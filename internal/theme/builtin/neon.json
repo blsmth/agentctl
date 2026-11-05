@@ -1,0 +1,18 @@
+{
+  "name": "neon",
+  "base": "#0a0a0f",
+  "surface": "#12121a",
+  "overlay": "#1e1e2a",
+  "muted": "#4a4a6a",
+  "subtle": "#7a7aaa",
+  "text": "#e0e0ff",
+  "bright": "#ffffff",
+  "accent": "#bf40ff",
+  "green": "#39ff14",
+  "yellow": "#ffff00",
+  "red": "#ff073a",
+  "blue": "#00d4ff",
+  "sky": "#00ffff",
+  "info": "#7b68ee",
+  "orange": "#ff6600"
+}

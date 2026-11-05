@@ -1,0 +1,4 @@
+{"type":"system","timestamp":"2026-03-25T10:00:00Z","agentSetting":"test-agent"}
+{"type":"user","timestamp":"2026-03-25T10:00:01Z","message":{"role":"user","content":[{"type":"text","text":"Implement the feature"}]}}
+{"type":"assistant","timestamp":"2026-03-25T10:00:05Z","gitBranch":"agent/go-engineer/issue-697","message":{"role":"assistant","content":[{"type":"text","text":"I'll implement it."}],"usage":{"input_tokens":500,"output_tokens":50}}}
+{"type":"assistant","timestamp":"2026-03-25T10:00:10Z","gitBranch":"agent/go-engineer/issue-697","message":{"role":"assistant","content":[{"type":"text","text":"Done."}],"usage":{"input_tokens":600,"output_tokens":30}}}

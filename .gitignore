@@ -1,0 +1,16 @@
+/agentctl
+/config.json
+.worktrees/
+.agentctl/
+.claude/
+
+blog-drafts/
+dist/
+.DS_Store
+*.test
+*.out
+
+# macapp/ (Swift fleet app)
+macapp/.build/
+macapp/build/
+macapp/*.app/

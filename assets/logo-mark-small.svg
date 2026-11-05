@@ -1,0 +1,40 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Channel Window Icon — agentctl (compact) -->
+  <rect width="128" height="128" fill="#08090c"/>
+
+  <!-- Window frame -->
+  <rect x="6" y="6" width="116" height="116" fill="none" stroke="#7C6AEF" stroke-width="2"/>
+
+  <!-- Title bar -->
+  <rect x="6" y="6" width="116" height="16" fill="#7C6AEF" fill-opacity="0.12"/>
+  <line x1="6" y1="22" x2="122" y2="22" stroke="#7C6AEF" stroke-width="1" opacity="0.3"/>
+  <text x="12" y="18" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="8" font-weight="700" fill="#A78BFA">#agentctl</text>
+
+  <!-- Messages (compact) -->
+  <text x="12" y="37" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="7" fill="#7C6AEF">&lt;</text>
+  <text x="18" y="37" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="7" font-weight="700" fill="#34D399">go-eng</text>
+  <text x="54" y="37" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="7" fill="#7C6AEF">&gt;</text>
+  <text x="62" y="37" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="7" fill="#666">PR ready</text>
+
+  <text x="12" y="50" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="7" fill="#7C6AEF">&lt;</text>
+  <text x="18" y="50" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="7" font-weight="700" fill="#FBBF24">infra</text>
+  <text x="46" y="50" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="7" fill="#7C6AEF">&gt;</text>
+  <text x="54" y="50" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="7" fill="#666">working...</text>
+
+  <text x="12" y="63" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="7" fill="#7C6AEF">&lt;</text>
+  <text x="18" y="63" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="7" font-weight="700" fill="#F87171">plat</text>
+  <text x="38" y="63" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="7" fill="#7C6AEF">&gt;</text>
+  <text x="46" y="63" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="7" fill="#666">⏸ blocked</text>
+
+  <!-- Divider -->
+  <line x1="6" y1="74" x2="122" y2="74" stroke="#7C6AEF" stroke-width="0.5" opacity="0.25"/>
+
+  <!-- Input prompt -->
+  <text x="12" y="87" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="8" font-weight="700" fill="#7C6AEF">&gt;</text>
+  <text x="22" y="87" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="7" fill="#555">dispatch_</text>
+
+  <!-- Status bar -->
+  <rect x="6" y="100" width="116" height="22" fill="#7C6AEF" fill-opacity="0.08"/>
+  <line x1="6" y1="100" x2="122" y2="100" stroke="#7C6AEF" stroke-width="1" opacity="0.2"/>
+  <text x="12" y="114" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="8" fill="#A78BFA">[W:1 I:1 B:1]</text>
+</svg>

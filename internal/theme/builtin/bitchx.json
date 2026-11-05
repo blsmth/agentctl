@@ -1,0 +1,18 @@
+{
+  "name": "bitchx",
+  "base": "#000000",
+  "surface": "#0a0a0a",
+  "overlay": "#1a1a1a",
+  "muted": "#555555",
+  "subtle": "#888888",
+  "text": "#cccccc",
+  "bright": "#ffffff",
+  "accent": "#00aaaa",
+  "green": "#00aa00",
+  "yellow": "#aaaa00",
+  "red": "#aa0000",
+  "blue": "#5555ff",
+  "sky": "#55ffff",
+  "info": "#55ff55",
+  "orange": "#ff5500"
+}

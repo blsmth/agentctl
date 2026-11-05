@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  # Needed by golangci-lint-action's only-new-issues option to fetch the PR diff.
+  pull-requests: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.11
+          only-new-issues: true
+
+      # Build darwin/arm64 snapshot binary and upload as artifact on pushes to main only.
+      # To fetch and install the latest binary (maintainers, darwin/arm64): just upgrade
+      - name: Build darwin/arm64 snapshot
+        if: github.event_name == 'push'
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: build --snapshot --single-target
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+
+      - name: Upload darwin/arm64 artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentctl-darwin-arm64
+          path: dist/agentctl_darwin_arm64*/agentctl
+          if-no-files-found: error
+          retention-days: 14
+
+  macapp:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for macapp changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            swift:
+              - 'macapp/**'
+              - '.github/workflows/ci.yaml'
+
+      - name: Select Xcode
+        if: steps.filter.outputs.swift == 'true'
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Cache SwiftPM build
+        if: steps.filter.outputs.swift == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            macapp/.build
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-spm-${{ hashFiles('macapp/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Build (debug)
+        if: steps.filter.outputs.swift == 'true'
+        working-directory: macapp
+        run: swift build
+
+      - name: Build (release)
+        if: steps.filter.outputs.swift == 'true'
+        working-directory: macapp
+        run: swift build -c release
+
+      - name: Test
+        if: steps.filter.outputs.swift == 'true'
+        working-directory: macapp
+        run: swift test

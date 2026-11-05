@@ -1,0 +1,34 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+  settings:
+    errcheck:
+      # Don't flag unchecked errors on these functions — they're almost always
+      # intentional (deferred closes, fmt to stdout, os.Remove in cleanup).
+      exclude-functions:
+        - "fmt.Fprint"
+        - "fmt.Fprintf"
+        - "fmt.Fprintln"
+        - "fmt.Printf"
+        - "fmt.Sscanf"
+        - "(*os.File).Close"
+        - "io.WriteString"
+        - "(*os.File).WriteString"
+        - "os.Remove"
+        - "os.Chmod"
+        - "os.MkdirAll"
+        - "os.Unsetenv"
+        - "(*net/http.Response).Body.Close"
+        - "(*bufio.Writer).Flush"
+    staticcheck:
+      checks:
+        - "all"
+        - "-QF*"  # disable quickfix suggestions — they're style not correctness
+        - "-ST*"  # disable style suggestions

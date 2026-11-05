@@ -1,0 +1,19 @@
+✻ Cogitated for 10s · done 10:58 AM
+
+❯ lets figure out why we see that wake issue
+
+⏺ Checking tests and live panes for prompt-marker lines
+  ⎿  $ tmux capture-pane -p -t @21 > /tmp/wake-falseneg-capture.txt; grep -n "❯\|^─\|──────" /tmp/wake-falseneg-capture.txt | cut -c1-80; echo ---; gh pr list --repo
+     blsmth/agentctl --json number,title,headRefName --jq '.[]|"\(.number) \(.title)"'; grep -rn "promptStillStaged\|InjectPromptToWindow" --in…
+
+✳ Nebulizing… (29s · ↓ 2.2k tokens)
+  ⎿  Tip: You can control how big a workflow is just by prompting. Ask for a small workflow, cap it with "use at most 5 agents", or set a default with Dynamic
+     workflow size in /config.
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── brandon ─
+❯ 
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀▐█░░░░░░░░░░░░░░░░░░░▌ 5h 8% · resets 3pm · 7d 10%
+  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀opus 5.5 · ▐█░░░░░░░░░░░░░░░░░░░▌ 8% ctx · 75k/1000k · turn: 73k↑ 676↓ · 90% cached · 22 turns · total: 1349k↑ 12k↓ · $0.70 · 1m 43s
+  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀~/code/personal/agentctl · ⎇ main
+  ⏵⏵ auto mode on (shift+tab to cycle)

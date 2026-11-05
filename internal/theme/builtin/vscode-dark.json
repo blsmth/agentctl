@@ -1,0 +1,18 @@
+{
+  "name": "vscode-dark",
+  "base": "#1e1e1e",
+  "surface": "#252526",
+  "overlay": "#3c3c3c",
+  "muted": "#6a737d",
+  "subtle": "#858585",
+  "text": "#d4d4d4",
+  "bright": "#ffffff",
+  "accent": "#569cd6",
+  "green": "#6a9955",
+  "yellow": "#dcdcaa",
+  "red": "#f44747",
+  "blue": "#569cd6",
+  "sky": "#9cdcfe",
+  "info": "#4fc1ff",
+  "orange": "#ce9178"
+}

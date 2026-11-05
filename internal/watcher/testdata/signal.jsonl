@@ -1,0 +1,3 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Please complete the task."}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I will work on this now.\n\nAGENTCTL:DONE\n\nAll tasks are complete."}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Additional assistant message with no signal."}]}}

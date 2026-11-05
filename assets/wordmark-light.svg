@@ -1,0 +1,11 @@
+<svg width="640" height="80" viewBox="0 0 640 80" xmlns="http://www.w3.org/2000/svg">
+  <!-- Prompt Style Wordmark — agentctl (light) -->
+  <text x="0" y="54" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="48" fill="#aaa">$</text>
+  <text x="40" y="54" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="48" font-weight="800" fill="#1a1a2e">agentctl</text>
+  <!-- Cursor -->
+  <rect x="402" y="18" width="4" height="40" fill="#7C6AEF" opacity="0.8">
+    <animate attributeName="opacity" values="0.8;0.8;0;0" dur="1.2s" repeatCount="indefinite"/>
+  </rect>
+  <!-- Ghost command -->
+  <text x="420" y="54" font-family="'JetBrains Mono', 'SF Mono', 'Menlo', 'Courier New', monospace" font-size="48" fill="#ddd">dispatch</text>
+</svg>

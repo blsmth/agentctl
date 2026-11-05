@@ -1,0 +1,159 @@
+{
+  "__inputs": [],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "9.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" }
+  ],
+  "annotations": { "list": [] },
+  "description": "Per-agent detail: tokens, tools, context, turns, cost, and state",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": null,
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 1, "stacking": { "group": "A", "mode": "normal" } } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Token Usage Over Time",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": null, "expr": "rate(agentctl_tokens_total{agent=~\"$agent\",direction=\"input\"}[$interval])", "legendFormat": "input", "refId": "A" },
+        { "datasource": null, "expr": "rate(agentctl_tokens_total{agent=~\"$agent\",direction=\"output\"}[$interval])", "legendFormat": "output", "refId": "B" }
+      ]
+    },
+    {
+      "datasource": null,
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "barRadius": 0.1, "groupWidth": 0.7, "legend": { "calcs": [], "displayMode": "list", "placement": "bottom" }, "orientation": "horizontal", "tooltip": { "mode": "single" } },
+      "title": "Tool Usage Breakdown (top 10)",
+      "type": "barchart",
+      "targets": [
+        { "datasource": null, "expr": "topk(10, sum by (tool) (agentctl_tool_use_total{agent=~\"$agent\"}))", "legendFormat": "{{tool}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": null,
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 1 }, "max": 100, "min": 0, "unit": "percent" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "title": "Context Window Usage",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": null, "expr": "agentctl_context_pct{agent=~\"$agent\"}", "legendFormat": "{{agent}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": null,
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 1 } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Turns Over Time",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": null, "expr": "rate(agentctl_turns_total{agent=~\"$agent\"}[$interval])", "legendFormat": "{{agent}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": null,
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }, "unit": "currencyUSD" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 16 },
+      "id": 5,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "title": "Session Cost",
+      "type": "stat",
+      "targets": [
+        { "datasource": null, "expr": "agentctl_cost_estimate_dollars{agent=~\"$agent\"}", "legendFormat": "{{agent}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": null,
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 4, "w": 18, "x": 6, "y": 16 },
+      "id": 6,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "mergeValues": true, "rowHeight": 0.9, "showValue": "auto", "tooltip": { "mode": "single" } },
+      "title": "State Timeline",
+      "type": "state-timeline",
+      "targets": [
+        { "datasource": null, "expr": "agentctl_state_transitions_total{agent=~\"$agent\"}", "legendFormat": "{{state}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": null,
+      "fieldConfig": { "defaults": { "color": { "mode": "spectrum" }, "custom": { "hideFrom": { "legend": false, "tooltip": false, "viz": false } }, "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "id": 7,
+      "options": { "calculate": false, "color": { "exponent": 0.5, "fill": "dark-orange", "mode": "scheme", "reverse": false, "scale": "exponential", "scheme": "Oranges", "steps": 64 }, "exemplars": { "color": "rgba(255,0,255,0.7)" }, "filterValues": { "le": 1e-9 }, "legend": { "show": true }, "rowsFrame": { "layout": "auto" }, "tooltip": { "mode": "single", "yHistogram": false }, "yAxis": { "axisLabel": "", "reverse": false } },
+      "title": "Blocked Duration Heatmap",
+      "type": "heatmap",
+      "targets": [
+        { "datasource": null, "expr": "sum by (le) (rate(agentctl_blocked_duration_seconds_bucket{agent=~\"$agent\"}[$interval]))", "format": "heatmap", "legendFormat": "{{le}}", "refId": "A" }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 36,
+  "style": "dark",
+  "tags": ["agentctl"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "datasource": null,
+        "definition": "label_values(agentctl_agents_active, instance)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Instance",
+        "multi": false,
+        "name": "instance",
+        "options": [],
+        "query": { "query": "label_values(agentctl_agents_active, instance)", "refId": "StandardVariableQuery" },
+        "refresh": 2,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": null,
+        "definition": "label_values(agentctl_agents_active, agent)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Agent",
+        "multi": false,
+        "name": "agent",
+        "options": [],
+        "query": { "query": "label_values(agentctl_agents_active, agent)", "refId": "StandardVariableQuery" },
+        "refresh": 2,
+        "type": "query"
+      },
+      {
+        "current": { "selected": true, "text": "5m", "value": "5m" },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Interval",
+        "multi": false,
+        "name": "interval",
+        "options": [
+          { "selected": false, "text": "1m", "value": "1m" },
+          { "selected": true,  "text": "5m", "value": "5m" },
+          { "selected": false, "text": "15m", "value": "15m" },
+          { "selected": false, "text": "1h", "value": "1h" }
+        ],
+        "query": "1m,5m,15m,1h",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": { "from": "now-3h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Agent Detail",
+  "uid": "agentctl-agent-detail",
+  "version": 1
+}
