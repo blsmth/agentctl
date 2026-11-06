@@ -17,7 +17,7 @@ First public release.
 - Notifications via `alerter` (macOS) or `notify-send` (Linux); `notify_cmd` customizes or disables them.
 - Optional work journal backed by a local LLM (`llm.provider: ollama`), with a durable journal and JSONL sidecar.
 - Optional Prometheus metrics and dashboards.
-- `agentctl install-plugin` works from the binary (the plugin is embedded); `agentctl version` prints a semver.
+- agentctl slash commands (`/agentctl:dispatch`, `context`, `status`, `logs`, `restart`) install via the Claude Code plugin marketplace (`/plugin marketplace add blsmth/agentctl`, then `/plugin install agentctl@agentctl`); `agentctl install-plugin` no longer copies files and just prints those commands. `agentctl version` prints a semver.
 - Hooks and popups invoke the running binary (`os.Executable()`), so `go install github.com/blsmth/agentctl@latest` and release tarballs both work.
 - Release builds for darwin and linux on amd64 and arm64 (goreleaser).
 - Experimental macOS companion app (`macapp/`).

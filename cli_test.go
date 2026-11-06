@@ -40,7 +40,7 @@ var cliTests = []cliCase{
 	{"sync --help", []string{"sync", "--help"}, 0, "dry-run", ""},
 	{"new --help", []string{"new", "--help"}, 0, "name", ""},
 	{"install-templates --help", []string{"install-templates", "--help"}, 0, "force", ""},
-	{"install-plugin --help", []string{"install-plugin", "--help"}, 0, "force", ""},
+	{"install-plugin prints marketplace commands", []string{"install-plugin"}, 0, "/plugin install agentctl@agentctl", ""},
 	{"sessions summary --help", []string{"sessions", "summary", "--help"}, 0, "date", ""},
 	{"status --help lists subcommands", []string{"status", "--help"}, 0, "peek", ""},
 	{"status list --help shows filters", []string{"status", "list", "--help"}, 0, "blocked", ""},

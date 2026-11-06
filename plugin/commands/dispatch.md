@@ -13,10 +13,11 @@ Build and immediately execute the command:
 - If only a number was given:  `agentctl dispatch --issue <N>`
 - If a number and agent were given: `agentctl dispatch --issue <N> --agent <name>`
 
-No `<number>` or `<name>` placeholders may appear in the command you run — substitute real values only.
+No `<number>` or `<name>` placeholders may appear in the command you run — substitute real values only. If no issue number is present, ask the user for one instead of running anything.
+
+Run this from inside an agentctl tmux session (the agent launches in a new tmux window there) with `gh` authenticated for the repo. The agent defaults to one inferred from issue labels, then `go-engineer`.
 
 Examples:
 - `/agentctl:dispatch 42` → `agentctl dispatch --issue 42`
 - `/agentctl:dispatch issue 42` → `agentctl dispatch --issue 42`
 - `/agentctl:dispatch 42 go-engineer` → `agentctl dispatch --issue 42 --agent go-engineer`
-- `/agentctl:dispatch issue 42 go-engineer` → `agentctl dispatch --issue 42 --agent go-engineer`

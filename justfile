@@ -77,9 +77,6 @@ upgrade:
     mv -f "{{bindir}}/agentctl.tmp" "{{bindir}}/agentctl"
     just relaunch
 
-# Install the Claude Code plugin (copies the embedded plugin into ~/.claude/)
-install-plugin: install
-    agentctl install-plugin
 
 # Tail the shared monitor log (see internal/logging.MonitorLogPath).
 # Honors AGENTCTL_RUNTIME_DIR the same way paths.Init does, falling back to

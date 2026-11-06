@@ -27,7 +27,7 @@ All popups follow the same pattern in `internal/tui/`:
 1. Define a `FooResult` struct for output and a `FooModel` with Bubble Tea's `Init/Update/View`
 2. `NewFooModel(...)` constructor, `Result()` accessor
 3. The calling command runs `tea.NewProgram(model)`, then reads the result after `p.Run()`
-4. Shared styles (`titleStyle`, `normalStyle`, `selectedStyle`, `hintStyle`) are in the tui package; reuse them
+4. Table-based viewers share `tableStyles` (`internal/tui/tablestyles.go`); reuse it rather than redefining column, rule, dim, detail, subtitle, and hint-bar styles. Popup-only styles such as `selectedStyle` are defined locally in the tui package (e.g. `improve.go`)
 5. Popups are launched via `tmux display-popup -E` with the running agentctl binary (`os.Executable()`)
 
 ### Dispatch command
