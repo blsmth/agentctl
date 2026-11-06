@@ -396,7 +396,7 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 	shellPrefixScript := filepath.Join(paths.RuntimeDir(), "shell-prefix.sh")
 
 	sessionTarget := SessionName + ":"
-	envArgs := buildLaunchEnv(windowName, workDir, agentName, sessionID, agentctlBin, shellPrefixScript, instanceName(), extraEnv)
+	envArgs := buildLaunchEnv(windowName, workDir, agentName, sessionID, agentctlBin, shellPrefixScript, instanceName(), permissionModeFromCmd(shellCmd), extraEnv)
 	newWindowArgs := append(
 		// -n and -c are format-expanded by tmux; escape them (FormatEscape).
 		[]string{"new-window", "-t", sessionTarget, "-n", FormatEscape(windowName), "-c", FormatEscape(workDir)},
@@ -491,10 +491,41 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 	return windowID, nil
 }
 
+// subprocessEnvScrub returns the CLAUDE_CODE_SUBPROCESS_ENV_SCRUB value for a
+// launch with the given --permission-mode.
+//
+// Do NOT set this to 1 unconditionally. Claude Code (v2.1.311+) overrides the
+// permission mode when it is set, even with --allowedTools:
+//
+//	⚠ Permission mode forced to default — CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is
+//	set (allowed_non_write_users hardening). Declare allowedTools explicitly,
+//	or set CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0 to opt out.
+//
+// For auto mode we inject an explicit 0 (not just omit it) so a value
+// inherited from the parent environment (agentctl itself may run in a window
+// with SCRUB=1) cannot re-enable it.
+func subprocessEnvScrub(permissionMode string) string {
+	if permissionMode == "auto" {
+		return "0"
+	}
+	return "1"
+}
+
+var permissionModeRe = regexp.MustCompile(`--permission-mode\s+'?([A-Za-z]+)'?(?:\s|$)`)
+
+// permissionModeFromCmd extracts the --permission-mode value from a launch
+// command, or "" if absent.
+func permissionModeFromCmd(shellCmd string) string {
+	if m := permissionModeRe.FindStringSubmatch(shellCmd); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 // buildLaunchEnv returns the -e KEY=VALUE arguments for tmux new-window.
 // It is extracted as a helper to allow unit testing the env-var construction
 // without a live tmux session.
-func buildLaunchEnv(windowName, workDir, agentName, sessionID, agentctlBin, shellPrefixScript, inst string, extraEnv map[string]string) []string {
+func buildLaunchEnv(windowName, workDir, agentName, sessionID, agentctlBin, shellPrefixScript, inst, permissionMode string, extraEnv map[string]string) []string {
 	args := []string{
 		"-e", "AGENTCTL=1",
 		"-e", "AGENTCTL_WINDOW_NAME=" + windowName,
@@ -506,7 +537,7 @@ func buildLaunchEnv(windowName, workDir, agentName, sessionID, agentctlBin, shel
 		"-e", "DISABLE_AUTOUPDATER=1",
 		"-e", "CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1",
 		"-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
-		"-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1",
+		"-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=" + subprocessEnvScrub(permissionMode),
 		"-e", "CLAUDE_CODE_SHELL_PREFIX=" + shellPrefixScript,
 	}
 	if inst != "" {
