@@ -1,7 +1,10 @@
 package hooks
 
 import (
+	"strings"
 	"testing"
+
+	ctxstore "github.com/blsmth/agentctl/internal/context"
 )
 
 func TestIsAgentctlDispatch(t *testing.T) {
@@ -260,5 +263,116 @@ func TestParseDispatchFlags_Segment(t *testing.T) {
 				t.Errorf("got (%q,%d,%q), want (%q,%d,%q)", a, i, p, tt.wantAgent, tt.wantIssue, tt.wantPrompt)
 			}
 		})
+	}
+}
+
+// isolateContextStore points the context store at a temp dir and returns a
+// function that seeds an entry.
+func isolateContextStore(t *testing.T) func(key, content string) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_DATA_HOME", dir+"/data")
+	t.Setenv("XDG_CONFIG_HOME", dir+"/config")
+	t.Setenv("XDG_STATE_HOME", dir+"/state")
+	return func(key, content string) {
+		t.Helper()
+		ctxstore.Init()
+		if err := ctxstore.Set(key, ctxstore.Entry{Content: content}); err != nil {
+			t.Fatalf("seeding store: %v", err)
+		}
+	}
+}
+
+func TestResolvePromptKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		seed    map[string]string
+		command string
+		want    string
+		wantOK  bool
+	}{
+		{
+			name:    "chained set resolves",
+			command: `agentctl context set k "plain text" && agentctl dispatch --agent a --prompt-key k`,
+			want:    "plain text", wantOK: true,
+		},
+		{
+			name:    "single-quoted multi-line",
+			command: "agentctl context set k 'line one\nline two $HOME' && agentctl dispatch --agent a --prompt-key k",
+			want:    "line one\nline two $HOME", wantOK: true,
+		},
+		{
+			name:    "double-quoted command substitution is unresolved",
+			command: `agentctl context set k "see $(cat x)" && agentctl dispatch --agent a --prompt-key k`,
+		},
+		{
+			name:    "double-quoted variable is unresolved",
+			command: `agentctl context set k "hi $VAR" && agentctl dispatch --agent a --prompt-key k`,
+		},
+		{
+			name:    "backtick is unresolved",
+			command: "agentctl context set k \"hi `id`\" && agentctl dispatch --agent a --prompt-key k",
+		},
+		{
+			name:    "inline set unresolved does not fall back to the store",
+			seed:    map[string]string{"k": "stored"},
+			command: `agentctl context set k "$X" && agentctl dispatch --agent a --prompt-key k`,
+		},
+		{
+			name:    "store used when no inline set",
+			seed:    map[string]string{"k": "stored"},
+			command: `agentctl dispatch --agent a --prompt-key k`,
+			want:    "stored", wantOK: true,
+		},
+		{
+			name:    "inline set wins over store",
+			seed:    map[string]string{"k": "stored"},
+			command: `agentctl context set k "fresh" && agentctl dispatch --agent a --prompt-key k`,
+			want:    "fresh", wantOK: true,
+		},
+		{
+			name:    "missing everywhere",
+			command: `agentctl dispatch --agent a --prompt-key k`,
+		},
+		{
+			name:    "different key in the chain is not used",
+			command: `agentctl context set other "x" && agentctl dispatch --agent a --prompt-key k`,
+		},
+		{
+			name:    "set that is only an argument of another command is not used",
+			command: `echo agentctl context set k "x" && agentctl dispatch --agent a --prompt-key k`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			seed := isolateContextStore(t)
+			for k, v := range tt.seed {
+				seed(k, v)
+			}
+			got, ok := resolvePromptKey("k", tt.command)
+			if ok != tt.wantOK || got != tt.want {
+				t.Errorf("resolvePromptKey = (%q, %v), want (%q, %v)", got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestDispatchPreviewGate_UnresolvedPromptKeyDenies(t *testing.T) {
+	isolateContextStore(t)
+	t.Setenv("TMUX", "/tmp/fake-tmux-socket")
+	t.Setenv("AGENTCTL_SESSION_ID", "sess-promptkey-deny")
+	command := "agentctl dispatch --agent go-engineer --prompt-key nokey"
+	removeDispatchLockForTest(t, command)
+	failIfDispatchPopupRunnerCalled(t)
+
+	approved, decided, reason := dispatchPreviewGate("lead", command)
+	if approved || decided {
+		t.Errorf("got approved=%v decided=%v, want false, false", approved, decided)
+	}
+	for _, want := range []string{"nokey", "not found", "separate Bash call"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("reason %q missing %q", reason, want)
+		}
 	}
 }

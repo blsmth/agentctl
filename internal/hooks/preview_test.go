@@ -93,7 +93,7 @@ func TestPermissionWrite_NotInTmux_PassesThrough(t *testing.T) {
 func TestDispatchPreviewGate_NotInTmux_PassesThrough(t *testing.T) {
 	t.Setenv("TMUX", "")
 
-	approved, decided := dispatchPreviewGate("lead", "agentctl dispatch --agent go-engineer --prompt hi")
+	approved, decided, _ := dispatchPreviewGate("lead", "agentctl dispatch --agent go-engineer --prompt hi")
 
 	if approved || decided {
 		t.Errorf("dispatchPreviewGate() = (approved=%v, decided=%v) with no popup available, want (false, false)", approved, decided)

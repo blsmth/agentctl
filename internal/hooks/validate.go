@@ -122,7 +122,13 @@ func ValidateBash() {
 	if isDispatch || cfg.EffectiveBashPreview(agentName) {
 		var approved, decided bool
 		if isDispatch {
-			approved, decided = dispatchPreviewGate(agentName, command)
+			var denyReason string
+			approved, decided, denyReason = dispatchPreviewGate(agentName, command)
+			if denyReason != "" {
+				// The prompt cannot be shown, so fail closed.
+				denyCommand(agentName, command, denyReason, actx)
+				return
+			}
 		} else {
 			approved, decided = bashPreviewGate(agentName, command)
 		}
