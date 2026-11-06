@@ -1013,3 +1013,24 @@ func TestDetectAndFireTransitions(t *testing.T) {
 		})
 	}
 }
+
+func TestSessionIdentityOK(t *testing.T) {
+	tests := []struct {
+		name      string
+		want, got string
+		ok        bool
+	}{
+		{"same id", "$3", "$3", true},
+		{"different id", "$3", "$7", false},
+		{"session missing", "$3", "", false},
+		{"unknown recorded id, session exists", "", "$7", true},
+		{"unknown recorded id, session missing", "", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sessionIdentityOK(tc.want, tc.got); got != tc.ok {
+				t.Fatalf("sessionIdentityOK(%q,%q) = %v, want %v", tc.want, tc.got, got, tc.ok)
+			}
+		})
+	}
+}

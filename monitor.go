@@ -169,6 +169,8 @@ type tickMsg struct{}
 
 // monitorModel is the Bubble Tea model for the headless background monitor.
 type monitorModel struct {
+	sessionID           string // tmux #{session_id} of the session this monitor serves ("" = unknown)
+	runtimeDir          string // runtime dir holding monitor.pid ("" disables the pidfile guard)
 	windows             map[string]*instanceState
 	transitionTracker   *metrics.TransitionTracker // nil when metrics disabled
 	watcher             *watcher.ContentWatcher
@@ -333,7 +335,11 @@ func cmdMonitor() {
 
 	// Run the monitor as a headless Bubble Tea program (no terminal output).
 	devNull, _ := os.Open(os.DevNull)
-	p := tea.NewProgram(newMonitorModel(activeWindowFile, regEntry), tea.WithoutRenderer(), tea.WithInput(devNull))
+	model := newMonitorModel(activeWindowFile, regEntry)
+	model.runtimeDir = runtimeDir
+	model.sessionID = tmux.SessionID()
+	logging.Log("monitor: serving tmux session id %q", model.sessionID)
+	p := tea.NewProgram(model, tea.WithoutRenderer(), tea.WithInput(devNull))
 	if _, err := p.Run(); err != nil {
 		logging.Log("monitor: tea.Program error: %v", err)
 	}
@@ -348,7 +354,9 @@ func (m monitorModel) Init() tea.Cmd {
 func (m monitorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg.(type) {
 	case tickMsg:
-		m.processTick()
+		if !m.processTick() {
+			return m, tea.Quit
+		}
 		return m, tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return tickMsg{} })
 
 	case tea.KeyPressMsg:
@@ -431,9 +439,18 @@ func (m *monitorModel) applyVisuals(windowID string, inst *instanceState, curSta
 // processTick runs one full monitor poll cycle: discovers windows, reads hook
 // state, fires plugin transitions, updates metrics displays, and persists state.
 // It delegates each phase to a named method for readability and testability.
-func (m *monitorModel) processTick() {
-	if !tmux.SessionExists() {
-		return
+//
+// It returns false when the monitor should exit: the session it serves is gone
+// or has been replaced by a same-named one, or another monitor owns the
+// pidfile. In that case nothing is saved and no Gone transitions fire.
+func (m *monitorModel) processTick() bool {
+	if !sessionIdentityOK(m.sessionID, tmux.SessionID()) {
+		logging.Log("monitor: tmux session %q gone or replaced (want id %q), exiting without saving state", tmux.SessionName, m.sessionID)
+		return false
+	}
+	if m.runtimeDir != "" && pidfile.Validate(m.runtimeDir, "monitor.pid") {
+		logging.Log("monitor: pidfile names another live monitor, exiting without saving state")
+		return false
 	}
 
 	cfg := config.Load()
@@ -467,6 +484,19 @@ func (m *monitorModel) processTick() {
 	}
 
 	m.persistState(cfg, windows, activeWindowID)
+	return true
+}
+
+// sessionIdentityOK reports whether the session currently named
+// tmux.SessionName is the one the monitor was started for. want is the
+// session_id recorded at startup; got is the current lookup ("" when the
+// session does not exist). An empty want (lookup failed at startup) degrades
+// to an existence check.
+func sessionIdentityOK(want, got string) bool {
+	if got == "" {
+		return false
+	}
+	return want == "" || want == got
 }
 
 // reconcileWindows bootstraps instanceState for new windows, fires Gone
