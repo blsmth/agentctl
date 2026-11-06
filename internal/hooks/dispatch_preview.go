@@ -73,6 +73,9 @@ func isAgentctlDispatch(command string) bool {
 type cmdToken struct {
 	text   string
 	quoted bool
+	// expands is true when the shell would not pass text through verbatim:
+	// it contains $, a backtick or a backslash outside single quotes.
+	expands bool
 }
 
 // dispatchSegments returns, for every "agentctl dispatch" occurrence in the
@@ -143,18 +146,20 @@ func segmentHasHelp(seg []cmdToken) bool {
 }
 
 // dispatchPreviewGate shows the popup and reports whether the user approved.
-// Returns (approved, decided). decided is false when no popup was shown (not
+// Returns (approved, decided, denyReason). A non-empty denyReason means the
+// prompt could not be shown, so the command must be denied (fail closed) with
+// that reason; approved and decided are false. Otherwise decided is false when no popup was shown (not
 // in tmux, popup failed to launch, another invocation owns it) and the
 // caller must stay silent -- emitting nothing is how ValidateBash's PreToolUse
 // hook signals "allow" to Claude Code, same as the existing deny checks in
 // validate.go signal "allow" by simply returning without writing anything.
-func dispatchPreviewGate(agentName, command string) (approved, decided bool) {
+func dispatchPreviewGate(agentName, command string) (approved, decided bool, denyReason string) {
 	// Check if we're in a tmux session — can't show popup otherwise.
 	// Pass through rather than allowing: an unreviewed dispatch is exactly
 	// what this popup exists to prevent. See PermissionRequest's doc comment.
 	if os.Getenv("TMUX") == "" {
 		logging.Log("hook-validate-bash: not in tmux session, passing through dispatch")
-		return false, false
+		return false, false, ""
 	}
 
 	// Exactly one of the (typically two -- the agentctl hook map is
@@ -167,7 +172,7 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool) {
 	release, ok := acquireGateLock(command)
 	if !ok {
 		logging.Log("hook-validate-bash: dispatch gate already owned by another invocation, staying silent")
-		return false, false
+		return false, false, ""
 	}
 	defer release()
 
@@ -208,28 +213,18 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool) {
 	// that actually needs the store, so it pays the init cost itself instead
 	// of taxing every other hook invocation.
 	if promptKey != "" {
-		ctxstore.Init()
-		entry, ok, err := ctxstore.Get(promptKey)
-		switch {
-		case err != nil:
-			logging.Log("hook-validate-bash: failed to resolve prompt key %q: %v", promptKey, err)
-			args.Prompt = "**Context key not found:** " + promptKey
-		case !ok:
-			logging.Log("hook-validate-bash: prompt key %q not found", promptKey)
-			args.Prompt = "**Context key not found:** " + promptKey
-		case strings.TrimSpace(entry.Content) == "":
-			logging.Log("hook-validate-bash: prompt key %q is empty", promptKey)
-			args.Prompt = "**Context key not found:** " + promptKey
-		default:
-			args.Prompt = entry.Content
+		content, ok := resolvePromptKey(promptKey, command)
+		if !ok {
+			return false, false, promptKeyDenyReason(promptKey)
 		}
+		args.Prompt = content
 	}
 
 	// Write to a temp JSON file.
 	tmpFile, err := os.CreateTemp("", "agentctl-dispatch-preview-*")
 	if err != nil {
 		logging.Log("hook-validate-bash: failed to create dispatch temp file: %v", err)
-		return false, false
+		return false, false, ""
 	}
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
@@ -237,7 +232,7 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool) {
 	if err := json.NewEncoder(tmpFile).Encode(args); err != nil {
 		tmpFile.Close()
 		logging.Log("hook-validate-bash: failed to write dispatch temp file: %v", err)
-		return false, false
+		return false, false, ""
 	}
 	tmpFile.Close()
 
@@ -266,14 +261,74 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool) {
 			exitCode := exitErr.ExitCode()
 			logging.Log("hook-validate-bash: dispatch popup exit code=%d", exitCode)
 			if exitCode == 1 {
-				return false, true
+				return false, true, ""
 			}
 		}
 		logging.Log("hook-validate-bash: dispatch popup error: %v, passing through", err)
-		return false, false
+		return false, false, ""
 	}
 
-	return true, true
+	return true, true, ""
+}
+
+// promptKeyDenyReason is the deny message shown to the model when the prompt
+// behind --prompt-key cannot be displayed in the approval popup.
+func promptKeyDenyReason(key string) string {
+	return fmt.Sprintf("dispatch --prompt-key %s: key not found in the context store. "+
+		"Run `agentctl context set %s ...` as a separate Bash call first, then dispatch, "+
+		"so the approval popup can show the prompt.", key, key)
+}
+
+// resolvePromptKey returns the prompt text for key. An `agentctl context set
+// <key> <value>` earlier in the same command line wins over the store, since
+// it is what will be stored by the time dispatch runs -- PreToolUse fires
+// before any part of the command executes, so the store alone would miss it.
+// ok is false when the prompt cannot be shown faithfully.
+func resolvePromptKey(key, command string) (content string, ok bool) {
+	if v, found, literal := inlineContextSet(key, command); found {
+		if !literal || strings.TrimSpace(v) == "" {
+			logging.Log("hook-validate-bash: inline context set for %q is not literal or empty", key)
+			return "", false
+		}
+		return v, true
+	}
+	ctxstore.Init()
+	entry, found, err := ctxstore.Get(key)
+	switch {
+	case err != nil:
+		logging.Log("hook-validate-bash: failed to resolve prompt key %q: %v", key, err)
+	case !found:
+		logging.Log("hook-validate-bash: prompt key %q not found", key)
+	case strings.TrimSpace(entry.Content) == "":
+		logging.Log("hook-validate-bash: prompt key %q is empty", key)
+	default:
+		return entry.Content, true
+	}
+	return "", false
+}
+
+// inlineContextSet scans command for `agentctl context set <key> <value>` as
+// a command of its own (start of the line or right after a control operator)
+// and returns the last such value. literal is false when the value is subject
+// to shell expansion and so cannot be read as written.
+func inlineContextSet(key, command string) (value string, found, literal bool) {
+	tokens := tokenizeQuoted(strings.TrimSpace(command))
+	for i := 0; i+4 < len(tokens); i++ {
+		if tokens[i].quoted || !strings.HasSuffix(tokens[i].text, "agentctl") ||
+			tokens[i+1].text != "context" || tokens[i+2].text != "set" || tokens[i+3].text != key {
+			continue
+		}
+		if i > 0 {
+			switch tokens[i-1].text {
+			case "&&", ";", "||", "&", "|":
+			default:
+				continue
+			}
+		}
+		v := tokens[i+4]
+		value, found, literal = v.text, true, !v.expands
+	}
+	return value, found, literal
 }
 
 // dispatchPopupRunner launches the tmux popup running "agentctl
@@ -379,15 +434,15 @@ func tokenizeCommand(s string) []string {
 func tokenizeQuoted(s string) []cmdToken {
 	var tokens []cmdToken
 	var cur strings.Builder
-	inQuote, hadQuote := false, false
+	inQuote, hadQuote, expands := false, false, false
 	var quoteChar byte
 
 	flush := func() {
 		if cur.Len() > 0 || hadQuote {
-			tokens = append(tokens, cmdToken{text: cur.String(), quoted: hadQuote})
+			tokens = append(tokens, cmdToken{text: cur.String(), quoted: hadQuote, expands: expands})
 		}
 		cur.Reset()
-		hadQuote = false
+		hadQuote, expands = false, false
 	}
 
 	for i := 0; i < len(s); i++ {
@@ -396,6 +451,9 @@ func tokenizeQuoted(s string) []cmdToken {
 			if c == quoteChar {
 				inQuote = false
 			} else {
+				if quoteChar == '"' && (c == '$' || c == '`' || c == '\\') {
+					expands = true
+				}
 				cur.WriteByte(c)
 			}
 			continue
@@ -408,6 +466,9 @@ func tokenizeQuoted(s string) []cmdToken {
 		case ' ', '\t', '\n':
 			flush()
 		default:
+			if c == '$' || c == '`' || c == '\\' {
+				expands = true
+			}
 			cur.WriteByte(c)
 		}
 	}

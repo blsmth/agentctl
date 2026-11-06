@@ -49,7 +49,7 @@ const sharedRuntimeSections = "### Context store\n" +
 const orchestratorDelegationSection = "### Delegation\n" +
 	"- `agentctl dispatch --issue <N>` — dispatch an agent to work on a GitHub issue; this is the primary way work gets assigned to another agent\n" +
 	"- `agentctl dispatch --agent <name> --prompt <text>` — dispatch an agent on an ad-hoc prompt (no ticket)\n" +
-	"- `agentctl dispatch --agent <name> --prompt-key <key>` — same as `--prompt`, but reads the prompt text from `agentctl context get <key>` instead of an inline string; use this instead of `--prompt \"$(cat file)\"` because the approval popup tokenizes the raw command string and cannot resolve command substitution\n" +
+	"- `agentctl dispatch --agent <name> --prompt-key <key>` — same as `--prompt`, but reads the prompt text from `agentctl context get <key>` instead of an inline string; use this instead of `--prompt \"$(cat file)\"` because the approval popup tokenizes the raw command string and cannot resolve command substitution; run `agentctl context set <key> ...` in a separate Bash call BEFORE the dispatch, never chained with `&&` (the popup is shown before any part of the command runs, and an unresolvable key is denied)\n" +
 	"- `agentctl tickets` — list GitHub issues\n" +
 	"- `agentctl health` — run health checks"
 

@@ -91,7 +91,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 
 **Cleanup:** `agentctl cleanup` (`internal/cleanup`) classifies every worktree under `.worktrees/` and reclaims the safe ones (see `Classify`'s doc comment). Unknown directories under `.worktrees/` are reported as `skip` and never deleted.
 
-**`--prompt-key <key>`:** `agentctl dispatch --prompt-key <key> --agent <name>` reads the ad-hoc prompt from the context store instead of `--prompt`. The approval popup sees the raw, unexpanded command, so `--prompt "$(cat spec.md)"` would show a reviewer nothing useful; a context key can be resolved and shown. It is mutually exclusive with `--prompt` and `--issue`.
+**`--prompt-key <key>`:** `agentctl dispatch --prompt-key <key> --agent <name>` reads the ad-hoc prompt from the context store instead of `--prompt`. The approval popup sees the raw, unexpanded command, so `--prompt "$(cat spec.md)"` would show a reviewer nothing useful; a context key can be resolved and shown. It is mutually exclusive with `--prompt` and `--issue`. Run `agentctl context set <key> ...` in a **separate Bash call before** the dispatch, not chained with `&&`: the PreToolUse gate runs before any part of the command executes. As a fallback the gate reads a literal `context set <key> <value>` earlier in the same command line (single-quoted, or double-quoted without `$`/backticks); if the prompt still cannot be resolved, the dispatch is denied rather than shown with a placeholder.
 
 ### Querying agent status (`agentctl status`)
 
