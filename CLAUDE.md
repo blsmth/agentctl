@@ -91,6 +91,8 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 
 **Cleanup:** `agentctl cleanup` (`internal/cleanup`) classifies every worktree under `.worktrees/` and reclaims the safe ones (see `Classify`'s doc comment). Unknown directories under `.worktrees/` are reported as `skip` and never deleted.
 
+**Sweep:** `agentctl sweep` is the window-centric counterpart, scoped to the *current* tmux session only (session from `$TMUX_PANE`, or `--session` outside tmux). It closes finished windows (including ones with no worktree), reuses `cleanup.Classify` for windows that own one, and lists the rest with the action each needs. Classification is the pure `cleanup.ClassifyWindow`; self, `shell`, `improve~*`, untracked windows, and bare windows (unless `--include-bare`) are never closed. `--dry-run` plans only.
+
 **`--prompt-key <key>`:** `agentctl dispatch --prompt-key <key> --agent <name>` reads the ad-hoc prompt from the context store instead of `--prompt`. The approval popup sees the raw, unexpanded command, so `--prompt "$(cat spec.md)"` would show a reviewer nothing useful; a context key can be resolved and shown. It is mutually exclusive with `--prompt` and `--issue`.
 
 ### Querying agent status (`agentctl status`)

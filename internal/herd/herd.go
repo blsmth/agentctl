@@ -271,7 +271,11 @@ func TagRows(session, project string, snap *state.Snapshot) []Row {
 // isNonAgentWindow reports whether a window name is one the monitor never
 // tracks as an agent: the persistent "shell" window, or an auto-improve
 // session ("improve~<agent>").
-func isNonAgentWindow(name string) bool {
+func isNonAgentWindow(name string) bool { return IsNonAgentWindow(name) }
+
+// IsNonAgentWindow is the exported form of isNonAgentWindow, for commands
+// (e.g. `agentctl sweep`) that must never touch these windows.
+func IsNonAgentWindow(name string) bool {
 	if name == "shell" {
 		return true
 	}

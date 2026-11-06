@@ -693,11 +693,18 @@ type WindowInfo struct {
 // The order matches tmux display order (by window index). No filtering is
 // applied — the caller decides which windows to act on.
 func ListWindows() []WindowInfo {
+	return ListWindowsIn(SessionName)
+}
+
+// ListWindowsIn lists the windows of the named session. It is ListWindows
+// parameterised so callers that must be scoped to the session they were
+// invoked from (e.g. `agentctl sweep`) never depend on the global.
+func ListWindowsIn(session string) []WindowInfo {
 	// Tab-delimited: window names and pane paths may both contain spaces
 	// (e.g. spinner-prefixed names, or a path under "My Projects"), so a
 	// space delimiter would corrupt both fields. Neither field can contain a
 	// literal tab.
-	cmd := exec.Command("tmux", "list-windows", "-t", SessionName,
+	cmd := exec.Command("tmux", "list-windows", "-t", session,
 		"-F", "#{window_id}\t#{pane_current_path}\t#{window_name}")
 	out, err := cmd.Output()
 	if err != nil {

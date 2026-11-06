@@ -51,6 +51,12 @@ agentctl cleanup --dry-run                 # print the plan and exit
 agentctl cleanup --yes                     # act without the confirmation prompt
 agentctl cleanup --include-open-prs        # also reclaim worktrees whose branch has an open PR (branch is kept)
 agentctl cleanup --json                    # machine-readable output
+agentctl sweep --dry-run                   # window-centric, current session only
+```
+
+To clean up by *window* instead of by worktree, run `agentctl sweep` from inside tmux. It only touches the current session, closes finished windows (with or without a worktree), and prints a table of what needs you. Flags: `--dry-run`, `--include-bare`, `--session <name>` (required outside tmux), `--json`.
+
+```sh
 git worktree list                          # see all worktrees
 ```
 
