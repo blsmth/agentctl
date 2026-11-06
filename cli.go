@@ -39,6 +39,7 @@ type CLI struct {
 	Logs        LogsCmd        `cmd:"" help:"View agent session logs"`
 	Improve     ImproveCmd     `cmd:"" help:"Launch self-improvement session"`
 	Cleanup     CleanupCmd     `cmd:"" help:"Reclaim worktrees and windows from finished agents"`
+	Sweep       SweepCmd       `cmd:"" help:"Close finished windows in the current tmux session and list what needs attention"`
 	KillAll     KillAllCmd     `cmd:"" name:"kill-all" hidden:""`
 	KillAllMenu KillAllMenuCmd `cmd:"" name:"kill-all-menu" hidden:""`
 	KillMenu    KillMenuCmd    `cmd:"" name:"kill-menu" hidden:""`
@@ -210,6 +211,23 @@ func (c *CleanupCmd) Run() error {
 		Yes:            c.Yes,
 		IncludeOpenPRs: c.IncludeOpenPRs,
 		JSON:           c.JSON,
+	})
+}
+
+// SweepCmd implements `agentctl sweep`.
+type SweepCmd struct {
+	Session     string `help:"tmux session to sweep (required outside tmux; default: the session this command runs in)"`
+	DryRun      bool   `name:"dry-run" help:"Print the plan without closing anything"`
+	IncludeBare bool   `name:"include-bare" help:"Also close done, idle bare (interactive) windows"`
+	JSON        bool   `help:"Output as JSON"`
+}
+
+func (c *SweepCmd) Run() error {
+	return cmd.RunSweep(cmd.SweepOptions{
+		Session:     c.Session,
+		DryRun:      c.DryRun,
+		IncludeBare: c.IncludeBare,
+		JSON:        c.JSON,
 	})
 }
 

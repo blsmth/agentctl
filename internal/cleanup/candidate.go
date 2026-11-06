@@ -128,40 +128,7 @@ func Gather(opts Options) ([]Candidate, error) {
 			Window:         wf,
 			IncludeOpenPRs: opts.IncludeOpenPRs,
 		}
-
-		if dirty, err := IsDirty(wt.Path); err != nil {
-			// An inconclusive git probe is treated the same as dirty --
-			// refusing to reclaim on an unknown answer is always the safe
-			// choice.
-			logging.Warn("cleanup: IsDirty(%s): %v -- treating as dirty", wt.Path, err)
-			facts.Dirty = true
-		} else {
-			facts.Dirty = dirty
-		}
-
-		facts.HasUpstream = HasUpstream(wt.Path)
-		if facts.HasUpstream {
-			if n, err := UnpushedCount(wt.Path); err == nil {
-				facts.UnpushedCount = n
-			} else {
-				logging.Warn("cleanup: UnpushedCount(%s): %v -- treating as unpushed", wt.Path, err)
-				facts.UnpushedCount = 1
-			}
-		}
-
-		if n, err := AheadOfBase(wt.Path, baseRef); err == nil {
-			facts.AheadOfBase = n
-		} else {
-			logging.Warn("cleanup: AheadOfBase(%s, %s): %v -- treating as ahead of base", wt.Path, baseRef, err)
-			facts.AheadOfBase = 1 // never treat an unknown ahead-count as "empty"
-		}
-		facts.MergedIntoBase = MergedIntoBase(wt.Path, baseRef)
-
-		if opts.RepoSlug != "" && wt.Branch != "" {
-			facts.PR = LookupPRState(opts.RepoSlug, wt.Branch)
-		} else {
-			facts.PR = PRUnknown
-		}
+		gatherGitFacts(&facts, wt.Path, wt.Branch, opts.RepoSlug, baseRef)
 
 		verdict := Classify(facts)
 
@@ -385,4 +352,52 @@ func Reclaim(c *Candidate) {
 			c.StepsDone = append(c.StepsDone, "removed mailbox")
 		}
 	}
+}
+
+// gatherGitFacts fills the git/gh-derived fields of f for the worktree at
+// path. An inconclusive probe always resolves to the conservative answer
+// (dirty, unpushed, ahead of base, PR unknown).
+func gatherGitFacts(f *Facts, path, branch, repoSlug, baseRef string) {
+	if dirty, err := IsDirty(path); err != nil {
+		// An inconclusive git probe is treated the same as dirty --
+		// refusing to reclaim on an unknown answer is always the safe
+		// choice.
+		logging.Warn("cleanup: IsDirty(%s): %v -- treating as dirty", path, err)
+		f.Dirty = true
+	} else {
+		f.Dirty = dirty
+	}
+
+	f.HasUpstream = HasUpstream(path)
+	if f.HasUpstream {
+		if n, err := UnpushedCount(path); err == nil {
+			f.UnpushedCount = n
+		} else {
+			logging.Warn("cleanup: UnpushedCount(%s): %v -- treating as unpushed", path, err)
+			f.UnpushedCount = 1
+		}
+	}
+
+	if n, err := AheadOfBase(path, baseRef); err == nil {
+		f.AheadOfBase = n
+	} else {
+		logging.Warn("cleanup: AheadOfBase(%s, %s): %v -- treating as ahead of base", path, baseRef, err)
+		f.AheadOfBase = 1 // never treat an unknown ahead-count as "empty"
+	}
+	f.MergedIntoBase = MergedIntoBase(path, baseRef)
+
+	if repoSlug != "" && branch != "" {
+		f.PR = LookupPRState(repoSlug, branch)
+	} else {
+		f.PR = PRUnknown
+	}
+}
+
+// WorktreeFacts gathers the git/gh Facts for a single worktree (everything
+// except the Window and IncludeOpenPRs fields, which the caller owns), for
+// callers that start from a window rather than from Gather's worktree walk.
+func WorktreeFacts(repoDir, repoSlug, path, branch string) Facts {
+	var f Facts
+	gatherGitFacts(&f, path, branch, repoSlug, worktree.ResolveBaseRef(repoDir))
+	return f
 }
