@@ -898,6 +898,7 @@ func TestLaunchAgentShellPrefixIsBareScriptPath(t *testing.T) {
 		"/usr/local/bin/agentctl", // agentctlBin
 		scriptPath,                // shellPrefixScript
 		"",                        // inst (no instance suffix)
+		"",                        // permissionMode
 		nil,                       // extraEnv
 	)
 
@@ -947,6 +948,7 @@ func TestBuildLaunchEnv_ForwardsExtraEnv(t *testing.T) {
 		"session-123",
 		"/usr/local/bin/agentctl",
 		"/repo/.agentctl/shell-prefix.sh",
+		"",
 		"",
 		extraEnv,
 	)
@@ -1001,6 +1003,7 @@ func TestBuildLaunchEnv_RuntimeDirDefaulting(t *testing.T) {
 			"session-123",
 			"/usr/local/bin/agentctl",
 			"/repo/.agentctl/shell-prefix.sh",
+			"",
 			"",
 			extraEnv,
 		)
@@ -1294,5 +1297,46 @@ func TestChromeRowsForLayoutMatchesChromeBarRows(t *testing.T) {
 func TestChromeBarRowsIsTwo(t *testing.T) {
 	if ChromeBarRows != 2 {
 		t.Errorf("ChromeBarRows = %d, want 2", ChromeBarRows)
+	}
+}
+
+func TestBuildLaunchEnv_EnvScrubByPermissionMode(t *testing.T) {
+	tests := []struct {
+		mode, want string
+	}{
+		{"auto", "0"},
+		{"", "1"},
+		{"default", "1"},
+		{"acceptEdits", "1"},
+		{"plan", "1"},
+	}
+	for _, tt := range tests {
+		t.Run("mode="+tt.mode, func(t *testing.T) {
+			args := buildLaunchEnv("w", "/tmp", "a", "s", "/bin/agentctl", "/p.sh", "", tt.mode, nil)
+			var vals []string
+			for i := 0; i+1 < len(args); i++ {
+				if args[i] == "-e" && strings.HasPrefix(args[i+1], "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=") {
+					vals = append(vals, strings.TrimPrefix(args[i+1], "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB="))
+				}
+			}
+			if len(vals) != 1 || vals[0] != tt.want {
+				t.Errorf("SCRUB values = %v, want exactly [%s]", vals, tt.want)
+			}
+		})
+	}
+}
+
+func TestPermissionModeFromCmd(t *testing.T) {
+	tests := map[string]string{
+		"claude --model opus --permission-mode auto 'prompt'": "auto",
+		"claude --permission-mode 'plan' x":                   "plan",
+		"claude --permission-mode acceptEdits":                "acceptEdits",
+		"claude 'do --permission-mode-ish things'":            "",
+		"claude": "",
+	}
+	for cmd, want := range tests {
+		if got := permissionModeFromCmd(cmd); got != want {
+			t.Errorf("permissionModeFromCmd(%q) = %q, want %q", cmd, got, want)
+		}
 	}
 }
