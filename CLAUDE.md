@@ -117,7 +117,7 @@ Issue labels and PR conventions are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Design Notes & Patterns
 
-Development conventions (tmux patterns, popup architecture, TUI conventions) are in `plugin/skills/agentctl-dev.md`; the other docs are indexed in [docs/README.md](docs/README.md).
+Development conventions (tmux patterns, popup architecture, TUI conventions) are in [docs/development.md](docs/development.md); the other docs are indexed in [docs/README.md](docs/README.md).
 
 ### Session identity
 

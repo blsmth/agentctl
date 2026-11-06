@@ -50,10 +50,16 @@ agentctl init                    # initialize agentctl in the current project
 agentctl hooks-install --global  # install Claude Code hooks (omit --global for this project only)
 agentctl statusline install      # use agentctl as Claude Code's status line
 agentctl install-templates       # starter agents: architect, devops-engineer, go-engineer, python-engineer, terraform-engineer
-agentctl install-plugin          # install the agentctl Claude Code plugin (embedded in the binary)
 ```
 
 Hooks are what drive agent state, so `hooks-install` is the important one. Run `agentctl <command> --help` for flags.
+
+Slash commands (`/agentctl:dispatch`, `context`, `status`, `logs`, `restart`) install as a Claude Code plugin, from inside Claude Code:
+
+```
+/plugin marketplace add blsmth/agentctl
+/plugin install agentctl@agentctl
+```
 
 ## Quickstart
 

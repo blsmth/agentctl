@@ -101,26 +101,6 @@ func writeSettingsJSON(t *testing.T, proj string, settings map[string]interface{
 	writeSettingsHooks(t, proj, settings["hooks"].(map[string]interface{}))
 }
 
-func TestPluginInstalledDetection(t *testing.T) {
-	home := t.TempDir()
-	if pluginInstalled(home) {
-		t.Error("empty home reported plugin installed")
-	}
-	cmds := filepath.Join(home, ".claude", "commands", "agentctl")
-	_ = os.MkdirAll(cmds, 0o755)
-	_ = os.WriteFile(filepath.Join(cmds, "start.md"), []byte("x"), 0o644)
-	if !pluginInstalled(home) {
-		t.Error("install-plugin commands not detected")
-	}
-
-	home2 := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(home2, ".claude"), 0o755)
-	_ = os.WriteFile(filepath.Join(home2, ".claude", "settings.json"), []byte(`{"enabledPlugins":{"agentctl@blsmth":true}}`), 0o644)
-	if !pluginInstalled(home2) {
-		t.Error("enabledPlugins entry not detected")
-	}
-}
-
 func TestInstallHooksRefusesEphemeralBinary(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -137,21 +117,5 @@ func TestInstallHooksRefusesEphemeralBinary(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(home, ".claude", "settings.json")); statErr == nil {
 		t.Error("settings written despite refusal")
-	}
-}
-
-func TestWarnIfPluginInstalled(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", "")
-	t.Setenv("XDG_DATA_HOME", "")
-	t.Setenv("XDG_STATE_HOME", "")
-	cmds := filepath.Join(home, ".claude", "commands", "agentctl")
-	_ = os.MkdirAll(cmds, 0o755)
-	_ = os.WriteFile(filepath.Join(cmds, "start.md"), []byte("x"), 0o644)
-	var sb strings.Builder
-	warnIfPluginInstalled(&sb)
-	if !strings.Contains(sb.String(), "fires twice") {
-		t.Errorf("no double-fire warning: %q", sb.String())
 	}
 }

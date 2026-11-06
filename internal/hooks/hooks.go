@@ -6,8 +6,6 @@
 // See HooksConfig() for the canonical list of all registered hooks.
 package hooks
 
-//go:generate go test . -run TestPluginHooksJSONMatches -update
-
 import (
 	"os"
 	"os/exec"

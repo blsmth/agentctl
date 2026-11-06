@@ -1,0 +1,19 @@
+{
+  "name": "agentctl",
+  "owner": {
+    "name": "Brendan Smith"
+  },
+  "metadata": {
+    "description": "agentctl slash commands for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "agentctl",
+      "source": "./plugin",
+      "description": "agentctl slash commands for Claude Code",
+      "version": "0.1.0",
+      "homepage": "https://github.com/blsmth/agentctl",
+      "license": "MIT"
+    }
+  ]
+}

@@ -1,15 +1,11 @@
 {
   "name": "agentctl",
   "version": "0.1.0",
+  "description": "agentctl slash commands for Claude Code",
   "author": {
     "name": "Brendan Smith"
   },
   "homepage": "https://github.com/blsmth/agentctl",
   "repository": "https://github.com/blsmth/agentctl",
-  "license": "MIT",
-  "description": "agentctl integration for Claude Code — agents, skills, hooks, and slash commands",
-  "commands": "commands",
-  "agents": "agents",
-  "skills": "skills",
-  "hooks": "hooks/hooks.json"
+  "license": "MIT"
 }

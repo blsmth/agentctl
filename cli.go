@@ -118,7 +118,7 @@ type CLI struct {
 	Sync             SyncCmd             `cmd:"" help:"Sync project agents to global registry"`
 	HooksInstall     HooksInstallCmd     `cmd:"" name:"hooks-install" help:"Install Claude Code hooks"`
 	InstallTemplates InstallTemplatesCmd `cmd:"" name:"install-templates" help:"Install starter agent templates"`
-	InstallPlugin    InstallPluginCmd    `cmd:"" name:"install-plugin" help:"Install agentctl plugin"`
+	InstallPlugin    InstallPluginCmd    `cmd:"" name:"install-plugin" help:"Print plugin marketplace install instructions" hidden:""`
 
 	// Claude Code statusLine data source. Bare `agentctl statusline`
 	// is normally intercepted by main.go's fast path before Kong ever sees
@@ -1023,13 +1023,12 @@ func (c *InstallTemplatesCmd) Run() error {
 	return nil
 }
 
-// InstallPluginCmd implements `agentctl install-plugin [--force]`.
-type InstallPluginCmd struct {
-	Force bool `short:"f" help:"Overwrite existing regular files (symlinks are always replaced)"`
-}
+// InstallPluginCmd implements the `agentctl install-plugin` stub, which prints
+// the Claude Code marketplace install commands.
+type InstallPluginCmd struct{}
 
 func (c *InstallPluginCmd) Run() error {
-	cmd.RunCmdInstallPlugin(c.Force)
+	cmd.RunCmdInstallPlugin()
 	return nil
 }
 

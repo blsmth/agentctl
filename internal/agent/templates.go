@@ -1,21 +1,22 @@
 package agent
 
 import (
+	"embed"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/blsmth/agentctl/plugin"
 )
 
-// templateFS is the embedded plugin tree; the built-in templates are the
-// plugin's agent definitions (plugin/agents/*.md), the single source of truth.
-var templateFS fs.FS = plugin.FS
+// templateFS holds the built-in agent templates (templates/*.md), shipped via
+// `agentctl init`, `install-templates` and the create wizard.
+//
+//go:embed templates/*.md
+var templateFS embed.FS
 
 // templatesDir is the directory within templateFS holding the templates.
-const templatesDir = "agents"
+const templatesDir = "templates"
 
 // TemplateInfo describes a built-in agent template.
 type TemplateInfo struct {

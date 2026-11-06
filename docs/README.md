@@ -12,6 +12,7 @@
 | [monitor-architecture.md](monitor-architecture.md) | Monitor loop, hook-driven state, TUI internals |
 | [claude-code-hooks.md](claude-code-hooks.md) | Claude Code hook events and how agentctl uses them |
 | [prompt-architecture.md](prompt-architecture.md) | How dispatch prompts are structured |
+| [development.md](development.md) | Contributor conventions: tmux patterns, popup architecture, TUI conventions |
 
 ## Design records
 

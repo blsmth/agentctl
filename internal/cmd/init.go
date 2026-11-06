@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -177,43 +176,6 @@ func configureDefaultAgent(reader *bufio.Reader, cwd string) {
 // tests (whose binary lives in a go-build dir) can substitute it.
 var persistedPrefixFn = hooks.PersistedPrefix
 
-// pluginInstalled reports whether the agentctl Claude Code plugin appears to
-// be installed under home: either install-plugin's slash commands exist, or
-// settings.json enables a plugin named agentctl. The plugin ships its own
-// hooks.json, so registering hooks here as well makes every hook fire twice.
-func pluginInstalled(home string) bool {
-	if fi, err := os.Stat(filepath.Join(home, ".claude", "commands", "agentctl", "start.md")); err == nil && !fi.IsDir() {
-		return true
-	}
-	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
-	if err != nil {
-		return false
-	}
-	var settings struct {
-		EnabledPlugins map[string]interface{} `json:"enabledPlugins"`
-	}
-	if json.Unmarshal(data, &settings) != nil {
-		return false
-	}
-	for name := range settings.EnabledPlugins {
-		if name == "agentctl" || strings.HasPrefix(name, "agentctl@") {
-			return true
-		}
-	}
-	return false
-}
-
-// warnIfPluginInstalled writes a double-firing warning to w when the plugin is
-// installed alongside settings-file hooks.
-func warnIfPluginInstalled(w io.Writer) {
-	home, err := os.UserHomeDir()
-	if err != nil || !pluginInstalled(home) {
-		return
-	}
-	fmt.Fprintln(w, "Warning: the agentctl plugin appears to be installed, and its hooks.json registers the same hooks.")
-	fmt.Fprintln(w, "         With both active every hook fires twice. Keep one: disable the plugin's hooks or remove these.")
-}
-
 // InstallHooks installs agentctl hook handlers into the appropriate settings file.
 // If global is true, writes to ~/.claude/settings.json (global Claude settings).
 // If global is false, writes to .claude/settings.local.json in the current working
@@ -253,7 +215,6 @@ func InstallHooks(global bool) (string, error) {
 	if err := writeHooksToPath(settingsPath, prefix); err != nil {
 		return "", err
 	}
-	warnIfPluginInstalled(os.Stderr)
 	return settingsPath, nil
 }
 
