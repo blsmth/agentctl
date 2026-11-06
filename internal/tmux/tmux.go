@@ -57,6 +57,18 @@ func SessionExists() bool {
 	return cmd.Run() == nil
 }
 
+// SessionID returns the tmux session_id (e.g. "$3") of the session named
+// SessionName, or "" when it does not exist. Ids are unique for the life of
+// the tmux server, so they distinguish a session from a later one that reuses
+// its name.
+func SessionID() string {
+	out, err := exec.Command("tmux", "display-message", "-p", "-t", "="+SessionName, "#{session_id}").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // StartSession creates the agentctl tmux session with a shell as window 0,
 // configures the status bar and keybindings, then attaches.
 func StartSession(defaultAgent string) error {
