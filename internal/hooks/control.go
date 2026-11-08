@@ -313,6 +313,8 @@ func UserPrompt() {
 	// Consume stdin -- we don't need the prompt text.
 	decodeInput(&struct{}{}) // non-fatal: ignore return value
 
+	monitorWatchdog()
+
 	windowID := resolveHookWindowID()
 	if windowID == "" {
 		logging.Log("hook-user-prompt: cannot determine window ID, skipping")

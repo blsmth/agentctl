@@ -332,6 +332,11 @@ type Config struct {
 	// SessionRetentionDays is how many days to keep session metadata before purging.
 	// Defaults to 30 when zero.
 	SessionRetentionDays int `json:"session_retention_days,omitempty"`
+	// RestoreMaxAge is a Go duration string: the oldest saved state.json that
+	// `agentctl restore` will still restore agents from. Defaults to "168h".
+	// "0" or a negative value disables the gate. Global config only. Use
+	// EffectiveRestoreMaxAge to read it.
+	RestoreMaxAge string `json:"restore_max_age,omitempty"`
 	// Hooks maps lifecycle event names to lists of shell commands. Commands run
 	// after agentctl's built-in handling for each event. Per-agent hooks in
 	// agents.<name>.hooks run after these global hooks.
@@ -515,6 +520,24 @@ func (c *Config) EffectiveAutoPollInterval() time.Duration {
 		}
 	}
 	return 5 * time.Minute
+}
+
+// DefaultRestoreMaxAge is the restore age gate when restore_max_age is unset
+// or unparseable.
+const DefaultRestoreMaxAge = 168 * time.Hour
+
+// EffectiveRestoreMaxAge returns the restore age gate. A result <= 0 means the
+// gate is disabled.
+func (c *Config) EffectiveRestoreMaxAge() time.Duration {
+	if c.RestoreMaxAge == "" {
+		return DefaultRestoreMaxAge
+	}
+	d, err := time.ParseDuration(c.RestoreMaxAge)
+	if err != nil {
+		// Unparseable: fall back rather than silently disabling the gate.
+		return DefaultRestoreMaxAge
+	}
+	return d
 }
 
 // ToggleAutoPoll flips the auto_poll setting and saves it to the global

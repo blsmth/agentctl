@@ -65,6 +65,8 @@ func SessionStart() {
 	doneTimer := logging.Timing("hook/session-start")
 	defer doneTimer()
 
+	monitorWatchdog()
+
 	// Read stdin JSON to get session_id and cwd. Claude Code sends these on
 	// every SessionStart, including after /clear. Failure is non-fatal -- the
 	// rest of the function still runs.

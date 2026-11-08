@@ -57,6 +57,7 @@ Rationale: a project-local file can arrive with a cloned repository. Executing c
 | `theme` | string | `catppuccin-mocha` | Color theme name. |
 | `auto_poll` | bool | `false` | Ticket-browser autopilot mode. |
 | `auto_poll_interval` | string | `5m` | Autopilot poll interval (Go duration). |
+| `restore_max_age` | string | `168h` | Oldest saved `state.json` that `agentctl restore` will restore agents from after a relaunch (Go duration). `0` or negative disables the gate. Global config only. Skipped agents are named in the log. |
 | `session_retention_days` | int | `30` | Days to keep session metadata before purging. |
 | `dispatch.on_complete` | string | empty | Deprecated; use `hooks.dispatch_complete`. Still honored as a fallback. Global-only. |
 | `hooks` | object | none | Event name to list of shell commands. Global-only. See [hooks](#hooks). |

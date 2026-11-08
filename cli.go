@@ -25,13 +25,14 @@ type CLI struct {
 	Version VersionCmd `cmd:"" help:"Print version info"`
 
 	// Session management
-	Quit        QuitCmd        `cmd:"" help:"Quit the agentctl session"`
-	Restart     RestartCmd     `cmd:"" help:"Kill the agentctl session; relaunch with agentctl, or prefix+R inside tmux"`
-	Start       StartCmd       `cmd:"" help:"Print session startup banner" hidden:""`
-	QuitMenu    QuitMenuCmd    `cmd:"" name:"quit-menu" hidden:""`
-	RestartMenu RestartMenuCmd `cmd:"" name:"restart-menu" hidden:""`
-	SaveState   SaveStateCmd   `cmd:"" name:"save-state" hidden:""`
-	Restore     RestoreCmd     `cmd:"" hidden:""`
+	Quit         QuitCmd         `cmd:"" help:"Quit the agentctl session"`
+	Restart      RestartCmd      `cmd:"" help:"Kill the agentctl session; relaunch with agentctl, or prefix+R inside tmux"`
+	Start        StartCmd        `cmd:"" help:"Print session startup banner" hidden:""`
+	QuitMenu     QuitMenuCmd     `cmd:"" name:"quit-menu" hidden:""`
+	RestartMenu  RestartMenuCmd  `cmd:"" name:"restart-menu" hidden:""`
+	SaveState    SaveStateCmd    `cmd:"" name:"save-state" hidden:""`
+	Restore      RestoreCmd      `cmd:"" hidden:""`
+	RelaunchPrep RelaunchPrepCmd `cmd:"" name:"relaunch-prep" hidden:"" help:"Stop the project monitor and kill its session (used by just relaunch)"`
 
 	// Agent windows
 	Launch      LaunchCmd      `cmd:"" help:"Launch an agent in a new window"`
@@ -165,6 +166,10 @@ func (c *RestartMenuCmd) Run() error { cmd.RunRestartMenu(); return nil }
 type SaveStateCmd struct{}
 
 func (c *SaveStateCmd) Run() error { cmdSaveState(); return nil }
+
+type RelaunchPrepCmd struct{}
+
+func (c *RelaunchPrepCmd) Run() error { return cmd.RunRelaunchPrep() }
 
 type RestoreCmd struct{}
 
