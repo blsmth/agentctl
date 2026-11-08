@@ -54,7 +54,7 @@ agentctl install-templates       # starter agents: architect, devops-engineer, g
 
 Hooks are what drive agent state, so `hooks-install` is the important one. Run `agentctl <command> --help` for flags.
 
-Slash commands (`/agentctl:dispatch`, `context`, `status`, `logs`, `restart`) install as a Claude Code plugin, from inside Claude Code:
+Slash commands (`/agentctl:dispatch`, `context`, `status`, `sweep`, `logs`, `restart`) install as a Claude Code plugin, from inside Claude Code:
 
 ```
 /plugin marketplace add blsmth/agentctl
