@@ -2469,3 +2469,24 @@ func TestToggleOffStaysInProject(t *testing.T) {
 		}
 	})
 }
+
+func TestEffectiveRestoreMaxAge(t *testing.T) {
+	tests := []struct {
+		in   string
+		want time.Duration
+	}{
+		{"", DefaultRestoreMaxAge},
+		{"24h", 24 * time.Hour},
+		{"0", 0},
+		{"-1h", -time.Hour},
+		{"garbage", DefaultRestoreMaxAge},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			c := &Config{RestoreMaxAge: tt.in}
+			if got := c.EffectiveRestoreMaxAge(); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

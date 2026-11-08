@@ -40,15 +40,32 @@ var tmuxSafeRe = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 // for tmux (no dots, spaces, or special characters). If dirname is empty
 // the session name stays as "agentctl".
 func SetSessionName() {
-	dirName := paths.DirName()
+	SessionName = SessionNameForDirName(paths.DirName())
+}
+
+// SessionNameForDirName returns the session name for a project directory's
+// basename: "agentctl-<sanitized>", or plain "agentctl" when the basename is
+// empty or sanitizes to nothing. It is the single source of truth for the
+// name, shared by SetSessionName, the hook watchdog and relaunch-prep.
+func SessionNameForDirName(dirName string) string {
 	if dirName == "" || dirName == "." || dirName == "/" {
-		return
+		return "agentctl"
 	}
-	safe := tmuxSafeRe.ReplaceAllString(dirName, "-")
-	safe = strings.Trim(safe, "-")
-	if safe != "" {
-		SessionName = "agentctl-" + safe
+	safe := strings.Trim(tmuxSafeRe.ReplaceAllString(dirName, "-"), "-")
+	if safe == "" {
+		return "agentctl"
 	}
+	return "agentctl-" + safe
+}
+
+// SessionNameForProjectRoot returns the session name for a project root.
+func SessionNameForProjectRoot(root string) string {
+	return SessionNameForDirName(filepath.Base(root))
+}
+
+// HasSessionNamed reports whether a tmux session with exactly this name exists.
+func HasSessionNamed(name string) bool {
+	return exec.Command("tmux", "has-session", "-t", "="+name).Run() == nil
 }
 
 // SessionExists checks if the agentctl tmux session is running.
@@ -1165,6 +1182,16 @@ func agentctlKeybindings(exe string) []keyBinding {
 	}
 }
 
+// StartMonitor launches `<exe> monitor` detached (via tmux run-shell -b) with
+// projectRoot as its cwd, so the monitor resolves the right runtime dir
+// regardless of which pane is active. run-shell hands its command to sh, so
+// the binary path is quoted, and tmux format-expands that command first, so it
+// is format-escaped too. (run-shell's -c is not format-expanded.)
+func StartMonitor(exe, projectRoot string) error {
+	qexe := FormatEscape(shellquote.Quote(exe))
+	return exec.Command("tmux", "run-shell", "-b", "-c", projectRoot, qexe+" monitor").Run()
+}
+
 // applyConfig sets up the status bar, keybindings, and styling.
 func applyConfig() {
 	exe, _ := os.Executable()
@@ -1193,12 +1220,9 @@ func applyConfig() {
 	// directory regardless of which pane is active when applyConfig runs.
 	projectRoot := filepath.Dir(pidDir)
 	pidfile.Kill(pidDir, "monitor.pid")
-	// run-shell hands its command to sh, so the binary path is quoted, and
-	// tmux format-expands that command first, so it is format-escaped too.
-	// (run-shell's -c is not format-expanded.)
-	qexe := FormatEscape(shellquote.Quote(exe))
-	_ = exec.Command("tmux", "run-shell", "-b", "-c", projectRoot, qexe+" monitor").Run()
+	_ = StartMonitor(exe, projectRoot)
 	// Restore agents from previous session in the background
+	qexe := FormatEscape(shellquote.Quote(exe))
 	_ = exec.Command("tmux", "run-shell", "-b", "-c", projectRoot, qexe+" restore").Run()
 	done()
 

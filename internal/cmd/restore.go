@@ -7,6 +7,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/claude"
+	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/sessions"
@@ -14,7 +15,19 @@ import (
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
-const maxStateAge = 5 * time.Minute
+// restoreStale reports whether a state snapshot saved at ts is older than
+// maxAge. maxAge <= 0 disables the gate.
+func restoreStale(ts, now time.Time, maxAge time.Duration) bool {
+	return maxAge > 0 && now.Sub(ts) > maxAge
+}
+
+func agentNames(agents []state.AgentState) []string {
+	names := make([]string, len(agents))
+	for i, a := range agents {
+		names[i] = a.Name
+	}
+	return names
+}
 
 // RunRestore reads the persisted agent state and relaunches any agents
 // that were running when agentctl last exited.
@@ -28,8 +41,10 @@ func RunRestore() {
 		logging.Log("restoreAgents: no saved state")
 		return
 	}
-	if time.Since(saved.Timestamp) > maxStateAge {
-		logging.Log("restoreAgents: state is stale (age=%s), skipping", time.Since(saved.Timestamp).Round(time.Second))
+	maxAge := config.Load().EffectiveRestoreMaxAge()
+	if restoreStale(saved.Timestamp, time.Now(), maxAge) {
+		logging.Log("restoreAgents: state is stale (age=%s, restore_max_age=%s), skipping agents %v",
+			time.Since(saved.Timestamp).Round(time.Second), maxAge, agentNames(saved.Agents))
 		return
 	}
 

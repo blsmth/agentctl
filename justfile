@@ -19,27 +19,15 @@ build:
     go build -ldflags "{{_ldflags}}" -o agentctl .
 
 # Kill the tmux session and relaunch (no build)
-# Session name mirrors tmux.SetSessionName: "agentctl-<sanitized-cwd-basename>",
-# falling back to plain "agentctl" when the basename sanitizes to empty.
+# `relaunch-prep` resolves ONE project root (AGENTCTL_RUNTIME_DIR's parent, else
+# the main repo even from inside .worktrees/) and derives both the session name
+# and the monitor pidfile from it, via the same Go helpers the session start
+# path uses (tmux.SessionNameForProjectRoot, pidfile.Kill).
 [private]
 relaunch:
     #!/usr/bin/env bash
-    safe=$(basename "$PWD" | tr -c 'a-zA-Z0-9_-' '-' | sed 's/^-*//;s/-*$//')
-    session="agentctl${safe:+-$safe}"
-    # Stop the old monitor first: if it outlives the session it can observe
-    # the replacement (same name) and overwrite state.json with zero agents.
-    pidfile="${AGENTCTL_RUNTIME_DIR:-$PWD/.agentctl}/monitor.pid"
-    if [ -f "$pidfile" ]; then
-        pid=$(tr -dc '0-9' < "$pidfile")
-        if [ -n "$pid" ] && ps -p "$pid" -o args= 2>/dev/null | grep -q 'agentctl.*monitor'; then
-            kill "$pid" 2>/dev/null || true
-            for _ in 1 2 3 4 5 6 7 8 9 10; do
-                kill -0 "$pid" 2>/dev/null || break
-                sleep 0.1
-            done
-        fi
-    fi
-    tmux kill-session -t "$session" 2>/dev/null || true
+    set -e
+    "{{bindir}}/agentctl" relaunch-prep
     sleep 0.5
     "{{bindir}}/agentctl"
 

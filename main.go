@@ -531,6 +531,9 @@ func isStatuslineIngestCmd(args []string) bool {
 // text). They must not create .agentctl/ or a log file in the cwd.
 var readOnlyCommands = map[string]bool{
 	"version": true, "models": true, "status": true, "help": true,
+	// relaunch-prep resolves its own project root and must not create a
+	// runtime dir in the (possibly worktree) cwd it is run from.
+	"relaunch-prep": true,
 }
 
 // isReadOnlyInvocation reports whether args name a read-only invocation:
