@@ -68,7 +68,7 @@ Put a `.agentctl/config.json` in your project to add project-wide restrictions f
 - Command keys: `notify_cmd`, `hooks`, `dispatch.on_complete` (and the per-agent forms).
 - Permission keys: `agents.<name>.auto_accept` and `agents.<name>.allowed_permissions`. A project may add to `blocked_commands` / `blocked_patterns` but never remove entries the global config set.
 - `permission_mode`, `llm`, and the `metrics` endpoint and credentials.
-- `default_agent` (what prefix+A launches).
+- `default_agent` (what prefix+A launches) is honored from the project layer only when it is safe: a valid agent name, naming a built-in, a plugin agent, or an agent in `~/.claude/agents` that the repo's own `.claude/agents` does not define or shadow, and not an agent with `auto_accept` or an approval-skipping `permission_mode` (unless it is also the global default). Otherwise prefix+A warns and launches the global `default_agent`.
 - `agents.<name>.dir` (would point an `auto`-mode worker at any directory), `agents.<name>.context_keys` and `agents.<name>.cross_context` (would pull your global context store into the prompt of an agent working on the repo's input), and `agents.<name>.auto_improve`. A project may still switch `cross_context` and `auto_improve` off.
 
 Agent names themselves are also untrusted: an agent definition (`.claude/agents/*.md`) whose name is not `[A-Za-z0-9._-]+` (max 64 characters, no leading `.` or `-`) is skipped at discovery, and a project-local agent that shadows a global agent of the same name prints a warning naming the project file when it is launched.

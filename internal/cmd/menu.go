@@ -228,39 +228,138 @@ func formatRelativeTime(d time.Duration) string {
 	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 }
 
-// usableDefaultAgent returns cfg.DefaultAgent when it is a valid agent name
-// that discovery actually finds (or a Claude Code built-in, or a valid
-// plugin:agent reference), and "" otherwise.
-// A rejected value is reported on w and in the log rather than launched:
-// default_agent drives the prefix+A quick-launch, so it must never be handed
-// to a launch unchecked.
+// discoverUserAgents lists the agents in the user-level registry
+// (~/.claude/agents) only, without any project-local .claude/agents. It is a
+// package-level var so tests can stub discovery.
+var discoverUserAgents = func() ([]agent.Agent, error) {
+	return agent.DiscoverAll(config.Load(), nil)
+}
+
+// approvalModes are the permission_mode values that keep claude asking before
+// it acts. Every other value (auto, acceptEdits, dontAsk, bypassPermissions,
+// or anything unrecognized) approves at least some actions on its own.
+var approvalModes = []string{"", "default", "manual", "plan"}
+
+// usableDefaultAgent returns the agent prefix+A should launch, or "" when
+// there is none it can safely launch. Every rejection is reported on w and
+// in the log rather than launched: default_agent drives the quick-launch, so
+// it must never be handed to a launch unchecked.
+//
+// A default_agent that came from the project-local config (it differs from
+// cfg.GlobalDefaultAgent) is untrusted, since a cloned repo commits it. It is
+// honored only when projectDefaultRejection finds nothing wrong; otherwise
+// the global default_agent is used instead.
 func usableDefaultAgent(cfg *config.Config, w io.Writer) string {
 	name := cfg.DefaultAgent
+	if name != "" && name != cfg.GlobalDefaultAgent {
+		why := projectDefaultRejection(cfg, name)
+		if why == "" {
+			return name
+		}
+		fallback := "no global default_agent is set"
+		if cfg.GlobalDefaultAgent != "" {
+			fallback = fmt.Sprintf("using global default_agent %q", cfg.GlobalDefaultAgent)
+		}
+		warnDefaultAgent(w, fmt.Sprintf("ignoring project default_agent %q: %s; %s", name, why, fallback))
+		name = cfg.GlobalDefaultAgent
+	}
 	if name == "" {
 		return ""
 	}
-	reject := func(why string) string {
-		msg := fmt.Sprintf("agentctl: warning: ignoring default_agent %q: %s", name, why)
-		fmt.Fprintln(w, msg)
-		logging.Warn("%s", msg)
+	if why := defaultAgentRejection(name); why != "" {
+		warnDefaultAgent(w, fmt.Sprintf("ignoring default_agent %q: %s", name, why))
 		return ""
 	}
+	return name
+}
+
+// defaultAgentRejection returns why name cannot be launched as the default
+// agent, or "" when it is a valid agent name that discovery actually finds,
+// a Claude Code built-in, or a valid plugin:agent reference.
+func defaultAgentRejection(name string) string {
 	if !agent.ValidLaunchName(name) {
-		return reject("invalid agent name")
+		return "invalid agent name"
 	}
 	// Built-ins and plugin agents have no .md for discovery to find; they
 	// pass through by name exactly as `dispatch --agent` accepts them.
 	if slices.Contains(claudeBuiltinAgents, name) || agent.ValidPluginName(name) {
-		return name
+		return ""
 	}
 	agents, err := discoverDispatchAgents("")
 	if err != nil {
-		return reject(fmt.Sprintf("discovering agents: %v", err))
+		return fmt.Sprintf("discovering agents: %v", err)
 	}
 	for _, a := range agents {
 		if a.Name == name {
-			return name
+			return ""
 		}
 	}
-	return reject("no such agent")
+	return "no such agent"
+}
+
+// projectDefaultRejection returns why a project-local default_agent must not
+// be honored, or "" when it is safe. Safe means the name is valid, names an
+// agent the repo does not control (a built-in, a plugin agent, or one in the
+// user-level registry that no repo-local definition shadows), and that agent
+// does not auto-approve unless it is also the global default.
+func projectDefaultRejection(cfg *config.Config, name string) string {
+	if !agent.ValidLaunchName(name) {
+		return "invalid agent name"
+	}
+	if !slices.Contains(claudeBuiltinAgents, name) && !agent.ValidPluginName(name) {
+		if why := repoControlledRejection(name); why != "" {
+			return why
+		}
+	}
+	if name == cfg.GlobalDefaultAgent {
+		return ""
+	}
+	ac := cfg.ForAgent(name)
+	if ac.AutoAccept {
+		return "agent has auto_accept enabled"
+	}
+	if !slices.Contains(approvalModes, ac.PermissionMode) {
+		return fmt.Sprintf("agent has permission_mode %q, which skips approvals", ac.PermissionMode)
+	}
+	return ""
+}
+
+// repoControlledRejection returns "" when name resolves to the same file in
+// the user-level registry and in cwd discovery, and why not otherwise. A name
+// that is missing from the registry, or that a repo-local .claude/agents file
+// shadows, would launch a definition the repo wrote.
+func repoControlledRejection(name string) string {
+	user, err := discoverUserAgents()
+	if err != nil {
+		return fmt.Sprintf("discovering user agents: %v", err)
+	}
+	userPath, ok := agentPath(user, name)
+	if !ok {
+		return "not defined in the user-level agents dir"
+	}
+	all, err := discoverDispatchAgents("")
+	if err != nil {
+		return fmt.Sprintf("discovering agents: %v", err)
+	}
+	if path, ok := agentPath(all, name); !ok || path != userPath {
+		return "shadowed by a repo-local agent definition"
+	}
+	return ""
+}
+
+// agentPath returns the FilePath of the first agent in agents named name.
+func agentPath(agents []agent.Agent, name string) (string, bool) {
+	for _, a := range agents {
+		if a.Name == name {
+			return a.FilePath, true
+		}
+	}
+	return "", false
+}
+
+// warnDefaultAgent reports msg on w and in the log.
+func warnDefaultAgent(w io.Writer, msg string) {
+	msg = "agentctl: warning: " + msg
+	fmt.Fprintln(w, msg)
+	logging.Warn("%s", msg)
 }

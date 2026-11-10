@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/agentname"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/tokens"
@@ -325,8 +326,15 @@ type Config struct {
 	// Theme is the name of the active color theme. Defaults to "catppuccin-mocha".
 	Theme string `json:"theme,omitempty"`
 	// DefaultAgent is the agent launched by the quick-launch keybinding (prefix+A).
-	// Falls back to the first discovered agent if empty.
+	// A project-local value overrides the global one when it passes
+	// agent.ValidLaunchName (checked in sanitizeProjectConfig); the launch path
+	// applies the remaining checks (no repo-only agent, no auto-approving
+	// agent) and falls back to GlobalDefaultAgent when they fail.
 	DefaultAgent string `json:"default_agent,omitempty"`
+	// GlobalDefaultAgent is default_agent from the global layer alone, set by
+	// Load. When DefaultAgent differs from it, DefaultAgent came from the
+	// project-local config and is untrusted. Never serialized.
+	GlobalDefaultAgent string `json:"-"`
 	// Dispatch holds global dispatch configuration.
 	Dispatch DispatchConfig `json:"dispatch,omitempty"`
 	// SessionRetentionDays is how many days to keep session metadata before purging.
@@ -807,8 +815,12 @@ func containsAll(have, want []string) bool {
 //     may add but never remove: the result is global ∪ project)
 //   - agents.*.permission_mode (bypassPermissions/dontAsk would launch claude
 //     with no approvals); the global agent's value is used instead
-//   - default_agent (it picks what prefix+A launches, and its value becomes a
-//     tmux window name and path component); the global value is kept
+//   - default_agent when it fails agent.ValidLaunchName (the value becomes a
+//     tmux window name and path component); the global value is kept. A
+//     valid name is honored here, but because it picks what prefix+A
+//     launches, the launch path (cmd.usableDefaultAgent) additionally
+//     rejects agents defined only in the repo and auto-approving agents,
+//     falling back to GlobalDefaultAgent
 //   - agents.*.dir (would point an auto-mode worker at any directory, e.g. ~),
 //     agents.*.cross_context and agents.*.context_keys (would pull the user's
 //     global context store into the prompt of an agent processing attacker
@@ -840,10 +852,10 @@ func sanitizeProjectConfig(project, global *Config) {
 		warn("notify_cmd", globalOnly)
 		project.NotifyCmd = nil
 	}
-	if project.DefaultAgent != "" && project.DefaultAgent != global.DefaultAgent {
-		warn("default_agent", globalOnly)
+	if project.DefaultAgent != "" && !agentname.ValidLaunch(project.DefaultAgent) {
+		warn("default_agent", "invalid agent name")
+		project.DefaultAgent = ""
 	}
-	project.DefaultAgent = ""
 	if project.AutoPoll && !global.AutoPoll {
 		warn("auto_poll", globalOnly)
 	}
@@ -955,6 +967,7 @@ func sanitizeProjectConfig(project, global *Config) {
 func Load() *Config {
 	// Start with global defaults.
 	cfg := loadFromPath(globalConfigPath)
+	cfg.GlobalDefaultAgent = cfg.DefaultAgent
 
 	// Overlay project config when it's distinct from global.
 	if configPath != globalConfigPath {
@@ -1324,8 +1337,8 @@ func setGlobalAgent(name string, fn func(*AgentConfig)) error {
 	})
 }
 
-// SetDefaultAgent writes default_agent to the global layer, the only layer
-// that honors it.
+// SetDefaultAgent writes default_agent to the global layer. A project-local
+// default_agent may still override it (see Config.DefaultAgent).
 func SetDefaultAgent(name string) error {
 	return updateLayer(globalConfigPath, func(layer *Config) {
 		layer.DefaultAgent = name

@@ -1860,6 +1860,19 @@ func writeLayers(t *testing.T, global, project string) (gp, pp string) {
 	return gp, pp
 }
 
+// wantDefaultAgent checks the merged default_agent and the recorded global one.
+func wantDefaultAgent(merged, global string) func(t *testing.T, cfg *Config) {
+	return func(t *testing.T, cfg *Config) {
+		t.Helper()
+		if cfg.DefaultAgent != merged {
+			t.Errorf("default_agent = %q, want %q", cfg.DefaultAgent, merged)
+		}
+		if cfg.GlobalDefaultAgent != global {
+			t.Errorf("GlobalDefaultAgent = %q, want %q", cfg.GlobalDefaultAgent, global)
+		}
+	}
+}
+
 func TestProjectLayerGlobalOnlyKeys(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1892,24 +1905,34 @@ func TestProjectLayerGlobalOnlyKeys(t *testing.T) {
 			},
 		},
 		{
-			name:    "default_agent from project is ignored, global kept",
-			global:  `{"default_agent":"go-engineer"}`,
-			project: `{"default_agent":"x$(touch /tmp/p)"}`,
-			check: func(t *testing.T, cfg *Config) {
-				if cfg.DefaultAgent != "go-engineer" {
-					t.Errorf("default_agent = %q, want global go-engineer", cfg.DefaultAgent)
-				}
-			},
+			name:    "default_agent from project with a valid name is honored",
+			global:  `{"default_agent":"brandon"}`,
+			project: `{"default_agent":"ll-lead"}`,
+			check:   wantDefaultAgent("ll-lead", "brandon"),
 		},
 		{
-			name:    "default_agent from project is ignored with no global value",
+			name:    "default_agent from project names a plugin agent",
 			global:  `{}`,
-			project: `{"default_agent":"evil"}`,
-			check: func(t *testing.T, cfg *Config) {
-				if cfg.DefaultAgent != "" {
-					t.Errorf("default_agent = %q, want empty", cfg.DefaultAgent)
-				}
-			},
+			project: `{"default_agent":"my-plugin:reviewer"}`,
+			check:   wantDefaultAgent("my-plugin:reviewer", ""),
+		},
+		{
+			name:    "default_agent injection from project is ignored, global kept",
+			global:  `{"default_agent":"go-engineer"}`,
+			project: `{"default_agent":"x$(touch /tmp/p)"}`,
+			check:   wantDefaultAgent("go-engineer", "go-engineer"),
+		},
+		{
+			name:    "default_agent path traversal from project is ignored",
+			global:  `{"default_agent":"go-engineer"}`,
+			project: `{"default_agent":"../../x"}`,
+			check:   wantDefaultAgent("go-engineer", "go-engineer"),
+		},
+		{
+			name:    "default_agent injection from project with no global value",
+			global:  `{}`,
+			project: `{"default_agent":"x$(touch /tmp/p)"}`,
+			check:   wantDefaultAgent("", ""),
 		},
 		{
 			name:   "dir, cross_context, context_keys, auto_improve cannot override global",

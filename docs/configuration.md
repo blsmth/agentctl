@@ -53,7 +53,7 @@ Rationale: a project-local file can arrive with a cloned repository. Executing c
 | `statusline_align` | string | `left` | `left` or `right`. Right-aligns the `rich` format's lines. Unknown values fall back to `left`. |
 | `work_journal` | bool | `false` | Journal a session summary on session end for all agents (needs `llm.provider`). Per-agent values can also enable it. |
 | `llm` | object | disabled | Local model provider. See [llm](#llm). |
-| `default_agent` | string | first discovered agent | Agent launched by the quick-launch keybinding. Global-only; ignored with a warning if it is not a discovered agent. |
+| `default_agent` | string | first discovered agent | Agent launched by the quick-launch keybinding. A project-local value overrides the global one only when it passes the safety checks in [permissions.md](permissions.md) (otherwise the global value is used, with a warning); ignored with a warning if it is not a discovered agent. |
 | `theme` | string | `catppuccin-mocha` | Color theme name. |
 | `auto_poll` | bool | `false` | Ticket-browser autopilot mode. |
 | `auto_poll_interval` | string | `5m` | Autopilot poll interval (Go duration). |
