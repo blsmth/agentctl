@@ -1,14 +1,9 @@
 package agent
 
-import (
-	"regexp"
-	"strings"
-)
+import "github.com/blsmth/agentctl/internal/agentname"
 
 // MaxNameLen is the longest agent name ValidName accepts.
-const MaxNameLen = 64
-
-var validNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+const MaxNameLen = agentname.MaxLen
 
 // ValidName reports whether name is safe to use as an agent name.
 //
@@ -19,15 +14,7 @@ var validNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 // set is therefore deliberately narrow: ASCII letters, digits, '.', '_' and
 // '-', at most MaxNameLen bytes, and no leading '.' (hidden files, "..") or
 // '-' (would read as a flag).
-func ValidName(name string) bool {
-	if name == "" || len(name) > MaxNameLen {
-		return false
-	}
-	if name[0] == '.' || name[0] == '-' {
-		return false
-	}
-	return validNameRe.MatchString(name)
-}
+func ValidName(name string) bool { return agentname.Valid(name) }
 
 // ValidPluginName reports whether name is a Claude Code plugin-scoped agent
 // reference of the form `plugin:agent` where both halves pass ValidName.
@@ -35,13 +22,8 @@ func ValidName(name string) bool {
 // Exactly one colon: Claude Code namespaces plugin agents as plugin:agent and
 // plugin agents/ directories are flat (no nested namespaces observed in any
 // installed plugin), so a:b:c is rejected.
-func ValidPluginName(name string) bool {
-	plugin, agentName, ok := strings.Cut(name, ":")
-	return ok && ValidName(plugin) && ValidName(agentName)
-}
+func ValidPluginName(name string) bool { return agentname.ValidPlugin(name) }
 
 // ValidLaunchName reports whether name may be handed to a launch: either a
 // plain ValidName or a ValidPluginName.
-func ValidLaunchName(name string) bool {
-	return ValidName(name) || ValidPluginName(name)
-}
+func ValidLaunchName(name string) bool { return agentname.ValidLaunch(name) }

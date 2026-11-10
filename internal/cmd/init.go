@@ -101,12 +101,15 @@ func RunInit() {
 }
 
 // configureDefaultAgent prompts the user to select a default agent and saves it
-// to the global agentctl config (default_agent is global-only). It is called at the end of RunInit as a final setup step.
+// to the global agentctl config. A repo may override it with default_agent in
+// its .agentctl/config.json, which prefix+A honors only after the launch-time
+// safety checks (see usableDefaultAgent). It is called at the end of RunInit
+// as a final setup step.
 func configureDefaultAgent(reader *bufio.Reader, cwd string) {
 	cfg := config.Load()
 
-	if cfg.DefaultAgent != "" {
-		fmt.Printf("\nDefault agent: %s (already configured)\n", cfg.DefaultAgent)
+	if cfg.GlobalDefaultAgent != "" {
+		fmt.Printf("\nDefault agent: %s (already configured)\n", cfg.GlobalDefaultAgent)
 		return
 	}
 
