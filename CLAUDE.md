@@ -56,7 +56,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 - **Notifications** are hook-driven (`internal/hooks/`), not monitor-driven. Settings: see [docs/configuration.md](docs/configuration.md#notifications).
 - **Auto-opening PRs**: when a dispatched agent finishes with a PR, the monitor opens it via `gh pr view --web` (config `open_pr_in_browser`), once per PR per monitor process.
 - **Worktree reclaim on SessionEnd**: on a terminal `SessionEnd` the hook runs `cleanup.Classify` against the window's own worktree and reclaims it (with its window) only when the verdict is `empty` or `landed`. `git worktree prune` always runs. Opt out with `auto_reclaim_worktree: false`.
-- **`bash_preview`**: `bashPreviewGate` (`internal/hooks/preview_gate.go`) only shows the popup when a human is attached **and** looking at the issuing window (`tmuxHasAttachedClient`); otherwise the command passes through. That backstop prevents unattended dispatches from deadlocking on an invisible popup.
+- **`bash_preview`**: `bashPreviewGate` (`internal/hooks/preview_gate.go`) only shows the popup when a human is attached **and** looking at the issuing window (`tmuxHasAttachedClient`); otherwise the command passes through. That backstop prevents unattended dispatches from deadlocking on an invisible popup. Unanswered popups (dispatch and bash) deny after a deadline (`popupDeadline`, 9m against the 600s `timeout` registered on `hook-validate-bash`) and the popup is closed with `tmux display-popup -C`, rather than failing open when Claude Code kills the hook.
 - **Command-type config keys** (`notify_cmd`, `hooks.*`, `dispatch.on_complete`) are read only from the global config, never from project-local `.agentctl/config.json`.
 
 ### Key data flow

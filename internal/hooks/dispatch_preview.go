@@ -1,8 +1,8 @@
 package hooks
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -255,20 +255,7 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool, den
 	logging.Log("hook-validate-bash: launching dispatch popup agent=%s target=%s issue=%d",
 		agentName, targetAgent, issue)
 
-	if err := dispatchPopupRunner(popupW, popupH, tmpPath); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			exitCode := exitErr.ExitCode()
-			logging.Log("hook-validate-bash: dispatch popup exit code=%d", exitCode)
-			if exitCode == 1 {
-				return false, true, ""
-			}
-		}
-		logging.Log("hook-validate-bash: dispatch popup error: %v, passing through", err)
-		return false, false, ""
-	}
-
-	return true, true, ""
+	return runPopupWithDeadline("dispatch", "hook-validate-bash: dispatch", popupW, popupH, tmpPath)
 }
 
 // promptKeyDenyReason is the deny message shown to the model when the prompt
@@ -339,9 +326,9 @@ func inlineContextSet(key, command string) (value string, found, literal bool) {
 // same seam pattern as clientDimensions in popup_clamp.go.
 var dispatchPopupRunner = runDispatchPopupCmd
 
-func runDispatchPopupCmd(popupW, popupH int, argsFilePath string) error {
+func runDispatchPopupCmd(ctx context.Context, popupW, popupH int, argsFilePath string) error {
 	agentctlBin := agentctlBinaryPath()
-	cmd := exec.Command("tmux", "display-popup",
+	cmd := exec.CommandContext(ctx, "tmux", "display-popup",
 		"-E",
 		"-w", strconv.Itoa(popupW),
 		"-h", strconv.Itoa(popupH),

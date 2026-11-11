@@ -3,10 +3,8 @@ package hooks
 import (
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -108,15 +106,15 @@ func reclaimStaleGateLock(path string) bool {
 // bash_preview path deliberately -- the "agentctl dispatch" gate's existing
 // TMUX-only check is left unchanged (see ValidateBash's doc comment on why
 // dispatch gating is independent of this setting).
-func bashPreviewGate(agentName, command string) (approved, decided bool) {
+func bashPreviewGate(agentName, command string) (approved, decided bool, denyReason string) {
 	if os.Getenv("TMUX") == "" {
 		logging.Log("hook-validate-bash: not in tmux session, passing through bash preview")
-		return false, false
+		return false, false, ""
 	}
 
 	if !hasAttachedClient() {
 		logging.Log("hook-validate-bash: no attached tmux client, passing through bash preview")
-		return false, false
+		return false, false, ""
 	}
 
 	// Same dedupe rationale as dispatchPreviewGate: PreToolUse fires twice per
@@ -124,7 +122,7 @@ func bashPreviewGate(agentName, command string) (approved, decided bool) {
 	release, ok := acquireGateLock(command)
 	if !ok {
 		logging.Log("hook-validate-bash: bash preview gate already owned by another invocation, staying silent")
-		return false, false
+		return false, false, ""
 	}
 	defer release()
 
@@ -141,7 +139,7 @@ func bashPreviewGate(agentName, command string) (approved, decided bool) {
 	tmpFile, err := os.CreateTemp("", "agentctl-bash-preview-*")
 	if err != nil {
 		logging.Log("hook-validate-bash: failed to create bash preview temp file: %v", err)
-		return false, false
+		return false, false, ""
 	}
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
@@ -149,7 +147,7 @@ func bashPreviewGate(agentName, command string) (approved, decided bool) {
 	if err := json.NewEncoder(tmpFile).Encode(args); err != nil {
 		tmpFile.Close()
 		logging.Log("hook-validate-bash: failed to write bash preview temp file: %v", err)
-		return false, false
+		return false, false, ""
 	}
 	tmpFile.Close()
 
@@ -165,18 +163,5 @@ func bashPreviewGate(agentName, command string) (approved, decided bool) {
 
 	logging.Log("hook-validate-bash: launching bash preview popup agent=%s cmd=%s", agentName, textutil.Truncate(command, 100, "..."))
 
-	if err := dispatchPopupRunner(popupW, popupH, tmpPath); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			exitCode := exitErr.ExitCode()
-			logging.Log("hook-validate-bash: bash preview popup exit code=%d", exitCode)
-			if exitCode == 1 {
-				return false, true
-			}
-		}
-		logging.Log("hook-validate-bash: bash preview popup error: %v, passing through", err)
-		return false, false
-	}
-
-	return true, true
+	return runPopupWithDeadline("bash command", "hook-validate-bash: bash preview", popupW, popupH, tmpPath)
 }
