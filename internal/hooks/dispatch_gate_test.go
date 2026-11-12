@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -26,7 +27,7 @@ func withFakeDispatchPopupRunner(t *testing.T, run func(popupW, popupH int, args
 	t.Helper()
 	called := new(bool)
 	orig := dispatchPopupRunner
-	dispatchPopupRunner = func(popupW, popupH int, argsFilePath string) error {
+	dispatchPopupRunner = func(_ context.Context, popupW, popupH int, argsFilePath string) error {
 		*called = true
 		return run(popupW, popupH, argsFilePath)
 	}
@@ -39,7 +40,7 @@ func withFakeDispatchPopupRunner(t *testing.T, run func(popupW, popupH int, args
 func failIfDispatchPopupRunnerCalled(t *testing.T) {
 	t.Helper()
 	orig := dispatchPopupRunner
-	dispatchPopupRunner = func(popupW, popupH int, argsFilePath string) error {
+	dispatchPopupRunner = func(_ context.Context, popupW, popupH int, argsFilePath string) error {
 		t.Fatalf("dispatchPopupRunner must not be called")
 		return nil
 	}

@@ -115,12 +115,19 @@ func commandPrefix() string {
 func BuildHooksConfig(exePrefix string) map[string]interface{} {
 	// hook builds a single hook entry with type "command".
 	hook := func(cmd string, async bool) map[string]interface{} {
+		timeout := 0
+		if cmd == "hook-validate-bash" {
+			timeout = validateBashTimeoutSeconds
+		}
 		h := map[string]interface{}{
 			"type":    "command",
 			"command": exePrefix + " " + cmd,
 		}
 		if async {
 			h["async"] = true
+		}
+		if timeout > 0 {
+			h["timeout"] = timeout
 		}
 		return h
 	}

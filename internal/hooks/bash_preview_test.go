@@ -463,7 +463,7 @@ func TestBashPreviewGate_NoAttachedClient_StaysSilent(t *testing.T) {
 	const command = "go build ./..."
 	removeDispatchLockForTest(t, command)
 
-	approved, decided := bashPreviewGate("go-engineer", command)
+	approved, decided, _ := bashPreviewGate("go-engineer", command)
 	if decided {
 		t.Errorf("decided = true, want false when no client is attached")
 	}
@@ -478,7 +478,7 @@ func TestBashPreviewGate_NotInTmux_StaysSilent(t *testing.T) {
 	t.Setenv("TMUX", "")
 	failIfDispatchPopupRunnerCalled(t)
 
-	approved, decided := bashPreviewGate("go-engineer", "go build ./...")
+	approved, decided, _ := bashPreviewGate("go-engineer", "go build ./...")
 	if decided {
 		t.Errorf("decided = true, want false when not in tmux")
 	}
@@ -501,7 +501,7 @@ func TestBashPreviewGate_Approves(t *testing.T) {
 		return nil
 	})
 
-	approved, decided := bashPreviewGate("go-engineer", command)
+	approved, decided, _ := bashPreviewGate("go-engineer", command)
 	if !*called {
 		t.Fatalf("expected dispatchPopupRunner to be called")
 	}
