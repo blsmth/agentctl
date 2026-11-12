@@ -96,7 +96,7 @@ func RunSend(addr, message, kind, subject string, waitReply bool, timeout time.D
 	// not immediate -- there is no tmux injection to report as already having
 	// happened. Report honestly: the message is queued and will be delivered
 	// the next time that window's hooks fire.
-	fmt.Printf("Queued message %s for %s -- will be delivered at its next tool call or prompt submission.\n", id, windowID)
+	fmt.Printf("Queued message %s for %s -- will be delivered at its next tool call or prompt submission.\n", id, linkWindow(windowID, windowID))
 
 	// Notify only when the target will NOT get prompt delivery: PostToolUse
 	// fires within one tool call while an agent is working, so a desktop

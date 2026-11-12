@@ -302,7 +302,7 @@ func printSweepReport(rep sweepReport, jsonOut bool) {
 		fmt.Println(cliHeaderStyle().Render(verb))
 		sort.SliceStable(rep.Closed, func(i, j int) bool { return rep.Closed[i].WindowID < rep.Closed[j].WindowID })
 		for _, r := range rep.Closed {
-			line := fmt.Sprintf("  %s  %s  %s", r.WindowID, r.Name, muted.Render("("+r.Detail+")"))
+			line := fmt.Sprintf("  %s  %s  %s", linkWindow(r.WindowID, r.WindowID), r.Name, muted.Render("("+r.Detail+")"))
 			if len(r.Errors) > 0 {
 				line += "  FAILED: " + strings.Join(r.Errors, "; ")
 			}
@@ -323,7 +323,7 @@ func printSweepReport(rep sweepReport, jsonOut bool) {
 				return lipgloss.NewStyle()
 			})
 		for _, r := range rep.Attention {
-			t.Row(r.WindowID, r.Name, r.Agent, r.Status, r.Detail)
+			t.Row(linkWindow(r.WindowID, r.WindowID), r.Name, r.Agent, r.Status, r.Detail)
 		}
 		fmt.Println(t.Render())
 		fmt.Println()
