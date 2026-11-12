@@ -127,7 +127,7 @@ func PreflightBackend(b config.BackendConfig) error {
 	if err != nil {
 		return fmt.Errorf("backend unreachable at %s: %w", b.BaseURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil
 	}
