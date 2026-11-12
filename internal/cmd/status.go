@@ -13,6 +13,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/winlink"
 )
 
 // StatusOptions configures the `agentctl status` listing.
@@ -168,9 +170,9 @@ func RunStatus(opts StatusOptions) error {
 	grid := make([][]cell, 0, len(rows)+1)
 	for _, sr := range rows {
 		c := []cell{
-			{sr.group.Project, cliMuted()},
-			{sr.row.WindowID, lipgloss.NewStyle()},
-			{sr.row.Name, cliAccent()},
+			{text: sr.group.Project, style: cliMuted()},
+			{text: sr.row.WindowID, style: lipgloss.NewStyle(), window: sr.row.WindowID},
+			{text: sr.row.Name, style: cliAccent()},
 			stateCell(sr.row),
 		}
 		if opts.Verify {
@@ -178,9 +180,9 @@ func RunStatus(opts StatusOptions) error {
 		}
 		c = append(c,
 			ctxCell(sr.row.ContextPct),
-			cell{dashIfEmpty(sr.meta.Mode), cliMuted()},
-			cell{dashIfEmpty(sr.meta.Parent()), cliMuted()},
-			cell{truncateDisplay(herd.ActivityLine(sr.row), 44), cliMuted()},
+			cell{text: dashIfEmpty(sr.meta.Mode), style: cliMuted()},
+			cell{text: dashIfEmpty(sr.meta.Parent()), style: cliMuted()},
+			cell{text: truncateDisplay(herd.ActivityLine(sr.row), 44), style: cliMuted()},
 		)
 		grid = append(grid, c)
 	}
@@ -196,6 +198,24 @@ func RunStatus(opts StatusOptions) error {
 type cell struct {
 	text  string
 	style lipgloss.Style
+	// window, when set, is a tmux window ID ("@65") the rendered cell is
+	// hyperlinked to (see internal/winlink). The link escapes are added after
+	// styling and never count toward the column width, which is measured on
+	// text alone.
+	window string
+}
+
+// linkWindow wraps already-styled text in a window hyperlink when stdout is a
+// terminal. A variable so tests can force links on regardless of stdout.
+var linkWindow = winlink.Text
+
+// render returns the cell styled and, if it names a window, hyperlinked.
+func (c cell) render() string {
+	out := c.style.Render(c.text)
+	if c.window != "" {
+		out = linkWindow(c.window, out)
+	}
+	return out
 }
 
 // printGrid renders a table, padding on *visible* width rather than byte
@@ -208,7 +228,7 @@ type cell struct {
 // this table looked ragged only in the columns that were colored. So widths
 // are computed from the plain strings, and padding is appended after styling
 // (styling never changes visible width).
-func printGrid(out *os.File, headers []string, grid [][]cell) {
+func printGrid(out io.Writer, headers []string, grid [][]cell) {
 	widths := make([]int, len(headers))
 	for i, h := range headers {
 		widths[i] = lipgloss.Width(h)
@@ -248,7 +268,7 @@ func printGrid(out *os.File, headers []string, grid [][]cell) {
 	for _, row := range grid {
 		b.Reset()
 		for i, c := range row {
-			b.WriteString(c.style.Render(c.text))
+			b.WriteString(c.render())
 			if i < len(row)-1 && i < len(widths) {
 				b.WriteString(strings.Repeat(" ", widths[i]-lipgloss.Width(c.text)+gap))
 			}
@@ -353,15 +373,15 @@ func printAttentionSummary(rows []statusRow) {
 func stateCell(r herd.Row) cell {
 	switch {
 	case r.State == "blocked":
-		return cell{"blocked", cliRed()}
+		return cell{text: "blocked", style: cliRed()}
 	case r.Done:
-		return cell{"done", cliGreen()}
+		return cell{text: "done", style: cliGreen()}
 	case r.State == "working":
-		return cell{"working", cliAccent()}
+		return cell{text: "working", style: cliAccent()}
 	case r.State == "":
-		return cell{"-", cliMuted()}
+		return cell{text: "-", style: cliMuted()}
 	default:
-		return cell{r.State, cliMuted()}
+		return cell{text: r.State, style: cliMuted()}
 	}
 }
 
@@ -375,24 +395,24 @@ func renderState(r herd.Row) string {
 // recorded state — the disagreement is the whole point of --verify.
 func paneCell(sr statusRow) cell {
 	if !sr.checked {
-		return cell{"?", cliMuted()}
+		return cell{text: "?", style: cliMuted()}
 	}
 	s := sr.verdict.String()
 	if !sr.verdict.AgreesWith(sr.row.State) {
-		return cell{"≠" + s, cliRed()}
+		return cell{text: "≠" + s, style: cliRed()}
 	}
-	return cell{s, cliMuted()}
+	return cell{text: s, style: cliMuted()}
 }
 
 func ctxCell(pct int) cell {
 	if pct <= 0 {
-		return cell{"-", cliMuted()}
+		return cell{text: "-", style: cliMuted()}
 	}
 	s := fmt.Sprintf("%d%%", pct)
 	if pct >= 80 {
-		return cell{s, cliRed()}
+		return cell{text: s, style: cliRed()}
 	}
-	return cell{s, cliMuted()}
+	return cell{text: s, style: cliMuted()}
 }
 
 func dashIfEmpty(s string) string {
@@ -463,7 +483,7 @@ func RunStatusDetail(window string, jsonOut bool) error {
 		fmt.Fprintf(w, "%s\t%s\n", muted.Render(k), v)
 	}
 
-	fmt.Fprintf(w, "%s\t%s\n", hdr.Render("WINDOW"), cliAccent().Render(sr.row.WindowID+"  "+sr.row.Name))
+	fmt.Fprintf(w, "%s\t%s\n", hdr.Render("WINDOW"), linkWindow(sr.row.WindowID, cliAccent().Render(sr.row.WindowID))+cliAccent().Render("  "+sr.row.Name))
 	line("session", sr.group.Session)
 	line("project", sr.group.Project)
 	line("state", renderState(sr.row))
@@ -614,7 +634,7 @@ func RunPeek(window string, lines int, jsonOut bool) error {
 	}
 
 	muted := cliMuted()
-	fmt.Printf("%s  %s  (%s)\n", cliAccent().Render(sr.row.WindowID), sr.row.Name, sr.group.Project)
+	fmt.Printf("%s  %s  (%s)\n", linkWindow(sr.row.WindowID, cliAccent().Render(sr.row.WindowID)), sr.row.Name, sr.group.Project)
 	fmt.Printf("%s recorded=%s  pane=%s\n", muted.Render("state:"), dashIfEmpty(sr.row.State), verdict.String())
 	if !verdict.AgreesWith(sr.row.State) {
 		fmt.Println(cliRed().Render(
@@ -713,9 +733,9 @@ func RunWhoami(jsonOut bool) error {
 			mark, style = "✓", cliGreen()
 		}
 		grid = append(grid, []cell{
-			{mark + " " + s.Name, style},
-			{dashIfEmpty(s.WindowID), cliMuted()},
-			{s.Note, cliMuted()},
+			{text: mark + " " + s.Name, style: style},
+			{text: dashIfEmpty(s.WindowID), style: cliMuted(), window: s.WindowID},
+			{text: s.Note, style: cliMuted()},
 		})
 	}
 	printGrid(os.Stdout, []string{"SOURCE", "SAYS", "NOTE"}, grid)

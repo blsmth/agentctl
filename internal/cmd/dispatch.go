@@ -94,14 +94,14 @@ func RunDispatch(issueNumber int, promptText string, promptKey string, agentName
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Dispatched #%d → %s (window %s)\n", issueNumber, resolvedAgent, wid)
+		fmt.Printf("Dispatched #%d → %s (window %s)\n", issueNumber, resolvedAgent, linkWindow(wid, wid))
 	} else {
 		wid, resolvedAgent, err = dispatchPrompt(promptText, promptKey, agentName, workDir, model, !noWorktree)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Dispatched prompt → %s (window %s)\n", resolvedAgent, wid)
+		fmt.Printf("Dispatched prompt → %s (window %s)\n", resolvedAgent, linkWindow(wid, wid))
 	}
 
 	if !wait {
@@ -129,13 +129,13 @@ func RunDispatch(issueNumber int, promptText string, promptKey string, agentName
 	subject := waitSubject()
 
 	// Print initial status immediately.
-	fmt.Printf("\rWaiting for %s (%s, window %s)… 0s", subject, resolvedAgent, wid)
+	fmt.Printf("\rWaiting for %s (%s, window %s)… 0s", subject, resolvedAgent, linkWindow(wid, wid))
 
 	for {
 		select {
 		case <-deadline:
 			fmt.Printf("\rWaiting for %s (%s, window %s)… %s — timeout\n",
-				subject, resolvedAgent, wid, formatElapsed(time.Since(start)))
+				subject, resolvedAgent, linkWindow(wid, wid), formatElapsed(time.Since(start)))
 			os.Exit(2)
 
 		case <-ticker.C:
@@ -144,20 +144,20 @@ func RunDispatch(issueNumber int, promptText string, promptKey string, agentName
 			// Check if window still exists.
 			if tmux.WindowNameByID(wid) == "" {
 				fmt.Printf("\rWaiting for %s (%s, window %s)… %s — window gone\n",
-					subject, resolvedAgent, wid, formatElapsed(elapsed))
+					subject, resolvedAgent, linkWindow(wid, wid), formatElapsed(elapsed))
 				os.Exit(1)
 			}
 
 			// Check for done signal.
 			if ws, _ := windowstate.Read(wid); ws.Done {
 				fmt.Printf("\rWaiting for %s (%s, window %s)… %s — done\n",
-					subject, resolvedAgent, wid, formatElapsed(elapsed))
+					subject, resolvedAgent, linkWindow(wid, wid), formatElapsed(elapsed))
 				os.Exit(0)
 			}
 
 			// Still running — update status line in place.
 			fmt.Printf("\rWaiting for %s (%s, window %s)… %s",
-				subject, resolvedAgent, wid, formatElapsed(elapsed))
+				subject, resolvedAgent, linkWindow(wid, wid), formatElapsed(elapsed))
 		}
 	}
 }
