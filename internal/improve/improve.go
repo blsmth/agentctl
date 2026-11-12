@@ -298,7 +298,7 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 	windowName := "improve~" + agentName
 	logging.Log("launchImprovement: launching window %q cmd=%q session=%s", windowName, shellCmd, sessionID)
 	var launchErr error
-	_, launchErr = tmux.LaunchAgent(windowName, workDir, shellCmd, logPath, agentName, sessionID, extraEnv)
+	_, launchErr = tmux.LaunchAgent(windowName, workDir, shellCmd, logPath, agentName, sessionID, extraEnv, true)
 	if launchErr != nil {
 		logging.Log("launchImprovement: LaunchAgent error: %v", launchErr)
 	} else {

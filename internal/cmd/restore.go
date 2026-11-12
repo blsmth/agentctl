@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/agent"
@@ -68,7 +69,7 @@ func RunRestore() {
 	// resuming the same conversation.
 	usedSessions := make(map[string]bool)
 
-	for _, as := range saved.Agents {
+	for _, as := range restoreOrder(saved.Agents, config.Load().EffectiveNewWindowPosition()) {
 		// Resolve base agent name from instance name or explicit AgentName field
 		baseName := as.AgentName
 		if baseName == "" {
@@ -132,6 +133,19 @@ func RunRestore() {
 	if err := state.Clear(); err != nil {
 		logging.Log("restoreAgents: failed to clear state: %v", err)
 	}
+}
+
+// restoreOrder returns agents in the order they should be relaunched so the
+// resulting tmux window order matches the saved one. Each launch inserts at
+// the leftmost position when new_window_position is "left", which would
+// reverse the list, so launch last-to-first in that case. The input is not
+// modified.
+func restoreOrder(agents []state.AgentState, position string) []state.AgentState {
+	out := slices.Clone(agents)
+	if position == config.NewWindowLeft {
+		slices.Reverse(out)
+	}
+	return out
 }
 
 // validateRestoreSession returns the sessionID and logPath that are safe to

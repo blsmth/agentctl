@@ -79,7 +79,7 @@ func Restore(req RestoreRequest) (string, error) {
 	}
 
 	logging.Log("dispatch.Restore: launching %s (base=%s) workDir=%s logPath=%s", instanceName, req.AgentName, req.WorkDir, logPath)
-	wid, err := tmux.LaunchAgent(instanceName, req.WorkDir, shellCmd, logPath, req.AgentName, "", nil)
+	wid, err := tmux.LaunchAgent(instanceName, req.WorkDir, shellCmd, logPath, req.AgentName, "", nil, false)
 	if err != nil {
 		return "", fmt.Errorf("dispatch.Restore: launching %s: %w", instanceName, err)
 	}

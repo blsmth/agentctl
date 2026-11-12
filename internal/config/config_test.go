@@ -2513,3 +2513,25 @@ func TestEffectiveRestoreMaxAge(t *testing.T) {
 		})
 	}
 }
+
+func TestEffectiveNewWindowPosition(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"", "left"},
+		{"left", "left"},
+		{"right", "right"},
+		{" Right ", "right"},
+		{"garbage", "left"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			c := &Config{NewWindowPosition: tt.in}
+			if got := c.EffectiveNewWindowPosition(); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+	var c Config
+	if err := json.Unmarshal([]byte(`{"new_window_position":"right"}`), &c); err != nil || c.EffectiveNewWindowPosition() != "right" {
+		t.Errorf("json parse: %v %q", err, c.NewWindowPosition)
+	}
+}

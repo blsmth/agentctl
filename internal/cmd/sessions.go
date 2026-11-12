@@ -203,7 +203,7 @@ func LaunchWithResume(name string, sessionID string, workDir string, writeSettin
 		ForkSession:  true,
 		SettingsPath: writeSettings(name, ac, workDir),
 	}, ac)
-	wid, err := tmux.LaunchAgent(windowName, workDir, shellCmd, "", name, "", nil)
+	wid, err := tmux.LaunchAgent(windowName, workDir, shellCmd, "", name, "", nil, true)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

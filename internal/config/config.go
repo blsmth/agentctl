@@ -345,6 +345,11 @@ type Config struct {
 	// "0" or a negative value disables the gate. Global config only. Use
 	// EffectiveRestoreMaxAge to read it.
 	RestoreMaxAge string `json:"restore_max_age,omitempty"`
+	// NewWindowPosition is where new agent windows are inserted in the tmux
+	// window list: "left" (default, first position) or "right" (appended).
+	// Unknown values fall back to "left". Global config only. Use
+	// EffectiveNewWindowPosition to read it.
+	NewWindowPosition string `json:"new_window_position,omitempty"`
 	// Hooks maps lifecycle event names to lists of shell commands. Commands run
 	// after agentctl's built-in handling for each event. Per-agent hooks in
 	// agents.<name>.hooks run after these global hooks.
@@ -528,6 +533,21 @@ func (c *Config) EffectiveAutoPollInterval() time.Duration {
 		}
 	}
 	return 5 * time.Minute
+}
+
+// Window insertion positions accepted by new_window_position.
+const (
+	NewWindowLeft  = "left"
+	NewWindowRight = "right"
+)
+
+// EffectiveNewWindowPosition returns "left" or "right"; anything else
+// (including unset) is "left".
+func (c *Config) EffectiveNewWindowPosition() string {
+	if strings.EqualFold(strings.TrimSpace(c.NewWindowPosition), NewWindowRight) {
+		return NewWindowRight
+	}
+	return NewWindowLeft
 }
 
 // DefaultRestoreMaxAge is the restore age gate when restore_max_age is unset

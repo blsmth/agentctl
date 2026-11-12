@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/pidfile"
@@ -407,7 +408,11 @@ func writeLaunchScript(dir, shellCmd, launchLog string) (string, string, error) 
 // for log correlation. Both are injected as env vars into the window.
 // Returns the stable tmux window ID (e.g. "@5") that can be used for all
 // subsequent targeting, regardless of window name changes.
-func LaunchAgent(windowName string, workDir string, shellCmd string, logPath string, agentName string, sessionID string, extraEnv map[string]string) (string, error) {
+//
+// focus selects whether the new window becomes the current window; when false
+// the window is created detached (-d) so the user stays where they were.
+// The insertion position follows the global new_window_position config.
+func LaunchAgent(windowName string, workDir string, shellCmd string, logPath string, agentName string, sessionID string, extraEnv map[string]string, focus bool) (string, error) {
 	done := logging.Timing("LaunchAgent: tmux new-window")
 	// Use "session:" (trailing colon) to force tmux to interpret this as a
 	// session target with auto-assigned window index. Without the colon,
@@ -424,14 +429,9 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 	// unconditionally ensures audit logging runs for every agent window.
 	shellPrefixScript := filepath.Join(paths.RuntimeDir(), "shell-prefix.sh")
 
-	sessionTarget := SessionName + ":"
 	envArgs := buildLaunchEnv(windowName, workDir, agentName, sessionID, agentctlBin, shellPrefixScript, instanceName(), permissionModeFromCmd(shellCmd), extraEnv)
-	newWindowArgs := append(
-		// -n and -c are format-expanded by tmux; escape them (FormatEscape).
-		[]string{"new-window", "-t", sessionTarget, "-n", FormatEscape(windowName), "-c", FormatEscape(workDir)},
-		envArgs...,
-	)
-	newWindowArgs = append(newWindowArgs, "-P", "-F", "#{window_id}")
+	left := config.Load().EffectiveNewWindowPosition() == config.NewWindowLeft
+	newWindowArgs := buildNewWindowArgs(SessionName, windowName, workDir, focus, left, envArgs)
 
 	// The SessionStart hook (agentctl hook-session-start) handles dynamic
 	// identity var injection (AGENTCTL_WINDOW_ID, AGENTCTL_WINDOW_INDEX) via
@@ -518,6 +518,29 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 	done()
 
 	return windowID, nil
+}
+
+// buildNewWindowArgs returns the tmux new-window argv (without the trailing
+// shell command) for an agent window. Without focus it adds -d so the window
+// is not selected. With left it adds -b and targets "<session>:^" (the first
+// window) so the new window is inserted before it; otherwise the target is
+// "<session>:" (trailing colon: force a session target with an auto-assigned
+// index; see the LaunchAgent history -- without it tmux may resolve the bare
+// name as a window reference and fail with "index N in use").
+// -n and -c are format-expanded by tmux, so they are escaped (FormatEscape).
+func buildNewWindowArgs(session, windowName, workDir string, focus, left bool, envArgs []string) []string {
+	args := []string{"new-window"}
+	if !focus {
+		args = append(args, "-d")
+	}
+	target := session + ":"
+	if left {
+		args = append(args, "-b")
+		target = session + ":^"
+	}
+	args = append(args, "-t", target, "-n", FormatEscape(windowName), "-c", FormatEscape(workDir))
+	args = append(args, envArgs...)
+	return append(args, "-P", "-F", "#{window_id}")
 }
 
 // subprocessEnvScrub returns the CLAUDE_CODE_SUBPROCESS_ENV_SCRUB value for a
