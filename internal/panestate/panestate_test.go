@@ -1,6 +1,9 @@
 package panestate
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const (
 	idle = `✻ Sautéed for 21s
@@ -33,6 +36,29 @@ const (
 ❯
 ────────────────────────────────────────────────────────────────────────`
 
+	busyReal = `  Running git add internal/dispatch/backend.go && git commi… · 55s
+  ⎿  $ git add ... && sleep 60; gh pr checks 13 2>&1 | tail (55s)
+     (ctrl+b ctrl+b (twice) to run in background)
+✽ Skedaddling… (1m 7s · ↓ 547 tokens)
+  ⎿  Tip: Run /install-github-app to tag @claude right from your Github issues and PRs
+─────── go-engineer ─
+❯ 
+───────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent`
+
+	idleReal = `✻ Worked for 4m 25s · done 2:03 PM
+
+※ recap: Goal: ...
+                                         new task? /clear to save 109.9k tokens
+─────── go-engineer ─
+❯ 
+───────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent`
+
+	dialogSpinner = "✽ Skedaddling… (1m 7s · ↓ 547 tokens)\n" + dialog
+
+	bgOnly = "  ⎿  $ sleep 60\n     (ctrl+b ctrl+b (twice) to run in background)\n─────\n❯ \n─────\n"
+
 	boxed = "╭──────────╮\n│ ❯        │\n╰──────────╯\n"
 )
 
@@ -44,6 +70,12 @@ func TestClassify(t *testing.T) {
 	}{
 		{"idle", idle, Idle},
 		{"busy", busy, Busy},
+		{"real busy capture", busyReal, Busy},
+		{"real idle capture", idleReal, Idle},
+		{"spinner line with dialog", dialogSpinner, AwaitingInput},
+		{"background hint only", bgOnly, Busy},
+		{"short spinner", "· Thinking… (3s)\n──\n❯ \n──", Busy},
+		{"spinner deep in scrollback", "✽ Skedaddling… (1m 7s)\n" + strings.Repeat("output line\n", 20) + idleReal, Idle},
 		{"dialog", dialog, AwaitingInput},
 		{"dialog beats busy footer", dialogBusyFooter, AwaitingInput},
 		{"numbered dialog fallback", dialogOther, AwaitingInput},

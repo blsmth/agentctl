@@ -5,7 +5,10 @@
 // auto-approval.
 package panestate
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // Verdict is what a pane's visible contents say the agent is doing, as
 // opposed to what windowstate claims. When the two disagree the pane is right.
@@ -51,6 +54,20 @@ var busyMarkers = []string{
 	"tokens · esc to interrupt",
 }
 
+// busyTailLines bounds how far above the input box the spinner and
+// background-hint checks look, so a spinner-like line echoed deep in
+// scrollback does not count.
+const busyTailLines = 15
+
+// spinnerLine matches the current Claude Code status line: one non-ASCII
+// spinner glyph, a word ending in an ellipsis, then " (" and an elapsed
+// duration. Glyphs and verbs rotate, so neither is enumerated. The finished
+// "✻ Worked for 4m 25s" line has no ellipsis and does not match.
+var spinnerLine = regexp.MustCompile(`^[^\x00-\x7f] \S+… \(\d+[hms]`)
+
+// backgroundHint appears under a running Bash tool.
+const backgroundHint = "to run in background)"
+
 // Classify derives a verdict from captured pane text. It must be fed the
 // full visible pane: a bounded tail can cut the dialog text off and yield a
 // false negative.
@@ -72,6 +89,9 @@ func Classify(text string) Verdict {
 		if strings.Contains(text, m) {
 			return Busy
 		}
+	}
+	if spinnerShowing(text) {
+		return Busy
 	}
 	if PromptCount(text) > 0 {
 		return Idle
@@ -104,4 +124,29 @@ func PromptCount(text string) int {
 		}
 	}
 	return n
+}
+
+// spinnerShowing reports whether the last busyTailLines non-empty lines above
+// the input box contain the spinner status line or the background hint.
+func spinnerShowing(text string) bool {
+	lines := strings.Split(text, "\n")
+	end := len(lines)
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(strings.TrimLeft(lines[i], "│ \t"), "❯") {
+			end = i
+			break
+		}
+	}
+	seen := 0
+	for i := end - 1; i >= 0 && seen < busyTailLines; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		seen++
+		if spinnerLine.MatchString(line) || strings.Contains(line, backgroundHint) {
+			return true
+		}
+	}
+	return false
 }
