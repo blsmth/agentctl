@@ -368,6 +368,7 @@ type DispatchCmd struct {
 	Agent      string        `help:"Agent name (auto-detected from labels if omitted)" short:"a"`
 	Dir        string        `help:"Working directory"`
 	Model      string        `help:"Model override (e.g. sonnet, opus, haiku)" short:"m"`
+	Backend    string        `help:"Named backend from config (self-hosted/Ollama); 'none' forces Anthropic"`
 	Repo       string        `help:"GitHub repo as owner/name (default: resolved from the working directory)"`
 	NoWorktree bool          `name:"no-worktree" help:"Skip worktree creation"`
 	Wait       bool          `help:"Block until agent completes"`
@@ -375,7 +376,7 @@ type DispatchCmd struct {
 }
 
 func (c *DispatchCmd) Run() error {
-	cmd.RunDispatch(c.Issue, c.Prompt, c.PromptKey, c.Agent, c.Dir, c.Model, c.NoWorktree, c.Wait, c.Timeout, c.Repo)
+	cmd.RunDispatch(c.Issue, c.Prompt, c.PromptKey, c.Agent, c.Dir, c.Model, c.Backend, c.NoWorktree, c.Wait, c.Timeout, c.Repo)
 	return nil
 }
 

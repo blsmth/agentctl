@@ -45,6 +45,7 @@ type statusJSONRow struct {
 	State        string `json:"state"`
 	Done         bool   `json:"done"`
 	Mode         string `json:"mode,omitempty"`
+	Backend      string `json:"backend,omitempty"`
 	ContextPct   int    `json:"context_pct,omitempty"`
 	Ticket       string `json:"ticket,omitempty"`
 	Branch       string `json:"branch,omitempty"`
@@ -290,6 +291,7 @@ func emitStatusJSON(rows []statusRow) error {
 			State:        sr.row.State,
 			Done:         sr.row.Done,
 			Mode:         sr.meta.Mode,
+			Backend:      sr.meta.Backend,
 			ContextPct:   sr.row.ContextPct,
 			Ticket:       sr.meta.Ticket,
 			Branch:       sr.meta.Branch,
@@ -457,7 +459,7 @@ func RunStatusDetail(window string, jsonOut bool) error {
 			Session: sr.group.Session, Project: sr.group.Project,
 			WindowID: sr.row.WindowID, WindowIndex: sr.row.WindowIndex,
 			Agent: sr.row.Name, State: sr.row.State, Done: sr.row.Done,
-			Mode: sr.meta.Mode, ContextPct: sr.row.ContextPct,
+			Mode: sr.meta.Mode, Backend: sr.meta.Backend, ContextPct: sr.row.ContextPct,
 			Ticket: sr.meta.Ticket, Branch: sr.meta.Branch,
 			WorktreePath: sr.row.WorktreePath, Parent: sr.meta.Parent(),
 			Activity: herd.ActivityLine(sr.row), MailPending: sr.row.MailboxPending,
@@ -495,6 +497,9 @@ func RunStatusDetail(window string, jsonOut bool) error {
 		line("pane says", v)
 	}
 	line("mode", sr.meta.Mode)
+	if sr.meta.Backend != "" {
+		line("backend", sr.meta.Backend+"  (not Anthropic)")
+	}
 	line("ticket", strings.TrimSpace(sr.meta.Ticket+" "+sr.meta.TicketTitle))
 	line("branch", sr.meta.Branch)
 	line("worktree", firstNonEmpty(sr.row.WorktreePath, sr.meta.WorktreeDir))

@@ -277,6 +277,13 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 
 	sessionID := ids.NewUUID()
 
+	// Same backend as the agent itself: a local-model agent's improvement
+	// session must not quietly run on Anthropic (or vice versa).
+	extraEnv := dispatch.AgentEnvOverrides(ac)
+	if _, err := dispatch.PrepareBackend(cfg, &ac, "", "", extraEnv); err != nil {
+		return fmt.Errorf("resolving backend: %w", err)
+	}
+
 	// Build base flags with per-session hook configuration.
 	settingsPath := dispatch.WriteAgentSettings(agentName, ac, workDir)
 	baseFlags := dispatch.BuildBaseFlags(dispatch.ClaudeInvocation{Agent: agentName, SessionID: sessionID, SettingsPath: settingsPath}, ac)
@@ -292,7 +299,6 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 		// Non-fatal — continue launch without shell-prefix if the write failed.
 	}
 
-	extraEnv := dispatch.AgentEnvOverrides(ac)
 	extraEnv["AGENTCTL_MODE"] = "improve"
 
 	windowName := "improve~" + agentName

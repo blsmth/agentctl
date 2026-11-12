@@ -1201,6 +1201,7 @@ func (m *monitorModel) persistState(cfg *config.Config, windows []tmux.WindowInf
 			contextWindow = inst.pushedContextWindow
 			contextTokens = inst.pushedContextTokens
 		}
+		backendWS, _ := windowstate.Read(id)
 		agentStates = append(agentStates, state.AgentState{
 			Name:                inst.instance,
 			AgentName:           inst.base,
@@ -1230,6 +1231,7 @@ func (m *monitorModel) persistState(cfg *config.Config, windows []tmux.WindowInf
 			LastToolDetail:      inst.lastToolDetail,
 			LastText:            inst.lastText,
 			MailboxPending:      inst.mailboxPending,
+			Backend:             backendWS.Backend,
 			MainPane:            inst.mainPane,
 		})
 	}

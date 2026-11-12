@@ -125,8 +125,9 @@ func RunRestore() {
 			DuplicateSession: isDuplicate,
 			WorkDir:          workDir,
 			LogPath:          logPath,
+			Backend:          as.Backend,
 		}); err != nil {
-			logging.Log("restoreAgents: failed to launch %s: %v", as.Name, err)
+			logging.Log("restoreAgents: not restoring %s: %v", as.Name, err)
 		}
 	}
 

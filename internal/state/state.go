@@ -45,6 +45,7 @@ type AgentState struct {
 	MainPane            string `json:"main_pane,omitempty"`              // tmux pane ID of the agent content pane
 	LastToolDetail      string `json:"last_tool_detail,omitempty"`       // e.g. "monitor.go" or "go build ./..."
 	LastText            string `json:"last_text,omitempty"`              // last assistant text block (already truncated to ~100 chars upstream)
+	Backend             string `json:"backend,omitempty"`                // config backend name the window runs against ("" = Anthropic); restore re-resolves it
 	MailboxPending      int    `json:"mailbox_pending,omitempty"`        // count-only mailbox.PendingCount, refreshed on a throttled monitor tick; see internal/cmd/wake.go for delivery
 }
 

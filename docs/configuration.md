@@ -65,6 +65,7 @@ Rationale: a project-local file can arrive with a cloned repository. Executing c
 | `rate_limit.token_cap` | int | `88000` | Token budget per 5-hour window, used only to *estimate* usage when Claude Code has not pushed a real rate-limit percentage. |
 | `metrics` | object | disabled | Prometheus endpoint and remote write. See [metrics](#metrics). |
 | `models` | object | built-in registry | Model registry overrides and context thresholds. See [models](#models). |
+| `backends` | object | none | Named self-hosted endpoints. Global-only. See [Backends](#backends-self-hosted--ollama). |
 | `agents` | object | none | Per-agent settings. See [Per-agent settings](#per-agent-settings). |
 
 ### Notifications
@@ -201,6 +202,7 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
 | `bash_preview` | bool | inherit | Overrides the global `bash_preview`. |
 | `auto_reclaim_worktree` | bool | `true` | On a terminal session end, remove this agent's worktree and window if it is empty or landed. Set `false` to opt out; `git worktree prune` and `agentctl cleanup` are unaffected. |
 | `work_journal` | bool | inherit | Enable journaling for this agent (needs `llm.provider`). |
+| `backend` | string | none | Name of a `backends` entry to launch this agent against instead of Anthropic. Global-only. |
 | `dispatch.on_complete` | string | inherit | Per-agent completion command. Global-only. |
 | `hooks` | object | none | Per-agent lifecycle hooks. Global-only. |
 
@@ -215,6 +217,45 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
   }
 }
 ```
+
+## Backends (self-hosted / Ollama)
+
+Ollama speaks the Anthropic Messages API, so Claude Code can run against a self-hosted server with only env vars and a model flag. Define named backends globally and point agents at them:
+
+```json
+{
+  "backends": {
+    "fenrir": {
+      "base_url": "http://fenrir:11434",
+      "model": "qwen3.6:35b-a3b",
+      "auth_token": "ollama",
+      "max_context_tokens": 131072
+    }
+  },
+  "agents": { "go-engineer-local": { "backend": "fenrir" } }
+}
+```
+
+| Key | Description |
+|---|---|
+| `base_url` | Required. An `http`/`https` URL. |
+| `model` | Required. Matched exactly against the server's model list. |
+| `auth_token` | Dummy token; defaults to `ollama` (Ollama ignores it). |
+| `max_context_tokens` | Sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS` so Claude Code knows the context size of a model it does not recognize. `0` leaves it unset. |
+
+A launch with a backend sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, an explicitly **empty** `ANTHROPIC_API_KEY` (so a real key cannot leak to the endpoint), `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, and points `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, and `CLAUDE_CODE_SUBAGENT_MODEL` at the backend model (background tasks and subagents use aliases that do not exist on Ollama). The backend model wins over the agent's `model`; an explicit `dispatch --model` wins over both.
+
+`agentctl dispatch --backend <name>` overrides the agent's backend; `--backend none` forces Anthropic. Dispatch, improve, resume, and `agentctl restore` all apply the backend. Restore re-resolves the backend name saved with the window; if it no longer exists in config the window is skipped (logged), never relaunched on Anthropic. `agentctl status <window>` and `--json` show the backend.
+
+**Global-only.** `backends` and `agents.<name>.backend` are ignored, with a warning, in a project-local `.agentctl/config.json`. A project that could set `base_url` could silently redirect every prompt and every file the agent reads to an attacker's host. An agent that names an unknown backend logs a warning at load and fails at launch; it never falls back to Anthropic.
+
+**Preflight.** Before launching, agentctl does `GET <base_url>/api/tags` (3s timeout). An unreachable server is a hard error naming the URL. If the response is an Ollama tag list and the model is not in it, the launch fails and lists what is available. Names match exactly: `qwen3.6:35b` and `qwen3.6:35b-a3b` are the same digest but different names. A non-200 or non-Ollama response skips the model check, since it may be another Anthropic-compatible server.
+
+Gotchas:
+
+- **Context length is a server setting.** Ollama defaults to 4096 tokens of context regardless of the model, and the Anthropic-compatible API does not let the client set `num_ctx`. The Claude Code system prompt alone exceeds that, so run the server with `OLLAMA_CONTEXT_LENGTH` set (e.g. `131072`) and set `max_context_tokens` to match.
+- **Pick a tool-calling model.** qwen3.6 MoE works; deepseek-r1 cannot call tools.
+- Cost metrics skip unknown models; that is expected.
 
 ## Environment variables
 

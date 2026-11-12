@@ -33,14 +33,17 @@ import (
 // WindowState is the per-window authoritative state written by hooks and read
 // by the monitor. It replaces tmux window options as the IPC mechanism.
 type WindowState struct {
-	State         string `json:"state"`
-	LogPath       string `json:"log_path"`
-	SessionID     string `json:"session_id"`
-	Done          bool   `json:"done"`
-	LastToolTime  int64  `json:"last_tool_time,omitempty"`
-	Ticket        string `json:"ticket,omitempty"`
-	TicketTitle   string `json:"ticket_title,omitempty"`
-	Mode          string `json:"mode,omitempty"`
+	State        string `json:"state"`
+	LogPath      string `json:"log_path"`
+	SessionID    string `json:"session_id"`
+	Done         bool   `json:"done"`
+	LastToolTime int64  `json:"last_tool_time,omitempty"`
+	Ticket       string `json:"ticket,omitempty"`
+	TicketTitle  string `json:"ticket_title,omitempty"`
+	Mode         string `json:"mode,omitempty"`
+	// Backend is the name of the config backend this window's claude was
+	// launched against ("" = Anthropic). Restore re-resolves it from config.
+	Backend       string `json:"backend,omitempty"`
 	SubagentCount int    `json:"subagent_count,omitempty"`
 
 	// Branch and WorktreeDir record the dispatch worktree linkage: which git

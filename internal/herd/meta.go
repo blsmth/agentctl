@@ -17,6 +17,7 @@ import (
 type Meta struct {
 	WindowID         string
 	Mode             string // "dispatch", "adhoc", "bare", "custom"
+	Backend          string // config backend name; "" = Anthropic
 	Ticket           string
 	TicketTitle      string
 	Branch           string
@@ -74,6 +75,7 @@ func LoadMeta(g Group) map[string]Meta {
 		out[id] = Meta{
 			WindowID:         id,
 			Mode:             ws.Mode,
+			Backend:          ws.Backend,
 			Ticket:           ws.Ticket,
 			TicketTitle:      ws.TicketTitle,
 			Branch:           ws.Branch,
