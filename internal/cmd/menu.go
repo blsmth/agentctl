@@ -118,7 +118,9 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 // If name is empty it falls back to the configured default_agent.
 // noWorktree is the CLI's --no-worktree escape hatch: when true, the agent
 // launches directly in the main checkout instead of an isolated worktree.
-func RunLaunch(name string, noWorktree bool) {
+// backend is the --backend override: a name selects that backend, "none"
+// forces Anthropic, and empty defers to the agent config.
+func RunLaunch(name string, noWorktree bool, backend string) {
 	if name == "" {
 		cfg := config.Load()
 		name = usableDefaultAgent(cfg, os.Stderr)
@@ -134,7 +136,7 @@ func RunLaunch(name string, noWorktree bool) {
 		os.Exit(1)
 	}
 	workDir := resolveAgentDir(baseName)
-	RunLaunchAgent(baseName, workDir, noWorktree)
+	RunLaunchAgent(baseName, workDir, noWorktree, backend)
 }
 
 // RunLaunchAgent launches a fresh interactive agent session in workDir.
@@ -144,11 +146,12 @@ func RunLaunch(name string, noWorktree bool) {
 // noWorktree, when true, passes an explicit false override so this launch
 // skips worktree isolation (the CLI's --no-worktree escape hatch); when
 // false, UseWorktree is left nil so the launch inherits the mode default.
-func RunLaunchAgent(name string, workDir string, noWorktree bool) {
+func RunLaunchAgent(name string, workDir string, noWorktree bool, backend string) {
 	req := dispatch.Request{
 		AgentName: name,
 		Mode:      dispatch.ModeBare,
 		WorkDir:   workDir,
+		Backend:   backend,
 	}
 	if noWorktree {
 		useWorktree := false
@@ -210,7 +213,7 @@ func RunLaunchMenu(name string, writeSettings WriteAgentSettingsFn) {
 
 	// Fresh launch with chosen directory. Inherits the mode default (no
 	// --no-worktree escape hatch available from this TUI path).
-	RunLaunchAgent(baseName, result.Dir, false)
+	RunLaunchAgent(baseName, result.Dir, false, "")
 }
 
 // formatRelativeTime formats a duration as a compact human-readable relative

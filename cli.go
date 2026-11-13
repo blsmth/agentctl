@@ -182,9 +182,10 @@ func (c *RestoreCmd) Run() error { cmd.RunRestore(); return nil }
 type LaunchCmd struct {
 	Name       string `arg:"" optional:"" help:"Agent name to launch (reads default_agent from config if omitted)"`
 	NoWorktree bool   `name:"no-worktree" help:"Launch directly in the main checkout instead of an isolated git worktree"`
+	Backend    string `help:"Named backend from config (self-hosted/Ollama); 'none' forces Anthropic"`
 }
 
-func (c *LaunchCmd) Run() error { cmd.RunLaunch(c.Name, c.NoWorktree); return nil }
+func (c *LaunchCmd) Run() error { cmd.RunLaunch(c.Name, c.NoWorktree, c.Backend); return nil }
 
 type KillCmd struct {
 	Name string `arg:"" help:"Agent name to kill"`

@@ -254,6 +254,15 @@ A launch with a backend sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, an ex
 Gotchas:
 
 - **Context length is a server setting.** Ollama defaults to 4096 tokens of context regardless of the model, and the Anthropic-compatible API does not let the client set `num_ctx`. The Claude Code system prompt alone exceeds that, so run the server with `OLLAMA_CONTEXT_LENGTH` set (e.g. `131072`) and set `max_context_tokens` to match.
+- **Per-model context without a server restart.** Instead of `OLLAMA_CONTEXT_LENGTH` (which needs a server restart, and on macOS the Ollama app sometimes refuses to quit), bake the context into a derived model. This affects only that model (verified on Ollama 0.40):
+
+  ```sh
+  printf "FROM gemma4\nPARAMETER num_ctx 65536\n" > Modelfile
+  ollama create gemma4-64k -f Modelfile
+  ```
+
+  Then set the backend `model` to `gemma4-64k` and `max_context_tokens` to `65536`. Confirm the context the model actually loaded with via `ollama ps`, or `GET /api/ps` (field `context_length`).
+- **Context size floor.** Claude Code's fixed overhead (system prompt plus tool definitions) uses roughly 30k tokens, so 32k of context is too small to be useful; 64k is a practical minimum.
 - **Pick a tool-calling model.** qwen3.6 MoE works; deepseek-r1 cannot call tools.
 - Cost metrics skip unknown models; that is expected.
 
