@@ -380,6 +380,7 @@ func cmdSaveState() {
 			LogPath:   logPath,
 			WorkDir:   workDir,
 			WindowID:  windowID,
+			Backend:   ws.Backend,
 		})
 	}
 	if err := state.Save(&state.State{Agents: agents, Timestamp: time.Now()}); err != nil {

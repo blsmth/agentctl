@@ -57,7 +57,10 @@ type Request struct {
 	UseWorktree *bool
 	RepoSlug    string // e.g. "owner/repo"
 	Model       string // overrides agent config and mode default when set
-	Background  bool   // when true, skip switching to the new window after launch
+	// Backend overrides the agent's configured backend: "" = use the agent
+	// config, BackendNone = force Anthropic, else a name from config backends.
+	Backend    string
+	Background bool // when true, skip switching to the new window after launch
 }
 
 // Result contains the output of a successful Launch.
@@ -115,6 +118,23 @@ func Launch(req Request) (Result, error) {
 		return Result{}, fmt.Errorf("WorkDir is required")
 	}
 
+	// 4. Load agent config. Done before creating the worktree so a bad or
+	// unreachable backend fails the dispatch without leaving a worktree behind.
+	cfg := config.Load()
+	ac := cfg.ForAgent(req.AgentName)
+
+	// Apply model: priority order is Request.Model > backend model >
+	// AgentConfig.Model > modeSpec.DefaultModel.
+	if req.Model != "" {
+		ac.Model = req.Model
+	} else if ac.Model == "" && spec.DefaultModel != "" {
+		ac.Model = spec.DefaultModel
+	}
+	backendEnv := map[string]string{}
+	if _, err := PrepareBackend(cfg, &ac, req.Backend, req.Model, backendEnv); err != nil {
+		return Result{}, fmt.Errorf("resolving backend: %w", err)
+	}
+
 	// 3. Create worktree if requested.
 	var branch string
 	repoDir := workDir // remember original repo dir so we can detect an actual worktree below
@@ -132,16 +152,7 @@ func Launch(req Request) (Result, error) {
 		}
 	}
 
-	// 4. Load agent config.
-	cfg := config.Load()
-	ac := cfg.ForAgent(req.AgentName)
-
-	// Apply model: priority order is Request.Model > AgentConfig.Model > modeSpec.DefaultModel.
-	if req.Model != "" {
-		ac.Model = req.Model
-	} else if ac.Model == "" && spec.DefaultModel != "" {
-		ac.Model = spec.DefaultModel
-	}
+	// 4. (see above) agent config is loaded before the worktree is created.
 
 	// 5. Gather context store entries.
 	var contextEntries []ctxstore.Entry
@@ -262,6 +273,9 @@ func Launch(req Request) (Result, error) {
 	windowName := tmux.NextInstanceName(req.AgentName)
 	logPath := claude.LogPath(workDir, sessionID)
 	extraEnv := buildDispatchEnv(req, ac, workDir, repoDir, branch, useWorktree)
+	for k, v := range backendEnv {
+		extraEnv[k] = v
+	}
 	applySpawnedByEnv(extraEnv)
 
 	logging.Log("dispatch: shellCmd len=%d: %s", len(shellCmd), textutil.Truncate(logCmd, 500, "..."))

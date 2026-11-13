@@ -37,6 +37,12 @@ type RestoreRequest struct {
 	// track this window immediately (without a filesystem scan). May be empty
 	// if the log path is not known.
 	LogPath string
+
+	// Backend is the config backend name the window was launched against
+	// ("" = Anthropic), as persisted in windowstate/state.json. It is
+	// re-resolved from config; if it no longer exists Restore returns an
+	// error rather than relaunching on Anthropic.
+	Backend string
 }
 
 // Restore re-launches a saved agent window using the shared settings helpers
@@ -56,7 +62,10 @@ func Restore(req RestoreRequest) (string, error) {
 	}
 
 	cfg := config.Load()
-	ac := cfg.ForAgent(req.AgentName)
+	ac, extraEnv, err := prepareRestore(cfg, req)
+	if err != nil {
+		return "", fmt.Errorf("dispatch.Restore: %s: %w", req.InstanceName, err)
+	}
 
 	settingsPath := WriteAgentSettings(req.AgentName, ac, req.WorkDir)
 	resume := req.SessionID != "" && !req.DuplicateSession
@@ -79,7 +88,7 @@ func Restore(req RestoreRequest) (string, error) {
 	}
 
 	logging.Log("dispatch.Restore: launching %s (base=%s) workDir=%s logPath=%s", instanceName, req.AgentName, req.WorkDir, logPath)
-	wid, err := tmux.LaunchAgent(instanceName, req.WorkDir, shellCmd, logPath, req.AgentName, "", nil, false)
+	wid, err := tmux.LaunchAgent(instanceName, req.WorkDir, shellCmd, logPath, req.AgentName, "", extraEnv, false)
 	if err != nil {
 		return "", fmt.Errorf("dispatch.Restore: launching %s: %w", instanceName, err)
 	}
@@ -100,4 +109,21 @@ func buildRestoreCmd(agentName, sessionID, settingsPath string, resume bool, ac 
 	}
 	resumed := BuildBaseFlags(ClaudeInvocation{Agent: agentName, Resume: sessionID, SettingsPath: settingsPath}, ac)
 	return resumed + " || " + fresh
+}
+
+// prepareRestore returns the agent config and extra launch env for a restored
+// window. The backend comes from the persisted request, not the current agent
+// config: a window launched with --backend none must come back on Anthropic,
+// and one launched on a backend must never come back on Anthropic.
+func prepareRestore(cfg *config.Config, req RestoreRequest) (config.AgentConfig, map[string]string, error) {
+	ac := cfg.ForAgent(req.AgentName)
+	ac.Backend = req.Backend
+	env := map[string]string{}
+	if _, err := PrepareBackend(cfg, &ac, "", "", env); err != nil {
+		return ac, nil, err
+	}
+	if len(env) == 0 {
+		env = nil
+	}
+	return ac, env, nil
 }

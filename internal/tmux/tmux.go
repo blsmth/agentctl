@@ -511,6 +511,7 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 			ws.Ticket = extraEnv["AGENTCTL_TICKET"]
 			ws.TicketTitle = extraEnv["AGENTCTL_TICKET_TITLE"]
 			ws.Mode = extraEnv["AGENTCTL_MODE"]
+			ws.Backend = extraEnv["AGENTCTL_BACKEND"]
 			ws.SpawnedBy = extraEnv["AGENTCTL_SPAWNED_BY"]
 			ws.SpawnedBySession = extraEnv["AGENTCTL_SPAWNED_BY_SESSION"]
 		})

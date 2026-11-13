@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -83,6 +84,86 @@ type AgentConfig struct {
 	// "inherit the global setting". Use EffectiveBashPreview to read the
 	// effective value.
 	BashPreview *bool `json:"bash_preview,omitempty"`
+	// Backend names an entry in the global Config.Backends map. When set, the
+	// agent launches against that Anthropic-compatible endpoint (e.g. a
+	// self-hosted Ollama) instead of Anthropic. Global config only: see
+	// sanitizeProjectConfig.
+	Backend string `json:"backend,omitempty"`
+}
+
+// DefaultBackendAuthToken is the dummy token sent to a backend that does not
+// set auth_token. Ollama ignores it.
+const DefaultBackendAuthToken = "ollama"
+
+// BackendConfig describes a self-hosted Anthropic-compatible endpoint.
+type BackendConfig struct {
+	BaseURL          string `json:"base_url"`                     // http(s) URL of the server, required
+	Model            string `json:"model"`                        // model name served there, required
+	AuthToken        string `json:"auth_token,omitempty"`         // default "ollama"
+	MaxContextTokens int    `json:"max_context_tokens,omitempty"` // 0 = do not set the var
+}
+
+// validate checks b and returns b with defaults applied.
+func (b BackendConfig) validate() (BackendConfig, error) {
+	u, err := url.Parse(b.BaseURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return b, fmt.Errorf("base_url %q must be an http or https URL", b.BaseURL)
+	}
+	if b.Model == "" {
+		return b, fmt.Errorf("model is required")
+	}
+	if !safeLaunchValue.MatchString(b.Model) {
+		return b, fmt.Errorf("model %q has invalid characters", b.Model)
+	}
+	if b.AuthToken == "" {
+		b.AuthToken = DefaultBackendAuthToken
+	}
+	if !safeLaunchValue.MatchString(b.AuthToken) {
+		return b, fmt.Errorf("auth_token has invalid characters")
+	}
+	if b.MaxContextTokens < 0 {
+		return b, fmt.Errorf("max_context_tokens must not be negative")
+	}
+	return b, nil
+}
+
+// ResolveBackend returns the named backend. It errors when the name is not
+// defined (or failed validation at load) so callers never silently fall back
+// to Anthropic.
+func (c Config) ResolveBackend(name string) (BackendConfig, error) {
+	b, ok := c.Backends[name]
+	if !ok {
+		return BackendConfig{}, fmt.Errorf("backend %q is not defined in the global config (or is invalid; see the agentctl log)", name)
+	}
+	return b, nil
+}
+
+// validateBackends drops invalid backends (logging why) and applies defaults,
+// then warns about agents that reference a backend that does not exist.
+func validateBackends(cfg *Config) {
+	for name, b := range cfg.Backends {
+		vb, err := b.validate()
+		if err != nil {
+			logOnce(fmt.Sprintf("config: ignoring backend %q: %v", name, err))
+			delete(cfg.Backends, name)
+			continue
+		}
+		cfg.Backends[name] = vb
+	}
+	for name, ac := range cfg.Agents {
+		if ac.Backend == "" {
+			continue
+		}
+		if _, ok := cfg.Backends[ac.Backend]; !ok {
+			logOnce(fmt.Sprintf("config: agent %q references unknown backend %q; launching it will fail", name, ac.Backend))
+		}
+	}
+}
+
+func logOnce(msg string) {
+	if _, dup := warnedKeys.LoadOrStore(msg, true); !dup {
+		logging.Log("%s", msg)
+	}
 }
 
 // BasicAuthConfig holds HTTP basic authentication credentials.
@@ -317,8 +398,12 @@ type Config struct {
 	// project-local layer cannot set it. Use EffectiveNotifyCmd to read it.
 	NotifyCmd *string `json:"notify_cmd,omitempty"`
 	// Agents maps agent names to their per-agent settings.
-	Agents  map[string]AgentConfig `json:"agents"`
-	Metrics MetricsConfig          `json:"metrics,omitempty"`
+	Agents map[string]AgentConfig `json:"agents"`
+	// Backends maps names to self-hosted Anthropic-compatible endpoints that
+	// agents select with agents.<name>.backend. Global config only: a project
+	// that could set base_url could redirect every prompt to another host.
+	Backends map[string]BackendConfig `json:"backends,omitempty"`
+	Metrics  MetricsConfig            `json:"metrics,omitempty"`
 	// AutoPoll enables the ticket browser autopilot mode.
 	AutoPoll bool `json:"auto_poll"`
 	// AutoPollInterval is the poll interval as a Go duration string (e.g. "5m"). Defaults to "5m".
@@ -848,6 +933,9 @@ func containsAll(have, want []string) bool {
 //     session); the global agent's value is used instead, or the default
 //     (DefaultAgentConfig) for an agent the global config does not define.
 //     A project may still switch cross_context / auto_improve off.
+//   - backends and agents.*.backend (a project-chosen base_url would send
+//     every prompt and file the agent reads to an arbitrary host); the global
+//     agent's backend is used instead
 //   - llm.* (provider/host could send session summaries elsewhere)
 //   - metrics.endpoint / metrics.basic_auth (remote write could exfiltrate
 //     session metrics); a project may still toggle metrics and the loopback
@@ -893,6 +981,10 @@ func sanitizeProjectConfig(project, global *Config) {
 		warn("bash_preview", noLoosen)
 		project.BashPreview = nil
 	}
+	if len(project.Backends) > 0 {
+		warn("backends", globalOnly)
+	}
+	project.Backends = nil
 	if len(project.Hooks) > 0 {
 		warn("hooks", globalOnly)
 		project.Hooks = nil
@@ -941,6 +1033,10 @@ func sanitizeProjectConfig(project, global *Config) {
 		if ac.AutoImprove && !gb.AutoImprove {
 			warn(pre+"auto_improve", globalOnly)
 		}
+		if ac.Backend != "" && ac.Backend != g.Backend {
+			warn(pre+"backend", globalOnly)
+		}
+		ac.Backend = g.Backend
 		if ac.BashPreview != nil && !*ac.BashPreview && global.EffectiveBashPreview(name) {
 			warn(pre+"bash_preview", noLoosen)
 			ac.BashPreview = g.BashPreview
@@ -995,6 +1091,7 @@ func Load() *Config {
 		sanitizeProjectConfig(projectCfg, cfg)
 		mergeConfig(cfg, projectCfg)
 	}
+	validateBackends(cfg)
 
 	// Convert config.ModelOverride to tokens.ModelOverride and push into the
 	// registry. Every process (monitor, chrome bar pane, CLI commands) picks
@@ -1294,6 +1391,7 @@ func projectAgent(ac, prev, global AgentConfig) AgentConfig {
 	ac.AllowedPermissions = prev.AllowedPermissions
 	ac.PermissionMode = prev.PermissionMode
 	ac.Dir, ac.ContextKeys = prev.Dir, prev.ContextKeys
+	ac.Backend = prev.Backend
 	ac.BlockedCommands = minusStrings(ac.BlockedCommands, global.BlockedCommands)
 	ac.BlockedPatterns = minusStrings(ac.BlockedPatterns, global.BlockedPatterns)
 	return ac
