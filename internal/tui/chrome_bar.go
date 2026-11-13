@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -291,6 +292,9 @@ func (m ChromeBarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.MouseClickMsg:
+		return m, m.handleClick(msg)
+
 	case activeWindowChangedMsg:
 		// Fast path: read the active-window file and update the tab highlight.
 		data, err := os.ReadFile(filepath.Join(filepath.Dir(m.statePath), "active-window"))
@@ -378,7 +382,9 @@ func (m ChromeBarModel) View() tea.View {
 		line1 = m.renderKeybindLine(w)
 	}
 	line2 := m.renderTabLine(w)
-	return tea.NewView(line1 + "\n" + line2)
+	v := tea.NewView(line1 + "\n" + line2)
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
 }
 
 // ── Line 1: keybind hints ────────────────────────────────────────────────────
@@ -394,106 +400,175 @@ func (m ChromeBarModel) renderKeybindLine(w int) string {
 
 // ── Line 2: agent tabs ───────────────────────────────────────────────────────
 
+// tabSpan is the half-open cell column range [Start, End) a tab occupies on
+// line 2 of the chrome bar.
+type tabSpan struct {
+	WindowID string
+	Start    int
+	End      int
+}
+
+// tabStyles bundles the line-2 styles so rendering and hit-testing share them.
+type tabStyles struct {
+	session, active, working, blocked, done, idle, sep, fill, clock lipgloss.Style
+}
+
+func newTabStyles() tabStyles {
+	t := theme.Current()
+	base := func(fg string) lipgloss.Style {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(fg)).Background(lipgloss.Color(t.Base))
+	}
+	return tabStyles{
+		session: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color(t.Bright)).
+			Background(lipgloss.Color(t.Accent)).
+			Padding(0, 1),
+		active: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color(t.Bright)).
+			Background(lipgloss.Color(t.Surface)).
+			Padding(0, 1),
+		working: base(t.Accent),
+		blocked: base(t.Yellow),
+		done:    base(t.Green),
+		idle:    base(t.Subtle),
+		sep:     base(t.Muted),
+		fill:    base(t.Muted),
+		clock:   base(t.Subtle),
+	}
+}
+
+// renderTabLabel renders one tab label (no leading separator).
+func renderTabLabel(tab TabInfo, spinnerView string, st tabStyles) string {
+	displayName := tab.Name
+	if tab.Ticket > 0 {
+		displayName = fmt.Sprintf("%s #%d", tab.Name, tab.Ticket)
+	}
+	var icon string
+	var style lipgloss.Style
+	switch tab.State {
+	case "working":
+		icon, style = spinnerView, st.working
+	case "blocked":
+		icon, style = "⏸", st.blocked
+	case "done":
+		icon, style = "✓", st.done
+	default:
+		icon, style = "○", st.idle
+	}
+	if tab.IsActive {
+		style = st.active
+	}
+	return style.Render(icon + " " + displayName)
+}
+
+// tabLayout is a pure function of its inputs: it returns the rendered session
+// badge, the rendered tab labels, and each tab's cell span. Both rendering and
+// click hit-testing call it, so they cannot disagree.
+func tabLayout(tabs []TabInfo, spinnerView string, st tabStyles) (badge string, labels []string, spans []tabSpan) {
+	badge = st.session.Render(" " + tmux.SessionName + " ")
+	sepW := lipgloss.Width(st.sep.Render(" "))
+	x := lipgloss.Width(badge)
+	labels = make([]string, len(tabs))
+	spans = make([]tabSpan, len(tabs))
+	for i, tab := range tabs {
+		x += sepW // the separator belongs to no tab
+		labels[i] = renderTabLabel(tab, spinnerView, st)
+		w := lipgloss.Width(labels[i])
+		spans[i] = tabSpan{WindowID: tab.WindowID, Start: x, End: x + w}
+		x += w
+	}
+	return badge, labels, spans
+}
+
+// tabSpans returns the current tab spans for hit-testing.
+func (m ChromeBarModel) tabSpans() []tabSpan {
+	_, _, spans := tabLayout(m.tabs, m.spinner.View(), newTabStyles())
+	return spans
+}
+
+// tabAt returns the window ID of the tab covering cell column x.
+func (m ChromeBarModel) tabAt(x int) (string, bool) {
+	for _, sp := range m.tabSpans() {
+		if x >= sp.Start && x < sp.End && sp.WindowID != "" {
+			return sp.WindowID, true
+		}
+	}
+	return "", false
+}
+
 // renderTabLine renders the session badge, agent tabs, fill, and clock.
 func (m ChromeBarModel) renderTabLine(w int) string {
-	t := theme.Current()
-
-	sessionStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(t.Bright)).
-		Background(lipgloss.Color(t.Accent)).
-		Padding(0, 1)
-
-	activeTabStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(t.Bright)).
-		Background(lipgloss.Color(t.Surface)).
-		Padding(0, 1)
-
-	workingTabStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Accent)).
-		Background(lipgloss.Color(t.Base))
-
-	blockedTabStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Yellow)).
-		Background(lipgloss.Color(t.Base))
-
-	doneTabStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Green)).
-		Background(lipgloss.Color(t.Base))
-
-	idleTabStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Subtle)).
-		Background(lipgloss.Color(t.Base))
-
-	sepStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Muted)).
-		Background(lipgloss.Color(t.Base))
-
-	fillStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color(t.Base)).
-		Foreground(lipgloss.Color(t.Muted))
-
-	clockStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Subtle)).
-		Background(lipgloss.Color(t.Base))
+	st := newTabStyles()
+	badge, labels, _ := tabLayout(m.tabs, m.spinner.View(), st)
 
 	var sb strings.Builder
-	sb.WriteString(sessionStyle.Render(" " + tmux.SessionName + " "))
-
-	for _, tab := range m.tabs {
-		sb.WriteString(sepStyle.Render(" "))
-
-		// Append issue reference if this is a dispatch window.
-		displayName := tab.Name
-		if tab.Ticket > 0 {
-			displayName = fmt.Sprintf("%s #%d", tab.Name, tab.Ticket)
-		}
-
-		var label string
-		switch tab.State {
-		case "working":
-			indicator := m.spinner.View()
-			tabText := fmt.Sprintf("%s %s", indicator, displayName)
-			if tab.IsActive {
-				label = activeTabStyle.Render(tabText)
-			} else {
-				label = workingTabStyle.Render(tabText)
-			}
-		case "blocked":
-			tabText := "⏸ " + displayName
-			if tab.IsActive {
-				label = activeTabStyle.Render(tabText)
-			} else {
-				label = blockedTabStyle.Render(tabText)
-			}
-		case "done":
-			tabText := "✓ " + displayName
-			if tab.IsActive {
-				label = activeTabStyle.Render(tabText)
-			} else {
-				label = doneTabStyle.Render(tabText)
-			}
-		default: // idle
-			tabText := "○ " + displayName
-			if tab.IsActive {
-				label = activeTabStyle.Render(tabText)
-			} else {
-				label = idleTabStyle.Render(tabText)
-			}
-		}
+	sb.WriteString(badge)
+	for _, label := range labels {
+		sb.WriteString(st.sep.Render(" "))
 		sb.WriteString(label)
 	}
 
 	left := sb.String()
 	leftW := lipgloss.Width(left)
 
-	clockStr := clockStyle.Render(" " + m.clock + " ")
+	clockStr := st.clock.Render(" " + m.clock + " ")
 	clockW := lipgloss.Width(clockStr)
 
 	fill := w - leftW - clockW
 	if fill < 0 {
 		fill = 0
 	}
-	return left + fillStyle.Render(strings.Repeat(" ", fill)) + clockStr
+	return left + st.fill.Render(strings.Repeat(" ", fill)) + clockStr
+}
+
+// focusAgentPane returns a window's agent (non-chrome) pane to focus.
+func focusAgentPane(windowID string) {
+	if windowID == "" {
+		return
+	}
+	if pane := tmux.FindMainPane(windowID); pane != "" {
+		_ = tmux.SelectPane(pane)
+	}
+}
+
+// tabClickCmd switches to target (if non-empty) and restores focus to the
+// agent pane in both the origin and target windows. It runs off the Update
+// goroutine as a tea.Cmd.
+func tabClickCmd(origin, target string) tea.Cmd {
+	return func() tea.Msg {
+		focusAgentPane(origin)
+		if target != "" {
+			if target != origin {
+				_ = exec.Command("tmux", "select-window", "-t", target).Run()
+			}
+			focusAgentPane(target)
+		}
+		return nil
+	}
+}
+
+// clickTarget classifies a mouse click. act is false for clicks that must be
+// ignored entirely (wheel, right/middle). Otherwise target is the window to
+// select, or "" when the click only needs to return focus to the agent pane
+// (line 1, badge, fill, clock).
+func (m ChromeBarModel) clickTarget(msg tea.MouseClickMsg) (target string, act bool) {
+	if msg.Button != tea.MouseLeft {
+		return "", false
+	}
+	if msg.Y != 1 {
+		return "", true
+	}
+	target, _ = m.tabAt(msg.X)
+	return target, true
+}
+
+// handleClick maps a mouse click to a command; nil when it should be ignored.
+func (m ChromeBarModel) handleClick(msg tea.MouseClickMsg) tea.Cmd {
+	target, act := m.clickTarget(msg)
+	if !act {
+		return nil
+	}
+	return tabClickCmd(m.windowID, target)
 }

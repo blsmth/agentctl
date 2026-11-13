@@ -1510,7 +1510,8 @@ func LaunchChromeBar(windowID string) error {
 		return fmt.Errorf("chrome bar split: %s: %w", string(rawOut), err)
 	}
 	paneID := strings.TrimSpace(string(rawOut))
-	_ = DisablePaneInput(paneID)
+	// Input stays enabled: tmux drops mouse events for input-off panes, and the
+	// chrome bar handles tab clicks (see tui.ChromeBarModel).
 	mainPane := findMainPane(windowID)
 	windowstate.Update(windowID, func(wst *windowstate.WindowState) { //nolint:errcheck
 		wst.ChromeBarPane = paneID

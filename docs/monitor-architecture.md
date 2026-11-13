@@ -84,7 +84,7 @@ The `internal/tui/` package holds many standalone Bubble Tea models. Most intera
 
 A few full-screen browsers — **agents**, **sessions**, and **tickets** — run as dedicated tmux windows (opened via `OpenOrFocus*Window`) rather than popups, recording an origin window so they can restore focus on exit.
 
-The **chrome bar** (`chrome_bar.go`) is different: an input-disabled pane docked in every window that watches `state.json` via fsnotify (plus a sibling `active-window` file for instant active-tab highlighting) and re-renders on change.
+The **chrome bar** (`chrome_bar.go`) is different: a mouse-enabled pane docked in every window that watches `state.json` via fsnotify (plus a sibling `active-window` file for instant active-tab highlighting) and re-renders on change.
 
 ## Hook System (Separate Processes)
 
