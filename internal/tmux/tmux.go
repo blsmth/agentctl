@@ -80,11 +80,18 @@ func SessionExists() bool {
 // the tmux server, so they distinguish a session from a later one that reuses
 // its name.
 func SessionID() string {
-	out, err := exec.Command("tmux", "display-message", "-p", "-t", "="+SessionName, "#{session_id}").Output()
+	out, err := exec.Command("tmux", sessionIDArgs(SessionName)...).Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// sessionIDArgs builds the display-message argv for SessionID. display-message
+// -t takes a target-pane, so a bare "=name" resolves to nothing (empty output,
+// exit 0) on tmux 3.x; the trailing colon makes it an explicit session target.
+func sessionIDArgs(name string) []string {
+	return []string{"display-message", "-p", "-t", "=" + name + ":", "#{session_id}"}
 }
 
 // StartSession creates the agentctl tmux session with a shell as window 0,

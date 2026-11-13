@@ -194,3 +194,18 @@ func TestFormatEscapeOnRealTmux(t *testing.T) {
 	}
 	assertNotCreated(t, hit)
 }
+
+func TestSessionIDArgsTrailingColon(t *testing.T) {
+	args := sessionIDArgs("foo")
+	if got := args[len(args)-2]; got != "=foo:" {
+		t.Fatalf("target = %q, want %q", got, "=foo:")
+	}
+}
+
+func TestSessionIDArgsResolveOnRealTmux(t *testing.T) {
+	p := newPrivateTmux(t)
+	got := p.run(sessionIDArgs("s")...)
+	if !strings.HasPrefix(got, "$") {
+		t.Fatalf("session id = %q, want $N", got)
+	}
+}

@@ -1018,19 +1018,40 @@ func TestSessionIdentityOK(t *testing.T) {
 	tests := []struct {
 		name      string
 		want, got string
+		alive     bool
 		ok        bool
 	}{
-		{"same id", "$3", "$3", true},
-		{"different id", "$3", "$7", false},
-		{"session missing", "$3", "", false},
-		{"unknown recorded id, session exists", "", "$7", true},
-		{"unknown recorded id, session missing", "", "", false},
+		{"same id", "$3", "$3", true, true},
+		{"different id", "$3", "$7", true, false},
+		{"session missing", "$3", "", false, false},
+		{"empty got with known want is not rescued by liveness", "$3", "", true, false},
+		{"unknown recorded id, session exists", "", "$7", false, true},
+		{"unknown recorded id, lookup empty, session alive", "", "", true, true},
+		{"unknown recorded id, session missing", "", "", false, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := sessionIdentityOK(tc.want, tc.got); got != tc.ok {
-				t.Fatalf("sessionIdentityOK(%q,%q) = %v, want %v", tc.want, tc.got, got, tc.ok)
+			if got := sessionIdentityOK(tc.want, tc.got, func() bool { return tc.alive }); got != tc.ok {
+				t.Fatalf("sessionIdentityOK(%q,%q,alive=%v) = %v, want %v", tc.want, tc.got, tc.alive, got, tc.ok)
 			}
 		})
+	}
+}
+
+func TestLookupSessionID(t *testing.T) {
+	calls := 0
+	got := lookupSessionID(func() string {
+		calls++
+		if calls < 3 {
+			return ""
+		}
+		return "$4"
+	}, 5, 0)
+	if got != "$4" || calls != 3 {
+		t.Fatalf("got %q after %d calls", got, calls)
+	}
+	calls = 0
+	if got := lookupSessionID(func() string { calls++; return "" }, 3, 0); got != "" || calls != 3 {
+		t.Fatalf("got %q after %d calls", got, calls)
 	}
 }
