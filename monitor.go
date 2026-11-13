@@ -337,7 +337,10 @@ func cmdMonitor() {
 	devNull, _ := os.Open(os.DevNull)
 	model := newMonitorModel(activeWindowFile, regEntry)
 	model.runtimeDir = runtimeDir
-	model.sessionID = tmux.SessionID()
+	model.sessionID = lookupSessionID(tmux.SessionID, 5, 200*time.Millisecond)
+	if model.sessionID == "" {
+		logging.Log("monitor: WARNING could not determine tmux session id for %q; falling back to name-based liveness (replaced-session protection disabled)", tmux.SessionName)
+	}
 	logging.Log("monitor: serving tmux session id %q", model.sessionID)
 	p := tea.NewProgram(model, tea.WithoutRenderer(), tea.WithInput(devNull))
 	if _, err := p.Run(); err != nil {
@@ -444,7 +447,7 @@ func (m *monitorModel) applyVisuals(windowID string, inst *instanceState, curSta
 // or has been replaced by a same-named one, or another monitor owns the
 // pidfile. In that case nothing is saved and no Gone transitions fire.
 func (m *monitorModel) processTick() bool {
-	if !sessionIdentityOK(m.sessionID, tmux.SessionID()) {
+	if !sessionIdentityOK(m.sessionID, tmux.SessionID(), tmux.SessionExists) {
 		logging.Log("monitor: tmux session %q gone or replaced (want id %q), exiting without saving state", tmux.SessionName, m.sessionID)
 		return false
 	}
@@ -487,16 +490,34 @@ func (m *monitorModel) processTick() bool {
 	return true
 }
 
+// lookupSessionID calls lookup up to attempts times, sleeping between tries,
+// and returns the first non-empty id ("" if none).
+func lookupSessionID(lookup func() string, attempts int, delay time.Duration) string {
+	for i := 0; i < attempts; i++ {
+		if id := lookup(); id != "" {
+			return id
+		}
+		if i < attempts-1 {
+			time.Sleep(delay)
+		}
+	}
+	return ""
+}
+
 // sessionIdentityOK reports whether the session currently named
 // tmux.SessionName is the one the monitor was started for. want is the
 // session_id recorded at startup; got is the current lookup ("" when the
-// session does not exist). An empty want (lookup failed at startup) degrades
-// to an existence check.
-func sessionIdentityOK(want, got string) bool {
-	if got == "" {
-		return false
+// lookup failed or the session does not exist). When want is non-empty the ids
+// must match. When want is empty (identity unknown) an empty got is not proof
+// the session is gone, so it degrades to the name-based alive check.
+func sessionIdentityOK(want, got string, alive func() bool) bool {
+	if want != "" {
+		return got == want
 	}
-	return want == "" || want == got
+	if got != "" {
+		return true
+	}
+	return alive()
 }
 
 // reconcileWindows bootstraps instanceState for new windows, fires Gone
