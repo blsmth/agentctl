@@ -146,7 +146,7 @@ func PreflightBackend(b config.BackendConfig) error {
 	}
 	var have []string
 	for _, m := range *tags.Models {
-		if m.Name == b.Model || m.Model == b.Model {
+		if sameModel(m.Name, b.Model) || sameModel(m.Model, b.Model) {
 			return nil
 		}
 		have = append(have, m.Name)
@@ -156,4 +156,23 @@ func PreflightBackend(b config.BackendConfig) error {
 		avail = strings.Join(have, ", ")
 	}
 	return fmt.Errorf("model %q is not available at %s (available: %s)", b.Model, b.BaseURL, avail)
+}
+
+// normalizeModel appends Ollama's implicit ":latest" tag when the final path
+// segment has no tag. Colons earlier in the name (registry host:port) are not
+// tag separators. Comparison-only; never used for the name passed to --model.
+func normalizeModel(name string) string {
+	last := name[strings.LastIndex(name, "/")+1:]
+	if strings.Contains(last, ":") {
+		return name
+	}
+	return name + ":latest"
+}
+
+// sameModel reports whether two model names refer to the same Ollama model.
+func sameModel(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return normalizeModel(a) == normalizeModel(b)
 }

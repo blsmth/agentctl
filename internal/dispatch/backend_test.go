@@ -143,6 +143,36 @@ func TestPreflightBackend(t *testing.T) {
 	}
 }
 
+func TestSameModel(t *testing.T) {
+	tests := []struct {
+		name, a, b string
+		want       bool
+	}{
+		{"untagged config vs latest listing", "gemma4-64k", "gemma4-64k:latest", true},
+		{"latest config vs latest listing", "gemma4-64k:latest", "gemma4-64k:latest", true},
+		{"explicit tag does not match latest", "gemma4:12b", "gemma4:latest", false},
+		{"namespaced untagged", "x/z-image-turbo", "x/z-image-turbo:latest", true},
+		{"registry host with port untagged", "host:5000/ns/model", "host:5000/ns/model:latest", true},
+		{"registry host with port differs by tag", "host:5000/ns/model", "host:5000/ns/model:v2", false},
+		{"35b vs 35b-a3b", "qwen3.6:35b", "qwen3.6:35b-a3b", false},
+		{"different names", "a", "b:latest", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sameModel(tt.a, tt.b); got != tt.want {
+				t.Errorf("sameModel(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPreflightBackendLatestTag(t *testing.T) {
+	srv := tagsServer(t, 200, `{"models":[{"name":"gemma4-64k:latest","model":"gemma4-64k:latest"}]}`)
+	if err := PreflightBackend(config.BackendConfig{BaseURL: srv.URL, Model: "gemma4-64k"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestPreflightBackendUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	url := srv.URL
