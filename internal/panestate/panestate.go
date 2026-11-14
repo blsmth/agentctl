@@ -65,8 +65,9 @@ const busyTailLines = 15
 // "✻ Worked for 4m 25s" line has no ellipsis and does not match.
 var spinnerLine = regexp.MustCompile(`^[^\x00-\x7f] \S+… \(\d+[hms]`)
 
-// backgroundHint appears under a running Bash tool.
-const backgroundHint = "to run in background)"
+// backgroundHint is the whole line shown under a running Bash tool. Anchoring
+// both ends keeps prose that quotes the hint from reading as busy.
+var backgroundHint = regexp.MustCompile(`^\(.*to run in background\)$`)
 
 // Classify derives a verdict from captured pane text. It must be fed the
 // full visible pane: a bounded tail can cut the dialog text off and yield a
@@ -144,7 +145,7 @@ func spinnerShowing(text string) bool {
 			continue
 		}
 		seen++
-		if spinnerLine.MatchString(line) || strings.Contains(line, backgroundHint) {
+		if spinnerLine.MatchString(line) || backgroundHint.MatchString(line) {
 			return true
 		}
 	}
