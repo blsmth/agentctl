@@ -883,3 +883,126 @@ func TestChromeBarToastReplacesKeybindLine(t *testing.T) {
 		t.Errorf("line 2 (tabs) should be unaffected by the toast; got: %q", lines[1])
 	}
 }
+
+func TestTabSpans(t *testing.T) {
+	tabs := []TabInfo{
+		{Name: "shell", State: "idle", WindowID: "@9"},
+		{Name: "go-engineer", State: "working", Ticket: 12, WindowID: "@1", IsActive: true},
+		{Name: "py", State: "working", WindowID: "@2"},
+		{Name: "blk", State: "blocked", Ticket: 7, WindowID: "@3"},
+		{Name: "dn", State: "done", WindowID: "@4"},
+	}
+	m := newTestChromeBar(tabs)
+	st := newTabStyles()
+	spans := m.tabSpans()
+	if len(spans) != len(tabs) {
+		t.Fatalf("got %d spans, want %d", len(spans), len(tabs))
+	}
+	badge, labels, _ := tabLayout(tabs, m.spinner.View(), st)
+	written := badge
+	for i, tab := range tabs {
+		t.Run(tab.Name, func(t *testing.T) {
+			written += st.sep.Render(" ")
+			wantStart := lipgloss.Width(written)
+			written += labels[i]
+			wantEnd := lipgloss.Width(written)
+			if spans[i].WindowID != tab.WindowID || spans[i].Start != wantStart || spans[i].End != wantEnd {
+				t.Errorf("span = %+v, want [%d,%d) for %s", spans[i], wantStart, wantEnd, tab.WindowID)
+			}
+		})
+	}
+	// The rendered line's left part must be exactly what the spans describe.
+	line := m.renderTabLine(200)
+	if got := lipgloss.Width(line); got != 200 {
+		t.Errorf("line width = %d, want 200", got)
+	}
+}
+
+func TestTabAt(t *testing.T) {
+	m := newTestChromeBar(testTabs())
+	spans := m.tabSpans()
+	first, last := spans[0], spans[len(spans)-1]
+	badgeW := first.Start - 1
+	tests := []struct {
+		name   string
+		x      int
+		wantID string
+		wantOK bool
+	}{
+		{"first cell of first tab", first.Start, "@1", true},
+		{"last cell of first tab", first.End - 1, "@1", true},
+		{"separator after first tab", first.End, "", false},
+		{"first cell of second tab", spans[1].Start, "@2", true},
+		{"last cell of last tab", last.End - 1, "@4", true},
+		{"badge", badgeW - 1, "", false},
+		{"separator before first tab", first.Start - 1, "", false},
+		{"fill", last.End, "", false},
+		{"clock", 195, "", false},
+		{"negative", -1, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id, ok := m.tabAt(tt.x)
+			if id != tt.wantID || ok != tt.wantOK {
+				t.Errorf("tabAt(%d) = %q,%v want %q,%v", tt.x, id, ok, tt.wantID, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestClickTarget(t *testing.T) {
+	m := newTestChromeBar(testTabs())
+	x := m.tabSpans()[1].Start
+	tests := []struct {
+		name       string
+		msg        tea.MouseClickMsg
+		wantTarget string
+		wantAct    bool
+	}{
+		{"left on tab", tea.MouseClickMsg{X: x, Y: 1, Button: tea.MouseLeft}, "@2", true},
+		{"left on line 1 only refocuses", tea.MouseClickMsg{X: x, Y: 0, Button: tea.MouseLeft}, "", true},
+		{"left on fill only refocuses", tea.MouseClickMsg{X: 150, Y: 1, Button: tea.MouseLeft}, "", true},
+		{"wheel ignored", tea.MouseClickMsg{X: x, Y: 1, Button: tea.MouseWheelUp}, "", false},
+		{"right ignored", tea.MouseClickMsg{X: x, Y: 1, Button: tea.MouseRight}, "", false},
+		{"middle ignored", tea.MouseClickMsg{X: x, Y: 1, Button: tea.MouseMiddle}, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target, act := m.clickTarget(tt.msg)
+			if target != tt.wantTarget || act != tt.wantAct {
+				t.Errorf("got %q,%v want %q,%v", target, act, tt.wantTarget, tt.wantAct)
+			}
+			if !tt.wantAct {
+				if _, cmd := m.Update(tt.msg); cmd != nil {
+					t.Error("ignored click produced a command")
+				}
+			}
+		})
+	}
+}
+
+func TestChromeBarViewEnablesMouse(t *testing.T) {
+	if got := newTestChromeBar(testTabs()).View().MouseMode; got != tea.MouseModeCellMotion {
+		t.Errorf("MouseMode = %v, want cell motion", got)
+	}
+}
+
+func TestKeyPressNeverQuitsAndRefocuses(t *testing.T) {
+	m := newTestChromeBar(testTabs())
+	m.windowID = "" // focusAgentPane is a no-op, so no tmux calls are made
+	for _, key := range []tea.KeyPressMsg{
+		{Code: 'c', Mod: tea.ModCtrl},
+		{Code: 'q', Text: "q"},
+		{Code: tea.KeyEnter},
+	} {
+		t.Run(key.String(), func(t *testing.T) {
+			_, cmd := m.Update(key)
+			if cmd == nil {
+				t.Fatal("key press returned nil cmd, want refocus cmd")
+			}
+			if _, quit := cmd().(tea.QuitMsg); quit {
+				t.Error("key press quit the chrome bar")
+			}
+		})
+	}
+}

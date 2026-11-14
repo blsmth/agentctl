@@ -92,7 +92,7 @@ Layered per-agent settings (alerts, `auto_improve`, `cross_context`, dir, model,
 
 ### tui/
 
-Bubble Tea models. The chrome bar (`chrome_bar.go`) is an input-disabled pane that watches `state.json` via fsnotify and renders the two-row chrome (keybinds + tabs). Most other models run as their own `tea.Program` inside a `tmux display-popup` (launcher, wizards, confirmations, settings); a few full-screen browsers (agents, sessions, tickets) run as dedicated tmux windows.
+Bubble Tea models. The chrome bar (`chrome_bar.go`) is a mouse-enabled pane that watches `state.json` via fsnotify and renders the two-row chrome (keybinds + tabs). Left-clicking a tab on line 2 switches to that window and returns focus to the agent pane; clicks elsewhere only refocus the agent pane. Most other models run as their own `tea.Program` inside a `tmux display-popup` (launcher, wizards, confirmations, settings); a few full-screen browsers (agents, sessions, tickets) run as dedicated tmux windows.
 
 ## Notifications
 
