@@ -3,11 +3,15 @@ package hooks
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/buildid"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/pidfile"
+	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
@@ -22,6 +26,8 @@ const (
 type watchdogDeps struct {
 	now           func() time.Time
 	monitorAlive  func() bool
+	monitorStale  func() bool // optional; true when the live monitor runs an outdated binary
+	killMonitor   func()
 	sessionExists func() bool
 	lastAttempt   func() time.Time
 	markAttempt   func(time.Time)
@@ -37,14 +43,20 @@ const (
 	watchdogNoSession   watchdogResult = "no-session"
 	watchdogSpawned     watchdogResult = "spawned"
 	watchdogSpawnFailed watchdogResult = "spawn-failed"
+
+	watchdogReplacedStale watchdogResult = "replaced-stale"
 )
 
-// runWatchdog restarts a dead monitor. It is ordered cheapest-first: a live
+// runWatchdog restarts a dead monitor, and replaces a live one running a stale
+// binary (this upgrades monitors that predate self re-exec). It is ordered cheapest-first: a live
 // pidfile returns before anything else, and tmux is only consulted once the
 // monitor is dead and the rate limit allows an attempt.
 func runWatchdog(d watchdogDeps) watchdogResult {
 	if d.monitorAlive() {
-		return watchdogAlive
+		if d.monitorStale == nil || !d.monitorStale() {
+			return watchdogAlive
+		}
+		return replaceStale(d)
 	}
 	now := d.now()
 	if now.Sub(d.lastAttempt()) < watchdogMinInterval {
@@ -60,6 +72,52 @@ func runWatchdog(d watchdogDeps) watchdogResult {
 		return watchdogSpawnFailed
 	}
 	return watchdogSpawned
+}
+
+func replaceStale(d watchdogDeps) watchdogResult {
+	now := d.now()
+	if now.Sub(d.lastAttempt()) < watchdogMinInterval {
+		return watchdogRateLimited
+	}
+	if !d.sessionExists() {
+		return watchdogNoSession
+	}
+	d.markAttempt(now)
+	d.killMonitor()
+	if err := d.spawn(); err != nil {
+		return watchdogSpawnFailed
+	}
+	return watchdogReplacedStale
+}
+
+// staleMonitor reports whether the recorded monitor build is outdated relative
+// to hookExe. rec/recErr come from buildid.Read, monitorPID is the pid in
+// monitor.pid (0 if unreadable), and stat reads the current identity of a path.
+// A monitor is stale when monitor.build is unreadable, its pid disagrees with
+// monitor.pid, or it recorded the same path as hookExe but that file changed.
+// A different recorded path is never stale, so a dev build and an installed
+// build do not kill each other.
+func staleMonitor(rec buildid.Identity, recErr error, monitorPID int, hookExe string, stat func(string) (buildid.Identity, error)) bool {
+	if recErr != nil || rec.PID != monitorPID {
+		return true
+	}
+	if rec.Path != hookExe {
+		return false
+	}
+	cur, err := stat(hookExe)
+	if err != nil {
+		return false // mid-install; try again later
+	}
+	return !buildid.SameBuild(rec, cur)
+}
+
+func monitorIsStale(runtimeDir string) bool {
+	rec, recErr := buildid.Read(runtimeDir)
+	pid := 0
+	if data, err := os.ReadFile(filepath.Join(runtimeDir, monitorPidName)); err == nil {
+		pid, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+	}
+	return staleMonitor(rec, recErr, pid, selfpath.Path(), buildid.Stat)
 }
 
 // monitorWatchdog is called from frequent, non-per-tool hooks. It never
@@ -80,6 +138,8 @@ func monitorWatchdog() {
 	res := runWatchdog(watchdogDeps{
 		now:           time.Now,
 		monitorAlive:  func() bool { return pidfile.Validate(runtimeDir, monitorPidName) },
+		monitorStale:  func() bool { return monitorIsStale(runtimeDir) },
+		killMonitor:   func() { pidfile.Kill(runtimeDir, monitorPidName) },
 		sessionExists: func() bool { return tmux.HasSessionNamed(session) },
 		lastAttempt: func() time.Time {
 			if fi, err := os.Stat(stamp); err == nil {
@@ -101,6 +161,8 @@ func monitorWatchdog() {
 		},
 	})
 	switch res {
+	case watchdogReplacedStale:
+		logging.Log("monitor-watchdog: monitor binary stale, replaced it (session %s)", session)
 	case watchdogSpawned, watchdogSpawnFailed:
 		logging.Log("monitor-watchdog: monitor dead, session %s exists: %s", session, res)
 	}

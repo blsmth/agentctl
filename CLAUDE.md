@@ -53,6 +53,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 
 ### Behavior notes
 
+- **Monitor hot reload**: monitor-side changes go live within about one tick of `just install`, with no relaunch needed. The monitor records its binary identity in `<runtimeDir>/monitor.build` and re-execs itself (same PID) when the file changes (`monitor_reexec.go`); the hook watchdog replaces older monitors that never wrote that file. In-memory state resets on re-exec (see [docs/monitor-architecture.md](docs/monitor-architecture.md#hot-reload)).
 - **Notifications** are hook-driven (`internal/hooks/`), not monitor-driven. Settings: see [docs/configuration.md](docs/configuration.md#notifications).
 - **Auto-opening PRs**: when a dispatched agent finishes with a PR, the monitor opens it via `gh pr view --web` (config `open_pr_in_browser`), once per PR per monitor process.
 - **Worktree reclaim on SessionEnd**: on a terminal `SessionEnd` the hook runs `cleanup.Classify` against the window's own worktree and reclaims it (with its window) only when the verdict is `empty` or `landed`. `git worktree prune` always runs. Opt out with `auto_reclaim_worktree: false`.
