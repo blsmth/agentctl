@@ -74,6 +74,7 @@ func TestClassify(t *testing.T) {
 		{"real idle capture", idleReal, Idle},
 		{"spinner line with dialog", dialogSpinner, AwaitingInput},
 		{"background hint only", bgOnly, Busy},
+		{"hint quoted in prose", "  - the to run in background) hint\n  the `(ctrl+b ctrl+b (twice) to run in background)` hint\n✻ Cogitated for 46s · done 4:05 PM\n─────\n❯ \n─────\n", Idle},
 		{"short spinner", "· Thinking… (3s)\n──\n❯ \n──", Busy},
 		{"spinner deep in scrollback", "✽ Skedaddling… (1m 7s)\n" + strings.Repeat("output line\n", 20) + idleReal, Idle},
 		{"dialog", dialog, AwaitingInput},
