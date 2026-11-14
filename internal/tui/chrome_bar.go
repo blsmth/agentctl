@@ -287,10 +287,10 @@ func (m ChromeBarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		if msg.String() == "ctrl+c" {
-			return m, tea.Quit
-		}
-		return m, nil
+		// No key quits the bar: focus can land here (prefix+arrow,
+		// select-pane), and quitting would leave the window without chrome.
+		// Any key hands focus back to the agent pane instead.
+		return m, tabClickCmd(m.windowID, "")
 
 	case tea.MouseClickMsg:
 		return m, m.handleClick(msg)

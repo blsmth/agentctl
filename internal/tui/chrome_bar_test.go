@@ -986,3 +986,23 @@ func TestChromeBarViewEnablesMouse(t *testing.T) {
 		t.Errorf("MouseMode = %v, want cell motion", got)
 	}
 }
+
+func TestKeyPressNeverQuitsAndRefocuses(t *testing.T) {
+	m := newTestChromeBar(testTabs())
+	m.windowID = "" // focusAgentPane is a no-op, so no tmux calls are made
+	for _, key := range []tea.KeyPressMsg{
+		{Code: 'c', Mod: tea.ModCtrl},
+		{Code: 'q', Text: "q"},
+		{Code: tea.KeyEnter},
+	} {
+		t.Run(key.String(), func(t *testing.T) {
+			_, cmd := m.Update(key)
+			if cmd == nil {
+				t.Fatal("key press returned nil cmd, want refocus cmd")
+			}
+			if _, quit := cmd().(tea.QuitMsg); quit {
+				t.Error("key press quit the chrome bar")
+			}
+		})
+	}
+}
