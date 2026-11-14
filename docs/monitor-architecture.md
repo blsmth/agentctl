@@ -6,6 +6,18 @@ Technical reference for the agentctl monitor, hook system, transition handlers, 
 
 The monitor (`monitor.go`) is the heart of agentctl. It's a **Bubble Tea `tea.Model` running headless** — `tea.WithoutRenderer()` with stdin wired to `/dev/null`. It has `Init()`, `Update()`, and `View()` (returns `""`), but never renders to a terminal. Instead it uses Bubble Tea purely as a **message loop and timer scheduler**. A single monitor runs per project, guarded by a pidfile.
 
+## Hot Reload
+
+The monitor is long-lived, so it picks up a reinstalled binary on its own. At startup `cmdMonitor` resolves its executable (`os.Executable` plus `EvalSymlinks`) and writes its identity (path, dev, inode, size, mtime, pid) to `<runtimeDir>/monitor.build` (`internal/buildid`). At the top of each `processTick`, after the session identity and pidfile checks, `maybeReexec` stats that path. It calls `syscall.Exec` when the identity differs, the file is a regular executable, and its mtime is at least 1 second old (`exeChanged`). Exec keeps the PID, so `monitor.pid`, the registry entry and the pidfile identity check stay valid; deferred cleanup does not run. A failed stat does nothing, a failed exec is logged and retried at most every 30 seconds, and ephemeral binaries (under `os.TempDir`, e.g. `go run`) are skipped.
+
+Monitors that predate this mechanism never wrote `monitor.build`. The hook watchdog (`internal/hooks/watchdog.go`, run from SessionStart and UserPromptSubmit) treats a live monitor as stale when `monitor.build` is missing or unreadable, its pid differs from `monitor.pid`, or it records the same path as the running hook binary but that file's identity changed. A stale monitor is killed and respawned, under the same 30 second rate limit as dead-monitor respawn. A recorded path that differs from the hook binary's path is never stale, so a dev build and an installed build do not kill each other.
+
+Known consequences of a re-exec, since in-memory state resets:
+
+- The done-unseen check-mark glyph can reappear on windows that were already viewed.
+- Prometheus counters restart from zero.
+- A done edge landing during the roughly one second gap is not observed. The `hasPrev` gate in `detectAndFireTransitions` already prevents re-firing old edges.
+
 ## Two Message Loops
 
 The monitor runs on two interleaved timers:

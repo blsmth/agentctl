@@ -75,6 +75,12 @@ func Persisted(lookup func() (string, error), lookPath func(string) (string, err
 	return Quote(exe), nil
 }
 
+// IsEphemeral reports whether exe lives under the OS temp dir or a go-build
+// directory (go run / go test builds), i.e. a binary that will not persist.
+func IsEphemeral(exe string) bool {
+	return isEphemeral(exe, os.TempDir())
+}
+
 func isEphemeral(exe, tmpDir string) bool {
 	cands := []string{exe}
 	if r, err := filepath.EvalSymlinks(exe); err == nil {

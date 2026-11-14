@@ -169,8 +169,11 @@ type tickMsg struct{}
 
 // monitorModel is the Bubble Tea model for the headless background monitor.
 type monitorModel struct {
-	sessionID           string // tmux #{session_id} of the session this monitor serves ("" = unknown)
-	runtimeDir          string // runtime dir holding monitor.pid ("" disables the pidfile guard)
+	exeStart            exeIdentity                                 // recorded identity of this binary; zero Path disables hot reload
+	lastReexecTry       time.Time                                   // last re-exec attempt, to rate limit retries after failure
+	execFn              func(path string, argv, env []string) error // nil = syscall.Exec
+	sessionID           string                                      // tmux #{session_id} of the session this monitor serves ("" = unknown)
+	runtimeDir          string                                      // runtime dir holding monitor.pid ("" disables the pidfile guard)
 	windows             map[string]*instanceState
 	transitionTracker   *metrics.TransitionTracker // nil when metrics disabled
 	watcher             *watcher.ContentWatcher
@@ -337,6 +340,9 @@ func cmdMonitor() {
 	devNull, _ := os.Open(os.DevNull)
 	model := newMonitorModel(activeWindowFile, regEntry)
 	model.runtimeDir = runtimeDir
+	if id, ok := recordExeIdentity(runtimeDir); ok {
+		model.exeStart = id
+	}
 	model.sessionID = lookupSessionID(tmux.SessionID, 5, 200*time.Millisecond)
 	if model.sessionID == "" {
 		logging.Log("monitor: WARNING could not determine tmux session id for %q; falling back to name-based liveness (replaced-session protection disabled)", tmux.SessionName)
@@ -455,6 +461,9 @@ func (m *monitorModel) processTick() bool {
 		logging.Log("monitor: pidfile names another live monitor, exiting without saving state")
 		return false
 	}
+	// Re-exec on a new binary; returns only if no exec happened. Same PID, so
+	// the pidfile and registry entry stay valid.
+	m.maybeReexec(time.Now())
 
 	cfg := config.Load()
 	windows := tmux.ListWindows()
