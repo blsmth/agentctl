@@ -184,7 +184,7 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `alerts` | bool | `true` | Master switch for this agent's notifications. |
-| `alert_config.blocked` | bool | `true` | Notify on Working to Blocked (needs approval). |
+| `alert_config.blocked` | bool | `true` | Notify on Working to Blocked (needs approval, including a pending dispatch/bash approval popup). |
 | `alert_config.idle` | bool | `true` | Notify on Working to Idle (done). |
 | `alert_config.gone` | bool | `false` | Reserved; no notification uses it yet. |
 | `auto_improve` | bool | `false` | Launch a self-improvement session when a session ends. Global-only (a project may only switch it off). |

@@ -11,8 +11,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/approval"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/state"
 )
 
@@ -25,6 +27,45 @@ type completeHandler struct {
 	runHook     func(cmd string, env []string)
 	swapLabels  func(repo string, issueNumber int)
 	openPR      func(pr int, workDir string)
+	// approvalPending reports whether an approval popup is waiting on a
+	// human; nil means never. sleep is the retry delay seam.
+	approvalPending func() bool
+	sleep           func(time.Duration)
+}
+
+const (
+	approvalDeferRetries  = 6
+	approvalDeferInterval = 20 * time.Second
+)
+
+// approvalMarkersPending is the production approvalPending check.
+func approvalMarkersPending() bool {
+	return approval.Pending(paths.RuntimeDir(), time.Now())
+}
+
+// waitForApprovals returns true when it is fine to steal focus: no approval
+// popup is pending, or none remained after approvalDeferRetries waits. It runs
+// inside the per-completion goroutine, so it is bounded (about two minutes)
+// and adds no goroutine of its own.
+func (h *completeHandler) waitForApprovals(pr int) bool {
+	if h.approvalPending == nil {
+		return true
+	}
+	sleep := h.sleep
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+	for i := 0; h.approvalPending(); i++ {
+		if i >= approvalDeferRetries {
+			logging.Log("dispatch-complete: approval still pending, not opening PR #%d in browser", pr)
+			return false
+		}
+		if i == 0 {
+			logging.Log("dispatch-complete: approval popup pending, deferring open of PR #%d", pr)
+		}
+		sleep(approvalDeferInterval)
+	}
+	return true
 }
 
 // defaultHandler is the production implementation used by HandleComplete.
@@ -34,6 +75,8 @@ var defaultHandler = &completeHandler{
 	runHook:     runOnCompleteHook,
 	swapLabels:  swapDispatchLabels,
 	openPR:      openPRInBrowser,
+
+	approvalPending: approvalMarkersPending,
 }
 
 // openedPRs tracks PR numbers already opened in the browser during this
