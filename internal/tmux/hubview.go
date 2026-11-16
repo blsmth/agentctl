@@ -1,10 +1,11 @@
-// hubview.go holds the tmux primitives for the hub's LIVE agent pane (spike).
+// hubview.go holds the tmux primitives for the hub's live agent pane.
 //
 // The right-hand pane of the hub's list window runs a nested tmux client
 // attached to a GROUPED "viewer" session that shares windows with the agent's
-// home session. Agent panes are never joined or moved (see CapturePane for why
-// join-pane is forbidden): the viewer only *shares* the window, so killing the
-// viewer pane, the viewer session, or the whole hub leaves every agent alone.
+// home session. Agent panes are never joined or moved (join-pane is
+// forbidden: a joined pane dies with the hub): the viewer only *shares* the
+// window, so killing the viewer pane, the viewer session, or the whole hub
+// leaves every agent alone.
 package tmux
 
 import (

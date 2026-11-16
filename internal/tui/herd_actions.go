@@ -18,9 +18,6 @@ const (
 	herdCloseLabel = "✕"
 )
 
-// herdWheelStep is how many preview lines one wheel notch scrolls.
-const herdWheelStep = 3
-
 // herdLaunchStripEnv lists env vars inherited from the hub that would point a
 // launched agent at the hub's session/window instead of the target project.
 var herdLaunchStripEnv = []string{
@@ -207,7 +204,7 @@ func (m *HerdModel) herdMenuItems(idx int) []herdMenuItem {
 	g := m.groupOfLine(idx)
 	if m.lines[idx].kind == herdLineRow {
 		items = append(items,
-			herdMenuItem{"open", "enter"},
+			herdMenuItem{"focus", "enter"},
 			herdMenuItem{"close", "x"},
 			herdMenuItem{"home", "J"},
 		)
@@ -259,7 +256,7 @@ func (m *HerdModel) runMenuKey(key string) tea.Cmd {
 	m.menuOpen = false
 	switch key {
 	case "enter":
-		_, cmd := m.linkSelectedIntoHub()
+		_, cmd := m.focusLive()
 		return cmd
 	case "x":
 		m.startClose(line)

@@ -6,16 +6,12 @@ import (
 )
 
 func TestCapturePaneArgs(t *testing.T) {
-	plain := capturePaneArgs("s:@1", 50, false)
-	if slices.Contains(plain, "-e") {
-		t.Errorf("plain capture has -e: %v", plain)
+	args := capturePaneArgs("s:@1", 50)
+	if slices.Contains(args, "-e") {
+		t.Errorf("capture has -e: %v", args)
 	}
-	ansiArgs := capturePaneArgs("s:@1", 50, true)
-	if !slices.Contains(ansiArgs, "-e") {
-		t.Errorf("ansi capture missing -e: %v", ansiArgs)
-	}
-	if !slices.Contains(ansiArgs, "-S") || !slices.Contains(ansiArgs, "-50") {
-		t.Errorf("missing scrollback: %v", ansiArgs)
+	if !slices.Contains(args, "-S") || !slices.Contains(args, "-50") {
+		t.Errorf("missing scrollback: %v", args)
 	}
 }
 

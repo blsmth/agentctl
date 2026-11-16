@@ -1,7 +1,8 @@
 # Design: the herd view (central hub)
 
-Status: Phase 1 implemented; sidebar + main panel layout implemented;
-link-window (open-in-hub) and sidebar group dividers implemented
+Status: Phase 1 implemented; the live agent pane is the hub's only view
+(the capture-pane preview and link-window open-in-hub were removed);
+sidebar group dividers implemented
 Date: 2026-08-07 (Phase 1 landed 2026-08-13; sidebar + main panel landed
 2026-08-14; link-window + sidebar dividers landed 2026-08-14)
 
@@ -191,8 +192,8 @@ Shipped as: the session registry + `LastText`/`LastToolDetail` persistence
 view, jump primitives, `jump-next-blocked`, and the `prefix+g` / `prefix+b`
 keybinds (this PR).
 
-Phase 1.5 — done. Sidebar + main panel layout, replacing the flat single-list
-render for wide terminals. See "Sidebar + main panel layout" below.
+Phase 1.5 — done (since superseded by the live pane). Sidebar + main panel
+layout; see "Live agent pane" below.
 
 Phase 2 — polish. Per-directory fsnotify instead of poll; recently-closed /
 history rows; richer activity lines; a small "N blocked elsewhere" hint in each
@@ -202,141 +203,47 @@ Phase 3 — remote. Extend the registry with a host dimension and a read-only
 state endpoint per machine; the hub merges remote sessions as additional row
 sources. No change to the view model — remote is just more rows.
 
-## Sidebar + main panel layout
+## Live agent pane
 
-The flat single-list render (Phase 1) becomes a **sidebar + main panel**
-layout on any terminal at least `herdMinSplitWidth` (80) columns wide: the
-grouped session/agent list narrows into a left-hand sidebar, and a main panel
-on the right shows live detail for whatever the cursor is on. Below that
-width a sidebar is unusable — names and activity truncate into mush — so the
-hub falls back to the original full-width flat list unchanged.
+The hub window is two panes. The left pane runs the `HerdModel` list (the
+grouped session/agent list, narrow: roughly 30% of the window, clamped to
+44–56 columns by default). The right pane is a **live, fully interactive view
+of the selected agent**: a nested tmux client attached to a *grouped viewer
+session* that shares windows with the agent's home session
+(`internal/tmux/hubview.go`). There is no other mode: the earlier
+capture-pane preview panel, the `v` toggle, and the link-window "open in hub"
+flow were all removed in favour of this.
 
-**Built on `SplitPane`, not a hand-rolled two-column layout.** `SplitPane`
-(`internal/tui/splitpane.go`) already backed the Memory/Tickets/Sessions/
-Agents browsers' list-on-top-detail-on-bottom layout. Rather than write a
-second component, it gained an `Orientation` field: `OrientVertical` (the
-existing behaviour, and the zero value — so every prior caller is
-byte-for-byte unaffected) or `OrientHorizontal`, which places the list and
-detail panes side by side instead of stacked. `ListWidth`/`DetailWidth` give
-the column split (reusing `ListRatio`/`MinListRows` as column counts rather
-than row counts in this orientation); `ListHeight`/`DetailHeight` both
-return the full terminal height, since side-by-side panes share one height
-rather than dividing it. The hub is `SplitPane`'s first `OrientHorizontal`
-consumer.
+**Selection drives the pane.** Moving the cursor onto an agent row (keys,
+click, or a reload that moves the selection) hands that agent to the viewer
+once per selection change (`liveShowCmd`). Selecting a group header or
+placeholder, or having zero agents, leaves the pane on the last viewed agent;
+until an agent has been viewed the list shows a one-line hint. If the viewer
+fails to start, the error appears in the status line and the next selection
+change retries; there is no fallback view.
 
-**Every sidebar line is selectable, not just agent rows.** Landing the
-cursor on a session's group header (or its "no agents" placeholder) selects
-that *session* rather than any one agent, and the main panel shows a
-session-level summary instead of agent detail — project path, agent count,
-and the state-breakdown counts (blocked/working/done/idle) across the
-session's agents. This is new: Phase 1's flat list only ever let the cursor
-land on an agent row. `Enter` still only acts on an agent-row selection
-(jump); it's a no-op on a header/placeholder selection, since there's no
-single window to jump to.
+**Safety.** Agent panes are never joined or moved. `tmux join-pane` was tried
+early and rejected: a joined pane is destroyed when the hub dies and wrecks the
+agent's chrome geometry. The viewer only *shares* the window via a grouped
+session, so killing the viewer pane, the viewer session, or the whole hub
+leaves every agent untouched (verified on a private tmux server).
 
-**Main panel content for an agent row**: metadata (state, model, context %,
-cumulative input/output tokens, ticket number if any, activity line) above a
-live mirror of that agent's terminal, via a new `tmux.CapturePane(session,
-windowID, lines)` helper (`internal/tmux/hub.go`) wrapping `tmux capture-pane
--p -t <session>:<windowID>`, trimmed of the trailing blank lines tmux pads
-its output with. **Only ever called for the currently-selected row** — not
-once per row per tick — so the hub shells out to tmux at most once per ~1s
-poll tick, exactly like the jump primitives it already had. A dead pane
-(window closed between polls) surfaces as an inline "preview unavailable"
-message in the main panel, never a crash.
+**Focus.** `enter` (on an agent row) and `tab` move keyboard focus into the
+live pane; `prefix+o` returns to the list. The list pane's mouse clicks only
+select; they never open anything.
 
-**`tmux join-pane` was tried and explicitly rejected — do not retry it.** An
-early spike considered joining the live agent pane into the hub's main panel
-directly, instead of a read-only mirror. Tested on a throwaway server with a
-marker process to observe pane lifecycle across a join: the joined pane is
-**destroyed** when the hub session dies (`just relaunch`, `agentctl quit`,
-etc.) rather than returning home — `join-pane` moves a pane, it doesn't
-share it, so killing the window that now contains it kills the agent's real
-pane too. It also split the wrong pane in practice and left the agent's home
-window rendering as a full-screen chrome bar on return, wrecking the 45/4
-chrome geometry the per-session hooks maintain. `capture-pane` is read-only
-and non-destructive by construction, which is why it's the only primitive
-used here.
+**Resizing.** The split is only re-applied when the hub *window* width
+changes (compared against the last applied window width). A list-pane resize
+at an unchanged window width is the user dragging the divider: the dragged
+list width is remembered (clamped to 30 columns minimum, and so the live pane
+keeps at least 20) and preserved across later window resizes and selection
+changes rather than snapping back to the default ratio
+(`decideLiveResize`).
 
-**`tmux link-window` (Enter opens the agent inside the hub, instead of
-switching away) shipped as a follow-up.** Unlike `join-pane`, `link-window`
-genuinely is safe — a linked window is *shared* between the two sessions,
-not moved, so killing the hub session leaves the agent's window alive (tmux
-only destroys a window when its last link goes away). This was re-verified
-on a throwaway server (`tmux -L linktest`) specifically for this change:
-linking a window into a second session, then killing that session, left the
-source window and its pane's process running untouched. See "Link-window:
-open an agent inside the hub" below for the shipped design.
-
-## Link-window: open an agent inside the hub
-
-`Enter` on an agent row links that agent's window into the hub session and
-selects it — the caller lands in the real, fully interactive agent
-terminal, without leaving the hub session. This replaces `Enter`'s old
-behaviour of switching the client away to the agent's home session; that
-plain-jump behaviour is still available under a separate key (`J`) for
-workflows that specifically want the project's own session context.
-
-**Why link-window, not join-pane.** See "`tmux join-pane` was tried and
-explicitly rejected" above: `join-pane` moves a pane, so killing the window
-that now contains it kills the agent's real pane too. `link-window` shares a
-window between sessions instead of moving it — tmux only destroys a window
-when its *last* link goes away — so killing the hub session (`agentctl
-quit`, `just relaunch`) leaves a linked agent's window, and its process,
-completely untouched in its home session. Verified directly on a throwaway
-server (`tmux -L linktest`): link a window into a second session, kill that
-session, confirm the source window and its pane's process are still alive.
-
-**Command shape:**
-```
-tmux link-window -s <homeSession>:<windowID> -t <HubSessionName>:
-tmux select-window -t <HubSessionName>:<windowID>
-```
-A linked window keeps the *same* window ID in both sessions, which is what
-makes the operation idempotent: before linking, the hub checks whether that
-window ID is already present in its own window list
-(`tmux list-windows -t <hub> -F '#{window_id}'`) and just selects it if so.
-This check is required, not just defensive — verified on the throwaway
-server that `tmux link-window` itself is **not** idempotent: linking the
-same window a second time silently produces a duplicate entry in the
-destination session's window list rather than erroring or no-op'ing.
-
-**Unlinking (`u`)** detaches the selected agent's window from the hub,
-leaving it exactly as-is in its home session, via plain
-`tmux unlink-window -t <hub>:<windowID>` — **never** `-k`, which would
-destroy the window outright once the hub's link was its last one, killing a
-live agent. tmux itself refuses to unlink a window that is only linked to
-one session (`"window only linked to one session"`, verified on the
-throwaway server) — the hub treats that refusal as a normal, non-fatal
-outcome: it's surfaced as a dim inline message (not the red error styling
-used for real failures) and does not trigger a reload.
-
-**Link state in the sidebar.** An agent currently linked into the hub is
-marked with a dim `↗` glyph after its name. This is computed fresh every
-poll tick from `tmux.ListHubWindowIDs()` — tmux's own window list for the
-hub session — never from any state the hub stores itself, since a linked
-window can be unlinked, or simply vanish (its home window closed), at any
-time.
-
-**Returning to the list.** The herd-list window (the one running the
-`HerdModel` aggregator) is pinned to a stable tmux window name,
-`HerdListWindowName` (`"herd-list"`), specifically so it can be targeted
-reliably once other windows — linked-in agents — start sharing the hub
-session. `agentctl hub` (and therefore the `prefix+g` summon key, which is
-server-global and so live inside every window of the hub session too, linked
-ones included) now checks whether the caller is *already* attached to the
-hub session: if so, it selects the herd-list window instead of issuing a
-no-op `switch-client` to the session it's already in. That gives one
-consistent "back to the list" gesture from anywhere — including from inside
-a window linked in via `Enter`.
-
-**Safety invariants**, all enforced in `internal/tmux/hub.go`:
-- `LinkWindowIntoHub` refuses a window whose home session is the hub itself,
-  and refuses an empty window ID, before shelling out to tmux at all.
-- `UnlinkWindowFromHub` never passes `-k`.
-- A tmux failure (e.g. the target window vanished between the last poll and
-  the keypress) surfaces as an inline message in the hub view and triggers a
-  reload — never a panic, never left silently stale.
+**Returning to the list.** The herd-list window is pinned to the stable name
+`HerdListWindowName`; `agentctl hub` (and so the `prefix+g` summon key)
+selects it when the caller is already inside the hub session, otherwise it
+switches into the hub.
 
 ### Keymap (herd-list window)
 
@@ -344,18 +251,16 @@ a window linked in via `Enter`.
 |-----|--------|
 | `j` / `down` | Move cursor down (skips dividers) |
 | `k` / `up` | Move cursor up (skips dividers) |
-| `enter` | Link the selected agent's window into the hub and select it |
+| `enter` / `tab` | Focus the live pane (`enter` only on an agent row) |
+| `prefix+o` | Back to the list from the live pane |
 | `J` | Jump to the selected agent's window in its own home session |
-| `u` | Unlink the selected agent's window from the hub |
+| `n` / `x` | New agent in the selected group / close the selected agent |
 | `b` | Jump to the next blocked agent anywhere (home session) |
 | `r` | Refresh |
 | `q` / `esc` | Back to the previous tmux session (`switch-client -l`) |
 
-`prefix+g` (bound server-wide, live in every agentctl session including the
-hub) is the summon key: from outside the hub it switches into the herd-list
-window; from inside the hub — including from inside a window linked in via
-`Enter` — it selects the herd-list window, i.e. "back to the list" from
-anywhere.
+Right-click on a row opens a menu: focus, close, home, new. Right-click on a
+header offers new.
 
 ## Sidebar group dividers
 
@@ -466,31 +371,18 @@ Where things ended up:
   `StartHubSession`, `SwitchToHub`, `SwitchToSessionWindow`,
   `SwitchToLastSession`, `SelectHerdListWindow`, `CurrentSessionName`,
   `ListSessions`, `ListSessionsWithPaths` (the primary discovery source —
-  reads `#{session_path}` directly), `CapturePane` (the main panel's
-  read-only terminal mirror; see "Sidebar + main panel layout" above for why
-  it's `capture-pane`, not `join-pane`).
-- Link-window primitives (same file): `LinkWindowIntoHub`,
-  `UnlinkWindowFromHub`, `SelectHerdWindow`, `ListHubWindowIDs`, plus the
-  pure argument builders `linkWindowArgs`/`unlinkWindowArgs`/
-  `selectHubWindowArgs`/`hubWindowTarget` that make the exact tmux command
-  shapes table-driven testable without a live tmux binary. See "Link-window:
-  open an agent inside the hub" above.
+  reads `#{session_path}` directly), `CapturePane` (plain-text pane capture
+  for sweep/status; the hub itself no longer captures panes).
+- Live pane primitives: `internal/tmux/hubview.go` — `ShowLiveViewer`,
+  `HideLiveViewer`, `FocusLivePane`, `HubWindowWidth`, `ResizeLiveViewer`.
 - The view: `internal/tui/herd.go` (`HerdModel`), following the existing
-  full-screen browser pattern (`hud.go`, `agents.go`, `sessions.go`). Layout
-  branch: `useSplitLayout`/`renderFlat`/`renderSplit`. Sidebar rendering
-  (shared with the flat fallback, just narrower): `renderLine`,
-  `renderGroupHeader`, `renderRow`, `renderHerdDivider`. Cursor movement that
-  skips dividers: `moveCursor`/`nextSelectable`. Link/unlink/home-jump
-  actions: `linkSelectedIntoHub`, `unlinkSelected`, `jumpToSelectedHome`.
-  Link-state glyph: `rowIsLinked`, driven by `herdLinkedCmd` polling
-  `tmux.ListHubWindowIDs()` every tick. Main-panel content mapping (pure, no
-  TTY): `mainPanelContent`, `renderAgentDetail`, `renderGroupSummary`,
-  `stateBreakdown`.
-- The reusable split-layout component: `internal/tui/splitpane.go`
-  (`SplitPane`, `Orientation`/`OrientVertical`/`OrientHorizontal`,
-  `ListWidth`, `DetailWidth`). Used in `OrientVertical` (the original,
-  default) by the Memory/Tickets/Sessions/Agents browsers, and in
-  `OrientHorizontal` by the hub.
+  full-screen browser pattern (`hud.go`, `agents.go`, `sessions.go`). List
+  rendering: `renderList`, `renderLine`, `renderGroupHeader`, `renderRow`,
+  `renderHerdDivider`. Cursor movement that skips dividers:
+  `moveCursor`/`nextSelectable`. Live pane: `maybeShowCmd`/`liveShowCmd`,
+  `focusLive`, `decideLiveResize`. Home jump: `jumpToSelectedHome`.
+- `internal/tui/splitpane.go` (`SplitPane`) is used by the hub only for cursor
+  and scroll bookkeeping; the other browsers use it for their layouts.
 - Commands: `internal/cmd/hub.go` (`RunHub`, `RunHubView`,
   `RunJumpNextBlocked`), wired up in `cli.go` as `agentctl hub`,
   `agentctl hub-view` (hidden), `agentctl jump-next-blocked` (hidden).

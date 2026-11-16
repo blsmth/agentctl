@@ -22,15 +22,14 @@ func TestSelectionAfterClose(t *testing.T) {
 		name       string
 		ids        []string
 		closeID    string
-		live       bool
 		wantWindow string
 		wantHeader bool
 	}{
-		{"middle row selects next", []string{"@1", "@2", "@3"}, "@2", false, "@3", false},
-		{"last row selects previous", []string{"@1", "@2", "@3"}, "@3", false, "@2", false},
-		{"first row selects next", []string{"@1", "@2"}, "@1", false, "@2", false},
-		{"only row selects header", []string{"@1"}, "@1", false, "", true},
-		{"live mode follows new selection", []string{"@1", "@2", "@3"}, "@2", true, "@3", false},
+		{"middle row selects next", []string{"@1", "@2", "@3"}, "@2", "@3", false},
+		{"last row selects previous", []string{"@1", "@2", "@3"}, "@3", "@2", false},
+		{"first row selects next", []string{"@1", "@2"}, "@1", "@2", false},
+		{"only row selects header", []string{"@1"}, "@1", "", true},
+		{"live pane follows new selection", []string{"@1", "@2", "@3"}, "@2", "@3", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -38,7 +37,6 @@ func TestSelectionAfterClose(t *testing.T) {
 			m := NewHerdModel()
 			m.termWidth, m.termHeight = 120, 40
 			m.configureSplitPane()
-			m.live = tt.live
 			m.loaded = true
 			m.groups = closeTestGroups(tt.ids...)
 			m.rebuildLines()
@@ -71,7 +69,7 @@ func TestSelectionAfterClose(t *testing.T) {
 				t.Errorf("selection = %q/%q header=%v, want s1/%q header=%v",
 					got.selSession, got.selWindowID, got.selIsHeader, tt.wantWindow, tt.wantHeader)
 			}
-			if tt.live && !tt.wantHeader && got.liveShown != "s1|"+tt.wantWindow {
+			if !tt.wantHeader && got.liveShown != "s1|"+tt.wantWindow {
 				t.Errorf("liveShown = %q, want s1|%s", got.liveShown, tt.wantWindow)
 			}
 		})

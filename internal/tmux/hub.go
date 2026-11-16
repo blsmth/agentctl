@@ -123,33 +123,14 @@ func SwitchToSessionWindow(session, windowID string) error {
 
 // CapturePane returns the last `lines` lines of a tmux pane's content via
 // `tmux capture-pane -p -t <session>:<windowID>`, trimmed of trailing blank
-// lines. This is the herd hub's read-only mirror of an agent's terminal for
-// the main panel preview.
-//
-// Deliberately NOT `tmux join-pane`: an earlier spike joined the live pane
-// into the hub and found it destroys the agent — a pane joined into the hub
-// session is killed outright when the hub dies (`just relaunch`, `agentctl
-// quit`), rather than returning home, and it also wrecks the source window's
-// chrome geometry on return. capture-pane is read-only and non-destructive,
-// so it's safe to call on every poll tick. See docs/herd-view-design.md.
+// lines. Plain text only: sweep, status and pane classification pattern-match
+// on it. Read-only and non-destructive.
 //
 // Returns an error if the pane is gone (e.g. the window closed between
 // polls) — callers must render a placeholder, never propagate a crash.
 func CapturePane(session, windowID string, lines int) (string, error) {
-	return capturePane(session, windowID, lines, false)
-}
-
-// CapturePaneANSI is CapturePane with `-e`, preserving SGR escapes so the hub
-// preview keeps the agent's colors. Only the hub renders this; sweep, status
-// and pane classification pattern-match on plain text and must use
-// CapturePane.
-func CapturePaneANSI(session, windowID string, lines int) (string, error) {
-	return capturePane(session, windowID, lines, true)
-}
-
-func capturePane(session, windowID string, lines int, ansiEscapes bool) (string, error) {
 	target := sessionWindowTarget(session, windowID)
-	args := capturePaneArgs(target, lines, ansiEscapes)
+	args := capturePaneArgs(target, lines)
 	out, err := exec.Command("tmux", args...).Output()
 	if err != nil {
 		return "", fmt.Errorf("capture-pane %s: %w", target, err)
@@ -157,13 +138,9 @@ func capturePane(session, windowID string, lines int, ansiEscapes bool) (string,
 	return trimTrailingBlankLines(string(out)), nil
 }
 
-// capturePaneArgs builds the capture-pane argument list; -e keeps escapes.
-func capturePaneArgs(target string, lines int, ansiEscapes bool) []string {
-	args := []string{"capture-pane", "-p"}
-	if ansiEscapes {
-		args = append(args, "-e")
-	}
-	args = append(args, "-t", target)
+// capturePaneArgs builds the capture-pane argument list.
+func capturePaneArgs(target string, lines int) []string {
+	args := []string{"capture-pane", "-p", "-t", target}
 	if lines > 0 {
 		args = append(args, "-S", "-"+strconv.Itoa(lines))
 	}
@@ -199,156 +176,12 @@ func HubSessionExists() bool {
 	return exec.Command("tmux", "has-session", "-t", HubSessionName).Run() == nil
 }
 
-// ── Link-window: open an agent inside the hub ───────────────────────────────
-//
-// tmux link-window is the safe primitive for "open this agent without
-// leaving the hub": a linked window is *shared* between the two sessions,
-// not moved, so killing the hub session (`agentctl quit`, `just relaunch`)
-// leaves the agent's process alive and its home window intact — tmux only
-// destroys a window when its last link goes away. This was verified on a
-// throwaway server (`tmux -L linktest`): linking a window into a second
-// session, then killing that session, left the source window and its pane's
-// process running untouched. See docs/herd-view-design.md and the rejected
-// `join-pane` alternative documented in internal/tmux/hub.go's CapturePane.
-
-// hubWindowTarget builds the session-qualified target for a window inside
-// the hub session ("agentctl-hub:@id"). Factored out so link/unlink/select
-// all build the exact same target string, and so that construction is
-// testable without shelling out to tmux.
-func hubWindowTarget(windowID string) string {
-	return sessionWindowTarget(HubSessionName, windowID)
-}
-
-// linkWindowArgs builds the `tmux link-window` argument list that links a
-// window from its home session into the hub session: `-s <home>:<id>` (the
-// source, kept alive) `-t <hub>:` (a *session* target with no window index,
-// so tmux keeps the window's own ID rather than renumbering it into a slot).
-func linkWindowArgs(homeSession, windowID string) []string {
-	return []string{"link-window", "-s", sessionWindowTarget(homeSession, windowID), "-t", HubSessionName + ":"}
-}
-
-// unlinkWindowArgs builds the `tmux unlink-window` argument list for
-// detaching a window from the hub session. Deliberately never includes `-k`:
-// unlink-window -k destroys the window outright once it has no other link,
-// which would kill a live agent whose only link was the hub's. Plain
-// unlink-window instead leaves the window exactly as-is in every session it
-// remains linked to (its actual home).
-func unlinkWindowArgs(windowID string) []string {
-	return []string{"unlink-window", "-t", hubWindowTarget(windowID)}
-}
-
-// selectHubWindowArgs builds the `tmux select-window` argument list for
-// selecting a window already present in the hub session (used both after a
-// successful link and as the idempotent no-op path when the window is
-// already linked in).
-func selectHubWindowArgs(windowID string) []string {
-	return []string{"select-window", "-t", hubWindowTarget(windowID)}
-}
-
-// parseWindowIDList parses the output of
-// `tmux list-windows -F '#{window_id}'` into a set of window IDs, skipping
-// blank lines. Mirrors parseSessionList's shape for the same reason: pure,
-// no I/O, directly table-driven testable.
-func parseWindowIDList(raw string) map[string]bool {
-	ids := make(map[string]bool)
-	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			ids[line] = true
-		}
-	}
-	return ids
-}
-
-// ListHubWindowIDs returns the set of tmux window IDs currently present in
-// the hub session — the herd-list window itself plus any agent windows
-// linked in via LinkWindowIntoHub. This is the tmux-is-source-of-truth check
-// used both for LinkWindowIntoHub's idempotency and for the sidebar's
-// link-state glyph: a window can be unlinked or vanish at any time, so the
-// hub never trusts stored state about what's linked, only this live query.
-// Returns an empty (non-nil) set if the hub session is gone or the query
-// fails — callers treat "nothing linked" the same as "couldn't tell",
-// which is the safe default (never claim something is linked when it isn't
-// known to be).
-func ListHubWindowIDs() map[string]bool {
-	out, err := exec.Command("tmux", "list-windows", "-t", HubSessionName, "-F", "#{window_id}").Output()
-	if err != nil {
-		return map[string]bool{}
-	}
-	return parseWindowIDList(string(out))
-}
-
-// LinkWindowIntoHub links an agent's window from its home session into the
-// hub session and selects it, putting the caller inside the real,
-// interactive agent terminal without leaving the hub session.
-//
-// Idempotent: a linked window keeps the *same* window ID in both sessions,
-// so before linking this checks ListHubWindowIDs (tmux itself, not any
-// cached state) and just selects the window if it's already there. This
-// check is required, not just defensive: verified on a throwaway server
-// that tmux's own link-window is NOT idempotent on repeated calls — linking
-// the same window a second time silently produces a duplicate entry in the
-// destination session's window list rather than erroring or no-op'ing.
-//
-// Refuses to link a window whose home session is the hub itself (there is
-// nothing to "bring in" — the window already belongs to the hub) or an
-// empty window ID.
-func LinkWindowIntoHub(homeSession, windowID string) error {
-	if homeSession == HubSessionName {
-		return fmt.Errorf("refusing to link a window from the hub session itself")
-	}
-	if windowID == "" {
-		return fmt.Errorf("empty window id")
-	}
-
-	if ListHubWindowIDs()[windowID] {
-		return SelectHerdWindow(windowID)
-	}
-
-	args := linkWindowArgs(homeSession, windowID)
-	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("link-window %s -> %s: %s: %w", args[2], args[4], string(out), err)
-	}
-	return SelectHerdWindow(windowID)
-}
-
-// UnlinkWindowFromHub unlinks an agent's window from the hub session,
-// leaving it exactly as-is in its home session. Deliberately never passes
-// `-k` (see unlinkWindowArgs) — that would destroy the window once the hub's
-// link was its last one, killing a live agent.
-//
-// tmux itself refuses to unlink a window that is only linked to one session
-// (message: "window only linked to one session") — verified on a throwaway
-// server. Callers must treat that refusal as an expected, non-fatal outcome
-// (there was nothing to unlink) rather than a real failure; this function
-// still returns the error so the caller can decide how to present it, but
-// does no special-casing of the message itself.
-func UnlinkWindowFromHub(windowID string) error {
-	args := unlinkWindowArgs(windowID)
-	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("unlink-window %s: %s: %w", args[2], string(out), err)
-	}
-	return nil
-}
-
-// SelectHerdWindow selects a window (by tmux window ID) inside the hub
-// session — used both by LinkWindowIntoHub (after linking, or as the
-// idempotent no-op path) and directly by anything that already knows a
-// window is linked in.
-func SelectHerdWindow(windowID string) error {
-	args := selectHubWindowArgs(windowID)
-	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("select-window %s: %s: %w", args[2], string(out), err)
-	}
-	return nil
-}
-
 // SelectHerdListWindow selects the hub's own herd-list window (the one
 // running the HerdModel aggregator) by its stable name. This is the "back to
 // the list" primitive: `agentctl hub` calls it when the caller is already
 // inside the hub session (see SwitchToHub), so the summon key works as a
 // consistent "take me to the list" gesture from anywhere — including from
-// inside a window linked in via LinkWindowIntoHub.
+// inside the live hub view.
 func SelectHerdListWindow() error {
 	target := sessionWindowTarget(HubSessionName, HerdListWindowName)
 	cmd := exec.Command("tmux", "select-window", "-t", target)
@@ -502,7 +335,7 @@ func StartHubSession() error {
 // SwitchToHub creates the hub session if it doesn't already exist, then
 // gets the caller to the herd-list window: `select-window` if the caller is
 // already attached to the hub session itself (e.g. the summon key pressed
-// from inside a window linked in via LinkWindowIntoHub — see
+// from inside the live hub view — see
 // SelectHerdListWindow), `switch-client` if attached to a different tmux
 // session, or `attach-session` if not inside any tmux client at all (e.g.
 // summoning the hub from outside tmux entirely).

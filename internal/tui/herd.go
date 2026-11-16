@@ -25,28 +25,14 @@ const herdPollInterval = 1 * time.Second
 // above; blank(1) + error-line(1) + hint-bar(1) below.
 const herdChromeRows = 7
 
-// herdMinSplitWidth is the terminal width below which the sidebar + main
-// panel layout is unusable (a sidebar narrower than this truncates every
-// agent name into mush). Below it the hub falls back to the original
-// full-width flat list.
-const herdMinSplitWidth = 80
-
-// herdMinSidebarWidth / herdMinMainPanelWidth are the SplitPane minimums for
-// the sidebar and main panel columns in split mode.
+// herdSidebarRatio is the fraction of content width the list column takes
+// (see herdLiveLeftCols); herdMinSidebarWidth / herdMinMainPanelWidth are the
+// SplitPane minimums, which here only feed its cursor bookkeeping.
 const (
+	herdSidebarRatio      = 0.3
 	herdMinSidebarWidth   = 28
 	herdMinMainPanelWidth = 40
 )
-
-// herdSidebarRatio is the fraction of content width given to the sidebar in
-// split mode.
-const herdSidebarRatio = 0.3
-
-// herdPreviewLines is how many lines of an agent's terminal CapturePane
-// requests. The main panel only ever displays as many as fit its height, but
-// requesting a generous fixed amount keeps CapturePane's argument building
-// simple and avoids re-shelling out if the panel is resized slightly taller.
-const herdPreviewLines = 200
 
 // herdMaxNameWidth caps how much of a row's width the instance name can
 // claim, even in the wide flat-list fallback, so the activity line always
@@ -188,24 +174,6 @@ type herdLoadedMsg struct {
 	err    error
 }
 
-// herdCapturedMsg carries the result of an async tmux.CapturePane() call for
-// whichever agent was selected at the time it was fired. session/windowID
-// let the receiver discard a stale result that arrives after the user has
-// already navigated to a different row.
-type herdCapturedMsg struct {
-	session  string
-	windowID string
-	content  string
-	err      error
-}
-
-// herdLinkedMsg carries the result of an async tmux.ListHubWindowIDs() call
-// — the current set of window IDs present in the hub session, used to mark
-// which agent rows are open (linked in) in the sidebar.
-type herdLinkedMsg struct {
-	ids map[string]bool
-}
-
 // ── Flattened line model ─────────────────────────────────────────────────────
 
 // herdLineKind distinguishes the three kinds of renderable lines in the
@@ -232,24 +200,21 @@ type herdLine struct {
 // ── HerdModel ────────────────────────────────────────────────────────────────
 
 // HerdModel is the full-screen Bubble Tea model for the herd hub: the
-// read-only, cross-session aggregator view that runs as the sole window of
-// the agentctl-hub tmux session. Data is loaded from internal/herd, which
-// does all the registry/tmux/state.json I/O; this model only renders it and
-// handles navigation + jump.
+// cross-session aggregator that runs as the sole window of the agentctl-hub
+// tmux session. Data is loaded from internal/herd, which does all the
+// registry/tmux/state.json I/O; this model renders the list and drives the
+// live agent pane.
 //
-// Layout: a sidebar (session/agent list) + main panel (selected agent's live
-// preview + metadata, or a session summary when a group header is selected),
-// built on SplitPane in OrientHorizontal mode. Below herdMinSplitWidth this
-// degrades to the original full-width flat list — a sidebar that narrow is
-// unusable, not a design worth defending.
+// Layout: the hub window's left column is this list (session/agent rows); the
+// right column is a nested tmux client on a grouped viewer session showing the
+// selected agent live (see internal/tmux/hubview.go). There is no other view.
 //
-// Both layouts share one selection model: every line in m.lines (group
-// headers, placeholders, and agent rows alike) is selectable. Landing on a
-// row shows that agent's detail; landing on a header or placeholder shows
-// its session's summary. Selection is tracked by SplitPane's cursor, and
-// resolved after each reload by (session, windowID) — or by session alone
-// for a header — rather than by raw index, so a reorder from a state change
-// never moves the cursor out from under the user.
+// Every line in m.lines (group headers, placeholders, and agent rows alike) is
+// selectable. Selection is tracked by SplitPane's cursor, and resolved after
+// each reload by (session, windowID) — or by session alone for a header —
+// rather than by raw index, so a reorder from a state change never moves the
+// cursor out from under the user. Only agent rows drive the live pane: a
+// header or placeholder leaves the last viewed agent on screen.
 type HerdModel struct {
 	termWidth  int
 	termHeight int
@@ -257,17 +222,13 @@ type HerdModel struct {
 	groups []herd.Group
 	lines  []herdLine
 
-	// splitPane owns cursor position, scrolling, and (in split-layout mode)
-	// the sidebar/main-panel rendering. HerdModel drives it via
-	// SetListContent/SetDetailContent/SetSize/Cursor/SetCursor/View, but
-	// does NOT delegate key handling to SplitPane.Update(): unlike the
-	// other browsers' flat row lists, herd's sidebar mixes selectable
-	// headers and rows, and Enter's jump behaviour only applies to rows —
-	// both are simpler to express directly in handleKey/moveCursor below.
+	// splitPane owns cursor position and scrolling bookkeeping. HerdModel does
+	// NOT delegate key handling to SplitPane.Update(): the list mixes
+	// selectable headers and rows, which is simpler to express directly in
+	// handleKey/moveCursor below.
 	splitPane SplitPane
 
-	// scrollOffset is the flat-layout fallback's own vertical scroll
-	// position (split mode uses splitPane's internal listScroll instead).
+	// scrollOffset is the list's vertical scroll position.
 	scrollOffset int
 
 	// selSession/selWindowID/selIsHeader identify the selection by
@@ -279,30 +240,12 @@ type HerdModel struct {
 	selWindowID string
 	selIsHeader bool
 
-	// preview/previewErr hold the last tmux.CapturePane() result for the
-	// currently selected agent row. Populated asynchronously by
-	// herdCaptureCmd; never fetched for anything but the selected row.
-	preview    string
-	previewErr string
-	// previewUp is how many lines the preview is scrolled up from the
-	// bottom; reset whenever the selected agent changes.
-	previewUp int
-
-	// linkedWindowIDs is the set of tmux window IDs currently present in the
-	// hub session (herdLinkedCmd → tmux.ListHubWindowIDs), refreshed every
-	// poll tick. Never stored/cached beyond that — tmux is the source of
-	// truth for which agents are open in the hub, since a linked window can
-	// be unlinked or vanish at any time. Drives the sidebar's link-state
-	// glyph (see rowIsLinked).
-	linkedWindowIDs map[string]bool
-
 	loaded  bool
 	loadErr error
 	jumpErr string // a real failure: styled as an error, triggers a refresh
 
-	// infoMsg is a benign, non-error inline message — e.g. tmux's expected
-	// refusal to unlink a window that was never linked in. Rendered
-	// alongside jumpErr but without the error styling; see renderFooter.
+	// infoMsg is a benign, non-error inline message. Rendered alongside
+	// jumpErr but without the error styling; see renderFooter.
 	infoMsg string
 
 	// confirmSession/confirmWindow identify the row awaiting inline close
@@ -321,20 +264,20 @@ type HerdModel struct {
 	menuOpen bool
 	menuLine int
 
-	// live is the spike toggle: when on, the right side of the hub window is a
-	// nested tmux client on a grouped viewer session (tmux.ShowLiveViewer)
-	// instead of the capture-pane preview. liveShown is the "session|window"
-	// last handed to the viewer, so selection changes (not every tick) drive it.
-	live      bool
+	// liveShown is the "session|window" last handed to the viewer, so
+	// selection changes (not every tick) drive it; a failed attempt is retried
+	// only once the selection changes. liveLeft/liveRight are the column split
+	// of the hub window (list column / live pane).
 	liveShown string
 	liveLeft  int
 	liveRight int
 
-	// autoLive asks the model to switch live mode on after the first load
-	// that yields a selectable agent row (see WithAutoLive); autoLiveDone
-	// makes that a one-shot so `v` off stays off.
-	autoLive     bool
-	autoLiveDone bool
+	// liveWinWidth is the hub window width the split was last applied for;
+	// a list-pane resize at the same window width is a divider drag, not a
+	// window resize. userLeft is the list width the user dragged to (0 = none),
+	// preserved across window resizes.
+	liveWinWidth int
+	userLeft     int
 
 	quitting bool
 }
@@ -342,9 +285,13 @@ type HerdModel struct {
 // NewHerdModel creates the hub aggregator model. Data is loaded
 // asynchronously via Init().
 func NewHerdModel() HerdModel {
+	const defaultWidth = 120
+	left, right, _ := herdLiveSplit(defaultWidth)
 	return HerdModel{
-		termWidth:  120,
+		termWidth:  defaultWidth,
 		termHeight: 40,
+		liveLeft:   left,
+		liveRight:  right,
 		splitPane: SplitPane{
 			Orientation:   OrientHorizontal,
 			ListRatio:     herdSidebarRatio,
@@ -354,17 +301,9 @@ func NewHerdModel() HerdModel {
 	}
 }
 
-// WithAutoLive returns the model configured to start in live mode as soon as
-// an agent row is selectable. If the viewer fails to start, the model falls
-// back to the preview layout and shows the error in the status line.
-func (m HerdModel) WithAutoLive() HerdModel {
-	m.autoLive = true
-	return m
-}
-
 // Init kicks off the first load and starts the poll loop.
 func (m HerdModel) Init() tea.Cmd {
-	return tea.Batch(herdLoadCmd(), herdTickCmd(), herdLinkedCmd())
+	return tea.Batch(herdLoadCmd(), herdTickCmd())
 }
 
 func herdTickCmd() tea.Cmd {
@@ -378,37 +317,14 @@ func herdLoadCmd() tea.Cmd {
 	}
 }
 
-// herdCaptureCmd asynchronously captures the given agent's pane. Only ever
-// called for the currently-selected agent — never for every row — so the
-// hub shells out to tmux at most once per poll tick, not once per row.
-func herdCaptureCmd(session, windowID string) tea.Cmd {
-	return func() tea.Msg {
-		content, err := tmux.CapturePaneANSI(session, windowID, herdPreviewLines)
-		return herdCapturedMsg{session: session, windowID: windowID, content: content, err: err}
-	}
-}
-
-// herdLinkedCmd asynchronously fetches the current set of window IDs linked
-// into the hub session. Cheap (a single `tmux list-windows`), so unlike
-// herdCaptureCmd this runs every tick regardless of what's selected — it
-// drives every row's link-state glyph, not just the selected one.
-func herdLinkedCmd() tea.Cmd {
-	return func() tea.Msg {
-		return herdLinkedMsg{ids: tmux.ListHubWindowIDs()}
-	}
-}
-
-// maybeCaptureCmd fires herdCaptureCmd for whatever agent is currently
-// selected, or returns nil if nothing selectable is an agent row (a header,
-// placeholder, or empty hub is selected instead).
-func (m *HerdModel) maybeCaptureCmd() tea.Cmd {
+// maybeShowCmd hands the selected agent to the live viewer, or returns nil if
+// nothing selectable is an agent row (a header, placeholder, or empty hub is
+// selected): the live pane then keeps showing the last viewed agent.
+func (m *HerdModel) maybeShowCmd() tea.Cmd {
 	if m.selIsHeader || m.selSession == "" || m.selWindowID == "" {
 		return nil
 	}
-	if m.live {
-		return m.liveShowCmd()
-	}
-	return herdCaptureCmd(m.selSession, m.selWindowID)
+	return m.liveShowCmd()
 }
 
 // Update handles Bubble Tea messages.
@@ -418,39 +334,54 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
 		m.configureSplitPane()
-		if m.live {
-			return m, herdLiveResizeCmd(m.termWidth)
+		return m, herdProbeCmd(msg.Width)
+
+	case herdProbeMsg:
+		d := decideLiveResize(msg.win, m.liveWinWidth, m.liveLeft, msg.pane, m.userLeft)
+		m.liveWinWidth, m.userLeft = d.winWidth, d.userLeft
+		if d.err != nil {
+			m.jumpErr = d.err.Error()
 		}
-		return m, nil
+		if d.left > 0 {
+			m.liveLeft, m.liveRight = d.left, d.right
+			m.configureSplitPane()
+		}
+		if !d.apply {
+			return m, nil
+		}
+		left, right := d.left, d.right
+		return m, func() tea.Msg {
+			return herdLiveSizedMsg{left: left, right: right, err: tmux.ResizeLiveViewer(right)}
+		}
 
 	case herdTickMsg:
-		return m, tea.Batch(herdLoadCmd(), herdTickCmd(), herdLinkedCmd(), m.maybeCaptureCmd())
+		show := m.maybeShowCmd()
+		return m, tea.Batch(herdLoadCmd(), herdTickCmd(), show)
 
 	case herdLiveMsg:
-		if !m.live {
-			return m, nil // toggled off while the viewer was starting
-		}
 		if msg.err != nil {
-			return m.liveFallback(msg.err)
+			// No fallback: surface the error; the next selection change retries.
+			m.jumpErr = msg.err.Error()
+			return m, func() tea.Msg {
+				_ = tmux.HideLiveViewer() // drop any half-built viewer
+				return nil
+			}
 		}
+		m.jumpErr = ""
 		m.liveLeft, m.liveRight = msg.left, msg.right
+		if msg.win > 0 {
+			m.liveWinWidth = msg.win
+		}
 		m.configureSplitPane()
 		return m, nil
 
 	case herdLiveSizedMsg:
-		if !m.live {
-			return m, nil
-		}
 		if msg.err != nil {
 			m.jumpErr = msg.err.Error()
 			return m, nil
 		}
 		m.liveLeft, m.liveRight = msg.left, msg.right
 		m.configureSplitPane()
-		return m, nil
-
-	case herdLinkedMsg:
-		m.linkedWindowIDs = msg.ids
 		return m, nil
 
 	case herdLaunchedMsg:
@@ -475,7 +406,7 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.closePending.killed = true
 		}
 		m.infoMsg = "closed " + msg.name + " (worktree kept; see agentctl sweep)"
-		return m, tea.Batch(herdLoadCmd(), herdLinkedCmd())
+		return m, herdLoadCmd()
 
 	case herdLoadedMsg:
 		m.loaded = true
@@ -485,26 +416,12 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rebuildLines()
 			m.applyClosePending()
 			m.resolveSelection()
-			m.maybeAutoLive()
 		}
-		return m, m.maybeCaptureCmd()
-
-	case herdCapturedMsg:
-		if msg.session == m.selSession && msg.windowID == m.selWindowID {
-			m.preview = msg.content
-			m.previewErr = ""
-			if msg.err != nil {
-				m.previewErr = msg.err.Error()
-				m.preview = ""
-			}
-		}
-		return m, nil
+		show := m.maybeShowCmd()
+		return m, show
 
 	case tea.MouseClickMsg:
 		return m.handleClick(msg)
-
-	case tea.MouseWheelMsg:
-		return m.handleWheel(msg)
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -556,31 +473,25 @@ func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "j", "down":
 		m.moveCursor(1)
-		return *m, m.maybeCaptureCmd()
+		show := m.maybeShowCmd()
+		return *m, show
 
 	case "k", "up":
 		m.moveCursor(-1)
-		return *m, m.maybeCaptureCmd()
-
-	case "pgup", "ctrl+u":
-		m.previewUp += 10
-		return *m, nil
-
-	case "pgdown", "ctrl+d":
-		m.previewUp -= 10
-		if m.previewUp < 0 {
-			m.previewUp = 0
-		}
-		return *m, nil
+		show := m.maybeShowCmd()
+		return *m, show
 
 	case "enter":
-		return m.linkSelectedIntoHub()
+		if m.selectedRow() == nil {
+			return *m, nil
+		}
+		return m.focusLive()
+
+	case "tab":
+		return m.focusLive()
 
 	case "J":
 		return m.jumpToSelectedHome()
-
-	case "u":
-		return m.unlinkSelected()
 
 	case "b":
 		return m.jumpToNextBlocked()
@@ -589,17 +500,6 @@ func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.jumpErr = ""
 		m.infoMsg = ""
 		return *m, herdLoadCmd()
-
-	case "v":
-		return m.toggleLive()
-
-	case "tab":
-		if m.live {
-			if err := tmux.FocusLivePane(); err != nil {
-				m.jumpErr = err.Error()
-			}
-		}
-		return *m, nil
 	}
 	return *m, nil
 }
@@ -608,6 +508,7 @@ func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // along with the column split that was applied.
 type herdLiveMsg struct {
 	key         string
+	win         int // hub window width the split was computed for
 	left, right int
 	err         error
 }
@@ -628,8 +529,8 @@ const (
 	herdLiveMinRight = 20
 )
 
-// herdLiveLeftCols is the width of the list column in live mode for a hub
-// window totalWidth columns wide.
+// herdLiveLeftCols is the width of the list column for a hub window
+// totalWidth columns wide.
 func herdLiveLeftCols(totalWidth int) int {
 	left := int(float64(totalWidth-4)*herdSidebarRatio) + 4
 	if left < herdLiveMinLeft {
@@ -641,16 +542,82 @@ func herdLiveLeftCols(totalWidth int) int {
 	return left
 }
 
-// herdLiveSplit splits a window totalWidth columns wide into the list column
-// and the live pane (one column goes to the pane border). err is set when the
-// live pane would be unusably narrow.
+// herdLiveUserMinLeft is the narrowest list column a mouse drag may leave.
+const herdLiveUserMinLeft = 30
+
+// clampUserLeft bounds a user-chosen list width to [herdLiveUserMinLeft,
+// totalWidth-herdLiveMinRight-1] so the live pane always stays usable.
+func clampUserLeft(left, totalWidth int) int {
+	maxLeft := totalWidth - herdLiveMinRight - 1
+	if left > maxLeft {
+		left = maxLeft
+	}
+	if left < herdLiveUserMinLeft {
+		left = herdLiveUserMinLeft
+	}
+	return left
+}
+
+// herdLiveSplit is herdLiveSplitFor with no user-chosen width.
 func herdLiveSplit(totalWidth int) (left, right int, err error) {
+	return herdLiveSplitFor(totalWidth, 0)
+}
+
+// herdLiveSplitFor splits a window totalWidth columns wide into the list
+// column and the live pane (one column goes to the pane border). userLeft, when
+// positive, is the list width the user dragged the divider to and replaces the
+// computed default (clamped). err is set when the live pane would be unusably
+// narrow.
+func herdLiveSplitFor(totalWidth, userLeft int) (left, right int, err error) {
 	left = herdLiveLeftCols(totalWidth)
+	if userLeft > 0 {
+		left = clampUserLeft(userLeft, totalWidth)
+	}
 	right = totalWidth - left - 1
 	if right < herdLiveMinRight {
 		return left, right, fmt.Errorf("terminal too narrow for live pane")
 	}
 	return left, right, nil
+}
+
+// herdResizeDecision is the outcome of decideLiveResize.
+type herdResizeDecision struct {
+	apply    bool // tmux must resize the live pane to right columns
+	left     int  // list column width now in effect (0 = unchanged)
+	right    int
+	userLeft int // remembered user-chosen list width (0 = none)
+	winWidth int // hub window width now considered applied
+	err      error
+}
+
+// decideLiveResize decides what a list-pane resize means. winWidth is the hub
+// window's current width (0 = unknown), lastWin the window width last applied,
+// appliedLeft the list width last applied, paneWidth the list pane's width as
+// the TUI just saw it, userLeft the remembered user-chosen list width.
+//
+//   - window width changed: re-apply the split, keeping userLeft if set;
+//   - window width unchanged and the pane differs from what we applied: the
+//     user dragged the divider; remember it (clamped) and leave tmux alone
+//     unless clamping moved it;
+//   - otherwise nothing.
+func decideLiveResize(winWidth, lastWin, appliedLeft, paneWidth, userLeft int) herdResizeDecision {
+	d := herdResizeDecision{userLeft: userLeft, winWidth: lastWin}
+	if winWidth <= 0 {
+		return d
+	}
+	if winWidth != lastWin {
+		left, right, err := herdLiveSplitFor(winWidth, userLeft)
+		d.winWidth, d.left, d.right, d.err = winWidth, left, right, err
+		d.apply = err == nil
+		return d
+	}
+	if paneWidth <= 0 || paneWidth == appliedLeft {
+		return d
+	}
+	left := clampUserLeft(paneWidth, winWidth)
+	d.userLeft, d.left, d.right = left, left, winWidth-left-1
+	d.apply = left != paneWidth
+	return d
 }
 
 // liveWindowWidth is the real width of the hub window: asked of tmux (the
@@ -663,19 +630,23 @@ func liveWindowWidth(fallback int) int {
 	return fallback
 }
 
-// herdLiveResizeCmd re-applies the live split after the terminal resized.
-func herdLiveResizeCmd(fallbackWidth int) tea.Cmd {
+// herdProbeMsg carries the hub window's width (0 when tmux could not say)
+// alongside the list pane width that triggered the probe.
+type herdProbeMsg struct {
+	pane, win int
+}
+
+// herdProbeCmd asks tmux for the hub window width after a pane resize.
+func herdProbeCmd(paneWidth int) tea.Cmd {
 	return func() tea.Msg {
-		left, right, err := herdLiveSplit(liveWindowWidth(fallbackWidth))
-		if err == nil {
-			err = tmux.ResizeLiveViewer(right)
-		}
-		return herdLiveSizedMsg{left: left, right: right, err: err}
+		w, _ := tmux.HubWindowWidth()
+		return herdProbeMsg{pane: paneWidth, win: w}
 	}
 }
 
 // liveShowCmd hands the current selection to the live viewer, once per
-// selection change.
+// selection change (a failed attempt is not retried until the selection
+// changes again). The split honours a user-dragged divider.
 func (m *HerdModel) liveShowCmd() tea.Cmd {
 	key := m.selSession + "|" + m.selWindowID
 	if key == m.liveShown {
@@ -683,74 +654,15 @@ func (m *HerdModel) liveShowCmd() tea.Cmd {
 	}
 	m.liveShown = key
 	session, window := m.selSession, m.selWindowID
-	fallback := m.termWidth
+	fallback, userLeft := m.termWidth, m.userLeft
 	return func() tea.Msg {
-		left, right, err := herdLiveSplit(liveWindowWidth(fallback))
+		win := liveWindowWidth(fallback)
+		left, right, err := herdLiveSplitFor(win, userLeft)
 		if err == nil {
 			err = tmux.ShowLiveViewer(session, window, right)
 		}
-		return herdLiveMsg{key: key, left: left, right: right, err: err}
+		return herdLiveMsg{key: key, left: left, right: right, win: win, err: err}
 	}
-}
-
-// liveFallback leaves live mode after the viewer failed to start, restoring
-// the preview layout and surfacing the error in the status line.
-func (m *HerdModel) liveFallback(err error) (tea.Model, tea.Cmd) {
-	m.live, m.liveShown = false, ""
-	m.liveLeft, m.liveRight = 0, 0
-	m.jumpErr = err.Error()
-	m.configureSplitPane()
-	return *m, tea.Batch(func() tea.Msg {
-		_ = tmux.HideLiveViewer() // drop any half-built viewer
-		return nil
-	}, m.maybeCaptureCmd())
-}
-
-// enableLive turns live mode on, sizing the list column from the best width
-// known synchronously; liveShowCmd then corrects it from tmux's real width.
-func (m *HerdModel) enableLive() bool {
-	left, right, err := herdLiveSplit(m.termWidth)
-	if err != nil {
-		m.jumpErr = err.Error()
-		return false
-	}
-	m.liveLeft, m.liveRight = left, right
-	m.live, m.liveShown = true, ""
-	m.configureSplitPane()
-	return true
-}
-
-// maybeAutoLive switches live mode on once, when the hub starts with a
-// selectable agent row.
-func (m *HerdModel) maybeAutoLive() {
-	if !m.autoLive || m.autoLiveDone || m.live {
-		return
-	}
-	if m.selIsHeader || m.selSession == "" || m.selWindowID == "" {
-		return
-	}
-	m.autoLiveDone = true
-	m.enableLive()
-}
-
-// toggleLive flips live mode. Turning it off kills the viewer pane and
-// session (never an agent pane).
-func (m *HerdModel) toggleLive() (tea.Model, tea.Cmd) {
-	m.jumpErr = ""
-	m.autoLiveDone = true
-	if m.live {
-		m.live, m.liveShown = false, ""
-		m.liveLeft, m.liveRight = 0, 0
-		m.configureSplitPane()
-		if err := tmux.HideLiveViewer(); err != nil {
-			m.jumpErr = err.Error()
-		}
-		return *m, m.maybeCaptureCmd()
-	}
-	if !m.enableLive() {
-		return *m, nil
-	}
-	return *m, m.maybeCaptureCmd()
 }
 
 // configureSplitPane sizes the SplitPane from the current terminal
@@ -795,11 +707,7 @@ func (m *HerdModel) selectedGroup() *herd.Group {
 // syncSelectionFromCursor refreshes selSession/selWindowID/selIsHeader from
 // whatever line the SplitPane's cursor currently points at.
 func (m *HerdModel) syncSelectionFromCursor() {
-	prevSession, prevWindow := m.selSession, m.selWindowID
 	defer func() {
-		if m.selSession != prevSession || m.selWindowID != prevWindow {
-			m.previewUp = 0
-		}
 		if m.closeArmed() && (m.selSession != m.confirmSession || m.selWindowID != m.confirmWindow) {
 			m.cancelClose()
 		}
@@ -955,33 +863,20 @@ func (m *HerdModel) ensureCursorVisible() {
 	}
 }
 
-// ── Jump / link / unlink ─────────────────────────────────────────────────────
+// ── Jump ─────────────────────────────────────────────────────────────────────
 
-// linkSelectedIntoHub is Enter's action: link the selected row's window into
-// the hub session (idempotently — see tmux.LinkWindowIntoHub) and select it,
-// putting the caller in the real, interactive agent terminal without leaving
-// the hub session. A no-op when the cursor is on a group header/placeholder
-// rather than an agent row. If the target window vanished between the last
-// poll and this keypress (or any other tmux failure), records an inline
-// error and triggers a refresh instead of crashing.
-func (m *HerdModel) linkSelectedIntoHub() (tea.Model, tea.Cmd) {
-	r := m.selectedRow()
-	if r == nil {
-		return *m, nil
-	}
-	if err := tmux.LinkWindowIntoHub(r.Session, r.WindowID); err != nil {
+// focusLive is Enter's and tab's action: move tmux focus to the live pane so
+// keystrokes go to the viewed agent. Prefix+o returns to the list.
+func (m *HerdModel) focusLive() (tea.Model, tea.Cmd) {
+	if err := tmux.FocusLivePane(); err != nil {
 		m.jumpErr = err.Error()
-		return *m, herdLoadCmd()
 	}
-	m.jumpErr = ""
-	m.infoMsg = ""
-	return *m, herdLinkedCmd()
+	return *m, nil
 }
 
 // jumpToSelectedHome is J's action: switch the client to the selected row's
-// window in its own home session — the pre-link-window jump behaviour,
-// preserved for workflows that want the project's own session context
-// rather than staying inside the hub. If the switch fails (e.g. the session
+// window in its own home session, for workflows that want the project's own
+// session context rather than the hub. If the switch fails (e.g. the session
 // died between the last poll and this keypress), records an inline error
 // and triggers a refresh instead of crashing. A no-op when the cursor is on
 // a group header/placeholder rather than an agent row.
@@ -997,31 +892,6 @@ func (m *HerdModel) jumpToSelectedHome() (tea.Model, tea.Cmd) {
 	m.jumpErr = ""
 	m.infoMsg = ""
 	return *m, nil
-}
-
-// unlinkSelected is u's action: unlink the selected row's window from the
-// hub session, leaving it exactly as-is in its home session (see
-// tmux.UnlinkWindowFromHub — never passes -k, so this can never destroy a
-// live agent). A no-op when the cursor is on a group header/placeholder.
-//
-// tmux itself refuses to unlink a window that was never linked into the hub
-// to begin with ("window only linked to one session") — that refusal is
-// expected and non-fatal, so it's surfaced via the dim infoMsg rather than
-// the red jumpErr styling; it is not a real failure and does not trigger a
-// reload.
-func (m *HerdModel) unlinkSelected() (tea.Model, tea.Cmd) {
-	r := m.selectedRow()
-	if r == nil {
-		return *m, nil
-	}
-	if err := tmux.UnlinkWindowFromHub(r.WindowID); err != nil {
-		m.jumpErr = ""
-		m.infoMsg = err.Error()
-		return *m, herdLinkedCmd()
-	}
-	m.jumpErr = ""
-	m.infoMsg = ""
-	return *m, herdLinkedCmd()
 }
 
 // jumpToNextBlocked jumps to the first blocked agent across all sessions,
@@ -1047,7 +917,8 @@ func (m *HerdModel) jumpToNextBlocked() (tea.Model, tea.Cmd) {
 	}
 	m.syncSelectionFromCursor()
 	m.ensureCursorVisible()
-	return *m, m.maybeCaptureCmd()
+	show := m.maybeShowCmd()
+	return *m, show
 }
 
 // ── Line model construction ──────────────────────────────────────────────────
@@ -1089,8 +960,8 @@ func (m *HerdModel) rebuildLines() {
 // contentWidth returns the usable content width based on terminal size.
 func (m HerdModel) contentWidth() int {
 	w := m.termWidth - 4
-	if m.live && m.liveLeft > 0 && w > m.liveLeft-4 {
-		w = m.liveLeft - 4 // live: the list column is all the hub pane has
+	if m.liveLeft > 0 && w > m.liveLeft-4 {
+		w = m.liveLeft - 4 // the list column is all the hub pane has
 	}
 	if w < 40 {
 		w = 40
@@ -1107,28 +978,10 @@ func (m HerdModel) View() tea.View {
 }
 
 func (m HerdModel) render() string {
-	if !m.splitActive() {
-		return m.renderFlat()
-	}
-	return m.renderSplit()
+	return m.renderList()
 }
 
-// splitActive reports whether the sidebar + detail panel layout is shown.
-// Live mode is list-only: the live viewer pane replaces the detail panel.
-func (m HerdModel) splitActive() bool {
-	return !m.live && useSplitLayout(m.termWidth)
-}
-
-// useSplitLayout reports whether the sidebar + main panel layout is usable
-// at the given terminal width. Below herdMinSplitWidth a sidebar would
-// truncate every agent name and activity line into mush, so the original
-// full-width flat list is strictly more usable than a split layout would
-// be.
-func useSplitLayout(width int) bool {
-	return width >= herdMinSplitWidth
-}
-
-// renderHeader renders the title + subtitle chrome shared by both layouts.
+// renderHeader renders the title + subtitle chrome.
 func (m HerdModel) renderHeader(cw int) string {
 	var b strings.Builder
 	b.WriteString(herdTitleStyle.Width(cw).Render("agentctl hub"))
@@ -1169,36 +1022,23 @@ func (m HerdModel) renderFooter(cw int) string {
 	case m.jumpErr != "":
 		b.WriteString(herdErrStyle.Render("  " + truncateToWidth(m.jumpErr, cw-2)))
 	case m.infoMsg != "":
-		// A benign, non-error outcome (e.g. tmux's expected refusal to
-		// unlink a window that was never linked in) — dim, not red.
+		// A benign, non-error outcome (e.g. a close notice) — dim, not red.
 		b.WriteString(herdDimStyle.Render("  " + truncateToWidth(m.infoMsg, cw-2)))
 	}
 	b.WriteString("\n")
 
 	hintParts := []string{
 		menuHintKeyStyle.Render("j/k") + " " + menuHintLabelStyle.Render("navigate"),
-		menuHintKeyStyle.Render("enter") + " " + menuHintLabelStyle.Render("open"),
+		menuHintKeyStyle.Render("enter/tab") + " " + menuHintLabelStyle.Render("focus live"),
+		menuHintKeyStyle.Render("^b o") + " " + menuHintLabelStyle.Render("back"),
 		menuHintKeyStyle.Render("J") + " " + menuHintLabelStyle.Render("home"),
-		menuHintKeyStyle.Render("u") + " " + menuHintLabelStyle.Render("unlink"),
 		menuHintKeyStyle.Render("n") + " " + menuHintLabelStyle.Render("new"),
 		menuHintKeyStyle.Render("x") + " " + menuHintLabelStyle.Render("close"),
 		menuHintKeyStyle.Render("b") + " " + menuHintLabelStyle.Render("blocked"),
 		menuHintKeyStyle.Render("r") + " " + menuHintLabelStyle.Render("refresh"),
-		menuHintKeyStyle.Render("v") + " " + menuHintLabelStyle.Render(liveHint(m.live)),
+		menuHintKeyStyle.Render("q") + " " + menuHintLabelStyle.Render("leave"),
 	}
-	if m.live {
-		hintParts = append(hintParts,
-			menuHintKeyStyle.Render("tab")+" "+menuHintLabelStyle.Render("focus live"),
-			menuHintKeyStyle.Render("^b o")+" "+menuHintLabelStyle.Render("back"),
-		)
-	}
-	hintParts = append(hintParts, menuHintKeyStyle.Render("q")+" "+menuHintLabelStyle.Render("back"))
-	sep := "  " + menuHintDotStyle.Render("·") + "  "
-	if m.live {
-		b.WriteString(strings.Join(m.wrapHints(hintParts, cw), "\n"))
-		return b.String()
-	}
-	b.WriteString(tableStyles.HintBar.MarginTop(0).Width(cw).Render(strings.Join(hintParts, sep)))
+	b.WriteString(strings.Join(m.wrapHints(hintParts, cw), "\n"))
 	return b.String()
 }
 
@@ -1231,12 +1071,9 @@ func (m HerdModel) wrapHints(parts []string, cw int) []string {
 	return lines
 }
 
-// liveHintRows is how many rows the live-mode hint bar occupies beyond the
-// single row the chrome budget (herdChromeRows) already reserves.
+// liveHintRows is how many rows the hint bar occupies beyond the single row
+// the chrome budget (herdChromeRows) already reserves.
 func (m HerdModel) liveHintRows() int {
-	if !m.live {
-		return 0
-	}
 	var b strings.Builder
 	b.WriteString(m.renderFooter(m.contentWidth()))
 	// footer = "\n" + message line + "\n" + hint rows
@@ -1247,18 +1084,15 @@ func (m HerdModel) liveHintRows() int {
 	return extra
 }
 
-// liveHint labels the live-pane toggle: "preview" while live (v returns to the
-// preview layout), "live" otherwise. The focus hints are separate parts.
-func liveHint(live bool) string {
-	if live {
-		return "preview"
-	}
-	return "live"
-}
+// herdNoViewHint is shown in the list area until an agent has been viewed in
+// the live pane (e.g. the cursor sits on a header and no agent was ever
+// selected).
+const herdNoViewHint = "select an agent to view it live"
 
-// renderFlat renders the original full-width flat list — the narrow-terminal
-// fallback, and unchanged in spirit from the hub's pre-sidebar layout.
-func (m HerdModel) renderFlat() string {
+// renderList renders the hub's list column: header, rows, footer. The list is
+// padded to its full height so the footer (and click targets derived from it)
+// never move.
+func (m HerdModel) renderList() string {
 	var b strings.Builder
 	cw := m.contentWidth()
 
@@ -1277,56 +1111,18 @@ func (m HerdModel) renderFlat() string {
 			b.WriteString(m.renderLine(i, cw))
 			b.WriteString("\n")
 		}
+		if pad := visible - (end - start); pad > 0 {
+			if m.liveShown == "" {
+				b.WriteString(herdDimStyle.Render("  " + truncateToWidth(herdNoViewHint, cw-2)))
+				b.WriteString("\n")
+				pad--
+			}
+			b.WriteString(strings.Repeat("\n", pad))
+		}
 	}
 
 	b.WriteString(m.renderFooter(cw))
 	return b.String()
-}
-
-// renderSplit renders the sidebar + main panel layout via SplitPane in
-// OrientHorizontal mode.
-func (m HerdModel) renderSplit() string {
-	var b strings.Builder
-	cw := m.contentWidth()
-
-	b.WriteString(m.renderHeader(cw))
-
-	if status, isStatus := m.renderStatusOrEmpty(); isStatus {
-		b.WriteString(status)
-	} else {
-		sp := m.splitPane // clone — View() must not mutate the receiver
-		listContent := m.buildSidebarContent(sp.ListWidth())
-		detailContent := m.buildMainPanelContent(sp.DetailWidth())
-		sp.SetListContent(listContent, len(m.lines))
-		sp.SetDetailContent(detailContent)
-		b.WriteString(sp.View())
-		b.WriteString("\n")
-	}
-
-	b.WriteString(m.renderFooter(cw))
-	return b.String()
-}
-
-// buildSidebarContent renders every line in m.lines at the given sidebar
-// width, for SplitPane's list content in split mode. Reuses the very same
-// renderLine used by the flat fallback — the sidebar isn't a different
-// rendering, just a narrower one — so truncation behaviour at a narrow
-// width only needs to be right in one place.
-func (m HerdModel) buildSidebarContent(width int) string {
-	if len(m.lines) == 0 {
-		return ""
-	}
-	lines := make([]string, len(m.lines))
-	for i := range m.lines {
-		lines[i] = m.renderLine(i, width)
-	}
-	return strings.Join(lines, "\n")
-}
-
-// buildMainPanelContent builds the main panel's content for whichever line
-// is selected.
-func (m HerdModel) buildMainPanelContent(width int) string {
-	return mainPanelContent(m.lines, m.splitPane.Cursor(), m.preview, m.previewErr, width, m.splitPane.DetailHeight(), m.previewUp)
 }
 
 func (m HerdModel) renderLine(i int, cw int) string {
@@ -1453,26 +1249,6 @@ func (m HerdModel) renderGroupHeader(g herd.Group, selected bool, cw int) string
 	return line
 }
 
-// herdLinkedGlyph marks an agent row whose window is currently linked into
-// the hub session — open, and reachable with a plain window switch, not
-// just a jump into another session. Rendered dim so it doesn't compete with
-// the state glyph for attention.
-const herdLinkedGlyph = "↗"
-
-// rowIsLinked reports whether an agent row's window is currently linked
-// into the hub session, per linkedWindowIDs — populated every poll tick
-// from tmux.ListHubWindowIDs. tmux is always the source of truth for link
-// state; nothing about it is ever stored or cached beyond that one map. A
-// nil/empty map (e.g. before the hub's first tick, or a momentarily
-// unreadable hub session) means "nothing known to be linked", never a
-// crash or a false positive.
-func rowIsLinked(r herd.Row, linkedWindowIDs map[string]bool) bool {
-	if len(linkedWindowIDs) == 0 {
-		return false
-	}
-	return linkedWindowIDs[r.WindowID]
-}
-
 // renderRow renders one agent row. When stale is true (the owning group's
 // snapshot has gone stale but retained its last-known rows) the glyph, name,
 // and activity are all dimmed — but the row stays selectable and jumpable:
@@ -1498,12 +1274,7 @@ func (m HerdModel) renderRow(r herd.Row, selected bool, stale bool, cw int) stri
 		activityStyle = herdDimStyle
 	}
 
-	linkedMarker := ""
-	if rowIsLinked(r, m.linkedWindowIDs) {
-		linkedMarker = " " + herdDimStyle.Render(herdLinkedGlyph)
-	}
-
-	// Reserve room for the cursor marker, glyph, linked marker, and
+	// Reserve room for the cursor marker, glyph, and
 	// separators; whatever's left is split between the name and the
 	// activity line. The name is capped at herdMaxNameWidth even when
 	// there's more room, so a long instance name can't crowd out the
@@ -1512,7 +1283,7 @@ func (m HerdModel) renderRow(r herd.Row, selected bool, stale bool, cw int) stri
 	// lipgloss.Width, never len, since ANSI styling and any multi-byte
 	// runes would otherwise miscount and overflow the terminal width.
 	glyphStr := style.Render(glyph)
-	overhead := lipgloss.Width(cursor) + lipgloss.Width(glyphStr) + 1 /* space */ + lipgloss.Width(linkedMarker) + 2 /* gap before activity */ + 1 + lipgloss.Width(herdCloseLabel) /* close button */
+	overhead := lipgloss.Width(cursor) + lipgloss.Width(glyphStr) + 1 /* space */ + 2 /* gap before activity */ + 1 + lipgloss.Width(herdCloseLabel) /* close button */
 	nameBudget := cw - overhead
 	if nameBudget > herdMaxNameWidth {
 		nameBudget = herdMaxNameWidth
@@ -1522,7 +1293,7 @@ func (m HerdModel) renderRow(r herd.Row, selected bool, stale bool, cw int) stri
 	}
 	name := truncateToWidth(r.Name, nameBudget)
 
-	prefix := cursor + glyphStr + " " + renderAgentName(name, stale, r.State == "blocked") + linkedMarker + "  "
+	prefix := cursor + glyphStr + " " + renderAgentName(name, stale, r.State == "blocked") + "  "
 	prefixW := lipgloss.Width(prefix)
 	// Reserve " ✕" at the right edge, ahead of the gutter.
 	closeW := 1 + lipgloss.Width(herdCloseLabel)
@@ -1566,177 +1337,6 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
-}
-
-// ── Main panel content mapping ───────────────────────────────────────────────
-
-// mainPanelContent builds the main panel's content for whichever line is
-// currently selected in the sidebar:
-//   - an agent row → its metadata (state, model, context %, tokens, ticket,
-//     activity) plus the already-captured live pane preview (this function
-//     does no I/O itself — preview/previewErr are supplied by the caller)
-//   - a group header or placeholder → a session-level summary (project,
-//     agent count, rolled-up state breakdown)
-//   - neither (no lines, or the cursor doesn't land on anything) → a
-//     "nothing selected" placeholder
-//
-// Kept free of any Bubble Tea / tmux dependency so it's directly
-// table-driven testable with no TTY.
-func mainPanelContent(lines []herdLine, cursor int, preview, previewErr string, width, height, up int) string {
-	if cursor < 0 || cursor >= len(lines) {
-		return herdDimStyle.Render("  nothing selected")
-	}
-	l := lines[cursor]
-	if l.kind == herdLineRow {
-		return renderAgentDetail(l.row, preview, previewErr, width, height, up)
-	}
-	return renderGroupSummary(l.group)
-}
-
-// detailLabel renders one "Label: value" metadata line for the main panel,
-// with a fixed label column width so values line up.
-func detailLabel(labelWidth int, k, v string) string {
-	return fmt.Sprintf("%s %s\n", tableStyles.DetailLabel.Width(labelWidth).Render(k+":"), tableStyles.DetailValue.Render(v))
-}
-
-// stateDisplay returns a human-friendly label for an agent row's state.
-func stateDisplay(r herd.Row) string {
-	switch {
-	case r.State == "blocked":
-		return "blocked"
-	case r.State == "working":
-		return "working"
-	case r.Done:
-		return "done (unseen)"
-	default:
-		return "idle"
-	}
-}
-
-// renderAgentDetail renders the selected agent's metadata plus its live
-// terminal preview.
-//
-// The preview is bottom-anchored: when height (rows available to the whole
-// detail body) is positive, only the last lines of the preview that fit under
-// the metadata header are kept, so the newest output, input box and status
-// line stay visible. up scrolls that window toward older lines.
-func renderAgentDetail(r herd.Row, preview, previewErr string, width, height, up int) string {
-	var b strings.Builder
-
-	b.WriteString(tableStyles.DetailSection.Render(r.Name))
-	b.WriteString("\n\n")
-
-	const labelW = 12
-	b.WriteString(detailLabel(labelW, "State", stateDisplay(r)))
-	if r.ModelName != "" {
-		b.WriteString(detailLabel(labelW, "Model", r.ModelName))
-	}
-	b.WriteString(detailLabel(labelW, "Context", fmt.Sprintf("%d%%", r.ContextPct)))
-	b.WriteString(detailLabel(labelW, "Tokens", fmt.Sprintf("%s in / %s out", formatTokenCount(r.InputTokens), formatTokenCount(r.OutputTokens))))
-	if r.Ticket > 0 {
-		b.WriteString(detailLabel(labelW, "Ticket", fmt.Sprintf("#%d", r.Ticket)))
-	}
-	if activity := herd.ActivityLine(r); activity != "" {
-		b.WriteString(detailLabel(labelW, "Activity", truncateToWidth(activity, width-labelW-2)))
-	}
-
-	b.WriteString("\n")
-	b.WriteString(tableStyles.DetailSection.Render("Terminal"))
-	b.WriteString("\n")
-	switch {
-	case previewErr != "":
-		b.WriteString(herdErrStyle.Render("  preview unavailable: " + previewErr))
-	case strings.TrimSpace(ansi.Strip(preview)) == "":
-		b.WriteString(herdDimStyle.Render("  (no output yet)"))
-	default:
-		lines := previewLines(preview)
-		if height > 0 {
-			avail := height - strings.Count(b.String(), "\n") - 1
-			lines = tailWindow(lines, avail, up)
-		}
-		b.WriteString(strings.Join(lines, "\n"))
-	}
-
-	return b.String()
-}
-
-// previewLines prepares a captured pane for display: it drops U+2800 (the
-// braille blank agentctl's statusline uses as right-alignment padding, which
-// would otherwise push the text past the panel width), makes each line
-// SGR-self-contained, and trims trailing blank lines so bottom-anchoring
-// shows real content.
-func previewLines(preview string) []string {
-	preview = strings.ReplaceAll(preview, "\u2800", "")
-	lines := strings.Split(normalizeANSILines(preview), "\n")
-	for len(lines) > 0 && strings.TrimSpace(ansi.Strip(lines[len(lines)-1])) == "" {
-		lines = lines[:len(lines)-1]
-	}
-	return lines
-}
-
-// tailWindow returns the last avail lines of lines, shifted up lines toward
-// the start (clamped). Fewer lines than avail are returned whole.
-func tailWindow(lines []string, avail, up int) []string {
-	if avail < 1 {
-		avail = 1
-	}
-	if len(lines) <= avail {
-		return lines
-	}
-	maxUp := len(lines) - avail
-	if up > maxUp {
-		up = maxUp
-	}
-	if up < 0 {
-		up = 0
-	}
-	end := len(lines) - up
-	return lines[end-avail : end]
-}
-
-// stateBreakdown counts rows in each state category, using the same
-// classification as rowGlyph/renderRow: blocked, working, done (unseen), or
-// idle.
-func stateBreakdown(rows []herd.Row) (blocked, working, done, idle int) {
-	for _, r := range rows {
-		switch {
-		case r.State == "blocked":
-			blocked++
-		case r.State == "working":
-			working++
-		case r.Done:
-			done++
-		default:
-			idle++
-		}
-	}
-	return blocked, working, done, idle
-}
-
-// renderGroupSummary renders a session-level summary for the main panel:
-// project path, agent count, and the rolled-up state breakdown.
-func renderGroupSummary(g herd.Group) string {
-	var b strings.Builder
-
-	b.WriteString(tableStyles.DetailSection.Render(g.Session))
-	b.WriteString("\n\n")
-
-	const labelW = 14
-	b.WriteString(detailLabel(labelW, "Project", g.Project))
-	b.WriteString(detailLabel(labelW, "Agents", fmt.Sprintf("%d", len(g.Rows))))
-
-	blocked, working, done, idle := stateBreakdown(g.Rows)
-	b.WriteString(detailLabel(labelW, "Blocked", fmt.Sprintf("%d", blocked)))
-	b.WriteString(detailLabel(labelW, "Working", fmt.Sprintf("%d", working)))
-	b.WriteString(detailLabel(labelW, "Done", fmt.Sprintf("%d", done)))
-	b.WriteString(detailLabel(labelW, "Idle", fmt.Sprintf("%d", idle)))
-
-	if g.Stale {
-		b.WriteString("\n")
-		b.WriteString(herdDimStyle.Render("  snapshot stale"))
-	}
-
-	return b.String()
 }
 
 // herdClosePending records a closed row's position within its group.
