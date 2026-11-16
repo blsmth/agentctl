@@ -248,7 +248,11 @@ var globalDenyPatterns = []globalDenyEntry{
 	{regexp.MustCompile(`go\s+run\s+.*agentctl|agentctl.*go\s+run\s+\.`), "\U0001F6D1 BLOCKED: never invoke agentctl via 'go run' -- call 'agentctl' directly from PATH instead"},
 }
 
+// checkGlobalDenyList matches globalDenyPatterns against command with
+// data-only heredoc bodies removed (see stripDataHeredocs). Quoted arguments
+// are still matched literally.
 func checkGlobalDenyList(command string) string {
+	command = stripDataHeredocs(command)
 	for _, deny := range globalDenyPatterns {
 		if deny.re.MatchString(command) {
 			return deny.reason
