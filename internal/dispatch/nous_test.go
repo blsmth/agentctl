@@ -527,34 +527,34 @@ func TestAgentctlWorktreeRoot(t *testing.T) {
 	}
 }
 
-func TestRequireNousWorktree(t *testing.T) {
+// TestWriteAgentSettingsNousOutsideWorktree: a nous launch in the main
+// checkout is allowed; routing travels only in the --settings file and the
+// checkout's own settings.local.json is left untouched.
+func TestWriteAgentSettingsNousOutsideWorktree(t *testing.T) {
+	pinNousConfig(t)
 	repo := t.TempDir()
-	wt := filepath.Join(repo, ".worktrees", "w")
-	makeLinkedWorktree(t, repo, wt)
-	nous := &Backend{Name: "nous", BackendConfig: config.BackendConfig{Kind: "nous"}}
-	ollama := &Backend{Name: "fenrir"}
-	tests := []struct {
-		name    string
-		be      *Backend
-		dir     string
-		wantErr bool
-	}{
-		{"nous in worktree", nous, wt, false},
-		{"nous in main checkout", nous, repo, true},
-		{"ollama anywhere", ollama, repo, false},
-		{"no backend", nil, repo, false},
+	withRuntimeDir(t, filepath.Join(repo, ".agentctl"))
+	localPath := filepath.Join(repo, ".claude", "settings.local.json")
+
+	path := WriteAgentSettings("go-engineer", config.AgentConfig{Backend: "nous"}, repo)
+	if path == "" {
+		t.Fatal("no settings path returned")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := RequireNousWorktree(tt.be, tt.dir)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("err = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"apiKeyHelper", "ANTHROPIC_BASE_URL"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("--settings file missing %q:\n%s", want, b)
+		}
+	}
+	if _, err := os.Stat(localPath); !os.IsNotExist(err) {
+		t.Errorf("main checkout settings.local.json must not be written; stat err = %v", err)
 	}
 }
 
-func TestPrepareRestoreNousRequiresWorktree(t *testing.T) {
+func TestPrepareRestoreNousOutsideWorktree(t *testing.T) {
 	nousEnvSetup(t, map[string]string{"nous": "k"})
 	srv := catalogServer(t, 200, nousCatalogJSON, nil)
 	cfg := &config.Config{Backends: map[string]config.BackendConfig{
@@ -564,11 +564,10 @@ func TestPrepareRestoreNousRequiresWorktree(t *testing.T) {
 	wt := filepath.Join(repo, ".worktrees", "w")
 	makeLinkedWorktree(t, repo, wt)
 
-	if _, _, err := prepareRestore(cfg, RestoreRequest{AgentName: "a", Backend: "nous", WorkDir: repo}); err == nil || !strings.Contains(err.Error(), "worktree") {
-		t.Errorf("main checkout: err = %v, want worktree error", err)
-	}
-	if _, env, err := prepareRestore(cfg, RestoreRequest{AgentName: "a", Backend: "nous", WorkDir: wt}); err != nil || env[EnvBackend] != "nous" {
-		t.Errorf("worktree: env=%v err=%v", env, err)
+	for name, dir := range map[string]string{"main checkout": repo, "worktree": wt} {
+		if _, env, err := prepareRestore(cfg, RestoreRequest{AgentName: "a", Backend: "nous", WorkDir: dir}); err != nil || env[EnvBackend] != "nous" {
+			t.Errorf("%s: env=%v err=%v", name, env, err)
+		}
 	}
 }
 

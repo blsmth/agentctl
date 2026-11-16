@@ -136,13 +136,7 @@ func Launch(req Request) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("resolving backend: %w", err)
 	}
-	// A nous launch must be in a worktree (see RequireNousWorktree): refuse
-	// --no-worktree here, before anything is created, and below refuse to fall
-	// back to the shared checkout when worktree creation fails.
-	nousLaunch := be != nil && be.IsNous()
-	if nousLaunch && !useWorktree {
-		return Result{}, fmt.Errorf("backend %q (nous) requires a worktree launch; drop --no-worktree or use --backend none", be.Name)
-	}
+	_ = be
 
 	// 3. Create worktree if requested.
 	var branch string
@@ -153,9 +147,6 @@ func Launch(req Request) (Result, error) {
 		if err != nil {
 			// Visible, not just logged: the agent now runs in the shared
 			// checkout instead of an isolated worktree.
-			if nousLaunch {
-				return Result{}, fmt.Errorf("creating worktree for branch %s (backend %q requires one; not falling back to the shared checkout): %w", branch, be.Name, err)
-			}
 			logging.Warn("dispatch: worktree failed (branch=%s), falling back to shared dir: %v", branch, err)
 			fmt.Fprintf(os.Stderr, "agentctl: warning: worktree for %s not created (%v); launching in the shared checkout %s\n", branch, err, workDir)
 		} else {
@@ -650,8 +641,9 @@ func BuildAgentSettingsJSON(ac config.AgentConfig, includeHooks bool) ([]byte, e
 // When workDir is an agentctl worktree it also rewrites the worktree's
 // settings.local.json from ac, so a restore, resume or relaunch never
 // inherits backend routing (or loses it) from an earlier launch. A failure
-// there is logged and the --settings file is still written; nous launches
-// are separately required to be in a worktree (RequireNousWorktree).
+// there is logged and the --settings file is still written. Outside a
+// worktree nothing is written to the checkout's settings.local.json: the
+// --settings file alone carries backend routing.
 func WriteAgentSettings(name string, ac config.AgentConfig, workDir string) string {
 	if root, ok := agentctlWorktreeRoot(workDir); ok {
 		if err := WriteWorktreeSettings(workDir, root, ac); err != nil {
@@ -735,22 +727,6 @@ func sameDir(a, b string) bool {
 	ra, err1 := filepath.EvalSymlinks(a)
 	rb, err2 := filepath.EvalSymlinks(b)
 	return err1 == nil && err2 == nil && ra == rb
-}
-
-// RequireNousWorktree errors when be is a nous backend and workDir is not an
-// agentctl worktree. Nous routing (base URL and key helper) must reach Claude
-// Code through the worktree's settings.local.json: --settings alone is
-// unreliable when --agent is also passed (Claude Code bug #37730), and a
-// launch that lost both would talk to Anthropic. A nil or non-nous backend is
-// a no-op.
-func RequireNousWorktree(be *Backend, workDir string) error {
-	if be == nil || !be.IsNous() {
-		return nil
-	}
-	if _, ok := agentctlWorktreeRoot(workDir); ok {
-		return nil
-	}
-	return fmt.Errorf("backend %q (nous) requires a launch inside an agentctl worktree, but %s is not one; use a worktree dispatch or --backend none", be.Name, workDir)
 }
 
 // unsafeStemChars matches characters not allowed in a settings file name.
