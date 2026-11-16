@@ -9,7 +9,6 @@ import (
 
 	"github.com/blsmth/agentctl/internal/claude"
 	"github.com/blsmth/agentctl/internal/metrics"
-	"github.com/blsmth/agentctl/internal/watcher"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
@@ -34,7 +33,6 @@ func newLinkLogsModel(t *testing.T, projectsDir string) *monitorModel {
 	t.Cleanup(func() { windowstate.SetDirForTest("") })
 	return &monitorModel{
 		windows:          make(map[string]*instanceState),
-		watcher:          watcher.New(),
 		metricsCollector: metrics.NewCollector(prometheus.NewRegistry()),
 		projectsDir:      projectsDir,
 	}

@@ -40,8 +40,6 @@ type AgentState struct {
 	LastTurnCacheCreate int    `json:"last_turn_cache_create,omitempty"` // last turn cache-create tokens
 	Ticket              int    `json:"ticket,omitempty"`                 // GitHub issue number (0 if not a dispatch)
 	StartTime           int64  `json:"start_time,omitempty"`             // Unix timestamp when window was first seen
-	HeaderPane          string `json:"header_pane,omitempty"`            // tmux pane ID for header chrome (e.g. "%5")
-	FooterPane          string `json:"footer_pane,omitempty"`            // tmux pane ID for footer chrome (e.g. "%6")
 	MainPane            string `json:"main_pane,omitempty"`              // tmux pane ID of the agent content pane
 	LastToolDetail      string `json:"last_tool_detail,omitempty"`       // e.g. "monitor.go" or "go build ./..."
 	LastText            string `json:"last_text,omitempty"`              // last assistant text block (already truncated to ~100 chars upstream)
@@ -49,37 +47,12 @@ type AgentState struct {
 	MailboxPending      int    `json:"mailbox_pending,omitempty"`        // count-only mailbox.PendingCount, refreshed on a throttled monitor tick; see internal/cmd/wake.go for delivery
 }
 
-// RateLimitState holds account-level rate limit information for the chrome bar.
-type RateLimitState struct {
-	ResetsAt      int64  `json:"resets_at,omitempty"`       // Unix timestamp from rate_limit_event
-	RateLimitType string `json:"rate_limit_type,omitempty"` // "five_hour"
-	Status        string `json:"status,omitempty"`          // "allowed" or "blocked"
-	WindowTokens  int64  `json:"window_tokens,omitempty"`   // input+output tokens consumed in current window
-	TokenCap      int    `json:"token_cap,omitempty"`       // from config, for percentage calc
-	UsagePct      int    `json:"usage_pct,omitempty"`       // 0-100, computed
-
-	// Source records which path produced UsagePct: "statusline" when the
-	// pushed rate_limits.five_hour.used_percentage was used directly, or
-	// "derived" when computed from WindowTokens/TokenCap. Empty when neither
-	// path has produced anything yet (e.g. the monitor hasn't ticked, or
-	// no pushed statusLine data has arrived). When Source
-	// is "statusline", WindowTokens/TokenCap are meaningless and left zero
-	// rather than reporting a cap that did not produce UsagePct.
-	Source string `json:"source,omitempty"`
-
-	// SevenDayPct/SevenDayResetsAt surface rate_limits.seven_day from a
-	// pushed statusLine payload -- these stay nil/zero whenever Source != "statusline".
-	SevenDayPct      *float64 `json:"seven_day_pct,omitempty"`
-	SevenDayResetsAt int64    `json:"seven_day_resets_at,omitempty"`
-}
-
 // State is the snapshot of running agents, written by the monitor.
 type State struct {
-	Agents         []AgentState   `json:"agents"`
-	Timestamp      time.Time      `json:"timestamp"`
-	ActiveWindowID string         `json:"active_window_id,omitempty"` // tmux window ID of the currently active window
-	PrefixActive   bool           `json:"prefix_active,omitempty"`    // true when the tmux prefix key (ctrl+b) is active
-	RateLimit      RateLimitState `json:"rate_limit,omitempty"`       // account-level rate limit state
+	Agents         []AgentState `json:"agents"`
+	Timestamp      time.Time    `json:"timestamp"`
+	ActiveWindowID string       `json:"active_window_id,omitempty"` // tmux window ID of the currently active window
+	PrefixActive   bool         `json:"prefix_active,omitempty"`    // true when the tmux prefix key (ctrl+b) is active
 }
 
 // Snapshot wraps State with pre-built indexes for fast lookups.
@@ -155,15 +128,6 @@ func (s *Snapshot) PrefixActive() bool {
 		return false
 	}
 	return s.State.PrefixActive
-}
-
-// RateLimit returns the rate limit state from the snapshot, or a zero value
-// if the snapshot is nil.
-func (s *Snapshot) RateLimit() RateLimitState {
-	if s == nil {
-		return RateLimitState{}
-	}
-	return s.State.RateLimit
 }
 
 // IsStale returns true if the snapshot's timestamp is older than maxAge,

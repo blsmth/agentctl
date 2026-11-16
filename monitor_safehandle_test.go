@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/blsmth/agentctl/internal/metrics"
-	"github.com/blsmth/agentctl/internal/watcher"
 	"github.com/blsmth/agentctl/internal/windowstate"
 	"github.com/prometheus/client_golang/prometheus"
 	"testing"
@@ -78,7 +77,6 @@ func TestReconcileWindowsGonePathSurvivesHandlerPanic(t *testing.T) {
 	m := &monitorModel{
 		windows:           map[string]*instanceState{"@9": {instance: "go-engineer", base: "go-engineer", hasPrev: true, prevState: state.StatusWorking}},
 		transitionTracker: metrics.NewTransitionTracker(reg),
-		watcher:           watcher.New(),
 	}
 	orig := handleCompleteFn
 	t.Cleanup(func() { handleCompleteFn = orig })
