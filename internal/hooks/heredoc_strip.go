@@ -8,20 +8,17 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-// stdinExecutingCommands are commands that execute (or forward for execution)
-// what they read on stdin or that wrap other commands, so a heredoc body fed
-// to them is code rather than data and must still be matched.
-var stdinExecutingCommands = map[string]bool{
-	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true,
-	"fish": true, "csh": true, "tcsh": true, "ash": true,
-	"eval": true, "source": true, ".": true, "exec": true,
-	"ssh": true, "python": true, "python3": true, "perl": true,
-	"ruby": true, "node": true, "deno": true, "bun": true, "php": true,
-	"lua": true, "xargs": true, "env": true, "sudo": true, "doas": true,
-	"su": true, "nohup": true, "time": true, "command": true,
-	"builtin": true, "watch": true, "tmux": true, "docker": true,
-	"kubectl": true, "osascript": true, "sqlite3": true, "psql": true,
-	"mysql": true, "gdb": true, "expect": true,
+// dataReceivers is an allowlist of commands known to treat stdin purely as
+// data. Anything not listed keeps its heredoc body in the matched text, so
+// wrappers (timeout, nice, setsid, ...) and interpreters fail closed.
+var dataReceivers = map[string]bool{
+	"cat": true, "tee": true, "agentctl": true, "gh": true, "git": true,
+	"jq": true, "wc": true, "grep": true, "egrep": true, "fgrep": true,
+	"sort": true, "uniq": true, "head": true, "tail": true, "cut": true,
+	"tr": true, "tac": true, "nl": true, "fold": true, "fmt": true,
+	"column": true, "diff": true, "cmp": true, "od": true, "xxd": true,
+	"base64": true, "md5sum": true, "shasum": true, "sha256sum": true,
+	"pbcopy": true, "less": true, "more": true, "yq": true,
 }
 
 // stripDataHeredocs returns command with the bodies of heredocs removed when
@@ -51,14 +48,11 @@ func stripDataHeredocs(command string) string {
 	var spans []span
 	syntax.Walk(f, func(n syntax.Node) bool {
 		st, ok := n.(*syntax.Stmt)
-		if !ok || piped[st] || !isDataReceiver(st) {
+		if !ok || piped[st] || !isDataReceiver(st) || hasSubstitution(st) {
 			return true
 		}
 		for _, r := range st.Redirs {
 			if (r.Op != syntax.Hdoc && r.Op != syntax.DashHdoc) || r.Hdoc == nil {
-				continue
-			}
-			if hasSubstitution(r.Hdoc) {
 				continue
 			}
 			s, e := r.Hdoc.Pos().Offset(), r.Hdoc.End().Offset()
@@ -78,7 +72,7 @@ func stripDataHeredocs(command string) string {
 }
 
 // isDataReceiver reports whether st is a plain command whose name is a known
-// literal that does not execute its stdin.
+// literal on the dataReceivers allowlist.
 func isDataReceiver(st *syntax.Stmt) bool {
 	call, ok := st.Cmd.(*syntax.CallExpr)
 	if !ok || len(call.Args) == 0 {
@@ -88,15 +82,16 @@ func isDataReceiver(st *syntax.Stmt) bool {
 	if name == "" {
 		return false
 	}
-	return !stdinExecutingCommands[path.Base(name)]
+	return dataReceivers[path.Base(name)]
 }
 
-// hasSubstitution reports whether the heredoc body contains command or
-// process substitution, which the outer shell would execute.
-func hasSubstitution(w *syntax.Word) bool {
+// hasSubstitution reports whether n (a statement: args, redirects and heredoc
+// body) contains command or process substitution, which the shell would
+// execute or wire to another command (e.g. `cat <<EOF > >(bash)`).
+func hasSubstitution(n syntax.Node) bool {
 	found := false
-	syntax.Walk(w, func(n syntax.Node) bool {
-		switch n.(type) {
+	syntax.Walk(n, func(c syntax.Node) bool {
+		switch c.(type) {
 		case *syntax.CmdSubst, *syntax.ProcSubst:
 			found = true
 		}
