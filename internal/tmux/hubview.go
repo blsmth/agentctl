@@ -188,3 +188,36 @@ func FocusLivePane() error {
 	_, err := tmuxRun("select-pane", "-t", sessionWindowTarget(HubSessionName, HerdListWindowName)+".+")
 	return err
 }
+
+// HubWindowWidth returns the full width of the hub list window. Once the live
+// pane exists the hub TUI only sees its own (narrow) pane, so the real
+// window width has to come from tmux.
+func HubWindowWidth() (int, error) {
+	out, err := tmuxRun("display-message", "-p", "-t",
+		sessionWindowTarget(HubSessionName, HerdListWindowName), "#{window_width}")
+	if err != nil {
+		return 0, err
+	}
+	var w int
+	if _, err := fmt.Sscanf(out, "%d", &w); err != nil {
+		return 0, fmt.Errorf("parsing window width %q: %w", out, err)
+	}
+	return w, nil
+}
+
+// viewerResizeArgs builds the resize args pinning the live pane to width
+// columns (the list pane takes whatever remains).
+func viewerResizeArgs(viewerPane string, width int) []string {
+	return []string{"resize-pane", "-t", viewerPane, "-x", fmt.Sprint(width)}
+}
+
+// ResizeLiveViewer pins the live pane to rightWidth columns. A no-op when
+// there is no live pane.
+func ResizeLiveViewer(rightWidth int) error {
+	pane := viewerPaneID()
+	if pane == "" {
+		return nil
+	}
+	_, err := tmuxRun(viewerResizeArgs(pane, rightWidth)...)
+	return err
+}

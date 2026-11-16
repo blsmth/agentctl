@@ -24,7 +24,7 @@ func RunHub() {
 // executes *inside* the hub session's sole window — mirrors how `agentctl
 // tickets --tui` is launched inside its own dedicated window.
 func RunHubView() {
-	model := tui.NewHerdModel()
+	model := tui.NewHerdModel().WithAutoLive()
 	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "hub-view error: %v\n", err)

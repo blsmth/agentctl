@@ -265,6 +265,12 @@ type HerdModel struct {
 	liveLeft  int
 	liveRight int
 
+	// autoLive asks the model to switch live mode on after the first load
+	// that yields a selectable agent row (see WithAutoLive); autoLiveDone
+	// makes that a one-shot so `v` off stays off.
+	autoLive     bool
+	autoLiveDone bool
+
 	quitting bool
 }
 
@@ -281,6 +287,14 @@ func NewHerdModel() HerdModel {
 			MinDetailRows: herdMinMainPanelWidth,
 		},
 	}
+}
+
+// WithAutoLive returns the model configured to start in live mode as soon as
+// an agent row is selectable. If the viewer fails to start, the model falls
+// back to the preview layout and shows the error in the status line.
+func (m HerdModel) WithAutoLive() HerdModel {
+	m.autoLive = true
+	return m
 }
 
 // Init kicks off the first load and starts the poll loop.
@@ -339,18 +353,35 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
 		m.configureSplitPane()
+		if m.live {
+			return m, herdLiveResizeCmd(m.termWidth)
+		}
 		return m, nil
 
 	case herdTickMsg:
 		return m, tea.Batch(herdLoadCmd(), herdTickCmd(), herdLinkedCmd(), m.maybeCaptureCmd())
 
 	case herdLiveMsg:
+		if !m.live {
+			return m, nil // toggled off while the viewer was starting
+		}
+		if msg.err != nil {
+			return m.liveFallback(msg.err)
+		}
+		m.liveLeft, m.liveRight = msg.left, msg.right
+		m.configureSplitPane()
+		return m, nil
+
+	case herdLiveSizedMsg:
+		if !m.live {
+			return m, nil
+		}
 		if msg.err != nil {
 			m.jumpErr = msg.err.Error()
-			if m.liveShown == msg.key {
-				m.liveShown = "" // retry on the next tick
-			}
+			return m, nil
 		}
+		m.liveLeft, m.liveRight = msg.left, msg.right
+		m.configureSplitPane()
 		return m, nil
 
 	case herdLinkedMsg:
@@ -384,6 +415,7 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.groups = msg.groups
 			m.rebuildLines()
 			m.resolveSelection()
+			m.maybeAutoLive()
 		}
 		return m, m.maybeCaptureCmd()
 
@@ -502,21 +534,74 @@ func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return *m, nil
 }
 
-// herdLiveMsg reports the outcome of handing a selection to the live viewer.
+// herdLiveMsg reports the outcome of handing a selection to the live viewer,
+// along with the column split that was applied.
 type herdLiveMsg struct {
-	key string
-	err error
+	key         string
+	left, right int
+	err         error
 }
 
-// herdLiveLeftCols is the width of the list column in live mode: the sidebar
-// width the split layout uses today (plus the content margin), floored so the
-// flat-list fallback (which the narrow column triggers) still fits.
-func (m *HerdModel) herdLiveLeftCols() int {
-	left := m.splitPane.ListWidth() + 4
-	if left < 44 {
-		left = 44
+// herdLiveSizedMsg reports the outcome of re-applying the live split sizes.
+type herdLiveSizedMsg struct {
+	left, right int
+	err         error
+}
+
+// Live-mode list column bounds. The list column is the sidebar width the
+// split layout would use (herdSidebarRatio of the content width) plus the
+// content margin, floored so rows stay readable and capped so a very wide
+// terminal does not hand the list most of the screen.
+const (
+	herdLiveMinLeft  = 44
+	herdLiveMaxLeft  = 56
+	herdLiveMinRight = 20
+)
+
+// herdLiveLeftCols is the width of the list column in live mode for a hub
+// window totalWidth columns wide.
+func herdLiveLeftCols(totalWidth int) int {
+	left := int(float64(totalWidth-4)*herdSidebarRatio) + 4
+	if left < herdLiveMinLeft {
+		left = herdLiveMinLeft
+	}
+	if left > herdLiveMaxLeft {
+		left = herdLiveMaxLeft
 	}
 	return left
+}
+
+// herdLiveSplit splits a window totalWidth columns wide into the list column
+// and the live pane (one column goes to the pane border). err is set when the
+// live pane would be unusably narrow.
+func herdLiveSplit(totalWidth int) (left, right int, err error) {
+	left = herdLiveLeftCols(totalWidth)
+	right = totalWidth - left - 1
+	if right < herdLiveMinRight {
+		return left, right, fmt.Errorf("terminal too narrow for live pane")
+	}
+	return left, right, nil
+}
+
+// liveWindowWidth is the real width of the hub window: asked of tmux (the
+// hub's own pane is only the list column once live), falling back to the
+// width the TUI last saw.
+func liveWindowWidth(fallback int) int {
+	if w, err := tmux.HubWindowWidth(); err == nil && w > 0 {
+		return w
+	}
+	return fallback
+}
+
+// herdLiveResizeCmd re-applies the live split after the terminal resized.
+func herdLiveResizeCmd(fallbackWidth int) tea.Cmd {
+	return func() tea.Msg {
+		left, right, err := herdLiveSplit(liveWindowWidth(fallbackWidth))
+		if err == nil {
+			err = tmux.ResizeLiveViewer(right)
+		}
+		return herdLiveSizedMsg{left: left, right: right, err: err}
+	}
 }
 
 // liveShowCmd hands the current selection to the live viewer, once per
@@ -528,34 +613,73 @@ func (m *HerdModel) liveShowCmd() tea.Cmd {
 	}
 	m.liveShown = key
 	session, window := m.selSession, m.selWindowID
-	right := m.termWidth - 1
-	if m.liveLeft > 0 {
-		right = m.liveRight
-	}
+	fallback := m.termWidth
 	return func() tea.Msg {
-		return herdLiveMsg{key: key, err: tmux.ShowLiveViewer(session, window, right)}
+		left, right, err := herdLiveSplit(liveWindowWidth(fallback))
+		if err == nil {
+			err = tmux.ShowLiveViewer(session, window, right)
+		}
+		return herdLiveMsg{key: key, left: left, right: right, err: err}
 	}
 }
 
-// toggleLive flips live mode. Off by default; turning it off kills the viewer
-// pane and session (never an agent pane).
+// liveFallback leaves live mode after the viewer failed to start, restoring
+// the preview layout and surfacing the error in the status line.
+func (m *HerdModel) liveFallback(err error) (tea.Model, tea.Cmd) {
+	m.live, m.liveShown = false, ""
+	m.liveLeft, m.liveRight = 0, 0
+	m.jumpErr = err.Error()
+	m.configureSplitPane()
+	return *m, tea.Batch(func() tea.Msg {
+		_ = tmux.HideLiveViewer() // drop any half-built viewer
+		return nil
+	}, m.maybeCaptureCmd())
+}
+
+// enableLive turns live mode on, sizing the list column from the best width
+// known synchronously; liveShowCmd then corrects it from tmux's real width.
+func (m *HerdModel) enableLive() bool {
+	left, right, err := herdLiveSplit(m.termWidth)
+	if err != nil {
+		m.jumpErr = err.Error()
+		return false
+	}
+	m.liveLeft, m.liveRight = left, right
+	m.live, m.liveShown = true, ""
+	m.configureSplitPane()
+	return true
+}
+
+// maybeAutoLive switches live mode on once, when the hub starts with a
+// selectable agent row.
+func (m *HerdModel) maybeAutoLive() {
+	if !m.autoLive || m.autoLiveDone || m.live {
+		return
+	}
+	if m.selIsHeader || m.selSession == "" || m.selWindowID == "" {
+		return
+	}
+	m.autoLiveDone = true
+	m.enableLive()
+}
+
+// toggleLive flips live mode. Turning it off kills the viewer pane and
+// session (never an agent pane).
 func (m *HerdModel) toggleLive() (tea.Model, tea.Cmd) {
 	m.jumpErr = ""
+	m.autoLiveDone = true
 	if m.live {
 		m.live, m.liveShown = false, ""
+		m.liveLeft, m.liveRight = 0, 0
+		m.configureSplitPane()
 		if err := tmux.HideLiveViewer(); err != nil {
 			m.jumpErr = err.Error()
 		}
 		return *m, m.maybeCaptureCmd()
 	}
-	left := m.herdLiveLeftCols()
-	m.liveRight = m.termWidth - left - 1
-	if m.liveRight < 20 {
-		m.jumpErr = "terminal too narrow for live pane"
+	if !m.enableLive() {
 		return *m, nil
 	}
-	m.liveLeft = left
-	m.live = true
 	return *m, m.maybeCaptureCmd()
 }
 
@@ -733,7 +857,7 @@ func (m *HerdModel) resolveSelection() {
 }
 
 func (m *HerdModel) visibleLines() int {
-	h := m.termHeight - herdChromeRows
+	h := m.termHeight - herdChromeRows - m.liveHintRows()
 	if h < 3 {
 		h = 3
 	}
@@ -895,6 +1019,9 @@ func (m *HerdModel) rebuildLines() {
 // contentWidth returns the usable content width based on terminal size.
 func (m HerdModel) contentWidth() int {
 	w := m.termWidth - 4
+	if m.live && m.liveLeft > 0 && w > m.liveLeft-4 {
+		w = m.liveLeft - 4 // live: the list column is all the hub pane has
+	}
 	if w < 40 {
 		w = 40
 	}
@@ -910,10 +1037,16 @@ func (m HerdModel) View() tea.View {
 }
 
 func (m HerdModel) render() string {
-	if !useSplitLayout(m.termWidth) {
+	if !m.splitActive() {
 		return m.renderFlat()
 	}
 	return m.renderSplit()
+}
+
+// splitActive reports whether the sidebar + detail panel layout is shown.
+// Live mode is list-only: the live viewer pane replaces the detail panel.
+func (m HerdModel) splitActive() bool {
+	return !m.live && useSplitLayout(m.termWidth)
 }
 
 // useSplitLayout reports whether the sidebar + main panel layout is usable
@@ -982,18 +1115,73 @@ func (m HerdModel) renderFooter(cw int) string {
 		menuHintKeyStyle.Render("b") + " " + menuHintLabelStyle.Render("blocked"),
 		menuHintKeyStyle.Render("r") + " " + menuHintLabelStyle.Render("refresh"),
 		menuHintKeyStyle.Render("v") + " " + menuHintLabelStyle.Render(liveHint(m.live)),
-		menuHintKeyStyle.Render("q") + " " + menuHintLabelStyle.Render("back"),
 	}
+	if m.live {
+		hintParts = append(hintParts,
+			menuHintKeyStyle.Render("tab")+" "+menuHintLabelStyle.Render("focus live"),
+			menuHintKeyStyle.Render("^b o")+" "+menuHintLabelStyle.Render("back"),
+		)
+	}
+	hintParts = append(hintParts, menuHintKeyStyle.Render("q")+" "+menuHintLabelStyle.Render("back"))
 	sep := "  " + menuHintDotStyle.Render("·") + "  "
+	if m.live {
+		b.WriteString(strings.Join(m.wrapHints(hintParts, cw), "\n"))
+		return b.String()
+	}
 	b.WriteString(tableStyles.HintBar.MarginTop(0).Width(cw).Render(strings.Join(hintParts, sep)))
 	return b.String()
 }
 
-// liveHint labels the live-pane toggle; when live it also documents focus
-// movement (tab → live pane; outer prefix + o → back to the list).
+// wrapHints packs hint parts into centered lines no wider than cw, breaking
+// between parts so no "key label" pair is ever split.
+func (m HerdModel) wrapHints(parts []string, cw int) []string {
+	sep := "  " + menuHintDotStyle.Render("·") + "  "
+	sepW := lipgloss.Width(sep)
+	var lines []string
+	var cur []string
+	curW := 0
+	flush := func() {
+		if len(cur) > 0 {
+			lines = append(lines, tableStyles.HintBar.MarginTop(0).Width(cw).Render(strings.Join(cur, sep)))
+		}
+		cur, curW = nil, 0
+	}
+	for _, p := range parts {
+		w := lipgloss.Width(p)
+		if len(cur) > 0 && curW+sepW+w > cw {
+			flush()
+		}
+		if len(cur) > 0 {
+			curW += sepW
+		}
+		cur = append(cur, p)
+		curW += w
+	}
+	flush()
+	return lines
+}
+
+// liveHintRows is how many rows the live-mode hint bar occupies beyond the
+// single row the chrome budget (herdChromeRows) already reserves.
+func (m HerdModel) liveHintRows() int {
+	if !m.live {
+		return 0
+	}
+	var b strings.Builder
+	b.WriteString(m.renderFooter(m.contentWidth()))
+	// footer = "\n" + message line + "\n" + hint rows
+	extra := strings.Count(b.String(), "\n") - 2
+	if extra < 0 {
+		return 0
+	}
+	return extra
+}
+
+// liveHint labels the live-pane toggle: "preview" while live (v returns to the
+// preview layout), "live" otherwise. The focus hints are separate parts.
 func liveHint(live bool) string {
 	if live {
-		return "live off · tab focus live · ^b o back"
+		return "preview"
 	}
 	return "live"
 }

@@ -29,7 +29,7 @@ func (m HerdModel) herdListTop() int {
 
 // herdListRows is the number of screen rows the list area spans.
 func (m HerdModel) herdListRows() int {
-	if useSplitLayout(m.termWidth) {
+	if m.splitActive() {
 		return m.splitPane.paneHeight()
 	}
 	return m.visibleLines()
@@ -54,7 +54,7 @@ func (m HerdModel) lineAt(x, y int) (idx int, inDetail bool, ok bool) {
 	if row < 0 || row >= m.herdListRows() {
 		return -1, false, false
 	}
-	if !useSplitLayout(m.termWidth) {
+	if !m.splitActive() {
 		idx = m.scrollOffset + row
 		if idx >= len(m.lines) {
 			return -1, false, false
@@ -76,7 +76,7 @@ func (m HerdModel) lineAt(x, y int) (idx int, inDetail bool, ok bool) {
 
 // listColWidth is the width of the list column lines are rendered at.
 func (m HerdModel) listColWidth() int {
-	if useSplitLayout(m.termWidth) {
+	if m.splitActive() {
 		return m.splitPane.ListWidth()
 	}
 	return m.contentWidth()
