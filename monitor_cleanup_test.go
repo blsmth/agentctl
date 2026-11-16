@@ -25,6 +25,7 @@ func TestReconcileWindows_GoneUntrackedWindowsCleanedUpWithoutHandlers(t *testin
 			handleCompleteFn = func(state.Transition, config.AgentConfig) { calls++ }
 
 			m.reconcileWindows(&config.Config{}, nil, 0)
+			m.reconcileWindows(&config.Config{}, nil, 0)
 
 			if calls != 0 {
 				t.Errorf("handler fired %d times for %s, want 0", calls, name)

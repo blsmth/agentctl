@@ -84,6 +84,7 @@ func TestReconcileWindowsGonePathSurvivesHandlerPanic(t *testing.T) {
 	handleCompleteFn = func(state.Transition, config.AgentConfig) { calls++; panic("boom") }
 
 	m.reconcileWindows(&config.Config{}, nil, 0)
+	m.reconcileWindows(&config.Config{}, nil, 0)
 
 	if calls != 1 {
 		t.Fatalf("handleCompleteFn calls = %d, want 1", calls)

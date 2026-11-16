@@ -71,6 +71,10 @@ type instanceState struct {
 	instance string // instance name (e.g. "go-engineer:2")
 	base     string // base agent name (e.g. "go-engineer")
 
+	// missingTicks counts consecutive successful ticks this window was absent
+	// from list-windows (see goneAfterMissingTicks).
+	missingTicks int
+
 	// Log tracking
 	logPath  string // cached log file path
 	logTTL   int64  // unix time when log lookup expires
@@ -446,7 +450,7 @@ func (m *monitorModel) processTick() bool {
 	m.maybeReexec(time.Now())
 
 	cfg := config.Load()
-	windows := tmux.ListWindows()
+	windows, listErr := tmux.ListWindowsErr()
 	activeWindowID := tmux.ActiveWindowIDFast(m.activeWindowFile)
 	now := time.Now().Unix()
 
@@ -455,7 +459,9 @@ func (m *monitorModel) processTick() bool {
 	// aligned to the same tick rather than drifting relative to each other.
 	m.mailboxTick++
 
-	m.reconcileWindows(cfg, windows, now)
+	if !m.reconcileListed(cfg, windows, listErr, now) {
+		return true // list failed: skip the whole tick (and its state snapshot)
+	}
 
 	for _, w := range windows {
 		if w.ID == "" {
@@ -509,6 +515,22 @@ func sessionIdentityOK(want, got string, alive func() bool) bool {
 	return alive()
 }
 
+// goneAfterMissingTicks is how many consecutive successful ticks a window must
+// be absent from list-windows before it is treated as gone.
+const goneAfterMissingTicks = 2
+
+// reconcileListed runs reconcileWindows unless the window list failed. A
+// failed list is not "zero windows": acting on it would treat every live
+// window as gone and tombstone its state. It reports whether the tick may go on.
+func (m *monitorModel) reconcileListed(cfg *config.Config, windows []tmux.WindowInfo, listErr error, now int64) bool {
+	if listErr != nil {
+		logging.Log("monitor: list-windows failed, skipping tick: %v", listErr)
+		return false
+	}
+	m.reconcileWindows(cfg, windows, now)
+	return true
+}
+
 // reconcileWindows bootstraps instanceState for new windows, fires Gone
 // transitions for disappeared windows, and cleans up associated resources.
 func (m *monitorModel) reconcileWindows(cfg *config.Config, windows []tmux.WindowInfo, now int64) {
@@ -548,6 +570,13 @@ func (m *monitorModel) reconcileWindows(cfg *config.Config, windows []tmux.Windo
 	}
 	for id, inst := range m.windows {
 		if currentIDs[id] {
+			inst.missingTicks = 0
+			continue
+		}
+		// Require absence on two consecutive successful ticks so one flaky
+		// read cannot remove (and tombstone) a live window.
+		inst.missingTicks++
+		if inst.missingTicks < goneAfterMissingTicks {
 			continue
 		}
 		// shell and improve~ windows never fire handlers, but must still be

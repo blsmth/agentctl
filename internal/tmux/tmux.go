@@ -765,6 +765,14 @@ func ListWindows() []WindowInfo {
 // parameterised so callers that must be scoped to the session they were
 // invoked from (e.g. `agentctl sweep`) never depend on the global.
 func ListWindowsIn(session string) []WindowInfo {
+	windows, _ := ListWindowsInErr(session)
+	return windows
+}
+
+// ListWindowsInErr is ListWindowsIn that distinguishes a failed tmux call
+// (error) from a session with no windows (nil, nil). Callers that act on a
+// window's absence must use it.
+func ListWindowsInErr(session string) ([]WindowInfo, error) {
 	// Tab-delimited: window names and pane paths may both contain spaces
 	// (e.g. spinner-prefixed names, or a path under "My Projects"), so a
 	// space delimiter would corrupt both fields. Neither field can contain a
@@ -773,7 +781,7 @@ func ListWindowsIn(session string) []WindowInfo {
 		"-F", "#{window_id}\t#{pane_current_path}\t#{window_name}")
 	out, err := cmd.Output()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("tmux list-windows -t %s: %w", session, err)
 	}
 	var windows []WindowInfo
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -783,7 +791,12 @@ func ListWindowsIn(session string) []WindowInfo {
 		}
 		windows = append(windows, WindowInfo{ID: parts[0], Path: parts[1], Name: parts[2]})
 	}
-	return windows
+	return windows, nil
+}
+
+// ListWindowsErr is ListWindows that reports a failed tmux call.
+func ListWindowsErr() ([]WindowInfo, error) {
+	return ListWindowsInErr(SessionName)
 }
 
 // ActiveWindowIDFast returns the currently active tmux window ID. It prefers
