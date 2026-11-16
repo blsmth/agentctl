@@ -119,11 +119,7 @@ func prepareRestore(cfg *config.Config, req RestoreRequest) (config.AgentConfig,
 	ac := cfg.ForAgent(req.AgentName)
 	ac.Backend = req.Backend
 	env := map[string]string{}
-	be, err := PrepareBackend(cfg, &ac, "", "", req.WorkDir, env)
-	if err != nil {
-		return ac, nil, err
-	}
-	if err := RequireNousWorktree(be, req.WorkDir); err != nil {
+	if _, err := PrepareBackend(cfg, &ac, "", "", req.WorkDir, env); err != nil {
 		return ac, nil, err
 	}
 	if len(env) == 0 {
