@@ -83,6 +83,11 @@ type Group struct {
 	// metadata, and the spawned-by parent link that state.json does not.
 	RuntimeDir string
 
+	// ProjectDir is the session's project directory (tmux #{session_path},
+	// or the registry's ProjectDir). Used as the cwd when launching a new
+	// agent into this session from the hub.
+	ProjectDir string
+
 	// SnapshotAge is how old the state.json backing this group was when it
 	// was read. Zero when the snapshot was missing or unreadable — check
 	// Stale, not SnapshotAge == 0, to detect that case. Surfaced because a
@@ -216,6 +221,7 @@ func LoadGroup(e registry.Entry) Group {
 			Rollup:     RollupIdle,
 			Stale:      true,
 			RuntimeDir: e.RuntimeDir,
+			ProjectDir: e.ProjectDir,
 		}
 	}
 
@@ -226,6 +232,7 @@ func LoadGroup(e registry.Entry) Group {
 		Rollup:      RollupRows(rows),
 		Rows:        rows,
 		RuntimeDir:  e.RuntimeDir,
+		ProjectDir:  e.ProjectDir,
 		SnapshotAge: time.Since(snap.Timestamp),
 	}
 	if snap.IsStale(SnapshotStaleAfter) {

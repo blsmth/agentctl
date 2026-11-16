@@ -120,7 +120,7 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 // launches directly in the main checkout instead of an isolated worktree.
 // backend is the --backend override: a name selects that backend, "none"
 // forces Anthropic, and empty defers to the agent config.
-func RunLaunch(name string, noWorktree bool, backend string) {
+func RunLaunch(name string, noWorktree bool, backend string, background bool) {
 	if name == "" {
 		cfg := config.Load()
 		name = usableDefaultAgent(cfg, os.Stderr)
@@ -136,7 +136,7 @@ func RunLaunch(name string, noWorktree bool, backend string) {
 		os.Exit(1)
 	}
 	workDir := resolveAgentDir(baseName)
-	RunLaunchAgent(baseName, workDir, noWorktree, backend)
+	RunLaunchAgentOpts(baseName, workDir, noWorktree, backend, background)
 }
 
 // RunLaunchAgent launches a fresh interactive agent session in workDir.
@@ -147,11 +147,18 @@ func RunLaunch(name string, noWorktree bool, backend string) {
 // skips worktree isolation (the CLI's --no-worktree escape hatch); when
 // false, UseWorktree is left nil so the launch inherits the mode default.
 func RunLaunchAgent(name string, workDir string, noWorktree bool, backend string) {
+	RunLaunchAgentOpts(name, workDir, noWorktree, backend, false)
+}
+
+// RunLaunchAgentOpts is RunLaunchAgent with control over focus: background
+// creates the window without switching the client to it.
+func RunLaunchAgentOpts(name string, workDir string, noWorktree bool, backend string, background bool) {
 	req := dispatch.Request{
-		AgentName: name,
-		Mode:      dispatch.ModeBare,
-		WorkDir:   workDir,
-		Backend:   backend,
+		Background: background,
+		AgentName:  name,
+		Mode:       dispatch.ModeBare,
+		WorkDir:    workDir,
+		Backend:    backend,
 	}
 	if noWorktree {
 		useWorktree := false
