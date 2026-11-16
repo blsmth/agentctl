@@ -164,9 +164,16 @@ func RunLaunchAgentOpts(name string, workDir string, noWorktree bool, backend st
 		useWorktree := false
 		req.UseWorktree = &useWorktree
 	}
-	if _, err := dispatch.Launch(req); err != nil {
+	res, err := dispatch.Launch(req)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+	// Machine-readable: the hub parses the last stdout line to focus the new
+	// window. Only emitted for background launches; interactive output is
+	// unchanged.
+	if background && res.WindowID != "" {
+		fmt.Println(res.WindowID)
 	}
 }
 

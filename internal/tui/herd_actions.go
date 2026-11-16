@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -69,8 +71,43 @@ func rowCanClose(r herd.Row) bool {
 
 // herdLaunchedMsg reports the outcome of a background `agentctl launch`.
 type herdLaunchedMsg struct {
-	session string
-	err     error
+	session  string
+	windowID string // "" when the launch did not report a usable window ID
+	err      error
+}
+
+// herdFocusRetryMsg re-triggers a load while a launched window has not yet
+// shown up in state.json.
+type herdFocusRetryMsg struct{ session, windowID string }
+
+// Bounds for waiting on the monitor to publish a newly launched window.
+const (
+	herdFocusRetryInterval = 500 * time.Millisecond
+	herdFocusMaxRetries    = 10
+)
+
+// herdPendingFocus is a launched window the hub should select once it appears.
+type herdPendingFocus struct {
+	session  string
+	windowID string
+	tries    int
+}
+
+// parseLaunchWindowID extracts the window ID from `agentctl launch
+// --background` stdout: the last non-empty line, which must look like "@123".
+// Returns "" if absent or malformed.
+func parseLaunchWindowID(stdout string) string {
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if len(last) < 2 || last[0] != '@' {
+		return ""
+	}
+	for _, r := range last[1:] {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return last
 }
 
 // herdClosedMsg reports the outcome of a window close.
@@ -90,14 +127,19 @@ func herdLaunchCmd(g herd.Group) tea.Cmd {
 		c := exec.Command(exe, "launch", "--background")
 		c.Dir = g.ProjectDir
 		c.Env = herdLaunchEnv(g, os.Environ())
-		if out, err := c.CombinedOutput(); err != nil {
-			msg := strings.TrimSpace(string(out))
+		var stdout, stderr bytes.Buffer
+		c.Stdout, c.Stderr = &stdout, &stderr
+		if err := c.Run(); err != nil {
+			msg := strings.TrimSpace(stderr.String())
+			if msg == "" {
+				msg = strings.TrimSpace(stdout.String())
+			}
 			if i := strings.LastIndex(msg, "\n"); i >= 0 {
 				msg = msg[i+1:]
 			}
 			return herdLaunchedMsg{session: g.Session, err: fmt.Errorf("launch in %s: %s: %w", g.Session, msg, err)}
 		}
-		return herdLaunchedMsg{session: g.Session}
+		return herdLaunchedMsg{session: g.Session, windowID: parseLaunchWindowID(stdout.String())}
 	}
 }
 
@@ -267,4 +309,42 @@ func (m *HerdModel) runMenuKey(key string) tea.Cmd {
 		return m.launchForLine(line)
 	}
 	return nil
+}
+
+// applyPendingFocus selects the pending launched row if it is now present and
+// clears the target. Reports whether a row was selected.
+func (m *HerdModel) applyPendingFocus() bool {
+	p := m.pendingFocus
+	if p == nil {
+		return false
+	}
+	for i, l := range m.lines {
+		if l.kind == herdLineRow && l.row.Session == p.session && l.row.WindowID == p.windowID {
+			m.selectLine(i)
+			m.pendingFocus = nil
+			return true
+		}
+	}
+	return false
+}
+
+// focusRetry handles a retry tick: it gives up after herdFocusMaxRetries,
+// otherwise reloads and schedules the next tick. Stale ticks (target replaced
+// or cleared) are ignored.
+func (m *HerdModel) focusRetry(msg herdFocusRetryMsg) tea.Cmd {
+	p := m.pendingFocus
+	if p == nil || p.session != msg.session || p.windowID != msg.windowID {
+		return nil
+	}
+	if p.tries++; p.tries > herdFocusMaxRetries {
+		m.pendingFocus = nil
+		return nil
+	}
+	return tea.Batch(herdLoadCmd(), herdFocusRetryCmd(p.session, p.windowID))
+}
+
+func herdFocusRetryCmd(session, windowID string) tea.Cmd {
+	return tea.Tick(herdFocusRetryInterval, func(time.Time) tea.Msg {
+		return herdFocusRetryMsg{session: session, windowID: windowID}
+	})
 }
