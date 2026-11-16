@@ -279,6 +279,11 @@ type HerdModel struct {
 	liveWinWidth int
 	userLeft     int
 
+	// pendingFocus is a just-launched window to select once it appears in a
+	// reload. Cleared on success, give-up, manual selection, or replaced by a
+	// newer launch.
+	pendingFocus *herdPendingFocus
+
 	quitting bool
 }
 
@@ -395,7 +400,15 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.jumpErr = ""
 		m.infoMsg = "launched new agent in " + msg.session
-		return m, herdLoadCmd()
+		m.pendingFocus = nil
+		if msg.windowID == "" {
+			return m, herdLoadCmd()
+		}
+		m.pendingFocus = &herdPendingFocus{session: msg.session, windowID: msg.windowID}
+		return m, tea.Batch(herdLoadCmd(), herdFocusRetryCmd(msg.session, msg.windowID))
+
+	case herdFocusRetryMsg:
+		return m, m.focusRetry(msg)
 
 	case herdClosedMsg:
 		if msg.err != nil {
@@ -419,6 +432,7 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rebuildLines()
 			m.applyClosePending()
 			m.resolveSelection()
+			m.applyPendingFocus()
 		}
 		show := m.maybeShowCmd()
 		return m, show
@@ -752,6 +766,7 @@ func (m *HerdModel) moveCursor(delta int) {
 	// SplitPane's totalRows (used for cursor clamping) in sync immediately,
 	// rather than waiting for the next View().
 	m.splitPane.SetListContent(m.splitPane.listContent, len(m.lines))
+	m.pendingFocus = nil
 	m.splitPane.SetCursor(m.nextSelectable(m.splitPane.Cursor(), delta))
 	m.syncSelectionFromCursor()
 	m.ensureCursorVisible()

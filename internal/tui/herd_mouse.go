@@ -120,6 +120,7 @@ func (m HerdModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, ac
 
 // selectLine moves the cursor to idx with the same bookkeeping as moveCursor.
 func (m *HerdModel) selectLine(idx int) {
+	m.pendingFocus = nil // a manual selection beats a pending launch focus
 	m.splitPane.SetListContent(m.splitPane.listContent, len(m.lines))
 	m.splitPane.SetCursor(idx)
 	m.syncSelectionFromCursor()
