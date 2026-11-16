@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/theme"
@@ -280,7 +281,7 @@ func herdLoadCmd() tea.Cmd {
 // hub shells out to tmux at most once per poll tick, not once per row.
 func herdCaptureCmd(session, windowID string) tea.Cmd {
 	return func() tea.Msg {
-		content, err := tmux.CapturePane(session, windowID, herdPreviewLines)
+		content, err := tmux.CapturePaneANSI(session, windowID, herdPreviewLines)
 		return herdCapturedMsg{session: session, windowID: windowID, content: content, err: err}
 	}
 }
@@ -1065,20 +1066,13 @@ func (m HerdModel) renderRow(r herd.Row, selected bool, stale bool, cw int) stri
 }
 
 // truncateToWidth shortens s to at most width display columns (as measured
-// by lipgloss.Width, which is ANSI- and wide-rune-aware), appending "…" when
+// by ansi.Truncate, which is ANSI- and wide-rune-aware and preserves escapes), appending "…" when
 // truncated. Returns s unchanged if it already fits or width <= 0.
 func truncateToWidth(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	if lipgloss.Width(s) <= width {
-		return s
-	}
-	runes := []rune(s)
-	for len(runes) > 0 && lipgloss.Width(string(runes)) > width-1 {
-		runes = runes[:len(runes)-1]
-	}
-	return string(runes) + "…"
+	return ansi.Truncate(s, width, "…")
 }
 
 func plural(n int) string {
@@ -1161,10 +1155,10 @@ func renderAgentDetail(r herd.Row, preview, previewErr string, width int) string
 	switch {
 	case previewErr != "":
 		b.WriteString(herdErrStyle.Render("  preview unavailable: " + previewErr))
-	case strings.TrimSpace(preview) == "":
+	case strings.TrimSpace(ansi.Strip(preview)) == "":
 		b.WriteString(herdDimStyle.Render("  (no output yet)"))
 	default:
-		b.WriteString(preview)
+		b.WriteString(normalizeANSILines(preview))
 	}
 
 	return b.String()
