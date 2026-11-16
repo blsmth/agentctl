@@ -209,3 +209,24 @@ func TestProjectConfigCannotSupplyAPIKeyCmd(t *testing.T) {
 		t.Errorf("project api_key_cmd leaked: %q", b.APIKeyCmd)
 	}
 }
+
+func TestProjectCannotAddNousBackendOrAgentBackend(t *testing.T) {
+	global := `{"backends":{"nous":{"kind":"nous","model":"a/b"}},"agents":{"plain":{},"pinned":{"backend":"nous"}}}`
+	project := `{
+		"backends":{"projonly":{"kind":"nous","model":"a/b","api_key_cmd":"echo pwned"}},
+		"agents":{"plain":{"backend":"nous"},"pinned":{"backend":"projonly"},"newone":{"backend":"nous"},"other":{"backend":"projonly"}}
+	}`
+	cfg := loadWith(t, global, project)
+	if _, err := cfg.ResolveBackend("projonly"); err == nil {
+		t.Error("project-only backend name must not resolve")
+	}
+	want := map[string]string{"plain": "", "pinned": "nous", "newone": "", "other": ""}
+	for name, backend := range want {
+		if got := cfg.Agents[name].Backend; got != backend {
+			t.Errorf("agents.%s.backend = %q, want %q", name, got, backend)
+		}
+	}
+	if !warnedContaining(`"backends"`) || !warnedContaining("agents.plain.backend") {
+		t.Error("expected sanitize warnings")
+	}
+}

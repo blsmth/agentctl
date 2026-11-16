@@ -167,7 +167,7 @@ func main() {
 			if agentName == "" {
 				agentName = os.Getenv("AGENTCTL_AGENT_NAME")
 			}
-			ac := config.Load().ForAgent(agentName)
+			ac := worktreeSettingsAgentConfig(config.Load(), agentName, os.Getenv)
 			return dispatch.WriteWorktreeSettings(worktreeDir, repoDir, ac)
 		})
 		hooks.Dispatch(os.Args[1])

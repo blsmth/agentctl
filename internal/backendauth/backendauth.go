@@ -141,3 +141,20 @@ func redactedStderr(stderr, stdout string) string {
 	}
 	return ": " + line
 }
+
+// Available reports whether a key can be obtained for backend name, without
+// running api_key_cmd (it may prompt, e.g. 1Password) and without any network
+// call: a configured api_key_cmd counts as available; otherwise the store must
+// hold a key.
+func Available(name string, b config.BackendConfig) error {
+	if b.APIKeyCmd != "" {
+		return nil
+	}
+	if _, err := DefaultStore.Get(name); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("no API key stored for backend %q; run `agentctl backend login %s`", name, name)
+		}
+		return fmt.Errorf("reading API key for backend %q: %w", name, err)
+	}
+	return nil
+}

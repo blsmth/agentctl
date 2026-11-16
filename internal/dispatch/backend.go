@@ -142,7 +142,7 @@ func PrepareBackend(cfg *config.Config, ac *config.AgentConfig, override, explic
 		return nil, nil
 	}
 	if be.IsNous() {
-		info, err := preflightNous(be.Name, be.BackendConfig, workDir)
+		info, err := preflightNous(be.Name, be.BackendConfig, workDir, explicitModel)
 		if err != nil {
 			return nil, fmt.Errorf("backend %q: %w", be.Name, err)
 		}

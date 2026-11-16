@@ -151,7 +151,7 @@ func TestPreflightNous(t *testing.T) {
 			nousEnvSetup(t, tt.keys)
 			srv := catalogServer(t, tt.status, tt.body, nil)
 			tt.b.BaseURL = srv.URL
-			info, err := preflightNous("nous", tt.b, "")
+			info, err := preflightNous("nous", tt.b, "", "")
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatal(err)
@@ -173,7 +173,7 @@ func TestPreflightNousUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	url := srv.URL
 	srv.Close()
-	_, err := preflightNous("nous", config.BackendConfig{Kind: "nous", BaseURL: url, Model: "a/b"}, "")
+	_, err := preflightNous("nous", config.BackendConfig{Kind: "nous", BaseURL: url, Model: "a/b"}, "", "")
 	if err == nil || !strings.Contains(err.Error(), "unreachable") {
 		t.Fatalf("err = %v", err)
 	}
@@ -188,7 +188,7 @@ func TestPreflightNousCatalogCache(t *testing.T) {
 	b := config.BackendConfig{Kind: "nous", BaseURL: srv.URL, Model: "qwen/qwen3-coder-next"}
 
 	for i := 0; i < 2; i++ {
-		if _, err := preflightNous("nous", b, ""); err != nil {
+		if _, err := preflightNous("nous", b, "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -200,7 +200,7 @@ func TestPreflightNousCatalogCache(t *testing.T) {
 	old := nowFn
 	nowFn = func() time.Time { return time.Now().Add(11 * time.Minute) }
 	t.Cleanup(func() { nowFn = old })
-	if _, err := preflightNous("nous", b, ""); err != nil {
+	if _, err := preflightNous("nous", b, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if hits.Load() != 2 {
@@ -430,9 +430,7 @@ func TestWriteAgentSettingsRefreshesWorktree(t *testing.T) {
 	pinNousConfig(t)
 	repo := t.TempDir()
 	wt := filepath.Join(repo, ".worktrees", "agent-x-issue-1")
-	if err := os.MkdirAll(wt, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	makeLinkedWorktree(t, repo, wt)
 	localPath := filepath.Join(wt, ".claude", "settings.local.json")
 	rt := filepath.Join(repo, ".agentctl")
 	withRuntimeDir(t, rt)
@@ -463,5 +461,249 @@ func TestWriteAgentSettingsRefreshesWorktree(t *testing.T) {
 		if strings.Contains(got, bad) {
 			t.Errorf("stale %q left in worktree settings after backend none:\n%s", bad, got)
 		}
+	}
+}
+
+// makeLinkedWorktree fakes the on-disk shape of `git worktree add`: repo/.git
+// is a directory and wt/.git is a file pointing into repo/.git/worktrees/.
+func makeLinkedWorktree(t *testing.T, repo, wt string) {
+	t.Helper()
+	admin := filepath.Join(repo, ".git", "worktrees", filepath.Base(wt))
+	for _, d := range []string{admin, wt} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+admin+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAgentctlWorktreeRoot(t *testing.T) {
+	repo := t.TempDir()
+	wt := filepath.Join(repo, ".worktrees", "w")
+	makeLinkedWorktree(t, repo, wt)
+
+	// Layout matches but no .git file: a look-alike directory.
+	fake := filepath.Join(repo, ".worktrees", "fake")
+	if err := os.MkdirAll(fake, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// .git file pointing at some other repository.
+	other := t.TempDir()
+	foreign := filepath.Join(repo, ".worktrees", "foreign")
+	makeLinkedWorktree(t, other, foreign)
+	// Linked worktree of this repo but not under .worktrees.
+	elsewhere := filepath.Join(t.TempDir(), "w")
+	makeLinkedWorktree(t, repo, elsewhere)
+
+	tests := []struct {
+		name   string
+		dir    string
+		wantOK bool
+	}{
+		{"real worktree", wt, true},
+		{"look-alike dir", fake, false},
+		{"foreign repo", foreign, false},
+		{"not under .worktrees", elsewhere, false},
+		{"repo root", repo, false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root, ok := agentctlWorktreeRoot(tt.dir)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if ok && !sameDir(root, repo) {
+				t.Errorf("root = %q, want %q", root, repo)
+			}
+		})
+	}
+}
+
+func TestRequireNousWorktree(t *testing.T) {
+	repo := t.TempDir()
+	wt := filepath.Join(repo, ".worktrees", "w")
+	makeLinkedWorktree(t, repo, wt)
+	nous := &Backend{Name: "nous", BackendConfig: config.BackendConfig{Kind: "nous"}}
+	ollama := &Backend{Name: "fenrir"}
+	tests := []struct {
+		name    string
+		be      *Backend
+		dir     string
+		wantErr bool
+	}{
+		{"nous in worktree", nous, wt, false},
+		{"nous in main checkout", nous, repo, true},
+		{"ollama anywhere", ollama, repo, false},
+		{"no backend", nil, repo, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := RequireNousWorktree(tt.be, tt.dir)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestPrepareRestoreNousRequiresWorktree(t *testing.T) {
+	nousEnvSetup(t, map[string]string{"nous": "k"})
+	srv := catalogServer(t, 200, nousCatalogJSON, nil)
+	cfg := &config.Config{Backends: map[string]config.BackendConfig{
+		"nous": {Kind: "nous", BaseURL: srv.URL, Model: "qwen/qwen3-coder-next"},
+	}}
+	repo := t.TempDir()
+	wt := filepath.Join(repo, ".worktrees", "w")
+	makeLinkedWorktree(t, repo, wt)
+
+	if _, _, err := prepareRestore(cfg, RestoreRequest{AgentName: "a", Backend: "nous", WorkDir: repo}); err == nil || !strings.Contains(err.Error(), "worktree") {
+		t.Errorf("main checkout: err = %v, want worktree error", err)
+	}
+	if _, env, err := prepareRestore(cfg, RestoreRequest{AgentName: "a", Backend: "nous", WorkDir: wt}); err != nil || env[EnvBackend] != "nous" {
+		t.Errorf("worktree: env=%v err=%v", env, err)
+	}
+}
+
+func TestPreflightNousChecksExplicitModel(t *testing.T) {
+	nousEnvSetup(t, map[string]string{"nous": "k"})
+	srv := catalogServer(t, 200, nousCatalogJSON, nil)
+	b := config.BackendConfig{Kind: "nous", BaseURL: srv.URL, Model: "qwen/qwen3-coder-next"}
+
+	if _, err := preflightNous("nous", b, "", "qwen/missing"); err == nil || !strings.Contains(err.Error(), "qwen/missing") {
+		t.Errorf("missing explicit model: err = %v", err)
+	}
+	info, err := preflightNous("nous", b, "", "qwen/qwen3-max")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ContextLength != 32768 {
+		t.Errorf("context should follow the explicit model, got %d", info.ContextLength)
+	}
+}
+
+func TestPreflightNousDoesNotRunAPIKeyCmd(t *testing.T) {
+	nousEnvSetup(t, map[string]string{})
+	srv := catalogServer(t, 200, nousCatalogJSON, nil)
+	marker := filepath.Join(t.TempDir(), "ran")
+	b := config.BackendConfig{Kind: "nous", BaseURL: srv.URL, Model: "qwen/qwen3-coder-next",
+		APIKeyCmd: "touch " + marker + "; echo key"}
+	if _, err := preflightNous("nous", b, "", ""); err != nil {
+		t.Fatalf("configured api_key_cmd should satisfy preflight: %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("preflight ran api_key_cmd")
+	}
+}
+
+func TestMergeAgentctlSettings(t *testing.T) {
+	existing := `{
+  "permissions": {"allow": ["Bash(ls)"], "deny": ["Bash(*backend-token*)", "Edit(**/.claude/settings*.json)", "Bash(rm)"]},
+  "env": {"FOO": "bar", "ANTHROPIC_BASE_URL": "https://old", "ANTHROPIC_API_KEY": ""},
+  "apiKeyHelper": "old",
+  "hooks": {"Stop": []},
+  "model": "keepme"
+}`
+	t.Run("nous", func(t *testing.T) {
+		gen := `{"apiKeyHelper":"new","env":{"ANTHROPIC_BASE_URL":"https://new","ANTHROPIC_API_KEY":"","ANTHROPIC_AUTH_TOKEN":""},` +
+			`"permissions":{"deny":["Bash(*backend-token*)","Edit(**/.claude/settings*.json)"]}}`
+		out, err := mergeAgentctlSettings([]byte(existing), []byte(gen))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			Model        string
+			APIKeyHelper string
+			Hooks        json.RawMessage
+			Env          map[string]string
+			Permissions  struct{ Allow, Deny []string }
+		}
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Model != "keepme" || got.APIKeyHelper != "new" || got.Hooks != nil {
+			t.Errorf("got %+v", got)
+		}
+		if got.Env["FOO"] != "bar" || got.Env["ANTHROPIC_BASE_URL"] != "https://new" {
+			t.Errorf("env = %v", got.Env)
+		}
+		if strings.Join(got.Permissions.Allow, ",") != "Bash(ls)" {
+			t.Errorf("allow = %v", got.Permissions.Allow)
+		}
+		if strings.Join(got.Permissions.Deny, ",") != "Bash(rm),Bash(*backend-token*),Edit(**/.claude/settings*.json)" {
+			t.Errorf("deny = %v", got.Permissions.Deny)
+		}
+	})
+	t.Run("no backend removes owned keys, keeps the rest", func(t *testing.T) {
+		out, err := mergeAgentctlSettings([]byte(existing), []byte(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(out)
+		for _, bad := range []string{"apiKeyHelper", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "backend-token", "hooks", "settings*.json"} {
+			if strings.Contains(s, bad) {
+				t.Errorf("%q survived:\n%s", bad, s)
+			}
+		}
+		for _, keep := range []string{`"FOO": "bar"`, "Bash(ls)", "Bash(rm)", "keepme"} {
+			if !strings.Contains(s, keep) {
+				t.Errorf("%q lost:\n%s", keep, s)
+			}
+		}
+	})
+	t.Run("empty existing", func(t *testing.T) {
+		out, err := mergeAgentctlSettings(nil, []byte(`{"apiKeyHelper":"x"}`))
+		if err != nil || !strings.Contains(string(out), "apiKeyHelper") {
+			t.Errorf("out=%s err=%v", out, err)
+		}
+	})
+	t.Run("invalid existing errors", func(t *testing.T) {
+		if _, err := mergeAgentctlSettings([]byte(`{bad`), []byte(`{}`)); err == nil {
+			t.Error("expected error")
+		}
+	})
+}
+
+func TestWriteWorktreeSettingsKeepsSavedPermissions(t *testing.T) {
+	pinNousConfig(t)
+	repo := t.TempDir()
+	wt := filepath.Join(repo, ".worktrees", "w")
+	makeLinkedWorktree(t, repo, wt)
+	local := filepath.Join(wt, ".claude", "settings.local.json")
+	if err := os.MkdirAll(filepath.Dir(local), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	saved := `{"permissions":{"allow":["Bash(make test)"]},"enableAllProjectMcpServers":true}`
+	if err := os.WriteFile(local, []byte(saved), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, backend := range []string{"nous", "", "nous"} {
+		if err := WriteWorktreeSettings(wt, repo, config.AgentConfig{Backend: backend}); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(local)
+		if !strings.Contains(string(b), "Bash(make test)") || !strings.Contains(string(b), "enableAllProjectMcpServers") {
+			t.Fatalf("backend %q: saved settings lost:\n%s", backend, b)
+		}
+		if got := strings.Contains(string(b), "apiKeyHelper"); got != (backend == "nous") {
+			t.Fatalf("backend %q: apiKeyHelper present = %v", backend, got)
+		}
+	}
+}
+
+func TestWriteAgentSettingsWorktreeFailureStillWritesSettings(t *testing.T) {
+	pinNousConfig(t)
+	repo := t.TempDir()
+	wt := filepath.Join(repo, ".worktrees", "w")
+	makeLinkedWorktree(t, repo, wt)
+	// A symlinked .claude makes the worktree write refuse.
+	if err := os.Symlink(t.TempDir(), filepath.Join(wt, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	withRuntimeDir(t, filepath.Join(repo, ".agentctl"))
+	if path := WriteAgentSettings("go-engineer", config.AgentConfig{Backend: "nous"}, wt); path == "" {
+		t.Error("--settings file must still be written when the worktree write fails")
 	}
 }

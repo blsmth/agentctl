@@ -51,7 +51,7 @@ var nowFn = time.Now
 //  1. no settings layer sets a competing Anthropic credential,
 //  2. every configured model is in the public catalog (GET /v1/models),
 //  3. an API key can be resolved locally.
-func preflightNous(name string, b config.BackendConfig, workDir string) (nousInfo, error) {
+func preflightNous(name string, b config.BackendConfig, workDir, explicitModel string) (nousInfo, error) {
 	if err := checkShadowingCredentials(workDir); err != nil {
 		return nousInfo{}, err
 	}
@@ -64,6 +64,9 @@ func preflightNous(name string, b config.BackendConfig, workDir string) (nousInf
 		byID[m.ID] = m
 	}
 	wanted := []string{b.Model}
+	if explicitModel != "" {
+		wanted = append(wanted, explicitModel)
+	}
 	for _, a := range []string{"opus", "sonnet", "haiku", "subagent"} {
 		wanted = append(wanted, b.AliasModel(a))
 	}
@@ -82,11 +85,15 @@ func preflightNous(name string, b config.BackendConfig, workDir string) (nousInf
 			logging.Warn("nous: model %q does not list a messages endpoint in the catalog; it may not work with Claude Code", id)
 		}
 	}
-	info := nousInfo{ContextLength: byID[b.Model].ContextLength}
+	effective := b.Model
+	if explicitModel != "" {
+		effective = explicitModel
+	}
+	info := nousInfo{ContextLength: byID[effective].ContextLength}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if _, err := backendauth.Resolve(ctx, name, b); err != nil {
+	// Only check that a key is available: no network call with the key, and
+	// an api_key_cmd is not run (it may prompt, e.g. 1Password).
+	if err := backendauth.Available(name, b); err != nil {
 		return nousInfo{}, err
 	}
 	return info, nil
