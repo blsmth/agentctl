@@ -117,3 +117,95 @@ func TestUnknownBackendWarns(t *testing.T) {
 		t.Error("expected error resolving unknown backend")
 	}
 }
+
+func TestNousBackendValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		b    string
+		ok   bool
+	}{
+		{"minimal", `{"kind":"nous","model":"qwen/qwen3-coder-next"}`, true},
+		{"tilde slug", `{"kind":"nous","model":"~anthropic/claude-sonnet-latest"}`, true},
+		{"explicit auth", `{"kind":"nous","model":"m/x","auth":"api_key"}`, true},
+		{"alias models", `{"kind":"nous","model":"m/x","models":{"haiku":"openai/gpt-oss-120b"}}`, true},
+		{"oauth reserved", `{"kind":"nous","model":"m/x","auth":"oauth"}`, false},
+		{"unknown auth", `{"kind":"nous","model":"m/x","auth":"hermes"}`, false},
+		{"auth_token rejected", `{"kind":"nous","model":"m/x","auth_token":"sk-secret"}`, false},
+		{"http rejected", `{"kind":"nous","model":"m/x","base_url":"http://h"}`, false},
+		{"no model", `{"kind":"nous"}`, false},
+		{"shell chars", `{"kind":"nous","model":"a/b;rm -rf"}`, false},
+		{"dollar in alias", `{"kind":"nous","model":"a/b","models":{"opus":"$(x)"}}`, false},
+		{"unknown kind", `{"kind":"openai","model":"m"}`, false},
+		{"negative ctx", `{"kind":"nous","model":"m/x","max_context_tokens":-1}`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := loadWith(t, `{"backends":{"b":`+tt.b+`}}`, `{}`)
+			_, err := cfg.ResolveBackend("b")
+			if (err == nil) != tt.ok {
+				t.Errorf("ResolveBackend err = %v, want ok=%v", err, tt.ok)
+			}
+		})
+	}
+}
+
+func TestNousBackendDefaults(t *testing.T) {
+	tests := []struct {
+		name, baseURL, want string
+	}{
+		{"default", ``, NousDefaultBaseURL},
+		{"strip v1", `"base_url":"https://inference-api.nousresearch.com/v1",`, NousDefaultBaseURL},
+		{"strip v1 slash", `"base_url":"https://x.example/v1/",`, "https://x.example"},
+		{"keep other", `"base_url":"https://x.example/proxy",`, "https://x.example/proxy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := loadWith(t, `{"backends":{"n":{`+tt.baseURL+`"kind":"nous","model":"a/b"}}}`, `{}`)
+			b, err := cfg.ResolveBackend("n")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if b.BaseURL != tt.want || b.Auth != "api_key" || b.AuthToken != "" {
+				t.Errorf("got %+v", b)
+			}
+		})
+	}
+}
+
+func TestAliasModel(t *testing.T) {
+	b := BackendConfig{Model: "base/m", Models: &BackendModels{Haiku: "cheap/h"}}
+	for alias, want := range map[string]string{"opus": "base/m", "sonnet": "base/m", "haiku": "cheap/h", "subagent": "base/m"} {
+		if got := b.AliasModel(alias); got != want {
+			t.Errorf("AliasModel(%s) = %q, want %q", alias, got, want)
+		}
+	}
+	if got := (BackendConfig{Model: "x"}).AliasModel("opus"); got != "x" {
+		t.Errorf("nil Models fallback = %q", got)
+	}
+}
+
+func TestOllamaUnchangedByNousFields(t *testing.T) {
+	cfg := loadWith(t, `{"backends":{"o":{"kind":"ollama","base_url":"http://h:1","model":"m:1"}}}`, `{}`)
+	b, err := cfg.ResolveBackend("o")
+	if err != nil || b.AuthToken != "ollama" || b.BaseURL != "http://h:1" {
+		t.Fatalf("got %+v, %v", b, err)
+	}
+	// Slugs stay invalid for ollama: safeLaunchValue was not widened.
+	cfg = loadWith(t, `{"backends":{"o":{"base_url":"http://h:1","model":"a/b"}}}`, `{}`)
+	if _, err := cfg.ResolveBackend("o"); err == nil {
+		t.Error("ollama backend accepted a slash model")
+	}
+}
+
+func TestProjectConfigCannotSupplyAPIKeyCmd(t *testing.T) {
+	global := `{"backends":{"nous":{"kind":"nous","model":"a/b"}}}`
+	project := `{"backends":{"nous":{"kind":"nous","model":"a/b","api_key_cmd":"echo pwned"}}}`
+	cfg := loadWith(t, global, project)
+	b, err := cfg.ResolveBackend("nous")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.APIKeyCmd != "" {
+		t.Errorf("project api_key_cmd leaked: %q", b.APIKeyCmd)
+	}
+}

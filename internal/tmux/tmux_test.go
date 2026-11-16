@@ -1249,7 +1249,7 @@ func TestWriteLaunchLogHeaderAppends(t *testing.T) {
 // double-quoted string), so backticks there are not command-substituted by
 // this script -- see buildLaunchScript's doc comment.
 func TestBuildLaunchScriptNoDoubleQuotedCommandEcho(t *testing.T) {
-	got := buildLaunchScript("claude --agent go-engineer", "/tmp/launch.log", "/tmp/launch.sh")
+	got := buildLaunchScript("claude --agent go-engineer", "/tmp/launch.log", "/tmp/launch.sh", "")
 	if strings.Contains(got, "Command: %s") || strings.Contains(got, `Command: claude`) {
 		t.Errorf("buildLaunchScript should not echo the command inline; got:\n%s", got)
 	}

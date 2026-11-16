@@ -224,7 +224,7 @@ func TestPrepareBackendEnvAndPreflight(t *testing.T) {
 	cfg := testCfg(srv.URL)
 	ac := config.AgentConfig{Backend: "fenrir"}
 	env := map[string]string{}
-	if _, err := PrepareBackend(cfg, &ac, "", "", env); err == nil {
+	if _, err := PrepareBackend(cfg, &ac, "", "", "", env); err == nil {
 		t.Fatal("expected preflight failure for missing model")
 	}
 	if len(env) != 0 {

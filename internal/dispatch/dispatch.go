@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/blsmth/agentctl/internal/agent"
@@ -131,7 +132,7 @@ func Launch(req Request) (Result, error) {
 		ac.Model = spec.DefaultModel
 	}
 	backendEnv := map[string]string{}
-	if _, err := PrepareBackend(cfg, &ac, req.Backend, req.Model, backendEnv); err != nil {
+	if _, err := PrepareBackend(cfg, &ac, req.Backend, req.Model, workDir, backendEnv); err != nil {
 		return Result{}, fmt.Errorf("resolving backend: %w", err)
 	}
 
@@ -541,11 +542,29 @@ func BuildAgentSettingsJSON(ac config.AgentConfig, includeHooks bool) ([]byte, e
 		Deny  []string `json:"deny,omitempty"`
 	}
 	type agentSettings struct {
-		Hooks       map[string]interface{} `json:"hooks,omitempty"`
-		Permissions *settingsPerms         `json:"permissions,omitempty"`
+		Hooks        map[string]interface{} `json:"hooks,omitempty"`
+		Permissions  *settingsPerms         `json:"permissions,omitempty"`
+		APIKeyHelper string                 `json:"apiKeyHelper,omitempty"`
+		Env          map[string]string      `json:"env,omitempty"`
 	}
 
 	var s agentSettings
+	nous, err := nousBackendFor(ac)
+	if err != nil {
+		return nil, err
+	}
+	if nous != nil {
+		// The base URL and the credential helper always travel together in
+		// the same file (see BackendEnv). The empty API key / auth token
+		// blank any lower settings layer so a stray credential cannot
+		// outrank the helper and reach Nous.
+		s.APIKeyHelper = shellquote.Quote(exe) + " backend-token " + shellquote.Quote(nous.Name)
+		s.Env = map[string]string{
+			"ANTHROPIC_BASE_URL":   nous.BaseURL,
+			"ANTHROPIC_API_KEY":    "",
+			"ANTHROPIC_AUTH_TOKEN": "",
+		}
+	}
 	if includeHooks {
 		// Render the full canonical hook event set from internal/hooks — the
 		// single source of truth for agentctl's hook map — using the resolved
@@ -565,6 +584,19 @@ func BuildAgentSettingsJSON(ac config.AgentConfig, includeHooks bool) ([]byte, e
 			deny = append(deny, fmt.Sprintf("Bash(*%s*)", bc))
 		}
 		s.Permissions.Deny = deny
+	}
+
+	if nous != nil {
+		// Defence in depth only: the agent runs as the same user and can
+		// read its key by other means (see docs/configuration.md).
+		if s.Permissions == nil {
+			s.Permissions = &settingsPerms{}
+		}
+		s.Permissions.Deny = append(s.Permissions.Deny,
+			"Bash(*backend-token*)",
+			"Edit(**/.claude/settings*.json)",
+			"Write(**/.claude/settings*.json)",
+		)
 	}
 
 	if ac.AutoAccept {
@@ -605,7 +637,17 @@ func BuildAgentSettingsJSON(ac config.AgentConfig, includeHooks bool) ([]byte, e
 // actually loads. Every other caller here runs directly in its own working
 // directory with no such ancestor concern, so checking workDir alone is
 // correct for them.
+//
+// When workDir is an agentctl worktree it also rewrites the worktree's
+// settings.local.json from ac, so a restore, resume or relaunch never
+// inherits backend routing (or loses it) from an earlier launch.
 func WriteAgentSettings(name string, ac config.AgentConfig, workDir string) string {
+	if root, ok := agentctlWorktreeRoot(workDir); ok {
+		if err := WriteWorktreeSettings(workDir, root, ac); err != nil {
+			logging.Warn("WriteAgentSettings: refreshing worktree settings in %s: %v", workDir, err)
+			return ""
+		}
+	}
 	path, _ := writeAgentSettings(name, ac, workDir, workDir)
 	return path
 }
@@ -630,7 +672,7 @@ func writeAgentSettings(name string, ac config.AgentConfig, workDir, hooksBounda
 		return "", fmt.Errorf("marshaling settings: %w", err)
 	}
 
-	path, err := writeSettingsFile(paths.RuntimeDir(), paths.SettingsDir(), name, data)
+	path, err := writeSettingsFile(paths.RuntimeDir(), paths.SettingsDir(), settingsFileStem(name, ac.Backend), data)
 	if err != nil {
 		logging.Warn("WriteAgentSettings: %v", err)
 		return "", err
@@ -638,6 +680,56 @@ func writeAgentSettings(name string, ac config.AgentConfig, workDir, hooksBounda
 
 	logging.Log("WriteAgentSettings: wrote %s for agent %s", path, name)
 	return path, nil
+}
+
+// agentctlWorktreeRoot reports whether dir is an agentctl worktree
+// (<root>/.worktrees/<slug>, the layout worktree.Create produces) and returns
+// the repository root.
+func agentctlWorktreeRoot(dir string) (string, bool) {
+	if dir == "" {
+		return "", false
+	}
+	dir = filepath.Clean(dir)
+	parent := filepath.Dir(dir)
+	if filepath.Base(parent) != ".worktrees" {
+		return "", false
+	}
+	return filepath.Dir(parent), true
+}
+
+// unsafeStemChars matches characters not allowed in a settings file name.
+var unsafeStemChars = regexp.MustCompile(`[^A-Za-z0-9._-]`)
+
+// settingsFileStem names the --settings file: <agent>@<backend> when a
+// backend applies, so launches of one agent on different backends never
+// overwrite each other's file.
+func settingsFileStem(agentName, backend string) string {
+	if backend == "" {
+		return agentName
+	}
+	return agentName + "@" + unsafeStemChars.ReplaceAllString(backend, "_")
+}
+
+// loadConfigFn loads the config for backend resolution; tests replace it.
+var loadConfigFn = config.Load
+
+// nousBackendFor returns the nous backend that ac.Backend (set by
+// PrepareBackend to the effective backend) names, or nil when the launch is
+// not on a nous backend. A name that no longer resolves is an error: settings
+// must never silently drop the routing for a backend the launch was prepared
+// against.
+func nousBackendFor(ac config.AgentConfig) (*Backend, error) {
+	if ac.Backend == "" {
+		return nil, nil
+	}
+	b, err := loadConfigFn().ResolveBackend(ac.Backend)
+	if err != nil {
+		return nil, fmt.Errorf("resolving backend for settings: %w", err)
+	}
+	if !b.IsNous() {
+		return nil, nil
+	}
+	return &Backend{Name: ac.Backend, BackendConfig: b}, nil
 }
 
 // projectHasAgentctlHooks reports whether dir has a project-local

@@ -197,7 +197,7 @@ func LaunchWithResume(name string, sessionID string, workDir string, writeSettin
 	// The resumed session's original backend is not recorded, so use the
 	// agent's configured one; an unknown backend is an error, never Anthropic.
 	extraEnv := map[string]string{}
-	if _, err := dispatch.PrepareBackend(cfg, &ac, "", "", extraEnv); err != nil {
+	if _, err := dispatch.PrepareBackend(cfg, &ac, "", "", workDir, extraEnv); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: resolving backend: %v\n", err)
 		os.Exit(1)
 	}

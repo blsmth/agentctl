@@ -43,7 +43,7 @@ func TestBuildLaunchScriptIsPOSIX(t *testing.T) {
 	for _, tt := range hostilePayloads {
 		t.Run(tt.name, func(t *testing.T) {
 			shellCmd := "claude --agent go-engineer " + shellquote.Quote(tt.payload)
-			script := buildLaunchScript(shellCmd, "/home/a user/launch.log", "/home/a user/launch-1.sh")
+			script := buildLaunchScript(shellCmd, "/home/a user/launch.log", "/home/a user/launch-1.sh", "")
 			if !strings.HasPrefix(script, "#!/bin/sh\n") {
 				t.Errorf("script shebang is not #!/bin/sh:\n%s", script)
 			}
@@ -73,7 +73,7 @@ func TestBuildLaunchScriptRunsUnderSh(t *testing.T) {
 			shellCmd := "printf '%s' " + shellquote.Quote(tt.payload) + " > " + shellquote.Quote(outFile) +
 				"; echo to-stderr >&2; exit 3"
 
-			scriptPath, _, err := writeLaunchScript(dir, shellCmd, launchLog)
+			scriptPath, _, err := writeLaunchScript(dir, shellCmd, launchLog, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -185,7 +185,7 @@ func TestLaunchDirPermissions(t *testing.T) {
 	}
 	assertPerm(t, dir, 0o700)
 
-	scriptPath, _, err := writeLaunchScript(dir, "true", launchLogPath(dir, "w"))
+	scriptPath, _, err := writeLaunchScript(dir, "true", launchLogPath(dir, "w"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,5 +308,48 @@ func TestChromeBarHookShellCmdRuns(t *testing.T) {
 	}
 	if want := runtimeDir + "|chrome-bar-pane|@7"; string(got) != want {
 		t.Errorf("stand-in got %q, want %q", got, want)
+	}
+}
+
+func TestUnsetLineFor(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+		wantErr        bool
+	}{
+		{"empty", "", "", false},
+		{"blank", "   ", "", false},
+		{"names", "ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN  CLAUDE_CODE_OAUTH_TOKEN", "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN", false},
+		{"lowercase", "foo", "", true},
+		{"injection", "A; rm -rf ~", "", true},
+		{"substitution", "A$(id)", "", true},
+		{"leading digit", "1A", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := unsetLineFor(tt.in)
+			if (err != nil) != tt.wantErr || got != tt.want {
+				t.Errorf("unsetLineFor(%q) = %q, %v", tt.in, got, err)
+			}
+		})
+	}
+}
+
+func TestWriteLaunchScriptUnset(t *testing.T) {
+	dir := t.TempDir()
+	_, content, err := writeLaunchScript(dir, "claude --agent x", launchLogPath(dir, "w"), "ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unset := strings.Index(content, "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN\n")
+	cmd := strings.Index(content, "claude --agent x")
+	if unset < 0 || cmd < 0 || unset > cmd {
+		t.Errorf("unset must precede the command:\n%s", content)
+	}
+	if _, _, err := writeLaunchScript(dir, "true", launchLogPath(dir, "w"), "bad name;x"); err == nil {
+		t.Error("invalid unset name accepted")
+	}
+	_, content, _ = writeLaunchScript(dir, "true", launchLogPath(dir, "w"), "")
+	if strings.Contains(content, "unset") {
+		t.Error("unset emitted with no names")
 	}
 }

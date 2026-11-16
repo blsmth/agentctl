@@ -280,7 +280,7 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 	// Same backend as the agent itself: a local-model agent's improvement
 	// session must not quietly run on Anthropic (or vice versa).
 	extraEnv := dispatch.AgentEnvOverrides(ac)
-	if _, err := dispatch.PrepareBackend(cfg, &ac, "", "", extraEnv); err != nil {
+	if _, err := dispatch.PrepareBackend(cfg, &ac, "", "", workDir, extraEnv); err != nil {
 		return fmt.Errorf("resolving backend: %w", err)
 	}
 

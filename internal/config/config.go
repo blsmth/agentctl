@@ -95,16 +95,140 @@ type AgentConfig struct {
 // set auth_token. Ollama ignores it.
 const DefaultBackendAuthToken = "ollama"
 
-// BackendConfig describes a self-hosted Anthropic-compatible endpoint.
-type BackendConfig struct {
-	BaseURL          string `json:"base_url"`                     // http(s) URL of the server, required
-	Model            string `json:"model"`                        // model name served there, required
-	AuthToken        string `json:"auth_token,omitempty"`         // default "ollama"
-	MaxContextTokens int    `json:"max_context_tokens,omitempty"` // 0 = do not set the var
+// Backend kinds. The empty kind is Ollama (the original behaviour).
+const (
+	BackendKindOllama = "ollama"
+	BackendKindNous   = "nous"
+)
+
+// NousDefaultBaseURL is the Nous Research inference host. It is used without
+// a /v1 suffix because Claude Code appends /v1/messages itself.
+const NousDefaultBaseURL = "https://inference-api.nousresearch.com"
+
+// Backend auth modes (nous only).
+const (
+	BackendAuthAPIKey = "api_key"
+	BackendAuthOAuth  = "oauth" // reserved; always a validation error
+)
+
+// BackendModels holds per-alias model overrides for a backend. An empty field
+// falls back to BackendConfig.Model.
+type BackendModels struct {
+	Opus     string `json:"opus,omitempty"`
+	Sonnet   string `json:"sonnet,omitempty"`
+	Haiku    string `json:"haiku,omitempty"`
+	Subagent string `json:"subagent,omitempty"`
 }
 
-// validate checks b and returns b with defaults applied.
+// BackendConfig describes an Anthropic-compatible endpoint: a self-hosted
+// Ollama server (kind "" or "ollama") or the Nous Research Portal ("nous").
+type BackendConfig struct {
+	Kind             string         `json:"kind,omitempty"`               // "" | "ollama" | "nous"
+	BaseURL          string         `json:"base_url,omitempty"`           // http(s) URL; required for ollama, defaulted for nous
+	Model            string         `json:"model"`                        // model name served there, required
+	Models           *BackendModels `json:"models,omitempty"`             // nous: per-alias overrides
+	AuthToken        string         `json:"auth_token,omitempty"`         // ollama only; default "ollama"
+	Auth             string         `json:"auth,omitempty"`               // nous: "api_key" (default); "oauth" is reserved
+	APIKeyCmd        string         `json:"api_key_cmd,omitempty"`        // nous: shell command printing the key
+	MaxContextTokens int            `json:"max_context_tokens,omitempty"` // 0 = do not set the var
+}
+
+// safeModelValue is the charset allowed for nous model slugs. It adds "/" and
+// "~" (OpenRouter-style ids such as "~anthropic/claude-sonnet-latest") to
+// safeLaunchValue's set. It applies to backend model fields only: every place
+// a model reaches a command line quotes it (dispatch.BuildBaseFlags).
+var safeModelValue = regexp.MustCompile(`^[A-Za-z0-9._:/~-]+$`)
+
+// nousNameRe restricts nous backend names: the name keys a stored credential
+// and a settings file name.
+var nousNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// IsNous reports whether b is a Nous Portal backend.
+func (b BackendConfig) IsNous() bool { return b.Kind == BackendKindNous }
+
+// AliasModel returns the model for a Claude alias ("opus", "sonnet", "haiku",
+// "subagent"), falling back to b.Model.
+func (b BackendConfig) AliasModel(alias string) string {
+	var m string
+	if b.Models != nil {
+		switch alias {
+		case "opus":
+			m = b.Models.Opus
+		case "sonnet":
+			m = b.Models.Sonnet
+		case "haiku":
+			m = b.Models.Haiku
+		case "subagent":
+			m = b.Models.Subagent
+		}
+	}
+	if m == "" {
+		return b.Model
+	}
+	return m
+}
+
+// validate checks b and returns b with defaults applied. It never resolves a
+// secret or runs a command: Load runs it on every monitor tick.
 func (b BackendConfig) validate() (BackendConfig, error) {
+	switch b.Kind {
+	case "", BackendKindOllama:
+		return b.validateOllama()
+	case BackendKindNous:
+		return b.validateNous()
+	default:
+		return b, fmt.Errorf("kind %q is not supported (use %q or %q)", b.Kind, BackendKindOllama, BackendKindNous)
+	}
+}
+
+func (b BackendConfig) validateNous() (BackendConfig, error) {
+	if b.BaseURL == "" {
+		b.BaseURL = NousDefaultBaseURL
+	}
+	u, err := url.Parse(b.BaseURL)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return b, fmt.Errorf("base_url %q must be an https URL", b.BaseURL)
+	}
+	b.BaseURL = strings.TrimSuffix(strings.TrimRight(b.BaseURL, "/"), "/v1")
+	if b.AuthToken != "" {
+		return b, fmt.Errorf("auth_token is not allowed for kind %q (store the key with `agentctl backend login`)", BackendKindNous)
+	}
+	switch b.Auth {
+	case "":
+		b.Auth = BackendAuthAPIKey
+	case BackendAuthAPIKey:
+	case BackendAuthOAuth:
+		return b, fmt.Errorf("auth %q is not supported", BackendAuthOAuth)
+	default:
+		return b, fmt.Errorf("auth %q is not supported (use %q)", b.Auth, BackendAuthAPIKey)
+	}
+	if b.Model == "" {
+		return b, fmt.Errorf("model is required")
+	}
+	fields := []struct{ name, v string }{{"model", b.Model}}
+	if b.Models != nil {
+		fields = append(fields,
+			struct{ name, v string }{"models.opus", b.Models.Opus},
+			struct{ name, v string }{"models.sonnet", b.Models.Sonnet},
+			struct{ name, v string }{"models.haiku", b.Models.Haiku},
+			struct{ name, v string }{"models.subagent", b.Models.Subagent},
+		)
+	}
+	for _, f := range fields {
+		if f.v == "" && f.name != "model" {
+			continue
+		}
+		if !safeModelValue.MatchString(f.v) {
+			return b, fmt.Errorf("%s %q has invalid characters", f.name, f.v)
+		}
+	}
+	if b.MaxContextTokens < 0 {
+		return b, fmt.Errorf("max_context_tokens must not be negative")
+	}
+	return b, nil
+}
+
+func (b BackendConfig) validateOllama() (BackendConfig, error) {
 	u, err := url.Parse(b.BaseURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return b, fmt.Errorf("base_url %q must be an http or https URL", b.BaseURL)
@@ -143,6 +267,9 @@ func (c Config) ResolveBackend(name string) (BackendConfig, error) {
 func validateBackends(cfg *Config) {
 	for name, b := range cfg.Backends {
 		vb, err := b.validate()
+		if err == nil && vb.IsNous() && !nousNameRe.MatchString(name) {
+			err = fmt.Errorf("backend name must match %s (it names the credential and settings file)", nousNameRe)
+		}
 		if err != nil {
 			logOnce(fmt.Sprintf("config: ignoring backend %q: %v", name, err))
 			delete(cfg.Backends, name)

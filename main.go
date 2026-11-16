@@ -40,6 +40,13 @@ var (
 )
 
 func main() {
+	// backend-token is Claude Code's apiKeyHelper target: stdout must be
+	// exactly the key, so it runs before paths, logging and every other
+	// bootstrap step (none of which it needs).
+	if len(os.Args) >= 2 && os.Args[1] == "backend-token" {
+		os.Exit(runBackendToken(os.Args[2:], os.Stdout, os.Stderr))
+	}
+
 	// Strip legacy --instance flag from os.Args so subcommand switch is unaffected.
 	// The flag is no longer used for path disambiguation (CWD provides isolation)
 	// but we still accept and ignore it for backwards compatibility.
@@ -535,6 +542,9 @@ var readOnlyCommands = map[string]bool{
 	// relaunch-prep resolves its own project root and must not create a
 	// runtime dir in the (possibly worktree) cwd it is run from.
 	"relaunch-prep": true,
+	// backend login/logout/status touch the keychain or credential store,
+	// never the runtime dir.
+	"backend": true,
 }
 
 // isReadOnlyInvocation reports whether args name a read-only invocation:

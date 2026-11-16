@@ -339,7 +339,14 @@ func writeLaunchLogHeader(launchLog, workDir, shellCmd string) error {
 // Single quotes disable ALL shell expansion, including backticks and $(), so
 // this line is safe to interpolate raw. Values this function interpolates
 // itself (the log and script paths) are quoted here.
-func buildLaunchScript(shellCmd, launchLog, scriptPath string) string {
+//
+// unsetLine, when non-empty (see unsetLineFor), is emitted just before
+// shellCmd inside the subshell so the listed variables are gone from the
+// claude process's environment.
+func buildLaunchScript(shellCmd, launchLog, scriptPath, unsetLine string) string {
+	if unsetLine != "" {
+		unsetLine += "\n"
+	}
 	return fmt.Sprintf(`#!/bin/sh
 # agentctl launch script (POSIX sh)
 AGENTCTL_LAUNCH_LOG=%s
@@ -347,7 +354,7 @@ export AGENTCTL_LAUNCH_LOG
 
 exec 4>&1
 exit_code=$( { { (
-%s
+%s%s
 ) 2>&1 1>&4 4>&- 3>&-; echo "$?" >&3; } | tee -a "$AGENTCTL_LAUNCH_LOG" >&2 3>&- 4>&-; } 3>&1 )
 exec 4>&-
 
@@ -359,7 +366,32 @@ if [ "$exit_code" != 0 ]; then
     read -r _ || true
 fi
 rm -f %s
-`, shellquote.Quote(launchLog), shellCmd, shellquote.Quote(scriptPath))
+`, shellquote.Quote(launchLog), unsetLine, shellCmd, shellquote.Quote(scriptPath))
+}
+
+// EnvUnset is the extraEnv key naming variables to remove from the launched
+// process's environment (space-separated). tmux -e can only set variables,
+// and an inherited ANTHROPIC_API_KEY would shadow a backend's apiKeyHelper
+// and be sent to the backend.
+const EnvUnset = "AGENTCTL_UNSET_ENV"
+
+var unsetNameRe = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
+// unsetLineFor turns a space-separated list of variable names into an
+// `unset` command line. Every name is validated against unsetNameRe, since
+// the result is interpolated into a shell script unquoted. An empty list
+// yields "".
+func unsetLineFor(names string) (string, error) {
+	fields := strings.Fields(names)
+	if len(fields) == 0 {
+		return "", nil
+	}
+	for _, n := range fields {
+		if !unsetNameRe.MatchString(n) {
+			return "", fmt.Errorf("invalid variable name %q in %s", n, EnvUnset)
+		}
+	}
+	return "unset " + strings.Join(fields, " "), nil
 }
 
 // loginCapableShells are the shells known to accept `-l -c <cmd>` (login
@@ -388,13 +420,19 @@ func launchWindowArgv(userShell, scriptPath string) []string {
 
 // writeLaunchScript creates a new 0600 launch script in dir containing
 // buildLaunchScript's output and returns its path and content.
-func writeLaunchScript(dir, shellCmd, launchLog string) (string, string, error) {
+//
+// unsetEnv is the space-separated AGENTCTL_UNSET_ENV value ("" for none).
+func writeLaunchScript(dir, shellCmd, launchLog, unsetEnv string) (string, string, error) {
+	unsetLine, err := unsetLineFor(unsetEnv)
+	if err != nil {
+		return "", "", err
+	}
 	sf, err := os.CreateTemp(dir, "launch-*.sh") // CreateTemp uses mode 0600
 	if err != nil {
 		return "", "", fmt.Errorf("creating launch script: %w", err)
 	}
 	scriptPath := sf.Name()
-	content := buildLaunchScript(shellCmd, launchLog, scriptPath)
+	content := buildLaunchScript(shellCmd, launchLog, scriptPath, unsetLine)
 	if _, err := sf.WriteString(content); err != nil {
 		sf.Close()
 		os.Remove(scriptPath)
@@ -467,7 +505,7 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 		return "", fmt.Errorf("launch log %s: %w", launchLog, err)
 	}
 
-	scriptPath, scriptContent, err := writeLaunchScript(scriptDir, shellCmd, launchLog)
+	scriptPath, scriptContent, err := writeLaunchScript(scriptDir, shellCmd, launchLog, extraEnv[EnvUnset])
 	if err != nil {
 		return "", err
 	}
