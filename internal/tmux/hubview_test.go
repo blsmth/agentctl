@@ -13,12 +13,14 @@ func TestViewerArgBuilders(t *testing.T) {
 		got  []string
 		want []string
 	}{
-		{"new-session", viewerNewSessionArgs("agentctl-proj"),
-			[]string{"new-session", "-d", "-t", "agentctl-proj", "-s", "agentctl-hubview"}},
-		{"select-window", viewerSelectWindowArgs("@7"),
-			[]string{"select-window", "-t", "agentctl-hubview:@7"}},
-		{"respawn", viewerRespawnArgs("%9", "cmd"),
-			[]string{"respawn-pane", "-k", "-t", "%9", "cmd"}},
+		{"new-session", viewerNewSessionArgs("agentctl-proj", "agentctl-hubview-2"),
+			[]string{"new-session", "-d", "-t", "agentctl-proj", "-s", "agentctl-hubview-2"}},
+		{"select-window", viewerSelectWindowArgs("agentctl-hubview-2", "@7"),
+			[]string{"select-window", "-t", "agentctl-hubview-2:@7"}},
+		{"switch-client", viewerSwitchClientArgs("/dev/ttys004", "agentctl-hubview-2"),
+			[]string{"switch-client", "-c", "/dev/ttys004", "-t", "agentctl-hubview-2"}},
+		{"destroy-unattached", viewerDestroyUnattachedArgs("agentctl-hubview"),
+			[]string{"set-option", "-t", "agentctl-hubview", "destroy-unattached", "on"}},
 		{"split", viewerSplitArgs("agentctl-hub:herd-list", 80, "cmd"),
 			[]string{"split-window", "-h", "-d", "-P", "-F", "#{pane_id}", "-t", "agentctl-hub:herd-list", "-l", "80", "cmd"}},
 	}
@@ -31,10 +33,50 @@ func TestViewerArgBuilders(t *testing.T) {
 	}
 }
 
+func TestNextViewerName(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing []string
+		want     string
+	}{
+		{"none", nil, "agentctl-hubview"},
+		{"base taken", []string{"agentctl-hubview"}, "agentctl-hubview-2"},
+		{"-2 taken", []string{"agentctl-hubview-2"}, "agentctl-hubview"},
+		{"both taken", []string{"agentctl-hubview", "agentctl-hubview-2"}, "agentctl-hubview-3"},
+		{"unrelated", []string{"agentctl-a"}, "agentctl-hubview"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := nextViewerName(tt.existing)
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+			if !IsViewerSession(got) {
+				t.Errorf("%q does not match viewer prefix", got)
+			}
+		})
+	}
+}
+
+func TestParseViewerSessionsAndClients(t *testing.T) {
+	if got := parseViewerSessions("agentctl-a\nagentctl-hubview-2\n\nagentctl-hubview\nagentctl-hub\n"); !equalStrings(got, []string{"agentctl-hubview-2", "agentctl-hubview"}) {
+		t.Errorf("parseViewerSessions = %v", got)
+	}
+	if got := parseViewerSessions(""); len(got) != 0 {
+		t.Errorf("empty = %v", got)
+	}
+	if got := parseClientNames("/dev/ttys001\n /dev/ttys002 \n\n"); !equalStrings(got, []string{"/dev/ttys001", "/dev/ttys002"}) {
+		t.Errorf("parseClientNames = %v", got)
+	}
+	if got := parseClientNames(""); len(got) != 0 {
+		t.Errorf("empty = %v", got)
+	}
+}
+
 func TestViewerOptionArgs(t *testing.T) {
 	got := map[string]string{}
-	for _, a := range viewerOptionArgs() {
-		if len(a) != 5 || a[0] != "set-option" || a[2] != ViewerSessionName {
+	for _, a := range viewerOptionArgs("agentctl-hubview-2") {
+		if len(a) != 5 || a[0] != "set-option" || a[2] != "agentctl-hubview-2" {
 			t.Fatalf("unexpected option args %v", a)
 		}
 		got[a[3]] = a[4]
@@ -46,7 +88,7 @@ func TestViewerOptionArgs(t *testing.T) {
 		}
 	}
 	if _, ok := got["destroy-unattached"]; ok {
-		t.Error("destroy-unattached must be set at attach time, not on a detached session")
+		t.Error("destroy-unattached must be set after attach, not on a detached session")
 	}
 }
 
@@ -54,13 +96,13 @@ func TestViewerAttachCommand(t *testing.T) {
 	tests := []struct {
 		name, sock, want string
 	}{
-		{"no socket", "", `env -u TMUX tmux attach -t agentctl-hubview \; set-option -t agentctl-hubview destroy-unattached on`},
-		{"socket", "/tmp/tmux-1/default", `env -u TMUX tmux -S '/tmp/tmux-1/default' attach -t agentctl-hubview \; set-option -t agentctl-hubview destroy-unattached on`},
-		{"quote", "/a b/it's", `env -u TMUX tmux -S '/a b/it'\''s' attach -t agentctl-hubview \; set-option -t agentctl-hubview destroy-unattached on`},
+		{"no socket", "", `env -u TMUX tmux attach -t agentctl-hubview-2 \; set-option -t agentctl-hubview-2 destroy-unattached on`},
+		{"socket", "/tmp/tmux-1/default", `env -u TMUX tmux -S '/tmp/tmux-1/default' attach -t agentctl-hubview-2 \; set-option -t agentctl-hubview-2 destroy-unattached on`},
+		{"quote", "/a b/it's", `env -u TMUX tmux -S '/a b/it'\''s' attach -t agentctl-hubview-2 \; set-option -t agentctl-hubview-2 destroy-unattached on`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := viewerAttachCommand(tt.sock); got != tt.want {
+			if got := viewerAttachCommand(tt.sock, "agentctl-hubview-2"); got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
@@ -68,8 +110,8 @@ func TestViewerAttachCommand(t *testing.T) {
 }
 
 func TestViewerNeverUsesJoinOrMove(t *testing.T) {
-	all := [][]string{viewerNewSessionArgs("h"), viewerSelectWindowArgs("@1"),
-		viewerRespawnArgs("%1", "c"), viewerSplitArgs("t", 1, "c")}
+	all := [][]string{viewerNewSessionArgs("h", "v"), viewerSelectWindowArgs("v", "@1"),
+		viewerSwitchClientArgs("c", "v"), viewerSplitArgs("t", 1, "c")}
 	for _, a := range all {
 		if strings.Contains(a[0], "join-pane") || strings.Contains(a[0], "move-pane") {
 			t.Errorf("forbidden command %v", a)
@@ -100,32 +142,64 @@ func TestShowLiveViewer_Refusals(t *testing.T) {
 }
 
 // TestShowHideLiveViewer_Integration drives the real functions against a
-// private tmux server. Opt in with AGENTCTL_SPIKE_TMUX_SOCKET=<socket name>
-// (a server that already has agentctl-hub:herd-list and a session "home").
+// private tmux server. Opt in with AGENTCTL_SPIKE_TMUX_SOCKET=<socket name>.
+// The server needs agentctl-hub:herd-list (attached by a client, so the pane
+// has a size) and sessions "homea" and "homeb", each with a window running a
+// long sleep; pass their window IDs via AGENTCTL_SPIKE_WIN_A / _B.
 func TestShowHideLiveViewer_Integration(t *testing.T) {
 	name := os.Getenv("AGENTCTL_SPIKE_TMUX_SOCKET")
 	if name == "" {
 		t.Skip("set AGENTCTL_SPIKE_TMUX_SOCKET to run against a private tmux server")
+	}
+	winA, winB := os.Getenv("AGENTCTL_SPIKE_WIN_A"), os.Getenv("AGENTCTL_SPIKE_WIN_B")
+	if winA == "" || winB == "" {
+		t.Skip("set AGENTCTL_SPIKE_WIN_A and AGENTCTL_SPIKE_WIN_B")
 	}
 	out, err := exec.Command("tmux", "-L", name, "display-message", "-p", "#{socket_path},1,0").Output()
 	if err != nil {
 		t.Skipf("no private server: %v", err)
 	}
 	t.Setenv("TMUX", strings.TrimSpace(string(out)))
-	if err := ShowLiveViewer("home", "@0", 60); err != nil {
+
+	panePIDs := func(win string) string {
+		o, _ := exec.Command("tmux", "-L", name, "list-panes", "-t", win, "-F", "#{pane_pid}").Output()
+		return strings.TrimSpace(string(o))
+	}
+	pidsA, pidsB := panePIDs(winA), panePIDs(winB)
+	if pidsA == "" || pidsB == "" {
+		t.Fatal("agent windows missing")
+	}
+
+	if err := ShowLiveViewer("homea", winA, 60); err != nil {
 		t.Fatal(err)
 	}
-	if viewerPaneID() == "" || !viewerSessionExists() {
+	pane := viewerPaneID()
+	if pane == "" || !viewerSessionExists() {
 		t.Fatal("viewer pane/session missing after show")
 	}
-	if err := ShowLiveViewer("home", "@0", 60); err != nil {
-		t.Fatal(err)
+	// Same session again, then a different project: pane must survive.
+	for _, step := range []struct{ home, win string }{{"homea", winA}, {"homeb", winB}, {"homea", winA}} {
+		if err := ShowLiveViewer(step.home, step.win, 60); err != nil {
+			t.Fatalf("show %s/%s: %v", step.home, step.win, err)
+		}
+		if got := viewerPaneID(); got != pane {
+			t.Fatalf("viewer pane changed: %q -> %q", pane, got)
+		}
+		if n := len(viewerSessions()); n != 1 {
+			t.Fatalf("viewer sessions = %d, want 1", n)
+		}
+	}
+	if panePIDs(winA) != pidsA || panePIDs(winB) != pidsB {
+		t.Fatal("agent panes changed")
 	}
 	if err := HideLiveViewer(); err != nil {
 		t.Fatal(err)
 	}
 	if viewerPaneID() != "" || viewerSessionExists() {
 		t.Fatal("viewer leaked after hide")
+	}
+	if panePIDs(winA) != pidsA || panePIDs(winB) != pidsB {
+		t.Fatal("agent panes killed by hide")
 	}
 }
 

@@ -31,39 +31,90 @@ func IsViewerSession(name string) bool {
 }
 
 // viewerNewSessionArgs builds the grouped-session creation args.
-func viewerNewSessionArgs(homeSession string) []string {
-	return []string{"new-session", "-d", "-t", homeSession, "-s", ViewerSessionName}
+func viewerNewSessionArgs(homeSession, name string) []string {
+	return []string{"new-session", "-d", "-t", homeSession, "-s", name}
+}
+
+// nextViewerName picks a viewer session name (matching ViewerSessionPrefix)
+// not present in existing, so a new viewer can coexist with the old one while
+// the nested client is switched across.
+func nextViewerName(existing []string) string {
+	taken := make(map[string]bool, len(existing))
+	for _, e := range existing {
+		taken[e] = true
+	}
+	if !taken[ViewerSessionName] {
+		return ViewerSessionName
+	}
+	for i := 2; ; i++ {
+		if n := fmt.Sprintf("%s-%d", ViewerSessionName, i); !taken[n] {
+			return n
+		}
+	}
+}
+
+// parseViewerSessions filters a list-sessions name listing to viewer sessions.
+func parseViewerSessions(out string) []string {
+	var res []string
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimSpace(l); l != "" && IsViewerSession(l) {
+			res = append(res, l)
+		}
+	}
+	return res
+}
+
+// parseClientNames parses `list-clients -F "#{client_name}"` output.
+func parseClientNames(out string) []string {
+	var res []string
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			res = append(res, l)
+		}
+	}
+	return res
+}
+
+// viewerSwitchClientArgs builds the args moving a nested client to a session.
+func viewerSwitchClientArgs(client, session string) []string {
+	return []string{"switch-client", "-c", client, "-t", session}
+}
+
+// viewerDestroyUnattachedArgs enables destroy-unattached on a session. Only
+// safe once a client is attached (a detached session is destroyed at once).
+func viewerDestroyUnattachedArgs(session string) []string {
+	return []string{"set-option", "-t", session, "destroy-unattached", "on"}
 }
 
 // viewerOptionArgs builds the per-session option commands that make the
 // viewer transparent: no prefix (the outer client's prefix still drives the
 // hub, every other key reaches the agent) and no status line. Note
 // destroy-unattached is NOT here: setting it on a detached session destroys
-// it immediately (verified), so the attach command sets it once attached.
-func viewerOptionArgs() [][]string {
+// it immediately (verified), so it is set once a client is attached.
+func viewerOptionArgs(session string) [][]string {
 	opts := [][2]string{{"prefix", "None"}, {"prefix2", "None"}, {"status", "off"}}
 	out := make([][]string, 0, len(opts))
 	for _, o := range opts {
-		out = append(out, []string{"set-option", "-t", ViewerSessionName, o[0], o[1]})
+		out = append(out, []string{"set-option", "-t", session, o[0], o[1]})
 	}
 	return out
 }
 
-// viewerSelectWindowArgs selects an agent window inside the viewer session.
-func viewerSelectWindowArgs(windowID string) []string {
-	return []string{"select-window", "-t", sessionWindowTarget(ViewerSessionName, windowID)}
+// viewerSelectWindowArgs selects an agent window inside a viewer session.
+func viewerSelectWindowArgs(session, windowID string) []string {
+	return []string{"select-window", "-t", sessionWindowTarget(session, windowID)}
 }
 
 // viewerAttachCommand is the shell command run in the live pane: a nested
 // client on the same server (TMUX unset so tmux allows nesting, socket passed
 // explicitly), which flips destroy-unattached on once attached.
-func viewerAttachCommand(socketPath string) string {
+func viewerAttachCommand(socketPath, session string) string {
 	sock := ""
 	if socketPath != "" {
 		sock = " -S " + shellQuote(socketPath)
 	}
 	return fmt.Sprintf("env -u TMUX tmux%s attach -t %s \\; set-option -t %s destroy-unattached on",
-		sock, ViewerSessionName, ViewerSessionName)
+		sock, session, session)
 }
 
 // viewerSplitArgs builds the split-window args creating the live pane to the
@@ -71,11 +122,6 @@ func viewerAttachCommand(socketPath string) string {
 func viewerSplitArgs(listTarget string, width int, attachCmd string) []string {
 	return []string{"split-window", "-h", "-d", "-P", "-F", "#{pane_id}",
 		"-t", listTarget, "-l", fmt.Sprint(width), attachCmd}
-}
-
-// viewerRespawnArgs builds the respawn args for the VIEWER pane only.
-func viewerRespawnArgs(viewerPane, attachCmd string) []string {
-	return []string{"respawn-pane", "-k", "-t", viewerPane, attachCmd}
 }
 
 func shellQuote(s string) string {
@@ -115,49 +161,102 @@ func viewerPaneID() string {
 	return ""
 }
 
-func viewerSessionHome() string {
-	out, err := tmuxRun("display-message", "-p", "-t", ViewerSessionName, "#{session_group}")
+// viewerSessions lists the current viewer sessions (normally zero or one;
+// two only transiently while switching).
+func viewerSessions() []string {
+	out, err := tmuxRun("list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		return nil
+	}
+	return parseViewerSessions(out)
+}
+
+// viewerClients returns the clients attached to a viewer session.
+func viewerClients(session string) []string {
+	out, err := tmuxRun("list-clients", "-t", "="+session, "-F", "#{client_name}")
+	if err != nil {
+		return nil
+	}
+	return parseClientNames(out)
+}
+
+// currentViewer returns the viewer session with an attached client (falling
+// back to the first one) and its first client, if any.
+func currentViewer(sessions []string) (session, client string) {
+	for _, s := range sessions {
+		if c := viewerClients(s); len(c) > 0 {
+			return s, c[0]
+		}
+	}
+	if len(sessions) > 0 {
+		return sessions[0], ""
+	}
+	return "", ""
+}
+
+func viewerSessionHome(session string) string {
+	out, err := tmuxRun("display-message", "-p", "-t", "="+session, "#{session_group}")
 	if err != nil {
 		return ""
 	}
 	return out
 }
 
+func killViewerSessions(except string) {
+	for _, s := range viewerSessions() {
+		if s != except {
+			_ = exec.Command("tmux", "kill-session", "-t", "="+s).Run()
+		}
+	}
+}
+
 // ShowLiveViewer shows windowID (living in homeSession) in the hub's live
 // pane, creating the pane/viewer session as needed. rightWidth is the width of
-// the live pane when it has to be created. Only the viewer pane/session are
-// ever created, respawned or killed; agent panes are never touched.
+// the live pane when it has to be created. When the target is in a different
+// home session the existing nested client is switched to a fresh viewer
+// session, so the pane never dies. Only viewer panes/sessions are ever
+// created or killed; agent panes are never touched.
 func ShowLiveViewer(homeSession, windowID string, rightWidth int) error {
 	if homeSession == HubSessionName || IsViewerSession(homeSession) || windowID == "" {
 		return fmt.Errorf("cannot view %q/%q live", homeSession, windowID)
 	}
 	pane := viewerPaneID()
-	sameGroup := pane != "" && viewerSessionExists() && viewerSessionHome() == homeSession
-	if sameGroup {
-		_, err := tmuxRun(viewerSelectWindowArgs(windowID)...)
+	sessions := viewerSessions()
+	old, client := currentViewer(sessions)
+	if pane != "" && client != "" && viewerSessionHome(old) == homeSession {
+		_, err := tmuxRun(viewerSelectWindowArgs(old, windowID)...)
 		return err
 	}
-	// New or different home session: rebuild the viewer session. Killing the
-	// viewer session only drops a group member; windows survive in home.
-	_ = exec.Command("tmux", "kill-session", "-t", ViewerSessionName).Run()
-	if _, err := tmuxRun(viewerNewSessionArgs(homeSession)...); err != nil {
+
+	name := nextViewerName(sessions)
+	if _, err := tmuxRun(viewerNewSessionArgs(homeSession, name)...); err != nil {
 		return err
 	}
-	for _, a := range viewerOptionArgs() {
+	for _, a := range viewerOptionArgs(name) {
 		if _, err := tmuxRun(a...); err != nil {
 			return err
 		}
 	}
-	if _, err := tmuxRun(viewerSelectWindowArgs(windowID)...); err != nil {
+	if _, err := tmuxRun(viewerSelectWindowArgs(name, windowID)...); err != nil {
 		return err
 	}
-	cmd := viewerAttachCommand(outerSocketPath())
+
+	if pane != "" && client != "" {
+		if _, err := tmuxRun(viewerSwitchClientArgs(client, name)...); err == nil {
+			_, err := tmuxRun(viewerDestroyUnattachedArgs(name)...)
+			killViewerSessions(name)
+			return err
+		}
+	}
+
+	// Fallback: no pane or no attached client. Drop the stale pane (never
+	// respawn a pane ID captured before a kill) and recreate it.
 	if pane != "" {
-		_, err := tmuxRun(viewerRespawnArgs(pane, cmd)...)
-		return err
+		_ = exec.Command("tmux", "kill-pane", "-t", pane).Run()
 	}
+	killViewerSessions(name)
 	list := sessionWindowTarget(HubSessionName, HerdListWindowName)
-	id, err := tmuxRun(viewerSplitArgs(list, rightWidth, cmd)...)
+	id, err := tmuxRun(viewerSplitArgs(list, rightWidth, viewerAttachCommand(outerSocketPath(), name))...)
 	if err != nil {
 		return err
 	}
@@ -166,19 +265,16 @@ func ShowLiveViewer(homeSession, windowID string, rightWidth int) error {
 }
 
 func viewerSessionExists() bool {
-	return exec.Command("tmux", "has-session", "-t", "="+ViewerSessionName).Run() == nil
+	return len(viewerSessions()) > 0
 }
 
-// HideLiveViewer kills the viewer pane and viewer session. Agent windows are
-// shared, not owned, by the viewer, so they survive.
+// HideLiveViewer kills the viewer pane and all viewer sessions. Agent windows
+// are shared, not owned, by the viewer, so they survive.
 func HideLiveViewer() error {
 	if pane := viewerPaneID(); pane != "" {
 		_ = exec.Command("tmux", "kill-pane", "-t", pane).Run()
 	}
-	if viewerSessionExists() {
-		_, err := tmuxRun("kill-session", "-t", "="+ViewerSessionName)
-		return err
-	}
+	killViewerSessions("")
 	return nil
 }
 
