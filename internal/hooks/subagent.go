@@ -32,7 +32,7 @@ func SubagentStart() {
 		ws.SubagentCount++
 		count = ws.SubagentCount
 	}); err != nil {
-		logging.Log("hook-subagent-start: windowstate.Update error: %v", err)
+		logUpdateErr("hook-subagent-start", err)
 	}
 
 	agentName := os.Getenv("AGENTCTL_AGENT_NAME")
@@ -67,7 +67,7 @@ func SubagentStop() {
 		}
 		count = ws.SubagentCount
 	}); err != nil {
-		logging.Log("hook-subagent-stop: windowstate.Update error: %v", err)
+		logUpdateErr("hook-subagent-stop", err)
 	}
 
 	agentName := os.Getenv("AGENTCTL_AGENT_NAME")

@@ -128,11 +128,17 @@ func SessionStart() {
 		if input.Cwd != "" {
 			logPath = claude.LogPath(input.Cwd, input.SessionID)
 		}
+		// A session starting is a new agent in this window; clear any
+		// tombstone from a previous window that held the recycled ID.
+		windowstate.Revive(windowID)
 		if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
 			ws.SessionID = input.SessionID
 			ws.LogPath = logPath
+			if input.Cwd != "" {
+				ws.WorkDir = input.Cwd
+			}
 		}); err != nil {
-			logging.Log("hook-session-start: windowstate.Update error: %v", err)
+			logUpdateErr("hook-session-start", err)
 		} else {
 			if logPath == "" {
 				logging.Log("hook-session-start: cleared log_path for window=%s session=%s (cwd unknown, avoiding stale cross-session path)", windowID, input.SessionID)
@@ -243,7 +249,7 @@ func SessionEnd() {
 		if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
 			ws.State = "idle"
 		}); err != nil {
-			logging.Log("hook-session-end: windowstate.Update error: %v", err)
+			logUpdateErr("hook-session-end", err)
 		}
 		logging.Log("hook-session-end: cleared state=idle window=%s agent=%s", windowID, agentName)
 	}

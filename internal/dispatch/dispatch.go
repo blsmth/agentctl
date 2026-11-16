@@ -290,6 +290,8 @@ func Launch(req Request) (Result, error) {
 
 	if wid != "" {
 		windowstate.Update(wid, func(ws *windowstate.WindowState) { //nolint:errcheck
+			ws.Instance = windowName
+			ws.AgentName = req.AgentName
 			if req.Ticket > 0 {
 				ws.Ticket = fmt.Sprintf("%d", req.Ticket)
 				ws.TicketTitle = req.TicketTitle

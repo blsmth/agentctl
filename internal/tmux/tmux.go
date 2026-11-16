@@ -513,7 +513,12 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 	// writers under the same flock, so whichever runs second always starts
 	// from what the first left instead of overwriting it wholesale.
 	if windowID != "" {
+		// A NEW agent starts in this window: clear any tombstone left by a
+		// previous window that held the same (recycled) @N ID.
+		windowstate.Revive(windowID)
 		windowstate.Update(windowID, func(ws *windowstate.WindowState) { //nolint:errcheck
+			ws.Instance = windowName
+			ws.AgentName = agentName
 			ws.LogPath = logPath
 			ws.Ticket = extraEnv["AGENTCTL_TICKET"]
 			ws.TicketTitle = extraEnv["AGENTCTL_TICKET_TITLE"]

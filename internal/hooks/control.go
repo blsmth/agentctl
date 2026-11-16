@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -13,6 +14,18 @@ import (
 	"github.com/blsmth/agentctl/internal/textutil"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
+
+// maxLastTextRunes caps WindowState.LastText.
+const maxLastTextRunes = 500
+
+// logUpdateErr logs a windowstate update failure, except ErrGone: a late hook
+// for a window that was just removed is expected, not noteworthy.
+func logUpdateErr(hook string, err error) {
+	if err == nil || errors.Is(err, windowstate.ErrGone) {
+		return
+	}
+	logging.Log("%s: windowstate.Update error: %v", hook, err)
+}
 
 // CheckDone is called by Claude Code's Stop hook.
 // For ticket-launched agents, it verifies the work is complete before allowing
@@ -46,9 +59,11 @@ func CheckDone() {
 	if windowID != "" {
 		if err := windowstate.Update(windowID, func(w *windowstate.WindowState) {
 			w.State = "idle"
+			w.LastText = textutil.Truncate(input.LastAssistantMessage, maxLastTextRunes, "")
+			w.TurnCount++
 			ws = *w
 		}); err != nil {
-			logging.Log("hook-check-done: windowstate.Update error: %v", err)
+			logUpdateErr("hook-check-done", err)
 		}
 		logging.Log("hook-check-done: set state=idle window=%s", windowID)
 	}
@@ -79,7 +94,7 @@ func CheckDone() {
 			if err := windowstate.Update(windowID, func(w *windowstate.WindowState) {
 				w.Done = true
 			}); err != nil {
-				logging.Log("hook-check-done: windowstate.Update(Done) error: %v", err)
+				logUpdateErr("hook-check-done", err)
 			} else {
 				logging.Log("hook-check-done: set done=true window=%s agent=%s", windowID, agentName)
 			}
@@ -253,7 +268,7 @@ func StopFailure() {
 			ws.State = "idle"
 			ws.Error = errType
 		}); err != nil {
-			logging.Log("hook-stop-failure: windowstate.Update error: %v", err)
+			logUpdateErr("hook-stop-failure", err)
 		} else {
 			logging.Log("hook-stop-failure: set state=idle error=%s window=%s agent=%s", errType, windowID, agentName)
 		}
@@ -333,7 +348,7 @@ func UserPrompt() {
 		w.Done = false
 		ws = *w
 	}); err != nil {
-		logging.Log("hook-user-prompt: windowstate.Update error: %v", err)
+		logUpdateErr("hook-user-prompt", err)
 	}
 
 	agentName := os.Getenv("AGENTCTL_AGENT_NAME")
@@ -416,7 +431,7 @@ func Notify() {
 				ws = *w
 			})
 			if updateErr != nil {
-				logging.Log("hook-notify: windowstate.Update error: %v", updateErr)
+				logUpdateErr("hook-notify", updateErr)
 			} else {
 				logging.Log("hook-notify: set state=%s window=%s agent=%s", newState, windowID, agentName)
 			}

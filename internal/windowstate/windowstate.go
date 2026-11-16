@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -143,6 +144,92 @@ type WindowState struct {
 	// state (not refreshed while it stays blocked), so a repeat notification
 	// for a still-pending prompt can report how long it has been waiting.
 	BlockedSince time.Time `json:"blocked_since,omitempty"`
+
+	// Instance is the window instance name (e.g. "go-engineer:2") and
+	// AgentName the base agent name ("go-engineer"). Written when agentctl
+	// launches an agent into the window (tmux.LaunchAgent).
+	Instance  string `json:"instance,omitempty"`
+	AgentName string `json:"agent_name,omitempty"`
+
+	// WorkDir is the agent's working directory, written by hook-session-start
+	// from the hook payload cwd.
+	WorkDir string `json:"work_dir,omitempty"`
+
+	// LastToolDetail is the summary of the most recent tool call (the same
+	// string PreTool stores as PendingToolDetail), written by PostToolUse so
+	// it survives after PendingTool is cleared.
+	LastToolDetail string `json:"last_tool_detail,omitempty"`
+
+	// LastText is the tail of the last assistant message (truncated), and
+	// TurnCount the number of completed turns. Both are written by
+	// hook-check-done in the Update that sets State=idle.
+	LastText  string `json:"last_text,omitempty"`
+	TurnCount int    `json:"turn_count,omitempty"`
+
+	// Seen records whether the user has looked at the window since it went
+	// idle. Reserved: a later step (window glyph/seen tracking) writes it.
+	Seen bool `json:"seen,omitempty"`
+
+	// CompleteFiredAt is when the done-edge completion handlers last fired.
+	// Reserved: a later step (done-edge completion) writes it.
+	CompleteFiredAt time.Time `json:"complete_fired_at,omitempty"`
+
+	// extra holds JSON keys this binary does not know about, preserved by
+	// Read and merged back by Write so an older binary cannot erase fields
+	// written by a newer one.
+	extra map[string]json.RawMessage
+}
+
+// ErrGone is returned by Transact/Update for a window that was removed
+// recently (a fresh tombstone exists). The write is skipped.
+var ErrGone = errors.New("windowstate: window removed")
+
+// TombstoneTTL is how long a tombstone blocks writes. tmux recycles window
+// IDs (@N), so a tombstone must not block a genuinely new window forever;
+// Revive clears it explicitly when a new agent launches.
+const TombstoneTTL = 10 * time.Minute
+
+// knownKeys is the set of JSON keys mapped to WindowState fields.
+var knownKeys = func() map[string]struct{} {
+	m := map[string]struct{}{}
+	t := reflect.TypeOf(WindowState{})
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("json")
+		if name, _, _ := strings.Cut(tag, ","); name != "" && name != "-" {
+			m[name] = struct{}{}
+		}
+	}
+	return m
+}()
+
+// clone returns a copy of ws that does not share the extra map.
+func (ws WindowState) clone() WindowState {
+	if ws.extra != nil {
+		m := make(map[string]json.RawMessage, len(ws.extra))
+		for k, v := range ws.extra {
+			m[k] = v
+		}
+		ws.extra = m
+	}
+	return ws
+}
+
+// marshal encodes ws, merging preserved unknown keys (struct fields win).
+func (ws WindowState) marshal() ([]byte, error) {
+	data, err := json.Marshal(ws)
+	if err != nil || len(ws.extra) == 0 {
+		return data, err
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return nil, err
+	}
+	for k, v := range ws.extra {
+		if _, ok := obj[k]; !ok {
+			obj[k] = v
+		}
+	}
+	return json.Marshal(obj)
 }
 
 // CtxPctFreshness is how recent a statusline-pushed CtxPct value must be
@@ -258,6 +345,17 @@ func Read(windowID string) (WindowState, error) {
 	if err := json.Unmarshal(data, &ws); err != nil {
 		return WindowState{}, fmt.Errorf("parsing window state %s: %w", windowID, err)
 	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err == nil {
+		for k, v := range raw {
+			if _, ok := knownKeys[k]; !ok {
+				if ws.extra == nil {
+					ws.extra = map[string]json.RawMessage{}
+				}
+				ws.extra[k] = v
+			}
+		}
+	}
 	if !logPathConsistent(ws.LogPath, ws.SessionID) {
 		warnInconsistentLogPath(windowID, ws.LogPath, ws.SessionID)
 		ws.LogPath = ""
@@ -309,7 +407,7 @@ func Write(windowID string, ws WindowState) error {
 	}
 	ws.UpdatedAt = time.Now()
 
-	data, err := json.Marshal(ws)
+	data, err := ws.marshal()
 	if err != nil {
 		return fmt.Errorf("marshaling window state %s: %w", windowID, err)
 	}
@@ -323,41 +421,102 @@ func Write(windowID string, ws WindowState) error {
 	return nil
 }
 
-// Update reads current state, applies fn, and writes back atomically.
-// It holds an exclusive flock on a per-window lock file for the duration,
-// preventing concurrent hook writes from clobbering each other.
-// This is the primary API for hooks.
-func Update(windowID string, fn func(*WindowState)) error {
-	if windowsDir == "" {
-		return fmt.Errorf("windowstate: Init not called")
-	}
-	// Acquire exclusive lock before read-modify-write. O_NOFOLLOW: a
-	// symlinked lock file must not create or open its target.
+// goneFilePath returns the tombstone path for windowID ("<dir>/@97.gone").
+func goneFilePath(windowID string) string {
+	return strings.TrimSuffix(filePath(windowID), ".json") + ".gone"
+}
+
+// lockWindow takes the exclusive per-window flock. O_NOFOLLOW: a symlinked
+// lock file must not create or open its target. The returned func releases it.
+func lockWindow(windowID string) (func(), error) {
 	lockPath := filePath(windowID) + ".lock"
 	lockFile, err := safefs.OpenNoFollow(rootDir, lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return fmt.Errorf("opening lock file for %s: %w", windowID, err)
+		return nil, fmt.Errorf("opening lock file for %s: %w", windowID, err)
 	}
-	defer lockFile.Close()
 	_ = lockFile.Chmod(0o600) // tighten a lock file created 0644 by an older version
-
 	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
-		return fmt.Errorf("acquiring lock for %s: %w", windowID, err)
+		lockFile.Close() //nolint:errcheck
+		return nil, fmt.Errorf("acquiring lock for %s: %w", windowID, err)
 	}
-	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN) //nolint:errcheck
-
-	ws, err := Read(windowID)
-	if err != nil {
-		return err
-	}
-
-	fn(&ws)
-
-	return Write(windowID, ws)
+	return func() {
+		syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN) //nolint:errcheck
+		lockFile.Close()                                   //nolint:errcheck
+	}, nil
 }
 
-// Remove deletes the state file and lock file for windowID.
-// It is called when a tmux window is closed to avoid unbounded file accumulation.
+// tombstoneFresh reports whether windowID has an unexpired tombstone. An
+// expired one is deleted lazily. Callers hold the window lock.
+func tombstoneFresh(windowID string) bool {
+	gp := goneFilePath(windowID)
+	data, err := readNoFollow(gp)
+	if err != nil {
+		return false
+	}
+	var at time.Time
+	if t, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data))); perr == nil {
+		at = t
+	} else if fi, serr := os.Lstat(gp); serr == nil {
+		at = fi.ModTime()
+	}
+	if time.Since(at) > TombstoneTTL {
+		os.Remove(gp) //nolint:errcheck
+		return false
+	}
+	return true
+}
+
+// Transact is Update that also returns copies of the state before and after
+// fn, so callers can detect edges (e.g. Done false -> true) atomically. It
+// holds the per-window flock for the whole read-modify-write. If the window
+// has a fresh tombstone nothing is written and ErrGone is returned.
+func Transact(windowID string, fn func(*WindowState)) (old, updated WindowState, err error) {
+	if windowsDir == "" {
+		return old, updated, fmt.Errorf("windowstate: Init not called")
+	}
+	unlock, err := lockWindow(windowID)
+	if err != nil {
+		return old, updated, err
+	}
+	defer unlock()
+
+	if tombstoneFresh(windowID) {
+		return old, updated, ErrGone
+	}
+	ws, err := Read(windowID)
+	if err != nil {
+		return old, updated, err
+	}
+	old = ws.clone()
+	fn(&ws)
+	updated = ws.clone()
+	if err := Write(windowID, ws); err != nil {
+		return old, updated, err
+	}
+	return old, updated, nil
+}
+
+// Update reads current state, applies fn, and writes back atomically under
+// the per-window flock. This is the primary API for hooks. It returns
+// ErrGone for a recently removed window.
+func Update(windowID string, fn func(*WindowState)) error {
+	_, _, err := Transact(windowID, fn)
+	return err
+}
+
+// Revive deletes windowID's tombstone. Call it where a NEW agent starts in a
+// window (tmux recycles @N IDs) before its first Update.
+func Revive(windowID string) {
+	if windowsDir == "" || checkDir() != nil {
+		return
+	}
+	os.Remove(goneFilePath(windowID)) //nolint:errcheck
+}
+
+// Remove deletes the state file for windowID under the per-window flock and
+// leaves a tombstone so a late hook Update cannot recreate it. The lock file
+// is left in place (deleting it while held would let a waiter lock an
+// orphaned inode); RemoveAll cleans it up.
 //
 // Nothing is removed when the windows dir chain contains a symlink: deleting
 // through one would remove files wherever it points.
@@ -365,15 +524,23 @@ func Remove(windowID string) {
 	if windowsDir == "" || checkDir() != nil {
 		return
 	}
+	if unlock, err := lockWindow(windowID); err == nil {
+		defer unlock()
+	} else {
+		logging.Log("windowstate: Remove %s without lock: %v", windowID, err)
+	}
 	fp := filePath(windowID)
-	os.Remove(fp)           //nolint:errcheck
-	os.Remove(fp + ".lock") //nolint:errcheck
-	os.Remove(fp + ".tmp")  //nolint:errcheck // legacy fixed temp name
+	os.Remove(fp)          //nolint:errcheck
+	os.Remove(fp + ".tmp") //nolint:errcheck // legacy fixed temp name
 	// safefs.WriteFile's temp files: ".<id>.json.<random>.tmp".
 	if leftovers, err := filepath.Glob(filepath.Join(windowsDir, "."+globEscape(filepath.Base(fp))+".*.tmp")); err == nil {
 		for _, p := range leftovers {
 			os.Remove(p) //nolint:errcheck
 		}
+	}
+	stamp := []byte(time.Now().UTC().Format(time.RFC3339Nano))
+	if err := safefs.WriteFile(rootDir, goneFilePath(windowID), stamp, 0o600); err != nil {
+		logging.Log("windowstate: writing tombstone for %s: %v", windowID, err)
 	}
 }
 

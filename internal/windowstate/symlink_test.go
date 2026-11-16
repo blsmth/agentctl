@@ -192,7 +192,7 @@ func TestRemoveCleansTempFilesAndLockIsTightened(t *testing.T) {
 		}
 	}
 	Remove("@1")
-	for _, p := range []string{filePath("@1"), lock, mine} {
+	for _, p := range []string{filePath("@1"), mine} {
 		if _, err := os.Lstat(p); err == nil {
 			t.Errorf("%s not removed", filepath.Base(p))
 		}

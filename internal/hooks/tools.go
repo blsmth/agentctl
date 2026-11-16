@@ -58,7 +58,7 @@ func PreTool() {
 		ws.PendingToolDetail = detail
 		ws.PendingToolAt = pendingAt
 	}); err != nil {
-		logging.Log("hook-pre-tool: windowstate.Update error: %v", err)
+		logUpdateErr("hook-pre-tool", err)
 	}
 	logging.Log("hook-pre-tool: set state=working window=%s agent=%s tool=%s", windowID, agentName, input.ToolName)
 
@@ -116,14 +116,16 @@ func PostTool() {
 	defer doneTimer()
 
 	nowUnix := time.Now().Unix()
+	lastToolDetail := toolinput.Summarize(input.ToolName, input.ToolInput, maxToolDetailLen)
 	var ws windowstate.WindowState
 	if err := windowstate.Update(windowID, func(w *windowstate.WindowState) {
 		w.State = "working"
 		w.LastToolTime = nowUnix
+		w.LastToolDetail = lastToolDetail
 		clearPendingToolIfMatch(w, input.ToolName)
 		ws = *w
 	}); err != nil {
-		logging.Log("hook-post-tool: windowstate.Update error: %v", err)
+		logUpdateErr("hook-post-tool", err)
 	}
 	logging.Log("hook-post-tool: set state=working last_tool_time=%d window=%s agent=%s tool=%s", nowUnix, windowID, agentName, input.ToolName)
 
@@ -205,7 +207,7 @@ func PostToolFailure() {
 			ws.State = "idle"
 			clearPendingToolIfMatch(ws, input.ToolName)
 		}); err != nil {
-			logging.Log("hook-post-tool-failure: windowstate.Update error: %v", err)
+			logUpdateErr("hook-post-tool-failure", err)
 		}
 		logging.Log("hook-post-tool-failure: interrupt, set state=idle window=%s agent=%s tool=%s", windowID, agentName, input.ToolName)
 	} else {
@@ -213,7 +215,7 @@ func PostToolFailure() {
 			ws.LastError = errSummary
 			clearPendingToolIfMatch(ws, input.ToolName)
 		}); err != nil {
-			logging.Log("hook-post-tool-failure: windowstate.Update error: %v", err)
+			logUpdateErr("hook-post-tool-failure", err)
 		}
 		logging.Log("hook-post-tool-failure: tool failure window=%s agent=%s tool=%s error=%s", windowID, agentName, input.ToolName, input.Error)
 	}
