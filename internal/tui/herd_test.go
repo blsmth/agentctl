@@ -348,7 +348,7 @@ func TestMainPanelContent_AgentSelected(t *testing.T) {
 	}
 	lines := []herdLine{{kind: herdLineRow, row: row}}
 
-	out := mainPanelContent(lines, 0, "$ some terminal output\n", "", 80)
+	out := mainPanelContent(lines, 0, "$ some terminal output\n", "", 80, 0, 0)
 
 	for _, want := range []string{"go-engineer~2", "State:", "working", "Model:", "claude-sonnet-4-20250514", "Context:", "42%", "Tokens:", "Ticket:", "#99", "Terminal", "some terminal output"} {
 		if !strings.Contains(out, want) {
@@ -367,7 +367,7 @@ func TestMainPanelContent_AgentSelected_PreviewError(t *testing.T) {
 	}
 	lines := []herdLine{{kind: herdLineRow, row: row}}
 
-	out := mainPanelContent(lines, 0, "", "capture-pane agentctl-myproj:@5: exit status 1", 80)
+	out := mainPanelContent(lines, 0, "", "capture-pane agentctl-myproj:@5: exit status 1", 80, 0, 0)
 	if !strings.Contains(out, "preview unavailable") {
 		t.Errorf("expected preview-unavailable message, got:\n%s", out)
 	}
@@ -383,7 +383,7 @@ func TestMainPanelContent_AgentSelected_NoOutputYet(t *testing.T) {
 	}
 	lines := []herdLine{{kind: herdLineRow, row: row}}
 
-	out := mainPanelContent(lines, 0, "", "", 80)
+	out := mainPanelContent(lines, 0, "", "", 80, 0, 0)
 	if !strings.Contains(out, "no output yet") {
 		t.Errorf("expected no-output placeholder, got:\n%s", out)
 	}
@@ -409,7 +409,7 @@ func TestMainPanelContent_GroupHeaderSelected(t *testing.T) {
 		{kind: herdLineRow, row: g.Rows[2]},
 	}
 
-	out := mainPanelContent(lines, 0, "", "", 80)
+	out := mainPanelContent(lines, 0, "", "", 80, 0, 0)
 
 	for _, want := range []string{"agentctl-myproj", "Project:", "myproj", "Agents:", "3", "Blocked:", "1", "Working:", "1", "Idle:", "1"} {
 		if !strings.Contains(out, want) {
@@ -430,7 +430,7 @@ func TestMainPanelContent_PlaceholderSelected(t *testing.T) {
 		{kind: herdLinePlaceholder, group: g},
 	}
 
-	out := mainPanelContent(lines, 1, "", "", 80)
+	out := mainPanelContent(lines, 1, "", "", 80, 0, 0)
 	if !strings.Contains(out, "Agents:") || !strings.Contains(out, "0") {
 		t.Errorf("expected a zero-agent summary for the placeholder line, got:\n%s", out)
 	}
@@ -450,7 +450,7 @@ func TestMainPanelContent_NothingSelected(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out := mainPanelContent(tt.lines, tt.cursor, "", "", 80)
+			out := mainPanelContent(tt.lines, tt.cursor, "", "", 80, 0, 0)
 			if !strings.Contains(out, "nothing selected") {
 				t.Errorf("expected nothing-selected placeholder, got:\n%s", out)
 			}
