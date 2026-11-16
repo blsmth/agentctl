@@ -229,7 +229,9 @@ session, so killing the viewer pane, the viewer session, or the whole hub
 leaves every agent untouched (verified on a private tmux server).
 
 **Focus.** `enter` (on an agent row) and `tab` move keyboard focus into the
-live pane; `prefix+o` returns to the list. The list pane's mouse clicks only
+live pane; `prefix+Left` / `prefix+Right` (tmux's default `select-pane`
+bindings, which agentctl does not rebind) move focus between list and live pane
+(`prefix+o` is agentctl's logs key). The list pane's mouse clicks only
 select; they never open anything.
 
 **Resizing.** The split is only re-applied when the hub *window* width
@@ -245,6 +247,25 @@ changes rather than snapping back to the default ratio
 selects it when the caller is already inside the hub session, otherwise it
 switches into the hub.
 
+### Prefix keys and tabs act on the viewed agent
+
+The hub window carries no chrome-bar or HUD pane (`LaunchChromeBar` and
+`ToggleHud` skip it); the agent's chrome bar inside the live pane is the only
+tab bar. Every agentctl prefix binding sets `AGENTCTL_KEY_WINDOW=#{window_id}`
+and `agentctl` calls `hubtarget.Apply` once, before paths are resolved. If that
+window belongs to `agentctl-hub`, it resolves the current `agentctl-hubview*`
+session, its active window, its home session (the non-viewer member of the
+session group) and that session's `AGENTCTL_RUNTIME_DIR`, then substitutes the
+window-id argument and the runtime dir; the usual cwd pin then lands in the
+home project. `q` closes the hub, `R`/`K` are refused, and with no viewer a
+"select an agent in the hub first" message is shown. The pure core is
+`hubtarget.Resolve`.
+
+Tab clicks in a chrome bar that is being viewed through the hub select the
+window in the viewer session (`tmux.ViewerForWindow`); the hub polls the
+viewer's active window each tick and moves its selection when it changed
+without the hub causing it (`viewerSyncTarget`).
+
 ### Keymap (herd-list window)
 
 | Key | Action |
@@ -252,7 +273,7 @@ switches into the hub.
 | `j` / `down` | Move cursor down (skips dividers) |
 | `k` / `up` | Move cursor up (skips dividers) |
 | `enter` / `tab` | Focus the live pane (`enter` only on an agent row) |
-| `prefix+o` | Back to the list from the live pane |
+| `prefix+←` / `prefix+→` | Move focus between the list and the live pane |
 | `J` | Jump to the selected agent's window in its own home session |
 | `n` / `x` | New agent in the selected group / close the selected agent |
 | `b` | Select the next blocked agent and focus its live pane (stays in the hub) |

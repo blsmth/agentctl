@@ -533,6 +533,18 @@ func focusAgentPane(windowID string) {
 	}
 }
 
+// selectTabWindow switches to target. When origin is being viewed through the
+// herd hub's live viewer, the viewer session switches (the hub list follows by
+// polling the viewer); otherwise the home session switches as usual.
+func selectTabWindow(origin, target string) {
+	if viewer := tmux.ViewerForWindow(origin); viewer != "" {
+		if tmux.SelectViewerWindow(viewer, target) == nil {
+			return
+		}
+	}
+	_ = exec.Command("tmux", "select-window", "-t", target).Run()
+}
+
 // tabClickCmd switches to target (if non-empty) and restores focus to the
 // agent pane in both the origin and target windows. It runs off the Update
 // goroutine as a tea.Cmd.
@@ -541,7 +553,7 @@ func tabClickCmd(origin, target string) tea.Cmd {
 		focusAgentPane(origin)
 		if target != "" {
 			if target != origin {
-				_ = exec.Command("tmux", "select-window", "-t", target).Run()
+				selectTabWindow(origin, target)
 			}
 			focusAgentPane(target)
 		}

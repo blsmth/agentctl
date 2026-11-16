@@ -400,3 +400,9 @@ func KillSessionWindow(session, windowID string) error {
 	sigTermPaneGroups(string(paneOut))
 	return nil
 }
+
+// IsHubWindow reports whether windowID belongs to the hub session (its
+// herd-list window). Chrome bars and HUD panes must never be attached to it.
+func IsHubWindow(windowID string) bool {
+	return SessionOfWindow(windowID) == HubSessionName
+}

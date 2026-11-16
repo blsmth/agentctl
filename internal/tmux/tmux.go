@@ -1210,26 +1210,25 @@ type keyBinding struct {
 func agentctlKeybindings(exe string) []keyBinding {
 	popupPin, envPrefix := keybindingPinArgs()
 	qexe := shellquote.Quote(exe)
-	// invoke is for display-popup, which does not format-expand its command;
-	// invokeRS is for anything that passes through a run-shell, which does, so
-	// the binary path is format-escaped (see FormatEscape).
-	invoke := func(args string) string { return qexe + " " + args }
+	// invokeRS is for anything that passes through a run-shell, which
+	// format-expands, so the binary path is format-escaped (see FormatEscape).
 	invokeRS := func(args string) string { return FormatEscape(qexe) + " " + args }
 
-	// popup opens a display-popup in the current pane running agentctl args.
-	popup := func(w, h int, args string) string {
-		return fmt.Sprintf("display-popup -E %s -w %d -h %d %s", popupPin, w, h, shellquote.Quote(invoke(args)))
-	}
 	// nested opens the popup via run-shell so #{window_id} is expanded. The
 	// outer run-shell expands the whole inner command once (unescaping the
-	// path); the inner display-popup then runs it unexpanded.
+	// path); the inner display-popup then runs it unexpanded. The window ID is
+	// also handed to the popup as KeyWindowEnv (display-popup itself expands
+	// neither its command nor its -e values, so only this form can carry it):
+	// hubtarget.Apply uses it to redirect hub keypresses to the viewed agent.
 	nested := func(w, h int, args string) string {
-		inner := fmt.Sprintf("tmux display-popup -E -t #{window_id} %s -w %d -h %d %s", popupPin, w, h, shellquote.Quote(invokeRS(args)))
+		inner := fmt.Sprintf("tmux display-popup -E -t #{window_id} %s -e %s=#{window_id} -w %d -h %d %s",
+			popupPin, KeyWindowEnv, w, h, shellquote.Quote(invokeRS(args)))
 		return "run-shell " + shellquote.Quote(inner)
 	}
-	// run execs agentctl args via run-shell with the cwd pin.
+	popup := func(w, h int, args string) string { return nested(w, h, args) }
+	// run execs agentctl args via run-shell with the cwd pin and KeyWindowEnv.
 	run := func(flags, args string) string {
-		return "run-shell " + flags + shellquote.Quote(envPrefix+invokeRS(args))
+		return "run-shell " + flags + shellquote.Quote(envPrefix+KeyWindowEnv+"=#{window_id} "+invokeRS(args))
 	}
 
 	return []keyBinding{
@@ -1529,6 +1528,11 @@ func chromeBarSplitArgs(lastPane, chromeBarCmd string) []string {
 // Utility windows (tickets, sessions, agents) are skipped because they run
 // full-screen TUI applications that must fill the entire window.
 func LaunchChromeBar(windowID string) error {
+	// The hub window gets no chrome: the agent's own chrome bar, inside the
+	// live pane, is the only tab bar.
+	if IsHubWindow(windowID) {
+		return nil
+	}
 	// Skip utility windows — they use the full screen.
 	if winName := WindowNameByID(windowID); utilityWindowNames[winName] {
 		return nil
@@ -1691,6 +1695,9 @@ func ResizePaneHeight(paneID string, height int) error {
 // If a HUD pane exists and is expanded, it collapses it to 2 rows (metrics only).
 // If a HUD pane exists and is collapsed, it expands it back to 30% of the window height.
 func ToggleHud(windowID string) error {
+	if IsHubWindow(windowID) {
+		return fmt.Errorf("no HUD in the hub; select an agent first")
+	}
 	wsHud, _ := windowstate.Read(windowID)
 	if wsHud.HudPane != "" {
 		if wsHud.HudCollapsed {

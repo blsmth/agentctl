@@ -19,6 +19,7 @@ import (
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/hooks"
+	"github.com/blsmth/agentctl/internal/hubtarget"
 	"github.com/blsmth/agentctl/internal/improve"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
@@ -57,6 +58,15 @@ func main() {
 			os.Args = append(os.Args[:i], os.Args[i+2:]...)
 			break
 		}
+	}
+
+	// Prefix keys pressed in the herd hub act on the agent shown in the live
+	// viewer, not on the hub window. This must run before paths.Init (it may
+	// redirect AGENTCTL_RUNTIME_DIR) and is a no-op for anything that did not
+	// come from a keybinding. See internal/hubtarget.
+	var hubDone bool
+	if os.Args, hubDone = hubtarget.Apply(os.Args); hubDone {
+		return
 	}
 
 	// Tier 0: always needed — paths and logging first.

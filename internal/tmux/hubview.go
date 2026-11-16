@@ -196,7 +196,7 @@ func currentViewer(sessions []string) (session, client string) {
 }
 
 func viewerSessionHome(session string) string {
-	out, err := tmuxRun("display-message", "-p", "-t", "="+session, "#{session_group}")
+	out, err := tmuxRun("display-message", "-p", "-t", "="+session+":", "#{session_group}")
 	if err != nil {
 		return ""
 	}
@@ -351,4 +351,122 @@ func ResizeLiveViewer(rightWidth int) error {
 	}
 	_, err := tmuxRun(viewerResizeArgs(pane, rightWidth)...)
 	return err
+}
+
+// KeyWindowEnv is set by every agentctl prefix binding to #{window_id} of the
+// window the key was pressed in. hubtarget.Apply uses it to tell whether the
+// key was pressed in the hub (and so must be redirected to the viewed agent).
+// Only the window ID is interpolated: names are attacker-influenced and tmux
+// format-expands before sh runs.
+const KeyWindowEnv = "AGENTCTL_KEY_WINDOW"
+
+// SessionOfWindow returns the session owning windowID ("@N"), or "".
+func SessionOfWindow(windowID string) string {
+	if !strings.HasPrefix(windowID, "@") {
+		return ""
+	}
+	out, err := tmuxRun("display-message", "-p", "-t", windowID, "#{session_name}")
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
+// ViewedAgent describes the agent currently shown in the hub's live viewer.
+type ViewedAgent struct {
+	Viewer     string // viewer session name
+	Window     string // active window id in the viewer
+	Home       string // home (non-viewer) session of the viewer's group
+	RuntimeDir string // AGENTCTL_RUNTIME_DIR of the home session
+}
+
+// pickHomeSession chooses the home session from a group's member names: the
+// first one that is not a viewer session.
+func pickHomeSession(members []string) string {
+	for _, m := range members {
+		if m != "" && !IsViewerSession(m) && m != HubSessionName {
+			return m
+		}
+	}
+	return ""
+}
+
+// parseEnvValue parses `show-environment` output ("NAME=value"); "" for the
+// unset ("-NAME") or empty cases.
+func parseEnvValue(name, out string) string {
+	out = strings.TrimSpace(out)
+	if v, ok := strings.CutPrefix(out, name+"="); ok {
+		return v
+	}
+	return ""
+}
+
+// homeOfViewer returns the home session of a viewer session's group.
+func homeOfViewer(viewer string) string {
+	group := viewerSessionHome(viewer)
+	if group == "" {
+		return ""
+	}
+	out, _ := tmuxRun("list-sessions", "-F", "#{session_name}",
+		"-f", "#{==:#{session_group},"+FormatEscape(group)+"}")
+	return pickHomeSession(strings.Split(out, "\n"))
+}
+
+// HubViewedAgent resolves the agent shown in the live viewer: the current
+// viewer session, its active window, the home session of its group and that
+// session's runtime dir. Fields are empty when no agent is viewed.
+func HubViewedAgent() ViewedAgent {
+	viewer, _ := currentViewer(viewerSessions())
+	if viewer == "" {
+		return ViewedAgent{}
+	}
+	v := ViewedAgent{Viewer: viewer}
+	v.Window, _ = tmuxRun("display-message", "-p", "-t", "="+viewer+":", "#{window_id}")
+	v.Home = homeOfViewer(viewer)
+	if v.Home == "" {
+		return ViewedAgent{Viewer: viewer, Window: v.Window}
+	}
+	env, _ := tmuxRun("show-environment", "-t", "="+v.Home, "AGENTCTL_RUNTIME_DIR")
+	v.RuntimeDir = parseEnvValue("AGENTCTL_RUNTIME_DIR", env)
+	return v
+}
+
+// ViewerActiveWindow returns the home session and active window id the live
+// viewer currently shows ("" when there is no viewer). The hub polls it to keep
+// its list selection in step when the viewer window changes by other means
+// (e.g. a tab click in the agent's chrome bar).
+func ViewerActiveWindow() (home, windowID string) {
+	viewer, _ := currentViewer(viewerSessions())
+	if viewer == "" {
+		return "", ""
+	}
+	windowID, _ = tmuxRun("display-message", "-p", "-t", "="+viewer+":", "#{window_id}")
+	return homeOfViewer(viewer), windowID
+}
+
+// SelectViewerWindow switches the live viewer session containing windowID to
+// it. Used by chrome-bar tab clicks made from inside a viewer.
+func SelectViewerWindow(viewer, windowID string) error {
+	_, err := tmuxRun(viewerSelectWindowArgs(viewer, windowID)...)
+	return err
+}
+
+// ViewerForWindow returns the hub viewer session showing windowID right now
+// (it is the viewer's active window and the viewer has an attached client),
+// or "" when the window is not being viewed through the hub. A window also
+// watched directly (a non-viewer client attached to its home session) counts
+// as not viewed: there the click most likely came from that client, and tab
+// switches keep their normal home-session meaning.
+func ViewerForWindow(windowID string) string {
+	viewer, client := currentViewer(viewerSessions())
+	if viewer == "" || client == "" || windowID == "" {
+		return ""
+	}
+	if w, _ := tmuxRun("display-message", "-p", "-t", "="+viewer+":", "#{window_id}"); w != windowID {
+		return ""
+	}
+	if home := homeOfViewer(viewer); home != "" && len(viewerClients(home)) > 0 {
+		return ""
+	}
+	return viewer
 }

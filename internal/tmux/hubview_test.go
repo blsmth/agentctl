@@ -209,3 +209,52 @@ func TestViewerResizeArgs(t *testing.T) {
 		t.Errorf("viewerResizeArgs = %q", got)
 	}
 }
+
+func TestPickHomeSession(t *testing.T) {
+	tests := []struct {
+		name    string
+		members []string
+		want    string
+	}{
+		{"viewer first", []string{"agentctl-hubview", "agentctl-acme"}, "agentctl-acme"},
+		{"home only", []string{"agentctl-acme"}, "agentctl-acme"},
+		{"only viewers", []string{"agentctl-hubview", "agentctl-hubview-2"}, ""},
+		{"empty", []string{""}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := pickHomeSession(tt.members); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseEnvValue(t *testing.T) {
+	tests := []struct{ out, want string }{
+		{"AGENTCTL_RUNTIME_DIR=/p/.agentctl\n", "/p/.agentctl"},
+		{"-AGENTCTL_RUNTIME_DIR", ""},
+		{"AGENTCTL_RUNTIME_DIR=", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := parseEnvValue("AGENTCTL_RUNTIME_DIR", tt.out); got != tt.want {
+			t.Errorf("parseEnvValue(%q) = %q, want %q", tt.out, got, tt.want)
+		}
+	}
+}
+
+// Every binding that runs agentctl must carry the key window so the hub
+// redirect can tell where the key was pressed (except the cross-project ones).
+func TestKeybindingsCarryKeyWindow(t *testing.T) {
+	unflagged := map[string]bool{"g": true, "b": true, "p": true}
+	for _, kb := range agentctlKeybindings("/x/agentctl") {
+		has := strings.Contains(kb.command, KeyWindowEnv+"=#{window_id}")
+		if unflagged[kb.key] {
+			continue
+		}
+		if !has {
+			t.Errorf("binding %q lacks %s: %s", kb.key, KeyWindowEnv, kb.command)
+		}
+	}
+}
