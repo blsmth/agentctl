@@ -91,6 +91,10 @@ func RunBackendLogin(name string, fromStdin, noVerify bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	if err := backendauth.Verify(ctx, b, key); err != nil {
+		if errors.Is(err, backendauth.ErrNoCredits) {
+			fmt.Printf("Key stored and valid, but the account has no credits for paid models: add credits or use a :free model.\n")
+			return nil
+		}
 		return fmt.Errorf("key stored, but verification failed: %w", err)
 	}
 	fmt.Println("Key verified.")
@@ -151,7 +155,9 @@ func RunBackendStatus(verify bool) error {
 		if verify {
 			res := "skipped (no credential)"
 			if err == nil {
-				if verr := backendauth.Verify(ctx, b, key); verr != nil {
+				if verr := backendauth.Verify(ctx, b, key); errors.Is(verr, backendauth.ErrNoCredits) {
+					res = "ok (key valid; no credits for paid models)"
+				} else if verr != nil {
 					res = "FAILED: " + verr.Error()
 				} else {
 					res = "ok"

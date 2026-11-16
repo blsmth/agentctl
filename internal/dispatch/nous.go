@@ -181,6 +181,7 @@ func fetchNousCatalog(baseURL string) (nousCatalog, error) {
 	if err != nil {
 		return nousCatalog{}, fmt.Errorf("building request for %s: %w", url, err)
 	}
+	backendauth.SetUserAgent(req)
 	resp, err := backendHTTPClient.Do(req)
 	if err != nil {
 		return nousCatalog{}, fmt.Errorf("backend unreachable at %s: %w", baseURL, err)

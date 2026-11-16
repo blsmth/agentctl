@@ -126,12 +126,17 @@ func TestVerifyStatusMapping(t *testing.T) {
 		{404, `{"error":{"type":"not_found_error"}}`, "model not found"},
 		{429, `{"error":{"type":"rate_limit_error","message":"hidden"}}`, "rate_limit_error"},
 		{502, `<html>bad gateway</html>`, "unexpected HTTP 502"},
+		{403, `<html>Attention Required! | Cloudflare</html>`, "blocked by the provider edge (WAF)"},
+		{403, `{"error":{"type":"permission_error"}}`, "permission_error"},
+		{403, `{"error":{"code":"insufficient_credits_for_paid_model","type":"x"}}`, "no credits"},
+		{404, `{"error":{"code":"insufficient_credits_for_paid_model"}}`, "no credits"},
+		{403, `{"error":{"code":42}}`, "unexpected HTTP 403"},
 	}
 	for _, tt := range tests {
 		t.Run(http.StatusText(tt.status), func(t *testing.T) {
-			var gotAuth, gotPath string
+			var gotAuth, gotPath, gotUAHeader string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				gotAuth, gotPath = r.Header.Get("Authorization"), r.URL.Path
+				gotAuth, gotPath, gotUAHeader = r.Header.Get("Authorization"), r.URL.Path, r.Header.Get("User-Agent")
 				w.WriteHeader(tt.status)
 				_, _ = io.WriteString(w, tt.body)
 			}))
@@ -140,11 +145,20 @@ func TestVerifyStatusMapping(t *testing.T) {
 			if gotAuth != "Bearer k" || gotPath != "/v1/messages" {
 				t.Errorf("auth=%q path=%q", gotAuth, gotPath)
 			}
+			if gotUA, want := gotUAHeader, "agentctl/"+Version; gotUA != want {
+				t.Errorf("User-Agent = %q, want %q", gotUA, want)
+			}
 			if tt.want == "" {
 				if err != nil {
 					t.Fatal(err)
 				}
 				return
+			}
+			if strings.Contains(tt.want, "no credits") && !errors.Is(err, ErrNoCredits) {
+				t.Errorf("want ErrNoCredits, got %v", err)
+			}
+			if strings.Contains(tt.want, "blocked") && strings.Contains(err.Error(), "key invalid") {
+				t.Errorf("WAF block must not say the key is invalid: %v", err)
 			}
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want %q", err, tt.want)
@@ -293,5 +307,16 @@ func TestKeychainGetAndNotFound(t *testing.T) {
 	fakeSecurity(t, true)
 	if _, err := (&keychainStore{}).Get("nous"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing Get = %v", err)
+	}
+}
+
+func TestUserAgent(t *testing.T) {
+	old := Version
+	Version = "9.9.9"
+	t.Cleanup(func() { Version = old })
+	req, _ := http.NewRequest(http.MethodGet, "http://x", nil)
+	SetUserAgent(req)
+	if got := req.Header.Get("User-Agent"); got != "agentctl/9.9.9" {
+		t.Errorf("User-Agent = %q", got)
 	}
 }

@@ -55,6 +55,11 @@ func catalogServer(t *testing.T, status int, body string, hits *atomic.Int32) *h
 		if r.URL.Path != "/v1/models" {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
+		if ua := r.Header.Get("User-Agent"); !strings.HasPrefix(ua, "agentctl/") {
+			t.Errorf("catalog request User-Agent = %q, want agentctl/<version>", ua)
+			w.WriteHeader(403)
+			return
+		}
 		if r.Header.Get("Authorization") != "" {
 			t.Errorf("catalog request must not carry credentials")
 		}

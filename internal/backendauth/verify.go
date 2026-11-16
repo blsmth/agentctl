@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,13 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 )
+
+// ErrNoCredits means the key was accepted but the account cannot use paid
+// models: the key is valid.
+var ErrNoCredits = errors.New("key is valid but the account has no credits for paid models")
+
+// noCreditsCode is the error.code Nous returns for that case.
+const noCreditsCode = "insufficient_credits_for_paid_model"
 
 // HTTPClient performs the verification request; tests replace it.
 var HTTPClient = &http.Client{Timeout: 30 * time.Second}
@@ -36,6 +44,7 @@ func Verify(ctx context.Context, b config.BackendConfig, key string) error {
 	if err != nil {
 		return fmt.Errorf("building verify request: %w", err)
 	}
+	SetUserAgent(req)
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-version", "2023-06-01")
@@ -48,19 +57,29 @@ func Verify(ctx context.Context, b config.BackendConfig, key string) error {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
+	var e struct {
+		Error struct {
+			Type string `json:"type"`
+			Code any    `json:"code"`
+		} `json:"error"`
+	}
+	isJSON := json.Unmarshal(raw, &e) == nil
+	if isJSON && e.Error.Code == any(noCreditsCode) &&
+		(resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+		return fmt.Errorf("%w; add credits or use a :free model", ErrNoCredits)
+	}
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("key invalid or out of credits (HTTP 401)")
 	case http.StatusNotFound:
 		return fmt.Errorf("model not found: %s (HTTP 404)", b.Model)
-	}
-	var e struct {
-		Error struct {
-			Type string `json:"type"`
-		} `json:"error"`
+	case http.StatusForbidden:
+		if !isJSON {
+			return fmt.Errorf("request blocked by the provider edge (WAF), HTTP 403; this does not mean the key is invalid")
+		}
 	}
 	typ := ""
-	if json.Unmarshal(raw, &e) == nil && errorTypeRe.MatchString(e.Error.Type) {
+	if isJSON && errorTypeRe.MatchString(e.Error.Type) {
 		typ = ": " + e.Error.Type
 	}
 	return fmt.Errorf("unexpected HTTP %d from backend%s", resp.StatusCode, typ)

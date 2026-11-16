@@ -316,6 +316,8 @@ The `ANTHROPIC_AUTH_TOKEN` sentence above applies to the Ollama kind only; a nou
 Caveats:
 
 - **Billing.** API keys bill pay-as-you-go credits, not any subscription's included usage. Rate limits depend on your Nous tier; check the Portal for current limits.
+- **Verified free models.** `meituan/longcat-2.5:free` works for tool use over `/v1/messages` (verified end to end with Claude Code doing Read, Bash and Write). `stepfun/step-3.7-flash:free` and `upstage/solar-mini4:free` return `400 missing tags` and are unusable.
+- **Edge blocking.** Nous sits behind Cloudflare, which returns a 403 HTML page for Go's default User-Agent; agentctl sends `User-Agent: agentctl/<version>` on every request to Nous. `backend login` reports a non-JSON 403 as blocked by the provider edge (WAF), not an invalid key, and an `insufficient_credits_for_paid_model` error as a valid key on an account with no credits (add credits or use a `:free` model).
 - **Models.** Only models verified to do tool use over `/v1/messages` are supported; the catalog's `endpoints` field is copied from OpenRouter and may be wrong. `anthropic/*` models are the safest bet. Prompt caching behaviour under concurrent agents is unverified, so cost may be higher than the token counts suggest.
 - **The agent can read its own key.** It runs as your user, so it can run `agentctl backend-token`, `security find-generic-password`, or read the credential file. The `Bash(*backend-token*)` and `Edit(**/.claude/settings*.json)` deny rule that nous launches add are defence in depth only. Set a spend limit on the Nous key.
 - **Cost display is wrong** for slug models: the statusline and metrics have no pricing for them.

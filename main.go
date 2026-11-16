@@ -13,6 +13,7 @@ import (
 	"github.com/alecthomas/kong"
 
 	"github.com/blsmth/agentctl/internal/agent"
+	"github.com/blsmth/agentctl/internal/backendauth"
 	"github.com/blsmth/agentctl/internal/cmd"
 	"github.com/blsmth/agentctl/internal/config"
 	ctxstore "github.com/blsmth/agentctl/internal/context"
@@ -40,6 +41,7 @@ var (
 )
 
 func main() {
+	backendauth.Version = version
 	// backend-token is Claude Code's apiKeyHelper target: stdout must be
 	// exactly the key, so it runs before paths, logging and every other
 	// bootstrap step (none of which it needs).
