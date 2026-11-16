@@ -269,8 +269,12 @@ type HerdModel struct {
 	// only once the selection changes. liveLeft/liveRight are the column split
 	// of the hub window (list column / live pane).
 	liveShown string
-	liveLeft  int
-	liveRight int
+	// viewerSeen is the "session|window" the viewer last reported on a poll;
+	// a change relative to it that the hub did not cause drives the selection
+	// (see viewerSyncTarget).
+	viewerSeen string
+	liveLeft   int
+	liveRight  int
 
 	// liveWinWidth is the hub window width the split was last applied for;
 	// a list-pane resize at the same window width is a divider drag, not a
@@ -356,7 +360,10 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case herdTickMsg:
 		show := m.maybeShowCmd()
-		return m, tea.Batch(herdLoadCmd(), herdTickCmd(), show)
+		return m, tea.Batch(herdLoadCmd(), herdTickCmd(), show, herdViewerPollCmd())
+
+	case herdViewerMsg:
+		return m.syncFromViewer(msg), nil
 
 	case herdFocusErrMsg:
 		m.jumpErr = msg.err.Error()
@@ -1427,4 +1434,50 @@ func (m *HerdModel) applyClosePending() {
 	case m.groupForSession(p.session) != nil:
 		m.selSession, m.selWindowID, m.selIsHeader = p.session, "", true
 	}
+}
+
+// herdViewerMsg reports the window the live viewer currently shows.
+type herdViewerMsg struct{ home, window string }
+
+// herdViewerPollCmd asks tmux which window the viewer shows.
+func herdViewerPollCmd() tea.Cmd {
+	return func() tea.Msg {
+		home, win := tmux.ViewerActiveWindow()
+		return herdViewerMsg{home: home, window: win}
+	}
+}
+
+// viewerSyncTarget decides whether the hub selection must follow the viewer.
+// The viewer shows home|win; seen is what the previous poll saw and liveShown
+// what the hub itself last handed to the viewer. Only a change the hub did not
+// cause (observed differs from both) is followed, and only when the window is
+// a row of the list. It returns the key to remember as seen.
+func viewerSyncTarget(lines []herdLine, liveShown, seen, home, win string) (key string, follow bool) {
+	if home == "" || win == "" {
+		return seen, false
+	}
+	key = home + "|" + win
+	if key == seen || key == liveShown {
+		return key, false
+	}
+	for _, l := range lines {
+		if l.kind == herdLineRow && l.row.Session == home && l.row.WindowID == win {
+			return key, true
+		}
+	}
+	return key, false
+}
+
+// syncFromViewer moves the list selection to the window the viewer switched
+// to by other means (a chrome-bar tab click inside the live pane).
+func (m HerdModel) syncFromViewer(msg herdViewerMsg) HerdModel {
+	key, follow := viewerSyncTarget(m.lines, m.liveShown, m.viewerSeen, msg.home, msg.window)
+	m.viewerSeen = key
+	if !follow {
+		return m
+	}
+	m.selSession, m.selWindowID, m.selIsHeader = msg.home, msg.window, false
+	m.liveShown = key
+	m.resolveSelection()
+	return m
 }

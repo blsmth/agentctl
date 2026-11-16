@@ -74,6 +74,22 @@ These two keys are bound server-globally (tmux `bind-key` has no session
 scope), so they work identically from inside the hub itself and from every
 per-project session.
 
+### Prefix keys inside the hub
+
+Bindings are server-global, so a key pressed in the hub would resolve to the
+hub window itself. Instead, every agentctl binding passes the window it was
+pressed in (`AGENTCTL_KEY_WINDOW`), and `agentctl` (see `internal/hubtarget`)
+redirects hub keypresses to the agent shown in the live pane:
+
+- **Window-scoped** (`x` kill, `o` logs, `s` settings, `i` improve, `h`/`H` HUD, `C` context push) act on the viewed agent's window.
+- **Project-scoped** (`a` menu, `A` launch, `c` create, `T`/`Q` tickets, `P` permissions, `m`/`t`/`S` windows) run as if pressed in the viewed agent's project session; new windows land there.
+- `q` closes the hub (back to the previous session). `R` (restart) and `K` (kill all) are refused in the hub.
+- With no agent viewed yet, these keys show "select an agent in the hub first".
+- Popups may open over the hub window; only their target changes.
+- `prefix+Left` / `prefix+Right` (tmux defaults) move focus between the list and the live pane.
+
+The hub window has no chrome bar or HUD of its own: the agent's chrome bar inside the live pane is the only tab bar. Clicking a tab there switches the live viewer and the hub list follows.
+
 ## Notes
 
 The keybinding layout is inspired by [BitchX](https://en.wikipedia.org/wiki/BitchX)'s layered key maps — direct keys for the most common actions, a prefix mode for window management, and muscle-memory-friendly mnemonics (a=agent, t=ticket, s=settings, etc.).
