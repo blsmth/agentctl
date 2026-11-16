@@ -143,8 +143,9 @@ just no longer load-bearing for local discovery.
 
 Each row shows a state glyph, the agent's instance name, its session/project, and
 a short activity line. Rows are grouped by session (top level), and within a
-session ordered so the things needing attention float up: **blocked first, then
-done (unseen), then working, then idle.** Each session's group header carries a
+session ordered by tmux window index (stable; state never reorders rows).
+Groups are alphabetical by project name; use `b` to jump to blocked agents.
+Each session's group header carries a
 rolled-up state — blocked if any member is blocked, else working if any is
 working, else done if any is done-unseen, else idle — so with a dozen agents you
 scan headers first and only expand the session that's blocked. This is herdr's
@@ -444,14 +445,9 @@ The "Open questions" from the original draft, resolved by what actually shipped:
   "stale" marker on the group header — and those rows stay jumpable, since
   the tmux window is very likely still there even though the snapshot is
   momentarily out of date.
-- **Row order and group rollup deliberately use different precedence**,
-  exactly as scoped in the implementation ticket but worth restating since
-  it's easy to miss on a skim: within a group, rows sort blocked → done
-  (unseen) → working → idle, but a *group's* rolled-up status is blocked →
-  working → done → idle. Working outranks done-unseen at the group level (a
-  session with any agent still working is "busier" than one that's merely
-  finished-and-unseen) even though an individual done-unseen row floats
-  above a working row within its own group.
+- **Ordering is stable, not attention-ranked.** Groups sort alphabetically
+  by project (case-insensitive), rows by window index. A group's rollup status
+  (blocked → working → done → idle) is display-only and never reorders.
 
 ## Key code references
 

@@ -34,9 +34,8 @@ type Row struct {
 }
 
 // RollupStatus is a rolled-up status across a set of rows, in the group-level
-// attention-priority order used for group headers and group sorting:
-// Blocked > Working > Done > Idle. This intentionally differs from the
-// within-group row order (see rowSortRank) — see the design doc.
+// attention-priority order used for group headers:
+// Blocked > Working > Done > Idle. It does not affect ordering.
 type RollupStatus int
 
 const (
@@ -289,35 +288,13 @@ func IsNonAgentWindow(name string) bool {
 	return len(name) >= len("improve~") && name[:len("improve~")] == "improve~"
 }
 
-// rowSortRank returns the within-group sort priority for a row: blocked
-// first, then done (unseen), then working, then idle. Lower ranks sort
-// first. This deliberately differs from the group-level RollupStatus order —
-// see rollupOf.
-func rowSortRank(r Row) int {
-	switch {
-	case r.State == "blocked":
-		return 0
-	case r.Done:
-		return 1
-	case r.State == "working":
-		return 2
-	default:
-		return 3
-	}
-}
-
-// SortRows orders rows within a group: blocked first, then done (unseen),
-// then working, then idle — ties broken by WindowIndex so the order matches
-// tmux's display order and doesn't jitter between polls as states change.
-// Returns a new slice; the input is left untouched.
+// SortRows orders rows within a group by WindowIndex (tmux's window order)
+// only. State deliberately plays no part, so agents do not jump around as
+// their state changes. Returns a new slice; the input is left untouched.
 func SortRows(rows []Row) []Row {
 	sorted := make([]Row, len(rows))
 	copy(sorted, rows)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		ri, rj := rowSortRank(sorted[i]), rowSortRank(sorted[j])
-		if ri != rj {
-			return ri < rj
-		}
 		return sorted[i].WindowIndex < sorted[j].WindowIndex
 	})
 	return sorted
@@ -325,9 +302,7 @@ func SortRows(rows []Row) []Row {
 
 // rollupOf returns the group-level RollupStatus contribution of a single
 // row: blocked if State is "blocked", else working if State is "working",
-// else done if Done is true (unseen completion), else idle. Note this order
-// — working before done — differs from rowSortRank, which is deliberate: see
-// the design doc's "Group rollup" section.
+// else done if Done is true (unseen completion), else idle.
 func rollupOf(r Row) RollupStatus {
 	switch {
 	case r.State == "blocked":
@@ -357,17 +332,17 @@ func RollupRows(rows []Row) RollupStatus {
 	return best
 }
 
-// OrderGroups sorts groups so the ones needing attention float to the top:
-// by rolled-up status (using the same RollupBlocked > RollupWorking >
-// RollupDone > RollupIdle precedence as RollupRows), then by session name
-// for stability when rollups tie. Returns a new slice; the input is left
-// untouched.
+// OrderGroups sorts groups alphabetically by project display name
+// (case-insensitive), breaking ties by session name. Rollup status plays no
+// part, so groups stay put as their agents change state. Returns a new slice;
+// the input is left untouched.
 func OrderGroups(groups []Group) []Group {
 	sorted := make([]Group, len(groups))
 	copy(sorted, groups)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		if sorted[i].Rollup != sorted[j].Rollup {
-			return sorted[i].Rollup < sorted[j].Rollup
+		pi, pj := strings.ToLower(sorted[i].Project), strings.ToLower(sorted[j].Project)
+		if pi != pj {
+			return pi < pj
 		}
 		return sorted[i].Session < sorted[j].Session
 	})
@@ -375,8 +350,8 @@ func OrderGroups(groups []Group) []Group {
 }
 
 // FirstBlocked returns the first blocked agent across all groups, walking
-// groups then rows in the exact order Load produces (groups sorted by
-// rollup, rows sorted within each group) — so the hub view and the
+// groups then rows in the exact order Load produces (groups alphabetical by
+// project, rows by window index within each group) — so the hub view and the
 // `jump-next-blocked` command always agree on which agent is "next".
 // Returns nil if no agent is blocked anywhere.
 func FirstBlocked(groups []Group) *Row {

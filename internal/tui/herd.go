@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"hash/fnv"
 	"strings"
 	"time"
 
@@ -84,6 +85,10 @@ var (
 	herdCountStyle    lipgloss.Style
 	herdNameStyle     lipgloss.Style
 	herdActivityStyle lipgloss.Style
+
+	// herdPaletteColors is the stable accent palette (theme colours) that
+	// project groups and agent types hash into.
+	herdPaletteColors []string
 )
 
 // initHerdStyles initialises the hub view's styles from the active theme.
@@ -115,6 +120,61 @@ func initHerdStyles() {
 	herdCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
 	herdNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Text))
 	herdActivityStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
+
+	herdPaletteColors = []string{t.Accent, t.Sky, t.Blue, t.Info, t.Orange, t.Green}
+}
+
+// herdPalette returns the accent palette, falling back to the active theme
+// if styles have not been initialised.
+func herdPalette() []string {
+	if len(herdPaletteColors) == 0 {
+		t := theme.Current()
+		return []string{t.Accent, t.Sky, t.Blue, t.Info, t.Orange, t.Green}
+	}
+	return herdPaletteColors
+}
+
+// herdColorFor picks a stable palette colour for name: the same name always
+// maps to the same colour.
+func herdColorFor(name string) string {
+	pal := herdPalette()
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	return pal[int(h.Sum32()%uint32(len(pal)))]
+}
+
+// splitAgentName splits "go-engineer:2" into ("go-engineer", ":2"). Names
+// without a numeric ":N" suffix return the whole name and "".
+func splitAgentName(name string) (base, suffix string) {
+	i := strings.LastIndex(name, ":")
+	if i <= 0 || i == len(name)-1 {
+		return name, ""
+	}
+	for _, c := range name[i+1:] {
+		if c < '0' || c > '9' {
+			return name, ""
+		}
+	}
+	return name[:i], name[i:]
+}
+
+// renderAgentName colours the agent type by hash and keeps ":N" muted. The
+// caller passes the already-truncated plain name. Dim overrides colour; a
+// blocked row gets a bold warning colour so it stands out.
+func renderAgentName(name string, stale, blocked bool) string {
+	if stale {
+		return herdDimStyle.Render(name)
+	}
+	base, suffix := splitAgentName(name)
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color(herdColorFor(base)))
+	if blocked {
+		style = herdBlockedStyle.Bold(true)
+	}
+	out := style.Render(base)
+	if suffix != "" {
+		out += herdCountStyle.Render(suffix)
+	}
+	return out
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────────
@@ -250,6 +310,11 @@ type HerdModel struct {
 	// the selection moves off that row.
 	confirmSession string
 	confirmWindow  string
+
+	// closePending remembers where a just-closed row sat so the next reload
+	// can select its neighbour instead of jumping to the first row. Cleared
+	// after one use.
+	closePending *herdClosePending
 
 	// menuOpen/menuLine: the right-click context menu (rendered in the footer)
 	// and the line it was opened on.
@@ -400,11 +465,15 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case herdClosedMsg:
 		if msg.err != nil {
+			m.closePending = nil
 			m.infoMsg = ""
 			m.jumpErr = msg.err.Error()
 			return m, herdLoadCmd()
 		}
 		m.jumpErr = ""
+		if m.closePending != nil {
+			m.closePending.killed = true
+		}
 		m.infoMsg = "closed " + msg.name + " (worktree kept; see agentctl sweep)"
 		return m, tea.Batch(herdLoadCmd(), herdLinkedCmd())
 
@@ -414,6 +483,7 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.groups = msg.groups
 			m.rebuildLines()
+			m.applyClosePending()
 			m.resolveSelection()
 			m.maybeAutoLive()
 		}
@@ -1353,11 +1423,15 @@ func (m HerdModel) renderGroupHeader(g herd.Group, selected bool, cw int) string
 	if selected {
 		marker = " " + cursorActiveStyle.Render("▸") + " "
 	}
+	projStyle := herdProjectStyle.Bold(true).Foreground(lipgloss.Color(herdColorFor(g.Project)))
+	if g.Stale {
+		projStyle = herdDimStyle
+	}
 	line := fmt.Sprintf("%s%s  %s  %s  %s",
 		marker,
 		style.Render(glyph),
-		herdSessionStyle.Render(g.Session),
-		herdProjectStyle.Render(g.Project),
+		projStyle.Render(g.Project),
+		herdCountStyle.Render(g.Session),
 		herdCountStyle.Render(count),
 	)
 	if g.Stale {
@@ -1409,15 +1483,18 @@ func (m HerdModel) renderRow(r herd.Row, selected bool, stale bool, cw int) stri
 	if stale {
 		style = herdDimStyle
 	}
-	cursor := "   "
+	// Thin left bar in the group's colour, then the cursor slot (3 columns).
+	barStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(herdColorFor(r.Project)))
+	if stale {
+		barStyle = herdDimStyle
+	}
+	cursor := barStyle.Render("▎") + "  "
 	if selected {
-		cursor = " " + cursorActiveStyle.Render("▸") + " "
+		cursor = barStyle.Render("▎") + cursorActiveStyle.Render("▸") + " "
 	}
 
-	nameStyle := herdNameStyle
 	activityStyle := herdActivityStyle
 	if stale {
-		nameStyle = herdDimStyle
 		activityStyle = herdDimStyle
 	}
 
@@ -1445,7 +1522,7 @@ func (m HerdModel) renderRow(r herd.Row, selected bool, stale bool, cw int) stri
 	}
 	name := truncateToWidth(r.Name, nameBudget)
 
-	prefix := cursor + glyphStr + " " + nameStyle.Render(name) + linkedMarker + "  "
+	prefix := cursor + glyphStr + " " + renderAgentName(name, stale, r.State == "blocked") + linkedMarker + "  "
 	prefixW := lipgloss.Width(prefix)
 	// Reserve " ✕" at the right edge, ahead of the gutter.
 	closeW := 1 + lipgloss.Width(herdCloseLabel)
@@ -1660,4 +1737,71 @@ func renderGroupSummary(g herd.Group) string {
 	}
 
 	return b.String()
+}
+
+// herdClosePending records a closed row's position within its group.
+type herdClosePending struct {
+	session  string
+	windowID string
+	nextID   string // window id of the row directly after it, if any
+	prevID   string // window id of the row directly before it, if any
+	killed   bool   // the close succeeded
+	tries    int    // reloads that still showed the window
+}
+
+// herdClosePendingMaxTries bounds how many reloads wait for the monitor's
+// snapshot to drop a closed window before giving up.
+const herdClosePendingMaxTries = 6
+
+// recordClose captures the neighbours of the row being closed.
+func (m *HerdModel) recordClose(r herd.Row) {
+	p := &herdClosePending{session: r.Session, windowID: r.WindowID}
+	if g := m.groupForSession(r.Session); g != nil {
+		for i, gr := range g.Rows {
+			if gr.WindowID != r.WindowID {
+				continue
+			}
+			if i+1 < len(g.Rows) {
+				p.nextID = g.Rows[i+1].WindowID
+			}
+			if i > 0 {
+				p.prevID = g.Rows[i-1].WindowID
+			}
+			break
+		}
+	}
+	m.closePending = p
+}
+
+// applyClosePending, run after a reload rebuilt m.lines, moves the selection
+// to the closed row's neighbour: next, else previous, else the project header.
+// Waits (a few reloads) while the closed window is still listed. One-shot.
+func (m *HerdModel) applyClosePending() {
+	p := m.closePending
+	if p == nil || !p.killed {
+		return
+	}
+	has := func(id string) bool {
+		for _, l := range m.lines {
+			if l.kind == herdLineRow && l.row.Session == p.session && l.row.WindowID == id {
+				return true
+			}
+		}
+		return false
+	}
+	if has(p.windowID) {
+		if p.tries++; p.tries >= herdClosePendingMaxTries {
+			m.closePending = nil
+		}
+		return
+	}
+	m.closePending = nil
+	switch {
+	case p.nextID != "" && has(p.nextID):
+		m.selSession, m.selWindowID, m.selIsHeader = p.session, p.nextID, false
+	case p.prevID != "" && has(p.prevID):
+		m.selSession, m.selWindowID, m.selIsHeader = p.session, p.prevID, false
+	case m.groupForSession(p.session) != nil:
+		m.selSession, m.selWindowID, m.selIsHeader = p.session, "", true
+	}
 }

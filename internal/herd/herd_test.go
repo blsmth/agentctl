@@ -221,22 +221,22 @@ func TestSortRows(t *testing.T) {
 			wantOrder: []string{"a"},
 		},
 		{
-			name: "blocked floats above everything",
+			name: "state does not reorder rows; WindowIndex only",
 			rows: []Row{
 				row("idle-agent", "idle", false, 0),
 				row("working-agent", "working", false, 1),
 				row("blocked-agent", "blocked", false, 2),
 				row("done-agent", "idle", true, 3),
 			},
-			wantOrder: []string{"blocked-agent", "done-agent", "working-agent", "idle-agent"},
+			wantOrder: []string{"idle-agent", "working-agent", "blocked-agent", "done-agent"},
 		},
 		{
-			name: "done-unseen floats above working",
+			name: "done-unseen does not float above working",
 			rows: []Row{
-				row("working-agent", "working", false, 0),
 				row("done-agent", "idle", true, 1),
+				row("working-agent", "working", false, 0),
 			},
-			wantOrder: []string{"done-agent", "working-agent"},
+			wantOrder: []string{"working-agent", "done-agent"},
 		},
 		{
 			name: "tie-break by WindowIndex when states equal",
@@ -248,7 +248,7 @@ func TestSortRows(t *testing.T) {
 			wantOrder: []string{"first", "second", "third"},
 		},
 		{
-			name: "tie-break within same rank (blocked)",
+			name: "blocked rows ordered by WindowIndex",
 			rows: []Row{
 				row("blocked-2", "blocked", false, 2),
 				row("blocked-1", "blocked", false, 1),
@@ -401,39 +401,30 @@ func TestOrderGroups(t *testing.T) {
 			want:   []string{"agentctl-a"},
 		},
 		{
-			name: "blocked group floats to top",
+			name: "rollup does not float blocked groups",
 			groups: []Group{
-				{Session: "agentctl-idle", Rollup: RollupIdle},
-				{Session: "agentctl-working", Rollup: RollupWorking},
-				{Session: "agentctl-blocked", Rollup: RollupBlocked},
+				{Session: "agentctl-c", Project: "c", Rollup: RollupBlocked},
+				{Session: "agentctl-a", Project: "a", Rollup: RollupIdle},
+				{Session: "agentctl-b", Project: "b", Rollup: RollupWorking},
 			},
-			want: []string{"agentctl-blocked", "agentctl-working", "agentctl-idle"},
+			want: []string{"agentctl-a", "agentctl-b", "agentctl-c"},
 		},
 		{
-			name: "tie-break by session name",
+			name: "case-insensitive project name",
 			groups: []Group{
-				{Session: "agentctl-zebra", Rollup: RollupWorking},
-				{Session: "agentctl-apple", Rollup: RollupWorking},
+				{Session: "agentctl-z", Project: "Zed"},
+				{Session: "agentctl-b", Project: "banana"},
+				{Session: "agentctl-a", Project: "Apple"},
 			},
-			want: []string{"agentctl-apple", "agentctl-zebra"},
+			want: []string{"agentctl-a", "agentctl-b", "agentctl-z"},
 		},
 		{
-			name: "full precedence ordering",
+			name: "tie on project broken by session",
 			groups: []Group{
-				{Session: "agentctl-idle", Rollup: RollupIdle},
-				{Session: "agentctl-done", Rollup: RollupDone},
-				{Session: "agentctl-blocked", Rollup: RollupBlocked},
-				{Session: "agentctl-working", Rollup: RollupWorking},
+				{Session: "agentctl-2", Project: "same"},
+				{Session: "agentctl-1", Project: "Same"},
 			},
-			want: []string{"agentctl-blocked", "agentctl-working", "agentctl-done", "agentctl-idle"},
-		},
-		{
-			name: "stale group with zero agents sorts by its idle rollup",
-			groups: []Group{
-				{Session: "agentctl-stale", Rollup: RollupIdle, Stale: true},
-				{Session: "agentctl-blocked", Rollup: RollupBlocked},
-			},
-			want: []string{"agentctl-blocked", "agentctl-stale"},
+			want: []string{"agentctl-1", "agentctl-2"},
 		},
 	}
 
@@ -649,9 +640,9 @@ func TestLoadGroupFreshSnapshot(t *testing.T) {
 	if len(got.Rows) != 2 {
 		t.Fatalf("got %d rows, want 2", len(got.Rows))
 	}
-	// Blocked row must sort first.
-	if got.Rows[0].Name != "python-engineer" {
-		t.Errorf("first row = %q, want %q (blocked floats to top)", got.Rows[0].Name, "python-engineer")
+	// Rows are in window-index order, not state order.
+	if got.Rows[0].Name != "go-engineer" {
+		t.Errorf("first row = %q, want %q (window-index order)", got.Rows[0].Name, "go-engineer")
 	}
 }
 
