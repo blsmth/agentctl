@@ -224,6 +224,9 @@ type HerdModel struct {
 	// herdCaptureCmd; never fetched for anything but the selected row.
 	preview    string
 	previewErr string
+	// previewUp is how many lines the preview is scrolled up from the
+	// bottom; reset whenever the selected agent changes.
+	previewUp int
 
 	// linkedWindowIDs is the set of tmux window IDs currently present in the
 	// hub session (herdLinkedCmd → tmux.ListHubWindowIDs), refreshed every
@@ -369,6 +372,17 @@ func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.moveCursor(-1)
 		return *m, m.maybeCaptureCmd()
 
+	case "pgup", "ctrl+u":
+		m.previewUp += 10
+		return *m, nil
+
+	case "pgdown", "ctrl+d":
+		m.previewUp -= 10
+		if m.previewUp < 0 {
+			m.previewUp = 0
+		}
+		return *m, nil
+
 	case "enter":
 		return m.linkSelectedIntoHub()
 
@@ -431,6 +445,12 @@ func (m *HerdModel) selectedGroup() *herd.Group {
 // syncSelectionFromCursor refreshes selSession/selWindowID/selIsHeader from
 // whatever line the SplitPane's cursor currently points at.
 func (m *HerdModel) syncSelectionFromCursor() {
+	prevSession, prevWindow := m.selSession, m.selWindowID
+	defer func() {
+		if m.selSession != prevSession || m.selWindowID != prevWindow {
+			m.previewUp = 0
+		}
+	}()
 	idx := m.splitPane.Cursor()
 	if idx < 0 || idx >= len(m.lines) {
 		m.selSession, m.selWindowID, m.selIsHeader = "", "", false
@@ -870,7 +890,7 @@ func (m HerdModel) buildSidebarContent(width int) string {
 // buildMainPanelContent builds the main panel's content for whichever line
 // is selected.
 func (m HerdModel) buildMainPanelContent(width int) string {
-	return mainPanelContent(m.lines, m.splitPane.Cursor(), m.preview, m.previewErr, width)
+	return mainPanelContent(m.lines, m.splitPane.Cursor(), m.preview, m.previewErr, width, m.splitPane.DetailHeight(), m.previewUp)
 }
 
 func (m HerdModel) renderLine(i int, cw int) string {
@@ -1096,13 +1116,13 @@ func plural(n int) string {
 //
 // Kept free of any Bubble Tea / tmux dependency so it's directly
 // table-driven testable with no TTY.
-func mainPanelContent(lines []herdLine, cursor int, preview, previewErr string, width int) string {
+func mainPanelContent(lines []herdLine, cursor int, preview, previewErr string, width, height, up int) string {
 	if cursor < 0 || cursor >= len(lines) {
 		return herdDimStyle.Render("  nothing selected")
 	}
 	l := lines[cursor]
 	if l.kind == herdLineRow {
-		return renderAgentDetail(l.row, preview, previewErr, width)
+		return renderAgentDetail(l.row, preview, previewErr, width, height, up)
 	}
 	return renderGroupSummary(l.group)
 }
@@ -1129,7 +1149,12 @@ func stateDisplay(r herd.Row) string {
 
 // renderAgentDetail renders the selected agent's metadata plus its live
 // terminal preview.
-func renderAgentDetail(r herd.Row, preview, previewErr string, width int) string {
+//
+// The preview is bottom-anchored: when height (rows available to the whole
+// detail body) is positive, only the last lines of the preview that fit under
+// the metadata header are kept, so the newest output, input box and status
+// line stay visible. up scrolls that window toward older lines.
+func renderAgentDetail(r herd.Row, preview, previewErr string, width, height, up int) string {
 	var b strings.Builder
 
 	b.WriteString(tableStyles.DetailSection.Render(r.Name))
@@ -1158,10 +1183,49 @@ func renderAgentDetail(r herd.Row, preview, previewErr string, width int) string
 	case strings.TrimSpace(ansi.Strip(preview)) == "":
 		b.WriteString(herdDimStyle.Render("  (no output yet)"))
 	default:
-		b.WriteString(normalizeANSILines(preview))
+		lines := previewLines(preview)
+		if height > 0 {
+			avail := height - strings.Count(b.String(), "\n") - 1
+			lines = tailWindow(lines, avail, up)
+		}
+		b.WriteString(strings.Join(lines, "\n"))
 	}
 
 	return b.String()
+}
+
+// previewLines prepares a captured pane for display: it drops U+2800 (the
+// braille blank agentctl's statusline uses as right-alignment padding, which
+// would otherwise push the text past the panel width), makes each line
+// SGR-self-contained, and trims trailing blank lines so bottom-anchoring
+// shows real content.
+func previewLines(preview string) []string {
+	preview = strings.ReplaceAll(preview, "\u2800", "")
+	lines := strings.Split(normalizeANSILines(preview), "\n")
+	for len(lines) > 0 && strings.TrimSpace(ansi.Strip(lines[len(lines)-1])) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+// tailWindow returns the last avail lines of lines, shifted up lines toward
+// the start (clamped). Fewer lines than avail are returned whole.
+func tailWindow(lines []string, avail, up int) []string {
+	if avail < 1 {
+		avail = 1
+	}
+	if len(lines) <= avail {
+		return lines
+	}
+	maxUp := len(lines) - avail
+	if up > maxUp {
+		up = maxUp
+	}
+	if up < 0 {
+		up = 0
+	}
+	end := len(lines) - up
+	return lines[end-avail : end]
 }
 
 // stateBreakdown counts rows in each state category, using the same
