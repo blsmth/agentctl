@@ -500,3 +500,7 @@ func (p *SplitPane) clampDetailScroll() {
 		p.detailScroll = 0
 	}
 }
+
+// ListScroll returns the list pane's current scroll offset (index of the
+// first visible list row).
+func (p *SplitPane) ListScroll() int { return p.listScroll }

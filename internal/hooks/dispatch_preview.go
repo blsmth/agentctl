@@ -12,6 +12,7 @@ import (
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/shellquote"
+	"github.com/blsmth/agentctl/internal/textutil"
 	"github.com/blsmth/agentctl/internal/tui"
 )
 
@@ -255,7 +256,8 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool, den
 	logging.Log("hook-validate-bash: launching dispatch popup agent=%s target=%s issue=%d",
 		agentName, targetAgent, issue)
 
-	return runPopupWithDeadline("dispatch", "hook-validate-bash: dispatch", popupW, popupH, tmpPath)
+	return runPopupWithDeadline("dispatch", "hook-validate-bash: dispatch", popupW, popupH, tmpPath,
+		dispatchPopupNotice(agentName, targetAgent, issue, args.Prompt))
 }
 
 // promptKeyDenyReason is the deny message shown to the model when the prompt
@@ -461,4 +463,20 @@ func tokenizeQuoted(s string) []cmdToken {
 	}
 	flush()
 	return tokens
+}
+
+// dispatchPopupNotice builds the pending-approval description for a dispatch.
+func dispatchPopupNotice(agentName, targetAgent string, issue int, prompt string) popupNotice {
+	target := targetAgent
+	if target == "" {
+		target = "an agent"
+	}
+	detail := target
+	if issue > 0 {
+		target = fmt.Sprintf("%s on #%d", target, issue)
+		detail = target
+	} else if first := strings.TrimSpace(strings.SplitN(strings.TrimSpace(prompt), "\n", 2)[0]); first != "" {
+		detail = target + ": " + textutil.Truncate(first, 80, "...")
+	}
+	return popupNotice{Agent: agentName, Tool: "dispatch", Detail: detail, Action: "dispatch " + target}
 }

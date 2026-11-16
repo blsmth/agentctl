@@ -163,5 +163,10 @@ func bashPreviewGate(agentName, command string) (approved, decided bool, denyRea
 
 	logging.Log("hook-validate-bash: launching bash preview popup agent=%s cmd=%s", agentName, textutil.Truncate(command, 100, "..."))
 
-	return runPopupWithDeadline("bash command", "hook-validate-bash: bash preview", popupW, popupH, tmpPath)
+	return runPopupWithDeadline("bash command", "hook-validate-bash: bash preview", popupW, popupH, tmpPath, popupNotice{
+		Agent:  agentName,
+		Tool:   "Bash",
+		Detail: textutil.Truncate(command, 100, "..."),
+		Action: "run a command",
+	})
 }
