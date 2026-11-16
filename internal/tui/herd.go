@@ -66,10 +66,8 @@ var (
 	herdDoneStyle    lipgloss.Style
 	herdIdleStyle    lipgloss.Style
 
-	herdSessionStyle  lipgloss.Style
 	herdProjectStyle  lipgloss.Style
 	herdCountStyle    lipgloss.Style
-	herdNameStyle     lipgloss.Style
 	herdActivityStyle lipgloss.Style
 
 	// herdPaletteColors is the stable accent palette (theme colours) that
@@ -101,10 +99,8 @@ func initHerdStyles() {
 	herdDoneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Green))
 	herdIdleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Subtle))
 
-	herdSessionStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Text))
 	herdProjectStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Sky))
 	herdCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
-	herdNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Text))
 	herdActivityStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
 
 	herdPaletteColors = []string{t.Accent, t.Sky, t.Blue, t.Info, t.Orange, t.Green}
