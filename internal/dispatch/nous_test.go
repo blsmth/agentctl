@@ -377,7 +377,7 @@ func TestBuildAgentSettingsJSONNous(t *testing.T) {
 		}
 	}
 	deny := strings.Join(p.Permissions.Deny, "|")
-	for _, want := range []string{"Bash(*backend-token*)", "Edit(**/.claude/settings*.json)", "Write(**/.claude/settings*.json)"} {
+	for _, want := range []string{"Bash(*backend-token*)", "Edit(**/.claude/settings*.json)"} {
 		if !strings.Contains(deny, want) {
 			t.Errorf("deny %v missing %s", p.Permissions.Deny, want)
 		}

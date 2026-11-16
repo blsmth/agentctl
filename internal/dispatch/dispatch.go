@@ -595,7 +595,6 @@ func BuildAgentSettingsJSON(ac config.AgentConfig, includeHooks bool) ([]byte, e
 		s.Permissions.Deny = append(s.Permissions.Deny,
 			"Bash(*backend-token*)",
 			"Edit(**/.claude/settings*.json)",
-			"Write(**/.claude/settings*.json)",
 		)
 	}
 
