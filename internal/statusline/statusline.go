@@ -2,6 +2,7 @@ package statusline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -915,7 +916,7 @@ func persistWindowState(p *Payload, windowID string) {
 			}
 		}
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, windowstate.ErrGone) {
 		logging.Log("statusline: updating windowstate for %s: %v", windowID, err)
 	}
 }
