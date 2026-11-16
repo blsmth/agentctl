@@ -738,3 +738,46 @@ func TestRenderRow_ShowsLinkedGlyphWhenLinked(t *testing.T) {
 		t.Errorf("expected no linked glyph before the first tick populates linkedWindowIDs, got %q", out)
 	}
 }
+
+func TestHerdToggleLive_TooNarrowStaysOff(t *testing.T) {
+	m := NewHerdModel()
+	m.termWidth = 50
+	m.configureSplitPane()
+	if _, cmd := m.toggleLive(); cmd != nil {
+		t.Error("expected no command when the terminal is too narrow")
+	}
+	if m.live {
+		t.Error("live must stay off when too narrow")
+	}
+	if m.jumpErr == "" {
+		t.Error("expected an inline error")
+	}
+}
+
+func TestHerdLiveShowCmd_OncePerSelection(t *testing.T) {
+	m := NewHerdModel()
+	m.live, m.liveLeft, m.liveRight = true, 44, 70
+	m.selSession, m.selWindowID = "agentctl-a", "@1"
+	if m.liveShowCmd() == nil {
+		t.Fatal("first selection must hand off to the viewer")
+	}
+	if m.liveShowCmd() != nil {
+		t.Error("same selection must not re-fire")
+	}
+	m.selWindowID = "@2"
+	if m.liveShowCmd() == nil {
+		t.Error("changed selection must fire")
+	}
+}
+
+func TestHerdLiveOff_NoViewerCmd(t *testing.T) {
+	m := NewHerdModel()
+	m.selSession, m.selWindowID = "agentctl-a", "@1"
+	if m.live {
+		t.Fatal("live must default to off")
+	}
+	// Off: maybeCaptureCmd is the capture-pane preview, and liveShown is untouched.
+	if m.maybeCaptureCmd() == nil || m.liveShown != "" {
+		t.Error("off mode must use the capture preview only")
+	}
+}
