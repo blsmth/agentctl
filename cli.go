@@ -55,6 +55,10 @@ type CLI struct {
 	Create           CreateCmd           `cmd:"" aliases:"create-menu" help:"Create a new agent definition"`
 	OpenAgentsWindow OpenAgentsWindowCmd `cmd:"" name:"open-agents-window" hidden:""`
 
+	// Backends
+	Backend      BackendCmd      `cmd:"" help:"Manage backend credentials (login, logout, status)"`
+	BackendToken BackendTokenCmd `cmd:"" name:"backend-token" hidden:"" help:"Print a backend's API key (Claude Code apiKeyHelper)"`
+
 	// Dispatch
 	Dispatch DispatchCmd `cmd:"" help:"Dispatch an agent to work on a ticket"`
 
@@ -182,10 +186,47 @@ func (c *RestoreCmd) Run() error { cmd.RunRestore(); return nil }
 type LaunchCmd struct {
 	Name       string `arg:"" optional:"" help:"Agent name to launch (reads default_agent from config if omitted)"`
 	NoWorktree bool   `name:"no-worktree" help:"Launch directly in the main checkout instead of an isolated git worktree"`
-	Backend    string `help:"Named backend from config (self-hosted/Ollama); 'none' forces Anthropic"`
+	Backend    string `help:"Named backend from config (Ollama, Nous Portal); 'none' forces Anthropic"`
 }
 
 func (c *LaunchCmd) Run() error { cmd.RunLaunch(c.Name, c.NoWorktree, c.Backend); return nil }
+
+// BackendCmd groups the credential commands for nous backends.
+type BackendCmd struct {
+	Login  BackendLoginCmd  `cmd:"" help:"Store and verify the API key for a nous backend"`
+	Logout BackendLogoutCmd `cmd:"" help:"Remove the stored API key for a backend"`
+	Status BackendStatusCmd `cmd:"" help:"Show backends and whether each has a credential"`
+}
+
+type BackendLoginCmd struct {
+	Name     string `arg:"" help:"Backend name from config"`
+	Stdin    bool   `help:"Read the key from stdin instead of prompting"`
+	NoVerify bool   `name:"no-verify" help:"Skip the one-token verification request (which bills a fraction of a cent)"`
+}
+
+func (c *BackendLoginCmd) Run() error { return cmd.RunBackendLogin(c.Name, c.Stdin, c.NoVerify) }
+
+type BackendLogoutCmd struct {
+	Name string `arg:"" help:"Backend name from config"`
+}
+
+func (c *BackendLogoutCmd) Run() error { return cmd.RunBackendLogout(c.Name) }
+
+type BackendStatusCmd struct {
+	Verify bool `help:"Verify each stored key with a one-token request (bills a fraction of a cent)"`
+}
+
+func (c *BackendStatusCmd) Run() error { return cmd.RunBackendStatus(c.Verify) }
+
+// BackendTokenCmd is routed on main's fast path before Kong ever runs; it is
+// declared here so it shows in the command tree.
+type BackendTokenCmd struct {
+	Name string `arg:"" help:"Backend name"`
+}
+
+func (c *BackendTokenCmd) Run() error {
+	return fmt.Errorf("backend-token is handled before CLI parsing; this should be unreachable")
+}
 
 type KillCmd struct {
 	Name string `arg:"" help:"Agent name to kill"`
@@ -369,7 +410,7 @@ type DispatchCmd struct {
 	Agent      string        `help:"Agent name (auto-detected from labels if omitted)" short:"a"`
 	Dir        string        `help:"Working directory"`
 	Model      string        `help:"Model override (e.g. sonnet, opus, haiku)" short:"m"`
-	Backend    string        `help:"Named backend from config (self-hosted/Ollama); 'none' forces Anthropic"`
+	Backend    string        `help:"Named backend from config (Ollama, Nous Portal); 'none' forces Anthropic"`
 	Repo       string        `help:"GitHub repo as owner/name (default: resolved from the working directory)"`
 	NoWorktree bool          `name:"no-worktree" help:"Skip worktree creation"`
 	Wait       bool          `help:"Block until agent completes"`

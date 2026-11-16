@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/blsmth/agentctl/internal/agent"
@@ -131,8 +132,16 @@ func Launch(req Request) (Result, error) {
 		ac.Model = spec.DefaultModel
 	}
 	backendEnv := map[string]string{}
-	if _, err := PrepareBackend(cfg, &ac, req.Backend, req.Model, backendEnv); err != nil {
+	be, err := PrepareBackend(cfg, &ac, req.Backend, req.Model, workDir, backendEnv)
+	if err != nil {
 		return Result{}, fmt.Errorf("resolving backend: %w", err)
+	}
+	// A nous launch must be in a worktree (see RequireNousWorktree): refuse
+	// --no-worktree here, before anything is created, and below refuse to fall
+	// back to the shared checkout when worktree creation fails.
+	nousLaunch := be != nil && be.IsNous()
+	if nousLaunch && !useWorktree {
+		return Result{}, fmt.Errorf("backend %q (nous) requires a worktree launch; drop --no-worktree or use --backend none", be.Name)
 	}
 
 	// 3. Create worktree if requested.
@@ -144,6 +153,9 @@ func Launch(req Request) (Result, error) {
 		if err != nil {
 			// Visible, not just logged: the agent now runs in the shared
 			// checkout instead of an isolated worktree.
+			if nousLaunch {
+				return Result{}, fmt.Errorf("creating worktree for branch %s (backend %q requires one; not falling back to the shared checkout): %w", branch, be.Name, err)
+			}
 			logging.Warn("dispatch: worktree failed (branch=%s), falling back to shared dir: %v", branch, err)
 			fmt.Fprintf(os.Stderr, "agentctl: warning: worktree for %s not created (%v); launching in the shared checkout %s\n", branch, err, workDir)
 		} else {
@@ -543,11 +555,29 @@ func BuildAgentSettingsJSON(ac config.AgentConfig, includeHooks bool) ([]byte, e
 		Deny  []string `json:"deny,omitempty"`
 	}
 	type agentSettings struct {
-		Hooks       map[string]interface{} `json:"hooks,omitempty"`
-		Permissions *settingsPerms         `json:"permissions,omitempty"`
+		Hooks        map[string]interface{} `json:"hooks,omitempty"`
+		Permissions  *settingsPerms         `json:"permissions,omitempty"`
+		APIKeyHelper string                 `json:"apiKeyHelper,omitempty"`
+		Env          map[string]string      `json:"env,omitempty"`
 	}
 
 	var s agentSettings
+	nous, err := nousBackendFor(ac)
+	if err != nil {
+		return nil, err
+	}
+	if nous != nil {
+		// The base URL and the credential helper always travel together in
+		// the same file (see BackendEnv). The empty API key / auth token
+		// blank any lower settings layer so a stray credential cannot
+		// outrank the helper and reach Nous.
+		s.APIKeyHelper = shellquote.Quote(exe) + " backend-token " + shellquote.Quote(nous.Name)
+		s.Env = map[string]string{
+			"ANTHROPIC_BASE_URL":   nous.BaseURL,
+			"ANTHROPIC_API_KEY":    "",
+			"ANTHROPIC_AUTH_TOKEN": "",
+		}
+	}
 	if includeHooks {
 		// Render the full canonical hook event set from internal/hooks — the
 		// single source of truth for agentctl's hook map — using the resolved
@@ -567,6 +597,15 @@ func BuildAgentSettingsJSON(ac config.AgentConfig, includeHooks bool) ([]byte, e
 			deny = append(deny, fmt.Sprintf("Bash(*%s*)", bc))
 		}
 		s.Permissions.Deny = deny
+	}
+
+	if nous != nil {
+		// Defence in depth only: the agent runs as the same user and can
+		// read its key by other means (see docs/configuration.md).
+		if s.Permissions == nil {
+			s.Permissions = &settingsPerms{}
+		}
+		s.Permissions.Deny = append(s.Permissions.Deny, nousDenyRules...)
 	}
 
 	if ac.AutoAccept {
@@ -607,7 +646,18 @@ func BuildAgentSettingsJSON(ac config.AgentConfig, includeHooks bool) ([]byte, e
 // actually loads. Every other caller here runs directly in its own working
 // directory with no such ancestor concern, so checking workDir alone is
 // correct for them.
+//
+// When workDir is an agentctl worktree it also rewrites the worktree's
+// settings.local.json from ac, so a restore, resume or relaunch never
+// inherits backend routing (or loses it) from an earlier launch. A failure
+// there is logged and the --settings file is still written; nous launches
+// are separately required to be in a worktree (RequireNousWorktree).
 func WriteAgentSettings(name string, ac config.AgentConfig, workDir string) string {
+	if root, ok := agentctlWorktreeRoot(workDir); ok {
+		if err := WriteWorktreeSettings(workDir, root, ac); err != nil {
+			logging.Warn("WriteAgentSettings: refreshing worktree settings in %s: %v", workDir, err)
+		}
+	}
 	path, _ := writeAgentSettings(name, ac, workDir, workDir)
 	return path
 }
@@ -632,7 +682,7 @@ func writeAgentSettings(name string, ac config.AgentConfig, workDir, hooksBounda
 		return "", fmt.Errorf("marshaling settings: %w", err)
 	}
 
-	path, err := writeSettingsFile(paths.RuntimeDir(), paths.SettingsDir(), name, data)
+	path, err := writeSettingsFile(paths.RuntimeDir(), paths.SettingsDir(), settingsFileStem(name, ac.Backend), data)
 	if err != nil {
 		logging.Warn("WriteAgentSettings: %v", err)
 		return "", err
@@ -640,6 +690,102 @@ func writeAgentSettings(name string, ac config.AgentConfig, workDir, hooksBounda
 
 	logging.Log("WriteAgentSettings: wrote %s for agent %s", path, name)
 	return path, nil
+}
+
+// agentctlWorktreeRoot reports whether dir is an agentctl worktree and
+// returns the repository root. The layout must be <root>/.worktrees/<slug>
+// AND dir must be a linked worktree of the repository at <root>: its .git
+// file has to point into <root>/.git/worktrees/. A look-alike directory (for
+// example one a cloned repo committed under .worktrees/) does not match.
+func agentctlWorktreeRoot(dir string) (string, bool) {
+	if dir == "" {
+		return "", false
+	}
+	dir = filepath.Clean(dir)
+	parent := filepath.Dir(dir)
+	if filepath.Base(parent) != ".worktrees" {
+		return "", false
+	}
+	root := filepath.Dir(parent)
+	fi, err := os.Lstat(filepath.Join(dir, ".git"))
+	if err != nil || !fi.Mode().IsRegular() {
+		return "", false
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".git"))
+	if err != nil {
+		return "", false
+	}
+	gitdir, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
+	if !ok {
+		return "", false
+	}
+	gitdir = filepath.Clean(strings.TrimSpace(gitdir))
+	wtParent := filepath.Dir(gitdir) // <common>/worktrees
+	if filepath.Base(wtParent) != "worktrees" {
+		return "", false
+	}
+	if !sameDir(filepath.Dir(wtParent), filepath.Join(root, ".git")) {
+		return "", false
+	}
+	return root, true
+}
+
+// sameDir reports whether a and b are the same path after resolving symlinks.
+func sameDir(a, b string) bool {
+	ra, err1 := filepath.EvalSymlinks(a)
+	rb, err2 := filepath.EvalSymlinks(b)
+	return err1 == nil && err2 == nil && ra == rb
+}
+
+// RequireNousWorktree errors when be is a nous backend and workDir is not an
+// agentctl worktree. Nous routing (base URL and key helper) must reach Claude
+// Code through the worktree's settings.local.json: --settings alone is
+// unreliable when --agent is also passed (Claude Code bug #37730), and a
+// launch that lost both would talk to Anthropic. A nil or non-nous backend is
+// a no-op.
+func RequireNousWorktree(be *Backend, workDir string) error {
+	if be == nil || !be.IsNous() {
+		return nil
+	}
+	if _, ok := agentctlWorktreeRoot(workDir); ok {
+		return nil
+	}
+	return fmt.Errorf("backend %q (nous) requires a launch inside an agentctl worktree, but %s is not one; use a worktree dispatch or --backend none", be.Name, workDir)
+}
+
+// unsafeStemChars matches characters not allowed in a settings file name.
+var unsafeStemChars = regexp.MustCompile(`[^A-Za-z0-9._-]`)
+
+// settingsFileStem names the --settings file: <agent>@<backend> when a
+// backend applies, so launches of one agent on different backends never
+// overwrite each other's file.
+func settingsFileStem(agentName, backend string) string {
+	if backend == "" {
+		return agentName
+	}
+	return agentName + "@" + unsafeStemChars.ReplaceAllString(backend, "_")
+}
+
+// loadConfigFn loads the config for backend resolution; tests replace it.
+var loadConfigFn = config.Load
+
+// nousBackendFor returns the nous backend that ac.Backend (set by
+// PrepareBackend to the effective backend) names, or nil when the launch is
+// not on a nous backend. A name that no longer resolves is an error: settings
+// must never silently drop the routing for a backend the launch was prepared
+// against.
+func nousBackendFor(ac config.AgentConfig) (*Backend, error) {
+	if ac.Backend == "" {
+		return nil, nil
+	}
+	b, err := loadConfigFn().ResolveBackend(ac.Backend)
+	if err != nil {
+		return nil, fmt.Errorf("resolving backend for settings: %w", err)
+	}
+	if !b.IsNous() {
+		return nil, nil
+	}
+	return &Backend{Name: ac.Backend, BackendConfig: b}, nil
 }
 
 // projectHasAgentctlHooks reports whether dir has a project-local
@@ -805,7 +951,18 @@ func WriteWorktreeSettings(worktreeDir, repoRoot string, ac config.AgentConfig) 
 	// The worktree is a checkout of the repository, so .claude/ and the
 	// settings file may be whatever the repo committed -- including
 	// symlinks. safefs.WriteFile refuses both rather than writing through.
+	//
+	// The file may also hold permission rules Claude Code saved there, so
+	// only the agentctl-owned keys are updated (mergeAgentctlSettings).
 	path := filepath.Join(worktreeDir, ".claude", "settings.local.json")
+	existing, err := readSettingsFile(worktreeDir, path)
+	if err != nil {
+		return fmt.Errorf("reading settings: %w", err)
+	}
+	data, err = mergeAgentctlSettings(existing, data)
+	if err != nil {
+		return fmt.Errorf("merging settings in %s: %w", path, err)
+	}
 	if err := safefs.WriteFile(worktreeDir, path, data, 0o600); err != nil {
 		return fmt.Errorf("writing settings: %w", err)
 	}

@@ -65,7 +65,7 @@ Rationale: a project-local file can arrive with a cloned repository. Executing c
 | `rate_limit.token_cap` | int | `88000` | **Deprecated, unused.** Formerly estimated usage when no rate-limit percentage had been pushed; the monitor no longer derives rate limits. Still accepted so existing config files keep loading. |
 | `metrics` | object | disabled | Prometheus endpoint and remote write. See [metrics](#metrics). |
 | `models` | object | built-in registry | Model registry overrides and context thresholds. See [models](#models). |
-| `backends` | object | none | Named self-hosted endpoints. Global-only. See [Backends](#backends-self-hosted--ollama). |
+| `backends` | object | none | Named self-hosted endpoints. Global-only. See [Backends](#backends-ollama-and-nous-portal). |
 | `agents` | object | none | Per-agent settings. See [Per-agent settings](#per-agent-settings). |
 
 ### Notifications
@@ -218,7 +218,9 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
 }
 ```
 
-## Backends (self-hosted / Ollama)
+## Backends (Ollama and Nous Portal)
+
+A backend points Claude Code at an Anthropic-compatible endpoint instead of Anthropic. Two kinds exist, chosen by `kind`: `"ollama"` (the default when `kind` is empty; a self-hosted server) and `"nous"` (the [Nous Research Portal](#nous-portal-kind-nous)). Everything up to the Nous section describes the Ollama kind.
 
 Ollama speaks the Anthropic Messages API, so Claude Code can run against a self-hosted server with only env vars and a model flag. Define named backends globally and point agents at them:
 
@@ -238,12 +240,13 @@ Ollama speaks the Anthropic Messages API, so Claude Code can run against a self-
 
 | Key | Description |
 |---|---|
+| `kind` | Empty or `ollama` (this section), or `nous`. |
 | `base_url` | Required. An `http`/`https` URL. |
 | `model` | Required. Matched exactly against the server's model list. |
 | `auth_token` | Dummy token; defaults to `ollama` (Ollama ignores it). |
 | `max_context_tokens` | Sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS` so Claude Code knows the context size of a model it does not recognize. `0` leaves it unset. |
 
-A launch with a backend sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, an explicitly **empty** `ANTHROPIC_API_KEY` (so a real key cannot leak to the endpoint), `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, and points `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, and `CLAUDE_CODE_SUBAGENT_MODEL` at the backend model (background tasks and subagents use aliases that do not exist on Ollama). The backend model wins over the agent's `model`; an explicit `dispatch --model` wins over both.
+For an Ollama backend, a launch sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, an explicitly **empty** `ANTHROPIC_API_KEY` (so a real key cannot leak to the endpoint), `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, and points `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, and `CLAUDE_CODE_SUBAGENT_MODEL` at the backend model (background tasks and subagents use aliases that do not exist on Ollama). The backend model wins over the agent's `model`; an explicit `dispatch --model` wins over both.
 
 `agentctl dispatch --backend <name>` overrides the agent's backend; `--backend none` forces Anthropic. Dispatch, improve, resume, and `agentctl restore` all apply the backend. Restore re-resolves the backend name saved with the window; if it no longer exists in config the window is skipped (logged), never relaunched on Anthropic. `agentctl status <window>` and `--json` show the backend.
 
@@ -265,6 +268,59 @@ Gotchas:
 - **Context size floor.** Claude Code's fixed overhead (system prompt plus tool definitions) uses roughly 30k tokens, so 32k of context is too small to be useful; 64k is a practical minimum.
 - **Pick a tool-calling model.** qwen3.6 MoE works; deepseek-r1 cannot call tools.
 - Cost metrics skip unknown models; that is expected.
+
+### Nous Portal (`kind: "nous"`)
+
+The Nous inference host (`https://inference-api.nousresearch.com`) exposes an Anthropic-style `POST /v1/messages` (undocumented by Nous), so Claude Code can talk to it directly with no proxy.
+
+```json
+{
+  "backends": {
+    "nous": {
+      "kind": "nous",
+      "model": "qwen/qwen3-coder-next",
+      "models": { "haiku": "openai/gpt-oss-120b" }
+    }
+  },
+  "agents": { "go-engineer-nous": { "backend": "nous" } }
+}
+```
+
+| Key | Description |
+|---|---|
+| `kind` | `"nous"`. |
+| `base_url` | Optional; defaults to the Nous host. A trailing `/v1` is stripped (Claude Code adds it). Must be `https`. |
+| `model` | Required. A catalog slug such as `qwen/qwen3-coder-next` or `~anthropic/claude-sonnet-latest`. Slugs may contain `A-Za-z0-9._:/~-`. |
+| `models` | Optional per-alias overrides `{opus, sonnet, haiku, subagent}`; each falls back to `model`. Useful for sending Claude Code's background haiku work to a cheaper model. |
+| `auth` | `"api_key"` (the default). `"oauth"` is reserved and rejected as not supported. |
+| `api_key_cmd` | Optional shell command whose first stdout line is the key (run with `sh -c`, 10s timeout), e.g. `"op read op://Private/nous/credential"`. Takes precedence over the stored key. |
+| `max_context_tokens` | Optional. When `0`, the catalog's `context_length` for `model` is used. |
+| `auth_token` | **Rejected** for nous. Keys never go in `config.json`. |
+
+**Authentication.** Run `agentctl backend login nous` to enter the key (no-echo prompt; `--stdin` reads it from a pipe for scripting). The key is verified with one paid request (`POST /v1/messages`, `max_tokens: 1`); pass `--no-verify` to skip that. A 401 reports "key invalid or out of credits" and a 404 "model not found". `agentctl backend logout <name>` deletes the stored key, and `agentctl backend status [--verify]` lists each backend's kind, auth mode, and whether a credential exists and where it comes from (never the value).
+
+**Where keys are stored.** On macOS, in the login keychain (service `agentctl`, account `backend:<name>`), written through `security -i` on stdin so the key is never in argv. On other systems, in a `0600` file under `$XDG_STATE_HOME/agentctl/credentials/` (default `~/.local/state/...`, directory `0700`); a file with broader permissions is refused. `api_key_cmd` bypasses the store.
+
+**How the key reaches Claude Code.** The key never appears in tmux argv or env, launch scripts, logs, windowstate, `state.json`, or config. Claude Code gets it by running its `apiKeyHelper`, which agentctl points at the hidden `agentctl backend-token <name>` command (it prints exactly the key and a newline). The helper and `ANTHROPIC_BASE_URL` always travel together in the `--settings` file (named `<agent>@<backend>.json`) and, for worktree launches, the worktree's `.claude/settings.local.json`; the file also blanks `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` so a lower settings layer cannot outrank the helper. The launch script unsets `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN`. A restore, resume, or `--backend none` launch updates only the agentctl-owned keys of the worktree file (hooks, `apiKeyHelper`, the three env keys, agentctl's deny rules) and keeps everything else, such as permission rules Claude Code saved there, so Nous routing never lingers.
+
+The `ANTHROPIC_AUTH_TOKEN` sentence above applies to the Ollama kind only; a nous launch sets no `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY` in the window env. It does set the alias model variables, `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`.
+
+**Launch checks.** A nous launch fails, with the fix named, when:
+
+- an explicit `--model` is not a slug (no `/`): otherwise a Claude model name would silently run on your Anthropic subscription.
+- `GET <base_url>/v1/models` (3s timeout, cached in the runtime dir for 10 minutes) is unreachable, or `model`, an explicit `--model`, or any `models.*` entry is missing. Up to 10 ids with the same prefix are suggested. A model whose `endpoints` do not list `messages` only logs a warning, since that field is unreliable.
+- No key is available (`agentctl backend login <name>`, or `api_key_cmd` configured). Launch only checks availability: `api_key_cmd` is not run and no request is made with the key.
+- The launch is not in an agentctl worktree (`--no-worktree`, improve or resume in the main checkout), or worktree creation fails: nous routing is delivered through the worktree's `.claude/settings.local.json` because `--settings` alone is unreliable with `--agent`, so there is no fallback to the shared checkout.
+- Any settings layer (managed settings, `~/.claude/settings.json`, `.claude/settings{,.local}.json` in the working directory and its parents) sets a non-empty `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` in `env`; the error names the file.
+
+Caveats:
+
+- **Billing.** API keys bill pay-as-you-go credits, not any subscription's included usage. Rate limits depend on your Nous tier; check the Portal for current limits.
+- **Verified free models.** `meituan/longcat-2.5:free` works for tool use over `/v1/messages` (verified end to end with Claude Code doing Read, Bash and Write). `stepfun/step-3.7-flash:free` and `upstage/solar-mini4:free` return `400 missing tags` and are unusable.
+- **Edge blocking.** Nous sits behind Cloudflare, which returns a 403 HTML page for Go's default User-Agent; agentctl sends `User-Agent: agentctl/<version>` on every request to Nous. `backend login` reports a non-JSON 403 as blocked by the provider edge (WAF), not an invalid key, and an `insufficient_credits_for_paid_model` error as a valid key on an account with no credits (add credits or use a `:free` model).
+- **Models.** Only models verified to do tool use over `/v1/messages` are supported; the catalog's `endpoints` field is copied from OpenRouter and may be wrong. `anthropic/*` models are the safest bet. Prompt caching behaviour under concurrent agents is unverified, so cost may be higher than the token counts suggest.
+- **The agent can read its own key.** It runs as your user, so it can run `agentctl backend-token`, `security find-generic-password`, or read the credential file. The `Bash(*backend-token*)` and `Edit(**/.claude/settings*.json)` deny rule that nous launches add are defence in depth only. Set a spend limit on the Nous key.
+- **Cost display is wrong** for slug models: the statusline and metrics have no pricing for them.
 
 ## Environment variables
 

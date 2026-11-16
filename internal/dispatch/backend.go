@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // BackendNone is the --backend value that forces Anthropic even when the
@@ -31,7 +32,17 @@ type Backend struct {
 // parent environment cannot leak to the endpoint. The alias and subagent model
 // vars matter because Claude Code uses haiku for background work and subagents
 // default to aliases, none of which exist on a self-hosted server.
+//
+// For kind nous it returns only non-secret variables and deliberately omits
+// ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN and ANTHROPIC_API_KEY: the base URL
+// and the credential helper travel together in the settings file
+// (BuildAgentSettingsJSON), so a launch can never carry the URL without the
+// helper (which would send the user's Anthropic login to Nous) or the other
+// way round. The key itself is never in env.
 func BackendEnv(b config.BackendConfig) map[string]string {
+	if b.IsNous() {
+		return nousEnv(b)
+	}
 	token := b.AuthToken
 	if token == "" {
 		token = config.DefaultBackendAuthToken
@@ -51,6 +62,27 @@ func BackendEnv(b config.BackendConfig) map[string]string {
 	return env
 }
 
+// nousUnsetEnv lists credential variables removed from a nous launch so an
+// inherited one cannot shadow the apiKeyHelper or be sent to Nous.
+const nousUnsetEnv = "ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN"
+
+func nousEnv(b config.BackendConfig) map[string]string {
+	env := map[string]string{
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":   b.AliasModel("opus"),
+		"ANTHROPIC_DEFAULT_SONNET_MODEL": b.AliasModel("sonnet"),
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":  b.AliasModel("haiku"),
+		"CLAUDE_CODE_SUBAGENT_MODEL":     b.AliasModel("subagent"),
+		// Claude Code's experimental beta headers are unverified against
+		// Nous; the plain request shape is the safe default.
+		"CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+		tmux.EnvUnset:                            nousUnsetEnv,
+	}
+	if b.MaxContextTokens > 0 {
+		env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = fmt.Sprintf("%d", b.MaxContextTokens)
+	}
+	return env
+}
+
 // ResolveBackend picks the backend for a launch. override is the CLI/request
 // value: "" defers to ac.Backend, BackendNone forces Anthropic, anything else
 // names a backend. It returns nil, nil when no backend applies. An unknown
@@ -58,6 +90,9 @@ func BackendEnv(b config.BackendConfig) map[string]string {
 //
 // When a backend applies, ac.Model becomes the backend model (an "opus" alias
 // is meaningless there) unless explicitModel is set, which wins over both.
+// For a nous backend an explicitModel must be a slug (contain "/"): a bare
+// Claude model name would otherwise run on the Anthropic subscription while
+// windowstate records nous.
 func ResolveBackend(cfg *config.Config, ac *config.AgentConfig, override, explicitModel string) (*Backend, error) {
 	name := override
 	if name == "" {
@@ -72,6 +107,8 @@ func ResolveBackend(cfg *config.Config, ac *config.AgentConfig, override, explic
 	}
 	if explicitModel == "" {
 		ac.Model = b.Model
+	} else if b.IsNous() && !strings.Contains(explicitModel, "/") {
+		return nil, fmt.Errorf("model %q is not a Nous model slug (expected provider/model, e.g. %s); refusing to launch a Claude model on backend %q", explicitModel, b.Model, name)
 	}
 	return &Backend{Name: name, BackendConfig: b}, nil
 }
@@ -89,17 +126,34 @@ func ApplyBackendEnv(env map[string]string, be *Backend) {
 }
 
 // PrepareBackend resolves the backend, runs the preflight check, and merges
-// its env into env. It is the one call every launch path makes. A nil backend
-// (and nil error) means the launch stays on Anthropic.
-func PrepareBackend(cfg *config.Config, ac *config.AgentConfig, override, explicitModel string, env map[string]string) (*Backend, error) {
+// its env into env. It is the one call every launch path makes, and it must
+// run before the launch's settings files are written: it records the
+// effective backend on ac.Backend (an override wins; BackendNone clears it)
+// so BuildAgentSettingsJSON can emit the right settings. workDir is where the
+// agent will run; nous launches scan its settings layers for credentials.
+// A nil backend (and nil error) means the launch stays on Anthropic.
+func PrepareBackend(cfg *config.Config, ac *config.AgentConfig, override, explicitModel, workDir string, env map[string]string) (*Backend, error) {
 	be, err := ResolveBackend(cfg, ac, override, explicitModel)
-	if err != nil || be == nil {
+	if err != nil {
 		return nil, err
 	}
-	if err := PreflightBackend(be.BackendConfig); err != nil {
+	if be == nil {
+		ac.Backend = ""
+		return nil, nil
+	}
+	if be.IsNous() {
+		info, err := preflightNous(be.Name, be.BackendConfig, workDir, explicitModel)
+		if err != nil {
+			return nil, fmt.Errorf("backend %q: %w", be.Name, err)
+		}
+		if be.MaxContextTokens == 0 {
+			be.MaxContextTokens = info.ContextLength
+		}
+	} else if err := PreflightBackend(be.BackendConfig); err != nil {
 		return nil, fmt.Errorf("backend %q: %w", be.Name, err)
 	}
 	ApplyBackendEnv(env, be)
+	ac.Backend = be.Name
 	return be, nil
 }
 
@@ -109,7 +163,8 @@ var backendHTTPClient = &http.Client{}
 // preflightTimeout bounds the /api/tags request.
 var preflightTimeout = 3 * time.Second
 
-// PreflightBackend fails fast when a backend cannot serve a launch. It does
+// PreflightBackend fails fast when an Ollama backend cannot serve a launch (nous
+// backends use preflightNous). It does
 // GET <base_url>/api/tags: unreachable is an error; a 200 that parses as an
 // Ollama tag list must contain b.Model (exact name match, since e.g.
 // qwen3.6:35b and qwen3.6:35b-a3b are distinct names for one digest). Any
