@@ -343,6 +343,12 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.MouseClickMsg:
+		return m.handleClick(msg)
+
+	case tea.MouseWheelMsg:
+		return m.handleWheel(msg)
+
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
@@ -723,6 +729,7 @@ func (m HerdModel) contentWidth() int {
 func (m HerdModel) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
