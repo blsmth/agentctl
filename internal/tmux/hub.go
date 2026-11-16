@@ -50,7 +50,7 @@ func parseSessionList(raw string) []string {
 	var sessions []string
 	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
 		line = strings.TrimSpace(line)
-		if line != "" {
+		if line != "" && !IsViewerSession(line) {
 			sessions = append(sessions, line)
 		}
 	}
@@ -92,7 +92,7 @@ func parseSessionsWithPaths(raw string) []SessionInfo {
 			continue
 		}
 		parts := strings.SplitN(line, "|", 2)
-		if len(parts) != 2 || parts[0] == "" {
+		if len(parts) != 2 || parts[0] == "" || IsViewerSession(parts[0]) {
 			continue
 		}
 		sessions = append(sessions, SessionInfo{Name: parts[0], Path: parts[1]})

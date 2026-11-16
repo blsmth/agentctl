@@ -245,6 +245,15 @@ type HerdModel struct {
 	// alongside jumpErr but without the error styling; see renderFooter.
 	infoMsg string
 
+	// live is the spike toggle: when on, the right side of the hub window is a
+	// nested tmux client on a grouped viewer session (tmux.ShowLiveViewer)
+	// instead of the capture-pane preview. liveShown is the "session|window"
+	// last handed to the viewer, so selection changes (not every tick) drive it.
+	live      bool
+	liveShown string
+	liveLeft  int
+	liveRight int
+
 	quitting bool
 }
 
@@ -306,6 +315,9 @@ func (m *HerdModel) maybeCaptureCmd() tea.Cmd {
 	if m.selIsHeader || m.selSession == "" || m.selWindowID == "" {
 		return nil
 	}
+	if m.live {
+		return m.liveShowCmd()
+	}
 	return herdCaptureCmd(m.selSession, m.selWindowID)
 }
 
@@ -320,6 +332,15 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case herdTickMsg:
 		return m, tea.Batch(herdLoadCmd(), herdTickCmd(), herdLinkedCmd(), m.maybeCaptureCmd())
+
+	case herdLiveMsg:
+		if msg.err != nil {
+			m.jumpErr = msg.err.Error()
+			if m.liveShown == msg.key {
+				m.liveShown = "" // retry on the next tick
+			}
+		}
+		return m, nil
 
 	case herdLinkedMsg:
 		m.linkedWindowIDs = msg.ids
@@ -405,8 +426,76 @@ func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.jumpErr = ""
 		m.infoMsg = ""
 		return *m, herdLoadCmd()
+
+	case "v":
+		return m.toggleLive()
+
+	case "tab":
+		if m.live {
+			if err := tmux.FocusLivePane(); err != nil {
+				m.jumpErr = err.Error()
+			}
+		}
+		return *m, nil
 	}
 	return *m, nil
+}
+
+// herdLiveMsg reports the outcome of handing a selection to the live viewer.
+type herdLiveMsg struct {
+	key string
+	err error
+}
+
+// herdLiveLeftCols is the width of the list column in live mode: the sidebar
+// width the split layout uses today (plus the content margin), floored so the
+// flat-list fallback (which the narrow column triggers) still fits.
+func (m *HerdModel) herdLiveLeftCols() int {
+	left := m.splitPane.ListWidth() + 4
+	if left < 44 {
+		left = 44
+	}
+	return left
+}
+
+// liveShowCmd hands the current selection to the live viewer, once per
+// selection change.
+func (m *HerdModel) liveShowCmd() tea.Cmd {
+	key := m.selSession + "|" + m.selWindowID
+	if key == m.liveShown {
+		return nil
+	}
+	m.liveShown = key
+	session, window := m.selSession, m.selWindowID
+	right := m.termWidth - 1
+	if m.liveLeft > 0 {
+		right = m.liveRight
+	}
+	return func() tea.Msg {
+		return herdLiveMsg{key: key, err: tmux.ShowLiveViewer(session, window, right)}
+	}
+}
+
+// toggleLive flips live mode. Off by default; turning it off kills the viewer
+// pane and session (never an agent pane).
+func (m *HerdModel) toggleLive() (tea.Model, tea.Cmd) {
+	m.jumpErr = ""
+	if m.live {
+		m.live, m.liveShown = false, ""
+		if err := tmux.HideLiveViewer(); err != nil {
+			m.jumpErr = err.Error()
+		}
+		return *m, m.maybeCaptureCmd()
+	}
+	left := m.herdLiveLeftCols()
+	m.liveRight = m.termWidth - left - 1
+	if m.liveRight < 20 {
+		m.jumpErr = "terminal too narrow for live pane"
+		return *m, nil
+	}
+	m.liveLeft = left
+	m.live = true
+	return *m, m.maybeCaptureCmd()
 }
 
 // configureSplitPane sizes the SplitPane from the current terminal
@@ -820,11 +909,21 @@ func (m HerdModel) renderFooter(cw int) string {
 		menuHintKeyStyle.Render("u") + " " + menuHintLabelStyle.Render("unlink"),
 		menuHintKeyStyle.Render("b") + " " + menuHintLabelStyle.Render("blocked"),
 		menuHintKeyStyle.Render("r") + " " + menuHintLabelStyle.Render("refresh"),
+		menuHintKeyStyle.Render("v") + " " + menuHintLabelStyle.Render(liveHint(m.live)),
 		menuHintKeyStyle.Render("q") + " " + menuHintLabelStyle.Render("back"),
 	}
 	sep := "  " + menuHintDotStyle.Render("·") + "  "
 	b.WriteString(tableStyles.HintBar.MarginTop(0).Width(cw).Render(strings.Join(hintParts, sep)))
 	return b.String()
+}
+
+// liveHint labels the live-pane toggle; when live it also documents focus
+// movement (tab → live pane; outer prefix + o → back to the list).
+func liveHint(live bool) string {
+	if live {
+		return "live off · tab focus live · ^b o back"
+	}
+	return "live"
 }
 
 // renderFlat renders the original full-width flat list — the narrow-terminal
