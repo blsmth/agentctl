@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/blsmth/agentctl/internal/config"
 )
 
@@ -134,16 +136,38 @@ func SwitchToSessionWindow(session, windowID string) error {
 // Returns an error if the pane is gone (e.g. the window closed between
 // polls) — callers must render a placeholder, never propagate a crash.
 func CapturePane(session, windowID string, lines int) (string, error) {
+	return capturePane(session, windowID, lines, false)
+}
+
+// CapturePaneANSI is CapturePane with `-e`, preserving SGR escapes so the hub
+// preview keeps the agent's colors. Only the hub renders this; sweep, status
+// and pane classification pattern-match on plain text and must use
+// CapturePane.
+func CapturePaneANSI(session, windowID string, lines int) (string, error) {
+	return capturePane(session, windowID, lines, true)
+}
+
+func capturePane(session, windowID string, lines int, ansiEscapes bool) (string, error) {
 	target := sessionWindowTarget(session, windowID)
-	args := []string{"capture-pane", "-p", "-t", target}
-	if lines > 0 {
-		args = append(args, "-S", "-"+strconv.Itoa(lines))
-	}
+	args := capturePaneArgs(target, lines, ansiEscapes)
 	out, err := exec.Command("tmux", args...).Output()
 	if err != nil {
 		return "", fmt.Errorf("capture-pane %s: %w", target, err)
 	}
 	return trimTrailingBlankLines(string(out)), nil
+}
+
+// capturePaneArgs builds the capture-pane argument list; -e keeps escapes.
+func capturePaneArgs(target string, lines int, ansiEscapes bool) []string {
+	args := []string{"capture-pane", "-p"}
+	if ansiEscapes {
+		args = append(args, "-e")
+	}
+	args = append(args, "-t", target)
+	if lines > 0 {
+		args = append(args, "-S", "-"+strconv.Itoa(lines))
+	}
+	return args
 }
 
 // trimTrailingBlankLines removes trailing blank (whitespace-only) lines from
@@ -153,7 +177,7 @@ func CapturePane(session, windowID string, lines int) (string, error) {
 func trimTrailingBlankLines(s string) string {
 	lines := strings.Split(s, "\n")
 	end := len(lines)
-	for end > 0 && strings.TrimSpace(lines[end-1]) == "" {
+	for end > 0 && strings.TrimSpace(ansi.Strip(lines[end-1])) == "" {
 		end--
 	}
 	return strings.Join(lines[:end], "\n")
