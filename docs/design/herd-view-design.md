@@ -255,7 +255,7 @@ switches into the hub.
 | `prefix+o` | Back to the list from the live pane |
 | `J` | Jump to the selected agent's window in its own home session |
 | `n` / `x` | New agent in the selected group / close the selected agent |
-| `b` | Jump to the next blocked agent anywhere (home session) |
+| `b` | Select the next blocked agent and focus its live pane (stays in the hub) |
 | `r` | Refresh |
 | `q` / `esc` | Back to the previous tmux session (`switch-client -l`) |
 

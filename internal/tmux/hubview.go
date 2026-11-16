@@ -286,6 +286,40 @@ func FocusLivePane() error {
 	return err
 }
 
+// hubListPaneID returns the hub list pane's ID: the pane in the herd-list
+// window that is not the live viewer pane. Empty when it cannot be resolved.
+func hubListPaneID() string {
+	out, err := tmuxRun("list-panes", "-t", sessionWindowTarget(HubSessionName, HerdListWindowName),
+		"-F", "#{pane_id} #{"+viewerPaneOption+"}")
+	if err != nil {
+		return ""
+	}
+	return parseListPane(out)
+}
+
+// parseListPane picks the first pane not flagged as the viewer from
+// `#{pane_id} #{@agentctl_viewer}` lines.
+func parseListPane(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 1 {
+			return f[0]
+		}
+	}
+	return ""
+}
+
+// SendKeyToHubList sends a key to the hub's list pane (not the live pane), so
+// the hub TUI handles it as if typed. Used by prefix+b inside the hub.
+func SendKeyToHubList(key string) error {
+	pane := hubListPaneID()
+	if pane == "" {
+		return fmt.Errorf("hub list pane not found")
+	}
+	_, err := tmuxRun("send-keys", "-t", pane, key)
+	return err
+}
+
 // HubWindowWidth returns the full width of the hub list window. Once the live
 // pane exists the hub TUI only sees its own (narrow) pane, so the real
 // window width has to come from tmux.

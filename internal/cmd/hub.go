@@ -32,25 +32,42 @@ func RunHubView() {
 	}
 }
 
-// RunJumpNextBlocked finds the first blocked agent across every live
-// agentctl session — using the same internal/herd ordering the hub view
-// itself uses, so "next blocked" always agrees with what the hub would show
-// — and switches to it. Works from any session, not just the hub. No-op
-// (with a tmux status message) when nothing is blocked.
-func RunJumpNextBlocked() {
-	groups, err := herd.Load()
+// Seams for tests.
+var (
+	hubSendKey = tmux.SendKeyToHubList
+	hubLoad    = herd.Load
+	switchHome = tmux.SwitchToSessionWindow
+	displayMsg = tmux.DisplayMessage
+)
+
+// RunJumpNextBlocked jumps to the first blocked agent across every live
+// agentctl session. When the invoking client is inside the hub
+// (clientSession == tmux.HubSessionName) it does not switch sessions: it
+// sends `b` to the hub list pane so the TUI selects the row, shows it live
+// and focuses it, keeping ordering and selection in one place. From any
+// other session it switches to the agent's home window. No-op (with a tmux
+// status message) when nothing is blocked.
+func RunJumpNextBlocked(clientSession string) {
+	if clientSession == tmux.HubSessionName {
+		if err := hubSendKey("b"); err != nil {
+			displayMsg(fmt.Sprintf("jump-next-blocked: %v", err))
+		}
+		return
+	}
+
+	groups, err := hubLoad()
 	if err != nil {
-		tmux.DisplayMessage(fmt.Sprintf("jump-next-blocked: %v", err))
+		displayMsg(fmt.Sprintf("jump-next-blocked: %v", err))
 		return
 	}
 
 	row := herd.FirstBlocked(groups)
 	if row == nil {
-		tmux.DisplayMessage("no blocked agents")
+		displayMsg("no blocked agents")
 		return
 	}
 
-	if err := tmux.SwitchToSessionWindow(row.Session, row.WindowID); err != nil {
-		tmux.DisplayMessage(fmt.Sprintf("jump-next-blocked: %v", err))
+	if err := switchHome(row.Session, row.WindowID); err != nil {
+		displayMsg(fmt.Sprintf("jump-next-blocked: %v", err))
 	}
 }

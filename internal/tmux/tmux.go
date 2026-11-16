@@ -1265,7 +1265,7 @@ func agentctlKeybindings(exe string) []keyBinding {
 		// each candidate's RuntimeDir from the herd registry (internal/herd),
 		// not from paths.RuntimeDir() of the invoking process.
 		{"g", "run-shell -b " + shellquote.Quote(invokeRS("hub"))},
-		{"b", "run-shell -b " + shellquote.Quote(invokeRS("jump-next-blocked"))},
+		{"b", "run-shell -b " + shellquote.Quote(invokeRS("jump-next-blocked --client-session '#{client_session}'"))},
 	}
 }
 
