@@ -21,7 +21,7 @@ func hookNotify(opts notify.Options) {
 // for an agent with configuration ac.
 //
 //   - Alerts (the master switch) false suppresses everything.
-//   - "permission_prompt" additionally requires AlertConfig.Blocked.
+//   - "permission_prompt" and "approval_pending" (an agentctl approval popup) additionally requires AlertConfig.Blocked.
 //   - "idle_prompt" additionally requires AlertConfig.Idle.
 //   - Any other type (stop_failure, post_compact) is gated on the master
 //     switch only: there is no dedicated toggle for them. AlertConfig.Gone has
@@ -31,7 +31,7 @@ func shouldAlert(ac config.AgentConfig, notificationType string) bool {
 		return false
 	}
 	switch notificationType {
-	case "permission_prompt":
+	case "permission_prompt", approvalNotificationType:
 		return ac.AlertConfig.Blocked
 	case "idle_prompt":
 		return ac.AlertConfig.Idle
