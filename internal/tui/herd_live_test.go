@@ -7,16 +7,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-
-	"github.com/blsmth/agentctl/internal/herd"
 )
 
-// liveTestModel is mouseTestModel as the hub pane sees it in live mode: the
+// liveTestModel is mouseTestModel as the hub pane sees it: the
 // pane is only the list column wide.
 func liveTestModel(t *testing.T, paneWidth, height int) HerdModel {
 	t.Helper()
 	m := mouseTestModel(t, paneWidth, height)
-	m.live, m.liveLeft, m.liveRight = true, paneWidth, 200
+	m.liveLeft, m.liveRight = paneWidth, 200
 	m.configureSplitPane()
 	for i := range m.groups {
 		m.groups[i].ProjectDir, m.groups[i].RuntimeDir = "/p", "/p/.agentctl"
@@ -53,57 +51,54 @@ func TestHerdLiveSplit(t *testing.T) {
 }
 
 func TestHerdLiveView(t *testing.T) {
-	tests := []struct {
-		name        string
-		live        bool
-		wantDetail  bool
-		wantPreview bool
-	}{
-		{"live hides detail and preview", true, false, false},
-		{"preview layout keeps them", false, true, true},
+	m := mouseTestModel(t, 140, 40)
+	out := ansi.Strip(m.render())
+	if strings.ContainsAny(out, "╭╮╰╯") {
+		t.Errorf("list must not draw a detail panel border:\n%s", out)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := mouseTestModel(t, 140, 40)
-			m.preview = "PREVIEW-MARKER"
-			if tt.live {
-				m.live, m.liveLeft = true, 48
-				m.termWidth = 48
-				m.configureSplitPane()
-			}
-			out := ansi.Strip(m.render())
-			if got := strings.ContainsAny(out, "╭╮╰╯"); got != tt.wantDetail {
-				t.Errorf("detail border present = %v, want %v\n%s", got, tt.wantDetail, out)
-			}
-			if got := strings.Contains(out, "PREVIEW-MARKER"); got != tt.wantPreview {
-				t.Errorf("preview present = %v, want %v", got, tt.wantPreview)
-			}
-			for _, line := range strings.Split(out, "\n") {
-				if tt.live && len([]rune(line)) > 48 {
-					t.Errorf("live line wider than the pane: %q", line)
-				}
-			}
-		})
+	for _, line := range strings.Split(out, "\n") {
+		if len([]rune(line)) > m.liveLeft {
+			t.Errorf("line wider than the list column (%d): %q", m.liveLeft, line)
+		}
 	}
 }
 
 func TestHerdLiveHints(t *testing.T) {
 	m := liveTestModel(t, 48, 40)
 	out := ansi.Strip(m.render())
-	for _, want := range []string{"v preview", "tab focus live", "^b o back"} {
+	for _, want := range []string{"enter/tab focus live", "^b o back"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("live hints missing %q:\n%s", want, out)
+			t.Errorf("hints missing %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "live off") {
-		t.Error("stale 'live off' hint")
+	for _, gone := range []string{"v preview", "v live", "unlink", "open"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("stale hint %q:\n%s", gone, out)
+		}
 	}
 	if n := m.liveHintRows(); n < 1 {
 		t.Errorf("narrow hint bar should wrap onto extra rows, got %d", n)
 	}
-	m.live, m.liveLeft = false, 0
-	if out := ansi.Strip(m.render()); !strings.Contains(out, "v live") {
-		t.Error("preview layout lost its 'v live' hint")
+}
+
+func TestHerdNoViewHint(t *testing.T) {
+	m := liveTestModel(t, 48, 40)
+	if out := ansi.Strip(m.render()); !strings.Contains(out, herdNoViewHint) {
+		t.Errorf("expected hint before any agent was viewed:\n%s", out)
+	}
+	m.liveShown = "s1|@1"
+	if out := ansi.Strip(m.render()); strings.Contains(out, herdNoViewHint) {
+		t.Errorf("hint must disappear once an agent was viewed:\n%s", out)
+	}
+}
+
+func TestHerdListPaddedToFixedHeight(t *testing.T) {
+	m := liveTestModel(t, 48, 40)
+	a := strings.Count(m.render(), "\n")
+	m.groups = m.groups[:1]
+	m.rebuildLines()
+	if b := strings.Count(m.render(), "\n"); a != b {
+		t.Errorf("render height changed with row count: %d vs %d", a, b)
 	}
 }
 
@@ -124,7 +119,7 @@ func TestHerdLiveClicks(t *testing.T) {
 		{"header + new", w - herdSidebarRightGutter - 2, top, 0, herdClickNew},
 		{"row body selects", 5, top + 1, 1, herdClickSelect},
 		{"row close", w - herdSidebarRightGutter - 1, top + 1, 1, herdClickClose},
-		{"past the list", 5, top + 20, -1, herdClickIgnore},
+		{"past the list", 5, top + 40, -1, herdClickIgnore},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -135,66 +130,135 @@ func TestHerdLiveClicks(t *testing.T) {
 			}
 		})
 	}
-	// No detail panel to hit while live.
-	if _, inDetail, _ := m.lineAt(200, top+1); inDetail {
-		t.Error("live mode has no detail panel")
+}
+
+func TestHerdLiveShowCmd_OncePerSelection(t *testing.T) {
+	m := NewHerdModel()
+	m.selSession, m.selWindowID = "agentctl-a", "@1"
+	if m.liveShowCmd() == nil {
+		t.Fatal("first selection must hand off to the viewer")
+	}
+	if m.liveShowCmd() != nil {
+		t.Error("same selection must not re-fire")
+	}
+	m.selWindowID = "@2"
+	if m.liveShowCmd() == nil {
+		t.Error("changed selection must fire")
 	}
 }
 
-func TestHerdLiveSkipsCapture(t *testing.T) {
-	m := liveTestModel(t, 48, 40)
-	m.selSession, m.selWindowID = "s1", "@1"
-	m.liveShown = "s1|@1"
-	if cmd := m.maybeCaptureCmd(); cmd != nil {
-		t.Error("live mode must not capture the preview")
+func TestHerdMaybeShowCmd_HeaderKeepsLastViewed(t *testing.T) {
+	m := NewHerdModel()
+	m.selSession, m.selWindowID, m.selIsHeader = "agentctl-a", "", true
+	m.liveShown = "agentctl-a|@1"
+	if cmd := m.maybeShowCmd(); cmd != nil {
+		t.Error("a header selection must not touch the viewer")
+	}
+	if m.liveShown != "agentctl-a|@1" {
+		t.Errorf("liveShown changed to %q", m.liveShown)
+	}
+	m.selSession, m.selWindowID, m.selIsHeader = "", "", false
+	if cmd := m.maybeShowCmd(); cmd != nil {
+		t.Error("no selection must not touch the viewer")
 	}
 }
 
-func TestHerdLiveFallbackOnError(t *testing.T) {
+func TestHerdLiveErrorShownAndRetriedOnSelectionChange(t *testing.T) {
 	m := liveTestModel(t, 48, 40)
 	m.selSession, m.selWindowID = "s1", "@1"
+	if m.maybeShowCmd() == nil {
+		t.Fatal("first show must fire")
+	}
 	next, _ := m.Update(herdLiveMsg{key: "s1|@1", err: errors.New("boom")})
 	got := next.(HerdModel)
-	if got.live || got.jumpErr != "boom" {
-		t.Errorf("live=%v jumpErr=%q, want fallback with error", got.live, got.jumpErr)
+	if got.jumpErr != "boom" {
+		t.Errorf("jumpErr = %q, want boom", got.jumpErr)
+	}
+	if !strings.Contains(ansi.Strip(got.render()), "boom") {
+		t.Error("error must show in the status line")
+	}
+	if got.maybeShowCmd() != nil {
+		t.Error("failed show must not retry every tick")
+	}
+	got.selWindowID = "@2"
+	if got.maybeShowCmd() == nil {
+		t.Error("selection change must retry")
+	}
+	next, _ = got.Update(herdLiveMsg{key: "s1|@2", left: 44, right: 70})
+	if next.(HerdModel).jumpErr != "" {
+		t.Error("a successful show clears the error")
 	}
 }
 
-func TestHerdAutoLive(t *testing.T) {
-	load := herdLoadedMsg{groups: []herd.Group{
-		{Session: "s1", Rows: []herd.Row{testRow("a", "s1", "idle", "")}},
-	}}
-	load.groups[0].Rows[0].WindowID = "@1"
+func TestHerdEnterAndTabNoopOffRowsOrFocus(t *testing.T) {
+	// Enter on a header does nothing (and never links anything).
+	m := liveTestModel(t, 48, 40)
+	m.selectLine(0)
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd != nil {
+		t.Error("enter on a header must be a no-op")
+	}
+}
 
-	t.Run("on when a row is selectable", func(t *testing.T) {
-		InitStyles()
-		m := NewHerdModel().WithAutoLive()
-		m.termWidth = 200
-		m.selSession, m.selWindowID = "s1", "@1" // resolveSelection keeps it
-		next, _ := m.Update(load)
-		if !next.(HerdModel).live {
-			t.Error("expected live after load")
+func TestHerdRemovedKeysAreInert(t *testing.T) {
+	for _, k := range []rune{'v', 'u'} {
+		m := liveTestModel(t, 48, 40)
+		before := m.liveShown
+		next, cmd := m.Update(tea.KeyPressMsg{Code: k, Text: string(k)})
+		if cmd != nil || next.(HerdModel).liveShown != before {
+			t.Errorf("key %q should do nothing", k)
 		}
-	})
-	t.Run("off without the option", func(t *testing.T) {
-		InitStyles()
-		next, _ := NewHerdModel().Update(load)
-		if next.(HerdModel).live {
-			t.Error("live must stay off by default")
-		}
-	})
-	t.Run("v toggles back to preview", func(t *testing.T) {
-		InitStyles()
-		m := NewHerdModel().WithAutoLive()
-		m.termWidth = 200
-		next, _ := m.Update(load)
-		m = next.(HerdModel)
-		if !m.live {
-			t.Skip("live not enabled (selection not resolved)")
-		}
-		next, _ = m.Update(tea.KeyPressMsg{Code: 'v', Text: "v"})
-		if next.(HerdModel).live {
-			t.Error("v should leave live mode")
-		}
-	})
+	}
+}
+
+func TestDecideLiveResize(t *testing.T) {
+	tests := []struct {
+		name                                         string
+		win, lastWin, appliedLeft, pane, userLeft    int
+		wantApply                                    bool
+		wantLeft, wantRight, wantUserLeft, wantWinOK int
+	}{
+		{"unknown window width is a no-op", 0, 200, 56, 40, 0, false, 0, 0, 0, 200},
+		{"first sizing applies the computed split", 200, 0, 44, 44, 0, true, 56, 143, 0, 200},
+		{"window grew, no user ratio: recompute", 300, 200, 56, 56, 0, true, 56, 243, 0, 300},
+		{"window shrank, no user ratio: recompute", 100, 200, 56, 56, 0, true, 44, 55, 0, 100},
+		{"window resized keeps the dragged width", 300, 200, 70, 70, 70, true, 70, 229, 70, 300},
+		{"window resized clamps a dragged width to the new window", 100, 200, 90, 90, 90, true, 79, 20, 90, 100},
+		{"pane matches applied split: nothing to do", 200, 200, 56, 56, 0, false, 0, 0, 0, 200},
+		{"drag is remembered and not fought", 200, 200, 56, 80, 0, false, 80, 119, 80, 200},
+		{"drag below the minimum is clamped and re-applied", 200, 200, 56, 10, 0, true, 30, 169, 30, 200},
+		{"drag past the maximum is clamped and re-applied", 200, 200, 56, 190, 0, true, 179, 20, 179, 200},
+		{"pane size unknown is ignored", 200, 200, 56, 0, 0, false, 0, 0, 0, 200},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := decideLiveResize(tt.win, tt.lastWin, tt.appliedLeft, tt.pane, tt.userLeft)
+			if d.apply != tt.wantApply || d.left != tt.wantLeft || d.userLeft != tt.wantUserLeft || d.winWidth != tt.wantWinOK {
+				t.Errorf("got apply=%v left=%d userLeft=%d win=%d, want apply=%v left=%d userLeft=%d win=%d",
+					d.apply, d.left, d.userLeft, d.winWidth, tt.wantApply, tt.wantLeft, tt.wantUserLeft, tt.wantWinOK)
+			}
+			if tt.wantApply || tt.wantLeft > 0 {
+				if d.right != tt.wantRight {
+					t.Errorf("right = %d, want %d", d.right, tt.wantRight)
+				}
+			}
+		})
+	}
+}
+
+func TestHerdProbeMsgPreservesUserRatio(t *testing.T) {
+	m := liveTestModel(t, 48, 40)
+	m.liveWinWidth, m.liveLeft = 200, 56
+	// A drag: same window width, pane now 80 wide. No tmux command, ratio kept.
+	next, cmd := m.Update(herdProbeMsg{pane: 80, win: 200})
+	got := next.(HerdModel)
+	if cmd != nil || got.userLeft != 80 || got.liveLeft != 80 {
+		t.Fatalf("drag: cmd=%v userLeft=%d liveLeft=%d", cmd != nil, got.userLeft, got.liveLeft)
+	}
+	// The window then grows: re-applied at the dragged width.
+	next, cmd = got.Update(herdProbeMsg{pane: 100, win: 300})
+	got = next.(HerdModel)
+	if cmd == nil || got.liveLeft != 80 || got.liveRight != 219 || got.liveWinWidth != 300 {
+		t.Fatalf("window resize: cmd=%v left=%d right=%d win=%d", cmd != nil, got.liveLeft, got.liveRight, got.liveWinWidth)
+	}
 }

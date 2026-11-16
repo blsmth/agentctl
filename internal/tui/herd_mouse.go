@@ -7,8 +7,8 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// herdClickAction is what a mouse click on the hub should do. Clicks never
-// open an agent; only Enter (or J) does. The only side effects are the
+// herdClickAction is what a mouse click on the hub should do. Clicks only
+// select (the live pane follows the selection). The only side effects are the
 // explicit "+ new" / "✕" buttons and the right-click menu.
 type herdClickAction int
 
@@ -29,9 +29,6 @@ func (m HerdModel) herdListTop() int {
 
 // herdListRows is the number of screen rows the list area spans.
 func (m HerdModel) herdListRows() int {
-	if m.splitActive() {
-		return m.splitPane.paneHeight()
-	}
 	return m.visibleLines()
 }
 
@@ -42,43 +39,26 @@ func (m HerdModel) clickable() bool {
 	return !isStatus && len(m.lines) > 0
 }
 
-// lineAt maps a screen coordinate to a line index in m.lines. inDetail is true
-// (with idx -1) when the point is inside the split layout's main panel. ok is
-// false when the point is outside the list and detail areas, or the layout is
-// in a loading/error/empty state. A returned idx may be a divider line.
-func (m HerdModel) lineAt(x, y int) (idx int, inDetail bool, ok bool) {
+// lineAt maps a screen coordinate to a line index in m.lines. ok is false when
+// the point is outside the list area, or the hub is in a loading/error/empty
+// state. A returned idx may be a divider line.
+func (m HerdModel) lineAt(x, y int) (idx int, ok bool) {
 	if !m.clickable() || x < 0 {
-		return -1, false, false
+		return -1, false
 	}
 	row := y - m.herdListTop()
 	if row < 0 || row >= m.herdListRows() {
-		return -1, false, false
+		return -1, false
 	}
-	if !m.splitActive() {
-		idx = m.scrollOffset + row
-		if idx >= len(m.lines) {
-			return -1, false, false
-		}
-		return idx, false, true
-	}
-	if x >= m.splitPane.ListWidth() {
-		if x >= m.splitPane.termWidth {
-			return -1, false, false
-		}
-		return -1, true, true
-	}
-	idx = m.splitPane.ListScroll() + row
+	idx = m.scrollOffset + row
 	if idx >= len(m.lines) {
-		return -1, false, false
+		return -1, false
 	}
-	return idx, false, true
+	return idx, true
 }
 
 // listColWidth is the width of the list column lines are rendered at.
 func (m HerdModel) listColWidth() int {
-	if m.splitActive() {
-		return m.splitPane.ListWidth()
-	}
 	return m.contentWidth()
 }
 
@@ -97,7 +77,7 @@ func (m HerdModel) onCloseButton(x int) bool {
 }
 
 // clickDecision resolves a left click at (x, y) to a target line and action.
-// idx is -1 when the click is ignored, including clicks in the detail panel.
+// idx is -1 when the click is ignored.
 func (m HerdModel) clickDecision(x, y int) (idx int, action herdClickAction) {
 	return m.buttonDecision(x, y, tea.MouseLeft)
 }
@@ -106,8 +86,8 @@ func (m HerdModel) clickDecision(x, y int) (idx int, action herdClickAction) {
 // row or header opens the context menu; left click on a header's "+ new" or a
 // row's "✕" triggers that button, anything else on a line just selects it.
 func (m HerdModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, action herdClickAction) {
-	idx, inDetail, ok := m.lineAt(x, y)
-	if !ok || inDetail {
+	idx, ok := m.lineAt(x, y)
+	if !ok {
 		return -1, herdClickIgnore
 	}
 	l := m.lines[idx]
@@ -155,7 +135,8 @@ func (m HerdModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	case herdClickSelect:
 		m.menuOpen = false
 		m.selectLine(idx)
-		return m, m.maybeCaptureCmd()
+		show := m.maybeShowCmd()
+		return m, show
 	case herdClickNew:
 		m.menuOpen = false
 		m.selectLine(idx)
@@ -167,10 +148,12 @@ func (m HerdModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		}
 		m.selectLine(idx)
 		m.startClose(idx)
-		return m, m.maybeCaptureCmd()
+		show := m.maybeShowCmd()
+		return m, show
 	case herdClickMenu:
 		m.openMenu(idx)
-		return m, m.maybeCaptureCmd()
+		show := m.maybeShowCmd()
+		return m, show
 	}
 	m.menuOpen = false
 	return m, nil
@@ -186,27 +169,5 @@ func (m HerdModel) clickMenu(x int) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.menuOpen = false
-	return m, nil
-}
-
-// handleWheel scrolls the preview when the wheel is over the detail panel;
-// over the list it does nothing (a wheel notch moving the cursor was chaotic).
-func (m HerdModel) handleWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
-	if !m.clickable() {
-		return m, nil
-	}
-	_, inDetail, ok := m.lineAt(msg.X, msg.Y)
-	if !ok || !inDetail {
-		return m, nil
-	}
-	switch msg.Button {
-	case tea.MouseWheelUp:
-		m.previewUp += herdWheelStep
-	case tea.MouseWheelDown:
-		m.previewUp -= herdWheelStep
-		if m.previewUp < 0 {
-			m.previewUp = 0
-		}
-	}
 	return m, nil
 }

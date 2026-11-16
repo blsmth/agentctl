@@ -36,39 +36,32 @@ func mouseTestModel(t *testing.T, width, height int) HerdModel {
 
 func TestLineAt(t *testing.T) {
 	tests := []struct {
-		name       string
-		width      int
-		height     int
-		scrollTo   int // select this line first (-1 = none)
-		x, y       int
-		wantIdx    int
-		wantDetail bool
-		wantOK     bool
+		name     string
+		height   int
+		scrollTo int // select this line first (-1 = none)
+		x, y     int
+		wantIdx  int
+		wantOK   bool
 	}{
-		{"split first row", 120, 40, -1, 5, 3, 0, false, true},
-		{"split row b", 120, 40, -1, 5, 5, 2, false, true},
-		{"split divider", 120, 40, -1, 5, 6, 3, false, true},
-		{"split header", 120, 40, -1, 5, 7, 4, false, true},
-		{"split above list", 120, 40, -1, 5, 1, -1, false, false},
-		{"split below last line", 120, 40, -1, 5, 10, -1, false, false},
-		{"split detail", 120, 40, -1, 60, 6, -1, true, true},
-		{"split scrolled", 120, 10, 5, 5, 3, 3, false, true},
-		{"flat first row", 60, 40, -1, 5, 3, 0, false, true},
-		{"flat row c", 60, 40, -1, 5, 8, 5, false, true},
-		{"flat above list", 60, 40, -1, 5, 2, -1, false, false},
-		{"flat below last line", 60, 40, -1, 5, 9, -1, false, false},
-		{"flat scrolled", 60, 10, 5, 5, 4, 4, false, true},
+		{"first row", 40, -1, 5, 4, 1, true},
+		{"row b", 40, -1, 5, 5, 2, true},
+		{"divider", 40, -1, 5, 6, 3, true},
+		{"header", 40, -1, 5, 7, 4, true},
+		{"row c", 40, -1, 5, 8, 5, true},
+		{"above list", 40, -1, 5, 2, -1, false},
+		{"below last line", 40, -1, 5, 9, -1, false},
+		{"scrolled", 10, 5, 5, 3, 3, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := mouseTestModel(t, tt.width, tt.height)
+			m := mouseTestModel(t, 120, tt.height)
 			if tt.scrollTo >= 0 {
 				m.selectLine(tt.scrollTo)
 			}
-			idx, detail, ok := m.lineAt(tt.x, tt.y)
-			if idx != tt.wantIdx || detail != tt.wantDetail || ok != tt.wantOK {
-				t.Errorf("lineAt(%d,%d) = (%d,%v,%v), want (%d,%v,%v)",
-					tt.x, tt.y, idx, detail, ok, tt.wantIdx, tt.wantDetail, tt.wantOK)
+			idx, ok := m.lineAt(tt.x, tt.y)
+			if idx != tt.wantIdx || ok != tt.wantOK {
+				t.Errorf("lineAt(%d,%d) = (%d,%v), want (%d,%v)",
+					tt.x, tt.y, idx, ok, tt.wantIdx, tt.wantOK)
 			}
 		})
 	}
@@ -77,7 +70,7 @@ func TestLineAt(t *testing.T) {
 func TestLineAt_NotLoaded(t *testing.T) {
 	m := mouseTestModel(t, 120, 40)
 	m.loaded = false
-	if _, _, ok := m.lineAt(5, 3); ok {
+	if _, ok := m.lineAt(5, 3); ok {
 		t.Error("click while loading should be ignored")
 	}
 }
@@ -85,24 +78,19 @@ func TestLineAt_NotLoaded(t *testing.T) {
 func TestClickDecision(t *testing.T) {
 	tests := []struct {
 		name    string
-		width   int
 		x, y    int
 		sel     int
 		want    herdClickAction
 		wantIdx int
 	}{
-		{"row selects", 120, 5, 4, 0, herdClickSelect, 1},
-		{"header selects", 120, 5, 7, 1, herdClickSelect, 4},
-		{"divider ignored", 120, 5, 6, 1, herdClickIgnore, 3},
-		{"chrome ignored", 120, 5, 0, 1, herdClickIgnore, -1},
-		{"detail with row selected ignored", 120, 60, 5, 1, herdClickIgnore, -1},
-		{"detail with header selected ignored", 120, 60, 5, 0, herdClickIgnore, -1},
-		{"flat row selects", 60, 5, 4, 0, herdClickSelect, 1},
-		{"flat header selects", 60, 5, 7, 0, herdClickSelect, 4},
+		{"row selects", 5, 4, 0, herdClickSelect, 1},
+		{"header selects", 5, 7, 1, herdClickSelect, 4},
+		{"divider ignored", 5, 6, 1, herdClickIgnore, 3},
+		{"chrome ignored", 5, 0, 1, herdClickIgnore, -1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := mouseTestModel(t, tt.width, 40)
+			m := mouseTestModel(t, 120, 40)
 			m.selectLine(tt.sel)
 			idx, act := m.clickDecision(tt.x, tt.y)
 			if act != tt.want || idx != tt.wantIdx {
@@ -141,8 +129,11 @@ func TestClickRowSelectsWithoutOpening(t *testing.T) {
 		if got.jumpErr != "" {
 			t.Errorf("unexpected jump attempt: %q", got.jumpErr)
 		}
-		if cmd == nil {
-			t.Errorf("reclick=%v: expected preview capture cmd", reclick)
+		if !reclick && cmd == nil {
+			t.Error("first click: expected live viewer cmd")
+		}
+		if reclick && cmd != nil {
+			t.Error("reclick on the same row must not re-fire the viewer")
 		}
 	}
 }
@@ -153,44 +144,6 @@ func TestClickMiddleButtonIgnored(t *testing.T) {
 	next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseMiddle, X: 5, Y: 7})
 	if cmd != nil || cursorOf(next) != before {
 		t.Error("middle click should be ignored")
-	}
-}
-
-func TestWheel(t *testing.T) {
-	// Lines at width 120: list x=5, detail x=60; row y=3 is line 0.
-	tests := []struct {
-		name     string
-		x, y     int
-		button   tea.MouseButton
-		startUp  int
-		wantUp   int
-		wantCurs int
-	}{
-		{"list wheel down: no change", 5, 4, tea.MouseWheelDown, 0, 0, 0},
-		{"list wheel up: no change", 5, 4, tea.MouseWheelUp, 6, 6, 0},
-		{"detail wheel up scrolls 3", 60, 4, tea.MouseWheelUp, 0, 3, 0},
-		{"detail wheel up accumulates", 60, 4, tea.MouseWheelUp, 3, 6, 0},
-		{"detail wheel down scrolls 3", 60, 4, tea.MouseWheelDown, 6, 3, 0},
-		{"detail wheel down clamps at 0", 60, 4, tea.MouseWheelDown, 1, 0, 0},
-		{"outside both: no change", 5, 0, tea.MouseWheelUp, 0, 0, 0},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := mouseTestModel(t, 120, 40)
-			m.selectLine(0)
-			m.previewUp = tt.startUp
-			next, cmd := m.Update(tea.MouseWheelMsg{Button: tt.button, X: tt.x, Y: tt.y})
-			got := next.(HerdModel)
-			if got.previewUp != tt.wantUp {
-				t.Errorf("previewUp = %d, want %d", got.previewUp, tt.wantUp)
-			}
-			if cursorOf(got) != tt.wantCurs {
-				t.Errorf("cursor = %d, want %d", cursorOf(got), tt.wantCurs)
-			}
-			if cmd != nil {
-				t.Error("wheel should not return a cmd")
-			}
-		})
 	}
 }
 
@@ -232,8 +185,6 @@ func TestButtonDecision(t *testing.T) {
 		{"right click row on close col", closeX, 4, tea.MouseRight, 1, herdClickMenu},
 		{"right click header", 5, 3, tea.MouseRight, 0, herdClickMenu},
 		{"right click divider", 5, 6, tea.MouseRight, 3, herdClickIgnore},
-		{"right click detail", 60, 4, tea.MouseRight, -1, herdClickIgnore},
-		{"left click detail", 60, 4, tea.MouseLeft, -1, herdClickIgnore},
 		{"middle click", 5, 4, tea.MouseMiddle, -1, herdClickIgnore},
 	}
 	for _, tt := range tests {
@@ -311,7 +262,7 @@ func TestHandleClickActions(t *testing.T) {
 			t.Fatal("menu should open")
 		}
 		text, spans := menuItemSpans(got.herdMenuItems(got.menuLine))
-		if !strings.Contains(text, "[close]") || !strings.Contains(text, "[home]") || !strings.Contains(text, "[open]") || !strings.Contains(text, "[new]") {
+		if !strings.Contains(text, "[close]") || !strings.Contains(text, "[home]") || !strings.Contains(text, "[focus]") || !strings.Contains(text, "[new]") {
 			t.Errorf("menu text %q", text)
 		}
 		// click [close]
@@ -330,6 +281,7 @@ func TestHandleClickActions(t *testing.T) {
 		}
 	})
 }
+
 func cursorOf(m tea.Model) int {
 	h := m.(HerdModel)
 	return h.splitPane.Cursor()
