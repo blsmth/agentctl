@@ -182,6 +182,7 @@ func (m *HerdModel) confirmClose() tea.Cmd {
 	for _, l := range m.lines {
 		if l.kind == herdLineRow && m.confirmingRow(l.row) {
 			m.cancelClose()
+			m.recordClose(l.row)
 			m.infoMsg = "closing " + l.row.Name + "…"
 			return herdCloseCmd(l.row)
 		}
