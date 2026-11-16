@@ -2,6 +2,8 @@ package config
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -9,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -880,6 +883,64 @@ func mergeConfig(base, overlay *Config) {
 // the same ignored key would otherwise flood the log.
 var warnedKeys sync.Map
 
+// warnMarkerName is the dedupe marker, stored beside the project config (the
+// project runtime dir in production).
+// warnLog is logging.Log, swappable in tests.
+var warnLog = logging.Log
+
+const warnMarkerName = "config-warned"
+
+// logIgnoredKeys emits one summary line for the global-only keys stripped from
+// the project config. warnedKeys is the in-process fast path; the on-disk
+// marker, keyed on a hash of the project config bytes, suppresses repeats
+// across the short-lived processes (hooks, statusline, CLI) that load the same
+// unchanged file. Marker failures fall back to logging.
+func logIgnoredKeys(ignored []string) {
+	if len(ignored) == 0 {
+		return
+	}
+	msg := fmt.Sprintf("config: ignoring %d global-only keys from project-local config %s: %s",
+		len(ignored), configPath, strings.Join(ignored, ", "))
+	if _, dup := warnedKeys.LoadOrStore(msg, true); dup {
+		return
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		warnLog("%s", msg)
+		return
+	}
+	sum := sha256.Sum256(data)
+	hash := hex.EncodeToString(sum[:])
+	marker := filepath.Join(filepath.Dir(configPath), warnMarkerName)
+	if prev, err := os.ReadFile(marker); err == nil && string(bytes.TrimSpace(prev)) == hash {
+		return
+	}
+	warnLog("%s", msg)
+	if err := writeMarker(marker, []byte(hash+"\n")); err != nil {
+		warnLog("config: could not write warning marker %s: %v", marker, err)
+	}
+}
+
+func writeMarker(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
 // safeLaunchValue is the conservative charset allowed for model and
 // effort_level values coming from the project-local layer, since they end up
 // in the agent launch command line.
@@ -951,12 +1012,11 @@ func containsAll(have, want []string) bool {
 //
 // For agents defined in both layers, the global agent's protected fields win.
 func sanitizeProjectConfig(project, global *Config) {
-	warn := func(key, why string) {
-		msg := fmt.Sprintf("config: ignoring %q from project-local config %s (%s)", key, configPath, why)
-		if _, dup := warnedKeys.LoadOrStore(msg, true); !dup {
-			logging.Log("%s", msg)
-		}
+	var ignored []string
+	warn := func(key, _ string) {
+		ignored = append(ignored, strconv.Quote(key))
 	}
+	defer func() { logIgnoredKeys(ignored) }()
 	const globalOnly = "only honored in the global config"
 	const noLoosen = "project may enable this guard but not disable it"
 	if project.NotifyCmd != nil {
