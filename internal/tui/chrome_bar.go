@@ -553,7 +553,7 @@ func tabClickCmd(origin, target string) tea.Cmd {
 		focusAgentPane(origin)
 		if target != "" {
 			if target != origin {
-				_ = exec.Command("tmux", "select-window", "-t", target).Run()
+				selectTabWindow(origin, target)
 			}
 			focusAgentPane(target)
 		}
