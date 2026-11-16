@@ -128,3 +128,10 @@ func TestShowHideLiveViewer_Integration(t *testing.T) {
 		t.Fatal("viewer leaked after hide")
 	}
 }
+
+func TestViewerResizeArgs(t *testing.T) {
+	got := strings.Join(viewerResizeArgs("%7", 120), " ")
+	if got != "resize-pane -t %7 -x 120" {
+		t.Errorf("viewerResizeArgs = %q", got)
+	}
+}
