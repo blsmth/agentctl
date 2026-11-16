@@ -88,13 +88,13 @@ func TestClickDecision(t *testing.T) {
 		want    herdClickAction
 		wantIdx int
 	}{
-		{"row opens", 120, 5, 4, 0, herdClickOpen, 1},
+		{"row selects", 120, 5, 4, 0, herdClickSelect, 1},
 		{"header selects", 120, 5, 7, 1, herdClickSelect, 4},
 		{"divider ignored", 120, 5, 6, 1, herdClickIgnore, 3},
 		{"chrome ignored", 120, 5, 0, 1, herdClickIgnore, -1},
-		{"detail with row selected opens", 120, 60, 5, 1, herdClickOpen, -1},
+		{"detail with row selected ignored", 120, 60, 5, 1, herdClickIgnore, -1},
 		{"detail with header selected ignored", 120, 60, 5, 0, herdClickIgnore, -1},
-		{"flat row opens", 60, 5, 4, 0, herdClickOpen, 1},
+		{"flat row selects", 60, 5, 4, 0, herdClickSelect, 1},
 		{"flat header selects", 60, 5, 7, 0, herdClickSelect, 4},
 	}
 	for _, tt := range tests {
@@ -118,6 +118,29 @@ func TestClickHeaderSelectsWithoutJump(t *testing.T) {
 	}
 	if got.jumpErr != "" {
 		t.Errorf("unexpected jump attempt: %q", got.jumpErr)
+	}
+}
+
+func TestClickRowSelectsWithoutOpening(t *testing.T) {
+	for _, reclick := range []bool{false, true} {
+		m := mouseTestModel(t, 120, 40)
+		m.selectLine(0)
+		msg := tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 5}
+		next, cmd := m.Update(msg)
+		if reclick {
+			next, cmd = next.(HerdModel).Update(msg)
+		}
+		got := next.(HerdModel)
+		if cursorOf(got) != 2 || got.selWindowID != "@2" || got.selSession != "s1" || got.selIsHeader {
+			t.Errorf("selection = cursor %d %q/%q header=%v, want row b (@2)",
+				cursorOf(got), got.selSession, got.selWindowID, got.selIsHeader)
+		}
+		if got.jumpErr != "" {
+			t.Errorf("unexpected jump attempt: %q", got.jumpErr)
+		}
+		if cmd == nil {
+			t.Errorf("reclick=%v: expected preview capture cmd", reclick)
+		}
 	}
 }
 

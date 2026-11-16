@@ -6,13 +6,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// herdClickAction is what a mouse click on the hub should do.
+// herdClickAction is what a mouse click on the hub should do. Clicks never
+// open an agent; only Enter (or J) does.
 type herdClickAction int
 
 const (
 	herdClickIgnore herdClickAction = iota // nothing happens
-	herdClickSelect                        // move the cursor only
-	herdClickOpen                          // move the cursor (if needed) and run Enter's action
+	herdClickSelect                        // move the cursor only, like j/k
 )
 
 // herdListTop returns the screen row where the list (or sidebar) begins: the
@@ -70,22 +70,14 @@ func (m HerdModel) lineAt(x, y int) (idx int, inDetail bool, ok bool) {
 }
 
 // clickDecision resolves a left click at (x, y) to a target line and action.
-// idx is -1 for a detail-panel click (act on the current selection).
+// idx is -1 when the click is ignored, including clicks in the detail panel.
 func (m HerdModel) clickDecision(x, y int) (idx int, action herdClickAction) {
 	idx, inDetail, ok := m.lineAt(x, y)
-	if !ok {
-		return -1, herdClickIgnore
-	}
-	if inDetail {
-		if m.selectedRow() != nil {
-			return -1, herdClickOpen
-		}
+	if !ok || inDetail {
 		return -1, herdClickIgnore
 	}
 	switch m.lines[idx].kind {
-	case herdLineRow:
-		return idx, herdClickOpen
-	case herdLineHeader, herdLinePlaceholder:
+	case herdLineRow, herdLineHeader, herdLinePlaceholder:
 		return idx, herdClickSelect
 	}
 	return idx, herdClickIgnore
@@ -104,19 +96,11 @@ func (m HerdModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	idx, action := m.clickDecision(msg.X, msg.Y)
-	switch action {
-	case herdClickSelect:
-		m.selectLine(idx)
-		return m, m.maybeCaptureCmd()
-	case herdClickOpen:
-		if idx >= 0 {
-			m.selectLine(idx)
-		}
-		capture := m.maybeCaptureCmd()
-		model, cmd := m.linkSelectedIntoHub()
-		return model, tea.Batch(cmd, capture)
+	if action != herdClickSelect {
+		return m, nil
 	}
-	return m, nil
+	m.selectLine(idx)
+	return m, m.maybeCaptureCmd()
 }
 
 func (m HerdModel) handleWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
