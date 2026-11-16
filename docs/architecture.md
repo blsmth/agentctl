@@ -12,7 +12,6 @@ agentctl
 ├── birthtime_*.go       # Per-OS file birth-time helpers (log rotation detection)
 └── internal/
     ├── agent/           # Agent discovery/composition from ~/.claude/agents/*.md
-    ├── chromebar/       # Chrome bar helpers
     ├── claude/          # Retained claude CLI subprocess client (non-default llm provider)
     ├── claudecli/       # Claude CLI argument/flag construction
     ├── cmd/             # Implementations behind Kong subcommands (chrome, dispatch, …)
@@ -40,7 +39,6 @@ agentctl
     ├── tmux/            # All tmux interactions (session, window, pane, keybinds)
     ├── tokens/          # Token/cost accounting
     ├── tui/             # Bubble Tea models (chrome bar, menus, wizards, browsers)
-    ├── watcher/         # fsnotify helpers
     ├── windowstate/     # Per-window hook state at .agentctl/windows/<id>.json
     └── worktree/        # Git worktree create/remove/list
 ```

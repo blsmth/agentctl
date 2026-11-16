@@ -62,7 +62,7 @@ Rationale: a project-local file can arrive with a cloned repository. Executing c
 | `session_retention_days` | int | `30` | Days to keep session metadata before purging. |
 | `dispatch.on_complete` | string | empty | Deprecated; use `hooks.dispatch_complete`. Still honored as a fallback. Global-only. |
 | `hooks` | object | none | Event name to list of shell commands. Global-only. See [hooks](#hooks). |
-| `rate_limit.token_cap` | int | `88000` | Token budget per 5-hour window, used only to *estimate* usage when Claude Code has not pushed a real rate-limit percentage. |
+| `rate_limit.token_cap` | int | `88000` | **Deprecated, unused.** Formerly estimated usage when no rate-limit percentage had been pushed; the monitor no longer derives rate limits. Still accepted so existing config files keep loading. |
 | `metrics` | object | disabled | Prometheus endpoint and remote write. See [metrics](#metrics). |
 | `models` | object | built-in registry | Model registry overrides and context thresholds. See [models](#models). |
 | `backends` | object | none | Named self-hosted endpoints. Global-only. See [Backends](#backends-self-hosted--ollama). |

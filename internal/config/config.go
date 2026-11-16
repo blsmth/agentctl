@@ -375,7 +375,10 @@ func (c Config) EffectiveLLM() LLMConfig {
 
 // RateLimitConfig holds settings for the account-level rate limit display.
 type RateLimitConfig struct {
-	// TokenCap is the estimated max tokens (input+output, excluding cache)
+	// Deprecated: unused since the monitor stopped deriving rate limits (the
+	// statusline reads pushed data directly). Kept so existing configs load.
+	//
+	// TokenCap was the estimated max tokens (input+output, excluding cache)
 	// per 5-hour window. Default 88000. User can tune this based on their plan.
 	TokenCap int `json:"token_cap,omitempty"`
 }

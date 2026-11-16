@@ -4,11 +4,9 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -18,7 +16,6 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 
-	"github.com/blsmth/agentctl/internal/chromebar"
 	"github.com/blsmth/agentctl/internal/claude"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
@@ -30,14 +27,12 @@ import (
 	"github.com/blsmth/agentctl/internal/metrics"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/pidfile"
-	"github.com/blsmth/agentctl/internal/ratelimit"
 	"github.com/blsmth/agentctl/internal/reaper"
 	"github.com/blsmth/agentctl/internal/registry"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tokens"
-	"github.com/blsmth/agentctl/internal/watcher"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
@@ -77,10 +72,14 @@ type instanceState struct {
 	base     string // base agent name (e.g. "go-engineer")
 
 	// Log tracking
-	logPath    string // cached log file path
-	logTTL     int64  // unix time when log lookup expires
-	lastSize   int64  // last observed log file size (used for /clear detection only)
-	lastChange int64  // unix time of last size change (used for /clear detection only)
+	logPath  string // cached log file path
+	logTTL   int64  // unix time when log lookup expires
+	lastSize int64  // last observed log file size (used for /clear detection only)
+
+	// Cached pane cwd for state.json, refreshed every paneWorkDirRefresh.
+	paneWorkDir   string
+	paneWorkDirAt time.Time
+	lastChange    int64 // unix time of last size change (used for /clear detection only)
 
 	// State detection
 	prevState state.AgentStatus // previous state for transition detection
@@ -176,23 +175,18 @@ type monitorModel struct {
 	runtimeDir          string                                      // runtime dir holding monitor.pid ("" disables the pidfile guard)
 	windows             map[string]*instanceState
 	transitionTracker   *metrics.TransitionTracker // nil when metrics disabled
-	watcher             *watcher.ContentWatcher
 	firstTick           bool
 	snap                *state.Snapshot
-	lastHeader          map[string]string             // paneID -> last rendered header (HUD dedup cache)
-	lastFooter          map[string]string             // paneID -> last rendered footer (HUD dedup cache)
-	chromeTick          int                           // tick counter for throttling EnforceAllChromeSizes
-	reaperTick          int                           // tick counter for throttling orphan reaper (~60 s)
-	registryTick        int                           // tick counter for throttling registry.Heartbeat (~5 s)
-	mailboxTick         int                           // tick counter for throttling per-window mailbox.PendingCount (~5 s)
-	mailboxPruneTick    int                           // tick counter for throttling mailbox.PruneStale (~5 min)
-	sessionLogPruneTick int                           // tick counter for throttling logging.PruneSessionLogs (~5 min)
-	projectsDir         string                        // override for ~/.claude/projects (tests); "" = default
-	rateLimiter         *ratelimit.RateLimitProber    // background rate limit prober
-	tokenScanner        *ratelimit.WindowTokenScanner // background window-token scanner
-	metricsCollector    *metrics.Collector            // per-entry Prometheus metrics collector
-	activeWindowFile    string                        // path to hook-written active-window file
-	registryEntry       registry.Entry                // this session's registry entry, kept so a failed
+	chromeTick          int                // tick counter for throttling EnforceAllChromeSizes
+	reaperTick          int                // tick counter for throttling orphan reaper (~60 s)
+	registryTick        int                // tick counter for throttling registry.Heartbeat (~5 s)
+	mailboxTick         int                // tick counter for throttling per-window mailbox.PendingCount (~5 s)
+	mailboxPruneTick    int                // tick counter for throttling mailbox.PruneStale (~5 min)
+	sessionLogPruneTick int                // tick counter for throttling logging.PruneSessionLogs (~5 min)
+	projectsDir         string             // override for ~/.claude/projects (tests); "" = default
+	metricsCollector    *metrics.Collector // per-entry Prometheus metrics collector
+	activeWindowFile    string             // path to hook-written active-window file
+	registryEntry       registry.Entry     // this session's registry entry, kept so a failed
 	// Heartbeat (entry pruned while the monitor is still
 	// alive) can Register it again instead of leaving
 	// the session invisible to the hub forever
@@ -238,15 +232,6 @@ func newMonitorModel(activeWindowFile string, regEntry registry.Entry) monitorMo
 		}
 	}
 
-	cw := watcher.New()
-	cw.Register(watcher.ContentRule{
-		Name:    "agent-signal",
-		Pattern: regexp.MustCompile(`AGENTCTL:(\w+)`),
-		Action: func(m watcher.ContentMatch) {
-			logging.Log("agent %s signaled: %s", m.Instance, m.Submatches[0])
-		},
-	})
-
 	snap, _ := state.LoadSnapshot()
 
 	metricsCollector := metrics.NewCollector(metrics.Registerer())
@@ -254,13 +239,8 @@ func newMonitorModel(activeWindowFile string, regEntry registry.Entry) monitorMo
 	return monitorModel{
 		windows:           make(map[string]*instanceState),
 		transitionTracker: transitionTracker,
-		watcher:           cw,
 		firstTick:         true,
 		snap:              snap,
-		lastHeader:        make(map[string]string),
-		lastFooter:        make(map[string]string),
-		rateLimiter:       ratelimit.NewRateLimitProber(),
-		tokenScanner:      ratelimit.NewWindowTokenScanner(),
 		metricsCollector:  metricsCollector,
 		activeWindowFile:  activeWindowFile,
 		registryEntry:     regEntry,
@@ -567,14 +547,14 @@ func (m *monitorModel) reconcileWindows(cfg *config.Config, windows []tmux.Windo
 		currentIDs[w.ID] = true
 	}
 	for id, inst := range m.windows {
-		if inst.instance == "shell" || strings.HasPrefix(inst.instance, "improve~") {
-			continue
-		}
 		if currentIDs[id] {
 			continue
 		}
+		// shell and improve~ windows never fire handlers, but must still be
+		// cleaned up or they would stay in m.windows forever.
+		untracked := inst.instance == "shell" || strings.HasPrefix(inst.instance, "improve~")
 		logging.Log("monitor: window gone instance=%s (was %s)", inst.instance, inst.prevState)
-		if inst.hasPrev {
+		if inst.hasPrev && !untracked {
 			t := state.Transition{
 				Agent:    inst.base,
 				WindowID: id,
@@ -585,9 +565,6 @@ func (m *monitorModel) reconcileWindows(cfg *config.Config, windows []tmux.Windo
 			agentCfg := cfg.ForAgent(inst.base)
 			m.fireHandlers(t, agentCfg, true)
 		}
-		// Remove the cursor entry so memory doesn't grow unboundedly as
-		// agents come and go over the lifetime of a session.
-		m.watcher.ResetCursor(inst.logPath)
 		// Release the persistent stream reader.
 		if inst.stream != nil {
 			inst.stream.Close()
@@ -676,7 +653,6 @@ func (m *monitorModel) excludedLogs(inst *instanceState) map[string]bool {
 // resetInstanceLog drops inst's current log link and all per-session derived
 // state so a new log can be linked from scratch.
 func (m *monitorModel) resetInstanceLog(inst *instanceState, now int64) {
-	m.watcher.ResetCursor(inst.logPath)
 	inst.lastCtxPct = 0
 	inst.lastInputTokens = 0
 	inst.lastOutputTokens = 0
@@ -918,9 +894,6 @@ func (m *monitorModel) updateMetrics(inst *instanceState, windowID string) {
 		}
 	}
 
-	// Scan log content for registered patterns (incremental — no re-read).
-	m.watcher.Scan(inst.logPath, inst.base, inst.instance, windowID)
-
 	// Incremental session metadata updates. We extract lightweight fields
 	// once and accumulate tool-use data, then write a .meta.json sidecar
 	// whenever token counts change. We never call ParseSummary here — that
@@ -1022,12 +995,6 @@ func (m *monitorModel) detectAndFireTransitions(inst *instanceState, windowID st
 	if windowTicketStr != "" {
 		fmt.Sscanf(windowTicketStr, "%d", &windowTicket)
 	}
-	windowBranch := ""
-	windowWorkDir := ""
-	if windowMode == "dispatch" || windowMode == "adhoc" {
-		windowWorkDir = tmux.PaneWorkDir(windowID)
-		windowBranch = gitBranchForWorkDir(windowWorkDir)
-	}
 	inst.ticket = windowTicket
 	inst.mainPane = ws.MainPane
 
@@ -1055,6 +1022,14 @@ func (m *monitorModel) detectAndFireTransitions(inst *instanceState, windowID st
 	stateChanged := inst.hasPrev && inst.prevState != curState
 	doneEdge := inst.hasPrev && hookDone && !inst.prevDone
 	if stateChanged || doneEdge {
+		// Resolve the work dir and branch only on an edge: both fork (tmux,
+		// git) and are only consumed by the Transition below.
+		windowBranch := ""
+		windowWorkDir := ""
+		if windowMode == "dispatch" || windowMode == "adhoc" {
+			windowWorkDir = paneWorkDirFn(windowID)
+			windowBranch = gitBranchFn(windowWorkDir)
+		}
 		t := state.Transition{
 			Agent:          inst.base,
 			WindowID:       windowID,
@@ -1094,49 +1069,16 @@ func (m *monitorModel) detectAndFireTransitions(inst *instanceState, windowID st
 	inst.prevDone = hookDone
 }
 
-// computeRateLimitState builds state.RateLimitState from the rate limit
-// prober's latest info. A fresh pushed five_hour percentage
-// (info.Source == "statusline") is used directly instead of the
-// windowTokens/tokenCap estimate -- that estimate is off by roughly 5x for
-// real usage against the hardcoded default token cap, which is exactly the
-// "526% clamped to 100%" bug this fixes. WindowTokens/TokenCap are left zero
-// on the pushed path since they did not produce UsagePct and reporting them
-// would be misleading. tokenScanner is only ticked on the derived path;
-// WindowTokenScanner.Tick is itself lazy about the pushed-fresh case, so calling it unconditionally would still be correct, just wasted.
-func computeRateLimitState(cfg *config.Config, info *ratelimit.RateLimitInfo, tokenScanner *ratelimit.WindowTokenScanner) state.RateLimitState {
-	rlState := state.RateLimitState{
-		ResetsAt:      info.ResetsAt,
-		RateLimitType: info.RateLimitType,
-		Status:        info.Status,
-	}
+// Seams for the per-window tmux/git lookups so tests can count calls.
+var (
+	paneWorkDirFn = tmux.PaneWorkDir
+	gitBranchFn   = gitBranchForWorkDir
+)
 
-	if info.Source == "statusline" && info.FiveHourUsedPct != nil {
-		rlState.Source = "statusline"
-		rlState.UsagePct = int(math.Round(*info.FiveHourUsedPct))
-		if info.SevenDayUsedPct != nil {
-			sevenDay := *info.SevenDayUsedPct
-			rlState.SevenDayPct = &sevenDay
-			rlState.SevenDayResetsAt = info.SevenDayResetsAt
-		}
-		return rlState
-	}
-
-	rlState.Source = "derived"
-	tokenCap := cfg.RateLimit.EffectiveTokenCap()
-	windowStart := time.Unix(info.ResetsAt, 0).Add(-5 * time.Hour)
-	windowTokens := tokenScanner.Tick(windowStart)
-	usagePct := 0
-	if tokenCap > 0 {
-		usagePct = int(windowTokens * 100 / int64(tokenCap))
-		if usagePct > 100 {
-			usagePct = 100
-		}
-	}
-	rlState.WindowTokens = windowTokens
-	rlState.TokenCap = tokenCap
-	rlState.UsagePct = usagePct
-	return rlState
-}
+// paneWorkDirRefresh bounds how often persistState re-asks tmux for a
+// window's pane cwd; it changes rarely, and state.json only needs it fresh
+// to within a few seconds.
+const paneWorkDirRefresh = 5 * time.Second
 
 // gitBranchForWorkDir returns the current branch checked out in workDir, or
 // "" if workDir is empty, doesn't exist, or isn't a git repo. Uses a short
@@ -1203,7 +1145,11 @@ func (m *monitorModel) persistState(cfg *config.Config, windows []tmux.WindowInf
 		if inst.logPath != "" {
 			sessionID = strings.TrimSuffix(filepath.Base(inst.logPath), ".jsonl")
 		}
-		workDir := tmux.PaneWorkDir(id)
+		if inst.paneWorkDirAt.IsZero() || time.Since(inst.paneWorkDirAt) >= paneWorkDirRefresh {
+			inst.paneWorkDir = paneWorkDirFn(id)
+			inst.paneWorkDirAt = time.Now()
+		}
+		workDir := inst.paneWorkDir
 		var worktreePath string
 		if strings.Contains(workDir, "/.worktrees/") {
 			worktreePath = workDir
@@ -1269,25 +1215,14 @@ func (m *monitorModel) persistState(cfg *config.Config, windows []tmux.WindowInf
 		return cmp.Compare(a.WindowIndex, b.WindowIndex)
 	})
 
-	// Tick the rate limit prober and compute rate limit state.
-	var rlState state.RateLimitState
-	if info := m.rateLimiter.Tick(); info != nil {
-		rlState = computeRateLimitState(cfg, info, m.tokenScanner)
-	}
-
 	if err := state.Save(&state.State{
 		Agents:         agentStates,
 		Timestamp:      time.Now(),
 		ActiveWindowID: activeWindowID,
 		PrefixActive:   tmux.PrefixActive(),
-		RateLimit:      rlState,
 	}); err != nil {
 		logging.Log("monitor: state.Save: %v", err)
 	}
-
-	// Drive HUD rendering in-process using the already-computed agent state,
-	// eliminating the need for a separate hud-server process.
-	chromebar.Tick(agentStates, m.lastHeader, m.lastFooter)
 
 	// Enforce chrome bar pane sizes for all windows (including the shell window
 	// and any window skipped by the per-agent loop above). Throttled to every
@@ -1316,58 +1251,7 @@ func (m *monitorModel) persistState(cfg *config.Config, windows []tmux.WindowInf
 		m.registryEntry = heartbeatOrReregister(m.registryEntry)
 	}
 
-	// Sweep stale pending mailbox messages: every ~5 min (600 ticks × 500 ms).
-	// TTL expiry inside mailbox.DrainFor is lazy -- it only runs when a hook
-	// fires for a still-live window -- so mail addressed to a window that
-	// has since closed (or whose "@N" ID tmux later recycles onto an
-	// unrelated session) would otherwise rot on disk forever with no hook
-	// ever firing to catch it. This is a hard backstop independent of any
-	// hook. Logged at Warn (not Debug) when non-zero: silent cleanup is
-	// exactly how the original unbounded-backlog bug went unnoticed for
-	// days (see docs/agent-messaging-design.md §3).
-	m.mailboxPruneTick++
-	if m.mailboxPruneTick%600 == 0 {
-		go func() {
-			n, err := mailbox.PruneStale(mailbox.MaxPendingAge)
-			if err != nil {
-				logging.Log("monitor: mailbox.PruneStale: %v", err)
-				return
-			}
-			if n > 0 {
-				logging.Warn("monitor: pruned %d stale pending mailbox message(s) older than %s", n, mailbox.MaxPendingAge)
-			}
-		}()
-	}
-
-	// Sweep old session log files: every ~5 min (600 ticks x 500 ms), same
-	// cadence as the mailbox sweep above. Session logs get a brand-new
-	// filename per session, so lumberjack's MaxAge/MaxBackups retention
-	// (which is per-filename) never sees old session log files again to
-	// prune them -- this is the backstop that actually bounds the
-	// directory's total size and file count. protected is built from the
-	// live windows this monitor already has in scope so a log file backing
-	// an active session is never deleted out from under it.
-	m.sessionLogPruneTick++
-	if m.sessionLogPruneTick%600 == 0 {
-		protected := make([]string, 0, len(m.windows))
-		for windowID := range m.windows {
-			ws, err := windowstate.Read(windowID)
-			if err != nil || ws.LogPath == "" {
-				continue
-			}
-			protected = append(protected, ws.LogPath)
-		}
-		go func() {
-			n, err := logging.PruneSessionLogs(logging.MaxSessionLogAge, protected)
-			if err != nil {
-				logging.Log("monitor: logging.PruneSessionLogs: %v", err)
-				return
-			}
-			if n > 0 {
-				logging.Log("monitor: pruned %d stale session log file(s) older than %s", n, logging.MaxSessionLogAge)
-			}
-		}()
-	}
+	m.pruneTick()
 
 	m.firstTick = false
 }
@@ -1454,5 +1338,100 @@ func buildMonitorMeta(inst *instanceState, logPath string) sessions.SessionMeta 
 		FirstUserMessage:  inst.firstUserMessage,
 		FilesEdited:       filesEdited,
 		SourcePath:        logPath,
+	}
+}
+
+// Seams for the periodic prune calls so tests can observe them.
+var (
+	pruneMailboxFn     = mailbox.PruneStale
+	pruneSessionLogsFn = logging.PruneSessionLogs
+)
+
+// protectedSessionLogs returns the agentctl session-log paths
+// (.agentctl/logs/sessions/<session-id>.log) that back live windows, for
+// logging.PruneSessionLogs. A session's log is named after its
+// AGENTCTL_SESSION_ID, which dispatch sets to the Claude session UUID, so we
+// protect <dir>/<id>.log for both the window's recorded SessionID and the
+// UUID in its linked JSONL filename (the two diverge after /clear, while the
+// log file keeps the launch-time name).
+func (m *monitorModel) protectedSessionLogs(read func(string) (windowstate.WindowState, error)) []string {
+	dir := paths.SessionLogDir()
+	if dir == "" {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var out []string
+	add := func(id string) {
+		if id == "" {
+			return
+		}
+		p := filepath.Join(dir, id+".log")
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	for windowID, inst := range m.windows {
+		if inst.logPath != "" {
+			add(strings.TrimSuffix(filepath.Base(inst.logPath), ".jsonl"))
+		}
+		if ws, err := read(windowID); err == nil {
+			add(ws.SessionID)
+			if ws.LogPath != "" {
+				add(strings.TrimSuffix(filepath.Base(ws.LogPath), ".jsonl"))
+			}
+		}
+	}
+	return out
+}
+
+// pruneTick runs the throttled mailbox and session-log sweeps. It is called
+// once per tick before firstTick is cleared, so a fresh monitor sweeps on its
+// first tick instead of waiting ~5 minutes.
+func (m *monitorModel) pruneTick() {
+	// Sweep stale pending mailbox messages: every ~5 min (600 ticks × 500 ms).
+	// TTL expiry inside mailbox.DrainFor is lazy -- it only runs when a hook
+	// fires for a still-live window -- so mail addressed to a window that
+	// has since closed (or whose "@N" ID tmux later recycles onto an
+	// unrelated session) would otherwise rot on disk forever with no hook
+	// ever firing to catch it. This is a hard backstop independent of any
+	// hook. Logged at Warn (not Debug) when non-zero: silent cleanup is
+	// exactly how the original unbounded-backlog bug went unnoticed for
+	// days (see docs/agent-messaging-design.md §3).
+	m.mailboxPruneTick++
+	if m.firstTick || m.mailboxPruneTick%600 == 0 {
+		go func() {
+			n, err := pruneMailboxFn(mailbox.MaxPendingAge)
+			if err != nil {
+				logging.Log("monitor: mailbox.PruneStale: %v", err)
+				return
+			}
+			if n > 0 {
+				logging.Warn("monitor: pruned %d stale pending mailbox message(s) older than %s", n, mailbox.MaxPendingAge)
+			}
+		}()
+	}
+
+	// Sweep old session log files: every ~5 min (600 ticks x 500 ms), same
+	// cadence as the mailbox sweep above. Session logs get a brand-new
+	// filename per session, so lumberjack's MaxAge/MaxBackups retention
+	// (which is per-filename) never sees old session log files again to
+	// prune them -- this is the backstop that actually bounds the
+	// directory's total size and file count. protected is built from the
+	// live windows this monitor already has in scope so a log file backing
+	// an active session is never deleted out from under it.
+	m.sessionLogPruneTick++
+	if m.firstTick || m.sessionLogPruneTick%600 == 0 {
+		protected := m.protectedSessionLogs(windowstate.Read)
+		go func() {
+			n, err := pruneSessionLogsFn(logging.MaxSessionLogAge, protected)
+			if err != nil {
+				logging.Log("monitor: logging.PruneSessionLogs: %v", err)
+				return
+			}
+			if n > 0 {
+				logging.Log("monitor: pruned %d stale session log file(s) older than %s", n, logging.MaxSessionLogAge)
+			}
+		}()
 	}
 }

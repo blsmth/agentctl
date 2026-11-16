@@ -12,8 +12,7 @@ import (
 )
 
 // pushedFreshness is how recent ~/.local/state/agentctl/ratelimits.json must be
-// for RateLimitProber.Tick to trust it instead of running the API-consuming
-// probe.
+// for Fresh to report it as current.
 const pushedFreshness = 15 * time.Minute
 
 // PushedWindow mirrors one rate_limits.{five_hour,seven_day,spend_limit}
