@@ -547,3 +547,23 @@ func WindowIDForPane(pane string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+// KillSessionWindow destroys the window windowID in its home session, which
+// also removes any link of it (e.g. into the hub). It refuses the hub session
+// itself and anything that is not a "@N" window ID, so the hub can never close
+// its own list window. Pane process groups are SIGTERMed like KillWindow.
+func KillSessionWindow(session, windowID string) error {
+	if session == "" || session == HubSessionName {
+		return fmt.Errorf("refusing to close a window in session %q", session)
+	}
+	if !strings.HasPrefix(windowID, "@") {
+		return fmt.Errorf("invalid window id %q", windowID)
+	}
+	target := sessionWindowTarget(session, windowID)
+	paneOut, _ := exec.Command("tmux", "list-panes", "-t", target, "-F", "#{pane_pid}").Output()
+	if out, err := exec.Command("tmux", "kill-window", "-t", target).CombinedOutput(); err != nil {
+		return fmt.Errorf("kill-window: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	sigTermPaneGroups(string(paneOut))
+	return nil
+}

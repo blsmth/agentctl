@@ -4,12 +4,14 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/state"
+	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // ── Narrow-terminal fallback threshold ───────────────────────────────────────
@@ -779,5 +781,106 @@ func TestHerdLiveOff_NoViewerCmd(t *testing.T) {
 	// Off: maybeCaptureCmd is the capture-pane preview, and liveShown is untouched.
 	if m.maybeCaptureCmd() == nil || m.liveShown != "" {
 		t.Error("off mode must use the capture preview only")
+	}
+}
+
+func TestHerdLaunchEnv(t *testing.T) {
+	g := herd.Group{Session: "agentctl-proj", RuntimeDir: "/p/proj/.agentctl", ProjectDir: "/p/proj"}
+	parent := []string{
+		"PATH=/usr/bin",
+		"HOME=/h",
+		"AGENTCTL_RUNTIME_DIR=/hub/.agentctl",
+		"AGENTCTL_INSTANCE=hub",
+		"AGENTCTL_SESSION_ID=abc",
+		"AGENTCTL_WINDOW_ID=@9",
+		"TMUX_PANE=%3",
+		"TMUX=/tmp/tmux-1/default,1,0",
+		"AGENTCTL_INSTANCE_NAME=keep-me",
+	}
+	got := herdLaunchEnv(g, parent)
+	want := []string{"PATH=/usr/bin", "HOME=/h", "TMUX=/tmp/tmux-1/default,1,0", "AGENTCTL_INSTANCE_NAME=keep-me", "AGENTCTL_RUNTIME_DIR=/p/proj/.agentctl"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("env = %v, want %v", got, want)
+	}
+	if len(herdLaunchEnv(g, nil)) != 1 {
+		t.Error("nil parent should yield only RUNTIME_DIR")
+	}
+}
+
+func TestCloseConfirmStateMachine(t *testing.T) {
+	m := mouseTestModel(t, 120, 40)
+	m.selectLine(1) // row a (s1/@1)
+
+	// start
+	m.startClose(1)
+	if !m.closeArmed() || m.confirmWindow != "@1" {
+		t.Fatalf("start: armed=%v win=%q", m.closeArmed(), m.confirmWindow)
+	}
+	// start on a header does nothing
+	m2 := mouseTestModel(t, 120, 40)
+	m2.startClose(0)
+	if m2.closeArmed() {
+		t.Error("header must not arm close")
+	}
+	// moving selection away cancels
+	m.moveCursor(1)
+	if m.closeArmed() {
+		t.Error("moving selection should cancel")
+	}
+	// key flow: x arms, n cancels, x y confirms
+	m.selectLine(1)
+	var model tea.Model = m
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if !model.(HerdModel).closeArmed() {
+		t.Fatal("x should arm")
+	}
+	model, cmd := model.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	if model.(HerdModel).closeArmed() || cmd != nil {
+		t.Error("n should cancel without launching")
+	}
+	model, _ = model.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	model, cmd = model.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
+	if model.(HerdModel).closeArmed() || cmd == nil {
+		t.Error("y should confirm: disarm and return close cmd")
+	}
+	if !strings.Contains(model.(HerdModel).infoMsg, "closing a") {
+		t.Errorf("info = %q", model.(HerdModel).infoMsg)
+	}
+}
+
+func TestRowCanCloseAndGroupCanLaunch(t *testing.T) {
+	mk := func(sess, win string) herd.Row {
+		r := testRow("x", sess, "idle", "")
+		r.WindowID = win
+		return r
+	}
+	if rowCanClose(mk(tmux.HubSessionName, "@1")) {
+		t.Error("hub rows must never be closable")
+	}
+	if rowCanClose(mk("s", "shell")) {
+		t.Error("non-@ window ids rejected")
+	}
+	if !rowCanClose(mk("s", "@2")) {
+		t.Error("normal row closable")
+	}
+	if groupCanLaunch(herd.Group{Stale: true, ProjectDir: "/p", RuntimeDir: "/p/.agentctl"}) {
+		t.Error("stale group must not launch")
+	}
+	if groupCanLaunch(herd.Group{ProjectDir: "/p"}) {
+		t.Error("group without runtime dir must not launch")
+	}
+}
+
+func TestNKeyLaunchesInSelectedGroup(t *testing.T) {
+	m := buttonTestModel(t)
+	m.selectLine(2) // row b in s1
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	if cmd == nil || !strings.Contains(next.(HerdModel).infoMsg, "s1") {
+		t.Errorf("n on a row should launch in its group; info=%q", next.(HerdModel).infoMsg)
+	}
+	m.selectLine(5) // row c in stale s2
+	next, cmd = m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	if cmd != nil || next.(HerdModel).jumpErr == "" {
+		t.Error("n in stale group should error without launching")
 	}
 }

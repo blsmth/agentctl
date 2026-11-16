@@ -187,9 +187,13 @@ type LaunchCmd struct {
 	Name       string `arg:"" optional:"" help:"Agent name to launch (reads default_agent from config if omitted)"`
 	NoWorktree bool   `name:"no-worktree" help:"Launch directly in the main checkout instead of an isolated git worktree"`
 	Backend    string `help:"Named backend from config (Ollama, Nous Portal); 'none' forces Anthropic"`
+	Background bool   `help:"Create the window without switching to it"`
 }
 
-func (c *LaunchCmd) Run() error { cmd.RunLaunch(c.Name, c.NoWorktree, c.Backend); return nil }
+func (c *LaunchCmd) Run() error {
+	cmd.RunLaunch(c.Name, c.NoWorktree, c.Backend, c.Background)
+	return nil
+}
 
 // BackendCmd groups the credential commands for nous backends.
 type BackendCmd struct {

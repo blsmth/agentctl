@@ -245,6 +245,17 @@ type HerdModel struct {
 	// alongside jumpErr but without the error styling; see renderFooter.
 	infoMsg string
 
+	// confirmSession/confirmWindow identify the row awaiting inline close
+	// confirmation ("close <name>? y/n"); empty when none. Cleared whenever
+	// the selection moves off that row.
+	confirmSession string
+	confirmWindow  string
+
+	// menuOpen/menuLine: the right-click context menu (rendered in the footer)
+	// and the line it was opened on.
+	menuOpen bool
+	menuLine int
+
 	// live is the spike toggle: when on, the right side of the hub window is a
 	// nested tmux client on a grouped viewer session (tmux.ShowLiveViewer)
 	// instead of the capture-pane preview. liveShown is the "session|window"
@@ -346,6 +357,26 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.linkedWindowIDs = msg.ids
 		return m, nil
 
+	case herdLaunchedMsg:
+		if msg.err != nil {
+			m.infoMsg = ""
+			m.jumpErr = msg.err.Error()
+			return m, nil
+		}
+		m.jumpErr = ""
+		m.infoMsg = "launched new agent in " + msg.session
+		return m, herdLoadCmd()
+
+	case herdClosedMsg:
+		if msg.err != nil {
+			m.infoMsg = ""
+			m.jumpErr = msg.err.Error()
+			return m, herdLoadCmd()
+		}
+		m.jumpErr = ""
+		m.infoMsg = "closed " + msg.name + " (worktree kept; see agentctl sweep)"
+		return m, tea.Batch(herdLoadCmd(), herdLinkedCmd())
+
 	case herdLoadedMsg:
 		m.loaded = true
 		m.loadErr = msg.err
@@ -380,7 +411,37 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.menuOpen {
+		key := msg.String()
+		if key == "esc" || key == "q" {
+			m.menuOpen = false
+			return *m, nil
+		}
+		for _, it := range m.herdMenuItems(m.menuLine) {
+			if it.key == key {
+				return *m, m.runMenuKey(key)
+			}
+		}
+		m.menuOpen = false
+		return *m, nil
+	}
+	if m.closeArmed() {
+		switch msg.String() {
+		case "y", "Y":
+			return *m, m.confirmClose()
+		case "n", "N", "esc":
+			m.cancelClose()
+			return *m, nil
+		}
+	}
 	switch msg.String() {
+	case "n":
+		return *m, m.launchForLine(m.splitPane.Cursor())
+
+	case "x":
+		m.startClose(m.splitPane.Cursor())
+		return *m, nil
+
 	case "ctrl+c":
 		m.quitting = true
 		return *m, tea.Quit
@@ -544,6 +605,12 @@ func (m *HerdModel) syncSelectionFromCursor() {
 	defer func() {
 		if m.selSession != prevSession || m.selWindowID != prevWindow {
 			m.previewUp = 0
+		}
+		if m.closeArmed() && (m.selSession != m.confirmSession || m.selWindowID != m.confirmWindow) {
+			m.cancelClose()
+		}
+		if m.menuOpen && m.splitPane.Cursor() != m.menuLine {
+			m.menuOpen = false
 		}
 	}()
 	idx := m.splitPane.Cursor()
@@ -893,6 +960,9 @@ func (m HerdModel) renderFooter(cw int) string {
 	var b strings.Builder
 	b.WriteString("\n")
 	switch {
+	case m.menuOpen:
+		text, _ := menuItemSpans(m.herdMenuItems(m.menuLine))
+		b.WriteString(herdBlockedStyle.Render(truncateToWidth(text+"   esc", cw)))
 	case m.jumpErr != "":
 		b.WriteString(herdErrStyle.Render("  " + truncateToWidth(m.jumpErr, cw-2)))
 	case m.infoMsg != "":
@@ -907,6 +977,8 @@ func (m HerdModel) renderFooter(cw int) string {
 		menuHintKeyStyle.Render("enter") + " " + menuHintLabelStyle.Render("open"),
 		menuHintKeyStyle.Render("J") + " " + menuHintLabelStyle.Render("home"),
 		menuHintKeyStyle.Render("u") + " " + menuHintLabelStyle.Render("unlink"),
+		menuHintKeyStyle.Render("n") + " " + menuHintLabelStyle.Render("new"),
+		menuHintKeyStyle.Render("x") + " " + menuHintLabelStyle.Render("close"),
 		menuHintKeyStyle.Render("b") + " " + menuHintLabelStyle.Render("blocked"),
 		menuHintKeyStyle.Render("r") + " " + menuHintLabelStyle.Render("refresh"),
 		menuHintKeyStyle.Render("v") + " " + menuHintLabelStyle.Render(liveHint(m.live)),
@@ -1103,6 +1175,15 @@ func (m HerdModel) renderGroupHeader(g herd.Group, selected bool, cw int) string
 	if g.Stale {
 		line += "  " + herdDimStyle.Render(herdStaleMarker)
 	}
+	if groupCanLaunch(g) {
+		btnW := lipgloss.Width(herdNewLabel)
+		line = truncateToWidth(line, cw-herdSidebarRightGutter-btnW-1)
+		pad := cw - herdSidebarRightGutter - btnW - lipgloss.Width(line)
+		if pad < 1 {
+			pad = 1
+		}
+		line += strings.Repeat(" ", pad) + herdDimStyle.Render(herdNewLabel)
+	}
 	line = truncateToWidth(line, cw)
 	if selected {
 		return herdSelectedStyle.Width(cw).Render(line)
@@ -1166,7 +1247,7 @@ func (m HerdModel) renderRow(r herd.Row, selected bool, stale bool, cw int) stri
 	// lipgloss.Width, never len, since ANSI styling and any multi-byte
 	// runes would otherwise miscount and overflow the terminal width.
 	glyphStr := style.Render(glyph)
-	overhead := lipgloss.Width(cursor) + lipgloss.Width(glyphStr) + 1 /* space */ + lipgloss.Width(linkedMarker) + 2 /* gap before activity */
+	overhead := lipgloss.Width(cursor) + lipgloss.Width(glyphStr) + 1 /* space */ + lipgloss.Width(linkedMarker) + 2 /* gap before activity */ + 1 + lipgloss.Width(herdCloseLabel) /* close button */
 	nameBudget := cw - overhead
 	if nameBudget > herdMaxNameWidth {
 		nameBudget = herdMaxNameWidth
@@ -1178,13 +1259,27 @@ func (m HerdModel) renderRow(r herd.Row, selected bool, stale bool, cw int) stri
 
 	prefix := cursor + glyphStr + " " + nameStyle.Render(name) + linkedMarker + "  "
 	prefixW := lipgloss.Width(prefix)
-	available := cw - prefixW - herdSidebarRightGutter
+	// Reserve " ✕" at the right edge, ahead of the gutter.
+	closeW := 1 + lipgloss.Width(herdCloseLabel)
+	available := cw - prefixW - herdSidebarRightGutter - closeW
 	if available < 0 {
 		available = 0
 	}
-	activity := truncateToWidth(herd.ActivityLine(r), available)
+	closeStyle := herdDimStyle
+	var activityStr string
+	if m.confirmingRow(r) {
+		activityStr = herdBlockedStyle.Render(truncateToWidth("close "+r.Name+"? y/n", available))
+		closeStyle = herdBlockedStyle
+	} else {
+		activityStr = activityStyle.Render(truncateToWidth(herd.ActivityLine(r), available))
+	}
 
-	line := prefix + activityStyle.Render(activity)
+	line := prefix + activityStr
+	pad := cw - herdSidebarRightGutter - closeW - lipgloss.Width(line)
+	if pad < 0 {
+		pad = 0
+	}
+	line += strings.Repeat(" ", pad) + " " + closeStyle.Render(herdCloseLabel)
 	if selected {
 		return herdSelectedStyle.Width(cw).Render(line)
 	}

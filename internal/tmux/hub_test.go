@@ -336,3 +336,21 @@ func TestTrimTrailingBlankLines(t *testing.T) {
 		})
 	}
 }
+
+func TestKillSessionWindow_Guards(t *testing.T) {
+	tests := []struct {
+		name, session, window string
+	}{
+		{"hub session refused", HubSessionName, "@1"},
+		{"empty session refused", "", "@1"},
+		{"non window id refused", "agentctl-x", "shell"},
+		{"empty window refused", "agentctl-x", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := KillSessionWindow(tt.session, tt.window); err == nil {
+				t.Error("expected refusal")
+			}
+		})
+	}
+}
