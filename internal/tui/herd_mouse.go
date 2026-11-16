@@ -4,15 +4,20 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // herdClickAction is what a mouse click on the hub should do. Clicks never
-// open an agent; only Enter (or J) does.
+// open an agent; only Enter (or J) does. The only side effects are the
+// explicit "+ new" / "✕" buttons and the right-click menu.
 type herdClickAction int
 
 const (
 	herdClickIgnore herdClickAction = iota // nothing happens
 	herdClickSelect                        // move the cursor only, like j/k
+	herdClickNew                           // header's "+ new" button: launch in that group
+	herdClickClose                         // row's "✕" button: arm / confirm close
+	herdClickMenu                          // right click: open the context menu
 )
 
 // herdListTop returns the screen row where the list (or sidebar) begins: the
@@ -69,15 +74,65 @@ func (m HerdModel) lineAt(x, y int) (idx int, inDetail bool, ok bool) {
 	return idx, false, true
 }
 
+// listColWidth is the width of the list column lines are rendered at.
+func (m HerdModel) listColWidth() int {
+	if useSplitLayout(m.termWidth) {
+		return m.splitPane.ListWidth()
+	}
+	return m.contentWidth()
+}
+
+// onNewButton reports whether column x hits a header's right-aligned "+ new"
+// button (with one column of slack either side).
+func (m HerdModel) onNewButton(x int) bool {
+	end := m.listColWidth() - herdSidebarRightGutter
+	return x >= end-lipgloss.Width(herdNewLabel)-1 && x < end+1
+}
+
+// onCloseButton reports whether column x hits a row's right-aligned "✕"
+// (with slack that includes the gutter).
+func (m HerdModel) onCloseButton(x int) bool {
+	w := m.listColWidth()
+	return x >= w-herdSidebarRightGutter-lipgloss.Width(herdCloseLabel)-2 && x < w
+}
+
 // clickDecision resolves a left click at (x, y) to a target line and action.
 // idx is -1 when the click is ignored, including clicks in the detail panel.
 func (m HerdModel) clickDecision(x, y int) (idx int, action herdClickAction) {
+	return m.buttonDecision(x, y, tea.MouseLeft)
+}
+
+// buttonDecision resolves a click with the given button. Right click on a
+// row or header opens the context menu; left click on a header's "+ new" or a
+// row's "✕" triggers that button, anything else on a line just selects it.
+func (m HerdModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, action herdClickAction) {
 	idx, inDetail, ok := m.lineAt(x, y)
 	if !ok || inDetail {
 		return -1, herdClickIgnore
 	}
-	switch m.lines[idx].kind {
-	case herdLineRow, herdLineHeader, herdLinePlaceholder:
+	l := m.lines[idx]
+	switch button {
+	case tea.MouseRight:
+		if l.kind == herdLineRow || l.kind == herdLineHeader {
+			return idx, herdClickMenu
+		}
+		return idx, herdClickIgnore
+	case tea.MouseLeft:
+	default:
+		return -1, herdClickIgnore
+	}
+	switch l.kind {
+	case herdLineHeader:
+		if groupCanLaunch(l.group) && m.onNewButton(x) {
+			return idx, herdClickNew
+		}
+		return idx, herdClickSelect
+	case herdLineRow:
+		if m.onCloseButton(x) {
+			return idx, herdClickClose
+		}
+		return idx, herdClickSelect
+	case herdLinePlaceholder:
 		return idx, herdClickSelect
 	}
 	return idx, herdClickIgnore
@@ -92,31 +147,66 @@ func (m *HerdModel) selectLine(idx int) {
 }
 
 func (m HerdModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
-	if msg.Button != tea.MouseLeft {
-		return m, nil
+	if msg.Button == tea.MouseLeft && m.menuOpen && msg.Y == m.footerMessageY() {
+		return m.clickMenu(msg.X)
 	}
-	idx, action := m.clickDecision(msg.X, msg.Y)
-	if action != herdClickSelect {
-		return m, nil
+	idx, action := m.buttonDecision(msg.X, msg.Y, msg.Button)
+	switch action {
+	case herdClickSelect:
+		m.menuOpen = false
+		m.selectLine(idx)
+		return m, m.maybeCaptureCmd()
+	case herdClickNew:
+		m.menuOpen = false
+		m.selectLine(idx)
+		return m, m.launchForLine(idx)
+	case herdClickClose:
+		m.menuOpen = false
+		if m.confirmingRow(m.lines[idx].row) {
+			return m, m.confirmClose() // second click on the armed ✕
+		}
+		m.selectLine(idx)
+		m.startClose(idx)
+		return m, m.maybeCaptureCmd()
+	case herdClickMenu:
+		m.openMenu(idx)
+		return m, m.maybeCaptureCmd()
 	}
-	m.selectLine(idx)
-	return m, m.maybeCaptureCmd()
+	m.menuOpen = false
+	return m, nil
 }
 
+// clickMenu handles a left click on the footer's context-menu line.
+func (m HerdModel) clickMenu(x int) (tea.Model, tea.Cmd) {
+	items := m.herdMenuItems(m.menuLine)
+	_, spans := menuItemSpans(items)
+	for i, sp := range spans {
+		if x >= sp[0] && x < sp[1] {
+			return m, m.runMenuKey(items[i].key)
+		}
+	}
+	m.menuOpen = false
+	return m, nil
+}
+
+// handleWheel scrolls the preview when the wheel is over the detail panel;
+// over the list it does nothing (a wheel notch moving the cursor was chaotic).
 func (m HerdModel) handleWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if !m.clickable() {
 		return m, nil
 	}
-	if _, _, ok := m.lineAt(msg.X, msg.Y); !ok {
+	_, inDetail, ok := m.lineAt(msg.X, msg.Y)
+	if !ok || !inDetail {
 		return m, nil
 	}
 	switch msg.Button {
 	case tea.MouseWheelUp:
-		m.moveCursor(-1)
+		m.previewUp += herdWheelStep
 	case tea.MouseWheelDown:
-		m.moveCursor(1)
-	default:
-		return m, nil
+		m.previewUp -= herdWheelStep
+		if m.previewUp < 0 {
+			m.previewUp = 0
+		}
 	}
-	return m, m.maybeCaptureCmd()
+	return m, nil
 }
