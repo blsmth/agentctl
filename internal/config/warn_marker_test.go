@@ -41,15 +41,15 @@ func TestIgnoredKeysWarnOncePerContents(t *testing.T) {
 			dir := t.TempDir()
 			gp := filepath.Join(dir, "global.json")
 			pp := filepath.Join(dir, "rt", "config.json")
-			os.MkdirAll(filepath.Dir(pp), 0o700)
-			os.WriteFile(gp, []byte(`{}`), 0o600)
-			os.WriteFile(pp, []byte(staleProject), 0o600)
+			mustMkdir(t, filepath.Dir(pp))
+			mustWrite(t, gp, []byte(`{}`))
+			mustWrite(t, pp, []byte(staleProject))
 			setTestPaths(t, pp, gp)
 			resetWarned()
 			Load()
 			Load() // same process: warnedKeys
 			resetWarned()
-			os.WriteFile(pp, []byte(tt.second), 0o600)
+			mustWrite(t, pp, []byte(tt.second))
 			cfg := Load()
 			if cfg.NotifyCmd != nil || cfg.AutoPoll {
 				t.Fatalf("keys not stripped: %+v", cfg)
@@ -70,11 +70,13 @@ func TestIgnoredKeysUnwritableMarkerStillLogsAndStrips(t *testing.T) {
 	gp := filepath.Join(dir, "global.json")
 	rt := filepath.Join(dir, "rt")
 	pp := filepath.Join(rt, "config.json")
-	os.MkdirAll(rt, 0o700)
-	os.WriteFile(gp, []byte(`{}`), 0o600)
-	os.WriteFile(pp, []byte(staleProject), 0o600)
-	os.Chmod(rt, 0o500)
-	t.Cleanup(func() { os.Chmod(rt, 0o700) })
+	mustMkdir(t, rt)
+	mustWrite(t, gp, []byte(`{}`))
+	mustWrite(t, pp, []byte(staleProject))
+	if err := os.Chmod(rt, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(rt, 0o700) })
 	setTestPaths(t, pp, gp)
 	for i := 0; i < 2; i++ {
 		resetWarned()
@@ -85,5 +87,19 @@ func TestIgnoredKeysUnwritableMarkerStillLogsAndStrips(t *testing.T) {
 	}
 	if got := countIgnoring(t); got != 2 {
 		t.Errorf("logged %d times, want 2 (fail loud)", got)
+	}
+}
+
+func mustMkdir(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustWrite(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

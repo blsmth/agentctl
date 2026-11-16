@@ -883,11 +883,11 @@ func mergeConfig(base, overlay *Config) {
 // the same ignored key would otherwise flood the log.
 var warnedKeys sync.Map
 
-// warnMarkerName is the dedupe marker, stored beside the project config (the
-// project runtime dir in production).
 // warnLog is logging.Log, swappable in tests.
 var warnLog = logging.Log
 
+// warnMarkerName is the dedupe marker, stored beside the project config (the
+// project runtime dir in production).
 const warnMarkerName = "config-warned"
 
 // logIgnoredKeys emits one summary line for the global-only keys stripped from
