@@ -358,6 +358,9 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		show := m.maybeShowCmd()
 		return m, tea.Batch(herdLoadCmd(), herdTickCmd(), show)
 
+	case herdFocusErrMsg:
+		m.jumpErr = msg.err.Error()
+		return m, nil
 	case herdLiveMsg:
 		if msg.err != nil {
 			// No fallback: surface the error; the next selection change retries.
@@ -865,10 +868,16 @@ func (m *HerdModel) ensureCursorVisible() {
 
 // ── Jump ─────────────────────────────────────────────────────────────────────
 
+// tmux seams, overridden in tests.
+var (
+	switchToSessionWindow = tmux.SwitchToSessionWindow
+	focusLivePane         = tmux.FocusLivePane
+)
+
 // focusLive is Enter's and tab's action: move tmux focus to the live pane so
 // keystrokes go to the viewed agent. Prefix+o returns to the list.
 func (m *HerdModel) focusLive() (tea.Model, tea.Cmd) {
-	if err := tmux.FocusLivePane(); err != nil {
+	if err := focusLivePane(); err != nil {
 		m.jumpErr = err.Error()
 	}
 	return *m, nil
@@ -885,7 +894,7 @@ func (m *HerdModel) jumpToSelectedHome() (tea.Model, tea.Cmd) {
 	if r == nil {
 		return *m, nil
 	}
-	if err := tmux.SwitchToSessionWindow(r.Session, r.WindowID); err != nil {
+	if err := switchToSessionWindow(r.Session, r.WindowID); err != nil {
 		m.jumpErr = err.Error()
 		return *m, herdLoadCmd()
 	}
@@ -894,32 +903,46 @@ func (m *HerdModel) jumpToSelectedHome() (tea.Model, tea.Cmd) {
 	return *m, nil
 }
 
-// jumpToNextBlocked jumps to the first blocked agent across all sessions,
-// using the same internal/herd ordering the view itself renders with, and
-// moves the sidebar cursor to match so the highlighted row agrees with
-// wherever the user just jumped.
+// jumpToNextBlocked selects the first blocked agent across all sessions,
+// using the same internal/herd ordering the view itself renders with, shows
+// it in the live pane, and moves tmux focus there so the user can answer the
+// prompt immediately. It never switches the client out of the hub; J is the
+// explicit way to leave.
 func (m *HerdModel) jumpToNextBlocked() (tea.Model, tea.Cmd) {
 	r := herd.FirstBlocked(m.groups)
 	if r == nil {
 		m.jumpErr = "no blocked agents"
 		return *m, nil
 	}
-	if err := tmux.SwitchToSessionWindow(r.Session, r.WindowID); err != nil {
-		m.jumpErr = err.Error()
-		return *m, herdLoadCmd()
-	}
-	m.jumpErr = ""
+	found := false
 	for i, l := range m.lines {
 		if l.kind == herdLineRow && l.row.Session == r.Session && l.row.WindowID == r.WindowID {
 			m.splitPane.SetCursor(i)
+			found = true
 			break
 		}
 	}
+	if !found {
+		m.jumpErr = "blocked agent not in the list"
+		return *m, herdLoadCmd()
+	}
+	m.jumpErr = ""
 	m.syncSelectionFromCursor()
 	m.ensureCursorVisible()
-	show := m.maybeShowCmd()
-	return *m, show
+	focus := func() tea.Msg {
+		if err := focusLivePane(); err != nil {
+			return herdFocusErrMsg{err: err}
+		}
+		return nil
+	}
+	if show := m.maybeShowCmd(); show != nil {
+		return *m, tea.Sequence(show, focus)
+	}
+	return *m, focus
 }
+
+// herdFocusErrMsg reports a failure to move focus to the live pane.
+type herdFocusErrMsg struct{ err error }
 
 // ── Line model construction ──────────────────────────────────────────────────
 

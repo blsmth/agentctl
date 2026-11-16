@@ -68,7 +68,7 @@ agentctl binds only the keys below; tmux's defaults (`n` next window, `0`–`9` 
 | Key | Action |
 |-----|--------|
 | `g` | **Summon hub** — open the herd hub (`agentctl hub`), a cross-session dashboard of every agentctl session on the machine. Creates the `agentctl-hub` tmux session if it doesn't exist yet. |
-| `b` | **Jump to next blocked** — switch straight to the first blocked agent across every session (`agentctl jump-next-blocked`), from anywhere — not just the hub. |
+| `b` | **Jump to next blocked** — switch straight to the first blocked agent across every session (`agentctl jump-next-blocked`), from anywhere. Inside the hub it stays in the hub: the blocked row is selected and focus moves to the live pane. |
 
 These two keys are bound server-globally (tmux `bind-key` has no session
 scope), so they work identically from inside the hub itself and from every

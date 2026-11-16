@@ -445,9 +445,13 @@ func (c *HubViewCmd) Run() error { cmd.RunHubView(); return nil }
 
 // JumpNextBlockedCmd finds the first blocked agent across every live
 // agentctl session and switches to it. Works from any session.
-type JumpNextBlockedCmd struct{}
+type JumpNextBlockedCmd struct {
+	// ClientSession is the invoking client's session (the prefix+b binding
+	// passes #{client_session}); when it is the hub the hub does the jump.
+	ClientSession string `name:"client-session" hidden:"" help:"Invoking client's tmux session"`
+}
 
-func (c *JumpNextBlockedCmd) Run() error { cmd.RunJumpNextBlocked(); return nil }
+func (c *JumpNextBlockedCmd) Run() error { cmd.RunJumpNextBlocked(c.ClientSession); return nil }
 
 // ---------------------------------------------------------------------------
 // Tickets

@@ -206,3 +206,12 @@ func TestKillSessionWindow_Guards(t *testing.T) {
 		})
 	}
 }
+
+func TestParseListPane(t *testing.T) {
+	if got := parseListPane("%1 1\n%0 \n"); got != "%0" {
+		t.Errorf("got %q, want %%0", got)
+	}
+	if got := parseListPane("%1 1\n"); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
