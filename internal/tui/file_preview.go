@@ -283,6 +283,8 @@ func (m FilePreviewModel) View() tea.View {
 	out.WriteString(filePreviewHintStyle.Width(width).Render(hint))
 
 	v := tea.NewView(out.String())
+	// Alt screen: overflow must never scroll the inline renderer.
+	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }

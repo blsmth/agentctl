@@ -33,7 +33,7 @@ func popupFields(t *testing.T, cmd string) []string {
 func TestFilePreviewPopupCmdRoundTrips(t *testing.T) {
 	for _, v := range hostilePopupValues {
 		t.Run(v, func(t *testing.T) {
-			cmd := filePreviewPopupCmd(v, v+"-tmp", v+"-file", v+"-agent", 80, 24)
+			cmd := filePreviewPopupCmd(v, v+"-tmp", v+"-file", v+"-agent", 80, 24, v+"-res")
 			want := []string{
 				v, "file-preview",
 				"--path", v + "-tmp",
@@ -41,6 +41,7 @@ func TestFilePreviewPopupCmdRoundTrips(t *testing.T) {
 				"--agent", v + "-agent",
 				"--content-width", "80",
 				"--vp-height", "24",
+				"--result-file", v + "-res",
 			}
 			if got := popupFields(t, cmd); !slices.Equal(got, want) {
 				t.Errorf("filePreviewPopupCmd = %s\n tokenizes to %q\n want         %q", cmd, got, want)
@@ -52,8 +53,8 @@ func TestFilePreviewPopupCmdRoundTrips(t *testing.T) {
 func TestDispatchPreviewPopupCmdRoundTrips(t *testing.T) {
 	for _, v := range hostilePopupValues {
 		t.Run(v, func(t *testing.T) {
-			cmd := dispatchPreviewPopupCmd(v, v+"/args.json")
-			want := []string{v, "dispatch-preview", "--args-file", v + "/args.json"}
+			cmd := dispatchPreviewPopupCmd(v, v+"/args.json", v+"/args.json.result")
+			want := []string{v, "dispatch-preview", "--args-file", v + "/args.json", "--result-file", v + "/args.json.result"}
 			if got := popupFields(t, cmd); !slices.Equal(got, want) {
 				t.Errorf("dispatchPreviewPopupCmd = %s\n tokenizes to %q\n want         %q", cmd, got, want)
 			}

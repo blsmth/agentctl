@@ -394,7 +394,7 @@ func cmdThemePicker() {
 // the popup-sizing inputs resolved from the attached tmux client's
 // dimensions by the hook (0 => use the model's own defaults).
 // Exits 0 if the user allows, exits 1 if the user denies.
-func runCmdFilePreview(path, name, agentName string, contentWidth, vpHeight int) {
+func runCmdFilePreview(path, name, agentName string, contentWidth, vpHeight int, resultFile string) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "file-preview: read %s: %v\n", path, err)
@@ -415,6 +415,7 @@ func runCmdFilePreview(path, name, agentName string, contentWidth, vpHeight int)
 	}
 
 	fm := finalModel.(tui.FilePreviewModel)
+	writePreviewVerdict("file-preview", resultFile, fm.Decision())
 	if fm.Decision() == "allow" {
 		os.Exit(0)
 	}
@@ -425,7 +426,7 @@ func runCmdFilePreview(path, name, agentName string, contentWidth, vpHeight int)
 // runCmdDispatchPreview runs the dispatch-preview popup inside a tmux display-popup.
 // The args are read from the JSON temp file at argsFile.
 // Exits 0 if the user allows, exits 1 if the user denies.
-func runCmdDispatchPreview(argsFile string) {
+func runCmdDispatchPreview(argsFile, resultFile string) {
 	data, err := os.ReadFile(argsFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "dispatch-preview: read %s: %v\n", argsFile, err)
@@ -453,11 +454,24 @@ func runCmdDispatchPreview(argsFile string) {
 	}
 
 	dm := finalModel.(tui.DispatchPreviewModel)
+	writePreviewVerdict("dispatch-preview", resultFile, dm.Decision())
 	if dm.Decision() == "allow" {
 		os.Exit(0)
 	}
 	// deny or empty (user closed without deciding) → exit 1
 	os.Exit(1)
+}
+
+// writePreviewVerdict records the popup's decision for the hook that opened it.
+// The hook trusts only this file, never the exit code. Anything but "allow"
+// (including no decision) is recorded as "deny".
+func writePreviewVerdict(name, resultFile, decision string) {
+	if decision != "allow" {
+		decision = "deny"
+	}
+	if err := hooks.WritePopupResult(resultFile, decision); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: write result: %v\n", name, err)
+	}
 }
 
 // isHookCmd reports whether the subcommand is a hook handler.

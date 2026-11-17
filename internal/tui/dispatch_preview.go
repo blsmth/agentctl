@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/blsmth/agentctl/internal/highlight"
+	"github.com/blsmth/agentctl/internal/textutil"
 	"github.com/blsmth/agentctl/internal/theme"
 )
 
@@ -329,11 +330,12 @@ func (m DispatchPreviewModel) effectiveContentWidth() int {
 // layout there changes, update both):
 //
 //	collapsed content lines = title(1) + blank(1) + metadata(3) + blank(1) + toggle(1) = 7
-//	expanded adds           = blank(1) + viewport(vpHeight) + blank(1)               = vpHeight+2
+//	expanded adds           = blank(1) + viewport(vpHeight)                          = vpHeight+1
+//	(one spare row of headroom remains below the box)
 //	box border(2) + box padding(2)                                                   = 4
 //	tmux border(2)                                                                   = 2
 //	hint bar row (rendered outside the box)                                         = 1
-//	total = 7 + (vpHeight+2) + 4 + 2 + 1 = vpHeight + 16
+//	total = 7 + (vpHeight+1) + 4 + 2 + 1 = vpHeight + 15, budgeted as vpHeight + 16
 func (m DispatchPreviewModel) PopupSize() PopupSize {
 	// Width: content + border(2) + padding(4) + tmux border(2) = content + 8.
 	w := m.effectiveContentWidth() + 8
@@ -462,13 +464,13 @@ func (m DispatchPreviewModel) View() tea.View {
 	b.WriteString(dpToggleStyle.Render(toggleIcon + " " + toggleLabel))
 	b.WriteString(" ")
 	b.WriteString(dpDimStyle.Render(fmt.Sprintf("(%d lines)", lineCount)))
-	b.WriteString("\n")
 
-	// Expanded viewport.
+	// Expanded viewport. No trailing newline after either the toggle or the
+	// viewport: a stray one adds a blank row inside the box that PopupSize
+	// does not budget for.
 	if m.expanded {
-		b.WriteString("\n")
+		b.WriteString("\n\n")
 		b.WriteString(m.viewport.View())
-		b.WriteString("\n")
 	}
 
 	// Render the box, then place the hint bar below it (outside the border).
@@ -482,6 +484,9 @@ func (m DispatchPreviewModel) View() tea.View {
 	out.WriteString(dpHintStyle.Width(width).Render(hint))
 
 	v := tea.NewView(out.String())
+	// Alt screen so a view taller than the popup can never make the inline
+	// renderer scroll and redraw (flicker).
+	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
@@ -563,11 +568,14 @@ func (m DispatchPreviewModel) summaryLine() string {
 	}
 }
 
-// truncatePromptPreview truncates a prompt to 80 characters for the one-line
-// metadata preview, appending an ellipsis when truncation occurs.
+// truncatePromptPreview returns a one-line preview of a prompt: the first
+// non-blank line, whitespace collapsed, truncated to 80 runes with an ellipsis.
+// The preview must never contain a newline, since it fills a single metadata row.
 func truncatePromptPreview(p string) string {
-	if len(p) > 80 {
-		return p[:79] + "…"
+	for _, line := range strings.Split(p, "\n") {
+		if f := strings.Join(strings.Fields(line), " "); f != "" {
+			return textutil.Truncate(f, 80, "…")
+		}
 	}
-	return p
+	return ""
 }

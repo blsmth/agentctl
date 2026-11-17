@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 func TestDispatchPreviewModel_Init(t *testing.T) {
@@ -692,5 +695,68 @@ func TestDispatchPreviewModel_AutoDetectLabel(t *testing.T) {
 	}
 	if !strings.Contains(stripANSI(m.View().Content), "(auto-detect from labels)") {
 		t.Error("View() missing auto-detect label")
+	}
+}
+
+func TestTruncatePromptPreviewOneLine(t *testing.T) {
+	tests := []struct{ name, in, want string }{
+		{"short", "hello", "hello"},
+		{"heading first", "## Problem\n\nbody text", "## Problem"},
+		{"leading blanks", "\n\n  \n  do   the\tthing \nmore", "do the thing"},
+		{"empty", " \n ", ""},
+		{"multibyte truncation", strings.Repeat("é", 100), strings.Repeat("é", 79) + "…"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := truncatePromptPreview(tc.in)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+			if strings.Contains(got, "\n") || !utf8.ValidString(got) {
+				t.Errorf("preview %q must be one valid-UTF-8 line", got)
+			}
+		})
+	}
+}
+
+// The rendered view must fit inside the popup tmux opens for it, in every
+// state, or the renderer scrolls and flickers.
+func TestDispatchPreviewViewFitsPopup(t *testing.T) {
+	long := "## Problem\n\n" + strings.Repeat("A long line of prompt text that wraps around the popup width. ", 6) +
+		strings.Repeat("\n\n- item with some text", 80)
+	prompts := map[string]string{
+		"short":   "do a thing",
+		"long":    long,
+		"heading": "## Problem\n\nSomething is broken\n\n## Fix\n\nfix it",
+		"unicode": "## Überblick\n\n" + strings.Repeat("日本語のテキスト ", 40),
+	}
+	for _, kind := range []string{PreviewKindBash, PreviewKindDispatch} {
+		for _, width := range []int{60, 88, 120} {
+			for name, prompt := range prompts {
+				for _, expanded := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s/w%d/%s/expanded=%v", kind, width, name, expanded), func(t *testing.T) {
+						opts := []DispatchPreviewOption{WithContentWidth(width), WithMaxViewportHeight(22), WithKind(kind)}
+						var m DispatchPreviewModel
+						if kind == PreviewKindBash {
+							m = NewDispatchPreview("lead", "", 0, "", "", prompt, opts...)
+						} else {
+							m = NewDispatchPreview("lead", "go-engineer", 0, prompt, "", "agentctl dispatch", opts...)
+						}
+						m.expanded = expanded
+						view := m.View()
+						if !view.AltScreen {
+							t.Error("AltScreen must be set")
+						}
+						max := DispatchPreviewMaxPopupSize(opts...)
+						if h := lipgloss.Height(view.Content); h > max.Height-2 {
+							t.Errorf("height %d > popup inner %d", h, max.Height-2)
+						}
+						if w := lipgloss.Width(view.Content); w > max.Width-2 {
+							t.Errorf("width %d > popup inner %d", w, max.Width-2)
+						}
+					})
+				}
+			}
+		}
 	}
 }

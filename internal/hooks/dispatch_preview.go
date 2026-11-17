@@ -324,8 +324,9 @@ func inlineContextSet(key, command string) (value string, found, literal bool) {
 
 // dispatchPopupRunner launches the tmux popup running "agentctl
 // dispatch-preview --args-file <argsFilePath>" sized popupW x popupH, and
-// returns whatever error cmd.Run() produced (nil on approve, an
-// *exec.ExitError with code 1 on deny). It is a package-level var so tests
+// returns whatever error cmd.Run() produced. The error is NOT the verdict
+// (tmux exits 0 without running the popup when another overlay is open); the
+// popup records its decision in popupResultPath(argsFilePath). It is a package-level var so tests
 // can fake the popup outcome without shelling out to a real tmux client --
 // same seam pattern as clientDimensions in popup_clamp.go.
 var dispatchPopupRunner = runDispatchPopupCmd
@@ -337,15 +338,15 @@ func runDispatchPopupCmd(ctx context.Context, client string, popupW, popupH int,
 		"-E",
 		"-w", strconv.Itoa(popupW),
 		"-h", strconv.Itoa(popupH),
-		dispatchPreviewPopupCmd(agentctlBin, argsFilePath),
+		dispatchPreviewPopupCmd(agentctlBin, argsFilePath, popupResultPath(argsFilePath)),
 	)
 	return exec.CommandContext(ctx, "tmux", args...).Run()
 }
 
 // dispatchPreviewPopupCmd returns the shell command line tmux display-popup
 // runs for the dispatch preview, with every part quoted individually.
-func dispatchPreviewPopupCmd(agentctlBin, argsFilePath string) string {
-	return shellquote.Join(agentctlBin, "dispatch-preview", "--args-file", argsFilePath)
+func dispatchPreviewPopupCmd(agentctlBin, argsFilePath, resultFile string) string {
+	return shellquote.Join(agentctlBin, "dispatch-preview", "--args-file", argsFilePath, "--result-file", resultFile)
 }
 
 // parseDispatchFlags extracts --agent/-a, --issue/-i, --prompt/-p, and

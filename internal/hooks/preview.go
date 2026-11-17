@@ -18,7 +18,7 @@ import (
 // for the file-write preview. display-popup hands its command to the user's
 // shell, so every part -- including the binary path, which can contain spaces
 // -- is quoted individually.
-func filePreviewPopupCmd(agentctlBin, tmpPath, filePath, agentName string, contentWidth, vpHeight int) string {
+func filePreviewPopupCmd(agentctlBin, tmpPath, filePath, agentName string, contentWidth, vpHeight int, resultFile string) string {
 	return shellquote.Join(
 		agentctlBin, "file-preview",
 		"--path", tmpPath,
@@ -26,6 +26,7 @@ func filePreviewPopupCmd(agentctlBin, tmpPath, filePath, agentName string, conte
 		"--agent", agentName,
 		"--content-width", strconv.Itoa(contentWidth),
 		"--vp-height", strconv.Itoa(vpHeight),
+		"--result-file", resultFile,
 	)
 }
 
@@ -135,6 +136,8 @@ func PermissionWriteWithInput(filePath, content string) {
 	}
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
+	resultFile := popupResultPath(tmpPath)
+	defer os.Remove(resultFile)
 
 	if _, err := tmpFile.WriteString(content); err != nil {
 		tmpFile.Close()
@@ -176,31 +179,23 @@ func PermissionWriteWithInput(filePath, content string) {
 		"-E",
 		"-w", strconv.Itoa(popupW),
 		"-h", strconv.Itoa(popupH),
-		filePreviewPopupCmd(agentctlBin, tmpPath, filePath, agentName, contentWidth, vpHeight),
+		filePreviewPopupCmd(agentctlBin, tmpPath, filePath, agentName, contentWidth, vpHeight, resultFile),
 	)
 	cmd := exec.Command("tmux", popupArgs...)
 	logging.Log("hook-permission-request: launching popup for file=%s", filePath)
 
-	if err := cmd.Run(); err != nil {
-		// Non-zero exit from tmux display-popup: could be deny (exit 1) or
-		// popup launch failure (other non-zero). Check exit code.
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode := exitErr.ExitCode()
-			logging.Log("hook-permission-request: popup exit code=%d file=%s", exitCode, filePath)
-			if exitCode == 1 {
-				// User explicitly denied.
-				writePermissionDecision("deny", "User denied file write")
-				return
-			}
-		}
-		// Popup failed to launch, or exited with an unexpected code. We have
-		// no operator verdict, so we must not synthesize one.
-		passThroughPermission("popup error, no operator verdict: %v", err)
-		return
+	// The verdict is the result file the popup writes, never the exit code:
+	// tmux display-popup exits 0 without running the command when another
+	// popup or menu is already open on the client.
+	runErr := cmd.Run()
+	switch readPopupResult(resultFile) {
+	case "allow":
+		writePermissionDecision("allow", "")
+	case "deny":
+		writePermissionDecision("deny", "User denied file write")
+	default:
+		passThroughPermission("popup produced no verdict (run err: %v), deferring to normal permission flow", runErr)
 	}
-
-	// Exit code 0 = user explicitly allowed in the popup.
-	writePermissionDecision("allow", "")
 }
 
 // permissionOut is where decision JSON is written. A package-level var so
