@@ -112,6 +112,7 @@ type CLI struct {
 	// Tools
 	Context    ContextCmd    `cmd:"" help:"Manage cross-agent context store"`
 	Usage      UsageCmd      `cmd:"" help:"Show API usage stats"`
+	Cost       CostCmd       `cmd:"" help:"Per-session cost report (metered / sub / free) across all models"`
 	Health     HealthCmd     `cmd:"" help:"Run health checks"`
 	Status     StatusCmd     `cmd:"" help:"Query agent status across every live session"`
 	Dashboards DashboardsCmd `cmd:"" help:"View dashboards"`
@@ -285,6 +286,19 @@ func (c *SweepCmd) Run() error {
 		IncludeBare: c.IncludeBare,
 		JSON:        c.JSON,
 	})
+}
+
+// CostCmd implements `agentctl cost [session-id]`.
+type CostCmd struct {
+	Session string `arg:"" optional:"" help:"Session ID (prefix) for a per-model breakdown of one session"`
+	Since   string `default:"7d" help:"How far back to look (e.g. 36h, 7d, 2w)"`
+	By      string `enum:",agent,model,day,project" default:"" help:"Group totals by agent, model, day or project"`
+	Metered bool   `help:"Only metered sessions (real spend, e.g. Nous)"`
+	JSON    bool   `help:"Output as JSON"`
+}
+
+func (c *CostCmd) Run() error {
+	return cmd.RunCost(cmd.CostOptions{Session: c.Session, Since: c.Since, By: c.By, Metered: c.Metered, JSON: c.JSON})
 }
 
 type KillAllCmd struct{}

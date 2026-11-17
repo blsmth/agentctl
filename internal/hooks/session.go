@@ -133,9 +133,10 @@ func SessionStart() {
 		// tombstone from a previous window that held the recycled ID.
 		windowstate.Revive(windowID)
 		winIdx := tmux.WindowIndex(windowID)
-		var launchName string
+		var launchName, backend string
 		if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
 			launchName = ws.SessionName
+			backend = ws.Backend
 			if winIdx > 0 {
 				ws.WindowIndex = winIdx
 			}
@@ -149,6 +150,11 @@ func SessionStart() {
 		} else {
 			if err := sessionname.Record(input.SessionID, launchName); err != nil {
 				logging.Warn("hook-session-start: recording session name: %v", err)
+			}
+			// Remember the backend so cost reports can classify the session
+			// (metered / sub / free) after this window's state is gone.
+			if err := sessions.RecordBackend(input.SessionID, backend); err != nil {
+				logging.Warn("hook-session-start: recording backend: %v", err)
 			}
 			if logPath == "" {
 				logging.Log("hook-session-start: cleared log_path for window=%s session=%s (cwd unknown, avoiding stale cross-session path)", windowID, input.SessionID)

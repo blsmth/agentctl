@@ -75,6 +75,7 @@ type TurnMetric struct {
 	CacheRead    int
 	CacheCreate  int
 	Timestamp    time.Time
+	Model        string // per-request model; "" when the entry named none (use Summary.ModelName)
 }
 
 // ToolBreakdown returns a map of tool name → call count.
@@ -298,6 +299,12 @@ func ParseSummary(s Session) (*Summary, error) {
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024) // 10MB max line
 
+	// Claude Code writes one JSONL line per content block of an API response,
+	// each repeating the response's message.id and usage. Usage and turns are
+	// counted once per message id; the value is the TurnMetrics index (-1 when
+	// the first line carried no usage).
+	seenMsg := make(map[string]int)
+
 	for scanner.Scan() {
 		var entry map[string]any
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
@@ -331,37 +338,52 @@ func ParseSummary(s Session) (*Summary, error) {
 			msg, _ := entry["message"].(map[string]any)
 			content, _ := msg["content"].([]any)
 			ts := parseTimestamp(entry)
-			sum.TurnCount++
-			if m, ok := msg["model"].(string); ok && m != "" && m != "<synthetic>" {
+			msgID, _ := msg["id"].(string)
+			metricIdx, dup := -1, false
+			if msgID != "" {
+				metricIdx, dup = seenMsg[msgID]
+			}
+			if !dup {
+				sum.TurnCount++
+			}
+			turnModel := ""
+			if m, ok := msg["model"].(string); ok && isRealModelID(m) {
 				sum.ModelName = m
+				turnModel = m
 			}
 			if branch, ok := entry["gitBranch"].(string); ok && branch != "" && sum.GitBranch == "" {
 				sum.GitBranch = branch
 			}
 			if usage, ok := msg["usage"].(map[string]any); ok {
-				inputTokens := logstream.JSONFloat(usage, "input_tokens")
-				cacheCreate := logstream.JSONFloat(usage, "cache_creation_input_tokens")
-				cacheRead := logstream.JSONFloat(usage, "cache_read_input_tokens")
-				outputTokens := logstream.JSONFloat(usage, "output_tokens")
-				// TotalInputTokens tracks raw (uncached) input only; cache tokens are
-				// accumulated separately in CacheCreateTokens / CacheReadTokens.
-				sum.TotalInputTokens += int(inputTokens)
-				sum.TotalOutputTokens += int(outputTokens)
-				sum.CacheCreateTokens += int(cacheCreate)
-				sum.CacheReadTokens += int(cacheRead)
-				// Overwrite each turn so Last* fields always reflect the final turn.
-				sum.LastInputTokens = int(inputTokens)
-				sum.LastCacheReadTokens = int(cacheRead)
-				sum.LastCacheCreateTokens = int(cacheCreate)
-				// Append per-turn metric for the cost-growth view.
-				sum.TurnMetrics = append(sum.TurnMetrics, TurnMetric{
+				tm := TurnMetric{
 					Turn:         sum.TurnCount,
-					InputTokens:  int(inputTokens),
-					OutputTokens: int(outputTokens),
-					CacheRead:    int(cacheRead),
-					CacheCreate:  int(cacheCreate),
+					InputTokens:  int(logstream.JSONFloat(usage, "input_tokens")),
+					OutputTokens: int(logstream.JSONFloat(usage, "output_tokens")),
+					CacheRead:    int(logstream.JSONFloat(usage, "cache_read_input_tokens")),
+					CacheCreate:  int(logstream.JSONFloat(usage, "cache_creation_input_tokens")),
 					Timestamp:    ts,
-				})
+					Model:        turnModel,
+				}
+				switch {
+				case dup && metricIdx >= 0:
+					// Repeat of a message already counted: keep the larger
+					// figure per field (streamed output_tokens only grows).
+					cur := &sum.TurnMetrics[metricIdx]
+					cur.InputTokens = max(cur.InputTokens, tm.InputTokens)
+					cur.OutputTokens = max(cur.OutputTokens, tm.OutputTokens)
+					cur.CacheRead = max(cur.CacheRead, tm.CacheRead)
+					cur.CacheCreate = max(cur.CacheCreate, tm.CacheCreate)
+					if cur.Model == "" {
+						cur.Model = tm.Model
+					}
+				default:
+					sum.TurnMetrics = append(sum.TurnMetrics, tm)
+					if msgID != "" {
+						seenMsg[msgID] = len(sum.TurnMetrics) - 1
+					}
+				}
+			} else if msgID != "" && !dup {
+				seenMsg[msgID] = -1
 			}
 
 			for _, block := range content {
@@ -417,12 +439,39 @@ func ParseSummary(s Session) (*Summary, error) {
 	}
 	sort.Strings(sum.FilesEdited)
 
+	// TotalInputTokens tracks raw (uncached) input only; cache tokens are
+	// accumulated separately in CacheCreateTokens / CacheReadTokens.
+	for _, tm := range sum.TurnMetrics {
+		sum.TotalInputTokens += tm.InputTokens
+		sum.TotalOutputTokens += tm.OutputTokens
+		sum.CacheCreateTokens += tm.CacheCreate
+		sum.CacheReadTokens += tm.CacheRead
+	}
+	// Last* fields reflect the final turn.
+	if n := len(sum.TurnMetrics); n > 0 {
+		last := sum.TurnMetrics[n-1]
+		sum.LastInputTokens = last.InputTokens
+		sum.LastCacheReadTokens = last.CacheRead
+		sum.LastCacheCreateTokens = last.CacheCreate
+	}
+
 	if err := scanner.Err(); err != nil {
 		logging.Error("sessions: ParseSummary scan error for %s: %v", s.LogFile, err)
 		return sum, err
 	}
 	logging.Debug("sessions: parsed summary for %q — %d turns, %d tool calls", s.Agent, sum.TurnCount, len(sum.ToolCalls))
 	return sum, nil
+}
+
+// isRealModelID reports whether m names a model: not empty, not Claude Code's
+// "<synthetic>" placeholder, and not a bare family alias ("sonnet") that some
+// entries carry instead of a model id.
+func isRealModelID(m string) bool {
+	switch strings.ToLower(strings.TrimSpace(m)) {
+	case "", "<synthetic>", "opus", "sonnet", "haiku", "fable":
+		return false
+	}
+	return true
 }
 
 // sessionAgent reads the first entries to extract the agentSetting field.

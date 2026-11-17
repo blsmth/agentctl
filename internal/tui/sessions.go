@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/render"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/textutil"
@@ -179,6 +180,7 @@ type SessionEntry struct {
 	Tokens            int // raw input + output (excludes cache)
 	Duration          time.Duration
 	CostUSD           float64
+	CostUnknown       bool // model has no known price: show "?" and exclude from totals
 	ModelShort        string
 	GitBranch         string
 	TicketNumber      int // from extractIssueFromBranch(GitBranch), 0 if none
@@ -209,6 +211,7 @@ func sessFetchCmd(currentAgent string) tea.Cmd {
 		if err != nil {
 			return sessLoadedMsg{err: err}
 		}
+		backends := config.Load().Backends
 		var entries []SessionEntry
 		for _, s := range recentSessions {
 			sum, err := sessions.ParseSummary(s)
@@ -218,6 +221,7 @@ func sessFetchCmd(currentAgent string) tea.Cmd {
 
 			project := sessions.NormalizeProjectName(s.Project)
 			modelShort := render.AbbreviateModel(sum.ModelName)
+			sc := sessions.CostOfSummary(sum, sessions.ClassifyBilling(sum.ModelName, sessions.RecordedBackend(s.ID), backends))
 			ticketNum := extractIssueFromBranch(sum.GitBranch)
 
 			lastTotal := sum.LastInputTokens + sum.LastCacheReadTokens + sum.LastCacheCreateTokens
@@ -243,7 +247,8 @@ func sessFetchCmd(currentAgent string) tea.Cmd {
 				CacheCreateTokens: sum.CacheCreateTokens,
 				Tokens:            sum.TotalInputTokens + sum.TotalOutputTokens,
 				Duration:          dur,
-				CostUSD:           sessions.EstimateCostFromSummary(sum),
+				CostUSD:           sc.USD,
+				CostUnknown:       !sc.Known,
 				ModelShort:        modelShort,
 				GitBranch:         sum.GitBranch,
 				TicketNumber:      ticketNum,
@@ -704,7 +709,7 @@ func (m SessionsModel) buildListContent() (content string, cursorLine int) {
 		ticketCell := buildCell(sessTicketStyle, sessColTicket, ticketStr, selected, bg)
 
 		durCell := buildCell(sessDimStyle.Width(sessColDur), sessColDur, fmtDuration(entry.Duration), selected, bg)
-		costCell := buildCell(sessCostStyle, sessColCost, sessions.FormatCost(entry.CostUSD), selected, bg)
+		costCell := buildCell(sessCostStyle, sessColCost, entry.costStr(), selected, bg)
 		inCell := buildCell(sessTokenInStyle, sessColIn, fmtTokensShort(entry.InputTokens), selected, bg)
 		outCell := buildCell(sessTokenOutStyle, sessColOut, fmtTokensShort(entry.OutputTokens), selected, bg)
 		tpmCell := buildCell(sessTpmStyle, sessColTpm, fmtTokensShort(entry.TokPerMin), selected, bg)
@@ -737,10 +742,15 @@ func (m SessionsModel) buildListContent() (content string, cursorLine int) {
 	// ── Aggregate footer ────────────────────────────────────────────────────
 	var totalDuration time.Duration
 	var totalCost float64
+	var unpriced int
 	var totalIn, totalOut, totalCacheRead, totalCacheCreate int
 	for _, e := range m.entries {
 		totalDuration += e.Duration
-		totalCost += e.CostUSD
+		if e.CostUnknown {
+			unpriced++
+		} else {
+			totalCost += e.CostUSD
+		}
 		totalIn += e.InputTokens
 		totalOut += e.OutputTokens
 		totalCacheRead += e.CacheReadTokens
@@ -751,8 +761,12 @@ func (m SessionsModel) buildListContent() (content string, cursorLine int) {
 	if totalCached > 0 {
 		cachedAnnotation = fmt.Sprintf(" (+%s cached)", fmtTokensShort(totalCached))
 	}
+	costTotal := sessions.FormatCost(totalCost)
+	if unpriced > 0 {
+		costTotal += fmt.Sprintf(" (%d unpriced)", unpriced)
+	}
 	footer := fmt.Sprintf("%d sessions · %s · %s · %s in%s / %s out",
-		len(m.entries), fmtDuration(totalDuration), sessions.FormatCost(totalCost),
+		len(m.entries), fmtDuration(totalDuration), costTotal,
 		fmtTokensShort(totalIn), cachedAnnotation, fmtTokensShort(totalOut))
 
 	b.WriteString(sessRuleStyle.Render("   " + strings.Repeat("╌", cw-6)))
@@ -761,6 +775,20 @@ func (m SessionsModel) buildListContent() (content string, cursorLine int) {
 	b.WriteString("\n")
 
 	return b.String(), cursorLine
+}
+
+// costStr renders the entry's cost: "?" when its model has no known price.
+func (e SessionEntry) costStr() string {
+	return sessions.FormatCostOK(e.CostUSD, !e.CostUnknown)
+}
+
+// turnModel is the model a turn ran on: its own when recorded, else the
+// session's last-seen model.
+func turnModel(tm sessions.TurnMetric, sum *sessions.Summary) string {
+	if tm.Model != "" {
+		return tm.Model
+	}
+	return sum.ModelName
 }
 
 // buildDetailContent renders the detail pane content suitable for passing to
@@ -1021,7 +1049,7 @@ func (m SessionsModel) viewDetail() string {
 		b.WriteString(labelStyle.Render("Cache write:") + dimStyle.Render(fmtTokens(sum.CacheCreateTokens)+" tokens") + "\n")
 		b.WriteString(labelStyle.Render("Cache read:") + dimStyle.Render(fmtTokens(sum.CacheReadTokens)+" tokens") + "\n")
 		b.WriteString(labelStyle.Render("Turns:") + valueStyle.Render(fmt.Sprintf("%d", sum.TurnCount)) + "\n")
-		b.WriteString(labelStyle.Render("Cost:") + lipgloss.NewStyle().Foreground(lipgloss.Color(t.Green)).Render(sessions.FormatCost(entry.CostUSD)) + "\n")
+		b.WriteString(labelStyle.Render("Cost:") + lipgloss.NewStyle().Foreground(lipgloss.Color(t.Green)).Render(entry.costStr()) + "\n")
 		if entry.TokPerMin > 0 {
 			b.WriteString(labelStyle.Render("Tok/min:") + lipgloss.NewStyle().Foreground(lipgloss.Color(t.Orange)).Render(fmtTokensShort(entry.TokPerMin)) + "\n")
 		}
@@ -1116,7 +1144,7 @@ func (m SessionsModel) viewTurnMetrics() string {
 
 	// ── Subtitle ─────────────────────────────────────────────────────────────
 	b.WriteString(sessSubtitleStyle.Render(fmt.Sprintf("  %d turns  ·  %s total",
-		entry.Turns, sessions.FormatCost(entry.CostUSD),
+		entry.Turns, entry.costStr(),
 	)))
 	b.WriteString("\n")
 	b.WriteString("   " + sessRuleStyle.Render(strings.Repeat("╌", cw-3)))
@@ -1129,7 +1157,7 @@ func (m SessionsModel) viewTurnMetrics() string {
 		sampled := sessions.SampleTurnMetrics(sum.TurnMetrics, 15)
 
 		// Compute session average cost/turn for the "sweet spot" detection.
-		totalCost := sessions.EstimateCostFromSummary(sum)
+		totalCost := entry.CostUSD
 		avgCostPerTurn := 0.0
 		if sum.TurnCount > 0 {
 			avgCostPerTurn = totalCost / float64(sum.TurnCount)
@@ -1138,7 +1166,7 @@ func (m SessionsModel) viewTurnMetrics() string {
 		// Find sweet spot: last turn before cost/turn exceeded 2x average.
 		sweetSpotTurn := -1
 		for _, tm := range sum.TurnMetrics {
-			c := sessions.TurnCost(tm, sum.ModelName)
+			c, _ := sessions.TurnCost(tm, turnModel(tm, sum))
 			if c > 2*avgCostPerTurn {
 				break
 			}
@@ -1157,7 +1185,7 @@ func (m SessionsModel) viewTurnMetrics() string {
 		b.WriteString("\n")
 
 		for _, tm := range sampled {
-			cost := sessions.TurnCost(tm, sum.ModelName)
+			cost, costOK := sessions.TurnCost(tm, turnModel(tm, sum))
 			ctxPct := tokens.CtxPct(sum.ModelName, tm.InputTokens+tm.CacheRead+tm.CacheCreate)
 
 			// Annotate turns where cost/turn > 2x session average.
@@ -1169,7 +1197,7 @@ func (m SessionsModel) viewTurnMetrics() string {
 			turnStr := fmt.Sprintf("%-6d", tm.Turn)
 			inputStr := fmt.Sprintf("%-9s", fmtTokensShort(tm.InputTokens))
 			outputStr := fmt.Sprintf("%-9s", fmtTokensShort(tm.OutputTokens))
-			costStr := fmt.Sprintf("%-9s", sessions.FormatCost(cost))
+			costStr := fmt.Sprintf("%-9s", sessions.FormatCostOK(cost, costOK))
 			ctxStr := fmt.Sprintf("%-8s", fmt.Sprintf("%d%%", ctxPct))
 
 			turnCell := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted)).Render(turnStr)
@@ -1263,7 +1291,7 @@ func (m SessionsModel) renderDetailPane(cw, height int) string {
 	right = append(right, labelStyle.Render("Cache write:")+dimStyle.Render(fmtTokens(sum.CacheCreateTokens)+" tokens"))
 	right = append(right, labelStyle.Render("Cache read:")+dimStyle.Render(fmtTokens(sum.CacheReadTokens)+" tokens"))
 	right = append(right, labelStyle.Render("Turns:")+valueStyle.Render(fmt.Sprintf("%d", sum.TurnCount)))
-	right = append(right, labelStyle.Render("Cost:")+lipgloss.NewStyle().Foreground(lipgloss.Color(t.Green)).Render(sessions.FormatCost(entry.CostUSD)))
+	right = append(right, labelStyle.Render("Cost:")+lipgloss.NewStyle().Foreground(lipgloss.Color(t.Green)).Render(entry.costStr()))
 	if entry.TokPerMin > 0 {
 		right = append(right, labelStyle.Render("Tok/min:")+lipgloss.NewStyle().Foreground(lipgloss.Color(t.Orange)).Render(fmtTokensShort(entry.TokPerMin)))
 	}

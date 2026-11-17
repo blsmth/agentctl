@@ -41,10 +41,12 @@ func FormatDailySummary(projectDir string, date time.Time, metas []SessionMeta) 
 	var totalCost float64
 
 	for i, meta := range metas {
-		cost := EstimateCost(meta)
+		cost, costKnown := EstimateCost(meta)
 		dur := sessionDuration(meta)
 		totalDuration += dur
-		totalCost += cost
+		if costKnown {
+			totalCost += cost
+		}
 
 		agentName := meta.Agent
 		agentRunes := []rune(agentName)
@@ -63,8 +65,8 @@ func FormatDailySummary(projectDir string, date time.Time, metas []SessionMeta) 
 
 		durStr := formatSessionDuration(dur)
 
-		sb.WriteString(fmt.Sprintf("  %s  %s – %s  %s  $%.2f  %d turns\n",
-			padded, startStr, endStr, durStr, cost, meta.Turns))
+		sb.WriteString(fmt.Sprintf("  %s  %s – %s  %s  %s  %d turns\n",
+			padded, startStr, endStr, durStr, FormatCostOK(cost, costKnown), meta.Turns))
 
 		// First user message.
 		if meta.FirstUserMessage != "" {

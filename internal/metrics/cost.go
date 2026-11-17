@@ -43,7 +43,7 @@ func (c *CostEstimator) OnEntry(entry logstream.Entry) {
 	}
 
 	m := tokens.Lookup(entry.Model)
-	if m.Pricing == (tokens.Pricing{}) {
+	if !m.HasPricing() {
 		// Only log when there's truly nothing to go on — family fallback
 		// (m.Family != FamilyUnknown) now supplies pricing, so models like
 		// claude-opus-5 no longer get silently dropped here.
@@ -57,11 +57,11 @@ func (c *CostEstimator) OnEntry(entry logstream.Entry) {
 	}
 
 	u := entry.Usage
-	p := m.Pricing
-	cost := (float64(u.InputTokens)*p.InputPerMTok +
-		float64(u.OutputTokens)*p.OutputPerMTok +
-		float64(u.CacheReadTokens)*p.CacheReadPerMTok +
-		float64(u.CacheCreateTokens)*p.CacheCreatePerMTok) / 1_000_000
+	// Per request, so tiered models (Haiku 5.5 long-context) price correctly.
+	cost := m.Pricing.Cost(tokens.Usage{
+		Input: u.InputTokens, Output: u.OutputTokens,
+		CacheRead: u.CacheReadTokens, CacheCreate: u.CacheCreateTokens,
+	})
 
 	c.TotalCost += cost
 	c.ByModel[m.Key] += cost

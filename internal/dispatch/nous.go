@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/safefs"
+	"github.com/blsmth/agentctl/internal/tokens"
 )
 
 const (
@@ -33,6 +35,11 @@ type nousModel struct {
 	ID            string          `json:"id"`
 	ContextLength int             `json:"context_length,omitempty"`
 	Endpoints     json.RawMessage `json:"endpoints,omitempty"`
+	// Pricing is the catalog's $/token price strings. It is kept in the cache
+	// file so internal/tokens can price sessions on this model without any
+	// network access (tokens.ParseCatalog converts to $/MTok and applies the
+	// cache fallback rules).
+	Pricing *tokens.CatalogPricing `json:"pricing,omitempty"`
 }
 
 type nousCatalog struct {
@@ -170,7 +177,38 @@ func readCatalogCache(path string) (nousCatalog, bool) {
 	if err != nil || json.Unmarshal(data, &cat) != nil || len(cat.Data) == 0 {
 		return nousCatalog{}, false
 	}
+	if !catalogHasPricing(cat) {
+		return nousCatalog{}, false // written before pricing was cached: refetch
+	}
 	return cat, true
+}
+
+func catalogHasPricing(cat nousCatalog) bool {
+	for _, m := range cat.Data {
+		if m.Pricing != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// RefreshNousPricing makes sure the cached catalog of every configured nous
+// backend carries pricing, fetching (3s timeout) when the cache is missing,
+// expired or predates pricing, and reloads tokens' view of it. Intended for
+// explicit commands such as `agentctl cost`, never a hot path. Errors are
+// returned joined; a failure to reach one backend does not stop the rest.
+func RefreshNousPricing(backends map[string]config.BackendConfig) error {
+	var errs []error
+	for name, b := range backends {
+		if !b.IsNous() {
+			continue
+		}
+		if _, err := loadNousCatalog(b.BaseURL); err != nil {
+			errs = append(errs, fmt.Errorf("backend %s: %w", name, err))
+		}
+	}
+	tokens.ReloadCatalog()
+	return errors.Join(errs...)
 }
 
 func fetchNousCatalog(baseURL string) (nousCatalog, error) {

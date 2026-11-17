@@ -29,6 +29,53 @@ type Pricing struct {
 	OutputPerMTok      float64
 	CacheReadPerMTok   float64
 	CacheCreatePerMTok float64
+
+	// LongContext is an optional alternate rate card applied per request when
+	// the request's prompt (input + cache read + cache write) exceeds
+	// LongContext.ThresholdTokens. The zero value means "no tier".
+	LongContext LongContextTier
+}
+
+// LongContextTier is the alternate rate card billed for a request whose prompt
+// exceeds ThresholdTokens. Rates are $ per million tokens.
+type LongContextTier struct {
+	ThresholdTokens    int
+	InputPerMTok       float64
+	OutputPerMTok      float64
+	CacheReadPerMTok   float64
+	CacheCreatePerMTok float64
+}
+
+// Usage is the token usage of ONE request. Tiered pricing is decided per
+// request, so callers must price each request separately and sum the results
+// rather than price aggregate totals.
+type Usage struct {
+	Input       int // uncached input tokens
+	Output      int
+	CacheRead   int
+	CacheCreate int
+}
+
+// Prompt is the request's total prompt size: input + cache read + cache write.
+func (u Usage) Prompt() int { return u.Input + u.CacheRead + u.CacheCreate }
+
+// Cost returns the USD cost of one request, applying the long-context tier
+// when the prompt exceeds its threshold.
+func (p Pricing) Cost(u Usage) float64 {
+	in, out, cr, cw := p.InputPerMTok, p.OutputPerMTok, p.CacheReadPerMTok, p.CacheCreatePerMTok
+	if t := p.LongContext; t.ThresholdTokens > 0 && u.Prompt() > t.ThresholdTokens {
+		in, out, cr, cw = t.InputPerMTok, t.OutputPerMTok, t.CacheReadPerMTok, t.CacheCreatePerMTok
+	}
+	return (float64(u.Input)*in + float64(u.Output)*out +
+		float64(u.CacheRead)*cr + float64(u.CacheCreate)*cw) / 1_000_000
+}
+
+// HasPricing reports whether the model resolved to a usable price: a
+// built-in, config override, catalog entry, or Claude family fallback. A
+// wholly unknown model has none; callers must show its cost as unknown rather
+// than guess.
+func (m Model) HasPricing() bool {
+	return m.Source == "catalog" || m.Source == "free" || m.Pricing.InputPerMTok > 0 || m.Pricing.OutputPerMTok > 0
 }
 
 // Model is a fully resolved model description.
@@ -74,54 +121,50 @@ var familyDefaults = map[Family]Model{
 	FamilyOpus: {
 		Family:        FamilyOpus,
 		Short:         "opus",
-		Label:         "opus-5",
+		Label:         "opus-5.5",
 		ContextWindow: 1_000_000,
 		MaxOutput:     128_000,
-		Pricing: Pricing{
-			InputPerMTok:       5.00,
-			OutputPerMTok:      25.00,
-			CacheReadPerMTok:   0.50,
-			CacheCreatePerMTok: 6.25,
-		},
+		Pricing:       Pricing{InputPerMTok: 4.00, OutputPerMTok: 20.00, CacheReadPerMTok: 0.20, CacheCreatePerMTok: 5.00},
 	},
 	FamilySonnet: {
 		Family:        FamilySonnet,
 		Short:         "sonnet",
-		Label:         "sonnet-5",
+		Label:         "sonnet-5.5",
 		ContextWindow: 1_000_000,
 		MaxOutput:     128_000,
-		Pricing: Pricing{
-			InputPerMTok:       2.00,
-			OutputPerMTok:      10.00,
-			CacheReadPerMTok:   0.20,
-			CacheCreatePerMTok: 2.50,
-		},
+		Pricing:       Pricing{InputPerMTok: 2.00, OutputPerMTok: 10.00, CacheReadPerMTok: 0.10, CacheCreatePerMTok: 2.50},
 	},
 	FamilyHaiku: {
 		Family:        FamilyHaiku,
 		Short:         "haiku",
-		Label:         "haiku-4.5",
+		Label:         "haiku-5.5",
 		ContextWindow: 200_000,
 		MaxOutput:     64_000,
-		Pricing: Pricing{
-			InputPerMTok:       1.00,
-			OutputPerMTok:      5.00,
-			CacheReadPerMTok:   0.10,
-			CacheCreatePerMTok: 1.25,
-		},
+		Pricing:       haiku55Pricing,
 	},
 	FamilyFable: {
 		Family:        FamilyFable,
 		Short:         "fable",
-		Label:         "fable-5",
+		Label:         "fable-5.2",
 		ContextWindow: 1_000_000,
 		MaxOutput:     128_000,
-		Pricing: Pricing{
-			InputPerMTok:       10.00,
-			OutputPerMTok:      50.00,
-			CacheReadPerMTok:   1.00,
-			CacheCreatePerMTok: 12.50,
-		},
+		Pricing:       Pricing{InputPerMTok: 8.00, OutputPerMTok: 40.00, CacheReadPerMTok: 0.20, CacheCreatePerMTok: 10.00},
+	},
+}
+
+// haiku55Pricing is Haiku 5.5's rate card: requests whose prompt exceeds 100K
+// tokens are billed at the higher tier.
+var haiku55Pricing = Pricing{
+	InputPerMTok:       0.10,
+	OutputPerMTok:      0.50,
+	CacheReadPerMTok:   0.01,
+	CacheCreatePerMTok: 0.125,
+	LongContext: LongContextTier{
+		ThresholdTokens:    100_000,
+		InputPerMTok:       0.50,
+		OutputPerMTok:      2.50,
+		CacheReadPerMTok:   0.05,
+		CacheCreatePerMTok: 0.625,
 	},
 }
 
@@ -132,6 +175,56 @@ var familyDefaults = map[Family]Model{
 // `models.overrides` in config.json is the escape hatch for teaching
 // agentctl about a new model between agentctl releases.
 var builtins = map[string]Model{
+	"claude-opus-5-5": {
+		Key:           "claude-opus-5-5",
+		Family:        FamilyOpus,
+		Short:         "opus",
+		Label:         "opus-5.5",
+		ContextWindow: 1_000_000,
+		MaxOutput:     128_000,
+		Pricing:       Pricing{InputPerMTok: 4.00, OutputPerMTok: 20.00, CacheReadPerMTok: 0.20, CacheCreatePerMTok: 5.00},
+		Known:         true,
+	},
+	"claude-sonnet-5-5": {
+		Key:           "claude-sonnet-5-5",
+		Family:        FamilySonnet,
+		Short:         "sonnet",
+		Label:         "sonnet-5.5",
+		ContextWindow: 1_000_000,
+		MaxOutput:     128_000,
+		Pricing:       Pricing{InputPerMTok: 2.00, OutputPerMTok: 10.00, CacheReadPerMTok: 0.10, CacheCreatePerMTok: 2.50},
+		Known:         true,
+	},
+	"claude-haiku-5-5": {
+		Key:           "claude-haiku-5-5",
+		Family:        FamilyHaiku,
+		Short:         "haiku",
+		Label:         "haiku-5.5",
+		ContextWindow: 200_000,
+		MaxOutput:     64_000,
+		Pricing:       haiku55Pricing,
+		Known:         true,
+	},
+	"claude-fable-5-2": {
+		Key:           "claude-fable-5-2",
+		Family:        FamilyFable,
+		Short:         "fable",
+		Label:         "fable-5.2",
+		ContextWindow: 1_000_000,
+		MaxOutput:     128_000,
+		Pricing:       Pricing{InputPerMTok: 8.00, OutputPerMTok: 40.00, CacheReadPerMTok: 0.20, CacheCreatePerMTok: 10.00},
+		Known:         true,
+	},
+	"claude-fable-5-1": {
+		Key:           "claude-fable-5-1",
+		Family:        FamilyFable,
+		Short:         "fable",
+		Label:         "fable-5.1",
+		ContextWindow: 1_000_000,
+		MaxOutput:     128_000,
+		Pricing:       Pricing{InputPerMTok: 10.00, OutputPerMTok: 50.00, CacheReadPerMTok: 0.25, CacheCreatePerMTok: 12.50},
+		Known:         true,
+	},
 	"claude-fable-5": {
 		Key:           "claude-fable-5",
 		Family:        FamilyFable,
@@ -411,6 +504,11 @@ func applyOverride(base Model, o ModelOverride) Model {
 	if o.Short != "" {
 		m.Short = o.Short
 	}
+	if o.InputPerMTok != 0 || o.OutputPerMTok != 0 || o.CacheReadPerMTok != 0 || o.CacheCreatePerMTok != 0 {
+		// A price override replaces the whole rate card; the built-in
+		// long-context tier would no longer be consistent with it.
+		m.Pricing.LongContext = LongContextTier{}
+	}
 	if o.InputPerMTok != 0 {
 		m.Pricing.InputPerMTok = o.InputPerMTok
 	}
@@ -498,6 +596,9 @@ func deriveLabel(normalized string) string {
 // context_window) doesn't zero out pricing or other fields. It does NOT
 // consult overrides itself.
 func baseForKey(key string) Model {
+	if p, ok := catalogPricing(key); ok {
+		return catalogModel(key, p)
+	}
 	if b, ok := builtins[key]; ok {
 		b.Known = true
 		return b
@@ -509,6 +610,44 @@ func baseForKey(key string) Model {
 		return fd
 	}
 	return Model{Key: key, Family: FamilyUnknown, Label: deriveLabel(key), ContextWindow: defaultWindowLocked()}
+}
+
+// catalogModel builds the Model for a catalog-priced (Nous) id.
+func catalogModel(id string, p Pricing) Model {
+	m := Model{
+		Key:           id,
+		Family:        familyFromName(id),
+		Label:         deriveLabel(id),
+		ContextWindow: defaultWindowLocked(),
+		Pricing:       p,
+		Known:         true,
+		Source:        "catalog",
+	}
+	m.Short = id
+	return m
+}
+
+// bracketSuffix matches a trailing "[...]" qualifier such as "[1m]".
+var bracketSuffix = regexp.MustCompile(`\[[^\]]*\]$`)
+
+// versionSegment matches a short all-digit segment: a model version number
+// ("9" in "claude-opus-4-9"), as opposed to a date ("20250514").
+var versionSegment = regexp.MustCompile(`^\d{1,3}$`)
+
+// walkOK reports whether a built-in registered under candidate may price the
+// longer name: the leftover suffix must not contain a version number, or a
+// newer unknown model (claude-opus-4-9) would inherit an older generation's
+// rates (claude-opus-4) instead of the family fallback's newest ones.
+func walkOK(name, candidate string) bool {
+	if len(candidate) >= len(name) {
+		return true
+	}
+	for _, seg := range strings.Split(name[len(candidate)+1:], "-") {
+		if versionSegment.MatchString(seg) {
+			return false
+		}
+	}
+	return true
 }
 
 // Lookup resolves a model name to a fully-populated Model description.
@@ -548,8 +687,13 @@ func Lookup(model string) Model {
 	var resolved Model
 	matched := false
 
+	// Walk on the name without a trailing "[1m]" style qualifier, so
+	// "claude-opus-4-6[1m]" reaches the claude-opus-4-6 entry rather than
+	// the older claude-opus-4 one.
+	walkName := strings.TrimSpace(bracketSuffix.ReplaceAllString(normalized, ""))
+
 	// Step 3: interleaved prefix walk — config then built-in at each level.
-	for candidate := normalized; ; {
+	for candidate := walkName; ; {
 		if o, ok := overrides[candidate]; ok {
 			m := applyOverride(baseForKey(candidate), o)
 			m.Key = candidate
@@ -557,7 +701,11 @@ func Lookup(model string) Model {
 			resolved, matched = m, true
 			break
 		}
-		if b, ok := builtins[candidate]; ok {
+		if p, ok := catalogPricing(candidate); ok && candidate == walkName {
+			resolved, matched = catalogModel(candidate, p), true
+			break
+		}
+		if b, ok := builtins[candidate]; ok && walkOK(walkName, candidate) {
 			b.Known = true
 			b.Source = "built-in"
 			resolved, matched = b, true
@@ -568,6 +716,19 @@ func Lookup(model string) Model {
 			break
 		}
 		candidate = candidate[:idx]
+	}
+
+	// Variant suffix ":free" (e.g. "meituan/longcat-2.5:free") is free.
+	if !matched && strings.HasSuffix(walkName, ":free") {
+		resolved, matched = Model{
+			Key:           walkName,
+			Family:        FamilyUnknown,
+			Short:         model,
+			Label:         deriveLabel(walkName),
+			ContextWindow: defaultWindowLocked(),
+			Known:         true,
+			Source:        "free",
+		}, true
 	}
 
 	// Step 4: family fallback.

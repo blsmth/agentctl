@@ -13,10 +13,11 @@ import (
 
 	"github.com/blsmth/agentctl/internal/backendauth"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/tokens"
 )
 
 const nousCatalogJSON = `{"data":[
- {"id":"qwen/qwen3-coder-next","context_length":262144,"endpoints":["messages","chat"]},
+ {"id":"qwen/qwen3-coder-next","context_length":262144,"endpoints":["messages","chat"],"pricing":{"prompt":"0.00000012","completion":"0.0000008"}},
  {"id":"qwen/qwen3-max","context_length":32768},
  {"id":"openai/gpt-oss-120b","context_length":131072,"endpoints":["chat"]}
 ]}`
@@ -709,5 +710,28 @@ func TestWriteAgentSettingsWorktreeFailureStillWritesSettings(t *testing.T) {
 	withRuntimeDir(t, filepath.Join(repo, ".agentctl"))
 	if path := WriteAgentSettings("go-engineer", config.AgentConfig{Backend: "nous"}, wt); path == "" {
 		t.Error("--settings file must still be written when the worktree write fails")
+	}
+}
+
+func TestCatalogCachePreservesPricing(t *testing.T) {
+	body := `{"data":[{"id":"openai/gpt-6-astra","context_length":1050000,"pricing":{"prompt":"0.0000100000","completion":"0.0000500000","input_cache_read":"0.0000010000","input_cache_write":"0.0000125000"}}]}`
+	var cat nousCatalog
+	if err := json.Unmarshal([]byte(body), &cat); err != nil {
+		t.Fatal(err)
+	}
+	// Round-trip through the compact cache encoding, as loadNousCatalog does.
+	data, err := json.Marshal(cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := tokens.ParseCatalog(data)["openai/gpt-6-astra"]
+	if got.InputPerMTok != 10 || got.OutputPerMTok != 50 || got.CacheReadPerMTok != 1 || got.CacheCreatePerMTok != 12.5 {
+		t.Errorf("cached pricing = %+v, want 10/50/1/12.5 per MTok", got)
+	}
+	if !catalogHasPricing(cat) {
+		t.Error("catalogHasPricing = false")
+	}
+	if catalogHasPricing(nousCatalog{Data: []nousModel{{ID: "x"}}}) {
+		t.Error("a catalog without pricing must not count as priced (old cache files are refetched)")
 	}
 }

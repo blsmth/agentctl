@@ -279,14 +279,14 @@ func PrintTicketDetail(number int, jsonOut bool) error {
 
 // sessionsJSONRow is the flattened structure emitted for --json output.
 type sessionsJSONRow struct {
-	ID       string  `json:"id"`
-	Agent    string  `json:"agent"`
-	Project  string  `json:"project"`
-	Model    string  `json:"model"`
-	Duration string  `json:"duration"`
-	Turns    int     `json:"turns"`
-	CostUSD  float64 `json:"cost_usd"`
-	Age      string  `json:"age"`
+	ID       string   `json:"id"`
+	Agent    string   `json:"agent"`
+	Project  string   `json:"project"`
+	Model    string   `json:"model"`
+	Duration string   `json:"duration"`
+	Turns    int      `json:"turns"`
+	CostUSD  *float64 `json:"cost_usd"` // null = unknown model price
+	Age      string   `json:"age"`
 }
 
 // PrintSessionsTable fetches recent sessions and prints them as a table or JSON.
@@ -304,9 +304,11 @@ func PrintSessionsTable(jsonOut bool) error {
 		duration time.Duration
 		turns    int
 		costUSD  float64
+		costOK   bool
 		age      string
 	}
 
+	backends := config.Load().Backends
 	var rows []sessRow
 	for _, s := range recentSessions {
 		sum, err := sessions.ParseSummary(s)
@@ -317,6 +319,7 @@ func PrintSessionsTable(jsonOut bool) error {
 		project := filepath.Base(s.Project)
 		modelShort := cliAbbreviateModel(sum.ModelName)
 		age := fmtAge(time.Since(s.StartTime))
+		sc := sessions.CostOfSummary(sum, sessions.ClassifyBilling(sum.ModelName, sessions.RecordedBackend(s.ID), backends))
 
 		rows = append(rows, sessRow{
 			id:       s.ID,
@@ -325,7 +328,8 @@ func PrintSessionsTable(jsonOut bool) error {
 			model:    modelShort,
 			duration: dur,
 			turns:    sum.TurnCount,
-			costUSD:  sessions.EstimateCostFromSummary(sum),
+			costUSD:  sc.USD,
+			costOK:   sc.Known,
 			age:      age,
 		})
 	}
@@ -340,7 +344,7 @@ func PrintSessionsTable(jsonOut bool) error {
 				Model:    r.model,
 				Duration: fmtDuration(r.duration),
 				Turns:    r.turns,
-				CostUSD:  r.costUSD,
+				CostUSD:  ptrIf(r.costUSD, r.costOK),
 				Age:      r.age,
 			})
 		}
@@ -375,7 +379,9 @@ func PrintSessionsTable(jsonOut bool) error {
 	)
 	for _, r := range rows {
 		costStr := "-"
-		if r.costUSD > 0 {
+		if !r.costOK {
+			costStr = "?"
+		} else if r.costUSD > 0 {
 			costStr = fmt.Sprintf("$%.3f", r.costUSD)
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
@@ -416,19 +422,21 @@ func PrintSessionDetail(id string, jsonOut bool) error {
 		return fmt.Errorf("parsing session: %w", err)
 	}
 
+	sc := sessions.CostOfSummary(sum, sessions.ClassifyBilling(sum.ModelName, sessions.RecordedBackend(matched.ID), config.Load().Backends))
+
 	if jsonOut {
 		type detail struct {
-			ID           string  `json:"id"`
-			Agent        string  `json:"agent"`
-			Project      string  `json:"project"`
-			Model        string  `json:"model"`
-			Duration     string  `json:"duration"`
-			Turns        int     `json:"turns"`
-			CostUSD      float64 `json:"cost_usd"`
-			InputTokens  int     `json:"input_tokens"`
-			OutputTokens int     `json:"output_tokens"`
-			GitBranch    string  `json:"git_branch"`
-			LogFile      string  `json:"log_file"`
+			ID           string   `json:"id"`
+			Agent        string   `json:"agent"`
+			Project      string   `json:"project"`
+			Model        string   `json:"model"`
+			Duration     string   `json:"duration"`
+			Turns        int      `json:"turns"`
+			CostUSD      *float64 `json:"cost_usd"` // null = unknown model price
+			InputTokens  int      `json:"input_tokens"`
+			OutputTokens int      `json:"output_tokens"`
+			GitBranch    string   `json:"git_branch"`
+			LogFile      string   `json:"log_file"`
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -439,7 +447,7 @@ func PrintSessionDetail(id string, jsonOut bool) error {
 			Model:        cliAbbreviateModel(sum.ModelName),
 			Duration:     fmtDuration(matched.Duration()),
 			Turns:        sum.TurnCount,
-			CostUSD:      sessions.EstimateCostFromSummary(sum),
+			CostUSD:      ptrIf(sc.USD, sc.Known),
 			InputTokens:  sum.TotalInputTokens,
 			OutputTokens: sum.TotalOutputTokens,
 			GitBranch:    sum.GitBranch,
@@ -460,9 +468,10 @@ func PrintSessionDetail(id string, jsonOut bool) error {
 	if sum.GitBranch != "" {
 		fmt.Printf("%s  %s\n", labelStyle.Render("Branch:  "), val.Render(sum.GitBranch))
 	}
-	cost := sessions.EstimateCostFromSummary(sum)
-	if cost > 0 {
-		fmt.Printf("%s  %s\n", labelStyle.Render("Cost:    "), cliGreen().Render(fmt.Sprintf("$%.4f", cost)))
+	if !sc.Known {
+		fmt.Printf("%s  %s\n", labelStyle.Render("Cost:    "), cliRed().Render("? (unknown model price)"))
+	} else if sc.USD > 0 {
+		fmt.Printf("%s  %s %s\n", labelStyle.Render("Cost:    "), cliGreen().Render(fmt.Sprintf("$%.4f", sc.USD)), cliMuted().Render("("+sc.Billing.String()+")"))
 	}
 	fmt.Printf("%s  %d in / %d out\n", labelStyle.Render("Tokens:  "),
 		sum.TotalInputTokens, sum.TotalOutputTokens)

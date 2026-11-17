@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/tokens"
 )
 
 // SchemaVersion is the current metadata schema version.
@@ -32,9 +33,11 @@ type SessionMeta struct {
 	CacheReadTokens   int       `json:"cache_read_tokens"`
 	CacheCreateTokens int       `json:"cache_create_tokens"`
 	ModelName         string    `json:"model,omitempty"`
-	FirstUserMessage  string    `json:"first_message"`
-	FilesEdited       []string  `json:"files_edited"`
-	SourcePath        string    `json:"source_path"`
+	// Backend is the config backend the session ran on ("" = Anthropic).
+	Backend          string   `json:"backend,omitempty"`
+	FirstUserMessage string   `json:"first_message"`
+	FilesEdited      []string `json:"files_edited"`
+	SourcePath       string   `json:"source_path"`
 }
 
 // QueryOpts filters the sessions returned by FindMirroredSessions.
@@ -44,27 +47,6 @@ type QueryOpts struct {
 	Agent      string        // filter to agent name; empty = all
 	MaxAge     time.Duration // max age from now; zero = no age filter
 }
-
-// modelPricing holds per-token prices in USD per 1M tokens.
-type modelPricing struct {
-	Input      float64
-	Output     float64
-	CacheWrite float64
-	CacheRead  float64
-}
-
-// pricingTable maps model name substring to pricing. Entries are checked in order;
-// put more-specific substrings (e.g. "claude-opus") before broader ones.
-var pricingTable = []struct {
-	substr  string
-	pricing modelPricing
-}{
-	{"claude-opus", modelPricing{Input: 15.0, Output: 75.0, CacheWrite: 18.75, CacheRead: 1.50}},
-	{"claude-sonnet", modelPricing{Input: 3.0, Output: 15.0, CacheWrite: 3.75, CacheRead: 0.30}},
-	{"claude-haiku", modelPricing{Input: 0.25, Output: 1.25, CacheWrite: 0.30, CacheRead: 0.03}},
-}
-
-var defaultPricing = modelPricing{Input: 3.0, Output: 15.0, CacheWrite: 3.75, CacheRead: 0.30}
 
 // overrideSessionDataDir is used by tests to redirect session metadata writes.
 var overrideSessionDataDir string
@@ -166,6 +148,7 @@ func ExtractMeta(s Session) (SessionMeta, error) {
 		CacheReadTokens:   sum.CacheReadTokens,
 		CacheCreateTokens: sum.CacheCreateTokens,
 		ModelName:         sum.ModelName,
+		Backend:           RecordedBackend(s.ID),
 		FirstUserMessage:  firstMsg,
 		FilesEdited:       sum.FilesEdited,
 		SourcePath:        s.LogFile,
@@ -251,27 +234,21 @@ func matchesOpts(meta SessionMeta, opts QueryOpts) bool {
 	return true
 }
 
-// EstimateCost estimates the USD cost of a session based on token usage.
-// The pricing table is keyed by model name substring. Unknown models default
-// to Sonnet pricing.
-func EstimateCost(meta SessionMeta) float64 {
-	p := pricingForModel(meta.ModelName)
-
-	// InputTokens is raw (uncached) input only; cache tokens are tracked separately.
-	return (float64(meta.InputTokens)*p.Input +
-		float64(meta.OutputTokens)*p.Output +
-		float64(meta.CacheCreateTokens)*p.CacheWrite +
-		float64(meta.CacheReadTokens)*p.CacheRead) / 1_000_000
-}
-
-func pricingForModel(model string) modelPricing {
-	model = strings.ToLower(model)
-	for _, entry := range pricingTable {
-		if strings.Contains(model, entry.substr) {
-			return entry.pricing
-		}
+// EstimateCost estimates the USD cost of a session from its sidecar totals.
+// The sidecar has no per-request data, so this prices the aggregates and
+// cannot apply per-request tiers (Haiku 5.5 long-context); prefer
+// CostOfSummary when the JSONL is parsed. ok is false when the model has no
+// price.
+func EstimateCost(meta SessionMeta) (usd float64, ok bool) {
+	m := tokens.Lookup(meta.ModelName)
+	if !m.HasPricing() {
+		return 0, false
 	}
-	return defaultPricing
+	// InputTokens is raw (uncached) input only; cache tokens are tracked separately.
+	return m.Pricing.Cost(tokens.Usage{
+		Input: meta.InputTokens, Output: meta.OutputTokens,
+		CacheRead: meta.CacheReadTokens, CacheCreate: meta.CacheCreateTokens,
+	}), true
 }
 
 // DiskUsage returns the total bytes and file count in the session data directory.
