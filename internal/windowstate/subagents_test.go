@@ -17,7 +17,7 @@ func TestActiveSubagentCount(t *testing.T) {
 		{"fresh", WindowState{ActiveSubagents: map[string]time.Time{"a": now.Add(-time.Minute), "b": now}}, 2},
 		{"stale ignored", WindowState{ActiveSubagents: map[string]time.Time{"a": now.Add(-3 * time.Hour), "b": now}}, 1},
 		{"all stale", WindowState{ActiveSubagents: map[string]time.Time{"a": now.Add(-3 * time.Hour)}}, 0},
-		{"legacy counter", WindowState{SubagentCount: 2}, 2},
+		{"legacy counter ignored", WindowState{SubagentCount: 2}, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -49,8 +49,8 @@ func TestSubagentStartStop(t *testing.T) {
 	ws.StartSubagent("", now)
 	ws.StartSubagent("", now)
 	ws.StopSubagent("", now)
-	if ws.SubagentCount != 1 || ws.ActiveSubagentCount(now) != 1 {
-		t.Errorf("empty-id fallback: count=%d", ws.SubagentCount)
+	if ws.SubagentCount != 1 || ws.ActiveSubagentCount(now) != 0 {
+		t.Errorf("empty-id ignored: count=%d", ws.SubagentCount)
 	}
 	ws.ClearSubagents()
 	if ws.ActiveSubagentCount(now) != 0 {

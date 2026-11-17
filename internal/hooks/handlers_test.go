@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/mailbox"
@@ -852,6 +853,44 @@ func TestNotify_IdlePromptSetsIdle(t *testing.T) {
 	}
 	if !notifyCalled {
 		t.Error("Notify was not called for idle_prompt")
+	}
+}
+
+// TestNotify_IdlePromptKeepsWorkingWithSubagents verifies idle_prompt does not
+// flip a window to idle while a background subagent is running.
+func TestNotify_IdlePromptKeepsWorkingWithSubagents(t *testing.T) {
+	setupWindowstate(t)
+
+	notifyCalled := false
+	d := stubDeps(t)
+	d.Notify = func(opts notify.Options) { notifyCalled = true }
+	SetDepsForTest(d)
+	t.Cleanup(func() { SetDepsForTest(DefaultDeps()) })
+
+	if err := windowstate.Update("@12", func(ws *windowstate.WindowState) {
+		ws.State = "working"
+		ws.StartSubagent("agent-1", time.Now())
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("AGENTCTL", "1")
+	t.Setenv("AGENTCTL_AGENT_NAME", "go-engineer")
+	t.Setenv("AGENTCTL_WINDOW_ID", "@12")
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("AGENTCTL_SESSION_ID", "")
+
+	runHookCaptured(t, nil, `{"notification_type":"idle_prompt","message":"waiting"}`, Notify)
+
+	ws, err := windowstate.Read("@12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.State != "working" {
+		t.Errorf("State = %q, want working", ws.State)
+	}
+	if notifyCalled {
+		t.Error("idle alert fired while subagents were running")
 	}
 }
 

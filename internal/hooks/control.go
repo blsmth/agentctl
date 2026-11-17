@@ -459,6 +459,7 @@ func Notify() {
 	// resetting on every invocation.
 	prevState := ""
 	updateErr := error(nil)
+	subagentsActive := false
 	if windowID != "" {
 		var newState string
 		switch input.NotificationType {
@@ -470,6 +471,13 @@ func Notify() {
 		if newState != "" {
 			updateErr = winname.Update(windowID, func(w *windowstate.WindowState) {
 				prevState = w.State
+				ws = *w
+				if input.NotificationType == "idle_prompt" && w.ActiveSubagentCount(time.Now()) > 0 {
+					// The parent sits at the prompt while background
+					// subagents run; that is not idle.
+					subagentsActive = true
+					return
+				}
 				w.State = newState
 				switch input.NotificationType {
 				case "permission_prompt":
@@ -483,10 +491,16 @@ func Notify() {
 			})
 			if updateErr != nil {
 				logUpdateErr("hook-notify", updateErr)
+			} else if subagentsActive {
+				logging.Log("hook-notify: idle_prompt with subagents running, keeping state=%s window=%s", prevState, windowID)
 			} else {
 				logging.Log("hook-notify: set state=%s window=%s agent=%s", newState, windowID, agentName)
 			}
 		}
+	}
+
+	if subagentsActive {
+		return
 	}
 
 	// Auto-emit a "blocked" message to whoever dispatched this window (see

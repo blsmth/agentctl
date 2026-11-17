@@ -6,17 +6,10 @@ import "time"
 // lost SubagentStop hook must not pin a window as working forever.
 const SubagentStaleAfter = 2 * time.Hour
 
-// ActiveSubagentCount returns how many subagents are still running at now.
-// Entries older than SubagentStaleAfter are ignored. When no IDs are tracked
-// it falls back to the legacy SubagentCount, which is only driven by hooks
-// that arrive without an agent_id.
+// ActiveSubagentCount returns how many tracked subagents are still running at
+// now. Entries older than SubagentStaleAfter are ignored. SubagentCount is a
+// display mirror and is never consulted here.
 func (ws WindowState) ActiveSubagentCount(now time.Time) int {
-	if len(ws.ActiveSubagents) == 0 {
-		if ws.SubagentCount < 0 {
-			return 0
-		}
-		return ws.SubagentCount
-	}
 	n := 0
 	for _, started := range ws.ActiveSubagents {
 		if now.Sub(started) <= SubagentStaleAfter {
@@ -27,7 +20,7 @@ func (ws WindowState) ActiveSubagentCount(now time.Time) int {
 }
 
 // StartSubagent records a running subagent. It is idempotent per id. An empty
-// id falls back to the bare counter.
+// id only bumps the display counter and never affects ActiveSubagentCount.
 func (ws *WindowState) StartSubagent(id string, now time.Time) {
 	if id == "" {
 		ws.SubagentCount++
