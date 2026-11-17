@@ -129,3 +129,39 @@ func TestStaleMonitor(t *testing.T) {
 		})
 	}
 }
+
+// TestRunWatchdogDisabled: with monitor:false the watchdog neither spawns a
+// dead monitor nor replaces a stale one, and never consults tmux; an absent
+// (nil) switch behaves as before.
+func TestRunWatchdogDisabled(t *testing.T) {
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name  string
+		alive bool
+		stale bool
+	}{
+		{"dead monitor", false, false},
+		{"stale live monitor", true, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var spawns, kills, sessions int
+			got := runWatchdog(watchdogDeps{
+				now:           func() time.Time { return now },
+				disabled:      func() bool { return true },
+				monitorAlive:  func() bool { return tt.alive },
+				monitorStale:  func() bool { return tt.stale },
+				sessionExists: func() bool { sessions++; return true },
+				lastAttempt:   func() time.Time { return time.Time{} },
+				markAttempt:   func(time.Time) {},
+				killMonitor:   func() { kills++ },
+				spawn:         func() error { spawns++; return nil },
+			})
+			if got != watchdogDisabled {
+				t.Errorf("result = %s, want %s", got, watchdogDisabled)
+			}
+			if spawns+kills+sessions != 0 {
+				t.Errorf("spawns=%d kills=%d sessionChecks=%d, want none", spawns, kills, sessions)
+			}
+		})
+	}
+}

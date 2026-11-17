@@ -1406,6 +1406,21 @@ func StartMonitor(exe, projectRoot string) error {
 	return exec.Command("tmux", "run-shell", "-b", "-c", projectRoot, qexe+" monitor").Run()
 }
 
+// restartMonitor replaces this project's monitor with a fresh one, unless the
+// monitor kill switch (config `monitor: false`) is off. When disabled it does
+// nothing at all: an already running monitor is left alone (flipping the flag
+// never kills one), and the next relaunch simply does not start another.
+// It reports whether a monitor was started.
+func restartMonitor(enabled bool, pidDir, exe, projectRoot string, kill func(dir, name string), start func(exe, projectRoot string) error) bool {
+	if !enabled {
+		logging.Log("applyConfig: monitor disabled (config monitor:false), not starting one")
+		return false
+	}
+	kill(pidDir, "monitor.pid")
+	_ = start(exe, projectRoot)
+	return true
+}
+
 // applyConfig sets up the status bar, keybindings, and styling.
 func applyConfig() {
 	exe, _ := os.Executable()
@@ -1433,8 +1448,7 @@ func applyConfig() {
 	// the monitor process always resolves paths.Init(cwd) to the correct
 	// directory regardless of which pane is active when applyConfig runs.
 	projectRoot := filepath.Dir(pidDir)
-	pidfile.Kill(pidDir, "monitor.pid")
-	_ = StartMonitor(exe, projectRoot)
+	restartMonitor(config.Load().MonitorEnabled(), pidDir, exe, projectRoot, pidfile.Kill, StartMonitor)
 	// Restore agents from previous session in the background
 	qexe := FormatEscape(shellquote.Quote(exe))
 	_ = exec.Command("tmux", "run-shell", "-b", "-c", projectRoot, qexe+" restore").Run()

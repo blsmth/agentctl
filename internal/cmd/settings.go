@@ -5,14 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/blsmth/agentctl/internal/claude"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/logging"
-	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
 	"github.com/blsmth/agentctl/internal/worktree"
@@ -34,13 +33,8 @@ func CmdSettingsPopup(windowIDOrName string) {
 	// Resolve window ID (e.g. "@3") to agent name, or fall back to treating as name.
 	var agentName string
 	if strings.HasPrefix(windowIDOrName, "@") {
-		// Try snapshot first.
-		snap, _ := state.LoadSnapshot()
-		if !snap.IsStale(3 * time.Second) {
-			if as := snap.ByWindowID(windowIDOrName); as != nil {
-				agentName = as.AgentName
-			}
-		}
+		// Try windowstate first.
+		_, agentName = herd.LocalWindowNames(windowIDOrName)
 		if agentName == "" {
 			agentName = tmux.ResolveAgentByWindowID(windowIDOrName)
 		}

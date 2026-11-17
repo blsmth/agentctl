@@ -151,14 +151,13 @@ func TestClickMiddleButtonIgnored(t *testing.T) {
 	}
 }
 
-// buttonTestModel is mouseTestModel with s1 launchable (dirs set) and s2 stale.
+// buttonTestModel is mouseTestModel with s1 launchable (dirs set) and s2 not launchable.
 func buttonTestModel(t *testing.T) HerdModel {
 	t.Helper()
 	m := mouseTestModel(t, 120, 40)
 	m.groups[0].ProjectDir = "/p/one"
 	m.groups[0].RuntimeDir = "/p/one/.agentctl"
-	m.groups[1].Stale = true
-	m.groups[1].ProjectDir = "/p/two"
+	m.groups[1].ProjectDir = ""
 	m.groups[1].RuntimeDir = "/p/two/.agentctl"
 	m.rebuildLines()
 	m.resolveSelection()

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/alecthomas/kong"
@@ -18,6 +17,7 @@ import (
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/detach"
 	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/hubtarget"
 	"github.com/blsmth/agentctl/internal/improve"
@@ -320,12 +320,7 @@ func cmdImprove() {
 func cmdImproveMenu(windowID string) {
 	var agentName string
 	if strings.HasPrefix(windowID, "@") {
-		snap, _ := state.LoadSnapshot()
-		if !snap.IsStale(3 * time.Second) {
-			if as := snap.ByWindowID(windowID); as != nil {
-				agentName = as.AgentName
-			}
-		}
+		_, agentName = herd.LocalWindowNames(windowID)
 		if agentName == "" {
 			agentName = tmux.ResolveAgentByWindowID(windowID)
 		}

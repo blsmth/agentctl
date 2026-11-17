@@ -15,6 +15,7 @@ import (
 	"github.com/blsmth/agentctl/internal/cleanup"
 	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/mailbox"
+	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
@@ -227,7 +228,11 @@ func RunSweep(opts SweepOptions) error {
 
 	cwd, _ := os.Getwd()
 	cwdRoot, _ := worktree.Toplevel(cwd)
-	snap, _ := state.LoadSnapshot()
+	built, _ := herd.LoadAgents(session, paths.RuntimeDir())
+	byWindow := make(map[string]*state.AgentState, len(built))
+	for i := range built {
+		byWindow[built[i].WindowID] = &built[i]
+	}
 
 	d := sweepDeps{
 		Windows: func() []tmux.WindowInfo { return tmux.ListWindowsIn(session) },
@@ -242,10 +247,7 @@ func RunSweep(opts SweepOptions) error {
 		},
 		Mail: func(id string) int { n, _ := mailbox.PendingCount(id); return n },
 		Agent: func(id string) (string, string) {
-			if snap == nil {
-				return "", ""
-			}
-			a := snap.ByWindowID(id)
+			a := byWindow[id]
 			if a == nil {
 				return "", ""
 			}

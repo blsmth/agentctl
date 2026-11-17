@@ -68,7 +68,7 @@ func (m Meta) Dispatched() bool { return m.Mode != "" && m.Mode != "bare" }
 // LoadMeta reads every windowstate record in a group's runtime directory,
 // keyed by window ID. Returns an empty (non-nil) map when the group has no
 // runtime dir or the directory is unreadable — a group whose windowstate is
-// missing still renders from state.json, just without launch metadata.
+// missing still renders from tmux, just without launch metadata.
 func LoadMeta(g Group) map[string]Meta {
 	out := make(map[string]Meta)
 	for id, ws := range windowstate.AllFrom(windowstate.WindowsDirFor(g.RuntimeDir)) {

@@ -30,7 +30,7 @@ The project-local file is overlaid on the global one field by field: a non-empty
 - `agents` merges per agent name; a project entry for `go-engineer` replaces the whole global `go-engineer` entry (no deep merge inside one agent).
 - `models.overrides` merges per model key.
 - `hooks` replaces the global map entirely when the project sets any hooks.
-- Booleans that default to `true` (`open_pr_in_browser`, `auto_reclaim_worktree`) are tri-state: an explicit `false` in the project file survives the merge.
+- Booleans that default to `true` (`open_pr_in_browser`, `auto_reclaim_worktree`, `monitor`) are tri-state: an explicit `false` in the project file survives the merge.
 
 ### Command keys are global-only
 
@@ -48,6 +48,7 @@ Rationale: a project-local file can arrive with a cloned repository. Executing c
 |---|---|---|---|
 | `notify_cmd` | string | platform default | Desktop-notification command template. See [Notifications](#notifications). |
 | `open_pr_in_browser` | bool | `true` | Open a dispatched agent's PR in the browser (`gh pr view --web`) when it finishes. Each PR opens once per monitor process. |
+| `monitor` | bool | `true` | Kill switch for the per-project monitor. When `false`, session start and the hook watchdog do not start or replace a monitor and `agentctl health` says "monitor disabled". A running monitor is not killed; the next relaunch just does not start one. Everything except the macapp's `state.json` feed works without it. Global-only in the enabling direction: a project-local `"monitor": false` switches it off for that project, but a project can never switch it back on. |
 | `bash_preview` | bool | `false` | Show the human approval popup before **every** Bash tool call, not just `agentctl dispatch`. See [bash_preview](#bash_preview). |
 | `statusline_format` | string | `rich` | What `agentctl statusline` prints: `rich`, `complementary`, `full`, or `minimal`. Unknown values fall back to `rich`. |
 | `statusline_align` | string | `left` | `left` or `right`. Right-aligns the `rich` format's lines. Unknown values fall back to `left`. |

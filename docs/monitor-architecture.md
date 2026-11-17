@@ -83,12 +83,15 @@ The monitor does not rename tmux windows. Every hook or command that changes `St
 
 ## State Persistence
 
-Every tick, `persistState()` writes `state.json` under `paths.RuntimeDir()` (`$CWD/.agentctl/state.json`) with all agent states. This enables:
+Every tick, `persistState()` writes `state.json` under `paths.RuntimeDir()` (`$CWD/.agentctl/state.json`) with all agent states. **Nothing in agentctl requires it any more**: the macapp reads it (its format is unchanged), and it carries the JSONL-derived fields only the monitor computes (cumulative and last-turn token counts, start time, pending-mail count).
 
-- **Fast lookups**: UI panes and popups read the snapshot via `state.LoadSnapshot()` instead of forking tmux.
-- **Staleness detection**: Consumers check staleness and fall back to live tmux queries.
+Every other reader builds its view with the shared builder in `internal/herd` (`LoadAgents` / `BuildAgents`): `tmux list-windows` for the session (ID, order, name) joined with `windowstate.AllFrom(<runtime dir>/windows)`. tmux decides which windows exist, so a record with no window is ignored and a window with no record is listed as untracked (idle, named from tmux). `Done` is `ws.Done && !ws.Seen`; ctx%, context tokens/window, model and cost are the last values the statusline pushed. State, identity and the window list never depend on `state.json`. When `state.json` exists and is fresh (`herd.EnrichmentMaxAge`, 3s) the monitor-only token fields are merged in by window ID as optional enrichment; otherwise they stay zero and the UI hides them. The statusline takes tokens and duration from the Claude Code payload first and falls back to that enrichment only when a payload field is null; turns come from `ws.TurnCount`.
 
-The chrome bar and other panes watch `state.json` via fsnotify, so the flow is: **monitor tick → `state.Save(state.json)` → fsnotify → pane re-reads snapshot → re-render.**
+The chrome bar watches `windows/` and the `active-window` file with fsnotify, debounces events (100ms), rebuilds through the builder, and re-renders only when a rendered field changed. `tmux list-windows` is re-run only when a record file is created or removed, or on the 30s slow tick. The prefix indicator polls `#{client_prefix}` every 250ms in the active window's bar only. If fsnotify is unavailable it polls once a second.
+
+### Turning the monitor off (`monitor: false`)
+
+The global config key `monitor` (default `true`) is the kill switch. When `false`, session start / `applyConfig` does not start a monitor, the hook watchdog neither respawns nor replaces one, and `agentctl health` reports "monitor disabled" instead of a missing-monitor problem. Flipping the flag never kills a running monitor; the next relaunch just does not start one. With no monitor, `state.json` stops updating (the macapp loses its feed) and the `improve.HandleTransition` / metrics transition handlers do not run, but the chrome bar, hub, `agentctl status`, popups and statusline keep working from tmux and windowstate.
 
 ### Session restore (`restore.json`)
 
@@ -104,7 +107,7 @@ The `internal/tui/` package holds many standalone Bubble Tea models. Most intera
 
 A few full-screen browsers — **agents**, **sessions**, and **tickets** — run as dedicated tmux windows (opened via `OpenOrFocus*Window`) rather than popups, recording an origin window so they can restore focus on exit.
 
-The **chrome bar** (`chrome_bar.go`) is different: a mouse-enabled pane docked in every window that watches `state.json` via fsnotify (plus a sibling `active-window` file for instant active-tab highlighting) and re-renders on change.
+The **chrome bar** (`chrome_bar.go`) is different: a mouse-enabled pane docked in every window that watches the `windows/` directory and the sibling `active-window` file via fsnotify and re-renders when the built view changes (see [State Persistence](#state-persistence)).
 
 ## Hook System (Separate Processes)
 
@@ -129,7 +132,7 @@ Additional hooks handle compaction, elicitation, worktree create/remove, subagen
 2. **Transitions**: state change → `detectAndFireTransitions()` builds `Transition` → `RecordTransition` + `improve.HandleTransition`. Dispatch completion is not part of this loop.
 3. **Window names**: each state writer → `winname.Update` → `tmux rename-window` (state glyph) inside the windowstate transaction; the monitor only resolves ctx% in memory for `state.json`.
 4. **Log discovery**: `hook-session-start` → windowstate `LogPath` → monitor links `instanceState.logPath`; fallback `sessions.FindLatestLog()` scans the filesystem.
-5. **State persistence**: monitor tick → `state.Save()` → `state.json` → panes/popups read via `LoadSnapshot()`, chrome bar re-renders on fsnotify.
+5. **Reader views**: tmux `list-windows` + `windowstate.AllFrom` → `herd.BuildAgents` → chrome bar (fsnotify on `windows/`), hub, `agentctl status`, popups. The monitor still writes `state.json` for the macapp only.
 
 ## See also
 

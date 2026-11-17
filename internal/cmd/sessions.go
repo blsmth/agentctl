@@ -10,10 +10,10 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/sessionname"
 	"github.com/blsmth/agentctl/internal/sessions"
-	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
 )
@@ -35,13 +35,8 @@ func CmdSessionsMenu(writeSettings WriteAgentSettingsFn) {
 	if len(os.Args) > 2 {
 		arg := os.Args[2]
 		if strings.HasPrefix(arg, "@") {
-			// Window ID — resolve via snapshot, fall back to tmux.
-			snap, _ := state.LoadSnapshot()
-			if !snap.IsStale(3 * time.Second) {
-				if as := snap.ByWindowID(arg); as != nil {
-					currentAgent = as.AgentName
-				}
-			}
+			// Window ID — resolve via windowstate, fall back to tmux.
+			_, currentAgent = herd.LocalWindowNames(arg)
 			if currentAgent == "" {
 				currentAgent = tmux.ResolveAgentByWindowID(arg)
 			}

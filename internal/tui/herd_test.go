@@ -39,7 +39,7 @@ func TestRenderRow_TruncatesAtNarrowWidth(t *testing.T) {
 
 	t.Run("wide width — no truncation of short content", func(t *testing.T) {
 		short := testRow("go-engineer", "agentctl-myproj", "working", "Editing monitor.go")
-		out := m.renderRow(short, false, false, 100)
+		out := m.renderRow(short, false, 100)
 		if lipgloss.Width(out) > 100 {
 			t.Errorf("rendered width %d exceeds cw=100", lipgloss.Width(out))
 		}
@@ -50,7 +50,7 @@ func TestRenderRow_TruncatesAtNarrowWidth(t *testing.T) {
 
 	t.Run("narrow sidebar width — name and activity truncated", func(t *testing.T) {
 		const cw = 24
-		out := m.renderRow(r, false, false, cw)
+		out := m.renderRow(r, false, cw)
 		if got := lipgloss.Width(out); got > cw {
 			t.Errorf("rendered row width = %d, want <= %d (row: %q)", got, cw, out)
 		}
@@ -58,7 +58,7 @@ func TestRenderRow_TruncatesAtNarrowWidth(t *testing.T) {
 
 	t.Run("selected row is padded to full width", func(t *testing.T) {
 		const cw = 40
-		out := m.renderRow(r, true, false, cw)
+		out := m.renderRow(r, true, cw)
 		if got := lipgloss.Width(out); got != cw {
 			t.Errorf("selected row width = %d, want exactly %d", got, cw)
 		}
@@ -70,14 +70,14 @@ func TestRenderRow_TruncatesAtNarrowWidth(t *testing.T) {
 		// function must still not panic or produce a negative-width
 		// truncation call.
 		for _, cw := range []int{0, 1, 5, 10} {
-			out := m.renderRow(r, false, false, cw)
+			out := m.renderRow(r, false, cw)
 			_ = out // must not panic
 		}
 	})
 
 	t.Run("realistic narrow sidebar widths stay within budget", func(t *testing.T) {
 		for _, cw := range []int{16, 20, 24, 28} {
-			out := m.renderRow(r, false, false, cw)
+			out := m.renderRow(r, false, cw)
 			if got := lipgloss.Width(out); got > cw {
 				t.Errorf("cw=%d: rendered width %d exceeds cw (row: %q)", cw, got, out)
 			}
@@ -109,22 +109,6 @@ func TestRenderGroupHeader_TruncatesAndMarksSelected(t *testing.T) {
 		out := m.renderGroupHeader(g, true, cw)
 		if got := lipgloss.Width(out); got != cw {
 			t.Errorf("selected header width = %d, want exactly %d", got, cw)
-		}
-	})
-
-	t.Run("stale group shows the stale marker", func(t *testing.T) {
-		// Short names here so the composed line comfortably fits cw=80 —
-		// the truncation behaviour itself is covered separately above.
-		short := herd.Group{
-			Session: "agentctl-a",
-			Project: "a",
-			Rollup:  herd.RollupWorking,
-			Rows:    []herd.Row{testRow("a", "s", "working", "")},
-			Stale:   true,
-		}
-		out := m.renderGroupHeader(short, false, 80)
-		if !strings.Contains(out, herdStaleMarker) {
-			t.Errorf("expected stale marker in header, got %q", out)
 		}
 	})
 }
@@ -570,8 +554,8 @@ func TestRowCanCloseAndGroupCanLaunch(t *testing.T) {
 	if !rowCanClose(mk("s", "@2")) {
 		t.Error("normal row closable")
 	}
-	if groupCanLaunch(herd.Group{Stale: true, ProjectDir: "/p", RuntimeDir: "/p/.agentctl"}) {
-		t.Error("stale group must not launch")
+	if groupCanLaunch(herd.Group{RuntimeDir: "/p/.agentctl"}) {
+		t.Error("group without project dir must not launch")
 	}
 	if groupCanLaunch(herd.Group{ProjectDir: "/p"}) {
 		t.Error("group without runtime dir must not launch")
@@ -585,9 +569,9 @@ func TestNKeyLaunchesInSelectedGroup(t *testing.T) {
 	if cmd == nil || !strings.Contains(next.(HerdModel).infoMsg, "s1") {
 		t.Errorf("n on a row should launch in its group; info=%q", next.(HerdModel).infoMsg)
 	}
-	m.selectLine(5) // row c in stale s2
+	m.selectLine(5) // row c in s2 (no dirs)
 	next, cmd = m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
 	if cmd != nil || next.(HerdModel).jumpErr == "" {
-		t.Error("n in stale group should error without launching")
+		t.Error("n in a group without dirs should error without launching")
 	}
 }

@@ -5,14 +5,13 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/reaper"
 	"github.com/blsmth/agentctl/internal/selfpath"
-	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
 )
@@ -24,18 +23,17 @@ func RunKillMenu(nameOrID string) {
 	// nameOrID comes from #{window_id} via the keybinding, or falls back
 	// to resolving from the current tmux window.
 
-	// Try snapshot lookup first (fast path, avoids tmux forks).
+	// Try the windowstate record first (fast path, avoids tmux forks).
 	var windowID string
 	var displayName string
-	snap, _ := state.LoadSnapshot()
-	if !snap.IsStale(3*time.Second) && strings.HasPrefix(nameOrID, "@") {
-		if as := snap.ByWindowID(nameOrID); as != nil {
+	if strings.HasPrefix(nameOrID, "@") {
+		if instance, _ := herd.LocalWindowNames(nameOrID); instance != "" {
 			windowID = nameOrID
-			displayName = as.Name
+			displayName = instance
 		}
 	}
 
-	// Fallback: resolve via tmux when snapshot is stale or lookup missed.
+	// Fallback: resolve via tmux when the lookup missed.
 	if displayName == "" {
 		agentName := nameOrID
 		if strings.HasPrefix(nameOrID, "@") {
@@ -154,10 +152,9 @@ func RunQuit() {
 func RunQuitMenu() {
 	// Collect running instance names for the quit confirmation dialog.
 	var agents []string
-	snap, _ := state.LoadSnapshot()
-	if !snap.IsStale(3 * time.Second) {
-		for i := range snap.State.Agents {
-			agents = append(agents, snap.State.Agents[i].Name)
+	if built, err := herd.LocalAgents(); err == nil {
+		for i := range built {
+			agents = append(agents, built[i].Name)
 		}
 	}
 	if len(agents) == 0 {
@@ -214,10 +211,9 @@ func RunHubQuitMenu() {
 func RunRestartMenu() {
 	// Collect running instance names for the restart confirmation dialog.
 	var agents []string
-	snap, _ := state.LoadSnapshot()
-	if !snap.IsStale(3 * time.Second) {
-		for i := range snap.State.Agents {
-			agents = append(agents, snap.State.Agents[i].Name)
+	if built, err := herd.LocalAgents(); err == nil {
+		for i := range built {
+			agents = append(agents, built[i].Name)
 		}
 	}
 	if len(agents) == 0 {

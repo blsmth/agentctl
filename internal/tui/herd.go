@@ -19,9 +19,8 @@ import (
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
-// herdPollInterval is the hub's refresh cadence. The monitor writes
-// state.json roughly every tick (500ms); polling faster than ~1s buys
-// nothing (per the design doc).
+// herdPollInterval is the hub's refresh cadence; polling faster than ~1s
+// buys nothing (per the design doc).
 const herdPollInterval = 1 * time.Second
 
 // herdChromeRows is the number of non-list lines reserved above and below
@@ -145,12 +144,8 @@ func splitAgentName(name string) (base, suffix string) {
 }
 
 // renderAgentName colours the agent type by hash and keeps ":N" muted. The
-// caller passes the already-truncated plain name. Dim overrides colour; a
-// blocked row gets a bold warning colour so it stands out.
-func renderAgentName(name string, stale, blocked bool) string {
-	if stale {
-		return herdDimStyle.Render(name)
-	}
+// caller passes the already-truncated plain name. A blocked row gets a bold warning colour so it stands out.
+func renderAgentName(name string, blocked bool) string {
 	base, suffix := splitAgentName(name)
 	style := lipgloss.NewStyle().Foreground(lipgloss.Color(herdColorFor(base)))
 	if blocked {
@@ -195,7 +190,6 @@ type herdLine struct {
 	group      herd.Group // set for herdLineHeader / herdLinePlaceholder
 	row        herd.Row   // set for herdLineRow
 	groupHead  bool       // true for the first row of a group (blank line above)
-	stale      bool       // the owning group's Stale flag — dims rows/header without affecting selectability
 	label      string     // set for herdLineSubheader, e.g. "dispatched (2)"
 	treePrefix string     // connector prefix for herdLineRow ("" for roots)
 }
@@ -1043,12 +1037,6 @@ type herdFocusErrMsg struct{ err error }
 // rebuildLines flattens m.groups into the scrollable line list. Called after
 // every successful reload.
 //
-// A stale group whose snapshot still has last-known rows renders those rows
-// (dimmed, via herdLine.stale) rather than a placeholder — a briefly-wedged
-// monitor must not make a whole project's agents vanish from the hub. The
-// "snapshot unavailable" placeholder is reserved for groups with no rows at
-// all (snapshot missing/unreadable, or genuinely zero agents).
-//
 // A non-selectable herdLineDivider is inserted between adjacent groups —
 // never before the first group or after the last — so the groups read as
 // distinct blocks in the sidebar. Cursor movement (moveCursor) and selection
@@ -1060,18 +1048,18 @@ func (m *HerdModel) rebuildLines() {
 		if i > 0 {
 			lines = append(lines, herdLine{kind: herdLineDivider})
 		}
-		lines = append(lines, herdLine{kind: herdLineHeader, group: g, stale: g.Stale})
+		lines = append(lines, herdLine{kind: herdLineHeader, group: g})
 		if len(g.Rows) == 0 {
-			lines = append(lines, herdLine{kind: herdLinePlaceholder, group: g, stale: g.Stale})
+			lines = append(lines, herdLine{kind: herdLinePlaceholder, group: g})
 			continue
 		}
 		first := true
 		for _, t := range treeRows(g.Rows) {
 			if t.Label != "" {
-				lines = append(lines, herdLine{kind: herdLineSubheader, group: g, stale: g.Stale, label: t.Label})
+				lines = append(lines, herdLine{kind: herdLineSubheader, group: g, label: t.Label})
 				continue
 			}
-			lines = append(lines, herdLine{kind: herdLineRow, row: t.Row, groupHead: first, stale: g.Stale, treePrefix: t.Prefix})
+			lines = append(lines, herdLine{kind: herdLineRow, row: t.Row, groupHead: first, treePrefix: t.Prefix})
 			first = false
 		}
 	}
@@ -1259,9 +1247,6 @@ func (m HerdModel) renderLine(i int, cw int) string {
 		if selected {
 			marker = "  " + cursorActiveStyle.Render("▸") + " "
 		}
-		if l.group.Stale {
-			return marker + herdDimStyle.Render("snapshot unavailable")
-		}
 		return marker + herdDimStyle.Render("no agents")
 	case herdLineDivider:
 		return renderHerdDivider(cw)
@@ -1269,7 +1254,7 @@ func (m HerdModel) renderLine(i int, cw int) string {
 		// Align under agent names: bar + cursor slot (3 cols) + glyph + space.
 		return strings.Repeat(" ", 3+2) + herdDimStyle.Render(l.label)
 	default: // herdLineRow
-		return m.renderTreeRow(l.row, l.treePrefix, selected, l.stale, cw)
+		return m.renderTreeRow(l.row, l.treePrefix, selected, cw)
 	}
 }
 
@@ -1331,9 +1316,6 @@ func rowGlyph(r herd.Row) (string, lipgloss.Style) {
 	}
 }
 
-// herdStaleMarker is the dim "stale" tag appended to a stale group's header.
-const herdStaleMarker = "stale"
-
 // renderGroupHeader renders a session's group header line, now selectable
 // (a group header/placeholder can be the cursor's target, showing that
 // session's summary in the main panel) — hence the cursor marker, matching
@@ -1346,9 +1328,6 @@ func (m HerdModel) renderGroupHeader(g herd.Group, selected bool, cw int) string
 		marker = " " + cursorActiveStyle.Render("▸") + " "
 	}
 	projStyle := herdProjectStyle.Bold(true).Foreground(lipgloss.Color(herdColorFor(g.Project)))
-	if g.Stale {
-		projStyle = herdDimStyle
-	}
 	line := fmt.Sprintf("%s%s  %s  %s  %s",
 		marker,
 		style.Render(glyph),
@@ -1356,9 +1335,6 @@ func (m HerdModel) renderGroupHeader(g herd.Group, selected bool, cw int) string
 		herdCountStyle.Render(g.Session),
 		herdCountStyle.Render(count),
 	)
-	if g.Stale {
-		line += "  " + herdDimStyle.Render(herdStaleMarker)
-	}
 	if groupCanLaunch(g) {
 		btnW := lipgloss.Width(herdNewLabel)
 		line = truncateToWidth(line, cw-herdSidebarRightGutter-btnW-1)
@@ -1375,37 +1351,24 @@ func (m HerdModel) renderGroupHeader(g herd.Group, selected bool, cw int) string
 	return line
 }
 
-// renderRow renders one agent row. When stale is true (the owning group's
-// snapshot has gone stale but retained its last-known rows) the glyph, name,
-// and activity are all dimmed — but the row stays selectable and jumpable:
-// the tmux window is very likely still there even though the monitor's
-// snapshot is momentarily out of date.
-func (m HerdModel) renderRow(r herd.Row, selected bool, stale bool, cw int) string {
-	return m.renderTreeRow(r, "", selected, stale, cw)
+// renderRow renders one agent row.
+func (m HerdModel) renderRow(r herd.Row, selected bool, cw int) string {
+	return m.renderTreeRow(r, "", selected, cw)
 }
 
 // renderTreeRow is renderRow with a tree connector prefix drawn (dim) between
 // the glyph and the name. The prefix is clamped so deep nesting cannot starve
 // the name or push the activity column off-screen.
-func (m HerdModel) renderTreeRow(r herd.Row, treePrefix string, selected bool, stale bool, cw int) string {
+func (m HerdModel) renderTreeRow(r herd.Row, treePrefix string, selected bool, cw int) string {
 	glyph, style := rowGlyph(r)
-	if stale {
-		style = herdDimStyle
-	}
 	// Thin left bar in the group's colour, then the cursor slot (3 columns).
 	barStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(herdColorFor(r.Project)))
-	if stale {
-		barStyle = herdDimStyle
-	}
 	cursor := barStyle.Render("▎") + "  "
 	if selected {
 		cursor = barStyle.Render("▎") + cursorActiveStyle.Render("▸") + " "
 	}
 
 	activityStyle := herdActivityStyle
-	if stale {
-		activityStyle = herdDimStyle
-	}
 
 	// Reserve room for the cursor marker, glyph, and
 	// separators; whatever's left is split between the name and the
@@ -1437,7 +1400,7 @@ func (m HerdModel) renderTreeRow(r herd.Row, treePrefix string, selected bool, s
 	}
 	name := truncateToWidth(r.Name, nameBudget)
 
-	prefix := cursor + glyphStr + " " + herdDimStyle.Render(treePrefix) + renderAgentName(name, stale, r.State == "blocked") + "  "
+	prefix := cursor + glyphStr + " " + herdDimStyle.Render(treePrefix) + renderAgentName(name, r.State == "blocked") + "  "
 	prefixW := lipgloss.Width(prefix)
 	// Reserve " ✕" at the right edge, ahead of the gutter.
 	closeW := 1 + lipgloss.Width(herdCloseLabel)

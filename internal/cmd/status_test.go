@@ -1,11 +1,16 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/state"
+	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 func TestSessionMatches(t *testing.T) {
@@ -229,5 +234,46 @@ func TestDashIfEmpty(t *testing.T) {
 	}
 	if got := dashIfEmpty("adhoc"); got != "adhoc" {
 		t.Errorf("dashIfEmpty(adhoc) = %q", got)
+	}
+}
+
+// TestStatusRowsWithoutStateJSON: the status table is built from tmux windows
+// plus windowstate; no state.json exists anywhere.
+func TestStatusRowsWithoutStateJSON(t *testing.T) {
+	dir := t.TempDir()
+	winDir := filepath.Join(dir, "windows")
+	if err := os.MkdirAll(winDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(id, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(winDir, id+".json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("@2", `{"state":"blocked","instance":"go-engineer","mode":"dispatch","ticket":"7","spawned_by":"@1","spawned_by_session":"s1"}`)
+	write("@3", `{"state":"working","instance":"py-eng"}`)
+	wins := []tmux.WindowInfo{{ID: "@1", Name: "shell"}, {ID: "@2", Name: "⏸ go-engineer"}, {ID: "@3", Name: "● py-eng"}, {ID: "@4", Name: "bare"}}
+	agents := herd.BuildAgents(wins, windowstate.AllFrom(winDir), nil, time.Now())
+	rows := herd.TagAgents("agentctl-x", "x", agents)
+	g := herd.Group{Session: "agentctl-x", Project: "x", RuntimeDir: dir, Rows: rows, Rollup: herd.RollupRows(rows)}
+	if _, err := os.Stat(filepath.Join(dir, "state.json")); err == nil {
+		t.Fatal("state.json must not exist")
+	}
+
+	all := statusRowsFromGroups([]herd.Group{g}, StatusOptions{})
+	if len(all) != 3 {
+		t.Fatalf("got %d rows, want 3 (shell excluded, bare window kept)", len(all))
+	}
+	if all[2].row.Name != "bare" || all[2].row.State != "idle" {
+		t.Errorf("untracked row = %+v", all[2].row)
+	}
+
+	blocked := statusRowsFromGroups([]herd.Group{g}, StatusOptions{Blocked: true})
+	if len(blocked) != 1 || blocked[0].row.WindowID != "@2" {
+		t.Fatalf("--blocked = %+v, want only @2", blocked)
+	}
+	if blocked[0].meta.Mode != "dispatch" || blocked[0].meta.Parent() != "@1" || blocked[0].meta.Ticket != "7" {
+		t.Errorf("meta = %+v", blocked[0].meta)
 	}
 }

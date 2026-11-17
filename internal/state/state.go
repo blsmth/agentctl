@@ -15,35 +15,36 @@ import (
 
 // AgentState tracks a running agent's resumable session.
 type AgentState struct {
-	Name                string `json:"name"`                 // Instance name (e.g. "go-engineer~2")
-	AgentName           string `json:"agent_name,omitempty"` // Base agent name (e.g. "go-engineer"); empty means same as Name
-	SessionID           string `json:"session_id"`
-	LogPath             string `json:"log_path,omitempty"`
-	WorkDir             string `json:"work_dir,omitempty"`
-	WindowID            string `json:"window_id,omitempty"`              // tmux window ID (e.g. "@3")
-	WindowIndex         int    `json:"window_index,omitempty"`           // tmux display order (0-based position in list-windows output)
-	State               string `json:"state,omitempty"`                  // "working", "idle", "blocked"
-	ContextPct          int    `json:"context_pct,omitempty"`            // 0–100
-	ContextTokens       int    `json:"context_tokens,omitempty"`         // input tokens in the live context (last turn)
-	ContextWindow       int    `json:"context_window,omitempty"`         // usable window (model-aware, reserve-aware) for the active model
-	WorktreePath        string `json:"worktree_path,omitempty"`          // if launched in a worktree
-	Done                bool   `json:"done,omitempty"`                   // true when agent signaled done
-	InputTokens         int    `json:"input_tokens,omitempty"`           // cumulative input tokens
-	OutputTokens        int    `json:"output_tokens,omitempty"`          // cumulative output tokens
-	CacheReadTokens     int    `json:"cache_read_tokens,omitempty"`      // cumulative cache read tokens
-	CacheCreateTokens   int    `json:"cache_create_tokens,omitempty"`    // cumulative cache create tokens
-	ModelName           string `json:"model_name,omitempty"`             // e.g. "claude-sonnet-4-20250514"
-	TurnCount           int    `json:"turn_count,omitempty"`             // number of assistant turns
-	LastTurnInput       int    `json:"last_turn_input,omitempty"`        // last turn input tokens
-	LastTurnOutput      int    `json:"last_turn_output,omitempty"`       // last turn output tokens
-	LastTurnCacheRead   int    `json:"last_turn_cache_read,omitempty"`   // last turn cache-read tokens
-	LastTurnCacheCreate int    `json:"last_turn_cache_create,omitempty"` // last turn cache-create tokens
-	Ticket              int    `json:"ticket,omitempty"`                 // GitHub issue number (0 if not a dispatch)
-	StartTime           int64  `json:"start_time,omitempty"`             // Unix timestamp when window was first seen
-	MainPane            string `json:"main_pane,omitempty"`              // tmux pane ID of the agent content pane
-	LastToolDetail      string `json:"last_tool_detail,omitempty"`       // e.g. "monitor.go" or "go build ./..."
-	LastText            string `json:"last_text,omitempty"`              // last assistant text block (already truncated to ~100 chars upstream)
-	Backend             string `json:"backend,omitempty"`                // config backend name the window runs against ("" = Anthropic); restore re-resolves it
+	Name                string  `json:"name"`                 // Instance name (e.g. "go-engineer~2")
+	AgentName           string  `json:"agent_name,omitempty"` // Base agent name (e.g. "go-engineer"); empty means same as Name
+	SessionID           string  `json:"session_id"`
+	LogPath             string  `json:"log_path,omitempty"`
+	WorkDir             string  `json:"work_dir,omitempty"`
+	WindowID            string  `json:"window_id,omitempty"`              // tmux window ID (e.g. "@3")
+	WindowIndex         int     `json:"window_index,omitempty"`           // tmux display order (0-based position in list-windows output)
+	State               string  `json:"state,omitempty"`                  // "working", "idle", "blocked"
+	ContextPct          int     `json:"context_pct,omitempty"`            // 0–100
+	ContextTokens       int     `json:"context_tokens,omitempty"`         // input tokens in the live context (last turn)
+	ContextWindow       int     `json:"context_window,omitempty"`         // usable window (model-aware, reserve-aware) for the active model
+	WorktreePath        string  `json:"worktree_path,omitempty"`          // if launched in a worktree
+	Done                bool    `json:"done,omitempty"`                   // true when agent signaled done
+	InputTokens         int     `json:"input_tokens,omitempty"`           // cumulative input tokens
+	OutputTokens        int     `json:"output_tokens,omitempty"`          // cumulative output tokens
+	CacheReadTokens     int     `json:"cache_read_tokens,omitempty"`      // cumulative cache read tokens
+	CacheCreateTokens   int     `json:"cache_create_tokens,omitempty"`    // cumulative cache create tokens
+	ModelName           string  `json:"model_name,omitempty"`             // e.g. "claude-sonnet-4-20250514"
+	CostUSD             float64 `json:"cost_usd,omitempty"`               // cumulative session cost pushed by the statusline (not written by the monitor)
+	TurnCount           int     `json:"turn_count,omitempty"`             // number of assistant turns
+	LastTurnInput       int     `json:"last_turn_input,omitempty"`        // last turn input tokens
+	LastTurnOutput      int     `json:"last_turn_output,omitempty"`       // last turn output tokens
+	LastTurnCacheRead   int     `json:"last_turn_cache_read,omitempty"`   // last turn cache-read tokens
+	LastTurnCacheCreate int     `json:"last_turn_cache_create,omitempty"` // last turn cache-create tokens
+	Ticket              int     `json:"ticket,omitempty"`                 // GitHub issue number (0 if not a dispatch)
+	StartTime           int64   `json:"start_time,omitempty"`             // Unix timestamp when window was first seen
+	MainPane            string  `json:"main_pane,omitempty"`              // tmux pane ID of the agent content pane
+	LastToolDetail      string  `json:"last_tool_detail,omitempty"`       // e.g. "monitor.go" or "go build ./..."
+	LastText            string  `json:"last_text,omitempty"`              // last assistant text block (already truncated to ~100 chars upstream)
+	Backend             string  `json:"backend,omitempty"`                // config backend name the window runs against ("" = Anthropic); restore re-resolves it
 	// Launch metadata carried through session restore (copied from windowstate
 	// by BuildRestoreAgents; absent in monitor snapshots and old files). Ticket
 	// above is the monitor's int; TicketRef is the windowstate string form.
@@ -90,6 +91,11 @@ func LoadSnapshotFrom(path string) (*Snapshot, error) {
 	if s == nil {
 		return nil, nil
 	}
+	return NewSnapshot(s), nil
+}
+
+// NewSnapshot wraps s with lookup indexes.
+func NewSnapshot(s *State) *Snapshot {
 	snap := &Snapshot{
 		State:      s,
 		byWindowID: make(map[string]*AgentState, len(s.Agents)),
@@ -102,7 +108,7 @@ func LoadSnapshotFrom(path string) (*Snapshot, error) {
 		}
 		snap.byName[a.Name] = a
 	}
-	return snap, nil
+	return snap
 }
 
 // ByWindowID returns the AgentState for a given tmux window ID (e.g. "@3").

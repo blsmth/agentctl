@@ -8,7 +8,6 @@ import (
 
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
-	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
 )
@@ -29,7 +28,7 @@ func CmdHud(windowID string) {
 // into a single pane, eliminating the two tmux pane-border lines that would
 // otherwise separate three independent panes.
 func CmdChromeBar(windowID string) {
-	model := tui.NewChromeBarModel(windowID, state.FilePath())
+	model := tui.NewChromeBarModel(windowID, paths.RuntimeDir())
 	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "chrome-bar error: %v\n", err)

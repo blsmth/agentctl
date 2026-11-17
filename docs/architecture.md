@@ -54,7 +54,7 @@ agentctl
 3. State is **hook-driven**, not inferred from log growth. Claude Code hooks write a per-window state string to `.agentctl/windows/<windowID>.json` (`windowstate`). The monitor's `resolveState` maps it to an `AgentStatus`: `Working`, `Idle`, `Blocked`, or `Gone` (`Gone` is detected structurally when a window disappears).
 4. On a state change the monitor builds a `Transition` and calls the concrete handlers directly — `improve.HandleTransition` and the metrics `transitionTracker`. Dispatch completion is spawned by the Stop hook, not the monitor. There is no plugin registry.
 5. The monitor renames tmux windows to reflect state (`●` working, `⏸` blocked, `✓` done-unseen, bare name idle) and writes the authoritative snapshot to `state.json`.
-6. UI panes (the chrome bar) watch `state.json` via fsnotify and re-read the snapshot to re-render — no data is pushed to them.
+6. UI panes (the chrome bar) watch `.agentctl/windows/` and the `active-window` file via fsnotify and rebuild their view from tmux + windowstate — no data is pushed to them.
 
 See [monitor-architecture.md](monitor-architecture.md) for the detailed monitor, hook, and TUI reference.
 
@@ -70,7 +70,7 @@ The authoritative per-window state, written by hooks and read by the monitor. On
 
 ### state/
 
-The machine-readable snapshot (`state.json`) the monitor writes each tick under `paths.RuntimeDir()` (`$CWD/.agentctl/`). Consumers (chrome bar, popups) read it via `state.LoadSnapshot()` instead of forking tmux, and it enables restart resume and staleness checks.
+The machine-readable snapshot (`state.json`) the monitor writes each tick under `paths.RuntimeDir()` (`$CWD/.agentctl/`). Only the macapp reads it now; the chrome bar, hub, `agentctl status` and popups build their view from `tmux list-windows` plus windowstate (`herd.LoadAgents`), with a fresh `state.json` as optional enrichment for token counts.
 
 ### agent/
 
@@ -90,7 +90,7 @@ Layered per-agent settings (alerts, `auto_improve`, `cross_context`, dir, model,
 
 ### tui/
 
-Bubble Tea models. The chrome bar (`chrome_bar.go`) is a mouse-enabled pane that watches `state.json` via fsnotify and renders the two-row chrome (keybinds + tabs). Left-clicking a tab on line 2 switches to that window and returns focus to the agent pane; clicks elsewhere only refocus the agent pane. Most other models run as their own `tea.Program` inside a `tmux display-popup` (launcher, wizards, confirmations, settings); a few full-screen browsers (agents, sessions, tickets) run as dedicated tmux windows.
+Bubble Tea models. The chrome bar (`chrome_bar.go`) is a mouse-enabled pane that watches the windowstate directory via fsnotify and renders the two-row chrome (keybinds + tabs). Left-clicking a tab on line 2 switches to that window and returns focus to the agent pane; clicks elsewhere only refocus the agent pane. Most other models run as their own `tea.Program` inside a `tmux display-popup` (launcher, wizards, confirmations, settings); a few full-screen browsers (agents, sessions, tickets) run as dedicated tmux windows.
 
 ## Notifications
 

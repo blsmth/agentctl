@@ -233,22 +233,33 @@ func statuslineColumns() int {
 }
 
 // lookupAgentState resolves the current window's state.AgentState for the
-// "turns" and "duration" segments of the rich statusline -- neither
-// is present in the Claude Code payload itself. This is strictly
-// best-effort: state.json may not exist yet (state.Init hasn't run in this
-// process, or the monitor has never ticked), be stale, or simply have no
-// entry for this window. Any of those cases just means those two segments
-// are omitted downstream -- this never errors, never blocks, and never
-// delays the line.
+// segments the payload cannot supply on its own. The turn count and log path
+// come from windowstate (hook-written, always available); the monitor-only
+// token counters are merged from state.json only when it is fresh and are
+// otherwise left zero. Everything is best-effort: a missing record just omits
+// segments downstream; this never errors, blocks, or delays the line.
 func lookupAgentState(windowID string) *state.AgentState {
 	if windowID == "" {
 		return nil
 	}
-	snap, err := state.LoadSnapshot()
-	if err != nil || snap == nil {
-		return nil
+	var as *state.AgentState
+	if snap, err := state.LoadSnapshot(); err == nil && snap != nil && !snap.IsStale(3*time.Second) {
+		if m := snap.ByWindowID(windowID); m != nil {
+			c := *m
+			as = &c
+		}
 	}
-	return snap.ByWindowID(windowID)
+	if ws, err := windowstate.Read(windowID); err == nil && (ws.TurnCount > 0 || ws.LogPath != "") {
+		if as == nil {
+			as = &state.AgentState{}
+		}
+		as.WindowID = windowID
+		as.TurnCount = ws.TurnCount
+		if ws.LogPath != "" {
+			as.LogPath = ws.LogPath
+		}
+	}
+	return as
 }
 
 // consistentAgentState drops a snapshot entry that demonstrably belongs to a
@@ -640,12 +651,29 @@ func renderRichLine2(p *Payload, cols int, snap *state.AgentState) (string, bool
 		}
 	}
 
-	// 4. Last-turn tokens ("turn: 81k↑ 1k↓") -- from state.json, not the
-	// payload; the payload has no per-turn breakdown. Ported verbatim
+	// 4. Last-turn tokens ("turn: 81k↑ 1k↓") -- from the payload's
+	// current_usage, falling back to state.json when that is null. Ported verbatim
 	// (thresholds, glyphs, and label color) from the deleted
 	// chrome_bar.go renderMetricsLine step 4, restoring a segment that
 	// the rich statusline would otherwise lack.
-	if snap != nil && (snap.LastTurnInput > 0 || snap.LastTurnOutput > 0) {
+	lastIn, lastOut := 0, 0
+	if snap != nil {
+		lastIn, lastOut = snap.LastTurnInput, snap.LastTurnOutput
+	}
+	if cw := p.ContextWindow; cw != nil && cw.CurrentUsage != nil {
+		// Payload first: input-only context total (input + cache create +
+		// cache read, the same numerator ctx% uses) and the turn's output.
+		cu := cw.CurrentUsage
+		if in, ok := coerceNonNegative(cu.InputTokens); ok {
+			cc, _ := coerceNonNegative(cu.CacheCreationInputTokens)
+			cr, _ := coerceNonNegative(cu.CacheReadInputTokens)
+			lastIn = int(in + cc + cr)
+		}
+		if out, ok := coerceNonNegative(cu.OutputTokens); ok {
+			lastOut = int(out)
+		}
+	}
+	if lastIn > 0 || lastOut > 0 {
 		turnLabelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(th.TokenInput))
 		inThresholds := []render.Threshold{
 			{Cutoff: 50_000, Color: th.TokenInput},
@@ -657,8 +685,8 @@ func renderRichLine2(p *Payload, cols int, snap *state.AgentState) (string, bool
 			{Cutoff: 20_000, Color: th.Yellow},
 			{Cutoff: 999_999_999, Color: th.Red},
 		}
-		ltIn := render.ThresholdStyle(snap.LastTurnInput, inThresholds).Render(render.TokensK(snap.LastTurnInput) + "↑")
-		ltOut := render.ThresholdStyle(snap.LastTurnOutput, outThresholds).Render(render.TokensK(snap.LastTurnOutput) + "↓")
+		ltIn := render.ThresholdStyle(lastIn, inThresholds).Render(render.TokensK(lastIn) + "↑")
+		ltOut := render.ThresholdStyle(lastOut, outThresholds).Render(render.TokensK(lastOut) + "↓")
 		addSeg(turnLabelStyle.Render("turn: ") + ltIn + " " + ltOut)
 	}
 
@@ -695,7 +723,7 @@ func renderRichLine2(p *Payload, cols int, snap *state.AgentState) (string, bool
 		addSeg(pctStr + labelStyle.Render(" cached"))
 	}
 
-	// 6. Turns -- from state.json, not the payload.
+	// 6. Turns -- from windowstate (ws.TurnCount), not the payload.
 	if snap != nil && snap.TurnCount > 0 {
 		thresholds := []render.Threshold{
 			{Cutoff: 0, Color: th.Muted},
@@ -715,8 +743,20 @@ func renderRichLine2(p *Payload, cols int, snap *state.AgentState) (string, bool
 	// the placeholder to hold layout. This surface owns no such fixed
 	// width, so an all-zero total is skipped entirely rather than shown
 	// as noise.
-	if snap != nil {
-		total := snap.InputTokens + snap.OutputTokens
+	{
+		totIn, totOut := 0, 0
+		if snap != nil {
+			totIn, totOut = snap.InputTokens, snap.OutputTokens
+		}
+		if cw := p.ContextWindow; cw != nil {
+			if v, ok := coerceNonNegative(cw.TotalInputTokens); ok {
+				totIn = int(v)
+			}
+			if v, ok := coerceNonNegative(cw.TotalOutputTokens); ok {
+				totOut = int(v)
+			}
+		}
+		total := totIn + totOut
 		if total > 0 {
 			totalLabelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(th.TokenInput))
 			inThresholds := []render.Threshold{
@@ -729,8 +769,8 @@ func renderRichLine2(p *Payload, cols int, snap *state.AgentState) (string, bool
 				{Cutoff: 200_000, Color: th.Yellow},
 				{Cutoff: 999_999_999, Color: th.Red},
 			}
-			inStr := render.ThresholdStyle(snap.InputTokens, inThresholds).Render(render.TokensK(snap.InputTokens) + "↑")
-			outStr := render.ThresholdStyle(snap.OutputTokens, outThresholds).Render(render.TokensK(snap.OutputTokens) + "↓")
+			inStr := render.ThresholdStyle(totIn, inThresholds).Render(render.TokensK(totIn) + "↑")
+			outStr := render.ThresholdStyle(totOut, outThresholds).Render(render.TokensK(totOut) + "↓")
 			addSeg(totalLabelStyle.Render("total: ") + inStr + " " + outStr)
 		}
 	}
@@ -745,8 +785,16 @@ func renderRichLine2(p *Payload, cols int, snap *state.AgentState) (string, bool
 		}
 	}
 
-	// 9. Duration -- from state.json, not the payload.
-	if snap != nil && snap.StartTime > 0 {
+	// 9. Duration -- from the payload's cost.total_duration_ms, falling back
+	// to the monitor's start time in state.json.
+	haveDuration := false
+	if p.Cost != nil {
+		if ms, ok := coerceNonNegative(p.Cost.TotalDurationMS); ok && ms > 0 {
+			addSeg(valueStyle.Render(render.Duration(time.Duration(ms * float64(time.Millisecond)))))
+			haveDuration = true
+		}
+	}
+	if !haveDuration && snap != nil && snap.StartTime > 0 {
 		addSeg(valueStyle.Render(render.Duration(time.Since(time.Unix(snap.StartTime, 0)))))
 	}
 
