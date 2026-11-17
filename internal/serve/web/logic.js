@@ -793,3 +793,45 @@ export function resolvedText(r, nowMs) {
   }
   return head + when;
 }
+
+/** HUB_SESSION is the tmux hub session; its windows are never closable (server rule). */
+const HUB_SESSION = "agentctl-hub";
+
+/** SWIPE_SLOP is the movement in px after which a gesture's direction is locked. */
+export const SWIPE_SLOP = 10;
+
+/**
+ * canSwipeClose reports whether a row offers swipe-to-close: the write feature
+ * is on, the window is idle or done, and it is not a hub session. The server
+ * still re-verifies the pane and may answer 409.
+ */
+export function canSwipeClose(win, session, features) {
+  if (!win || !hasFeature(features, "write")) return false;
+  if (session === HUB_SESSION) return false;
+  const s = effectiveState(win);
+  return s === "idle" || s === "done";
+}
+
+/** swipeAxis locks a gesture to "x" or "y" once it moves past the slop; "" until then. */
+export function swipeAxis(dx, dy, slop = SWIPE_SLOP) {
+  const ax = Math.abs(dx);
+  const ay = Math.abs(dy);
+  if (Math.max(ax, ay) < slop) return "";
+  return ax > ay ? "x" : "y";
+}
+
+/** swipeOffset maps a drag to a row offset: leftward only, never past the row width. */
+export function swipeOffset(dx, width) {
+  return Math.max(-width, Math.min(0, dx));
+}
+
+/**
+ * swipeCommit decides a release: commit when dragged past 38% of the row width
+ * or flung left faster than 0.6 px/ms over at least 40px. dx is negative leftward.
+ */
+export function swipeCommit(dx, width, velocity = 0) {
+  if (width <= 0 || dx >= 0) return false;
+  const dist = -dx;
+  if (dist >= width * 0.38) return true;
+  return velocity < -0.6 && dist >= 40;
+}

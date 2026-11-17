@@ -12,10 +12,20 @@ import {
   sortGroups,
   treeLines,
   treeRows,
+  canSwipeClose,
   visibleTree,
+  windowApiPath,
   windowHash,
+  windowKey,
 } from "./logic.js";
-import { clear, h } from "./ui.js";
+import { send, ApiError } from "./api.js";
+import { attachSwipe } from "./swipe.js";
+import { clear, confirmSheet, h, toast } from "./ui.js";
+
+/** closeError is the message to toast for a failed close. */
+function closeError(err) {
+  return err instanceof ApiError || err instanceof Error ? err.message : "Close failed";
+}
 
 const GLYPH = { blocked: "⏸", working: "●", done: "✓", idle: "○" };
 
@@ -73,7 +83,7 @@ function treeSpans(entry, expanded) {
   return [...spans, ...stub];
 }
 
-function windowRow(entry, toggle, expanded) {
+function windowRow(entry, toggle, expanded, swipe) {
   const win = entry.win;
   const state = effectiveState(win);
   const since = formatSince(win.blocked_since || win.state_since, Date.now());
@@ -97,7 +107,14 @@ function windowRow(entry, toggle, expanded) {
       win.context_pct ? h("span", { class: "meta" }, `${Math.round(win.context_pct)}%`) : null,
     ),
   );
-  return h("div", { class: "node" }, link, toggle);
+  const node = h("div", { class: "node" }, link, toggle);
+  if (!swipe || !swipe.can(win)) return node;
+  const wrap = h("div", { class: `swipe${swipe.gone(win) ? " swipe-gone" : ""}` }, h("span", { class: "swipe-action", "aria-hidden": "true" }, "Close"), node);
+  attachSwipe(wrap, node, link, {
+    onBusy: swipe.busy,
+    onCommit: () => swipe.close(win),
+  });
+  return wrap;
 }
 
 function bucketRow(entry, toggle, expanded) {
@@ -125,6 +142,35 @@ export function mountFleet(root, ctx) {
 
   const collapsed = loadCollapsed();
 
+  // Renders are deferred while a swipe or confirm sheet is live, because
+  // render() rebuilds every row and would destroy the one being dragged.
+  let busyCount = 0;
+  let renderPending = false;
+  const closed = new Map(); // windowKey -> ms; rows closed, awaiting the fleet event
+  const swipe = {
+    can: (win) => canSwipeClose(win, win.session, ctx.features),
+    gone: (win) => closed.has(windowKey(win)),
+    busy: (on) => {
+      busyCount = Math.max(0, busyCount + (on ? 1 : -1));
+      if (busyCount === 0 && renderPending) {
+        renderPending = false;
+        render();
+      }
+    },
+    close: async (win) => {
+      const ok = await confirmSheet({ title: "Close window?", lines: [`${win.agent ?? ""} ${win.window_id}`], confirmLabel: "Close", danger: true });
+      if (!ok) return false;
+      try {
+        await send({ method: "POST", path: `${windowApiPath(win.session, win.window_id)}/close`, body: {} });
+      } catch (err) {
+        toast(closeError(err), "error");
+        return false;
+      }
+      closed.set(windowKey(win), Date.now());
+      return true;
+    },
+  };
+
   function groupNodes(g) {
     const entries = treeRows(g.windows);
     const live = new Set(entries.map((e) => collapseKey(g.session, e)));
@@ -140,12 +186,16 @@ export function mountFleet(root, ctx) {
       const key = collapseKey(g.session, e);
       const toggle = kids.length > 0 ? disclosure(kids, collapsed.has(key), flip(key)) : null;
       const expanded = kids.length > 0 && !collapsed.has(key);
-      return e.bucket ? bucketRow(e, toggle, expanded) : windowRow(e, toggle, expanded);
+      return e.bucket ? bucketRow(e, toggle, expanded) : windowRow(e, toggle, expanded, swipe);
     });
     return { nodes, live };
   }
 
   function render() {
+    if (busyCount > 0) {
+      renderPending = true;
+      return;
+    }
     renderApprovalBanner();
     const { fleet, downSince } = ctx.store;
     if (downSince && Date.now() - downSince > 15000) {
@@ -181,6 +231,8 @@ export function mountFleet(root, ctx) {
         ),
       );
     }
+    const present = new Set(groups.flatMap((g) => g.windows.map(windowKey)));
+    for (const [k, t] of closed) if (!present.has(k) || Date.now() - t > 15000) closed.delete(k);
     // Forget collapsed keys whose window or bucket is gone.
     const stale = [...collapsed].filter((k) => !live.has(k));
     if (stale.length > 0) {

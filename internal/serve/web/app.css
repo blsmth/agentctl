@@ -161,3 +161,12 @@ body.term-open nav { display: none; }
 .approval-text { margin: 0; padding: .6rem; background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
   white-space: pre-wrap; overflow-wrap: anywhere; font: .8rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
   max-height: 45vh; overflow: auto; -webkit-overflow-scrolling: touch; }
+
+/* Swipe-left-to-close on fleet rows. */
+.swipe { position: relative; overflow: hidden; background: var(--blocked); }
+.swipe-action { position: absolute; inset: 0 0 0 auto; display: flex; align-items: center; justify-content: flex-end; padding-right: 1.25rem; color: #fff; font-weight: 600; }
+.swipe > .node { position: relative; will-change: transform; }
+.swipe .win { touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.swipe:not(.swiping) > .swipe-action { visibility: hidden; }
+.swipe-gone { display: none; }
+@media (prefers-reduced-motion: reduce) { .swipe > .node { transition: none !important; } }

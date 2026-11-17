@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  canSwipeClose, swipeAxis, swipeCommit, swipeOffset,
   ansiColor, approvalBannerText, approvalConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
   buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
@@ -119,3 +120,31 @@ assert.equal(resolvedText(res({ outcome: "timed_out", resolved_at: "2026-11-17T1
 assert.equal(resolvedText(res({ outcome: "cancelled" }), T0), "No longer waiting · 2m ago");
 assert.equal(resolvedText({ outcome: "weird" }, T0), "No longer waiting");
 console.log("ok: resolved text");
+
+// Swipe-to-close.
+{
+  const idle = { state: "idle" };
+  const done = { state: "idle", done: true };
+  const feats = ["read", "write"];
+  assert.equal(canSwipeClose(idle, "s", feats), true);
+  assert.equal(canSwipeClose(done, "s", feats), true);
+  assert.equal(canSwipeClose({ state: "working" }, "s", feats), false);
+  assert.equal(canSwipeClose({ state: "blocked", done: true }, "s", feats), false);
+  assert.equal(canSwipeClose(idle, "s", ["read"]), false);
+  assert.equal(canSwipeClose(idle, "s", undefined), false);
+  assert.equal(canSwipeClose(idle, "agentctl-hub", feats), false);
+  assert.equal(swipeAxis(3, 4), "");
+  assert.equal(swipeAxis(-12, 4), "x");
+  assert.equal(swipeAxis(5, 14), "y");
+  assert.equal(swipeAxis(-11, 11), "y");
+  assert.equal(swipeOffset(30, 300), 0);
+  assert.equal(swipeOffset(-100, 300), -100);
+  assert.equal(swipeOffset(-400, 300), -300);
+  assert.equal(swipeCommit(-120, 300), true);
+  assert.equal(swipeCommit(-100, 300), false);
+  assert.equal(swipeCommit(-60, 300, -1), true);
+  assert.equal(swipeCommit(-20, 300, -2), false);
+  assert.equal(swipeCommit(50, 300, -2), false);
+  assert.equal(swipeCommit(-200, 0), false);
+  console.log("ok: swipe close");
+}
