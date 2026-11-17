@@ -20,8 +20,7 @@ func blockTmuxDeps(t *testing.T) {
 	t.Helper()
 	orig := signal.DefaultDeps()
 	signal.SetDepsForTest(&signal.Deps{
-		TmuxDisplay:  func(string, string) string { return "" },
-		RenameWindow: func(string, string) error { return nil },
+		TmuxDisplay: func(string, string) string { return "" },
 	})
 	t.Cleanup(func() { signal.SetDepsForTest(orig) })
 	t.Setenv("AGENTCTL_SESSION_ID", "")
@@ -201,8 +200,7 @@ func TestRunWithIO_PersistsWindowState(t *testing.T) {
 
 	orig := signal.DefaultDeps()
 	signal.SetDepsForTest(&signal.Deps{
-		TmuxDisplay:  func(string, string) string { return "@42" },
-		RenameWindow: func(string, string) error { return nil },
+		TmuxDisplay: func(string, string) string { return "@42" },
 	})
 	t.Cleanup(func() { signal.SetDepsForTest(orig) })
 	t.Setenv("AGENTCTL_SESSION_ID", "")
@@ -265,8 +263,7 @@ func TestRunWithIO_DoesNotTouchOwnedWindowStateFields(t *testing.T) {
 
 	orig := signal.DefaultDeps()
 	signal.SetDepsForTest(&signal.Deps{
-		TmuxDisplay:  func(string, string) string { return "@7" },
-		RenameWindow: func(string, string) error { return nil },
+		TmuxDisplay: func(string, string) string { return "@7" },
 	})
 	t.Cleanup(func() { signal.SetDepsForTest(orig) })
 	t.Setenv("AGENTCTL_SESSION_ID", "")

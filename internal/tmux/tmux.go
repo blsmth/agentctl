@@ -562,6 +562,12 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 		windowstate.Revive(windowID)
 		windowstate.Update(windowID, func(ws *windowstate.WindowState) { //nolint:errcheck
 			ws.Instance = windowName
+			// The window was just created with this name; start the glyph
+			// bookkeeping consistent with it so the first state writer
+			// renames from a known baseline. A recycled @N may carry a
+			// previous window's Seen/Done.
+			ws.RenderedName = windowName
+			ws.Seen = false
 			ws.AgentName = agentName
 			ws.LogPath = logPath
 			ws.Ticket = extraEnv["AGENTCTL_TICKET"]

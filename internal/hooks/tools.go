@@ -12,6 +12,7 @@ import (
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/toolinput"
 	"github.com/blsmth/agentctl/internal/windowstate"
+	"github.com/blsmth/agentctl/internal/winname"
 )
 
 // maxToolDetailLen caps toolinput.Summarize's output for the pending-tool
@@ -52,7 +53,7 @@ func PreTool() {
 	// Write state (plus the pending-tool fields the Notification hook reads
 	// to describe a permission prompt) in one Update -- visual updates
 	// (window renaming, tab style) are owned by the Bubble Tea monitor view.
-	if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
+	if err := winname.Update(windowID, func(ws *windowstate.WindowState) {
 		ws.State = "working"
 		ws.PendingTool = input.ToolName
 		ws.PendingToolDetail = detail
@@ -118,7 +119,7 @@ func PostTool() {
 	nowUnix := time.Now().Unix()
 	lastToolDetail := toolinput.Summarize(input.ToolName, input.ToolInput, maxToolDetailLen)
 	var ws windowstate.WindowState
-	if err := windowstate.Update(windowID, func(w *windowstate.WindowState) {
+	if err := winname.Update(windowID, func(w *windowstate.WindowState) {
 		w.State = "working"
 		w.LastToolTime = nowUnix
 		w.LastToolDetail = lastToolDetail
@@ -202,7 +203,7 @@ func PostToolFailure() {
 
 	if input.IsInterrupt {
 		// User interrupted the tool -- agent is no longer working.
-		if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
+		if err := winname.Update(windowID, func(ws *windowstate.WindowState) {
 			ws.LastError = errSummary
 			ws.State = "idle"
 			clearPendingToolIfMatch(ws, input.ToolName)

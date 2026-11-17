@@ -34,6 +34,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 
 - **tmux/** — All tmux interactions (sessions, windows, panes, keybindings, `display-popup`/`display-menu`). The native status bar is off; chrome is a two-row Bubble Tea pane docked at the bottom of every window. Session name is `tmux.SessionName` (`agentctl-<dir>`).
 - **windowstate/** — Authoritative per-window hook state at `.agentctl/windows/<windowID>.json`. Written by hooks, read by the monitor.
+- **winname/** — Computes the window name (glyph + instance) from windowstate and renames the tmux window inside the writer's transaction (`winname.Update`/`Transact`, `SyncName`).
 - **state/** — The `state.json` snapshot the monitor writes each tick; read by panes and popups via `LoadSnapshot()`.
 - **agent/** — Agent discovery from `~/.claude/agents/*.md` and project-local `.claude/agents/` (local shadows global); `Extends` composes agents.
 - **sessions/** — Parses Claude Code's JSONL logs in `~/.claude/projects/` for summaries, metrics, and session metadata sidecars.
@@ -68,7 +69,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 2. Claude Code hooks write per-window state to `.agentctl/windows/<windowID>.json` (`working`/`blocked`/`idle`)
 3. Monitor loops every 500ms, reads each window's hook state, and resolves it to an `AgentStatus`; `Gone` is detected when a window disappears. JSONL is parsed only for metrics/detail.
 4. On a state change the monitor builds a `Transition` and calls handlers directly — metrics `transitionTracker` and `improve.HandleTransition` (no plugin registry). Dispatch completion is hook-driven instead: the hook that sets `Done=true` (Stop hook, `signal done`) stamps `CompleteFiredAt` and spawns a detached `agentctl dispatch-complete <window>` (PR lookup, label swap, open PR, `dispatch_complete` hooks)
-5. Monitor renames tmux windows to reflect state (● working, ⏸ blocked, ✓ done-unseen, bare name idle) and writes `state.json`; the chrome bar pane watches `state.json` via fsnotify and re-renders
+5. The state writers (hooks, `signal`, `set-active-window`) rename tmux windows via `internal/winname` inside their windowstate transaction (● working, ⏸ blocked, ✓ done-unseen, bare name idle); `Seen` is a persisted windowstate field. The monitor writes `state.json`; the chrome bar pane watches it via fsnotify and re-renders
 
 ### Dispatch & Worktrees
 

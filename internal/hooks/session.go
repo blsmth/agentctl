@@ -23,6 +23,7 @@ import (
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
 	"github.com/blsmth/agentctl/internal/windowstate"
+	"github.com/blsmth/agentctl/internal/winname"
 	"github.com/blsmth/agentctl/internal/worktree"
 )
 
@@ -256,7 +257,7 @@ func SessionEnd() {
 	// exit cleanly reach SessionEnd without ever firing idle_prompt.
 	// Visual updates (window renaming, tab style) are owned by the Bubble Tea monitor view.
 	if windowID != "" {
-		if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
+		if err := winname.Update(windowID, func(ws *windowstate.WindowState) {
 			ws.State = "idle"
 		}); err != nil {
 			logUpdateErr("hook-session-end", err)

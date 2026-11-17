@@ -93,7 +93,7 @@ type instanceState struct {
 	lastCtxPct int // last known context percentage
 
 	// ctxPctSource and pushedContextWindow/pushedContextTokens cache the
-	// outcome of applyVisuals' ctx%-authority resolution:
+	// outcome of resolveCtxPct' ctx%-authority resolution:
 	// ctxPctSource is "statusline" when a fresh statusline-pushed value won
 	// (and pushedContextWindow/pushedContextTokens mirror
 	// windowstate.WindowState's ContextWindowSize/ContextTokens for that
@@ -117,9 +117,9 @@ type instanceState struct {
 
 	// Lifecycle
 	createdAt time.Time // time this instance was first seen
-	lastName  string    // last rendered window name for dedup
-	seen      bool      // true after user has focused this window in idle/blocked state
-	done      bool      // true when @agentctl_done is set (hook-stop with done=1)
+	// done mirrors windowstate Done && !Seen (the "✓ unseen" display fact) for
+	// state.json; windowstate is the source, set each tick.
+	done bool
 
 	// Turn tracking
 	turnCount      int   // cumulative assistant turn count
@@ -359,68 +359,23 @@ func (m monitorModel) View() tea.View {
 	return tea.NewView("")
 }
 
-// applyVisuals is the single owner of all tmux visual output for a window:
-// window renaming (with static indicator) and display writes for ctx/usage.
-// It is called on every tick. Changes are deduped against last-known values
-// to avoid unnecessary tmux calls.
-func (m *monitorModel) applyVisuals(windowID string, inst *instanceState, curState state.AgentStatus, activeWindowID string) {
-	// Window name — static indicator for working (● ), ⏸ for blocked, ✓ for done+unseen, bare name otherwise.
-	// The tab bar Bubble Tea pane handles animated spinners; the window name uses a static indicator.
-	var wantName string
-	switch curState {
-	case state.StatusWorking:
-		wantName = "● " + inst.instance
-	case state.StatusBlocked:
-		wantName = "⏸ " + inst.instance
-	default:
-		if inst.done && !inst.seen {
-			wantName = "✓ " + inst.instance
-		} else {
-			wantName = inst.instance
-		}
+// resolveCtxPct resolves the ctx% authority for a window. A fresh
+// statusline-pushed value (see internal/statusline) wins; otherwise the
+// monitor's own tokens.CtxPct-derived value (inst.lastCtxPct) stands. The
+// outcome is cached on inst for persistState and nothing is written to
+// windowstate: window names and Seen belong to the state writers, and ctx%
+// for the chrome bar comes from state.json.
+func (m *monitorModel) resolveCtxPct(inst *instanceState, ws windowstate.WindowState) {
+	if ws.CtxFresh(time.Now()) {
+		inst.lastCtxPct = ws.CtxPct
+		inst.ctxPctSource = "statusline"
+		inst.pushedContextWindow = ws.ContextWindowSize
+		inst.pushedContextTokens = ws.ContextTokens
+		return
 	}
-	if wantName != inst.lastName {
-		logging.Debug("monitor: rename %s → %q", windowID, wantName)
-		tmux.RenameWindow(windowID, wantName)
-		inst.lastName = wantName
-	}
-
-	// Track seen state — mark as seen when the window is active.
-	if windowID == activeWindowID {
-		inst.seen = true
-		inst.done = false
-	}
-
-	// Ctx% authoritative-source resolution: a fresh
-	// statusline-pushed value (see internal/statusline) wins and is left
-	// untouched; otherwise this monitor's own tokens.CtxPct-derived value is
-	// written and becomes the new source of truth. The check and the write
-	// happen inside the same windowstate.Update closure so they're atomic
-	// against a statusline push landing mid-tick -- a read-then-write in two
-	// steps could race a fresh push right out from under itself.
-	now := time.Now()
-	var wonCtxPct, wonContextWindow, wonContextTokens int
-	var wonSource string
-	windowstate.Update(windowID, func(ws *windowstate.WindowState) { //nolint:errcheck
-		if ws.CtxFresh(now) {
-			wonCtxPct = ws.CtxPct
-			wonContextWindow = ws.ContextWindowSize
-			wonContextTokens = ws.ContextTokens
-			wonSource = "statusline"
-			return
-		}
-		ws.CtxPct = inst.lastCtxPct
-		ws.CtxPctSource = "derived"
-		wonCtxPct = inst.lastCtxPct
-		wonSource = "derived"
-	})
-	// inst.lastCtxPct is populated from whichever value won so state.json's
-	// ContextPct and windowstate's CtxPct always agree -- one number, one
-	// source, everywhere.
-	inst.lastCtxPct = wonCtxPct
-	inst.ctxPctSource = wonSource
-	inst.pushedContextWindow = wonContextWindow
-	inst.pushedContextTokens = wonContextTokens
+	inst.ctxPctSource = "derived"
+	inst.pushedContextWindow = 0
+	inst.pushedContextTokens = 0
 }
 
 // processTick runs one full monitor poll cycle: discovers windows, reads hook
@@ -472,7 +427,7 @@ func (m *monitorModel) processTick() bool {
 		m.updateMetrics(inst, w.ID)
 		curState := m.resolveState(inst, ws)
 		m.detectAndFireTransitions(inst, w.ID, curState, ws, cfg, activeWindowID)
-		m.applyVisuals(w.ID, inst, curState, activeWindowID)
+		m.resolveCtxPct(inst, ws)
 	}
 
 	m.persistState(cfg, windows, activeWindowID)
@@ -802,7 +757,7 @@ func (m *monitorModel) detectLegacyRotation(inst *instanceState, windowID string
 	}
 	logging.Log("agent %s: /clear detected via log rotation (old=%s new=%s)", inst.instance, inst.logPath, latest)
 	m.resetInstanceLog(inst, now)
-	// Visual resets (ctx/usage display) are applied via applyVisuals at end of tick.
+	// Visual resets (ctx/usage display) are applied by resolveCtxPct at tick time.
 	windowstate.Update(windowID, func(wst *windowstate.WindowState) { //nolint:errcheck
 		wst.LogPath = ""
 	})
@@ -896,7 +851,7 @@ func (m *monitorModel) updateMetrics(inst *instanceState, windowID string) {
 	// without any nil/zero guard needed here.
 	ctxPct := tokens.CtxPct(inst.lastModelName, inst.lastTurnInput)
 
-	// Store latest metrics so applyVisuals and detectAndFireTransitions can read them.
+	// Store latest metrics so resolveCtxPct and detectAndFireTransitions can read them.
 	inst.lastCtxPct = ctxPct
 	inst.lastInputTokens = inst.cumulativeInput
 	inst.lastOutputTokens = inst.cumulativeOutput
@@ -1008,8 +963,9 @@ func (m *monitorModel) detectAndFireTransitions(inst *instanceState, windowID st
 		inst.lastToolDetail = ""
 	}
 
-	// Track done flag from hook.
-	inst.done = hookDone
+	// Done-and-unseen, as persisted by the state writers (windowstate Done
+	// is never cleared by focus; Seen is).
+	inst.done = hookDone && !ws.Seen
 
 	// Read dispatch-mode metadata from windowstate (set by hook-session-start).
 	windowMode := ws.Mode
@@ -1052,7 +1008,6 @@ func (m *monitorModel) detectAndFireTransitions(inst *instanceState, windowID st
 		}
 		agentCfg := cfg.ForAgent(inst.base)
 
-		inst.seen = false
 		logging.Log("monitor: %s transitioned %s → %s", inst.instance, inst.prevState, curState)
 		m.fireHandlers(t, agentCfg)
 	}
@@ -1160,7 +1115,7 @@ func (m *monitorModel) persistState(cfg *config.Config, windows []tmux.WindowInf
 		// ContextWindow/ContextTokens: prefer the pushed statusline pair
 		// (raw context_window_size and the same input-only usage total
 		// used_percentage itself is computed from) when it's what won
-		// applyVisuals' ctx% resolution this tick; otherwise fall back to
+		// resolveCtxPct' resolution this tick; otherwise fall back to
 		// the model-aware, reserve-aware derived pair as usual.
 		contextWindow := tokens.UsableWindow(inst.lastModelName)
 		contextTokens := inst.lastTurnInput

@@ -15,6 +15,7 @@ import (
 	"github.com/blsmth/agentctl/internal/notify"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/windowstate"
+	"github.com/blsmth/agentctl/internal/winname"
 )
 
 const (
@@ -88,7 +89,7 @@ func beginApproval(n popupNotice) (end func()) {
 	var prevTool, prevDetail string
 	var prevAt time.Time
 	if windowID != "" {
-		err := windowstate.Update(windowID, func(w *windowstate.WindowState) {
+		err := winname.Update(windowID, func(w *windowstate.WindowState) {
 			prevState = w.State
 			prevTool, prevDetail, prevAt = w.PendingTool, w.PendingToolDetail, w.PendingToolAt
 			w.State = "blocked"
@@ -131,7 +132,7 @@ func beginApproval(n popupNotice) (end func()) {
 		if !stateSet {
 			return
 		}
-		if err := windowstate.Update(windowID, func(w *windowstate.WindowState) {
+		if err := winname.Update(windowID, func(w *windowstate.WindowState) {
 			w.State = "working"
 			w.BlockedSince = time.Time{}
 			// Restore the PreToolUse-written pending tool (the real Bash

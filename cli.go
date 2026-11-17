@@ -11,11 +11,13 @@ import (
 	"github.com/blsmth/agentctl/internal/cmd"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/hooks"
+	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/safefs"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/statusline"
 	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/winname"
 )
 
 // CLI is the root Kong command struct. Every subcommand is a field here.
@@ -808,7 +810,15 @@ func (c *SetActiveWindowCmd) Run() error {
 	if err := safefs.CheckDir(paths.RuntimeDir(), filepath.Dir(path)); err != nil {
 		return fmt.Errorf("set-active-window: %w", err)
 	}
-	return tmux.WriteActiveWindowFile(path, c.WindowID)
+	if err := tmux.WriteActiveWindowFile(path, c.WindowID); err != nil {
+		return err
+	}
+	// Focusing a window marks it seen and clears a pending ✓. Best effort: the
+	// active-window file above is what matters for navigation.
+	if err := winname.MarkSeen(c.WindowID); err != nil {
+		logging.Debug("set-active-window: marking %s seen: %v", c.WindowID, err)
+	}
+	return nil
 }
 
 type ToggleCmd struct {

@@ -6,12 +6,12 @@ package signal
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
+	"github.com/blsmth/agentctl/internal/winname"
 )
 
 // Deps holds injectable external dependencies for signal operations.
@@ -20,16 +20,12 @@ type Deps struct {
 	// TmuxDisplay resolves a tmux format string targeting a specific pane/window.
 	// target may be a pane ID (e.g. "%3") or a window target (e.g. "agentctl:@5").
 	TmuxDisplay func(target, format string) string
-
-	// RenameWindow renames the tmux window identified by target.
-	RenameWindow func(target, name string) error
 }
 
 // DefaultDeps returns the production dependency set backed by real tmux calls.
 func DefaultDeps() *Deps {
 	return &Deps{
-		TmuxDisplay:  tmux.DisplayTarget,
-		RenameWindow: tmuxRenameWindow,
+		TmuxDisplay: tmux.DisplayTarget,
 	}
 }
 
@@ -110,9 +106,10 @@ func ResolveAgentName(windowID string) string {
 	return name
 }
 
-// Apply updates the windowstate for windowID to reflect state, then renames
-// the tmux window to match. agentName is used for the window rename; pass an
-// empty string to have Apply resolve it via ResolveAgentName.
+// Apply updates the windowstate for windowID to reflect state; winname renames
+// the tmux window to match inside the same transaction. agentName seeds
+// WindowState.Instance when the record has none; pass an empty string to have
+// Apply resolve it via ResolveAgentName.
 //
 // Valid state values: "done", "idle", "blocked", "working".
 func Apply(windowID, state, agentName string) error {
@@ -126,7 +123,10 @@ func Apply(windowID, state, agentName string) error {
 	// dispatch completion so exactly one detached completion process runs.
 	var claimed bool
 	now := time.Now()
-	if _, _, err := windowstate.Transact(windowID, func(ws *windowstate.WindowState) {
+	if _, _, err := winname.Transact(windowID, func(ws *windowstate.WindowState) {
+		if ws.Instance == "" {
+			ws.Instance = agentName
+		}
 		switch state {
 		case "done":
 			ws.State = "idle"
@@ -151,31 +151,6 @@ func Apply(windowID, state, agentName string) error {
 	}
 	logging.Log("signal: windowstate updated")
 
-	// Rename the tmux window immediately so the tab bar reflects the new state
-	// without waiting for the monitor poll interval.
-	target := fmt.Sprintf("%s:%s", tmux.SessionName, windowID)
-	switch state {
-	case "blocked":
-		if err := deps.RenameWindow(target, fmt.Sprintf("⏸ %s", agentName)); err != nil {
-			logging.Log("signal: rename-window error: %v", err)
-		} else {
-			logging.Log("signal: renamed window to ⏸ %s", agentName)
-		}
-	case "idle", "done":
-		if err := deps.RenameWindow(target, agentName); err != nil {
-			logging.Log("signal: rename-window error: %v", err)
-		} else {
-			logging.Log("signal: renamed window to %s", agentName)
-		}
-		// "working" state: the monitor drives the spinner; no rename needed here.
-	}
-
 	logging.Log("signal: done — window=%s state=%s agent=%s", windowID, state, agentName)
 	return nil
-}
-
-// tmuxRenameWindow renames a tmux window by its session:window target.
-func tmuxRenameWindow(target, name string) error {
-	// rename-window format-expands the name; it is literal here.
-	return exec.Command("tmux", "rename-window", "-t", target, tmux.FormatEscape(name)).Run()
 }
