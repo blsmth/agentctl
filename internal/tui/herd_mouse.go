@@ -238,7 +238,15 @@ func (m HerdModel) hoverAt(x, y int) herdHover {
 // move that lands on the same target changes nothing and returns a nil cmd.
 func (m HerdModel) handleMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	m.hoverX, m.hoverY, m.hasPointer = msg.X, msg.Y, true
+	prev := m.hover
 	m.hover = m.hoverAt(msg.X, msg.Y)
+	if m.hover == prev {
+		return m, nil
+	}
+	m.hideCard()
+	if m.hover.reg == herdHoverBody {
+		return m, herdCardTickCmd(m.hoverGen, m.hover)
+	}
 	return m, nil
 }
 
@@ -247,7 +255,12 @@ func (m HerdModel) handleMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 func (m *HerdModel) refreshHover() {
 	if !m.hasPointer {
 		m.hover = herdHover{}
+		m.hideCard()
 		return
 	}
 	m.hover = m.hoverAt(m.hoverX, m.hoverY)
+	// The card survives a reload only while its row is still under the pointer.
+	if r, idx, ok := m.rowForCard(m.card); m.card != nil && (!ok || m.hover.reg != herdHoverBody || m.hover.line != idx || r.WindowID == "") {
+		m.hideCard()
+	}
 }
