@@ -149,7 +149,7 @@ func TestSidebarRows_NeverExceedWidth(t *testing.T) {
 			for _, sel := range []bool{false, true} {
 				var out string
 				if l.kind == herdLineRow {
-					out = m.renderTreeRow(l.row, l.treePrefix, sel, cw)
+					out = m.renderTreeRow(l.row, l.treePrefix, l.nameCol, sel, cw)
 				} else {
 					out = m.renderLine(i, cw)
 				}
@@ -171,7 +171,7 @@ func TestSidebarSelectedHighlightStopsBeforeGutter(t *testing.T) {
 	m := sampleSidebar(t, 56)
 	cw := m.contentWidth()
 	r := m.lines[m.splitPane.Cursor()]
-	out := m.renderTreeRow(r.row, r.treePrefix, true, cw)
+	out := m.renderTreeRow(r.row, r.treePrefix, r.nameCol, true, cw)
 	for _, line := range strings.Split(out, "\n") {
 		if !strings.HasSuffix(line, strings.Repeat(" ", herdSidebarRightGutter)) {
 			t.Fatalf("selected line must end in %d plain gutter columns: %q", herdSidebarRightGutter, line)
@@ -338,7 +338,7 @@ func TestRenderTreeRow_ConfirmKeepsInstanceName(t *testing.T) {
 	m := sampleSidebar(t, 120)
 	l := m.lines[m.splitPane.Cursor()]
 	m.confirmSession, m.confirmWindow = l.row.Session, l.row.WindowID
-	out := ansi.Strip(m.renderTreeRow(l.row, "", false, m.contentWidth()))
+	out := ansi.Strip(m.renderTreeRow(l.row, "", 0, false, m.contentWidth()))
 	if !strings.Contains(out, "close go-engineer-opus:2? y/n") {
 		t.Errorf("close prompt must name the full instance: %q", out)
 	}
