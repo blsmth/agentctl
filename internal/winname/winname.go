@@ -135,18 +135,21 @@ func Apply(windowID string, ws *windowstate.WindowState, fn func(*windowstate.Wi
 		ws.Seen = true
 	}
 	SyncName(windowID, ws)
-	if ws.State != prevState {
-		// The state writers decide transitions; the metrics serve reads them
-		// from the event log. No-op unless metrics are enabled; never fails.
-		events.RecordStateChange(windowID, prevState, *ws)
-	}
 }
 
-// Transact is windowstate.Transact with Apply wrapped around fn.
+// Transact is windowstate.Transact with Apply wrapped around fn. A State
+// change is recorded in the metrics event log only after the transaction has
+// committed, so a failed write never emits an event for a change that did not
+// happen. The state writers decide transitions; the metrics serve reads them
+// from that log. No-op unless metrics are enabled; never fails.
 func Transact(windowID string, fn func(*windowstate.WindowState)) (old, updated windowstate.WindowState, err error) {
-	return windowstate.Transact(windowID, func(ws *windowstate.WindowState) {
+	old, updated, err = windowstate.Transact(windowID, func(ws *windowstate.WindowState) {
 		Apply(windowID, ws, fn)
 	})
+	if err == nil {
+		events.RecordStateChange(windowID, old.State, updated)
+	}
+	return old, updated, err
 }
 
 // Update is windowstate.Update with Apply wrapped around fn.

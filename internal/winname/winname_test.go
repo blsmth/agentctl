@@ -157,18 +157,24 @@ func TestApply_Seen(t *testing.T) {
 		wantName string
 	}{
 		{
-			name:     "done on background window is unseen",
-			active:   "@9",
-			start:    windowstate.WindowState{Instance: "a", State: "working", Seen: true},
-			mutate:   func(ws *windowstate.WindowState) { ws.State = "idle"; windowstate.ClaimComplete(ws, false, ws.UpdatedAt) },
+			name:   "done on background window is unseen",
+			active: "@9",
+			start:  windowstate.WindowState{Instance: "a", State: "working", Seen: true},
+			mutate: func(ws *windowstate.WindowState) {
+				ws.State = "idle"
+				windowstate.ClaimComplete(ws, false, ws.UpdatedAt)
+			},
 			wantSeen: false,
 			wantName: "✓ a",
 		},
 		{
-			name:     "done on active window is seen at once",
-			active:   "@1",
-			start:    windowstate.WindowState{Instance: "a", State: "working"},
-			mutate:   func(ws *windowstate.WindowState) { ws.State = "idle"; windowstate.ClaimComplete(ws, false, ws.UpdatedAt) },
+			name:   "done on active window is seen at once",
+			active: "@1",
+			start:  windowstate.WindowState{Instance: "a", State: "working"},
+			mutate: func(ws *windowstate.WindowState) {
+				ws.State = "idle"
+				windowstate.ClaimComplete(ws, false, ws.UpdatedAt)
+			},
 			wantSeen: true,
 			wantName: "a",
 		},
@@ -316,5 +322,41 @@ func TestUpdate_EmitsOneEventPerStateChange(t *testing.T) {
 		if n != st.wantEvents {
 			t.Fatalf("step %d (%s): %d events, want %d", i, st.state, n, st.wantEvents)
 		}
+	}
+}
+
+// A State change whose windowstate write fails must not emit an event.
+func TestUpdate_NoEventWhenWriteFails(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	install(t)
+	dir := t.TempDir()
+	windowstate.SetDirForTest(dir)
+	rt := filepath.Join(t.TempDir(), "proj", ".agentctl")
+	oe, or := events.Enabled, events.RuntimeDir
+	events.Enabled = func() bool { return true }
+	events.RuntimeDir = func() string { return rt }
+	t.Cleanup(func() { events.Enabled, events.RuntimeDir = oe, or })
+
+	if err := windowstate.Write("@1", windowstate.WindowState{State: "idle", Instance: "go-engineer:1", AgentName: "go-engineer"}); err != nil {
+		t.Fatal(err)
+	}
+	// One no-op transaction creates the lock file; then make the dir
+	// read-only so the record write (temp file + rename) fails.
+	if err := Update("@1", func(*windowstate.WindowState) {}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) }) //nolint:errcheck
+	ran := false
+	err := Update("@1", func(ws *windowstate.WindowState) { ran = true; ws.State = "working" })
+	if err == nil || !ran {
+		t.Skipf("write did not fail after fn ran (err=%v ran=%v)", err, ran)
+	}
+	if n := len(events.Files(rt)); n != 0 {
+		t.Fatalf("event emitted despite failed write: %d files", n)
 	}
 }
