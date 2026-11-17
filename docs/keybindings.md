@@ -90,6 +90,10 @@ redirects hub keypresses to the agent shown in the live pane:
 
 The hub window has no chrome bar or HUD of its own: the agent's chrome bar inside the live pane is the only tab bar. Clicking a tab there switches the live viewer and the hub list follows.
 
+### Hub list tree
+
+Within each project group the hub list is a parent/child tree. An agent dispatched by another agent renders directly under its dispatcher, indented with `├─` / `└─` / `│` connectors (nesting is recursive). Bare windows with no dispatcher are roots, in their usual order. Dispatched agents whose dispatcher is unknown, untrusted (no recorded session), or not in the same group are listed under a trailing `dispatched (N)` label. Every row stays selectable, and cursor movement, close-neighbour selection and jump-to-blocked all follow the displayed order.
+
 ## Notes
 
 The keybinding layout is inspired by [BitchX](https://en.wikipedia.org/wiki/BitchX)'s layered key maps — direct keys for the most common actions, a prefix mode for window management, and muscle-memory-friendly mnemonics (a=agent, t=ticket, s=settings, etc.).

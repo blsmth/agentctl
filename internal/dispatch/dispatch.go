@@ -392,7 +392,14 @@ func applySpawnedByEnv(extraEnv map[string]string) {
 	if spawnedBy := signal.ResolveWindowID(); spawnedBy != "" {
 		extraEnv["AGENTCTL_SPAWNED_BY"] = spawnedBy
 	}
-	if spawnedBySession := os.Getenv("AGENTCTL_SESSION_ID"); spawnedBySession != "" {
+	// AGENTCTL_SESSION_ID reaches a Bash tool via CLAUDE_ENV_FILE and can be
+	// missing on the first command after a restore, resume or /clear; Claude
+	// Code itself sets CLAUDE_CODE_SESSION_ID in every Bash tool env.
+	spawnedBySession := os.Getenv("AGENTCTL_SESSION_ID")
+	if spawnedBySession == "" {
+		spawnedBySession = os.Getenv("CLAUDE_CODE_SESSION_ID")
+	}
+	if spawnedBySession != "" {
 		extraEnv["AGENTCTL_SPAWNED_BY_SESSION"] = spawnedBySession
 	}
 }

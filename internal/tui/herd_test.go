@@ -149,32 +149,28 @@ func TestRebuildLines_HeadersRowsAndPlaceholders(t *testing.T) {
 	}
 	m.rebuildLines()
 
-	// group a: header + "bare" label + 2 rows (4 lines); a divider (1 line)
-	// between the two groups; group b: header + placeholder (2 lines, since
-	// it has zero agents) = 7 total.
-	if len(m.lines) != 7 {
-		t.Fatalf("len(lines) = %d, want 7 (header, label, 2 rows, divider, header+placeholder)", len(m.lines))
+	// group a: header + 2 rows (3 lines); a divider between the two groups;
+	// group b: header + placeholder (2 lines) = 6 total.
+	if len(m.lines) != 6 {
+		t.Fatalf("len(lines) = %d, want 6 (header, 2 rows, divider, header+placeholder)", len(m.lines))
 	}
 	if m.lines[0].kind != herdLineHeader || m.lines[0].group.Session != "agentctl-a" {
 		t.Errorf("lines[0] = %+v, want header for agentctl-a", m.lines[0])
 	}
-	if m.lines[1].kind != herdLineSubheader || m.lines[1].label != "bare (2)" {
-		t.Errorf("lines[1] = %+v, want bare subheader", m.lines[1])
+	if m.lines[1].kind != herdLineRow || m.lines[1].row.Name != "agent-1" {
+		t.Errorf("lines[1] = %+v, want row agent-1", m.lines[1])
 	}
-	if m.lines[2].kind != herdLineRow || m.lines[2].row.Name != "agent-1" {
-		t.Errorf("lines[2] = %+v, want row agent-1", m.lines[2])
+	if m.lines[2].kind != herdLineRow || m.lines[2].row.Name != "agent-2" {
+		t.Errorf("lines[2] = %+v, want row agent-2", m.lines[2])
 	}
-	if m.lines[3].kind != herdLineRow || m.lines[3].row.Name != "agent-2" {
-		t.Errorf("lines[3] = %+v, want row agent-2", m.lines[3])
+	if m.lines[3].kind != herdLineDivider {
+		t.Errorf("lines[3] = %+v, want divider between agentctl-a and agentctl-b", m.lines[3])
 	}
-	if m.lines[4].kind != herdLineDivider {
-		t.Errorf("lines[4] = %+v, want divider between agentctl-a and agentctl-b", m.lines[4])
+	if m.lines[4].kind != herdLineHeader || m.lines[4].group.Session != "agentctl-b" {
+		t.Errorf("lines[4] = %+v, want header for agentctl-b", m.lines[4])
 	}
-	if m.lines[5].kind != herdLineHeader || m.lines[5].group.Session != "agentctl-b" {
-		t.Errorf("lines[5] = %+v, want header for agentctl-b", m.lines[5])
-	}
-	if m.lines[6].kind != herdLinePlaceholder {
-		t.Errorf("lines[6] = %+v, want placeholder for agentctl-b (zero agents)", m.lines[6])
+	if m.lines[5].kind != herdLinePlaceholder {
+		t.Errorf("lines[5] = %+v, want placeholder for agentctl-b (zero agents)", m.lines[5])
 	}
 }
 
@@ -412,14 +408,19 @@ func TestResolveSelection_SkipsDividerWhenMatchingByWindowID(t *testing.T) {
 // ── Cursor movement skips dividers ───────────────────────────────────────────
 
 // TestMoveCursor_SkipsDividers builds a two-group, one-row-each layout
-// (header-a, bare-a, row-a1, divider, header-b, bare-b, row-b1 — indices
+// (header-a, dispatched-a, row-a1, divider, header-b, dispatched-b, row-b1 — indices
 // 0..6) and drives the cursor across the divider and sub-section labels in
 // both directions, including from the boundary positions at either end.
 func TestMoveCursor_SkipsDividers(t *testing.T) {
+	// Rows are parentless dispatched rows so each group has a label to skip.
+	a1 := testRow("agent-a1", "agentctl-a", "idle", "")
+	a1.Dispatched = true
+	b1 := testRow("agent-b1", "agentctl-b", "idle", "")
+	b1.Dispatched = true
 	m := &HerdModel{
 		groups: []herd.Group{
-			{Session: "agentctl-a", Project: "a", Rows: []herd.Row{testRow("agent-a1", "agentctl-a", "idle", "")}},
-			{Session: "agentctl-b", Project: "b", Rows: []herd.Row{testRow("agent-b1", "agentctl-b", "idle", "")}},
+			{Session: "agentctl-a", Project: "a", Rows: []herd.Row{a1}},
+			{Session: "agentctl-b", Project: "b", Rows: []herd.Row{b1}},
 		},
 	}
 	m.rebuildLines()

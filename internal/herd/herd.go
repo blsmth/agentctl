@@ -36,6 +36,11 @@ type Row struct {
 	// `agentctl dispatch`, false for windows launched interactively from the
 	// menu or hub (and for windows with no windowstate record).
 	Dispatched bool
+
+	// Parent is the tmux window ID (same session) of the agent that
+	// dispatched this window, or "" when none or untrusted (see
+	// Meta.Parent).
+	Parent string
 }
 
 // RollupStatus is a rolled-up status across a set of rows, in the group-level
@@ -246,11 +251,14 @@ func LoadGroup(e registry.Entry) Group {
 	return g
 }
 
-// TagDispatched sets Row.Dispatched in place from per-window launch metadata.
-// A window with no record in meta counts as bare.
+// TagDispatched sets Row.Dispatched and Row.Parent in place from per-window
+// launch metadata. A window with no record in meta counts as bare with no
+// parent.
 func TagDispatched(rows []Row, meta map[string]Meta) {
 	for i := range rows {
-		rows[i].Dispatched = meta[rows[i].WindowID].Dispatched()
+		m := meta[rows[i].WindowID]
+		rows[i].Dispatched = m.Dispatched()
+		rows[i].Parent = m.Parent()
 	}
 }
 
