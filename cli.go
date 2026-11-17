@@ -29,6 +29,7 @@ type CLI struct {
 	Restart      RestartCmd      `cmd:"" help:"Kill the agentctl session; relaunch with agentctl, or prefix+R inside tmux"`
 	Start        StartCmd        `cmd:"" help:"Print session startup banner" hidden:""`
 	QuitMenu     QuitMenuCmd     `cmd:"" name:"quit-menu" hidden:""`
+	HubQuitMenu  HubQuitMenuCmd  `cmd:"" name:"hub-quit-menu" hidden:""`
 	RestartMenu  RestartMenuCmd  `cmd:"" name:"restart-menu" hidden:""`
 	SaveState    SaveStateCmd    `cmd:"" name:"save-state" hidden:""`
 	Restore      RestoreCmd      `cmd:"" hidden:""`
@@ -162,6 +163,10 @@ func (c *StartCmd) Run() error { cmd.CmdStart(bannerArt); return nil }
 type QuitMenuCmd struct{}
 
 func (c *QuitMenuCmd) Run() error { cmd.RunQuitMenu(); return nil }
+
+type HubQuitMenuCmd struct{}
+
+func (c *HubQuitMenuCmd) Run() error { cmd.RunHubQuitMenu(); return nil }
 
 type RestartMenuCmd struct{}
 

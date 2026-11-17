@@ -73,7 +73,12 @@ const (
 	ActionRefuse
 	// ActionHubQuit: close the hub (return to the previous session).
 	ActionHubQuit
+	// ActionHubClose: confirm, then tear the hub down (prefix+q in the hub).
+	ActionHubClose
 )
+
+// HubCloseSubcmd is the hidden subcommand showing the close-hub confirmation.
+const HubCloseSubcmd = "hub-quit-menu"
 
 // NoViewerMessage is shown when a hub key needs a viewed agent and none exists.
 const NoViewerMessage = "select an agent in the hub first"
@@ -106,7 +111,7 @@ func Resolve(f Facts) Decision {
 	scope := Classify(f.Subcmd)
 	switch scope {
 	case ScopeHubQuit:
-		return Decision{Action: ActionHubQuit}
+		return Decision{Action: ActionHubClose}
 	case ScopeHubRefused:
 		return Decision{Action: ActionRefuse, Message: RefusedMessage}
 	case ScopeWindow, ScopeProject:
