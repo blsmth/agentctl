@@ -3,6 +3,7 @@ package dispatch
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -558,5 +559,51 @@ func TestHandleCompletePassesResolvedRepo(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("lookupPR not called")
+	}
+}
+
+// TestMarkPROpened_DedupesAcrossProcesses simulates two processes by running
+// two independent handlers that share one marker directory.
+func TestMarkPROpened_DedupesAcrossProcesses(t *testing.T) {
+	ResetOpenedPRsForTest()
+	config.SetConfigPathForTest(filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(&config.Config{Agents: map[string]config.AgentConfig{}}); err != nil {
+		t.Fatal(err)
+	}
+
+	opens := 0
+	newHandler := func() *completeHandler {
+		return &completeHandler{
+			lookupPR: func(string, string) int { return 7 },
+			runHook:  func(string, []string) {},
+			openPR:   func(int, string) { opens++ },
+		}
+	}
+	tr := state.Transition{Done: true, To: state.StatusIdle, Mode: "adhoc", Branch: "b", WorkDir: "/w"}
+	newHandler().handle(tr, config.DefaultAgentConfig())
+	newHandler().handle(tr, config.DefaultAgentConfig())
+	if opens != 1 {
+		t.Fatalf("opens = %d, want 1", opens)
+	}
+}
+
+func TestGCOpenedPRs(t *testing.T) {
+	dir := t.TempDir()
+	oldF, newF := filepath.Join(dir, "old-1"), filepath.Join(dir, "new-2")
+	for _, p := range []string{oldF, newF} {
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	past := time.Now().Add(-8 * 24 * time.Hour)
+	if err := os.Chtimes(oldF, past, past); err != nil {
+		t.Fatal(err)
+	}
+	gcOpenedPRs(dir, time.Now())
+	if _, err := os.Stat(oldF); !os.IsNotExist(err) {
+		t.Error("old marker not removed")
+	}
+	if _, err := os.Stat(newF); err != nil {
+		t.Error("fresh marker removed")
 	}
 }

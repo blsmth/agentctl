@@ -676,3 +676,33 @@ func FindBySessionID(sessionID string) string {
 	}
 	return ""
 }
+
+// ClaimComplete marks w done and reports whether the caller should spawn the
+// dispatch completion handler: the window is autonomous and no completion has
+// been claimed since the last re-arm. Call it inside Transact so concurrent
+// Stop hooks cannot both claim.
+func ClaimComplete(w *WindowState, autonomous bool, now time.Time) bool {
+	w.Done = true
+	if !autonomous || !w.CompleteFiredAt.IsZero() {
+		return false
+	}
+	w.CompleteFiredAt = now
+	return true
+}
+
+// ClearDone clears Done and re-arms completion so the next done edge fires
+// again.
+func ClearDone(w *WindowState) {
+	w.Done = false
+	w.CompleteFiredAt = time.Time{}
+}
+
+// ReleaseComplete undoes a ClaimComplete stamp (spawn failed) so a later Stop
+// can retry. It only clears the stamp if it is still the one at claimedAt.
+func ReleaseComplete(windowID string, claimedAt time.Time) error {
+	return Update(windowID, func(w *WindowState) {
+		if w.CompleteFiredAt.Equal(claimedAt) {
+			w.CompleteFiredAt = time.Time{}
+		}
+	})
+}

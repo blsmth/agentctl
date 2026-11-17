@@ -86,17 +86,25 @@ func CheckDone() {
 	logging.Log("hook-check-done: agent=%s all checks passed, allowing stop", agentName)
 
 	// Mark the window Done=true on a genuine turn-end completion. This is a
-	// second windowstate.Update (the first, above, only sets State=idle):
+	// second transaction (the first, above, only sets State=idle):
 	// blockReason isn't known until checkDoneReason runs, which happens
 	// after that first Update, so Done cannot be folded into it.
-	if shouldMarkDone(ws.Mode, input.StopHookActive, blockReason) {
-		if windowID != "" {
-			if err := windowstate.Update(windowID, func(w *windowstate.WindowState) {
-				w.Done = true
-			}); err != nil {
-				logUpdateErr("hook-check-done", err)
-			} else {
-				logging.Log("hook-check-done: set done=true window=%s agent=%s", windowID, agentName)
+	//
+	// The same transaction claims dispatch completion (CompleteFiredAt) so
+	// that exactly one racing Stop hook spawns the detached completion
+	// process. The hook itself never touches gh or git.
+	if shouldMarkDone(ws.Mode, input.StopHookActive, blockReason) && windowID != "" {
+		var claimed bool
+		now := time.Now()
+		_, _, err := windowstate.Transact(windowID, func(w *windowstate.WindowState) {
+			claimed = windowstate.ClaimComplete(w, autonomousModeFn(w.Mode), now)
+		})
+		if err != nil {
+			logUpdateErr("hook-check-done", err)
+		} else {
+			logging.Log("hook-check-done: set done=true window=%s agent=%s", windowID, agentName)
+			if claimed {
+				spawnComplete(windowID, now)
 			}
 		}
 	}
@@ -141,6 +149,30 @@ var autonomousModeFn = func(mode string) bool { return false }
 // dispatch.IsAutonomous; tests inject a stub.
 func SetAutonomousModeFn(fn func(mode string) bool) {
 	autonomousModeFn = fn
+}
+
+// spawnCompleteFn starts the detached `agentctl dispatch-complete <window>`
+// process. Production wiring (main.go) uses a fully detached child; the
+// default only logs, so a test or an unwired hook never shells out.
+var spawnCompleteFn = func(windowID string) error {
+	logging.Log("hook-check-done: spawnCompleteFn not wired, completion for window=%s not started", windowID)
+	return nil
+}
+
+// SetSpawnCompleteFn overrides the completion spawner.
+func SetSpawnCompleteFn(fn func(windowID string) error) {
+	spawnCompleteFn = fn
+}
+
+// spawnComplete starts the completion process for a claimed window. On failure
+// the claim is released so a later Stop can retry.
+func spawnComplete(windowID string, claimedAt time.Time) {
+	if err := spawnCompleteFn(windowID); err != nil {
+		logging.Warn("hook-check-done: spawning dispatch-complete window=%s: %v", windowID, err)
+		logUpdateErr("hook-check-done", windowstate.ReleaseComplete(windowID, claimedAt))
+		return
+	}
+	logging.Log("hook-check-done: spawned dispatch-complete window=%s", windowID)
 }
 
 // shouldMarkDone is the pure decision for whether a Stop hook invocation
@@ -345,7 +377,7 @@ func UserPrompt() {
 	if err := windowstate.Update(windowID, func(w *windowstate.WindowState) {
 		w.State = "working"
 		w.LastToolTime = nowUnix
-		w.Done = false
+		windowstate.ClearDone(w)
 		ws = *w
 	}); err != nil {
 		logUpdateErr("hook-user-prompt", err)
