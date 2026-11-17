@@ -30,11 +30,14 @@ func TestPlist(t *testing.T) {
 	if env["PATH"] != spec.Path {
 		t.Errorf("PATH = %v", env["PATH"])
 	}
+	if env["LANG"] != "en_US.UTF-8" {
+		t.Errorf("LANG = %v", env["LANG"])
+	}
 }
 
 func TestSystemdUnit(t *testing.T) {
 	unit := SystemdUnit(ServiceSpec{Exe: "/home/me/my bin/agentctl", Dir: "/home/me/.local/state/agentctl/serve", Path: "/usr/bin"})
-	for _, want := range []string{`ExecStart="/home/me/my bin/agentctl" serve`, "Restart=always", "WantedBy=default.target", "Environment=PATH=/usr/bin"} {
+	for _, want := range []string{`ExecStart="/home/me/my bin/agentctl" serve`, "Restart=always", "WantedBy=default.target", "Environment=PATH=/usr/bin", "Environment=LANG=en_US.UTF-8"} {
 		if !strings.Contains(unit, want) {
 			t.Errorf("unit missing %q:\n%s", want, unit)
 		}
