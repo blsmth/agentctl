@@ -104,6 +104,17 @@ func sessionIDArgs(name string) []string {
 // StartSession creates the agentctl tmux session with a shell as window 0,
 // configures the status bar and keybindings, then attaches.
 func StartSession(defaultAgent string) error {
+	if err := StartSessionDetached(defaultAgent); err != nil {
+		return err
+	}
+	logging.Log("attaching session")
+	return AttachSession()
+}
+
+// StartSessionDetached is StartSession without the attach: it creates and
+// configures the session and returns. `agentctl cron tick` uses it to
+// dispatch into a project whose session is not running.
+func StartSessionDetached(defaultAgent string) error {
 	done := logging.Timing("tmux new-session")
 	args := []string{
 		"new-session",
@@ -154,9 +165,7 @@ func StartSession(defaultAgent string) error {
 
 	// Switch back to shell window so the user lands there on attach.
 	_ = exec.Command("tmux", "select-window", "-t", SessionName+":shell").Run()
-
-	logging.Log("attaching session")
-	return AttachSession()
+	return nil
 }
 
 // instanceName extracts the instance suffix from SessionName (e.g. "foo" from

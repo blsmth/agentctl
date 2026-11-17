@@ -547,6 +547,10 @@ var readOnlyCommands = map[string]bool{
 	// metrics serve is per-machine: its pidfile and log live under the state
 	// dir, never in the cwd.
 	"metrics": true,
+	// cron is per-machine: jobs are in the global config dir, its state and
+	// log under <StateDir>/cron (launchd runs the tick from there); a fire
+	// binds its own project's runtime dir.
+	"cron": true,
 }
 
 // isReadOnlyInvocation reports whether args name a read-only invocation:

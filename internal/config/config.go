@@ -649,6 +649,9 @@ type Config struct {
 	// is stripped from the project-local layer (a project that could set
 	// allow_cidrs or allow_write could open the machine to its network).
 	Serve ServeConfig `json:"serve,omitzero"`
+	// Cron holds the global defaults and kill switch for `agentctl cron`
+	// (internal/cron). Global config only; the jobs live in schedules.json.
+	Cron CronConfig `json:"cron,omitzero"`
 }
 
 // StringPtr returns a pointer to s, for setting optional string fields such as
@@ -1245,6 +1248,12 @@ func sanitizeProjectConfig(project, global *Config) {
 		warn("serve", globalOnly)
 		project.Serve = ServeConfig{}
 	}
+	// Scheduling is global-only: a cloned repo must never be able to switch
+	// cron on or loosen its throttles.
+	if !reflect.DeepEqual(project.Cron, CronConfig{}) {
+		warn("cron", globalOnly)
+		project.Cron = CronConfig{}
+	}
 	if project.LLM != (LLMConfig{}) {
 		warn("llm", globalOnly)
 		project.LLM = LLMConfig{}
@@ -1621,6 +1630,8 @@ func applyProjectChanges(layer, before, after, global *Config) {
 	restore("llm", layer.LLM != protected.LLM)
 	restore("serve", !reflect.DeepEqual(layer.Serve, protected.Serve))
 	layer.Serve = protected.Serve
+	restore("cron", !reflect.DeepEqual(layer.Cron, protected.Cron))
+	layer.Cron = protected.Cron
 	restore("auto_poll", layer.AutoPoll != protected.AutoPoll)
 	restore("default_agent", layer.DefaultAgent != protected.DefaultAgent)
 	restore("accounts", !reflect.DeepEqual(layer.Accounts, protected.Accounts) ||
