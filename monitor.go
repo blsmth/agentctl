@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/blsmth/agentctl/internal/claude"
+	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/improve"
@@ -528,16 +529,17 @@ func backfillMainPane(windowID string, ws windowstate.WindowState, findMainPane 
 }
 
 // claudeProjectsDir returns the directory holding Claude Code's per-project
-// log directories. m.projectsDir overrides the default for tests.
-func (m *monitorModel) claudeProjectsDir() string {
+// log directories for a window's account ("" = the default account).
+// m.projectsDir overrides it for tests.
+func (m *monitorModel) claudeProjectsDir(account string) string {
 	if m.projectsDir != "" {
 		return m.projectsDir
 	}
-	home, err := os.UserHomeDir()
+	dir, err := claudehome.Dir(account)
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".claude", "projects")
+	return filepath.Join(dir, "projects")
 }
 
 // legacyScanDir returns the single Claude project directory a window with no
@@ -546,7 +548,7 @@ func (m *monitorModel) claudeProjectsDir() string {
 // nothing usable is known, in which case no scan is performed at all --
 // scanning every project would link another project's log.
 func (m *monitorModel) legacyScanDir(ws windowstate.WindowState, panePath string) string {
-	root := m.claudeProjectsDir()
+	root := m.claudeProjectsDir(ws.Account)
 	if root == "" {
 		return ""
 	}
@@ -653,7 +655,7 @@ func (m *monitorModel) linkLogs(inst *instanceState, windowID string, ws windows
 	if inst.logPath == "" && now > inst.logTTL {
 		inst.logTTL = now + 5
 		if ws.SessionID != "" {
-			m.linkBySessionID(inst, windowID, ws.SessionID)
+			m.linkBySessionID(inst, windowID, ws.Account, ws.SessionID)
 		} else {
 			m.linkByScan(inst, windowID, ws, panePath)
 		}
@@ -695,12 +697,16 @@ func (m *monitorModel) detectLegacyRotation(inst *instanceState, windowID string
 
 // linkBySessionID derives the log path from the window's SessionID and
 // backfills windowstate's LogPath if it is still empty for that session.
-func (m *monitorModel) linkBySessionID(inst *instanceState, windowID, sessionID string) {
-	root := m.claudeProjectsDir()
-	if root == "" {
-		return
+// The window's own account is searched first, then every account (session
+// IDs are unique across them).
+func (m *monitorModel) linkBySessionID(inst *instanceState, windowID, account, sessionID string) {
+	path := ""
+	if root := m.claudeProjectsDir(account); root != "" {
+		path = sessions.FindLogBySessionIDIn(root, sessionID)
 	}
-	path := sessions.FindLogBySessionIDIn(root, sessionID)
+	if path == "" && m.projectsDir == "" {
+		path = sessions.FindLogBySessionID(sessionID)
+	}
 	if path == "" {
 		return
 	}

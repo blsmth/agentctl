@@ -56,6 +56,9 @@ func buildSystemPrompt(req Request, spec modeSpec, workDir, branch string, useWo
 
 	// 4. Preamble
 	parts = append(parts, preambleWithOrchestrator(spec.Role, req.Orchestrator))
+	if req.CrossAccount && spec.Role != RoleOrchestrator {
+		parts = append(parts, crossAccountSection)
+	}
 
 	// 5. Shared Conventions -- expanded from the launching agent's own
 	// @shared/*.md includes. The raw "@shared/foo.md" line still lives in the

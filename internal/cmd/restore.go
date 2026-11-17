@@ -8,6 +8,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/claude"
+	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -106,7 +107,7 @@ func RunRestore() {
 	}
 
 	home, _ := os.UserHomeDir()
-	idMap := restoreAgents(saved.Agents, byName, home, filepath.Join(home, ".claude", "projects"),
+	idMap := restoreAgents(saved.Agents, byName, home, accountProjectsRoot,
 		config.Load().EffectiveNewWindowPosition(), dispatch.Restore)
 	remapSpawnedBy(saved.Agents, idMap, stampSpawnedBy)
 
@@ -138,9 +139,24 @@ func remapSpawnedBy(saved []state.AgentState, idMap map[string]string, stamp fun
 	}
 }
 
+// accountProjectsRoot returns the projects dir for a saved window: its
+// recorded account's, or for a window with no recorded account the one its
+// saved transcript lives under (the default dir when unknown).
+func accountProjectsRoot(account, logPath string) string {
+	if account == "" && logPath != "" {
+		account = claudehome.AccountForPath(logPath)
+	}
+	dir, err := claudehome.Dir(account)
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "projects")
+}
+
 // restoreAgents relaunches each saved agent through restore and returns a map
-// of old window ID to relaunched window ID.
-func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home, projectsRoot, position string, restore restoreFunc) map[string]string {
+// of old window ID to relaunched window ID. projectsRoot returns the Claude
+// projects dir for a saved window's account and log path.
+func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home string, projectsRoot func(account, logPath string) string, position string, restore restoreFunc) map[string]string {
 	idMap := make(map[string]string)
 	// Dedup session IDs: only the first window with a given session ID gets
 	// --resume. Subsequent duplicates start a fresh session to avoid two windows
@@ -179,9 +195,10 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 		// rather than --continue, which is unsafe when multiple windows share the
 		// same base agent. Duplicate session IDs: only the first window gets
 		// --resume; extras start fresh.
-		sessionID, logPath := validateRestoreSession(projectsRoot, workDir, as.SessionID, as.LogPath)
+		root := projectsRoot(as.Account, as.LogPath)
+		sessionID, logPath := validateRestoreSession(root, workDir, as.SessionID, as.LogPath)
 		if as.SessionID != "" && sessionID == "" {
-			where := sessions.FindLogBySessionIDIn(projectsRoot, as.SessionID)
+			where := sessions.FindLogBySessionIDIn(root, as.SessionID)
 			logging.Log("restoreAgents: %s: session %s has no log under project %s (found at %q); starting fresh instead of resuming",
 				as.Name, as.SessionID, claude.ProjectSlug(workDir), where)
 		}
@@ -200,6 +217,7 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 			WorkDir:          workDir,
 			LogPath:          logPath,
 			Backend:          as.Backend,
+			Account:          as.Account,
 			Mode:             as.Mode,
 			Ticket:           as.TicketRef,
 			TicketTitle:      as.TicketTitle,

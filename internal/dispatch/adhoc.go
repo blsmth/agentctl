@@ -23,6 +23,8 @@ type AdhocRequest struct {
 	WorkDir   string // required; the CLI resolves its default before calling
 	Model     string
 	Backend   string
+	// Account overrides the resolved Claude account (see Request.Account).
+	Account string
 	// Effort overrides the agent's effort_level (see Request.Effort).
 	Effort      string
 	UseWorktree bool
@@ -70,6 +72,7 @@ func LaunchAdhoc(req AdhocRequest) (Result, error) {
 		RepoSlug:     repoSlug,
 		Model:        req.Model,
 		Backend:      req.Backend,
+		Account:      req.Account,
 		Effort:       req.Effort,
 		Background:   true,
 		Detached:     req.Detached,

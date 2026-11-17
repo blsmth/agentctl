@@ -9,6 +9,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/claude"
+	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/hooks"
@@ -281,6 +282,13 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 	// Same backend as the agent itself: a local-model agent's improvement
 	// session must not quietly run on Anthropic (or vice versa).
 	extraEnv := dispatch.AgentEnvOverrides(ac)
+	// Same account resolution as a launch of the agent itself (agent
+	// setting, rules on the repo, default); never another account on error.
+	acct, err := claudehome.ForLaunch(cfg, "", agentName, workDir, "")
+	if err != nil {
+		return fmt.Errorf("resolving account: %w", err)
+	}
+	dispatch.ApplyAccountEnv(extraEnv, acct)
 	if _, err := dispatch.PrepareBackend(cfg, &ac, "", "", workDir, extraEnv); err != nil {
 		return fmt.Errorf("resolving backend: %w", err)
 	}
@@ -295,6 +303,9 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 	// Improvement sessions run in the agent's work dir; compute the log path so
 	// the monitor can track this window without scanning.
 	logPath := claude.LogPath(workDir, sessionID)
+	if acct.Dir != "" {
+		logPath = claude.LogPathIn(acct.Dir, workDir, sessionID)
+	}
 
 	// Ensure shell-prefix.sh is on disk so audit logging works from the first command.
 	if err := hooks.EnsureShellPrefixScript(); err != nil {

@@ -55,6 +55,7 @@ type dispatchPreviewOpts struct {
 	maxVPHeight  int
 	kind         string
 	now          func() time.Time
+	account      string
 }
 
 // DispatchPreviewOption configures optional sizing inputs to NewDispatchPreview
@@ -98,6 +99,13 @@ func WithKind(kind string) DispatchPreviewOption {
 			o.kind = kind
 		}
 	}
+}
+
+// WithAccount names the Claude account the dispatched agent will run under
+// (shown next to the target agent). Empty shows nothing (no accounts
+// configured).
+func WithAccount(account string) DispatchPreviewOption {
+	return func(o *dispatchPreviewOpts) { o.account = account }
 }
 
 // WithClock injects the time source used for the click arming delay. Nil is
@@ -206,6 +214,7 @@ type DispatchPreviewModel struct {
 	prompt      string // --prompt flag value, or the RESOLVED content of --prompt-key
 	promptKey   string // --prompt-key flag value (empty unless dispatching via a context key)
 	command     string // full original bash command (shown in collapsible section)
+	account     string // resolved Claude account of the dispatched agent; "" = none configured
 	expanded    bool   // whether the prompt viewport is visible
 	viewport    viewport.Model
 	decision    string // "allow" or "deny"
@@ -347,6 +356,7 @@ func NewDispatchPreview(agentName, targetAgent string, issue int, prompt, prompt
 		prompt:          prompt,
 		promptKey:       promptKey,
 		command:         command,
+		account:         o.account,
 		viewport:        vp,
 		vpHeight:        vpHeight,
 		contentWidth:    o.contentWidth,
@@ -642,7 +652,7 @@ func (m DispatchPreviewModel) metadataLines() []string {
 
 	lines := []string{
 		dpLabelStyle.Render("Requested by") + dpSubtleStyle.Render(m.agentName),
-		dpLabelStyle.Render("Dispatching") + dpTargetStyle.Render(m.targetAgent),
+		dpLabelStyle.Render("Dispatching") + dpTargetStyle.Render(m.targetAgent) + m.accountSuffix(),
 	}
 
 	switch {
@@ -658,6 +668,15 @@ func (m DispatchPreviewModel) metadataLines() []string {
 		lines = append(lines, dpLabelStyle.Render("Prompt")+dpDimStyle.Render(m.summaryLine()))
 	}
 	return lines
+}
+
+// accountSuffix renders the resolved account after the target agent, on the
+// same row so the popup's line budget (PopupSize) is unchanged.
+func (m DispatchPreviewModel) accountSuffix() string {
+	if m.account == "" {
+		return ""
+	}
+	return dpDimStyle.Render(" · account ") + dpSkyStyle.Render(m.account)
 }
 
 // hintSegments builds the popup's hint bar segments, with semantic colors on

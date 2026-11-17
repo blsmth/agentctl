@@ -57,7 +57,7 @@ func TestRestoreFromWindowStateOnly(t *testing.T) {
 		t.Fatalf("loadRestoreInput() = %v, %v", saved, err)
 	}
 	fn, got := collect()
-	restoreAgents(saved.Agents, agentsFor("a", "b"), "/home/x", t.TempDir(), config.NewWindowRight, fn)
+	restoreAgents(saved.Agents, agentsFor("a", "b"), "/home/x", fixedRoot(t.TempDir()), config.NewWindowRight, fn)
 	if len(*got) != 2 || (*got)[0].InstanceName != "a" || (*got)[1].InstanceName != "b" {
 		t.Errorf("restored %+v", *got)
 	}
@@ -109,7 +109,7 @@ func TestRestoreAgentsOrderAndDedupe(t *testing.T) {
 	} {
 		t.Run(tt.pos, func(t *testing.T) {
 			fn, got := collect()
-			restoreAgents(in, agentsFor("a", "b", "c"), "/home/x", t.TempDir(), tt.pos, fn)
+			restoreAgents(in, agentsFor("a", "b", "c"), "/home/x", fixedRoot(t.TempDir()), tt.pos, fn)
 			s := ""
 			for _, r := range *got {
 				s += r.InstanceName
@@ -165,7 +165,7 @@ func TestRestoreAgentsPassesLaunchMeta(t *testing.T) {
 		SpawnedBy: "@9", SpawnedBySession: "s",
 	}}
 	fn, got := collect()
-	restoreAgents(saved, agentsFor("a"), "/home/x", t.TempDir(), config.NewWindowRight, fn)
+	restoreAgents(saved, agentsFor("a"), "/home/x", fixedRoot(t.TempDir()), config.NewWindowRight, fn)
 	if len(*got) != 1 {
 		t.Fatalf("got %d requests", len(*got))
 	}
@@ -192,7 +192,7 @@ func TestRemapSpawnedBy(t *testing.T) {
 			for _, a := range saved {
 				agents[a.AgentName] = agent.Agent{Name: a.AgentName, Dir: "/proj"}
 			}
-			idMap := restoreAgents(saved, agents, "/home/x", t.TempDir(), pos, fn)
+			idMap := restoreAgents(saved, agents, "/home/x", fixedRoot(t.TempDir()), pos, fn)
 			type st struct{ by, sess string }
 			stamped := map[string]st{}
 			remapSpawnedBy(saved, idMap, func(w, by, sess string) { stamped[w] = st{by, sess} })
@@ -203,5 +203,29 @@ func TestRemapSpawnedBy(t *testing.T) {
 				t.Errorf("child stamp = %+v, want parent %s", got, idMap["@1"])
 			}
 		})
+	}
+}
+
+// fixedRoot is a projectsRoot that ignores the account.
+func fixedRoot(dir string) func(string, string) string {
+	return func(string, string) string { return dir }
+}
+
+// Restore relaunches a window under the account it ran under, and looks for
+// its transcript in that account's projects dir.
+func TestRestoreCarriesAccount(t *testing.T) {
+	fn, got := collect()
+	var asked []string
+	root := func(account, logPath string) string {
+		asked = append(asked, account)
+		return t.TempDir()
+	}
+	saved := []state.AgentState{{Name: "a", AgentName: "a", WorkDir: "/w", Account: "personal"}}
+	restoreAgents(saved, agentsFor("a"), "/home/x", root, config.NewWindowRight, fn)
+	if len(*got) != 1 || (*got)[0].Account != "personal" {
+		t.Fatalf("restored %+v", *got)
+	}
+	if len(asked) != 1 || asked[0] != "personal" {
+		t.Errorf("projects root asked for %v, want [personal]", asked)
 	}
 }

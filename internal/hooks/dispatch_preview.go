@@ -40,6 +40,9 @@ type DispatchPreviewArgs struct {
 	Prompt      string `json:"prompt"`
 	PromptKey   string `json:"prompt_key"`
 	Command     string `json:"command"`
+	// Account is the Claude account the dispatched agent resolves to, as
+	// "name (label)"; empty when no accounts are configured.
+	Account string `json:"account,omitempty"`
 	// Kind selects which popup layout to render -- see PreviewKind. Empty
 	// (the zero value) is treated as PreviewKindDispatch for backward
 	// compatibility with args files written before this field existed.
@@ -200,6 +203,7 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool, den
 		Kind:         PreviewKindDispatch,
 		ContentWidth: contentWidth,
 		VPHeight:     vpHeight,
+		Account:      dispatchPreviewAccount(targetAgent, command),
 	}
 
 	// Resolve --prompt-key to its actual content so the human reviewing the

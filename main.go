@@ -445,6 +445,7 @@ func runCmdDispatchPreview(argsFile, resultFile string) {
 		tui.WithContentWidth(args.ContentWidth),
 		tui.WithMaxViewportHeight(args.VPHeight),
 		tui.WithKind(string(args.Kind)),
+		tui.WithAccount(args.Account),
 	)
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
@@ -537,6 +538,9 @@ var readOnlyCommands = map[string]bool{
 	// backend login/logout/status touch the keychain or credential store,
 	// never the runtime dir.
 	"backend": true,
+	// account manages Claude config dirs and the global config, never the
+	// runtime dir.
+	"account": true,
 	// serve is per-machine: its state, log and pidfile live under
 	// <StateDir>/serve, never in the cwd (launchd starts it from there).
 	"serve": true,

@@ -72,14 +72,54 @@ func pushedRateLimitsPath() (string, error) {
 	return newPath, nil
 }
 
-// LoadPushed reads the shared statusLine-sourced rate limit file. It returns
-// a nil *PushedRateLimits (not an error) when the file does not exist --
-// callers treat that identically to "no pushed data yet".
-func LoadPushed() (*PushedRateLimits, error) {
-	path, err := pushedRateLimitsPath()
+// pushedPathFor returns the rate-limit file for account: ratelimits.json for
+// "" (no accounts configured, or an unnamed default dir) and
+// ratelimits-<account>.json otherwise. 5h/7d windows are per Claude login, so
+// accounts must not share a file.
+func pushedPathFor(account string) (string, error) {
+	if account == "" {
+		return pushedRateLimitsPath()
+	}
+	if !config.ValidAccountName(account) {
+		return "", fmt.Errorf("invalid account name %q", account)
+	}
+	dir, err := config.StateDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving state dir: %w", err)
+	}
+	return filepath.Join(dir, "ratelimits-"+account+".json"), nil
+}
+
+// LoadPushed reads the rate limits of the "" account (see LoadPushedFor).
+func LoadPushed() (*PushedRateLimits, error) { return LoadPushedFor("", false) }
+
+// SavePushed writes the rate limits of the "" account (see SavePushedFor).
+func SavePushed(pr *PushedRateLimits) error { return SavePushedFor("", pr) }
+
+// LoadPushedFor reads account's statusLine-sourced rate limit file. It
+// returns a nil *PushedRateLimits (not an error) when the file does not
+// exist -- callers treat that identically to "no pushed data yet".
+//
+// isDefault marks account as the default account: when its own file does not
+// exist yet, the pre-accounts single ratelimits.json is read instead (a
+// one-release fallback for data pushed before accounts were configured).
+func LoadPushedFor(account string, isDefault bool) (*PushedRateLimits, error) {
+	path, err := pushedPathFor(account)
 	if err != nil {
 		return nil, err
 	}
+	pr, err := loadPushedFile(path)
+	if err != nil || pr != nil || account == "" || !isDefault {
+		return pr, err
+	}
+	legacy, err := pushedRateLimitsPath()
+	if err != nil {
+		return nil, err
+	}
+	return loadPushedFile(legacy)
+}
+
+func loadPushedFile(path string) (*PushedRateLimits, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -94,13 +134,9 @@ func LoadPushed() (*PushedRateLimits, error) {
 	return &pr, nil
 }
 
-// SavePushed atomically (tmp+rename) writes the shared statusLine-sourced
-// rate limit file. Atomicity matters here specifically because Claude Code
-// cancels an in-flight statusLine script the instant a new update triggers;
-// a bare os.WriteFile could be truncated mid-write and leave every reader on
-// the machine looking at a corrupt or empty file.
-func SavePushed(pr *PushedRateLimits) error {
-	path, err := pushedRateLimitsPath()
+// SavePushedFor atomically writes pr as account's rate-limit file.
+func SavePushedFor(account string, pr *PushedRateLimits) error {
+	path, err := pushedPathFor(account)
 	if err != nil {
 		return err
 	}
@@ -110,9 +146,6 @@ func SavePushed(pr *PushedRateLimits) error {
 	}
 	data = append(data, '\n')
 
-	// An unpredictable temp name (not path+".tmp", which a planted symlink
-	// could redirect) and a refusal to replace a symlinked target. The
-	// directory chain is the user's own config dir and is not checked.
 	if err := safefs.ReplaceFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", path, err)
 	}

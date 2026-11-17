@@ -157,7 +157,7 @@ func TestPreflightNous(t *testing.T) {
 			nousEnvSetup(t, tt.keys)
 			srv := catalogServer(t, tt.status, tt.body, nil)
 			tt.b.BaseURL = srv.URL
-			info, err := preflightNous("nous", tt.b, "", "")
+			info, err := preflightNous("nous", tt.b, "", "", "")
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatal(err)
@@ -179,7 +179,7 @@ func TestPreflightNousUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	url := srv.URL
 	srv.Close()
-	_, err := preflightNous("nous", config.BackendConfig{Kind: "nous", BaseURL: url, Model: "a/b"}, "", "")
+	_, err := preflightNous("nous", config.BackendConfig{Kind: "nous", BaseURL: url, Model: "a/b"}, "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "unreachable") {
 		t.Fatalf("err = %v", err)
 	}
@@ -194,7 +194,7 @@ func TestPreflightNousCatalogCache(t *testing.T) {
 	b := config.BackendConfig{Kind: "nous", BaseURL: srv.URL, Model: "qwen/qwen3-coder-next"}
 
 	for i := 0; i < 2; i++ {
-		if _, err := preflightNous("nous", b, "", ""); err != nil {
+		if _, err := preflightNous("nous", b, "", "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -206,7 +206,7 @@ func TestPreflightNousCatalogCache(t *testing.T) {
 	old := nowFn
 	nowFn = func() time.Time { return time.Now().Add(11 * time.Minute) }
 	t.Cleanup(func() { nowFn = old })
-	if _, err := preflightNous("nous", b, "", ""); err != nil {
+	if _, err := preflightNous("nous", b, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if hits.Load() != 2 {
@@ -309,11 +309,12 @@ func TestCheckShadowingCredentials(t *testing.T) {
 			wt := filepath.Join(repo, ".worktrees", "w")
 			managed := filepath.Join(t.TempDir(), "managed.json")
 			t.Setenv("HOME", home)
+			t.Setenv("CLAUDE_CONFIG_DIR", "")
 			old := managedSettingsPaths
 			managedSettingsPaths = []string{managed}
 			t.Cleanup(func() { managedSettingsPaths = old })
 			tt.setup(t, home, repo, wt, managed)
-			err := checkShadowingCredentials(wt)
+			err := checkShadowingCredentials("", wt)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatal(err)
@@ -577,10 +578,10 @@ func TestPreflightNousChecksExplicitModel(t *testing.T) {
 	srv := catalogServer(t, 200, nousCatalogJSON, nil)
 	b := config.BackendConfig{Kind: "nous", BaseURL: srv.URL, Model: "qwen/qwen3-coder-next"}
 
-	if _, err := preflightNous("nous", b, "", "qwen/missing"); err == nil || !strings.Contains(err.Error(), "qwen/missing") {
+	if _, err := preflightNous("nous", b, "", "", "qwen/missing"); err == nil || !strings.Contains(err.Error(), "qwen/missing") {
 		t.Errorf("missing explicit model: err = %v", err)
 	}
-	info, err := preflightNous("nous", b, "", "qwen/qwen3-max")
+	info, err := preflightNous("nous", b, "", "", "qwen/qwen3-max")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +596,7 @@ func TestPreflightNousDoesNotRunAPIKeyCmd(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "ran")
 	b := config.BackendConfig{Kind: "nous", BaseURL: srv.URL, Model: "qwen/qwen3-coder-next",
 		APIKeyCmd: "touch " + marker + "; echo key"}
-	if _, err := preflightNous("nous", b, "", ""); err != nil {
+	if _, err := preflightNous("nous", b, "", "", ""); err != nil {
 		t.Fatalf("configured api_key_cmd should satisfy preflight: %v", err)
 	}
 	if _, err := os.Stat(marker); err == nil {

@@ -263,6 +263,9 @@ type LaunchOptions struct {
 	// Backend is the --backend override: a name selects that backend, "none"
 	// forces Anthropic, and empty defers to the agent config.
 	Backend string
+	// Account is the --account override (a name from config accounts); empty
+	// resolves through agent setting, account_rules and default_account.
+	Account string
 	// Model and Effort override the agent's configured model / effort_level;
 	// dispatch.Inherit clears the configured value.
 	Model  string
@@ -310,6 +313,7 @@ func RunLaunchAgentOpts(name string, workDir string, opts LaunchOptions) {
 		Mode:           dispatch.ModeBare,
 		WorkDir:        workDir,
 		Backend:        opts.Backend,
+		Account:        opts.Account,
 		Model:          opts.Model,
 		Effort:         opts.Effort,
 		PermissionMode: opts.PermissionMode,

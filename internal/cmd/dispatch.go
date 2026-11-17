@@ -23,11 +23,30 @@ import (
 // repoFlagRE matches a GitHub owner/name slug.
 var repoFlagRE = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`)
 
+// DispatchOptions holds the dispatch command's flags.
+type DispatchOptions struct {
+	Issue      int
+	Prompt     string
+	PromptKey  string
+	Agent      string
+	Dir        string
+	Model      string
+	Backend    string
+	Account    string
+	NoWorktree bool
+	Wait       bool
+	Timeout    time.Duration
+	Repo       string
+}
+
 // RunDispatch is the entry point for the dispatch command.
 // Flag parsing is handled by Kong via DispatchCmd in cli.go; this function
 // contains the business logic (validation + dispatch).
-func RunDispatch(issueNumber int, promptText string, promptKey string, agentName string, workDir string, model string, backend string, noWorktree bool, wait bool, timeoutDur time.Duration, repo string) {
-	const usageStr = "Usage: agentctl dispatch (--issue <N> | --prompt <text> | --prompt-key <key>) [--agent <name>] [--dir <path>] [--model <name>] [--backend <name>|none] [--repo <owner/name>] [--no-worktree] [--wait] [--timeout <duration>]"
+func RunDispatch(opts DispatchOptions) {
+	issueNumber, promptText, promptKey, agentName := opts.Issue, opts.Prompt, opts.PromptKey, opts.Agent
+	workDir, model, backend, account := opts.Dir, opts.Model, opts.Backend, opts.Account
+	noWorktree, wait, timeoutDur, repo := opts.NoWorktree, opts.Wait, opts.Timeout, opts.Repo
+	const usageStr = "Usage: agentctl dispatch (--issue <N> | --prompt <text> | --prompt-key <key>) [--agent <name>] [--dir <path>] [--model <name>] [--backend <name>|none] [--account <name>] [--repo <owner/name>] [--no-worktree] [--wait] [--timeout <duration>]"
 
 	// Validate: exactly one of --issue, --prompt, or --prompt-key must be supplied.
 	suppliedCount := 0
@@ -87,14 +106,14 @@ func RunDispatch(issueNumber int, promptText string, promptKey string, agentName
 	var err error
 
 	if issueNumber != 0 {
-		wid, resolvedAgent, err = dispatchIssue(issueNumber, agentName, workDir, model, backend, repo, !noWorktree)
+		wid, resolvedAgent, err = dispatchIssue(issueNumber, agentName, workDir, model, backend, account, repo, !noWorktree)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Printf("Dispatched #%d → %s (window %s)\n", issueNumber, resolvedAgent, linkWindow(wid, wid))
 	} else {
-		wid, resolvedAgent, err = dispatchPrompt(promptText, promptKey, agentName, workDir, model, backend, !noWorktree)
+		wid, resolvedAgent, err = dispatchPrompt(promptText, promptKey, agentName, workDir, model, backend, account, !noWorktree)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -173,7 +192,7 @@ var (
 // --prompt-key), or "" when the caller used --prompt directly; it is passed
 // through as display-only metadata (see dispatch.Request.PromptKey).
 // Returns the tmux window ID, the resolved agent name, and an error.
-func dispatchPrompt(prompt, promptKey, agentName, workDir, model, backend string, useWorktree bool) (string, string, error) {
+func dispatchPrompt(prompt, promptKey, agentName, workDir, model, backend, account string, useWorktree bool) (string, string, error) {
 	if workDir == "" {
 		workDir = resolveAgentDir(agentName)
 	}
@@ -184,6 +203,7 @@ func dispatchPrompt(prompt, promptKey, agentName, workDir, model, backend string
 		WorkDir:     workDir,
 		Model:       model,
 		Backend:     backend,
+		Account:     account,
 		UseWorktree: useWorktree,
 	})
 	if err != nil {
@@ -197,7 +217,7 @@ func dispatchPrompt(prompt, promptKey, agentName, workDir, model, backend string
 // worktree creation, settings generation, env vars, and tmux launch are all
 // handled by dispatch.Launch().
 // Returns the tmux window ID, the resolved agent name, and an error.
-func dispatchIssue(issueNumber int, agentName string, workDir string, model string, backend string, repo string, useWorktree bool) (string, string, error) {
+func dispatchIssue(issueNumber int, agentName string, workDir string, model string, backend string, account string, repo string, useWorktree bool) (string, string, error) {
 	// 1. Determine the directory for repo resolution.
 	//    Use the explicit --dir when provided; otherwise fall back to cwd so
 	//    that running from inside a project directory picks up its remote.
@@ -267,6 +287,7 @@ func dispatchIssue(issueNumber int, agentName string, workDir string, model stri
 		RepoSlug:    repoSlug,
 		Model:       model,
 		Backend:     backend,
+		Account:     account,
 		Background:  true,
 	})
 	if err != nil {

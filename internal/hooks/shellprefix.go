@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/safefs"
@@ -40,9 +41,11 @@ func withResolvedShebang(script, bashPath string) string {
 // and ensures the plugin directories exist. It is called at monitor startup and
 // during agentctl init so the script is always current.
 func EnsureShellPrefixScript() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("EnsureShellPrefixScript: home dir: %w", err)
+	// Plugin dirs live in the shared home (~/.claude/agents is symlinked
+	// into every account dir), not the per-account config dir.
+	claudeHome := claudehome.HomeDir()
+	if claudeHome == "" {
+		return fmt.Errorf("EnsureShellPrefixScript: home dir unknown")
 	}
 
 	// Write the bootstrap script into the runtime dir. Every Bash command an
@@ -59,7 +62,7 @@ func EnsureShellPrefixScript() error {
 	}
 
 	// Ensure plugin directories exist under ~/.claude/agents/agentctl/.
-	agentctlDir := filepath.Join(home, ".claude", "agents", "agentctl")
+	agentctlDir := filepath.Join(claudeHome, "agents", "agentctl")
 	for _, sub := range []string{"shell-hooks.d", "env.d"} {
 		if err := os.MkdirAll(filepath.Join(agentctlDir, sub), 0o755); err != nil {
 			return fmt.Errorf("EnsureShellPrefixScript: mkdir %s: %w", sub, err)
