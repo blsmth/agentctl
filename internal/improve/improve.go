@@ -8,10 +8,10 @@ import (
 	"strings"
 
 	"github.com/blsmth/agentctl/internal/agent"
-	"github.com/blsmth/agentctl/internal/claude"
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/ids"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -279,33 +279,54 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 
 	sessionID := ids.NewUUID()
 
+	// Same harness as the agent itself.
+	h, err := dispatch.ResolveHarness(cfg, agentName, "", workDir)
+	if err != nil {
+		return err
+	}
+	caps := h.Caps()
+
 	// Same backend as the agent itself: a local-model agent's improvement
 	// session must not quietly run on Anthropic (or vice versa).
 	extraEnv := dispatch.AgentEnvOverrides(ac)
 	// Same account resolution as a launch of the agent itself (agent
 	// setting, rules on the repo, default); never another account on error.
-	acct, err := claudehome.ForLaunch(cfg, "", agentName, workDir, "")
-	if err != nil {
-		return fmt.Errorf("resolving account: %w", err)
+	acctDir := ""
+	if caps.Accounts {
+		acct, err := claudehome.ForLaunch(cfg, "", agentName, workDir, "")
+		if err != nil {
+			return fmt.Errorf("resolving account: %w", err)
+		}
+		dispatch.ApplyAccountEnv(extraEnv, acct)
+		acctDir = acct.Dir
 	}
-	dispatch.ApplyAccountEnv(extraEnv, acct)
-	if _, err := dispatch.PrepareBackend(cfg, &ac, "", "", workDir, extraEnv); err != nil {
-		return fmt.Errorf("resolving backend: %w", err)
+	hb, err := dispatch.PrepareBackendFor(cfg, h, &ac, "", "", workDir, extraEnv)
+	if err != nil {
+		return err
 	}
 
-	// Build base flags with per-session hook configuration.
-	settingsPath := dispatch.WriteAgentSettings(agentName, ac, workDir)
+	// Build the command with per-session hook configuration.
+	prep, err := h.PrepareWorkspace(harness.Workspace{
+		Dir:           dispatch.LaunchDir(),
+		WriteSettings: func() (string, error) { return dispatch.WriteAgentSettings(agentName, ac, workDir), nil },
+		Backend:       hb,
+	})
+	if err != nil {
+		return err
+	}
 	sessionName := improveSessionName(agentName, paths.ProjectDir(), workDir)
 	extraEnv[dispatch.EnvSessionName] = sessionName
-	baseFlags := dispatch.BuildBaseFlags(dispatch.ClaudeInvocation{Agent: agentName, Name: sessionName, SessionID: sessionID, SettingsPath: settingsPath}, ac)
+	inv := dispatch.BaseInvocation(agentName, sessionName, ac, prep)
+	inv.SessionID = sessionID
+	baseFlags, err := h.Command(inv)
+	if err != nil {
+		return fmt.Errorf("building %s command: %w", h.Name(), err)
+	}
 	shellCmd := buildImproveShellCmd(baseFlags, promptFile, skipEditor)
 
 	// Improvement sessions run in the agent's work dir; compute the log path so
 	// the monitor can track this window without scanning.
-	logPath := claude.LogPath(workDir, sessionID)
-	if acct.Dir != "" {
-		logPath = claude.LogPathIn(acct.Dir, workDir, sessionID)
-	}
+	logPath := h.LaunchLogPath(acctDir, workDir, sessionID)
 
 	// Ensure shell-prefix.sh is on disk so audit logging works from the first command.
 	if err := hooks.EnsureShellPrefixScript(); err != nil {
@@ -314,6 +335,7 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 	}
 
 	extraEnv["AGENTCTL_MODE"] = "improve"
+	dispatch.ApplyHarnessEnv(extraEnv, h, "", prep)
 
 	windowName := "improve~" + agentName
 	logging.Log("launchImprovement: launching window %q cmd=%q session=%s", windowName, shellCmd, sessionID)
@@ -328,7 +350,7 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 }
 
 // buildImproveShellCmd returns the shell command line for an improvement
-// session. baseFlags must already be shell-quoted (dispatch.BuildBaseFlags);
+// session. baseFlags must already be shell-quoted (harness.Harness.Command);
 // promptFile is quoted here. With skipEditor the prompt is sent straight to
 // claude; otherwise $EDITOR opens it first so the user can review or tweak
 // it, and an emptied file aborts the launch (like `git commit`).

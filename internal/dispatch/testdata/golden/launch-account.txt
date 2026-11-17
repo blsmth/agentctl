@@ -1,0 +1,47 @@
+argv:
+  new-window
+  -d
+  -b
+  -t
+  agentctl-launchtest:^
+  -n
+  golden
+  -c
+  $PROJECT
+  -P
+  -F
+  #{window_id}
+env:
+  AGENTCTL=1
+  AGENTCTL_ACCOUNT=work
+  AGENTCTL_AGENT_NAME=golden
+  AGENTCTL_BIN=<BIN>
+  AGENTCTL_CLAUDE_NAME=golden-002-1
+  AGENTCTL_INSTANCE=launchtest
+  AGENTCTL_INSTANCE_NAME=golden
+  AGENTCTL_MODE=adhoc
+  AGENTCTL_RUNTIME_DIR=$PROJECT/.agentctl
+  AGENTCTL_SESSION_ID=<UUID>
+  AGENTCTL_WINDOW_NAME=golden
+  AGENTCTL_WORKING_DIR=$PROJECT
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+  CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
+  CLAUDE_CODE_SHELL_PREFIX=$PROJECT/.agentctl/shell-prefix.sh
+  CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0
+  CLAUDE_CONFIG_DIR=$HOME/work-claude
+  DISABLE_AUTOUPDATER=1
+command:
+  unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
+  claude --agent 'golden' -n 'golden-002-1' --session-id '<UUID>' --permission-mode 'auto' --settings '$PROJECT/.agentctl/settings/golden.json' --append-system-prompt-file '$PROJECT/.agentctl/launch/adhoc-sys-<RAND>.txt' 'say hi'
+windowstate:
+  instance=golden
+  agent=golden
+  mode=adhoc
+  log_path=$HOME/work-claude/projects/<SLUG:$PROJECT>/<UUID>.jsonl
+  session_name=golden-002-1
+  backend=
+  account=work
+settings:
+{
+  "hooks": "sha256:cbe19c252939c4820f718e911a5e11aeddcc59c3e21695660a44730999bceb58"
+}

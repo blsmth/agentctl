@@ -26,7 +26,9 @@ type AdhocRequest struct {
 	// Account overrides the resolved Claude account (see Request.Account).
 	Account string
 	// Effort overrides the agent's effort_level (see Request.Effort).
-	Effort      string
+	Effort string
+	// Harness overrides the agent's harness (see Request.Harness).
+	Harness     string
 	UseWorktree bool
 	// Detached launches with no parent window (see Request.Detached).
 	Detached bool
@@ -77,6 +79,7 @@ func LaunchAdhoc(req AdhocRequest) (Result, error) {
 		Backend:      req.Backend,
 		Account:      req.Account,
 		Effort:       req.Effort,
+		Harness:      req.Harness,
 		Background:   true,
 		Detached:     req.Detached,
 		Branch:       req.Branch,

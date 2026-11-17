@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/blsmth/agentctl/internal/claude"
 	"github.com/blsmth/agentctl/internal/cleanup"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/llm"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
@@ -82,8 +82,11 @@ func SessionStart() {
 	}
 	decodeInput(&input) // non-fatal: ignore return value
 
+	// A harness with an env file (Claude Code) always provides it; without
+	// one the hook has no session to serve. Harnesses without the env file
+	// mechanism (pi) still get their session linked below.
 	envFile := os.Getenv("CLAUDE_ENV_FILE")
-	if envFile == "" {
+	if envFile == "" && active.Caps().EnvFile {
 		logging.Log("hook-session-start: CLAUDE_ENV_FILE not set, skipping")
 		return
 	}
@@ -144,6 +147,7 @@ func SessionStart() {
 			}
 			ws.SessionID = input.SessionID
 			ws.LogPath = logPath
+			ws.Harness = harness.Canonical(active.Name())
 			// A new session cannot still have the old one's subagents running.
 			ws.ClearSubagents()
 			if input.Cwd != "" {
@@ -167,13 +171,32 @@ func SessionStart() {
 		}
 	}
 
+	if envFile != "" && !writeSessionEnvFile(envFile, windowID, windowIndex) {
+		return
+	}
+
+	// Fire user lifecycle hooks (async, non-blocking).
+	runUserHooks("session_start", map[string]string{
+		"AGENTCTL_TICKET":       os.Getenv("AGENTCTL_TICKET"),
+		"AGENTCTL_TICKET_TITLE": os.Getenv("AGENTCTL_TICKET_TITLE"),
+		"AGENTCTL_MODE":         os.Getenv("AGENTCTL_MODE"),
+		"AGENTCTL_AGENT_NAME":   os.Getenv("AGENTCTL_AGENT_NAME"),
+		"AGENTCTL_WINDOW_ID":    windowID,
+	})
+
+	emitSessionContext(windowID, windowIndex)
+}
+
+// writeSessionEnvFile writes the window identity and dispatch metadata to
+// CLAUDE_ENV_FILE so they persist across all Bash tool invocations.
+func writeSessionEnvFile(envFile, windowID, windowIndex string) bool {
 	// Write to CLAUDE_ENV_FILE so these persist across Bash commands.
 	// Use O_TRUNC (not O_APPEND) so stale values from previous sessions
 	// don't accumulate across /clear invocations.
 	f, err := os.OpenFile(envFile, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		logging.Log("hook-session-start: open env file: %v", err)
-		return
+		return false
 	}
 	defer f.Close()
 
@@ -195,46 +218,40 @@ func SessionStart() {
 	}
 
 	logging.Log("hook-session-start: wrote WINDOW_ID=%s WINDOW_INDEX=%s to %s", windowID, windowIndex, envFile)
+	return true
+}
 
-	// Fire user lifecycle hooks (async, non-blocking).
-	runUserHooks("session_start", map[string]string{
-		"AGENTCTL_TICKET":       os.Getenv("AGENTCTL_TICKET"),
-		"AGENTCTL_TICKET_TITLE": os.Getenv("AGENTCTL_TICKET_TITLE"),
-		"AGENTCTL_MODE":         os.Getenv("AGENTCTL_MODE"),
-		"AGENTCTL_AGENT_NAME":   os.Getenv("AGENTCTL_AGENT_NAME"),
-		"AGENTCTL_WINDOW_ID":    windowID,
-	})
-
-	// Emit JSON on stdout with context for the session.
-	// This becomes additional context visible to the agent.
+// emitSessionContext writes the session orientation (agent, ticket, window)
+// as additional context visible to the agent, for harnesses that take it.
+func emitSessionContext(windowID, windowIndex string) {
 	agentName := os.Getenv("AGENTCTL_AGENT_NAME")
 	windowName := os.Getenv("AGENTCTL_WINDOW_NAME")
-	if agentName != "" {
-		// Read ticket metadata from window state file (written at launch time).
-		wsCtx, _ := windowstate.Read(windowID)
-		ticket := wsCtx.Ticket
-		ticketTitle := wsCtx.TicketTitle
-		mode := wsCtx.Mode
-
-		var ctx string
-		if ticket != "" && ticketTitle != "" && mode != "" {
-			ctx = fmt.Sprintf(
-				"You are agent %q, working on ticket #%s: %q (mode: %s).\n"+
-					"You are running inside agentctl window %q (tmux index %s). "+
-					"To target your own window: `-t agentctl:%s`.",
-				agentName, ticket, ticketTitle, mode,
-				windowID, windowIndex, windowID,
-			)
-		} else {
-			ctx = fmt.Sprintf(
-				"You are running inside agentctl window %q (tmux ID: %s, index: %s). "+
-					"To target your own window in tmux commands, use `-t agentctl:%s`.",
-				windowName, windowID, windowIndex, windowID,
-			)
-		}
-		output := map[string]string{"additionalContext": ctx}
-		json.NewEncoder(os.Stdout).Encode(output) //nolint:errcheck
+	if agentName == "" {
+		return
 	}
+	// Read ticket metadata from window state file (written at launch time).
+	wsCtx, _ := windowstate.Read(windowID)
+	ticket := wsCtx.Ticket
+	ticketTitle := wsCtx.TicketTitle
+	mode := wsCtx.Mode
+
+	var ctx string
+	if ticket != "" && ticketTitle != "" && mode != "" {
+		ctx = fmt.Sprintf(
+			"You are agent %q, working on ticket #%s: %q (mode: %s).\n"+
+				"You are running inside agentctl window %q (tmux index %s). "+
+				"To target your own window: `-t agentctl:%s`.",
+			agentName, ticket, ticketTitle, mode,
+			windowID, windowIndex, windowID,
+		)
+	} else {
+		ctx = fmt.Sprintf(
+			"You are running inside agentctl window %q (tmux ID: %s, index: %s). "+
+				"To target your own window in tmux commands, use `-t agentctl:%s`.",
+			windowName, windowID, windowIndex, windowID,
+		)
+	}
+	emitDecision(harness.Decision{Kind: harness.SessionContext, Text: ctx})
 }
 
 // SessionEnd is called by Claude Code's SessionEnd hook.
@@ -521,19 +538,10 @@ func generateWorkJournal(agentName, sessionID, windowID string) error {
 	return writeJournalEntry(home, agentName, sessionID, paths.ProjectDir(), ws.Ticket, summary, aiSummary)
 }
 
-// sessionLogPath returns the JSONL path for a starting session: the payload's
-// transcript_path when it is named for the session (it already lives under
-// the right account's config dir), else the path derived from cwd under this
-// hook's own config dir ($CLAUDE_CONFIG_DIR, inherited from claude). "" when
-// neither is usable.
+// sessionLogPath returns the transcript for a starting session through the
+// active harness (see harness.Harness.SessionLogPath). "" when unknown.
 func sessionLogPath(sessionID, cwd, transcriptPath string) string {
-	if transcriptPath != "" && filepath.IsAbs(transcriptPath) && filepath.Base(transcriptPath) == sessionID+".jsonl" {
-		return transcriptPath
-	}
-	if cwd == "" {
-		return ""
-	}
-	return claude.LogPath(cwd, sessionID)
+	return active.SessionLogPath(sessionID, cwd, transcriptPath)
 }
 
 // buildJournalPrompt builds the text prompt sent to the LLM. It is capped at

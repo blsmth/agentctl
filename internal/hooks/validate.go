@@ -10,6 +10,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/audit"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/textutil"
 )
@@ -371,14 +372,7 @@ func denyCommand(agentName, command, reason string, actx denyAuditContext) {
 	// causes Claude Code to show a generic "hook error" instead of the deny
 	// reason (Zod validation failure on hookSpecificOutput). Kept for the
 	// presentation layer -- see the enforcement note below.
-	output := map[string]interface{}{
-		"hookSpecificOutput": map[string]string{
-			"hookEventName":            "PreToolUse",
-			"permissionDecision":       "deny",
-			"permissionDecisionReason": fullReason,
-		},
-	}
-	json.NewEncoder(os.Stdout).Encode(output) //nolint:errcheck
+	emitDecision(harness.Decision{Kind: harness.Deny, HookEvent: "PreToolUse", Reason: fullReason})
 
 	appendAuditRecord(audit.Record{
 		Event:          audit.EventToolDenied,
@@ -427,14 +421,7 @@ func denyBashPopup(agentName, command string, isDispatch bool, actx denyAuditCon
 		reason = "Dispatch denied in preview popup"
 	}
 	logging.Log("hook-validate-bash: DENIED via popup agent=%s dispatch=%v cmd=%q", agentName, isDispatch, textutil.Truncate(command, 100, "..."))
-	output := map[string]interface{}{
-		"hookSpecificOutput": map[string]string{
-			"hookEventName":            "PreToolUse",
-			"permissionDecision":       "deny",
-			"permissionDecisionReason": reason,
-		},
-	}
-	json.NewEncoder(os.Stdout).Encode(output) //nolint:errcheck
+	emitDecision(harness.Decision{Kind: harness.Deny, HookEvent: "PreToolUse", Reason: reason})
 
 	appendAuditRecord(audit.Record{
 		Event:          audit.EventToolDenied,
@@ -477,13 +464,7 @@ func denyBashPopup(agentName, command string, isDispatch bool, actx denyAuditCon
 // reintroduce that here.
 func allowCommand(agentName, command string) {
 	logging.Log("hook-validate-bash: ALLOWED via popup agent=%s cmd=%q", agentName, textutil.Truncate(command, 100, "..."))
-	output := map[string]interface{}{
-		"hookSpecificOutput": map[string]string{
-			"hookEventName":            "PreToolUse",
-			"permissionDecision":       "allow",
-			"permissionDecisionReason": "Approved in agentctl preview popup",
-		},
-	}
+	decision := harness.Decision{Kind: harness.Allow, HookEvent: "PreToolUse", Reason: "Approved in agentctl preview popup"}
 	// Written directly to os.Stdout (not cached in a package var) -- same
 	// pattern denyCommand/denyBashPopup use, and the pattern every existing
 	// test capture helper (captureStdout, captureDenyEmitter, runHookCaptured
@@ -491,5 +472,5 @@ func allowCommand(agentName, command string) {
 	// variable before the call is a fully sufficient seam as long as the
 	// write reads os.Stdout at call time rather than caching it at package
 	// init, so no extra indirection is introduced here.
-	json.NewEncoder(os.Stdout).Encode(output) //nolint:errcheck
+	emitDecision(decision)
 }

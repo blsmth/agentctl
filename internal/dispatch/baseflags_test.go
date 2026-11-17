@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/harness"
 )
 
 func TestResolvePermissionMode(t *testing.T) {
@@ -32,10 +33,10 @@ func TestResolvePermissionMode(t *testing.T) {
 	}
 }
 
-// TestBuildBaseFlags_PermissionModeWithModelAndEffort checks the full argv
+// TestClaudeCommand_PermissionModeWithModelAndEffort checks the full argv
 // dispatch.Launch produces for a worker dispatch: the permission mode sits
 // alongside model and effort, and an empty mode emits no flag at all.
-func TestBuildBaseFlags_PermissionModeWithModelAndEffort(t *testing.T) {
+func TestClaudeCommand_PermissionModeWithModelAndEffort(t *testing.T) {
 	ac := config.AgentConfig{Model: "opus", EffortLevel: "high"}
 	tests := []struct {
 		name string
@@ -52,11 +53,14 @@ func TestBuildBaseFlags_PermissionModeWithModelAndEffort(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := BuildBaseFlags(ClaudeInvocation{
-				Agent: "a", SessionID: "sid", PermissionMode: resolvePermissionMode(tt.mode, ac, ""),
-			}, ac)
+			inv := baseInvocation("a", "", ac, harness.Prepared{})
+			inv.SessionID, inv.PermissionMode = "sid", resolvePermissionMode(tt.mode, ac, "")
+			got, err := harness.For("").Command(inv)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if argv := fields(t, got); !slices.Equal(argv, tt.want) {
-				t.Errorf("BuildBaseFlags() = %s\n tokenizes to %q\n want         %q", got, argv, tt.want)
+				t.Errorf("Command() = %s\n tokenizes to %q\n want         %q", got, argv, tt.want)
 			}
 		})
 	}

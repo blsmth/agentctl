@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/harness"
 )
 
 func TestListOllamaModels(t *testing.T) {
@@ -92,12 +93,15 @@ func TestApplyOverrides(t *testing.T) {
 	}
 }
 
-func TestBuildBaseFlagsEffort(t *testing.T) {
+func TestClaudeCommandEffortOverride(t *testing.T) {
 	ac := config.AgentConfig{EffortLevel: "low"}
 	if _, err := applyOverrides(&ac, Request{Effort: "max"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	got := BuildBaseFlags(ClaudeInvocation{Agent: "a"}, ac)
+	got, err := harness.For("").Command(baseInvocation("a", "", ac, harness.Prepared{}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if want := "claude --agent 'a' --effort 'max'"; got != want {
 		t.Errorf("flags = %q, want %q", got, want)
 	}

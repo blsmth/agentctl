@@ -55,7 +55,7 @@ func TestLaunchUnsetEnv(t *testing.T) {
 
 func TestLaunchEnvCarriesAccount(t *testing.T) {
 	env := map[string]string{"CLAUDE_CONFIG_DIR": "/abs/.claude-personal", "AGENTCTL_ACCOUNT": "personal"}
-	args := buildLaunchEnv("w", "/wd", "a", "sid", "/bin/agentctl", "/sp", "", "", env)
+	args := buildLaunchEnv("w", "/wd", "a", "sid", "/bin/agentctl", "", env)
 	found := false
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-e" && args[i+1] == "CLAUDE_CONFIG_DIR=/abs/.claude-personal" {
@@ -76,7 +76,7 @@ func TestLaunchEnvCarriesAccount(t *testing.T) {
 // the launch script, never pass one through tmux -e.
 func TestDefaultDirLaunchUnsetsConfigDir(t *testing.T) {
 	env := map[string]string{EnvUnset: "CLAUDE_CONFIG_DIR", "AGENTCTL_ACCOUNT": "ll"}
-	for _, a := range buildLaunchEnv("w", "/wd", "a", "sid", "/bin/agentctl", "/sp", "", "", env) {
+	for _, a := range buildLaunchEnv("w", "/wd", "a", "sid", "/bin/agentctl", "", env) {
 		if strings.HasPrefix(a, "CLAUDE_CONFIG_DIR=") {
 			t.Errorf("CLAUDE_CONFIG_DIR passed to tmux: %q", a)
 		}

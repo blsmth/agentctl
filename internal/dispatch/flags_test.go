@@ -9,6 +9,7 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/harness"
 )
 
 // fields tokenizes cmd the way a POSIX shell would, failing the test on a
@@ -23,111 +24,15 @@ func fields(t *testing.T, cmd string) []string {
 	return got
 }
 
-func TestBuildBaseFlags(t *testing.T) {
-	tests := []struct {
-		name string
-		inv  ClaudeInvocation
-		ac   config.AgentConfig
-		want []string
-	}{
-		{
-			name: "no model or effort",
-			inv:  ClaudeInvocation{Agent: "go-engineer", SessionID: "sess-001"},
-			want: []string{"claude", "--agent", "go-engineer", "--session-id", "sess-001"},
-		},
-		{
-			name: "model only",
-			inv:  ClaudeInvocation{Agent: "go-engineer", SessionID: "sess-002"},
-			ac:   config.AgentConfig{Model: "opus"},
-			want: []string{"claude", "--agent", "go-engineer", "--session-id", "sess-002", "--model", "opus"},
-		},
-		{
-			name: "effort only",
-			inv:  ClaudeInvocation{Agent: "go-engineer", SessionID: "sess-003"},
-			ac:   config.AgentConfig{EffortLevel: "high"},
-			want: []string{"claude", "--agent", "go-engineer", "--session-id", "sess-003", "--effort", "high"},
-		},
-		{
-			name: "everything, settings path in a HOME with spaces",
-			inv: ClaudeInvocation{
-				Agent: "python-engineer", SessionID: "sess-004",
-				SettingsPath: "/Users/Jane Doe/proj/.agentctl/settings/python-engineer.json",
-			},
-			ac: config.AgentConfig{Model: "claude-sonnet-4-20250514", EffortLevel: "max"},
-			want: []string{
-				"claude", "--agent", "python-engineer", "--session-id", "sess-004",
-				"--model", "claude-sonnet-4-20250514", "--effort", "max",
-				"--settings", "/Users/Jane Doe/proj/.agentctl/settings/python-engineer.json",
-			},
-		},
-		{
-			name: "resume with fork (sessions browser)",
-			inv: ClaudeInvocation{
-				Agent: "go-engineer", Resume: "abc", ForkSession: true,
-				SettingsPath: "/Users/Jane Doe/s.json",
-			},
-			ac: config.AgentConfig{Model: "opus", EffortLevel: "high"},
-			want: []string{
-				"claude", "--agent", "go-engineer", "--resume", "abc", "--fork-session",
-				"--model", "opus", "--effort", "high", "--settings", "/Users/Jane Doe/s.json",
-			},
-		},
-		{
-			name: "session name set",
-			inv:  ClaudeInvocation{Agent: "go-engineer", Name: "agent-go-engineer-issue-42", SessionID: "s"},
-			want: []string{"claude", "--agent", "go-engineer", "-n", "agent-go-engineer-issue-42", "--session-id", "s"},
-		},
-		{
-			name: "session name with spaces is one argument",
-			inv:  ClaudeInvocation{Agent: "go-engineer", Name: "my project; x"},
-			want: []string{"claude", "--agent", "go-engineer", "-n", "my project; x"},
-		},
-		{
-			name: "session name unset emits no -n",
-			inv:  ClaudeInvocation{Agent: "go-engineer", SessionID: "s"},
-			want: []string{"claude", "--agent", "go-engineer", "--session-id", "s"},
-		},
-		{
-			name: "hostile agent name",
-			inv:  ClaudeInvocation{Agent: "x; touch /tmp/pwned", SessionID: "s"},
-			want: []string{"claude", "--agent", "x; touch /tmp/pwned", "--session-id", "s"},
-		},
-		{
-			name: "hostile model and effort",
-			inv:  ClaudeInvocation{Agent: "a", SessionID: "s"},
-			ac:   config.AgentConfig{Model: "$(touch /tmp/pwned)", EffortLevel: "`id`"},
-			want: []string{"claude", "--agent", "a", "--session-id", "s", "--model", "$(touch /tmp/pwned)", "--effort", "`id`"},
-		},
-		{
-			name: "quotes, newlines, and variables",
-			inv: ClaudeInvocation{
-				Agent: `it's "quoted"`, SessionID: "line1\nline2", Resume: "r;m",
-				SettingsPath: "$HOME/${USER}/s.json",
-			},
-			want: []string{
-				"claude", "--agent", `it's "quoted"`, "--session-id", "line1\nline2",
-				"--resume", "r;m", "--settings", "$HOME/${USER}/s.json",
-			},
-		},
+// restoreCmd builds the Claude restore command the way Restore does.
+func restoreCmd(t *testing.T, agentName, sessionName, sessionID, settings string, resume bool, ac config.AgentConfig) string {
+	t.Helper()
+	inv := baseInvocation(agentName, sessionName, ac, harness.Prepared{SettingsPath: settings})
+	cmd, err := buildRestoreCmd(harness.For(""), inv, sessionID, resume)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := BuildBaseFlags(tc.inv, tc.ac)
-			if argv := fields(t, got); !slices.Equal(argv, tc.want) {
-				t.Errorf("BuildBaseFlags() = %s\n tokenizes to %q\n want         %q", got, argv, tc.want)
-			}
-		})
-	}
-}
-
-// TestBuildBaseFlagsLiteralFlagsUnquoted keeps the command readable in logs
-// and process listings: only interpolated values are quoted.
-func TestBuildBaseFlagsLiteralFlagsUnquoted(t *testing.T) {
-	got := BuildBaseFlags(ClaudeInvocation{Agent: "go-engineer", SessionID: "sid"}, config.AgentConfig{Model: "opus"})
-	if !strings.HasPrefix(got, "claude --agent 'go-engineer' --session-id 'sid' --model 'opus'") {
-		t.Errorf("BuildBaseFlags() = %q", got)
-	}
+	return cmd
 }
 
 // TestBuildRestoreCmd parses the restore command as a POSIX `a || b` list
@@ -149,7 +54,7 @@ func TestBuildRestoreCmd(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := buildRestoreCmd("go-engineer", "", "sid $(x)", settings, tt.resume, ac)
+			cmd := restoreCmd(t, "go-engineer", "", "sid $(x)", settings, tt.resume, ac)
 			f, err := syntax.NewParser(syntax.Variant(syntax.LangPOSIX)).Parse(strings.NewReader(cmd), "")
 			if err != nil || len(f.Stmts) != 1 {
 				t.Fatalf("parsing %q: %v (stmts=%d)", cmd, err, len(f.Stmts))
@@ -182,8 +87,29 @@ func TestBuildRestoreCmd(t *testing.T) {
 // TestBuildRestoreCmd_ReusesSessionName verifies both sides of the restore
 // fallback carry the original -n name.
 func TestBuildRestoreCmd_ReusesSessionName(t *testing.T) {
-	cmd := buildRestoreCmd("go-engineer", "agent-go-engineer-issue-42", "sid", "/s.json", true, config.AgentConfig{})
+	cmd := restoreCmd(t, "go-engineer", "agent-go-engineer-issue-42", "sid", "/s.json", true, config.AgentConfig{})
 	if got := strings.Count(cmd, "-n 'agent-go-engineer-issue-42'"); got != 2 {
 		t.Errorf("want -n on both resume and fresh sides, got %d in %q", got, cmd)
+	}
+}
+
+// TestBuildRestoreCmd_Pi: pi reopens the saved session by ID (no fallback
+// chain), and a duplicate gets a fresh ID.
+func TestBuildRestoreCmd_Pi(t *testing.T) {
+	inv := baseInvocation("go-engineer", "n", config.AgentConfig{}, harness.Prepared{ExtensionPath: "/x/agentctl-pi.ts"})
+	pi := harness.For(harness.Pi)
+	cmd, err := buildRestoreCmd(pi, inv, "sid-1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"pi", "--session-id", "sid-1", "-n", "n", "-e", "/x/agentctl-pi.ts"}; !slices.Equal(fields(t, cmd), want) {
+		t.Errorf("resume = %q, want %q", fields(t, cmd), want)
+	}
+	dup, err := buildRestoreCmd(pi, inv, "sid-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(dup, "sid-1") || !strings.Contains(dup, "--session-id") {
+		t.Errorf("duplicate restore = %q, want a fresh --session-id", dup)
 	}
 }

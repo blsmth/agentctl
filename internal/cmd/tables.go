@@ -319,7 +319,7 @@ func PrintSessionsTable(jsonOut bool) error {
 		project := filepath.Base(s.Project)
 		modelShort := cliAbbreviateModel(sum.ModelName)
 		age := fmtAge(time.Since(s.StartTime))
-		sc := sessions.CostOfSummary(sum, sessions.ClassifyBilling(sum.ModelName, sessions.RecordedBackend(s.ID), backends))
+		sc := sessions.CostOfSummary(sum, sessions.BillingFor(s, sum.ModelName, backends))
 
 		rows = append(rows, sessRow{
 			id:       s.ID,
@@ -422,7 +422,7 @@ func PrintSessionDetail(id string, jsonOut bool) error {
 		return fmt.Errorf("parsing session: %w", err)
 	}
 
-	sc := sessions.CostOfSummary(sum, sessions.ClassifyBilling(sum.ModelName, sessions.RecordedBackend(matched.ID), config.Load().Backends))
+	sc := sessions.CostOfSummary(sum, sessions.BillingFor(*matched, sum.ModelName, config.Load().Backends))
 
 	if jsonOut {
 		type detail struct {

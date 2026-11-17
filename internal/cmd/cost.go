@@ -170,7 +170,7 @@ func sumCosts(rows []costRow) costTotals {
 
 // pricedRow turns a parsed session into a costRow.
 func pricedRow(s sessions.Session, sum *sessions.Summary, backends map[string]config.BackendConfig) costRow {
-	billing := sessions.ClassifyBilling(sum.ModelName, sessions.RecordedBackend(s.ID), backends)
+	billing := sessions.BillingFor(s, sum.ModelName, backends)
 	return costRow{
 		Start:     s.StartTime,
 		SessionID: s.ID,

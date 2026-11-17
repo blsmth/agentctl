@@ -1,0 +1,45 @@
+package tmux
+
+import (
+	"os/exec"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+// extendedKeysArgs returns the tmux set-option calls that let a pane tell
+// Shift+Enter, Ctrl+Enter and Enter apart, which pi needs (see pi's
+// docs/tmux.md): extended-keys on, plus the CSI-u format on tmux 3.5+.
+// Both are server options: tmux has no per-session form. "on" only takes
+// effect for applications that ask for extended keys, so other programs are
+// unaffected. version is `tmux -V` output; an unparseable one gets only the
+// first call.
+func extendedKeysArgs(version string) [][]string {
+	calls := [][]string{{"set-option", "-s", "extended-keys", "on"}}
+	if major, minor, ok := parseTmuxVersion(version); ok && (major > 3 || (major == 3 && minor >= 5)) {
+		calls = append(calls, []string{"set-option", "-s", "extended-keys-format", "csi-u"})
+	}
+	return calls
+}
+
+var tmuxVersionRe = regexp.MustCompile(`(\d+)\.(\d+)`)
+
+// parseTmuxVersion reads "tmux 3.6a" (or "tmux next-3.7") as 3, 6.
+func parseTmuxVersion(v string) (major, minor int, ok bool) {
+	m := tmuxVersionRe.FindStringSubmatch(strings.TrimSpace(v))
+	if m == nil {
+		return 0, 0, false
+	}
+	major, err1 := strconv.Atoi(m[1])
+	minor, err2 := strconv.Atoi(m[2])
+	return major, minor, err1 == nil && err2 == nil
+}
+
+// applyExtendedKeys enables extended keys on the tmux server. Failures are
+// ignored: an older tmux without the option still runs every agent.
+func applyExtendedKeys() {
+	out, _ := exec.Command("tmux", "-V").Output()
+	for _, args := range extendedKeysArgs(string(out)) {
+		_ = exec.Command("tmux", args...).Run()
+	}
+}

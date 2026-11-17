@@ -526,3 +526,32 @@ func TestServerPID_NotRunning(t *testing.T) {
 		t.Errorf("ServerPID = %d, want 0", got)
 	}
 }
+
+func TestFilterAgentProcesses_Pi(t *testing.T) {
+	const settings = "/repo/.agentctl/settings"
+	const ext = "/repo/.agentctl/launch/agentctl-pi.ts"
+	procs := []ProcessInfo{
+		{PID: 10, Cmd: "node /home/u/.pi/agent/install/releases/1.0.0/node_modules/@earendil-works/pi-coding-agent/dist/cli.js --session-id s -e " + ext},
+		{PID: 11, Cmd: "pi --session-id s -e " + ext},
+		{PID: 12, Cmd: "pi --session-id s -e /other/.agentctl/launch/agentctl-pi.ts"}, // another instance
+		{PID: 13, Cmd: "vim " + ext},                                                  // not pi
+		{PID: 14, Cmd: "node /usr/lib/node_modules/npm/bin/npm-cli.js " + ext},        // node, not pi
+		{PID: 15, Cmd: "claude --agent a --settings " + settings + "/a.json"},
+	}
+	got := FilterAgentProcesses(procs, settings)
+	var pids []int
+	for _, p := range got {
+		pids = append(pids, p.PID)
+	}
+	slices.Sort(pids)
+	if want := []int{10, 11, 15}; !slices.Equal(pids, want) {
+		t.Errorf("FilterAgentProcesses pids = %v, want %v", pids, want)
+	}
+	// No settings dir: no instance marker, so no pi process qualifies (the
+	// Claude filter keeps its own semantics; findOrphans refuses "" anyway).
+	for _, p := range FilterAgentProcesses(procs, "") {
+		if p.PID != 15 {
+			t.Errorf("empty settings dir matched pi process %v", p)
+		}
+	}
+}

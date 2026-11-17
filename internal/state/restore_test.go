@@ -172,3 +172,33 @@ func TestBuildRestoreAgentsCarriesPR(t *testing.T) {
 		t.Errorf("got %+v", got)
 	}
 }
+
+// TestBuildRestoreAgentsCarriesHarness: restore.json records a pi window's
+// harness, and never derives a pi session ID from its log file name
+// (<timestamp>_<id>.jsonl is not an ID). Old records mean claude.
+func TestBuildRestoreAgentsCarriesHarness(t *testing.T) {
+	got := BuildRestoreAgents(map[string]windowstate.WindowState{
+		"@1": {Instance: "p", AgentName: "p", WorkDir: "/w", Harness: "pi", LogPath: "/s/2026_sid.jsonl"},
+		"@2": {Instance: "c", AgentName: "c", WorkDir: "/w", LogPath: "/p/sess-2.jsonl"},
+	}, map[string]LiveWindow{"@1": {Index: 1}, "@2": {Index: 2}})
+	if got[0].Harness != "pi" || got[0].SessionID != "" {
+		t.Errorf("pi entry = harness %q session %q", got[0].Harness, got[0].SessionID)
+	}
+	if got[1].Harness != "" || got[1].SessionID != "sess-2" {
+		t.Errorf("claude entry = harness %q session %q", got[1].Harness, got[1].SessionID)
+	}
+}
+
+func TestLoadRestoreWithoutHarnessMeansClaude(t *testing.T) {
+	path := filepath.Join(t.TempDir(), RestoreFileName)
+	if err := os.WriteFile(path, []byte(`{"agents":[{"name":"a","agent_name":"a","session_id":"s"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadFrom(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Agents) != 1 || s.Agents[0].Harness != "" {
+		t.Errorf("agents = %+v", s.Agents)
+	}
+}

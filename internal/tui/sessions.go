@@ -221,7 +221,7 @@ func sessFetchCmd(currentAgent string) tea.Cmd {
 
 			project := sessions.NormalizeProjectName(s.Project)
 			modelShort := render.AbbreviateModel(sum.ModelName)
-			sc := sessions.CostOfSummary(sum, sessions.ClassifyBilling(sum.ModelName, sessions.RecordedBackend(s.ID), backends))
+			sc := sessions.CostOfSummary(sum, sessions.BillingFor(s, sum.ModelName, backends))
 			ticketNum := extractIssueFromBranch(sum.GitBranch)
 
 			lastTotal := sum.LastInputTokens + sum.LastCacheReadTokens + sum.LastCacheCreateTokens

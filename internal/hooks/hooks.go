@@ -16,6 +16,7 @@ import (
 // Dispatch routes a CLI subcommand to the appropriate hook handler.
 // Returns true if the subcommand was handled, false otherwise.
 func Dispatch(subcmd string) bool {
+	currentHook = subcmd
 	switch subcmd {
 	case "hook-session-start":
 		SessionStart()

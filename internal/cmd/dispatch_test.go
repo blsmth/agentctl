@@ -47,7 +47,7 @@ func TestDispatchPromptDelegatesToLaunchAdhoc(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	wid, agent, err := dispatchPrompt("do it", "spec-key", "go-engineer", dir, "opus", "none", "personal", true)
+	wid, agent, err := dispatchPrompt("do it", "spec-key", "go-engineer", dir, "opus", "none", "personal", "", true)
 	if err != nil {
 		t.Fatalf("dispatchPrompt error = %v, want nil", err)
 	}
@@ -63,7 +63,7 @@ func TestDispatchPromptDelegatesToLaunchAdhoc(t *testing.T) {
 	}
 
 	launchAdhoc = func(dispatch.AdhocRequest) (dispatch.Result, error) { return dispatch.Result{}, errors.New("boom") }
-	if _, _, err := dispatchPrompt("x", "", "go-engineer", dir, "", "", "", false); err == nil || err.Error() != "boom" {
+	if _, _, err := dispatchPrompt("x", "", "go-engineer", dir, "", "", "", "", false); err == nil || err.Error() != "boom" {
 		t.Errorf("err = %v, want boom", err)
 	}
 }
@@ -73,7 +73,7 @@ func TestDispatchIssueRepoResolution(t *testing.T) {
 	t.Cleanup(func() { resolveRepoSlug = old })
 	resolveRepoSlug = func(string) (string, error) { return "", errors.New("no remote") }
 
-	_, _, err := dispatchIssue(7, "", t.TempDir(), "", "", "", "", false)
+	_, _, err := dispatchIssue(7, "", t.TempDir(), "", "", "", "", "", false)
 	if err == nil || !strings.Contains(err.Error(), "could not determine GitHub repo for") {
 		t.Fatalf("err = %v, want could-not-determine error", err)
 	}
@@ -88,7 +88,7 @@ func TestDispatchIssueInvalidRepoFlag(t *testing.T) {
 			old := resolveRepoSlug
 			t.Cleanup(func() { resolveRepoSlug = old })
 			resolveRepoSlug = func(string) (string, error) { t.Fatal("must not resolve"); return "", nil }
-			_, _, err := dispatchIssue(7, "", t.TempDir(), "", "", "", repo, false)
+			_, _, err := dispatchIssue(7, "", t.TempDir(), "", "", "", "", repo, false)
 			if err == nil || !strings.Contains(err.Error(), "invalid --repo") {
 				t.Fatalf("err = %v, want invalid --repo", err)
 			}
@@ -105,7 +105,7 @@ func TestDispatchIssueRepoFlagSkipsResolver(t *testing.T) {
 	called := false
 	resolveRepoSlug = func(string) (string, error) { called = true; return "", errors.New("x") }
 	t.Setenv("PATH", t.TempDir()) // no gh: fetch fails fast
-	_, _, err := dispatchIssue(7, "", t.TempDir(), "", "", "", "acme/widgets", false)
+	_, _, err := dispatchIssue(7, "", t.TempDir(), "", "", "", "", "acme/widgets", false)
 	if called {
 		t.Error("resolver called despite --repo")
 	}

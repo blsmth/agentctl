@@ -882,55 +882,6 @@ func TestParseSessionsWithPaths(t *testing.T) {
 	}
 }
 
-// TestLaunchAgentShellPrefixIsBareScriptPath is the regression test for
-// the shell-prefix wrapper rewrite. It verifies that CLAUDE_CODE_SHELL_PREFIX is set to
-// exactly the script path — no leading 'source ', no trailing ' &&', and no
-// other shell metacharacters. Either of those would corrupt argv[0] when
-// Claude Code execs the wrapper.
-func TestLaunchAgentShellPrefixIsBareScriptPath(t *testing.T) {
-	const scriptPath = "/home/user/.agentctl/shell-prefix.sh"
-
-	args := buildLaunchEnv(
-		"go-engineer",             // windowName
-		"/tmp/workdir",            // workDir
-		"go-engineer",             // agentName
-		"session-123",             // sessionID
-		"/usr/local/bin/agentctl", // agentctlBin
-		scriptPath,                // shellPrefixScript
-		"",                        // inst (no instance suffix)
-		"",                        // permissionMode
-		nil,                       // extraEnv
-	)
-
-	// Find the CLAUDE_CODE_SHELL_PREFIX value in the -e KEY=VALUE pairs.
-	var prefixValue string
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == "-e" && strings.HasPrefix(args[i+1], "CLAUDE_CODE_SHELL_PREFIX=") {
-			prefixValue = strings.TrimPrefix(args[i+1], "CLAUDE_CODE_SHELL_PREFIX=")
-			break
-		}
-	}
-
-	if prefixValue == "" {
-		t.Fatal("CLAUDE_CODE_SHELL_PREFIX not found in buildLaunchEnv args")
-	}
-
-	// Must be exactly the script path — no extra tokens.
-	if prefixValue != scriptPath {
-		t.Errorf("CLAUDE_CODE_SHELL_PREFIX = %q, want %q", prefixValue, scriptPath)
-	}
-
-	// Regression: must not contain ' &&' (left-over from an earlier wrapper).
-	if strings.Contains(prefixValue, " &&") {
-		t.Errorf("CLAUDE_CODE_SHELL_PREFIX contains ' &&': %q", prefixValue)
-	}
-
-	// Regression: must not contain 'source ' (artefact of an earlier wrapper).
-	if strings.Contains(prefixValue, "source ") {
-		t.Errorf("CLAUDE_CODE_SHELL_PREFIX contains 'source ': %q", prefixValue)
-	}
-}
-
 // TestBuildLaunchEnv_ForwardsExtraEnv is the regression test for the runtime
 // dir split-brain fix: AGENTCTL_RUNTIME_DIR (and any other dispatch-supplied
 // extraEnv key) must reach the tmux new-window -e args unchanged, since that
@@ -947,8 +898,6 @@ func TestBuildLaunchEnv_ForwardsExtraEnv(t *testing.T) {
 		"go-engineer",
 		"session-123",
 		"/usr/local/bin/agentctl",
-		"/repo/.agentctl/shell-prefix.sh",
-		"",
 		"",
 		extraEnv,
 	)
@@ -1002,8 +951,6 @@ func TestBuildLaunchEnv_RuntimeDirDefaulting(t *testing.T) {
 			"go-engineer",
 			"session-123",
 			"/usr/local/bin/agentctl",
-			"/repo/.agentctl/shell-prefix.sh",
-			"",
 			"",
 			extraEnv,
 		)
@@ -1297,47 +1244,6 @@ func TestChromeRowsForLayoutMatchesChromeBarRows(t *testing.T) {
 func TestChromeBarRowsIsTwo(t *testing.T) {
 	if ChromeBarRows != 2 {
 		t.Errorf("ChromeBarRows = %d, want 2", ChromeBarRows)
-	}
-}
-
-func TestBuildLaunchEnv_EnvScrubByPermissionMode(t *testing.T) {
-	tests := []struct {
-		mode, want string
-	}{
-		{"auto", "0"},
-		{"", "1"},
-		{"default", "1"},
-		{"acceptEdits", "1"},
-		{"plan", "1"},
-	}
-	for _, tt := range tests {
-		t.Run("mode="+tt.mode, func(t *testing.T) {
-			args := buildLaunchEnv("w", "/tmp", "a", "s", "/bin/agentctl", "/p.sh", "", tt.mode, nil)
-			var vals []string
-			for i := 0; i+1 < len(args); i++ {
-				if args[i] == "-e" && strings.HasPrefix(args[i+1], "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=") {
-					vals = append(vals, strings.TrimPrefix(args[i+1], "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB="))
-				}
-			}
-			if len(vals) != 1 || vals[0] != tt.want {
-				t.Errorf("SCRUB values = %v, want exactly [%s]", vals, tt.want)
-			}
-		})
-	}
-}
-
-func TestPermissionModeFromCmd(t *testing.T) {
-	tests := map[string]string{
-		"claude --model opus --permission-mode auto 'prompt'": "auto",
-		"claude --permission-mode 'plan' x":                   "plan",
-		"claude --permission-mode acceptEdits":                "acceptEdits",
-		"claude 'do --permission-mode-ish things'":            "",
-		"claude": "",
-	}
-	for cmd, want := range tests {
-		if got := permissionModeFromCmd(cmd); got != want {
-			t.Errorf("permissionModeFromCmd(%q) = %q, want %q", cmd, got, want)
-		}
 	}
 }
 

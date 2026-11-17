@@ -16,6 +16,7 @@ import (
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/logstream"
+	"github.com/blsmth/agentctl/internal/transcript"
 )
 
 // claudeDir overrides the Claude Code config dirs for tests; "" means every
@@ -54,6 +55,8 @@ type Session struct {
 	StartTime time.Time
 	EndTime   time.Time
 	LogFile   string // path to the JSONL file
+	// Harness is the agent program that wrote the session ("" = claude).
+	Harness string
 }
 
 // Duration returns the session duration.
@@ -188,6 +191,9 @@ func findAllSessions() (map[string][]Session, error) {
 		if err := findSessionsIn(root, result); err != nil {
 			return nil, err
 		}
+	}
+	if root := piSessionsRoot(); root != "" {
+		findPiSessionsIn(root, result)
 	}
 	return result, nil
 }
@@ -361,6 +367,7 @@ func ParseSummary(s Session) (*Summary, error) {
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			continue
 		}
+		entry = transcript.Normalize(entry)
 
 		entryType, _ := entry["type"].(string)
 
@@ -542,6 +549,7 @@ func sessionAgent(path string) string {
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			continue
 		}
+		entry = transcript.Normalize(entry)
 		if agent, ok := entry["agentSetting"].(string); ok {
 			return agent
 		}
@@ -612,6 +620,7 @@ func sessionTimeRange(path string) (start, end time.Time) {
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			continue
 		}
+		entry = transcript.Normalize(entry)
 		ts := parseTimestamp(entry)
 		if !ts.IsZero() {
 			start = ts
@@ -658,6 +667,7 @@ func lastTimestamp(f *os.File) time.Time {
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			continue
 		}
+		entry = transcript.Normalize(entry)
 		ts := parseTimestamp(entry)
 		if !ts.IsZero() {
 			last = ts
@@ -964,6 +974,7 @@ func ReadFirstUserMessage(logPath string) string {
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			continue
 		}
+		entry = transcript.Normalize(entry)
 		if t, _ := entry["type"].(string); t != "user" {
 			continue
 		}
@@ -1007,6 +1018,7 @@ func FirstHumanText(logPath string) string {
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			continue
 		}
+		entry = transcript.Normalize(entry)
 		if t, _ := entry["type"].(string); t != "user" {
 			continue
 		}

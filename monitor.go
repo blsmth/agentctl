@@ -33,6 +33,7 @@ import (
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tokens"
+	"github.com/blsmth/agentctl/internal/transcript"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
@@ -625,7 +626,7 @@ func (m *monitorModel) linkLogs(inst *instanceState, windowID string, ws windows
 	if ws.SessionID != "" {
 		// A log whose basename is not <SessionID>.jsonl is poisoned (linked
 		// by an older, scan-based monitor). Drop it so it gets relinked.
-		if inst.logPath != "" && filepath.Base(inst.logPath) != ws.SessionID+".jsonl" {
+		if inst.logPath != "" && !transcript.LogMatchesSession(filepath.Base(inst.logPath), ws.SessionID) {
 			logging.Log("agent %s: log %s does not match session %s, resetting", inst.instance, inst.logPath, ws.SessionID)
 			m.resetInstanceLog(inst, now)
 		}
@@ -739,7 +740,7 @@ func (m *monitorModel) linkByScan(inst *instanceState, windowID string, ws windo
 	// Cache the discovered path and session ID in windowstate so the HUD can
 	// resolve the log path without waiting for the SessionStart hook. Only
 	// populate empty fields -- the hook is authoritative.
-	sessionID := strings.TrimSuffix(filepath.Base(newLog), ".jsonl")
+	sessionID := transcript.SessionIDFromLog(filepath.Base(newLog))
 	windowstate.Update(windowID, func(wst *windowstate.WindowState) { //nolint:errcheck
 		if wst.LogPath == "" {
 			wst.LogPath = newLog
@@ -986,7 +987,7 @@ func (m *monitorModel) persistState(cfg *config.Config, windows []tmux.WindowInf
 		}
 		sessionID := ""
 		if inst.logPath != "" {
-			sessionID = strings.TrimSuffix(filepath.Base(inst.logPath), ".jsonl")
+			sessionID = transcript.SessionIDFromLog(filepath.Base(inst.logPath))
 		}
 		if inst.paneWorkDirAt.IsZero() || time.Since(inst.paneWorkDirAt) >= paneWorkDirRefresh {
 			inst.paneWorkDir = paneWorkDirFn(id)
@@ -1168,12 +1169,12 @@ func (m *monitorModel) protectedSessionLogs(read func(string) (windowstate.Windo
 	}
 	for windowID, inst := range m.windows {
 		if inst.logPath != "" {
-			add(strings.TrimSuffix(filepath.Base(inst.logPath), ".jsonl"))
+			add(transcript.SessionIDFromLog(filepath.Base(inst.logPath)))
 		}
 		if ws, err := read(windowID); err == nil {
 			add(ws.SessionID)
 			if ws.LogPath != "" {
-				add(strings.TrimSuffix(filepath.Base(ws.LogPath), ".jsonl"))
+				add(transcript.SessionIDFromLog(filepath.Base(ws.LogPath)))
 			}
 		}
 	}

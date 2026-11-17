@@ -1,5 +1,6 @@
-// Package reaper detects and kills orphaned Claude Code processes -- sessions
-// whose tmux pane no longer exists but whose OS process is still running.
+// Package reaper detects and kills orphaned agent harness processes (Claude
+// Code and pi) -- sessions whose tmux pane no longer exists but whose OS
+// process is still running.
 //
 // Safety invariant: the reaper never signals a process unless it is provably
 // a descendant of the tmux server hosting this agentctl session (proven by
@@ -20,10 +21,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 
+	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/textutil"
 )
@@ -296,7 +299,7 @@ func findOrphans(procs []ProcessInfo, serverPID int, panePIDs []int, settingsDir
 
 	live := BuildDescendantSet(procs, panePIDs)
 	var out []orphan
-	for _, c := range FilterClaudeProcesses(procs, settingsDir) {
+	for _, c := range FilterAgentProcesses(procs, settingsDir) {
 		if c.PID <= 1 || c.PID == serverPID || live[c.PID] {
 			continue
 		}
@@ -368,4 +371,50 @@ func formatChain(chain []int) string {
 		parts[i] = strconv.Itoa(pid)
 	}
 	return strings.Join(parts, "->")
+}
+
+// FilterAgentProcesses returns the subset of procs that are agent harness
+// processes of this agentctl instance: Claude Code processes whose command
+// references settingsDir (FilterClaudeProcesses), and pi processes whose
+// command loads this instance's bridge extension
+// (<runtime dir>/launch/agentctl-pi.ts, a sibling of settingsDir).
+func FilterAgentProcesses(procs []ProcessInfo, settingsDir string) []ProcessInfo {
+	out := FilterClaudeProcesses(procs, settingsDir)
+	if settingsDir == "" {
+		return out
+	}
+	marker := filepath.Join(filepath.Dir(settingsDir), "launch", harness.PiExtensionFile)
+	for _, p := range procs {
+		if p.PID == os.Getpid() || !containsPi(p.Cmd) || !strings.Contains(p.Cmd, marker) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// containsPi reports whether cmd looks like a pi process: the executable is
+// "pi", or node running pi's package (a path containing "pi-coding-agent" or
+// ending in "/pi").
+func containsPi(cmd string) bool {
+	tokens := strings.Fields(cmd)
+	if len(tokens) == 0 {
+		return false
+	}
+	exeBase := strings.ToLower(filepath.Base(tokens[0]))
+	if exeBase == "pi" {
+		return true
+	}
+	if exeBase != "node" && exeBase != "bun" {
+		return false
+	}
+	for _, tok := range tokens[1:] {
+		if !strings.HasPrefix(tok, "/") {
+			continue
+		}
+		if strings.Contains(tok, "pi-coding-agent") || filepath.Base(tok) == "pi" {
+			return true
+		}
+	}
+	return false
 }
