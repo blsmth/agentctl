@@ -149,29 +149,32 @@ func TestRebuildLines_HeadersRowsAndPlaceholders(t *testing.T) {
 	}
 	m.rebuildLines()
 
-	// group a: header + 2 rows (3 lines); a divider (1 line) between the two
-	// groups; group b: header + placeholder (2 lines, since it has zero
-	// agents) = 6 total.
-	if len(m.lines) != 6 {
-		t.Fatalf("len(lines) = %d, want 6 (header+2 rows, divider, header+placeholder)", len(m.lines))
+	// group a: header + "bare" label + 2 rows (4 lines); a divider (1 line)
+	// between the two groups; group b: header + placeholder (2 lines, since
+	// it has zero agents) = 7 total.
+	if len(m.lines) != 7 {
+		t.Fatalf("len(lines) = %d, want 7 (header, label, 2 rows, divider, header+placeholder)", len(m.lines))
 	}
 	if m.lines[0].kind != herdLineHeader || m.lines[0].group.Session != "agentctl-a" {
 		t.Errorf("lines[0] = %+v, want header for agentctl-a", m.lines[0])
 	}
-	if m.lines[1].kind != herdLineRow || m.lines[1].row.Name != "agent-1" {
-		t.Errorf("lines[1] = %+v, want row agent-1", m.lines[1])
+	if m.lines[1].kind != herdLineSubheader || m.lines[1].label != "bare (2)" {
+		t.Errorf("lines[1] = %+v, want bare subheader", m.lines[1])
 	}
-	if m.lines[2].kind != herdLineRow || m.lines[2].row.Name != "agent-2" {
-		t.Errorf("lines[2] = %+v, want row agent-2", m.lines[2])
+	if m.lines[2].kind != herdLineRow || m.lines[2].row.Name != "agent-1" {
+		t.Errorf("lines[2] = %+v, want row agent-1", m.lines[2])
 	}
-	if m.lines[3].kind != herdLineDivider {
-		t.Errorf("lines[3] = %+v, want divider between agentctl-a and agentctl-b", m.lines[3])
+	if m.lines[3].kind != herdLineRow || m.lines[3].row.Name != "agent-2" {
+		t.Errorf("lines[3] = %+v, want row agent-2", m.lines[3])
 	}
-	if m.lines[4].kind != herdLineHeader || m.lines[4].group.Session != "agentctl-b" {
-		t.Errorf("lines[4] = %+v, want header for agentctl-b", m.lines[4])
+	if m.lines[4].kind != herdLineDivider {
+		t.Errorf("lines[4] = %+v, want divider between agentctl-a and agentctl-b", m.lines[4])
 	}
-	if m.lines[5].kind != herdLinePlaceholder {
-		t.Errorf("lines[5] = %+v, want placeholder for agentctl-b (zero agents)", m.lines[5])
+	if m.lines[5].kind != herdLineHeader || m.lines[5].group.Session != "agentctl-b" {
+		t.Errorf("lines[5] = %+v, want header for agentctl-b", m.lines[5])
+	}
+	if m.lines[6].kind != herdLinePlaceholder {
+		t.Errorf("lines[6] = %+v, want placeholder for agentctl-b (zero agents)", m.lines[6])
 	}
 }
 
@@ -409,9 +412,9 @@ func TestResolveSelection_SkipsDividerWhenMatchingByWindowID(t *testing.T) {
 // ── Cursor movement skips dividers ───────────────────────────────────────────
 
 // TestMoveCursor_SkipsDividers builds a two-group, one-row-each layout
-// (header-a, row-a1, divider, header-b, row-b1 — indices 0..4) and drives
-// the cursor across the divider in both directions, including from the
-// boundary positions at either end of the list.
+// (header-a, bare-a, row-a1, divider, header-b, bare-b, row-b1 — indices
+// 0..6) and drives the cursor across the divider and sub-section labels in
+// both directions, including from the boundary positions at either end.
 func TestMoveCursor_SkipsDividers(t *testing.T) {
 	m := &HerdModel{
 		groups: []herd.Group{
@@ -420,52 +423,29 @@ func TestMoveCursor_SkipsDividers(t *testing.T) {
 		},
 	}
 	m.rebuildLines()
-	if len(m.lines) != 5 {
-		t.Fatalf("setup: len(lines) = %d, want 5 (header,row,divider,header,row)", len(m.lines))
+	if len(m.lines) != 7 {
+		t.Fatalf("setup: len(lines) = %d, want 7", len(m.lines))
 	}
-	if m.lines[2].kind != herdLineDivider {
-		t.Fatalf("setup: lines[2] = %+v, want the divider", m.lines[2])
+	if m.lines[3].kind != herdLineDivider {
+		t.Fatalf("setup: lines[3] = %+v, want the divider", m.lines[3])
 	}
 
 	m.splitPane.SetListContent("", len(m.lines))
-	m.splitPane.SetCursor(1) // row-a1
+	m.splitPane.SetCursor(2) // row-a1
 
-	m.moveCursor(1)
-	if got := m.splitPane.Cursor(); got != 3 {
-		t.Fatalf("moveCursor(+1) from row-a1 (1) = %d, want 3 (header-b, skipping the divider at 2)", got)
-	}
-
-	m.moveCursor(1)
-	if got := m.splitPane.Cursor(); got != 4 {
-		t.Fatalf("moveCursor(+1) from header-b (3) = %d, want 4 (row-b1)", got)
-	}
-
-	// Boundary: moving past the last line must stay put, not panic or wrap.
-	m.moveCursor(1)
-	if got := m.splitPane.Cursor(); got != 4 {
-		t.Fatalf("moveCursor(+1) at the last line = %d, want 4 (unchanged)", got)
-	}
-
-	m.moveCursor(-1)
-	if got := m.splitPane.Cursor(); got != 3 {
-		t.Fatalf("moveCursor(-1) from row-b1 (4) = %d, want 3 (header-b)", got)
-	}
-
-	m.moveCursor(-1)
-	if got := m.splitPane.Cursor(); got != 1 {
-		t.Fatalf("moveCursor(-1) from header-b (3) = %d, want 1 (row-a1, skipping the divider at 2)", got)
-	}
-
-	m.moveCursor(-1)
-	if got := m.splitPane.Cursor(); got != 0 {
-		t.Fatalf("moveCursor(-1) from row-a1 (1) = %d, want 0 (header-a)", got)
-	}
-
-	// Boundary: moving before the first line must stay put, not panic or
-	// go negative.
-	m.moveCursor(-1)
-	if got := m.splitPane.Cursor(); got != 0 {
-		t.Fatalf("moveCursor(-1) at the first line = %d, want 0 (unchanged)", got)
+	for _, step := range []struct{ delta, want int }{
+		{1, 4},  // header-b, skipping the divider
+		{1, 6},  // row-b1, skipping the label
+		{1, 6},  // boundary: unchanged
+		{-1, 4}, // header-b, skipping the label
+		{-1, 2}, // row-a1, skipping the divider
+		{-1, 0}, // header-a, skipping the label
+		{-1, 0}, // boundary: unchanged
+	} {
+		m.moveCursor(step.delta)
+		if got := m.splitPane.Cursor(); got != step.want {
+			t.Fatalf("moveCursor(%+d) = %d, want %d", step.delta, got, step.want)
+		}
 	}
 }
 
@@ -535,10 +515,10 @@ func TestHerdLaunchEnv(t *testing.T) {
 
 func TestCloseConfirmStateMachine(t *testing.T) {
 	m := mouseTestModel(t, 120, 40)
-	m.selectLine(1) // row a (s1/@1)
+	m.selectLine(2) // row a (s1/@1)
 
 	// start
-	m.startClose(1)
+	m.startClose(2)
 	if !m.closeArmed() || m.confirmWindow != "@1" {
 		t.Fatalf("start: armed=%v win=%q", m.closeArmed(), m.confirmWindow)
 	}
@@ -554,7 +534,7 @@ func TestCloseConfirmStateMachine(t *testing.T) {
 		t.Error("moving selection should cancel")
 	}
 	// key flow: x arms, n cancels, x y confirms
-	m.selectLine(1)
+	m.selectLine(2)
 	var model tea.Model = m
 	model, _ = model.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	if !model.(HerdModel).closeArmed() {

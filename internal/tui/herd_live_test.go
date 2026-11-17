@@ -117,8 +117,9 @@ func TestHerdLiveClicks(t *testing.T) {
 	}{
 		{"header body selects", 3, top, 0, herdClickSelect},
 		{"header + new", w - herdSidebarRightGutter - 2, top, 0, herdClickNew},
-		{"row body selects", 5, top + 1, 1, herdClickSelect},
-		{"row close", w - herdSidebarRightGutter - 1, top + 1, 1, herdClickClose},
+		{"subheader ignored", 5, top + 1, 1, herdClickIgnore},
+		{"row body selects", 5, top + 2, 2, herdClickSelect},
+		{"row close", w - herdSidebarRightGutter - 1, top + 2, 2, herdClickClose},
 		{"past the list", 5, top + 40, -1, herdClickIgnore},
 	}
 	for _, tt := range tests {
