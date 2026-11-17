@@ -176,6 +176,11 @@ func (s *DeviceStore) Authenticate(token string, now time.Time) (Device, bool) {
 	return found, true
 }
 
+// Clear revokes every device.
+func (s *DeviceStore) Clear() error {
+	return s.mutate(func([]Device) ([]Device, error) { return []Device{}, nil })
+}
+
 // mutate applies fn to the on-disk list under an exclusive flock and writes
 // the result back.
 func (s *DeviceStore) mutate(fn func([]Device) ([]Device, error)) error {

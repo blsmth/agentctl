@@ -73,7 +73,7 @@ func TestPrintServeStatusNotRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	ca, err := serve.LoadOrCreateCA(dir, "host", now)
+	ca, err := serve.LoadOrCreateCA(dir, "host", nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,4 +101,33 @@ func makeShortDir(t *testing.T) (string, error) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir, nil
+}
+
+func TestRotateCANotRunning(t *testing.T) {
+	dir, err := makeShortDir(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	old, err := serve.LoadOrCreateCA(dir, "host", nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b bytes.Buffer
+	if err := rotateCA(&b, dir, "host", nil, now); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := serve.LoadCA(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if fresh.Fingerprint() == old.Fingerprint() {
+		t.Fatal("fingerprint unchanged")
+	}
+	for _, want := range []string{old.Fingerprint(), fresh.Fingerprint(), "revoked", "agentctl serve pair"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
 }

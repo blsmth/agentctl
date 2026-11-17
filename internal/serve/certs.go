@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/safefs"
 )
 
@@ -68,14 +69,16 @@ func Fingerprint(der []byte) string {
 }
 
 // LoadOrCreateCA loads <dir>/ca.crt and ca.key, creating them when neither
-// exists. An existing but unreadable or mismatched CA is an error: the CA is
+// exists. A new CA is name-constrained to local names (see caConstraints);
+// hostnames are the configured serve.hostnames, added to the permitted DNS
+// domains when they are not already under a local suffix. An existing but unreadable or mismatched CA is an error: the CA is
 // never regenerated automatically, because every paired phone trusts it.
-func LoadOrCreateCA(dir, hostname string, now time.Time) (*CA, error) {
+func LoadOrCreateCA(dir, hostname string, hostnames []string, now time.Time) (*CA, error) {
 	certPath, keyPath := filepath.Join(dir, CACertFile), filepath.Join(dir, CAKeyFile)
 	_, certErr := os.Stat(certPath)
 	_, keyErr := os.Stat(keyPath)
 	if errors.Is(certErr, os.ErrNotExist) && errors.Is(keyErr, os.ErrNotExist) {
-		return createCA(dir, hostname, now)
+		return createCA(dir, hostname, hostnames, now)
 	}
 	return LoadCA(dir)
 }
@@ -97,7 +100,7 @@ func LoadCA(dir string) (*CA, error) {
 	return &CA{Cert: cert, Key: key}, nil
 }
 
-func createCA(dir, hostname string, now time.Time) (*CA, error) {
+func createCA(dir, hostname string, hostnames []string, now time.Time) (*CA, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("generating CA key: %w", err)
@@ -120,6 +123,10 @@ func createCA(dir, hostname string, now time.Time) (*CA, error) {
 		IsCA:                  true,
 		MaxPathLenZero:        true,
 		SubjectKeyId:          ski,
+
+		PermittedDNSDomainsCritical: true,
+		PermittedDNSDomains:         permittedDNSDomains(hostnames),
+		PermittedIPRanges:           permittedIPRanges(),
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
@@ -212,7 +219,14 @@ func (s SANs) Equal(o SANs) bool {
 // missing, unreadable, not signed by ca, has different SANs than want, or
 // has less than 30 days left. regenerated reports whether a new leaf was
 // written.
+//
+// SANs the CA name constraints do not permit are dropped (with a warning),
+// since a single such SAN makes the whole leaf fail verification.
 func EnsureLeaf(dir string, ca *CA, want SANs, now time.Time) (cert tls.Certificate, regenerated bool, err error) {
+	want, dropped := FilterSANs(ca, want)
+	for _, d := range dropped {
+		logging.Warn("%s", sanOutsideConstraints(d))
+	}
 	if c, ok := loadLeaf(dir, ca, want, now); ok {
 		return c, false, nil
 	}

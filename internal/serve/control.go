@@ -26,6 +26,7 @@ var ErrNotRunning = errors.New("agentctl serve is not running (start it with `ag
 type controller interface {
 	OpenPairing(name string) (PairInfo, error)
 	Status() StatusInfo
+	RequestRestart()
 }
 
 type controlRequest struct {
@@ -97,6 +98,8 @@ func handleControl(conn net.Conn, c controller) {
 		} else {
 			resp.Pair = &info
 		}
+	case "restart":
+		c.RequestRestart()
 	case "status":
 		st := c.Status()
 		resp.Status = &st
@@ -137,6 +140,12 @@ func RequestPairing(dir, name string) (PairInfo, error) {
 		return PairInfo{}, errors.New("control socket: empty pairing response")
 	}
 	return *resp.Pair, nil
+}
+
+// RequestServerRestart asks the running server to re-exec itself.
+func RequestServerRestart(dir string) error {
+	_, err := controlCall(dir, controlRequest{Op: "restart"})
+	return err
 }
 
 // QueryStatus asks the running server for its status.

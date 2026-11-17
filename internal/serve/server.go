@@ -60,6 +60,9 @@ type Server struct {
 	bootPort  int
 	bootTimer *time.Timer
 	bootGen   int
+
+	// restart asks Run to re-exec (after `serve ca rotate`).
+	restart chan struct{}
 }
 
 // New builds a Server. It loads devices.json from opts.Dir and parses
@@ -77,7 +80,7 @@ func New(opts Options) (*Server, error) {
 	if now == nil {
 		now = time.Now
 	}
-	s := &Server{opts: opts, now: now, started: now(), cidrs: cidrs, devices: devices}
+	s := &Server{opts: opts, now: now, started: now(), cidrs: cidrs, devices: devices, restart: make(chan struct{}, 1)}
 	s.router = newRouter(devices, opts.Config.AllowWrite, now)
 	s.routes(s.router)
 	s.handler = s.chain(s.router)
@@ -271,6 +274,15 @@ func (s *Server) BootstrapHandler() http.Handler {
 		writeError(w, http.StatusNotFound, codeNotFound, "no such endpoint: "+r.URL.Path)
 	})
 	return s.cidrs.middleware(securityHeaders(mux))
+}
+
+// RequestRestart asks the running server to re-exec itself, picking up new
+// certificates. It never blocks.
+func (s *Server) RequestRestart() {
+	select {
+	case s.restart <- struct{}{}:
+	default:
+	}
 }
 
 // StatusInfo is the running server's self-report for `serve status`.

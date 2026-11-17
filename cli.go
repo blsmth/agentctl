@@ -1180,6 +1180,7 @@ type ServeCmd struct {
 	Status    ServeStatusCmd    `cmd:"" help:"Show whether the server runs, its URL, devices, cert expiry and CA fingerprint"`
 	Pair      ServePairCmd      `cmd:"" help:"Open a 5-minute pairing window and print QR codes for a phone"`
 	Devices   ServeDevicesCmd   `cmd:"" help:"List or revoke paired devices"`
+	CA        ServeCACmd        `cmd:"" name:"ca" help:"Manage the local certificate authority"`
 }
 
 type ServeRunCmd struct{}
@@ -1210,6 +1211,14 @@ type ServeDevicesCmd struct {
 	List ServeDevicesListCmd `cmd:"" default:"1" hidden:"" help:"List paired devices"`
 	Rm   ServeDevicesRmCmd   `cmd:"" help:"Revoke a paired device"`
 }
+
+type ServeCACmd struct {
+	Rotate ServeCARotateCmd `cmd:"" help:"Replace the CA and server certificate; every device must reinstall the profile and pair again"`
+}
+
+type ServeCARotateCmd struct{}
+
+func (c *ServeCARotateCmd) Run() error { return cmd.RunServeCARotate(os.Stdout) }
 
 type ServeDevicesListCmd struct{}
 

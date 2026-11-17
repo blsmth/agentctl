@@ -12,6 +12,7 @@ import (
 
 	"github.com/mdp/qrterminal/v3"
 
+	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/pidfile"
 	"github.com/blsmth/agentctl/internal/serve"
 )
@@ -119,6 +120,11 @@ func printServeStatus(w io.Writer, dir string, now time.Time) error {
 	}
 	if ca, err := serve.LoadCA(dir); err == nil {
 		fmt.Fprintf(tw, "CA fingerprint:\t%s\n", ca.Fingerprint())
+		if ca.Constrained() {
+			fmt.Fprintf(tw, "CA constraints:\tlocal names only\n")
+		} else {
+			fmt.Fprintf(tw, "CA constraints:\tnone (run: agentctl serve ca rotate)\n")
+		}
 	} else {
 		fmt.Fprintf(tw, "CA:\tnot created yet (agentctl serve creates it on first start)\n")
 	}
@@ -204,5 +210,58 @@ func RunServeDevicesRm(w io.Writer, ref string) error {
 		return err
 	}
 	fmt.Fprintf(w, "Revoked %s (%s)\n", d.ID, d.Name)
+	return nil
+}
+
+// RunServeCARotate replaces the CA (and with it the server certificate and
+// every paired device). A running server is told to restart so it creates
+// and serves the new CA immediately.
+func RunServeCARotate(w io.Writer) error {
+	dir, err := serveDir()
+	if err != nil {
+		return err
+	}
+	hostname, _ := os.Hostname()
+	return rotateCA(w, dir, hostname, config.Load().Serve.Hostnames, time.Now())
+}
+
+func rotateCA(w io.Writer, dir, hostname string, hostnames []string, now time.Time) error {
+	old := ""
+	if ca, err := serve.LoadCA(dir); err == nil {
+		old = ca.Fingerprint()
+	}
+	_, statusErr := serve.QueryStatus(dir)
+	running := statusErr == nil
+	ca, err := serve.RotateCA(dir, hostname, hostnames, !running, now)
+	if err != nil {
+		return err
+	}
+	if old != "" {
+		fmt.Fprintf(w, "Old CA fingerprint: %s\n", old)
+	}
+	if running {
+		if err := serve.RequestServerRestart(dir); err != nil {
+			return fmt.Errorf("CA removed, but asking the server to restart failed (restart it yourself): %w", err)
+		}
+		ca = waitForCA(dir, 10*time.Second)
+	}
+	if ca != nil {
+		fmt.Fprintf(w, "New CA fingerprint: %s\n", ca.Fingerprint())
+	} else {
+		fmt.Fprintln(w, "The new CA is created when agentctl serve next starts.")
+	}
+	fmt.Fprintln(w, "All paired devices were revoked. On each phone: delete the old agentctl profile (Settings > General > VPN & Device Management), then run `agentctl serve pair` and install the new profile.")
+	return nil
+}
+
+// waitForCA polls for the CA the restarting server creates.
+func waitForCA(dir string, timeout time.Duration) *serve.CA {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if ca, err := serve.LoadCA(dir); err == nil {
+			return ca
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 	return nil
 }

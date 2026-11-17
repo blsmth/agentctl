@@ -7,7 +7,7 @@ import (
 
 func TestMobileconfig(t *testing.T) {
 	dir := t.TempDir()
-	ca, err := LoadOrCreateCA(dir, "Host & <Co>", newClock().Now())
+	ca, err := LoadOrCreateCA(dir, "Host & <Co>", nil, newClock().Now())
 	if err != nil {
 		t.Fatal(err)
 	}

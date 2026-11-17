@@ -56,7 +56,7 @@ func newTestServer(t *testing.T, cfg config.ServeConfig) *testServer {
 	t.Helper()
 	dir := t.TempDir()
 	clock := newClock()
-	ca, err := LoadOrCreateCA(dir, "testhost", clock.Now())
+	ca, err := LoadOrCreateCA(dir, "testhost", nil, clock.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

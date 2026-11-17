@@ -63,7 +63,7 @@ func TestSANsEqual(t *testing.T) {
 func TestCACreatedOnceAndNeverRegenerated(t *testing.T) {
 	dir := t.TempDir()
 	now := newClock().Now()
-	ca, err := LoadOrCreateCA(dir, "host", now)
+	ca, err := LoadOrCreateCA(dir, "host", nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestCACreatedOnceAndNeverRegenerated(t *testing.T) {
 		}
 	}
 
-	again, err := LoadOrCreateCA(dir, "host", now.Add(20*365*24*time.Hour))
+	again, err := LoadOrCreateCA(dir, "host", nil, now.Add(20*365*24*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestCACreatedOnceAndNeverRegenerated(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, CAKeyFile), []byte("garbage"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadOrCreateCA(dir, "host", now); err == nil {
+	if _, err := LoadOrCreateCA(dir, "host", nil, now); err == nil {
 		t.Fatal("damaged CA key accepted")
 	}
 	after, _ := os.ReadFile(filepath.Join(dir, CACertFile))
@@ -113,7 +113,7 @@ func TestCACreatedOnceAndNeverRegenerated(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir2, CACertFile), before, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadOrCreateCA(dir2, "host", now); err == nil {
+	if _, err := LoadOrCreateCA(dir2, "host", nil, now); err == nil {
 		t.Fatal("CA cert without key accepted")
 	}
 	if _, err := os.Stat(filepath.Join(dir2, CAKeyFile)); !os.IsNotExist(err) {
@@ -124,10 +124,10 @@ func TestCACreatedOnceAndNeverRegenerated(t *testing.T) {
 func TestCAMismatchedKey(t *testing.T) {
 	a, b := t.TempDir(), t.TempDir()
 	now := newClock().Now()
-	if _, err := LoadOrCreateCA(a, "h", now); err != nil {
+	if _, err := LoadOrCreateCA(a, "h", nil, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadOrCreateCA(b, "h", now); err != nil {
+	if _, err := LoadOrCreateCA(b, "h", nil, now); err != nil {
 		t.Fatal(err)
 	}
 	key, _ := os.ReadFile(filepath.Join(b, CAKeyFile))
@@ -190,7 +190,7 @@ func TestEnsureLeaf(t *testing.T) {
 		{
 			name: "different CA regenerates",
 			second: func(_ string, _ *CA, now time.Time) (SANs, *CA, time.Time) {
-				other, err := LoadOrCreateCA(t.TempDir(), "other", now)
+				other, err := LoadOrCreateCA(t.TempDir(), "other", nil, now)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -213,7 +213,7 @@ func TestEnsureLeaf(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			now := newClock().Now()
-			ca, err := LoadOrCreateCA(dir, "host", now)
+			ca, err := LoadOrCreateCA(dir, "host", nil, now)
 			if err != nil {
 				t.Fatal(err)
 			}

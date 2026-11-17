@@ -5,13 +5,15 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 type fakeController struct {
-	gotName string
-	err     error
+	gotName   string
+	restarted atomic.Bool
+	err       error
 }
 
 func (f *fakeController) OpenPairing(name string) (PairInfo, error) {
@@ -21,6 +23,8 @@ func (f *fakeController) OpenPairing(name string) (PairInfo, error) {
 	}
 	return PairInfo{Code: "CODE", PairURL: "https://h:1/pair?code=CODE", Fingerprint: "AA"}, nil
 }
+
+func (f *fakeController) RequestRestart() { f.restarted.Store(true) }
 
 func (f *fakeController) Status() StatusInfo {
 	return StatusInfo{PID: 42, Version: "v", URL: "https://h:1/"}
@@ -65,6 +69,9 @@ func TestControlSocket(t *testing.T) {
 		t.Errorf("status = %+v", st)
 	}
 
+	if err := RequestServerRestart(dir); err != nil || !fc.restarted.Load() {
+		t.Errorf("restart not delivered: %v", err)
+	}
 	fc.err = errors.New("boom")
 	if _, err := RequestPairing(dir, ""); err == nil || err.Error() != "boom" {
 		t.Errorf("error not propagated: %v", err)

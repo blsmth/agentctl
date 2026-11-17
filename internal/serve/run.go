@@ -20,6 +20,7 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/pidfile"
 	"github.com/blsmth/agentctl/internal/selfexec"
+	"github.com/blsmth/agentctl/internal/selfpath"
 )
 
 // Files under the serve dir.
@@ -80,7 +81,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 	cfg := config.Load().Serve
 	now := time.Now()
 	hostname, _ := os.Hostname()
-	ca, err := LoadOrCreateCA(dir, hostname, now)
+	ca, err := LoadOrCreateCA(dir, hostname, cfg.Hostnames, now)
 	if err != nil {
 		return err
 	}
@@ -92,6 +93,9 @@ func Run(ctx context.Context, opts RunOptions) error {
 	leaf, regenerated, err := EnsureLeaf(dir, ca, sans, now)
 	if err != nil {
 		return err
+	}
+	if !ca.Constrained() {
+		logging.Warn("serve: the CA has no name constraints; run `agentctl serve ca rotate` to replace it")
 	}
 	if regenerated {
 		logging.Log("serve: issued server certificate for %v %v", sans.DNS, sans.IPs)
@@ -181,19 +185,33 @@ func Run(ctx context.Context, opts RunOptions) error {
 				return nil
 			}
 			return fmt.Errorf("https server: %w", err)
+		case <-srv.restart:
+			// `serve ca rotate` replaced the certificates on disk.
+			path := exe.Path
+			if reloadErr != nil {
+				path = selfpath.Path()
+			}
+			logging.Log("serve: restart requested, re-executing %s", path)
+			stop()
+			return reexec(dir, path)
 		case t := <-tick.C:
 			if reloadErr != nil || !selfexec.CheckChanged(exe, t) {
 				continue
 			}
 			logging.Log("serve: binary changed, re-executing %s", exe.Path)
 			stop()
-			// Same PID: serve.pid stays valid. Exec returns only on failure;
-			// exiting then lets launchd's KeepAlive start the new binary.
-			err := selfexec.Reexec(exe.Path)
-			pidfile.Remove(dir, PIDFile)
-			return fmt.Errorf("re-exec %s: %w", exe.Path, err)
+			return reexec(dir, exe.Path)
 		}
 	}
+}
+
+// reexec replaces the process with path. Same PID: serve.pid stays valid.
+// Exec returns only on failure; exiting then lets launchd's KeepAlive start
+// the server again.
+func reexec(dir, path string) error {
+	err := selfexec.Reexec(path)
+	pidfile.Remove(dir, PIDFile)
+	return fmt.Errorf("re-exec %s: %w", path, err)
 }
 
 // shutdown stops srv gracefully, giving in-flight requests a few seconds.

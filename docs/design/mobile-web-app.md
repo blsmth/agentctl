@@ -64,6 +64,7 @@ New `serve` block in `~/.config/agentctl/config.json`. Every key is **global-onl
 All under `config.StateDir()` (`~/.local/state/agentctl`) in `serve/`, dirs 0700, files 0600:
 
 - `ca.key`, `ca.crt` — local CA (ECDSA P-256, 10 years, name "agentctl local CA (<hostname>)").
+- The CA is name-constrained (critical): DNS `local`, `lan`, `home`, `home.arpa`, `internal` plus any `serve.hostnames` entry outside those at creation time; IPs RFC 1918, `100.64.0.0/10`, loopback and `fc00::/7`. A stolen `ca.key` cannot impersonate public sites. Leaf SANs outside the constraints are dropped with a warning; `agentctl serve ca rotate` replaces the CA (devices must reinstall the profile and re-pair).
 - `server.key`, `server.crt` — leaf signed by the CA (≤ 825 days so iOS accepts it), SANs = hostnames + `<os.Hostname>.local` + all non-loopback interface IPs at generation time. Regenerated automatically on start if SANs changed or < 30 days left. The CA is never regenerated automatically.
 - `devices.json` — paired devices: `{id, name, created, last_seen, token_sha256}`. Tokens are only stored hashed.
 - `vapid.json` — VAPID keypair (PR3). `subscriptions.json` — Web Push subscriptions keyed by device id (PR3).
