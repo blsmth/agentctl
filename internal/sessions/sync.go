@@ -140,3 +140,16 @@ func countJSONLFiles(projectsDir string, dirs []os.DirEntry) int {
 	}
 	return count
 }
+
+// SyncOne creates or refreshes the .meta.json sidecar for the single session
+// sessionID: it locates the session's JSONL log under the Claude projects
+// directory and runs ExtractMeta + WriteMeta on it. It is what the Stop and
+// SessionEnd hooks run (detached) now that no monitor writes sidecars.
+func SyncOne(sessionID string) error {
+	logFile := FindLogBySessionIDIn(filepath.Join(claudeDir, "projects"), sessionID)
+	if logFile == "" {
+		return fmt.Errorf("sessions: no log found for session %q", sessionID)
+	}
+	projectPath := decodeDirName(filepath.Base(filepath.Dir(logFile)))
+	return syncOneSession(logFile, projectPath, sessionID)
+}

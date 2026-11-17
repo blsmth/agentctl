@@ -11,6 +11,7 @@ import (
 // using the shared model registry (internal/tokens) for pricing.
 type CostEstimator struct {
 	agent         string
+	project       string
 	costCounter   *prometheus.CounterVec // agentctl_cost_estimate_dollars{agent, model}
 	unknownLogged map[string]bool        // tracks models for which we've already logged a warning
 
@@ -65,7 +66,7 @@ func (c *CostEstimator) OnEntry(entry logstream.Entry) {
 
 	c.TotalCost += cost
 	c.ByModel[m.Key] += cost
-	c.costCounter.WithLabelValues(c.agent, m.Key).Add(cost)
+	c.costCounter.WithLabelValues(c.agent, m.Key, c.project).Add(cost)
 }
 
 // OnReset zeroes accumulated cost state. Called when the stream switches to a new

@@ -6,6 +6,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/detach"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/metricsproc"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/stamp"
 )
@@ -31,8 +32,20 @@ func janitor() {
 			logging.Log("janitor: recovered: %v", r)
 		}
 	}()
-	runtimeJanitor(paths.RuntimeDir(), time.Now(), spawnJanitorFn)
+	janitorAt(paths.RuntimeDir(), time.Now())
 }
+
+// janitorAt is janitor for an explicit runtime dir and time.
+func janitorAt(runtimeDir string, now time.Time) {
+	if runtimeJanitor(runtimeDir, now, spawnJanitorFn) {
+		// Same 60s stamp: make sure the per-machine metrics serve is up
+		// (no-op unless metrics are enabled).
+		ensureMetricsServeFn()
+	}
+}
+
+// ensureMetricsServeFn starts the metrics serve when needed; a seam for tests.
+var ensureMetricsServeFn = metricsproc.EnsureStarted
 
 // runtimeJanitor spawns spawn at most once per janitorMinInterval for
 // runtimeDir, reporting whether it did.

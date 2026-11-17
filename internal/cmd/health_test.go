@@ -482,3 +482,23 @@ func TestHealthMonitorLine(t *testing.T) {
 		})
 	}
 }
+
+func TestHealthMetricsLine(t *testing.T) {
+	tests := []struct {
+		name    string
+		enabled bool
+		running bool
+		want    string
+	}{
+		{"disabled prints nothing", false, true, ""},
+		{"enabled and running", true, true, "serve running (pid 4242, port 9101)"},
+		{"enabled, not running", true, false, "serve not running (started by the next session start or hook janitor)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := healthMetricsLine(tt.enabled, 9101, 4242, tt.running); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

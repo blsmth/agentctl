@@ -261,6 +261,10 @@ func SessionEnd() {
 
 	logging.Log("hook-session-end: agent=%s window=%s reason=%s", agentName, windowID, input.Reason)
 
+	// Final .meta.json sidecar write for this session (detached; the monitor
+	// no longer writes sidecars).
+	syncSessionMeta(input.SessionID)
+
 	// Clear working state so the spinner stops. idle_prompt only fires when
 	// Claude is waiting for interactive input; ticket agents that finish and
 	// exit cleanly reach SessionEnd without ever firing idle_prompt.

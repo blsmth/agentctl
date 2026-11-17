@@ -43,10 +43,15 @@ func CheckDone() {
 	var input struct {
 		LastAssistantMessage string `json:"last_assistant_message"`
 		StopHookActive       bool   `json:"stop_hook_active"`
+		SessionID            string `json:"session_id"`
 	}
 	if !decodeInput(&input) {
 		return
 	}
+
+	// Refresh the session's .meta.json sidecar (detached; replaces the
+	// monitor's incremental write).
+	syncSessionMeta(input.SessionID)
 
 	// Set idle immediately -- the turn's text output is complete, so stop the
 	// spinner. If checks below fail (exit 2), UserPromptSubmit will set working

@@ -23,27 +23,27 @@ func NewCollector(reg prometheus.Registerer) *Collector {
 	c.tokensTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "agentctl_tokens_total",
 		Help: "Total tokens processed, partitioned by agent, direction, and cache type.",
-	}, []string{"agent", "direction", "cache_type"})
+	}, []string{"agent", "direction", "cache_type", "project"})
 
 	c.toolUseTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "agentctl_tool_use_total",
 		Help: "Total tool invocations observed in logstream entries.",
-	}, []string{"agent", "tool"})
+	}, []string{"agent", "tool", "project"})
 
 	c.turnsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "agentctl_turns_total",
 		Help: "Total assistant turns observed, partitioned by agent and model.",
-	}, []string{"agent", "model"})
+	}, []string{"agent", "model", "project"})
 
 	c.contextPct = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "agentctl_context_pct",
 		Help: "Current context window usage percentage (0–100) per agent.",
-	}, []string{"agent"})
+	}, []string{"agent", "project"})
 
 	c.costEstimate = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "agentctl_cost_estimate_dollars",
 		Help: "Estimated cost in USD accumulated from assistant turns, partitioned by agent and model.",
-	}, []string{"agent", "model"})
+	}, []string{"agent", "model", "project"})
 
 	reg.MustRegister(
 		c.tokensTotal,
@@ -62,18 +62,33 @@ func NewCollector(reg prometheus.Registerer) *Collector {
 // the same CounterVec and never re-register anything. Pricing comes from the
 // shared internal/tokens model registry, not a caller-supplied table.
 func (c *Collector) NewCostEstimator(agent string) *CostEstimator {
-	return NewCostEstimator(agent, c.costEstimate)
+	return c.NewProjectCostEstimator("", agent)
+}
+
+// NewProjectCostEstimator is NewCostEstimator with the series tagged with the
+// given project label value.
+func (c *Collector) NewProjectCostEstimator(project, agent string) *CostEstimator {
+	ce := NewCostEstimator(agent, c.costEstimate)
+	ce.project = project
+	return ce
 }
 
 // ForAgent returns an AgentCollector scoped to the given agent name.
 func (c *Collector) ForAgent(agent string) *AgentCollector {
-	return &AgentCollector{agent: agent, collector: c}
+	return c.ForProjectAgent("", agent)
+}
+
+// ForProjectAgent is ForAgent with every series tagged with the given
+// project label value (one process serves every project on the machine).
+func (c *Collector) ForProjectAgent(project, agent string) *AgentCollector {
+	return &AgentCollector{agent: agent, project: project, collector: c}
 }
 
 // AgentCollector wraps Collector with a bound agent name and implements
 // logstream.Subscriber. One AgentCollector is created per agent window.
 type AgentCollector struct {
 	agent     string
+	project   string
 	collector *Collector
 }
 
@@ -93,27 +108,27 @@ func (a *AgentCollector) OnEntry(entry logstream.Entry) {
 
 	if entry.Type == "assistant" && entry.Usage != nil {
 		if entry.Usage.InputTokens > 0 {
-			c.tokensTotal.WithLabelValues(a.agent, "input", "none").Add(float64(entry.Usage.InputTokens))
+			c.tokensTotal.WithLabelValues(a.agent, "input", "none", a.project).Add(float64(entry.Usage.InputTokens))
 		}
 		if entry.Usage.OutputTokens > 0 {
-			c.tokensTotal.WithLabelValues(a.agent, "output", "none").Add(float64(entry.Usage.OutputTokens))
+			c.tokensTotal.WithLabelValues(a.agent, "output", "none", a.project).Add(float64(entry.Usage.OutputTokens))
 		}
 		if entry.Usage.CacheReadTokens > 0 {
-			c.tokensTotal.WithLabelValues(a.agent, "input", "read").Add(float64(entry.Usage.CacheReadTokens))
+			c.tokensTotal.WithLabelValues(a.agent, "input", "read", a.project).Add(float64(entry.Usage.CacheReadTokens))
 		}
 		if entry.Usage.CacheCreateTokens > 0 {
-			c.tokensTotal.WithLabelValues(a.agent, "input", "create").Add(float64(entry.Usage.CacheCreateTokens))
+			c.tokensTotal.WithLabelValues(a.agent, "input", "create", a.project).Add(float64(entry.Usage.CacheCreateTokens))
 		}
 		model := entry.Model
 		if model == "" {
 			model = "unknown"
 		}
-		c.turnsTotal.WithLabelValues(a.agent, model).Inc()
+		c.turnsTotal.WithLabelValues(a.agent, model, a.project).Inc()
 	}
 
 	for _, block := range entry.Content {
 		if block.Type == "tool_use" && block.ToolName != "" {
-			c.toolUseTotal.WithLabelValues(a.agent, block.ToolName).Inc()
+			c.toolUseTotal.WithLabelValues(a.agent, block.ToolName, a.project).Inc()
 		}
 	}
 }
@@ -122,5 +137,5 @@ func (a *AgentCollector) OnEntry(entry logstream.Entry) {
 // (e.g. after /clear). Counters are cumulative and not reset. The contextPct
 // gauge is reset to 0 since the session context is now fresh.
 func (a *AgentCollector) OnReset() {
-	a.collector.contextPct.WithLabelValues(a.agent).Set(0)
+	a.collector.contextPct.WithLabelValues(a.agent, a.project).Set(0)
 }

@@ -50,37 +50,37 @@ func NewTransitionTracker(reg prometheus.Registerer) *TransitionTracker {
 	tr.agentsSpawned = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "agentctl_agents_spawned_total",
 		Help: "Total number of agent windows first seen.",
-	}, []string{"agent_name"})
+	}, []string{"agent_name", "project"})
 
 	tr.sessionsCompleted = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "agentctl_sessions_completed_total",
 		Help: "Total number of agent sessions completed (window gone).",
-	}, []string{"agent_name", "exit_state"})
+	}, []string{"agent_name", "exit_state", "project"})
 
 	tr.stateTransitions = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "agentctl_state_transitions_total",
 		Help: "Total number of agent state transitions.",
-	}, []string{"from_state", "to_state", "agent_name"})
+	}, []string{"from_state", "to_state", "agent_name", "project"})
 
 	tr.toolUses = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "agentctl_tool_uses_total",
 		Help: "Total number of tool uses observed (proxy via Working->Blocked transitions).",
-	}, []string{"tool_name", "agent_name"})
+	}, []string{"tool_name", "agent_name", "project"})
 
 	tr.failures = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "agentctl_failures_total",
 		Help: "Total number of likely failures (Working->Gone transitions).",
-	}, []string{"agent_name"})
+	}, []string{"agent_name", "project"})
 
 	tr.agentsActive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "agentctl_agents_active",
 		Help: "Number of active agents by state.",
-	}, []string{"state"})
+	}, []string{"state", "project"})
 
 	startTime := tr.startTime
 	tr.monitorUptime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "agentctl_monitor_uptime_seconds",
-		Help: "Seconds since the monitor started.",
+		Help: "Seconds since the metrics serve process started (name kept from the per-project monitor era).",
 	}, func() float64 {
 		return time.Since(startTime).Seconds()
 	})
@@ -89,19 +89,19 @@ func NewTransitionTracker(reg prometheus.Registerer) *TransitionTracker {
 		Name:    "agentctl_session_duration_seconds",
 		Help:    "Duration of agent sessions from first seen to gone.",
 		Buckets: prometheus.ExponentialBuckets(60, 2, 10), // 1min to ~17hrs
-	}, []string{"agent_name"})
+	}, []string{"agent_name", "project"})
 
 	tr.blockedDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "agentctl_blocked_duration_seconds",
 		Help:    "Duration of time agents spend in blocked state.",
 		Buckets: prometheus.ExponentialBuckets(1, 2, 12), // 1s to ~1hr
-	}, []string{"agent_name"})
+	}, []string{"agent_name", "project"})
 
 	tr.workingDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "agentctl_working_duration_seconds",
 		Help:    "Duration of time agents spend in working state.",
 		Buckets: prometheus.ExponentialBuckets(1, 2, 12), // 1s to ~1hr
-	}, []string{"agent_name"})
+	}, []string{"agent_name", "project"})
 
 	reg.MustRegister(
 		tr.agentsSpawned,
@@ -121,22 +121,30 @@ func NewTransitionTracker(reg prometheus.Registerer) *TransitionTracker {
 
 // RecordTransition updates all relevant Prometheus metrics for the given state transition.
 func (tr *TransitionTracker) RecordTransition(t state.Transition) {
+	tr.RecordTransitionAt(t, time.Now())
+}
+
+// RecordTransitionAt is RecordTransition with an explicit event time, so
+// durations come from when the transition happened rather than when it was
+// observed (the metrics serve replays hook events a moment after they occur).
+func (tr *TransitionTracker) RecordTransitionAt(t state.Transition, now time.Time) {
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
+	p := t.Project
 
 	// Track first-seen: count as a spawn the first time we see a window.
 	if !tr.seenWindows[t.WindowID] {
 		tr.seenWindows[t.WindowID] = true
-		tr.spawnTimes[t.WindowID] = time.Now()
-		tr.agentsSpawned.WithLabelValues(t.Agent).Inc()
+		tr.spawnTimes[t.WindowID] = now
+		tr.agentsSpawned.WithLabelValues(t.Agent, p).Inc()
 	}
 
 	// Count every transition.
-	tr.stateTransitions.WithLabelValues(t.From.String(), t.To.String(), t.Agent).Inc()
+	tr.stateTransitions.WithLabelValues(t.From.String(), t.To.String(), t.Agent, p).Inc()
 
 	// Track tool uses when a tool name is present.
 	if t.LastToolName != "" {
-		tr.toolUses.WithLabelValues(t.LastToolName, t.Agent).Inc()
+		tr.toolUses.WithLabelValues(t.LastToolName, t.Agent, p).Inc()
 	}
 
 	// Update active agent gauges. Decrement only the state the window was
@@ -145,37 +153,37 @@ func (tr *TransitionTracker) RecordTransition(t state.Transition) {
 
 	// Working duration tracking.
 	if t.To == state.StatusWorking {
-		tr.workingStart[t.WindowID] = time.Now()
+		tr.workingStart[t.WindowID] = now
 	}
 	if t.From == state.StatusWorking {
 		if start, ok := tr.workingStart[t.WindowID]; ok {
-			tr.workingDuration.WithLabelValues(t.Agent).Observe(time.Since(start).Seconds())
+			tr.workingDuration.WithLabelValues(t.Agent, p).Observe(now.Sub(start).Seconds())
 			delete(tr.workingStart, t.WindowID)
 		}
 	}
 
 	// Blocked duration tracking.
 	if t.To == state.StatusBlocked {
-		tr.blockedStart[t.WindowID] = time.Now()
+		tr.blockedStart[t.WindowID] = now
 	}
 	if t.From == state.StatusBlocked {
 		if start, ok := tr.blockedStart[t.WindowID]; ok {
-			tr.blockedDuration.WithLabelValues(t.Agent).Observe(time.Since(start).Seconds())
+			tr.blockedDuration.WithLabelValues(t.Agent, p).Observe(now.Sub(start).Seconds())
 			delete(tr.blockedStart, t.WindowID)
 		}
 	}
 
 	// Session completion.
 	if t.To == state.StatusGone {
-		tr.sessionsCompleted.WithLabelValues(t.Agent, t.From.String()).Inc()
+		tr.sessionsCompleted.WithLabelValues(t.Agent, t.From.String(), p).Inc()
 
 		if spawn, ok := tr.spawnTimes[t.WindowID]; ok {
-			tr.sessionDuration.WithLabelValues(t.Agent).Observe(time.Since(spawn).Seconds())
+			tr.sessionDuration.WithLabelValues(t.Agent, p).Observe(now.Sub(spawn).Seconds())
 		}
 
 		// Likely crash: was working when the window disappeared.
 		if t.From == state.StatusWorking {
-			tr.failures.WithLabelValues(t.Agent).Inc()
+			tr.failures.WithLabelValues(t.Agent, p).Inc()
 		}
 
 		// Clean up all per-window state.
@@ -195,11 +203,11 @@ func (tr *TransitionTracker) updateActive(t state.Transition) {
 	}
 	prev, wasCounted := tr.counted[t.WindowID]
 	if wasCounted {
-		tr.agentsActive.WithLabelValues(prev.String()).Dec()
+		tr.agentsActive.WithLabelValues(prev.String(), t.Project).Dec()
 		delete(tr.counted, t.WindowID)
 	}
 	if t.To != state.StatusGone {
-		tr.agentsActive.WithLabelValues(t.To.String()).Inc()
+		tr.agentsActive.WithLabelValues(t.To.String(), t.Project).Inc()
 		tr.counted[t.WindowID] = t.To
 	}
 }

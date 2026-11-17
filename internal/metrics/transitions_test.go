@@ -27,7 +27,7 @@ func TestTransitionTracker_StateTransition(t *testing.T) {
 		To:       state.StatusIdle,
 	})
 
-	count := testutil.ToFloat64(tr.stateTransitions.WithLabelValues("working", "idle", "go-engineer"))
+	count := testutil.ToFloat64(tr.stateTransitions.WithLabelValues("working", "idle", "go-engineer", ""))
 	if count != 1 {
 		t.Errorf("stateTransitions{working,idle,go-engineer} = %v, want 1", count)
 	}
@@ -106,7 +106,7 @@ func TestTransitionTracker_FailureDetection(t *testing.T) {
 		To:       state.StatusGone,
 	})
 
-	count := testutil.ToFloat64(tr.failures.WithLabelValues("go-engineer"))
+	count := testutil.ToFloat64(tr.failures.WithLabelValues("go-engineer", ""))
 	if count != 1 {
 		t.Errorf("failures{go-engineer} = %v, want 1", count)
 	}
@@ -137,7 +137,7 @@ func TestTransitionTracker_ActiveGaugeNeverNegative(t *testing.T) {
 				tr.RecordTransition(state.Transition{WindowID: s.win, Agent: "a", From: s.from, To: s.to})
 			}
 			for st, want := range map[state.AgentStatus]float64{W: tt.working, I: tt.idle, B: tt.blocked} {
-				if got := testutil.ToFloat64(tr.agentsActive.WithLabelValues(st.String())); got != want {
+				if got := testutil.ToFloat64(tr.agentsActive.WithLabelValues(st.String(), "")); got != want {
 					t.Errorf("%s = %v, want %v", st, got, want)
 				}
 			}

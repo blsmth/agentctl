@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/metrics/events"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
@@ -134,6 +135,11 @@ func Apply(windowID string, ws *windowstate.WindowState, fn func(*windowstate.Wi
 		ws.Seen = true
 	}
 	SyncName(windowID, ws)
+	if ws.State != prevState {
+		// The state writers decide transitions; the metrics serve reads them
+		// from the event log. No-op unless metrics are enabled; never fails.
+		events.RecordStateChange(windowID, prevState, *ws)
+	}
 }
 
 // Transact is windowstate.Transact with Apply wrapped around fn.

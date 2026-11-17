@@ -16,6 +16,7 @@ import (
 	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/metricsproc"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
@@ -34,6 +35,13 @@ func RunHealth() {
 	// kill switch (config monitor:false) leaves it enabled.
 	monitorEnabled := config.Load().MonitorEnabled()
 	fmt.Printf("  Monitor: %s\n", healthMonitorLine(monitorEnabled, healthMonitorStatus(runtimeDir)))
+
+	// Metrics serve (per machine), only when metrics are enabled.
+	mc := config.Load().EffectiveMetricsConfig()
+	pid, running := metricsproc.Running()
+	if line := healthMetricsLine(mc.Enabled, mc.EffectivePort(), pid, running); line != "" {
+		fmt.Printf("  Metrics: %s\n", line)
+	}
 
 	// Agent states from tmux list-windows + windowstate (never state.json).
 	stateFilePath := filepath.Join(runtimeDir, "state.json")
@@ -128,6 +136,18 @@ func RunHealth() {
 // healthMonitorLine appends the kill-switch note to the monitor status: a
 // disabled monitor that is not running is expected, not a problem, and one
 // that is still running from before the flag flipped is left alone.
+// healthMetricsLine describes the per-machine metrics serve. It returns ""
+// when metrics are disabled (nothing to report).
+func healthMetricsLine(enabled bool, port, pid int, running bool) string {
+	if !enabled {
+		return ""
+	}
+	if !running {
+		return "serve not running (started by the next session start or hook janitor)"
+	}
+	return fmt.Sprintf("serve running (pid %d, port %d)", pid, port)
+}
+
 func healthMonitorLine(enabled bool, status string) string {
 	if enabled {
 		return status

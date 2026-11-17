@@ -208,3 +208,30 @@ func TestSync_PrunesOld(t *testing.T) {
 		t.Error("old meta should have been pruned")
 	}
 }
+
+// TestSyncOne verifies the single-session sidecar write the Stop/SessionEnd
+// hooks run, including a refresh after the log grows and an unknown id.
+func TestSyncOne(t *testing.T) {
+	claudeRoot, metaRoot := setupSyncDirs(t)
+	projEncoded := "Users-test-myproject"
+	projDir := filepath.Join(claudeRoot, "projects", projEncoded)
+	writeTestJSONL(t, projDir, "session-one", "go-engineer")
+	writeTestJSONL(t, projDir, "session-two", "go-engineer")
+
+	if err := SyncOne("session-one"); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(metaRoot, projEncoded, "session-one.meta.json")); err != nil {
+		t.Fatalf("meta for session-one not written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(metaRoot, projEncoded, "session-two.meta.json")); !os.IsNotExist(err) {
+		t.Errorf("session-two meta should not exist: %v", err)
+	}
+
+	if err := SyncOne("no-such-session"); err == nil {
+		t.Error("SyncOne of an unknown session should fail")
+	}
+	if err := SyncOne("../escape"); err == nil {
+		t.Error("SyncOne must reject path-like ids")
+	}
+}

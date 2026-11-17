@@ -2,9 +2,13 @@ package winname
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/blsmth/agentctl/internal/metrics/events"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
@@ -266,5 +270,51 @@ func TestDoneUnseenSurvivesRestart(t *testing.T) {
 	}
 	if got := Compute(ws); got != "✓ a" {
 		t.Errorf("Compute = %q, want ✓ a", got)
+	}
+}
+
+// TestUpdate_EmitsOneEventPerStateChange: the state writers emit exactly one
+// metrics event per real State change, and none for a same-state write (a
+// PreTool while already working).
+func TestUpdate_EmitsOneEventPerStateChange(t *testing.T) {
+	install(t)
+	rt := filepath.Join(t.TempDir(), "proj", ".agentctl")
+	oe, or := events.Enabled, events.RuntimeDir
+	events.Enabled = func() bool { return true }
+	events.RuntimeDir = func() string { return rt }
+	t.Cleanup(func() { events.Enabled, events.RuntimeDir = oe, or })
+
+	if err := windowstate.Write("@1", windowstate.WindowState{State: "idle", Instance: "go-engineer:1", AgentName: "go-engineer"}); err != nil {
+		t.Fatal(err)
+	}
+	steps := []struct {
+		state, tool string
+		wantEvents  int // cumulative
+	}{
+		{"working", "Bash", 1}, // idle -> working
+		{"working", "Read", 1}, // PreTool while already working: no event
+		{"working", "Edit", 1},
+		{"blocked", "Edit", 2}, // working -> blocked
+		{"blocked", "Edit", 2},
+		{"working", "Edit", 3}, // blocked -> working
+		{"idle", "", 4},        // working -> idle
+		{"idle", "", 4},
+	}
+	for i, st := range steps {
+		if err := Update("@1", func(ws *windowstate.WindowState) {
+			ws.State = st.state
+			ws.PendingTool = st.tool
+		}); err != nil {
+			t.Fatal(err)
+		}
+		files := events.Files(rt)
+		n := 0
+		for _, f := range files {
+			b, _ := os.ReadFile(f)
+			n += strings.Count(string(b), "\n")
+		}
+		if n != st.wantEvents {
+			t.Fatalf("step %d (%s): %d events, want %d", i, st.state, n, st.wantEvents)
+		}
 	}
 }

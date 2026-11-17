@@ -25,7 +25,7 @@ The binary is a single Go module (`github.com/blsmth/agentctl`). Subcommand rout
 
 - **main.go** — Entry point, tiered init, hook fast-path, Kong dispatch, default session start/attach.
 - **cli.go** — The Kong `CLI` struct: all subcommands (including hidden internal ones) and their `Run()` methods.
-- **monitor.go** — Background monitor loop (headless Bubble Tea, 500ms tick). Reads hook-driven per-window state, resolves `AgentStatus`, fires transition handlers, parses JSONL for metrics, renames tmux windows with state glyphs, and persists `state.json`.
+- **monitor.go** — Background monitor loop (headless Bubble Tea, 500ms tick). Reads hook-driven per-window state, resolves `AgentStatus`, fires transition handlers, parses JSONL for `state.json` token enrichment, renames tmux windows with state glyphs, and persists `state.json`.
 - **birthtime_*.go** — Per-OS file birth-time helpers used for log-rotation (`/clear`) detection.
 
 Most former root-level helpers now live under `internal/` (`internal/improve`, `internal/hooks`, `internal/cmd`, etc.).
@@ -50,6 +50,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 - **cleanup/** — Classifies worktrees (`empty`, `landed`, dirty, unpushed, …) so `agentctl cleanup` and SessionEnd reclaim only what is safe.
 - **herd/** — Cross-session aggregation behind `agentctl hub` and `agentctl status`, including pane classification (`ClassifyPane`).
 - **mailbox/** — Per-window store for agentctl-originated notices (done/blocked backstop), delivered by the UserPromptSubmit/PostToolUse hooks. Agent-to-agent messaging is Claude Code's native `SendMessage`/`ListAgents`, not this package.
+- **metrics/**, **metricsserve/**, **metricsproc/** — Prometheus registry, collectors and remote write; `metrics/events` is the hook-written transition log; `metricsserve` is `agentctl metrics serve`; `metricsproc` is its pidfile/lock/start plumbing. See [docs/monitor-architecture.md](docs/monitor-architecture.md#metrics-without-the-monitor).
 - **notify/** — Desktop notifications from `notify_cmd` (`alerter` on macOS, `notify-send` on Linux).
 - **serve/** — `agentctl serve`, the per-machine HTTPS server for the mobile web app: local CA + leaf certs, CIDR filter, device-cookie auth, CSRF, pairing over a 0600 control socket. Routes register through `Router` (`Public`/`Device`/`Write`); see [docs/design/mobile-web-app.md](docs/design/mobile-web-app.md).
 
@@ -71,8 +72,8 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 
 1. `agentctl` starts a tmux session → runs the monitor as a background process (pidfile-guarded)
 2. Claude Code hooks write per-window state to `.agentctl/windows/<windowID>.json` (`working`/`blocked`/`idle`)
-3. Monitor loops every 500ms, reads each window's hook state, and resolves it to an `AgentStatus`; `Gone` is detected when a window disappears (monitor after two absent ticks, or the monitor-free `agentctl reconcile` via the shared `internal/reconcile` claim). JSONL is parsed only for metrics/detail. Readers (chrome bar, hub, `status`, popups) do not depend on it: they join `tmux list-windows` with `windowstate.AllFrom` via `herd.LoadAgents`. Config `monitor: false` stops agentctl starting it.
-4. On a state change the monitor builds a `Transition` and calls handlers directly — metrics `transitionTracker` and `improve.HandleTransition` (no plugin registry). Dispatch completion is hook-driven instead: the hook that sets `Done=true` (Stop hook, `signal done`) stamps `CompleteFiredAt` and spawns a detached `agentctl dispatch-complete <window>` (PR lookup, label swap, open PR, `dispatch_complete` hooks)
+3. Monitor loops every 500ms, reads each window's hook state, and resolves it to an `AgentStatus`; `Gone` is detected when a window disappears (monitor after two absent ticks, or the monitor-free `agentctl reconcile` via the shared `internal/reconcile` claim). JSONL is parsed only for token/detail enrichment. Readers (chrome bar, hub, `status`, popups) do not depend on it: they join `tmux list-windows` with `windowstate.AllFrom` via `herd.LoadAgents`. Config `monitor: false` stops agentctl starting it.
+4. On a state change the monitor builds a `Transition` and calls `improve.HandleTransition` directly (no plugin registry). Prometheus metrics are not a monitor handler: the state writers (`winname.Apply`, `reconcile.Finish`) append events to `<runtimeDir>/metrics/events-<date>.ndjson` when `metrics.enabled`, and the per-machine `agentctl metrics serve` (`internal/metricsserve`, started by session start and the hook janitor) tails them and reads window logs for usage, with a `project` label on every series. Dispatch completion is hook-driven instead: the hook that sets `Done=true` (Stop hook, `signal done`) stamps `CompleteFiredAt` and spawns a detached `agentctl dispatch-complete <window>` (PR lookup, label swap, open PR, `dispatch_complete` hooks)
 5. The state writers (hooks, `signal`, `set-active-window`) rename tmux windows via `internal/winname` inside their windowstate transaction (● working, ⏸ blocked, ✓ done-unseen, bare name idle); `Seen` is a persisted windowstate field. The monitor writes `state.json` (optional token enrichment and restore fallback only); the chrome bar pane watches `.agentctl/windows/` and `active-window` via fsnotify, rebuilds through `herd.BuildAgents`, and re-renders only when a rendered field changed
 
 ### Dispatch & Worktrees

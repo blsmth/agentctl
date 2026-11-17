@@ -18,6 +18,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/mailbox"
+	"github.com/blsmth/agentctl/internal/metrics/events"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -119,6 +120,9 @@ func parseStatus(s string) state.AgentStatus {
 func Finish(c Claimed, d Deps) {
 	instance, base := identity(c.Record)
 	logging.Log("reconcile: window gone window=%s instance=%q (was %q)", c.WindowID, instance, c.Record.State)
+	// The metrics serve reads Gone from the event log; the in-process monitor
+	// tracker is gone. No-op unless metrics are enabled.
+	events.RecordGone(d.RuntimeDir, c.WindowID, c.Record)
 	if base != "" && !untracked(instance) && d.Handle != nil {
 		t := state.Transition{
 			Agent:    base,

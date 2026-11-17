@@ -1,7 +1,9 @@
 package metrics
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -28,15 +30,21 @@ func newServer(addr string) *http.Server {
 	}
 }
 
-// StartHTTPServer starts the /metrics endpoint on DefaultBindHost:port using
-// the shared registry. It runs the HTTP server in a background goroutine and
-// returns immediately. Called by the monitor when metrics are enabled.
-func StartHTTPServer(port int) {
+// StartHTTPServer binds DefaultBindHost:port and serves /metrics from the
+// shared registry in a background goroutine. The bind happens before it
+// returns, so a port that is already taken is reported to the caller (the
+// per-machine metrics serve logs it and keeps remote write running).
+func StartHTTPServer(port int) error {
 	addr := fmt.Sprintf("%s:%d", DefaultBindHost, port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("metrics: listening on %s: %w", addr, err)
+	}
 	srv := newServer(addr)
 	go func() {
-		if err := srv.ListenAndServe(); err != nil {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logging.Error("metrics: HTTP server error on %s: %v", addr, err)
 		}
 	}()
+	return nil
 }

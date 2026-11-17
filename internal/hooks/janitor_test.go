@@ -61,3 +61,22 @@ func TestWatchdogTryAttemptLosesRace(t *testing.T) {
 		t.Fatalf("result = %s, want %s", got, watchdogRateLimited)
 	}
 }
+
+// The janitor starts the metrics serve on the same stamp as housekeeping: once
+// per interval, not on every hook.
+func TestJanitorEnsuresMetricsServeOncePerStamp(t *testing.T) {
+	rd := t.TempDir()
+	oj, oe := spawnJanitorFn, ensureMetricsServeFn
+	t.Cleanup(func() { spawnJanitorFn, ensureMetricsServeFn = oj, oe })
+	spawnJanitorFn = func(string) error { return nil }
+	var ensured int
+	ensureMetricsServeFn = func() bool { ensured++; return false }
+
+	now := time.Now()
+	janitorAt(rd, now)
+	janitorAt(rd, now.Add(10*time.Second))
+	janitorAt(rd, now.Add(61*time.Second))
+	if ensured != 2 {
+		t.Errorf("ensure calls = %d, want 2", ensured)
+	}
+}

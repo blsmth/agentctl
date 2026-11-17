@@ -19,7 +19,7 @@ func newTestCollector(t *testing.T) *Collector {
 func counterValue(t *testing.T, vec *prometheus.CounterVec, lvs ...string) float64 {
 	t.Helper()
 	m := &dto.Metric{}
-	if err := vec.WithLabelValues(lvs...).Write(m); err != nil {
+	if err := vec.WithLabelValues(append(lvs, "")...).Write(m); err != nil {
 		t.Fatalf("read counter %v: %v", lvs, err)
 	}
 	return m.GetCounter().GetValue()
@@ -29,7 +29,7 @@ func counterValue(t *testing.T, vec *prometheus.CounterVec, lvs ...string) float
 func gaugeValue(t *testing.T, vec *prometheus.GaugeVec, lvs ...string) float64 {
 	t.Helper()
 	m := &dto.Metric{}
-	if err := vec.WithLabelValues(lvs...).Write(m); err != nil {
+	if err := vec.WithLabelValues(append(lvs, "")...).Write(m); err != nil {
 		t.Fatalf("read gauge %v: %v", lvs, err)
 	}
 	return m.GetGauge().GetValue()
@@ -197,7 +197,7 @@ func TestOnReset_ResetsContextPct(t *testing.T) {
 	c := newTestCollector(t)
 	ac := c.ForAgent("go-engineer")
 
-	c.contextPct.WithLabelValues("go-engineer").Set(75)
+	c.contextPct.WithLabelValues("go-engineer", "").Set(75)
 	if got := gaugeValue(t, c.contextPct, "go-engineer"); got != 75 {
 		t.Errorf("contextPct before reset = %v, want 75", got)
 	}

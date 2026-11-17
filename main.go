@@ -526,6 +526,9 @@ var readOnlyCommands = map[string]bool{
 	// serve is per-machine: its state, log and pidfile live under
 	// <StateDir>/serve, never in the cwd (launchd starts it from there).
 	"serve": true,
+	// metrics serve is per-machine: its pidfile and log live under the state
+	// dir, never in the cwd.
+	"metrics": true,
 }
 
 // isReadOnlyInvocation reports whether args name a read-only invocation:

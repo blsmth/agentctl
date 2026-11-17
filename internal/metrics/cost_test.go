@@ -21,7 +21,7 @@ func newTestCostEstimator(t *testing.T) *CostEstimator {
 func costCounterValue(t *testing.T, ce *CostEstimator, model string) float64 {
 	t.Helper()
 	m := &dto.Metric{}
-	if err := ce.costCounter.WithLabelValues(ce.agent, model).Write(m); err != nil {
+	if err := ce.costCounter.WithLabelValues(ce.agent, model, ce.project).Write(m); err != nil {
 		t.Fatalf("read cost counter %q: %v", model, err)
 	}
 	return m.GetCounter().GetValue()

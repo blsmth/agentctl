@@ -5,10 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/blsmth/agentctl/internal/claude"
-	"github.com/blsmth/agentctl/internal/metrics"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
@@ -32,9 +29,8 @@ func newLinkLogsModel(t *testing.T, projectsDir string) *monitorModel {
 	windowstate.SetDirForTest(t.TempDir())
 	t.Cleanup(func() { windowstate.SetDirForTest("") })
 	return &monitorModel{
-		windows:          make(map[string]*instanceState),
-		metricsCollector: metrics.NewCollector(prometheus.NewRegistry()),
-		projectsDir:      projectsDir,
+		windows:     make(map[string]*instanceState),
+		projectsDir: projectsDir,
 	}
 }
 

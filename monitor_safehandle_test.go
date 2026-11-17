@@ -5,11 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/mailbox"
-	"github.com/blsmth/agentctl/internal/metrics"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -51,10 +48,9 @@ func TestFireHandlersSurvivesImprovePanic(t *testing.T) {
 
 // TestDetectAndFireTransitionsSurvivesHandlerPanic drives the real monitor
 // call path with a panicking improve.HandleTransition and asserts the tick completes,
-// RecordTransition still counted the edge, and prev state advanced.
+// and prev state advanced.
 func TestDetectAndFireTransitionsSurvivesHandlerPanic(t *testing.T) {
-	reg := prometheus.NewRegistry()
-	m := &monitorModel{windows: map[string]*instanceState{}, transitionTracker: metrics.NewTransitionTracker(reg)}
+	m := &monitorModel{windows: map[string]*instanceState{}}
 	inst := &instanceState{instance: "go-engineer", base: "go-engineer", hasPrev: true, prevState: state.StatusWorking}
 
 	orig := improveHandleFn
@@ -67,9 +63,6 @@ func TestDetectAndFireTransitionsSurvivesHandlerPanic(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("improveHandleFn calls = %d, want 1", calls)
 	}
-	if got := gatherCounterTotal(t, reg, "agentctl_state_transitions_total"); got != 1 {
-		t.Errorf("transitions counter = %v, want 1", got)
-	}
 	if inst.prevState != state.StatusIdle {
 		t.Errorf("prevState = %v, want idle (tick must finish after panic)", inst.prevState)
 	}
@@ -78,10 +71,8 @@ func TestDetectAndFireTransitionsSurvivesHandlerPanic(t *testing.T) {
 // TestReconcileWindowsGonePathSurvivesHandlerPanic covers the Gone path.
 func TestReconcileWindowsGonePathSurvivesHandlerPanic(t *testing.T) {
 	seedGoneRecord(t, "@9", "working", "go-engineer")
-	reg := prometheus.NewRegistry()
 	m := &monitorModel{
-		windows:           map[string]*instanceState{"@9": {instance: "go-engineer", base: "go-engineer", hasPrev: true, prevState: state.StatusWorking}},
-		transitionTracker: metrics.NewTransitionTracker(reg),
+		windows: map[string]*instanceState{"@9": {instance: "go-engineer", base: "go-engineer", hasPrev: true, prevState: state.StatusWorking}},
 	}
 	orig := improveHandleFn
 	t.Cleanup(func() { improveHandleFn = orig })
@@ -93,9 +84,6 @@ func TestReconcileWindowsGonePathSurvivesHandlerPanic(t *testing.T) {
 
 	if calls != 1 {
 		t.Fatalf("improveHandleFn calls = %d, want 1", calls)
-	}
-	if got := gatherCounterTotal(t, reg, "agentctl_state_transitions_total"); got != 1 {
-		t.Errorf("transitions counter = %v, want 1", got)
 	}
 	if _, ok := m.windows["@9"]; ok {
 		t.Error("gone window not cleaned up after handler panic")
