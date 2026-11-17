@@ -116,6 +116,12 @@ type herdClosedMsg struct {
 	err  error
 }
 
+// herdLaunchArgs is the argv (after the executable) of a hub "new" launch.
+// Hub-launched agents start in auto permission mode.
+func herdLaunchArgs() []string {
+	return []string{"launch", "--background", "--permission-mode", "auto"}
+}
+
 // herdLaunchCmd runs `agentctl launch --background` for g as a subprocess so
 // the TUI never blocks and the hub's own process state cannot leak in.
 func herdLaunchCmd(g herd.Group) tea.Cmd {
@@ -124,7 +130,7 @@ func herdLaunchCmd(g herd.Group) tea.Cmd {
 		if err != nil {
 			return herdLaunchedMsg{session: g.Session, err: fmt.Errorf("locating agentctl: %w", err)}
 		}
-		c := exec.Command(exe, "launch", "--background")
+		c := exec.Command(exe, herdLaunchArgs()...)
 		c.Dir = g.ProjectDir
 		c.Env = herdLaunchEnv(g, os.Environ())
 		var stdout, stderr bytes.Buffer

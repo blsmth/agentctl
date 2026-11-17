@@ -25,7 +25,7 @@ func TestResolvePermissionMode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := resolvePermissionMode(tt.mode, tt.ac); got != tt.want {
+			if got := resolvePermissionMode(tt.mode, tt.ac, ""); got != tt.want {
 				t.Errorf("resolvePermissionMode() = %q, want %q", got, tt.want)
 			}
 		})
@@ -53,11 +53,45 @@ func TestBuildBaseFlags_PermissionModeWithModelAndEffort(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := BuildBaseFlags(ClaudeInvocation{
-				Agent: "a", SessionID: "sid", PermissionMode: resolvePermissionMode(tt.mode, ac),
+				Agent: "a", SessionID: "sid", PermissionMode: resolvePermissionMode(tt.mode, ac, ""),
 			}, ac)
 			if argv := fields(t, got); !slices.Equal(argv, tt.want) {
 				t.Errorf("BuildBaseFlags() = %s\n tokenizes to %q\n want         %q", got, argv, tt.want)
 			}
 		})
+	}
+}
+
+func TestResolvePermissionMode_Override(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     Mode
+		ac       config.AgentConfig
+		override string
+		want     string
+	}{
+		{"override beats config", ModeBare, config.AgentConfig{PermissionMode: "plan"}, "auto", "auto"},
+		{"override on bare", ModeBare, config.AgentConfig{}, "auto", "auto"},
+		{"override beats dispatch default", ModeDispatch, config.AgentConfig{}, "plan", "plan"},
+		{"empty override unchanged", ModeBare, config.AgentConfig{}, "", ""},
+		{"empty override keeps config", ModeBare, config.AgentConfig{PermissionMode: "plan"}, "", "plan"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolvePermissionMode(tt.mode, tt.ac, tt.override); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidatePermissionMode(t *testing.T) {
+	for _, ok := range []string{"", "auto", "plan", "acceptEdits"} {
+		if err := ValidatePermissionMode(ok); err != nil {
+			t.Errorf("ValidatePermissionMode(%q) = %v, want nil", ok, err)
+		}
+	}
+	if err := ValidatePermissionMode("yolo"); err == nil {
+		t.Error("ValidatePermissionMode(yolo) = nil, want error")
 	}
 }
