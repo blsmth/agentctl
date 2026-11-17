@@ -49,15 +49,14 @@ agentctl hardcodes `~/.claude` in several places. With a second config dir these
 | `windowstate`, `restore.json` | none | Add `account` so restore relaunches under the same login |
 | Native `ListAgents` | each session registers in `$CLAUDE_CONFIG_DIR/sessions/<pid>.json` | **Unknown whether discovery crosses config dirs.** See the spike below |
 
-### Spike before building: cross-account messaging
+### Decision: accounts do not talk to each other (2026-11-17)
 
-Session records (`~/.claude/sessions/<pid>.json`) live under the config dir. They advertise `peerFeatures` including `reply_across_default_dirs`, which suggests *replies* across config dirs are anticipated, but discovery may only read the session's own `sessions/` directory. If an orchestrator on one account can't `ListAgents` a worker on the other, the worker preamble ("report to your orchestrator with SendMessage") breaks for cross-account dispatches.
+Brendan wants hard separation: LL sessions and personal sessions must not message each other. agentctl therefore **never** bridges native messaging across accounts: no shared `sessions/` registry, and `sessions/` is never in the symlink allowlist. Whether Claude Code's own discovery happens to cross config dirs is not relied on. If it does, agentctl adds `crossSessionInbound` and `SendMessage`/`ListAgents` deny handling only if a leak shows up in practice.
 
-Test: log in a second dir, start one session in each, and run `/list-agents` from both sides plus a `SendMessage` reply. Outcomes:
+Consequences:
 
-1. It works: nothing to do.
-2. Discovery is per dir: try symlinking `sessions/` to a shared directory (one registry, separate credentials). The records contain no credentials, only pid, cwd, socket path and name. Verify that Claude Code tolerates it, since it may lock or GC the directory.
-3. Neither works: dispatches inherit the orchestrator's account by default (rule below), and cross-account workers report through the agentctl mailbox plus `signal done`, the same fallback multi-harness.md uses for non-Claude harnesses.
+- **Cross-account dispatch.** When the worker's resolved account differs from the dispatching window's, the worker preamble omits the "report to your orchestrator with SendMessage" section and the orchestrator `@N.%P` pointer. The worker finishes with its PR as usual, and the orchestrator learns about it from the existing `agentctl notice:` done/blocked backstop (agentctl's own mailbox, which is per-machine, not per-account) and the PR itself. The dispatch popup shows the resolved account.
+- **The agentctl mailbox notices are allowed across accounts.** They are short factual status lines written by agentctl, not agent-to-agent messages.
 
 ## Design
 
@@ -125,7 +124,7 @@ Jobs get `account`, resolved by the same rules. The usage gate reads *that accou
 
 ## Rollout
 
-1. **Spike** (no code): second config dir, cross-account `ListAgents`/`SendMessage`, symlinked `settings.json` write-through, `sessions/` symlink tolerance. Write the results back into this doc.
+1. **Manual check during PR 2** (no code): symlinked `settings.json` survives a `/config` write (Claude Code writes through the link instead of replacing it).
 2. **Path plumbing, no behavior change:** a `claudehome` resolver (config dir for an account; default `~/.claude` or `$CLAUDE_CONFIG_DIR`) replacing the hardcoded paths in the table; rate limits keyed by account; `account` in windowstate and restore.
 3. **Accounts config + `account add/list/doctor` + `dispatch --account` + rules + env scrubbing.**
 4. **UI tags, cost grouping, phone picker, cron `account`.**
@@ -142,6 +141,6 @@ Jobs get `account`, resolved by the same rules. The usage gate reads *that accou
 
 ## Open questions
 
-1. Which account should agentctl's own orchestrator (`brandon`) run on? `~/code/personal/**` → personal Max implies yes, personal.
+1. Defaults chosen: `brandon` (orchestrator) resolves to personal via the `~/code/personal/**` rule.
 2. Any LL repos outside `~/code/ll/`, e.g. client repos under other paths, that need rules?
-3. Should a cross-account dispatch (orchestrator on `ll`, worker resolving to `personal`) need confirmation in the dispatch popup? The proposal shows the account in the popup but doesn't add a second prompt.
+3. Decided: a cross-account dispatch shows the account in the popup, with no second prompt.
