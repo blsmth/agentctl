@@ -1,5 +1,7 @@
 # Agent Messaging Design
 
+> **Superseded.** `agentctl send`, `inbox` and `wake` were removed in favour of Claude Code's native cross-session messaging (`SendMessage` and `ListAgents`, Claude Code 2.1.224+). The mailbox delivered through hook `additionalContext` next to tool results, which models discount as prompt injection, and it could not reach an idle session without `wake`, whose tmux send-keys truncated long text. Native messages are read between tool calls by a busy session and start a new turn in an idle one, and recipients can reply. Only a small agentctl-originated notice path survives (`internal/mailbox`, delivered by the existing hooks) as a backstop for workers that die or sit on a permission prompt. The text below is kept as history.
+
 Status: **accepted**, 2026-08-13
 Supersedes: the voluntary `agentctl signal done` convention as the primary completion mechanism.
 

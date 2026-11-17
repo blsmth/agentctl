@@ -171,34 +171,6 @@ func containsClaude(cmd string) bool {
 	return false
 }
 
-// HasClaudeDescendant reports whether a live Claude Code process is running
-// as panePID itself or as one of its transitive descendants.
-//
-// This is the reliable liveness check for "is an agent actually running in
-// this pane" -- checking tmux's #{pane_current_command} is NOT: Claude runs
-// as a *child* of the pane's shell, so every agentctl pane reports "zsh"
-// regardless of whether Claude is alive underneath it. That exact mistake is
-// what broke tmux send-keys delivery for months (see
-// docs/agent-messaging-design.md §3's shouldDeliver postmortem) -- do not
-// reintroduce it here.
-func HasClaudeDescendant(panePID int) bool {
-	if panePID <= 0 {
-		return false
-	}
-	procs, err := ListProcesses()
-	if err != nil {
-		logging.Log("reaper: HasClaudeDescendant: list processes: %v", err)
-		return false
-	}
-	live := BuildDescendantSet(procs, []int{panePID})
-	for _, p := range procs {
-		if live[p.PID] && containsClaude(p.Cmd) {
-			return true
-		}
-	}
-	return false
-}
-
 // KillProcess sends SIGTERM to exactly the process with the given PID -- never
 // its process group. If the process does not exist the error is ignored.
 func KillProcess(pid int) error {

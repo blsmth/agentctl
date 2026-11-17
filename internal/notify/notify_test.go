@@ -88,26 +88,6 @@ func TestDefaultCmd_IncludesSubtitleOnDarwin(t *testing.T) {
 	}
 }
 
-// TestNotify_DelegatesToNotifyWithOptions verifies the back-compat Notify
-// function still fires the command with title/message, and an empty
-// subtitle.
-func TestNotify_DelegatesToNotifyWithOptions(t *testing.T) {
-	cfgDir := t.TempDir()
-	outFile := filepath.Join(cfgDir, "out.txt")
-	setNotifyCmd(t, "printf '%s|%s' {{title}} {{message}} > "+outFile)
-
-	Notify("my-title", "my-message", nil)
-
-	data, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("read notify output: %v", err)
-	}
-	got := string(data)
-	if got != "my-title|my-message" {
-		t.Errorf("output = %q, want %q", got, "my-title|my-message")
-	}
-}
-
 // TestNotifyWithOptions_EmptyCmdDisables verifies an explicitly empty
 // notify_cmd disables notifications instead of falling back to the platform
 // default, while an unset one does not run a user command.
@@ -125,7 +105,7 @@ func TestNotifyWithOptions_EmptyCmdDisables(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	Notify("t", "m", nil)
+	NotifyWithOptions(Options{Title: "t", Message: "m"})
 
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Error("notification ran despite notify_cmd being explicitly empty")

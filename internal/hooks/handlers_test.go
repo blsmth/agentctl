@@ -22,6 +22,8 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/mailbox"
 	"github.com/blsmth/agentctl/internal/notify"
+	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/sessionname"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
@@ -988,5 +990,33 @@ func TestStopFailure_NotifyCalled(t *testing.T) {
 
 	if !notifyCalled {
 		t.Error("Notify was not called for StopFailure")
+	}
+}
+
+// TestSessionStart_RecordsSessionName verifies the launch-time -n name kept
+// in windowstate is persisted per session ID, so a later resume reuses it.
+func TestSessionStart_RecordsSessionName(t *testing.T) {
+	setupWindowstate(t)
+	if paths.RuntimeDir() == "" {
+		paths.Init(t.TempDir())
+	}
+	if err := windowstate.Write("@8", windowstate.WindowState{SessionName: "agent-go-engineer-issue-42"}); err != nil {
+		t.Fatal(err)
+	}
+
+	d := stubDeps(t)
+	SetDepsForTest(d)
+	t.Cleanup(func() { SetDepsForTest(DefaultDeps()) })
+
+	t.Setenv("AGENTCTL", "1")
+	t.Setenv("CLAUDE_ENV_FILE", filepath.Join(t.TempDir(), "claude-env.sh"))
+	t.Setenv("AGENTCTL_WINDOW_ID", "@8")
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("AGENTCTL_SESSION_ID", "")
+
+	runHookCaptured(t, nil, `{"session_id":"sid-name-test","cwd":"/tmp"}`, SessionStart)
+
+	if got := sessionname.Lookup("sid-name-test"); got != "agent-go-engineer-issue-42" {
+		t.Errorf("recorded name = %q", got)
 	}
 }

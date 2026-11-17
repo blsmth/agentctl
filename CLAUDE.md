@@ -48,7 +48,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 - **worktree/** — Git worktree create/remove/list/prune for isolated dispatch, under `<repo>/.worktrees/<slug>/`.
 - **cleanup/** — Classifies worktrees (`empty`, `landed`, dirty, unpushed, …) so `agentctl cleanup` and SessionEnd reclaim only what is safe.
 - **herd/** — Cross-session aggregation behind `agentctl hub` and `agentctl status`, including pane classification (`ClassifyPane`).
-- **mailbox/** — Per-window mailboxes behind `agentctl send`, `inbox`, and `wake`.
+- **mailbox/** — Per-window store for agentctl-originated notices (done/blocked backstop), delivered by the UserPromptSubmit/PostToolUse hooks. Agent-to-agent messaging is Claude Code's native `SendMessage`/`ListAgents`, not this package.
 - **notify/** — Desktop notifications from `notify_cmd` (`alerter` on macOS, `notify-send` on Linux).
 
 ### Behavior notes

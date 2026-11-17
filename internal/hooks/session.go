@@ -17,6 +17,7 @@ import (
 	"github.com/blsmth/agentctl/internal/llm"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/sessionname"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/shellquote"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -132,7 +133,9 @@ func SessionStart() {
 		// tombstone from a previous window that held the recycled ID.
 		windowstate.Revive(windowID)
 		winIdx := tmux.WindowIndex(windowID)
+		var launchName string
 		if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
+			launchName = ws.SessionName
 			if winIdx > 0 {
 				ws.WindowIndex = winIdx
 			}
@@ -144,6 +147,9 @@ func SessionStart() {
 		}); err != nil {
 			logUpdateErr("hook-session-start", err)
 		} else {
+			if err := sessionname.Record(input.SessionID, launchName); err != nil {
+				logging.Warn("hook-session-start: recording session name: %v", err)
+			}
 			if logPath == "" {
 				logging.Log("hook-session-start: cleared log_path for window=%s session=%s (cwd unknown, avoiding stale cross-session path)", windowID, input.SessionID)
 			}

@@ -271,17 +271,12 @@ func Pending(windowID string) ([]Message, error) {
 	return listMessages(dir)
 }
 
-// Read returns windowID's already-delivered messages in chronological order.
-func Read(windowID string) ([]Message, error) {
-	return listMessages(readDir(windowID))
-}
-
 // PendingCount returns the number of undelivered messages in windowID's
 // mailbox. It is cheaper than len(Pending(windowID)) because it never reads
 // or parses a message body -- just counts directory entries -- which
 // matters because the monitor calls this once per window on every throttled
 // tick to surface an unread count in the chrome bar (see docs/agent-
-// messaging-design.md §2's discoverability note on `agentctl wake`).
+// messaging-design.md §2).
 func PendingCount(windowID string) (int, error) {
 	dir := filepath.Join(resolveDir(), sanitize(windowID))
 	if err := checkDir(dir); err != nil {

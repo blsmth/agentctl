@@ -117,7 +117,7 @@ func CheckDone() {
 	// parameters so every branch stays table-driven testable without
 	// re-deriving them.
 	if shouldEmitDone(ws.SpawnedBy, ws.Mode, input.StopHookActive, blockReason) {
-		emitDoneMessage(windowID, ws, agentName, input.LastAssistantMessage)
+		emitDoneMessage(windowID, ws, agentName)
 	}
 
 	// Fire user lifecycle hooks (async, non-blocking). Only fires when all
@@ -202,22 +202,16 @@ func shouldEmitDone(spawnedBy, mode string, stopHookActive bool, blockReason str
 	return shouldMarkDone(mode, stopHookActive, blockReason) && spawnedBy != ""
 }
 
-// maxDoneMessageBody caps the length of the done message body. The body is
-// the turn's last_assistant_message, which can be long; it is truncated with
-// textutil.Truncate.
-const maxDoneMessageBody = 4000
-
-// emitDoneMessage enqueues a "done" mailbox message addressed to ws.SpawnedBy
-// (paired with ws.SpawnedBySession so the monitor's session-verification
-// check can discard it if the window has since been recycled -- see
-// docs/agent-messaging-design.md §1). Best-effort: any failure is logged and
-// swallowed, never surfaced to the caller, since a mailbox problem must never
-// affect whether the agent is allowed to stop.
-func emitDoneMessage(windowID string, ws windowstate.WindowState, agentName, lastAssistantMessage string) {
-	body := textutil.Truncate(strings.TrimSpace(lastAssistantMessage), maxDoneMessageBody, "...")
-	if body == "" {
-		body = fmt.Sprintf("%s finished its turn with no final message.", agentName)
-	}
+// emitDoneMessage enqueues a short, factual "done" notice addressed to
+// ws.SpawnedBy (paired with ws.SpawnedBySession so delivery can discard it if
+// the window has since been recycled). It deliberately does not carry the
+// worker's last message: the worker reports for itself with SendMessage, and
+// quoting it here made every report arrive twice. This is only the backstop
+// for a worker that went idle without reporting. Best-effort: any failure is
+// logged and swallowed, since a mailbox problem must never affect whether the
+// agent is allowed to stop.
+func emitDoneMessage(windowID string, ws windowstate.WindowState, agentName string) {
+	body := fmt.Sprintf("agentctl notice: %s (window %s) finished its turn and is idle.", agentName, windowID)
 	_, err := deps.EnqueueMailboxMessage(mailbox.Message{
 		From:      windowID,
 		To:        ws.SpawnedBy,
@@ -230,7 +224,7 @@ func emitDoneMessage(windowID string, ws windowstate.WindowState, agentName, las
 		logging.Warn("hook-check-done: mailbox enqueue(done) window=%s spawned_by=%s: %v", windowID, ws.SpawnedBy, err)
 		return
 	}
-	logging.Log("hook-check-done: enqueued done message window=%s -> %s", windowID, ws.SpawnedBy)
+	logging.Log("hook-check-done: enqueued done notice window=%s -> %s", windowID, ws.SpawnedBy)
 }
 
 // computeBlockReason is the gating decision for whether CheckDone should
@@ -477,7 +471,7 @@ func Notify() {
 	// missed notification is far cheaper than resuming the per-invocation
 	// spam this gate exists to prevent.
 	if updateErr == nil && shouldEmitBlocked(ws.SpawnedBy, input.NotificationType, prevState) {
-		emitBlockedMessage(windowID, ws, agentName, input.Message)
+		emitBlockedMessage(windowID, ws, agentName)
 	}
 
 	sessionName := resolveInstanceSessionName()
@@ -656,15 +650,29 @@ func shouldEmitBlocked(spawnedBy, notificationType, prevState string) bool {
 	return spawnedBy != "" && notificationType == "permission_prompt" && prevState != "blocked"
 }
 
-// maxBlockedMessageBody caps the length of the blocked message body.
-const maxBlockedMessageBody = 2000
+// maxBlockedToolSummary caps the tool summary in a blocked notice.
+const maxBlockedToolSummary = 200
 
-// emitBlockedMessage enqueues a "blocked" mailbox message addressed to
+// blockedToolSummary describes the pending permission prompt from agentctl's
+// own state (Claude Code's notification text is a constant). It returns
+// "an unspecified tool call" when no fresh pending tool is recorded.
+func blockedToolSummary(ws windowstate.WindowState, now time.Time) string {
+	if ws.PendingTool == "" || ws.PendingToolAt.IsZero() || now.Sub(ws.PendingToolAt) > pendingToolFreshWindow {
+		return "an unspecified tool call"
+	}
+	summary := ws.PendingTool
+	if d := strings.Join(strings.Fields(ws.PendingToolDetail), " "); d != "" {
+		summary += " " + d
+	}
+	return textutil.Truncate(summary, maxBlockedToolSummary, "...")
+}
+
+// emitBlockedMessage enqueues a short, factual "blocked" notice addressed to
 // ws.SpawnedBy (paired with ws.SpawnedBySession, mirroring emitDoneMessage).
 // Best-effort: any failure is logged and swallowed -- a mailbox problem must
 // never affect notification delivery to the operator.
-func emitBlockedMessage(windowID string, ws windowstate.WindowState, agentName, notifyMessage string) {
-	body := fmt.Sprintf("%s is blocked on a permission prompt: %s", agentName, textutil.Truncate(strings.TrimSpace(notifyMessage), maxBlockedMessageBody, "..."))
+func emitBlockedMessage(windowID string, ws windowstate.WindowState, agentName string) {
+	body := fmt.Sprintf("agentctl notice: %s (window %s) is waiting on a permission prompt: %s.", agentName, windowID, blockedToolSummary(ws, time.Now()))
 	_, err := deps.EnqueueMailboxMessage(mailbox.Message{
 		From:      windowID,
 		To:        ws.SpawnedBy,

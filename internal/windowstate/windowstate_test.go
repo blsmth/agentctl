@@ -623,3 +623,18 @@ func TestCtxFresh(t *testing.T) {
 		})
 	}
 }
+
+func TestSessionNameRoundTrip(t *testing.T) {
+	defer initTemp(t)()
+
+	if err := windowstate.Write("@7", windowstate.WindowState{State: "idle", SessionName: "agent-go-engineer-issue-42"}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got, err := windowstate.Read("@7")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got.SessionName != "agent-go-engineer-issue-42" {
+		t.Errorf("SessionName: got %q", got.SessionName)
+	}
+}

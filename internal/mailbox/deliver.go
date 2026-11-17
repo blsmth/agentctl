@@ -48,26 +48,13 @@ const truncatedMarker = "\n\n[truncated]"
 //   - claimed for delivery (moved to read/ BEFORE the body is returned --
 //     see the doc comment below on why claim-before-return is load-bearing)
 func DrainFor(windowID, sessionID string, ttl time.Duration) (body string, n int) {
-	body, ids := DrainForIDs(windowID, sessionID, ttl)
-	return body, len(ids)
-}
-
-// DrainForIDs is DrainFor plus the IDs of every message claimed for
-// delivery, in delivery order. `agentctl wake` needs those IDs: if the
-// tmux injection it performs after draining fails, the mail is already
-// claimed (see the claim-before-return note below) and the only way to
-// recover it by hand is a log line naming exactly which messages were lost.
-// DrainFor itself has no such recovery path to worry about -- its caller is
-// a hook writing straight to its own stdout, which cannot "fail to deliver"
-// the way a separate tmux send-keys call can.
-func DrainForIDs(windowID, sessionID string, ttl time.Duration) (body string, ids []string) {
 	pending, err := Pending(windowID)
 	if err != nil {
 		logging.Warn("mailbox: DrainFor(%s): Pending: %v", windowID, err)
-		return "", nil
+		return "", 0
 	}
 	if len(pending) == 0 {
-		return "", nil
+		return "", 0
 	}
 
 	now := time.Now()
@@ -76,7 +63,7 @@ func DrainForIDs(windowID, sessionID string, ttl time.Duration) (body string, id
 		// Session check: tmux recycles "@N" window IDs after a window
 		// closes, so a message enqueued for a since-recycled window must
 		// never reach whoever owns that ID now. An empty ToSession (e.g.
-		// `agentctl send` run outside a tracked window) or an empty live
+		// `agentctl-originated message enqueued outside a tracked window) or an empty live
 		// sessionID (windowstate not yet written) is never treated as a
 		// mismatch -- there's nothing to compare, so we don't manufacture a
 		// false positive.
@@ -102,7 +89,7 @@ func DrainForIDs(windowID, sessionID string, ttl time.Duration) (body string, id
 		deliverable = append(deliverable, msg)
 	}
 	if len(deliverable) == 0 {
-		return "", nil
+		return "", 0
 	}
 
 	// Claim before returning: mark every delivered message read BEFORE the
@@ -111,16 +98,14 @@ func DrainForIDs(windowID, sessionID string, ttl time.Duration) (body string, id
 	// claim-first the same message would be re-delivered on every tool call
 	// until the agent happens to stop -- there is no other point at which
 	// "this was delivered" gets recorded.
-	ids = make([]string, 0, len(deliverable))
 	for _, msg := range deliverable {
 		if err := MarkRead(windowID, msg.ID); err != nil {
 			logging.Warn("mailbox: MarkRead(%s, %s) after claiming for delivery: %v", windowID, msg.ID, err)
 		}
-		ids = append(ids, msg.ID)
 	}
 
 	body = truncateBody(formatCoalescedMessages(deliverable))
-	return body, ids
+	return body, len(deliverable)
 }
 
 // truncateBody caps s at maxDeliverBodyLen, appending an explicit marker so
@@ -153,35 +138,26 @@ func truncateBody(s string) string {
 // formatCoalescedMessages combines msgs into a single injectable body
 // (docs/agent-messaging-design.md §3: "Coalesce ... deliver all pending
 // messages for one window as a single injection, not one per message").
-// Each message is clearly delimited and shows its sender so the receiving
+// The header names the agentctl-originated notice and its sender so the receiving
 // agent can tell them apart. msgs must be non-empty.
 func formatCoalescedMessages(msgs []Message) string {
 	var b strings.Builder
 	if len(msgs) == 1 {
-		msg := msgs[0]
-		fmt.Fprintf(&b, "[agentctl message from %s]", displayFrom(msg.From))
-		if msg.Subject != "" {
-			fmt.Fprintf(&b, " %s", msg.Subject)
-		}
-		b.WriteString("\n\n")
-		b.WriteString(msg.Body)
+		fmt.Fprintf(&b, "[agentctl notice from %s]\n\n", displayFrom(msgs[0].From))
+		b.WriteString(msgs[0].Body)
 		return b.String()
 	}
 
-	fmt.Fprintf(&b, "[agentctl: %d messages received]\n", len(msgs))
+	fmt.Fprintf(&b, "[agentctl: %d notices]\n", len(msgs))
 	for i, msg := range msgs {
-		fmt.Fprintf(&b, "\n--- message %d/%d from %s", i+1, len(msgs), displayFrom(msg.From))
-		if msg.Subject != "" {
-			fmt.Fprintf(&b, ": %s", msg.Subject)
-		}
-		b.WriteString(" ---\n")
+		fmt.Fprintf(&b, "\n--- notice %d/%d from %s ---\n", i+1, len(msgs), displayFrom(msg.From))
 		b.WriteString(msg.Body)
 	}
 	return b.String()
 }
 
 // displayFrom returns from, or a placeholder for a message enqueued without
-// a sender (e.g. `agentctl send` run outside a tmux window).
+// a sender.
 func displayFrom(from string) string {
 	if from == "" {
 		return "unknown"

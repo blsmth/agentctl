@@ -34,6 +34,9 @@ import (
 // Request describes what to launch. Callers populate the fields relevant to
 // their mode; Launch() fills in defaults for anything left empty.
 type Request struct {
+	// Orchestrator is the dispatching session, filled in by Launch for worker
+	// roles so the preamble can name it. Zero means none.
+	Orchestrator Orchestrator
 	AgentName    string // required
 	Mode         Mode   // required
 	Ticket       int    // 0 for ad-hoc
@@ -171,6 +174,7 @@ func Launch(req Request) (Result, error) {
 	// agent definition files, so this is the only channel that actually gets
 	// their content in front of the model (see agent.ExpandSharedRefs).
 	// Never fails the dispatch: a resolution failure just means no expansion.
+	warnMissingMessagingTools(cfg, req.AgentName, workDir, repoDir)
 	var sharedConventions string
 	if body := resolveAgentBody(cfg, req.AgentName, workDir, repoDir); body != "" {
 		expanded, missing := agent.ExpandSharedRefs(body)
@@ -181,6 +185,9 @@ func Launch(req Request) (Result, error) {
 	}
 
 	// 7. Build system prompt.
+	if spec.Role != RoleOrchestrator {
+		req.Orchestrator = resolveOrchestrator()
+	}
 	systemPrompt := buildSystemPrompt(req, spec, workDir, branch, useWorktree, contextEntries, sharedConventions)
 
 	// 8. Determine user message.
@@ -237,8 +244,10 @@ func Launch(req Request) (Result, error) {
 		// (symlinked settings file or dir) must not launch a hookless agent.
 		return Result{}, fmt.Errorf("writing agent settings (refusing to launch without agentctl hooks): %w", err)
 	}
+	sessionName := SessionNameFor(req.AgentName, workDir, repoDir, useWorktree)
 	baseFlags := BuildBaseFlags(ClaudeInvocation{
 		Agent:          req.AgentName,
+		Name:           sessionName,
 		SessionID:      sessionID,
 		PermissionMode: resolvePermissionMode(req.Mode, ac),
 		SettingsPath:   settingsPath,
@@ -280,6 +289,7 @@ func Launch(req Request) (Result, error) {
 		extraEnv[k] = v
 	}
 	applySpawnedByEnv(extraEnv)
+	extraEnv[EnvSessionName] = sessionName
 
 	logging.Log("dispatch: shellCmd len=%d: %s", len(shellCmd), textutil.Truncate(logCmd, 500, "..."))
 	logging.Debug("dispatch: full shellCmd: %s", shellCmd)
@@ -469,6 +479,7 @@ type ClaudeInvocation struct {
 	ForkSession    bool   // --fork-session: resume into a new session ID
 	PermissionMode string // --permission-mode (see resolvePermissionMode)
 	SettingsPath   string // --settings
+	Name           string // -n: session name shown in ListAgents / SendMessage
 }
 
 // BuildBaseFlags returns the `claude` invocation prefix shared by every
@@ -485,6 +496,9 @@ type ClaudeInvocation struct {
 func BuildBaseFlags(inv ClaudeInvocation, ac config.AgentConfig) string {
 	var b strings.Builder
 	b.WriteString("claude --agent " + shellquote.Quote(inv.Agent))
+	if inv.Name != "" {
+		b.WriteString(" -n " + shellquote.Quote(inv.Name))
+	}
 	if inv.SessionID != "" {
 		b.WriteString(" --session-id " + shellquote.Quote(inv.SessionID))
 	}
@@ -975,4 +989,30 @@ func AgentEnvOverrides(ac config.AgentConfig) map[string]string {
 		env["MAX_THINKING_TOKENS"] = fmt.Sprintf("%d", ac.MaxThinkingTokens)
 	}
 	return env
+}
+
+// resolveOrchestrator identifies the dispatching Claude session. It returns
+// the zero value unless the dispatcher is a tracked session, so a human
+// dispatching from a plain shell window (or outside tmux) yields no
+// orchestrator for the worker to report to.
+func resolveOrchestrator() Orchestrator {
+	return orchestratorFor(signal.ResolveWindowID(), os.Getenv("AGENTCTL_SESSION_ID"), windowstate.Read)
+}
+
+// orchestratorFor is resolveOrchestrator with its inputs injected. A window
+// counts only when it has a Claude session: envSessionID (the same signal as
+// spawned_by_session) or a windowstate record carrying a SessionID. A tracked
+// session with no name still counts.
+func orchestratorFor(windowID, envSessionID string, read func(string) (windowstate.WindowState, error)) Orchestrator {
+	if windowID == "" {
+		return Orchestrator{}
+	}
+	ws, err := read(windowID)
+	if err != nil {
+		ws = windowstate.WindowState{}
+	}
+	if envSessionID == "" && ws.SessionID == "" {
+		return Orchestrator{}
+	}
+	return Orchestrator{WindowID: windowID, Name: ws.SessionName}
 }

@@ -107,7 +107,7 @@ func beginApproval(n popupNotice) (end func()) {
 
 	message := fmt.Sprintf("%s wants to %s, approve in %s", n.Agent, n.Action, sessionName)
 	if stateSet && ws.SpawnedBy != "" && prevState != "blocked" {
-		emitBlockedMessage(windowID, ws, n.Agent, message)
+		emitBlockedMessage(windowID, ws, n.Agent)
 	}
 	title := n.Agent
 	if d := strings.TrimPrefix(sessionName, "agentctl-"); d != "" {

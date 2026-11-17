@@ -568,6 +568,7 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 			ws.TicketTitle = extraEnv["AGENTCTL_TICKET_TITLE"]
 			ws.Mode = extraEnv["AGENTCTL_MODE"]
 			ws.Backend = extraEnv["AGENTCTL_BACKEND"]
+			ws.SessionName = extraEnv["AGENTCTL_CLAUDE_NAME"]
 			ws.SpawnedBy = extraEnv["AGENTCTL_SPAWNED_BY"]
 			ws.SpawnedBySession = extraEnv["AGENTCTL_SPAWNED_BY_SESSION"]
 		})
@@ -1557,27 +1558,6 @@ func findMainPane(windowID string) string {
 		}
 	}
 	return ""
-}
-
-// MainPanePID returns the OS PID of windowID's main (non-chrome) pane, or
-// (0, false) if the window or pane cannot be resolved. This is the pane
-// `agentctl wake` checks with reaper.HasClaudeDescendant for a real liveness
-// signal -- see findMainPane's doc comment for why #{pane_current_command}
-// cannot be used for that check.
-func MainPanePID(windowID string) (int, bool) {
-	mainPane := findMainPane(windowID)
-	if mainPane == "" {
-		return 0, false
-	}
-	out, err := exec.Command("tmux", "display-message", "-t", mainPane, "-p", "#{pane_pid}").Output()
-	if err != nil {
-		return 0, false
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil || pid <= 0 {
-		return 0, false
-	}
-	return pid, true
 }
 
 // WindowIDByName returns the tmux window ID for the first window with the given

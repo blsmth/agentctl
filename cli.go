@@ -118,11 +118,6 @@ type CLI struct {
 	Ctl        CtlCmd        `cmd:"" help:"Send operator control command"`
 	Models     ModelsCmd     `cmd:"" help:"Inspect the model registry (context window, pricing, resolution)"`
 
-	// Inter-agent messaging (docs/agent-messaging-design.md)
-	Send  SendCmd  `cmd:"" help:"Send a message to another agent's mailbox"`
-	Inbox InboxCmd `cmd:"" help:"List messages in the current window's mailbox"`
-	Wake  WakeCmd  `cmd:"" help:"Wake an idle agent and deliver its pending mailbox via send-keys"`
-
 	// Setup
 	Init             InitCmd             `cmd:"" help:"Initialize agentctl in current project"`
 	New              NewCmd              `cmd:"" help:"Create a new agent in current project"`
@@ -967,70 +962,6 @@ type CtlCmd struct {
 
 func (c *CtlCmd) Run() error {
 	cmd.RunCmdCtl(c.Async, c.Command)
-	return nil
-}
-
-// ---------------------------------------------------------------------------
-// Messaging
-// ---------------------------------------------------------------------------
-
-// SendCmd implements `agentctl send <addr> <message> [--kind fyi] [--subject
-// "..."] [--wait-reply] [--timeout <dur>]`. <addr> is either a tmux window
-// ID (e.g. "@41") or a running agent name. --wait-reply is sugar for
-// enqueuing the message, then blocking exactly like `inbox --wait --from
-// <addr>` for the reply.
-type SendCmd struct {
-	Addr      string        `arg:"" help:"Window ID (@41) or agent name"`
-	Message   string        `arg:"" help:"Message body"`
-	Kind      string        `help:"Message kind: done, blocked, fyi, or question" default:"fyi"`
-	Subject   string        `help:"Optional subject line"`
-	WaitReply bool          `name:"wait-reply" help:"Block until <addr> replies (same wait as inbox --wait --from <addr>)"`
-	Timeout   time.Duration `help:"Timeout for --wait-reply (default 5m)"`
-}
-
-func (c *SendCmd) Run() error {
-	cmd.RunSend(c.Addr, c.Message, c.Kind, c.Subject, c.WaitReply, c.Timeout)
-	return nil
-}
-
-// WakeCmd implements `agentctl wake <addr>`. <addr> is either a tmux window
-// ID (e.g. "@41") or a running agent name, resolved the same way as Send.
-// It refuses to wake a window that is still working, and refuses when no
-// live Claude process is found in the target pane -- see
-// docs/agent-messaging-design.md §3 and internal/cmd/wake.go for why.
-type WakeCmd struct {
-	Addr string `arg:"" help:"Window ID (@41) or agent name"`
-}
-
-func (c *WakeCmd) Run() error {
-	cmd.RunWake(c.Addr)
-	return nil
-}
-
-// InboxCmd implements `agentctl inbox [--all] [--json] [--wait] [--from
-// <addr>] [--timeout <dur>]`. It always resolves to the current window's
-// mailbox. --wait blocks until at least one matching pending message
-// exists, then drains and prints it -- see internal/mailbox.WaitAndClaim.
-type InboxCmd struct {
-	All     bool          `help:"Also show already-read messages"`
-	JSON    bool          `help:"Output as JSON"`
-	Wait    bool          `help:"Block until a matching message arrives, then drain and print it"`
-	From    string        `help:"With --wait, only match messages from this sender (window ID or agent name)"`
-	Timeout time.Duration `help:"Timeout for --wait (default 5m)"`
-}
-
-func (c *InboxCmd) Run() error {
-	if c.Wait {
-		if err := cmd.RunInboxWait(c.From, c.Timeout); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		return nil
-	}
-	if err := cmd.RunInbox(c.All, c.JSON); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
 	return nil
 }
 

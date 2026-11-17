@@ -37,7 +37,7 @@ func TestCheckGlobalDenyList_Heredocs(t *testing.T) {
 		{"plain", cs, true},
 		{"later bare command", "cat <<EOF\nhi\nEOF\n" + cs + "\n", true},
 		{"unparseable", "cat <<EOF\n" + cs + " ((( \n", true},
-		{"send body", "agentctl send @1 \"x\" <<EOF\n" + gr + "\nEOF\n", false},
+		{"context body", "agentctl context set k \"x\" <<EOF\n" + gr + "\nEOF\n", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

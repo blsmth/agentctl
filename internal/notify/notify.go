@@ -1,11 +1,7 @@
 // Package notify implements the desktop-notification command-substitution
-// logic shared by internal/hooks and internal/cmd. It exists as its own
-// package (rather than living in internal/hooks, where it originated)
-// because internal/cmd needs to fire the same notification (see
-// RunSend's --wait-reply gating in internal/cmd/send.go) and
-// internal/hooks' version was unexported -- extracting it here means both
-// callers run the exact same command-substitution logic instead of two
-// copies drifting apart.
+// logic behind internal/hooks' desktop notifications. It is its own package
+// so the substitution and notify_cmd execution can be tested in isolation
+// from the hook handlers.
 package notify
 
 import (
@@ -48,14 +44,6 @@ type Options struct {
 	Subtitle string
 	Message  string
 	Env      map[string]string
-}
-
-// Notify sends a desktop notification using the configured notify_cmd. It
-// is a thin delegate over NotifyWithOptions for callers that have no
-// subtitle to report -- {{subtitle}} substitutes to the empty string in
-// that case.
-func Notify(title, message string, env map[string]string) {
-	NotifyWithOptions(Options{Title: title, Message: message, Env: env})
 }
 
 // NotifyWithOptions sends a desktop notification using the configured

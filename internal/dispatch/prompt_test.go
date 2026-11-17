@@ -246,7 +246,7 @@ func TestPreamble_DoesNotMentionSignalDone(t *testing.T) {
 // preambles: both variants keep the exact runtime-environment heading (which
 // prompt_test.go asserts on elsewhere) and the shared context-store lines,
 // but only the orchestrator variant carries the delegation guidance
-// (dispatch/wake), and the worker variant must NOT.
+// (dispatch), and the worker variant must NOT.
 func TestPreamble_RoleAware(t *testing.T) {
 	t.Run("both carry the runtime environment heading", func(t *testing.T) {
 		for name, preamble := range map[string]string{"WorkerPreamble": WorkerPreamble, "OrchestratorPreamble": OrchestratorPreamble} {
@@ -264,12 +264,9 @@ func TestPreamble_RoleAware(t *testing.T) {
 		}
 	})
 
-	t.Run("orchestrator preamble contains dispatch and wake", func(t *testing.T) {
+	t.Run("orchestrator preamble contains dispatch", func(t *testing.T) {
 		if !strings.Contains(OrchestratorPreamble, "agentctl dispatch") {
 			t.Error("OrchestratorPreamble missing 'agentctl dispatch'")
-		}
-		if !strings.Contains(OrchestratorPreamble, "agentctl wake") {
-			t.Error("OrchestratorPreamble missing 'agentctl wake'")
 		}
 	})
 
@@ -280,10 +277,20 @@ func TestPreamble_RoleAware(t *testing.T) {
 		if strings.Contains(WorkerPreamble, "### Delegation") {
 			t.Error("WorkerPreamble should not contain the Delegation section")
 		}
-		// wake is part of the shared messaging section, not delegation --
-		// workers should still be able to wake another agent's mailbox.
-		if !strings.Contains(WorkerPreamble, "agentctl wake") {
-			t.Error("WorkerPreamble should still contain 'agentctl wake' (shared messaging, not delegation)")
+	})
+
+	t.Run("both carry ListAgents/SendMessage guidance and no mailbox commands", func(t *testing.T) {
+		for name, preamble := range map[string]string{"WorkerPreamble": WorkerPreamble, "OrchestratorPreamble": OrchestratorPreamble} {
+			for _, want := range []string{"ListAgents", "SendMessage"} {
+				if !strings.Contains(preamble, want) {
+					t.Errorf("%s missing %q", name, want)
+				}
+			}
+			for _, gone := range []string{"agentctl send", "agentctl inbox", "agentctl wake"} {
+				if strings.Contains(preamble, gone) {
+					t.Errorf("%s still references %q", name, gone)
+				}
+			}
 		}
 	})
 
@@ -1063,4 +1070,45 @@ func TestCustomMode_DefaultUserMessage(t *testing.T) {
 			t.Errorf("message should fall back to the plain sentence, got: %q", msg)
 		}
 	})
+}
+
+func TestPreamble_Orchestrator(t *testing.T) {
+	t.Run("worker with orchestrator and name", func(t *testing.T) {
+		got := preambleWithOrchestrator(RoleWorker, Orchestrator{WindowID: "@26", Name: "brandon"})
+		for _, want := range []string{"### Your orchestrator", "tmux window @26", "session name brandon", "same weight as this prompt", "SendMessage"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("missing %q in:\n%s", want, got)
+			}
+		}
+	})
+	t.Run("worker with orchestrator, no name", func(t *testing.T) {
+		got := preambleWithOrchestrator(RoleWorker, Orchestrator{WindowID: "@26"})
+		if !strings.Contains(got, "tmux window @26") || strings.Contains(got, "(session name") {
+			t.Errorf("unexpected section:\n%s", got)
+		}
+	})
+	t.Run("bare launch gets only generic guidance", func(t *testing.T) {
+		if got := preambleWithOrchestrator(RoleWorker, Orchestrator{}); got != WorkerPreamble {
+			t.Error("no orchestrator should yield the plain worker preamble")
+		}
+		if got := preambleWithOrchestrator(RoleOrchestrator, Orchestrator{WindowID: "@1"}); got != OrchestratorPreamble {
+			t.Error("orchestrator-role sessions never get the orchestrator section")
+		}
+	})
+}
+
+func TestFinishingSteps_ReportToOrchestrator(t *testing.T) {
+	orch := Orchestrator{WindowID: "@26"}
+	with := buildFinishingSteps(Request{Orchestrator: orch}, "agent/x/issue-1", true)
+	if !strings.Contains(with, "7. SendMessage to your orchestrator (window @26) with the PR URL") {
+		t.Errorf("worktree steps missing report step:\n%s", with)
+	}
+	without := buildFinishingSteps(Request{}, "agent/x/issue-1", true)
+	if strings.Contains(without, "SendMessage") {
+		t.Errorf("no orchestrator: steps must not mention SendMessage:\n%s", without)
+	}
+	shared := buildFinishingSteps(Request{Orchestrator: orch}, "", false)
+	if !strings.Contains(shared, "SendMessage to your orchestrator (window @26)") {
+		t.Errorf("shared-dir steps missing report:\n%s", shared)
+	}
 }

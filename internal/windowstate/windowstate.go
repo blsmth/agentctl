@@ -44,7 +44,10 @@ type WindowState struct {
 	Mode         string `json:"mode,omitempty"`
 	// Backend is the name of the config backend this window's claude was
 	// launched against ("" = Anthropic). Restore re-resolves it from config.
-	Backend       string `json:"backend,omitempty"`
+	Backend string `json:"backend,omitempty"`
+	// SessionName is the name passed to claude via -n at launch. Restore and
+	// resume reuse it so a relaunched session keeps its cross-session identity.
+	SessionName   string `json:"session_name,omitempty"`
 	SubagentCount int    `json:"subagent_count,omitempty"`
 
 	// Branch and WorktreeDir record the dispatch worktree linkage: which git

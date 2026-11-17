@@ -73,6 +73,21 @@ func TestBuildBaseFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "session name set",
+			inv:  ClaudeInvocation{Agent: "go-engineer", Name: "agent-go-engineer-issue-42", SessionID: "s"},
+			want: []string{"claude", "--agent", "go-engineer", "-n", "agent-go-engineer-issue-42", "--session-id", "s"},
+		},
+		{
+			name: "session name with spaces is one argument",
+			inv:  ClaudeInvocation{Agent: "go-engineer", Name: "my project; x"},
+			want: []string{"claude", "--agent", "go-engineer", "-n", "my project; x"},
+		},
+		{
+			name: "session name unset emits no -n",
+			inv:  ClaudeInvocation{Agent: "go-engineer", SessionID: "s"},
+			want: []string{"claude", "--agent", "go-engineer", "--session-id", "s"},
+		},
+		{
 			name: "hostile agent name",
 			inv:  ClaudeInvocation{Agent: "x; touch /tmp/pwned", SessionID: "s"},
 			want: []string{"claude", "--agent", "x; touch /tmp/pwned", "--session-id", "s"},
@@ -134,7 +149,7 @@ func TestBuildRestoreCmd(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := buildRestoreCmd("go-engineer", "sid $(x)", settings, tt.resume, ac)
+			cmd := buildRestoreCmd("go-engineer", "", "sid $(x)", settings, tt.resume, ac)
 			f, err := syntax.NewParser(syntax.Variant(syntax.LangPOSIX)).Parse(strings.NewReader(cmd), "")
 			if err != nil || len(f.Stmts) != 1 {
 				t.Fatalf("parsing %q: %v (stmts=%d)", cmd, err, len(f.Stmts))
@@ -161,5 +176,14 @@ func TestBuildRestoreCmd(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestBuildRestoreCmd_ReusesSessionName verifies both sides of the restore
+// fallback carry the original -n name.
+func TestBuildRestoreCmd_ReusesSessionName(t *testing.T) {
+	cmd := buildRestoreCmd("go-engineer", "agent-go-engineer-issue-42", "sid", "/s.json", true, config.AgentConfig{})
+	if got := strings.Count(cmd, "-n 'agent-go-engineer-issue-42'"); got != 2 {
+		t.Errorf("want -n on both resume and fresh sides, got %d in %q", got, cmd)
 	}
 }

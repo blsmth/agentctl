@@ -54,6 +54,9 @@ type RestoreRequest struct {
 	TicketTitle string
 	Branch      string
 	WorktreeDir string
+	// SessionName is the original claude -n name, reused so the restored
+	// session keeps its identity. Empty omits -n.
+	SessionName string
 }
 
 // Restore re-launches a saved agent window using the shared settings helpers
@@ -85,7 +88,7 @@ func Restore(req RestoreRequest) (string, error) {
 	} else if req.SessionID != "" {
 		logging.Log("dispatch.Restore: duplicate sessionID %s for %s, starting fresh", req.SessionID, req.InstanceName)
 	}
-	shellCmd := buildRestoreCmd(req.AgentName, req.SessionID, settingsPath, resume, ac)
+	shellCmd := buildRestoreCmd(req.AgentName, req.SessionName, req.SessionID, settingsPath, resume, ac)
 
 	instanceName := req.InstanceName
 	if instanceName == "" {
@@ -99,6 +102,12 @@ func Restore(req RestoreRequest) (string, error) {
 	}
 
 	logging.Log("dispatch.Restore: launching %s (base=%s) workDir=%s logPath=%s", instanceName, req.AgentName, req.WorkDir, logPath)
+	if req.SessionName != "" {
+		if extraEnv == nil {
+			extraEnv = map[string]string{}
+		}
+		extraEnv[EnvSessionName] = req.SessionName
+	}
 	wid, err := tmux.LaunchAgent(instanceName, req.WorkDir, shellCmd, logPath, req.AgentName, "", extraEnv, false)
 	if err != nil {
 		return "", fmt.Errorf("dispatch.Restore: launching %s: %w", instanceName, err)
@@ -129,12 +138,12 @@ func applyRestoreMeta(ws *windowstate.WindowState, req RestoreRequest) {
 // still opens. --continue is intentionally avoided: when multiple windows
 // share the same base agent name it grabs the most-recent session and causes
 // races.
-func buildRestoreCmd(agentName, sessionID, settingsPath string, resume bool, ac config.AgentConfig) string {
-	fresh := BuildBaseFlags(ClaudeInvocation{Agent: agentName, SettingsPath: settingsPath}, ac)
+func buildRestoreCmd(agentName, sessionName, sessionID, settingsPath string, resume bool, ac config.AgentConfig) string {
+	fresh := BuildBaseFlags(ClaudeInvocation{Agent: agentName, Name: sessionName, SettingsPath: settingsPath}, ac)
 	if !resume {
 		return fresh
 	}
-	resumed := BuildBaseFlags(ClaudeInvocation{Agent: agentName, Resume: sessionID, SettingsPath: settingsPath}, ac)
+	resumed := BuildBaseFlags(ClaudeInvocation{Agent: agentName, Name: sessionName, Resume: sessionID, SettingsPath: settingsPath}, ac)
 	return resumed + " || " + fresh
 }
 

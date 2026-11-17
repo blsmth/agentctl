@@ -89,7 +89,7 @@ agentctl status --blocked        # only the ones waiting on you
 
 Each agent is a tmux window. Claude Code hooks write per-window state (`working`, `blocked`, `idle`) and a background monitor reads it every 500ms, renames windows with state glyphs, fires notifications, and writes a snapshot the chrome bar renders. State comes from hooks; session JSONL logs are read only for metrics. Token, context, and rate-limit figures are shown by the Claude Code status line (`agentctl statusline`).
 
-You also get TUI browsers for agents, skills, memory files, issues, and session history; per-agent permissions; a cross-agent context store and mailboxes (`context`, `send`, `inbox`, `wake`); optional Prometheus metrics; and self-improvement sessions. Every action is a keybinding off `ctrl+b`; see [docs/keybindings.md](docs/keybindings.md).
+You also get TUI browsers for agents, skills, memory files, issues, and session history; per-agent permissions; a cross-agent context store (`context`) alongside Claude Code's native cross-session messaging; optional Prometheus metrics; and self-improvement sessions. Every action is a keybinding off `ctrl+b`; see [docs/keybindings.md](docs/keybindings.md).
 
 ## Supported platforms
 
