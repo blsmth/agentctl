@@ -29,3 +29,14 @@ func TestToWindow(t *testing.T) {
 		t.Errorf("untrusted parent leaked: %q", w.Parent)
 	}
 }
+
+func TestToWindowPR(t *testing.T) {
+	row := Row{AgentState: state.AgentState{Name: "a", WindowID: "@1", State: "idle", Done: true}}
+	w := ToWindow(row, Meta{PRNumber: 61, PRURL: "https://github.com/o/r/pull/61"})
+	if w.PRNumber != 61 || w.PRURL != "https://github.com/o/r/pull/61" {
+		t.Errorf("PR fields not mapped: %+v", w)
+	}
+	if w := ToWindow(row, Meta{}); w.PRNumber != 0 || w.PRURL != "" {
+		t.Errorf("empty meta produced PR: %+v", w)
+	}
+}

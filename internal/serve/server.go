@@ -54,6 +54,10 @@ type Options struct {
 	BusOptions fleetwatch.Options
 	// PingEvery is the SSE keep-alive interval; 0 means 20s.
 	PingEvery time.Duration
+
+	// Push dependencies; nil means production (webpush-go, ntfy.sh).
+	Pusher   Pusher
+	NtfyBase string
 }
 
 // Server is the agentctl serve HTTP application.
@@ -73,6 +77,12 @@ type Server struct {
 	bus       *fleetwatch.Bus
 	holder    Holder
 	pingEvery time.Duration
+	subs      *SubscriptionStore
+	vapid     VAPIDKeys
+	sender    *Sender
+	ntfy      *Ntfy
+	notifier  *Notifier
+	pushQ     *pushDispatcher
 	// done is closed by Close so open SSE streams end before shutdown.
 	done      chan struct{}
 	closeOnce sync.Once
@@ -122,6 +132,9 @@ func New(opts Options) (*Server, error) {
 	if s.pingEvery <= 0 {
 		s.pingEvery = 20 * time.Second
 	}
+	if err := s.initPush(opts); err != nil {
+		return nil, err
+	}
 	s.done = make(chan struct{})
 	s.bus = fleetwatch.NewBus(s.fleet, opts.BusOptions)
 	s.router = newRouter(devices, opts.Config.AllowWrite, now)
@@ -146,6 +159,7 @@ func (s *Server) routes(rt *Router) {
 	s.registerCore(rt)
 	s.registerStatic(rt)
 	s.registerRead(rt)
+	s.registerPush(rt)
 }
 
 // registerCore registers the foundation endpoints.
@@ -292,6 +306,15 @@ func (s *Server) Start(ctx context.Context) {
 	go func() {
 		defer s.bgWG.Done()
 		s.bus.Run(ctx)
+	}()
+	s.bgWG.Add(2)
+	go func() {
+		defer s.bgWG.Done()
+		runNotifier(ctx, s.bus, s.notifier)
+	}()
+	go func() {
+		defer s.bgWG.Done()
+		s.pushQ.run(ctx)
 	}()
 	if s.opts.Config.KeepAwakeEnabled() {
 		s.bgWG.Add(1)

@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/safefs"
 )
 
@@ -136,6 +137,11 @@ func (s *DeviceStore) Remove(ref string) (Device, error) {
 		removed = list[idx]
 		return append(list[:idx:idx], list[idx+1:]...), nil
 	})
+	if err == nil {
+		if derr := dropSubscriptions(filepath.Dir(s.path), removed.ID); derr != nil {
+			logging.Warn("serve: dropping subscriptions of device %s: %v", removed.ID, derr)
+		}
+	}
 	return removed, err
 }
 
@@ -178,7 +184,13 @@ func (s *DeviceStore) Authenticate(token string, now time.Time) (Device, bool) {
 
 // Clear revokes every device.
 func (s *DeviceStore) Clear() error {
-	return s.mutate(func([]Device) ([]Device, error) { return []Device{}, nil })
+	if err := s.mutate(func([]Device) ([]Device, error) { return []Device{}, nil }); err != nil {
+		return err
+	}
+	if err := clearSubscriptions(filepath.Dir(s.path)); err != nil {
+		logging.Warn("serve: dropping subscriptions: %v", err)
+	}
+	return nil
 }
 
 // mutate applies fn to the on-disk list under an exclusive flock and writes
@@ -289,4 +301,16 @@ func randomToken(n int) (string, error) {
 func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+// readFileOrEmpty reads path; a missing file yields no bytes and no error.
+func readFileOrEmpty(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	return data, nil
 }

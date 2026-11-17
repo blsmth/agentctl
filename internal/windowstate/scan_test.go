@@ -91,3 +91,21 @@ func TestAllFrom_MissingDir(t *testing.T) {
 		}
 	}
 }
+
+func TestPRFieldsRoundTrip(t *testing.T) {
+	SetDirForTest(t.TempDir())
+	if err := Update("@1", func(ws *WindowState) { ws.PRNumber = 12; ws.PRURL = "https://github.com/o/r/pull/12" }); err != nil {
+		t.Fatal(err)
+	}
+	// An unrelated later write must keep them.
+	if err := Update("@1", func(ws *WindowState) { ws.State = "idle" }); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := Read("@1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.PRNumber != 12 || ws.PRURL != "https://github.com/o/r/pull/12" {
+		t.Errorf("got %d %q", ws.PRNumber, ws.PRURL)
+	}
+}

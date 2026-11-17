@@ -26,14 +26,16 @@ type Window struct {
 	Activity     string `json:"activity,omitempty"`
 	MailPending  int    `json:"mail_pending,omitempty"`
 
-	// Additive fields (serve). PRURL is the newest pr-link record in the
-	// session log (see TagLogs). PendingTool is only set while the
+	// Additive fields (serve). PRURL is the PR recorded by dispatch completion
+	// (windowstate), else the newest pr-link record in the session log (see
+	// TagLogs); PRNumber is only known from the former. PendingTool is only set while the
 	// window is blocked, which is when it names the tool the dialog asks about.
 	PRURL        string `json:"pr_url,omitempty"`
 	Issue        int    `json:"issue,omitempty"`
 	BlockedSince string `json:"blocked_since,omitempty"`
 	StateSince   string `json:"state_since,omitempty"`
 	PendingTool  string `json:"pending_tool,omitempty"`
+	PRNumber     int    `json:"pr_number,omitempty"`
 }
 
 // ToWindow converts a row and its windowstate metadata to a Window.
@@ -57,6 +59,10 @@ func ToWindow(r Row, m Meta) Window {
 		MailPending:  r.MailboxPending,
 		Issue:        r.Ticket,
 		PRURL:        r.PRURL,
+		PRNumber:     m.PRNumber,
+	}
+	if m.PRURL != "" {
+		w.PRURL = m.PRURL
 	}
 	if !m.StateSince.IsZero() {
 		w.StateSince = m.StateSince.UTC().Format(time.RFC3339)

@@ -28,6 +28,8 @@ type Meta struct {
 	SpawnedBy        string // raw windowstate value — see ParentTrusted before showing it
 	SpawnedBySession string
 	UpdatedAt        time.Time
+	PRNumber         int
+	PRURL            string
 
 	PendingTool       string
 	PendingToolDetail string
@@ -93,6 +95,8 @@ func LoadMeta(g Group) map[string]Meta {
 			SpawnedBy:        ws.SpawnedBy,
 			SpawnedBySession: ws.SpawnedBySession,
 			UpdatedAt:        ws.UpdatedAt,
+			PRNumber:         ws.PRNumber,
+			PRURL:            ws.PRURL,
 
 			PendingTool:       ws.PendingTool,
 			PendingToolDetail: ws.PendingToolDetail,

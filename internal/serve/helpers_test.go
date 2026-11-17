@@ -54,13 +54,19 @@ type testServer struct {
 // newTestServer builds a Server over a temp state dir with a fresh CA.
 func newTestServer(t *testing.T, cfg config.ServeConfig) *testServer {
 	t.Helper()
+	return newTestServerWith(t, cfg, nil)
+}
+
+// newTestServerWith is newTestServer with a hook to adjust Options.
+func newTestServerWith(t *testing.T, cfg config.ServeConfig, mutate func(*Options)) *testServer {
+	t.Helper()
 	dir := t.TempDir()
 	clock := newClock()
 	ca, err := LoadOrCreateCA(dir, "testhost", nil, clock.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(Options{
+	opts := Options{
 		Config:        cfg,
 		Dir:           dir,
 		Version:       "test",
@@ -68,7 +74,11 @@ func newTestServer(t *testing.T, cfg config.ServeConfig) *testServer {
 		AdvertiseHost: "192.168.1.10",
 		HTTPSPort:     8443,
 		Now:           clock.Now,
-	})
+	}
+	if mutate != nil {
+		mutate(&opts)
+	}
+	s, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}

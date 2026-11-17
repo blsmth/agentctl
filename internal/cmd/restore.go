@@ -206,6 +206,8 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 			Task:             as.Task,
 			Branch:           as.Branch,
 			WorktreeDir:      as.WorktreeDir,
+			PRNumber:         as.PRNumber,
+			PRURL:            as.PRURL,
 			SessionName:      dispatch.RestoreSessionName(as.SessionName, baseName, as.Name, workDir, usedNames),
 		})
 		if err != nil {

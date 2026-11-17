@@ -25,6 +25,8 @@
     "window_index": 0,
     "agent": "lead",
     "state": "idle",
-    "done": true
+    "done": true,
+    "pr_url": "https://github.com/o/r/pull/61",
+    "pr_number": 61
   }
 ]

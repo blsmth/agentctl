@@ -200,6 +200,12 @@ type WindowState struct {
 	// It lets the writers skip the rename when nothing changed.
 	RenderedName string `json:"rendered_name,omitempty"`
 
+	// PRNumber and PRURL record the pull request dispatch completion found
+	// for this window's branch (internal/dispatch.RunComplete). Zero/empty
+	// until completion finds one.
+	PRNumber int    `json:"pr_number,omitempty"`
+	PRURL    string `json:"pr_url,omitempty"`
+
 	// CompleteFiredAt is when the done-edge completion handlers last fired.
 	// Reserved: a later step (done-edge completion) writes it.
 	CompleteFiredAt time.Time `json:"complete_fired_at,omitempty"`
