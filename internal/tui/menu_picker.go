@@ -268,7 +268,7 @@ func (m MenuModel) pickerRow(p modelPicker, i, width, priceW int) string {
 	if sel {
 		bar = "▌ "
 	}
-	value, note, price := r.typed, "", ""
+	var value, note, price string
 	switch r.kind {
 	case pickTyped:
 		value = "use " + r.typed + " as typed"

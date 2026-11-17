@@ -121,7 +121,6 @@ var (
 	menuHintDotStyle   lipgloss.Style
 	cursorActiveStyle  lipgloss.Style
 
-	menuTitleStyle   lipgloss.Style
 	mnSectionStyle   lipgloss.Style
 	mnRuleStyle      lipgloss.Style
 	mnNameStyle      lipgloss.Style
@@ -129,7 +128,6 @@ var (
 	mnDescStyle      lipgloss.Style
 	mnBadgeStyle     lipgloss.Style
 	mnRunningStyle   lipgloss.Style
-	mnStoppedStyle   lipgloss.Style
 	mnLabelStyle     lipgloss.Style
 	mnLabelFocusSty  lipgloss.Style
 	mnValueStyle     lipgloss.Style
@@ -149,12 +147,6 @@ func initMenuStyles() {
 	t := theme.Current()
 	fg := func(c string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(c)) }
 
-	menuTitleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(t.Bright)).
-		Background(lipgloss.Color(t.Accent)).
-		Padding(0, 2).
-		Align(lipgloss.Center)
 	menuHintKeyStyle = fg(t.Accent).Bold(true)
 	menuHintLabelStyle = fg(t.Muted)
 	menuHintDotStyle = fg(t.Surface)
@@ -167,7 +159,6 @@ func initMenuStyles() {
 	mnDescStyle = fg(t.Muted)
 	mnBadgeStyle = fg(t.Info)
 	mnRunningStyle = fg(t.Green)
-	mnStoppedStyle = fg(t.Overlay)
 	mnLabelStyle = fg(t.Muted)
 	mnLabelFocusSty = fg(t.Accent).Bold(true)
 	mnValueStyle = fg(t.Text)
@@ -664,15 +655,6 @@ func (m MenuModel) startEdit() (tea.Model, tea.Cmd) {
 	m.edit.SetValue(m.opts.dir)
 	m.errMsg = ""
 	return m, m.edit.Focus()
-}
-
-func hasModel(cs []modelOpt, v string) bool {
-	for _, c := range cs {
-		if c.Value == v {
-			return true
-		}
-	}
-	return false
 }
 
 // cycle moves the focused option's value by delta.
