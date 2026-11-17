@@ -35,26 +35,22 @@ type StatusOptions struct {
 	Verify  bool   // capture each pane and flag disagreements with windowstate
 }
 
-// statusJSONRow is the machine-readable shape of one agent window.
+// statusJSONRow is the machine-readable shape of one agent window: the shared
+// herd.Window (also served by `agentctl serve`) plus the optional pane check.
 type statusJSONRow struct {
-	Session      string `json:"session"`
-	Project      string `json:"project"`
-	WindowID     string `json:"window_id"`
-	WindowIndex  int    `json:"window_index"`
-	Agent        string `json:"agent"`
-	State        string `json:"state"`
-	Done         bool   `json:"done"`
-	Mode         string `json:"mode,omitempty"`
-	Backend      string `json:"backend,omitempty"`
-	ContextPct   int    `json:"context_pct,omitempty"`
-	Ticket       string `json:"ticket,omitempty"`
-	Branch       string `json:"branch,omitempty"`
-	WorktreePath string `json:"worktree_path,omitempty"`
-	Parent       string `json:"parent,omitempty"`
-	Activity     string `json:"activity,omitempty"`
-	MailPending  int    `json:"mail_pending,omitempty"`
+	herd.Window
 	PaneVerdict  string `json:"pane_verdict,omitempty"`
 	PaneDisagree bool   `json:"pane_disagrees,omitempty"`
+}
+
+// jsonRow builds the JSON form of a status row.
+func (sr statusRow) jsonRow() statusJSONRow {
+	j := statusJSONRow{Window: herd.ToWindow(sr.row, sr.meta)}
+	if sr.checked {
+		j.PaneVerdict = sr.verdict.String()
+		j.PaneDisagree = !sr.verdict.AgreesWith(sr.row.State)
+	}
+	return j
 }
 
 // statusRow pairs a herd row with the windowstate metadata for that window and
@@ -284,28 +280,7 @@ func printGrid(out io.Writer, headers []string, grid [][]cell) {
 func emitStatusJSON(rows []statusRow) error {
 	out := make([]statusJSONRow, 0, len(rows))
 	for _, sr := range rows {
-		j := statusJSONRow{
-			Session:      sr.group.Session,
-			Project:      sr.group.Project,
-			WindowID:     sr.row.WindowID,
-			WindowIndex:  sr.row.WindowIndex,
-			Agent:        sr.row.Name,
-			State:        sr.row.State,
-			Done:         sr.row.Done,
-			Mode:         sr.meta.Mode,
-			Backend:      sr.meta.Backend,
-			ContextPct:   sr.row.ContextPct,
-			Ticket:       sr.meta.Ticket,
-			Branch:       sr.meta.Branch,
-			WorktreePath: sr.row.WorktreePath,
-			Parent:       sr.meta.Parent(),
-			Activity:     herd.ActivityLine(sr.row),
-			MailPending:  sr.row.MailboxPending,
-		}
-		if sr.checked {
-			j.PaneVerdict = sr.verdict.String()
-			j.PaneDisagree = !sr.verdict.AgreesWith(sr.row.State)
-		}
+		j := sr.jsonRow()
 		out = append(out, j)
 	}
 	enc := json.NewEncoder(os.Stdout)
@@ -428,19 +403,8 @@ func RunStatusDetail(window string, jsonOut bool) error {
 	verdict, checked := verifyPane(sr.group.Session, sr.row.WindowID)
 
 	if jsonOut {
-		j := statusJSONRow{
-			Session: sr.group.Session, Project: sr.group.Project,
-			WindowID: sr.row.WindowID, WindowIndex: sr.row.WindowIndex,
-			Agent: sr.row.Name, State: sr.row.State, Done: sr.row.Done,
-			Mode: sr.meta.Mode, Backend: sr.meta.Backend, ContextPct: sr.row.ContextPct,
-			Ticket: sr.meta.Ticket, Branch: sr.meta.Branch,
-			WorktreePath: sr.row.WorktreePath, Parent: sr.meta.Parent(),
-			Activity: herd.ActivityLine(sr.row), MailPending: sr.row.MailboxPending,
-		}
-		if checked {
-			j.PaneVerdict = verdict.String()
-			j.PaneDisagree = !verdict.AgreesWith(sr.row.State)
-		}
+		sr.verdict, sr.checked = verdict, checked
+		j := sr.jsonRow()
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(j)

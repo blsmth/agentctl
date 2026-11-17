@@ -20,6 +20,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 )
 
 // Options configures a Server.
@@ -42,6 +43,17 @@ type Options struct {
 	BootstrapAddr string
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+
+	// Read API dependencies; nil means the production implementation (herd,
+	// tmux, agent discovery, caffeinate on darwin). Tests inject fakes.
+	Fleet  FleetSource
+	Panes  PaneSource
+	Agents AgentLister
+	Awake  Holder
+	// BusOptions tunes the fleet event bus (debounce, rediscovery).
+	BusOptions fleetwatch.Options
+	// PingEvery is the SSE keep-alive interval; 0 means 20s.
+	PingEvery time.Duration
 }
 
 // Server is the agentctl serve HTTP application.
@@ -54,6 +66,18 @@ type Server struct {
 	pairing pairing
 	router  *Router
 	handler http.Handler
+
+	fleet     FleetSource
+	panes     PaneSource
+	agents    AgentLister
+	bus       *fleetwatch.Bus
+	holder    Holder
+	pingEvery time.Duration
+	// done is closed by Close so open SSE streams end before shutdown.
+	done      chan struct{}
+	closeOnce sync.Once
+	cancel    context.CancelFunc
+	bgWG      sync.WaitGroup
 
 	bootMu    sync.Mutex
 	boot      *http.Server
@@ -81,6 +105,25 @@ func New(opts Options) (*Server, error) {
 		now = time.Now
 	}
 	s := &Server{opts: opts, now: now, started: now(), cidrs: cidrs, devices: devices, restart: make(chan struct{}, 1)}
+	s.fleet, s.panes, s.agents, s.holder = opts.Fleet, opts.Panes, opts.Agents, opts.Awake
+	if s.fleet == nil {
+		s.fleet = fleetwatch.HerdSource{}
+	}
+	if s.panes == nil {
+		s.panes = tmuxPanes{}
+	}
+	if s.agents == nil {
+		s.agents = discoveredAgents{}
+	}
+	if s.holder == nil {
+		s.holder = newHolder()
+	}
+	s.pingEvery = opts.PingEvery
+	if s.pingEvery <= 0 {
+		s.pingEvery = 20 * time.Second
+	}
+	s.done = make(chan struct{})
+	s.bus = fleetwatch.NewBus(s.fleet, opts.BusOptions)
 	s.router = newRouter(devices, opts.Config.AllowWrite, now)
 	s.routes(s.router)
 	s.handler = s.chain(s.router)
@@ -102,6 +145,7 @@ func (s *Server) chain(h http.Handler) http.Handler {
 func (s *Server) routes(rt *Router) {
 	s.registerCore(rt)
 	s.registerStatic(rt)
+	s.registerRead(rt)
 }
 
 // registerCore registers the foundation endpoints.
@@ -240,8 +284,36 @@ func (s *Server) closePairingLocked() {
 	}
 }
 
-// Close ends any pairing window and stops the bootstrap listener.
+// Start runs the fleet event bus and, when serve.keep_awake is on, the
+// keep-awake follower, until Close. It returns immediately.
+func (s *Server) Start(ctx context.Context) {
+	ctx, s.cancel = context.WithCancel(ctx)
+	s.bgWG.Add(1)
+	go func() {
+		defer s.bgWG.Done()
+		s.bus.Run(ctx)
+	}()
+	if s.opts.Config.KeepAwakeEnabled() {
+		s.bgWG.Add(1)
+		go func() {
+			defer s.bgWG.Done()
+			runKeepAwake(ctx, s.bus, s.holder)
+		}()
+	}
+}
+
+// Close ends any pairing window, stops the bootstrap listener and the
+// background watchers, and releases keep-awake. It must complete before a
+// selfexec re-exec so no caffeinate child outlives the old image. Idempotent.
 func (s *Server) Close() {
+	s.closeOnce.Do(func() {
+		close(s.done)
+		if s.cancel != nil {
+			s.cancel()
+		}
+		s.bgWG.Wait()
+		s.holder.Stop()
+	})
 	s.bootMu.Lock()
 	defer s.bootMu.Unlock()
 	s.closePairingLocked()

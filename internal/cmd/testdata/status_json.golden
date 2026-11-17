@@ -1,0 +1,30 @@
+[
+  {
+    "session": "agentctl-proj",
+    "project": "proj",
+    "window_id": "@5",
+    "window_index": 2,
+    "agent": "go-engineer~2",
+    "state": "working",
+    "done": false,
+    "mode": "dispatch",
+    "backend": "ollama",
+    "context_pct": 41,
+    "ticket": "#9",
+    "branch": "agent/x/issue-9",
+    "worktree_path": "/w/t",
+    "parent": "@1",
+    "activity": "Editing x.go",
+    "mail_pending": 1,
+    "pane_verdict": "busy"
+  },
+  {
+    "session": "agentctl-proj",
+    "project": "proj",
+    "window_id": "@1",
+    "window_index": 0,
+    "agent": "lead",
+    "state": "idle",
+    "done": true
+  }
+]

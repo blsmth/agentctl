@@ -16,6 +16,8 @@ const (
 	codeWriteDisabled   = "write_disabled"
 	codeNotFound        = "not_found"
 	codeInternal        = "internal"
+	codeBadRequest      = "bad_request"
+	codePaneUnavailable = "pane_unavailable"
 )
 
 // apiError is the JSON body of every error response.
