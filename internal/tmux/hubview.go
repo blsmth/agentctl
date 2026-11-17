@@ -475,3 +475,44 @@ func ViewerForWindow(windowID string) string {
 	}
 	return viewer
 }
+
+// HubCloseCommands builds the tmux commands that tear the hub down: detach the
+// client that asked (when known) so its terminal returns to the shell, then
+// kill each viewer session and finally the hub. Project sessions are never
+// named. Viewers are matched exactly (=name) so no prefix match can leak.
+func HubCloseCommands(client string, viewers []string) [][]string {
+	var cmds [][]string
+	if client != "" {
+		cmds = append(cmds, []string{"detach-client", "-t", client})
+	}
+	for _, v := range viewers {
+		if IsViewerSession(v) {
+			cmds = append(cmds, []string{"kill-session", "-t", "=" + v})
+		}
+	}
+	return append(cmds, []string{"kill-session", "-t", "=" + HubSessionName})
+}
+
+// hubCloseShell joins commands into one shell line of tmux invocations.
+func hubCloseShell(cmds [][]string) string {
+	parts := make([]string, 0, len(cmds))
+	for _, c := range cmds {
+		q := make([]string, 0, len(c)+1)
+		q = append(q, "tmux")
+		for _, a := range c {
+			q = append(q, shellQuote(a))
+		}
+		parts = append(parts, strings.Join(q, " "))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// CloseHub detaches client and destroys the viewer sessions and the hub. The
+// popup that calls it lives inside the hub, so the teardown runs via
+// `run-shell -b` (owned by the tmux server) and outlives the popup. Agents in
+// project sessions are untouched.
+func CloseHub(client string) error {
+	cmds := HubCloseCommands(client, viewerSessions())
+	_, err := tmuxRun("run-shell", "-b", hubCloseShell(cmds))
+	return err
+}

@@ -189,6 +189,25 @@ func RunQuitMenu() {
 	reaper.ReapOrphansUnderServer(serverPID, paths.SettingsDir())
 }
 
+// RunHubQuitMenu confirms closing the hub (prefix+q in the hub) and, on yes,
+// detaches the pressing client and destroys the hub and its viewer sessions.
+// Agents in project sessions are untouched.
+func RunHubQuitMenu() {
+	client := os.Getenv(tmux.KeyClientEnv)
+	finalModel, err := tea.NewProgram(tui.NewHubCloseModel()).Run()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if !finalModel.(tui.HubCloseModel).Result().Confirmed {
+		return
+	}
+	if err := tmux.CloseHub(client); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 // RunRestartMenu shows the Bubble Tea restart confirmation popup.
 // On confirm it relaunches the running agentctl binary (no rebuild), then kills
 // this session.
