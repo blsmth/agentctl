@@ -70,3 +70,31 @@ func TestPersistWindowState_LogPathBackfill(t *testing.T) {
 		})
 	}
 }
+
+func TestRecordEffectiveSessionName(t *testing.T) {
+	str := func(s string) *string { return &s }
+	tests := []struct {
+		name          string
+		ws            windowstate.WindowState
+		p             Payload
+		wantName      string
+		wantRequested string
+		wantVerified  bool
+	}{
+		{"same name", windowstate.WindowState{SessionName: "a-1"}, Payload{SessionName: str("a-1")}, "a-1", "", true},
+		{"deduped name", windowstate.WindowState{SessionName: "a-1"}, Payload{SessionName: str("a-1-happy-meteor")}, "a-1-happy-meteor", "a-1", true},
+		{"second rename keeps first requested", windowstate.WindowState{SessionName: "x", RequestedSessionName: "a-1"}, Payload{SessionName: str("y")}, "y", "a-1", true},
+		{"nil name", windowstate.WindowState{SessionName: "a-1"}, Payload{}, "a-1", "", false},
+		{"empty name", windowstate.WindowState{SessionName: "a-1"}, Payload{SessionName: str("")}, "a-1", "", false},
+		{"other session ignored", windowstate.WindowState{SessionID: "s1", SessionName: "a-1"}, Payload{SessionID: str("s2"), SessionName: str("zzz")}, "a-1", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ws := tt.ws
+			recordEffectiveSessionName(&ws, &tt.p)
+			if ws.SessionName != tt.wantName || ws.RequestedSessionName != tt.wantRequested || ws.SessionNameVerified != tt.wantVerified {
+				t.Errorf("got %q/%q/%v, want %q/%q/%v", ws.SessionName, ws.RequestedSessionName, ws.SessionNameVerified, tt.wantName, tt.wantRequested, tt.wantVerified)
+			}
+		})
+	}
+}

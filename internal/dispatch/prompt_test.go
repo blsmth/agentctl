@@ -1074,8 +1074,8 @@ func TestCustomMode_DefaultUserMessage(t *testing.T) {
 
 func TestPreamble_Orchestrator(t *testing.T) {
 	t.Run("worker with orchestrator and name", func(t *testing.T) {
-		got := preambleWithOrchestrator(RoleWorker, Orchestrator{WindowID: "@26", Name: "brandon"})
-		for _, want := range []string{"### Your orchestrator", "tmux window @26", "session name brandon", "same weight as this prompt", "SendMessage"} {
+		got := preambleWithOrchestrator(RoleWorker, Orchestrator{WindowID: "@26", Pane: "%77", Name: "brandon-proj-3"})
+		for _, want := range []string{"### Your orchestrator", "tmux window @26, pane %77", "@26.%77", "ignore the tmux session-name prefix", "brandon-proj-3", "hint only", "same weight as this prompt", "SendMessage", "orchestrator is gone", "PR body"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("missing %q in:\n%s", want, got)
 			}
@@ -1083,7 +1083,7 @@ func TestPreamble_Orchestrator(t *testing.T) {
 	})
 	t.Run("worker with orchestrator, no name", func(t *testing.T) {
 		got := preambleWithOrchestrator(RoleWorker, Orchestrator{WindowID: "@26"})
-		if !strings.Contains(got, "tmux window @26") || strings.Contains(got, "(session name") {
+		if !strings.Contains(got, "tmux window @26") || strings.Contains(got, "hint only") || !strings.Contains(got, "orchestrator is gone") {
 			t.Errorf("unexpected section:\n%s", got)
 		}
 	})

@@ -47,8 +47,17 @@ type WindowState struct {
 	Backend string `json:"backend,omitempty"`
 	// SessionName is the name passed to claude via -n at launch. Restore and
 	// resume reuse it so a relaunched session keeps its cross-session identity.
-	SessionName   string `json:"session_name,omitempty"`
-	SubagentCount int    `json:"subagent_count,omitempty"`
+	// When the statusline push reports a different name (Claude Code
+	// deduplicated it, or the user ran /rename), SessionName is overwritten
+	// with that effective name and the launch-time name moves to
+	// RequestedSessionName.
+	SessionName          string `json:"session_name,omitempty"`
+	RequestedSessionName string `json:"requested_session_name,omitempty"`
+	// SessionNameVerified is true when SessionName is known to be the name
+	// claude actually uses: confirmed by a statusline push, or chosen unique
+	// per window at dispatch. Only then is the name shown to other agents.
+	SessionNameVerified bool `json:"session_name_verified,omitempty"`
+	SubagentCount       int  `json:"subagent_count,omitempty"`
 
 	// Branch and WorktreeDir record the dispatch worktree linkage: which git
 	// branch this window is working on, and (only when a worktree was

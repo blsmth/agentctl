@@ -128,6 +128,8 @@ Development conventions (tmux patterns, popup architecture, TUI conventions) are
 
 The window's `SessionID` (written by `hook-session-start`, including after `/clear`) is authoritative for log linking. When set, `linkLogs` links the recorded `LogPath` or derives the log from the session ID (`linkBySessionID`, which calls `sessions.FindLogBySessionIDIn`), and never scans `~/.claude/projects/` for the newest log. Only windows with no SessionID fall back to a scan, confined to the window's own project directory. The statusline drops snapshot data whose log does not match the payload's `session_id`.
 
+Names are not identity. Bare launches name the session `<agent>-<project>-<N>` (`dispatch.SessionNameFor`, N = instance number, known before the window exists), because Claude Code silently renames duplicate `-n` names. The statusline write-back records the effective `session_name` (old value kept in `requested_session_name`, `session_name_verified` set). The only stable keys are the window ID and pane ID (`main_pane`); the tmux session prefix in a ListAgents location (`session:@N.%P`) changes when the hub links windows. The worker preamble therefore names its orchestrator by `@N.%P` and shows the name only when verified. Parent/child linkage uses `spawned_by` plus `spawned_by_session`, never a name.
+
 ## Dependencies
 
 - Go 1.26+ (build only), tmux 3.4+; optional `alerter` (macOS) / `notify-send` (Linux) for notifications, configurable via `notify_cmd`

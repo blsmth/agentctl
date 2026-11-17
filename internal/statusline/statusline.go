@@ -969,6 +969,7 @@ func persistWindowState(p *Payload, windowID string) {
 			}
 		}
 		backfillLogPath(ws, p)
+		recordEffectiveSessionName(ws, p)
 		if p.Model != nil && p.Model.ID != nil && *p.Model.ID != "" {
 			ws.Model = *p.Model.ID
 		}
@@ -983,6 +984,29 @@ func persistWindowState(p *Payload, windowID string) {
 	if err != nil && !errors.Is(err, windowstate.ErrGone) {
 		logging.Log("statusline: updating windowstate for %s: %v", windowID, err)
 	}
+}
+
+// recordEffectiveSessionName copies the session name Claude Code reports in
+// the pushed payload (`session_name`: the name from -n or /rename, after any
+// dedupe) into windowstate, keeping the launch-time name in
+// RequestedSessionName when they differ. A nil or empty name changes nothing,
+// and a payload from another session (e.g. after /clear raced the push) is
+// ignored.
+func recordEffectiveSessionName(ws *windowstate.WindowState, p *Payload) {
+	if p.SessionName == nil || *p.SessionName == "" {
+		return
+	}
+	if p.SessionID != nil && *p.SessionID != "" && ws.SessionID != "" && ws.SessionID != *p.SessionID {
+		return
+	}
+	name := *p.SessionName
+	if name != ws.SessionName {
+		if ws.SessionName != "" && ws.RequestedSessionName == "" {
+			ws.RequestedSessionName = ws.SessionName
+		}
+		ws.SessionName = name
+	}
+	ws.SessionNameVerified = true
 }
 
 // backfillLogPath implements persistWindowState's narrow LogPath self-heal.
