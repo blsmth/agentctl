@@ -41,7 +41,6 @@ type agentOpts struct {
 	backends  []string // backendAnthropic first, then configured names (sorted)
 	backend   string   // selected entry of backends
 	model     string   // selected model value
-	custom    string   // free-typed model, shown as an extra choice
 	effort    string
 	dir       string
 	worktree  bool
@@ -100,8 +99,7 @@ func (m MenuModel) nousModels() []string {
 }
 
 // modelChoices lists the selectable models for the current backend. The
-// default entry comes first; the current free-typed value is appended when it
-// is not already listed.
+// default entry comes first.
 func (m MenuModel) modelChoices() []modelOpt {
 	a, ok := m.current()
 	if !ok {
@@ -150,18 +148,7 @@ func (m MenuModel) modelChoices() []modelOpt {
 			}
 		}
 	}
-	add(m.opts.custom, "custom", false)
 	return out
-}
-
-// modelIndex returns the index of the selected model in choices (0 when absent).
-func modelIndex(choices []modelOpt, sel string) int {
-	for i, c := range choices {
-		if c.Value == sel {
-			return i
-		}
-	}
-	return 0
 }
 
 // resultModel is the Request.Model for the current selection: "" lets the
@@ -276,10 +263,9 @@ func (m MenuModel) modelWarning() string {
 	return fmt.Sprintf("%s is not on the server; launch preflight will fail", m.opts.model)
 }
 
-// priceHint describes cost for the selected model: per-MTok price and billing
-// class. Unknown prices are reported as unknown, never guessed.
-func (m MenuModel) priceHint() string {
-	be, model := m.opts.backend, m.opts.model
+// billingFor classifies the billing of model on backend and returns the
+// model id to price ("" when there is nothing to look up).
+func (m MenuModel) billingFor(be, model string) (sessions.Billing, string) {
 	var class sessions.Billing
 	lookup := model
 	if be == backendAnthropic {
@@ -289,9 +275,15 @@ func (m MenuModel) priceHint() string {
 		if lookup == "" || !strings.Contains(lookup, "/") {
 			class = sessions.BillingSub
 		}
-	} else {
-		class = sessions.ClassifyBilling(model, be, m.cfg.Backends)
+		return class, lookup
 	}
+	return sessions.ClassifyBilling(model, be, m.cfg.Backends), lookup
+}
+
+// priceHint describes cost for the selected model: per-MTok price and billing
+// class. Unknown prices are reported as unknown, never guessed.
+func (m MenuModel) priceHint() string {
+	class, lookup := m.billingFor(m.opts.backend, m.opts.model)
 	label := class.String()
 	switch class {
 	case sessions.BillingFree:
@@ -305,6 +297,24 @@ func (m MenuModel) priceHint() string {
 		}
 	}
 	return "price unknown · " + label
+}
+
+// priceShort is the compact per-row price of the model picker: "free",
+// "sub" (covered by a subscription), "$in/$out" per MTok, or "" when unknown.
+func (m MenuModel) priceShort(be, model string) string {
+	class, lookup := m.billingFor(be, model)
+	if class == sessions.BillingFree {
+		return "free"
+	}
+	if lookup != "" {
+		if p := tokens.Lookup(lookup); p.Source != "family" && p.HasPricing() && p.Known {
+			return "$" + priceNum(p.Pricing.InputPerMTok) + "/$" + priceNum(p.Pricing.OutputPerMTok)
+		}
+	}
+	if class == sessions.BillingSub {
+		return "sub"
+	}
+	return ""
 }
 
 // priceNum formats a $/MTok figure compactly.

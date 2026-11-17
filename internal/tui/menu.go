@@ -21,7 +21,7 @@ import (
 // keybinding in internal/tmux uses the same numbers (tmux needs them before the
 // model exists); the model lays itself out from the real size it is given.
 const (
-	MenuPopupWidth  = 120
+	MenuPopupWidth  = 100
 	MenuPopupHeight = 40
 )
 
@@ -121,7 +121,6 @@ var (
 	menuHintDotStyle   lipgloss.Style
 	cursorActiveStyle  lipgloss.Style
 
-	menuTitleStyle   lipgloss.Style
 	mnSectionStyle   lipgloss.Style
 	mnRuleStyle      lipgloss.Style
 	mnNameStyle      lipgloss.Style
@@ -129,7 +128,6 @@ var (
 	mnDescStyle      lipgloss.Style
 	mnBadgeStyle     lipgloss.Style
 	mnRunningStyle   lipgloss.Style
-	mnStoppedStyle   lipgloss.Style
 	mnLabelStyle     lipgloss.Style
 	mnLabelFocusSty  lipgloss.Style
 	mnValueStyle     lipgloss.Style
@@ -149,12 +147,6 @@ func initMenuStyles() {
 	t := theme.Current()
 	fg := func(c string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(c)) }
 
-	menuTitleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(t.Bright)).
-		Background(lipgloss.Color(t.Accent)).
-		Padding(0, 2).
-		Align(lipgloss.Center)
 	menuHintKeyStyle = fg(t.Accent).Bold(true)
 	menuHintLabelStyle = fg(t.Muted)
 	menuHintDotStyle = fg(t.Surface)
@@ -167,7 +159,6 @@ func initMenuStyles() {
 	mnDescStyle = fg(t.Muted)
 	mnBadgeStyle = fg(t.Info)
 	mnRunningStyle = fg(t.Green)
-	mnStoppedStyle = fg(t.Overlay)
 	mnLabelStyle = fg(t.Muted)
 	mnLabelFocusSty = fg(t.Accent).Bold(true)
 	mnValueStyle = fg(t.Text)
@@ -182,16 +173,17 @@ func initMenuStyles() {
 	mnSessionTextSty = fg(t.Text)
 }
 
-// menuFocus is the pane that receives keys.
-type menuFocus int
+// menuView is the screen the popup currently shows.
+type menuView int
 
 const (
-	menuFocusList menuFocus = iota
-	menuFocusOpts
-	menuFocusSessions
+	viewList   menuView = iota // filter + agent list + detail strip
+	viewResume                 // recent sessions in the detail area
+	viewSheet                  // options sheet for the highlighted agent
+	viewPicker                 // model picker over the sheet
 )
 
-// optField is a row of the options panel.
+// optField is a row of the options sheet.
 type optField int
 
 const (
@@ -208,7 +200,6 @@ type editMode int
 
 const (
 	editNone editMode = iota
-	editModel
 	editDir
 )
 
@@ -236,22 +227,24 @@ type sessionsMsg struct {
 	list  []MenuSession
 }
 
-// MenuModel is the Bubble Tea model for the one-screen launch menu.
+// MenuModel is the Bubble Tea model for the filter-first launch menu.
 type MenuModel struct {
 	cfg     MenuConfig
 	agents  []MenuAgent
-	visible []int // indexes into agents that pass the filter, in order
+	visible []int // indexes into agents that pass the filter, ranked
 	cursor  int   // index into visible; len(visible) is the create row
+	nameW   int   // width of the name column
 
-	filter    textinput.Model
-	filtering bool
+	filter textinput.Model // always focused in the list view
 
-	focus      menuFocus
+	view       menuView
 	field      optField
 	opts       agentOpts
 	edit       textinput.Model
 	editing    editMode
+	picker     modelPicker
 	errMsg     string
+	notice     string // one-shot footer message
 	sessCursor int
 
 	ollama   map[string]*ollamaState
@@ -270,13 +263,20 @@ func NewMenuModel(cfg MenuConfig) MenuModel {
 	fi := textinput.New()
 	fi.CharLimit = 60
 	fi.Prompt = ""
+	fi.Focus()
 	ei := textinput.New()
 	ei.CharLimit = 200
 	ei.Prompt = ""
 
+	nameW := 1
+	for _, a := range agents {
+		nameW = max(nameW, ansi.StringWidth(a.Name))
+	}
+
 	m := MenuModel{
 		cfg:      cfg,
 		agents:   agents,
+		nameW:    min(maxNameW, nameW),
 		filter:   fi,
 		edit:     ei,
 		ollama:   map[string]*ollamaState{},
@@ -307,19 +307,15 @@ func (m MenuModel) current() (MenuAgent, bool) {
 	return m.agents[m.visible[m.cursor]], true
 }
 
-// applyFilter recomputes the visible agents from the filter text, keeping the
-// highlighted agent when it still matches.
+// applyFilter recomputes the visible agents from the filter text. With an
+// empty query the highlighted agent is kept; with a query the cursor jumps to
+// the top match.
 func (m *MenuModel) applyFilter() {
 	prev, hadPrev := m.current()
 	q := strings.ToLower(strings.TrimSpace(m.filter.Value()))
-	m.visible = m.visible[:0:0]
-	for i, a := range m.agents {
-		if q == "" || matchesFilter(a, q) {
-			m.visible = append(m.visible, i)
-		}
-	}
+	m.visible = rankAgents(m.agents, q)
 	m.cursor = 0
-	if hadPrev {
+	if q == "" && hadPrev {
 		for i, idx := range m.visible {
 			if m.agents[idx].Name == prev.Name {
 				m.cursor = i
@@ -330,15 +326,54 @@ func (m *MenuModel) applyFilter() {
 	m.syncOpts()
 }
 
-// matchesFilter reports whether a contains the lowercase query in its name,
-// description or backend.
-func matchesFilter(a MenuAgent, q string) bool {
-	for _, s := range []string{a.Name, a.Description, a.Backend, a.Model} {
-		if strings.Contains(strings.ToLower(s), q) {
-			return true
+// rankAgents returns the indexes of agents matching the lowercase query q,
+// best first: name prefix, then name substring, then description / model /
+// backend. Within a tier the section order (the agents' own order) decides,
+// then the shorter name. An empty query keeps every agent in list order.
+func rankAgents(agents []MenuAgent, q string) []int {
+	if q == "" {
+		out := make([]int, len(agents))
+		for i := range agents {
+			out[i] = i
+		}
+		return out
+	}
+	type hit struct{ idx, tier int }
+	var hits []hit
+	for i, a := range agents {
+		name := strings.ToLower(a.Name)
+		switch {
+		case strings.HasPrefix(name, q):
+			hits = append(hits, hit{i, 0})
+		case strings.Contains(name, q):
+			hits = append(hits, hit{i, 1})
+		default:
+			for _, s := range []string{a.Description, a.Backend, a.Model} {
+				if strings.Contains(strings.ToLower(s), q) {
+					hits = append(hits, hit{i, 2})
+					break
+				}
+			}
 		}
 	}
-	return false
+	sort.SliceStable(hits, func(i, j int) bool {
+		a, b := hits[i], hits[j]
+		if a.tier != b.tier {
+			return a.tier < b.tier
+		}
+		if sa, sb := agents[a.idx].Section, agents[b.idx].Section; sa != sb {
+			return sa < sb
+		}
+		if a.tier < 2 {
+			return len(agents[a.idx].Name) < len(agents[b.idx].Name)
+		}
+		return false
+	})
+	out := make([]int, len(hits))
+	for i, h := range hits {
+		out[i] = h.idx
+	}
+	return out
 }
 
 // syncOpts rebuilds the options when the highlighted agent changed.
@@ -425,6 +460,9 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ollamaMsg:
 		m.ollama[msg.backend] = &ollamaState{done: true, models: msg.models, err: msg.err}
+		if m.view == viewPicker {
+			m.picker.rebuild(m)
+		}
 		return m, nil
 	case sessionsMsg:
 		m.sessions[msg.agent] = &sessionState{done: true, list: msg.list}
@@ -432,21 +470,7 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.updateKey(msg)
 	}
-	if m.filtering || m.editing != editNone {
-		return m.updateInput(msg)
-	}
 	return m, nil
-}
-
-// updateInput forwards non-key messages (cursor blink) to the active input.
-func (m MenuModel) updateInput(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-	if m.editing != editNone {
-		m.edit, cmd = m.edit.Update(msg)
-	} else {
-		m.filter, cmd = m.filter.Update(msg)
-	}
-	return m, cmd
 }
 
 func (m MenuModel) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -454,17 +478,19 @@ func (m MenuModel) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key == "ctrl+c" {
 		return m.cancel()
 	}
-	switch {
-	case m.filtering:
-		return m.keyFilter(msg)
-	case m.editing != editNone:
-		return m.keyEdit(msg)
-	case m.focus == menuFocusSessions:
-		return m.keySessions(key)
-	case m.focus == menuFocusOpts:
-		return m.keyOpts(key)
+	m.notice = ""
+	switch m.view {
+	case viewPicker:
+		return m.keyPicker(msg)
+	case viewSheet:
+		if m.editing != editNone {
+			return m.keyEdit(msg)
+		}
+		return m.keySheet(key)
+	case viewResume:
+		return m.keyResume(key)
 	}
-	return m.keyList(key)
+	return m.keyList(msg)
 }
 
 func (m MenuModel) cancel() (tea.Model, tea.Cmd) {
@@ -472,29 +498,10 @@ func (m MenuModel) cancel() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
-func (m MenuModel) keyFilter(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+// keyList handles the list view. The filter input is always focused, so any
+// key not bound below is typed into it.
+func (m MenuModel) keyList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "enter":
-		m.filtering = false
-		m.filter.Blur()
-		return m, m.fetchCmds()
-	case "esc":
-		m.filtering = false
-		m.filter.Blur()
-		m.filter.SetValue("")
-		m.applyFilter()
-		return m, m.fetchCmds()
-	}
-	var cmd tea.Cmd
-	m.filter, cmd = m.filter.Update(msg)
-	m.applyFilter()
-	return m, tea.Batch(cmd, m.fetchCmds())
-}
-
-func (m MenuModel) keyList(key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "q":
-		return m.cancel()
 	case "esc":
 		if m.filter.Value() != "" {
 			m.filter.SetValue("")
@@ -502,89 +509,74 @@ func (m MenuModel) keyList(key string) (tea.Model, tea.Cmd) {
 			return m, m.fetchCmds()
 		}
 		return m.cancel()
-	case "up", "k":
+	case "up", "ctrl+p", "ctrl+k":
 		if m.cursor > 0 {
 			m.cursor--
 		}
-	case "down", "j":
+	case "down", "ctrl+n", "ctrl+j":
 		if m.cursor < len(m.visible) {
 			m.cursor++
 		}
-	case "/":
-		m.filtering = true
-		return m, m.filter.Focus()
-	case "n":
-		return m.create()
-	case "tab":
-		if _, ok := m.current(); ok {
-			m.focus, m.field = menuFocusOpts, fBackend
-		}
-	case "shift+tab":
-		if _, ok := m.current(); ok {
-			m.focus, m.field = menuFocusOpts, fWorktree
-		}
-	case "r":
-		if len(m.currentSessions()) > 0 {
-			m.focus = menuFocusSessions
-		}
-	case "d":
-		return m.startEdit(fDir)
 	case "enter":
 		return m.launch()
+	case "tab":
+		if _, ok := m.current(); ok {
+			m.view, m.field, m.errMsg = viewSheet, fBackend, ""
+		}
+		return m, nil
+	case "ctrl+r":
+		return m.startResume()
+	case "ctrl+g":
+		return m.switchToRunning()
+	case "ctrl+u":
+		m.filter.SetValue("")
+		m.applyFilter()
+	default:
+		var cmd tea.Cmd
+		m.filter, cmd = m.filter.Update(msg)
+		m.applyFilter()
+		return m, tea.Batch(cmd, m.fetchCmds())
 	}
 	m.syncOpts()
 	return m, m.fetchCmds()
 }
 
-func (m MenuModel) keyOpts(key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "esc":
-		m.focus = menuFocusList
-		m.errMsg = ""
-	case "q":
-		return m.cancel()
-	case "tab", "down", "j":
-		if m.field == fWorktree {
-			m.focus = menuFocusList
-		} else {
-			m.field++
-		}
-	case "shift+tab", "up", "k":
-		if m.field == fBackend {
-			m.focus = menuFocusList
-		} else {
-			m.field--
-		}
-	case "right", "l":
-		return m.cycle(1)
-	case "left", "h":
-		return m.cycle(-1)
-	case "e":
-		return m.startEdit(m.field)
-	case "d":
-		return m.startEdit(fDir)
-	case "r":
-		if len(m.currentSessions()) > 0 {
-			m.focus = menuFocusSessions
-		}
-	case "enter":
-		return m.launch()
+func (m MenuModel) startResume() (tea.Model, tea.Cmd) {
+	if _, ok := m.current(); !ok {
+		return m, nil
 	}
+	if len(m.currentSessions()) == 0 {
+		m.notice = "no recent sessions to resume"
+		return m, nil
+	}
+	m.view, m.sessCursor = viewResume, 0
 	return m, nil
 }
 
-func (m MenuModel) keySessions(key string) (tea.Model, tea.Cmd) {
+// switchToRunning jumps to the most recently active running instance.
+func (m MenuModel) switchToRunning() (tea.Model, tea.Cmd) {
+	a, ok := m.current()
+	if !ok {
+		return m, nil
+	}
+	if len(a.Instances) == 0 {
+		m.notice = a.Name + " is not running"
+		return m, nil
+	}
+	m.result = MenuResult{Action: "switch", Agent: a.Name, Instance: a.Instances[0]}
+	return m, tea.Quit
+}
+
+func (m MenuModel) keyResume(key string) (tea.Model, tea.Cmd) {
 	ss := m.currentSessions()
 	switch key {
 	case "esc":
-		m.focus = menuFocusList
-	case "q":
-		return m.cancel()
-	case "up", "k":
+		m.view = viewList
+	case "up", "ctrl+p", "ctrl+k":
 		if m.sessCursor > 0 {
 			m.sessCursor--
 		}
-	case "down", "j":
+	case "down", "ctrl+n", "ctrl+j":
 		if m.sessCursor < len(ss)-1 {
 			m.sessCursor++
 		}
@@ -599,35 +591,56 @@ func (m MenuModel) keySessions(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// keyEdit handles the free-text model and dir inputs.
+// keySheet handles the options sheet.
+func (m MenuModel) keySheet(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc":
+		m.view, m.errMsg = viewList, ""
+	case "down", "ctrl+n", "ctrl+j", "tab":
+		if m.field < numFields-1 {
+			m.field++
+		}
+	case "up", "ctrl+p", "ctrl+k", "shift+tab":
+		if m.field > 0 {
+			m.field--
+		}
+	case "right":
+		return m.cycle(1)
+	case "left":
+		return m.cycle(-1)
+	case " ", "space":
+		switch m.field {
+		case fModel:
+			m.openPicker()
+		case fDir:
+			return m.startEdit()
+		default:
+			return m.cycle(1)
+		}
+	case "ctrl+u":
+		if a, ok := m.current(); ok {
+			m.opts = m.newAgentOpts(a)
+			m.errMsg = ""
+			return m, m.fetchCmds()
+		}
+	case "enter":
+		return m.launch()
+	}
+	return m, nil
+}
+
+// keyEdit handles the free-text dir input.
 func (m MenuModel) keyEdit(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.editing = editNone
-		m.errMsg = ""
 		m.edit.Blur()
 		return m, nil
 	case "enter":
-		val := strings.TrimSpace(m.edit.Value())
-		switch m.editing {
-		case editModel:
-			if val != "" {
-				if err := m.validateModel(m.opts.backend, val); err != nil {
-					m.errMsg = err.Error()
-					return m, nil
-				}
-				m.opts.model = val
-				if !hasModel(m.modelChoices(), val) {
-					m.opts.custom = val
-				}
-			}
-		case editDir:
-			if val != "" {
-				m.opts.dir = expandHome(val)
-			}
+		if val := strings.TrimSpace(m.edit.Value()); val != "" {
+			m.opts.dir = expandHome(val)
 		}
 		m.editing = editNone
-		m.errMsg = ""
 		m.edit.Blur()
 		return m, nil
 	}
@@ -636,31 +649,10 @@ func (m MenuModel) keyEdit(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func hasModel(cs []modelOpt, v string) bool {
-	for _, c := range cs {
-		if c.Value == v {
-			return true
-		}
-	}
-	return false
-}
-
-// startEdit opens the free-text input for the model or dir field.
-func (m MenuModel) startEdit(f optField) (tea.Model, tea.Cmd) {
-	if _, ok := m.current(); !ok {
-		return m, nil
-	}
-	switch f {
-	case fModel:
-		m.editing = editModel
-		m.edit.SetValue(m.opts.model)
-	case fDir:
-		m.editing = editDir
-		m.edit.SetValue(m.opts.dir)
-	default:
-		return m, nil
-	}
-	m.focus, m.field = menuFocusOpts, f
+// startEdit opens the free-text input for the dir field.
+func (m MenuModel) startEdit() (tea.Model, tea.Cmd) {
+	m.editing = editDir
+	m.edit.SetValue(m.opts.dir)
 	m.errMsg = ""
 	return m, m.edit.Focus()
 }
@@ -676,14 +668,8 @@ func (m MenuModel) cycle(delta int) (tea.Model, tea.Cmd) {
 	case fBackend:
 		i := indexOf(m.opts.backends, m.opts.backend)
 		m.opts.backend = m.opts.backends[wrap(i+delta, len(m.opts.backends))]
-		m.opts.custom = ""
 		m.opts.model = m.defaultModel(a, m.opts.backend)
 		return m, m.fetchCmds()
-	case fModel:
-		cs := m.modelChoices()
-		if len(cs) > 0 {
-			m.opts.model = cs[wrap(modelIndex(cs, m.opts.model)+delta, len(cs))].Value
-		}
 	case fEffort:
 		es := m.effortOptions()
 		m.opts.effort = es[wrap(indexOf(es, m.opts.effort)+delta, len(es))]
@@ -709,7 +695,8 @@ func (m MenuModel) create() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
-// launch validates the options and quits with a fresh-launch result.
+// launch validates the options and quits with a fresh-launch result. On the
+// create row, or with no match, it opens the creation wizard instead.
 func (m MenuModel) launch() (tea.Model, tea.Cmd) {
 	a, ok := m.current()
 	if !ok {
@@ -717,7 +704,7 @@ func (m MenuModel) launch() (tea.Model, tea.Cmd) {
 	}
 	if err := m.validate(a); err != nil {
 		m.errMsg = err.Error()
-		m.focus, m.field = menuFocusOpts, fModel
+		m.view, m.field = viewSheet, fModel
 		return m, nil
 	}
 	m.result = MenuResult{

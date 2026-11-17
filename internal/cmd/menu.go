@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,14 +19,16 @@ import (
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/sessionname"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
-// RunMenu shows the one-screen launch menu: agent list, launch options for
-// the highlighted agent and its recent sessions.
+// RunMenu shows the filter-first launch menu: agent list with a detail strip,
+// an options sheet and recent sessions for the highlighted agent.
 // writeSettings is injected from package main to avoid a circular import.
 // createMenu is called when the user selects "create"; it receives the agent
 // name to pre-fill (typically "").
@@ -60,7 +63,7 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 	done()
 
 	mcfg := tui.MenuConfig{
-		Agents:   buildMenuAgents(cfg, agents, runningByID),
+		Agents:   buildMenuAgents(cfg, agents, runningByID, windowActivity()),
 		Backends: cfg.Backends,
 		FetchOllama: func(ctx context.Context, name string) ([]string, error) {
 			return dispatch.ListOllamaModels(ctx, cfg.Backends[name])
@@ -119,16 +122,42 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 	}
 }
 
+// windowActivity maps window ID to the unix time of its latest recorded
+// activity (last tool call or state write), from windowstate.
+func windowActivity() map[string]int64 {
+	out := map[string]int64{}
+	for id, ws := range windowstate.AllFrom(paths.RuntimeDir()) {
+		t := ws.UpdatedAt.Unix()
+		if ws.LastToolTime > t {
+			t = ws.LastToolTime
+		}
+		out[id] = t
+	}
+	return out
+}
+
 // buildMenuAgents turns discovered agents (plus Claude Code's built-ins) into
-// menu entries, prefilled with each agent's effective config.
-func buildMenuAgents(cfg *config.Config, agents []agent.Agent, runningByID map[string]string) []tui.MenuAgent {
+// menu entries, prefilled with each agent's effective config. Instances are
+// ordered most recently active first (activity is keyed by window ID).
+func buildMenuAgents(cfg *config.Config, agents []agent.Agent, runningByID map[string]string, activity map[string]int64) []tui.MenuAgent {
+	ids := make([]string, 0, len(runningByID))
+	for id := range runningByID {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		if ai, aj := activity[ids[i]], activity[ids[j]]; ai != aj {
+			return ai > aj
+		}
+		return ids[i] < ids[j]
+	})
 	cwd, _ := os.Getwd()
 	if cwd == "" {
 		cwd, _ = os.UserHomeDir()
 	}
 	entry := func(name, desc, dir string, section tui.MenuSection) tui.MenuAgent {
 		var instances []string
-		for _, inst := range runningByID {
+		for _, id := range ids {
+			inst := runningByID[id]
 			if tmux.BaseAgentName(inst) == name {
 				instances = append(instances, inst)
 			}
