@@ -53,7 +53,9 @@ func tmuxKillWindow(windowID string) {
 	cmd := exec.Command("tmux", "kill-window", "-t", windowID)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		logging.Log("hook-session-end: kill-window %s: %s: %v", windowID, string(out), err)
+		return
 	}
+	tmux.SpawnReconcile()
 }
 
 // SessionStart is called by Claude Code's SessionStart hook.
@@ -68,6 +70,7 @@ func SessionStart() {
 	defer doneTimer()
 
 	monitorWatchdog()
+	janitor()
 
 	// Read stdin JSON to get session_id and cwd. Claude Code sends these on
 	// every SessionStart, including after /clear. Failure is non-fatal -- the

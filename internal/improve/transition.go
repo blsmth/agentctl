@@ -21,20 +21,36 @@ var launchSessionFn = LaunchSession
 // session ends (state → Gone) and AutoImprove is enabled, launches an
 // improvement session in the background.
 func HandleTransition(t state.Transition, agentCfg config.AgentConfig) {
-	if t.To != state.StatusGone {
+	if !wantsImprove(t, agentCfg) {
 		return
+	}
+	go launchImprove(t)
+}
+
+// HandleTransitionSync is HandleTransition for a short-lived process (the
+// detached `agentctl reconcile`): it returns only once the improvement session
+// has been launched, since a goroutine would die with the process.
+func HandleTransitionSync(t state.Transition, agentCfg config.AgentConfig) {
+	if !wantsImprove(t, agentCfg) {
+		return
+	}
+	launchImprove(t)
+}
+
+func wantsImprove(t state.Transition, agentCfg config.AgentConfig) bool {
+	if t.To != state.StatusGone {
+		return false
 	}
 	if strings.HasPrefix(t.Agent, "improve~") {
-		return // prevent recursion
+		return false // prevent recursion
 	}
-	if !agentCfg.AutoImprove {
-		return
-	}
+	return agentCfg.AutoImprove
+}
+
+func launchImprove(t state.Transition) {
 	logging.Log("improve: triggering auto-improve session for agent=%q (session ended)", t.Agent)
-	go func() {
-		time.Sleep(launchDelay)
-		if err := launchSessionFn(t.Agent, "", true); err != nil {
-			logging.Error("improve: failed to launch improvement session for agent=%q: %v", t.Agent, err)
-		}
-	}()
+	time.Sleep(launchDelay)
+	if err := launchSessionFn(t.Agent, "", true); err != nil {
+		logging.Error("improve: failed to launch improvement session for agent=%q: %v", t.Agent, err)
+	}
 }

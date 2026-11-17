@@ -42,3 +42,11 @@ func StartSelf(args, env []string) error {
 	}
 	return Start(exe, args, env)
 }
+
+// StartSelfPinned is StartSelf with AGENTCTL_RUNTIME_DIR pinned to runtimeDir
+// in the child's environment, so a process spawned from a hook or tmux
+// run-shell resolves this project's runtime dir whatever its cwd is.
+func StartSelfPinned(args []string, runtimeDir string) error {
+	env := append(os.Environ(), "AGENTCTL_RUNTIME_DIR="+runtimeDir)
+	return StartSelf(args, env)
+}

@@ -1,13 +1,18 @@
 package main
 
 import (
-	"github.com/blsmth/agentctl/internal/metrics"
-	"github.com/blsmth/agentctl/internal/windowstate"
-	"github.com/prometheus/client_golang/prometheus"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/mailbox"
+	"github.com/blsmth/agentctl/internal/metrics"
 	"github.com/blsmth/agentctl/internal/state"
+	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 func TestSafeHandleRecoversAndContinues(t *testing.T) {
@@ -72,6 +77,7 @@ func TestDetectAndFireTransitionsSurvivesHandlerPanic(t *testing.T) {
 
 // TestReconcileWindowsGonePathSurvivesHandlerPanic covers the Gone path.
 func TestReconcileWindowsGonePathSurvivesHandlerPanic(t *testing.T) {
+	seedGoneRecord(t, "@9", "working", "go-engineer")
 	reg := prometheus.NewRegistry()
 	m := &monitorModel{
 		windows:           map[string]*instanceState{"@9": {instance: "go-engineer", base: "go-engineer", hasPrev: true, prevState: state.StatusWorking}},
@@ -93,5 +99,20 @@ func TestReconcileWindowsGonePathSurvivesHandlerPanic(t *testing.T) {
 	}
 	if _, ok := m.windows["@9"]; ok {
 		t.Error("gone window not cleaned up after handler panic")
+	}
+}
+
+// seedGoneRecord points windowstate and mailbox at temp dirs and writes the
+// record the monitor's shared Gone claim consumes for window id.
+func seedGoneRecord(t *testing.T, id, st, instance string) {
+	t.Helper()
+	windowstate.SetDirForTest(filepath.Join(t.TempDir(), "windows"))
+	if err := os.MkdirAll(windowstate.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mailbox.SetDirForTest(t.TempDir())
+	rec := windowstate.WindowState{State: st, Instance: instance, AgentName: tmux.BaseAgentName(instance)}
+	if err := windowstate.Write(id, rec); err != nil {
+		t.Fatal(err)
 	}
 }

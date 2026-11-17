@@ -16,6 +16,7 @@ import (
 func TestReconcileWindows_GoneUntrackedWindowsCleanedUpWithoutHandlers(t *testing.T) {
 	for _, name := range []string{"shell", "improve~x"} {
 		t.Run(name, func(t *testing.T) {
+			seedGoneRecord(t, "@9", "working", name)
 			m := &monitorModel{windows: map[string]*instanceState{
 				"@9": {instance: name, base: name, hasPrev: true, prevState: state.StatusWorking},
 			}}
@@ -32,6 +33,9 @@ func TestReconcileWindows_GoneUntrackedWindowsCleanedUpWithoutHandlers(t *testin
 			}
 			if _, ok := m.windows["@9"]; ok {
 				t.Errorf("gone %s window still in m.windows", name)
+			}
+			if windowstate.Exists("@9") {
+				t.Errorf("gone %s window's record not removed", name)
 			}
 		})
 	}

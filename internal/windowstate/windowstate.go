@@ -545,11 +545,52 @@ func Remove(windowID string) {
 	if windowsDir == "" || checkDir() != nil {
 		return
 	}
-	if unlock, err := lockWindow(windowID); err == nil {
-		defer unlock()
-	} else {
-		logging.Log("windowstate: Remove %s without lock: %v", windowID, err)
+	unlock := lockOrLog(windowID, "Remove")
+	defer unlock()
+	removeLocked(windowID)
+}
+
+// Claim atomically removes windowID's record and tombstones it, like Remove,
+// but reports whether this caller was the one that removed it, returning the
+// record as it was. Of any number of concurrent Claims for the same window
+// exactly one returns true, so it is the single point where "this window is
+// gone" is acted on once.
+//
+// confirm, when non-nil, runs under the per-window lock after the record is
+// found and before it is removed; returning false aborts the claim. A caller
+// passes a fresh "is the tmux window really gone" check there: a launch that
+// recycled the @N ID holds the same lock to write its new record, so it is
+// either seen as live here or its record is written after this claim.
+func Claim(windowID string, confirm func() bool) (WindowState, bool) {
+	if windowsDir == "" || checkDir() != nil {
+		return WindowState{}, false
 	}
+	unlock := lockOrLog(windowID, "Claim")
+	defer unlock()
+	if _, err := os.Lstat(filePath(windowID)); err != nil {
+		return WindowState{}, false
+	}
+	if confirm != nil && !confirm() {
+		return WindowState{}, false
+	}
+	ws, _ := Read(windowID) // a corrupt record is still claimed (zero value)
+	removeLocked(windowID)
+	return ws, true
+}
+
+// lockOrLog takes the window lock, or logs and returns a no-op release.
+func lockOrLog(windowID, op string) func() {
+	unlock, err := lockWindow(windowID)
+	if err != nil {
+		logging.Log("windowstate: %s %s without lock: %v", op, windowID, err)
+		return func() {}
+	}
+	return unlock
+}
+
+// removeLocked deletes windowID's record and leftovers and writes the
+// tombstone. The caller holds the window lock and has checked the dir.
+func removeLocked(windowID string) {
 	fp := filePath(windowID)
 	os.Remove(fp)          //nolint:errcheck
 	os.Remove(fp + ".tmp") //nolint:errcheck // legacy fixed temp name

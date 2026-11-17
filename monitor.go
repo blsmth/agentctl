@@ -27,6 +27,7 @@ import (
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/pidfile"
 	"github.com/blsmth/agentctl/internal/reaper"
+	"github.com/blsmth/agentctl/internal/reconcile"
 	"github.com/blsmth/agentctl/internal/registry"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/state"
@@ -528,28 +529,27 @@ func (m *monitorModel) reconcileWindows(cfg *config.Config, windows []tmux.Windo
 		if inst.missingTicks < goneAfterMissingTicks {
 			continue
 		}
-		// shell and improve~ windows never fire handlers, but must still be
-		// cleaned up or they would stay in m.windows forever.
-		untracked := inst.instance == "shell" || strings.HasPrefix(inst.instance, "improve~")
 		logging.Log("monitor: window gone instance=%s (was %s)", inst.instance, inst.prevState)
-		if inst.hasPrev && !untracked {
-			t := state.Transition{
-				Agent:    inst.base,
-				WindowID: id,
-				From:     inst.prevState,
-				To:       state.StatusGone,
-				Active:   false,
-			}
-			agentCfg := cfg.ForAgent(inst.base)
-			m.fireHandlers(t, agentCfg)
+		// The shared claim fires the Gone handlers (shell/improve~ windows
+		// get none) and cleans up the mailbox exactly once, whether this
+		// tick or an `agentctl reconcile` notices first.
+		if c, ok := reconcile.Claim(id, nil); ok {
+			reconcile.Finish(c, m.reconcileDeps(cfg))
 		}
 		// Release the persistent stream reader.
 		if inst.stream != nil {
 			inst.stream.Close()
 		}
-		// Clean up the windowstate file for this window.
-		windowstate.Remove(id) //nolint:errcheck
 		delete(m.windows, id)
+	}
+}
+
+// reconcileDeps wires the shared Gone finisher to this monitor's handlers.
+func (m *monitorModel) reconcileDeps(cfg *config.Config) reconcile.Deps {
+	return reconcile.Deps{
+		Handle:      func(t state.Transition, ac config.AgentConfig) { m.fireHandlers(t, ac) },
+		AgentConfig: cfg.ForAgent,
+		RemoveInbox: mailbox.RemoveInbox,
 	}
 }
 

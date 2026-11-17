@@ -103,6 +103,9 @@ type CLI struct {
 	ChromeBar       ChromeBarCmd       `cmd:"" name:"chrome-bar" hidden:""`
 	ChromeBarPane   ChromeBarPaneCmd   `cmd:"" name:"chrome-bar-pane" hidden:""`
 	SetActiveWindow SetActiveWindowCmd `cmd:"" name:"set-active-window" hidden:""`
+	Reconcile       ReconcileCmd       `cmd:"" hidden:"" help:"Fire Gone handling for vanished windows (tmux hook, kill, janitor)"`
+	EnforceChrome   EnforceChromeCmd   `cmd:"" name:"enforce-chrome" hidden:"" help:"Re-enforce chrome bar pane sizes (tmux client hooks)"`
+	ApplyConfig     ApplyConfigCmd     `cmd:"" name:"apply-config" help:"Re-apply tmux hooks and keybindings to the running session (no restart)"`
 	Toggle          ToggleCmd          `cmd:"" hidden:""`
 	Settings        SettingsCmd        `cmd:"" hidden:""`
 	SettingsMenu    SettingsMenuCmd    `cmd:"" name:"settings-menu" hidden:""`
@@ -834,6 +837,25 @@ func (c *SetActiveWindowCmd) Run() error {
 	}
 	return nil
 }
+
+// ReconcileCmd runs Gone detection once (idempotent, flock-guarded); with
+// --housekeeping it also does the janitor's periodic sweeps.
+type ReconcileCmd struct {
+	Housekeeping bool `help:"Also reap orphans and prune mailboxes and session logs"`
+}
+
+func (c *ReconcileCmd) Run() error { cmd.RunReconcile(c.Housekeeping); return nil }
+
+// EnforceChromeCmd is run by the client-resized and client-attached tmux hooks.
+type EnforceChromeCmd struct{}
+
+func (c *EnforceChromeCmd) Run() error { cmd.RunEnforceChrome(); return nil }
+
+// ApplyConfigCmd re-applies session hooks and keybindings to the running
+// session without stopping or starting anything.
+type ApplyConfigCmd struct{}
+
+func (c *ApplyConfigCmd) Run() error { return cmd.RunApplyConfig() }
 
 type ToggleCmd struct {
 	AgentName string `arg:"" help:"Agent name"`

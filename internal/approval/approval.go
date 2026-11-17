@@ -54,3 +54,26 @@ func Pending(runtimeDir string, now time.Time) bool {
 	}
 	return false
 }
+
+// GC removes markers older than StaleAfter (left by a hook that crashed before
+// clearing its own) and returns how many it removed.
+func GC(runtimeDir string, now time.Time) int {
+	if runtimeDir == "" {
+		return 0
+	}
+	entries, err := os.ReadDir(dir(runtimeDir))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil || !info.Mode().IsRegular() || now.Sub(info.ModTime()) < StaleAfter {
+			continue
+		}
+		if os.Remove(filepath.Join(dir(runtimeDir), e.Name())) == nil {
+			n++
+		}
+	}
+	return n
+}

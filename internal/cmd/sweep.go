@@ -87,7 +87,6 @@ type sweepDeps struct {
 	BranchPR     func(branch string) cleanup.PRInfo
 	CloseWindow  func(id string) error
 	Reclaim      func(c *cleanup.Candidate)
-	RemoveState  func(id string)
 	RemoveMail   func(id string) error
 }
 
@@ -201,7 +200,8 @@ func runSweep(d sweepDeps, session, selfID string, opts SweepOptions) sweepRepor
 				if err := d.CloseWindow(w.ID); err != nil {
 					row.Errors = append(row.Errors, err.Error())
 				}
-				d.RemoveState(w.ID)
+				// The record is left for the reconcile spawned by the kill,
+				// which claims it and fires the Gone handlers once.
 				if err := d.RemoveMail(w.ID); err != nil {
 					row.Errors = append(row.Errors, "remove mailbox: "+err.Error())
 				}
@@ -279,7 +279,6 @@ func RunSweep(opts SweepOptions) error {
 		},
 		CloseWindow: tmux.KillWindow,
 		Reclaim:     cleanup.Reclaim,
-		RemoveState: windowstate.Remove,
 		RemoveMail:  mailbox.RemoveInbox,
 	}
 

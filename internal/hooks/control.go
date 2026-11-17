@@ -356,6 +356,7 @@ func UserPrompt() {
 	decodeInput(&struct{}{}) // non-fatal: ignore return value
 
 	monitorWatchdog()
+	janitor()
 
 	windowID := resolveHookWindowID()
 	if windowID == "" {
