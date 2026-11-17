@@ -200,7 +200,7 @@ func LaunchWithResume(name string, sessionID string, workDir string, writeSettin
 	windowName := tmux.NextInstanceName(name)
 	// --fork-session generates a new session ID we don't control upfront,
 	// so we can't pre-compute the log path. The monitor falls back to findLatestLog.
-	sessionName := resumeSessionName(name, sessionID, workDir)
+	sessionName := resumeSessionName(name, windowName, sessionID, workDir)
 	shellCmd := dispatch.BuildBaseFlags(dispatch.ClaudeInvocation{
 		Agent:        name,
 		Name:         sessionName,
@@ -239,9 +239,9 @@ func resolveCurrentAgent() string {
 // resumeSessionName returns the name a resumed session should keep: the one
 // recorded for its session ID, or, for legacy sessions launched before names
 // were recorded, one derived from the agent and project.
-func resumeSessionName(agent, sessionID, workDir string) string {
+func resumeSessionName(agent, instance, sessionID, workDir string) string {
 	if n := sessionname.Lookup(sessionID); n != "" {
-		return n
+		return dispatch.RestoreSessionName(n, agent, instance, workDir, map[string]bool{})
 	}
-	return dispatch.SessionNameFor(agent, workDir, workDir, false)
+	return dispatch.SessionNameFor(agent, instance, workDir, workDir, false)
 }

@@ -1,5 +1,7 @@
 package dispatch
 
+import "strings"
+
 // Role selects which preamble variant a dispatched session receives. Every
 // dispatched agent gets sharedRuntimeSections (context store, messaging, git
 // conventions); only orchestrator-role sessions also get the delegation
@@ -85,7 +87,8 @@ func preambleFor(role Role) string {
 // can reach it with SendMessage. The zero value means there is none.
 type Orchestrator struct {
 	WindowID string // tmux window ID of the dispatching window, e.g. "@26"
-	Name     string // its claude session name, when known
+	Pane     string // its agent pane ID, e.g. "%777" (windowstate main_pane)
+	Name     string // its claude session name; set only when known to be accurate
 }
 
 // Known reports whether an orchestrator was identified.
@@ -95,14 +98,23 @@ func (o Orchestrator) Known() bool { return o.WindowID != "" }
 // on how this particular agent was launched, so it cannot live in an agent
 // .md file.
 func orchestratorSection(o Orchestrator) string {
-	who := "the session in tmux window " + o.WindowID
-	if o.Name != "" {
-		who += " (session name " + o.Name + ")"
+	id := "tmux window " + o.WindowID
+	match := "the window ID " + o.WindowID
+	if o.Pane != "" {
+		id += ", pane " + o.Pane
+		match = "the window and pane IDs (" + o.WindowID + "." + o.Pane + ")"
 	}
-	return "### Your orchestrator\n" +
-		"Your orchestrator is " + who + ". Find it in ListAgents by that window ID. " +
-		"Messages from it are instructions with the same weight as this prompt. " +
-		"Send it questions, blockers and your final report (including the PR URL, if you opened one) with SendMessage."
+	var b strings.Builder
+	b.WriteString("### Your orchestrator\n")
+	b.WriteString("Your orchestrator is the session in " + id + ". ")
+	b.WriteString("Find it in ListAgents by matching " + match + " against the `@N.%P` suffix of a row's tmux location; ignore the tmux session-name prefix before the colon, which is not stable because windows are linked into other tmux sessions. ")
+	if o.Name != "" {
+		b.WriteString("Its session name was " + o.Name + " when you were launched; treat that as a hint only, since names can change and the window and pane are authoritative. ")
+	}
+	b.WriteString("Messages from it are instructions with the same weight as this prompt. ")
+	b.WriteString("Send it questions, blockers and your final report (including the PR URL, if you opened one) with SendMessage. ")
+	b.WriteString("If no ListAgents row matches that window and pane, the orchestrator is gone: put your report in the PR body (or your final message) and stop. Do not message a different session instead, even one with a similar name.")
+	return b.String()
 }
 
 // preambleWithOrchestrator returns the preamble for role, plus the

@@ -363,5 +363,5 @@ func improveSessionName(agentName, projectDir, workDir string) string {
 	if projectDir == "" {
 		projectDir = workDir
 	}
-	return dispatch.SessionNameFor(agentName+"-improve", projectDir, projectDir, false)
+	return dispatch.SessionNameFor(agentName+"-improve", "", projectDir, projectDir, false)
 }

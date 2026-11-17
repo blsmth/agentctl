@@ -244,7 +244,8 @@ func Launch(req Request) (Result, error) {
 		// (symlinked settings file or dir) must not launch a hookless agent.
 		return Result{}, fmt.Errorf("writing agent settings (refusing to launch without agentctl hooks): %w", err)
 	}
-	sessionName := SessionNameFor(req.AgentName, workDir, repoDir, useWorktree)
+	windowName := tmux.NextInstanceName(req.AgentName)
+	sessionName := SessionNameFor(req.AgentName, windowName, workDir, repoDir, useWorktree)
 	baseFlags := BuildBaseFlags(ClaudeInvocation{
 		Agent:          req.AgentName,
 		Name:           sessionName,
@@ -282,7 +283,6 @@ func Launch(req Request) (Result, error) {
 		logging.Log("dispatch: EnsureShellPrefixScript: %v", err)
 		// Non-fatal — continue launch without shell-prefix if the write failed.
 	}
-	windowName := tmux.NextInstanceName(req.AgentName)
 	logPath := claude.LogPath(workDir, sessionID)
 	extraEnv := buildDispatchEnv(req, ac, workDir, repoDir, branch, useWorktree)
 	for k, v := range backendEnv {
@@ -310,6 +310,9 @@ func Launch(req Request) (Result, error) {
 				ws.TicketTitle = req.TicketTitle
 			}
 			ws.Mode = string(req.Mode)
+			// The name is unique per window by construction (worktree
+			// slug or instance number), so it is safe to show others.
+			ws.SessionNameVerified = true
 			ws.Branch = branch
 			// Only record WorktreeDir when a worktree was actually created for
 			// this dispatch -- workDir still equals repoDir when useWorktree was
@@ -1021,5 +1024,9 @@ func orchestratorFor(windowID, envSessionID string, read func(string) (windowsta
 	if envSessionID == "" && ws.SessionID == "" {
 		return Orchestrator{}
 	}
-	return Orchestrator{WindowID: windowID, Name: ws.SessionName}
+	o := Orchestrator{WindowID: windowID, Pane: ws.MainPane}
+	if ws.SessionNameVerified {
+		o.Name = ws.SessionName
+	}
+	return o
 }
