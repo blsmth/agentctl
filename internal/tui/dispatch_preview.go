@@ -3,10 +3,12 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/highlight"
 	"github.com/blsmth/agentctl/internal/textutil"
@@ -52,6 +54,7 @@ type dispatchPreviewOpts struct {
 	contentWidth int
 	maxVPHeight  int
 	kind         string
+	now          func() time.Time
 }
 
 // DispatchPreviewOption configures optional sizing inputs to NewDispatchPreview
@@ -97,11 +100,22 @@ func WithKind(kind string) DispatchPreviewOption {
 	}
 }
 
+// WithClock injects the time source used for the click arming delay. Nil is
+// ignored. Intended for tests.
+func WithClock(now func() time.Time) DispatchPreviewOption {
+	return func(o *dispatchPreviewOpts) {
+		if now != nil {
+			o.now = now
+		}
+	}
+}
+
 func resolveDispatchPreviewOpts(opts []DispatchPreviewOption) dispatchPreviewOpts {
 	o := dispatchPreviewOpts{
 		contentWidth: dispatchPreviewContentWidth,
 		maxVPHeight:  dpMaxVPHeight,
 		kind:         PreviewKindDispatch,
+		now:          time.Now,
 	}
 	for _, opt := range opts {
 		opt(&o)
@@ -210,6 +224,36 @@ type DispatchPreviewModel struct {
 	// kind selects the popup layout -- PreviewKindDispatch (default, zero
 	// value) or PreviewKindBash. See WithKind.
 	kind string
+
+	// now is the clock for the click arming delay (nil = time.Now);
+	// openedAt is when the popup was created; pressed is the target of the
+	// last left-button press (dpTargetNone when none).
+	now      func() time.Time
+	openedAt time.Time
+	pressed  dpTarget
+}
+
+// dpClickArmDelay is how long after opening the popup ignores mouse clicks.
+// The popup steals focus from whatever the user was doing, so a click meant
+// for the pane underneath must not approve or deny.
+const dpClickArmDelay = 400 * time.Millisecond
+
+// dpTarget identifies a clickable region of the popup.
+type dpTarget int
+
+const (
+	dpTargetNone dpTarget = iota
+	dpTargetAllow
+	dpTargetDeny
+	dpTargetToggle
+	dpTargetRaw
+)
+
+// dpHintSeg is one hint-bar segment: its styled text and the target a click
+// on it triggers (dpTargetNone = not clickable).
+type dpHintSeg struct {
+	text   string
+	target dpTarget
 }
 
 // isBash reports whether this model is previewing a plain Bash command
@@ -309,6 +353,8 @@ func NewDispatchPreview(agentName, targetAgent string, issue int, prompt, prompt
 		rawContent:      rawContent,
 		renderedContent: renderedContent,
 		kind:            o.kind,
+		now:             o.now,
+		openedAt:        o.now(),
 	}
 }
 
@@ -404,6 +450,34 @@ func (m DispatchPreviewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.PageDown()
 			}
 		}
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			m.pressed = m.targetAt(msg.X, msg.Y)
+		} else {
+			m.pressed = dpTargetNone
+		}
+	case tea.MouseReleaseMsg:
+		pressed := m.pressed
+		m.pressed = dpTargetNone
+		if msg.Button != tea.MouseLeft || pressed == dpTargetNone || !m.clickArmed() {
+			return m, nil
+		}
+		if m.targetAt(msg.X, msg.Y) != pressed {
+			return m, nil
+		}
+		switch pressed {
+		case dpTargetAllow:
+			m.decision = "allow"
+			return m, tea.Quit
+		case dpTargetDeny:
+			m.decision = "deny"
+			return m, tea.Quit
+		case dpTargetToggle:
+			m.expanded = !m.expanded
+		case dpTargetRaw:
+			m.rawMode = !m.rawMode
+			m.viewport.SetContent(m.currentViewportContent())
+		}
 	case tea.MouseWheelMsg:
 		if m.expanded {
 			switch msg.Button {
@@ -426,12 +500,45 @@ func (m DispatchPreviewModel) currentViewportContent() string {
 	return m.renderedContent
 }
 
-func (m DispatchPreviewModel) View() tea.View {
+// renderBox renders the bordered box (everything except the hint bar).
+func (m DispatchPreviewModel) renderBox() string {
 	var b strings.Builder
+	b.WriteString(m.preToggle())
+	b.WriteString(m.toggleText())
 
-	// Width is applied per-render (not baked into the package-level styles)
-	// because it now varies per model instance -- see contentWidth's doc
-	// comment.
+	// Expanded viewport. No trailing newline after either the toggle or the
+	// viewport: a stray one adds a blank row inside the box that PopupSize
+	// does not budget for.
+	if m.expanded {
+		b.WriteString("\n\n")
+		b.WriteString(m.viewport.View())
+	}
+	return dpBoxStyle.Width(m.effectiveContentWidth() + 6).Render(b.String())
+}
+
+func (m DispatchPreviewModel) View() tea.View {
+	width := m.effectiveContentWidth()
+	rendered := m.renderBox()
+
+	hint := m.hintLine()
+
+	var out strings.Builder
+	out.WriteString(rendered)
+	out.WriteString("\n")
+	out.WriteString(dpHintStyle.Width(width).Render(hint))
+
+	v := tea.NewView(out.String())
+	// Alt screen so a view taller than the popup can never make the inline
+	// renderer scroll and redraw (flicker).
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+// preToggle renders everything above the toggle line (title, blank, metadata,
+// blank), ending in a newline.
+func (m DispatchPreviewModel) preToggle() string {
+	var b strings.Builder
 	width := m.effectiveContentWidth()
 
 	// Title bar — "{agentName} wants to dispatch {targetAgent}" for a
@@ -450,8 +557,11 @@ func (m DispatchPreviewModel) View() tea.View {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
+	return b.String()
+}
 
-	// Toggle line, with a dim line-count suffix.
+// toggleText renders the toggle line, with a dim line-count suffix.
+func (m DispatchPreviewModel) toggleText() string {
 	toggleIcon := "▶"
 	if m.expanded {
 		toggleIcon = "▼"
@@ -461,34 +571,57 @@ func (m DispatchPreviewModel) View() tea.View {
 		toggleLabel = "View command"
 	}
 	lineCount := strings.Count(m.rawContent, "\n") + 1
-	b.WriteString(dpToggleStyle.Render(toggleIcon + " " + toggleLabel))
-	b.WriteString(" ")
-	b.WriteString(dpDimStyle.Render(fmt.Sprintf("(%d lines)", lineCount)))
+	return dpToggleStyle.Render(toggleIcon+" "+toggleLabel) + " " +
+		dpDimStyle.Render(fmt.Sprintf("(%d lines)", lineCount))
+}
 
-	// Expanded viewport. No trailing newline after either the toggle or the
-	// viewport: a stray one adds a blank row inside the box that PopupSize
-	// does not budget for.
-	if m.expanded {
-		b.WriteString("\n\n")
-		b.WriteString(m.viewport.View())
+// clickArmed reports whether the arming delay since opening has elapsed.
+func (m DispatchPreviewModel) clickArmed() bool {
+	if m.openedAt.IsZero() {
+		return true
+	}
+	now := time.Now
+	if m.now != nil {
+		now = m.now
+	}
+	return now().Sub(m.openedAt) >= dpClickArmDelay
+}
+
+// targetAt maps a cell coordinate (relative to the popup) to a click target.
+// Regions are derived by measuring the same strings View() renders.
+func (m DispatchPreviewModel) targetAt(x, y int) dpTarget {
+	// Toggle line inside the box.
+	toggleY := dpBoxStyle.GetBorderTopSize() + dpBoxStyle.GetPaddingTop() +
+		strings.Count(m.preToggle(), "\n")
+	if y == toggleY {
+		left := dpBoxStyle.GetBorderLeftSize() + dpBoxStyle.GetPaddingLeft()
+		if x >= left && x < left+lipgloss.Width(m.toggleText()) {
+			return dpTargetToggle
+		}
+		return dpTargetNone
 	}
 
-	// Render the box, then place the hint bar below it (outside the border).
-	rendered := dpBoxStyle.Width(width + 6).Render(b.String())
-
-	hint := m.hintLine()
-
-	var out strings.Builder
-	out.WriteString(rendered)
-	out.WriteString("\n")
-	out.WriteString(dpHintStyle.Width(width).Render(hint))
-
-	v := tea.NewView(out.String())
-	// Alt screen so a view taller than the popup can never make the inline
-	// renderer scroll and redraw (flicker).
-	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
-	return v
+	// Hint bar below the box.
+	box := m.renderBox()
+	if y != lipgloss.Height(box) {
+		return dpTargetNone
+	}
+	hint := dpHintStyle.Width(m.effectiveContentWidth()).Render(m.hintLine())
+	stripped := ansi.Strip(hint)
+	lead := len(stripped) - len(strings.TrimLeft(stripped, " "))
+	cx := lead
+	sep := lipgloss.Width(hintSeparator())
+	for i, seg := range m.hintSegments() {
+		if i > 0 {
+			cx += sep
+		}
+		w := lipgloss.Width(seg.text)
+		if x >= cx && x < cx+w {
+			return seg.target
+		}
+		cx += w
+	}
+	return dpTargetNone
 }
 
 // metadataLines returns the aligned label/value rows shown above the toggle
@@ -527,26 +660,40 @@ func (m DispatchPreviewModel) metadataLines() []string {
 	return lines
 }
 
-// hintLine builds the popup's hint bar, with semantic colors on the allow/deny
-// keys. The raw/rendered toggle hint is only surfaced when the viewport is
-// expanded — it's meaningless while collapsed.
-func (m DispatchPreviewModel) hintLine() string {
-	hintParts := []string{"y", "allow", "n", "deny", "v", "toggle prompt"}
-	keyStyles := []lipgloss.Style{dpKeyAllowStyle, dpKeyDenyStyle, menuHintKeyStyle}
-
+// hintSegments builds the popup's hint bar segments, with semantic colors on
+// the allow/deny keys. The raw/rendered toggle hint is only surfaced when the
+// viewport is expanded — it's meaningless while collapsed.
+func (m DispatchPreviewModel) hintSegments() []dpHintSeg {
+	seg := func(ks lipgloss.Style, key, label string, t dpTarget) dpHintSeg {
+		return dpHintSeg{text: ks.Render(key) + " " + menuHintLabelStyle.Render(label), target: t}
+	}
+	segs := []dpHintSeg{
+		seg(dpKeyAllowStyle, "y", "allow", dpTargetAllow),
+		seg(dpKeyDenyStyle, "n", "deny", dpTargetDeny),
+		seg(menuHintKeyStyle, "v", "toggle prompt", dpTargetToggle),
+	}
 	if m.expanded {
-		hintParts = append(hintParts, "↕", "scroll")
-		keyStyles = append(keyStyles, menuHintKeyStyle)
-
+		segs = append(segs, seg(menuHintKeyStyle, "↕", "scroll", dpTargetNone))
 		rawLabel := "raw"
 		if m.rawMode {
 			rawLabel = "rendered"
 		}
-		hintParts = append(hintParts, "r", rawLabel)
-		keyStyles = append(keyStyles, menuHintKeyStyle)
+		segs = append(segs, seg(menuHintKeyStyle, "r", rawLabel, dpTargetRaw))
 	}
+	return segs
+}
 
-	return renderHintLineStyled(keyStyles, hintParts...)
+func hintSeparator() string {
+	return "  " + menuHintDotStyle.Render("·") + "  "
+}
+
+// hintLine joins the hint segments into the hint bar text.
+func (m DispatchPreviewModel) hintLine() string {
+	var parts []string
+	for _, s := range m.hintSegments() {
+		parts = append(parts, s.text)
+	}
+	return strings.Join(parts, hintSeparator())
 }
 
 // summaryLine returns the value shown in the metadata block's third row
