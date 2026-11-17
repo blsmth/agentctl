@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
-	"testing"
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/detach"
@@ -28,12 +27,7 @@ const (
 var (
 	stateDir = func() (string, error) { return config.StateDir() }
 	enabled  = func() bool { return config.Load().EffectiveMetricsConfig().Enabled }
-	spawn    = func() error {
-		if testing.Testing() {
-			return nil // never re-exec a test binary
-		}
-		return detach.StartSelf([]string{"metrics", "serve"}, nil)
-	}
+	spawn    = func() error { return detach.StartSelf([]string{"metrics", "serve"}, nil) }
 )
 
 // SetSeamsForTest overrides the seams and returns a restore func.
