@@ -222,7 +222,13 @@ func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, po
 		if err != nil {
 			var exitErr *exec.ExitError
 			if errors.As(err, &exitErr) {
-				if code := exitErr.ExitCode(); code != 0 && code != 1 {
+				switch code := exitErr.ExitCode(); code {
+				case 1:
+					// The popup ran and exited 1 but recorded nothing (a
+					// startup error); retrying would loop on a broken popup.
+					logging.Log("%s: popup exited 1 without a verdict after %s, denying", logPrefix, elapsed)
+					return false, true, ""
+				default:
 					logging.Log("%s: popup outcome=other exit code=%d after %s, passing through", logPrefix, code, elapsed)
 					return false, false, ""
 				}

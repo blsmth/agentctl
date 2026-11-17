@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"context"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -177,4 +178,19 @@ func TestSlowNotifyDoesNotDelayPopup(t *testing.T) {
 		t.Fatal("popup delayed by blocked Notify")
 	}
 	<-ran
+}
+
+// Exit 1 with no result file means the popup ran and failed; it must deny
+// immediately rather than be retried like a collision.
+func TestPopupExitOneWithoutResultDeniesWithoutRetry(t *testing.T) {
+	stubPopupSeams(t, 5*time.Second)
+	calls := 0
+	dispatchPopupRunner = func(context.Context, string, int, int, string) error {
+		calls++
+		return exec.Command("sh", "-c", "exit 1").Run()
+	}
+	approved, decided, reason := runTestPopup(t)
+	if approved || !decided || reason != "" || calls != 1 {
+		t.Fatalf("approved=%v decided=%v reason=%q calls=%d", approved, decided, reason, calls)
+	}
 }
