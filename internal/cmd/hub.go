@@ -30,11 +30,15 @@ func RunHubView() {
 	for {
 		final, err := tea.NewProgram(model).Run()
 		if err != nil {
+			hubClearZoom()
 			fmt.Fprintf(os.Stderr, "hub-view error: %v\n", err)
 			os.Exit(1)
 		}
 		hm, ok := final.(tui.HerdModel)
 		if !ok || !hm.Reexec() {
+			// The hub is gone: give every window it zoomed its chrome bar
+			// back. A hot reload keeps the zoom; the new image re-syncs it.
+			hubClearZoom()
 			return
 		}
 		// Hot reload: exec only after Run returned so the terminal is
@@ -49,6 +53,9 @@ func RunHubView() {
 
 // hubExec is the exec seam for tests.
 var hubExec = selfexec.ReexecEnv
+
+// hubClearZoom undoes the hub's chrome-hiding zooms; a seam for tests.
+var hubClearZoom = tmux.ClearHubZoom
 
 // reexecHub replaces the process with the new binary, carrying the selection
 // in the environment. It returns only when exec did not happen, i.e. the

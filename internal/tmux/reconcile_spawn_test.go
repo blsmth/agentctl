@@ -88,6 +88,7 @@ func TestSessionHookArgs(t *testing.T) {
 	}{
 		{"resized", chromeSizeHookArgs("s", "client-resized", "/bin/agentctl", "/p/.agentctl"), "client-resized", "enforce-chrome"},
 		{"attached", chromeSizeHookArgs("s", "client-attached", "/bin/agentctl", "/p/.agentctl"), "client-attached", "enforce-chrome"},
+		{"session-changed", chromeSizeHookArgs("s", "client-session-changed", "/bin/agentctl", "/p/.agentctl"), "client-session-changed", "enforce-chrome"},
 		{"unlinked", reconcileHookArgs("s", "/bin/agentctl", "/p/.agentctl"), "window-unlinked", "reconcile"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

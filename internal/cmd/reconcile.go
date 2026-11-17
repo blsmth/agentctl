@@ -30,8 +30,13 @@ func RunReconcile(housekeeping bool) {
 }
 
 // RunEnforceChrome is the body of the hidden `agentctl enforce-chrome`, run by
-// the client-resized and client-attached session hooks.
-func RunEnforceChrome() { tmux.EnforceAllChromeSizes() }
+// the client-resized, client-attached and client-session-changed session
+// hooks. It first undoes hub zooms (chrome hidden in the hub) on windows the
+// hub no longer views, then re-pins chrome pane sizes.
+func RunEnforceChrome() {
+	tmux.SweepHubZoom()
+	tmux.EnforceAllChromeSizes()
+}
 
 // RunApplyConfig is the body of `agentctl apply-config`.
 func RunApplyConfig() error {

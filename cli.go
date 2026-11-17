@@ -872,7 +872,8 @@ type ReconcileCmd struct {
 
 func (c *ReconcileCmd) Run() error { cmd.RunReconcile(c.Housekeeping); return nil }
 
-// EnforceChromeCmd is run by the client-resized and client-attached tmux hooks.
+// EnforceChromeCmd is run by the client-resized, client-attached and
+// client-session-changed tmux hooks.
 type EnforceChromeCmd struct{}
 
 func (c *EnforceChromeCmd) Run() error { cmd.RunEnforceChrome(); return nil }
