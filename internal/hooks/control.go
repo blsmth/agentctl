@@ -59,14 +59,26 @@ func CheckDone() {
 	// need a second windowstate.Read.
 	windowID := resolveHookWindowID()
 	var ws windowstate.WindowState
+	activeSubagents := 0
 	if windowID != "" {
 		if err := winname.Update(windowID, func(w *windowstate.WindowState) {
-			w.State = "idle"
+			// Background subagents keep the turn's work going: the parent's
+			// Stop fires while they run, so stay working until the next Stop.
+			activeSubagents = w.ActiveSubagentCount(time.Now())
+			if activeSubagents > 0 {
+				w.State = "working"
+			} else {
+				w.State = "idle"
+			}
 			w.LastText = textutil.Truncate(input.LastAssistantMessage, maxLastTextRunes, "")
 			w.TurnCount++
 			ws = *w
 		}); err != nil {
 			logUpdateErr("hook-check-done", err)
+		}
+		if activeSubagents > 0 {
+			logging.Log("hook-check-done: %d subagents still running, keeping state=working window=%s", activeSubagents, windowID)
+			return
 		}
 		logging.Log("hook-check-done: set state=idle window=%s", windowID)
 	}
@@ -101,7 +113,7 @@ func CheckDone() {
 	// The same transaction claims dispatch completion (CompleteFiredAt) so
 	// that exactly one racing Stop hook spawns the detached completion
 	// process. The hook itself never touches gh or git.
-	if shouldMarkDone(ws.Mode, input.StopHookActive, blockReason) && windowID != "" {
+	if shouldMarkDone(ws.Mode, input.StopHookActive, blockReason, activeSubagents) && windowID != "" {
 		var claimed bool
 		now := time.Now()
 		_, _, err := winname.Transact(windowID, func(w *windowstate.WindowState) {
@@ -124,7 +136,7 @@ func CheckDone() {
 	// otherwise), but shouldEmitDone still takes them as explicit
 	// parameters so every branch stays table-driven testable without
 	// re-deriving them.
-	if shouldEmitDone(ws.SpawnedBy, ws.Mode, input.StopHookActive, blockReason) {
+	if shouldEmitDone(ws.SpawnedBy, ws.Mode, input.StopHookActive, blockReason, activeSubagents) {
 		emitDoneMessage(windowID, ws, agentName)
 	}
 
@@ -189,7 +201,11 @@ func spawnComplete(windowID string, claimedAt time.Time) {
 // deliberately does NOT require SpawnedBy -- a dispatched window with no
 // parent (e.g. launched with nobody tracking it) still deserves the ✓
 // done-unseen badge and still needs HandleComplete to fire.
-func shouldMarkDone(mode string, stopHookActive bool, blockReason string) bool {
+func shouldMarkDone(mode string, stopHookActive bool, blockReason string, activeSubagents int) bool {
+	if activeSubagents > 0 {
+		// Subagents still running: the turn ended but the work did not.
+		return false
+	}
 	if stopHookActive {
 		// A blocked-stop retry, not a genuine completion.
 		return false
@@ -206,8 +222,8 @@ func shouldMarkDone(mode string, stopHookActive bool, blockReason string) bool {
 // hooks/tmux/filesystem dependency, so every branch is independently
 // testable without invoking CheckDone (which can os.Exit(2)). It is exactly
 // shouldMarkDone plus the additional requirement of a parent to report to.
-func shouldEmitDone(spawnedBy, mode string, stopHookActive bool, blockReason string) bool {
-	return shouldMarkDone(mode, stopHookActive, blockReason) && spawnedBy != ""
+func shouldEmitDone(spawnedBy, mode string, stopHookActive bool, blockReason string, activeSubagents int) bool {
+	return shouldMarkDone(mode, stopHookActive, blockReason, activeSubagents) && spawnedBy != ""
 }
 
 // emitDoneMessage enqueues a short, factual "done" notice addressed to
@@ -443,6 +459,7 @@ func Notify() {
 	// resetting on every invocation.
 	prevState := ""
 	updateErr := error(nil)
+	subagentsActive := false
 	if windowID != "" {
 		var newState string
 		switch input.NotificationType {
@@ -454,6 +471,13 @@ func Notify() {
 		if newState != "" {
 			updateErr = winname.Update(windowID, func(w *windowstate.WindowState) {
 				prevState = w.State
+				ws = *w
+				if input.NotificationType == "idle_prompt" && w.ActiveSubagentCount(time.Now()) > 0 {
+					// The parent sits at the prompt while background
+					// subagents run; that is not idle.
+					subagentsActive = true
+					return
+				}
 				w.State = newState
 				switch input.NotificationType {
 				case "permission_prompt":
@@ -467,10 +491,16 @@ func Notify() {
 			})
 			if updateErr != nil {
 				logUpdateErr("hook-notify", updateErr)
+			} else if subagentsActive {
+				logging.Log("hook-notify: idle_prompt with subagents running, keeping state=%s window=%s", prevState, windowID)
 			} else {
 				logging.Log("hook-notify: set state=%s window=%s agent=%s", newState, windowID, agentName)
 			}
 		}
+	}
+
+	if subagentsActive {
+		return
 	}
 
 	// Auto-emit a "blocked" message to whoever dispatched this window (see

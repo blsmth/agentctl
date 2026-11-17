@@ -2,13 +2,14 @@ package hooks
 
 import (
 	"os"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // SubagentStart is called by Claude Code's SubagentStart hook (matcher: *).
-// Increments @agentctl_subagent_count so the status bar can show "[+N sub]".
+// Records the subagent by ID so CheckDone can tell the window is still working.
 func SubagentStart() {
 	if !guardAgentctl() {
 		return
@@ -29,7 +30,7 @@ func SubagentStart() {
 	// Increment subagent count atomically via windowstate.Update (flock-protected).
 	var count int
 	if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
-		ws.SubagentCount++
+		ws.StartSubagent(input.AgentID, time.Now())
 		count = ws.SubagentCount
 	}); err != nil {
 		logUpdateErr("hook-subagent-start", err)
@@ -40,7 +41,8 @@ func SubagentStart() {
 }
 
 // SubagentStop is called by Claude Code's SubagentStop hook.
-// Decrements @agentctl_subagent_count when a subagent finishes.
+// Removes the subagent by ID. State is left alone: the parent's next Stop,
+// after Claude Code delivers the result, is what marks the window idle/done.
 func SubagentStop() {
 	if !guardAgentctl() {
 		return
@@ -62,9 +64,7 @@ func SubagentStop() {
 	// Decrement subagent count atomically via windowstate.Update (flock-protected, floor at 0).
 	var count int
 	if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
-		if ws.SubagentCount > 0 {
-			ws.SubagentCount--
-		}
+		ws.StopSubagent(input.AgentID, time.Now())
 		count = ws.SubagentCount
 	}); err != nil {
 		logUpdateErr("hook-subagent-stop", err)

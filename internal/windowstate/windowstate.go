@@ -62,6 +62,10 @@ type WindowState struct {
 	// per window at dispatch. Only then is the name shown to other agents.
 	SessionNameVerified bool `json:"session_name_verified,omitempty"`
 	SubagentCount       int  `json:"subagent_count,omitempty"`
+	// ActiveSubagents holds running subagents keyed on agent_id (value = start
+	// time). SubagentCount mirrors its length. Read it through
+	// ActiveSubagentCount, which ignores stale entries.
+	ActiveSubagents map[string]time.Time `json:"active_subagents,omitempty"`
 
 	// Branch and WorktreeDir record the dispatch worktree linkage: which git
 	// branch this window is working on, and (only when a worktree was
@@ -259,6 +263,13 @@ func (ws WindowState) clone() WindowState {
 			m[k] = v
 		}
 		ws.extra = m
+	}
+	if ws.ActiveSubagents != nil {
+		m := make(map[string]time.Time, len(ws.ActiveSubagents))
+		for k, v := range ws.ActiveSubagents {
+			m[k] = v
+		}
+		ws.ActiveSubagents = m
 	}
 	return ws
 }

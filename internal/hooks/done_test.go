@@ -15,6 +15,7 @@ package hooks
 
 import (
 	"testing"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
@@ -30,8 +31,16 @@ func TestShouldMarkDone(t *testing.T) {
 		stopHookActive bool
 		blockReason    string
 		autonomous     bool
+		subagents      int
 		want           bool
 	}{
+		{
+			name:       "active subagents -> false",
+			mode:       "dispatch",
+			autonomous: true,
+			subagents:  2,
+			want:       false,
+		},
 		{
 			name:       "autonomous + clean -> true",
 			mode:       "dispatch",
@@ -79,7 +88,7 @@ func TestShouldMarkDone(t *testing.T) {
 			})
 			t.Cleanup(func() { SetAutonomousModeFn(func(string) bool { return false }) })
 
-			got := shouldMarkDone(tt.mode, tt.stopHookActive, tt.blockReason)
+			got := shouldMarkDone(tt.mode, tt.stopHookActive, tt.blockReason, tt.subagents)
 			if got != tt.want {
 				t.Errorf("shouldMarkDone(%q, %v, %q) = %v, want %v",
 					tt.mode, tt.stopHookActive, tt.blockReason, got, tt.want)
@@ -97,7 +106,7 @@ func TestShouldMarkDone_DoesNotRequireSpawnedBy(t *testing.T) {
 	SetAutonomousModeFn(func(string) bool { return true })
 	t.Cleanup(func() { SetAutonomousModeFn(func(string) bool { return false }) })
 
-	if !shouldMarkDone("dispatch", false, "") {
+	if !shouldMarkDone("dispatch", false, "", 0) {
 		t.Fatal("expected shouldMarkDone to return true with no notion of a spawning parent")
 	}
 }
@@ -225,5 +234,57 @@ func TestUserPrompt_ClearsDone(t *testing.T) {
 	}
 	if ws.State != "working" {
 		t.Errorf("windowstate.State = %q, want working", ws.State)
+	}
+}
+
+// TestCheckDone_ActiveSubagentsKeepWorking proves a Stop that fires while a
+// background subagent runs leaves the window working and not done, and that
+// the next Stop with an empty set goes idle and done.
+func TestCheckDone_ActiveSubagentsKeepWorking(t *testing.T) {
+	setupWindowstate(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+
+	SetAutonomousModeFn(func(mode string) bool { return mode == "dispatch" })
+	t.Cleanup(func() { SetAutonomousModeFn(func(string) bool { return false }) })
+	d := stubDeps(t)
+	SetDepsForTest(d)
+	t.Cleanup(func() { SetDepsForTest(DefaultDeps()) })
+
+	const windowID = "@72"
+	if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
+		ws.Mode = "dispatch"
+		ws.StartSubagent("agent-1", time.Now())
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	t.Setenv("AGENTCTL", "1")
+	t.Setenv("AGENTCTL_WINDOW_ID", windowID)
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("AGENTCTL_SESSION_ID", "")
+	t.Setenv("AGENTCTL_AGENT_NAME", "go-engineer")
+
+	stdin := `{"stop_hook_active":false,"last_assistant_message":"waiting"}`
+	runHookCaptured(t, nil, stdin, CheckDone)
+	ws, err := windowstate.Read(windowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.State != "working" || ws.Done {
+		t.Errorf("with subagent: state=%q done=%v, want working/false", ws.State, ws.Done)
+	}
+
+	if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
+		ws.StopSubagent("agent-1", time.Now())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runHookCaptured(t, nil, stdin, CheckDone)
+	ws, _ = windowstate.Read(windowID)
+	if ws.State != "idle" || !ws.Done {
+		t.Errorf("without subagent: state=%q done=%v, want idle/true", ws.State, ws.Done)
 	}
 }

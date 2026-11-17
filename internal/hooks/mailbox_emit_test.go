@@ -36,6 +36,7 @@ func TestShouldEmitDone(t *testing.T) {
 		stopHookActive bool
 		blockReason    string
 		autonomous     bool
+		subagents      int
 		want           bool
 	}{
 		{
@@ -69,6 +70,14 @@ func TestShouldEmitDone(t *testing.T) {
 			want:        false,
 		},
 		{
+			name:       "active subagents -> no emit",
+			spawnedBy:  "@36",
+			mode:       "dispatch",
+			autonomous: true,
+			subagents:  1,
+			want:       false,
+		},
+		{
 			name:       "interactive/non-autonomous mode -> no emit",
 			spawnedBy:  "@36",
 			mode:       "discuss",
@@ -87,7 +96,7 @@ func TestShouldEmitDone(t *testing.T) {
 			})
 			t.Cleanup(func() { SetAutonomousModeFn(func(string) bool { return false }) })
 
-			got := shouldEmitDone(tt.spawnedBy, tt.mode, tt.stopHookActive, tt.blockReason)
+			got := shouldEmitDone(tt.spawnedBy, tt.mode, tt.stopHookActive, tt.blockReason, tt.subagents)
 			if got != tt.want {
 				t.Errorf("shouldEmitDone(%q, %q, %v, %q) = %v, want %v",
 					tt.spawnedBy, tt.mode, tt.stopHookActive, tt.blockReason, got, tt.want)
@@ -108,7 +117,7 @@ func TestShouldEmitDone_EmptySpawnedByReturnsFalse(t *testing.T) {
 	})
 	t.Cleanup(func() { SetAutonomousModeFn(func(string) bool { return false }) })
 
-	if shouldEmitDone("", "dispatch", false, "") {
+	if shouldEmitDone("", "dispatch", false, "", 0) {
 		t.Fatal("expected false when spawnedBy is empty")
 	}
 }
