@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strconv"
 
+	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/shellquote"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
@@ -55,10 +56,7 @@ func RunCmdCtl(async bool, rest []string) {
 
 	// Resolve the agentctl binary — prefer the running executable so dev builds
 	// and installed builds both invoke the right version.
-	exe, err := os.Executable()
-	if err != nil || exe == "" {
-		exe = "agentctl"
-	}
+	exe := selfpath.SpawnableOrFallback()
 
 	// Build the shell command that the popup will run: `agentctl <subcmd> [extra...]`
 	popupCmd := ctlPopupCmd(exe, entry.subcmd, extraArgs)

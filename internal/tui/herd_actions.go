@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
@@ -119,7 +120,7 @@ type herdClosedMsg struct {
 // the TUI never blocks and the hub's own process state cannot leak in.
 func herdLaunchCmd(g herd.Group) tea.Cmd {
 	return func() tea.Msg {
-		exe, err := os.Executable()
+		exe, err := selfpath.Spawnable()
 		if err != nil {
 			return herdLaunchedMsg{session: g.Session, err: fmt.Errorf("locating agentctl: %w", err)}
 		}

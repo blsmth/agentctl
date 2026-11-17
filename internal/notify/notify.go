@@ -9,14 +9,25 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/shellquote"
 )
+
+// desktopNotifierRe matches a command word that is alerter or notify-send
+// (optionally path-qualified) anywhere in a shell command line.
+var desktopNotifierRe = regexp.MustCompile("(?:^|[\\s;&|(`/])(?:alerter|notify-send)(?:$|[\\s;&|)`])")
+
+// invokesDesktopNotifier reports whether cmd runs alerter or notify-send.
+func invokesDesktopNotifier(cmd string) bool {
+	return desktopNotifierRe.MatchString(cmd)
+}
 
 // DefaultCmd returns the platform-appropriate default notification command.
 // On macOS it uses alerter, and on Linux notify-send, each only when that
@@ -57,6 +68,11 @@ func NotifyWithOptions(opts Options) {
 	cfg := config.Load()
 	notifyCmd, set := cfg.EffectiveNotifyCmd()
 	if !set {
+		if testing.Testing() {
+			// A test must never fall back to the developer's real
+			// desktop notifier.
+			return
+		}
 		notifyCmd = DefaultCmd()
 	}
 	if notifyCmd == "" {
@@ -71,6 +87,11 @@ func NotifyWithOptions(opts Options) {
 	typeVal := opts.Env["AGENTCTL_NOTIFICATION_TYPE"]
 
 	cmdStr := expandNotifyCmd(notifyCmd, opts.Title, opts.Subtitle, opts.Message, agentVal, typeVal)
+
+	if testing.Testing() && invokesDesktopNotifier(cmdStr) {
+		logging.Log("notify: refusing to run desktop notifier from a test binary: %q", cmdStr)
+		return
+	}
 
 	// Build process environment: inherit OS env then overlay the provided map.
 	procEnv := os.Environ()

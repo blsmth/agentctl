@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"testing"
 )
 
 // Fallback is returned by Path when the running executable cannot be
@@ -38,7 +39,7 @@ func Resolve(lookup func() (string, error)) (string, error) {
 // Path returns the resolved path of the running binary, or Fallback if it
 // cannot be determined.
 func Path() string {
-	exe, err := Resolve(os.Executable)
+	exe, err := Resolve(Lookup)
 	if err != nil {
 		return Fallback
 	}
@@ -140,4 +141,35 @@ func Quote(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// ErrTestBinary is returned by Spawnable when the running binary is a Go test
+// binary. Re-executing a test binary reruns the whole suite (it ignores
+// positional args), so a test that spawned "itself" forks without bound.
+var ErrTestBinary = errors.New("refusing to spawn the running binary from a test binary")
+
+// Lookup is the raw executable lookup (os.Executable). It exists so that
+// callers that must hand a lookup function to Resolve or Persisted do not call
+// os.Executable themselves; a source-scan test forbids that outside this
+// package. Never exec the result without going through Spawnable.
+func Lookup() (string, error) { return os.Executable() }
+
+// Spawnable returns the resolved path of the running binary for callers that
+// exec or spawn it (directly, or via tmux run-shell, popups and keybindings).
+// It returns ErrTestBinary under `go test`.
+func Spawnable() (string, error) {
+	if testing.Testing() {
+		return "", ErrTestBinary
+	}
+	return Resolve(Lookup)
+}
+
+// SpawnableOrFallback is Spawnable with a non-failing result: Fallback ("agentctl",
+// resolved through PATH) when the binary cannot be located or is a test binary.
+func SpawnableOrFallback() string {
+	exe, err := Spawnable()
+	if err != nil {
+		return Fallback
+	}
+	return exe
 }

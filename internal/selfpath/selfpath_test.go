@@ -131,3 +131,16 @@ func TestQuote(t *testing.T) {
 		}
 	}
 }
+
+func TestSpawnable_ErrorsUnderTest(t *testing.T) {
+	exe, err := Spawnable()
+	if !errors.Is(err, ErrTestBinary) {
+		t.Fatalf("Spawnable() = %q, %v; want ErrTestBinary", exe, err)
+	}
+	if exe != "" {
+		t.Errorf("Spawnable() path = %q, want empty", exe)
+	}
+	if got := SpawnableOrFallback(); got != Fallback {
+		t.Errorf("SpawnableOrFallback() = %q, want %q", got, Fallback)
+	}
+}

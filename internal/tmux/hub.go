@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/selfpath"
 )
 
 // HubSessionName is the fixed tmux session name for the herd hub. Unlike
@@ -368,10 +369,7 @@ func StartHubSession() error {
 		return err
 	}
 
-	exe, _ := os.Executable()
-	if exe == "" {
-		exe = "agentctl"
-	}
+	exe := selfpath.SpawnableOrFallback()
 
 	args := hubNewSessionArgs(dir, exe)
 	cmd := exec.Command("tmux", args...)

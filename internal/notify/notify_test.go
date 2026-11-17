@@ -174,3 +174,64 @@ func TestExpandNotifyCmd_SinglePass(t *testing.T) {
 		})
 	}
 }
+
+// fakeNotifiers puts fake alerter and notify-send on PATH that touch a marker
+// file, and returns the marker path.
+func fakeNotifiers(t *testing.T) string {
+	t.Helper()
+	binDir := t.TempDir()
+	marker := filepath.Join(binDir, "ran")
+	script := "#!/bin/sh\ntouch " + marker + "\n"
+	for _, name := range []string{"alerter", "notify-send"} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return marker
+}
+
+func TestNotifyWithOptions_NeverRunsDesktopNotifierUnderTest(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  *string // nil = notify_cmd unset
+	}{
+		{"unset falls back to nothing", nil},
+		{"explicit alerter", config.StringPtr("alerter --title {{title}} --message {{message}}")},
+		{"explicit notify-send", config.StringPtr("notify-send {{title}} {{message}}")},
+		{"pathed alerter", config.StringPtr("/usr/local/bin/alerter --message {{message}}")},
+		{"chained", config.StringPtr("true && alerter --message {{message}}")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			marker := fakeNotifiers(t)
+			cfgPath := filepath.Join(t.TempDir(), "config.json")
+			config.SetGlobalConfigPathForTest(cfgPath)
+			config.SetConfigPathForTest(cfgPath)
+			t.Cleanup(func() { config.SetGlobalConfigPathForTest(""); config.SetConfigPathForTest("") })
+			if err := config.Save(&config.Config{NotifyCmd: tt.cmd, Agents: map[string]config.AgentConfig{}}); err != nil {
+				t.Fatalf("config.Save: %v", err)
+			}
+			NotifyWithOptions(Options{Title: "t", Message: "m"})
+			if _, err := os.Stat(marker); err == nil {
+				t.Fatal("desktop notifier ran under test")
+			}
+		})
+	}
+}
+
+func TestInvokesDesktopNotifier(t *testing.T) {
+	tests := map[string]bool{
+		"alerter --x":                       true,
+		"notify-send a b":                   true,
+		"/opt/bin/alerter":                  true,
+		"printf x > /tmp/f":                 false,
+		"printf '%s' alerter-like > /tmp/f": false,
+		"echo hi; notify-send hi":           true,
+	}
+	for cmd, want := range tests {
+		if got := invokesDesktopNotifier(cmd); got != want {
+			t.Errorf("invokesDesktopNotifier(%q) = %v, want %v", cmd, got, want)
+		}
+	}
+}

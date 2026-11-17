@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"testing"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
@@ -17,6 +18,7 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/pidfile"
+	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/shellquote"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/theme"
@@ -133,10 +135,7 @@ func StartSession(defaultAgent string) error {
 	done()
 
 	// Create persistent tickets window at index 1.
-	exe, _ := os.Executable()
-	if exe == "" {
-		exe = "agentctl"
-	}
+	exe := selfpath.SpawnableOrFallback()
 	ticketsCmd := exec.Command("tmux", "new-window",
 		"-t", SessionName+":",
 		"-n", "tickets",
@@ -471,10 +470,7 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 	// tmux may resolve "agentctl" as a window reference (especially inside
 	// display-popup) and fail with "index N in use".
 	// Resolve agentctl binary path for shell-prefix and hooks.
-	agentctlBin, _ := os.Executable()
-	if agentctlBin == "" {
-		agentctlBin = "agentctl"
-	}
+	agentctlBin := selfpath.SpawnableOrFallback()
 
 	// shell-prefix.sh is written to the runtime dir by EnsureShellPrefixScript
 	// (called at monitor start, init, and dispatch). Setting CLAUDE_CODE_SHELL_PREFIX
@@ -1443,6 +1439,9 @@ func agentctlKeybindings(exe string) []keyBinding {
 // the binary path is quoted, and tmux format-expands that command first, so it
 // is format-escaped too. (run-shell's -c is not format-expanded.)
 func StartMonitor(exe, projectRoot string) error {
+	if testing.Testing() {
+		return selfpath.ErrTestBinary
+	}
 	qexe := FormatEscape(shellquote.Quote(exe))
 	return exec.Command("tmux", "run-shell", "-b", "-c", projectRoot, qexe+" monitor").Run()
 }
@@ -1464,7 +1463,7 @@ func restartMonitor(enabled bool, pidDir, exe, projectRoot string, kill func(dir
 
 // applyConfig sets up the status bar, keybindings, and styling.
 func applyConfig() {
-	exe, _ := os.Executable()
+	exe := selfpath.SpawnableOrFallback()
 
 	// Publish this project's runtime dir into the session environment before
 	// anything else: it is what makes the server-global keybindings below
@@ -1512,7 +1511,7 @@ func applyConfig() {
 // relaunch. Unlike applyConfig it never touches the monitor, restores nothing
 // and launches no windows.
 func ApplyConfigLive() {
-	exe, _ := os.Executable()
+	exe := selfpath.SpawnableOrFallback()
 	EnsureSessionEnv()
 	set("status", "off")
 	pidDir := paths.RuntimeDir()
@@ -1739,10 +1738,7 @@ func LaunchChromeBar(windowID string) error {
 		return nil
 	}
 
-	exe, _ := os.Executable()
-	if exe == "" {
-		exe = "agentctl"
-	}
+	exe := selfpath.SpawnableOrFallback()
 	chromeBarCmd := shellquote.Quote(exe) + " chrome-bar " + windowID
 
 	// Find the last pane so the bar appears at the absolute bottom.
@@ -1927,10 +1923,7 @@ func ToggleHud(windowID string) error {
 		_ = LaunchChromeBar(windowID)
 	}
 
-	exe, _ := os.Executable()
-	if exe == "" {
-		exe = "agentctl"
-	}
+	exe := selfpath.SpawnableOrFallback()
 	cmd := fmt.Sprintf("%s hud %s", shellquote.Quote(exe), windowID)
 
 	// Split the main (terminal) pane to open the HUD below it.
@@ -1997,10 +1990,7 @@ func OpenOrFocusTicketsWindow() error {
 	}
 
 	// Window died — recreate it.
-	exe, _ := os.Executable()
-	if exe == "" {
-		exe = "agentctl"
-	}
+	exe := selfpath.SpawnableOrFallback()
 
 	// Capture the currently active window ID so the tickets process can return
 	// focus to it on exit (best-effort; empty string is handled gracefully).
@@ -2023,10 +2013,7 @@ func OpenOrFocusTicketsWindow() error {
 // session, or focuses it if it already exists. The window runs `agentctl sessions`
 // in full-screen alt-screen mode.
 func OpenOrFocusSessionsWindow() error {
-	exe, _ := os.Executable()
-	if exe == "" {
-		exe = "agentctl"
-	}
+	exe := selfpath.SpawnableOrFallback()
 	windowName := "sessions"
 	target := fmt.Sprintf("%s:%s", SessionName, windowName)
 
@@ -2059,10 +2046,7 @@ func OpenOrFocusSessionsWindow() error {
 // session, or focuses it if it already exists. The window runs `agentctl agents`
 // in full-screen alt-screen mode.
 func OpenOrFocusAgentsWindow() error {
-	exe, _ := os.Executable()
-	if exe == "" {
-		exe = "agentctl"
-	}
+	exe := selfpath.SpawnableOrFallback()
 	windowName := "agents"
 	target := fmt.Sprintf("%s:%s", SessionName, windowName)
 

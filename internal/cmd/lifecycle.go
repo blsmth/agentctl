@@ -238,7 +238,7 @@ func RunRestartMenu() {
 	// Re-exec the binary that is running right now. Restart never rebuilds:
 	// building from "the current Go module" would compile whatever project the
 	// user happens to be in. Developers use `just restart` / `just install`.
-	exe, err := selfpath.Resolve(os.Executable)
+	exe, err := selfpath.Spawnable()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot locate agentctl binary: %v\n", err)
 		os.Exit(1)

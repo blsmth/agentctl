@@ -24,6 +24,7 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/safefs"
+	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/shellquote"
 	"github.com/blsmth/agentctl/internal/signal"
 	"github.com/blsmth/agentctl/internal/textutil"
@@ -582,7 +583,7 @@ func BuildBaseFlags(inv ClaudeInvocation, ac config.AgentConfig) string {
 // "agentctl"-named path instead of the test binary's own path (which would
 // never satisfy projectHasAgentctlHooks's "agentctl hook-" substring check,
 // since `go test` binaries aren't named "agentctl").
-var execPath = os.Executable
+var execPath = selfpath.Lookup
 
 // BuildAgentSettingsJSON returns the marshaled Claude Code settings JSON for an
 // agent (hooks + permissions). Exported so it can be written to multiple paths —

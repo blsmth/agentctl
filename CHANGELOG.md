@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 First public release.
 
+### Fixed
+
+- A Go test binary can no longer spawn itself. `selfpath.Spawnable` (used by every exec/spawn of the running binary) refuses under `go test`, `detach.Start` refuses to start the test binary, and a source-scan test forbids direct `os.Executable` calls. This follows an incident where a detached `hooks.test` reran the suite recursively and exhausted the per-user process limit. `detach.Start` also caps nesting with `AGENTCTL_DETACH_DEPTH` (refuses at depth 3), and `internal/notify` never runs the default notifier, `alerter` or `notify-send` under test.
+
 ### Added
 
 - tmux-native management of multiple Claude Code agents: one window per agent, hook-driven state (working, blocked, idle), a two-row chrome bar, window state glyphs, and a cross-session hub (`agentctl hub`, `agentctl status`).
