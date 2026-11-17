@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/blsmth/agentctl/internal/notify"
 )
 
 // withBlockingPopup installs a runner that blocks until ctx is cancelled, a
@@ -87,7 +85,6 @@ func stubPopupSeams(t *testing.T, deadline time.Duration) {
 	origRun, origDL, origClose, origRetry := dispatchPopupRunner, popupDeadline, popupCloser, popupRetryInterval
 	origDeps := deps
 	t.Cleanup(func() {
-		approvalAlerts.Wait()
 		dispatchPopupRunner, popupDeadline, popupCloser, popupRetryInterval = origRun, origDL, origClose, origRetry
 		deps = origDeps
 	})
@@ -152,32 +149,6 @@ func TestPopupStaleResultIgnored(t *testing.T) {
 	if approved || decided {
 		t.Fatalf("stale result approved: approved=%v decided=%v", approved, decided)
 	}
-}
-
-func TestSlowNotifyDoesNotDelayPopup(t *testing.T) {
-	stubPopupSeams(t, 5*time.Second)
-	release := make(chan struct{})
-	d := stubDeps(t)
-	d.Notify = func(notify.Options) { <-release }
-	deps = d
-	t.Cleanup(func() { close(release) })
-
-	ran := make(chan struct{})
-	dispatchPopupRunner = func(_ context.Context, _ string, _, _ int, argsFile string) error {
-		close(ran)
-		return WritePopupResult(popupResultPath(argsFile), "allow")
-	}
-	done := make(chan bool)
-	go func() { a, _, _ := runTestPopup(t); done <- a }()
-	select {
-	case a := <-done:
-		if !a {
-			t.Fatal("not approved")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("popup delayed by blocked Notify")
-	}
-	<-ran
 }
 
 // Exit 1 with no result file means the popup ran and failed; it must deny

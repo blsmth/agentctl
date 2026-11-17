@@ -5,15 +5,14 @@
 package notify
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
-	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -59,11 +58,18 @@ type Options struct {
 
 // NotifyWithOptions sends a desktop notification using the configured
 // notify_cmd. It reads notify_cmd from config (with the platform default when
-// unset; an explicitly empty value disables notifications), substitutes {{title}}, {{subtitle}}, {{message}}, {{agent}},
-// and {{type}} placeholders, and runs the command with a 30s timeout. The
-// env map entries are appended to the process environment so notify_cmd
-// scripts can reference them directly. No-ops when notify_cmd resolves to an
-// empty string.
+// unset; an explicitly empty value disables notifications), substitutes
+// {{title}}, {{subtitle}}, {{message}}, {{agent}}, and {{type}} placeholders,
+// and starts the command. The env map entries are appended to the process
+// environment so notify_cmd scripts can reference them directly. No-ops when
+// notify_cmd resolves to an empty string.
+//
+// The command is fire-and-forget: it runs detached in its own process group
+// with no inherited stdio, and NotifyWithOptions returns right after Start
+// without waiting. Notifiers such as alerter stay alive until the toast times
+// out or is clicked, and a hook must never block on that. Consequently there
+// is no exit status to log (only Start failures are), and there is no
+// timeout: a hung custom notify_cmd is the user's problem.
 func NotifyWithOptions(opts Options) {
 	cfg := config.Load()
 	notifyCmd, set := cfg.EffectiveNotifyCmd()
@@ -99,16 +105,16 @@ func NotifyWithOptions(opts Options) {
 		procEnv = append(procEnv, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	c := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+	c := exec.Command("sh", "-c", cmdStr)
 	c.Env = procEnv
+	c.Stdin, c.Stdout, c.Stderr = nil, nil, nil
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := c.Start(); err != nil {
 		logging.Error("notify: start: %v", err)
 		return
 	}
-	if err := c.Wait(); err != nil {
-		logging.Log("notify: process exited: %v", err)
+	if err := c.Process.Release(); err != nil {
+		logging.Log("notify: release: %v", err)
 	}
 }
 
