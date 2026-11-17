@@ -7,6 +7,7 @@ package tmux
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -73,11 +74,37 @@ type SessionInfo struct {
 // tmux server is running or no sessions are open — mirrors ListSessions, so
 // callers never have to special-case "no server" as an error.
 func ListSessionsWithPaths() []SessionInfo {
+	out, _ := ListSessionsWithPathsErr()
+	return out
+}
+
+// ListSessionsWithPathsErr is ListSessionsWithPaths that distinguishes a
+// failed query from an empty answer: "no server running" is an empty list with
+// a nil error, while any other tmux failure returns the error (and no
+// sessions), so a long-lived caller can keep its previous view instead of
+// treating a transient failure as "every session is gone".
+func ListSessionsWithPathsErr() ([]SessionInfo, error) {
 	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}|#{session_path}").Output()
 	if err != nil {
-		return nil
+		if noServer(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("tmux list-sessions: %w", err)
 	}
-	return parseSessionsWithPaths(string(out))
+	return parseSessionsWithPaths(string(out)), nil
+}
+
+// noServer reports whether err is tmux saying there is no server (so no
+// sessions) rather than a real failure.
+func noServer(err error) bool {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return false
+	}
+	msg := string(ee.Stderr)
+	return strings.Contains(msg, "no server running") ||
+		strings.Contains(msg, "error connecting to") ||
+		strings.Contains(msg, "no sessions")
 }
 
 // parseSessionsWithPaths parses the output of

@@ -7,6 +7,7 @@ import (
 	"github.com/blsmth/agentctl/internal/approval"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/mailbox"
+	"github.com/blsmth/agentctl/internal/metrics/events"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/reaper"
 	"github.com/blsmth/agentctl/internal/stamp"
@@ -25,8 +26,11 @@ type HousekeepingDeps struct {
 	ReapOrphans      func()
 	PruneMailbox     func() (int, error)
 	PruneSessionLogs func(protected []string) (int, error)
-	Records          func() map[string]windowstate.WindowState
-	SessionLogDir    func() string
+	// PruneEvents removes aged metrics event files (the serve prunes only
+	// while alive, so housekeeping covers machines where it is not running).
+	PruneEvents   func(now time.Time)
+	Records       func() map[string]windowstate.WindowState
+	SessionLogDir func() string
 }
 
 // DefaultHousekeepingDeps wires the sweeps to the real implementations for
@@ -41,6 +45,9 @@ func DefaultHousekeepingDeps(runtimeDir string) HousekeepingDeps {
 		},
 		PruneSessionLogs: func(protected []string) (int, error) {
 			return logging.PruneSessionLogs(logging.MaxSessionLogAge, protected)
+		},
+		PruneEvents: func(now time.Time) {
+			events.Prune(runtimeDir, now, events.Retention)
 		},
 		Records:       windowstate.All,
 		SessionLogDir: paths.SessionLogDir,
@@ -58,6 +65,9 @@ func Housekeep(d HousekeepingDeps) {
 	now := d.Now()
 	if d.ReapOrphans != nil {
 		d.ReapOrphans()
+	}
+	if d.PruneEvents != nil {
+		d.PruneEvents(now)
 	}
 	if n := approval.GC(d.RuntimeDir, now); n > 0 {
 		logging.Log("janitor: removed %d stale approval-pending marker(s)", n)

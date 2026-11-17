@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/metrics/events"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -339,4 +340,47 @@ func sameSet(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// Finish emits a Gone event into the project runtime dir when metrics are
+// enabled (the in-process tracker no longer exists in a detached reconcile),
+// exactly once per claim, and none for shell windows or when disabled.
+func TestFinishEmitsGoneEvent(t *testing.T) {
+	tests := []struct {
+		name     string
+		enabled  bool
+		instance string
+		want     int
+	}{
+		{"enabled", true, "go-engineer:1", 1},
+		{"disabled", false, "go-engineer:1", 0},
+		{"shell", true, "shell", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			oe := events.Enabled
+			events.Enabled = func() bool { return tt.enabled }
+			t.Cleanup(func() { events.Enabled = oe })
+			e.record("@4", "working", tt.instance)
+			c, ok := Claim("@4", nil)
+			if !ok {
+				t.Fatal("claim failed")
+			}
+			Finish(c, e.deps())
+
+			n := 0
+			for _, f := range events.Files(e.rt) {
+				b, _ := os.ReadFile(f)
+				ev, ok := events.Decode(b)
+				if !ok || ev.To != "gone" || ev.From != "working" || ev.WindowID != "@4" {
+					t.Fatalf("bad event %q", b)
+				}
+				n += 1
+			}
+			if n != tt.want {
+				t.Errorf("gone events = %d, want %d", n, tt.want)
+			}
+		})
+	}
 }

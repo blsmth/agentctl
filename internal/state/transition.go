@@ -3,6 +3,7 @@ package state
 // Transition describes a state change for an agent window.
 type Transition struct {
 	Agent          string // agent base name
+	Project        string // project label (basename of the project dir); "" when unknown
 	WindowID       string // tmux window ID
 	From           AgentStatus
 	To             AgentStatus

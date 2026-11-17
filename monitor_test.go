@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logstream"
 	"github.com/blsmth/agentctl/internal/metrics"
@@ -679,29 +677,8 @@ type fireTick struct {
 	wsMode   string
 }
 
-// gatherCounterTotal sums every sample of the named counter metric family
-// across a registry, regardless of label combination.
-func gatherCounterTotal(t *testing.T, reg *prometheus.Registry, name string) float64 {
-	t.Helper()
-	mfs, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("Gather: %v", err)
-	}
-	var total float64
-	for _, mf := range mfs {
-		if mf.GetName() != name {
-			continue
-		}
-		for _, sample := range mf.GetMetric() {
-			total += sample.GetCounter().GetValue()
-		}
-	}
-	return total
-}
-
 // TestDetectAndFireTransitions runs ticks through detectAndFireTransitions
-// and checks that handlers fire only on state edges (never on a done edge) and
-// that agentctl_state_transitions_total increments only on state edges.
+// and checks that handlers fire only on state edges (never on a done edge).
 func TestDetectAndFireTransitions(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -752,9 +729,7 @@ func TestDetectAndFireTransitions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reg := prometheus.NewRegistry()
-			tracker := metrics.NewTransitionTracker(reg)
-			m := &monitorModel{windows: make(map[string]*instanceState), transitionTracker: tracker}
+			m := &monitorModel{windows: make(map[string]*instanceState)}
 			inst := &instanceState{
 				instance:  "go-engineer",
 				base:      "go-engineer",
@@ -775,9 +750,6 @@ func TestDetectAndFireTransitions(t *testing.T) {
 
 			if edges != tt.wantEdges {
 				t.Errorf("handlers fired %d times, want %d", edges, tt.wantEdges)
-			}
-			if got := gatherCounterTotal(t, reg, "agentctl_state_transitions_total"); got != float64(tt.wantEdges) {
-				t.Errorf("agentctl_state_transitions_total = %v, want %d", got, tt.wantEdges)
 			}
 		})
 	}
@@ -822,5 +794,22 @@ func TestLookupSessionID(t *testing.T) {
 	calls = 0
 	if got := lookupSessionID(func() string { calls++; return "" }, 3, 0); got != "" || calls != 3 {
 		t.Fatalf("got %q after %d calls", got, calls)
+	}
+}
+
+// TestMonitorDoesNotRegisterMetrics: the monitor no longer owns metrics. It
+// registers nothing on the shared Prometheus registry and binds no port; both
+// belong to `agentctl metrics serve`.
+func TestMonitorDoesNotRegisterMetrics(t *testing.T) {
+	m := newMonitorModel("", registry.Entry{})
+	if m.windows == nil {
+		t.Fatal("model not initialised")
+	}
+	mfs, err := metrics.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mf := range mfs {
+		t.Errorf("monitor registered metric family %q", mf.GetName())
 	}
 }

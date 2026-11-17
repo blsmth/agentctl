@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/audit"
@@ -12,6 +15,7 @@ import (
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/metricsserve"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/safefs"
 	"github.com/blsmth/agentctl/internal/sessions"
@@ -137,8 +141,9 @@ type CLI struct {
 	// `agentctl statusline install`; the ingest path itself is machine-invoked.
 	Statusline StatuslineCmd `cmd:"" help:"Claude Code statusLine integration (see: statusline install)"`
 
-	// Mobile web app server (per machine)
-	Serve ServeCmd `cmd:"" help:"Run the HTTPS server for the mobile web app (install, pair, devices, status)"`
+	// Per-machine processes
+	Metrics MetricsCmd `cmd:"" help:"Prometheus metrics (serve: the per-machine metrics process)"`
+	Serve   ServeCmd   `cmd:"" help:"Run the HTTPS server for the mobile web app (install, pair, devices, status)"`
 }
 
 // ---------------------------------------------------------------------------
@@ -594,9 +599,22 @@ func (c *SessionsBrowseCmd) Run() error {
 }
 
 // SessionsSyncCmd implements `agentctl sessions sync`.
-type SessionsSyncCmd struct{}
+type SessionsSyncCmd struct {
+	Session    string `help:"Sync only this session id (used by the Stop/SessionEnd hooks)" hidden:""`
+	Transcript string `help:"Transcript path from the hook payload (skips the log scan)" hidden:""`
+}
 
-func (c *SessionsSyncCmd) Run() error { cmd.CmdSessionsSync(); return nil }
+func (c *SessionsSyncCmd) Run() error {
+	if c.Session != "" {
+		if err := sessions.SyncOne(c.Session, c.Transcript); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return nil
+	}
+	cmd.CmdSessionsSync()
+	return nil
+}
 
 // SessionsSummaryCmd implements `agentctl sessions summary [--date MM-DD-YYYY] [--dir /path]`.
 type SessionsSummaryCmd struct {
@@ -1191,6 +1209,26 @@ type RunUserHooksCmd struct {
 }
 
 func (c *RunUserHooksCmd) Run() error { hooks.RunUserHooksSync(c.Event); return nil }
+
+// ---------------------------------------------------------------------------
+// Metrics serve
+// ---------------------------------------------------------------------------
+
+// MetricsCmd groups the metrics subcommands.
+type MetricsCmd struct {
+	Serve MetricsServeCmd `cmd:"" help:"Run the per-machine metrics process (HTTP /metrics, remote write); exits 0 if one is already running"`
+}
+
+// MetricsServeCmd implements `agentctl metrics serve`. Hooks and session start
+// spawn it detached when metrics.enabled is set; it replaces the per-project
+// monitor's metrics duties.
+type MetricsServeCmd struct{}
+
+func (c *MetricsServeCmd) Run() error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return metricsserve.Run(ctx, metricsserve.Options{})
+}
 
 // ---------------------------------------------------------------------------
 // Serve (mobile web app server)

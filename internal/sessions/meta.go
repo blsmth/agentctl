@@ -76,11 +76,26 @@ func WriteMeta(meta SessionMeta) error {
 		return fmt.Errorf("sessions: marshal meta: %w", err)
 	}
 
-	tmp := filepath.Join(dir, meta.SessionID+".meta.json.tmp")
 	dst := filepath.Join(dir, meta.SessionID+".meta.json")
 
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("sessions: write tmp meta: %w", err)
+	// A unique temp file in the same dir so concurrent writers (detached
+	// hook syncs, a backfill) never interleave bytes in a shared tmp path.
+	f, err := os.CreateTemp(dir, meta.SessionID+".meta.json.*.tmp")
+	if err != nil {
+		return fmt.Errorf("sessions: create tmp meta: %w", err)
+	}
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp, 0o644)
+	}
+	if werr != nil {
+		os.Remove(tmp) //nolint:errcheck — best-effort cleanup
+		return fmt.Errorf("sessions: write tmp meta: %w", werr)
 	}
 	if err := os.Rename(tmp, dst); err != nil {
 		os.Remove(tmp) //nolint:errcheck — best-effort cleanup

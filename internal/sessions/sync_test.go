@@ -208,3 +208,52 @@ func TestSync_PrunesOld(t *testing.T) {
 		t.Error("old meta should have been pruned")
 	}
 }
+
+// TestSyncOne verifies the single-session sidecar write the Stop/SessionEnd
+// hooks run, including a refresh after the log grows and an unknown id.
+func TestSyncOne(t *testing.T) {
+	claudeRoot, metaRoot := setupSyncDirs(t)
+	projEncoded := "Users-test-myproject"
+	projDir := filepath.Join(claudeRoot, "projects", projEncoded)
+	writeTestJSONL(t, projDir, "session-one", "go-engineer")
+	writeTestJSONL(t, projDir, "session-two", "go-engineer")
+
+	if err := SyncOne("session-one", ""); err != nil {
+		t.Fatalf("SyncOne: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(metaRoot, projEncoded, "session-one.meta.json")); err != nil {
+		t.Fatalf("meta for session-one not written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(metaRoot, projEncoded, "session-two.meta.json")); !os.IsNotExist(err) {
+		t.Errorf("session-two meta should not exist: %v", err)
+	}
+
+	if err := SyncOne("no-such-session", ""); err == nil {
+		t.Error("SyncOne of an unknown session should fail")
+	}
+	if err := SyncOne("../escape", ""); err == nil {
+		t.Error("SyncOne must reject path-like ids")
+	}
+}
+
+// With a transcript path from the hook payload, SyncOne uses it directly and
+// never needs the projects scan; a mismatched transcript is ignored.
+func TestSyncOneTranscriptPath(t *testing.T) {
+	claudeRoot, metaRoot := setupSyncDirs(t)
+	projEncoded := "Users-test-myproject"
+	projDir := filepath.Join(claudeRoot, "projects", projEncoded)
+	writeTestJSONL(t, projDir, "session-one", "go-engineer")
+	tp := filepath.Join(projDir, "session-one.jsonl")
+
+	if err := SyncOne("session-one", tp); err != nil {
+		t.Fatalf("SyncOne with transcript: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(metaRoot, projEncoded, "session-one.meta.json")); err != nil {
+		t.Fatalf("meta not written: %v", err)
+	}
+	// A transcript for a different session is not trusted; the id is not
+	// found by scan either.
+	if err := SyncOne("other", tp); err == nil {
+		t.Error("SyncOne must not use a transcript that is not this session's")
+	}
+}

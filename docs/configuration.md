@@ -156,6 +156,8 @@ Journal output goes to `~/.local/share/agentctl/journal/<agent>.md` with a machi
 
 ### metrics
 
+The whole `metrics` block is global-only: a `metrics` key in a project's `.agentctl/config.json` is ignored (with a log warning), because one per-machine serve is shared by every project and must not depend on which project started it.
+
 | Key | Default | Description |
 |---|---|---|
 | `metrics.enabled` | `false` | Turn on the metrics system. |
@@ -164,6 +166,13 @@ Journal output goes to `~/.local/share/agentctl/journal/<agent>.md` with a machi
 | `metrics.port` | `9101` | Local `/metrics` port. |
 | `metrics.labels` | none | Static labels, e.g. `{"instance": "laptop"}`. |
 | `metrics.basic_auth` | none | `{"username": "...", "password": "..."}` for the remote-write endpoint. |
+
+Metrics are produced by one per-machine process, `agentctl metrics serve`, not by the per-project monitor, so they work with `monitor: false`. Session start and the hook janitor (at most once a minute) start it detached when `metrics.enabled` is set and none is alive; a machine-wide lock keeps it to one. It exits 0 at once if another is running, exits after 10 minutes with no agentctl tmux sessions, and re-execs itself when the binary is replaced. Its pidfile and log are `<state dir>/metrics-serve.pid` and `metrics-serve.log` (`agentctl health` shows its pid and port).
+
+- **Transitions** (spawned, completed, state transitions, tool uses, failures, active gauge, durations) come from an event log the state writers append to: `<runtimeDir>/metrics/events-<YYYY-MM-DD>.ndjson`, one line per real state change (and per Gone), written only while metrics are enabled. The serve tails each project's files from the end at startup, so history is not replayed; counters reset when it restarts, which Prometheus handles. Event files older than 3 days are removed.
+- **Usage** (`agentctl_tokens_total`, `_tool_use_total`, `_turns_total`, `_context_pct`, `_cost_estimate_dollars`) is read from each window's Claude log, for every project found through tmux.
+- Series names and existing labels are unchanged. Every transition and usage series gains a `project` label (the project directory's basename), since one process serves every project. `agentctl_monitor_uptime_seconds` now reports the **serve process** uptime (name kept so dashboards keep working).
+- If the port is already taken (for example by an old-binary monitor), the serve logs it and carries on with remote write only.
 
 ### serve
 

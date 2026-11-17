@@ -16,6 +16,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/detach"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/metricsproc"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/pidfile"
 	"github.com/blsmth/agentctl/internal/selfpath"
@@ -133,6 +134,11 @@ func StartSession(defaultAgent string) error {
 	done = logging.Timing("applyConfig (total)")
 	applyConfig()
 	done()
+
+	// Metrics come from the per-machine `agentctl metrics serve`, not the
+	// monitor: start it (detached, no-op unless metrics are enabled and none
+	// is alive). Works with monitor:false.
+	metricsproc.EnsureStarted()
 
 	// Create persistent tickets window at index 1.
 	exe := selfpath.SpawnableOrFallback()

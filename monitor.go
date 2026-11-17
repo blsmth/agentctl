@@ -23,7 +23,6 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/logstream"
 	"github.com/blsmth/agentctl/internal/mailbox"
-	"github.com/blsmth/agentctl/internal/metrics"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/pidfile"
 	"github.com/blsmth/agentctl/internal/reaper"
@@ -56,9 +55,6 @@ var improveHandleFn = improve.HandleTransition
 // so a panic in one does not skip the others. Dispatch completion is not fired
 // here: the Stop hook (and `agentctl signal done`) spawn it directly.
 func (m *monitorModel) fireHandlers(t state.Transition, agentCfg config.AgentConfig) {
-	if m.transitionTracker != nil {
-		safeHandle("RecordTransition", t, func() { m.transitionTracker.RecordTransition(t) })
-	}
 	safeHandle("improve.HandleTransition", t, func() { improveHandleFn(t, agentCfg) })
 }
 
@@ -139,20 +135,9 @@ type instanceState struct {
 	lastTurnCacheCreate int // most recent turn's cache-create tokens
 
 	// Persistent JSONL stream reader, usage accumulator, and state tracker.
-	stream         *logstream.Stream
-	usage          *logstream.UsageAccumulator
-	stateTracker   *logstream.StateTracker
-	agentCollector *metrics.AgentCollector
-	costEstimator  *metrics.CostEstimator
-
-	// Session metadata tracking (for incremental .meta.json writes).
-	firstUserMessage string          // cached first user message text (extracted once)
-	firstUserMsgDone bool            // true once we've attempted first user message extraction
-	sessionStartTime time.Time       // actual session start time from JSONL (read once)
-	sessionStartDone bool            // true once we've read the session start time
-	filesEditedSet   map[string]bool // accumulated file paths from Edit/Write tool calls
-	metaLastInput    int             // cumulativeInput at the time of the last meta write
-	metaLastOutput   int             // cumulativeOutput at the time of the last meta write
+	stream       *logstream.Stream
+	usage        *logstream.UsageAccumulator
+	stateTracker *logstream.StateTracker
 
 	// mailboxPending is a cached count of this window's undelivered mailbox
 	// messages, refreshed on a throttled tick (see monitorModel.mailboxTick)
@@ -173,76 +158,38 @@ type monitorModel struct {
 	sessionID           string                                      // tmux #{session_id} of the session this monitor serves ("" = unknown)
 	runtimeDir          string                                      // runtime dir holding monitor.pid ("" disables the pidfile guard)
 	windows             map[string]*instanceState
-	transitionTracker   *metrics.TransitionTracker // nil when metrics disabled
 	firstTick           bool
 	snap                *state.Snapshot
-	chromeTick          int                // tick counter for throttling EnforceAllChromeSizes
-	reaperTick          int                // tick counter for throttling orphan reaper (~60 s)
-	registryTick        int                // tick counter for throttling registry.Heartbeat (~5 s)
-	mailboxTick         int                // tick counter for throttling per-window mailbox.PendingCount (~5 s)
-	mailboxPruneTick    int                // tick counter for throttling mailbox.PruneStale (~5 min)
-	sessionLogPruneTick int                // tick counter for throttling logging.PruneSessionLogs (~5 min)
-	projectsDir         string             // override for ~/.claude/projects (tests); "" = default
-	metricsCollector    *metrics.Collector // per-entry Prometheus metrics collector
-	activeWindowFile    string             // path to hook-written active-window file
-	registryEntry       registry.Entry     // this session's registry entry, kept so a failed
+	chromeTick          int            // tick counter for throttling EnforceAllChromeSizes
+	reaperTick          int            // tick counter for throttling orphan reaper (~60 s)
+	registryTick        int            // tick counter for throttling registry.Heartbeat (~5 s)
+	mailboxTick         int            // tick counter for throttling per-window mailbox.PendingCount (~5 s)
+	mailboxPruneTick    int            // tick counter for throttling mailbox.PruneStale (~5 min)
+	sessionLogPruneTick int            // tick counter for throttling logging.PruneSessionLogs (~5 min)
+	projectsDir         string         // override for ~/.claude/projects (tests); "" = default
+	activeWindowFile    string         // path to hook-written active-window file
+	registryEntry       registry.Entry // this session's registry entry, kept so a failed
 	// Heartbeat (entry pruned while the monitor is still
 	// alive) can Register it again instead of leaving
 	// the session invisible to the hub forever
 }
 
-// newMonitorModel creates the initial monitor model with watcher and metrics registered.
+// newMonitorModel creates the initial monitor model. Metrics are not the
+// monitor's concern: `agentctl metrics serve` owns the registry, HTTP endpoint
+// and remote write, fed by hook-written events (see internal/metricsserve).
 // activeWindowFile is the path to the hook-written active-window file; pass ""
 // to always fall back to tmux display-message. regEntry is this session's
 // registry entry, already registered by the caller; the model keeps a copy so
 // it can re-register on a failed heartbeat (see the registryTick block below).
 func newMonitorModel(activeWindowFile string, regEntry registry.Entry) monitorModel {
-	cfg := config.Load()
-
-	metricsCfg := cfg.EffectiveMetricsConfig()
-	// Initialise the shared registry with static labels (including auto-instance)
-	// before any metrics are registered so every series carries those labels.
-	metrics.InitRegistry(metricsCfg.Labels)
-
-	var transitionTracker *metrics.TransitionTracker
-	if metricsCfg.Enabled {
-		transitionTracker = metrics.NewTransitionTracker(metrics.Registerer())
-		logging.Log("monitor: transition tracker initialized")
-
-		if port := metricsCfg.EffectivePort(); port > 0 {
-			metrics.StartHTTPServer(port)
-			logging.Log("monitor: metrics enabled on :%d", port)
-		}
-
-		if metricsCfg.HasRemoteWrite() {
-			rwCfg := metrics.RemoteWriteConfig{
-				Endpoint:     metricsCfg.Endpoint,
-				PushInterval: metricsCfg.EffectivePushInterval(),
-				Labels:       metricsCfg.Labels,
-			}
-			if metricsCfg.BasicAuth != nil {
-				rwCfg.BasicAuth = &metrics.BasicAuth{
-					Username: metricsCfg.BasicAuth.Username,
-					Password: metricsCfg.BasicAuth.Password,
-				}
-			}
-			metrics.StartRemoteWrite(rwCfg)
-			logging.Log("monitor: remote write enabled → %s (interval %s)", metricsCfg.Endpoint, metricsCfg.EffectivePushInterval())
-		}
-	}
-
 	snap, _ := state.LoadSnapshot()
 
-	metricsCollector := metrics.NewCollector(metrics.Registerer())
-
 	return monitorModel{
-		windows:           make(map[string]*instanceState),
-		transitionTracker: transitionTracker,
-		firstTick:         true,
-		snap:              snap,
-		metricsCollector:  metricsCollector,
-		activeWindowFile:  activeWindowFile,
-		registryEntry:     regEntry,
+		windows:          make(map[string]*instanceState),
+		firstTick:        true,
+		snap:             snap,
+		activeWindowFile: activeWindowFile,
+		registryEntry:    regEntry,
 	}
 }
 
@@ -547,6 +494,7 @@ func (m *monitorModel) reconcileWindows(cfg *config.Config, windows []tmux.Windo
 // reconcileDeps wires the shared Gone finisher to this monitor's handlers.
 func (m *monitorModel) reconcileDeps(cfg *config.Config) reconcile.Deps {
 	return reconcile.Deps{
+		RuntimeDir:  m.runtimeDir,
 		Handle:      func(t state.Transition, ac config.AgentConfig) { m.fireHandlers(t, ac) },
 		AgentConfig: cfg.ForAgent,
 		RemoveInbox: mailbox.RemoveInbox,
@@ -640,17 +588,10 @@ func (m *monitorModel) resetInstanceLog(inst *instanceState, now int64) {
 	inst.logTTL = 0
 	inst.lastSize = 0
 	inst.lastChange = now
-	inst.firstUserMessage = ""
-	inst.firstUserMsgDone = false
-	inst.sessionStartTime = time.Time{}
-	inst.sessionStartDone = false
-	inst.filesEditedSet = nil
-	inst.metaLastInput = 0
-	inst.metaLastOutput = 0
 }
 
 // attachLog points inst at path, wiring up (or switching) the persistent
-// stream reader and resetting session-metadata tracking for the new log.
+// stream reader that feeds the token/activity enrichment in state.json.
 func (m *monitorModel) attachLog(inst *instanceState, path string) {
 	inst.logPath = path
 	inst.lastSize = fileSize(path)
@@ -661,20 +602,9 @@ func (m *monitorModel) attachLog(inst *instanceState, path string) {
 		inst.stream = logstream.NewStream(path)
 		inst.stream.Subscribe(inst.usage)
 		inst.stream.Subscribe(inst.stateTracker)
-		inst.agentCollector = m.metricsCollector.ForAgent(inst.base)
-		inst.stream.Subscribe(inst.agentCollector)
-		inst.costEstimator = m.metricsCollector.NewCostEstimator(inst.base)
-		inst.stream.Subscribe(inst.costEstimator)
 	} else {
 		inst.stream.SetPath(path)
 	}
-	inst.firstUserMessage = ""
-	inst.firstUserMsgDone = false
-	inst.sessionStartTime = time.Time{}
-	inst.sessionStartDone = false
-	inst.filesEditedSet = nil
-	inst.metaLastInput = 0
-	inst.metaLastOutput = 0
 }
 
 // linkLogs handles log discovery, stream creation/switching, and session
@@ -816,8 +746,9 @@ func (m *monitorModel) linkByScan(inst *instanceState, windowID string, ws windo
 }
 
 // updateMetrics ticks the persistent log stream, copies UsageAccumulator fields
-// to inst, computes ctxPct, scans log content for registered patterns, extracts
-// session metadata, and writes the .meta.json sidecar when token counts change.
+// to inst and computes ctxPct (token enrichment for state.json). Prometheus
+// usage metrics and .meta.json sidecars are not written here any more: see
+// internal/metricsserve and the Stop/SessionEnd hooks.
 func (m *monitorModel) updateMetrics(inst *instanceState, windowID string) {
 	// Tick the persistent stream to read any new log entries since last poll.
 	// This runs before state detection so that StateTracker and UsageAccumulator
@@ -869,46 +800,6 @@ func (m *monitorModel) updateMetrics(inst *instanceState, windowID string) {
 			logging.Debug("monitor: mailbox.PendingCount(%s): %v", windowID, err)
 		} else {
 			inst.mailboxPending = n
-		}
-	}
-
-	// Incremental session metadata updates. We extract lightweight fields
-	// once and accumulate tool-use data, then write a .meta.json sidecar
-	// whenever token counts change. We never call ParseSummary here — that
-	// is a full file scan reserved for the backfill (agentctl sessions sync).
-	logPath := inst.logPath
-	if logPath != "" {
-		// Extract session start time once per log file.
-		if !inst.sessionStartDone {
-			inst.sessionStartTime = sessions.ReadStartTime(logPath)
-			inst.sessionStartDone = true
-		}
-		// Extract first user message once per log file.
-		if !inst.firstUserMsgDone {
-			inst.firstUserMessage = sessions.ReadFirstUserMessage(logPath)
-			inst.firstUserMsgDone = true
-		}
-		// Accumulate files edited from the current tool call (stateTracker tail).
-		var toolName, toolDetail string
-		if inst.stateTracker != nil {
-			toolName = inst.stateTracker.ToolName
-			toolDetail = inst.stateTracker.ToolDetail
-		}
-		if (toolName == "Edit" || toolName == "Write") && toolDetail != "" {
-			if inst.filesEditedSet == nil {
-				inst.filesEditedSet = make(map[string]bool)
-			}
-			inst.filesEditedSet[toolDetail] = true
-		}
-		// Write meta when token counts change (or on first write for this session).
-		if inst.cumulativeInput != inst.metaLastInput || inst.cumulativeOutput != inst.metaLastOutput {
-			meta := buildMonitorMeta(inst, logPath)
-			if err := sessions.WriteMeta(meta); err != nil {
-				logging.Debug("monitor: write meta for %s: %v", inst.instance, err)
-			} else {
-				inst.metaLastInput = inst.cumulativeInput
-				inst.metaLastOutput = inst.cumulativeOutput
-			}
 		}
 	}
 }
@@ -1237,55 +1128,6 @@ func fileSize(path string) int64 {
 		return 0
 	}
 	return info.Size()
-}
-
-// buildMonitorMeta constructs a SessionMeta from the current instanceState.
-// It uses accumulated incremental values — ParseSummary is never called here.
-func buildMonitorMeta(inst *instanceState, logPath string) sessions.SessionMeta {
-	sessionID := strings.TrimSuffix(filepath.Base(logPath), ".jsonl")
-	projectEncoded := filepath.Base(filepath.Dir(logPath))
-	project := "/" + projectEncoded // decodeDirName equivalent
-
-	// Worktree detection: -.worktrees- separator in the lossy-decoded path.
-	parentProject := project
-	if idx := strings.Index(project, "-.worktrees-"); idx >= 0 {
-		parentProject = project[:idx]
-	}
-
-	filesEdited := make([]string, 0, len(inst.filesEditedSet))
-	for f := range inst.filesEditedSet {
-		filesEdited = append(filesEdited, f)
-	}
-	slices.Sort(filesEdited)
-
-	startTime := inst.sessionStartTime
-	if startTime.IsZero() {
-		startTime = inst.createdAt
-	}
-
-	agent := inst.base
-	if agent == "" {
-		agent = "(unknown)"
-	}
-
-	return sessions.SessionMeta{
-		SchemaVersion: sessions.SchemaVersion,
-		SessionID:     sessionID,
-		Agent:         agent,
-		Project:       project,
-		ParentProject: parentProject,
-		StartTime:     startTime,
-		// EndTime is zero while the session is active.
-		Turns:             inst.turnCount,
-		InputTokens:       inst.cumulativeInput,
-		OutputTokens:      inst.cumulativeOutput,
-		CacheReadTokens:   inst.cumulativeCacheRead,
-		CacheCreateTokens: inst.cumulativeCacheCreate,
-		ModelName:         inst.lastModelName,
-		FirstUserMessage:  inst.firstUserMessage,
-		FilesEdited:       filesEdited,
-		SourcePath:        logPath,
-	}
 }
 
 // Seams for the periodic prune calls so tests can observe them.

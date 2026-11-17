@@ -43,7 +43,7 @@ State is **not** inferred from JSONL log growth. Claude Code hooks write state i
 
 `StatusGone` is detected structurally when a window ID disappears from `tmux list-windows`, not from any hook. The monitor notices after two absent ticks (`reconcileWindows`); without it, see [Gone and housekeeping without the monitor](#gone-and-housekeeping-without-the-monitor). Both paths use the same claim (`reconcile.Claim` / `reconcile.Finish`), so the handlers fire once per window.
 
-JSONL parsing still happens, but only to enrich metrics and transition detail — context-window %, token counts, and the last tool name/detail/text (via `logstream.StateTracker`). It does not author state.
+JSONL parsing still happens, but only to enrich `state.json` and transition detail — context-window %, token counts, and the last tool name/detail/text (via `logstream.StateTracker`). It does not author state.
 
 ## Per-Window State (`instanceState`)
 
@@ -52,7 +52,7 @@ Each tmux window gets an `instanceState` struct tracking:
 - **Identity**: instance name (`go-engineer~2`), base name (`go-engineer`)
 - **Log linkage**: JSONL log path (from windowstate `LogPath`, or a filesystem-scan fallback), a persistent `logstream.Stream`, and file-size tracking
 - **State machine**: previous state, `hasPrev` flag for first-tick suppression, `done` flag
-- **Metrics cache**: ctx%, input/output tokens, cumulative counts
+- **Token cache**: ctx%, input/output tokens, cumulative counts (for `state.json`; the monitor keeps its `logstream` for this enrichment, which the macapp and chrome bar read)
 - **Attention tracking**: `Seen` is a persisted windowstate field (set by `set-active-window`, cleared by the state writers)
 
 ## Log Discovery
@@ -69,11 +69,11 @@ The monitor needs each agent's JSONL session log. Two strategies:
 
 There is **no** plugin interface or registry. On a detected state change, `detectAndFireTransitions()` builds a `state.Transition` (agent, window ID, from/to states, active flag, last tool name/detail/text, context %, hook-handled/done flags, dispatch mode, ticket number, branch, work dir) and calls the concrete handlers directly:
 
-1. **`m.transitionTracker.RecordTransition(t)`** — Prometheus metrics (`internal/metrics`): agents spawned, sessions completed, state transitions, durations, monitor uptime, etc. Exposed on a configurable HTTP port when metrics are enabled.
-
-2. **`improve.HandleTransition(t, agentCfg)`** (`internal/improve`) — Auto-launches an improvement session on the relevant transition, gated by per-agent `auto_improve` config, with a recursion guard for improve windows.
+1. **`improve.HandleTransition(t, agentCfg)`** (`internal/improve`) — Auto-launches an improvement session on the relevant transition, gated by per-agent `auto_improve` config, with a recursion guard for improve windows.
 
 To add new reactive behavior, add a handler call here rather than registering a plugin.
+
+Prometheus metrics are not a monitor handler any more; see [Metrics without the monitor](#metrics-without-the-monitor).
 
 ### Dispatch completion is hook-driven
 
@@ -93,7 +93,7 @@ The chrome bar watches `windows/` and the `active-window` file with fsnotify, de
 
 ### Turning the monitor off (`monitor: false`)
 
-The global config key `monitor` (default `true`) is the kill switch. When `false`, session start / `applyConfig` does not start a monitor, the hook watchdog neither respawns nor replaces one, and `agentctl health` reports "monitor disabled" instead of a missing-monitor problem. Flipping the flag never kills a running monitor; the next relaunch just does not start one. With no monitor, `state.json` stops updating (the macapp loses its feed) and the `improve.HandleTransition` / metrics transition handlers do not run, but the chrome bar, hub, `agentctl status`, popups and statusline keep working from tmux and windowstate.
+The global config key `monitor` (default `true`) is the kill switch. When `false`, session start / `applyConfig` does not start a monitor, the hook watchdog neither respawns nor replaces one, and `agentctl health` reports "monitor disabled" instead of a missing-monitor problem. Flipping the flag never kills a running monitor; the next relaunch just does not start one. With no monitor, `state.json` stops updating (the macapp loses its feed) and the `improve.HandleTransition` handler does not run from the monitor (metrics are unaffected: see below), but the chrome bar, hub, `agentctl status`, popups and statusline keep working from tmux and windowstate.
 
 ### Gone and housekeeping without the monitor
 
@@ -102,9 +102,18 @@ The global config key `monitor` (default `true`) is the kill switch. When `false
 - **Claim.** `windowstate.Claim` removes a window's record under its per-window flock, writes the `.gone` tombstone and reports whether this caller did it; only that caller builds the Gone `Transition` (`From` = the record's state), runs `improve.HandleTransitionSync`, and removes the window's mailbox. shell and `improve~*` windows are claimed but get no handlers. The monitor's `reconcileWindows` calls the same `Claim`/`Finish`, so whichever notices first wins. A window removed by `cleanup`/`sweep`/SessionEnd reclaim has already had its record removed, so no Gone handler runs for it (the monitor used to fire one from memory).
 - **Safety.** `reconcile` takes a non-blocking flock on `<runtimeDir>/reconcile.lock` (held: exit). A failed `list-windows`, or a session that no longer exists, does nothing (teardown is restore territory). A record is reaped only if its window is absent from two listings 300ms apart and from a third taken under the record's lock, so a recycled `@N` whose new window exists is never removed. It runs inline: every spawner is already detached, and the auto-improve launch must finish before the process exits.
 - **Triggers.** A detached `reconcile` is spawned after `tmux.KillWindow` and the SessionEnd kill succeed; a session-scoped `window-unlinked` tmux hook (set by `applyConfig`/`apply-config`) runs it whenever tmux destroys a window, including when the agent just exits (it does not fire on `kill-session`, so teardown never mass-removes records); and the janitor.
-- **Janitor.** `SessionStart` and `UserPromptSubmit` call `janitor()` next to the watchdog. A flock-guarded stamp (`internal/stamp`, `<runtimeDir>/janitor.stamp`, 60s) lets exactly one concurrent hook spawn `agentctl reconcile --housekeeping`, which reconciles and then runs `reaper.ReapOrphans`, `approval-pending/` marker GC, and the mailbox and session-log prunes (5 min stamps each; protected session logs are built from windowstate only). The watchdog uses the same atomic stamp for its respawn throttle. Readers never reconcile.
+- **Janitor.** `SessionStart` and `UserPromptSubmit` call `janitor()` next to the watchdog. A flock-guarded stamp (`internal/stamp`, `<runtimeDir>/janitor.stamp`, 60s) lets exactly one concurrent hook spawn `agentctl reconcile --housekeeping`, which reconciles and then runs `reaper.ReapOrphans`, `approval-pending/` marker GC, and the metrics event-file prune, and the mailbox and session-log prunes (5 min stamps each; protected session logs are built from windowstate only). The watchdog uses the same atomic stamp for its respawn throttle. Readers never reconcile.
 - **Chrome sizes.** `client-resized` and `client-attached` session hooks run the hidden `agentctl enforce-chrome`. The monitor's 5-tick enforcement stays while the monitor is on, as do its own `pruneTick`/reaper (both are idempotent next to the janitor).
 - **`agentctl apply-config`** re-applies the session hooks, options and keybindings to the running session without stopping or starting the monitor or restoring anything, so an existing session picks up new hooks after `just install`.
+
+### Metrics without the monitor
+
+Metrics come from a per-machine `agentctl metrics serve` process (`internal/metricsserve`), not the monitor, and work with `monitor: false`:
+
+- **Event log.** The code that decides a state change appends one NDJSON line to `<runtimeDir>/metrics/events-<date>.ndjson` (`internal/metrics/events`): `winname.Apply` for every hook/`signal` State change (it sees old and new State, so a PreTool while already working writes nothing) and `reconcile.Finish` for Gone. Each line is one `O_APPEND` write under 4096 bytes, 0600, no symlinks, and only when `metrics.enabled`; a failed write is logged at debug and never fails a hook.
+- **Serve.** Tails each project's event files from the end (following date rollover, deletion and truncation) into `metrics.TransitionTracker`, using event timestamps for durations, and runs a `logstream` per window log (`metrics.UsageSet`) for the usage series. Projects are found through tmux (`herd.MergeSessions`), windows through windowstate. Every series carries a `project` label. See [configuration.md](configuration.md#metrics).
+- **Lifecycle.** Started detached by `StartSession` and the 60s hook janitor; one per machine via `<state dir>/metrics-serve.lock`; hot-reloads on binary change; exits after 10 idle minutes.
+- **`.meta.json` sidecars** are no longer written by the monitor: the Stop and SessionEnd hooks spawn a detached `agentctl sessions sync --session <id>` (`sessions.SyncOne`).
 
 ### Session restore (`restore.json`)
 
@@ -142,7 +151,7 @@ Additional hooks handle compaction, elicitation, worktree create/remove, subagen
 ## Key Data Flows
 
 1. **State detection**: Claude Code → hook (`pre-tool`/`notify`/…) → `windowstate.Update()` writes `.agentctl/windows/<id>.json` → monitor `resolveState()` reads it on tick.
-2. **Transitions**: state change → `detectAndFireTransitions()` builds `Transition` → `RecordTransition` + `improve.HandleTransition`. Dispatch completion is not part of this loop.
+2. **Transitions**: state change → `detectAndFireTransitions()` builds `Transition` → `improve.HandleTransition`; metrics come from the hook-written event log, not this loop. Dispatch completion is not part of this loop.
 3. **Window names**: each state writer → `winname.Update` → `tmux rename-window` (state glyph) inside the windowstate transaction; the monitor only resolves ctx% in memory for `state.json`.
 4. **Log discovery**: `hook-session-start` → windowstate `LogPath` → monitor links `instanceState.logPath`; fallback `sessions.FindLatestLog()` scans the filesystem.
 5. **Reader views**: tmux `list-windows` + `windowstate.AllFrom` → `herd.BuildAgents` → chrome bar (fsnotify on `windows/`), hub, `agentctl status`, popups. The monitor still writes `state.json`, used only for optional token enrichment and as the restore fallback.

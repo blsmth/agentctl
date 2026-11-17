@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -612,5 +613,37 @@ func TestDiskUsage(t *testing.T) {
 	}
 	if totalBytes <= 0 {
 		t.Errorf("totalBytes = %d, want > 0", totalBytes)
+	}
+}
+
+// Concurrent writers of the same session must never leave corrupt JSON
+// behind or a stray temp file.
+func TestWriteMeta_ConcurrentWriters(t *testing.T) {
+	dir := setupMetaDir(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			meta := SessionMeta{
+				SchemaVersion: SchemaVersion, SessionID: "sess1", Agent: "agent",
+				Project: "/test/proj", ParentProject: "/test/proj", StartTime: time.Now(),
+				FirstUserMessage: strings.Repeat("x", 4096+i),
+			}
+			if err := WriteMeta(meta); err != nil {
+				t.Errorf("WriteMeta: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	path := filepath.Join(dir, encodeDirName("/test/proj"), "sess1.meta.json")
+	if _, err := ReadMeta(path); err != nil {
+		t.Fatalf("meta corrupt after concurrent writes: %v", err)
+	}
+	ents, _ := os.ReadDir(filepath.Dir(path))
+	for _, e := range ents {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("temp file left behind: %s", e.Name())
+		}
 	}
 }

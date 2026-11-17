@@ -43,6 +43,8 @@ func CheckDone() {
 	var input struct {
 		LastAssistantMessage string `json:"last_assistant_message"`
 		StopHookActive       bool   `json:"stop_hook_active"`
+		SessionID            string `json:"session_id"`
+		TranscriptPath       string `json:"transcript_path"`
 	}
 	if !decodeInput(&input) {
 		return
@@ -74,6 +76,11 @@ func CheckDone() {
 		logging.Log("hook-check-done: stop_hook_active=true, allowing stop to prevent loop")
 		return
 	}
+
+	// Refresh the session's .meta.json sidecar (detached, throttled per
+	// session; SessionEnd does the final write). Re-entry after a stop hook
+	// already ran this turn is skipped above.
+	syncSessionMetaThrottled(input.SessionID, input.TranscriptPath, time.Now())
 
 	agentName := os.Getenv("AGENTCTL_AGENT_NAME")
 	logging.Log("hook-check-done: agent=%s", agentName)
