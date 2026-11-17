@@ -1,6 +1,7 @@
 // Fleet screen: project groups ordered by attention.
 import {
   collapseKey,
+  dispatchHash,
   descendants,
   effectiveState,
   formatClock,
@@ -155,7 +156,14 @@ export function mountFleet(root, ctx) {
         h(
           "section",
           { class: `group ${g.rollup}` },
-          h("h2", {}, g.project || g.session),
+          h(
+            "div",
+            { class: "group-head" },
+            h("h2", {}, g.project || g.session),
+            g.dir && ctx.hasFeature("write")
+              ? h("a", { class: "group-add", href: dispatchHash(g.dir), "aria-label": `Dispatch to ${g.project || g.session}` }, "+")
+              : null,
+          ),
           ...nodes,
         ),
       );

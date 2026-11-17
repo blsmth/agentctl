@@ -5,7 +5,7 @@ import {
 } from "./logic.js";
 import { clear, confirmSheet, h, toast } from "./ui.js";
 
-export function mountDispatch(root, ctx) {
+export function mountDispatch(root, ctx, { dir } = {}) {
   const agent = h("select", { "aria-label": "Agent" });
   const project = h("select", { "aria-label": "Project" });
   const prompt = h("textarea", { rows: "8", placeholder: "What should the agent do?" });
@@ -95,6 +95,7 @@ export function mountDispatch(root, ctx) {
     .then(([a, p]) => {
       for (const x of a.agents ?? []) agent.append(h("option", { value: x.name }, x.name));
       for (const x of p.projects ?? []) project.append(h("option", { value: x.dir }, x.name));
+      if (dir && (p.projects ?? []).some((x) => x.dir === dir)) project.value = dir;
       submit.disabled = !ctx.hasFeature("write");
       return loadOptions();
     })
