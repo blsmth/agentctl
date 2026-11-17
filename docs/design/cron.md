@@ -31,7 +31,7 @@ What is **not** allowed, per [Legal and compliance → Authentication and creden
 
 Soft limit: "Advertised usage limits for Pro, Max, and Ultra plans assume ordinary, individual usage of Claude Code and the Agent SDK", and "Anthropic reserves the right to take measures to enforce these restrictions … without prior notice." A cron that fans out dozens of Opus agents around the clock is the profile most likely to draw enforcement, even if the letter of the terms allows it. The design below therefore throttles by default (minimum interval, concurrency cap, and a skip when the 5h/7d windows run hot) instead of leaving it to the user.
 
-Open item for Brendan: the statusline says **Claude Team**. If that seat belongs to Lincoln Loop, scheduled personal-project runs on it are an employer-policy question, not an Anthropic-terms question. Per-job `backend`/account selection (below) makes it easy to keep personal crons on a personal plan or an API key.
+The Team seat is Lincoln Loop's; Brendan also has a personal Max plan. Personal-project jobs must run on the personal account, resolved by the rules in [accounts.md](accounts.md). Each job has an `account` field, and the usage gate reads that account's own 5h/7d windows.
 
 **Invariants the code must hold** (each gets a test):
 
@@ -70,7 +70,7 @@ A separate file rather than a `config.json` key, so `cron add/rm` rewrite a smal
       "harness": "claude",
       "mode": "window",
       "worktree": false,
-      "model": "", "effort": "", "backend": "",
+      "model": "", "effort": "", "backend": "", "account": "",
       "overlap": "skip",
       "catchup": "latest",
       "timeout": "45m",
@@ -174,6 +174,6 @@ The phone web app gets a read-only Schedules screen later (next fire, last resul
 
 ## Open questions
 
-1. Is the Team seat Lincoln Loop's? If yes, should personal-project jobs default to a different account or backend?
+1. (Answered: the Team seat is LL's, so personal jobs use the personal Max account; see [accounts.md](accounts.md).)
 2. Default `min_interval` of 15m: too tight or too loose? Anthropic's own cloud and Desktop forms use 1h.
 3. Should a cron `window` run close its window after Done-and-reclaimed, or leave it ✓ for review (current dispatch behavior)? This proposal leaves it, and `sweep` cleans up.
