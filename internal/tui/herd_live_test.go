@@ -221,6 +221,7 @@ func TestDecideLiveResize(t *testing.T) {
 	}{
 		{"unknown window width is a no-op", 0, 200, 56, 40, 0, false, 0, 0, 0, 200},
 		{"first sizing applies the computed split", 200, 0, 44, 44, 0, true, 56, 143, 0, 200},
+		{"first sizing after re-exec keeps the seeded width", 200, 0, 0, 0, 70, true, 70, 129, 70, 200},
 		{"window grew, no user ratio: recompute", 300, 200, 56, 56, 0, true, 56, 243, 0, 300},
 		{"window shrank, no user ratio: recompute", 100, 200, 56, 56, 0, true, 44, 55, 0, 100},
 		{"window resized keeps the dragged width", 300, 200, 70, 70, 70, true, 70, 229, 70, 300},
