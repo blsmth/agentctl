@@ -63,3 +63,35 @@ func TestParseHubSelect(t *testing.T) {
 }
 
 func lookupEnvForTest() (string, bool) { return os.LookupEnv(HubSelectEnv) }
+
+func TestHubLeftEnv(t *testing.T) {
+	t.Run("seeds userLeft and clears env", func(t *testing.T) {
+		t.Setenv(HubLeftEnv, "72")
+		m := NewHerdModel()
+		if m.userLeft != 72 {
+			t.Errorf("userLeft = %d, want 72", m.userLeft)
+		}
+		if _, ok := os.LookupEnv(HubLeftEnv); ok {
+			t.Error("env not cleared")
+		}
+	})
+	for _, v := range []string{"abc", "0", "-5", ""} {
+		t.Run("ignores "+v, func(t *testing.T) {
+			t.Setenv(HubLeftEnv, v)
+			if m := NewHerdModel(); m.userLeft != 0 {
+				t.Errorf("userLeft = %d, want 0", m.userLeft)
+			}
+		})
+	}
+	t.Run("ReexecEnv includes left only when set", func(t *testing.T) {
+		m := newHerdModel()
+		if env := m.ReexecEnv(); len(env) != 0 {
+			t.Errorf("env = %v, want empty", env)
+		}
+		m.userLeft = 65
+		env := m.ReexecEnv()
+		if len(env) != 1 || env[0] != HubLeftEnv+"=65" {
+			t.Errorf("env = %v", env)
+		}
+	})
+}

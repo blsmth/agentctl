@@ -59,10 +59,7 @@ func reexecHub(m tui.HerdModel) {
 		logging.Warn("hub: re-exec skipped: %v", err)
 		return
 	}
-	var extra []string
-	if sel := m.SelectionEnv(); sel != "" {
-		extra = append(extra, sel)
-	}
+	extra := m.ReexecEnv()
 	logging.Log("hub: binary changed, re-executing %s", exe.Path)
 	if err := hubExec(exe.Path, extra...); err != nil {
 		logging.Warn("hub: re-exec %s failed, keeping old image: %v", exe.Path, err)

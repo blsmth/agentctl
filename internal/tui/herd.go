@@ -370,6 +370,33 @@ type HerdModel struct {
 // reload re-exec. It is consumed once at startup.
 const HubSelectEnv = "AGENTCTL_HUB_SELECT"
 
+// HubLeftEnv carries the user-dragged list width across a hot reload re-exec.
+// It is consumed once at startup.
+const HubLeftEnv = "AGENTCTL_HUB_LEFT"
+
+// parseHubLeft parses a HubLeftEnv value; ok is false for garbage or
+// non-positive values.
+func parseHubLeft(v string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+// ReexecEnv returns the env entries to carry across a hot reload re-exec: the
+// selection and, when the user dragged the divider, the list width.
+func (m HerdModel) ReexecEnv() []string {
+	var env []string
+	if sel := m.SelectionEnv(); sel != "" {
+		env = append(env, sel)
+	}
+	if m.userLeft > 0 {
+		env = append(env, HubLeftEnv+"="+strconv.Itoa(m.userLeft))
+	}
+	return env
+}
+
 // parseHubSelect splits a HubSelectEnv value into session and window ID.
 func parseHubSelect(v string) (session, windowID string, ok bool) {
 	session, windowID, ok = strings.Cut(v, "|")
@@ -417,6 +444,12 @@ func NewHerdModel() HerdModel {
 		_ = os.Unsetenv(HubSelectEnv) // consume once; don't leak to child processes
 		if session, win, ok := parseHubSelect(v); ok {
 			m.pendingFocus = &herdPendingFocus{session: session, windowID: win}
+		}
+	}
+	if v, ok := os.LookupEnv(HubLeftEnv); ok {
+		_ = os.Unsetenv(HubLeftEnv)
+		if n, ok := parseHubLeft(v); ok {
+			m.userLeft = n
 		}
 	}
 	return m
