@@ -1367,8 +1367,8 @@ func TestRenderRichLine3_NarrowWidthDropsRightToLeft(t *testing.T) {
 	fullWidth := lipgloss.Width(full)
 	dirOnlyWidth := lipgloss.Width(render.ValueStyle().Render("/tmp/project"))
 
-	// Narrow enough to drop the PR segment, wide enough to keep the
-	// worktree segment.
+	// Narrow enough to drop the worktree segment, wide enough to keep the
+	// PR segment.
 	cols := fullWidth - 1
 	if cols < dirOnlyWidth {
 		t.Fatalf("test setup invalid: cols (%d) narrower than the mandatory dir segment (%d)", cols, dirOnlyWidth)
@@ -1381,11 +1381,11 @@ func TestRenderRichLine3_NarrowWidthDropsRightToLeft(t *testing.T) {
 		t.Errorf("lipgloss.Width(line) = %d, want <= %d", got, cols)
 	}
 	stripped := stripANSI(line)
-	if strings.Contains(stripped, "PR #1042") {
-		t.Errorf("line = %q, want PR dropped first at a slightly narrower width", stripped)
+	if strings.Contains(stripped, "issue-1041") {
+		t.Errorf("line = %q, want worktree dropped first at a slightly narrower width", stripped)
 	}
-	if !strings.Contains(stripped, "issue-1041") {
-		t.Errorf("line = %q, want worktree retained (only PR should have dropped yet)", stripped)
+	if !strings.Contains(stripped, "PR #1042") {
+		t.Errorf("line = %q, want PR retained (only the worktree should have dropped yet)", stripped)
 	}
 
 	// Narrowest: only the mandatory directory segment remains.

@@ -87,3 +87,14 @@ func unsetenv(t *testing.T, key string) {
 		t.Fatal(err)
 	}
 }
+
+func TestHyperlink(t *testing.T) {
+	if got, want := Hyperlink("https://x/pull/1", "PR"), "\x1b]8;;https://x/pull/1\x1b\\PR\x1b]8;;\x1b\\"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	for _, u := range []string{"", "https://x\x1b\\evil", "a\nb"} {
+		if got := Hyperlink(u, "PR"); got != "PR" {
+			t.Errorf("Hyperlink(%q) = %q, want unlinked", u, got)
+		}
+	}
+}

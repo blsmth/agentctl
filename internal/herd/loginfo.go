@@ -103,6 +103,44 @@ func ReadLogInfo(path string) LogInfo {
 	return entry.info
 }
 
+// ScanLogFrom is the incremental, cross-process counterpart of ReadLogInfo for
+// callers that persist their own cursor (the statusline is a fresh process per
+// push, so the in-process cache never helps). prevOffset and prevSize are the
+// values returned by the previous call for the same path (zero on first sight).
+//
+//   - fresh=true: the log was scanned from its tail (first sight, shrunk, or
+//     appended past the tail budget); info is the complete result and replaces
+//     whatever the caller held.
+//   - fresh=false: only bytes after prevOffset were scanned; info holds just
+//     the newer records (empty when nothing was appended) and should be laid
+//     over the caller's previous result.
+//
+// ok=false means the log is missing or unreadable.
+func ScanLogFrom(path string, prevOffset, prevSize int64) (offset, size int64, info LogInfo, fresh, ok bool) {
+	if path == "" {
+		return 0, 0, LogInfo{}, false, false
+	}
+	fi, err := os.Stat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return 0, 0, LogInfo{}, false, false
+	}
+	size = fi.Size()
+	if prevSize > 0 && size == prevSize {
+		return prevOffset, size, LogInfo{}, false, true
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0, LogInfo{}, false, false
+	}
+	defer f.Close() //nolint:errcheck
+	if prevSize > 0 && size > prevSize && size-prevOffset <= logTailBytes {
+		e := scanAppended(f, logCacheEntry{offset: prevOffset}, size)
+		return e.offset, size, e.info, false, true
+	}
+	e := scanFresh(f, size)
+	return e.offset, size, e.info, true, true
+}
+
 // forgetLog drops path from the cache.
 func forgetLog(path string) {
 	logCacheMu.Lock()

@@ -58,11 +58,22 @@ func URL(windowID string) string {
 // visible may itself contain SGR styling. If windowID is not a valid window
 // ID, visible is returned unchanged.
 func Wrap(windowID, visible string) string {
-	u := URL(windowID)
-	if u == "" {
+	return Hyperlink(URL(windowID), visible)
+}
+
+// Hyperlink unconditionally wraps visible in an OSC 8 hyperlink to url. An
+// empty url, or one containing control characters (which could terminate the
+// sequence early and inject escapes), returns visible unchanged.
+func Hyperlink(url, visible string) string {
+	if url == "" {
 		return visible
 	}
-	return oscOpen + u + oscST + visible + oscReset
+	for _, r := range url {
+		if r < 0x20 || r == 0x7f {
+			return visible
+		}
+	}
+	return oscOpen + url + oscST + visible + oscReset
 }
 
 // Text wraps visible in a link to windowID when Enabled, and otherwise

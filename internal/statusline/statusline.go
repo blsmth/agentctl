@@ -22,6 +22,7 @@ import (
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/theme"
 	"github.com/blsmth/agentctl/internal/windowstate"
+	"github.com/blsmth/agentctl/internal/winlink"
 )
 
 // Run is the entry point for `agentctl statusline`. main.go routes it here
@@ -81,13 +82,20 @@ func RunWithIO(r io.Reader, w io.Writer, dryRun bool) {
 	// calling ResolveWindowID() twice.
 	windowID := signal.ResolveWindowID()
 
+	format := config.Load().EffectiveStatuslineFormat()
+	rich := format == "rich"
 	if !dryRun {
-		persistWindowState(payload, windowID)
+		// The PR log scan rides the same windowstate write, and only runs
+		// when the rich format will render it.
+		if pr := persistWindowState(payload, windowID, rich); rich {
+			payload.PR = pr
+		}
 		persistRateLimits(payload)
+	} else if rich {
+		payload.PR = readResolvedPR(payload, windowID)
 	}
 
-	format := config.Load().EffectiveStatuslineFormat()
-	if format == "rich" {
+	if rich {
 		fmt.Fprintln(w, renderRichLine(payload, windowID))
 		return
 	}
@@ -383,7 +391,7 @@ func padLeftTo(line string, width int) string {
 //
 //	<battery> 5h 11% · resets 5pm · 7d 1%
 //	opus-4.6 · <battery> 34% ctx · 68k/200k · turn: 3k↑ 1k↓ · 78% cached · 12 turns · total: 789k↑ 6k↓ · $13.43 · 1h23m
-//	~/code/agentctl · ⎇ main · +-3 · issue-1023 · PR #42 approved
+//	~/code/agentctl · ⎇ main · +-3 · PR #42 approved · issue-1023
 //
 // Line 1 (account rate limits), line 2 (session metrics), and line 3
 // (workspace/git) are each built independently and only included if they
@@ -829,8 +837,8 @@ func renderRichLine2(p *Payload, cols int, snap *state.AgentState) (string, bool
 }
 
 // renderRichLine3 renders the workspace/git row: current directory, branch,
-// dirty-tree count, agentctl worktree name, and PR, in that order, dropping
-// segments right-to-left (PR first) when the rendered line would exceed
+// dirty-tree count, PR (a hyperlink), and agentctl worktree name, in that order,
+// dropping segments right-to-left (worktree name first) when the rendered line would exceed
 // cols. The directory segment is never dropped (minKeep = 1) -- it is the
 // one piece of context every other segment is relative to, and omitting it
 // while keeping e.g. just a PR number would be more confusing than showing
@@ -885,20 +893,24 @@ func renderRichLine3(p *Payload, cols int) (string, bool) {
 		addSeg(dirtyStyle.Render(fmt.Sprintf("+-%d", n)))
 	}
 
-	// 4. agentctl worktree name (droppable). Bare name, no branch semantics
-	// -- see payload.go's NOTE on why this is NOT windowstate.Branch/
-	// WorktreeDir and must not be treated as one.
-	if p.Workspace != nil && p.Workspace.GitWorktree != nil && *p.Workspace.GitWorktree != "" {
-		addSeg(mutedStyle.Render(*p.Workspace.GitWorktree))
-	}
-
-	// 5. PR (droppable).
+	// 4. PR (droppable), linked to its URL via OSC 8. Sits beside the
+	// branch/dirty status and outlasts the worktree name when trimming.
 	if p.PR != nil && p.PR.Number != nil {
 		prSeg := valueStyle.Render(fmt.Sprintf("PR #%d", int(*p.PR.Number)))
+		if p.PR.URL != nil && prLinkable(*p.PR.URL) {
+			prSeg = winlink.Hyperlink(*p.PR.URL, prSeg)
+		}
 		if p.PR.ReviewState != nil && *p.PR.ReviewState != "" {
 			prSeg += " " + mutedStyle.Render(*p.PR.ReviewState)
 		}
 		addSeg(prSeg)
+	}
+
+	// 5. agentctl worktree name (droppable, dropped first). Bare name, no
+	// branch semantics -- see payload.go's NOTE on why this is NOT
+	// windowstate.Branch/WorktreeDir and must not be treated as one.
+	if p.Workspace != nil && p.Workspace.GitWorktree != nil && *p.Workspace.GitWorktree != "" {
+		addSeg(mutedStyle.Render(*p.Workspace.GitWorktree))
 	}
 
 	const minKeep = 1
@@ -938,12 +950,17 @@ func renderRichLine3(p *Payload, cols int) (string, bool) {
 // another project's log. A non-empty LogPath is never overwritten --
 // the SessionStart hook owns it. windowID is resolved once by the caller (RunWithIO) rather than re-resolved here,
 // since "rich" rendering also needs it.
-func persistWindowState(p *Payload, windowID string) {
+//
+// When scanPR is set, the PR is resolved inside the same Update (see
+// resolvePR) and its scan cursor stored in ws.LogPR, so a push is still one
+// write. The resolved PR (nil when none) is returned for rendering.
+func persistWindowState(p *Payload, windowID string, scanPR bool) *PR {
 	if windowID == "" {
 		logging.Log("statusline: could not resolve window id; skipping windowstate update")
-		return
+		return p.PR
 	}
 
+	var pr *PR
 	err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
 		if pct, ok := p.ContextWindow.UsedPercentage(); ok {
 			ws.CtxPct = int(math.Round(pct))
@@ -970,6 +987,11 @@ func persistWindowState(p *Payload, windowID string) {
 		}
 		backfillLogPath(ws, p)
 		recordEffectiveSessionName(ws, p)
+		if scanPR {
+			var cache windowstate.LogPRScan
+			pr, cache, _ = resolvePR(p, *ws)
+			ws.LogPR = cache
+		}
 		if p.Model != nil && p.Model.ID != nil && *p.Model.ID != "" {
 			ws.Model = *p.Model.ID
 		}
@@ -984,6 +1006,10 @@ func persistWindowState(p *Payload, windowID string) {
 	if err != nil && !errors.Is(err, windowstate.ErrGone) {
 		logging.Log("statusline: updating windowstate for %s: %v", windowID, err)
 	}
+	if !scanPR {
+		return p.PR
+	}
+	return pr
 }
 
 // recordEffectiveSessionName copies the session name Claude Code reports in
