@@ -7,6 +7,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // RestoreRequest describes a previously-saved agent window to re-launch.
@@ -43,6 +44,16 @@ type RestoreRequest struct {
 	// re-resolved from config; if it no longer exists Restore returns an
 	// error rather than relaunching on Anthropic.
 	Backend string
+
+	// Launch metadata re-stamped on the relaunched window's windowstate record
+	// so it keeps its dispatched/bare classification. Empty values are left
+	// empty (an empty Mode counts as bare). SpawnedBy is deliberately absent:
+	// window IDs change on restore, so the caller remaps it after launch.
+	Mode        string
+	Ticket      string
+	TicketTitle string
+	Branch      string
+	WorktreeDir string
 }
 
 // Restore re-launches a saved agent window using the shared settings helpers
@@ -93,7 +104,23 @@ func Restore(req RestoreRequest) (string, error) {
 		return "", fmt.Errorf("dispatch.Restore: launching %s: %w", instanceName, err)
 	}
 
+	if wid != "" {
+		windowstate.Update(wid, func(ws *windowstate.WindowState) { //nolint:errcheck
+			applyRestoreMeta(ws, req)
+		})
+	}
+
 	return wid, nil
+}
+
+// applyRestoreMeta stamps the saved launch metadata onto a window record. It
+// only sets fields, so a later SessionStart (which merges via Update) keeps them.
+func applyRestoreMeta(ws *windowstate.WindowState, req RestoreRequest) {
+	ws.Mode = req.Mode
+	ws.Ticket = req.Ticket
+	ws.TicketTitle = req.TicketTitle
+	ws.Branch = req.Branch
+	ws.WorktreeDir = req.WorktreeDir
 }
 
 // buildRestoreCmd returns the shell command that re-launches a restored

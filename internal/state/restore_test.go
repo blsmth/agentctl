@@ -131,3 +131,35 @@ func TestRestoreFileRoundTrip(t *testing.T) {
 		t.Error("restore.json still present")
 	}
 }
+
+func TestBuildRestoreAgentsCopiesLaunchMeta(t *testing.T) {
+	recs := map[string]windowstate.WindowState{"@1": {
+		Instance: "go-engineer", AgentName: "go-engineer", WorkDir: "/w",
+		Mode: "adhoc", Ticket: "42", TicketTitle: "T", Branch: "agent/x",
+		WorktreeDir: "/w/.worktrees/x", SpawnedBy: "@9", SpawnedBySession: "sess",
+	}}
+	got := BuildRestoreAgents(recs, nil)
+	if len(got) != 1 {
+		t.Fatalf("got %d agents", len(got))
+	}
+	a := got[0]
+	if a.Mode != "adhoc" || a.TicketRef != "42" || a.TicketTitle != "T" || a.Branch != "agent/x" ||
+		a.WorktreeDir != "/w/.worktrees/x" || a.SpawnedBy != "@9" || a.SpawnedBySession != "sess" {
+		t.Errorf("meta not copied: %+v", a)
+	}
+}
+
+func TestLoadRestoreWithoutLaunchMeta(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "restore.json")
+	old := `{"agents":[{"name":"a","session_id":"s","work_dir":"/w"}],"timestamp":"2026-01-01T00:00:00Z"}`
+	if err := os.WriteFile(p, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadFrom(p)
+	if err != nil || s == nil || len(s.Agents) != 1 {
+		t.Fatalf("LoadFrom = %v, %v", s, err)
+	}
+	if a := s.Agents[0]; a.Mode != "" || a.SpawnedBy != "" || a.TicketRef != "" {
+		t.Errorf("unexpected meta: %+v", a)
+	}
+}

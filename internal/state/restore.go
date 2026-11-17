@@ -69,6 +69,14 @@ func BuildRestoreAgents(records map[string]windowstate.WindowState, live map[str
 			WindowID:    id,
 			WindowIndex: idx,
 			Backend:     ws.Backend,
+
+			Mode:             ws.Mode,
+			TicketRef:        ws.Ticket,
+			TicketTitle:      ws.TicketTitle,
+			Branch:           ws.Branch,
+			WorktreeDir:      ws.WorktreeDir,
+			SpawnedBy:        ws.SpawnedBy,
+			SpawnedBySession: ws.SpawnedBySession,
 		})
 	}
 	slices.SortFunc(out, func(a, b AgentState) int {

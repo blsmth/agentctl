@@ -2,6 +2,8 @@ package dispatch
 
 import (
 	"testing"
+
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 func TestRestoreRequest_RequiresWorkDir(t *testing.T) {
@@ -46,5 +48,21 @@ func TestRestoreRequest_DuplicateSession(t *testing.T) {
 	}
 	if !req.DuplicateSession {
 		t.Error("test setup error: DuplicateSession should be true")
+	}
+}
+
+func TestApplyRestoreMeta(t *testing.T) {
+	var ws windowstate.WindowState
+	ws.SpawnedBy = "@old"
+	applyRestoreMeta(&ws, RestoreRequest{Mode: "adhoc", Ticket: "7", TicketTitle: "t", Branch: "b", WorktreeDir: "/wt"})
+	if ws.Mode != "adhoc" || ws.Ticket != "7" || ws.TicketTitle != "t" || ws.Branch != "b" || ws.WorktreeDir != "/wt" {
+		t.Errorf("got %+v", ws)
+	}
+	if ws.SpawnedBy != "@old" {
+		t.Errorf("SpawnedBy must not be touched by applyRestoreMeta")
+	}
+	applyRestoreMeta(&ws, RestoreRequest{})
+	if ws.Mode != "" {
+		t.Errorf("empty mode must stay empty, got %q", ws.Mode)
 	}
 }
