@@ -49,11 +49,11 @@ const herdMaxNameWidth = 24
 // instead of running flush to the sidebar's left edge.
 const herdSidebarLeftInset = 2
 
-// herdSidebarRightGutter is the number of columns sidebar content lines
-// reserve at their right edge so they never touch the detail panel's
-// vertical border (see renderRow's "available" calculation). herdLineDivider
-// reserves the same gutter so it can't collide with that border either.
-const herdSidebarRightGutter = 3
+// herdSidebarRightGutter is the number of blank columns sidebar content lines
+// reserve at their right edge so they never touch the hub pane's edge (see
+// renderRow's "available" calculation). The close button, the "+ new"
+// button and the divider all end this many columns short of the pane width.
+const herdSidebarRightGutter = 1
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 
@@ -1098,9 +1098,9 @@ func (m *HerdModel) rebuildLines() {
 
 // contentWidth returns the usable content width based on terminal size.
 func (m HerdModel) contentWidth() int {
-	w := m.termWidth - 4
-	if m.liveLeft > 0 && w > m.liveLeft-4 {
-		w = m.liveLeft - 4 // the list column is all the hub pane has
+	w := m.termWidth
+	if m.liveLeft > 0 && w > m.liveLeft {
+		w = m.liveLeft // the list column is all the hub pane has
 	}
 	if w < 40 {
 		w = 40
@@ -1292,9 +1292,7 @@ func (m HerdModel) renderLine(i int, cw int) string {
 // groups, inset to match the sidebar's content block: herdSidebarLeftInset
 // blank columns on the left (the same column a group header's marker
 // starts at) and herdSidebarRightGutter blank columns on the right (the
-// same gutter content rows leave before the detail panel's vertical
-// border), so the rule reads as part of the sidebar rather than colliding
-// with the border in a T-junction. Below that combined inset+gutter width
+// same gutter content rows leave before the pane edge). Below that combined inset+gutter width
 // there's no room to reserve either margin, so it falls back to a plain
 // full-width rule (still exactly cw wide) rather than disappearing.
 //
