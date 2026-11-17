@@ -360,6 +360,11 @@ func ResizeLiveViewer(rightWidth int) error {
 // format-expands before sh runs.
 const KeyWindowEnv = "AGENTCTL_KEY_WINDOW"
 
+// KeyClientEnv is set next to KeyWindowEnv to #{client_name} of the client
+// that pressed the key. Bindings run in a popup/run-shell child with no
+// controlling client, so client-targeted commands need it for an explicit -c.
+const KeyClientEnv = "AGENTCTL_KEY_CLIENT"
+
 // SessionOfWindow returns the session owning windowID ("@N"), or "".
 func SessionOfWindow(windowID string) string {
 	if !strings.HasPrefix(windowID, "@") {

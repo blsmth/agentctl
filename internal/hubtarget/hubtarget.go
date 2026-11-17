@@ -12,6 +12,8 @@ package hubtarget
 import (
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/blsmth/agentctl/internal/tmux"
 )
@@ -145,6 +147,8 @@ func Apply(args []string) (newArgs []string, done bool) {
 		return args, false
 	}
 	_ = os.Unsetenv(tmux.KeyWindowEnv)
+	client := os.Getenv(tmux.KeyClientEnv)
+	_ = os.Unsetenv(tmux.KeyClientEnv)
 	if Classify(args[1]) == ScopeOther || tmux.SessionOfWindow(keyWin) != tmux.HubSessionName {
 		return args, false
 	}
@@ -158,12 +162,10 @@ func Apply(args []string) (newArgs []string, done bool) {
 	})
 	switch d.Action {
 	case ActionRefuse:
-		tmux.DisplayMessage(d.Message)
+		tmux.DisplayMessageTo(client, d.Message)
 		return args, true
 	case ActionHubQuit:
-		if err := tmux.SwitchToLastSession(); err != nil {
-			tmux.DisplayMessage(fmt.Sprintf("leaving hub: %v", err))
-		}
+		LeaveHub(tmuxLeaver{client: client, viewedHome: v.Home}, client)
 		return args, true
 	case ActionRedirect:
 		_ = os.Setenv("AGENTCTL_RUNTIME_DIR", d.RuntimeDir)
@@ -174,3 +176,55 @@ func Apply(args []string) (newArgs []string, done bool) {
 	}
 	return args, false
 }
+
+// Leaver is the tmux surface LeaveHub needs; injected so the chain is testable.
+type Leaver interface {
+	SwitchLast() error
+	SwitchSession(name string) error
+	ViewedHome() string
+	Sessions() []tmux.SessionActivity
+	Message(msg string)
+}
+
+// LeaveHub moves the client out of the hub: last session, else the viewed
+// agent's home session, else the most recently active other agentctl-*
+// session (not the hub, not a viewer). If all fail it shows why.
+func LeaveHub(l Leaver, client string) {
+	lastErr := l.SwitchLast()
+	if lastErr == nil {
+		return
+	}
+	errs := []string{lastErr.Error()}
+	if home := l.ViewedHome(); home != "" && home != tmux.HubSessionName {
+		err := l.SwitchSession(home)
+		if err == nil {
+			return
+		}
+		errs = append(errs, err.Error())
+	}
+	var cands []tmux.SessionActivity
+	for _, s := range l.Sessions() {
+		if strings.HasPrefix(s.Name, "agentctl-") && s.Name != tmux.HubSessionName && !tmux.IsViewerSession(s.Name) {
+			cands = append(cands, s)
+		}
+	}
+	sort.SliceStable(cands, func(i, j int) bool { return cands[i].Activity > cands[j].Activity })
+	for _, c := range cands {
+		err := l.SwitchSession(c.Name)
+		if err == nil {
+			return
+		}
+		errs = append(errs, err.Error())
+	}
+	l.Message(fmt.Sprintf("leaving hub: no session to switch to (%s)", strings.Join(errs, "; ")))
+}
+
+type tmuxLeaver struct{ client, viewedHome string }
+
+func (t tmuxLeaver) SwitchLast() error { return tmux.SwitchClientToLast(t.client) }
+func (t tmuxLeaver) SwitchSession(n string) error {
+	return tmux.SwitchClientToSession(t.client, n)
+}
+func (t tmuxLeaver) ViewedHome() string               { return t.viewedHome }
+func (t tmuxLeaver) Sessions() []tmux.SessionActivity { return tmux.ListSessionActivity() }
+func (t tmuxLeaver) Message(m string)                 { tmux.DisplayMessageTo(t.client, m) }
