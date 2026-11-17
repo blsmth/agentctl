@@ -866,3 +866,78 @@ func TestKeyPressNeverQuitsAndRefocuses(t *testing.T) {
 		})
 	}
 }
+
+// TestChromeBarRebuildActiveTabFlag: IsActive follows the active-window file.
+func TestChromeBarRebuildActiveTabFlag(t *testing.T) {
+	f := newChromeFixture(t, []tmux.WindowInfo{{ID: "@1", Name: "alpha"}, {ID: "@2", Name: "beta"}})
+	f.writeRecord(t, "@1", `{"state":"working","instance":"alpha"}`)
+	f.writeRecord(t, "@2", `{"state":"idle","instance":"beta"}`)
+	f.setActive(t, "@2")
+	m := f.model("@1")
+	m.rebuild(true)
+	if len(m.tabs) != 3 {
+		t.Fatalf("tabs = %d, want 3 (shell + 2)", len(m.tabs))
+	}
+	for _, tab := range m.tabs {
+		if want := tab.WindowID == "@2"; tab.IsActive != want {
+			t.Errorf("tab %q IsActive = %v, want %v", tab.Name, tab.IsActive, want)
+		}
+	}
+	if m.activeWindowID != "@2" {
+		t.Errorf("activeWindowID = %q, want @2 (active-window file)", m.activeWindowID)
+	}
+}
+
+// TestChromeBarRebuildDoneState: done+unseen shows as "done"; done+seen does not.
+func TestChromeBarRebuildDoneState(t *testing.T) {
+	f := newChromeFixture(t, []tmux.WindowInfo{{ID: "@3", Name: "finished"}, {ID: "@4", Name: "looked"}})
+	f.writeRecord(t, "@3", `{"state":"idle","instance":"finished","done":true}`)
+	f.writeRecord(t, "@4", `{"state":"idle","instance":"looked","done":true,"seen":true}`)
+	f.setActive(t, "@1")
+	m := f.model("@3")
+	m.rebuild(true)
+	if tb, _ := tabByID(m.tabs, "@3"); tb.State != "done" {
+		t.Errorf("unseen done tab state = %q, want done", tb.State)
+	}
+	if tb, _ := tabByID(m.tabs, "@4"); tb.State != "idle" {
+		t.Errorf("seen done tab state = %q, want idle", tb.State)
+	}
+}
+
+// TestChromeBarRebuildShellTab: the shell tab is first, keeps its real window
+// ID from the tmux list, and highlights when it is the active window.
+func TestChromeBarRebuildShellTab(t *testing.T) {
+	f := newChromeFixture(t, []tmux.WindowInfo{{ID: "@5", Name: "shell"}, {ID: "@6", Name: "go-engineer"}})
+	f.writeRecord(t, "@6", `{"state":"working","instance":"go-engineer"}`)
+	f.setActive(t, "@5")
+	m := f.model("@6")
+	m.rebuild(true)
+	shell := m.tabs[0]
+	if shell.Name != "shell" || shell.WindowID != "@5" || shell.State != "idle" || !shell.IsActive {
+		t.Errorf("shell tab = %+v, want first, @5, idle, active", shell)
+	}
+	if m.tabs[1].IsActive {
+		t.Error("agent tab must not be active when shell is")
+	}
+}
+
+// TestChromeBarPersistentWatcherTwoEvents: two separate writes produce two
+// messages on the same channel (the watcher is not recreated).
+func TestChromeBarPersistentWatcherTwoEvents(t *testing.T) {
+	f := newChromeFixture(t, nil)
+	f.writeRecord(t, "@1", `{"state":"idle"}`)
+	ch := startWatcher(f.dir)
+	time.Sleep(150 * time.Millisecond)
+
+	for i, body := range []string{`{"state":"working"}`, `{"state":"idle"}`} {
+		f.writeRecord(t, "@1", body)
+		msg, ok := recvWatch(t, ch, 2*time.Second)
+		if !ok {
+			t.Fatalf("write %d: no message", i+1)
+		}
+		if _, isWC := msg.(windowsChangedMsg); !isWC {
+			t.Errorf("write %d: got %T, want windowsChangedMsg", i+1, msg)
+		}
+		time.Sleep(2 * chromeBarDebounce)
+	}
+}

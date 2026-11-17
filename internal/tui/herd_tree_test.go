@@ -1,10 +1,15 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 func tRow(win, parent string, dispatched bool) herd.Row {
@@ -67,5 +72,40 @@ func TestRenderTreePrefixes(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("render missing %q:\n%s", want, joined)
 		}
+	}
+}
+
+// TestTreeRowsFromBuilder: rows built from windowstate by the herd builder
+// (no state.json) nest under their trusted dispatcher in the hub tree.
+func TestTreeRowsFromBuilder(t *testing.T) {
+	dir := t.TempDir()
+	winDir := filepath.Join(dir, "windows")
+	if err := os.MkdirAll(winDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(id, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(winDir, id+".json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("@1", `{"state":"working","instance":"lead"}`)
+	write("@2", `{"state":"blocked","instance":"w1","mode":"dispatch","spawned_by":"@1","spawned_by_session":"s"}`)
+	write("@3", `{"state":"idle","instance":"w2","mode":"dispatch","spawned_by":"@2","spawned_by_session":"s"}`)
+	wins := []tmux.WindowInfo{{ID: "@1", Name: "lead"}, {ID: "@2", Name: "w1"}, {ID: "@3", Name: "w2"}}
+	rows := herd.TagAgents("agentctl-x", "x", herd.BuildAgents(wins, windowstate.AllFrom(winDir), nil, time.Now()))
+	herd.TagDispatched(rows, herd.LoadMeta(herd.Group{RuntimeDir: dir}))
+
+	var got []string
+	for _, tr := range treeRows(rows) {
+		got = append(got, tr.Prefix+tr.Row.WindowID)
+	}
+	want := []string{"@1", "└─ @2", "   └─ @3"}
+	if !equalStrings(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	g := herd.Group{Session: "agentctl-x", Project: "x", Rows: rows}
+	if b := herd.FirstBlocked([]herd.Group{g}); b == nil || b.WindowID != "@2" {
+		t.Errorf("FirstBlocked = %v, want @2", b)
 	}
 }
