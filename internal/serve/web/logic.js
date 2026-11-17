@@ -53,10 +53,15 @@ export function isDispatched(win) {
   return Boolean(win.mode) && win.mode !== "bare";
 }
 
-/** treeConnector is the gutter text drawn before a tree entry's title. */
-export function treeConnector(entry) {
-  if (entry.depth === 0) return "";
-  return entry.ancestorsLast.map((l) => (l ? "   " : "│  ")).join("") + (entry.last ? "└─ " : "├─ ");
+/**
+ * treeLines describes the connector lines for a tree entry as data: `through`
+ * has one boolean per ancestor level (true = that ancestor has later siblings,
+ * so its vertical continues through this row) and `last` says whether the
+ * row's own elbow ends here (└) or continues (├).
+ */
+export function treeLines(entry) {
+  if (entry.depth === 0) return { through: [], last: false };
+  return { through: entry.ancestorsLast.map((l) => !l), last: Boolean(entry.last) };
 }
 
 /**

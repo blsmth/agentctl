@@ -7,7 +7,7 @@ import {
   formatSince,
   rollup,
   sortGroups,
-  treeConnector,
+  treeLines,
   treeRows,
   visibleTree,
   windowHash,
@@ -54,20 +54,37 @@ function disclosure(kids, isCollapsed, onToggle) {
   );
 }
 
-function windowRow(entry, toggle) {
+/** treeSpans emits one aria-hidden span per connector level; CSS draws the lines. */
+function stubSpan(entry) {
+  return h("span", { class: "tl stub", style: `--lvl:${entry.depth}`, "aria-hidden": "true" });
+}
+
+function treeSpans(entry, expanded) {
+  const stub = expanded ? [stubSpan(entry)] : [];
+  if (entry.depth === 0) return stub;
+  const { through, last } = treeLines(entry);
+  const spans = through.map((cont, k) =>
+    h("span", { class: `tl${cont ? " through" : ""}`, style: `--lvl:${k}`, "aria-hidden": "true" }),
+  );
+  spans.push(h("span", { class: `tl own${last ? " last" : ""}`, style: `--lvl:${through.length}`, "aria-hidden": "true" }));
+  return [...spans, ...stub];
+}
+
+function windowRow(entry, toggle, expanded) {
   const win = entry.win;
   const state = effectiveState(win);
   const since = formatSince(win.blocked_since || win.state_since, Date.now());
-  const meta = [win.window_id, win.mode, win.branch].filter(Boolean).join(" · ");
+  // Children omit the branch; it is in the detail view.
+  const meta = [win.window_id, win.mode, entry.depth > 0 ? "" : win.branch].filter(Boolean).join(" · ");
   const link = h(
     "a",
-    { class: `win ${state}${entry.depth > 0 ? " child" : ""}`, href: windowHash(win.session, win.window_id) },
-    entry.depth > 0 ? h("span", { class: "gutter", "aria-hidden": "true" }, treeConnector(entry)) : null,
+    { class: `win ${state}${entry.depth > 0 ? " child" : ""}`, style: entry.depth > 0 ? `--depth:${entry.depth}` : null, href: windowHash(win.session, win.window_id) },
+    ...treeSpans(entry, expanded),
     h("span", { class: "glyph", "aria-label": state }, GLYPH[state]),
     h(
       "span",
       { class: "win-main" },
-      h("span", { class: "win-title" }, win.agent || "(bare)", h("span", { class: "meta" }, ` ${meta}`)),
+      h("span", { class: "win-title" }, h("span", { class: "agent" }, win.agent || "(bare)"), h("span", { class: "meta" }, ` ${meta}`)),
       win.activity ? h("span", { class: "activity" }, win.activity) : null,
     ),
     h(
@@ -80,8 +97,8 @@ function windowRow(entry, toggle) {
   return h("div", { class: "node" }, link, toggle);
 }
 
-function bucketRow(entry, toggle) {
-  return h("div", { class: "node bucket" }, h("span", { class: "bucket-label" }, entry.label), toggle);
+function bucketRow(entry, toggle, expanded) {
+  return h("div", { class: "node bucket" }, expanded ? stubSpan(entry) : null, h("span", { class: "bucket-label" }, entry.label), toggle);
 }
 
 export function mountFleet(root, ctx) {
@@ -109,7 +126,8 @@ export function mountFleet(root, ctx) {
       const kids = descendants(entries, i);
       const key = collapseKey(g.session, e);
       const toggle = kids.length > 0 ? disclosure(kids, collapsed.has(key), flip(key)) : null;
-      return e.bucket ? bucketRow(e, toggle) : windowRow(e, toggle);
+      const expanded = kids.length > 0 && !collapsed.has(key);
+      return e.bucket ? bucketRow(e, toggle, expanded) : windowRow(e, toggle, expanded);
     });
     return { nodes, live };
   }
