@@ -18,6 +18,7 @@ require (
 	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
+	github.com/sahilm/fuzzy v0.1.3
 	golang.org/x/term v0.45.0
 	google.golang.org/protobuf v1.36.8
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1

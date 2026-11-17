@@ -6,7 +6,7 @@ All keybindings use the tmux prefix (`ctrl+b`), then the key. The bottom row of 
 
 | Key | Action |
 |-----|--------|
-| `a` | **Launch agent** — popup menu listing available agents |
+| `a` | **Launch agent** — filter-first popup: type to filter, `enter` launch, `tab` options, `ctrl+r` resume, `ctrl+g` go to running, `esc` clear/close |
 | `A` | **Quick-launch** — launch the default agent (`default_agent` in config) immediately, skipping the menu |
 | `m` | **Agents window** — open the agent browser window |
 | `c` | **Create** — popup menu for creating a new agent definition |
