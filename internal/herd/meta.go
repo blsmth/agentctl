@@ -20,6 +20,7 @@ type Meta struct {
 	Backend          string // config backend name; "" = Anthropic
 	Ticket           string
 	TicketTitle      string
+	Task             string // ad-hoc dispatch task line
 	Branch           string
 	WorktreeDir      string
 	LogPath          string
@@ -31,6 +32,7 @@ type Meta struct {
 	PendingTool       string
 	PendingToolDetail string
 	BlockedSince      time.Time
+	StateSince        time.Time
 	CostUSD           float64
 }
 
@@ -83,6 +85,7 @@ func LoadMeta(g Group) map[string]Meta {
 			Backend:          ws.Backend,
 			Ticket:           ws.Ticket,
 			TicketTitle:      ws.TicketTitle,
+			Task:             ws.Task,
 			Branch:           ws.Branch,
 			WorktreeDir:      ws.WorktreeDir,
 			LogPath:          ws.LogPath,
@@ -94,6 +97,7 @@ func LoadMeta(g Group) map[string]Meta {
 			PendingTool:       ws.PendingTool,
 			PendingToolDetail: ws.PendingToolDetail,
 			BlockedSince:      ws.BlockedSince,
+			StateSince:        ws.StateSince,
 			CostUSD:           ws.CostUSD,
 		}
 	}

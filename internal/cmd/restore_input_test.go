@@ -161,7 +161,7 @@ func TestLoadFreshRestoreInputClears(t *testing.T) {
 func TestRestoreAgentsPassesLaunchMeta(t *testing.T) {
 	saved := []state.AgentState{{
 		Name: "a", AgentName: "a", WindowID: "@1", WorkDir: "/w", Mode: "adhoc",
-		TicketRef: "42", TicketTitle: "T", Branch: "br", WorktreeDir: "/w/.worktrees/x",
+		TicketRef: "42", TicketTitle: "T", Task: "do x", Branch: "br", WorktreeDir: "/w/.worktrees/x",
 		SpawnedBy: "@9", SpawnedBySession: "s",
 	}}
 	fn, got := collect()
@@ -170,7 +170,7 @@ func TestRestoreAgentsPassesLaunchMeta(t *testing.T) {
 		t.Fatalf("got %d requests", len(*got))
 	}
 	r := (*got)[0]
-	if r.Mode != "adhoc" || r.Ticket != "42" || r.TicketTitle != "T" || r.Branch != "br" || r.WorktreeDir != "/w/.worktrees/x" {
+	if r.Mode != "adhoc" || r.Ticket != "42" || r.TicketTitle != "T" || r.Task != "do x" || r.Branch != "br" || r.WorktreeDir != "/w/.worktrees/x" {
 		t.Errorf("meta missing: %+v", r)
 	}
 }

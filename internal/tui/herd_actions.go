@@ -249,6 +249,9 @@ func (m *HerdModel) herdMenuItems(idx int) []herdMenuItem {
 			herdMenuItem{"close", "x"},
 			herdMenuItem{"home", "J"},
 		)
+		if m.lines[idx].row.PRURL != "" {
+			items = append(items, herdMenuItem{"open PR", "p"})
+		}
 	}
 	if g != nil && groupCanLaunch(*g) {
 		items = append(items, herdMenuItem{"new", "n"})
@@ -306,8 +309,23 @@ func (m *HerdModel) runMenuKey(key string) tea.Cmd {
 		return cmd
 	case "n":
 		return m.launchForLine(line)
+	case "p":
+		return m.openSelectedPR()
 	}
 	return nil
+}
+
+// herdOpenURL opens a PR URL in the browser; tests replace it.
+var herdOpenURL = tkOpenPRInBrowserCmd
+
+// openSelectedPR opens the selected row's PR (from its session log's pr-link
+// record), or does nothing when the row has none.
+func (m *HerdModel) openSelectedPR() tea.Cmd {
+	r := m.selectedRow()
+	if r == nil || r.PRURL == "" {
+		return nil
+	}
+	return herdOpenURL(r.PRURL)
 }
 
 // applyPendingFocus selects the pending launched row if it is now present and

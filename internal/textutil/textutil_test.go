@@ -38,3 +38,31 @@ func TestTruncate(t *testing.T) {
 		})
 	}
 }
+
+func TestTaskLine(t *testing.T) {
+	tests := []struct {
+		name   string
+		prompt string
+		max    int
+		want   string
+	}{
+		{"empty", "", 80, ""},
+		{"plain", "Fix the flaky test", 80, "Fix the flaky test"},
+		{"skips heading and blanks", "## Goal\n\n  Redesign the hub sidebar row\nmore", 80, "Redesign the hub sidebar row"},
+		{"skips front matter and rules", "---\n---\n***\nShip it", 80, "Ship it"},
+		{"skips code fence", "```go\nfmt.Println()\n```\nAfter the code", 80, "After the code"},
+		{"strips list marker and emphasis", "- **Bump** the `gutter` to 3", 80, "Bump the gutter to 3"},
+		{"strips numbered list and quote", "> 1. Do the thing", 80, "Do the thing"},
+		{"link keeps text", "See [the spec](https://x.y/z) first", 80, "See the spec first"},
+		{"collapses whitespace", "a \t  b", 80, "a b"},
+		{"truncates", "abcdefghij", 5, "abcd…"},
+		{"only headings", "# A\n## B", 80, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := TaskLine(tt.prompt, tt.max); got != tt.want {
+				t.Errorf("TaskLine(%q, %d) = %q, want %q", tt.prompt, tt.max, got, tt.want)
+			}
+		})
+	}
+}

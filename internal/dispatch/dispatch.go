@@ -348,6 +348,8 @@ func Launch(req Request) (Result, error) {
 			if req.Ticket > 0 {
 				ws.Ticket = fmt.Sprintf("%d", req.Ticket)
 				ws.TicketTitle = req.TicketTitle
+			} else if task := TaskFor(req); task != "" {
+				ws.Task = task
 			}
 			ws.Mode = string(req.Mode)
 			// The name is unique per window by construction (worktree
@@ -1069,4 +1071,17 @@ func orchestratorFor(windowID, envSessionID string, read func(string) (windowsta
 		o.Name = ws.SessionName
 	}
 	return o
+}
+
+// taskLineMax is the rune budget for the recorded ad-hoc task line.
+const taskLineMax = 80
+
+// TaskFor returns the one-line task recorded in windowstate for an ad-hoc
+// dispatch (the first prose line of its prompt), or "" for a ticket dispatch
+// or an empty prompt.
+func TaskFor(req Request) string {
+	if req.Ticket > 0 {
+		return ""
+	}
+	return textutil.TaskLine(req.CustomPrompt, taskLineMax)
 }

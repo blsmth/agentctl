@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/registry"
 	"github.com/blsmth/agentctl/internal/state"
@@ -34,6 +35,16 @@ type Row struct {
 	// dispatched this window, or "" when none or untrusted (see
 	// Meta.Parent).
 	Parent string
+
+	// StateSince is when the window entered its current state (BlockedSince
+	// for a blocked row); zero when unknown. Set by TagMeta.
+	StateSince time.Time
+
+	// Recap is the row's "what is it working on" line, and PRNumber/PRURL the
+	// newest PR link from its session log. Set by TagLogs.
+	Recap    RecapLine
+	PRNumber int
+	PRURL    string
 }
 
 // RollupStatus is a rolled-up status across a set of rows, in the group-level
@@ -211,21 +222,11 @@ func LoadGroup(e registry.Entry) Group {
 		return g
 	}
 	rows := TagAgents(e.SessionName, project, agents)
-	TagDispatched(rows, LoadMeta(Group{RuntimeDir: e.RuntimeDir}))
+	TagMeta(rows, LoadMeta(Group{RuntimeDir: e.RuntimeDir}))
+	TagLogs(rows)
 	g.Rows = rows
 	g.Rollup = RollupRows(rows)
 	return g
-}
-
-// TagDispatched sets Row.Dispatched and Row.Parent in place from per-window
-// launch metadata. A window with no record in meta counts as bare with no
-// parent.
-func TagDispatched(rows []Row, meta map[string]Meta) {
-	for i := range rows {
-		m := meta[rows[i].WindowID]
-		rows[i].Dispatched = m.Dispatched()
-		rows[i].Parent = m.Parent()
-	}
 }
 
 // projectDisplayName derives a human-friendly project name from a registry

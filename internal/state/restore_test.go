@@ -135,7 +135,7 @@ func TestRestoreFileRoundTrip(t *testing.T) {
 func TestBuildRestoreAgentsCopiesLaunchMeta(t *testing.T) {
 	recs := map[string]windowstate.WindowState{"@1": {
 		Instance: "go-engineer", AgentName: "go-engineer", WorkDir: "/w",
-		Mode: "adhoc", Ticket: "42", TicketTitle: "T", Branch: "agent/x",
+		Mode: "adhoc", Ticket: "42", TicketTitle: "T", Task: "do x", Branch: "agent/x",
 		WorktreeDir: "/w/.worktrees/x", SpawnedBy: "@9", SpawnedBySession: "sess",
 	}}
 	got := BuildRestoreAgents(recs, nil)
@@ -143,7 +143,7 @@ func TestBuildRestoreAgentsCopiesLaunchMeta(t *testing.T) {
 		t.Fatalf("got %d agents", len(got))
 	}
 	a := got[0]
-	if a.Mode != "adhoc" || a.TicketRef != "42" || a.TicketTitle != "T" || a.Branch != "agent/x" ||
+	if a.Mode != "adhoc" || a.TicketRef != "42" || a.TicketTitle != "T" || a.Task != "do x" || a.Branch != "agent/x" ||
 		a.WorktreeDir != "/w/.worktrees/x" || a.SpawnedBy != "@9" || a.SpawnedBySession != "sess" {
 		t.Errorf("meta not copied: %+v", a)
 	}

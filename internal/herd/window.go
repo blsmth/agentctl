@@ -26,8 +26,8 @@ type Window struct {
 	Activity     string `json:"activity,omitempty"`
 	MailPending  int    `json:"mail_pending,omitempty"`
 
-	// Additive fields (serve). PRURL is not recorded in windowstate today and
-	// stays empty until something writes it. PendingTool is only set while the
+	// Additive fields (serve). PRURL is the newest pr-link record in the
+	// session log (see TagLogs). PendingTool is only set while the
 	// window is blocked, which is when it names the tool the dialog asks about.
 	PRURL        string `json:"pr_url,omitempty"`
 	Issue        int    `json:"issue,omitempty"`
@@ -56,6 +56,10 @@ func ToWindow(r Row, m Meta) Window {
 		Activity:     ActivityLine(r),
 		MailPending:  r.MailboxPending,
 		Issue:        r.Ticket,
+		PRURL:        r.PRURL,
+	}
+	if !m.StateSince.IsZero() {
+		w.StateSince = m.StateSince.UTC().Format(time.RFC3339)
 	}
 	if r.State == "blocked" {
 		w.PendingTool = m.PendingTool

@@ -94,7 +94,7 @@ func TestTreeRowsFromBuilder(t *testing.T) {
 	write("@3", `{"state":"idle","instance":"w2","mode":"dispatch","spawned_by":"@2","spawned_by_session":"s"}`)
 	wins := []tmux.WindowInfo{{ID: "@1", Name: "lead"}, {ID: "@2", Name: "w1"}, {ID: "@3", Name: "w2"}}
 	rows := herd.TagAgents("agentctl-x", "x", herd.BuildAgents(wins, windowstate.AllFrom(winDir), nil, time.Now()))
-	herd.TagDispatched(rows, herd.LoadMeta(herd.Group{RuntimeDir: dir}))
+	herd.TagMeta(rows, herd.LoadMeta(herd.Group{RuntimeDir: dir}))
 
 	var got []string
 	for _, tr := range treeRows(rows) {

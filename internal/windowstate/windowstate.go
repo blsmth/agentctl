@@ -41,7 +41,11 @@ type WindowState struct {
 	LastToolTime int64  `json:"last_tool_time,omitempty"`
 	Ticket       string `json:"ticket,omitempty"`
 	TicketTitle  string `json:"ticket_title,omitempty"`
-	Mode         string `json:"mode,omitempty"`
+	// Task is a short one-line summary of an ad-hoc (--prompt/--prompt-key)
+	// dispatch's prompt, recorded at dispatch time (ticket dispatches have
+	// TicketTitle instead). The hub shows it until a recap exists.
+	Task string `json:"task,omitempty"`
+	Mode string `json:"mode,omitempty"`
 	// Backend is the name of the config backend this window's claude was
 	// launched against ("" = Anthropic). Restore re-resolves it from config.
 	Backend string `json:"backend,omitempty"`
@@ -156,6 +160,10 @@ type WindowState struct {
 	// state (not refreshed while it stays blocked), so a repeat notification
 	// for a still-pending prompt can report how long it has been waiting.
 	BlockedSince time.Time `json:"blocked_since,omitempty"`
+
+	// StateSince is when State last changed value. Stamped by Transact (every
+	// writer goes through it), so no writer has to remember to set it.
+	StateSince time.Time `json:"state_since,omitempty"`
 
 	// Instance is the window instance name (e.g. "go-engineer:2") and
 	// AgentName the base agent name ("go-engineer"). Written when agentctl
@@ -510,6 +518,9 @@ func Transact(windowID string, fn func(*WindowState)) (old, updated WindowState,
 	}
 	old = ws.clone()
 	fn(&ws)
+	if ws.State != old.State {
+		ws.StateSince = time.Now()
+	}
 	updated = ws.clone()
 	if err := Write(windowID, ws); err != nil {
 		return old, updated, err

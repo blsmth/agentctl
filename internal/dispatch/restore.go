@@ -52,6 +52,7 @@ type RestoreRequest struct {
 	Mode        string
 	Ticket      string
 	TicketTitle string
+	Task        string
 	Branch      string
 	WorktreeDir string
 	// SessionName is the original claude -n name, reused so the restored
@@ -128,6 +129,7 @@ func applyRestoreMeta(ws *windowstate.WindowState, req RestoreRequest) {
 	ws.Mode = req.Mode
 	ws.Ticket = req.Ticket
 	ws.TicketTitle = req.TicketTitle
+	ws.Task = req.Task
 	ws.Branch = req.Branch
 	ws.WorktreeDir = req.WorktreeDir
 }
