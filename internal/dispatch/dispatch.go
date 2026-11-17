@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/blsmth/agentctl/internal/agent"
@@ -66,6 +67,9 @@ type Request struct {
 	// Effort overrides the agent's effort_level when set (see ValidEfforts);
 	// Inherit clears the configured level so claude uses its own default.
 	Effort string
+	// PermissionMode overrides the agent's permission_mode and the mode
+	// default when set; it must pass ValidatePermissionMode.
+	PermissionMode string
 	// Backend overrides the agent's configured backend: "" = use the agent
 	// config, BackendNone = force Anthropic, else a name from config backends.
 	Backend    string
@@ -114,6 +118,20 @@ var ValidEfforts = launchopts.Efforts
 
 // ValidateEffort rejects an effort that is neither Inherit nor a known level.
 func ValidateEffort(e string) error { return launchopts.ValidateEffort(e) }
+
+// ValidatePermissionMode rejects a value `claude --permission-mode` does not
+// accept. The empty string (no override) is valid.
+func ValidatePermissionMode(pm string) error {
+	if pm == "" || validPermissionModes[pm] {
+		return nil
+	}
+	modes := make([]string, 0, len(validPermissionModes))
+	for m := range validPermissionModes {
+		modes = append(modes, m)
+	}
+	sort.Strings(modes)
+	return fmt.Errorf("invalid permission mode %q (valid: %s)", pm, strings.Join(modes, ", "))
+}
 
 // Result contains the output of a successful Launch.
 type Result struct {
@@ -295,7 +313,7 @@ func Launch(req Request) (Result, error) {
 		Agent:          req.AgentName,
 		Name:           sessionName,
 		SessionID:      sessionID,
-		PermissionMode: resolvePermissionMode(req.Mode, ac),
+		PermissionMode: resolvePermissionMode(req.Mode, ac, req.PermissionMode),
 		SettingsPath:   settingsPath,
 	}, ac)
 
@@ -517,12 +535,15 @@ var validPermissionModes = map[string]bool{
 }
 
 // resolvePermissionMode returns the permission mode to pass to claude, or ""
-// to pass none. An explicit valid config value wins in every mode; an invalid
+// to pass none. A valid per-launch override wins over everything. An explicit valid config value wins in every mode; an invalid
 // one is logged and ignored. Otherwise the default applies only to worker
 // dispatch modes (ModeDispatch, ModeAdhoc) -- interactive modes (bare,
 // discuss, triage, review, custom) have a human at the keyboard and keep
 // Claude's own default.
-func resolvePermissionMode(mode Mode, ac config.AgentConfig) string {
+func resolvePermissionMode(mode Mode, ac config.AgentConfig, override string) string {
+	if override != "" && validPermissionModes[override] {
+		return override
+	}
 	if pm := ac.PermissionMode; pm != "" {
 		if validPermissionModes[pm] {
 			return pm

@@ -265,7 +265,7 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
 | `dir` | string | empty (portable) | Fixed working directory. Global-only. |
 | `model` | string | inherit | `sonnet`, `opus`, `haiku`, or a full model name. |
 | `effort_level` | string | unset | `low`, `medium`, `high`, `max`, or `auto`. |
-| `permission_mode` | string | `auto` for worker dispatches; unset otherwise | Value passed to `claude --permission-mode`. Worker dispatches (`--issue`, `--prompt`, `--prompt-key`) default to `auto`; interactive modes (bare, discuss, triage, review) get no flag unless set. One of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`; an unknown value logs a warning and falls back to the default. |
+| `permission_mode` | string | `auto` for worker dispatches; unset otherwise | Value passed to `claude --permission-mode`. Worker dispatches (`--issue`, `--prompt`, `--prompt-key`) default to `auto`; interactive modes (bare, discuss, triage, review) get no flag unless set. One of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`; an unknown value logs a warning and falls back to the default. `agentctl launch --permission-mode <mode>` overrides it for a single launch (unknown values are rejected); the hub's "new" action launches with `--permission-mode auto`. |
 | `max_thinking_tokens` | int | `0` (default) | Thinking budget. |
 | `blocked_commands` | string[] | none | Substrings that deny matching Bash commands. |
 | `blocked_patterns` | string[] | none | Regexes that deny matching Bash commands. |

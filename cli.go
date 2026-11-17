@@ -202,12 +202,13 @@ func (c *RestoreCmd) Run() error { cmd.RunRestore(); return nil }
 // ---------------------------------------------------------------------------
 
 type LaunchCmd struct {
-	Name       string `arg:"" optional:"" help:"Agent name to launch (reads default_agent from config if omitted)"`
-	NoWorktree bool   `name:"no-worktree" help:"Launch directly in the main checkout instead of an isolated git worktree"`
-	Backend    string `help:"Named backend from config (Ollama, Nous Portal); 'none' forces Anthropic"`
-	Model      string `help:"Model to run (overrides the agent's model; 'inherit' clears it)"`
-	Effort     string `help:"Effort level: low, medium, high, xhigh, max, auto ('inherit' clears the agent's)"`
-	Background bool   `help:"Create the window without switching to it"`
+	Name           string `arg:"" optional:"" help:"Agent name to launch (reads default_agent from config if omitted)"`
+	NoWorktree     bool   `name:"no-worktree" help:"Launch directly in the main checkout instead of an isolated git worktree"`
+	Backend        string `help:"Named backend from config (Ollama, Nous Portal); 'none' forces Anthropic"`
+	Model          string `help:"Model to run (overrides the agent's model; 'inherit' clears it)"`
+	Effort         string `help:"Effort level: low, medium, high, xhigh, max, auto ('inherit' clears the agent's)"`
+	PermissionMode string `name:"permission-mode" help:"claude --permission-mode for this launch; overrides the agent config"`
+	Background     bool   `help:"Create the window without switching to it"`
 }
 
 func (c *LaunchCmd) Run() error {
@@ -216,12 +217,16 @@ func (c *LaunchCmd) Run() error {
 			return err
 		}
 	}
+	if err := dispatch.ValidatePermissionMode(c.PermissionMode); err != nil {
+		return err
+	}
 	cmd.RunLaunch(c.Name, cmd.LaunchOptions{
-		Backend:    c.Backend,
-		Model:      c.Model,
-		Effort:     c.Effort,
-		NoWorktree: c.NoWorktree,
-		Background: c.Background,
+		Backend:        c.Backend,
+		Model:          c.Model,
+		Effort:         c.Effort,
+		PermissionMode: c.PermissionMode,
+		NoWorktree:     c.NoWorktree,
+		Background:     c.Background,
 	})
 	return nil
 }
@@ -785,7 +790,7 @@ func (c *FilePreviewCmd) Run() error {
 // permission for a Bash(agentctl dispatch ...) command.
 // Exits 0 if the user allows, exits 1 if the user denies.
 type DispatchPreviewCmd struct {
-	ArgsFile string `name:"args-file" required:"" help:"Temp file path containing dispatch preview args JSON"`
+	ArgsFile   string `name:"args-file" required:"" help:"Temp file path containing dispatch preview args JSON"`
 	ResultFile string `name:"result-file" help:"Write the allow/deny verdict to this file (0600)"`
 }
 

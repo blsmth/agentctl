@@ -267,6 +267,9 @@ type LaunchOptions struct {
 	// dispatch.Inherit clears the configured value.
 	Model  string
 	Effort string
+	// PermissionMode is the claude --permission-mode override; empty defers
+	// to the agent config and mode default.
+	PermissionMode string
 	// NoWorktree is the CLI's --no-worktree escape hatch: when true, the agent
 	// launches directly in the checkout instead of an isolated worktree.
 	NoWorktree bool
@@ -302,13 +305,14 @@ func RunLaunch(name string, opts LaunchOptions) {
 // UseWorktree is left nil so the launch inherits the mode default.
 func RunLaunchAgentOpts(name string, workDir string, opts LaunchOptions) {
 	req := dispatch.Request{
-		Background: opts.Background,
-		AgentName:  name,
-		Mode:       dispatch.ModeBare,
-		WorkDir:    workDir,
-		Backend:    opts.Backend,
-		Model:      opts.Model,
-		Effort:     opts.Effort,
+		Background:     opts.Background,
+		AgentName:      name,
+		Mode:           dispatch.ModeBare,
+		WorkDir:        workDir,
+		Backend:        opts.Backend,
+		Model:          opts.Model,
+		Effort:         opts.Effort,
+		PermissionMode: opts.PermissionMode,
 	}
 	if opts.NoWorktree {
 		useWorktree := false
