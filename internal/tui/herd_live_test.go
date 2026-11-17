@@ -106,8 +106,8 @@ func TestHerdLiveClicks(t *testing.T) {
 	m := liveTestModel(t, 48, 40)
 	top := m.herdListTop()
 	w := m.listColWidth()
-	if w != 44 {
-		t.Fatalf("listColWidth = %d, want 44", w)
+	if w != 48 {
+		t.Fatalf("listColWidth = %d, want 48", w)
 	}
 	tests := []struct {
 		name       string

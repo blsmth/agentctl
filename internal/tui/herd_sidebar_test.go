@@ -372,3 +372,34 @@ func TestOpenSelectedPR(t *testing.T) {
 		t.Error("menu should offer open PR for a row with one")
 	}
 }
+
+func TestSidebarCloseButtonOneColumnFromPaneEdge(t *testing.T) {
+	for _, n := range []int{56, 80, 106} {
+		m := sampleSidebar(t, n)
+		if cw := m.contentWidth(); cw != n {
+			t.Fatalf("termWidth %d: contentWidth = %d, want %d", n, cw, n)
+		}
+		found := false
+		for i, l := range m.lines {
+			if l.kind != herdLineRow || i == m.splitPane.Cursor() {
+				continue
+			}
+			found = true
+			line := ansi.Strip(m.renderLine(i, n))
+			cols := []rune(line)
+			if len(cols) != n-1 {
+				t.Fatalf("width %d: line is %d cols, want %d", n, len(cols), n-1)
+			}
+			if got := string(cols[n-2]); got != herdCloseLabel {
+				t.Errorf("width %d: col %d = %q, want %q in %q", n, n-2, got, herdCloseLabel, line)
+			}
+			if !m.onCloseButton(n - 2) {
+				t.Errorf("width %d: onCloseButton(%d) = false", n, n-2)
+			}
+			break
+		}
+		if !found {
+			t.Fatal("no unselected row")
+		}
+	}
+}
