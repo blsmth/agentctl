@@ -41,6 +41,7 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 // writeHTML writes an HTML page with the given status.
 func writeHTML(w http.ResponseWriter, status int, body []byte) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", cspHTML)
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
 }
