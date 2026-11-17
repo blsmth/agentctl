@@ -194,6 +194,10 @@ type herdLine struct {
 	groupHead  bool       // true for the first row of a group (blank line above)
 	label      string     // set for herdLineSubheader, e.g. "dispatched (2)"
 	treePrefix string     // connector prefix for herdLineRow ("" for roots)
+	// nameCol is the group's uncapped name-column width (tree prefix plus
+	// base name, max over its rows) for herdLineRow; renderTreeRow caps it
+	// at render time so recaps line up within a group.
+	nameCol int
 }
 
 // selectable reports whether the cursor may rest on this line. Dividers and
@@ -1071,12 +1075,19 @@ func (m *HerdModel) rebuildLines() {
 			continue
 		}
 		first := true
-		for _, t := range treeRows(g.Rows) {
+		tree := treeRows(g.Rows)
+		nameCol := 0
+		for _, t := range tree {
+			if t.Label == "" {
+				nameCol = max(nameCol, lipgloss.Width(t.Prefix)+lipgloss.Width(herd.BaseName(t.Row)))
+			}
+		}
+		for _, t := range tree {
 			if t.Label != "" {
 				lines = append(lines, herdLine{kind: herdLineSubheader, group: g, label: t.Label})
 				continue
 			}
-			lines = append(lines, herdLine{kind: herdLineRow, row: t.Row, groupHead: first, treePrefix: t.Prefix})
+			lines = append(lines, herdLine{kind: herdLineRow, row: t.Row, groupHead: first, treePrefix: t.Prefix, nameCol: nameCol})
 			first = false
 		}
 	}
@@ -1273,7 +1284,7 @@ func (m HerdModel) renderLine(i int, cw int) string {
 		// Align under agent names: bar + cursor slot (3 cols) + glyph + space.
 		return strings.Repeat(" ", 3+2) + herdDimStyle.Render(l.label)
 	default: // herdLineRow
-		return m.renderTreeRow(l.row, l.treePrefix, selected, cw)
+		return m.renderTreeRow(l.row, l.treePrefix, l.nameCol, selected, cw)
 	}
 }
 
@@ -1368,7 +1379,7 @@ func (m HerdModel) renderGroupHeader(g herd.Group, selected bool, cw int) string
 
 // renderRow renders one agent row.
 func (m HerdModel) renderRow(r herd.Row, selected bool, cw int) string {
-	return m.renderTreeRow(r, "", selected, cw)
+	return m.renderTreeRow(r, "", 0, selected, cw)
 }
 
 // herdNow is the clock row ages are measured against; tests replace it.
@@ -1441,12 +1452,18 @@ func recapStyle(src herd.RecapSource) lipgloss.Style {
 // The prefix is clamped so deep nesting cannot starve the name. A selected
 // row also renders its detail lines (see rowDetail) beneath it, joined by
 // newlines; every line measures at most cw (exactly cw when selected).
-func (m HerdModel) renderTreeRow(r herd.Row, treePrefix string, selected bool, cw int) string {
+func (m HerdModel) renderTreeRow(r herd.Row, treePrefix string, nameCol int, selected bool, cw int) string {
 	glyph, style := rowGlyph(r)
 	cursor := herdRowCursor(r, selected)
 	glyphStr := style.Render(glyph)
 
-	nameBudget := herdNameBudget(cw)
+	closeW := 1 + lipgloss.Width(herdCloseLabel)
+	inner := cw - herdSidebarRightGutter
+	// Columns before the name: bar, cursor slot, glyph and a space. The
+	// name column may not push the recap below herdMinRecapWidth.
+	maxCol := inner - 5 - 2 - closeW - herdMinRecapWidth
+	nameBudget := min(herdNameBudget(cw), max(maxCol, 0))
+	col := min(nameCol, nameBudget)
 	if tw := lipgloss.Width(treePrefix); tw > 0 {
 		keep := min(tw, nameBudget-6)
 		treePrefix = ansi.Truncate(treePrefix, max(keep, 0), "")
@@ -1454,9 +1471,8 @@ func (m HerdModel) renderTreeRow(r herd.Row, treePrefix string, selected bool, c
 	}
 	name := truncateToWidth(herd.BaseName(r), nameBudget)
 
-	prefix := cursor + glyphStr + " " + herdDimStyle.Render(treePrefix) + renderAgentName(name, r.State == "blocked") + "  "
-	closeW := 1 + lipgloss.Width(herdCloseLabel)
-	inner := cw - herdSidebarRightGutter
+	padW := max(col-lipgloss.Width(treePrefix)-lipgloss.Width(name), 0)
+	prefix := cursor + glyphStr + " " + herdDimStyle.Render(treePrefix) + renderAgentName(name, r.State == "blocked") + strings.Repeat(" ", padW) + "  "
 	available := inner - lipgloss.Width(prefix) - closeW
 
 	closeStyle := herdDimStyle
