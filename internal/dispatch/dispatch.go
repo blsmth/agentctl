@@ -225,7 +225,7 @@ func Launch(req Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	acct, backendEnv, err := prepareAccountAndBackend(cfg, h, &ac, req, explicitModel, workDir)
+	acct, backendEnv, hb, err := prepareAccountAndBackend(cfg, h, &ac, req, explicitModel, workDir)
 	if err != nil {
 		return Result{}, err
 	}
@@ -310,6 +310,7 @@ func Launch(req Request) (Result, error) {
 	prep, err := h.PrepareWorkspace(harness.Workspace{
 		Dir:           launchDirFn(),
 		WriteSettings: func() (string, error) { return writeLaunchSettings(req.AgentName, ac, workDir, repoDir, useWorktree) },
+		Backend:       hb,
 	})
 	if err != nil {
 		return Result{}, err
@@ -364,7 +365,7 @@ func Launch(req Request) (Result, error) {
 	}
 	applyParentEnv(req, extraEnv)
 	extraEnv[EnvSessionName] = sessionName
-	ApplyHarnessEnv(extraEnv, h, permissionMode)
+	ApplyHarnessEnv(extraEnv, h, permissionMode, prep)
 
 	logging.Log("dispatch: shellCmd len=%d: %s", len(shellCmd), textutil.Truncate(logCmd, 500, "..."))
 	logging.Debug("dispatch: full shellCmd: %s", shellCmd)

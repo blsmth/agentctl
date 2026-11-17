@@ -300,18 +300,16 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 		dispatch.ApplyAccountEnv(extraEnv, acct)
 		acctDir = acct.Dir
 	}
-	if caps.Backends {
-		if _, err := dispatch.PrepareBackend(cfg, &ac, "", "", workDir, extraEnv); err != nil {
-			return fmt.Errorf("resolving backend: %w", err)
-		}
-	} else {
-		ac.Backend = ""
+	hb, err := dispatch.PrepareBackendFor(cfg, h, &ac, "", "", workDir, extraEnv)
+	if err != nil {
+		return err
 	}
 
 	// Build the command with per-session hook configuration.
 	prep, err := h.PrepareWorkspace(harness.Workspace{
 		Dir:           dispatch.LaunchDir(),
 		WriteSettings: func() (string, error) { return dispatch.WriteAgentSettings(agentName, ac, workDir), nil },
+		Backend:       hb,
 	})
 	if err != nil {
 		return err
@@ -337,7 +335,7 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 	}
 
 	extraEnv["AGENTCTL_MODE"] = "improve"
-	dispatch.ApplyHarnessEnv(extraEnv, h, "")
+	dispatch.ApplyHarnessEnv(extraEnv, h, "", prep)
 
 	windowName := "improve~" + agentName
 	logging.Log("launchImprovement: launching window %q cmd=%q session=%s", windowName, shellCmd, sessionID)

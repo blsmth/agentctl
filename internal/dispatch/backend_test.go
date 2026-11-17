@@ -193,7 +193,7 @@ func TestPrepareRestore(t *testing.T) {
 	cfg.Agents = map[string]config.AgentConfig{"go-engineer": {Model: "opus", Backend: "fenrir"}}
 
 	t.Run("persisted backend re-applied", func(t *testing.T) {
-		ac, env, err := prepareRestore(cfg, harness.For(""), RestoreRequest{AgentName: "go-engineer", Backend: "fenrir"})
+		ac, env, _, err := prepareRestore(cfg, harness.For(""), RestoreRequest{AgentName: "go-engineer", Backend: "fenrir"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -205,12 +205,12 @@ func TestPrepareRestore(t *testing.T) {
 		}
 	})
 	t.Run("missing backend skips window", func(t *testing.T) {
-		if _, _, err := prepareRestore(cfg, harness.For(""), RestoreRequest{AgentName: "go-engineer", Backend: "gone"}); err == nil {
+		if _, _, _, err := prepareRestore(cfg, harness.For(""), RestoreRequest{AgentName: "go-engineer", Backend: "gone"}); err == nil {
 			t.Fatal("expected error for missing backend")
 		}
 	})
 	t.Run("no persisted backend stays on Anthropic", func(t *testing.T) {
-		ac, env, err := prepareRestore(cfg, harness.For(""), RestoreRequest{AgentName: "go-engineer"})
+		ac, env, _, err := prepareRestore(cfg, harness.For(""), RestoreRequest{AgentName: "go-engineer"})
 		if err != nil {
 			t.Fatal(err)
 		}

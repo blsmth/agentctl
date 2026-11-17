@@ -38,6 +38,8 @@ func (piHarness) Caps() Caps {
 		ResumeByID:         true,
 		BlockingPreTool:    true,
 		ContextInjection:   true,
+		Backends:           true,
+		RegistersBackends:  true,
 	}
 }
 
@@ -53,7 +55,7 @@ var piThinking = map[string]string{
 
 // Command returns the pi command line:
 //
-//	pi --session-id <id> -n <name> [--model <m>] [--thinking <lvl>]
+//	pi --session-id <id> -n <name> [--provider <p>] [--model <m>] [--thinking <lvl>]
 //	   -e <bridge> --append-system-prompt <file> [--fork <id>] [-- <message>]
 //
 // pi's --session-id both pre-assigns a new session's ID and resumes an
@@ -72,6 +74,9 @@ func (piHarness) Command(inv Invocation) (string, error) {
 	}
 	if inv.Name != "" {
 		b.WriteString(" -n " + shellquote.Quote(inv.Name))
+	}
+	if inv.Provider != "" {
+		b.WriteString(" --provider " + shellquote.Quote(inv.Provider))
 	}
 	if inv.Model != "" {
 		b.WriteString(" --model " + shellquote.Quote(inv.Model))
@@ -122,7 +127,13 @@ func (piHarness) PrepareWorkspace(ws Workspace) (Prepared, error) {
 	if err != nil {
 		return Prepared{}, err
 	}
-	return Prepared{ExtensionPath: path}, nil
+	prep := Prepared{ExtensionPath: path}
+	if ws.Backend != nil {
+		if prep.Provider, prep.Model, prep.Env, err = piBackendProvider(*ws.Backend); err != nil {
+			return Prepared{}, err
+		}
+	}
+	return prep, nil
 }
 
 // WritePiExtension writes the embedded bridge extension to dir and returns

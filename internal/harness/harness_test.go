@@ -83,14 +83,17 @@ func TestCanonical(t *testing.T) {
 // TestCapsHonest pins the capability declarations callers degrade on.
 func TestCapsHonest(t *testing.T) {
 	c := For(Claude).Caps()
+	if c.RegistersBackends {
+		t.Error("claude must keep agentctl's env/settings backend routing")
+	}
 	if !c.NativeMessaging || !c.BlockedSignal || !c.Statusline || !c.Accounts || !c.AgentFlag || !c.EnvFile {
 		t.Errorf("claude caps = %+v", c)
 	}
 	p := For(Pi).Caps()
-	if p.NativeMessaging || p.BlockedSignal || p.Statusline || p.Accounts || p.Backends || p.AgentFlag || p.PermissionModes || p.EnvFile || p.PaneClassifier {
+	if p.NativeMessaging || p.BlockedSignal || p.Statusline || p.Accounts || p.AgentFlag || p.PermissionModes || p.EnvFile || p.PaneClassifier {
 		t.Errorf("pi declares a capability it lacks: %+v", p)
 	}
-	if !p.PreassignSessionID || !p.BlockingPreTool || !p.ContextInjection || !p.ResumeByID {
+	if !p.PreassignSessionID || !p.BlockingPreTool || !p.ContextInjection || !p.ResumeByID || !p.Backends || !p.RegistersBackends {
 		t.Errorf("pi caps missing bridge-provided capability: %+v", p)
 	}
 }

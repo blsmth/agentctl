@@ -113,7 +113,7 @@ func TestPrepareRestoreCarriesAccount(t *testing.T) {
 	}
 	config.SetConfigPathForTest(cfgPath)
 	t.Cleanup(func() { config.SetConfigPathForTest("") })
-	_, env, err := prepareRestore(cfg, harness.For(""), RestoreRequest{AgentName: "a", WorkDir: "/w", Account: "personal"})
+	_, env, _, err := prepareRestore(cfg, harness.For(""), RestoreRequest{AgentName: "a", WorkDir: "/w", Account: "personal"})
 	if err != nil {
 		t.Fatal(err)
 	}
