@@ -333,7 +333,7 @@ func RunAccountList(out io.Writer) error {
 // usageCells renders an account's latest pushed 5h and 7d usage ("-" when
 // none has been pushed; "~" marks data older than the freshness window).
 func usageCells(account string) (string, string) {
-	pr, err := ratelimit.LoadPushedFor(account, claudehome.IsDefaultAccount(account))
+	pr, err := ratelimit.LoadPushedFor(account, account == claudehome.HomeAccount())
 	if err != nil || pr == nil {
 		return "-", "-"
 	}
