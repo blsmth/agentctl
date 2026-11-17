@@ -21,15 +21,3 @@ func TestTrimTrailingBlankLinesEscapeOnly(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
-
-func TestCapturePaneANSIArgs(t *testing.T) {
-	args := capturePaneANSIArgs("s:@1", 50)
-	for _, want := range []string{"-e", "-J", "-p", "-t", "-S", "-50"} {
-		if !slices.Contains(args, want) {
-			t.Errorf("missing %s: %v", want, args)
-		}
-	}
-	if args[0] != "capture-pane" {
-		t.Errorf("args = %v", args)
-	}
-}

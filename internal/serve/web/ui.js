@@ -1,6 +1,5 @@
 // Small DOM helpers. Text is only ever set through textContent / text nodes,
 // never as HTML, so pane and agent text cannot inject markup.
-import { fitFontSize } from "./logic.js";
 
 /** h builds an element: h("button", {class: "btn", onclick: fn}, "label", child...). */
 export function h(tag, attrs, ...children) {
@@ -58,18 +57,4 @@ export function confirmSheet({ title, lines = [], confirmLabel = "Confirm", dang
     );
     document.body.append(overlay);
   });
-}
-
-/**
- * fitTermFont scales an xterm's font so its current columns fill availWidth.
- * Shared by the live terminal and the exact pane view; never changes cols.
- * Returns true when the font changed.
- */
-export function fitTermFont(term, host, availWidth, min, max) {
-  const screenEl = host.querySelector(".xterm-screen");
-  const measured = screenEl ? screenEl.getBoundingClientRect().width : 0;
-  const f = fitFontSize(availWidth, measured, term.options.fontSize, min, max);
-  if (Math.abs(f - term.options.fontSize) < 0.1) return false;
-  term.options.fontSize = f;
-  return true;
 }
