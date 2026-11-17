@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -152,10 +154,7 @@ func buildMenuAgents(cfg *config.Config, agents []agent.Agent, runningByID map[s
 	var out []tui.MenuAgent
 	seen := map[string]bool{}
 	for _, a := range agents {
-		section := tui.SectionUser
-		if a.Scope == agent.ScopeLocal {
-			section = tui.SectionProject
-		}
+		section := menuSection(a, cwd)
 		seen[a.Name] = true
 		out = append(out, entry(a.Name, a.Description, a.Dir, section))
 	}
@@ -165,6 +164,24 @@ func buildMenuAgents(cfg *config.Config, agents []agent.Agent, runningByID map[s
 		}
 	}
 	return out
+}
+
+// menuSection picks the list section of a discovered agent. ScopeLocal covers
+// both agents defined in the current project's .claude/agents and registry
+// symlinks into other repos, so the definition's resolved path decides: only
+// a file under cwd's .claude/agents is "Project"; other ScopeLocal agents are
+// "Other projects" (their fixed dir is the useful part there).
+func menuSection(a agent.Agent, cwd string) tui.MenuSection {
+	if a.Scope != agent.ScopeLocal {
+		return tui.SectionUser
+	}
+	if cwd != "" {
+		dir := filepath.Join(cwd, ".claude", "agents")
+		if rel, err := filepath.Rel(dir, a.FilePath); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+			return tui.SectionProject
+		}
+	}
+	return tui.SectionOther
 }
 
 // newSessionLoader returns the menu's lazy session loader. The log scan runs

@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/sessions"
+	"github.com/blsmth/agentctl/internal/tui"
 )
 
 func TestMenuSessions(t *testing.T) {
@@ -35,5 +37,27 @@ func TestMenuSessions(t *testing.T) {
 	}
 	if got[1].Preview != "named-older" {
 		t.Errorf("fallback preview = %q", got[1].Preview)
+	}
+}
+
+func TestMenuSection(t *testing.T) {
+	cwd := "/repo"
+	tests := []struct {
+		name string
+		a    agent.Agent
+		want tui.MenuSection
+	}{
+		{"cwd project agent", agent.Agent{Scope: agent.ScopeLocal, FilePath: "/repo/.claude/agents/brandon.md"}, tui.SectionProject},
+		{"symlink into current repo", agent.Agent{Scope: agent.ScopeLocal, SymTarget: "/repo/.claude/agents/x.md", FilePath: "/repo/.claude/agents/x.md"}, tui.SectionProject},
+		{"symlink into other repo", agent.Agent{Scope: agent.ScopeLocal, SymTarget: "/other/.claude/agents/ha.md", FilePath: "/other/.claude/agents/ha.md"}, tui.SectionOther},
+		{"sibling dir prefix is not cwd", agent.Agent{Scope: agent.ScopeLocal, FilePath: "/repo2/.claude/agents/a.md"}, tui.SectionOther},
+		{"global registry", agent.Agent{Scope: agent.ScopeGlobal, FilePath: "/home/u/.claude/agents/a.md"}, tui.SectionUser},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := menuSection(tc.a, cwd); got != tc.want {
+				t.Errorf("section = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

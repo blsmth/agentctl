@@ -42,6 +42,7 @@ const (
 	SectionPinned MenuSection = iota
 	SectionProject
 	SectionUser
+	SectionOther
 	SectionBuiltin
 )
 
@@ -54,6 +55,8 @@ func (s MenuSection) Label() string {
 		return "Project"
 	case SectionUser:
 		return "User"
+	case SectionOther:
+		return "Other projects"
 	default:
 		return "Built-in"
 	}
