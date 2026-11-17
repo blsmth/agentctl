@@ -95,8 +95,7 @@ type WindowState struct {
 
 	// MainPane is the tmux pane ID of the agent content pane (e.g. "%12") --
 	// the pane that is neither the chrome bar nor the HUD pane. It is the
-	// authoritative answer to "which pane holds the agent" for callers (e.g.
-	// the native macapp) that would otherwise have to re-derive it with a
+	// authoritative answer to "which pane holds the agent" for callers that would otherwise have to re-derive it with a
 	// heuristic. Written once by tmux.LaunchChromeBar (or backfilled by the
 	// monitor for windows that already had a chrome bar before this field
 	// existed); never changes for the lifetime of a window.
