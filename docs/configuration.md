@@ -121,6 +121,8 @@ A per-agent value overrides the global one.
 
 `statusline_align: "right"` pads the `rich` lines flush with the terminal's right edge.
 
+When accounts are configured (see [Accounts](#accounts-multiple-claude-logins)), every format except `minimal` shows the name of the account the session runs under (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), the same one whose rate limits are shown: first on the `rich` rate-limit line (on the workspace line when there are no rate limits), dropped before the 5h figure when the line is narrow. With no accounts, or a dir that matches none, nothing is added.
+
 ### hooks
 
 Lifecycle hooks run shell commands (via `sh -c`) after agentctl's built-in handling. Supported event keys: `session_start`, `session_end`, `notification`, `stop`, `stop_failure`, `pre_tool`, `post_tool`, `dispatch_complete`. Per-agent hooks run after global hooks for the same event. Global-only.

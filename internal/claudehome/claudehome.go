@@ -129,6 +129,12 @@ func CurrentAccount() string {
 	return AccountForDir(Current())
 }
 
+// CurrentAccountIn is CurrentAccount for a caller that already holds the
+// loaded config, saving a second config load on hot paths.
+func CurrentAccountIn(cfg *config.Config) string {
+	return accountForDirIn(cfg, Current())
+}
+
 // HomeAccount returns the configured account whose dir is ~/.claude
 // (HomeDir), or "" when none is. Processes that ran before accounts were
 // configured used that dir, so it owns pre-accounts data such as the single
