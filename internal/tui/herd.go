@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"hash/fnv"
+	"os"
 	"strings"
 	"time"
 
@@ -12,6 +13,8 @@ import (
 
 	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/hubtarget"
+	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/selfexec"
 	"github.com/blsmth/agentctl/internal/theme"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
@@ -306,11 +309,71 @@ type HerdModel struct {
 	pendingFocus *herdPendingFocus
 
 	quitting bool
+
+	// exeChanged reports whether the executable on disk was replaced since
+	// start (nil disables hot reload). reexec is set once it did; the model
+	// then quits and the caller execs the new binary (see Reexec).
+	exeChanged func() bool
+	reexec     bool
+}
+
+// HubSelectEnv carries the selected agent ("session|windowID") across a hot
+// reload re-exec. It is consumed once at startup.
+const HubSelectEnv = "AGENTCTL_HUB_SELECT"
+
+// parseHubSelect splits a HubSelectEnv value into session and window ID.
+func parseHubSelect(v string) (session, windowID string, ok bool) {
+	session, windowID, ok = strings.Cut(v, "|")
+	if !ok || session == "" || windowID == "" {
+		return "", "", false
+	}
+	return session, windowID, true
+}
+
+// Reexec reports whether the model quit because the binary on disk changed.
+func (m HerdModel) Reexec() bool { return m.reexec }
+
+// WithoutReload returns the model reset to keep running after a failed
+// re-exec: hot reload is disabled and the current selection is re-applied once
+// the list loads.
+func (m HerdModel) WithoutReload() HerdModel {
+	m.exeChanged, m.reexec = nil, false
+	m.pendingFocus = nil
+	if m.selSession != "" && m.selWindowID != "" && !m.selIsHeader {
+		m.pendingFocus = &herdPendingFocus{session: m.selSession, windowID: m.selWindowID}
+	}
+	m.loaded = false
+	return m
+}
+
+// SelectionEnv returns the HubSelectEnv entry ("KEY=session|windowID") for the
+// current selection, or "" when no agent row is selected.
+func (m HerdModel) SelectionEnv() string {
+	if m.selIsHeader || m.selSession == "" || m.selWindowID == "" {
+		return ""
+	}
+	return HubSelectEnv + "=" + m.selSession + "|" + m.selWindowID
 }
 
 // NewHerdModel creates the hub aggregator model. Data is loaded
 // asynchronously via Init().
 func NewHerdModel() HerdModel {
+	m := newHerdModel()
+	if id, err := selfexec.Capture(); err != nil {
+		logging.Log("hub: hot reload disabled: %v", err)
+	} else {
+		m.exeChanged = func() bool { return selfexec.CheckChanged(id, time.Now()) }
+	}
+	if v, ok := os.LookupEnv(HubSelectEnv); ok {
+		_ = os.Unsetenv(HubSelectEnv) // consume once; don't leak to child processes
+		if session, win, ok := parseHubSelect(v); ok {
+			m.pendingFocus = &herdPendingFocus{session: session, windowID: win}
+		}
+	}
+	return m
+}
+
+func newHerdModel() HerdModel {
 	const defaultWidth = 120
 	left, right, _ := herdLiveSplit(defaultWidth)
 	return HerdModel{
@@ -381,6 +444,10 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case herdTickMsg:
+		if m.exeChanged != nil && m.exeChanged() {
+			m.reexec = true
+			return m, tea.Quit
+		}
 		show := m.maybeShowCmd()
 		return m, tea.Batch(herdLoadCmd(), herdTickCmd(), show, herdViewerPollCmd())
 

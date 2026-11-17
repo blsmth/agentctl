@@ -7,6 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/selfexec"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
 )
@@ -25,10 +27,45 @@ func RunHub() {
 // tickets --tui` is launched inside its own dedicated window.
 func RunHubView() {
 	model := tui.NewHerdModel()
-	p := tea.NewProgram(model)
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "hub-view error: %v\n", err)
-		os.Exit(1)
+	for {
+		final, err := tea.NewProgram(model).Run()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "hub-view error: %v\n", err)
+			os.Exit(1)
+		}
+		hm, ok := final.(tui.HerdModel)
+		if !ok || !hm.Reexec() {
+			return
+		}
+		// Hot reload: exec only after Run returned so the terminal is
+		// restored (alt screen and mouse off). The nested viewer is a separate
+		// tmux client and is left untouched.
+		reexecHub(hm)
+		// Exec failed: keep running the old image with the same state, and
+		// stop watching the binary so we don't spin.
+		model = hm.WithoutReload()
+	}
+}
+
+// hubExec is the exec seam for tests.
+var hubExec = selfexec.ReexecEnv
+
+// reexecHub replaces the process with the new binary, carrying the selection
+// in the environment. It returns only when exec did not happen, i.e. the
+// caller should keep running the old process.
+func reexecHub(m tui.HerdModel) {
+	exe, err := selfexec.Capture()
+	if err != nil {
+		logging.Warn("hub: re-exec skipped: %v", err)
+		return
+	}
+	var extra []string
+	if sel := m.SelectionEnv(); sel != "" {
+		extra = append(extra, sel)
+	}
+	logging.Log("hub: binary changed, re-executing %s", exe.Path)
+	if err := hubExec(exe.Path, extra...); err != nil {
+		logging.Warn("hub: re-exec %s failed, keeping old image: %v", exe.Path, err)
 	}
 }
 

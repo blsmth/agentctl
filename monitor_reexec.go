@@ -2,13 +2,12 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/buildid"
 	"github.com/blsmth/agentctl/internal/logging"
-	"github.com/blsmth/agentctl/internal/selfpath"
+	"github.com/blsmth/agentctl/internal/selfexec"
 )
 
 // Hot reload: the monitor re-executes itself when its binary on disk changes.
@@ -31,54 +30,25 @@ import (
 // The hook watchdog (internal/hooks/watchdog.go) replaces monitors that predate
 // this mechanism and never wrote monitor.build.
 
-const (
-	reexecMinAge     = time.Second
-	reexecRetryEvery = 30 * time.Second
-)
+const reexecRetryEvery = 30 * time.Second
 
 // exeIdentity is the on-disk identity of an executable.
-type exeIdentity = buildid.Identity
+type exeIdentity = selfexec.Identity
 
-// exeChanged reports whether the binary at cur.Path should trigger a re-exec:
-// it is not an ephemeral (temp / go-build) path, its identity differs from
-// start, it is a regular executable file, and its mtime is at least
-// reexecMinAge before now.
+// exeChanged is selfexec.Changed; kept as a local name for the monitor tests.
 func exeChanged(start, cur exeIdentity, now time.Time) bool {
-	if selfpath.IsEphemeral(cur.Path) {
-		return false
-	}
-	if buildid.SameBuild(start, cur) {
-		return false
-	}
-	if !cur.Mode.IsRegular() || cur.Mode.Perm()&0o111 == 0 {
-		return false
-	}
-	mtime := time.Unix(cur.MtimeUnix, cur.MtimeNsec)
-	return now.Sub(mtime) >= reexecMinAge
+	return selfexec.Changed(start, cur, now)
 }
 
-// recordExeIdentity resolves the running executable, writes its identity to
+// recordExeIdentity captures the running executable's identity, writes it to
 // monitor.build and returns it. ok is false when hot reload is disabled for
 // this process (ephemeral path or unresolvable executable).
 func recordExeIdentity(runtimeDir string) (id exeIdentity, ok bool) {
-	exe, err := selfpath.Resolve(os.Executable)
+	id, err := selfexec.Capture()
 	if err != nil {
 		logging.Log("monitor: hot reload disabled: %v", err)
 		return exeIdentity{}, false
 	}
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = resolved
-	}
-	if selfpath.IsEphemeral(exe) {
-		logging.Log("monitor: hot reload disabled: ephemeral binary %s", exe)
-		return exeIdentity{}, false
-	}
-	id, err = buildid.Stat(exe)
-	if err != nil {
-		logging.Log("monitor: hot reload disabled: stat %s: %v", exe, err)
-		return exeIdentity{}, false
-	}
-	id.PID = os.Getpid()
 	if err := buildid.Write(runtimeDir, id); err != nil {
 		logging.Log("monitor: write %s: %v", buildid.FileName, err)
 	}
