@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/blsmth/agentctl/internal/notify"
+	"github.com/blsmth/agentctl/internal/remoteapproval"
 	"github.com/blsmth/agentctl/internal/winname"
 )
 
@@ -29,5 +30,10 @@ func TestMain(m *testing.M) {
 		func(string) string { return "" },
 		func() string { return "" },
 	)
+	// Never open a remote approval on the developer's running agentctl
+	// serve (it would push to their phone).
+	openRemote = func(remoteapproval.Request) (*remoteapproval.Approval, error) {
+		return nil, remoteapproval.ErrNotRunning
+	}
 	os.Exit(m.Run())
 }

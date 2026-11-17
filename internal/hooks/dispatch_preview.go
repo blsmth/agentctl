@@ -11,6 +11,7 @@ import (
 
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/remoteapproval"
 	"github.com/blsmth/agentctl/internal/shellquote"
 	"github.com/blsmth/agentctl/internal/textutil"
 	"github.com/blsmth/agentctl/internal/tui"
@@ -258,8 +259,16 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool, den
 	logging.Log("hook-validate-bash: launching dispatch popup agent=%s target=%s issue=%d",
 		agentName, targetAgent, issue)
 
-	return runPopupWithDeadline(target, "dispatch", "hook-validate-bash: dispatch", popupW, popupH, tmpPath,
-		dispatchPopupNotice(agentName, targetAgent, issue, args.Prompt))
+	notice := dispatchPopupNotice(agentName, targetAgent, issue, args.Prompt)
+	notice.Remote = &remoteDetails{
+		Kind:        remoteapproval.KindDispatch,
+		AskingAgent: agentName,
+		TargetAgent: targetAgent,
+		Issue:       issue,
+		Prompt:      args.Prompt,
+		Command:     command,
+	}
+	return runPopupWithDeadline(target, "dispatch", "hook-validate-bash: dispatch", popupW, popupH, tmpPath, notice)
 }
 
 // promptKeyDenyReason is the deny message shown to the model when the prompt

@@ -177,24 +177,25 @@ Metrics are produced by one per-machine process, `agentctl metrics serve`, not b
 
 ### serve
 
-Settings for `agentctl serve`, the per-machine HTTPS server the mobile web app talks to (design: [design/mobile-web-app.md](design/mobile-web-app.md)). **Every key is global-only**: a `serve` block in a project-local config is ignored with a warning. The server reads it at start; restart it (`agentctl serve install` again, or `launchctl kickstart -k gui/$(id -u)/com.blsmth.agentctl.serve`) after editing.
+Settings for `agentctl serve`, the per-machine HTTPS server the mobile web app talks to (design: [design/mobile-web-app.md](design/mobile-web-app.md)). **Every key is global-only**: a `serve` block in a project-local config is ignored with a warning. The server reads it at start; restart it (`agentctl serve install` again, or `launchctl kickstart -k gui/$(id -u)/com.blsmth.agentctl.serve`) after editing; both are human-only (agents are blocked from running them).
 
 | Key | Default | Description |
 |---|---|---|
 | `serve.listen` | `:8443` | HTTPS listen address. While pairing, a plain-HTTP listener on port + 1 serves only the CA profile and instructions. |
 | `serve.hostnames` | none | Extra DNS names for the server certificate. `<hostname>.local` and every non-loopback interface IP are always included. |
 | `serve.allow_cidrs` | RFC 1918, `100.64.0.0/10`, loopback | Source-address allowlist, checked before anything else (including `/healthz`). `X-Forwarded-For` is never trusted. |
-| `serve.allow_write` | `false` | Enable write actions (answer, reply, interrupt, dispatch, close). |
+| `serve.allow_write` | `false` | Enable write actions (answer, reply, interrupt, dispatch, close, and answering approval popups from the phone). |
 | `serve.keep_awake` | `true` | Hold `caffeinate -s` while any agent is working or blocked. |
 | `serve.push.blocked` / `serve.push.done` | `true` | Push on an agent becoming blocked / finishing. |
 | `serve.push.blocked_reminder_minutes` | `10` | One reminder per blocked episode; `0` disables. |
+| `serve.push.approvals` | `true` | Push when a dispatch or Bash approval popup is waiting and can be answered from the phone (see [Remote approvals](design/mobile-web-app.md#remote-approvals)). Ignores quiet hours, since an unanswered approval blocks work; respects `muted_projects`. |
 | `serve.push.quiet_hours` | none | Local `HH:MM-HH:MM` range with no pushes. |
 | `serve.push.muted_projects` | none | Project names that never push. |
 | `serve.push.vapid_subscriber` | `https://github.com/blsmth/agentctl` | VAPID contact (the JWT `sub`) sent to push services: an `https:` URL or an email address, with or without `mailto:`. |
 | `serve.ntfy_topic` | none | Also post notifications to `https://ntfy.sh/<topic>`. **ntfy.sh topics are public**: anyone who knows or guesses the name can read every post, so use a long random topic (for example `openssl rand -hex 16`). |
 | `serve.ntfy_details` | `false` | Put agent and project names in ntfy posts, plus a `Click` link to the window (which publishes the server's LAN address). Off by default, a post says only what kind of event happened ("an agent is blocked"). |
 
-State lives in `$XDG_STATE_HOME/agentctl/serve/` (0700): the local CA and server certificate, `devices.json` (token hashes only), `vapid.json` (Web Push keypair, 0600), `subscriptions.json` (per-device push subscriptions; dropped when a device is revoked), `serve.pid`, `serve.log`, and the 0600 control socket `control.sock`. Commands: `agentctl serve` (foreground), `serve install` / `uninstall` (launchd LaunchAgent; prints a systemd user unit on Linux), `serve status`, `serve pair [--name N]`, `serve devices [rm <id|name>]`. The CA is name-constrained to local names (`.local`, `.lan`, `.home`, `.home.arpa`, `.internal`, the `serve.hostnames` present when it was created) and private/loopback/ULA IPs; after adding a hostname outside those, run `agentctl serve ca rotate` (every device must reinstall the profile and pair again).
+State lives in `$XDG_STATE_HOME/agentctl/serve/` (0700): the local CA and server certificate, `devices.json` (token hashes only), `vapid.json` (Web Push keypair, 0600), `subscriptions.json` (per-device push subscriptions; dropped when a device is revoked), `serve.pid`, `serve.log`, and the 0600 control socket `control.sock`. Commands: `agentctl serve` (foreground), `serve install` / `uninstall` (launchd LaunchAgent; prints a systemd user unit on Linux), `serve status`, `serve pair [--name N]`, `serve devices [rm <id|name>]`, `serve logs [-n N] [--audit] [--follow]` (read-only tail of `serve.log` or `audit.jsonl`). Agents cannot touch the serve state dir, restart or reinstall serve, or pair devices (the Bash validator blocks it, since remote approvals depend on serve); `serve logs` is how they read its logs. The CA is name-constrained to local names (`.local`, `.lan`, `.home`, `.home.arpa`, `.internal`, the `serve.hostnames` present when it was created) and private/loopback/ULA IPs; after adding a hostname outside those, run `agentctl serve ca rotate` (every device must reinstall the profile and pair again).
 
 Web Push subscriptions are accepted only for known push services (Apple, Firebase Cloud Messaging, Mozilla, Windows Notification Service), and push requests never connect to private, loopback or link-local addresses or follow redirects.
 

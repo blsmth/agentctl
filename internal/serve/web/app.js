@@ -1,9 +1,18 @@
 // App entry: feature detection, live store, hash router, service worker.
 import { get } from "./api.js";
+import { mountApprovals } from "./approvals.js";
 import { mountDispatch } from "./dispatch.js";
 import { mountFleet } from "./fleet.js";
 import { startLive } from "./live.js";
-import { applyGone, applyWindow, hasFeature, parseRoute } from "./logic.js";
+import {
+  applyGone,
+  applyWindow,
+  hasFeature,
+  parseRoute,
+  removeApproval,
+  upsertApproval,
+  withReceived,
+} from "./logic.js";
 import { mountSettings } from "./settings.js";
 import { mountTerminal } from "./terminal.js";
 import { h } from "./ui.js";
@@ -13,6 +22,7 @@ import { mountWindow } from "./window.js";
 const store = {
   fleet: null,
   downSince: null,
+  approvals: [],
   listeners: new Set(),
   subscribe(fn) {
     this.listeners.add(fn);
@@ -23,7 +33,40 @@ const store = {
   },
 };
 
-const ctx = { store, features: [], hasFeature: (name) => hasFeature(ctx.features, name) };
+const ctx = {
+  store,
+  features: [],
+  hasFeature: (name) => hasFeature(ctx.features, name),
+  refreshApprovals: () => refreshApprovals(),
+};
+
+const APPROVALS_POLL_MS = 15000;
+
+function setApprovals(list) {
+  store.approvals = list;
+  renderNavBadge();
+  store.emit({ type: "approvals" });
+}
+
+/** refreshApprovals refetches the pending list (after reconnects and answers). */
+async function refreshApprovals() {
+  if (!ctx.hasFeature("approvals")) return;
+  try {
+    const body = await get("/v1/approvals");
+    const now = Date.now();
+    setApprovals((body.approvals ?? []).map((a) => withReceived(a, now)));
+  } catch {
+    // keep the last known list; the next event or poll retries
+  }
+}
+
+function renderNavBadge() {
+  const badge = document.getElementById("nav-approvals-badge");
+  if (!badge) return;
+  const n = store.approvals.length;
+  badge.textContent = n > 0 ? String(n) : "";
+  badge.hidden = n === 0;
+}
 const root = document.getElementById("app");
 let cleanup = () => {};
 
@@ -33,6 +76,7 @@ function route() {
   const r = parseRoute(location.hash);
   if (r.name === "window") cleanup = mountWindow(root, ctx, r);
   else if (r.name === "terminal" && ctx.hasFeature("terminal")) cleanup = mountTerminal(root, ctx, r);
+  else if (r.name === "approvals" && ctx.hasFeature("approvals")) cleanup = mountApprovals(root, ctx, r);
   else if (r.name === "dispatch") cleanup = mountDispatch(root, ctx, { dir: r.dir });
   else if (r.name === "settings") cleanup = mountSettings(root, ctx);
   else cleanup = mountFleet(root, ctx);
@@ -47,6 +91,15 @@ function startFeed() {
     onFleet(body) {
       store.fleet = body;
       store.emit({ type: "fleet" });
+      // A fleet event starts every (re)connected stream: events may have
+      // been missed while it was down.
+      refreshApprovals();
+    },
+    onApproval(a) {
+      setApprovals(upsertApproval(store.approvals, withReceived(a, Date.now())));
+    },
+    onApprovalResolved(r) {
+      setApprovals(removeApproval(store.approvals, r.id));
     },
     onWindow(win) {
       if (store.fleet) store.fleet = applyWindow(store.fleet, win);
@@ -81,7 +134,12 @@ async function main() {
     return;
   }
   document.getElementById("nav-dispatch").hidden = !ctx.hasFeature("write");
+  document.getElementById("nav-approvals").hidden = !ctx.hasFeature("approvals");
   startFeed();
+  if (ctx.hasFeature("approvals")) {
+    refreshApprovals();
+    setInterval(() => !document.hidden && refreshApprovals(), APPROVALS_POLL_MS);
+  }
   addEventListener("hashchange", route);
   route();
 }

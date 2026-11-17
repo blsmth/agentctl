@@ -1,5 +1,7 @@
 // Fleet screen: project groups ordered by attention.
 import {
+  approvalBannerText,
+  approvalHash,
   collapseKey,
   dispatchHash,
   descendants,
@@ -104,12 +106,22 @@ function bucketRow(entry, toggle, expanded) {
 
 export function mountFleet(root, ctx) {
   const banner = h("div", { class: "banner", hidden: true });
+  const approvalBanner = h("a", { class: "banner approval-banner", hidden: true, href: approvalHash("") });
   const list = h("div", { class: "fleet" });
   root.append(
     h("header", { class: "bar" }, h("h1", {}, "Fleet"), ctx.hasFeature("write") ? h("a", { class: "btn", href: "#/dispatch" }, "Dispatch") : null),
+    approvalBanner,
     banner,
     list,
   );
+
+  function renderApprovalBanner() {
+    const pending = ctx.store.approvals ?? [];
+    const text = approvalBannerText(pending.length);
+    approvalBanner.textContent = text;
+    approvalBanner.hidden = !text;
+    approvalBanner.setAttribute("href", approvalHash(pending.length === 1 ? pending[0].id : ""));
+  }
 
   const collapsed = loadCollapsed();
 
@@ -134,6 +146,7 @@ export function mountFleet(root, ctx) {
   }
 
   function render() {
+    renderApprovalBanner();
     const { fleet, downSince } = ctx.store;
     if (downSince && Date.now() - downSince > 15000) {
       banner.textContent = `laptop unreachable since ${formatClock(downSince)}`;

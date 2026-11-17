@@ -219,6 +219,15 @@ export function parseRoute(hash) {
   } catch {
     return { name: "fleet" };
   }
+  if (parts[0] === "approvals") {
+    let id = "";
+    try {
+      id = parts[1] ? decodeURIComponent(parts[1]) : "";
+    } catch {
+      id = "";
+    }
+    return { name: "approvals", id };
+  }
   if (parts[0] === "dispatch") {
     if (parts.length >= 2) {
       try {
@@ -616,4 +625,101 @@ export function normalizePane(text) {
 /** paneModeOrDefault validates a persisted pane mode. */
 export function paneModeOrDefault(v) {
   return v === "exact" ? "exact" : "reflow";
+}
+
+// --- Remote approvals ("away mode") -----------------------------------------
+
+/** approvalHash is the app route for one approval (or the list when id is empty). */
+export function approvalHash(id) {
+  return id ? `#/approvals/${encodeURIComponent(id)}` : "#/approvals";
+}
+
+/** approvalApiPath is the answer endpoint of an approval. */
+export function approvalApiPath(id) {
+  return `/v1/approvals/${encodeURIComponent(id)}`;
+}
+
+/**
+ * buildApprovalRequest builds the answer for an approval as it was shown: the
+ * body carries the payload hash of exactly that version, so the server
+ * refuses (409) anything that changed or was already answered.
+ */
+export function buildApprovalRequest(approval, decision) {
+  if (decision !== "allow" && decision !== "deny") throw new Error(`invalid decision ${decision}`);
+  if (!approval || !approval.id || !approval.payload_sha256) throw new Error("no approval to answer");
+  return {
+    method: "POST",
+    path: approvalApiPath(approval.id),
+    body: { decision, payload_sha256: approval.payload_sha256 },
+  };
+}
+
+/**
+ * withReceived stamps an approval with the local time it arrived, so the
+ * countdown runs on the phone's clock (the laptop's may differ).
+ */
+export function withReceived(approval, nowMs) {
+  return { ...approval, received_ms: nowMs };
+}
+
+/** upsertApproval adds or replaces an approval, keeping the list oldest first. */
+export function upsertApproval(list, approval) {
+  const rest = (list ?? []).filter((a) => a.id !== approval.id);
+  rest.push(approval);
+  return rest.sort((a, b) => (a.opened < b.opened ? -1 : a.opened > b.opened ? 1 : a.id < b.id ? -1 : 1));
+}
+
+/** removeApproval drops an approval by id. */
+export function removeApproval(list, id) {
+  return (list ?? []).filter((a) => a.id !== id);
+}
+
+/** approvalsForWindow lists the pending approvals a window is asking for. */
+export function approvalsForWindow(list, session, windowId) {
+  return (list ?? []).filter((a) => a.session === session && a.window_id === windowId);
+}
+
+/** secondsLeft is the approval's remaining time on the phone's clock. */
+export function secondsLeft(approval, nowMs) {
+  const base = Number(approval.seconds_remaining) || 0;
+  const elapsed = approval.received_ms ? Math.floor((nowMs - approval.received_ms) / 1000) : 0;
+  return Math.max(0, base - elapsed);
+}
+
+/** formatCountdown renders seconds as m:ss. */
+export function formatCountdown(secs) {
+  const s = Math.max(0, Math.floor(secs));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** approvalSummary is the one-line description of what is being asked. */
+export function approvalSummary(a) {
+  const who = a.asking_agent || "An agent";
+  if (a.kind === "dispatch") return `${who} wants to dispatch ${a.target_agent || "an agent"}`;
+  return `${who} wants to run a command`;
+}
+
+/** approvalBannerText is the fleet banner for n pending approvals ("" for none). */
+export function approvalBannerText(n) {
+  if (!n) return "";
+  return n === 1 ? "1 approval waiting" : `${n} approvals waiting`;
+}
+
+/** approvalConfirm is the confirm sheet for answering an approval: everything that runs, in full. */
+export function approvalConfirm(a, decision) {
+  const allow = decision === "allow";
+  const head = [approvalSummary(a), `window: ${a.window_id}${a.project ? ` (${a.project})` : ""}`];
+  if (a.kind === "dispatch") {
+    head.push(`target agent: ${a.target_agent || "(default)"}`);
+    if (a.issue) head.push(`issue: #${a.issue}`);
+  }
+  const lines = [head.join("\n")];
+  if (a.prompt) lines.push(a.prompt);
+  lines.push(a.command);
+  return {
+    title: allow ? (a.kind === "dispatch" ? "Approve this dispatch?" : "Approve this command?") : "Deny?",
+    lines,
+    confirmLabel: allow ? "Approve" : "Deny",
+    danger: !allow,
+  };
 }

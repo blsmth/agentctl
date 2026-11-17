@@ -1,7 +1,9 @@
 // Window detail: header, read-only xterm pane, state-aware action bar.
 import { ApiError, get, send } from "./api.js";
+import { approvalCard, tickCountdowns } from "./approvals.js";
 import {
   actionsFor,
+  approvalsForWindow,
   buildAnswerRequest,
   buildReplyRequest,
   effectiveState,
@@ -137,12 +139,16 @@ export function mountWindow(root, ctx, { session, windowId }) {
   };
   const paneBar = h("div", { class: "pane-bar" }, h("div", { class: "segmented" }, modeBtns.reflow, modeBtns.exact));
   const actions = h("div", { class: "actions" });
+  const approvalHost = h("div", { class: "window-approvals" });
+  let approvalCountdowns = [];
+  let approvalKey = null;
   const liveLink = ctx.hasFeature("terminal")
     ? h("a", { class: "btn", href: terminalHash(session, windowId) }, "Live terminal")
     : null;
   root.append(
     h("header", { class: "bar" }, h("a", { class: "btn", href: "#/" }, "‹ Fleet"), title, liveLink),
     sub,
+    approvalHost,
     paneBar,
     paneHost,
     actions,
@@ -328,6 +334,19 @@ export function mountWindow(root, ctx, { session, windowId }) {
     renderActions();
   }
 
+  // The window's own pending approval, shown in full above the pane.
+  function renderApprovals() {
+    const mine = approvalsForWindow(ctx.store.approvals, session, windowId);
+    const key = mine.map((a) => a.id).join(",");
+    if (key === approvalKey) return;
+    approvalKey = key;
+    clear(approvalHost);
+    approvalCountdowns = [];
+    for (const a of mine) approvalHost.append(approvalCard(ctx, a, approvalCountdowns));
+  }
+  renderApprovals();
+  const approvalTick = setInterval(() => tickCountdowns(approvalCountdowns), 1000);
+
   refresh();
   const timer = setInterval(() => {
     if (!document.hidden && !gone) refresh();
@@ -336,10 +355,12 @@ export function mountWindow(root, ctx, { session, windowId }) {
   document.addEventListener("visibilitychange", onVisible);
   const unsub = ctx.store.subscribe((ev) => {
     if (ev?.type === "window" && ev.win.session === session && ev.win.window_id === windowId) refresh();
+    if (ev?.type === "approvals") renderApprovals();
   });
 
   return () => {
     clearInterval(timer);
+    clearInterval(approvalTick);
     unsub();
     document.removeEventListener("visibilitychange", onVisible);
     view.destroy();

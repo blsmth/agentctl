@@ -58,6 +58,10 @@ type ServePushConfig struct {
 	Blocked *bool `json:"blocked,omitempty"`
 	// Done pushes when an agent finishes. nil means enabled.
 	Done *bool `json:"done,omitempty"`
+	// Approvals pushes when an approval (dispatch or bash popup) waits for
+	// an answer from the phone. nil means enabled. Quiet hours do not apply:
+	// an unanswered approval blocks work and is denied at its deadline.
+	Approvals *bool `json:"approvals,omitempty"`
 	// BlockedReminderMinutes sends one reminder per blocked episode after
 	// this many minutes. nil means 10; 0 disables reminders.
 	BlockedReminderMinutes *int `json:"blocked_reminder_minutes,omitempty"`
@@ -101,6 +105,11 @@ func (p ServePushConfig) BlockedEnabled() bool {
 // DoneEnabled reports whether done pushes are on (default true).
 func (p ServePushConfig) DoneEnabled() bool {
 	return p.Done == nil || *p.Done
+}
+
+// ApprovalsEnabled reports whether approval pushes are on (default true).
+func (p ServePushConfig) ApprovalsEnabled() bool {
+	return p.Approvals == nil || *p.Approvals
 }
 
 // EffectiveBlockedReminderMinutes returns the reminder delay in minutes

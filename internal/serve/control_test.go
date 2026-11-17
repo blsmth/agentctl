@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"bufio"
 	"errors"
 	"net"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/blsmth/agentctl/internal/remoteapproval"
 )
 
 type fakeController struct {
@@ -25,6 +28,12 @@ func (f *fakeController) OpenPairing(name string) (PairInfo, error) {
 }
 
 func (f *fakeController) RequestRestart() { f.restarted.Store(true) }
+
+func (f *fakeController) Ping() remoteapproval.PingInfo { return remoteapproval.PingInfo{PID: 42} }
+
+func (f *fakeController) ServeApproval(conn net.Conn, _ *bufio.Reader, _ remoteapproval.Request) {
+	_ = conn.Close()
+}
 
 func (f *fakeController) Status() StatusInfo {
 	return StatusInfo{PID: 42, Version: "v", URL: "https://h:1/"}

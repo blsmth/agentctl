@@ -368,3 +368,75 @@ func TestCheckProjectDenyList(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// serve-tamper rules (remote approvals)
+// ---------------------------------------------------------------------------
+
+func TestCheckServeTamper(t *testing.T) {
+	orig := serveStateDir
+	t.Cleanup(func() { serveStateDir = orig })
+	serveStateDir = func() string { return "/Users/u/.local/state/agentctl/serve" }
+
+	tests := []struct {
+		name     string
+		command  string
+		wantDeny bool
+	}{
+		// Denied: state dir, socket, pidfile.
+		{"control socket", "nc -U ~/.local/state/agentctl/serve/control.sock", true},
+		{"socket by name", "python3 -c 'import socket; s.connect(\"control.sock\")'", true},
+		{"pidfile", "kill $(cat ~/.local/state/agentctl/serve/serve.pid)", true},
+		{"pidfile anywhere", "cat serve.pid", true},
+		{"state dir tilde", "ls ~/.local/state/agentctl/serve", true},
+		{"state dir xdg", "ls $XDG_STATE_HOME/agentctl/serve/", true},
+		{"state dir xdg braces", "ls ${XDG_STATE_HOME}/agentctl/serve", true},
+		{"resolved dir", "cp x /Users/u/.local/state/agentctl/serve/devices.json", true},
+		{"resolved dir via HOME", "rm $HOME/.local/state/agentctl/serve/audit.jsonl", true},
+		// Denied: stopping serve.
+		{"launchctl bootout", "launchctl bootout gui/501/com.blsmth.agentctl.serve", true},
+		{"launchctl unload plist", "launchctl unload ~/Library/LaunchAgents/com.blsmth.agentctl.serve.plist", true},
+		{"launchctl kickstart", "launchctl kickstart -k gui/$(id -u)/com.blsmth.agentctl.serve", true},
+		{"systemctl", "systemctl --user stop agentctl-serve", true},
+		{"pkill serve", "pkill -f 'agentctl serve'", true},
+		{"pkill agentctl", "pkill agentctl", true},
+		{"killall", "killall agentctl", true},
+		{"kill pgrep", "kill $(pgrep -f 'agentctl serve')", true},
+		{"serve uninstall", "agentctl serve uninstall", true},
+		{"serve install", "agentctl serve install", true},
+		{"serve pair", "agentctl serve pair --name evil", true},
+		{"serve ca rotate", "agentctl serve ca rotate", true},
+		{"chained", "go build ./... && agentctl serve uninstall", true},
+
+		// Allowed: ordinary commands that mention serve.
+		{"go test serve pkg", "go test -race ./internal/serve/...", false},
+		{"serve status", "agentctl serve status", false},
+		{"serve logs", "agentctl serve logs", false},
+		{"serve logs audit", "agentctl serve logs --audit", false},
+		{"serve logs follow", "agentctl serve logs -n 200 --audit --follow", false},
+		{"npm serve", "npm run serve", false},
+		{"python http.server", "python3 -m http.server 8000", false},
+		{"hugo", "hugo serve -D", false},
+		{"metrics serve", "agentctl metrics serve --help", false},
+		{"git log serve", "git log --oneline -- internal/serve/server.go", false},
+		{"grep serve", "grep -rn 'func (s \\*Server)' internal/serve", false},
+		{"kill job", "kill %1", false},
+		{"kill pid", "kill 12345", false},
+		{"launchctl list", "launchctl list | grep homebrew", false},
+		{"agentctl status", "agentctl status --json", false},
+		{"dispatch about serve", "agentctl dispatch --agent go-engineer --prompt 'fix the serve push notifier'", false},
+		{"other state dir", "ls ~/.local/state/agentctl/registry", false},
+		{"serve dir in repo", "cat internal/serve/control.go", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reason := checkGlobalDenyList(tt.command)
+			if got := reason != ""; got != tt.wantDeny {
+				t.Fatalf("checkGlobalDenyList(%q) = %q, wantDeny %v", tt.command, reason, tt.wantDeny)
+			}
+			if tt.wantDeny && !strings.Contains(reason, "agentctl serve logs") {
+				t.Fatalf("reason %q does not explain the block", reason)
+			}
+		})
+	}
+}

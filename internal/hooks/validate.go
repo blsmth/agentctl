@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -248,9 +249,69 @@ var globalDenyPatterns = []globalDenyEntry{
 	{regexp.MustCompile(`go\s+run\s+.*agentctl|agentctl.*go\s+run\s+\.`), "\U0001F6D1 BLOCKED: never invoke agentctl via 'go run' -- call 'agentctl' directly from PATH instead"},
 }
 
-// checkGlobalDenyList matches globalDenyPatterns against command with
-// data-only heredoc bodies removed (see stripDataHeredocs). Quoted arguments
-// are still matched literally.
+// serveTamperReason is the deny reason for commands that could subvert
+// remote approvals.
+const serveTamperReason = "\U0001F6D1 BLOCKED: this touches agentctl serve's state, control socket or process. " +
+	"Remote approvals depend on it; ask the user to do this themselves. " +
+	"To read serve's logs use `agentctl serve logs` (add --audit for audit.jsonl)."
+
+// serveTamperPatterns protect remote approvals (docs/design/mobile-web-app.md,
+// "Remote approvals"). A same-uid agent that could stop agentctl serve and
+// bind its own control socket, or pair a device, could answer its own
+// approval popups. They deny: references to the serve state dir, its control
+// socket or pidfile; stopping or reinstalling the serve LaunchAgent or
+// systemd unit; killing agentctl processes; and the serve subcommands that
+// pair devices, restart or remove the server. This is a speed bump against
+// accidents and naive attempts, not a sandbox: a program written to disk can
+// still do any of this. Ordinary commands that mention "serve" (go test
+// ./internal/serve/..., agentctl serve status|logs, npm run serve) pass;
+// `agentctl serve logs` is the read-only way to read serve.log and
+// audit.jsonl.
+var serveTamperPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`control\.sock\b`),
+	regexp.MustCompile(`\bserve\.pid\b`),
+	regexp.MustCompile(`(?:state/agentctl|XDG_STATE_HOME\}?/agentctl)/serve\b`),
+	regexp.MustCompile(`\blaunchctl\b[^\n]*agentctl\.serve\b`),
+	regexp.MustCompile(`\bsystemctl\b[^\n]*agentctl`),
+	regexp.MustCompile(`\b(?:pkill|killall)\b[^\n|;&]*agentctl`),
+	regexp.MustCompile(`\bkill\b[^\n]*\bagentctl\b[^\n]*\bserve\b`),
+	regexp.MustCompile(`\bagentctl\s+serve\s+(?:install|uninstall|pair|ca)\b`),
+}
+
+// serveStateDir is the resolved serve state dir, matched literally (absolute
+// and ~-relative) on top of serveTamperPatterns. A var so tests can pin it.
+var serveStateDir = func() string {
+	dir, err := config.StateDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "serve")
+}
+
+// checkServeTamper reports whether command could subvert remote approvals.
+func checkServeTamper(command string) string {
+	for _, re := range serveTamperPatterns {
+		if re.MatchString(command) {
+			return serveTamperReason
+		}
+	}
+	if dir := serveStateDir(); dir != "" {
+		if strings.Contains(command, dir) {
+			return serveTamperReason
+		}
+		if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(dir, home+"/") {
+			if strings.Contains(command, "~/"+strings.TrimPrefix(dir, home+"/")) ||
+				strings.Contains(command, "$HOME/"+strings.TrimPrefix(dir, home+"/")) {
+				return serveTamperReason
+			}
+		}
+	}
+	return ""
+}
+
+// checkGlobalDenyList matches globalDenyPatterns and the serve-tamper rules
+// against command with data-only heredoc bodies removed (see
+// stripDataHeredocs). Quoted arguments are still matched literally.
 func checkGlobalDenyList(command string) string {
 	command = stripDataHeredocs(command)
 	for _, deny := range globalDenyPatterns {
@@ -258,7 +319,7 @@ func checkGlobalDenyList(command string) string {
 			return deny.reason
 		}
 	}
-	return ""
+	return checkServeTamper(command)
 }
 
 // denyAuditContext carries the PreToolUse fields both deny emitters need to
