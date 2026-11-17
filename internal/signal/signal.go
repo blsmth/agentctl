@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -40,6 +41,20 @@ var deps = DefaultDeps()
 func SetDepsForTest(d *Deps) {
 	deps = d
 }
+
+// autonomousModeFn and spawnCompleteFn are seams wired by main: this package
+// cannot import internal/dispatch (which imports it). Defaults are the safe
+// answers: nothing is autonomous, and nothing is spawned.
+var (
+	autonomousModeFn = func(string) bool { return false }
+	spawnCompleteFn  = func(string) error { return nil }
+)
+
+// SetAutonomousModeFn overrides the mode-autonomy predicate.
+func SetAutonomousModeFn(fn func(mode string) bool) { autonomousModeFn = fn }
+
+// SetSpawnCompleteFn overrides the detached completion spawner.
+func SetSpawnCompleteFn(fn func(windowID string) error) { spawnCompleteFn = fn }
 
 // ResolveWindowID returns the tmux window ID for the current process.
 // Resolution order (most → least reliable):
@@ -107,21 +122,32 @@ func Apply(windowID, state, agentName string) error {
 
 	logging.Log("signal: applying state=%s on window=%s agent=%s", state, windowID, agentName)
 
-	// Update persistent windowstate (read by the monitor on its next tick).
-	if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
+	// Update persistent windowstate. For "done" the same transaction claims
+	// dispatch completion so exactly one detached completion process runs.
+	var claimed bool
+	now := time.Now()
+	if _, _, err := windowstate.Transact(windowID, func(ws *windowstate.WindowState) {
 		switch state {
 		case "done":
 			ws.State = "idle"
-			ws.Done = true
+			claimed = windowstate.ClaimComplete(ws, autonomousModeFn(ws.Mode), now)
 		case "working":
 			ws.State = "working"
-			ws.Done = false
+			windowstate.ClearDone(ws)
 		default:
 			ws.State = state
-			ws.Done = false
+			windowstate.ClearDone(ws)
 		}
 	}); err != nil {
 		return fmt.Errorf("updating window state: %w", err)
+	}
+	if claimed {
+		if err := spawnCompleteFn(windowID); err != nil {
+			logging.Warn("signal: spawning dispatch-complete window=%s: %v", windowID, err)
+			if rerr := windowstate.ReleaseComplete(windowID, now); rerr != nil {
+				logging.Warn("signal: releasing completion claim window=%s: %v", windowID, rerr)
+			}
+		}
 	}
 	logging.Log("signal: windowstate updated")
 

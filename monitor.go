@@ -18,7 +18,6 @@ import (
 
 	"github.com/blsmth/agentctl/internal/claude"
 	"github.com/blsmth/agentctl/internal/config"
-	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/improve"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -36,9 +35,6 @@ import (
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
-// handleCompleteFn is dispatch.HandleComplete, indirected for testing.
-var handleCompleteFn = dispatch.HandleComplete
-
 // safeHandle runs fn, recovering any panic so one misbehaving transition
 // handler cannot kill the monitor loop. The panic value and stack are logged
 // with the handler name and agent/window context.
@@ -52,17 +48,17 @@ func safeHandle(name string, t state.Transition, fn func()) {
 	fn()
 }
 
+// improveHandleFn is improve.HandleTransition, indirected for testing.
+var improveHandleFn = improve.HandleTransition
+
 // fireHandlers invokes each transition handler individually under safeHandle
-// so a panic in one does not skip the others. stateEdge selects which
-// handlers run: the done edge (stateEdge false) fires only HandleComplete.
-func (m *monitorModel) fireHandlers(t state.Transition, agentCfg config.AgentConfig, stateEdge bool) {
-	if stateEdge {
-		if m.transitionTracker != nil {
-			safeHandle("RecordTransition", t, func() { m.transitionTracker.RecordTransition(t) })
-		}
-		safeHandle("improve.HandleTransition", t, func() { improve.HandleTransition(t, agentCfg) })
+// so a panic in one does not skip the others. Dispatch completion is not fired
+// here: the Stop hook (and `agentctl signal done`) spawn it directly.
+func (m *monitorModel) fireHandlers(t state.Transition, agentCfg config.AgentConfig) {
+	if m.transitionTracker != nil {
+		safeHandle("RecordTransition", t, func() { m.transitionTracker.RecordTransition(t) })
 	}
-	safeHandle("HandleComplete", t, func() { handleCompleteFn(t, agentCfg) })
+	safeHandle("improve.HandleTransition", t, func() { improveHandleFn(t, agentCfg) })
 }
 
 // instanceState holds all per-instance monitoring state for a single agent window.
@@ -124,7 +120,6 @@ type instanceState struct {
 	lastName  string    // last rendered window name for dedup
 	seen      bool      // true after user has focused this window in idle/blocked state
 	done      bool      // true when @agentctl_done is set (hook-stop with done=1)
-	prevDone  bool      // previous tick's hookDone, for done-edge detection (see detectAndFireTransitions)
 
 	// Turn tracking
 	turnCount      int   // cumulative assistant turn count
@@ -592,7 +587,7 @@ func (m *monitorModel) reconcileWindows(cfg *config.Config, windows []tmux.Windo
 				Active:   false,
 			}
 			agentCfg := cfg.ForAgent(inst.base)
-			m.fireHandlers(t, agentCfg, true)
+			m.fireHandlers(t, agentCfg)
 		}
 		// Release the persistent stream reader.
 		if inst.stream != nil {
@@ -1027,30 +1022,10 @@ func (m *monitorModel) detectAndFireTransitions(inst *instanceState, windowID st
 	inst.ticket = windowTicket
 	inst.mainPane = ws.MainPane
 
-	// Fire transition handlers on state changes, and also on the "done edge"
-	// (hookDone flips false -> true with no accompanying state change).
-	//
-	// Why the done edge matters: hook-check-done writes windowstate TWICE --
-	// State="idle" immediately (to stop the spinner), then Done=true seconds
-	// later once the slower completion checks (git status, build) finish. The
-	// monitor ticks every 500ms, so it almost always observes the state change
-	// (working -> idle, Done=false) well before Done flips true. Gating
-	// dispatch.HandleComplete on stateChanged alone means it is called once
-	// with Done=false (an early no-op return) and never again, so
-	// auto-open-PR-in-browser, dispatch label swaps, and dispatch_complete
-	// hooks never fire. Firing again on the done edge closes that gap.
-	//
-	// doneEdge is gated on inst.hasPrev, same as stateChanged: a brand-new
-	// instanceState starts with prevDone=false, so without this guard the
-	// very first tick on a window that is already done=true (e.g. every
-	// agent window still sitting at done+idle across a monitor restart)
-	// would compute a false->true edge and fire handlers for a PR that was
-	// already opened by the previous monitor process. Requiring hasPrev
-	// means the first tick only establishes the prevDone baseline; only an
-	// edge actually observed by this monitor process fires anything.
+	// Fire transition handlers on state changes. Dispatch completion (the
+	// "done edge") is hook-driven, not detected here.
 	stateChanged := inst.hasPrev && inst.prevState != curState
-	doneEdge := inst.hasPrev && hookDone && !inst.prevDone
-	if stateChanged || doneEdge {
+	if stateChanged {
 		// Resolve the work dir and branch only on an edge: both fork (tmux,
 		// git) and are only consumed by the Transition below.
 		windowBranch := ""
@@ -1078,24 +1053,12 @@ func (m *monitorModel) detectAndFireTransitions(inst *instanceState, windowID st
 		}
 		agentCfg := cfg.ForAgent(inst.base)
 
-		// RecordTransition and improve.HandleTransition stay gated on the state
-		// edge only: RecordTransition counts every transition handed to it, so
-		// routing the done edge through it would double-count and corrupt the
-		// Prometheus counters, and improve.HandleTransition only acts on
-		// To == StatusGone (a no-op here either way) -- keeping it on the state
-		// edge preserves exactly today's behavior.
-		if stateChanged {
-			inst.seen = false
-			logging.Log("monitor: %s transitioned %s → %s", inst.instance, inst.prevState, curState)
-		}
-		if doneEdge && !stateChanged {
-			logging.Log("monitor: %s done edge (state=%s) - firing completion handlers", inst.instance, curState)
-		}
-		m.fireHandlers(t, agentCfg, stateChanged)
+		inst.seen = false
+		logging.Log("monitor: %s transitioned %s → %s", inst.instance, inst.prevState, curState)
+		m.fireHandlers(t, agentCfg)
 	}
 	inst.prevState = curState
 	inst.hasPrev = true
-	inst.prevDone = hookDone
 }
 
 // Seams for the per-window tmux/git lookups so tests can count calls.

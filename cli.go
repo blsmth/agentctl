@@ -10,6 +10,7 @@ import (
 	"github.com/blsmth/agentctl/internal/audit"
 	"github.com/blsmth/agentctl/internal/cmd"
 	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/safefs"
 	"github.com/blsmth/agentctl/internal/sessions"
@@ -59,6 +60,10 @@ type CLI struct {
 	// Backends
 	Backend      BackendCmd      `cmd:"" help:"Manage backend credentials (login, logout, status)"`
 	BackendToken BackendTokenCmd `cmd:"" name:"backend-token" hidden:"" help:"Print a backend's API key (Claude Code apiKeyHelper)"`
+
+	// Dispatch completion (spawned detached by the Stop hook / signal done)
+	DispatchComplete DispatchCompleteCmd `cmd:"" name:"dispatch-complete" hidden:"" help:"Run dispatch completion for a window (PR lookup, labels, hooks)"`
+	RunUserHooks     RunUserHooksCmd     `cmd:"" name:"run-user-hooks" hidden:"" help:"Run user lifecycle hooks for an event (spawned detached by hooks)"`
 
 	// Dispatch
 	Dispatch DispatchCmd `cmd:"" help:"Dispatch an agent to work on a ticket"`
@@ -1188,3 +1193,18 @@ func runCmdTicketCreate(title, body, bodyFile, labelsStr string) {
 
 	cmd.RunTicketCreateBody(title, bodyContent, labels)
 }
+
+// DispatchCompleteCmd runs dispatch completion synchronously for one window.
+type DispatchCompleteCmd struct {
+	WindowID string `arg:"" help:"tmux window ID (e.g. @5)"`
+}
+
+func (c *DispatchCompleteCmd) Run() error { cmd.RunDispatchComplete(c.WindowID); return nil }
+
+// RunUserHooksCmd runs the configured user hooks for one lifecycle event,
+// using the environment inherited from the spawning hook.
+type RunUserHooksCmd struct {
+	Event string `arg:"" help:"Lifecycle event (stop, session_end, ...)"`
+}
+
+func (c *RunUserHooksCmd) Run() error { hooks.RunUserHooksSync(c.Event); return nil }

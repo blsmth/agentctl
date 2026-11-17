@@ -52,7 +52,7 @@ agentctl
 1. `agentctl` starts (or attaches to) a tmux session, then runs the monitor as a background process guarded by a pidfile.
 2. The monitor is a **headless Bubble Tea program** (`tea.WithoutRenderer()`) that ticks every 500ms. Each tick lists tmux windows and, per window, links logs, updates metrics, resolves state, fires transition handlers, and applies visuals.
 3. State is **hook-driven**, not inferred from log growth. Claude Code hooks write a per-window state string to `.agentctl/windows/<windowID>.json` (`windowstate`). The monitor's `resolveState` maps it to an `AgentStatus`: `Working`, `Idle`, `Blocked`, or `Gone` (`Gone` is detected structurally when a window disappears).
-4. On a state change the monitor builds a `Transition` and calls the concrete handlers directly — `dispatch.HandleComplete`, `improve.HandleTransition`, and the metrics `transitionTracker`. There is no plugin registry.
+4. On a state change the monitor builds a `Transition` and calls the concrete handlers directly — `improve.HandleTransition` and the metrics `transitionTracker`. Dispatch completion is spawned by the Stop hook, not the monitor. There is no plugin registry.
 5. The monitor renames tmux windows to reflect state (`●` working, `⏸` blocked, `✓` done-unseen, bare name idle) and writes the authoritative snapshot to `state.json`.
 6. UI panes (the chrome bar) watch `state.json` via fsnotify and re-read the snapshot to re-render — no data is pushed to them.
 
@@ -86,7 +86,7 @@ Layered per-agent settings (alerts, `auto_improve`, `cross_context`, dir, model,
 
 ### dispatch/ & worktree/
 
-`dispatch` fetches a GitHub issue, infers the agent from labels, creates an isolated git worktree, and launches the agent on it; it also handles post-completion actions via `HandleComplete`. `worktree` does the git worktree create/remove/list; worktrees live at `<repo>/.worktrees/<slug>/`. See [dispatch docs](dispatch.md).
+`dispatch` fetches a GitHub issue, infers the agent from labels, creates an isolated git worktree, and launches the agent on it; it also handles post-completion actions via `RunComplete` (run by the hook-spawned `dispatch-complete` process). `worktree` does the git worktree create/remove/list; worktrees live at `<repo>/.worktrees/<slug>/`. See [dispatch docs](dispatch.md).
 
 ### tui/
 

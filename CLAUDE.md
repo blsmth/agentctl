@@ -38,7 +38,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 - **agent/** — Agent discovery from `~/.claude/agents/*.md` and project-local `.claude/agents/` (local shadows global); `Extends` composes agents.
 - **sessions/** — Parses Claude Code's JSONL logs in `~/.claude/projects/` for summaries, metrics, and session metadata sidecars.
 - **config/** — Layered settings: project-local `.agentctl/config.json` over global `~/.config/agentctl/config.json`, reloaded every monitor tick. See [docs/configuration.md](docs/configuration.md); `internal/config` structs are the source of truth.
-- **dispatch/**, **improve/** — Transition handlers (`dispatch.HandleComplete`, `improve.HandleTransition`) plus dispatch/worktree orchestration and self-improvement launching.
+- **dispatch/**, **improve/** — `improve.HandleTransition` (monitor transition handler) and `dispatch.RunComplete` (hook-spawned completion), plus dispatch/worktree orchestration and self-improvement launching.
 - **hooks/** — Claude Code hook handlers (`hooks.Dispatch`): write windowstate, fire notifications, validate Bash, derive done state.
 - **tui/** — Bubble Tea models: the fsnotify-fed chrome bar, menus, wizards, and full-screen browsers.
 - **render/** — Leaf package of presentation helpers shared by the chrome bar and the statusline so both render the same numbers.
@@ -55,7 +55,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 
 - **Monitor hot reload**: monitor-side changes go live within about one tick of `just install`, with no relaunch needed. The monitor records its binary identity in `<runtimeDir>/monitor.build` and re-execs itself (same PID) when the file changes (`monitor_reexec.go`); the hook watchdog replaces older monitors that never wrote that file. In-memory state resets on re-exec (see [docs/monitor-architecture.md](docs/monitor-architecture.md#hot-reload)).
 - **Notifications** are hook-driven (`internal/hooks/`), not monitor-driven. Settings: see [docs/configuration.md](docs/configuration.md#notifications).
-- **Auto-opening PRs**: when a dispatched agent finishes with a PR, the monitor opens it via `gh pr view --web` (config `open_pr_in_browser`), once per PR per monitor process.
+- **Auto-opening PRs**: when a dispatched agent finishes with a PR, completion runs from the Stop hook (or `agentctl signal done`), not the monitor: it spawns a detached `agentctl dispatch-complete <window>` that opens the PR via `gh pr view --web` (config `open_pr_in_browser`), once per PR, deduped across processes by marker files in `<runtimeDir>/opened-prs/`.
 - **Worktree reclaim on SessionEnd**: on a terminal `SessionEnd` the hook runs `cleanup.Classify` against the window's own worktree and reclaims it (with its window) only when the verdict is `empty` or `landed`. `git worktree prune` always runs. Opt out with `auto_reclaim_worktree: false`.
 - **`bash_preview`**: `bashPreviewGate` (`internal/hooks/preview_gate.go`) only shows the popup when a human is attached **and** looking at the issuing window (`tmuxHasAttachedClient`); otherwise the command passes through. That backstop prevents unattended dispatches from deadlocking on an invisible popup. Unanswered popups (dispatch and bash) deny after a deadline (`popupDeadline`, 9m against the 600s `timeout` registered on `hook-validate-bash`) and the popup is closed with `tmux display-popup -C`, rather than failing open when Claude Code kills the hook. While a popup is open the window is marked `blocked` (PendingTool `dispatch`/`Bash`) with a desktop notification (`approval_pending`, gated by `alert_config.blocked`) and a marker file in `<runtimeDir>/approval-pending/` that makes the monitor defer `gh pr view --web` auto-open (up to ~2 minutes, then skip). State is restored to `working` on every exit path.
 - **Backends** (Ollama and Nous Portal via `backends` + `agents.*.backend`, global-only; `dispatch --backend`): `nous` delivers its API key through `apiKeyHelper` (`agentctl backend-token`), never through env or config. See [docs/configuration.md](docs/configuration.md#backends-ollama-and-nous-portal).
@@ -67,7 +67,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 1. `agentctl` starts a tmux session → runs the monitor as a background process (pidfile-guarded)
 2. Claude Code hooks write per-window state to `.agentctl/windows/<windowID>.json` (`working`/`blocked`/`idle`)
 3. Monitor loops every 500ms, reads each window's hook state, and resolves it to an `AgentStatus`; `Gone` is detected when a window disappears. JSONL is parsed only for metrics/detail.
-4. On a state change the monitor builds a `Transition` and calls handlers directly — metrics `transitionTracker`, `dispatch.HandleComplete`, `improve.HandleTransition` (no plugin registry)
+4. On a state change the monitor builds a `Transition` and calls handlers directly — metrics `transitionTracker` and `improve.HandleTransition` (no plugin registry). Dispatch completion is hook-driven instead: the hook that sets `Done=true` (Stop hook, `signal done`) stamps `CompleteFiredAt` and spawns a detached `agentctl dispatch-complete <window>` (PR lookup, label swap, open PR, `dispatch_complete` hooks)
 5. Monitor renames tmux windows to reflect state (● working, ⏸ blocked, ✓ done-unseen, bare name idle) and writes `state.json`; the chrome bar pane watches `state.json` via fsnotify and re-renders
 
 ### Dispatch & Worktrees
@@ -110,7 +110,7 @@ Three behaviors are deliberate:
 
 ## Adding a transition handler
 
-There is no plugin registry. Add your reactive logic as a function and call it from `detectAndFireTransitions()` in `monitor.go`, alongside the existing `dispatch.HandleComplete` / `improve.HandleTransition` calls. It receives the `state.Transition` and the agent's `config.AgentConfig`.
+There is no plugin registry. Add your reactive logic as a function and call it from `detectAndFireTransitions()` in `monitor.go`, alongside the existing `improve.HandleTransition` call. It receives the `state.Transition` and the agent's `config.AgentConfig`.
 
 ## Adding a new subcommand
 

@@ -16,7 +16,7 @@ Known consequences of a re-exec, since in-memory state resets:
 
 - The done-unseen check-mark glyph can reappear on windows that were already viewed.
 - Prometheus counters restart from zero.
-- A done edge landing during the roughly one second gap is not observed. The `hasPrev` gate in `detectAndFireTransitions` already prevents re-firing old edges.
+- Dispatch completion is not affected by a re-exec: it is hook-driven (see below), not detected by the monitor.
 
 ## Two Message Loops
 
@@ -70,11 +70,13 @@ There is **no** plugin interface or registry. On a detected state change, `detec
 
 1. **`m.transitionTracker.RecordTransition(t)`** — Prometheus metrics (`internal/metrics`): agents spawned, sessions completed, state transitions, durations, monitor uptime, etc. Exposed on a configurable HTTP port when metrics are enabled.
 
-2. **`dispatch.HandleComplete(t, agentCfg)`** (`internal/dispatch`) — Post-dispatch completion actions for issue/ticket runs.
-
-3. **`improve.HandleTransition(t, agentCfg)`** (`internal/improve`) — Auto-launches an improvement session on the relevant transition, gated by per-agent `auto_improve` config, with a recursion guard for improve windows.
+2. **`improve.HandleTransition(t, agentCfg)`** (`internal/improve`) — Auto-launches an improvement session on the relevant transition, gated by per-agent `auto_improve` config, with a recursion guard for improve windows.
 
 To add new reactive behavior, add a handler call here rather than registering a plugin.
+
+### Dispatch completion is hook-driven
+
+The Stop hook (`hooks.CheckDone`) and `agentctl signal done` set `Done=true` in a `windowstate.Transact` that also stamps `CompleteFiredAt` when the window is autonomous (dispatch/adhoc) and no completion has been claimed since the last re-arm. The winner spawns a fully detached hidden `agentctl dispatch-complete <windowID>` (own session, stdio on /dev/null, never waited on), so the hook never blocks on gh or git. That process rebuilds the `Transition` from windowstate and runs `dispatch.RunComplete` synchronously: PR lookup, label swap, deferral while an approval popup is pending (up to ~2 minutes), `gh pr view --web`, and `dispatch_complete` hooks. Each completion is its own process, so PR opening is deduped with O_EXCL marker files at `<runtimeDir>/opened-prs/<repo-slug>-<pr>` (markers older than 7 days are removed when one is written). `UserPromptSubmit` and non-done `signal` states clear `Done` and `CompleteFiredAt`, so a working-then-done cycle completes again. If the spawn fails, the stamp is cleared so a later Stop retries. The monitor takes no part in this.
 
 ## Visual Output — `applyVisuals()`
 
@@ -125,7 +127,7 @@ Additional hooks handle compaction, elicitation, worktree create/remove, subagen
 ## Key Data Flows
 
 1. **State detection**: Claude Code → hook (`pre-tool`/`notify`/…) → `windowstate.Update()` writes `.agentctl/windows/<id>.json` → monitor `resolveState()` reads it on tick.
-2. **Transitions**: state change → `detectAndFireTransitions()` builds `Transition` → `RecordTransition` + `dispatch.HandleComplete` + `improve.HandleTransition`.
+2. **Transitions**: state change → `detectAndFireTransitions()` builds `Transition` → `RecordTransition` + `improve.HandleTransition`. Dispatch completion is not part of this loop.
 3. **Visual output**: monitor `applyVisuals()` → `tmux rename-window` (state glyph) + windowstate metrics for the chrome bar.
 4. **Log discovery**: `hook-session-start` → windowstate `LogPath` → monitor links `instanceState.logPath`; fallback `sessions.FindLatestLog()` scans the filesystem.
 5. **State persistence**: monitor tick → `state.Save()` → `state.json` → panes/popups read via `LoadSnapshot()`, chrome bar re-renders on fsnotify.

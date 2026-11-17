@@ -16,12 +16,14 @@ import (
 	"github.com/blsmth/agentctl/internal/cmd"
 	"github.com/blsmth/agentctl/internal/config"
 	ctxstore "github.com/blsmth/agentctl/internal/context"
+	"github.com/blsmth/agentctl/internal/detach"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/hubtarget"
 	"github.com/blsmth/agentctl/internal/improve"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/signal"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/statusline"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -143,6 +145,8 @@ func main() {
 	// more for statusline: Claude Code debounces pushes at 300ms and cancels
 	// an in-flight invocation the moment a new one triggers, so init cost
 	// eats directly into the window before the process gets killed.
+	wireCompletion()
+
 	if fastPath {
 		if err := config.Init(); err != nil {
 			logging.Error("config init: %v", err)
@@ -542,4 +546,19 @@ func isReadOnlyInvocation(args []string) bool {
 		}
 	}
 	return false
+}
+
+// wireCompletion connects the seams that start dispatch completion as a
+// detached `agentctl dispatch-complete` process. internal/hooks and
+// internal/signal cannot import internal/dispatch, so main wires both.
+func wireCompletion() {
+	spawn := func(windowID string) error {
+		return detach.StartSelf([]string{"dispatch-complete", windowID}, nil)
+	}
+	hooks.SetSpawnCompleteFn(spawn)
+	signal.SetSpawnCompleteFn(spawn)
+	signal.SetAutonomousModeFn(dispatch.IsAutonomous)
+	hooks.SetDetachUserHooks(func(event string, env []string) error {
+		return detach.StartSelf([]string{"run-user-hooks", event}, env)
+	})
 }

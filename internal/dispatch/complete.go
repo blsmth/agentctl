@@ -2,9 +2,11 @@ package dispatch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,9 +46,8 @@ func approvalMarkersPending() bool {
 }
 
 // waitForApprovals returns true when it is fine to steal focus: no approval
-// popup is pending, or none remained after approvalDeferRetries waits. It runs
-// inside the per-completion goroutine, so it is bounded (about two minutes)
-// and adds no goroutine of its own.
+// popup is pending, or none remained after approvalDeferRetries waits. It is
+// bounded (about two minutes).
 func (h *completeHandler) waitForApprovals(pr int) bool {
 	if h.approvalPending == nil {
 		return true
@@ -79,42 +80,111 @@ var defaultHandler = &completeHandler{
 	approvalPending: approvalMarkersPending,
 }
 
-// openedPRs tracks PR numbers already opened in the browser during this
-// monitor process, so an agent flapping done->working->done doesn't reopen
-// the same tab repeatedly.
+// openedPRsGCAge is how old a PR marker must be before it is garbage
+// collected the next time one is written.
+const openedPRsGCAge = 7 * 24 * time.Hour
+
+// Fallback state for when no runtime dir is set (tests): in-process only.
 var (
-	openedPRsMu sync.Mutex
-	openedPRs   = make(map[int]bool)
+	openedPRsMu  sync.Mutex
+	openedPRs    = make(map[string]bool)
+	openedPRsDir string // test override; empty means <runtimeDir>/opened-prs
 )
 
-// markPROpened records that pr has been opened, returning true if this is
-// the first time (i.e. the caller should proceed to open it).
-func markPROpened(pr int) bool {
-	openedPRsMu.Lock()
-	defer openedPRsMu.Unlock()
-	if openedPRs[pr] {
-		return false
+// openedPRsDirPath returns the marker directory, or "" when there is no
+// runtime dir to hold one.
+func openedPRsDirPath() string {
+	if openedPRsDir != "" {
+		return openedPRsDir
 	}
-	openedPRs[pr] = true
+	if rd := paths.RuntimeDir(); rd != "" {
+		return filepath.Join(rd, "opened-prs")
+	}
+	return ""
+}
+
+// prMarkerName is the marker file name for a PR: "<repo-slug>-<pr>".
+func prMarkerName(repo string, pr int) string {
+	slug := strings.NewReplacer("/", "-", string(filepath.Separator), "-").Replace(repo)
+	if slug == "" {
+		slug = "unknown"
+	}
+	return fmt.Sprintf("%s-%d", slug, pr)
+}
+
+// markPROpened records that pr has been opened, returning true if this is
+// the first time (i.e. the caller should proceed to open it). The record is
+// an O_EXCL marker file so it dedupes across processes: each completion runs
+// in its own short-lived `agentctl dispatch-complete` process.
+func markPROpened(repo string, pr int) bool {
+	name := prMarkerName(repo, pr)
+	dir := openedPRsDirPath()
+	if dir == "" {
+		openedPRsMu.Lock()
+		defer openedPRsMu.Unlock()
+		if openedPRs[name] {
+			return false
+		}
+		openedPRs[name] = true
+		return true
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		logging.Warn("dispatch-complete: creating %s: %v", dir, err)
+		return true // cannot dedupe; opening twice beats never opening
+	}
+	f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return false
+		}
+		logging.Warn("dispatch-complete: writing PR marker %s: %v", name, err)
+		return true
+	}
+	f.Close()
+	gcOpenedPRs(dir, time.Now())
 	return true
 }
 
-// ResetOpenedPRsForTest clears the dedupe state. Only for use in tests.
+// gcOpenedPRs removes markers older than openedPRsGCAge.
+func gcOpenedPRs(dir string, now time.Time) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil || now.Sub(info.ModTime()) <= openedPRsGCAge {
+			continue
+		}
+		os.Remove(filepath.Join(dir, e.Name())) //nolint:errcheck
+	}
+}
+
+// ResetOpenedPRsForTest points the dedupe state at a fresh empty directory.
+// Only for use in tests.
 func ResetOpenedPRsForTest() {
 	openedPRsMu.Lock()
 	defer openedPRsMu.Unlock()
-	openedPRs = make(map[int]bool)
+	openedPRs = make(map[string]bool)
+	dir, err := os.MkdirTemp("", "opened-prs-")
+	if err != nil {
+		openedPRsDir = ""
+		return
+	}
+	openedPRsDir = dir
 }
 
-// HandleComplete fires when a dispatch- or adhoc-mode agent transitions to
-// Idle with the Done flag set. It looks up the associated PR, swaps GitHub
-// labels (ticketed dispatches only), and runs any configured on_complete
-// hooks.
-func HandleComplete(t state.Transition, cfg config.AgentConfig) {
+// RunComplete performs dispatch completion for a dispatch- or adhoc-mode
+// agent that is idle with the Done flag set: it looks up the associated PR,
+// swaps GitHub labels (ticketed dispatches only), opens the PR in the
+// browser, and runs any configured dispatch_complete hooks. It runs
+// synchronously (it may sleep ~2 minutes deferring to a pending approval
+// popup) and is meant for the detached `agentctl dispatch-complete` process.
+func RunComplete(t state.Transition, cfg config.AgentConfig) {
 	defaultHandler.handle(t, cfg)
 }
 
-// handle is the injectable implementation used by both HandleComplete and tests.
+// handle is the synchronous core used by RunComplete and tests.
 func (h *completeHandler) handle(t state.Transition, cfg config.AgentConfig) {
 	// Only handle dispatch/adhoc-mode windows that just signaled done.
 	if !t.Done || t.To != state.StatusIdle || (t.Mode != "dispatch" && t.Mode != "adhoc") {
@@ -129,64 +199,60 @@ func (h *completeHandler) handle(t state.Transition, cfg config.AgentConfig) {
 
 	logging.Log("dispatch-complete: issue #%d agent=%s branch=%s mode=%s — looking up PR", issueNumber, agentName, branch, t.Mode)
 
-	// PR lookup runs in a goroutine to avoid blocking the monitor tick.
-	go func() {
-		repo := ""
-		repoOK := true
-		if h.resolveRepo != nil {
-			var err error
-			repo, err = h.resolveRepo(workDir)
-			if err != nil {
-				repoOK = false
-				logging.Warn("dispatch-complete: cannot resolve repo for issue #%d, skipping PR lookup and label swap: %v", issueNumber, err)
-			}
+	repo := ""
+	repoOK := true
+	if h.resolveRepo != nil {
+		var err error
+		repo, err = h.resolveRepo(workDir)
+		if err != nil {
+			repoOK = false
+			logging.Warn("dispatch-complete: cannot resolve repo for issue #%d, skipping PR lookup and label swap: %v", issueNumber, err)
 		}
+	}
 
-		pr := 0
-		if repoOK && branch != "" {
-			pr = h.lookupPR(repo, branch)
-		}
+	pr := 0
+	if repoOK && branch != "" {
+		pr = h.lookupPR(repo, branch)
+	}
 
-		logging.Log("dispatch-complete: PR lookup for issue #%d (PR #%d)", issueNumber, pr)
+	logging.Log("dispatch-complete: PR lookup for issue #%d (PR #%d)", issueNumber, pr)
 
-		// Run user lifecycle hooks for dispatch_complete.
-		// We need the full Config to call EffectiveHooks; load it fresh.
-		fullCfg := config.Load()
+	// We need the full Config to call EffectiveHooks; load it fresh.
+	fullCfg := config.Load()
 
-		// Label lifecycle is ticket-specific (Autopilot only) — ad-hoc dispatches
-		// have no issue to swap labels on.
-		if fullCfg.AutoPoll && pr > 0 && issueNumber > 0 && h.swapLabels != nil {
-			logging.Log("dispatch-complete: swapping labels on issue #%d (agentctl:in-progress → agentctl:ready-for-review)", issueNumber)
-			h.swapLabels(repo, issueNumber)
-		}
+	// Label lifecycle is ticket-specific (Autopilot only) — ad-hoc dispatches
+	// have no issue to swap labels on.
+	if fullCfg.AutoPoll && pr > 0 && issueNumber > 0 && h.swapLabels != nil {
+		logging.Log("dispatch-complete: swapping labels on issue #%d (agentctl:in-progress → agentctl:ready-for-review)", issueNumber)
+		h.swapLabels(repo, issueNumber)
+	}
 
-		// Open the newly-created PR in the browser, unless disabled or already
-		// opened once this process (an agent can go done->working->done again
-		// within one session).
-		if pr > 0 && fullCfg.OpenPRInBrowserEnabled() && h.openPR != nil && markPROpened(pr) {
-			h.openPR(pr, workDir)
-		}
+	// Open the newly-created PR in the browser, unless disabled or already
+	// opened (marker file; an agent can go done->working->done again, and each
+	// completion is a separate process).
+	if pr > 0 && fullCfg.OpenPRInBrowserEnabled() && h.openPR != nil && h.waitForApprovals(pr) && markPROpened(repo, pr) {
+		h.openPR(pr, workDir)
+	}
 
-		// EffectiveHooks returns global + agent hooks merged, with backward-compat
-		// fallback to dispatch.on_complete when hooks.dispatch_complete is unset.
-		hookCmds := fullCfg.EffectiveHooks("dispatch_complete", cfg)
-		if len(hookCmds) == 0 {
-			return
-		}
+	// EffectiveHooks returns global + agent hooks merged, with backward-compat
+	// fallback to dispatch.on_complete when hooks.dispatch_complete is unset.
+	hookCmds := fullCfg.EffectiveHooks("dispatch_complete", cfg)
+	if len(hookCmds) == 0 {
+		return
+	}
 
-		env := []string{
-			fmt.Sprintf("AGENTCTL_ISSUE=%d", issueNumber),
-			fmt.Sprintf("AGENTCTL_AGENT=%s", agentName),
-			fmt.Sprintf("AGENTCTL_BRANCH=%s", branch),
-			fmt.Sprintf("AGENTCTL_WORKDIR=%s", workDir),
-			fmt.Sprintf("AGENTCTL_PR=%d", pr),
-			fmt.Sprintf("AGENTCTL_WINDOW_ID=%s", windowID),
-		}
-		for _, hookCmd := range hookCmds {
-			logging.Log("dispatch-complete: running dispatch_complete hook for issue #%d: %s", issueNumber, hookCmd)
-			h.runHook(hookCmd, env)
-		}
-	}()
+	env := []string{
+		fmt.Sprintf("AGENTCTL_ISSUE=%d", issueNumber),
+		fmt.Sprintf("AGENTCTL_AGENT=%s", agentName),
+		fmt.Sprintf("AGENTCTL_BRANCH=%s", branch),
+		fmt.Sprintf("AGENTCTL_WORKDIR=%s", workDir),
+		fmt.Sprintf("AGENTCTL_PR=%d", pr),
+		fmt.Sprintf("AGENTCTL_WINDOW_ID=%s", windowID),
+	}
+	for _, hookCmd := range hookCmds {
+		logging.Log("dispatch-complete: running dispatch_complete hook for issue #%d: %s", issueNumber, hookCmd)
+		h.runHook(hookCmd, env)
+	}
 }
 
 // swapDispatchLabels removes agentctl:in-progress and adds agentctl:ready-for-review

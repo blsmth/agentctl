@@ -661,16 +661,12 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// ── detectAndFireTransitions: done-edge firing ──────────────────────────────
+// ── detectAndFireTransitions: done edge no longer fires handlers ─────────────
 //
-// Regression coverage for the bug where dispatch.HandleComplete (and
-// therefore auto-open-PR-in-browser, dispatch label swaps, and
-// dispatch_complete hooks) never fired: hook-check-done writes
-// windowstate.State="idle" immediately, then windowstate.Done=true seconds
-// later once slower completion checks finish. The monitor almost always
-// observes the state-change tick with Done still false, and — before this
-// fix — never re-fired handlers once Done flipped true with no accompanying
-// state change.
+// Dispatch completion (PR lookup, label swap, open-in-browser,
+// dispatch_complete hooks) is driven by the Stop hook / `signal done`, which
+// spawn `agentctl dispatch-complete`. The monitor must NOT fire anything on a
+// done edge; only state edges reach RecordTransition and improve.
 
 // fireTick is one simulated 500ms monitor tick fed into detectAndFireTransitions.
 type fireTick struct {
@@ -700,118 +696,54 @@ func gatherCounterTotal(t *testing.T, reg *prometheus.Registry, name string) flo
 	return total
 }
 
-// TestDetectAndFireTransitions runs one or more ticks through
-// detectAndFireTransitions against a fresh instanceState/transitionTracker
-// and checks both how many times handleCompleteFn fired (and with what Done
-// values) and how much agentctl_state_transitions_total incremented.
+// TestDetectAndFireTransitions runs ticks through detectAndFireTransitions
+// and checks that handlers fire only on state edges (never on a done edge) and
+// that agentctl_state_transitions_total increments only on state edges.
 func TestDetectAndFireTransitions(t *testing.T) {
 	tests := []struct {
-		name string
-
-		// Initial instanceState going into the first tick.
+		name      string
 		hasPrev   bool
 		prevState state.AgentStatus
-		prevDone  bool
-
-		ticks []fireTick
-
-		wantHandleCompleteDone  []bool // one entry per handleCompleteFn call, in order
-		wantStateTransitionsInc float64
+		ticks     []fireTick
+		wantEdges int // expected state-edge handler calls == transitions counter
 	}{
 		{
-			// The core regression case: no state change at all, just Done
-			// flipping false -> true. Before this fix, nothing fired.
-			name:                    "done edge alone with no state change fires",
-			hasPrev:                 true,
-			prevState:               state.StatusIdle,
-			prevDone:                false,
-			ticks:                   []fireTick{{curState: state.StatusIdle, wsState: "idle", wsDone: true, wsMode: "adhoc"}},
-			wantHandleCompleteDone:  []bool{true},
-			wantStateTransitionsInc: 0,
+			name:      "done edge alone with no state change fires nothing",
+			hasPrev:   true,
+			prevState: state.StatusIdle,
+			ticks:     []fireTick{{curState: state.StatusIdle, wsState: "idle", wsDone: true, wsMode: "adhoc"}},
 		},
 		{
-			// State change (working -> idle) with Done already true: fires
-			// exactly once, not twice (state edge and done edge must not both
-			// fire independently within the same tick).
-			name:                    "state change with done already true fires once",
-			hasPrev:                 true,
-			prevState:               state.StatusWorking,
-			prevDone:                false,
-			ticks:                   []fireTick{{curState: state.StatusIdle, wsState: "idle", wsDone: true, wsMode: "adhoc"}},
-			wantHandleCompleteDone:  []bool{true},
-			wantStateTransitionsInc: 1,
-		},
-		{
-			// Production sequence: tick 1 is the state change with Done still
-			// false (fires, but HandleComplete itself early-returns on
-			// !t.Done); tick 2 is a later done-edge-only tick once Done flips
-			// true (fires again, for real).
-			name:      "state change then later done edge fires twice",
+			name:      "state change with done already true fires once (state edge only)",
 			hasPrev:   true,
 			prevState: state.StatusWorking,
-			prevDone:  false,
+			ticks:     []fireTick{{curState: state.StatusIdle, wsState: "idle", wsDone: true, wsMode: "adhoc"}},
+			wantEdges: 1,
+		},
+		{
+			name:      "state change then later done edge fires only for the state change",
+			hasPrev:   true,
+			prevState: state.StatusWorking,
 			ticks: []fireTick{
 				{curState: state.StatusIdle, wsState: "idle", wsDone: false, wsMode: "adhoc"},
 				{curState: state.StatusIdle, wsState: "idle", wsDone: true, wsMode: "adhoc"},
 			},
-			wantHandleCompleteDone:  []bool{false, true},
-			wantStateTransitionsInc: 1,
+			wantEdges: 1,
 		},
 		{
-			// The dedupe guarantee that matters most: once a window has
-			// settled at done+idle (prevDone already true, no state change),
-			// detectAndFireTransitions must not keep firing every tick.
-			name:                    "done already true and settled does not repeat-fire",
-			hasPrev:                 true,
-			prevState:               state.StatusIdle,
-			prevDone:                true,
-			ticks:                   []fireTick{{curState: state.StatusIdle, wsState: "idle", wsDone: true}},
-			wantHandleCompleteDone:  nil,
-			wantStateTransitionsInc: 0,
+			name:      "settled done+idle does not fire",
+			hasPrev:   true,
+			prevState: state.StatusIdle,
+			ticks:     []fireTick{{curState: state.StatusIdle, wsState: "idle", wsDone: true}},
 		},
 		{
-			// Pre-existing behavior preserved: a state change with Done false
-			// (and staying false) fires once via the state edge alone.
-			name:                    "state change with done false fires once as today",
-			hasPrev:                 true,
-			prevState:               state.StatusWorking,
-			prevDone:                false,
-			ticks:                   []fireTick{{curState: state.StatusIdle, wsState: "idle", wsDone: false, wsMode: "adhoc"}},
-			wantHandleCompleteDone:  []bool{false},
-			wantStateTransitionsInc: 1,
-		},
-		{
-			// Mode filtering lives inside dispatch.HandleComplete, not the
-			// monitor -- "bare" mode windows must still reach the seam on the
-			// done edge, with Mode passed through untouched.
-			name:                    "bare mode window still reaches the seam on done edge",
-			hasPrev:                 true,
-			prevState:               state.StatusIdle,
-			prevDone:                false,
-			ticks:                   []fireTick{{curState: state.StatusIdle, wsState: "idle", wsDone: true, wsMode: "bare"}},
-			wantHandleCompleteDone:  []bool{true},
-			wantStateTransitionsInc: 0,
-		},
-		{
-			// Blocking-review regression: doneEdge must be gated on hasPrev
-			// just like stateChanged. A brand-new instanceState (hasPrev:
-			// false) for a window that is already done=true must NOT fire on
-			// its first tick -- this is exactly what every agent window
-			// sitting at done+idle looks like across a monitor restart, and
-			// firing here would reopen a browser tab for an already-handled
-			// PR (markPROpened's dedupe map is per-process and starts empty).
-			// The second tick proves the prevDone baseline established by
-			// the first tick holds, so it doesn't fire on the next tick either.
-			name:      "first tick on an already-done window does not fire (monitor restart)",
+			name:      "first tick on an already-done window does not fire",
 			hasPrev:   false,
 			prevState: state.StatusIdle,
-			prevDone:  false,
 			ticks: []fireTick{
 				{curState: state.StatusIdle, wsState: "idle", wsDone: true, wsMode: "adhoc"},
 				{curState: state.StatusIdle, wsState: "idle", wsDone: true, wsMode: "adhoc"},
 			},
-			wantHandleCompleteDone:  nil,
-			wantStateTransitionsInc: 0,
 		},
 	}
 
@@ -825,17 +757,12 @@ func TestDetectAndFireTransitions(t *testing.T) {
 				base:      "go-engineer",
 				hasPrev:   tt.hasPrev,
 				prevState: tt.prevState,
-				prevDone:  tt.prevDone,
 			}
 
-			var gotModes []string
-			var gotDone []bool
-			orig := handleCompleteFn
-			handleCompleteFn = func(tr state.Transition, _ config.AgentConfig) {
-				gotDone = append(gotDone, tr.Done)
-				gotModes = append(gotModes, tr.Mode)
-			}
-			t.Cleanup(func() { handleCompleteFn = orig })
+			edges := 0
+			orig := improveHandleFn
+			improveHandleFn = func(state.Transition, config.AgentConfig) { edges++ }
+			t.Cleanup(func() { improveHandleFn = orig })
 
 			cfg := &config.Config{}
 			for _, tick := range tt.ticks {
@@ -843,27 +770,11 @@ func TestDetectAndFireTransitions(t *testing.T) {
 				m.detectAndFireTransitions(inst, "@1", tick.curState, ws, cfg, "")
 			}
 
-			if len(gotDone) != len(tt.wantHandleCompleteDone) {
-				t.Fatalf("handleCompleteFn called %d times with Done=%v, want %d times with Done=%v",
-					len(gotDone), gotDone, len(tt.wantHandleCompleteDone), tt.wantHandleCompleteDone)
+			if edges != tt.wantEdges {
+				t.Errorf("handlers fired %d times, want %d", edges, tt.wantEdges)
 			}
-			for i, want := range tt.wantHandleCompleteDone {
-				if gotDone[i] != want {
-					t.Errorf("call %d: Transition.Done = %v, want %v", i, gotDone[i], want)
-				}
-			}
-			for i, tick := range tt.ticks {
-				if i >= len(gotModes) {
-					break
-				}
-				if gotModes[i] != tick.wsMode {
-					t.Errorf("call %d: Transition.Mode = %q, want %q", i, gotModes[i], tick.wsMode)
-				}
-			}
-
-			if got := gatherCounterTotal(t, reg, "agentctl_state_transitions_total"); got != tt.wantStateTransitionsInc {
-				t.Errorf("agentctl_state_transitions_total = %v, want %v (RecordTransition must only be invoked on the state edge)",
-					got, tt.wantStateTransitionsInc)
+			if got := gatherCounterTotal(t, reg, "agentctl_state_transitions_total"); got != float64(tt.wantEdges) {
+				t.Errorf("agentctl_state_transitions_total = %v, want %d", got, tt.wantEdges)
 			}
 		})
 	}

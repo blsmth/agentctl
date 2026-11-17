@@ -25,6 +25,23 @@ var userHookTimeout = 30 * time.Second
 // extraEnv is merged with os.Environ() so PATH, HOME, etc. are all available.
 func runUserHooks(event string, extraEnv map[string]string) {
 	cfg := config.Load()
+	if detachUserHooksFn != nil {
+		if !hasUserHooks(cfg, event) {
+			return
+		}
+		// A hook process exits right after its handler returns, which kills
+		// any goroutine. Hand the work to a detached child that inherits the
+		// environment (plus extras) instead.
+		env := os.Environ()
+		for k, v := range extraEnv {
+			env = append(env, k+"="+v)
+		}
+		err := detachUserHooksFn(event, env)
+		if err == nil {
+			return
+		}
+		logging.Warn("user-hook: event=%s detach failed, running in-process: %v", event, err)
+	}
 
 	agentName := os.Getenv("AGENTCTL_AGENT_NAME")
 	var agentCfg config.AgentConfig
@@ -48,6 +65,41 @@ func runUserHooks(event string, extraEnv map[string]string) {
 			runSingleUserHook(event, cmd, env)
 		}
 	}()
+}
+
+// detachUserHooksFn, when set, starts `agentctl run-user-hooks <event>` fully
+// detached with the given environment. Nil (the default, and in tests) keeps
+// the in-process goroutine, which only works in long-lived processes.
+var detachUserHooksFn func(event string, env []string) error
+
+// SetDetachUserHooks enables detached user hooks; spawn must start
+// `agentctl run-user-hooks <event>` fully detached with env. main.go wires it.
+func SetDetachUserHooks(spawn func(event string, env []string) error) {
+	detachUserHooksFn = spawn
+}
+
+// hasUserHooks reports whether any hook command is configured for event.
+func hasUserHooks(cfg *config.Config, event string) bool {
+	var agentCfg config.AgentConfig
+	if name := os.Getenv("AGENTCTL_AGENT_NAME"); name != "" {
+		agentCfg = cfg.ForAgent(name)
+	}
+	return len(cfg.EffectiveHooks(event, agentCfg)) > 0
+}
+
+// RunUserHooksSync runs the user hooks for event to completion in the calling
+// process, in order, each under userHookTimeout. It is the body of the
+// detached `agentctl run-user-hooks` child.
+func RunUserHooksSync(event string) {
+	cfg := config.Load()
+	var agentCfg config.AgentConfig
+	if name := os.Getenv("AGENTCTL_AGENT_NAME"); name != "" {
+		agentCfg = cfg.ForAgent(name)
+	}
+	env := os.Environ()
+	for _, cmd := range cfg.EffectiveHooks(event, agentCfg) {
+		runSingleUserHook(event, cmd, env)
+	}
 }
 
 // runSingleUserHook executes one user hook command via "sh -c" with the
