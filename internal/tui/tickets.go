@@ -3,7 +3,6 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -17,6 +16,7 @@ import (
 	"github.com/blsmth/agentctl/internal/agentlabel"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/theme"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -1905,7 +1905,7 @@ var execAutoPollRunner = autoPollRunner{
 		).Output()
 	},
 	dispatch: func(issue int, agent string) error {
-		exe, err := os.Executable()
+		exe, err := selfpath.Spawnable()
 		if err != nil {
 			return fmt.Errorf("locating agentctl executable: %w", err)
 		}

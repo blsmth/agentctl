@@ -25,7 +25,7 @@ type Identity = buildid.Identity
 // when hot reload must be disabled for this process (ephemeral path or
 // unresolvable/unstattable executable).
 func Capture() (Identity, error) {
-	exe, err := selfpath.Resolve(os.Executable)
+	exe, err := selfpath.Spawnable()
 	if err != nil {
 		return Identity{}, err
 	}

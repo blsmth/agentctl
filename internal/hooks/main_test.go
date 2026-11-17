@@ -17,6 +17,8 @@ func TestMain(m *testing.M) {
 	approvalRuntimeDir = func() string { return "" }
 	// Hook tests must never spawn a real janitor process.
 	spawnJanitorFn = func(string) error { return nil }
+	// Nor a real monitor via the watchdog.
+	watchdogSpawnFn = func(string) error { return nil }
 	// Never rename (or query) real tmux windows from a unit test.
 	winname.SetSeamsForTest(
 		func(string, string) error { return nil },

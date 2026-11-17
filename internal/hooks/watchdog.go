@@ -147,6 +147,15 @@ func monitorIsStale(runtimeDir string) bool {
 	return staleMonitor(rec, recErr, pid, selfpath.Path(), buildid.Stat)
 }
 
+// watchdogSpawnFn starts a monitor for projectRoot; a seam for tests.
+var watchdogSpawnFn = func(projectRoot string) error {
+	exe, err := selfpath.Spawnable()
+	if err != nil {
+		return err
+	}
+	return tmux.StartMonitor(exe, projectRoot)
+}
+
 // monitorWatchdog is called from frequent, non-per-tool hooks. It never
 // blocks or fails the hook: all errors are logged and swallowed.
 func monitorWatchdog() {
@@ -183,13 +192,7 @@ func monitorWatchdog() {
 				_ = os.Chtimes(stampPath, t, t)
 			}
 		},
-		spawn: func() error {
-			exe, err := os.Executable()
-			if err != nil {
-				return err
-			}
-			return tmux.StartMonitor(exe, projectRoot)
-		},
+		spawn: func() error { return watchdogSpawnFn(projectRoot) },
 	})
 	switch res {
 	case watchdogReplacedStale:

@@ -166,23 +166,43 @@ func TestHookNoopWithoutAgentctl(t *testing.T) {
 // hookNotify
 // ---------------------------------------------------------------------------
 
+// saveTestConfig points config at cfgPath, saves cfg there and fails the test
+// if the save fails: a silent failure would fall back to the developer's real
+// notify_cmd.
+func saveTestConfig(t *testing.T, cfgPath string, cfg *config.Config) {
+	t.Helper()
+	config.SetGlobalConfigPathForTest(cfgPath)
+	config.SetConfigPathForTest(cfgPath)
+	t.Cleanup(func() { config.SetGlobalConfigPathForTest(""); config.SetConfigPathForTest("") })
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("config.Save: %v", err)
+	}
+}
+
 func TestHookNotify_EmptyCmd_NoOp(t *testing.T) {
-	// When notify_cmd is empty and platform is not darwin, hookNotify should no-op.
+	// An explicitly empty notify_cmd disables notifications. A fake alerter on
+	// PATH proves nothing runs it.
+	binDir := t.TempDir()
+	marker := filepath.Join(binDir, "alerter-ran")
+	script := "#!/bin/sh\ntouch " + marker + "\n"
+	for _, name := range []string{"alerter", "notify-send"} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	cfgDir := t.TempDir()
 	cfgPath := filepath.Join(cfgDir, "config.json")
 	cfg := &config.Config{
 		NotifyCmd: config.StringPtr(""),
 		Agents:    map[string]config.AgentConfig{},
 	}
-	config.SetGlobalConfigPathForTest(cfgPath)
-	config.SetConfigPathForTest(cfgPath)
-	config.Save(cfg) //nolint:errcheck
-	defer func() { config.SetGlobalConfigPathForTest(""); config.SetConfigPathForTest("") }()
+	saveTestConfig(t, cfgPath, cfg)
 
-	// hookNotify should not panic or produce errors with empty cmd on non-darwin.
-	// On darwin, the default alerter cmd will be used, but we can't easily test that
-	// without actually running alerter. The important behavior is that it doesn't panic.
 	hookNotify(notify.Options{Title: "test", Message: "message"})
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("a desktop notifier ran despite empty notify_cmd")
+	}
 }
 
 func TestHookNotify_TemplateSubstitution(t *testing.T) {
@@ -196,10 +216,7 @@ func TestHookNotify_TemplateSubstitution(t *testing.T) {
 		NotifyCmd: config.StringPtr("printf '%s\\n%s' {{title}} {{message}} > " + outFile),
 		Agents:    map[string]config.AgentConfig{},
 	}
-	config.SetGlobalConfigPathForTest(cfgPath)
-	config.SetConfigPathForTest(cfgPath)
-	config.Save(cfg) //nolint:errcheck
-	defer func() { config.SetGlobalConfigPathForTest(""); config.SetConfigPathForTest("") }()
+	saveTestConfig(t, cfgPath, cfg)
 
 	hookNotify(notify.Options{Title: "my-agent", Message: "Needs permission"})
 
@@ -231,10 +248,7 @@ func TestHookNotify_QuotesValues(t *testing.T) {
 		NotifyCmd: config.StringPtr("printf '%s\\n%s' {{title}} {{message}} > " + outFile),
 		Agents:    map[string]config.AgentConfig{},
 	}
-	config.SetGlobalConfigPathForTest(cfgPath)
-	config.SetConfigPathForTest(cfgPath)
-	config.Save(cfg) //nolint:errcheck
-	defer func() { config.SetGlobalConfigPathForTest(""); config.SetConfigPathForTest("") }()
+	saveTestConfig(t, cfgPath, cfg)
 
 	const (
 		wantTitle   = "Needs permission"
@@ -267,10 +281,7 @@ func TestHookNotify_EnvVarsAvailable(t *testing.T) {
 		NotifyCmd: config.StringPtr("printf '%s %s' $AGENTCTL_AGENT_NAME $AGENTCTL_NOTIFICATION_TYPE > " + outFile),
 		Agents:    map[string]config.AgentConfig{},
 	}
-	config.SetGlobalConfigPathForTest(cfgPath)
-	config.SetConfigPathForTest(cfgPath)
-	config.Save(cfg) //nolint:errcheck
-	defer func() { config.SetGlobalConfigPathForTest(""); config.SetConfigPathForTest("") }()
+	saveTestConfig(t, cfgPath, cfg)
 
 	hookNotify(notify.Options{
 		Title:   "test-agent",
@@ -305,10 +316,7 @@ func TestHookNotify_AgentTypePlaceholders(t *testing.T) {
 		NotifyCmd: config.StringPtr("printf '%s %s' {{agent}} {{type}} > " + outFile),
 		Agents:    map[string]config.AgentConfig{},
 	}
-	config.SetGlobalConfigPathForTest(cfgPath)
-	config.SetConfigPathForTest(cfgPath)
-	config.Save(cfg) //nolint:errcheck
-	defer func() { config.SetGlobalConfigPathForTest(""); config.SetConfigPathForTest("") }()
+	saveTestConfig(t, cfgPath, cfg)
 
 	hookNotify(notify.Options{
 		Title:   "title-val",

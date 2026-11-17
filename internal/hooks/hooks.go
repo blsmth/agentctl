@@ -92,7 +92,7 @@ func HooksConfig() map[string]interface{} {
 // long-lived settings files, or an error when the running binary is
 // ephemeral (temp dir / go-build cache). See selfpath.Persisted.
 func PersistedPrefix() (string, error) {
-	return selfpath.Persisted(os.Executable, exec.LookPath, os.TempDir())
+	return selfpath.Persisted(selfpath.Lookup, exec.LookPath, os.TempDir())
 }
 
 // commandPrefix is PersistedPrefix with a non-failing fallback to the quoted

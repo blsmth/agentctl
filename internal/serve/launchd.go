@@ -90,7 +90,7 @@ func systemdQuote(s string) string {
 // CurrentServiceSpec describes the running binary. It refuses a temporary
 // (go run / go test) binary, which would vanish.
 func CurrentServiceSpec(dir string) (ServiceSpec, error) {
-	exe, err := os.Executable()
+	exe, err := selfpath.Spawnable()
 	if err != nil {
 		return ServiceSpec{}, fmt.Errorf("locating executable: %w", err)
 	}
