@@ -195,3 +195,22 @@ func SameDir(a, b string) bool {
 	}
 	return canonical(a) == canonical(b)
 }
+
+// EnvFor returns how a child process is pointed at config dir dir.
+//
+// Claude Code treats an explicit CLAUDE_CONFIG_DIR as a different login even
+// when it names its own default dir: the keychain entry is keyed by a hash of
+// the dir and .claude.json is read from inside it rather than from
+// ~/.claude.json. So the default dir (HomeDir, compared with SameDir) must be
+// selected by removing the variable (unset true), never by setting it. Any
+// other dir is set explicitly (value). An empty dir means "no account
+// applies": value "" and unset false, keep the inherited environment.
+func EnvFor(dir string) (value string, unset bool) {
+	if dir == "" {
+		return "", false
+	}
+	if home := HomeDir(); home != "" && SameDir(dir, home) {
+		return "", true
+	}
+	return dir, false
+}

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/blsmth/agentctl/internal/claude"
-	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -110,7 +109,7 @@ func Restore(req RestoreRequest) (string, error) {
 	if logPath == "" {
 		// Generate a new log path if the saved one is unavailable.
 		logPath = claude.LogPath(req.WorkDir, "restore")
-		if dir := extraEnv[claudehome.EnvConfigDir]; dir != "" {
+		if dir := accountDirFromEnv(extraEnv); dir != "" {
 			logPath = claude.LogPathIn(dir, req.WorkDir, "restore")
 		}
 	}

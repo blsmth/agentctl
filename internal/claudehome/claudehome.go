@@ -110,10 +110,25 @@ func dirIn(cfg *config.Config, account string) (string, error) {
 // explicit $CLAUDE_CONFIG_DIR (hooks and the statusline inherit it from the
 // claude process that spawned them), else Dir(""). Returns "" when nothing
 // resolves.
+//
+// A window whose account lives in the default dir is launched with
+// CLAUDE_CONFIG_DIR unset (see EnvFor), so when the variable is absent and
+// AGENTCTL_ACCOUNT names a configured account in the default dir, that dir
+// wins over default_account.
 func Current() string {
 	if env := os.Getenv(EnvConfigDir); env != "" {
 		if d, err := ExpandDir(env); err == nil {
 			return d
+		}
+	}
+	if name := os.Getenv(EnvAccount); name != "" {
+		cfg := loadConfig()
+		if _, ok := cfg.Accounts[name]; ok {
+			if d, err := dirIn(cfg, name); err == nil {
+				if _, unset := EnvFor(d); unset {
+					return d
+				}
+			}
 		}
 	}
 	d, err := Dir("")

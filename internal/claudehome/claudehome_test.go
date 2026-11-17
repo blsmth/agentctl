@@ -18,6 +18,7 @@ func setup(t *testing.T, cfg *config.Config) string {
 	}
 	t.Setenv("HOME", home)
 	t.Setenv(EnvConfigDir, "")
+	t.Setenv(EnvAccount, "")
 	origLoad, origHome := loadConfig, userHomeDir
 	loadConfig = func() *config.Config { return cfg }
 	userHomeDir = func() (string, error) { return home, nil }
@@ -180,5 +181,77 @@ func TestSameDir(t *testing.T) {
 	}
 	if !SameDir(d, filepath.Join(home, "link")) || !SameDir(d+"/", d) || SameDir(d, home) {
 		t.Error("SameDir mismatch")
+	}
+}
+
+func TestEnvFor(t *testing.T) {
+	home := setup(t, twoAccounts())
+	def := filepath.Join(home, ".claude")
+	personal := filepath.Join(home, ".claude-personal")
+	for _, d := range []string{def, personal} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(home, "claude-link")
+	if err := os.Symlink(def, link); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name      string
+		dir       string
+		wantValue string
+		wantUnset bool
+	}{
+		{"default dir", def, "", true},
+		{"default dir trailing slash", def + "/", "", true},
+		{"default dir via symlink", link, "", true},
+		{"default dir with tilde", "~/.claude", "", true},
+		{"other dir", personal, personal, false},
+		{"empty inherits", "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, unset := EnvFor(tt.dir)
+			if value != tt.wantValue || unset != tt.wantUnset {
+				t.Errorf("EnvFor(%q) = %q, %v; want %q, %v", tt.dir, value, unset, tt.wantValue, tt.wantUnset)
+			}
+		})
+	}
+}
+
+func TestCurrentDefaultDirAccount(t *testing.T) {
+	cfg := twoAccounts()
+	cfg.DefaultAccount = "personal"
+	home := setup(t, cfg)
+	def := filepath.Join(home, ".claude")
+	personal := filepath.Join(home, ".claude-personal")
+
+	// No hint: default_account.
+	if got := Current(); got != personal {
+		t.Errorf("Current() = %q, want %q", got, personal)
+	}
+	// A window launched as ll runs with CLAUDE_CONFIG_DIR unset.
+	t.Setenv(EnvAccount, "ll")
+	if got := Current(); got != def {
+		t.Errorf("Current() for ll window = %q, want %q", got, def)
+	}
+	if got := CurrentAccount(); got != "ll" {
+		t.Errorf("CurrentAccount() = %q, want ll", got)
+	}
+	// AGENTCTL_ACCOUNT never overrides an explicit CLAUDE_CONFIG_DIR, and an
+	// account outside the default dir needs the variable to be set.
+	t.Setenv(EnvConfigDir, personal)
+	if got := Current(); got != personal {
+		t.Errorf("Current() with explicit dir = %q, want %q", got, personal)
+	}
+	t.Setenv(EnvConfigDir, "")
+	t.Setenv(EnvAccount, "personal")
+	if got := Current(); got != personal {
+		t.Errorf("Current() = %q, want %q", got, personal)
+	}
+	t.Setenv(EnvAccount, "gone")
+	if got := Current(); got != personal {
+		t.Errorf("Current() for unknown account = %q, want %q", got, personal)
 	}
 }
