@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"sort"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -91,19 +92,21 @@ func (p *modelPicker) refilter(m MenuModel, sel string) {
 		p.group("ALIASES", func(it pickItem) bool { return !it.def && it.alias })
 		p.group("MODELS", func(it pickItem) bool { return !it.def && !it.alias })
 	} else {
-		matches := fuzzy.FindFrom(q, pickSource(p.items))
+		matches := matchTerms(q, p.items)
 		if len(matches) > 0 {
 			p.rows = append(p.rows, pickRow{kind: pickHeader, text: "MATCHES"})
 		}
-		for _, mt := range matches {
-			p.rows = append(p.rows, pickRow{kind: pickModel, item: mt.Index})
+		for _, idx := range matches {
+			p.rows = append(p.rows, pickRow{kind: pickModel, item: idx})
 		}
 		exact := false
 		for _, it := range p.items {
 			exact = exact || it.value == q
 		}
 		if err := m.validateModel(m.opts.backend, q); err != nil {
-			p.err = err.Error()
+			if len(matches) == 0 {
+				p.err = err.Error()
+			}
 		} else if !exact {
 			p.rows = append(p.rows, pickRow{kind: pickTyped, typed: q})
 		}
@@ -134,6 +137,33 @@ func (p *modelPicker) group(label string, in func(pickItem) bool) {
 	if len(p.rows) == start+1 {
 		p.rows = p.rows[:start]
 	}
+}
+
+// matchTerms returns the indexes of items matching every whitespace-separated
+// term of q (fuzzy, per term), best first by summed score. sahilm/fuzzy treats a
+// space as a literal rune, so terms are matched separately.
+func matchTerms(q string, items []pickItem) []int {
+	var scores map[int]int
+	for _, term := range strings.Fields(q) {
+		hit := map[int]int{}
+		for _, mt := range fuzzy.FindFrom(term, pickSource(items)) {
+			if prev, ok := scores[mt.Index]; scores == nil || ok {
+				hit[mt.Index] = prev + mt.Score
+			}
+		}
+		scores = hit
+	}
+	out := make([]int, 0, len(scores))
+	for idx := range scores {
+		out = append(out, idx)
+	}
+	sort.Slice(out, func(a, b int) bool {
+		if scores[out[a]] != scores[out[b]] {
+			return scores[out[a]] > scores[out[b]]
+		}
+		return out[a] < out[b]
+	})
+	return out
 }
 
 // move shifts the cursor by delta selectable rows.

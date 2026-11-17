@@ -389,13 +389,18 @@ func TestNousBareModelRejected(t *testing.T) {
 		t.Fatalf("view = %v, want picker", m.view)
 	}
 	m = typeText(t, m, "opus")
-	if !strings.Contains(m.picker.err, "not a Nous model slug") {
-		t.Fatalf("bare alias not rejected: err=%q", m.picker.err)
+	if m.picker.err != "" {
+		t.Errorf("warning shown while matches exist: %q", m.picker.err)
 	}
 	for _, r := range m.picker.rows {
 		if r.kind == pickTyped {
 			t.Fatal("as-typed row offered for a bare nous model")
 		}
+	}
+	m.picker.input.SetValue("")
+	m = typeText(t, m, "zzqq")
+	if !strings.Contains(m.picker.err, "not a Nous model slug") {
+		t.Fatalf("bare model with no matches not rejected: err=%q", m.picker.err)
 	}
 	m.picker.input.SetValue("")
 	m = typeText(t, m, "vendor/model-x")
@@ -440,6 +445,20 @@ func TestModelPickerFuzzy(t *testing.T) {
 	m = typeText(t, m, "claude-opus")
 	if v, _ := m.picker.selected(); v != "anthropic/claude-opus-x" {
 		t.Errorf("top match for claude-opus = %q", v)
+	}
+	// Multi-word queries match every term, in any case.
+	m.picker.input.SetValue("")
+	m = typeText(t, m, "qwen coder")
+	if v, _ := m.picker.selected(); v != "qwen/qwen3-coder-next" {
+		t.Errorf("top match for %q = %q", "qwen coder", v)
+	}
+	if m.picker.err != "" {
+		t.Errorf("as-typed warning shown despite matches: %q", m.picker.err)
+	}
+	m.picker.input.SetValue("")
+	m = typeText(t, m, "coder zzzz")
+	if _, ok := m.picker.selected(); ok && m.picker.rows[m.picker.cursor].kind == pickModel {
+		t.Error("a term with no match must exclude the item")
 	}
 	// An id nothing fuzzy-matches but validateModel accepts is offered as typed.
 	m.picker.input.SetValue("")
