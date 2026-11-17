@@ -918,3 +918,61 @@ func ReadFirstUserMessage(logPath string) string {
 	}
 	return ""
 }
+
+// FirstHumanText returns the first text a human typed in the session log at
+// logPath, or "" when there is none within the first 300 lines. Claude Code
+// writes a typed prompt as a plain-string content (not a block list), and the
+// log is also full of synthetic user entries (tool results, slash-command
+// echoes, system reminders, interrupts) that are not what the person said.
+func FirstHumanText(logPath string) string {
+	f, err := os.Open(logPath)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for i := 0; i < 300 && scanner.Scan(); i++ {
+		var entry map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			continue
+		}
+		if t, _ := entry["type"].(string); t != "user" {
+			continue
+		}
+		if meta, _ := entry["isMeta"].(bool); meta {
+			continue
+		}
+		msg, _ := entry["message"].(map[string]any)
+		switch c := msg["content"].(type) {
+		case string:
+			if text, ok := humanText(c); ok {
+				return text
+			}
+		case []any:
+			for _, block := range c {
+				b, ok := block.(map[string]any)
+				if !ok || b["type"] != "text" {
+					continue
+				}
+				s, _ := b["text"].(string)
+				if text, ok := humanText(s); ok {
+					return text
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// humanText reports whether s looks like text a person typed rather than a
+// synthetic wrapper (<system-reminder>, <command-name>, interrupt markers).
+func humanText(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.HasPrefix(s, "<") || strings.HasPrefix(s, "[Request interrupted") ||
+		strings.HasPrefix(s, "Caveat:") {
+		return "", false
+	}
+	return s, true
+}

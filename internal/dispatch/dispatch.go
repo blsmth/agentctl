@@ -20,6 +20,7 @@ import (
 	"github.com/blsmth/agentctl/internal/gittracked"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/ids"
+	"github.com/blsmth/agentctl/internal/launchopts"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/safefs"
@@ -60,12 +61,52 @@ type Request struct {
 	// reason to override that default, e.g. the CLI's --no-worktree flag.
 	UseWorktree *bool
 	RepoSlug    string // e.g. "owner/repo"
-	Model       string // overrides agent config and mode default when set
+	Model       string // overrides agent config and mode default when set; Inherit clears the configured model
+	// Effort overrides the agent's effort_level when set (see ValidEfforts);
+	// Inherit clears the configured level so claude uses its own default.
+	Effort string
 	// Backend overrides the agent's configured backend: "" = use the agent
 	// config, BackendNone = force Anthropic, else a name from config backends.
 	Backend    string
 	Background bool // when true, skip switching to the new window after launch
 }
+
+// applyOverrides applies the request's model and effort to ac and returns the
+// explicit model to hand to PrepareBackend (empty when the request did not
+// name one). Model priority: Request.Model > AgentConfig.Model > defaultModel.
+func applyOverrides(ac *config.AgentConfig, req Request, defaultModel string) (string, error) {
+	explicitModel := req.Model
+	switch {
+	case req.Model == Inherit:
+		ac.Model = ""
+		explicitModel = ""
+	case req.Model != "":
+		ac.Model = req.Model
+	case ac.Model == "" && defaultModel != "":
+		ac.Model = defaultModel
+	}
+	if req.Effort != "" {
+		if err := ValidateEffort(req.Effort); err != nil {
+			return "", err
+		}
+		if req.Effort == Inherit {
+			ac.EffortLevel = ""
+		} else {
+			ac.EffortLevel = req.Effort
+		}
+	}
+	return explicitModel, nil
+}
+
+// Inherit is the Request.Model / Request.Effort value that clears the agent's
+// configured value instead of overriding it.
+const Inherit = launchopts.Inherit
+
+// ValidEfforts are the --effort levels Claude Code accepts.
+var ValidEfforts = launchopts.Efforts
+
+// ValidateEffort rejects an effort that is neither Inherit nor a known level.
+func ValidateEffort(e string) error { return launchopts.ValidateEffort(e) }
 
 // Result contains the output of a successful Launch.
 type Result struct {
@@ -129,13 +170,12 @@ func Launch(req Request) (Result, error) {
 
 	// Apply model: priority order is Request.Model > backend model >
 	// AgentConfig.Model > modeSpec.DefaultModel.
-	if req.Model != "" {
-		ac.Model = req.Model
-	} else if ac.Model == "" && spec.DefaultModel != "" {
-		ac.Model = spec.DefaultModel
+	explicitModel, err := applyOverrides(&ac, req, spec.DefaultModel)
+	if err != nil {
+		return Result{}, err
 	}
 	backendEnv := map[string]string{}
-	be, err := PrepareBackend(cfg, &ac, req.Backend, req.Model, workDir, backendEnv)
+	be, err := PrepareBackend(cfg, &ac, req.Backend, explicitModel, workDir, backendEnv)
 	if err != nil {
 		return Result{}, fmt.Errorf("resolving backend: %w", err)
 	}

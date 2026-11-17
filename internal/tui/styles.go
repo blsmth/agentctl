@@ -204,7 +204,6 @@ func InitStyles() {
 	initMenuStyles()
 	initImproveStyles()
 	initHudlogStyles()
-	initLaunchStyles()
 	initTableStyles()
 	initSessionStyles()
 	initSettingsStyles()

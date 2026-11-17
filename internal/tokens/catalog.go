@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -164,4 +165,25 @@ func ReloadCatalog() {
 	defer catalog.mu.Unlock()
 	catalog.loaded = false
 	catalog.entries = nil
+}
+
+// CatalogModelIDs returns the model ids in the cached Nous catalog, sorted and
+// de-duplicated. It reads only the local cache files; nothing here touches the
+// network, and it is empty when no catalog has been cached.
+func CatalogModelIDs() []string {
+	catalog.mu.Lock()
+	defer catalog.mu.Unlock()
+	if catalog.dir == "" {
+		return nil
+	}
+	if !catalog.loaded {
+		catalog.loaded = true
+		catalog.entries = loadCatalogDir(catalog.dir)
+	}
+	ids := make([]string, 0, len(catalog.entries))
+	for id := range catalog.entries {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }

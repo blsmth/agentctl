@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
+	"strings"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -14,12 +18,14 @@ import (
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/sessionname"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
 )
 
-// RunMenu shows the main agent picker TUI.
+// RunMenu shows the one-screen launch menu: agent list, launch options for
+// the highlighted agent and its recent sessions.
 // writeSettings is injected from package main to avoid a circular import.
 // createMenu is called when the user selects "create"; it receives the agent
 // name to pre-fill (typically "").
@@ -37,10 +43,14 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 	// runningByID maps windowID → instance name, built from tmux's window
 	// list joined with windowstate; falls back to a plain tmux query.
 	runningByID := make(map[string]string)
+	liveSessions := make(map[string]bool)
 	if built, err := herd.LocalAgents(); err == nil {
 		for _, as := range built {
 			if as.WindowID != "" {
 				runningByID[as.WindowID] = as.Name
+			}
+			if as.SessionID != "" {
+				liveSessions[as.SessionID] = true
 			}
 		}
 	}
@@ -49,27 +59,15 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 	}
 	done()
 
-	// Build menu agent list.
-	var menuAgents []tui.MenuAgent
-	for _, a := range agents {
-		// Collect running instances for this agent.
-		var instances []string
-		for _, name := range runningByID {
-			if tmux.BaseAgentName(name) == a.Name {
-				instances = append(instances, name)
-			}
-		}
-
-		menuAgents = append(menuAgents, tui.MenuAgent{
-			Name:        a.Name,
-			Description: a.Description,
-			Instances:   instances,
-			Standalone:  !a.IsPortable(),
-		})
+	mcfg := tui.MenuConfig{
+		Agents:   buildMenuAgents(cfg, agents, runningByID),
+		Backends: cfg.Backends,
+		FetchOllama: func(ctx context.Context, name string) ([]string, error) {
+			return dispatch.ListOllamaModels(ctx, cfg.Backends[name])
+		},
+		LoadSessions: newSessionLoader(liveSessions),
 	}
-
-	model := tui.NewMenuModel(menuAgents, cfg.DefaultAgent)
-	p := tea.NewProgram(model)
+	p := tea.NewProgram(tui.NewMenuModel(mcfg))
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -103,23 +101,152 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 			}
 		}
 	case "launch":
-		// Clear the terminal so the next TUI replaces this one instead of
-		// rendering below it (we're inside the same display-popup).
+		// Clear the terminal so the launch output replaces this TUI instead
+		// of rendering below it (we're inside the same display-popup).
 		fmt.Print("\033[H\033[2J")
-		RunLaunchMenu(result.Agent, writeSettings)
+		RunLaunchAgentOpts(result.Agent, result.Dir, LaunchOptions{
+			Backend:    result.Backend,
+			Model:      result.Model,
+			Effort:     result.Effort,
+			NoWorktree: result.NoWorktree,
+		})
+	case "resume":
+		fmt.Print("\033[H\033[2J")
+		LaunchWithResume(result.Agent, result.SessionID, result.Dir, writeSettings)
 	case "create":
 		fmt.Print("\033[H\033[2J")
 		createMenu("")
 	}
 }
 
+// buildMenuAgents turns discovered agents (plus Claude Code's built-ins) into
+// menu entries, prefilled with each agent's effective config.
+func buildMenuAgents(cfg *config.Config, agents []agent.Agent, runningByID map[string]string) []tui.MenuAgent {
+	cwd, _ := os.Getwd()
+	if cwd == "" {
+		cwd, _ = os.UserHomeDir()
+	}
+	entry := func(name, desc, dir string, section tui.MenuSection) tui.MenuAgent {
+		var instances []string
+		for _, inst := range runningByID {
+			if tmux.BaseAgentName(inst) == name {
+				instances = append(instances, inst)
+			}
+		}
+		if name == cfg.DefaultAgent {
+			section = tui.SectionPinned
+		}
+		ac := cfg.ForAgent(name)
+		if dir == "" {
+			dir = cwd
+		}
+		return tui.MenuAgent{
+			Name:        name,
+			Description: desc,
+			Instances:   instances,
+			Section:     section,
+			Backend:     ac.Backend,
+			Model:       ac.Model,
+			Effort:      ac.EffortLevel,
+			Dir:         dir,
+		}
+	}
+	var out []tui.MenuAgent
+	seen := map[string]bool{}
+	for _, a := range agents {
+		section := menuSection(a, cwd)
+		seen[a.Name] = true
+		out = append(out, entry(a.Name, a.Description, a.Dir, section))
+	}
+	for _, name := range claudeBuiltinAgents {
+		if !seen[name] {
+			out = append(out, entry(name, "", "", tui.SectionBuiltin))
+		}
+	}
+	return out
+}
+
+// menuSection picks the list section of a discovered agent. ScopeLocal covers
+// both agents defined in the current project's .claude/agents and registry
+// symlinks into other repos, so the definition's resolved path decides: only
+// a file under cwd's .claude/agents is "Project"; other ScopeLocal agents are
+// "Other projects" (their fixed dir is the useful part there).
+func menuSection(a agent.Agent, cwd string) tui.MenuSection {
+	if a.Scope != agent.ScopeLocal {
+		return tui.SectionUser
+	}
+	if cwd != "" {
+		dir := filepath.Join(cwd, ".claude", "agents")
+		if rel, err := filepath.Rel(dir, a.FilePath); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+			return tui.SectionProject
+		}
+	}
+	return tui.SectionOther
+}
+
+// newSessionLoader returns the menu's lazy session loader. The log scan runs
+// once, on first use; live holds session IDs open in a current window.
+func newSessionLoader(live map[string]bool) func(agent string) []tui.MenuSession {
+	var (
+		once  sync.Once
+		byAgt map[string][]sessions.Session
+	)
+	return func(name string) []tui.MenuSession {
+		once.Do(func() { byAgt, _ = sessions.FindSessionsByAgent() })
+		return menuSessions(byAgt[name], live, sessionLabel)
+	}
+}
+
+// menuSessions converts sessions to menu entries, flagging the live ones. The
+// preview is the first real human text, falling back to label (the session
+// name). Only the entries NormalizeSessions will keep pay for a preview.
+func menuSessions(all []sessions.Session, live map[string]bool, label func(sessions.Session) string) []tui.MenuSession {
+	var out []tui.MenuSession
+	for _, s := range all {
+		when := s.EndTime
+		if when.IsZero() {
+			when = s.StartTime
+		}
+		out = append(out, tui.MenuSession{ID: s.ID, When: when, Project: s.Project, Live: live[s.ID]})
+	}
+	keep := tui.NormalizeSessions(out, time.Now(), 7*24*time.Hour, 5)
+	byID := make(map[string]sessions.Session, len(all))
+	for _, s := range all {
+		byID[s.ID] = s
+	}
+	for i := range keep {
+		s := byID[keep[i].ID]
+		keep[i].Preview = GetSessionPreview(s)
+		if keep[i].Preview == "" {
+			keep[i].Preview = label(s)
+		}
+	}
+	return keep
+}
+
+// sessionLabel is the recorded name of a session, "" when there is none.
+func sessionLabel(s sessions.Session) string { return sessionname.Lookup(s.ID) }
+
+// LaunchOptions are the per-launch overrides of a fresh agent launch. The zero
+// value defers everything to the agent config and the mode defaults.
+type LaunchOptions struct {
+	// Backend is the --backend override: a name selects that backend, "none"
+	// forces Anthropic, and empty defers to the agent config.
+	Backend string
+	// Model and Effort override the agent's configured model / effort_level;
+	// dispatch.Inherit clears the configured value.
+	Model  string
+	Effort string
+	// NoWorktree is the CLI's --no-worktree escape hatch: when true, the agent
+	// launches directly in the checkout instead of an isolated worktree.
+	NoWorktree bool
+	// Background creates the window without switching the client to it.
+	Background bool
+}
+
 // RunLaunch launches a fresh interactive agent session for the named agent.
 // If name is empty it falls back to the configured default_agent.
-// noWorktree is the CLI's --no-worktree escape hatch: when true, the agent
-// launches directly in the main checkout instead of an isolated worktree.
-// backend is the --backend override: a name selects that backend, "none"
-// forces Anthropic, and empty defers to the agent config.
-func RunLaunch(name string, noWorktree bool, backend string, background bool) {
+func RunLaunch(name string, opts LaunchOptions) {
 	if name == "" {
 		cfg := config.Load()
 		name = usableDefaultAgent(cfg, os.Stderr)
@@ -135,31 +262,25 @@ func RunLaunch(name string, noWorktree bool, backend string, background bool) {
 		os.Exit(1)
 	}
 	workDir := resolveAgentDir(baseName)
-	RunLaunchAgentOpts(baseName, workDir, noWorktree, backend, background)
+	RunLaunchAgentOpts(baseName, workDir, opts)
 }
 
-// RunLaunchAgent launches a fresh interactive agent session in workDir.
+// RunLaunchAgentOpts launches a fresh interactive agent session in workDir.
 // The agent receives the agentctl preamble but no ticket, no autonomous
 // execution instructions, and no initial user message — it starts
-// interactively and waits for the user.
-// noWorktree, when true, passes an explicit false override so this launch
-// skips worktree isolation (the CLI's --no-worktree escape hatch); when
-// false, UseWorktree is left nil so the launch inherits the mode default.
-func RunLaunchAgent(name string, workDir string, noWorktree bool, backend string) {
-	RunLaunchAgentOpts(name, workDir, noWorktree, backend, false)
-}
-
-// RunLaunchAgentOpts is RunLaunchAgent with control over focus: background
-// creates the window without switching the client to it.
-func RunLaunchAgentOpts(name string, workDir string, noWorktree bool, backend string, background bool) {
+// interactively and waits for the user. When opts.NoWorktree is false,
+// UseWorktree is left nil so the launch inherits the mode default.
+func RunLaunchAgentOpts(name string, workDir string, opts LaunchOptions) {
 	req := dispatch.Request{
-		Background: background,
+		Background: opts.Background,
 		AgentName:  name,
 		Mode:       dispatch.ModeBare,
 		WorkDir:    workDir,
-		Backend:    backend,
+		Backend:    opts.Backend,
+		Model:      opts.Model,
+		Effort:     opts.Effort,
 	}
-	if noWorktree {
+	if opts.NoWorktree {
 		useWorktree := false
 		req.UseWorktree = &useWorktree
 	}
@@ -171,77 +292,9 @@ func RunLaunchAgentOpts(name string, workDir string, noWorktree bool, backend st
 	// Machine-readable: the hub parses the last stdout line to focus the new
 	// window. Only emitted for background launches; interactive output is
 	// unchanged.
-	if background && res.WindowID != "" {
+	if opts.Background && res.WindowID != "" {
 		fmt.Println(res.WindowID)
 	}
-}
-
-// RunLaunchMenu shows the launch TUI for the named agent, offering to resume a
-// recent session or start fresh. writeSettings is injected from package main.
-func RunLaunchMenu(name string, writeSettings WriteAgentSettingsFn) {
-	// Always resolve to base agent name.
-	baseName := tmux.BaseAgentName(name)
-
-	// Resolve default working directory from agent definition.
-	defaultDir := resolveAgentDir(baseName)
-
-	// Check for recent sessions to offer resume (up to 5).
-	recentSessions, _ := sessions.FindSessionsForAgent(baseName, 5)
-
-	// Filter to sessions within the last 24 hours.
-	var items []tui.LaunchSession
-	for _, s := range recentSessions {
-		age := time.Since(s.EndTime)
-		if s.EndTime.IsZero() {
-			age = time.Since(s.StartTime)
-		}
-		if age < 24*time.Hour {
-			items = append(items, tui.LaunchSession{
-				SessionID: s.ID,
-				Age:       formatRelativeTime(age),
-				Preview:   GetSessionPreview(s),
-				Project:   s.Project,
-			})
-		}
-	}
-
-	// Always show the launch TUI so users can change the working directory.
-	model := tui.NewLaunchModel(baseName, items, defaultDir)
-	p := tea.NewProgram(model)
-	finalModel, err := p.Run()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	result := finalModel.(tui.LaunchModel).Result()
-	if result.Cancelled {
-		return
-	}
-
-	if result.Resume {
-		LaunchWithResume(baseName, result.SessionID, result.Dir, writeSettings)
-		return
-	}
-
-	// Fresh launch with chosen directory. Inherits the mode default (no
-	// --no-worktree escape hatch available from this TUI path).
-	RunLaunchAgent(baseName, result.Dir, false, "")
-}
-
-// formatRelativeTime formats a duration as a compact human-readable relative
-// time string (e.g. "just now", "5m ago", "2h ago", "3d ago").
-func formatRelativeTime(d time.Duration) string {
-	if d < time.Minute {
-		return "just now"
-	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	}
-	if d < 24*time.Hour {
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	}
-	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 }
 
 // discoverUserAgents lists the agents in the user-level registry
