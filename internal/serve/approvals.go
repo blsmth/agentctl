@@ -37,6 +37,10 @@ const (
 	// resolvedTTL is how long a resolved approval's ID is remembered, so a
 	// late answer gets 409 instead of 404.
 	resolvedTTL = 15 * time.Minute
+	// maxHistory and historyTTL bound the resolved-approval history that lets
+	// a stale push link say what happened.
+	maxHistory = 50
+	historyTTL = 30 * time.Minute
 	// decisionWriteTimeout bounds writing the decision to the hook.
 	decisionWriteTimeout = 2 * time.Second
 
@@ -67,6 +71,60 @@ type approvalView struct {
 	Deadline         string `json:"deadline"`
 	SecondsRemaining int    `json:"seconds_remaining"`
 	PayloadSHA256    string `json:"payload_sha256"`
+}
+
+// Resolved outcomes shown to the phone.
+const (
+	resolvedApproved  = "approved"
+	resolvedDenied    = "denied"
+	resolvedAnswered  = "answered" // answered where serve could not see the decision (laptop)
+	resolvedTimedOut  = "timed_out"
+	resolvedCancelled = "cancelled"
+	sourceLaptop      = "laptop"
+)
+
+// resolvedApproval is one history entry. It deliberately holds no prompt or
+// command text: the summary fields are enough to say what happened.
+type resolvedApproval struct {
+	ID          string `json:"id"`
+	Status      string `json:"status"`
+	Kind        string `json:"kind"`
+	AskingAgent string `json:"asking_agent"`
+	TargetAgent string `json:"target_agent"`
+	Session     string `json:"session"`
+	Project     string `json:"project"`
+	WindowID    string `json:"window_id"`
+	Opened      string `json:"opened"`
+	ResolvedAt  string `json:"resolved_at"`
+	Outcome     string `json:"outcome"`
+	Source      string `json:"source,omitempty"`
+
+	at time.Time
+}
+
+// newResolved builds the history entry for p. outcome is the connection
+// outcome (answered, expired, a cancel reason, ...); decision and device
+// describe a phone answer.
+func newResolved(p *pendingApproval, outcome, decision, device string, now time.Time) resolvedApproval {
+	r := resolvedApproval{
+		ID: p.req.ID, Status: "resolved", Kind: p.req.Kind, AskingAgent: p.req.AskingAgent,
+		TargetAgent: p.req.TargetAgent, Session: p.req.Session, Project: p.project, WindowID: p.req.WindowID,
+		Opened: p.opened.UTC().Format(time.RFC3339), ResolvedAt: now.UTC().Format(time.RFC3339), at: now,
+	}
+	switch outcome {
+	case outcomeAnswered:
+		r.Outcome, r.Source = resolvedDenied, device
+		if decision == remoteapproval.Allow {
+			r.Outcome = resolvedApproved
+		}
+	case remoteapproval.ReasonLaptop:
+		r.Outcome, r.Source = resolvedAnswered, sourceLaptop
+	case outcomeExpired, remoteapproval.ReasonTimeout:
+		r.Outcome = resolvedTimedOut
+	default:
+		r.Outcome = resolvedCancelled
+	}
+	return r
 }
 
 // approvalResolved is the SSE "approval_resolved" event.
@@ -126,6 +184,7 @@ type approvalStore struct {
 	mu       sync.Mutex
 	pending  map[string]*pendingApproval
 	resolved map[string]time.Time
+	history  []resolvedApproval // oldest first
 	subs     map[chan approvalEvent]struct{}
 }
 
@@ -163,11 +222,53 @@ func (st *approvalStore) add(p *pendingApproval, now time.Time) error {
 	return nil
 }
 
-func (st *approvalStore) remove(id string, now time.Time) {
+func (st *approvalStore) remove(r resolvedApproval) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	delete(st.pending, id)
-	st.resolved[id] = now
+	delete(st.pending, r.ID)
+	st.resolved[r.ID] = r.at
+	st.history = append(st.history, r)
+	st.pruneHistory(r.at)
+}
+
+// pruneHistory drops expired entries and keeps the newest maxHistory.
+// Callers hold st.mu.
+func (st *approvalStore) pruneHistory(now time.Time) {
+	st.history = slices.DeleteFunc(st.history, func(r resolvedApproval) bool {
+		return now.Sub(r.at) > historyTTL
+	})
+	if n := len(st.history) - maxHistory; n > 0 {
+		st.history = slices.Delete(st.history, 0, n)
+	}
+}
+
+// recent returns unexpired resolved approvals, newest first.
+func (st *approvalStore) recent(now time.Time) []resolvedApproval {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.pruneHistory(now)
+	out := make([]resolvedApproval, 0, len(st.history))
+	for i := len(st.history) - 1; i >= 0; i-- {
+		out = append(out, st.history[i])
+	}
+	return out
+}
+
+// lookup returns the pending approval or the resolved history entry for id.
+func (st *approvalStore) lookup(id string, now time.Time) (*pendingApproval, *resolvedApproval) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if p, ok := st.pending[id]; ok {
+		return p, nil
+	}
+	st.pruneHistory(now)
+	for i := range st.history {
+		if st.history[i].ID == id {
+			r := st.history[i]
+			return nil, &r
+		}
+	}
+	return nil, nil
 }
 
 // list returns pending approvals, oldest first.
@@ -319,7 +420,8 @@ func (s *Server) ServeApproval(conn net.Conn, br *bufio.Reader, req remoteapprov
 	case <-s.done:
 		outcome = outcomeStopping
 	}
-	s.approvals.remove(req.ID, s.now())
+	resolvedAt := s.now()
+	s.approvals.remove(newResolved(p, outcome, decision, device, resolvedAt))
 	s.approvals.publish(approvalEvent{resolved: &approvalResolved{
 		ID: req.ID, Session: req.Session, WindowID: req.WindowID, Outcome: outcome, Decision: decision,
 	}})
@@ -424,6 +526,7 @@ func (s *Server) auditApproval(p *pendingApproval, action, result, deviceID, dev
 func (s *Server) registerApprovals(rt *Router) {
 	rt.Feature("approvals")
 	rt.Device("GET /v1/approvals", s.handleApprovals)
+	rt.Device("GET /v1/approvals/{id}", s.handleApprovalGet)
 	rt.Write("POST /v1/approvals/{id}", writeRoute(s, "approval", s.handleApprovalAnswer))
 }
 
@@ -434,8 +537,31 @@ func (s *Server) handleApprovals(w http.ResponseWriter, _ *http.Request) {
 		views = append(views, p.view(now))
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Approvals []approvalView `json:"approvals"`
-	}{views})
+		Approvals []approvalView     `json:"approvals"`
+		Recent    []resolvedApproval `json:"recent"`
+	}{views, s.approvals.recent(now)})
+}
+
+// handleApprovalGet returns one approval: the pending view, or the resolved
+// summary while it is still in history. Unknown and expired ids are 404.
+func (s *Server) handleApprovalGet(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	now := s.now()
+	if remoteapproval.ValidID(id) {
+		p, res := s.approvals.lookup(id, now)
+		switch {
+		case p != nil:
+			writeJSON(w, http.StatusOK, struct {
+				approvalView
+				Status string `json:"status"`
+			}{p.view(now), "pending"})
+			return
+		case res != nil:
+			writeJSON(w, http.StatusOK, res)
+			return
+		}
+	}
+	writeError(w, http.StatusNotFound, codeNotFound, "no such approval")
 }
 
 type approvalAnswerBody struct {

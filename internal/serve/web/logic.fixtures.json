@@ -35,5 +35,105 @@
     {"name": "attribute off", "input": "\u001b[1;3mA\u001b[22mB\u001b[23mC", "expect": [{"t": "A", "bold": true, "italic": true}, {"t": "B", "italic": true}, {"t": "C"}]},
     {"name": "default colours", "input": "\u001b[31;42mA\u001b[39;49mB", "expect": [{"t": "A", "fg": "#cd3131", "bg": "#0dbc79"}, {"t": "B"}]},
     {"name": "empty reset", "input": "\u001b[1mA\u001b[mB", "expect": [{"t": "A", "bold": true}, {"t": "B"}]}
+  ],
+  "split": [
+    {
+      "name": "prompt box with statusline and footer",
+      "input": "● Done.\n\n────────────────────────────────────────\n❯ run tests\n────────────────────────────────────────\n⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀main ± 3  ████░░░░░░ 42% ctx⠀⠀\n  ⏵⏵ auto mode on (shift+tab to cycle)",
+      "body": [
+        "● Done.",
+        "",
+        {
+          "rule": ""
+        },
+        "❯ run tests",
+        {
+          "rule": ""
+        }
+      ],
+      "status": [
+        "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀main ± 3  ████░░░░░░ 42% ctx⠀⠀",
+        "  ⏵⏵ auto mode on (shift+tab to cycle)"
+      ]
+    },
+    {
+      "name": "prompt box with side borders",
+      "input": "hi\n╭──────────────────────────────────────╮\n│ > │\n╰──────────────────────────────────────╯\n  ⏵⏵ auto mode on\n\n",
+      "body": [
+        "hi",
+        {
+          "rule": ""
+        },
+        ">",
+        {
+          "rule": ""
+        }
+      ],
+      "status": [
+        "  ⏵⏵ auto mode on"
+      ]
+    },
+    {
+      "name": "multi-line prompt input",
+      "input": "────────────────────────────────────────\n> first\n  second\n────────────────────────────────────────\nfooter",
+      "body": [
+        {
+          "rule": ""
+        },
+        "> first",
+        "  second",
+        {
+          "rule": ""
+        }
+      ],
+      "status": [
+        "footer"
+      ]
+    },
+    {
+      "name": "prompt box with nothing below",
+      "input": "x\n────────────────────────────────────────\n> \n────────────────────────────────────────\n\n",
+      "body": [
+        "x",
+        {
+          "rule": ""
+        },
+        ">",
+        {
+          "rule": ""
+        },
+        "",
+        ""
+      ],
+      "status": null
+    },
+    {
+      "name": "no prompt box",
+      "input": "a\n────────────────────────────────────────\nb\nc",
+      "body": [
+        "a",
+        {
+          "rule": ""
+        },
+        "b",
+        "c"
+      ],
+      "status": null
+    },
+    {
+      "name": "rules without prompt line",
+      "input": "────────────────────────────────────────\nplain\n────────────────────────────────────────\ntail",
+      "body": [
+        {
+          "rule": ""
+        },
+        "plain",
+        {
+          "rule": ""
+        },
+        "tail"
+      ],
+      "status": null
+    }
   ]
 }

@@ -589,26 +589,27 @@ function cellsToRuns(cells) {
  * collapse to one.
  */
 export function normalizePane(text) {
-  const blocks = [];
-  for (const runs of parseAnsi(text)) {
+  return collapseBlanks(lineBlocks(parseAnsi(text)));
+}
+
+/** lineBlocks maps parsed lines to one block each, before blank collapsing. */
+function lineBlocks(lines) {
+  return lines.map((runs) => {
     const plain = runs.map((r) => r.t).join("");
     const rule = ruleOf(plain);
-    if (rule) {
-      blocks.push({ rule: rule.label });
-      continue;
-    }
+    if (rule) return { rule: rule.label };
     const cells = runs.flatMap((r) => {
       const { t, ...s } = r;
       return Array.from(t, (ch) => ({ ch, s }));
     });
     const norm = normalizeCells(cells);
-    if (norm.length === 0 || BLANKISH.test(norm.map((x) => x.ch).join(""))) {
-      blocks.push({ runs: [] });
-      continue;
-    }
-    blocks.push({ runs: cellsToRuns(norm) });
-  }
-  // Collapse 3+ consecutive blank lines to one.
+    if (norm.length === 0 || BLANKISH.test(norm.map((x) => x.ch).join(""))) return { runs: [] };
+    return { runs: cellsToRuns(norm) };
+  });
+}
+
+/** collapseBlanks collapses 3+ consecutive blank lines to one. */
+function collapseBlanks(blocks) {
   const out = [];
   for (let i = 0; i < blocks.length; i++) {
     if (blocks[i].runs && blocks[i].runs.length === 0) {
@@ -620,6 +621,43 @@ export function normalizePane(text) {
     } else out.push(blocks[i]);
   }
   return out;
+}
+
+const blockText = (b) => (b.runs ? b.runs.map((r) => r.t).join("") : "");
+const isPromptLine = (b) => /^[>❯]/.test(blockText(b));
+
+/**
+ * splitPane is normalizePane plus detection of Claude Code's trailing chrome:
+ * everything after the rule that closes the prompt input box (a rule, a line
+ * starting with ">" or "❯", optionally continuation lines, then a rule).
+ * Returns {body, status}: status is null when no prompt box (or nothing below
+ * it) is found, otherwise {lines} with the raw plain lines (padding intact,
+ * trailing blank lines dropped). The body then ends at the closing rule.
+ */
+export function splitPane(text) {
+  const lines = parseAnsi(text);
+  const blocks = lineBlocks(lines);
+  let end = -1;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    if (blocks[i].rule !== undefined) {
+      end = i;
+      break;
+    }
+  }
+  let start = -1;
+  for (let i = end - 1; i >= 0 && end >= 0; i--) {
+    if (blocks[i].rule !== undefined) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0 || end - start < 2 || !isPromptLine(blocks[start + 1])) {
+    return { body: collapseBlanks(blocks), status: null };
+  }
+  const raw = lines.slice(end + 1).map((runs) => runs.map((r) => r.t).join("").replace(/\s+$/, ""));
+  while (raw.length && raw[raw.length - 1].replace(/[\s⠀]/g, "") === "") raw.pop();
+  if (raw.length === 0) return { body: collapseBlanks(blocks), status: null };
+  return { body: collapseBlanks(blocks.slice(0, end + 1)), status: { lines: raw } };
 }
 
 /** paneModeOrDefault validates a persisted pane mode. */
@@ -722,4 +760,36 @@ export function approvalConfirm(a, decision) {
     confirmLabel: allow ? "Approve" : "Deny",
     danger: !allow,
   };
+}
+
+/**
+ * resolvedText describes a resolved approval ({outcome, source, resolved_at,
+ * opened}) in one line, e.g. "Approved from device-00bb · 2m ago".
+ */
+export function resolvedText(r, nowMs) {
+  const ago = formatSince(r.resolved_at, nowMs);
+  const when = ago ? ` · ${ago} ago` : "";
+  const opened = Date.parse(r.opened);
+  const done = Date.parse(r.resolved_at);
+  let head;
+  switch (r.outcome) {
+    case "approved":
+    case "denied": {
+      const verb = r.outcome === "approved" ? "Approved" : "Denied";
+      if (r.source === "laptop") head = `Already answered on the laptop: ${r.outcome}`;
+      else head = r.source ? `${verb} from ${r.source}` : verb;
+      break;
+    }
+    case "answered":
+      head = r.source === "laptop" ? "Already answered on the laptop" : "Already answered";
+      break;
+    case "timed_out": {
+      const secs = Number.isFinite(opened) && Number.isFinite(done) ? Math.max(0, Math.round((done - opened) / 1000)) : 0;
+      head = secs >= 60 ? `Timed out after ${Math.floor(secs / 60)}m` : secs > 0 ? `Timed out after ${secs}s` : "Timed out";
+      break;
+    }
+    default:
+      head = "No longer waiting";
+  }
+  return head + when;
 }
