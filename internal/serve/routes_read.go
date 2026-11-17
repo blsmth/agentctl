@@ -86,6 +86,8 @@ func (s *Server) registerRead(rt *Router) {
 	rt.Device("GET /v1/sessions/{session}/windows/{window}/pane", s.handlePane)
 	rt.Device("GET /v1/agents", s.handleAgents)
 	rt.Device("GET /v1/projects", s.handleProjects)
+	rt.Feature("launch-options")
+	rt.Device("GET /v1/launch-options", s.handleLaunchOptions)
 	rt.Feature("events")
 	rt.Device("GET /v1/events", s.handleEvents)
 }

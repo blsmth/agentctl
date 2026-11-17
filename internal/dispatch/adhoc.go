@@ -18,11 +18,13 @@ type AdhocRequest struct {
 	Prompt string
 	// PromptKey is the context store key the prompt was resolved from, or ""
 	// (display-only; see Request.PromptKey).
-	PromptKey   string
-	AgentName   string
-	WorkDir     string // required; the CLI resolves its default before calling
-	Model       string
-	Backend     string
+	PromptKey string
+	AgentName string
+	WorkDir   string // required; the CLI resolves its default before calling
+	Model     string
+	Backend   string
+	// Effort overrides the agent's effort_level (see Request.Effort).
+	Effort      string
 	UseWorktree bool
 	// Detached launches with no parent window (see Request.Detached).
 	Detached bool
@@ -68,6 +70,7 @@ func LaunchAdhoc(req AdhocRequest) (Result, error) {
 		RepoSlug:     repoSlug,
 		Model:        req.Model,
 		Backend:      req.Backend,
+		Effort:       req.Effort,
 		Background:   true,
 		Detached:     req.Detached,
 	})

@@ -1,13 +1,17 @@
-// Dispatch screen: agent + project + prompt, with a confirm sheet.
+// Dispatch screen: agent + project + prompt, launch options, and a confirm sheet.
 import { ApiError, get, send } from "./api.js";
-import { buildDispatchRequest, windowHash } from "./logic.js";
-import { confirmSheet, h, toast } from "./ui.js";
+import {
+  buildDispatchRequest, choiceLabel, confirmLines, launchOptionsPath, modelPicker, windowHash,
+} from "./logic.js";
+import { clear, confirmSheet, h, toast } from "./ui.js";
 
 export function mountDispatch(root, ctx) {
   const agent = h("select", { "aria-label": "Agent" });
   const project = h("select", { "aria-label": "Project" });
   const prompt = h("textarea", { rows: "8", placeholder: "What should the agent do?" });
   const submit = h("button", { class: "btn primary", disabled: true }, "Review & send");
+  const launchBox = h("div", { class: "launch-opts" });
+  const withOptions = ctx.hasFeature("launch-options");
   root.append(
     h("header", { class: "bar" }, h("a", { class: "btn", href: "#/" }, "‹ Fleet"), h("h1", {}, "Dispatch")),
     h(
@@ -15,17 +19,84 @@ export function mountDispatch(root, ctx) {
       { class: "form", onsubmit: (e) => e.preventDefault() },
       h("label", {}, "Agent", agent),
       h("label", {}, "Project", project),
+      withOptions ? launchBox : null,
       h("label", {}, "Prompt", prompt),
       ctx.hasFeature("write") ? null : h("p", { class: "muted" }, "Write actions are not enabled on this server."),
       submit,
     ),
   );
 
+  // opts is the launch-options body for the current agent/project; choice is
+  // what the pickers currently select. loadSeq drops stale responses.
+  let opts = null;
+  let choice = {};
+  let loadSeq = 0;
+
+  function renderOptions() {
+    clear(launchBox);
+    if (!opts) return;
+    const backends = h("div", { class: "seg", role: "group", "aria-label": "Backend" });
+    for (const b of opts.backends ?? []) {
+      backends.append(
+        h(
+          "button",
+          {
+            type: "button",
+            class: "btn",
+            "aria-pressed": String(choice.backend === b.name),
+            onclick: () => {
+              choice = { ...choice, backend: b.name, model: modelPicker(opts, b.name).def };
+              renderOptions();
+            },
+          },
+          b.name,
+        ),
+      );
+    }
+    const mp = modelPicker(opts, choice.backend);
+    let model;
+    if (mp.freeText) {
+      model = h("input", { type: "text", value: choice.model ?? "", autocapitalize: "off", autocorrect: "off", spellcheck: "false" });
+      model.addEventListener("input", () => (choice = { ...choice, model: model.value.trim() }));
+    } else {
+      model = h("select", { "aria-label": "Model" }, ...mp.choices.map((c) => h("option", { value: c.value }, choiceLabel(c))));
+      model.value = choice.model ?? mp.def;
+      model.addEventListener("change", () => (choice = { ...choice, model: model.value }));
+    }
+    const effort = h("select", { "aria-label": "Effort" }, ...(opts.efforts ?? []).map((e) => h("option", { value: e }, e)));
+    effort.value = choice.effort;
+    effort.addEventListener("change", () => (choice = { ...choice, effort: effort.value }));
+    launchBox.append(
+      h("div", {}, h("div", { class: "muted" }, "Backend"), backends),
+      h("label", {}, "Model", model, mp.freeText ? h("span", { class: "muted" }, `${mp.error}; type a model name`) : null),
+      h("label", {}, "Effort", effort),
+    );
+  }
+
+  async function loadOptions() {
+    if (!withOptions || !agent.value || !project.value) return;
+    const seq = ++loadSeq;
+    opts = null;
+    renderOptions();
+    try {
+      const o = await get(launchOptionsPath(agent.value, project.value));
+      if (seq !== loadSeq) return;
+      opts = o;
+      choice = { backend: o.defaults.backend, model: o.defaults.model, effort: o.defaults.effort };
+      renderOptions();
+    } catch (e) {
+      if (seq === loadSeq) toast(`Could not load launch options: ${e.message}`, "error");
+    }
+  }
+  agent.addEventListener("change", loadOptions);
+  project.addEventListener("change", loadOptions);
+
   Promise.all([get("/v1/agents"), get("/v1/projects")])
     .then(([a, p]) => {
       for (const x of a.agents ?? []) agent.append(h("option", { value: x.name }, x.name));
       for (const x of p.projects ?? []) project.append(h("option", { value: x.dir }, x.name));
       submit.disabled = !ctx.hasFeature("write");
+      return loadOptions();
     })
     .catch((e) => toast(`Could not load agents/projects: ${e.message}`, "error"));
 
@@ -35,10 +106,10 @@ export function mountDispatch(root, ctx) {
       toast("Pick an agent and project, and write a prompt", "error");
       return;
     }
-    const req = buildDispatchRequest(agent.value, project.value, text);
+    const req = buildDispatchRequest(agent.value, project.value, text, opts ? choice : {});
     const ok = await confirmSheet({
       title: "Dispatch?",
-      lines: [`agent: ${req.body.agent}\nproject: ${req.body.project_dir}`, req.body.prompt],
+      lines: confirmLines(req.body),
       confirmLabel: "Dispatch",
     });
     if (!ok) return;
@@ -52,5 +123,7 @@ export function mountDispatch(root, ctx) {
       submit.disabled = false;
     }
   });
-  return () => {};
+  return () => {
+    loadSeq++;
+  };
 }

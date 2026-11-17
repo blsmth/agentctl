@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/cleanup"
 	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/launchopts"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -413,6 +415,8 @@ type dispatchIn struct {
 	ProjectDir string `json:"project_dir"`
 	Prompt     string `json:"prompt"`
 	Model      string `json:"model,omitempty"`
+	Backend    string `json:"backend,omitempty"`
+	Effort     string `json:"effort,omitempty"`
 }
 
 // checkText rejects empty text and control characters other than newline
@@ -456,12 +460,6 @@ func checkReplyMode(text string) (outcome, bool) {
 // project dir must be exactly one of /v1/projects' dirs and the agent one of
 // /v1/agents' for that dir.
 func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) outcome {
-	if in.Agent == "" || !agent.ValidLaunchName(in.Agent) {
-		return failure(http.StatusBadRequest, codeUnknownAgent, "invalid agent name")
-	}
-	if !filepath.IsAbs(in.ProjectDir) {
-		return failure(http.StatusBadRequest, codeUnknownProject, "project_dir must be an absolute path from /v1/projects")
-	}
 	if utf8.RuneCountInString(in.Prompt) > maxPromptRunes {
 		return failure(http.StatusRequestEntityTooLarge, codeTooLarge, fmt.Sprintf("prompt exceeds %d characters", maxPromptRunes))
 	}
@@ -471,46 +469,32 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	if in.Model != "" && !modelRE.MatchString(in.Model) {
 		return failure(http.StatusBadRequest, codeBadRequest, "invalid model")
 	}
-
-	groups, err := s.fleet.Fleet()
-	if err != nil {
-		logging.Warn("serve: loading fleet: %v", err)
-		return failure(http.StatusInternalServerError, codeInternal, "loading fleet")
-	}
-	var g fleetwatch.Group
-	found := false
-	for _, cand := range groups {
-		if cand.Dir != "" && cand.Dir == in.ProjectDir {
-			g, found = cand, true
-			break
+	if in.Effort != "" {
+		if err := launchopts.ValidateEffort(in.Effort); err != nil {
+			return failure(http.StatusBadRequest, codeBadRequest, err.Error())
 		}
 	}
-	if !found {
-		return failure(http.StatusBadRequest, codeUnknownProject, "project_dir is not a known project")
+	g, out, ok := s.dispatchTarget(in.Agent, in.ProjectDir, a)
+	if !ok {
+		return out
 	}
-	a.Session = g.Session
-	a.Project = clip(g.Project)
-
-	agents, err := s.agents.Agents([]string{g.Dir})
-	if err != nil {
-		logging.Warn("serve: discovering agents: %v", err)
-		return failure(http.StatusInternalServerError, codeInternal, "discovering agents")
-	}
-	known := false
-	for _, ag := range agents {
-		if ag.Name == in.Agent {
-			known = true
-			break
+	backend, model, effort := in.Backend, in.Model, in.Effort
+	if in.Backend != "" || in.Model != "" || in.Effort != "" {
+		c, err := s.launchChoices(g.Session, g.RuntimeDir, in.Agent)
+		if err != nil {
+			logging.Warn("serve: dispatch launch options: %v", err)
+			return failure(http.StatusInternalServerError, codeInternal, "reading launch options")
+		}
+		backend, model, effort, out, ok = resolveLaunchChoice(c, in)
+		if !ok {
+			return out
 		}
 	}
-	if !known {
-		return failure(http.StatusBadRequest, codeUnknownAgent, fmt.Sprintf("unknown agent %q for this project", in.Agent))
-	}
-	a.Agent = in.Agent
+	a.Backend, a.Model, a.Effort = clip(in.Backend), clip(in.Model), clip(in.Effort)
 	s.auditAttempt(*a)
 
 	res, err := s.dispatcher.Dispatch(DispatchRequest{
-		Agent: in.Agent, Prompt: in.Prompt, Model: in.Model,
+		Agent: in.Agent, Prompt: in.Prompt, Model: model, Backend: backend, Effort: effort,
 		Dir: g.Dir, Session: g.Session, RuntimeDir: g.RuntimeDir,
 	})
 	if err != nil {
@@ -519,4 +503,98 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	}
 	a.Window = res.WindowID
 	return success(res)
+}
+
+// resolveLaunchChoice checks the requested backend, model and effort against
+// what the agent's launch options offer and maps them to the launch overrides
+// exactly as the tmux popup does. An empty backend selects the agent's
+// default; "none" is accepted as an alias of "anthropic".
+func resolveLaunchChoice(c launchChoices, in dispatchIn) (backend, model, effort string, out outcome, ok bool) {
+	bad := func(msg string) (string, string, string, outcome, bool) {
+		return "", "", "", failure(http.StatusBadRequest, codeBadRequest, msg), false
+	}
+	names, def := c.in.BackendNames()
+	sel := in.Backend
+	switch {
+	case sel == "":
+		sel = def
+	case sel == launchopts.BackendNone:
+		sel = launchopts.BackendAnthropic
+	case !slices.Contains(names, sel):
+		return bad("unknown backend")
+	}
+	if in.Model != "" && in.Model != launchopts.Inherit {
+		offered := slices.ContainsFunc(c.in.ModelChoices(sel), func(m launchopts.ModelChoice) bool {
+			if c.in.IsNous(sel) || sel == launchopts.BackendAnthropic {
+				return m.Value == in.Model
+			}
+			return launchopts.SameModel(m.Value, in.Model)
+		})
+		// An Ollama server that could not be asked cannot say what it has: the
+		// charset check done earlier is all that applies.
+		_, listFailed := c.listErrors[sel]
+		if !offered && !listFailed {
+			return bad("model is not offered for this backend")
+		}
+	}
+	if in.Model == launchopts.Inherit && sel != launchopts.BackendAnthropic {
+		return bad("model is not offered for this backend")
+	}
+	model = in.Model
+	if model == "" {
+		model = c.in.DefaultModel(sel)
+	}
+	return c.in.ResultBackend(sel), c.in.ResultModel(sel, model), c.in.ResultEffort(effortOrInherit(in.Effort, c)), outcome{}, true
+}
+
+func effortOrInherit(e string, c launchChoices) string {
+	if e == "" {
+		return c.in.DefaultEffort()
+	}
+	return e
+}
+
+// dispatchTarget validates an agent name and project dir as a dispatch (and
+// its launch options) require: the dir must be exactly a fleet project's dir
+// and the agent one of the agents discoverable there. a, when non-nil,
+// receives the audit fields.
+func (s *Server) dispatchTarget(agentName, projectDir string, a *auditEntry) (fleetwatch.Group, outcome, bool) {
+	if agentName == "" || !agent.ValidLaunchName(agentName) {
+		return fleetwatch.Group{}, failure(http.StatusBadRequest, codeUnknownAgent, "invalid agent name"), false
+	}
+	if !filepath.IsAbs(projectDir) {
+		return fleetwatch.Group{}, failure(http.StatusBadRequest, codeUnknownProject, "project_dir must be an absolute path from /v1/projects"), false
+	}
+	groups, err := s.fleet.Fleet()
+	if err != nil {
+		logging.Warn("serve: loading fleet: %v", err)
+		return fleetwatch.Group{}, failure(http.StatusInternalServerError, codeInternal, "loading fleet"), false
+	}
+	var g fleetwatch.Group
+	found := false
+	for _, cand := range groups {
+		if cand.Dir != "" && cand.Dir == projectDir {
+			g, found = cand, true
+			break
+		}
+	}
+	if !found {
+		return fleetwatch.Group{}, failure(http.StatusBadRequest, codeUnknownProject, "project_dir is not a known project"), false
+	}
+	if a != nil {
+		a.Session = g.Session
+		a.Project = clip(g.Project)
+	}
+	agents, err := s.agents.Agents([]string{g.Dir})
+	if err != nil {
+		logging.Warn("serve: discovering agents: %v", err)
+		return fleetwatch.Group{}, failure(http.StatusInternalServerError, codeInternal, "discovering agents"), false
+	}
+	if !slices.ContainsFunc(agents, func(ag AgentInfo) bool { return ag.Name == agentName }) {
+		return fleetwatch.Group{}, failure(http.StatusBadRequest, codeUnknownAgent, fmt.Sprintf("unknown agent %q for this project", agentName)), false
+	}
+	if a != nil {
+		a.Agent = agentName
+	}
+	return g, outcome{}, true
 }
