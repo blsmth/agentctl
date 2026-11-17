@@ -6,6 +6,7 @@ package tokens
 import (
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -861,4 +862,88 @@ func Registry() []Model {
 		return out[i].Label > out[j].Label
 	})
 	return out
+}
+
+// pricingOnlyKeys are builtins keys that exist so Lookup can price a family
+// by prefix walk but are NOT valid `claude --model` IDs (their real IDs are
+// claude-opus-4-0, claude-sonnet-4-0 and claude-3-5-haiku-latest, and all
+// three are legacy). They must never reach the model picker.
+var pricingOnlyKeys = map[string]bool{
+	"claude-opus-4":    true,
+	"claude-sonnet-4":  true,
+	"claude-haiku-3-5": true,
+}
+
+// familyOrder is the picker order of the Claude families.
+var familyOrder = []Family{FamilyOpus, FamilySonnet, FamilyHaiku, FamilyFable}
+
+// AnthropicModelIDs lists the model IDs `claude --model` accepts, from the
+// built-in registry plus config override keys starting with "claude-". Order:
+// family (opus, sonnet, haiku, fable), then newest version first.
+func AnthropicModelIDs() []string {
+	mu.RLock()
+	keys := make(map[string]Family, len(builtins)+len(overrides))
+	for k, m := range builtins {
+		if !pricingOnlyKeys[k] {
+			keys[k] = m.Family
+		}
+	}
+	for k := range overrides {
+		if strings.HasPrefix(k, "claude-") && !pricingOnlyKeys[k] {
+			if _, ok := keys[k]; !ok {
+				keys[k] = familyFromName(k)
+			}
+		}
+	}
+	mu.RUnlock()
+
+	rank := func(f Family) int {
+		for i, ff := range familyOrder {
+			if ff == f {
+				return i
+			}
+		}
+		return len(familyOrder)
+	}
+	ids := make([]string, 0, len(keys))
+	for k := range keys {
+		ids = append(ids, k)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		a, b := ids[i], ids[j]
+		if ra, rb := rank(keys[a]), rank(keys[b]); ra != rb {
+			return ra < rb
+		}
+		if c := compareVersion(keyVersion(a), keyVersion(b)); c != 0 {
+			return c > 0
+		}
+		return a < b
+	})
+	return ids
+}
+
+// keyVersion extracts the numeric components of a model key
+// ("claude-opus-4-8" -> [4 8]); date suffixes sort as a trailing component.
+func keyVersion(key string) []int {
+	var v []int
+	for _, p := range strings.Split(key, "-") {
+		if n, err := strconv.Atoi(p); err == nil {
+			v = append(v, n)
+		}
+	}
+	return v
+}
+
+// compareVersion compares version slices; a shorter prefix sorts lower
+// ([5] < [5 5]).
+func compareVersion(a, b []int) int {
+	for i := 0; i < len(a) && i < len(b); i++ {
+		if a[i] != b[i] {
+			if a[i] < b[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return len(a) - len(b)
 }

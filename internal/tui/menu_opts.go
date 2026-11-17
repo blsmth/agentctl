@@ -19,7 +19,7 @@ import (
 const backendAnthropic = "anthropic"
 
 // anthropicModels are the model aliases offered for the Anthropic backend.
-var anthropicModels = []string{launchopts.Inherit, "opus", "sonnet", "haiku"}
+var anthropicModels = []string{launchopts.Inherit, "opus", "sonnet", "haiku", "fable"}
 
 // effortChoices are the effort values offered for every agent.
 var effortChoices = []string{launchopts.Inherit, "low", "medium", "high", "max"}
@@ -126,7 +126,10 @@ func (m MenuModel) modelChoices() []modelOpt {
 	case be == backendAnthropic:
 		add(def, "", true)
 		for _, v := range anthropicModels {
-			add(v, "", false)
+			add(v, "alias", false)
+		}
+		for _, id := range tokens.AnthropicModelIDs() {
+			add(id, tokens.Lookup(id).Label, false)
 		}
 	case m.isNous(be):
 		b := m.cfg.Backends[be]

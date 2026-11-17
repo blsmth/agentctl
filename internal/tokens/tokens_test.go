@@ -860,3 +860,37 @@ func TestLookup_ConfigOverrideBeatsCatalog(t *testing.T) {
 		t.Errorf("CacheRead = %v, want catalog-derived 2", m.Pricing.CacheReadPerMTok)
 	}
 }
+
+func TestAnthropicModelIDs(t *testing.T) {
+	t.Cleanup(func() { tokens.SetOverrides(nil, 0) })
+	tokens.SetOverrides(map[string]tokens.ModelOverride{
+		"claude-opus-9":  {ContextWindow: 1},
+		"vendor/foo-bar": {ContextWindow: 1},
+	}, 0)
+	ids := tokens.AnthropicModelIDs()
+	idx := map[string]int{}
+	for i, id := range ids {
+		idx[id] = i
+	}
+	for _, legacy := range []string{"claude-opus-4", "claude-sonnet-4", "claude-haiku-3-5"} {
+		if _, ok := idx[legacy]; ok {
+			t.Errorf("%s must not be listed", legacy)
+		}
+	}
+	if _, ok := idx["vendor/foo-bar"]; ok {
+		t.Error("non-claude override listed")
+	}
+	if _, ok := idx["claude-opus-9"]; !ok {
+		t.Fatal("claude- override missing")
+	}
+	order := []string{"claude-opus-9", "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-1",
+		"claude-sonnet-5-5", "claude-sonnet-5", "claude-sonnet-4-5", "claude-haiku-5-5", "claude-haiku-4-5",
+		"claude-fable-5-2", "claude-fable-5-1", "claude-fable-5"}
+	for i := 1; i < len(order); i++ {
+		a, aok := idx[order[i-1]]
+		b, bok := idx[order[i]]
+		if !aok || !bok || a >= b {
+			t.Errorf("%s (%d) should precede %s (%d)", order[i-1], a, order[i], b)
+		}
+	}
+}
