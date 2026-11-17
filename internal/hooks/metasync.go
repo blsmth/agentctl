@@ -1,6 +1,8 @@
 package hooks
 
 import (
+	"testing"
+
 	"github.com/blsmth/agentctl/internal/detach"
 	"github.com/blsmth/agentctl/internal/logging"
 )
@@ -8,6 +10,9 @@ import (
 // spawnMetaSyncFn starts the detached `agentctl sessions sync --session <id>`;
 // a seam for tests.
 var spawnMetaSyncFn = func(sessionID string) error {
+	if testing.Testing() {
+		return nil // never re-exec a test binary
+	}
 	return detach.StartSelf([]string{"sessions", "sync", "--session", sessionID}, nil)
 }
 
