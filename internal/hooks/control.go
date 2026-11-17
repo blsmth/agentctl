@@ -13,6 +13,7 @@ import (
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/textutil"
 	"github.com/blsmth/agentctl/internal/windowstate"
+	"github.com/blsmth/agentctl/internal/winname"
 )
 
 // maxLastTextRunes caps WindowState.LastText.
@@ -57,7 +58,7 @@ func CheckDone() {
 	windowID := resolveHookWindowID()
 	var ws windowstate.WindowState
 	if windowID != "" {
-		if err := windowstate.Update(windowID, func(w *windowstate.WindowState) {
+		if err := winname.Update(windowID, func(w *windowstate.WindowState) {
 			w.State = "idle"
 			w.LastText = textutil.Truncate(input.LastAssistantMessage, maxLastTextRunes, "")
 			w.TurnCount++
@@ -96,7 +97,7 @@ func CheckDone() {
 	if shouldMarkDone(ws.Mode, input.StopHookActive, blockReason) && windowID != "" {
 		var claimed bool
 		now := time.Now()
-		_, _, err := windowstate.Transact(windowID, func(w *windowstate.WindowState) {
+		_, _, err := winname.Transact(windowID, func(w *windowstate.WindowState) {
 			claimed = windowstate.ClaimComplete(w, autonomousModeFn(w.Mode), now)
 		})
 		if err != nil {
@@ -290,7 +291,7 @@ func StopFailure() {
 	windowID := resolveHookWindowID()
 	if windowID != "" {
 		errType := input.ErrorType
-		if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
+		if err := winname.Update(windowID, func(ws *windowstate.WindowState) {
 			ws.State = "idle"
 			ws.Error = errType
 		}); err != nil {
@@ -368,7 +369,7 @@ func UserPrompt() {
 	// here and re-set (if warranted) by CheckDone at the next turn's end.
 	nowUnix := time.Now().Unix()
 	var ws windowstate.WindowState
-	if err := windowstate.Update(windowID, func(w *windowstate.WindowState) {
+	if err := winname.Update(windowID, func(w *windowstate.WindowState) {
 		w.State = "working"
 		w.LastToolTime = nowUnix
 		windowstate.ClearDone(w)
@@ -443,7 +444,7 @@ func Notify() {
 			newState = "idle"
 		}
 		if newState != "" {
-			updateErr = windowstate.Update(windowID, func(w *windowstate.WindowState) {
+			updateErr = winname.Update(windowID, func(w *windowstate.WindowState) {
 				prevState = w.State
 				w.State = newState
 				switch input.NotificationType {

@@ -1,12 +1,12 @@
 package signal_test
 
 import (
-	"fmt"
 	"os"
 	"testing"
 
 	"github.com/blsmth/agentctl/internal/signal"
 	"github.com/blsmth/agentctl/internal/windowstate"
+	"github.com/blsmth/agentctl/internal/winname"
 )
 
 // setupDeps installs a test-double Deps that records rename calls and maps
@@ -20,13 +20,20 @@ func setupDeps(t *testing.T, displayResponses map[string]string) (renames *[]str
 			key := target + "|" + format
 			return displayResponses[key]
 		},
-		RenameWindow: func(target, name string) error {
-			*renames = append(*renames, target+"="+name)
-			return nil
-		},
 	}
 	signal.SetDepsForTest(d)
-	return renames, func() { signal.SetDepsForTest(signal.DefaultDeps()) }
+	restore := winname.SetSeamsForTest(
+		func(windowID, name string) error {
+			*renames = append(*renames, windowID+"="+name)
+			return nil
+		},
+		func(string) string { return "" },
+		func() string { return "" },
+	)
+	return renames, func() {
+		restore()
+		signal.SetDepsForTest(signal.DefaultDeps())
+	}
 }
 
 // withWindowstateDir redirects windowstate to a temp dir for the test.
@@ -155,11 +162,11 @@ func TestApply_DoneState(t *testing.T) {
 		t.Error("Done should be true after 'done' signal")
 	}
 
-	// "done" triggers a rename to plain agent name (no prefix).
+	// "done" on an unseen window renders the ✓ glyph.
 	if len(*renames) == 0 {
 		t.Fatal("expected a rename call")
 	}
-	wantRename := fmt.Sprintf("agentctl:@1=%s", "myagent")
+	wantRename := "@1=✓ myagent"
 	if (*renames)[0] != wantRename {
 		t.Errorf("rename = %q, want %q", (*renames)[0], wantRename)
 	}
@@ -185,9 +192,8 @@ func TestApply_WorkingState(t *testing.T) {
 	if ws.Done {
 		t.Error("Done should be false after 'working' signal")
 	}
-	// "working" state does not trigger an immediate rename.
-	if len(*renames) != 0 {
-		t.Errorf("unexpected rename call for 'working' state: %v", *renames)
+	if len(*renames) != 1 || (*renames)[0] != "@2=● myagent" {
+		t.Errorf("renames = %v, want [@2=● myagent]", *renames)
 	}
 }
 
@@ -214,7 +220,7 @@ func TestApply_BlockedState(t *testing.T) {
 	if len(*renames) == 0 {
 		t.Fatal("expected a rename call for 'blocked'")
 	}
-	wantRename := "agentctl:@3=⏸ myagent"
+	wantRename := "@3=⏸ myagent"
 	if (*renames)[0] != wantRename {
 		t.Errorf("rename = %q, want %q", (*renames)[0], wantRename)
 	}
@@ -244,7 +250,7 @@ func TestApply_IdleState(t *testing.T) {
 	if len(*renames) == 0 {
 		t.Fatal("expected a rename call for 'idle'")
 	}
-	wantRename := "agentctl:@4=myagent"
+	wantRename := "@4=myagent"
 	if (*renames)[0] != wantRename {
 		t.Errorf("rename = %q, want %q", (*renames)[0], wantRename)
 	}
@@ -265,7 +271,7 @@ func TestApply_AgentNameFromEnv(t *testing.T) {
 	if len(*renames) == 0 {
 		t.Fatal("expected rename call")
 	}
-	wantRename := "agentctl:@5=envagent"
+	wantRename := "@5=✓ envagent"
 	if (*renames)[0] != wantRename {
 		t.Errorf("rename = %q, want %q", (*renames)[0], wantRename)
 	}
@@ -289,7 +295,7 @@ func TestApply_AgentNameFromWindow(t *testing.T) {
 		t.Fatal("expected rename call")
 	}
 	// StripAgentPrefix should strip the "● " spinner prefix.
-	wantRename := "agentctl:@6=myagent"
+	wantRename := "@6=myagent"
 	if (*renames)[0] != wantRename {
 		t.Errorf("rename = %q, want %q", (*renames)[0], wantRename)
 	}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/blsmth/agentctl/internal/notify"
+	"github.com/blsmth/agentctl/internal/winname"
 )
 
 // TestMain keeps tests that reach beginApproval (via the popup gates) from
@@ -14,5 +15,11 @@ func TestMain(m *testing.M) {
 	approvalWindowID = func() string { return "" }
 	approvalSessionName = func() string { return "agentctl-test" }
 	approvalRuntimeDir = func() string { return "" }
+	// Never rename (or query) real tmux windows from a unit test.
+	winname.SetSeamsForTest(
+		func(string, string) error { return nil },
+		func(string) string { return "" },
+		func() string { return "" },
+	)
 	os.Exit(m.Run())
 }

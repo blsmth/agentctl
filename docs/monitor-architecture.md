@@ -14,7 +14,7 @@ Monitors that predate this mechanism never wrote `monitor.build`. The hook watch
 
 Known consequences of a re-exec, since in-memory state resets:
 
-- The done-unseen check-mark glyph can reappear on windows that were already viewed.
+- The done-unseen ✓ is unaffected: `Done` and `Seen` are persisted in windowstate and window names are written by the state writers, not the monitor.
 - Prometheus counters restart from zero.
 - Dispatch completion is not affected by a re-exec: it is hook-driven (see below), not detected by the monitor.
 
@@ -51,8 +51,7 @@ Each tmux window gets an `instanceState` struct tracking:
 - **Log linkage**: JSONL log path (from windowstate `LogPath`, or a filesystem-scan fallback), a persistent `logstream.Stream`, and file-size tracking
 - **State machine**: previous state, `hasPrev` flag for first-tick suppression, `done` flag
 - **Metrics cache**: ctx%, input/output tokens, cumulative counts
-- **Visual dedup**: last rendered window name and displays
-- **Attention tracking**: `seen` flag (clears when the user focuses the window)
+- **Attention tracking**: `Seen` is a persisted windowstate field (set by `set-active-window`, cleared by the state writers)
 
 ## Log Discovery
 
@@ -78,9 +77,9 @@ To add new reactive behavior, add a handler call here rather than registering a 
 
 The Stop hook (`hooks.CheckDone`) and `agentctl signal done` set `Done=true` in a `windowstate.Transact` that also stamps `CompleteFiredAt` when the window is autonomous (dispatch/adhoc) and no completion has been claimed since the last re-arm. The winner spawns a fully detached hidden `agentctl dispatch-complete <windowID>` (own session, stdio on /dev/null, never waited on), so the hook never blocks on gh or git. That process rebuilds the `Transition` from windowstate and runs `dispatch.RunComplete` synchronously: PR lookup, label swap, deferral while an approval popup is pending (up to ~2 minutes), `gh pr view --web`, and `dispatch_complete` hooks. Each completion is its own process, so PR opening is deduped with O_EXCL marker files at `<runtimeDir>/opened-prs/<repo-slug>-<pr>` (markers older than 7 days are removed when one is written). `UserPromptSubmit` and non-done `signal` states clear `Done` and `CompleteFiredAt`, so a working-then-done cycle completes again. If the spawn fails, the stamp is cleared so a later Stop retries. The monitor takes no part in this.
 
-## Visual Output — `applyVisuals()`
+## Window Names — written by the state writers
 
-A single function owns tmux visual updates for each window, called on every tick and spinner tick. The window name carries the state glyph — `● name` (working, animated spinner), `⏸ name` (blocked), `✓ name` (done and unseen), or the bare name (idle). Context % and token metrics are written back to windowstate for the chrome bar to render. All changes are **deduped** against last-known values to avoid unnecessary tmux IPC.
+The monitor does not rename tmux windows. Every hook or command that changes `State` or `Done` (`internal/hooks`, `agentctl signal`) goes through `internal/winname`, which runs inside the same `windowstate` transaction: it clears `Seen` when State changes or Done goes true (or sets it at once if the window is the active one), then `SyncName` renames the window when `winname.Compute` differs from the persisted `RenderedName`. The name carries the glyph — `● name` (working), `⏸ name` (blocked), `✓ name` (done and unseen), or the bare name (idle). `agentctl set-active-window` (tmux after-select-window) sets `Seen=true` and syncs, clearing the ✓; `Done` itself is never cleared by focus. Because `Seen`, `Done` and `RenderedName` are persisted, the ✓ survives a monitor restart or hot reload. A rename failure is logged at debug and leaves `RenderedName` unchanged, so the next writer retries. The monitor's remaining per-tick work is resolving ctx% in memory (a fresh statusline push wins, otherwise its derived value; nothing is written back to windowstate) and persisting `state.json`.
 
 ## State Persistence
 
@@ -128,7 +127,7 @@ Additional hooks handle compaction, elicitation, worktree create/remove, subagen
 
 1. **State detection**: Claude Code → hook (`pre-tool`/`notify`/…) → `windowstate.Update()` writes `.agentctl/windows/<id>.json` → monitor `resolveState()` reads it on tick.
 2. **Transitions**: state change → `detectAndFireTransitions()` builds `Transition` → `RecordTransition` + `improve.HandleTransition`. Dispatch completion is not part of this loop.
-3. **Visual output**: monitor `applyVisuals()` → `tmux rename-window` (state glyph) + windowstate metrics for the chrome bar.
+3. **Window names**: each state writer → `winname.Update` → `tmux rename-window` (state glyph) inside the windowstate transaction; the monitor only resolves ctx% in memory for `state.json`.
 4. **Log discovery**: `hook-session-start` → windowstate `LogPath` → monitor links `instanceState.logPath`; fallback `sessions.FindLatestLog()` scans the filesystem.
 5. **State persistence**: monitor tick → `state.Save()` → `state.json` → panes/popups read via `LoadSnapshot()`, chrome bar re-renders on fsnotify.
 

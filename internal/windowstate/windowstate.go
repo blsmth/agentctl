@@ -92,16 +92,16 @@ type WindowState struct {
 	// Raw context window usage percentage (0–100). Read by chrome_bar.go.
 	// Replaces the rendered tmux-format CtxDisplay string.
 	//
-	// This field has two writers that do not step on each other: `agentctl statusline` (internal/statusline) writes it
+	// Written by `agentctl statusline` (internal/statusline): it writes it
 	// from the pushed context_window.used_percentage whenever a value is
-	// present, and the monitor writes its own tokens.CtxPct-derived fallback
-	// ONLY when the existing value did not come from statusline, or the
-	// statusline value has gone stale (see CtxPctSource, CtxPushedAt,
-	// CtxFresh). The monitor must not overwrite a fresh pushed value.
+	// present. The monitor no longer writes it: it uses a fresh pushed value
+	// for state.json (see CtxFresh) and otherwise keeps its own
+	// tokens.CtxPct-derived value in memory only.
 	CtxPct int `json:"ctx_pct,omitempty"`
 
 	// CtxPctSource records who most recently won the right to write CtxPct:
-	// "statusline" or "derived". See CtxFresh.
+	// "statusline" (the only value written now; legacy records may say
+	// "derived"). See CtxFresh.
 	CtxPctSource string `json:"ctx_pct_source,omitempty"`
 
 	// CtxPushedAt is when `agentctl statusline` last successfully wrote
@@ -174,9 +174,14 @@ type WindowState struct {
 	LastText  string `json:"last_text,omitempty"`
 	TurnCount int    `json:"turn_count,omitempty"`
 
-	// Seen records whether the user has looked at the window since it went
-	// idle. Reserved: a later step (window glyph/seen tracking) writes it.
+	// Seen records whether the user has looked at the window since it last
+	// went done or changed state. Cleared by the state writers, set by
+	// set-active-window (see internal/winname). With Done it decides the ✓.
 	Seen bool `json:"seen,omitempty"`
+
+	// RenderedName is the tmux window name last written by internal/winname.
+	// It lets the writers skip the rename when nothing changed.
+	RenderedName string `json:"rendered_name,omitempty"`
 
 	// CompleteFiredAt is when the done-edge completion handlers last fired.
 	// Reserved: a later step (done-edge completion) writes it.
@@ -248,10 +253,9 @@ func (ws WindowState) marshal() ([]byte, error) {
 const CtxPctFreshness = 5 * time.Minute
 
 // CtxFresh reports whether ws's CtxPct was written by `agentctl statusline`
-// and is still within CtxPctFreshness of now. Callers (the monitor's
-// applyVisuals) use this to decide whether to leave CtxPct (and the paired
-// ContextWindowSize/ContextTokens) alone or overwrite them with a derived
-// value.
+// and is still within CtxPctFreshness of now. The monitor
+// uses this to decide whether to take CtxPct (and the paired
+// ContextWindowSize/ContextTokens) from windowstate or its derived value.
 func (ws WindowState) CtxFresh(now time.Time) bool {
 	if ws.CtxPctSource != "statusline" || ws.CtxPushedAt.IsZero() {
 		return false
@@ -510,6 +514,15 @@ func Transact(windowID string, fn func(*WindowState)) (old, updated WindowState,
 func Update(windowID string, fn func(*WindowState)) error {
 	_, _, err := Transact(windowID, fn)
 	return err
+}
+
+// Exists reports whether windowID has a state file.
+func Exists(windowID string) bool {
+	if windowsDir == "" || checkDir() != nil {
+		return false
+	}
+	_, err := os.Lstat(filePath(windowID))
+	return err == nil
 }
 
 // Revive deletes windowID's tombstone. Call it where a NEW agent starts in a

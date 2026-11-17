@@ -240,7 +240,7 @@ func TestRawWriteRaceCanLoseFields(t *testing.T) {
 	proceed := make(chan struct{})
 	done := make(chan struct{})
 
-	// Simulates the monitor's per-tick windowstate.Update() (applyVisuals),
+	// Simulates the monitor's per-tick windowstate.Update() (formerly applyVisuals),
 	// which runs for every known window every tick, including a window that
 	// just appeared this same tick. It acquires the lock, reads the
 	// (currently nonexistent) file, and then blocks mid-critical-section --

@@ -1334,7 +1334,7 @@ func rollupGlyph(r herd.RollupStatus) (string, lipgloss.Style) {
 }
 
 // rowGlyph returns the glyph and style for a single agent row, matching the
-// window-rename convention in monitor.go's applyVisuals: ● working,
+// window-rename convention in internal/winname: ● working,
 // ⏸ blocked, ✓ done (unseen), bare/○ otherwise.
 func rowGlyph(r herd.Row) (string, lipgloss.Style) {
 	switch {

@@ -130,43 +130,60 @@ func TestHeartbeatOrReregister_NoopWhenHeartbeatSucceeds(t *testing.T) {
 	}
 }
 
-// ── applyVisuals dedup tracking ──────────────────────────────────────────────
+// ── monitor does not own window names ───────────────────────────────────────
 
-// TestApplyVisuals_Dedup verifies that applyVisuals updates inst.lastName on the
-// first call (name changed) and leaves it identical on a second call with the
-// same state. rename-window will fail silently (no real tmux session) but the
-// dedup field update is still exercised.
-func TestApplyVisuals_Dedup(t *testing.T) {
+// TestResolveCtxPct_WritesNothing verifies the monitor no longer touches
+// windowstate (and so cannot rename windows or write Seen): resolving ctx%
+// for a window with no record must not create one.
+func TestResolveCtxPct_WritesNothing(t *testing.T) {
+	windowstate.SetDirForTest(t.TempDir())
+	t.Cleanup(func() { windowstate.SetDirForTest("") })
+
 	m := monitorModel{}
+	inst := &instanceState{instance: "go-engineer", base: "go-engineer", lastCtxPct: 25}
+	m.resolveCtxPct(inst, windowstate.WindowState{})
 
-	inst := &instanceState{
-		instance: "go-engineer",
-		base:     "go-engineer",
-		seen:     true,
+	if windowstate.Exists("@999") {
+		t.Error("resolveCtxPct created a windowstate record")
 	}
-
-	// First call — lastName is "", wantName is "go-engineer", so lastName should be updated.
-	m.applyVisuals("@999", inst, state.StatusIdle, "@0")
-	if inst.lastName != "go-engineer" {
-		t.Errorf("first applyVisuals: expected lastName=%q, got %q", "go-engineer", inst.lastName)
-	}
-
-	// Second call with the same state — lastName already matches; no rename needed.
-	m.applyVisuals("@999", inst, state.StatusIdle, "@0")
-	if inst.lastName != "go-engineer" {
-		t.Errorf("second applyVisuals: expected lastName=%q, got %q", "go-engineer", inst.lastName)
+	if inst.ctxPctSource != "derived" || inst.lastCtxPct != 25 {
+		t.Errorf("source=%q lastCtxPct=%d, want derived/25", inst.ctxPctSource, inst.lastCtxPct)
 	}
 }
 
-// ── applyVisuals ctx% authority resolution ────────────────────────
+// TestDetectTransitions_DoneUnseenFromWindowstate verifies inst.done (the
+// state.json Done) is windowstate Done && !Seen.
+func TestDetectTransitions_DoneUnseenFromWindowstate(t *testing.T) {
+	tests := []struct {
+		name string
+		ws   windowstate.WindowState
+		want bool
+	}{
+		{"done unseen", windowstate.WindowState{State: "idle", Done: true}, true},
+		{"done seen", windowstate.WindowState{State: "idle", Done: true, Seen: true}, false},
+		{"not done", windowstate.WindowState{State: "idle"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := monitorModel{}
+			inst := &instanceState{instance: "a", base: "a"}
+			m.detectAndFireTransitions(inst, "@1", state.StatusIdle, tt.ws, config.Load(), "@0")
+			if inst.done != tt.want {
+				t.Errorf("inst.done = %v, want %v", inst.done, tt.want)
+			}
+		})
+	}
+}
 
-// TestApplyVisuals_CtxPct_PreservesFreshStatuslinePush verifies that a fresh
+// ── ctx% authority resolution ────────────────────────
+
+// TestResolveCtxPct_PreservesFreshStatuslinePush verifies that a fresh
 // statusline-pushed CtxPct is left completely untouched by the monitor: it
 // is neither overwritten in windowstate, nor is inst.lastCtxPct pulled back
 // down to the (lower/different) derived value. This is the core regression
 // test for the "context percentage clobbered every 500ms tick" bug
 // (monitor.go:364, before the pushed value took precedence).
-func TestApplyVisuals_CtxPct_PreservesFreshStatuslinePush(t *testing.T) {
+func TestResolveCtxPct_PreservesFreshStatuslinePush(t *testing.T) {
 	wsDir := t.TempDir()
 	windowstate.SetDirForTest(wsDir)
 	t.Cleanup(func() { windowstate.SetDirForTest("") })
@@ -186,11 +203,10 @@ func TestApplyVisuals_CtxPct_PreservesFreshStatuslinePush(t *testing.T) {
 	inst := &instanceState{
 		instance:   "go-engineer",
 		base:       "go-engineer",
-		seen:       true,
 		lastCtxPct: 25, // the monitor's own derived value -- deliberately different
 	}
 
-	m.applyVisuals(windowID, inst, state.StatusWorking, "@0")
+	m.resolveCtxPct(inst, mustRead(t, windowID))
 
 	if inst.lastCtxPct != 22 {
 		t.Errorf("inst.lastCtxPct = %d, want 22 (pushed value preserved, not clobbered by derived 25)", inst.lastCtxPct)
@@ -214,12 +230,12 @@ func TestApplyVisuals_CtxPct_PreservesFreshStatuslinePush(t *testing.T) {
 	}
 }
 
-// TestApplyVisuals_CtxPct_OverwritesStalePush verifies the other direction:
+// TestResolveCtxPct_StalePushFallsBackInMemory verifies the other direction:
 // once a statusline push has gone stale (no push within
 // windowstate.CtxPctFreshness -- e.g. the window is parked and no longer
 // producing assistant messages), the monitor reclaims CtxPct with its own
-// derived value, and inst.lastCtxPct adopts that same value.
-func TestApplyVisuals_CtxPct_OverwritesStalePush(t *testing.T) {
+// derived value in memory only; windowstate is left alone.
+func TestResolveCtxPct_StalePushFallsBackInMemory(t *testing.T) {
 	wsDir := t.TempDir()
 	windowstate.SetDirForTest(wsDir)
 	t.Cleanup(func() { windowstate.SetDirForTest("") })
@@ -239,11 +255,10 @@ func TestApplyVisuals_CtxPct_OverwritesStalePush(t *testing.T) {
 	inst := &instanceState{
 		instance:   "go-engineer",
 		base:       "go-engineer",
-		seen:       true,
 		lastCtxPct: 25,
 	}
 
-	m.applyVisuals(windowID, inst, state.StatusWorking, "@0")
+	m.resolveCtxPct(inst, mustRead(t, windowID))
 
 	if inst.lastCtxPct != 25 {
 		t.Errorf("inst.lastCtxPct = %d, want 25 (derived value reclaims a stale push)", inst.lastCtxPct)
@@ -259,28 +274,18 @@ func TestApplyVisuals_CtxPct_OverwritesStalePush(t *testing.T) {
 	if err != nil {
 		t.Fatalf("windowstate.Read: %v", err)
 	}
-	if ws.CtxPct != 25 {
-		t.Errorf("windowstate CtxPct = %d, want 25 (reclaimed)", ws.CtxPct)
-	}
-	if ws.CtxPctSource != "derived" {
-		t.Errorf("windowstate CtxPctSource = %q, want derived", ws.CtxPctSource)
+	if ws.CtxPct != 22 || ws.CtxPctSource != "statusline" {
+		t.Errorf("windowstate CtxPct/Source = %d/%q, want 22/statusline (the monitor writes nothing)", ws.CtxPct, ws.CtxPctSource)
 	}
 }
 
-// ── instanceState seen/done tracking ─────────────────────────────────────────
-
-// TestInstanceState_SeenDone verifies the seen and done fields are accessible
-// and settable on instanceState (compile-time coverage of tracking state).
-func TestInstanceState_SeenDone(t *testing.T) {
-	inst := &instanceState{}
-	inst.seen = true
-	if !inst.seen {
-		t.Error("seen should be true after setting")
+func mustRead(t *testing.T, windowID string) windowstate.WindowState {
+	t.Helper()
+	ws, err := windowstate.Read(windowID)
+	if err != nil {
+		t.Fatalf("windowstate.Read: %v", err)
 	}
-	inst.done = true
-	if !inst.done {
-		t.Error("done should be true after setting")
-	}
+	return ws
 }
 
 // TestStateStringNeverWorkingWhenDone verifies the state-string override that
@@ -495,7 +500,6 @@ func TestProcessTickHandlesNilUsage(t *testing.T) {
 	inst := &instanceState{
 		instance: "go-engineer~1",
 		base:     "go-engineer",
-		seen:     true,
 		// stream and usage are intentionally nil — this is the crash scenario.
 	}
 
@@ -527,7 +531,6 @@ func TestProcessTickHandlesNilUsage_CtxPctIsZero(t *testing.T) {
 	inst := &instanceState{
 		instance: "go-engineer~1",
 		base:     "go-engineer",
-		seen:     true,
 	}
 
 	ctxPct := tokens.CtxPct(inst.lastModelName, inst.lastTurnInput)
