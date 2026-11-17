@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
+	"github.com/fsnotify/fsnotify"
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -464,6 +465,30 @@ func recvWatch(t *testing.T, ch chan tea.Msg, d time.Duration) (tea.Msg, bool) {
 	}
 }
 
+// startTestWatcher starts watchLoop with an explicit debounce. The fsnotify
+// watches are registered before it returns, so writes made afterwards are
+// never missed and tests need no startup sleep. The watcher closes on cleanup.
+func startTestWatcher(t *testing.T, runtimeDir string, debounce time.Duration) chan tea.Msg {
+	t.Helper()
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Skipf("fsnotify unavailable: %v", err)
+	}
+	t.Cleanup(func() { _ = w.Close() })
+	if err := watchDirs(w, runtimeDir); err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan tea.Msg, 1)
+	go watchLoop(w, runtimeDir, ch, debounce)
+	return ch
+}
+
+// watchWait is how long to wait for a message that should arrive after one
+// debounce window, with generous slack for slow runners.
+func watchWait(debounce time.Duration) time.Duration {
+	return 5*debounce + 2*time.Second
+}
+
 // TestChromeBarWatcherActiveWindow: the persistent watcher delivers an
 // activeWindowChangedMsg when the active-window file is written.
 func TestChromeBarWatcherActiveWindow(t *testing.T) {
@@ -471,13 +496,13 @@ func TestChromeBarWatcherActiveWindow(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(f.dir, "windows"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	ch := startWatcher(f.dir)
-	time.Sleep(100 * time.Millisecond)
+	const debounce = chromeBarDebounce
+	ch := startTestWatcher(t, f.dir, debounce)
 	f.setActive(t, "@3")
 
-	msg, ok := recvWatch(t, ch, 2*time.Second)
+	msg, ok := recvWatch(t, ch, watchWait(debounce))
 	if !ok {
-		t.Fatal("no message within 2s")
+		t.Fatal("no message for active-window write")
 	}
 	if _, isActive := msg.(activeWindowChangedMsg); !isActive {
 		t.Errorf("got %T, want activeWindowChangedMsg", msg)
@@ -490,14 +515,16 @@ func TestChromeBarWatcherActiveWindow(t *testing.T) {
 func TestChromeBarWatcherDebouncesBurst(t *testing.T) {
 	f := newChromeFixture(t, nil)
 	f.writeRecord(t, "@1", `{"state":"idle"}`)
-	ch := startWatcher(f.dir)
-	time.Sleep(150 * time.Millisecond)
+	// The debounce dwarfs any realistic burst duration, so even a starved CI
+	// runner finishes all writes inside one window.
+	const debounce = time.Second
+	ch := startTestWatcher(t, f.dir, debounce)
 
 	const n = 25
 	for i := 0; i < n; i++ {
 		f.writeRecord(t, "@1", fmt.Sprintf(`{"state":"working","turn_count":%d}`, i))
 	}
-	msg, ok := recvWatch(t, ch, 2*time.Second)
+	msg, ok := recvWatch(t, ch, watchWait(debounce))
 	if !ok {
 		t.Fatal("no message after burst")
 	}
@@ -508,13 +535,13 @@ func TestChromeBarWatcherDebouncesBurst(t *testing.T) {
 	if wc.relist {
 		t.Error("writes to an existing record must not request a relist")
 	}
-	if extra, got := recvWatch(t, ch, 4*chromeBarDebounce); got {
+	if extra, got := recvWatch(t, ch, 2*debounce); got {
 		t.Errorf("burst of %d writes produced a second message: %#v", n, extra)
 	}
 
 	// A new record file is a window being created: relist.
 	f.writeRecord(t, "@2", `{"state":"idle"}`)
-	msg, ok = recvWatch(t, ch, 2*time.Second)
+	msg, ok = recvWatch(t, ch, watchWait(debounce))
 	if !ok {
 		t.Fatal("no message after new record")
 	}
@@ -926,18 +953,17 @@ func TestChromeBarRebuildShellTab(t *testing.T) {
 func TestChromeBarPersistentWatcherTwoEvents(t *testing.T) {
 	f := newChromeFixture(t, nil)
 	f.writeRecord(t, "@1", `{"state":"idle"}`)
-	ch := startWatcher(f.dir)
-	time.Sleep(150 * time.Millisecond)
+	const debounce = chromeBarDebounce
+	ch := startTestWatcher(t, f.dir, debounce)
 
 	for i, body := range []string{`{"state":"working"}`, `{"state":"idle"}`} {
 		f.writeRecord(t, "@1", body)
-		msg, ok := recvWatch(t, ch, 2*time.Second)
+		msg, ok := recvWatch(t, ch, watchWait(debounce))
 		if !ok {
 			t.Fatalf("write %d: no message", i+1)
 		}
 		if _, isWC := msg.(windowsChangedMsg); !isWC {
 			t.Errorf("write %d: got %T, want windowsChangedMsg", i+1, msg)
 		}
-		time.Sleep(2 * chromeBarDebounce)
 	}
 }
