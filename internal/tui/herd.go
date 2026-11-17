@@ -351,6 +351,12 @@ type HerdModel struct {
 	hoverY     int
 	hasPointer bool
 
+	// card is the visible hover card (see herd_card.go); hoverGen invalidates
+	// pending dwell ticks; cardCache holds parsed log stats by log path.
+	card      *herdCard
+	hoverGen  int
+	cardCache map[string]cardCacheEntry
+
 	quitting bool
 
 	// exeChanged reports whether the executable on disk was replaced since
@@ -573,12 +579,25 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, show
 
 	case tea.MouseClickMsg:
+		m.hideCard()
 		return m.handleClick(msg)
+
+	case tea.MouseWheelMsg:
+		m.hideCard()
+		return m, nil
+
+	case herdCardTickMsg:
+		return m.handleCardTick(msg)
+
+	case herdCardStatsMsg:
+		m.storeCardStats(msg)
+		return m, nil
 
 	case tea.MouseMotionMsg:
 		return m.handleMotion(msg)
 
 	case tea.KeyPressMsg:
+		m.hideCard()
 		return m.handleKey(msg)
 	}
 	return m, nil
@@ -1180,7 +1199,11 @@ func (m HerdModel) View() tea.View {
 }
 
 func (m HerdModel) render() string {
-	return m.renderList()
+	out := m.renderList()
+	if m.card != nil {
+		out = m.withCard(out)
+	}
+	return out
 }
 
 // renderHeader renders the title + subtitle chrome.
