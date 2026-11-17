@@ -105,6 +105,17 @@ func sessionIDArgs(name string) []string {
 // StartSession creates the agentctl tmux session with a shell as window 0,
 // configures the status bar and keybindings, then attaches.
 func StartSession(defaultAgent string) error {
+	if err := StartSessionDetached(defaultAgent); err != nil {
+		return err
+	}
+	logging.Log("attaching session")
+	return AttachSession()
+}
+
+// StartSessionDetached is StartSession without the attach: it creates and
+// configures the session and returns. `agentctl cron tick` uses it to
+// dispatch into a project whose session is not running.
+func StartSessionDetached(defaultAgent string) error {
 	done := logging.Timing("tmux new-session")
 	args := []string{
 		"new-session",
@@ -155,9 +166,7 @@ func StartSession(defaultAgent string) error {
 
 	// Switch back to shell window so the user lands there on attach.
 	_ = exec.Command("tmux", "select-window", "-t", SessionName+":shell").Run()
-
-	logging.Log("attaching session")
-	return AttachSession()
+	return nil
 }
 
 // instanceName extracts the instance suffix from SessionName (e.g. "foo" from
@@ -397,14 +406,50 @@ var unsetNameRe = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 // account or API key.
 var accountCredentialEnv = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
 
+// AddUnsetEnv appends names to env[EnvUnset], keeping the names already
+// listed there, so independent launch steps (account, backend) can each ask
+// for variables to be removed without clobbering one another.
+func AddUnsetEnv(env map[string]string, names ...string) {
+	have := strings.Fields(env[EnvUnset])
+	for _, n := range names {
+		if !slices.Contains(have, n) {
+			have = append(have, n)
+		}
+	}
+	if len(have) > 0 {
+		env[EnvUnset] = strings.Join(have, " ")
+	}
+}
+
+// RemoveUnsetEnv drops names from env[EnvUnset] (deleting the key when the
+// list becomes empty).
+func RemoveUnsetEnv(env map[string]string, names ...string) {
+	have := strings.Fields(env[EnvUnset])
+	if len(have) == 0 {
+		return
+	}
+	kept := have[:0]
+	for _, n := range have {
+		if !slices.Contains(names, n) {
+			kept = append(kept, n)
+		}
+	}
+	if len(kept) == 0 {
+		delete(env, EnvUnset)
+		return
+	}
+	env[EnvUnset] = strings.Join(kept, " ")
+}
+
 // launchUnsetEnv returns the space-separated variables the launch script
 // unsets: extraEnv[EnvUnset], plus, when the launch selects an account
-// (CLAUDE_CONFIG_DIR in extraEnv), every accountCredentialEnv name the
-// launch does not set itself (a backend may set ANTHROPIC_AUTH_TOKEN, and
-// tmux -e values must survive).
+// (CLAUDE_CONFIG_DIR set in extraEnv, or listed in EnvUnset because the
+// account lives in Claude Code's default dir), every accountCredentialEnv
+// name the launch does not set itself (a backend may set
+// ANTHROPIC_AUTH_TOKEN, and tmux -e values must survive).
 func launchUnsetEnv(extraEnv map[string]string) string {
 	names := strings.Fields(extraEnv[EnvUnset])
-	if extraEnv[claudehome.EnvConfigDir] == "" {
+	if extraEnv[claudehome.EnvConfigDir] == "" && !slices.Contains(names, claudehome.EnvConfigDir) {
 		return strings.Join(names, " ")
 	}
 	for _, n := range accountCredentialEnv {

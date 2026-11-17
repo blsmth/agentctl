@@ -8,9 +8,9 @@ import {
   buildReplyRequest,
   effectiveState,
   formatSince,
-  normalizePane,
   paneModeOrDefault,
   safeHttpsUrl,
+  splitPane,
   terminalHash,
   windowApiPath,
 } from "./logic.js";
@@ -18,6 +18,7 @@ import { clear, confirmSheet, fitTermFont, h, toast } from "./ui.js";
 
 const PANE_REFRESH_MS = 2000;
 const MODE_KEY = "agentctl.paneMode";
+const STATUS_KEY = "agentctl.statusBarOpen";
 const EXACT_MIN_FONT = 4;
 const EXACT_MAX_FONT = 14;
 
@@ -34,6 +35,22 @@ function saveMode(mode) {
     localStorage.setItem(MODE_KEY, mode);
   } catch {
     // storage unavailable (private mode): the choice just is not remembered
+  }
+}
+
+function loadStatusOpen() {
+  try {
+    return localStorage.getItem(STATUS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveStatusOpen(open) {
+  try {
+    localStorage.setItem(STATUS_KEY, open ? "1" : "0");
+  } catch {
+    // storage unavailable: the choice just is not remembered
   }
 }
 
@@ -58,12 +75,41 @@ function styleSpan(run) {
 /** reflowView renders the pane as wrapping HTML. */
 function reflowView() {
   const el = h("div", { class: "pane-reflow" });
+  let statusOpen = loadStatusOpen();
+  let statusLines = null;
+  // statusBar is Claude Code's chrome below the prompt box: one muted row,
+  // tap to show the raw lines.
+  function statusBar() {
+    const wrap = document.createElement("div");
+    wrap.className = "pane-status";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "pane-status-toggle";
+    toggle.setAttribute("aria-expanded", String(statusOpen));
+    toggle.textContent = statusOpen ? "status bar ▾" : "status bar ▸";
+    toggle.addEventListener("click", () => {
+      statusOpen = !statusOpen;
+      saveStatusOpen(statusOpen);
+      const next = statusBar();
+      wrap.replaceWith(next);
+    });
+    wrap.append(toggle);
+    if (statusOpen) {
+      const pre = document.createElement("pre");
+      pre.className = "pane-status-raw";
+      pre.textContent = statusLines.join("\n");
+      wrap.append(pre);
+    }
+    return wrap;
+  }
   return {
     el,
     update(pane) {
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
       const frag = document.createDocumentFragment();
-      for (const b of normalizePane(pane.text)) {
+      const split = splitPane(pane.text);
+      statusLines = split.status ? split.status.lines : null;
+      for (const b of split.body) {
         if (b.rule !== undefined) {
           const rule = document.createElement("div");
           rule.className = "pane-rule";
@@ -81,6 +127,7 @@ function reflowView() {
           frag.append(line);
         }
       }
+      if (statusLines) frag.append(statusBar());
       el.replaceChildren(frag);
       if (atBottom) el.scrollTop = el.scrollHeight;
     },

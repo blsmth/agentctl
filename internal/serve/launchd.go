@@ -1,16 +1,14 @@
 package serve
 
 import (
-	"bytes"
-	"encoding/xml"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/launchd"
 	"github.com/blsmth/agentctl/internal/selfpath"
 )
 
@@ -23,7 +21,7 @@ const LaunchdLogFile = "launchd.log"
 
 // PlistPath returns ~/Library/LaunchAgents/com.blsmth.agentctl.serve.plist.
 func PlistPath(home string) string {
-	return filepath.Join(home, "Library", "LaunchAgents", LaunchdLabel+".plist")
+	return launchd.PlistPath(home, LaunchdLabel)
 }
 
 // ServiceSpec is what the service definition runs.
@@ -41,33 +39,23 @@ type ServiceSpec struct {
 // Plist renders the LaunchAgent: run `agentctl serve` at load and keep it
 // alive.
 func Plist(spec ServiceSpec) []byte {
-	var b bytes.Buffer
-	str := func(s string) string {
-		var e bytes.Buffer
-		_ = xml.EscapeText(&e, []byte(s))
-		return "<string>" + e.String() + "</string>"
+	var env []launchd.EnvVar
+	if spec.Path != "" {
+		env = append(env, launchd.EnvVar{Key: "PATH", Value: spec.Path})
 	}
-	b.WriteString(xml.Header)
-	b.WriteString(`<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">` + "\n")
-	b.WriteString("<plist version=\"1.0\">\n<dict>\n")
-	fmt.Fprintf(&b, "\t<key>Label</key>\n\t%s\n", str(LaunchdLabel))
-	fmt.Fprintf(&b, "\t<key>ProgramArguments</key>\n\t<array>\n\t\t%s\n\t\t%s\n\t</array>\n", str(spec.Exe), str("serve"))
-	b.WriteString("\t<key>RunAtLoad</key>\n\t<true/>\n")
-	b.WriteString("\t<key>KeepAlive</key>\n\t<true/>\n")
-	b.WriteString("\t<key>ProcessType</key>\n\t<string>Interactive</string>\n")
-	fmt.Fprintf(&b, "\t<key>WorkingDirectory</key>\n\t%s\n", str(spec.Dir))
-	logPath := filepath.Join(spec.Dir, LaunchdLogFile)
-	fmt.Fprintf(&b, "\t<key>StandardOutPath</key>\n\t%s\n", str(logPath))
-	fmt.Fprintf(&b, "\t<key>StandardErrorPath</key>\n\t%s\n", str(logPath))
 	// LANG matters: without a UTF-8 locale tmux replaces tabs and non-ASCII
 	// bytes in -F output with "_", which breaks window listing.
-	b.WriteString("\t<key>EnvironmentVariables</key>\n\t<dict>\n")
-	if spec.Path != "" {
-		fmt.Fprintf(&b, "\t\t<key>PATH</key>\n\t\t%s\n", str(spec.Path))
-	}
-	fmt.Fprintf(&b, "\t\t<key>LANG</key>\n\t\t%s\n\t</dict>\n", str("en_US.UTF-8"))
-	b.WriteString("</dict>\n</plist>\n")
-	return b.Bytes()
+	env = append(env, launchd.EnvVar{Key: "LANG", Value: launchd.UTF8Locale})
+	return launchd.Job{
+		Label:            LaunchdLabel,
+		ProgramArguments: []string{spec.Exe, "serve"},
+		RunAtLoad:        true,
+		KeepAlive:        true,
+		ProcessType:      "Interactive",
+		WorkingDirectory: spec.Dir,
+		LogPath:          filepath.Join(spec.Dir, LaunchdLogFile),
+		Env:              env,
+	}.Plist()
 }
 
 // SystemdUnit renders a systemd user unit equivalent of the LaunchAgent.
@@ -109,7 +97,7 @@ func CurrentServiceSpec(dir string) (ServiceSpec, error) {
 type runner func(name string, args ...string) ([]byte, error)
 
 func execRunner(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).CombinedOutput()
+	return launchd.ExecRunner(name, args...)
 }
 
 // Launchd installs and removes the LaunchAgent.
@@ -129,39 +117,18 @@ func NewLaunchd() (*Launchd, error) {
 	return &Launchd{home: home, uid: os.Getuid(), run: execRunner, sleep: time.Sleep}, nil
 }
 
-func (l *Launchd) domain() string { return "gui/" + strconv.Itoa(l.uid) }
+// agent is the shared launchd manager over l's seams.
+func (l *Launchd) agent() launchd.Agent {
+	return launchd.Agent{Home: l.home, UID: l.uid, Run: launchd.Runner(l.run), Sleep: l.sleep}
+}
 
 // Install writes the plist and (re)bootstraps it, so a second install picks
 // up a changed binary path. It returns the plist path.
 func (l *Launchd) Install(spec ServiceSpec) (string, error) {
-	path := PlistPath(l.home)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
-	}
-	if err := os.WriteFile(path, Plist(spec), 0o644); err != nil {
-		return "", fmt.Errorf("writing %s: %w", path, err)
-	}
-	// bootout fails when the job is not loaded; that is the normal case.
-	_, _ = l.run("launchctl", "bootout", l.domain()+"/"+LaunchdLabel)
-	// bootout returns before the old job is fully gone, and bootstrapping
-	// over it fails with an I/O error, so retry briefly.
-	var out []byte
-	var err error
-	for attempt := 0; attempt < 5; attempt++ {
-		if out, err = l.run("launchctl", "bootstrap", l.domain(), path); err == nil {
-			return path, nil
-		}
-		l.sleep(500 * time.Millisecond)
-	}
-	return path, fmt.Errorf("launchctl bootstrap %s %s: %v: %s", l.domain(), path, err, bytes.TrimSpace(out))
+	return l.agent().Install(LaunchdLabel, Plist(spec))
 }
 
 // Uninstall unloads the job and removes the plist. Missing pieces are fine.
 func (l *Launchd) Uninstall() (string, error) {
-	path := PlistPath(l.home)
-	_, _ = l.run("launchctl", "bootout", l.domain()+"/"+LaunchdLabel)
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return path, fmt.Errorf("removing %s: %w", path, err)
-	}
-	return path, nil
+	return l.agent().Uninstall(LaunchdLabel)
 }

@@ -99,6 +99,12 @@ type WindowState struct {
 	SpawnedBy        string `json:"spawned_by,omitempty"`         // tmux window ID of the dispatcher
 	SpawnedBySession string `json:"spawned_by_session,omitempty"` // dispatcher session UUID
 
+	// ScheduledBy names the `agentctl cron` job that launched this window,
+	// and ScheduledAt when it was launched. cron tick uses them for overlap,
+	// max_concurrent and timeout decisions. Empty for every other launch.
+	ScheduledBy string    `json:"scheduled_by,omitempty"`
+	ScheduledAt time.Time `json:"scheduled_at,omitzero"`
+
 	// Pane layout metadata (replaces @agentctl_chrome_bar, @agentctl_hud_pane,
 	// @agentctl_hud_collapsed tmux window options).
 	ChromeBarPane string `json:"chrome_bar_pane,omitempty"`

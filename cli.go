@@ -145,6 +145,7 @@ type CLI struct {
 	// Per-machine processes
 	Metrics MetricsCmd `cmd:"" help:"Prometheus metrics (serve: the per-machine metrics process)"`
 	Serve   ServeCmd   `cmd:"" help:"Run the HTTPS server for the mobile web app (install, pair, devices, status)"`
+	Cron    CronCmd    `cmd:"" help:"Scheduled agent runs (add, list, runs, run, pause, resume, rm, install)"`
 }
 
 // ---------------------------------------------------------------------------
@@ -1360,3 +1361,97 @@ type ServeDevicesRmCmd struct {
 }
 
 func (c *ServeDevicesRmCmd) Run() error { return cmd.RunServeDevicesRm(os.Stdout, c.Device) }
+
+// ---------------------------------------------------------------------------
+// Cron (scheduled agent runs)
+// ---------------------------------------------------------------------------
+
+// CronCmd groups `agentctl cron`. Jobs live in ~/.config/agentctl/schedules.json
+// (global only); launchd runs the hidden `cron tick` every minute.
+type CronCmd struct {
+	Add       CronAddCmd       `cmd:"" help:"Add a scheduled job"`
+	List      CronListCmd      `cmd:"" help:"List jobs with next fire, last result and throttles"`
+	Runs      CronRunsCmd      `cmd:"" help:"Show run history (fired, skipped, failed)"`
+	Run       CronRunCmd       `cmd:"" help:"Fire a job now (honors overlap and the usage gate unless --force)"`
+	Pause     CronPauseCmd     `cmd:"" help:"Pause a job"`
+	Resume    CronResumeCmd    `cmd:"" help:"Resume a paused job (missed fires are not caught up)"`
+	Rm        CronRmCmd        `cmd:"" help:"Remove a job"`
+	Install   CronInstallCmd   `cmd:"" help:"Install the launchd ticker (prints a crontab line on Linux)"`
+	Uninstall CronUninstallCmd `cmd:"" help:"Remove the launchd ticker"`
+	Tick      CronTickCmd      `cmd:"" hidden:"" help:"Run one scheduler pass (what launchd runs every minute)"`
+}
+
+type CronAddCmd struct {
+	Name       string `arg:"" help:"Job name (letters, digits, - and _)"`
+	Schedule   string `required:"" help:"5-field cron expression in local time, or @hourly/@daily/@weekly"`
+	Agent      string `required:"" short:"a" help:"Agent to run"`
+	Dir        string `required:"" help:"Project directory"`
+	Prompt     string `short:"p" help:"Prompt text"`
+	PromptKey  string `name:"prompt-key" short:"k" help:"Context store key holding the prompt (read at each fire)"`
+	PromptFile string `name:"prompt-file" type:"path" help:"File holding the prompt (copied into the job now)"`
+	NoWorktree bool   `name:"no-worktree" help:"Run in the project checkout instead of a worktree per fire"`
+	Model      string `short:"m" help:"Model override"`
+	Effort     string `help:"Effort override (low, medium, high, xhigh, max, auto)"`
+	Backend    string `help:"Named backend from config; 'none' forces Anthropic"`
+	Account    string `help:"Claude account to run under"`
+	Timeout    string `help:"Interrupt a run after this long (e.g. 45m); default none"`
+	Overlap    string `enum:"skip,allow" default:"skip" help:"When the previous run is still active: skip or allow"`
+	Catchup    string `enum:"latest,none" default:"latest" help:"After missed fires: run the latest within catchup_window, or none"`
+}
+
+func (c *CronAddCmd) Run() error {
+	return cmd.RunCronAdd(os.Stdout, cmd.CronAddOptions{
+		Name: c.Name, Schedule: c.Schedule, Agent: c.Agent, Dir: c.Dir,
+		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile, NoWorktree: c.NoWorktree,
+		Model: c.Model, Effort: c.Effort, Backend: c.Backend, Account: c.Account,
+		Timeout: c.Timeout, Overlap: c.Overlap, Catchup: c.Catchup,
+	})
+}
+
+type CronListCmd struct{}
+
+func (c *CronListCmd) Run() error { return cmd.RunCronList(os.Stdout) }
+
+type CronRunsCmd struct {
+	Name  string `arg:"" optional:"" help:"Only this job"`
+	Limit int    `short:"n" default:"20" help:"Show the last N entries (0 for all)"`
+}
+
+func (c *CronRunsCmd) Run() error { return cmd.RunCronRuns(os.Stdout, c.Name, c.Limit) }
+
+type CronRunCmd struct {
+	Name  string `arg:"" help:"Job to fire"`
+	Force bool   `help:"Ignore overlap, max_concurrent and the usage gate"`
+}
+
+func (c *CronRunCmd) Run() error { return cmd.RunCronRun(os.Stdout, c.Name, c.Force) }
+
+type CronPauseCmd struct {
+	Name string `arg:"" help:"Job to pause"`
+}
+
+func (c *CronPauseCmd) Run() error { return cmd.RunCronSetEnabled(os.Stdout, c.Name, false) }
+
+type CronResumeCmd struct {
+	Name string `arg:"" help:"Job to resume"`
+}
+
+func (c *CronResumeCmd) Run() error { return cmd.RunCronSetEnabled(os.Stdout, c.Name, true) }
+
+type CronRmCmd struct {
+	Name string `arg:"" help:"Job to remove"`
+}
+
+func (c *CronRmCmd) Run() error { return cmd.RunCronRemove(os.Stdout, c.Name) }
+
+type CronInstallCmd struct{}
+
+func (c *CronInstallCmd) Run() error { return cmd.RunCronInstall(os.Stdout) }
+
+type CronUninstallCmd struct{}
+
+func (c *CronUninstallCmd) Run() error { return cmd.RunCronUninstall(os.Stdout) }
+
+type CronTickCmd struct{}
+
+func (c *CronTickCmd) Run() error { return cmd.RunCronTick() }

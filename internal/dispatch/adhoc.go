@@ -38,6 +38,9 @@ type AdhocRequest struct {
 	// held under. LaunchAdhoc then does not look it up again.
 	RepoSlug      string
 	RepoSlugKnown bool
+	// Branch and ScheduledBy pass through to Request (see there).
+	Branch      string
+	ScheduledBy string
 }
 
 // Seams for tests.
@@ -79,6 +82,8 @@ func LaunchAdhoc(req AdhocRequest) (Result, error) {
 		Harness:      req.Harness,
 		Background:   true,
 		Detached:     req.Detached,
+		Branch:       req.Branch,
+		ScheduledBy:  req.ScheduledBy,
 	})
 }
 

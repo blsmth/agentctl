@@ -3,26 +3,86 @@ package dispatch
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/harness"
+	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 func TestApplyAccountEnv(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	def := filepath.Join(home, ".claude")
+	personal := filepath.Join(home, ".claude-personal")
+	tests := []struct {
+		name      string
+		start     map[string]string
+		res       claudehome.Resolution
+		wantDir   string // "" = not set
+		wantUnset string // tmux.EnvUnset value
+		wantAcct  string
+	}{
+		{"zero resolution is a no-op", map[string]string{}, claudehome.Resolution{}, "", "", ""},
+		{"other dir is set", map[string]string{}, claudehome.Resolution{Name: "personal", Dir: personal}, personal, "", "personal"},
+		{"default dir is unset", map[string]string{}, claudehome.Resolution{Name: "ll", Dir: def}, "", "CLAUDE_CONFIG_DIR", "ll"},
+		{"default dir with trailing slash is unset", map[string]string{}, claudehome.Resolution{Name: "ll", Dir: def + "/"}, "", "CLAUDE_CONFIG_DIR", "ll"},
+		{
+			"default dir drops a dir already in env",
+			map[string]string{"CLAUDE_CONFIG_DIR": personal},
+			claudehome.Resolution{Name: "ll", Dir: def}, "", "CLAUDE_CONFIG_DIR", "ll",
+		},
+		{
+			"unnamed default dir also unsets an inherited account name",
+			map[string]string{},
+			claudehome.Resolution{Dir: def}, "", "CLAUDE_CONFIG_DIR AGENTCTL_ACCOUNT", "",
+		},
+		{
+			"other dir clears a previous unset",
+			map[string]string{tmux.EnvUnset: "CLAUDE_CONFIG_DIR"},
+			claudehome.Resolution{Name: "personal", Dir: personal}, personal, "", "personal",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := tt.start
+			ApplyAccountEnv(env, tt.res)
+			if got := env["CLAUDE_CONFIG_DIR"]; got != tt.wantDir {
+				t.Errorf("CLAUDE_CONFIG_DIR = %q, want %q", got, tt.wantDir)
+			}
+			if got := env[tmux.EnvUnset]; got != tt.wantUnset {
+				t.Errorf("%s = %q, want %q", tmux.EnvUnset, got, tt.wantUnset)
+			}
+			if got := env["AGENTCTL_ACCOUNT"]; got != tt.wantAcct {
+				t.Errorf("AGENTCTL_ACCOUNT = %q, want %q", got, tt.wantAcct)
+			}
+		})
+	}
+}
+
+// A nous backend's unset list must not clobber the account's request to
+// unset CLAUDE_CONFIG_DIR, and the launch dir must still resolve to ~/.claude.
+func TestDefaultDirAccountWithNousBackend(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	def := filepath.Join(home, ".claude")
 	env := map[string]string{}
-	ApplyAccountEnv(env, claudehome.Resolution{})
-	if len(env) != 0 {
-		t.Errorf("zero resolution changed env: %v", env)
+	ApplyAccountEnv(env, claudehome.Resolution{Name: "ll", Dir: def})
+	ApplyBackendEnv(env, &Backend{Name: "nous", BackendConfig: config.BackendConfig{Kind: config.BackendKindNous, Model: "x/y"}})
+	names := strings.Fields(env[tmux.EnvUnset])
+	for _, want := range []string{"CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"} {
+		if !slices.Contains(names, want) {
+			t.Errorf("%s = %q, missing %s", tmux.EnvUnset, env[tmux.EnvUnset], want)
+		}
 	}
-	ApplyAccountEnv(env, claudehome.Resolution{Name: "personal", Dir: "/h/.claude-personal"})
-	if env["CLAUDE_CONFIG_DIR"] != "/h/.claude-personal" || env["AGENTCTL_ACCOUNT"] != "personal" {
-		t.Errorf("env = %v", env)
+	if got := accountDirFromEnv(env); got != def {
+		t.Errorf("accountDirFromEnv = %q, want %q", got, def)
 	}
-	if !filepath.IsAbs(env["CLAUDE_CONFIG_DIR"]) {
-		t.Error("CLAUDE_CONFIG_DIR must be absolute")
+	if got := accountDirFromEnv(map[string]string{}); got != "" {
+		t.Errorf("accountDirFromEnv(empty) = %q, want \"\"", got)
 	}
 }
 

@@ -43,6 +43,9 @@ func RunHealth() {
 		fmt.Printf("  Metrics: %s\n", line)
 	}
 
+	// Scheduled runs (per machine), only when cron is in use.
+	printCronHealth(time.Now())
+
 	// Agent states from tmux list-windows + windowstate (never state.json).
 	stateFilePath := filepath.Join(runtimeDir, "state.json")
 	agents, err := herd.LocalAgents()

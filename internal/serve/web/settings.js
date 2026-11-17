@@ -67,13 +67,27 @@ export function mountSettings(root, ctx) {
       );
     }
     if (!pushSupported()) {
-      pushBox.append(h("p", { class: "muted" }, "This browser does not support web push."));
+      pushBox.append(h("p", { class: "muted" }, "Open from the Home Screen icon to enable notifications (iOS requires it)."));
       return;
     }
     if (!isStandalone()) return;
+    if (Notification.permission === "denied") {
+      pushBox.append(h("p", { class: "muted" }, "Notifications are blocked in iOS Settings → Notifications → agentctl."));
+    }
     const sub = await currentSubscription();
-    pushBox.append(h("p", {}, `Permission: ${Notification.permission}; ${sub ? "subscribed" : "not subscribed"}`));
-    if (sub) {
+    let server = null;
+    try {
+      server = (await get("/v1/push/subscription")).subscribed;
+    } catch {
+      server = null;
+    }
+    let status = sub ? "subscribed on this device" : "not subscribed on this device";
+    if (server === null) status += "; server state unknown";
+    else if (server && !sub) status += "; server still has an old subscription (tap Enable to renew)";
+    else if (!server && sub) status += "; server has no subscription (tap Enable to renew)";
+    else if (server) status += "; server confirms";
+    pushBox.append(h("p", {}, `Permission: ${Notification.permission}; ${status}`));
+    if (sub && server !== false) {
       pushBox.append(
         h(
           "div",

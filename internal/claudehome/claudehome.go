@@ -51,8 +51,10 @@ func HomeDir() string {
 	return filepath.Join(home, ".claude")
 }
 
-// DefaultDir returns the config dir used when no account applies:
-// $CLAUDE_CONFIG_DIR when set (made absolute), else ~/.claude.
+// DefaultDir returns Claude Code's own config dir for this process:
+// $CLAUDE_CONFIG_DIR when set (made absolute), else ~/.claude. It is what
+// Current returns, and what a launch falls back to when no account applies
+// and default_account is unset. It never reflects default_account.
 func DefaultDir() string {
 	if env := os.Getenv(EnvConfigDir); env != "" {
 		if d, err := ExpandDir(env); err == nil {
@@ -106,27 +108,33 @@ func dirIn(cfg *config.Config, account string) (string, error) {
 	return ExpandDir(a.ConfigDir)
 }
 
-// Current returns the config dir of the running process's own account: an
+// Current returns the config dir the running process itself uses: an
 // explicit $CLAUDE_CONFIG_DIR (hooks and the statusline inherit it from the
-// claude process that spawned them), else Dir(""). Returns "" when nothing
-// resolves.
+// claude process that spawned them), else ~/.claude (HomeDir). Returns ""
+// when nothing resolves.
+//
+// default_account is never consulted: it picks where a new launch goes
+// (Resolve/ForLaunch), not where a running process is. A claude process with
+// CLAUDE_CONFIG_DIR unset is using Claude Code's default dir, ~/.claude,
+// whatever default_account says: windows on a ~/.claude account are launched
+// with the variable unset (see EnvFor), and so is every window launched
+// before accounts were configured.
 func Current() string {
-	if env := os.Getenv(EnvConfigDir); env != "" {
-		if d, err := ExpandDir(env); err == nil {
-			return d
-		}
-	}
-	d, err := Dir("")
-	if err != nil {
-		return DefaultDir()
-	}
-	return d
+	return DefaultDir()
 }
 
 // CurrentAccount returns the account name of the running process (see
 // Current), or "" when its dir matches no configured account.
 func CurrentAccount() string {
 	return AccountForDir(Current())
+}
+
+// HomeAccount returns the configured account whose dir is ~/.claude
+// (HomeDir), or "" when none is. Processes that ran before accounts were
+// configured used that dir, so it owns pre-accounts data such as the single
+// ratelimits.json.
+func HomeAccount() string {
+	return AccountForDir(HomeDir())
 }
 
 // All returns every configured account, sorted by name, plus an unnamed entry

@@ -18,6 +18,7 @@ func setup(t *testing.T, cfg *config.Config) string {
 	}
 	t.Setenv("HOME", home)
 	t.Setenv(EnvConfigDir, "")
+	t.Setenv(EnvAccount, "")
 	origLoad, origHome := loadConfig, userHomeDir
 	loadConfig = func() *config.Config { return cfg }
 	userHomeDir = func() (string, error) { return home, nil }
@@ -180,5 +181,97 @@ func TestSameDir(t *testing.T) {
 	}
 	if !SameDir(d, filepath.Join(home, "link")) || !SameDir(d+"/", d) || SameDir(d, home) {
 		t.Error("SameDir mismatch")
+	}
+}
+
+func TestEnvFor(t *testing.T) {
+	home := setup(t, twoAccounts())
+	def := filepath.Join(home, ".claude")
+	personal := filepath.Join(home, ".claude-personal")
+	for _, d := range []string{def, personal} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(home, "claude-link")
+	if err := os.Symlink(def, link); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name      string
+		dir       string
+		wantValue string
+		wantUnset bool
+	}{
+		{"default dir", def, "", true},
+		{"default dir trailing slash", def + "/", "", true},
+		{"default dir via symlink", link, "", true},
+		{"default dir with tilde", "~/.claude", "", true},
+		{"other dir", personal, personal, false},
+		{"empty inherits", "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, unset := EnvFor(tt.dir)
+			if value != tt.wantValue || unset != tt.wantUnset {
+				t.Errorf("EnvFor(%q) = %q, %v; want %q, %v", tt.dir, value, unset, tt.wantValue, tt.wantUnset)
+			}
+		})
+	}
+}
+
+// TestCurrent pins Current to the dir the process physically uses:
+// $CLAUDE_CONFIG_DIR, else ~/.claude. default_account and AGENTCTL_ACCOUNT
+// never change it (regression: with default_account pointing at a
+// non-~/.claude account, unset-variable windows were filed under it).
+func TestCurrent(t *testing.T) {
+	personalDefault := func() *config.Config {
+		cfg := twoAccounts()
+		cfg.DefaultAccount = "personal"
+		return cfg
+	}
+	tests := []struct {
+		name        string
+		cfg         *config.Config
+		envDir      string // relative to HOME; "" leaves CLAUDE_CONFIG_DIR unset
+		envAccount  string
+		wantDir     string // relative to HOME
+		wantAccount string
+	}{
+		{name: "var set to other dir", cfg: personalDefault(), envDir: ".claude-personal", wantDir: ".claude-personal", wantAccount: "personal"},
+		{name: "var set, default_account is home", cfg: twoAccounts(), envDir: ".claude-personal", wantDir: ".claude-personal", wantAccount: "personal"},
+		{name: "var unset, default_account non-home", cfg: personalDefault(), wantDir: ".claude", wantAccount: "ll"},
+		{name: "var unset, stale AGENTCTL_ACCOUNT", cfg: personalDefault(), envAccount: "personal", wantDir: ".claude", wantAccount: "ll"},
+		{name: "var unset, no accounts", cfg: &config.Config{}, wantDir: ".claude", wantAccount: ""},
+		{name: "var set, no accounts", cfg: &config.Config{}, envDir: "alt", wantDir: "alt", wantAccount: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := setup(t, tt.cfg)
+			if tt.envDir != "" {
+				t.Setenv(EnvConfigDir, filepath.Join(home, tt.envDir))
+			}
+			t.Setenv(EnvAccount, tt.envAccount)
+			if got, want := Current(), filepath.Join(home, tt.wantDir); got != want {
+				t.Errorf("Current() = %q, want %q", got, want)
+			}
+			if got := CurrentAccount(); got != tt.wantAccount {
+				t.Errorf("CurrentAccount() = %q, want %q", got, tt.wantAccount)
+			}
+		})
+	}
+}
+
+func TestHomeAccount(t *testing.T) {
+	cfg := twoAccounts()
+	cfg.DefaultAccount = "personal"
+	setup(t, cfg)
+	t.Setenv(EnvConfigDir, "~/.claude-personal")
+	if got := HomeAccount(); got != "ll" {
+		t.Errorf("HomeAccount() = %q, want ll", got)
+	}
+	setup(t, &config.Config{Accounts: map[string]config.AccountConfig{"p": {ConfigDir: "~/.claude-p"}}})
+	if got := HomeAccount(); got != "" {
+		t.Errorf("HomeAccount() with no ~/.claude account = %q, want \"\"", got)
 	}
 }

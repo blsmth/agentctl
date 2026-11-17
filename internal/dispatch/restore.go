@@ -3,7 +3,6 @@ package dispatch
 import (
 	"fmt"
 
-	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -126,7 +125,7 @@ func Restore(req RestoreRequest) (string, error) {
 	logPath := req.LogPath
 	if logPath == "" {
 		// Generate a new log path if the saved one is unavailable.
-		logPath = h.LaunchLogPath(extraEnv[claudehome.EnvConfigDir], req.WorkDir, "restore")
+		logPath = h.LaunchLogPath(accountDirFromEnv(extraEnv), req.WorkDir, "restore")
 	}
 
 	logging.Log("dispatch.Restore: launching %s (base=%s, harness=%s) workDir=%s logPath=%s", instanceName, req.AgentName, h.Name(), req.WorkDir, logPath)

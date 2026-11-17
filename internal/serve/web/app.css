@@ -54,6 +54,12 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 .pane-reflow { height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; box-sizing: border-box; padding: 6px 8px;
   font: 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #e5e5e5; }
 .pane-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.4em; }
+.pane-status { margin-top: .35em; color: #7a7a7a; }
+.pane-status-toggle { background: none; border: 0; padding: .2em 0; color: inherit; font: inherit; font-size: .9em; cursor: pointer; }
+.pane-status-raw { margin: .2em 0 0; overflow-x: auto; white-space: pre; font-size: .85em; }
+.approval-resolved { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: .75rem; margin: .75rem; }
+.approval-recent summary { cursor: pointer; color: #9a9a9a; padding: .5rem .75rem; }
+.approval-recent .row-item { padding: .35rem .75rem; }
 .pane-rule { display: flex; align-items: center; gap: .5rem; margin: .35em 0; color: #666; }
 .pane-rule::before, .pane-rule::after { content: ""; flex: 1; border-top: 1px solid #444; }
 .pane-rule:not(:has(span))::after { display: none; }

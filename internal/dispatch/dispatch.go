@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/claudehome"
@@ -88,6 +89,12 @@ type Request struct {
 	// (serve may have been started from a tmux pane, and TMUX_PANE would
 	// otherwise name an unrelated window as the parent).
 	Detached bool
+	// Branch overrides the generated worktree branch name (buildBranch).
+	// cron uses it for its cron/<job>-<YYYYMMDD-HHMM> worktrees.
+	Branch string
+	// ScheduledBy is the cron job launching this window, recorded in
+	// windowstate (with the launch time) for overlap and timeout checks.
+	ScheduledBy string
 	// Harness overrides the agent's configured harness (dispatch --harness);
 	// "" resolves through config, frontmatter, then harness.Default.
 	Harness string
@@ -234,7 +241,10 @@ func Launch(req Request) (Result, error) {
 	var branch string
 	repoDir := workDir // remember original repo dir so we can detect an actual worktree below
 	if useWorktree {
-		branch = buildBranch(req)
+		branch = req.Branch
+		if branch == "" {
+			branch = buildBranch(req)
+		}
 		wtPath, err := worktree.Create(workDir, branch)
 		if err != nil {
 			// Visible, not just logged: the agent now runs in the shared
@@ -388,6 +398,10 @@ func Launch(req Request) (Result, error) {
 				ws.Task = task
 			}
 			ws.Mode = string(req.Mode)
+			if req.ScheduledBy != "" {
+				ws.ScheduledBy = req.ScheduledBy
+				ws.ScheduledAt = time.Now()
+			}
 			// The name is unique per window by construction (worktree
 			// slug or instance number), so it is safe to show others.
 			ws.SessionNameVerified = true

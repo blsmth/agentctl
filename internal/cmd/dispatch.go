@@ -38,6 +38,15 @@ type DispatchOptions struct {
 	Wait       bool
 	Timeout    time.Duration
 	Repo       string
+	// Effort overrides the agent's effort_level (cron jobs; no CLI flag yet).
+	Effort string
+	// Branch overrides the generated worktree branch (cron).
+	Branch string
+	// ScheduledBy is the cron job behind this launch, recorded in
+	// windowstate.
+	ScheduledBy string
+	// Detached launches with no parent window (cron).
+	Detached bool
 }
 
 // RunDispatch is the entry point for the dispatch command.
@@ -194,19 +203,34 @@ var (
 // through as display-only metadata (see dispatch.Request.PromptKey).
 // Returns the tmux window ID, the resolved agent name, and an error.
 func dispatchPrompt(prompt, promptKey, agentName, workDir, model, backend, account, harnessName string, useWorktree bool) (string, string, error) {
+	return dispatchPromptOptions(DispatchOptions{
+		Prompt: prompt, PromptKey: promptKey, Agent: agentName, Dir: workDir,
+		Model: model, Backend: backend, Account: account, Harness: harnessName, NoWorktree: !useWorktree,
+	})
+}
+
+// dispatchPromptOptions is dispatchPrompt over the full options, including
+// the cron-only Effort, Branch, ScheduledBy and Detached. opts.Prompt must
+// already be resolved.
+func dispatchPromptOptions(opts DispatchOptions) (string, string, error) {
+	workDir := opts.Dir
 	if workDir == "" {
-		workDir = resolveAgentDir(agentName)
+		workDir = resolveAgentDir(opts.Agent)
 	}
 	res, err := launchAdhoc(dispatch.AdhocRequest{
-		Prompt:      prompt,
-		PromptKey:   promptKey,
-		AgentName:   agentName,
+		Prompt:      opts.Prompt,
+		PromptKey:   opts.PromptKey,
+		AgentName:   opts.Agent,
 		WorkDir:     workDir,
-		Model:       model,
-		Backend:     backend,
-		Account:     account,
-		Harness:     harnessName,
-		UseWorktree: useWorktree,
+		Model:       opts.Model,
+		Backend:     opts.Backend,
+		Account:     opts.Account,
+		Harness:     opts.Harness,
+		Effort:      opts.Effort,
+		UseWorktree: !opts.NoWorktree,
+		Detached:    opts.Detached,
+		Branch:      opts.Branch,
+		ScheduledBy: opts.ScheduledBy,
 	})
 	if err != nil {
 		return "", "", err
