@@ -59,9 +59,13 @@ func Plist(spec ServiceSpec) []byte {
 	logPath := filepath.Join(spec.Dir, LaunchdLogFile)
 	fmt.Fprintf(&b, "\t<key>StandardOutPath</key>\n\t%s\n", str(logPath))
 	fmt.Fprintf(&b, "\t<key>StandardErrorPath</key>\n\t%s\n", str(logPath))
+	// LANG matters: without a UTF-8 locale tmux replaces tabs and non-ASCII
+	// bytes in -F output with "_", which breaks window listing.
+	b.WriteString("\t<key>EnvironmentVariables</key>\n\t<dict>\n")
 	if spec.Path != "" {
-		fmt.Fprintf(&b, "\t<key>EnvironmentVariables</key>\n\t<dict>\n\t\t<key>PATH</key>\n\t\t%s\n\t</dict>\n", str(spec.Path))
+		fmt.Fprintf(&b, "\t\t<key>PATH</key>\n\t\t%s\n", str(spec.Path))
 	}
+	fmt.Fprintf(&b, "\t\t<key>LANG</key>\n\t\t%s\n\t</dict>\n", str("en_US.UTF-8"))
 	b.WriteString("</dict>\n</plist>\n")
 	return b.Bytes()
 }
@@ -76,6 +80,7 @@ func SystemdUnit(spec ServiceSpec) string {
 	if spec.Path != "" {
 		fmt.Fprintf(&b, "Environment=%s\n", systemdQuote("PATH="+spec.Path))
 	}
+	b.WriteString("Environment=LANG=en_US.UTF-8\n")
 	b.WriteString("Restart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n")
 	return b.String()
 }

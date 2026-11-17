@@ -21,6 +21,7 @@ import (
 	"github.com/blsmth/agentctl/internal/pidfile"
 	"github.com/blsmth/agentctl/internal/selfexec"
 	"github.com/blsmth/agentctl/internal/selfpath"
+	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // Files under the serve dir.
@@ -77,6 +78,9 @@ func Run(ctx context.Context, opts RunOptions) error {
 		return fmt.Errorf("agentctl serve is already running (pid %d)", pid)
 	}
 	logging.InitFile(filepath.Join(dir, LogFile))
+	if tmux.EnsureUTF8Locale() {
+		logging.Log("serve: no UTF-8 locale in environment; set LC_CTYPE=en_US.UTF-8 for tmux children")
+	}
 
 	cfg := config.Load().Serve
 	now := time.Now()

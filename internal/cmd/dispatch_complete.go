@@ -37,6 +37,7 @@ var defaultCompleteDeps = completeDeps{
 // It runs dispatch completion synchronously and never fails the process: a
 // missing window is logged and ignored.
 func RunDispatchComplete(windowID string) {
+	tmux.EnsureUTF8Locale()
 	runDispatchComplete(windowID, defaultCompleteDeps)
 }
 

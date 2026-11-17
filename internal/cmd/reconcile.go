@@ -18,6 +18,7 @@ var errNoSession = errors.New("no running agentctl session for this project")
 // improve.HandleTransitionSync must finish before the process exits. With no
 // runtime dir (a hook outside agentctl) it does nothing.
 func RunReconcile(housekeeping bool) {
+	tmux.EnsureUTF8Locale()
 	rd := paths.RuntimeDir()
 	if rd == "" {
 		return
