@@ -137,7 +137,16 @@ Triggers (from the fleetwatch bus): transition into `blocked`; transition to don
 
 ### Live terminal (PR6)
 
-`GET /v1/sessions/{s}/windows/{w}/terminal` → WebSocket (`github.com/coder/websocket`). Server creates a grouped viewer session (reuse the `internal/tmux/hubview.go` grouped-session approach; never `join-pane`, which kills agents), attaches a nested `tmux attach` client inside a PTY (`github.com/creack/pty`) sized from the client's resize messages, and pipes bytes both ways. Input requires `allow_write` (read-only mode streams output only). Viewer session is destroyed on disconnect. Frontend: vendored xterm.js + fit addon.
+`GET /v1/sessions/{s}/windows/{w}/terminal` → WebSocket (`github.com/coder/websocket`), a Device route advertised as feature `terminal`. The window is resolved through the fleet like the read routes; only fleet IDs reach tmux.
+
+- **Origin**: the upgrade is refused (403 `forbidden_origin`) unless `Origin` is exactly this server's scheme and host. CORS does not cover WebSockets, so this is the CSRF defence for the route.
+- **Mechanism** (`internal/tmux/mobileview.go`): a grouped viewer session `agentctl-mobileview-<random>` (`new-session -d -t =<home>`) with the target window selected, then `tmux -u attach-session -t =<viewer> -f ignore-size [-r]` inside a PTY (`github.com/creack/pty`), piped both ways. Never `join-pane`. The viewer has `prefix`/`prefix2` None and an empty `key-table`, so every key the phone sends reaches the pane and none reaches tmux (no command prompt, no new-window).
+- **Size**: `ignore-size` keeps the phone client from resizing the shared window under the laptop. The phone renders at the window's real size: the first message is `{type:"size", cols, rows, read_only}` from `#{window_width} #{window_height}`, resent when a 2s poll sees a change (the PTY is resized to match). Two failed polls close the socket (1001 "window closed").
+- **Protocol**: binary frames are raw terminal bytes both ways; text frames are JSON control messages (`size` from the server, `ping` either way every 20s).
+- **Write gate**: input is accepted only with `serve.allow_write`. Read-only mode drops input frames and attaches with `-r`. In write mode each connection writes two audit lines (`action: "terminal"`, `connected`/`disconnected` with `bytes_in`/`bytes_out`, never content).
+- **Cleanup**: on socket close, PTY EOF, `Server.Close` (shutdown and selfexec re-exec) the PTY process is killed and the viewer killed; `destroy-unattached` is also turned on once attached, so a viewer dies with its client even if serve crashes. Serve startup sweeps stale `agentctl-mobileview-*` sessions. At most 4 terminals (429 `too_many_terminals`).
+- **Discovery**: `tmux.IsAnyViewerSession` (hub and phone viewers) is excluded from session listing, herd discovery, hub leave, and home-session resolution; pane/window → session lookups map a viewer to its home session; approval popups never target a phone client.
+- **Frontend** (`terminal.js`, route `#/t/<session>/<window>`): full-screen xterm.js sized to the server's cols/rows with the font scaled to the screen width (never `fit()`), pinch-zoom and pan as a fallback, a key bar (Esc, Tab, ^C, arrows, 1, 2, Enter) above the soft keyboard in write mode, a `read-only` badge otherwise, reconnect with backoff.
 
 ## Web app (PR5)
 

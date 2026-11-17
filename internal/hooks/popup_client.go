@@ -4,6 +4,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // tmuxClient is one row of `tmux list-clients` across all sessions.
@@ -12,13 +14,14 @@ type tmuxClient struct {
 	WindowID string // window the client is currently showing
 	Activity int64  // client_activity, unix seconds
 	Flags    string
+	Session  string // client_session
 }
 
 // listClients lists every attached tmux client, in every session. Package-level
 // var so tests do not shell out, like clientDimensions.
 var listClients = tmuxListClients
 
-const listClientsFormat = "#{client_name}\t#{window_id}\t#{client_activity}\t#{client_flags}"
+const listClientsFormat = "#{client_name}\t#{window_id}\t#{client_activity}\t#{client_flags}\t#{client_session}"
 
 func tmuxListClients() []tmuxClient {
 	out, err := exec.Command("tmux", "list-clients", "-F", listClientsFormat).Output()
@@ -42,6 +45,9 @@ func parseClients(out string) []tmuxClient {
 		if len(f) > 3 {
 			c.Flags = f[3]
 		}
+		if len(f) > 4 {
+			c.Session = f[4]
+		}
 		clients = append(clients, c)
 	}
 	return clients
@@ -62,13 +68,16 @@ type popupTarget struct {
 // whose current window is windowID (a link-window copy shares the ID, so a
 // window viewed through the hub matches), highest activity wins. Rule 2:
 // otherwise the most recently active client overall. Rule 3: no clients, empty
-// target. Control-mode clients cannot display a popup and are ignored.
+// target. Control-mode clients cannot display a popup and are ignored, and
+// so are the phone's terminal clients (agentctl serve's viewer sessions): a
+// popup there is invisible on the laptop, and a phone watching must not
+// count as a human looking at the window.
 func selectPopupClient(clients []tmuxClient, windowID string) popupTarget {
 	t := popupTarget{WindowID: windowID}
 	var best *tmuxClient
 	for i := range clients {
 		c := &clients[i]
-		if strings.Contains(c.Flags, "control-mode") {
+		if strings.Contains(c.Flags, "control-mode") || tmux.IsMobileViewerSession(c.Session) {
 			continue
 		}
 		viewing := windowID != "" && c.WindowID == windowID

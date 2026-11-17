@@ -33,6 +33,7 @@ func TestLeaveHub(t *testing.T) {
 	sess := []tmux.SessionActivity{
 		{Name: "agentctl-hub", Activity: 99},
 		{Name: "agentctl-hubview-1", Activity: 98},
+		{Name: "agentctl-mobileview-0a1b", Activity: 96},
 		{Name: "other", Activity: 97},
 		{Name: "agentctl-old", Activity: 10},
 		{Name: "agentctl-new", Activity: 50},
@@ -47,7 +48,7 @@ func TestLeaveHub(t *testing.T) {
 		{"viewed home", &fakeLeaver{lastErr: errors.New("x"), home: "agentctl-a", sessions: sess}, []string{"agentctl-a"}, false},
 		{"most recent non-hub", &fakeLeaver{lastErr: errors.New("x"), sessions: sess}, []string{"agentctl-new"}, false},
 		{"home fails then fallback", &fakeLeaver{lastErr: errors.New("x"), home: "agentctl-a", failFor: map[string]bool{"agentctl-a": true}, sessions: sess}, []string{"agentctl-a", "agentctl-new"}, false},
-		{"all fail", &fakeLeaver{lastErr: errors.New("x"), sessions: sess[:3]}, nil, true},
+		{"all fail", &fakeLeaver{lastErr: errors.New("x"), sessions: sess[:4]}, nil, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

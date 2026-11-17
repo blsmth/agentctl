@@ -94,6 +94,18 @@ func TestMergeSessions(t *testing.T) {
 			},
 		},
 		{
+			name: "hub and phone viewer sessions are excluded",
+			sessions: []tmux.SessionInfo{
+				{Name: "agentctl-hubview", Path: "/home/x/real"},
+				{Name: "agentctl-mobileview-0a1b2c", Path: "/home/x/real"},
+				{Name: "agentctl-real", Path: "/home/x/real"},
+			},
+			entries: nil,
+			want: []registry.Entry{
+				{SessionName: "agentctl-real", ProjectDir: "/home/x/real", RuntimeDir: "/home/x/real/.agentctl", Host: "local"},
+			},
+		},
+		{
 			name:     "non-agentctl session names are ignored",
 			sessions: []tmux.SessionInfo{{Name: "unrelated-session", Path: "/home/x/whatever"}},
 			entries:  nil,

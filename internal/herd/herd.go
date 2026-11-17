@@ -153,7 +153,7 @@ func MergeSessions(sessions []tmux.SessionInfo, entries []registry.Entry) []regi
 	out := make([]registry.Entry, 0, len(sessions)+len(entries))
 
 	for _, s := range sessions {
-		if !isAgentctlSessionName(s.Name) || s.Name == tmux.HubSessionName || tmux.IsViewerSession(s.Name) {
+		if !isAgentctlSessionName(s.Name) || s.Name == tmux.HubSessionName || tmux.IsAnyViewerSession(s.Name) {
 			continue
 		}
 		if seen[s.Name] {

@@ -5,6 +5,7 @@ import { mountFleet } from "./fleet.js";
 import { startLive } from "./live.js";
 import { applyGone, applyWindow, hasFeature, parseRoute } from "./logic.js";
 import { mountSettings } from "./settings.js";
+import { mountTerminal } from "./terminal.js";
 import { h } from "./ui.js";
 import { mountWindow } from "./window.js";
 
@@ -31,6 +32,7 @@ function route() {
   root.replaceChildren();
   const r = parseRoute(location.hash);
   if (r.name === "window") cleanup = mountWindow(root, ctx, r);
+  else if (r.name === "terminal" && ctx.hasFeature("terminal")) cleanup = mountTerminal(root, ctx, r);
   else if (r.name === "dispatch") cleanup = mountDispatch(root, ctx);
   else if (r.name === "settings") cleanup = mountSettings(root, ctx);
   else cleanup = mountFleet(root, ctx);

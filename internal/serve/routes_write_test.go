@@ -166,6 +166,12 @@ func writeGroup(st string, done bool, name, mode string) fleetwatch.Group {
 
 func newWriteEnv(t *testing.T, allowWrite bool) *writeEnv {
 	t.Helper()
+	return newWriteEnvWith(t, allowWrite, nil)
+}
+
+// newWriteEnvWith is newWriteEnv with a hook to adjust Options.
+func newWriteEnvWith(t *testing.T, allowWrite bool, mutate func(*Options)) *writeEnv {
+	t.Helper()
 	fleet := &fakeFleet{}
 	fleet.set(writeGroup("blocked", false, "go-engineer", "dispatch"))
 	e := &writeEnv{
@@ -178,12 +184,16 @@ func newWriteEnv(t *testing.T, allowWrite bool) *writeEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(Options{
+	opts := Options{
 		Config: config.ServeConfig{AllowWrite: allowWrite}, Dir: dir, Version: "test", CA: ca, Now: clock.Now,
 		Fleet: fleet, Panes: e.panes, Awake: &fakeHolder{},
 		Agents: fakeAgents{list: []AgentInfo{{Name: "go-engineer", Scope: "global"}}},
 		Keys:   e.keys, Injector: e.inj, Closer: e.closer, Dispatcher: e.disp,
-	})
+	}
+	if mutate != nil {
+		mutate(&opts)
+	}
+	s, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}

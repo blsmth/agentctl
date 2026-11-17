@@ -14,6 +14,8 @@ require (
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/log v1.0.0
 	github.com/charmbracelet/x/ansi v0.11.6
+	github.com/coder/websocket v1.8.15
+	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/golang/snappy v1.0.0
 	github.com/mdp/qrterminal/v3 v3.2.1
