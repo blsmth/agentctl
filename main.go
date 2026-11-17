@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,7 +21,6 @@ import (
 	"github.com/blsmth/agentctl/internal/improve"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
-	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/statusline"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -364,39 +362,8 @@ func resolveCurrentAgent() string {
 }
 
 func cmdSaveState() {
-	running := tmux.RunningAgents() // map[windowID]instanceName
-	var agents []state.AgentState
-	for windowID, name := range running {
-		baseName := tmux.BaseAgentName(name)
-
-		// Read the authoritative log path from the window state file.
-		// Fall back to filesystem scan for windows without hook-driven state.
-		ws, _ := windowstate.Read(windowID)
-		logPath := ws.LogPath
-		if logPath == "" {
-			logPath = sessions.FindLatestLog(baseName, time.Time{}, nil)
-		}
-		sessionID := ""
-		if logPath != "" {
-			sessionID = strings.TrimSuffix(filepath.Base(logPath), ".jsonl")
-		}
-		workDir := tmux.PaneWorkDir(windowID)
-
-		agents = append(agents, state.AgentState{
-			Name:      name,
-			AgentName: baseName,
-			SessionID: sessionID,
-			LogPath:   logPath,
-			WorkDir:   workDir,
-			WindowID:  windowID,
-			Backend:   ws.Backend,
-		})
-	}
-	if err := state.Save(&state.State{Agents: agents, Timestamp: time.Now()}); err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving state: %v\n", err)
-		os.Exit(1)
-	}
-	logging.Log("save-state: saved %d agents", len(agents))
+	n := tmux.SaveRestore()
+	logging.Log("save-state: saved %d agents", n)
 }
 
 // cmdThemePicker runs the quick theme picker popup (prefix+p).

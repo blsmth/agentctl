@@ -155,6 +155,11 @@ type WindowState struct {
 	// from the hook payload cwd.
 	WorkDir string `json:"work_dir,omitempty"`
 
+	// WindowIndex is the window's tmux index when hook-session-start last ran
+	// (0 = unknown). It is the restore-order fallback once tmux windows are
+	// gone; it can go stale when windows are inserted to its left.
+	WindowIndex int `json:"window_index,omitempty"`
+
 	// LastToolDetail is the summary of the most recent tool call (the same
 	// string PreTool stores as PendingToolDetail), written by PostToolUse so
 	// it survives after PendingTool is cleared.

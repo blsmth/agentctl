@@ -30,10 +30,30 @@ func agentNames(agents []state.AgentState) []string {
 	return names
 }
 
+// restoreFunc relaunches one agent; dispatch.Restore in production.
+type restoreFunc func(dispatch.RestoreRequest) (string, error)
+
+// loadRestoreInput returns the saved agents to restore. It prefers
+// restore.json (built from per-window hook state at the points that destroy
+// windows) and falls back to the monitor-written state.json when restore.json
+// is absent.
+func loadRestoreInput() (*state.State, error) {
+	saved, err := state.LoadRestore()
+	if err != nil {
+		logging.Log("restoreAgents: failed to load restore.json: %v", err)
+	}
+	if saved != nil {
+		return saved, nil
+	}
+	// COMPAT: one-release fallback to the monitor snapshot. Goes away when the
+	// monitor is deleted.
+	return state.Load()
+}
+
 // RunRestore reads the persisted agent state and relaunches any agents
 // that were running when agentctl last exited.
 func RunRestore() {
-	saved, err := state.Load()
+	saved, err := loadRestoreInput()
 	if err != nil {
 		logging.Log("restoreAgents: failed to load state: %v", err)
 		return
@@ -62,14 +82,25 @@ func RunRestore() {
 	}
 
 	home, _ := os.UserHomeDir()
-	projectsRoot := filepath.Join(home, ".claude", "projects")
+	restoreAgents(saved.Agents, byName, home, filepath.Join(home, ".claude", "projects"),
+		config.Load().EffectiveNewWindowPosition(), dispatch.Restore)
 
+	if err := state.Clear(); err != nil {
+		logging.Log("restoreAgents: failed to clear state: %v", err)
+	}
+	if err := state.ClearRestore(); err != nil {
+		logging.Log("restoreAgents: failed to clear restore file: %v", err)
+	}
+}
+
+// restoreAgents relaunches each saved agent through restore.
+func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home, projectsRoot, position string, restore restoreFunc) {
 	// Dedup session IDs: only the first window with a given session ID gets
 	// --resume. Subsequent duplicates start a fresh session to avoid two windows
 	// resuming the same conversation.
 	usedSessions := make(map[string]bool)
 
-	for _, as := range restoreOrder(saved.Agents, config.Load().EffectiveNewWindowPosition()) {
+	for _, as := range restoreOrder(saved, position) {
 		// Resolve base agent name from instance name or explicit AgentName field
 		baseName := as.AgentName
 		if baseName == "" {
@@ -83,9 +114,9 @@ func RunRestore() {
 			continue
 		}
 
-		// Use the saved working directory (captured from the pane at save time),
-		// or fall back to the agent's configured dir. We NEVER fall back to $HOME
-		// because `claude --continue` there will trigger a directory trust prompt.
+		// Use the saved working directory, or fall back to the agent's
+		// configured dir. We NEVER fall back to $HOME because `claude
+		// --continue` there will trigger a directory trust prompt.
 		workDir := as.WorkDir
 		if workDir == "" {
 			workDir = a.Dir
@@ -97,12 +128,9 @@ func RunRestore() {
 
 		// Use --resume <id> to restore the exact session this agent was running.
 		// If --resume fails (stale/invalid session), fall back to a fresh session
-		// rather than --continue. Using --continue here is unsafe: when multiple
-		// windows share the same base agent, they race and both grab the same
-		// most-recent session.
-		// Guard against duplicate session IDs in state.json: only the first window
-		// with a given session ID gets --resume; extras start fresh.
-
+		// rather than --continue, which is unsafe when multiple windows share the
+		// same base agent. Duplicate session IDs: only the first window gets
+		// --resume; extras start fresh.
 		sessionID, logPath := validateRestoreSession(projectsRoot, workDir, as.SessionID, as.LogPath)
 		if as.SessionID != "" && sessionID == "" {
 			where := sessions.FindLogBySessionIDIn(projectsRoot, as.SessionID)
@@ -115,10 +143,8 @@ func RunRestore() {
 			usedSessions[sessionID] = true
 		}
 
-		// Restore using the saved instance name (e.g. "go-engineer~2").
-		// Pass the persisted log path so the monitor can track this window
-		// immediately without filesystem scanning.
-		if _, err := dispatch.Restore(dispatch.RestoreRequest{
+		// Restore using the saved instance name (e.g. "go-engineer:2").
+		if _, err := restore(dispatch.RestoreRequest{
 			AgentName:        baseName,
 			InstanceName:     as.Name,
 			SessionID:        sessionID,
@@ -129,10 +155,6 @@ func RunRestore() {
 		}); err != nil {
 			logging.Log("restoreAgents: not restoring %s: %v", as.Name, err)
 		}
-	}
-
-	if err := state.Clear(); err != nil {
-		logging.Log("restoreAgents: failed to clear state: %v", err)
 	}
 }
 
