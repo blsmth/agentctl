@@ -39,10 +39,11 @@ var popupDeadline = time.Duration(validateBashTimeoutSeconds)*time.Second - popu
 // opened for. Seam for tests.
 var popupCloser = closeDisplayPopup
 
-// closeDisplayPopup runs `tmux display-popup -C`. The popup is opened without
-// -t (it targets the hook's current client), so closing uses the same default.
-func closeDisplayPopup() error {
-	return exec.Command("tmux", "display-popup", "-C").Run()
+// closeDisplayPopup runs `tmux display-popup -C` on the client the popup was
+// opened on (empty client: tmux's default, matching an open without -c).
+func closeDisplayPopup(client string) error {
+	args := append([]string{"display-popup"}, popupTarget{Client: client}.clientArgs()...)
+	return exec.Command("tmux", append(args, "-C")...).Run()
 }
 
 // popupTimeoutReason is the deny reason shown to the model when nobody
@@ -148,7 +149,7 @@ func beginApproval(n popupNotice) (end func()) {
 // signals. Returns (approved, decided, denyReason) like the gates: a non-empty
 // denyReason means the popup went unanswered (or the hook was cancelled), the
 // popup was closed, and the command must be denied.
-func runPopupWithDeadline(kind, logPrefix string, popupW, popupH int, argsFile string, notice popupNotice) (approved, decided bool, denyReason string) {
+func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, popupH int, argsFile string, notice popupNotice) (approved, decided bool, denyReason string) {
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer stop()
 	ctx, cancel := context.WithTimeout(sigCtx, popupDeadline)
@@ -158,11 +159,11 @@ func runPopupWithDeadline(kind, logPrefix string, popupW, popupH int, argsFile s
 	defer end()
 
 	start := time.Now()
-	err := dispatchPopupRunner(ctx, popupW, popupH, argsFile)
+	err := dispatchPopupRunner(ctx, target.Client, popupW, popupH, argsFile)
 	elapsed := time.Since(start).Round(time.Millisecond)
 	if ctx.Err() != nil {
 		// Killing the tmux client does not necessarily close the popup.
-		if cerr := popupCloser(); cerr != nil {
+		if cerr := popupCloser(target.Client); cerr != nil {
 			logging.Log("%s: failed to close popup: %v", logPrefix, cerr)
 		}
 		outcome := "timeout"
