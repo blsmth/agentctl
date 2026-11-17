@@ -6,13 +6,118 @@ import {
   buildReplyRequest,
   effectiveState,
   formatSince,
+  normalizePane,
+  paneModeOrDefault,
   safeHttpsUrl,
   terminalHash,
   windowApiPath,
 } from "./logic.js";
-import { clear, confirmSheet, h, toast } from "./ui.js";
+import { clear, confirmSheet, fitTermFont, h, toast } from "./ui.js";
 
 const PANE_REFRESH_MS = 2000;
+const MODE_KEY = "agentctl.paneMode";
+const EXACT_MIN_FONT = 4;
+const EXACT_MAX_FONT = 14;
+
+function loadMode() {
+  try {
+    return paneModeOrDefault(localStorage.getItem(MODE_KEY));
+  } catch {
+    return "reflow";
+  }
+}
+
+function saveMode(mode) {
+  try {
+    localStorage.setItem(MODE_KEY, mode);
+  } catch {
+    // storage unavailable (private mode): the choice just is not remembered
+  }
+}
+
+/** styleSpan builds a span for one styled run; text only via textContent. */
+function styleSpan(run) {
+  const span = document.createElement("span");
+  span.textContent = run.t;
+  let fg = run.fg;
+  let bg = run.bg;
+  if (run.inverse) {
+    [fg, bg] = [bg ?? "#000000", fg ?? "#e5e5e5"];
+  }
+  if (fg) span.style.color = fg;
+  if (bg) span.style.backgroundColor = bg;
+  if (run.bold) span.style.fontWeight = "700";
+  if (run.dim) span.style.opacity = "0.6";
+  if (run.italic) span.style.fontStyle = "italic";
+  if (run.underline) span.style.textDecoration = "underline";
+  return span;
+}
+
+/** reflowView renders the pane as wrapping HTML. */
+function reflowView() {
+  const el = h("div", { class: "pane-reflow" });
+  return {
+    el,
+    update(pane) {
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+      const frag = document.createDocumentFragment();
+      for (const b of normalizePane(pane.text)) {
+        if (b.rule !== undefined) {
+          const rule = document.createElement("div");
+          rule.className = "pane-rule";
+          if (b.rule) {
+            const label = document.createElement("span");
+            label.textContent = b.rule;
+            rule.append(label);
+          }
+          frag.append(rule);
+        } else {
+          const line = document.createElement("div");
+          line.className = "pane-line";
+          if (b.runs.length === 0) line.textContent = "\u00a0";
+          else for (const r of b.runs) line.append(styleSpan(r));
+          frag.append(line);
+        }
+      }
+      el.replaceChildren(frag);
+      if (atBottom) el.scrollTop = el.scrollHeight;
+    },
+    destroy() {},
+  };
+}
+
+/**
+ * exactView is the read-only xterm at the window's real size. The font is
+ * scaled so the full width fits; cols are never changed by fitting.
+ */
+function exactView() {
+  const host = h("div", { class: "pane-exact-host" });
+  const el = h("div", { class: "pane-exact" }, host);
+  const term = new window.Terminal({
+    disableStdin: true,
+    convertEol: true,
+    fontSize: 12,
+    scrollback: 0,
+    cursorBlink: false,
+    cursorStyle: "underline",
+    cursorInactiveStyle: "none",
+  });
+  term.open(host);
+  return {
+    el,
+    update(pane) {
+      const cols = pane.cols > 0 ? pane.cols : 80;
+      const rows = pane.rows > 0 ? pane.rows : 24;
+      if (term.cols !== cols || term.rows !== rows) term.resize(cols, rows);
+      term.write(`\x1b[2J\x1b[3J\x1b[H${pane.text}`, () => {
+        fitTermFont(term, host, el.clientWidth - 4, EXACT_MIN_FONT, EXACT_MAX_FONT);
+      });
+    },
+    destroy() {
+      term.dispose();
+    },
+  };
+}
 
 export function mountWindow(root, ctx, { session, windowId }) {
   const base = windowApiPath(session, windowId);
@@ -25,7 +130,12 @@ export function mountWindow(root, ctx, { session, windowId }) {
 
   const title = h("h1", {}, windowId);
   const sub = h("div", { class: "meta pad-x" });
-  const termHost = h("div", { class: "term" });
+  const paneHost = h("div", { class: "pane" });
+  const modeBtns = {
+    reflow: h("button", { class: "seg", onclick: () => setMode("reflow") }, "Reflow"),
+    exact: h("button", { class: "seg", onclick: () => setMode("exact") }, "Exact"),
+  };
+  const paneBar = h("div", { class: "pane-bar" }, h("div", { class: "segmented" }, modeBtns.reflow, modeBtns.exact));
   const actions = h("div", { class: "actions" });
   const liveLink = ctx.hasFeature("terminal")
     ? h("a", { class: "btn", href: terminalHash(session, windowId) }, "Live terminal")
@@ -33,31 +143,30 @@ export function mountWindow(root, ctx, { session, windowId }) {
   root.append(
     h("header", { class: "bar" }, h("a", { class: "btn", href: "#/" }, "‹ Fleet"), title, liveLink),
     sub,
-    termHost,
+    paneBar,
+    paneHost,
     actions,
   );
 
-  const term = new window.Terminal({
-    disableStdin: true,
-    convertEol: true,
-    fontSize: 12,
-    scrollback: 2000,
-    cursorBlink: false,
-    cursorStyle: "underline",
-    cursorInactiveStyle: "none",
-  });
-  const fit = new window.FitAddon.FitAddon();
-  term.loadAddon(fit);
-  term.open(termHost);
-  const refit = () => {
-    try {
-      fit.fit();
-    } catch {
-      // host not laid out yet
-    }
-  };
-  refit();
-  window.addEventListener("resize", refit);
+  let mode = loadMode();
+  let view = null;
+
+  function mountView() {
+    view?.destroy();
+    clear(paneHost);
+    view = mode === "exact" ? exactView() : reflowView();
+    paneHost.append(view.el);
+    for (const [m, btn] of Object.entries(modeBtns)) btn.setAttribute("aria-pressed", String(m === mode));
+    if (pane) view.update(pane);
+  }
+
+  function setMode(next) {
+    if (next === mode) return;
+    mode = next;
+    saveMode(mode);
+    mountView();
+  }
+  mountView();
 
   function renderHeader() {
     if (!win) return;
@@ -194,9 +303,10 @@ export function mountWindow(root, ctx, { session, windowId }) {
       if (e instanceof ApiError && e.status === 404) gone = true;
       return;
     }
-    if (pane.text !== lastText) {
-      lastText = pane.text;
-      term.write(`\x1b[2J\x1b[3J\x1b[H${pane.text}`);
+    const key = `${pane.cols}x${pane.rows}\n${pane.text}`;
+    if (key !== lastText) {
+      lastText = key;
+      view.update(pane);
     }
   }
 
@@ -232,7 +342,6 @@ export function mountWindow(root, ctx, { session, windowId }) {
     clearInterval(timer);
     unsub();
     document.removeEventListener("visibilitychange", onVisible);
-    window.removeEventListener("resize", refit);
-    term.dispose();
+    view.destroy();
   };
 }
