@@ -206,6 +206,9 @@ type WindowState struct {
 	PRNumber int    `json:"pr_number,omitempty"`
 	PRURL    string `json:"pr_url,omitempty"`
 
+	// LogPR is the statusline's incremental pr-link scan cache; see LogPRScan.
+	LogPR LogPRScan `json:"log_pr,omitempty"`
+
 	// CompleteFiredAt is when the done-edge completion handlers last fired.
 	// Reserved: a later step (done-edge completion) writes it.
 	CompleteFiredAt time.Time `json:"complete_fired_at,omitempty"`
@@ -237,6 +240,17 @@ var knownKeys = func() map[string]struct{} {
 	}
 	return m
 }()
+
+// LogPRScan caches the statusline's scan of a session log for its newest
+// pr-link record, so each push scans only the bytes appended since the last.
+// It is separate from PRNumber/PRURL, which dispatch completion owns.
+type LogPRScan struct {
+	Path     string `json:"path,omitempty"`
+	Offset   int64  `json:"offset,omitempty"` // consumed through here
+	Size     int64  `json:"size,omitempty"`   // log size at the last scan
+	PRNumber int    `json:"pr_number,omitempty"`
+	PRURL    string `json:"pr_url,omitempty"`
+}
 
 // clone returns a copy of ws that does not share the extra map.
 func (ws WindowState) clone() WindowState {

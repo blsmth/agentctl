@@ -22,6 +22,7 @@ import (
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/theme"
 	"github.com/blsmth/agentctl/internal/windowstate"
+	"github.com/blsmth/agentctl/internal/winlink"
 )
 
 // Run is the entry point for `agentctl statusline`. main.go routes it here
@@ -88,6 +89,7 @@ func RunWithIO(r io.Reader, w io.Writer, dryRun bool) {
 
 	format := config.Load().EffectiveStatuslineFormat()
 	if format == "rich" {
+		applyResolvedPR(payload, windowID, !dryRun)
 		fmt.Fprintln(w, renderRichLine(payload, windowID))
 		return
 	}
@@ -383,7 +385,7 @@ func padLeftTo(line string, width int) string {
 //
 //	<battery> 5h 11% · resets 5pm · 7d 1%
 //	opus-4.6 · <battery> 34% ctx · 68k/200k · turn: 3k↑ 1k↓ · 78% cached · 12 turns · total: 789k↑ 6k↓ · $13.43 · 1h23m
-//	~/code/agentctl · ⎇ main · +-3 · issue-1023 · PR #42 approved
+//	~/code/agentctl · ⎇ main · +-3 · PR #42 approved · issue-1023
 //
 // Line 1 (account rate limits), line 2 (session metrics), and line 3
 // (workspace/git) are each built independently and only included if they
@@ -829,8 +831,8 @@ func renderRichLine2(p *Payload, cols int, snap *state.AgentState) (string, bool
 }
 
 // renderRichLine3 renders the workspace/git row: current directory, branch,
-// dirty-tree count, agentctl worktree name, and PR, in that order, dropping
-// segments right-to-left (PR first) when the rendered line would exceed
+// dirty-tree count, PR (a hyperlink), and agentctl worktree name, in that order,
+// dropping segments right-to-left (worktree name first) when the rendered line would exceed
 // cols. The directory segment is never dropped (minKeep = 1) -- it is the
 // one piece of context every other segment is relative to, and omitting it
 // while keeping e.g. just a PR number would be more confusing than showing
@@ -885,20 +887,24 @@ func renderRichLine3(p *Payload, cols int) (string, bool) {
 		addSeg(dirtyStyle.Render(fmt.Sprintf("+-%d", n)))
 	}
 
-	// 4. agentctl worktree name (droppable). Bare name, no branch semantics
-	// -- see payload.go's NOTE on why this is NOT windowstate.Branch/
-	// WorktreeDir and must not be treated as one.
-	if p.Workspace != nil && p.Workspace.GitWorktree != nil && *p.Workspace.GitWorktree != "" {
-		addSeg(mutedStyle.Render(*p.Workspace.GitWorktree))
-	}
-
-	// 5. PR (droppable).
+	// 4. PR (droppable), linked to its URL via OSC 8. Sits beside the
+	// branch/dirty status and outlasts the worktree name when trimming.
 	if p.PR != nil && p.PR.Number != nil {
 		prSeg := valueStyle.Render(fmt.Sprintf("PR #%d", int(*p.PR.Number)))
+		if p.PR.URL != nil && prLinkable(*p.PR.URL) {
+			prSeg = winlink.Hyperlink(*p.PR.URL, prSeg)
+		}
 		if p.PR.ReviewState != nil && *p.PR.ReviewState != "" {
 			prSeg += " " + mutedStyle.Render(*p.PR.ReviewState)
 		}
 		addSeg(prSeg)
+	}
+
+	// 5. agentctl worktree name (droppable, dropped first). Bare name, no
+	// branch semantics -- see payload.go's NOTE on why this is NOT
+	// windowstate.Branch/WorktreeDir and must not be treated as one.
+	if p.Workspace != nil && p.Workspace.GitWorktree != nil && *p.Workspace.GitWorktree != "" {
+		addSeg(mutedStyle.Render(*p.Workspace.GitWorktree))
 	}
 
 	const minKeep = 1
