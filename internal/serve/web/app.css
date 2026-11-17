@@ -90,7 +90,9 @@ body.term-open nav { display: none; }
 /* Fleet tree: nested dispatched agents. */
 .node { display: flex; align-items: stretch; background: var(--card); }
 .node > .win { flex: 1; min-width: 0; }
-.win.child { position: relative; min-height: 44px; padding-top: .35rem; padding-bottom: .35rem; padding-left: calc(var(--row-pad) + var(--depth, 1) * var(--indent)); }
+.win { position: relative; }
+.node.bucket { position: relative; }
+.win.child { min-height: 44px; padding-top: .35rem; padding-bottom: .35rem; padding-left: calc(var(--row-pad) + var(--depth, 1) * var(--indent)); }
 /* Tree lines. Geometry is shared with roots: glyph column --glyph-w starting
    --row-pad inside the padding box (after the 4px left border). Level k's
    vertical sits under the centre of the glyph at depth k. Lines are drawn in
@@ -98,6 +100,7 @@ body.term-open nav { display: none; }
    are continuous. */
 .tl { position: absolute; left: calc(var(--row-pad) + var(--lvl) * var(--indent) + var(--glyph-w) / 2 - var(--tree-w) / 2); top: 0; bottom: -1px; width: var(--tree-w); pointer-events: none; }
 .tl.through::before, .tl.own::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--tree-w); background: var(--tree-line); }
+.tl.stub::before { content: ""; position: absolute; left: 0; top: 50%; bottom: 0; width: var(--tree-w); background: var(--tree-line); }
 .tl.own.last::before { bottom: 50%; }
 .tl.own::after { content: ""; position: absolute; left: 0; top: calc(50% - var(--tree-w) / 2); height: var(--tree-w); width: calc(var(--indent) - var(--glyph-w) / 2 - .15rem); background: var(--tree-line); }
 .win.child .win-title .meta { font-size: .8rem; }
