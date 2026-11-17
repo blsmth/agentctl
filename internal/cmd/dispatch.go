@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -16,7 +15,6 @@ import (
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/logging"
-	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/textutil"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -165,11 +163,12 @@ func RunDispatch(issueNumber int, promptText string, promptKey string, agentName
 // Seams for tests.
 var (
 	resolveRepoSlug = dispatch.RepoSlug
-	launchAgent     = dispatch.Launch
+	launchAdhoc     = dispatch.LaunchAdhoc
 )
 
 // dispatchPrompt launches an agent in a new tmux window using an inline prompt
-// instead of a GitHub issue. It delegates to dispatch.Launch().
+// instead of a GitHub issue. It resolves the default working directory and
+// delegates to dispatch.LaunchAdhoc, which agentctl serve shares.
 // promptKey is the context store key the prompt was resolved from (via
 // --prompt-key), or "" when the caller used --prompt directly; it is passed
 // through as display-only metadata (see dispatch.Request.PromptKey).
@@ -178,29 +177,14 @@ func dispatchPrompt(prompt, promptKey, agentName, workDir, model, backend string
 	if workDir == "" {
 		workDir = resolveAgentDir(agentName)
 	}
-
-	// Determine the target repo from the working directory so that env vars
-	// and dispatch-log entries reference the correct repository. For ad-hoc
-	// dispatch the slug is informational only, and dispatching into a
-	// non-GitHub directory is legitimate, so a failure is not fatal: warn and
-	// continue with an empty slug (env var and --repo usage are omitted).
-	repoSlug, err := resolveRepoSlug(workDir)
-	if err != nil {
-		logging.Warn("dispatch: no GitHub repo for %s, continuing without repo slug: %v", workDir, err)
-		repoSlug = ""
-	}
-
-	res, err := launchAgent(dispatch.Request{
-		AgentName:    agentName,
-		Mode:         dispatch.ModeAdhoc,
-		CustomPrompt: prompt,
-		PromptKey:    promptKey,
-		WorkDir:      workDir,
-		UseWorktree:  &useWorktree,
-		RepoSlug:     repoSlug,
-		Model:        model,
-		Backend:      backend,
-		Background:   true,
+	res, err := launchAdhoc(dispatch.AdhocRequest{
+		Prompt:      prompt,
+		PromptKey:   promptKey,
+		AgentName:   agentName,
+		WorkDir:     workDir,
+		Model:       model,
+		Backend:     backend,
+		UseWorktree: useWorktree,
 	})
 	if err != nil {
 		return "", "", err
@@ -343,60 +327,14 @@ func formatElapsed(d time.Duration) string {
 }
 
 // discoverDispatchAgents lists the agents visible to a dispatch targeting
-// workDir: the global registry, the cwd and agent-configured directories
-// (agent.DiscoverFromCwd), plus workDir's own project-local agents. It is a
-// package-level var so tests can stub discovery.
-var discoverDispatchAgents = func(workDir string) ([]agent.Agent, error) {
-	cfg := config.Load()
-	agents, err := agent.DiscoverFromCwd(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if workDir == "" {
-		return agents, nil
-	}
-	local, err := agent.DiscoverAll(cfg, []string{paths.ExpandHome(workDir)})
-	if err != nil {
-		return agents, nil //nolint:nilerr // --dir discovery is additive; the base list still stands
-	}
-	return append(agents, local...), nil
-}
+// workDir (see dispatch.DiscoverAgents).
+var discoverDispatchAgents = dispatch.DiscoverAgents
 
-// claudeBuiltinAgents are the agents Claude Code ships with. They appear in
-// `claude --agent`'s "Available agents" list but have no .md file for
-// agentctl's discovery to find.
-var claudeBuiltinAgents = []string{
-	"general-purpose", "Explore", "Plan", "claude-code-guide", "statusline-setup",
-}
-
-// isPluginAgent reports whether name has Claude Code's plugin-scoped
-// `plugin:name` form. Plugin agents live in Claude Code's plugin cache, which
-// agentctl does not index, so they pass through unvalidated (the name is
-// still shell-quoted at launch).
-func isPluginAgent(name string) bool {
-	plugin, agentName, ok := strings.Cut(name, ":")
-	return ok && plugin != "" && agentName != ""
-}
+// claudeBuiltinAgents are the agents Claude Code ships with (see
+// dispatch.ClaudeBuiltinAgents).
+var claudeBuiltinAgents = dispatch.ClaudeBuiltinAgents()
 
 // validateAgentName returns an error naming the available agents unless name
-// is a discovered agent, a Claude Code built-in, or a plugin agent.
-func validateAgentName(name, workDir string) error {
-	if slices.Contains(claudeBuiltinAgents, name) || isPluginAgent(name) {
-		return nil
-	}
-	agents, err := discoverDispatchAgents(workDir)
-	if err != nil {
-		return fmt.Errorf("discovering agents: %w", err)
-	}
-	names := make([]string, 0, len(agents)+len(claudeBuiltinAgents))
-	for _, a := range agents {
-		if a.Name == name {
-			return nil
-		}
-		names = append(names, a.Name)
-	}
-	names = append(names, claudeBuiltinAgents...)
-	slices.Sort(names)
-	names = slices.Compact(names)
-	return fmt.Errorf("unknown agent %q; available agents: %s (or plugin:name)", name, strings.Join(names, ", "))
-}
+// is a discovered agent, a Claude Code built-in, or a plugin agent (see
+// dispatch.ValidateAgentName).
+var validateAgentName = dispatch.ValidateAgentName

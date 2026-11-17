@@ -47,6 +47,8 @@ func (tmuxPanes) Capture(session, windowID string, lines int) (string, error) {
 type discoveredAgents struct{}
 
 func (discoveredAgents) Agents(projectDirs []string) ([]AgentInfo, error) {
+	globalsMu.RLock() // config.Load reads state withSession rebinds
+	defer globalsMu.RUnlock()
 	cfg := config.Load()
 	found, err := agent.DiscoverAll(cfg, agent.ProjectDirs(cfg, projectDirs...))
 	if err != nil {

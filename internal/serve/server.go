@@ -50,6 +50,11 @@ type Options struct {
 	Panes  PaneSource
 	Agents AgentLister
 	Awake  Holder
+	// Write API dependencies; nil means tmux and in-process dispatch.
+	Keys       KeySender
+	Injector   Injector
+	Closer     WindowCloser
+	Dispatcher Dispatcher
 	// BusOptions tunes the fleet event bus (debounce, rediscovery).
 	BusOptions fleetwatch.Options
 	// PingEvery is the SSE keep-alive interval; 0 means 20s.
@@ -83,6 +88,15 @@ type Server struct {
 	ntfy      *Ntfy
 	notifier  *Notifier
 	pushQ     *pushDispatcher
+
+	keys       KeySender
+	injector   Injector
+	closer     WindowCloser
+	dispatcher Dispatcher
+	limiter    writeLimiter
+	audit      *auditLog
+	winLocks   windowLocks
+
 	// done is closed by Close so open SSE streams end before shutdown.
 	done      chan struct{}
 	closeOnce sync.Once
@@ -119,6 +133,21 @@ func New(opts Options) (*Server, error) {
 	if s.fleet == nil {
 		s.fleet = fleetwatch.HerdSource{}
 	}
+	s.fleet = lockedFleet{src: s.fleet}
+	s.keys, s.injector, s.closer, s.dispatcher = opts.Keys, opts.Injector, opts.Closer, opts.Dispatcher
+	if s.keys == nil {
+		s.keys = tmuxKeys{}
+	}
+	if s.injector == nil {
+		s.injector = tmuxInjector{}
+	}
+	if s.closer == nil {
+		s.closer = tmuxCloser{}
+	}
+	if s.dispatcher == nil {
+		s.dispatcher = launchDispatcher{}
+	}
+	s.audit = newAuditLog(opts.Dir)
 	if s.panes == nil {
 		s.panes = tmuxPanes{}
 	}
@@ -138,6 +167,7 @@ func New(opts Options) (*Server, error) {
 	s.done = make(chan struct{})
 	s.bus = fleetwatch.NewBus(s.fleet, opts.BusOptions)
 	s.router = newRouter(devices, opts.Config.AllowWrite, now)
+	s.router.onWriteDenied = s.auditRejected
 	s.routes(s.router)
 	s.handler = s.chain(s.router)
 	return s, nil
@@ -149,7 +179,7 @@ func (s *Server) Handler() http.Handler { return s.handler }
 // chain wraps h in the middleware every HTTPS request passes, outermost
 // first: CIDR filter, security headers, CSRF.
 func (s *Server) chain(h http.Handler) http.Handler {
-	return s.cidrs.middleware(securityHeaders(requireCSRF(h)))
+	return s.cidrs.middleware(securityHeaders(requireCSRF(h, s.auditRejected)))
 }
 
 // routes registers every endpoint. Later PRs add one line each here
@@ -160,6 +190,7 @@ func (s *Server) routes(rt *Router) {
 	s.registerStatic(rt)
 	s.registerRead(rt)
 	s.registerPush(rt)
+	s.registerWrite(rt)
 }
 
 // registerCore registers the foundation endpoints.

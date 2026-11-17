@@ -70,6 +70,12 @@ type Request struct {
 	// config, BackendNone = force Anthropic, else a name from config backends.
 	Backend    string
 	Background bool // when true, skip switching to the new window after launch
+	// Detached marks a launch with no dispatching window (agentctl serve,
+	// acting for a phone): spawned_by stays empty and the worker is told of no
+	// orchestrator, whatever the launching process's own environment says
+	// (serve may have been started from a tmux pane, and TMUX_PANE would
+	// otherwise name an unrelated window as the parent).
+	Detached bool
 }
 
 // applyOverrides applies the request's model and effort to ac and returns the
@@ -226,7 +232,7 @@ func Launch(req Request) (Result, error) {
 	}
 
 	// 7. Build system prompt.
-	if spec.Role != RoleOrchestrator {
+	if spec.Role != RoleOrchestrator && !req.Detached {
 		req.Orchestrator = resolveOrchestrator()
 	}
 	systemPrompt := buildSystemPrompt(req, spec, workDir, branch, useWorktree, contextEntries, sharedConventions)
@@ -329,7 +335,7 @@ func Launch(req Request) (Result, error) {
 	for k, v := range backendEnv {
 		extraEnv[k] = v
 	}
-	applySpawnedByEnv(extraEnv)
+	applyParentEnv(req, extraEnv)
 	extraEnv[EnvSessionName] = sessionName
 
 	logging.Log("dispatch: shellCmd len=%d: %s", len(shellCmd), textutil.Truncate(logCmd, 500, "..."))
@@ -423,6 +429,14 @@ func buildDispatchEnv(req Request, ac config.AgentConfig, workDir, repoDir, bran
 	}
 	extraEnv["AGENTCTL_MODE"] = string(req.Mode)
 	return extraEnv
+}
+
+// applyParentEnv records the dispatcher on extraEnv unless the launch is
+// Detached, which has no parent window by definition.
+func applyParentEnv(req Request, extraEnv map[string]string) {
+	if !req.Detached {
+		applySpawnedByEnv(extraEnv)
+	}
 }
 
 // applySpawnedByEnv sets AGENTCTL_SPAWNED_BY and AGENTCTL_SPAWNED_BY_SESSION

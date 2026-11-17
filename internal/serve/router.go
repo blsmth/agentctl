@@ -25,6 +25,9 @@ type Router struct {
 	allowWrite bool
 	features   []string
 	now        func() time.Time
+	// onWriteDenied, when set, is told of every request the allow_write
+	// gate refuses (for the audit log).
+	onWriteDenied func(r *http.Request, code string)
 }
 
 func newRouter(auth deviceAuthenticator, allowWrite bool, now func() time.Time) *Router {
@@ -48,7 +51,7 @@ func (rt *Router) Device(pattern string, h http.HandlerFunc) {
 // serve.allow_write. Register write routes with a non-GET method so the CSRF
 // check applies.
 func (rt *Router) Write(pattern string, h http.HandlerFunc) {
-	rt.mux.Handle(pattern, requireDevice(rt.auth, rt.now, requireWrite(rt.allowWrite, h)))
+	rt.mux.Handle(pattern, requireDevice(rt.auth, rt.now, requireWrite(rt.allowWrite, rt.onWriteDenied, h)))
 }
 
 // Feature advertises a capability in /healthz "features" so the web app can

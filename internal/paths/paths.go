@@ -244,6 +244,21 @@ func resolvePath(path string) string {
 // RuntimeDir returns the base .agentctl/ directory.
 func RuntimeDir() string { return runtimeDir }
 
+// Bind points RuntimeDir at dir until the returned restore func runs. It also
+// consumes Init's once guard, so a later Init cannot override the binding.
+//
+// It exists for agentctl serve, the one process that acts on many sessions:
+// tmux, windowstate and config derive their paths from this package-global
+// value, so serve binds the target session's runtime dir around each action.
+// Bind does no locking of its own; the caller must serialize every Bind and
+// every concurrent reader of RuntimeDir under its own lock.
+func Bind(dir string) (restore func()) {
+	once.Do(func() {})
+	prev := runtimeDir
+	runtimeDir = dir
+	return func() { runtimeDir = prev }
+}
+
 // ProjectDir returns the project root -- the parent of .agentctl/, i.e. the
 // directory a session was started from. Returns "" if Init has not been
 // called.
