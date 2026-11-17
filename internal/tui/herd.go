@@ -79,6 +79,11 @@ var (
 	herdActivityStyle lipgloss.Style
 	herdRecapStyle    lipgloss.Style
 
+	// Recap styles for a hovered row: the theme's primary text colour, with
+	// the activity fallback still italic so its source stays distinguishable.
+	herdRecapHoverStyle    lipgloss.Style
+	herdActivityHoverStyle lipgloss.Style
+
 	// herdPaletteColors is the stable accent palette (theme colours) that
 	// project groups and agent types hash into.
 	herdPaletteColors []string
@@ -115,6 +120,9 @@ func initHerdStyles() {
 	herdCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
 	herdActivityStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
 	herdRecapStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Subtle))
+
+	herdRecapHoverStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Text))
+	herdActivityHoverStyle = herdRecapHoverStyle.Italic(true)
 
 	herdPaletteColors = []string{t.Accent, t.Sky, t.Blue, t.Info, t.Orange, t.Green}
 }
@@ -178,10 +186,18 @@ func splitAgentName(name string) (base, suffix string) {
 // renderAgentName colours the agent type by hash and keeps ":N" muted. The
 // caller passes the already-truncated plain name. A blocked row gets a bold warning colour so it stands out.
 func renderAgentName(name string, blocked bool) string {
+	return renderAgentNameHover(name, blocked, false)
+}
+
+// renderAgentNameHover is renderAgentName; a hovered name is also bold.
+func renderAgentNameHover(name string, blocked, hovered bool) string {
 	base, suffix := splitAgentName(name)
 	style := lipgloss.NewStyle().Foreground(lipgloss.Color(herdColorFor(base)))
 	if blocked {
 		style = herdBlockedStyle.Bold(true)
+	}
+	if hovered {
+		style = style.Bold(true)
 	}
 	out := style.Render(base)
 	if suffix != "" {
@@ -1459,7 +1475,25 @@ func herdFitLineStyled(line string, hl *lipgloss.Style, cw int) string {
 	if hl == nil {
 		return line
 	}
+	line = reapplyBackground(line, hl)
 	return hl.Width(inner).Render(line) + strings.Repeat(" ", herdSidebarRightGutter)
+}
+
+// reapplyBackground re-emits hl's background after every SGR reset in line.
+// Segments are pre-rendered with their own styles and each ends in a reset,
+// which would otherwise drop the outer background and leave the highlight
+// patchy after the first segment.
+func reapplyBackground(line string, hl *lipgloss.Style) string {
+	bg := hl.GetBackground()
+	if bg == nil {
+		return line
+	}
+	seq, _, ok := strings.Cut(lipgloss.NewStyle().Background(bg).Render("x"), "x")
+	if !ok || seq == "" {
+		return line
+	}
+	line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+seq)
+	return strings.ReplaceAll(line, "\x1b[m", "\x1b[m"+seq)
 }
 
 // herdRowCursor is a row's left bar in the group colour plus the cursor slot.
@@ -1525,6 +1559,7 @@ func (m HerdModel) renderTreeRowHover(r herd.Row, treePrefix string, nameCol int
 	cursor := herdRowCursor(r, selected)
 	glyphStr := style.Render(glyph)
 
+	hovered := hover == herdHoverBody || hover == herdHoverClose
 	closeW := 1 + lipgloss.Width(herdCloseLabel)
 	inner := cw - herdSidebarRightGutter
 	// Columns before the name: bar, cursor slot, glyph and a space. The
@@ -1540,7 +1575,7 @@ func (m HerdModel) renderTreeRowHover(r herd.Row, treePrefix string, nameCol int
 	name := truncateToWidth(herd.BaseName(r), nameBudget)
 
 	padW := max(col-lipgloss.Width(treePrefix)-lipgloss.Width(name), 0)
-	prefix := cursor + glyphStr + " " + herdDimStyle.Render(treePrefix) + renderAgentName(name, r.State == "blocked") + strings.Repeat(" ", padW) + "  "
+	prefix := cursor + glyphStr + " " + herdDimStyle.Render(treePrefix) + renderAgentNameHover(name, r.State == "blocked", hovered) + strings.Repeat(" ", padW) + "  "
 	available := inner - lipgloss.Width(prefix) - closeW
 
 	closeStyle := herdDimStyle
@@ -1560,7 +1595,14 @@ func (m HerdModel) renderTreeRowHover(r herd.Row, treePrefix string, nameCol int
 			right = ""
 		}
 		recap := rowRecap(r)
-		text = recapStyle(recap.Source).Render(truncateToWidth(recap.Text, available))
+		rs := recapStyle(recap.Source)
+		if hovered {
+			rs = herdRecapHoverStyle
+			if recap.Source == herd.RecapActivity {
+				rs = herdActivityHoverStyle
+			}
+		}
+		text = rs.Render(truncateToWidth(recap.Text, available))
 	}
 
 	line := prefix + text
@@ -1570,7 +1612,7 @@ func (m HerdModel) renderTreeRowHover(r herd.Row, treePrefix string, nameCol int
 	switch {
 	case selected:
 		hl = &herdSelectedStyle
-	case hover == herdHoverBody || hover == herdHoverClose:
+	case hovered:
 		hl = &herdHoverStyle
 	}
 	out := herdFitLineStyled(line, hl, cw)

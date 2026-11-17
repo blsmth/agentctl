@@ -518,3 +518,77 @@ func TestHerdHover_WidthInvariants(t *testing.T) {
 		}
 	}
 }
+
+func TestHerdHover_NameBoldRecapBright(t *testing.T) {
+	m := sampleSidebar(t, 120)
+	cw := m.contentWidth()
+	fg := func(s lipgloss.Style) string {
+		pre, _, _ := strings.Cut(s.Render("x"), "x")
+		return pre
+	}
+	for i, l := range m.lines {
+		if l.kind != herdLineRow {
+			continue
+		}
+		blocked := l.row.State == "blocked"
+		base, _ := splitAgentName(truncateToWidth(herd.BaseName(l.row), herdNameBudget(cw)))
+		rs := herdRecapHoverStyle
+		if rowRecap(l.row).Source == herd.RecapActivity {
+			rs = herdActivityHoverStyle
+		}
+		for _, sel := range []bool{false, true} {
+			hov := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, sel, herdHoverBody, cw)
+			plain := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, sel, herdHoverNone, cw)
+			if !strings.Contains(hov, renderAgentNameHover(base, blocked, true)) {
+				t.Errorf("row %d sel=%v: hovered name not bold", i, sel)
+			}
+			if !strings.Contains(plain, renderAgentName(base, blocked)) {
+				t.Errorf("row %d sel=%v: unhovered name changed", i, sel)
+			}
+			if !blocked && strings.Contains(plain, renderAgentNameHover(base, blocked, true)) {
+				t.Errorf("row %d sel=%v: unhovered name is bold", i, sel)
+			}
+			if !strings.Contains(hov, fg(rs)) {
+				t.Errorf("row %d sel=%v: bright recap foreground missing", i, sel)
+			}
+		}
+	}
+}
+
+func TestHerdHover_BackgroundContinuous(t *testing.T) {
+	m := sampleSidebar(t, 120)
+	cw := m.contentWidth()
+	for _, tc := range []struct {
+		name string
+		sel  bool
+		reg  herdHoverRegion
+		hl   lipgloss.Style
+	}{
+		{"hover", false, herdHoverBody, herdHoverStyle},
+		{"selected", true, herdHoverNone, herdSelectedStyle},
+	} {
+		seq, _, _ := strings.Cut(lipgloss.NewStyle().Background(tc.hl.GetBackground()).Render("x"), "x")
+		for i, l := range m.lines {
+			if l.kind != herdLineRow {
+				continue
+			}
+			first := strings.Split(m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, tc.sel, tc.reg, cw), "\n")[0]
+			body := strings.TrimSuffix(first, strings.Repeat(" ", herdSidebarRightGutter))
+			// Every reset must be immediately followed by the background
+			// again, except the final one that closes the highlight.
+			for _, reset := range []string{"\x1b[0m", "\x1b[m"} {
+				rest := body
+				for {
+					idx := strings.Index(rest, reset)
+					if idx < 0 {
+						break
+					}
+					rest = rest[idx+len(reset):]
+					if rest != "" && !strings.HasPrefix(rest, seq) {
+						t.Fatalf("%s row %d: text after reset without background: %q", tc.name, i, rest)
+					}
+				}
+			}
+		}
+	}
+}
