@@ -64,7 +64,7 @@ func TestServiceWorkerScope(t *testing.T) {
 		t.Errorf("Service-Worker-Allowed = %q", got)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"showNotification", "notificationclick", `"/v1/"`} {
+	for _, want := range []string{"showNotification", "notificationclick", `"/v1/"`, "target.origin !== self.location.origin"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("sw.js missing %q", want)
 		}

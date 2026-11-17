@@ -170,3 +170,13 @@ export function urlBase64ToBytes(s) {
   const raw = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/"));
   return Uint8Array.from(raw, (c) => c.charCodeAt(0));
 }
+
+/** safeHttpsUrl returns the normalised URL when s parses as an https URL, else "". */
+export function safeHttpsUrl(s) {
+  try {
+    const u = new URL(s);
+    return u.protocol === "https:" ? u.href : "";
+  } catch {
+    return "";
+  }
+}

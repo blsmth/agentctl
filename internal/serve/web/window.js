@@ -6,6 +6,7 @@ import {
   buildReplyRequest,
   effectiveState,
   formatSince,
+  safeHttpsUrl,
   windowApiPath,
 } from "./logic.js";
 import { clear, confirmSheet, h, toast } from "./ui.js";
@@ -62,8 +63,9 @@ export function mountWindow(root, ctx, { session, windowId }) {
     const since = formatSince(win.blocked_since || win.state_since, Date.now());
     if (since) bits.push(since);
     sub.append(bits.filter(Boolean).join(" · "));
-    if (win.pr_url) {
-      sub.append(" · ", h("a", { href: win.pr_url, target: "_blank", rel: "noopener noreferrer" }, "PR"));
+    const pr = safeHttpsUrl(win.pr_url);
+    if (pr) {
+      sub.append(" · ", h("a", { href: pr, target: "_blank", rel: "noopener noreferrer" }, "PR"));
     }
   }
 
