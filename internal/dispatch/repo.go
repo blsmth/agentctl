@@ -1,21 +1,43 @@
 package dispatch
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
+
+// repoSlugTimeout bounds `gh repo view`. It goes to the network, and a hung
+// gh must not hang a dispatch (or agentctl serve, which resolves the slug
+// while a phone waits).
+const repoSlugTimeout = 15 * time.Second
 
 // commandRunner runs name with args in dir and returns stdout. It exists so
 // tests can inject gh behavior.
 type commandRunner func(dir, name string, args ...string) ([]byte, error)
 
 func execRunner(dir, name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
+	return runWithTimeout(repoSlugTimeout, dir, name, args...)
+}
+
+// runWithTimeout runs name in dir and returns stdout, killing it after
+// timeout.
+func runWithTimeout(timeout time.Duration, dir, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	return cmd.Output()
+	// A child that inherited stdout must not keep Output waiting after the
+	// kill.
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("%s timed out after %s: %w", name, timeout, ctx.Err())
+	}
+	return out, err
 }
 
 var (

@@ -37,6 +37,10 @@ type syncPanes struct {
 	err       error
 	captures  int
 	onCapture func(n int)
+
+	mainPaneErr   error
+	mainPaneCalls int
+	capturedPanes []string
 }
 
 func (p *syncPanes) Capture(string, string, int) (string, error) {
@@ -48,6 +52,25 @@ func (p *syncPanes) Capture(string, string, int) (string, error) {
 		hook(n)
 	}
 	return text, err
+}
+
+// testMainPane is the main pane syncPanes reports for every window.
+const testMainPane = "%7"
+
+// MainPane makes syncPanes the writes' MainPanes too.
+func (p *syncPanes) MainPane(_, _, _, _ string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.mainPaneCalls++
+	return testMainPane, p.mainPaneErr
+}
+
+// CapturePane records the pane a write captured and returns the text.
+func (p *syncPanes) CapturePane(paneID string, lines int) (string, error) {
+	p.mu.Lock()
+	p.capturedPanes = append(p.capturedPanes, paneID)
+	p.mu.Unlock()
+	return p.Capture("", "", lines)
 }
 
 func (p *syncPanes) set(text string) {
@@ -189,6 +212,7 @@ func newWriteEnvWith(t *testing.T, allowWrite bool, mutate func(*Options)) *writ
 		Fleet: fleet, Panes: e.panes, Awake: &fakeHolder{},
 		Agents: fakeAgents{list: []AgentInfo{{Name: "go-engineer", Scope: "global"}}},
 		Keys:   e.keys, Injector: e.inj, Closer: e.closer, Dispatcher: e.disp,
+		MainPanes: e.panes,
 	}
 	if mutate != nil {
 		mutate(&opts)
@@ -197,6 +221,8 @@ func newWriteEnvWith(t *testing.T, allowWrite bool, mutate func(*Options)) *writ
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Tests that exercise the post-answer wait set their own.
+	s.answerSettle = 20 * time.Millisecond
 	t.Cleanup(s.Close)
 	e.testServer = &testServer{Server: s, dir: dir, clock: clock}
 	e.dev, e.tok = e.pairDevice(t, "phone")
@@ -412,18 +438,24 @@ func TestAnswer(t *testing.T) {
 					t.Fatalf("code %s, sent %v", errCode(t, w), sent)
 				}
 			} else {
-				want := WindowTarget{Session: "agentctl-proj", RuntimeDir: "/code/proj/.agentctl", WindowID: "@523"}
+				want := WindowTarget{Session: "agentctl-proj", RuntimeDir: "/code/proj/.agentctl", WindowID: "@523", Pane: testMainPane}
 				if len(sent) != 1 || sent[0].key != tt.wantKey || sent[0].target != want {
 					t.Fatalf("sent %+v", sent)
 				}
 			}
-			lines := e.auditLines(t)
-			wantResult := "ok"
-			if tt.code != "" {
-				wantResult = tt.code
+			// A sent key is preceded by an attempt line; a refusal has none.
+			wantResults := []string{tt.code}
+			if tt.code == "" {
+				wantResults = []string{auditAttemptResult, "ok"}
 			}
-			if len(lines) != 1 || lines[0].Result != wantResult || lines[0].Window != "@523" || lines[0].Session != "agentctl-proj" {
-				t.Errorf("audit = %+v", lines)
+			lines := e.auditLines(t)
+			if len(lines) != len(wantResults) {
+				t.Fatalf("audit = %+v", lines)
+			}
+			for i, l := range lines {
+				if l.Result != wantResults[i] || l.Window != "@523" || l.Session != "agentctl-proj" {
+					t.Errorf("audit line %d = %+v", i, l)
+				}
 			}
 		})
 	}
@@ -443,13 +475,14 @@ func TestAnswerRecapturesBeforeSending(t *testing.T) {
 	}
 }
 
-// Two phones answering the same dialog: the per-window lock serializes them,
-// so later requests re-capture after the first answered and see it gone.
+// Two phones (or a double tap) answering the same dialog: exactly one key is
+// sent. The fake pane never redraws: Claude Code redraws some time after
+// send-keys returns, so a fake that cleared the dialog inside SendKey would
+// hide the race where every later request re-captures the dialog the first
+// one already answered and its key lands in the input box.
 func TestConcurrentAnswersSerialized(t *testing.T) {
 	e := newWriteEnv(t, true)
 	e.keys.delay = 20 * time.Millisecond
-	// Answering a real dialog dismisses it.
-	e.keys.onSend = func() { e.panes.set(idlePane) }
 	body := fmt.Sprintf(`{"key":"1","dialog_hash":%q}`, dialogHash(t))
 
 	var wg sync.WaitGroup
@@ -649,8 +682,14 @@ func TestDispatch(t *testing.T) {
 			t.Errorf("dispatch = %+v", e.disp.got)
 		}
 		lines := e.auditLines(t)
-		if len(lines) != 1 || lines[0].Result != "ok" || lines[0].Window != "@900" || lines[0].Session != "agentctl-proj" {
-			t.Errorf("audit = %+v", lines)
+		if len(lines) != 2 {
+			t.Fatalf("audit = %+v", lines)
+		}
+		if a := lines[0]; a.Result != auditAttemptResult || a.Session != "agentctl-proj" || a.Agent != "go-engineer" || a.Project != "proj" {
+			t.Errorf("attempt line = %+v", a)
+		}
+		if a := lines[1]; a.Result != "ok" || a.Window != "@900" || a.Session != "agentctl-proj" || a.Agent != "go-engineer" || a.Project != "proj" {
+			t.Errorf("result line = %+v", a)
 		}
 	})
 }
@@ -737,20 +776,25 @@ func TestAuditNoPlaintext(t *testing.T) {
 	sum := sha256.Sum256([]byte(okBody))
 	want := hex.EncodeToString(sum[:])
 	lines := e.auditLines(t)
-	if len(lines) != 3 {
+	// An attempt line precedes every action that acts; a refusal has none.
+	if len(lines) != 5 {
 		t.Fatalf("audit = %+v", lines)
 	}
-	for i, wantResult := range []string{"ok", codeNotIdle, "ok"} {
+	for i, wantResult := range []string{auditAttemptResult, "ok", codeNotIdle, auditAttemptResult, "ok"} {
 		l := lines[i]
 		if l.Result != wantResult || l.DeviceID != e.dev.ID || l.DeviceName != "phone" || l.RemoteIP != "192.168.1.20" || l.Time == "" {
 			t.Errorf("line %d = %+v", i, l)
 		}
 	}
-	if lines[0].Action != "reply" || lines[0].BodySHA256 != want || lines[1].BodySHA256 != want {
-		t.Errorf("reply lines = %+v", lines[:2])
+	for _, l := range lines[:3] {
+		if l.Action != "reply" || l.BodySHA256 != want {
+			t.Errorf("reply line = %+v", l)
+		}
 	}
-	if lines[2].Action != "dispatch" || len(lines[2].BodySHA256) != 64 {
-		t.Errorf("dispatch line = %+v", lines[2])
+	for _, l := range lines[3:] {
+		if l.Action != "dispatch" || len(l.BodySHA256) != 64 || l.Agent != "go-engineer" || l.Project != "proj" {
+			t.Errorf("dispatch line = %+v", l)
+		}
 	}
 }
 
@@ -787,4 +831,152 @@ func TestWithSessionRejectsBadTargets(t *testing.T) {
 			t.Errorf("withSession(%q, %q): err=%v called=%v", tc.session, tc.dir, err, called)
 		}
 	}
+}
+
+// An answered dialog's hash is refused for answeredTTL, then accepted again
+// (the agent may legitimately ask the same thing later).
+func TestAnswerRepeatRefusedUntilTTL(t *testing.T) {
+	e := newWriteEnv(t, true)
+	body := fmt.Sprintf(`{"key":"1","dialog_hash":%q}`, dialogHash(t))
+	if w := e.post(winPath+"/answer", body); w.Code != 200 {
+		t.Fatalf("first answer = %d %s", w.Code, w.Body)
+	}
+	w := e.post(winPath+"/answer", body)
+	if w.Code != http.StatusConflict || errCode(t, w) != codeAlreadyAnswered {
+		t.Fatalf("repeat = %d %s, want 409 %s", w.Code, w.Body, codeAlreadyAnswered)
+	}
+	e.clock.Advance(answeredTTL)
+	if w := e.post(winPath+"/answer", body); w.Code != 200 {
+		t.Fatalf("after TTL = %d %s", w.Code, w.Body)
+	}
+	if n := len(e.keys.all()); n != 2 {
+		t.Errorf("%d keys sent, want 2", n)
+	}
+}
+
+// The answer holds the window lock until the answered dialog leaves the
+// pane (bounded by answerSettle), so the next request sees the redraw.
+func TestAnswerWaitsForRedraw(t *testing.T) {
+	e := newWriteEnv(t, true)
+	e.answerSettle = 5 * time.Second
+	const redraw = 150 * time.Millisecond
+	e.keys.onSend = func() { time.AfterFunc(redraw, func() { e.panes.set(idlePane) }) }
+	start := time.Now()
+	if w := e.post(winPath+"/answer", fmt.Sprintf(`{"key":"1","dialog_hash":%q}`, dialogHash(t))); w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if d := time.Since(start); d < redraw || d > e.answerSettle {
+		t.Errorf("answer returned after %v, want after the %v redraw and well before the %v cap", d, redraw, e.answerSettle)
+	}
+}
+
+// Regression: writes captured the window's active pane but typed into its
+// main pane. Every capture and keystroke now targets the main pane.
+func TestWritesTargetMainPane(t *testing.T) {
+	t.Run("answer", func(t *testing.T) {
+		e := newWriteEnv(t, true)
+		if w := e.post(winPath+"/answer", fmt.Sprintf(`{"key":"1","dialog_hash":%q}`, dialogHash(t))); w.Code != 200 {
+			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+		if sent := e.keys.all(); len(sent) != 1 || sent[0].target.Pane != testMainPane {
+			t.Errorf("sent %+v", sent)
+		}
+		assertCapturedMainPane(t, e)
+	})
+	t.Run("reply", func(t *testing.T) {
+		e := newWriteEnv(t, true)
+		e.fleet.set(writeGroup("idle", false, "go-engineer", "dispatch"))
+		e.panes.set(idlePane)
+		if w := e.post(winPath+"/reply", `{"text":"hi"}`); w.Code != 200 {
+			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+		if len(e.inj.tgts) != 1 || e.inj.tgts[0].Pane != testMainPane {
+			t.Errorf("injected into %+v", e.inj.tgts)
+		}
+		assertCapturedMainPane(t, e)
+	})
+	t.Run("close", func(t *testing.T) {
+		e := newWriteEnv(t, true)
+		e.fleet.set(writeGroup("idle", true, "go-engineer", "dispatch"))
+		e.panes.set(idlePane)
+		if w := e.post(winPath+"/close", `{}`); w.Code != 200 {
+			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+		assertCapturedMainPane(t, e)
+	})
+	t.Run("interrupt", func(t *testing.T) {
+		e := newWriteEnv(t, true)
+		if w := e.post(winPath+"/interrupt", `{}`); w.Code != 200 {
+			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+		if sent := e.keys.all(); len(sent) != 1 || sent[0].target.Pane != testMainPane {
+			t.Errorf("sent %+v", sent)
+		}
+	})
+	t.Run("no main pane", func(t *testing.T) {
+		e := newWriteEnv(t, true)
+		e.panes.mainPaneErr = fmt.Errorf("no main pane")
+		w := e.post(winPath+"/answer", fmt.Sprintf(`{"key":"1","dialog_hash":%q}`, dialogHash(t)))
+		if w.Code != http.StatusBadGateway || errCode(t, w) != codePaneUnavailable {
+			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+		e.assertNothingSent(t)
+	})
+}
+
+func assertCapturedMainPane(t *testing.T, e *writeEnv) {
+	t.Helper()
+	e.panes.mu.Lock()
+	defer e.panes.mu.Unlock()
+	if len(e.panes.capturedPanes) == 0 {
+		t.Fatal("no main-pane capture")
+	}
+	for _, p := range e.panes.capturedPanes {
+		if p != testMainPane {
+			t.Errorf("captured pane %q, want %q", p, testMainPane)
+		}
+	}
+}
+
+// A reply starting with "!" would run a shell command (Claude Code bash
+// mode, no permission dialog), "/" a slash command, "#" a memory write.
+func TestReplyRejectsCommandPrefixes(t *testing.T) {
+	for _, text := range []string{
+		"!rm -rf ~",
+		"/permissions",
+		"/add-dir /",
+		"#remember this",
+		"   !ls",
+		"\n\t/hooks",
+		"！", // fullwidth is not a mode prefix; accepted below
+	} {
+		t.Run(text, func(t *testing.T) {
+			e := newWriteEnv(t, true)
+			e.fleet.set(writeGroup("idle", false, "go-engineer", "dispatch"))
+			e.panes.set(idlePane)
+			body, _ := json.Marshal(replyIn{Text: text})
+			w := e.post(winPath+"/reply", string(body))
+			if text == "！" {
+				if w.Code != 200 {
+					t.Fatalf("status %d: %s", w.Code, w.Body)
+				}
+				return
+			}
+			if w.Code != http.StatusBadRequest || errCode(t, w) != codeReplyIsCommand {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			e.assertNothingSent(t)
+			if lines := e.auditLines(t); len(lines) != 1 || lines[0].Result != codeReplyIsCommand {
+				t.Errorf("audit = %+v", lines)
+			}
+		})
+	}
+	t.Run("prefix later in the text is fine", func(t *testing.T) {
+		e := newWriteEnv(t, true)
+		e.fleet.set(writeGroup("idle", false, "go-engineer", "dispatch"))
+		e.panes.set(idlePane)
+		if w := e.post(winPath+"/reply", `{"text":"run /tmp/x.sh! #1"}`); w.Code != 200 {
+			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+	})
 }

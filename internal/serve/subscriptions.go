@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,12 +33,47 @@ type SubKeys struct {
 	Auth   string `json:"auth"`
 }
 
-// Validate checks that s is usable. The endpoint must be https: the server
-// POSTs to it, so a plain-http or odd-scheme URL is refused.
+// pushServiceHosts are the Web Push services a subscription endpoint may
+// point at. The server POSTs to every stored endpoint on each broadcast (and
+// on demand from /v1/push/test), so an arbitrary endpoint would let a paired
+// device aim those requests at the LAN or the cloud metadata service. A
+// leading "*." matches any subdomain (not the bare domain).
+var pushServiceHosts = []string{
+	"*.push.apple.com",                  // Safari / iOS (web.push.apple.com)
+	"fcm.googleapis.com",                // Chrome, Edge on Android, most Chromium
+	"updates.push.services.mozilla.com", // Firefox
+	"*.push.services.mozilla.com",
+	"*.notify.windows.com", // Edge on Windows (WNS)
+}
+
+// isPushServiceHost reports whether host matches pushServiceHosts.
+func isPushServiceHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	for _, pat := range pushServiceHosts {
+		if suffix, ok := strings.CutPrefix(pat, "*"); ok {
+			if strings.HasSuffix(host, suffix) && len(host) > len(suffix) {
+				return true
+			}
+		} else if host == pat {
+			return true
+		}
+	}
+	return false
+}
+
+// Validate checks that s is usable. The endpoint must be an https URL on a
+// known push service (pushServiceHosts), on the default port and with no
+// credentials: the server POSTs to it, so anything else is refused.
 func (s Subscription) Validate() error {
 	u, err := url.Parse(s.Endpoint)
-	if err != nil || u.Scheme != "https" || u.Host == "" {
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Opaque != "" {
 		return errors.New("endpoint must be an https URL")
+	}
+	if p := u.Port(); p != "" && p != "443" {
+		return errors.New("endpoint must use the default https port")
+	}
+	if !isPushServiceHost(u.Hostname()) {
+		return fmt.Errorf("endpoint host %q is not a known push service", u.Hostname())
 	}
 	if s.Keys.P256dh == "" || s.Keys.Auth == "" {
 		return errors.New("keys.p256dh and keys.auth are required")

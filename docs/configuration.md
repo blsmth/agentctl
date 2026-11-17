@@ -180,10 +180,13 @@ Settings for `agentctl serve`, the per-machine HTTPS server the mobile web app t
 | `serve.push.blocked_reminder_minutes` | `10` | One reminder per blocked episode; `0` disables. |
 | `serve.push.quiet_hours` | none | Local `HH:MM-HH:MM` range with no pushes. |
 | `serve.push.muted_projects` | none | Project names that never push. |
-| `serve.push.vapid_subscriber` | `mailto:agentctl@localhost` | VAPID contact sent to push services. |
-| `serve.ntfy_topic` | none | Also post notifications to `https://ntfy.sh/<topic>`. |
+| `serve.push.vapid_subscriber` | `https://github.com/blsmth/agentctl` | VAPID contact (the JWT `sub`) sent to push services: an `https:` URL or an email address, with or without `mailto:`. |
+| `serve.ntfy_topic` | none | Also post notifications to `https://ntfy.sh/<topic>`. **ntfy.sh topics are public**: anyone who knows or guesses the name can read every post, so use a long random topic (for example `openssl rand -hex 16`). |
+| `serve.ntfy_details` | `false` | Put agent and project names in ntfy posts, plus a `Click` link to the window (which publishes the server's LAN address). Off by default, a post says only what kind of event happened ("an agent is blocked"). |
 
-State lives in `$XDG_STATE_HOME/agentctl/serve/` (0700): the local CA and server certificate, `devices.json` (token hashes only), `vapid.json` (Web Push keypair, 0600), `subscriptions.json` (per-device push subscriptions; dropped when a device is revoked), `serve.pid`, `serve.log`, and the 0600 control socket `control.sock`. Commands: `agentctl serve` (foreground), `serve install` / `uninstall` (launchd LaunchAgent; prints a systemd user unit on Linux), `serve status`, `serve pair [--name N]`, `serve devices [rm <id The CA is name-constrained to local names (`.local`, `.lan`, `.home`, `.home.arpa`, `.internal`, the `serve.hostnames` present when it was created) and private/loopback/ULA IPs; after adding a hostname outside those, run `agentctl serve ca rotate` (every device must reinstall the profile and pair again).|name>]`.
+State lives in `$XDG_STATE_HOME/agentctl/serve/` (0700): the local CA and server certificate, `devices.json` (token hashes only), `vapid.json` (Web Push keypair, 0600), `subscriptions.json` (per-device push subscriptions; dropped when a device is revoked), `serve.pid`, `serve.log`, and the 0600 control socket `control.sock`. Commands: `agentctl serve` (foreground), `serve install` / `uninstall` (launchd LaunchAgent; prints a systemd user unit on Linux), `serve status`, `serve pair [--name N]`, `serve devices [rm <id|name>]`. The CA is name-constrained to local names (`.local`, `.lan`, `.home`, `.home.arpa`, `.internal`, the `serve.hostnames` present when it was created) and private/loopback/ULA IPs; after adding a hostname outside those, run `agentctl serve ca rotate` (every device must reinstall the profile and pair again).
+
+Web Push subscriptions are accepted only for known push services (Apple, Firebase Cloud Messaging, Mozilla, Windows Notification Service), and push requests never connect to private, loopback or link-local addresses or follow redirects.
 
 ### models
 

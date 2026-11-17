@@ -30,6 +30,7 @@ First public release.
 
 - Command-type config keys (`notify_cmd`, `hooks.*`, `dispatch.on_complete`) are honored only from the global config, never from a project-local `.agentctl/config.json`.
 - The global config honors `XDG_CONFIG_HOME`.
+- `agentctl serve` push and write hardening: push subscription endpoints must be on a known Web Push service, push requests refuse private, loopback and link-local addresses and redirects, and push errors no longer reach the client. Replies starting with `!`, `/` or `#` are refused (Claude Code would run them as a shell or slash command). A dialog answered twice in quick succession sends one key, not a stray one into the input box. Writes check and type into the main pane. Dispatch no longer holds the session lock across `gh repo view` (which now has a timeout). The audit log records an attempt line before each action, with agent and project for dispatch. ntfy posts carry no agent, project or LAN address unless `serve.ntfy_details` is set. The VAPID subject is no longer `mailto:mailto:…`, and defaults to the project URL.
 
 ### Platforms
 

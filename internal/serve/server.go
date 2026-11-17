@@ -55,6 +55,9 @@ type Options struct {
 	Injector   Injector
 	Closer     WindowCloser
 	Dispatcher Dispatcher
+	// MainPanes finds and captures the pane a window write checks and types
+	// into; nil means tmux.
+	MainPanes MainPanes
 	// Live terminal dependencies; nil means tmux viewer sessions and
 	// creack/pty. TerminalSizeEvery is the window-size poll; 0 means 2s.
 	Terminal          TerminalTmux
@@ -98,10 +101,15 @@ type Server struct {
 	injector   Injector
 	closer     WindowCloser
 	dispatcher Dispatcher
-	limiter    writeLimiter
-	audit      *auditLog
-	winLocks   windowLocks
-	term       *terminals
+	mainPanes  MainPanes
+	// answered remembers recently answered dialogs (see handleAnswer);
+	// answerSettle bounds the wait for an answered dialog to redraw.
+	answered     answeredDialogs
+	answerSettle time.Duration
+	limiter      writeLimiter
+	audit        *auditLog
+	winLocks     windowLocks
+	term         *terminals
 
 	// done is closed by Close so open SSE streams end before shutdown.
 	done      chan struct{}
@@ -151,7 +159,11 @@ func New(opts Options) (*Server, error) {
 		s.closer = tmuxCloser{}
 	}
 	if s.dispatcher == nil {
-		s.dispatcher = launchDispatcher{}
+		s.dispatcher = newLaunchDispatcher()
+	}
+	s.mainPanes, s.answerSettle = opts.MainPanes, answerSettleTimeout
+	if s.mainPanes == nil {
+		s.mainPanes = tmuxMainPanes{}
 	}
 	s.audit = newAuditLog(opts.Dir)
 	s.term = newTerminals(opts.Terminal, opts.PTY, opts.TerminalSizeEvery)

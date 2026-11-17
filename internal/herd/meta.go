@@ -30,6 +30,10 @@ type Meta struct {
 	UpdatedAt        time.Time
 	PRNumber         int
 	PRURL            string
+	// Pane layout (windowstate main_pane, chrome_bar_pane, hud_pane).
+	MainPane      string
+	ChromeBarPane string
+	HudPane       string
 
 	PendingTool       string
 	PendingToolDetail string
@@ -97,6 +101,9 @@ func LoadMeta(g Group) map[string]Meta {
 			UpdatedAt:        ws.UpdatedAt,
 			PRNumber:         ws.PRNumber,
 			PRURL:            ws.PRURL,
+			MainPane:         ws.MainPane,
+			ChromeBarPane:    ws.ChromeBarPane,
+			HudPane:          ws.HudPane,
 
 			PendingTool:       ws.PendingTool,
 			PendingToolDetail: ws.PendingToolDetail,

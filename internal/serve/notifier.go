@@ -23,8 +23,9 @@ const (
 	// dispatch completion to record the PR, so "PR #N ready" is not
 	// preempted by a plain "finished".
 	prGrace = 20 * time.Second
-	// notifyBuffer is the outgoing queue. The bus is never blocked: when it
-	// is full the oldest-first behaviour is to drop the new message.
+	// notifyBuffer is the outgoing queue's capacity. The bus is never
+	// blocked: when the queue is full the new message is dropped and the
+	// queued (older) ones are kept.
 	notifyBuffer = 32
 )
 

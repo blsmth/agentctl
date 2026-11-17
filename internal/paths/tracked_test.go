@@ -267,3 +267,33 @@ func TestCheckRuntimeDirGitFailureRefuses(t *testing.T) {
 		t.Fatalf("err = %v, want refusal", err)
 	}
 }
+
+// CheckRuntimeDirAt checks an explicit dir without binding it (agentctl
+// serve checks a session's dir before taking its session lock).
+func TestCheckRuntimeDirAt(t *testing.T) {
+	if err := CheckRuntimeDirAt("", true); err != nil {
+		t.Errorf("empty dir = %v, want nil", err)
+	}
+	base := t.TempDir()
+	missing := filepath.Join(base, "missing", ".agentctl")
+	if err := CheckRuntimeDirAt(missing, false); err != nil {
+		t.Errorf("missing dir = %v, want nil", err)
+	}
+	target := filepath.Join(base, "real")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, ".agentctl")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	var unsafe *UnsafeRuntimeDirError
+	if err := CheckRuntimeDirAt(link, false); !errors.As(err, &unsafe) {
+		t.Errorf("symlinked dir = %v, want UnsafeRuntimeDirError", err)
+	}
+	before := RuntimeDir()
+	_ = CheckRuntimeDirAt(link, false)
+	if RuntimeDir() != before {
+		t.Error("CheckRuntimeDirAt changed the bound runtime dir")
+	}
+}

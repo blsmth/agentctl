@@ -22,8 +22,10 @@ import (
 const VAPIDFile = "vapid.json"
 
 // DefaultVAPIDSubscriber is the VAPID "sub" claim: a contact the push service
-// can reach. It is required by the spec but need not be real.
-const DefaultVAPIDSubscriber = "mailto:agentctl@localhost"
+// can reach. Apple rejects a JWT whose subject is not a usable mailto: or
+// https: URL (BadJwtToken), so the default is the project's URL, not a
+// localhost address.
+const DefaultVAPIDSubscriber = "https://github.com/blsmth/agentctl"
 
 const (
 	// pushTTL is how long a push service keeps an undelivered message.
@@ -89,10 +91,22 @@ type webPusher struct {
 }
 
 func newWebPusher(keys VAPIDKeys, subscriber string) *webPusher {
-	if subscriber == "" {
-		subscriber = DefaultVAPIDSubscriber
+	return &webPusher{keys: keys, subscriber: vapidSubscriber(subscriber), client: newPushClient()}
+}
+
+// vapidSubscriber returns the value to hand webpush-go as Options.Subscriber.
+// webpush-go (v1.4) prepends "mailto:" to anything that does not start with
+// "https:", so a configured "mailto:x@y" would become "mailto:mailto:x@y";
+// the scheme is stripped here and webpush-go adds it back exactly once.
+func vapidSubscriber(configured string) string {
+	s := strings.TrimSpace(configured)
+	if s == "" {
+		s = DefaultVAPIDSubscriber
 	}
-	return &webPusher{keys: keys, subscriber: subscriber, client: &http.Client{Timeout: pushTimeout}}
+	if len(s) >= len("mailto:") && strings.EqualFold(s[:len("mailto:")], "mailto:") {
+		s = s[len("mailto:"):]
+	}
+	return s
 }
 
 func (p *webPusher) Push(ctx context.Context, sub Subscription, payload []byte, opts PushOptions) (int, error) {
@@ -224,7 +238,16 @@ func (s *Sender) SendTo(ctx context.Context, deviceID string, msg Message) error
 	return s.deliver(ctx, deviceID, sub, msg)
 }
 
-var errNoSubscription = errors.New("this device has no push subscription")
+var (
+	errNoSubscription = errors.New("this device has no push subscription")
+	// errSubscriptionExpired: the push service said the subscription is
+	// gone (404/410) and it was deleted.
+	errSubscriptionExpired = errors.New("the push subscription expired and was removed")
+	// errPushFailed is what callers see for any other delivery failure; the
+	// detail (dial errors, status codes) goes only to the log, so a client
+	// cannot use push delivery to probe the network.
+	errPushFailed = errors.New("push delivery failed")
+)
 
 func (s *Sender) liveDevices() (map[string]bool, error) {
 	devs, err := s.devices.List()
@@ -245,15 +268,15 @@ func (s *Sender) deliver(ctx context.Context, deviceID string, sub Subscription,
 	switch {
 	case err != nil:
 		logging.Warn("serve: push to device %s failed: %v", deviceID, err)
-		return fmt.Errorf("push failed: %w", err)
+		return errPushFailed
 	case status == http.StatusNotFound || status == http.StatusGone:
 		if derr := s.subs.DeleteEndpoint(sub.Endpoint); derr != nil {
 			logging.Warn("serve: push: deleting expired subscription: %v", derr)
 		}
-		return errors.New("subscription expired and was removed")
+		return errSubscriptionExpired
 	case status < 200 || status >= 300:
 		logging.Warn("serve: push to device %s: push service returned %d", deviceID, status)
-		return fmt.Errorf("push service returned %d", status)
+		return errPushFailed
 	}
 	return nil
 }
@@ -261,12 +284,17 @@ func (s *Sender) deliver(ctx context.Context, deviceID string, sub Subscription,
 // ntfyBase is where the ntfy fallback posts.
 const ntfyBase = "https://ntfy.sh"
 
-// Ntfy posts notifications to an ntfy topic.
+// Ntfy posts notifications to an ntfy topic. Topics on ntfy.sh are public:
+// anyone who knows or guesses the name can read them. So unless Details is
+// set, a post carries only the kind of event: no agent or project name, no
+// window, and no Click URL (which would publish the server's LAN address).
 type Ntfy struct {
 	Base   string // default ntfyBase
 	Topic  string
-	AppURL string // https://<host>:<port>, for the Click header
-	Client *http.Client
+	AppURL string // https://<host>:<port>, for the Click header (Details only)
+	// Details posts the full title and body and a Click link to the window
+	// (serve.ntfy_details).
+	Details bool
 }
 
 // Send posts msg. It is bounded by pushTimeout; callers run it off the bus
@@ -276,9 +304,9 @@ func (n *Ntfy) Send(ctx context.Context, msg Message) error {
 	if base == "" {
 		base = ntfyBase
 	}
-	client := n.Client
-	if client == nil {
-		client = &http.Client{Timeout: pushTimeout}
+	client := &http.Client{Timeout: pushTimeout}
+	if !n.Details {
+		msg = redactForNtfy(msg)
 	}
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
@@ -287,7 +315,9 @@ func (n *Ntfy) Send(ctx context.Context, msg Message) error {
 		return fmt.Errorf("building ntfy request: %w", err)
 	}
 	req.Header.Set("Title", msg.Title)
-	req.Header.Set("Click", n.AppURL+msg.URL)
+	if n.Details {
+		req.Header.Set("Click", n.AppURL+msg.URL)
+	}
 	req.Header.Set("Tags", ntfyTags(msg.Kind))
 	if msg.Urgent {
 		req.Header.Set("Priority", "high")
@@ -302,6 +332,24 @@ func (n *Ntfy) Send(ctx context.Context, msg Message) error {
 		return fmt.Errorf("ntfy returned %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// redactForNtfy replaces a message's title and body with text that names
+// only the kind of event (see Ntfy).
+func redactForNtfy(m Message) Message {
+	switch m.Kind {
+	case "blocked":
+		m.Title = "agentctl: an agent is blocked"
+	case "reminder":
+		m.Title = "agentctl: an agent is still blocked"
+	case "done":
+		m.Title = "agentctl: an agent finished"
+	default:
+		m.Title = "agentctl: notification"
+	}
+	m.Body = "Open agentctl for details."
+	m.URL = ""
+	return m
 }
 
 func ntfyTags(kind string) string {

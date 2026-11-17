@@ -55,7 +55,8 @@ New `serve` block in `~/.config/agentctl/config.json`. Every key is **global-onl
     "quiet_hours": "23:00-07:00",    // local time; empty = none
     "muted_projects": []
   },
-  "ntfy_topic": ""                   // optional; posts to https://ntfy.sh/<topic>
+  "ntfy_topic": "",                  // optional; posts to https://ntfy.sh/<topic>. ntfy.sh topics are public: use a long random name
+  "ntfy_details": false              // off: ntfy posts name only the kind of event (no agent, project, window or Click URL)
 }
 ```
 
@@ -116,13 +117,15 @@ Source: an internal event bus (`internal/serve/fleetwatch`) that fsnotify-watche
 
 | Method + path | Body | Behavior and guards |
 |---|---|---|
-| `POST …/windows/{w}/answer` | `{"key":"1","dialog_hash":"…"}` | Re-capture and re-classify the pane **immediately before sending**. Must still be awaiting input and the dialog hash must equal `dialog_hash`, and `key` must be one of the dialog's option keys or `"esc"`. Otherwise 409 `dialog_changed`. Then `send-keys` the key. |
-| `POST …/windows/{w}/reply` | `{"text":"…"}` | Only when the pane classifies idle (prompt ready) and windowstate is not `working`. Sends literal text (`send-keys -l`) then Enter. Text > 4000 chars rejected (413). 409 `not_idle` otherwise. |
+| `POST …/windows/{w}/answer` | `{"key":"1","dialog_hash":"…"}` | Re-capture and re-classify the pane **immediately before sending**. Must still be awaiting input and the dialog hash must equal `dialog_hash`, and `key` must be one of the dialog's option keys or `"esc"`. Otherwise 409 `dialog_changed`. Then `send-keys` the key. The window lock does not cover Claude Code's redraw, so the answered hash is remembered per window for 5s and a repeat (double tap, second phone) gets 409 `already_answered`; the answer also waits up to 1s for the dialog to leave the pane before releasing the lock. |
+| `POST …/windows/{w}/reply` | `{"text":"…"}` | Only when the pane classifies idle (prompt ready) and windowstate is not `working`. Sends literal text (`send-keys -l`) then Enter. Text > 4000 chars rejected (413). 409 `not_idle` otherwise. Text whose first non-space character is `!` (Claude Code bash mode: runs a shell command with no permission dialog), `/` (slash commands such as `/permissions`, `/hooks`, `/add-dir`) or `#` (memory) is rejected with 400 `reply_is_command`: a reply is text for the agent, never a command. |
 | `POST …/windows/{w}/interrupt` | `{}` | Sends Escape. Allowed in any state. |
 | `POST /v1/dispatch` | `{"agent","project_dir","prompt","model"?}` | Ad-hoc dispatch, same code path as `agentctl dispatch --agent X --prompt Y` with `--dir project_dir`. Export the needed function from `internal/cmd` (or move it to `internal/dispatch`) instead of shelling out. `project_dir` must be one of `/v1/projects` dirs. Returns `{"window_id","session","branch"}`. |
 | `POST …/windows/{w}/close` | `{}` | Kill the window, only if done or idle and it is not the orchestrator's own window class (`shell`, `improve~*` excluded), mirroring `sweep` safety rules. |
 
-Write rate limit: 30/min per device (token bucket, `golang.org/x/time/rate`). Audit line: `{time, device_id, device_name, remote_ip, action, session, window, body_sha256, result}`.
+Write rate limit: 30/min per device (token bucket, `golang.org/x/time/rate`). Audit line: `{time, device_id, device_name, remote_ip, action, session, window, body_sha256, result}`, plus `agent` and `project` for dispatch. An action that acts writes a `result: "attempt"` line immediately before the side effect, then the result line; a refused request writes only the result line.
+
+The window actions check and type into the window's main pane (the pane that is neither the chrome bar nor the HUD, `tmux.MainPaneOf`), never the active pane. Dispatch resolves the repo slug (`gh repo view`, with a timeout) and runs the runtime-dir git check before binding the session; only agent validation and the launch run under the session lock, so a slow `gh` never stalls fleet reads.
 
 ### Push (PR3)
 
@@ -133,7 +136,9 @@ Write rate limit: 30/min per device (token bucket, `golang.org/x/time/rate`). Au
 | `DELETE /v1/push/subscribe` | remove this device's subscription |
 | `POST /v1/push/test` | send a test push to this device |
 
-Triggers (from the fleetwatch bus): transition into `blocked`; transition to done with a PR (`pr_url` non-empty) or done without one; still blocked after `blocked_reminder_minutes` (once per blocked episode). De-dupe per window per episode; respect quiet hours and muted projects. Payload JSON: `{"title":"agentctl: go-engineer blocked","body":"agentctl · @523 · Bash","url":"/#/w/agentctl-agentctl/@523","tag":"<session>:<window>"}`. Library: `github.com/SherClockHolmes/webpush-go`. Expired subscriptions (404/410) are deleted. ntfy fallback posts the same title/body with `Click:` header set to the app URL.
+Triggers (from the fleetwatch bus): transition into `blocked`; transition to done with a PR (`pr_url` non-empty) or done without one; still blocked after `blocked_reminder_minutes` (once per blocked episode). De-dupe per window per episode; respect quiet hours and muted projects. Payload JSON: `{"title":"agentctl: go-engineer blocked","body":"agentctl · @523 · Bash","url":"/#/w/agentctl-agentctl/@523","tag":"<session>:<window>"}`. Library: `github.com/SherClockHolmes/webpush-go`. Expired subscriptions (404/410) are deleted. ntfy fallback: by default a post carries only the kind of event (no agent, project or window, no `Click:` header, since ntfy.sh topics are public and the app URL is a LAN address); with `ntfy_details` it posts the same title/body with `Click:` set to the app URL.
+
+Push is a server-side request a paired device controls, so it is fenced: `POST /v1/push/subscribe` accepts only https endpoints on the default port on known push services (`*.push.apple.com`, `fcm.googleapis.com`, `*.push.services.mozilla.com`, `*.notify.windows.com`; `pushServiceHosts`); the push HTTP client refuses to dial loopback, private, link-local, CGNAT and unspecified addresses after DNS resolution (rebinding), refuses redirects and ignores proxy environment variables; and `/v1/push/test` returns a generic error, with the detail only in `serve.log`. The VAPID subject defaults to `https://github.com/blsmth/agentctl`; a configured `mailto:` value is passed to webpush-go without its scheme, which the library adds back.
 
 ### Live terminal (PR6)
 

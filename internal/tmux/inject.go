@@ -152,6 +152,19 @@ func InjectPromptToWindow(windowID, content string) error {
 	return nil
 }
 
+// InjectPromptToPane is InjectPromptToWindow for a main pane the caller
+// already resolved (MainPaneOf), with the same guards and verification. It
+// reads no package-global session state.
+func InjectPromptToPane(paneID, content string) error {
+	if !IsPaneID(paneID) {
+		return fmt.Errorf("inject: invalid pane id %q", paneID)
+	}
+	if err := sendAndVerifySubmission(paneID, content); err != nil {
+		return fmt.Errorf("pane %s: %w", paneID, err)
+	}
+	return nil
+}
+
 // ErrDialogBlocking is returned (wrapped) when a permission/confirmation
 // dialog is on screen in the target pane. Injecting then would type into the
 // dialog and the Enter would hit its focused option -- approving a tool call

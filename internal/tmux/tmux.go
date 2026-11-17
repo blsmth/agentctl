@@ -558,27 +558,39 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 		// previous window that held the same (recycled) @N ID.
 		windowstate.Revive(windowID)
 		windowstate.Update(windowID, func(ws *windowstate.WindowState) { //nolint:errcheck
-			ws.Instance = windowName
-			// The window was just created with this name; start the glyph
-			// bookkeeping consistent with it so the first state writer
-			// renames from a known baseline. A recycled @N may carry a
-			// previous window's Seen/Done.
-			ws.RenderedName = windowName
-			ws.Seen = false
-			ws.AgentName = agentName
-			ws.LogPath = logPath
-			ws.Ticket = extraEnv["AGENTCTL_TICKET"]
-			ws.TicketTitle = extraEnv["AGENTCTL_TICKET_TITLE"]
-			ws.Mode = extraEnv["AGENTCTL_MODE"]
-			ws.Backend = extraEnv["AGENTCTL_BACKEND"]
-			ws.SessionName = extraEnv["AGENTCTL_CLAUDE_NAME"]
-			ws.SpawnedBy = extraEnv["AGENTCTL_SPAWNED_BY"]
-			ws.SpawnedBySession = extraEnv["AGENTCTL_SPAWNED_BY_SESSION"]
+			applyLaunchBootstrap(ws, windowName, agentName, logPath, extraEnv)
 		})
 	}
 	done()
 
 	return windowID, nil
+}
+
+// applyLaunchBootstrap stamps a freshly launched agent's metadata onto its
+// window record. A recycled @N may carry a previous window's fields, so
+// anything that belongs to the previous agent's work is reset here.
+func applyLaunchBootstrap(ws *windowstate.WindowState, windowName, agentName, logPath string, extraEnv map[string]string) {
+	ws.Instance = windowName
+	// The window was just created with this name; start the glyph
+	// bookkeeping consistent with it so the first state writer
+	// renames from a known baseline. A recycled @N may carry a
+	// previous window's Seen/Done.
+	ws.RenderedName = windowName
+	ws.Seen = false
+	ws.AgentName = agentName
+	ws.LogPath = logPath
+	ws.Ticket = extraEnv["AGENTCTL_TICKET"]
+	ws.TicketTitle = extraEnv["AGENTCTL_TICKET_TITLE"]
+	ws.Mode = extraEnv["AGENTCTL_MODE"]
+	ws.Backend = extraEnv["AGENTCTL_BACKEND"]
+	ws.SessionName = extraEnv["AGENTCTL_CLAUDE_NAME"]
+	ws.SpawnedBy = extraEnv["AGENTCTL_SPAWNED_BY"]
+	ws.SpawnedBySession = extraEnv["AGENTCTL_SPAWNED_BY_SESSION"]
+	// The PR belongs to the previous work: dispatch completion records the
+	// new one, and restore re-applies a restored window's after launch.
+	// Leaving it would make the next done push announce an old PR.
+	ws.PRNumber = 0
+	ws.PRURL = ""
 }
 
 // buildNewWindowArgs returns the tmux new-window argv (without the trailing
@@ -1637,15 +1649,31 @@ func FindMainPane(windowID string) string {
 // This is the pane that is NOT a chrome bar or HUD pane.
 func findMainPane(windowID string) string {
 	ws, _ := windowstate.Read(windowID)
-	chromeBarPane := ws.ChromeBarPane
-	hudPane := ws.HudPane
+	id, _ := MainPaneOf(SessionName, windowID, ws.ChromeBarPane, ws.HudPane)
+	return id
+}
 
-	target := fmt.Sprintf("%s:%s", SessionName, windowID)
+// MainPaneOf returns the main pane of <session>:<windowID> given the
+// window's recorded chrome bar and HUD panes: findMainPane with every input
+// explicit, so a caller that serves many sessions (agentctl serve) resolves
+// the same pane InjectPromptToWindow types into without binding the
+// package-global session.
+func MainPaneOf(session, windowID, chromeBarPane, hudPane string) (string, error) {
+	target := sessionWindowTarget(session, windowID)
 	out, err := exec.Command("tmux", "list-panes", "-t", target, "-F", "#{pane_id}").CombinedOutput()
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("list-panes %s: %s: %w", target, strings.TrimSpace(string(out)), err)
 	}
-	for _, id := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	if id := pickMainPane(string(out), chromeBarPane, hudPane); id != "" {
+		return id, nil
+	}
+	return "", fmt.Errorf("no main pane in %s", target)
+}
+
+// pickMainPane returns the first pane ID in list-panes output that is
+// neither the chrome bar nor the HUD pane.
+func pickMainPane(listPanes, chromeBarPane, hudPane string) string {
+	for _, id := range strings.Split(strings.TrimSpace(listPanes), "\n") {
 		if id != chromeBarPane && id != hudPane && id != "" {
 			return id
 		}
