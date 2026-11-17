@@ -67,7 +67,7 @@ func TestPopupApprovalState(t *testing.T) {
 			approvalWindowID = func() string { return wid }
 			approvalRuntimeDir = func() string { return rt }
 			popupDeadline = tc.deadline
-			popupCloser = func() error { return nil }
+			popupCloser = func(string) error { return nil }
 
 			var alerts []notify.Options
 			var mails []mailbox.Message
@@ -76,7 +76,7 @@ func TestPopupApprovalState(t *testing.T) {
 			d.EnqueueMailboxMessage = func(m mailbox.Message) (string, error) { mails = append(mails, m); return "id", nil }
 			deps = d
 
-			dispatchPopupRunner = func(ctx context.Context, _, _ int, _ string) error {
+			dispatchPopupRunner = func(ctx context.Context, _ string, _, _ int, _ string) error {
 				ws, err := windowstate.Read(wid)
 				if err != nil {
 					t.Errorf("read: %v", err)
@@ -93,7 +93,7 @@ func TestPopupApprovalState(t *testing.T) {
 				return tc.run(t, ctx)
 			}
 
-			approved, decided, _ := runPopupWithDeadline("dispatch", "test", 10, 10, "f",
+			approved, decided, _ := runPopupWithDeadline(popupTarget{}, "dispatch", "test", 10, 10, "f",
 				popupNotice{Agent: "lead", Tool: "dispatch", Detail: "go-engineer on #3", Action: "dispatch go-engineer on #3"})
 			if approved != tc.approved || decided != tc.decided {
 				t.Fatalf("approved=%v decided=%v", approved, decided)
@@ -128,7 +128,7 @@ func TestPopupUnresolvedWindowStillShowsPopup(t *testing.T) {
 	origRun := dispatchPopupRunner
 	t.Cleanup(func() { dispatchPopupRunner = origRun })
 	called := false
-	dispatchPopupRunner = func(context.Context, int, int, string) error { called = true; return nil }
+	dispatchPopupRunner = func(context.Context, string, int, int, string) error { called = true; return nil }
 	var alerts int
 	d := stubDeps(t)
 	d.Notify = func(notify.Options) { alerts++ }
@@ -136,7 +136,7 @@ func TestPopupUnresolvedWindowStillShowsPopup(t *testing.T) {
 	deps = d
 	t.Cleanup(func() { deps = origDeps })
 
-	approved, decided, _ := runPopupWithDeadline("bash command", "test", 1, 1, "f", popupNotice{Agent: "a", Tool: "Bash", Action: "run a command"})
+	approved, decided, _ := runPopupWithDeadline(popupTarget{}, "bash command", "test", 1, 1, "f", popupNotice{Agent: "a", Tool: "Bash", Action: "run a command"})
 	if !called || !approved || !decided || alerts != 1 {
 		t.Fatalf("called=%v approved=%v decided=%v alerts=%d", called, approved, decided, alerts)
 	}

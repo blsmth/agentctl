@@ -202,23 +202,30 @@ func clampPopupToClient(sz tui.PopupSize) tui.PopupSize {
 }
 
 // tmuxClientDimensions is the production implementation of clientDimensions.
-// It shells out to `tmux display -p` twice (once per dimension) rather than
-// a single call with both formats concatenated, so a failure or garbage
-// value on one query doesn't have to be disentangled from the other.
+// It queries the same client the popup will open on (resolvePopupTarget), so
+// sizing, opening and closing agree; with no clients it falls back to tmux's
+// default client. It shells out once per dimension so a garbage value on one
+// query doesn't have to be disentangled from the other.
 func tmuxClientDimensions() (width, height int, ok bool) {
-	w, wOK := tmuxDisplayInt("#{client_width}")
-	h, hOK := tmuxDisplayInt("#{client_height}")
+	client := resolvePopupTarget().Client
+	w, wOK := tmuxDisplayInt(client, "#{client_width}")
+	h, hOK := tmuxDisplayInt(client, "#{client_height}")
 	if !wOK || !hOK {
 		return 0, 0, false
 	}
 	return w, h, true
 }
 
-// tmuxDisplayInt runs `tmux display -p <format>` and parses the result as a
-// positive integer. Returns ok=false on any error, empty output, or
-// unparseable/non-positive output.
-func tmuxDisplayInt(format string) (int, bool) {
-	out, err := exec.Command("tmux", "display", "-p", format).Output()
+// tmuxDisplayInt runs `tmux display-message [-c client] -p <format>` and
+// parses the result as a positive integer. Returns ok=false on any error,
+// empty output, or unparseable/non-positive output.
+func tmuxDisplayInt(client, format string) (int, bool) {
+	args := []string{"display-message"}
+	if client != "" {
+		args = append(args, "-c", client)
+	}
+	args = append(args, "-p", format)
+	out, err := exec.Command("tmux", args...).Output()
 	if err != nil {
 		return 0, false
 	}
@@ -229,90 +236,27 @@ func tmuxDisplayInt(format string) (int, bool) {
 	return n, true
 }
 
-// tmuxDisplayString runs `tmux display -p <format>` and returns the trimmed
-// output. Returns ok=false on any error or empty output. Same implicit
-// target-resolution semantics as tmuxDisplayInt (current pane/session via
-// $TMUX_PANE) -- see that function's doc comment.
-func tmuxDisplayString(format string) (string, bool) {
-	out, err := exec.Command("tmux", "display", "-p", format).Output()
-	if err != nil {
-		return "", false
-	}
-	s := strings.TrimSpace(string(out))
-	if s == "" {
-		return "", false
-	}
-	return s, true
-}
-
-// hasAttachedClient reports whether a human is attached to the current tmux
-// session AND is currently looking at the window that is calling this
-// function -- as opposed to merely running inside a tmux pane somewhere,
-// which is all os.Getenv("TMUX") != "" tells you, or merely having SOME
-// client attached to the session, which is not enough on its own (see
-// below).
-//
-// Both halves matter because every agentctl agent window -- including a
-// dispatched, unattended one -- is created with `new-window -t
-// <sessionTarget>` (tmux.LaunchAgent), i.e. it lives in THE SAME SESSION the
-// human is attached to, just in a different window. Checking only "is a
-// client attached to this session" is true whenever the human is attached to
-// ANY window in the session, including window 0 while an unattended
-// dispatched agent in window 5 is asking. Requiring the calling window to
-// also be the session's ACTIVE window is what actually distinguishes "a
-// human is looking at this" from "a human is looking at something else in
-// the same session" -- without it, a global bash_preview setting deadlocks
-// every unattended dispatch forever on a modal nobody can see.
-//
-// clientDimensions() (above) is NOT a substitute for this check: per its own
-// doc comment, it deliberately FALLS BACK to fixed defaults (88/22) on any
-// query failure rather than reporting one, specifically so popup sizing
-// never aborts over an unqueryable client. That fallback makes it
-// indistinguishable from "small but present" client, which is exactly the
-// ambiguity this function exists to resolve.
+// hasAttachedClient reports whether a human is looking at the window that is
+// calling this function: some client, in ANY session, currently shows the
+// issuing window (a link-window copy in another session, such as the hub's
+// nested view, has the same window ID and counts). Merely having a client
+// attached to the session is not enough: an unattended dispatched agent in
+// window 5 must not raise a popup because the human is viewing window 0.
 //
 // It is a package-level var so tests can fake the answer without shelling
 // out to a real tmux server -- same seam pattern as clientDimensions.
 var hasAttachedClient = tmuxHasAttachedClient
 
 // tmuxHasAttachedClient is the production implementation of
-// hasAttachedClient. It resolves the calling window via
-// signal.ResolveWindowID's TMUX_PANE path specifically -- NOT the full
-// resolution chain, whose AGENTCTL_WINDOW_ID fallback is session-global and
-// last-writer-wins and can therefore name the wrong window entirely. A hook
-// invocation always runs inside its own pane, so TMUX_PANE is always
-// available and always correct for it; if it can't be resolved this way, the
-// window is treated as NOT attached (fail closed to pass-through, which
-// emits nothing -- the safe direction, since ValidateBash's caller falls
-// back to Claude Code's normal permission flow).
-//
-// It then requires BOTH:
-//  1. at least one client attached to the session (scoped to the CURRENT
-//     session, resolved via tmux's implicit target -- a client attached to
-//     some other project's session must not count as "attached" here), and
-//  2. the calling window is that session's ACTIVE window.
-//
-// Any error, empty output, or unresolvable window makes this false. There is
-// deliberately no fallback default the way clientDimensions has one -- an
-// unqueryable client here is never "safe to proceed", it's "assume nobody is
-// watching."
+// hasAttachedClient. The calling window comes from TMUX_PANE only (see
+// resolveCallingWindowID); if it cannot be resolved, or no client shows it,
+// the answer is false (fail closed to pass-through, the safe direction).
 func tmuxHasAttachedClient() bool {
 	windowID := resolveCallingWindowID()
 	if windowID == "" {
 		return false
 	}
-
-	session, ok := tmuxDisplayString("#{session_name}")
-	if !ok {
-		return false
-	}
-
-	out, err := exec.Command("tmux", "list-clients", "-t", session).Output()
-	if err != nil || strings.TrimSpace(string(out)) == "" {
-		return false
-	}
-
-	return tmux.DisplayTarget(windowID, "#{window_active}") == "1"
+	return selectPopupClient(listClients(), windowID).Viewing
 }
 
 // resolveCallingWindowID resolves the tmux window ID of the pane this hook

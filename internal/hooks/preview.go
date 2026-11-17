@@ -164,18 +164,21 @@ func PermissionWriteWithInput(filePath, content string) {
 	popupH := sz.Height
 
 	// Read agent name from environment (set by agentctl dispatch).
-	agentName := os.Getenv("AGENTCTL_AGENT_NAME")
+	target := resolvePopupTarget()
+	agentName := target.label(os.Getenv("AGENTCTL_AGENT_NAME"))
 
 	// Build the agentctl binary path.
 	agentctlBin := agentctlBinaryPath()
 
 	// Launch tmux popup.
-	cmd := exec.Command("tmux", "display-popup",
+	popupArgs := append([]string{"display-popup"}, target.clientArgs()...)
+	popupArgs = append(popupArgs,
 		"-E",
 		"-w", strconv.Itoa(popupW),
 		"-h", strconv.Itoa(popupH),
 		filePreviewPopupCmd(agentctlBin, tmpPath, filePath, agentName, contentWidth, vpHeight),
 	)
+	cmd := exec.Command("tmux", popupArgs...)
 	logging.Log("hook-permission-request: launching popup for file=%s", filePath)
 
 	if err := cmd.Run(); err != nil {

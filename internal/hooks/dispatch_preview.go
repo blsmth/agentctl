@@ -186,9 +186,11 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool, den
 	// doc comment on DispatchPreviewArgs).
 	contentWidth, vpHeight := dispatchPreviewFit()
 
+	target := resolvePopupTarget()
+
 	// Build the args struct.
 	args := DispatchPreviewArgs{
-		AgentName:    agentName,
+		AgentName:    target.label(agentName),
 		TargetAgent:  targetAgent,
 		Issue:        issue,
 		Prompt:       prompt,
@@ -256,7 +258,7 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool, den
 	logging.Log("hook-validate-bash: launching dispatch popup agent=%s target=%s issue=%d",
 		agentName, targetAgent, issue)
 
-	return runPopupWithDeadline("dispatch", "hook-validate-bash: dispatch", popupW, popupH, tmpPath,
+	return runPopupWithDeadline(target, "dispatch", "hook-validate-bash: dispatch", popupW, popupH, tmpPath,
 		dispatchPopupNotice(agentName, targetAgent, issue, args.Prompt))
 }
 
@@ -328,15 +330,16 @@ func inlineContextSet(key, command string) (value string, found, literal bool) {
 // same seam pattern as clientDimensions in popup_clamp.go.
 var dispatchPopupRunner = runDispatchPopupCmd
 
-func runDispatchPopupCmd(ctx context.Context, popupW, popupH int, argsFilePath string) error {
+func runDispatchPopupCmd(ctx context.Context, client string, popupW, popupH int, argsFilePath string) error {
 	agentctlBin := agentctlBinaryPath()
-	cmd := exec.CommandContext(ctx, "tmux", "display-popup",
+	args := append([]string{"display-popup"}, popupTarget{Client: client}.clientArgs()...)
+	args = append(args,
 		"-E",
 		"-w", strconv.Itoa(popupW),
 		"-h", strconv.Itoa(popupH),
 		dispatchPreviewPopupCmd(agentctlBin, argsFilePath),
 	)
-	return cmd.Run()
+	return exec.CommandContext(ctx, "tmux", args...).Run()
 }
 
 // dispatchPreviewPopupCmd returns the shell command line tmux display-popup

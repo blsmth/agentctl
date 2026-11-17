@@ -128,8 +128,10 @@ func bashPreviewGate(agentName, command string) (approved, decided bool, denyRea
 
 	contentWidth, vpHeight := dispatchPreviewFit()
 
+	target := resolvePopupTarget()
+
 	args := DispatchPreviewArgs{
-		AgentName:    agentName,
+		AgentName:    target.label(agentName),
 		Command:      command,
 		Kind:         PreviewKindBash,
 		ContentWidth: contentWidth,
@@ -163,7 +165,7 @@ func bashPreviewGate(agentName, command string) (approved, decided bool, denyRea
 
 	logging.Log("hook-validate-bash: launching bash preview popup agent=%s cmd=%s", agentName, textutil.Truncate(command, 100, "..."))
 
-	return runPopupWithDeadline("bash command", "hook-validate-bash: bash preview", popupW, popupH, tmpPath, popupNotice{
+	return runPopupWithDeadline(target, "bash command", "hook-validate-bash: bash preview", popupW, popupH, tmpPath, popupNotice{
 		Agent:  agentName,
 		Tool:   "Bash",
 		Detail: textutil.Truncate(command, 100, "..."),

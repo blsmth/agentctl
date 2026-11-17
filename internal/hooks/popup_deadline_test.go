@@ -15,8 +15,8 @@ func withBlockingPopup(t *testing.T) *int {
 	t.Cleanup(func() { dispatchPopupRunner, popupDeadline, popupCloser = origRun, origDL, origClose })
 	popupDeadline = 50 * time.Millisecond
 	closes := new(int)
-	popupCloser = func() error { *closes++; return nil }
-	dispatchPopupRunner = func(ctx context.Context, _, _ int, _ string) error {
+	popupCloser = func(string) error { *closes++; return nil }
+	dispatchPopupRunner = func(ctx context.Context, _ string, _, _ int, _ string) error {
 		<-ctx.Done()
 		return ctx.Err()
 	}
