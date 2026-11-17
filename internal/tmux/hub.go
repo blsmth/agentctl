@@ -189,18 +189,24 @@ func sendKeyArgs(target, key string) []string {
 	return []string{"send-keys", "-t", target, "--", key}
 }
 
-// CapturePaneANSI is CapturePane with `-e`: colour and style escape
-// sequences are kept so a client can render the pane faithfully. Classify it
-// only after panestate.StripANSI.
+// CapturePaneANSI is CapturePane with `-e` and `-J`: colour and style escape
+// sequences are kept so a client can render the pane faithfully, and lines
+// tmux wrapped itself are joined. Classify it only after panestate.StripANSI.
 func CapturePaneANSI(session, windowID string, lines int) (string, error) {
 	target := sessionWindowTarget(session, windowID)
-	args := capturePaneArgs(target, lines)
-	args = append(args[:2], append([]string{"-e"}, args[2:]...)...)
+	args := capturePaneANSIArgs(target, lines)
 	out, err := exec.Command("tmux", args...).Output()
 	if err != nil {
 		return "", fmt.Errorf("capture-pane %s: %w", target, err)
 	}
 	return trimTrailingBlankLines(string(out)), nil
+}
+
+// capturePaneANSIArgs is capturePaneArgs plus -e (escapes) and -J (join
+// wrapped lines).
+func capturePaneANSIArgs(target string, lines int) []string {
+	args := capturePaneArgs(target, lines)
+	return append(args[:2], append([]string{"-e", "-J"}, args[2:]...)...)
 }
 
 // capturePaneArgs builds the capture-pane argument list.

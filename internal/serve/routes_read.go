@@ -26,6 +26,12 @@ type PaneSource interface {
 	Capture(session, windowID string, lines int) (string, error)
 }
 
+// PaneSizer is optionally implemented by a PaneSource to report the window's
+// size in cells, which the phone needs to render the pane exactly.
+type PaneSizer interface {
+	Size(windowID string) (cols, rows int, err error)
+}
+
 // AgentLister lists the agents a dispatch can target.
 type AgentLister interface {
 	Agents(projectDirs []string) ([]AgentInfo, error)
@@ -42,6 +48,10 @@ type tmuxPanes struct{}
 
 func (tmuxPanes) Capture(session, windowID string, lines int) (string, error) {
 	return tmux.CapturePaneANSI(session, windowID, lines)
+}
+
+func (tmuxPanes) Size(windowID string) (int, int, error) {
+	return tmux.WindowSize(windowID)
 }
 
 type discoveredAgents struct{}
@@ -190,6 +200,9 @@ type paneBody struct {
 	Text    string            `json:"text"`
 	Verdict string            `json:"verdict"`
 	Dialog  *panestate.Dialog `json:"dialog"`
+	// Cols and Rows are the window size (0 when unknown). Additive.
+	Cols int `json:"cols"`
+	Rows int `json:"rows"`
 }
 
 // apiVerdict maps a pane verdict to the API vocabulary.
@@ -239,7 +252,15 @@ func (s *Server) handlePane(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, codePaneUnavailable, "pane could not be captured")
 		return
 	}
-	writeJSON(w, http.StatusOK, buildPaneBody(text))
+	body := buildPaneBody(text)
+	if sz, ok := s.panes.(PaneSizer); ok {
+		if c, r, err := sz.Size(g.Windows[i].WindowID); err == nil {
+			body.Cols, body.Rows = c, r
+		} else {
+			logging.Debug("serve: window size: %v", err)
+		}
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 func (s *Server) handleAgents(w http.ResponseWriter, _ *http.Request) {
