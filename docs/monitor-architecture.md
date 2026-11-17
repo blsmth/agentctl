@@ -85,10 +85,17 @@ A single function owns tmux visual updates for each window, called on every tick
 Every tick, `persistState()` writes `state.json` under `paths.RuntimeDir()` (`$CWD/.agentctl/state.json`) with all agent states. This enables:
 
 - **Fast lookups**: UI panes and popups read the snapshot via `state.LoadSnapshot()` instead of forking tmux.
-- **Restart resume**: On restart the monitor restores log paths from the snapshot.
 - **Staleness detection**: Consumers check staleness and fall back to live tmux queries.
 
 The chrome bar and other panes watch `state.json` via fsnotify, so the flow is: **monitor tick → `state.Save(state.json)` → fsnotify → pane re-reads snapshot → re-render.**
+
+### Session restore (`restore.json`)
+
+Restore does not depend on the monitor. `agentctl restore` reads `<runtimeDir>/restore.json`, which is built from the per-window hook state (`windowstate`: instance, agent name, session ID, log path, work dir, backend) by `state.BuildRestoreAgents` and written (0600, same safefs discipline as `state.json`) at every point that is about to destroy windows: `tmux.KillSession` (quit, restart), relaunch-prep, the hidden `save-state` command, and `StartSession` immediately before `windowstate.RemoveAll()`. The `StartSession` write covers a tmux server crash or reboot, where the windows are gone but the records survive. A write that finds no agent entries is skipped, so a clean start never clobbers a good file. Tombstoned (removed) windows have no record and so never appear; shell, hub, utility and `improve~*` windows are skipped.
+
+Entry order is the tab order: the live `tmux list-windows` position when the window still exists, otherwise the `WindowIndex` that `hook-session-start` recorded (it can be slightly stale after left-insertion; ties fall back to window ID order). `restore_max_age` is applied to the `restore.json` timestamp, and the file is cleared after a restore attempt along with `state.json`.
+
+If `restore.json` is missing, restore falls back to `state.json` (one-release compatibility; removed with the monitor).
 
 ## TUI
 

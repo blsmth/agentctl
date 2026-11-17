@@ -17,6 +17,7 @@ import (
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/pidfile"
 	"github.com/blsmth/agentctl/internal/shellquote"
+	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/theme"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
@@ -116,6 +117,11 @@ func StartSession(defaultAgent string) error {
 		return fmt.Errorf("creating session: %s: %w", string(out), err)
 	}
 	done()
+
+	// Preserve what restore needs before the records are wiped: after a tmux
+	// server crash or reboot the windows are gone but the records survive.
+	// Writes nothing when there are no agent records.
+	SaveRestoreAtStart()
 
 	// Clear stale window state from any previous session — pane/window IDs
 	// are not stable across tmux session restarts.
@@ -695,12 +701,119 @@ func SwitchToAgent(agentName string) error {
 	return nil
 }
 
+// WindowIndex returns the tmux index of windowID, or 0 when unknown.
+func WindowIndex(windowID string) int {
+	out, err := exec.Command("tmux", "display-message", "-p", "-t", windowID, "#{window_index}").Output()
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	return n
+}
+
+// SaveRestore writes restore.json for the current project from the per-window
+// hook state, ordered by the live tmux windows where they still exist. It
+// writes nothing when there are no agent entries, so a clean start never
+// clobbers a good file from an earlier quit. Failures are logged, never
+// returned: they must not block starting or killing a session. It returns the
+// number of entries saved.
+func SaveRestore() int {
+	return saveRestoreFor(SessionName, filepath.Dir(state.FilePath()), windowstate.All(), restoreOpts{filterLive: true})
+}
+
+// SaveRestoreAtStart is SaveRestore for StartSession, run after new-session
+// and before windowstate.RemoveAll. Only the fresh shell window is live then,
+// so records are not filtered by liveness (that is the crash/reboot case), and
+// an existing restore.json is left alone: RunRestore clears it once consumed,
+// so a surviving file is an unconsumed save from a kill point and is
+// authoritative over what the leftover records can reconstruct.
+func SaveRestoreAtStart() int {
+	return saveRestoreFor(SessionName, filepath.Dir(state.FilePath()), windowstate.All(), restoreOpts{keepExisting: true})
+}
+
+// SaveRestoreIn is SaveRestore for another project (session name and runtime
+// dir), used by relaunch-prep which runs outside the project's own session.
+func SaveRestoreIn(session, runtimeDir string) int {
+	return saveRestoreFor(session, runtimeDir, windowstate.AllFrom(windowstate.WindowsDirFor(runtimeDir)), restoreOpts{filterLive: true})
+}
+
+type restoreOpts struct {
+	// filterLive drops records whose window is not in the live tmux session
+	// (closed windows whose record was never removed).
+	filterLive bool
+	// keepExisting skips the write when restore.json already exists.
+	keepExisting bool
+}
+
+// listRestoreWindows lists the session's windows with their real tmux
+// #{window_index}. A var so tests can stub tmux.
+var listRestoreWindows = func(session string) (map[string]state.LiveWindow, error) {
+	out, err := exec.Command("tmux", "list-windows", "-t", session,
+		"-F", "#{window_id}\t#{window_index}\t#{pane_current_path}").Output()
+	if err != nil {
+		return nil, fmt.Errorf("tmux list-windows -t %s: %w", session, err)
+	}
+	live := map[string]state.LiveWindow{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 || parts[0] == "" {
+			continue
+		}
+		idx, _ := strconv.Atoi(parts[1])
+		live[parts[0]] = state.LiveWindow{Index: idx, Path: parts[2]}
+	}
+	return live, nil
+}
+
+func saveRestoreFor(session, runtimeDir string, records map[string]windowstate.WindowState, opts restoreOpts) int {
+	if runtimeDir == "" || runtimeDir == "." {
+		return 0
+	}
+	if opts.keepExisting {
+		if _, err := os.Lstat(filepath.Join(runtimeDir, state.RestoreFileName)); err == nil {
+			logging.Log("save-restore: keeping existing %s", state.RestoreFileName)
+			return 0
+		}
+	}
+	live, err := listRestoreWindows(session)
+	if err != nil {
+		if opts.filterLive {
+			// Unknown, not empty: without the live set we cannot tell closed
+			// windows from open ones, so keep whatever is already saved.
+			logging.Log("save-restore: skipping, cannot list windows: %v", err)
+			return 0
+		}
+		live = nil
+	}
+	if opts.filterLive && len(live) > 0 {
+		kept := make(map[string]windowstate.WindowState, len(records))
+		for id, ws := range records {
+			if _, ok := live[id]; ok {
+				kept[id] = ws
+			}
+		}
+		records = kept
+	}
+	agents := state.BuildRestoreAgents(records, live)
+	if len(agents) == 0 {
+		return 0
+	}
+	if err := state.SaveRestoreAgents(runtimeDir, agents); err != nil {
+		logging.Log("save-restore: %v", err)
+		return 0
+	}
+	logging.Log("save-restore: saved %d agents", len(agents))
+	return len(agents)
+}
+
 // KillSession destroys the entire agentctl tmux session.
 // It mirrors KillWindow/KillAgent: pane PIDs are collected across the whole
 // session BEFORE the kill, and sigTermPaneGroups is called AFTER a successful
 // kill to SIGTERM every pane's process group. This reaches headless Claude
 // subprocesses that would not receive SIGHUP on pane destruction.
 func KillSession() error {
+	// Windows are still alive here: record what restore needs first.
+	SaveRestore()
 	// Collect pane PIDs across the entire session before destroying it.
 	paneOut, _ := exec.Command("tmux", "list-panes",
 		"-s", "-t", SessionName, "-F", "#{pane_pid}").Output()

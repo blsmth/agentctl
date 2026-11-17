@@ -47,6 +47,8 @@ func RunRelaunchPrep() error {
 	// Stop the monitor first: if it outlives the session it can observe the
 	// replacement (same name) and overwrite state.json with zero agents.
 	pidfile.Kill(filepath.Join(root, ".agentctl"), "monitor.pid")
+	// Windows are still alive: record what restore needs before killing them.
+	tmux.SaveRestoreIn(session, filepath.Join(root, ".agentctl"))
 	_ = exec.Command("tmux", "kill-session", "-t", "="+session).Run()
 	fmt.Printf("relaunch-prep: root=%s session=%s\n", root, session)
 	return nil

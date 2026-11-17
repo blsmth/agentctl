@@ -131,7 +131,11 @@ func SessionStart() {
 		// A session starting is a new agent in this window; clear any
 		// tombstone from a previous window that held the recycled ID.
 		windowstate.Revive(windowID)
+		winIdx := tmux.WindowIndex(windowID)
 		if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
+			if winIdx > 0 {
+				ws.WindowIndex = winIdx
+			}
 			ws.SessionID = input.SessionID
 			ws.LogPath = logPath
 			if input.Cwd != "" {
