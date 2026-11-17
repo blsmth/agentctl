@@ -84,6 +84,7 @@ func TestRecordEffectiveSessionName(t *testing.T) {
 		{"same name", windowstate.WindowState{SessionName: "a-1"}, Payload{SessionName: str("a-1")}, "a-1", "", true},
 		{"deduped name", windowstate.WindowState{SessionName: "a-1"}, Payload{SessionName: str("a-1-happy-meteor")}, "a-1-happy-meteor", "a-1", true},
 		{"second rename keeps first requested", windowstate.WindowState{SessionName: "x", RequestedSessionName: "a-1"}, Payload{SessionName: str("y")}, "y", "a-1", true},
+		{"unnamed launch keeps title out", windowstate.WindowState{}, Payload{SessionName: str("Fix the build")}, "", "", false},
 		{"nil name", windowstate.WindowState{SessionName: "a-1"}, Payload{}, "a-1", "", false},
 		{"empty name", windowstate.WindowState{SessionName: "a-1"}, Payload{SessionName: str("")}, "a-1", "", false},
 		{"other session ignored", windowstate.WindowState{SessionID: "s1", SessionName: "a-1"}, Payload{SessionID: str("s2"), SessionName: str("zzz")}, "a-1", "", false},

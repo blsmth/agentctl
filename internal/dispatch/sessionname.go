@@ -50,3 +50,23 @@ func instanceNumber(instance string) int {
 	}
 	return 1
 }
+
+// RestoreSessionName picks the -n name for a restored or resumed window.
+// The recorded name is kept, so /rename names and worktree slugs survive,
+// unless it would collide: it is the legacy <agent>-<project> form that every
+// pre-numbering window of one agent shared, or another restored window
+// already took it. Then it is regenerated from the window's instance name.
+// taken holds names already given to restored windows; the result is added.
+// An empty recorded name stays empty (the original launch passed no -n).
+func RestoreSessionName(recorded, agent, instance, workDir string, taken map[string]bool) string {
+	if recorded == "" {
+		return ""
+	}
+	name := recorded
+	legacy := SessionNameFor(agent, "", workDir, workDir, false)
+	if recorded == legacy || taken[recorded] {
+		name = SessionNameFor(agent, instance, workDir, workDir, false)
+	}
+	taken[name] = true
+	return name
+}

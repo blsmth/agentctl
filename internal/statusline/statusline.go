@@ -987,13 +987,18 @@ func persistWindowState(p *Payload, windowID string) {
 }
 
 // recordEffectiveSessionName copies the session name Claude Code reports in
-// the pushed payload (`session_name`: the name from -n or /rename, after any
-// dedupe) into windowstate, keeping the launch-time name in
+// the pushed payload (`session_name`: the --name or /rename value, or an
+// AI-generated title when neither was set; the docs do not say it reflects
+// automatic dedupe suffixes, which unique launch names exist to prevent) into
+// windowstate, keeping the launch-time name in
 // RequestedSessionName when they differ. A nil or empty name changes nothing,
 // and a payload from another session (e.g. after /clear raced the push) is
 // ignored.
 func recordEffectiveSessionName(ws *windowstate.WindowState, p *Payload) {
-	if p.SessionName == nil || *p.SessionName == "" {
+	// An empty recorded name means the launch passed no -n, so the payload
+	// carries Claude Code's AI-generated title, not an address ListAgents
+	// shows. Never record that as the session name.
+	if p.SessionName == nil || *p.SessionName == "" || ws.SessionName == "" {
 		return
 	}
 	if p.SessionID != nil && *p.SessionID != "" && ws.SessionID != "" && ws.SessionID != *p.SessionID {

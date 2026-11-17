@@ -92,3 +92,31 @@ func TestOrchestratorFor(t *testing.T) {
 		})
 	}
 }
+
+func TestRestoreSessionName(t *testing.T) {
+	taken := map[string]bool{}
+	got := []string{
+		RestoreSessionName("brandon-proj", "brandon", "brandon", "/r/proj", taken),
+		RestoreSessionName("brandon-proj", "brandon", "brandon:2", "/r/proj", taken),
+		RestoreSessionName("brandon-proj", "brandon", "brandon:3", "/r/proj", taken),
+	}
+	want := []string{"brandon-proj-1", "brandon-proj-2", "brandon-proj-3"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("legacy[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	taken = map[string]bool{}
+	if g := RestoreSessionName("my-rename", "brandon", "brandon:2", "/r/proj", taken); g != "my-rename" {
+		t.Errorf("renamed kept: got %q", g)
+	}
+	if g := RestoreSessionName("my-rename", "brandon", "brandon:3", "/r/proj", taken); g != "brandon-proj-3" {
+		t.Errorf("duplicate regenerated: got %q", g)
+	}
+	if g := RestoreSessionName("", "brandon", "brandon", "/r/proj", taken); g != "" {
+		t.Errorf("empty stays empty: got %q", g)
+	}
+	if g := RestoreSessionName("brandon-proj-5", "brandon", "brandon:5", "/r/proj", map[string]bool{}); g != "brandon-proj-5" {
+		t.Errorf("numbered kept: got %q", g)
+	}
+}

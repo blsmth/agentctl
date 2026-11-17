@@ -147,6 +147,7 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 	// resuming the same conversation.
 	usedSessions := make(map[string]bool)
 
+	usedNames := map[string]bool{}
 	for _, as := range restoreOrder(saved, position) {
 		// Resolve base agent name from instance name or explicit AgentName field
 		baseName := as.AgentName
@@ -204,7 +205,7 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 			TicketTitle:      as.TicketTitle,
 			Branch:           as.Branch,
 			WorktreeDir:      as.WorktreeDir,
-			SessionName:      as.SessionName,
+			SessionName:      dispatch.RestoreSessionName(as.SessionName, baseName, as.Name, workDir, usedNames),
 		})
 		if err != nil {
 			logging.Log("restoreAgents: not restoring %s: %v", as.Name, err)

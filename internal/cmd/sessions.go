@@ -241,7 +241,7 @@ func resolveCurrentAgent() string {
 // were recorded, one derived from the agent and project.
 func resumeSessionName(agent, instance, sessionID, workDir string) string {
 	if n := sessionname.Lookup(sessionID); n != "" {
-		return n
+		return dispatch.RestoreSessionName(n, agent, instance, workDir, map[string]bool{})
 	}
 	return dispatch.SessionNameFor(agent, instance, workDir, workDir, false)
 }
