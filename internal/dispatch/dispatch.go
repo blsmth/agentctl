@@ -991,16 +991,28 @@ func AgentEnvOverrides(ac config.AgentConfig) map[string]string {
 	return env
 }
 
-// resolveOrchestrator identifies the dispatching window (and its session name,
-// when windowstate has one). Zero when launched outside any tracked window.
+// resolveOrchestrator identifies the dispatching Claude session. It returns
+// the zero value unless the dispatcher is a tracked session, so a human
+// dispatching from a plain shell window (or outside tmux) yields no
+// orchestrator for the worker to report to.
 func resolveOrchestrator() Orchestrator {
-	wid := signal.ResolveWindowID()
-	if wid == "" {
+	return orchestratorFor(signal.ResolveWindowID(), os.Getenv("AGENTCTL_SESSION_ID"), windowstate.Read)
+}
+
+// orchestratorFor is resolveOrchestrator with its inputs injected. A window
+// counts only when it has a Claude session: envSessionID (the same signal as
+// spawned_by_session) or a windowstate record carrying a SessionID. A tracked
+// session with no name still counts.
+func orchestratorFor(windowID, envSessionID string, read func(string) (windowstate.WindowState, error)) Orchestrator {
+	if windowID == "" {
 		return Orchestrator{}
 	}
-	o := Orchestrator{WindowID: wid}
-	if ws, err := windowstate.Read(wid); err == nil {
-		o.Name = ws.SessionName
+	ws, err := read(windowID)
+	if err != nil {
+		ws = windowstate.WindowState{}
 	}
-	return o
+	if envSessionID == "" && ws.SessionID == "" {
+		return Orchestrator{}
+	}
+	return Orchestrator{WindowID: windowID, Name: ws.SessionName}
 }

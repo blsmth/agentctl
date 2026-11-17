@@ -202,6 +202,7 @@ func TestCheckDone_EmitsDoneWhenSpawnedAndAutonomous(t *testing.T) {
 	t.Setenv("TMUX_PANE", "")
 	t.Setenv("AGENTCTL_SESSION_ID", "")
 	t.Setenv("AGENTCTL_AGENT_NAME", "go-engineer")
+	t.Setenv("AGENTCTL_INSTANCE_NAME", "") // may be inherited from the outer session
 
 	stdin := `{"stop_hook_active":false,"last_assistant_message":"Opened PR #948, all tests pass."}`
 	runHookCaptured(t, nil, stdin, CheckDone)
@@ -413,6 +414,7 @@ func TestNotify_EmitsBlockedWhenSpawned(t *testing.T) {
 
 	t.Setenv("AGENTCTL", "1")
 	t.Setenv("AGENTCTL_AGENT_NAME", "go-engineer")
+	t.Setenv("AGENTCTL_INSTANCE_NAME", "") // may be inherited from the outer session
 	t.Setenv("AGENTCTL_WINDOW_ID", childWindow)
 	t.Setenv("TMUX_PANE", "")
 	t.Setenv("AGENTCTL_SESSION_ID", "")
@@ -438,8 +440,8 @@ func TestNotify_EmitsBlockedWhenSpawned(t *testing.T) {
 	if msg.ToSession != parentSession {
 		t.Errorf("ToSession = %q, want %q (SpawnedBySession)", msg.ToSession, parentSession)
 	}
-	if !strings.HasPrefix(msg.Body, "agentctl notice: go-engineer") || !strings.Contains(msg.Body, "(window @60) is waiting on a permission prompt: ") {
-		t.Errorf("Body %q is not the factual blocked notice", msg.Body)
+	if want := "agentctl notice: go-engineer (window @60) is waiting on a permission prompt: an unspecified tool call."; msg.Body != want {
+		t.Errorf("Body = %q, want %q", msg.Body, want)
 	}
 }
 

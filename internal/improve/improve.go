@@ -14,6 +14,7 @@ import (
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/ids"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/shellquote"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -286,7 +287,9 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 
 	// Build base flags with per-session hook configuration.
 	settingsPath := dispatch.WriteAgentSettings(agentName, ac, workDir)
-	baseFlags := dispatch.BuildBaseFlags(dispatch.ClaudeInvocation{Agent: agentName, Name: dispatch.SessionNameFor(agentName+"-improve", workDir, workDir, false), SessionID: sessionID, SettingsPath: settingsPath}, ac)
+	sessionName := improveSessionName(agentName, paths.ProjectDir(), workDir)
+	extraEnv[dispatch.EnvSessionName] = sessionName
+	baseFlags := dispatch.BuildBaseFlags(dispatch.ClaudeInvocation{Agent: agentName, Name: sessionName, SessionID: sessionID, SettingsPath: settingsPath}, ac)
 	shellCmd := buildImproveShellCmd(baseFlags, promptFile, skipEditor)
 
 	// Improvement sessions run in the agent's work dir; compute the log path so
@@ -351,4 +354,14 @@ func writePromptFile(agentName string, prompt string) (string, error) {
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+// improveSessionName names an improvement session <agent>-improve-<project>.
+// The project is the project root's basename; workDir is the agent's .claude
+// directory, so it is only a fallback when the project root is unknown.
+func improveSessionName(agentName, projectDir, workDir string) string {
+	if projectDir == "" {
+		projectDir = workDir
+	}
+	return dispatch.SessionNameFor(agentName+"-improve", projectDir, projectDir, false)
 }

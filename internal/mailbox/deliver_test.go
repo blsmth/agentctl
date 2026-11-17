@@ -80,7 +80,7 @@ func TestDrainFor_SessionMismatchDiscards(t *testing.T) {
 }
 
 // TestDrainFor_EmptyToSessionNeverMismatches verifies a message enqueued
-// without session verification (empty ToSession, e.g. via `agentctl send`
+// without session verification (empty ToSession, e.g. a notice enqueued
 // outside a tracked window) is still delivered rather than discarded.
 func TestDrainFor_EmptyToSessionNeverMismatches(t *testing.T) {
 	setupDeliverTest(t)

@@ -7,10 +7,8 @@ import (
 )
 
 // hookNotify sends a desktop notification using the configured notify_cmd.
-// It is a thin wrapper around internal/notify.NotifyWithOptions -- the
-// command-substitution logic used to live here, but internal/cmd needs to
-// fire the same notification, so it was extracted to internal/notify rather than
-// copy-pasted. It does NOT consult per-agent alert settings; hook call sites
+// It is a thin wrapper around internal/notify.NotifyWithOptions, which owns
+// the command-substitution logic. It does NOT consult per-agent alert settings; hook call sites
 // must go through sendAlert.
 func hookNotify(opts notify.Options) {
 	notify.NotifyWithOptions(opts)

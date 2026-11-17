@@ -251,7 +251,7 @@ func TestIsReadOnlyInvocation(t *testing.T) {
 		{[]string{"agentctl", "dispatch", "-h"}, true},
 		{[]string{"agentctl", "-v"}, true},
 		{[]string{"agentctl", "dispatch", "--issue", "1"}, false},
-		{[]string{"agentctl", "send", "@1", "hi"}, false},
+		{[]string{"agentctl", "context", "set", "k", "v"}, false},
 	}
 	for _, tt := range tests {
 		if got := isReadOnlyInvocation(tt.args); got != tt.want {

@@ -1199,6 +1199,7 @@ func (m *monitorModel) persistState(cfg *config.Config, windows []tmux.WindowInf
 			LastText:            inst.lastText,
 			MailboxPending:      inst.mailboxPending,
 			Backend:             backendWS.Backend,
+			SessionName:         backendWS.SessionName,
 			MainPane:            inst.mainPane,
 		})
 	}

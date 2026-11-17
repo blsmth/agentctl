@@ -39,7 +39,7 @@ const (
    3. No
  Esc to cancel · Tab to amend`
 
-	// Input staged into the box but never submitted — the wake/send-keys
+	// Input staged into the box but never submitted — the send-keys
 	// failure mode. Two prompt lines instead of one.
 	paneStaged = `✻ Done for now
 ──────────────────────────────────────────────────────────── lead ──

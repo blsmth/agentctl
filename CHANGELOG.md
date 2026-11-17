@@ -12,7 +12,7 @@ First public release.
 - `agentctl dispatch --issue N`: fetch a GitHub issue, create an isolated git worktree, launch an agent, and work toward a PR. Accepts `--repo owner/name` to override the repo (`AGENTCTL_REPO` is exported to the dispatched agent for information only) and errors if the repo cannot be determined. Also `--prompt` and `--prompt-key` for ad-hoc work.
 - Worktree cleanup (`agentctl cleanup`) and automatic reclaim of empty or landed worktrees on session exit.
 - Claude Code status line integration (`agentctl statusline`, formats `rich`, `complementary`, `full`, `minimal`) showing rate limits, context, tokens, cost, and git state.
-- Cross-agent context store, mailboxes (`send`, `inbox`, `wake`), and session search.
+- Cross-agent context store and session search. Agents message each other with Claude Code native cross-session messaging (`SendMessage`/`ListAgents`): every session launches with a stable `-n` name, dispatched workers are told their orchestrator, and agentctl adds short factual `agentctl notice:` lines when a worker goes idle or blocks.
 - Per-agent permissions, a dispatch approval popup, and optional `bash_preview` for every Bash call.
 - Notifications via `alerter` (macOS) or `notify-send` (Linux); `notify_cmd` customizes or disables them.
 - Optional work journal backed by a local LLM (`llm.provider: ollama`), with a durable journal and JSONL sidecar.

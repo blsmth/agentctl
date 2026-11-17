@@ -208,60 +208,6 @@ func TestContainsClaude(t *testing.T) {
 	}
 }
 
-// ---- HasClaudeDescendant ----------------------------------------------------
-
-// TestHasClaudeDescendant exercises the pure BuildDescendantSet+containsClaude
-// logic HasClaudeDescendant wraps, using a fake process table (ListProcesses
-// itself shells out to `ps`, so the exported entry point is not exercised
-// directly here -- see the pattern used throughout this file).
-func TestHasClaudeDescendant(t *testing.T) {
-	// PID 12 is a pane shell whose child (13) is a live claude process.
-	// PID 20 is a pane shell with no claude descendant at all (e.g. the
-	// agent already exited to a shell -- the exact case wake must refuse).
-	procs := []ProcessInfo{
-		{PID: 12, PPID: 11, Cmd: "zsh"},
-		{PID: 13, PPID: 12, Cmd: "claude --agent go-engineer"},
-		{PID: 20, PPID: 10, Cmd: "zsh"},
-	}
-
-	live := func(panePID int) bool {
-		procsForTest := procs
-		liveSet := BuildDescendantSet(procsForTest, []int{panePID})
-		for _, p := range procsForTest {
-			if liveSet[p.PID] && containsClaude(p.Cmd) {
-				return true
-			}
-		}
-		return false
-	}
-
-	if !live(12) {
-		t.Error("expected pane 12 (parent of a live claude process) to report a claude descendant")
-	}
-	if live(20) {
-		t.Error("expected pane 20 (shell with no claude descendant) to report no claude descendant")
-	}
-}
-
-func TestHasClaudeDescendant_InvalidPID(t *testing.T) {
-	if HasClaudeDescendant(0) {
-		t.Error("HasClaudeDescendant(0) should be false")
-	}
-	if HasClaudeDescendant(-1) {
-		t.Error("HasClaudeDescendant(-1) should be false")
-	}
-}
-
-// TestHasClaudeDescendant_Live exercises the real exported function, which
-// calls the actual ListProcesses() (a real `ps` shellout). It only asserts
-// on a PID that cannot possibly exist, so it stays deterministic without
-// mocking `ps`.
-func TestHasClaudeDescendant_Live(t *testing.T) {
-	if HasClaudeDescendant(999999999) {
-		t.Error("expected no claude descendant for a PID that cannot exist")
-	}
-}
-
 // ---- helpers ---------------------------------------------------------------
 
 func pidSet(procs []ProcessInfo) map[int]bool {
