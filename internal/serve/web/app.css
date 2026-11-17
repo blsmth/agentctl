@@ -28,15 +28,16 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 
 .banner { background: var(--blocked); color: #fff; padding: .6rem 1rem; text-align: center; }
 .group { margin-bottom: .5rem; }
+.fleet, .group { --glyph-w: 1.4rem; --indent: 1.4rem; --row-pad: 1rem; --tree-w: 1.5px; --tree-line: color-mix(in srgb, var(--muted) 55%, transparent); }
 .win { display: flex; align-items: center; gap: .75rem; min-height: 56px; padding: .6rem 1rem; text-decoration: none; color: var(--fg);
   background: var(--card); border-bottom: 1px solid var(--line); border-left: 4px solid var(--idle); }
 .win.blocked { border-left-color: var(--blocked); background: color-mix(in srgb, var(--blocked) 12%, var(--card)); }
 .win.working { border-left-color: var(--working); }
 .win.done { border-left-color: var(--done); }
-.glyph { width: 1.4rem; text-align: center; font-size: 1.1rem; }
+.glyph { width: var(--glyph-w); text-align: center; font-size: 1.1rem; }
 .blocked .glyph { color: var(--blocked); } .working .glyph { color: var(--working); } .done .glyph { color: var(--done); }
 .win-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.win-title { font-weight: 600; }
+.win-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .win-title .meta { font-weight: 400; }
 .activity { color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .win-side { display: flex; flex-direction: column; align-items: flex-end; font-size: .8rem; color: var(--muted); }
@@ -89,10 +90,20 @@ body.term-open nav { display: none; }
 /* Fleet tree: nested dispatched agents. */
 .node { display: flex; align-items: stretch; background: var(--card); }
 .node > .win { flex: 1; min-width: 0; }
-.win.child { min-height: 44px; padding-top: .35rem; padding-bottom: .35rem; padding-left: .5rem; gap: .4rem; }
-.gutter { font: .85rem/1 ui-monospace, Menlo, monospace; white-space: pre; color: var(--muted); flex: none; user-select: none; }
+.win.child { position: relative; min-height: 44px; padding-top: .35rem; padding-bottom: .35rem; padding-left: calc(var(--row-pad) + var(--depth, 1) * var(--indent)); }
+/* Tree lines. Geometry is shared with roots: glyph column --glyph-w starting
+   --row-pad inside the padding box (after the 4px left border). Level k's
+   vertical sits under the centre of the glyph at depth k. Lines are drawn in
+   the row's padding box; bottom:-1px covers the 1px row border so verticals
+   are continuous. */
+.tl { position: absolute; left: calc(var(--row-pad) + var(--lvl) * var(--indent) + var(--glyph-w) / 2 - var(--tree-w) / 2); top: 0; bottom: -1px; width: var(--tree-w); pointer-events: none; }
+.tl.through::before, .tl.own::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--tree-w); background: var(--tree-line); }
+.tl.own.last::before { bottom: 50%; }
+.tl.own::after { content: ""; position: absolute; left: 0; top: calc(50% - var(--tree-w) / 2); height: var(--tree-w); width: calc(var(--indent) - var(--glyph-w) / 2 - .15rem); background: var(--tree-line); }
+.win.child .win-title .meta { font-size: .8rem; }
 .win.child .win-title { font-size: .95rem; }
 .win.child .glyph { font-size: 1rem; }
+.win .glyph { flex: none; width: var(--glyph-w); }
 .node.bucket { align-items: center; min-height: 44px; padding-left: 1rem; border-bottom: 1px solid var(--line); border-left: 4px solid var(--line); }
 .bucket-label { flex: 1; color: var(--muted); font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; }
 .disclose { min-width: 44px; min-height: 44px; padding: 0 .6rem; display: inline-flex; align-items: center; justify-content: center; gap: .3rem;
