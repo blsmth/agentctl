@@ -103,6 +103,20 @@ const fallbackLine = "agentctl"
 // undecodable input. Output must stay non-empty either way.
 const noDataLine = "-"
 
+// pushedCostTrusted reports whether Claude Code's pushed cost.total_cost_usd
+// can be shown. Claude Code computes it from its own Claude price table, so it
+// is only meaningful for claude-* models: for any other model id (Nous, Ollama:
+// "openai/gpt-6-astra", "qwen3-coder") it applies Claude rates to foreign
+// token counts and is wrong in both directions. Those sessions show no cost
+// here; `agentctl cost` prices them from the real catalog. A payload that names
+// no model keeps the previous behaviour.
+func pushedCostTrusted(p *Payload) bool {
+	if p == nil || p.Model == nil || p.Model.ID == nil || *p.Model.ID == "" {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(*p.Model.ID), "claude-")
+}
+
 // minDisplayCostUSD is the floor below which renderRichLine2 omits the cost
 // segment entirely rather than render a noisy "$0.00". Cost is
 // legitimately zero on a fresh session and again after /clear (Claude Code
@@ -182,7 +196,7 @@ func renderComplementary(p *Payload) string {
 		}
 	}
 
-	if p.Cost != nil {
+	if p.Cost != nil && pushedCostTrusted(p) {
 		if cost, ok := coerceNonNegative(p.Cost.TotalCostUSD); ok {
 			parts = append(parts, fmt.Sprintf("$%.2f", cost))
 		}
@@ -725,7 +739,7 @@ func renderRichLine2(p *Payload, cols int, snap *state.AgentState) (string, bool
 	// legitimately has $0.00, which is noise, not information. A negative
 	// value is clamped to 0 by coerceNonNegative and so is also omitted
 	// here, never printed as "$0.00".
-	if p.Cost != nil {
+	if p.Cost != nil && pushedCostTrusted(p) {
 		if cost, ok := coerceNonNegative(p.Cost.TotalCostUSD); ok && cost >= minDisplayCostUSD {
 			addSeg(valueStyle.Render(fmt.Sprintf("$%.2f", cost)))
 		}
@@ -910,10 +924,12 @@ func persistWindowState(p *Payload, windowID string) {
 		if p.Model != nil && p.Model.ID != nil && *p.Model.ID != "" {
 			ws.Model = *p.Model.ID
 		}
-		if p.Cost != nil {
+		if p.Cost != nil && pushedCostTrusted(p) {
 			if v, ok := coerceNonNegative(p.Cost.TotalCostUSD); ok {
 				ws.CostUSD = v
 			}
+		} else if p.Cost != nil {
+			ws.CostUSD = 0 // untrusted figure for this model: never keep a stale one either
 		}
 	})
 	if err != nil && !errors.Is(err, windowstate.ErrGone) {

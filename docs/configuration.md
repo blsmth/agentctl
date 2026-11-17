@@ -173,9 +173,39 @@ Teach agentctl about a new model without a release, and tune context-window warn
 | `models.context_warn_pct` | `75` | Context % where the warning fires (clamped to 10-100). |
 | `models.context_critical_pct` | `90` | Context % where the critical state fires. If warn >= critical both revert to defaults. |
 | `models.reserve_output` | `true` | Subtract the model's max-output reserve from the usable window. |
-| `models.overrides` | none | Map of model name (or prefix) to `context_window`, `max_output`, `short`, `input_per_mtok`, `output_per_mtok`, `cache_read_per_mtok`, `cache_create_per_mtok`. Zero fields fall through to the built-in value. |
+| `models.overrides` | none | Map of model name (or prefix) to `context_window`, `max_output`, `short`, `input_per_mtok`, `output_per_mtok`, `cache_read_per_mtok`, `cache_create_per_mtok`. Zero fields fall through to the built-in value (a price field replaces the whole rate card, including any long-context tier). See [Pricing and cost](#pricing-and-cost). |
 
 `agentctl models` prints the resolved registry.
+
+### Pricing and cost
+
+One table prices everything: `internal/tokens`. `tokens.Lookup(model)` resolves, in order, a `models.overrides` entry, the cached Nous catalog (exact id such as `openai/gpt-6-astra`), the built-in Anthropic table, then a family fallback (`opus`/`sonnet`/`haiku`/`fable` substring) at the **newest** generation's rates. Anything else is **unknown**: its cost is shown as `?` and excluded from totals (with a count of excluded sessions), never priced as Sonnet.
+
+- **Anthropic built-ins** (per MTok, input / output / cache read / 5m cache write): Opus 5.5 `4 / 20 / 0.20 / 5`, Sonnet 5.5 `2 / 10 / 0.10 / 2.50`, Haiku 5.5 `0.10 / 0.50 / 0.01 / 0.125`, Fable 5.2 `8 / 40 / 0.20 / 10`, Fable 5.1 `10 / 50 / 0.25 / 12.50`, Fable 5 `10 / 50 / 1 / 12.50`, Opus 5 and 4.5-4.8 `5 / 25 / 0.50 / 6.25`, Sonnet 5 `2 / 10 / 0.20 / 2.50`. Refresh from <https://platform.claude.com/docs/en/about-claude/pricing>.
+- **Long-context tier.** A model may carry a threshold and alternate rates, applied **per request** when its prompt (input + cache read + cache write) exceeds the threshold. Haiku 5.5 bills a request over 100,000 prompt tokens at `0.50 / 2.50 / 0.05 / 0.625`. Session totals are therefore summed per request (turn), never from aggregate token totals; aggregates are used only when a session has no per-turn data (the `.meta.json` sidecar), where tiers cannot apply. A `models.overrides` price field replaces the whole rate card, including the tier.
+- **Nous Portal.** `agentctl dispatch` caches the catalog (`GET /v1/models`) as `nous-models-*.json` in the runtime dir, now including each model's `pricing` ($/token strings: `prompt`, `completion`, `input_cache_read`, `input_cache_write`). Pricing is converted to per MTok and read lazily, once per process, from that file; nothing on a hot path touches the network. A missing or zero `input_cache_write` bills cache writes as input; a missing or zero `input_cache_read` means the model does not cache, so cache reads bill at the input price. A `:free` variant not in the catalog is $0. `agentctl cost` refreshes the cache (3s timeout) when it meets an unpriced model and a nous backend is configured. A cache written by an older agentctl has no pricing and is refetched on next use.
+- **Overrides always win**, so you can price a model the catalog lacks:
+
+  ```json
+  { "models": { "overrides": { "openai/gpt-6-astra": { "input_per_mtok": 10, "output_per_mtok": 50, "cache_read_per_mtok": 1, "cache_create_per_mtok": 12.5 } } } }
+  ```
+
+- **Billing class.** Each session is `metered` (Nous: real money), `sub` (Anthropic via the Claude subscription: the dollars are API-equivalent value, not a charge) or `free` (Ollama: always $0). The backend is recorded per session by the SessionStart hook (a small file under the session data dir, since the window state is deleted when the window closes) and classified with the global `backends` kind. Sessions recorded before this existed fall back to the model: `claude-*` is `sub`, a catalog model is `metered`, a bare non-Claude tag with an Ollama backend configured is `free`, anything else is unknown (`?`).
+- **Message de-duplication.** Claude Code writes one JSONL line per content block, repeating the response's `message.id` and usage. Usage and turn counts are taken once per message id; counting every line overstates tokens by about 1.5x.
+
+#### `agentctl cost`
+
+```sh
+agentctl cost                      # sessions from the last 7 days
+agentctl cost --since 36h --metered
+agentctl cost --by model           # or agent | day | project
+agentctl cost <session-id>         # per-model breakdown for one session
+agentctl cost --json
+```
+
+Columns: DATE, PROJECT, AGENT, MODEL, BILLING, TURNS, CACHE READ, OUTPUT, COST. The totals row has `metered` (the number that matters) and `sub` subtotals; sessions with unknown pricing show `?` and are excluded, with a count. `agentctl usage` stays token-only and `agentctl tables sessions` / the sessions browser now use the same pricing (they show `?` for unpriced models). With `--json`, an unknown cost is `null`.
+
+**Statusline cost.** Claude Code's pushed `cost.total_cost_usd` comes from its own Claude price table, so for a non-`claude-*` model id (Nous, Ollama) it applies Claude rates to foreign token counts. agentctl hides it for those models and does not store it; use `agentctl cost`. (Not verified against a live non-Anthropic session here: JSONL logs carry no `total_cost_usd`, only the statusline payload does.)
 
 ### Agent-to-agent messaging
 
@@ -275,7 +305,7 @@ Gotchas:
   Then set the backend `model` to `gemma4-64k` and `max_context_tokens` to `65536`. Confirm the context the model actually loaded with via `ollama ps`, or `GET /api/ps` (field `context_length`).
 - **Context size floor.** Claude Code's fixed overhead (system prompt plus tool definitions) uses roughly 30k tokens, so 32k of context is too small to be useful; 64k is a practical minimum.
 - **Pick a tool-calling model.** qwen3.6 MoE works; deepseek-r1 cannot call tools.
-- Cost metrics skip unknown models; that is expected.
+- Ollama sessions are `free`: `agentctl cost` prices them at $0 (billing class `free`), and cost metrics skip unknown models.
 
 ### Nous Portal (`kind: "nous"`)
 
@@ -327,7 +357,7 @@ Caveats:
 - **Edge blocking.** Nous sits behind Cloudflare, which returns a 403 HTML page for Go's default User-Agent; agentctl sends `User-Agent: agentctl/<version>` on every request to Nous. `backend login` reports a non-JSON 403 as blocked by the provider edge (WAF), not an invalid key, and an `insufficient_credits_for_paid_model` error as a valid key on an account with no credits (add credits or use a `:free` model).
 - **Models.** Only models verified to do tool use over `/v1/messages` are supported; the catalog's `endpoints` field is copied from OpenRouter and may be wrong. `anthropic/*` models are the safest bet. Prompt caching behaviour under concurrent agents is unverified, so cost may be higher than the token counts suggest.
 - **The agent can read its own key.** It runs as your user, so it can run `agentctl backend-token`, `security find-generic-password`, or read the credential file. The `Bash(*backend-token*)` and `Edit(**/.claude/settings*.json)` deny rule that nous launches add are defence in depth only. Set a spend limit on the Nous key.
-- **Cost display is wrong** for slug models: the statusline and metrics have no pricing for them.
+- **Cost.** Nous sessions are priced from the catalog (`agentctl cost`, billing class `metered`). The statusline hides Claude Code's pushed cost for non-Claude models because Claude Code prices them with Claude rates.
 
 ## Environment variables
 

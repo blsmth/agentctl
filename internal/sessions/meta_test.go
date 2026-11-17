@@ -381,14 +381,15 @@ func sessionIDs(metas []SessionMeta) map[string]bool {
 // TestEstimateCost covers the pricing table and edge cases.
 func TestEstimateCost(t *testing.T) {
 	tests := []struct {
-		name string
-		meta SessionMeta
-		want float64 // USD
+		name    string
+		meta    SessionMeta
+		want    float64 // USD
+		unknown bool    // price unknown: EstimateCost reports ok=false
 	}{
 		{
-			name: "zero tokens",
-			meta: SessionMeta{},
-			want: 0,
+			name:    "zero tokens, no model",
+			meta:    SessionMeta{},
+			unknown: true,
 		},
 		{
 			name: "sonnet pricing — raw input only",
@@ -410,19 +411,19 @@ func TestEstimateCost(t *testing.T) {
 		{
 			name: "haiku pricing — raw input",
 			meta: SessionMeta{
-				ModelName:    "claude-haiku-3-20240307",
+				ModelName:    "claude-haiku-3-5-20241022",
 				InputTokens:  1_000_000,
 				OutputTokens: 0,
 			},
-			want: 0.25,
+			want: 0.80,
 		},
 		{
 			name: "haiku pricing — output",
 			meta: SessionMeta{
-				ModelName:    "claude-haiku-3-20240307",
+				ModelName:    "claude-haiku-3-5-20241022",
 				OutputTokens: 1_000_000,
 			},
-			want: 1.25,
+			want: 4.0,
 		},
 		{
 			name: "opus pricing — input",
@@ -440,30 +441,42 @@ func TestEstimateCost(t *testing.T) {
 				InputTokens:  0,
 				OutputTokens: 1_000_000,
 			},
-			want: 75.0, // Opus: $75/1M output
+			want: 25.0, // Opus 4.5: $25/1M output
 		},
 		{
-			name: "unknown model defaults to sonnet",
+			name: "non-claude unknown model is unknown, not sonnet",
 			meta: SessionMeta{
-				ModelName:    "claude-future-model-99",
+				ModelName:    "qwen3.6:35b-a3b",
 				InputTokens:  1_000_000,
 				OutputTokens: 0,
 			},
-			want: 3.0, // defaultPricing == sonnet
+			unknown: true,
 		},
 		{
-			name: "empty model defaults to sonnet",
+			name: "empty model is unknown, not sonnet",
 			meta: SessionMeta{
 				InputTokens:  1_000_000,
 				OutputTokens: 0,
 			},
-			want: 3.0,
+			unknown: true,
+		},
+		{
+			name: "opus 5.5 is $4/$20, not the old $15/$75",
+			meta: SessionMeta{
+				ModelName:    "claude-opus-5-5",
+				InputTokens:  1_000_000,
+				OutputTokens: 1_000_000,
+			},
+			want: 24.0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := EstimateCost(tt.meta)
+			got, ok := EstimateCost(tt.meta)
+			if ok == tt.unknown {
+				t.Fatalf("EstimateCost() ok = %v, want %v", ok, !tt.unknown)
+			}
 			if math.Abs(got-tt.want) > 1e-9 {
 				t.Errorf("EstimateCost() = %v, want %v", got, tt.want)
 			}
@@ -488,7 +501,7 @@ func TestEstimateCost_CacheBreakdown(t *testing.T) {
 	//      = 10.485
 	const want = 10.485
 
-	got := EstimateCost(meta)
+	got, _ := EstimateCost(meta)
 	if math.Abs(got-want) > 1e-9 {
 		t.Errorf("EstimateCost() = %.6f, want %.6f", got, want)
 	}

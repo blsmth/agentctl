@@ -1,6 +1,9 @@
 package tokens_test
 
 import (
+	"math"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -178,8 +181,8 @@ func TestLookup_FamilyFallback(t *testing.T) {
 	if m.MaxOutput != 128_000 {
 		t.Errorf("MaxOutput = %d, want 128000 (newest opus generation)", m.MaxOutput)
 	}
-	if m.Pricing.InputPerMTok != 5.0 {
-		t.Errorf("InputPerMTok = %v, want 5.0 (newest opus generation)", m.Pricing.InputPerMTok)
+	if m.Pricing.InputPerMTok != 4.0 {
+		t.Errorf("InputPerMTok = %v, want 4.0 (newest opus generation)", m.Pricing.InputPerMTok)
 	}
 }
 
@@ -304,8 +307,8 @@ func TestLookup_PartialOverrideOnFamilyFallback(t *testing.T) {
 	if m.ContextWindow != 2_000_000 {
 		t.Errorf("ContextWindow = %d, want 2000000", m.ContextWindow)
 	}
-	if m.Pricing.InputPerMTok != 5.0 {
-		t.Errorf("InputPerMTok = %v, want 5.0 (newest opus family default, not zeroed)", m.Pricing.InputPerMTok)
+	if m.Pricing.InputPerMTok != 4.0 {
+		t.Errorf("InputPerMTok = %v, want 4.0 (newest opus family default, not zeroed)", m.Pricing.InputPerMTok)
 	}
 	if m.Source != "config" {
 		t.Errorf("Source = %q, want config", m.Source)
@@ -666,8 +669,8 @@ func TestLookup_UnknownFutureModelFamilyFallback(t *testing.T) {
 	if m.ContextWindow != 1_000_000 {
 		t.Errorf("ContextWindow = %d, want 1000000 (newest opus generation)", m.ContextWindow)
 	}
-	if m.Pricing.InputPerMTok != 5.0 {
-		t.Errorf("InputPerMTok = %v, want 5.0 (newest opus generation)", m.Pricing.InputPerMTok)
+	if m.Pricing.InputPerMTok != 4.0 {
+		t.Errorf("InputPerMTok = %v, want 4.0 (newest opus generation)", m.Pricing.InputPerMTok)
 	}
 }
 
@@ -720,5 +723,140 @@ func TestRegistry_IncludesAllRealWorldModels(t *testing.T) {
 		if !present[k] {
 			t.Errorf("Registry() missing built-in key %q", k)
 		}
+	}
+}
+
+func TestPricing_Cost_Haiku55Tier(t *testing.T) {
+	p := tokens.Lookup("claude-haiku-5-5").Pricing
+	under := tokens.Usage{Input: 1000, Output: 1000, CacheRead: 50_000, CacheCreate: 1000}
+	over := tokens.Usage{Input: 1000, Output: 1000, CacheRead: 150_000, CacheCreate: 1000}
+	// 52_000 prompt: base rates 0.10/0.50/0.01/0.125 per MTok.
+	wantUnder := (1000*0.10 + 1000*0.50 + 50_000*0.01 + 1000*0.125) / 1e6
+	// 152_000 prompt: tier rates 0.50/2.50/0.05/0.625 per MTok.
+	wantOver := (1000*0.50 + 1000*2.50 + 150_000*0.05 + 1000*0.625) / 1e6
+	if got := p.Cost(under); math.Abs(got-wantUnder) > 1e-12 {
+		t.Errorf("under = %v, want %v", got, wantUnder)
+	}
+	if got := p.Cost(over); math.Abs(got-wantOver) > 1e-12 {
+		t.Errorf("over = %v, want %v", got, wantOver)
+	}
+	// Exactly at the threshold is not "exceeds".
+	at := tokens.Usage{Input: 100_000}
+	if got, want := p.Cost(at), 100_000*0.10/1e6; math.Abs(got-want) > 1e-12 {
+		t.Errorf("at threshold = %v, want %v", got, want)
+	}
+}
+
+func TestLookup_Anthropic55Rates(t *testing.T) {
+	tests := []struct {
+		model          string
+		in, out, cr, w float64
+	}{
+		{"claude-opus-5-5", 4, 20, 0.20, 5},
+		{"claude-sonnet-5-5", 2, 10, 0.10, 2.5},
+		{"claude-haiku-5-5", 0.10, 0.50, 0.01, 0.125},
+		{"claude-fable-5-2", 8, 40, 0.20, 10},
+		{"claude-fable-5-1", 10, 50, 0.25, 12.5},
+		{"claude-fable-5", 10, 50, 1, 12.5},
+		{"claude-opus-5", 5, 25, 0.50, 6.25},
+		{"claude-sonnet-5", 2, 10, 0.20, 2.5},
+		{"claude-opus-4-8", 5, 25, 0.50, 6.25},
+		{"claude-opus-5-5-20261101", 4, 20, 0.20, 5}, // dated id
+		{"claude-opus-5-5[1m]", 4, 20, 0.20, 5},      // qualifier
+		{"claude-opus-4-9", 4, 20, 0.20, 5},          // unknown newer: family fallback, not claude-opus-4
+		{"claude-fable-5-3", 8, 40, 0.20, 10},        // unknown newer fable
+		{"claude-haiku-9", 0.10, 0.50, 0.01, 0.125},  // family fallback
+	}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			p := tokens.Lookup(tt.model).Pricing
+			if p.InputPerMTok != tt.in || p.OutputPerMTok != tt.out || p.CacheReadPerMTok != tt.cr || p.CacheCreatePerMTok != tt.w {
+				t.Errorf("pricing = %+v, want %v/%v/%v/%v", p, tt.in, tt.out, tt.cr, tt.w)
+			}
+		})
+	}
+}
+
+func TestLookup_UnknownModelHasNoPricing(t *testing.T) {
+	tokens.SetCatalogDir("")
+	for _, name := range []string{"", "<synthetic>", "qwen3.6:35b-a3b", "totally-unknown"} {
+		if tokens.Lookup(name).HasPricing() {
+			t.Errorf("Lookup(%q).HasPricing() = true, want false", name)
+		}
+	}
+	if m := tokens.Lookup("meituan/longcat-2.5:free"); !m.HasPricing() || m.Pricing.InputPerMTok != 0 {
+		t.Errorf(":free variant should be priced at zero, got %+v", m)
+	}
+}
+
+func TestParseCatalog_CacheFallbacks(t *testing.T) {
+	doc := `{"data":[
+	 {"id":"openai/gpt-6-astra","pricing":{"prompt":"0.000002","completion":"0.00001","input_cache_read":"0.000001","input_cache_write":"0.0000025"}},
+	 {"id":"qwen/zero-cache","pricing":{"prompt":"0.0000005","completion":"0.000002","input_cache_read":"0","input_cache_write":"0"}},
+	 {"id":"qwen/missing-cache","pricing":{"prompt":"0.0000005","completion":"0.000002"}},
+	 {"id":"qwen/numeric","pricing":{"prompt":0.0000005,"completion":0.000002}},
+	 {"id":"qwen/no-pricing"},
+	 {"id":"qwen/no-completion","pricing":{"prompt":"0.1"}}]}`
+	got := tokens.ParseCatalog([]byte(doc))
+	approx := func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+	a := got["openai/gpt-6-astra"]
+	if !approx(a.InputPerMTok, 2) || !approx(a.OutputPerMTok, 10) || !approx(a.CacheReadPerMTok, 1) || !approx(a.CacheCreatePerMTok, 2.5) {
+		t.Errorf("astra = %+v", a)
+	}
+	for _, id := range []string{"qwen/zero-cache", "qwen/missing-cache", "qwen/numeric"} {
+		p := got[id]
+		if !approx(p.InputPerMTok, 0.5) || !approx(p.CacheReadPerMTok, 0.5) || !approx(p.CacheCreatePerMTok, 0.5) {
+			t.Errorf("%s: cache should fall back to input price: %+v", id, p)
+		}
+	}
+	if _, ok := got["qwen/no-pricing"]; ok {
+		t.Error("entry without pricing should be omitted")
+	}
+	if _, ok := got["qwen/no-completion"]; ok {
+		t.Error("entry without completion price should be omitted")
+	}
+}
+
+func writeCatalog(t *testing.T, dir, doc string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "nous-models-abc.json"), []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCalibration_AstraSession re-prices a real gpt-6-astra review session's
+// usage at catalog prices; Nous billed about $7 for it.
+func TestCalibration_AstraSession(t *testing.T) {
+	dir := t.TempDir()
+	writeCatalog(t, dir, `{"data":[{"id":"openai/gpt-6-astra","pricing":{"prompt":"0.0000100000","completion":"0.0000500000","input_cache_read":"0.0000010000","input_cache_write":"0.0000125000"}}]}`)
+	tokens.SetCatalogDir(dir)
+	t.Cleanup(func() { tokens.SetCatalogDir("") })
+
+	m := tokens.Lookup("openai/gpt-6-astra")
+	if !m.HasPricing() || m.Source != "catalog" {
+		t.Fatalf("astra not resolved from catalog: %+v", m)
+	}
+	got := m.Pricing.Cost(tokens.Usage{Input: 117, Output: 10323, CacheRead: 4552942, CacheCreate: 171823})
+	if math.Abs(got-7.22) > 0.01 {
+		t.Errorf("astra session = $%.4f, want $7.22 +-0.01", got)
+	}
+}
+
+func TestLookup_ConfigOverrideBeatsCatalog(t *testing.T) {
+	dir := t.TempDir()
+	writeCatalog(t, dir, `{"data":[{"id":"openai/gpt-6-astra","pricing":{"prompt":"0.000002","completion":"0.00001"}}]}`)
+	tokens.SetCatalogDir(dir)
+	tokens.SetOverrides(map[string]tokens.ModelOverride{
+		"openai/gpt-6-astra": {InputPerMTok: 1, OutputPerMTok: 3},
+	}, 0)
+	t.Cleanup(func() { tokens.SetCatalogDir(""); tokens.SetOverrides(nil, 0) })
+
+	m := tokens.Lookup("openai/gpt-6-astra")
+	if m.Source != "config" || m.Pricing.InputPerMTok != 1 || m.Pricing.OutputPerMTok != 3 {
+		t.Errorf("override should win: %+v", m)
+	}
+	// Unoverridden fields still come from the catalog base (cache read = input).
+	if m.Pricing.CacheReadPerMTok != 2 {
+		t.Errorf("CacheRead = %v, want catalog-derived 2", m.Pricing.CacheReadPerMTok)
 	}
 }

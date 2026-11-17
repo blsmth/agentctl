@@ -87,14 +87,14 @@ func TestCostEstimator_PrefixMatch(t *testing.T) {
 func TestCostEstimator_FamilyFallbackAccrues(t *testing.T) {
 	ce := newTestCostEstimator(t)
 
-	// opus family default (newest generation): input=5.0 per MTok.
+	// opus family default (newest generation): input=4.0 per MTok (Opus 5.5).
 	ce.OnEntry(logstream.Entry{
 		Type:  "assistant",
 		Model: "claude-opus-9",
 		Usage: mkUsage(1_000_000, 0, 0, 0),
 	})
 
-	const want = 5.0
+	const want = 4.0
 	if ce.TotalCost != want {
 		t.Errorf("TotalCost = %v, want %v (opus family fallback pricing)", ce.TotalCost, want)
 	}

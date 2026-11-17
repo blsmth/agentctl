@@ -1300,6 +1300,9 @@ func Load() *Config {
 	}
 	tokens.SetOverrides(tokOverrides, cfg.Models.DefaultContextWindow)
 	tokens.SetReserveOutput(cfg.Models.EffectiveReserveOutput())
+	// Nous catalog pricing is read lazily from the dispatch cache in the
+	// runtime dir; no-op when the dir is unchanged.
+	tokens.SetCatalogDir(paths.RuntimeDir())
 
 	return cfg
 }
