@@ -55,7 +55,7 @@ func RunHealth() {
 		fmt.Printf("  Windows: (none)\n")
 	}
 
-	// State file freshness (the monitor writes it for the macapp only).
+	// State file freshness (the monitor writes it; used only for optional token enrichment and as a restore fallback).
 	if !monitorEnabled {
 		fmt.Printf("  State:   %s (not maintained, monitor disabled)\n", stateFilePath)
 	} else if info, statErr := os.Stat(stateFilePath); statErr == nil {

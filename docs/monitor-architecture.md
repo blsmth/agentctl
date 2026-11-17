@@ -85,7 +85,7 @@ The monitor does not rename tmux windows. Every hook or command that changes `St
 
 ## State Persistence
 
-Every tick, `persistState()` writes `state.json` under `paths.RuntimeDir()` (`$CWD/.agentctl/state.json`) with all agent states. **Nothing in agentctl requires it any more**: the macapp reads it (its format is unchanged), and it carries the JSONL-derived fields only the monitor computes (cumulative and last-turn token counts, start time, pending-mail count).
+Every tick, `persistState()` writes `state.json` under `paths.RuntimeDir()` (`$CWD/.agentctl/state.json`) with all agent states. **Nothing in agentctl requires it any more**: it is read only for optional token enrichment (`herd/view.go`, `EnrichmentMaxAge`) and as the one-release restore fallback when `restore.json` is absent, and it carries the JSONL-derived fields only the monitor computes (cumulative and last-turn token counts, start time, pending-mail count).
 
 Every other reader builds its view with the shared builder in `internal/herd` (`LoadAgents` / `BuildAgents`): `tmux list-windows` for the session (ID, order, name) joined with `windowstate.AllFrom(<runtime dir>/windows)`. tmux decides which windows exist, so a record with no window is ignored and a window with no record is listed as untracked (idle, named from tmux). `Done` is `ws.Done && !ws.Seen`; ctx%, context tokens/window, model and cost are the last values the statusline pushed. State, identity and the window list never depend on `state.json`. When `state.json` exists and is fresh (`herd.EnrichmentMaxAge`, 3s) the monitor-only token fields are merged in by window ID as optional enrichment; otherwise they stay zero and the UI hides them. The statusline takes tokens and duration from the Claude Code payload first and falls back to that enrichment only when a payload field is null; turns come from `ws.TurnCount`.
 
@@ -145,7 +145,7 @@ Additional hooks handle compaction, elicitation, worktree create/remove, subagen
 2. **Transitions**: state change → `detectAndFireTransitions()` builds `Transition` → `RecordTransition` + `improve.HandleTransition`. Dispatch completion is not part of this loop.
 3. **Window names**: each state writer → `winname.Update` → `tmux rename-window` (state glyph) inside the windowstate transaction; the monitor only resolves ctx% in memory for `state.json`.
 4. **Log discovery**: `hook-session-start` → windowstate `LogPath` → monitor links `instanceState.logPath`; fallback `sessions.FindLatestLog()` scans the filesystem.
-5. **Reader views**: tmux `list-windows` + `windowstate.AllFrom` → `herd.BuildAgents` → chrome bar (fsnotify on `windows/`), hub, `agentctl status`, popups. The monitor still writes `state.json` for the macapp only.
+5. **Reader views**: tmux `list-windows` + `windowstate.AllFrom` → `herd.BuildAgents` → chrome bar (fsnotify on `windows/`), hub, `agentctl status`, popups. The monitor still writes `state.json`, used only for optional token enrichment and as the restore fallback.
 
 ## See also
 

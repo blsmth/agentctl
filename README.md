@@ -95,8 +95,6 @@ You also get TUI browsers for agents, skills, memory files, issues, and session 
 
 macOS and Linux. Windows is not supported (WSL may work but is untested).
 
-`macapp/` contains an **experimental**, macOS-only companion app; see [macapp/README.md](macapp/README.md).
-
 ## Documentation
 
 | | |

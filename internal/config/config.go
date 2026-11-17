@@ -586,8 +586,8 @@ type Config struct {
 	OpenPRInBrowser *bool `json:"open_pr_in_browser,omitempty"`
 	// Monitor is the monitor kill switch. nil (unset) means enabled; only an
 	// explicit false stops agentctl starting the per-project monitor (session
-	// start, applyConfig, the hook watchdog). Nothing but the macapp's
-	// state.json depends on the monitor. A running monitor is never killed
+	// start, applyConfig, the hook watchdog). Only optional token
+	// enrichment from state.json depends on the monitor. A running monitor is never killed
 	// by flipping the flag; the next relaunch just does not start one. Like
 	// auto_improve, a project-local config may switch it off but can never
 	// switch it back on. Use MonitorEnabled() to read the effective value.

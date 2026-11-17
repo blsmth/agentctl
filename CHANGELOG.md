@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 First public release.
 
+### Removed
+
+- The experimental macOS companion app (`macapp/`). The hub and the mobile web app (`agentctl serve`) replace it.
+
 ### Fixed
 
 - A Go test binary can no longer spawn itself. `selfpath.Spawnable` (used by every exec/spawn of the running binary) refuses under `go test`, `detach.Start` refuses to start the test binary, and a source-scan test forbids direct `os.Executable` calls. This follows an incident where a detached `hooks.test` reran the suite recursively and exhausted the per-user process limit. `detach.Start` also caps nesting with `AGENTCTL_DETACH_DEPTH` (refuses at depth 3), and `internal/notify` never runs the default notifier, `alerter` or `notify-send` under test.
