@@ -584,6 +584,14 @@ type Config struct {
 	// only an explicit false disables it. Use OpenPRInBrowserEnabled() to
 	// read the effective value.
 	OpenPRInBrowser *bool `json:"open_pr_in_browser,omitempty"`
+	// Monitor is the monitor kill switch. nil (unset) means enabled; only an
+	// explicit false stops agentctl starting the per-project monitor (session
+	// start, applyConfig, the hook watchdog). Nothing but the macapp's
+	// state.json depends on the monitor. A running monitor is never killed
+	// by flipping the flag; the next relaunch just does not start one. Like
+	// auto_improve, a project-local config may switch it off but can never
+	// switch it back on. Use MonitorEnabled() to read the effective value.
+	Monitor *bool `json:"monitor,omitempty"`
 	// StatuslineFormat controls what `agentctl statusline` renders
 	// (internal/statusline): "rich" (default -- a colored 2-line
 	// status line covering account rate limits on line 1 and
@@ -663,6 +671,12 @@ func (c Config) EffectiveStatuslineAlign() string {
 // in the browser automatically, defaulting to true when unset.
 func (c Config) OpenPRInBrowserEnabled() bool {
 	return c.OpenPRInBrowser == nil || *c.OpenPRInBrowser
+}
+
+// MonitorEnabled reports whether the per-project monitor may be started,
+// defaulting to true when unset.
+func (c Config) MonitorEnabled() bool {
+	return c.Monitor == nil || *c.Monitor
 }
 
 // EffectiveWorkJournal returns true if journaling is enabled for the given agent.
@@ -957,6 +971,12 @@ func mergeConfig(base, overlay *Config) {
 	if len(overlay.Hooks) > 0 {
 		base.Hooks = overlay.Hooks
 	}
+	// Monitor: only an explicit false is overlaid (sanitizeProjectConfig has
+	// already dropped a project true).
+	if overlay.Monitor != nil {
+		base.Monitor = overlay.Monitor
+	}
+
 	// OpenPRInBrowser: overlay if explicitly set (nil means "not specified").
 	if overlay.OpenPRInBrowser != nil {
 		base.OpenPRInBrowser = overlay.OpenPRInBrowser
@@ -1131,6 +1151,7 @@ func containsAll(have, want []string) bool {
 //   - metrics.endpoint / metrics.basic_auth (remote write could exfiltrate
 //     session metrics); a project may still toggle metrics and the loopback
 //     port
+//   - monitor set to true (a project may switch the monitor off, never back on)
 //   - auto_poll (autopilot dispatches every "ready" issue unattended)
 //   - bash_preview / agents.*.bash_preview set to false when the global layer
 //     enables it (a project may tighten the guard, never loosen it)
@@ -1153,6 +1174,13 @@ func sanitizeProjectConfig(project, global *Config) {
 	if project.DefaultAgent != "" && !agentname.ValidLaunch(project.DefaultAgent) {
 		warn("default_agent", "invalid agent name")
 		project.DefaultAgent = ""
+	}
+	if project.Monitor != nil && *project.Monitor {
+		// A project can only switch the monitor off, never back on.
+		if !global.MonitorEnabled() {
+			warn("monitor", "project may switch the monitor off but not back on")
+		}
+		project.Monitor = nil
 	}
 	if project.AutoPoll && !global.AutoPoll {
 		warn("auto_poll", globalOnly)

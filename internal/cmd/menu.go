@@ -12,9 +12,9 @@ import (
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/sessions"
-	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
 )
@@ -34,12 +34,11 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 	}
 
 	done = logging.Timing("RunMenu: running agents")
-	// runningByID maps windowID → instance name. We build it from the snapshot
-	// when fresh (avoids a tmux fork) or fall back to a live tmux query.
+	// runningByID maps windowID → instance name, built from tmux's window
+	// list joined with windowstate; falls back to a plain tmux query.
 	runningByID := make(map[string]string)
-	snap, _ := state.LoadSnapshot()
-	if !snap.IsStale(3 * time.Second) {
-		for _, as := range snap.State.Agents {
+	if built, err := herd.LocalAgents(); err == nil {
+		for _, as := range built {
 			if as.WindowID != "" {
 				runningByID[as.WindowID] = as.Name
 			}

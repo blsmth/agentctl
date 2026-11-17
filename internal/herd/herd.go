@@ -1,7 +1,7 @@
 // Package herd is the data layer for the hub's cross-session aggregator view.
 // It is deliberately kept free of any Bubble Tea / terminal dependency so it
 // can be exercised with table-driven tests and no TTY: Load (and LoadGroup)
-// do the I/O (registry, tmux, state.json), while tagging, ordering, and
+// do the I/O (registry, tmux, windowstate), while tagging, ordering, and
 // rollup are pure functions over slices.
 package herd
 
@@ -10,18 +10,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/blsmth/agentctl/internal/registry"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
-
-// SnapshotStaleAfter is how old a session's state.json can be before its
-// group is flagged Stale. The monitor writes state.json roughly every tick
-// (500ms), so this leaves generous margin for the hub's own ~1s poll cadence
-// without flapping.
-const SnapshotStaleAfter = 5 * time.Second
 
 // Row is one agent window, tagged with the session and project it belongs
 // to. state.AgentState itself carries no session/project key — rows are
@@ -71,46 +64,33 @@ func (r RollupStatus) String() string {
 }
 
 // Group is one session's worth of agents: the session name, a display name
-// for its project, the rolled-up status across all its rows, the rows
-// themselves (already ordered), and whether the underlying state.json
-// snapshot was missing, unreadable, or stale. When a fresh snapshot goes
-// stale (the monitor briefly wedges) Rows keeps the last-known set rather
-// than going empty — a stale group still shows its agents, just dimmed and
-// flagged, so a momentary hiccup doesn't make a whole project's agents
-// vanish from the hub. Rows are only empty when there was never any data to
-// show (snapshot missing/unreadable, or genuinely zero agents).
+// for its project, the rolled-up status across all its rows, and the rows
+// themselves (already ordered). Rows are built from `tmux list-windows` plus
+// windowstate (see LoadAgents), never from state.json, so a group is as live
+// as tmux and the hooks are; when tmux cannot list the session the group has
+// no rows.
 type Group struct {
 	Session string
 	Project string
 	Rollup  RollupStatus
 	Rows    []Row
-	Stale   bool // snapshot missing, unreadable, or older than SnapshotStaleAfter
 
-	// RuntimeDir is the session's .agentctl directory — where its state.json
-	// and windows/ live. Carried through so a caller can reach that session's
-	// windowstate records (see Enrich), which hold launch mode, dispatch
-	// metadata, and the spawned-by parent link that state.json does not.
+	// RuntimeDir is the session's .agentctl directory — where its windows/
+	// records live. Carried through so a caller can reach that session's
+	// windowstate records (see LoadMeta).
 	RuntimeDir string
 
 	// ProjectDir is the session's project directory (tmux #{session_path},
 	// or the registry's ProjectDir). Used as the cwd when launching a new
 	// agent into this session from the hub.
 	ProjectDir string
-
-	// SnapshotAge is how old the state.json backing this group was when it
-	// was read. Zero when the snapshot was missing or unreadable — check
-	// Stale, not SnapshotAge == 0, to detect that case. Surfaced because a
-	// non-interactive caller cannot see the hub's dimming: a wedged monitor
-	// otherwise serves confident, frozen answers.
-	SnapshotAge time.Duration
 }
 
 // Load discovers every live agentctl session — primarily via tmux's
 // #{session_path} (ListSessionsWithPaths), enriched by the registry — and
 // builds one Group per surviving entry. It never aborts on a single
-// session's problem: a session whose snapshot is missing, unreadable, or
-// stale renders as a degraded (Stale) group rather than failing the
-// caller's whole aggregation. See docs/herd-view-design.md for why tmux,
+// session's problem: a session tmux cannot list renders as an empty group
+// rather than failing the caller's whole aggregation. See docs/herd-view-design.md for why tmux,
 // not the registry, is the primary discovery source.
 func Load() ([]Group, error) {
 	live := make(map[string]bool)
@@ -212,42 +192,28 @@ func isAgentctlSessionName(name string) bool {
 	return strings.HasPrefix(name, "agentctl-")
 }
 
-// LoadGroup builds a single Group from one registry entry by reading its
-// state.json. Never returns an error — a missing or unreadable snapshot
-// produces a degraded (Stale) group with no rows. A snapshot that exists but
-// has gone stale (older than SnapshotStaleAfter) also flags the group Stale,
-// but keeps its last-known rows rather than dropping them: a briefly-wedged
-// monitor shouldn't make a whole project's agents vanish from the hub.
+// LoadGroup builds a single Group from one registry entry: tmux's window
+// list for the session joined with its windowstate records (LoadAgents).
+// Never returns an error — if tmux cannot list the session (server gone) the
+// group is empty. state.json is not consulted beyond optional token
+// enrichment.
 func LoadGroup(e registry.Entry) Group {
 	project := projectDisplayName(e)
-
-	path := filepath.Join(e.RuntimeDir, "state.json")
-	snap, err := state.LoadSnapshotFrom(path)
-	if err != nil || snap == nil {
-		return Group{
-			Session:    e.SessionName,
-			Project:    project,
-			Rollup:     RollupIdle,
-			Stale:      true,
-			RuntimeDir: e.RuntimeDir,
-			ProjectDir: e.ProjectDir,
-		}
-	}
-
-	rows := SortRows(TagRows(e.SessionName, project, snap))
-	TagDispatched(rows, LoadMeta(Group{RuntimeDir: e.RuntimeDir}))
 	g := Group{
-		Session:     e.SessionName,
-		Project:     project,
-		Rollup:      RollupRows(rows),
-		Rows:        rows,
-		RuntimeDir:  e.RuntimeDir,
-		ProjectDir:  e.ProjectDir,
-		SnapshotAge: time.Since(snap.Timestamp),
+		Session:    e.SessionName,
+		Project:    project,
+		Rollup:     RollupIdle,
+		RuntimeDir: e.RuntimeDir,
+		ProjectDir: e.ProjectDir,
 	}
-	if snap.IsStale(SnapshotStaleAfter) {
-		g.Stale = true
+	agents, err := LoadAgents(e.SessionName, e.RuntimeDir)
+	if err != nil {
+		return g
 	}
+	rows := TagAgents(e.SessionName, project, agents)
+	TagDispatched(rows, LoadMeta(Group{RuntimeDir: e.RuntimeDir}))
+	g.Rows = rows
+	g.Rollup = RollupRows(rows)
 	return g
 }
 
@@ -273,35 +239,18 @@ func projectDisplayName(e registry.Entry) string {
 	return name
 }
 
-// TagRows builds the Row slice for one session from its already-loaded
-// state.Snapshot, tagging each row with the session name and project display
-// name. Skips non-agent windows ("shell", "improve~*") the same way the
-// monitor does when it builds state.json — persistState already filters
-// these, but a hand-edited or stale snapshot might not.
-func TagRows(session, project string, snap *state.Snapshot) []Row {
-	if snap == nil {
-		return nil
+// TagAgents tags already-built agent views with the session and project and
+// orders them by window index.
+func TagAgents(session, project string, agents []state.AgentState) []Row {
+	rows := make([]Row, 0, len(agents))
+	for _, a := range agents {
+		rows = append(rows, Row{Session: session, Project: project, AgentState: a})
 	}
-	rows := make([]Row, 0, len(snap.Agents))
-	for _, a := range snap.Agents {
-		if isNonAgentWindow(a.Name) {
-			continue
-		}
-		rows = append(rows, Row{
-			Session:    session,
-			Project:    project,
-			AgentState: a,
-		})
-	}
-	return rows
+	return SortRows(rows)
 }
 
-// isNonAgentWindow reports whether a window name is one the monitor never
-// tracks as an agent: the persistent "shell" window, or an auto-improve
-// session ("improve~<agent>").
-func isNonAgentWindow(name string) bool { return IsNonAgentWindow(name) }
-
-// IsNonAgentWindow is the exported form of isNonAgentWindow, for commands
+// IsNonAgentWindow reports whether a window name is one the monitor never
+// tracks as an agent ("shell", "improve~*"), for commands
 // (e.g. `agentctl sweep`) that must never touch these windows.
 func IsNonAgentWindow(name string) bool {
 	if name == "shell" {

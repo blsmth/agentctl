@@ -461,3 +461,24 @@ func TestHealthCheckHookDrift_InSync(t *testing.T) {
 		t.Errorf("Mismatched = %v, want none for a fully in-sync settings file", report.Mismatched)
 	}
 }
+
+func TestHealthMonitorLine(t *testing.T) {
+	tests := []struct {
+		name    string
+		enabled bool
+		status  string
+		want    string
+	}{
+		{"enabled passes through", true, "not running (no pidfile)", "not running (no pidfile)"},
+		{"disabled and not running is not a problem", false, "not running (no pidfile)", "monitor disabled (config monitor:false)"},
+		{"disabled, stale pid also not running", false, "PID 9 (not running)", "PID 9 (not running) -- monitor disabled (config monitor:false); will not be restarted"},
+		{"disabled but still running is left alone", false, "PID 5 (running, uptime 01:00)", "PID 5 (running, uptime 01:00) -- monitor disabled (config monitor:false); will not be restarted"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := healthMonitorLine(tt.enabled, tt.status); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

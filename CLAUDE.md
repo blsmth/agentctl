@@ -35,7 +35,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 - **tmux/** — All tmux interactions (sessions, windows, panes, keybindings, `display-popup`/`display-menu`). The native status bar is off; chrome is a two-row Bubble Tea pane docked at the bottom of every window. Session name is `tmux.SessionName` (`agentctl-<dir>`).
 - **windowstate/** — Authoritative per-window hook state at `.agentctl/windows/<windowID>.json`. Written by hooks, read by the monitor.
 - **winname/** — Computes the window name (glyph + instance) from windowstate and renames the tmux window inside the writer's transaction (`winname.Update`/`Transact`, `SyncName`).
-- **state/** — The `state.json` snapshot the monitor writes each tick; read by panes and popups via `LoadSnapshot()`.
+- **state/** — The `state.json` snapshot the monitor writes each tick (read by the macapp; agentctl readers build their view from `herd.LoadAgents` and use a fresh snapshot only as optional token enrichment), plus `AgentState`, the restore builders, and the snapshot types.
 - **agent/** — Agent discovery from `~/.claude/agents/*.md` and project-local `.claude/agents/` (local shadows global); `Extends` composes agents.
 - **sessions/** — Parses Claude Code's JSONL logs in `~/.claude/projects/` for summaries, metrics, and session metadata sidecars. Also owns session cost: `CostOfSummary` prices per request through `tokens.Lookup` (unknown model = unknown cost, never a Sonnet default) and `ClassifyBilling` assigns `metered`/`sub`/`free`; surfaced by `agentctl cost`. Pricing lives only in `internal/tokens`.
 - **config/** — Layered settings: project-local `.agentctl/config.json` over global `~/.config/agentctl/config.json`, reloaded every monitor tick. See [docs/configuration.md](docs/configuration.md); `internal/config` structs are the source of truth.
@@ -62,15 +62,16 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 - **Cost**: one pricing source, `internal/tokens` (config overrides, then the cached Nous catalog, then built-ins, then newest-generation family fallback). Tiered models (Haiku 5.5) are priced per request, so session totals are summed per turn, and the parser dedups JSONL lines by `message.id`. The statusline hides Claude Code's pushed `total_cost_usd` for non-`claude-*` models. See [docs/configuration.md](docs/configuration.md#pricing-and-cost).
 - **Backends** (Ollama and Nous Portal via `backends` + `agents.*.backend`, global-only; `dispatch --backend`): `nous` delivers its API key through `apiKeyHelper` (`agentctl backend-token`), never through env or config. See [docs/configuration.md](docs/configuration.md#backends-ollama-and-nous-portal).
 - **Session restore** reads `<runtimeDir>/restore.json`, built from per-window `windowstate` records at every point that destroys windows (`StartSession` before `RemoveAll`, `tmux.KillSession`, relaunch-prep, `save-state`), not from the monitor's `state.json`. `state.json` is only a one-release fallback when `restore.json` is absent. See [docs/monitor-architecture.md](docs/monitor-architecture.md#session-restore-restorejson).
+- **Monitor kill switch**: global config `monitor: false` (default true) stops session start / `applyConfig` and the hook watchdog from starting or replacing a monitor, and `agentctl health` reports "monitor disabled". A running monitor is never killed by the flag. Like `auto_improve`, a project may switch it off but never back on.
 - **Command-type config keys** (`notify_cmd`, `hooks.*`, `dispatch.on_complete`) are read only from the global config, never from project-local `.agentctl/config.json`.
 
 ### Key data flow
 
 1. `agentctl` starts a tmux session → runs the monitor as a background process (pidfile-guarded)
 2. Claude Code hooks write per-window state to `.agentctl/windows/<windowID>.json` (`working`/`blocked`/`idle`)
-3. Monitor loops every 500ms, reads each window's hook state, and resolves it to an `AgentStatus`; `Gone` is detected when a window disappears. JSONL is parsed only for metrics/detail.
+3. Monitor loops every 500ms, reads each window's hook state, and resolves it to an `AgentStatus`; `Gone` is detected when a window disappears. JSONL is parsed only for metrics/detail. Readers (chrome bar, hub, `status`, popups) do not depend on it: they join `tmux list-windows` with `windowstate.AllFrom` via `herd.LoadAgents`. Config `monitor: false` stops agentctl starting it.
 4. On a state change the monitor builds a `Transition` and calls handlers directly — metrics `transitionTracker` and `improve.HandleTransition` (no plugin registry). Dispatch completion is hook-driven instead: the hook that sets `Done=true` (Stop hook, `signal done`) stamps `CompleteFiredAt` and spawns a detached `agentctl dispatch-complete <window>` (PR lookup, label swap, open PR, `dispatch_complete` hooks)
-5. The state writers (hooks, `signal`, `set-active-window`) rename tmux windows via `internal/winname` inside their windowstate transaction (● working, ⏸ blocked, ✓ done-unseen, bare name idle); `Seen` is a persisted windowstate field. The monitor writes `state.json`; the chrome bar pane watches it via fsnotify and re-renders
+5. The state writers (hooks, `signal`, `set-active-window`) rename tmux windows via `internal/winname` inside their windowstate transaction (● working, ⏸ blocked, ✓ done-unseen, bare name idle); `Seen` is a persisted windowstate field. The monitor writes `state.json` for the macapp only; the chrome bar pane watches `.agentctl/windows/` and `active-window` via fsnotify, rebuilds through `herd.BuildAgents`, and re-renders only when a rendered field changed
 
 ### Dispatch & Worktrees
 
@@ -104,10 +105,9 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 
 `agentctl status` is the scriptable counterpart to `agentctl hub` (same `internal/herd` aggregation). Use it instead of hand-joining `tmux list-windows` with `jq` over windowstate files. Subcommands: `status [<window>]` (table or detail; `--json`, `--session`, `--state`, `--blocked`, `--verify`), `status peek <window>`, and `status whoami`.
 
-Three behaviors are deliberate:
+Rows come from `tmux list-windows` plus windowstate (`herd.LoadAgents`), so `status` works with the monitor off. Two behaviors are deliberate:
 
 - **`PARENT` is blank for bare windows.** Only dispatched windows record a dispatcher; bare windows would otherwise report whichever window was created last (`herd.Meta.Parent()` returns `""` rather than a plausible wrong answer).
-- **Stale snapshots are flagged on stderr** (`herd.SnapshotStaleAfter`), since a wedged monitor freezes `state.json` instead of removing it.
 - **`--verify` trusts the pane over the record** via `herd.ClassifyPane`. `⏸` is not a blocked signal (it is in every pane's footer); classification matches dialog text.
 
 ## Adding a transition handler

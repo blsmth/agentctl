@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/buildid"
+	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/pidfile"
@@ -26,6 +27,7 @@ const (
 type watchdogDeps struct {
 	now           func() time.Time
 	monitorAlive  func() bool
+	disabled      func() bool // optional; true when config monitor:false switches the monitor off
 	monitorStale  func() bool // optional; true when the live monitor runs an outdated binary
 	killMonitor   func()
 	sessionExists func() bool
@@ -45,6 +47,7 @@ const (
 	watchdogSpawnFailed watchdogResult = "spawn-failed"
 
 	watchdogReplacedStale watchdogResult = "replaced-stale"
+	watchdogDisabled      watchdogResult = "monitor-disabled"
 )
 
 // runWatchdog restarts a dead monitor, and replaces a live one running a stale
@@ -52,6 +55,11 @@ const (
 // pidfile returns before anything else, and tmux is only consulted once the
 // monitor is dead and the rate limit allows an attempt.
 func runWatchdog(d watchdogDeps) watchdogResult {
+	// The kill switch wins over everything: no spawn and no replacement. A
+	// monitor that is already running is left alone.
+	if d.disabled != nil && d.disabled() {
+		return watchdogDisabled
+	}
 	if d.monitorAlive() {
 		if d.monitorStale == nil || !d.monitorStale() {
 			return watchdogAlive
@@ -137,6 +145,7 @@ func monitorWatchdog() {
 	stamp := filepath.Join(runtimeDir, watchdogStampName)
 	res := runWatchdog(watchdogDeps{
 		now:           time.Now,
+		disabled:      func() bool { return !config.Load().MonitorEnabled() },
 		monitorAlive:  func() bool { return pidfile.Validate(runtimeDir, monitorPidName) },
 		monitorStale:  func() bool { return monitorIsStale(runtimeDir) },
 		killMonitor:   func() { pidfile.Kill(runtimeDir, monitorPidName) },

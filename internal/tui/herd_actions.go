@@ -56,11 +56,10 @@ func containsString(list []string, s string) bool {
 	return false
 }
 
-// groupCanLaunch reports whether the hub may offer "new" for g: stale groups
-// (no live monitor snapshot) and groups with no known project dir/runtime dir
-// cannot be targeted reliably.
+// groupCanLaunch reports whether the hub may offer "new" for g: groups with no
+// known project dir/runtime dir cannot be targeted reliably.
 func groupCanLaunch(g herd.Group) bool {
-	return !g.Stale && g.ProjectDir != "" && g.RuntimeDir != ""
+	return g.ProjectDir != "" && g.RuntimeDir != ""
 }
 
 // rowCanClose reports whether the hub may close r's window. The hub session
@@ -184,7 +183,7 @@ func (m *HerdModel) launchForLine(idx int) tea.Cmd {
 		return nil
 	}
 	if !groupCanLaunch(*g) {
-		m.jumpErr = "cannot launch in " + g.Session + ": session is stale"
+		m.jumpErr = "cannot launch in " + g.Session + ": unknown project directory"
 		return nil
 	}
 	m.jumpErr = ""

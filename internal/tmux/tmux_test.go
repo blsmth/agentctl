@@ -1340,3 +1340,30 @@ func TestPermissionModeFromCmd(t *testing.T) {
 		}
 	}
 }
+
+// TestRestartMonitor: monitor:false skips both the kill and the start, so a
+// running monitor is left alone and no new one appears; enabled does both,
+// kill first.
+func TestRestartMonitor(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		enabled bool
+		want    []string
+	}{
+		{"enabled kills then starts", true, []string{"kill", "start"}},
+		{"disabled does neither", false, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls []string
+			started := restartMonitor(tt.enabled, "/p/.agentctl", "/bin/agentctl", "/p",
+				func(string, string) { calls = append(calls, "kill") },
+				func(string, string) error { calls = append(calls, "start"); return nil })
+			if started != tt.enabled {
+				t.Errorf("started = %v, want %v", started, tt.enabled)
+			}
+			if strings.Join(calls, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("calls = %v, want %v", calls, tt.want)
+			}
+		})
+	}
+}

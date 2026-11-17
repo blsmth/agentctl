@@ -1,10 +1,11 @@
 package tui
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/blsmth/agentctl/internal/config"
-	"github.com/blsmth/agentctl/internal/state"
+	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // isolateConfig points both the global and project-local config paths at
@@ -247,468 +248,327 @@ func TestChromeBarPrefixActiveDiffers(t *testing.T) {
 	}
 }
 
-// ── file-watch mode tests ─────────────────────────────────────────────────────
+// ── windowstate-driven view tests ─────────────────────────────────────────────
 
-// writeTestStateFile writes a state.State to a JSON file at path and returns
-// the path. It uses a temp directory so tests are isolated.
-func writeTestStateFile(t *testing.T, dir string, s *state.State) string {
+// chromeFixture is a runtime dir with windowstate records and an optional
+// active-window file, plus a fake tmux window list. No state.json exists.
+type chromeFixture struct {
+	dir       string
+	wins      []tmux.WindowInfo
+	listErr   error
+	listCalls int
+}
+
+func newChromeFixture(t *testing.T, wins []tmux.WindowInfo) *chromeFixture {
 	t.Helper()
-	path := filepath.Join(dir, "state.json")
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal state: %v", err)
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatalf("write state.json: %v", err)
-	}
-	return path
+	isolateConfig(t)
+	return &chromeFixture{dir: t.TempDir(), wins: wins}
 }
 
-// TestChromeBarReadStateFile verifies that readStateFile() populates the tab
-// list, active window, prefix state, and this window's ctx% (used for the
-// warn/critical toast) from a state.json with known values. Per-window
-// token/model/turn/duration metrics moved to the "rich" statusline format
-// and are no longer read here.
-func TestChromeBarReadStateFile(t *testing.T) {
-	dir := t.TempDir()
-
-	s := &state.State{
-		Agents: []state.AgentState{
-			{
-				Name:       "go-engineer",
-				AgentName:  "go-engineer",
-				WindowID:   "@1",
-				State:      "working",
-				ContextPct: 42,
-			},
-			{
-				Name:      "python-eng",
-				AgentName: "python-eng",
-				WindowID:  "@2",
-				State:     "idle",
-			},
-		},
-		Timestamp:      time.Now(),
-		ActiveWindowID: "@1",
-		PrefixActive:   true,
+func (f *chromeFixture) writeRecord(t *testing.T, id, body string) {
+	t.Helper()
+	dir := filepath.Join(f.dir, "windows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	path := writeTestStateFile(t, dir, s)
-	state.SetStatePathForTest(path)
-
-	m := NewChromeBarModel("@1", path)
-	m.shellWindowID = "@0" // pre-seed for test; avoids live tmux lookup
-	m.readStateFile()
-
-	// Tabs should include the shell tab (prepended) plus both agents = 3 total.
-	if len(m.tabs) != 3 {
-		t.Fatalf("tabs = %d, want 3 (shell + 2 agents)", len(m.tabs))
-	}
-	// Shell tab must be first.
-	if m.tabs[0].Name != "shell" || m.tabs[0].WindowID != "@0" {
-		t.Errorf("tabs[0] = {Name:%q WindowID:%q}, want {Name:\"shell\" WindowID:\"@0\"}", m.tabs[0].Name, m.tabs[0].WindowID)
-	}
-
-	// Active window.
-	if m.activeWindowID != "@1" {
-		t.Errorf("activeWindowID = %q, want '@1'", m.activeWindowID)
-	}
-	if !m.prefixActive {
-		t.Error("prefixActive = false, want true")
-	}
-
-	// Per-window ctx% for our window (@1) -- used by the warn/critical toast.
-	if m.ctxPct != 42 {
-		t.Errorf("ctxPct = %d, want 42", m.ctxPct)
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
-// TestChromeBarReadStateFileActiveTabFlag verifies that the IsActive flag is
-// set correctly on each tab based on the ActiveWindowID in the snapshot.
-func TestChromeBarReadStateFileActiveTabFlag(t *testing.T) {
-	dir := t.TempDir()
-
-	s := &state.State{
-		Agents: []state.AgentState{
-			{Name: "alpha", AgentName: "alpha", WindowID: "@1", State: "working"},
-			{Name: "beta", AgentName: "beta", WindowID: "@2", State: "idle"},
-		},
-		Timestamp:      time.Now(),
-		ActiveWindowID: "@2",
+func (f *chromeFixture) setActive(t *testing.T, id string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(f.dir, "active-window"), []byte(id+"\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	path := writeTestStateFile(t, dir, s)
-	state.SetStatePathForTest(path)
+}
 
-	m := NewChromeBarModel("@1", path)
-	m.readStateFile()
+func (f *chromeFixture) model(windowID string) *ChromeBarModel {
+	return newChromeBarModel(windowID, f.dir,
+		func() ([]tmux.WindowInfo, error) { f.listCalls++; return f.wins, f.listErr },
+		func() bool { return false })
+}
 
-	// shell + 2 agents = 3 tabs.
-	if len(m.tabs) != 3 {
-		t.Fatalf("tabs = %d, want 3", len(m.tabs))
-	}
-	for _, tab := range m.tabs {
-		wantActive := tab.WindowID == "@2"
-		if tab.IsActive != wantActive {
-			t.Errorf("tab %q IsActive = %v, want %v", tab.Name, tab.IsActive, wantActive)
+func tabByID(tabs []TabInfo, id string) (TabInfo, bool) {
+	for _, tb := range tabs {
+		if tb.WindowID == id {
+			return tb, true
 		}
 	}
+	return TabInfo{}, false
 }
 
-// TestChromeBarReadStateFileDoneState verifies that agents with Done=true get
-// state "done" in the tab list.
-func TestChromeBarReadStateFileDoneState(t *testing.T) {
-	dir := t.TempDir()
+// TestChromeBarRebuildWithoutStateJSON: tabs, state, ctx% and the active
+// highlight all come from tmux + windowstate + the active-window file.
+func TestChromeBarRebuildWithoutStateJSON(t *testing.T) {
+	f := newChromeFixture(t, []tmux.WindowInfo{
+		{ID: "@5", Name: "shell"},
+		{ID: "@1", Name: "● go-engineer"},
+		{ID: "@2", Name: "python-eng"},
+		{ID: "@3", Name: "✓ finished"},
+		{ID: "@4", Name: "improve~go-engineer"},
+	})
+	f.writeRecord(t, "@1", `{"state":"working","instance":"go-engineer","ticket":"12","ctx_pct":42}`)
+	f.writeRecord(t, "@3", `{"state":"idle","instance":"finished","done":true}`)
+	f.writeRecord(t, "@9", `{"state":"working","instance":"ghost"}`) // no such window
+	f.setActive(t, "@1")
 
-	s := &state.State{
-		Agents: []state.AgentState{
-			{Name: "finished", AgentName: "finished", WindowID: "@3", State: "idle", Done: true},
-		},
-		Timestamp: time.Now(),
+	m := f.model("@1")
+	if !m.rebuild(true) {
+		t.Fatal("first rebuild should report a change")
 	}
-	path := writeTestStateFile(t, dir, s)
-	state.SetStatePathForTest(path)
+	if _, err := os.Stat(filepath.Join(f.dir, "state.json")); err == nil {
+		t.Fatal("fixture must not have a state.json")
+	}
 
-	m := NewChromeBarModel("@3", path)
-	m.readStateFile()
-
-	// shell + 1 agent = 2 tabs.
-	if len(m.tabs) != 2 {
-		t.Fatalf("tabs = %d, want 2 (shell + 1 agent)", len(m.tabs))
+	var names []string
+	for _, tb := range m.tabs {
+		names = append(names, tb.Name)
 	}
-	// Shell is tabs[0]; the agent tab is tabs[1].
-	if m.tabs[1].State != "done" {
-		t.Errorf("tab state = %q, want 'done'", m.tabs[1].State)
+	if got, want := strings.Join(names, ","), "shell,go-engineer,python-eng,finished"; got != want {
+		t.Fatalf("tabs = %s, want %s (shell first, tmux order, no ghost, no improve~)", got, want)
 	}
-}
-
-// TestReadStateFileShellTabFirst verifies that after readStateFile() the shell
-// tab appears first in m.tabs with Name "shell", WindowID "@0", and State "idle".
-func TestReadStateFileShellTabFirst(t *testing.T) {
-	dir := t.TempDir()
-
-	s := &state.State{
-		Agents: []state.AgentState{
-			{Name: "go-engineer", AgentName: "go-engineer", WindowID: "@1", State: "working"},
-		},
-		Timestamp:      time.Now(),
-		ActiveWindowID: "@1",
+	if tb, _ := tabByID(m.tabs, "@5"); tb.State != "idle" {
+		t.Errorf("shell state = %q", tb.State)
 	}
-	path := writeTestStateFile(t, dir, s)
-	state.SetStatePathForTest(path)
-
-	m := NewChromeBarModel("@1", path)
-	m.shellWindowID = "@0" // pre-seed for test; avoids live tmux lookup
-	m.readStateFile()
-
-	if len(m.tabs) == 0 {
-		t.Fatal("tabs is empty after readStateFile")
+	if tb, _ := tabByID(m.tabs, "@1"); tb.State != "working" || tb.Ticket != 12 || tb.CtxPct != 42 || !tb.IsActive {
+		t.Errorf("@1 tab = %+v", tb)
 	}
-	shell := m.tabs[0]
-	if shell.Name != "shell" {
-		t.Errorf("tabs[0].Name = %q, want \"shell\"", shell.Name)
+	if tb, _ := tabByID(m.tabs, "@2"); tb.State != "idle" {
+		t.Errorf("untracked tab = %+v, want idle", tb)
 	}
-	if shell.WindowID != "@0" {
-		t.Errorf("tabs[0].WindowID = %q, want \"@0\"", shell.WindowID)
+	if tb, _ := tabByID(m.tabs, "@3"); tb.State != "done" {
+		t.Errorf("done tab = %+v, want done", tb)
 	}
-	if shell.State != "idle" {
-		t.Errorf("tabs[0].State = %q, want \"idle\"", shell.State)
+	if m.ctxPct != 42 || m.activeWindowID != "@1" {
+		t.Errorf("ctxPct=%d active=%q", m.ctxPct, m.activeWindowID)
 	}
 }
 
-// TestReadStateFileShellTabHighlightWhenActive verifies that the shell tab is
-// marked IsActive when the active window matches the shell window's real ID.
-func TestReadStateFileShellTabHighlightWhenActive(t *testing.T) {
-	dir := t.TempDir()
+func TestChromeBarRebuildDiffAndRelist(t *testing.T) {
+	f := newChromeFixture(t, []tmux.WindowInfo{{ID: "@1", Name: "alpha"}})
+	f.writeRecord(t, "@1", `{"state":"working","instance":"alpha"}`)
+	f.setActive(t, "@1")
+	m := f.model("@1")
 
-	// Simulate the shell window having ID "@5" (not @0) — realistic when the
-	// tmux server has been running and ID counters have advanced.
-	const shellWindowID = "@5"
+	if !m.rebuild(true) {
+		t.Fatal("first rebuild should change")
+	}
+	if f.listCalls != 1 {
+		t.Fatalf("list calls = %d, want 1", f.listCalls)
+	}
 
-	s := &state.State{
-		Agents: []state.AgentState{
-			{Name: "go-engineer", AgentName: "go-engineer", WindowID: "@6", State: "working"},
-		},
-		Timestamp:      time.Now(),
-		ActiveWindowID: shellWindowID, // user switched to the shell window
+	// Nothing changed (e.g. a statusline push of unrendered fields).
+	f.writeRecord(t, "@1", `{"state":"working","instance":"alpha","cost_usd":3.5,"last_text":"x"}`)
+	if m.rebuild(false) {
+		t.Error("unrendered field change must not report a re-render")
 	}
-	path := writeTestStateFile(t, dir, s)
-	state.SetStatePathForTest(path)
+	if f.listCalls != 1 {
+		t.Errorf("rebuild(false) re-ran list-windows (%d calls)", f.listCalls)
+	}
 
-	m := NewChromeBarModel("@6", path)
-	m.shellWindowID = shellWindowID // pre-seed the real shell window ID
-	m.readStateFile()
+	// A rendered field changed.
+	f.writeRecord(t, "@1", `{"state":"blocked","instance":"alpha"}`)
+	if !m.rebuild(false) {
+		t.Error("state change must report a re-render")
+	}
+	if tb, _ := tabByID(m.tabs, "@1"); tb.State != "blocked" {
+		t.Errorf("state = %q", tb.State)
+	}
 
-	if len(m.tabs) == 0 {
-		t.Fatal("tabs is empty after readStateFile")
+	// A new window only appears after a relist.
+	f.wins = append(f.wins, tmux.WindowInfo{ID: "@2", Name: "beta"})
+	if m.rebuild(false); len(m.tabs) != 2 { // shell + alpha
+		t.Errorf("tabs = %d before relist, want 2", len(m.tabs))
 	}
-	shell := m.tabs[0]
-	if shell.Name != "shell" {
-		t.Fatalf("tabs[0].Name = %q, want \"shell\"", shell.Name)
-	}
-	if !shell.IsActive {
-		t.Errorf("shell tab IsActive = false, want true when active window = %q", shellWindowID)
-	}
-	// Agent tab should not be active.
-	if m.tabs[1].IsActive {
-		t.Errorf("agent tab IsActive = true, want false when shell is active")
+	if !m.rebuild(true) || len(m.tabs) != 3 {
+		t.Errorf("tabs = %d after relist, want 3", len(m.tabs))
 	}
 }
 
-// TestChromeBarStateFileChangedMsgReturnsWatchCmd verifies that a
-// stateFileChangedMsg triggers a readStateFile and returns a new watchStateFile cmd.
-func TestChromeBarStateFileChangedMsgReturnsWatchCmd(t *testing.T) {
-	dir := t.TempDir()
+// TestChromeBarRebuildListFailureKeepsLastRender: tmux going away must not
+// blank or crash the bar.
+func TestChromeBarRebuildListFailureKeepsLastRender(t *testing.T) {
+	f := newChromeFixture(t, []tmux.WindowInfo{{ID: "@1", Name: "alpha"}})
+	f.writeRecord(t, "@1", `{"state":"working","instance":"alpha"}`)
+	m := f.model("@1")
+	m.rebuild(true)
+	before := slices.Clone(m.tabs)
 
-	s := &state.State{
-		Agents:    []state.AgentState{{Name: "go-engineer", AgentName: "go-engineer", WindowID: "@1", State: "idle"}},
-		Timestamp: time.Now(),
+	f.listErr = errors.New("no server")
+	if m.rebuild(true) {
+		t.Error("failed list must report no change")
 	}
-	path := writeTestStateFile(t, dir, s)
-	state.SetStatePathForTest(path)
+	if !slices.Equal(before, m.tabs) {
+		t.Errorf("tabs changed on list failure: %+v", m.tabs)
+	}
+}
 
-	m := NewChromeBarModel("@1", path)
-	_, cmd := m.Update(stateFileChangedMsg{})
+func TestChromeBarOnlyShellWindow(t *testing.T) {
+	f := newChromeFixture(t, []tmux.WindowInfo{{ID: "@1", Name: "shell"}})
+	m := f.model("@1")
+	m.rebuild(true)
+	if len(m.tabs) != 1 || m.tabs[0].Name != "shell" {
+		t.Errorf("tabs = %+v, want only shell", m.tabs)
+	}
+}
+
+// TestChromeBarWindowsChangedMsgReturnsWatchCmd: the handler re-arms the wait.
+func TestChromeBarWindowsChangedMsgReturnsWatchCmd(t *testing.T) {
+	f := newChromeFixture(t, nil)
+	m := f.model("@1")
+	_, cmd := m.Update(windowsChangedMsg{})
 	if cmd == nil {
-		t.Error("Update(stateFileChangedMsg) should return a non-nil command (new watchStateFile)")
+		t.Error("Update(windowsChangedMsg) should return a non-nil command")
 	}
 }
 
-// TestChromeBarActiveWindowChangedMsg verifies that activeWindowChangedMsg reads
-// the active-window file and updates m.activeWindowID + the IsActive flag on tabs.
+// TestChromeBarActiveWindowChangedMsg: the active-window file drives the
+// highlight without touching tmux.
 func TestChromeBarActiveWindowChangedMsg(t *testing.T) {
-	dir := t.TempDir()
-
-	// Write a state.json so statePath is valid (required for the watcher restart).
-	s := &state.State{
-		Agents: []state.AgentState{
-			{Name: "alpha", AgentName: "alpha", WindowID: "@1", State: "working"},
-			{Name: "beta", AgentName: "beta", WindowID: "@2", State: "idle"},
-		},
-		Timestamp:      time.Now(),
-		ActiveWindowID: "@1",
-	}
-	statePath := writeTestStateFile(t, dir, s)
-
-	// Write the active-window file pointing at @2.
-	activeWindowPath := filepath.Join(dir, "active-window")
-	if err := os.WriteFile(activeWindowPath, []byte("@2\n"), 0o644); err != nil {
-		t.Fatalf("write active-window: %v", err)
-	}
-
-	state.SetStatePathForTest(statePath)
-	m := NewChromeBarModel("@1", statePath)
+	f := newChromeFixture(t, nil)
+	f.setActive(t, "@2")
+	m := f.model("@1")
 	m.tabs = []TabInfo{
 		{Name: "alpha", WindowID: "@1", IsActive: true},
-		{Name: "beta", WindowID: "@2", IsActive: false},
+		{Name: "beta", WindowID: "@2"},
 	}
 	m.activeWindowID = "@1"
 
 	newModel, cmd := m.Update(activeWindowChangedMsg{})
-	updated, ok := newModel.(ChromeBarModel)
-	if !ok {
-		t.Fatal("Update(activeWindowChangedMsg) did not return ChromeBarModel")
-	}
+	updated := newModel.(ChromeBarModel)
 	if cmd == nil {
-		t.Error("Update(activeWindowChangedMsg) should return a non-nil watchStateFile cmd")
+		t.Error("should return a non-nil watch cmd")
 	}
 	if updated.activeWindowID != "@2" {
-		t.Errorf("activeWindowID = %q, want '@2'", updated.activeWindowID)
+		t.Errorf("activeWindowID = %q, want @2", updated.activeWindowID)
 	}
 	for _, tab := range updated.tabs {
-		wantActive := tab.WindowID == "@2"
-		if tab.IsActive != wantActive {
-			t.Errorf("tab %q IsActive = %v, want %v", tab.Name, tab.IsActive, wantActive)
+		if want := tab.WindowID == "@2"; tab.IsActive != want {
+			t.Errorf("tab %q IsActive = %v, want %v", tab.Name, tab.IsActive, want)
 		}
+	}
+	if f.listCalls != 0 {
+		t.Error("active-window change must not list windows")
 	}
 }
 
-// TestChromeBarStartWatcherActiveWindow verifies that the persistent watcher
-// delivers an activeWindowChangedMsg when the active-window file is written,
-// and that the same channel is reused (no watcher recreation).
-func TestChromeBarStartWatcherActiveWindow(t *testing.T) {
-	dir := t.TempDir()
-	statePath := filepath.Join(dir, "state.json")
-	if err := os.WriteFile(statePath, []byte("{}"), 0o644); err != nil {
-		t.Fatalf("write state.json: %v", err)
-	}
-	activeWindowPath := filepath.Join(dir, "active-window")
-
-	m := NewChromeBarModel("@1", statePath)
-	ch := m.watchEvents
-
-	// Give the watcher goroutine a moment to set up the inotify/kqueue watch.
-	time.Sleep(50 * time.Millisecond)
-
-	if err := os.WriteFile(activeWindowPath, []byte("@3\n"), 0o644); err != nil {
-		t.Fatalf("write active-window: %v", err)
-	}
-
-	done := make(chan tea.Msg, 1)
-	go func() { done <- waitForStateChange(ch)() }()
-
+// recvWatch reads one message from ch with a timeout.
+func recvWatch(t *testing.T, ch chan tea.Msg, d time.Duration) (tea.Msg, bool) {
+	t.Helper()
 	select {
-	case msg := <-done:
-		if _, ok := msg.(activeWindowChangedMsg); !ok {
-			t.Errorf("got %T, want activeWindowChangedMsg", msg)
-		}
-	case <-time.After(2 * time.Second):
-		t.Error("persistent watcher did not deliver activeWindowChangedMsg within 2s")
-	}
-
-	// Channel must be the same — watcher was not recreated.
-	if m.watchEvents != ch {
-		t.Error("watchEvents channel changed after event — watcher was unexpectedly recreated")
+	case msg := <-ch:
+		return msg, true
+	case <-time.After(d):
+		return nil, false
 	}
 }
 
-// TestChromeBarPersistentWatcherTwoEvents verifies that writing state.json twice
-// produces two stateFileChangedMsg values on the same channel without growing
-// the watcher count.
-func TestChromeBarPersistentWatcherTwoEvents(t *testing.T) {
-	dir := t.TempDir()
-	statePath := filepath.Join(dir, "state.json")
-	if err := os.WriteFile(statePath, []byte("{}"), 0o644); err != nil {
-		t.Fatalf("write state.json: %v", err)
+// TestChromeBarWatcherActiveWindow: the persistent watcher delivers an
+// activeWindowChangedMsg when the active-window file is written.
+func TestChromeBarWatcherActiveWindow(t *testing.T) {
+	f := newChromeFixture(t, nil)
+	if err := os.MkdirAll(filepath.Join(f.dir, "windows"), 0o755); err != nil {
+		t.Fatal(err)
 	}
+	ch := startWatcher(f.dir)
+	time.Sleep(100 * time.Millisecond)
+	f.setActive(t, "@3")
 
-	m := NewChromeBarModel("@1", statePath)
-	ch := m.watchEvents
-
-	// Give the watcher goroutine a moment to register the directory watch.
-	time.Sleep(50 * time.Millisecond)
-
-	receive := func(label string) tea.Msg {
-		t.Helper()
-		done := make(chan tea.Msg, 1)
-		go func() { done <- waitForStateChange(ch)() }()
-		select {
-		case msg := <-done:
-			return msg
-		case <-time.After(2 * time.Second):
-			t.Fatalf("%s: timed out waiting for message", label)
-			return nil
-		}
+	msg, ok := recvWatch(t, ch, 2*time.Second)
+	if !ok {
+		t.Fatal("no message within 2s")
 	}
-
-	// First write.
-	if err := os.WriteFile(statePath, []byte(`{"agents":[]}`), 0o644); err != nil {
-		t.Fatalf("write state.json (1): %v", err)
-	}
-	msg1 := receive("first write")
-	if _, ok := msg1.(stateFileChangedMsg); !ok {
-		t.Errorf("first event: got %T, want stateFileChangedMsg", msg1)
-	}
-
-	// Second write.
-	if err := os.WriteFile(statePath, []byte(`{"agents":[]}`), 0o644); err != nil {
-		t.Fatalf("write state.json (2): %v", err)
-	}
-	msg2 := receive("second write")
-	if _, ok := msg2.(stateFileChangedMsg); !ok {
-		t.Errorf("second event: got %T, want stateFileChangedMsg", msg2)
-	}
-
-	// The channel is the same — no new watcher was created.
-	if m.watchEvents != ch {
-		t.Error("watchEvents channel changed between events — watcher was recreated")
+	if _, isActive := msg.(activeWindowChangedMsg); !isActive {
+		t.Errorf("got %T, want activeWindowChangedMsg", msg)
 	}
 }
 
-// TestReadStateFilePreferActiveWindowFile verifies that readStateFile() uses the
-// active-window file value when it differs from state.json's ActiveWindowID.
-func TestReadStateFilePreferActiveWindowFile(t *testing.T) {
-	dir := t.TempDir()
+// TestChromeBarWatcherDebouncesBurst: N rapid windowstate writes yield one
+// windowsChangedMsg (and so one rebuild), not N. Existing records do not
+// trigger a relist; a brand new record does.
+func TestChromeBarWatcherDebouncesBurst(t *testing.T) {
+	f := newChromeFixture(t, nil)
+	f.writeRecord(t, "@1", `{"state":"idle"}`)
+	ch := startWatcher(f.dir)
+	time.Sleep(150 * time.Millisecond)
 
-	// state.json has ActiveWindowID "@1" but the hook already wrote "@2".
-	s := &state.State{
-		Agents: []state.AgentState{
-			{Name: "alpha", AgentName: "alpha", WindowID: "@1", State: "idle"},
-			{Name: "beta", AgentName: "beta", WindowID: "@2", State: "idle"},
-		},
-		Timestamp:      time.Now(),
-		ActiveWindowID: "@1",
+	const n = 25
+	for i := 0; i < n; i++ {
+		f.writeRecord(t, "@1", fmt.Sprintf(`{"state":"working","turn_count":%d}`, i))
 	}
-	statePath := writeTestStateFile(t, dir, s)
-	state.SetStatePathForTest(statePath)
-
-	// Write active-window file with the authoritative (newer) value.
-	awPath := filepath.Join(dir, "active-window")
-	if err := os.WriteFile(awPath, []byte("@2\n"), 0o644); err != nil {
-		t.Fatalf("write active-window: %v", err)
+	msg, ok := recvWatch(t, ch, 2*time.Second)
+	if !ok {
+		t.Fatal("no message after burst")
+	}
+	wc, isWC := msg.(windowsChangedMsg)
+	if !isWC {
+		t.Fatalf("got %T, want windowsChangedMsg", msg)
+	}
+	if wc.relist {
+		t.Error("writes to an existing record must not request a relist")
+	}
+	if extra, got := recvWatch(t, ch, 4*chromeBarDebounce); got {
+		t.Errorf("burst of %d writes produced a second message: %#v", n, extra)
 	}
 
-	m := NewChromeBarModel("@1", statePath)
-	m.readStateFile()
-
-	if m.activeWindowID != "@2" {
-		t.Errorf("activeWindowID = %q, want '@2' (active-window file should win)", m.activeWindowID)
+	// A new record file is a window being created: relist.
+	f.writeRecord(t, "@2", `{"state":"idle"}`)
+	msg, ok = recvWatch(t, ch, 2*time.Second)
+	if !ok {
+		t.Fatal("no message after new record")
 	}
-	for _, tab := range m.tabs {
-		wantActive := tab.WindowID == "@2"
-		if tab.IsActive != wantActive {
-			t.Errorf("tab %q IsActive = %v, want %v", tab.Name, tab.IsActive, wantActive)
-		}
+	if wc, _ := msg.(windowsChangedMsg); !wc.relist {
+		t.Errorf("new record: got %#v, want relist", msg)
 	}
 }
 
-// TestReadStateFileNoActiveWindowFile verifies that readStateFile() falls back
-// to the state.json ActiveWindowID when the active-window file does not exist.
-func TestReadStateFileNoActiveWindowFile(t *testing.T) {
-	dir := t.TempDir()
+func TestChromeBarPrefixPoll(t *testing.T) {
+	f := newChromeFixture(t, nil)
+	polls := 0
+	m := newChromeBarModel("@1", f.dir, func() ([]tmux.WindowInfo, error) { return nil, nil },
+		func() bool { polls++; return true })
 
-	s := &state.State{
-		Agents: []state.AgentState{
-			{Name: "alpha", AgentName: "alpha", WindowID: "@1", State: "working"},
-			{Name: "beta", AgentName: "beta", WindowID: "@2", State: "idle"},
-		},
-		Timestamp:      time.Now(),
-		ActiveWindowID: "@1",
+	// Inactive window: tick must not poll tmux.
+	m.activeWindowID = "@2"
+	_, cmd := m.Update(prefixTickMsg{})
+	if cmd == nil {
+		t.Fatal("tick must reschedule")
 	}
-	statePath := writeTestStateFile(t, dir, s)
-	state.SetStatePathForTest(statePath)
-
-	// No active-window file — fallback to state.json.
-	m := NewChromeBarModel("@1", statePath)
-	m.readStateFile()
-
-	if m.activeWindowID != "@1" {
-		t.Errorf("activeWindowID = %q, want '@1' (state.json fallback)", m.activeWindowID)
+	if polls != 0 {
+		t.Errorf("polled %d times for an inactive window", polls)
 	}
-	for _, tab := range m.tabs {
-		wantActive := tab.WindowID == "@1"
-		if tab.IsActive != wantActive {
-			t.Errorf("tab %q IsActive = %v, want %v", tab.Name, tab.IsActive, wantActive)
-		}
+
+	// Active window: tick returns a batch whose poll cmd yields the result.
+	m.activeWindowID = "@1"
+	_, cmd = m.Update(prefixTickMsg{})
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatalf("active tick = %T, want batch of 2", cmd())
+	}
+	res, ok := batch[1]().(prefixResultMsg)
+	if !ok || !res.active || polls != 1 {
+		t.Fatalf("poll result = %#v polls=%d", res, polls)
+	}
+	newModel, _ := m.Update(res)
+	if !newModel.(ChromeBarModel).prefixActive {
+		t.Error("prefixActive not set from poll result")
 	}
 }
 
 // ── Context warn/critical toast latching ──────────────
 
-// chromeBarWithCtxPct writes a state.json with a single agent at the given
-// ContextPct/ContextTokens/ContextWindow and returns a ChromeBarModel ready
-// to receive stateFileChangedMsg.
-func chromeBarWithCtxPct(t *testing.T, dir string, ctxPct, ctxTokens, ctxWindow int) *ChromeBarModel {
+// chromeBarWithCtxPct builds a model whose own window (@1) has the given
+// ctx% pushed into windowstate, ready to receive windowsChangedMsg.
+func chromeBarWithCtxPct(t *testing.T, _ string, ctxPct, ctxTokens, ctxWindow int) *ChromeBarModel {
 	t.Helper()
-	s := &state.State{
-		Agents: []state.AgentState{
-			{
-				Name:          "go-engineer",
-				AgentName:     "go-engineer",
-				WindowID:      "@1",
-				State:         "working",
-				ContextPct:    ctxPct,
-				ContextTokens: ctxTokens,
-				ContextWindow: ctxWindow,
-			},
-		},
-		Timestamp: time.Now(),
-	}
-	path := writeTestStateFile(t, dir, s)
-	state.SetStatePathForTest(path)
-	return NewChromeBarModel("@1", path)
+	f := newChromeFixture(t, []tmux.WindowInfo{{ID: "@1", Name: "go-engineer"}})
+	f.writeRecord(t, "@1", fmt.Sprintf(`{"state":"working","instance":"go-engineer","ctx_pct":%d,"context_tokens":%d,"context_window_size":%d}`, ctxPct, ctxTokens, ctxWindow))
+	return f.model("@1")
 }
 
 // toastFromCmd safely extracts a ToastMsg from the tea.Cmd returned by the
-// stateFileChangedMsg handler, without ever risking a hang.
+// windowsChangedMsg handler, without ever risking a hang.
 //
 // The handler always returns tea.Batch(waitForStateChange(m.watchEvents),
 // toastCmd). tea.Batch collapses to a *single*, unwrapped Cmd when only one
@@ -774,7 +634,7 @@ func TestChromeBarContextWarnReArmsAfterDrop(t *testing.T) {
 
 	m := chromeBarWithCtxPct(t, dir, 80, 160_000, 200_000) // 80% >= warn(75)
 
-	newModel, cmd := m.Update(stateFileChangedMsg{})
+	newModel, cmd := m.Update(windowsChangedMsg{})
 	updated := newModel.(ChromeBarModel)
 	toast := toastMsgFrom(t, cmd)
 	if !strings.Contains(toast.msg, "80%") {
@@ -785,7 +645,7 @@ func TestChromeBarContextWarnReArmsAfterDrop(t *testing.T) {
 	}
 
 	// Still above threshold — must not re-fire.
-	newModel2, cmd2 := updated.Update(stateFileChangedMsg{})
+	newModel2, cmd2 := updated.Update(windowsChangedMsg{})
 	updated2 := newModel2.(ChromeBarModel)
 	if toast2, fired := toastFromCmd(cmd2); fired {
 		t.Errorf("expected no toast while still above warn threshold, got one: %q", toast2.msg)
@@ -797,7 +657,7 @@ func TestChromeBarContextWarnReArmsAfterDrop(t *testing.T) {
 	dropped := chromeBarWithCtxPct(t, dir, 10, 20_000, 200_000)
 	dropped.ctxWarnFired = updated2.ctxWarnFired
 	dropped.ctxCritFired = updated2.ctxCritFired
-	newModel3, cmd3 := dropped.Update(stateFileChangedMsg{})
+	newModel3, cmd3 := dropped.Update(windowsChangedMsg{})
 	updated3 := newModel3.(ChromeBarModel)
 	if toast3, fired := toastFromCmd(cmd3); fired {
 		t.Errorf("expected no toast while dropping below threshold, got one: %q", toast3.msg)
@@ -811,7 +671,7 @@ func TestChromeBarContextWarnReArmsAfterDrop(t *testing.T) {
 	risen := chromeBarWithCtxPct(t, dir, 80, 160_000, 200_000)
 	risen.ctxWarnFired = updated3.ctxWarnFired
 	risen.ctxCritFired = updated3.ctxCritFired
-	_, cmd4 := risen.Update(stateFileChangedMsg{})
+	_, cmd4 := risen.Update(windowsChangedMsg{})
 	toast2 := toastMsgFrom(t, cmd4)
 	if !strings.Contains(toast2.msg, "80%") {
 		t.Errorf("second warn toast = %q, want it to mention 80%%", toast2.msg)
@@ -828,7 +688,7 @@ func TestChromeBarContextCriticalOnlyAboveCriticalThreshold(t *testing.T) {
 
 	// 80% — above warn(75), below critical(90): warn fires, critical does not.
 	warnOnly := chromeBarWithCtxPct(t, dir, 80, 160_000, 200_000)
-	newModel, cmd := warnOnly.Update(stateFileChangedMsg{})
+	newModel, cmd := warnOnly.Update(windowsChangedMsg{})
 	updated := newModel.(ChromeBarModel)
 	toast := toastMsgFrom(t, cmd)
 	if toast.level != ToastWarn {
@@ -842,7 +702,7 @@ func TestChromeBarContextCriticalOnlyAboveCriticalThreshold(t *testing.T) {
 	critical := chromeBarWithCtxPct(t, dir, 95, 190_000, 200_000)
 	critical.ctxWarnFired = updated.ctxWarnFired
 	critical.ctxCritFired = updated.ctxCritFired
-	newModel2, cmd2 := critical.Update(stateFileChangedMsg{})
+	newModel2, cmd2 := critical.Update(windowsChangedMsg{})
 	updated2 := newModel2.(ChromeBarModel)
 	toast2 := toastMsgFrom(t, cmd2)
 	if toast2.level != ToastError {
@@ -1004,5 +864,80 @@ func TestKeyPressNeverQuitsAndRefocuses(t *testing.T) {
 				t.Error("key press quit the chrome bar")
 			}
 		})
+	}
+}
+
+// TestChromeBarRebuildActiveTabFlag: IsActive follows the active-window file.
+func TestChromeBarRebuildActiveTabFlag(t *testing.T) {
+	f := newChromeFixture(t, []tmux.WindowInfo{{ID: "@1", Name: "alpha"}, {ID: "@2", Name: "beta"}})
+	f.writeRecord(t, "@1", `{"state":"working","instance":"alpha"}`)
+	f.writeRecord(t, "@2", `{"state":"idle","instance":"beta"}`)
+	f.setActive(t, "@2")
+	m := f.model("@1")
+	m.rebuild(true)
+	if len(m.tabs) != 3 {
+		t.Fatalf("tabs = %d, want 3 (shell + 2)", len(m.tabs))
+	}
+	for _, tab := range m.tabs {
+		if want := tab.WindowID == "@2"; tab.IsActive != want {
+			t.Errorf("tab %q IsActive = %v, want %v", tab.Name, tab.IsActive, want)
+		}
+	}
+	if m.activeWindowID != "@2" {
+		t.Errorf("activeWindowID = %q, want @2 (active-window file)", m.activeWindowID)
+	}
+}
+
+// TestChromeBarRebuildDoneState: done+unseen shows as "done"; done+seen does not.
+func TestChromeBarRebuildDoneState(t *testing.T) {
+	f := newChromeFixture(t, []tmux.WindowInfo{{ID: "@3", Name: "finished"}, {ID: "@4", Name: "looked"}})
+	f.writeRecord(t, "@3", `{"state":"idle","instance":"finished","done":true}`)
+	f.writeRecord(t, "@4", `{"state":"idle","instance":"looked","done":true,"seen":true}`)
+	f.setActive(t, "@1")
+	m := f.model("@3")
+	m.rebuild(true)
+	if tb, _ := tabByID(m.tabs, "@3"); tb.State != "done" {
+		t.Errorf("unseen done tab state = %q, want done", tb.State)
+	}
+	if tb, _ := tabByID(m.tabs, "@4"); tb.State != "idle" {
+		t.Errorf("seen done tab state = %q, want idle", tb.State)
+	}
+}
+
+// TestChromeBarRebuildShellTab: the shell tab is first, keeps its real window
+// ID from the tmux list, and highlights when it is the active window.
+func TestChromeBarRebuildShellTab(t *testing.T) {
+	f := newChromeFixture(t, []tmux.WindowInfo{{ID: "@5", Name: "shell"}, {ID: "@6", Name: "go-engineer"}})
+	f.writeRecord(t, "@6", `{"state":"working","instance":"go-engineer"}`)
+	f.setActive(t, "@5")
+	m := f.model("@6")
+	m.rebuild(true)
+	shell := m.tabs[0]
+	if shell.Name != "shell" || shell.WindowID != "@5" || shell.State != "idle" || !shell.IsActive {
+		t.Errorf("shell tab = %+v, want first, @5, idle, active", shell)
+	}
+	if m.tabs[1].IsActive {
+		t.Error("agent tab must not be active when shell is")
+	}
+}
+
+// TestChromeBarPersistentWatcherTwoEvents: two separate writes produce two
+// messages on the same channel (the watcher is not recreated).
+func TestChromeBarPersistentWatcherTwoEvents(t *testing.T) {
+	f := newChromeFixture(t, nil)
+	f.writeRecord(t, "@1", `{"state":"idle"}`)
+	ch := startWatcher(f.dir)
+	time.Sleep(150 * time.Millisecond)
+
+	for i, body := range []string{`{"state":"working"}`, `{"state":"idle"}`} {
+		f.writeRecord(t, "@1", body)
+		msg, ok := recvWatch(t, ch, 2*time.Second)
+		if !ok {
+			t.Fatalf("write %d: no message", i+1)
+		}
+		if _, isWC := msg.(windowsChangedMsg); !isWC {
+			t.Errorf("write %d: got %T, want windowsChangedMsg", i+1, msg)
+		}
+		time.Sleep(2 * chromeBarDebounce)
 	}
 }

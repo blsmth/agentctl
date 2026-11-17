@@ -2535,3 +2535,39 @@ func TestEffectiveNewWindowPosition(t *testing.T) {
 		t.Errorf("json parse: %v %q", err, c.NewWindowPosition)
 	}
 }
+
+// TestMonitorEnabled covers the monitor kill switch: absent means true, the
+// global layer can turn it off, and a project layer can switch it off but
+// never back on.
+func TestMonitorEnabled(t *testing.T) {
+	tests := []struct {
+		name    string
+		global  string
+		project string
+		want    bool
+	}{
+		{"absent everywhere defaults to true", `{}`, `{}`, true},
+		{"global false", `{"monitor": false}`, `{}`, false},
+		{"global true", `{"monitor": true}`, `{}`, true},
+		{"project false turns it off", `{}`, `{"monitor": false}`, false},
+		{"project true cannot re-enable a global false", `{"monitor": false}`, `{"monitor": true}`, false},
+		{"project true is a no-op when global is absent", `{}`, `{"monitor": true}`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			globalPath := filepath.Join(dir, "global.json")
+			projectPath := filepath.Join(dir, "project.json")
+			if err := os.WriteFile(globalPath, []byte(tt.global), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(projectPath, []byte(tt.project), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			setTestPaths(t, projectPath, globalPath)
+			if got := Load().MonitorEnabled(); got != tt.want {
+				t.Errorf("MonitorEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

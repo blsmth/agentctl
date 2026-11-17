@@ -13,6 +13,7 @@ import (
 	"github.com/blsmth/agentctl/internal/render"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/theme"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // ansiEscapeRE matches any CSI SGR escape sequence lipgloss emits (e.g.
@@ -1471,5 +1472,41 @@ func TestRenderRich_ThreeLines_RespectColumnsAtRepresentativeWidths(t *testing.T
 	}
 	if !changed {
 		t.Errorf("no line's width changed across COLUMNS values %v -- expected at least one line to react by dropping segments", widths)
+	}
+}
+
+// TestLookupAgentState_FromWindowstateOnly: with no state.json the turn count
+// still comes from the hook-written windowstate record.
+func TestLookupAgentState_FromWindowstateOnly(t *testing.T) {
+	state.SetStatePathForTest("/nonexistent/path/state.json")
+	windowstate.SetDirForTest(t.TempDir())
+	if err := windowstate.Write("@7", windowstate.WindowState{TurnCount: 9, LogPath: "/p/abc.jsonl"}); err != nil {
+		t.Fatal(err)
+	}
+	got := lookupAgentState("@7")
+	if got == nil || got.TurnCount != 9 || got.LogPath != "/p/abc.jsonl" {
+		t.Fatalf("lookupAgentState = %+v, want TurnCount 9 and log path from windowstate", got)
+	}
+}
+
+// TestRichLine2_PayloadSupplies: turns (windowstate), duration, last-turn and
+// cumulative tokens render with no snapshot-only data at all.
+func TestRichLine2_PayloadSupplies(t *testing.T) {
+	p := &Payload{
+		Cost: &Cost{TotalDurationMS: f64Ptr(3_900_000)},
+		ContextWindow: &ContextWindow{
+			TotalInputTokens:  f64Ptr(789_000),
+			TotalOutputTokens: f64Ptr(6_000),
+			CurrentUsage:      &CurrentUsage{InputTokens: f64Ptr(1000), CacheReadInputTokens: f64Ptr(80_000), OutputTokens: f64Ptr(1100)},
+		},
+	}
+	line, ok := renderRichLine2(p, 999, &state.AgentState{TurnCount: 4})
+	if !ok {
+		t.Fatal("no line")
+	}
+	for _, want := range []string{"turn: ", "81k", "total: ", "789k", "4", "1h"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("line %q missing %q", line, want)
+		}
 	}
 }

@@ -12,10 +12,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
-	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
@@ -29,15 +30,17 @@ func RunHealth() {
 
 	fmt.Printf("Session: %s\n", sessionName)
 
-	// Monitor PID status.
-	fmt.Printf("  Monitor: %s\n", healthMonitorStatus(runtimeDir))
+	// Monitor PID status. A missing monitor is only a problem while the
+	// kill switch (config monitor:false) leaves it enabled.
+	monitorEnabled := config.Load().MonitorEnabled()
+	fmt.Printf("  Monitor: %s\n", healthMonitorLine(monitorEnabled, healthMonitorStatus(runtimeDir)))
 
-	// Agent states from state.json.
+	// Agent states from tmux list-windows + windowstate (never state.json).
 	stateFilePath := filepath.Join(runtimeDir, "state.json")
-	st, err := state.Load()
-	if err == nil && st != nil && len(st.Agents) > 0 {
-		fmt.Printf("  Windows: %d\n", len(st.Agents))
-		for _, a := range st.Agents {
+	agents, err := herd.LocalAgents()
+	if err == nil && len(agents) > 0 {
+		fmt.Printf("  Windows: %d\n", len(agents))
+		for _, a := range agents {
 			stateStr := a.State
 			if stateStr == "" {
 				stateStr = "unknown"
@@ -49,11 +52,13 @@ func RunHealth() {
 			fmt.Printf("    %-32s %s%s\n", a.Name, stateStr, extra)
 		}
 	} else {
-		fmt.Printf("  Windows: (no state)\n")
+		fmt.Printf("  Windows: (none)\n")
 	}
 
-	// State file freshness.
-	if info, statErr := os.Stat(stateFilePath); statErr == nil {
+	// State file freshness (the monitor writes it for the macapp only).
+	if !monitorEnabled {
+		fmt.Printf("  State:   %s (not maintained, monitor disabled)\n", stateFilePath)
+	} else if info, statErr := os.Stat(stateFilePath); statErr == nil {
 		age := time.Since(info.ModTime()).Round(10 * time.Millisecond)
 		fmt.Printf("  State:   %s (last write %s ago, %s)\n",
 			stateFilePath, age, healthFormatBytes(info.Size()))
@@ -118,6 +123,19 @@ func RunHealth() {
 	default:
 		fmt.Printf("Orphan monitors: none (%d monitors checked, all have live sessions)\n", report.Checked)
 	}
+}
+
+// healthMonitorLine appends the kill-switch note to the monitor status: a
+// disabled monitor that is not running is expected, not a problem, and one
+// that is still running from before the flag flipped is left alone.
+func healthMonitorLine(enabled bool, status string) string {
+	if enabled {
+		return status
+	}
+	if strings.HasPrefix(status, "not running") {
+		return "monitor disabled (config monitor:false)"
+	}
+	return status + " -- monitor disabled (config monitor:false); will not be restarted"
 }
 
 // healthMonitorStatus returns a human-readable description of the monitor

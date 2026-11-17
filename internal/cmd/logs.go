@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
+	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/shellquote"
-	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
@@ -18,15 +17,12 @@ func RunLogs(nameOrID string) {
 	// Resolve window ID (e.g. "@3") to agent name, or strip prefixes from window name.
 	name := nameOrID
 	if strings.HasPrefix(nameOrID, "@") {
-		// Try snapshot first for fast resolution without a tmux fork.
-		snap, _ := state.LoadSnapshot()
-		if !snap.IsStale(3 * time.Second) {
-			if as := snap.ByWindowID(nameOrID); as != nil {
-				name = as.AgentName
-			}
+		// Try windowstate first for fast resolution without a tmux fork.
+		if _, base := herd.LocalWindowNames(nameOrID); base != "" {
+			name = base
 		}
 		if name == nameOrID {
-			// Snapshot miss — fall back to tmux.
+			// Record miss — fall back to tmux.
 			if resolved := tmux.ResolveAgentByWindowID(nameOrID); resolved != "" {
 				name = resolved
 			}

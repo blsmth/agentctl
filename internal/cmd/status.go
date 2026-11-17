@@ -53,7 +53,6 @@ type statusJSONRow struct {
 	Parent       string `json:"parent,omitempty"`
 	Activity     string `json:"activity,omitempty"`
 	MailPending  int    `json:"mail_pending,omitempty"`
-	Stale        bool   `json:"stale"`
 	PaneVerdict  string `json:"pane_verdict,omitempty"`
 	PaneDisagree bool   `json:"pane_disagrees,omitempty"`
 }
@@ -75,7 +74,12 @@ func collectStatusRows(opts StatusOptions) ([]statusRow, []herd.Group, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("loading agent sessions: %w", err)
 	}
+	return statusRowsFromGroups(groups, opts), groups, nil
+}
 
+// statusRowsFromGroups joins each group's rows with its windowstate metadata
+// and applies the caller's filters. Pure apart from reading windowstate.
+func statusRowsFromGroups(groups []herd.Group, opts StatusOptions) []statusRow {
 	wantState := opts.State
 	if opts.Blocked {
 		wantState = "blocked"
@@ -98,7 +102,7 @@ func collectStatusRows(opts StatusOptions) ([]statusRow, []herd.Group, error) {
 			rows = append(rows, sr)
 		}
 	}
-	return rows, groups, nil
+	return rows
 }
 
 // sessionMatches reports whether a group matches a --session filter, accepting
@@ -147,7 +151,7 @@ func verifyPane(session, windowID string) (herd.PaneVerdict, bool) {
 
 // RunStatus prints the cross-session agent table (or JSON).
 func RunStatus(opts StatusOptions) error {
-	rows, groups, err := collectStatusRows(opts)
+	rows, _, err := collectStatusRows(opts)
 	if err != nil {
 		return err
 	}
@@ -158,7 +162,6 @@ func RunStatus(opts StatusOptions) error {
 
 	if len(rows) == 0 {
 		fmt.Println("No agents match.")
-		printStaleWarning(groups)
 		return nil
 	}
 
@@ -189,7 +192,6 @@ func RunStatus(opts StatusOptions) error {
 	}
 
 	printGrid(os.Stdout, cols, grid)
-	printStaleWarning(groups)
 	printAttentionSummary(rows)
 	return nil
 }
@@ -299,7 +301,6 @@ func emitStatusJSON(rows []statusRow) error {
 			Parent:       sr.meta.Parent(),
 			Activity:     herd.ActivityLine(sr.row),
 			MailPending:  sr.row.MailboxPending,
-			Stale:        sr.group.Stale,
 		}
 		if sr.checked {
 			j.PaneVerdict = sr.verdict.String()
@@ -310,34 +311,6 @@ func emitStatusJSON(rows []statusRow) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
-}
-
-// printStaleWarning reports sessions whose state.json is not being refreshed.
-//
-// This is deliberately loud and unconditional. A wedged or dead monitor does
-// not make the data disappear — it makes it *freeze*, and frozen data reads
-// exactly like fresh data in a table. Every state and activity string for that
-// session is a claim about the past presented in the present tense.
-func printStaleWarning(groups []herd.Group) {
-	var stale []herd.Group
-	for _, g := range groups {
-		if g.Stale {
-			stale = append(stale, g)
-		}
-	}
-	if len(stale) == 0 {
-		return
-	}
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintf(os.Stderr, "⚠️  %d session(s) have a stale or missing snapshot — their rows may be frozen:\n", len(stale))
-	for _, g := range stale {
-		age := "missing"
-		if g.SnapshotAge > 0 {
-			age = fmtAge(g.SnapshotAge)
-		}
-		fmt.Fprintf(os.Stderr, "    %s (%s) — state.json %s\n", g.Project, g.Session, age)
-	}
-	fmt.Fprintln(os.Stderr, "    That session's monitor may be wedged or dead; check `agentctl health`.")
 }
 
 // printAttentionSummary prints a one-line tally of what needs a human.
@@ -463,7 +436,6 @@ func RunStatusDetail(window string, jsonOut bool) error {
 			Ticket: sr.meta.Ticket, Branch: sr.meta.Branch,
 			WorktreePath: sr.row.WorktreePath, Parent: sr.meta.Parent(),
 			Activity: herd.ActivityLine(sr.row), MailPending: sr.row.MailboxPending,
-			Stale: sr.group.Stale,
 		}
 		if checked {
 			j.PaneVerdict = verdict.String()
@@ -532,9 +504,6 @@ func RunStatusDetail(window string, jsonOut bool) error {
 
 	if err := w.Flush(); err != nil {
 		return err
-	}
-	if sr.group.Stale {
-		printStaleWarning([]herd.Group{sr.group})
 	}
 	return nil
 }
