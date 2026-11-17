@@ -67,6 +67,9 @@ type chromeBarClockTickMsg struct{}
 // prefixTickMsg fires every 250ms; only the active window's bar acts on it.
 type prefixTickMsg struct{}
 
+// chromeBarReloadTickMsg fires every few seconds to check for a new binary.
+type chromeBarReloadTickMsg struct{}
+
 // prefixResultMsg carries the polled #{client_prefix} value.
 type prefixResultMsg struct{ active bool }
 
@@ -135,6 +138,9 @@ type ChromeBarModel struct {
 	// ── Status bar state (line 1) ────────────────────────────────────────────
 	prefixActive bool
 	hints        []KeyHint
+
+	// reload watches the binary for hot reload; nil in tests.
+	reload *reloader
 }
 
 // NewChromeBarModel creates a new ChromeBarModel for the given tmux window ID.
@@ -152,6 +158,7 @@ func NewChromeBarModel(windowID string, runtimeDir string) *ChromeBarModel {
 		m.rebuild(true)
 		m.watchEvents = startWatcher(runtimeDir)
 	}
+	m.reload = newReloader("chrome-bar", windowID)
 	return m
 }
 
@@ -185,7 +192,21 @@ func (m ChromeBarModel) Init() tea.Cmd {
 			chromeBarClockTick(),
 		)
 	}
+	if m.reload != nil && m.reload.changed != nil {
+		cmds = append(cmds, chromeBarReloadTick())
+	}
 	return tea.Batch(cmds...)
+}
+
+// Reexec reports whether the bar quit because the binary changed; the caller
+// must exec the new image after the program returns.
+func (m ChromeBarModel) Reexec() bool { return m.reload.triggered() }
+
+// WithoutReload disables hot reload after a failed exec.
+func (m ChromeBarModel) WithoutReload() ChromeBarModel { m.reload.disable(); return m }
+
+func chromeBarReloadTick() tea.Cmd {
+	return tea.Tick(reloadCheckInterval, func(time.Time) tea.Msg { return chromeBarReloadTickMsg{} })
 }
 
 // chromeBarClockTick schedules a 30-second clock refresh used in file-watch mode.
@@ -443,6 +464,12 @@ func (m ChromeBarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tabs = tabs
 		}
 		return m, waitForStateChange(m.watchEvents)
+
+	case chromeBarReloadTickMsg:
+		if m.reload.due() {
+			return m, tea.Quit
+		}
+		return m, chromeBarReloadTick()
 
 	case prefixTickMsg:
 		next := chromeBarPrefixTick()

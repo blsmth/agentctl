@@ -18,6 +18,8 @@ Known consequences of a re-exec, since in-memory state resets:
 - Prometheus counters restart from zero.
 - Dispatch completion is not affected by a re-exec: it is hook-driven (see below), not detected by the monitor.
 
+The chrome bar (`chrome-bar`) and the HUD (`hud`) panes are long-lived Bubble Tea processes and hot-reload the same way through `internal/selfexec`, as does the hub list. Each captures its identity at startup (on a `Capture` error hot reload is disabled for that process and logged). A chrome bar checks every 3 seconds and the HUD every 3 seconds on its 500ms poll tick. When `CheckChanged` reports a change, the pane waits a deterministic 0-2s jitter derived from its window ID (so dozens of panes do not re-exec in the same second), quits the program with `tea.Quit` so the terminal is restored, and `cmd.runWithReload` execs the new binary with the same args only after `Run` has returned. No state crosses the exec: the bar rebuilds from `tmux list-windows` plus windowstate, and the HUD re-reads its log. If the exec fails, the pane keeps running the old image with hot reload off rather than exiting, because nothing respawns a dead chrome bar (windowstate still records `chrome_bar_pane`, so `LaunchChromeBar` would refuse to create another).
+
 ## Two Message Loops
 
 The monitor runs on two interleaved timers:
