@@ -1,0 +1,318 @@
+package serve
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"path/filepath"
+	"strings"
+	"time"
+
+	webpush "github.com/SherClockHolmes/webpush-go"
+
+	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/safefs"
+)
+
+// VAPIDFile holds the server's VAPID keypair under the serve dir.
+const VAPIDFile = "vapid.json"
+
+// DefaultVAPIDSubscriber is the VAPID "sub" claim: a contact the push service
+// can reach. It is required by the spec but need not be real.
+const DefaultVAPIDSubscriber = "mailto:agentctl@localhost"
+
+const (
+	// pushTTL is how long a push service keeps an undelivered message.
+	pushTTL = 3600 // seconds
+	// pushTimeout bounds one Web Push or ntfy request.
+	pushTimeout = 10 * time.Second
+)
+
+// VAPIDKeys is the keypair stored in vapid.json.
+type VAPIDKeys struct {
+	Private string `json:"private_key"`
+	Public  string `json:"public_key"`
+}
+
+// LoadOrCreateVAPID reads <dir>/vapid.json, generating it (0600) on first run.
+func LoadOrCreateVAPID(dir string) (VAPIDKeys, error) {
+	path := filepath.Join(dir, VAPIDFile)
+	data, err := readFileOrEmpty(path)
+	if err != nil {
+		return VAPIDKeys{}, err
+	}
+	if len(data) > 0 {
+		var k VAPIDKeys
+		if err := json.Unmarshal(data, &k); err != nil {
+			return VAPIDKeys{}, fmt.Errorf("parsing %s: %w", path, err)
+		}
+		if k.Private != "" && k.Public != "" {
+			return k, nil
+		}
+	}
+	priv, pub, err := webpush.GenerateVAPIDKeys()
+	if err != nil {
+		return VAPIDKeys{}, fmt.Errorf("generating VAPID keys: %w", err)
+	}
+	k := VAPIDKeys{Private: priv, Public: pub}
+	out, err := json.MarshalIndent(k, "", "  ")
+	if err != nil {
+		return VAPIDKeys{}, fmt.Errorf("encoding VAPID keys: %w", err)
+	}
+	if err := safefs.WriteFile(dir, path, append(out, '\n'), 0o600); err != nil {
+		return VAPIDKeys{}, fmt.Errorf("writing %s: %w", path, err)
+	}
+	return k, nil
+}
+
+// PushOptions are the per-message delivery options.
+type PushOptions struct {
+	// Urgent sends Urgency: high (used for blocked agents).
+	Urgent bool
+}
+
+// Pusher delivers one encrypted Web Push message. It returns the push
+// service's HTTP status; a non-nil error means the request itself failed.
+type Pusher interface {
+	Push(ctx context.Context, sub Subscription, payload []byte, opts PushOptions) (status int, err error)
+}
+
+// webPusher is the production Pusher over webpush-go.
+type webPusher struct {
+	keys       VAPIDKeys
+	subscriber string
+	client     *http.Client
+}
+
+func newWebPusher(keys VAPIDKeys, subscriber string) *webPusher {
+	if subscriber == "" {
+		subscriber = DefaultVAPIDSubscriber
+	}
+	return &webPusher{keys: keys, subscriber: subscriber, client: &http.Client{Timeout: pushTimeout}}
+}
+
+func (p *webPusher) Push(ctx context.Context, sub Subscription, payload []byte, opts PushOptions) (int, error) {
+	urgency := webpush.UrgencyNormal
+	if opts.Urgent {
+		urgency = webpush.UrgencyHigh
+	}
+	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
+	defer cancel()
+	resp, err := webpush.SendNotificationWithContext(ctx, payload, &webpush.Subscription{
+		Endpoint: sub.Endpoint,
+		Keys:     webpush.Keys{P256dh: sub.Keys.P256dh, Auth: sub.Keys.Auth},
+	}, &webpush.Options{
+		HTTPClient:      p.client,
+		Subscriber:      p.subscriber,
+		VAPIDPublicKey:  p.keys.Public,
+		VAPIDPrivateKey: p.keys.Private,
+		TTL:             pushTTL,
+		Urgency:         urgency,
+	})
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	return resp.StatusCode, nil
+}
+
+// Message is one notification. It never carries pane or prompt text.
+type Message struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+	// URL is the app-relative route to open, "/#/w/<session>/<window>".
+	URL string `json:"url"`
+	// Tag collapses notifications for the same window: "<session>:<window>".
+	Tag string `json:"tag"`
+
+	// Urgent and Kind are not part of the payload.
+	Urgent bool   `json:"-"`
+	Kind   string `json:"-"` // "blocked", "reminder", "done", "test"
+}
+
+func (m Message) payload() []byte {
+	b, _ := json.Marshal(m)
+	return b
+}
+
+// encodeURIComponent mirrors the JavaScript function of the same name, which
+// is what the web app's router uses to build and decode hash routes.
+func encodeURIComponent(s string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			strings.IndexByte("-_.!~*'()", c) >= 0:
+			b.WriteByte(c)
+		default:
+			b.WriteByte('%')
+			b.WriteByte(hex[c>>4])
+			b.WriteByte(hex[c&15])
+		}
+	}
+	return b.String()
+}
+
+// windowURL is the app route for a window, as the web app's router parses it.
+func windowURL(session, windowID string) string {
+	return "/#/w/" + encodeURIComponent(session) + "/" + encodeURIComponent(windowID)
+}
+
+// Sender delivers messages to subscribed devices over Web Push. Devices that
+// were revoked are skipped (and their subscriptions dropped) by checking the
+// device store on every send, so a stale subscriptions.json never notifies a
+// revoked phone.
+type Sender struct {
+	devices *DeviceStore
+	subs    *SubscriptionStore
+	pusher  Pusher
+}
+
+// NewSender returns a Sender.
+func NewSender(devices *DeviceStore, subs *SubscriptionStore, pusher Pusher) *Sender {
+	return &Sender{devices: devices, subs: subs, pusher: pusher}
+}
+
+// Broadcast sends msg to every paired device with a subscription.
+func (s *Sender) Broadcast(ctx context.Context, msg Message) {
+	live, err := s.liveDevices()
+	if err != nil {
+		logging.Warn("serve: push: %v", err)
+		return
+	}
+	all, err := s.subs.All()
+	if err != nil {
+		logging.Warn("serve: push: reading subscriptions: %v", err)
+		return
+	}
+	var stale []string
+	for id, sub := range all {
+		if !live[id] {
+			stale = append(stale, id)
+			continue
+		}
+		_ = s.deliver(ctx, id, sub, msg) // failures are logged in deliver
+	}
+	if len(stale) > 0 {
+		if err := s.subs.Delete(stale...); err != nil {
+			logging.Warn("serve: push: dropping subscriptions of revoked devices: %v", err)
+		}
+	}
+}
+
+// SendTo sends msg to one device. It reports whether the device has a
+// subscription that is still valid.
+func (s *Sender) SendTo(ctx context.Context, deviceID string, msg Message) error {
+	live, err := s.liveDevices()
+	if err != nil {
+		return err
+	}
+	if !live[deviceID] {
+		return errors.New("device is not paired")
+	}
+	sub, ok := s.subs.Get(deviceID)
+	if !ok {
+		return errNoSubscription
+	}
+	return s.deliver(ctx, deviceID, sub, msg)
+}
+
+var errNoSubscription = errors.New("this device has no push subscription")
+
+func (s *Sender) liveDevices() (map[string]bool, error) {
+	devs, err := s.devices.List()
+	if err != nil {
+		return nil, fmt.Errorf("listing devices: %w", err)
+	}
+	live := make(map[string]bool, len(devs))
+	for _, d := range devs {
+		live[d.ID] = true
+	}
+	return live, nil
+}
+
+// deliver pushes to one subscription and deletes it when the push service says
+// it is gone (404/410).
+func (s *Sender) deliver(ctx context.Context, deviceID string, sub Subscription, msg Message) error {
+	status, err := s.pusher.Push(ctx, sub, msg.payload(), PushOptions{Urgent: msg.Urgent})
+	switch {
+	case err != nil:
+		logging.Warn("serve: push to device %s failed: %v", deviceID, err)
+		return fmt.Errorf("push failed: %w", err)
+	case status == http.StatusNotFound || status == http.StatusGone:
+		if derr := s.subs.DeleteEndpoint(sub.Endpoint); derr != nil {
+			logging.Warn("serve: push: deleting expired subscription: %v", derr)
+		}
+		return errors.New("subscription expired and was removed")
+	case status < 200 || status >= 300:
+		logging.Warn("serve: push to device %s: push service returned %d", deviceID, status)
+		return fmt.Errorf("push service returned %d", status)
+	}
+	return nil
+}
+
+// ntfyBase is where the ntfy fallback posts.
+const ntfyBase = "https://ntfy.sh"
+
+// Ntfy posts notifications to an ntfy topic.
+type Ntfy struct {
+	Base   string // default ntfyBase
+	Topic  string
+	AppURL string // https://<host>:<port>, for the Click header
+	Client *http.Client
+}
+
+// Send posts msg. It is bounded by pushTimeout; callers run it off the bus
+// goroutine.
+func (n *Ntfy) Send(ctx context.Context, msg Message) error {
+	base := n.Base
+	if base == "" {
+		base = ntfyBase
+	}
+	client := n.Client
+	if client == nil {
+		client = &http.Client{Timeout: pushTimeout}
+	}
+	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/"+url.PathEscape(n.Topic), strings.NewReader(msg.Body))
+	if err != nil {
+		return fmt.Errorf("building ntfy request: %w", err)
+	}
+	req.Header.Set("Title", msg.Title)
+	req.Header.Set("Click", n.AppURL+msg.URL)
+	req.Header.Set("Tags", ntfyTags(msg.Kind))
+	if msg.Urgent {
+		req.Header.Set("Priority", "high")
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("posting to ntfy: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("ntfy returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func ntfyTags(kind string) string {
+	switch kind {
+	case "blocked":
+		return "warning,agentctl"
+	case "reminder":
+		return "hourglass,agentctl"
+	case "done":
+		return "white_check_mark,agentctl"
+	default:
+		return "bell,agentctl"
+	}
+}

@@ -18,6 +18,7 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/state"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // completeHandler holds injectable functions for testing HandleComplete.
@@ -27,8 +28,11 @@ type completeHandler struct {
 	resolveRepo func(dir string) (string, error)
 	lookupPR    func(repo, branch string) int
 	runHook     func(cmd string, env []string)
-	swapLabels  func(repo string, issueNumber int)
-	openPR      func(pr int, workDir string)
+	// recordPR persists the PR found for a window into windowstate; nil
+	// means not recorded.
+	recordPR   func(windowID, repo string, pr int)
+	swapLabels func(repo string, issueNumber int)
+	openPR     func(pr int, workDir string)
 	// approvalPending reports whether an approval popup is waiting on a
 	// human; nil means never. sleep is the retry delay seam.
 	approvalPending func() bool
@@ -74,6 +78,7 @@ var defaultHandler = &completeHandler{
 	resolveRepo: RepoSlug,
 	lookupPR:    lookupPRByBranch,
 	runHook:     runOnCompleteHook,
+	recordPR:    recordPRInWindowState,
 	swapLabels:  swapDispatchLabels,
 	openPR:      openPRInBrowser,
 
@@ -217,6 +222,12 @@ func (h *completeHandler) handle(t state.Transition, cfg config.AgentConfig) {
 
 	logging.Log("dispatch-complete: PR lookup for issue #%d (PR #%d)", issueNumber, pr)
 
+	// Record the PR before anything slow (the approval wait below can take
+	// minutes) so `status --json`, the serve API and the done push see it.
+	if pr > 0 && repo != "" && h.recordPR != nil {
+		h.recordPR(windowID, repo, pr)
+	}
+
 	// We need the full Config to call EffectiveHooks; load it fresh.
 	fullCfg := config.Load()
 
@@ -252,6 +263,23 @@ func (h *completeHandler) handle(t state.Transition, cfg config.AgentConfig) {
 	for _, hookCmd := range hookCmds {
 		logging.Log("dispatch-complete: running dispatch_complete hook for issue #%d: %s", issueNumber, hookCmd)
 		h.runHook(hookCmd, env)
+	}
+}
+
+// prURL is the web URL of pull request pr in repo ("owner/name").
+func prURL(repo string, pr int) string {
+	return fmt.Sprintf("https://github.com/%s/pull/%d", repo, pr)
+}
+
+// recordPRInWindowState writes the PR number and URL into the window's
+// windowstate record inside its transaction. A vanished window is not an error.
+func recordPRInWindowState(windowID, repo string, pr int) {
+	err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
+		ws.PRNumber = pr
+		ws.PRURL = prURL(repo, pr)
+	})
+	if err != nil && !errors.Is(err, windowstate.ErrGone) {
+		logging.Warn("dispatch-complete: recording PR #%d for %s: %v", pr, windowID, err)
 	}
 }
 

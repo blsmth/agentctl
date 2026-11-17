@@ -34,6 +34,7 @@ func TestStatusJSONGolden(t *testing.T) {
 				Session: "agentctl-proj", Project: "proj",
 				AgentState: state.AgentState{Name: "lead", WindowID: "@1", State: "idle", Done: true},
 			},
+			meta: herd.Meta{PRNumber: 61, PRURL: "https://github.com/o/r/pull/61"},
 		},
 	}
 	out := make([]statusJSONRow, 0, len(rows))

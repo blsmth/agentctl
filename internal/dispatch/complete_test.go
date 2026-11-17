@@ -10,6 +10,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/state"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 func TestHandleComplete_FiltersBadTransitions(t *testing.T) {
@@ -605,5 +606,39 @@ func TestGCOpenedPRs(t *testing.T) {
 	}
 	if _, err := os.Stat(newF); err != nil {
 		t.Error("fresh marker removed")
+	}
+}
+
+func TestHandleRecordsPR(t *testing.T) {
+	var gotWin, gotRepo string
+	var gotPR int
+	h := &completeHandler{
+		resolveRepo: func(string) (string, error) { return "o/r", nil },
+		lookupPR:    func(repo, branch string) int { return 42 },
+		recordPR:    func(w, repo string, pr int) { gotWin, gotRepo, gotPR = w, repo, pr },
+		runHook:     func(string, []string) {},
+	}
+	h.handle(state.Transition{Done: true, To: state.StatusIdle, Mode: "dispatch", WindowID: "@9", Branch: "b"}, config.AgentConfig{})
+	if gotWin != "@9" || gotRepo != "o/r" || gotPR != 42 {
+		t.Errorf("recordPR got %q %q %d", gotWin, gotRepo, gotPR)
+	}
+
+	gotPR = 0
+	h.lookupPR = func(string, string) int { return 0 }
+	h.handle(state.Transition{Done: true, To: state.StatusIdle, Mode: "dispatch", WindowID: "@9", Branch: "b"}, config.AgentConfig{})
+	if gotPR != 0 {
+		t.Error("recorded a PR when none was found")
+	}
+}
+
+func TestRecordPRInWindowState(t *testing.T) {
+	windowstate.SetDirForTest(t.TempDir())
+	recordPRInWindowState("@3", "o/r", 5)
+	ws, err := windowstate.Read("@3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.PRNumber != 5 || ws.PRURL != "https://github.com/o/r/pull/5" {
+		t.Errorf("got %d %q", ws.PRNumber, ws.PRURL)
 	}
 }

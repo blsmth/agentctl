@@ -59,6 +59,9 @@ type ServePushConfig struct {
 	// QuietHours is a local-time "HH:MM-HH:MM" range with no pushes. Empty
 	// means none.
 	QuietHours string `json:"quiet_hours,omitempty"`
+	// VAPIDSubscriber is the contact (mailto: or https: URL) sent to push
+	// services as the VAPID subject. Empty means mailto:agentctl@localhost.
+	VAPIDSubscriber string `json:"vapid_subscriber,omitempty"`
 	// MutedProjects are project names that never push.
 	MutedProjects []string `json:"muted_projects,omitempty"`
 }

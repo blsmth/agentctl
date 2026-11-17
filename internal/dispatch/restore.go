@@ -55,6 +55,8 @@ type RestoreRequest struct {
 	Task        string
 	Branch      string
 	WorktreeDir string
+	PRNumber    int
+	PRURL       string
 	// SessionName is the original claude -n name, reused so the restored
 	// session keeps its identity. Empty omits -n.
 	SessionName string
@@ -132,6 +134,8 @@ func applyRestoreMeta(ws *windowstate.WindowState, req RestoreRequest) {
 	ws.Task = req.Task
 	ws.Branch = req.Branch
 	ws.WorktreeDir = req.WorktreeDir
+	ws.PRNumber = req.PRNumber
+	ws.PRURL = req.PRURL
 }
 
 // buildRestoreCmd returns the shell command that re-launches a restored

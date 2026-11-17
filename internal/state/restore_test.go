@@ -163,3 +163,12 @@ func TestLoadRestoreWithoutLaunchMeta(t *testing.T) {
 		t.Errorf("unexpected meta: %+v", a)
 	}
 }
+
+func TestBuildRestoreAgentsCarriesPR(t *testing.T) {
+	got := BuildRestoreAgents(map[string]windowstate.WindowState{
+		"@1": {Instance: "a", AgentName: "a", PRNumber: 7, PRURL: "https://github.com/o/r/pull/7"},
+	}, nil)
+	if len(got) != 1 || got[0].PRNumber != 7 || got[0].PRURL != "https://github.com/o/r/pull/7" {
+		t.Errorf("got %+v", got)
+	}
+}

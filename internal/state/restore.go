@@ -79,6 +79,8 @@ func BuildRestoreAgents(records map[string]windowstate.WindowState, live map[str
 			SpawnedBy:        ws.SpawnedBy,
 			SpawnedBySession: ws.SpawnedBySession,
 			SessionName:      ws.SessionName,
+			PRNumber:         ws.PRNumber,
+			PRURL:            ws.PRURL,
 		})
 	}
 	slices.SortFunc(out, func(a, b AgentState) int {
