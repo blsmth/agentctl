@@ -52,6 +52,7 @@ New `serve` block in `~/.config/agentctl/config.json`. Every key is **global-onl
     "blocked": true,
     "done": true,
     "blocked_reminder_minutes": 10,  // 0 disables reminders; one reminder per blocked episode
+    "approvals": true,               // push when an approval waits (see Remote approvals); ignores quiet hours
     "quiet_hours": "23:00-07:00",    // local time; empty = none
     "muted_projects": []
   },
@@ -153,6 +154,41 @@ Push is a server-side request a paired device controls, so it is fenced: `POST /
 - **Cleanup**: on socket close, PTY EOF, `Server.Close` (shutdown and selfexec re-exec) the PTY process is killed and the viewer killed; `destroy-unattached` is also turned on once attached, so a viewer dies with its client even if serve crashes. Serve startup sweeps stale `agentctl-mobileview-*` sessions. At most 4 terminals (429 `too_many_terminals`).
 - **Discovery**: `tmux.IsAnyViewerSession` (hub and phone viewers) is excluded from session listing, herd discovery, hub leave, and home-session resolution; pane/window → session lookups map a viewer to its home session; approval popups never target a phone client.
 - **Frontend** (`terminal.js`, route `#/t/<session>/<window>`): full-screen xterm.js sized to the server's cols/rows with the font scaled to the screen width (never `fit()`), pinch-zoom and pan as a fallback, a key bar (Esc, Tab, ^C, arrows, 1, 2, Enter) above the soft keyboard in write mode, a `read-only` badge otherwise, reconnect with backoff.
+
+## Remote approvals
+
+Away mode: when only the phone is at hand, the approval popups that gate `agentctl dispatch` (always) and Bash commands (`bash_preview`) can be answered from the web app. Without this, a popup nobody sees blocks the agent until its 9-minute deadline and is then denied.
+
+### Hook side (`internal/hooks`, `internal/remoteapproval`)
+
+`runPopupWithDeadline` (both popup kinds) opens a remote approval in parallel with the tmux popup when `agentctl serve` is running, and otherwise behaves exactly as before.
+
+- **Detection**: the control socket `<StateDir>/serve/control.sock` must accept within 200ms. Nothing accepting means "not running", and only the popup is used.
+- **Guard** (`remoteapproval.Guard`), before anything is sent: `serve.pid` must be a regular 0600 file owned by the user and name a live process whose command line is `agentctl … serve`; where the OS reports the socket peer (macOS `LOCAL_PEERPID`, Linux `SO_PEERCRED`) it must be that pid, on both the probe and the approval connection; a `ping` op must report that pid and the same executable build (dev, inode, size, mtime) as the hook's own binary. Any failure logs and falls back to the popup alone. During the ~2s after `just install` before serve re-execs, the builds differ and the phone is not offered the approval.
+- **Protocol**: one control-socket connection per approval. The hook writes `{op:"approval_request", id (128-bit random hex), kind ("dispatch"|"bash"), asking_agent, session, window_id, target_agent, issue, prompt (fully resolved, including `--prompt-key` content), command, deadline}` and then reads a single line `{decision:"allow"|"deny", device, payload_sha256}` from that same connection. The decision is never read from anywhere else. Anything other than a well-formed allow or deny whose `payload_sha256` equals the hook's own hash of what it sent is an error.
+- **First answer wins**: the laptop popup answering sends `{op:"approval_cancel", id, reason:"answered_on_laptop"}` and closes the connection. The phone answering cancels the popup's tmux client and closes the popup with `display-popup -C` on its client, and its verdict is returned. At the deadline or on a signal both are closed and the command is denied.
+- **Errors never allow**: an error on the remote path drops it, and the popup alone decides. If the popup could not be shown (it would have passed through), the hook keeps waiting for the phone until the deadline.
+- **No laptop client** (`selectPopupClient` finds none, so `popupTarget.Client` is empty): the popup is skipped and only the phone can answer, until the same deadline. If the remote path then fails, the popup is started as it would have been without serve.
+- `bashPreviewGate` still passes through when no human is attached; only popups that are shown (or, for dispatch, would be) go to the phone. Blocked state, desktop notice and the approval-pending marker from `beginApproval` are unchanged. Every outcome is logged with its source (`laptop`, `phone`, `timeout`).
+
+### Serve side
+
+- **Control socket**: `approval_request` keeps the connection open; the approval is held in memory, bound to that connection, and disappears when the connection drops (the hook gave up or exited), on `approval_cancel`, at deadline plus 10s, or when serve stops. Deadlines are clamped to 15 minutes and at most 32 approvals may be pending. `ping` returns `{pid, build}`. `approval_cancel` on any other connection is refused, and no op decides anything.
+- **API**: `GET /v1/approvals` (Device) returns `{"approvals":[{id, kind, asking_agent, session, project, window_id, target_agent, issue, prompt, command, opened, deadline, seconds_remaining, payload_sha256}]}`. `payload_sha256` is the SHA-256 of the canonical JSON of the shown fields (`remoteapproval.PayloadHash`: id, kind, asking agent, session, window, target agent, issue, prompt, command). `POST /v1/approvals/{id}` (Write: CSRF, `allow_write`, rate limit, audit) takes `{decision, payload_sha256}`; 409 `approval_changed` when the hash differs, 409 `already_answered` when it was answered or resolved (resolved IDs are remembered 15 minutes), 409 `approval_gone` when the hook hung up before the answer reached it, 404 for unknown IDs. Feature `approvals` is always advertised (the list is readable without `allow_write`).
+- **SSE**: `event: approval` (the list entry) when one opens, and once per pending approval on connect; `event: approval_resolved` `{id, session, window_id, outcome, decision?}` when it closes. Outcomes: `answered`, `answered_on_laptop`, `timeout`, `cancelled`, `gone`, `expired`, `server_stopping`.
+- **Push**: on open, to every subscribed device: title "Approval needed", body "<asking agent> wants to dispatch <target agent>" or "<asking agent> wants to run a command", url `/#/approvals/<id>`, urgency high, TTL = time to the deadline. Prompt and command text never go into a push (or into ntfy, which says only "approval needed"). Muted projects are respected; quiet hours are ignored, since an unanswered approval blocks work and is denied at the deadline. `serve.push.approvals` (default true, global-only) turns these pushes off.
+- **Audit** (`audit.jsonl`): `approval_requested` when one opens; for an answer the usual write lines (`approval` with `attempt`, then the result) carrying device, `decision` and the `payload_sha256` the phone sent; `approval_resolved` with the outcome when it ended any other way. Lines never contain prompt or command text.
+
+### Web app
+
+`#/approvals` lists pending approvals and `#/approvals/<id>` shows one (the push target). Each shows the asking agent and window (linked), target agent, issue, a countdown on the phone's clock, the full prompt and the command (text only, monospace, scrollable), and Approve / Deny. Both go through a confirm sheet that repeats everything that will run, and send the payload hash of the version shown; a 409 or 404 toasts "Already answered or changed" and refreshes. The Fleet view shows a red "N approval(s) waiting" banner, the asking window's detail view shows its approval inline, and the bottom nav has an Approvals tab with a count badge (only when the feature is advertised). The list is refetched on every SSE (re)connect and every 15s as a backstop.
+
+### Security model and residual risk
+
+- Decisions come only from `POST /v1/approvals/{id}` by a paired device with `allow_write`, CSRF header and rate limit, and are bound to the payload hash of what the phone displayed. The device token is stored only hashed, so a same-uid agent cannot read one from disk.
+- The hook only trusts its own connection, verified as described above, and requires the decision to carry the hash of its own payload.
+- The Bash validator (`checkServeTamper` in `internal/hooks/validate.go`, part of the global deny list) blocks commands that reference the serve state dir, `control.sock` or `serve.pid`; stop, reload or reinstall the serve LaunchAgent or systemd unit; `pkill`/`killall` agentctl, or `kill` an `agentctl serve` found some other way; and `agentctl serve install|uninstall|pair|ca`.
+- **Residual risk**: every agent runs as the same uid as serve. A determined agent can write a program to disk and run it, which the validator cannot see into: it could stop serve, rewrite `serve.pid`, and bind an impostor socket named like the real one that answers the ping with a copied build identity and the right pid; or ask the real control socket to open a pairing window and pair itself as a device over loopback. These are bypasses of the same-uid boundary, not of this protocol, and they are equally available without away mode (such an agent can already run anything it likes). The checks above make an accidental or naive bypass fail closed: a fake or broken socket can at worst cause a deny or a timeout.
 
 ## Web app (PR5)
 

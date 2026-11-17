@@ -2,7 +2,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  ansiColor, buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, launchOptionsPath, parseRoute, modelPicker, normalizePane, parseAnsi,
+  ansiColor, approvalBannerText, approvalConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
+  buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
+  parseAnsi, parseRoute, removeApproval, secondsLeft, upsertApproval, withReceived,
 } from "./logic.js";
 
 const fixtures = JSON.parse(readFileSync(new URL("./logic.fixtures.json", import.meta.url), "utf8"));
@@ -56,3 +58,45 @@ assert.deepEqual(parseRoute("#/dispatch/%E0%A4%A"), { name: "dispatch" });
 assert.equal(dispatchHash("/a b/c"), "#/dispatch/%2Fa%20b%2Fc");
 assert.deepEqual(parseRoute(dispatchHash("/x y/z&w")), { name: "dispatch", dir: "/x y/z&w" });
 console.log("ok: dispatch route");
+// Remote approvals.
+assert.deepEqual(parseRoute("#/approvals"), { name: "approvals", id: "" });
+assert.deepEqual(parseRoute("#/approvals/abc123"), { name: "approvals", id: "abc123" });
+assert.deepEqual(parseRoute("#/approvals/%E0%A4%A"), { name: "approvals", id: "" });
+assert.equal(approvalHash("ab"), "#/approvals/ab");
+assert.equal(approvalHash(""), "#/approvals");
+const ap = {
+  id: "a1", kind: "dispatch", asking_agent: "orch", session: "agentctl-p", project: "p", window_id: "@5",
+  target_agent: "go-engineer", issue: 0, prompt: "do it", command: "agentctl dispatch -k k",
+  opened: "2026-11-17T10:00:00Z", seconds_remaining: 540, payload_sha256: "h1",
+};
+assert.deepEqual(buildApprovalRequest(ap, "allow"), {
+  method: "POST", path: "/v1/approvals/a1", body: { decision: "allow", payload_sha256: "h1" },
+});
+assert.deepEqual(buildApprovalRequest(ap, "deny").body.decision, "deny");
+assert.throws(() => buildApprovalRequest(ap, "yes"));
+assert.throws(() => buildApprovalRequest({ id: "a1" }, "allow"));
+assert.equal(approvalSummary(ap), "orch wants to dispatch go-engineer");
+assert.equal(approvalSummary({ kind: "bash", asking_agent: "w" }), "w wants to run a command");
+assert.equal(approvalBannerText(0), "");
+assert.equal(approvalBannerText(1), "1 approval waiting");
+assert.equal(approvalBannerText(3), "3 approvals waiting");
+assert.equal(formatCountdown(539), "8:59");
+assert.equal(formatCountdown(-3), "0:00");
+const stamped = withReceived(ap, 1000);
+assert.equal(secondsLeft(stamped, 1000), 540);
+assert.equal(secondsLeft(stamped, 61500), 480);
+assert.equal(secondsLeft(stamped, 10_000_000), 0);
+const b = { ...ap, id: "b2", opened: "2026-11-17T09:00:00Z", window_id: "@6" };
+let list = upsertApproval([], ap);
+list = upsertApproval(list, b);
+assert.deepEqual(list.map((x) => x.id), ["b2", "a1"]);
+list = upsertApproval(list, { ...ap, prompt: "x" });
+assert.equal(list.length, 2);
+assert.deepEqual(approvalsForWindow(list, "agentctl-p", "@5").map((x) => x.id), ["a1"]);
+assert.deepEqual(removeApproval(list, "a1").map((x) => x.id), ["b2"]);
+const conf = approvalConfirm(ap, "allow");
+assert.equal(conf.confirmLabel, "Approve");
+assert.equal(conf.danger, false);
+assert.ok(conf.lines.includes("do it") && conf.lines.includes("agentctl dispatch -k k"));
+assert.equal(approvalConfirm({ ...ap, kind: "bash", prompt: "" }, "deny").danger, true);
+console.log("ok: approval helpers");

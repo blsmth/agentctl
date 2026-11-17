@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/remoteapproval"
 	"github.com/blsmth/agentctl/internal/textutil"
 	"github.com/blsmth/agentctl/internal/tui"
 )
@@ -170,5 +171,6 @@ func bashPreviewGate(agentName, command string) (approved, decided bool, denyRea
 		Tool:   "Bash",
 		Detail: textutil.Truncate(command, 100, "..."),
 		Action: "run a command",
+		Remote: &remoteDetails{Kind: remoteapproval.KindBash, AskingAgent: agentName, Command: command},
 	})
 }

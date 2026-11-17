@@ -8,9 +8,10 @@ const POLL_MS = 5000;
 /**
  * startLive connects the feed and returns a stop function. Handlers:
  * onFleet(body), onWindow(win), onGone({session, window_id}),
+ * onApproval(approval), onApprovalResolved({id, outcome, ...}),
  * onStatus(up: boolean).
  */
-export function startLive({ events, onFleet, onWindow, onGone, onStatus }) {
+export function startLive({ events, onFleet, onWindow, onGone, onApproval, onApprovalResolved, onStatus }) {
   let stopped = false;
   let timer = null;
   let source = null;
@@ -49,6 +50,8 @@ export function startLive({ events, onFleet, onWindow, onGone, onStatus }) {
     });
     source.addEventListener("window", parse(onWindow));
     source.addEventListener("gone", parse(onGone));
+    if (onApproval) source.addEventListener("approval", parse(onApproval));
+    if (onApprovalResolved) source.addEventListener("approval_resolved", parse(onApprovalResolved));
     source.onerror = () => {
       source.close();
       onStatus(false);

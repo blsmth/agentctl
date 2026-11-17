@@ -183,10 +183,11 @@ Settings for `agentctl serve`, the per-machine HTTPS server the mobile web app t
 | `serve.listen` | `:8443` | HTTPS listen address. While pairing, a plain-HTTP listener on port + 1 serves only the CA profile and instructions. |
 | `serve.hostnames` | none | Extra DNS names for the server certificate. `<hostname>.local` and every non-loopback interface IP are always included. |
 | `serve.allow_cidrs` | RFC 1918, `100.64.0.0/10`, loopback | Source-address allowlist, checked before anything else (including `/healthz`). `X-Forwarded-For` is never trusted. |
-| `serve.allow_write` | `false` | Enable write actions (answer, reply, interrupt, dispatch, close). |
+| `serve.allow_write` | `false` | Enable write actions (answer, reply, interrupt, dispatch, close, and answering approval popups from the phone). |
 | `serve.keep_awake` | `true` | Hold `caffeinate -s` while any agent is working or blocked. |
 | `serve.push.blocked` / `serve.push.done` | `true` | Push on an agent becoming blocked / finishing. |
 | `serve.push.blocked_reminder_minutes` | `10` | One reminder per blocked episode; `0` disables. |
+| `serve.push.approvals` | `true` | Push when a dispatch or Bash approval popup is waiting and can be answered from the phone (see [Remote approvals](design/mobile-web-app.md#remote-approvals)). Ignores quiet hours, since an unanswered approval blocks work; respects `muted_projects`. |
 | `serve.push.quiet_hours` | none | Local `HH:MM-HH:MM` range with no pushes. |
 | `serve.push.muted_projects` | none | Project names that never push. |
 | `serve.push.vapid_subscriber` | `https://github.com/blsmth/agentctl` | VAPID contact (the JWT `sub`) sent to push services: an `https:` URL or an email address, with or without `mailto:`. |

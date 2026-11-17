@@ -113,7 +113,13 @@ func Run(ctx context.Context, opts RunOptions) error {
 	port := ln.Addr().(*net.TCPAddr).Port
 	listenHost, _, _ := net.SplitHostPort(listen)
 
+	exe, reloadErr := selfexec.Capture()
+	if reloadErr != nil {
+		logging.Log("serve: hot reload disabled: %v", reloadErr)
+	}
+
 	srv, err := New(Options{
+		Build:         exe,
 		Config:        cfg,
 		Dir:           dir,
 		Version:       opts.Version,
@@ -149,11 +155,6 @@ func Run(ctx context.Context, opts RunOptions) error {
 
 	if err := pidfile.Write(dir, PIDFile); err != nil {
 		logging.Warn("serve: %v", err)
-	}
-
-	exe, reloadErr := selfexec.Capture()
-	if reloadErr != nil {
-		logging.Log("serve: hot reload disabled: %v", reloadErr)
 	}
 
 	st := srv.Status()

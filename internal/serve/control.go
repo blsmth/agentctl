@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/remoteapproval"
 )
 
 // ControlSocket is the unix socket the CLI uses to talk to the running
@@ -27,6 +29,13 @@ type controller interface {
 	OpenPairing(name string) (PairInfo, error)
 	Status() StatusInfo
 	RequestRestart()
+	// Ping reports the server's pid and build for the approval hook's
+	// guard.
+	Ping() remoteapproval.PingInfo
+	// ServeApproval runs one remote approval on its connection (it owns
+	// conn and keeps reading br for the hook's cancel). Nothing it reads
+	// can approve: decisions come only from POST /v1/approvals/{id}.
+	ServeApproval(conn net.Conn, br *bufio.Reader, req remoteapproval.Request)
 }
 
 type controlRequest struct {
@@ -35,9 +44,10 @@ type controlRequest struct {
 }
 
 type controlResponse struct {
-	Error  string      `json:"error,omitempty"`
-	Pair   *PairInfo   `json:"pair,omitempty"`
-	Status *StatusInfo `json:"status,omitempty"`
+	Error  string                   `json:"error,omitempty"`
+	Pair   *PairInfo                `json:"pair,omitempty"`
+	Status *StatusInfo              `json:"status,omitempty"`
+	Ping   *remoteapproval.PingInfo `json:"ping,omitempty"`
 }
 
 // listenControl binds <dir>/control.sock. A socket nobody answers on is
@@ -81,14 +91,32 @@ func serveControl(ln net.Listener, c controller) {
 	}
 }
 
+// handleControl answers one newline-terminated JSON request. An
+// approval_request keeps the connection open (see controller.ServeApproval).
 func handleControl(conn net.Conn, c controller) {
-	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(controlTimeout))
+	br := bufio.NewReaderSize(conn, 4096)
+	line, err := remoteapproval.ReadLine(br)
 	var req controlRequest
-	if err := json.NewDecoder(conn).Decode(&req); err != nil {
+	if err == nil {
+		err = json.Unmarshal(line, &req)
+	}
+	if err != nil {
 		_ = json.NewEncoder(conn).Encode(controlResponse{Error: "bad request: " + err.Error()})
+		_ = conn.Close()
 		return
 	}
+	if req.Op == remoteapproval.OpRequest {
+		var ar remoteapproval.Request
+		if err := json.Unmarshal(line, &ar); err != nil {
+			_ = json.NewEncoder(conn).Encode(remoteapproval.Decision{Error: "bad request: " + err.Error()})
+			_ = conn.Close()
+			return
+		}
+		c.ServeApproval(conn, br, ar)
+		return
+	}
+	defer func() { _ = conn.Close() }()
 	var resp controlResponse
 	switch req.Op {
 	case "pair":
@@ -103,6 +131,12 @@ func handleControl(conn net.Conn, c controller) {
 	case "status":
 		st := c.Status()
 		resp.Status = &st
+	case remoteapproval.OpPing:
+		info := c.Ping()
+		resp.Ping = &info
+	case remoteapproval.OpCancel:
+		// A cancel is only meaningful on the approval's own connection.
+		resp.Error = "approval_cancel must be sent on the approval's connection"
 	default:
 		resp.Error = fmt.Sprintf("unknown op %q", req.Op)
 	}

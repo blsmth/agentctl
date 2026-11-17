@@ -330,6 +330,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	snapshot, sub := s.bus.Subscribe()
 	defer sub.Close()
+	approvalC, pending := s.approvals.subscribe()
+	defer s.approvals.unsubscribe(approvalC)
 
 	send := func(event string, v any) bool {
 		data, err := json.Marshal(v)
@@ -344,6 +346,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if !send("fleet", s.fleetBody(snapshot)) {
 		return
 	}
+	for _, v := range approvalsOf(pending, s.now()) {
+		if !send("approval", v) {
+			return
+		}
+	}
 
 	ping := time.NewTicker(s.pingEvery)
 	defer ping.Stop()
@@ -355,6 +362,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-ping.C:
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil || rc.Flush() != nil {
+				return
+			}
+		case ev := <-approvalC:
+			if !sendApprovalEvent(send, ev) {
 				return
 			}
 		case ev := <-sub.C:

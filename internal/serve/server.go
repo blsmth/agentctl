@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/buildid"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -77,6 +78,10 @@ type Options struct {
 	// Push dependencies; nil means production (webpush-go, ntfy.sh).
 	Pusher   Pusher
 	NtfyBase string
+
+	// Build is the server binary's identity, reported to the control-socket
+	// ping so approval hooks can check they talk to the same agentctl build.
+	Build buildid.Identity
 }
 
 // Server is the agentctl serve HTTP application.
@@ -118,6 +123,7 @@ type Server struct {
 	audit        *auditLog
 	winLocks     windowLocks
 	term         *terminals
+	approvals    *approvalStore
 
 	// done is closed by Close so open SSE streams end before shutdown.
 	done      chan struct{}
@@ -182,6 +188,7 @@ func New(opts Options) (*Server, error) {
 		s.mainPanes = tmuxMainPanes{}
 	}
 	s.audit = newAuditLog(opts.Dir)
+	s.approvals = newApprovalStore()
 	s.term = newTerminals(opts.Terminal, opts.PTY, opts.TerminalSizeEvery)
 	if s.panes == nil {
 		s.panes = tmuxPanes{}
@@ -227,6 +234,7 @@ func (s *Server) routes(rt *Router) {
 	s.registerPush(rt)
 	s.registerWrite(rt)
 	s.registerTerminal(rt)
+	s.registerApprovals(rt)
 }
 
 // registerCore registers the foundation endpoints.

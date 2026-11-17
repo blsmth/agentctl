@@ -62,6 +62,9 @@ type popupNotice struct {
 	Tool   string
 	Detail string
 	Action string
+	// Remote, when set, also offers the approval to the phone through
+	// agentctl serve (see raceRemote). nil means the popup alone.
+	Remote *remoteDetails
 }
 
 // approvalNotificationType is the sendAlert type for a pending approval popup.
@@ -153,6 +156,27 @@ func beginApproval(n popupNotice) (end func()) {
 // so tests can shrink it.
 var popupRetryInterval = 750 * time.Millisecond
 
+// popupEnd is how the tmux popup loop ended.
+type popupEnd int
+
+const (
+	// popupVerdict: approved/decided carry the human's answer, or a deny
+	// for a popup that ran and failed (exit 1, no result).
+	popupVerdict popupEnd = iota
+	// popupPassThrough: the popup could not be shown; without another
+	// answer source the gate stays silent.
+	popupPassThrough
+	// popupExpired: the context ended first. popupOpen says whether a popup
+	// may still be on screen and must be closed.
+	popupExpired
+)
+
+type popupResult struct {
+	end               popupEnd
+	approved, decided bool
+	popupOpen         bool
+}
+
 // runPopupWithDeadline runs the popup under popupDeadline and hook-cancelling
 // signals. Returns (approved, decided, denyReason) like the gates: a non-empty
 // denyReason means the popup went unanswered (or the hook was cancelled), the
@@ -163,6 +187,11 @@ var popupRetryInterval = 750 * time.Millisecond
 // returns 0 without running the command when the client already has a popup or
 // menu open. No result file therefore means the popup never ran, and it is
 // re-opened until it does or the deadline expires.
+//
+// When notice.Remote is set and agentctl serve is running (and passes
+// remoteapproval.Guard), the approval is also opened on the phone and the
+// first answer wins; see raceRemote. Otherwise behavior is exactly the popup
+// alone.
 func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, popupH int, argsFile string, notice popupNotice) (approved, decided bool, denyReason string) {
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer stop()
@@ -175,7 +204,8 @@ func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, po
 	resultFile := popupResultPath(argsFile)
 	defer os.Remove(resultFile)
 
-	deny := func(elapsed time.Duration, closePopup bool) (bool, bool, string) {
+	begin := time.Now()
+	deny := func(closePopup bool) (bool, bool, string) {
 		if closePopup {
 			// Killing the tmux client does not necessarily close the popup.
 			if cerr := popupCloser(target.Client); cerr != nil {
@@ -186,11 +216,32 @@ func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, po
 		if sigCtx.Err() != nil {
 			outcome = "cancelled by signal"
 		}
-		logging.Log("%s: popup outcome=%s after %s (%v), denying", logPrefix, outcome, elapsed, ctx.Err())
+		logging.Log("%s: approval outcome=%s source=timeout after %s (%v), denying",
+			logPrefix, outcome, time.Since(begin).Round(time.Millisecond), ctx.Err())
 		return false, false, popupTimeoutReason(kind, popupDeadline)
 	}
+	run := func(c context.Context) popupResult {
+		return runPopupLoop(c, target, logPrefix, popupW, popupH, argsFile)
+	}
 
-	begin := time.Now()
+	if remote := startRemote(notice.Remote, logPrefix, begin.Add(popupDeadline)); remote != nil {
+		return raceRemote(ctx, target, logPrefix, remote, run, deny)
+	}
+
+	pr := run(ctx)
+	switch pr.end {
+	case popupVerdict:
+		logging.Log("%s: approval source=laptop approved=%v", logPrefix, pr.approved)
+		return pr.approved, pr.decided, ""
+	case popupPassThrough:
+		return false, false, ""
+	}
+	return deny(pr.popupOpen)
+}
+
+// runPopupLoop shows the popup until it records a verdict, fails, or ctx ends.
+func runPopupLoop(ctx context.Context, target popupTarget, logPrefix string, popupW, popupH int, argsFile string) popupResult {
+	resultFile := popupResultPath(argsFile)
 	for attempt := 1; ; attempt++ {
 		os.Remove(resultFile) // a stale verdict must never be read
 		start := time.Now()
@@ -200,13 +251,13 @@ func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, po
 		switch readPopupResult(resultFile) {
 		case "allow":
 			logging.Log("%s: popup outcome=approved after %s", logPrefix, elapsed)
-			return true, true, ""
+			return popupResult{end: popupVerdict, approved: true, decided: true}
 		case "deny":
 			logging.Log("%s: popup outcome=denied after %s", logPrefix, elapsed)
-			return false, true, ""
+			return popupResult{end: popupVerdict, decided: true}
 		}
 		if ctx.Err() != nil {
-			return deny(time.Since(begin).Round(time.Millisecond), true)
+			return popupResult{end: popupExpired, popupOpen: true}
 		}
 		if err != nil {
 			var exitErr *exec.ExitError
@@ -216,15 +267,14 @@ func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, po
 					// The popup ran and exited 1 but recorded nothing (a
 					// startup error); retrying would loop on a broken popup.
 					logging.Log("%s: popup exited 1 without a verdict after %s, denying", logPrefix, elapsed)
-					return false, true, ""
+					return popupResult{end: popupVerdict, decided: true}
 				default:
 					logging.Log("%s: popup outcome=other exit code=%d after %s, passing through", logPrefix, code, elapsed)
-					return false, false, ""
+					return popupResult{end: popupPassThrough}
 				}
-			} else {
-				logging.Log("%s: popup outcome=error after %s: %v, passing through", logPrefix, elapsed, err)
-				return false, false, ""
 			}
+			logging.Log("%s: popup outcome=error after %s: %v, passing through", logPrefix, elapsed, err)
+			return popupResult{end: popupPassThrough}
 		}
 
 		// No verdict: the popup never ran (another popup or menu was open).
@@ -232,7 +282,7 @@ func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, po
 			logPrefix, err, elapsed, popupRetryInterval, attempt)
 		select {
 		case <-ctx.Done():
-			return deny(time.Since(begin).Round(time.Millisecond), false)
+			return popupResult{end: popupExpired}
 		case <-time.After(popupRetryInterval):
 		}
 	}

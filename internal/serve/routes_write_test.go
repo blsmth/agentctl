@@ -298,6 +298,7 @@ func writeRoutes(t *testing.T) []struct{ name, path, body string } {
 		{"interrupt", winPath + "/interrupt", `{}`},
 		{"close", winPath + "/close", `{}`},
 		{"dispatch", "/v1/dispatch", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"p"}`},
+		{"approval", "/v1/approvals/" + strings.Repeat("a", 32), `{"decision":"allow","payload_sha256":"x"}`},
 	}
 }
 
@@ -809,6 +810,8 @@ func TestWriteActionFor(t *testing.T) {
 		{"/v1/sessions/s/windows/@1/close", "close", "s", "@1", true},
 		{"/v1/sessions/s/windows/@1/pane", "", "", "", false},
 		{"/v1/push/subscribe", "", "", "", false},
+		{"/v1/approvals/abc", "approval", "", "", true},
+		{"/v1/approvals", "", "", "", false},
 	}
 	for _, tt := range tests {
 		a, s, w, ok := writeActionFor(tt.path)

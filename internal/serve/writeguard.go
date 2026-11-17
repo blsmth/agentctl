@@ -90,6 +90,13 @@ type auditEntry struct {
 	// "disconnected" line (keystrokes in, screen output out).
 	BytesIn  *int64 `json:"bytes_in,omitempty"`
 	BytesOut *int64 `json:"bytes_out,omitempty"`
+	// Remote approval lines: the approval, who asked, the decision and the
+	// SHA-256 of the payload the phone was shown (never the payload).
+	ApprovalID    string `json:"approval_id,omitempty"`
+	ApprovalKind  string `json:"approval_kind,omitempty"`
+	AskingAgent   string `json:"asking_agent,omitempty"`
+	Decision      string `json:"decision,omitempty"`
+	PayloadSHA256 string `json:"payload_sha256,omitempty"`
 }
 
 // auditLog appends entries to <serve dir>/audit.jsonl (0600), one locked
@@ -148,6 +155,9 @@ var writeActions = map[string]bool{"answer": true, "reply": true, "interrupt": t
 func writeActionFor(path string) (action, session, window string, ok bool) {
 	if path == "/v1/dispatch" {
 		return "dispatch", "", "", true
+	}
+	if strings.HasPrefix(path, "/v1/approvals/") {
+		return "approval", "", "", true
 	}
 	// /v1/sessions/{s}/windows/{w}/{action}
 	p := strings.Split(strings.TrimPrefix(path, "/"), "/")

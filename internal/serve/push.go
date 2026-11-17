@@ -75,6 +75,9 @@ func LoadOrCreateVAPID(dir string) (VAPIDKeys, error) {
 type PushOptions struct {
 	// Urgent sends Urgency: high (used for blocked agents).
 	Urgent bool
+	// TTL is how long (seconds) the push service keeps an undelivered
+	// message; 0 means pushTTL.
+	TTL int
 }
 
 // Pusher delivers one encrypted Web Push message. It returns the push
@@ -110,6 +113,10 @@ func vapidSubscriber(configured string) string {
 }
 
 func (p *webPusher) Push(ctx context.Context, sub Subscription, payload []byte, opts PushOptions) (int, error) {
+	ttl := pushTTL
+	if opts.TTL > 0 {
+		ttl = opts.TTL
+	}
 	urgency := webpush.UrgencyNormal
 	if opts.Urgent {
 		urgency = webpush.UrgencyHigh
@@ -124,7 +131,7 @@ func (p *webPusher) Push(ctx context.Context, sub Subscription, payload []byte, 
 		Subscriber:      p.subscriber,
 		VAPIDPublicKey:  p.keys.Public,
 		VAPIDPrivateKey: p.keys.Private,
-		TTL:             pushTTL,
+		TTL:             ttl,
 		Urgency:         urgency,
 	})
 	if err != nil {
@@ -144,9 +151,10 @@ type Message struct {
 	// Tag collapses notifications for the same window: "<session>:<window>".
 	Tag string `json:"tag"`
 
-	// Urgent and Kind are not part of the payload.
+	// Urgent, Kind and TTL are not part of the payload.
 	Urgent bool   `json:"-"`
-	Kind   string `json:"-"` // "blocked", "reminder", "done", "test"
+	Kind   string `json:"-"` // "blocked", "reminder", "done", "approval", "test"
+	TTL    int    `json:"-"` // seconds; 0 means pushTTL
 }
 
 func (m Message) payload() []byte {
@@ -264,7 +272,7 @@ func (s *Sender) liveDevices() (map[string]bool, error) {
 // deliver pushes to one subscription and deletes it when the push service says
 // it is gone (404/410).
 func (s *Sender) deliver(ctx context.Context, deviceID string, sub Subscription, msg Message) error {
-	status, err := s.pusher.Push(ctx, sub, msg.payload(), PushOptions{Urgent: msg.Urgent})
+	status, err := s.pusher.Push(ctx, sub, msg.payload(), PushOptions{Urgent: msg.Urgent, TTL: msg.TTL})
 	switch {
 	case err != nil:
 		logging.Warn("serve: push to device %s failed: %v", deviceID, err)
@@ -344,6 +352,8 @@ func redactForNtfy(m Message) Message {
 		m.Title = "agentctl: an agent is still blocked"
 	case "done":
 		m.Title = "agentctl: an agent finished"
+	case "approval":
+		m.Title = "agentctl: approval needed"
 	default:
 		m.Title = "agentctl: notification"
 	}
@@ -360,6 +370,8 @@ func ntfyTags(kind string) string {
 		return "hourglass,agentctl"
 	case "done":
 		return "white_check_mark,agentctl"
+	case "approval":
+		return "raising_hand,agentctl"
 	default:
 		return "bell,agentctl"
 	}
