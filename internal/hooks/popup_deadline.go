@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -68,10 +67,6 @@ type popupNotice struct {
 // approvalNotificationType is the sendAlert type for a pending approval popup.
 const approvalNotificationType = "approval_pending"
 
-// approvalAlerts tracks in-flight approval notifications. Production never
-// waits on it; tests do, to observe the send deterministically.
-var approvalAlerts sync.WaitGroup
-
 // approvalSeams are the process-environment lookups beginApproval needs, as
 // vars so tests need no tmux.
 var (
@@ -121,26 +116,20 @@ func beginApproval(n popupNotice) (end func()) {
 	if d := strings.TrimPrefix(sessionName, "agentctl-"); d != "" {
 		title = n.Agent + " \u00b7 " + d
 	}
-	// The default notify_cmd (alerter --timeout 10) blocks until the toast
-	// times out or is clicked, so it must not delay the popup. The hook
-	// outlives the send in practice; an orphaned alerter is harmless.
-	d := *deps
-	approvalAlerts.Add(1)
-	go func() {
-		defer approvalAlerts.Done()
-		sendAlertWith(d, n.Agent, approvalNotificationType, notify.Options{
-			Title:    title,
-			Subtitle: "Approval needed",
-			Message:  message,
-			Env: map[string]string{
-				"AGENTCTL_AGENT_NAME":        n.Agent,
-				"AGENTCTL_NOTIFICATION_TYPE": approvalNotificationType,
-				"AGENTCTL_WINDOW_ID":         windowID,
-				"AGENTCTL_TOOL_NAME":         n.Tool,
-				"AGENTCTL_SESSION_NAME":      sessionName,
-			},
-		})
-	}()
+	// notify.NotifyWithOptions is fire-and-forget, so this does not delay
+	// the popup.
+	sendAlert(n.Agent, approvalNotificationType, notify.Options{
+		Title:    title,
+		Subtitle: "Approval needed",
+		Message:  message,
+		Env: map[string]string{
+			"AGENTCTL_AGENT_NAME":        n.Agent,
+			"AGENTCTL_NOTIFICATION_TYPE": approvalNotificationType,
+			"AGENTCTL_WINDOW_ID":         windowID,
+			"AGENTCTL_TOOL_NAME":         n.Tool,
+			"AGENTCTL_SESSION_NAME":      sessionName,
+		},
+	})
 
 	return func() {
 		clearMarker()

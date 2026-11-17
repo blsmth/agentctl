@@ -220,10 +220,7 @@ func TestHookNotify_TemplateSubstitution(t *testing.T) {
 
 	hookNotify(notify.Options{Title: "my-agent", Message: "Needs permission"})
 
-	data, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("read notify output file: %v", err)
-	}
+	data := waitForNotifyOutput(t, outFile)
 	got := string(data)
 	if !strings.Contains(got, "my-agent") {
 		t.Errorf("output %q does not contain title 'my-agent'", got)
@@ -256,10 +253,7 @@ func TestHookNotify_QuotesValues(t *testing.T) {
 	)
 	hookNotify(notify.Options{Title: wantTitle, Message: wantMessage})
 
-	data, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("read notify output file: %v", err)
-	}
+	data := waitForNotifyOutput(t, outFile)
 	got := string(data)
 	if !strings.Contains(got, wantTitle) {
 		t.Errorf("output %q does not contain multi-word title %q", got, wantTitle)
@@ -292,10 +286,7 @@ func TestHookNotify_EnvVarsAvailable(t *testing.T) {
 		},
 	})
 
-	data, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("read notify output file: %v", err)
-	}
+	data := waitForNotifyOutput(t, outFile)
 	got := string(data)
 	if !strings.Contains(got, "test-agent") {
 		t.Errorf("output %q does not contain AGENTCTL_AGENT_NAME 'test-agent'", got)
@@ -327,10 +318,7 @@ func TestHookNotify_AgentTypePlaceholders(t *testing.T) {
 		},
 	})
 
-	data, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("read notify output file: %v", err)
-	}
+	data := waitForNotifyOutput(t, outFile)
 	got := string(data)
 	if !strings.Contains(got, "go-engineer") {
 		t.Errorf("output %q does not contain {{agent}} substitution 'go-engineer'", got)
@@ -2313,5 +2301,20 @@ func TestDispatch_HandlesHookSubcommands(t *testing.T) {
 				t.Errorf("Dispatch(%q) = true, want false", subcmd)
 			}
 		})
+	}
+}
+
+// waitForNotifyOutput polls for the file written by the detached notify_cmd.
+func waitForNotifyOutput(t *testing.T, path string) []byte {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+			return data
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("notify_cmd never wrote %s", path)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

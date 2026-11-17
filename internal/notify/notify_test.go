@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
 )
@@ -42,10 +43,7 @@ func TestNotifyWithOptions_SubtitleSubstitution(t *testing.T) {
 		Message:  "git push --force origin main",
 	})
 
-	data, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("read notify output: %v", err)
-	}
+	data := waitForFile(t, outFile)
 	got := string(data)
 	if !strings.Contains(got, "Needs permission — Bash") {
 		t.Errorf("output %q does not contain subtitle", got)
@@ -69,10 +67,7 @@ func TestNotifyWithOptions_EmptySubtitleIsSafe(t *testing.T) {
 
 	NotifyWithOptions(Options{Title: "t", Message: "m"})
 
-	data, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("read notify output: %v", err)
-	}
+	data := waitForFile(t, outFile)
 	got := string(data)
 	if !strings.Contains(got, "ran --subtitle  ok") && !strings.Contains(got, "ran --subtitle ok") {
 		t.Errorf("expected safe empty-subtitle substitution, got %q", got)
@@ -233,5 +228,47 @@ func TestInvokesDesktopNotifier(t *testing.T) {
 		if got := invokesDesktopNotifier(cmd); got != want {
 			t.Errorf("invokesDesktopNotifier(%q) = %v, want %v", cmd, got, want)
 		}
+	}
+}
+
+// waitForFile polls for a non-empty file written by the detached notify_cmd.
+func waitForFile(t *testing.T, path string) []byte {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+			return data
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("notify_cmd never wrote %s", path)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestNotifyWithOptions_DoesNotBlock verifies a long-running notify_cmd does
+// not delay the caller.
+func TestNotifyWithOptions_DoesNotBlock(t *testing.T) {
+	setNotifyCmd(t, "sleep 5")
+	start := time.Now()
+	NotifyWithOptions(Options{Title: "t", Message: "m"})
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("NotifyWithOptions took %v, want well under 1s", d)
+	}
+}
+
+// TestNotifyWithOptions_DetachedStillGetsSubstitutionsAndEnv verifies the
+// detached command still sees placeholder values and the env overlay.
+func TestNotifyWithOptions_DetachedStillGetsSubstitutionsAndEnv(t *testing.T) {
+	outFile := filepath.Join(t.TempDir(), "out.txt")
+	tmp := outFile + ".tmp"
+	setNotifyCmd(t, "printf '%s|%s' \"$AGENTCTL_NOTIFICATION_TYPE\" {{title}} > "+tmp+" && mv "+tmp+" "+outFile)
+	NotifyWithOptions(Options{
+		Title:   "my title",
+		Message: "m",
+		Env:     map[string]string{"AGENTCTL_NOTIFICATION_TYPE": "idle_prompt"},
+	})
+	if got := string(waitForFile(t, outFile)); got != "idle_prompt|my title" {
+		t.Errorf("got %q", got)
 	}
 }
