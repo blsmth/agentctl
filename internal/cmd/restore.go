@@ -50,22 +50,45 @@ func loadRestoreInput() (*state.State, error) {
 	return state.Load()
 }
 
-// RunRestore reads the persisted agent state and relaunches any agents
-// that were running when agentctl last exited.
-func RunRestore() {
+// loadFreshRestoreInput returns the agents to restore, or nil when there is
+// nothing to do. A stale or empty input is cleared (restore.json and
+// state.json) before returning: restore.json is consumed or discarded on
+// every path, because a leftover file would make StartSession's keep-existing
+// rule block every later crash-recovery save.
+func loadFreshRestoreInput(now time.Time, maxAge time.Duration) *state.State {
 	saved, err := loadRestoreInput()
 	if err != nil {
 		logging.Log("restoreAgents: failed to load state: %v", err)
-		return
+		return nil
 	}
 	if saved == nil || len(saved.Agents) == 0 {
 		logging.Log("restoreAgents: no saved state")
-		return
+		clearRestoreInputs()
+		return nil
 	}
-	maxAge := config.Load().EffectiveRestoreMaxAge()
-	if restoreStale(saved.Timestamp, time.Now(), maxAge) {
-		logging.Log("restoreAgents: state is stale (age=%s, restore_max_age=%s), skipping agents %v",
-			time.Since(saved.Timestamp).Round(time.Second), maxAge, agentNames(saved.Agents))
+	if restoreStale(saved.Timestamp, now, maxAge) {
+		logging.Log("restoreAgents: state is stale (age=%s, restore_max_age=%s), skipping agents %v; clearing",
+			now.Sub(saved.Timestamp).Round(time.Second), maxAge, agentNames(saved.Agents))
+		clearRestoreInputs()
+		return nil
+	}
+	return saved
+}
+
+func clearRestoreInputs() {
+	if err := state.Clear(); err != nil {
+		logging.Log("restoreAgents: failed to clear state: %v", err)
+	}
+	if err := state.ClearRestore(); err != nil {
+		logging.Log("restoreAgents: failed to clear restore file: %v", err)
+	}
+}
+
+// RunRestore reads the persisted agent state and relaunches any agents
+// that were running when agentctl last exited.
+func RunRestore() {
+	saved := loadFreshRestoreInput(time.Now(), config.Load().EffectiveRestoreMaxAge())
+	if saved == nil {
 		return
 	}
 
@@ -85,12 +108,7 @@ func RunRestore() {
 	restoreAgents(saved.Agents, byName, home, filepath.Join(home, ".claude", "projects"),
 		config.Load().EffectiveNewWindowPosition(), dispatch.Restore)
 
-	if err := state.Clear(); err != nil {
-		logging.Log("restoreAgents: failed to clear state: %v", err)
-	}
-	if err := state.ClearRestore(); err != nil {
-		logging.Log("restoreAgents: failed to clear restore file: %v", err)
-	}
+	clearRestoreInputs()
 }
 
 // restoreAgents relaunches each saved agent through restore.

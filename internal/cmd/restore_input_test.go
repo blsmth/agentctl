@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -115,6 +116,43 @@ func TestRestoreAgentsOrderAndDedupe(t *testing.T) {
 			}
 			if s != tt.want {
 				t.Errorf("order %q, want %q", s, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadFreshRestoreInputClears(t *testing.T) {
+	now := time.Now()
+	maxAge := config.DefaultRestoreMaxAge
+	tests := []struct {
+		name      string
+		agents    []state.AgentState
+		ts        time.Time
+		wantNil   bool
+		wantFiles bool
+	}{
+		{"stale cleared", []state.AgentState{{Name: "a"}}, now.Add(-2 * maxAge), true, false},
+		{"empty cleared", nil, now, true, false},
+		{"fresh kept for restore", []state.AgentState{{Name: "a"}}, now, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := useRuntime(t)
+			if err := state.SaveRestoreAt(dir, &state.State{Agents: tt.agents, Timestamp: tt.ts}); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.Save(&state.State{Agents: tt.agents, Timestamp: tt.ts}); err != nil {
+				t.Fatal(err)
+			}
+			got := loadFreshRestoreInput(now, maxAge)
+			if (got == nil) != tt.wantNil {
+				t.Fatalf("got %v, wantNil=%v", got, tt.wantNil)
+			}
+			for _, f := range []string{state.RestoreFileName, "state.json"} {
+				_, err := os.Stat(filepath.Join(dir, f))
+				if exists := err == nil; exists != tt.wantFiles {
+					t.Errorf("%s exists=%v, want %v", f, exists, tt.wantFiles)
+				}
 			}
 		})
 	}
