@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -63,6 +64,10 @@ var (
 	herdDimStyle      lipgloss.Style
 	herdErrStyle      lipgloss.Style
 	herdSelectedStyle lipgloss.Style
+	herdHoverStyle    lipgloss.Style // row tint, weaker than herdSelectedStyle
+
+	herdCloseHoverStyle lipgloss.Style // ✕ under the pointer
+	herdNewHoverStyle   lipgloss.Style // "+ new" under the pointer
 
 	herdWorkingStyle lipgloss.Style
 	herdBlockedStyle lipgloss.Style
@@ -97,6 +102,9 @@ func initHerdStyles() {
 	herdDimStyle = tableStyles.Dim
 	herdErrStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Red))
 	herdSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color(t.Surface))
+	herdHoverStyle = lipgloss.NewStyle().Background(lipgloss.Color(midColor(t.Base, t.Surface)))
+	herdCloseHoverStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Red))
+	herdNewHoverStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Accent))
 
 	herdWorkingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Accent))
 	herdBlockedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Yellow))
@@ -109,6 +117,28 @@ func initHerdStyles() {
 	herdRecapStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Subtle))
 
 	herdPaletteColors = []string{t.Accent, t.Sky, t.Blue, t.Info, t.Orange, t.Green}
+}
+
+// midColor is the midpoint of two #rrggbb colours, so the hover tint sits
+// between the base background and the selection highlight. Falls back to b
+// for anything that is not a 6-digit hex colour.
+func midColor(a, b string) string {
+	parse := func(c string) (r, g, bl int64, ok bool) {
+		if len(c) != 7 || c[0] != '#' {
+			return 0, 0, 0, false
+		}
+		v, err := strconv.ParseInt(c[1:], 16, 32)
+		if err != nil {
+			return 0, 0, 0, false
+		}
+		return v >> 16 & 0xff, v >> 8 & 0xff, v & 0xff, true
+	}
+	ar, ag, ab, ok1 := parse(a)
+	br, bg, bb, ok2 := parse(b)
+	if !ok1 || !ok2 {
+		return b
+	}
+	return fmt.Sprintf("#%02x%02x%02x", (ar+br)/2, (ag+bg)/2, (ab+bb)/2)
 }
 
 // herdPalette returns the accent palette, falling back to the active theme
@@ -296,6 +326,14 @@ type HerdModel struct {
 	// reload. Cleared on success, give-up, manual selection, or replaced by a
 	// newer launch.
 	pendingFocus *herdPendingFocus
+
+	// hover is the line/region under the pointer (see herd_mouse.go);
+	// hoverX/hoverY/hasPointer remember the last pointer cell so the target
+	// can be recomputed when the content moves under a still pointer.
+	hover      herdHover
+	hoverX     int
+	hoverY     int
+	hasPointer bool
 
 	quitting bool
 
@@ -510,6 +548,7 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.groups = msg.groups
 			m.rebuildLines()
+			m.refreshHover()
 			m.applyClosePending()
 			m.resolveSelection()
 			m.applyPendingFocus()
@@ -519,6 +558,9 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		return m.handleClick(msg)
+
+	case tea.MouseMotionMsg:
+		return m.handleMotion(msg)
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -950,6 +992,11 @@ func (m *HerdModel) ensureCursorVisible() {
 	if len(m.lines) == 0 {
 		return
 	}
+	defer func(before int) {
+		if m.scrollOffset != before {
+			m.refreshHover() // the content under the pointer changed
+		}
+	}(m.scrollOffset)
 	cursor := m.splitPane.Cursor()
 	visible := m.visibleLines()
 	if cursor < m.scrollOffset {
@@ -1112,7 +1159,7 @@ func (m HerdModel) contentWidth() int {
 func (m HerdModel) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = tea.MouseModeAllMotion
 	return v
 }
 
@@ -1271,7 +1318,7 @@ func (m HerdModel) renderLine(i int, cw int) string {
 	selected := i == m.splitPane.Cursor()
 	switch l.kind {
 	case herdLineHeader:
-		return m.renderGroupHeader(l.group, selected, cw)
+		return m.renderGroupHeaderHover(l.group, selected, m.hover.region(i) == herdHoverNew, cw)
 	case herdLinePlaceholder:
 		marker := "    "
 		if selected {
@@ -1284,7 +1331,7 @@ func (m HerdModel) renderLine(i int, cw int) string {
 		// Align under agent names: bar + cursor slot (3 cols) + glyph + space.
 		return strings.Repeat(" ", 3+2) + herdDimStyle.Render(l.label)
 	default: // herdLineRow
-		return m.renderTreeRow(l.row, l.treePrefix, l.nameCol, selected, cw)
+		return m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, selected, m.hover.region(i), cw)
 	}
 }
 
@@ -1349,6 +1396,11 @@ func rowGlyph(r herd.Row) (string, lipgloss.Style) {
 // session's summary in the main panel) — hence the cursor marker, matching
 // renderRow's convention.
 func (m HerdModel) renderGroupHeader(g herd.Group, selected bool, cw int) string {
+	return m.renderGroupHeaderHover(g, selected, false, cw)
+}
+
+// renderGroupHeaderHover is renderGroupHeader with the "+ new" button hovered.
+func (m HerdModel) renderGroupHeaderHover(g herd.Group, selected, newHover bool, cw int) string {
 	glyph, style := rollupGlyph(g.Rollup)
 	count := fmt.Sprintf("(%d agent%s)", len(g.Rows), plural(len(g.Rows)))
 	marker := strings.Repeat(" ", herdSidebarLeftInset)
@@ -1370,7 +1422,11 @@ func (m HerdModel) renderGroupHeader(g herd.Group, selected bool, cw int) string
 		if pad < 1 {
 			pad = 1
 		}
-		line += strings.Repeat(" ", pad) + herdDimStyle.Render(herdNewLabel)
+		newStyle := herdDimStyle
+		if newHover {
+			newStyle = herdNewHoverStyle
+		}
+		line += strings.Repeat(" ", pad) + newStyle.Render(herdNewLabel)
 	}
 	return herdFitLine(line, selected, cw)
 }
@@ -1387,15 +1443,23 @@ var herdNow = time.Now
 // A selected line is highlighted up to the gutter (never into it) and then
 // padded with plain gutter columns, so it measures exactly cw.
 func herdFitLine(line string, selected bool, cw int) string {
+	if selected {
+		return herdFitLineStyled(line, &herdSelectedStyle, cw)
+	}
+	return herdFitLineStyled(line, nil, cw)
+}
+
+// herdFitLineStyled is herdFitLine with an arbitrary highlight (nil = none).
+func herdFitLineStyled(line string, hl *lipgloss.Style, cw int) string {
 	inner := cw - herdSidebarRightGutter
 	if inner < 1 {
 		return ansi.Truncate(line, max(cw, 0), "")
 	}
 	line = ansi.Truncate(line, inner, "")
-	if !selected {
+	if hl == nil {
 		return line
 	}
-	return herdSelectedStyle.Width(inner).Render(line) + strings.Repeat(" ", herdSidebarRightGutter)
+	return hl.Width(inner).Render(line) + strings.Repeat(" ", herdSidebarRightGutter)
 }
 
 // herdRowCursor is a row's left bar in the group colour plus the cursor slot.
@@ -1451,6 +1515,12 @@ func recapStyle(src herd.RecapSource) lipgloss.Style {
 // row also renders its detail lines (see rowDetail) beneath it, joined by
 // newlines; every line measures at most cw (exactly cw when selected).
 func (m HerdModel) renderTreeRow(r herd.Row, treePrefix string, nameCol int, selected bool, cw int) string {
+	return m.renderTreeRowHover(r, treePrefix, nameCol, selected, herdHoverNone, cw)
+}
+
+// renderTreeRowHover is renderTreeRow with the hover region of this row: a
+// body hover tints an unselected row, a close hover recolours the ✕.
+func (m HerdModel) renderTreeRowHover(r herd.Row, treePrefix string, nameCol int, selected bool, hover herdHoverRegion, cw int) string {
 	glyph, style := rowGlyph(r)
 	cursor := herdRowCursor(r, selected)
 	glyphStr := style.Render(glyph)
@@ -1480,6 +1550,9 @@ func (m HerdModel) renderTreeRow(r herd.Row, treePrefix string, nameCol int, sel
 		text = herdBlockedStyle.Render(truncateToWidth("close "+r.Name+"? y/n", available))
 		closeStyle = herdBlockedStyle
 	} else {
+		if hover == herdHoverClose {
+			closeStyle = herdCloseHoverStyle
+		}
 		right = rowRight(r)
 		if rw := lipgloss.Width(right); rw > 0 && available-rw-1 >= herdMinRecapWidth {
 			available -= rw + 1
@@ -1493,7 +1566,14 @@ func (m HerdModel) renderTreeRow(r herd.Row, treePrefix string, nameCol int, sel
 	line := prefix + text
 	pad := inner - closeW - lipgloss.Width(line) - lipgloss.Width(right)
 	line += strings.Repeat(" ", max(pad, 0)) + right + " " + closeStyle.Render(herdCloseLabel)
-	out := herdFitLine(line, selected, cw)
+	var hl *lipgloss.Style
+	switch {
+	case selected:
+		hl = &herdSelectedStyle
+	case hover == herdHoverBody || hover == herdHoverClose:
+		hl = &herdHoverStyle
+	}
+	out := herdFitLineStyled(line, hl, cw)
 	if !selected {
 		return out
 	}

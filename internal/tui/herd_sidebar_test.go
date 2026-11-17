@@ -403,3 +403,118 @@ func TestSidebarCloseButtonOneColumnFromPaneEdge(t *testing.T) {
 		}
 	}
 }
+
+// hoverTarget finds the screen row of line i and returns it.
+func hoverRowY(m HerdModel, i int) int {
+	y := m.herdListTop()
+	cw := m.listColWidth()
+	for j := m.scrollOffset; j < i; j++ {
+		y += m.lineHeight(j, cw)
+	}
+	return y
+}
+
+func TestHerdHover_CloseAndNew(t *testing.T) {
+	m := sampleSidebar(t, 56)
+	cw := m.listColWidth()
+	closeX := cw - herdSidebarRightGutter - 1
+
+	// Pick an unselected row.
+	rowIdx := -1
+	for i, l := range m.lines {
+		if l.kind == herdLineRow && i != m.splitPane.Cursor() {
+			rowIdx = i
+			break
+		}
+	}
+	if rowIdx < 0 {
+		t.Fatal("no unselected row")
+	}
+	nm, cmd := m.Update(tea.MouseMotionMsg{X: closeX, Y: hoverRowY(m, rowIdx)})
+	if cmd != nil {
+		t.Fatal("motion should not return a cmd")
+	}
+	m = nm.(HerdModel)
+	if got := m.hover.region(rowIdx); got != herdHoverClose {
+		t.Fatalf("region = %v, want close", got)
+	}
+	l := m.lines[rowIdx]
+	want := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, false, herdHoverClose, cw)
+	if got := m.renderLine(rowIdx, cw); got != want {
+		t.Error("hovered row not rendered with the close-hover style")
+	}
+	if !strings.Contains(want, herdCloseHoverStyle.Render(herdCloseLabel)) {
+		t.Error("rendered row lacks the styled ✕")
+	}
+	if plain := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, false, herdHoverNone, cw); plain == want {
+		t.Error("hover must change the rendering")
+	}
+
+	// Same region: no change, nil cmd.
+	before := m.hover
+	nm, cmd = m.Update(tea.MouseMotionMsg{X: closeX, Y: hoverRowY(m, rowIdx)})
+	if cmd != nil || nm.(HerdModel).hover != before {
+		t.Error("motion within the same region must be a no-op")
+	}
+
+	// Off the list (header rows): cleared.
+	nm, _ = m.Update(tea.MouseMotionMsg{X: closeX, Y: 0})
+	if nm.(HerdModel).hover.region(rowIdx) != herdHoverNone {
+		t.Error("moving off the list should clear hover")
+	}
+
+}
+
+func TestHerdHover_New(t *testing.T) {
+	m := sampleSidebar(t, 56)
+	cw := m.listColWidth()
+	for i := range m.lines {
+		if m.lines[i].kind == herdLineHeader {
+			m.lines[i].group.ProjectDir, m.lines[i].group.RuntimeDir = "/p", "/r"
+		}
+	}
+	hdr := -1
+	for i, l := range m.lines {
+		if l.kind == herdLineHeader && groupCanLaunch(l.group) {
+			hdr = i
+			break
+		}
+	}
+	if hdr < 0 {
+		t.Fatal("no launchable header in sample")
+	}
+	nm, _ := m.Update(tea.MouseMotionMsg{X: cw - herdSidebarRightGutter - 1, Y: hoverRowY(m, hdr)})
+	m = nm.(HerdModel)
+	if m.hover.region(hdr) != herdHoverNew {
+		t.Fatalf("region = %v, want new", m.hover.region(hdr))
+	}
+	if !strings.Contains(m.renderLine(hdr, cw), herdNewHoverStyle.Render(herdNewLabel)) {
+		t.Error("header lacks hovered + new")
+	}
+}
+
+func TestHerdHover_WidthInvariants(t *testing.T) {
+	for _, width := range []int{44, 56, 120} {
+		m := sampleSidebar(t, width)
+		cw := m.contentWidth()
+		for i, l := range m.lines {
+			if l.kind != herdLineRow {
+				continue
+			}
+			for _, reg := range []herdHoverRegion{herdHoverBody, herdHoverClose} {
+				for _, sel := range []bool{false, true} {
+					out := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, sel, reg, cw)
+					for _, line := range strings.Split(out, "\n") {
+						w := lipgloss.Width(line)
+						if w != cw { // every case here is highlighted (selected or hover tint)
+							t.Errorf("width=%d line %d reg=%v sel=%v: %d cols, want exactly %d", width, i, reg, sel, w, cw)
+						}
+						if !strings.HasSuffix(line, strings.Repeat(" ", herdSidebarRightGutter)) {
+							t.Errorf("gutter not plain: %q", line)
+						}
+					}
+				}
+			}
+		}
+	}
+}
