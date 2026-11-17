@@ -3,6 +3,7 @@ package logging
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/blsmth/agentctl/internal/paths"
@@ -59,5 +60,34 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 	if got := fi.Mode().Perm(); got != want {
 		t.Errorf("%s mode = %v, want %v", path, got, want)
+	}
+}
+
+func TestInitFileWritesOutsideRuntimeDir(t *testing.T) {
+	resetState()
+	paths.ResetForTest()
+	t.Setenv("AGENTCTL_RUNTIME_DIR", "")
+	t.Setenv("AGENTCTL_SESSION_ID", "")
+	runtimeBase := t.TempDir()
+	paths.Init(runtimeBase)
+	t.Cleanup(func() {
+		resetState()
+		paths.ResetForTest()
+	})
+
+	path := filepath.Join(t.TempDir(), "serve", "serve.log")
+	InitFile(path)
+	Log("serve line")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	if !strings.Contains(string(data), "serve line") {
+		t.Errorf("log missing line: %q", data)
+	}
+	assertMode(t, path, 0o600)
+	if _, err := os.Stat(filepath.Join(runtimeBase, ".agentctl")); !os.IsNotExist(err) {
+		t.Errorf("InitFile created the runtime dir (err=%v)", err)
 	}
 }

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>agentctl: install certificate</title>
+<style>/*CSS*/</style>
+</head>
+<body>
+<main>
+<h1>Step 1: trust this Mac</h1>
+<p>agentctl serves HTTPS with a certificate authority created on <strong>{{.Host}}</strong>. Install it once:</p>
+<ol>
+<li><a class="button" href="/ca.mobileconfig">Download profile</a></li>
+<li>Open Settings &rarr; <em>Profile Downloaded</em> and tap Install.</li>
+<li>Settings &rarr; General &rarr; About &rarr; Certificate Trust Settings: enable full trust for <em>{{.CAName}}</em>.</li>
+</ol>
+<p>Check that the fingerprint shown in Settings matches the one printed in the terminal:</p>
+<p class="fp">{{.Fingerprint}}</p>
+<h1>Step 2: pair</h1>
+<p>Scan the second QR code printed by <code>agentctl serve pair</code>.</p>
+</main>
+</body>
+</html>

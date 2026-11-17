@@ -96,3 +96,36 @@ func TestKillSkipsOwnPID(t *testing.T) {
 	// If the guard were missing this would SIGTERM the test binary.
 	Kill(dir, "monitor.pid")
 }
+
+func TestRunning(t *testing.T) {
+	tests := []struct {
+		name    string
+		pid     func(t *testing.T) int
+		matches bool
+		want    bool
+	}{
+		{name: "live matching process", pid: func(t *testing.T) int { c, _ := startSleeper(t); return c.Process.Pid }, matches: true, want: true},
+		{name: "live non-matching process", pid: func(t *testing.T) int { c, _ := startSleeper(t); return c.Process.Pid }, matches: false, want: false},
+		{name: "own pid", pid: func(*testing.T) int { return os.Getpid() }, matches: true, want: false},
+		{name: "garbage", pid: func(*testing.T) int { return -1 }, matches: true, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			orig := isAgentctlCmd
+			t.Cleanup(func() { isAgentctlCmd = orig })
+			isAgentctlCmd = func(int, string) bool { return tc.matches }
+			dir := t.TempDir()
+			pid := tc.pid(t)
+			if err := os.WriteFile(filepath.Join(dir, "serve.pid"), []byte(strconv.Itoa(pid)+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, ok := Running(dir, "serve.pid", "serve")
+			if ok != tc.want || (ok && got != pid) {
+				t.Errorf("Running = %d, %v; want %v", got, ok, tc.want)
+			}
+		})
+	}
+	if _, ok := Running(t.TempDir(), "missing.pid", "serve"); ok {
+		t.Error("missing pidfile reported running")
+	}
+}

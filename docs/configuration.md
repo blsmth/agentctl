@@ -17,7 +17,7 @@ agentctl follows the XDG base directory spec and splits user-level files by role
 |---|---|---|
 | Config | `$XDG_CONFIG_HOME/agentctl` (default `~/.config/agentctl`) | `config.json`, user-authored `themes/*.json` |
 | Data | `$XDG_DATA_HOME/agentctl` (default `~/.local/share/agentctl`) | `context/` (context store), `journal/` (work journal) |
-| State | `$XDG_STATE_HOME/agentctl` (default `~/.local/state/agentctl`) | `registry/` (live sessions), `ratelimits.json`, `hub/` (hub session working directory) |
+| State | `$XDG_STATE_HOME/agentctl` (default `~/.local/state/agentctl`) | `registry/` (live sessions), `ratelimits.json`, `hub/` (hub session working directory), `serve/` (`agentctl serve` certificates, devices, log) |
 
 A relative `XDG_*` value is invalid per the spec and is ignored. `AGENTCTL_REGISTRY_DIR` still overrides the registry location.
 
@@ -67,6 +67,7 @@ Rationale: a project-local file can arrive with a cloned repository. Executing c
 | `metrics` | object | disabled | Prometheus endpoint and remote write. See [metrics](#metrics). |
 | `models` | object | built-in registry | Model registry overrides and context thresholds. See [models](#models). |
 | `backends` | object | none | Named self-hosted endpoints. Global-only. See [Backends](#backends-ollama-and-nous-portal). |
+| `serve` | object | defaults | `agentctl serve` (mobile web app server). Global-only. See [serve](#serve). |
 | `agents` | object | none | Per-agent settings. See [Per-agent settings](#per-agent-settings). |
 
 ### Notifications
@@ -163,6 +164,25 @@ Journal output goes to `~/.local/share/agentctl/journal/<agent>.md` with a machi
 | `metrics.port` | `9101` | Local `/metrics` port. |
 | `metrics.labels` | none | Static labels, e.g. `{"instance": "laptop"}`. |
 | `metrics.basic_auth` | none | `{"username": "...", "password": "..."}` for the remote-write endpoint. |
+
+### serve
+
+Settings for `agentctl serve`, the per-machine HTTPS server the mobile web app talks to (design: [design/mobile-web-app.md](design/mobile-web-app.md)). **Every key is global-only**: a `serve` block in a project-local config is ignored with a warning. The server reads it at start; restart it (`agentctl serve install` again, or `launchctl kickstart -k gui/$(id -u)/com.blsmth.agentctl.serve`) after editing.
+
+| Key | Default | Description |
+|---|---|---|
+| `serve.listen` | `:8443` | HTTPS listen address. While pairing, a plain-HTTP listener on port + 1 serves only the CA profile and instructions. |
+| `serve.hostnames` | none | Extra DNS names for the server certificate. `<hostname>.local` and every non-loopback interface IP are always included. |
+| `serve.allow_cidrs` | RFC 1918, `100.64.0.0/10`, loopback | Source-address allowlist, checked before anything else (including `/healthz`). `X-Forwarded-For` is never trusted. |
+| `serve.allow_write` | `false` | Enable write actions (answer, reply, interrupt, dispatch, close). |
+| `serve.keep_awake` | `true` | Hold `caffeinate -s` while any agent is working or blocked. |
+| `serve.push.blocked` / `serve.push.done` | `true` | Push on an agent becoming blocked / finishing. |
+| `serve.push.blocked_reminder_minutes` | `10` | One reminder per blocked episode; `0` disables. |
+| `serve.push.quiet_hours` | none | Local `HH:MM-HH:MM` range with no pushes. |
+| `serve.push.muted_projects` | none | Project names that never push. |
+| `serve.ntfy_topic` | none | Also post notifications to `https://ntfy.sh/<topic>`. |
+
+State lives in `$XDG_STATE_HOME/agentctl/serve/` (0700): the local CA and server certificate, `devices.json` (token hashes only), `serve.pid`, `serve.log`, and the 0600 control socket `control.sock`. Commands: `agentctl serve` (foreground), `serve install` / `uninstall` (launchd LaunchAgent; prints a systemd user unit on Linux), `serve status`, `serve pair [--name N]`, `serve devices [rm <id The CA is name-constrained to local names (`.local`, `.lan`, `.home`, `.home.arpa`, `.internal`, the `serve.hostnames` present when it was created) and private/loopback/ULA IPs; after adding a hostname outside those, run `agentctl serve ca rotate` (every device must reinstall the profile and pair again).|name>]`.
 
 ### models
 

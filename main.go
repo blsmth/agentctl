@@ -523,6 +523,9 @@ var readOnlyCommands = map[string]bool{
 	// backend login/logout/status touch the keychain or credential store,
 	// never the runtime dir.
 	"backend": true,
+	// serve is per-machine: its state, log and pidfile live under
+	// <StateDir>/serve, never in the cwd (launchd starts it from there).
+	"serve": true,
 }
 
 // isReadOnlyInvocation reports whether args name a read-only invocation:

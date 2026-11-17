@@ -1,0 +1,324 @@
+// Package serve implements `agentctl serve`: a per-machine HTTPS server that
+// the phone web app talks to. See docs/design/mobile-web-app.md.
+//
+// Request pipeline (Server.chain): source-CIDR filter, security headers,
+// CSRF header check for non-GET methods, then the Router, which applies
+// per-route device-cookie auth and the allow_write gate.
+package serve
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/logging"
+)
+
+// Options configures a Server.
+type Options struct {
+	// Config is the global serve block.
+	Config config.ServeConfig
+	// Dir is the serve state dir (<StateDir>/serve).
+	Dir string
+	// Version is reported by /healthz and `serve status`.
+	Version string
+	// CA is the local CA; pairing serves it as a configuration profile.
+	CA *CA
+	// AdvertiseHost is the host (usually an IP in the certificate) put into
+	// the pairing URLs.
+	AdvertiseHost string
+	// HTTPSPort is the port the HTTPS listener is bound to.
+	HTTPSPort int
+	// BootstrapAddr is where the plain-HTTP pairing listener binds while a
+	// pairing window is open. Empty disables it.
+	BootstrapAddr string
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
+}
+
+// Server is the agentctl serve HTTP application.
+type Server struct {
+	opts    Options
+	now     func() time.Time
+	started time.Time
+	cidrs   cidrFilter
+	devices *DeviceStore
+	pairing pairing
+	router  *Router
+	handler http.Handler
+
+	bootMu    sync.Mutex
+	boot      *http.Server
+	bootPort  int
+	bootTimer *time.Timer
+	bootGen   int
+
+	// restart asks Run to re-exec (after `serve ca rotate`).
+	restart chan struct{}
+}
+
+// New builds a Server. It loads devices.json from opts.Dir and parses
+// allow_cidrs; it does not listen.
+func New(opts Options) (*Server, error) {
+	cidrs, err := parseCIDRs(opts.Config.EffectiveAllowCIDRs())
+	if err != nil {
+		return nil, err
+	}
+	devices, err := OpenDeviceStore(opts.Dir)
+	if err != nil {
+		return nil, err
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	s := &Server{opts: opts, now: now, started: now(), cidrs: cidrs, devices: devices, restart: make(chan struct{}, 1)}
+	s.router = newRouter(devices, opts.Config.AllowWrite, now)
+	s.routes(s.router)
+	s.handler = s.chain(s.router)
+	return s, nil
+}
+
+// Handler returns the full HTTPS request pipeline.
+func (s *Server) Handler() http.Handler { return s.handler }
+
+// chain wraps h in the middleware every HTTPS request passes, outermost
+// first: CIDR filter, security headers, CSRF.
+func (s *Server) chain(h http.Handler) http.Handler {
+	return s.cidrs.middleware(securityHeaders(requireCSRF(h)))
+}
+
+// routes registers every endpoint. Later PRs add one line each here
+// (s.registerRead(rt), s.registerPush(rt), s.registerWrite(rt), ...),
+// implemented in their own routes_*.go files.
+func (s *Server) routes(rt *Router) {
+	s.registerCore(rt)
+}
+
+// registerCore registers the foundation endpoints.
+func (s *Server) registerCore(rt *Router) {
+	rt.Public("GET /healthz", s.handleHealthz)
+	rt.Public("GET /pair", s.handlePair)
+	rt.Device("GET /{$}", s.handleIndex)
+	rt.Device("/", s.handleNotFound)
+}
+
+// healthz is the /healthz body.
+type healthz struct {
+	OK       bool     `json:"ok"`
+	Version  string   `json:"version"`
+	Started  string   `json:"started"`
+	Features []string `json:"features"`
+}
+
+func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, healthz{
+		OK:       true,
+		Version:  s.opts.Version,
+		Started:  s.started.UTC().Format(time.RFC3339),
+		Features: s.router.Features(),
+	})
+}
+
+func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
+	writeHTML(w, http.StatusOK, pageIndex)
+}
+
+func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusNotFound, codeNotFound, "no such endpoint: "+r.URL.Path)
+}
+
+// PairInfo is what `agentctl serve pair` prints.
+type PairInfo struct {
+	Code         string    `json:"code"`
+	Expires      time.Time `json:"expires"`
+	PairURL      string    `json:"pair_url"`
+	BootstrapURL string    `json:"bootstrap_url,omitempty"`
+	Fingerprint  string    `json:"fingerprint"`
+}
+
+// OpenPairing opens (or restarts) the pairing window: a fresh one-time code
+// and, when configured, the plain-HTTP bootstrap listener serving the CA
+// profile. Both end PairingWindow later.
+func (s *Server) OpenPairing(name string) (PairInfo, error) {
+	if s.opts.CA == nil {
+		return PairInfo{}, errors.New("no CA loaded")
+	}
+	s.bootMu.Lock()
+	defer s.bootMu.Unlock()
+	port := 0
+	if s.opts.BootstrapAddr != "" {
+		p, err := s.startBootstrapLocked()
+		if err != nil {
+			return PairInfo{}, err
+		}
+		port = p
+	}
+	code, expires, err := s.pairing.open(name, s.now())
+	if err != nil {
+		return PairInfo{}, err
+	}
+	if s.bootTimer != nil {
+		s.bootTimer.Stop()
+	}
+	s.bootGen++
+	gen := s.bootGen
+	s.bootTimer = time.AfterFunc(expires.Sub(s.now()), func() { s.expirePairing(gen) })
+
+	info := PairInfo{
+		Code:        code,
+		Expires:     expires,
+		Fingerprint: s.opts.CA.Fingerprint(),
+		PairURL: (&url.URL{
+			Scheme:   "https",
+			Host:     net.JoinHostPort(s.opts.AdvertiseHost, strconv.Itoa(s.opts.HTTPSPort)),
+			Path:     "/pair",
+			RawQuery: url.Values{"code": {code}}.Encode(),
+		}).String(),
+	}
+	if port != 0 {
+		info.BootstrapURL = "http://" + net.JoinHostPort(s.opts.AdvertiseHost, strconv.Itoa(port)) + "/"
+	}
+	logging.Log("serve: pairing window open until %s", expires.Format(time.RFC3339))
+	return info, nil
+}
+
+// startBootstrapLocked starts the bootstrap listener if it is not running
+// and returns its port. Callers hold bootMu.
+func (s *Server) startBootstrapLocked() (int, error) {
+	if s.boot != nil {
+		return s.bootPort, nil
+	}
+	ln, err := net.Listen("tcp", s.opts.BootstrapAddr)
+	if err != nil {
+		return 0, fmt.Errorf("starting pairing bootstrap listener on %s: %w", s.opts.BootstrapAddr, err)
+	}
+	srv := newHTTPServer(s.BootstrapHandler())
+	s.boot = srv
+	s.bootPort = ln.Addr().(*net.TCPAddr).Port
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logging.Error("serve: bootstrap listener: %v", err)
+		}
+	}()
+	return s.bootPort, nil
+}
+
+// expirePairing is the window timer. It does nothing when the window was
+// reopened (a newer generation) after this timer was armed.
+func (s *Server) expirePairing(gen int) {
+	s.bootMu.Lock()
+	defer s.bootMu.Unlock()
+	if gen == s.bootGen {
+		s.closePairingLocked()
+	}
+}
+
+// closePairingLocked ends the pairing window: the code is discarded and the
+// bootstrap listener stops. Callers hold bootMu.
+func (s *Server) closePairingLocked() {
+	s.pairing.close()
+	if s.bootTimer != nil {
+		s.bootTimer.Stop()
+		s.bootTimer = nil
+	}
+	if s.boot != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = s.boot.Shutdown(ctx)
+		s.boot = nil
+		logging.Log("serve: pairing window closed")
+	}
+}
+
+// Close ends any pairing window and stops the bootstrap listener.
+func (s *Server) Close() {
+	s.bootMu.Lock()
+	defer s.bootMu.Unlock()
+	s.closePairingLocked()
+}
+
+// BootstrapHandler serves the plain-HTTP pairing landing page and the CA
+// configuration profile, behind the same CIDR filter as HTTPS. It serves
+// nothing secret: the CA certificate is public, and the pairing code only
+// ever travels over HTTPS.
+func (s *Server) BootstrapHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
+		host, _ := os.Hostname()
+		body, err := renderBootstrap(bootstrapPage{
+			Host:        host,
+			CAName:      s.opts.CA.Cert.Subject.CommonName,
+			Fingerprint: s.opts.CA.Fingerprint(),
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, codeInternal, "rendering page")
+			return
+		}
+		writeHTML(w, http.StatusOK, body)
+	})
+	mux.HandleFunc("GET /ca.mobileconfig", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", MobileconfigContentType)
+		w.Header().Set("Content-Disposition", `attachment; filename="agentctl-ca.mobileconfig"`)
+		_, _ = w.Write(Mobileconfig(s.opts.CA))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, codeNotFound, "no such endpoint: "+r.URL.Path)
+	})
+	return s.cidrs.middleware(securityHeaders(mux))
+}
+
+// RequestRestart asks the running server to re-exec itself, picking up new
+// certificates. It never blocks.
+func (s *Server) RequestRestart() {
+	select {
+	case s.restart <- struct{}{}:
+	default:
+	}
+}
+
+// StatusInfo is the running server's self-report for `serve status`.
+type StatusInfo struct {
+	PID      int       `json:"pid"`
+	Version  string    `json:"version"`
+	Started  time.Time `json:"started"`
+	URL      string    `json:"url"`
+	Pairing  bool      `json:"pairing"`
+	Features []string  `json:"features"`
+}
+
+// Status reports the running server's state.
+func (s *Server) Status() StatusInfo {
+	return StatusInfo{
+		PID:      os.Getpid(),
+		Version:  s.opts.Version,
+		Started:  s.started,
+		URL:      "https://" + net.JoinHostPort(s.opts.AdvertiseHost, strconv.Itoa(s.opts.HTTPSPort)) + "/",
+		Pairing:  s.pairing.active(s.now()),
+		Features: s.router.Features(),
+	}
+}
+
+// newHTTPServer returns an http.Server with timeouts so a slow or malicious
+// client cannot hold connections open indefinitely (as internal/metrics).
+// Long-lived handlers (SSE, the terminal WebSocket in later PRs) lift
+// WriteTimeout per request with http.NewResponseController(w).
+// SetWriteDeadline(time.Time{}).
+func newHTTPServer(h http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           h,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    64 << 10,
+	}
+}
