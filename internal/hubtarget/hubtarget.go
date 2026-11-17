@@ -221,7 +221,7 @@ func LeaveHub(l Leaver, client string) {
 	}
 	var cands []tmux.SessionActivity
 	for _, s := range l.Sessions() {
-		if strings.HasPrefix(s.Name, "agentctl-") && s.Name != tmux.HubSessionName && !tmux.IsViewerSession(s.Name) {
+		if strings.HasPrefix(s.Name, "agentctl-") && s.Name != tmux.HubSessionName && !tmux.IsAnyViewerSession(s.Name) {
 			cands = append(cands, s)
 		}
 	}

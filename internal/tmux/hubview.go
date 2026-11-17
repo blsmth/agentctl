@@ -218,7 +218,7 @@ func killViewerSessions(except string) {
 // session, so the pane never dies. Only viewer panes/sessions are ever
 // created or killed; agent panes are never touched.
 func ShowLiveViewer(homeSession, windowID string, rightWidth int) error {
-	if homeSession == HubSessionName || IsViewerSession(homeSession) || windowID == "" {
+	if homeSession == HubSessionName || IsAnyViewerSession(homeSession) || windowID == "" {
 		return fmt.Errorf("cannot view %q/%q live", homeSession, windowID)
 	}
 	pane := viewerPaneID()
@@ -374,7 +374,22 @@ func SessionOfWindow(windowID string) string {
 	if err != nil {
 		return ""
 	}
-	return out
+	return homeOfSession(out)
+}
+
+// homeOfSession maps a viewer session (hub or phone) to the home session of
+// its group and returns any other name unchanged. tmux resolves a pane or
+// window target to the most recently active session holding it, which is a
+// viewer while someone watches through the hub or the phone; callers want
+// the agent's own session. A seam for tests.
+var homeOfSession = func(name string) string {
+	if !IsAnyViewerSession(name) {
+		return name
+	}
+	if home := homeOfViewer(name); home != "" {
+		return home
+	}
+	return name
 }
 
 // ViewedAgent describes the agent currently shown in the hub's live viewer.
@@ -389,7 +404,7 @@ type ViewedAgent struct {
 // first one that is not a viewer session.
 func pickHomeSession(members []string) string {
 	for _, m := range members {
-		if m != "" && !IsViewerSession(m) && m != HubSessionName {
+		if m != "" && !IsAnyViewerSession(m) && m != HubSessionName {
 			return m
 		}
 	}

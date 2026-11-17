@@ -79,6 +79,10 @@ type auditEntry struct {
 	Window     string `json:"window"`
 	BodySHA256 string `json:"body_sha256"`
 	Result     string `json:"result"`
+	// BytesIn and BytesOut count a live terminal's traffic on its
+	// "disconnected" line (keystrokes in, screen output out).
+	BytesIn  *int64 `json:"bytes_in,omitempty"`
+	BytesOut *int64 `json:"bytes_out,omitempty"`
 }
 
 // auditLog appends entries to <serve dir>/audit.jsonl (0600), one locked

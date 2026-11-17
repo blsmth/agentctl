@@ -55,6 +55,11 @@ type Options struct {
 	Injector   Injector
 	Closer     WindowCloser
 	Dispatcher Dispatcher
+	// Live terminal dependencies; nil means tmux viewer sessions and
+	// creack/pty. TerminalSizeEvery is the window-size poll; 0 means 2s.
+	Terminal          TerminalTmux
+	PTY               PTYStarter
+	TerminalSizeEvery time.Duration
 	// BusOptions tunes the fleet event bus (debounce, rediscovery).
 	BusOptions fleetwatch.Options
 	// PingEvery is the SSE keep-alive interval; 0 means 20s.
@@ -96,6 +101,7 @@ type Server struct {
 	limiter    writeLimiter
 	audit      *auditLog
 	winLocks   windowLocks
+	term       *terminals
 
 	// done is closed by Close so open SSE streams end before shutdown.
 	done      chan struct{}
@@ -148,6 +154,7 @@ func New(opts Options) (*Server, error) {
 		s.dispatcher = launchDispatcher{}
 	}
 	s.audit = newAuditLog(opts.Dir)
+	s.term = newTerminals(opts.Terminal, opts.PTY, opts.TerminalSizeEvery)
 	if s.panes == nil {
 		s.panes = tmuxPanes{}
 	}
@@ -191,6 +198,7 @@ func (s *Server) routes(rt *Router) {
 	s.registerRead(rt)
 	s.registerPush(rt)
 	s.registerWrite(rt)
+	s.registerTerminal(rt)
 }
 
 // registerCore registers the foundation endpoints.
@@ -357,14 +365,17 @@ func (s *Server) Start(ctx context.Context) {
 }
 
 // Close ends any pairing window, stops the bootstrap listener and the
-// background watchers, and releases keep-awake. It must complete before a
-// selfexec re-exec so no caffeinate child outlives the old image. Idempotent.
+// background watchers, ends live terminals (killing their tmux clients and
+// viewer sessions), and releases keep-awake. It must complete before a
+// selfexec re-exec so no caffeinate or tmux child outlives the old image.
+// Idempotent.
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		close(s.done)
 		if s.cancel != nil {
 			s.cancel()
 		}
+		s.term.close()
 		s.bgWG.Wait()
 		s.holder.Stop()
 	})
@@ -436,9 +447,9 @@ func (s *Server) Status() StatusInfo {
 
 // newHTTPServer returns an http.Server with timeouts so a slow or malicious
 // client cannot hold connections open indefinitely (as internal/metrics).
-// Long-lived handlers (SSE, the terminal WebSocket in later PRs) lift
-// WriteTimeout per request with http.NewResponseController(w).
-// SetWriteDeadline(time.Time{}).
+// Long-lived handlers (SSE, the terminal WebSocket) lift the timeouts per
+// request with http.NewResponseController(w).SetWriteDeadline(time.Time{})
+// (and SetReadDeadline for the WebSocket).
 func newHTTPServer(h http.Handler) *http.Server {
 	return &http.Server{
 		Handler:           h,

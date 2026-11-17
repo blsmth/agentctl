@@ -83,12 +83,26 @@ export function windowHash(session, windowId) {
   return `#/w/${encodeURIComponent(session)}/${encodeURIComponent(windowId)}`;
 }
 
+/** terminalHash is the app route for a window's live terminal. */
+export function terminalHash(session, windowId) {
+  return `#/t/${encodeURIComponent(session)}/${encodeURIComponent(windowId)}`;
+}
+
+/** terminalSocketUrl is the WebSocket URL of a window's live terminal on this origin. */
+export function terminalSocketUrl(loc, session, windowId) {
+  const scheme = loc.protocol === "https:" ? "wss:" : "ws:";
+  return `${scheme}//${loc.host}${windowApiPath(session, windowId)}/terminal`;
+}
+
 /** parseRoute turns location.hash into {name, ...params}. */
 export function parseRoute(hash) {
   const parts = (hash || "").replace(/^#\/?/, "").split("/").filter(Boolean);
   try {
     if (parts[0] === "w" && parts.length >= 3) {
       return { name: "window", session: decodeURIComponent(parts[1]), windowId: decodeURIComponent(parts[2]) };
+    }
+    if (parts[0] === "t" && parts.length >= 3) {
+      return { name: "terminal", session: decodeURIComponent(parts[1]), windowId: decodeURIComponent(parts[2]) };
     }
   } catch {
     return { name: "fleet" };
@@ -179,4 +193,57 @@ export function safeHttpsUrl(s) {
   } catch {
     return "";
   }
+}
+
+/**
+ * parseControl parses a terminal control frame: {type:"size", cols, rows,
+ * read_only} or {type:"ping"}. Anything else returns null.
+ */
+export function parseControl(text) {
+  let m;
+  try {
+    m = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!m || typeof m !== "object") return null;
+  if (m.type === "ping") return { type: "ping" };
+  if (m.type === "size" && Number.isInteger(m.cols) && Number.isInteger(m.rows) && m.cols > 0 && m.rows > 0) {
+    return { type: "size", cols: Math.min(m.cols, 1000), rows: Math.min(m.rows, 1000), readOnly: m.read_only === true };
+  }
+  return null;
+}
+
+/**
+ * fitFontSize scales a font so cols columns fill width. measured is the
+ * rendered width of those columns at font size base; xterm cell width is
+ * linear in font size. The result is clamped to [min, max].
+ */
+export function fitFontSize(width, measured, base, min = 5, max = 16) {
+  if (!(width > 0) || !(measured > 0) || !(base > 0)) return base;
+  const f = Math.floor(((base * width) / measured) * 10) / 10;
+  return Math.max(min, Math.min(max, f));
+}
+
+/**
+ * KEY_BAR lists the extra keys a phone keyboard lacks. Arrow keys depend on
+ * the terminal's cursor-key mode (see keySequence).
+ */
+export const KEY_BAR = [
+  { label: "Esc", seq: "\x1b" },
+  { label: "Tab", seq: "\t" },
+  { label: "^C", seq: "\x03" },
+  { label: "←", arrow: "D" },
+  { label: "↑", arrow: "A" },
+  { label: "↓", arrow: "B" },
+  { label: "→", arrow: "C" },
+  { label: "1", seq: "1" },
+  { label: "2", seq: "2" },
+  { label: "⏎", seq: "\r" },
+];
+
+/** keySequence returns the bytes a key-bar key sends. */
+export function keySequence(key, applicationCursor) {
+  if (key.arrow) return `\x1b${applicationCursor ? "O" : "["}${key.arrow}`;
+  return key.seq;
 }

@@ -7,6 +7,7 @@ import {
   effectiveState,
   formatSince,
   safeHttpsUrl,
+  terminalHash,
   windowApiPath,
 } from "./logic.js";
 import { clear, confirmSheet, h, toast } from "./ui.js";
@@ -26,8 +27,11 @@ export function mountWindow(root, ctx, { session, windowId }) {
   const sub = h("div", { class: "meta pad-x" });
   const termHost = h("div", { class: "term" });
   const actions = h("div", { class: "actions" });
+  const liveLink = ctx.hasFeature("terminal")
+    ? h("a", { class: "btn", href: terminalHash(session, windowId) }, "Live terminal")
+    : null;
   root.append(
-    h("header", { class: "bar" }, h("a", { class: "btn", href: "#/" }, "‹ Fleet"), title),
+    h("header", { class: "bar" }, h("a", { class: "btn", href: "#/" }, "‹ Fleet"), title, liveLink),
     sub,
     termHost,
     actions,

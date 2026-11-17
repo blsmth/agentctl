@@ -123,6 +123,8 @@ func Run(ctx context.Context, opts RunOptions) error {
 		return err
 	}
 	defer srv.Close()
+	// Viewer sessions of a previous run that died without cleaning up.
+	srv.SweepTerminals()
 	srv.Start(ctx)
 
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{leaf}}

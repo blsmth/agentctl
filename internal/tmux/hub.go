@@ -51,7 +51,7 @@ func parseSessionList(raw string) []string {
 	var sessions []string
 	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
 		line = strings.TrimSpace(line)
-		if line != "" && !IsViewerSession(line) {
+		if line != "" && !IsAnyViewerSession(line) {
 			sessions = append(sessions, line)
 		}
 	}
@@ -93,7 +93,7 @@ func parseSessionsWithPaths(raw string) []SessionInfo {
 			continue
 		}
 		parts := strings.SplitN(line, "|", 2)
-		if len(parts) != 2 || parts[0] == "" || IsViewerSession(parts[0]) {
+		if len(parts) != 2 || parts[0] == "" || IsAnyViewerSession(parts[0]) {
 			continue
 		}
 		sessions = append(sessions, SessionInfo{Name: parts[0], Path: parts[1]})
@@ -328,7 +328,7 @@ func SessionNameForPane(pane string) string {
 	if err != nil {
 		return ""
 	}
-	return name
+	return homeOfSession(name)
 }
 
 // hubDir returns ~/.local/state/agentctl/hub, creating it if necessary. The hub
