@@ -185,36 +185,25 @@ const (
 	herdLinePlaceholder                     // "no agents" / "snapshot unavailable"
 	herdLineRow                             // a selectable agent row
 	herdLineDivider                         // a non-selectable rule between two groups
-	herdLineSubheader                       // a non-selectable "bare (N)" / "dispatched (N)" label
+	herdLineSubheader                       // a non-selectable "dispatched (N)" label
 )
 
 // herdLine is one renderable line. Every kind except herdLineDivider is also
 // selectable — see the "selection" section below.
 type herdLine struct {
-	kind      herdLineKind
-	group     herd.Group // set for herdLineHeader / herdLinePlaceholder
-	row       herd.Row   // set for herdLineRow
-	groupHead bool       // true for the first row of a group (blank line above)
-	stale     bool       // the owning group's Stale flag — dims rows/header without affecting selectability
-	label     string     // set for herdLineSubheader, e.g. "bare (2)"
+	kind       herdLineKind
+	group      herd.Group // set for herdLineHeader / herdLinePlaceholder
+	row        herd.Row   // set for herdLineRow
+	groupHead  bool       // true for the first row of a group (blank line above)
+	stale      bool       // the owning group's Stale flag — dims rows/header without affecting selectability
+	label      string     // set for herdLineSubheader, e.g. "dispatched (2)"
+	treePrefix string     // connector prefix for herdLineRow ("" for roots)
 }
 
 // selectable reports whether the cursor may rest on this line. Dividers and
 // sub-section labels are decoration only.
 func (l herdLine) selectable() bool {
 	return l.kind != herdLineDivider && l.kind != herdLineSubheader
-}
-
-// partitionRows splits rows into bare and dispatched, preserving order.
-func partitionRows(rows []herd.Row) (bare, dispatched []herd.Row) {
-	for _, r := range rows {
-		if r.Dispatched {
-			dispatched = append(dispatched, r)
-		} else {
-			bare = append(bare, r)
-		}
-	}
-	return bare, dispatched
 }
 
 // ── HerdModel ────────────────────────────────────────────────────────────────
@@ -1076,21 +1065,14 @@ func (m *HerdModel) rebuildLines() {
 			lines = append(lines, herdLine{kind: herdLinePlaceholder, group: g, stale: g.Stale})
 			continue
 		}
-		bare, dispatched := partitionRows(g.Rows)
 		first := true
-		for _, sec := range []struct {
-			name string
-			rows []herd.Row
-		}{{"bare", bare}, {"dispatched", dispatched}} {
-			if len(sec.rows) == 0 {
+		for _, t := range treeRows(g.Rows) {
+			if t.Label != "" {
+				lines = append(lines, herdLine{kind: herdLineSubheader, group: g, stale: g.Stale, label: t.Label})
 				continue
 			}
-			lines = append(lines, herdLine{kind: herdLineSubheader, group: g, stale: g.Stale,
-				label: fmt.Sprintf("%s (%d)", sec.name, len(sec.rows))})
-			for _, r := range sec.rows {
-				lines = append(lines, herdLine{kind: herdLineRow, row: r, groupHead: first, stale: g.Stale})
-				first = false
-			}
+			lines = append(lines, herdLine{kind: herdLineRow, row: t.Row, groupHead: first, stale: g.Stale, treePrefix: t.Prefix})
+			first = false
 		}
 	}
 	m.lines = lines
@@ -1287,7 +1269,7 @@ func (m HerdModel) renderLine(i int, cw int) string {
 		// Align under agent names: bar + cursor slot (3 cols) + glyph + space.
 		return strings.Repeat(" ", 3+2) + herdDimStyle.Render(l.label)
 	default: // herdLineRow
-		return m.renderRow(l.row, selected, l.stale, cw)
+		return m.renderTreeRow(l.row, l.treePrefix, selected, l.stale, cw)
 	}
 }
 
@@ -1399,6 +1381,13 @@ func (m HerdModel) renderGroupHeader(g herd.Group, selected bool, cw int) string
 // the tmux window is very likely still there even though the monitor's
 // snapshot is momentarily out of date.
 func (m HerdModel) renderRow(r herd.Row, selected bool, stale bool, cw int) string {
+	return m.renderTreeRow(r, "", selected, stale, cw)
+}
+
+// renderTreeRow is renderRow with a tree connector prefix drawn (dim) between
+// the glyph and the name. The prefix is clamped so deep nesting cannot starve
+// the name or push the activity column off-screen.
+func (m HerdModel) renderTreeRow(r herd.Row, treePrefix string, selected bool, stale bool, cw int) string {
 	glyph, style := rowGlyph(r)
 	if stale {
 		style = herdDimStyle
@@ -1435,9 +1424,20 @@ func (m HerdModel) renderRow(r herd.Row, selected bool, stale bool, cw int) stri
 	if nameBudget < 0 {
 		nameBudget = 0
 	}
+	if tw := lipgloss.Width(treePrefix); tw > 0 {
+		keep := tw
+		if max := nameBudget - 6; keep > max {
+			keep = max
+		}
+		if keep < 0 {
+			keep = 0
+		}
+		treePrefix = ansi.Truncate(treePrefix, keep, "")
+		nameBudget -= lipgloss.Width(treePrefix)
+	}
 	name := truncateToWidth(r.Name, nameBudget)
 
-	prefix := cursor + glyphStr + " " + renderAgentName(name, stale, r.State == "blocked") + "  "
+	prefix := cursor + glyphStr + " " + herdDimStyle.Render(treePrefix) + renderAgentName(name, stale, r.State == "blocked") + "  "
 	prefixW := lipgloss.Width(prefix)
 	// Reserve " ✕" at the right edge, ahead of the gutter.
 	closeW := 1 + lipgloss.Width(herdCloseLabel)
@@ -1501,8 +1501,7 @@ const herdClosePendingMaxTries = 6
 func (m *HerdModel) recordClose(r herd.Row) {
 	p := &herdClosePending{session: r.Session, windowID: r.WindowID}
 	if g := m.groupForSession(r.Session); g != nil {
-		bare, dispatched := partitionRows(g.Rows)
-		ordered := append(bare, dispatched...) // display order
+		ordered := treeOrder(treeRows(g.Rows)) // display order
 		for i, gr := range ordered {
 			if gr.WindowID != r.WindowID {
 				continue

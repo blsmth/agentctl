@@ -241,12 +241,38 @@ func TestApplySpawnedByEnv_PopulatedFromEnv(t *testing.T) {
 	}
 }
 
+func TestApplySpawnedByEnv_FallsBackToClaudeCodeSessionID(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("AGENTCTL_SESSION_ID", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "claude-sess-9")
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("AGENTCTL_WINDOW_ID", "@36")
+
+	extraEnv := map[string]string{}
+	applySpawnedByEnv(extraEnv)
+	if got := extraEnv["AGENTCTL_SPAWNED_BY_SESSION"]; got != "claude-sess-9" {
+		t.Errorf("AGENTCTL_SPAWNED_BY_SESSION = %q, want claude-sess-9", got)
+	}
+
+	// AGENTCTL_SESSION_ID still wins when both are set.
+	t.Setenv("AGENTCTL_SESSION_ID", "agentctl-sess")
+	extraEnv = map[string]string{}
+	applySpawnedByEnv(extraEnv)
+	if got := extraEnv["AGENTCTL_SPAWNED_BY_SESSION"]; got != "agentctl-sess" {
+		t.Errorf("AGENTCTL_SPAWNED_BY_SESSION = %q, want agentctl-sess", got)
+	}
+}
+
 func TestApplySpawnedByEnv_AbsentWhenEnvEmpty(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("XDG_DATA_HOME", "")
 	t.Setenv("XDG_STATE_HOME", "")
 	t.Setenv("AGENTCTL_SESSION_ID", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("TMUX_PANE", "")
 	t.Setenv("AGENTCTL_WINDOW_ID", "")
 

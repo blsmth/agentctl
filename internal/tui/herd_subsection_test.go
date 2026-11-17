@@ -60,11 +60,11 @@ func equalStrings(a, b []string) bool {
 
 func TestRebuildLinesSubsections(t *testing.T) {
 	m := subModel(t, subRow("@1", false), subRow("@2", true), subRow("@3", false), subRow("@4", true))
-	want := []string{"H", "S:bare (2)", "R:@1", "R:@3", "S:dispatched (2)", "R:@2", "R:@4"}
+	want := []string{"H", "R:@1", "R:@3", "S:dispatched (2)", "R:@2", "R:@4"}
 	if got := describe(m); !equalStrings(got, want) {
 		t.Errorf("lines = %v, want %v", got, want)
 	}
-	if !m.lines[2].groupHead || m.lines[3].groupHead || m.lines[5].groupHead {
+	if !m.lines[1].groupHead || m.lines[2].groupHead || m.lines[4].groupHead {
 		t.Error("only the first row of the group should be groupHead")
 	}
 }
@@ -79,7 +79,7 @@ func TestRebuildLinesOnlyDispatched(t *testing.T) {
 
 func TestCursorSkipsSubheader(t *testing.T) {
 	m := subModel(t, subRow("@1", false), subRow("@2", true))
-	m.selectLine(2) // bare row @1
+	m.selectLine(1) // bare row @1
 	m.moveCursor(1)
 	if l := m.lines[m.splitPane.Cursor()]; l.kind != herdLineRow || l.row.WindowID != "@2" {
 		t.Errorf("down from last bare row landed on %+v, want row @2", l)
@@ -92,8 +92,8 @@ func TestCursorSkipsSubheader(t *testing.T) {
 
 func TestClickSubheaderIgnored(t *testing.T) {
 	m := subModel(t, subRow("@1", false), subRow("@2", true))
-	// Lines: 0 header, 1 bare label, 2 row, 3 dispatched label, 4 row.
-	for _, idx := range []int{1, 3} {
+	// Lines: 0 header, 1 row, 2 dispatched label, 3 row.
+	for _, idx := range []int{2} {
 		if m.lines[idx].kind != herdLineSubheader {
 			t.Fatalf("line %d is not a subheader", idx)
 		}
@@ -112,8 +112,8 @@ func TestClickSubheaderIgnored(t *testing.T) {
 
 func TestCloseLastBareSelectsNeighbourNotSubheader(t *testing.T) {
 	m := subModel(t, subRow("@1", false), subRow("@2", true))
-	m.selectLine(2)
-	m.recordClose(m.lines[2].row)
+	m.selectLine(1)
+	m.recordClose(m.lines[1].row)
 	if m.closePending.nextID != "@2" {
 		t.Errorf("nextID = %q, want @2 (first dispatched row)", m.closePending.nextID)
 	}

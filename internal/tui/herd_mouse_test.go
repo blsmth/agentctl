@@ -12,14 +12,15 @@ import (
 )
 
 // mouseTestModel builds a loaded hub with lines:
-// 0 header(s1), 1 bare label, 2 row a, 3 row b, 4 divider, 5 header(s2),
-// 6 bare label, 7 row c.
+// 0 header(s1), 1 dispatched label, 2 row a, 3 row b, 4 divider, 5 header(s2),
+// 6 dispatched label, 7 row c.
 func mouseTestModel(t *testing.T, width, height int) HerdModel {
 	t.Helper()
 	InitStyles()
 	row := func(name, win, sess string) herd.Row {
 		r := testRow(name, sess, "idle", "")
 		r.WindowID = win
+		r.Dispatched = true // parentless dispatched rows sit under a "dispatched (N)" label
 		return r
 	}
 	m := NewHerdModel()
@@ -169,7 +170,7 @@ func TestButtonDecision(t *testing.T) {
 	w := m.listColWidth()
 	newX := w - herdSidebarRightGutter - 2 // inside "+ new"
 	closeX := w - herdSidebarRightGutter - 1
-	// y: 3 header(s1), 4 bare label, 5 row a, 6 row b, 7 divider, 8 header(s2), 9 bare label, 10 row c
+	// y: 3 header(s1), 4 dispatched label, 5 row a, 6 row b, 7 divider, 8 header(s2), 9 dispatched label, 10 row c
 	tests := []struct {
 		name       string
 		x, y       int
