@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -20,42 +23,66 @@ func tRow(win, parent string, dispatched bool) herd.Row {
 	return r
 }
 
+type treeFixtureRow struct {
+	WindowID   string `json:"window_id"`
+	Parent     string `json:"parent"`
+	Dispatched bool   `json:"dispatched"`
+	State      string `json:"state"`
+	Index      int    `json:"index"`
+}
+
+type treeFixtureWant struct {
+	ID     string `json:"id"`
+	Depth  int    `json:"depth"`
+	Prefix string `json:"prefix"`
+	Label  string `json:"label"`
+}
+
+// TestTreeRows drives treeRows from testdata/tree_cases.json, which the web
+// app's logic.js treeRows is checked against too. The hub hands treeRows rows
+// already in attention order, so the test sorts the same way the JS port does.
 func TestTreeRows(t *testing.T) {
-	tests := []struct {
-		name string
-		rows []herd.Row
-		want []string // "<prefix>@id" or "S:label"
-	}{
-		{"no dispatched", []herd.Row{tRow("@1", "", false), tRow("@2", "", false)},
-			[]string{"@1", "@2"}},
-		{"two children", []herd.Row{tRow("@1", "", false), tRow("@2", "@1", true), tRow("@3", "@1", true)},
-			[]string{"@1", "├─ @2", "└─ @3"}},
-		{"grandchild continuation", []herd.Row{
-			tRow("@1", "", false), tRow("@2", "@1", true), tRow("@3", "@2", true), tRow("@4", "@1", true), tRow("@5", "", false)},
-			[]string{"@1", "├─ @2", "│  └─ @3", "└─ @4", "@5"}},
-		{"orphan bucket", []herd.Row{tRow("@1", "", false), tRow("@2", "@99", true)},
-			[]string{"@1", "S:dispatched (1)", "└─ @2"}},
-		{"untrusted parent", []herd.Row{tRow("@1", "", false), tRow("@2", "", true), tRow("@3", "", true)},
-			[]string{"@1", "S:dispatched (2)", "├─ @2", "└─ @3"}},
-		{"orphan with child", []herd.Row{tRow("@2", "@99", true), tRow("@3", "@2", true)},
-			[]string{"S:dispatched (2)", "└─ @2", "   └─ @3"}},
-		{"cycle", []herd.Row{tRow("@1", "@2", true), tRow("@2", "@1", true)},
-			[]string{"S:dispatched (2)", "└─ @1", "   └─ @2"}},
-		{"self parent", []herd.Row{tRow("@1", "@1", true), tRow("@2", "", false)},
-			[]string{"@2", "S:dispatched (1)", "└─ @1"}},
+	raw, err := os.ReadFile(filepath.Join("testdata", "tree_cases.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var got []string
-			for _, tr := range treeRows(tt.rows) {
+	var fx struct {
+		Cases []struct {
+			Name string            `json:"name"`
+			Rows []treeFixtureRow  `json:"rows"`
+			Want []treeFixtureWant `json:"want"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatal(err)
+	}
+	rank := map[string]int{"blocked": 0, "working": 1, "done": 2, "idle": 3}
+	for _, tt := range fx.Cases {
+		t.Run(tt.Name, func(t *testing.T) {
+			in := append([]treeFixtureRow(nil), tt.Rows...)
+			sort.SliceStable(in, func(i, j int) bool {
+				if rank[in[i].State] != rank[in[j].State] {
+					return rank[in[i].State] < rank[in[j].State]
+				}
+				return in[i].Index < in[j].Index
+			})
+			var rows []herd.Row
+			for _, r := range in {
+				row := tRow(r.WindowID, r.Parent, r.Dispatched)
+				row.State = r.State
+				rows = append(rows, row)
+			}
+			var got, want []treeFixtureWant
+			for _, tr := range treeRows(rows) {
 				if tr.Label != "" {
-					got = append(got, "S:"+tr.Label)
+					got = append(got, treeFixtureWant{Label: tr.Label})
 				} else {
-					got = append(got, tr.Prefix+tr.Row.WindowID)
+					got = append(got, treeFixtureWant{ID: tr.Row.WindowID, Depth: tr.Depth, Prefix: tr.Prefix})
 				}
 			}
-			if !equalStrings(got, tt.want) {
-				t.Errorf("got %q, want %q", got, tt.want)
+			want = tt.Want
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("got %+v, want %+v", got, want)
 			}
 		})
 	}
