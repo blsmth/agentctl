@@ -488,15 +488,17 @@ func TestHealthMetricsLine(t *testing.T) {
 		name    string
 		enabled bool
 		running bool
+		bound   int
 		want    string
 	}{
-		{"disabled prints nothing", false, true, ""},
-		{"enabled and running", true, true, "serve running (pid 4242, port 9101)"},
-		{"enabled, not running", true, false, "serve not running (started by the next session start or hook janitor)"},
+		{"disabled prints nothing", false, true, 9101, ""},
+		{"enabled and running", true, true, 9101, "serve running (pid 4242, port 9101)"},
+		{"bind failed reports no endpoint", true, true, 0, "serve running (pid 4242, no local /metrics endpoint: could not bind port 9101)"},
+		{"enabled, not running", true, false, 0, "serve not running (started by the next session start or hook janitor)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := healthMetricsLine(tt.enabled, 9101, 4242, tt.running); got != tt.want {
+			if got := healthMetricsLine(tt.enabled, 9101, tt.bound, 4242, tt.running); got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})

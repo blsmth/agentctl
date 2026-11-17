@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/blsmth/agentctl/internal/config"
@@ -102,9 +104,44 @@ func Acquire() (release func(), ok bool, err error) {
 	if err := pidfile.Write(d, PidName); err != nil {
 		logging.Log("metrics: %v", err)
 	}
+	// A stale port from a previous serve must not be reported for this one.
+	os.Remove(filepath.Join(d, PortName)) //nolint:errcheck
 	return func() {
+		os.Remove(filepath.Join(d, PortName)) //nolint:errcheck
 		pidfile.Remove(d, PidName)
 		syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck
 		f.Close()                                   //nolint:errcheck
 	}, true, nil
+}
+
+// PortName is the file under the state dir holding the port the serve actually
+// bound for /metrics (absent when the bind failed or is disabled).
+const PortName = "metrics-serve.port"
+
+// WritePort records the port the running serve bound.
+func WritePort(port int) {
+	d, err := Dir()
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(filepath.Join(d, PortName), []byte(strconv.Itoa(port)+"\n"), 0o600); err != nil {
+		logging.Log("metrics: writing port file: %v", err)
+	}
+}
+
+// BoundPort returns the port the serve recorded, or 0 when it has none.
+func BoundPort() int {
+	d, err := Dir()
+	if err != nil {
+		return 0
+	}
+	b, err := os.ReadFile(filepath.Join(d, PortName))
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }

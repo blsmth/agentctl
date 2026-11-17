@@ -1192,14 +1192,13 @@ func sanitizeProjectConfig(project, global *Config) {
 		warn("auto_poll", globalOnly)
 	}
 	project.AutoPoll = false
-	if project.Metrics.Endpoint != "" && project.Metrics.Endpoint != global.Metrics.Endpoint {
-		warn("metrics.endpoint", globalOnly)
+	// The whole metrics block is global-only: the per-machine metrics serve
+	// is shared by every project, so its port, labels, endpoint and enabled
+	// flag must not depend on which project happened to spawn it.
+	if !reflect.DeepEqual(project.Metrics, MetricsConfig{}) && !reflect.DeepEqual(project.Metrics, global.Metrics) {
+		warn("metrics", globalOnly)
 	}
-	if project.Metrics.BasicAuth != nil && !reflect.DeepEqual(project.Metrics.BasicAuth, global.Metrics.BasicAuth) {
-		warn("metrics.basic_auth", globalOnly)
-	}
-	project.Metrics.Endpoint = global.Metrics.Endpoint
-	project.Metrics.BasicAuth = global.Metrics.BasicAuth
+	project.Metrics = global.Metrics
 	globalPreview := global.BashPreview != nil && *global.BashPreview
 	if project.BashPreview != nil && !*project.BashPreview && globalPreview {
 		warn("bash_preview", noLoosen)

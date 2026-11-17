@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
@@ -36,7 +37,13 @@ const (
 	// IdleExit is how long the serve lingers with no agentctl tmux sessions.
 	IdleExit = 10 * time.Minute
 	// eventRetention is how many days of event files are kept.
-	eventRetention = 3 * 24 * time.Hour
+	eventRetention = events.Retention
+	// absenceExpiry is how long a project may be missing from discovery
+	// before its event tailer and usage streams (and their read offsets) are
+	// dropped. Shorter misses (a failed tmux query, a session restart) keep
+	// them, so returning projects are never re-read from the start and
+	// double counted.
+	absenceExpiry = 6 * time.Hour
 )
 
 // Project is one agentctl project the serve watches.
@@ -52,6 +59,8 @@ type Server struct {
 	usage     *metrics.UsageSet
 	started   time.Time
 	tailers   map[string]*events.Tailer // by runtime dir
+	lastSeen  map[string]time.Time      // runtime dir -> last discovery that listed it
+	known     map[string]bool           // runtime dirs that ever had a tailer
 	projects  []Project
 	firstDisc bool
 }
@@ -63,44 +72,67 @@ func NewServer(reg prometheus.Registerer, now time.Time) *Server {
 		tracker: metrics.NewTransitionTracker(reg),
 		usage:   metrics.NewUsageSet(metrics.NewCollector(reg)),
 		started: now,
-		tailers: make(map[string]*events.Tailer),
+		tailers:  make(map[string]*events.Tailer),
+		lastSeen: make(map[string]time.Time),
+		known:    make(map[string]bool),
 	}
 }
 
 // SetProjects replaces the watched project set. Projects present on the first
 // call are tailed from the end of their event files (no replay of history);
 // projects that appear later are read from the start but only for events at or
-// after the serve's start.
-func (s *Server) SetProjects(ps []Project) {
-	seen := make(map[string]bool, len(ps))
+// after the serve's start. A project that drops out of discovery keeps its
+// tailer and usage streams for absenceExpiry, so a transient miss followed by
+// a return does not re-read (and double count) anything.
+func (s *Server) SetProjects(ps []Project) { s.SetProjectsAt(ps, time.Now()) }
+
+// SetProjectsAt is SetProjects with an explicit clock.
+func (s *Server) SetProjectsAt(ps []Project, now time.Time) {
 	for _, p := range ps {
-		seen[p.RuntimeDir] = true
+		s.lastSeen[p.RuntimeDir] = now
 		if _, ok := s.tailers[p.RuntimeDir]; ok {
 			continue
 		}
-		if s.firstDisc {
+		switch {
+		case s.known[p.RuntimeDir]:
+			// Returning after its state expired: events from the absence are
+			// gone, but replaying from the serve start would double count.
+			s.tailers[p.RuntimeDir] = events.NewTailer(p.RuntimeDir)
+		case s.firstDisc:
+			s.seedActive(p, now)
 			s.tailers[p.RuntimeDir] = events.NewTailerSince(p.RuntimeDir, s.started)
-		} else {
+		default:
+			s.seedActive(p, now)
 			s.tailers[p.RuntimeDir] = events.NewTailer(p.RuntimeDir)
 		}
+		s.known[p.RuntimeDir] = true
 	}
 	s.firstDisc = true
 	for dir := range s.tailers {
-		if !seen[dir] {
+		if now.Sub(s.lastSeen[dir]) > absenceExpiry {
 			delete(s.tailers, dir)
+			delete(s.lastSeen, dir)
 		}
 	}
 	s.projects = ps
 }
 
+// seedActive counts the project's already-running windows in the active gauge.
+func (s *Server) seedActive(p Project, now time.Time) {
+	for id, ws := range windowstate.AllFrom(windowstate.WindowsDirFor(p.RuntimeDir)) {
+		if _, _, ok := events.Identity(ws); !ok {
+			continue
+		}
+		s.tracker.SeedActive(id, p.Name, parseStatus(events.Status(ws.State)), now)
+	}
+}
+
 // Step runs one poll: it feeds new events to the transition tracker, then
 // syncs and ticks the per-window usage streams.
 func (s *Server) Step() {
-	for _, p := range s.projects {
-		if tl := s.tailers[p.RuntimeDir]; tl != nil {
-			for _, e := range tl.Poll() {
-				s.Feed(e)
-			}
+	for _, tl := range s.tailers {
+		for _, e := range tl.Poll() {
+			s.Feed(e)
 		}
 	}
 	s.syncUsage()
@@ -154,14 +186,37 @@ func (s *Server) syncUsage() {
 			s.usage.Attach(key, p.Name, base, ws.LogPath)
 		}
 	}
+	// Streams of a project missing from discovery keep their offsets until
+	// the project has been absent for absenceExpiry.
+	present := make(map[string]bool, len(s.projects))
+	for _, p := range s.projects {
+		present[p.RuntimeDir] = true
+	}
+	for dir := range s.tailers {
+		if present[dir] {
+			continue
+		}
+		for _, k := range s.usage.Keys() {
+			if strings.HasPrefix(k, dir+"|") {
+				keep[k] = true
+			}
+		}
+	}
 	s.usage.Retain(keep)
 }
 
 // DiscoverProjects lists the projects behind every live agentctl tmux session
 // (tmux is the source of truth; the registry only enriches, as for the hub).
-func DiscoverProjects() []Project {
+//
+// It returns an error when tmux could not be queried, so the caller keeps its
+// previous project set rather than treating a failed query as "no projects".
+func DiscoverProjects() ([]Project, error) {
+	sessions, err := tmux.ListSessionsWithPathsErr()
+	if err != nil {
+		return nil, err
+	}
 	entries, _ := registry.List()
-	merged := herd.MergeSessions(tmux.ListSessionsWithPaths(), entries)
+	merged := herd.MergeSessions(sessions, entries)
 	var out []Project
 	seen := make(map[string]bool)
 	for _, e := range merged {
@@ -171,7 +226,7 @@ func DiscoverProjects() []Project {
 		seen[e.RuntimeDir] = true
 		out = append(out, Project{Name: projectName(e), RuntimeDir: e.RuntimeDir})
 	}
-	return out
+	return out, nil
 }
 
 func projectName(e registry.Entry) string {
@@ -184,7 +239,7 @@ func projectName(e registry.Entry) string {
 
 // Options are Run's seams.
 type Options struct {
-	Discover func() []Project
+	Discover func() ([]Project, error)
 	Poll     time.Duration
 	Idle     time.Duration
 }
@@ -235,6 +290,7 @@ func Run(ctx context.Context, opts Options) error {
 			// remote write still works.
 			logging.Log("metrics serve: %v (continuing without the local /metrics endpoint)", err)
 		} else {
+			metricsproc.WritePort(port)
 			logging.Log("metrics serve: /metrics on :%d", port)
 		}
 	}
@@ -272,8 +328,16 @@ func loop(ctx context.Context, srv *Server, opts Options, exeStart selfexec.Iden
 		case now := <-tick.C:
 			if now.Sub(lastDiscover) >= discoverInterval || lastDiscover.IsZero() {
 				lastDiscover = now
-				ps := opts.Discover()
-				srv.SetProjects(ps)
+				ps, derr := opts.Discover()
+				if derr != nil {
+					// Keep the previous project set; do not count a failed
+					// query towards idleness either.
+					logging.Log("metrics serve: discovery failed, keeping previous projects: %v", derr)
+					lastSeen = now
+					ps = srv.projects
+				} else {
+					srv.SetProjects(ps)
+				}
 				if len(ps) > 0 {
 					lastSeen = now
 				} else if now.Sub(lastSeen) >= opts.Idle {

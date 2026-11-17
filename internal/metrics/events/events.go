@@ -234,6 +234,9 @@ func Files(runtimeDir string) []string {
 	return out
 }
 
+// Retention is how long event files are kept.
+const Retention = 3 * 24 * time.Hour
+
 // Prune removes event files whose day is older than keep before now.
 func Prune(runtimeDir string, now time.Time, keep time.Duration) {
 	cutoff := now.Add(-keep).Format(dateLayout)

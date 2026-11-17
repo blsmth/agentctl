@@ -211,3 +211,28 @@ func (tr *TransitionTracker) updateActive(t state.Transition) {
 		tr.counted[t.WindowID] = t.To
 	}
 }
+
+// SeedActive counts an already-running window under st in the active gauge
+// without recording a transition or a spawn, so a restarted serve starts from
+// the real population instead of undercounting until each window next changes
+// state. It does nothing for a window the tracker already knows.
+func (tr *TransitionTracker) SeedActive(windowID, project string, st state.AgentStatus, now time.Time) {
+	if st == state.StatusGone {
+		return
+	}
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if tr.seenWindows[windowID] {
+		return
+	}
+	tr.seenWindows[windowID] = true
+	tr.spawnTimes[windowID] = now
+	tr.counted[windowID] = st
+	tr.agentsActive.WithLabelValues(st.String(), project).Inc()
+	switch st {
+	case state.StatusWorking:
+		tr.workingStart[windowID] = now
+	case state.StatusBlocked:
+		tr.blockedStart[windowID] = now
+	}
+}

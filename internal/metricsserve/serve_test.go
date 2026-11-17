@@ -254,9 +254,9 @@ func TestLoopExitsWhenIdle(t *testing.T) {
 	opts := Options{
 		Poll: time.Millisecond,
 		Idle: 20 * time.Millisecond,
-		Discover: func() []Project {
+		Discover: func() ([]Project, error) {
 			calls++
-			return nil
+			return nil, nil
 		},
 	}
 	done := make(chan error, 1)
@@ -271,5 +271,106 @@ func TestLoopExitsWhenIdle(t *testing.T) {
 	}
 	if calls == 0 {
 		t.Error("discover never ran")
+	}
+}
+
+// A project missing from one discovery pass (e.g. a failed tmux query) and
+// then returning must not re-read its events or logs: counters stay put.
+func TestProjectDropAndReturnDoesNotDoubleCount(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	started := time.Now()
+	srv := NewServer(reg, started)
+	srv.SetProjects(nil) // first pass: later projects count as "late" and replay since start
+
+	rt := filepath.Join(t.TempDir(), "proj", ".agentctl")
+	proj := []Project{{Name: "proj", RuntimeDir: rt}}
+	writeWindow(t, rt, "@1", windowstate.WindowState{Instance: "go-engineer:1", AgentName: "go-engineer", LogPath: writeLog(t, t.TempDir(), 100, 10)})
+	events.Append(rt, events.Event{TS: started.Add(time.Second), Project: filepath.Dir(rt), WindowID: "@1", Agent: "go-engineer", From: "idle", To: "working", Tool: "Bash"}) //nolint:errcheck
+
+	srv.SetProjects(proj)
+	srv.Step()
+
+	counters := func() [3]float64 {
+		return [3]float64{
+			sample(t, reg, "agentctl_state_transitions_total", map[string]string{"project": "proj"}),
+			sample(t, reg, "agentctl_tokens_total", map[string]string{"project": "proj", "direction": "input"}),
+			sample(t, reg, "agentctl_tool_use_total", map[string]string{"project": "proj", "tool": "Bash"}),
+		}
+	}
+	before := counters()
+	if before[0] != 1 || before[1] != 100 || before[2] != 1 {
+		t.Fatalf("baseline counters = %v", before)
+	}
+
+	srv.SetProjects(nil) // dropped for one pass
+	srv.Step()
+	srv.SetProjects(proj) // and back
+	srv.Step()
+	srv.Step()
+
+	if after := counters(); after != before {
+		t.Fatalf("counters after drop+return = %v, want %v (double counted)", after, before)
+	}
+	if srv.usage.Len() != 1 {
+		t.Errorf("usage streams = %d, want 1", srv.usage.Len())
+	}
+
+	// New events after the return are still picked up.
+	events.Append(rt, events.Event{TS: started.Add(2 * time.Second), Project: filepath.Dir(rt), WindowID: "@1", Agent: "go-engineer", From: "working", To: "idle"}) //nolint:errcheck
+	srv.Step()
+	if got := sample(t, reg, "agentctl_state_transitions_total", map[string]string{"project": "proj"}); got != 2 {
+		t.Errorf("transitions after return = %v, want 2", got)
+	}
+}
+
+// After a long absence the project's state expires, and its return does not
+// replay events from the serve start.
+func TestProjectExpiresAfterLongAbsence(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	started := time.Now()
+	srv := NewServer(reg, started)
+	srv.SetProjectsAt(nil, started)
+	rt := filepath.Join(t.TempDir(), "proj", ".agentctl")
+	proj := []Project{{Name: "proj", RuntimeDir: rt}}
+	events.Append(rt, events.Event{TS: started.Add(time.Second), Project: filepath.Dir(rt), WindowID: "@1", Agent: "a", From: "idle", To: "working"}) //nolint:errcheck
+	srv.SetProjectsAt(proj, started)
+	srv.Step()
+
+	srv.SetProjectsAt(nil, started.Add(absenceExpiry/2))
+	if len(srv.tailers) != 1 {
+		t.Fatalf("tailer dropped before expiry")
+	}
+	srv.SetProjectsAt(nil, started.Add(absenceExpiry+time.Minute))
+	if len(srv.tailers) != 0 {
+		t.Fatalf("tailer kept past expiry")
+	}
+	srv.SetProjectsAt(proj, started.Add(absenceExpiry+2*time.Minute))
+	srv.Step()
+	if got := sample(t, reg, "agentctl_state_transitions_total", nil); got != 1 {
+		t.Fatalf("transitions = %v, want 1 (no replay)", got)
+	}
+}
+
+// A serve starting while agents are already running seeds the active gauge
+// from their windowstate records.
+func TestSeedActiveGaugeFromWindowState(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	srv := NewServer(reg, time.Now())
+	rt := filepath.Join(t.TempDir(), "proj", ".agentctl")
+	writeWindow(t, rt, "@1", windowstate.WindowState{Instance: "go-engineer:1", AgentName: "go-engineer", State: "working"})
+	writeWindow(t, rt, "@2", windowstate.WindowState{Instance: "go-engineer:2", AgentName: "go-engineer", State: "blocked"})
+	writeWindow(t, rt, "@3", windowstate.WindowState{Instance: "shell"})
+	srv.SetProjects([]Project{{Name: "proj", RuntimeDir: rt}})
+	if got := sample(t, reg, "agentctl_agents_active", map[string]string{"state": "working"}); got != 1 {
+		t.Errorf("working = %v, want 1", got)
+	}
+	if got := sample(t, reg, "agentctl_agents_active", map[string]string{"state": "blocked"}); got != 1 {
+		t.Errorf("blocked = %v, want 1", got)
+	}
+	// A later real transition moves the seeded window, not double counts it.
+	events.Append(rt, events.Event{Project: filepath.Dir(rt), WindowID: "@1", Agent: "go-engineer", From: "working", To: "idle"}) //nolint:errcheck
+	srv.Step()
+	if got := sample(t, reg, "agentctl_agents_active", map[string]string{"state": "working"}); got != 0 {
+		t.Errorf("working after idle = %v, want 0", got)
 	}
 }

@@ -79,3 +79,12 @@ func (u *UsageSet) Tick() {
 
 // Len reports how many streams are tracked.
 func (u *UsageSet) Len() int { return len(u.streams) }
+
+// Keys lists the tracked stream keys.
+func (u *UsageSet) Keys() []string {
+	out := make([]string, 0, len(u.streams))
+	for k := range u.streams {
+		out = append(out, k)
+	}
+	return out
+}

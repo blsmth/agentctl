@@ -156,6 +156,8 @@ Journal output goes to `~/.local/share/agentctl/journal/<agent>.md` with a machi
 
 ### metrics
 
+The whole `metrics` block is global-only: a `metrics` key in a project's `.agentctl/config.json` is ignored (with a log warning), because one per-machine serve is shared by every project and must not depend on which project started it.
+
 | Key | Default | Description |
 |---|---|---|
 | `metrics.enabled` | `false` | Turn on the metrics system. |

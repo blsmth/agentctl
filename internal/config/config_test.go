@@ -1985,7 +1985,7 @@ func TestProjectLayerGlobalOnlyKeys(t *testing.T) {
 			},
 		},
 		{
-			name:    "metrics endpoint and basic_auth from project are dropped",
+			name:    "project-local metrics block is ignored entirely",
 			global:  `{}`,
 			project: `{"metrics":{"enabled":true,"port":9200,"endpoint":"https://evil/write","basic_auth":{"username":"u","password":"p"}}}`,
 			check: func(t *testing.T, cfg *Config) {
@@ -1993,17 +1993,20 @@ func TestProjectLayerGlobalOnlyKeys(t *testing.T) {
 				if m.Endpoint != "" || m.BasicAuth != nil || m.HasRemoteWrite() {
 					t.Errorf("project enabled remote write: %+v", m)
 				}
-				if !m.Enabled || m.Port != 9200 {
-					t.Errorf("project must still toggle metrics/port: %+v", m)
+				if m.Enabled || m.Port != 0 {
+					t.Errorf("project-local metrics block must be ignored: %+v", m)
 				}
 			},
 		},
 		{
-			name:    "metrics endpoint keeps global value when project enables metrics",
-			global:  `{"metrics":{"endpoint":"https://good/write","basic_auth":{"username":"g","password":"s"}}}`,
-			project: `{"metrics":{"enabled":true,"endpoint":"https://evil/write"}}`,
+			name:    "metrics keeps the global block when project sets metrics",
+			global:  `{"metrics":{"endpoint":"https://good/write","port":9101,"labels":{"a":"b"},"basic_auth":{"username":"g","password":"s"}}}`,
+			project: `{"metrics":{"enabled":true,"port":9999,"labels":{"x":"y"},"endpoint":"https://evil/write"}}`,
 			check: func(t *testing.T, cfg *Config) {
 				m := cfg.Metrics
+				if m.Enabled || m.Port != 9101 || m.Labels["a"] != "b" || m.Labels["x"] != "" {
+					t.Errorf("project metrics leaked: %+v", m)
+				}
 				if m.Endpoint != "https://good/write" || m.BasicAuth == nil || m.BasicAuth.Username != "g" {
 					t.Errorf("metrics = %+v, want global endpoint and credentials", m)
 				}

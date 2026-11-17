@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/metrics/events"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
@@ -48,5 +49,27 @@ func TestHousekeepNoRuntimeDir(t *testing.T) {
 	Housekeep(HousekeepingDeps{Now: time.Now, ReapOrphans: func() { called = true }})
 	if called {
 		t.Fatal("Housekeep ran without a runtime dir")
+	}
+}
+
+func TestHousekeepPrunesEventFiles(t *testing.T) {
+	rt := t.TempDir()
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	old := events.Append(rt, events.Event{TS: now.AddDate(0, 0, -10), WindowID: "@1", Agent: "a", From: "idle", To: "working"})
+	cur := events.Append(rt, events.Event{TS: now, WindowID: "@1", Agent: "a", From: "working", To: "idle"})
+	if old != nil || cur != nil {
+		t.Fatalf("append: %v %v", old, cur)
+	}
+	if n := len(events.Files(rt)); n != 2 {
+		t.Fatalf("setup: %d files, want 2", n)
+	}
+	d := DefaultHousekeepingDeps(rt)
+	d.Now = func() time.Time { return now }
+	d.ReapOrphans = nil
+	d.PruneMailbox = nil
+	d.PruneSessionLogs = nil
+	Housekeep(d)
+	if n := len(events.Files(rt)); n != 1 {
+		t.Fatalf("after housekeeping: %d files, want 1", n)
 	}
 }

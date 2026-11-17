@@ -39,7 +39,7 @@ func RunHealth() {
 	// Metrics serve (per machine), only when metrics are enabled.
 	mc := config.Load().EffectiveMetricsConfig()
 	pid, running := metricsproc.Running()
-	if line := healthMetricsLine(mc.Enabled, mc.EffectivePort(), pid, running); line != "" {
+	if line := healthMetricsLine(mc.Enabled, mc.EffectivePort(), metricsproc.BoundPort(), pid, running); line != "" {
 		fmt.Printf("  Metrics: %s\n", line)
 	}
 
@@ -138,14 +138,19 @@ func RunHealth() {
 // that is still running from before the flag flipped is left alone.
 // healthMetricsLine describes the per-machine metrics serve. It returns ""
 // when metrics are disabled (nothing to report).
-func healthMetricsLine(enabled bool, port, pid int, running bool) string {
+// configured is the configured port; bound is the port the serve actually
+// bound (0 when its bind failed or it reported none).
+func healthMetricsLine(enabled bool, configured, bound, pid int, running bool) string {
 	if !enabled {
 		return ""
 	}
 	if !running {
 		return "serve not running (started by the next session start or hook janitor)"
 	}
-	return fmt.Sprintf("serve running (pid %d, port %d)", pid, port)
+	if bound == 0 {
+		return fmt.Sprintf("serve running (pid %d, no local /metrics endpoint: could not bind port %d)", pid, configured)
+	}
+	return fmt.Sprintf("serve running (pid %d, port %d)", pid, bound)
 }
 
 func healthMonitorLine(enabled bool, status string) string {
