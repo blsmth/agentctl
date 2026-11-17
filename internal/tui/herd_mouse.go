@@ -183,3 +183,71 @@ func (m HerdModel) clickMenu(x int) (tea.Model, tea.Cmd) {
 	m.menuOpen = false
 	return m, nil
 }
+
+// herdHoverRegion is which part of a line the pointer is over.
+type herdHoverRegion int
+
+const (
+	herdHoverNone  herdHoverRegion = iota
+	herdHoverBody                  // a row's body (not its ✕)
+	herdHoverClose                 // a row's ✕ button
+	herdHoverNew                   // a group header's "+ new" button
+)
+
+// herdHover is the hover target: a line index plus the region on it. The zero
+// value (region none) hovers nothing.
+type herdHover struct {
+	line int
+	reg  herdHoverRegion
+}
+
+// region returns the hovered region of line i (none when another line is hovered).
+func (h herdHover) region(i int) herdHoverRegion {
+	if h.reg != herdHoverNone && h.line == i {
+		return h.reg
+	}
+	return herdHoverNone
+}
+
+// hoverAt resolves the hover target under (x, y) with the same hit-testing as
+// clicks, so hover and click can never disagree.
+func (m HerdModel) hoverAt(x, y int) herdHover {
+	idx, sub, ok := m.lineAtSub(x, y)
+	if !ok {
+		return herdHover{}
+	}
+	l := m.lines[idx]
+	switch l.kind {
+	case herdLineHeader:
+		if groupCanLaunch(l.group) && m.onNewButton(x) {
+			return herdHover{line: idx, reg: herdHoverNew}
+		}
+	case herdLineRow:
+		if sub != 0 { // detail lines: no hover effect
+			break
+		}
+		if m.onCloseButton(x) {
+			return herdHover{line: idx, reg: herdHoverClose}
+		}
+		return herdHover{line: idx, reg: herdHoverBody}
+	}
+	return herdHover{}
+}
+
+// handleMotion tracks the pointer. All-motion reporting floods events, so a
+// move that lands on the same target changes nothing and returns a nil cmd.
+func (m HerdModel) handleMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
+	m.hoverX, m.hoverY, m.hasPointer = msg.X, msg.Y, true
+	m.hover = m.hoverAt(msg.X, msg.Y)
+	return m, nil
+}
+
+// refreshHover recomputes the hover from the last pointer position, after
+// the content under it moved (reload, scroll). Clears it without a pointer.
+func (m *HerdModel) refreshHover() {
+	if !m.hasPointer {
+		m.hover = herdHover{}
+		return
+	}
+	m.hover = m.hoverAt(m.hoverX, m.hoverY)
+}
