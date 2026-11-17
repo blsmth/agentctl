@@ -85,3 +85,20 @@ body.term-open nav { display: none; }
   background: var(--card); border-top: 1px solid var(--line); z-index: 11; }
 .keybar .key { flex: 1 0 auto; min-width: 44px; min-height: 40px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); font: 600 15px ui-monospace, Menlo, monospace; }
 .term-screen:has(.keybar:not([hidden])) .term-viewport { margin-bottom: calc(54px + env(safe-area-inset-bottom)); }
+
+/* Fleet tree: nested dispatched agents. */
+.node { display: flex; align-items: stretch; background: var(--card); }
+.node > .win { flex: 1; min-width: 0; }
+.win.child { min-height: 44px; padding-top: .35rem; padding-bottom: .35rem; padding-left: .5rem; gap: .4rem; }
+.gutter { font: .85rem/1 ui-monospace, Menlo, monospace; white-space: pre; color: var(--muted); flex: none; user-select: none; }
+.win.child .win-title { font-size: .95rem; }
+.win.child .glyph { font-size: 1rem; }
+.node.bucket { align-items: center; min-height: 44px; padding-left: 1rem; border-bottom: 1px solid var(--line); border-left: 4px solid var(--line); }
+.bucket-label { flex: 1; color: var(--muted); font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; }
+.disclose { min-width: 44px; min-height: 44px; padding: 0 .6rem; display: inline-flex; align-items: center; justify-content: center; gap: .3rem;
+  border: 0; border-bottom: 1px solid var(--line); border-left: 1px solid var(--line); background: var(--card); color: var(--muted); font: inherit; font-size: .85rem; cursor: pointer; }
+.node.bucket .disclose { border-bottom: 0; border-left: 0; }
+.disclose .glyph { width: auto; font-size: 1rem; }
+.disclose.u-blocked { color: var(--blocked); box-shadow: inset -4px 0 0 var(--blocked); background: color-mix(in srgb, var(--blocked) 12%, var(--card)); }
+.disclose.u-working .glyph { color: var(--working); } .disclose.u-done .glyph { color: var(--done); }
+.disclose.u-blocked .glyph { color: var(--blocked); }

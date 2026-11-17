@@ -48,6 +48,108 @@ export function sortGroups(groups) {
   return decorated.map((d) => d.group);
 }
 
+/** isDispatched mirrors herd.Meta.Dispatched: launched by another agent. */
+export function isDispatched(win) {
+  return Boolean(win.mode) && win.mode !== "bare";
+}
+
+/** treeConnector is the gutter text drawn before a tree entry's title. */
+export function treeConnector(entry) {
+  if (entry.depth === 0) return "";
+  return entry.ancestorsLast.map((l) => (l ? "   " : "│  ")).join("") + (entry.last ? "└─ " : "├─ ");
+}
+
+/**
+ * treeRows flattens one group's windows into display order. It ports
+ * internal/tui/herd_tree.go treeRows (shared cases: internal/tui/testdata/
+ * tree_cases.json). A window nests under win.parent when that is another
+ * window of the group (and not itself). Non-dispatched windows without such a
+ * parent are roots. Dispatched windows with no usable parent, plus windows
+ * stuck in a parent cycle, go under a trailing {label, bucket:true} entry.
+ * Roots and children are in attention order; every window is emitted once.
+ * Entries are {win, depth, last, ancestorsLast[]} or {label, bucket:true, depth:0}.
+ */
+export function treeRows(windows) {
+  const rows = sortWindows(windows);
+  const idx = new Map();
+  rows.forEach((r, i) => {
+    if (r.window_id && !idx.has(r.window_id)) idx.set(r.window_id, i);
+  });
+  const children = rows.map(() => []);
+  const hasParent = rows.map(() => false);
+  rows.forEach((r, i) => {
+    if (!r.parent || !idx.has(r.parent)) return;
+    const p = idx.get(r.parent);
+    if (p === i) return;
+    hasParent[i] = true;
+    children[p].push(i);
+  });
+
+  const visited = rows.map(() => false);
+  const out = [];
+  const walk = (i, depth, ancestorsLast, last) => {
+    visited[i] = true;
+    out.push({ win: rows[i], depth, last, ancestorsLast });
+    const kids = children[i].filter((c) => !visited[c]);
+    const childAnc = depth > 0 ? [...ancestorsLast, last] : ancestorsLast;
+    for (let n = 0; n < kids.length; n++) {
+      if (visited[kids[n]]) continue; // reached via an earlier sibling's subtree
+      walk(kids[n], depth + 1, childAnc, n === kids.length - 1);
+    }
+  };
+
+  rows.forEach((r, i) => {
+    if (!isDispatched(r) && !hasParent[i]) walk(i, 0, [], true);
+  });
+
+  // Bucket: walk every top-level entry as non-last, then fix up the final one.
+  const head = out.length;
+  out.push({ bucket: true, depth: 0 });
+  let lastTop = -1;
+  for (let pass = 0; pass < 2; pass++) {
+    rows.forEach((r, i) => {
+      if (visited[i] || (pass === 0 && (hasParent[i] || !isDispatched(r)))) return;
+      lastTop = out.length;
+      walk(i, 1, [], false);
+    });
+  }
+  if (lastTop < 0) return out.slice(0, head);
+  out[lastTop].last = true;
+  for (let j = lastTop + 1; j < out.length; j++) out[j].ancestorsLast[0] = true;
+  out[head].label = `dispatched (${out.length - head - 1})`;
+  return out;
+}
+
+/** descendants returns the entries nested under entries[i] (consecutive deeper entries). */
+export function descendants(entries, i) {
+  const d = entries[i].depth;
+  const out = [];
+  for (let j = i + 1; j < entries.length && entries[j].depth > d; j++) out.push(entries[j]);
+  return out;
+}
+
+/** collapseKey identifies a collapsible entry: window, or the group's bucket. */
+export function collapseKey(session, entry) {
+  return `${session}\u0000${entry.bucket ? "bucket" : entry.win.window_id}`;
+}
+
+/** visibleTree drops the entries hidden under a collapsed entry. */
+export function visibleTree(entries, session, collapsed) {
+  const out = [];
+  let skipBelow = Infinity;
+  for (const e of entries) {
+    if (e.depth > skipBelow) continue;
+    skipBelow = Infinity;
+    out.push(e);
+    if (collapsed.has(collapseKey(session, e)) && descendantsOf(entries, e).length > 0) skipBelow = e.depth;
+  }
+  return out;
+}
+
+function descendantsOf(entries, e) {
+  return descendants(entries, entries.indexOf(e));
+}
+
 /** formatSince renders "time in state": "12s", "5m", "2h 05m", "3d". */
 export function formatSince(iso, nowMs) {
   if (!iso) return "";
