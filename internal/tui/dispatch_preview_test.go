@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestDispatchPreviewModel_Init(t *testing.T) {
@@ -759,4 +761,176 @@ func TestDispatchPreviewViewFitsPopup(t *testing.T) {
 			}
 		}
 	}
+}
+
+// --- mouse ---
+
+type dpClock struct{ t time.Time }
+
+func (c *dpClock) now() time.Time { return c.t }
+
+func newClickModel(kind string, expanded bool) (DispatchPreviewModel, *dpClock) {
+	clk := &dpClock{t: time.Unix(1000, 0)}
+	m := NewDispatchPreview("brandon", "go-engineer", 7, "do the thing\nline two", "", "agentctl dispatch --issue 7",
+		WithKind(kind), WithClock(clk.now))
+	m.expanded = expanded
+	clk.t = clk.t.Add(dpClickArmDelay + time.Millisecond)
+	return m, clk
+}
+
+// findCell locates needle in the ANSI-stripped rendered view and returns its
+// (x, y) cell coordinates.
+func findCell(t *testing.T, m DispatchPreviewModel, needle string) (int, int) {
+	t.Helper()
+	lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+	for y, l := range lines {
+		if i := strings.Index(l, needle); i >= 0 {
+			return utf8.RuneCountInString(l[:i]), y
+		}
+	}
+	t.Fatalf("%q not found in view:\n%s", needle, strings.Join(lines, "\n"))
+	return 0, 0
+}
+
+func click(m DispatchPreviewModel, x, y int, btn tea.MouseButton) (DispatchPreviewModel, tea.Cmd) {
+	mm, _ := m.Update(tea.MouseClickMsg{X: x, Y: y, Button: btn})
+	mm, cmd := mm.Update(tea.MouseReleaseMsg{X: x, Y: y, Button: btn})
+	return mm.(DispatchPreviewModel), cmd
+}
+
+func TestDispatchPreviewMouse_Targets(t *testing.T) {
+	tests := []struct {
+		name     string
+		kind     string
+		expanded bool
+		needle   string
+		check    func(t *testing.T, m DispatchPreviewModel, cmd tea.Cmd)
+	}{
+		{"allow", PreviewKindDispatch, false, "allow", func(t *testing.T, m DispatchPreviewModel, cmd tea.Cmd) {
+			if m.Decision() != "allow" || cmd == nil {
+				t.Errorf("decision=%q cmd=%v", m.Decision(), cmd)
+			}
+		}},
+		{"deny", PreviewKindDispatch, false, "deny", func(t *testing.T, m DispatchPreviewModel, cmd tea.Cmd) {
+			if m.Decision() != "deny" || cmd == nil {
+				t.Errorf("decision=%q cmd=%v", m.Decision(), cmd)
+			}
+		}},
+		{"allow bash", PreviewKindBash, true, "allow", func(t *testing.T, m DispatchPreviewModel, cmd tea.Cmd) {
+			if m.Decision() != "allow" || cmd == nil {
+				t.Errorf("decision=%q", m.Decision())
+			}
+		}},
+		{"hint toggle collapsed", PreviewKindDispatch, false, "toggle prompt", func(t *testing.T, m DispatchPreviewModel, _ tea.Cmd) {
+			if !m.expanded {
+				t.Error("want expanded")
+			}
+		}},
+		{"hint toggle expanded", PreviewKindBash, true, "toggle prompt", func(t *testing.T, m DispatchPreviewModel, _ tea.Cmd) {
+			if m.expanded {
+				t.Error("want collapsed")
+			}
+		}},
+		{"box toggle collapsed", PreviewKindDispatch, false, "▶ View prompt", func(t *testing.T, m DispatchPreviewModel, _ tea.Cmd) {
+			if !m.expanded {
+				t.Error("want expanded")
+			}
+		}},
+		{"box toggle bash expanded", PreviewKindBash, true, "▼ View command", func(t *testing.T, m DispatchPreviewModel, _ tea.Cmd) {
+			if m.expanded {
+				t.Error("want collapsed")
+			}
+		}},
+		{"raw", PreviewKindDispatch, true, "raw", func(t *testing.T, m DispatchPreviewModel, _ tea.Cmd) {
+			if !m.rawMode {
+				t.Error("want rawMode")
+			}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := newClickModel(tc.kind, tc.expanded)
+			x, y := findCell(t, m, tc.needle)
+			// "raw" also appears elsewhere only in the hint bar; use last line.
+			if tc.name == "raw" {
+				x, y = findCell(t, m, "r raw")
+				x += 2
+			}
+			got, cmd := click(m, x, y, tea.MouseLeft)
+			tc.check(t, got, cmd)
+		})
+	}
+}
+
+func TestDispatchPreviewMouse_RawUnclickableWhenCollapsed(t *testing.T) {
+	m, _ := newClickModel(PreviewKindDispatch, false)
+	if strings.Contains(ansi.Strip(m.View().Content), "r raw") {
+		t.Fatal("raw hint should be absent when collapsed")
+	}
+	for _, seg := range m.hintSegments() {
+		if seg.target == dpTargetRaw {
+			t.Fatal("raw segment present when collapsed")
+		}
+	}
+}
+
+func TestDispatchPreviewMouse_Negative(t *testing.T) {
+	m, clk := newClickModel(PreviewKindDispatch, true)
+	ax, ay := findCell(t, m, "allow")
+	dx, dy := findCell(t, m, "deny")
+
+	t.Run("press one release another", func(t *testing.T) {
+		mm, _ := m.Update(tea.MouseClickMsg{X: ax, Y: ay, Button: tea.MouseLeft})
+		mm, cmd := mm.Update(tea.MouseReleaseMsg{X: dx, Y: dy, Button: tea.MouseLeft})
+		if mm.(DispatchPreviewModel).Decision() != "" || cmd != nil {
+			t.Error("expected no decision")
+		}
+	})
+	t.Run("release without press", func(t *testing.T) {
+		mm, cmd := m.Update(tea.MouseReleaseMsg{X: ax, Y: ay, Button: tea.MouseLeft})
+		if mm.(DispatchPreviewModel).Decision() != "" || cmd != nil {
+			t.Error("expected no decision")
+		}
+	})
+	t.Run("right click", func(t *testing.T) {
+		got, cmd := click(m, ax, ay, tea.MouseRight)
+		if got.Decision() != "" || cmd != nil {
+			t.Error("expected no decision")
+		}
+	})
+	t.Run("wheel", func(t *testing.T) {
+		mm, cmd := m.Update(tea.MouseWheelMsg{X: ax, Y: ay, Button: tea.MouseWheelDown})
+		if mm.(DispatchPreviewModel).Decision() != "" || cmd != nil {
+			t.Error("expected no decision")
+		}
+	})
+	for _, needle := range []string{"wants to dispatch", "Requested by", "brandon", "scroll"} {
+		t.Run("inert "+needle, func(t *testing.T) {
+			x, y := findCell(t, m, needle)
+			got, cmd := click(m, x, y, tea.MouseLeft)
+			if got.Decision() != "" || cmd != nil || got.expanded != m.expanded || got.rawMode != m.rawMode {
+				t.Error("click on inert area changed state")
+			}
+		})
+	}
+	t.Run("whitespace", func(t *testing.T) {
+		got, cmd := click(m, 0, 0, tea.MouseLeft)
+		if got.Decision() != "" || cmd != nil || got.expanded != m.expanded {
+			t.Error("changed state")
+		}
+	})
+	t.Run("arming delay", func(t *testing.T) {
+		fresh, c := newClickModel(PreviewKindDispatch, true)
+		c.t = fresh.openedAt.Add(dpClickArmDelay - time.Millisecond)
+		got, cmd := click(fresh, ax, ay, tea.MouseLeft)
+		if got.Decision() != "" || cmd != nil {
+			t.Error("click inside arming delay should be ignored")
+		}
+		c.t = fresh.openedAt.Add(dpClickArmDelay)
+		got, _ = click(fresh, ax, ay, tea.MouseLeft)
+		if got.Decision() != "allow" {
+			t.Error("click after arming delay should act")
+		}
+	})
+	_ = clk
 }

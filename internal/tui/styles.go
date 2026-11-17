@@ -258,25 +258,6 @@ func renderHintLine(hints ...string) string {
 	return strings.Join(parts, sep)
 }
 
-// renderHintLineStyled behaves like renderHintLine, but lets the caller give
-// each key/label pair its own key style (e.g. semantic green/red for
-// allow/deny) while keeping the same "key label · key label" shape and dot
-// separator. keyStyles must have one entry per key/label pair in hints; use
-// menuHintKeyStyle for pairs that don't need a distinct color.
-func renderHintLineStyled(keyStyles []lipgloss.Style, hints ...string) string {
-	var parts []string
-	for i := 0; i+1 < len(hints); i += 2 {
-		idx := i / 2
-		ks := menuHintKeyStyle
-		if idx < len(keyStyles) {
-			ks = keyStyles[idx]
-		}
-		parts = append(parts, ks.Render(hints[i])+" "+menuHintLabelStyle.Render(hints[i+1]))
-	}
-	sep := "  " + menuHintDotStyle.Render("·") + "  "
-	return strings.Join(parts, sep)
-}
-
 // renderStepDots renders a row of progress dots for a multi-step wizard.
 // total is the number of steps; current is the 0-based active step.
 func renderStepDots(current, total int, contentWidth int) string {
