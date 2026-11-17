@@ -15,9 +15,9 @@ agentctl follows the XDG base directory spec and splits user-level files by role
 
 | Role | Location | Contents |
 |---|---|---|
-| Config | `$XDG_CONFIG_HOME/agentctl` (default `~/.config/agentctl`) | `config.json`, user-authored `themes/*.json` |
+| Config | `$XDG_CONFIG_HOME/agentctl` (default `~/.config/agentctl`) | `config.json`, `schedules.json` (`agentctl cron` jobs), user-authored `themes/*.json` |
 | Data | `$XDG_DATA_HOME/agentctl` (default `~/.local/share/agentctl`) | `context/` (context store), `journal/` (work journal) |
-| State | `$XDG_STATE_HOME/agentctl` (default `~/.local/state/agentctl`) | `registry/` (live sessions), `ratelimits.json`, `hub/` (hub session working directory), `serve/` (`agentctl serve` certificates, devices, log) |
+| State | `$XDG_STATE_HOME/agentctl` (default `~/.local/state/agentctl`) | `registry/` (live sessions), `ratelimits.json`, `hub/` (hub session working directory), `serve/` (`agentctl serve` certificates, devices, log), `cron/` (`agentctl cron` tick lock, state, run history, log) |
 
 A relative `XDG_*` value is invalid per the spec and is ignored. `AGENTCTL_REGISTRY_DIR` still overrides the registry location.
 
@@ -74,6 +74,7 @@ Rationale: a project-local file can arrive with a cloned repository. Executing c
 | `default_account` | string | none | Account used when nothing else picks one. Global-only. |
 | `account_rules` | array | none | Route launches to an account by repo root. Global-only. |
 | `serve` | object | defaults | `agentctl serve` (mobile web app server). Global-only. See [serve](#serve). |
+| `cron` | object | defaults | `agentctl cron` (scheduled agent runs): kill switch and throttles. Global-only. See [cron](#cron). |
 | `agents` | object | none | Per-agent settings. See [Per-agent settings](#per-agent-settings). |
 
 ### Notifications
@@ -203,6 +204,22 @@ Settings for `agentctl serve`, the per-machine HTTPS server the mobile web app t
 State lives in `$XDG_STATE_HOME/agentctl/serve/` (0700): the local CA and server certificate, `devices.json` (token hashes only), `vapid.json` (Web Push keypair, 0600), `subscriptions.json` (per-device push subscriptions; dropped when a device is revoked), `serve.pid`, `serve.log`, and the 0600 control socket `control.sock`. Commands: `agentctl serve` (foreground), `serve install` / `uninstall` (launchd LaunchAgent; prints a systemd user unit on Linux), `serve status`, `serve pair [--name N]`, `serve devices [rm <id|name>]`, `serve logs [-n N] [--audit] [--follow]` (read-only tail of `serve.log` or `audit.jsonl`). Agents cannot touch the serve state dir, restart or reinstall serve, or pair devices (the Bash validator blocks it, since remote approvals depend on serve); `serve logs` is how they read its logs. The CA is name-constrained to local names (`.local`, `.lan`, `.home`, `.home.arpa`, `.internal`, the `serve.hostnames` present when it was created) and private/loopback/ULA IPs; after adding a hostname outside those, run `agentctl serve ca rotate` (every device must reinstall the profile and pair again).
 
 Web Push subscriptions are accepted only for known push services (Apple, Firebase Cloud Messaging, Mozilla, Windows Notification Service), and push requests never connect to private, loopback or link-local addresses or follow redirects.
+
+### cron
+
+Global defaults for `agentctl cron`, scheduled agent runs (design: [design/cron.md](design/cron.md)). **Every key is global-only**: a `cron` block in a project-local config is ignored with a warning, and the jobs themselves live only in `~/.config/agentctl/schedules.json` (0600), so nothing a cloned repository ships can create or loosen a recurring autonomous job.
+
+| Key | Default | Description |
+|---|---|---|
+| `cron.enabled` | `true` | Kill switch. `false` makes `agentctl cron tick` a no-op (it still stamps its last-tick time). |
+| `cron.min_interval` | `15m` | `cron add` rejects a schedule whose fires, measured over the next 50, come closer together than this. |
+| `cron.max_concurrent` | `2` | Live, not-done scheduled windows across all jobs; a fire past the cap is recorded as `skipped:concurrency`. |
+| `cron.skip_if_usage_above` | `{"five_hour": 80, "seven_day": 90}` | Skip a fire when the statusline-pushed 5h or 7d used percentage of the account the job runs under is at or above this. The account resolves as for `dispatch` (the job's `account`, `agents.<name>.account`, `account_rules` on the repo root, `default_account`); a hot account is skipped, never swapped for another. Missing data, or data older than 6h, counts as unknown: the run goes ahead and the run log says so. A job's own `skip_if_usage_above` overrides per field. |
+| `cron.catchup_window` | `6h` | With `catchup: latest` (the default), the most recent missed fire still runs if it is at most this late; older ones are recorded as `skipped:catchup`. |
+
+Jobs (`agentctl cron add <name> --schedule '30 7 * * 1-5' --agent A --dir D (--prompt T | --prompt-key K | --prompt-file F)`) take `[--no-worktree] [--model] [--effort] [--backend] [--account] [--timeout 45m] [--overlap skip|allow] [--catchup latest|none]`. Schedules are 5-field cron in local time, or `@hourly`/`@daily`/`@weekly`. `harness` (`claude`) and `mode` (`window`) are in the schema but only those values are accepted for now. `--prompt-file` is copied into the job when it is added; `--prompt-key` is read from the context store at each fire.
+
+`agentctl cron install` writes `~/Library/LaunchAgents/com.blsmth.agentctl.cron.plist`, which runs `agentctl cron tick` every 60 seconds with a PATH covering the current `claude`, `tmux` and `gh` and a UTF-8 locale (on Linux it prints a crontab line instead). Each tick takes a flock on `<state dir>/cron/tick.lock`, records `last_fire` per job in `cron/state.json` before launching (a crash cannot fire twice), waits a deterministic 0-90s per-job jitter, and launches through the same path as `agentctl dispatch --prompt`: a worktree per fire (`.worktrees/cron-<job>-<YYYYMMDD-HHMM>`, unless `worktree: false`), a detached project session if none is running, and `scheduled_by` in the window's record. `overlap: skip` (default) skips a fire while the previous run's window is alive and not done. A job `timeout` sends `C-c` to the window and marks it blocked with a notice; it never kills it. Every decision is appended to `cron/runs.ndjson` (`agentctl cron runs [<name>]`). `agentctl cron list` shows the next fire, last result and throttles; `agentctl health` reports whether the ticker is loaded, the last tick's age, and jobs whose last 3 launches failed.
 
 ### models
 

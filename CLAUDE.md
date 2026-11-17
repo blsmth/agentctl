@@ -54,6 +54,8 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 - **metrics/**, **metricsserve/**, **metricsproc/** — Prometheus registry, collectors and remote write; `metrics/events` is the hook-written transition log; `metricsserve` is `agentctl metrics serve`; `metricsproc` is its pidfile/lock/start plumbing. See [docs/monitor-architecture.md](docs/monitor-architecture.md#metrics-without-the-monitor).
 - **notify/** — Desktop notifications from `notify_cmd` (`alerter` on macOS, `notify-send` on Linux).
 - **serve/** — `agentctl serve`, the per-machine HTTPS server for the mobile web app: local CA + leaf certs, CIDR filter, device-cookie auth, CSRF, pairing over a 0600 control socket. Routes register through `Router` (`Public`/`Device`/`Write`); see [docs/design/mobile-web-app.md](docs/design/mobile-web-app.md).
+- **cron/** — `agentctl cron` (scheduled runs): `schedules.json` jobs (global only), `robfig/cron` schedules, and the flock-guarded `cron tick` decisions (due fires with jitter, catch-up, overlap via windowstate `scheduled_by`, `max_concurrent`, usage gate, timeouts) behind injectable `Deps`; state and `runs.ndjson` under `<stateDir>/cron/`. The CLI and real deps (project binding, detached session start, dispatch through `cmd.DispatchOptions`) are in `internal/cmd/cron*.go`. See [docs/configuration.md](docs/configuration.md#cron).
+- **launchd/** — LaunchAgent plist rendering and `launchctl` bootstrap/bootout, shared by `serve install` and `cron install`.
 
 ### Behavior notes
 

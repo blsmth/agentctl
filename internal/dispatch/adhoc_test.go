@@ -43,6 +43,12 @@ func TestLaunchAdhoc(t *testing.T) {
 			req:  AdhocRequest{Prompt: "p", AgentName: "go-engineer", WorkDir: "/w", UseWorktree: true, Detached: true},
 			slug: "acme/widgets", wantSlug: "acme/widgets",
 		},
+		{
+			name: "scheduled (cron)",
+			req: AdhocRequest{Prompt: "p", AgentName: "go-engineer", WorkDir: "/w", UseWorktree: true, Detached: true,
+				Effort: "high", Branch: "cron/nightly-20261117-0200", ScheduledBy: "nightly"},
+			slug: "acme/widgets", wantSlug: "acme/widgets",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -59,7 +65,8 @@ func TestLaunchAdhoc(t *testing.T) {
 			}
 			if got.AgentName != tt.req.AgentName || got.CustomPrompt != tt.req.Prompt || got.PromptKey != tt.req.PromptKey ||
 				got.WorkDir != tt.req.WorkDir || got.Model != tt.req.Model || got.Backend != tt.req.Backend ||
-				got.Detached != tt.req.Detached || got.Ticket != 0 {
+				got.Detached != tt.req.Detached || got.Ticket != 0 || got.Effort != tt.req.Effort ||
+				got.Branch != tt.req.Branch || got.ScheduledBy != tt.req.ScheduledBy {
 				t.Errorf("Request = %+v, from %+v", *got, tt.req)
 			}
 			if got.UseWorktree == nil || *got.UseWorktree != tt.req.UseWorktree {
