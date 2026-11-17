@@ -232,9 +232,7 @@ func Launch(req Request) (Result, error) {
 	}
 
 	// 7. Build system prompt.
-	if spec.Role != RoleOrchestrator && !req.Detached {
-		req.Orchestrator = resolveOrchestrator()
-	}
+	req.Orchestrator = launchOrchestrator(req, spec)
 	systemPrompt := buildSystemPrompt(req, spec, workDir, branch, useWorktree, contextEntries, sharedConventions)
 
 	// 8. Determine user message.
@@ -1057,6 +1055,20 @@ func AgentEnvOverrides(ac config.AgentConfig) map[string]string {
 	}
 	return env
 }
+
+// launchOrchestrator is the orchestrator a launch reports to: none for an
+// orchestrator role, and none for a Detached launch (agentctl serve), whose
+// dispatcher is a phone: resolving one there would pick up whatever window
+// the serve process happens to inherit.
+func launchOrchestrator(req Request, spec modeSpec) Orchestrator {
+	if spec.Role == RoleOrchestrator || req.Detached {
+		return Orchestrator{}
+	}
+	return resolveOrchestratorFn()
+}
+
+// resolveOrchestratorFn is the seam launchOrchestrator resolves through.
+var resolveOrchestratorFn = resolveOrchestrator
 
 // resolveOrchestrator identifies the dispatching Claude session. It returns
 // the zero value unless the dispatcher is a tracked session, so a human

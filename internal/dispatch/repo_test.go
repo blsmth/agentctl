@@ -1,8 +1,10 @@
 package dispatch
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func stubRunner(t *testing.T, fn commandRunner) *int {
@@ -80,5 +82,20 @@ func TestRepoSlugIgnoresEnv(t *testing.T) {
 	got, err := RepoSlug("/x")
 	if err != nil || got != "gh/repo" {
 		t.Fatalf("got %q, %v; want gh/repo", got, err)
+	}
+}
+
+// A hung gh must not hang the dispatch: the runner kills it at the timeout.
+func TestRunWithTimeoutKillsHungCommand(t *testing.T) {
+	start := time.Now()
+	_, err := runWithTimeout(100*time.Millisecond, t.TempDir(), "sleep", "10")
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want a deadline error", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("returned after %v", d)
+	}
+	if out, err := runWithTimeout(5*time.Second, t.TempDir(), "echo", "ok"); err != nil || string(out) != "ok\n" {
+		t.Errorf("echo = %q, %v", out, err)
 	}
 }

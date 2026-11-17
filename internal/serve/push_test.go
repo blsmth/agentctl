@@ -56,7 +56,7 @@ func (f *fakePusher) endpoints() []string {
 }
 
 func testSub(name string) Subscription {
-	return Subscription{Endpoint: "https://push.example/" + name, Keys: SubKeys{P256dh: "p", Auth: "a"}}
+	return Subscription{Endpoint: "https://web.push.apple.com/" + name, Keys: SubKeys{P256dh: "p", Auth: "a"}}
 }
 
 func postJSON(h http.Handler, method, target, body string, opts ...reqOpt) *httptest.ResponseRecorder {
@@ -111,7 +111,7 @@ func TestSubscriptionStorePersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := st2.Get("d1"); !ok || got.Endpoint != "https://push.example/one" {
+	if got, ok := st2.Get("d1"); !ok || got.Endpoint != "https://web.push.apple.com/one" {
 		t.Fatalf("Get(d1) = %+v, %v", got, ok)
 	}
 	if err := st2.Delete("d1"); err != nil {
@@ -123,7 +123,7 @@ func TestSubscriptionStorePersistence(t *testing.T) {
 	if _, ok := st.Get("d2"); !ok {
 		t.Error("d2 lost")
 	}
-	if err := st.DeleteEndpoint("https://push.example/two"); err != nil {
+	if err := st.DeleteEndpoint("https://web.push.apple.com/two"); err != nil {
 		t.Fatal(err)
 	}
 	if all, _ := st.All(); len(all) != 0 {
@@ -135,15 +135,33 @@ func TestSubscriptionValidate(t *testing.T) {
 	cases := map[string]Subscription{
 		"http endpoint": {Endpoint: "http://x/y", Keys: SubKeys{"p", "a"}},
 		"no endpoint":   {Keys: SubKeys{"p", "a"}},
-		"no keys":       {Endpoint: "https://x/y"},
+		"no keys":       {Endpoint: "https://web.push.apple.com/y"},
+		// Not a push service: a paired device must not be able to aim
+		// broadcasts at the LAN, loopback or cloud metadata.
+		"loopback":           {Endpoint: "https://127.0.0.1:6443/", Keys: SubKeys{"p", "a"}},
+		"metadata":           {Endpoint: "https://169.254.169.254/latest", Keys: SubKeys{"p", "a"}},
+		"private ip":         {Endpoint: "https://10.0.0.5:22/", Keys: SubKeys{"p", "a"}},
+		"other host":         {Endpoint: "https://example.com/push", Keys: SubKeys{"p", "a"}},
+		"lookalike suffix":   {Endpoint: "https://evilpush.apple.com/x", Keys: SubKeys{"p", "a"}},
+		"bare wildcard base": {Endpoint: "https://push.apple.com/x", Keys: SubKeys{"p", "a"}},
+		"allowed host, port": {Endpoint: "https://web.push.apple.com:8443/x", Keys: SubKeys{"p", "a"}},
+		"userinfo":           {Endpoint: "https://u:p@web.push.apple.com/x", Keys: SubKeys{"p", "a"}},
 	}
 	for name, sub := range cases {
 		if sub.Validate() == nil {
 			t.Errorf("%s: want error", name)
 		}
 	}
-	if err := testSub("ok").Validate(); err != nil {
-		t.Errorf("valid sub: %v", err)
+	for _, ep := range []string{
+		"https://web.push.apple.com/QGx",
+		"https://fcm.googleapis.com/fcm/send/abc",
+		"https://updates.push.services.mozilla.com/wpush/v2/x",
+		"https://wns2-par02p.notify.windows.com/w/?token=x",
+		"https://WEB.PUSH.APPLE.COM:443/x",
+	} {
+		if err := (Subscription{Endpoint: ep, Keys: SubKeys{"p", "a"}}).Validate(); err != nil {
+			t.Errorf("%s: %v", ep, err)
+		}
 	}
 }
 
@@ -151,7 +169,7 @@ func TestSenderBroadcast(t *testing.T) {
 	ts := newTestServer(t, config.ServeConfig{})
 	d1, _ := ts.pairDevice(t, "phone")
 	d2, _ := ts.pairDevice(t, "tablet")
-	fp := &fakePusher{status: map[string]int{"https://push.example/gone": http.StatusGone}}
+	fp := &fakePusher{status: map[string]int{"https://web.push.apple.com/gone": http.StatusGone}}
 	ts.subs.Set(d1.ID, testSub("phone"), ts.clock.Now()) //nolint:errcheck
 	ts.subs.Set(d2.ID, testSub("gone"), ts.clock.Now())  //nolint:errcheck
 	s := NewSender(ts.devices, ts.subs, fp)
@@ -172,7 +190,7 @@ func TestSenderBroadcast(t *testing.T) {
 		t.Error("healthy subscription was deleted")
 	}
 
-	fp.status = map[string]int{"https://push.example/phone": http.StatusNotFound}
+	fp.status = map[string]int{"https://web.push.apple.com/phone": http.StatusNotFound}
 	s.Broadcast(context.Background(), Message{Title: "t"})
 	if _, ok := ts.subs.Get(d1.ID); ok {
 		t.Error("404 subscription was not deleted")
@@ -201,7 +219,7 @@ func TestSenderSkipsRevokedDevice(t *testing.T) {
 	fp := &fakePusher{}
 	s := NewSender(ts.devices, ts.subs, fp)
 	s.Broadcast(context.Background(), Message{Title: "t"})
-	if got := fp.endpoints(); len(got) != 1 || got[0] != "https://push.example/tablet" {
+	if got := fp.endpoints(); len(got) != 1 || got[0] != "https://web.push.apple.com/tablet" {
 		t.Errorf("pushed to %v, want only tablet", got)
 	}
 	if _, ok := ts.subs.Get(d.ID); ok {
@@ -250,7 +268,7 @@ func TestNtfyRequestShape(t *testing.T) {
 		gotBody = string(b)
 	}))
 	defer srv.Close()
-	n := &Ntfy{Base: srv.URL, Topic: "my topic", AppURL: "https://192.168.1.10:8443"}
+	n := &Ntfy{Base: srv.URL, Topic: "my topic", AppURL: "https://192.168.1.10:8443", Details: true}
 	msg := Message{Title: "agentctl: go-engineer blocked", Body: "proj · @5 · Bash", URL: windowURL("agentctl-proj", "@5"), Kind: "blocked", Urgent: true}
 	if err := n.Send(context.Background(), msg); err != nil {
 		t.Fatal(err)
@@ -324,7 +342,7 @@ func TestPushEndpoints(t *testing.T) {
 		t.Errorf("bad subscribe = %d", w.Code)
 	}
 	// subscribe in the shape PushSubscription.toJSON() produces
-	body := `{"endpoint":"https://push.example/phone","expirationTime":null,"keys":{"p256dh":"P","auth":"A"}}`
+	body := `{"endpoint":"https://web.push.apple.com/phone","expirationTime":null,"keys":{"p256dh":"P","auth":"A"}}`
 	if w := postJSON(ts.Handler(), "POST", "/v1/push/subscribe", body, cookie); w.Code != 200 {
 		t.Fatalf("subscribe = %d %s", w.Code, w.Body)
 	}
@@ -335,7 +353,7 @@ func TestPushEndpoints(t *testing.T) {
 	if w := postJSON(ts.Handler(), "POST", "/v1/push/test", "{}", cookie); w.Code != 200 {
 		t.Fatalf("test = %d %s", w.Code, w.Body)
 	}
-	if got := fp.endpoints(); len(got) != 1 || got[0] != "https://push.example/phone" {
+	if got := fp.endpoints(); len(got) != 1 || got[0] != "https://web.push.apple.com/phone" {
 		t.Errorf("test push went to %v", got)
 	}
 	// unsubscribe
@@ -355,7 +373,7 @@ func TestPushDispatcherDeliversToWebPushAndNtfy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { posted <- r.Header.Get("Title") }))
 	defer srv.Close()
 	fp := &fakePusher{}
-	ts := newTestServerWith(t, config.ServeConfig{NtfyTopic: "topic"}, func(o *Options) { o.Pusher = fp; o.NtfyBase = srv.URL })
+	ts := newTestServerWith(t, config.ServeConfig{NtfyTopic: "topic", NtfyDetails: true}, func(o *Options) { o.Pusher = fp; o.NtfyBase = srv.URL })
 	d, _ := ts.pairDevice(t, "phone")
 	ts.subs.Set(d.ID, testSub("phone"), ts.clock.Now()) //nolint:errcheck
 

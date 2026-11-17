@@ -51,14 +51,37 @@ func cleanLine(line string) string {
 	return strings.TrimSpace(line)
 }
 
-// maxDialogContext bounds how many lines above the question belong to the
-// dialog (the tool name and the command or diff being approved).
+// maxDialogContext bounds how many non-blank lines above the options belong
+// to the dialog when no separator rule bounds it (a dialog Claude Code draws
+// always has one: the box top or a ─ rule).
 const maxDialogContext = 14
+
+// dialogStart returns the first line of the dialog body whose options start
+// at line first. The body is everything above the options back to the
+// nearest separator rule, however long: a long command must be part of the
+// text (and so of the hash), or two commands that differ only in their early
+// lines would be the same dialog. Only when no rule is found is the body cut
+// at maxDialogContext non-blank lines, so pane history is never swept in.
+func dialogStart(lines, cleaned []string, first int) int {
+	for i := first - 1; i >= 0; i-- {
+		if isRule(lines[i]) {
+			return i + 1
+		}
+	}
+	start, budget := first, maxDialogContext
+	for i := first - 1; i >= 0 && budget > 0; i-- {
+		start = i
+		if cleaned[i] != "" {
+			budget--
+		}
+	}
+	return start
+}
 
 // ParseDialog extracts the permission dialog from the captured pane (ANSI is
 // accepted). It finds the last run of numbered options starting at "1", takes
-// the lines above it, back to the nearest separator rule, as the dialog body,
-// and returns ok=false when the pane has no such run.
+// the lines above it, back to the nearest separator rule, as the dialog body
+// (see dialogStart), and returns ok=false when the pane has no such run.
 func ParseDialog(pane string) (Dialog, bool) {
 	lines := strings.Split(StripANSI(pane), "\n")
 	cleaned := make([]string, len(lines))
@@ -99,18 +122,7 @@ func ParseDialog(pane string) (Dialog, bool) {
 		return Dialog{}, false
 	}
 
-	// Body: walk up from the first option until a separator or the budget.
-	start := first
-	budget := maxDialogContext
-	for i := first - 1; i >= 0 && budget > 0; i-- {
-		if isRule(lines[i]) {
-			break
-		}
-		start = i
-		if cleaned[i] != "" {
-			budget--
-		}
-	}
+	start := dialogStart(lines, cleaned, first)
 	var kept []string
 	for _, l := range cleaned[start : last+1] {
 		if l != "" {

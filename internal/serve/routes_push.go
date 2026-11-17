@@ -29,9 +29,10 @@ func (s *Server) initPush(opts Options) error {
 	s.sender = NewSender(s.devices, subs, pusher)
 	if topic := opts.Config.NtfyTopic; topic != "" {
 		s.ntfy = &Ntfy{
-			Base:   opts.NtfyBase,
-			Topic:  topic,
-			AppURL: "https://" + net.JoinHostPort(opts.AdvertiseHost, strconv.Itoa(opts.HTTPSPort)),
+			Base:    opts.NtfyBase,
+			Topic:   topic,
+			Details: opts.Config.NtfyDetails,
+			AppURL:  "https://" + net.JoinHostPort(opts.AdvertiseHost, strconv.Itoa(opts.HTTPSPort)),
 		}
 	}
 	s.pushQ = newPushDispatcher(s.sender, s.ntfy)
@@ -105,10 +106,13 @@ func (s *Server) handlePushTest(w http.ResponseWriter, r *http.Request) {
 		Kind:  "test",
 	})
 	switch {
-	case errors.Is(err, errNoSubscription):
+	case errors.Is(err, errNoSubscription), errors.Is(err, errSubscriptionExpired):
 		writeError(w, http.StatusConflict, codeBadRequest, err.Error())
 	case err != nil:
-		writeError(w, http.StatusBadGateway, codeInternal, err.Error())
+		// Never echo the delivery error: it carries dial errors and status
+		// codes. deliver logged the detail.
+		logging.Warn("serve: test push to device %s: %v", dev.ID, err)
+		writeError(w, http.StatusBadGateway, codeInternal, "push delivery failed; see serve.log")
 	default:
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}

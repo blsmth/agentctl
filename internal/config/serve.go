@@ -44,7 +44,12 @@ type ServeConfig struct {
 	// Push configures Web Push / ntfy notification triggers.
 	Push ServePushConfig `json:"push,omitzero"`
 	// NtfyTopic, when set, also posts notifications to https://ntfy.sh/<topic>.
+	// ntfy.sh topics are public: anyone who knows the name can subscribe, so
+	// it must be long and random.
 	NtfyTopic string `json:"ntfy_topic,omitempty"`
+	// NtfyDetails puts agent and project names, and a Click link with the
+	// server's address, into ntfy posts. Off by default: the topic is public.
+	NtfyDetails bool `json:"ntfy_details,omitempty"`
 }
 
 // ServePushConfig is the `serve.push` block.
@@ -60,7 +65,8 @@ type ServePushConfig struct {
 	// means none.
 	QuietHours string `json:"quiet_hours,omitempty"`
 	// VAPIDSubscriber is the contact (mailto: or https: URL) sent to push
-	// services as the VAPID subject. Empty means mailto:agentctl@localhost.
+	// services as the VAPID subject. Empty means
+	// https://github.com/blsmth/agentctl.
 	VAPIDSubscriber string `json:"vapid_subscriber,omitempty"`
 	// MutedProjects are project names that never push.
 	MutedProjects []string `json:"muted_projects,omitempty"`

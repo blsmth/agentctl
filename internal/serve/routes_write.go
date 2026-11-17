@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -26,6 +27,16 @@ const (
 	maxPromptRunes = 32000
 	// escKey is the answer key that dismisses a dialog.
 	escKey = "esc"
+	// answeredTTL is how long an answered dialog's hash is remembered per
+	// window. Claude Code redraws some time after the key lands; until then
+	// a second answer (a double tap, a second phone) would re-capture the
+	// same dialog and its key would land in the input box as stray text.
+	answeredTTL = 5 * time.Second
+	// answerSettleTimeout caps how long an answer waits, under the window
+	// lock, for the answered dialog to leave the pane; answerSettlePoll is
+	// the re-capture interval.
+	answerSettleTimeout = time.Second
+	answerSettlePoll    = 100 * time.Millisecond
 )
 
 var (
@@ -81,10 +92,12 @@ type resolved struct {
 	group  fleetwatch.Group
 	index  int
 	window herd.Window
+	// pane is the window's main pane, set by lockWindow.
+	pane string
 }
 
 func (rw resolved) target() WindowTarget {
-	return WindowTarget{Session: rw.group.Session, RuntimeDir: rw.group.RuntimeDir, WindowID: rw.window.WindowID}
+	return WindowTarget{Session: rw.group.Session, RuntimeDir: rw.group.RuntimeDir, WindowID: rw.window.WindowID, Pane: rw.pane}
 }
 
 // resolveWindow finds the request's {session}/{window} in the fleet. Only a
@@ -105,7 +118,9 @@ func (s *Server) resolveWindow(r *http.Request) (resolved, outcome, bool) {
 }
 
 // lockWindow resolves the window, takes its lock, then resolves it again so
-// every check after the lock sees state no older than the lock.
+// every check after the lock sees state no older than the lock. It also
+// resolves the window's main pane: every check and keystroke after it
+// targets that one pane.
 func (s *Server) lockWindow(r *http.Request, a *auditEntry) (resolved, func(), outcome, bool) {
 	rw, out, ok := s.resolveWindow(r)
 	if !ok {
@@ -118,13 +133,25 @@ func (s *Server) lockWindow(r *http.Request, a *auditEntry) (resolved, func(), o
 		unlock()
 		return resolved{}, nil, out, false
 	}
+	meta := rw.group.Meta[rw.window.WindowID]
+	pane, err := s.mainPanes.MainPane(rw.group.Session, rw.window.WindowID, meta.ChromeBarPane, meta.HudPane)
+	if err == nil && !tmux.IsPaneID(pane) {
+		err = fmt.Errorf("not a pane id: %q", pane)
+	}
+	if err != nil {
+		unlock()
+		logging.Warn("serve: finding main pane of %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
+		return resolved{}, nil, failure(http.StatusBadGateway, codePaneUnavailable, "the agent pane could not be found"), false
+	}
+	rw.pane = pane
 	return rw, unlock, outcome{}, true
 }
 
-// capturePane captures and classifies a window's pane exactly as GET …/pane
-// does (buildPaneBody), so a write decides on what the phone was shown.
+// capturePane captures the window's main pane (rw.pane, the pane the write
+// types into) and classifies it as GET …/pane does (buildPaneBody), so a
+// write decides on what the phone was shown.
 func (s *Server) capturePane(rw resolved) (paneBody, outcome, bool) {
-	text, err := s.panes.Capture(rw.group.Session, rw.window.WindowID, defaultPaneLines)
+	text, err := s.mainPanes.CapturePane(rw.pane, defaultPaneLines)
 	if err != nil {
 		logging.Warn("serve: capturing pane: %v", err)
 		return paneBody{}, failure(http.StatusBadGateway, codePaneUnavailable, "pane could not be captured"), false
@@ -141,6 +168,13 @@ type answerIn struct {
 // re-classified under the window lock immediately before the key is sent;
 // unless it still shows the very dialog the phone answered (same hash) and
 // the key is one of its options or esc, nothing is sent.
+//
+// The lock alone does not stop a double answer: send-keys returns before
+// Claude Code redraws, so a second request can re-capture the dialog that
+// was just answered and its key would land in the input box. So an answered
+// hash is remembered per window for answeredTTL and a repeat is refused, and
+// the answer waits (up to answerSettle) for the dialog to leave the pane
+// before releasing the lock.
 func (s *Server) handleAnswer(r *http.Request, in answerIn, a *auditEntry) outcome {
 	if in.Key != escKey && !answerKeyRE.MatchString(in.Key) {
 		return failure(http.StatusBadRequest, codeBadRequest, `key must be a dialog option key or "esc"`)
@@ -161,17 +195,78 @@ func (s *Server) handleAnswer(r *http.Request, in answerIn, a *auditEntry) outco
 	if pane.Verdict != "awaiting_input" || pane.Dialog == nil || pane.Dialog.Hash != in.DialogHash {
 		return failure(http.StatusConflict, codeDialogChanged, "the dialog changed; refresh and try again")
 	}
+	winKey := rw.group.Session + "\x00" + rw.window.WindowID
+	if s.answered.recent(winKey, in.DialogHash, s.now()) {
+		return failure(http.StatusConflict, codeAlreadyAnswered, "this dialog was already answered; refresh and try again")
+	}
 	key := in.Key
 	if key == escKey {
 		key = "Escape"
 	} else if !hasOption(pane, key) {
 		return failure(http.StatusConflict, codeDialogChanged, fmt.Sprintf("%q is not an option of this dialog", in.Key))
 	}
+	s.auditAttempt(*a)
 	if err := s.keys.SendKey(rw.target(), key); err != nil {
 		logging.Warn("serve: answer %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
 		return failure(http.StatusBadGateway, codeActionFailed, "sending the key failed")
 	}
+	s.answered.remember(winKey, in.DialogHash, s.now())
+	s.awaitDialogGone(rw, in.DialogHash)
 	return success(okBody)
+}
+
+// awaitDialogGone re-captures the pane until it no longer shows the dialog
+// with hash, for at most s.answerSettle. It only narrows the window in which
+// a later request could see the answered dialog; answeredDialogs is the
+// guard.
+func (s *Server) awaitDialogGone(rw resolved, hash string) {
+	deadline := time.Now().Add(s.answerSettle)
+	for time.Now().Before(deadline) {
+		text, err := s.mainPanes.CapturePane(rw.pane, defaultPaneLines)
+		if err != nil {
+			return
+		}
+		if p := buildPaneBody(text); p.Dialog == nil || p.Dialog.Hash != hash {
+			return
+		}
+		time.Sleep(answerSettlePoll)
+	}
+}
+
+// answeredDialogs remembers the last answered dialog hash per window.
+type answeredDialogs struct {
+	mu sync.Mutex
+	m  map[string]answeredDialog
+}
+
+type answeredDialog struct {
+	hash string
+	at   time.Time
+}
+
+// recent reports whether window key answered the dialog hash within
+// answeredTTL of now.
+func (d *answeredDialogs) recent(key, hash string, now time.Time) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	e, ok := d.m[key]
+	return ok && e.hash == hash && now.Sub(e.at) < answeredTTL
+}
+
+// remember records that window key answered hash at now, dropping expired
+// entries so the map stays bounded by the windows answered recently.
+func (d *answeredDialogs) remember(key, hash string, now time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.m == nil {
+		d.m = make(map[string]answeredDialog)
+	}
+	for k, e := range d.m {
+		if now.Sub(e.at) >= answeredTTL {
+			delete(d.m, k)
+		}
+	}
+	d.m[key] = answeredDialog{hash: hash, at: now}
 }
 
 func hasOption(pane paneBody, key string) bool {
@@ -195,6 +290,9 @@ func (s *Server) handleReply(r *http.Request, in replyIn, a *auditEntry) outcome
 	if out, ok := checkText("text", in.Text); !ok {
 		return out
 	}
+	if out, ok := checkReplyMode(in.Text); !ok {
+		return out
+	}
 	rw, unlock, out, ok := s.lockWindow(r, a)
 	if !ok {
 		return out
@@ -211,6 +309,7 @@ func (s *Server) handleReply(r *http.Request, in replyIn, a *auditEntry) outcome
 	if pane.Verdict != "idle" {
 		return failure(http.StatusConflict, codeNotIdle, "the agent is not at an idle prompt")
 	}
+	s.auditAttempt(*a)
 	// The inject path re-checks the pane before every keystroke and refuses
 	// a dialog (tmux.ErrDialogBlocking).
 	if err := s.injector.Inject(rw.target(), in.Text); err != nil {
@@ -232,6 +331,7 @@ func (s *Server) handleInterrupt(r *http.Request, _ emptyIn, a *auditEntry) outc
 		return out
 	}
 	defer unlock()
+	s.auditAttempt(*a)
 	if err := s.keys.SendKey(rw.target(), "Escape"); err != nil {
 		logging.Warn("serve: interrupt %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
 		return failure(http.StatusBadGateway, codeActionFailed, "sending Escape failed")
@@ -300,6 +400,7 @@ func (s *Server) handleClose(r *http.Request, _ emptyIn, a *auditEntry) outcome 
 	if v, ok := closable(rw, pane.Verdict); !ok {
 		return failure(http.StatusConflict, codeNotClosable, "window cannot be closed: "+v.Reason)
 	}
+	s.auditAttempt(*a)
 	if err := s.closer.CloseWindow(rw.target()); err != nil {
 		logging.Warn("serve: close %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
 		return failure(http.StatusBadGateway, codeActionFailed, "closing the window failed")
@@ -327,6 +428,24 @@ func checkText(field, s string) (outcome, bool) {
 		if c != '\n' && c != '\t' && (unicode.IsControl(c) || c == '\u2028' || c == '\u2029') {
 			return failure(http.StatusBadRequest, codeBadRequest, field+" contains control characters"), false
 		}
+	}
+	return outcome{}, true
+}
+
+// replyModePrefixes are the runes that, first in Claude Code's input box,
+// leave plain prompting: "!" runs the rest as a shell command (bash mode, no
+// permission dialog), "/" runs a slash command (/permissions, /hooks,
+// /add-dir change what the agent may do) and "#" writes to memory. A reply
+// is text for the agent, so it must not start with any of them.
+const replyModePrefixes = "!/#"
+
+// checkReplyMode rejects a reply whose first non-space rune would switch
+// Claude Code out of prompt mode (see replyModePrefixes).
+func checkReplyMode(text string) (outcome, bool) {
+	trimmed := strings.TrimLeftFunc(text, unicode.IsSpace)
+	if r, _ := utf8.DecodeRuneInString(trimmed); strings.ContainsRune(replyModePrefixes, r) {
+		return failure(http.StatusBadRequest, codeReplyIsCommand,
+			fmt.Sprintf("a reply cannot start with %q: Claude Code would run it as a command, not send it to the agent", r)), false
 	}
 	return outcome{}, true
 }
@@ -370,6 +489,7 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 		return failure(http.StatusBadRequest, codeUnknownProject, "project_dir is not a known project")
 	}
 	a.Session = g.Session
+	a.Project = clip(g.Project)
 
 	agents, err := s.agents.Agents([]string{g.Dir})
 	if err != nil {
@@ -386,6 +506,8 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	if !known {
 		return failure(http.StatusBadRequest, codeUnknownAgent, fmt.Sprintf("unknown agent %q for this project", in.Agent))
 	}
+	a.Agent = in.Agent
+	s.auditAttempt(*a)
 
 	res, err := s.dispatcher.Dispatch(DispatchRequest{
 		Agent: in.Agent, Prompt: in.Prompt, Model: in.Model,

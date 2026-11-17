@@ -118,3 +118,60 @@ func TestParseDialogHashStability(t *testing.T) {
 		t.Error("different commands must hash differently")
 	}
 }
+
+// longBashDialog is a boxed Bash dialog whose command is longer than
+// maxDialogContext lines; first is its first command line.
+func longBashDialog(first string) string {
+	var b strings.Builder
+	b.WriteString("╭──────────────────────────────────────────────────────────────────╮\n")
+	b.WriteString("│ Bash command                                                     │\n")
+	b.WriteString("│   " + first + "\n")
+	for i := range 2 * maxDialogContext {
+		b.WriteString("│   echo line " + strings.Repeat("x", i%5) + "\n")
+	}
+	b.WriteString("│ Do you want to proceed?                                          │\n")
+	b.WriteString("│ ❯ 1. Yes                                                         │\n")
+	b.WriteString("│   2. No                                                          │\n")
+	b.WriteString("╰──────────────────────────────────────────────────────────────────╯\n")
+	return b.String()
+}
+
+// Regression: only the last maxDialogContext lines above the options were
+// hashed, so two long commands that differed above that window hashed the
+// same and an answer for one could approve the other.
+func TestParseDialogHashCoversWholeRegion(t *testing.T) {
+	a, okA := ParseDialog(longBashDialog("rm -rf /tmp/scratch"))
+	b, okB := ParseDialog(longBashDialog("rm -rf $HOME"))
+	if !okA || !okB {
+		t.Fatal("fixture does not parse")
+	}
+	if a.Hash == b.Hash {
+		t.Error("commands differing above the old context window hash the same")
+	}
+	for _, want := range []string{"Bash command", "rm -rf /tmp/scratch", "Do you want to proceed?"} {
+		if !strings.Contains(a.Text, want) {
+			t.Errorf("text missing %q:\n%s", want, a.Text)
+		}
+	}
+	if a.Hash != HashDialogText(a.Text) {
+		t.Error("hash is not HashDialogText(Text)")
+	}
+}
+
+// Without a separator rule the body is still bounded, so scrollback above an
+// unboxed dialog is not swept in.
+func TestParseDialogNoRuleBounded(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("old scrollback that is not part of the dialog\n")
+	for range maxDialogContext {
+		b.WriteString("context\n")
+	}
+	b.WriteString(dialogANSI)
+	d, ok := ParseDialog(b.String())
+	if !ok {
+		t.Fatal("does not parse")
+	}
+	if strings.Contains(d.Text, "old scrollback") {
+		t.Errorf("text includes scrollback:\n%s", d.Text)
+	}
+}

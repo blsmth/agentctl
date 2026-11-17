@@ -175,6 +175,44 @@ func SendKeyToWindow(session, windowID, key string) error {
 	return sendKeyFn(sessionWindowTarget(session, windowID), key)
 }
 
+// SendKeyToPane sends one tmux key name to a pane by ID ("%12"), the pane
+// CapturePaneByIDANSI reads. Callers must allowlist key, as for
+// SendKeyToWindow.
+func SendKeyToPane(paneID, key string) error {
+	if !IsPaneID(paneID) {
+		return fmt.Errorf("send-keys: invalid pane id %q", paneID)
+	}
+	return sendKeyFn(paneID, key)
+}
+
+// IsPaneID reports whether s is a tmux pane ID ("%" and digits), so it can
+// only ever be read as a pane target.
+func IsPaneID(s string) bool {
+	if len(s) < 2 || s[0] != '%' {
+		return false
+	}
+	for _, c := range s[1:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// CapturePaneByIDANSI is CapturePaneANSI for one pane by ID.
+func CapturePaneByIDANSI(paneID string, lines int) (string, error) {
+	if !IsPaneID(paneID) {
+		return "", fmt.Errorf("capture-pane: invalid pane id %q", paneID)
+	}
+	args := capturePaneArgs(paneID, lines)
+	args = append(args[:2], append([]string{"-e"}, args[2:]...)...)
+	out, err := exec.Command("tmux", args...).Output()
+	if err != nil {
+		return "", fmt.Errorf("capture-pane %s: %w", paneID, err)
+	}
+	return trimTrailingBlankLines(string(out)), nil
+}
+
 // sendKeyFn runs `tmux send-keys -t target key`; a seam for tests.
 var sendKeyFn = func(target, key string) error {
 	if out, err := exec.Command("tmux", sendKeyArgs(target, key)...).CombinedOutput(); err != nil {

@@ -79,6 +79,9 @@ type auditEntry struct {
 	Window     string `json:"window"`
 	BodySHA256 string `json:"body_sha256"`
 	Result     string `json:"result"`
+	// Agent and Project name what a dispatch launches.
+	Agent   string `json:"agent,omitempty"`
+	Project string `json:"project,omitempty"`
 	// BytesIn and BytesOut count a live terminal's traffic on its
 	// "disconnected" line (keystrokes in, screen output out).
 	BytesIn  *int64 `json:"bytes_in,omitempty"`
@@ -168,6 +171,17 @@ func (s *Server) recordAudit(e auditEntry) {
 	if err := s.audit.append(e); err != nil {
 		logging.Error("serve: audit: %v", err)
 	}
+}
+
+// auditAttemptResult marks the line written before a write acts.
+const auditAttemptResult = "attempt"
+
+// auditAttempt records that a write is about to act, before it does: a
+// side effect that hangs or crashes serve still leaves a trace. The final
+// line (with the result) follows when the handler returns.
+func (s *Server) auditAttempt(e auditEntry) {
+	e.Result = auditAttemptResult
+	s.recordAudit(e)
 }
 
 // auditRejected records a write attempt refused before its handler ran

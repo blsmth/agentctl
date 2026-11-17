@@ -103,3 +103,44 @@ func TestApplyParentEnvDetached(t *testing.T) {
 		t.Errorf("detached env = %v, want no parent keys", detached)
 	}
 }
+
+// A caller that resolved the slug already (agentctl serve, before taking its
+// session lock) is trusted, even when it resolved to no repo: LaunchAdhoc
+// must not run `gh repo view` again.
+func TestLaunchAdhocKnownSlugSkipsLookup(t *testing.T) {
+	for _, slug := range []string{"acme/widgets", ""} {
+		got := stubAdhoc(t, "wrong/slug", nil)
+		adhocRepoSlug = func(string) (string, error) {
+			t.Error("repo slug looked up again")
+			return "", nil
+		}
+		if _, err := LaunchAdhoc(AdhocRequest{Prompt: "p", AgentName: "a", WorkDir: "/w", RepoSlug: slug, RepoSlugKnown: true}); err != nil {
+			t.Fatal(err)
+		}
+		if got.RepoSlug != slug {
+			t.Errorf("RepoSlug = %q, want %q", got.RepoSlug, slug)
+		}
+	}
+}
+
+// A Detached launch (agentctl serve) has no dispatching window: it must not
+// resolve an orchestrator from whatever window the process inherited.
+func TestLaunchOrchestratorDetached(t *testing.T) {
+	old := resolveOrchestratorFn
+	t.Cleanup(func() { resolveOrchestratorFn = old })
+	calls := 0
+	resolveOrchestratorFn = func() Orchestrator {
+		calls++
+		return Orchestrator{WindowID: "@1", Pane: "%1"}
+	}
+	worker := modeSpec{Role: RoleWorker}
+	if o := launchOrchestrator(Request{Detached: true}, worker); o != (Orchestrator{}) || calls != 0 {
+		t.Errorf("detached: orchestrator %+v, %d resolves", o, calls)
+	}
+	if o := launchOrchestrator(Request{}, modeSpec{Role: RoleOrchestrator}); o != (Orchestrator{}) || calls != 0 {
+		t.Errorf("orchestrator role: orchestrator %+v, %d resolves", o, calls)
+	}
+	if o := launchOrchestrator(Request{}, worker); o.WindowID != "@1" || calls != 1 {
+		t.Errorf("worker: orchestrator %+v, %d resolves", o, calls)
+	}
+}

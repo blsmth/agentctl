@@ -26,6 +26,12 @@ type AdhocRequest struct {
 	UseWorktree bool
 	// Detached launches with no parent window (see Request.Detached).
 	Detached bool
+	// RepoSlug is the GitHub "owner/repo" for WorkDir when RepoSlugKnown is
+	// set: the caller resolved it already (possibly to "", no GitHub repo),
+	// typically before taking a lock that a slow `gh repo view` must not be
+	// held under. LaunchAdhoc then does not look it up again.
+	RepoSlug      string
+	RepoSlugKnown bool
 }
 
 // Seams for tests.
@@ -46,10 +52,9 @@ func LaunchAdhoc(req AdhocRequest) (Result, error) {
 	// dispatch the slug is informational only, and dispatching into a
 	// non-GitHub directory is legitimate, so a failure is not fatal: warn and
 	// continue with an empty slug (env var and --repo usage are omitted).
-	repoSlug, err := adhocRepoSlug(req.WorkDir)
-	if err != nil {
-		logging.Warn("dispatch: no GitHub repo for %s, continuing without repo slug: %v", req.WorkDir, err)
-		repoSlug = ""
+	repoSlug := req.RepoSlug
+	if !req.RepoSlugKnown {
+		repoSlug = resolveAdhocRepoSlug(req.WorkDir)
 	}
 
 	useWorktree := req.UseWorktree
@@ -66,6 +71,16 @@ func LaunchAdhoc(req AdhocRequest) (Result, error) {
 		Background:   true,
 		Detached:     req.Detached,
 	})
+}
+
+// resolveAdhocRepoSlug looks up WorkDir's repo slug, or "" when it has none.
+func resolveAdhocRepoSlug(workDir string) string {
+	repoSlug, err := adhocRepoSlug(workDir)
+	if err != nil {
+		logging.Warn("dispatch: no GitHub repo for %s, continuing without repo slug: %v", workDir, err)
+		return ""
+	}
+	return repoSlug
 }
 
 // DiscoverAgents lists the agents visible to a dispatch targeting workDir:

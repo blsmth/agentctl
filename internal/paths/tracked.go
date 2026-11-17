@@ -53,14 +53,21 @@ var gitRunner gittracked.Runner = gittracked.ExecGit
 // full check. Not being in a git repository, or git being unavailable, is
 // not an error. Returns nil when Init has not been called.
 func CheckRuntimeDir(withGit bool) error {
-	if runtimeDir == "" {
+	return CheckRuntimeDirAt(runtimeDir, withGit)
+}
+
+// CheckRuntimeDirAt is CheckRuntimeDir for an explicit runtime dir, for a
+// process (agentctl serve) that acts on many sessions and checks one before
+// binding it. An empty dir is not checked.
+func CheckRuntimeDirAt(dir string, withGit bool) error {
+	if dir == "" {
 		return nil
 	}
 	run := gitRunner
 	if !withGit {
 		run = nil
 	}
-	return checkRuntimeDir(runtimeDir, run)
+	return checkRuntimeDir(dir, run)
 }
 
 // checkRuntimeDir is CheckRuntimeDir against an explicit dir and runner. A
