@@ -1,0 +1,43 @@
+argv:
+  new-window
+  -d
+  -b
+  -t
+  agentctl-launchtest:^
+  -n
+  golden:2
+  -c
+  $PROJECT
+  -P
+  -F
+  #{window_id}
+env:
+  AGENTCTL=1
+  AGENTCTL_AGENT_NAME=golden
+  AGENTCTL_BIN=<BIN>
+  AGENTCTL_CLAUDE_NAME=golden-proj-2
+  AGENTCTL_INSTANCE=launchtest
+  AGENTCTL_INSTANCE_NAME=golden:2
+  AGENTCTL_RUNTIME_DIR=$PROJECT/.agentctl
+  AGENTCTL_SESSION_ID=
+  AGENTCTL_WINDOW_NAME=golden:2
+  AGENTCTL_WORKING_DIR=$PROJECT
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+  CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
+  CLAUDE_CODE_SHELL_PREFIX=$PROJECT/.agentctl/shell-prefix.sh
+  CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1
+  DISABLE_AUTOUPDATER=1
+command:
+  claude --agent 'golden' -n 'golden-proj-2' --resume '<UUID>' --model 'opus' --effort 'high' --settings '$PROJECT/.agentctl/settings/golden.json' || claude --agent 'golden' -n 'golden-proj-2' --model 'opus' --effort 'high' --settings '$PROJECT/.agentctl/settings/golden.json'
+windowstate:
+  instance=golden:2
+  agent=golden
+  mode=adhoc
+  log_path=$HOME/.claude/projects/p/<UUID>.jsonl
+  session_name=golden-proj-2
+  backend=
+  account=
+settings:
+{
+  "hooks": "sha256:cbe19c252939c4820f718e911a5e11aeddcc59c3e21695660a44730999bceb58"
+}

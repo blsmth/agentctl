@@ -483,6 +483,21 @@ func writeLaunchScript(dir, shellCmd, launchLog, unsetEnv string) (string, strin
 	return scriptPath, content, nil
 }
 
+// launchTmux runs the tmux commands LaunchAgent issues (new-window and the
+// window options that follow it). A var so launch-path tests can capture the
+// exact argv without a tmux server; see SetLaunchTmuxForTest.
+var launchTmux = func(args ...string) ([]byte, error) {
+	return exec.Command("tmux", args...).CombinedOutput()
+}
+
+// SetLaunchTmuxForTest replaces the tmux runner LaunchAgent uses and returns
+// a func restoring the previous one. Tests only.
+func SetLaunchTmuxForTest(fn func(args ...string) ([]byte, error)) (restore func()) {
+	prev := launchTmux
+	launchTmux = fn
+	return func() { launchTmux = prev }
+}
+
 // LaunchAgent creates a new tmux window for the given agent.
 // windowName is the tmux window name (may include a ~N instance suffix).
 // logPath, if non-empty, is set as the @agentctl_log window option so the
@@ -548,8 +563,7 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 	logging.Log("LaunchAgent: wrote launch script %s (%d bytes)", scriptPath, len(scriptContent))
 	logging.Debug("LaunchAgent: launch script first 300 chars: %s", truncateStr(scriptContent, 300))
 	newWindowArgs = append(newWindowArgs, launchWindowArgv(os.Getenv("SHELL"), scriptPath)...)
-	cmd := exec.Command("tmux", newWindowArgs...)
-	out, err := cmd.CombinedOutput()
+	out, err := launchTmux(newWindowArgs...)
 	if err != nil {
 		return "", fmt.Errorf("new-window: %s: %w", string(out), err)
 	}
@@ -561,12 +575,12 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 	// Use windowID as the target so renames don't break these option sets.
 	done = logging.Timing("LaunchAgent: window options")
 	idTarget := fmt.Sprintf("%s:%s", SessionName, windowID)
-	_ = exec.Command("tmux", "set-option", "-w", "-t", idTarget, "monitor-silence", "2").Run()
-	_ = exec.Command("tmux", "set-option", "-w", "-t", idTarget, "monitor-activity", "off").Run()
+	_, _ = launchTmux("set-option", "-w", "-t", idTarget, "monitor-silence", "2")
+	_, _ = launchTmux("set-option", "-w", "-t", idTarget, "monitor-activity", "off")
 
 	// Inject the stable window ID as an env var so the process inside can read it.
 	if windowID != "" {
-		_ = exec.Command("tmux", "set-environment", "-t", idTarget, "AGENTCTL_WINDOW_ID", windowID).Run()
+		_, _ = launchTmux("set-environment", "-t", idTarget, "AGENTCTL_WINDOW_ID", windowID)
 	}
 
 	// Bootstrap the windowstate file with launch-time metadata so the monitor
