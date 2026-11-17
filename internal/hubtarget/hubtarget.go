@@ -142,6 +142,12 @@ func RewriteArgs(args []string, hubWindow string, d Decision) []string {
 	return out
 }
 
+// Seams for tests.
+var (
+	sessionOfWindow = tmux.SessionOfWindow
+	viewedAgent     = tmux.HubViewedAgent
+)
+
 // Apply inspects a keybinding-spawned invocation (AGENTCTL_KEY_WINDOW set)
 // and, when it came from the hub, redirects it. It must run before
 // paths.Init. It returns the (possibly rewritten) args and whether the
@@ -154,10 +160,10 @@ func Apply(args []string) (newArgs []string, done bool) {
 	_ = os.Unsetenv(tmux.KeyWindowEnv)
 	client := os.Getenv(tmux.KeyClientEnv)
 	_ = os.Unsetenv(tmux.KeyClientEnv)
-	if Classify(args[1]) == ScopeOther || tmux.SessionOfWindow(keyWin) != tmux.HubSessionName {
+	if Classify(args[1]) == ScopeOther || sessionOfWindow(keyWin) != tmux.HubSessionName {
 		return args, false
 	}
-	v := tmux.HubViewedAgent()
+	v := viewedAgent()
 	d := Resolve(Facts{
 		Subcmd:        args[1],
 		KeySessionHub: true,
@@ -169,6 +175,12 @@ func Apply(args []string) (newArgs []string, done bool) {
 	case ActionRefuse:
 		tmux.DisplayMessageTo(client, d.Message)
 		return args, true
+	case ActionHubClose:
+		// The confirm popup needs the client to detach on yes.
+		_ = os.Setenv(tmux.KeyClientEnv, client)
+		out := append([]string(nil), args...)
+		out[1] = HubCloseSubcmd
+		return out, false
 	case ActionHubQuit:
 		LeaveHub(tmuxLeaver{client: client, viewedHome: v.Home}, client)
 		return args, true

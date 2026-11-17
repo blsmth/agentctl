@@ -1,8 +1,11 @@
 package hubtarget
 
 import (
+	"os"
 	"reflect"
 	"testing"
+
+	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 func TestClassify(t *testing.T) {
@@ -77,5 +80,36 @@ func TestRewriteArgs(t *testing.T) {
 	}
 	if got := RewriteArgs(args, "@1", Decision{}); !reflect.DeepEqual(got, args) {
 		t.Errorf("no window: got %v", got)
+	}
+}
+
+func TestApplyQuitMenuInHubBecomesHubQuitMenu(t *testing.T) {
+	oldS, oldV := sessionOfWindow, viewedAgent
+	t.Cleanup(func() { sessionOfWindow, viewedAgent = oldS, oldV })
+	sessionOfWindow = func(string) string { return tmux.HubSessionName }
+	viewedAgent = func() tmux.ViewedAgent { return tmux.ViewedAgent{} }
+	t.Setenv(tmux.KeyWindowEnv, "@1")
+	t.Setenv(tmux.KeyClientEnv, "/dev/ttys009")
+
+	args, done := Apply([]string{"agentctl", "quit-menu"})
+	if done {
+		t.Fatal("done = true, want false")
+	}
+	if len(args) != 2 || args[1] != HubCloseSubcmd {
+		t.Fatalf("args = %v, want subcmd %q", args, HubCloseSubcmd)
+	}
+	if got := os.Getenv(tmux.KeyClientEnv); got != "/dev/ttys009" {
+		t.Errorf("client env = %q, want preserved", got)
+	}
+}
+
+func TestApplyQuitMenuOutsideHubUntouched(t *testing.T) {
+	oldS := sessionOfWindow
+	t.Cleanup(func() { sessionOfWindow = oldS })
+	sessionOfWindow = func(string) string { return "agentctl-proj" }
+	t.Setenv(tmux.KeyWindowEnv, "@1")
+	args, done := Apply([]string{"agentctl", "quit-menu"})
+	if done || args[1] != "quit-menu" {
+		t.Fatalf("args = %v done = %v", args, done)
 	}
 }
