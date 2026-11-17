@@ -169,6 +169,8 @@ Away mode: when only the phone is at hand, the approval popups that gate `agentc
 - **First answer wins**: the laptop popup answering sends `{op:"approval_cancel", id, reason:"answered_on_laptop"}` and closes the connection. The phone answering cancels the popup's tmux client and closes the popup with `display-popup -C` on its client, and its verdict is returned. At the deadline or on a signal both are closed and the command is denied.
 - **Errors never allow**: an error on the remote path drops it, and the popup alone decides. If the popup could not be shown (it would have passed through), the hook keeps waiting for the phone until the deadline.
 - **No laptop client** (`selectPopupClient` finds none, so `popupTarget.Client` is empty): the popup is skipped and only the phone can answer, until the same deadline. If the remote path then fails, the popup is started as it would have been without serve.
+- **Conflicting verdicts deny**: when the laptop and the phone both answer before the hook acts on either (the phone's answer arrives while the popup is being stopped, or both are pending at the deadline), the result is allow only if both said allow, and deny otherwise.
+- **Tightening**: with serve running and no laptop tmux client, a dispatch whose popup previously could not be shown (and passed through silently, leaving Claude Code's permission flow to decide) now waits for the phone and is denied at the deadline if nobody answers. The same holds when the popup fails to launch while the phone path is open.
 - `bashPreviewGate` still passes through when no human is attached; only popups that are shown (or, for dispatch, would be) go to the phone. Blocked state, desktop notice and the approval-pending marker from `beginApproval` are unchanged. Every outcome is logged with its source (`laptop`, `phone`, `timeout`).
 
 ### Serve side
@@ -188,6 +190,7 @@ Away mode: when only the phone is at hand, the approval popups that gate `agentc
 - Decisions come only from `POST /v1/approvals/{id}` by a paired device with `allow_write`, CSRF header and rate limit, and are bound to the payload hash of what the phone displayed. The device token is stored only hashed, so a same-uid agent cannot read one from disk.
 - The hook only trusts its own connection, verified as described above, and requires the decision to carry the hash of its own payload.
 - The Bash validator (`checkServeTamper` in `internal/hooks/validate.go`, part of the global deny list) blocks commands that reference the serve state dir, `control.sock` or `serve.pid`; stop, reload or reinstall the serve LaunchAgent or systemd unit; `pkill`/`killall` agentctl, or `kill` an `agentctl serve` found some other way; and `agentctl serve install|uninstall|pair|ca`.
+- These rules make some operations human-only, including `launchctl kickstart … com.blsmth.agentctl.serve` (restarting serve) and `agentctl serve install|uninstall|pair|ca`. Agents read serve's logs with the read-only `agentctl serve logs [-n N] [--audit] [--follow]`, which prints the tail of `serve.log`, or of `audit.jsonl` with `--audit`; the deny reason points to it.
 - **Residual risk**: every agent runs as the same uid as serve. A determined agent can write a program to disk and run it, which the validator cannot see into: it could stop serve, rewrite `serve.pid`, and bind an impostor socket named like the real one that answers the ping with a copied build identity and the right pid; or ask the real control socket to open a pairing window and pair itself as a device over loopback. These are bypasses of the same-uid boundary, not of this protocol, and they are equally available without away mode (such an agent can already run anything it likes). The checks above make an accidental or naive bypass fail closed: a fake or broken socket can at worst cause a deny or a timeout.
 
 ## Web app (PR5)
@@ -214,6 +217,7 @@ agentctl serve uninstall
 agentctl serve status          # running?, pid, listen URL, version, devices count, cert expiry, CA fingerprint
 agentctl serve pair [--name N]
 agentctl serve devices [rm <id|name>]
+agentctl serve logs [-n N] [--audit] [--follow]   # read-only tail of serve.log / audit.jsonl
 ```
 
 Linux: `install` prints a systemd user unit instead of writing launchd (no need to fully support Linux, but do not break the build).

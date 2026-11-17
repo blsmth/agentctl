@@ -437,3 +437,86 @@ func TestFakeSocketGuardRejectsPIDMismatch(t *testing.T) {
 		t.Fatal("approval request sent to an unverified socket")
 	}
 }
+
+// Verdicts from the laptop and the phone that arrive together resolve
+// conservatively: approved only if both said allow.
+func TestConflictingVerdictsDeny(t *testing.T) {
+	tests := []struct {
+		name          string
+		phone, laptop string
+		phoneFirst    bool
+		wantApproved  bool
+	}{
+		{"phone allow, laptop deny (phone first)", remoteapproval.Allow, "deny", true, false},
+		{"phone deny, laptop allow (phone first)", remoteapproval.Deny, "allow", true, false},
+		{"phone allow, laptop deny (both pending)", remoteapproval.Allow, "deny", false, false},
+		{"phone deny, laptop allow (both pending)", remoteapproval.Deny, "allow", false, false},
+		{"both allow (phone first)", remoteapproval.Allow, "allow", true, true},
+		{"both allow (both pending)", remoteapproval.Allow, "allow", false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stubPopupSeams(t, 5*time.Second)
+			fs := withFakeServe(t)
+			recordCloser(t)
+			phoneSent := make(chan struct{})
+			dispatchPopupRunner = func(ctx context.Context, _ string, _, _ int, argsFile string) error {
+				if tc.phoneFirst {
+					// The laptop verdict lands just as the phone's answer
+					// stops the popup.
+					<-ctx.Done()
+				} else {
+					// Both arrive before the gate looks at either.
+					<-phoneSent
+					time.Sleep(50 * time.Millisecond)
+				}
+				return WritePopupResult(popupResultPath(argsFile), tc.laptop)
+			}
+			out := runRemoteGate(t, laptop)
+			fs.waitRequest()
+			fs.answer(tc.phone)
+			close(phoneSent)
+			g := waitGate(t, out)
+			if g.approved != tc.wantApproved || !g.decided || g.reason != "" {
+				t.Fatalf("got %+v, want approved=%v", g, tc.wantApproved)
+			}
+		})
+	}
+}
+
+// At the deadline, a laptop verdict and a phone decision that are both
+// pending also combine conservatively (whichever branch sees them first).
+func TestConflictAtDeadlineDenies(t *testing.T) {
+	for _, tc := range []struct{ phone, laptop string }{
+		{remoteapproval.Deny, "allow"},
+		{remoteapproval.Allow, "deny"},
+	} {
+		t.Run(tc.phone+"/"+tc.laptop, func(t *testing.T) {
+			stubPopupSeams(t, 5*time.Second)
+			fs := withFakeServe(t)
+			recordCloser(t)
+			dispatchPopupRunner = func(ctx context.Context, _ string, _, _ int, argsFile string) error {
+				<-ctx.Done()
+				// The phone answers and the laptop verdict lands while the
+				// deadline is being handled.
+				go fs.answer(tc.phone)
+				time.Sleep(50 * time.Millisecond)
+				return WritePopupResult(popupResultPath(argsFile), tc.laptop)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel() // the deadline has passed
+			req := remoteapproval.Request{ID: strings.Repeat("c", 32), Kind: "dispatch", Command: "x", Deadline: time.Now().Add(time.Minute)}
+			a, err := openRemote(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fs.waitRequest()
+			args := filepath.Join(t.TempDir(), "args")
+			run := func(c context.Context) popupResult { return runPopupLoop(c, laptop, "test", 1, 1, args) }
+			deny := func(bool) (bool, bool, string) { return false, false, "timed out" }
+			if approved, _, _ := raceRemote(ctx, laptop, "test", a, run, deny); approved {
+				t.Fatal("conflicting verdicts at the deadline approved")
+			}
+		})
+	}
+}

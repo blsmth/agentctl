@@ -252,7 +252,8 @@ var globalDenyPatterns = []globalDenyEntry{
 // serveTamperReason is the deny reason for commands that could subvert
 // remote approvals.
 const serveTamperReason = "\U0001F6D1 BLOCKED: this touches agentctl serve's state, control socket or process. " +
-	"Remote approvals depend on it; ask the user to do this themselves."
+	"Remote approvals depend on it; ask the user to do this themselves. " +
+	"To read serve's logs use `agentctl serve logs` (add --audit for audit.jsonl)."
 
 // serveTamperPatterns protect remote approvals (docs/design/mobile-web-app.md,
 // "Remote approvals"). A same-uid agent that could stop agentctl serve and
@@ -263,7 +264,9 @@ const serveTamperReason = "\U0001F6D1 BLOCKED: this touches agentctl serve's sta
 // pair devices, restart or remove the server. This is a speed bump against
 // accidents and naive attempts, not a sandbox: a program written to disk can
 // still do any of this. Ordinary commands that mention "serve" (go test
-// ./internal/serve/..., agentctl serve status, npm run serve) pass.
+// ./internal/serve/..., agentctl serve status|logs, npm run serve) pass;
+// `agentctl serve logs` is the read-only way to read serve.log and
+// audit.jsonl.
 var serveTamperPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`control\.sock\b`),
 	regexp.MustCompile(`\bserve\.pid\b`),

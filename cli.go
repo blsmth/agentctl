@@ -1248,6 +1248,7 @@ type ServeCmd struct {
 	Install   ServeInstallCmd   `cmd:"" help:"Install the launchd LaunchAgent (prints a systemd unit on Linux)"`
 	Uninstall ServeUninstallCmd `cmd:"" help:"Remove the launchd LaunchAgent"`
 	Status    ServeStatusCmd    `cmd:"" help:"Show whether the server runs, its URL, devices, cert expiry and CA fingerprint"`
+	Logs      ServeLogsCmd      `cmd:"" help:"Print the tail of serve.log (or audit.jsonl with --audit); read-only"`
 	Pair      ServePairCmd      `cmd:"" help:"Open a 5-minute pairing window and print QR codes for a phone"`
 	Devices   ServeDevicesCmd   `cmd:"" help:"List or revoke paired devices"`
 	CA        ServeCACmd        `cmd:"" name:"ca" help:"Manage the local certificate authority"`
@@ -1270,6 +1271,20 @@ func (c *ServeUninstallCmd) Run() error { return cmd.RunServeUninstall(os.Stdout
 type ServeStatusCmd struct{}
 
 func (c *ServeStatusCmd) Run() error { return cmd.RunServeStatus(os.Stdout) }
+
+// ServeLogsCmd implements `agentctl serve logs`, the read-only way to read
+// serve's logs (the Bash validator blocks direct access to the serve dir).
+type ServeLogsCmd struct {
+	Lines  int  `short:"n" default:"50" help:"Number of trailing lines to print"`
+	Audit  bool `help:"Print audit.jsonl instead of serve.log"`
+	Follow bool `short:"f" help:"Keep printing new lines until interrupted"`
+}
+
+func (c *ServeLogsCmd) Run() error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return cmd.RunServeLogs(ctx, os.Stdout, cmd.ServeLogsOptions{Lines: c.Lines, Audit: c.Audit, Follow: c.Follow})
+}
 
 type ServePairCmd struct {
 	Name string `help:"Name for the paired device (default: device-<id>)"`

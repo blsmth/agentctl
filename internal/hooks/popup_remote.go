@@ -157,6 +157,11 @@ func raceRemote(ctx context.Context, target popupTarget, logPrefix string, remot
 			popupCh = nil
 			switch pr.end {
 			case popupVerdict:
+				// A phone answer that arrived in the same instant counts too.
+				if d, ok := pendingPhone(remoteCh); ok {
+					remote.Close()
+					return conflictVerdict(logPrefix, pr, d)
+				}
 				remote.Cancel(remoteapproval.ReasonLaptop)
 				logging.Log("%s: approval source=laptop approved=%v", logPrefix, pr.approved)
 				return pr.approved, pr.decided, ""
@@ -189,29 +194,54 @@ func raceRemote(ctx context.Context, target popupTarget, logPrefix string, remot
 			}
 			remote.Close()
 			pr := stopPopup()
-			if pr.end == popupVerdict {
-				// The laptop answered in the same instant; its result file
-				// was read first by the popup loop. The phone still wins:
-				// its answer arrived on the select first.
-				logging.Log("%s: laptop verdict arrived after the phone's; using the phone's", logPrefix)
-			}
 			if !phoneOnly {
 				if cerr := popupCloser(target.Client); cerr != nil {
 					logging.Log("%s: failed to close popup: %v", logPrefix, cerr)
 				}
+			}
+			if pr.end == popupVerdict {
+				// The laptop answered in the same instant.
+				return conflictVerdict(logPrefix, pr, rr.d)
 			}
 			approved := rr.d.Decision == remoteapproval.Allow
 			logging.Log("%s: approval source=phone device=%s approved=%v", logPrefix, rr.d.Device, approved)
 			return approved, true, ""
 
 		case <-ctx.Done():
-			remote.Cancel(remoteapproval.ReasonTimeout)
 			pr := stopPopup()
-			if pr.end == popupVerdict {
+			d, phoneAnswered := pendingPhone(remoteCh)
+			remote.Cancel(remoteapproval.ReasonTimeout)
+			switch {
+			case pr.end == popupVerdict && phoneAnswered:
+				return conflictVerdict(logPrefix, pr, d)
+			case pr.end == popupVerdict:
 				logging.Log("%s: approval source=laptop approved=%v (at the deadline)", logPrefix, pr.approved)
 				return pr.approved, pr.decided, ""
 			}
 			return deny(pr.popupOpen)
 		}
 	}
+}
+
+// pendingPhone returns a phone decision that has already arrived on
+// remoteCh, without waiting. A remote error counts as no decision.
+func pendingPhone(remoteCh chan remoteResult) (remoteapproval.Decision, bool) {
+	if remoteCh == nil {
+		return remoteapproval.Decision{}, false
+	}
+	select {
+	case rr := <-remoteCh:
+		return rr.d, rr.err == nil
+	default:
+		return remoteapproval.Decision{}, false
+	}
+}
+
+// conflictVerdict combines a laptop verdict and a phone decision that arrived
+// together: approved only when both said allow, denied otherwise.
+func conflictVerdict(logPrefix string, pr popupResult, d remoteapproval.Decision) (bool, bool, string) {
+	approved := pr.approved && d.Decision == remoteapproval.Allow
+	logging.Log("%s: approval source=laptop+phone laptop_approved=%v phone=%s device=%s approved=%v",
+		logPrefix, pr.approved, d.Decision, d.Device, approved)
+	return approved, true, ""
 }

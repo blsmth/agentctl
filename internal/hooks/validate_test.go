@@ -411,6 +411,9 @@ func TestCheckServeTamper(t *testing.T) {
 		// Allowed: ordinary commands that mention serve.
 		{"go test serve pkg", "go test -race ./internal/serve/...", false},
 		{"serve status", "agentctl serve status", false},
+		{"serve logs", "agentctl serve logs", false},
+		{"serve logs audit", "agentctl serve logs --audit", false},
+		{"serve logs follow", "agentctl serve logs -n 200 --audit --follow", false},
 		{"npm serve", "npm run serve", false},
 		{"python http.server", "python3 -m http.server 8000", false},
 		{"hugo", "hugo serve -D", false},
@@ -431,7 +434,7 @@ func TestCheckServeTamper(t *testing.T) {
 			if got := reason != ""; got != tt.wantDeny {
 				t.Fatalf("checkGlobalDenyList(%q) = %q, wantDeny %v", tt.command, reason, tt.wantDeny)
 			}
-			if tt.wantDeny && !strings.Contains(reason, "agentctl serve") {
+			if tt.wantDeny && !strings.Contains(reason, "agentctl serve logs") {
 				t.Fatalf("reason %q does not explain the block", reason)
 			}
 		})
