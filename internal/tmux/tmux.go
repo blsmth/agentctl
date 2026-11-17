@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/detach"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -389,6 +391,30 @@ const EnvUnset = "AGENTCTL_UNSET_ENV"
 
 var unsetNameRe = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
+// accountCredentialEnv are inherited variables that outrank a config dir's
+// own login (Claude Code auth precedence) and would silently bill another
+// account or API key.
+var accountCredentialEnv = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
+
+// launchUnsetEnv returns the space-separated variables the launch script
+// unsets: extraEnv[EnvUnset], plus, when the launch selects an account
+// (CLAUDE_CONFIG_DIR in extraEnv), every accountCredentialEnv name the
+// launch does not set itself (a backend may set ANTHROPIC_AUTH_TOKEN, and
+// tmux -e values must survive).
+func launchUnsetEnv(extraEnv map[string]string) string {
+	names := strings.Fields(extraEnv[EnvUnset])
+	if extraEnv[claudehome.EnvConfigDir] == "" {
+		return strings.Join(names, " ")
+	}
+	for _, n := range accountCredentialEnv {
+		if _, set := extraEnv[n]; set || slices.Contains(names, n) {
+			continue
+		}
+		names = append(names, n)
+	}
+	return strings.Join(names, " ")
+}
+
 // unsetLineFor turns a space-separated list of variable names into an
 // `unset` command line. Every name is validated against unsetNameRe, since
 // the result is interpolated into a shell script unquoted. An empty list
@@ -514,7 +540,7 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 		return "", fmt.Errorf("launch log %s: %w", launchLog, err)
 	}
 
-	scriptPath, scriptContent, err := writeLaunchScript(scriptDir, shellCmd, launchLog, extraEnv[EnvUnset])
+	scriptPath, scriptContent, err := writeLaunchScript(scriptDir, shellCmd, launchLog, launchUnsetEnv(extraEnv))
 	if err != nil {
 		return "", err
 	}
@@ -589,6 +615,7 @@ func applyLaunchBootstrap(ws *windowstate.WindowState, windowName, agentName, lo
 	ws.TicketTitle = extraEnv["AGENTCTL_TICKET_TITLE"]
 	ws.Mode = extraEnv["AGENTCTL_MODE"]
 	ws.Backend = extraEnv["AGENTCTL_BACKEND"]
+	ws.Account = extraEnv[claudehome.EnvAccount]
 	ws.SessionName = extraEnv["AGENTCTL_CLAUDE_NAME"]
 	ws.SpawnedBy = extraEnv["AGENTCTL_SPAWNED_BY"]
 	ws.SpawnedBySession = extraEnv["AGENTCTL_SPAWNED_BY_SESSION"]

@@ -40,6 +40,8 @@ Keys that make agentctl run a shell command are honored **only from the global c
 - `hooks.*` (and per-agent `agents.<name>.hooks`)
 - `dispatch.on_complete` (and per-agent `dispatch.on_complete`)
 
+`backends`, `accounts`, `default_account`, `account_rules` and `agents.<name>.account` are global-only for the same reason: they decide where prompts go and which login pays for them.
+
 Rationale: a project-local file can arrive with a cloned repository. Executing commands named by an untrusted repo would be remote code execution. See [SECURITY.md](../SECURITY.md).
 
 ## Top-level keys
@@ -68,6 +70,9 @@ Rationale: a project-local file can arrive with a cloned repository. Executing c
 | `metrics` | object | disabled | Prometheus endpoint and remote write. See [metrics](#metrics). |
 | `models` | object | built-in registry | Model registry overrides and context thresholds. See [models](#models). |
 | `backends` | object | none | Named self-hosted endpoints. Global-only. See [Backends](#backends-ollama-and-nous-portal). |
+| `accounts` | object | none | Named Claude logins, one config dir each. Global-only. See [Accounts](#accounts-multiple-claude-logins). |
+| `default_account` | string | none | Account used when nothing else picks one. Global-only. |
+| `account_rules` | array | none | Route launches to an account by repo root. Global-only. |
 | `serve` | object | defaults | `agentctl serve` (mobile web app server). Global-only. See [serve](#serve). |
 | `agents` | object | none | Per-agent settings. See [Per-agent settings](#per-agent-settings). |
 
@@ -277,6 +282,7 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
 | `auto_reclaim_worktree` | bool | `true` | On a terminal session end, remove this agent's worktree and window if it is empty or landed. Set `false` to opt out; `git worktree prune` and `agentctl cleanup` are unaffected. |
 | `work_journal` | bool | inherit | Enable journaling for this agent (needs `llm.provider`). |
 | `backend` | string | none | Name of a `backends` entry to launch this agent against instead of Anthropic. Global-only. |
+| `account` | string | none | Name of an `accounts` entry this agent launches under. Global-only. |
 | `dispatch.on_complete` | string | inherit | Per-agent completion command. Global-only. |
 | `hooks` | object | none | Per-agent lifecycle hooks. Global-only. |
 
@@ -395,10 +401,54 @@ Caveats:
 - **The agent can read its own key.** It runs as your user, so it can run `agentctl backend-token`, `security find-generic-password`, or read the credential file. The `Bash(*backend-token*)` and `Edit(**/.claude/settings*.json)` deny rule that nous launches add are defence in depth only. Set a spend limit on the Nous key.
 - **Cost.** Nous sessions are priced from the catalog (`agentctl cost`, billing class `metered`). The statusline hides Claude Code's pushed cost for non-Claude models because Claude Code prices them with Claude rates.
 
+## Accounts (multiple Claude logins)
+
+Each account is one Claude Code config dir (`CLAUDE_CONFIG_DIR`) with its own login. Claude Code runs the login (`claude auth login`) and stores and refreshes the token itself, keyed per dir; agentctl only chooses which dir a window gets and never reads, copies or passes credentials. Design: [design/accounts.md](design/accounts.md).
+
+```json
+{
+  "accounts": {
+    "ll":       {"config_dir": "~/.claude",          "label": "Lincoln Loop (Team)"},
+    "personal": {"config_dir": "~/.claude-personal", "label": "Personal (Max)"}
+  },
+  "default_account": "ll",
+  "account_rules": [
+    {"path": "~/code/ll/**",       "account": "ll"},
+    {"path": "~/code/personal/**", "account": "personal"}
+  ],
+  "agents": {"brandon": {"account": "personal"}}
+}
+```
+
+- `accounts.<name>.config_dir` must be absolute or start with `~/`. Names use letters, digits, `.`, `_` and `-`.
+- `account_rules[].path` is matched against the launch's **repo root** (a worktree resolves to its main repo root, so worktrees inherit). `<dir>/**` and a plain directory match that directory and everything below it; other patterns are `filepath.Match` globs on the whole root. The longest matching path wins.
+- **Resolution order** at launch: `--account` flag > `agents.<name>.account` > `account_rules` > the dispatching window's account > `default_account` > the default dir (`$CLAUDE_CONFIG_DIR`, else `~/.claude`). A name that is not configured fails the launch; there is never a fallback to another account, and agentctl never switches accounts on its own (for example when one hits its usage limit).
+- All four keys are **global-only**: a project-local `.agentctl/config.json` cannot route a repo onto another account.
+
+With accounts configured, every launch (dispatch, bare launch, restore, resume, improvement sessions) sets an absolute `CLAUDE_CONFIG_DIR` and unsets inherited `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` (they outrank the per-dir login) unless the launch's backend sets them. The account is recorded in windowstate and `restore.json`, so restore relaunches under the same login. With no accounts configured nothing changes: windows inherit the environment as before.
+
+Accounts are isolated on purpose. They share no `sessions/` registry, so sessions under different accounts cannot `SendMessage` each other. A worker dispatched under a different account than its dispatcher gets no "report to your orchestrator" step; the dispatcher still gets agentctl's own `agentctl notice:` done/blocked lines, and the approval popup shows the resolved account.
+
+Rate limits (5h/7d) are per login: the statusline records them in `~/.local/state/agentctl/ratelimits-<account>.json` (the pre-accounts `ratelimits.json` is still read for the default account for one release).
+
+Commands:
+
+```
+agentctl account add personal --config-dir ~/.claude-personal [--label "Personal (Max)"]
+agentctl account list      # name, dir, label, login identity, 5h/7d usage
+agentctl account doctor    # shared links intact, logged in, stray credential env vars
+agentctl account rm personal   # unregister only; never deletes the dir
+agentctl dispatch --issue 12 --account personal
+```
+
+`account add` creates the dir (0700), symlinks the shared allowlist from `~/.claude` (`agents/`, `shared/`, `skills/`, `commands/`, `agent-memory/`, `CLAUDE.md`, `settings.json`, `hooks/`, `plugins/`; entries that do not exist are skipped, and an existing non-symlink file is never overwritten), registers the account, then prints `CLAUDE_CONFIG_DIR=<dir> claude auth login` and, inside tmux, opens it in a popup. Credentials, `projects/`, `sessions/`, history and org policy files stay private to each dir.
+
 ## Environment variables
 
 | Variable | Effect |
 |---|---|
 | `XDG_CONFIG_HOME` | Moves the global config directory (default `~/.config`). |
+| `CLAUDE_CONFIG_DIR` | The Claude Code config dir. With no `accounts` configured it is the default dir agentctl reads transcripts from (else `~/.claude`); with accounts, launches set it per window. |
+| `AGENTCTL_ACCOUNT` | Set in a launched window to the account it runs under (recorded in windowstate). |
 | `AGENTCTL_REPO` | Set by dispatch in a dispatched agent's environment, for its information only. It is never read to resolve the repo; use `agentctl dispatch --repo owner/name` for that. |
 | `AGENTCTL_RUNTIME_DIR` | Override the `.agentctl/` runtime directory. |

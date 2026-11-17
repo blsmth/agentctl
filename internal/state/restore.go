@@ -69,6 +69,7 @@ func BuildRestoreAgents(records map[string]windowstate.WindowState, live map[str
 			WindowID:    id,
 			WindowIndex: idx,
 			Backend:     ws.Backend,
+			Account:     ws.Account,
 
 			Mode:             ws.Mode,
 			TicketRef:        ws.Ticket,

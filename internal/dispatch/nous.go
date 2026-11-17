@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/backendauth"
+	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
@@ -58,8 +59,8 @@ var nowFn = time.Now
 //  1. no settings layer sets a competing Anthropic credential,
 //  2. every configured model is in the public catalog (GET /v1/models),
 //  3. an API key can be resolved locally.
-func preflightNous(name string, b config.BackendConfig, workDir, explicitModel string) (nousInfo, error) {
-	if err := checkShadowingCredentials(workDir); err != nil {
+func preflightNous(name string, b config.BackendConfig, configDir, workDir, explicitModel string) (nousInfo, error) {
+	if err := checkShadowingCredentials(configDir, workDir); err != nil {
 		return nousInfo{}, err
 	}
 	cat, err := loadNousCatalog(b.BaseURL)
@@ -260,12 +261,16 @@ const maxSettingsScanHops = 64
 // settings layer that applies to workDir sets a non-empty ANTHROPIC_API_KEY
 // or ANTHROPIC_AUTH_TOKEN in env: a settings env value overrides the shell
 // and would send that credential to Nous. Layers: managed settings,
-// ~/.claude/settings.json, and .claude/settings{,.local}.json in workDir and
-// every parent directory.
-func checkShadowingCredentials(workDir string) error {
+// the user settings.json of the launch's Claude config dir (configDir; ""
+// means this process's own, claudehome.Current), and
+// .claude/settings{,.local}.json in workDir and every parent directory.
+func checkShadowingCredentials(configDir, workDir string) error {
 	files := append([]string{}, managedSettingsPaths...)
-	if home, err := os.UserHomeDir(); err == nil {
-		files = append(files, filepath.Join(home, ".claude", "settings.json"))
+	if configDir == "" {
+		configDir = claudehome.Current()
+	}
+	if configDir != "" {
+		files = append(files, filepath.Join(configDir, "settings.json"))
 	}
 	if workDir != "" {
 		dir := filepath.Clean(workDir)

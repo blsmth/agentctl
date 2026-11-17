@@ -16,6 +16,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/claude"
+	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/gittracked"
@@ -72,8 +73,15 @@ type Request struct {
 	PermissionMode string
 	// Backend overrides the agent's configured backend: "" = use the agent
 	// config, BackendNone = force Anthropic, else a name from config backends.
-	Backend    string
-	Background bool // when true, skip switching to the new window after launch
+	Backend string
+	// Account is the --account override: a name from config accounts. ""
+	// resolves through claudehome.Resolve (agent, rules, parent, default).
+	Account string
+	// CrossAccount is set by Launch when the worker runs under a different
+	// Claude account than its dispatcher: the worker is then told of no
+	// orchestrator to SendMessage (accounts are isolated on purpose).
+	CrossAccount bool
+	Background   bool // when true, skip switching to the new window after launch
 	// Detached marks a launch with no dispatching window (agentctl serve,
 	// acting for a phone): spawned_by stays empty and the worker is told of no
 	// orchestrator, whatever the launching process's own environment says
@@ -140,6 +148,9 @@ type Result struct {
 	SessionID string
 	WorkDir   string
 	Branch    string
+	// Account is the configured account the window runs under ("" when no
+	// accounts are configured or the default dir has no account name).
+	Account string
 }
 
 // Launch executes the unified dispatch pipeline:
@@ -199,7 +210,18 @@ func Launch(req Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	// Account before backend: a nous preflight checks the account's own
+	// settings.json. Never falls back to another account on error.
+	parentAccount := ""
+	if !req.Detached && cfg.HasAccounts() {
+		parentAccount = parentAccountFn()
+	}
+	acct, err := resolveAccountFn(cfg, req.Account, req.AgentName, workDir, parentAccount)
+	if err != nil {
+		return Result{}, fmt.Errorf("resolving account: %w", err)
+	}
 	backendEnv := map[string]string{}
+	ApplyAccountEnv(backendEnv, acct)
 	be, err := PrepareBackend(cfg, &ac, req.Backend, explicitModel, workDir, backendEnv)
 	if err != nil {
 		return Result{}, fmt.Errorf("resolving backend: %w", err)
@@ -251,6 +273,9 @@ func Launch(req Request) (Result, error) {
 
 	// 7. Build system prompt.
 	req.Orchestrator = launchOrchestrator(req, spec)
+	if req.Orchestrator.Known() && cfg.HasAccounts() {
+		dropCrossAccountOrchestrator(&req, acct.Dir, claudehome.ParentDir(parentAccount))
+	}
 	systemPrompt := buildSystemPrompt(req, spec, workDir, branch, useWorktree, contextEntries, sharedConventions)
 
 	// 8. Determine user message.
@@ -347,6 +372,9 @@ func Launch(req Request) (Result, error) {
 		// Non-fatal — continue launch without shell-prefix if the write failed.
 	}
 	logPath := claude.LogPath(workDir, sessionID)
+	if acct.Dir != "" {
+		logPath = claude.LogPathIn(acct.Dir, workDir, sessionID)
+	}
 	extraEnv := buildDispatchEnv(req, ac, workDir, repoDir, branch, useWorktree)
 	for k, v := range backendEnv {
 		extraEnv[k] = v
@@ -403,6 +431,7 @@ func Launch(req Request) (Result, error) {
 		SessionID: sessionID,
 		WorkDir:   workDir,
 		Branch:    branch,
+		Account:   acct.Name,
 	}, nil
 }
 

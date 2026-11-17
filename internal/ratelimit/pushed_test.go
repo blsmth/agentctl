@@ -159,3 +159,49 @@ func TestSavePushed_DoesNotFollowPlantedTempSymlink(t *testing.T) {
 		t.Errorf("victim modified: %q", got)
 	}
 }
+
+func TestPushedPerAccount(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+
+	ll := &PushedRateLimits{UpdatedAt: 1, FiveHour: &PushedWindow{UsedPercentage: 10}}
+	personal := &PushedRateLimits{UpdatedAt: 2, FiveHour: &PushedWindow{UsedPercentage: 90}}
+	if err := SavePushedFor("ll", ll); err != nil {
+		t.Fatal(err)
+	}
+	if err := SavePushedFor("personal", personal); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]float64{"ll": 10, "personal": 90} {
+		got, err := LoadPushedFor(name, false)
+		if err != nil || got == nil || got.FiveHour.UsedPercentage != want {
+			t.Errorf("LoadPushedFor(%s) = %+v, %v; want %v", name, got, err, want)
+		}
+	}
+	if got, _ := LoadPushed(); got != nil {
+		t.Errorf("legacy file written by per-account saves: %+v", got)
+	}
+	if err := SavePushedFor("../x", ll); err == nil {
+		t.Error("invalid account name accepted")
+	}
+}
+
+func TestLoadPushedForLegacyFallback(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	if err := SavePushed(&PushedRateLimits{UpdatedAt: 3, FiveHour: &PushedWindow{UsedPercentage: 42}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := LoadPushedFor("ll", true); got == nil || got.FiveHour.UsedPercentage != 42 {
+		t.Errorf("default account did not fall back to the legacy file: %+v", got)
+	}
+	if got, _ := LoadPushedFor("personal", false); got != nil {
+		t.Errorf("non-default account read the legacy file: %+v", got)
+	}
+}

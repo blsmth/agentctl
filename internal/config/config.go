@@ -92,6 +92,9 @@ type AgentConfig struct {
 	// self-hosted Ollama) instead of Anthropic. Global config only: see
 	// sanitizeProjectConfig.
 	Backend string `json:"backend,omitempty"`
+	// Account names an entry in the global Config.Accounts map: the Claude
+	// login (CLAUDE_CONFIG_DIR) this agent launches under. Global config only.
+	Account string `json:"account,omitempty"`
 }
 
 // DefaultBackendAuthToken is the dummy token sent to a backend that does not
@@ -536,7 +539,17 @@ type Config struct {
 	// agents select with agents.<name>.backend. Global config only: a project
 	// that could set base_url could redirect every prompt to another host.
 	Backends map[string]BackendConfig `json:"backends,omitempty"`
-	Metrics  MetricsConfig            `json:"metrics,omitempty"`
+	// Accounts maps names to Claude Code config dirs, one login each (see
+	// docs/design/accounts.md). Global config only: a cloned repo must not be
+	// able to route itself onto another account.
+	Accounts map[string]AccountConfig `json:"accounts,omitempty"`
+	// DefaultAccount is the account used when no flag, agent setting, rule or
+	// dispatching window picks one. Global config only.
+	DefaultAccount string `json:"default_account,omitempty"`
+	// AccountRules route launches by repo root (longest matching path wins).
+	// Global config only.
+	AccountRules []AccountRule `json:"account_rules,omitempty"`
+	Metrics      MetricsConfig `json:"metrics,omitempty"`
 	// AutoPoll enables the ticket browser autopilot mode.
 	AutoPoll bool `json:"auto_poll"`
 	// AutoPollInterval is the poll interval as a Go duration string (e.g. "5m"). Defaults to "5m".
@@ -1219,6 +1232,7 @@ func sanitizeProjectConfig(project, global *Config) {
 		warn("backends", globalOnly)
 	}
 	project.Backends = nil
+	sanitizeProjectAccounts(project, warn)
 	if len(project.Hooks) > 0 {
 		warn("hooks", globalOnly)
 		project.Hooks = nil
@@ -1275,6 +1289,10 @@ func sanitizeProjectConfig(project, global *Config) {
 			warn(pre+"backend", globalOnly)
 		}
 		ac.Backend = g.Backend
+		if ac.Account != "" && ac.Account != g.Account {
+			warn(pre+"account", globalOnly)
+		}
+		ac.Account = g.Account
 		if ac.BashPreview != nil && !*ac.BashPreview && global.EffectiveBashPreview(name) {
 			warn(pre+"bash_preview", noLoosen)
 			ac.BashPreview = g.BashPreview
@@ -1330,6 +1348,7 @@ func Load() *Config {
 		mergeConfig(cfg, projectCfg)
 	}
 	validateBackends(cfg)
+	validateAccounts(cfg)
 
 	// Convert config.ModelOverride to tokens.ModelOverride and push into the
 	// registry. Every process (monitor, chrome bar pane, CLI commands) picks
@@ -1604,6 +1623,11 @@ func applyProjectChanges(layer, before, after, global *Config) {
 	layer.Serve = protected.Serve
 	restore("auto_poll", layer.AutoPoll != protected.AutoPoll)
 	restore("default_agent", layer.DefaultAgent != protected.DefaultAgent)
+	restore("accounts", !reflect.DeepEqual(layer.Accounts, protected.Accounts) ||
+		layer.DefaultAccount != protected.DefaultAccount ||
+		!reflect.DeepEqual(layer.AccountRules, protected.AccountRules))
+	layer.Accounts, layer.DefaultAccount, layer.AccountRules =
+		protected.Accounts, protected.DefaultAccount, protected.AccountRules
 	layer.NotifyCmd, layer.Hooks, layer.Dispatch, layer.LLM, layer.AutoPoll, layer.DefaultAgent =
 		protected.NotifyCmd, protected.Hooks, protected.Dispatch, protected.LLM, protected.AutoPoll, protected.DefaultAgent
 	layer.Metrics.Endpoint, layer.Metrics.BasicAuth = protected.Metrics.Endpoint, protected.Metrics.BasicAuth
@@ -1634,7 +1658,7 @@ func projectAgent(ac, prev, global AgentConfig) AgentConfig {
 	ac.AllowedPermissions = prev.AllowedPermissions
 	ac.PermissionMode = prev.PermissionMode
 	ac.Dir, ac.ContextKeys = prev.Dir, prev.ContextKeys
-	ac.Backend = prev.Backend
+	ac.Backend, ac.Account = prev.Backend, prev.Account
 	ac.BlockedCommands = minusStrings(ac.BlockedCommands, global.BlockedCommands)
 	ac.BlockedPatterns = minusStrings(ac.BlockedPatterns, global.BlockedPatterns)
 	return ac

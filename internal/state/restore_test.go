@@ -79,10 +79,10 @@ func TestBuildRestoreAgents(t *testing.T) {
 
 func TestBuildRestoreAgentsFields(t *testing.T) {
 	got := BuildRestoreAgents(map[string]windowstate.WindowState{
-		"@1": {Instance: "a:2", AgentName: "a", LogPath: "/p/sess-1.jsonl", Backend: "nous", SessionName: "agent-a-issue-1"},
+		"@1": {Instance: "a:2", AgentName: "a", LogPath: "/p/sess-1.jsonl", Backend: "nous", Account: "personal", SessionName: "agent-a-issue-1"},
 		"@2": {Instance: "b", AgentName: "b", WorkDir: "/rec"},
 	}, map[string]LiveWindow{"@1": {Index: 1, Path: "/pane"}, "@2": {Index: 2, Path: "/pane"}})
-	if got[0].SessionID != "sess-1" || got[0].WorkDir != "/pane" || got[0].Backend != "nous" || got[0].SessionName != "agent-a-issue-1" || got[0].WindowID != "@1" {
+	if got[0].SessionID != "sess-1" || got[0].WorkDir != "/pane" || got[0].Backend != "nous" || got[0].Account != "personal" || got[0].SessionName != "agent-a-issue-1" || got[0].WindowID != "@1" {
 		t.Errorf("entry 0 = %+v", got[0])
 	}
 	if got[1].WorkDir != "/rec" || got[1].SessionID != "" {

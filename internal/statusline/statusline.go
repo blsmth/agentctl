@@ -14,6 +14,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/ratelimit"
@@ -1053,7 +1054,8 @@ func backfillLogPath(ws *windowstate.WindowState, p *Payload) {
 }
 
 // persistRateLimits writes the account-level rate-limit windows present in
-// this payload to the shared, atomic ~/.local/state/agentctl/ratelimits.json.
+// this payload to the atomic per-account file under ~/.local/state/agentctl/
+// (ratelimits-<account>.json; ratelimits.json with no accounts configured).
 // Absent windows are omitted, never zero-filled. If rate_limits
 // is nil, or present but every window fails coercion, the existing file (if
 // any) is left untouched rather than clobbered with an empty one.
@@ -1075,7 +1077,9 @@ func persistRateLimits(p *Payload) {
 		return
 	}
 
-	if err := ratelimit.SavePushed(pr); err != nil {
+	// 5h/7d windows are per Claude login: key the file by the account of
+	// this statusline process (its inherited CLAUDE_CONFIG_DIR).
+	if err := ratelimit.SavePushedFor(claudehome.CurrentAccount(), pr); err != nil {
 		logging.Log("statusline: saving pushed rate limits: %v", err)
 	}
 }

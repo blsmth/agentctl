@@ -17,7 +17,7 @@ func setupSyncDirs(t *testing.T) (claudeRoot string, metaRoot string) {
 	SetClaudeDirForTest(claudeRoot)
 	SetSessionDataDirForTest(metaRoot)
 	t.Cleanup(func() {
-		SetClaudeDirForTest(claudeBaseDir())
+		SetClaudeDirForTest("")
 		SetSessionDataDirForTest("")
 	})
 	return claudeRoot, metaRoot

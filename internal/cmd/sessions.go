@@ -193,6 +193,14 @@ func LaunchWithResume(name string, sessionID string, workDir string, writeSettin
 	// The resumed session's original backend is not recorded, so use the
 	// agent's configured one; an unknown backend is an error, never Anthropic.
 	extraEnv := map[string]string{}
+	// A session can only be resumed from the config dir holding its
+	// transcript, so the account follows the session, not the rules.
+	acct, err := dispatch.ResumeAccount(cfg, sessionID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: resolving account: %v\n", err)
+		os.Exit(1)
+	}
+	dispatch.ApplyAccountEnv(extraEnv, acct)
 	if _, err := dispatch.PrepareBackend(cfg, &ac, "", "", workDir, extraEnv); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: resolving backend: %v\n", err)
 		os.Exit(1)

@@ -64,6 +64,7 @@ type CLI struct {
 
 	// Backends
 	Backend      BackendCmd      `cmd:"" help:"Manage backend credentials (login, logout, status)"`
+	Account      AccountCmd      `cmd:"" help:"Manage Claude accounts (one CLAUDE_CONFIG_DIR per login)"`
 	BackendToken BackendTokenCmd `cmd:"" name:"backend-token" hidden:"" help:"Print a backend's API key (Claude Code apiKeyHelper)"`
 
 	// Dispatch completion (spawned detached by the Stop hook / signal done)
@@ -205,6 +206,7 @@ type LaunchCmd struct {
 	Name           string `arg:"" optional:"" help:"Agent name to launch (reads default_agent from config if omitted)"`
 	NoWorktree     bool   `name:"no-worktree" help:"Launch directly in the main checkout instead of an isolated git worktree"`
 	Backend        string `help:"Named backend from config (Ollama, Nous Portal); 'none' forces Anthropic"`
+	Account        string `help:"Claude account from config accounts (default: agent setting, account_rules, default_account)"`
 	Model          string `help:"Model to run (overrides the agent's model; 'inherit' clears it)"`
 	Effort         string `help:"Effort level: low, medium, high, xhigh, max, auto ('inherit' clears the agent's)"`
 	PermissionMode string `name:"permission-mode" help:"claude --permission-mode for this launch; overrides the agent config"`
@@ -222,6 +224,7 @@ func (c *LaunchCmd) Run() error {
 	}
 	cmd.RunLaunch(c.Name, cmd.LaunchOptions{
 		Backend:        c.Backend,
+		Account:        c.Account,
 		Model:          c.Model,
 		Effort:         c.Effort,
 		PermissionMode: c.PermissionMode,
@@ -230,6 +233,40 @@ func (c *LaunchCmd) Run() error {
 	})
 	return nil
 }
+
+// AccountCmd groups the multi-account commands. Each account is a Claude
+// Code config dir with its own login; agentctl never handles the credentials.
+type AccountCmd struct {
+	Add    AccountAddCmd    `cmd:"" help:"Create and register an account dir, then log it in with claude auth login"`
+	List   AccountListCmd   `cmd:"" help:"List accounts with their login identity and 5h/7d usage"`
+	Doctor AccountDoctorCmd `cmd:"" help:"Check shared symlinks, logins and stray credential env vars"`
+	Rm     AccountRmCmd     `cmd:"" help:"Unregister an account (never deletes its dir)"`
+}
+
+type AccountAddCmd struct {
+	Name      string `arg:"" help:"Account name"`
+	ConfigDir string `name:"config-dir" required:"" help:"Claude Code config dir for this account (e.g. ~/.claude-personal)"`
+	Label     string `help:"Human-readable label"`
+	NoLogin   bool   `name:"no-login" help:"Do not open the login popup inside tmux"`
+}
+
+func (c *AccountAddCmd) Run() error {
+	return cmd.RunAccountAdd(cmd.AccountAddOptions{Name: c.Name, ConfigDir: c.ConfigDir, Label: c.Label, NoLogin: c.NoLogin}, os.Stdout)
+}
+
+type AccountListCmd struct{}
+
+func (c *AccountListCmd) Run() error { return cmd.RunAccountList(os.Stdout) }
+
+type AccountDoctorCmd struct{}
+
+func (c *AccountDoctorCmd) Run() error { return cmd.RunAccountDoctor(os.Stdout) }
+
+type AccountRmCmd struct {
+	Name string `arg:"" help:"Account name"`
+}
+
+func (c *AccountRmCmd) Run() error { return cmd.RunAccountRm(c.Name, os.Stdout) }
 
 // BackendCmd groups the credential commands for nous backends.
 type BackendCmd struct {
@@ -455,6 +492,7 @@ type DispatchCmd struct {
 	Dir        string        `help:"Working directory"`
 	Model      string        `help:"Model override (e.g. sonnet, opus, haiku)" short:"m"`
 	Backend    string        `help:"Named backend from config (Ollama, Nous Portal); 'none' forces Anthropic"`
+	Account    string        `help:"Claude account from config accounts (default: agent setting, account_rules, dispatching window, default_account)"`
 	Repo       string        `help:"GitHub repo as owner/name (default: resolved from the working directory)"`
 	NoWorktree bool          `name:"no-worktree" help:"Skip worktree creation"`
 	Wait       bool          `help:"Block until agent completes"`
@@ -462,7 +500,11 @@ type DispatchCmd struct {
 }
 
 func (c *DispatchCmd) Run() error {
-	cmd.RunDispatch(c.Issue, c.Prompt, c.PromptKey, c.Agent, c.Dir, c.Model, c.Backend, c.NoWorktree, c.Wait, c.Timeout, c.Repo)
+	cmd.RunDispatch(cmd.DispatchOptions{
+		Issue: c.Issue, Prompt: c.Prompt, PromptKey: c.PromptKey, Agent: c.Agent, Dir: c.Dir,
+		Model: c.Model, Backend: c.Backend, Account: c.Account, NoWorktree: c.NoWorktree,
+		Wait: c.Wait, Timeout: c.Timeout, Repo: c.Repo,
+	})
 	return nil
 }
 

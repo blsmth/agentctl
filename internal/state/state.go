@@ -45,6 +45,7 @@ type AgentState struct {
 	LastToolDetail      string  `json:"last_tool_detail,omitempty"`       // e.g. "monitor.go" or "go build ./..."
 	LastText            string  `json:"last_text,omitempty"`              // last assistant text block (already truncated to ~100 chars upstream)
 	Backend             string  `json:"backend,omitempty"`                // config backend name the window runs against ("" = Anthropic); restore re-resolves it
+	Account             string  `json:"account,omitempty"`                // configured Claude account the window runs under; restore relaunches under it
 	// Launch metadata carried through session restore (copied from windowstate
 	// by BuildRestoreAgents; absent in monitor snapshots and old files). Ticket
 	// above is the monitor's int; TicketRef is the windowstate string form.

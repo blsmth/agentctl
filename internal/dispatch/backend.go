@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/launchopts"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -144,7 +145,9 @@ func PrepareBackend(cfg *config.Config, ac *config.AgentConfig, override, explic
 		return nil, nil
 	}
 	if be.IsNous() {
-		info, err := preflightNous(be.Name, be.BackendConfig, workDir, explicitModel)
+		// The launch's account (when already applied to env) decides
+		// which user settings.json is checked for shadowing credentials.
+		info, err := preflightNous(be.Name, be.BackendConfig, env[claudehome.EnvConfigDir], workDir, explicitModel)
 		if err != nil {
 			return nil, fmt.Errorf("backend %q: %w", be.Name, err)
 		}

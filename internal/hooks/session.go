@@ -76,8 +76,9 @@ func SessionStart() {
 	// every SessionStart, including after /clear. Failure is non-fatal -- the
 	// rest of the function still runs.
 	var input struct {
-		SessionID string `json:"session_id"`
-		Cwd       string `json:"cwd"`
+		SessionID      string `json:"session_id"`
+		Cwd            string `json:"cwd"`
+		TranscriptPath string `json:"transcript_path"`
 	}
 	decodeInput(&input) // non-fatal: ignore return value
 
@@ -129,10 +130,7 @@ func SessionStart() {
 	// for this window. An empty log_path just makes the monitor fall back to
 	// its filesystem scan, which is degraded but at least not wrong.
 	if input.SessionID != "" {
-		logPath := ""
-		if input.Cwd != "" {
-			logPath = claude.LogPath(input.Cwd, input.SessionID)
-		}
+		logPath := sessionLogPath(input.SessionID, input.Cwd, input.TranscriptPath)
 		// A session starting is a new agent in this window; clear any
 		// tombstone from a previous window that held the recycled ID.
 		windowstate.Revive(windowID)
@@ -521,6 +519,21 @@ func generateWorkJournal(agentName, sessionID, windowID string) error {
 	// cwd is the worktree (<repo>/.worktrees/agent-foo-issue-N), whereas
 	// ProjectDir resolves to the owning project.
 	return writeJournalEntry(home, agentName, sessionID, paths.ProjectDir(), ws.Ticket, summary, aiSummary)
+}
+
+// sessionLogPath returns the JSONL path for a starting session: the payload's
+// transcript_path when it is named for the session (it already lives under
+// the right account's config dir), else the path derived from cwd under this
+// hook's own config dir ($CLAUDE_CONFIG_DIR, inherited from claude). "" when
+// neither is usable.
+func sessionLogPath(sessionID, cwd, transcriptPath string) string {
+	if transcriptPath != "" && filepath.IsAbs(transcriptPath) && filepath.Base(transcriptPath) == sessionID+".jsonl" {
+		return transcriptPath
+	}
+	if cwd == "" {
+		return ""
+	}
+	return claude.LogPath(cwd, sessionID)
 }
 
 // buildJournalPrompt builds the text prompt sent to the LLM. It is capped at

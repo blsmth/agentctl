@@ -14,16 +14,50 @@ import (
 //
 // Returns the number of files added, updated, and pruned.
 func Sync(retentionDays int) (added int, updated int, pruned int, err error) {
-	claudeProjectsDir := filepath.Join(claudeDir, "projects")
-
-	projectDirs, err := os.ReadDir(claudeProjectsDir)
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("sessions: sync read claude projects: %w", err)
+	type root struct {
+		dir     string
+		entries []os.DirEntry
 	}
-
-	total := countJSONLFiles(claudeProjectsDir, projectDirs)
+	var roots []root
+	var readErr error
+	total := 0
+	for _, dir := range ProjectsRoots() {
+		entries, rerr := os.ReadDir(dir)
+		if rerr != nil {
+			if readErr == nil {
+				readErr = rerr
+			}
+			continue
+		}
+		roots = append(roots, root{dir, entries})
+		total += countJSONLFiles(dir, entries)
+	}
+	if len(roots) == 0 {
+		return 0, 0, 0, fmt.Errorf("sessions: sync read claude projects: %w", readErr)
+	}
 	processed := 0
 
+	for _, r := range roots {
+		a, u := syncRoot(r.dir, r.entries, &processed, total)
+		added += a
+		updated += u
+	}
+
+	fmt.Fprintln(os.Stderr) // newline after the progress indicator
+
+	if retentionDays <= 0 {
+		retentionDays = 30
+	}
+	maxAge := time.Duration(retentionDays) * 24 * time.Hour
+	pruned, err = Purge(maxAge)
+	if err != nil {
+		return added, updated, 0, fmt.Errorf("sessions: sync purge: %w", err)
+	}
+	return added, updated, pruned, nil
+}
+
+// syncRoot syncs the sessions under one projects dir.
+func syncRoot(claudeProjectsDir string, projectDirs []os.DirEntry, processed *int, total int) (added, updated int) {
 	for _, pd := range projectDirs {
 		if !pd.IsDir() {
 			continue
@@ -41,8 +75,8 @@ func Sync(retentionDays int) (added int, updated int, pruned int, err error) {
 				continue
 			}
 
-			processed++
-			fmt.Fprintf(os.Stderr, "\rSyncing sessions... %d/%d", processed, total)
+			*processed++
+			fmt.Fprintf(os.Stderr, "\rSyncing sessions... %d/%d", *processed, total)
 
 			logFile := filepath.Join(dirPath, e.Name())
 			sessionID := strings.TrimSuffix(e.Name(), ".jsonl")
@@ -74,18 +108,7 @@ func Sync(retentionDays int) (added int, updated int, pruned int, err error) {
 			}
 		}
 	}
-
-	fmt.Fprintln(os.Stderr) // newline after the progress indicator
-
-	if retentionDays <= 0 {
-		retentionDays = 30
-	}
-	maxAge := time.Duration(retentionDays) * 24 * time.Hour
-	pruned, err = Purge(maxAge)
-	if err != nil {
-		return added, updated, 0, fmt.Errorf("sessions: sync purge: %w", err)
-	}
-	return added, updated, pruned, nil
+	return added, updated
 }
 
 // syncOneSession extracts metadata from the given JSONL file and writes it via
@@ -160,7 +183,7 @@ func SyncOne(sessionID, transcriptPath string) error {
 		}
 	}
 	if logFile == "" {
-		logFile = FindLogBySessionIDIn(filepath.Join(claudeDir, "projects"), sessionID)
+		logFile = FindLogBySessionID(sessionID)
 	}
 	if logFile == "" {
 		return fmt.Errorf("sessions: no log found for session %q", sessionID)

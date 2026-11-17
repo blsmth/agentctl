@@ -13,19 +13,37 @@ import (
 	"unicode/utf8"
 
 	"github.com/blsmth/agentctl/internal/claude"
+	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/logstream"
 )
 
-// claudeDir is the base directory for Claude Code data.
-var claudeDir = claudeBaseDir()
+// claudeDir overrides the Claude Code config dirs for tests; "" means every
+// configured account (claudehome.All).
+var claudeDir string
 
-func claudeBaseDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
+// claudeDirs returns every Claude Code config dir to read transcripts from:
+// one per configured account (plus the default dir), or the test override.
+func claudeDirs() []string {
+	if claudeDir != "" {
+		return []string{claudeDir}
 	}
-	return filepath.Join(home, ".claude")
+	var out []string
+	for _, a := range claudehome.All() {
+		out = append(out, a.Dir)
+	}
+	return out
+}
+
+// ProjectsRoots returns the projects/ dir of every Claude Code config dir
+// (one per configured account). Session IDs are unique across them.
+func ProjectsRoots() []string {
+	dirs := claudeDirs()
+	out := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		out = append(out, filepath.Join(d, "projects"))
+	}
+	return out
 }
 
 // Session represents a Claude Code conversation session.
@@ -162,9 +180,20 @@ func FindRecentSessions(limit int, maxAge time.Duration) ([]Session, error) {
 	return all, nil
 }
 
-// findAllSessions does a single pass over all JSONL files and buckets by agent.
+// findAllSessions does a single pass over all JSONL files in every account's
+// projects dir and buckets by agent.
 func findAllSessions() (map[string][]Session, error) {
-	projectsDir := filepath.Join(claudeDir, "projects")
+	result := make(map[string][]Session)
+	for _, root := range ProjectsRoots() {
+		if err := findSessionsIn(root, result); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+// findSessionsIn adds the sessions under one projects dir to result.
+func findSessionsIn(projectsDir string, result map[string][]Session) error {
 	projectDirs, err := os.ReadDir(projectsDir)
 	if err != nil {
 		// A missing projects directory is a legitimate state (e.g. a fresh
@@ -173,12 +202,11 @@ func findAllSessions() (map[string][]Session, error) {
 		// rather than treating it as a hard error.
 		if os.IsNotExist(err) {
 			logging.Debug("sessions: no projects dir at %s, returning empty result", projectsDir)
-			return map[string][]Session{}, nil
+			return nil
 		}
-		return nil, fmt.Errorf("reading projects dir: %w", err)
+		return fmt.Errorf("reading projects dir: %w", err)
 	}
 
-	result := make(map[string][]Session)
 	for _, pd := range projectDirs {
 		if !pd.IsDir() {
 			continue
@@ -227,17 +255,49 @@ func findAllSessions() (map[string][]Session, error) {
 		}
 	}
 
-	return result, nil
+	return nil
 }
 
-// FindSessionsForProject returns sessions for a given project directory, most recent first.
+// FindSessionsForProject returns sessions for a given project directory
+// across every account, most recent first. It errors only when no account
+// has the project dir.
 func FindSessionsForProject(projectDir string, limit int) ([]Session, error) {
 	dirName := claude.ProjectSlug(projectDir)
-	dirPath := filepath.Join(claudeDir, "projects", dirName)
+	var sessions []Session
+	var firstErr error
+	found := false
+	for _, root := range ProjectsRoots() {
+		dirPath := filepath.Join(root, dirName)
+		ss, err := sessionsInProjectDir(dirPath, projectDir)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("reading project dir %s: %w", dirPath, err)
+			}
+			continue
+		}
+		found = true
+		sessions = append(sessions, ss...)
+	}
+	if !found && firstErr != nil {
+		return nil, firstErr
+	}
 
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].StartTime.After(sessions[j].StartTime)
+	})
+
+	if limit > 0 && len(sessions) > limit {
+		sessions = sessions[:limit]
+	}
+
+	return sessions, nil
+}
+
+// sessionsInProjectDir lists the sessions in one project dir.
+func sessionsInProjectDir(dirPath, projectDir string) ([]Session, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
-		return nil, fmt.Errorf("reading project dir %s: %w", dirPath, err)
+		return nil, err
 	}
 
 	var sessions []Session
@@ -270,15 +330,6 @@ func FindSessionsForProject(projectDir string, limit int) ([]Session, error) {
 			LogFile:   logFile,
 		})
 	}
-
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].StartTime.After(sessions[j].StartTime)
-	})
-
-	if limit > 0 && len(sessions) > limit {
-		sessions = sessions[:limit]
-	}
-
 	return sessions, nil
 }
 
@@ -695,35 +746,25 @@ func abbreviateHome(path string) string {
 }
 
 // FindLatestLog returns the most recently modified JSONL log file for agentName
-// under the default Claude projects directory (~/.claude/projects/).
+// under every account's Claude projects directory (see ProjectsRoots).
 // notBefore excludes files whose birth time predates notBefore by more than 30s.
 // excludePaths is a set of file paths to skip (e.g. already claimed by another agent).
 func FindLatestLog(agentName string, notBefore time.Time, excludePaths map[string]bool) string {
 	// Improvement sessions use the base agent name as their agentSetting.
 	agentName = strings.TrimPrefix(agentName, "improve~")
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
+	var newest latestLog
+	for _, root := range ProjectsRoots() {
+		newest.scanRoot(root, agentName, notBefore, excludePaths)
 	}
-	return FindLatestLogIn(filepath.Join(home, ".claude", "projects"), agentName, notBefore, excludePaths)
+	return newest.path
 }
 
 // FindLatestLogIn is the testable core of FindLatestLog. It searches for the
 // most recently modified JSONL log file for agentName under projectsDir,
 // filtering by notBefore and excludePaths.
 func FindLatestLogIn(projectsDir, agentName string, notBefore time.Time, excludePaths map[string]bool) string {
-	dirs, err := os.ReadDir(projectsDir)
-	if err != nil {
-		return ""
-	}
-
 	var newest latestLog
-	for _, d := range dirs {
-		if !d.IsDir() {
-			continue
-		}
-		newest.scan(filepath.Join(projectsDir, d.Name()), agentName, notBefore, excludePaths)
-	}
+	newest.scanRoot(projectsDir, agentName, notBefore, excludePaths)
 	return newest.path
 }
 
@@ -741,6 +782,19 @@ func FindLatestLogInProject(projectDir, agentName string, notBefore time.Time, e
 type latestLog struct {
 	modTime time.Time
 	path    string
+}
+
+// scanRoot scans every project dir under one projects root.
+func (l *latestLog) scanRoot(projectsDir, agentName string, notBefore time.Time, excludePaths map[string]bool) {
+	dirs, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return
+	}
+	for _, d := range dirs {
+		if d.IsDir() {
+			l.scan(filepath.Join(projectsDir, d.Name()), agentName, notBefore, excludePaths)
+		}
+	}
 }
 
 func (l *latestLog) scan(dirPath, agentName string, notBefore time.Time, excludePaths map[string]bool) {
@@ -793,6 +847,21 @@ func FindLogBySessionIDIn(projectsDir, sessionID string) string {
 		return ""
 	}
 	return matches[0]
+}
+
+// FindLogBySessionID returns the JSONL log for sessionID, searching every
+// account's projects dir (see ProjectsRoots). "" when not found or ambiguous.
+func FindLogBySessionID(sessionID string) string {
+	found := ""
+	for _, root := range ProjectsRoots() {
+		if p := FindLogBySessionIDIn(root, sessionID); p != "" {
+			if found != "" {
+				return ""
+			}
+			found = p
+		}
+	}
+	return found
 }
 
 // ReadStartTime reads the first timestamp from a JSONL log file without a full

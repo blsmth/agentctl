@@ -49,6 +49,10 @@ type WindowState struct {
 	// Backend is the name of the config backend this window's claude was
 	// launched against ("" = Anthropic). Restore re-resolves it from config.
 	Backend string `json:"backend,omitempty"`
+	// Account is the configured Claude account (CLAUDE_CONFIG_DIR) the window
+	// was launched under ("" = no accounts configured, or an unnamed default
+	// dir). Restore relaunches under the same account.
+	Account string `json:"account,omitempty"`
 	// SessionName is the name passed to claude via -n at launch. Restore and
 	// resume reuse it so a relaunched session keeps its cross-session identity.
 	// When the statusline push reports a different name (Claude Code

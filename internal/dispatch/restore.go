@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/blsmth/agentctl/internal/claude"
+	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -44,6 +45,13 @@ type RestoreRequest struct {
 	// re-resolved from config; if it no longer exists Restore returns an
 	// error rather than relaunching on Anthropic.
 	Backend string
+
+	// Account is the configured Claude account the window ran under ("" =
+	// none recorded). It is re-resolved from config; if it no longer exists
+	// Restore returns an error rather than relaunching under another login.
+	// With none recorded, the account whose projects dir holds LogPath is
+	// used so --resume finds the session.
+	Account string
 
 	// Launch metadata re-stamped on the relaunched window's windowstate record
 	// so it keeps its dispatched/bare classification. Empty values are left
@@ -102,6 +110,9 @@ func Restore(req RestoreRequest) (string, error) {
 	if logPath == "" {
 		// Generate a new log path if the saved one is unavailable.
 		logPath = claude.LogPath(req.WorkDir, "restore")
+		if dir := extraEnv[claudehome.EnvConfigDir]; dir != "" {
+			logPath = claude.LogPathIn(dir, req.WorkDir, "restore")
+		}
 	}
 
 	logging.Log("dispatch.Restore: launching %s (base=%s) workDir=%s logPath=%s", instanceName, req.AgentName, req.WorkDir, logPath)
@@ -161,6 +172,11 @@ func prepareRestore(cfg *config.Config, req RestoreRequest) (config.AgentConfig,
 	ac := cfg.ForAgent(req.AgentName)
 	ac.Backend = req.Backend
 	env := map[string]string{}
+	acct, err := restoreAccount(cfg, req.Account, req.LogPath)
+	if err != nil {
+		return ac, nil, err
+	}
+	ApplyAccountEnv(env, acct)
 	if _, err := PrepareBackend(cfg, &ac, "", "", req.WorkDir, env); err != nil {
 		return ac, nil, err
 	}

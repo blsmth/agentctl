@@ -127,3 +127,10 @@ func preambleWithOrchestrator(role Role, o Orchestrator) string {
 	}
 	return p + "\n\n" + orchestratorSection(o)
 }
+
+// crossAccountSection replaces orchestratorSection for a worker launched
+// under a different Claude account than its dispatcher. Accounts are
+// isolated on purpose, so the worker is given no session to SendMessage.
+const crossAccountSection = "### Reporting\n" +
+	"You were dispatched from a session that runs under a different Claude account. Accounts are kept separate, so do not try to reach it with SendMessage. " +
+	"Put your report in the PR body (or your final message); agentctl tells the dispatcher when you finish."

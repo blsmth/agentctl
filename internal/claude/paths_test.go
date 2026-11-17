@@ -80,3 +80,18 @@ func TestProjectSlug(t *testing.T) {
 		})
 	}
 }
+
+func TestLogPathHonorsConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	want := dir + "/projects/-w/s.jsonl"
+	if got := claude.LogPath("/w", "s"); got != want {
+		t.Errorf("LogPath = %q, want %q", got, want)
+	}
+	if got := claude.LogPathIn("/other", "/w", "s"); got != "/other/projects/-w/s.jsonl" {
+		t.Errorf("LogPathIn = %q", got)
+	}
+	if got := claude.LogPathIn("", "/w", "s"); got != "" {
+		t.Errorf("LogPathIn with no dir = %q, want empty", got)
+	}
+}
