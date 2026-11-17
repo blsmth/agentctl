@@ -101,6 +101,7 @@ func (s *Server) chain(h http.Handler) http.Handler {
 // implemented in their own routes_*.go files.
 func (s *Server) routes(rt *Router) {
 	s.registerCore(rt)
+	s.registerStatic(rt)
 }
 
 // registerCore registers the foundation endpoints.

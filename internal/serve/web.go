@@ -7,8 +7,7 @@ import (
 	"strings"
 )
 
-// webFS holds the pages served before the web app exists. PR5 replaces the
-// contents of web/ with the PWA.
+// webFS holds the HTML pages and the web app's static files (see assets.go).
 //
 //go:embed web
 var webFS embed.FS
