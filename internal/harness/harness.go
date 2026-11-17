@@ -65,8 +65,13 @@ type Caps struct {
 	PermissionModes bool
 	// Accounts: multi-account support (CLAUDE_CONFIG_DIR) applies.
 	Accounts bool
-	// Backends: agentctl backends (Anthropic-protocol endpoint swap) apply.
+	// Backends: agentctl backends (config `backends`, Ollama and Nous Portal)
+	// apply.
 	Backends bool
+	// RegistersBackends: the harness registers a backend as a provider itself
+	// (PrepareWorkspace with Workspace.Backend) instead of agentctl pointing
+	// its Anthropic client at the endpoint through env and settings.
+	RegistersBackends bool
 	// EnvFile: SessionStart hands the hook an env file (CLAUDE_ENV_FILE) to
 	// persist variables into the agent's shell tool.
 	EnvFile bool
@@ -91,6 +96,9 @@ type Invocation struct {
 	Effort         string // agentctl effort level (see launchopts.Efforts)
 	SettingsPath   string // claude --settings
 	ExtensionPath  string // pi -e
+	// Provider selects the provider Model belongs to (pi --provider), for a
+	// backend the harness registers itself.
+	Provider string
 	// SystemPromptFile is appended to the harness's system prompt.
 	SystemPromptFile string
 	// Message is the first user message, quoted into the command.
@@ -108,6 +116,9 @@ type Workspace struct {
 	// Dir is a private (0700) directory agentctl owns where harness files
 	// such as the pi bridge extension are written.
 	Dir string
+	// Backend is the agentctl backend the launch runs against, for harnesses
+	// that register it themselves (pi). Nil = the harness's own provider.
+	Backend *Backend
 	// WriteSettings writes agentctl's Claude Code settings (hooks and
 	// permissions) for this launch and returns the --settings path. Only
 	// harnesses that read Claude Code settings call it.
@@ -118,6 +129,30 @@ type Workspace struct {
 type Prepared struct {
 	SettingsPath  string
 	ExtensionPath string
+	// Provider and Model select the backend the harness registered (empty
+	// when Workspace.Backend was nil); the launcher puts them in the
+	// invocation.
+	Provider string
+	Model    string
+	// Env is window env the prepared files need (the pi backend provider).
+	Env map[string]string
+}
+
+// Backend is an agentctl backend (config `backends`) resolved for a launch,
+// in harness-neutral terms. It never carries a secret: a key is fetched at
+// request time by KeyCommand.
+type Backend struct {
+	Name    string // config name, e.g. "nous"
+	Kind    string // "ollama" or "nous"
+	BaseURL string // endpoint root without /v1
+	// Models are the model IDs to register; the first is the launch model.
+	Models        []string
+	ContextWindow int // tokens; 0 = unknown
+	// AuthToken is a literal, non-secret token (Ollama's dummy token).
+	AuthToken string
+	// KeyCommand is a shell command printing the API key (agentctl
+	// backend-token <name>), for backends with a stored credential.
+	KeyCommand string
 }
 
 // Event is a decoded hook payload. Raw is the payload in agentctl's

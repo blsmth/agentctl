@@ -360,3 +360,94 @@ func TestPiParseTranscript(t *testing.T) {
 		t.Errorf("usage = %+v", u)
 	}
 }
+
+func TestPiBackendProvider(t *testing.T) {
+	tests := []struct {
+		name      string
+		b         Backend
+		wantKey   string
+		wantURL   string
+		wantModel []string
+		wantCtx   int
+		wantErr   bool
+	}{
+		{
+			name:      "nous fetches the key by command",
+			b:         Backend{Name: "nous", Kind: "nous", BaseURL: "https://inference-api.nousresearch.com", Models: []string{"qwen/qwen3-coder-next", "qwen/qwen3-coder-next", "b/cheap", ""}, ContextWindow: 262144, KeyCommand: "'/bin/agentctl' backend-token 'nous'"},
+			wantKey:   "!'/bin/agentctl' backend-token 'nous'",
+			wantURL:   "https://inference-api.nousresearch.com/v1",
+			wantModel: []string{"qwen/qwen3-coder-next", "b/cheap"},
+			wantCtx:   262144,
+		},
+		{
+			name:      "ollama literal token is escaped for pi's syntax",
+			b:         Backend{Name: "local", Kind: "ollama", BaseURL: "http://fenrir:11434/", Models: []string{"qwen3:8b"}, AuthToken: "!$tok"},
+			wantKey:   "$!$$tok",
+			wantURL:   "http://fenrir:11434/v1",
+			wantModel: []string{"qwen3:8b"},
+			wantCtx:   piDefaultContextWindow,
+		},
+		{name: "no model", b: Backend{Name: "x", BaseURL: "http://h", AuthToken: "t"}, wantErr: true},
+		{name: "no credential", b: Backend{Name: "x", BaseURL: "http://h", Models: []string{"m"}}, wantErr: true},
+		{name: "no base url", b: Backend{Name: "x", Models: []string{"m"}, AuthToken: "t"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider, model, env, err := piBackendProvider(tt.b)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if provider != "agentctl-"+tt.b.Name || model != tt.wantModel[0] {
+				t.Errorf("provider, model = %q, %q", provider, model)
+			}
+			var p piProvider
+			if err := json.Unmarshal([]byte(env[EnvPiProvider]), &p); err != nil {
+				t.Fatalf("%s: %v", EnvPiProvider, err)
+			}
+			if p.Name != provider || p.Config.APIKey != tt.wantKey || p.Config.BaseURL != tt.wantURL || p.Config.API != "openai-completions" {
+				t.Errorf("provider = %+v", p)
+			}
+			var ids []string
+			for _, m := range p.Config.Models {
+				ids = append(ids, m.ID)
+				if m.ContextWindow != tt.wantCtx || m.MaxTokens <= 0 || m.MaxTokens > m.ContextWindow {
+					t.Errorf("model %s limits = %d/%d", m.ID, m.ContextWindow, m.MaxTokens)
+				}
+			}
+			if !slices.Equal(ids, tt.wantModel) {
+				t.Errorf("models = %q, want %q", ids, tt.wantModel)
+			}
+		})
+	}
+}
+
+func TestPiPrepareWorkspaceWithBackend(t *testing.T) {
+	b := &Backend{Name: "nous", BaseURL: "https://x", Models: []string{"a/b"}, KeyCommand: "agentctl backend-token nous"}
+	prep, err := For(Pi).PrepareWorkspace(Workspace{Dir: t.TempDir(), Backend: b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prep.Provider != "agentctl-nous" || prep.Model != "a/b" || prep.Env[EnvPiProvider] == "" {
+		t.Errorf("Prepared = %+v", prep)
+	}
+	got, _ := For(Pi).Command(Invocation{SessionID: "s", Provider: prep.Provider, Model: prep.Model})
+	if want := []string{"pi", "--session-id", "s", "--provider", "agentctl-nous", "--model", "a/b"}; !slices.Equal(fields(t, got), want) {
+		t.Errorf("Command = %q, want %q", fields(t, got), want)
+	}
+	if _, err := For(Pi).PrepareWorkspace(Workspace{Dir: t.TempDir(), Backend: &Backend{Name: "bad"}}); err == nil {
+		t.Error("want error for an unusable backend")
+	}
+}
+
+func TestPiExtensionRegistersProvider(t *testing.T) {
+	src := string(PiExtensionSource())
+	if !strings.Contains(src, "process.env.AGENTCTL_PI_PROVIDER") || !strings.Contains(src, "pi.registerProvider(p.name, p.config)") {
+		t.Error("bridge does not register the backend provider")
+	}
+}

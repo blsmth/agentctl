@@ -63,6 +63,14 @@ func preflightNous(name string, b config.BackendConfig, configDir, workDir, expl
 	if err := checkShadowingCredentials(configDir, workDir); err != nil {
 		return nousInfo{}, err
 	}
+	return preflightNousCatalog(name, b, explicitModel)
+}
+
+// preflightNousCatalog is preflightNous without the Claude settings check
+// (steps 2 and 3): every configured model is in the catalog and a key can be
+// resolved locally. Harnesses that do not read Claude settings (pi) use it
+// directly.
+func preflightNousCatalog(name string, b config.BackendConfig, explicitModel string) (nousInfo, error) {
 	cat, err := loadNousCatalog(b.BaseURL)
 	if err != nil {
 		return nousInfo{}, err

@@ -94,7 +94,7 @@ func Restore(req RestoreRequest) (string, error) {
 	}
 
 	cfg := config.Load()
-	ac, extraEnv, err := prepareRestore(cfg, h, req)
+	ac, extraEnv, hb, err := prepareRestore(cfg, h, req)
 	if err != nil {
 		return "", fmt.Errorf("dispatch.Restore: %s: %w", req.InstanceName, err)
 	}
@@ -102,6 +102,7 @@ func Restore(req RestoreRequest) (string, error) {
 	prep, err := h.PrepareWorkspace(harness.Workspace{
 		Dir:           launchDirFn(),
 		WriteSettings: func() (string, error) { return WriteAgentSettings(req.AgentName, ac, req.WorkDir), nil },
+		Backend:       hb,
 	})
 	if err != nil {
 		return "", fmt.Errorf("dispatch.Restore: %s: %w", req.InstanceName, err)
@@ -135,7 +136,7 @@ func Restore(req RestoreRequest) (string, error) {
 	if req.SessionName != "" {
 		extraEnv[EnvSessionName] = req.SessionName
 	}
-	ApplyHarnessEnv(extraEnv, h, "")
+	ApplyHarnessEnv(extraEnv, h, "", prep)
 	wid, err := tmux.LaunchAgent(instanceName, req.WorkDir, shellCmd, logPath, req.AgentName, "", extraEnv, false)
 	if err != nil {
 		return "", fmt.Errorf("dispatch.Restore: launching %s: %w", instanceName, err)
@@ -175,7 +176,7 @@ func buildRestoreCmd(h harness.Harness, inv harness.Invocation, sessionID string
 // config: a window launched with --backend none must come back on Anthropic,
 // and one launched on a backend must never come back on Anthropic. Harnesses
 // without accounts or backends skip both.
-func prepareRestore(cfg *config.Config, h harness.Harness, req RestoreRequest) (config.AgentConfig, map[string]string, error) {
+func prepareRestore(cfg *config.Config, h harness.Harness, req RestoreRequest) (config.AgentConfig, map[string]string, *harness.Backend, error) {
 	ac := cfg.ForAgent(req.AgentName)
 	ac.Backend = req.Backend
 	env := map[string]string{}
@@ -183,19 +184,26 @@ func prepareRestore(cfg *config.Config, h harness.Harness, req RestoreRequest) (
 	if caps.Accounts {
 		acct, err := restoreAccount(cfg, req.Account, req.LogPath)
 		if err != nil {
-			return ac, nil, err
+			return ac, nil, nil, err
 		}
 		ApplyAccountEnv(env, acct)
 	}
-	if caps.Backends {
-		if _, err := PrepareBackend(cfg, &ac, "", "", req.WorkDir, env); err != nil {
-			return ac, nil, err
+	var hb *harness.Backend
+	switch {
+	case caps.RegistersBackends:
+		var err error
+		if hb, err = PrepareBackendFor(cfg, h, &ac, "", "", req.WorkDir, env); err != nil {
+			return ac, nil, nil, err
 		}
-	} else {
+	case caps.Backends:
+		if _, err := PrepareBackend(cfg, &ac, "", "", req.WorkDir, env); err != nil {
+			return ac, nil, nil, err
+		}
+	default:
 		ac.Backend = ""
 	}
 	if len(env) == 0 {
 		env = nil
 	}
-	return ac, env, nil
+	return ac, env, hb, nil
 }

@@ -568,7 +568,7 @@ func TestPrepareRestoreNousOutsideWorktree(t *testing.T) {
 	makeLinkedWorktree(t, repo, wt)
 
 	for name, dir := range map[string]string{"main checkout": repo, "worktree": wt} {
-		if _, env, err := prepareRestore(cfg, harness.For(""), RestoreRequest{AgentName: "a", Backend: "nous", WorkDir: dir}); err != nil || env[EnvBackend] != "nous" {
+		if _, env, _, err := prepareRestore(cfg, harness.For(""), RestoreRequest{AgentName: "a", Backend: "nous", WorkDir: dir}); err != nil || env[EnvBackend] != "nous" {
 			t.Errorf("%s: env=%v err=%v", name, env, err)
 		}
 	}

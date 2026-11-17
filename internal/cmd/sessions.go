@@ -207,13 +207,10 @@ func LaunchWithResume(name string, sessionID string, workDir string, writeSettin
 		}
 		dispatch.ApplyAccountEnv(extraEnv, acct)
 	}
-	if caps.Backends {
-		if _, err := dispatch.PrepareBackend(cfg, &ac, "", "", workDir, extraEnv); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: resolving backend: %v\n", err)
-			os.Exit(1)
-		}
-	} else {
-		ac.Backend = ""
+	hb, err := dispatch.PrepareBackendFor(cfg, h, &ac, "", "", workDir, extraEnv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 	windowName := tmux.NextInstanceName(name)
 	// The forked session's ID is chosen by the harness, so the log path
@@ -222,6 +219,7 @@ func LaunchWithResume(name string, sessionID string, workDir string, writeSettin
 	prep, err := h.PrepareWorkspace(harness.Workspace{
 		Dir:           dispatch.LaunchDir(),
 		WriteSettings: func() (string, error) { return writeSettings(name, ac, workDir), nil },
+		Backend:       hb,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -235,7 +233,7 @@ func LaunchWithResume(name string, sessionID string, workDir string, writeSettin
 		os.Exit(1)
 	}
 	extraEnv[dispatch.EnvSessionName] = sessionName
-	dispatch.ApplyHarnessEnv(extraEnv, h, "")
+	dispatch.ApplyHarnessEnv(extraEnv, h, "", prep)
 	wid, err := tmux.LaunchAgent(windowName, workDir, shellCmd, "", name, "", extraEnv, true)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

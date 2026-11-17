@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/tmux/launchtest"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -120,7 +121,7 @@ func TestLaunch_HarnessSelection(t *testing.T) {
 		{"unknown flag", `{}`, Request{Harness: "codex"}, "", `unknown harness "codex"`},
 		{"unknown config", `{"agents": {"golden": {"harness": "nope"}}}`, Request{}, "", `unknown harness "nope"`},
 		{"account flag on pi", `{}`, Request{Account: "work"}, "", "the pi harness has no accounts"},
-		{"backend flag on pi", `{}`, Request{Backend: "ollama"}, "", "backends do not apply to the pi harness"},
+		{"unknown backend on pi", `{}`, Request{Backend: "ollama"}, "", `backend "ollama" is not defined`},
 		{"backend none is fine on pi", `{}`, Request{Backend: BackendNone}, "pi", ""},
 	}
 	for _, tt := range tests {
@@ -170,5 +171,113 @@ func TestRestore_Pi(t *testing.T) {
 	}
 	if _, err := Restore(RestoreRequest{AgentName: "golden", WorkDir: env.Project, Harness: "gone"}); err == nil {
 		t.Error("want error restoring an unknown harness")
+	}
+}
+
+// TestPrepareBackendFor_PiNous: a nous backend on pi is resolved and
+// preflighted (catalog, key available) but never routed through Claude's
+// env or settings: no ANTHROPIC_* vars, no Claude settings-layer check, and
+// the key travels only as the backend-token command.
+func TestPrepareBackendFor_PiNous(t *testing.T) {
+	nousEnvSetup(t, map[string]string{"nous": "sk-test-not-sent"})
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	// A Claude credential that would block a Claude launch on nous.
+	home := os.Getenv("HOME")
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{"env":{"ANTHROPIC_API_KEY":"sk-x"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prevExec := execPath
+	execPath = func() (string, error) { return "/opt/bin/agentctl", nil }
+	t.Cleanup(func() { execPath = prevExec })
+	srv := catalogServer(t, 200, nousCatalogJSON, nil)
+	cfg := &config.Config{Backends: map[string]config.BackendConfig{
+		"nous": {Kind: "nous", BaseURL: srv.URL, Model: "qwen/qwen3-coder-next", Models: &config.BackendModels{Haiku: "qwen/qwen3-max"}},
+	}}
+
+	ac := config.AgentConfig{}
+	if _, err := PrepareBackendFor(cfg, harness.For(harness.Claude), &ac, "nous", "", t.TempDir(), map[string]string{}); err == nil {
+		t.Fatal("claude launch must refuse the shadowing credential")
+	}
+
+	ac = config.AgentConfig{}
+	env := map[string]string{}
+	hb, err := PrepareBackendFor(cfg, harness.For(harness.Pi), &ac, "nous", "", t.TempDir(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hb == nil || hb.Name != "nous" || hb.BaseURL != srv.URL || hb.ContextWindow != 262144 || hb.AuthToken != "" {
+		t.Fatalf("backend = %+v", hb)
+	}
+	if hb.KeyCommand != "'/opt/bin/agentctl' backend-token 'nous'" {
+		t.Errorf("KeyCommand = %q", hb.KeyCommand)
+	}
+	if !slices.Contains(hb.Models, "qwen/qwen3-max") || hb.Models[0] != "qwen/qwen3-coder-next" {
+		t.Errorf("models = %q", hb.Models)
+	}
+	if ac.Backend != "nous" || ac.Model != "qwen/qwen3-coder-next" {
+		t.Errorf("ac = backend %q model %q", ac.Backend, ac.Model)
+	}
+	if len(env) != 1 || env[EnvBackend] != "nous" {
+		t.Errorf("env = %v, want only %s", env, EnvBackend)
+	}
+
+	// Preflight still runs: a model missing from the catalog fails.
+	ac = config.AgentConfig{}
+	if _, err := PrepareBackendFor(cfg, harness.For(harness.Pi), &ac, "nous", "qwen/nope", t.TempDir(), map[string]string{}); err == nil {
+		t.Error("want catalog error for an unknown model")
+	}
+	// No backend: nothing to register.
+	ac = config.AgentConfig{}
+	if hb, err := PrepareBackendFor(cfg, harness.For(harness.Pi), &ac, BackendNone, "", t.TempDir(), map[string]string{}); err != nil || hb != nil {
+		t.Errorf("BackendNone = %+v, %v", hb, err)
+	}
+}
+
+// TestLaunch_PiOllamaBackend runs a pi dispatch against an Ollama backend
+// from the agent's config end to end (minus tmux).
+func TestLaunch_PiOllamaBackend(t *testing.T) {
+	no := false
+	srv := tagsServer(t, 200, `{"models":[{"name":"qwen3:8b","model":"qwen3:8b"}]}`)
+	env := setupPi(t, `{"backends": {"local": {"base_url": "`+srv.URL+`", "model": "qwen3:8b"}}, "agents": {"golden": {"backend": "local"}}}`)
+	rec := launchtest.Capture(t)
+	if _, err := Launch(Request{AgentName: "golden", Mode: ModeBare, WorkDir: env.Project, UseWorktree: &no, Background: true}); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	l := rec.Only()
+	argv := fields(t, l.Command)
+	for _, want := range [][]string{{"--provider", "agentctl-local"}, {"--model", "qwen3:8b"}} {
+		i := slices.Index(argv, want[0])
+		if i < 0 || argv[i+1] != want[1] {
+			t.Errorf("command lacks %q: %q", want, argv)
+		}
+	}
+	if l.Env[EnvBackend] != "local" || !strings.Contains(l.Env[harness.EnvPiProvider], `"baseUrl":"`+srv.URL+`/v1"`) {
+		t.Errorf("env backend=%q provider=%s", l.Env[EnvBackend], l.Env[harness.EnvPiProvider])
+	}
+	for k := range l.Env {
+		if strings.HasPrefix(k, "ANTHROPIC_") || strings.HasPrefix(k, "CLAUDE_CODE_") {
+			t.Errorf("pi window got Claude backend env %s", k)
+		}
+	}
+	if ws, _ := windowstate.Read("@9001"); ws.Backend != "local" {
+		t.Errorf("windowstate backend = %q", ws.Backend)
+	}
+}
+
+// TestRestore_PiKeepsBackend: a pi window restored with its recorded backend
+// registers it again.
+func TestRestore_PiKeepsBackend(t *testing.T) {
+	srv := tagsServer(t, 200, `{"models":[{"name":"qwen3:8b","model":"qwen3:8b"}]}`)
+	env := setupPi(t, `{"backends": {"local": {"base_url": "`+srv.URL+`", "model": "qwen3:8b"}}}`)
+	rec := launchtest.Capture(t)
+	if _, err := Restore(RestoreRequest{AgentName: "golden", SessionID: "sid-1", WorkDir: env.Project, Harness: "pi", Backend: "local"}); err != nil {
+		t.Fatal(err)
+	}
+	l := rec.Only()
+	if argv := fields(t, l.Command); !slices.Contains(argv, "agentctl-local") || l.Env[EnvBackend] != "local" || l.Env[harness.EnvPiProvider] == "" {
+		t.Errorf("restore = %q env %v", argv, l.Env)
 	}
 }

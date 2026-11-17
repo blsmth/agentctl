@@ -95,6 +95,19 @@ function textOf(content): string {
 export default function (pi) {
   if (!enabled()) return;
 
+  // An agentctl backend (config `backends`) arrives as a provider to
+  // register before pi resolves --provider/--model. Its apiKey is a
+  // "!agentctl backend-token <name>" command, never the key itself.
+  const provider = process.env.AGENTCTL_PI_PROVIDER;
+  if (provider) {
+    try {
+      const p = JSON.parse(provider);
+      pi.registerProvider(p.name, p.config);
+    } catch (err) {
+      console.error(`agentctl: cannot register backend provider: ${err}`);
+    }
+  }
+
   let lastText = "";
   // Set when hook-check-done refused the stop and a continuation was sent,
   // so the next settle reports stop_hook_active (as Claude Code's Stop hook

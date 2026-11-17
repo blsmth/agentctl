@@ -2,6 +2,8 @@ package dispatch
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/claudehome"
@@ -9,6 +11,7 @@ import (
 	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/shellquote"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
@@ -68,52 +71,137 @@ type launchAccount struct {
 }
 
 // prepareAccountAndBackend resolves the Claude account and the backend for a
-// launch and returns the env they add. Account comes first: a nous
+// launch and returns the env they add, plus the backend for PrepareWorkspace
+// when the harness registers it itself. Account comes first: a nous
 // preflight checks the account's own settings.json. It never falls back to
 // another account on error.
 //
-// Harnesses without accounts or backends (pi) skip both. An explicit
-// --account or --backend for such a harness is an error (the user asked for
-// something that cannot happen); a value from the agent's config is ignored
-// with a warning, so one agent config can serve several harnesses.
-func prepareAccountAndBackend(cfg *config.Config, h harness.Harness, ac *config.AgentConfig, req Request, explicitModel, workDir string) (launchAccount, map[string]string, error) {
+// Harnesses without accounts (pi) skip them. An explicit --account for such
+// a harness is an error (the user asked for something that cannot happen).
+func prepareAccountAndBackend(cfg *config.Config, h harness.Harness, ac *config.AgentConfig, req Request, explicitModel, workDir string) (launchAccount, map[string]string, *harness.Backend, error) {
 	env := map[string]string{}
-	caps := h.Caps()
 	var acct launchAccount
-	if caps.Accounts {
+	if h.Caps().Accounts {
 		if !req.Detached && cfg.HasAccounts() {
 			acct.parent = parentAccountFn()
 		}
 		res, err := resolveAccountFn(cfg, req.Account, req.AgentName, workDir, acct.parent)
 		if err != nil {
-			return acct, nil, fmt.Errorf("resolving account: %w", err)
+			return acct, nil, nil, fmt.Errorf("resolving account: %w", err)
 		}
 		acct.Resolution = res
 		ApplyAccountEnv(env, res)
 	} else if req.Account != "" {
-		return acct, nil, fmt.Errorf("--account %q: the %s harness has no accounts", req.Account, h.Name())
+		return acct, nil, nil, fmt.Errorf("--account %q: the %s harness has no accounts", req.Account, h.Name())
 	}
-	if caps.Backends {
-		if _, err := PrepareBackend(cfg, ac, req.Backend, explicitModel, workDir, env); err != nil {
-			return acct, nil, fmt.Errorf("resolving backend: %w", err)
+	hb, err := PrepareBackendFor(cfg, h, ac, req.Backend, explicitModel, workDir, env)
+	if err != nil {
+		return acct, nil, nil, err
+	}
+	return acct, env, hb, nil
+}
+
+// PrepareBackendFor resolves a launch's backend for harness h and merges the
+// env it needs into env. override is the --backend value ("" = the agent's
+// config, BackendNone = the harness's own provider).
+//
+// On Claude it is PrepareBackend: Claude Code is pointed at the endpoint
+// through env and the settings file. On a harness that registers backends
+// itself (pi) the backend is resolved and preflighted the same way (catalog
+// and key availability for nous, reachability for Ollama; the Claude
+// settings-layer check does not apply), AGENTCTL_BACKEND is recorded, and the
+// returned harness.Backend goes to PrepareWorkspace. It is nil when no
+// backend applies.
+//
+// A harness without backends rejects an explicit --backend and ignores (with
+// a warning) one from the agent's config, so one agent config can serve
+// several harnesses.
+func PrepareBackendFor(cfg *config.Config, h harness.Harness, ac *config.AgentConfig, override, explicitModel, workDir string, env map[string]string) (*harness.Backend, error) {
+	caps := h.Caps()
+	switch {
+	case !caps.Backends:
+		if override != "" && override != BackendNone {
+			return nil, fmt.Errorf("--backend %q: backends do not apply to the %s harness", override, h.Name())
 		}
-		return acct, env, nil
+		if ac.Backend != "" {
+			logging.Warn("dispatch: backend %q ignored on the %s harness", ac.Backend, h.Name())
+			ac.Backend = ""
+		}
+		return nil, nil
+	case !caps.RegistersBackends:
+		if _, err := PrepareBackend(cfg, ac, override, explicitModel, workDir, env); err != nil {
+			return nil, fmt.Errorf("resolving backend: %w", err)
+		}
+		return nil, nil
 	}
-	if req.Backend != "" && req.Backend != BackendNone {
-		return acct, nil, fmt.Errorf("--backend %q: backends do not apply to the %s harness", req.Backend, h.Name())
+	be, err := ResolveBackend(cfg, ac, override, explicitModel)
+	if err != nil {
+		return nil, fmt.Errorf("resolving backend: %w", err)
 	}
-	if ac.Backend != "" {
-		logging.Warn("dispatch: agent %s: backend %q ignored on the %s harness", req.AgentName, ac.Backend, h.Name())
+	if be == nil {
 		ac.Backend = ""
+		return nil, nil
 	}
-	return acct, env, nil
+	if be.IsNous() {
+		info, err := preflightNousCatalog(be.Name, be.BackendConfig, explicitModel)
+		if err != nil {
+			return nil, fmt.Errorf("resolving backend: backend %q: %w", be.Name, err)
+		}
+		if be.MaxContextTokens == 0 {
+			be.MaxContextTokens = info.ContextLength
+		}
+	} else if err := PreflightBackend(be.BackendConfig); err != nil {
+		return nil, fmt.Errorf("resolving backend: backend %q: %w", be.Name, err)
+	}
+	env[EnvBackend] = be.Name
+	ac.Backend = be.Name
+	return harnessBackend(be, ac.Model), nil
+}
+
+// harnessBackend describes be for a harness that registers it itself. model
+// is the launch model (the explicit --model or the backend's). A nous key is
+// fetched at request time by `agentctl backend-token <name>`, the same
+// helper Claude's apiKeyHelper runs, so it never enters env or a file.
+func harnessBackend(be *Backend, model string) *harness.Backend {
+	hb := &harness.Backend{
+		Name:          be.Name,
+		Kind:          be.Kind,
+		BaseURL:       be.BaseURL,
+		Models:        []string{model, be.Model},
+		ContextWindow: be.MaxContextTokens,
+	}
+	if be.IsNous() {
+		for _, a := range []string{"opus", "sonnet", "haiku", "subagent"} {
+			hb.Models = append(hb.Models, be.AliasModel(a))
+		}
+		hb.KeyCommand = shellquote.Quote(agentctlExe()) + " backend-token " + shellquote.Quote(be.Name)
+		return hb
+	}
+	hb.Kind = config.BackendKindOllama
+	hb.AuthToken = be.AuthToken
+	if hb.AuthToken == "" {
+		hb.AuthToken = config.DefaultBackendAuthToken
+	}
+	return hb
+}
+
+// agentctlExe is the agentctl binary a credential helper command runs, the
+// same resolution BuildAgentSettingsJSON uses for hook commands.
+func agentctlExe() string {
+	exe, _ := execPath()
+	if exe == "" {
+		home, _ := os.UserHomeDir()
+		exe = filepath.Join(home, ".local", "bin", "agentctl")
+	}
+	return exe
 }
 
 // baseInvocation is the part of a harness invocation every launch path
-// shares: agent, session name, model and effort from ac, and the files
-// PrepareWorkspace wrote.
+// shares: agent, session name, model and effort from ac, and what
+// PrepareWorkspace produced (files, and the provider and model of a backend
+// the harness registered).
 func baseInvocation(agentName, sessionName string, ac config.AgentConfig, prep harness.Prepared) harness.Invocation {
-	return harness.Invocation{
+	inv := harness.Invocation{
 		Agent:         agentName,
 		Name:          sessionName,
 		Model:         ac.Model,
@@ -121,12 +209,16 @@ func baseInvocation(agentName, sessionName string, ac config.AgentConfig, prep h
 		SettingsPath:  prep.SettingsPath,
 		ExtensionPath: prep.ExtensionPath,
 	}
+	if prep.Provider != "" {
+		inv.Provider, inv.Model = prep.Provider, prep.Model
+	}
+	return inv
 }
 
-// ApplyHarnessEnv adds h's launch env (and, for a non-default harness, its
-// name) to extraEnv. Keys the caller already set win, as they did when this
-// env was built inside tmux.LaunchAgent.
-func ApplyHarnessEnv(extraEnv map[string]string, h harness.Harness, permissionMode string) {
+// ApplyHarnessEnv adds h's launch env, the env prep needs, and (for a
+// non-default harness) its name to extraEnv. Keys the caller already set win
+// over h's launch env, as they did when it was built inside tmux.LaunchAgent.
+func ApplyHarnessEnv(extraEnv map[string]string, h harness.Harness, permissionMode string, prep harness.Prepared) {
 	for k, v := range h.LaunchEnv(harness.EnvParams{
 		PermissionMode:    permissionMode,
 		ShellPrefixScript: tmux.ShellPrefixScriptPath(),
@@ -134,6 +226,9 @@ func ApplyHarnessEnv(extraEnv map[string]string, h harness.Harness, permissionMo
 		if _, set := extraEnv[k]; !set {
 			extraEnv[k] = v
 		}
+	}
+	for k, v := range prep.Env {
+		extraEnv[k] = v
 	}
 	if name := harness.Canonical(h.Name()); name != "" {
 		extraEnv[harness.EnvHarness] = name
