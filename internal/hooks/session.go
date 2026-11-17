@@ -146,6 +146,8 @@ func SessionStart() {
 			}
 			ws.SessionID = input.SessionID
 			ws.LogPath = logPath
+			// A new session cannot still have the old one's subagents running.
+			ws.ClearSubagents()
 			if input.Cwd != "" {
 				ws.WorkDir = input.Cwd
 			}
@@ -273,6 +275,7 @@ func SessionEnd() {
 	if windowID != "" {
 		if err := winname.Update(windowID, func(ws *windowstate.WindowState) {
 			ws.State = "idle"
+			ws.ClearSubagents()
 		}); err != nil {
 			logUpdateErr("hook-session-end", err)
 		}
