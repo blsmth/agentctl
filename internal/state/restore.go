@@ -73,6 +73,7 @@ func BuildRestoreAgents(records map[string]windowstate.WindowState, live map[str
 			Mode:             ws.Mode,
 			TicketRef:        ws.Ticket,
 			TicketTitle:      ws.TicketTitle,
+			Task:             ws.Task,
 			Branch:           ws.Branch,
 			WorktreeDir:      ws.WorktreeDir,
 			SpawnedBy:        ws.SpawnedBy,

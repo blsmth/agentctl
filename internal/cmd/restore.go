@@ -203,6 +203,7 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 			Mode:             as.Mode,
 			Ticket:           as.TicketRef,
 			TicketTitle:      as.TicketTitle,
+			Task:             as.Task,
 			Branch:           as.Branch,
 			WorktreeDir:      as.WorktreeDir,
 			SessionName:      dispatch.RestoreSessionName(as.SessionName, baseName, as.Name, workDir, usedNames),

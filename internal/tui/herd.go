@@ -37,9 +37,9 @@ const (
 	herdMinMainPanelWidth = 40
 )
 
-// herdMaxNameWidth caps how much of a row's width the instance name can
-// claim, even in the wide flat-list fallback, so the activity line always
-// keeps some room and a long instance name can't crowd it out entirely.
+// herdMaxNameWidth caps how much of a row's width the agent name can claim,
+// even in the wide flat-list fallback, so the recap always keeps some room
+// and a long name can't crowd it out entirely.
 const herdMaxNameWidth = 24
 
 // herdSidebarLeftInset is the left margin sidebar content lines start at —
@@ -53,7 +53,7 @@ const herdSidebarLeftInset = 2
 // reserve at their right edge so they never touch the detail panel's
 // vertical border (see renderRow's "available" calculation). herdLineDivider
 // reserves the same gutter so it can't collide with that border either.
-const herdSidebarRightGutter = 2
+const herdSidebarRightGutter = 3
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 
@@ -72,6 +72,7 @@ var (
 	herdProjectStyle  lipgloss.Style
 	herdCountStyle    lipgloss.Style
 	herdActivityStyle lipgloss.Style
+	herdRecapStyle    lipgloss.Style
 
 	// herdPaletteColors is the stable accent palette (theme colours) that
 	// project groups and agent types hash into.
@@ -105,6 +106,7 @@ func initHerdStyles() {
 	herdProjectStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Sky))
 	herdCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
 	herdActivityStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
+	herdRecapStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Subtle))
 
 	herdPaletteColors = []string{t.Accent, t.Sky, t.Blue, t.Info, t.Orange, t.Green}
 }
@@ -552,6 +554,9 @@ func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.startClose(m.splitPane.Cursor())
 		return *m, nil
 
+	case "p":
+		return *m, m.openSelectedPR()
+
 	case "ctrl+c":
 		m.quitting = true
 		return *m, tea.Quit
@@ -946,12 +951,24 @@ func (m *HerdModel) ensureCursorVisible() {
 	if cursor < m.scrollOffset {
 		m.scrollOffset = cursor
 	}
-	if cursor >= m.scrollOffset+visible {
-		m.scrollOffset = cursor - visible + 1
+	// Scroll until every row from the top through the cursor line, including
+	// the selected row's detail lines, fits on screen.
+	cw := m.contentWidth()
+	for m.scrollOffset < cursor && m.rowsBetween(m.scrollOffset, cursor, cw) > visible {
+		m.scrollOffset++
 	}
 	if m.scrollOffset < 0 {
 		m.scrollOffset = 0
 	}
+}
+
+// rowsBetween is the number of screen rows lines from..to (inclusive) take.
+func (m *HerdModel) rowsBetween(from, to, cw int) int {
+	n := 0
+	for i := from; i <= to && i < len(m.lines); i++ {
+		n += m.lineHeight(i, cw)
+	}
+	return n
 }
 
 // ── Jump ─────────────────────────────────────────────────────────────────────
@@ -1213,16 +1230,18 @@ func (m HerdModel) renderList() string {
 		b.WriteString(status)
 	} else {
 		visible := m.visibleLines()
-		start := m.scrollOffset
-		end := start + visible
-		if end > len(m.lines) {
-			end = len(m.lines)
+		used := 0
+		for i := m.scrollOffset; i < len(m.lines) && used < visible; i++ {
+			for _, l := range strings.Split(m.renderLine(i, cw), "\n") {
+				if used == visible {
+					break
+				}
+				b.WriteString(l)
+				b.WriteString("\n")
+				used++
+			}
 		}
-		for i := start; i < end; i++ {
-			b.WriteString(m.renderLine(i, cw))
-			b.WriteString("\n")
-		}
-		if pad := visible - (end - start); pad > 0 {
+		if pad := visible - used; pad > 0 {
 			if m.liveShown == "" {
 				b.WriteString(herdDimStyle.Render("  " + truncateToWidth(herdNoViewHint, cw-2)))
 				b.WriteString("\n")
@@ -1344,11 +1363,7 @@ func (m HerdModel) renderGroupHeader(g herd.Group, selected bool, cw int) string
 		}
 		line += strings.Repeat(" ", pad) + herdDimStyle.Render(herdNewLabel)
 	}
-	line = truncateToWidth(line, cw)
-	if selected {
-		return herdSelectedStyle.Width(cw).Render(line)
-	}
-	return line
+	return herdFitLine(line, selected, cw)
 }
 
 // renderRow renders one agent row.
@@ -1356,77 +1371,228 @@ func (m HerdModel) renderRow(r herd.Row, selected bool, cw int) string {
 	return m.renderTreeRow(r, "", selected, cw)
 }
 
-// renderTreeRow is renderRow with a tree connector prefix drawn (dim) between
-// the glyph and the name. The prefix is clamped so deep nesting cannot starve
-// the name or push the activity column off-screen.
+// herdNow is the clock row ages are measured against; tests replace it.
+var herdNow = time.Now
+
+// herdFitLine clamps a sidebar line to the columns left of the right gutter.
+// A selected line is highlighted up to the gutter (never into it) and then
+// padded with plain gutter columns, so it measures exactly cw.
+func herdFitLine(line string, selected bool, cw int) string {
+	inner := cw - herdSidebarRightGutter
+	if inner < 1 {
+		return ansi.Truncate(line, max(cw, 0), "")
+	}
+	line = ansi.Truncate(line, inner, "")
+	if !selected {
+		return line
+	}
+	return herdSelectedStyle.Width(inner).Render(line) + strings.Repeat(" ", herdSidebarRightGutter)
+}
+
+// herdRowCursor is a row's left bar in the group colour plus the cursor slot.
+func herdRowCursor(r herd.Row, selected bool) string {
+	bar := lipgloss.NewStyle().Foreground(lipgloss.Color(herdColorFor(r.Project))).Render("▎")
+	if selected {
+		return bar + cursorActiveStyle.Render("▸") + " "
+	}
+	return bar + "  "
+}
+
+// herdNameBudget is the most columns a row's name (plus tree prefix) may take
+// at width cw: herdMaxNameWidth, or a third of a narrow sidebar so the recap
+// keeps most of the row.
+func herdNameBudget(cw int) int {
+	return max(min(herdMaxNameWidth, cw/3), 0)
+}
+
+// rowRight renders the right-aligned status before the close button: the PR
+// badge ("#60", or "#60 ✓" on a done row, which replaces the age) and the
+// dim time in the current state (blocked style on a blocked row).
+func rowRight(r herd.Row) string {
+	var parts []string
+	if r.PRNumber > 0 {
+		badge := fmt.Sprintf("#%d", r.PRNumber)
+		if r.Done {
+			return herdDoneStyle.Render(badge + " ✓")
+		}
+		parts = append(parts, herdProjectStyle.Render(badge))
+	}
+	if !r.StateSince.IsZero() {
+		style := herdDimStyle
+		if r.State == "blocked" {
+			style = herdBlockedStyle
+		}
+		parts = append(parts, style.Render(herd.CompactAge(herdNow().Sub(r.StateSince))))
+	}
+	return strings.Join(parts, " ")
+}
+
+// recapStyle is the style for a row's recap text: the activity fallback is
+// the weakest signal and renders dimmer than a real recap, task or title.
+func recapStyle(src herd.RecapSource) lipgloss.Style {
+	if src == herd.RecapActivity {
+		return herdActivityStyle.Italic(true)
+	}
+	return herdRecapStyle
+}
+
+// renderTreeRow renders an agent row: cursor, glyph, tree prefix (dim), base
+// agent name, recap, then the right-aligned age/PR badge and close button.
+// The prefix is clamped so deep nesting cannot starve the name. A selected
+// row also renders its detail lines (see rowDetail) beneath it, joined by
+// newlines; every line measures at most cw (exactly cw when selected).
 func (m HerdModel) renderTreeRow(r herd.Row, treePrefix string, selected bool, cw int) string {
 	glyph, style := rowGlyph(r)
-	// Thin left bar in the group's colour, then the cursor slot (3 columns).
-	barStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(herdColorFor(r.Project)))
-	cursor := barStyle.Render("▎") + "  "
-	if selected {
-		cursor = barStyle.Render("▎") + cursorActiveStyle.Render("▸") + " "
-	}
-
-	activityStyle := herdActivityStyle
-
-	// Reserve room for the cursor marker, glyph, and
-	// separators; whatever's left is split between the name and the
-	// activity line. The name is capped at herdMaxNameWidth even when
-	// there's more room, so a long instance name can't crowd out the
-	// activity line in a wide flat view, and is truncated to whatever's
-	// actually available in a narrow sidebar. All measured with
-	// lipgloss.Width, never len, since ANSI styling and any multi-byte
-	// runes would otherwise miscount and overflow the terminal width.
+	cursor := herdRowCursor(r, selected)
 	glyphStr := style.Render(glyph)
-	overhead := lipgloss.Width(cursor) + lipgloss.Width(glyphStr) + 1 /* space */ + 2 /* gap before activity */ + 1 + lipgloss.Width(herdCloseLabel) /* close button */
-	nameBudget := cw - overhead
-	if nameBudget > herdMaxNameWidth {
-		nameBudget = herdMaxNameWidth
-	}
-	if nameBudget < 0 {
-		nameBudget = 0
-	}
+
+	nameBudget := herdNameBudget(cw)
 	if tw := lipgloss.Width(treePrefix); tw > 0 {
-		keep := tw
-		if max := nameBudget - 6; keep > max {
-			keep = max
-		}
-		if keep < 0 {
-			keep = 0
-		}
-		treePrefix = ansi.Truncate(treePrefix, keep, "")
+		keep := min(tw, nameBudget-6)
+		treePrefix = ansi.Truncate(treePrefix, max(keep, 0), "")
 		nameBudget -= lipgloss.Width(treePrefix)
 	}
-	name := truncateToWidth(r.Name, nameBudget)
+	name := truncateToWidth(herd.BaseName(r), nameBudget)
 
 	prefix := cursor + glyphStr + " " + herdDimStyle.Render(treePrefix) + renderAgentName(name, r.State == "blocked") + "  "
-	prefixW := lipgloss.Width(prefix)
-	// Reserve " ✕" at the right edge, ahead of the gutter.
 	closeW := 1 + lipgloss.Width(herdCloseLabel)
-	available := cw - prefixW - herdSidebarRightGutter - closeW
-	if available < 0 {
-		available = 0
-	}
+	inner := cw - herdSidebarRightGutter
+	available := inner - lipgloss.Width(prefix) - closeW
+
 	closeStyle := herdDimStyle
-	var activityStr string
+	var text, right string
 	if m.confirmingRow(r) {
-		activityStr = herdBlockedStyle.Render(truncateToWidth("close "+r.Name+"? y/n", available))
+		// The full instance name: this is the identifier being closed.
+		text = herdBlockedStyle.Render(truncateToWidth("close "+r.Name+"? y/n", available))
 		closeStyle = herdBlockedStyle
 	} else {
-		activityStr = activityStyle.Render(truncateToWidth(herd.ActivityLine(r), available))
+		right = rowRight(r)
+		if rw := lipgloss.Width(right); rw > 0 && available-rw-1 >= herdMinRecapWidth {
+			available -= rw + 1
+		} else {
+			right = ""
+		}
+		recap := rowRecap(r)
+		text = recapStyle(recap.Source).Render(truncateToWidth(recap.Text, available))
 	}
 
-	line := prefix + activityStr
-	pad := cw - herdSidebarRightGutter - closeW - lipgloss.Width(line)
-	if pad < 0 {
-		pad = 0
+	line := prefix + text
+	pad := inner - closeW - lipgloss.Width(line) - lipgloss.Width(right)
+	line += strings.Repeat(" ", max(pad, 0)) + right + " " + closeStyle.Render(herdCloseLabel)
+	out := herdFitLine(line, selected, cw)
+	if !selected {
+		return out
 	}
-	line += strings.Repeat(" ", pad) + " " + closeStyle.Render(herdCloseLabel)
-	if selected {
-		return herdSelectedStyle.Width(cw).Render(line)
+	for _, d := range rowDetailStyled(r, cw) {
+		out += "\n" + herdFitLine(d, true, cw)
 	}
-	return line
+	return out
+}
+
+// rowRecap is the row's recap as loaded (herd.TagLogs), or, for a row that
+// never went through it, the log-free part of the chain (task, activity).
+func rowRecap(r herd.Row) herd.RecapLine {
+	if r.Recap.Source != herd.RecapNone {
+		return r.Recap
+	}
+	return herd.Recap(r, herd.LogInfo{})
+}
+
+// herdMinRecapWidth is the narrowest recap the right-aligned age/badge may
+// leave; below it the age/badge is dropped.
+const herdMinRecapWidth = 8
+
+// herdDetailIndent is how far a selected row's detail lines are indented:
+// the bar, the cursor slot and the glyph column, so they align with the name.
+const herdDetailIndent = 5
+
+// herdDetailMaxLines caps a selected row's extra lines.
+const herdDetailMaxLines = 3
+
+// herdDetailLine is one plain-text detail line and whether it is the
+// activity line (dimmer) rather than recap text.
+type herdDetailLine struct {
+	text     string
+	activity bool
+}
+
+// rowDetail returns the plain detail lines a selected row renders beneath
+// itself at width cw: the full recap wrapped, then the last activity line
+// when it differs from the recap, at most herdDetailMaxLines in total. Hit
+// testing and scrolling count these lines, so rendering must use exactly
+// this.
+func rowDetail(r herd.Row, cw int) []herdDetailLine {
+	w := cw - herdSidebarRightGutter - herdDetailIndent
+	if w < herdMinRecapWidth {
+		return nil
+	}
+	activity := herd.ActivityLine(r)
+	rc := rowRecap(r)
+	recap := rc.Text
+	isActivity := rc.Source == herd.RecapActivity
+	showActivity := activity != "" && !isActivity && activity != recap
+
+	recapMax := herdDetailMaxLines
+	if showActivity {
+		recapMax--
+	}
+	var out []herdDetailLine
+	for _, l := range wrapLines(recap, w, recapMax) {
+		out = append(out, herdDetailLine{text: l, activity: isActivity})
+	}
+	if showActivity {
+		out = append(out, herdDetailLine{text: truncateToWidth(activity, w), activity: true})
+	}
+	return out
+}
+
+// rowDetailStyled renders rowDetail's lines with the bar and indent.
+func rowDetailStyled(r herd.Row, cw int) []string {
+	bar := lipgloss.NewStyle().Foreground(lipgloss.Color(herdColorFor(r.Project))).Render("▎")
+	indent := bar + strings.Repeat(" ", herdDetailIndent-1)
+	var out []string
+	for _, d := range rowDetail(r, cw) {
+		style := herdActivityStyle
+		if d.activity {
+			style = herdDimStyle.Italic(true)
+		}
+		out = append(out, indent+style.Render(d.text))
+	}
+	return out
+}
+
+// wrapLines word-wraps s to width w, keeping at most n lines; when it does
+// not fit, the last kept line ends in "…".
+func wrapLines(s string, w, n int) []string {
+	if s == "" || w <= 0 || n <= 0 {
+		return nil
+	}
+	lines := strings.Split(ansi.Wrap(s, w, ""), "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " ")
+	}
+	if len(lines) <= n {
+		return lines
+	}
+	lines = lines[:n]
+	last := lines[n-1]
+	if lipgloss.Width(last)+1 > w {
+		last = ansi.Truncate(last, w-1, "")
+	}
+	lines[n-1] = last + "…"
+	return lines
+}
+
+// lineHeight is how many screen rows line i renders as at width cw: a
+// selected agent row adds its detail lines, everything else is one row.
+func (m HerdModel) lineHeight(i, cw int) int {
+	if i < 0 || i >= len(m.lines) {
+		return 0
+	}
+	if l := m.lines[i]; l.kind == herdLineRow && i == m.splitPane.Cursor() {
+		return 1 + len(rowDetail(l.row, cw))
+	}
+	return 1
 }
 
 // truncateToWidth shortens s to at most width display columns (as measured

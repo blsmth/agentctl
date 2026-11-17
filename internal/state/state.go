@@ -51,6 +51,7 @@ type AgentState struct {
 	Mode             string `json:"mode,omitempty"`
 	TicketRef        string `json:"ticket_ref,omitempty"`
 	TicketTitle      string `json:"ticket_title,omitempty"`
+	Task             string `json:"task,omitempty"` // ad-hoc dispatch task line (windowstate Task)
 	Branch           string `json:"branch,omitempty"`
 	WorktreeDir      string `json:"worktree_dir,omitempty"`
 	SpawnedBy        string `json:"spawned_by,omitempty"`

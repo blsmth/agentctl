@@ -190,3 +190,40 @@ func TestTombstone(t *testing.T) {
 		}
 	})
 }
+
+func TestTransactStampsStateSince(t *testing.T) {
+	defer initTemp(t)()
+	write := func(fn func(*windowstate.WindowState)) windowstate.WindowState {
+		t.Helper()
+		_, ws, err := windowstate.Transact("@1", fn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ws
+	}
+
+	before := time.Now()
+	ws := write(func(ws *windowstate.WindowState) { ws.State = "working" })
+	if ws.StateSince.Before(before) {
+		t.Fatalf("StateSince = %v, want stamped on the state change", ws.StateSince)
+	}
+	first := ws.StateSince
+
+	ws = write(func(ws *windowstate.WindowState) { ws.LastToolDetail = "Editing a.go" })
+	if !ws.StateSince.Equal(first) {
+		t.Errorf("a write that keeps State must not move StateSince: %v -> %v", first, ws.StateSince)
+	}
+	ws = write(func(ws *windowstate.WindowState) { ws.State = "working" })
+	if !ws.StateSince.Equal(first) {
+		t.Errorf("re-writing the same State must not move StateSince")
+	}
+
+	time.Sleep(2 * time.Millisecond)
+	ws = write(func(ws *windowstate.WindowState) { ws.State = "blocked" })
+	if !ws.StateSince.After(first) {
+		t.Errorf("a State change must move StateSince forward: %v -> %v", first, ws.StateSince)
+	}
+	if got, _ := windowstate.Read("@1"); !got.StateSince.Equal(ws.StateSince) {
+		t.Errorf("StateSince not persisted: %v vs %v", got.StateSince, ws.StateSince)
+	}
+}

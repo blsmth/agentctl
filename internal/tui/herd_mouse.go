@@ -43,18 +43,29 @@ func (m HerdModel) clickable() bool {
 // the point is outside the list area, or the hub is in a loading/error/empty
 // state. A returned idx may be a divider line.
 func (m HerdModel) lineAt(x, y int) (idx int, ok bool) {
+	idx, _, ok = m.lineAtSub(x, y)
+	return idx, ok
+}
+
+// lineAtSub is lineAt that also reports which screen row of the line was hit:
+// 0 for a line's own row, 1.. for a selected row's detail lines.
+func (m HerdModel) lineAtSub(x, y int) (idx, sub int, ok bool) {
 	if !m.clickable() || x < 0 {
-		return -1, false
+		return -1, 0, false
 	}
 	row := y - m.herdListTop()
 	if row < 0 || row >= m.herdListRows() {
-		return -1, false
+		return -1, 0, false
 	}
-	idx = m.scrollOffset + row
-	if idx >= len(m.lines) {
-		return -1, false
+	cw := m.listColWidth()
+	for i := m.scrollOffset; i < len(m.lines); i++ {
+		h := m.lineHeight(i, cw)
+		if row < h {
+			return i, row, true
+		}
+		row -= h
 	}
-	return idx, true
+	return -1, 0, false
 }
 
 // listColWidth is the width of the list column lines are rendered at.
@@ -86,7 +97,7 @@ func (m HerdModel) clickDecision(x, y int) (idx int, action herdClickAction) {
 // row or header opens the context menu; left click on a header's "+ new" or a
 // row's "✕" triggers that button, anything else on a line just selects it.
 func (m HerdModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, action herdClickAction) {
-	idx, ok := m.lineAt(x, y)
+	idx, sub, ok := m.lineAtSub(x, y)
 	if !ok {
 		return -1, herdClickIgnore
 	}
@@ -108,7 +119,7 @@ func (m HerdModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, ac
 		}
 		return idx, herdClickSelect
 	case herdLineRow:
-		if m.onCloseButton(x) {
+		if sub == 0 && m.onCloseButton(x) { // detail lines have no ✕
 			return idx, herdClickClose
 		}
 		return idx, herdClickSelect

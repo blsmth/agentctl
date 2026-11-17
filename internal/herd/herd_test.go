@@ -634,14 +634,14 @@ func TestLoadGroupTagsDispatched(t *testing.T) {
 	}
 }
 
-func TestTagDispatchedSetsParentOnlyWhenTrusted(t *testing.T) {
+func TestTagMetaSetsParentOnlyWhenTrusted(t *testing.T) {
 	rows := []Row{{}, {}, {}}
 	rows[0].WindowID, rows[1].WindowID, rows[2].WindowID = "@1", "@2", "@3"
 	meta := map[string]Meta{
 		"@1": {Mode: "dispatch", SpawnedBy: "@9", SpawnedBySession: "sess"},
 		"@2": {Mode: "bare", SpawnedBy: "@9"}, // untrusted: env leak
 	}
-	TagDispatched(rows, meta)
+	TagMeta(rows, meta)
 	want := []string{"@9", "", ""}
 	for i, r := range rows {
 		if r.Parent != want[i] {
