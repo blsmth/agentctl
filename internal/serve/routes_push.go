@@ -44,6 +44,7 @@ func (s *Server) initPush(opts Options) error {
 func (s *Server) registerPush(rt *Router) {
 	rt.Feature("push")
 	rt.Device("GET /v1/push/vapid", s.handlePushVAPID)
+	rt.Device("GET /v1/push/subscription", s.handlePushSubscription)
 	rt.Device("POST /v1/push/subscribe", s.handlePushSubscribe)
 	rt.Device("DELETE /v1/push/subscribe", s.handlePushUnsubscribe)
 	rt.Device("POST /v1/push/test", s.handlePushTest)
@@ -74,7 +75,28 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, codeInternal, "storing subscription")
 		return
 	}
+	logging.Log("serve: push: device %s (%s) subscribed via %s", dev.ID, dev.Name, endpointHost(sub.Endpoint))
+	s.auditPush(r, dev, "push_subscribe", "ok")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// auditPush records a push-management action by dev.
+func (s *Server) auditPush(r *http.Request, dev Device, action, result string) {
+	e := s.auditFor(r, dev, action)
+	e.Result = result
+	s.recordAudit(e)
+}
+
+// handlePushSubscription reports whether the calling device has a stored
+// subscription.
+func (s *Server) handlePushSubscription(w http.ResponseWriter, r *http.Request) {
+	dev, ok := DeviceFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, codeUnauthorized, "no device")
+		return
+	}
+	_, has := s.subs.Get(dev.ID)
+	writeJSON(w, http.StatusOK, map[string]bool{"subscribed": has})
 }
 
 func (s *Server) handlePushUnsubscribe(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +110,8 @@ func (s *Server) handlePushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, codeInternal, "removing subscription")
 		return
 	}
+	logging.Log("serve: push: device %s (%s) unsubscribed", dev.ID, dev.Name)
+	s.auditPush(r, dev, "push_unsubscribe", "ok")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -105,6 +129,7 @@ func (s *Server) handlePushTest(w http.ResponseWriter, r *http.Request) {
 		Tag:   "agentctl:test",
 		Kind:  "test",
 	})
+	s.auditPush(r, dev, "push_test", testResult(err))
 	switch {
 	case errors.Is(err, errNoSubscription), errors.Is(err, errSubscriptionExpired):
 		writeError(w, http.StatusConflict, codeBadRequest, err.Error())
@@ -115,5 +140,18 @@ func (s *Server) handlePushTest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, codeInternal, "push delivery failed; see serve.log")
 	default:
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func testResult(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, errNoSubscription):
+		return "no_subscription"
+	case errors.Is(err, errSubscriptionExpired):
+		return "expired"
+	default:
+		return "failed"
 	}
 }

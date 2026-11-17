@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
@@ -195,6 +196,47 @@ type Sender struct {
 	devices *DeviceStore
 	subs    *SubscriptionStore
 	pusher  Pusher
+
+	mu   sync.Mutex
+	last *LastPush
+}
+
+// LastPush describes the most recent notification handed to Broadcast.
+type LastPush struct {
+	Time   time.Time `json:"time"`
+	Kind   string    `json:"kind"`
+	Result string    `json:"result"`
+}
+
+// pushLogf writes the Info-level push diagnostics. It is a variable so tests
+// can capture the lines.
+var pushLogf = logging.Log
+
+// LastPush returns the most recent Broadcast outcome, or nil.
+func (s *Sender) LastPush() *LastPush {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.last == nil {
+		return nil
+	}
+	c := *s.last
+	return &c
+}
+
+func (s *Sender) record(kind, result string) {
+	s.mu.Lock()
+	s.last = &LastPush{Time: time.Now(), Kind: kind, Result: result}
+	s.mu.Unlock()
+}
+
+// endpointHost is the push service host of a subscription endpoint, the only
+// part of it that is safe to log.
+func endpointHost(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Hostname() == "" {
+		return "unknown"
+	}
+	return u.Hostname()
 }
 
 // NewSender returns a Sender.
@@ -215,12 +257,26 @@ func (s *Sender) Broadcast(ctx context.Context, msg Message) {
 		return
 	}
 	var stale []string
+	targets := make(map[string]Subscription, len(all))
 	for id, sub := range all {
 		if !live[id] {
 			stale = append(stale, id)
 			continue
 		}
-		_ = s.deliver(ctx, id, sub, msg) // failures are logged in deliver
+		targets[id] = sub
+	}
+	if len(targets) == 0 {
+		pushLogf("push: no subscribed devices, nothing sent (kind %s)", msg.Kind)
+		s.record(msg.Kind, "no subscribed devices")
+	} else {
+		pushLogf("push: kind=%s tag=%s subscriptions=%d", msg.Kind, msg.Tag, len(targets))
+		sent := 0
+		for id, sub := range targets {
+			if s.deliver(ctx, id, sub, msg) == nil { // failures are logged in deliver
+				sent++
+			}
+		}
+		s.record(msg.Kind, fmt.Sprintf("sent to %d/%d", sent, len(targets)))
 	}
 	if len(stale) > 0 {
 		if err := s.subs.Delete(stale...); err != nil {
@@ -276,16 +332,20 @@ func (s *Sender) deliver(ctx context.Context, deviceID string, sub Subscription,
 	switch {
 	case err != nil:
 		logging.Warn("serve: push to device %s failed: %v", deviceID, err)
+		pushLogf("push: kind=%s device=%s result=failed (request error)", msg.Kind, deviceID)
 		return errPushFailed
 	case status == http.StatusNotFound || status == http.StatusGone:
 		if derr := s.subs.DeleteEndpoint(sub.Endpoint); derr != nil {
 			logging.Warn("serve: push: deleting expired subscription: %v", derr)
 		}
+		pushLogf("push: kind=%s device=%s host=%s result=expired-deleted (status %d)", msg.Kind, deviceID, endpointHost(sub.Endpoint), status)
 		return errSubscriptionExpired
 	case status < 200 || status >= 300:
 		logging.Warn("serve: push to device %s: push service returned %d", deviceID, status)
+		pushLogf("push: kind=%s device=%s host=%s result=failed (status %d)", msg.Kind, deviceID, endpointHost(sub.Endpoint), status)
 		return errPushFailed
 	}
+	pushLogf("push: kind=%s device=%s host=%s result=sent (status %d)", msg.Kind, deviceID, endpointHost(sub.Endpoint), status)
 	return nil
 }
 

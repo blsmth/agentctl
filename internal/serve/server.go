@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -467,11 +468,15 @@ type StatusInfo struct {
 	URL      string    `json:"url"`
 	Pairing  bool      `json:"pairing"`
 	Features []string  `json:"features"`
+	// PushDevices names the devices with a push subscription; LastPush is
+	// the most recent notification outcome (nil before the first).
+	PushDevices []string  `json:"push_devices,omitempty"`
+	LastPush    *LastPush `json:"last_push,omitempty"`
 }
 
 // Status reports the running server's state.
 func (s *Server) Status() StatusInfo {
-	return StatusInfo{
+	st := StatusInfo{
 		PID:      os.Getpid(),
 		Version:  s.opts.Version,
 		Started:  s.started,
@@ -479,6 +484,33 @@ func (s *Server) Status() StatusInfo {
 		Pairing:  s.pairing.active(s.now()),
 		Features: s.router.Features(),
 	}
+	if s.subs != nil && s.devices != nil {
+		st.PushDevices = s.pushDeviceNames()
+	}
+	if s.sender != nil {
+		st.LastPush = s.sender.LastPush()
+	}
+	return st
+}
+
+// pushDeviceNames lists the names of paired devices that have a subscription.
+func (s *Server) pushDeviceNames() []string {
+	all, err := s.subs.All()
+	if err != nil {
+		return nil
+	}
+	devs, err := s.devices.List()
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, d := range devs {
+		if _, ok := all[d.ID]; ok {
+			names = append(names, d.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // newHTTPServer returns an http.Server with timeouts so a slow or malicious
