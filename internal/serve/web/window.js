@@ -93,6 +93,61 @@ function reflowView() {
 function exactView() {
   const host = h("div", { class: "pane-exact-host" });
   const el = h("div", { class: "pane-exact" }, host);
+  const term = new window.Terminal({
+    disableStdin: true,
+    convertEol: true,
+    fontSize: 12,
+    scrollback: 0,
+    cursorBlink: false,
+    cursorStyle: "underline",
+    cursorInactiveStyle: "none",
+  });
+  term.open(host);
+  return {
+    el,
+    update(pane) {
+      const cols = pane.cols > 0 ? pane.cols : 80;
+      const rows = pane.rows > 0 ? pane.rows : 24;
+      if (term.cols !== cols || term.rows !== rows) term.resize(cols, rows);
+      term.write(`\x1b[2J\x1b[3J\x1b[H${pane.text}`, () => {
+        fitTermFont(term, host, el.clientWidth - 4, EXACT_MIN_FONT, EXACT_MAX_FONT);
+      });
+    },
+    destroy() {
+      term.dispose();
+    },
+  };
+}
+
+export function mountWindow(root, ctx, { session, windowId }) {
+  const base = windowApiPath(session, windowId);
+  const canWrite = ctx.hasFeature("write");
+  let win = null;
+  let pane = null;
+  let lastText = null;
+  let lastActionsKey = null;
+  let gone = false;
+
+  const title = h("h1", {}, windowId);
+  const sub = h("div", { class: "meta pad-x" });
+  const paneHost = h("div", { class: "pane" });
+  const modeBtns = {
+    reflow: h("button", { class: "seg", onclick: () => setMode("reflow") }, "Reflow"),
+    exact: h("button", { class: "seg", onclick: () => setMode("exact") }, "Exact"),
+  };
+  const paneBar = h("div", { class: "pane-bar" }, h("div", { class: "segmented" }, modeBtns.reflow, modeBtns.exact));
+  const actions = h("div", { class: "actions" });
+  const liveLink = ctx.hasFeature("terminal")
+    ? h("a", { class: "btn", href: terminalHash(session, windowId) }, "Live terminal")
+    : null;
+  root.append(
+    h("header", { class: "bar" }, h("a", { class: "btn", href: "#/" }, "‹ Fleet"), title, liveLink),
+    sub,
+    paneBar,
+    paneHost,
+    actions,
+  );
+
   let mode = loadMode();
   let view = null;
 
