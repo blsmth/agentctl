@@ -88,7 +88,21 @@ redirects hub keypresses to the agent shown in the live pane:
 - Popups may open over the hub window; only their target changes.
 - `prefix+Left` / `prefix+Right` (tmux defaults) move focus between the list and the live pane.
 
-The hub window has no chrome bar or HUD of its own: the agent's chrome bar inside the live pane is the only tab bar. Clicking a tab there switches the live viewer and the hub list follows.
+The hub window has no chrome bar or HUD of its own. By default the agent's chrome bar is hidden in the live pane too, since the hub list already shows every agent: the hub zooms the viewed window's main pane while it shows it and unzooms it when it moves on, closes, or you switch to that project session (a zoom you made yourself is never undone). Attaching to a project session directly always shows its chrome bar.
+
+### Hub list keys
+
+| Key | Action |
+|-----|--------|
+| `j`/`k` | Move the selection; the live pane follows. |
+| `enter`/`tab` | Focus the live pane. |
+| `J` | Jump to the selected agent's home session. |
+| `n` / `x` | Launch a new agent / close the selected one. |
+| `b` | Select the next blocked agent. |
+| `p` | Open the selected agent's PR. |
+| `c` | **Toggle chrome** — show or hide the agent's chrome bar in the live pane for this hub (starts from the `hub_chrome` config value, default hidden). With chrome shown, clicking a tab in the live pane switches the live viewer and the hub list follows. |
+| `r` | Refresh. |
+| `q`/`esc` | Leave the hub. |
 
 ### Hub list tree
 

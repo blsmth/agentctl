@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/hubtarget"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -364,6 +365,11 @@ type HerdModel struct {
 	// then quits and the caller execs the new binary (see Reexec).
 	exeChanged func() bool
 	reexec     bool
+
+	// hubChrome reports whether agent windows show their chrome bar in the
+	// live pane. false (the hub_chrome default) zooms the viewed window's main
+	// pane so its chrome bar is hidden (see tmux.SyncHubZoom); `c` toggles it.
+	hubChrome bool
 }
 
 // HubSelectEnv carries the selected agent ("session|windowID") across a hot
@@ -373,6 +379,22 @@ const HubSelectEnv = "AGENTCTL_HUB_SELECT"
 // HubLeftEnv carries the user-dragged list width across a hot reload re-exec.
 // It is consumed once at startup.
 const HubLeftEnv = "AGENTCTL_HUB_LEFT"
+
+// HubChromeEnv carries the hub's chrome toggle ("1" shown, "0" hidden) across
+// a hot reload re-exec. It is consumed once at startup.
+const HubChromeEnv = "AGENTCTL_HUB_CHROME"
+
+// parseHubChrome parses a HubChromeEnv value; ok is false for anything but
+// "1" or "0".
+func parseHubChrome(v string) (shown, ok bool) {
+	switch strings.TrimSpace(v) {
+	case "1":
+		return true, true
+	case "0":
+		return false, true
+	}
+	return false, false
+}
 
 // parseHubLeft parses a HubLeftEnv value; ok is false for garbage or
 // non-positive values.
@@ -385,7 +407,8 @@ func parseHubLeft(v string) (int, bool) {
 }
 
 // ReexecEnv returns the env entries to carry across a hot reload re-exec: the
-// selection and, when the user dragged the divider, the list width.
+// selection, the chrome toggle and, when the user dragged the divider, the
+// list width.
 func (m HerdModel) ReexecEnv() []string {
 	var env []string
 	if sel := m.SelectionEnv(); sel != "" {
@@ -394,6 +417,11 @@ func (m HerdModel) ReexecEnv() []string {
 	if m.userLeft > 0 {
 		env = append(env, HubLeftEnv+"="+strconv.Itoa(m.userLeft))
 	}
+	chrome := "0"
+	if m.hubChrome {
+		chrome = "1"
+	}
+	env = append(env, HubChromeEnv+"="+chrome)
 	return env
 }
 
@@ -452,6 +480,13 @@ func NewHerdModel() HerdModel {
 			m.userLeft = n
 		}
 	}
+	m.hubChrome = hubChromeDefault()
+	if v, ok := os.LookupEnv(HubChromeEnv); ok {
+		_ = os.Unsetenv(HubChromeEnv)
+		if shown, ok := parseHubChrome(v); ok {
+			m.hubChrome = shown
+		}
+	}
 	return m
 }
 
@@ -474,7 +509,7 @@ func newHerdModel() HerdModel {
 
 // Init kicks off the first load and starts the poll loop.
 func (m HerdModel) Init() tea.Cmd {
-	return tea.Batch(herdLoadCmd(), herdTickCmd())
+	return tea.Batch(herdLoadCmd(), herdTickCmd(), herdZoomSyncCmd(m.hubChrome))
 }
 
 func herdTickCmd() tea.Cmd {
@@ -531,7 +566,7 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		show := m.maybeShowCmd()
-		return m, tea.Batch(herdLoadCmd(), herdTickCmd(), show, herdViewerPollCmd())
+		return m, tea.Batch(herdLoadCmd(), herdTickCmd(), show, herdViewerPollCmd(), herdZoomSyncCmd(m.hubChrome))
 
 	case herdViewerMsg:
 		return m.syncFromViewer(msg), nil
@@ -709,6 +744,9 @@ func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.jumpErr = ""
 		m.infoMsg = ""
 		return *m, herdLoadCmd()
+
+	case "c":
+		return *m, m.toggleChrome()
 	}
 	return *m, nil
 }
@@ -864,11 +902,15 @@ func (m *HerdModel) liveShowCmd() tea.Cmd {
 	m.liveShown = key
 	session, window := m.selSession, m.selWindowID
 	fallback, userLeft := m.termWidth, m.userLeft
+	shown := m.hubChrome
 	return func() tea.Msg {
 		win := liveWindowWidth(fallback)
 		left, right, err := herdLiveSplitFor(win, userLeft)
 		if err == nil {
 			err = tmux.ShowLiveViewer(session, window, right)
+			if err == nil {
+				hubZoomSync(!shown)
+			}
 		}
 		return herdLiveMsg{key: key, left: left, right: right, win: win, err: err}
 	}
@@ -1294,6 +1336,7 @@ func (m HerdModel) renderFooter(cw int) string {
 		menuHintKeyStyle.Render("x") + " " + menuHintLabelStyle.Render("close"),
 		menuHintKeyStyle.Render("b") + " " + menuHintLabelStyle.Render("blocked"),
 		menuHintKeyStyle.Render("r") + " " + menuHintLabelStyle.Render("refresh"),
+		menuHintKeyStyle.Render("c") + " " + menuHintLabelStyle.Render("chrome"),
 		menuHintKeyStyle.Render("q") + " " + menuHintLabelStyle.Render("leave"),
 	}
 	b.WriteString(strings.Join(m.wrapHints(hintParts, cw), "\n"))
@@ -1933,3 +1976,37 @@ func (herdLeaver) SwitchSession(n string) error {
 func (l herdLeaver) ViewedHome() string             { return l.home }
 func (herdLeaver) Sessions() []tmux.SessionActivity { return tmux.ListSessionActivity() }
 func (l herdLeaver) Message(msg string)             { l.m.jumpErr = msg }
+
+// Chrome-zoom seams, overridden in tests so they never touch tmux.
+var (
+	hubZoomSync      = tmux.SyncHubZoom
+	hubChromeDefault = func() bool { return config.Load().HubChrome }
+)
+
+// herdZoomSyncCmd brings the viewed window's zoom in line with the chrome
+// toggle (shown = chrome bar visible in the live pane). Run on start (which
+// also sweeps zooms leaked by a previous hub), every poll tick (the viewer
+// can change window without the hub: chrome-bar tab clicks, leaving and
+// returning to the hub) and on toggle.
+func herdZoomSyncCmd(shown bool) tea.Cmd {
+	return func() tea.Msg {
+		hubZoomSync(!shown)
+		return nil
+	}
+}
+
+// toggleChrome flips whether the live pane shows the agent's chrome bar and
+// applies it to the viewed window at once.
+func (m *HerdModel) toggleChrome() tea.Cmd {
+	m.hubChrome = !m.hubChrome
+	if m.hubChrome {
+		m.infoMsg = "chrome bar shown in the hub"
+	} else {
+		m.infoMsg = "chrome bar hidden in the hub"
+	}
+	m.jumpErr = ""
+	return herdZoomSyncCmd(m.hubChrome)
+}
+
+// HubChrome reports whether the live pane shows the agent's chrome bar.
+func (m HerdModel) HubChrome() bool { return m.hubChrome }

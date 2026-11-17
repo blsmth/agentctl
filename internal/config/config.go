@@ -592,6 +592,12 @@ type Config struct {
 	// auto_improve, a project-local config may switch it off but can never
 	// switch it back on. Use MonitorEnabled() to read the effective value.
 	Monitor *bool `json:"monitor,omitempty"`
+	// HubChrome shows each agent window's chrome bar inside the hub's live pane.
+	// false (default) hides it there by zooming the viewed window's main pane;
+	// a project session attached directly always shows its chrome bar. The hub
+	// key `c` toggles it for the running hub. Global config only: the hub
+	// belongs to no project.
+	HubChrome bool `json:"hub_chrome,omitempty"`
 	// StatuslineFormat controls what `agentctl statusline` renders
 	// (internal/statusline): "rich" (default -- a colored 2-line
 	// status line covering account rate limits on line 1 and
@@ -1159,6 +1165,7 @@ func containsAll(have, want []string) bool {
 //     port
 //   - monitor set to true (a project may switch the monitor off, never back on)
 //   - auto_poll (autopilot dispatches every "ready" issue unattended)
+//   - hub_chrome (the hub belongs to no project)
 //   - bash_preview / agents.*.bash_preview set to false when the global layer
 //     enables it (a project may tighten the guard, never loosen it)
 //   - agents.*.model / effort_level values outside [A-Za-z0-9._:-]+ (they are
@@ -1187,6 +1194,10 @@ func sanitizeProjectConfig(project, global *Config) {
 			warn("monitor", "project may switch the monitor off but not back on")
 		}
 		project.Monitor = nil
+	}
+	if project.HubChrome {
+		warn("hub_chrome", globalOnly)
+		project.HubChrome = false
 	}
 	if project.AutoPoll && !global.AutoPoll {
 		warn("auto_poll", globalOnly)

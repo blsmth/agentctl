@@ -2,6 +2,8 @@ package tui
 
 import (
 	"os"
+	"slices"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -85,12 +87,12 @@ func TestHubLeftEnv(t *testing.T) {
 	}
 	t.Run("ReexecEnv includes left only when set", func(t *testing.T) {
 		m := newHerdModel()
-		if env := m.ReexecEnv(); len(env) != 0 {
-			t.Errorf("env = %v, want empty", env)
+		if env := m.ReexecEnv(); slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, HubLeftEnv+"=") }) {
+			t.Errorf("env = %v, want no %s", env, HubLeftEnv)
 		}
 		m.userLeft = 65
 		env := m.ReexecEnv()
-		if len(env) != 1 || env[0] != HubLeftEnv+"=65" {
+		if !slices.Contains(env, HubLeftEnv+"=65") {
 			t.Errorf("env = %v", env)
 		}
 	})

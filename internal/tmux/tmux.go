@@ -1299,9 +1299,14 @@ func activeWindowHookArgs(session, exe, runtimeDir string) []string {
 		"run-shell -b " + shellquote.Quote(shellCmd)}
 }
 
+// chromeSizeHookEvents are the client events whose session hooks run
+// enforce-chrome: the ones that distort chrome pane sizes, plus
+// client-session-changed so switching into a session undoes hub zooms.
+var chromeSizeHookEvents = []string{"client-resized", "client-attached", "client-session-changed"}
+
 // chromeSizeHookArgs returns the tmux args to set a session-scoped hook for
-// event (client-resized, client-attached) that re-enforces chrome bar pane
-// sizes through the hidden `agentctl enforce-chrome`, pinned like
+// event (one of chromeSizeHookEvents) that re-enforces chrome bar pane sizes
+// through the hidden `agentctl enforce-chrome`, pinned like
 // activeWindowHookArgs.
 func chromeSizeHookArgs(session, event, exe, runtimeDir string) []string {
 	shellCmd := hookAgentctlCmd(exe, runtimeDir, "enforce-chrome")
@@ -1560,8 +1565,10 @@ func installSessionHooks(exe, pidDir, projectRoot string) {
 	_ = exec.Command("tmux", selectArgs...).Run() // args built internally, not user input
 
 	// Chrome pane sizes are re-enforced when a client attaches or resizes,
-	// the events that distort them, instead of on a monitor timer.
-	for _, ev := range []string{"client-resized", "client-attached"} {
+	// the events that distort them, instead of on a monitor timer. Switching
+	// a client into this session also sweeps leftover hub zooms, so leaving
+	// the hub for this session brings its chrome bar back at once.
+	for _, ev := range chromeSizeHookEvents {
 		_ = exec.Command("tmux", chromeSizeHookArgs(SessionName, ev, exe, pidDir)...).Run()
 	}
 
@@ -1841,6 +1848,24 @@ func EnforceAllChromeSizes() {
 	}
 }
 
+// windowSizeFormat is the display-message format EnforceMainPaneSize reads
+// (parsed by parseWindowHeightZoom).
+const windowSizeFormat = "#{window_height} #{window_zoomed_flag}"
+
+// parseWindowHeightZoom parses windowSizeFormat output into the window height and
+// whether the window is zoomed. EnforceMainPaneSize skips zoomed windows.
+func parseWindowHeightZoom(out string) (height int, zoomed bool, err error) {
+	f := strings.Fields(out)
+	if len(f) == 0 {
+		return 0, false, fmt.Errorf("empty window size %q", out)
+	}
+	height, err = strconv.Atoi(f[0])
+	if err != nil || height <= 0 {
+		return 0, false, fmt.Errorf("invalid window_height %q", f[0])
+	}
+	return height, len(f) > 1 && f[1] == "1", nil
+}
+
 // EnforceMainPaneSize grows the main (terminal) pane to fill all available
 // window space, which forces every chrome pane (header, footer, status bar)
 // to its minimum height of 1 row. This avoids the ping-pong inflation that
@@ -1850,6 +1875,8 @@ func EnforceAllChromeSizes() {
 // The target height is:
 //
 //	windowHeight - chromePaneCount×1 - borderCount(numPanes-1)
+//
+// A zoomed window is skipped: resize-pane would unzoom it.
 func EnforceMainPaneSize(windowID string) {
 	mainPane := findMainPane(windowID)
 	if mainPane == "" {
@@ -1857,16 +1884,21 @@ func EnforceMainPaneSize(windowID string) {
 		return
 	}
 
-	// Query window height.
+	// Query window height and zoom state.
 	target := fmt.Sprintf("%s:%s", SessionName, windowID)
-	out, err := exec.Command("tmux", "display-message", "-t", target, "-p", "#{window_height}").Output()
+	out, err := exec.Command("tmux", "display-message", "-t", target, "-p", windowSizeFormat).Output()
 	if err != nil {
 		logging.Log("tmux: EnforceMainPaneSize: display-message failed: %v", err)
 		return
 	}
-	windowHeight, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil || windowHeight <= 0 {
-		logging.Log("tmux: EnforceMainPaneSize: invalid window_height %q", strings.TrimSpace(string(out)))
+	windowHeight, zoomed, err := parseWindowHeightZoom(string(out))
+	if err != nil {
+		logging.Log("tmux: EnforceMainPaneSize: %v", err)
+		return
+	}
+	if zoomed {
+		// resize-pane unzooms a zoomed window: leave it to whoever zoomed
+		// it (the user, or the hub hiding the chrome bar, see hubzoom.go).
 		return
 	}
 

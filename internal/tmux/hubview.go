@@ -13,6 +13,9 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/selfpath"
 )
 
 // ViewerSessionName is the grouped session the hub's live pane attaches to.
@@ -276,6 +279,7 @@ func HideLiveViewer() error {
 		_ = exec.Command("tmux", "kill-pane", "-t", pane).Run()
 	}
 	killViewerSessions("")
+	ClearHubZoom()
 	return nil
 }
 
@@ -468,6 +472,9 @@ func ViewerActiveWindow() (home, windowID string) {
 // it. Used by chrome-bar tab clicks made from inside a viewer.
 func SelectViewerWindow(viewer, windowID string) error {
 	_, err := tmuxRun(viewerSelectWindowArgs(viewer, windowID)...)
+	// Give the window the viewer just left its chrome bar back at once; the
+	// hub zooms the new one on its next poll.
+	SweepHubZoom()
 	return err
 }
 
@@ -478,17 +485,32 @@ func SelectViewerWindow(viewer, windowID string) error {
 // as not viewed: there the click most likely came from that client, and tab
 // switches keep their normal home-session meaning.
 func ViewerForWindow(windowID string) string {
-	viewer, client := currentViewer(viewerSessions())
-	if viewer == "" || client == "" || windowID == "" {
+	if windowID == "" {
 		return ""
 	}
-	if w, _ := tmuxRun("display-message", "-p", "-t", "="+viewer+":", "#{window_id}"); w != windowID {
-		return ""
-	}
-	if home := homeOfViewer(viewer); home != "" && len(viewerClients(home)) > 0 {
+	viewer, w := hubViewed()
+	if w != windowID {
 		return ""
 	}
 	return viewer
+}
+
+// hubViewed returns the viewer session with an attached client and its active
+// window, or empty strings when there is none or when the home session of the
+// viewer's group has a direct (non-viewer) client of its own.
+func hubViewed() (viewer, windowID string) {
+	viewer, client := currentViewer(viewerSessions())
+	if viewer == "" || client == "" {
+		return "", ""
+	}
+	w, _ := tmuxRun("display-message", "-p", "-t", "="+viewer+":", "#{window_id}")
+	if w == "" {
+		return "", ""
+	}
+	if home := homeOfViewer(viewer); home != "" && len(viewerClients(home)) > 0 {
+		return "", ""
+	}
+	return viewer, w
 }
 
 // HubCloseCommands builds the tmux commands that tear the hub down: detach the
@@ -527,7 +549,15 @@ func hubCloseShell(cmds [][]string) string {
 // `run-shell -b` (owned by the tmux server) and outlives the popup. Agents in
 // project sessions are untouched.
 func CloseHub(client string) error {
+	ClearHubZoom()
 	cmds := HubCloseCommands(client, viewerSessions())
-	_, err := tmuxRun("run-shell", "-b", hubCloseShell(cmds))
+	shell := hubCloseShell(cmds)
+	// The hub process may re-zoom on a last poll tick before it dies, so
+	// sweep once more after the viewers are gone. Pinned to a runtime dir so
+	// enforce-chrome never initialises one in whatever cwd run-shell has.
+	if rd := paths.RuntimeDir(); rd != "" {
+		shell += "; " + hookAgentctlCmd(selfpath.SpawnableOrFallback(), rd, "enforce-chrome")
+	}
+	_, err := tmuxRun("run-shell", "-b", shell)
 	return err
 }
