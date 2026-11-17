@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -63,7 +64,7 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 	done()
 
 	mcfg := tui.MenuConfig{
-		Agents:   buildMenuAgents(cfg, agents, runningByID, windowActivity()),
+		Agents:   buildMenuAgents(cfg, agents, runningByID, windowActivity(paths.RuntimeDir())),
 		Backends: cfg.Backends,
 		FetchOllama: func(ctx context.Context, name string) ([]string, error) {
 			return dispatch.ListOllamaModels(ctx, cfg.Backends[name])
@@ -118,15 +119,15 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 		LaunchWithResume(result.Agent, result.SessionID, result.Dir, writeSettings)
 	case "create":
 		fmt.Print("\033[H\033[2J")
-		createMenu("")
+		createMenu(result.Name)
 	}
 }
 
 // windowActivity maps window ID to the unix time of its latest recorded
 // activity (last tool call or state write), from windowstate.
-func windowActivity() map[string]int64 {
+func windowActivity(runtimeDir string) map[string]int64 {
 	out := map[string]int64{}
-	for id, ws := range windowstate.AllFrom(paths.RuntimeDir()) {
+	for id, ws := range windowstate.AllFrom(windowstate.WindowsDirFor(runtimeDir)) {
 		t := ws.UpdatedAt.Unix()
 		if ws.LastToolTime > t {
 			t = ws.LastToolTime
@@ -148,7 +149,7 @@ func buildMenuAgents(cfg *config.Config, agents []agent.Agent, runningByID map[s
 		if ai, aj := activity[ids[i]], activity[ids[j]]; ai != aj {
 			return ai > aj
 		}
-		return ids[i] < ids[j]
+		return windowIDLess(ids[i], ids[j])
 	})
 	cwd, _ := os.Getwd()
 	if cwd == "" {
@@ -460,4 +461,15 @@ func warnDefaultAgent(w io.Writer, msg string) {
 	msg = "agentctl: warning: " + msg
 	fmt.Fprintln(w, msg)
 	logging.Warn("%s", msg)
+}
+
+// windowIDLess orders tmux window IDs ("@2" before "@10") numerically; IDs that
+// do not parse fall back to string order.
+func windowIDLess(a, b string) bool {
+	na, errA := strconv.Atoi(strings.TrimPrefix(a, "@"))
+	nb, errB := strconv.Atoi(strings.TrimPrefix(b, "@"))
+	if errA != nil || errB != nil || na == nb {
+		return a < b
+	}
+	return na < nb
 }

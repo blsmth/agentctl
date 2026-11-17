@@ -466,7 +466,7 @@ func (m MenuModel) sheetLines(width, height int) []string {
 	out = append(out, m.sheetRow(fEffort, "Effort", choiceList(m.effortOptions(), o.effort), "←→", o.effort != def.effort, width))
 
 	var dv string
-	if m.editing == editDir {
+	if m.editing {
 		dv = m.edit.View()
 	} else {
 		dv = shortenDir(o.dir)
@@ -525,7 +525,7 @@ func (m MenuModel) hintSegments() []hint {
 	case viewResume:
 		return []hint{{"⏎", "resume"}, {"↑↓", "select"}, {"esc", "back"}}
 	case viewSheet:
-		if m.editing != editNone {
+		if m.editing {
 			return []hint{{"⏎", "confirm"}, {"esc", "cancel"}}
 		}
 		return []hint{{"⏎", "launch"}, {"↑↓", "field"}, {"←→", "change"}, {"space", "pick/edit"}, {"ctrl+u", "reset"}, {"esc", "back"}}

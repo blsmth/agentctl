@@ -166,6 +166,16 @@ func matchTerms(q string, items []pickItem) []int {
 	return out
 }
 
+// restore moves the cursor to the model row with the given value, if shown.
+func (p *modelPicker) restore(value string) {
+	for i, r := range p.rows {
+		if r.kind == pickModel && p.items[r.item].value == value {
+			p.cursor = i
+			return
+		}
+	}
+}
+
 // move shifts the cursor by delta selectable rows.
 func (p *modelPicker) move(delta int) {
 	for i := p.cursor + delta; i >= 0 && i < len(p.rows); i += delta {
