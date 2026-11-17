@@ -245,8 +245,9 @@ func SessionEnd() {
 	}
 
 	var input struct {
-		Reason    string `json:"reason"`
-		SessionID string `json:"session_id"`
+		Reason         string `json:"reason"`
+		SessionID      string `json:"session_id"`
+		TranscriptPath string `json:"transcript_path"`
 	}
 	if !decodeInput(&input) {
 		return
@@ -263,7 +264,7 @@ func SessionEnd() {
 
 	// Final .meta.json sidecar write for this session (detached; the monitor
 	// no longer writes sidecars).
-	syncSessionMeta(input.SessionID)
+	syncSessionMeta(input.SessionID, input.TranscriptPath)
 
 	// Clear working state so the spinner stops. idle_prompt only fires when
 	// Claude is waiting for interactive input; ticket agents that finish and

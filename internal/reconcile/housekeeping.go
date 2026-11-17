@@ -30,7 +30,7 @@ type HousekeepingDeps struct {
 	// while alive, so housekeeping covers machines where it is not running).
 	PruneEvents   func(now time.Time)
 	Records       func() map[string]windowstate.WindowState
-	SessionLogDir    func() string
+	SessionLogDir func() string
 }
 
 // DefaultHousekeepingDeps wires the sweeps to the real implementations for

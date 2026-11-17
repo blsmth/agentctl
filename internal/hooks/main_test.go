@@ -21,7 +21,7 @@ func TestMain(m *testing.M) {
 	watchdogSpawnFn = func(string) error { return nil }
 	// Nor a metrics serve or session-meta sync: in a test binary
 	// os.Executable() is the test binary, which would re-run the suite.
-	spawnMetaSyncFn = func(string) error { return nil }
+	spawnMetaSyncFn = func(string, string) error { return nil }
 	ensureMetricsServeFn = func() bool { return false }
 	// Never rename (or query) real tmux windows from a unit test.
 	winname.SetSeamsForTest(

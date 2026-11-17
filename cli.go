@@ -600,12 +600,13 @@ func (c *SessionsBrowseCmd) Run() error {
 
 // SessionsSyncCmd implements `agentctl sessions sync`.
 type SessionsSyncCmd struct {
-	Session string `help:"Sync only this session id (used by the Stop/SessionEnd hooks)" hidden:""`
+	Session    string `help:"Sync only this session id (used by the Stop/SessionEnd hooks)" hidden:""`
+	Transcript string `help:"Transcript path from the hook payload (skips the log scan)" hidden:""`
 }
 
 func (c *SessionsSyncCmd) Run() error {
 	if c.Session != "" {
-		if err := sessions.SyncOne(c.Session); err != nil {
+		if err := sessions.SyncOne(c.Session, c.Transcript); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

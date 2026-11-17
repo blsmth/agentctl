@@ -145,8 +145,23 @@ func countJSONLFiles(projectsDir string, dirs []os.DirEntry) int {
 // sessionID: it locates the session's JSONL log under the Claude projects
 // directory and runs ExtractMeta + WriteMeta on it. It is what the Stop and
 // SessionEnd hooks run (detached) now that no monitor writes sidecars.
-func SyncOne(sessionID string) error {
-	logFile := FindLogBySessionIDIn(filepath.Join(claudeDir, "projects"), sessionID)
+//
+// transcriptPath, when it names an existing file, is used directly (the hook
+// payload carries it), avoiding a scan of the projects directory.
+func SyncOne(sessionID, transcriptPath string) error {
+	if sessionID == "" || strings.ContainsAny(sessionID, `/\`) || sessionID == "." || sessionID == ".." {
+		return fmt.Errorf("sessions: invalid session id %q", sessionID)
+	}
+	logFile := ""
+	// Only trust a transcript named for this session.
+	if transcriptPath != "" && filepath.Base(transcriptPath) == sessionID+".jsonl" {
+		if st, err := os.Stat(transcriptPath); err == nil && st.Mode().IsRegular() {
+			logFile = transcriptPath
+		}
+	}
+	if logFile == "" {
+		logFile = FindLogBySessionIDIn(filepath.Join(claudeDir, "projects"), sessionID)
+	}
 	if logFile == "" {
 		return fmt.Errorf("sessions: no log found for session %q", sessionID)
 	}

@@ -69,9 +69,9 @@ type Server struct {
 // server. Discovered projects are added with SetProjects.
 func NewServer(reg prometheus.Registerer, now time.Time) *Server {
 	return &Server{
-		tracker: metrics.NewTransitionTracker(reg),
-		usage:   metrics.NewUsageSet(metrics.NewCollector(reg)),
-		started: now,
+		tracker:  metrics.NewTransitionTracker(reg),
+		usage:    metrics.NewUsageSet(metrics.NewCollector(reg)),
+		started:  now,
 		tailers:  make(map[string]*events.Tailer),
 		lastSeen: make(map[string]time.Time),
 		known:    make(map[string]bool),

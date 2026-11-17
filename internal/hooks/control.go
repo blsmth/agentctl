@@ -44,14 +44,11 @@ func CheckDone() {
 		LastAssistantMessage string `json:"last_assistant_message"`
 		StopHookActive       bool   `json:"stop_hook_active"`
 		SessionID            string `json:"session_id"`
+		TranscriptPath       string `json:"transcript_path"`
 	}
 	if !decodeInput(&input) {
 		return
 	}
-
-	// Refresh the session's .meta.json sidecar (detached; replaces the
-	// monitor's incremental write).
-	syncSessionMeta(input.SessionID)
 
 	// Set idle immediately -- the turn's text output is complete, so stop the
 	// spinner. If checks below fail (exit 2), UserPromptSubmit will set working
@@ -79,6 +76,11 @@ func CheckDone() {
 		logging.Log("hook-check-done: stop_hook_active=true, allowing stop to prevent loop")
 		return
 	}
+
+	// Refresh the session's .meta.json sidecar (detached, throttled per
+	// session; SessionEnd does the final write). Re-entry after a stop hook
+	// already ran this turn is skipped above.
+	syncSessionMetaThrottled(input.SessionID, input.TranscriptPath, time.Now())
 
 	agentName := os.Getenv("AGENTCTL_AGENT_NAME")
 	logging.Log("hook-check-done: agent=%s", agentName)
