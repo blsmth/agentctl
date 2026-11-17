@@ -139,6 +139,29 @@ func CapturePane(session, windowID string, lines int) (string, error) {
 	return trimTrailingBlankLines(string(out)), nil
 }
 
+// SendKeyToWindow sends one tmux key name (e.g. "1", "Escape") to
+// <session>:<windowID>, the same target CapturePane and CapturePaneANSI
+// read, so a caller that classified the captured pane types into exactly the
+// pane it checked. The key is passed without -l, so tmux interprets key names;
+// callers must allowlist key before calling.
+func SendKeyToWindow(session, windowID, key string) error {
+	return sendKeyFn(sessionWindowTarget(session, windowID), key)
+}
+
+// sendKeyFn runs `tmux send-keys -t target key`; a seam for tests.
+var sendKeyFn = func(target, key string) error {
+	if out, err := exec.Command("tmux", sendKeyArgs(target, key)...).CombinedOutput(); err != nil {
+		return fmt.Errorf("send-keys %s: %s: %w", target, strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+// sendKeyArgs builds the send-keys argument list. "--" ends option parsing,
+// so a key can never be read as a flag.
+func sendKeyArgs(target, key string) []string {
+	return []string{"send-keys", "-t", target, "--", key}
+}
+
 // CapturePaneANSI is CapturePane with `-e`: colour and style escape
 // sequences are kept so a client can render the pane faithfully. Classify it
 // only after panestate.StripANSI.

@@ -141,3 +141,10 @@ func TestLessThenRemoveQuotesPath(t *testing.T) {
 		t.Errorf("pager got %q, want %q", out, path)
 	}
 }
+
+func stubDiscovery(t *testing.T, agents []agent.Agent, err error) {
+	t.Helper()
+	old := discoverDispatchAgents
+	t.Cleanup(func() { discoverDispatchAgents = old })
+	discoverDispatchAgents = func(string) ([]agent.Agent, error) { return agents, err }
+}

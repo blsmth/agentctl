@@ -18,6 +18,17 @@ const (
 	codeInternal        = "internal"
 	codeBadRequest      = "bad_request"
 	codePaneUnavailable = "pane_unavailable"
+
+	// Write API (PR4).
+	codeDialogChanged    = "dialog_changed"
+	codeNotIdle          = "not_idle"
+	codeNotClosable      = "not_closable"
+	codeTooLarge         = "too_large"
+	codeRateLimited      = "rate_limited"
+	codeUnsupportedMedia = "unsupported_media_type"
+	codeUnknownProject   = "unknown_project"
+	codeUnknownAgent     = "unknown_agent"
+	codeActionFailed     = "action_failed"
 )
 
 // apiError is the JSON body of every error response.

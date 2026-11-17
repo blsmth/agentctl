@@ -34,28 +34,37 @@ func TestFormatElapsed(t *testing.T) {
 	}
 }
 
-// directory with no resolvable GitHub repo is not fatal and launches with an
-// empty RepoSlug.
-func TestDispatchPromptProceedsWithoutRepo(t *testing.T) {
-	oldResolve, oldLaunch := resolveRepoSlug, launchAgent
-	t.Cleanup(func() { resolveRepoSlug, launchAgent = oldResolve, oldLaunch })
+// dispatchPrompt resolves nothing but the default working directory and hands
+// every flag to dispatch.LaunchAdhoc, the core agentctl serve shares.
+func TestDispatchPromptDelegatesToLaunchAdhoc(t *testing.T) {
+	old := launchAdhoc
+	t.Cleanup(func() { launchAdhoc = old })
 
-	resolveRepoSlug = func(string) (string, error) { return "", errors.New("no remote") }
-	var got dispatch.Request
-	launchAgent = func(req dispatch.Request) (dispatch.Result, error) {
+	var got dispatch.AdhocRequest
+	launchAdhoc = func(req dispatch.AdhocRequest) (dispatch.Result, error) {
 		got = req
 		return dispatch.Result{WindowID: "@9", AgentName: req.AgentName}, nil
 	}
 
-	wid, agent, err := dispatchPrompt("do it", "", "go-engineer", t.TempDir(), "", "", false)
+	dir := t.TempDir()
+	wid, agent, err := dispatchPrompt("do it", "spec-key", "go-engineer", dir, "opus", "none", true)
 	if err != nil {
 		t.Fatalf("dispatchPrompt error = %v, want nil", err)
 	}
 	if wid != "@9" || agent != "go-engineer" {
 		t.Errorf("got %q, %q", wid, agent)
 	}
-	if got.RepoSlug != "" {
-		t.Errorf("RepoSlug = %q, want empty", got.RepoSlug)
+	want := dispatch.AdhocRequest{
+		Prompt: "do it", PromptKey: "spec-key", AgentName: "go-engineer", WorkDir: dir,
+		Model: "opus", Backend: "none", UseWorktree: true,
+	}
+	if got != want {
+		t.Errorf("AdhocRequest = %+v, want %+v", got, want)
+	}
+
+	launchAdhoc = func(dispatch.AdhocRequest) (dispatch.Result, error) { return dispatch.Result{}, errors.New("boom") }
+	if _, _, err := dispatchPrompt("x", "", "go-engineer", dir, "", "", false); err == nil || err.Error() != "boom" {
+		t.Errorf("err = %v, want boom", err)
 	}
 }
 

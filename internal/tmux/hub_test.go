@@ -215,3 +215,21 @@ func TestParseListPane(t *testing.T) {
 		t.Errorf("got %q, want empty", got)
 	}
 }
+
+func TestSendKeyToWindow(t *testing.T) {
+	old := sendKeyFn
+	t.Cleanup(func() { sendKeyFn = old })
+	var gotTarget, gotKey string
+	sendKeyFn = func(target, key string) error { gotTarget, gotKey = target, key; return nil }
+
+	if err := SendKeyToWindow("agentctl-proj", "@523", "Escape"); err != nil {
+		t.Fatal(err)
+	}
+	if gotTarget != "agentctl-proj:@523" || gotKey != "Escape" {
+		t.Errorf("sent %q to %q", gotKey, gotTarget)
+	}
+	want := []string{"send-keys", "-t", "s:@1", "--", "-X"}
+	if got := sendKeyArgs("s:@1", "-X"); strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("sendKeyArgs = %q, want %q", got, want)
+	}
+}

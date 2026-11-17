@@ -1,4 +1,4 @@
-package cmd
+package dispatch
 
 import (
 	"errors"
@@ -12,9 +12,9 @@ func stubDiscovery(t *testing.T, agents []agent.Agent, err error) (calls *int, g
 	t.Helper()
 	var n int
 	var dir string
-	old := discoverDispatchAgents
-	t.Cleanup(func() { discoverDispatchAgents = old })
-	discoverDispatchAgents = func(workDir string) ([]agent.Agent, error) {
+	old := discoverAgents
+	t.Cleanup(func() { discoverAgents = old })
+	discoverAgents = func(workDir string) ([]agent.Agent, error) {
 		n++
 		dir = workDir
 		return agents, err
@@ -69,9 +69,9 @@ func TestValidateAgentName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			calls, gotDir := stubDiscovery(t, tt.agents, tt.discErr)
-			err := validateAgentName(tt.input, "/some/dir")
+			err := ValidateAgentName(tt.input, "/some/dir")
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("validateAgentName(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				t.Fatalf("ValidateAgentName(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
 			}
 			if (*calls > 0) != tt.wantDiscovery {
 				t.Errorf("discovery calls = %d, wantDiscovery %v", *calls, tt.wantDiscovery)

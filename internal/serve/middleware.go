@@ -87,12 +87,16 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 // requireCSRF rejects every state-changing method without CSRFHeader: 1.
-func requireCSRF(next http.Handler) http.Handler {
+// onReject, when set, is told of each rejection (for the audit log).
+func requireCSRF(next http.Handler, onReject func(*http.Request, string)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 		default:
 			if r.Header.Get(CSRFHeader) != "1" {
+				if onReject != nil {
+					onReject(r, codeCSRF)
+				}
 				writeError(w, http.StatusForbidden, codeCSRF, "missing "+CSRFHeader+" header")
 				return
 			}
@@ -135,10 +139,14 @@ func requireDevice(auth deviceAuthenticator, now func() time.Time, next http.Han
 	})
 }
 
-// requireWrite returns 403 unless serve.allow_write is on.
-func requireWrite(allowed bool, next http.Handler) http.Handler {
+// requireWrite returns 403 unless serve.allow_write is on. onDeny, when set,
+// is told of each refusal (for the audit log).
+func requireWrite(allowed bool, onDeny func(*http.Request, string), next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !allowed {
+			if onDeny != nil {
+				onDeny(r, codeWriteDisabled)
+			}
 			writeError(w, http.StatusForbidden, codeWriteDisabled, "write actions are disabled (serve.allow_write is false)")
 			return
 		}
