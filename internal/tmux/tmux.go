@@ -121,7 +121,7 @@ func StartSession(defaultAgent string) error {
 	// Preserve what restore needs before the records are wiped: after a tmux
 	// server crash or reboot the windows are gone but the records survive.
 	// Writes nothing when there are no agent records.
-	SaveRestore()
+	SaveRestoreAtStart()
 
 	// Clear stale window state from any previous session — pane/window IDs
 	// are not stable across tmux session restarts.
@@ -718,22 +718,81 @@ func WindowIndex(windowID string) int {
 // returned: they must not block starting or killing a session. It returns the
 // number of entries saved.
 func SaveRestore() int {
-	return saveRestoreFor(SessionName, filepath.Dir(state.FilePath()), windowstate.All())
+	return saveRestoreFor(SessionName, filepath.Dir(state.FilePath()), windowstate.All(), restoreOpts{filterLive: true})
+}
+
+// SaveRestoreAtStart is SaveRestore for StartSession, run after new-session
+// and before windowstate.RemoveAll. Only the fresh shell window is live then,
+// so records are not filtered by liveness (that is the crash/reboot case), and
+// an existing restore.json is left alone: RunRestore clears it once consumed,
+// so a surviving file is an unconsumed save from a kill point and is
+// authoritative over what the leftover records can reconstruct.
+func SaveRestoreAtStart() int {
+	return saveRestoreFor(SessionName, filepath.Dir(state.FilePath()), windowstate.All(), restoreOpts{keepExisting: true})
 }
 
 // SaveRestoreIn is SaveRestore for another project (session name and runtime
 // dir), used by relaunch-prep which runs outside the project's own session.
 func SaveRestoreIn(session, runtimeDir string) int {
-	return saveRestoreFor(session, runtimeDir, windowstate.AllFrom(windowstate.WindowsDirFor(runtimeDir)))
+	return saveRestoreFor(session, runtimeDir, windowstate.AllFrom(windowstate.WindowsDirFor(runtimeDir)), restoreOpts{filterLive: true})
 }
 
-func saveRestoreFor(session, runtimeDir string, records map[string]windowstate.WindowState) int {
+type restoreOpts struct {
+	// filterLive drops records whose window is not in the live tmux session
+	// (closed windows whose record was never removed).
+	filterLive bool
+	// keepExisting skips the write when restore.json already exists.
+	keepExisting bool
+}
+
+// listRestoreWindows lists the session's windows with their real tmux
+// #{window_index}. A var so tests can stub tmux.
+var listRestoreWindows = func(session string) (map[string]state.LiveWindow, error) {
+	out, err := exec.Command("tmux", "list-windows", "-t", session,
+		"-F", "#{window_id}\t#{window_index}\t#{pane_current_path}").Output()
+	if err != nil {
+		return nil, fmt.Errorf("tmux list-windows -t %s: %w", session, err)
+	}
+	live := map[string]state.LiveWindow{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 || parts[0] == "" {
+			continue
+		}
+		idx, _ := strconv.Atoi(parts[1])
+		live[parts[0]] = state.LiveWindow{Index: idx, Path: parts[2]}
+	}
+	return live, nil
+}
+
+func saveRestoreFor(session, runtimeDir string, records map[string]windowstate.WindowState, opts restoreOpts) int {
 	if runtimeDir == "" || runtimeDir == "." {
 		return 0
 	}
-	live := map[string]state.LiveWindow{}
-	for i, w := range ListWindowsIn(session) {
-		live[w.ID] = state.LiveWindow{Index: i, Path: w.Path}
+	if opts.keepExisting {
+		if _, err := os.Lstat(filepath.Join(runtimeDir, state.RestoreFileName)); err == nil {
+			logging.Log("save-restore: keeping existing %s", state.RestoreFileName)
+			return 0
+		}
+	}
+	live, err := listRestoreWindows(session)
+	if err != nil {
+		if opts.filterLive {
+			// Unknown, not empty: without the live set we cannot tell closed
+			// windows from open ones, so keep whatever is already saved.
+			logging.Log("save-restore: skipping, cannot list windows: %v", err)
+			return 0
+		}
+		live = nil
+	}
+	if opts.filterLive && len(live) > 0 {
+		kept := make(map[string]windowstate.WindowState, len(records))
+		for id, ws := range records {
+			if _, ok := live[id]; ok {
+				kept[id] = ws
+			}
+		}
+		records = kept
 	}
 	agents := state.BuildRestoreAgents(records, live)
 	if len(agents) == 0 {
