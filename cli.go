@@ -50,7 +50,6 @@ type CLI struct {
 	KillMenu    KillMenuCmd    `cmd:"" name:"kill-menu" hidden:""`
 	LogsMenu    LogsMenuCmd    `cmd:"" name:"logs-menu" hidden:""`
 	ImproveMenu ImproveMenuCmd `cmd:"" name:"improve-menu" hidden:""`
-	LaunchMenu  LaunchMenuCmd  `cmd:"" name:"launch-menu" hidden:""`
 
 	// Agent management
 	Agents           AgentsCmd           `cmd:"" aliases:"agent-manager" help:"List agents (--tui for interactive browser)"`
@@ -198,11 +197,24 @@ type LaunchCmd struct {
 	Name       string `arg:"" optional:"" help:"Agent name to launch (reads default_agent from config if omitted)"`
 	NoWorktree bool   `name:"no-worktree" help:"Launch directly in the main checkout instead of an isolated git worktree"`
 	Backend    string `help:"Named backend from config (Ollama, Nous Portal); 'none' forces Anthropic"`
+	Model      string `help:"Model to run (overrides the agent's model; 'inherit' clears it)"`
+	Effort     string `help:"Effort level: low, medium, high, xhigh, max, auto ('inherit' clears the agent's)"`
 	Background bool   `help:"Create the window without switching to it"`
 }
 
 func (c *LaunchCmd) Run() error {
-	cmd.RunLaunch(c.Name, c.NoWorktree, c.Backend, c.Background)
+	if c.Effort != "" {
+		if err := dispatch.ValidateEffort(c.Effort); err != nil {
+			return err
+		}
+	}
+	cmd.RunLaunch(c.Name, cmd.LaunchOptions{
+		Backend:    c.Backend,
+		Model:      c.Model,
+		Effort:     c.Effort,
+		NoWorktree: c.NoWorktree,
+		Background: c.Background,
+	})
 	return nil
 }
 
@@ -331,15 +343,6 @@ type ImproveMenuCmd struct {
 }
 
 func (c *ImproveMenuCmd) Run() error { cmdImproveMenu(c.WindowID); return nil }
-
-type LaunchMenuCmd struct {
-	Name string `arg:"" help:"Agent name"`
-}
-
-func (c *LaunchMenuCmd) Run() error {
-	cmd.RunLaunchMenu(c.Name, dispatch.WriteAgentSettings)
-	return nil
-}
 
 // ---------------------------------------------------------------------------
 // Agent management

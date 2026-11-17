@@ -175,3 +175,30 @@ func TestGetSessionPreview_NoMessages(t *testing.T) {
 		t.Errorf("GetSessionPreview with no user messages = %q, want empty string", got)
 	}
 }
+
+func TestFirstHumanText(t *testing.T) {
+	tests := []struct {
+		name, log, want string
+	}{
+		{"string content", `{"type":"user","message":{"role":"user","content":"fix the bug"}}`, "fix the bug"},
+		{"block content", `{"type":"user","message":{"content":[{"type":"text","text":"hello there"}]}}`, "hello there"},
+		{"skips tool_result and wrappers",
+			`{"type":"user","message":{"content":[{"type":"tool_result","content":"x"}]}}
+{"type":"user","message":{"content":"<command-name>/clear</command-name>"}}
+{"type":"user","isMeta":true,"message":{"content":"meta text"}}
+{"type":"user","message":{"content":"[Request interrupted by user]"}}
+{"type":"user","message":{"content":"real prompt"}}`, "real prompt"},
+		{"none", `{"type":"assistant","message":{"content":"hi"}}`, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "s.jsonl")
+			if err := os.WriteFile(p, []byte(tc.log+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := FirstHumanText(p); got != tc.want {
+				t.Errorf("FirstHumanText = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

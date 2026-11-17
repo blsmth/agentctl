@@ -128,11 +128,10 @@ func FormatTokenCount(n int) string {
 
 // GetSessionPreview returns a short preview of the first user message in a session.
 func GetSessionPreview(s Session) string {
-	sum, err := ParseSummary(s)
-	if err != nil || len(sum.UserMsgs) == 0 {
+	preview := strings.Join(strings.Fields(FirstHumanText(s.LogFile)), " ")
+	if preview == "" {
 		return ""
 	}
-	preview := sum.UserMsgs[0]
 	if len(preview) > 55 {
 		preview = truncateBytes(preview, 55) + "..."
 	}

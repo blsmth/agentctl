@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,12 +11,13 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/launchopts"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // BackendNone is the --backend value that forces Anthropic even when the
 // agent config selects a backend.
-const BackendNone = "none"
+const BackendNone = launchopts.BackendNone
 
 // EnvBackend carries the active backend's name into the window (and from
 // there into windowstate) so restore and status can find it again.
@@ -163,32 +165,31 @@ var backendHTTPClient = &http.Client{}
 // preflightTimeout bounds the /api/tags request.
 var preflightTimeout = 3 * time.Second
 
-// PreflightBackend fails fast when an Ollama backend cannot serve a launch (nous
-// backends use preflightNous). It does
-// GET <base_url>/api/tags: unreachable is an error; a 200 that parses as an
-// Ollama tag list must contain b.Model (exact name match, since e.g.
-// qwen3.6:35b and qwen3.6:35b-a3b are distinct names for one digest). Any
-// other response skips the model check -- it may be a non-Ollama
-// Anthropic-compatible server.
-func PreflightBackend(b config.BackendConfig) error {
+// ErrNoModelList means the backend answered but not with an Ollama tag list
+// (non-200, unreadable, or no "models" field): it may be a non-Ollama
+// Anthropic-compatible server, so the model cannot be checked.
+var ErrNoModelList = launchopts.ErrNoModelList
+
+// ListOllamaModels does GET <base_url>/api/tags and returns the model names
+// the server reports. An unreachable server is an error; a response that is not
+// an Ollama tag list yields ErrNoModelList.
+func ListOllamaModels(ctx context.Context, b config.BackendConfig) ([]string, error) {
 	url := strings.TrimRight(b.BaseURL, "/") + "/api/tags"
-	ctx, cancel := context.WithTimeout(context.Background(), preflightTimeout)
-	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return fmt.Errorf("building request for %s: %w", url, err)
+		return nil, fmt.Errorf("building request for %s: %w", url, err)
 	}
 	resp, err := backendHTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("backend unreachable at %s: %w", b.BaseURL, err)
+		return nil, fmt.Errorf("backend unreachable at %s: %w", b.BaseURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil
+		return nil, ErrNoModelList
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return nil
+		return nil, ErrNoModelList
 	}
 	var tags struct {
 		Models *[]struct {
@@ -197,14 +198,41 @@ func PreflightBackend(b config.BackendConfig) error {
 		} `json:"models"`
 	}
 	if json.Unmarshal(body, &tags) != nil || tags.Models == nil {
+		return nil, ErrNoModelList
+	}
+	names := make([]string, 0, len(*tags.Models))
+	for _, m := range *tags.Models {
+		name := m.Name
+		if name == "" {
+			name = m.Model
+		}
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+// PreflightBackend fails fast when an Ollama backend cannot serve a launch (nous
+// backends use preflightNous). It lists the server's models: unreachable is an
+// error; a parsable Ollama tag list must contain b.Model (exact name match,
+// since e.g. qwen3.6:35b and qwen3.6:35b-a3b are distinct names for one
+// digest). Any other response skips the model check -- it may be a non-Ollama
+// Anthropic-compatible server.
+func PreflightBackend(b config.BackendConfig) error {
+	ctx, cancel := context.WithTimeout(context.Background(), preflightTimeout)
+	defer cancel()
+	have, err := ListOllamaModels(ctx, b)
+	if errors.Is(err, ErrNoModelList) {
 		return nil
 	}
-	var have []string
-	for _, m := range *tags.Models {
-		if sameModel(m.Name, b.Model) || sameModel(m.Model, b.Model) {
+	if err != nil {
+		return err
+	}
+	for _, name := range have {
+		if sameModel(name, b.Model) {
 			return nil
 		}
-		have = append(have, m.Name)
 	}
 	avail := "none"
 	if len(have) > 0 {
@@ -213,21 +241,9 @@ func PreflightBackend(b config.BackendConfig) error {
 	return fmt.Errorf("model %q is not available at %s (available: %s)", b.Model, b.BaseURL, avail)
 }
 
-// normalizeModel appends Ollama's implicit ":latest" tag when the final path
-// segment has no tag. Colons earlier in the name (registry host:port) are not
-// tag separators. Comparison-only; never used for the name passed to --model.
-func normalizeModel(name string) string {
-	last := name[strings.LastIndex(name, "/")+1:]
-	if strings.Contains(last, ":") {
-		return name
-	}
-	return name + ":latest"
-}
+// SameModel reports whether two Ollama model names refer to the same model
+// (an untagged name means ":latest").
+func SameModel(a, b string) bool { return launchopts.SameModel(a, b) }
 
-// sameModel reports whether two model names refer to the same Ollama model.
-func sameModel(a, b string) bool {
-	if a == "" || b == "" {
-		return false
-	}
-	return normalizeModel(a) == normalizeModel(b)
-}
+// sameModel reports whether two Ollama model names refer to the same model.
+func sameModel(a, b string) bool { return launchopts.SameModel(a, b) }

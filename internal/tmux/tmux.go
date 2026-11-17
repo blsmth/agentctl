@@ -1401,7 +1401,7 @@ func agentctlKeybindings(exe string) []keyBinding {
 	}
 
 	return []keyBinding{
-		{"a", popup(100, 42, "menu")},
+		{"a", popup(120, 40, "menu")},
 		{"x", nested(50, 11, "kill-menu #{window_id}")},
 		{"o", run("", "logs #{window_id}")},
 		{"s", nested(68, 18, "settings-menu #{window_id}")},
