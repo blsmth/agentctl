@@ -42,20 +42,6 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 .activity { color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .win-side { display: flex; flex-direction: column; align-items: flex-end; font-size: .8rem; color: var(--muted); }
 
-.pane { margin: 0 .5rem; height: 40vh; background: #000; border-radius: 8px; overflow: hidden; }
-.pane-bar { display: flex; justify-content: flex-end; padding: 0 .5rem .35rem; }
-.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.seg { background: transparent; color: var(--muted); border: 0; padding: .3rem .8rem; font-size: .8rem; }
-.seg[aria-pressed="true"] { background: var(--card); color: inherit; font-weight: 600; }
-.pane-reflow { height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; box-sizing: border-box; padding: 6px 8px;
-  font: 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #e5e5e5; }
-.pane-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.4em; }
-.pane-rule { display: flex; align-items: center; gap: .5rem; margin: .35em 0; color: #666; }
-.pane-rule::before, .pane-rule::after { content: ""; flex: 1; border-top: 1px solid #444; }
-.pane-rule:not(:has(span))::after { display: none; }
-.pane-rule span { color: #9a9a9a; font-size: .9em; overflow-wrap: anywhere; }
-.pane-exact { height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; }
-.pane-exact-host { display: inline-block; padding: 2px; }
 .term { margin: 0 .5rem; height: 40vh; background: #000; border-radius: 8px; overflow: hidden; padding: 4px; }
 .actions { padding: .75rem 1rem; display: flex; flex-direction: column; gap: .6rem; }
 .dialog { margin: 0; padding: .6rem; background: var(--card); border: 1px solid var(--line); border-radius: 8px;

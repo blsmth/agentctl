@@ -37,16 +37,13 @@ func (f *fakeFleet) set(g ...fleetwatch.Group) {
 }
 
 type fakePanes struct {
-	text       string
-	err        error
-	cols, rows int
-	got        struct {
+	text string
+	err  error
+	got  struct {
 		session, window string
 		lines           int
 	}
 }
-
-func (f *fakePanes) Size(string) (int, int, error) { return f.cols, f.rows, nil }
 
 func (f *fakePanes) Capture(session, window string, lines int) (string, error) {
 	f.got.session, f.got.window, f.got.lines = session, window, lines
@@ -459,40 +456,5 @@ func TestSSEEndsOnServerClose(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("stream still open after Close")
-	}
-}
-
-func TestPaneEndpointSize(t *testing.T) {
-	e := newReadEnv(t)
-	e.panes.text = "hello\n"
-	e.panes.cols, e.panes.rows = 180, 50
-	w := e.get("/v1/sessions/agentctl-proj/windows/523/pane")
-	if w.Code != 200 {
-		t.Fatalf("status %d: %s", w.Code, w.Body)
-	}
-	var body struct{ Cols, Rows int }
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if body.Cols != 180 || body.Rows != 50 {
-		t.Errorf("size = %dx%d, want 180x50", body.Cols, body.Rows)
-	}
-}
-
-// The pane endpoint and the answer guard both go through buildPaneBody, so
-// the same capture must yield the same dialog hash on both paths.
-func TestPaneAndAnswerHashSameDialog(t *testing.T) {
-	e := newReadEnv(t)
-	e.panes.text = dialogPane
-	w := e.get("/v1/sessions/agentctl-proj/windows/523/pane")
-	var viaPane struct {
-		Dialog struct{ Hash string } `json:"dialog"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &viaPane); err != nil {
-		t.Fatal(err)
-	}
-	guard := buildPaneBody(e.panes.text)
-	if guard.Dialog == nil || guard.Dialog.Hash == "" || guard.Dialog.Hash != viaPane.Dialog.Hash {
-		t.Errorf("guard hash %+v != pane hash %q", guard.Dialog, viaPane.Dialog.Hash)
 	}
 }
