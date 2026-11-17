@@ -1,8 +1,7 @@
 // Package notify implements the desktop-notification command-substitution
 // logic shared by internal/hooks and internal/cmd. It exists as its own
 // package (rather than living in internal/hooks, where it originated)
-// because internal/cmd needs to fire the same notification (see
-// RunSend's --wait-reply gating in internal/cmd/send.go) and
+// because internal/cmd needs to fire the same notification and
 // internal/hooks' version was unexported -- extracting it here means both
 // callers run the exact same command-substitution logic instead of two
 // copies drifting apart.

@@ -54,7 +54,8 @@ type AgentState struct {
 	WorktreeDir      string `json:"worktree_dir,omitempty"`
 	SpawnedBy        string `json:"spawned_by,omitempty"`
 	SpawnedBySession string `json:"spawned_by_session,omitempty"`
-	MailboxPending   int    `json:"mailbox_pending,omitempty"` // count-only mailbox.PendingCount, refreshed on a throttled monitor tick; see internal/cmd/wake.go for delivery
+	SessionName      string `json:"session_name,omitempty"`    // claude -n name; reused on restore
+	MailboxPending   int    `json:"mailbox_pending,omitempty"` // count-only mailbox.PendingCount, refreshed on a throttled monitor tick; delivered by the hook path
 }
 
 // State is the snapshot of running agents, written by the monitor.

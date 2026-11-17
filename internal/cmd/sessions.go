@@ -204,12 +204,15 @@ func LaunchWithResume(name string, sessionID string, workDir string, writeSettin
 	windowName := tmux.NextInstanceName(name)
 	// --fork-session generates a new session ID we don't control upfront,
 	// so we can't pre-compute the log path. The monitor falls back to findLatestLog.
+	sessionName := dispatch.SessionNameFor(name, workDir, workDir, false)
 	shellCmd := dispatch.BuildBaseFlags(dispatch.ClaudeInvocation{
 		Agent:        name,
+		Name:         sessionName,
 		Resume:       sessionID,
 		ForkSession:  true,
 		SettingsPath: writeSettings(name, ac, workDir),
 	}, ac)
+	extraEnv[dispatch.EnvSessionName] = sessionName
 	wid, err := tmux.LaunchAgent(windowName, workDir, shellCmd, "", name, "", extraEnv, true)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

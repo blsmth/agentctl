@@ -113,7 +113,7 @@ Blocking hooks can return JSON on stdout:
 - **Extra payload**: `tool_name`, `tool_input`, `tool_response`, `tool_use_id`
 - **agentctl status**: ✅ IMPLEMENTED (`hook-post-tool`)
   - Sets windowstate `state` to `working` and refreshes `last_tool_time` (fixes the stuck-spinner/stuck-blocked bugs where `idle_prompt` doesn't fire)
-  - Delivers pending mailbox messages as `additionalContext` (see [design/agent-messaging-design.md](design/agent-messaging-design.md))
+  - Delivers pending agentctl notices (done/blocked backstop) as `additionalContext` (see [design/agent-messaging-design.md](design/agent-messaging-design.md))
   - Appends a record to the hook-sourced audit trail (`internal/audit`; see `agentctl audit`) — this is the primary audit source, since it fires for every tool, not just Bash
 
 #### PostToolUseFailure

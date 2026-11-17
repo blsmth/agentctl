@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/config"
@@ -76,4 +77,45 @@ func projectDirsForBodyResolve(cfg *config.Config, extraDirs ...string) []string
 	cwd, _ := os.Getwd()
 	first := append(append([]string{}, extraDirs...), cwd)
 	return agent.ProjectDirs(cfg, first...)
+}
+
+// messagingTools are the cross-session messaging tools an agent needs.
+var messagingTools = []string{"SendMessage", "ListAgents"}
+
+// missingMessagingTools returns the messaging tools absent from a frontmatter
+// `tools:` value. An empty value means "all tools" and reports none missing.
+func missingMessagingTools(tools string) []string {
+	if strings.TrimSpace(tools) == "" {
+		return nil
+	}
+	have := map[string]bool{}
+	for _, t := range strings.FieldsFunc(tools, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
+		have[t] = true
+	}
+	var missing []string
+	for _, t := range messagingTools {
+		if !have[t] {
+			missing = append(missing, t)
+		}
+	}
+	return missing
+}
+
+// warnMissingMessagingTools prints a one-line stderr warning when the target
+// agent's definition has a restrictive `tools:` list that omits SendMessage or
+// ListAgents (Claude Code hides unlisted tools). Never fails the dispatch.
+func warnMissingMessagingTools(cfg *config.Config, agentName string, extraDirs ...string) {
+	agents, err := agent.DiscoverAll(cfg, projectDirsForBodyResolve(cfg, extraDirs...))
+	if err != nil {
+		return
+	}
+	for _, a := range agents {
+		if a.Name != agentName {
+			continue
+		}
+		if missing := missingMessagingTools(a.Tools); len(missing) > 0 {
+			fmt.Fprintf(shadowWarnOut, "agentctl: warning: %s has a tools: list without %s; the agent cannot message other sessions (add it to the frontmatter)\n", a.FilePath, strings.Join(missing, " and "))
+		}
+		return
+	}
 }

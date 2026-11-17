@@ -7,7 +7,7 @@
 // quit, restart, restore), agent windows (launch, kill, logs, dispatch,
 // cleanup), the full-screen and popup TUIs (agents, skills, memory, sessions,
 // tickets, settings, the chrome bar and HUD), cross-session views (hub,
-// status, peek, whoami), messaging (send, inbox, wake), the context store,
+// status, peek, whoami), the context store,
 // audit and usage reports, and setup (init, new, sync, hooks and template
 // installation).
 //

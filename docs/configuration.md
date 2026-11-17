@@ -177,6 +177,14 @@ Teach agentctl about a new model without a release, and tune context-window warn
 
 `agentctl models` prints the resolved registry.
 
+### Agent-to-agent messaging
+
+Agents talk to each other with Claude Code's native cross-session tools, `ListAgents` and `SendMessage` (Claude Code 2.1.224+), not through agentctl. Every agentctl launch passes `-n <name>` so sessions are findable: dispatched worktree agents use the worktree slug (for example `agent-go-engineer-issue-42`), bare launches use `<agent>-<project>`. The name is stored in the window's `session_name` and reused on restore and resume.
+
+If an agent's `.md` frontmatter has a `tools:` list, Claude Code hides any tool not on it. Add `SendMessage` and `ListAgents` to that list; `agentctl dispatch` prints a warning naming the file when either is missing. Agents with no `tools:` line get every tool.
+
+agentctl keeps one small notice path for the done/blocked backstop: when a dispatched worker goes idle or stops on a permission prompt, the dispatching window receives a short `agentctl notice: ...` line through its next prompt or tool result. It is factual, carries no worker output, and is not a substitute for the worker's own `SendMessage` report.
+
 ## Per-agent settings
 
 Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.blocked: true`, `alert_config.idle: true`, `cross_context: true`.

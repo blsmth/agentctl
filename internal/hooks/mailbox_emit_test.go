@@ -17,6 +17,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/mailbox"
 	"github.com/blsmth/agentctl/internal/notify"
@@ -226,8 +227,11 @@ func TestCheckDone_EmitsDoneWhenSpawnedAndAutonomous(t *testing.T) {
 	if msg.From != childWindow {
 		t.Errorf("From = %q, want %q", msg.From, childWindow)
 	}
-	if !strings.Contains(msg.Body, "Opened PR #948") {
-		t.Errorf("Body %q does not contain the last assistant message", msg.Body)
+	if strings.Contains(msg.Body, "Opened PR #948") {
+		t.Errorf("Body %q must not quote the last assistant message", msg.Body)
+	}
+	if want := "agentctl notice: go-engineer (window @41) finished its turn and is idle."; msg.Body != want {
+		t.Errorf("Body = %q, want %q", msg.Body, want)
 	}
 	if msg.Hops != 0 {
 		t.Errorf("Hops = %d, want 0 (a freshly-originated auto-message, not a reply)", msg.Hops)
@@ -434,8 +438,8 @@ func TestNotify_EmitsBlockedWhenSpawned(t *testing.T) {
 	if msg.ToSession != parentSession {
 		t.Errorf("ToSession = %q, want %q (SpawnedBySession)", msg.ToSession, parentSession)
 	}
-	if !strings.Contains(msg.Body, "needs approval for rm -rf") {
-		t.Errorf("Body %q does not contain the notification message", msg.Body)
+	if !strings.HasPrefix(msg.Body, "agentctl notice: go-engineer") || !strings.Contains(msg.Body, "(window @60) is waiting on a permission prompt: ") {
+		t.Errorf("Body %q is not the factual blocked notice", msg.Body)
 	}
 }
 
@@ -641,5 +645,26 @@ func TestNotify_EnqueueFailureDoesNotAffectNotifyPath(t *testing.T) {
 	}
 	if ws.State != "blocked" {
 		t.Errorf("windowstate.State = %q, want blocked (enqueue failure must not affect the notify path)", ws.State)
+	}
+}
+
+func TestBlockedToolSummary(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name string
+		ws   windowstate.WindowState
+		want string
+	}{
+		{"fresh tool with detail", windowstate.WindowState{PendingTool: "Bash", PendingToolDetail: "rm -rf\n/tmp/x", PendingToolAt: now}, "Bash rm -rf /tmp/x"},
+		{"fresh tool no detail", windowstate.WindowState{PendingTool: "Edit", PendingToolAt: now}, "Edit"},
+		{"stale tool", windowstate.WindowState{PendingTool: "Bash", PendingToolAt: now.Add(-time.Hour)}, "an unspecified tool call"},
+		{"no tool", windowstate.WindowState{}, "an unspecified tool call"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := blockedToolSummary(tt.ws, now); got != tt.want {
+				t.Errorf("blockedToolSummary = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

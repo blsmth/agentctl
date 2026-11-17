@@ -156,9 +156,8 @@ type instanceState struct {
 	// mailboxPending is a cached count of this window's undelivered mailbox
 	// messages, refreshed on a throttled tick (see monitorModel.mailboxTick)
 	// rather than every 500ms. Count-only: the monitor must never drain or
-	// deliver mail itself -- see internal/cmd/wake.go for the one path that
-	// does, and docs/agent-messaging-design.md §3 for why automatic
-	// monitor-driven injection was rejected.
+	// deliver mail itself; delivery belongs to the UserPromptSubmit and
+	// PostToolUse hooks (internal/hooks/mailbox_deliver.go).
 	mailboxPending int
 }
 
@@ -909,7 +908,7 @@ func (m *monitorModel) updateMetrics(inst *instanceState, windowID string) {
 	// mailbox.PendingCount is one os.ReadDir per window, cheap in isolation
 	// but unnecessary at full tick rate for a number that only matters to a
 	// human glancing at the chrome bar. Count-only -- this must never drain
-	// or deliver; see internal/cmd/wake.go for the one path that does.
+	// or deliver; the hooks own delivery.
 	if m.firstTick || m.mailboxTick%10 == 0 {
 		if n, err := mailbox.PendingCount(windowID); err != nil {
 			logging.Debug("monitor: mailbox.PendingCount(%s): %v", windowID, err)

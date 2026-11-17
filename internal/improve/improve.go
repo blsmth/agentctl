@@ -286,7 +286,7 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 
 	// Build base flags with per-session hook configuration.
 	settingsPath := dispatch.WriteAgentSettings(agentName, ac, workDir)
-	baseFlags := dispatch.BuildBaseFlags(dispatch.ClaudeInvocation{Agent: agentName, SessionID: sessionID, SettingsPath: settingsPath}, ac)
+	baseFlags := dispatch.BuildBaseFlags(dispatch.ClaudeInvocation{Agent: agentName, Name: dispatch.SessionNameFor(agentName+"-improve", workDir, workDir, false), SessionID: sessionID, SettingsPath: settingsPath}, ac)
 	shellCmd := buildImproveShellCmd(baseFlags, promptFile, skipEditor)
 
 	// Improvement sessions run in the agent's work dir; compute the log path so

@@ -647,7 +647,7 @@ func RunPeek(window string, lines int, jsonOut bool) error {
 	}
 	if prompts > 1 {
 		fmt.Println(cliRed().Render(fmt.Sprintf(
-			"⚠️  %d prompt lines — input is staged but unsubmitted (a wake/send-keys delivery did not go through)", prompts)))
+			"⚠️  %d prompt lines — input is staged but unsubmitted (a send-keys delivery did not go through)", prompts)))
 	}
 	fmt.Println(muted.Render(strings.Repeat("─", 72)))
 	fmt.Println(strings.TrimRight(text, "\n"))

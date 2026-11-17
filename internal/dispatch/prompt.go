@@ -55,7 +55,7 @@ func buildSystemPrompt(req Request, spec modeSpec, workDir, branch string, useWo
 	parts = append(parts, "---")
 
 	// 4. Preamble
-	parts = append(parts, preambleFor(spec.Role))
+	parts = append(parts, preambleWithOrchestrator(spec.Role, req.Orchestrator))
 
 	// 5. Shared Conventions -- expanded from the launching agent's own
 	// @shared/*.md includes. The raw "@shared/foo.md" line still lives in the
@@ -172,9 +172,9 @@ func buildFinishingSteps(req Request, branch string, useWorktree bool) string {
 3. Commit your changes with a descriptive message.%s
 4. Push your branch: git push -u origin %s
 5. Open a pull request: gh pr create --base main --title "<title>" --body-file <file>.%s Write the body to a temp file and use --body-file rather than an inline --body — inline bodies with non-trivial content trigger interactive prompts.
-6. Print the PR URL.
+6. Print the PR URL.%s
 
-The PR is the deliverable, not the commit — do not stop after committing, and do NOT merge to main yourself.`, closesLine, branch, prClosesNote)
+The PR is the deliverable, not the commit — do not stop after committing, and do NOT merge to main yourself.`, closesLine, branch, prClosesNote, reportStep(req.Orchestrator, "7", "the PR URL"))
 	}
 
 	return `When you are finished — follow these steps IN ORDER, do not skip any:
@@ -182,7 +182,20 @@ The PR is the deliverable, not the commit — do not stop after committing, and 
 2. Stage ONLY the files you changed — explicit paths, never "git add -A" or "git add .".
 3. Commit your changes with a descriptive message.
 
-Do NOT push to main and do NOT open a pull request — you are working directly in the shared repo directory, not an isolated worktree. Stop after committing and report back what you did.`
+Do NOT push to main and do NOT open a pull request — you are working directly in the shared repo directory, not an isolated worktree. Stop after committing and report back what you did.` + reportStep(req.Orchestrator, "", "a summary of what you did")
+}
+
+// reportStep is the final finishing step: report to the orchestrator with
+// SendMessage. Empty when there is no orchestrator.
+func reportStep(o Orchestrator, num, what string) string {
+	if !o.Known() {
+		return ""
+	}
+	prefix := "\n" + num + ". "
+	if num == "" {
+		prefix = "\n\nFinally: "
+	}
+	return prefix + "SendMessage to your orchestrator (window " + o.WindowID + ") with " + what + "."
 }
 
 // buildFrontmatter returns a YAML-style frontmatter block with session metadata.

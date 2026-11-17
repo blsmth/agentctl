@@ -281,7 +281,7 @@ func Read(windowID string) ([]Message, error) {
 // or parses a message body -- just counts directory entries -- which
 // matters because the monitor calls this once per window on every throttled
 // tick to surface an unread count in the chrome bar (see docs/agent-
-// messaging-design.md §2's discoverability note on `agentctl wake`).
+// messaging-design.md §2).
 func PendingCount(windowID string) (int, error) {
 	dir := filepath.Join(resolveDir(), sanitize(windowID))
 	if err := checkDir(dir); err != nil {

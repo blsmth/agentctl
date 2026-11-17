@@ -321,37 +321,31 @@ func TestTruncateBody_ValidUTF8AtEveryCutOffset(t *testing.T) {
 	}
 }
 
-// TestDrainForIDs_ReturnsClaimedMessageIDs verifies that DrainForIDs returns
-// the IDs of every message it claims, in delivery order -- `agentctl wake`
-// depends on these IDs to log recoverably if the tmux injection after
-// draining fails (the mail is already claimed by then).
-func TestDrainForIDs_ReturnsClaimedMessageIDs(t *testing.T) {
+// TestDrainFor_CountsClaimedMessages verifies DrainFor reports how many
+// messages it claimed and that the body carries every one of them.
+func TestDrainFor_CountsClaimedMessages(t *testing.T) {
 	setupDeliverTest(t)
 
-	id1 := enqueue(t, "@50", "s1", "one")
+	enqueue(t, "@50", "s1", "one")
 	time.Sleep(2 * time.Millisecond)
-	id2 := enqueue(t, "@50", "s1", "two")
+	enqueue(t, "@50", "s1", "two")
 
-	body, ids := DrainForIDs("@50", "s1", DefaultTTL)
-	if len(ids) != 2 {
-		t.Fatalf("DrainForIDs ids = %v, want 2 entries", ids)
-	}
-	if ids[0] != id1 || ids[1] != id2 {
-		t.Errorf("DrainForIDs ids = %v, want [%s %s]", ids, id1, id2)
+	body, n := DrainFor("@50", "s1", DefaultTTL)
+	if n != 2 {
+		t.Fatalf("DrainFor n = %d, want 2", n)
 	}
 	if !strings.Contains(body, "one") || !strings.Contains(body, "two") {
 		t.Errorf("body %q missing expected message text", body)
 	}
 }
 
-// TestDrainForIDs_EmptyMailboxReturnsNilIDs verifies the no-op path returns
-// a nil/empty ID slice rather than erroring.
-func TestDrainForIDs_EmptyMailboxReturnsNilIDs(t *testing.T) {
-	setupDeliverTest(t)
-
-	body, ids := DrainForIDs("@50", "s1", DefaultTTL)
-	if body != "" || len(ids) != 0 {
-		t.Errorf("DrainForIDs on empty mailbox = (%q, %v), want (\"\", empty)", body, ids)
+func TestFormatCoalescedMessages_Header(t *testing.T) {
+	got := formatCoalescedMessages([]Message{{From: "@12", Subject: "ignored", Body: "agentctl notice: x finished."}})
+	if !strings.HasPrefix(got, "[agentctl notice from @12]") {
+		t.Errorf("header = %q, want agentctl notice header", got)
+	}
+	if strings.Contains(got, "agentctl message") {
+		t.Errorf("old header still present: %q", got)
 	}
 }
 

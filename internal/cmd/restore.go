@@ -204,6 +204,7 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 			TicketTitle:      as.TicketTitle,
 			Branch:           as.Branch,
 			WorktreeDir:      as.WorktreeDir,
+			SessionName:      as.SessionName,
 		})
 		if err != nil {
 			logging.Log("restoreAgents: not restoring %s: %v", as.Name, err)

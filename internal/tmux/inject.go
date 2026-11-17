@@ -134,14 +134,11 @@ func InjectPromptToAgent(agentName, content string) error {
 // staged content; if so, it retries the Enter a bounded number of times,
 // and only returns success once a capture confirms the box emptied out.
 // If it is still staged after the retry budget, it returns an error so
-// callers can treat the content as undelivered (and, for mailbox delivery,
-// log the full body for manual recovery -- see internal/cmd/wake.go).
+// callers can treat the content as undelivered.
 //
 // Unlike InjectPromptToAgent, this addresses an exact tmux window ID rather
 // than resolving an ambiguous agent name to whichever running window happens
-// to match first. Callers that already hold a concrete window ID -- notably
-// mailbox delivery, where the address is a (windowID, sessionID) pair by
-// design (see docs/agent-messaging-design.md §1) -- must use this, not
+// to match first. Callers that already hold a concrete window ID must use this, not
 // InjectPromptToAgent's arbitrary-first-match name lookup.
 func InjectPromptToWindow(windowID, content string) error {
 	mainPane := findMainPane(windowID)
@@ -189,17 +186,6 @@ func checkInjectable(paneID string) error {
 	default:
 		return fmt.Errorf("%w: pane %s is empty or unrecognised", ErrCannotVerify, paneID)
 	}
-}
-
-// CheckWindowInjectable reports whether it is currently safe to inject into
-// windowID's main pane, without sending anything. Callers that irreversibly
-// claim state before injecting (mailbox drain) use it to defer instead.
-func CheckWindowInjectable(windowID string) error {
-	mainPane := findMainPane(windowID)
-	if mainPane == "" {
-		return fmt.Errorf("could not find main pane for window %s", windowID)
-	}
-	return checkInjectable(mainPane)
 }
 
 // guardedLiteral and guardedEnter are the ONLY call sites of the raw send
