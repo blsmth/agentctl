@@ -82,14 +82,20 @@ func RunWithIO(r io.Reader, w io.Writer, dryRun bool) {
 	// calling ResolveWindowID() twice.
 	windowID := signal.ResolveWindowID()
 
+	format := config.Load().EffectiveStatuslineFormat()
+	rich := format == "rich"
 	if !dryRun {
-		persistWindowState(payload, windowID)
+		// The PR log scan rides the same windowstate write, and only runs
+		// when the rich format will render it.
+		if pr := persistWindowState(payload, windowID, rich); rich {
+			payload.PR = pr
+		}
 		persistRateLimits(payload)
+	} else if rich {
+		payload.PR = readResolvedPR(payload, windowID)
 	}
 
-	format := config.Load().EffectiveStatuslineFormat()
-	if format == "rich" {
-		applyResolvedPR(payload, windowID, !dryRun)
+	if rich {
 		fmt.Fprintln(w, renderRichLine(payload, windowID))
 		return
 	}
@@ -944,12 +950,17 @@ func renderRichLine3(p *Payload, cols int) (string, bool) {
 // another project's log. A non-empty LogPath is never overwritten --
 // the SessionStart hook owns it. windowID is resolved once by the caller (RunWithIO) rather than re-resolved here,
 // since "rich" rendering also needs it.
-func persistWindowState(p *Payload, windowID string) {
+//
+// When scanPR is set, the PR is resolved inside the same Update (see
+// resolvePR) and its scan cursor stored in ws.LogPR, so a push is still one
+// write. The resolved PR (nil when none) is returned for rendering.
+func persistWindowState(p *Payload, windowID string, scanPR bool) *PR {
 	if windowID == "" {
 		logging.Log("statusline: could not resolve window id; skipping windowstate update")
-		return
+		return p.PR
 	}
 
+	var pr *PR
 	err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
 		if pct, ok := p.ContextWindow.UsedPercentage(); ok {
 			ws.CtxPct = int(math.Round(pct))
@@ -976,6 +987,11 @@ func persistWindowState(p *Payload, windowID string) {
 		}
 		backfillLogPath(ws, p)
 		recordEffectiveSessionName(ws, p)
+		if scanPR {
+			var cache windowstate.LogPRScan
+			pr, cache, _ = resolvePR(p, *ws)
+			ws.LogPR = cache
+		}
 		if p.Model != nil && p.Model.ID != nil && *p.Model.ID != "" {
 			ws.Model = *p.Model.ID
 		}
@@ -990,6 +1006,10 @@ func persistWindowState(p *Payload, windowID string) {
 	if err != nil && !errors.Is(err, windowstate.ErrGone) {
 		logging.Log("statusline: updating windowstate for %s: %v", windowID, err)
 	}
+	if !scanPR {
+		return p.PR
+	}
+	return pr
 }
 
 // recordEffectiveSessionName copies the session name Claude Code reports in

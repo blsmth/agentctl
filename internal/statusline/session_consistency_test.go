@@ -60,7 +60,7 @@ func TestPersistWindowState_LogPathBackfill(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			persistWindowState(tt.payload, w)
+			persistWindowState(tt.payload, w, false)
 			// Read validates consistency; use All-free raw check via Update.
 			var got string
 			_ = windowstate.Update(w, func(ws *windowstate.WindowState) { got = ws.LogPath })

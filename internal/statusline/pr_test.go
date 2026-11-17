@@ -151,3 +151,47 @@ func TestRenderPRSegmentLinkedAndWidth(t *testing.T) {
 		t.Errorf("non-http URL was linked: %q", l)
 	}
 }
+
+func TestPersistWindowStatePRScan(t *testing.T) {
+	windowstate.SetDirForTest(t.TempDir())
+	t.Cleanup(func() { windowstate.SetDirForTest("") })
+	const w = "@9"
+	logPath := filepath.Join(t.TempDir(), "s.jsonl")
+	writeLog(t, logPath, prLine(7, prA), false)
+	p := &Payload{TranscriptPath: &logPath}
+	if err := windowstate.Update(w, func(ws *windowstate.WindowState) { ws.Model = "m" }); err != nil {
+		t.Fatal(err)
+	}
+	cursor := func() windowstate.LogPRScan {
+		var c windowstate.LogPRScan
+		_ = windowstate.Update(w, func(ws *windowstate.WindowState) { c = ws.LogPR })
+		return c
+	}
+
+	// Non-rich: no scan, LogPR untouched.
+	if pr := persistWindowState(p, w, false); pr != nil {
+		t.Errorf("non-rich returned PR %v", pr)
+	}
+	if c := cursor(); c != (windowstate.LogPRScan{}) {
+		t.Errorf("non-rich touched LogPR: %+v", c)
+	}
+
+	// Rich: the single persist write stores the cursor and returns the PR.
+	pr := persistWindowState(p, w, true)
+	if pr == nil || int(*pr.Number) != 7 {
+		t.Fatalf("rich pr = %v, want #7", pr)
+	}
+	if c := cursor(); c.PRNumber != 7 || c.Size == 0 || c.Path != logPath {
+		t.Errorf("LogPR = %+v, want #7 with cursor", c)
+	}
+
+	// Grown log: same call updates the cursor and PR.
+	writeLog(t, logPath, prLine(9, prB), true)
+	pr = persistWindowState(p, w, true)
+	if pr == nil || int(*pr.Number) != 9 {
+		t.Fatalf("grown pr = %v, want #9", pr)
+	}
+	if c := cursor(); c.PRNumber != 9 {
+		t.Errorf("LogPR = %+v, want #9", c)
+	}
+}

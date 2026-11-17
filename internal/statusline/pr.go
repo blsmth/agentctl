@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/blsmth/agentctl/internal/herd"
-	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
@@ -86,25 +85,18 @@ func newPR(n int, url string) *PR {
 	return pr
 }
 
-// applyResolvedPR fills p.PR from resolvePR when the payload has none, and
-// (when persist) records a changed scan cursor. Nothing is written when the
-// cache is unchanged. Never errors: no PR means no segment.
-func applyResolvedPR(p *Payload, windowID string, persist bool) {
-	if windowID == "" || (p.PR != nil && p.PR.Number != nil) {
-		return
+// readResolvedPR is the read-only path (--dry-run): resolve without writing
+// the scan cursor. Never errors: no PR means no segment.
+func readResolvedPR(p *Payload, windowID string) *PR {
+	if windowID == "" {
+		return p.PR
 	}
 	ws, err := windowstate.Read(windowID)
 	if err != nil {
-		return
+		return p.PR
 	}
-	pr, cache, changed := resolvePR(p, ws)
-	p.PR = pr
-	if changed && persist {
-		err := windowstate.Update(windowID, func(w *windowstate.WindowState) { w.LogPR = cache })
-		if err != nil {
-			logging.Debug("statusline: caching pr scan for %s: %v", windowID, err)
-		}
-	}
+	pr, _, _ := resolvePR(p, ws)
+	return pr
 }
 
 // prLinkable reports whether url is safe to emit as a hyperlink.
