@@ -27,6 +27,11 @@ type Meta struct {
 	SpawnedBy        string // raw windowstate value — see ParentTrusted before showing it
 	SpawnedBySession string
 	UpdatedAt        time.Time
+
+	PendingTool       string
+	PendingToolDetail string
+	BlockedSince      time.Time
+	CostUSD           float64
 }
 
 // ParentTrusted reports whether SpawnedBy actually identifies the window that
@@ -85,6 +90,11 @@ func LoadMeta(g Group) map[string]Meta {
 			SpawnedBy:        ws.SpawnedBy,
 			SpawnedBySession: ws.SpawnedBySession,
 			UpdatedAt:        ws.UpdatedAt,
+
+			PendingTool:       ws.PendingTool,
+			PendingToolDetail: ws.PendingToolDetail,
+			BlockedSince:      ws.BlockedSince,
+			CostUSD:           ws.CostUSD,
 		}
 	}
 	return out

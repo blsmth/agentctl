@@ -138,6 +138,20 @@ func CapturePane(session, windowID string, lines int) (string, error) {
 	return trimTrailingBlankLines(string(out)), nil
 }
 
+// CapturePaneANSI is CapturePane with `-e`: colour and style escape
+// sequences are kept so a client can render the pane faithfully. Classify it
+// only after panestate.StripANSI.
+func CapturePaneANSI(session, windowID string, lines int) (string, error) {
+	target := sessionWindowTarget(session, windowID)
+	args := capturePaneArgs(target, lines)
+	args = append(args[:2], append([]string{"-e"}, args[2:]...)...)
+	out, err := exec.Command("tmux", args...).Output()
+	if err != nil {
+		return "", fmt.Errorf("capture-pane %s: %w", target, err)
+	}
+	return trimTrailingBlankLines(string(out)), nil
+}
+
 // capturePaneArgs builds the capture-pane argument list.
 func capturePaneArgs(target string, lines int) []string {
 	args := []string{"capture-pane", "-p", "-t", target}

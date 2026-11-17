@@ -123,6 +123,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 		return err
 	}
 	defer srv.Close()
+	srv.Start(ctx)
 
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{leaf}}
 	httpSrv := newHTTPServer(srv.Handler())
@@ -163,8 +164,10 @@ func Run(ctx context.Context, opts RunOptions) error {
 
 	stop := func() {
 		_ = ctl.Close()
-		shutdown(httpSrv)
+		// Close first: it ends open SSE streams (which would otherwise hold
+		// Shutdown for its full timeout) and releases keep-awake.
 		srv.Close()
+		shutdown(httpSrv)
 	}
 	for {
 		select {
