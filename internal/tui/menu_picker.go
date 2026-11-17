@@ -69,7 +69,7 @@ func (p *modelPicker) rebuild(m MenuModel) {
 	choices := m.modelChoices()
 	p.items = p.items[:0:0]
 	for _, c := range choices {
-		alias := strings.HasSuffix(c.Note, "alias") || (m.opts.backend == backendAnthropic && !c.Default)
+		alias := strings.HasSuffix(c.Note, "alias")
 		p.items = append(p.items, pickItem{
 			value: c.Value,
 			note:  c.Note,

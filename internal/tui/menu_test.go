@@ -835,3 +835,64 @@ func TestViewTooSmall(t *testing.T) {
 		t.Errorf("view = %q", got)
 	}
 }
+
+func TestAnthropicPickerListsFullIDs(t *testing.T) {
+	m := newTestMenu(t, nil)
+	m = moveTo(t, m, "u1")
+	m, _ = press(t, m, "tab", "down", "space")
+	var headers []string
+	for _, r := range m.picker.rows {
+		if r.kind == pickHeader {
+			headers = append(headers, r.text)
+		}
+	}
+	if got := strings.Join(headers, ","); got != "DEFAULT,ALIASES,MODELS" {
+		t.Fatalf("headers = %s", got)
+	}
+	items := map[string]pickItem{}
+	for _, it := range m.picker.items {
+		items[it.value] = it
+	}
+	if it, ok := items["fable"]; !ok || !it.alias || it.price != "sub" {
+		t.Errorf("fable alias = %+v, ok=%v", it, ok)
+	}
+	it, ok := items["claude-opus-5-5"]
+	if !ok || it.alias || it.price == "" || it.note != "opus-5.5" {
+		t.Errorf("claude-opus-5-5 = %+v, ok=%v", it, ok)
+	}
+	for _, legacy := range []string{"claude-opus-4", "claude-sonnet-4", "claude-haiku-3-5"} {
+		if _, ok := items[legacy]; ok {
+			t.Errorf("legacy key %s listed", legacy)
+		}
+	}
+
+	m = typeText(t, m, "sonnet 5")
+	found := false
+	for _, r := range m.picker.rows {
+		if r.kind == pickModel && m.picker.items[r.item].value == "claude-sonnet-5-5" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error(`query "sonnet 5" did not find claude-sonnet-5-5`)
+	}
+}
+
+func TestLaunchFullAnthropicID(t *testing.T) {
+	m := newTestMenu(t, nil)
+	m = moveTo(t, m, "u1")
+	m, _ = press(t, m, "tab", "down", "space")
+	m = typeText(t, m, "claude-opus-5-5")
+	m, _ = press(t, m, "enter", "enter")
+	want := MenuResult{Action: "launch", Agent: "u1", Dir: "/work", Model: "claude-opus-5-5"}
+	if got := m.Result(); got != want {
+		t.Errorf("result = %+v, want %+v", got, want)
+	}
+}
+
+func TestModelLabelFullID(t *testing.T) {
+	m := newTestMenu(t, nil)
+	if got := m.modelLabel(MenuAgent{Name: "x", Model: "claude-opus-5-5"}); got != "opus-5.5" {
+		t.Errorf("label = %q", got)
+	}
+}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/launchopts"
 	"github.com/blsmth/agentctl/internal/sessions"
+	"github.com/blsmth/agentctl/internal/tokens"
 )
 
 // Layout constants (display cells).
@@ -55,6 +56,11 @@ func (m MenuModel) modelLabel(a MenuAgent) string {
 		return a.Backend
 	}
 	if a.Model != "" {
+		if strings.HasPrefix(a.Model, "claude-") {
+			if l := tokens.Lookup(a.Model); l.Known && l.Source != "family" && l.Label != "" {
+				return l.Label
+			}
+		}
 		return a.Model
 	}
 	return launchopts.Inherit
