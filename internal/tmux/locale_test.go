@@ -48,7 +48,12 @@ func TestListWindowsWithoutLocale(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
-	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	tmp, err := os.MkdirTemp("/tmp", "tl")
+	if err != nil {
+		t.Skip(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
+	t.Setenv("TMUX_TMPDIR", tmp)
 	t.Setenv("TMUX", "")
 	t.Setenv("LC_ALL", "")
 	t.Setenv("LC_CTYPE", "")
