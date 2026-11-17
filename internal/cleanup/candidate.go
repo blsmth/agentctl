@@ -307,9 +307,13 @@ func resolveStatus(hookState string) string {
 //  2. worktree.Remove(path).
 //  3. Delete the local branch -- landed/empty only, never open-pr, and only
 //     via the safe delete (never forced).
-//  4. windowstate.Remove(windowID), if there was an associated window.
-//  5. Remove the per-window mailbox directory, if there was an associated
+//  4. Remove the per-window mailbox directory, if there was an associated
 //     window.
+//
+// The window's windowstate record is deliberately NOT removed here: the
+// reconcile that KillWindow spawns (or the window-unlinked tmux hook) claims
+// it, which is what fires the Gone handlers exactly once. Removing it first
+// would make that claim find nothing.
 func Reclaim(c *Candidate) {
 	if !c.Disposition.Reclaimable() {
 		logging.Warn("cleanup: Reclaim called on non-reclaimable candidate %s (disposition=%s) -- refusing", c.WorktreePath, c.Disposition)
@@ -343,9 +347,6 @@ func Reclaim(c *Candidate) {
 	}
 
 	if c.WindowID != "" {
-		windowstate.Remove(c.WindowID)
-		c.StepsDone = append(c.StepsDone, "removed window state")
-
 		if err := mailbox.RemoveInbox(c.WindowID); err != nil {
 			c.Errors = append(c.Errors, fmt.Sprintf("remove mailbox: %v", err))
 		} else {
