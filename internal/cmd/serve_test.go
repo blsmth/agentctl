@@ -131,3 +131,21 @@ func TestRotateCANotRunning(t *testing.T) {
 		}
 	}
 }
+
+func TestPrintPushStatus(t *testing.T) {
+	var b bytes.Buffer
+	printPushStatus(&b, serve.StatusInfo{
+		PushDevices: []string{"phone", "tablet"},
+		LastPush:    &serve.LastPush{Time: time.Now(), Kind: "blocked", Result: "sent to 2/2"},
+	})
+	for _, want := range []string{"push subscriptions:", "2 (phone, tablet)", "last push:", "blocked sent to 2/2"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("missing %q:\n%s", want, b.String())
+		}
+	}
+	b.Reset()
+	printPushStatus(&b, serve.StatusInfo{})
+	if !strings.Contains(b.String(), "push subscriptions:\t0") || !strings.Contains(b.String(), "none since start") {
+		t.Errorf("empty status:\n%s", b.String())
+	}
+}

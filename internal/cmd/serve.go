@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -100,6 +101,7 @@ func printServeStatus(w io.Writer, dir string, now time.Time) error {
 		if st.Pairing {
 			fmt.Fprintf(tw, "pairing:\topen\n")
 		}
+		printPushStatus(tw, st)
 	case errors.Is(err, serve.ErrNotRunning):
 		if pid, ok := pidfile.Running(dir, serve.PIDFile, "serve"); ok {
 			fmt.Fprintf(tw, "running:\tpid %d, but the control socket does not answer\n", pid)
@@ -264,4 +266,18 @@ func waitForCA(dir string, timeout time.Duration) *serve.CA {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return nil
+}
+
+// printPushStatus writes the push subscription and last-push lines.
+func printPushStatus(w io.Writer, st serve.StatusInfo) {
+	if len(st.PushDevices) == 0 {
+		fmt.Fprintf(w, "push subscriptions:\t0\n")
+	} else {
+		fmt.Fprintf(w, "push subscriptions:\t%d (%s)\n", len(st.PushDevices), strings.Join(st.PushDevices, ", "))
+	}
+	if lp := st.LastPush; lp != nil {
+		fmt.Fprintf(w, "last push:\t%s %s %s\n", lp.Time.Local().Format(time.RFC1123), lp.Kind, lp.Result)
+	} else {
+		fmt.Fprintf(w, "last push:\tnone since start\n")
+	}
 }
