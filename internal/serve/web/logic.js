@@ -190,6 +190,11 @@ export function windowHash(session, windowId) {
   return `#/w/${encodeURIComponent(session)}/${encodeURIComponent(windowId)}`;
 }
 
+/** dispatchHash is the Dispatch route with a project dir preselected. */
+export function dispatchHash(dir) {
+  return `#/dispatch/${encodeURIComponent(dir)}`;
+}
+
 /** terminalHash is the app route for a window's live terminal. */
 export function terminalHash(session, windowId) {
   return `#/t/${encodeURIComponent(session)}/${encodeURIComponent(windowId)}`;
@@ -214,7 +219,16 @@ export function parseRoute(hash) {
   } catch {
     return { name: "fleet" };
   }
-  if (parts[0] === "dispatch") return { name: "dispatch" };
+  if (parts[0] === "dispatch") {
+    if (parts.length >= 2) {
+      try {
+        return { name: "dispatch", dir: decodeURIComponent(parts[1]) };
+      } catch {
+        return { name: "dispatch" };
+      }
+    }
+    return { name: "dispatch" };
+  }
   if (parts[0] === "settings") return { name: "settings" };
   return { name: "fleet" };
 }

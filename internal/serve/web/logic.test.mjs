@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  ansiColor, buildDispatchRequest, choiceLabel, confirmLines, launchOptionsPath, modelPicker, normalizePane, parseAnsi,
+  ansiColor, buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, launchOptionsPath, parseRoute, modelPicker, normalizePane, parseAnsi,
 } from "./logic.js";
 
 const fixtures = JSON.parse(readFileSync(new URL("./logic.fixtures.json", import.meta.url), "utf8"));
@@ -49,3 +49,10 @@ assert.deepEqual(confirmLines({ agent: "a", project_dir: "/d", prompt: "p", back
 ]);
 assert.deepEqual(confirmLines({ agent: "a", project_dir: "/d", prompt: "p" }), ["agent: a\nproject: /d", "p"]);
 console.log("ok: launch option helpers");
+
+assert.deepEqual(parseRoute("#/dispatch"), { name: "dispatch" });
+assert.deepEqual(parseRoute("#/dispatch/%2Fa%20b%2Fc"), { name: "dispatch", dir: "/a b/c" });
+assert.deepEqual(parseRoute("#/dispatch/%E0%A4%A"), { name: "dispatch" });
+assert.equal(dispatchHash("/a b/c"), "#/dispatch/%2Fa%20b%2Fc");
+assert.deepEqual(parseRoute(dispatchHash("/x y/z&w")), { name: "dispatch", dir: "/x y/z&w" });
+console.log("ok: dispatch route");

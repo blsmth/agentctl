@@ -28,6 +28,10 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 
 .banner { background: var(--blocked); color: #fff; padding: .6rem 1rem; text-align: center; }
 .group { margin-bottom: .5rem; }
+.group-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin: 0 .5rem 0 0; }
+.group-head h2 { margin: .5rem 1rem .2rem; min-width: 0; overflow-wrap: anywhere; }
+.group-add { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px;
+  margin: -.4rem 0; border-radius: 10px; font-size: 1.4rem; line-height: 1; text-decoration: none; color: var(--accent); }
 .fleet, .group { --glyph-w: 1.4rem; --indent: 1.4rem; --row-pad: 1rem; --tree-w: 1.5px; --tree-line: color-mix(in srgb, var(--muted) 55%, transparent); }
 .win { display: flex; align-items: center; gap: .75rem; min-height: 56px; padding: .6rem 1rem; text-decoration: none; color: var(--fg);
   background: var(--card); border-bottom: 1px solid var(--line); border-left: 4px solid var(--idle); }

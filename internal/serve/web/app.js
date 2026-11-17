@@ -33,7 +33,7 @@ function route() {
   const r = parseRoute(location.hash);
   if (r.name === "window") cleanup = mountWindow(root, ctx, r);
   else if (r.name === "terminal" && ctx.hasFeature("terminal")) cleanup = mountTerminal(root, ctx, r);
-  else if (r.name === "dispatch") cleanup = mountDispatch(root, ctx);
+  else if (r.name === "dispatch") cleanup = mountDispatch(root, ctx, { dir: r.dir });
   else if (r.name === "settings") cleanup = mountSettings(root, ctx);
   else cleanup = mountFleet(root, ctx);
   document.querySelectorAll("nav a").forEach((a) => {
