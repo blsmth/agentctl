@@ -23,6 +23,7 @@ const store = {
   fleet: null,
   downSince: null,
   approvals: [],
+  recentApprovals: [],
   listeners: new Set(),
   subscribe(fn) {
     this.listeners.add(fn);
@@ -54,6 +55,7 @@ async function refreshApprovals() {
   try {
     const body = await get("/v1/approvals");
     const now = Date.now();
+    store.recentApprovals = body.recent ?? [];
     setApprovals((body.approvals ?? []).map((a) => withReceived(a, now)));
   } catch {
     // keep the last known list; the next event or poll retries
@@ -100,6 +102,7 @@ function startFeed() {
     },
     onApprovalResolved(r) {
       setApprovals(removeApproval(store.approvals, r.id));
+      refreshApprovals(); // pick up the new history entry
     },
     onWindow(win) {
       if (store.fleet) store.fleet = applyWindow(store.fleet, win);

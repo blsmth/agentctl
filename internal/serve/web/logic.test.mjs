@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   ansiColor, approvalBannerText, approvalConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
   buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
-  parseAnsi, parseRoute, removeApproval, secondsLeft, upsertApproval, withReceived,
+  parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
 } from "./logic.js";
 
 const fixtures = JSON.parse(readFileSync(new URL("./logic.fixtures.json", import.meta.url), "utf8"));
@@ -15,6 +15,12 @@ const view = (b) => (b.rule !== undefined ? { rule: b.rule } : b.runs.map((r) =>
 let n = 0;
 for (const f of fixtures.normalize) {
   assert.deepEqual(normalizePane(f.input).map(view), f.expect, f.name);
+  n++;
+}
+for (const f of fixtures.split) {
+  const got = splitPane(f.input);
+  assert.deepEqual(got.body.map(view), f.body, `${f.name}: body`);
+  assert.deepEqual(got.status ? got.status.lines : null, f.status, `${f.name}: status`);
   n++;
 }
 for (const f of fixtures.sgr) {
@@ -100,3 +106,16 @@ assert.equal(conf.danger, false);
 assert.ok(conf.lines.includes("do it") && conf.lines.includes("agentctl dispatch -k k"));
 assert.equal(approvalConfirm({ ...ap, kind: "bash", prompt: "" }, "deny").danger, true);
 console.log("ok: approval helpers");
+
+// Resolved approval text.
+const T0 = Date.parse("2026-11-17T10:10:00Z");
+const res = (o) => ({ opened: "2026-11-17T10:00:00Z", resolved_at: "2026-11-17T10:08:00Z", ...o });
+assert.equal(resolvedText(res({ outcome: "denied", source: "laptop" }), T0), "Already answered on the laptop: denied · 2m ago");
+assert.equal(resolvedText(res({ outcome: "answered", source: "laptop" }), T0), "Already answered on the laptop · 2m ago");
+assert.equal(resolvedText(res({ outcome: "approved", source: "device-00bb" }), T0), "Approved from device-00bb · 2m ago");
+assert.equal(resolvedText(res({ outcome: "denied", source: "device-00bb" }), T0), "Denied from device-00bb · 2m ago");
+assert.equal(resolvedText(res({ outcome: "timed_out", resolved_at: "2026-11-17T10:09:00Z" }), T0), "Timed out after 9m · 1m ago");
+assert.equal(resolvedText(res({ outcome: "timed_out", resolved_at: "2026-11-17T10:00:30Z" }), T0), "Timed out after 30s · 9m ago");
+assert.equal(resolvedText(res({ outcome: "cancelled" }), T0), "No longer waiting · 2m ago");
+assert.equal(resolvedText({ outcome: "weird" }, T0), "No longer waiting");
+console.log("ok: resolved text");
