@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/hubtarget"
 	"github.com/blsmth/agentctl/internal/theme"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
@@ -506,9 +507,8 @@ func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return *m, tea.Quit
 
 	case "q", "esc":
-		if err := tmux.SwitchToLastSession(); err != nil {
-			m.jumpErr = err.Error()
-		}
+		home, _ := tmux.ViewerActiveWindow()
+		hubtarget.LeaveHub(herdLeaver{m: m, home: home}, "")
 		return *m, nil
 
 	case "j", "down":
@@ -1530,3 +1530,19 @@ func (m HerdModel) syncFromViewer(msg herdViewerMsg) HerdModel {
 	m.resolveSelection()
 	return m
 }
+
+// herdLeaver adapts the hub list to hubtarget.Leaver. The herd process runs in
+// the hub pane (no popup), so the current client is right and no -c is needed;
+// failures surface through jumpErr rather than display-message.
+type herdLeaver struct {
+	m    *HerdModel
+	home string
+}
+
+func (herdLeaver) SwitchLast() error { return tmux.SwitchClientToLast("") }
+func (herdLeaver) SwitchSession(n string) error {
+	return tmux.SwitchClientToSession("", n)
+}
+func (l herdLeaver) ViewedHome() string             { return l.home }
+func (herdLeaver) Sessions() []tmux.SessionActivity { return tmux.ListSessionActivity() }
+func (l herdLeaver) Message(msg string)             { l.m.jumpErr = msg }
