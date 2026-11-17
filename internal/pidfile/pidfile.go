@@ -75,6 +75,42 @@ func Validate(dir, name string) bool {
 	return isMonitor(pid)
 }
 
+// Running reads <dir>/<name> and reports the recorded PID when that process
+// is alive, is not the caller, and is an agentctl process whose command line
+// contains word (e.g. "serve"). It is Validate for processes other than the
+// monitor.
+func Running(dir, name, word string) (int, bool) {
+	data, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 || pid == os.Getpid() {
+		return 0, false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil || proc.Signal(syscall.Signal(0)) != nil {
+		return 0, false
+	}
+	if !isAgentctlCmd(pid, word) {
+		return 0, false
+	}
+	return pid, true
+}
+
+// isAgentctlCmd reports whether pid's command line contains "agentctl" and
+// word. A variable so tests can stand in a fake process.
+var isAgentctlCmd = agentctlCmdMatches
+
+func agentctlCmdMatches(pid int, word string) bool {
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
+	if err != nil {
+		return false
+	}
+	cmdline := strings.TrimSpace(string(out))
+	return strings.Contains(cmdline, "agentctl") && strings.Contains(cmdline, word)
+}
+
 // isMonitor reports whether pid is an agentctl monitor. It is a variable so
 // tests can stand in a fake process without relying on its command line.
 var isMonitor = isAgentctlMonitor

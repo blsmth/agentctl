@@ -625,6 +625,11 @@ type Config struct {
 	// LLM configures the local model provider used for text completion (see
 	// internal/llm). Empty/unset Provider means the feature is disabled.
 	LLM LLMConfig `json:"llm,omitempty"`
+	// Serve configures `agentctl serve`, the per-machine HTTPS server the
+	// mobile web app talks to (internal/serve). Global config only: every key
+	// is stripped from the project-local layer (a project that could set
+	// allow_cidrs or allow_write could open the machine to its network).
+	Serve ServeConfig `json:"serve,omitzero"`
 }
 
 // StringPtr returns a pointer to s, for setting optional string fields such as
@@ -1148,6 +1153,7 @@ func containsAll(have, want []string) bool {
 //     every prompt and file the agent reads to an arbitrary host); the global
 //     agent's backend is used instead
 //   - llm.* (provider/host could send session summaries elsewhere)
+//   - serve.* (allow_cidrs / allow_write would open the machine to the network)
 //   - metrics.endpoint / metrics.basic_auth (remote write could exfiltrate
 //     session metrics); a project may still toggle metrics and the loopback
 //     port
@@ -1210,6 +1216,10 @@ func sanitizeProjectConfig(project, global *Config) {
 	if project.Dispatch.OnComplete != "" {
 		warn("dispatch.on_complete", globalOnly)
 		project.Dispatch = DispatchConfig{}
+	}
+	if !reflect.DeepEqual(project.Serve, ServeConfig{}) {
+		warn("serve", globalOnly)
+		project.Serve = ServeConfig{}
 	}
 	if project.LLM != (LLMConfig{}) {
 		warn("llm", globalOnly)
@@ -1580,6 +1590,8 @@ func applyProjectChanges(layer, before, after, global *Config) {
 	restore("hooks", !reflect.DeepEqual(layer.Hooks, protected.Hooks))
 	restore("dispatch", layer.Dispatch != protected.Dispatch)
 	restore("llm", layer.LLM != protected.LLM)
+	restore("serve", !reflect.DeepEqual(layer.Serve, protected.Serve))
+	layer.Serve = protected.Serve
 	restore("auto_poll", layer.AutoPoll != protected.AutoPoll)
 	restore("default_agent", layer.DefaultAgent != protected.DefaultAgent)
 	layer.NotifyCmd, layer.Hooks, layer.Dispatch, layer.LLM, layer.AutoPoll, layer.DefaultAgent =

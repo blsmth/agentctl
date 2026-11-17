@@ -74,10 +74,20 @@ func Init() {
 	once.Do(func() { initInternal() })
 }
 
+// InitFile is Init for a long-lived process whose log lives outside the
+// runtime dir (agentctl serve writes <StateDir>/serve/serve.log). It must
+// run before anything logs: like Init, only the first call takes effect.
+func InitFile(path string) {
+	once.Do(func() { initAt(path) })
+}
+
 func initInternal() {
+	initAt(LogPath())
+}
+
+func initAt(path string) {
 	debugOn = os.Getenv("AGENTCTL_DEBUG") == "1"
 
-	path := LogPath()
 	if path == "" {
 		fmt.Fprintf(os.Stderr, "agentctl: logging.Init: could not resolve home dir\n")
 		return

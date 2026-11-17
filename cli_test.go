@@ -250,6 +250,8 @@ func TestIsReadOnlyInvocation(t *testing.T) {
 		{[]string{"agentctl", "--help"}, true},
 		{[]string{"agentctl", "dispatch", "-h"}, true},
 		{[]string{"agentctl", "-v"}, true},
+		{[]string{"agentctl", "serve"}, true},
+		{[]string{"agentctl", "serve", "pair", "--name", "phone"}, true},
 		{[]string{"agentctl", "dispatch", "--issue", "1"}, false},
 		{[]string{"agentctl", "context", "set", "k", "v"}, false},
 	}

@@ -51,6 +51,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 - **herd/** — Cross-session aggregation behind `agentctl hub` and `agentctl status`, including pane classification (`ClassifyPane`).
 - **mailbox/** — Per-window store for agentctl-originated notices (done/blocked backstop), delivered by the UserPromptSubmit/PostToolUse hooks. Agent-to-agent messaging is Claude Code's native `SendMessage`/`ListAgents`, not this package.
 - **notify/** — Desktop notifications from `notify_cmd` (`alerter` on macOS, `notify-send` on Linux).
+- **serve/** — `agentctl serve`, the per-machine HTTPS server for the mobile web app: local CA + leaf certs, CIDR filter, device-cookie auth, CSRF, pairing over a 0600 control socket. Routes register through `Router` (`Public`/`Device`/`Write`); see [docs/design/mobile-web-app.md](docs/design/mobile-web-app.md).
 
 ### Behavior notes
 

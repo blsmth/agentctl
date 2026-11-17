@@ -134,6 +134,9 @@ type CLI struct {
 	// it — see isStatuslineIngestCmd. The group is visible so users can find
 	// `agentctl statusline install`; the ingest path itself is machine-invoked.
 	Statusline StatuslineCmd `cmd:"" help:"Claude Code statusLine integration (see: statusline install)"`
+
+	// Mobile web app server (per machine)
+	Serve ServeCmd `cmd:"" help:"Run the HTTPS server for the mobile web app (install, pair, devices, status)"`
 }
 
 // ---------------------------------------------------------------------------
@@ -1163,3 +1166,57 @@ type RunUserHooksCmd struct {
 }
 
 func (c *RunUserHooksCmd) Run() error { hooks.RunUserHooksSync(c.Event); return nil }
+
+// ---------------------------------------------------------------------------
+// Serve (mobile web app server)
+// ---------------------------------------------------------------------------
+
+// ServeCmd groups `agentctl serve` and its management subcommands. Bare
+// `agentctl serve` runs the server in the foreground (what launchd runs).
+type ServeCmd struct {
+	Run       ServeRunCmd       `cmd:"" default:"1" hidden:"" help:"Run the server in the foreground"`
+	Install   ServeInstallCmd   `cmd:"" help:"Install the launchd LaunchAgent (prints a systemd unit on Linux)"`
+	Uninstall ServeUninstallCmd `cmd:"" help:"Remove the launchd LaunchAgent"`
+	Status    ServeStatusCmd    `cmd:"" help:"Show whether the server runs, its URL, devices, cert expiry and CA fingerprint"`
+	Pair      ServePairCmd      `cmd:"" help:"Open a 5-minute pairing window and print QR codes for a phone"`
+	Devices   ServeDevicesCmd   `cmd:"" help:"List or revoke paired devices"`
+}
+
+type ServeRunCmd struct{}
+
+func (c *ServeRunCmd) Run() error {
+	return cmd.RunServe(strings.TrimPrefix(versionString(), "agentctl "))
+}
+
+type ServeInstallCmd struct{}
+
+func (c *ServeInstallCmd) Run() error { return cmd.RunServeInstall(os.Stdout) }
+
+type ServeUninstallCmd struct{}
+
+func (c *ServeUninstallCmd) Run() error { return cmd.RunServeUninstall(os.Stdout) }
+
+type ServeStatusCmd struct{}
+
+func (c *ServeStatusCmd) Run() error { return cmd.RunServeStatus(os.Stdout) }
+
+type ServePairCmd struct {
+	Name string `help:"Name for the paired device (default: device-<id>)"`
+}
+
+func (c *ServePairCmd) Run() error { return cmd.RunServePair(os.Stdout, c.Name) }
+
+type ServeDevicesCmd struct {
+	List ServeDevicesListCmd `cmd:"" default:"1" hidden:"" help:"List paired devices"`
+	Rm   ServeDevicesRmCmd   `cmd:"" help:"Revoke a paired device"`
+}
+
+type ServeDevicesListCmd struct{}
+
+func (c *ServeDevicesListCmd) Run() error { return cmd.RunServeDevices(os.Stdout) }
+
+type ServeDevicesRmCmd struct {
+	Device string `arg:"" help:"Device id or name"`
+}
+
+func (c *ServeDevicesRmCmd) Run() error { return cmd.RunServeDevicesRm(os.Stdout, c.Device) }
