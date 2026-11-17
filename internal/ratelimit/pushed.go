@@ -100,16 +100,17 @@ func SavePushed(pr *PushedRateLimits) error { return SavePushedFor("", pr) }
 // returns a nil *PushedRateLimits (not an error) when the file does not
 // exist -- callers treat that identically to "no pushed data yet".
 //
-// isDefault marks account as the default account: when its own file does not
+// ownsLegacy marks account as the owner of pre-accounts data (the ~/.claude
+// account, claudehome.HomeAccount): when its own file does not
 // exist yet, the pre-accounts single ratelimits.json is read instead (a
 // one-release fallback for data pushed before accounts were configured).
-func LoadPushedFor(account string, isDefault bool) (*PushedRateLimits, error) {
+func LoadPushedFor(account string, ownsLegacy bool) (*PushedRateLimits, error) {
 	path, err := pushedPathFor(account)
 	if err != nil {
 		return nil, err
 	}
 	pr, err := loadPushedFile(path)
-	if err != nil || pr != nil || account == "" || !isDefault {
+	if err != nil || pr != nil || account == "" || !ownsLegacy {
 		return pr, err
 	}
 	legacy, err := pushedRateLimitsPath()

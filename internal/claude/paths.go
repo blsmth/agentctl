@@ -11,7 +11,7 @@ var slugUnsafe = regexp.MustCompile(`[^A-Za-z0-9-]`)
 
 // LogPath returns the expected JSONL path for a Claude Code session under the
 // running process's own config dir (claudehome.Current: $CLAUDE_CONFIG_DIR,
-// else the default account). Launchers that know the target account use
+// else ~/.claude, never default_account). Launchers that know the target account use
 // LogPathIn instead. See LogPathIn for the layout.
 // Returns "" if the config dir cannot be determined.
 func LogPath(workDir, sessionID string) string {

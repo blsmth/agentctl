@@ -544,7 +544,7 @@ func cronAccount(job cron.Job) (string, error) {
 }
 
 // cronUsage reads account's pushed rate limits (the pre-accounts single
-// file for "" and, as a fallback, for the default account).
+// file for "" and, as a fallback, for the ~/.claude account).
 func cronUsage(account string) (*ratelimit.PushedRateLimits, error) {
-	return ratelimit.LoadPushedFor(account, claudehome.IsDefaultAccount(account))
+	return ratelimit.LoadPushedFor(account, account == claudehome.HomeAccount())
 }
