@@ -14,6 +14,7 @@ import (
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // restoreStale reports whether a state snapshot saved at ts is older than
@@ -105,14 +106,42 @@ func RunRestore() {
 	}
 
 	home, _ := os.UserHomeDir()
-	restoreAgents(saved.Agents, byName, home, filepath.Join(home, ".claude", "projects"),
+	idMap := restoreAgents(saved.Agents, byName, home, filepath.Join(home, ".claude", "projects"),
 		config.Load().EffectiveNewWindowPosition(), dispatch.Restore)
+	remapSpawnedBy(saved.Agents, idMap, stampSpawnedBy)
 
 	clearRestoreInputs()
 }
 
-// restoreAgents relaunches each saved agent through restore.
-func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home, projectsRoot, position string, restore restoreFunc) {
+// stampSpawnedBy writes the dispatcher reply-to address on a window record.
+func stampSpawnedBy(windowID, spawnedBy, session string) {
+	windowstate.Update(windowID, func(ws *windowstate.WindowState) { //nolint:errcheck
+		ws.SpawnedBy = spawnedBy
+		ws.SpawnedBySession = session
+	})
+}
+
+// remapSpawnedBy runs after every window is launched (a child can launch
+// before its parent). idMap maps old window IDs to the relaunched ones. A
+// child whose dispatcher was restored gets the new ID; otherwise nothing is
+// stamped, leaving SpawnedBy/SpawnedBySession blank (an unresolvable parent
+// must render blank).
+func remapSpawnedBy(saved []state.AgentState, idMap map[string]string, stamp func(windowID, spawnedBy, session string)) {
+	for _, as := range saved {
+		newID, ok := idMap[as.WindowID]
+		if !ok || as.SpawnedBy == "" || as.SpawnedBySession == "" {
+			continue
+		}
+		if parent, ok := idMap[as.SpawnedBy]; ok && parent != "" {
+			stamp(newID, parent, as.SpawnedBySession)
+		}
+	}
+}
+
+// restoreAgents relaunches each saved agent through restore and returns a map
+// of old window ID to relaunched window ID.
+func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home, projectsRoot, position string, restore restoreFunc) map[string]string {
+	idMap := make(map[string]string)
 	// Dedup session IDs: only the first window with a given session ID gets
 	// --resume. Subsequent duplicates start a fresh session to avoid two windows
 	// resuming the same conversation.
@@ -162,7 +191,7 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 		}
 
 		// Restore using the saved instance name (e.g. "go-engineer:2").
-		if _, err := restore(dispatch.RestoreRequest{
+		wid, err := restore(dispatch.RestoreRequest{
 			AgentName:        baseName,
 			InstanceName:     as.Name,
 			SessionID:        sessionID,
@@ -170,10 +199,21 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 			WorkDir:          workDir,
 			LogPath:          logPath,
 			Backend:          as.Backend,
-		}); err != nil {
+			Mode:             as.Mode,
+			Ticket:           as.TicketRef,
+			TicketTitle:      as.TicketTitle,
+			Branch:           as.Branch,
+			WorktreeDir:      as.WorktreeDir,
+		})
+		if err != nil {
 			logging.Log("restoreAgents: not restoring %s: %v", as.Name, err)
+			continue
+		}
+		if as.WindowID != "" && wid != "" {
+			idMap[as.WindowID] = wid
 		}
 	}
+	return idMap
 }
 
 // restoreOrder returns agents in the order they should be relaunched so the

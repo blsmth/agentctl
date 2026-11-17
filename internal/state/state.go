@@ -44,7 +44,17 @@ type AgentState struct {
 	LastToolDetail      string `json:"last_tool_detail,omitempty"`       // e.g. "monitor.go" or "go build ./..."
 	LastText            string `json:"last_text,omitempty"`              // last assistant text block (already truncated to ~100 chars upstream)
 	Backend             string `json:"backend,omitempty"`                // config backend name the window runs against ("" = Anthropic); restore re-resolves it
-	MailboxPending      int    `json:"mailbox_pending,omitempty"`        // count-only mailbox.PendingCount, refreshed on a throttled monitor tick; see internal/cmd/wake.go for delivery
+	// Launch metadata carried through session restore (copied from windowstate
+	// by BuildRestoreAgents; absent in monitor snapshots and old files). Ticket
+	// above is the monitor's int; TicketRef is the windowstate string form.
+	Mode             string `json:"mode,omitempty"`
+	TicketRef        string `json:"ticket_ref,omitempty"`
+	TicketTitle      string `json:"ticket_title,omitempty"`
+	Branch           string `json:"branch,omitempty"`
+	WorktreeDir      string `json:"worktree_dir,omitempty"`
+	SpawnedBy        string `json:"spawned_by,omitempty"`
+	SpawnedBySession string `json:"spawned_by_session,omitempty"`
+	MailboxPending   int    `json:"mailbox_pending,omitempty"` // count-only mailbox.PendingCount, refreshed on a throttled monitor tick; see internal/cmd/wake.go for delivery
 }
 
 // State is the snapshot of running agents, written by the monitor.

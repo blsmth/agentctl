@@ -157,3 +157,51 @@ func TestLoadFreshRestoreInputClears(t *testing.T) {
 		})
 	}
 }
+
+func TestRestoreAgentsPassesLaunchMeta(t *testing.T) {
+	saved := []state.AgentState{{
+		Name: "a", AgentName: "a", WindowID: "@1", WorkDir: "/w", Mode: "adhoc",
+		TicketRef: "42", TicketTitle: "T", Branch: "br", WorktreeDir: "/w/.worktrees/x",
+		SpawnedBy: "@9", SpawnedBySession: "s",
+	}}
+	fn, got := collect()
+	restoreAgents(saved, agentsFor("a"), "/home/x", t.TempDir(), config.NewWindowRight, fn)
+	if len(*got) != 1 {
+		t.Fatalf("got %d requests", len(*got))
+	}
+	r := (*got)[0]
+	if r.Mode != "adhoc" || r.Ticket != "42" || r.TicketTitle != "T" || r.Branch != "br" || r.WorktreeDir != "/w/.worktrees/x" {
+		t.Errorf("meta missing: %+v", r)
+	}
+}
+
+func TestRemapSpawnedBy(t *testing.T) {
+	saved := []state.AgentState{
+		{Name: "child", AgentName: "c", WindowID: "@2", SpawnedBy: "@1", SpawnedBySession: "ps"},
+		{Name: "parent", AgentName: "p", WindowID: "@1"},
+		{Name: "orphan", AgentName: "o", WindowID: "@3", SpawnedBy: "@99", SpawnedBySession: "xs"},
+	}
+	for _, pos := range []string{config.NewWindowRight, config.NewWindowLeft} {
+		t.Run(pos, func(t *testing.T) {
+			n := 0
+			fn := func(r dispatch.RestoreRequest) (string, error) {
+				n++
+				return "@" + string(rune('a'+n)), nil
+			}
+			agents := map[string]agent.Agent{}
+			for _, a := range saved {
+				agents[a.AgentName] = agent.Agent{Name: a.AgentName, Dir: "/proj"}
+			}
+			idMap := restoreAgents(saved, agents, "/home/x", t.TempDir(), pos, fn)
+			type st struct{ by, sess string }
+			stamped := map[string]st{}
+			remapSpawnedBy(saved, idMap, func(w, by, sess string) { stamped[w] = st{by, sess} })
+			if len(stamped) != 1 {
+				t.Fatalf("stamped %v, want only the child", stamped)
+			}
+			if got := stamped[idMap["@2"]]; got.by != idMap["@1"] || got.sess != "ps" {
+				t.Errorf("child stamp = %+v, want parent %s", got, idMap["@1"])
+			}
+		})
+	}
+}
