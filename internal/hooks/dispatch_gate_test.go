@@ -29,10 +29,24 @@ func withFakeDispatchPopupRunner(t *testing.T, run func(popupW, popupH int, args
 	orig := dispatchPopupRunner
 	dispatchPopupRunner = func(_ context.Context, _ string, popupW, popupH int, argsFilePath string) error {
 		*called = true
-		return run(popupW, popupH, argsFilePath)
+		err := run(popupW, popupH, argsFilePath)
+		recordFakeVerdict(argsFilePath, err)
+		return err
 	}
 	t.Cleanup(func() { dispatchPopupRunner = orig })
 	return called
+}
+
+// recordFakeVerdict mimics the real popup process: exit nil means the operator
+// pressed allow, exit code 1 means deny; anything else leaves no result file.
+func recordFakeVerdict(argsFilePath string, err error) {
+	var ee *exec.ExitError
+	switch {
+	case err == nil:
+		_ = WritePopupResult(popupResultPath(argsFilePath), "allow")
+	case errors.As(err, &ee) && ee.ExitCode() == 1:
+		_ = WritePopupResult(popupResultPath(argsFilePath), "deny")
+	}
 }
 
 // failIfDispatchPopupRunnerCalled installs a dispatchPopupRunner that fails

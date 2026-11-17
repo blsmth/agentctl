@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -66,6 +68,10 @@ type popupNotice struct {
 // approvalNotificationType is the sendAlert type for a pending approval popup.
 const approvalNotificationType = "approval_pending"
 
+// approvalAlerts tracks in-flight approval notifications. Production never
+// waits on it; tests do, to observe the send deterministically.
+var approvalAlerts sync.WaitGroup
+
 // approvalSeams are the process-environment lookups beginApproval needs, as
 // vars so tests need no tmux.
 var (
@@ -115,18 +121,26 @@ func beginApproval(n popupNotice) (end func()) {
 	if d := strings.TrimPrefix(sessionName, "agentctl-"); d != "" {
 		title = n.Agent + " \u00b7 " + d
 	}
-	sendAlert(n.Agent, approvalNotificationType, notify.Options{
-		Title:    title,
-		Subtitle: "Approval needed",
-		Message:  message,
-		Env: map[string]string{
-			"AGENTCTL_AGENT_NAME":        n.Agent,
-			"AGENTCTL_NOTIFICATION_TYPE": approvalNotificationType,
-			"AGENTCTL_WINDOW_ID":         windowID,
-			"AGENTCTL_TOOL_NAME":         n.Tool,
-			"AGENTCTL_SESSION_NAME":      sessionName,
-		},
-	})
+	// The default notify_cmd (alerter --timeout 10) blocks until the toast
+	// times out or is clicked, so it must not delay the popup. The hook
+	// outlives the send in practice; an orphaned alerter is harmless.
+	d := *deps
+	approvalAlerts.Add(1)
+	go func() {
+		defer approvalAlerts.Done()
+		sendAlertWith(d, n.Agent, approvalNotificationType, notify.Options{
+			Title:    title,
+			Subtitle: "Approval needed",
+			Message:  message,
+			Env: map[string]string{
+				"AGENTCTL_AGENT_NAME":        n.Agent,
+				"AGENTCTL_NOTIFICATION_TYPE": approvalNotificationType,
+				"AGENTCTL_WINDOW_ID":         windowID,
+				"AGENTCTL_TOOL_NAME":         n.Tool,
+				"AGENTCTL_SESSION_NAME":      sessionName,
+			},
+		})
+	}()
 
 	return func() {
 		clearMarker()
@@ -145,10 +159,21 @@ func beginApproval(n popupNotice) (end func()) {
 	}
 }
 
+// popupRetryInterval is how long to wait before re-opening a popup that did
+// not run because another popup or menu was already open on the client. A var
+// so tests can shrink it.
+var popupRetryInterval = 750 * time.Millisecond
+
 // runPopupWithDeadline runs the popup under popupDeadline and hook-cancelling
 // signals. Returns (approved, decided, denyReason) like the gates: a non-empty
 // denyReason means the popup went unanswered (or the hook was cancelled), the
 // popup was closed, and the command must be denied.
+//
+// The verdict comes only from the result file the popup process writes
+// (popupResultPath(argsFile)), never from display-popup's exit code: tmux
+// returns 0 without running the command when the client already has a popup or
+// menu open. No result file therefore means the popup never ran, and it is
+// re-opened until it does or the deadline expires.
 func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, popupH int, argsFile string, notice popupNotice) (approved, decided bool, denyReason string) {
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer stop()
@@ -158,13 +183,15 @@ func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, po
 	end := beginApproval(notice)
 	defer end()
 
-	start := time.Now()
-	err := dispatchPopupRunner(ctx, target.Client, popupW, popupH, argsFile)
-	elapsed := time.Since(start).Round(time.Millisecond)
-	if ctx.Err() != nil {
-		// Killing the tmux client does not necessarily close the popup.
-		if cerr := popupCloser(target.Client); cerr != nil {
-			logging.Log("%s: failed to close popup: %v", logPrefix, cerr)
+	resultFile := popupResultPath(argsFile)
+	defer os.Remove(resultFile)
+
+	deny := func(elapsed time.Duration, closePopup bool) (bool, bool, string) {
+		if closePopup {
+			// Killing the tmux client does not necessarily close the popup.
+			if cerr := popupCloser(target.Client); cerr != nil {
+				logging.Log("%s: failed to close popup: %v", logPrefix, cerr)
+			}
 		}
 		outcome := "timeout"
 		if sigCtx.Err() != nil {
@@ -173,20 +200,45 @@ func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, po
 		logging.Log("%s: popup outcome=%s after %s (%v), denying", logPrefix, outcome, elapsed, ctx.Err())
 		return false, false, popupTimeoutReason(kind, popupDeadline)
 	}
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			code := exitErr.ExitCode()
-			if code == 1 {
-				logging.Log("%s: popup outcome=denied after %s", logPrefix, elapsed)
-				return false, true, ""
-			}
-			logging.Log("%s: popup outcome=other exit code=%d after %s, passing through", logPrefix, code, elapsed)
-			return false, false, ""
+
+	begin := time.Now()
+	for attempt := 1; ; attempt++ {
+		os.Remove(resultFile) // a stale verdict must never be read
+		start := time.Now()
+		err := dispatchPopupRunner(ctx, target.Client, popupW, popupH, argsFile)
+		elapsed := time.Since(start).Round(time.Millisecond)
+
+		switch readPopupResult(resultFile) {
+		case "allow":
+			logging.Log("%s: popup outcome=approved after %s", logPrefix, elapsed)
+			return true, true, ""
+		case "deny":
+			logging.Log("%s: popup outcome=denied after %s", logPrefix, elapsed)
+			return false, true, ""
 		}
-		logging.Log("%s: popup outcome=error after %s: %v, passing through", logPrefix, elapsed, err)
-		return false, false, ""
+		if ctx.Err() != nil {
+			return deny(time.Since(begin).Round(time.Millisecond), true)
+		}
+		if err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				if code := exitErr.ExitCode(); code != 0 && code != 1 {
+					logging.Log("%s: popup outcome=other exit code=%d after %s, passing through", logPrefix, code, elapsed)
+					return false, false, ""
+				}
+			} else {
+				logging.Log("%s: popup outcome=error after %s: %v, passing through", logPrefix, elapsed, err)
+				return false, false, ""
+			}
+		}
+
+		// No verdict: the popup never ran (another popup or menu was open).
+		logging.Log("%s: popup did not run (no result, exit err=%v after %s), retrying in %s (attempt %d)",
+			logPrefix, err, elapsed, popupRetryInterval, attempt)
+		select {
+		case <-ctx.Done():
+			return deny(time.Since(begin).Round(time.Millisecond), false)
+		case <-time.After(popupRetryInterval):
+		}
 	}
-	logging.Log("%s: popup outcome=approved after %s", logPrefix, elapsed)
-	return true, true, ""
 }

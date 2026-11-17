@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 func TestFilePreviewModel_Init(t *testing.T) {
@@ -212,5 +214,31 @@ func TestFilePreviewModel_TitleRendering(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "/foo/bar.go") {
 		t.Errorf("View() output should contain %q", "/foo/bar.go")
+	}
+}
+
+func TestFilePreviewViewFitsPopup(t *testing.T) {
+	contents := map[string]string{
+		"short": "package main\n",
+		"long":  strings.Repeat("fmt.Println(\"a fairly long line of go code that goes on and on and on and on\")\n", 200),
+	}
+	for _, width := range []int{60, 108} {
+		for name, content := range contents {
+			t.Run(fmt.Sprintf("w%d/%s", width, name), func(t *testing.T) {
+				opts := []FilePreviewOption{WithFileContentWidth(width), WithFileMaxViewportHeight(32)}
+				m := NewFilePreview("/tmp/x.go", content, "lead", opts...)
+				view := m.View()
+				if !view.AltScreen {
+					t.Error("AltScreen must be set")
+				}
+				max := FilePreviewMaxPopupSize(opts...)
+				if h := lipgloss.Height(view.Content); h > max.Height-2 {
+					t.Errorf("height %d > popup inner %d", h, max.Height-2)
+				}
+				if w := lipgloss.Width(view.Content); w > max.Width-2 {
+					t.Errorf("width %d > popup inner %d", w, max.Width-2)
+				}
+			})
+		}
 	}
 }

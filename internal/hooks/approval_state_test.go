@@ -76,7 +76,7 @@ func TestPopupApprovalState(t *testing.T) {
 			d.EnqueueMailboxMessage = func(m mailbox.Message) (string, error) { mails = append(mails, m); return "id", nil }
 			deps = d
 
-			dispatchPopupRunner = func(ctx context.Context, _ string, _, _ int, _ string) error {
+			dispatchPopupRunner = func(ctx context.Context, _ string, _, _ int, argsFile string) error {
 				ws, err := windowstate.Read(wid)
 				if err != nil {
 					t.Errorf("read: %v", err)
@@ -90,10 +90,12 @@ func TestPopupApprovalState(t *testing.T) {
 				if _, err := os.Stat(filepath.Join(rt, "approval-pending", wid)); err != nil {
 					t.Errorf("marker file: %v", err)
 				}
-				return tc.run(t, ctx)
+				err = tc.run(t, ctx)
+				recordFakeVerdict(argsFile, err)
+				return err
 			}
 
-			approved, decided, _ := runPopupWithDeadline(popupTarget{}, "dispatch", "test", 10, 10, "f",
+			approved, decided, _ := runPopupWithDeadline(popupTarget{}, "dispatch", "test", 10, 10, filepath.Join(t.TempDir(), "args"),
 				popupNotice{Agent: "lead", Tool: "dispatch", Detail: "go-engineer on #3", Action: "dispatch go-engineer on #3"})
 			if approved != tc.approved || decided != tc.decided {
 				t.Fatalf("approved=%v decided=%v", approved, decided)
@@ -109,6 +111,7 @@ func TestPopupApprovalState(t *testing.T) {
 			if approval.Pending(rt, time.Now()) {
 				t.Error("marker left behind")
 			}
+			approvalAlerts.Wait()
 			if len(alerts) != 1 {
 				t.Fatalf("alerts = %d, want 1", len(alerts))
 			}
@@ -128,7 +131,11 @@ func TestPopupUnresolvedWindowStillShowsPopup(t *testing.T) {
 	origRun := dispatchPopupRunner
 	t.Cleanup(func() { dispatchPopupRunner = origRun })
 	called := false
-	dispatchPopupRunner = func(context.Context, string, int, int, string) error { called = true; return nil }
+	dispatchPopupRunner = func(_ context.Context, _ string, _, _ int, argsFile string) error {
+		called = true
+		recordFakeVerdict(argsFile, nil)
+		return nil
+	}
 	var alerts int
 	d := stubDeps(t)
 	d.Notify = func(notify.Options) { alerts++ }
@@ -136,7 +143,8 @@ func TestPopupUnresolvedWindowStillShowsPopup(t *testing.T) {
 	deps = d
 	t.Cleanup(func() { deps = origDeps })
 
-	approved, decided, _ := runPopupWithDeadline(popupTarget{}, "bash command", "test", 1, 1, "f", popupNotice{Agent: "a", Tool: "Bash", Action: "run a command"})
+	approved, decided, _ := runPopupWithDeadline(popupTarget{}, "bash command", "test", 1, 1, filepath.Join(t.TempDir(), "args"), popupNotice{Agent: "a", Tool: "Bash", Action: "run a command"})
+	approvalAlerts.Wait()
 	if !called || !approved || !decided || alerts != 1 {
 		t.Fatalf("called=%v approved=%v decided=%v alerts=%d", called, approved, decided, alerts)
 	}

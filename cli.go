@@ -772,10 +772,11 @@ type FilePreviewCmd struct {
 	Agent        string `name:"agent" help:"Agent name shown in the title bar"`
 	ContentWidth int    `name:"content-width" help:"Resolved popup content width (0 = model default)"`
 	VPHeight     int    `name:"vp-height" help:"Resolved max viewport height (0 = model default)"`
+	ResultFile   string `name:"result-file" help:"Write the allow/deny verdict to this file (0600)"`
 }
 
 func (c *FilePreviewCmd) Run() error {
-	runCmdFilePreview(c.Path, c.Name, c.Agent, c.ContentWidth, c.VPHeight)
+	runCmdFilePreview(c.Path, c.Name, c.Agent, c.ContentWidth, c.VPHeight, c.ResultFile)
 	return nil
 }
 
@@ -785,9 +786,10 @@ func (c *FilePreviewCmd) Run() error {
 // Exits 0 if the user allows, exits 1 if the user denies.
 type DispatchPreviewCmd struct {
 	ArgsFile string `name:"args-file" required:"" help:"Temp file path containing dispatch preview args JSON"`
+	ResultFile string `name:"result-file" help:"Write the allow/deny verdict to this file (0600)"`
 }
 
-func (c *DispatchPreviewCmd) Run() error { runCmdDispatchPreview(c.ArgsFile); return nil }
+func (c *DispatchPreviewCmd) Run() error { runCmdDispatchPreview(c.ArgsFile, c.ResultFile); return nil }
 
 // ---------------------------------------------------------------------------
 // TUI / internal
