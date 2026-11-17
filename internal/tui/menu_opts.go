@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
-	"sort"
 	"strings"
 
 	"github.com/blsmth/agentctl/internal/launchopts"
@@ -16,24 +14,14 @@ import (
 
 // backendAnthropic is the first entry of the backend selector: no backend,
 // plain Claude Code against Anthropic.
-const backendAnthropic = "anthropic"
-
-// anthropicModels are the model aliases offered for the Anthropic backend.
-var anthropicModels = []string{launchopts.Inherit, "opus", "sonnet", "haiku", "fable"}
-
-// effortChoices are the effort values offered for every agent.
-var effortChoices = []string{launchopts.Inherit, "low", "medium", "high", "max"}
+const backendAnthropic = launchopts.BackendAnthropic
 
 // safeModelRe is the charset allowed for a typed model name (the launch path
 // shell-quotes it regardless).
 var safeModelRe = regexp.MustCompile(`^[A-Za-z0-9._:/~\[\]-]+$`)
 
 // modelOpt is one entry of the model selector.
-type modelOpt struct {
-	Value   string
-	Default bool
-	Note    string // short suffix such as "opus alias"
-}
+type modelOpt = launchopts.ModelChoice
 
 // agentOpts is the editable launch configuration for the highlighted agent.
 type agentOpts struct {
@@ -47,41 +35,45 @@ type agentOpts struct {
 	defaultBE string // backends entry the agent config selects
 }
 
+// inputs gathers the pure choice inputs for a from config and the fetched
+// model lists.
+func (m MenuModel) inputs(a MenuAgent) launchopts.Inputs {
+	in := launchopts.Inputs{
+		AgentBackend: a.Backend,
+		AgentModel:   a.Model,
+		AgentEffort:  a.Effort,
+		Backends:     launchopts.SpecsFromConfig(m.cfg.Backends),
+		AnthropicIDs: launchopts.AnthropicIDNotes(),
+		NousModels:   m.nousModels(),
+		OllamaModels: map[string][]string{},
+	}
+	for be, st := range m.ollama {
+		if st != nil && st.done && st.err == nil {
+			in.OllamaModels[be] = st.models
+		}
+	}
+	return in
+}
+
 // newAgentOpts prefills the options for a from its effective config.
 func (m MenuModel) newAgentOpts(a MenuAgent) agentOpts {
-	names := make([]string, 0, len(m.cfg.Backends))
-	for n := range m.cfg.Backends {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	o := agentOpts{
+	in := m.inputs(a)
+	names, def := in.BackendNames()
+	return agentOpts{
 		agent:     a.Name,
-		backends:  append([]string{backendAnthropic}, names...),
-		defaultBE: backendAnthropic,
-		effort:    launchopts.Inherit,
+		backends:  names,
+		defaultBE: def,
+		backend:   def,
+		model:     in.DefaultModel(def),
+		effort:    in.DefaultEffort(),
 		dir:       a.Dir,
 		worktree:  true,
 	}
-	if _, ok := m.cfg.Backends[a.Backend]; ok && a.Backend != "" {
-		o.defaultBE = a.Backend
-	}
-	o.backend = o.defaultBE
-	o.model = m.defaultModel(a, o.backend)
-	if a.Effort != "" {
-		o.effort = a.Effort
-	}
-	return o
 }
 
 // defaultModel is the model the agent would run on the given backend.
 func (m MenuModel) defaultModel(a MenuAgent, backend string) string {
-	if backend == backendAnthropic {
-		if a.Backend == "" && a.Model != "" {
-			return a.Model
-		}
-		return launchopts.Inherit
-	}
-	return m.cfg.Backends[backend].Model
+	return m.inputs(a).DefaultModel(backend)
 }
 
 // isNous reports whether the named backend is a Nous Portal backend.
@@ -105,105 +97,30 @@ func (m MenuModel) modelChoices() []modelOpt {
 	if !ok {
 		return nil
 	}
-	be := m.opts.backend
-	var out []modelOpt
-	add := func(v, note string, def bool) {
-		if v == "" {
-			return
-		}
-		for i := range out {
-			if out[i].Value == v || (!m.isNous(be) && be != backendAnthropic && launchopts.SameModel(out[i].Value, v)) {
-				if note != "" && out[i].Note == "" {
-					out[i].Note = note
-				}
-				return
-			}
-		}
-		out = append(out, modelOpt{Value: v, Default: def, Note: note})
-	}
-	def := m.defaultModel(a, be)
-	switch {
-	case be == backendAnthropic:
-		add(def, "", true)
-		for _, v := range anthropicModels {
-			add(v, "alias", false)
-		}
-		for _, id := range tokens.AnthropicModelIDs() {
-			add(id, tokens.Lookup(id).Label, false)
-		}
-	case m.isNous(be):
-		b := m.cfg.Backends[be]
-		add(def, "", true)
-		if b.Models != nil {
-			add(b.Models.Opus, "opus alias", false)
-			add(b.Models.Sonnet, "sonnet alias", false)
-			add(b.Models.Haiku, "haiku alias", false)
-			add(b.Models.Subagent, "subagent alias", false)
-		}
-		for _, id := range m.nousModels() {
-			add(id, "", false)
-		}
-	default:
-		add(def, "", true)
-		if st := m.ollama[be]; st != nil && st.done && st.err == nil {
-			for _, id := range st.models {
-				add(id, "", false)
-			}
-		}
-	}
-	return out
+	return m.inputs(a).ModelChoices(m.opts.backend)
 }
 
 // resultModel is the Request.Model for the current selection: "" lets the
 // agent config / backend decide.
 func (m MenuModel) resultModel(a MenuAgent) string {
-	sel, be := m.opts.model, m.opts.backend
-	if be == backendAnthropic {
-		if a.Backend == "" && a.Model != "" && sel == a.Model {
-			return ""
-		}
-		if sel == launchopts.Inherit {
-			if a.Model != "" {
-				return launchopts.Inherit
-			}
-			return ""
-		}
-		return sel
-	}
-	if sel == m.cfg.Backends[be].Model {
-		return ""
-	}
-	return sel
+	return m.inputs(a).ResultModel(m.opts.backend, m.opts.model)
 }
 
 // resultBackend is the Request.Backend for the current selection.
 func (m MenuModel) resultBackend(a MenuAgent) string {
-	if m.opts.backend != backendAnthropic {
-		return m.opts.backend
-	}
-	if a.Backend != "" {
-		return launchopts.BackendNone
-	}
-	return ""
+	return m.inputs(a).ResultBackend(m.opts.backend)
 }
 
 // resultEffort is the Request.Effort for the current selection.
 func (m MenuModel) resultEffort(a MenuAgent) string {
-	sel := m.opts.effort
-	if sel == a.Effort || (sel == launchopts.Inherit && a.Effort == "") {
-		return ""
-	}
-	return sel
+	return m.inputs(a).ResultEffort(m.opts.effort)
 }
 
 // effortOptions lists the effort values, adding a configured value outside the
 // standard set so the default stays selectable.
 func (m MenuModel) effortOptions() []string {
-	out := slices.Clone(effortChoices)
-	if a, ok := m.current(); ok && a.Effort != "" && !slices.Contains(out, a.Effort) {
-		out = append(out, a.Effort)
-	}
-	return out
+	a, _ := m.current()
+	return m.inputs(a).EffortOptions()
 }
 
 // validateModel applies the launch-time rules to a model value for backend:

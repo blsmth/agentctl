@@ -130,3 +130,9 @@ body.term-open nav { display: none; }
 .disclose.u-blocked { color: var(--blocked); box-shadow: inset -4px 0 0 var(--blocked); background: color-mix(in srgb, var(--blocked) 12%, var(--card)); }
 .disclose.u-working .glyph { color: var(--working); } .disclose.u-done .glyph { color: var(--done); }
 .disclose.u-blocked .glyph { color: var(--blocked); }
+
+/* Launch option pickers on the Dispatch screen */
+.launch-opts { display: flex; flex-direction: column; gap: .75rem; }
+.launch-opts .seg { display: flex; flex-wrap: wrap; gap: .4rem; }
+.launch-opts .seg .btn[aria-pressed="true"] { background: var(--accent, #3b82f6); color: #fff; }
+.launch-opts select, .launch-opts input { width: 100%; }

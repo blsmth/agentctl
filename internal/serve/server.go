@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 )
@@ -58,6 +59,11 @@ type Options struct {
 	// MainPanes finds and captures the pane a window write checks and types
 	// into; nil means tmux.
 	MainPanes MainPanes
+	// LaunchConfig reads launch defaults for GET /v1/launch-options and
+	// dispatch validation; nil means the real config. OllamaModels lists a
+	// backend's live models; nil means dispatch.ListOllamaModels.
+	LaunchConfig LaunchConfigSource
+	OllamaModels OllamaLister
 	// Live terminal dependencies; nil means tmux viewer sessions and
 	// creack/pty. TerminalSizeEvery is the window-size poll; 0 means 2s.
 	Terminal          TerminalTmux
@@ -102,6 +108,8 @@ type Server struct {
 	closer     WindowCloser
 	dispatcher Dispatcher
 	mainPanes  MainPanes
+	launchCfg  LaunchConfigSource
+	ollama     *ollamaCache
 	// answered remembers recently answered dialogs (see handleAnswer);
 	// answerSettle bounds the wait for an answered dialog to redraw.
 	answered     answeredDialogs
@@ -160,6 +168,14 @@ func New(opts Options) (*Server, error) {
 	}
 	if s.dispatcher == nil {
 		s.dispatcher = newLaunchDispatcher()
+	}
+	s.launchCfg = opts.LaunchConfig
+	if s.launchCfg == nil {
+		s.launchCfg = configLaunchSource{}
+	}
+	s.ollama = &ollamaCache{list: opts.OllamaModels, now: now}
+	if s.ollama.list == nil {
+		s.ollama.list = dispatch.ListOllamaModels
 	}
 	s.mainPanes, s.answerSettle = opts.MainPanes, answerSettleTimeout
 	if s.mainPanes == nil {

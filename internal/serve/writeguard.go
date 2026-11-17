@@ -82,6 +82,10 @@ type auditEntry struct {
 	// Agent and Project name what a dispatch launches.
 	Agent   string `json:"agent,omitempty"`
 	Project string `json:"project,omitempty"`
+	// Backend, Model and Effort are the requested launch choices (not secret).
+	Backend string `json:"backend,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
 	// BytesIn and BytesOut count a live terminal's traffic on its
 	// "disconnected" line (keystrokes in, screen output out).
 	BytesIn  *int64 `json:"bytes_in,omitempty"`

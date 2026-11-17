@@ -243,8 +243,46 @@ export function buildReplyRequest(session, windowId, text) {
   return { method: "POST", path: `${windowApiPath(session, windowId)}/reply`, body: { text } };
 }
 
-export function buildDispatchRequest(agent, projectDir, prompt) {
-  return { method: "POST", path: "/v1/dispatch", body: { agent, project_dir: projectDir, prompt } };
+/**
+ * buildDispatchRequest builds POST /v1/dispatch. choice is the optional
+ * {backend, model, effort} picked from launch options; empty fields are left
+ * out so the server keeps the agent's own configuration.
+ */
+export function buildDispatchRequest(agent, projectDir, prompt, choice = {}) {
+  const body = { agent, project_dir: projectDir, prompt };
+  for (const k of ["backend", "model", "effort"]) if (choice[k]) body[k] = choice[k];
+  return { method: "POST", path: "/v1/dispatch", body };
+}
+
+/** launchOptionsPath is GET /v1/launch-options for an agent in a project. */
+export function launchOptionsPath(agent, projectDir) {
+  return `/v1/launch-options?agent=${encodeURIComponent(agent)}&project_dir=${encodeURIComponent(projectDir)}`;
+}
+
+/**
+ * modelPicker describes the model control for a backend of a launch-options
+ * body: a select of choices, or a free-text field (with the default prefilled)
+ * when the server could not list the backend's models.
+ */
+export function modelPicker(opts, backend) {
+  const m = opts?.models?.[backend];
+  const choices = m?.models ?? [];
+  const def = choices.find((c) => c.default)?.value ?? choices[0]?.value ?? "";
+  return { freeText: Boolean(m?.model_list_error), choices, def, error: m?.model_list_error ?? "" };
+}
+
+/** choiceLabel is the option text of a model choice: value, note, default mark. */
+export function choiceLabel(c) {
+  return `${c.value}${c.note ? ` (${c.note})` : ""}${c.default ? " \u2605 default" : ""}`;
+}
+
+/** confirmLines are the sheet lines for a dispatch: settings, then the prompt. */
+export function confirmLines(body) {
+  const rows = [`agent: ${body.agent}`, `project: ${body.project_dir}`];
+  if (body.backend) rows.push(`backend: ${body.backend}`);
+  if (body.model) rows.push(`model: ${body.model}`);
+  if (body.effort) rows.push(`effort: ${body.effort}`);
+  return [rows.join("\n"), body.prompt];
 }
 
 /** actionsFor decides which action-bar sections a window shows. */

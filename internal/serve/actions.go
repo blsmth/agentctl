@@ -66,9 +66,13 @@ type Dispatcher interface {
 // DispatchRequest is a validated POST /v1/dispatch, with the target session
 // resolved from the fleet.
 type DispatchRequest struct {
-	Agent      string
-	Prompt     string
-	Model      string
+	Agent  string
+	Prompt string
+	Model  string
+	// Backend and Effort are the launch overrides, already resolved the way
+	// the launch popup does ("" = agent config).
+	Backend    string
+	Effort     string
 	Dir        string
 	Session    string
 	RuntimeDir string
