@@ -8,19 +8,71 @@ import (
 
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/selfexec"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
 )
 
+// reloadable is a pane model that can ask to be re-exec'd after it quits.
+type reloadable interface {
+	tea.Model
+	Reexec() bool
+}
+
+// paneExec is the exec seam for tests (selfexec.Reexec in production).
+var paneExec = selfexec.Reexec
+
+// paneCapture is the identity seam for tests.
+var paneCapture = selfexec.Capture
+
+// runWithReload runs a long-lived pane program. When the model quits asking
+// for a re-exec (binary changed) it execs the new binary only after Run has
+// returned, so the terminal is restored first. If the exec cannot happen the
+// old image keeps running with hot reload off: exiting would leave the
+// window without its pane, and nothing respawns it (windowstate still
+// records the dead pane, so LaunchChromeBar would refuse to recreate it).
+func runWithReload(name string, model reloadable, run func(tea.Model) (tea.Model, error), disable func(tea.Model) reloadable) {
+	for {
+		final, err := run(model)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s error: %v\n", name, err)
+			os.Exit(1)
+		}
+		rm, ok := final.(reloadable)
+		if !ok || !rm.Reexec() {
+			return
+		}
+		if reexecPane(name) {
+			return // only reached when paneExec is stubbed
+		}
+		model = disable(rm)
+	}
+}
+
+// reexecPane execs the new binary. It returns true only if exec returned
+// successfully (test seams); false means the caller should keep running.
+func reexecPane(name string) bool {
+	exe, err := paneCapture()
+	if err != nil {
+		logging.Warn("%s: re-exec skipped: %v", name, err)
+		return false
+	}
+	logging.Log("%s: binary changed, re-executing %s", name, exe.Path)
+	if err := paneExec(exe.Path); err != nil {
+		logging.Warn("%s: re-exec %s failed, keeping old image: %v", name, exe.Path, err)
+		return false
+	}
+	return true
+}
+
+func runProgram(m tea.Model) (tea.Model, error) { return tea.NewProgram(m).Run() }
+
 // CmdHud runs the HUD Bubble Tea app for the given tmux window ID.
 // It runs inline (the HUD IS the pane content) — no popup wrapper.
 func CmdHud(windowID string) {
-	model := tui.NewHudModel(windowID)
-	p := tea.NewProgram(model)
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "hud error: %v\n", err)
-		os.Exit(1)
-	}
+	runWithReload("hud", tui.NewHudModel(windowID), runProgram, func(m tea.Model) reloadable {
+		return m.(tui.HudModel).WithoutReload()
+	})
 }
 
 // CmdChromeBar runs the 3-row bottom chrome bar as a Bubble Tea program.
@@ -28,12 +80,9 @@ func CmdHud(windowID string) {
 // into a single pane, eliminating the two tmux pane-border lines that would
 // otherwise separate three independent panes.
 func CmdChromeBar(windowID string) {
-	model := tui.NewChromeBarModel(windowID, paths.RuntimeDir())
-	p := tea.NewProgram(model)
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "chrome-bar error: %v\n", err)
-		os.Exit(1)
-	}
+	runWithReload("chrome-bar", tui.NewChromeBarModel(windowID, paths.RuntimeDir()), runProgram, func(m tea.Model) reloadable {
+		return m.(tui.ChromeBarModel).WithoutReload()
+	})
 }
 
 // CmdChromeBarPane creates a 3-row chrome bar pane at the bottom of the given

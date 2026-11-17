@@ -90,6 +90,9 @@ type HudModel struct {
 	agentctlLogIsGlobal bool
 	// agentctlLogErr holds the last error from resolving the agentctl log path.
 	agentctlLogErr string
+
+	// reload watches the binary for hot reload.
+	reload *reloader
 }
 
 // NewHudModel creates a new HUD model targeting the given tmux window ID.
@@ -104,8 +107,16 @@ func NewHudModel(windowID string) HudModel {
 		sysLogAtBottom:   true,
 		streamCursor:     -1,
 		expandedEntries:  make(map[int]bool),
+		reload:           newReloader("hud", windowID),
 	}
 }
+
+// Reexec reports whether the HUD quit because the binary changed; the caller
+// must exec the new image after the program returns.
+func (m HudModel) Reexec() bool { return m.reload.triggered() }
+
+// WithoutReload disables hot reload after a failed exec.
+func (m HudModel) WithoutReload() HudModel { m.reload.disable(); return m }
 
 // Init starts the first tick.
 func (m HudModel) Init() tea.Cmd {
@@ -324,6 +335,9 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case hudTickMsg:
+		if m.reload.due() {
+			return m, tea.Quit
+		}
 		m.poll()
 		return m, hudTick()
 	}
