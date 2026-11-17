@@ -517,7 +517,7 @@ func TestLaunchResult(t *testing.T) {
 			[]string{"tab", "right", "down", "down", "right", "ctrl+u", "enter"},
 			MenuResult{Action: "launch", Agent: "lead", Dir: "/work"}},
 		{"create row via no match", "",
-			[]string{"z", "z", "q", "enter"}, MenuResult{Action: "create"}},
+			[]string{"z", "z", "q", "enter"}, MenuResult{Action: "create", Name: "zzq"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -537,7 +537,7 @@ func TestEffortAndDirEditing(t *testing.T) {
 	m := newTestMenu(t, nil)
 	m = moveTo(t, m, "u1")
 	m, _ = press(t, m, "tab", "down", "down", "down", "space")
-	if m.editing != editDir {
+	if !m.editing {
 		t.Fatal("space on Dir should edit it")
 	}
 	m.edit.SetValue("")
@@ -894,5 +894,69 @@ func TestModelLabelFullID(t *testing.T) {
 	m := newTestMenu(t, nil)
 	if got := m.modelLabel(MenuAgent{Name: "x", Model: "claude-opus-5-5"}); got != "opus-5.5" {
 		t.Errorf("label = %q", got)
+	}
+}
+
+func TestResumeWhileLoadingShowsResumeView(t *testing.T) {
+	m := newTestMenu(t, func(c *MenuConfig) {
+		c.LoadSessions = func(string) []MenuSession { return nil }
+	})
+	_ = m.fetchCmds() // starts the load, but the result has not arrived
+	m, _ = press(t, m, "ctrl+r")
+	if m.view != viewResume || m.notice != "" {
+		t.Errorf("view=%v notice=%q, want resume view while loading", m.view, m.notice)
+	}
+}
+
+func TestEnterWithNoMatchPassesFilterToCreate(t *testing.T) {
+	m := newTestMenu(t, nil)
+	m = typeText(t, m, "zzq")
+	m, _ = press(t, m, "enter")
+	if got := m.Result(); got.Action != "create" || got.Name != "zzq" {
+		t.Errorf("result = %+v", got)
+	}
+}
+
+func TestRankAgentsFuzzyFallback(t *testing.T) {
+	agents := []MenuAgent{{Name: "go-engineer"}, {Name: "reviewer"}}
+	for _, q := range []string{"go eng", "goeng"} {
+		if got := rankAgents(agents, q); len(got) != 1 || got[0] != 0 {
+			t.Errorf("rankAgents(%q) = %v, want [0]", q, got)
+		}
+	}
+	agents = []MenuAgent{{Name: "xgoeng"}, {Name: "goengine"}, {Name: "g-o-e-n-g"}}
+	if got := rankAgents(agents, "goeng"); len(got) != 3 || got[0] != 1 || got[1] != 0 {
+		t.Errorf("ranking = %v, want prefix, substring, fuzzy", got)
+	}
+}
+
+func TestValidationErrorFocusesOffendingField(t *testing.T) {
+	m := newTestMenu(t, nil)
+	m = moveTo(t, m, "u1")
+	m.opts.dir = " "
+	m, _ = press(t, m, "enter")
+	if m.view != viewSheet || m.field != fDir || m.errMsg == "" {
+		t.Errorf("view=%v field=%v err=%q, want dir field", m.view, m.field, m.errMsg)
+	}
+}
+
+func TestPickerCursorSurvivesOllamaArrival(t *testing.T) {
+	m := newTestMenu(t, nil)
+	m = moveTo(t, m, "oll")
+	m, _ = press(t, m, "tab", "down", "space")
+	if m.view != viewPicker {
+		t.Fatal("picker should be open")
+	}
+	m.picker.move(1)
+	want, _ := m.picker.selected()
+	updated, _ := m.Update(ollamaMsg{backend: "local", models: []string{"a:1", "b:2"}})
+	m = updated.(MenuModel)
+	if got, _ := m.picker.selected(); got != want {
+		// The previously selected row may legitimately vanish; only assert when listed.
+		for _, r := range m.picker.rows {
+			if r.kind == pickModel && m.picker.items[r.item].value == want {
+				t.Errorf("selected = %q, want %q kept", got, want)
+			}
+		}
 	}
 }

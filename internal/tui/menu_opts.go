@@ -222,18 +222,19 @@ func (m MenuModel) validateModel(backend, value string) error {
 	return nil
 }
 
-// validate checks the whole selection before launch.
-func (m MenuModel) validate(a MenuAgent) error {
+// validate checks the whole selection before launch and returns the options
+// field the first error belongs to.
+func (m MenuModel) validate(a MenuAgent) (optField, error) {
 	if strings.TrimSpace(m.opts.dir) == "" {
-		return fmt.Errorf("working directory is empty")
+		return fDir, fmt.Errorf("working directory is empty")
 	}
 	if err := launchopts.ValidateEffort(m.opts.effort); err != nil {
-		return err
+		return fEffort, err
 	}
 	if rm := m.resultModel(a); rm != "" {
-		return m.validateModel(m.opts.backend, rm)
+		return fModel, m.validateModel(m.opts.backend, rm)
 	}
-	return nil
+	return fModel, nil
 }
 
 // expandHome expands a leading "~" in dir.

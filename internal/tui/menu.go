@@ -12,14 +12,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/sahilm/fuzzy"
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/theme"
 )
 
 // Popup size of the launch menu in terminal cells, tmux border included. The
-// keybinding in internal/tmux uses the same numbers (tmux needs them before the
-// model exists); the model lays itself out from the real size it is given.
+// keybinding in internal/tmux hard-codes matching numbers (tmux needs them before
+// the model exists), so change both together; the model lays itself out from the
+// real size it is given.
 const (
 	MenuPopupWidth  = 100
 	MenuPopupHeight = 40
@@ -104,6 +106,7 @@ type MenuConfig struct {
 type MenuResult struct {
 	Cancelled  bool
 	Action     string // "switch", "launch", "resume", "create"
+	Name       string // create only: the filter text to pre-fill the new agent name
 	Agent      string // base agent name
 	Instance   string // specific instance to switch to
 	Backend    string // dispatch.Request.Backend ("", "none" or a name)
@@ -195,14 +198,6 @@ const (
 	numFields
 )
 
-// editMode says which free-text input is active.
-type editMode int
-
-const (
-	editNone editMode = iota
-	editDir
-)
-
 // ollamaState is the live model list of one Ollama backend.
 type ollamaState struct {
 	done   bool
@@ -241,7 +236,7 @@ type MenuModel struct {
 	field      optField
 	opts       agentOpts
 	edit       textinput.Model
-	editing    editMode
+	editing    bool // the dir free-text input is active
 	picker     modelPicker
 	errMsg     string
 	notice     string // one-shot footer message
@@ -328,7 +323,7 @@ func (m *MenuModel) applyFilter() {
 
 // rankAgents returns the indexes of agents matching the lowercase query q,
 // best first: name prefix, then name substring, then description / model /
-// backend. Within a tier the section order (the agents' own order) decides,
+// backend, then a fuzzy match on the name (so "goeng" finds go-engineer). Within a tier the section order (the agents' own order) decides,
 // then the shorter name. An empty query keeps every agent in list order.
 func rankAgents(agents []MenuAgent, q string) []int {
 	if q == "" {
@@ -339,6 +334,7 @@ func rankAgents(agents []MenuAgent, q string) []int {
 		return out
 	}
 	type hit struct{ idx, tier int }
+	fq := strings.ReplaceAll(q, " ", "")
 	var hits []hit
 	for i, a := range agents {
 		name := strings.ToLower(a.Name)
@@ -348,11 +344,16 @@ func rankAgents(agents []MenuAgent, q string) []int {
 		case strings.Contains(name, q):
 			hits = append(hits, hit{i, 1})
 		default:
+			matched := false
 			for _, s := range []string{a.Description, a.Backend, a.Model} {
 				if strings.Contains(strings.ToLower(s), q) {
 					hits = append(hits, hit{i, 2})
+					matched = true
 					break
 				}
+			}
+			if !matched && fq != "" && len(fuzzy.Find(fq, []string{name})) > 0 {
+				hits = append(hits, hit{i, 3})
 			}
 		}
 	}
@@ -461,7 +462,11 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ollamaMsg:
 		m.ollama[msg.backend] = &ollamaState{done: true, models: msg.models, err: msg.err}
 		if m.view == viewPicker {
+			sel, ok := m.picker.selected()
 			m.picker.rebuild(m)
+			if ok {
+				m.picker.restore(sel)
+			}
 		}
 		return m, nil
 	case sessionsMsg:
@@ -483,7 +488,7 @@ func (m MenuModel) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case viewPicker:
 		return m.keyPicker(msg)
 	case viewSheet:
-		if m.editing != editNone {
+		if m.editing {
 			return m.keyEdit(msg)
 		}
 		return m.keySheet(key)
@@ -543,6 +548,11 @@ func (m MenuModel) keyList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m MenuModel) startResume() (tea.Model, tea.Cmd) {
 	if _, ok := m.current(); !ok {
+		return m, nil
+	}
+	if st := m.sessions[m.opts.agent]; st != nil && !st.done {
+		// Still loading: the resume view renders "loading…" until it lands.
+		m.view, m.sessCursor = viewResume, 0
 		return m, nil
 	}
 	if len(m.currentSessions()) == 0 {
@@ -633,14 +643,14 @@ func (m MenuModel) keySheet(key string) (tea.Model, tea.Cmd) {
 func (m MenuModel) keyEdit(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		m.editing = editNone
+		m.editing = false
 		m.edit.Blur()
 		return m, nil
 	case "enter":
 		if val := strings.TrimSpace(m.edit.Value()); val != "" {
 			m.opts.dir = expandHome(val)
 		}
-		m.editing = editNone
+		m.editing = false
 		m.edit.Blur()
 		return m, nil
 	}
@@ -651,7 +661,7 @@ func (m MenuModel) keyEdit(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 // startEdit opens the free-text input for the dir field.
 func (m MenuModel) startEdit() (tea.Model, tea.Cmd) {
-	m.editing = editDir
+	m.editing = true
 	m.edit.SetValue(m.opts.dir)
 	m.errMsg = ""
 	return m, m.edit.Focus()
@@ -691,7 +701,7 @@ func indexOf(xs []string, v string) int {
 func wrap(i, n int) int { return ((i % n) + n) % n }
 
 func (m MenuModel) create() (tea.Model, tea.Cmd) {
-	m.result = MenuResult{Action: "create"}
+	m.result = MenuResult{Action: "create", Name: strings.TrimSpace(m.filter.Value())}
 	return m, tea.Quit
 }
 
@@ -702,9 +712,9 @@ func (m MenuModel) launch() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m.create()
 	}
-	if err := m.validate(a); err != nil {
+	if field, err := m.validate(a); err != nil {
 		m.errMsg = err.Error()
-		m.view, m.field = viewSheet, fModel
+		m.view, m.field = viewSheet, field
 		return m, nil
 	}
 	m.result = MenuResult{
