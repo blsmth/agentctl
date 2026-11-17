@@ -4,14 +4,13 @@
 // server sends the window's real size and the font is scaled to fit it.
 import {
   backoffDelay,
-  fitFontSize,
   KEY_BAR,
   keySequence,
   parseControl,
   terminalSocketUrl,
   windowHash,
 } from "./logic.js";
-import { h } from "./ui.js";
+import { fitTermFont, h } from "./ui.js";
 
 const PING_MS = 20000;
 const BASE_FONT = 10;
@@ -66,10 +65,7 @@ export function mountTerminal(root, ctx, { session, windowId }) {
   // fitWidth scales the font so the window's columns fill the screen width.
   function fitWidth() {
     if (!size || userZoomed) return;
-    const screenEl = host.querySelector(".xterm-screen");
-    const measured = screenEl ? screenEl.getBoundingClientRect().width : 0;
-    const f = fitFontSize(viewport.clientWidth - 4, measured, term.options.fontSize, MIN_FONT, MAX_FONT);
-    if (Math.abs(f - term.options.fontSize) >= 0.1) term.options.fontSize = f;
+    fitTermFont(term, host, viewport.clientWidth - 4, MIN_FONT, MAX_FONT);
   }
 
   function applySize(m) {

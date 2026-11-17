@@ -1,0 +1,39 @@
+{
+  "normalize": [
+    {"name": "plain line trailing space", "input": "hello   \n", "expect": ["hello", ""]},
+    {"name": "full width rule", "input": "────────────────────────────────────────", "expect": [{"rule": ""}]},
+    {"name": "heavy and double rules", "input": "━━━━━━━━━━\n══════════", "expect": [{"rule": ""}, {"rule": ""}]},
+    {"name": "labelled rule", "input": "── brandon-agentctl-happy-meteor ──────────", "expect": [{"rule": "brandon-agentctl-happy-meteor"}]},
+    {"name": "box top and bottom", "input": "╭────────────────╮\n│ hi │\n╰────────────────╯", "expect": [{"rule": ""}, "hi", {"rule": ""}]},
+    {"name": "box with label", "input": "╭── Claude Code ──────╮", "expect": [{"rule": "Claude Code"}]},
+    {"name": "box side borders", "input": "│ Do you want to proceed?        │\n│ ❯ 1. Yes                       │\n│   2. No                        │", "expect": ["Do you want to proceed?", "❯ 1. Yes", "  2. No"]},
+    {"name": "braille right-aligned statusline", "input": "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀main ± 3  42% ctx⠀⠀", "expect": ["main ± 3  42% ctx"]},
+    {"name": "space then braille padding", "input": "   ⠀⠀⠀⠀⠀⠀opus", "expect": ["opus"]},
+    {"name": "braille interior gap", "input": "left⠀⠀⠀⠀⠀⠀⠀right", "expect": ["left  right"]},
+    {"name": "braille only line is blank", "input": "a\n⠀⠀⠀⠀\nb", "expect": ["a", "", "b"]},
+    {"name": "deep right-aligned short text", "input": "                                                  auto mode on", "expect": ["auto mode on"]},
+    {"name": "deep indent long text kept", "input": "                                  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expect": ["                                  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]},
+    {"name": "normal indent kept", "input": "  indented", "expect": ["  indented"]},
+    {"name": "two blanks kept", "input": "a\n\n\nb", "expect": ["a", "", "", "b"]},
+    {"name": "three blanks collapse", "input": "a\n\n\n\nb", "expect": ["a", "", "b"]},
+    {"name": "many blanks collapse", "input": "a\n\n  \n⠀\n\n\nb", "expect": ["a", "", "b"]},
+    {"name": "sgr stripped from text", "input": "\u001b[1;31mred\u001b[0m text", "expect": ["red text"]},
+    {"name": "coloured rule", "input": "\u001b[2m──────────────\u001b[0m", "expect": [{"rule": ""}]},
+    {"name": "dashes are not a rule", "input": "---", "expect": ["---"]},
+    {"name": "two box chars not a rule", "input": "──", "expect": ["──"]},
+    {"name": "pipe in middle kept", "input": "a │ b", "expect": ["a │ b"]},
+    {"name": "osc and cursor sequences dropped", "input": "\u001b]0;title\u0007\u001b[2Kok", "expect": ["ok"]}
+  ],
+  "sgr": [
+    {"name": "plain", "input": "abc", "expect": [{"t": "abc"}]},
+    {"name": "16 colour fg", "input": "\u001b[31mred\u001b[0m", "expect": [{"t": "red", "fg": "#cd3131"}]},
+    {"name": "bright fg and bg", "input": "\u001b[91;102mx", "expect": [{"t": "x", "fg": "#f14c4c", "bg": "#23d18b"}]},
+    {"name": "256 colour", "input": "\u001b[38;5;196;48;5;232mx", "expect": [{"t": "x", "fg": "#ff0000", "bg": "#080808"}]},
+    {"name": "truecolor", "input": "\u001b[38;2;10;20;255mx", "expect": [{"t": "x", "fg": "#0a14ff"}]},
+    {"name": "truecolor colon form", "input": "\u001b[48:2::1:2:3mx", "expect": [{"t": "x", "bg": "#010203"}]},
+    {"name": "attributes", "input": "\u001b[1;2;3;4;7mx", "expect": [{"t": "x", "bold": true, "dim": true, "italic": true, "underline": true, "inverse": true}]},
+    {"name": "attribute off", "input": "\u001b[1;3mA\u001b[22mB\u001b[23mC", "expect": [{"t": "A", "bold": true, "italic": true}, {"t": "B", "italic": true}, {"t": "C"}]},
+    {"name": "default colours", "input": "\u001b[31;42mA\u001b[39;49mB", "expect": [{"t": "A", "fg": "#cd3131", "bg": "#0dbc79"}, {"t": "B"}]},
+    {"name": "empty reset", "input": "\u001b[1mA\u001b[mB", "expect": [{"t": "A", "bold": true}, {"t": "B"}]}
+  ]
+}
