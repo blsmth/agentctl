@@ -41,13 +41,20 @@ var (
 )
 
 // LoginCommand is the command that logs a config dir in. It runs Claude
-// Code's own OAuth flow; agentctl never sees the token.
+// Code's own OAuth flow; agentctl never sees the token. Claude Code's
+// default dir is logged in with CLAUDE_CONFIG_DIR unset (see
+// claudehome.EnvFor), so its command is plain `claude auth login`.
 func LoginCommand(dir string) string {
-	return "CLAUDE_CONFIG_DIR=" + shellquote.Quote(dir) + " claude auth login"
+	value, unset := claudehome.EnvFor(dir)
+	if unset || value == "" {
+		return "claude auth login"
+	}
+	return "CLAUDE_CONFIG_DIR=" + shellquote.Quote(value) + " claude auth login"
 }
 
 // claudeEnv returns the environment for a claude subprocess pointed at dir,
 // without inherited credential variables (they would outrank the dir's login).
+// Claude Code's default dir is selected by leaving CLAUDE_CONFIG_DIR out.
 func claudeEnv(dir string) []string {
 	var env []string
 	for _, kv := range os.Environ() {
@@ -57,7 +64,10 @@ func claudeEnv(dir string) []string {
 		}
 		env = append(env, kv)
 	}
-	return append(env, claudehome.EnvConfigDir+"="+dir)
+	if value, unset := claudehome.EnvFor(dir); !unset && value != "" {
+		env = append(env, claudehome.EnvConfigDir+"="+value)
+	}
+	return env
 }
 
 func containsStr(list []string, s string) bool {

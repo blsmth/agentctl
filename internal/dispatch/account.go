@@ -2,12 +2,15 @@ package dispatch
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/signal"
+	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // resolveAccountFn is the seam Launch resolves the account through.
@@ -16,12 +19,17 @@ var resolveAccountFn = claudehome.ForLaunch
 // parentAccountFn returns the dispatching window's account (seam for tests).
 var parentAccountFn = func() string { return claudehome.ParentAccount(signal.ResolveWindowID()) }
 
-// ApplyAccountEnv points the launch at the resolved account's config dir:
-// CLAUDE_CONFIG_DIR (absolute) and AGENTCTL_ACCOUNT, which LaunchAgent
-// records in windowstate. A zero Resolution (no accounts configured) is a
-// no-op, so the window keeps its inherited environment. Credential variables
-// that would outrank the per-dir login are scrubbed by tmux.LaunchAgent
-// whenever CLAUDE_CONFIG_DIR is set here.
+// ApplyAccountEnv points the launch at the resolved account's config dir and
+// records AGENTCTL_ACCOUNT, which LaunchAgent stores in windowstate. A zero
+// Resolution (no accounts configured) is a no-op, so the window keeps its
+// inherited environment.
+//
+// The dir is applied through claudehome.EnvFor: any dir other than Claude
+// Code's default (~/.claude) is set as CLAUDE_CONFIG_DIR; the default dir is
+// selected by unsetting CLAUDE_CONFIG_DIR in the launch script (tmux.EnvUnset),
+// because an explicit CLAUDE_CONFIG_DIR=~/.claude is a separate, logged-out
+// login to Claude Code. Either way tmux.LaunchAgent scrubs the credential
+// variables that would outrank the account's login.
 //
 // Call it before PrepareBackend so a nous preflight checks the right
 // account's settings.json.
@@ -29,10 +37,36 @@ func ApplyAccountEnv(env map[string]string, r claudehome.Resolution) {
 	if r.Dir == "" {
 		return
 	}
-	env[claudehome.EnvConfigDir] = r.Dir
+	value, unset := claudehome.EnvFor(r.Dir)
+	if unset {
+		delete(env, claudehome.EnvConfigDir)
+		tmux.AddUnsetEnv(env, claudehome.EnvConfigDir)
+	} else {
+		env[claudehome.EnvConfigDir] = value
+		tmux.RemoveUnsetEnv(env, claudehome.EnvConfigDir)
+	}
 	if r.Name != "" {
 		env[claudehome.EnvAccount] = r.Name
+		tmux.RemoveUnsetEnv(env, claudehome.EnvAccount)
+	} else {
+		// The unnamed default dir: never let an inherited account name
+		// attribute the window to another login.
+		delete(env, claudehome.EnvAccount)
+		tmux.AddUnsetEnv(env, claudehome.EnvAccount)
 	}
+}
+
+// accountDirFromEnv returns the config dir a launch env selects: an explicit
+// CLAUDE_CONFIG_DIR, the default dir when ApplyAccountEnv unset it, or ""
+// when the env leaves the inherited dir alone.
+func accountDirFromEnv(env map[string]string) string {
+	if d := env[claudehome.EnvConfigDir]; d != "" {
+		return d
+	}
+	if slices.Contains(strings.Fields(env[tmux.EnvUnset]), claudehome.EnvConfigDir) {
+		return claudehome.HomeDir()
+	}
+	return ""
 }
 
 // restoreAccount returns the account a restored window relaunches under. A

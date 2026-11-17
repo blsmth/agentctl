@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/launchopts"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -123,6 +122,12 @@ func ApplyBackendEnv(env map[string]string, be *Backend) {
 		return
 	}
 	for k, v := range BackendEnv(be.BackendConfig) {
+		if k == tmux.EnvUnset {
+			// Merge: the account may already have asked to unset
+			// CLAUDE_CONFIG_DIR.
+			tmux.AddUnsetEnv(env, strings.Fields(v)...)
+			continue
+		}
 		env[k] = v
 	}
 	env[EnvBackend] = be.Name
@@ -147,7 +152,7 @@ func PrepareBackend(cfg *config.Config, ac *config.AgentConfig, override, explic
 	if be.IsNous() {
 		// The launch's account (when already applied to env) decides
 		// which user settings.json is checked for shadowing credentials.
-		info, err := preflightNous(be.Name, be.BackendConfig, env[claudehome.EnvConfigDir], workDir, explicitModel)
+		info, err := preflightNous(be.Name, be.BackendConfig, accountDirFromEnv(env), workDir, explicitModel)
 		if err != nil {
 			return nil, fmt.Errorf("backend %q: %w", be.Name, err)
 		}

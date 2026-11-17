@@ -271,3 +271,66 @@ func TestClaudeEnvStripsCredentials(t *testing.T) {
 		}
 	}
 }
+
+// Registering Claude Code's default dir as an account must not link the
+// shared allowlist into itself, and its login hint must not set
+// CLAUDE_CONFIG_DIR (an explicit default dir is a separate, empty login).
+func TestAccountAddDefaultDirSkipsSelfLink(t *testing.T) {
+	for _, configDir := range []string{"~/.claude", "~/.claude/"} {
+		t.Run(configDir, func(t *testing.T) {
+			home, _ := accountEnv(t)
+			ch := seedHome(t, home)
+			before := listDir(t, ch)
+			var out bytes.Buffer
+			if err := RunAccountAdd(AccountAddOptions{Name: "ll", ConfigDir: configDir}, &out); err != nil {
+				t.Fatal(err)
+			}
+			if got := listDir(t, ch); !slices.Equal(got, before) {
+				t.Errorf("~/.claude changed: %v, want %v", got, before)
+			}
+			for _, name := range before {
+				if fi, err := os.Lstat(filepath.Join(ch, name)); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+					t.Errorf("%s replaced by a link (err=%v)", name, err)
+				}
+			}
+			if strings.Contains(out.String(), "linked") {
+				t.Errorf("self-links reported:\n%s", out.String())
+			}
+			if strings.Contains(out.String(), "CLAUDE_CONFIG_DIR") || !strings.Contains(out.String(), "  claude auth login\n") {
+				t.Errorf("default-dir login hint must be plain `claude auth login`:\n%s", out.String())
+			}
+		})
+	}
+}
+
+func TestLoginCommand(t *testing.T) {
+	home, _ := accountEnv(t)
+	tests := []struct {
+		dir  string
+		want string
+	}{
+		{filepath.Join(home, ".claude"), "claude auth login"},
+		{filepath.Join(home, ".claude") + "/", "claude auth login"},
+		{"/abs/.claude-personal", "CLAUDE_CONFIG_DIR='/abs/.claude-personal' claude auth login"},
+	}
+	for _, tt := range tests {
+		if got := LoginCommand(tt.dir); got != tt.want {
+			t.Errorf("LoginCommand(%q) = %q, want %q", tt.dir, got, tt.want)
+		}
+	}
+}
+
+// The `account list` / `account doctor` probe for the default dir must run
+// claude with CLAUDE_CONFIG_DIR unset, or it reports a logged-in ll as
+// logged out.
+func TestClaudeEnvDefaultDirUnsetsConfigDir(t *testing.T) {
+	home, _ := accountEnv(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude-personal"))
+	t.Setenv("ANTHROPIC_API_KEY", "x")
+	for _, kv := range claudeEnv(filepath.Join(home, ".claude")) {
+		k, _, _ := strings.Cut(kv, "=")
+		if k == "CLAUDE_CONFIG_DIR" || slices.Contains(credentialEnvVars, k) {
+			t.Errorf("%s passed to the default-dir probe", kv)
+		}
+	}
+}
