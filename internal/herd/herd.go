@@ -31,6 +31,11 @@ type Row struct {
 	Session string // tmux session name, e.g. "agentctl-myproject"
 	Project string // display name for the project (the session's directory basename)
 	state.AgentState
+
+	// Dispatched is true when another agent launched this window via
+	// `agentctl dispatch`, false for windows launched interactively from the
+	// menu or hub (and for windows with no windowstate record).
+	Dispatched bool
 }
 
 // RollupStatus is a rolled-up status across a set of rows, in the group-level
@@ -225,6 +230,7 @@ func LoadGroup(e registry.Entry) Group {
 	}
 
 	rows := SortRows(TagRows(e.SessionName, project, snap))
+	TagDispatched(rows, LoadMeta(Group{RuntimeDir: e.RuntimeDir}))
 	g := Group{
 		Session:     e.SessionName,
 		Project:     project,
@@ -238,6 +244,14 @@ func LoadGroup(e registry.Entry) Group {
 		g.Stale = true
 	}
 	return g
+}
+
+// TagDispatched sets Row.Dispatched in place from per-window launch metadata.
+// A window with no record in meta counts as bare.
+func TagDispatched(rows []Row, meta map[string]Meta) {
+	for i := range rows {
+		rows[i].Dispatched = meta[rows[i].WindowID].Dispatched()
+	}
 }
 
 // projectDisplayName derives a human-friendly project name from a registry

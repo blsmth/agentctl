@@ -1,6 +1,7 @@
 package herd
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -657,5 +658,36 @@ func writeStateFile(t *testing.T, dir string, s state.State) {
 	defer state.SetStatePathForTest(prev)
 	if err := state.Save(&s); err != nil {
 		t.Fatalf("writeStateFile: %v", err)
+	}
+}
+
+func TestLoadGroupTagsDispatched(t *testing.T) {
+	dir := t.TempDir()
+	winDir := filepath.Join(dir, "windows")
+	if err := os.MkdirAll(winDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	modes := map[string]string{"@1": "dispatch", "@2": "adhoc", "@3": "custom", "@4": "bare"}
+	for id, mode := range modes {
+		data := []byte(`{"mode":"` + mode + `"}`)
+		if err := os.WriteFile(filepath.Join(winDir, id+".json"), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agents := []state.AgentState{}
+	for i, id := range []string{"@1", "@2", "@3", "@4", "@5"} { // @5 has no record
+		agents = append(agents, state.AgentState{Name: "a" + id, WindowID: id, WindowIndex: i})
+	}
+	writeStateFile(t, dir, state.State{Agents: agents, Timestamp: time.Now()})
+
+	got := LoadGroup(registry.Entry{SessionName: "agentctl-x", ProjectDir: "/tmp/x", RuntimeDir: dir})
+	want := map[string]bool{"@1": true, "@2": true, "@3": true, "@4": false, "@5": false}
+	if len(got.Rows) != len(want) {
+		t.Fatalf("got %d rows, want %d", len(got.Rows), len(want))
+	}
+	for _, r := range got.Rows {
+		if r.Dispatched != want[r.WindowID] {
+			t.Errorf("%s Dispatched = %v, want %v", r.WindowID, r.Dispatched, want[r.WindowID])
+		}
 	}
 }

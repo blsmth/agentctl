@@ -181,6 +181,7 @@ const (
 	herdLinePlaceholder                     // "no agents" / "snapshot unavailable"
 	herdLineRow                             // a selectable agent row
 	herdLineDivider                         // a non-selectable rule between two groups
+	herdLineSubheader                       // a non-selectable "bare (N)" / "dispatched (N)" label
 )
 
 // herdLine is one renderable line. Every kind except herdLineDivider is also
@@ -191,6 +192,25 @@ type herdLine struct {
 	row       herd.Row   // set for herdLineRow
 	groupHead bool       // true for the first row of a group (blank line above)
 	stale     bool       // the owning group's Stale flag — dims rows/header without affecting selectability
+	label     string     // set for herdLineSubheader, e.g. "bare (2)"
+}
+
+// selectable reports whether the cursor may rest on this line. Dividers and
+// sub-section labels are decoration only.
+func (l herdLine) selectable() bool {
+	return l.kind != herdLineDivider && l.kind != herdLineSubheader
+}
+
+// partitionRows splits rows into bare and dispatched, preserving order.
+func partitionRows(rows []herd.Row) (bare, dispatched []herd.Row) {
+	for _, r := range rows {
+		if r.Dispatched {
+			dispatched = append(dispatched, r)
+		} else {
+			bare = append(bare, r)
+		}
+	}
+	return bare, dispatched
 }
 
 // ── HerdModel ────────────────────────────────────────────────────────────────
@@ -746,9 +766,9 @@ func (m *HerdModel) syncSelectionFromCursor() {
 		m.selSession = l.row.Session
 		m.selWindowID = l.row.WindowID
 		m.selIsHeader = false
-	case herdLineDivider:
+	case herdLineDivider, herdLineSubheader:
 		// Unreachable in practice — moveCursor/resolveSelection never park
-		// the cursor on a divider — but defend against adopting a
+		// the cursor on a divider or subheader — but defend against adopting a
 		// divider's zero-value Group as the selection rather than leaving
 		// whatever was previously selected in place.
 	default: // herdLineHeader / herdLinePlaceholder
@@ -792,7 +812,7 @@ func (m *HerdModel) nextSelectable(cursor, delta int) int {
 			return idx // boundary reached; idx is the last selectable stop
 		}
 		idx = next
-		if m.lines[idx].kind != herdLineDivider {
+		if m.lines[idx].selectable() {
 			return idx
 		}
 	}
@@ -844,7 +864,7 @@ func (m *HerdModel) resolveSelection() {
 	// to the first selectable line. rebuildLines never emits a divider as
 	// the first line, but this skips one anyway rather than assuming it.
 	for i, l := range m.lines {
-		if l.kind != herdLineDivider {
+		if l.selectable() {
 			m.splitPane.SetCursor(i)
 			m.syncSelectionFromCursor()
 			m.ensureCursorVisible()
@@ -989,8 +1009,21 @@ func (m *HerdModel) rebuildLines() {
 			lines = append(lines, herdLine{kind: herdLinePlaceholder, group: g, stale: g.Stale})
 			continue
 		}
-		for j, r := range g.Rows {
-			lines = append(lines, herdLine{kind: herdLineRow, row: r, groupHead: j == 0, stale: g.Stale})
+		bare, dispatched := partitionRows(g.Rows)
+		first := true
+		for _, sec := range []struct {
+			name string
+			rows []herd.Row
+		}{{"bare", bare}, {"dispatched", dispatched}} {
+			if len(sec.rows) == 0 {
+				continue
+			}
+			lines = append(lines, herdLine{kind: herdLineSubheader, group: g, stale: g.Stale,
+				label: fmt.Sprintf("%s (%d)", sec.name, len(sec.rows))})
+			for _, r := range sec.rows {
+				lines = append(lines, herdLine{kind: herdLineRow, row: r, groupHead: first, stale: g.Stale})
+				first = false
+			}
 		}
 	}
 	m.lines = lines
@@ -1183,6 +1216,9 @@ func (m HerdModel) renderLine(i int, cw int) string {
 		return marker + herdDimStyle.Render("no agents")
 	case herdLineDivider:
 		return renderHerdDivider(cw)
+	case herdLineSubheader:
+		// Align under agent names: bar + cursor slot (3 cols) + glyph + space.
+		return strings.Repeat(" ", 3+2) + herdDimStyle.Render(l.label)
 	default: // herdLineRow
 		return m.renderRow(l.row, selected, l.stale, cw)
 	}
@@ -1398,15 +1434,17 @@ const herdClosePendingMaxTries = 6
 func (m *HerdModel) recordClose(r herd.Row) {
 	p := &herdClosePending{session: r.Session, windowID: r.WindowID}
 	if g := m.groupForSession(r.Session); g != nil {
-		for i, gr := range g.Rows {
+		bare, dispatched := partitionRows(g.Rows)
+		ordered := append(bare, dispatched...) // display order
+		for i, gr := range ordered {
 			if gr.WindowID != r.WindowID {
 				continue
 			}
-			if i+1 < len(g.Rows) {
-				p.nextID = g.Rows[i+1].WindowID
+			if i+1 < len(ordered) {
+				p.nextID = ordered[i+1].WindowID
 			}
 			if i > 0 {
-				p.prevID = g.Rows[i-1].WindowID
+				p.prevID = ordered[i-1].WindowID
 			}
 			break
 		}

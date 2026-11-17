@@ -12,7 +12,8 @@ import (
 )
 
 // mouseTestModel builds a loaded hub with lines:
-// 0 header(s1), 1 row a, 2 row b, 3 divider, 4 header(s2), 5 row c.
+// 0 header(s1), 1 bare label, 2 row a, 3 row b, 4 divider, 5 header(s2),
+// 6 bare label, 7 row c.
 func mouseTestModel(t *testing.T, width, height int) HerdModel {
 	t.Helper()
 	InitStyles()
@@ -43,13 +44,14 @@ func TestLineAt(t *testing.T) {
 		wantIdx  int
 		wantOK   bool
 	}{
-		{"first row", 40, -1, 5, 4, 1, true},
-		{"row b", 40, -1, 5, 5, 2, true},
-		{"divider", 40, -1, 5, 6, 3, true},
-		{"header", 40, -1, 5, 7, 4, true},
-		{"row c", 40, -1, 5, 8, 5, true},
+		{"subheader", 40, -1, 5, 4, 1, true},
+		{"first row", 40, -1, 5, 5, 2, true},
+		{"row b", 40, -1, 5, 6, 3, true},
+		{"divider", 40, -1, 5, 7, 4, true},
+		{"header", 40, -1, 5, 8, 5, true},
+		{"row c", 40, -1, 5, 10, 7, true},
 		{"above list", 40, -1, 5, 2, -1, false},
-		{"below last line", 40, -1, 5, 9, -1, false},
+		{"below last line", 40, -1, 5, 11, -1, false},
 		{"scrolled", 10, 5, 5, 3, 3, true},
 	}
 	for _, tt := range tests {
@@ -83,9 +85,10 @@ func TestClickDecision(t *testing.T) {
 		want    herdClickAction
 		wantIdx int
 	}{
-		{"row selects", 5, 4, 0, herdClickSelect, 1},
-		{"header selects", 5, 7, 1, herdClickSelect, 4},
-		{"divider ignored", 5, 6, 1, herdClickIgnore, 3},
+		{"row selects", 5, 5, 0, herdClickSelect, 2},
+		{"header selects", 5, 8, 2, herdClickSelect, 5},
+		{"divider ignored", 5, 7, 2, herdClickIgnore, 4},
+		{"subheader ignored", 5, 4, 2, herdClickIgnore, 1},
 		{"chrome ignored", 5, 0, 1, herdClickIgnore, -1},
 	}
 	for _, tt := range tests {
@@ -102,7 +105,7 @@ func TestClickDecision(t *testing.T) {
 
 func TestClickHeaderSelectsWithoutJump(t *testing.T) {
 	m := mouseTestModel(t, 120, 40)
-	next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 7})
+	next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 8})
 	got := next.(HerdModel)
 	if !got.selIsHeader || got.selSession != "s2" || got.selWindowID != "" {
 		t.Errorf("selection = %q/%q/%v, want header of s2", got.selSession, got.selWindowID, got.selIsHeader)
@@ -116,13 +119,13 @@ func TestClickRowSelectsWithoutOpening(t *testing.T) {
 	for _, reclick := range []bool{false, true} {
 		m := mouseTestModel(t, 120, 40)
 		m.selectLine(0)
-		msg := tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 5}
+		msg := tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 6}
 		next, cmd := m.Update(msg)
 		if reclick {
 			next, cmd = next.(HerdModel).Update(msg)
 		}
 		got := next.(HerdModel)
-		if cursorOf(got) != 2 || got.selWindowID != "@2" || got.selSession != "s1" || got.selIsHeader {
+		if cursorOf(got) != 3 || got.selWindowID != "@2" || got.selSession != "s1" || got.selIsHeader {
 			t.Errorf("selection = cursor %d %q/%q header=%v, want row b (@2)",
 				cursorOf(got), got.selSession, got.selWindowID, got.selIsHeader)
 		}
@@ -166,7 +169,7 @@ func TestButtonDecision(t *testing.T) {
 	w := m.listColWidth()
 	newX := w - herdSidebarRightGutter - 2 // inside "+ new"
 	closeX := w - herdSidebarRightGutter - 1
-	// y: 3 header(s1), 4 row a, 5 row b, 6 divider, 7 header(s2), 8 row c
+	// y: 3 header(s1), 4 bare label, 5 row a, 6 row b, 7 divider, 8 header(s2), 9 bare label, 10 row c
 	tests := []struct {
 		name       string
 		x, y       int
@@ -176,16 +179,18 @@ func TestButtonDecision(t *testing.T) {
 	}{
 		{"header new button", newX, 3, tea.MouseLeft, 0, herdClickNew},
 		{"header elsewhere selects", 5, 3, tea.MouseLeft, 0, herdClickSelect},
-		{"stale header has no button", newX, 7, tea.MouseLeft, 4, herdClickSelect},
-		{"row close button", closeX, 4, tea.MouseLeft, 1, herdClickClose},
-		{"row elsewhere selects", 5, 4, tea.MouseLeft, 1, herdClickSelect},
-		{"stale row still closable", closeX, 8, tea.MouseLeft, 5, herdClickClose},
-		{"row new column is not a button", newX - 4, 4, tea.MouseLeft, 1, herdClickSelect},
-		{"right click row", 5, 4, tea.MouseRight, 1, herdClickMenu},
-		{"right click row on close col", closeX, 4, tea.MouseRight, 1, herdClickMenu},
+		{"stale header has no button", newX, 8, tea.MouseLeft, 5, herdClickSelect},
+		{"row close button", closeX, 5, tea.MouseLeft, 2, herdClickClose},
+		{"row elsewhere selects", 5, 5, tea.MouseLeft, 2, herdClickSelect},
+		{"stale row still closable", closeX, 10, tea.MouseLeft, 7, herdClickClose},
+		{"row new column is not a button", newX - 4, 5, tea.MouseLeft, 2, herdClickSelect},
+		{"right click row", 5, 5, tea.MouseRight, 2, herdClickMenu},
+		{"right click row on close col", closeX, 5, tea.MouseRight, 2, herdClickMenu},
+		{"left click subheader", closeX, 4, tea.MouseLeft, 1, herdClickIgnore},
+		{"right click subheader", 5, 4, tea.MouseRight, 1, herdClickIgnore},
 		{"right click header", 5, 3, tea.MouseRight, 0, herdClickMenu},
-		{"right click divider", 5, 6, tea.MouseRight, 3, herdClickIgnore},
-		{"middle click", 5, 4, tea.MouseMiddle, -1, herdClickIgnore},
+		{"right click divider", 5, 7, tea.MouseRight, 4, herdClickIgnore},
+		{"middle click", 5, 5, tea.MouseMiddle, -1, herdClickIgnore},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -207,7 +212,7 @@ func TestRenderedButtonsLineUpWithHitColumns(t *testing.T) {
 	if x := len([]rune(hdr[:strings.Index(hdr, herdNewLabel)])); !m.onNewButton(x) || !m.onNewButton(x+len(herdNewLabel)-1) {
 		t.Errorf("new button at col %d not hit-testable", x)
 	}
-	row := ansi.Strip(m.renderLine(1, w))
+	row := ansi.Strip(m.renderLine(2, w))
 	cols := []rune(row)
 	var closeCol = -1
 	for i, r := range cols {
@@ -218,7 +223,7 @@ func TestRenderedButtonsLineUpWithHitColumns(t *testing.T) {
 	if closeCol < 0 || !m.onCloseButton(closeCol) {
 		t.Errorf("close glyph at col %d in %q not hit-testable", closeCol, row)
 	}
-	if lipgloss.Width(m.renderLine(1, w)) > w {
+	if lipgloss.Width(m.renderLine(2, w)) > w {
 		t.Error("row wider than list column")
 	}
 }
@@ -235,28 +240,28 @@ func TestHandleClickActions(t *testing.T) {
 		}
 	})
 	t.Run("close click arms, second click confirms", func(t *testing.T) {
-		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: closeX, Y: 4})
+		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: closeX, Y: 5})
 		got := next.(HerdModel)
 		if got.confirmWindow != "@1" || got.confirmSession != "s1" {
 			t.Fatalf("armed = %q/%q", got.confirmSession, got.confirmWindow)
 		}
-		if !strings.Contains(ansi.Strip(got.renderLine(1, w)), "close a? y/n") {
-			t.Errorf("row should show confirm prompt: %q", ansi.Strip(got.renderLine(1, w)))
+		if !strings.Contains(ansi.Strip(got.renderLine(2, w)), "close a? y/n") {
+			t.Errorf("row should show confirm prompt: %q", ansi.Strip(got.renderLine(2, w)))
 		}
-		after, cmd := got.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: closeX, Y: 4})
+		after, cmd := got.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: closeX, Y: 5})
 		if cmd == nil || after.(HerdModel).closeArmed() {
 			t.Error("second click on armed X should confirm and disarm")
 		}
 	})
 	t.Run("clicking another row cancels", func(t *testing.T) {
-		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: closeX, Y: 4})
-		next, _ = next.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 5})
+		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: closeX, Y: 5})
+		next, _ = next.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 6})
 		if next.(HerdModel).closeArmed() {
 			t.Error("selection moving away should cancel")
 		}
 	})
 	t.Run("right click opens menu, click item", func(t *testing.T) {
-		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseRight, X: 5, Y: 4})
+		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseRight, X: 5, Y: 5})
 		got := next.(HerdModel)
 		if !got.menuOpen {
 			t.Fatal("menu should open")
@@ -273,7 +278,7 @@ func TestHandleClickActions(t *testing.T) {
 		}
 	})
 	t.Run("menu footer is on the rendered message line", func(t *testing.T) {
-		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseRight, X: 5, Y: 4})
+		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseRight, X: 5, Y: 5})
 		lines := strings.Split(ansi.Strip(next.(HerdModel).render()), "\n")
 		y := next.(HerdModel).footerMessageY()
 		if y >= len(lines) || !strings.Contains(lines[y], "[close]") {
