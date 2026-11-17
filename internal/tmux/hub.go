@@ -163,12 +163,59 @@ func trimTrailingBlankLines(s string) string {
 // SwitchToLastSession switches the attached client back to whichever session
 // it was previously attached to (`tmux switch-client -l`). Used to return from
 // the hub to wherever the user came from.
-func SwitchToLastSession() error {
-	cmd := exec.Command("tmux", "switch-client", "-l")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("switch-client -l: %s: %w", string(out), err)
+func SwitchToLastSession() error { return SwitchClientToLast("") }
+
+// SwitchClientToLast is SwitchToLastSession aimed at a specific client (-c)
+// when client is non-empty.
+func SwitchClientToLast(client string) error {
+	args := []string{"switch-client"}
+	if client != "" {
+		args = append(args, "-c", client)
+	}
+	args = append(args, "-l")
+	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("switch-client -l: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
+}
+
+// SwitchClientToSession switches client (or the current one when empty) to
+// the named session. The target is "=name:" for an exact-match session.
+func SwitchClientToSession(client, session string) error {
+	args := []string{"switch-client"}
+	if client != "" {
+		args = append(args, "-c", client)
+	}
+	args = append(args, "-t", "="+session+":")
+	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("switch-client %s: %s: %w", session, strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+// ListSessionActivity returns "name\tactivity" lines for every session
+// (including viewers; callers filter).
+func ListSessionActivity() []SessionActivity {
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}\t#{session_activity}").Output()
+	if err != nil {
+		return nil
+	}
+	var res []SessionActivity
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		name, act, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if !ok || name == "" {
+			continue
+		}
+		n, _ := strconv.ParseInt(act, 10, 64)
+		res = append(res, SessionActivity{Name: name, Activity: n})
+	}
+	return res
+}
+
+// SessionActivity is a session name with its #{session_activity} epoch.
+type SessionActivity struct {
+	Name     string
+	Activity int64
 }
 
 // HubSessionExists reports whether the hub session is currently running.

@@ -256,5 +256,8 @@ func TestKeybindingsCarryKeyWindow(t *testing.T) {
 		if !has {
 			t.Errorf("binding %q lacks %s: %s", kb.key, KeyWindowEnv, kb.command)
 		}
+		if !strings.Contains(kb.command, KeyClientEnv+"=#{client_name}") {
+			t.Errorf("binding %q lacks %s: %s", kb.key, KeyClientEnv, kb.command)
+		}
 	}
 }

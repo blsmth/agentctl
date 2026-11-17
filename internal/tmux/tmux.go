@@ -1061,9 +1061,17 @@ func RunningAgents() map[string]string {
 }
 
 // DisplayMessage shows a brief message in the tmux status line.
-func DisplayMessage(msg string) {
-	// display-message format-expands its text; msg is literal.
-	_ = exec.Command("tmux", "display-message", FormatEscape(msg)).Run()
+func DisplayMessage(msg string) { DisplayMessageTo("", msg) }
+
+// DisplayMessageTo is DisplayMessage aimed at a specific client (-c) when
+// client is non-empty; needed when running detached from any client (popups).
+func DisplayMessageTo(client, msg string) {
+	args := []string{"display-message"}
+	if client != "" {
+		args = append(args, "-c", client)
+	}
+	args = append(args, FormatEscape(msg))
+	_ = exec.Command("tmux", args...).Run()
 }
 
 // NewTempWindow opens a temporary tmux window that closes when the command exits.
@@ -1334,14 +1342,14 @@ func agentctlKeybindings(exe string) []keyBinding {
 	// neither its command nor its -e values, so only this form can carry it):
 	// hubtarget.Apply uses it to redirect hub keypresses to the viewed agent.
 	nested := func(w, h int, args string) string {
-		inner := fmt.Sprintf("tmux display-popup -E -t #{window_id} %s -e %s=#{window_id} -w %d -h %d %s",
-			popupPin, KeyWindowEnv, w, h, shellquote.Quote(invokeRS(args)))
+		inner := fmt.Sprintf("tmux display-popup -E -t #{window_id} %s -e %s=#{window_id} -e %s=#{client_name} -w %d -h %d %s",
+			popupPin, KeyWindowEnv, KeyClientEnv, w, h, shellquote.Quote(invokeRS(args)))
 		return "run-shell " + shellquote.Quote(inner)
 	}
 	popup := func(w, h int, args string) string { return nested(w, h, args) }
 	// run execs agentctl args via run-shell with the cwd pin and KeyWindowEnv.
 	run := func(flags, args string) string {
-		return "run-shell " + flags + shellquote.Quote(envPrefix+KeyWindowEnv+"=#{window_id} "+invokeRS(args))
+		return "run-shell " + flags + shellquote.Quote(envPrefix+KeyWindowEnv+"=#{window_id} "+KeyClientEnv+"=#{client_name} "+invokeRS(args))
 	}
 
 	return []keyBinding{
