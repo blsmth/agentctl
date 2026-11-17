@@ -93,7 +93,7 @@ func statusRowsFromGroups(groups []herd.Group, opts StatusOptions) []statusRow {
 			}
 			sr := statusRow{row: r, meta: meta[r.WindowID], group: g}
 			if opts.Verify {
-				sr.verdict, sr.checked = verifyPane(g.Session, r.WindowID)
+				sr.verdict, sr.checked = verifyPane(g.Session, r.WindowID, r.Harness)
 			}
 			rows = append(rows, sr)
 		}
@@ -137,12 +137,12 @@ func stateMatches(r herd.Row, want string) bool {
 // verifyPane captures a window's pane and classifies it. Returns checked=false
 // when the pane could not be read, so callers can distinguish "no verdict"
 // from "verdict is unknown".
-func verifyPane(session, windowID string) (herd.PaneVerdict, bool) {
+func verifyPane(session, windowID, harnessName string) (herd.PaneVerdict, bool) {
 	text, err := tmux.CapturePane(session, windowID, 60)
 	if err != nil {
 		return herd.PaneUnknown, false
 	}
-	return herd.ClassifyPane(text), true
+	return herd.ClassifyPaneFor(harnessName, text), true
 }
 
 // RunStatus prints the cross-session agent table (or JSON).
@@ -400,7 +400,7 @@ func RunStatusDetail(window string, jsonOut bool) error {
 		return err
 	}
 
-	verdict, checked := verifyPane(sr.group.Session, sr.row.WindowID)
+	verdict, checked := verifyPane(sr.group.Session, sr.row.WindowID, sr.row.Harness)
 
 	if jsonOut {
 		sr.verdict, sr.checked = verdict, checked
@@ -546,7 +546,7 @@ func RunPeek(window string, lines int, jsonOut bool) error {
 	if err != nil {
 		return fmt.Errorf("capturing pane for %s: %w", sr.row.WindowID, err)
 	}
-	verdict := herd.ClassifyPane(text)
+	verdict := herd.ClassifyPaneFor(sr.row.Harness, text)
 	prompts := herd.PromptCount(text)
 
 	if jsonOut {

@@ -24,11 +24,16 @@ func guardAgentctl() bool {
 	return true
 }
 
-// decodeInput reads and decodes JSON from stdin into dst.
-// Returns false if decoding fails (already logged). Callers that
-// don't care about decode errors can ignore the return value.
+// decodeInput reads the hook payload from stdin and decodes it into dst, in
+// the canonical (Claude Code) shape whatever the harness (see
+// readHookInput). Returns false if decoding fails (already logged). Callers
+// that don't care about decode errors can ignore the return value.
 func decodeInput(dst interface{}) bool {
-	if err := json.NewDecoder(os.Stdin).Decode(dst); err != nil {
+	ev, err := readHookInput()
+	if err == nil {
+		err = json.Unmarshal(ev.Raw, dst)
+	}
+	if err != nil {
 		logging.Log("hook: decode stdin: %v", err)
 		return false
 	}

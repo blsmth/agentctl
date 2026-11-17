@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/blsmth/agentctl/internal/transcript"
 )
 
 // Sync scans all Claude project directories and creates or updates .meta.json
@@ -177,7 +179,7 @@ func SyncOne(sessionID, transcriptPath string) error {
 	}
 	logFile := ""
 	// Only trust a transcript named for this session.
-	if transcriptPath != "" && filepath.Base(transcriptPath) == sessionID+".jsonl" {
+	if transcriptPath != "" && transcript.LogMatchesSession(filepath.Base(transcriptPath), sessionID) {
 		if st, err := os.Stat(transcriptPath); err == nil && st.Mode().IsRegular() {
 			logFile = transcriptPath
 		}

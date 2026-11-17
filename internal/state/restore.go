@@ -57,7 +57,7 @@ func BuildRestoreAgents(records map[string]windowstate.WindowState, live map[str
 			}
 		}
 		sessionID := ws.SessionID
-		if sessionID == "" && ws.LogPath != "" {
+		if sessionID == "" && ws.LogPath != "" && ws.Harness == "" {
 			sessionID = strings.TrimSuffix(filepath.Base(ws.LogPath), ".jsonl")
 		}
 		out = append(out, AgentState{
@@ -70,6 +70,7 @@ func BuildRestoreAgents(records map[string]windowstate.WindowState, live map[str
 			WindowIndex: idx,
 			Backend:     ws.Backend,
 			Account:     ws.Account,
+			Harness:     ws.Harness,
 
 			Mode:             ws.Mode,
 			TicketRef:        ws.Ticket,

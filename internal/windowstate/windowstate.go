@@ -29,6 +29,7 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/safefs"
+	"github.com/blsmth/agentctl/internal/transcript"
 )
 
 // WindowState is the per-window authoritative state written by hooks and read
@@ -53,6 +54,9 @@ type WindowState struct {
 	// was launched under ("" = no accounts configured, or an unnamed default
 	// dir). Restore relaunches under the same account.
 	Account string `json:"account,omitempty"`
+	// Harness is the agent program running in the window ("" = claude, the
+	// default; see internal/harness). Restore relaunches with the same one.
+	Harness string `json:"harness,omitempty"`
 	// SessionName is the name passed to claude via -n at launch. Restore and
 	// resume reuse it so a relaunched session keeps its cross-session identity.
 	// When the statusline push reports a different name (Claude Code
@@ -428,7 +432,7 @@ func Read(windowID string) (WindowState, error) {
 
 // logPathConsistent reports whether logPath is plausibly the log for
 // sessionID. claude.LogPath derives the filename directly from the session
-// ID, so filepath.Base(logPath) must equal sessionID + ".jsonl" -- only the
+// ID, so filepath.Base(logPath) must equal sessionID + ".jsonl" (pi: <timestamp>_<id>.jsonl) -- only the
 // basename matters here, never the directory portion. A resumed session
 // legitimately logs to the directory where it was originally created (not
 // necessarily the window's current cwd), so directory mismatches are
@@ -440,7 +444,7 @@ func logPathConsistent(logPath, sessionID string) bool {
 	if logPath == "" || sessionID == "" {
 		return true
 	}
-	return filepath.Base(logPath) == sessionID+".jsonl"
+	return transcript.LogMatchesSession(filepath.Base(logPath), sessionID)
 }
 
 // warnedLogPaths tracks (windowID, logPath) pairs we've already warned about

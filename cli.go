@@ -207,6 +207,7 @@ type LaunchCmd struct {
 	NoWorktree     bool   `name:"no-worktree" help:"Launch directly in the main checkout instead of an isolated git worktree"`
 	Backend        string `help:"Named backend from config (Ollama, Nous Portal); 'none' forces Anthropic"`
 	Account        string `help:"Claude account from config accounts (default: agent setting, account_rules, default_account)"`
+	Harness        string `help:"Agent program to run the agent on: claude or pi (default: agent config, then frontmatter, then claude)"`
 	Model          string `help:"Model to run (overrides the agent's model; 'inherit' clears it)"`
 	Effort         string `help:"Effort level: low, medium, high, xhigh, max, auto ('inherit' clears the agent's)"`
 	PermissionMode string `name:"permission-mode" help:"claude --permission-mode for this launch; overrides the agent config"`
@@ -225,6 +226,7 @@ func (c *LaunchCmd) Run() error {
 	cmd.RunLaunch(c.Name, cmd.LaunchOptions{
 		Backend:        c.Backend,
 		Account:        c.Account,
+		Harness:        c.Harness,
 		Model:          c.Model,
 		Effort:         c.Effort,
 		PermissionMode: c.PermissionMode,
@@ -493,6 +495,7 @@ type DispatchCmd struct {
 	Model      string        `help:"Model override (e.g. sonnet, opus, haiku)" short:"m"`
 	Backend    string        `help:"Named backend from config (Ollama, Nous Portal); 'none' forces Anthropic"`
 	Account    string        `help:"Claude account from config accounts (default: agent setting, account_rules, dispatching window, default_account)"`
+	Harness    string        `help:"Agent program to run the agent on: claude or pi (default: agent config, then frontmatter, then claude)"`
 	Repo       string        `help:"GitHub repo as owner/name (default: resolved from the working directory)"`
 	NoWorktree bool          `name:"no-worktree" help:"Skip worktree creation"`
 	Wait       bool          `help:"Block until agent completes"`
@@ -502,7 +505,7 @@ type DispatchCmd struct {
 func (c *DispatchCmd) Run() error {
 	cmd.RunDispatch(cmd.DispatchOptions{
 		Issue: c.Issue, Prompt: c.Prompt, PromptKey: c.PromptKey, Agent: c.Agent, Dir: c.Dir,
-		Model: c.Model, Backend: c.Backend, Account: c.Account, NoWorktree: c.NoWorktree,
+		Model: c.Model, Backend: c.Backend, Account: c.Account, Harness: c.Harness, NoWorktree: c.NoWorktree,
 		Wait: c.Wait, Timeout: c.Timeout, Repo: c.Repo,
 	})
 	return nil

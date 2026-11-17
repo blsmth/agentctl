@@ -40,7 +40,7 @@ Keys that make agentctl run a shell command are honored **only from the global c
 - `hooks.*` (and per-agent `agents.<name>.hooks`)
 - `dispatch.on_complete` (and per-agent `dispatch.on_complete`)
 
-`backends`, `accounts`, `default_account`, `account_rules` and `agents.<name>.account` are global-only for the same reason: they decide where prompts go and which login pays for them.
+`backends`, `accounts`, `default_account`, `account_rules`, `agents.<name>.account` and `agents.<name>.harness` are global-only for the same reason: they decide where prompts go, which login pays for them, and (for `harness`) which approval layer an agent runs under.
 
 Rationale: a project-local file can arrive with a cloned repository. Executing commands named by an untrusted repo would be remote code execution. See [SECURITY.md](../SECURITY.md).
 
@@ -283,6 +283,7 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
 | `work_journal` | bool | inherit | Enable journaling for this agent (needs `llm.provider`). |
 | `backend` | string | none | Name of a `backends` entry to launch this agent against instead of Anthropic. Global-only. |
 | `account` | string | none | Name of an `accounts` entry this agent launches under. Global-only. |
+| `harness` | string | `claude` | Agent program to run this agent on: `claude` (Claude Code) or `pi`. Wins over a `harness:` line in the agent definition's frontmatter; `agentctl dispatch --harness` and `agentctl launch --harness` win over both. An unknown name fails the launch. Global-only. See [Harnesses](#harnesses-claude-code-and-pi). |
 | `dispatch.on_complete` | string | inherit | Per-agent completion command. Global-only. |
 | `hooks` | object | none | Per-agent lifecycle hooks. Global-only. |
 
@@ -443,6 +444,34 @@ agentctl dispatch --issue 12 --account personal
 
 `account add` creates the dir (0700), symlinks the shared allowlist from `~/.claude` (`agents/`, `shared/`, `skills/`, `commands/`, `agent-memory/`, `CLAUDE.md`, `settings.json`, `hooks/`, `plugins/`; entries that do not exist are skipped, and an existing non-symlink file is never overwritten), registers the account, then prints `CLAUDE_CONFIG_DIR=<dir> claude auth login` and, inside tmux, opens it in a popup. Credentials, `projects/`, `sessions/`, history and org policy files stay private to each dir.
 
+## Harnesses (Claude Code and pi)
+
+A harness is the terminal coding-agent program that runs in an agent's window. The default is Claude Code; [pi](https://github.com/earendil-works/pi) (`pi` CLI, 1.0+) is the second. The harness is chosen per launch, highest first:
+
+1. `agentctl dispatch --harness <name>` or `agentctl launch --harness <name>`
+2. `agents.<name>.harness` in the global config
+3. `harness: <name>` in the agent definition's frontmatter
+4. `claude`
+
+Config wins over frontmatter for the same reason it does for `model`: your own config outranks a definition file that may have come with a cloned repo. The harness is recorded in windowstate and `restore.json`, so restore relaunches the window on the same harness (records without it mean `claude`).
+
+```yaml
+---
+name: pi-reviewer
+description: Reviews diffs on pi
+harness: pi
+---
+```
+
+What changes on pi:
+
+- **Launch.** `pi --session-id <uuid> -n <name> [--model <m>] [--thinking <level>] -e <bridge> --append-system-prompt <file> [-- <first message>]`. `effort_level` maps to `--thinking` (`auto` leaves pi's default). `model` is passed as is (pi accepts `provider/id` and fuzzy patterns); the mode default model (`sonnet` for issue dispatches) is a Claude alias and is not applied. pi has no `--agent`, so the agent's full definition body, with its `@shared` includes expanded, goes into the system-prompt file with the usual preamble. Restore reopens the session with `--session-id`.
+- **Hooks.** pi has no shell-hook config. agentctl writes a small dependency-free bridge extension (`<runtime dir>/launch/agentctl-pi.ts`) at every launch and loads it with `-e`. It forwards pi's `session_start`, `agent_start`, `tool_call`, `tool_result`, `agent_settled` and `session_shutdown` events to `agentctl hook-* --harness pi`, so working / idle / done, dispatch completion, the done notice to the dispatcher's mailbox, and worktree reclaim on quit behave as on Claude. `agent_settled` is the turn end; when the completion checks refuse the stop (uncommitted changes, failing build) the bridge sends the reason back as a user message, as Claude Code's Stop hook does.
+- **Approvals.** pi has no permission system. The bash gate (`blocked_commands`, `blocked_patterns`, the global deny list, `bash_preview` and the dispatch approval popup) runs on every pi `bash` tool call and blocks it on deny. A window is only blocked while an agentctl approval popup is open; `permission_mode` and `allowed_permissions` do not apply.
+- **Not available on pi:** accounts (an explicit `--account` is an error), backends (an explicit `--backend` is an error; an agent's configured backend is ignored with a warning), `SendMessage` / `ListAgents` (workers are not taught them and report through the PR; agentctl's done notice still reaches the dispatcher), the statusline, and pane classification (`status --verify` reports `unknown`). Mailbox notices addressed to a pi window are delivered through the bridge.
+- **Transcripts.** pi session files (`~/.pi/agent/sessions/`, or `$PI_CODING_AGENT_SESSION_DIR`) are read in place, so the chrome bar's tokens and context %, the work journal and `agentctl cost` work. Tokens are priced through the same table as Claude sessions; a Claude model run through pi is billed `metered` (pi calls the API with its own credentials).
+- **tmux.** agentctl enables `extended-keys` (and `extended-keys-format csi-u` on tmux 3.5+) on the tmux server so pi can tell Shift+Enter from Enter. Both are server options; `on` only affects programs that ask for extended keys.
+
 ## Environment variables
 
 | Variable | Effect |
@@ -450,5 +479,6 @@ agentctl dispatch --issue 12 --account personal
 | `XDG_CONFIG_HOME` | Moves the global config directory (default `~/.config`). |
 | `CLAUDE_CONFIG_DIR` | The Claude Code config dir. With no `accounts` configured it is the default dir agentctl reads transcripts from (else `~/.claude`); with accounts, launches set it per window. |
 | `AGENTCTL_ACCOUNT` | Set in a launched window to the account it runs under (recorded in windowstate). |
+| `AGENTCTL_HARNESS` | Set in a launched window to its harness when that is not `claude` (recorded in windowstate). |
 | `AGENTCTL_REPO` | Set by dispatch in a dispatched agent's environment, for its information only. It is never read to resolve the repo; use `agentctl dispatch --repo owner/name` for that. |
 | `AGENTCTL_RUNTIME_DIR` | Override the `.agentctl/` runtime directory. |

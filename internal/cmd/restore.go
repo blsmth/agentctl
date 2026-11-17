@@ -11,6 +11,7 @@ import (
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/state"
@@ -197,7 +198,11 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 		// --resume; extras start fresh.
 		root := projectsRoot(as.Account, as.LogPath)
 		sessionID, logPath := validateRestoreSession(root, workDir, as.SessionID, as.LogPath)
-		if as.SessionID != "" && sessionID == "" {
+		if harness.For(as.Harness).Name() != harness.Claude {
+			// pi reopens (or recreates) a session by ID wherever its file
+			// lives, so the ID is kept; the log only when it still exists.
+			sessionID, logPath = as.SessionID, existingFile(as.LogPath)
+		} else if as.SessionID != "" && sessionID == "" {
 			where := sessions.FindLogBySessionIDIn(root, as.SessionID)
 			logging.Log("restoreAgents: %s: session %s has no log under project %s (found at %q); starting fresh instead of resuming",
 				as.Name, as.SessionID, claude.ProjectSlug(workDir), where)
@@ -218,6 +223,7 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 			LogPath:          logPath,
 			Backend:          as.Backend,
 			Account:          as.Account,
+			Harness:          as.Harness,
 			Mode:             as.Mode,
 			Ticket:           as.TicketRef,
 			TicketTitle:      as.TicketTitle,
@@ -266,4 +272,15 @@ func validateRestoreSession(projectsRoot, workDir, sessionID, savedLogPath strin
 		return "", ""
 	}
 	return sessionID, want
+}
+
+// existingFile returns path when it names an existing regular file, else "".
+func existingFile(path string) string {
+	if path == "" {
+		return ""
+	}
+	if st, err := os.Stat(path); err != nil || st.IsDir() {
+		return ""
+	}
+	return path
 }

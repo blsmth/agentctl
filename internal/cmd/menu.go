@@ -266,6 +266,9 @@ type LaunchOptions struct {
 	// Account is the --account override (a name from config accounts); empty
 	// resolves through agent setting, account_rules and default_account.
 	Account string
+	// Harness is the --harness override; empty resolves through the agent
+	// config, its frontmatter, then the default (claude).
+	Harness string
 	// Model and Effort override the agent's configured model / effort_level;
 	// dispatch.Inherit clears the configured value.
 	Model  string
@@ -314,6 +317,7 @@ func RunLaunchAgentOpts(name string, workDir string, opts LaunchOptions) {
 		WorkDir:        workDir,
 		Backend:        opts.Backend,
 		Account:        opts.Account,
+		Harness:        opts.Harness,
 		Model:          opts.Model,
 		Effort:         opts.Effort,
 		PermissionMode: opts.PermissionMode,

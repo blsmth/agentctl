@@ -1,6 +1,9 @@
 package herd
 
-import "github.com/blsmth/agentctl/internal/panestate"
+import (
+	"github.com/blsmth/agentctl/internal/harness"
+	"github.com/blsmth/agentctl/internal/panestate"
+)
 
 // PaneVerdict is what a pane's visible contents say the agent is doing, as
 // opposed to what windowstate claims. When the two disagree, the pane wins.
@@ -48,4 +51,11 @@ func (v PaneVerdict) AgreesWith(recorded string) bool {
 		return recorded == "idle" || recorded == ""
 	}
 	return true // Unknown never contradicts anything.
+}
+
+// ClassifyPaneFor classifies pane text with the reader of the named harness
+// ("" = claude). A harness agentctl cannot read (pi) yields PaneUnknown, so
+// `status --verify` falls back to the recorded state instead of misreading.
+func ClassifyPaneFor(harnessName, text string) PaneVerdict {
+	return PaneVerdict(harness.For(harnessName).ClassifyPane(text))
 }

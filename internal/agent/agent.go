@@ -49,6 +49,7 @@ type Agent struct {
 	Extends      string // Base agent name, empty if standalone
 	ComposedBody string // Merged base+local body, empty if standalone
 	Tools        string // Tools field from frontmatter
+	Harness      string // harness field from frontmatter ("" = config or default; see internal/harness)
 	Scope        AgentScope
 	SymTarget    string // Raw symlink target path (if local)
 	ProjectName  string // Extracted project name from symlink target
@@ -69,6 +70,9 @@ type Frontmatter struct {
 	Tools       string `yaml:"tools"`
 	Model       string `yaml:"model"`
 	Extends     string `yaml:"extends"`
+	// Harness names the agent program to run this agent on ("claude", "pi").
+	// The agents.<name>.harness config key wins over it.
+	Harness string `yaml:"harness"`
 }
 
 // frontmatter is an alias kept for internal use.
@@ -275,6 +279,7 @@ func scanDir(dir string, scope AgentScope, cfg *config.Config) ([]Agent, error) 
 			FilePath:    resolved,
 			Extends:     fm.Extends,
 			Tools:       fm.Tools,
+			Harness:     fm.Harness,
 			Scope:       agentScope,
 			SymTarget:   symTarget,
 			ProjectName: projectName,
@@ -337,6 +342,7 @@ func resolveExtends(agents []Agent, cfg *config.Config) []Agent {
 				Dir:         dir,
 				Model:       ac.Model,
 				FilePath:    basePath,
+				Harness:     fm.Harness,
 			}
 			base = &synthetic
 		}

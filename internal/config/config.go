@@ -95,6 +95,10 @@ type AgentConfig struct {
 	// Account names an entry in the global Config.Accounts map: the Claude
 	// login (CLAUDE_CONFIG_DIR) this agent launches under. Global config only.
 	Account string `json:"account,omitempty"`
+	// Harness names the agent program this agent runs on: "claude" (default)
+	// or "pi". Wins over the agent definition's frontmatter harness; dispatch
+	// --harness wins over both. Global config only: see sanitizeProjectConfig.
+	Harness string `json:"harness,omitempty"`
 }
 
 // DefaultBackendAuthToken is the dummy token sent to a backend that does not
@@ -142,7 +146,7 @@ type BackendConfig struct {
 // safeModelValue is the charset allowed for nous model slugs. It adds "/" and
 // "~" (OpenRouter-style ids such as "~anthropic/claude-sonnet-latest") to
 // safeLaunchValue's set. It applies to backend model fields only: every place
-// a model reaches a command line quotes it (dispatch.BuildBaseFlags).
+// a model reaches a command line quotes it (harness.Harness.Command).
 var safeModelValue = regexp.MustCompile(`^[A-Za-z0-9._:/~-]+$`)
 
 // nousNameRe restricts nous backend names: the name keys a stored credential
@@ -1293,6 +1297,10 @@ func sanitizeProjectConfig(project, global *Config) {
 			warn(pre+"account", globalOnly)
 		}
 		ac.Account = g.Account
+		if ac.Harness != "" && ac.Harness != g.Harness {
+			warn(pre+"harness", globalOnly)
+		}
+		ac.Harness = g.Harness
 		if ac.BashPreview != nil && !*ac.BashPreview && global.EffectiveBashPreview(name) {
 			warn(pre+"bash_preview", noLoosen)
 			ac.BashPreview = g.BashPreview

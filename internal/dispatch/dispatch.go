@@ -15,11 +15,11 @@ import (
 	"strings"
 
 	"github.com/blsmth/agentctl/internal/agent"
-	"github.com/blsmth/agentctl/internal/claude"
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/gittracked"
+	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/ids"
 	"github.com/blsmth/agentctl/internal/launchopts"
@@ -88,6 +88,14 @@ type Request struct {
 	// (serve may have been started from a tmux pane, and TMUX_PANE would
 	// otherwise name an unrelated window as the parent).
 	Detached bool
+	// Harness overrides the agent's configured harness (dispatch --harness);
+	// "" resolves through config, frontmatter, then harness.Default.
+	Harness string
+
+	// Set by Launch from the resolved harness, for buildSystemPrompt.
+	persona          string // full agent body, for harnesses without --agent
+	noMessaging      bool   // harness has no SendMessage/ListAgents
+	reportViaMailbox bool   // a dispatcher exists but cannot be messaged
 }
 
 // applyOverrides applies the request's model and effort to ac and returns the
@@ -151,6 +159,8 @@ type Result struct {
 	// Account is the configured account the window runs under ("" when no
 	// accounts are configured or the default dir has no account name).
 	Account string
+	// Harness is the agent program the window runs (see internal/harness).
+	Harness string
 }
 
 // Launch executes the unified dispatch pipeline:
@@ -162,7 +172,7 @@ type Result struct {
 //  6. Resolve the launching agent's body and expand its @shared includes
 //  7. Build system prompt
 //  8. Determine user message
-//  9. Generate session ID, base flags, settings file
+//  9. Prepare the harness workspace (settings or bridge extension), session ID
 //  10. Write system prompt to temp file
 //  11. Build shell command
 //  12. Launch tmux window
@@ -203,30 +213,22 @@ func Launch(req Request) (Result, error) {
 	// unreachable backend fails the dispatch without leaving a worktree behind.
 	cfg := config.Load()
 	ac := cfg.ForAgent(req.AgentName)
-
-	// Apply model: priority order is Request.Model > backend model >
-	// AgentConfig.Model > modeSpec.DefaultModel.
-	explicitModel, err := applyOverrides(&ac, req, spec.DefaultModel)
+	h, err := resolveHarness(cfg, req.AgentName, req.Harness, workDir)
 	if err != nil {
 		return Result{}, err
 	}
-	// Account before backend: a nous preflight checks the account's own
-	// settings.json. Never falls back to another account on error.
-	parentAccount := ""
-	if !req.Detached && cfg.HasAccounts() {
-		parentAccount = parentAccountFn()
-	}
-	acct, err := resolveAccountFn(cfg, req.Account, req.AgentName, workDir, parentAccount)
+	caps := h.Caps()
+
+	// Apply model: priority order is Request.Model > backend model >
+	// AgentConfig.Model > modeSpec.DefaultModel.
+	explicitModel, err := applyOverrides(&ac, req, modeDefaultModel(h, spec))
 	if err != nil {
-		return Result{}, fmt.Errorf("resolving account: %w", err)
+		return Result{}, err
 	}
-	backendEnv := map[string]string{}
-	ApplyAccountEnv(backendEnv, acct)
-	be, err := PrepareBackend(cfg, &ac, req.Backend, explicitModel, workDir, backendEnv)
+	acct, backendEnv, err := prepareAccountAndBackend(cfg, h, &ac, req, explicitModel, workDir)
 	if err != nil {
-		return Result{}, fmt.Errorf("resolving backend: %w", err)
+		return Result{}, err
 	}
-	_ = be
 
 	// 3. Create worktree if requested.
 	var branch string
@@ -261,7 +263,9 @@ func Launch(req Request) (Result, error) {
 	// agent definition files, so this is the only channel that actually gets
 	// their content in front of the model (see agent.ExpandSharedRefs).
 	// Never fails the dispatch: a resolution failure just means no expansion.
-	warnMissingMessagingTools(cfg, req.AgentName, workDir, repoDir)
+	if caps.NativeMessaging {
+		warnMissingMessagingTools(cfg, req.AgentName, workDir, repoDir)
+	}
 	var sharedConventions string
 	if body := resolveAgentBody(cfg, req.AgentName, workDir, repoDir); body != "" {
 		expanded, missing := agent.ExpandSharedRefs(body)
@@ -269,12 +273,24 @@ func Launch(req Request) (Result, error) {
 		for _, ref := range missing {
 			logging.Warn("dispatch: agent %q references unresolved shared include %q", req.AgentName, ref)
 		}
+		if !caps.AgentFlag {
+			// No --agent: the persona itself must travel in the prompt.
+			req.persona = body
+		}
 	}
 
 	// 7. Build system prompt.
 	req.Orchestrator = launchOrchestrator(req, spec)
-	if req.Orchestrator.Known() && cfg.HasAccounts() {
-		dropCrossAccountOrchestrator(&req, acct.Dir, claudehome.ParentDir(parentAccount))
+	if req.Orchestrator.Known() && cfg.HasAccounts() && caps.Accounts {
+		dropCrossAccountOrchestrator(&req, acct.Dir, claudehome.ParentDir(acct.parent))
+	}
+	if !caps.NativeMessaging {
+		// No SendMessage: the worker is not told of an orchestrator to
+		// message. agentctl's done notice still reaches the dispatcher's
+		// mailbox (spawned_by is set from the environment, not from this).
+		req.reportViaMailbox = req.Orchestrator.Known()
+		req.Orchestrator = Orchestrator{}
+		req.noMessaging = true
 	}
 	systemPrompt := buildSystemPrompt(req, spec, workDir, branch, useWorktree, contextEntries, sharedConventions)
 
@@ -289,58 +305,24 @@ func Launch(req Request) (Result, error) {
 		}
 	}
 
-	// Write project-local settings into the worktree so hooks fire there, and
-	// do it BEFORE WriteAgentSettings below. Needed because Claude Code ignores
-	// --settings when --agent is also passed (bug #37730). Project-local
-	// resolution honours the worktree directory and is NOT affected by the
-	// bug. Best-effort — a failure here is non-fatal.
-	//
-	// Ordering matters for the single-hooks-source invariant: WriteAgentSettings
-	// checks workDir and its ancestors up to repoDir (via
-	// ancestorHasAgentctlHooks) and omits hooks from the --settings file when it
-	// finds agentctl hooks already registered anywhere in that chain. Writing the
-	// worktree settings first means that check sees them and correctly excludes
-	// hooks from the --settings file for this dispatch, so hooks fire from exactly
-	// one source instead of two (see BuildAgentSettingsJSON's doc comment).
-	//
-	// repoDir is passed as the ancestor-walk boundary in both calls below: an
-	// agentctl worktree lives at <repoDir>/.worktrees/<slug>/, nested INSIDE the
-	// repo, and Claude Code's project-local settings resolution walks up the
-	// directory tree from cwd rather than stopping at the immediate directory --
-	// so a hand-maintained <repoDir>/.claude/settings.local.json that already
-	// registers agentctl hooks gets loaded IN ADDITION TO whatever this dispatch
-	// writes into the worktree, unless both writers here account for it. See
-	// ancestorHasAgentctlHooks's doc comment for the empirical verification.
-	//
-	// A failure here aborts the dispatch rather than launching anyway: the
-	// usual cause is a branch that commits .claude/ (or its
-	// settings.local.json) as a symlink, and launching regardless would run
-	// the worker -- often in auto permission mode -- without agentctl's
-	// hooks, including hook-validate-bash.
-	if useWorktree && workDir != repoDir {
-		if err := WriteWorktreeSettings(workDir, repoDir, ac); err != nil {
-			logging.Warn("dispatch: WriteWorktreeSettings: %v", err)
-			return Result{}, fmt.Errorf("writing worktree settings in %s (refusing to launch without agentctl hooks): %w", workDir, err)
-		}
+	// 9. Prepare the harness workspace: for Claude, agentctl's settings
+	// (hooks, permissions, backend routing); for pi, the bridge extension.
+	prep, err := h.PrepareWorkspace(harness.Workspace{
+		Dir:           launchDirFn(),
+		WriteSettings: func() (string, error) { return writeLaunchSettings(req.AgentName, ac, workDir, repoDir, useWorktree) },
+	})
+	if err != nil {
+		return Result{}, err
 	}
-
-	// 9. Generate session ID, base flags, settings.
 	sessionID := ids.NewUUID()
-	settingsPath, err := writeAgentSettings(req.AgentName, ac, workDir, repoDir)
-	if err != nil && paths.RuntimeDir() != "" {
-		// Same reasoning as the worktree settings above: a refused write
-		// (symlinked settings file or dir) must not launch a hookless agent.
-		return Result{}, fmt.Errorf("writing agent settings (refusing to launch without agentctl hooks): %w", err)
-	}
 	windowName := tmux.NextInstanceName(req.AgentName)
 	sessionName := SessionNameFor(req.AgentName, windowName, workDir, repoDir, useWorktree)
-	baseFlags := BuildBaseFlags(ClaudeInvocation{
-		Agent:          req.AgentName,
-		Name:           sessionName,
-		SessionID:      sessionID,
-		PermissionMode: resolvePermissionMode(req.Mode, ac, req.PermissionMode),
-		SettingsPath:   settingsPath,
-	}, ac)
+	permissionMode := resolvePermissionMode(req.Mode, ac, req.PermissionMode)
+	inv := baseInvocation(req.AgentName, sessionName, ac, prep)
+	inv.SessionID = sessionID
+	if caps.PermissionModes {
+		inv.PermissionMode = permissionMode
+	}
 
 	// 10. Write system prompt to temp file.
 	sysFile, err := writeTempPrompt(string(req.Mode)+"-sys", systemPrompt)
@@ -348,20 +330,24 @@ func Launch(req Request) (Result, error) {
 		return Result{}, fmt.Errorf("writing system prompt: %w", err)
 	}
 	logging.Debug("dispatch: full system prompt %s (%d bytes):\n%s", sysFile, len(systemPrompt), systemPrompt)
+	inv.SystemPromptFile = sysFile
 
 	// 11. Build shell command.
 	// For interactive (non-autonomous) modes with no user message, omit the
-	// message argument so claude starts in interactive mode rather than sending
-	// an empty first message.
+	// message argument so the agent starts in interactive mode rather than
+	// sending an empty first message.
 	// logCmd is shellCmd with the user prompt elided: the prompt carries issue
 	// and spec text, which does not belong in the normal-level log.
-	logCmd := fmt.Sprintf(
-		"%s --append-system-prompt-file %s",
-		baseFlags, shellquote.Quote(sysFile),
-	)
+	logCmd, err := h.Command(inv)
+	if err != nil {
+		return Result{}, fmt.Errorf("building %s command: %w", h.Name(), err)
+	}
 	shellCmd := logCmd
 	if userMessage != "" {
-		shellCmd = logCmd + " " + shellquote.Quote(userMessage)
+		inv.Message = userMessage
+		if shellCmd, err = h.Command(inv); err != nil {
+			return Result{}, fmt.Errorf("building %s command: %w", h.Name(), err)
+		}
 		logCmd = fmt.Sprintf("%s <prompt elided, %d bytes>", logCmd, len(userMessage))
 	}
 
@@ -371,16 +357,14 @@ func Launch(req Request) (Result, error) {
 		logging.Log("dispatch: EnsureShellPrefixScript: %v", err)
 		// Non-fatal — continue launch without shell-prefix if the write failed.
 	}
-	logPath := claude.LogPath(workDir, sessionID)
-	if acct.Dir != "" {
-		logPath = claude.LogPathIn(acct.Dir, workDir, sessionID)
-	}
+	logPath := h.LaunchLogPath(acct.Dir, workDir, sessionID)
 	extraEnv := buildDispatchEnv(req, ac, workDir, repoDir, branch, useWorktree)
 	for k, v := range backendEnv {
 		extraEnv[k] = v
 	}
 	applyParentEnv(req, extraEnv)
 	extraEnv[EnvSessionName] = sessionName
+	ApplyHarnessEnv(extraEnv, h, permissionMode)
 
 	logging.Log("dispatch: shellCmd len=%d: %s", len(shellCmd), textutil.Truncate(logCmd, 500, "..."))
 	logging.Debug("dispatch: full shellCmd: %s", shellCmd)
@@ -432,6 +416,7 @@ func Launch(req Request) (Result, error) {
 		WorkDir:   workDir,
 		Branch:    branch,
 		Account:   acct.Name,
+		Harness:   h.Name(),
 	}, nil
 }
 
@@ -583,59 +568,6 @@ func resolvePermissionMode(mode Mode, ac config.AgentConfig, override string) st
 		return defaultDispatchPermissionMode
 	}
 	return ""
-}
-
-// ClaudeInvocation names the per-launch parts of a `claude` command line.
-// Empty fields are omitted from the command.
-type ClaudeInvocation struct {
-	Agent          string // --agent (required)
-	SessionID      string // --session-id: start a new session with this ID
-	Resume         string // --resume: continue this existing session
-	ForkSession    bool   // --fork-session: resume into a new session ID
-	PermissionMode string // --permission-mode (see resolvePermissionMode)
-	SettingsPath   string // --settings
-	Name           string // -n: session name shown in ListAgents / SendMessage
-}
-
-// BuildBaseFlags returns the `claude` invocation prefix shared by every
-// launch path (dispatch.Launch, Restore, improve's launchImprovement, and the
-// sessions browser's resume): agent, session/resume flags, and -- when set
-// -- model and effort level from ac, and the settings file.
-//
-// The result is a shell command line (it is embedded in a launch script), so
-// every interpolated value is quoted with shellquote.Quote. Values here come
-// from CLI flags, config files, and $HOME-derived paths; none of them may be
-// trusted to be free of spaces or shell metacharacters. Using CLI flags
-// rather than env vars for model/effort keeps them visible in process
-// listings and lets them take precedence over ambient environment settings.
-func BuildBaseFlags(inv ClaudeInvocation, ac config.AgentConfig) string {
-	var b strings.Builder
-	b.WriteString("claude --agent " + shellquote.Quote(inv.Agent))
-	if inv.Name != "" {
-		b.WriteString(" -n " + shellquote.Quote(inv.Name))
-	}
-	if inv.SessionID != "" {
-		b.WriteString(" --session-id " + shellquote.Quote(inv.SessionID))
-	}
-	if inv.Resume != "" {
-		b.WriteString(" --resume " + shellquote.Quote(inv.Resume))
-	}
-	if inv.ForkSession {
-		b.WriteString(" --fork-session")
-	}
-	if ac.Model != "" {
-		b.WriteString(" --model " + shellquote.Quote(ac.Model))
-	}
-	if ac.EffortLevel != "" {
-		b.WriteString(" --effort " + shellquote.Quote(ac.EffortLevel))
-	}
-	if inv.PermissionMode != "" {
-		b.WriteString(" --permission-mode " + shellquote.Quote(inv.PermissionMode))
-	}
-	if inv.SettingsPath != "" {
-		b.WriteString(" --settings " + shellquote.Quote(inv.SettingsPath))
-	}
-	return b.String()
 }
 
 // execPath resolves the path of the running binary, used to prefix hook
@@ -1096,8 +1028,8 @@ func writeTempPrompt(prefix, content string) (string, error) {
 
 // AgentEnvOverrides returns Claude Code env var overrides from agent config.
 // Exported so that internal/improve can reuse the same logic without duplication.
-// Note: CLAUDE_CODE_SHELL_PREFIX is wired unconditionally by tmux.LaunchAgent
-// and is therefore not set here.
+// Note: CLAUDE_CODE_SHELL_PREFIX comes from the Claude harness's launch env
+// (ApplyHarnessEnv) and is therefore not set here.
 func AgentEnvOverrides(ac config.AgentConfig) map[string]string {
 	env := make(map[string]string)
 	if ac.MaxThinkingTokens > 0 {

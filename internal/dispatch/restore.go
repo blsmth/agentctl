@@ -3,9 +3,9 @@ package dispatch
 import (
 	"fmt"
 
-	"github.com/blsmth/agentctl/internal/claude"
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -68,16 +68,19 @@ type RestoreRequest struct {
 	// SessionName is the original claude -n name, reused so the restored
 	// session keeps its identity. Empty omits -n.
 	SessionName string
+	// Harness is the recorded harness ("" = claude). An unknown name fails
+	// the restore rather than relaunching the window on another harness.
+	Harness string
 }
 
 // Restore re-launches a saved agent window using the shared settings helpers
-// from the dispatch package. It uses --resume <sessionID> when possible so the
+// from the dispatch package. It resumes the saved session when possible so the
 // agent can continue the conversation that was interrupted by the agentctl
 // restart, falling back to a fresh session if the session ID is unknown or
-// duplicated.
+// duplicated. The window comes back on the harness it was launched with.
 //
 // Unlike Launch, Restore does not inject a system prompt or user message — the
-// existing Claude session already carries the conversation history.
+// existing session already carries the conversation history.
 func Restore(req RestoreRequest) (string, error) {
 	if req.WorkDir == "" {
 		return "", fmt.Errorf("dispatch.Restore: WorkDir is required")
@@ -85,21 +88,34 @@ func Restore(req RestoreRequest) (string, error) {
 	if req.AgentName == "" {
 		return "", fmt.Errorf("dispatch.Restore: AgentName is required")
 	}
-
-	cfg := config.Load()
-	ac, extraEnv, err := prepareRestore(cfg, req)
+	h, err := harness.Lookup(req.Harness)
 	if err != nil {
 		return "", fmt.Errorf("dispatch.Restore: %s: %w", req.InstanceName, err)
 	}
 
-	settingsPath := WriteAgentSettings(req.AgentName, ac, req.WorkDir)
+	cfg := config.Load()
+	ac, extraEnv, err := prepareRestore(cfg, h, req)
+	if err != nil {
+		return "", fmt.Errorf("dispatch.Restore: %s: %w", req.InstanceName, err)
+	}
+
+	prep, err := h.PrepareWorkspace(harness.Workspace{
+		Dir:           launchDirFn(),
+		WriteSettings: func() (string, error) { return WriteAgentSettings(req.AgentName, ac, req.WorkDir), nil },
+	})
+	if err != nil {
+		return "", fmt.Errorf("dispatch.Restore: %s: %w", req.InstanceName, err)
+	}
 	resume := req.SessionID != "" && !req.DuplicateSession
 	if resume {
 		logging.Log("dispatch.Restore: resuming %s (session=%s)", req.InstanceName, req.SessionID)
 	} else if req.SessionID != "" {
 		logging.Log("dispatch.Restore: duplicate sessionID %s for %s, starting fresh", req.SessionID, req.InstanceName)
 	}
-	shellCmd := buildRestoreCmd(req.AgentName, req.SessionName, req.SessionID, settingsPath, resume, ac)
+	shellCmd, err := buildRestoreCmd(h, baseInvocation(req.AgentName, req.SessionName, ac, prep), req.SessionID, resume)
+	if err != nil {
+		return "", fmt.Errorf("dispatch.Restore: %s: %w", req.InstanceName, err)
+	}
 
 	instanceName := req.InstanceName
 	if instanceName == "" {
@@ -109,19 +125,17 @@ func Restore(req RestoreRequest) (string, error) {
 	logPath := req.LogPath
 	if logPath == "" {
 		// Generate a new log path if the saved one is unavailable.
-		logPath = claude.LogPath(req.WorkDir, "restore")
-		if dir := extraEnv[claudehome.EnvConfigDir]; dir != "" {
-			logPath = claude.LogPathIn(dir, req.WorkDir, "restore")
-		}
+		logPath = h.LaunchLogPath(extraEnv[claudehome.EnvConfigDir], req.WorkDir, "restore")
 	}
 
-	logging.Log("dispatch.Restore: launching %s (base=%s) workDir=%s logPath=%s", instanceName, req.AgentName, req.WorkDir, logPath)
+	logging.Log("dispatch.Restore: launching %s (base=%s, harness=%s) workDir=%s logPath=%s", instanceName, req.AgentName, h.Name(), req.WorkDir, logPath)
+	if extraEnv == nil {
+		extraEnv = map[string]string{}
+	}
 	if req.SessionName != "" {
-		if extraEnv == nil {
-			extraEnv = map[string]string{}
-		}
 		extraEnv[EnvSessionName] = req.SessionName
 	}
+	ApplyHarnessEnv(extraEnv, h, "")
 	wid, err := tmux.LaunchAgent(instanceName, req.WorkDir, shellCmd, logPath, req.AgentName, "", extraEnv, false)
 	if err != nil {
 		return "", fmt.Errorf("dispatch.Restore: launching %s: %w", instanceName, err)
@@ -150,35 +164,35 @@ func applyRestoreMeta(ws *windowstate.WindowState, req RestoreRequest) {
 }
 
 // buildRestoreCmd returns the shell command that re-launches a restored
-// agent. With resume it tries --resume <sessionID> first and falls back to a
-// fresh session if that fails (stale or invalid session ID), so the window
-// still opens. --continue is intentionally avoided: when multiple windows
-// share the same base agent name it grabs the most-recent session and causes
-// races.
-func buildRestoreCmd(agentName, sessionName, sessionID, settingsPath string, resume bool, ac config.AgentConfig) string {
-	fresh := BuildBaseFlags(ClaudeInvocation{Agent: agentName, Name: sessionName, SettingsPath: settingsPath}, ac)
-	if !resume {
-		return fresh
-	}
-	resumed := BuildBaseFlags(ClaudeInvocation{Agent: agentName, Name: sessionName, Resume: sessionID, SettingsPath: settingsPath}, ac)
-	return resumed + " || " + fresh
+// agent (see harness.Harness.RestoreCommand: Claude tries --resume and
+// falls back to a fresh session; pi reopens the session by ID).
+func buildRestoreCmd(h harness.Harness, inv harness.Invocation, sessionID string, resume bool) (string, error) {
+	return h.RestoreCommand(inv, sessionID, resume)
 }
 
 // prepareRestore returns the agent config and extra launch env for a restored
 // window. The backend comes from the persisted request, not the current agent
 // config: a window launched with --backend none must come back on Anthropic,
-// and one launched on a backend must never come back on Anthropic.
-func prepareRestore(cfg *config.Config, req RestoreRequest) (config.AgentConfig, map[string]string, error) {
+// and one launched on a backend must never come back on Anthropic. Harnesses
+// without accounts or backends skip both.
+func prepareRestore(cfg *config.Config, h harness.Harness, req RestoreRequest) (config.AgentConfig, map[string]string, error) {
 	ac := cfg.ForAgent(req.AgentName)
 	ac.Backend = req.Backend
 	env := map[string]string{}
-	acct, err := restoreAccount(cfg, req.Account, req.LogPath)
-	if err != nil {
-		return ac, nil, err
+	caps := h.Caps()
+	if caps.Accounts {
+		acct, err := restoreAccount(cfg, req.Account, req.LogPath)
+		if err != nil {
+			return ac, nil, err
+		}
+		ApplyAccountEnv(env, acct)
 	}
-	ApplyAccountEnv(env, acct)
-	if _, err := PrepareBackend(cfg, &ac, "", "", req.WorkDir, env); err != nil {
-		return ac, nil, err
+	if caps.Backends {
+		if _, err := PrepareBackend(cfg, &ac, "", "", req.WorkDir, env); err != nil {
+			return ac, nil, err
+		}
+	} else {
+		ac.Backend = ""
 	}
 	if len(env) == 0 {
 		env = nil

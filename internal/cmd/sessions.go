@@ -10,6 +10,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/sessionname"
@@ -186,37 +187,55 @@ func ParseDateFlag(s string) (time.Time, error) {
 	return time.ParseInLocation("01-02-2006", s, time.Local)
 }
 
-// LaunchWithResume launches an agent window and resumes the given session.
+// LaunchWithResume launches an agent window and resumes the given session,
+// forked into a new one, on the harness that recorded the session.
 func LaunchWithResume(name string, sessionID string, workDir string, writeSettings WriteAgentSettingsFn) {
 	cfg := config.Load()
 	ac := cfg.ForAgent(name)
+	h := harness.For(sessionHarnessFn(sessionID))
+	caps := h.Caps()
 	// The resumed session's original backend is not recorded, so use the
 	// agent's configured one; an unknown backend is an error, never Anthropic.
 	extraEnv := map[string]string{}
-	// A session can only be resumed from the config dir holding its
-	// transcript, so the account follows the session, not the rules.
-	acct, err := dispatch.ResumeAccount(cfg, sessionID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: resolving account: %v\n", err)
-		os.Exit(1)
+	if caps.Accounts {
+		// A session can only be resumed from the config dir holding its
+		// transcript, so the account follows the session, not the rules.
+		acct, err := dispatch.ResumeAccount(cfg, sessionID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: resolving account: %v\n", err)
+			os.Exit(1)
+		}
+		dispatch.ApplyAccountEnv(extraEnv, acct)
 	}
-	dispatch.ApplyAccountEnv(extraEnv, acct)
-	if _, err := dispatch.PrepareBackend(cfg, &ac, "", "", workDir, extraEnv); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: resolving backend: %v\n", err)
-		os.Exit(1)
+	if caps.Backends {
+		if _, err := dispatch.PrepareBackend(cfg, &ac, "", "", workDir, extraEnv); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: resolving backend: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		ac.Backend = ""
 	}
 	windowName := tmux.NextInstanceName(name)
-	// --fork-session generates a new session ID we don't control upfront,
-	// so we can't pre-compute the log path. The monitor falls back to findLatestLog.
+	// The forked session's ID is chosen by the harness, so the log path
+	// cannot be pre-computed. The monitor falls back to findLatestLog.
 	sessionName := resumeSessionName(name, windowName, sessionID, workDir)
-	shellCmd := dispatch.BuildBaseFlags(dispatch.ClaudeInvocation{
-		Agent:        name,
-		Name:         sessionName,
-		Resume:       sessionID,
-		ForkSession:  true,
-		SettingsPath: writeSettings(name, ac, workDir),
-	}, ac)
+	prep, err := h.PrepareWorkspace(harness.Workspace{
+		Dir:           dispatch.LaunchDir(),
+		WriteSettings: func() (string, error) { return writeSettings(name, ac, workDir), nil },
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	inv := dispatch.BaseInvocation(name, sessionName, ac, prep)
+	inv.Resume, inv.ForkSession = sessionID, true
+	shellCmd, err := h.Command(inv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 	extraEnv[dispatch.EnvSessionName] = sessionName
+	dispatch.ApplyHarnessEnv(extraEnv, h, "")
 	wid, err := tmux.LaunchAgent(windowName, workDir, shellCmd, "", name, "", extraEnv, true)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -253,3 +272,7 @@ func resumeSessionName(agent, instance, sessionID, workDir string) string {
 	}
 	return dispatch.SessionNameFor(agent, instance, workDir, workDir, false)
 }
+
+// sessionHarnessFn names the harness that recorded a session. A var for
+// tests.
+var sessionHarnessFn = sessions.HarnessOf

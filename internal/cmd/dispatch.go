@@ -33,6 +33,7 @@ type DispatchOptions struct {
 	Model      string
 	Backend    string
 	Account    string
+	Harness    string
 	NoWorktree bool
 	Wait       bool
 	Timeout    time.Duration
@@ -44,9 +45,9 @@ type DispatchOptions struct {
 // contains the business logic (validation + dispatch).
 func RunDispatch(opts DispatchOptions) {
 	issueNumber, promptText, promptKey, agentName := opts.Issue, opts.Prompt, opts.PromptKey, opts.Agent
-	workDir, model, backend, account := opts.Dir, opts.Model, opts.Backend, opts.Account
+	workDir, model, backend, account, harnessName := opts.Dir, opts.Model, opts.Backend, opts.Account, opts.Harness
 	noWorktree, wait, timeoutDur, repo := opts.NoWorktree, opts.Wait, opts.Timeout, opts.Repo
-	const usageStr = "Usage: agentctl dispatch (--issue <N> | --prompt <text> | --prompt-key <key>) [--agent <name>] [--dir <path>] [--model <name>] [--backend <name>|none] [--account <name>] [--repo <owner/name>] [--no-worktree] [--wait] [--timeout <duration>]"
+	const usageStr = "Usage: agentctl dispatch (--issue <N> | --prompt <text> | --prompt-key <key>) [--agent <name>] [--dir <path>] [--model <name>] [--backend <name>|none] [--account <name>] [--harness <name>] [--repo <owner/name>] [--no-worktree] [--wait] [--timeout <duration>]"
 
 	// Validate: exactly one of --issue, --prompt, or --prompt-key must be supplied.
 	suppliedCount := 0
@@ -106,14 +107,14 @@ func RunDispatch(opts DispatchOptions) {
 	var err error
 
 	if issueNumber != 0 {
-		wid, resolvedAgent, err = dispatchIssue(issueNumber, agentName, workDir, model, backend, account, repo, !noWorktree)
+		wid, resolvedAgent, err = dispatchIssue(issueNumber, agentName, workDir, model, backend, account, harnessName, repo, !noWorktree)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Printf("Dispatched #%d → %s (window %s)\n", issueNumber, resolvedAgent, linkWindow(wid, wid))
 	} else {
-		wid, resolvedAgent, err = dispatchPrompt(promptText, promptKey, agentName, workDir, model, backend, account, !noWorktree)
+		wid, resolvedAgent, err = dispatchPrompt(promptText, promptKey, agentName, workDir, model, backend, account, harnessName, !noWorktree)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -192,7 +193,7 @@ var (
 // --prompt-key), or "" when the caller used --prompt directly; it is passed
 // through as display-only metadata (see dispatch.Request.PromptKey).
 // Returns the tmux window ID, the resolved agent name, and an error.
-func dispatchPrompt(prompt, promptKey, agentName, workDir, model, backend, account string, useWorktree bool) (string, string, error) {
+func dispatchPrompt(prompt, promptKey, agentName, workDir, model, backend, account, harnessName string, useWorktree bool) (string, string, error) {
 	if workDir == "" {
 		workDir = resolveAgentDir(agentName)
 	}
@@ -204,6 +205,7 @@ func dispatchPrompt(prompt, promptKey, agentName, workDir, model, backend, accou
 		Model:       model,
 		Backend:     backend,
 		Account:     account,
+		Harness:     harnessName,
 		UseWorktree: useWorktree,
 	})
 	if err != nil {
@@ -217,7 +219,7 @@ func dispatchPrompt(prompt, promptKey, agentName, workDir, model, backend, accou
 // worktree creation, settings generation, env vars, and tmux launch are all
 // handled by dispatch.Launch().
 // Returns the tmux window ID, the resolved agent name, and an error.
-func dispatchIssue(issueNumber int, agentName string, workDir string, model string, backend string, account string, repo string, useWorktree bool) (string, string, error) {
+func dispatchIssue(issueNumber int, agentName, workDir, model, backend, account, harnessName, repo string, useWorktree bool) (string, string, error) {
 	// 1. Determine the directory for repo resolution.
 	//    Use the explicit --dir when provided; otherwise fall back to cwd so
 	//    that running from inside a project directory picks up its remote.
@@ -288,6 +290,7 @@ func dispatchIssue(issueNumber int, agentName string, workDir string, model stri
 		Model:       model,
 		Backend:     backend,
 		Account:     account,
+		Harness:     harnessName,
 		Background:  true,
 	})
 	if err != nil {

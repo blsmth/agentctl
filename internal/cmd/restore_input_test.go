@@ -229,3 +229,32 @@ func TestRestoreCarriesAccount(t *testing.T) {
 		t.Errorf("projects root asked for %v, want [personal]", asked)
 	}
 }
+
+// A pi window is restored on pi with its session ID, though no Claude log
+// exists for it; its saved log is kept only while the file exists.
+func TestRestoreCarriesPiHarness(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "2026_sid-1.jsonl")
+	if err := os.WriteFile(log, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	saved := []state.AgentState{
+		{Name: "a", AgentName: "a", WindowID: "@1", WorkDir: "/w", Harness: "pi", SessionID: "sid-1", LogPath: log},
+		{Name: "b", AgentName: "b", WindowID: "@2", WorkDir: "/w", Harness: "pi", SessionID: "sid-2", LogPath: "/gone/2026_sid-2.jsonl"},
+		{Name: "c", AgentName: "c", WindowID: "@3", WorkDir: "/w", SessionID: "sid-3"}, // claude, no log
+	}
+	fn, got := collect()
+	restoreAgents(saved, agentsFor("a", "b", "c"), "/home/x", fixedRoot(t.TempDir()), config.NewWindowRight, fn)
+	if len(*got) != 3 {
+		t.Fatalf("got %d requests", len(*got))
+	}
+	r := *got
+	if r[0].Harness != "pi" || r[0].SessionID != "sid-1" || r[0].LogPath != log {
+		t.Errorf("pi with log = %+v", r[0])
+	}
+	if r[1].Harness != "pi" || r[1].SessionID != "sid-2" || r[1].LogPath != "" {
+		t.Errorf("pi without log = %+v", r[1])
+	}
+	if r[2].Harness != "" || r[2].SessionID != "" {
+		t.Errorf("claude without log = %+v (want a fresh session)", r[2])
+	}
+}

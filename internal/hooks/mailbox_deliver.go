@@ -16,9 +16,7 @@ package hooks
 // additionalContext -- no tmux pane inspection required.
 
 import (
-	"encoding/json"
-	"os"
-
+	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/mailbox"
 )
@@ -44,7 +42,8 @@ func deliverMailbox(eventName, windowID, sessionID string) {
 		}
 	}()
 
-	if windowID == "" {
+	// A harness that cannot inject must not drain mail it would then drop.
+	if windowID == "" || !active.Caps().ContextInjection {
 		return
 	}
 
@@ -53,15 +52,6 @@ func deliverMailbox(eventName, windowID, sessionID string) {
 		return
 	}
 
-	output := map[string]any{
-		"hookSpecificOutput": map[string]any{
-			"hookEventName":     eventName,
-			"additionalContext": body,
-		},
-	}
-	if err := json.NewEncoder(os.Stdout).Encode(output); err != nil {
-		logging.Warn("hook-mailbox-deliver: encode output window=%s event=%s: %v", windowID, eventName, err)
-		return
-	}
+	emitDecision(harness.Decision{Kind: harness.Context, HookEvent: eventName, Text: body})
 	logging.Log("hook-mailbox-deliver: delivered %d message(s) to window=%s via %s", n, windowID, eventName)
 }

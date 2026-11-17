@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/transcript"
 )
 
 const (
@@ -221,12 +222,37 @@ func (s *Stream) Close() {
 	s.offset = 0
 }
 
+// ParseLine parses one transcript line into an Entry. Records from other
+// harnesses are normalized into Claude Code's shape first (see
+// internal/transcript).
+func ParseLine(raw []byte) Entry { return parseEntry(raw) }
+
+// ReadAll parses every non-blank line of a transcript.
+func ReadAll(r io.Reader) ([]Entry, error) {
+	br := bufio.NewReaderSize(r, readChunkSize)
+	var out []Entry
+	for {
+		line, _, oversized, err := readLine(br, nil, maxLineBytes)
+		if err != nil && err != io.EOF {
+			return out, err
+		}
+		line = bytes.TrimRight(line, "\r\n")
+		if !oversized && len(line) > 0 {
+			out = append(out, parseEntry(line))
+		}
+		if err == io.EOF {
+			return out, nil
+		}
+	}
+}
+
 // parseEntry parses a raw JSONL line into a structured Entry.
 func parseEntry(raw []byte) Entry {
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return Entry{Raw: m}
 	}
+	m = transcript.Normalize(m)
 
 	e := Entry{Raw: m}
 	e.Type, _ = m["type"].(string)

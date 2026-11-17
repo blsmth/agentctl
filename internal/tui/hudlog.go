@@ -13,6 +13,7 @@ import (
 	"github.com/blsmth/agentctl/internal/logstream"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/theme"
+	"github.com/blsmth/agentctl/internal/transcript"
 )
 
 // LogEntry is a single formatted entry shown in the HUD log stream.
@@ -88,6 +89,7 @@ func TailLog(logPath string, fromOffset int64) (TailResult, error) {
 		if err := json.Unmarshal(line, &raw); err != nil {
 			continue
 		}
+		raw = transcript.Normalize(raw)
 
 		entryType, _ := raw["type"].(string)
 		ts := parseHudTimestamp(raw)

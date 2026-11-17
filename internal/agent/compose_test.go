@@ -134,3 +134,14 @@ func TestCompose_InheritsModel(t *testing.T) {
 		t.Errorf("Model = %q, want %q", out.Model, "claude-opus")
 	}
 }
+
+func TestComposeInheritsHarness(t *testing.T) {
+	got := Compose(Agent{Name: "local"}, "l", Agent{Name: "base", Harness: "pi"}, "b")
+	if got.Harness != "pi" {
+		t.Errorf("Harness = %q, want inherited pi", got.Harness)
+	}
+	got = Compose(Agent{Name: "local", Harness: "claude"}, "l", Agent{Name: "base", Harness: "pi"}, "b")
+	if got.Harness != "claude" {
+		t.Errorf("Harness = %q, want local claude", got.Harness)
+	}
+}

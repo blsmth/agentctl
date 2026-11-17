@@ -177,3 +177,13 @@ func indexOf(haystack, needle string) int {
 	}
 	return -1
 }
+
+func TestClassifyPaneForHarness(t *testing.T) {
+	dialog := "Do you want to proceed?\n❯ 1. Yes\n  2. No\n\nEsc to cancel"
+	if got := ClassifyPaneFor("", dialog); got != PaneAwaitingInput {
+		t.Errorf("claude dialog = %v", got)
+	}
+	if got := ClassifyPaneFor("pi", dialog); got != PaneUnknown {
+		t.Errorf("pi pane = %v, want unknown (no reader for pi)", got)
+	}
+}

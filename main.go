@@ -184,6 +184,19 @@ func main() {
 			ac := worktreeSettingsAgentConfig(config.Load(), agentName, os.Getenv)
 			return dispatch.WriteWorktreeSettings(worktreeDir, repoDir, ac)
 		})
+		// Harnesses other than Claude Code (the pi bridge extension) call
+		// hooks with --harness <name>, selecting how stdin is decoded and
+		// how decisions are written back. An unknown harness is refused
+		// rather than guessed: its payload would be misread. The bash gate
+		// fails closed (exit 2 blocks the tool call).
+		if err := hooks.SetHarness(hooks.HarnessFromArgs(os.Args[2:])); err != nil {
+			logging.Error("%s: %v", os.Args[1], err)
+			fmt.Fprintf(os.Stderr, "agentctl: %v\n", err)
+			if os.Args[1] == "hook-validate-bash" {
+				os.Exit(2)
+			}
+			os.Exit(1)
+		}
 		hooks.Dispatch(os.Args[1])
 		return
 	}

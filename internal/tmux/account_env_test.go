@@ -44,7 +44,7 @@ func TestLaunchUnsetEnv(t *testing.T) {
 
 func TestLaunchEnvCarriesAccount(t *testing.T) {
 	env := map[string]string{"CLAUDE_CONFIG_DIR": "/abs/.claude-personal", "AGENTCTL_ACCOUNT": "personal"}
-	args := buildLaunchEnv("w", "/wd", "a", "sid", "/bin/agentctl", "/sp", "", "", env)
+	args := buildLaunchEnv("w", "/wd", "a", "sid", "/bin/agentctl", "", env)
 	found := false
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-e" && args[i+1] == "CLAUDE_CONFIG_DIR=/abs/.claude-personal" {

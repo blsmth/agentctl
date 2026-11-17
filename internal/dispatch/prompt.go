@@ -20,6 +20,7 @@ import (
 //  2. Task content (issue body or long custom prompt)
 //  3. "---" separator
 //  4. Preamble (agentctl capabilities, role-selected -- see preamble.go)
+//     4b. Agent definition body, for harnesses without --agent (pi)
 //  5. Shared Conventions (expanded from the launching agent's own @shared
 //     includes, if any -- see agent.ExpandSharedRefs)
 //  6. Worktree orientation note (branch name only, if applicable)
@@ -55,9 +56,22 @@ func buildSystemPrompt(req Request, spec modeSpec, workDir, branch string, useWo
 	parts = append(parts, "---")
 
 	// 4. Preamble
-	parts = append(parts, preambleWithOrchestrator(spec.Role, req.Orchestrator))
+	if req.noMessaging {
+		parts = append(parts, preambleForHarness(spec.Role, false))
+		if req.reportViaMailbox && spec.Role != RoleOrchestrator {
+			parts = append(parts, mailboxReportingSection)
+		}
+	} else {
+		parts = append(parts, preambleWithOrchestrator(spec.Role, req.Orchestrator))
+	}
 	if req.CrossAccount && spec.Role != RoleOrchestrator {
 		parts = append(parts, crossAccountSection)
+	}
+
+	// 4b. Persona -- for harnesses with no --agent flag (pi), the agent's
+	// own definition body has no other way in front of the model.
+	if req.persona != "" {
+		parts = append(parts, "## Agent definition: "+req.AgentName+"\n\n"+strings.TrimSpace(req.persona))
 	}
 
 	// 5. Shared Conventions -- expanded from the launching agent's own
@@ -66,9 +80,11 @@ func buildSystemPrompt(req Request, spec modeSpec, workDir, branch string, useWo
 	// (see agent.ExpandSharedRefs doc comment), so this expanded copy is the
 	// one the model can actually rely on; the heading says so explicitly.
 	if sharedConventions != "" {
-		parts = append(parts, "## Shared Conventions\n\n"+
-			"_The following was expanded from this agent's `@shared` includes, because Claude Code does not expand `@` imports inside agent definition files. This expanded copy is authoritative over any raw `@shared/...` reference you may also see in your own instructions._\n\n"+
-			sharedConventions)
+		note := "_The following was expanded from this agent's `@shared` includes, because Claude Code does not expand `@` imports inside agent definition files. This expanded copy is authoritative over any raw `@shared/...` reference you may also see in your own instructions._\n\n"
+		if req.persona != "" {
+			note = "_The following was expanded from the `@shared` includes in the agent definition above. It is authoritative over the raw `@shared/...` references there._\n\n"
+		}
+		parts = append(parts, "## Shared Conventions\n\n"+note+sharedConventions)
 	}
 
 	// 6. Worktree orientation note

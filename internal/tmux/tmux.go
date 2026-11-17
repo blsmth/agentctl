@@ -17,6 +17,7 @@ import (
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/detach"
+	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/metricsproc"
 	"github.com/blsmth/agentctl/internal/paths"
@@ -348,7 +349,7 @@ func writeLaunchLogHeader(launchLog, workDir, shellCmd string) error {
 // The invocation line interpolates shellCmd verbatim on its own line inside
 // a subshell (so an `exit` inside it cannot skip the status report).
 // shellCmd is not a single opaque token but a full command line built by the
-// caller (dispatch.BuildBaseFlags and friends), and every value it embeds is
+// caller (harness.Harness.Command and friends), and every value it embeds is
 // already quoted by the caller with shellquote.Quote.
 // Single quotes disable ALL shell expansion, including backticks and $(), so
 // this line is safe to interpolate raw. Values this function interpolates
@@ -519,12 +520,10 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 	// Resolve agentctl binary path for shell-prefix and hooks.
 	agentctlBin := selfpath.SpawnableOrFallback()
 
-	// shell-prefix.sh is written to the runtime dir by EnsureShellPrefixScript
-	// (called at monitor start, init, and dispatch). Setting CLAUDE_CODE_SHELL_PREFIX
-	// unconditionally ensures audit logging runs for every agent window.
-	shellPrefixScript := filepath.Join(paths.RuntimeDir(), "shell-prefix.sh")
-
-	envArgs := buildLaunchEnv(windowName, workDir, agentName, sessionID, agentctlBin, shellPrefixScript, instanceName(), permissionModeFromCmd(shellCmd), extraEnv)
+	// Harness-specific env (Claude Code's CLAUDE_CODE_* vars, including the
+	// shell prefix that runs audit logging) arrives in extraEnv: callers add
+	// it from their harness (harness.Harness.LaunchEnv).
+	envArgs := buildLaunchEnv(windowName, workDir, agentName, sessionID, agentctlBin, instanceName(), extraEnv)
 	left := config.Load().EffectiveNewWindowPosition() == config.NewWindowLeft
 	newWindowArgs := buildNewWindowArgs(SessionName, windowName, workDir, focus, left, envArgs)
 
@@ -630,6 +629,7 @@ func applyLaunchBootstrap(ws *windowstate.WindowState, windowName, agentName, lo
 	ws.Mode = extraEnv["AGENTCTL_MODE"]
 	ws.Backend = extraEnv["AGENTCTL_BACKEND"]
 	ws.Account = extraEnv[claudehome.EnvAccount]
+	ws.Harness = extraEnv[harness.EnvHarness]
 	ws.SessionName = extraEnv["AGENTCTL_CLAUDE_NAME"]
 	ws.SpawnedBy = extraEnv["AGENTCTL_SPAWNED_BY"]
 	ws.SpawnedBySession = extraEnv["AGENTCTL_SPAWNED_BY_SESSION"]
@@ -663,41 +663,17 @@ func buildNewWindowArgs(session, windowName, workDir string, focus, left bool, e
 	return append(args, "-P", "-F", "#{window_id}")
 }
 
-// subprocessEnvScrub returns the CLAUDE_CODE_SUBPROCESS_ENV_SCRUB value for a
-// launch with the given --permission-mode.
-//
-// Do NOT set this to 1 unconditionally. Claude Code (v2.1.311+) overrides the
-// permission mode when it is set, even with --allowedTools:
-//
-//	⚠ Permission mode forced to default — CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is
-//	set (allowed_non_write_users hardening). Declare allowedTools explicitly,
-//	or set CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0 to opt out.
-//
-// For auto mode we inject an explicit 0 (not just omit it) so a value
-// inherited from the parent environment (agentctl itself may run in a window
-// with SCRUB=1) cannot re-enable it.
-func subprocessEnvScrub(permissionMode string) string {
-	if permissionMode == "auto" {
-		return "0"
-	}
-	return "1"
-}
-
-var permissionModeRe = regexp.MustCompile(`--permission-mode\s+'?([A-Za-z]+)'?(?:\s|$)`)
-
-// permissionModeFromCmd extracts the --permission-mode value from a launch
-// command, or "" if absent.
-func permissionModeFromCmd(shellCmd string) string {
-	if m := permissionModeRe.FindStringSubmatch(shellCmd); m != nil {
-		return m[1]
-	}
-	return ""
+// ShellPrefixScriptPath is the shell-prefix.sh EnsureShellPrefixScript writes
+// into the runtime dir (monitor start, init, dispatch). Claude windows point
+// CLAUDE_CODE_SHELL_PREFIX at it so audit logging runs for every command.
+func ShellPrefixScriptPath() string {
+	return filepath.Join(paths.RuntimeDir(), "shell-prefix.sh")
 }
 
 // buildLaunchEnv returns the -e KEY=VALUE arguments for tmux new-window.
 // It is extracted as a helper to allow unit testing the env-var construction
 // without a live tmux session.
-func buildLaunchEnv(windowName, workDir, agentName, sessionID, agentctlBin, shellPrefixScript, inst, permissionMode string, extraEnv map[string]string) []string {
+func buildLaunchEnv(windowName, workDir, agentName, sessionID, agentctlBin, inst string, extraEnv map[string]string) []string {
 	args := []string{
 		"-e", "AGENTCTL=1",
 		"-e", "AGENTCTL_WINDOW_NAME=" + windowName,
@@ -706,11 +682,6 @@ func buildLaunchEnv(windowName, workDir, agentName, sessionID, agentctlBin, shel
 		"-e", "AGENTCTL_SESSION_ID=" + sessionID,
 		"-e", "AGENTCTL_BIN=" + agentctlBin,
 		"-e", "AGENTCTL_WORKING_DIR=" + workDir,
-		"-e", "DISABLE_AUTOUPDATER=1",
-		"-e", "CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1",
-		"-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
-		"-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=" + subprocessEnvScrub(permissionMode),
-		"-e", "CLAUDE_CODE_SHELL_PREFIX=" + shellPrefixScript,
 	}
 	if inst != "" {
 		args = append(args, "-e", "AGENTCTL_INSTANCE="+inst)
@@ -1633,6 +1604,7 @@ func applyStylingAndKeybindings(exe string) {
 	// session-scoped (-t SessionName) and does not affect other tmux sessions.
 	set("set-titles", "on")
 	set("set-titles-string", titleString(paths.DirName()))
+	applyExtendedKeys()
 	// Invisible pane borders — match terminal background so chrome panes blend in.
 	// Uses the theme's Base color so it adapts to the active theme.
 	borderColor := theme.Current().Base

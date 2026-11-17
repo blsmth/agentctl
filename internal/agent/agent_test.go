@@ -37,6 +37,11 @@ func TestParseFrontmatter(t *testing.T) {
 			want:  frontmatter{},
 		},
 		{
+			name:  "harness",
+			input: "---\nname: test\nharness: pi\n---\n",
+			want:  frontmatter{Name: "test", Harness: "pi"},
+		},
+		{
 			name:  "extra fields ignored",
 			input: "---\nname: test\nunknown_field: hi\n---\n",
 			want:  frontmatter{Name: "test"},

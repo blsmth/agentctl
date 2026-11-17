@@ -21,6 +21,7 @@ import (
 	"github.com/blsmth/agentctl/internal/metrics/events"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/transcript"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
@@ -278,7 +279,7 @@ func ProtectedSessionLogs(dir string, records map[string]windowstate.WindowState
 	for _, ws := range records {
 		add(ws.SessionID)
 		if ws.LogPath != "" {
-			add(strings.TrimSuffix(filepath.Base(ws.LogPath), ".jsonl"))
+			add(transcript.SessionIDFromLog(filepath.Base(ws.LogPath)))
 		}
 	}
 	return out

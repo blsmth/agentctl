@@ -8,6 +8,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/harness"
 )
 
 func TestApplyAccountEnv(t *testing.T) {
@@ -112,7 +113,7 @@ func TestPrepareRestoreCarriesAccount(t *testing.T) {
 	}
 	config.SetConfigPathForTest(cfgPath)
 	t.Cleanup(func() { config.SetConfigPathForTest("") })
-	_, env, err := prepareRestore(cfg, RestoreRequest{AgentName: "a", WorkDir: "/w", Account: "personal"})
+	_, env, err := prepareRestore(cfg, harness.For(""), RestoreRequest{AgentName: "a", WorkDir: "/w", Account: "personal"})
 	if err != nil {
 		t.Fatal(err)
 	}

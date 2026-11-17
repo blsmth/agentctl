@@ -104,3 +104,13 @@ func RecordedBackend(sessionID string) string {
 	}
 	return strings.TrimSpace(string(data))
 }
+
+// BillingFor classifies session s priced at model. A Claude model run
+// through another harness (pi) is not covered by the Claude subscription:
+// that harness calls the API with its own credentials, so it is metered.
+func BillingFor(s Session, model string, backends map[string]config.BackendConfig) Billing {
+	if s.Harness != "" && s.Harness != "claude" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "claude-") {
+		return BillingMetered
+	}
+	return ClassifyBilling(model, RecordedBackend(s.ID), backends)
+}

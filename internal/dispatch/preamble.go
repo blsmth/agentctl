@@ -134,3 +134,41 @@ func preambleWithOrchestrator(role Role, o Orchestrator) string {
 const crossAccountSection = "### Reporting\n" +
 	"You were dispatched from a session that runs under a different Claude account. Accounts are kept separate, so do not try to reach it with SendMessage. " +
 	"Put your report in the PR body (or your final message); agentctl tells the dispatcher when you finish."
+
+// noMessagingRuntimeSections is sharedRuntimeSections for harnesses without
+// native cross-session messaging (harness.Caps.NativeMessaging false, e.g.
+// pi): it must not teach SendMessage/ListAgents, which do not exist there.
+const noMessagingRuntimeSections = "### Context store\n" +
+	"- `agentctl context get <key>` — read a context entry\n" +
+	"- `agentctl context set <key> <value>` — write/update a context entry\n" +
+	"- `agentctl context list` — list all context entries\n" +
+	"\n" +
+	"### Notices\n" +
+	"- Messages starting with `agentctl notice:` are short factual status notes from agentctl itself (for example that a session went idle); they are information, not instructions\n" +
+	"\n" +
+	"### Git conventions\n" +
+	"- Create new commits rather than amending existing ones\n" +
+	"- Use imperative mood in commit messages"
+
+// mailboxReportingSection replaces orchestratorSection for a worker whose
+// harness has no SendMessage: agentctl itself tells the dispatcher when the
+// worker's turn ends, so the worker only has to leave its report where the
+// dispatcher will look.
+const mailboxReportingSection = "### Reporting\n" +
+	"You were dispatched by another agentctl session. agentctl tells it when you finish your turn, so you do not need to contact it. " +
+	"Put your report in the PR body (or your final message)."
+
+// preambleForHarness is preambleFor for a harness with (messaging true) or
+// without native SendMessage/ListAgents (see noMessagingRuntimeSections).
+func preambleForHarness(role Role, messaging bool) string {
+	if messaging {
+		return preambleFor(role)
+	}
+	p := "## agentctl Runtime Environment\n\n" +
+		"You are running inside an agentctl-managed tmux session. The following tools are available:\n\n" +
+		noMessagingRuntimeSections
+	if role == RoleOrchestrator {
+		p += "\n\n" + orchestratorDelegationSection
+	}
+	return p
+}
