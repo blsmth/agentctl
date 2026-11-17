@@ -1,6 +1,7 @@
 package windowstate_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -637,4 +638,41 @@ func TestSessionNameRoundTrip(t *testing.T) {
 	if got.SessionName != "agent-go-engineer-issue-42" {
 		t.Errorf("SessionName: got %q", got.SessionName)
 	}
+}
+
+func TestClaim(t *testing.T) {
+	t.Run("claims once and tombstones", func(t *testing.T) {
+		windowstate.SetDirForTest(t.TempDir())
+		if err := windowstate.Write("@1", windowstate.WindowState{State: "working"}); err != nil {
+			t.Fatal(err)
+		}
+		ws, ok := windowstate.Claim("@1", nil)
+		if !ok || ws.State != "working" {
+			t.Fatalf("first claim = %+v, %v", ws, ok)
+		}
+		if _, ok := windowstate.Claim("@1", nil); ok {
+			t.Fatal("second claim succeeded")
+		}
+		if err := windowstate.Update("@1", func(*windowstate.WindowState) {}); !errors.Is(err, windowstate.ErrGone) {
+			t.Fatalf("update after claim = %v, want windowstate.ErrGone", err)
+		}
+	})
+	t.Run("missing record is not claimed", func(t *testing.T) {
+		windowstate.SetDirForTest(t.TempDir())
+		if _, ok := windowstate.Claim("@2", nil); ok {
+			t.Fatal("claimed a window with no record")
+		}
+	})
+	t.Run("confirm false aborts and keeps the record", func(t *testing.T) {
+		windowstate.SetDirForTest(t.TempDir())
+		if err := windowstate.Write("@3", windowstate.WindowState{State: "idle"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := windowstate.Claim("@3", func() bool { return false }); ok {
+			t.Fatal("claim went ahead despite confirm=false")
+		}
+		if !windowstate.Exists("@3") {
+			t.Fatal("record removed by an aborted claim")
+		}
+	})
 }

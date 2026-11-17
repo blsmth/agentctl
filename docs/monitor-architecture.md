@@ -39,7 +39,7 @@ State is **not** inferred from JSONL log growth. Claude Code hooks write state i
 | `idle` | `hook-notify` (idle_prompt), `hook-stop-failure`, `hook-post-tool-failure` | `StatusIdle` |
 | _(none)_ | window not hook-configured or just launched | `StatusIdle` (default) |
 
-`StatusGone` is detected structurally when a window ID disappears from `tmux list-windows` (see `reconcileWindows`), not from any hook.
+`StatusGone` is detected structurally when a window ID disappears from `tmux list-windows`, not from any hook. The monitor notices after two absent ticks (`reconcileWindows`); without it, see [Gone and housekeeping without the monitor](#gone-and-housekeeping-without-the-monitor). Both paths use the same claim (`reconcile.Claim` / `reconcile.Finish`), so the handlers fire once per window.
 
 JSONL parsing still happens, but only to enrich metrics and transition detail — context-window %, token counts, and the last tool name/detail/text (via `logstream.StateTracker`). It does not author state.
 
@@ -92,6 +92,17 @@ The chrome bar watches `windows/` and the `active-window` file with fsnotify, de
 ### Turning the monitor off (`monitor: false`)
 
 The global config key `monitor` (default `true`) is the kill switch. When `false`, session start / `applyConfig` does not start a monitor, the hook watchdog neither respawns nor replaces one, and `agentctl health` reports "monitor disabled" instead of a missing-monitor problem. Flipping the flag never kills a running monitor; the next relaunch just does not start one. With no monitor, `state.json` stops updating (the macapp loses its feed) and the `improve.HandleTransition` / metrics transition handlers do not run, but the chrome bar, hub, `agentctl status`, popups and statusline keep working from tmux and windowstate.
+
+### Gone and housekeeping without the monitor
+
+`internal/reconcile` holds the code that finishes a vanished window, and the hidden `agentctl reconcile` runs it with no long-lived process:
+
+- **Claim.** `windowstate.Claim` removes a window's record under its per-window flock, writes the `.gone` tombstone and reports whether this caller did it; only that caller builds the Gone `Transition` (`From` = the record's state), runs `improve.HandleTransitionSync`, and removes the window's mailbox. shell and `improve~*` windows are claimed but get no handlers. The monitor's `reconcileWindows` calls the same `Claim`/`Finish`, so whichever notices first wins. A window removed by `cleanup`/`sweep`/SessionEnd reclaim has already had its record removed, so no Gone handler runs for it (the monitor used to fire one from memory).
+- **Safety.** `reconcile` takes a non-blocking flock on `<runtimeDir>/reconcile.lock` (held: exit). A failed `list-windows`, or a session that no longer exists, does nothing (teardown is restore territory). A record is reaped only if its window is absent from two listings 300ms apart and from a third taken under the record's lock, so a recycled `@N` whose new window exists is never removed. It runs inline: every spawner is already detached, and the auto-improve launch must finish before the process exits.
+- **Triggers.** A detached `reconcile` is spawned after `tmux.KillWindow` and the SessionEnd kill succeed; a session-scoped `window-unlinked` tmux hook (set by `applyConfig`/`apply-config`) runs it whenever tmux destroys a window, including when the agent just exits (it does not fire on `kill-session`, so teardown never mass-removes records); and the janitor.
+- **Janitor.** `SessionStart` and `UserPromptSubmit` call `janitor()` next to the watchdog. A flock-guarded stamp (`internal/stamp`, `<runtimeDir>/janitor.stamp`, 60s) lets exactly one concurrent hook spawn `agentctl reconcile --housekeeping`, which reconciles and then runs `reaper.ReapOrphans`, `approval-pending/` marker GC, and the mailbox and session-log prunes (5 min stamps each; protected session logs are built from windowstate only). The watchdog uses the same atomic stamp for its respawn throttle. Readers never reconcile.
+- **Chrome sizes.** `client-resized` and `client-attached` session hooks run the hidden `agentctl enforce-chrome`. The monitor's 5-tick enforcement stays while the monitor is on, as do its own `pruneTick`/reaper (both are idempotent next to the janitor).
+- **`agentctl apply-config`** re-applies the session hooks, options and keybindings to the running session without stopping or starting the monitor or restoring anything, so an existing session picks up new hooks after `just install`.
 
 ### Session restore (`restore.json`)
 

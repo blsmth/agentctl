@@ -13,6 +13,7 @@ import (
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/pidfile"
 	"github.com/blsmth/agentctl/internal/selfpath"
+	"github.com/blsmth/agentctl/internal/stamp"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
@@ -33,7 +34,11 @@ type watchdogDeps struct {
 	sessionExists func() bool
 	lastAttempt   func() time.Time
 	markAttempt   func(time.Time)
-	spawn         func() error
+	// tryAttempt, when set, atomically claims the attempt slot (check and
+	// stamp under one lock) and replaces markAttempt: with the two split,
+	// concurrent hooks all passed the lastAttempt check before any stamped.
+	tryAttempt func(time.Time) bool
+	spawn      func() error
 }
 
 // watchdogResult says what runWatchdog did.
@@ -75,11 +80,23 @@ func runWatchdog(d watchdogDeps) watchdogResult {
 	}
 	// Stamp before spawning so a monitor that crashes on start is not
 	// respawned by every prompt.
-	d.markAttempt(now)
+	if !claimAttempt(d, now) {
+		return watchdogRateLimited
+	}
 	if err := d.spawn(); err != nil {
 		return watchdogSpawnFailed
 	}
 	return watchdogSpawned
+}
+
+// claimAttempt records an attempt at now, reporting false when another process
+// holds the slot.
+func claimAttempt(d watchdogDeps, now time.Time) bool {
+	if d.tryAttempt != nil {
+		return d.tryAttempt(now)
+	}
+	d.markAttempt(now)
+	return true
 }
 
 func replaceStale(d watchdogDeps) watchdogResult {
@@ -90,7 +107,9 @@ func replaceStale(d watchdogDeps) watchdogResult {
 	if !d.sessionExists() {
 		return watchdogNoSession
 	}
-	d.markAttempt(now)
+	if !claimAttempt(d, now) {
+		return watchdogRateLimited
+	}
 	d.killMonitor()
 	if err := d.spawn(); err != nil {
 		return watchdogSpawnFailed
@@ -142,7 +161,7 @@ func monitorWatchdog() {
 	}
 	projectRoot := filepath.Dir(runtimeDir)
 	session := tmux.SessionNameForProjectRoot(projectRoot)
-	stamp := filepath.Join(runtimeDir, watchdogStampName)
+	stampPath := filepath.Join(runtimeDir, watchdogStampName)
 	res := runWatchdog(watchdogDeps{
 		now:           time.Now,
 		disabled:      func() bool { return !config.Load().MonitorEnabled() },
@@ -151,14 +170,17 @@ func monitorWatchdog() {
 		killMonitor:   func() { pidfile.Kill(runtimeDir, monitorPidName) },
 		sessionExists: func() bool { return tmux.HasSessionNamed(session) },
 		lastAttempt: func() time.Time {
-			if fi, err := os.Stat(stamp); err == nil {
+			if fi, err := os.Stat(stampPath); err == nil {
 				return fi.ModTime()
 			}
 			return time.Time{}
 		},
+		tryAttempt: func(t time.Time) bool {
+			return stamp.Try(stampPath, watchdogMinInterval, t)
+		},
 		markAttempt: func(t time.Time) {
-			if err := os.WriteFile(stamp, nil, 0o600); err == nil {
-				_ = os.Chtimes(stamp, t, t)
+			if err := os.WriteFile(stampPath, nil, 0o600); err == nil {
+				_ = os.Chtimes(stampPath, t, t)
 			}
 		},
 		spawn: func() error {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/detach"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/pidfile"
@@ -866,7 +867,26 @@ func KillWindow(windowID string) error {
 	}
 	// SIGTERM each pane's process group to clean up shells and children.
 	sigTermPaneGroups(string(paneOut))
+	SpawnReconcile()
 	return nil
+}
+
+// spawnReconcileFn starts the detached reconcile process; a seam for tests.
+var spawnReconcileFn = func(runtimeDir string) error {
+	return detach.StartSelfPinned([]string{"reconcile"}, runtimeDir)
+}
+
+// SpawnReconcile starts a detached `agentctl reconcile` so a window this
+// process just closed gets its Gone handling without a monitor. It never
+// waits and never fails the caller; with no runtime dir it does nothing.
+func SpawnReconcile() {
+	rd := paths.RuntimeDir()
+	if rd == "" {
+		return
+	}
+	if err := spawnReconcileFn(rd); err != nil {
+		logging.Log("tmux: spawning reconcile: %v", err)
+	}
 }
 
 // KillAllAgents closes all agent windows, leaving only the "shell" window.
@@ -1265,6 +1285,27 @@ func activeWindowHookArgs(session, exe, runtimeDir string) []string {
 		"run-shell -b " + shellquote.Quote(shellCmd)}
 }
 
+// chromeSizeHookArgs returns the tmux args to set a session-scoped hook for
+// event (client-resized, client-attached) that re-enforces chrome bar pane
+// sizes through the hidden `agentctl enforce-chrome`, pinned like
+// activeWindowHookArgs.
+func chromeSizeHookArgs(session, event, exe, runtimeDir string) []string {
+	shellCmd := hookAgentctlCmd(exe, runtimeDir, "enforce-chrome")
+	return []string{"set-hook", "-t", session, event,
+		"run-shell -b " + shellquote.Quote(shellCmd)}
+}
+
+// reconcileHookArgs returns the tmux args to set the session-scoped
+// window-unlinked hook that runs the hidden `agentctl reconcile`. tmux fires
+// it when a window is destroyed, whether killed or because its last process
+// exited (not on kill-session), so Gone handling needs no monitor.
+// Reconcile re-lists windows itself; the hook carries no window ID.
+func reconcileHookArgs(session, exe, runtimeDir string) []string {
+	shellCmd := hookAgentctlCmd(exe, runtimeDir, "reconcile")
+	return []string{"set-hook", "-t", session, "window-unlinked",
+		"run-shell -b " + shellquote.Quote(shellCmd)}
+}
+
 // keybindingPinArgs returns the fragments applyConfig splices into every
 // keybinding that runs agentctl, so the spawned process resolves THIS
 // project's runtime dir and cwd rather than inheriting whatever the active
@@ -1454,11 +1495,38 @@ func applyConfig() {
 	_ = exec.Command("tmux", "run-shell", "-b", "-c", projectRoot, qexe+" restore").Run()
 	done()
 
+	installSessionHooks(exe, pidDir, projectRoot)
+
+	// Launch the chrome bar in the initial shell window.
+	done = logging.Timing("applyConfig: LaunchChromeBar shell window")
+	if shellID := windowIDByName("shell"); shellID != "" {
+		_ = LaunchChromeBar(shellID) // best-effort at startup; failure is non-fatal
+	}
+	done()
+
+	applyStylingAndKeybindings(exe)
+}
+
+// ApplyConfigLive re-applies the session hooks, options and keybindings to the
+// running session so it picks up changes from a newer binary without a
+// relaunch. Unlike applyConfig it never touches the monitor, restores nothing
+// and launches no windows.
+func ApplyConfigLive() {
+	exe, _ := os.Executable()
+	EnsureSessionEnv()
+	set("status", "off")
+	pidDir := paths.RuntimeDir()
+	installSessionHooks(exe, pidDir, filepath.Dir(pidDir))
+	applyStylingAndKeybindings(exe)
+}
+
+// installSessionHooks sets every session-scoped hook agentctl relies on.
+func installSessionHooks(exe, pidDir, projectRoot string) {
 	// The ChromeBarRows-row chrome bar replaces the separate status-bar and
 	// tab-bar panes, eliminating a tmux pane-border line. Set the
 	// after-new-window hook so every new window gets the chrome bar
 	// automatically.
-	done = logging.Timing("applyConfig: after-new-window hook")
+	done := logging.Timing("applyConfig: session hooks")
 
 	// Remove stale global hooks from older agentctl versions that used -g.
 	// Session-scoped hooks set below will take over for this session.
@@ -1473,17 +1541,23 @@ func applyConfig() {
 	// state.json) for near-instant tab highlight updates.
 	selectArgs := activeWindowHookArgs(SessionName, exe, pidDir)
 	_ = exec.Command("tmux", selectArgs...).Run() // args built internally, not user input
-	done()
 
-	// Launch the chrome bar in the initial shell window.
-	done = logging.Timing("applyConfig: LaunchChromeBar shell window")
-	if shellID := windowIDByName("shell"); shellID != "" {
-		_ = LaunchChromeBar(shellID) // best-effort at startup; failure is non-fatal
+	// Chrome pane sizes are re-enforced when a client attaches or resizes,
+	// the events that distort them, instead of on a monitor timer.
+	for _, ev := range []string{"client-resized", "client-attached"} {
+		_ = exec.Command("tmux", chromeSizeHookArgs(SessionName, ev, exe, pidDir)...).Run()
 	}
-	done()
 
+	// Gone handling when a window is destroyed, with no monitor involved.
+	_ = exec.Command("tmux", reconcileHookArgs(SessionName, exe, pidDir)...).Run()
+	done()
+}
+
+// applyStylingAndKeybindings sets the misc options, pane borders and
+// keybindings.
+func applyStylingAndKeybindings(exe string) {
 	// Misc options
-	done = logging.Timing("applyConfig: misc options (7 calls)")
+	done := logging.Timing("applyConfig: misc options (7 calls)")
 	set("visual-silence", "off")
 	set("visual-activity", "off")
 	set("renumber-windows", "on")
