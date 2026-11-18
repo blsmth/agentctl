@@ -4,12 +4,27 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/logging"
 )
+
+// TestMain points the process logger at a private dir so tests never depend
+// on a resolvable home dir (CI has none) or write into the real one.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "serve-test-log")
+	if err != nil {
+		panic(err)
+	}
+	logging.InitFile(filepath.Join(dir, "serve.log"))
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
 
 // fakeClock is an adjustable clock for tests.
 type fakeClock struct {

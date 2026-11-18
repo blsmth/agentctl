@@ -355,6 +355,15 @@ func (s *Server) Ping() remoteapproval.PingInfo {
 // ServeApproval runs one approval connection until it is answered, cancelled,
 // dropped, expired, or the server stops. It owns conn.
 func (s *Server) ServeApproval(conn net.Conn, br *bufio.Reader, req remoteapproval.Request) {
+	s.ctlMu.Lock()
+	if s.ctlStopped {
+		s.ctlMu.Unlock()
+		_ = conn.Close()
+		return
+	}
+	s.ctlWG.Add(1)
+	s.ctlMu.Unlock()
+	defer s.ctlWG.Done() // runs last: Close returns only after the audit write
 	defer func() { _ = conn.Close() }()
 	refuse := func(msg string) {
 		_ = conn.SetWriteDeadline(time.Now().Add(decisionWriteTimeout))
