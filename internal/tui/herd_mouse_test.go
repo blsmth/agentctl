@@ -45,14 +45,15 @@ func TestLineAt(t *testing.T) {
 		wantIdx  int
 		wantOK   bool
 	}{
-		{"subheader", 40, -1, 5, 4, 1, true},
-		{"first row", 40, -1, 5, 5, 2, true},
-		{"row b", 40, -1, 5, 6, 3, true},
-		{"divider", 40, -1, 5, 7, 4, true},
-		{"header", 40, -1, 5, 8, 5, true},
-		{"row c", 40, -1, 5, 10, 7, true},
-		{"above list", 40, -1, 5, 2, -1, false},
-		{"below last line", 40, -1, 5, 11, -1, false},
+		{"subheader", 40, -1, 5, 3, 1, true},
+		{"first row", 40, -1, 5, 4, 2, true},
+		{"row b", 40, -1, 5, 5, 3, true},
+		{"divider", 40, -1, 5, 6, 4, true},
+		{"header", 40, -1, 5, 7, 5, true},
+		{"row c", 40, -1, 5, 9, 7, true},
+		{"title", 40, -1, 5, 0, -1, false},
+		{"blank row above list", 40, -1, 5, 1, -1, false},
+		{"below last line", 40, -1, 5, 10, -1, false},
 		{"scrolled", 10, 5, 5, 3, 3, true},
 	}
 	for _, tt := range tests {
@@ -86,10 +87,11 @@ func TestClickDecision(t *testing.T) {
 		want    herdClickAction
 		wantIdx int
 	}{
-		{"row selects", 5, 5, 0, herdClickSelect, 2},
-		{"header selects", 5, 8, 2, herdClickSelect, 5},
-		{"divider ignored", 5, 7, 2, herdClickIgnore, 4},
-		{"subheader ignored", 5, 4, 2, herdClickIgnore, 1},
+		{"row selects", 5, 4, 0, herdClickSelect, 2},
+		{"header selects", 1, 7, 2, herdClickSelect, 5},
+		{"header name folds", 5, 7, 2, herdClickFold, 5},
+		{"divider ignored", 5, 6, 2, herdClickIgnore, 4},
+		{"subheader ignored", 5, 3, 2, herdClickIgnore, 1},
 		{"chrome ignored", 5, 0, 1, herdClickIgnore, -1},
 	}
 	for _, tt := range tests {
@@ -106,7 +108,7 @@ func TestClickDecision(t *testing.T) {
 
 func TestClickHeaderSelectsWithoutJump(t *testing.T) {
 	m := mouseTestModel(t, 120, 40)
-	next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 8})
+	next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: 7})
 	got := next.(HerdModel)
 	if !got.selIsHeader || got.selSession != "s2" || got.selWindowID != "" {
 		t.Errorf("selection = %q/%q/%v, want header of s2", got.selSession, got.selWindowID, got.selIsHeader)
@@ -120,7 +122,7 @@ func TestClickRowSelectsWithoutOpening(t *testing.T) {
 	for _, reclick := range []bool{false, true} {
 		m := mouseTestModel(t, 120, 40)
 		m.selectLine(0)
-		msg := tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 6}
+		msg := tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 5}
 		next, cmd := m.Update(msg)
 		if reclick {
 			next, cmd = next.(HerdModel).Update(msg)
@@ -145,7 +147,7 @@ func TestClickRowSelectsWithoutOpening(t *testing.T) {
 func TestClickMiddleButtonIgnored(t *testing.T) {
 	m := mouseTestModel(t, 120, 40)
 	before := cursorOf(m)
-	next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseMiddle, X: 5, Y: 7})
+	next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseMiddle, X: 5, Y: 5})
 	if cmd != nil || cursorOf(next) != before {
 		t.Error("middle click should be ignored")
 	}
@@ -169,7 +171,7 @@ func TestButtonDecision(t *testing.T) {
 	w := m.listColWidth()
 	newX := w - herdSidebarRightGutter - 2 // inside "+ new"
 	closeX := w - herdSidebarRightGutter - 1
-	// y: 3 header(s1), 4 dispatched label, 5 row a, 6 row b, 7 divider, 8 header(s2), 9 dispatched label, 10 row c
+	// y: 2 header(s1), 3 dispatched label, 4 row a, 5 row b, 6 divider, 7 header(s2), 8 dispatched label, 9 row c
 	tests := []struct {
 		name       string
 		x, y       int
@@ -177,20 +179,23 @@ func TestButtonDecision(t *testing.T) {
 		wantIdx    int
 		wantAction herdClickAction
 	}{
-		{"header new button", newX, 3, tea.MouseLeft, 0, herdClickNew},
-		{"header elsewhere selects", 5, 3, tea.MouseLeft, 0, herdClickSelect},
-		{"stale header has no button", newX, 8, tea.MouseLeft, 5, herdClickSelect},
-		{"row close button", closeX, 5, tea.MouseLeft, 2, herdClickClose},
-		{"row elsewhere selects", 5, 5, tea.MouseLeft, 2, herdClickSelect},
-		{"stale row still closable", closeX, 10, tea.MouseLeft, 7, herdClickClose},
-		{"row new column is not a button", newX - 4, 5, tea.MouseLeft, 2, herdClickSelect},
-		{"right click row", 5, 5, tea.MouseRight, 2, herdClickMenu},
-		{"right click row on close col", closeX, 5, tea.MouseRight, 2, herdClickMenu},
-		{"left click subheader", closeX, 4, tea.MouseLeft, 1, herdClickIgnore},
-		{"right click subheader", 5, 4, tea.MouseRight, 1, herdClickIgnore},
-		{"right click header", 5, 3, tea.MouseRight, 0, herdClickMenu},
-		{"right click divider", 5, 7, tea.MouseRight, 4, herdClickIgnore},
-		{"middle click", 5, 5, tea.MouseMiddle, -1, herdClickIgnore},
+		{"header new button", newX, 2, tea.MouseLeft, 0, herdClickNew},
+		{"header elsewhere selects", 1, 2, tea.MouseLeft, 0, herdClickSelect},
+		{"header gap before counts selects", newX - 30, 2, tea.MouseLeft, 0, herdClickSelect},
+		{"header fold marker folds", herdHeaderNameCol, 2, tea.MouseLeft, 0, herdClickFold},
+		{"header space before name folds", herdHeaderNameCol + 1, 2, tea.MouseLeft, 0, herdClickFold},
+		{"stale header has no button", newX, 7, tea.MouseLeft, 5, herdClickSelect},
+		{"row close button", closeX, 4, tea.MouseLeft, 2, herdClickClose},
+		{"row elsewhere selects", 5, 4, tea.MouseLeft, 2, herdClickSelect},
+		{"stale row still closable", closeX, 9, tea.MouseLeft, 7, herdClickClose},
+		{"row new column is not a button", newX - 4, 4, tea.MouseLeft, 2, herdClickSelect},
+		{"right click row", 5, 4, tea.MouseRight, 2, herdClickMenu},
+		{"right click row on close col", closeX, 4, tea.MouseRight, 2, herdClickMenu},
+		{"left click subheader", closeX, 3, tea.MouseLeft, 1, herdClickIgnore},
+		{"right click subheader", 5, 3, tea.MouseRight, 1, herdClickIgnore},
+		{"right click header", 5, 2, tea.MouseRight, 0, herdClickMenu},
+		{"right click divider", 5, 6, tea.MouseRight, 4, herdClickIgnore},
+		{"middle click", 5, 4, tea.MouseMiddle, -1, herdClickIgnore},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -234,14 +239,14 @@ func TestHandleClickActions(t *testing.T) {
 	closeX := w - herdSidebarRightGutter - 1
 
 	t.Run("new button arms the selector without launching", func(t *testing.T) {
-		next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: w - herdSidebarRightGutter - 2, Y: 3})
+		next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: w - herdSidebarRightGutter - 2, Y: 2})
 		got := next.(HerdModel)
 		if cmd != nil || got.newSession != "s1" || got.infoMsg != "" {
 			t.Errorf("expected armed selector and no launch, got cmd=%v armed=%q info=%q", cmd != nil, got.newSession, got.infoMsg)
 		}
 	})
 	t.Run("close click arms, second click confirms", func(t *testing.T) {
-		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: closeX, Y: 5})
+		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: closeX, Y: 4})
 		got := next.(HerdModel)
 		if got.confirmWindow != "@1" || got.confirmSession != "s1" {
 			t.Fatalf("armed = %q/%q", got.confirmSession, got.confirmWindow)
@@ -249,20 +254,20 @@ func TestHandleClickActions(t *testing.T) {
 		if !strings.Contains(ansi.Strip(got.renderLine(2, w)), "close a? y/n") {
 			t.Errorf("row should show confirm prompt: %q", ansi.Strip(got.renderLine(2, w)))
 		}
-		after, cmd := got.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: closeX, Y: 5})
+		after, cmd := got.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: closeX, Y: 4})
 		if cmd == nil || after.(HerdModel).closeArmed() {
 			t.Error("second click on armed X should confirm and disarm")
 		}
 	})
 	t.Run("clicking another row cancels", func(t *testing.T) {
-		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: closeX, Y: 5})
-		next, _ = next.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 6})
+		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: closeX, Y: 4})
+		next, _ = next.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 5})
 		if next.(HerdModel).closeArmed() {
 			t.Error("selection moving away should cancel")
 		}
 	})
 	t.Run("right click opens menu, click item", func(t *testing.T) {
-		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseRight, X: 5, Y: 5})
+		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseRight, X: 5, Y: 4})
 		got := next.(HerdModel)
 		if !got.menuOpen {
 			t.Fatal("menu should open")
@@ -279,7 +284,7 @@ func TestHandleClickActions(t *testing.T) {
 		}
 	})
 	t.Run("menu footer is on the rendered message line", func(t *testing.T) {
-		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseRight, X: 5, Y: 5})
+		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseRight, X: 5, Y: 4})
 		lines := strings.Split(ansi.Strip(next.(HerdModel).render()), "\n")
 		y := next.(HerdModel).footerMessageY()
 		if y >= len(lines) || !strings.Contains(lines[y], "[close]") {
@@ -331,7 +336,7 @@ func TestSelectorHitColumns(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, got := m.buttonDecision(tt.x, 3, tea.MouseLeft); got != tt.want {
+			if _, got := m.buttonDecision(tt.x, 2, tea.MouseLeft); got != tt.want {
 				t.Errorf("x=%d: action %v, want %v", tt.x, got, tt.want)
 			}
 		})
@@ -346,28 +351,28 @@ func TestSelectorClicks(t *testing.T) {
 		return next.(HerdModel), cmd != nil
 	}
 	t.Run("shell", func(t *testing.T) {
-		got, cmd := click(m, shell[0], 3)
+		got, cmd := click(m, shell[0], 2)
 		if !cmd || got.newArmed() || !strings.Contains(got.infoMsg, "opening shell in s1") {
 			t.Errorf("cmd=%v armed=%v info=%q", cmd, got.newArmed(), got.infoMsg)
 		}
 	})
 	t.Run("agent", func(t *testing.T) {
-		got, cmd := click(m, agent[0], 3)
+		got, cmd := click(m, agent[0], 2)
 		if !cmd || got.newArmed() || !strings.Contains(got.infoMsg, "launching agent in s1") {
 			t.Errorf("cmd=%v armed=%v info=%q", cmd, got.newArmed(), got.infoMsg)
 		}
 	})
 	t.Run("elsewhere cancels", func(t *testing.T) {
-		got, _ := click(m, 5, 6)
+		got, _ := click(m, 5, 5)
 		if got.newArmed() {
 			t.Error("still armed")
 		}
 	})
 	t.Run("hover each side", func(t *testing.T) {
-		if h := m.hoverAt(shell[0], 3); h.reg != herdHoverNewShell {
+		if h := m.hoverAt(shell[0], 2); h.reg != herdHoverNewShell {
 			t.Errorf("shell hover = %v", h.reg)
 		}
-		if h := m.hoverAt(agent[0], 3); h.reg != herdHoverNewAgent {
+		if h := m.hoverAt(agent[0], 2); h.reg != herdHoverNewAgent {
 			t.Errorf("agent hover = %v", h.reg)
 		}
 	})

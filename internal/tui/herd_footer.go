@@ -164,6 +164,9 @@ func herdHelpItems() []herdHelpItem {
 		{"p", "open PR", "p"},
 		{"r", "refresh", "r"},
 		{"c", "chrome", "c"},
+		{"z", "fold", "z"},
+		{"Z", "focus mode", "Z"},
+		{"f", "filter", "f"},
 		{"q", "leave", "q"},
 		{"esc", "close help", "?"},
 	}

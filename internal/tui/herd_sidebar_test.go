@@ -204,7 +204,8 @@ func TestSidebarMouse_ExpandedSelectedRow(t *testing.T) {
 		wantIdx    int
 		wantAction herdClickAction
 	}{
-		{"header", 5, top, 0, herdClickSelect},
+		{"header", 1, top, 0, herdClickSelect},
+		{"header name", 8, top, 0, herdClickFold},
 		{"selected row", 10, top + 1, sel, herdClickSelect},
 		{"selected row close", closeX, top + 1, sel, herdClickClose},
 		{"detail line selects", 10, top + 2, sel, herdClickSelect},

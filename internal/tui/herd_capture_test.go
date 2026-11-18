@@ -59,3 +59,37 @@ func TestHubCapture(t *testing.T) {
 		}
 	}
 }
+
+// TestHubCaptureFoldedFiltered logs the capture fixture with the quiet
+// project folded (focus mode) and then under the "needs you" filter, and
+// checks every line fits.
+func TestHubCaptureFoldedFiltered(t *testing.T) {
+	for _, w := range []int{44, 56} {
+		m := captureSidebar(t, w, 30)
+		m.toggleFocusMode()
+		m.clearInfo()
+		focus := ansi.Strip(m.render())
+		t.Logf("hub capture, focus mode (cw=%d):\n%s", m.contentWidth(), focus)
+
+		m.toggleFocusMode()
+		m.cycleFilter()
+		m.cycleFilter()
+		m.clearInfo()
+		needs := ansi.Strip(m.render())
+		t.Logf("hub capture, needs you (cw=%d):\n%s", m.contentWidth(), needs)
+
+		for _, out := range []string{focus, needs} {
+			for _, l := range strings.Split(out, "\n") {
+				if ansi.StringWidth(l) > m.contentWidth() {
+					t.Errorf("line wider than %d: %q", m.contentWidth(), l)
+				}
+			}
+		}
+		if !strings.Contains(focus, herdFoldedGlyph+" spacewalker") && !strings.Contains(focus, herdFoldedGlyph+" energy") {
+			t.Errorf("focus mode should fold a quiet project:\n%s", focus)
+		}
+		if !strings.Contains(needs, "· needs") {
+			t.Errorf("needs-you capture lacks the title tag:\n%s", needs)
+		}
+	}
+}
