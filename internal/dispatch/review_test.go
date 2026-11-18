@@ -140,7 +140,7 @@ func TestReviewPRSystemPrompt(t *testing.T) {
 		notWant     []string
 		useWorktree bool
 	}{
-		{"worktree", false, []string{"cut from the default branch, not from the PR", "git fetch origin pull/42/head && git checkout --detach FETCH_HEAD", "is abc123def", "git checkout agent/code-reviewer/review-pr-42"}, []string{"shared checkout"}, true},
+		{"worktree", false, []string{"cut from the default branch, not from the PR", "git fetch origin pull/42/head && git checkout --detach FETCH_HEAD", "is abc123def", "git checkout agent/code-reviewer/review-pr-42-"}, []string{"shared checkout"}, true},
 		{"shared checkout", true, []string{"You are in the shared checkout", "gh pr diff 42"}, []string{"git checkout --detach"}, false},
 	}
 	for _, tt := range tests {
@@ -170,8 +170,10 @@ func TestReviewModeSpec(t *testing.T) {
 	if !IsAutonomous(string(ModeReviewPR)) {
 		t.Error("review-pr is not autonomous")
 	}
-	if got := buildBranch(Request{AgentName: "code-reviewer", Mode: ModeReviewPR, ReviewPR: &PullRequest{Number: 7}}); got != "agent/code-reviewer/review-pr-7" {
-		t.Errorf("branch = %s", got)
+	r := Request{AgentName: "code-reviewer", Mode: ModeReviewPR, ReviewPR: &PullRequest{Number: 7}}
+	b1, b2 := buildBranch(r), buildBranch(r)
+	if !strings.HasPrefix(b1, "agent/code-reviewer/review-pr-7-") || b1 == b2 {
+		t.Errorf("branches = %s, %s; want distinct agent/code-reviewer/review-pr-7-<id>", b1, b2)
 	}
 	if got := TaskFor(Request{ReviewPR: &PullRequest{Number: 7, Title: "Fix"}, CustomPrompt: "extra"}); got != "Review PR #7: Fix" {
 		t.Errorf("task = %q", got)

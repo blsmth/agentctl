@@ -33,19 +33,21 @@ func TestApplyAgentRole(t *testing.T) {
 		wantRole      Role
 		wantFinishing bool
 		wantWorktree  *bool // nil: not set
+		agentIssued   bool  // dispatched from a tracked agent session
 	}{
-		{"worker adhoc unchanged", Request{Mode: ModeAdhoc}, "", ModeAdhoc, RoleWorker, true, nil},
-		{"explicit worker unchanged", Request{Mode: ModeAdhoc}, agent.RoleWorker, ModeAdhoc, RoleWorker, true, nil},
-		{"worker dispatch unchanged", Request{Mode: ModeDispatch, Ticket: 3}, "", ModeDispatch, RoleWorker, true, nil},
-		{"orchestrator human adhoc becomes bare", Request{Mode: ModeAdhoc, UseWorktree: &yes}, agent.RoleOrchestrator, ModeBare, RoleOrchestrator, false, &yes},
-		{"orchestrator human adhoc keeps adhoc worktree default", Request{Mode: ModeAdhoc}, agent.RoleOrchestrator, ModeBare, RoleOrchestrator, false, &yes},
-		{"orchestrator scheduled adhoc stays adhoc", Request{Mode: ModeAdhoc, ScheduledBy: "nightly"}, agent.RoleOrchestrator, ModeAdhoc, RoleOrchestrator, false, nil},
-		{"orchestrator dispatch stays dispatch", Request{Mode: ModeDispatch, Ticket: 3}, agent.RoleOrchestrator, ModeDispatch, RoleOrchestrator, false, nil},
-		{"orchestrator bare stays bare", Request{Mode: ModeBare}, agent.RoleOrchestrator, ModeBare, RoleOrchestrator, false, nil},
+		{"worker adhoc unchanged", Request{Mode: ModeAdhoc}, "", ModeAdhoc, RoleWorker, true, nil, false},
+		{"explicit worker unchanged", Request{Mode: ModeAdhoc}, agent.RoleWorker, ModeAdhoc, RoleWorker, true, nil, false},
+		{"worker dispatch unchanged", Request{Mode: ModeDispatch, Ticket: 3}, "", ModeDispatch, RoleWorker, true, nil, false},
+		{"orchestrator human adhoc becomes bare", Request{Mode: ModeAdhoc, UseWorktree: &yes}, agent.RoleOrchestrator, ModeBare, RoleOrchestrator, false, &yes, false},
+		{"orchestrator human adhoc keeps adhoc worktree default", Request{Mode: ModeAdhoc}, agent.RoleOrchestrator, ModeBare, RoleOrchestrator, false, &yes, false},
+		{"orchestrator adhoc from an agent session stays adhoc", Request{Mode: ModeAdhoc}, agent.RoleOrchestrator, ModeAdhoc, RoleOrchestrator, false, nil, true},
+		{"orchestrator scheduled adhoc stays adhoc", Request{Mode: ModeAdhoc, ScheduledBy: "nightly"}, agent.RoleOrchestrator, ModeAdhoc, RoleOrchestrator, false, nil, false},
+		{"orchestrator dispatch stays dispatch", Request{Mode: ModeDispatch, Ticket: 3}, agent.RoleOrchestrator, ModeDispatch, RoleOrchestrator, false, nil, false},
+		{"orchestrator bare stays bare", Request{Mode: ModeBare}, agent.RoleOrchestrator, ModeBare, RoleOrchestrator, false, nil, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req, spec := applyAgentRole(tt.req, modes[tt.req.Mode], tt.role)
+			req, spec := applyAgentRole(tt.req, modes[tt.req.Mode], tt.role, !tt.agentIssued)
 			if req.Mode != tt.wantMode {
 				t.Errorf("Mode = %s, want %s", req.Mode, tt.wantMode)
 			}
@@ -89,7 +91,7 @@ func TestOrchestratorSystemPrompt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.req.AgentName = "lead"
-			req, spec := applyAgentRole(tt.req, modes[tt.req.Mode], tt.role)
+			req, spec := applyAgentRole(tt.req, modes[tt.req.Mode], tt.role, true)
 			req.Orchestrator = Orchestrator{WindowID: "@5", Pane: "%6"}
 			if spec.Role == RoleOrchestrator {
 				req.Orchestrator = Orchestrator{} // launchOrchestrator drops it
@@ -148,6 +150,9 @@ func TestLaunchGoldenOrchestrator(t *testing.T) {
 	}{
 		{"orchestrator-human-adhoc", Request{Mode: ModeAdhoc, CustomPrompt: longPrompt, Detached: true}, true, false, false, false},
 		{"orchestrator-scheduled-adhoc", Request{Mode: ModeAdhoc, CustomPrompt: longPrompt, Detached: true, ScheduledBy: "nightly-triage"}, false, true, true, true},
+		// Dispatched by another agent session (the stub resolves a tracked
+		// dispatcher, Detached is false): unattended, so done and --wait work.
+		{"orchestrator-agent-dispatched-adhoc", Request{Mode: ModeAdhoc, CustomPrompt: longPrompt}, false, true, true, true},
 		{"orchestrator-dispatch", Request{Mode: ModeDispatch, Ticket: 7, TicketTitle: "Fix it", TicketBody: "body"}, false, false, true, true},
 	}
 	for _, tt := range tests {

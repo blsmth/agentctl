@@ -219,7 +219,9 @@ func Launch(req Request) (Result, error) {
 	// The agent's frontmatter role adapts the mode (an orchestrator never
 	// gets the worker tail) before anything reads the mode or its spec.
 	cfg := config.Load()
-	req, spec = applyAgentRole(req, spec, frontmatterRoleFn(cfg, req.AgentName, workDir))
+	if role := frontmatterRoleFn(cfg, req.AgentName, workDir); role != "" {
+		req, spec = applyAgentRole(req, spec, role, humanLaunch(req))
+	}
 
 	// Resolve useWorktree ONCE, immediately after the mode lookup -- this is
 	// the single chokepoint for the mode-default-with-explicit-override
@@ -558,10 +560,12 @@ func buildBranch(req Request) string {
 	if req.Ticket > 0 {
 		return fmt.Sprintf("agent/%s/issue-%d", req.AgentName, req.Ticket)
 	}
-	if req.ReviewPR != nil {
-		return fmt.Sprintf("agent/%s/review-pr-%d", req.AgentName, req.ReviewPR.Number)
-	}
 	slug := ids.NewUUID()[:8]
+	if req.ReviewPR != nil {
+		// Suffixed so a second review of the same PR never shares a live
+		// reviewer's worktree.
+		return fmt.Sprintf("agent/%s/review-pr-%d-%s", req.AgentName, req.ReviewPR.Number, slug)
+	}
 	if req.Mode == ModeBare {
 		return fmt.Sprintf("agent/%s/session-%s", req.AgentName, slug)
 	}

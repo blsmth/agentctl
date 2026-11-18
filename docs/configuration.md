@@ -331,7 +331,7 @@ role: orchestrator
 ---
 ```
 
-An orchestrator gets the orchestrator preamble in every mode and never gets worker finishing steps (commit, push, open a PR). `dispatch --prompt` (and the phone's new-session button) launches it as an interactive `bare` session with the prompt as its first message; cron jobs and `dispatch --issue` keep autonomous execution. See [dispatch.md](dispatch.md#orchestrator-agents).
+An orchestrator gets the orchestrator preamble in every mode and never gets worker finishing steps (commit, push, open a PR). The phone's new-session button, or `dispatch --prompt` from a shell with no tracked Claude session, launches it as an interactive `bare` session with the prompt as its first message; cron jobs, `--prompt` dispatches from another agent session and `dispatch --issue` keep autonomous execution. See [dispatch.md](dispatch.md#orchestrator-agents).
 
 ## Backends (Ollama and Nous Portal)
 

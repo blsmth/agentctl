@@ -545,7 +545,10 @@ func tokenizeQuoted(s string) []cmdToken {
 			if i+1 < len(s) {
 				i++
 				if s[i] != '\n' {
+					// The escaped character is quoted: \> or \; is a
+					// word, never a redirection or control operator.
 					cur.WriteByte(s[i])
+					hadQuote = true
 				}
 				continue
 			}

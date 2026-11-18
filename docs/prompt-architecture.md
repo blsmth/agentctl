@@ -46,10 +46,12 @@ order:
 The preamble role is the mode's, upgraded to orchestrator when the agent's
 frontmatter says `role: orchestrator` (never downgraded). Such an agent never
 gets finishing steps or the "do not merge to main" line
-(`dispatch.applyAgentRole`). A human-initiated ad-hoc launch of it becomes
+(`dispatch.applyAgentRole`). A human-initiated ad-hoc launch of it (the phone, or a shell with no tracked
+Claude session) becomes
 `bare`: the prompt is the first user message (moved to `## Task` only past
-64KB, the inline-argument cap) with no execution boilerplate. Cron and
-`--issue` launches keep their mode and autonomous instructions.
+64KB, the inline-argument cap) with no execution boilerplate. Cron launches, ad-hoc
+dispatches from another agent session, and `--issue` keep their mode and
+autonomous instructions.
 
 Finishing steps are deliberately last — ordered instructions closest to the
 end of the prompt are followed most reliably, and getting the agent to

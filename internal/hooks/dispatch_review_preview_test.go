@@ -47,6 +47,29 @@ func TestReviewPRDispatchIsGated(t *testing.T) {
 	}
 }
 
+// Regression: an escaped >, ; | or & is a quoted word to the shell, so the
+// gate must not drop it as a redirection or end the segment there; otherwise
+// the popup shows a different prompt than the launch receives.
+func TestEscapedOperatorsStayInThePrompt(t *testing.T) {
+	tests := []struct {
+		command, wantAgent, wantPrompt string
+	}{
+		{`agentctl dispatch --agent go-engineer --prompt \>evil\ payload`, "go-engineer", ">evil payload"},
+		{`agentctl dispatch --prompt \>evil --agent go-engineer`, "go-engineer", ">evil"},
+		{`agentctl dispatch --agent a --prompt a\;b`, "a", "a;b"},
+		{`agentctl dispatch --agent a --prompt x\|y`, "a", "x|y"},
+		{`agentctl dispatch --agent a --prompt x\&\&y`, "a", "x&&y"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			a, _, p, _ := parseDispatchFlags(tt.command)
+			if a != tt.wantAgent || p != tt.wantPrompt {
+				t.Errorf("got agent %q prompt %q, want %q %q", a, p, tt.wantAgent, tt.wantPrompt)
+			}
+		})
+	}
+}
+
 func TestTokenizeBackslash(t *testing.T) {
 	tests := []struct {
 		name  string

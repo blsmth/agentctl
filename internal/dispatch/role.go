@@ -8,6 +8,13 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 )
 
+// humanLaunch reports whether req was issued by a person rather than by an
+// agent session: a Detached launch (the phone) or one with no tracked
+// dispatching session.
+func humanLaunch(req Request) bool {
+	return req.Detached || !resolveOrchestratorFn().Known()
+}
+
 // frontmatterRoleFn returns the role in agentName's definition frontmatter
 // (agent.RoleOrchestrator, agent.RoleWorker or ""). A var for tests.
 var frontmatterRoleFn = frontmatterRole
@@ -34,17 +41,22 @@ func frontmatterRole(cfg *config.Config, agentName, workDir string) string {
 // How it gets there depends on who is launching:
 //
 //   - A human-initiated ad-hoc launch (the phone's new-session button,
-//     `dispatch --prompt`) is converted to ModeBare: an interactive session
+//     `dispatch --prompt` from a plain shell) is converted to ModeBare: an interactive session
 //     with the prompt as its first user message, no execInstructions and the
 //     interactive permission mode. The caller's worktree choice is kept.
-//   - An unattended launch (ad-hoc with ScheduledBy set, i.e. cron, and
-//     ModeDispatch) keeps its mode and autonomous instructions; only the
+//   - An unattended launch (ad-hoc with ScheduledBy set, i.e. cron; ad-hoc
+//     dispatched by another agent session; and ModeDispatch) keeps its mode and autonomous instructions; only the
 //     preamble role and the finishing steps change.
-func applyAgentRole(req Request, spec modeSpec, role string) (Request, modeSpec) {
+//
+// human reports whether a person issued the launch: the phone (Detached) or a
+// shell with no tracked Claude session behind it. An ad-hoc dispatch from
+// another agent session is unattended: it must stay autonomous so the done
+// state, the dispatcher's done notice and `dispatch --wait` keep working.
+func applyAgentRole(req Request, spec modeSpec, role string, human bool) (Request, modeSpec) {
 	if role != agent.RoleOrchestrator {
 		return req, spec
 	}
-	if req.Mode == ModeAdhoc && req.ScheduledBy == "" {
+	if req.Mode == ModeAdhoc && req.ScheduledBy == "" && human {
 		if req.UseWorktree == nil {
 			// Keep the ad-hoc default rather than inheriting bare's.
 			useWorktree := spec.DefaultWorktree
