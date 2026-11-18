@@ -27,7 +27,8 @@ import (
 //  7. Mode instructions (autonomy/behavior boilerplate)
 //  8. Context store entries
 //  9. Finishing steps (verify -> commit -> push -> PR, worktree-aware) --
-//     only for modes with IncludeFinishingSteps set (dispatch, adhoc)
+//     only for modes with IncludeFinishingSteps set (dispatch, adhoc), and
+//     never for an orchestrator-role agent (see applyAgentRole)
 //
 // Finishing steps are deliberately last: ordered instructions closest to the
 // end of the prompt are followed most reliably, and this is the sequence we
@@ -48,7 +49,10 @@ func buildSystemPrompt(req Request, spec modeSpec, workDir, branch string, useWo
 	}
 
 	// For adhoc with long prompts, embed the custom prompt as task content.
-	if req.Mode == ModeAdhoc && req.CustomPrompt != "" && len(req.CustomPrompt) > longPromptThreshold {
+	// A bare launch's prompt is its first message unless it is too long to
+	// pass as one argument (bareUserMessage).
+	if req.Mode == ModeAdhoc && req.CustomPrompt != "" && len(req.CustomPrompt) > longPromptThreshold ||
+		req.Mode == ModeBare && len(req.CustomPrompt) > maxInlineMessage {
 		parts = append(parts, fmt.Sprintf("## Task\n\n%s", req.CustomPrompt))
 	}
 
@@ -88,7 +92,12 @@ func buildSystemPrompt(req Request, spec modeSpec, workDir, branch string, useWo
 	}
 
 	// 6. Worktree orientation note
-	if useWorktree && branch != "" {
+	switch {
+	case req.Mode == ModeReviewPR:
+		if useWorktree && branch != "" && !req.reviewSharedCheckout {
+			parts = append(parts, reviewWorktreeOrientation(req, workDir, branch))
+		}
+	case useWorktree && branch != "":
 		parts = append(parts, buildWorktreeOrientation(spec, workDir, branch))
 	}
 

@@ -50,9 +50,12 @@ type Agent struct {
 	ComposedBody string // Merged base+local body, empty if standalone
 	Tools        string // Tools field from frontmatter
 	Harness      string // harness field from frontmatter ("" = config or default; see internal/harness)
-	Scope        AgentScope
-	SymTarget    string // Raw symlink target path (if local)
-	ProjectName  string // Extracted project name from symlink target
+	// Role is the frontmatter role: RoleOrchestrator, RoleWorker, or "" (a
+	// worker). Unknown values are logged and dropped at discovery.
+	Role        string
+	Scope       AgentScope
+	SymTarget   string // Raw symlink target path (if local)
+	ProjectName string // Extracted project name from symlink target
 	// Shadows is the FilePath of the global agent this project-local agent
 	// replaced in discovery (same name), or "" when it shadows nothing.
 	Shadows string
@@ -73,6 +76,27 @@ type Frontmatter struct {
 	// Harness names the agent program to run this agent on ("claude", "pi").
 	// The agents.<name>.harness config key wins over it.
 	Harness string `yaml:"harness"`
+	// Role is "orchestrator" for an agent whose job is coordinating other
+	// agents (it never gets worker finishing steps), "worker" or empty
+	// otherwise. See NormalizeRole.
+	Role string `yaml:"role"`
+}
+
+// Frontmatter role values.
+const (
+	RoleOrchestrator = "orchestrator"
+	RoleWorker       = "worker"
+)
+
+// NormalizeRole returns role when it is a known value (RoleOrchestrator,
+// RoleWorker or ""), else "" after logging a warning naming source.
+func NormalizeRole(role, source string) string {
+	switch role {
+	case "", RoleOrchestrator, RoleWorker:
+		return role
+	}
+	logging.Warn("agent: %s: ignoring unknown role %q (want %s or %s)", source, role, RoleOrchestrator, RoleWorker)
+	return ""
 }
 
 // frontmatter is an alias kept for internal use.
@@ -299,6 +323,7 @@ func scanDir(dir string, scope AgentScope, cfg *config.Config) ([]Agent, error) 
 			Extends:     fm.Extends,
 			Tools:       fm.Tools,
 			Harness:     fm.Harness,
+			Role:        NormalizeRole(fm.Role, path),
 			Scope:       agentScope,
 			SymTarget:   symTarget,
 			ProjectName: projectName,
@@ -362,6 +387,7 @@ func resolveExtends(agents []Agent, cfg *config.Config) []Agent {
 				Model:       ac.Model,
 				FilePath:    basePath,
 				Harness:     fm.Harness,
+				Role:        NormalizeRole(fm.Role, basePath),
 			}
 			base = &synthetic
 		}

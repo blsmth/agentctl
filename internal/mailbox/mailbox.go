@@ -128,8 +128,7 @@ func sanitize(windowID string) string {
 // Messages carry prompt and issue text, so the mailbox root and every inbox
 // are 0700 (existing ones are tightened) and message files are 0600. This
 // matters most for the os.TempDir fallback, which is shared with other users.
-func pendingDir(windowID string) (string, error) {
-	safeRoot, root := dirs()
+func pendingDir(safeRoot, root, windowID string) (string, error) {
 	if root == "" {
 		return "", fmt.Errorf("mailbox: no mailbox directory")
 	}
@@ -171,12 +170,11 @@ func newMessageID() string {
 
 // writeMessage atomically writes m to path (temp+rename, mode 0600),
 // refusing a symlink anywhere from the mailbox's safe root down.
-func writeMessage(path string, m Message) error {
+func writeMessage(safeRoot, path string, m Message) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling message: %w", err)
 	}
-	safeRoot, _ := dirs()
 	if err := safefs.WriteFile(safeRoot, path, data, 0o600); err != nil {
 		return fmt.Errorf("writing message: %w", err)
 	}
@@ -186,6 +184,21 @@ func writeMessage(path string, m Message) error {
 // Enqueue validates m and durably writes it to To's pending inbox, assigning
 // ID and Created if unset. Returns the assigned ID.
 func Enqueue(m Message) (string, error) {
+	safeRoot, root := dirs()
+	return enqueueAt(safeRoot, root, m)
+}
+
+// EnqueueIn is Enqueue into the mailbox of another agentctl session, whose
+// runtime dir is runtimeDir (a fleet.Group's RuntimeDir): that session's
+// hooks deliver from <runtimeDir>/inbox. An empty runtimeDir is Enqueue.
+func EnqueueIn(runtimeDir string, m Message) (string, error) {
+	if runtimeDir == "" {
+		return Enqueue(m)
+	}
+	return enqueueAt(runtimeDir, filepath.Join(runtimeDir, "inbox"), m)
+}
+
+func enqueueAt(safeRoot, root string, m Message) (string, error) {
 	if m.To == "" {
 		return "", fmt.Errorf("mailbox: To is required")
 	}
@@ -203,11 +216,11 @@ func Enqueue(m Message) (string, error) {
 		m.Created = time.Now()
 	}
 
-	dir, err := pendingDir(m.To)
+	dir, err := pendingDir(safeRoot, root, m.To)
 	if err != nil {
 		return "", err
 	}
-	if err := writeMessage(filepath.Join(dir, m.ID+".json"), m); err != nil {
+	if err := writeMessage(safeRoot, filepath.Join(dir, m.ID+".json"), m); err != nil {
 		return "", err
 	}
 	return m.ID, nil

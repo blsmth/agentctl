@@ -300,7 +300,7 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
 | `dir` | string | empty (portable) | Fixed working directory. Global-only. |
 | `model` | string | inherit | `sonnet`, `opus`, `haiku`, or a full model name. |
 | `effort_level` | string | unset | `low`, `medium`, `high`, `max`, or `auto`. |
-| `permission_mode` | string | `auto` for worker dispatches; unset otherwise | Value passed to `claude --permission-mode`. Worker dispatches (`--issue`, `--prompt`, `--prompt-key`) default to `auto`; interactive modes (bare, discuss, triage, review) get no flag unless set. One of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`; an unknown value logs a warning and falls back to the default. `agentctl launch --permission-mode <mode>` overrides it for a single launch (unknown values are rejected); the hub's "new" action launches with `--permission-mode auto`. |
+| `permission_mode` | string | `auto` for worker dispatches; unset otherwise | Value passed to `claude --permission-mode`. Worker dispatches (`--issue`, `--prompt`, `--prompt-key`, `--review-pr`) default to `auto`; interactive modes (bare, discuss, triage, review) get no flag unless set. One of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`; an unknown value logs a warning and falls back to the default. `agentctl launch --permission-mode <mode>` overrides it for a single launch (unknown values are rejected); the hub's "new" action launches with `--permission-mode auto`. |
 | `max_thinking_tokens` | int | `0` (default) | Thinking budget. |
 | `blocked_commands` | string[] | none | Substrings that deny matching Bash commands. |
 | `blocked_patterns` | string[] | none | Regexes that deny matching Bash commands. |
@@ -326,6 +326,19 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
   }
 }
 ```
+
+### Agent frontmatter `role`
+
+An agent definition can declare `role: orchestrator` (or `role: worker`, the same as leaving it out) in its frontmatter. There is no config key. An `extends` child inherits the base's role unless it sets its own; an unknown value is logged and ignored.
+
+```markdown
+---
+name: brandon
+role: orchestrator
+---
+```
+
+An orchestrator gets the orchestrator preamble in every mode and never gets worker finishing steps (commit, push, open a PR). The phone's new-session button, or `dispatch --prompt` from a shell with no tracked Claude session, launches it as an interactive `bare` session with the prompt as its first message; cron jobs, `--prompt` dispatches from another agent session and `dispatch --issue` keep autonomous execution. See [dispatch.md](dispatch.md#orchestrator-agents).
 
 ## Backends (Ollama and Nous Portal)
 

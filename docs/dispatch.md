@@ -10,6 +10,8 @@ agentctl dispatch --issue 42 --agent go-engineer    # explicit agent
 agentctl dispatch --issue 42 --dir ~/code/other     # explicit working directory
 agentctl dispatch --issue 42 --no-worktree          # skip worktree, use shared repo
 agentctl dispatch --issue 42 --repo owner/name      # explicit GitHub repo (else resolved from the working dir)
+agentctl dispatch --agent go-engineer --prompt '...' # ad-hoc prompt (or --prompt-key <key>)
+agentctl dispatch --review-pr 57                    # review an open PR (code-reviewer by default)
 ```
 
 Or use the TUI: `ctrl+b T` opens the ticket launcher, where you can browse issues and dispatch interactively.
@@ -74,8 +76,9 @@ A dispatch is launched in one of several modes (`internal/dispatch/modes.go`). E
 | `review` | Do **not** implement. Reviews related PRs or commits for correctness, edge cases, style, test coverage and security, and reports what must change. | no (interactive) | opus |
 | `discuss` | Do **not** implement yet. Acts as a technical collaborator to scope and refine the ticket; implements only once you say to proceed. | no (interactive) | sonnet |
 | `custom` | Uses your own prompt as the system instructions, optionally with a ticket attached. | no (interactive) | agent config |
+| `review-pr` | Review one open PR (`--review-pr N`) and send a verdict to the orchestrator. Never commits, pushes, opens a PR or writes to GitHub. | yes | agent config |
 
-`agentctl dispatch --issue N` runs `dispatch` mode and `--prompt` / `--prompt-key` run `adhoc`. The other modes are reached from the **ticket launcher** (`ctrl+b T`): pick an agent and an issue, then choose a prompt mode:
+`agentctl dispatch --issue N` runs `dispatch` mode, `--prompt` / `--prompt-key` run `adhoc`, and `--review-pr N` runs `review-pr`. The other modes are reached from the **ticket launcher** (`ctrl+b T`): pick an agent and an issue, then choose a prompt mode:
 
 | Launcher choice | Key | Mode |
 |-----------------|-----|------|
@@ -85,6 +88,26 @@ A dispatch is launched in one of several modes (`internal/dispatch/modes.go`). E
 | No prompt (conversational) | `n` | `discuss` |
 | Custom | `c` | `custom` |
 
+## Orchestrator agents
+
+An agent with `role: orchestrator` in its frontmatter (see [configuration.md](configuration.md#agent-frontmatter-role)) coordinates others, so it never gets the worker tail: no finishing steps (commit, push, open a PR) and no "do not merge to main" worktree line, and its preamble is the orchestrator one.
+
+- **Human-initiated `--prompt`** (the phone's new-session button, or the CLI from a shell with no tracked Claude session): launched as a `bare` interactive session. The prompt is the first user message, there are no autonomous instructions, and the permission mode is the interactive default.
+- **Unattended** (a cron job, or `--prompt` dispatched from another agent session, so done notices and `--wait` work) **and `--issue`**: the mode is kept, with its autonomous instructions and the task in the system prompt.
+
+## PR review (`--review-pr`)
+
+```bash
+agentctl dispatch --review-pr 57                          # author detected from the PR branch
+agentctl dispatch --review-pr 57 --author @12             # name the author window
+agentctl dispatch --review-pr 57 --model sonnet --prompt 'Focus on the tmux calls.'
+```
+
+- Fetches the PR with `gh pr view` (title, URL, base/head branch, head sha, changed files, body). A closed or merged PR is an error. Exclusive with `--issue`; `--prompt` / `--prompt-key` add text under "Additional review instructions".
+- The worktree is `.worktrees/agent-<agent>-review-pr-<N>-<id>/` on `agent/<agent>/review-pr-<N>-<id>` (a fresh id per review, so two reviews never share a worktree), cut from the default branch. The reviewer checks out the PR head detached and returns to that branch when done, so SessionEnd can reclaim it. It is never pushed.
+- **Author**: the live window whose worktree branch equals the PR's head branch, across every agentctl session (`--author @N` overrides). When it runs under the same Claude account, the prompt names it by `@N.%P` and agentctl queues an `agentctl notice:` in the author's window introducing the reviewer. Otherwise the reviewer reports to its orchestrator only.
+- The deliverable is one `REVIEW PR #<N> — VERDICT: MERGE | MERGE-WITH-FOLLOWUPS | BLOCKED | NEEDS-BRENDAN` message to the orchestrator, after at most 3 fix rounds with the author.
+
 ## Context injection
 
 The dispatched agent receives a carefully scoped context window:
@@ -92,7 +115,7 @@ The dispatched agent receives a carefully scoped context window:
 - **Issue body** — the problem statement from GitHub
 - **Agent system prompt** — the agent's conventions and tool preferences from `~/.claude/agents/<name>.md`
 - **Project CLAUDE.md** — codebase conventions
-- **Implementation spec** (if available) — from the context store, keyed to the ticket number
+- **Context entries** — every context store entry stored with `--agent <name>` (for example a `ticket-<N>-spec`), within a size budget. Entries are selected by agent, not by key name
 
 And nothing else. No conversation history about unrelated issues. No stale file reads. Just the signal the agent needs.
 

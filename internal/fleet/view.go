@@ -164,6 +164,7 @@ func agentFromWindow(idx int, w tmux.WindowInfo, name string, records map[string
 		LastToolDetail:   ws.LastToolDetail,
 		LastText:         ws.LastText,
 		Backend:          ws.Backend,
+		Account:          ws.Account,
 		Harness:          ws.Harness,
 		Mode:             ws.Mode,
 		TicketRef:        ws.Ticket,
