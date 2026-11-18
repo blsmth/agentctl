@@ -214,7 +214,7 @@ func (m *HerdModel) launchForGroup(g *herd.Group) tea.Cmd {
 		return nil
 	}
 	m.jumpErr = ""
-	m.infoMsg = "launching agent in " + g.Session + "…"
+	m.setProgress("launching agent in " + m.projectLabel(g.Session) + "…")
 	return herdLaunchCmd(*g)
 }
 
@@ -228,7 +228,7 @@ func (m *HerdModel) shellForGroup(g *herd.Group) tea.Cmd {
 		return nil
 	}
 	m.jumpErr = ""
-	m.infoMsg = "opening shell in " + g.Session + "…"
+	m.setProgress("opening shell in " + m.projectLabel(g.Session) + "…")
 	return herdShellCmd(*g)
 }
 
@@ -324,7 +324,7 @@ func (m *HerdModel) confirmClose() tea.Cmd {
 		if l.kind == herdLineRow && m.confirmingRow(l.row) {
 			m.cancelClose()
 			m.recordClose(l.row)
-			m.infoMsg = "closing " + l.row.Name + "…"
+			m.setProgress("closing " + l.row.Name + "…")
 			return herdCloseCmd(l.row)
 		}
 	}
@@ -388,11 +388,12 @@ func (m HerdModel) footerMessageY() int {
 
 // openMenu opens the context menu for line idx (selecting it first).
 func (m *HerdModel) openMenu(idx int) {
+	m.menuHelp = false
 	m.cancelClose()
 	m.cancelNew()
 	m.selectLine(idx)
 	if len(m.herdMenuItems(idx)) == 0 {
-		m.menuOpen = false
+		m.closeMenu()
 		return
 	}
 	m.menuOpen, m.menuLine = true, idx
@@ -401,7 +402,7 @@ func (m *HerdModel) openMenu(idx int) {
 // runMenuKey executes a menu action by its key id.
 func (m *HerdModel) runMenuKey(key string) tea.Cmd {
 	line := m.menuLine
-	m.menuOpen = false
+	m.closeMenu()
 	switch key {
 	case "enter":
 		_, cmd := m.focusLive()
