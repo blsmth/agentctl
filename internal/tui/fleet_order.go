@@ -167,13 +167,8 @@ func (m FleetModel) dropSlotAt(y int) (slot int, ok bool) {
 	if row < 0 || row >= m.fleetListRows() {
 		return -1, false
 	}
-	cw := m.listColWidth()
-	for i := m.scrollOffset; i < len(m.lines); i++ {
-		h := m.lineHeight(i, cw)
-		if row < h {
-			return m.groupIndexOfLine(i), true
-		}
-		row -= h
+	if idx, _, ok := m.lineAtSub(0, y); ok {
+		return m.groupIndexOfLine(idx), true
 	}
 	return len(m.groups) - 1, true
 }

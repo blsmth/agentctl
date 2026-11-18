@@ -283,3 +283,23 @@ func TestPressOnRowIsNotADrag(t *testing.T) {
 		t.Error("press on an agent row started a drag")
 	}
 }
+
+func TestDropSlotWithScroll(t *testing.T) {
+	m, _ := orderModel(t)
+	m.scrollOffset = headerLine(t, m, "s2")
+	top := m.fleetListTop()
+	if slot, ok := m.dropSlotAt(top); !ok || slot != 1 {
+		t.Errorf("first visible line (s2 header): slot=%d ok=%v, want 1", slot, ok)
+	}
+	if _, ok := m.dropSlotAt(top - 1); ok {
+		t.Error("row above the list should be outside")
+	}
+	// Dragging s4 onto the scrolled-to s2 header reorders against real groups.
+	y4 := lineScreenY(m, headerLine(t, m, "s4")) - lineScreenY(m, m.scrollOffset) + top
+	m = orderSend(m, tea.MouseClickMsg{Button: tea.MouseLeft, X: 20, Y: y4})
+	m = orderSend(m, tea.MouseMotionMsg{Button: tea.MouseLeft, X: 20, Y: top})
+	m = orderSend(m, tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 20, Y: top})
+	if got := groupSessions(m); !slices.Equal(got, []string{"s1", "s4", "s2", "s3"}) {
+		t.Errorf("order %v", got)
+	}
+}
