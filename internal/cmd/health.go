@@ -100,6 +100,9 @@ func RunHealth() {
 	// would pass any check that stops there.
 	printHookDriftReport(healthCheckHookDrift(cwdOrEmpty()))
 
+	// Agent definitions whose tools: list contradicts their role. Warn only.
+	printAgentToolsHealth(os.Stdout, cwdOrEmpty())
+
 	fmt.Println()
 
 	// Orphan monitor detection. See healthDecideOrphans for the correctness
