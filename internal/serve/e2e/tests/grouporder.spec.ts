@@ -68,3 +68,24 @@ test("Alt+ArrowDown on a header moves the group one slot", async ({ page }) => {
   await expect(names(page)).toHaveText(["blog", "shop", "hub"]);
   await expect(page.locator(".fleet .group-toggle", { hasText: "shop" })).toBeFocused();
 });
+
+test("a render during the hold does not freeze later renders", async ({ page, control }) => {
+  // Press and hold the shop header, and let the fleet re-render under the
+  // finger before the long press fires: the old header is gone by then.
+  const held = page.evaluate(async () => {
+    const head = document.querySelector<HTMLElement>(".fleet section.group .group-head")!;
+    const r = head.getBoundingClientRect();
+    const ev = (type: string) =>
+      new PointerEvent(type, { pointerId: 1, pointerType: "touch", isPrimary: true, bubbles: true, cancelable: true, clientX: r.left + 40, clientY: r.top + 10, button: 0, buttons: type === "pointerup" ? 0 : 1 });
+    head.dispatchEvent(ev("pointerdown"));
+    await new Promise((res) => setTimeout(res, 700));
+    // The finger lifts on whatever header is now under it.
+    document.querySelector(".fleet section.group .group-head")!.dispatchEvent(ev("pointerup"));
+  });
+  await control.patchWindow("agentctl-shop", "@11", { activity: "changed during the hold" });
+  await held;
+  await expect(page.getByText("changed during the hold")).toBeVisible();
+  await control.patchWindow("agentctl-shop", "@11", { activity: "changed after the hold" });
+  await expect(page.getByText("changed after the hold")).toBeVisible();
+  await expect(names(page)).toHaveText(["shop", "blog", "hub"]);
+});

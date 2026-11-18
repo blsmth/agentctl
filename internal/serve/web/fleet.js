@@ -203,17 +203,35 @@ function attachGroupDrag(section, head, { list, onBusy, onDrop }) {
 
   const blockScroll = (e) => e.preventDefault();
 
-  const clearPress = () => {
-    if (press) clearTimeout(press.timer);
+  // The press holds renders from pointerdown, so the list is not rebuilt
+  // under a finger that is still deciding between tap, scroll and drag. A
+  // tap's release is delayed past its click, which a render would swallow.
+  const clearPress = (delayMs = 0) => {
+    if (!press) return;
+    clearTimeout(press.timer);
     press = null;
+    if (delayMs > 0) setTimeout(() => onBusy(false), delayMs);
+    else onBusy(false);
   };
 
   const start = () => {
     const p = press;
     press = null;
-    onBusy(true);
+    // The press already holds renders (busy). Still, never drag a header
+    // that has left the page.
+    if (!p || !head.isConnected) {
+      onBusy(false);
+      return;
+    }
     drag = { id: p.id, grab: p.y - head.getBoundingClientRect().top, y: p.y, slot: 0, raf: 0 };
-    head.setPointerCapture?.(p.id);
+    try {
+      head.setPointerCapture?.(p.id);
+    } catch {
+      // No active pointer to capture (it lifted already): drop the gesture.
+      drag = null;
+      onBusy(false);
+      return;
+    }
     // touch-action only governs a gesture before it starts scrolling, so also
     // veto touchmove (iOS) while the drag is live.
     head.classList.add("dragging");
@@ -250,6 +268,7 @@ function attachGroupDrag(section, head, { list, onBusy, onDrop }) {
 
   head.addEventListener("pointerdown", (e) => {
     if (press || drag || (e.pointerType === "mouse" && e.button !== 0) || e.target.closest(".group-add")) return;
+    onBusy(true);
     press = { id: e.pointerId, x: e.clientX, y: e.clientY, timer: setTimeout(start, LONG_PRESS_MS) };
   });
   head.addEventListener("pointermove", (e) => {
@@ -260,7 +279,7 @@ function attachGroupDrag(section, head, { list, onBusy, onDrop }) {
     place();
   });
   head.addEventListener("pointerup", (e) => {
-    if (press && e.pointerId === press.id) clearPress();
+    if (press && e.pointerId === press.id) clearPress(150);
     if (drag && e.pointerId === drag.id) finish(true);
   });
   head.addEventListener("pointercancel", (e) => {
@@ -340,7 +359,7 @@ export function mountFleet(root, ctx) {
   async function reorder(key, slot) {
     const before = displayedKeys();
     const keys = moveKey(before, key, slot);
-    if (sameOrder(keys, before) && keys.every((k, i) => k === before[i])) return;
+    if (keys.every((k, i) => k === before[i])) return;
     const prev = pending;
     pending = { keys, at: Date.now() };
     render();
