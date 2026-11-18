@@ -204,9 +204,8 @@ func (m *HerdModel) groupOfLine(idx int) *herd.Group {
 	return nil
 }
 
-// launchForLine starts a background launch in the group owning line idx.
-func (m *HerdModel) launchForLine(idx int) tea.Cmd {
-	g := m.groupOfLine(idx)
+// launchForGroup starts a background agent launch in g's project.
+func (m *HerdModel) launchForGroup(g *herd.Group) tea.Cmd {
 	if g == nil {
 		return nil
 	}
@@ -219,9 +218,8 @@ func (m *HerdModel) launchForLine(idx int) tea.Cmd {
 	return herdLaunchCmd(*g)
 }
 
-// shellForLine opens a shell window in the group owning line idx.
-func (m *HerdModel) shellForLine(idx int) tea.Cmd {
-	g := m.groupOfLine(idx)
+// shellForGroup opens a shell window in g's project.
+func (m *HerdModel) shellForGroup(g *herd.Group) tea.Cmd {
 	if g == nil {
 		return nil
 	}
@@ -248,6 +246,22 @@ func (m *HerdModel) armNew(idx int) {
 
 func (m *HerdModel) cancelNew() { m.newSession, m.newLine = "", 0 }
 
+// validateNew cancels the selector when its group is gone, can no longer
+// launch, or no longer owns the armed line (after a reload).
+func (m *HerdModel) validateNew() {
+	if !m.newArmed() {
+		return
+	}
+	g := m.groupForSession(m.newSession)
+	if g == nil || !groupCanLaunch(*g) {
+		m.cancelNew()
+		return
+	}
+	if o := m.groupOfLine(m.newLine); o == nil || o.Session != m.newSession {
+		m.cancelNew()
+	}
+}
+
 func (m HerdModel) newArmed() bool { return m.newSession != "" }
 
 // newArmedFor reports whether the selector is showing on group g's header.
@@ -258,14 +272,20 @@ func (m HerdModel) newArmedFor(g herd.Group) bool {
 // handleNewKey handles a key while the selector is armed. handled is false for
 // keys that should fall through to normal handling (after cancelling).
 func (m *HerdModel) handleNewKey(key string) (cmd tea.Cmd, handled bool) {
-	line := m.newLine
+	// Target by session, not line index: a reload can move other groups
+	// under the armed index.
+	g := m.groupForSession(m.newSession)
+	if g == nil || !groupCanLaunch(*g) {
+		m.cancelNew()
+		return nil, key == "s" || key == "a" || key == "enter" || key == "esc" || key == "n"
+	}
 	switch key {
 	case "s":
 		m.cancelNew()
-		return m.shellForLine(line), true
+		return m.shellForGroup(g), true
 	case "a", "enter":
 		m.cancelNew()
-		return m.launchForLine(line), true
+		return m.launchForGroup(g), true
 	case "esc", "n":
 		m.cancelNew()
 		return nil, true

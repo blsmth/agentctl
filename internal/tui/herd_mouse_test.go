@@ -484,3 +484,45 @@ func TestSelectorRenderingAndHints(t *testing.T) {
 		t.Errorf("footer shows selector hints when disarmed: %q", f)
 	}
 }
+
+func TestSelectorTargetsArmedSessionAfterReload(t *testing.T) {
+	setup := func(t *testing.T) HerdModel {
+		m := armedHeaderModel(t) // armed on s1 at line 0
+		// Reload: s2 now sorts first, so it sits at the armed index.
+		for i := range m.groups {
+			m.groups[i].ProjectDir, m.groups[i].RuntimeDir = "/p", "/r"
+		}
+		m.groups[0], m.groups[1] = m.groups[1], m.groups[0]
+		m.rebuildLines()
+		if m.lines[m.newLine].group.Session != "s2" {
+			t.Fatalf("setup: line %d is %q", m.newLine, m.lines[m.newLine].group.Session)
+		}
+		return m
+	}
+	t.Run("key targets armed session or cancels", func(t *testing.T) {
+		m := setup(t)
+		cmd, _ := m.handleNewKey("s")
+		if m.newArmed() {
+			t.Error("still armed")
+		}
+		if cmd != nil && !strings.Contains(m.infoMsg, "s1") {
+			t.Errorf("shell targeted wrong group: %q", m.infoMsg)
+		}
+	})
+	t.Run("reload cancels", func(t *testing.T) {
+		m := setup(t)
+		m.validateNew()
+		if m.newArmed() {
+			t.Error("selector should cancel when its group moved off the armed line")
+		}
+	})
+	t.Run("vanished group cancels", func(t *testing.T) {
+		m := armedHeaderModel(t)
+		m.groups = m.groups[1:]
+		m.rebuildLines()
+		cmd, _ := m.handleNewKey("s")
+		if cmd != nil || m.newArmed() {
+			t.Error("must cancel without launching")
+		}
+	})
+}

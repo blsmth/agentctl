@@ -656,6 +656,7 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.groups = msg.groups
 			m.rebuildLines()
+			m.validateNew()
 			m.refreshHover()
 			m.applyClosePending()
 			m.resolveSelection()
@@ -989,6 +990,7 @@ func (m *HerdModel) syncSelectionFromCursor() {
 		if m.newArmed() && m.splitPane.Cursor() != m.newLine {
 			m.cancelNew()
 		}
+		m.validateNew()
 		if m.menuOpen && m.splitPane.Cursor() != m.menuLine {
 			m.menuOpen = false
 		}

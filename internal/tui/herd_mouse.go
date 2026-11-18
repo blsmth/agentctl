@@ -196,11 +196,11 @@ func (m HerdModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	case herdClickNewShell:
 		m.menuOpen = false
 		m.cancelNew()
-		return m, m.shellForLine(idx)
+		return m, m.shellForGroup(m.groupForSession(m.lines[idx].group.Session))
 	case herdClickNewAgent:
 		m.menuOpen = false
 		m.cancelNew()
-		return m, m.launchForLine(idx)
+		return m, m.launchForGroup(m.groupForSession(m.lines[idx].group.Session))
 	case herdClickClose:
 		m.menuOpen = false
 		if m.confirmingRow(m.lines[idx].row) {
