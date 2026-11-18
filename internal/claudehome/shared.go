@@ -14,7 +14,6 @@ var SharedEntries = []string{
 	"shared",
 	"skills",
 	"commands",
-	"agent-memory",
 	"CLAUDE.md",
 	"settings.json",
 	"hooks",
@@ -23,4 +22,9 @@ var SharedEntries = []string{
 
 // NeverShared names entries that must never be a symlink in an account dir
 // (`account doctor` reports one that is).
-var NeverShared = []string{"sessions", "projects"}
+//
+// agent-memory is here because Claude Code auto-allows writes to its memory
+// dir only when the real path is inside the current CLAUDE_CONFIG_DIR. Through
+// a symlink to ~/.claude the write resolves outside it and Claude Code prompts
+// on every memory write. Memory must be a real dir inside the account.
+var NeverShared = []string{"sessions", "projects", "agent-memory"}

@@ -461,7 +461,7 @@ agentctl account rm personal   # unregister only; never deletes the dir
 agentctl dispatch --issue 12 --account personal
 ```
 
-`account add` creates the dir (0700), symlinks the shared allowlist from `~/.claude` (`agents/`, `shared/`, `skills/`, `commands/`, `agent-memory/`, `CLAUDE.md`, `settings.json`, `hooks/`, `plugins/`; entries that do not exist are skipped, and an existing non-symlink file is never overwritten), registers the account, then prints `CLAUDE_CONFIG_DIR=<dir> claude auth login` (plain `claude auth login` for `~/.claude`, which is also never linked into itself) and, inside tmux, opens it in a popup. Credentials, `projects/`, `sessions/`, history and org policy files stay private to each dir.
+`account add` creates the dir (0700), symlinks the shared allowlist from `~/.claude` (`agents/`, `shared/`, `skills/`, `commands/`, `CLAUDE.md`, `settings.json`, `hooks/`, `plugins/`; entries that do not exist are skipped, and an existing non-symlink file is never overwritten), registers the account, then prints `CLAUDE_CONFIG_DIR=<dir> claude auth login` (plain `claude auth login` for `~/.claude`, which is also never linked into itself) and, inside tmux, opens it in a popup. Credentials, `projects/`, `sessions/`, history and org policy files stay private to each dir. Agent memory is per account, because Claude Code only trusts its memory dir inside its own config dir.
 
 ## Harnesses (Claude Code and pi)
 

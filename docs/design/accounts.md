@@ -87,7 +87,7 @@ Keep `~/.claude` as `ll`, since it is already logged in there, has the history, 
 
 Each config dir is a full Claude home. Agents, shared includes, user `CLAUDE.md`, user `settings.json` (hooks, statusline, permissions), skills, commands and agent memory should be the same in both, while credentials, `projects/`, `sessions/`, history, caches and org policy files stay separate.
 
-`agentctl account add` symlinks a fixed allowlist from the home dir (`~/.claude`) into the new dir: `agents/`, `shared/`, `skills/`, `commands/`, `agent-memory/`, `CLAUDE.md`, `settings.json`, `hooks/`, `plugins/` (verify plugins tolerate sharing). **Never** `.credentials.json`, `sessions/`, `projects/`, `remote-settings*`, `policy-limits*`, `.claude.json`, `history.jsonl`, `daemon*`, `statsig`/telemetry. It's an allowlist, not a denylist, so new Claude Code files default to private.
+`agentctl account add` symlinks a fixed allowlist from the home dir (`~/.claude`) into the new dir: `agents/`, `shared/`, `skills/`, `commands/`, `CLAUDE.md`, `settings.json`, `hooks/`, `plugins/` (verify plugins tolerate sharing). Agent memory (`agent-memory/`) is per account, because Claude Code only trusts its memory dir inside its own config dir. **Never** `.credentials.json`, `sessions/`, `projects/`, `remote-settings*`, `policy-limits*`, `.claude.json`, `history.jsonl`, `daemon*`, `statsig`/telemetry. It's an allowlist, not a denylist, so new Claude Code files default to private.
 
 Caveat: Claude Code rewrites `settings.json` (e.g. `/config` toggles). Through a symlink that's what we want, since the edit lands in the shared file, provided Claude Code writes through the link rather than replacing it with a file. Verify. If it replaces the link, `account doctor` detects and repairs it.
 
