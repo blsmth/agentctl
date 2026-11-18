@@ -412,17 +412,32 @@ export function hasFeature(features, name) {
 /**
  * buildAnswerRequest builds the request that answers a dialog. It always sends
  * the hash of the dialog the user was shown, so the server can refuse (409)
- * when the pane has moved on. key is an option key or "esc".
+ * when the pane has moved on. key is an option key or "esc"; for a
+ * multi-select question (dialog.kind "multi") it is the array of option keys
+ * to tick, and the server ticks exactly those and moves to the next tab.
  */
 export function buildAnswerRequest(session, windowId, dialog, key) {
   if (!dialog || !dialog.hash) throw new Error("no dialog to answer");
-  const valid = key === "esc" || (dialog.options ?? []).some((o) => o.key === key);
-  if (!valid) throw new Error(`key ${key} is not an option of this dialog`);
-  return {
-    method: "POST",
-    path: `${windowApiPath(session, windowId)}/answer`,
-    body: { key, dialog_hash: dialog.hash },
-  };
+  const isOption = (k) => (dialog.options ?? []).some((o) => o.key === k);
+  const path = `${windowApiPath(session, windowId)}/answer`;
+  if (Array.isArray(key)) {
+    if (dialog.kind !== "multi") throw new Error("this dialog takes a single answer");
+    if (key.length === 0) throw new Error("choose at least one option");
+    for (const k of key) if (!isOption(k)) throw new Error(`key ${k} is not an option of this dialog`);
+    return { method: "POST", path, body: { keys: [...new Set(key)], dialog_hash: dialog.hash } };
+  }
+  if (key !== "esc" && dialog.kind === "multi") throw new Error("choose options, then continue");
+  if (key !== "esc" && !isOption(key)) throw new Error(`key ${key} is not an option of this dialog`);
+  return { method: "POST", path, body: { key, dialog_hash: dialog.hash } };
+}
+
+/**
+ * multiSelectLabel is the confirm-sheet title for a multi-select answer:
+ * the chosen options' labels, in dialog order.
+ */
+export function multiSelectLabel(dialog, keys) {
+  const chosen = (dialog?.options ?? []).filter((o) => keys.includes(o.key)).map((o) => o.label);
+  return `Choose ${chosen.join(", ")}?`;
 }
 
 /** MAX_IMAGES: the most images one message carries (the server enforces the same). */

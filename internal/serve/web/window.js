@@ -17,6 +17,7 @@ import {
   hangingIndent,
   headerChips,
   liveness,
+  multiSelectLabel,
   paneLinesForExact,
   paneModeOrDefault,
   safeHttpsUrl,
@@ -415,6 +416,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
   function answerSection() {
     const dialog = pane.dialog;
     const recommended = focusedOption(pane.text, dialog) || dialog.options?.[0]?.key || "";
+    // key is an option key, "esc", or (multi-select) the keys to tick.
     const answer = (key) => {
       let req;
       try {
@@ -423,32 +425,58 @@ export function mountWindow(root, ctx, { session, windowId }) {
         toast(e.message, "error");
         return;
       }
-      run(
-        {
-          title: key === "esc" ? "Dismiss the dialog (Esc)?" : `Answer "${key}"?`,
-          lines: [dialog.text],
-          confirmLabel: "Send",
-        },
-        req,
-      );
+      let title = `Answer "${key}"?`;
+      if (key === "esc") title = "Dismiss the dialog (Esc)?";
+      else if (Array.isArray(key)) title = multiSelectLabel(dialog, key);
+      run({ title, lines: [dialog.text], confirmLabel: "Send" }, req);
     };
+    const dismiss = h("button", { class: "btn choice", onclick: () => answer("esc") }, "Dismiss (Esc)");
+    const choices =
+      dialog.kind === "multi"
+        ? multiChoices(dialog, answer)
+        : (dialog.options ?? []).map((o) =>
+            h(
+              "button",
+              { class: `btn choice${o.key === recommended ? " primary" : ""}`, onclick: () => answer(o.key) },
+              `${o.key}. ${o.label}`,
+            ),
+          );
     return h(
       "section",
       { class: "answer" },
       h("p", { class: "question" }, dialogQuestion(dialog)),
-      h(
-        "div",
-        { class: "choices" },
-        ...(dialog.options ?? []).map((o) =>
-          h(
-            "button",
-            { class: `btn choice${o.key === recommended ? " primary" : ""}`, onclick: () => answer(o.key) },
-            `${o.key}. ${o.label}`,
-          ),
-        ),
-        h("button", { class: "btn choice", onclick: () => answer("esc") }, "Dismiss (Esc)"),
-      ),
+      h("div", { class: "choices" }, ...choices, dismiss),
     );
+  }
+
+  // multiChoices are a multi-select question's options as toggles (starting
+  // from the boxes ticked in the pane) and a Continue button that sends the
+  // ticked set. Toggling sends nothing.
+  function multiChoices(dialog, answer) {
+    const ticked = new Set(dialog.checked ?? []);
+    const next = h("button", { class: "btn choice primary", onclick: () => answer([...ticked]) }, "Continue");
+    const sync = () => {
+      next.disabled = ticked.size === 0;
+    };
+    const toggles = (dialog.options ?? []).map((o) => {
+      const btn = h(
+        "button",
+        {
+          class: "btn choice toggle",
+          "aria-pressed": String(ticked.has(o.key)),
+          onclick: () => {
+            if (ticked.has(o.key)) ticked.delete(o.key);
+            else ticked.add(o.key);
+            btn.setAttribute("aria-pressed", String(ticked.has(o.key)));
+            sync();
+          },
+        },
+        `${o.key}. ${o.label}`,
+      );
+      return btn;
+    });
+    sync();
+    return [...toggles, next];
   }
 
   // attachments is the composer's image picker: an attach button and

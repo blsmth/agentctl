@@ -19,6 +19,7 @@ import (
 	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/launchopts"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/panestate"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
@@ -179,8 +180,11 @@ func (s *Server) capturePane(rw resolved) (paneBody, outcome, bool) {
 }
 
 type answerIn struct {
-	Key        string `json:"key"`
-	DialogHash string `json:"dialog_hash"`
+	Key string `json:"key"`
+	// Keys answers a multi-select question (panestate.KindMulti): the
+	// options to leave ticked. Key must then be empty.
+	Keys       []string `json:"keys,omitempty"`
+	DialogHash string   `json:"dialog_hash"`
 }
 
 // handleAnswer answers a permission dialog. The pane is re-captured and
@@ -194,8 +198,14 @@ type answerIn struct {
 // hash is remembered per window for answeredTTL and a repeat is refused, and
 // the answer waits (up to answerSettle) for the dialog to leave the pane
 // before releasing the lock.
+//
+// A multi-select question is answered with Keys instead: see answerMulti.
 func (s *Server) handleAnswer(r *http.Request, in answerIn, a *auditEntry) outcome {
-	if in.Key != escKey && !answerKeyRE.MatchString(in.Key) {
+	if len(in.Keys) > 0 {
+		if out, ok := checkMultiKeys(in); !ok {
+			return out
+		}
+	} else if in.Key != escKey && !answerKeyRE.MatchString(in.Key) {
 		return failure(http.StatusBadRequest, codeBadRequest, `key must be a dialog option key or "esc"`)
 	}
 	if !dialogHashRE.MatchString(in.DialogHash) {
@@ -218,6 +228,16 @@ func (s *Server) handleAnswer(r *http.Request, in answerIn, a *auditEntry) outco
 	if s.answered.recent(winKey, in.DialogHash, s.now()) {
 		return failure(http.StatusConflict, codeAlreadyAnswered, "this dialog was already answered; refresh and try again")
 	}
+	multi := pane.Dialog.Kind == panestate.KindMulti
+	switch {
+	case len(in.Keys) > 0 && !multi:
+		return failure(http.StatusConflict, codeDialogChanged, "this dialog takes a single key")
+	case len(in.Keys) > 0:
+		return s.answerMulti(rw, *pane.Dialog, in, a)
+	case multi && in.Key != escKey:
+		// A digit only toggles a checkbox: the answer is the set of keys.
+		return failure(http.StatusConflict, codeDialogChanged, "this question takes several answers; send keys")
+	}
 	key := in.Key
 	if key == escKey {
 		key = "Escape"
@@ -239,17 +259,115 @@ func (s *Server) handleAnswer(r *http.Request, in answerIn, a *auditEntry) outco
 // a later request could see the answered dialog; answeredDialogs is the
 // guard.
 func (s *Server) awaitDialogGone(rw resolved, hash string) {
+	s.awaitDialog(rw, func(d *panestate.Dialog) bool { return d == nil || d.Hash != hash })
+}
+
+// awaitDialog re-captures the pane until done reports true for its dialog
+// (nil when none is showing), for at most s.answerSettle. It returns the
+// last dialog seen and whether done was reached.
+func (s *Server) awaitDialog(rw resolved, done func(*panestate.Dialog) bool) (*panestate.Dialog, bool) {
 	deadline := time.Now().Add(s.answerSettle)
-	for time.Now().Before(deadline) {
+	for {
 		text, err := s.mainPanes.CapturePane(rw.pane, defaultPaneLines)
 		if err != nil {
-			return
+			return nil, false
 		}
-		if p := buildPaneBodyFor(rw.harness(), text); p.Dialog == nil || p.Dialog.Hash != hash {
-			return
+		p := buildPaneBodyFor(rw.harness(), text)
+		if done(p.Dialog) {
+			return p.Dialog, true
+		}
+		if !time.Now().Before(deadline) {
+			return p.Dialog, false
 		}
 		time.Sleep(answerSettlePoll)
 	}
+}
+
+// checkMultiKeys validates a multi-select answer's shape: Key empty, and
+// Keys distinct option keys.
+func checkMultiKeys(in answerIn) (outcome, bool) {
+	if in.Key != "" {
+		return failure(http.StatusBadRequest, codeBadRequest, "send either key or keys"), false
+	}
+	if len(in.Keys) > maxMultiKeys {
+		return failure(http.StatusBadRequest, codeBadRequest, "too many keys"), false
+	}
+	seen := map[string]bool{}
+	for _, k := range in.Keys {
+		if !answerKeyRE.MatchString(k) || seen[k] {
+			return failure(http.StatusBadRequest, codeBadRequest, "keys must be distinct dialog option keys"), false
+		}
+		seen[k] = true
+	}
+	return outcome{}, true
+}
+
+// maxMultiKeys bounds a multi-select answer (AskUserQuestion offers at most
+// a handful of options).
+const maxMultiKeys = 20
+
+// answerMulti answers a multi-select AskUserQuestion tab: it ticks exactly
+// in.Keys, then presses Tab to move on (to the next question or the review
+// tab, which is answered like any dialog). In Claude Code a digit toggles
+// its option's checkbox without moving the cursor or the tab, and Tab
+// advances; Tab with nothing ticked skips the question, hence keys are
+// required.
+//
+// Keys are never sent blind: after each toggle the pane is re-captured and
+// re-parsed, and the next key goes out only if the same question is still up
+// (panestate.QuestionKey) with that option now in the wanted state. Anything
+// else stops the sequence. The caller holds the window lock and has checked
+// that d is the dialog the phone answered.
+func (s *Server) answerMulti(rw resolved, d panestate.Dialog, in answerIn, a *auditEntry) outcome {
+	for _, k := range in.Keys {
+		if !slices.ContainsFunc(d.Options, func(o panestate.Option) bool { return o.Key == k }) {
+			return failure(http.StatusConflict, codeDialogChanged, fmt.Sprintf("%q is not an option of this question", k))
+		}
+	}
+	winKey := rw.group.Session + "\x00" + rw.window.WindowID
+	question := panestate.QuestionKey(d)
+	s.auditAttempt(*a)
+	for _, o := range d.Options {
+		want := slices.Contains(in.Keys, o.Key)
+		if d.IsChecked(o.Key) == want {
+			continue
+		}
+		if err := s.keys.SendKey(rw.target(), o.Key); err != nil {
+			logging.Warn("serve: answer %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
+			return failure(http.StatusBadGateway, codeActionFailed, "sending the key failed")
+		}
+		s.answered.remember(winKey, in.DialogHash, s.now())
+		next, ok := s.awaitDialog(rw, func(n *panestate.Dialog) bool {
+			return n == nil || panestate.QuestionKey(*n) != question || n.IsChecked(o.Key) == want
+		})
+		if !ok || next == nil || panestate.QuestionKey(*next) != question || next.IsChecked(o.Key) != want {
+			logging.Warn("serve: answer %s:%s: option %s did not toggle", rw.group.Session, rw.window.WindowID, o.Key)
+			return failure(http.StatusConflict, codeDialogChanged, "the question did not take the selection; refresh and try again")
+		}
+		d = *next
+	}
+	if !slices.Equal(d.Checked, sortedKeys(d, in.Keys)) {
+		return failure(http.StatusConflict, codeDialogChanged, "the question did not take the selection; refresh and try again")
+	}
+	if err := s.keys.SendKey(rw.target(), "Tab"); err != nil {
+		logging.Warn("serve: answer %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
+		return failure(http.StatusBadGateway, codeActionFailed, "sending the key failed")
+	}
+	s.answered.remember(winKey, in.DialogHash, s.now())
+	s.awaitDialog(rw, func(n *panestate.Dialog) bool { return n == nil || panestate.QuestionKey(*n) != question })
+	return success(okBody)
+}
+
+// sortedKeys orders keys as the dialog lists its options, matching
+// Dialog.Checked.
+func sortedKeys(d panestate.Dialog, keys []string) []string {
+	var out []string
+	for _, o := range d.Options {
+		if slices.Contains(keys, o.Key) {
+			out = append(out, o.Key)
+		}
+	}
+	return out
 }
 
 // answeredDialogs remembers the last answered dialog hash per window.

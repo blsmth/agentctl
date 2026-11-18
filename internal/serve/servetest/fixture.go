@@ -1,6 +1,7 @@
 package servetest
 
 import (
+	_ "embed"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -27,26 +28,42 @@ const (
 		"╰────────────────────────────────────────────────╯\n"
 )
 
+// AskUserQuestion screens captured from Claude Code (v2.1.311, 80 columns):
+// tab 1 of 2 (single-select, options with descriptions), tab 2
+// (multi-select checkboxes) and the review tab. The review tab is the real
+// three-question capture trimmed to these two questions.
+var (
+	//go:embed panes/askuser-q1.txt
+	AskUserPane string
+	//go:embed panes/askuser-q2.txt
+	AskUserMultiPane string
+	//go:embed panes/askuser-review.txt
+	AskUserReviewPane string
+)
+
 // paneKinds maps Window.Pane names to pane text.
 var paneKinds = map[string]string{
-	"idle":    IdlePane,
-	"working": WorkingPane,
-	"dialog":  DialogPane,
+	"idle":           IdlePane,
+	"working":        WorkingPane,
+	"dialog":         DialogPane,
+	"askuser":        AskUserPane,
+	"askuser-multi":  AskUserMultiPane,
+	"askuser-review": AskUserReviewPane,
 }
 
 // Window is one fixture window. It is the JSON the control API accepts, and
 // deliberately flat: the harness derives the fleet row, windowstate metadata
 // and served window from it, so they can never disagree.
 type Window struct {
-	ID          string `json:"id"`
-	Index       int    `json:"index"`
-	Agent       string `json:"agent"`
-	State       string `json:"state"` // idle | working | blocked
-	Done        bool   `json:"done,omitempty"`
-	Mode        string `json:"mode,omitempty"` // "" or bare = interactive; dispatch, adhoc = dispatched
-	Branch      string `json:"branch,omitempty"`
-	Parent      string `json:"parent,omitempty"` // dispatching window ID in the same session
-	Activity    string `json:"activity,omitempty"`
+	ID       string `json:"id"`
+	Index    int    `json:"index"`
+	Agent    string `json:"agent"`
+	State    string `json:"state"` // idle | working | blocked
+	Done     bool   `json:"done,omitempty"`
+	Mode     string `json:"mode,omitempty"` // "" or bare = interactive; dispatch, adhoc = dispatched
+	Branch   string `json:"branch,omitempty"`
+	Parent   string `json:"parent,omitempty"` // dispatching window ID in the same session
+	Activity string `json:"activity,omitempty"`
 	// Recap and RecapSource (summary, task, title, activity) fill the row's
 	// recap line as fleet.TagLogs would.
 	Recap       string `json:"recap,omitempty"`
@@ -61,7 +78,8 @@ type Window struct {
 	Model   string  `json:"model,omitempty"`
 	CostUSD float64 `json:"cost_usd,omitempty"`
 	PRURL   string  `json:"pr_url,omitempty"`
-	// Pane names the captured screen: idle, working or dialog. Empty picks
+	// Pane names the captured screen: idle, working, dialog, askuser,
+	// askuser-multi or askuser-review. Empty picks
 	// one from State. PaneText, when set, is used verbatim instead.
 	Pane     string `json:"pane,omitempty"`
 	PaneText string `json:"pane_text,omitempty"`
@@ -124,6 +142,8 @@ func DefaultFixture() []Group {
 				{ID: "@14", Index: 4, Agent: "reviewer", State: "blocked", Mode: "dispatch", Parent: "@12",
 					PendingTool: "Bash", Activity: "go test ./...", Branch: "agent/reviewer/adhoc-3f2a", Model: "claude-haiku-4-5"},
 				{ID: "@15", Index: 5, Agent: "docs", State: "idle", Activity: "updated README"},
+				{ID: "@17", Index: 7, Agent: "designer", State: "blocked", Pane: "askuser",
+					PendingTool: "AskUserQuestion", Activity: "Which color should the button be?", Model: "claude-haiku-4-5"},
 			},
 		},
 		{

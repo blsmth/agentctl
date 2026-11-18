@@ -91,7 +91,7 @@ type fakeKeys struct {
 	inside atomic.Int32
 	maxIn  atomic.Int32
 	delay  time.Duration
-	onSend func()
+	onSend func(key string)
 }
 
 func (f *fakeKeys) SendKey(t WindowTarget, key string) error {
@@ -105,7 +105,7 @@ func (f *fakeKeys) SendKey(t WindowTarget, key string) error {
 	}
 	time.Sleep(f.delay)
 	if f.onSend != nil {
-		f.onSend()
+		f.onSend(key)
 	}
 	f.mu.Lock()
 	f.sent = append(f.sent, sentKey{t, key})
@@ -1004,7 +1004,7 @@ func TestAnswerWaitsForRedraw(t *testing.T) {
 	e := newWriteEnv(t, true)
 	e.answerSettle = 5 * time.Second
 	const redraw = 150 * time.Millisecond
-	e.keys.onSend = func() { time.AfterFunc(redraw, func() { e.panes.set(idlePane) }) }
+	e.keys.onSend = func(string) { time.AfterFunc(redraw, func() { e.panes.set(idlePane) }) }
 	start := time.Now()
 	if w := e.post(winPath+"/answer", fmt.Sprintf(`{"key":"1","dialog_hash":%q}`, dialogHash(t))); w.Code != 200 {
 		t.Fatalf("status %d: %s", w.Code, w.Body)

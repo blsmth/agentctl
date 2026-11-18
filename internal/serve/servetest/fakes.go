@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/panestate"
 	"github.com/blsmth/agentctl/internal/serve"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 )
@@ -157,17 +159,55 @@ func (p panes) CapturePane(pane string, _ int) (string, error) {
 }
 
 // keys records answers and interrupts. A key sent to a dialog dismisses it,
-// so the server's post-answer settle loop returns at once.
+// so the server's post-answer settle loop returns at once. The
+// AskUserQuestion screens step as Claude Code does: a digit on the
+// single-select tab moves to the multi-select tab, where a digit toggles its
+// checkbox and Tab moves to the review tab; any answer there (or Escape
+// anywhere) ends the dialog.
 type keys struct{ w *world }
 
 func (k keys) SendKey(t serve.WindowTarget, key string) error {
 	k.w.record(Action{Kind: "key", Session: t.Session, Window: t.WindowID, Pane: t.Pane, Key: key})
-	_ = k.w.update(t.Session, t.WindowID, func(x *Window) {
-		if x.paneText() == DialogPane {
-			x.Pane, x.PaneText = "idle", ""
-		}
-	})
+	_ = k.w.update(t.Session, t.WindowID, func(x *Window) { stepPane(x, key) })
 	return nil
+}
+
+// stepPane applies key to the screen x shows.
+func stepPane(x *Window, key string) {
+	text := x.paneText()
+	switch {
+	case text == DialogPane || text == AskUserReviewPane || (key == "Escape" && isAskUser(x)):
+		x.Pane, x.PaneText = "idle", ""
+	case text == AskUserPane:
+		x.Pane, x.PaneText = "askuser-multi", ""
+	case isAskUserMulti(x) && key == "Tab":
+		x.Pane, x.PaneText = "askuser-review", ""
+	case isAskUserMulti(x):
+		x.PaneText = toggleBox(text, key)
+	}
+}
+
+func isAskUser(x *Window) bool {
+	return x.Pane == "askuser" || x.Pane == "askuser-review" || isAskUserMulti(x)
+}
+
+func isAskUserMulti(x *Window) bool { return x.Pane == "askuser-multi" }
+
+// toggleBox flips the checkbox of option key on a multi-select screen.
+func toggleBox(pane, key string) string {
+	lines := strings.Split(pane, "\n")
+	for i, l := range lines {
+		plain := strings.TrimLeft(panestate.StripANSI(l), " ❯")
+		if !strings.HasPrefix(plain, key+". [") {
+			continue
+		}
+		if strings.Contains(l, "[ ]") {
+			lines[i] = strings.Replace(l, "[ ]", "[✔]", 1)
+		} else {
+			lines[i] = strings.Replace(l, "[✔]", "[ ]", 1)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 type injector struct{ w *world }

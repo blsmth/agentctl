@@ -36,6 +36,45 @@ test("answer a blocked agent's dialog", async ({ page, control }) => {
   await expect(page.locator(".answer")).toHaveCount(0);
 });
 
+// @17 is a two-question AskUserQuestion (real Claude Code captures): a
+// single-select tab, a multi-select tab, then the review tab. The fake steps
+// through them as Claude Code does on each key.
+test("answer an AskUserQuestion: single-select, multi-select, submit", async ({ page, control }) => {
+  await openWindow(page, "@17");
+  const answer = page.locator(".answer");
+  const choices = answer.locator(".choices button");
+  const send = () => sheet(page).getByRole("button", { name: "Send" }).tap();
+
+  // Tab 1: pick-and-advance options; the free-text entries are not offered.
+  await expect(answer.locator(".question")).toHaveText("Which color should the button be?");
+  await expect(choices).toHaveText(["1. Red", "2. Green", "3. Blue", "Dismiss (Esc)"]);
+  await choices.filter({ hasText: "2. Green" }).tap();
+  await expect(sheet(page)).toContainText('Answer "2"?');
+  await send();
+
+  // Tab 2: toggles that send nothing until Continue.
+  await expect(answer.locator(".question")).toHaveText("Which sizes should we ship?");
+  await expect(choices).toHaveText(["1. Small", "2. Medium", "3. Large", "Continue", "Dismiss (Esc)"]);
+  const cont = choices.filter({ hasText: "Continue" });
+  await expect(cont).toBeDisabled();
+  await choices.filter({ hasText: "1. Small" }).tap();
+  await choices.filter({ hasText: "3. Large" }).tap();
+  await expect(choices.filter({ hasText: "3. Large" })).toHaveAttribute("aria-pressed", "true");
+  await cont.tap();
+  await expect(sheet(page)).toContainText("Choose Small, Large?");
+  await send();
+
+  // Review tab: a plain dialog.
+  await expect(answer.locator(".question")).toHaveText("Ready to submit your answers?");
+  await choices.filter({ hasText: "1. Submit answers" }).tap();
+  await send();
+  await expect(answer).toHaveCount(0);
+
+  // The server ticked each box with a re-check in between, then moved on.
+  const keys = (await control.actions()).filter((a) => a.window === "@17").map((a) => a.key);
+  expect(keys).toEqual(["2", "1", "3", "Tab", "1"]);
+});
+
 test("blocked layout: answers above the pane, question only, recommended option primary", async ({ page }) => {
   await openWindow(page, "@14");
   const answer = page.locator(".answer");

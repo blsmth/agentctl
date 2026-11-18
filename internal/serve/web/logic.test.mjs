@@ -8,7 +8,7 @@ import {
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
-  actionsWithQueue, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
+  actionsWithQueue, buildAnswerRequest, multiSelectLabel, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines,
 } from "./logic.js";
 
@@ -326,6 +326,15 @@ console.log("ok: resolved text");
   assert.equal(actionsWithQueue(working, { verdict: "working" }, false), "interrupt");
   assert.equal(actionsWithQueue({ state: "idle" }, { verdict: "idle" }, true), "reply");
   assert.equal(actionsWithQueue({ state: "blocked" }, { verdict: "awaiting_input", dialog }, true), "answer");
+  const multi = { hash: "h", kind: "multi", options: [{ key: "1", label: "Small" }, { key: "2", label: "Medium" }, { key: "3", label: "Large" }], checked: ["2"] };
+  assert.deepEqual(buildAnswerRequest("s", "@1", multi, ["1", "3"]).body, { keys: ["1", "3"], dialog_hash: "h" });
+  assert.deepEqual(buildAnswerRequest("s", "@1", multi, "esc").body, { key: "esc", dialog_hash: "h" });
+  assert.throws(() => buildAnswerRequest("s", "@1", multi, "1"));
+  assert.throws(() => buildAnswerRequest("s", "@1", multi, []));
+  assert.throws(() => buildAnswerRequest("s", "@1", multi, ["4"]));
+  assert.throws(() => buildAnswerRequest("s", "@1", { hash: "h", options: [{ key: "1", label: "Yes" }] }, ["1"]));
+  assert.deepEqual(buildAnswerRequest("s", "@1", { hash: "h", kind: "question", options: [{ key: "1", label: "Red" }] }, "1").body, { key: "1", dialog_hash: "h" });
+  assert.equal(multiSelectLabel(multi, ["3", "1"]), "Choose Small, Large?");
   assert.deepEqual(buildQueueRequest("s", "@1", "hi"), { method: "POST", path: "/v1/sessions/s/windows/%401/queue", body: { text: "hi" } });
   assert.deepEqual(buildQueueRequest("s", "@1", "hi", ["a.png"]).body, { text: "hi", images: ["a.png"] });
   assert.deepEqual(buildReplyRequest("s", "@1", "hi", []).body, { text: "hi" });

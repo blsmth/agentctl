@@ -129,6 +129,9 @@ a.chip { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45
 .answer .question { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
 .answer .choices { flex-direction: column; flex-wrap: nowrap; }
 .answer .choices .btn { flex: none; width: 100%; min-height: 48px; padding: .55rem 1rem; justify-content: flex-start; text-align: left; }
+.answer .choices .toggle::before { content: "☐"; margin-right: .5rem; }
+.answer .choices .toggle[aria-pressed="true"] { border-color: var(--accent); }
+.answer .choices .toggle[aria-pressed="true"]::before { content: "☑"; color: var(--accent); }
 .gone { padding: 1rem; display: flex; flex-direction: column; align-items: flex-start; gap: .5rem; }
 .gone p { margin: 0; }
 .actions { padding: .75rem 1rem; display: flex; flex-direction: column; gap: .6rem; }

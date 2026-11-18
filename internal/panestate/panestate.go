@@ -46,6 +46,9 @@ var dialogMarkers = []string{
 	"Do you want to create",
 	"Do you want to make this edit",
 	"Esc to cancel",
+	// AskUserQuestion's review tab ("1. Submit answers / 2. Cancel") has no
+	// footer, and its "❯ 1." cursor would otherwise read as an idle prompt.
+	"Ready to submit your answers?",
 }
 
 // busyMarkers are strings the footer renders only while a turn is in flight.
