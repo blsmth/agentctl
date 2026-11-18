@@ -33,7 +33,9 @@ test("rows show the state glyph and agent", async ({ page }) => {
   // A recap replaces the agent name as the headline; the name becomes a chip.
   await expect(row(page, "@12").locator(".win-title .agent")).toHaveText("Add a checkout retry");
   await expect(row(page, "@12").locator(".win-title .tag")).toHaveText(["#7", "PR #8", "go-engineer"]);
-  await expect(row(page, "@12").locator(".activity.recap")).toHaveText("#7 Add a checkout retry");
+  // The task is already the headline, so the second line is the activity.
+  await expect(row(page, "@12").locator(".activity")).toHaveText("opened PR #8");
+  await expect(row(page, "@12").locator(".activity.recap")).toHaveCount(0);
   await expect(row(page, "@12").locator(".win-title")).not.toContainText("@12");
   await expect(row(page, "@12").locator(".win-side")).toContainText("42% ctx");
 });

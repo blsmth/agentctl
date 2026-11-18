@@ -165,7 +165,7 @@ console.log("ok: resolved text");
   const ticket = { agent: "go-engineer:3", recap: "#7 Add a checkout retry", recap_source: "task", activity: "go test" };
   assert.equal(rowHeadline(ticket), "Add a checkout retry");
   assert.equal(agentChip(ticket), "go-engineer");
-  assert.equal(rowDetailLine(ticket), "#7 Add a checkout retry");
+  assert.equal(rowDetailLine(ticket), "go test");
   const summary = { agent: "brandon:55", recap: "Wiring recaps into the phone app. Next up: tests.", recap_source: "summary", activity: "ls" };
   assert.equal(rowHeadline(summary), "Wiring recaps into the phone app");
   assert.equal(rowDetailLine(summary), summary.recap);

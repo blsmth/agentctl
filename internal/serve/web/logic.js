@@ -96,9 +96,13 @@ export function agentChip(win) {
   return name;
 }
 
-/** rowDetailLine is the second line: the full recap, else the activity line, else "". */
+/**
+ * rowDetailLine is the second line: the full recap, else the activity line,
+ * else "". A task recap is already the headline and #issue chip, so it falls
+ * through to the activity line.
+ */
 export function rowDetailLine(win) {
-  if (hasRecap(win)) return win.recap;
+  if (hasRecap(win) && win.recap_source !== "task") return win.recap;
   return win.activity ?? "";
 }
 
