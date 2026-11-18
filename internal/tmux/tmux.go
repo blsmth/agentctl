@@ -72,14 +72,27 @@ func SessionNameForProjectRoot(root string) string {
 	return SessionNameForDirName(filepath.Base(root))
 }
 
+// ExactSession returns a tmux session target that matches name exactly. A bare
+// name in -t is resolved by prefix, so "agentctl-foo" would match a live
+// "agentctl-foobar"; the "=" prefix disables that. Use it for commands whose
+// target is a session (has-session, kill-session, attach-session,
+// list-windows, set-environment, list-clients).
+func ExactSession(name string) string { return "=" + name }
+
+// ExactSessionTarget is ExactSession with a trailing ":", the form for
+// commands whose target is a window or pane (set-option, set-hook,
+// new-window, switch-client, display-message, list-panes -s). With a bare
+// "=name" those commands fail ("no such session"), so the colon is required.
+func ExactSessionTarget(name string) string { return "=" + name + ":" }
+
 // HasSessionNamed reports whether a tmux session with exactly this name exists.
 func HasSessionNamed(name string) bool {
-	return exec.Command("tmux", "has-session", "-t", "="+name).Run() == nil
+	return exec.Command("tmux", "has-session", "-t", ExactSession(name)).Run() == nil
 }
 
 // SessionExists checks if the agentctl tmux session is running.
 func SessionExists() bool {
-	cmd := exec.Command("tmux", "has-session", "-t", SessionName)
+	cmd := exec.Command("tmux", "has-session", "-t", ExactSession(SessionName))
 	return cmd.Run() == nil
 }
 
@@ -99,7 +112,7 @@ func SessionID() string {
 // -t takes a target-pane, so a bare "=name" resolves to nothing (empty output,
 // exit 0) on tmux 3.x; the trailing colon makes it an explicit session target.
 func sessionIDArgs(name string) []string {
-	return []string{"display-message", "-p", "-t", "=" + name + ":", "#{session_id}"}
+	return []string{"display-message", "-p", "-t", ExactSessionTarget(name), "#{session_id}"}
 }
 
 // StartSession creates the agentctl tmux session with a shell as window 0,
@@ -157,7 +170,7 @@ func StartSessionDetached(defaultAgent string) error {
 	// Create persistent tickets window at index 1.
 	exe := selfpath.SpawnableOrFallback()
 	ticketsCmd := exec.Command("tmux", "new-window",
-		"-t", SessionName+":",
+		"-t", ExactSessionTarget(SessionName),
 		"-n", "tickets",
 		"-e", "AGENTCTL=1",
 		exe, "tickets",
@@ -165,7 +178,7 @@ func StartSessionDetached(defaultAgent string) error {
 	_ = ticketsCmd.Run()
 
 	// Switch back to shell window so the user lands there on attach.
-	_ = exec.Command("tmux", "select-window", "-t", SessionName+":shell").Run()
+	_ = exec.Command("tmux", "select-window", "-t", ExactSessionTarget(SessionName)+"shell").Run()
 	return nil
 }
 
@@ -210,13 +223,13 @@ func EnsureSessionEnv() {
 		return
 	}
 	logging.Debug("tmux: set-environment -t %s AGENTCTL_RUNTIME_DIR=%s", SessionName, rd)
-	_ = exec.Command("tmux", "set-environment", "-t", SessionName, "AGENTCTL_RUNTIME_DIR", rd).Run()
+	_ = exec.Command("tmux", "set-environment", "-t", ExactSession(SessionName), "AGENTCTL_RUNTIME_DIR", rd).Run()
 }
 
 // AttachSession attaches to an existing agentctl session.
 func AttachSession() error {
 	EnsureSessionEnv()
-	cmd := exec.Command("tmux", "attach-session", "-t", SessionName)
+	cmd := exec.Command("tmux", "attach-session", "-t", ExactSession(SessionName))
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -618,13 +631,13 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 	// Enable silence monitoring — after 2s of no output, tab shows idle indicator.
 	// Use windowID as the target so renames don't break these option sets.
 	done = logging.Timing("LaunchAgent: window options")
-	idTarget := fmt.Sprintf("%s:%s", SessionName, windowID)
+	idTarget := sessionWindowTarget(SessionName, windowID)
 	_, _ = launchTmux("set-option", "-w", "-t", idTarget, "monitor-silence", "2")
 	_, _ = launchTmux("set-option", "-w", "-t", idTarget, "monitor-activity", "off")
 
 	// Inject the stable window ID as an env var so the process inside can read it.
 	if windowID != "" {
-		_, _ = launchTmux("set-environment", "-t", idTarget, "AGENTCTL_WINDOW_ID", windowID)
+		_, _ = launchTmux("set-environment", "-t", ExactSession(SessionName), "AGENTCTL_WINDOW_ID", windowID)
 	}
 
 	// Bootstrap the windowstate file with launch-time metadata so the monitor
@@ -698,10 +711,10 @@ func buildNewWindowArgs(session, windowName, workDir string, focus, left bool, e
 	if !focus {
 		args = append(args, "-d")
 	}
-	target := session + ":"
+	target := ExactSessionTarget(session)
 	if left {
 		args = append(args, "-b")
-		target = session + ":^"
+		target += "^"
 	}
 	args = append(args, "-t", target, "-n", FormatEscape(windowName), "-c", FormatEscape(workDir))
 	args = append(args, envArgs...)
@@ -761,7 +774,7 @@ func buildLaunchEnv(windowName, workDir, agentName, sessionID, agentctlBin, inst
 // SwitchToWindow selects the window identified by its tmux window ID (e.g. "@3").
 // Using a window ID is unambiguous and stable across renames.
 func SwitchToWindow(windowID string) error {
-	target := fmt.Sprintf("%s:%s", SessionName, windowID)
+	target := sessionWindowTarget(SessionName, windowID)
 	cmd := exec.Command("tmux", "select-window", "-t", target)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("select-window: %s: %w", string(out), err)
@@ -772,7 +785,7 @@ func SwitchToWindow(windowID string) error {
 // SwitchToAgent selects the window for the given agent by name.
 // Deprecated: prefer SwitchToWindow when a window ID is available.
 func SwitchToAgent(agentName string) error {
-	target := fmt.Sprintf("%s:%s", SessionName, agentName)
+	target := sessionWindowTarget(SessionName, agentName)
 	cmd := exec.Command("tmux", "select-window", "-t", target)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("select-window: %s: %w", string(out), err)
@@ -827,7 +840,7 @@ type restoreOpts struct {
 // listRestoreWindows lists the session's windows with their real tmux
 // #{window_index}. A var so tests can stub tmux.
 var listRestoreWindows = func(session string) (map[string]state.LiveWindow, error) {
-	out, err := exec.Command("tmux", "list-windows", "-t", session,
+	out, err := exec.Command("tmux", "list-windows", "-t", ExactSession(session),
 		"-F", "#{window_id}\t#{window_index}\t#{pane_current_path}").Output()
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-windows -t %s: %w", session, err)
@@ -895,8 +908,8 @@ func KillSession() error {
 	SaveRestore()
 	// Collect pane PIDs across the entire session before destroying it.
 	paneOut, _ := exec.Command("tmux", "list-panes",
-		"-s", "-t", SessionName, "-F", "#{pane_pid}").Output()
-	cmd := exec.Command("tmux", "kill-session", "-t", SessionName)
+		"-s", "-t", ExactSessionTarget(SessionName), "-F", "#{pane_pid}").Output()
+	cmd := exec.Command("tmux", "kill-session", "-t", ExactSession(SessionName))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("kill-session: %s: %w", string(out), err)
 	}
@@ -911,7 +924,7 @@ func KillSession() error {
 // groups to prevent orphaned shell processes from lingering after the window
 // is destroyed.
 func KillAgent(agentName string) error {
-	target := fmt.Sprintf("%s:%s", SessionName, agentName)
+	target := sessionWindowTarget(SessionName, agentName)
 	// Collect pane PIDs before destroying the window.
 	paneOut, _ := exec.Command("tmux", "list-panes", "-t", target, "-F", "#{pane_pid}").Output()
 	cmd := exec.Command("tmux", "kill-window", "-t", target)
@@ -929,7 +942,7 @@ func KillAgent(agentName string) error {
 // groups to prevent orphaned shell processes from lingering after the window
 // is destroyed.
 func KillWindow(windowID string) error {
-	target := fmt.Sprintf("%s:%s", SessionName, windowID)
+	target := sessionWindowTarget(SessionName, windowID)
 	// Collect pane PIDs before destroying the window.
 	paneOut, _ := exec.Command("tmux", "list-panes", "-t", target, "-F", "#{pane_pid}").Output()
 	cmd := exec.Command("tmux", "kill-window", "-t", target)
@@ -1026,7 +1039,7 @@ func ListWindowsInErr(session string) ([]WindowInfo, error) {
 	// (e.g. spinner-prefixed names, or a path under "My Projects"), so a
 	// space delimiter would corrupt both fields. Neither field can contain a
 	// literal tab.
-	cmd := exec.Command("tmux", "list-windows", "-t", session,
+	cmd := exec.Command("tmux", "list-windows", "-t", ExactSession(session),
 		"-F", "#{window_id}\t#{pane_current_path}\t#{window_name}")
 	out, err := cmd.Output()
 	if err != nil {
@@ -1082,7 +1095,7 @@ func PrefixActive() bool {
 // windowID should be a stable window ID (e.g. "@3"). This is a best-effort
 // operation; errors are silently ignored.
 func RenameWindow(windowID, name string) {
-	target := fmt.Sprintf("%s:%s", SessionName, windowID)
+	target := sessionWindowTarget(SessionName, windowID)
 	exec.Command("tmux", "rename-window", "-t", target, FormatEscape(name)).Run() //nolint:errcheck
 }
 
@@ -1174,12 +1187,12 @@ func DisplayMessageTo(client, msg string) {
 
 // NewTempWindow opens a temporary tmux window that closes when the command exits.
 func NewTempWindow(name string, shellCmd string) {
-	_ = exec.Command("tmux", "new-window", "-t", SessionName+":", "-n", FormatEscape(name), shellCmd).Run()
+	_ = exec.Command("tmux", "new-window", "-t", ExactSessionTarget(SessionName), "-n", FormatEscape(name), shellCmd).Run()
 }
 
 // PaneWorkDir returns the current working directory of the pane in the given window.
 func PaneWorkDir(windowID string) string {
-	target := fmt.Sprintf("%s:%s", SessionName, windowID)
+	target := sessionWindowTarget(SessionName, windowID)
 	cmd := exec.Command("tmux", "display-message", "-p", "-t", target, "#{pane_current_path}")
 	out, err := cmd.Output()
 	if err != nil {
@@ -1219,7 +1232,7 @@ func CurrentWindowID() string {
 // This queries tmux directly with an explicit target, so it works from any context
 // (popups, background processes, etc.).
 func WindowNameByID(windowID string) string {
-	target := fmt.Sprintf("%s:%s", SessionName, windowID)
+	target := sessionWindowTarget(SessionName, windowID)
 	cmd := exec.Command("tmux", "display-message", "-p", "-t", target, "#{window_name}")
 	out, err := cmd.Output()
 	if err != nil {
@@ -1337,7 +1350,7 @@ func chromeBarHookArgs(session, exe, runtimeDir, projectRoot string) []string {
 	// for tmux's own command parser (which, like sh, takes '\'' as a literal
 	// quote outside single quotes). Wrapping it in bare '...' instead would
 	// let the single quotes already inside it terminate the wrap early.
-	return []string{"set-hook", "-t", session, "after-new-window",
+	return []string{"set-hook", "-t", ExactSessionTarget(session), "after-new-window",
 		fmt.Sprintf("run-shell -b -c %s %s", shellquote.Quote(projectRoot), shellquote.Quote(shellCmd))}
 }
 
@@ -1352,7 +1365,7 @@ func chromeBarHookArgs(session, exe, runtimeDir, projectRoot string) []string {
 // chromeBarHookArgs, and every path is quoted and format-escaped.
 func activeWindowHookArgs(session, exe, runtimeDir string) []string {
 	shellCmd := hookAgentctlCmd(exe, runtimeDir, "set-active-window #{window_id}")
-	return []string{"set-hook", "-t", session, "after-select-window",
+	return []string{"set-hook", "-t", ExactSessionTarget(session), "after-select-window",
 		"run-shell -b " + shellquote.Quote(shellCmd)}
 }
 
@@ -1367,7 +1380,7 @@ var chromeSizeHookEvents = []string{"client-resized", "client-attached", "client
 // activeWindowHookArgs.
 func chromeSizeHookArgs(session, event, exe, runtimeDir string) []string {
 	shellCmd := hookAgentctlCmd(exe, runtimeDir, "enforce-chrome")
-	return []string{"set-hook", "-t", session, event,
+	return []string{"set-hook", "-t", ExactSessionTarget(session), event,
 		"run-shell -b " + shellquote.Quote(shellCmd)}
 }
 
@@ -1378,7 +1391,7 @@ func chromeSizeHookArgs(session, event, exe, runtimeDir string) []string {
 // Reconcile re-lists windows itself; the hook carries no window ID.
 func reconcileHookArgs(session, exe, runtimeDir string) []string {
 	shellCmd := hookAgentctlCmd(exe, runtimeDir, "reconcile")
-	return []string{"set-hook", "-t", session, "window-unlinked",
+	return []string{"set-hook", "-t", ExactSessionTarget(session), "window-unlinked",
 		"run-shell -b " + shellquote.Quote(shellCmd)}
 }
 
@@ -1845,7 +1858,7 @@ func LaunchChromeBar(windowID string) error {
 	chromeBarCmd := shellquote.Quote(exe) + " chrome-bar " + windowID
 
 	// Find the last pane so the bar appears at the absolute bottom.
-	target := fmt.Sprintf("%s:%s", SessionName, windowID)
+	target := sessionWindowTarget(SessionName, windowID)
 	out, err := exec.Command("tmux", "list-panes", "-t", target, "-F", "#{pane_id}").Output()
 	if err != nil {
 		return fmt.Errorf("list-panes for chrome bar: %w", err)
@@ -1947,7 +1960,7 @@ func EnforceMainPaneSize(windowID string) {
 	}
 
 	// Query window height and zoom state.
-	target := fmt.Sprintf("%s:%s", SessionName, windowID)
+	target := sessionWindowTarget(SessionName, windowID)
 	out, err := exec.Command("tmux", "display-message", "-t", target, "-p", windowSizeFormat).Output()
 	if err != nil {
 		logging.Log("tmux: EnforceMainPaneSize: display-message failed: %v", err)
@@ -2084,7 +2097,7 @@ func titleString(project string) string {
 }
 
 func set(key, value string) {
-	_ = exec.Command("tmux", "set-option", "-t", SessionName, key, value).Run()
+	_ = exec.Command("tmux", "set-option", "-t", ExactSessionTarget(SessionName), key, value).Run()
 }
 
 // setw sets a global window-level tmux option so it applies to all windows
@@ -2125,7 +2138,7 @@ func OpenOrFocusTicketsWindow() error {
 	originID := CurrentWindowID()
 
 	cmd := exec.Command("tmux", "new-window",
-		"-t", SessionName+":",
+		"-t", ExactSessionTarget(SessionName),
 		"-n", "tickets",
 		"-e", "AGENTCTL=1",
 		"-e", "AGENTCTL_ORIGIN_WINDOW="+originID,

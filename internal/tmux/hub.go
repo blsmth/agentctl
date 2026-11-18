@@ -133,7 +133,7 @@ func parseSessionsWithPaths(raw string) []SessionInfo {
 // caller's own — SwitchToWindow only ever targets the package-global
 // SessionName, which isn't good enough for a hub jumping across sessions.
 func sessionWindowTarget(session, windowID string) string {
-	return session + ":" + windowID
+	return ExactSessionTarget(session) + windowID
 }
 
 // SwitchToSessionWindow switches the attached client to a specific window in
@@ -295,7 +295,7 @@ func SwitchClientToSession(client, session string) error {
 	if client != "" {
 		args = append(args, "-c", client)
 	}
-	args = append(args, "-t", "="+session+":")
+	args = append(args, "-t", ExactSessionTarget(session))
 	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("switch-client %s: %s: %w", session, strings.TrimSpace(string(out)), err)
 	}
@@ -329,7 +329,7 @@ type SessionActivity struct {
 
 // HubSessionExists reports whether the hub session is currently running.
 func HubSessionExists() bool {
-	return exec.Command("tmux", "has-session", "-t", HubSessionName).Run() == nil
+	return exec.Command("tmux", "has-session", "-t", ExactSession(HubSessionName)).Run() == nil
 }
 
 // SelectFleetListWindow selects the hub's own fleet-list window (the one
@@ -471,10 +471,10 @@ func StartHubSession() error {
 		return fmt.Errorf("creating hub session: %s: %w", string(out), err)
 	}
 
-	_ = exec.Command("tmux", "set-option", "-t", HubSessionName, "status", "off").Run()
-	_ = exec.Command("tmux", "set-option", "-t", HubSessionName, "mouse", "on").Run()
-	_ = exec.Command("tmux", "set-option", "-t", HubSessionName, "set-titles", "on").Run()
-	_ = exec.Command("tmux", "set-option", "-t", HubSessionName, "set-titles-string", "agentctl · hub").Run()
+	_ = exec.Command("tmux", "set-option", "-t", ExactSessionTarget(HubSessionName), "status", "off").Run()
+	_ = exec.Command("tmux", "set-option", "-t", ExactSessionTarget(HubSessionName), "mouse", "on").Run()
+	_ = exec.Command("tmux", "set-option", "-t", ExactSessionTarget(HubSessionName), "set-titles", "on").Run()
+	_ = exec.Command("tmux", "set-option", "-t", ExactSessionTarget(HubSessionName), "set-titles-string", "agentctl · hub").Run()
 	// Pin the fleet-list window's name: nothing re-asserts it every tick (the
 	// way the monitor keeps agent windows' state-glyph names sticky), so
 	// automatic-rename would otherwise be free to drift it away from
@@ -501,14 +501,14 @@ func SwitchToHub() error {
 		if CurrentSessionName() == HubSessionName {
 			return SelectFleetListWindow()
 		}
-		cmd := exec.Command("tmux", "switch-client", "-t", HubSessionName)
+		cmd := exec.Command("tmux", "switch-client", "-t", ExactSessionTarget(HubSessionName))
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("switch-client %s: %s: %w", HubSessionName, string(out), err)
 		}
 		return nil
 	}
 
-	cmd := exec.Command("tmux", "attach-session", "-t", HubSessionName)
+	cmd := exec.Command("tmux", "attach-session", "-t", ExactSession(HubSessionName))
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

@@ -36,7 +36,7 @@ func IsViewerSession(name string) bool {
 
 // viewerNewSessionArgs builds the grouped-session creation args.
 func viewerNewSessionArgs(homeSession, name string) []string {
-	return []string{"new-session", "-d", "-t", homeSession, "-s", name}
+	return []string{"new-session", "-d", "-t", ExactSession(homeSession), "-s", name}
 }
 
 // nextViewerName picks a viewer session name (matching ViewerSessionPrefix)
@@ -81,13 +81,13 @@ func parseClientNames(out string) []string {
 
 // viewerSwitchClientArgs builds the args moving a nested client to a session.
 func viewerSwitchClientArgs(client, session string) []string {
-	return []string{"switch-client", "-c", client, "-t", session}
+	return []string{"switch-client", "-c", client, "-t", ExactSessionTarget(session)}
 }
 
 // viewerDestroyUnattachedArgs enables destroy-unattached on a session. Only
 // safe once a client is attached (a detached session is destroyed at once).
 func viewerDestroyUnattachedArgs(session string) []string {
-	return []string{"set-option", "-t", session, "destroy-unattached", "on"}
+	return []string{"set-option", "-t", ExactSessionTarget(session), "destroy-unattached", "on"}
 }
 
 // viewerOptionArgs builds the per-session option commands that make the
@@ -99,7 +99,7 @@ func viewerOptionArgs(session string) [][]string {
 	opts := [][2]string{{"prefix", "None"}, {"prefix2", "None"}, {"status", "off"}}
 	out := make([][]string, 0, len(opts))
 	for _, o := range opts {
-		out = append(out, []string{"set-option", "-t", session, o[0], o[1]})
+		out = append(out, []string{"set-option", "-t", ExactSessionTarget(session), o[0], o[1]})
 	}
 	return out
 }
@@ -177,7 +177,7 @@ func viewerSessions() []string {
 
 // viewerClients returns the clients attached to a viewer session.
 func viewerClients(session string) []string {
-	out, err := tmuxRun("list-clients", "-t", "="+session, "-F", "#{client_name}")
+	out, err := tmuxRun("list-clients", "-t", ExactSession(session), "-F", "#{client_name}")
 	if err != nil {
 		return nil
 	}
@@ -199,7 +199,7 @@ func currentViewer(sessions []string) (session, client string) {
 }
 
 func viewerSessionHome(session string) string {
-	out, err := tmuxRun("display-message", "-p", "-t", "="+session+":", "#{session_group}")
+	out, err := tmuxRun("display-message", "-p", "-t", ExactSessionTarget(session), "#{session_group}")
 	if err != nil {
 		return ""
 	}
@@ -445,12 +445,12 @@ func HubViewedAgent() ViewedAgent {
 		return ViewedAgent{}
 	}
 	v := ViewedAgent{Viewer: viewer}
-	v.Window, _ = tmuxRun("display-message", "-p", "-t", "="+viewer+":", "#{window_id}")
+	v.Window, _ = tmuxRun("display-message", "-p", "-t", ExactSessionTarget(viewer), "#{window_id}")
 	v.Home = homeOfViewer(viewer)
 	if v.Home == "" {
 		return ViewedAgent{Viewer: viewer, Window: v.Window}
 	}
-	env, _ := tmuxRun("show-environment", "-t", "="+v.Home, "AGENTCTL_RUNTIME_DIR")
+	env, _ := tmuxRun("show-environment", "-t", ExactSession(v.Home), "AGENTCTL_RUNTIME_DIR")
 	v.RuntimeDir = parseEnvValue("AGENTCTL_RUNTIME_DIR", env)
 	return v
 }
@@ -464,7 +464,7 @@ func ViewerActiveWindow() (home, windowID string) {
 	if viewer == "" {
 		return "", ""
 	}
-	windowID, _ = tmuxRun("display-message", "-p", "-t", "="+viewer+":", "#{window_id}")
+	windowID, _ = tmuxRun("display-message", "-p", "-t", ExactSessionTarget(viewer), "#{window_id}")
 	return homeOfViewer(viewer), windowID
 }
 
@@ -503,7 +503,7 @@ func hubViewed() (viewer, windowID string) {
 	if viewer == "" || client == "" {
 		return "", ""
 	}
-	w, _ := tmuxRun("display-message", "-p", "-t", "="+viewer+":", "#{window_id}")
+	w, _ := tmuxRun("display-message", "-p", "-t", ExactSessionTarget(viewer), "#{window_id}")
 	if w == "" {
 		return "", ""
 	}

@@ -2,7 +2,7 @@ argv:
   new-window
   -b
   -t
-  agentctl-launchtest:^
+  =agentctl-launchtest:^
   -n
   golden
   -c
