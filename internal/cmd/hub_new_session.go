@@ -22,9 +22,11 @@ type hubNewSessionDeps struct {
 }
 
 var hubNewSessionLive = hubNewSessionDeps{
-	runtimeDir:    paths.RuntimeDir,
-	sessionName:   func() string { return tmux.SessionName },
-	sessionExists: tmux.SessionExists,
+	runtimeDir:  paths.RuntimeDir,
+	sessionName: func() string { return tmux.SessionName },
+	// Exact match: tmux.SessionExists resolves "agentctl-foo" by prefix and
+	// would find a live agentctl-foobar.
+	sessionExists: func() bool { return tmux.HasSessionNamed(tmux.SessionName) },
 	sessionPath:   tmuxSessionPath,
 	startSession:  func() error { return tmux.StartSessionDetached(config.Load().DefaultAgent) },
 	launch: func() {
@@ -73,7 +75,10 @@ func runHubNewSession(dir string, d hubNewSessionDeps) error {
 	if d.sessionExists() {
 		// Two projects with the same basename share a session name; never
 		// launch into the other one.
-		if p := d.sessionPath(name); p != "" && !tmux.SamePath(p, dir) {
+		switch p := d.sessionPath(name); {
+		case p == "":
+			return fmt.Errorf("tmux session %s exists but its directory is unknown", name)
+		case !tmux.SamePath(p, dir):
 			return fmt.Errorf("tmux session %s already belongs to %s", name, p)
 		}
 	} else {

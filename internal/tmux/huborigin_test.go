@@ -56,7 +56,13 @@ func TestRecordHubOriginSkips(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(hub, "sub"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, cwd := range []string{"", "relative/dir", hub, filepath.Join(hub, "sub"), wt, filepath.Join(wt, "pkg")} {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	legacyHub := filepath.Join(cfgHome, "agentctl", "hub")
+	if err := os.MkdirAll(legacyHub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, cwd := range []string{"", "relative/dir", hub, filepath.Join(hub, "sub"), legacyHub, wt, filepath.Join(wt, "pkg")} {
 		if err := RecordHubOrigin(cwd); err != nil {
 			t.Errorf("RecordHubOrigin(%q): %v", cwd, err)
 		}

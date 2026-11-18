@@ -134,6 +134,27 @@ func TestRunHubNewSession(t *testing.T) {
 			t.Error("acted with the wrong runtime dir")
 		}
 	})
+	t.Run("only a prefix-matching session is live: start our own", func(t *testing.T) {
+		// agentctl-foobar is live, agentctl-foo is not: the exact-match
+		// check reports no session, so ours is started rather than
+		// launching into the other project's session.
+		dir := t.TempDir()
+		f := &fakeHubNewSession{exists: false, path: "/src/foobar"}
+		if err := runHubNewSession(dir, f.deps(filepath.Join(dir, ".agentctl"))); err != nil {
+			t.Fatal(err)
+		}
+		if f.started != 1 || f.launched != 1 {
+			t.Errorf("started=%d launched=%d, want 1/1", f.started, f.launched)
+		}
+	})
+	t.Run("existing session with unknown directory is refused", func(t *testing.T) {
+		dir := t.TempDir()
+		f := &fakeHubNewSession{exists: true, path: ""}
+		err := runHubNewSession(dir, f.deps(filepath.Join(dir, ".agentctl")))
+		if err == nil || !strings.Contains(err.Error(), "directory is unknown") || f.launched+f.started != 0 {
+			t.Errorf("err = %v, started=%d launched=%d", err, f.started, f.launched)
+		}
+	})
 	t.Run("start failure stops the launch", func(t *testing.T) {
 		dir := t.TempDir()
 		f := &fakeHubNewSession{startErr: errors.New("boom")}

@@ -45,11 +45,18 @@ func hubOriginSkipped(cwd string) bool {
 	if err != nil {
 		return false
 	}
-	hub := filepath.Join(base, "hub")
-	for _, c := range []string{cwd, evalOr(cwd)} {
-		for _, h := range []string{hub, evalOr(hub)} {
-			if c == h || strings.HasPrefix(c, h+string(filepath.Separator)) {
-				return true
+	// hubDir() is <stateDir>/hub, or the legacy <configDir>/hub when its
+	// migration failed: skip both.
+	hubs := []string{filepath.Join(base, "hub")}
+	if cfg, err := config.GlobalDir(); err == nil {
+		hubs = append(hubs, filepath.Join(cfg, "hub"))
+	}
+	for _, h := range hubs {
+		for _, c := range []string{cwd, evalOr(cwd)} {
+			for _, hh := range []string{h, evalOr(h)} {
+				if c == hh || strings.HasPrefix(c, hh+string(filepath.Separator)) {
+					return true
+				}
 			}
 		}
 	}
