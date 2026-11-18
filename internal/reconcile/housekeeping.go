@@ -12,6 +12,7 @@ import (
 	"github.com/blsmth/agentctl/internal/reaper"
 	"github.com/blsmth/agentctl/internal/stamp"
 	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/uploads"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
@@ -28,7 +29,9 @@ type HousekeepingDeps struct {
 	PruneSessionLogs func(protected []string) (int, error)
 	// PruneEvents removes aged metrics event files (the serve prunes only
 	// while alive, so housekeeping covers machines where it is not running).
-	PruneEvents   func(now time.Time)
+	PruneEvents func(now time.Time)
+	// PruneUploads removes phone-attached images older than uploads.MaxAge.
+	PruneUploads  func(now time.Time) (int, error)
 	Records       func() map[string]windowstate.WindowState
 	SessionLogDir func() string
 }
@@ -48,6 +51,9 @@ func DefaultHousekeepingDeps(runtimeDir string) HousekeepingDeps {
 		},
 		PruneEvents: func(now time.Time) {
 			events.Prune(runtimeDir, now, events.Retention)
+		},
+		PruneUploads: func(now time.Time) (int, error) {
+			return uploads.Prune(runtimeDir, now, uploads.MaxAge)
 		},
 		Records:       windowstate.All,
 		SessionLogDir: paths.SessionLogDir,
@@ -81,6 +87,15 @@ func Housekeep(d HousekeepingDeps) {
 			logging.Log("janitor: mailbox.PruneStale: %v", err)
 		case n > 0:
 			logging.Warn("janitor: pruned %d stale pending mailbox message(s) older than %s", n, mailbox.MaxPendingAge)
+		}
+	}
+	if stamp.Try(filepath.Join(d.RuntimeDir, "prune-uploads.stamp"), PruneInterval, now) && d.PruneUploads != nil {
+		n, err := d.PruneUploads(now)
+		switch {
+		case err != nil:
+			logging.Log("janitor: uploads.Prune: %v", err)
+		case n > 0:
+			logging.Log("janitor: pruned %d phone upload(s) older than %s", n, uploads.MaxAge)
 		}
 	}
 	if stamp.Try(filepath.Join(d.RuntimeDir, "prune-session-logs.stamp"), PruneInterval, now) && d.PruneSessionLogs != nil {

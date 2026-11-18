@@ -271,3 +271,31 @@ test("a window not started by cron shows no schedule line", async ({ page }) => 
   await expect(page.locator("header.bar h1")).toHaveText("docs");
   await expect(page.locator(".win-scheduled")).toBeHidden();
 });
+
+test("reply with an attached screenshot", async ({ page, control }) => {
+  await openWindow(page, "@15");
+  // 1x1 transparent PNG
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await page.locator(".actions textarea").fill("what is wrong here?");
+  await page.locator(".actions input[type=file]").setInputFiles({ name: "IMG_0001.png", mimeType: "image/png", buffer: png });
+  await expect(page.locator(".actions .thumb img")).toHaveCount(1);
+  await page.getByRole("button", { name: "Reply" }).tap();
+  await expect(sheet(page)).toContainText("+ 1 image");
+  await sheet(page).getByRole("button", { name: "Send" }).tap();
+  await expect(page.locator("#toasts .toast").first()).toHaveText("Sent");
+  const actions = await control.waitForActions((a) => a.length > 0);
+  expect(actions).toHaveLength(1);
+  expect(actions[0].text).toMatch(/^what is wrong here\?\n\n\[Screenshot: \/.*\/uploads\/15\/[0-9a-f]{32}\.png\]$/);
+});
+
+test("a screenshot can be removed before sending", async ({ page }) => {
+  await openWindow(page, "@15");
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+  await page.locator(".actions input[type=file]").setInputFiles({ name: "a.png", mimeType: "image/png", buffer: png });
+  await expect(page.locator(".actions .thumb")).toHaveCount(1);
+  await page.getByRole("button", { name: "Remove image" }).tap();
+  await expect(page.locator(".actions .thumb")).toHaveCount(0);
+});

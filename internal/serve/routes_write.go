@@ -66,6 +66,10 @@ func (s *Server) registerWrite(rt *Router) {
 		rt.Feature("queue")
 	}
 	rt.Write("POST "+win+"/queue", writeRoute(s, "queue", s.handleQueue))
+	if rt.allowWrite {
+		rt.Feature("upload")
+	}
+	rt.Write("POST "+win+"/upload", s.handleUpload)
 	rt.Write("POST "+win+"/interrupt", writeRoute(s, "interrupt", s.handleInterrupt))
 	rt.Write("POST "+win+"/close", writeRoute(s, "close", s.handleClose))
 	rt.Write("POST /v1/dispatch", writeRoute(s, "dispatch", s.handleDispatch))
@@ -295,6 +299,9 @@ func hasOption(pane paneBody, key string) bool {
 
 type replyIn struct {
 	Text string `json:"text"`
+	// Images are IDs returned by POST …/upload for this window; their paths
+	// are appended to the text.
+	Images []string `json:"images,omitempty"`
 }
 
 // handleReply types a reply into an idle agent and submits it.
@@ -320,17 +327,27 @@ func (s *Server) typeText(r *http.Request, in replyIn, a *auditEntry, allowWorki
 	if utf8.RuneCountInString(in.Text) > maxReplyRunes {
 		return failure(http.StatusRequestEntityTooLarge, codeTooLarge, fmt.Sprintf("reply exceeds %d characters", maxReplyRunes))
 	}
-	if out, ok := checkText("text", in.Text); !ok {
-		return out
+	if len(in.Images) > maxImages {
+		return failure(http.StatusBadRequest, codeBadRequest, fmt.Sprintf("at most %d images per message", maxImages))
 	}
-	if out, ok := checkReplyMode(in.Text); !ok {
-		return out
+	// An image-only message is allowed; otherwise the text is required.
+	if len(in.Images) == 0 || strings.TrimSpace(in.Text) != "" {
+		if out, ok := checkText("text", in.Text); !ok {
+			return out
+		}
+		if out, ok := checkReplyMode(in.Text); !ok {
+			return out
+		}
 	}
 	rw, unlock, out, ok := s.lockWindow(r, a)
 	if !ok {
 		return out
 	}
 	defer unlock()
+	text, out, ok := withImages(rw, in)
+	if !ok {
+		return out
+	}
 
 	st := rw.window.State
 	if st == "blocked" || (st == "working" && !allowWorking) {
@@ -360,7 +377,7 @@ func (s *Server) typeText(r *http.Request, in replyIn, a *auditEntry, allowWorki
 	s.auditAttempt(*a)
 	// The inject path re-checks the pane before every keystroke and refuses
 	// a dialog (tmux.ErrDialogBlocking).
-	if err := s.inject(target, in.Text, allowWorking); err != nil {
+	if err := s.inject(target, text, allowWorking); err != nil {
 		logging.Warn("serve: %s %s:%s: %v", a.Action, rw.group.Session, rw.window.WindowID, err)
 		if errors.Is(err, tmux.ErrDialogBlocking) {
 			return failure(http.StatusConflict, codeNotIdle, "a dialog appeared; refresh and try again")

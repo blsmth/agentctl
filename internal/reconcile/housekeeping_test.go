@@ -73,3 +73,18 @@ func TestHousekeepPrunesEventFiles(t *testing.T) {
 		t.Fatalf("after housekeeping: %d files, want 1", n)
 	}
 }
+
+func TestHousekeepPrunesUploadsOnce(t *testing.T) {
+	var n int
+	now := time.Now()
+	d := HousekeepingDeps{
+		RuntimeDir:   t.TempDir(),
+		Now:          func() time.Time { return now },
+		PruneUploads: func(time.Time) (int, error) { n++; return 1, nil },
+	}
+	Housekeep(d)
+	Housekeep(d)
+	if n != 1 {
+		t.Fatalf("PruneUploads ran %d times within the interval, want 1", n)
+	}
+}
