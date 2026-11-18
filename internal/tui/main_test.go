@@ -5,6 +5,9 @@ import (
 	"os"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/servectl"
 	"github.com/blsmth/agentctl/internal/testenv"
 )
@@ -22,6 +25,17 @@ func TestMain(m *testing.M) {
 	// replace these.
 	fleetServeProbe = func() servectl.State { return servectl.StateOff }
 	fleetServeToggle = func() (string, error) { return "", errors.New("serve toggle disabled in tests") }
+	// Never spawn agentctl (launch, hub-new-session) or read the real hub
+	// origin; tests that need them replace these.
+	fleetLaunch = func(g fleet.Group) tea.Cmd {
+		return func() tea.Msg {
+			return fleetLaunchedMsg{session: g.Session, err: errors.New("launch disabled in tests")}
+		}
+	}
+	fleetNewSessionRun = func(string, []string) (string, error) {
+		return "", errors.New("hub-new-session disabled in tests")
+	}
+	fleetHubOrigin = func() (string, bool) { return "", false }
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
