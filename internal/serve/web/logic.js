@@ -281,6 +281,26 @@ export function collapseKey(session, entry) {
   return `${session}\u0000${entry.kind === "scheduled" ? "bucket:scheduled" : "bucket"}`;
 }
 
+/**
+ * groupKey is the collapse key of a whole project group. Window IDs start
+ * with "@", so it never collides with a collapseKey.
+ */
+export function groupKey(session) {
+  return `${session}\u0000group`;
+}
+
+/**
+ * groupCounts tallies a group's windows by display state in attention order,
+ * omitting empty states: what a folded project header shows (as on the hub).
+ */
+export function groupCounts(windows) {
+  const n = { blocked: 0, working: 0, done: 0, idle: 0 };
+  for (const w of windows) n[effectiveState(w)]++;
+  return Object.keys(RANK)
+    .filter((s) => n[s] > 0)
+    .map((state) => ({ state, n: n[state] }));
+}
+
 /** visibleTree drops the entries hidden under a collapsed entry. */
 export function visibleTree(entries, session, collapsed) {
   const out = [];

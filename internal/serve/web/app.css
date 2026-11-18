@@ -29,7 +29,20 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 .banner { background: var(--blocked); color: #fff; padding: .6rem 1rem; text-align: center; }
 .group { margin-bottom: .5rem; }
 .group-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin: 0 .5rem 0 0; }
-.group-head h2 { margin: .5rem 1rem .2rem; min-width: 0; overflow-wrap: anywhere; }
+.group-head h2 { margin: 0 0 0 .5rem; min-width: 0; overflow-wrap: anywhere; flex: 1; }
+.group-head { padding-top: .3rem; }
+.group-toggle { display: inline-flex; align-items: center; min-height: 44px; padding: 0 .5rem; border: 0; background: none;
+  color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.group-toggle::before { content: "▾"; flex: none; width: 1.1rem; color: var(--muted); font-size: .9em; }
+.group.folded .group-toggle::before { content: "▸"; color: var(--fg); }
+.group.folded { margin-bottom: 0; border-bottom: 1px solid var(--line); }
+.group-counts { display: inline-flex; align-items: center; gap: .6rem; flex: none; min-height: 44px; padding: 0 .25rem;
+  border: 0; background: none; color: var(--muted); font: inherit; font-size: .9rem; cursor: pointer; }
+.group-counts .count { display: inline-flex; align-items: center; gap: .2rem; line-height: 1; }
+.group-counts .glyph { width: auto; font-size: .85rem; }
+.group-counts .count.idle .glyph { color: var(--muted); }
+.group-counts .count.blocked { color: var(--blocked); font-weight: 600; } .group-counts .count.blocked .glyph { color: var(--blocked); }
+.group-counts .count.working .glyph { color: var(--working); } .group-counts .count.done .glyph { color: var(--done); }
 .group-add { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px;
   margin: -.4rem 0; border-radius: 10px; font-size: 1.4rem; line-height: 1; text-decoration: none; color: var(--accent); }
 .fleet, .group { --glyph-w: 1.4rem; --indent: 1.4rem; --row-pad: 1rem; --tree-w: 1.5px; --tree-line: color-mix(in srgb, var(--muted) 55%, transparent); }
