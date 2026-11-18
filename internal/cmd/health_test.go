@@ -504,3 +504,100 @@ func TestHealthMetricsLine(t *testing.T) {
 		})
 	}
 }
+
+// TestHealthCheckHookDrift_TimeoutZeroNotDrift verifies that hooks with
+// timeout: 0 (explicitly set) are not flagged as drifted from hooks without
+// the timeout field at all. This was a false positive bug: JSON comparison
+// would fail because one had "timeout":0 while the other omitted it, but
+// the command strings would be identical, making the report misleading.
+func TestHealthCheckHookDrift_TimeoutZeroNotDrift(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Create a settings file that has timeout: 0 for hooks that don't need it
+	// (simulating what an older version or manual edit might produce)
+	settings := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"PreToolUse": []interface{}{
+				map[string]interface{}{
+					"matcher": "*",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "command",
+							"command": "agentctl hook-pre-tool",
+							"timeout": 0, // This should not cause drift
+						},
+					},
+				},
+				map[string]interface{}{
+					"matcher": "Bash",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "command",
+							"command": "agentctl hook-validate-bash",
+							"timeout": 600, // Preserved when > 0
+						},
+					},
+				},
+			},
+		},
+	}
+
+	writeSettingsJSON(t, home, settings)
+
+	report := healthCheckHookDrift(home)
+	if !report.Found {
+		t.Fatalf("Found = false, want true")
+	}
+	if len(report.Mismatched) != 0 {
+		t.Errorf("expected no drift for timeout: 0 (same as missing), got Mismatched=%+v", report.Mismatched)
+	}
+}
+
+// TestHealthCheckHookDrift_AsyncFalseNotDrift verifies that hooks with
+// async: false (explicitly set) are not flagged as drifted from hooks without
+// the async field at all.
+func TestHealthCheckHookDrift_AsyncFalseNotDrift(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Create a settings file that has async: false for hooks that don't need it
+	// but includes all other fields to match canonical
+	settings := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"PreToolUse": []interface{}{
+				map[string]interface{}{
+					"matcher": "*",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "command",
+							"command": "agentctl hook-pre-tool",
+							"async":   false, // This should not cause drift
+						},
+					},
+				},
+				map[string]interface{}{
+					"matcher": "Bash",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "command",
+							"command": "agentctl hook-validate-bash",
+							"timeout": 600, // Required to match canonical
+							"async":   false, // This should not cause drift
+						},
+					},
+				},
+			},
+		},
+	}
+
+	writeSettingsJSON(t, home, settings)
+
+	report := healthCheckHookDrift(home)
+	if !report.Found {
+		t.Fatalf("Found = false, want true")
+	}
+	if len(report.Mismatched) != 0 {
+		t.Errorf("expected no drift for async: false (same as missing), got Mismatched=%+v", report.Mismatched)
+	}
+}

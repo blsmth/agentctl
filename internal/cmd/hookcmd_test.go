@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,4 +119,139 @@ func TestInstallHooksRefusesEphemeralBinary(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(home, ".claude", "settings.json")); statErr == nil {
 		t.Error("settings written despite refusal")
 	}
+}
+
+// TestNormalizeHookValue_SkipZeroValues verifies that optional fields with
+// zero values (timeout: 0, async: false) are omitted during comparison,
+// preventing false positives when the canonical config omits these fields.
+func TestNormalizeHookValue_SkipZeroValues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// The canonical config never includes timeout or async for hooks that don't need them.
+	// A settings file that explicitly sets them to zero/false should normalize to the same
+	// structure, not be flagged as drift.
+	tests := []struct {
+		name     string
+		val      interface{}
+		expected interface{}
+	}{
+		{
+			name: "hook with timeout: 0 normalized to missing timeout",
+			val: map[string]interface{}{
+				"type":    "command",
+				"command": "agentctl hook-pre-tool",
+				"timeout": 0,
+			},
+			expected: map[string]interface{}{
+				"type":    "command",
+				"command": "agentctl hook-pre-tool",
+			},
+		},
+		{
+			name: "hook with async: false normalized to missing async",
+			val: map[string]interface{}{
+				"type":    "command",
+				"command": "agentctl hook-pre-tool",
+				"async":   false,
+			},
+			expected: map[string]interface{}{
+				"type":    "command",
+				"command": "agentctl hook-pre-tool",
+			},
+		},
+		{
+			name: "hook with timeout: 600 preserved",
+			val: map[string]interface{}{
+				"type":    "command",
+				"command": "agentctl hook-validate-bash",
+				"timeout": 600,
+			},
+			expected: map[string]interface{}{
+				"type":    "command",
+				"command": "agentctl hook-validate-bash",
+				"timeout": 600,
+			},
+		},
+		{
+			name: "hook with async: true preserved",
+			val: map[string]interface{}{
+				"type":    "command",
+				"command": "agentctl hook-session-end",
+				"async":   true,
+			},
+			expected: map[string]interface{}{
+				"type":    "command",
+				"command": "agentctl hook-session-end",
+				"async":   true,
+			},
+		},
+		{
+			name: "PreToolUse array with optional fields at zero values",
+			val: []interface{}{
+				map[string]interface{}{
+					"matcher": "*",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "command",
+							"command": "agentctl hook-pre-tool",
+							"timeout": 0, // Should be omitted
+						},
+					},
+				},
+				map[string]interface{}{
+					"matcher": "Bash",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "command",
+							"command": "agentctl hook-validate-bash",
+							"timeout": 600, // Should be preserved
+						},
+					},
+				},
+			},
+			expected: []interface{}{
+				map[string]interface{}{
+					"matcher": "*",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "command",
+							"command": "agentctl hook-pre-tool",
+						},
+					},
+				},
+				map[string]interface{}{
+					"matcher": "Bash",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "command",
+							"command": "agentctl hook-validate-bash",
+							"timeout": 600,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeHookValue(tt.val, home)
+			if !equalAnyType(got, tt.expected) {
+				t.Errorf("normalizeHookValue() = %#v, want %#v", got, tt.expected)
+			}
+		})
+	}
+}
+
+// equalAnyType reports whether two values are equal, handling interface{} types.
+// It's used for testing normalizeHookValue where the output type depends on input.
+func equalAnyType(a, b interface{}) bool {
+	// Marshal both to JSON and compare - handles map ordering and type differences
+	ma, err1 := json.Marshal(a)
+	mb, err2 := json.Marshal(b)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return string(ma) == string(mb)
 }

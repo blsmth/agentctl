@@ -66,7 +66,10 @@ func splitFirstToken(cmd string) (tok, rest string, ok bool) {
 }
 
 // normalizeHookValue returns a deep copy of a hook event value with every
-// "command" string passed through normalizeHookCommand.
+// "command" string passed through normalizeHookCommand. It also normalizes
+// optional fields that may differ semantically but serialize differently:
+// - timeout: 0 is equivalent to missing (no timeout)
+// - async: false is equivalent to missing (not async)
 func normalizeHookValue(v interface{}, home string) interface{} {
 	switch x := v.(type) {
 	case map[string]interface{}:
@@ -76,7 +79,13 @@ func normalizeHookValue(v interface{}, home string) interface{} {
 				out[k] = normalizeHookCommand(s, home)
 				continue
 			}
-			out[k] = normalizeHookValue(val, home)
+			normalized := normalizeHookValue(val, home)
+			// Skip optional fields that have their zero values
+			// (equivalent to being omitted entirely)
+			if skipZeroValue(k, normalized) {
+				continue
+			}
+			out[k] = normalized
 		}
 		return out
 	case []interface{}:
@@ -88,4 +97,27 @@ func normalizeHookValue(v interface{}, home string) interface{} {
 	default:
 		return v
 	}
+}
+
+// skipZeroValue reports whether a field with the given key and normalized value
+// should be omitted during comparison. These are optional fields whose zero
+// value is semantically equivalent to not being present at all.
+func skipZeroValue(key string, val interface{}) bool {
+	// timeout: 0 means no timeout (same as missing)
+	// async: false means not async (same as missing)
+	if key != "timeout" && key != "async" {
+		return false
+	}
+	// Check for zero values
+	switch v := val.(type) {
+	case int:
+		return v == 0
+	case int64:
+		return v == 0
+	case float64:
+		return v == 0
+	case bool:
+		return !v
+	}
+	return false
 }
