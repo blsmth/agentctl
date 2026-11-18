@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,7 +27,12 @@ var repoFlagRE = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`)
 
 // DispatchOptions holds the dispatch command's flags.
 type DispatchOptions struct {
-	Issue      int
+	Issue int
+	// ReviewPR is `--review-pr`: review this open pull request (ModeReviewPR).
+	ReviewPR int
+	// Author is `--author @N`, the --review-pr author's window, overriding
+	// detection from the PR branch.
+	Author     string
 	Prompt     string
 	PromptKey  string
 	Agent      string
@@ -57,28 +63,8 @@ func RunDispatch(opts DispatchOptions) {
 	issueNumber, promptText, promptKey, agentName := opts.Issue, opts.Prompt, opts.PromptKey, opts.Agent
 	workDir, model, backend, account, harnessName := opts.Dir, opts.Model, opts.Backend, opts.Account, opts.Harness
 	noWorktree, wait, timeoutDur, repo := opts.NoWorktree, opts.Wait, opts.Timeout, opts.Repo
-	const usageStr = "Usage: agentctl dispatch (--issue <N> | --prompt <text> | --prompt-key <key>) [--agent <name>] [--dir <path>] [--model <name>] [--backend <name>|none] [--account <name>] [--harness <name>] [--repo <owner/name>] [--no-worktree] [--wait] [--timeout <duration>]"
-
-	// Validate: exactly one of --issue, --prompt, or --prompt-key must be supplied.
-	suppliedCount := 0
-	for _, v := range []bool{issueNumber != 0, promptText != "", promptKey != ""} {
-		if v {
-			suppliedCount++
-		}
-	}
-	if suppliedCount > 1 {
-		fmt.Fprintln(os.Stderr, "Error: --issue, --prompt, and --prompt-key are mutually exclusive\n"+usageStr)
-		cliout.Exit(1)
-	}
-	if suppliedCount == 0 {
-		fmt.Fprintln(os.Stderr, "Error: one of --issue, --prompt, or --prompt-key is required\n"+usageStr)
-		cliout.Exit(1)
-	}
-
-	// --agent is required when --prompt or --prompt-key is used (no label-based
-	// inference without an issue).
-	if (promptText != "" || promptKey != "") && agentName == "" {
-		fmt.Fprintln(os.Stderr, "Error: --agent is required when using --prompt or --prompt-key\n"+usageStr)
+	if err := validateDispatchOptions(opts); err != nil {
+		fmt.Fprintln(os.Stderr, "Error: "+err.Error()+"\n"+dispatchUsage)
 		cliout.Exit(1)
 	}
 
@@ -107,6 +93,9 @@ func RunDispatch(opts DispatchOptions) {
 	// waitSubject returns a human-readable description of the dispatch target
 	// for use in --wait status lines (avoids printing "#0" for ad-hoc).
 	waitSubject := func() string {
+		if opts.ReviewPR != 0 {
+			return fmt.Sprintf("PR #%d", opts.ReviewPR)
+		}
 		if issueNumber != 0 {
 			return fmt.Sprintf("#%d", issueNumber)
 		}
@@ -116,14 +105,24 @@ func RunDispatch(opts DispatchOptions) {
 	var wid, resolvedAgent string
 	var err error
 
-	if issueNumber != 0 {
+	switch {
+	case opts.ReviewPR != 0:
+		ropts := opts
+		ropts.Prompt = promptText
+		wid, resolvedAgent, err = dispatchReviewPR(ropts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			cliout.Exit(1)
+		}
+		fmt.Printf("Dispatched review of PR #%d → %s (window %s)\n", opts.ReviewPR, resolvedAgent, linkWindow(wid, wid))
+	case issueNumber != 0:
 		wid, resolvedAgent, err = dispatchIssue(issueNumber, agentName, workDir, model, backend, account, harnessName, repo, !noWorktree)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			cliout.Exit(1)
 		}
 		fmt.Printf("Dispatched #%d → %s (window %s)\n", issueNumber, resolvedAgent, linkWindow(wid, wid))
-	} else {
+	default:
 		wid, resolvedAgent, err = dispatchPrompt(promptText, promptKey, agentName, workDir, model, backend, account, harnessName, !noWorktree)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -190,6 +189,52 @@ func RunDispatch(opts DispatchOptions) {
 	}
 }
 
+// dispatchUsage is the dispatch command's one-line usage.
+const dispatchUsage = "Usage: agentctl dispatch (--issue <N> | --review-pr <N> | --prompt <text> | --prompt-key <key>) [--agent <name>] [--author @N] [--dir <path>] [--model <name>] [--backend <name>|none] [--account <name>] [--harness <name>] [--repo <owner/name>] [--no-worktree] [--wait] [--timeout <duration>]"
+
+// authorFlagRE matches an --author window ID.
+var authorFlagRE = regexp.MustCompile(`^@[0-9]+$`)
+
+// validateDispatchOptions checks the flag combination: one target (--issue,
+// --review-pr, or a prompt), --issue/--prompt/--prompt-key mutually exclusive,
+// --review-pr exclusive with --issue (a prompt with it adds review
+// instructions), --agent required for a plain prompt, --author only with
+// --review-pr.
+func validateDispatchOptions(opts DispatchOptions) error {
+	if opts.ReviewPR < 0 || opts.Issue < 0 {
+		return errors.New("--issue and --review-pr take a positive number")
+	}
+	if opts.ReviewPR != 0 && opts.Issue != 0 {
+		return errors.New("--issue and --review-pr are mutually exclusive")
+	}
+	supplied := 0
+	for _, v := range []bool{opts.Issue != 0, opts.Prompt != "", opts.PromptKey != ""} {
+		if v {
+			supplied++
+		}
+	}
+	if supplied > 1 {
+		return errors.New("--issue, --prompt, and --prompt-key are mutually exclusive")
+	}
+	if supplied == 0 && opts.ReviewPR == 0 {
+		return errors.New("one of --issue, --review-pr, --prompt, or --prompt-key is required")
+	}
+	// No label-based agent inference without an issue; --review-pr defaults
+	// to code-reviewer.
+	if (opts.Prompt != "" || opts.PromptKey != "") && opts.ReviewPR == 0 && opts.Agent == "" {
+		return errors.New("--agent is required when using --prompt or --prompt-key")
+	}
+	if opts.Author != "" {
+		if opts.ReviewPR == 0 {
+			return errors.New("--author requires --review-pr")
+		}
+		if !authorFlagRE.MatchString(opts.Author) {
+			return fmt.Errorf("invalid --author %q: want a window ID such as @12", opts.Author)
+		}
+	}
+	return nil
+}
+
 // Seams for tests.
 var (
 	resolveRepoSlug = dispatch.RepoSlug
@@ -245,28 +290,10 @@ func dispatchPromptOptions(opts DispatchOptions) (string, string, error) {
 // handled by dispatch.Launch().
 // Returns the tmux window ID, the resolved agent name, and an error.
 func dispatchIssue(issueNumber int, agentName, workDir, model, backend, account, harnessName, repo string, useWorktree bool) (string, string, error) {
-	// 1. Determine the directory for repo resolution.
-	//    Use the explicit --dir when provided; otherwise fall back to cwd so
-	//    that running from inside a project directory picks up its remote.
-	repoDir := workDir
-	if repoDir == "" {
-		repoDir, _ = os.Getwd()
-	}
-
-	// 2. Resolve the GitHub repo slug from the target directory.
-	//    This ensures --issue N resolves against the correct project, not the
-	//    agentctl repo, when dispatching into a foreign codebase.
-	repoSlug := repo
-	if repoSlug != "" && !repoFlagRE.MatchString(repoSlug) {
-		return "", "", fmt.Errorf("invalid --repo %q: want owner/name", repoSlug)
-	}
-	if repoSlug == "" {
-		var err error
-		repoSlug, err = resolveRepoSlug(repoDir)
-		if err != nil {
-			logging.Warn("dispatch: resolving repo for %s: %v", repoDir, err)
-			return "", "", fmt.Errorf("could not determine GitHub repo for %s; pass --repo or run inside a GitHub checkout", repoDir)
-		}
+	// 1-2. Resolve the GitHub repo slug from the target directory.
+	repoSlug, err := resolveDispatchRepo(workDir, repo)
+	if err != nil {
+		return "", "", err
 	}
 
 	// 3. Fetch issue via gh CLI using the resolved repo.
@@ -322,6 +349,28 @@ func dispatchIssue(issueNumber int, agentName, workDir, model, backend, account,
 		return "", "", err
 	}
 	return res.WindowID, res.AgentName, nil
+}
+
+// resolveDispatchRepo returns the GitHub repo slug a dispatch targets: --repo
+// when given, else the repo of workDir (or the cwd when workDir is empty), so
+// a dispatch into a foreign codebase resolves against that project.
+func resolveDispatchRepo(workDir, repo string) (string, error) {
+	if repo != "" {
+		if !repoFlagRE.MatchString(repo) {
+			return "", fmt.Errorf("invalid --repo %q: want owner/name", repo)
+		}
+		return repo, nil
+	}
+	repoDir := workDir
+	if repoDir == "" {
+		repoDir, _ = os.Getwd()
+	}
+	slug, err := resolveRepoSlug(repoDir)
+	if err != nil {
+		logging.Warn("dispatch: resolving repo for %s: %v", repoDir, err)
+		return "", fmt.Errorf("could not determine GitHub repo for %s; pass --repo or run inside a GitHub checkout", repoDir)
+	}
+	return slug, nil
 }
 
 // resolveAgentDir returns the working directory for the given agent name.

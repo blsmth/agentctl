@@ -59,6 +59,7 @@ type dispatchPreviewOpts struct {
 	now          func() time.Time
 	account      string
 	cron         CronPreview
+	reviewPR     int
 }
 
 // CronPreview is the job-specific part of a PreviewKindCron popup.
@@ -120,6 +121,12 @@ func WithKind(kind string) DispatchPreviewOption {
 // configured).
 func WithAccount(account string) DispatchPreviewOption {
 	return func(o *dispatchPreviewOpts) { o.account = account }
+}
+
+// WithReviewPR marks a `dispatch --review-pr` preview: the third metadata
+// row shows the PR number instead of an issue or prompt.
+func WithReviewPR(n int) DispatchPreviewOption {
+	return func(o *dispatchPreviewOpts) { o.reviewPR = n }
 }
 
 // WithCron fills the job rows of a PreviewKindCron popup.
@@ -230,6 +237,7 @@ type DispatchPreviewModel struct {
 	agentName   string
 	targetAgent string
 	issue       int    // 0 for ad-hoc prompt dispatches
+	reviewPR    int    // --review-pr number; 0 otherwise
 	prompt      string // --prompt flag value, or the RESOLVED content of --prompt-key
 	promptKey   string // --prompt-key flag value (empty unless dispatching via a context key)
 	command     string // full original bash command (shown in collapsible section)
@@ -324,7 +332,9 @@ func NewDispatchPreview(agentName, targetAgent string, issue int, prompt, prompt
 		agentName = "agent"
 	}
 	if targetAgent == "" {
-		if issue > 0 {
+		if o.reviewPR > 0 {
+			targetAgent = "code-reviewer"
+		} else if issue > 0 {
 			targetAgent = "(auto-detect from labels)"
 		} else {
 			targetAgent = "agent"
@@ -386,6 +396,7 @@ func NewDispatchPreview(agentName, targetAgent string, issue int, prompt, prompt
 		agentName:       agentName,
 		targetAgent:     targetAgent,
 		issue:           issue,
+		reviewPR:        o.reviewPR,
 		prompt:          prompt,
 		promptKey:       promptKey,
 		command:         command,
@@ -711,6 +722,8 @@ func (m DispatchPreviewModel) metadataLines() []string {
 	}
 
 	switch {
+	case m.reviewPR > 0:
+		lines = append(lines, dpLabelStyle.Render("Review PR")+dpSkyStyle.Render(m.summaryLine()))
 	case m.issue > 0:
 		lines = append(lines, dpLabelStyle.Render("Issue")+dpSkyStyle.Render(m.summaryLine()))
 	case m.promptKey != "":
@@ -787,6 +800,8 @@ func (m DispatchPreviewModel) hintLine() string {
 // Kept small and testable.
 func (m DispatchPreviewModel) summaryLine() string {
 	switch {
+	case m.reviewPR > 0:
+		return fmt.Sprintf("#%d", m.reviewPR)
 	case m.issue > 0:
 		return fmt.Sprintf("#%d", m.issue)
 	case m.promptKey != "":

@@ -98,11 +98,16 @@ type Request struct {
 	// Harness overrides the agent's configured harness (dispatch --harness);
 	// "" resolves through config, frontmatter, then harness.Default.
 	Harness string
+	// ReviewPR is the pull request a ModeReviewPR launch reviews.
+	ReviewPR *PullRequest
 
 	// Set by Launch from the resolved harness, for buildSystemPrompt.
 	persona          string // full agent body, for harnesses without --agent
 	noMessaging      bool   // harness has no SendMessage/ListAgents
 	reportViaMailbox bool   // a dispatcher exists but cannot be messaged
+	// reviewSharedCheckout is set for a ModeReviewPR launch that runs in the
+	// shared checkout (no worktree, or worktree creation failed).
+	reviewSharedCheckout bool
 }
 
 // applyOverrides applies the request's model and effort to ac and returns the
@@ -168,6 +173,11 @@ type Result struct {
 	Account string
 	// Harness is the agent program the window runs (see internal/harness).
 	Harness string
+	// MessagesAuthor is true for a ModeReviewPR launch whose prompt names the
+	// PR author's window as reachable with SendMessage (author known, same
+	// account, messaging harness). The caller introduces the reviewer to the
+	// author only then.
+	MessagesAuthor bool
 }
 
 // Launch executes the unified dispatch pipeline:
@@ -200,6 +210,17 @@ func Launch(req Request) (Result, error) {
 		return Result{}, fmt.Errorf("unknown dispatch mode: %q", req.Mode)
 	}
 
+	// 2. Resolve working directory.
+	workDir := req.WorkDir
+	if workDir == "" {
+		return Result{}, fmt.Errorf("WorkDir is required")
+	}
+
+	// The agent's frontmatter role adapts the mode (an orchestrator never
+	// gets the worker tail) before anything reads the mode or its spec.
+	cfg := config.Load()
+	req, spec = applyAgentRole(req, spec, frontmatterRoleFn(cfg, req.AgentName, workDir))
+
 	// Resolve useWorktree ONCE, immediately after the mode lookup -- this is
 	// the single chokepoint for the mode-default-with-explicit-override
 	// pattern. Every other site in this file that needs to know whether the
@@ -210,15 +231,8 @@ func Launch(req Request) (Result, error) {
 		useWorktree = *req.UseWorktree
 	}
 
-	// 2. Resolve working directory.
-	workDir := req.WorkDir
-	if workDir == "" {
-		return Result{}, fmt.Errorf("WorkDir is required")
-	}
-
 	// 4. Load agent config. Done before creating the worktree so a bad or
 	// unreachable backend fails the dispatch without leaving a worktree behind.
-	cfg := config.Load()
 	ac := cfg.ForAgent(req.AgentName)
 	h, err := resolveHarness(cfg, req.AgentName, req.Harness, workDir)
 	if err != nil {
@@ -302,6 +316,7 @@ func Launch(req Request) (Result, error) {
 		req.Orchestrator = Orchestrator{}
 		req.noMessaging = true
 	}
+	messagesAuthor := prepareReview(&req, cfg, caps.Accounts, acct.Dir, useWorktree && workDir != repoDir)
 	systemPrompt := buildSystemPrompt(req, spec, workDir, branch, useWorktree, contextEntries, sharedConventions)
 
 	// 8. Determine user message.
@@ -432,7 +447,31 @@ func Launch(req Request) (Result, error) {
 		Branch:    branch,
 		Account:   acct.Name,
 		Harness:   h.Name(),
+
+		MessagesAuthor: messagesAuthor,
 	}, nil
+}
+
+// prepareReview finishes a ModeReviewPR request once the account and harness
+// are known: it copies ReviewPR (Launch must not mutate the caller's), marks
+// a cross-account author, and records whether the launch runs in the shared
+// checkout. It returns whether the prompt names the author as reachable.
+func prepareReview(req *Request, cfg *config.Config, accounts bool, reviewerDir string, inWorktree bool) bool {
+	if req.ReviewPR == nil {
+		return false
+	}
+	pr := *req.ReviewPR
+	req.ReviewPR = &pr
+	req.reviewSharedCheckout = !inWorktree
+	if !pr.Author.Known() || req.noMessaging {
+		return false
+	}
+	if cfg.HasAccounts() && accounts && crossAccount(reviewerDir, claudehome.ParentDir(pr.Author.Account)) {
+		logging.Log("dispatch: PR #%d author %s runs under a different account; the reviewer reports to its orchestrator only", pr.Number, pr.Author.WindowID)
+		pr.Author.crossAccount = true
+		return false
+	}
+	return true
 }
 
 // buildDispatchEnv builds the extraEnv map passed to tmux.LaunchAgent for a
@@ -519,6 +558,9 @@ func buildBranch(req Request) string {
 	if req.Ticket > 0 {
 		return fmt.Sprintf("agent/%s/issue-%d", req.AgentName, req.Ticket)
 	}
+	if req.ReviewPR != nil {
+		return fmt.Sprintf("agent/%s/review-pr-%d", req.AgentName, req.ReviewPR.Number)
+	}
 	slug := ids.NewUUID()[:8]
 	if req.Mode == ModeBare {
 		return fmt.Sprintf("agent/%s/session-%s", req.AgentName, slug)
@@ -529,6 +571,9 @@ func buildBranch(req Request) string {
 func modeLogPrefix(req Request) string {
 	if req.Ticket > 0 {
 		return fmt.Sprintf("#%d", req.Ticket)
+	}
+	if req.ReviewPR != nil {
+		return fmt.Sprintf("review PR #%d", req.ReviewPR.Number)
 	}
 	return "adhoc"
 }
@@ -566,7 +611,7 @@ var validPermissionModes = map[string]bool{
 // resolvePermissionMode returns the permission mode to pass to claude, or ""
 // to pass none. A valid per-launch override wins over everything. An explicit valid config value wins in every mode; an invalid
 // one is logged and ignored. Otherwise the default applies only to worker
-// dispatch modes (ModeDispatch, ModeAdhoc) -- interactive modes (bare,
+// dispatch modes (ModeDispatch, ModeAdhoc, ModeReviewPR) -- interactive modes (bare,
 // discuss, triage, review, custom) have a human at the keyboard and keep
 // Claude's own default.
 func resolvePermissionMode(mode Mode, ac config.AgentConfig, override string) string {
@@ -579,7 +624,7 @@ func resolvePermissionMode(mode Mode, ac config.AgentConfig, override string) st
 		}
 		logging.Warn("dispatch: invalid permission_mode %q for agent; falling back to default", pm)
 	}
-	if mode == ModeDispatch || mode == ModeAdhoc {
+	if mode == ModeDispatch || mode == ModeAdhoc || mode == ModeReviewPR {
 		return defaultDispatchPermissionMode
 	}
 	return ""
@@ -1106,6 +1151,9 @@ const taskLineMax = 80
 func TaskFor(req Request) string {
 	if req.Ticket > 0 {
 		return ""
+	}
+	if pr := req.ReviewPR; pr != nil {
+		return textutil.TaskLine(fmt.Sprintf("Review PR #%d: %s", pr.Number, pr.Title), taskLineMax)
 	}
 	return textutil.TaskLine(req.CustomPrompt, taskLineMax)
 }

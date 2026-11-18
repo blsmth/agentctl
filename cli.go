@@ -490,6 +490,8 @@ func (c *OpenAgentsWindowCmd) Run() error {
 // DispatchCmd implements `agentctl dispatch` with full flag support.
 type DispatchCmd struct {
 	Issue      int           `help:"GitHub issue number" short:"i"`
+	ReviewPR   int           `name:"review-pr" help:"Review an open pull request; the verdict goes to the dispatching session (default agent: code-reviewer; --prompt/--prompt-key add review instructions)"`
+	Author     string        `help:"Window of the --review-pr author, e.g. @12 (default: the live window on the PR branch)"`
 	Prompt     string        `help:"Ad-hoc prompt text" short:"p"`
 	PromptKey  string        `name:"prompt-key" help:"Read ad-hoc prompt from a context store key" short:"k"`
 	Agent      string        `help:"Agent name (auto-detected from labels if omitted)" short:"a"`
@@ -506,7 +508,7 @@ type DispatchCmd struct {
 
 func (c *DispatchCmd) Run() error {
 	cmd.RunDispatch(cmd.DispatchOptions{
-		Issue: c.Issue, Prompt: c.Prompt, PromptKey: c.PromptKey, Agent: c.Agent, Dir: c.Dir,
+		Issue: c.Issue, ReviewPR: c.ReviewPR, Author: c.Author, Prompt: c.Prompt, PromptKey: c.PromptKey, Agent: c.Agent, Dir: c.Dir,
 		Model: c.Model, Backend: c.Backend, Account: c.Account, Harness: c.Harness, NoWorktree: c.NoWorktree,
 		Wait: c.Wait, Timeout: c.Timeout, Repo: c.Repo,
 	})

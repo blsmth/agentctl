@@ -61,6 +61,11 @@ func Compose(local Agent, localBody string, base Agent, baseBody string) Agent {
 		out.Harness = base.Harness
 	}
 
+	// Inherit Role from base when local has none.
+	if out.Role == "" {
+		out.Role = base.Role
+	}
+
 	// Compose body: base first, then local overrides.
 	var body strings.Builder
 	body.WriteString(strings.TrimRight(baseBody, "\n"))

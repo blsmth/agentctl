@@ -41,9 +41,11 @@ type DispatchPreviewArgs struct {
 	AgentName   string `json:"agent_name"`
 	TargetAgent string `json:"target_agent"`
 	Issue       int    `json:"issue"`
-	Prompt      string `json:"prompt"`
-	PromptKey   string `json:"prompt_key"`
-	Command     string `json:"command"`
+	// ReviewPR is the `--review-pr` number; 0 for every other dispatch.
+	ReviewPR  int    `json:"review_pr,omitempty"`
+	Prompt    string `json:"prompt"`
+	PromptKey string `json:"prompt_key"`
+	Command   string `json:"command"`
 	// Account is the Claude account the dispatched agent resolves to, as
 	// "name (label)"; empty when no accounts are configured.
 	Account string `json:"account,omitempty"`
@@ -152,7 +154,7 @@ func segmentHasHelp(seg []cmdToken) bool {
 // the next word.
 func isDispatchValueFlag(tok string) bool {
 	switch tok {
-	case "--agent", "-a", "--issue", "-i", "--prompt", "-p", "--prompt-key", "-k":
+	case "--agent", "-a", "--issue", "-i", "--prompt", "-p", "--prompt-key", "-k", "--review-pr", "--author":
 		return true
 	}
 	return false
@@ -210,6 +212,10 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool, den
 
 	// Parse flags from the dispatch command.
 	targetAgent, issue, prompt, promptKey := parseDispatchFlags(command)
+	reviewPR := parseDispatchReviewPR(command)
+	if reviewPR > 0 && targetAgent == "" {
+		targetAgent = "code-reviewer"
+	}
 
 	// Resolve the popup's sizing inputs from the attached client BEFORE
 	// building the tmux popup, so the same values can be threaded through to
@@ -224,6 +230,7 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool, den
 		AgentName:    target.label(agentName),
 		TargetAgent:  targetAgent,
 		Issue:        issue,
+		ReviewPR:     reviewPR,
 		Prompt:       prompt,
 		PromptKey:    promptKey,
 		Command:      command,
@@ -291,6 +298,10 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool, den
 		agentName, targetAgent, issue)
 
 	notice := dispatchPopupNotice(agentName, targetAgent, issue, args.Prompt)
+	if reviewPR > 0 {
+		notice.Detail = fmt.Sprintf("%s reviewing PR #%d", targetAgent, reviewPR)
+		notice.Action = notice.Detail
+	}
 	notice.Remote = &remoteDetails{
 		Kind:        remoteapproval.KindDispatch,
 		AskingAgent: agentName,
@@ -400,21 +411,7 @@ func dispatchPreviewPopupCmd(agentctlBin, argsFilePath, resultFile string) strin
 // this way keeps the switch defensive against future flag additions that
 // share a longer common prefix.
 func parseDispatchFlags(command string) (targetAgent string, issue int, prompt string, promptKey string) {
-	segs := dispatchSegments(command)
-	var seg []cmdToken
-	for _, c := range segs {
-		if !segmentHasHelp(c) {
-			seg = c
-			break
-		}
-	}
-	if seg == nil && len(segs) > 0 {
-		seg = segs[0]
-	}
-	tokens := make([]string, len(seg))
-	for i, t := range seg {
-		tokens[i] = t.text
-	}
+	tokens := dispatchTokens(command)
 	for i := 0; i < len(tokens); i++ {
 		tok := tokens[i]
 		switch {
@@ -449,6 +446,49 @@ func parseDispatchFlags(command string) (targetAgent string, issue int, prompt s
 		}
 	}
 	return
+}
+
+// dispatchTokens returns the words of the gated dispatch invocation in
+// command: the first segment that is not a help lookup, else the first.
+func dispatchTokens(command string) []string {
+	segs := dispatchSegments(command)
+	var seg []cmdToken
+	for _, c := range segs {
+		if !segmentHasHelp(c) {
+			seg = c
+			break
+		}
+	}
+	if seg == nil && len(segs) > 0 {
+		seg = segs[0]
+	}
+	tokens := make([]string, len(seg))
+	for i, t := range seg {
+		tokens[i] = t.text
+	}
+	return tokens
+}
+
+// parseDispatchReviewPR returns the --review-pr number of the dispatch in
+// command, or 0. Issue titles are not fetched for the popup, so neither is
+// the PR title: the popup shows the number.
+func parseDispatchReviewPR(command string) int {
+	tokens := dispatchTokens(command)
+	n := 0
+	for i := 0; i < len(tokens); i++ {
+		switch tok := tokens[i]; {
+		case tok == "--review-pr":
+			if i+1 < len(tokens) {
+				fmt.Sscanf(tokens[i+1], "%d", &n) //nolint:errcheck
+				i++
+			}
+		case strings.HasPrefix(tok, "--review-pr="):
+			fmt.Sscanf(strings.TrimPrefix(tok, "--review-pr="), "%d", &n) //nolint:errcheck
+		case isDispatchValueFlag(tok):
+			i++ // a value such as a prompt mentioning --review-pr is not the flag
+		}
+	}
+	return n
 }
 
 // tokenizeCommand splits a shell command string into tokens, handling
@@ -498,8 +538,21 @@ func tokenizeQuoted(s string) []cmdToken {
 			quoteChar = c
 		case ' ', '\t', '\n':
 			flush()
+		case '\\':
+			// Outside quotes a backslash makes the next character literal
+			// ('don'\''t' is don't), and backslash-newline is a line
+			// continuation. A trailing backslash is left for the shell.
+			if i+1 < len(s) {
+				i++
+				if s[i] != '\n' {
+					cur.WriteByte(s[i])
+				}
+				continue
+			}
+			expands = true
+			cur.WriteByte(c)
 		default:
-			if c == '$' || c == '`' || c == '\\' {
+			if c == '$' || c == '`' {
 				expands = true
 			}
 			cur.WriteByte(c)

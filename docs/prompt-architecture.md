@@ -32,12 +32,24 @@ order:
 4. Preamble (agentctl capabilities: context store, messaging, etc.)
 5. Worktree orientation note (branch name only, if applicable)
 6. Mode instructions (autonomy/behavior boilerplate for dispatch/adhoc; a
-   different block per mode for discuss/triage/review/custom; empty for bare)
-7. Context store entries (auto-injected ticket spec + pinned context_keys)
+   different block per mode for discuss/triage/review/custom; PR context,
+   verdict format and author section for review-pr; empty for bare)
+7. Context store entries (entries stored for this agent + pinned context_keys)
 8. Finishing steps — verify, commit, push, open a PR (worktree-aware; only
-   for the fully autonomous dispatch/adhoc modes, since triage/review forbid
-   implementing and discuss/custom/bare leave "done" to the human)
+   for the fully autonomous dispatch/adhoc modes, since triage/review/review-pr
+   forbid committing and discuss/custom/bare leave "done" to the human; never
+   for a `role: orchestrator` agent)
 ```
+
+### Agent role
+
+The preamble role is the mode's, upgraded to orchestrator when the agent's
+frontmatter says `role: orchestrator` (never downgraded). Such an agent never
+gets finishing steps or the "do not merge to main" line
+(`dispatch.applyAgentRole`). A human-initiated ad-hoc launch of it becomes
+`bare`: the prompt is the first user message (moved to `## Task` only past
+64KB, the inline-argument cap) with no execution boilerplate. Cron and
+`--issue` launches keep their mode and autonomous instructions.
 
 Finishing steps are deliberately last — ordered instructions closest to the
 end of the prompt are followed most reliably, and getting the agent to

@@ -15,11 +15,16 @@ const (
 	ModeTriage   Mode = "triage"
 	ModeReview   Mode = "review"
 	ModeCustom   Mode = "custom"
-	// ModeBare is used when launching an agent interactively with no ticket, no
-	// autonomous execution instructions, and no initial user message. The agent
-	// receives the preamble so it knows about agentctl capabilities, but is
-	// otherwise started fresh and waits for the user.
+	// ModeBare is used when launching an agent interactively with no ticket and
+	// no autonomous execution instructions. The agent receives the preamble so
+	// it knows about agentctl capabilities, then waits for the user, unless
+	// CustomPrompt is set: that becomes its first user message (an
+	// orchestrator launched on an ad-hoc prompt, see applyAgentRole).
 	ModeBare Mode = "bare"
+	// ModeReviewPR is `dispatch --review-pr`: an autonomous review of one pull
+	// request whose deliverable is a verdict message to the orchestrator, not
+	// a commit. Distinct from the interactive, issue-based ModeReview.
+	ModeReviewPR Mode = "review-pr"
 )
 
 // modeSpec defines per-mode prompt composition and behavior.
@@ -229,12 +234,25 @@ Be direct and constructive. Point out what is done well, and be explicit about w
 		Role:            RoleWorker,
 		DefaultWorktree: true,
 	},
-	// ModeBare: no exec boilerplate, no ticket, no initial user message.
-	// The agent receives the preamble (so it knows about agentctl capabilities)
-	// and then starts interactively waiting for the user.
+	ModeReviewPR: {
+		SystemInstructions: reviewPRInstructions,
+		DefaultUserMessage: reviewPRUserMessage,
+		Autonomous:         true,
+		IncludeTicketBody:  false,
+		// The deliverable is a verdict message; the instructions forbid
+		// committing, pushing and opening a PR.
+		IncludeFinishingSteps: false,
+		DefaultModel:          "",
+		Role:                  RoleWorker,
+		DefaultWorktree:       true,
+	},
+	// ModeBare: no exec boilerplate, no ticket. The agent receives the
+	// preamble (so it knows about agentctl capabilities) and then starts
+	// interactively waiting for the user, or on CustomPrompt as its first
+	// message when one is set.
 	ModeBare: {
 		SystemInstructions: func(_ Request) string { return "" },
-		DefaultUserMessage: func(_ Request) string { return "" },
+		DefaultUserMessage: bareUserMessage,
 		Autonomous:         false,
 		IncludeTicketBody:  false,
 		DefaultModel:       "",
@@ -265,6 +283,20 @@ Be direct and constructive. Point out what is done well, and be explicit about w
 	},
 }
 
+// maxInlineMessage caps a prompt delivered whole as the first user message (a
+// single command-line argument; Linux limits one to 128KB). A longer bare
+// prompt goes in the system prompt under "## Task" instead.
+const maxInlineMessage = 64 << 10
+
+// bareUserMessage is ModeBare's first user message: CustomPrompt itself, or
+// a pointer to the "## Task" section when it is too long to pass inline.
+func bareUserMessage(req Request) string {
+	if len(req.CustomPrompt) > maxInlineMessage {
+		return `Your task is in the system prompt under "## Task".`
+	}
+	return req.CustomPrompt
+}
+
 // IsAutonomous reports whether mode runs without human interaction, i.e.
 // whether it is safe for the monitor to auto-deliver an unsolicited mailbox
 // message into the window (see docs/agent-messaging-design.md §3's "Risks"
@@ -272,7 +304,7 @@ Be direct and constructive. Point out what is done well, and be explicit about w
 // including in interactive sessions, so gating delivery on state alone would
 // inject into a window where a human is mid-conversation).
 //
-// True for dispatch, adhoc, and triage — the fully autonomous modes with no
+// True for dispatch, adhoc, review-pr and triage — the fully autonomous modes with no
 // expected human turn-taking. False for discuss, review, custom, and bare,
 // and for any unrecognised/empty mode string (e.g. a window launched before
 // hooks recorded a mode) — those default to the safe answer, not delivery.
