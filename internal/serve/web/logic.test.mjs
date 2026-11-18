@@ -6,6 +6,7 @@ import {
   ansiColor, approvalBannerText, approvalConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
   buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
+  bucketLabel, kindLabel, rowTags, rowTitle, treeRows,
 } from "./logic.js";
 
 const fixtures = JSON.parse(readFileSync(new URL("./logic.fixtures.json", import.meta.url), "utf8"));
@@ -147,4 +148,22 @@ console.log("ok: resolved text");
   assert.equal(swipeCommit(50, 300, -2), false);
   assert.equal(swipeCommit(-200, 0), false);
   console.log("ok: swipe close");
+}
+
+{
+  assert.equal(rowTitle({ agent: "go-engineer" }), "go-engineer");
+  assert.equal(rowTitle({ agent: "" }), "Claude");
+  assert.deepEqual(rowTags({}), []);
+  assert.deepEqual(rowTags({ issue: 42 }), ["#42"]);
+  assert.deepEqual(rowTags({ issue: 42, pr_number: 99, pr_url: "https://github.com/o/r/pull/7" }), ["#42", "PR #99"]);
+  assert.deepEqual(rowTags({ pr_url: "https://github.com/o/r/pull/7" }), ["PR #7"]);
+  assert.deepEqual(rowTags({ pr_url: "https://example.com/x" }), ["PR"]);
+  assert.equal(kindLabel({ mode: "dispatch" }), "task");
+  assert.equal(kindLabel({ mode: "adhoc" }), "task");
+  assert.equal(kindLabel({ mode: "bare" }), "session");
+  assert.equal(kindLabel({}), "session");
+  assert.equal(bucketLabel(2), "Tasks from other sessions (2)");
+  const bucket = treeRows([{ window_id: "@1", mode: "dispatch", parent: "@9" }]).find((e) => e.bucket);
+  assert.equal(bucket.count, 1);
+  console.log("ok: fleet row labels");
 }

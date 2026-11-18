@@ -7,6 +7,7 @@ import {
   buildAnswerRequest,
   buildReplyRequest,
   effectiveState,
+  kindLabel,
   formatSince,
   paneModeOrDefault,
   safeHttpsUrl,
@@ -225,7 +226,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
     if (!win) return;
     title.textContent = win.agent || windowId;
     clear(sub);
-    const bits = [win.branch, win.mode, win.context_pct ? `${Math.round(win.context_pct)}% ctx` : "", effectiveState(win)];
+    const bits = [kindLabel(win), win.branch, win.context_pct ? `${Math.round(win.context_pct)}% ctx` : "", effectiveState(win)];
     const since = formatSince(win.blocked_since || win.state_since, Date.now());
     if (since) bits.push(since);
     sub.append(bits.filter(Boolean).join(" · "));

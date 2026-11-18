@@ -24,7 +24,7 @@ test("a long left swipe on an idle row asks to close; confirm closes it", async 
 
   await expect(sheet(page)).toBeVisible();
   await expect(sheet(page)).toContainText("Close window?");
-  await expect(sheet(page)).toContainText("docs @15");
+  await expect(sheet(page)).toContainText("docs");
   // The click after the lift was swallowed: still on the fleet, row held open.
   expect(new URL(page.url()).hash).toBe("");
   expect(await offsetX(node(link))).toBeLessThan(-50);

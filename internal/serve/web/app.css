@@ -42,7 +42,9 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 .blocked .glyph { color: var(--blocked); } .working .glyph { color: var(--working); } .done .glyph { color: var(--done); }
 .win-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .win-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.win-title .meta { font-weight: 400; }
+.win-title { display: flex; align-items: baseline; gap: .4rem; }
+.win-title .agent { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.win-title .tag { flex: none; font-weight: 500; font-size: .75rem; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .activity { color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .win-side { display: flex; flex-direction: column; align-items: flex-end; font-size: .8rem; color: var(--muted); }
 
@@ -127,7 +129,6 @@ body.term-open nav { display: none; }
 .tl.stub::before { content: ""; position: absolute; left: 0; top: 50%; bottom: 0; width: var(--tree-w); background: var(--tree-line); }
 .tl.own.last::before { bottom: 50%; }
 .tl.own::after { content: ""; position: absolute; left: 0; top: calc(50% - var(--tree-w) / 2); height: var(--tree-w); width: calc(var(--indent) - var(--glyph-w) / 2 - .15rem); background: var(--tree-line); }
-.win.child .win-title .meta { font-size: .8rem; }
 .win.child .win-title { font-size: .95rem; }
 .win.child .glyph { font-size: 1rem; }
 .win .glyph { flex: none; width: var(--glyph-w); }
