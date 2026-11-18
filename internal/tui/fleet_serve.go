@@ -2,7 +2,6 @@ package tui
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/blsmth/agentctl/internal/servectl"
 )
@@ -111,16 +110,8 @@ func (m FleetModel) serveBadge() string {
 // serveBadgeSpan is the indicator's [start, end) columns on the title row;
 // ok is false when it is not shown.
 func (m FleetModel) serveBadgeSpan() (span [2]int, ok bool) {
-	badge := m.serveBadge()
-	if badge == "" {
-		return span, false
-	}
-	start := fleetSidebarLeftInset + lipgloss.Width("agentctl hub") + lipgloss.Width(fleetServeGap)
-	end := start + lipgloss.Width(badge)
-	if end > m.contentWidth()-fleetSidebarRightGutter {
-		return span, false // truncated off a very narrow title
-	}
-	return [2]int{start, end}, true
+	span = m.titleLayout(m.contentWidth()).badge
+	return span, span[1] > 0
 }
 
 // onServeBadge reports whether (x, y) hits the indicator (title row only).

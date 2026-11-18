@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -493,6 +494,10 @@ type FleetModel struct {
 	serveKnown   bool
 	serveProbing bool
 	serveBusy    bool
+
+	// dirPrompt is the open "+ new session" directory prompt (see
+	// fleet_newsession.go); nil when closed.
+	dirPrompt *fleetNewSessionState
 }
 
 // HubSelectEnv carries the selected agent ("session|windowID") across a hot
@@ -840,6 +845,14 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.handleMotion(msg)
 
+	case tea.PasteMsg:
+		if m.newSessionOpen() {
+			var cmd tea.Cmd
+			m.dirPrompt.input, cmd = m.dirPrompt.input.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+
 	case tea.KeyPressMsg:
 		m.hideCard()
 		m.wheelHold = false
@@ -857,6 +870,9 @@ func (m *FleetModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if key == "esc" {
 			return *m, nil
 		}
+	}
+	if m.newSessionOpen() {
+		return *m, m.handleNewSessionKey(msg)
 	}
 	if m.menuOpen && m.menuHelp {
 		// The key reference closes on any key; a binding it lists then runs
@@ -908,6 +924,10 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 
 	case "n":
 		m.armNew(m.splitPane.Cursor())
+		return *m, nil
+
+	case fleetNewSessionKey:
+		m.openNewSession()
 		return *m, nil
 
 	case "x":
@@ -1582,21 +1602,59 @@ func (m FleetModel) fleetCounts() (blocked, working, done, idle int) {
 // totals right-aligned: a yellow inverse ⏸ cell (only when something is
 // blocked, and the only filled cell), then ● ✓ ○ counts and a dim agent and
 // session total. An active attention filter adds a muted tag after the title
-// ("· needs you"). Narrow widths drop the totals, then tighten the counts and
-// shorten the tag, then drop the counts, then truncate.
+// ("· needs you"), then come the serve indicator and the "+ new session"
+// button. See titleLayout for how narrow widths degrade.
 func (m FleetModel) renderTitle(cw int) string {
-	title := strings.Repeat(" ", fleetSidebarLeftInset) + fleetTitleStyle.Render("agentctl hub")
-	if badge := m.serveBadge(); badge != "" {
-		title += fleetServeGap + badge // serveBadgeSpan mirrors this layout
-	}
-	left, shortLeft := title, title
+	return m.titleLayout(cw).line
+}
+
+// fleetTitleLayout is the rendered title row plus the columns of its two
+// click targets; a span is [0,0] when that target is not shown.
+type fleetTitleLayout struct {
+	line              string
+	badge, newSession [2]int
+}
+
+// titleLayout lays out the title row. Narrow widths drop the totals, then
+// tighten the counts and shorten the filter tag, then shorten the "+ new
+// session" button (fleetNewSessionLabels) and finally hide it (N still
+// works), then drop the counts, then truncate. Rendering and hit-testing
+// both come from here, so they cannot disagree.
+func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
+	tags := []string{""}
 	if m.filter != fleetFilterAll {
-		left += fleetCountStyle.Render(" · " + m.filter.label())
 		short, _, _ := strings.Cut(m.filter.label(), " ")
-		shortLeft += fleetCountStyle.Render(" · " + short)
+		tags = []string{m.filter.label(), short}
+	}
+	fit := func(l fleetTitleLayout, left, right string) fleetTitleLayout {
+		line := left
+		if right != "" {
+			pad := cw - fleetSidebarRightGutter - lipgloss.Width(left) - lipgloss.Width(right)
+			line += strings.Repeat(" ", pad) + right
+		}
+		l.line = fleetFitLine(line, false, cw)
+		limit := cw - fleetSidebarRightGutter
+		if l.badge[1] > limit {
+			l.badge = [2]int{}
+		}
+		if l.newSession[1] > limit {
+			l.newSession = [2]int{}
+		}
+		return l
+	}
+	labels := append(slices.Clone(fleetNewSessionLabels), "")
+	// bare is the title without counts, with the widest button that fits.
+	bare := func() fleetTitleLayout {
+		for _, label := range labels {
+			left, l := m.titleLeft(tags[0], label)
+			if label == "" || lipgloss.Width(left) <= cw-fleetSidebarRightGutter {
+				return fit(l, left, "")
+			}
+		}
+		return fleetTitleLayout{} // unreachable: the "" label always returns
 	}
 	if !m.loaded || m.loadErr != nil {
-		return fleetFitLine(left, false, cw)
+		return bare()
 	}
 	blocked, working, done, idle := m.fleetCounts()
 	count := func(glyph string, st lipgloss.Style, n int) string {
@@ -1611,19 +1669,50 @@ func (m FleetModel) renderTitle(cw int) string {
 	total := working + blocked + done + idle
 	suffix := fleetDimStyle.Render(fmt.Sprintf(" · %d agent%s, %d session%s", total, plural(total), len(m.groups), plural(len(m.groups))))
 
-	candidates := [][2]string{{left, counts + suffix}, {left, counts}}
+	type candidate struct{ tag, right string }
+	candidates := []candidate{{tags[0], counts + suffix}, {tags[0], counts}}
 	if m.filter != fleetFilterAll {
 		tight := strings.Join(cells, " ")
-		candidates = append(candidates, [2]string{left, tight}, [2]string{shortLeft, tight})
+		candidates = append(candidates, candidate{tags[0], tight}, candidate{tags[1], tight})
 	}
-	for _, c := range candidates {
-		room := cw - fleetSidebarRightGutter - lipgloss.Width(c[0]) - 1
-		if lipgloss.Width(c[1]) <= room {
-			pad := cw - fleetSidebarRightGutter - lipgloss.Width(c[0]) - lipgloss.Width(c[1])
-			return fleetFitLine(c[0]+strings.Repeat(" ", pad)+c[1], false, cw)
+	for _, label := range labels {
+		for _, c := range candidates {
+			left, l := m.titleLeft(c.tag, label)
+			room := cw - fleetSidebarRightGutter - lipgloss.Width(left) - 1
+			if lipgloss.Width(c.right) <= room {
+				return fit(l, left, c.right)
+			}
 		}
 	}
-	return fleetFitLine(left, false, cw)
+	return bare()
+}
+
+// titleLeft builds the title row's left part: the title, the filter tag
+// (when tag is not empty), the serve indicator and the "+ new session"
+// button showing label ("" hides it), with the columns of the last two.
+func (m FleetModel) titleLeft(tag, label string) (string, fleetTitleLayout) {
+	var l fleetTitleLayout
+	left := strings.Repeat(" ", fleetSidebarLeftInset) + fleetTitleStyle.Render("agentctl hub")
+	if tag != "" {
+		left += fleetCountStyle.Render(" · " + tag)
+	}
+	if badge := m.serveBadge(); badge != "" {
+		left += fleetServeGap
+		start := lipgloss.Width(left)
+		left += badge
+		l.badge = [2]int{start, lipgloss.Width(left)}
+	}
+	if label != "" {
+		left += fleetServeGap
+		start := lipgloss.Width(left)
+		style := fleetDimStyle
+		if m.hover.reg == fleetHoverNewSession {
+			style = fleetNewHoverStyle
+		}
+		left += style.Render(label)
+		l.newSession = [2]int{start, lipgloss.Width(left)}
+	}
+	return left, l
 }
 
 // renderStatusOrEmpty renders the loading/error/empty states shared by both

@@ -188,6 +188,15 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	if msg.Button == tea.MouseLeft && m.menuOpen && !m.menuHelp && msg.Y == m.footerMessageY() {
 		return m.clickMenu(msg.X)
 	}
+	if msg.Button == tea.MouseLeft && m.onNewSessionButton(msg.X, msg.Y) {
+		return m.runKey(fleetNewSessionKey) // same as the key
+	}
+	if m.newSessionOpen() {
+		if msg.Y == m.footerMessageY() {
+			return m, nil // a click on the prompt itself keeps it open
+		}
+		m.cancelNewSession() // any other click dismisses the prompt
+	}
 	if msg.Button == tea.MouseLeft && m.onServeBadge(msg.X, msg.Y) {
 		m.closeMenu()
 		m.cancelNew()
@@ -255,13 +264,14 @@ func (m FleetModel) clickMenu(x int) (tea.Model, tea.Cmd) {
 type fleetHoverRegion int
 
 const (
-	fleetHoverNone     fleetHoverRegion = iota
-	fleetHoverBody                      // a row's body (not its ✕)
-	fleetHoverClose                     // a row's ✕ button
-	fleetHoverNew                       // a group header's "+ new" button
-	fleetHoverNewShell                  // armed selector's "shell"
-	fleetHoverNewAgent                  // armed selector's "agent"
-	fleetHoverFold                      // a group header's fold marker and project name
+	fleetHoverNone       fleetHoverRegion = iota
+	fleetHoverBody                        // a row's body (not its ✕)
+	fleetHoverClose                       // a row's ✕ button
+	fleetHoverNew                         // a group header's "+ new" button
+	fleetHoverNewShell                    // armed selector's "shell"
+	fleetHoverNewAgent                    // armed selector's "agent"
+	fleetHoverFold                        // a group header's fold marker and project name
+	fleetHoverNewSession                  // the title's "+ new session" button (line -1)
 )
 
 // fleetHover is the hover target: a line index plus the region on it. The zero
@@ -282,6 +292,9 @@ func (h fleetHover) region(i int) fleetHoverRegion {
 // hoverAt resolves the hover target under (x, y) with the same hit-testing as
 // clicks, so hover and click can never disagree.
 func (m FleetModel) hoverAt(x, y int) fleetHover {
+	if m.onNewSessionButton(x, y) {
+		return fleetHover{line: -1, reg: fleetHoverNewSession}
+	}
 	idx, sub, ok := m.lineAtSub(x, y)
 	if !ok {
 		return fleetHover{}

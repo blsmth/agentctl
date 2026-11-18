@@ -112,6 +112,8 @@ func (m FleetModel) footerBody(cw int) string {
 	var b strings.Builder
 	b.WriteString("\n")
 	switch {
+	case m.newSessionOpen():
+		b.WriteString(m.newSessionView(cw))
 	case m.menuOpen && m.menuHelp:
 		lines, _ := fleetHelpLayout(fleetHelpItems(), cw)
 		b.WriteString(strings.Join(lines, "\n"))
@@ -126,8 +128,16 @@ func (m FleetModel) footerBody(cw int) string {
 		b.WriteString(fleetDimStyle.Render("  " + truncateToWidth(m.infoMsg, cw-2)))
 	}
 	b.WriteString("\n")
+	if m.newSessionOpen() && m.jumpErr != "" {
+		// The message line holds the prompt: its error takes the hint bar.
+		b.WriteString(fleetErrStyle.Render("  " + truncateToWidth(m.jumpErr, cw-2)))
+		return b.String()
+	}
 	hints := fleetFooterHints
-	if m.newArmed() {
+	switch {
+	case m.newSessionOpen():
+		hints = fleetNewSessionHints
+	case m.newArmed():
 		hints = fleetNewHints
 	}
 	b.WriteString(fitHints(hints, cw))
@@ -159,6 +169,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"^b o", "back to list", ""},
 		{"b", "next blocked", "b"},
 		{"n", "new", "n"},
+		{fleetNewSessionKey, "new session", fleetNewSessionKey},
 		{"x", "close", "x"},
 		{"J", "home", "J"},
 		{"p", "open PR", "p"},
@@ -213,6 +224,7 @@ func fleetHelpLayout(items []fleetHelpItem, cw int) (lines []string, spans []fle
 
 // openHelp opens the "?" key reference in the footer.
 func (m *FleetModel) openHelp() {
+	m.cancelNewSession()
 	m.cancelClose()
 	m.cancelNew()
 	m.menuOpen, m.menuHelp, m.menuLine = true, true, m.splitPane.Cursor()

@@ -125,6 +125,9 @@ func fleetLaunchArgs() []string {
 	return []string{"launch", "--background", "--permission-mode", "auto"}
 }
 
+// fleetLaunch is the per-group launch; a seam so tests never spawn agentctl.
+var fleetLaunch = fleetLaunchCmd
+
 // fleetLaunchCmd runs `agentctl launch --background` for g as a subprocess so
 // the TUI never blocks and the hub's own process state cannot leak in.
 func fleetLaunchCmd(g fleet.Group) tea.Cmd {
@@ -215,7 +218,7 @@ func (m *FleetModel) launchForGroup(g *fleet.Group) tea.Cmd {
 	}
 	m.jumpErr = ""
 	m.setProgress("launching agent in " + m.projectLabel(g.Session) + "…")
-	return fleetLaunchCmd(*g)
+	return fleetLaunch(*g)
 }
 
 // shellForGroup opens a shell window in g's project.
