@@ -283,7 +283,7 @@ func TestApply_AgentNameFromWindow(t *testing.T) {
 
 	// Return "● myagent" from window name lookup — StripAgentPrefix should strip "● ".
 	renames, cleanup := setupDeps(t, map[string]string{
-		"agentctl:@6|#{window_name}": "● myagent",
+		"=agentctl:@6|#{window_name}": "● myagent",
 	})
 	defer cleanup()
 

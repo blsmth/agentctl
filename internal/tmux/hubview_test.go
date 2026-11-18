@@ -98,9 +98,9 @@ func TestViewerAttachCommand(t *testing.T) {
 	tests := []struct {
 		name, sock, want string
 	}{
-		{"no socket", "", `env -u TMUX tmux attach -t agentctl-hubview-2 \; set-option -t agentctl-hubview-2 destroy-unattached on`},
-		{"socket", "/tmp/tmux-1/default", `env -u TMUX tmux -S '/tmp/tmux-1/default' attach -t agentctl-hubview-2 \; set-option -t agentctl-hubview-2 destroy-unattached on`},
-		{"quote", "/a b/it's", `env -u TMUX tmux -S '/a b/it'\''s' attach -t agentctl-hubview-2 \; set-option -t agentctl-hubview-2 destroy-unattached on`},
+		{"no socket", "", `env -u TMUX tmux attach -t =agentctl-hubview-2 \; set-option -t =agentctl-hubview-2: destroy-unattached on`},
+		{"socket", "/tmp/tmux-1/default", `env -u TMUX tmux -S '/tmp/tmux-1/default' attach -t =agentctl-hubview-2 \; set-option -t =agentctl-hubview-2: destroy-unattached on`},
+		{"quote", "/a b/it's", `env -u TMUX tmux -S '/a b/it'\''s' attach -t =agentctl-hubview-2 \; set-option -t =agentctl-hubview-2: destroy-unattached on`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

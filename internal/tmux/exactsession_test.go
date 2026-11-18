@@ -1,8 +1,9 @@
 package tmux
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
-	"strings"
 	"testing"
 )
 
@@ -22,12 +23,13 @@ func TestSessionTargetsAreExact(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
-	sock := "acexact" + strings.ReplaceAll(t.Name(), "/", "")
+	// Short name: the full socket path must fit sun_path (104 bytes on macOS).
+	sock := fmt.Sprintf("acx%d", os.Getpid())
 	tm := func(args ...string) error {
 		return exec.Command("tmux", append([]string{"-L", sock, "-f", "/dev/null"}, args...)...).Run()
 	}
 	if err := tm("new-session", "-d", "-s", "agentctl-foobar", "sleep", "60"); err != nil {
-		t.Skipf("cannot start scratch tmux server: %v", err)
+		t.Fatalf("cannot start scratch tmux server: %v", err)
 	}
 	t.Cleanup(func() { _ = tm("kill-server") })
 
@@ -63,6 +65,9 @@ func TestSessionTargetsAreExact(t *testing.T) {
 		{"new-window", []string{"new-window", "-d", "-t", ExactSessionTarget("agentctl-foobar")}},
 		{"new-window-left", []string{"new-window", "-d", "-b", "-t", ExactSessionTarget("agentctl-foobar") + "^"}},
 		{"select-window", []string{"select-window", "-t", sessionWindowTarget("agentctl-foobar", "@0")}},
+		{"set-hook", []string{"set-hook", "-t", ExactSessionTarget("agentctl-foobar"), "after-new-window", "display-message x"}},
+		{"set-environment", []string{"set-environment", "-t", ExactSession("agentctl-foobar"), "A", "b"}},
+		{"display-message", []string{"display-message", "-p", "-t", ExactSessionTarget("agentctl-foobar"), "#{pid}"}},
 		{"list-panes-s", []string{"list-panes", "-s", "-t", ExactSessionTarget("agentctl-foobar")}},
 	} {
 		t.Run("exact/"+tc.name, func(t *testing.T) {

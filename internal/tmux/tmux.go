@@ -1778,7 +1778,7 @@ func WindowIDByName(name string) string {
 // windowIDByName returns the tmux window ID for the first window with the given
 // name in the agentctl session, or "" if not found.
 func windowIDByName(name string) string {
-	out, err := exec.Command("tmux", "list-windows", "-t", SessionName,
+	out, err := exec.Command("tmux", "list-windows", "-t", ExactSession(SessionName),
 		"-F", "#{window_id} #{window_name}").Output()
 	if err != nil {
 		return ""
@@ -1910,7 +1910,7 @@ func EnforceAllChromeSizes() {
 	if !SessionExists() {
 		return
 	}
-	out, err := exec.Command("tmux", "list-windows", "-t", SessionName,
+	out, err := exec.Command("tmux", "list-windows", "-t", ExactSession(SessionName),
 		"-F", "#{window_id}").Output()
 	if err != nil {
 		return
@@ -2035,7 +2035,7 @@ func ToggleHud(windowID string) error {
 		if wsHud.HudCollapsed {
 			// Expand back to 30% of window height.
 			out, _ := exec.Command("tmux", "display-message", "-t",
-				SessionName+":"+windowID, "-p", "#{window_height}").CombinedOutput()
+				sessionWindowTarget(SessionName, windowID), "-p", "#{window_height}").CombinedOutput()
 			totalH, _ := strconv.Atoi(strings.TrimSpace(string(out)))
 			targetH := totalH * 30 / 100
 			if targetH < 5 {
@@ -2123,7 +2123,7 @@ func bindRoot(key, command string) {
 // agentctl session. The window is created at session startup and should always
 // exist; if it has been killed, this function recreates it.
 func OpenOrFocusTicketsWindow() error {
-	target := fmt.Sprintf("%s:tickets", SessionName)
+	target := sessionWindowTarget(SessionName, "tickets")
 
 	// Fast path: window exists — just focus it.
 	if err := exec.Command("tmux", "select-window", "-t", target).Run(); err == nil {
@@ -2156,7 +2156,7 @@ func OpenOrFocusTicketsWindow() error {
 func OpenOrFocusSessionsWindow() error {
 	exe := selfpath.SpawnableOrFallback()
 	windowName := "sessions"
-	target := fmt.Sprintf("%s:%s", SessionName, windowName)
+	target := sessionWindowTarget(SessionName, windowName)
 
 	// Check if the window already exists.
 	err := exec.Command("tmux", "select-window", "-t", target).Run()
@@ -2169,7 +2169,7 @@ func OpenOrFocusSessionsWindow() error {
 	originID := CurrentWindowID()
 
 	// Window doesn't exist — create it.
-	sessionTarget := SessionName + ":"
+	sessionTarget := ExactSessionTarget(SessionName)
 	cmd := exec.Command("tmux", "new-window",
 		"-t", sessionTarget,
 		"-n", windowName,
@@ -2189,7 +2189,7 @@ func OpenOrFocusSessionsWindow() error {
 func OpenOrFocusAgentsWindow() error {
 	exe := selfpath.SpawnableOrFallback()
 	windowName := "agents"
-	target := fmt.Sprintf("%s:%s", SessionName, windowName)
+	target := sessionWindowTarget(SessionName, windowName)
 
 	// Check if the window already exists.
 	err := exec.Command("tmux", "select-window", "-t", target).Run()
@@ -2199,7 +2199,7 @@ func OpenOrFocusAgentsWindow() error {
 
 	originID := CurrentWindowID()
 
-	sessionTarget := SessionName + ":"
+	sessionTarget := ExactSessionTarget(SessionName)
 	cmd := exec.Command("tmux", "new-window",
 		"-t", sessionTarget,
 		"-n", windowName,
@@ -2221,7 +2221,7 @@ func ReturnFocusAndKillWindow(originWindowID, windowName string) {
 	if originWindowID != "" {
 		exec.Command("tmux", "select-window", "-t", originWindowID).Run() //nolint:errcheck
 	}
-	target := fmt.Sprintf("%s:%s", SessionName, windowName)
+	target := sessionWindowTarget(SessionName, windowName)
 	exec.Command("tmux", "kill-window", "-t", target).Run() //nolint:errcheck
 }
 
