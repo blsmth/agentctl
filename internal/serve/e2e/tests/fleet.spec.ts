@@ -29,6 +29,11 @@ test("rows show the state glyph and agent", async ({ page }) => {
   }
   await expect(row(page, "@13").locator(".agent")).toHaveText("test-writer");
   await expect(row(page, "@13").locator(".activity")).toHaveText("go test ./...");
+  // Internal identifiers (window ID, launch mode, generated branch) stay off the row.
+  await expect(row(page, "@12").locator(".win-title .agent")).toHaveText("go-engineer");
+  await expect(row(page, "@12").locator(".win-title .tag")).toHaveText(["#7", "PR #8"]);
+  await expect(row(page, "@12").locator(".win-title")).not.toContainText("@12");
+  await expect(row(page, "@12").locator(".win-side")).toContainText("42% ctx");
 });
 
 test("dispatched windows nest under their parent", async ({ page }) => {

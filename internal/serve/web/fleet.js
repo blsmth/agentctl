@@ -2,6 +2,7 @@
 import {
   approvalBannerText,
   approvalHash,
+  bucketLabel,
   collapseKey,
   dispatchHash,
   descendants,
@@ -9,6 +10,8 @@ import {
   formatClock,
   formatSince,
   rollup,
+  rowTags,
+  rowTitle,
   sortGroups,
   treeLines,
   treeRows,
@@ -87,8 +90,8 @@ function windowRow(entry, toggle, expanded, swipe) {
   const win = entry.win;
   const state = effectiveState(win);
   const since = formatSince(win.blocked_since || win.state_since, Date.now());
-  // Children omit the branch; it is in the detail view.
-  const meta = [win.window_id, win.mode, entry.depth > 0 ? "" : win.branch].filter(Boolean).join(" · ");
+  // Window ID, launch mode and branch are internal; the detail view has them.
+  const tags = rowTags(win).map((t) => h("span", { class: "tag" }, t));
   const link = h(
     "a",
     { class: `win ${state}${entry.depth > 0 ? " child" : ""}`, style: entry.depth > 0 ? `--depth:${entry.depth}` : null, href: windowHash(win.session, win.window_id) },
@@ -97,14 +100,14 @@ function windowRow(entry, toggle, expanded, swipe) {
     h(
       "span",
       { class: "win-main" },
-      h("span", { class: "win-title" }, h("span", { class: "agent" }, win.agent || "(bare)"), h("span", { class: "meta" }, ` ${meta}`)),
+      h("span", { class: "win-title" }, h("span", { class: "agent" }, rowTitle(win)), ...tags),
       win.activity ? h("span", { class: "activity" }, win.activity) : null,
     ),
     h(
       "span",
       { class: "win-side" },
       since ? h("span", {}, since) : null,
-      win.context_pct ? h("span", { class: "meta" }, `${Math.round(win.context_pct)}%`) : null,
+      win.context_pct ? h("span", { class: "meta" }, `${Math.round(win.context_pct)}% ctx`) : null,
     ),
   );
   const node = h("div", { class: "node" }, link, toggle);
@@ -118,7 +121,7 @@ function windowRow(entry, toggle, expanded, swipe) {
 }
 
 function bucketRow(entry, toggle, expanded) {
-  return h("div", { class: "node bucket" }, expanded ? stubSpan(entry) : null, h("span", { class: "bucket-label" }, entry.label), toggle);
+  return h("div", { class: "node bucket" }, expanded ? stubSpan(entry) : null, h("span", { class: "bucket-label" }, bucketLabel(entry.count ?? 0)), toggle);
 }
 
 export function mountFleet(root, ctx) {
@@ -158,7 +161,7 @@ export function mountFleet(root, ctx) {
       }
     },
     close: async (win) => {
-      const ok = await confirmSheet({ title: "Close window?", lines: [`${win.agent ?? ""} ${win.window_id}`], confirmLabel: "Close", danger: true });
+      const ok = await confirmSheet({ title: "Close window?", lines: [[rowTitle(win), ...rowTags(win)].join(" ")], confirmLabel: "Close", danger: true });
       if (!ok) return false;
       try {
         await send({ method: "POST", path: `${windowApiPath(win.session, win.window_id)}/close`, body: {} });
