@@ -7,7 +7,7 @@ import {
   buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
-  isScheduled, scheduledChip, scheduledLine, treeLines,
+  isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
   actionsWithQueue, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine,
 } from "./logic.js";
@@ -326,4 +326,17 @@ console.log("ok: resolved text");
   assert.match(checkAttachment({ ...png, type: "image/heic" }, 0), /not a png/);
   assert.match(checkAttachment({ ...png, size: 11 * 1024 * 1024 }, 0), /larger than 10 MB/);
   console.log("ok: window view helpers");
+}
+
+{
+  assert.deepEqual(groupCounts([]), []);
+  assert.deepEqual(
+    groupCounts([{ state: "idle" }, { state: "working" }, { state: "idle", done: true }, { state: "blocked" }, { state: "idle" }, { state: "working" }]),
+    [{ state: "blocked", n: 1 }, { state: "working", n: 2 }, { state: "done", n: 1 }, { state: "idle", n: 2 }],
+  );
+  assert.deepEqual(groupCounts([{ state: "idle" }]), [{ state: "idle", n: 1 }]);
+  assert.notEqual(groupKey("s"), collapseKey("s", { win: { window_id: "@1" } }));
+  assert.notEqual(groupKey("s"), collapseKey("s", { bucket: true }));
+  assert.notEqual(groupKey("a"), groupKey("b"));
+  console.log("ok: project fold helpers");
 }

@@ -9,6 +9,8 @@ import {
   effectiveState,
   formatClock,
   formatSince,
+  groupCounts,
+  groupKey,
   rollup,
   agentChip,
   rowDetailLine,
@@ -129,6 +131,17 @@ function windowRow(entry, toggle, expanded, swipe) {
   return wrap;
 }
 
+/** groupSummary is a folded project's per-state counts, as on the hub's group header. */
+function groupSummary(windows, onToggle) {
+  const counts = groupCounts(windows);
+  const label = counts.map((c) => `${c.n} ${c.state}`).join(", ");
+  return h(
+    "button",
+    { class: "group-counts", type: "button", "aria-label": `Expand: ${label}`, onclick: onToggle },
+    ...counts.map((c) => h("span", { class: `count ${c.state}` }, h("span", { class: "glyph", "aria-hidden": "true" }, GLYPH[c.state]), String(c.n))),
+  );
+}
+
 function bucketRow(entry, toggle, expanded) {
   return h("div", { class: "node bucket" }, expanded ? stubSpan(entry) : null, h("span", { class: "bucket-label" }, bucketLabel(entry.count ?? 0, entry.kind)), toggle);
 }
@@ -225,21 +238,34 @@ export function mountFleet(root, ctx) {
     if (groups.length === 0) list.append(h("p", { class: "muted pad" }, "No agents running."));
     const live = new Set();
     for (const g of groups) {
+      // Window keys stay live while the group is folded, so nested folds survive.
       const { nodes, live: keys } = groupNodes(g);
       keys.forEach((k) => live.add(k));
+      const gk = groupKey(g.session);
+      live.add(gk);
+      const folded = collapsed.has(gk);
+      const name = g.project || g.session;
+      const toggle = () => {
+        if (folded) collapsed.delete(gk);
+        else collapsed.add(gk);
+        saveCollapsed(collapsed);
+        render();
+      };
       list.append(
         h(
           "section",
-          { class: `group ${g.rollup}` },
+          { class: `group ${g.rollup}${folded ? " folded" : ""}` },
           h(
             "div",
             { class: "group-head" },
-            h("h2", {}, g.project || g.session),
+            // Heading text stays the bare name; the chevron is drawn by CSS.
+            h("h2", {}, h("button", { class: "group-toggle", type: "button", "aria-expanded": String(!folded), onclick: toggle }, name)),
+            folded ? groupSummary(g.windows, toggle) : null,
             g.dir && ctx.hasFeature("write")
-              ? h("a", { class: "group-add", href: dispatchHash(g.dir), "aria-label": `Dispatch to ${g.project || g.session}` }, "+")
+              ? h("a", { class: "group-add", href: dispatchHash(g.dir), "aria-label": `Dispatch to ${name}` }, "+")
               : null,
           ),
-          ...nodes,
+          ...(folded ? [] : nodes),
         ),
       );
     }

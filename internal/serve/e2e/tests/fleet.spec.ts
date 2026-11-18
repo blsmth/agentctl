@@ -57,6 +57,29 @@ test("dispatched windows nest under their parent", async ({ page }) => {
   await expect(row(page, "@14")).toBeVisible();
 });
 
+test("tapping a project header folds the whole group and remembers it", async ({ page }) => {
+  const shop = page.locator(".fleet section.group").first();
+  const toggle = shop.locator("h2 button.group-toggle");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(shop.locator(".group-counts")).toHaveCount(0);
+  await toggle.tap();
+  await expect(shop).toHaveClass(/\bfolded\b/);
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  for (const id of ["@11", "@12", "@13", "@14"]) await expect(row(page, id)).toHaveCount(0);
+  // The folded header keeps the attention signal: a blocked count.
+  await expect(shop.locator(".group-counts .count.blocked")).toHaveText("⏸1");
+  // Other projects are untouched, and the heading text is still the bare name.
+  await expect(row(page, "@31")).toBeVisible();
+  await expect(page.locator(".fleet section.group h2")).toHaveText(["shop", "blog", "hub"]);
+  // The fold survives a reload.
+  await page.reload();
+  await expect(page.locator(".fleet section.group").first()).toHaveClass(/\bfolded\b/);
+  await expect(row(page, "@11")).toHaveCount(0);
+  // Tapping the counts unfolds it.
+  await page.locator(".fleet section.group").first().locator(".group-counts").tap();
+  await expect(row(page, "@14")).toBeVisible();
+});
+
 test("tapping a row opens its window view", async ({ page }) => {
   await row(page, "@15").tap();
   await expect(page).toHaveURL(/#\/w\/agentctl-shop\/%4015$/);
