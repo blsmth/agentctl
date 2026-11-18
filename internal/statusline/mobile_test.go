@@ -12,11 +12,15 @@ import (
 
 func TestEffectiveFormat(t *testing.T) {
 	const win = "@7"
-	laptop := tmux.Client{Name: "/dev/ttys001", WindowID: win, Session: "agentctl-proj"}
+	now := time.Unix(1_700_000_000, 0)
+	fresh := now.Add(-10 * time.Second).Unix()
+	stale := now.Add(-laptopIdleAfter - time.Second).Unix()
+	laptop := tmux.Client{Name: "/dev/ttys001", WindowID: win, Session: "agentctl-proj", Activity: fresh}
+	laptopIdle := tmux.Client{Name: "/dev/ttys001", WindowID: win, Session: "agentctl-proj", Activity: stale}
 	laptopElsewhere := tmux.Client{Name: "/dev/ttys001", WindowID: "@9", Session: "agentctl-proj"}
 	phone := tmux.Client{Name: "/dev/ttys099", WindowID: win, Session: tmux.MobileViewerSessionPrefix + "abc"}
-	hub := tmux.Client{Name: "/dev/ttys002", WindowID: win, Session: "agentctl-hubview"}
-	control := tmux.Client{Name: "ctl", WindowID: win, Session: "agentctl-proj", Flags: "control-mode"}
+	hub := tmux.Client{Name: "/dev/ttys002", WindowID: win, Session: "agentctl-hubview", Activity: fresh}
+	control := tmux.Client{Name: "ctl", WindowID: win, Session: "agentctl-proj", Flags: "control-mode", Activity: fresh}
 
 	tests := []struct {
 		name       string
@@ -30,6 +34,8 @@ func TestEffectiveFormat(t *testing.T) {
 	}{
 		{name: "no marker", clients: []tmux.Client{phone}, window: win, want: "rich"},
 		{name: "marker, laptop viewing", marker: true, clients: []tmux.Client{laptop, phone}, window: win, want: "rich", wantListed: true},
+		{name: "marker, idle laptop client on the window", marker: true, clients: []tmux.Client{laptopIdle, phone}, window: win, want: "full", wantListed: true},
+		{name: "marker, idle and fresh laptop clients", marker: true, clients: []tmux.Client{laptopIdle, laptop, phone}, window: win, want: "rich", wantListed: true},
 		{name: "marker, laptop elsewhere", marker: true, clients: []tmux.Client{laptopElsewhere, phone}, window: win, want: "full", wantListed: true},
 		{name: "marker, only the phone client", marker: true, clients: []tmux.Client{phone}, window: win, want: "full", wantListed: true},
 		{name: "marker, hub viewer counts as laptop", marker: true, clients: []tmux.Client{hub, phone}, window: win, want: "rich", wantListed: true},
@@ -49,8 +55,9 @@ func TestEffectiveFormat(t *testing.T) {
 				}
 			}
 			listed := false
-			oldDir, oldList := phoneViewDirFn, listClientsFn
-			t.Cleanup(func() { phoneViewDirFn, listClientsFn = oldDir, oldList })
+			oldDir, oldList, oldNow := phoneViewDirFn, listClientsFn, nowFn
+			t.Cleanup(func() { phoneViewDirFn, listClientsFn, nowFn = oldDir, oldList, oldNow })
+			nowFn = func() time.Time { return now }
 			phoneViewDirFn = func() string { return dir }
 			listClientsFn = func(time.Duration) ([]tmux.Client, error) {
 				listed = true

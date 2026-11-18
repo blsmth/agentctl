@@ -13,6 +13,12 @@ import (
 // watching the window; like the git dirty count it must not stall a refresh.
 const clientListTimeout = 150 * time.Millisecond
 
+// laptopIdleAfter is how long a laptop client may go without input before it
+// stops counting as looking at the window (Mac asleep or locked, tmux still
+// attached). Phone input goes through the viewer client, so it does not
+// advance the laptop client's activity.
+const laptopIdleAfter = 2 * time.Minute
+
 // Seams, replaced in tests so nothing touches real tmux or the real state dir.
 var (
 	phoneViewDirFn = func() string {
@@ -23,6 +29,7 @@ var (
 		return d
 	}
 	listClientsFn = tmux.ListClientsTimeout
+	nowFn         = time.Now
 )
 
 // effectiveFormat is the format to render for windowID. It is the configured
@@ -45,7 +52,7 @@ func effectiveFormat(cfg *config.Config, windowID string) string {
 		logging.Debug("statusline: listing tmux clients: %v", err)
 		return normal
 	}
-	if tmux.LaptopViewing(clients, windowID) {
+	if tmux.LaptopViewing(clients, windowID, nowFn(), laptopIdleAfter) {
 		return normal
 	}
 	return mobile

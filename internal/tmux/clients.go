@@ -72,13 +72,18 @@ func (c Client) IsCandidateViewer() bool {
 }
 
 // LaptopViewing reports whether any candidate client currently shows windowID
-// (a link-window copy, such as the hub's nested view, shares the ID).
-func LaptopViewing(clients []Client, windowID string) bool {
+// (a link-window copy, such as the hub's nested view, shares the ID) and has
+// been active within maxIdle of now. A client that is attached but idle (the
+// laptop asleep or locked) is not looking at anything.
+func LaptopViewing(clients []Client, windowID string, now time.Time, maxIdle time.Duration) bool {
 	if windowID == "" {
 		return false
 	}
 	for _, c := range clients {
-		if c.IsCandidateViewer() && c.WindowID == windowID {
+		if !c.IsCandidateViewer() || c.WindowID != windowID {
+			continue
+		}
+		if now.Sub(time.Unix(c.Activity, 0)) <= maxIdle {
 			return true
 		}
 	}
