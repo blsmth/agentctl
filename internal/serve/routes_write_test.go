@@ -188,6 +188,59 @@ func writeGroup(st string, done bool, name, mode string) fleetwatch.Group {
 	}
 }
 
+// piGroup is writeGroup for a pi window.
+func piGroup(st string) fleetwatch.Group {
+	g := writeGroup(st, false, "pi", "bare")
+	g.Rows[0].Harness = "pi"
+	return g
+}
+
+// TestTextToPi: pi's pane cannot be classified, so the recorded state
+// decides reply and queue ("" counts as idle) and the inject skips the pane
+// guard.
+func TestTextToPi(t *testing.T) {
+	tests := []struct {
+		name, route, state string
+		status             int
+	}{
+		{"reply idle", "reply", "idle", 200},
+		{"reply empty state", "reply", "", 200},
+		{"reply working", "reply", "working", 409},
+		{"reply blocked", "reply", "blocked", 409},
+		{"queue idle", "queue", "idle", 200},
+		{"queue empty state", "queue", "", 200},
+		{"queue working", "queue", "working", 200},
+		{"queue blocked", "queue", "blocked", 409},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWriteEnv(t, true)
+			e.fleet.set(piGroup(tt.state))
+			e.panes.set("")
+			w := e.post(winPath+"/"+tt.route, `{"text":"hi"}`)
+			if w.Code != tt.status {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			if got := len(e.inj.got) == 1; got != (tt.status == 200) {
+				t.Errorf("injected %q", e.inj.got)
+			}
+			if tt.status == 200 && !(len(e.inj.tgts) == 1 && e.inj.tgts[0].Unclassified) {
+				t.Error("target not marked Unclassified")
+			}
+		})
+	}
+}
+
+func TestReplyClaudeUnknownPaneRefused(t *testing.T) {
+	e := newWriteEnv(t, true)
+	e.fleet.set(writeGroup("idle", false, "go-engineer", "dispatch"))
+	e.panes.set("")
+	if w := e.post(winPath+"/reply", `{"text":"hi"}`); w.Code != 409 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	e.assertNothingSent(t)
+}
+
 func newWriteEnv(t *testing.T, allowWrite bool) *writeEnv {
 	t.Helper()
 	return newWriteEnvWith(t, allowWrite, nil)

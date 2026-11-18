@@ -16,6 +16,7 @@ import (
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/cleanup"
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/launchopts"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
@@ -102,6 +103,14 @@ type resolved struct {
 	pane string
 }
 
+// harness is the window's recorded harness name ("" = claude).
+func (rw resolved) harness() string {
+	if rw.index < len(rw.group.Rows) {
+		return rw.group.Rows[rw.index].Harness
+	}
+	return ""
+}
+
 func (rw resolved) target() WindowTarget {
 	return WindowTarget{Session: rw.group.Session, RuntimeDir: rw.group.RuntimeDir, WindowID: rw.window.WindowID, Pane: rw.pane}
 }
@@ -162,7 +171,7 @@ func (s *Server) capturePane(rw resolved) (paneBody, outcome, bool) {
 		logging.Warn("serve: capturing pane: %v", err)
 		return paneBody{}, failure(http.StatusBadGateway, codePaneUnavailable, "pane could not be captured"), false
 	}
-	return buildPaneBody(text), outcome{}, true
+	return buildPaneBodyFor(rw.harness(), text), outcome{}, true
 }
 
 type answerIn struct {
@@ -232,7 +241,7 @@ func (s *Server) awaitDialogGone(rw resolved, hash string) {
 		if err != nil {
 			return
 		}
-		if p := buildPaneBody(text); p.Dialog == nil || p.Dialog.Hash != hash {
+		if p := buildPaneBodyFor(rw.harness(), text); p.Dialog == nil || p.Dialog.Hash != hash {
 			return
 		}
 		time.Sleep(answerSettlePoll)
@@ -327,20 +336,31 @@ func (s *Server) typeText(r *http.Request, in replyIn, a *auditEntry, allowWorki
 	if st == "blocked" || (st == "working" && !allowWorking) {
 		return failure(http.StatusConflict, codeNotIdle, "the agent is "+st)
 	}
-	pane, out, ok := s.capturePane(rw)
-	if !ok {
-		return out
-	}
-	if !textAccepted(pane.Verdict, allowWorking) {
-		if allowWorking {
-			return failure(http.StatusConflict, codeNotIdle, "the agent is not at a prompt that accepts input")
+	target := rw.target()
+	if harness.For(rw.harness()).Caps().PaneClassifier {
+		pane, out, ok := s.capturePane(rw)
+		if !ok {
+			return out
 		}
-		return failure(http.StatusConflict, codeNotIdle, "the agent is not at an idle prompt")
+		if !textAccepted(pane.Verdict, allowWorking) {
+			if allowWorking {
+				return failure(http.StatusConflict, codeNotIdle, "the agent is not at a prompt that accepts input")
+			}
+			return failure(http.StatusConflict, codeNotIdle, "the agent is not at an idle prompt")
+		}
+	} else {
+		// The pane cannot be read for this harness: the recorded state
+		// (checked above) is all there is. An empty state is a fresh agent
+		// whose bridge has not written idle yet.
+		if !recordedAccepts(st, allowWorking) {
+			return failure(http.StatusConflict, codeNotIdle, "the agent is not at an idle prompt")
+		}
+		target.Unclassified = true
 	}
 	s.auditAttempt(*a)
 	// The inject path re-checks the pane before every keystroke and refuses
 	// a dialog (tmux.ErrDialogBlocking).
-	if err := s.inject(rw.target(), in.Text, allowWorking); err != nil {
+	if err := s.inject(target, in.Text, allowWorking); err != nil {
 		logging.Warn("serve: %s %s:%s: %v", a.Action, rw.group.Session, rw.window.WindowID, err)
 		if errors.Is(err, tmux.ErrDialogBlocking) {
 			return failure(http.StatusConflict, codeNotIdle, "a dialog appeared; refresh and try again")
@@ -355,6 +375,12 @@ func (s *Server) typeText(r *http.Request, in replyIn, a *auditEntry, allowWorki
 // never does.
 func textAccepted(verdict string, allowWorking bool) bool {
 	return verdict == "idle" || (allowWorking && verdict == "working")
+}
+
+// recordedAccepts is textAccepted for a harness whose pane cannot be read:
+// the windowstate record decides. "" counts as idle.
+func recordedAccepts(state string, allowWorking bool) bool {
+	return state == "idle" || state == "" || (allowWorking && state == "working")
 }
 
 // inject delivers text through the Injector, or its Queue method for a

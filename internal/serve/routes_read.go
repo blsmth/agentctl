@@ -227,9 +227,13 @@ func apiVerdict(v fleet.PaneVerdict) string {
 
 // buildPaneBody classifies captured pane text (with ANSI) and parses its
 // dialog. Shared with PR4's answer guard, which must re-run exactly this.
-func buildPaneBody(text string) paneBody {
+func buildPaneBody(text string) paneBody { return buildPaneBodyFor("", text) }
+
+// buildPaneBodyFor is buildPaneBody with the window's harness reader: a
+// harness agentctl cannot read (pi) yields verdict "unknown" and no dialog.
+func buildPaneBodyFor(harnessName, text string) paneBody {
 	plain := panestate.StripANSI(text)
-	verdict := fleet.ClassifyPane(plain)
+	verdict := fleet.ClassifyPaneFor(harnessName, plain)
 	body := paneBody{Text: text, Verdict: apiVerdict(verdict)}
 	if verdict == fleet.PaneAwaitingInput {
 		if d, ok := panestate.ParseDialog(plain); ok {
@@ -259,7 +263,7 @@ func (s *Server) handlePane(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, codePaneUnavailable, "pane could not be captured")
 		return
 	}
-	body := buildPaneBody(text)
+	body := buildPaneBodyFor(harnessOf(g, i), text)
 	if sz, ok := s.panes.(PaneSizer); ok {
 		if c, r, err := sz.Size(g.Windows[i].WindowID); err == nil {
 			body.Cols, body.Rows = c, r
@@ -391,4 +395,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// harnessOf is window i's recorded harness name ("" = claude).
+func harnessOf(g fleetwatch.Group, i int) string {
+	if i < len(g.Rows) {
+		return g.Rows[i].Harness
+	}
+	return ""
 }

@@ -26,6 +26,9 @@ type WindowTarget struct {
 	// Pane is the window's main (agent) pane, resolved through MainPanes:
 	// the pane a write captured and checked, and the one it types into.
 	Pane string
+	// Unclassified is set for a harness whose pane agentctl cannot read
+	// (pi): the inject path then skips the pane-classification guard.
+	Unclassified bool
 }
 
 // KeySender sends one tmux key name to a window's main pane (t.Pane).
@@ -175,6 +178,9 @@ func (tmuxKeys) SendKey(t WindowTarget, key string) error {
 type tmuxInjector struct{}
 
 func (tmuxInjector) Inject(t WindowTarget, text string) error {
+	if t.Unclassified {
+		return tmux.InjectUnclassifiedToPane(t.Pane, text)
+	}
 	return tmux.InjectPromptToPane(t.Pane, text)
 }
 

@@ -357,3 +357,20 @@ func TestVerifySubmission(t *testing.T) {
 		})
 	}
 }
+
+func TestInjectUnclassifiedToPane(t *testing.T) {
+	if err := InjectUnclassifiedToPane("bogus", "x"); err == nil {
+		t.Fatal("want error for invalid pane id")
+	}
+	var sent []string
+	oldL, oldE := injectSendLiteral, injectSendEnter
+	t.Cleanup(func() { injectSendLiteral, injectSendEnter = oldL, oldE })
+	injectSendLiteral = func(_, c string) error { sent = append(sent, "lit:"+c); return nil }
+	injectSendEnter = func(string) error { sent = append(sent, "enter"); return nil }
+	if err := InjectUnclassifiedToPane("%5", "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if len(sent) != 2 || sent[0] != "lit:hi" || sent[1] != "enter" {
+		t.Errorf("sent %v", sent)
+	}
+}

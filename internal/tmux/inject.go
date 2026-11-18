@@ -247,6 +247,24 @@ func verifySubmission(captured string) submission {
 	}
 }
 
+// InjectUnclassifiedToPane types content into a pane of a harness whose
+// screen agentctl cannot classify (pi) and presses Enter, which submits there.
+// There is no dialog guard and no staged-input verification: both depend on
+// Claude Code's pane layout. The caller has checked the recorded state.
+func InjectUnclassifiedToPane(paneID, content string) error {
+	if !IsPaneID(paneID) {
+		return fmt.Errorf("inject: invalid pane id %q", paneID)
+	}
+	if err := injectSendLiteral(paneID, content); err != nil {
+		return fmt.Errorf("pane %s: send content: %w", paneID, err)
+	}
+	time.Sleep(pasteSettleDelay)
+	if err := injectSendEnter(paneID); err != nil {
+		return fmt.Errorf("pane %s: send enter: %w", paneID, err)
+	}
+	return nil
+}
+
 // sendAndVerifySubmission does the actual literal-send, settle-delay,
 // Enter, and verify-or-retry work for InjectPromptToWindow, addressed at an
 // already-resolved paneID. Split out from InjectPromptToWindow so tests can
