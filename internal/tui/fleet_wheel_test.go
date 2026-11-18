@@ -164,3 +164,27 @@ func TestWheelIgnoredCases(t *testing.T) {
 		}
 	})
 }
+
+func TestWheelViewerSelectionFollows(t *testing.T) {
+	m := wheelTestModel(t, 40, 20)
+	m = wheel(m, tea.MouseWheelDown, 5)
+	m = wheel(m, tea.MouseWheelDown, 5)
+	m = m.syncFromViewer(fleetViewerMsg{home: "s1", window: "@40"})
+	cw := m.contentWidth()
+	c := m.splitPane.Cursor()
+	if c < m.scrollOffset || c >= m.shownEnd(cw) {
+		t.Errorf("cursor %d off screen (offset %d, shownEnd %d)", c, m.scrollOffset, m.shownEnd(cw))
+	}
+}
+
+func TestWheelResizeClamps(t *testing.T) {
+	m := wheelTestModel(t, 40, 20)
+	for i := 0; i < 100; i++ {
+		m = wheel(m, tea.MouseWheelDown, 5)
+	}
+	out, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = out.(FleetModel)
+	if mx := m.maxScrollOffset(); m.scrollOffset > mx {
+		t.Errorf("scrollOffset %d > max %d after grow", m.scrollOffset, mx)
+	}
+}

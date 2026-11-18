@@ -1082,6 +1082,7 @@ func (m *FleetModel) configureSplitPane() {
 		h = 3
 	}
 	m.splitPane.SetSize(m.contentWidth(), h)
+	m.clampScroll() // the list area may have grown
 }
 
 // ── Selection / navigation ───────────────────────────────────────────────────
@@ -1269,9 +1270,8 @@ func (m *FleetModel) visibleLines() int {
 }
 
 // ensureCursorVisible keeps the flat fallback's own scroll position
-// (scrollOffset) following the cursor. It's a no-op in split mode (which
-// uses SplitPane's own listScroll instead) but harmless to call
-// unconditionally.
+// (scrollOffset) following the cursor. It's a no-op while wheelHold is set
+// (the user wheel-scrolled; a key press or selection change clears it).
 func (m *FleetModel) ensureCursorVisible() {
 	if len(m.lines) == 0 || m.wheelHold {
 		return
@@ -2526,6 +2526,7 @@ func (m FleetModel) syncFromViewer(msg fleetViewerMsg) FleetModel {
 	}
 	m.selSession, m.selWindowID, m.selIsHeader = msg.home, msg.window, false
 	m.liveShown = key
+	m.wheelHold = false // the selection changed: follow it
 	m.resolveSelection()
 	return m
 }
