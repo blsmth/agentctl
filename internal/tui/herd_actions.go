@@ -18,6 +18,9 @@ import (
 // Labels for the clickable affordances drawn on hub lines.
 const (
 	herdNewLabel   = "+ new"
+	herdShellLabel = "shell"
+	herdAgentLabel = "agent"
+	herdSelSep     = " | "
 	herdCloseLabel = "✕"
 )
 
@@ -149,6 +152,24 @@ func herdLaunchCmd(g herd.Group) tea.Cmd {
 	}
 }
 
+// herdShellOpenedMsg reports the outcome of opening a shell window.
+type herdShellOpenedMsg struct {
+	session  string
+	windowID string
+	err      error
+}
+
+// herdShellCmd opens a plain shell window in g's project. The window's env
+// comes from the target tmux session, not the hub process, so no hub identity
+// (AGENTCTL_WINDOW_ID, TMUX_PANE, ...) leaks in. Shell windows are not agents:
+// herd.LoadAgents skips them, so the hub never lists them.
+func herdShellCmd(g herd.Group) tea.Cmd {
+	return func() tea.Msg {
+		id, err := tmux.NewShellWindow(g.Session, g.ProjectDir)
+		return herdShellOpenedMsg{session: g.Session, windowID: id, err: err}
+	}
+}
+
 func herdCloseCmd(r herd.Row) tea.Cmd {
 	return func() tea.Msg {
 		return herdClosedMsg{name: r.Name, err: tmux.KillSessionWindow(r.Session, r.WindowID)}
@@ -183,9 +204,8 @@ func (m *HerdModel) groupOfLine(idx int) *herd.Group {
 	return nil
 }
 
-// launchForLine starts a background launch in the group owning line idx.
-func (m *HerdModel) launchForLine(idx int) tea.Cmd {
-	g := m.groupOfLine(idx)
+// launchForGroup starts a background agent launch in g's project.
+func (m *HerdModel) launchForGroup(g *herd.Group) tea.Cmd {
 	if g == nil {
 		return nil
 	}
@@ -196,6 +216,82 @@ func (m *HerdModel) launchForLine(idx int) tea.Cmd {
 	m.jumpErr = ""
 	m.infoMsg = "launching agent in " + g.Session + "…"
 	return herdLaunchCmd(*g)
+}
+
+// shellForGroup opens a shell window in g's project.
+func (m *HerdModel) shellForGroup(g *herd.Group) tea.Cmd {
+	if g == nil {
+		return nil
+	}
+	if !groupCanLaunch(*g) {
+		m.jumpErr = "cannot open shell in " + g.Session + ": unknown project directory"
+		return nil
+	}
+	m.jumpErr = ""
+	m.infoMsg = "opening shell in " + g.Session + "…"
+	return herdShellCmd(*g)
+}
+
+// armNew turns the header's "+ new" button of the group owning line idx into
+// the shell | agent selector. Groups that cannot launch never arm.
+func (m *HerdModel) armNew(idx int) {
+	g := m.groupOfLine(idx)
+	if g == nil || !groupCanLaunch(*g) {
+		m.cancelNew()
+		return
+	}
+	m.jumpErr = ""
+	m.newSession, m.newLine = g.Session, idx
+}
+
+func (m *HerdModel) cancelNew() { m.newSession, m.newLine = "", 0 }
+
+// validateNew cancels the selector when its group is gone, can no longer
+// launch, or no longer owns the armed line (after a reload).
+func (m *HerdModel) validateNew() {
+	if !m.newArmed() {
+		return
+	}
+	g := m.groupForSession(m.newSession)
+	if g == nil || !groupCanLaunch(*g) {
+		m.cancelNew()
+		return
+	}
+	if o := m.groupOfLine(m.newLine); o == nil || o.Session != m.newSession {
+		m.cancelNew()
+	}
+}
+
+func (m HerdModel) newArmed() bool { return m.newSession != "" }
+
+// newArmedFor reports whether the selector is showing on group g's header.
+func (m HerdModel) newArmedFor(g herd.Group) bool {
+	return m.newArmed() && g.Session == m.newSession
+}
+
+// handleNewKey handles a key while the selector is armed. handled is false for
+// keys that should fall through to normal handling (after cancelling).
+func (m *HerdModel) handleNewKey(key string) (cmd tea.Cmd, handled bool) {
+	// Target by session, not line index: a reload can move other groups
+	// under the armed index.
+	g := m.groupForSession(m.newSession)
+	if g == nil || !groupCanLaunch(*g) {
+		m.cancelNew()
+		return nil, key == "s" || key == "a" || key == "enter" || key == "esc" || key == "n"
+	}
+	switch key {
+	case "s":
+		m.cancelNew()
+		return m.shellForGroup(g), true
+	case "a", "enter":
+		m.cancelNew()
+		return m.launchForGroup(g), true
+	case "esc", "n":
+		m.cancelNew()
+		return nil, true
+	}
+	m.cancelNew()
+	return nil, false
 }
 
 // startClose arms the inline close confirmation for the row at line idx.
@@ -293,6 +389,7 @@ func (m HerdModel) footerMessageY() int {
 // openMenu opens the context menu for line idx (selecting it first).
 func (m *HerdModel) openMenu(idx int) {
 	m.cancelClose()
+	m.cancelNew()
 	m.selectLine(idx)
 	if len(m.herdMenuItems(idx)) == 0 {
 		m.menuOpen = false
@@ -315,7 +412,7 @@ func (m *HerdModel) runMenuKey(key string) tea.Cmd {
 		_, cmd := m.jumpToSelectedHome()
 		return cmd
 	case "n":
-		return m.launchForLine(line)
+		m.armNew(line)
 	case "p":
 		return m.openSelectedPR()
 	}

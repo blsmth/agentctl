@@ -233,10 +233,11 @@ func TestHandleClickActions(t *testing.T) {
 	w := m.listColWidth()
 	closeX := w - herdSidebarRightGutter - 1
 
-	t.Run("new button returns launch cmd", func(t *testing.T) {
+	t.Run("new button arms the selector without launching", func(t *testing.T) {
 		next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: w - herdSidebarRightGutter - 2, Y: 3})
-		if cmd == nil || !strings.Contains(next.(HerdModel).infoMsg, "launching") {
-			t.Errorf("expected launch cmd and status, got cmd=%v info=%q", cmd != nil, next.(HerdModel).infoMsg)
+		got := next.(HerdModel)
+		if cmd != nil || got.newSession != "s1" || got.infoMsg != "" {
+			t.Errorf("expected armed selector and no launch, got cmd=%v armed=%q info=%q", cmd != nil, got.newSession, got.infoMsg)
 		}
 	})
 	t.Run("close click arms, second click confirms", func(t *testing.T) {
@@ -290,4 +291,238 @@ func TestHandleClickActions(t *testing.T) {
 func cursorOf(m tea.Model) int {
 	h := m.(HerdModel)
 	return h.splitPane.Cursor()
+}
+
+// armedHeaderModel returns buttonTestModel with the selector armed on header 0.
+func armedHeaderModel(t *testing.T) HerdModel {
+	t.Helper()
+	m := buttonTestModel(t)
+	m.selectLine(0)
+	m.armNew(0)
+	if !m.newArmed() {
+		t.Fatal("selector did not arm")
+	}
+	return m
+}
+
+func TestSelectorHitColumns(t *testing.T) {
+	m := armedHeaderModel(t)
+	shell, agent := m.selectorSpans()
+	end := m.listColWidth() - herdSidebarRightGutter
+	if agent[1] != end || agent[1]-agent[0] != len(herdAgentLabel) || shell[1]-shell[0] != len(herdShellLabel) {
+		t.Fatalf("spans shell=%v agent=%v end=%d", shell, agent, end)
+	}
+	tests := []struct {
+		name string
+		x    int
+		want herdClickAction
+	}{
+		{"left of shell", shell[0] - 2, herdClickSelect},
+		{"slack left of shell", shell[0] - 1, herdClickNewShell},
+		{"shell first col", shell[0], herdClickNewShell},
+		{"shell last col", shell[1] - 1, herdClickNewShell},
+		{"space after shell", shell[1], herdClickNewShell},
+		{"pipe", shell[1] + 1, herdClickSelect},
+		{"space before agent", agent[0] - 1, herdClickNewAgent},
+		{"agent first col", agent[0], herdClickNewAgent},
+		{"agent last col", agent[1] - 1, herdClickNewAgent},
+		{"slack right of agent", agent[1], herdClickNewAgent},
+		{"past slack", agent[1] + 1, herdClickSelect},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, got := m.buttonDecision(tt.x, 3, tea.MouseLeft); got != tt.want {
+				t.Errorf("x=%d: action %v, want %v", tt.x, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSelectorClicks(t *testing.T) {
+	m := armedHeaderModel(t)
+	shell, agent := m.selectorSpans()
+	click := func(m HerdModel, x, y int) (HerdModel, bool) {
+		next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+		return next.(HerdModel), cmd != nil
+	}
+	t.Run("shell", func(t *testing.T) {
+		got, cmd := click(m, shell[0], 3)
+		if !cmd || got.newArmed() || !strings.Contains(got.infoMsg, "opening shell in s1") {
+			t.Errorf("cmd=%v armed=%v info=%q", cmd, got.newArmed(), got.infoMsg)
+		}
+	})
+	t.Run("agent", func(t *testing.T) {
+		got, cmd := click(m, agent[0], 3)
+		if !cmd || got.newArmed() || !strings.Contains(got.infoMsg, "launching agent in s1") {
+			t.Errorf("cmd=%v armed=%v info=%q", cmd, got.newArmed(), got.infoMsg)
+		}
+	})
+	t.Run("elsewhere cancels", func(t *testing.T) {
+		got, _ := click(m, 5, 6)
+		if got.newArmed() {
+			t.Error("still armed")
+		}
+	})
+	t.Run("hover each side", func(t *testing.T) {
+		if h := m.hoverAt(shell[0], 3); h.reg != herdHoverNewShell {
+			t.Errorf("shell hover = %v", h.reg)
+		}
+		if h := m.hoverAt(agent[0], 3); h.reg != herdHoverNewAgent {
+			t.Errorf("agent hover = %v", h.reg)
+		}
+	})
+}
+
+func TestSelectorKeys(t *testing.T) {
+	tests := []struct {
+		key       string
+		wantCmd   bool
+		wantInfo  string
+		wantArmed bool
+	}{
+		{"s", true, "opening shell in s1", false},
+		{"a", true, "launching agent in s1", false},
+		{"enter", true, "launching agent in s1", false},
+		{"esc", false, "", false},
+		{"n", false, "", false},
+		{"z", false, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			m := armedHeaderModel(t)
+			code := rune(tt.key[0])
+			text := tt.key
+			switch tt.key {
+			case "esc":
+				code, text = tea.KeyEscape, ""
+			case "enter":
+				code, text = tea.KeyEnter, ""
+			}
+			next, cmd := m.Update(tea.KeyPressMsg{Code: code, Text: text})
+			got := next.(HerdModel)
+			if (cmd != nil) != tt.wantCmd || got.newArmed() != tt.wantArmed || !strings.Contains(got.infoMsg, tt.wantInfo) {
+				t.Errorf("cmd=%v armed=%v info=%q", cmd != nil, got.newArmed(), got.infoMsg)
+			}
+		})
+	}
+}
+
+func TestSelectorArmingAndCancel(t *testing.T) {
+	t.Run("n arms from a row", func(t *testing.T) {
+		m := buttonTestModel(t)
+		m.selectLine(2)
+		next, cmd := m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+		got := next.(HerdModel)
+		if cmd != nil || got.newSession != "s1" {
+			t.Errorf("cmd=%v armed=%q", cmd != nil, got.newSession)
+		}
+	})
+	t.Run("cursor movement cancels", func(t *testing.T) {
+		m := armedHeaderModel(t)
+		m.moveCursor(1)
+		if m.newArmed() {
+			t.Error("moving the cursor should cancel")
+		}
+	})
+	t.Run("j key cancels", func(t *testing.T) {
+		m := armedHeaderModel(t)
+		next, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+		if next.(HerdModel).newArmed() {
+			t.Error("j should cancel")
+		}
+	})
+	t.Run("menu new arms", func(t *testing.T) {
+		m := buttonTestModel(t)
+		m.openMenu(2)
+		m.runMenuKey("n")
+		if m.newSession != "s1" {
+			t.Errorf("armed = %q", m.newSession)
+		}
+	})
+	t.Run("non-launchable group never arms", func(t *testing.T) {
+		m := buttonTestModel(t)
+		m.selectLine(5) // s2: no dirs
+		m.armNew(5)
+		if m.newArmed() {
+			t.Error("must not arm")
+		}
+		if got := m.herdMenuItems(5); len(got) != 0 {
+			for _, it := range got {
+				if it.key == "n" {
+					t.Error("menu offers new for a non-launchable group")
+				}
+			}
+		}
+	})
+}
+
+func TestSelectorRenderingAndHints(t *testing.T) {
+	for _, width := range []int{30, 44, 80, 120} {
+		m := armedHeaderModel(t)
+		m.termWidth = width
+		m.configureSplitPane()
+		cw := m.listColWidth()
+		out := m.renderLine(0, cw)
+		if w := lipgloss.Width(out); w > cw {
+			t.Errorf("width %d: header %d wide > %d", width, w, cw)
+		}
+		plain := strings.TrimRight(ansi.Strip(out), " ")
+		if !strings.HasSuffix(plain, herdShellLabel+herdSelSep+herdAgentLabel) {
+			t.Errorf("width %d: selector truncated: %q", width, plain)
+		}
+		shell, _ := m.selectorSpans()
+		if shell[0] >= 0 && !strings.HasPrefix(string([]rune(ansi.Strip(out))[shell[0]:]), herdShellLabel) {
+			t.Errorf("width %d: shell label not at span col %d: %q", width, shell[0], ansi.Strip(out))
+		}
+	}
+	m := armedHeaderModel(t)
+	if f := ansi.Strip(m.renderFooter(80)); !strings.Contains(f, "shell") || !strings.Contains(f, "esc cancel") {
+		t.Errorf("footer lacks selector hints: %q", f)
+	}
+	m.cancelNew()
+	if f := ansi.Strip(m.renderFooter(80)); strings.Contains(f, "esc cancel") {
+		t.Errorf("footer shows selector hints when disarmed: %q", f)
+	}
+}
+
+func TestSelectorTargetsArmedSessionAfterReload(t *testing.T) {
+	setup := func(t *testing.T) HerdModel {
+		m := armedHeaderModel(t) // armed on s1 at line 0
+		// Reload: s2 now sorts first, so it sits at the armed index.
+		for i := range m.groups {
+			m.groups[i].ProjectDir, m.groups[i].RuntimeDir = "/p", "/r"
+		}
+		m.groups[0], m.groups[1] = m.groups[1], m.groups[0]
+		m.rebuildLines()
+		if m.lines[m.newLine].group.Session != "s2" {
+			t.Fatalf("setup: line %d is %q", m.newLine, m.lines[m.newLine].group.Session)
+		}
+		return m
+	}
+	t.Run("key targets armed session or cancels", func(t *testing.T) {
+		m := setup(t)
+		cmd, _ := m.handleNewKey("s")
+		if m.newArmed() {
+			t.Error("still armed")
+		}
+		if cmd != nil && !strings.Contains(m.infoMsg, "s1") {
+			t.Errorf("shell targeted wrong group: %q", m.infoMsg)
+		}
+	})
+	t.Run("reload cancels", func(t *testing.T) {
+		m := setup(t)
+		m.validateNew()
+		if m.newArmed() {
+			t.Error("selector should cancel when its group moved off the armed line")
+		}
+	})
+	t.Run("vanished group cancels", func(t *testing.T) {
+		m := armedHeaderModel(t)
+		m.groups = m.groups[1:]
+		m.rebuildLines()
+		cmd, _ := m.handleNewKey("s")
+		if cmd != nil || m.newArmed() {
+			t.Error("must cancel without launching")
+		}
+	})
 }

@@ -310,6 +310,12 @@ type HerdModel struct {
 	confirmSession string
 	confirmWindow  string
 
+	// newSession/newLine identify the group header whose "+ new" button is
+	// armed as the shell | agent selector (newLine is the cursor line it was
+	// armed from); empty when none. Cleared when the cursor moves off newLine.
+	newSession string
+	newLine    int
+
 	// closePending remembers where a just-closed row sat so the next reload
 	// can select its neighbour instead of jumping to the first row. Cleared
 	// after one use.
@@ -615,6 +621,18 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendingFocus = &herdPendingFocus{session: msg.session, windowID: msg.windowID}
 		return m, tea.Batch(herdLoadCmd(), herdFocusRetryCmd(msg.session, msg.windowID))
 
+	case herdShellOpenedMsg:
+		if msg.err != nil {
+			m.infoMsg = ""
+			m.jumpErr = msg.err.Error()
+			return m, nil
+		}
+		// Shell windows are not agent rows (herd.LoadAgents skips them), so
+		// there is nothing to focus: just report.
+		m.jumpErr = ""
+		m.infoMsg = "opened shell in " + msg.session
+		return m, nil
+
 	case herdFocusRetryMsg:
 		return m, m.focusRetry(msg)
 
@@ -638,6 +656,7 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.groups = msg.groups
 			m.rebuildLines()
+			m.validateNew()
 			m.refreshHover()
 			m.applyClosePending()
 			m.resolveSelection()
@@ -695,9 +714,15 @@ func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return *m, nil
 		}
 	}
+	if m.newArmed() {
+		if cmd, handled := m.handleNewKey(msg.String()); handled {
+			return *m, cmd
+		}
+	}
 	switch msg.String() {
 	case "n":
-		return *m, m.launchForLine(m.splitPane.Cursor())
+		m.armNew(m.splitPane.Cursor())
+		return *m, nil
 
 	case "x":
 		m.startClose(m.splitPane.Cursor())
@@ -962,6 +987,10 @@ func (m *HerdModel) syncSelectionFromCursor() {
 		if m.closeArmed() && (m.selSession != m.confirmSession || m.selWindowID != m.confirmWindow) {
 			m.cancelClose()
 		}
+		if m.newArmed() && m.splitPane.Cursor() != m.newLine {
+			m.cancelNew()
+		}
+		m.validateNew()
 		if m.menuOpen && m.splitPane.Cursor() != m.menuLine {
 			m.menuOpen = false
 		}
@@ -1339,6 +1368,13 @@ func (m HerdModel) renderFooter(cw int) string {
 		menuHintKeyStyle.Render("c") + " " + menuHintLabelStyle.Render("chrome"),
 		menuHintKeyStyle.Render("q") + " " + menuHintLabelStyle.Render("leave"),
 	}
+	if m.newArmed() {
+		hintParts = []string{
+			menuHintKeyStyle.Render("s") + " " + menuHintLabelStyle.Render("shell"),
+			menuHintKeyStyle.Render("a") + " " + menuHintLabelStyle.Render("agent"),
+			menuHintKeyStyle.Render("esc") + " " + menuHintLabelStyle.Render("cancel"),
+		}
+	}
 	b.WriteString(strings.Join(m.wrapHints(hintParts, cw), "\n"))
 	return b.String()
 }
@@ -1433,7 +1469,7 @@ func (m HerdModel) renderLine(i int, cw int) string {
 	selected := i == m.splitPane.Cursor()
 	switch l.kind {
 	case herdLineHeader:
-		return m.renderGroupHeaderHover(l.group, selected, m.hover.region(i) == herdHoverNew, cw)
+		return m.renderGroupHeaderHover(l.group, selected, m.hover.region(i), cw)
 	case herdLinePlaceholder:
 		marker := "    "
 		if selected {
@@ -1511,11 +1547,12 @@ func rowGlyph(r herd.Row) (string, lipgloss.Style) {
 // session's summary in the main panel) — hence the cursor marker, matching
 // renderRow's convention.
 func (m HerdModel) renderGroupHeader(g herd.Group, selected bool, cw int) string {
-	return m.renderGroupHeaderHover(g, selected, false, cw)
+	return m.renderGroupHeaderHover(g, selected, herdHoverNone, cw)
 }
 
-// renderGroupHeaderHover is renderGroupHeader with the "+ new" button hovered.
-func (m HerdModel) renderGroupHeaderHover(g herd.Group, selected, newHover bool, cw int) string {
+// renderGroupHeaderHover is renderGroupHeader with a hovered region: the "+ new"
+// button, or one side of the shell | agent selector when it is armed.
+func (m HerdModel) renderGroupHeaderHover(g herd.Group, selected bool, hover herdHoverRegion, cw int) string {
 	glyph, style := rollupGlyph(g.Rollup)
 	marker := strings.Repeat(" ", herdSidebarLeftInset)
 	if selected {
@@ -1531,17 +1568,30 @@ func (m HerdModel) renderGroupHeaderHover(g herd.Group, selected, newHover bool,
 	}
 	line := strings.Join(parts, "  ")
 	if groupCanLaunch(g) {
-		btnW := lipgloss.Width(herdNewLabel)
+		var btn string
+		if m.newArmedFor(g) {
+			shell, agent := herdDimStyle, herdDimStyle
+			switch hover {
+			case herdHoverNewShell:
+				shell = herdNewHoverStyle
+			case herdHoverNewAgent:
+				agent = herdNewHoverStyle
+			}
+			btn = shell.Render(herdShellLabel) + herdDimStyle.Render(herdSelSep) + agent.Render(herdAgentLabel)
+		} else {
+			style := herdDimStyle
+			if hover == herdHoverNew {
+				style = herdNewHoverStyle
+			}
+			btn = style.Render(herdNewLabel)
+		}
+		btnW := lipgloss.Width(btn)
 		line = truncateToWidth(line, cw-herdSidebarRightGutter-btnW-1)
 		pad := cw - herdSidebarRightGutter - btnW - lipgloss.Width(line)
 		if pad < 1 {
 			pad = 1
 		}
-		newStyle := herdDimStyle
-		if newHover {
-			newStyle = herdNewHoverStyle
-		}
-		line += strings.Repeat(" ", pad) + newStyle.Render(herdNewLabel)
+		line += strings.Repeat(" ", pad) + btn
 	}
 	return herdFitLine(line, selected, cw)
 }
