@@ -204,7 +204,8 @@ func TestSidebarMouse_ExpandedSelectedRow(t *testing.T) {
 		wantIdx    int
 		wantAction herdClickAction
 	}{
-		{"header", 5, top, 0, herdClickSelect},
+		{"header", 1, top, 0, herdClickSelect},
+		{"header name", 8, top, 0, herdClickFold},
 		{"selected row", 10, top + 1, sel, herdClickSelect},
 		{"selected row close", closeX, top + 1, sel, herdClickClose},
 		{"detail line selects", 10, top + 2, sel, herdClickSelect},
@@ -266,15 +267,16 @@ func TestRowRight(t *testing.T) {
 		row  herd.Row
 		want string
 	}{
-		{"no age no pr", herd.Row{}, ""},
-		{"age", herd.Row{StateSince: since}, "4m"},
-		{"pr and age", herd.Row{StateSince: since, PRNumber: 60}, "#60 4m"},
-		{"done pr keeps age, no check", herd.Row{StateSince: since, PRNumber: 60, AgentState: state.AgentState{Done: true}}, "#60 4m"},
-		{"done without pr keeps age", herd.Row{StateSince: since, AgentState: state.AgentState{Done: true}}, "4m"},
+		{"no age no pr", herd.Row{}, "         "},
+		{"age", herd.Row{StateSince: since}, "       4m"},
+		{"pr and age", herd.Row{StateSince: since, PRNumber: 60}, "  #60  4m"},
+		{"done pr keeps age, no check", herd.Row{StateSince: since, PRNumber: 60, AgentState: state.AgentState{Done: true}}, "  #60  4m"},
+		{"done without pr keeps age", herd.Row{StateSince: since, AgentState: state.AgentState{Done: true}}, "       4m"},
+		{"four-digit pr", herd.Row{StateSince: since, PRNumber: 1025}, "#1025  4m"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ansi.Strip(rowRight(tt.row)); got != tt.want {
+			if got := ansi.Strip(rowRight(tt.row, herdRightFull)); got != tt.want {
 				t.Errorf("rowRight = %q, want %q", got, tt.want)
 			}
 		})
@@ -285,7 +287,7 @@ func TestRowRight_BlockedUsesBlockedStyle(t *testing.T) {
 	InitStyles()
 	fixedHerdNow(t)
 	r := herd.Row{StateSince: sidebarNow.Add(-2 * time.Minute), AgentState: state.AgentState{State: "blocked"}}
-	if got, want := rowRight(r), herdBlockedStyle.Render("2m"); got != want {
+	if got, want := rowRight(r, herdRightFull), herdBlockedStyle.Render("2m"); !strings.HasSuffix(got, want) {
 		t.Errorf("blocked age = %q, want %q", got, want)
 	}
 }
@@ -385,10 +387,11 @@ func TestSidebarCloseButtonOneColumnFromPaneEdge(t *testing.T) {
 				continue
 			}
 			found = true
-			line := ansi.Strip(m.renderLine(i, n))
+			// The ✕ shows on a hovered (or selected) row only.
+			line := ansi.Strip(m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, false, herdHoverBody, n))
 			cols := []rune(line)
-			if len(cols) != n-1 {
-				t.Fatalf("width %d: line is %d cols, want %d", n, len(cols), n-1)
+			if len(cols) != n {
+				t.Fatalf("width %d: line is %d cols, want %d", n, len(cols), n)
 			}
 			if got := string(cols[n-2]); got != herdCloseLabel {
 				t.Errorf("width %d: col %d = %q, want %q in %q", n, n-2, got, herdCloseLabel, line)
@@ -530,7 +533,7 @@ func TestHerdHover_NameBoldRecapBright(t *testing.T) {
 		if l.kind != herdLineRow {
 			continue
 		}
-		blocked := l.row.State == "blocked"
+		w := rowWeight(l.row)
 		base, _ := splitAgentName(truncateToWidth(herd.BaseName(l.row), herdNameBudget(cw)))
 		rs := herdRecapHoverStyle
 		if rowRecap(l.row).Source == herd.RecapActivity {
@@ -539,13 +542,13 @@ func TestHerdHover_NameBoldRecapBright(t *testing.T) {
 		for _, sel := range []bool{false, true} {
 			hov := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, sel, herdHoverBody, cw)
 			plain := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, sel, herdHoverNone, cw)
-			if !strings.Contains(hov, renderAgentNameHover(base, blocked, true)) {
+			if !strings.Contains(hov, renderAgentNameHover(base, w, true)) {
 				t.Errorf("row %d sel=%v: hovered name not bold", i, sel)
 			}
-			if !strings.Contains(plain, renderAgentName(base, blocked)) {
+			if !strings.Contains(plain, renderAgentName(base, w)) {
 				t.Errorf("row %d sel=%v: unhovered name changed", i, sel)
 			}
-			if !blocked && strings.Contains(plain, renderAgentNameHover(base, blocked, true)) {
+			if w != herdWeightBlocked && w != herdWeightWorking && strings.Contains(plain, renderAgentNameHover(base, w, true)) {
 				t.Errorf("row %d sel=%v: unhovered name is bold", i, sel)
 			}
 			if !strings.Contains(hov, fg(rs)) {

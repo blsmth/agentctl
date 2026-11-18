@@ -1,4 +1,4 @@
-// The window view: pane, state-aware actions, the window's approvals.
+// The window view: header, pane, state-aware actions, the window's approvals.
 import type { Page } from "@playwright/test";
 import { expect, openFleet, test } from "./fixtures";
 
@@ -24,16 +24,39 @@ test("reply to an idle agent", async ({ page, control }) => {
 
 test("answer a blocked agent's dialog", async ({ page, control }) => {
   await openWindow(page, "@14");
-  await expect(page.locator(".actions pre.dialog")).toContainText("Do you want to proceed?");
-  const yes = page.locator(".actions .choices button", { hasText: "1. Yes" });
-  await expect(page.locator(".actions .choices button")).toHaveCount(3); // 1, 2, Esc
+  await expect(page.locator(".answer .question")).toHaveText("Do you want to proceed?");
+  const yes = page.locator(".answer .choices button", { hasText: "1. Yes" });
+  await expect(page.locator(".answer .choices button")).toHaveCount(3); // 1, 2, Dismiss
   await yes.tap();
   await expect(sheet(page)).toContainText('Answer "1"?');
   await sheet(page).getByRole("button", { name: "Send" }).tap();
   const actions = await control.waitForActions((a) => a.length > 0);
   expect(actions).toEqual([{ kind: "key", session: SHOP, window: "@14", pane: "%14", key: "1" }]);
   // The fake dismisses the dialog; the refreshed view stops offering answers.
-  await expect(page.locator(".actions pre.dialog")).toHaveCount(0);
+  await expect(page.locator(".answer")).toHaveCount(0);
+});
+
+test("blocked layout: answers above the pane, question only, recommended option primary", async ({ page }) => {
+  await openWindow(page, "@14");
+  const answer = page.locator(".answer");
+  await expect(answer).toBeVisible();
+  const answerBox = await answer.boundingBox();
+  const paneBox = await page.locator(".pane").boundingBox();
+  expect(answerBox!.y + answerBox!.height).toBeLessThanOrEqual(paneBox!.y);
+  // The pane already shows the dialog; the answer card carries only its question.
+  await expect(answer).not.toContainText("Bash command");
+  await expect(page.locator(".actions")).toBeEmpty();
+  const choices = answer.locator(".choices button");
+  await expect(choices).toHaveText(["1. Yes", "2. No, and tell Claude what to do differently", "Dismiss (Esc)"]);
+  await expect(choices.nth(0)).toHaveClass(/\bprimary\b/);
+  await expect(choices.nth(1)).not.toHaveClass(/\bprimary\b/);
+  // Full-width rows.
+  const first = await choices.nth(0).boundingBox();
+  const second = await choices.nth(1).boundingBox();
+  expect(Math.abs(first!.width - second!.width)).toBeLessThan(1);
+  expect(second!.y).toBeGreaterThan(first!.y);
+  await choices.nth(2).tap();
+  await expect(sheet(page)).toContainText("Dismiss the dialog (Esc)?");
 });
 
 test("interrupt a working agent", async ({ page, control }) => {
@@ -42,6 +65,164 @@ test("interrupt a working agent", async ({ page, control }) => {
   await sheet(page).getByRole("button", { name: "Interrupt" }).tap();
   const actions = await control.waitForActions((a) => a.length > 0);
   expect(actions).toEqual([{ kind: "key", session: SHOP, window: "@13", pane: "%13", key: "Escape" }]);
+});
+
+test("Interrupt is a small right-aligned button beside the queue composer", async ({ page }) => {
+  await openWindow(page, "@13");
+  const interrupt = page.getByRole("button", { name: "Interrupt" });
+  const queue = page.getByRole("button", { name: "Queue message" });
+  await expect(interrupt).toHaveClass(/\bsmall\b/);
+  const ib = await interrupt.boundingBox();
+  const qb = await queue.boundingBox();
+  expect(ib!.x).toBeGreaterThan(qb!.x);
+  expect(ib!.width).toBeLessThan(qb!.width);
+  expect(ib!.height).toBeLessThan(44);
+});
+
+test("after an interrupt, the reply box that follows gets focus", async ({ page, control }) => {
+  await openWindow(page, "@13");
+  await page.getByRole("button", { name: "Interrupt" }).tap();
+  await sheet(page).getByRole("button", { name: "Interrupt" }).tap();
+  await control.waitForActions((a) => a.length > 0);
+  await control.patchWindow(SHOP, "@13", { state: "idle", pane: "idle" });
+  await expect(page.locator(".actions textarea")).toBeFocused();
+  await expect(page.locator("#toasts .toast", { hasText: "Interrupted. Tell it what to do next." })).toBeVisible();
+});
+
+test("queue a message for a working agent", async ({ page, control }) => {
+  await openWindow(page, "@13");
+  const text = page.locator(".actions textarea");
+  await text.fill("then run the linter");
+  await page.getByRole("button", { name: "Queue message" }).tap();
+  await expect(sheet(page)).toContainText("Queue message?");
+  await expect(sheet(page)).toContainText("Delivered after the current step.");
+  await sheet(page).getByRole("button", { name: "Queue" }).tap();
+  const actions = await control.waitForActions((a) => a.length > 0);
+  expect(actions).toEqual([{ kind: "queue", session: SHOP, window: "@13", pane: "%13", text: "then run the linter" }]);
+  await expect(text).toHaveValue("");
+});
+
+test("an Interrupt sheet left open does not survive navigation to another window", async ({ page, control, guard }) => {
+  await openWindow(page, "@13");
+  await page.getByRole("button", { name: "Interrupt" }).tap();
+  await expect(sheet(page)).toContainText("Interrupt agent?");
+  await page.evaluate((h) => (location.hash = h), `#/w/${SHOP}/${encodeURIComponent("@14")}`);
+  await expect(page.locator(".answer .question")).toHaveText("Do you want to proceed?");
+  await expect(page.locator(".overlay")).toHaveCount(0);
+  await page.waitForTimeout(500);
+  expect(await control.actions()).toEqual([]);
+  expect(guard.unexpected()).toEqual([]);
+});
+
+test("a closed window says so and offers the way back", async ({ page, control, guard }) => {
+  guard.allow(/HTTP 404|status of 404/);
+  await openWindow(page, "@15");
+  await page.locator(".actions .close-window").tap();
+  await expect(sheet(page)).toContainText("Close window?");
+  await sheet(page).getByRole("button", { name: "Close" }).tap();
+  await control.waitForActions((a) => a.some((x) => x.kind === "close"));
+  await expect(page.locator(".gone")).toContainText("This window was closed.");
+  await expect(page.locator("header.bar h1")).toHaveText("Window closed");
+  await expect(page.locator(".pane-bar")).toBeHidden();
+  await expect(page.locator(".actions")).toBeEmpty();
+  await page.locator(".gone").getByRole("link", { name: "Back to Fleet" }).tap();
+  await expect(page.locator("header.bar h1")).toHaveText("Fleet");
+});
+
+test("header: state pill, project and branch, task line and chips", async ({ page }) => {
+  await openWindow(page, "@13");
+  await expect(page.locator(".state-pill")).toHaveClass(/\bworking\b/);
+  await expect(page.locator(".state-pill")).toHaveText(/^working for \d+m$/);
+  await expect(page.locator(".win-where")).toHaveText("shop · agent/test-writer/issue-9");
+  await expect(page.locator(".win-task")).toHaveText("Cover the cart service");
+  await expect(page.locator(".chips .chip")).toHaveText(["9% ctx", "$0.98", "sonnet-4-5", "@13 · dispatch"]);
+  // No header Live terminal button: Live is the third pane segment.
+  await expect(page.locator("header.bar .btn")).toHaveCount(0);
+  await expect(page.locator(".segmented .seg")).toHaveText(["Reflow", "Exact", "Live"]);
+  await expect(page.locator(".segmented a.seg")).toHaveAttribute("href", `#/t/${SHOP}/%4013`);
+});
+
+test("done windows show the PR chip, a full-width Reply and a small Close", async ({ page }) => {
+  await openWindow(page, "@12");
+  const pr = page.locator(".chips a.chip.pr");
+  await expect(pr).toHaveText("PR #8");
+  await expect(pr).toHaveAttribute("href", "https://github.com/example/shop/pull/8");
+  const reply = await page.getByRole("button", { name: "Reply" }).boundingBox();
+  const text = await page.locator(".actions textarea").boundingBox();
+  expect(Math.abs(reply!.width - text!.width)).toBeLessThan(1);
+  const close = page.locator(".actions .close-window");
+  await expect(close).toHaveText("Close window");
+  expect((await close.boundingBox())!.y).toBeGreaterThan(reply!.y);
+});
+
+test("the pane fills the screen down to the actions", async ({ page }) => {
+  await openWindow(page, "@13");
+  const viewport = page.viewportSize()!;
+  const pane = (await page.locator(".pane").boundingBox())!;
+  const actions = (await page.locator(".actions").boundingBox())!;
+  const nav = (await page.locator("nav").boundingBox())!;
+  expect(pane.height).toBeGreaterThan(viewport.height * 0.3);
+  // The pane runs down to the actions, which sit right above the tab bar:
+  // no dead band anywhere below the pane.
+  expect(actions.y - (pane.y + pane.height)).toBeLessThan(4);
+  expect(nav.y - (actions.y + actions.height)).toBeLessThan(24);
+});
+
+test("an empty prompt box is left out of Reflow", async ({ page }) => {
+  await openWindow(page, "@15");
+  // IdlePane is a labelled rule, an empty prompt and a closing rule.
+  await expect(page.locator(".pane-reflow")).not.toContainText("❯");
+  await expect(page.locator(".pane-reflow .pane-empty")).toHaveText("At an empty prompt.");
+});
+
+test("liveness chip: updated, then offline when fetches fail", async ({ page }) => {
+  await openWindow(page, "@13");
+  const chip = page.locator(".live-chip");
+  await expect(chip).toHaveText(/^updated \d+[sm] ago$/);
+  // Fail the window's fetches as a dropped network would (page.route does
+  // not see requests once the service worker controls the page).
+  await page.evaluate(() => {
+    const w = window as unknown as { realFetch: typeof fetch };
+    w.realFetch = window.fetch;
+    window.fetch = (input, init) =>
+      String(input).startsWith("/v1/sessions/") ? Promise.reject(new TypeError("Load failed")) : w.realFetch(input, init);
+  });
+  await expect(chip).toHaveText(/^offline since \d\d:\d\d$/, { timeout: 8000 });
+  await expect(chip).toHaveClass(/\boffline\b/);
+  await page.evaluate(() => {
+    window.fetch = (window as unknown as { realFetch: typeof fetch }).realFetch;
+  });
+  await expect(chip).toHaveText(/^updated /, { timeout: 8000 });
+});
+
+test("new output while scrolled up shows a pill that scrolls to the bottom", async ({ page, control }) => {
+  const long = (tag: string) => Array.from({ length: 150 }, (_, i) => `${tag} line ${i}`).join("\n") + "\n";
+  await control.patchWindow(SHOP, "@13", { pane_text: long("a") });
+  await openWindow(page, "@13");
+  const scroller = page.locator(".pane-reflow");
+  await expect(scroller).toContainText("a line 149");
+  await scroller.evaluate((el) => (el.scrollTop = 0));
+  const pill = page.locator(".new-output");
+  await expect(pill).toBeHidden();
+  await control.patchWindow(SHOP, "@13", { pane_text: long("b") });
+  await expect(pill).toBeVisible({ timeout: 8000 });
+  await pill.tap();
+  await expect(pill).toBeHidden();
+  const atBottom = await scroller.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 24);
+  expect(atBottom).toBe(true);
+});
+
+test("Exact shows a one-time hint", async ({ page }) => {
+  await openWindow(page, "@13");
+  await page.locator(".segmented").getByText("Exact", { exact: true }).tap();
+  const hint = page.locator(".exact-hint");
+  await expect(hint).toBeVisible();
+  await hint.getByRole("button", { name: "Got it" }).tap();
+  await expect(hint).toBeHidden();
+  await page.reload();
+  await expect(page.locator(".pane .xterm")).toBeVisible();
+  await expect(hint).toBeHidden();
+  await page.evaluate(() => localStorage.clear());
 });
 
 test("a pending approval shows on the fleet and in its window, and approving answers it", async ({ page, control }) => {

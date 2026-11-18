@@ -7,6 +7,8 @@ import {
   buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowTitle, treeRows,
+  actionsWithQueue, buildQueueRequest, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
+  liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine,
 } from "./logic.js";
 
 const fixtures = JSON.parse(readFileSync(new URL("./logic.fixtures.json", import.meta.url), "utf8"));
@@ -23,6 +25,11 @@ for (const f of fixtures.split) {
   const got = splitPane(f.input);
   assert.deepEqual(got.body.map(view), f.body, `${f.name}: body`);
   assert.deepEqual(got.status ? got.status.lines : null, f.status, `${f.name}: status`);
+  if (f.prompt !== undefined) assert.deepEqual(got.prompt, f.prompt, `${f.name}: prompt`);
+  n++;
+}
+for (const f of fixtures.exact) {
+  assert.deepEqual(paneLinesForExact(f.input), f.expect, f.name);
   n++;
 }
 for (const f of fixtures.sgr) {
@@ -166,4 +173,78 @@ console.log("ok: resolved text");
   const bucket = treeRows([{ window_id: "@1", mode: "dispatch", parent: "@9" }]).find((e) => e.bucket);
   assert.equal(bucket.count, 1);
   console.log("ok: fleet row labels");
+}
+
+// Window view helpers.
+{
+  const dialog = {
+    text: "Bash command\ngo test ./...\nDo you want to proceed?\n1. Yes\n2. No, and tell Claude what to do differently",
+    hash: "h",
+    options: [{ key: "1", label: "Yes" }, { key: "2", label: "No, and tell Claude what to do differently" }],
+  };
+  assert.equal(dialogQuestion(dialog), "Do you want to proceed?");
+  assert.equal(dialogQuestion({ text: "Edit file\nfoo.go\n1. Yes\n2. No" }), "foo.go");
+  assert.equal(dialogQuestion({ text: "" }), "");
+  assert.equal(focusedOption("│ \x1b[36m❯ 1. Yes\x1b[0m │\n│   2. No │", dialog), "1");
+  assert.equal(focusedOption("❯ 2. No", dialog), "2");
+  assert.equal(focusedOption("❯ 7. Other", dialog), "");
+  assert.equal(focusedOption("❯ run tests", dialog), "");
+
+  assert.equal(shortModel("claude-sonnet-4-20250514"), "sonnet-4");
+  assert.equal(shortModel("claude-opus-4-1"), "opus-4-1");
+  assert.equal(shortModel("claude-opus-4-1[1m]"), "opus-4-1");
+  assert.equal(shortModel("qwen3:32b"), "qwen3:32b");
+  assert.equal(shortModel(undefined), "");
+  assert.equal(formatCost(0.98), "$0.98");
+  assert.equal(formatCost(12.3), "$12.30");
+  assert.equal(formatCost(0.001), "<$0.01");
+  assert.equal(formatCost(0), "");
+
+  assert.equal(taskLine({ detail: { title: " Cover the cart " }, issue: 9, activity: "x" }), "Cover the cart");
+  assert.equal(taskLine({ detail: {}, issue: 9, activity: "x" }), "Issue #9");
+  assert.equal(taskLine({ ticket: "42", activity: "x" }), "Issue #42");
+  assert.equal(taskLine({ activity: "go test" }), "go test");
+  assert.equal(taskLine({}), "");
+
+  const now = Date.parse("2026-11-17T10:03:00Z");
+  assert.equal(stateLabel({ state: "working", state_since: "2026-11-17T10:00:00Z" }, now), "working for 3m");
+  assert.equal(stateLabel({ state: "blocked", blocked_since: "2026-11-17T10:02:30Z", state_since: "x" }, now), "blocked for 30s");
+  assert.equal(stateLabel({ state: "idle", done: true }, now), "done");
+
+  const chips = headerChips({
+    pr_url: "https://github.com/o/r/pull/8", context_pct: 41.6, window_id: "@12", mode: "dispatch",
+    detail: { cost_usd: 1.84, model: "claude-opus-4-1" },
+  }, safeHttpsUrl);
+  assert.deepEqual(chips.map((c) => c.text), ["PR #8", "42% ctx", "$1.84", "opus-4-1", "@12 · dispatch"]);
+  assert.equal(chips[0].href, "https://github.com/o/r/pull/8");
+  assert.deepEqual(headerChips({ pr_url: "javascript:alert(1)", pr_number: 3, window_id: "@1" }, safeHttpsUrl).map((c) => c.text), ["@1"]);
+  assert.deepEqual(headerChips({ pr_url: "https://x.test/p", pr_number: 3 }, safeHttpsUrl).map((c) => c.text), ["PR #3"]);
+
+  const t0 = Date.parse("2026-11-17T10:00:00Z");
+  assert.deepEqual(liveness({}, t0), { text: "", kind: "stale" });
+  assert.deepEqual(liveness({ lastChangeAt: t0 - 4000 }, t0), { text: "updated 4s ago", kind: "fresh" });
+  assert.deepEqual(liveness({ lastChangeAt: t0 - 45000 }, t0), { text: "updated 45s ago", kind: "stale" });
+  assert.deepEqual(liveness({ lastChangeAt: t0 - 180000 }, t0), { text: "updated 3m ago", kind: "stale" });
+  assert.equal(liveness({ lastChangeAt: t0, offlineSince: t0 - 1000 }, t0).kind, "offline");
+  assert.match(liveness({ offlineSince: t0 }, t0).text, /^offline since \d\d:\d\d$/);
+
+  assert.equal(hangingIndent("plain text"), 2);
+  assert.equal(hangingIndent("● Bash(go test)"), 2);
+  assert.equal(hangingIndent("  ⎿  ok  github.com/x"), 5);
+  assert.equal(hangingIndent("      41      srv := x"), 6);
+  assert.equal(hangingIndent(" ".repeat(40) + "x"), 16);
+
+  assert.equal(exactRows(50, 24, 600, 15), 24);
+  assert.equal(exactRows(10, 24, 600, 15), 10);
+  assert.equal(exactRows(50, 60, 300, 15), 20);
+  assert.equal(exactRows(50, 24, 0, 15), 24);
+  assert.equal(exactRows(0, 24, 300, 15), 1);
+
+  const working = { state: "working" };
+  assert.equal(actionsWithQueue(working, { verdict: "working" }, true), "queue");
+  assert.equal(actionsWithQueue(working, { verdict: "working" }, false), "interrupt");
+  assert.equal(actionsWithQueue({ state: "idle" }, { verdict: "idle" }, true), "reply");
+  assert.equal(actionsWithQueue({ state: "blocked" }, { verdict: "awaiting_input", dialog }, true), "answer");
+  assert.deepEqual(buildQueueRequest("s", "@1", "hi"), { method: "POST", path: "/v1/sessions/s/windows/%401/queue", body: { text: "hi" } });
+  console.log("ok: window view helpers");
 }

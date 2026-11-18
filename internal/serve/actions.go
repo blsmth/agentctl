@@ -40,6 +40,14 @@ type Injector interface {
 	Inject(t WindowTarget, text string) error
 }
 
+// Queuer is optionally implemented by an Injector that delivers a message
+// queued for a working agent differently from a reply. The tmux injector
+// does not: typing mid-turn is how Claude Code queues input, and the guarded
+// inject path already accepts a busy pane.
+type Queuer interface {
+	Queue(t WindowTarget, text string) error
+}
+
 // WindowCloser kills a window.
 type WindowCloser interface {
 	CloseWindow(t WindowTarget) error

@@ -16,7 +16,8 @@ import (
 // Action is one side effect the server asked a backend for. Tests read
 // them through the control API instead of watching tmux.
 type Action struct {
-	// Kind is close, key (answer and interrupt), reply, dispatch or approval.
+	// Kind is close, key (answer and interrupt), reply, queue, dispatch or
+	// approval.
 	Kind     string `json:"kind"`
 	Session  string `json:"session,omitempty"`
 	Window   string `json:"window,omitempty"`
@@ -173,6 +174,13 @@ type injector struct{ w *world }
 
 func (i injector) Inject(t serve.WindowTarget, text string) error {
 	i.w.record(Action{Kind: "reply", Session: t.Session, Window: t.WindowID, Pane: t.Pane, Text: text})
+	return nil
+}
+
+// Queue implements serve.Queuer, so a message queued for a working agent
+// is recorded as its own kind.
+func (i injector) Queue(t serve.WindowTarget, text string) error {
+	i.w.record(Action{Kind: "queue", Session: t.Session, Window: t.WindowID, Pane: t.Pane, Text: text})
 	return nil
 }
 

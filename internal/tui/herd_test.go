@@ -7,8 +7,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/charmbracelet/x/ansi"
-
 	"github.com/blsmth/agentctl/internal/herd"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -209,66 +207,25 @@ func TestRebuildLines_DividerCounts(t *testing.T) {
 	}
 }
 
-func TestRenderHerdDivider_SpansExactWidth(t *testing.T) {
+// TestRenderHerdDivider_IsEmptyRow pins the divider between groups as an
+// empty row (rhythm comes from the gap, not a rule) at every width, so it can
+// never overflow or draw a border.
+func TestRenderHerdDivider_IsEmptyRow(t *testing.T) {
 	InitStyles()
-	for _, cw := range []int{0, 1, 10, 40, 80, 120} {
-		out := renderHerdDivider(cw)
-		if got := lipgloss.Width(out); got != cw {
-			t.Errorf("renderHerdDivider(%d): width = %d, want %d", cw, got, cw)
+	for _, cw := range []int{0, 1, 3, 10, 40, 80, 120} {
+		if out := renderHerdDivider(cw); out != "" {
+			t.Errorf("renderHerdDivider(%d) = %q, want an empty row", cw, out)
 		}
 	}
-}
-
-// TestRenderHerdDivider_MatchesContentInset asserts the divider's left
-// offset and right gutter match the sidebar content block it sits between —
-// a group header's left inset and a content row's right gutter — so it
-// reads as part of the sidebar instead of starting at column 0 and
-// colliding with the detail panel's border in a T-junction. This is a
-// regression test: it fails if the sidebar's padding constants
-// (herdSidebarLeftInset / herdSidebarRightGutter) and renderHerdDivider ever
-// drift apart.
-func TestRenderHerdDivider_MatchesContentInset(t *testing.T) {
-	InitStyles()
-
-	for _, cw := range []int{40, 80, 120} {
-		plainRunes := []rune(ansi.Strip(renderHerdDivider(cw)))
-
-		if got := lipgloss.Width(string(plainRunes)); got != cw {
-			t.Fatalf("renderHerdDivider(%d): plain width = %d, want %d", cw, got, cw)
-		}
-
-		leading := 0
-		for leading < len(plainRunes) && plainRunes[leading] == ' ' {
-			leading++
-		}
-		if leading != herdSidebarLeftInset {
-			t.Errorf("renderHerdDivider(%d): left inset = %d, want %d (herdSidebarLeftInset)", cw, leading, herdSidebarLeftInset)
-		}
-
-		trailing := 0
-		for trailing < len(plainRunes) && plainRunes[len(plainRunes)-1-trailing] == ' ' {
-			trailing++
-		}
-		if trailing != herdSidebarRightGutter {
-			t.Errorf("renderHerdDivider(%d): right gutter = %d, want %d (herdSidebarRightGutter)", cw, trailing, herdSidebarRightGutter)
-		}
-
-		if strings.ContainsRune(string(plainRunes), '│') {
-			t.Errorf("renderHerdDivider(%d): must not draw the panel border itself", cw)
-		}
-	}
-}
-
-// TestRenderHerdDivider_NarrowFallback covers widths too small to reserve
-// both the left inset and the right gutter — the divider must still span
-// exactly cw columns rather than disappearing or overflowing.
-func TestRenderHerdDivider_NarrowFallback(t *testing.T) {
-	InitStyles()
-
-	for _, cw := range []int{1, 2, 3} {
-		out := renderHerdDivider(cw)
-		if got := lipgloss.Width(out); got != cw {
-			t.Errorf("renderHerdDivider(%d): width = %d, want %d", cw, got, cw)
+	m := sampleSidebar(t, 56)
+	for i, l := range m.lines {
+		if l.kind == herdLineDivider {
+			if out := m.renderLine(i, m.contentWidth()); out != "" {
+				t.Errorf("divider line %d renders %q, want empty", i, out)
+			}
+			if l.selectable() {
+				t.Errorf("divider line %d must stay non-selectable", i)
+			}
 		}
 	}
 }

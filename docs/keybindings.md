@@ -99,10 +99,15 @@ The hub window has no chrome bar or HUD of its own. By default the agent's chrom
 | `J` | Jump to the selected agent's home session. |
 | `n` / `x` | Launch a new agent / close the selected one. |
 | `b` | Select the next blocked agent. |
+| `z` | **Fold** the project group under the cursor (on its header or any of its rows; the cursor moves to the header). A folded group shows only its header line, with its counts and the ⏸ flag. Clicking a header's project name toggles it too. |
+| `Z` | **Focus mode** — fold every project with no blocked (⏸) and no working (●) agent; press again to unfold everything. |
+| `f` | **Filter** — cycle `all` → `active` (working + blocked) → `needs you` (blocked + done-unseen). The title shows the active filter. Parents of a matching agent stay visible, dimmed, so the tree still reads; a project with nothing matching shows its header only. |
 | `p` | Open the selected agent's PR. |
 | `c` | **Toggle chrome** — show or hide the agent's chrome bar in the live pane for this hub (starts from the `hub_chrome` config value, default hidden). With chrome shown, clicking a tab in the live pane switches the live viewer and the hub list follows. |
 | `r` | Refresh. |
 | `q`/`esc` | Leave the hub. |
+
+Fold state and the filter are kept per hub across reloads, hot reloads and restarts, in `hub-view.json` in the agentctl state dir (`$XDG_STATE_HOME/agentctl`, default `~/.local/state/agentctl`). Jumps that target a hidden agent (`b`, a just-launched agent, a tab click in the live pane) unfold its group first, and clear the filter if it would still hide it. The one-line footer has no room for `z`, `Z` and `f`; they are listed under `?`.
 
 ### Hub list tree
 

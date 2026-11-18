@@ -49,6 +49,14 @@ type Window struct {
 	Activity    string `json:"activity,omitempty"`
 	ContextPct  int    `json:"context_pct,omitempty"`
 	PendingTool string `json:"pending_tool,omitempty"`
+	// Title is the task title (windowstate ticket_title), Issue the GitHub
+	// issue number, Model the model name, CostUSD the session cost and PRURL
+	// the window's PR: the header fields of the window view.
+	Title   string  `json:"title,omitempty"`
+	Issue   int     `json:"issue,omitempty"`
+	Model   string  `json:"model,omitempty"`
+	CostUSD float64 `json:"cost_usd,omitempty"`
+	PRURL   string  `json:"pr_url,omitempty"`
 	// Pane names the captured screen: idle, working or dialog. Empty picks
 	// one from State. PaneText, when set, is used verbatim instead.
 	Pane     string `json:"pane,omitempty"`
@@ -94,10 +102,14 @@ func DefaultFixture() []Group {
 			Windows: []Window{
 				{ID: "@11", Index: 1, Agent: "orchestrator", State: "idle", Activity: "waiting for review"},
 				{ID: "@12", Index: 2, Agent: "go-engineer", State: "idle", Done: true, Mode: "dispatch", Parent: "@11",
-					Branch: "agent/go-engineer/issue-7", Activity: "opened PR #8", ContextPct: 42},
-				{ID: "@13", Index: 3, Agent: "test-writer", State: "working", Mode: "dispatch", Parent: "@11", Activity: "go test ./..."},
+					Branch: "agent/go-engineer/issue-7", Activity: "opened PR #8", ContextPct: 42,
+					Title: "Add a checkout retry", Issue: 7, Model: "claude-opus-4-1", CostUSD: 1.84,
+					PRURL: "https://github.com/example/shop/pull/8"},
+				{ID: "@13", Index: 3, Agent: "test-writer", State: "working", Mode: "dispatch", Parent: "@11", Activity: "go test ./...",
+					Branch: "agent/test-writer/issue-9", ContextPct: 9, Title: "Cover the cart service", Issue: 9,
+					Model: "claude-sonnet-4-5", CostUSD: 0.98},
 				{ID: "@14", Index: 4, Agent: "reviewer", State: "blocked", Mode: "dispatch", Parent: "@12",
-					PendingTool: "Bash", Activity: "go test ./..."},
+					PendingTool: "Bash", Activity: "go test ./...", Branch: "agent/reviewer/adhoc-3f2a", Model: "claude-haiku-4-5"},
 				{ID: "@15", Index: 5, Agent: "docs", State: "idle", Activity: "updated README"},
 			},
 		},
@@ -175,6 +187,7 @@ func rowFor(g Group, w Window, now time.Time) (herd.Row, herd.Meta) {
 	row := herd.Row{Session: g.Session, Project: g.Project, AgentState: state.AgentState{
 		Name: w.Agent, WindowID: w.ID, WindowIndex: w.Index, State: w.State, Done: w.Done,
 		ContextPct: w.ContextPct, LastText: w.Activity, MainPane: paneID(w.ID),
+		ModelName: w.Model, Ticket: w.Issue,
 	}}
 	mode := w.Mode
 	if mode == "" {
@@ -183,6 +196,10 @@ func rowFor(g Group, w Window, now time.Time) (herd.Row, herd.Meta) {
 	meta := herd.Meta{
 		WindowID: w.ID, Mode: mode, Branch: w.Branch, MainPane: paneID(w.ID),
 		UpdatedAt: now.Add(-2 * time.Minute), StateSince: now.Add(-3 * time.Minute),
+		TicketTitle: w.Title, CostUSD: w.CostUSD, PRURL: w.PRURL,
+	}
+	if w.Issue > 0 {
+		meta.Ticket = fmt.Sprint(w.Issue)
 	}
 	if w.Parent != "" {
 		meta.SpawnedBy, meta.SpawnedBySession = w.Parent, g.Session

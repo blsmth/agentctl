@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -295,6 +296,7 @@ func writeRoutes(t *testing.T) []struct{ name, path, body string } {
 	return []struct{ name, path, body string }{
 		{"answer", winPath + "/answer", fmt.Sprintf(`{"key":"1","dialog_hash":%q}`, dialogHash(t))},
 		{"reply", winPath + "/reply", `{"text":"hi"}`},
+		{"queue", winPath + "/queue", `{"text":"hi"}`},
 		{"interrupt", winPath + "/interrupt", `{}`},
 		{"close", winPath + "/close", `{}`},
 		{"dispatch", "/v1/dispatch", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"p"}`},
@@ -362,12 +364,10 @@ func TestWriteRoutesRequireDevice(t *testing.T) {
 func TestWriteFeatureAdvertisedOnlyWhenAllowed(t *testing.T) {
 	for _, allow := range []bool{false, true} {
 		e := newWriteEnv(t, allow)
-		has := false
-		for _, f := range e.router.Features() {
-			has = has || f == "write"
-		}
-		if has != allow {
-			t.Errorf("allow_write=%v: write feature = %v", allow, has)
+		for _, name := range []string{"write", "queue"} {
+			if has := slices.Contains(e.router.Features(), name); has != allow {
+				t.Errorf("allow_write=%v: %s feature = %v", allow, name, has)
+			}
 		}
 	}
 }
@@ -566,6 +566,94 @@ func TestReply(t *testing.T) {
 			t.Fatalf("status %d: %s", w.Code, w.Body)
 		}
 	})
+}
+
+func TestQueue(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    string
+		pane     string
+		text     string
+		injErr   error
+		status   int
+		code     string
+		injected bool
+	}{
+		{"working", "working", workingPane, "also run the linter", nil, 200, "", true},
+		{"turn ended before the send", "idle", idlePane, "hi", nil, 200, "", true},
+		{"record working, pane idle", "working", idlePane, "hi", nil, 200, "", true},
+		{"blocked window", "blocked", dialogPane, "hi", nil, 409, codeNotIdle, false},
+		{"blocked record, busy pane", "blocked", workingPane, "hi", nil, 409, codeNotIdle, false},
+		{"record working but pane dialog", "working", dialogPane, "hi", nil, 409, codeNotIdle, false},
+		{"unrecognised pane", "working", "", "hi", nil, 409, codeNotIdle, false},
+		{"dialog appears during inject", "working", workingPane, "hi", fmt.Errorf("x: %w", tmux.ErrDialogBlocking), 409, codeNotIdle, false},
+		{"slash command", "working", workingPane, "/permissions", nil, 400, codeReplyIsCommand, false},
+		{"bash mode", "working", workingPane, "  !rm -rf /", nil, 400, codeReplyIsCommand, false},
+		{"too long", "working", workingPane, strings.Repeat("é", maxReplyRunes+1), nil, 413, codeTooLarge, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWriteEnv(t, true)
+			e.fleet.set(writeGroup(tt.state, false, "go-engineer", "dispatch"))
+			e.panes.set(tt.pane)
+			e.inj.err = tt.injErr
+			body, _ := json.Marshal(replyIn{Text: tt.text})
+			w := e.post(winPath+"/queue", string(body))
+			if w.Code != tt.status {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			if tt.code != "" && errCode(t, w) != tt.code {
+				t.Errorf("code = %s, want %s", errCode(t, w), tt.code)
+			}
+			if got := len(e.inj.got) == 1 && e.inj.got[0] == tt.text; got != tt.injected {
+				t.Errorf("injected %q, want injected=%v", e.inj.got, tt.injected)
+			}
+			if len(e.keys.all()) != 0 {
+				t.Errorf("keys sent: %+v", e.keys.all())
+			}
+			lines := e.auditLines(t)
+			if len(lines) == 0 || lines[len(lines)-1].Action != "queue" {
+				t.Errorf("audit = %+v, want a queue line", lines)
+			}
+		})
+	}
+}
+
+// TestReplyStillRefusesWorking pins that queueing is opt-in: the reply route
+// keeps refusing a working agent even though queue accepts it.
+func TestReplyStillRefusesWorking(t *testing.T) {
+	e := newWriteEnv(t, true)
+	e.fleet.set(writeGroup("working", false, "go-engineer", "dispatch"))
+	e.panes.set(workingPane)
+	if w := e.post(winPath+"/reply", `{"text":"hi"}`); w.Code != http.StatusConflict || errCode(t, w) != codeNotIdle {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	e.assertNothingSent(t)
+}
+
+// queueInjector distinguishes queued messages from replies (Queuer).
+type queueInjector struct {
+	fakeInjector
+	queued []string
+}
+
+func (q *queueInjector) Queue(_ WindowTarget, text string) error {
+	q.queued = append(q.queued, text)
+	return nil
+}
+
+func TestQueueUsesQueuer(t *testing.T) {
+	q := &queueInjector{}
+	s := &Server{injector: q}
+	if err := s.inject(WindowTarget{}, "a", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.inject(WindowTarget{}, "b", false); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(q.queued, []string{"a"}) || !slices.Equal(q.got, []string{"b"}) {
+		t.Errorf("queued %q injected %q", q.queued, q.got)
+	}
 }
 
 func TestInterruptAnyState(t *testing.T) {

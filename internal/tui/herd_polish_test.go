@@ -19,16 +19,22 @@ func TestRowRight_DoneBadgeAndAge(t *testing.T) {
 	fixedHerdNow(t)
 	since := sidebarNow.Add(-4 * time.Hour)
 	done := herd.Row{StateSince: since, PRNumber: 105, AgentState: state.AgentState{Done: true}}
-	got := rowRight(done)
-	if plain := ansi.Strip(got); plain != "#105 4h" {
-		t.Errorf("done right = %q, want %q", plain, "#105 4h")
+	got := rowRight(done, herdRightFull)
+	if plain := ansi.Strip(got); plain != " #105  4h" {
+		t.Errorf("done right = %q, want %q", plain, " #105  4h")
 	}
-	if !strings.HasPrefix(got, herdDoneStyle.Render("#105")) {
+	if !strings.Contains(got, herdDoneStyle.Render("#105")) {
 		t.Errorf("done badge should use the done style: %q", got)
 	}
 	working := herd.Row{StateSince: sidebarNow.Add(-time.Second), PRNumber: 108, AgentState: state.AgentState{State: "working"}}
-	if plain := ansi.Strip(rowRight(working)); plain != "#108 1s" {
+	if plain := ansi.Strip(rowRight(working, herdRightFull)); plain != " #108  1s" {
 		t.Errorf("working right = %q", plain)
+	}
+	if plain := ansi.Strip(rowRight(working, herdRightPR)); plain != " #108" {
+		t.Errorf("PR-only right = %q", plain)
+	}
+	if got := rowRight(working, herdRightNone); got != "" {
+		t.Errorf("no slots = %q", got)
 	}
 }
 
@@ -44,9 +50,13 @@ func TestGroupHeaderCountsAndSession(t *testing.T) {
 		Session: "agentctl-proj", Project: "proj", Rollup: herd.RollupWorking,
 		Rows: []herd.Row{mk("working", false), mk("working", false), mk("blocked", false), mk("", true), mk("", false)},
 	}
+	m.groups = []herd.Group{g}
 	out := ansi.Strip(m.renderGroupHeader(g, false, 80))
-	if !strings.Contains(out, "● 2  ⏸ 1  ✓ 1  ○ 1") {
+	if !strings.Contains(out, "⏸ 1  ● 2  ✓ 1  ○ 1") {
 		t.Errorf("counts missing: %q", out)
+	}
+	if !strings.HasPrefix(out, "  ⏸ "+herdUnfoldedGlyph+" proj") {
+		t.Errorf("blocked group should carry the ⏸ flag: %q", out)
 	}
 	if strings.Contains(out, "agentctl-proj") || strings.Contains(out, "agent") {
 		t.Errorf("default session should be hidden: %q", out)
@@ -54,9 +64,13 @@ func TestGroupHeaderCountsAndSession(t *testing.T) {
 
 	g.Rows = []herd.Row{mk("working", false)}
 	g.Session = "custom"
+	m.groups = []herd.Group{g}
 	out = ansi.Strip(m.renderGroupHeader(g, false, 80))
 	if !strings.Contains(out, "custom") || strings.Contains(out, "⏸") || strings.Contains(out, "✓") || strings.Contains(out, "○") {
-		t.Errorf("custom session shown and zero buckets omitted: %q", out)
+		t.Errorf("custom session shown and zero buckets blank: %q", out)
+	}
+	if !strings.HasPrefix(out, "    "+herdUnfoldedGlyph+" proj") {
+		t.Errorf("no rollup glyph without a blocked agent: %q", out)
 	}
 }
 

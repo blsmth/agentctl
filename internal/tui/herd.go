@@ -26,9 +26,10 @@ import (
 const herdPollInterval = 1 * time.Second
 
 // herdChromeRows is the number of non-list lines reserved above and below
-// the scrollable line list: title(1) + blank(1) + subtitle(1) + blank(1)
-// above; blank(1) + error-line(1) + hint-bar(1) below.
-const herdChromeRows = 7
+// the scrollable line list: title(1) + the "↑ N more" row(1), blank when
+// nothing is scrolled off, above; the "↓ N more" row(1) + message line(1) +
+// hint bar(1) below, plus one spare row.
+const herdChromeRows = 6
 
 // herdSidebarRatio is the fraction of content width the list column takes
 // (see herdLiveLeftCols); herdMinSidebarWidth / herdMinMainPanelWidth are the
@@ -61,9 +62,9 @@ const herdSidebarRightGutter = 1
 
 var (
 	herdTitleStyle    lipgloss.Style
-	herdSubtitleStyle lipgloss.Style
 	herdDimStyle      lipgloss.Style
 	herdErrStyle      lipgloss.Style
+	herdSuccessStyle  lipgloss.Style // transient success notices in the footer
 	herdSelectedStyle lipgloss.Style
 	herdHoverStyle    lipgloss.Style // row tint, weaker than herdSelectedStyle
 
@@ -80,33 +81,42 @@ var (
 	herdActivityStyle lipgloss.Style
 	herdRecapStyle    lipgloss.Style
 
+	// Row weight by state (see rowWeight): the glyph carries the state
+	// colour, the name and recap only get brighter or dimmer.
+	herdNameWorkingStyle  lipgloss.Style
+	herdNameDoneStyle     lipgloss.Style
+	herdNameIdleStyle     lipgloss.Style
+	herdRecapWorkingStyle lipgloss.Style
+	herdRecapIdleStyle    lipgloss.Style
+
 	// Recap styles for a hovered row: the theme's primary text colour, with
 	// the activity fallback still italic so its source stays distinguishable.
 	herdRecapHoverStyle    lipgloss.Style
 	herdActivityHoverStyle lipgloss.Style
 
+	// herdEmptyStyle is the muted italic fallback sentence of a row with no
+	// recap text (see rowRecapText).
+	herdEmptyStyle lipgloss.Style
+
 	// herdPaletteColors is the stable accent palette (theme colours) that
-	// project groups and agent types hash into.
+	// project groups hash into: the left bar and the group header only.
 	herdPaletteColors []string
 )
 
 // initHerdStyles initialises the hub view's styles from the active theme.
 // Reuses the same state colours as the chrome bar's agent tabs (workingTab =
 // Accent, blockedTab = Yellow, doneTab = Green, idleTab = Subtle) so the hub
-// and the per-session chrome bar agree visually.
+// and the per-session chrome bar agree visually. Those colours belong to the
+// state glyphs; agent names use plain text weights so a palette colour can
+// never be mistaken for a state.
 func initHerdStyles() {
 	t := theme.Current()
 
-	herdTitleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(t.Bright)).
-		Background(lipgloss.Color(t.Accent)).
-		Padding(0, 2).
-		Align(lipgloss.Center)
+	herdTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Accent))
 
-	herdSubtitleStyle = tableStyles.Subtitle
 	herdDimStyle = tableStyles.Dim
 	herdErrStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Red))
+	herdSuccessStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Green))
 	herdSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color(t.Surface))
 	herdHoverStyle = lipgloss.NewStyle().Background(lipgloss.Color(midColor(t.Base, t.Surface)))
 	herdCloseHoverStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Red))
@@ -122,8 +132,15 @@ func initHerdStyles() {
 	herdActivityStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
 	herdRecapStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Subtle))
 
+	herdNameWorkingStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Bright))
+	herdNameDoneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Text))
+	herdNameIdleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Subtle))
+	herdRecapWorkingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Text))
+	herdRecapIdleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
+
 	herdRecapHoverStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Text))
 	herdActivityHoverStyle = herdRecapHoverStyle.Italic(true)
+	herdEmptyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted)).Italic(true)
 
 	herdPaletteColors = []string{t.Accent, t.Sky, t.Blue, t.Info, t.Orange, t.Green}
 }
@@ -184,19 +201,57 @@ func splitAgentName(name string) (base, suffix string) {
 	return name[:i], name[i:]
 }
 
-// renderAgentName colours the agent type by hash and keeps ":N" muted. The
-// caller passes the already-truncated plain name. A blocked row gets a bold warning colour so it stands out.
-func renderAgentName(name string, blocked bool) string {
-	return renderAgentNameHover(name, blocked, false)
+// herdWeight is a row's visual weight, derived from its state the same way
+// rowGlyph picks the glyph.
+type herdWeight int
+
+const (
+	herdWeightIdle herdWeight = iota
+	herdWeightDone
+	herdWeightWorking
+	herdWeightBlocked
+)
+
+// rowWeight classifies r for name and recap styling.
+func rowWeight(r herd.Row) herdWeight {
+	switch {
+	case r.State == "blocked":
+		return herdWeightBlocked
+	case r.State == "working":
+		return herdWeightWorking
+	case r.Done:
+		return herdWeightDone
+	default:
+		return herdWeightIdle
+	}
+}
+
+// herdNameStyle is the agent name's style for a row of weight w: working is
+// bold bright, done normal text, idle subtle and blocked bold warning. The
+// state colour lives on the glyph; names never use the project palette.
+func herdNameStyle(w herdWeight) lipgloss.Style {
+	switch w {
+	case herdWeightBlocked:
+		return herdBlockedStyle.Bold(true)
+	case herdWeightWorking:
+		return herdNameWorkingStyle
+	case herdWeightDone:
+		return herdNameDoneStyle
+	default:
+		return herdNameIdleStyle
+	}
+}
+
+// renderAgentName renders the agent name in its row-weight style and keeps
+// ":N" muted. The caller passes the already-truncated plain name.
+func renderAgentName(name string, w herdWeight) string {
+	return renderAgentNameHover(name, w, false)
 }
 
 // renderAgentNameHover is renderAgentName; a hovered name is also bold.
-func renderAgentNameHover(name string, blocked, hovered bool) string {
+func renderAgentNameHover(name string, w herdWeight, hovered bool) string {
 	base, suffix := splitAgentName(name)
-	style := lipgloss.NewStyle().Foreground(lipgloss.Color(herdColorFor(base)))
-	if blocked {
-		style = herdBlockedStyle.Bold(true)
-	}
+	style := herdNameStyle(w)
 	if hovered {
 		style = style.Bold(true)
 	}
@@ -245,6 +300,9 @@ type herdLine struct {
 	// base name, max over its rows) for herdLineRow; renderTreeRow caps it
 	// at render time so recaps line up within a group.
 	nameCol int
+	// dimmed marks a herdLineRow the attention filter keeps only as the
+	// ancestor of a matching row; it renders muted.
+	dimmed bool
 }
 
 // selectable reports whether the cursor may rest on this line. Dividers and
@@ -303,6 +361,11 @@ type HerdModel struct {
 	// infoMsg is a benign, non-error inline message. Rendered alongside
 	// jumpErr but without the error styling; see renderFooter.
 	infoMsg string
+	// infoOK marks infoMsg as a finished success (✓, success colour) that the
+	// poll tick clears once infoUntil has passed; a progress notice
+	// ("launching…") does not expire, its outcome replaces it.
+	infoOK    bool
+	infoUntil time.Time
 
 	// confirmSession/confirmWindow identify the row awaiting inline close
 	// confirmation ("close <name>? y/n"); empty when none. Cleared whenever
@@ -325,6 +388,9 @@ type HerdModel struct {
 	// and the line it was opened on.
 	menuOpen bool
 	menuLine int
+	// menuHelp marks the open menu as the "?" key reference (every binding,
+	// see herdHelpItems) rather than a line's context menu.
+	menuHelp bool
 
 	// liveShown is the "session|window" last handed to the viewer, so
 	// selection changes (not every tick) drive it; a failed attempt is retried
@@ -376,6 +442,20 @@ type HerdModel struct {
 	// live pane. false (the hub_chrome default) zooms the viewed window's main
 	// pane so its chrome bar is hidden (see tmux.SyncHubZoom); `c` toggles it.
 	hubChrome bool
+
+	// folded is the set of folded groups by session name (see herd_fold.go):
+	// a folded group renders as its header line only. focusMode records that
+	// `Z` folded the quiet groups, so the next `Z` unfolds everything. filter
+	// is the attention filter `f` cycles. All three survive reloads, the hot
+	// reload re-exec (HubViewEnv) and hub restarts (viewPath, "" = not
+	// persisted).
+	folded    map[string]bool
+	focusMode bool
+	filter    herdFilter
+	viewPath  string
+	// viewDirty marks a fold/filter change made on the way to a jump
+	// (revealRow) that flushView has not persisted yet.
+	viewDirty bool
 }
 
 // HubSelectEnv carries the selected agent ("session|windowID") across a hot
@@ -428,6 +508,9 @@ func (m HerdModel) ReexecEnv() []string {
 		chrome = "1"
 	}
 	env = append(env, HubChromeEnv+"="+chrome)
+	if v := m.viewEnv(); v != "" {
+		env = append(env, v)
+	}
 	return env
 }
 
@@ -493,6 +576,7 @@ func NewHerdModel() HerdModel {
 			m.hubChrome = shown
 		}
 	}
+	m.loadViewState()
 	return m
 }
 
@@ -524,7 +608,7 @@ func herdTickCmd() tea.Cmd {
 
 func herdLoadCmd() tea.Cmd {
 	return func() tea.Msg {
-		groups, err := herd.Load()
+		groups, err := herd.LoadWithShells()
 		return herdLoadedMsg{groups: groups, err: err}
 	}
 }
@@ -567,6 +651,7 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case herdTickMsg:
+		m.expireInfo(herdNow())
 		if m.exeChanged != nil && m.exeChanged() {
 			m.reexec = true
 			return m, tea.Quit
@@ -575,7 +660,8 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(herdLoadCmd(), herdTickCmd(), show, herdViewerPollCmd(), herdZoomSyncCmd(m.hubChrome))
 
 	case herdViewerMsg:
-		return m.syncFromViewer(msg), nil
+		m = m.syncFromViewer(msg)
+		return m, m.flushView()
 
 	case herdFocusErrMsg:
 		m.jumpErr = msg.err.Error()
@@ -608,12 +694,12 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case herdLaunchedMsg:
 		if msg.err != nil {
-			m.infoMsg = ""
+			m.clearInfo()
 			m.jumpErr = msg.err.Error()
 			return m, nil
 		}
 		m.jumpErr = ""
-		m.infoMsg = "launched new agent in " + msg.session
+		m.setSuccess("launched new agent in " + m.projectLabel(msg.session))
 		m.pendingFocus = nil
 		if msg.windowID == "" {
 			return m, herdLoadCmd()
@@ -623,15 +709,18 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case herdShellOpenedMsg:
 		if msg.err != nil {
-			m.infoMsg = ""
+			m.clearInfo()
 			m.jumpErr = msg.err.Error()
 			return m, nil
 		}
-		// Shell windows are not agent rows (herd.LoadAgents skips them), so
-		// there is nothing to focus: just report.
 		m.jumpErr = ""
-		m.infoMsg = "opened shell in " + msg.session
-		return m, nil
+		m.setSuccess("opened shell in " + m.projectLabel(msg.session))
+		m.pendingFocus = nil
+		if msg.windowID == "" {
+			return m, herdLoadCmd()
+		}
+		m.pendingFocus = &herdPendingFocus{session: msg.session, windowID: msg.windowID}
+		return m, tea.Batch(herdLoadCmd(), herdFocusRetryCmd(msg.session, msg.windowID))
 
 	case herdFocusRetryMsg:
 		return m, m.focusRetry(msg)
@@ -639,7 +728,7 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case herdClosedMsg:
 		if msg.err != nil {
 			m.closePending = nil
-			m.infoMsg = ""
+			m.clearInfo()
 			m.jumpErr = msg.err.Error()
 			return m, herdLoadCmd()
 		}
@@ -647,7 +736,7 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.closePending != nil {
 			m.closePending.killed = true
 		}
-		m.infoMsg = "closed " + msg.name + " (worktree kept; see agentctl sweep)"
+		m.setSuccess("closed " + msg.name + " (worktree kept; see agentctl sweep)")
 		return m, herdLoadCmd()
 
 	case herdLoadedMsg:
@@ -663,7 +752,7 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyPendingFocus()
 		}
 		show := m.maybeShowCmd()
-		return m, show
+		return m, tea.Batch(show, m.flushView())
 
 	case tea.MouseClickMsg:
 		m.hideCard()
@@ -691,10 +780,22 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	// An error stays on screen until the next key, which dismisses it.
+	m.jumpErr = ""
+	if m.menuOpen && m.menuHelp {
+		// The key reference closes on any key; a binding it lists then runs
+		// as usual, so the menu never swallows a keystroke.
+		m.closeMenu()
+		m.ensureCursorVisible()
+		if key == "?" || key == "esc" || key == "q" {
+			return *m, nil
+		}
+		return m.runKey(key)
+	}
 	if m.menuOpen {
-		key := msg.String()
 		if key == "esc" || key == "q" {
-			m.menuOpen = false
+			m.closeMenu()
 			return *m, nil
 		}
 		for _, it := range m.herdMenuItems(m.menuLine) {
@@ -702,11 +803,11 @@ func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return *m, m.runMenuKey(key)
 			}
 		}
-		m.menuOpen = false
+		m.closeMenu()
 		return *m, nil
 	}
 	if m.closeArmed() {
-		switch msg.String() {
+		switch key {
 		case "y", "Y":
 			return *m, m.confirmClose()
 		case "n", "N", "esc":
@@ -715,11 +816,21 @@ func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if m.newArmed() {
-		if cmd, handled := m.handleNewKey(msg.String()); handled {
+		if cmd, handled := m.handleNewKey(key); handled {
 			return *m, cmd
 		}
 	}
-	switch msg.String() {
+	return m.runKey(key)
+}
+
+// runKey runs the hub binding for key (as tea.KeyPressMsg.String() spells
+// it). Shared by the keyboard and the clickable "?" key reference.
+func (m *HerdModel) runKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "?":
+		m.openHelp()
+		return *m, nil
+
 	case "n":
 		m.armNew(m.splitPane.Cursor())
 		return *m, nil
@@ -767,11 +878,20 @@ func (m *HerdModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "r":
 		m.jumpErr = ""
-		m.infoMsg = ""
+		m.clearInfo()
 		return *m, herdLoadCmd()
 
 	case "c":
 		return *m, m.toggleChrome()
+
+	case "z":
+		return *m, m.toggleFoldAt(m.splitPane.Cursor())
+
+	case "Z":
+		return *m, m.toggleFocusMode()
+
+	case "f":
+		return *m, m.cycleFilter()
 	}
 	return *m, nil
 }
@@ -992,7 +1112,7 @@ func (m *HerdModel) syncSelectionFromCursor() {
 		}
 		m.validateNew()
 		if m.menuOpen && m.splitPane.Cursor() != m.menuLine {
-			m.menuOpen = false
+			m.closeMenu()
 		}
 	}()
 	idx := m.splitPane.Cursor()
@@ -1087,6 +1207,18 @@ func (m *HerdModel) resolveSelection() {
 				m.syncSelectionFromCursor()
 				m.ensureCursorVisible()
 				return
+			}
+		}
+		// The row still exists but is hidden (folded or filtered out): stay
+		// on its group's header.
+		if !m.selIsHeader && m.rowExists(m.selSession, m.selWindowID) {
+			for i, l := range m.lines {
+				if l.kind == herdLineHeader && l.group.Session == m.selSession {
+					m.splitPane.SetCursor(i)
+					m.syncSelectionFromCursor()
+					m.ensureCursorVisible()
+					return
+				}
 			}
 		}
 	}
@@ -1194,7 +1326,7 @@ func (m *HerdModel) jumpToSelectedHome() (tea.Model, tea.Cmd) {
 		return *m, herdLoadCmd()
 	}
 	m.jumpErr = ""
-	m.infoMsg = ""
+	m.clearInfo()
 	return *m, nil
 }
 
@@ -1209,6 +1341,7 @@ func (m *HerdModel) jumpToNextBlocked() (tea.Model, tea.Cmd) {
 		m.jumpErr = "no blocked agents"
 		return *m, nil
 	}
+	m.revealRow(r.Session, r.WindowID) // unfold its group first
 	found := false
 	for i, l := range m.lines {
 		if l.kind == herdLineRow && l.row.Session == r.Session && l.row.WindowID == r.WindowID {
@@ -1231,9 +1364,9 @@ func (m *HerdModel) jumpToNextBlocked() (tea.Model, tea.Cmd) {
 		return nil
 	}
 	if show := m.maybeShowCmd(); show != nil {
-		return *m, tea.Sequence(show, focus)
+		return *m, tea.Batch(tea.Sequence(show, focus), m.flushView())
 	}
-	return *m, focus
+	return *m, tea.Batch(focus, m.flushView())
 }
 
 // herdFocusErrMsg reports a failure to move focus to the live pane.
@@ -1249,19 +1382,40 @@ type herdFocusErrMsg struct{ err error }
 // distinct blocks in the sidebar. Cursor movement (moveCursor) and selection
 // re-resolution (resolveSelection) both skip herdLineDivider explicitly;
 // see those functions for why a divider can never become the selection.
+//
+// Folding and the attention filter are applied here, so the line list,
+// selection, overflow counts and mouse hit-testing all see exactly what is
+// drawn: a folded group contributes its header only; under a filter a group
+// keeps its matching rows plus their ancestors (marked dimmed), and a group
+// with nothing left shows its header only. Two consecutive header-only groups
+// get no divider between them, so a folded hub reads as a compact list.
 func (m *HerdModel) rebuildLines() {
+	defer func() {
+		// Keep SplitPane's row count (cursor clamping) in step at once.
+		m.splitPane.SetListContent(m.splitPane.listContent, len(m.lines))
+	}()
 	var lines []herdLine
+	prevBody := false
 	for i, g := range m.groups {
-		if i > 0 {
+		rows, context := g.Rows, map[string]bool(nil)
+		if !m.isFolded(g.Session) {
+			rows, context = filterRows(g.Rows, m.filter)
+		}
+		body := !m.isFolded(g.Session) && (len(rows) > 0 || (len(g.Rows) == 0 && m.filter == herdFilterAll))
+		if i > 0 && (body || prevBody) {
 			lines = append(lines, herdLine{kind: herdLineDivider})
 		}
+		prevBody = body
 		lines = append(lines, herdLine{kind: herdLineHeader, group: g})
+		if !body {
+			continue
+		}
 		if len(g.Rows) == 0 {
 			lines = append(lines, herdLine{kind: herdLinePlaceholder, group: g})
 			continue
 		}
 		first := true
-		tree := treeRows(g.Rows)
+		tree := treeRows(rows)
 		nameCol := 0
 		for _, t := range tree {
 			if t.Label == "" {
@@ -1273,7 +1427,7 @@ func (m *HerdModel) rebuildLines() {
 				lines = append(lines, herdLine{kind: herdLineSubheader, group: g, label: t.Label})
 				continue
 			}
-			lines = append(lines, herdLine{kind: herdLineRow, row: t.Row, groupHead: first, treePrefix: t.Prefix, nameCol: nameCol})
+			lines = append(lines, herdLine{kind: herdLineRow, row: t.Row, groupHead: first, treePrefix: t.Prefix, nameCol: nameCol, dimmed: context[t.Row.WindowID]})
 			first = false
 		}
 	}
@@ -1310,19 +1464,76 @@ func (m HerdModel) render() string {
 	return out
 }
 
-// renderHeader renders the title + subtitle chrome.
+// renderHeader renders the title line and the row below it, which is blank
+// unless the list is scrolled and it carries the "↑ N more" indicator. It
+// always ends in two line breaks, so the list (and every click target) starts
+// at the same row (herdListTop).
 func (m HerdModel) renderHeader(cw int) string {
-	var b strings.Builder
-	b.WriteString(herdTitleStyle.Width(cw).Render("agentctl hub"))
-	b.WriteString("\n")
+	return m.renderTitle(cw) + "\n" + m.renderOverflowAbove(cw) + "\n"
+}
 
-	total := 0
+// fleetCounts tallies every row by its glyph.
+func (m HerdModel) fleetCounts() (blocked, working, done, idle int) {
 	for _, g := range m.groups {
-		total += len(g.Rows)
+		for _, r := range g.Rows {
+			switch rowWeight(r) {
+			case herdWeightBlocked:
+				blocked++
+			case herdWeightWorking:
+				working++
+			case herdWeightDone:
+				done++
+			default:
+				idle++
+			}
+		}
 	}
-	b.WriteString(herdSubtitleStyle.Render(fmt.Sprintf("  %d session%s · %d agent%s", len(m.groups), plural(len(m.groups)), total, plural(total))))
-	b.WriteString("\n\n")
-	return b.String()
+	return blocked, working, done, idle
+}
+
+// renderTitle renders "agentctl hub" in bold accent on the left and the fleet
+// totals right-aligned: a yellow inverse ⏸ cell (only when something is
+// blocked, and the only filled cell), then ● ✓ ○ counts and a dim agent and
+// session total. An active attention filter adds a muted tag after the title
+// ("· needs you"). Narrow widths drop the totals, then tighten the counts and
+// shorten the tag, then drop the counts, then truncate.
+func (m HerdModel) renderTitle(cw int) string {
+	title := strings.Repeat(" ", herdSidebarLeftInset) + herdTitleStyle.Render("agentctl hub")
+	left, shortLeft := title, title
+	if m.filter != herdFilterAll {
+		left += herdCountStyle.Render(" · " + m.filter.label())
+		short, _, _ := strings.Cut(m.filter.label(), " ")
+		shortLeft += herdCountStyle.Render(" · " + short)
+	}
+	if !m.loaded || m.loadErr != nil {
+		return herdFitLine(left, false, cw)
+	}
+	blocked, working, done, idle := m.fleetCounts()
+	count := func(glyph string, st lipgloss.Style, n int) string {
+		return st.Render(glyph) + " " + herdRecapWorkingStyle.Render(fmt.Sprint(n))
+	}
+	var cells []string
+	if blocked > 0 {
+		cells = append(cells, herdBlockedStyle.Bold(true).Reverse(true).Render(fmt.Sprintf(" ⏸ %d ", blocked)))
+	}
+	cells = append(cells, count("●", herdWorkingStyle, working), count("✓", herdDoneStyle, done), count("○", herdIdleStyle, idle))
+	counts := strings.Join(cells, "  ")
+	total := working + blocked + done + idle
+	suffix := herdDimStyle.Render(fmt.Sprintf(" · %d agent%s, %d session%s", total, plural(total), len(m.groups), plural(len(m.groups))))
+
+	candidates := [][2]string{{left, counts + suffix}, {left, counts}}
+	if m.filter != herdFilterAll {
+		tight := strings.Join(cells, " ")
+		candidates = append(candidates, [2]string{left, tight}, [2]string{shortLeft, tight})
+	}
+	for _, c := range candidates {
+		room := cw - herdSidebarRightGutter - lipgloss.Width(c[0]) - 1
+		if lipgloss.Width(c[1]) <= room {
+			pad := cw - herdSidebarRightGutter - lipgloss.Width(c[0]) - lipgloss.Width(c[1])
+			return herdFitLine(c[0]+strings.Repeat(" ", pad)+c[1], false, cw)
+		}
+	}
+	return herdFitLine(left, false, cw)
 }
 
 // renderStatusOrEmpty renders the loading/error/empty states shared by both
@@ -1338,87 +1549,6 @@ func (m HerdModel) renderStatusOrEmpty() (string, bool) {
 		return herdDimStyle.Render("  no agentctl sessions running") + "\n", true
 	}
 	return "", false
-}
-
-// renderFooter renders the jump-error line + hint bar shared by both layouts.
-func (m HerdModel) renderFooter(cw int) string {
-	var b strings.Builder
-	b.WriteString("\n")
-	switch {
-	case m.menuOpen:
-		text, _ := menuItemSpans(m.herdMenuItems(m.menuLine))
-		b.WriteString(herdBlockedStyle.Render(truncateToWidth(text+"   esc", cw)))
-	case m.jumpErr != "":
-		b.WriteString(herdErrStyle.Render("  " + truncateToWidth(m.jumpErr, cw-2)))
-	case m.infoMsg != "":
-		// A benign, non-error outcome (e.g. a close notice) — dim, not red.
-		b.WriteString(herdDimStyle.Render("  " + truncateToWidth(m.infoMsg, cw-2)))
-	}
-	b.WriteString("\n")
-
-	hintParts := []string{
-		menuHintKeyStyle.Render("j/k") + " " + menuHintLabelStyle.Render("navigate"),
-		menuHintKeyStyle.Render("enter/tab") + " " + menuHintLabelStyle.Render("focus live"),
-		menuHintKeyStyle.Render("^b o") + " " + menuHintLabelStyle.Render("back"),
-		menuHintKeyStyle.Render("J") + " " + menuHintLabelStyle.Render("home"),
-		menuHintKeyStyle.Render("n") + " " + menuHintLabelStyle.Render("new"),
-		menuHintKeyStyle.Render("x") + " " + menuHintLabelStyle.Render("close"),
-		menuHintKeyStyle.Render("b") + " " + menuHintLabelStyle.Render("blocked"),
-		menuHintKeyStyle.Render("r") + " " + menuHintLabelStyle.Render("refresh"),
-		menuHintKeyStyle.Render("c") + " " + menuHintLabelStyle.Render("chrome"),
-		menuHintKeyStyle.Render("q") + " " + menuHintLabelStyle.Render("leave"),
-	}
-	if m.newArmed() {
-		hintParts = []string{
-			menuHintKeyStyle.Render("s") + " " + menuHintLabelStyle.Render("shell"),
-			menuHintKeyStyle.Render("a") + " " + menuHintLabelStyle.Render("agent"),
-			menuHintKeyStyle.Render("esc") + " " + menuHintLabelStyle.Render("cancel"),
-		}
-	}
-	b.WriteString(strings.Join(m.wrapHints(hintParts, cw), "\n"))
-	return b.String()
-}
-
-// wrapHints packs hint parts into centered lines no wider than cw, breaking
-// between parts so no "key label" pair is ever split.
-func (m HerdModel) wrapHints(parts []string, cw int) []string {
-	sep := "  " + menuHintDotStyle.Render("·") + "  "
-	sepW := lipgloss.Width(sep)
-	var lines []string
-	var cur []string
-	curW := 0
-	flush := func() {
-		if len(cur) > 0 {
-			lines = append(lines, tableStyles.HintBar.MarginTop(0).Width(cw).Render(strings.Join(cur, sep)))
-		}
-		cur, curW = nil, 0
-	}
-	for _, p := range parts {
-		w := lipgloss.Width(p)
-		if len(cur) > 0 && curW+sepW+w > cw {
-			flush()
-		}
-		if len(cur) > 0 {
-			curW += sepW
-		}
-		cur = append(cur, p)
-		curW += w
-	}
-	flush()
-	return lines
-}
-
-// liveHintRows is how many rows the hint bar occupies beyond the single row
-// the chrome budget (herdChromeRows) already reserves.
-func (m HerdModel) liveHintRows() int {
-	var b strings.Builder
-	b.WriteString(m.renderFooter(m.contentWidth()))
-	// footer = "\n" + message line + "\n" + hint rows
-	extra := strings.Count(b.String(), "\n") - 2
-	if extra < 0 {
-		return 0
-	}
-	return extra
 }
 
 // herdNoViewHint is shown in the list area until an agent has been viewed in
@@ -1464,6 +1594,66 @@ func (m HerdModel) renderList() string {
 	return b.String()
 }
 
+// shownEnd is one past the last line renderList draws (even partly) at the
+// current scroll offset.
+func (m HerdModel) shownEnd(cw int) int {
+	visible := m.visibleLines()
+	used := 0
+	i := m.scrollOffset
+	for ; i < len(m.lines) && used < visible; i++ {
+		used += m.lineHeight(i, cw)
+	}
+	return i
+}
+
+// hiddenRows counts the agent rows among lines[from:to].
+func (m HerdModel) hiddenRows(from, to int) (rows, other int) {
+	for i := max(from, 0); i < min(to, len(m.lines)); i++ {
+		switch m.lines[i].kind {
+		case herdLineRow:
+			rows++
+		case herdLineHeader, herdLinePlaceholder:
+			other++
+		}
+	}
+	return rows, other
+}
+
+// renderOverflow is the muted "↑ N more" / "↓ N more" indicator for the
+// agent rows scrolled out of view on one side ("" when nothing is hidden).
+func renderOverflow(arrow string, rows, other, cw int) string {
+	var text string
+	switch {
+	case rows > 0:
+		text = fmt.Sprintf("%s %d more", arrow, rows)
+	case other > 0:
+		text = arrow + " more"
+	default:
+		return ""
+	}
+	return herdCountStyle.Render(strings.Repeat(" ", herdSidebarLeftInset+1) + truncateToWidth(text, cw-herdSidebarLeftInset-1-herdSidebarRightGutter))
+}
+
+// renderOverflowAbove is the indicator for lines scrolled off the top, drawn
+// on the header row just above the list.
+func (m HerdModel) renderOverflowAbove(cw int) string {
+	if !m.clickable() {
+		return ""
+	}
+	rows, other := m.hiddenRows(0, m.scrollOffset)
+	return renderOverflow("↑", rows, other, cw)
+}
+
+// renderOverflowBelow is the indicator for lines past the bottom, drawn on the
+// footer's blank row just below the list so the footer itself never moves.
+func (m HerdModel) renderOverflowBelow(cw int) string {
+	if !m.clickable() {
+		return ""
+	}
+	rows, other := m.hiddenRows(m.shownEnd(cw), len(m.lines))
+	return renderOverflow("↓", rows, other, cw)
+}
+
 func (m HerdModel) renderLine(i int, cw int) string {
 	l := m.lines[i]
 	selected := i == m.splitPane.Cursor()
@@ -1479,63 +1669,45 @@ func (m HerdModel) renderLine(i int, cw int) string {
 	case herdLineDivider:
 		return renderHerdDivider(cw)
 	case herdLineSubheader:
-		// Align under agent names: bar + cursor slot (3 cols) + glyph + space.
-		return strings.Repeat(" ", 3+2) + herdDimStyle.Render(l.label)
+		// The group's bar keeps the spine unbroken; the label aligns under
+		// agent names: bar + cursor slot + glyph + space.
+		return herdProjectBar(l.group.Project) + strings.Repeat(" ", herdDetailIndent-1) + herdDimStyle.Render(l.label)
 	default: // herdLineRow
-		return m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, selected, m.hover.region(i), cw)
+		out := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, selected, m.hover.region(i), cw)
+		if l.dimmed && !selected && m.hover.region(i) == herdHoverNone {
+			out = dimContextRow(l.row, out)
+		}
+		return out
 	}
 }
 
-// renderHerdDivider renders a non-selectable rule between two adjacent
-// groups, inset to match the sidebar's content block: herdSidebarLeftInset
-// blank columns on the left (the same column a group header's marker
-// starts at) and herdSidebarRightGutter blank columns on the right (the
-// same gutter content rows leave before the pane edge). Below that combined inset+gutter width
-// there's no room to reserve either margin, so it falls back to a plain
-// full-width rule (still exactly cw wide) rather than disappearing.
-//
-// The returned string always measures exactly cw columns wide (measured
-// with lipgloss.Width, never len, so it stays exact under the dim style's
-// SGR codes). Never rendered before the first group or after the last —
-// see rebuildLines.
-func renderHerdDivider(cw int) string {
-	if cw <= 0 {
-		return ""
-	}
-	if cw < herdSidebarLeftInset+herdSidebarRightGutter {
-		return herdDimStyle.Render(strings.Repeat("─", cw))
-	}
-	dashW := cw - herdSidebarLeftInset - herdSidebarRightGutter
-	return strings.Repeat(" ", herdSidebarLeftInset) +
-		herdDimStyle.Render(strings.Repeat("─", dashW)) +
-		strings.Repeat(" ", herdSidebarRightGutter)
+// renderHerdDivider renders the non-selectable gap between two adjacent
+// groups: an empty row. The line kind stays so hit-testing and navigation
+// treat it as before. Never rendered before the first group or after the
+// last; see rebuildLines.
+func renderHerdDivider(int) string {
+	return ""
 }
 
-// rollupGlyph returns the glyph and style for a group's rolled-up status,
-// reusing the same state colours as the per-session chrome bar's agent tabs.
-func rollupGlyph(r herd.RollupStatus) (string, lipgloss.Style) {
-	switch r {
-	case herd.RollupBlocked:
-		return "⏸", herdBlockedStyle
-	case herd.RollupWorking:
-		return "●", herdWorkingStyle
-	case herd.RollupDone:
-		return "✓", herdDoneStyle
-	default:
-		return "○", herdIdleStyle
-	}
+// herdProjectBar is the project-coloured left bar shared by a group's rows,
+// detail lines and sub-section labels.
+func herdProjectBar(project string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(herdColorFor(project))).Render("▎")
 }
 
 // rowGlyph returns the glyph and style for a single agent row, matching the
 // window-rename convention in internal/winname: ● working,
 // ⏸ blocked, ✓ done (unseen), bare/○ otherwise.
 func rowGlyph(r herd.Row) (string, lipgloss.Style) {
-	switch {
-	case r.State == "blocked":
+	if r.Shell {
+		return "$", herdDimStyle
+	}
+	switch rowWeight(r) {
+	case herdWeightBlocked:
 		return "⏸", herdBlockedStyle
-	case r.State == "working":
+	case herdWeightWorking:
 		return "●", herdWorkingStyle
-	case r.Done:
+	case herdWeightDone:
 		return "✓", herdDoneStyle
 	default:
 		return "○", herdIdleStyle
@@ -1550,25 +1722,70 @@ func (m HerdModel) renderGroupHeader(g herd.Group, selected bool, cw int) string
 	return m.renderGroupHeaderHover(g, selected, herdHoverNone, cw)
 }
 
+// groupCustomSession reports whether g's tmux session name is not the one
+// agentctl derives from its project, and so is worth showing. Session names
+// are sanitized ("energy-solutions.ops" runs as
+// "agentctl-energy-solutions-ops"), so compare against the derived name.
+func groupCustomSession(g herd.Group) bool {
+	if g.Session == "" || g.Session == tmux.SessionNameForDirName(g.Project) {
+		return false
+	}
+	return g.ProjectDir == "" || g.Session != tmux.SessionNameForProjectRoot(g.ProjectDir)
+}
+
+// herdMinSessionLabel is the narrowest custom-session label worth drawing.
+const herdMinSessionLabel = 6
+
 // renderGroupHeaderHover is renderGroupHeader with a hovered region: the "+ new"
 // button, or one side of the shell | agent selector when it is armed.
+//
+// Layout: marker, a ⏸ flag slot (yellow when the group has a blocked agent),
+// the project name, a custom session name when there is one, then the
+// per-state counts right-aligned in fixed slots (see groupStateCounts) and the
+// button. The counts never truncate; the session name gives way first, then
+// the project name.
 func (m HerdModel) renderGroupHeaderHover(g herd.Group, selected bool, hover herdHoverRegion, cw int) string {
-	glyph, style := rollupGlyph(g.Rollup)
+	line, _ := m.groupHeaderLayout(g, selected, hover, cw)
+	return line
+}
+
+// Fold markers drawn before a group's project name.
+const (
+	herdFoldedGlyph   = "▸"
+	herdUnfoldedGlyph = "▾"
+)
+
+// herdHeaderNameCol is the column a group header's fold marker starts at:
+// the cursor marker, the ⏸ flag slot and a space.
+const herdHeaderNameCol = herdSidebarLeftInset + 2
+
+// herdNewGap is the blank columns between a header's counts and its "+ new"
+// button, so the button never reads as part of the counts.
+const herdNewGap = 2
+
+// headerNameSpan is the [start, end) columns of group g's fold marker and
+// project name on its header: the click target that toggles the fold.
+func (m HerdModel) headerNameSpan(g herd.Group, cw int) [2]int {
+	_, span := m.groupHeaderLayout(g, false, herdHoverNone, cw)
+	return span
+}
+
+// groupHeaderLayout renders a group header (see renderGroupHeaderHover) and
+// reports the columns its fold marker and project name occupy.
+func (m HerdModel) groupHeaderLayout(g herd.Group, selected bool, hover herdHoverRegion, cw int) (string, [2]int) {
 	marker := strings.Repeat(" ", herdSidebarLeftInset)
 	if selected {
 		marker = " " + cursorActiveStyle.Render("▸") + " "
 	}
-	projStyle := herdProjectStyle.Bold(true).Foreground(lipgloss.Color(herdColorFor(g.Project)))
-	parts := []string{marker + style.Render(glyph), projStyle.Render(g.Project)}
-	if g.Session != "" && g.Session != "agentctl-"+g.Project {
-		parts = append(parts, herdCountStyle.Render(g.Session))
+	counts := groupStateCounts(g, m.countDigits(), herdCountGap(cw))
+	flag := " "
+	if counts.blocked > 0 {
+		flag = herdBlockedStyle.Render("⏸")
 	}
-	if counts := groupStateCounts(g); counts != "" {
-		parts = append(parts, counts)
-	}
-	line := strings.Join(parts, "  ")
+
+	var btn string
+	btnW := lipgloss.Width(herdNewLabel)
 	if groupCanLaunch(g) {
-		var btn string
 		if m.newArmedFor(g) {
 			shell, agent := herdDimStyle, herdDimStyle
 			switch hover {
@@ -1585,36 +1802,106 @@ func (m HerdModel) renderGroupHeaderHover(g herd.Group, selected bool, hover her
 			}
 			btn = style.Render(herdNewLabel)
 		}
-		btnW := lipgloss.Width(btn)
-		line = truncateToWidth(line, cw-herdSidebarRightGutter-btnW-1)
-		pad := cw - herdSidebarRightGutter - btnW - lipgloss.Width(line)
-		if pad < 1 {
-			pad = 1
-		}
-		line += strings.Repeat(" ", pad) + btn
+		btnW = lipgloss.Width(btn)
 	}
-	return herdFitLine(line, selected, cw)
+	right := counts.text + strings.Repeat(" ", herdNewGap) + btn + strings.Repeat(" ", btnW-lipgloss.Width(btn))
+
+	leftW := cw - herdSidebarRightGutter - lipgloss.Width(right) - 1
+	projStyle := herdProjectStyle.Bold(true).Foreground(lipgloss.Color(herdColorFor(g.Project)))
+	if hover == herdHoverFold {
+		projStyle = projStyle.Underline(true)
+	}
+	fold := herdDimStyle.Render(herdUnfoldedGlyph)
+	if m.isFolded(g.Session) {
+		fold = herdCountStyle.Render(herdFoldedGlyph)
+	}
+	head := marker + flag + " " + fold + " "
+	name := truncateToWidth(g.Project, leftW-lipgloss.Width(head))
+	span := [2]int{herdHeaderNameCol, lipgloss.Width(head) + lipgloss.Width(name)}
+	line := head + projStyle.Render(name)
+	if groupCustomSession(g) {
+		if room := leftW - lipgloss.Width(line) - 2; room >= herdMinSessionLabel {
+			line += "  " + herdCountStyle.Render(truncateToWidth(g.Session, room))
+		}
+	}
+	if leftW < lipgloss.Width(head) {
+		// Too narrow for any name: keep the right side intact.
+		line = truncateToWidth(line, max(leftW, 0))
+		span[1] = min(span[1], max(leftW, 0))
+	}
+	pad := max(cw-herdSidebarRightGutter-lipgloss.Width(right)-lipgloss.Width(line), 1)
+	return herdFitLine(line+strings.Repeat(" ", pad)+right, selected, cw), span
 }
 
-// groupStateCounts renders a group's per-state row counts with the row
-// glyphs, in the order working, blocked, done, idle; empty buckets are
-// omitted.
-func groupStateCounts(g herd.Group) string {
-	glyphs := []string{"●", "⏸", "✓", "○"}
-	n := map[string]int{}
-	styles := map[string]lipgloss.Style{}
-	for _, r := range g.Rows {
-		gl, st := rowGlyph(r)
-		n[gl]++
-		styles[gl] = st
-	}
-	var out []string
-	for _, gl := range glyphs {
-		if n[gl] > 0 {
-			out = append(out, styles[gl].Render(gl)+" "+herdCountStyle.Render(fmt.Sprint(n[gl])))
+// countDigits is the widest per-state count across all groups, so the count
+// slots line up down the whole sidebar.
+func (m HerdModel) countDigits() int {
+	d := 1
+	for _, g := range m.groups {
+		c := groupStateCounts(g, 1, 1)
+		for _, n := range []int{c.blocked, c.working, c.done, c.idle} {
+			d = max(d, len(fmt.Sprint(n)))
 		}
 	}
-	return strings.Join(out, "  ")
+	return d
+}
+
+// herdCountGap is the space between header count slots: two columns when the
+// sidebar has room, one at the narrow end.
+func herdCountGap(cw int) int {
+	if cw >= 56 {
+		return 2
+	}
+	return 1
+}
+
+// herdGroupCounts is a group's per-state tally and its rendered slots.
+type herdGroupCounts struct {
+	blocked, working, done, idle int
+	text                         string
+}
+
+// groupStateCounts tallies a group's rows by state and renders them in fixed
+// slots, in the title's order ⏸ ● ✓ ○: each slot is the glyph, a space and
+// the count right-aligned to digits columns; an empty bucket is a blank slot
+// of the same width, so the counts form columns across groups.
+func groupStateCounts(g herd.Group, digits, gap int) herdGroupCounts {
+	var c herdGroupCounts
+	for _, r := range g.Rows {
+		if r.Shell {
+			continue
+		}
+		switch rowWeight(r) {
+		case herdWeightBlocked:
+			c.blocked++
+		case herdWeightWorking:
+			c.working++
+		case herdWeightDone:
+			c.done++
+		default:
+			c.idle++
+		}
+	}
+	slots := []struct {
+		glyph string
+		st    lipgloss.Style
+		n     int
+	}{
+		{"⏸", herdBlockedStyle, c.blocked},
+		{"●", herdWorkingStyle, c.working},
+		{"✓", herdDoneStyle, c.done},
+		{"○", herdIdleStyle, c.idle},
+	}
+	parts := make([]string, len(slots))
+	for i, s := range slots {
+		if s.n == 0 {
+			parts[i] = strings.Repeat(" ", 2+digits)
+			continue
+		}
+		parts[i] = s.st.Render(s.glyph) + " " + herdCountStyle.Render(fmt.Sprintf("%*d", digits, s.n))
+	}
+	c.text = strings.Join(parts, strings.Repeat(" ", gap))
+	return c
 }
 
 // renderRow renders one agent row.
@@ -1668,7 +1955,7 @@ func reapplyBackground(line string, hl *lipgloss.Style) string {
 
 // herdRowCursor is a row's left bar in the group colour plus the cursor slot.
 func herdRowCursor(r herd.Row, selected bool) string {
-	bar := lipgloss.NewStyle().Foreground(lipgloss.Color(herdColorFor(r.Project))).Render("▎")
+	bar := herdProjectBar(r.Project)
 	if selected {
 		return bar + cursorActiveStyle.Render("▸") + " "
 	}
@@ -1682,51 +1969,125 @@ func herdNameBudget(cw int) int {
 	return max(min(herdMaxNameWidth, cw/3), 0)
 }
 
-// rowRight renders the right-aligned status before the close button: the PR
-// badge ("#60", in the done style on a done row) and the dim time in the
-// current state (blocked style on a blocked row).
-func rowRight(r herd.Row) string {
-	var parts []string
+// Fixed right-hand columns of a row: the PR badge slot ("#1025" is the widest
+// seen) and the age slot, both right-aligned and blank when absent.
+const (
+	herdPRSlotW  = 5
+	herdAgeSlotW = 3
+)
+
+// herdRightSlots is how many of the right-hand columns a row draws; narrow
+// rows drop the age first, then the PR.
+type herdRightSlots int
+
+const (
+	herdRightNone herdRightSlots = iota // neither column
+	herdRightPR                         // PR column only
+	herdRightFull                       // PR and age columns
+)
+
+// width is the columns the slots take, excluding the gap before them.
+func (s herdRightSlots) width() int {
+	switch s {
+	case herdRightFull:
+		return herdPRSlotW + 1 + herdAgeSlotW
+	case herdRightPR:
+		return herdPRSlotW
+	}
+	return 0
+}
+
+// fitRightSlots picks the most right-hand columns that still leave the recap
+// herdMinRecapWidth of the available columns (one more goes to the gap).
+func fitRightSlots(available int) herdRightSlots {
+	for _, s := range []herdRightSlots{herdRightFull, herdRightPR} {
+		if available-s.width()-1 >= herdMinRecapWidth {
+			return s
+		}
+	}
+	return herdRightNone
+}
+
+// padLeft right-aligns a rendered s in w columns.
+func padLeft(s string, w int) string {
+	return strings.Repeat(" ", max(w-lipgloss.Width(s), 0)) + s
+}
+
+// rowRight renders the right-aligned status columns before the close button:
+// the PR badge ("#60", in the done style on a done row) in a herdPRSlotW slot
+// and the dim time in the current state (blocked style on a blocked row) in a
+// herdAgeSlotW slot, one space apart. An absent value leaves its slot blank so
+// the columns line up down the sidebar.
+func rowRight(r herd.Row, slots herdRightSlots) string {
+	if slots == herdRightNone {
+		return ""
+	}
+	var pr string
 	if r.PRNumber > 0 {
-		badge := fmt.Sprintf("#%d", r.PRNumber)
 		bs := herdProjectStyle
 		if r.Done {
 			bs = herdDoneStyle
 		}
-		parts = append(parts, bs.Render(badge))
+		pr = bs.Render(fmt.Sprintf("#%d", r.PRNumber))
 	}
+	out := padLeft(pr, herdPRSlotW)
+	if slots == herdRightPR {
+		return out
+	}
+	var age string
 	if !r.StateSince.IsZero() {
 		style := herdDimStyle
 		if r.State == "blocked" {
 			style = herdBlockedStyle
 		}
-		parts = append(parts, style.Render(herd.CompactAge(herdNow().Sub(r.StateSince))))
+		age = style.Render(herd.CompactAge(herdNow().Sub(r.StateSince)))
 	}
-	return strings.Join(parts, " ")
+	return out + " " + padLeft(age, herdAgeSlotW)
 }
 
-// recapStyle is the style for a row's recap text: the activity fallback is
-// the weakest signal and renders dimmer than a real recap, task or title.
-func recapStyle(src herd.RecapSource) lipgloss.Style {
-	if src == herd.RecapActivity {
-		return herdActivityStyle.Italic(true)
+// recapStyle is the style for a row's recap text, by row weight: working in
+// normal text, done subtle, idle muted, blocked subtle as before. The
+// activity fallback is the weakest signal and stays italic; a row with no
+// recap at all (src RecapNone, see rowRecap) gets the muted italic fallback.
+func recapStyle(w herdWeight, src herd.RecapSource) lipgloss.Style {
+	if src == herd.RecapNone {
+		return herdEmptyStyle
 	}
-	return herdRecapStyle
+	var st lipgloss.Style
+	switch w {
+	case herdWeightWorking:
+		st = herdRecapWorkingStyle
+	case herdWeightIdle:
+		st = herdRecapIdleStyle
+	default: // done, blocked
+		st = herdRecapStyle
+	}
+	if src == herd.RecapActivity {
+		if w == herdWeightBlocked {
+			st = herdActivityStyle
+		}
+		return st.Italic(true)
+	}
+	return st
 }
 
 // renderTreeRow renders an agent row: cursor, glyph, tree prefix (dim), base
-// agent name, recap, then the right-aligned age/PR badge and close button.
-// The prefix is clamped so deep nesting cannot starve the name. A selected
-// row also renders its detail lines (see rowDetail) beneath it, joined by
-// newlines; every line measures at most cw (exactly cw when selected).
+// agent name, recap, then the right-aligned PR and age columns and the close
+// button. The prefix is clamped so deep nesting cannot starve the name. A
+// selected row also renders its detail lines (see rowDetail) beneath it,
+// joined by newlines; every line measures at most cw (exactly cw when
+// selected).
 func (m HerdModel) renderTreeRow(r herd.Row, treePrefix string, nameCol int, selected bool, cw int) string {
 	return m.renderTreeRowHover(r, treePrefix, nameCol, selected, herdHoverNone, cw)
 }
 
 // renderTreeRowHover is renderTreeRow with the hover region of this row: a
-// body hover tints an unselected row, a close hover recolours the ✕.
+// body hover tints an unselected row, a close hover recolours the ✕. The ✕
+// is drawn only on the selected and the hovered row; every other row keeps
+// its one-cell slot blank so alignment and hit regions never change.
 func (m HerdModel) renderTreeRowHover(r herd.Row, treePrefix string, nameCol int, selected bool, hover herdHoverRegion, cw int) string {
 	glyph, style := rowGlyph(r)
+	weight := rowWeight(r)
 	cursor := herdRowCursor(r, selected)
 	glyphStr := style.Render(glyph)
 
@@ -1743,28 +2104,30 @@ func (m HerdModel) renderTreeRowHover(r herd.Row, treePrefix string, nameCol int
 	name := truncateToWidth(herd.BaseName(r), nameBudget)
 
 	padW := max(col-lipgloss.Width(treePrefix)-lipgloss.Width(name), 0)
-	prefix := cursor + glyphStr + " " + herdDimStyle.Render(treePrefix) + renderAgentNameHover(name, r.State == "blocked", hovered) + strings.Repeat(" ", padW) + "  "
+	prefix := cursor + glyphStr + " " + herdDimStyle.Render(treePrefix) + renderAgentNameHover(name, weight, hovered) + strings.Repeat(" ", padW) + "  "
 	available := inner - lipgloss.Width(prefix) - closeW
 
 	closeStyle := herdDimStyle
+	showClose := selected || hovered
 	var text, right string
 	if m.confirmingRow(r) {
 		// The full instance name: this is the identifier being closed.
 		text = herdBlockedStyle.Render(truncateToWidth("close "+r.Name+"? y/n", available))
 		closeStyle = herdBlockedStyle
+		showClose = true
 	} else {
 		if hover == herdHoverClose {
 			closeStyle = herdCloseHoverStyle
 		}
-		right = rowRight(r)
-		if rw := lipgloss.Width(right); rw > 0 && available-rw-1 >= herdMinRecapWidth {
+		// The columns sit at fixed positions, but the recap may run into a
+		// slot this row leaves blank: only what is drawn is reserved.
+		right = strings.TrimLeft(rowRight(r, fitRightSlots(available)), " ")
+		if rw := lipgloss.Width(right); rw > 0 {
 			available -= rw + 1
-		} else {
-			right = ""
 		}
 		recap := rowRecap(r)
-		rs := recapStyle(recap.Source)
-		if hovered {
+		rs := recapStyle(weight, recap.Source)
+		if hovered && recap.Source != herd.RecapNone {
 			rs = herdRecapHoverStyle
 			if recap.Source == herd.RecapActivity {
 				rs = herdActivityHoverStyle
@@ -1773,9 +2136,13 @@ func (m HerdModel) renderTreeRowHover(r herd.Row, treePrefix string, nameCol int
 		text = rs.Render(truncateToWidth(recap.Text, available))
 	}
 
+	closeBtn := strings.Repeat(" ", lipgloss.Width(herdCloseLabel))
+	if showClose {
+		closeBtn = closeStyle.Render(herdCloseLabel)
+	}
 	line := prefix + text
 	pad := inner - closeW - lipgloss.Width(line) - lipgloss.Width(right)
-	line += strings.Repeat(" ", max(pad, 0)) + right + " " + closeStyle.Render(herdCloseLabel)
+	line += strings.Repeat(" ", max(pad, 0)) + right + " " + closeBtn
 	var hl *lipgloss.Style
 	switch {
 	case selected:
@@ -1795,11 +2162,42 @@ func (m HerdModel) renderTreeRowHover(r herd.Row, treePrefix string, nameCol int
 
 // rowRecap is the row's recap as loaded (herd.TagLogs), or, for a row that
 // never went through it, the log-free part of the chain (task, activity).
+// A row with nothing at all gets a fallback sentence built from what the row
+// already knows (see emptyRecapText), still with Source RecapNone so it
+// renders as a fallback; herd.Recap itself stays pure.
 func rowRecap(r herd.Row) herd.RecapLine {
+	if r.Shell {
+		return herd.RecapLine{Text: "shell"}
+	}
 	if r.Recap.Source != herd.RecapNone {
 		return r.Recap
 	}
-	return herd.Recap(r, herd.LogInfo{})
+	if rc := herd.Recap(r, herd.LogInfo{}); rc.Source != herd.RecapNone {
+		return rc
+	}
+	return herd.RecapLine{Text: emptyRecapText(r, herdNow())}
+}
+
+// emptyRecapText is the sentence a row with no recap shows: "waiting for
+// first prompt · 4m" before the first turn, otherwise "no activity yet ·
+// started 2d ago". The age is omitted when the start time is unknown.
+func emptyRecapText(r herd.Row, now time.Time) string {
+	var since time.Time
+	if r.StartTime > 0 {
+		since = time.Unix(r.StartTime, 0)
+	} else if !r.StateSince.IsZero() {
+		since = r.StateSince
+	}
+	if r.TurnCount == 0 {
+		if since.IsZero() {
+			return "waiting for first prompt"
+		}
+		return "waiting for first prompt · " + herd.CompactAge(now.Sub(since))
+	}
+	if since.IsZero() {
+		return "no activity yet"
+	}
+	return "no activity yet · started " + herd.CompactAge(now.Sub(since)) + " ago"
 }
 
 // herdKeptPrefix clamps a row's tree prefix the way renderTreeRowHover does,
@@ -1849,16 +2247,18 @@ const herdDetailIndent = 5
 // herdDetailMaxLines caps a selected row's extra lines.
 const herdDetailMaxLines = 3
 
-// herdDetailLine is one plain-text detail line and whether it is the
-// activity line (dimmer) rather than recap text.
+// herdDetailLine is one plain-text detail line and its marker ("" for recap
+// text, herdActivityMarker or herdCommandMarker for an activity line).
 type herdDetailLine struct {
-	text     string
-	activity bool
+	text   string
+	marker string
 }
 
 // rowDetail returns the plain detail lines a selected row renders beneath
 // itself at width cw: the full recap wrapped, then the last activity line
-// when it differs from the recap, at most herdDetailMaxLines in total. Hit
+// when it differs from the recap, at most herdDetailMaxLines in total. A
+// recap that is itself the activity (herd.RecapActivity: the last tool
+// command or text) is one marked, truncated line and never wraps. Hit
 // testing and scrolling count these lines, so rendering must use exactly
 // this. prefixW is the width of the row's kept tree prefix (herdKeptPrefix).
 func rowDetail(r herd.Row, prefixW, cw int) []herdDetailLine {
@@ -1868,9 +2268,15 @@ func rowDetail(r herd.Row, prefixW, cw int) []herdDetailLine {
 	}
 	activity := herd.ActivityLine(r)
 	rc := rowRecap(r)
+	if rc.Source == herd.RecapNone {
+		return nil // the fallback sentence is already the whole story
+	}
+	if rc.Source == herd.RecapActivity {
+		marker, text := activityMarker(r, rc.Text)
+		return []herdDetailLine{{text: truncateToWidth(text, w-lipgloss.Width(marker)), marker: marker}}
+	}
 	recap := rc.Text
-	isActivity := rc.Source == herd.RecapActivity
-	showActivity := activity != "" && !isActivity && activity != recap
+	showActivity := activity != "" && activity != recap
 
 	recapMax := herdDetailMaxLines
 	if showActivity {
@@ -1878,30 +2284,42 @@ func rowDetail(r herd.Row, prefixW, cw int) []herdDetailLine {
 	}
 	var out []herdDetailLine
 	for _, l := range wrapLines(recap, w, recapMax) {
-		out = append(out, herdDetailLine{text: l, activity: isActivity})
+		out = append(out, herdDetailLine{text: l})
 	}
 	if showActivity {
-		out = append(out, herdDetailLine{text: truncateToWidth(activity, w-herdActivityMarkerW), activity: true})
+		marker, text := activityMarker(r, activity)
+		out = append(out, herdDetailLine{text: truncateToWidth(text, w-lipgloss.Width(marker)), marker: marker})
 	}
 	return out
 }
 
-// herdActivityMarker leads the last-action line.
+// Markers leading an activity detail line: a shell command from the last
+// tool detail ("Bash: go test" shows as "$ go test"), anything else.
 const (
-	herdActivityMarker  = "› "
-	herdActivityMarkerW = 2
+	herdCommandMarker  = "$ "
+	herdActivityMarker = "› "
 )
+
+// activityMarker picks the marker for an activity line and the text to show
+// after it: a Bash tool detail drops its "Bash: " label for "$ ".
+func activityMarker(r herd.Row, text string) (marker, shown string) {
+	if r.LastToolDetail != "" {
+		if cmd, ok := strings.CutPrefix(text, "Bash: "); ok {
+			return herdCommandMarker, cmd
+		}
+	}
+	return herdActivityMarker, text
+}
 
 // rowDetailStyled renders rowDetail's lines with the bar, indent and the
 // tree continuation for the row's (already clamped) prefix.
 func rowDetailStyled(r herd.Row, treePrefix string, cw int) []string {
-	bar := lipgloss.NewStyle().Foreground(lipgloss.Color(herdColorFor(r.Project))).Render("▎")
-	indent := bar + strings.Repeat(" ", herdDetailIndent-1) + herdDimStyle.Render(herdContinuation(treePrefix))
+	indent := herdProjectBar(r.Project) + strings.Repeat(" ", herdDetailIndent-1) + herdDimStyle.Render(herdContinuation(treePrefix))
 	var out []string
 	for _, d := range rowDetail(r, lipgloss.Width(treePrefix), cw) {
 		text := herdActivityStyle.Render(d.text)
-		if d.activity && rowRecap(r).Source != herd.RecapActivity {
-			text = herdDimStyle.Render(herdActivityMarker) + text
+		if d.marker != "" {
+			text = herdDimStyle.Render(d.marker) + text
 		}
 		out = append(out, indent+text)
 	}
@@ -2062,6 +2480,9 @@ func viewerSyncTarget(lines []herdLine, liveShown, seen, home, win string) (key 
 // syncFromViewer moves the list selection to the window the viewer switched
 // to by other means (a chrome-bar tab click inside the live pane).
 func (m HerdModel) syncFromViewer(msg herdViewerMsg) HerdModel {
+	if key := msg.home + "|" + msg.window; msg.home != "" && msg.window != "" && key != m.viewerSeen && key != m.liveShown {
+		m.revealRow(msg.home, msg.window) // a switch to a hidden row unfolds it
+	}
 	key, follow := viewerSyncTarget(m.lines, m.liveShown, m.viewerSeen, msg.home, msg.window)
 	m.viewerSeen = key
 	if !follow {
@@ -2111,14 +2532,26 @@ func herdZoomSyncCmd(shown bool) tea.Cmd {
 // applies it to the viewed window at once.
 func (m *HerdModel) toggleChrome() tea.Cmd {
 	m.hubChrome = !m.hubChrome
+	msg := "chrome bar hidden in the hub"
 	if m.hubChrome {
-		m.infoMsg = "chrome bar shown in the hub"
-	} else {
-		m.infoMsg = "chrome bar hidden in the hub"
+		msg = "chrome bar shown in the hub"
 	}
 	m.jumpErr = ""
+	m.setSuccess(msg)
 	return herdZoomSyncCmd(m.hubChrome)
 }
 
 // HubChrome reports whether the live pane shows the agent's chrome bar.
 func (m HerdModel) HubChrome() bool { return m.hubChrome }
+
+// dimContextRow mutes a rendered row the attention filter keeps only as an
+// ancestor of a matching row: the project bar keeps its colour, everything
+// after it goes dim.
+func dimContextRow(r herd.Row, line string) string {
+	plain := ansi.Strip(line)
+	_, rest, ok := strings.Cut(plain, "▎")
+	if !ok {
+		return herdDimStyle.Render(plain)
+	}
+	return herdProjectBar(r.Project) + herdDimStyle.Render(rest)
+}

@@ -31,6 +31,11 @@ type Row struct {
 	// menu or hub (and for windows with no windowstate record).
 	Dispatched bool
 
+	// Shell marks a plain "shell" window. It is shown in the hub so it can be
+	// selected, viewed and closed, but it is not an agent: no state, no
+	// windowstate record, and it never feeds the group rollup.
+	Shell bool
+
 	// Parent is the tmux window ID (same session) of the agent that
 	// dispatched this window, or "" when none or untrusted (see
 	// Meta.Parent).
@@ -103,7 +108,14 @@ type Group struct {
 // session's problem: a session tmux cannot list renders as an empty group
 // rather than failing the caller's whole aggregation. See docs/herd-view-design.md for why tmux,
 // not the registry, is the primary discovery source.
-func Load() ([]Group, error) {
+func Load() ([]Group, error) { return load(false) }
+
+// LoadWithShells is Load for the hub: each group also carries its "shell"
+// windows as Shell rows (never part of the rollup). status, fleet watching
+// and the other readers use Load and never see them.
+func LoadWithShells() ([]Group, error) { return load(true) }
+
+func load(shells bool) ([]Group, error) {
 	live := make(map[string]bool)
 	for _, s := range tmux.ListSessions() {
 		live[s] = true
@@ -118,7 +130,7 @@ func Load() ([]Group, error) {
 
 	groups := make([]Group, 0, len(merged))
 	for _, e := range merged {
-		groups = append(groups, LoadGroup(e))
+		groups = append(groups, loadGroup(e, shells))
 	}
 	return OrderGroups(groups), nil
 }
@@ -208,7 +220,9 @@ func isAgentctlSessionName(name string) bool {
 // Never returns an error — if tmux cannot list the session (server gone) the
 // group is empty. state.json is not consulted beyond optional token
 // enrichment.
-func LoadGroup(e registry.Entry) Group {
+func LoadGroup(e registry.Entry) Group { return loadGroup(e, false) }
+
+func loadGroup(e registry.Entry, withShells bool) Group {
 	project := projectDisplayName(e)
 	g := Group{
 		Session:    e.SessionName,
@@ -217,15 +231,24 @@ func LoadGroup(e registry.Entry) Group {
 		RuntimeDir: e.RuntimeDir,
 		ProjectDir: e.ProjectDir,
 	}
-	agents, err := LoadAgents(e.SessionName, e.RuntimeDir)
+	agents, shells, err := loadAgentsAndShells(e.SessionName, e.RuntimeDir)
 	if err != nil {
 		return g
+	}
+	if !withShells {
+		shells = nil
 	}
 	rows := TagAgents(e.SessionName, project, agents)
 	TagMeta(rows, LoadMeta(Group{RuntimeDir: e.RuntimeDir}))
 	TagLogs(rows)
-	g.Rows = rows
 	g.Rollup = RollupRows(rows)
+	if len(shells) > 0 {
+		for _, s := range shells {
+			rows = append(rows, Row{Session: e.SessionName, Project: project, AgentState: s, Shell: true})
+		}
+		rows = SortRows(rows)
+	}
+	g.Rows = rows
 	return g
 }
 
