@@ -1,4 +1,4 @@
-// hub.go holds the tmux primitives for the herd hub: a dedicated, persistent
+// hub.go holds the tmux primitives for the fleet hub: a dedicated, persistent
 // tmux session (agentctl-hub) that runs the cross-session aggregator view.
 // Unlike per-project agentctl-<dir> sessions, the hub owns no agents, so its
 // lifecycle deliberately bypasses applyConfig (no monitor, no restore, no
@@ -22,17 +22,17 @@ import (
 	"github.com/blsmth/agentctl/internal/selfpath"
 )
 
-// HubSessionName is the fixed tmux session name for the herd hub. Unlike
+// HubSessionName is the fixed tmux session name for the fleet hub. Unlike
 // per-project sessions it does not vary with the launching directory.
 const HubSessionName = "agentctl-hub"
 
-// HerdListWindowName is the stable tmux window name of the hub session's
+// FleetListWindowName is the stable tmux window name of the hub session's
 // sole home-grown window — the one running `agentctl hub-view` (the
-// HerdModel aggregator). It's given a fixed name (rather than left to
+// FleetModel aggregator). It's given a fixed name (rather than left to
 // default to the running command) so it can be targeted reliably by
-// SelectHerdListWindow once other windows — linked-in agent windows — start
+// SelectFleetListWindow once other windows — linked-in agent windows — start
 // sharing the session.
-const HerdListWindowName = "herd-list"
+const FleetListWindowName = "fleet-list"
 
 // ListSessions returns the names of every tmux session on the local server.
 // Returns an empty slice (not an error) when no tmux server is running, since
@@ -60,10 +60,10 @@ func parseSessionList(raw string) []string {
 }
 
 // SessionInfo holds a tmux session's name and its working directory
-// (#{session_path}). This is the herd hub's primary discovery source: tmux
+// (#{session_path}). This is the fleet hub's primary discovery source: tmux
 // exposes the project directory directly, so no registry lookup is needed to
 // find where a session's `.agentctl/state.json` lives (see
-// docs/herd-view-design.md).
+// docs/fleet-view-design.md).
 type SessionInfo struct {
 	Name string
 	Path string
@@ -332,14 +332,14 @@ func HubSessionExists() bool {
 	return exec.Command("tmux", "has-session", "-t", HubSessionName).Run() == nil
 }
 
-// SelectHerdListWindow selects the hub's own herd-list window (the one
-// running the HerdModel aggregator) by its stable name. This is the "back to
+// SelectFleetListWindow selects the hub's own fleet-list window (the one
+// running the FleetModel aggregator) by its stable name. This is the "back to
 // the list" primitive: `agentctl hub` calls it when the caller is already
 // inside the hub session (see SwitchToHub), so the summon key works as a
 // consistent "take me to the list" gesture from anywhere — including from
 // inside the live hub view.
-func SelectHerdListWindow() error {
-	target := sessionWindowTarget(HubSessionName, HerdListWindowName)
+func SelectFleetListWindow() error {
+	target := sessionWindowTarget(HubSessionName, FleetListWindowName)
 	cmd := exec.Command("tmux", "select-window", "-t", target)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("select-window %s: %s: %w", target, string(out), err)
@@ -350,7 +350,7 @@ func SelectHerdListWindow() error {
 // CurrentSessionName returns the tmux session name of the currently attached
 // client, or "" if the caller isn't running inside a tmux client (no TMUX
 // env var) or the query fails. Used by SwitchToHub to detect "already inside
-// the hub" so it can select the herd-list window instead of issuing a
+// the hub" so it can select the fleet-list window instead of issuing a
 // (harmless but unhelpful) switch-client to the session it's already in.
 func CurrentSessionName() string {
 	if os.Getenv("TMUX") == "" {
@@ -430,7 +430,7 @@ func hubNewSessionArgs(dir, exe string) []string {
 		"new-session",
 		"-d",
 		"-s", HubSessionName,
-		"-n", HerdListWindowName,
+		"-n", FleetListWindowName,
 		"-c", FormatEscape(dir), // -c is format-expanded
 		"-e", "AGENTCTL=1",
 		// Explicitly clear AGENTCTL_RUNTIME_DIR. tmux new-session seeds a
@@ -475,21 +475,21 @@ func StartHubSession() error {
 	_ = exec.Command("tmux", "set-option", "-t", HubSessionName, "mouse", "on").Run()
 	_ = exec.Command("tmux", "set-option", "-t", HubSessionName, "set-titles", "on").Run()
 	_ = exec.Command("tmux", "set-option", "-t", HubSessionName, "set-titles-string", "agentctl · hub").Run()
-	// Pin the herd-list window's name: nothing re-asserts it every tick (the
+	// Pin the fleet-list window's name: nothing re-asserts it every tick (the
 	// way the monitor keeps agent windows' state-glyph names sticky), so
 	// automatic-rename would otherwise be free to drift it away from
-	// HerdListWindowName over time, breaking SelectHerdListWindow's targeting.
-	herdListTarget := sessionWindowTarget(HubSessionName, HerdListWindowName)
-	_ = exec.Command("tmux", "set-window-option", "-t", herdListTarget, "automatic-rename", "off").Run()
+	// FleetListWindowName over time, breaking SelectFleetListWindow's targeting.
+	fleetListTarget := sessionWindowTarget(HubSessionName, FleetListWindowName)
+	_ = exec.Command("tmux", "set-window-option", "-t", fleetListTarget, "automatic-rename", "off").Run()
 
 	return nil
 }
 
 // SwitchToHub creates the hub session if it doesn't already exist, then
-// gets the caller to the herd-list window: `select-window` if the caller is
+// gets the caller to the fleet-list window: `select-window` if the caller is
 // already attached to the hub session itself (e.g. the summon key pressed
 // from inside the live hub view — see
-// SelectHerdListWindow), `switch-client` if attached to a different tmux
+// SelectFleetListWindow), `switch-client` if attached to a different tmux
 // session, or `attach-session` if not inside any tmux client at all (e.g.
 // summoning the hub from outside tmux entirely).
 func SwitchToHub() error {
@@ -499,7 +499,7 @@ func SwitchToHub() error {
 
 	if os.Getenv("TMUX") != "" {
 		if CurrentSessionName() == HubSessionName {
-			return SelectHerdListWindow()
+			return SelectFleetListWindow()
 		}
 		cmd := exec.Command("tmux", "switch-client", "-t", HubSessionName)
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -555,7 +555,7 @@ func KillSessionWindow(session, windowID string) error {
 }
 
 // IsHubWindow reports whether windowID belongs to the hub session (its
-// herd-list window). Chrome bars and HUD panes must never be attached to it.
+// fleet-list window). Chrome bars and HUD panes must never be attached to it.
 func IsHubWindow(windowID string) bool {
 	return SessionOfWindow(windowID) == HubSessionName
 }

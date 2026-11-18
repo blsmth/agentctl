@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 )
 
@@ -78,7 +78,7 @@ func TestKeepAwakeStartFailureRetries(t *testing.T) {
 
 func TestRunKeepAwakeFollowsFleet(t *testing.T) {
 	win := func(st string, done bool) fleetwatch.Group {
-		return fleetwatch.Group{Session: "agentctl-p", Windows: []herd.Window{
+		return fleetwatch.Group{Session: "agentctl-p", Windows: []fleet.Window{
 			{Session: "agentctl-p", WindowID: "@1", State: st, Done: done},
 		}}
 	}
@@ -134,7 +134,7 @@ func TestRunKeepAwakeFollowsFleet(t *testing.T) {
 func TestServerCloseReleasesKeepAwake(t *testing.T) {
 	e := newReadEnv(t)
 	h := e.holder.(*fakeHolder)
-	e.fleet.set(fleetwatch.Group{Session: "agentctl-p", Windows: []herd.Window{{Session: "agentctl-p", WindowID: "@1", State: "working"}}})
+	e.fleet.set(fleetwatch.Group{Session: "agentctl-p", Windows: []fleet.Window{{Session: "agentctl-p", WindowID: "@1", State: "working"}}})
 	e.Start(context.Background())
 	deadline := time.Now().Add(2 * time.Second)
 	for {

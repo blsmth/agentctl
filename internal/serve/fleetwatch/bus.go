@@ -8,7 +8,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
@@ -32,11 +32,11 @@ const (
 // Event is one bus message. Only the fields for its Kind are set.
 type Event struct {
 	Kind     Kind
-	Fleet    []Group     // KindFleet
-	Window   herd.Window // KindWindow, KindTransition
-	Session  string      // KindGone
-	WindowID string      // KindGone
-	From, To string      // KindTransition
+	Fleet    []Group      // KindFleet
+	Window   fleet.Window // KindWindow, KindTransition
+	Session  string       // KindGone
+	WindowID string       // KindGone
+	From, To string       // KindTransition
 }
 
 // Timing defaults; tests override them through Options.
@@ -63,7 +63,7 @@ type Bus struct {
 	mu      sync.Mutex
 	loaded  bool
 	cur     []Group
-	windows map[string]herd.Window // key: session + "\x00" + window id
+	windows map[string]fleet.Window // key: session + "\x00" + window id
 	missed  map[string]int
 	subs    map[*Subscription]struct{}
 
@@ -80,7 +80,7 @@ func NewBus(src Source, opts Options) *Bus {
 	}
 	return &Bus{
 		src: src, opts: opts,
-		windows: make(map[string]herd.Window),
+		windows: make(map[string]fleet.Window),
 		missed:  make(map[string]int),
 		subs:    make(map[*Subscription]struct{}),
 	}
@@ -153,8 +153,8 @@ func (b *Bus) Refresh() {
 // diffLocked computes events against b.windows and returns the new window
 // map plus the snapshot to expose (groups, with windows that are missing but
 // not yet gone kept in place).
-func (b *Bus) diffLocked(groups []Group) ([]Event, map[string]herd.Window, []Group) {
-	next := make(map[string]herd.Window, len(b.windows))
+func (b *Bus) diffLocked(groups []Group) ([]Event, map[string]fleet.Window, []Group) {
+	next := make(map[string]fleet.Window, len(b.windows))
 	var events []Event
 	for _, g := range groups {
 		for _, w := range g.Windows {
@@ -193,12 +193,12 @@ func (b *Bus) diffLocked(groups []Group) ([]Event, map[string]herd.Window, []Gro
 }
 
 // keepWindow returns groups with w present, copying only what it changes.
-func keepWindow(groups []Group, w herd.Window) []Group {
+func keepWindow(groups []Group, w fleet.Window) []Group {
 	out := make([]Group, len(groups))
 	copy(out, groups)
 	for i := range out {
 		if out[i].Session == w.Session {
-			ws := make([]herd.Window, len(out[i].Windows), len(out[i].Windows)+1)
+			ws := make([]fleet.Window, len(out[i].Windows), len(out[i].Windows)+1)
 			copy(ws, out[i].Windows)
 			out[i].Windows = append(ws, w)
 			return out

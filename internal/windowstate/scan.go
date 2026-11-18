@@ -13,7 +13,7 @@ import (
 // This exists for cross-session queries. All() can only ever see the calling
 // process's own project, because windowsDir is derived from paths.RuntimeDir()
 // at Init time. A command that aggregates every live agentctl session (see
-// internal/herd) needs to read each session's windows directory in turn, and
+// internal/fleet) needs to read each session's windows directory in turn, and
 // hijacking the package global via SetDirForTest would be both racy and a lie
 // about that function's contract.
 //

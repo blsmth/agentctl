@@ -399,7 +399,7 @@ func TestSplitPane_ViewHorizontal_RendersSideBySide(t *testing.T) {
 }
 
 // TestSplitPane_ViewHorizontal_DividerIsSingleAndFullHeight is the
-// regression test for the two herd hub defects fixed here: a doubled
+// regression test for the two fleet hub defects fixed here: a doubled
 // vertical rule where the sidebar met the detail panel (defect 1 — "│╭" /
 // "││" on every row), and a divider that stopped short of the pane's full
 // height once the sidebar ran out of content while the detail box's border

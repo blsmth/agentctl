@@ -1,27 +1,27 @@
 // Package fleetwatch is the fleet event bus behind `agentctl serve`: it
 // watches every live session's windowstate directory, rebuilds the fleet
-// through herd (tmux + windowstate, never the monitor), diffs the rendered
+// through fleet (tmux + windowstate, never the monitor), diffs the rendered
 // windows and fans typed events out to subscribers (SSE handlers, keep-awake,
 // later push).
 package fleetwatch
 
 import (
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 )
 
 // Group is one session's worth of windows as served by /v1/fleet.
 type Group struct {
-	Session string        `json:"session"`
-	Project string        `json:"project"`
-	Dir     string        `json:"dir"`
-	Rollup  string        `json:"rollup"`
-	Windows []herd.Window `json:"windows"`
+	Session string         `json:"session"`
+	Project string         `json:"project"`
+	Dir     string         `json:"dir"`
+	Rollup  string         `json:"rollup"`
+	Windows []fleet.Window `json:"windows"`
 
 	// RuntimeDir is the session's .agentctl dir, watched by the bus.
 	RuntimeDir string `json:"-"`
 	// Rows and Meta carry the detail the window endpoint renders.
-	Rows []herd.Row           `json:"-"`
-	Meta map[string]herd.Meta `json:"-"`
+	Rows []fleet.Row           `json:"-"`
+	Meta map[string]fleet.Meta `json:"-"`
 }
 
 // Source produces the current fleet.
@@ -29,23 +29,23 @@ type Source interface {
 	Fleet() ([]Group, error)
 }
 
-// HerdSource is the production Source: herd.Load over tmux and windowstate.
-type HerdSource struct{}
+// LiveSource is the production Source: fleet.Load over tmux and windowstate.
+type LiveSource struct{}
 
 // Fleet implements Source.
-func (HerdSource) Fleet() ([]Group, error) {
-	groups, err := herd.Load()
+func (LiveSource) Fleet() ([]Group, error) {
+	groups, err := fleet.Load()
 	if err != nil {
 		return nil, err
 	}
-	return FromHerd(groups), nil
+	return FromFleet(groups), nil
 }
 
-// FromHerd converts herd groups, loading each group's windowstate metadata.
-func FromHerd(groups []herd.Group) []Group {
+// FromFleet converts fleet groups, loading each group's windowstate metadata.
+func FromFleet(groups []fleet.Group) []Group {
 	out := make([]Group, 0, len(groups))
 	for _, g := range groups {
-		meta := herd.LoadMeta(g)
+		meta := fleet.LoadMeta(g)
 		out = append(out, Group{
 			Session:    g.Session,
 			Project:    g.Project,
@@ -76,8 +76,8 @@ func Find(groups []Group, session, windowID string) (Group, int, bool) {
 }
 
 // Status names the attention state of a window: blocked, working, done or
-// idle (the same precedence as herd's rollup).
-func Status(w herd.Window) string {
+// idle (the same precedence as fleet's rollup).
+func Status(w fleet.Window) string {
 	switch {
 	case w.State == "blocked":
 		return "blocked"

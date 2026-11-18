@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/metricsproc"
@@ -48,7 +48,7 @@ func RunHealth() {
 
 	// Agent states from tmux list-windows + windowstate (never state.json).
 	stateFilePath := filepath.Join(runtimeDir, "state.json")
-	agents, err := herd.LocalAgents()
+	agents, err := fleet.LocalAgents()
 	if err == nil && len(agents) > 0 {
 		fmt.Printf("  Windows: %d\n", len(agents))
 		for _, a := range agents {

@@ -224,7 +224,7 @@ func Load() (*State, error) {
 }
 
 // LoadFrom reads a state.json from an arbitrary path. Returns nil, nil if the
-// file doesn't exist. This lets callers (e.g. the herd hub) read N snapshots
+// file doesn't exist. This lets callers (e.g. the fleet hub) read N snapshots
 // from N project directories without going through the package-global path.
 func LoadFrom(path string) (*State, error) {
 	data, err := os.ReadFile(path)

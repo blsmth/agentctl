@@ -15,7 +15,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/cleanup"
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/launchopts"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
@@ -97,7 +97,7 @@ func (l *windowLocks) lock(session, windowID string) (unlock func()) {
 type resolved struct {
 	group  fleetwatch.Group
 	index  int
-	window herd.Window
+	window fleet.Window
 	// pane is the window's main pane, set by lockWindow.
 	pane string
 }
@@ -408,7 +408,7 @@ func closable(rw resolved, paneVerdict string) (cleanup.SweepVerdict, bool) {
 		name = rw.group.Rows[rw.index].Name
 	}
 	v := cleanup.ClassifyWindow(cleanup.SweepFacts{
-		NonAgent:          herd.IsNonAgentWindow(name) || herd.IsNonAgentWindow(rw.window.Agent),
+		NonAgent:          fleet.IsNonAgentWindow(name) || fleet.IsNonAgentWindow(rw.window.Agent),
 		Tracked:           tracked,
 		IncludeBare:       true,
 		State:             rw.window.State,

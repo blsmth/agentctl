@@ -15,7 +15,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/blsmth/agentctl/internal/config"
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/theme"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -394,7 +394,7 @@ func (m *ChromeBarModel) rebuild(relist bool) bool {
 	}
 
 	records := windowstate.AllFrom(windowstate.WindowsDirFor(m.runtimeDir))
-	agents := herd.BuildAgents(m.wins, records, nil, time.Now())
+	agents := fleet.BuildAgents(m.wins, records, nil, time.Now())
 
 	active := tmux.ActiveWindowIDFast(filepath.Join(m.runtimeDir, "active-window"))
 
@@ -723,7 +723,7 @@ func focusAgentPane(windowID string) {
 }
 
 // selectTabWindow switches to target. When origin is being viewed through the
-// herd hub's live viewer, the viewer session switches (the hub list follows by
+// fleet hub's live viewer, the viewer session switches (the hub list follows by
 // polling the viewer); otherwise the home session switches as usual.
 func selectTabWindow(origin, target string) {
 	if viewer := tmux.ViewerForWindow(origin); viewer != "" {

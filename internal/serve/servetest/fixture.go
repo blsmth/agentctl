@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/state"
 )
@@ -35,7 +35,7 @@ var paneKinds = map[string]string{
 }
 
 // Window is one fixture window. It is the JSON the control API accepts, and
-// deliberately flat: the harness derives the herd row, windowstate metadata
+// deliberately flat: the harness derives the fleet row, windowstate metadata
 // and served window from it, so they can never disagree.
 type Window struct {
 	ID          string `json:"id"`
@@ -169,13 +169,13 @@ func build(groups []Group, root string, now time.Time) []fleetwatch.Group {
 		fg := fleetwatch.Group{
 			Session: g.Session, Project: g.Project, Dir: g.Dir,
 			RuntimeDir: filepath.Join(root, "fixture", g.Session, ".agentctl"),
-			Meta:       map[string]herd.Meta{},
+			Meta:       map[string]fleet.Meta{},
 		}
 		for _, w := range g.Windows {
 			row, meta := rowFor(g, w, now)
 			fg.Rows = append(fg.Rows, row)
 			fg.Meta[w.ID] = meta
-			fg.Windows = append(fg.Windows, herd.ToWindow(row, meta))
+			fg.Windows = append(fg.Windows, fleet.ToWindow(row, meta))
 		}
 		fg.Rollup = rollup(fg.Windows)
 		out = append(out, fg)
@@ -183,8 +183,8 @@ func build(groups []Group, root string, now time.Time) []fleetwatch.Group {
 	return out
 }
 
-func rowFor(g Group, w Window, now time.Time) (herd.Row, herd.Meta) {
-	row := herd.Row{Session: g.Session, Project: g.Project, AgentState: state.AgentState{
+func rowFor(g Group, w Window, now time.Time) (fleet.Row, fleet.Meta) {
+	row := fleet.Row{Session: g.Session, Project: g.Project, AgentState: state.AgentState{
 		Name: w.Agent, WindowID: w.ID, WindowIndex: w.Index, State: w.State, Done: w.Done,
 		ContextPct: w.ContextPct, LastText: w.Activity, MainPane: paneID(w.ID),
 		ModelName: w.Model, Ticket: w.Issue,
@@ -193,7 +193,7 @@ func rowFor(g Group, w Window, now time.Time) (herd.Row, herd.Meta) {
 	if mode == "" {
 		mode = "bare"
 	}
-	meta := herd.Meta{
+	meta := fleet.Meta{
 		WindowID: w.ID, Mode: mode, Branch: w.Branch, MainPane: paneID(w.ID),
 		UpdatedAt: now.Add(-2 * time.Minute), StateSince: now.Add(-3 * time.Minute),
 		TicketTitle: w.Title, CostUSD: w.CostUSD, PRURL: w.PRURL,
@@ -215,7 +215,7 @@ func rowFor(g Group, w Window, now time.Time) (herd.Row, herd.Meta) {
 func paneID(windowID string) string { return "%" + strings.TrimPrefix(windowID, "@") }
 
 // rollup is the most urgent status in ws (fleetwatch.Status precedence).
-func rollup(ws []herd.Window) string {
+func rollup(ws []fleet.Window) string {
 	rank := map[string]int{"blocked": 0, "working": 1, "done": 2, "idle": 3}
 	best := "idle"
 	for _, w := range ws {

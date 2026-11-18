@@ -74,8 +74,8 @@ type CLI struct {
 	// Dispatch
 	Dispatch DispatchCmd `cmd:"" help:"Dispatch an agent to work on a ticket"`
 
-	// Herd hub — cross-session aggregator view
-	Hub             HubCmd             `cmd:"" help:"Open the herd hub (cross-session dashboard)"`
+	// Fleet hub — cross-session aggregator view
+	Hub             HubCmd             `cmd:"" help:"Open the fleet hub (cross-session dashboard)"`
 	HubView         HubViewCmd         `cmd:"" name:"hub-view" hidden:""`
 	JumpNextBlocked JumpNextBlockedCmd `cmd:"" name:"jump-next-blocked" hidden:""`
 
@@ -513,10 +513,10 @@ func (c *DispatchCmd) Run() error {
 }
 
 // ---------------------------------------------------------------------------
-// Herd hub
+// Fleet hub
 // ---------------------------------------------------------------------------
 
-// HubCmd summons the herd hub — creating the agentctl-hub session if it
+// HubCmd summons the fleet hub — creating the agentctl-hub session if it
 // doesn't already exist — and switches into it.
 type HubCmd struct{}
 

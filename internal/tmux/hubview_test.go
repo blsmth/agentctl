@@ -21,8 +21,8 @@ func TestViewerArgBuilders(t *testing.T) {
 			[]string{"switch-client", "-c", "/dev/ttys004", "-t", "agentctl-hubview-2"}},
 		{"destroy-unattached", viewerDestroyUnattachedArgs("agentctl-hubview"),
 			[]string{"set-option", "-t", "agentctl-hubview", "destroy-unattached", "on"}},
-		{"split", viewerSplitArgs("agentctl-hub:herd-list", 80, "cmd"),
-			[]string{"split-window", "-h", "-d", "-P", "-F", "#{pane_id}", "-t", "agentctl-hub:herd-list", "-l", "80", "cmd"}},
+		{"split", viewerSplitArgs("agentctl-hub:fleet-list", 80, "cmd"),
+			[]string{"split-window", "-h", "-d", "-P", "-F", "#{pane_id}", "-t", "agentctl-hub:fleet-list", "-l", "80", "cmd"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -143,7 +143,7 @@ func TestShowLiveViewer_Refusals(t *testing.T) {
 
 // TestShowHideLiveViewer_Integration drives the real functions against a
 // private tmux server. Opt in with AGENTCTL_SPIKE_TMUX_SOCKET=<socket name>.
-// The server needs agentctl-hub:herd-list (attached by a client, so the pane
+// The server needs agentctl-hub:fleet-list (attached by a client, so the pane
 // has a size) and sessions "homea" and "homeb", each with a window running a
 // long sleep; pass their window IDs via AGENTCTL_SPIKE_WIN_A / _B.
 func TestShowHideLiveViewer_Integration(t *testing.T) {

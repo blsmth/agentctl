@@ -1,7 +1,7 @@
 // Package metricsproc is the lifecycle plumbing for the per-machine
 // `agentctl metrics serve` process: where its pidfile and lock live, whether it
 // is running, and starting it detached. It is deliberately light (no tmux,
-// herd or metrics imports) so hooks and session start can use it.
+// fleet or metrics imports) so hooks and session start can use it.
 package metricsproc
 
 import (

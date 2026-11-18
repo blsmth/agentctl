@@ -216,7 +216,7 @@ func InitStyles() {
 	initHudStyles()
 	initThemePickerStyles()
 	initModalStyles()
-	initHerdStyles()
+	initFleetStyles()
 }
 
 // PopupSize describes the tmux display-popup dimensions for a TUI popup.

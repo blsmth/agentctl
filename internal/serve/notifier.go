@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 )
@@ -32,7 +32,7 @@ const (
 // episode is the push state of one window.
 type episode struct {
 	status string // last seen: blocked, working, done, idle
-	win    herd.Window
+	win    fleet.Window
 
 	blockedAt   time.Time // start of the current blocked episode
 	reminded    bool      // reminder sent (or deliberately skipped) this episode
@@ -62,7 +62,7 @@ func NewNotifier(cfg config.ServePushConfig, now func() time.Time, deliver func(
 	return &Notifier{cfg: cfg, now: now, deliver: deliver, episodes: make(map[string]*episode)}
 }
 
-func winKey(w herd.Window) string { return w.Session + "\x00" + w.WindowID }
+func winKey(w fleet.Window) string { return w.Session + "\x00" + w.WindowID }
 
 // Seed records the windows present at startup without notifying about them: a
 // restart must not re-announce every blocked agent.
@@ -105,7 +105,7 @@ func (n *Notifier) Handle(ev fleetwatch.Event) {
 }
 
 // observeLocked compares w with the window's tracked state and fires triggers.
-func (n *Notifier) observeLocked(w herd.Window) {
+func (n *Notifier) observeLocked(w fleet.Window) {
 	now := n.now()
 	k := winKey(w)
 	to := fleetwatch.Status(w)
@@ -159,7 +159,7 @@ func (n *Notifier) Tick() {
 	}
 }
 
-func (n *Notifier) fireBlockedLocked(ep *episode, w herd.Window, now time.Time) {
+func (n *Notifier) fireBlockedLocked(ep *episode, w fleet.Window, now time.Time) {
 	if !n.cfg.BlockedEnabled() || !n.allowedLocked(w, now) {
 		return
 	}
@@ -181,7 +181,7 @@ func (n *Notifier) fireBlockedLocked(ep *episode, w herd.Window, now time.Time) 
 	})
 }
 
-func (n *Notifier) fireReminderLocked(w herd.Window, blockedFor time.Duration) {
+func (n *Notifier) fireReminderLocked(w fleet.Window, blockedFor time.Duration) {
 	if !n.cfg.BlockedEnabled() || !n.allowedLocked(w, n.now()) {
 		return
 	}
@@ -197,7 +197,7 @@ func (n *Notifier) fireReminderLocked(w herd.Window, blockedFor time.Duration) {
 
 // startDoneLocked fires the done push, or waits briefly for the PR when
 // dispatch completion (which records it) is expected to run for this window.
-func (n *Notifier) startDoneLocked(ep *episode, w herd.Window, now time.Time) {
+func (n *Notifier) startDoneLocked(ep *episode, w fleet.Window, now time.Time) {
 	if w.PRURL == "" && (w.Mode == "dispatch" || w.Mode == "adhoc") {
 		ep.doneDeadline = now.Add(prGrace)
 		return
@@ -205,7 +205,7 @@ func (n *Notifier) startDoneLocked(ep *episode, w herd.Window, now time.Time) {
 	n.sendDoneLocked(ep, w, now)
 }
 
-func (n *Notifier) sendDoneLocked(ep *episode, w herd.Window, now time.Time) {
+func (n *Notifier) sendDoneLocked(ep *episode, w fleet.Window, now time.Time) {
 	ep.doneDeadline = time.Time{}
 	if !n.cfg.DoneEnabled() || !n.allowedLocked(w, now) {
 		return
@@ -231,14 +231,14 @@ func (n *Notifier) sendDoneLocked(ep *episode, w herd.Window, now time.Time) {
 }
 
 // allowedLocked applies muted projects and quiet hours.
-func (n *Notifier) allowedLocked(w herd.Window, now time.Time) bool {
+func (n *Notifier) allowedLocked(w fleet.Window, now time.Time) bool {
 	if slices.Contains(n.cfg.MutedProjects, w.Project) {
 		return false
 	}
 	return !InQuietHours(n.cfg.QuietHours, now)
 }
 
-func windowLabel(w herd.Window) string {
+func windowLabel(w fleet.Window) string {
 	return fmt.Sprintf("%s · %s", w.Project, w.WindowID)
 }
 

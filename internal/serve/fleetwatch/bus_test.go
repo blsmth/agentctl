@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/state"
 )
 
@@ -30,11 +30,11 @@ func (f *fakeSource) set(g ...Group) {
 	f.mu.Unlock()
 }
 
-func win(id, st string, done bool) herd.Window {
-	return herd.Window{Session: "agentctl-p", Project: "p", WindowID: id, Agent: "a", State: st, Done: done}
+func win(id, st string, done bool) fleet.Window {
+	return fleet.Window{Session: "agentctl-p", Project: "p", WindowID: id, Agent: "a", State: st, Done: done}
 }
 
-func grp(ws ...herd.Window) Group {
+func grp(ws ...fleet.Window) Group {
 	return Group{Session: "agentctl-p", Project: "p", Windows: ws}
 }
 
@@ -90,13 +90,13 @@ func TestBusWindowAndTransition(t *testing.T) {
 }
 
 func TestBusIgnoresNonRenderedChanges(t *testing.T) {
-	row := func(turns int, sid string) herd.Row {
-		return herd.Row{Session: "agentctl-p", Project: "p", AgentState: state.AgentState{
+	row := func(turns int, sid string) fleet.Row {
+		return fleet.Row{Session: "agentctl-p", Project: "p", AgentState: state.AgentState{
 			Name: "a", WindowID: "@1", State: "working", TurnCount: turns, SessionID: sid, InputTokens: turns * 10,
 		}}
 	}
-	mk := func(r herd.Row) Group {
-		return Group{Session: "agentctl-p", Project: "p", Windows: []herd.Window{herd.ToWindow(r, herd.Meta{})}}
+	mk := func(r fleet.Row) Group {
+		return Group{Session: "agentctl-p", Project: "p", Windows: []fleet.Window{fleet.ToWindow(r, fleet.Meta{})}}
 	}
 	src := &fakeSource{}
 	src.set(mk(row(1, "s1")))
@@ -238,13 +238,13 @@ func TestBusRunRefreshesOnFileChange(t *testing.T) {
 func TestActive(t *testing.T) {
 	tests := []struct {
 		name string
-		ws   []herd.Window
+		ws   []fleet.Window
 		want bool
 	}{
 		{"empty", nil, false},
-		{"idle and done", []herd.Window{win("@1", "idle", false), win("@2", "idle", true)}, false},
-		{"working", []herd.Window{win("@1", "working", false)}, true},
-		{"blocked", []herd.Window{win("@1", "idle", false), win("@2", "blocked", false)}, true},
+		{"idle and done", []fleet.Window{win("@1", "idle", false), win("@2", "idle", true)}, false},
+		{"working", []fleet.Window{win("@1", "working", false)}, true},
+		{"blocked", []fleet.Window{win("@1", "idle", false), win("@2", "blocked", false)}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

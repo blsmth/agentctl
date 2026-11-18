@@ -11,7 +11,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/config"
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/panestate"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
@@ -143,11 +143,11 @@ type windowDetail struct {
 }
 
 type windowBody struct {
-	herd.Window
+	fleet.Window
 	Detail windowDetail `json:"detail"`
 }
 
-func detailFor(row herd.Row, m herd.Meta) windowDetail {
+func detailFor(row fleet.Row, m fleet.Meta) windowDetail {
 	d := windowDetail{
 		Summary:           row.LastText,
 		PendingTool:       m.PendingTool,
@@ -208,13 +208,13 @@ type paneBody struct {
 }
 
 // apiVerdict maps a pane verdict to the API vocabulary.
-func apiVerdict(v herd.PaneVerdict) string {
+func apiVerdict(v fleet.PaneVerdict) string {
 	switch v {
-	case herd.PaneAwaitingInput:
+	case fleet.PaneAwaitingInput:
 		return "awaiting_input"
-	case herd.PaneBusy:
+	case fleet.PaneBusy:
 		return "working"
-	case herd.PaneIdle:
+	case fleet.PaneIdle:
 		return "idle"
 	}
 	return "unknown"
@@ -224,9 +224,9 @@ func apiVerdict(v herd.PaneVerdict) string {
 // dialog. Shared with PR4's answer guard, which must re-run exactly this.
 func buildPaneBody(text string) paneBody {
 	plain := panestate.StripANSI(text)
-	verdict := herd.ClassifyPane(plain)
+	verdict := fleet.ClassifyPane(plain)
 	body := paneBody{Text: text, Verdict: apiVerdict(verdict)}
-	if verdict == herd.PaneAwaitingInput {
+	if verdict == fleet.PaneAwaitingInput {
 		if d, ok := panestate.ParseDialog(plain); ok {
 			body.Dialog = &d
 		}

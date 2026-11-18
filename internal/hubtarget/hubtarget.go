@@ -1,7 +1,7 @@
 // Package hubtarget makes agentctl's server-global prefix keys act on the
-// agent being viewed in the herd hub, not on the hub window itself.
+// agent being viewed in the fleet hub, not on the hub window itself.
 //
-// In the hub (session agentctl-hub, window herd-list) every binding resolves
+// In the hub (session agentctl-hub, window fleet-list) every binding resolves
 // #{window_id} and the session environment to the hub. The binding sets
 // AGENTCTL_KEY_WINDOW=#{window_id} (tmux.KeyWindowEnv); Apply, called once
 // from main before paths are resolved, asks tmux whether that window is the

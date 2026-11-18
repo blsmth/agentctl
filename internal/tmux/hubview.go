@@ -151,7 +151,7 @@ func tmuxRun(args ...string) (string, error) {
 
 // viewerPaneID returns the live pane's ID in the hub list window, or "".
 func viewerPaneID() string {
-	out, err := tmuxRun("list-panes", "-t", sessionWindowTarget(HubSessionName, HerdListWindowName),
+	out, err := tmuxRun("list-panes", "-t", sessionWindowTarget(HubSessionName, FleetListWindowName),
 		"-F", "#{pane_id} #{"+viewerPaneOption+"}")
 	if err != nil {
 		return ""
@@ -259,7 +259,7 @@ func ShowLiveViewer(homeSession, windowID string, rightWidth int) error {
 		_ = exec.Command("tmux", "kill-pane", "-t", pane).Run()
 	}
 	killViewerSessions(name)
-	list := sessionWindowTarget(HubSessionName, HerdListWindowName)
+	list := sessionWindowTarget(HubSessionName, FleetListWindowName)
 	id, err := tmuxRun(viewerSplitArgs(list, rightWidth, viewerAttachCommand(outerSocketPath(), name))...)
 	if err != nil {
 		return err
@@ -286,14 +286,14 @@ func HideLiveViewer() error {
 // FocusLivePane toggles focus between the hub list pane and the live pane
 // (same as the outer-prefix `o`, but without needing the prefix).
 func FocusLivePane() error {
-	_, err := tmuxRun("select-pane", "-t", sessionWindowTarget(HubSessionName, HerdListWindowName)+".+")
+	_, err := tmuxRun("select-pane", "-t", sessionWindowTarget(HubSessionName, FleetListWindowName)+".+")
 	return err
 }
 
-// hubListPaneID returns the hub list pane's ID: the pane in the herd-list
+// hubListPaneID returns the hub list pane's ID: the pane in the fleet-list
 // window that is not the live viewer pane. Empty when it cannot be resolved.
 func hubListPaneID() string {
-	out, err := tmuxRun("list-panes", "-t", sessionWindowTarget(HubSessionName, HerdListWindowName),
+	out, err := tmuxRun("list-panes", "-t", sessionWindowTarget(HubSessionName, FleetListWindowName),
 		"-F", "#{pane_id} #{"+viewerPaneOption+"}")
 	if err != nil {
 		return ""
@@ -329,7 +329,7 @@ func SendKeyToHubList(key string) error {
 // window width has to come from tmux.
 func HubWindowWidth() (int, error) {
 	out, err := tmuxRun("display-message", "-p", "-t",
-		sessionWindowTarget(HubSessionName, HerdListWindowName), "#{window_width}")
+		sessionWindowTarget(HubSessionName, FleetListWindowName), "#{window_width}")
 	if err != nil {
 		return 0, err
 	}

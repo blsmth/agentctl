@@ -143,7 +143,7 @@ func checkSessionTarget(session, runtimeDir string) error {
 	return nil
 }
 
-// lockedFleet reads the fleet under globalsMu's read lock: herd loading may
+// lockedFleet reads the fleet under globalsMu's read lock: fleet loading may
 // consult config, which a concurrent withSession rebinds.
 type lockedFleet struct{ src FleetSource }
 

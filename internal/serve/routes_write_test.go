@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/panestate"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/state"
@@ -175,16 +175,16 @@ type writeEnv struct {
 
 // writeGroup is testGroup with a runtime dir and the window's state set.
 func writeGroup(st string, done bool, name, mode string) fleetwatch.Group {
-	row := herd.Row{Session: "agentctl-proj", Project: "proj", AgentState: state.AgentState{
+	row := fleet.Row{Session: "agentctl-proj", Project: "proj", AgentState: state.AgentState{
 		Name: name, WindowID: "@523", WindowIndex: 1, State: st, Done: done,
 	}}
-	meta := herd.Meta{WindowID: "@523", Mode: mode}
+	meta := fleet.Meta{WindowID: "@523", Mode: mode}
 	return fleetwatch.Group{
 		Session: "agentctl-proj", Project: "proj", Dir: "/code/proj", Rollup: st,
 		RuntimeDir: "/code/proj/.agentctl",
-		Windows:    []herd.Window{herd.ToWindow(row, meta)},
-		Rows:       []herd.Row{row},
-		Meta:       map[string]herd.Meta{"@523": meta},
+		Windows:    []fleet.Window{fleet.ToWindow(row, meta)},
+		Rows:       []fleet.Row{row},
+		Meta:       map[string]fleet.Meta{"@523": meta},
 	}
 }
 
@@ -688,7 +688,7 @@ func TestClose(t *testing.T) {
 		{"improve", writeGroup("idle", true, "improve~1", "dispatch"), idlePane, 409},
 		{"untracked", func() fleetwatch.Group {
 			g := writeGroup("idle", true, "go-engineer", "dispatch")
-			g.Meta = map[string]herd.Meta{}
+			g.Meta = map[string]fleet.Meta{}
 			return g
 		}(), idlePane, 409},
 		{"hub", func() fleetwatch.Group {

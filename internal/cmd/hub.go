@@ -6,14 +6,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/selfexec"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
 )
 
-// RunHub summons the herd hub — creating the agentctl-hub session if it
+// RunHub summons the fleet hub — creating the agentctl-hub session if it
 // doesn't already exist — and switches the caller into it.
 func RunHub() {
 	if err := tmux.SwitchToHub(); err != nil {
@@ -26,7 +26,7 @@ func RunHub() {
 // executes *inside* the hub session's sole window — mirrors how `agentctl
 // tickets --tui` is launched inside its own dedicated window.
 func RunHubView() {
-	model := tui.NewHerdModel()
+	model := tui.NewFleetModel()
 	for {
 		final, err := tea.NewProgram(model).Run()
 		if err != nil {
@@ -34,7 +34,7 @@ func RunHubView() {
 			fmt.Fprintf(os.Stderr, "hub-view error: %v\n", err)
 			os.Exit(1)
 		}
-		hm, ok := final.(tui.HerdModel)
+		hm, ok := final.(tui.FleetModel)
 		if !ok || !hm.Reexec() {
 			// The hub is gone: give every window it zoomed its chrome bar
 			// back. A hot reload keeps the zoom; the new image re-syncs it.
@@ -60,7 +60,7 @@ var hubClearZoom = tmux.ClearHubZoom
 // reexecHub replaces the process with the new binary, carrying the selection
 // in the environment. It returns only when exec did not happen, i.e. the
 // caller should keep running the old process.
-func reexecHub(m tui.HerdModel) {
+func reexecHub(m tui.FleetModel) {
 	exe, err := selfexec.Capture()
 	if err != nil {
 		logging.Warn("hub: re-exec skipped: %v", err)
@@ -76,7 +76,7 @@ func reexecHub(m tui.HerdModel) {
 // Seams for tests.
 var (
 	hubSendKey = tmux.SendKeyToHubList
-	hubLoad    = herd.Load
+	hubLoad    = fleet.Load
 	switchHome = tmux.SwitchToSessionWindow
 	displayMsg = tmux.DisplayMessage
 )
@@ -102,7 +102,7 @@ func RunJumpNextBlocked(clientSession string) {
 		return
 	}
 
-	row := herd.FirstBlocked(groups)
+	row := fleet.FirstBlocked(groups)
 	if row == nil {
 		displayMsg("no blocked agents")
 		return

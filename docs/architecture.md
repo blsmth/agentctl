@@ -70,7 +70,7 @@ The authoritative per-window state, written by hooks and read by the monitor. On
 
 ### state/
 
-The machine-readable snapshot (`state.json`) the monitor writes each tick under `paths.RuntimeDir()` (`$CWD/.agentctl/`). Only optional token enrichment (`herd/view.go`, `EnrichmentMaxAge`) and the one-release restore fallback when `restore.json` is absent read it; the chrome bar, hub, `agentctl status` and popups build their view from `tmux list-windows` plus windowstate (`herd.LoadAgents`), with a fresh `state.json` as optional enrichment for token counts.
+The machine-readable snapshot (`state.json`) the monitor writes each tick under `paths.RuntimeDir()` (`$CWD/.agentctl/`). Only optional token enrichment (`fleet/view.go`, `EnrichmentMaxAge`) and the one-release restore fallback when `restore.json` is absent read it; the chrome bar, hub, `agentctl status` and popups build their view from `tmux list-windows` plus windowstate (`fleet.LoadAgents`), with a fresh `state.json` as optional enrichment for token counts.
 
 ### agent/
 

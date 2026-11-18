@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 )
 
@@ -28,12 +28,12 @@ func (e *notifyEnv) take() []Message {
 	return out
 }
 
-func win(state string, done bool) herd.Window {
-	return herd.Window{Session: "agentctl-proj", Project: "proj", WindowID: "@5", Agent: "go-engineer",
+func win(state string, done bool) fleet.Window {
+	return fleet.Window{Session: "agentctl-proj", Project: "proj", WindowID: "@5", Agent: "go-engineer",
 		State: state, Done: done, Mode: "bare"}
 }
 
-func (e *notifyEnv) transition(w herd.Window) {
+func (e *notifyEnv) transition(w fleet.Window) {
 	e.n.Handle(fleetwatch.Event{Kind: fleetwatch.KindTransition, Window: w})
 }
 
@@ -46,7 +46,7 @@ func TestNotifierTriggers(t *testing.T) {
 	tests := []struct {
 		name      string
 		cfg       config.ServePushConfig
-		w         herd.Window
+		w         fleet.Window
 		wantTitle string
 		wantBody  string
 		urgent    bool
@@ -205,7 +205,7 @@ func TestNotifierFlappingDoesNotSpam(t *testing.T) {
 }
 
 func TestNotifierDoneWaitsForPR(t *testing.T) {
-	dispatched := func(pr int) herd.Window {
+	dispatched := func(pr int) fleet.Window {
 		w := win("idle", true)
 		w.Mode = "dispatch"
 		if pr > 0 {
@@ -337,7 +337,7 @@ func TestNotifierQuietHoursAndMute(t *testing.T) {
 
 func TestNotifierSeedAndGone(t *testing.T) {
 	e := newNotifyEnv(config.ServePushConfig{})
-	g := fleetwatch.Group{Session: "agentctl-proj", Windows: []herd.Window{win("blocked", false)}}
+	g := fleetwatch.Group{Session: "agentctl-proj", Windows: []fleet.Window{win("blocked", false)}}
 	e.n.Seed([]fleetwatch.Group{g})
 	e.clock.Advance(time.Hour)
 	e.n.Tick()
@@ -348,7 +348,7 @@ func TestNotifierSeedAndGone(t *testing.T) {
 	}
 
 	// Dropped events: the full fleet reveals a new transition.
-	g.Windows = []herd.Window{win("idle", true)}
+	g.Windows = []fleet.Window{win("idle", true)}
 	e.n.Handle(fleetwatch.Event{Kind: fleetwatch.KindFleet, Fleet: []fleetwatch.Group{g}})
 	if got := e.take(); len(got) != 1 || got[0].Kind != "done" {
 		t.Fatalf("fleet resync = %+v", got)

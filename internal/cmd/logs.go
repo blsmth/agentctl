@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/shellquote"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -18,7 +18,7 @@ func RunLogs(nameOrID string) {
 	name := nameOrID
 	if strings.HasPrefix(nameOrID, "@") {
 		// Try windowstate first for fast resolution without a tmux fork.
-		if _, base := herd.LocalWindowNames(nameOrID); base != "" {
+		if _, base := fleet.LocalWindowNames(nameOrID); base != "" {
 			name = base
 		}
 		if name == nameOrID {

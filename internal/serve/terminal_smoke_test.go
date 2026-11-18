@@ -13,7 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -93,12 +93,12 @@ func TestTerminalSmokeRealTmux(t *testing.T) {
 	}
 
 	// End to end through the server.
-	fleet := &fakeFleet{}
-	row := herd.Row{Session: home, Project: "smoke", AgentState: state.AgentState{Name: "sh", WindowID: win, State: "idle"}}
-	fleet.set(fleetwatch.Group{Session: home, Project: "smoke", RuntimeDir: "/tmp/smoke/.agentctl",
-		Windows: []herd.Window{herd.ToWindow(row, herd.Meta{WindowID: win})}, Rows: []herd.Row{row}})
+	src := &fakeFleet{}
+	row := fleet.Row{Session: home, Project: "smoke", AgentState: state.AgentState{Name: "sh", WindowID: win, State: "idle"}}
+	src.set(fleetwatch.Group{Session: home, Project: "smoke", RuntimeDir: "/tmp/smoke/.agentctl",
+		Windows: []fleet.Window{fleet.ToWindow(row, fleet.Meta{WindowID: win})}, Rows: []fleet.Row{row}})
 	for _, write := range []bool{false, true} {
-		e := newWriteEnvWith(t, write, func(o *Options) { o.Fleet = fleet })
+		e := newWriteEnvWith(t, write, func(o *Options) { o.Fleet = src })
 		srv := httptest.NewServer(e.Handler())
 		h := http.Header{"Origin": {srv.URL}, "Cookie": {DeviceCookie + "=" + e.tok}}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

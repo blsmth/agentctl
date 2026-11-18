@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/metrics"
 	"github.com/blsmth/agentctl/internal/metrics/events"
@@ -216,7 +216,7 @@ func DiscoverProjects() ([]Project, error) {
 		return nil, err
 	}
 	entries, _ := registry.List()
-	merged := herd.MergeSessions(sessions, entries)
+	merged := fleet.MergeSessions(sessions, entries)
 	var out []Project
 	seen := make(map[string]bool)
 	for _, e := range merged {

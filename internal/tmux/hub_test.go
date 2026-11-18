@@ -111,12 +111,12 @@ func TestHubSessionNameConstant(t *testing.T) {
 	}
 }
 
-// TestHerdListWindowNameConstant guards against an accidental rename — the
-// herd-list window name is referenced by both StartHubSession (which pins
-// it) and SelectHerdListWindow (which targets it), and must stay in sync.
-func TestHerdListWindowNameConstant(t *testing.T) {
-	if HerdListWindowName != "herd-list" {
-		t.Errorf("HerdListWindowName = %q, want %q", HerdListWindowName, "herd-list")
+// TestFleetListWindowNameConstant guards against an accidental rename — the
+// fleet-list window name is referenced by both StartHubSession (which pins
+// it) and SelectFleetListWindow (which targets it), and must stay in sync.
+func TestFleetListWindowNameConstant(t *testing.T) {
+	if FleetListWindowName != "fleet-list" {
+		t.Errorf("FleetListWindowName = %q, want %q", FleetListWindowName, "fleet-list")
 	}
 }
 
