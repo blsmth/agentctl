@@ -75,6 +75,8 @@ let cleanup = () => {};
 function route() {
   cleanup();
   root.replaceChildren();
+  // Sheets live on document.body, outside #app; none may outlive its view.
+  document.querySelectorAll(".overlay").forEach((o) => o.remove());
   const r = parseRoute(location.hash);
   if (r.name === "window") cleanup = mountWindow(root, ctx, r);
   else if (r.name === "terminal" && ctx.hasFeature("terminal")) cleanup = mountTerminal(root, ctx, r);

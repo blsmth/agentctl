@@ -317,6 +317,120 @@ export function actionsFor(win, pane) {
   return "none";
 }
 
+/**
+ * actionsWithQueue is actionsFor for a server that can queue a message to a
+ * working agent: "queue" (composer plus a small Interrupt) replaces
+ * "interrupt" when hasQueue is set.
+ */
+export function actionsWithQueue(win, pane, hasQueue) {
+  const kind = actionsFor(win, pane);
+  return kind === "interrupt" && hasQueue ? "queue" : kind;
+}
+
+export function buildQueueRequest(session, windowId, text) {
+  return { method: "POST", path: `${windowApiPath(session, windowId)}/queue`, body: { text } };
+}
+
+/**
+ * dialogQuestion is the line of a dialog that asks the question: the last
+ * line ending in "?" before the first option, else the line just before the
+ * options, else the first line.
+ */
+export function dialogQuestion(dialog) {
+  const lines = (dialog?.text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+  const first = lines.findIndex((l) => /^\d+\.\s/.test(l));
+  const head = first < 0 ? lines : lines.slice(0, first);
+  for (let i = head.length - 1; i >= 0; i--) if (head[i].endsWith("?")) return head[i];
+  return head[head.length - 1] ?? lines[0] ?? "";
+}
+
+/**
+ * focusedOption is the key of the dialog option the pane's cursor (❯) is
+ * on, which is the option Claude Code recommends by default; "" when the
+ * pane shows none of the dialog's options focused.
+ */
+export function focusedOption(paneText, dialog) {
+  const keys = new Set((dialog?.options ?? []).map((o) => o.key));
+  const plain = (paneText ?? "").replace(ESC_RE, "");
+  let found = "";
+  for (const m of plain.matchAll(/❯\s*(\d{1,2})\.\s/g)) if (keys.has(m[1])) found = m[1];
+  return found;
+}
+
+/**
+ * shortModel trims a model id for a chip: "claude-" prefix and a trailing
+ * date stamp go ("claude-sonnet-4-20250514" -> "sonnet-4").
+ */
+export function shortModel(model) {
+  if (!model) return "";
+  return model.replace(/^claude-/, "").replace(/-\d{8}$/, "").replace(/\[.*\]$/, "");
+}
+
+/** formatCost renders a USD cost: "$0.98", "$12.30", "<$0.01". */
+export function formatCost(usd) {
+  if (!(usd > 0)) return "";
+  if (usd < 0.01) return "<$0.01";
+  return `$${usd.toFixed(2)}`;
+}
+
+/** taskLine is what the window is doing: its task title, else its issue, else its activity. */
+export function taskLine(win) {
+  const title = win?.detail?.title?.trim();
+  if (title) return title;
+  if (win?.issue > 0) return `Issue #${win.issue}`;
+  if (win?.ticket) return /^\d+$/.test(win.ticket) ? `Issue #${win.ticket}` : win.ticket;
+  return win?.activity ?? "";
+}
+
+/** stateLabel is the header pill text: "working for 3m", "idle". */
+export function stateLabel(win, nowMs) {
+  const s = effectiveState(win);
+  const since = formatSince(win.blocked_since || win.state_since, nowMs);
+  return since ? `${s} for ${since}` : s;
+}
+
+/**
+ * headerChips lists the window's chips, present fields only, as
+ * {text, href?, kind}: PR (link), context, cost, model, then window id and
+ * mode.
+ */
+export function headerChips(win, safeUrl) {
+  const chips = [];
+  const pr = safeUrl(win.pr_url ?? "");
+  if (pr) chips.push({ kind: "pr", text: win.pr_number ? `PR #${win.pr_number}` : prLabel(pr), href: pr });
+  if (win.context_pct) chips.push({ kind: "ctx", text: `${Math.round(win.context_pct)}% ctx` });
+  const cost = formatCost(win.detail?.cost_usd);
+  if (cost) chips.push({ kind: "cost", text: cost });
+  const model = shortModel(win.detail?.model);
+  if (model) chips.push({ kind: "model", text: model });
+  const id = [win.window_id, win.mode].filter(Boolean).join(" · ");
+  if (id) chips.push({ kind: "id", text: id });
+  return chips;
+}
+
+/** prLabel is "PR #8" for a GitHub pull URL, else "PR". */
+function prLabel(url) {
+  const m = /\/pull\/(\d+)(?:[/?#]|$)/.exec(url);
+  return m ? `PR #${m[1]}` : "PR";
+}
+
+/** FRESH_MS is how long after a pane change the liveness chip reads as fresh. */
+export const FRESH_MS = 10000;
+
+/**
+ * liveness describes the pane bar's liveness chip. offlineSince (ms) is set
+ * while the window cannot be fetched (or the live feed is down); otherwise
+ * the chip says how long ago the pane last changed. Returns {text, kind}
+ * with kind "offline", "fresh" or "stale"; text "" before the first fetch.
+ */
+export function liveness({ lastChangeAt, offlineSince }, nowMs) {
+  if (offlineSince) return { text: `offline since ${formatClock(offlineSince)}`, kind: "offline" };
+  if (!lastChangeAt) return { text: "", kind: "stale" };
+  const s = Math.max(0, Math.floor((nowMs - lastChangeAt) / 1000));
+  const ago = s < 60 ? `${s}s` : formatSince(new Date(lastChangeAt).toISOString(), nowMs);
+  return { text: `updated ${ago} ago`, kind: nowMs - lastChangeAt < FRESH_MS ? "fresh" : "stale" };
+}
+
 /** backoffDelay is the reconnect delay in ms for the nth failed attempt (0-based), capped at 30s. */
 export function backoffDelay(attempt) {
   return Math.min(30000, 1000 * 2 ** attempt);
@@ -625,18 +739,32 @@ function collapseBlanks(blocks) {
 
 const blockText = (b) => (b.runs ? b.runs.map((r) => r.t).join("") : "");
 const isPromptLine = (b) => /^[>❯]/.test(blockText(b));
+const isBlank = (b) => b.runs !== undefined && b.runs.length === 0;
 
 /**
- * splitPane is normalizePane plus detection of Claude Code's trailing chrome:
- * everything after the rule that closes the prompt input box (a rule, a line
- * starting with ">" or "❯", optionally continuation lines, then a rule).
- * Returns {body, status}: status is null when no prompt box (or nothing below
- * it) is found, otherwise {lines} with the raw plain lines (padding intact,
- * trailing blank lines dropped). The body then ends at the closing rule.
+ * promptOf describes the prompt box's input lines: text is what was typed
+ * (the leading ">" or "❯" dropped, trimmed), and empty is true when nothing
+ * was. Dim-only text after the glyph is Claude Code's placeholder hint and
+ * counts as empty.
  */
-export function splitPane(text) {
-  const lines = parseAnsi(text);
-  const blocks = lineBlocks(lines);
+function promptOf(blocks) {
+  const typed = blocks.map((b, i) => {
+    const runs = b.runs ?? [];
+    const kept = runs.filter((r) => !r.dim);
+    let t = kept.map((r) => r.t).join("");
+    if (i === 0) t = t.replace(/^\s*[>❯]/, "");
+    return t.trim();
+  });
+  const text = typed.filter(Boolean).join("\n");
+  return { text, empty: text === "" };
+}
+
+/**
+ * findPromptBox locates Claude Code's prompt input box in render blocks: a
+ * rule, a line starting with ">" or "❯", optional continuation lines, then
+ * the last rule. Returns {start, end} (the two rule indices) or null.
+ */
+function findPromptBox(blocks) {
   let end = -1;
   for (let i = blocks.length - 1; i >= 0; i--) {
     if (blocks[i].rule !== undefined) {
@@ -651,19 +779,92 @@ export function splitPane(text) {
       break;
     }
   }
-  if (start < 0 || end - start < 2 || !isPromptLine(blocks[start + 1])) {
-    return { body: collapseBlanks(blocks), status: null };
-  }
-  const raw = lines.slice(end + 1).map((runs) => runs.map((r) => r.t).join("").replace(/\s+$/, ""));
+  if (start < 0 || end - start < 2 || !isPromptLine(blocks[start + 1])) return null;
+  return { start, end };
+}
+
+/**
+ * splitPane is normalizePane plus detection of Claude Code's trailing chrome:
+ * the prompt input box and everything after the rule that closes it.
+ * Returns {body, status, prompt}:
+ *   - prompt is null when no prompt box is found, else {text, empty}.
+ *   - status is null when there is no prompt box or nothing below it,
+ *     otherwise {lines} with the raw plain lines (padding intact, trailing
+ *     blank lines dropped).
+ *   - body ends at the box's closing rule when something is typed in it;
+ *     when the prompt is empty the box is left out (body ends at the last
+ *     non-blank line above it), since an empty box says nothing.
+ */
+export function splitPane(text) {
+  const lines = parseAnsi(text);
+  const blocks = lineBlocks(lines);
+  const box = findPromptBox(blocks);
+  if (!box) return { body: collapseBlanks(blocks), status: null, prompt: null };
+  const prompt = promptOf(blocks.slice(box.start + 1, box.end));
+  const raw = lines.slice(box.end + 1).map((runs) => runs.map((r) => r.t).join("").replace(/\s+$/, ""));
   while (raw.length && raw[raw.length - 1].replace(/[\s⠀]/g, "") === "") raw.pop();
-  if (raw.length === 0) return { body: collapseBlanks(blocks), status: null };
-  return { body: collapseBlanks(blocks.slice(0, end + 1)), status: { lines: raw } };
+  let body = blocks.slice(0, prompt.empty ? box.start : box.end + 1);
+  if (prompt.empty) {
+    let n = body.length;
+    while (n > 0 && isBlank(body[n - 1])) n--;
+    body = body.slice(0, n);
+  }
+  return { body: collapseBlanks(body), status: raw.length ? { lines: raw } : null, prompt };
+}
+
+/**
+ * paneLinesForExact returns the lines of pane text the Exact view writes to
+ * its terminal: Claude Code's footer below the prompt box (statusline, mode
+ * line) is dropped, as are trailing blank lines, so the terminal can be sized
+ * to its content with no blank band. ANSI escapes are kept. Without a prompt
+ * box only trailing blank lines are dropped.
+ */
+export function paneLinesForExact(text) {
+  const raw = text.replace(/\r/g, "").split("\n");
+  const blocks = lineBlocks(parseAnsi(text));
+  const box = findPromptBox(blocks);
+  // parseAnsi splits on the same newlines, so block i is raw line i.
+  const lines = box ? raw.slice(0, box.end + 1) : raw;
+  const plain = (l) => l.replace(ESC_RE, "").replace(/[\s⠀]/g, "");
+  let n = lines.length;
+  while (n > 0 && plain(lines[n - 1]) === "") n--;
+  return lines.slice(0, n);
+}
+
+/**
+ * exactRows is how many terminal rows the Exact view shows: as many as fit
+ * availHeight at cellHeight, but never more than the content (contentLines)
+ * or the pane itself (paneRows), and at least one.
+ */
+export function exactRows(contentLines, paneRows, availHeight, cellHeight) {
+  const cap = Math.max(1, Math.min(contentLines || 1, paneRows || contentLines || 1));
+  if (!(availHeight > 0) || !(cellHeight > 0)) return cap;
+  return Math.max(1, Math.min(cap, Math.floor(availHeight / cellHeight)));
+}
+
+/** TOOL_GLYPHS start Claude Code's tool and result lines (●, ⏺, ⎿, └, …). */
+const TOOL_GLYPHS = "●⏺⎿└✻✶✳✢◼☐☒✔✓✗·*";
+const HANG_RE = new RegExp(`^([ \\t]*)([${TOOL_GLYPHS}][ \\t]+)?`);
+
+/**
+ * hangingIndent is the indent, in columns, for wrapped continuations of a
+ * reflowed line: its leading whitespace, plus a leading tool glyph and the
+ * space after it, so a wrapped "⎿ ok …" continues under "ok". At least 2
+ * (a wrapped line is always set off) and at most 16.
+ */
+export function hangingIndent(plain) {
+  const m = HANG_RE.exec(plain);
+  const n = m ? m[0].length : 0;
+  return Math.max(2, Math.min(16, n));
 }
 
 /** paneModeOrDefault validates a persisted pane mode. */
 export function paneModeOrDefault(v) {
   return v === "exact" ? "exact" : "reflow";
 }
+
+/** INTERRUPT_FOLLOWUP_MS: an interrupt counts as the cause of the reply box appearing within this window. */
+export const INTERRUPT_FOLLOWUP_MS = 10000;
 
 // --- Remote approvals ("away mode") -----------------------------------------
 

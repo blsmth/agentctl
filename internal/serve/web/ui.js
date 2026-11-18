@@ -32,14 +32,22 @@ export function toast(message, kind = "info") {
 
 /**
  * confirmSheet shows a bottom sheet with a title and body lines and resolves
- * true on confirm, false on cancel.
+ * true on confirm, false on cancel. Navigating away (hashchange) cancels it:
+ * the sheet belongs to the view that opened it, and confirming it from the
+ * next view would act on the previous one's target.
  */
 export function confirmSheet({ title, lines = [], confirmLabel = "Confirm", danger = false }) {
   return new Promise((resolve) => {
+    let settled = false;
     const done = (v) => {
+      if (settled) return;
+      settled = true;
+      removeEventListener("hashchange", onNavigate);
       overlay.remove();
       resolve(v);
     };
+    const onNavigate = () => done(false);
+    addEventListener("hashchange", onNavigate, { once: true });
     const overlay = h(
       "div",
       { class: "overlay", onclick: (e) => e.target === overlay && done(false) },
