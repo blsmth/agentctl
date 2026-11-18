@@ -395,6 +395,10 @@ func RunAccountDoctor(out io.Writer) error {
 		}
 		for _, name := range claudehome.NeverShared {
 			if fi, err := os.Lstat(filepath.Join(a.Dir, name)); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+				if name == "agent-memory" {
+					report("agent-memory/ is a symlink; Claude Code prompts on every memory write through it. Replace it with a real dir and move the memory of the agents that run on this account into it")
+					continue
+				}
 				report("%s/ is a symlink; accounts must not share it", name)
 			}
 		}

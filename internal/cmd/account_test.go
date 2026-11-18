@@ -47,7 +47,7 @@ func accountEnv(t *testing.T) (home string, cfgPath string) {
 func seedHome(t *testing.T, home string) string {
 	t.Helper()
 	ch := filepath.Join(home, ".claude")
-	for _, d := range []string{"agents", "shared", "commands", "projects", "sessions", "hooks"} {
+	for _, d := range []string{"agents", "shared", "commands", "projects", "sessions", "hooks", "agent-memory"} {
 		if err := os.MkdirAll(filepath.Join(ch, d), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -92,7 +92,7 @@ func TestAccountAddLinksExactlyTheAllowlist(t *testing.T) {
 			t.Errorf("%s -> %q (%v), want link to %s", name, target, err, filepath.Join(ch, name))
 		}
 	}
-	for _, private := range []string{".credentials.json", "sessions", "projects", "history.jsonl", "policy-limits.json", ".claude.json"} {
+	for _, private := range []string{"agent-memory", ".credentials.json", "sessions", "projects", "history.jsonl", "policy-limits.json", ".claude.json"} {
 		if _, err := os.Lstat(filepath.Join(dir, private)); !os.IsNotExist(err) {
 			t.Errorf("%s must not be created or linked (err=%v)", private, err)
 		}
@@ -224,6 +224,9 @@ func TestAccountDoctor(t *testing.T) {
 	if err := os.Symlink(filepath.Join(home, ".claude", "sessions"), filepath.Join(dir, "sessions")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink(filepath.Join(home, ".claude", "agent-memory"), filepath.Join(dir, "agent-memory")); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-not-real")
 	accountAuthStatus = func(string) (authInfo, error) { return authInfo{}, nil }
 	out.Reset()
@@ -231,7 +234,7 @@ func TestAccountDoctor(t *testing.T) {
 	if err == nil {
 		t.Fatalf("doctor passed a broken setup:\n%s", out.String())
 	}
-	for _, want := range []string{"settings.json is a regular file", "sessions/ is a symlink", "ANTHROPIC_API_KEY is set", "not logged in"} {
+	for _, want := range []string{"settings.json is a regular file", "sessions/ is a symlink", "agent-memory/ is a symlink", "move the memory", "ANTHROPIC_API_KEY is set", "not logged in"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("doctor output missing %q:\n%s", want, out.String())
 		}
