@@ -102,6 +102,11 @@ var (
 	// fleetPaletteColors is the stable accent palette (theme colours) that
 	// project groups hash into: the left bar and the group header only.
 	fleetPaletteColors []string
+
+	// fleetStylesTheme is the theme name the fleet styles were last built
+	// from; the poll tick compares it to the active theme (see
+	// refreshThemeIfChanged).
+	fleetStylesTheme string
 )
 
 // initFleetStyles initialises the hub view's styles from the active theme.
@@ -112,6 +117,7 @@ var (
 // never be mistaken for a state.
 func initFleetStyles() {
 	t := theme.Current()
+	fleetStylesTheme = t.Name
 
 	fleetTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Accent))
 
@@ -144,6 +150,20 @@ func initFleetStyles() {
 	fleetEmptyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted)).Italic(true)
 
 	fleetPaletteColors = []string{t.Accent, t.Sky, t.Blue, t.Info, t.Orange, t.Green}
+}
+
+// refreshThemeIfChanged rebuilds every package-level style when the resolved
+// theme name differs from the one the styles were built from, and reports
+// whether it did. Nothing in the hub caches rendered strings or colours (the
+// hover card and row lines are rendered from the styles in View), so
+// rebuilding the styles is enough; selection, folds, filter and the viewer
+// are untouched.
+func refreshThemeIfChanged() bool {
+	if theme.Current().Name == fleetStylesTheme {
+		return false
+	}
+	InitStyles()
+	return true
 }
 
 // midColor is the midpoint of two #rrggbb colours, so the hover tint sits
@@ -672,6 +692,7 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reexec = true
 			return m, tea.Quit
 		}
+		refreshThemeIfChanged()
 		show := m.maybeShowCmd()
 		probe := m.serveProbeCmd()
 		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome), probe)
