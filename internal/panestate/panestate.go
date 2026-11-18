@@ -46,9 +46,6 @@ var dialogMarkers = []string{
 	"Do you want to create",
 	"Do you want to make this edit",
 	"Esc to cancel",
-	// AskUserQuestion's review tab ("1. Submit answers / 2. Cancel") has no
-	// footer, and its "❯ 1." cursor would otherwise read as an idle prompt.
-	"Ready to submit your answers?",
 }
 
 // busyMarkers are strings the footer renders only while a turn is in flight.
@@ -112,7 +109,39 @@ func DialogShowing(text string) bool {
 	}
 	// A numbered-choice dialog that phrases its question some other way still
 	// renders a selected first option and a decline option.
-	return strings.Contains(text, "❯ 1. Yes") && strings.Contains(text, ". No")
+	if strings.Contains(text, "❯ 1. Yes") && strings.Contains(text, ". No") {
+		return true
+	}
+	return reviewTabShowing(text)
+}
+
+// reviewQuestion and reviewSubmit are AskUserQuestion's review tab: the
+// question line, then (blank lines allowed) its first option.
+const reviewQuestion = "Ready to submit your answers?"
+
+var reviewSubmit = regexp.MustCompile(`^(❯\s*)?1\.\s+Submit answers$`)
+
+// reviewTabShowing reports whether AskUserQuestion's review tab is up. It has
+// no footer, and its "❯ 1." cursor would otherwise read as an idle prompt.
+// The match is structural (the question line on its own, then "1. Submit
+// answers") because the phrase alone turns up in scrollback, in prose about
+// this very dialog.
+func reviewTabShowing(text string) bool {
+	lines := strings.Split(StripANSI(text), "\n")
+	for i, l := range lines {
+		if strings.TrimSpace(l) != reviewQuestion {
+			continue
+		}
+		for _, next := range lines[i+1:] {
+			if t := strings.TrimSpace(next); t != "" {
+				if reviewSubmit.MatchString(t) {
+					return true
+				}
+				break
+			}
+		}
+	}
+	return false
 }
 
 // PromptCount returns the number of "❯" prompt lines in the pane, tolerating

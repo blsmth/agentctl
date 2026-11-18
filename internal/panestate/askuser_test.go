@@ -147,3 +147,43 @@ func TestOptionRunStopsAtUnindentedText(t *testing.T) {
 		t.Error("a list without option 1 parsed as a dialog")
 	}
 }
+
+// Regression: the review-tab phrase anywhere in the pane classified an idle
+// pane as awaiting input, and its numbered prose then became answer buttons.
+func TestReviewPhraseInScrollbackStaysIdle(t *testing.T) {
+	pane := "⏺ The review tab shows \"Ready to submit your answers?\" with Submit/Cancel.\n\n" +
+		"  1. Fix the parser\n  2. Add tests\n\n✻ Worked for 3s\n\n" +
+		"────\n❯ \n────\n  ⏵⏵ auto mode on\n"
+	if v := Classify(pane); v != Idle {
+		t.Errorf("Classify = %v, want idle", v)
+	}
+	// The question on its own line but not followed by Submit answers.
+	other := "Ready to submit your answers?\n\n  1. Fix the parser\n────\n❯ \n────\n"
+	if v := Classify(other); v != Idle {
+		t.Errorf("Classify(other) = %v, want idle", v)
+	}
+}
+
+// Real captures of the same multi-select tab before and after pressing "2"
+// (Claude Code v2.1.311): only the box ("[✔]", colored) and the tab mark
+// ("☒ Size") change, so the question key holds while the hash moves. The
+// server's toggle check depends on exactly this.
+func TestParseDialogMultiCheckedLive(t *testing.T) {
+	a, okA := ParseDialog(readCapture(t, "askuser-q2-live.txt"))
+	b, okB := ParseDialog(readCapture(t, "askuser-q2-live-ticked.txt"))
+	if !okA || !okB {
+		t.Fatal("captures do not parse")
+	}
+	if len(a.Checked) != 0 || !reflect.DeepEqual(b.Checked, []string{"2"}) {
+		t.Errorf("checked = %v then %v, want none then [2]", a.Checked, b.Checked)
+	}
+	if b.Kind != KindMulti || !reflect.DeepEqual(a.Options, b.Options) {
+		t.Errorf("kind %q, options %+v vs %+v", b.Kind, a.Options, b.Options)
+	}
+	if a.Hash == b.Hash {
+		t.Error("ticking a box must change the hash")
+	}
+	if QuestionKey(a) != QuestionKey(b) {
+		t.Errorf("question key changed on tick:\n%s\n---\n%s", a.Text, b.Text)
+	}
+}
