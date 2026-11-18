@@ -587,7 +587,7 @@ func herdTickCmd() tea.Cmd {
 
 func herdLoadCmd() tea.Cmd {
 	return func() tea.Msg {
-		groups, err := herd.Load()
+		groups, err := herd.LoadWithShells()
 		return herdLoadedMsg{groups: groups, err: err}
 	}
 }
@@ -691,11 +691,14 @@ func (m HerdModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.jumpErr = msg.err.Error()
 			return m, nil
 		}
-		// Shell windows are not agent rows (herd.LoadAgents skips them), so
-		// there is nothing to focus: just report.
 		m.jumpErr = ""
 		m.setSuccess("opened shell in " + m.projectLabel(msg.session))
-		return m, nil
+		m.pendingFocus = nil
+		if msg.windowID == "" {
+			return m, herdLoadCmd()
+		}
+		m.pendingFocus = &herdPendingFocus{session: msg.session, windowID: msg.windowID}
+		return m, tea.Batch(herdLoadCmd(), herdFocusRetryCmd(msg.session, msg.windowID))
 
 	case herdFocusRetryMsg:
 		return m, m.focusRetry(msg)
@@ -1615,6 +1618,9 @@ func herdProjectBar(project string) string {
 // window-rename convention in internal/winname: ● working,
 // ⏸ blocked, ✓ done (unseen), bare/○ otherwise.
 func rowGlyph(r herd.Row) (string, lipgloss.Style) {
+	if r.Shell {
+		return "$", herdDimStyle
+	}
 	switch rowWeight(r) {
 	case herdWeightBlocked:
 		return "⏸", herdBlockedStyle
@@ -1744,6 +1750,9 @@ type herdGroupCounts struct {
 func groupStateCounts(g herd.Group, digits, gap int) herdGroupCounts {
 	var c herdGroupCounts
 	for _, r := range g.Rows {
+		if r.Shell {
+			continue
+		}
 		switch rowWeight(r) {
 		case herdWeightBlocked:
 			c.blocked++
@@ -2039,6 +2048,9 @@ func (m HerdModel) renderTreeRowHover(r herd.Row, treePrefix string, nameCol int
 // already knows (see emptyRecapText), still with Source RecapNone so it
 // renders as a fallback; herd.Recap itself stays pure.
 func rowRecap(r herd.Row) herd.RecapLine {
+	if r.Shell {
+		return herd.RecapLine{Text: "shell"}
+	}
 	if r.Recap.Source != herd.RecapNone {
 		return r.Recap
 	}
