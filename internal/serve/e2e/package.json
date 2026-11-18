@@ -1,0 +1,13 @@
+{
+  "name": "agentctl-web-e2e",
+  "private": true,
+  "description": "Browser tests for the agentctl phone web app (internal/serve/web).",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1"
+  }
+}

@@ -56,3 +56,66 @@ jobs:
           path: dist/agentctl_darwin_arm64*/agentctl
           if-no-files-found: error
           retention-days: 14
+
+  # Browser tests for the phone web app (internal/serve/web): Playwright on
+  # WebKit with an iPhone profile against the Go dev server. See
+  # docs/development.md, "Phone web app: browser tests".
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: internal/serve/e2e
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: internal/serve/e2e/package-lock.json
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Playwright version
+        id: pw
+        run: echo "version=$(jq -r '.packages["node_modules/@playwright/test"].version' package-lock.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-webkit
+
+      - name: Install WebKit and its system deps
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps webkit
+
+      - name: Install WebKit system deps (browser cached)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps webkit
+
+      - name: Build dev server
+        working-directory: .
+        run: go build -o /dev/null ./internal/serve/servetest/devserver
+
+      - name: Logic tests
+        run: node ../web/logic.test.mjs
+
+      - name: Playwright
+        run: npx playwright test
+
+      - name: Upload Playwright report and traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            internal/serve/e2e/playwright-report/
+            internal/serve/e2e/test-results/
+          retention-days: 14

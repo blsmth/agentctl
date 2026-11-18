@@ -1,4 +1,4 @@
-// Run with: node internal/serve/web/logic.test.mjs  (no dependencies; CI has no node).
+// Run with: node internal/serve/web/logic.test.mjs  (no dependencies; also run by `just web-test` and the CI web job).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
