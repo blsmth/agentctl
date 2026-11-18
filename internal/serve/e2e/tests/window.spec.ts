@@ -256,3 +256,18 @@ test("deny sends a deny decision", async ({ page, control }) => {
   const actions = await control.waitForActions((a) => a.some((x) => x.kind === "approval"));
   expect(actions[0]).toMatchObject({ kind: "approval", id, decision: "deny" });
 });
+
+test("a cron window says which job started it", async ({ page, control }) => {
+  const groups = await control.fleet();
+  groups[0].windows.push({ id: "@16", index: 6, agent: "triage", state: "idle", mode: "adhoc", scheduled_by: "nightly-triage", activity: "triaged 3 issues" });
+  await control.setFleet(groups);
+  await openWindow(page, "@16");
+  await expect(page.locator(".win-scheduled")).toBeVisible();
+  await expect(page.locator(".win-scheduled")).toHaveText(/^Scheduled run: nightly-triage, fired \w{3} \d{1,2} \w{3} \d{2}:\d{2}$/);
+});
+
+test("a window not started by cron shows no schedule line", async ({ page }) => {
+  await openWindow(page, "@15");
+  await expect(page.locator("header.bar h1")).toHaveText("docs");
+  await expect(page.locator(".win-scheduled")).toBeHidden();
+});

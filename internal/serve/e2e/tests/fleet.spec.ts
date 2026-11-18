@@ -67,3 +67,18 @@ test("an empty fleet says so", async ({ page, control }) => {
   await control.useFixture("empty");
   await expect(page.locator(".fleet")).toContainText("No agents running.");
 });
+
+test("cron windows get a job chip and their own bucket", async ({ page, control }) => {
+  const groups = await control.fleet();
+  groups[0].windows.push({ id: "@16", index: 6, agent: "triage", state: "working", mode: "adhoc", scheduled_by: "nightly-triage", activity: "triaging" });
+  await control.setFleet(groups);
+  const r = row(page, "@16");
+  await expect(r.locator(".win-title .tag.sched-chip")).toHaveText("⏲ nightly-triage");
+  await expect(r.locator(".glyph")).toHaveText("●");
+  // Not filed under "Tasks from other sessions": cron has no starting session.
+  const shop = page.locator(".fleet section.group").first();
+  await expect(shop.locator(".bucket-label")).toHaveText(["Scheduled jobs (1)"]);
+  await expect(r).toHaveAttribute("style", /--depth:\s*1/);
+  // Other rows carry no job chip.
+  await expect(row(page, "@15").locator(".sched-chip")).toHaveCount(0);
+});

@@ -24,12 +24,13 @@ func tRow(win, parent string, dispatched bool) fleet.Row {
 }
 
 type treeFixtureRow struct {
-	WindowID   string `json:"window_id"`
-	Parent     string `json:"parent"`
-	Dispatched bool   `json:"dispatched"`
-	Detached   bool   `json:"detached"`
-	State      string `json:"state"`
-	Index      int    `json:"index"`
+	WindowID    string `json:"window_id"`
+	Parent      string `json:"parent"`
+	Dispatched  bool   `json:"dispatched"`
+	Detached    bool   `json:"detached"`
+	ScheduledBy string `json:"scheduled_by"`
+	State       string `json:"state"`
+	Index       int    `json:"index"`
 }
 
 type treeFixtureWant struct {
@@ -72,6 +73,7 @@ func TestTreeRows(t *testing.T) {
 				row := tRow(r.WindowID, r.Parent, r.Dispatched)
 				row.State = r.State
 				row.Detached = r.Detached
+				row.ScheduledBy = r.ScheduledBy
 				rows = append(rows, row)
 			}
 			var got, want []treeFixtureWant

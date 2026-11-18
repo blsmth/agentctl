@@ -292,6 +292,13 @@ func cardContent(r fleet.Row, st *cardStats, parentName string, now time.Time, w
 		add(&prov, "pr", pr)
 	}
 	add(&prov, "from", parentName)
+	if r.ScheduledBy != "" {
+		v := r.ScheduledBy
+		if !r.ScheduledAt.IsZero() {
+			v += " · fired " + fleet.CompactAge(now.Sub(r.ScheduledAt)) + " ago"
+		}
+		add(&prov, "scheduled", v)
+	}
 
 	var last string
 	if act := fleet.ActivityLine(r); act != "" && act != r.Recap.Text {

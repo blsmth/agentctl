@@ -40,6 +40,11 @@ type Meta struct {
 	BlockedSince      time.Time
 	StateSince        time.Time
 	CostUSD           float64
+
+	// ScheduledBy is the `agentctl cron` job that launched the window and
+	// ScheduledAt when it fired; both empty for every other launch.
+	ScheduledBy string
+	ScheduledAt time.Time
 }
 
 // ParentTrusted reports whether SpawnedBy actually identifies the window that
@@ -115,6 +120,8 @@ func LoadMeta(g Group) map[string]Meta {
 			BlockedSince:      ws.BlockedSince,
 			StateSince:        ws.StateSince,
 			CostUSD:           ws.CostUSD,
+			ScheduledBy:       ws.ScheduledBy,
+			ScheduledAt:       ws.ScheduledAt,
 		}
 	}
 	return out

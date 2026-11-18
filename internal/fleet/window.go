@@ -45,6 +45,11 @@ type Window struct {
 	// Detached: dispatched with no recorded dispatcher (phone, cron); shown as a
 	// plain session.
 	Detached bool `json:"detached,omitempty"`
+
+	// ScheduledBy names the `agentctl cron` job that launched the window and
+	// ScheduledAt (RFC 3339) when it fired; both omitted for other windows.
+	ScheduledBy string `json:"scheduled_by,omitempty"`
+	ScheduledAt string `json:"scheduled_at,omitempty"`
 }
 
 // ToWindow converts a row and its windowstate metadata to a Window.
@@ -73,6 +78,12 @@ func ToWindow(r Row, m Meta) Window {
 	}
 	if r.Recap.Text != "" {
 		w.Recap, w.RecapSource = r.Recap.Text, r.Recap.Source.String()
+	}
+	if m.ScheduledBy != "" {
+		w.ScheduledBy = m.ScheduledBy
+		if !m.ScheduledAt.IsZero() {
+			w.ScheduledAt = m.ScheduledAt.UTC().Format(time.RFC3339)
+		}
 	}
 	if m.PRURL != "" {
 		w.PRURL = m.PRURL

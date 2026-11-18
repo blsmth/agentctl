@@ -133,10 +133,39 @@ export function kindLabel(win) {
 /**
  * bucketLabel heads the tasks whose recorded dispatcher is not in this group:
  * it was closed, or lives in another project. Detached windows (no recorded
- * dispatcher) are never bucketed.
+ * dispatcher) are never bucketed there. The "scheduled" bucket heads the
+ * windows `agentctl cron` launched that have no usable parent.
  */
-export function bucketLabel(count) {
+export function bucketLabel(count, kind = "dispatched") {
+  if (kind === "scheduled") return `Scheduled jobs (${count})`;
   return `Tasks from other sessions (${count})`;
+}
+
+/** isScheduled reports whether `agentctl cron` launched the window. */
+export function isScheduled(win) {
+  return Boolean(win.scheduled_by);
+}
+
+/** scheduledChip is the "⏲ job" chip of a cron-launched row, or "". */
+export function scheduledChip(win) {
+  return isScheduled(win) ? `⏲ ${win.scheduled_by}` : "";
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * scheduledLine is the window view's provenance line for a cron run:
+ * "Scheduled run: nightly-triage, fired Wed 18 Nov 07:00", in the device's
+ * time zone; the time is left off when unknown. "" for other windows.
+ */
+export function scheduledLine(win) {
+  if (!isScheduled(win)) return "";
+  const at = win.scheduled_at ? new Date(win.scheduled_at) : null;
+  if (!at || Number.isNaN(at.getTime())) return `Scheduled run: ${win.scheduled_by}`;
+  const pad = (n) => String(n).padStart(2, "0");
+  const when = `${WEEKDAYS[at.getDay()]} ${at.getDate()} ${MONTHS[at.getMonth()]} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  return `Scheduled run: ${win.scheduled_by}, fired ${when}`;
 }
 
 /**
@@ -157,9 +186,11 @@ export function treeLines(entry) {
  * window of the group (and not itself). Windows that are not dispatched or are
  * detached (no recorded dispatcher) and have no such parent are roots.
  * Dispatched windows whose recorded parent is unusable, plus windows
- * stuck in a parent cycle, go under a trailing {label, bucket:true} entry.
+ * stuck in a parent cycle, go under a trailing {label, bucket:true,
+ * kind:"dispatched"} entry; cron windows with no usable parent go under a
+ * {kind:"scheduled"} bucket after it.
  * Roots and children are in attention order; every window is emitted once.
- * Entries are {win, depth, last, ancestorsLast[]} or {label, bucket:true, depth:0}.
+ * Entries are {win, depth, last, ancestorsLast[]} or {label, bucket:true, kind, count, depth:0}.
  */
 export function treeRows(windows) {
   const rows = sortWindows(windows);
@@ -190,26 +221,49 @@ export function treeRows(windows) {
     }
   };
 
+  // Windows `agentctl cron` launched have no starting session; those without
+  // a usable parent get their own "scheduled" bucket.
+  const schedRoot = (i) => !hasParent[i] && isScheduled(rows[i]);
+  // schedTree marks scheduled roots and everything below them, so the
+  // dispatched bucket's cycle pass leaves their subtrees alone.
+  const schedTree = rows.map(() => false);
+  const mark = (i) => {
+    if (schedTree[i]) return;
+    schedTree[i] = true;
+    children[i].forEach(mark);
+  };
+  rows.forEach((_, i) => schedRoot(i) && mark(i));
+
   rows.forEach((r, i) => {
-    if ((!isDispatched(r) || isDetached(r)) && !hasParent[i]) walk(i, 0, [], true);
+    if ((!isDispatched(r) || isDetached(r)) && !hasParent[i] && !schedRoot(i)) walk(i, 0, [], true);
   });
 
-  // Bucket: walk every top-level entry as non-last, then fix up the final one.
-  const head = out.length;
-  out.push({ bucket: true, depth: 0 });
-  let lastTop = -1;
-  for (let pass = 0; pass < 2; pass++) {
-    rows.forEach((r, i) => {
-      if (visited[i] || (pass === 0 && (hasParent[i] || !isDispatched(r) || isDetached(r)))) return;
-      lastTop = out.length;
-      walk(i, 1, [], false);
-    });
-  }
-  if (lastTop < 0) return out.slice(0, head);
-  out[lastTop].last = true;
-  for (let j = lastTop + 1; j < out.length; j++) out[j].ancestorsLast[0] = true;
-  out[head].count = out.length - head - 1;
-  out[head].label = `dispatched (${out[head].count})`;
+  // bucket appends a header plus every unvisited window pick selects (two
+  // passes): walk every top-level entry as non-last, then fix up the final one.
+  const bucket = (kind, pick) => {
+    const head = out.length;
+    out.push({ bucket: true, kind, depth: 0 });
+    let lastTop = -1;
+    for (let pass = 0; pass < 2; pass++) {
+      rows.forEach((r, i) => {
+        if (visited[i] || !pick(i, pass)) return;
+        lastTop = out.length;
+        walk(i, 1, [], false);
+      });
+    }
+    if (lastTop < 0) {
+      out.length = head;
+      return;
+    }
+    out[lastTop].last = true;
+    for (let j = lastTop + 1; j < out.length; j++) out[j].ancestorsLast[0] = true;
+    out[head].count = out.length - head - 1;
+    out[head].label = `${kind} (${out[head].count})`;
+  };
+  // Dispatched windows with no usable parent, then cycles; scheduled
+  // subtrees are kept for their own bucket.
+  bucket("dispatched", (i, pass) => !schedTree[i] && (pass === 1 || (!hasParent[i] && isDispatched(rows[i]) && !isDetached(rows[i]))));
+  bucket("scheduled", (i, pass) => pass === 0 && schedRoot(i));
   return out;
 }
 
@@ -223,7 +277,8 @@ export function descendants(entries, i) {
 
 /** collapseKey identifies a collapsible entry: window, or the group's bucket. */
 export function collapseKey(session, entry) {
-  return `${session}\u0000${entry.bucket ? "bucket" : entry.win.window_id}`;
+  if (!entry.bucket) return `${session}\u0000${entry.win.window_id}`;
+  return `${session}\u0000${entry.kind === "scheduled" ? "bucket:scheduled" : "bucket"}`;
 }
 
 /** visibleTree drops the entries hidden under a collapsed entry. */

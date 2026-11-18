@@ -65,6 +65,9 @@ type Window struct {
 	// one from State. PaneText, when set, is used verbatim instead.
 	Pane     string `json:"pane,omitempty"`
 	PaneText string `json:"pane_text,omitempty"`
+	// ScheduledBy marks a window launched by `agentctl cron` job of that
+	// name; it fired 15 minutes before the fixture's now.
+	ScheduledBy string `json:"scheduled_by,omitempty"`
 }
 
 var recapSources = map[string]fleet.RecapSource{
@@ -213,6 +216,10 @@ func rowFor(g Group, w Window, now time.Time) (fleet.Row, fleet.Meta) {
 	}
 	if w.Issue > 0 {
 		meta.Ticket = fmt.Sprint(w.Issue)
+	}
+	if w.ScheduledBy != "" {
+		row.ScheduledBy, row.ScheduledAt = w.ScheduledBy, now.Add(-15*time.Minute)
+		meta.ScheduledBy, meta.ScheduledAt = row.ScheduledBy, row.ScheduledAt
 	}
 	if w.Parent != "" {
 		meta.SpawnedBy, meta.SpawnedBySession = w.Parent, g.Session

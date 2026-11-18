@@ -47,6 +47,7 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 .win-title .tag { flex: none; font-weight: 500; font-size: .75rem; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .activity.recap { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
 .win-title .tag.agent-chip { opacity: .8; }
+.win-title .tag.sched-chip { white-space: nowrap; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; }
 .activity { color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .win-side { display: flex; flex-direction: column; align-items: flex-end; font-size: .8rem; color: var(--muted); }
 
@@ -67,6 +68,7 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 .state-pill .dot { width: .55rem; height: .55rem; border-radius: 50%; background: var(--c); }
 .state-pill.working { --c: var(--working); } .state-pill.blocked { --c: var(--blocked); } .state-pill.done { --c: var(--done); }
 .win-task { font-size: .95rem; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.win-scheduled { font-size: .85rem; color: var(--muted); }
 .chips { display: flex; flex-wrap: wrap; gap: .35rem; }
 .chip { font-size: .75rem; line-height: 1.2; padding: .2rem .55rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted);
   background: var(--card); white-space: nowrap; text-decoration: none; }

@@ -181,7 +181,7 @@ func RunStatus(opts StatusOptions) error {
 		}
 		c = append(c,
 			ctxCell(sr.row.ContextPct),
-			cell{text: dashIfEmpty(sr.meta.Mode), style: cliMuted()},
+			cell{text: dashIfEmpty(statusMode(sr.meta)), style: cliMuted()},
 			cell{text: dashIfEmpty(sr.meta.Parent()), style: cliMuted()},
 			cell{text: truncateDisplay(fleet.ActivityLine(sr.row), 44), style: cliMuted()},
 		)
@@ -434,6 +434,9 @@ func RunStatusDetail(window string, jsonOut bool) error {
 		line("pane says", v)
 	}
 	line("mode", sr.meta.Mode)
+	if d := scheduledDetail(sr.meta); d != "" {
+		line("scheduled", d)
+	}
 	if sr.meta.Backend != "" {
 		line("backend", sr.meta.Backend+"  (not Anthropic)")
 	}
@@ -775,4 +778,26 @@ func lookupWindowBySession(sessionID string) string {
 		}
 	}
 	return ""
+}
+
+// statusMode is the status table's MODE cell: "cron" for a window launched by
+// `agentctl cron` (whose recorded mode is the dispatch kind it used), else
+// the recorded launch mode.
+func statusMode(m fleet.Meta) string {
+	if m.ScheduledBy != "" {
+		return "cron"
+	}
+	return m.Mode
+}
+
+// scheduledDetail is the status detail "scheduled" line: the cron job and its
+// fire time, or "" for other windows (which skip the line).
+func scheduledDetail(m fleet.Meta) string {
+	if m.ScheduledBy == "" {
+		return ""
+	}
+	if m.ScheduledAt.IsZero() {
+		return m.ScheduledBy
+	}
+	return m.ScheduledBy + "  fired " + m.ScheduledAt.Local().Format("Mon 2 Jan 15:04")
 }

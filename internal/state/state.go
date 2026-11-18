@@ -62,6 +62,11 @@ type AgentState struct {
 	PRURL            string `json:"pr_url,omitempty"`
 	SessionName      string `json:"session_name,omitempty"`    // claude -n name; reused on restore
 	MailboxPending   int    `json:"mailbox_pending,omitempty"` // count-only mailbox.PendingCount, refreshed on a throttled monitor tick; delivered by the hook path
+
+	// ScheduledBy is the cron job that launched the window and ScheduledAt
+	// when it fired (windowstate scheduled_by/scheduled_at); empty otherwise.
+	ScheduledBy string    `json:"scheduled_by,omitempty"`
+	ScheduledAt time.Time `json:"scheduled_at,omitzero"`
 }
 
 // State is the snapshot of running agents, written by the monitor.

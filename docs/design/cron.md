@@ -160,7 +160,7 @@ The phone web app gets a read-only Schedules screen later (next fire, last resul
 2. **Approval popup for agent-run `cron add`** plus `--prompt-file`. Done: `cron add`, `cron resume` and `cron run --force` are gated by the dispatch popup (`PreviewKindCron`, `internal/hooks/cron_preview.go`) and phone approvals (`remoteapproval.KindCron`); plain `cron run` honors every throttle and is not gated. The Bash validator and the `PreToolUse` `hook-pre-tool` deny direct writes to `schedules.json` and `<stateDir>/cron/`. There is no `cron edit`/`enable` subcommand; `resume` is the enable.
 3. **`headless` mode** for Claude, with run output and push body.
 4. **Harness plumbing** once multi-harness phase 1 lands: route launches through `Harness`, add `Headless`/`HeadlessCommand`, accept `harness: codex|pi`.
-5. Later: hub ⏲ marker, phone Schedules screen, Linux timer install, event triggers (a GitHub webhook via `serve`) if wanted.
+5. Hub ⏲ marker done: cron windows show `⏲ <job>` in the hub recap column and on phone fleet rows, sit under a `scheduled (N)` / "Scheduled jobs (N)" bucket, the phone window view has a "Scheduled run" line, and `agentctl status` shows MODE `cron` (`scheduled_by`/`scheduled_at` on the window JSON). Later: phone Schedules screen, Linux timer install, event triggers (a GitHub webhook via `serve`) if wanted.
 
 ## Tests worth writing
 
