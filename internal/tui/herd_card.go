@@ -177,15 +177,43 @@ func newCardStyles() cardStyles {
 	}
 }
 
+// cardBarCells is the width of the card's context bar.
+const cardBarCells = 10
+
+// contextBar renders a small bar plus percent ("██░░░░░░░░ 13%"), coloured
+// green below 50, yellow below 80 and red otherwise.
+func contextBar(pct int, cs cardStyles) string {
+	pct = max(0, min(pct, 100))
+	t := theme.Current()
+	color := t.Red
+	switch {
+	case pct < 50:
+		color = t.Green
+	case pct < 80:
+		color = t.Yellow
+	}
+	filled := (pct*cardBarCells + 99) / 100
+	fill := cs.bg.Foreground(lipgloss.Color(color))
+	return fill.Render(strings.Repeat("█", filled)) +
+		cs.bg.Foreground(lipgloss.Color(t.Overlay)).Render(strings.Repeat("░", cardBarCells-filled)) +
+		cs.text.Render(fmt.Sprintf(" %d%%", pct))
+}
+
+// cardRow is one label/value pair; value is already styled when styled is set.
+type cardRow struct {
+	label, value string
+	styled       bool
+}
+
 // cardContent builds the card's lines (each at most w columns). A line whose
 // data is unknown is omitted. stats may be nil while the log is still parsing.
+// Layout: title, divider, usage rows, then (after a blank line) provenance rows.
 func cardContent(r herd.Row, st *cardStats, parentName string, now time.Time, w int, cs cardStyles) []string {
-	var out []string
-	add := func(label, value string) {
-		if value == "" {
-			return
+	var usage, prov []cardRow
+	add := func(dst *[]cardRow, label, value string) {
+		if value != "" {
+			*dst = append(*dst, cardRow{label: label, value: value})
 		}
-		out = append(out, truncateToWidth(cs.dim.Render(label+" ")+cs.text.Render(value), w))
 	}
 
 	glyph, gs := rowGlyph(r)
@@ -197,7 +225,7 @@ func cardContent(r herd.Row, st *cardStats, parentName string, now time.Time, w 
 		stateTxt += " " + herd.CompactAge(now.Sub(r.StateSince))
 	}
 	title := cs.text.Bold(true).Render(r.Name) + cs.bg.Render("  ") + gs.Background(cs.bg.GetBackground()).Render(glyph) + cs.dim.Render(" "+stateTxt)
-	out = append(out, truncateToWidth(title, w))
+	out := []string{truncateToWidth(title, w)}
 
 	model := r.ModelName
 	in, outTok, cacheRead, turns := r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.TurnCount
@@ -213,22 +241,22 @@ func cardContent(r herd.Row, st *cardStats, parentName string, now time.Time, w 
 	}
 
 	if model != "" {
-		add("model", render.AbbreviateModel(model))
+		add(&usage, "model", render.AbbreviateModel(model))
 	}
 	if r.ContextPct > 0 {
-		add("context", fmt.Sprintf("%d%%", r.ContextPct))
+		usage = append(usage, cardRow{label: "context", value: contextBar(r.ContextPct, cs), styled: true})
 	}
 	var tok []string
 	if in > 0 {
-		tok = append(tok, render.TokensK(in)+" in")
+		tok = append(tok, render.TokensCompact(in)+" in")
 	}
 	if outTok > 0 {
-		tok = append(tok, render.TokensK(outTok)+" out")
+		tok = append(tok, render.TokensCompact(outTok)+" out")
 	}
 	if cacheRead > 0 {
-		tok = append(tok, render.TokensK(cacheRead)+" cached")
+		tok = append(tok, render.TokensCompact(cacheRead)+" cached")
 	}
-	add("tokens", strings.Join(tok, " · "))
+	add(&usage, "tokens", strings.Join(tok, " · "))
 	if st != nil && st.hasCost {
 		c := fmt.Sprintf("$%.2f", st.cost.USD)
 		if st.cost.Billing == sessions.BillingFree {
@@ -237,34 +265,71 @@ func cardContent(r herd.Row, st *cardStats, parentName string, now time.Time, w 
 		if st.cost.Billing != sessions.BillingUnknown {
 			c += " (" + st.cost.Billing.String() + ")"
 		}
-		add("cost", c)
+		add(&usage, "cost", c)
 	}
 	if dur > 0 {
 		v := render.Duration(dur)
 		if turns > 0 {
 			v += fmt.Sprintf(" · %d turns", turns)
 		}
-		add("session", v)
+		add(&usage, "session", v)
 	} else if turns > 0 {
-		add("turns", fmt.Sprint(turns))
+		add(&usage, "turns", fmt.Sprint(turns))
 	}
 
-	add("branch", r.Branch)
-	wt := firstNonEmpty(r.WorktreeDir, r.WorktreePath)
-	if wt != "" {
-		add("worktree", filepath.Base(wt))
+	add(&prov, "branch", r.Branch)
+	if wt := firstNonEmpty(r.WorktreeDir, r.WorktreePath); wt != "" {
+		add(&prov, "worktree", filepath.Base(wt))
 	}
 	if r.PRNumber > 0 {
 		pr := fmt.Sprintf("#%d", r.PRNumber)
 		if r.PRURL != "" {
 			pr += " " + r.PRURL
 		}
-		add("pr", pr)
+		add(&prov, "pr", pr)
 	}
-	add("from", parentName)
+	add(&prov, "from", parentName)
 
+	var last string
 	if act := herd.ActivityLine(r); act != "" && act != r.Recap.Text {
-		add("last", act)
+		last = act
+	}
+
+	labelW := 0
+	for _, rows := range [][]cardRow{usage, prov} {
+		for _, cr := range rows {
+			labelW = max(labelW, lipgloss.Width(cr.label))
+		}
+	}
+	if last != "" {
+		labelW = max(labelW, len("last"))
+	}
+	line := func(cr cardRow) string {
+		label := cs.dim.Render(cr.label + strings.Repeat(" ", labelW-lipgloss.Width(cr.label)+1))
+		v := cr.value
+		if !cr.styled {
+			v = cs.text.Render(v)
+		}
+		return truncateToWidth(label+v, w)
+	}
+
+	if len(usage)+len(prov) == 0 && last == "" {
+		return out
+	}
+	out = append(out, cs.dim.Render(strings.Repeat("─", max(w, 0))))
+	for _, cr := range usage {
+		out = append(out, line(cr))
+	}
+	if len(prov) > 0 && len(usage) > 0 {
+		out = append(out, cs.bg.Render(""))
+	}
+	for _, cr := range prov {
+		out = append(out, line(cr))
+	}
+	if last != "" {
+		// Marker then text, matching the sidebar's last-action line.
+		label := cs.dim.Render("last" + strings.Repeat(" ", labelW-len("last")+1))
+		out = append(out, truncateToWidth(label+cs.dim.Render(herdActivityMarker)+cs.text.Render(last), w))
 	}
 	return out
 }

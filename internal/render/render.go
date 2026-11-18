@@ -128,6 +128,15 @@ func TokensK(n int) string {
 	return fmt.Sprintf("%d", n)
 }
 
+// TokensCompact formats a token count with a "k" suffix for thousands and an
+// "M" suffix (one decimal) from a million up: 4516000 -> "4.5M".
+func TokensCompact(n int) string {
+	if n >= 1_000_000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
+	return TokensK(n)
+}
+
 // Duration formats a duration as "Xh Ym", "Xm Ys", or "Xs".
 func Duration(d time.Duration) string {
 	d = d.Round(time.Second)

@@ -118,7 +118,7 @@ func TestSidebarSample_Render(t *testing.T) {
 		"go-engineer-opus ",                     // base name, no ":2"
 		"We are building",                       // recap wins
 		"#61 Redesign",                          // ticket task
-		"#60 ✓",                                 // done PR badge replaces the age
+		"#60 25m",                               // done PR badge keeps the age
 		"4m",                                    // state age
 		"Reading README.md",                     // activity fallback
 		"Add offline mode",                      // ad-hoc task
@@ -269,7 +269,7 @@ func TestRowRight(t *testing.T) {
 		{"no age no pr", herd.Row{}, ""},
 		{"age", herd.Row{StateSince: since}, "4m"},
 		{"pr and age", herd.Row{StateSince: since, PRNumber: 60}, "#60 4m"},
-		{"done pr replaces age", herd.Row{StateSince: since, PRNumber: 60, AgentState: state.AgentState{Done: true}}, "#60 ✓"},
+		{"done pr keeps age, no check", herd.Row{StateSince: since, PRNumber: 60, AgentState: state.AgentState{Done: true}}, "#60 4m"},
 		{"done without pr keeps age", herd.Row{StateSince: since, AgentState: state.AgentState{Done: true}}, "4m"},
 	}
 	for _, tt := range tests {
@@ -318,7 +318,7 @@ func TestRowDetail(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := rowDetail(tt.row, 52)
+			got := rowDetail(tt.row, 0, 52)
 			if len(got) != tt.wantLines {
 				t.Fatalf("rowDetail lines = %d, want %d: %+v", len(got), tt.wantLines, got)
 			}
