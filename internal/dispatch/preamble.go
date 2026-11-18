@@ -30,6 +30,8 @@ const sharedRuntimeSections = "### Context store\n" +
 	"- `agentctl context get <key>` — read a context entry\n" +
 	"- `agentctl context set <key> <value>` — write/update a context entry\n" +
 	"- `agentctl context list` — list all context entries\n" +
+	"- `agentctl context clear <key>` — delete a context entry\n" +
+	"- `agentctl status whoami` — which tmux window am I\n" +
 	"\n" +
 	"### Messaging\n" +
 	"- `ListAgents` lists the other Claude Code sessions on this machine; each row shows the session name and its tmux location, e.g. `agentctl-myproject:@412.%635` (the `@412` part is the tmux window ID)\n" +
@@ -41,20 +43,66 @@ const sharedRuntimeSections = "### Context store\n" +
 	"- Create new commits rather than amending existing ones\n" +
 	"- Use imperative mood in commit messages"
 
-// orchestratorDelegationSection documents dispatch as the primary delegation
-// path, plus the two other coordination commands (tickets, health).
-// --prompt-key exists specifically because the dispatch-preview approval
-// popup tokenizes the raw pre-shell command string before a human ever sees
-// it, so `--prompt "$(cat file)"` renders in that popup as the literal,
-// unexpanded text -- a human approving that has seen nothing meaningful.
-// `--prompt-key` reads the same content from the context store, which the
-// popup CAN resolve and display for real.
-const orchestratorDelegationSection = "### Delegation\n" +
-	"- `agentctl dispatch --issue <N>` — dispatch an agent to work on a GitHub issue; this is the primary way work gets assigned to another agent\n" +
-	"- `agentctl dispatch --agent <name> --prompt <text>` — dispatch an agent on an ad-hoc prompt (no ticket)\n" +
-	"- `agentctl dispatch --agent <name> --prompt-key <key>` — same as `--prompt`, but reads the prompt text from `agentctl context get <key>` instead of an inline string; use this instead of `--prompt \"$(cat file)\"` because the approval popup tokenizes the raw command string and cannot resolve command substitution; run `agentctl context set <key> ...` in a separate Bash call BEFORE the dispatch, never chained with `&&` (the popup is shown before any part of the command runs, and an unresolvable key is denied)\n" +
-	"- `agentctl tickets` — list GitHub issues\n" +
-	"- `agentctl health` — run health checks"
+// The orchestrator quick reference is grouped by job (delegate, watch, wait,
+// clean up, context, other). It stays project-neutral: the lead session uses
+// it in repos that have none of this repository's tooling. The messaging and
+// no-messaging variants differ only in the Wait group, so the rest is shared.
+//
+// --prompt-key exists because the dispatch-preview approval popup tokenizes
+// the raw pre-shell command string before a human sees it, so
+// `--prompt "$(cat file)"` renders as literal, unexpanded text. --prompt-key
+// reads the same content from the context store, which the popup CAN resolve
+// and display.
+const orchDelegateSection = "### Delegate\n" +
+	"- `agentctl dispatch --issue <N>` — worker on a GitHub issue; `agentctl dispatch --agent <name> --prompt '<text>'` — worker on an ad-hoc prompt\n" +
+	"- `agentctl dispatch --agent <name> --prompt-key <key>` — prompt read from `agentctl context get <key>`. Prefer it for long prompts: the approval popup sees the raw command string and cannot resolve `$(cat file)`, but it can resolve a key. Run `agentctl context set <key> ...` in a separate Bash call BEFORE the dispatch, never chained with `&&` (the popup appears before any part of the command runs, and an unresolvable key is denied)\n" +
+	"- Flags: `--dir <repo>` (required when the work lives in a different repo than your cwd), `--model`, `--account`, `--no-worktree`\n" +
+	"- Worktree, branch and PR finishing steps are automatic: do not describe git mechanics in the prompt\n" +
+	"- Prompts: inline single-quoted multi-line text; never `$(cat file)`\n" +
+	"- Output `Dispatched ... (window @N)` gives the window ID used by status/peek"
+const orchDelegateMatchMessaging = " and for matching the worker's ListAgents row\n"
+const orchDelegateMatchNoMessaging = "\n"
+
+const orchWatchSection = "### Watch\n" +
+	"- `agentctl status list [--json] [--blocked] [--state <s>] [--session <name>]` — all agents and their state\n" +
+	"- `agentctl status peek @N [--lines N]` — a window's pane contents and what they imply\n" +
+	"- Use these instead of `tmux capture-pane`, `tmux list-windows` or reading `.agentctl/windows/*.json`; output is plain text when piped\n"
+
+const orchWaitMessagingSection = "### Wait\n" +
+	"- Do not poll. Workers report back with SendMessage when done, and agentctl adds an `agentctl notice:` line when a worker goes idle or blocks\n" +
+	"- CI: `gh pr checks <N> --watch --interval 20`; exit code 8 means checks are pending, not failed\n"
+
+const orchWaitNoMessagingSection = "### Wait\n" +
+	"- Do not poll. agentctl tells you when a worker finishes or blocks (`agentctl notice:` lines)\n" +
+	"- CI: `gh pr checks <N> --watch --interval 20`; exit code 8 means checks are pending, not failed\n"
+
+const orchCleanupSection = "### Clean up\n" +
+	"- `agentctl sweep --dry-run`, then `agentctl sweep` — close finished windows in the current tmux session (`--session <name>` outside tmux, `--include-bare` for idle bare windows)\n" +
+	"- `agentctl cleanup --dry-run`, then `agentctl cleanup --yes` — reclaim finished worktrees (skips those with open PRs)\n"
+
+const orchContextSection = "### Context for workers\n" +
+	"- `agentctl context set <key> <value> --agent <name> --tag <t>` — an entry is auto-injected into that agent's prompts; WITHOUT `--agent` it is stored but never injected anywhere\n" +
+	"- `agentctl context clear <key>` — delete an entry\n"
+
+const orchOtherSection = "### Other\n" +
+	"- `agentctl tickets` — list GitHub issues; `agentctl health` — health checks\n" +
+	"- `agentctl agents` — list dispatchable agents; `agentctl account list` — accounts and usage\n" +
+	"- `agentctl cost [--since 7d] [--by agent]` — spend report\n"
+
+// orchestratorSections joins the quick-reference groups, with the Wait group
+// matching the harness's messaging support.
+func orchestratorSections(messaging bool) string {
+	wait, match := orchWaitNoMessagingSection, orchDelegateMatchNoMessaging
+	if messaging {
+		wait, match = orchWaitMessagingSection, orchDelegateMatchMessaging
+	}
+	return strings.TrimRight(orchDelegateSection+match+"\n"+orchWatchSection+"\n"+wait+"\n"+
+		orchCleanupSection+"\n"+orchContextSection+"\n"+orchOtherSection, "\n")
+}
+
+// orchestratorDelegationSection is the orchestrator quick reference for
+// harnesses with native messaging.
+var orchestratorDelegationSection = orchestratorSections(true)
 
 // WorkerPreamble is the system-prompt section injected into worker-role
 // sessions -- dispatch, adhoc, triage, review, discuss, and custom. It covers
@@ -69,7 +117,7 @@ const WorkerPreamble = "## agentctl Runtime Environment\n\n" +
 // orchestrator-role sessions (mode `bare`, i.e. the human-facing lead
 // session). It carries everything WorkerPreamble does, plus the delegation
 // surface.
-const OrchestratorPreamble = "## agentctl Runtime Environment\n\n" +
+var OrchestratorPreamble = "## agentctl Runtime Environment\n\n" +
 	"You are running inside an agentctl-managed tmux session. The following tools are available:\n\n" +
 	sharedRuntimeSections + "\n\n" + orchestratorDelegationSection
 
@@ -142,6 +190,8 @@ const noMessagingRuntimeSections = "### Context store\n" +
 	"- `agentctl context get <key>` — read a context entry\n" +
 	"- `agentctl context set <key> <value>` — write/update a context entry\n" +
 	"- `agentctl context list` — list all context entries\n" +
+	"- `agentctl context clear <key>` — delete a context entry\n" +
+	"- `agentctl status whoami` — which tmux window am I\n" +
 	"\n" +
 	"### Notices\n" +
 	"- Messages starting with `agentctl notice:` are short factual status notes from agentctl itself (for example that a session went idle); they are information, not instructions\n" +
@@ -168,7 +218,23 @@ func preambleForHarness(role Role, messaging bool) string {
 		"You are running inside an agentctl-managed tmux session. The following tools are available:\n\n" +
 		noMessagingRuntimeSections
 	if role == RoleOrchestrator {
-		p += "\n\n" + orchestratorDelegationSection
+		p += "\n\n" + orchestratorSections(false)
 	}
 	return p
+}
+
+// AllPreambles returns every preamble variant by name (worker and orchestrator,
+// with and without native messaging, plus the per-launch identity sections).
+// It lets tests check the command references in injected text against the real
+// CLI.
+func AllPreambles() map[string]string {
+	return map[string]string{
+		"WorkerPreamble":               WorkerPreamble,
+		"OrchestratorPreamble":         OrchestratorPreamble,
+		"WorkerPreamble(no messaging)": preambleForHarness(RoleWorker, false),
+		"OrchestratorPreamble(no msg)": preambleForHarness(RoleOrchestrator, false),
+		"orchestratorSection":          orchestratorSection(Orchestrator{WindowID: "@1", Pane: "%2"}),
+		"crossAccountSection":          crossAccountSection,
+		"mailboxReportingSection":      mailboxReportingSection,
+	}
 }

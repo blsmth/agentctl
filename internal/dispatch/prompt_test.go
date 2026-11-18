@@ -1112,3 +1112,54 @@ func TestFinishingSteps_ReportToOrchestrator(t *testing.T) {
 		t.Errorf("shared-dir steps missing report:\n%s", shared)
 	}
 }
+
+func TestOrchestratorQuickReference(t *testing.T) {
+	groups := []string{"### Delegate", "### Watch", "### Wait", "### Clean up", "### Context for workers", "### Other"}
+	for name, p := range map[string]string{
+		"messaging":    OrchestratorPreamble,
+		"no messaging": preambleForHarness(RoleOrchestrator, false),
+	} {
+		for _, g := range groups {
+			if !strings.Contains(p, g) {
+				t.Errorf("%s: missing group %q", name, g)
+			}
+		}
+		for _, want := range []string{
+			"agentctl status list", "agentctl status peek", "--dir <repo>", "gh pr checks <N> --watch",
+			"exit code 8", "agentctl sweep --dry-run", "agentctl cleanup --yes", "WITHOUT `--agent`",
+			"agentctl context clear", "agentctl account list", "agentctl cost",
+		} {
+			if !strings.Contains(p, want) {
+				t.Errorf("%s: missing %q", name, want)
+			}
+		}
+	}
+
+	nm := preambleForHarness(RoleOrchestrator, false)
+	for _, bad := range []string{"SendMessage", "ListAgents"} {
+		if strings.Contains(nm, bad) {
+			t.Errorf("no-messaging orchestrator preamble mentions %s", bad)
+		}
+	}
+	if !strings.Contains(OrchestratorPreamble, "SendMessage") {
+		t.Error("messaging orchestrator preamble should mention SendMessage in Wait")
+	}
+}
+
+func TestWorkerPreambleContextClearAndWhoami(t *testing.T) {
+	for name, p := range map[string]string{
+		"messaging":    WorkerPreamble,
+		"no messaging": preambleForHarness(RoleWorker, false),
+	} {
+		for _, want := range []string{"agentctl context clear <key>", "agentctl status whoami"} {
+			if !strings.Contains(p, want) {
+				t.Errorf("%s worker preamble missing %q", name, want)
+			}
+		}
+		for _, bad := range []string{"agentctl dispatch", "agentctl sweep", "### Delegate"} {
+			if strings.Contains(p, bad) {
+				t.Errorf("%s worker preamble must not contain %q", name, bad)
+			}
+		}
+	}
+}
