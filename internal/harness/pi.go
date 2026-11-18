@@ -195,12 +195,22 @@ func PiSessionsDir() string {
 	if d := os.Getenv("PI_CODING_AGENT_SESSION_DIR"); d != "" {
 		return d
 	}
+	dir := PiAgentDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "sessions")
+}
+
+// PiAgentDir returns pi's config dir (settings.json, models.json, sessions):
+// $PI_CODING_AGENT_DIR, else ~/.pi/agent. "" when the home dir is unknown.
+func PiAgentDir() string {
 	if d := os.Getenv("PI_CODING_AGENT_DIR"); d != "" {
-		return filepath.Join(d, "sessions")
+		return d
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return ""
 	}
-	return filepath.Join(home, ".pi", "agent", "sessions")
+	return filepath.Join(home, ".pi", "agent")
 }

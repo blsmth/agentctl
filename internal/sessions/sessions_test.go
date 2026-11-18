@@ -104,6 +104,21 @@ func TestNormalizeProjectName(t *testing.T) {
 			want:  "agentctl",
 		},
 		{
+			name:  "pi worktree, issue slug",
+			input: "/-Users-alice-src-agentctl-.worktrees-agent-go-engineer-issue-42",
+			want:  "agentctl",
+		},
+		{
+			name:  "pi worktree, adhoc slug",
+			input: "/-Users-alice-src-agentctl-.worktrees-agent-go-engineer-adhoc-d1e942d3",
+			want:  "agentctl",
+		},
+		{
+			name:  "pi non-worktree dir",
+			input: "/-Users-alice-src-agentctl",
+			want:  "agentctl",
+		},
+		{
 			name:  "no hyphens — single segment",
 			input: "/agentctl",
 			want:  "agentctl",

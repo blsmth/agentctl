@@ -728,8 +728,12 @@ func NormalizeProjectName(project string) string {
 	// Worktree paths encode "/.worktrees/" as "--worktrees-" (the dot becomes
 	// a hyphen, and both surrounding slashes also become hyphens). Strip
 	// everything from that marker onwards so we recover the parent project.
-	if idx := strings.Index(encoded, "--worktrees-"); idx > 0 {
-		encoded = encoded[:idx]
+	// pi keeps the dot ("-.worktrees-"), so both forms are recognised.
+	for _, marker := range []string{"--worktrees-", "-.worktrees-"} {
+		if idx := strings.Index(encoded, marker); idx > 0 {
+			encoded = encoded[:idx]
+			break
+		}
 	}
 
 	// The last "-"-separated segment is the project basename.
