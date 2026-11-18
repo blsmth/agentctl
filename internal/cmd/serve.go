@@ -16,6 +16,8 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/pidfile"
 	"github.com/blsmth/agentctl/internal/serve"
+	"github.com/blsmth/agentctl/internal/servectl"
+	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // RunServe runs agentctl serve in the foreground.
@@ -280,4 +282,50 @@ func printPushStatus(w io.Writer, st serve.StatusInfo) {
 	} else {
 		fmt.Fprintf(w, "last push:\tnone since start\n")
 	}
+}
+
+// serveController is the servectl.Controller the start/stop/toggle commands
+// use; a variable so tests never reach launchctl.
+var serveController = servectl.New
+
+// serveDisplay shows a toggle result as a tmux message on client; a variable
+// so tests do not talk to tmux.
+var serveDisplay = tmux.DisplayMessageTo
+
+// RunServeStart starts agentctl serve (see servectl.Controller.Start).
+func RunServeStart(w io.Writer) error {
+	return runServeAction(w, "", servectl.Controller.Start)
+}
+
+// RunServeStop stops agentctl serve until the next login (see
+// servectl.Controller.Stop).
+func RunServeStop(w io.Writer) error {
+	return runServeAction(w, "", servectl.Controller.Stop)
+}
+
+// RunServeToggle stops a running agentctl serve or starts a stopped one.
+// With client set (the prefix-key binding) the result is also shown as a
+// tmux message on that client.
+func RunServeToggle(w io.Writer, client string) error {
+	return runServeAction(w, client, servectl.Controller.Toggle)
+}
+
+func runServeAction(w io.Writer, client string, act func(servectl.Controller) (string, error)) error {
+	c, err := serveController()
+	if err != nil {
+		return err
+	}
+	msg, err := act(c)
+	if client != "" {
+		shown := msg
+		if err != nil {
+			shown = "serve: " + err.Error()
+		}
+		serveDisplay(client, shown)
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(w, msg)
+	return nil
 }

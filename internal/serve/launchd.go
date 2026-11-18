@@ -10,10 +10,11 @@ import (
 
 	"github.com/blsmth/agentctl/internal/launchd"
 	"github.com/blsmth/agentctl/internal/selfpath"
+	"github.com/blsmth/agentctl/internal/servectl"
 )
 
 // LaunchdLabel is the LaunchAgent label for agentctl serve.
-const LaunchdLabel = "com.blsmth.agentctl.serve"
+const LaunchdLabel = servectl.Label
 
 // LaunchdLogFile captures stdout/stderr of the launchd job (startup banner,
 // panics); the structured log is serve.log.

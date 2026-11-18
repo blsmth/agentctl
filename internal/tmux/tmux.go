@@ -1497,6 +1497,10 @@ func agentctlKeybindings(exe string) []keyBinding {
 		{"h", run("", "hud-toggle #{window_id}")},
 		{"H", nested(80, 30, "hud #{window_id}")},
 		{"C", nested(60, 24, "context-push-menu #{window_id}")},
+		// Toggle agentctl serve (the phone web app) and report the outcome as
+		// a tmux message on the pressing client. Machine-wide, so not
+		// redirected in the hub (hubtarget scopes it ScopeOther).
+		{"W", run("-b ", "serve toggle --message-client '#{client_name}'")},
 		// Fleet hub: summon the cross-session dashboard, and jump straight to
 		// the next blocked agent anywhere. bind-key is server-global — these
 		// two keys end up live in every agentctl session, including the hub

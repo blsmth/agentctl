@@ -117,3 +117,55 @@ func TestAgentInstallUninstallLoaded(t *testing.T) {
 		t.Errorf("second uninstall: %v", err)
 	}
 }
+
+func TestAgentBootoutKickstartInstalled(t *testing.T) {
+	home := t.TempDir()
+	var calls []string
+	fail := false
+	a := Agent{Home: home, UID: 501, Sleep: func(time.Duration) {}, Run: func(name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if fail {
+			return []byte("Boot-out failed: 3: No such process\n"), errors.New("exit status 3")
+		}
+		return nil, nil
+	}}
+	if a.Installed("com.x") {
+		t.Error("Installed with no plist")
+	}
+	if err := os.MkdirAll(home+"/Library/LaunchAgents", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(PlistPath(home, "com.x"), []byte("<plist/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !a.Installed("com.x") {
+		t.Error("not Installed with a plist")
+	}
+	if err := a.Bootout("com.x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Kickstart("com.x", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Kickstart("com.x", true); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"launchctl bootout gui/501/com.x",
+		"launchctl kickstart gui/501/com.x",
+		"launchctl kickstart -k gui/501/com.x",
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Errorf("calls = %q", calls)
+	}
+	if _, err := os.Stat(PlistPath(home, "com.x")); err != nil {
+		t.Errorf("Bootout removed the plist: %v", err)
+	}
+	fail = true
+	if err := a.Bootout("com.x"); err == nil || !strings.Contains(err.Error(), "No such process") {
+		t.Errorf("Bootout err = %v", err)
+	}
+	if err := a.Kickstart("com.x", false); err == nil {
+		t.Error("Kickstart succeeded on a failing launchctl")
+	}
+}

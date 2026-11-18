@@ -56,6 +56,12 @@ agentctl binds only the keys below; tmux's defaults (`n` next window, `0`–`9` 
 | `i` | **Self-improve** — agent analyzes its session logs and rewrites its own instructions |
 | `C` | **Context push** — pick a context-store entry to push to the focused agent |
 
+## Phone web app
+
+| Key | Action |
+|-----|--------|
+| `W` | **Toggle `agentctl serve`** — stop the phone web app server if it runs, else start it (`agentctl serve toggle`); the result shows as a tmux message, e.g. "serve started at https://…". Stop leaves the LaunchAgent installed, so serve comes back at the next login. Not installed: the message says to run `agentctl serve install`. See [the mobile web app design](design/mobile-web-app.md#start-stop-and-the-toggle-internalservectl). |
+
 ## HUD
 
 | Key | Action |
@@ -105,9 +111,12 @@ The hub window has no chrome bar or HUD of its own. By default the agent's chrom
 | `p` | Open the selected agent's PR. |
 | `c` | **Toggle chrome** — show or hide the agent's chrome bar in the live pane for this hub (starts from the `hub_chrome` config value, default hidden). With chrome shown, clicking a tab in the live pane switches the live viewer and the hub list follows. |
 | `r` | Refresh. |
+| `S` | **Toggle `agentctl serve`**, like prefix+`W`; the outcome flashes in the footer. |
 | `q`/`esc` | Leave the hub. |
 
-Fold state and the filter are kept per hub across reloads, hot reloads and restarts, in `hub-view.json` in the agentctl state dir (`$XDG_STATE_HOME/agentctl`, default `~/.local/state/agentctl`). Jumps that target a hidden agent (`b`, a just-launched agent, a tab click in the live pane) unfold its group first, and clear the filter if it would still hide it. The one-line footer has no room for `z`, `Z` and `f`; they are listed under `?`.
+The title row shows `agentctl serve`'s state after "agentctl hub": `📱 serve` (green) when it runs, `📱 off` (dim) when it does not, and `📱 stuck` (yellow) when its process is alive but its control socket refuses connections (phone approvals are not offered). It is refreshed on the hub's poll tick and does not need the monitor. Clicking it toggles serve, like `S`.
+
+Fold state and the filter are kept per hub across reloads, hot reloads and restarts, in `hub-view.json` in the agentctl state dir (`$XDG_STATE_HOME/agentctl`, default `~/.local/state/agentctl`). Jumps that target a hidden agent (`b`, a just-launched agent, a tab click in the live pane) unfold its group first, and clear the filter if it would still hide it. The one-line footer has no room for `z`, `Z`, `f` and `S`; they are listed under `?`.
 
 ### Hub list tree
 

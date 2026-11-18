@@ -17,6 +17,7 @@ import (
 	"github.com/blsmth/agentctl/internal/hubtarget"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/selfexec"
+	"github.com/blsmth/agentctl/internal/servectl"
 	"github.com/blsmth/agentctl/internal/theme"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
@@ -456,6 +457,14 @@ type FleetModel struct {
 	// viewDirty marks a fold/filter change made on the way to a jump
 	// (revealRow) that flushView has not persisted yet.
 	viewDirty bool
+
+	// serveState is agentctl serve's state from the last probe (see
+	// fleet_serve.go); serveKnown is false until the first one lands.
+	// serveProbing and serveBusy keep one probe and one toggle in flight.
+	serveState   servectl.State
+	serveKnown   bool
+	serveProbing bool
+	serveBusy    bool
 }
 
 // HubSelectEnv carries the selected agent ("session|windowID") across a hot
@@ -599,7 +608,14 @@ func newFleetModel() FleetModel {
 
 // Init kicks off the first load and starts the poll loop.
 func (m FleetModel) Init() tea.Cmd {
-	return tea.Batch(fleetLoadCmd(), fleetTickCmd(), fleetZoomSyncCmd(m.hubChrome))
+	return tea.Batch(fleetLoadCmd(), fleetTickCmd(), fleetZoomSyncCmd(m.hubChrome), fleetServeProbeOnce())
+}
+
+// fleetServeProbeOnce is the first serve probe. Init has a value receiver,
+// so it cannot mark the probe in flight; the first tick may then start a
+// second one, which is harmless.
+func fleetServeProbeOnce() tea.Cmd {
+	return func() tea.Msg { return fleetServeProbedMsg{state: fleetServeProbe()} }
 }
 
 func fleetTickCmd() tea.Cmd {
@@ -657,7 +673,15 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		show := m.maybeShowCmd()
-		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome))
+		probe := m.serveProbeCmd()
+		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome), probe)
+
+	case fleetServeProbedMsg:
+		m.applyServeProbe(msg)
+		return m, nil
+
+	case fleetServeToggledMsg:
+		return m, m.applyServeToggled(msg)
 
 	case fleetViewerMsg:
 		m = m.syncFromViewer(msg)
@@ -892,6 +916,9 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 
 	case "f":
 		return *m, m.cycleFilter()
+
+	case fleetServeKey:
+		return *m, m.toggleServe()
 	}
 	return *m, nil
 }
@@ -1499,6 +1526,9 @@ func (m FleetModel) fleetCounts() (blocked, working, done, idle int) {
 // shorten the tag, then drop the counts, then truncate.
 func (m FleetModel) renderTitle(cw int) string {
 	title := strings.Repeat(" ", fleetSidebarLeftInset) + fleetTitleStyle.Render("agentctl hub")
+	if badge := m.serveBadge(); badge != "" {
+		title += fleetServeGap + badge // serveBadgeSpan mirrors this layout
+	}
 	left, shortLeft := title, title
 	if m.filter != fleetFilterAll {
 		left += fleetCountStyle.Render(" · " + m.filter.label())

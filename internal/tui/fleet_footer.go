@@ -167,6 +167,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"z", "fold", "z"},
 		{"Z", "focus mode", "Z"},
 		{"f", "filter", "f"},
+		{fleetServeKey, "serve on/off", fleetServeKey},
 		{"q", "leave", "q"},
 		{"esc", "close help", "?"},
 	}

@@ -192,8 +192,8 @@ Away mode: when only the phone is at hand, the approval popups that gate `agentc
 
 - Decisions come only from `POST /v1/approvals/{id}` by a paired device with `allow_write`, CSRF header and rate limit, and are bound to the payload hash of what the phone displayed. The device token is stored only hashed, so a same-uid agent cannot read one from disk.
 - The hook only trusts its own connection, verified as described above, and requires the decision to carry the hash of its own payload.
-- The Bash validator (`checkServeTamper` in `internal/hooks/validate.go`, part of the global deny list) blocks commands that reference the serve state dir, `control.sock` or `serve.pid`; stop, reload or reinstall the serve LaunchAgent or systemd unit; `pkill`/`killall` agentctl, or `kill` an `agentctl serve` found some other way; and `agentctl serve install|uninstall|pair|ca`.
-- These rules make some operations human-only, including `launchctl kickstart … com.blsmth.agentctl.serve` (restarting serve) and `agentctl serve install|uninstall|pair|ca`. Agents read serve's logs with the read-only `agentctl serve logs [-n N] [--audit] [--follow]`, which prints the tail of `serve.log`, or of `audit.jsonl` with `--audit`; the deny reason points to it.
+- The Bash validator (`checkServeTamper` in `internal/hooks/validate.go`, part of the global deny list) blocks commands that reference the serve state dir, `control.sock` or `serve.pid`; stop, reload or reinstall the serve LaunchAgent or systemd unit; `pkill`/`killall` agentctl, or `kill` an `agentctl serve` found some other way; `launchctl` with the serve label in either order, across lines; and `agentctl serve install|uninstall|pair|ca|start|stop|toggle` (also by path or `"$(which agentctl)"`).
+- These rules make some operations human-only, including `launchctl kickstart … com.blsmth.agentctl.serve` (restarting serve) and `agentctl serve install|uninstall|pair|ca|start|stop|toggle`. The human's prefix+`W` and the hub's `S` key and indicator run outside Claude Code. An agent that injects keystrokes into the hub with `tmux send-keys` is outside what a string-based rule can see, like the program-on-disk case below. Agents read serve's logs with the read-only `agentctl serve logs [-n N] [--audit] [--follow]`, which prints the tail of `serve.log`, or of `audit.jsonl` with `--audit`; the deny reason points to it.
 - **Residual risk**: every agent runs as the same uid as serve. A determined agent can write a program to disk and run it, which the validator cannot see into: it could stop serve, rewrite `serve.pid`, and bind an impostor socket named like the real one that answers the ping with a copied build identity and the right pid; or ask the real control socket to open a pairing window and pair itself as a device over loopback. These are bypasses of the same-uid boundary, not of this protocol, and they are equally available without away mode (such an agent can already run anything it likes). The checks above make an accidental or naive bypass fail closed: a fake or broken socket can at worst cause a deny or a timeout.
 
 ## Web app (PR5)
@@ -219,13 +219,28 @@ Embedded under `internal/serve/web/` (`go:embed`), served at `/`. Hash-based rou
 agentctl serve                 # run in the foreground (what launchd runs)
 agentctl serve install         # write ~/Library/LaunchAgents/com.blsmth.agentctl.serve.plist (KeepAlive, RunAtLoad), bootstrap it
 agentctl serve uninstall
+agentctl serve start           # bootstrap the installed LaunchAgent (kickstart if loaded); human-only
+agentctl serve stop            # bootout the LaunchAgent, plist kept: back at next login; human-only
+agentctl serve toggle          # stop if a serve process is alive, else start; human-only
 agentctl serve status          # running?, pid, listen URL, version, devices count, cert expiry, CA fingerprint
 agentctl serve pair [--name N]
 agentctl serve devices [rm <id|name>]
 agentctl serve logs [-n N] [--audit] [--follow]   # read-only tail of serve.log / audit.jsonl
 ```
 
-Linux: `install` prints a systemd user unit instead of writing launchd (no need to fully support Linux, but do not break the build).
+Linux: `install` prints a systemd user unit instead of writing launchd (no need to fully support Linux, but do not break the build). `start`/`stop`/`toggle` print the matching `systemctl --user start|stop agentctl-serve`.
+
+### Start, stop and the toggle (`internal/servectl`)
+
+`internal/servectl` is the leaf package behind `serve start|stop|toggle`, prefix+`W` and the hub indicator (internal/serve imports the TUI, so the TUI cannot import it; servectl owns the label, `serve.pid` and `control.sock` names and serve uses its constants). Every `launchctl` call goes through `launchd.Agent`'s runner (`Bootstrap`, `Bootout`, `Kickstart`, `Loaded`, `Installed`) and every signal through `Controller.Terminate`; inside a test binary `servectl.New` refuses both.
+
+- **stop** boots the job out and leaves the plist on disk, so serve comes back at the next login or with `start`. It does not `launchctl disable` the job: a stop that silently outlived a reboot would leave serve installed but never running, and remote approvals quietly off; `uninstall` is the permanent stop. A serve process launchd does not manage (run in a terminal) gets SIGTERM, but only after `pidfile.Running` confirmed it is `agentctl … serve`.
+- **start** kickstarts a loaded job (`-k` when a process is alive but its control socket is dead) or bootstraps the installed plist, then waits up to 10s for the control socket and reports the URL. With no plist it fails with "run `agentctl serve install`" rather than spawning a detached server: that process would have no supervisor, no log capture and would not come back at login, and it would be one more self-spawn path.
+- **toggle** stops when `serve.pid` names a live serve process (answering or not), else starts.
+- **prefix+`W`** runs `agentctl serve toggle --message-client '#{client_name}'` in a background `run-shell` and shows the result as a tmux message ("serve stopped (…)", "serve started at https://…", or the error).
+- **Hub indicator**: the hub list's title row shows `📱 serve` (green, running), `📱 off` (dim) or `📱 stuck` (yellow: the pid is alive but the control socket refuses connections, so phone approvals are not offered). It is fed by a probe on the hub's 1s poll tick (`servectl.Probe`: the pidfile check and, only when a process is alive, one local socket connect; no launchctl, nothing per render, independent of the monitor). Clicking it or pressing `S` in the list toggles serve and flashes the outcome in the footer.
+
+These paths run outside Claude Code. For agents, `serve start|stop|toggle` and `launchctl` against the serve label are denied by the serve-tamper rules (see "Security model and residual risk").
 
 Hot reload: use `internal/selfexec` exactly like the hub/monitor, so `just install` upgrades the running server (same PID, same listener is fine to re-open). Pidfile-guarded: a second `serve` exits with a clear message.
 

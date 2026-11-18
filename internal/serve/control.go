@@ -13,11 +13,12 @@ import (
 
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/remoteapproval"
+	"github.com/blsmth/agentctl/internal/servectl"
 )
 
 // ControlSocket is the unix socket the CLI uses to talk to the running
 // server. It lives in the 0700 serve dir and is itself 0600.
-const ControlSocket = "control.sock"
+const ControlSocket = servectl.ControlSocket
 
 const controlTimeout = 5 * time.Second
 
