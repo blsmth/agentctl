@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/sessions"
 )
@@ -29,7 +30,7 @@ func RunUsage() {
 	byAgent, err := sessions.FindSessionsByAgent()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error finding sessions: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	todayUsage := sessions.AggregateUsage(byAgent, todayStart, now)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/claude"
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -24,7 +25,7 @@ func RunInit() {
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: could not determine working directory: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	dir := filepath.Join(cwd, ".claude", "agents")
@@ -37,7 +38,7 @@ func RunInit() {
 		// .claude/ may be repository content; never create through a symlink.
 		if err := safefs.MkdirAll(cwd, dir, 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: could not create .claude/agents/: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 
 		fmt.Println("Created .claude/agents/")
@@ -58,7 +59,7 @@ func RunInit() {
 		installed, skipped, err := agent.InstallTemplates(dir, false)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 
 		if len(installed) == 0 && len(skipped) == 0 {
@@ -316,7 +317,7 @@ func RunNew(name, extends string) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: could not determine working directory: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	agentsDir := filepath.Join(cwd, ".claude", "agents")
@@ -326,7 +327,7 @@ func RunNew(name, extends string) {
 	info, err := os.Stat(agentsDir)
 	if err != nil || !info.IsDir() {
 		fmt.Fprintln(os.Stderr, "No .claude/agents/ directory. Run `agentctl init` first.")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	targetPath := filepath.Join(agentsDir, name+".md")
@@ -334,7 +335,7 @@ func RunNew(name, extends string) {
 	// Check for existing file (Lstat: a dangling symlink counts as existing).
 	if _, err := os.Lstat(targetPath); err == nil {
 		fmt.Fprintf(os.Stderr, "Agent %s already exists at %s\n", name, targetPath)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	var content string
@@ -346,7 +347,7 @@ func RunNew(name, extends string) {
 
 	if err := safefs.WriteFile(cwd, targetPath, []byte(content), 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: could not write agent file: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	if extends != "" {

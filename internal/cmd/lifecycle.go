@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/reaper"
@@ -44,7 +45,7 @@ func RunKillMenu(nameOrID string) {
 		}
 		if agentName == "" || agentName == "shell" {
 			fmt.Fprintln(os.Stderr, "Switch to an agent window first")
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		displayName = tmux.StripAgentPrefix(agentName)
 		if strings.HasPrefix(nameOrID, "@") {
@@ -54,7 +55,7 @@ func RunKillMenu(nameOrID string) {
 
 	if displayName == "" || displayName == "shell" {
 		fmt.Fprintln(os.Stderr, "Switch to an agent window first")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	model := tui.NewKillModel(displayName)
@@ -62,7 +63,7 @@ func RunKillMenu(nameOrID string) {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.KillModel).Result()
@@ -74,12 +75,12 @@ func RunKillMenu(nameOrID string) {
 	if windowID != "" {
 		if err := tmux.KillWindow(windowID); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 	} else {
 		if err := tmux.KillAgent(displayName); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 	}
 }
@@ -88,7 +89,7 @@ func RunKillMenu(nameOrID string) {
 func RunKill(name string) {
 	if err := tmux.KillAgent(name); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 }
 
@@ -114,7 +115,7 @@ func RunKillAllMenu() {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.KillAllModel).Result()
@@ -143,7 +144,7 @@ func RunQuit() {
 	serverPID := reaper.ServerPID(tmux.SessionName)
 	if err := tmux.KillSession(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	reaper.ReapOrphansUnderServer(serverPID, paths.SettingsDir())
 }
@@ -168,7 +169,7 @@ func RunQuitMenu() {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.QuitModel).Result()
@@ -181,7 +182,7 @@ func RunQuitMenu() {
 	serverPID := reaper.ServerPID(tmux.SessionName)
 	if err := tmux.KillSession(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	reaper.ReapOrphansUnderServer(serverPID, paths.SettingsDir())
 }
@@ -194,14 +195,14 @@ func RunHubQuitMenu() {
 	finalModel, err := tea.NewProgram(tui.NewHubCloseModel()).Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	if !finalModel.(tui.HubCloseModel).Result().Confirmed {
 		return
 	}
 	if err := tmux.CloseHub(client); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 }
 
@@ -227,7 +228,7 @@ func RunRestartMenu() {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.RestartModel).Result()
@@ -241,13 +242,13 @@ func RunRestartMenu() {
 	exe, err := selfpath.Spawnable()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot locate agentctl binary: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	scriptPath, err := writeRestartScript(exe)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Could not create restart script: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	// nohup detaches the child from this process's controlling terminal and
@@ -257,7 +258,7 @@ func RunRestartMenu() {
 	nohupCmd.Stderr = nil
 	if err := nohupCmd.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "Could not launch restart process: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	// Release detaches the child from this process so it runs independently.
 	_ = nohupCmd.Process.Release()
@@ -266,7 +267,7 @@ func RunRestartMenu() {
 	// which will restore all agents from the saved state file.
 	if err := tmux.KillSession(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 }
 
@@ -318,7 +319,7 @@ func RunRestart() {
 	serverPID := reaper.ServerPID(tmux.SessionName)
 	if err := tmux.KillSession(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	reaper.ReapOrphansUnderServer(serverPID, paths.SettingsDir())
 }

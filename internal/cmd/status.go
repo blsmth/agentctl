@@ -18,6 +18,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"charm.land/lipgloss/v2"
 
@@ -548,6 +549,9 @@ func RunPeek(window string, lines int, jsonOut bool) error {
 	}
 	verdict := fleet.ClassifyPaneFor(sr.row.Harness, text)
 	prompts := fleet.PromptCount(text)
+	// Classification above ran on the raw capture; the output drops statusline
+	// padding.
+	text = stripPanePadding(text)
 
 	if jsonOut {
 		enc := json.NewEncoder(os.Stdout)
@@ -585,6 +589,21 @@ func RunPeek(window string, lines int, jsonOut bool) error {
 	fmt.Println(muted.Render(strings.Repeat("─", 72)))
 	fmt.Println(strings.TrimRight(text, "\n"))
 	return nil
+}
+
+// stripPanePadding removes statusline right-align padding from captured pane
+// text: U+2800 braille blanks (see statusline.padRune) and whitespace are
+// trimmed from the start of each line, and lines left empty are dropped.
+func stripPanePadding(text string) string {
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimLeftFunc(line, func(r rune) bool { return r == '\u2800' || unicode.IsSpace(r) })
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 // whoamiSource is one way of answering "which window am I?", with the answer

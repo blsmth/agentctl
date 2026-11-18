@@ -12,6 +12,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/backendauth"
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/cmd"
 	"github.com/blsmth/agentctl/internal/config"
 	ctxstore "github.com/blsmth/agentctl/internal/context"
@@ -253,7 +254,15 @@ func main() {
 		kong.Description("tmux-native command center for managing Claude Code agents"),
 		kong.UsageOnError(),
 	)
-	if err := ctx.Run(); err != nil {
+	// Visible CLI commands print plain text when stdout is a pipe or NO_COLOR is
+	// set. Hidden (internal) commands run inside tmux panes and keep color.
+	restoreStdout := func() {}
+	if sel := ctx.Selected(); sel != nil && !sel.Hidden {
+		restoreStdout = cliout.Plain()
+	}
+	err := ctx.Run()
+	restoreStdout()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

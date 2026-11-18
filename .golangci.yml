@@ -8,7 +8,12 @@ linters:
     - staticcheck
     - unused
     - ineffassign
+    - forbidigo
   settings:
+    forbidigo:
+      forbid:
+        - pattern: ^os\.Exit$
+          msg: use cliout.Exit so stdout buffered by cliout.Plain is flushed
     errcheck:
       # Don't flag unchecked errors on these functions — they're almost always
       # intentional (deferred closes, fmt to stdout, os.Remove in cleanup).
@@ -32,3 +37,13 @@ linters:
         - "all"
         - "-QF*"  # disable quickfix suggestions — they're style not correctness
         - "-ST*"  # disable style suggestions
+  exclusions:
+    rules:
+      # forbidigo only applies to internal/cmd (CLI command bodies), not tests:
+      # exclude every other path. (path-except did not work with this linter.)
+      - path: ^([^/]+\.go|internal/([^c]|c[^m]|cm[^d]|cmd[^/]).*|cmd/.*)$
+        linters:
+          - forbidigo
+      - path: _test\.go
+        linters:
+          - forbidigo

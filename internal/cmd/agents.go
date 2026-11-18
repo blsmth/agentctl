@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/blsmth/agentctl/internal/agent"
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
@@ -20,7 +21,7 @@ func CmdSkillsManager() {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.SkillsModel)
@@ -45,7 +46,7 @@ func CmdMemory() {
 	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 }
 
@@ -58,14 +59,14 @@ func CmdAgentManager() {
 	agents, err := agent.DiscoverFromCwd(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	model := tui.NewAgentsModel(agents, cfg)
 	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	// Return focus to the origin window (if launched from a tmux popup).
@@ -77,7 +78,7 @@ func CmdAgentManager() {
 func CmdCreateMenu(name string) {
 	if name != "" && agent.Exists(name) {
 		fmt.Fprintf(os.Stderr, "Agent %q already exists\n", name)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	model := tui.NewCreateModel(name)
@@ -85,7 +86,7 @@ func CmdCreateMenu(name string) {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.CreateModel).Result()
@@ -104,7 +105,7 @@ func CmdCreateMenu(name string) {
 
 	if err := agent.Create(opts); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	fmt.Printf("Created agent: %s\n", result.Name)
