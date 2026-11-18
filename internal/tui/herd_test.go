@@ -562,16 +562,20 @@ func TestRowCanCloseAndGroupCanLaunch(t *testing.T) {
 	}
 }
 
-func TestNKeyLaunchesInSelectedGroup(t *testing.T) {
+func TestNKeyArmsSelectorThenAgentLaunches(t *testing.T) {
 	m := buttonTestModel(t)
 	m.selectLine(2) // row b in s1
 	next, cmd := m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	if cmd != nil || next.(HerdModel).newSession != "s1" {
+		t.Fatalf("n on a row should arm the selector; armed=%q", next.(HerdModel).newSession)
+	}
+	next, cmd = next.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	if cmd == nil || !strings.Contains(next.(HerdModel).infoMsg, "s1") {
-		t.Errorf("n on a row should launch in its group; info=%q", next.(HerdModel).infoMsg)
+		t.Errorf("a should launch in its group; info=%q", next.(HerdModel).infoMsg)
 	}
 	m.selectLine(5) // row c in s2 (no dirs)
 	next, cmd = m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
-	if cmd != nil || next.(HerdModel).jumpErr == "" {
-		t.Error("n in a group without dirs should error without launching")
+	if cmd != nil || next.(HerdModel).newArmed() {
+		t.Error("n in a group without dirs must not arm")
 	}
 }

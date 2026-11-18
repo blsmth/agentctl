@@ -13,11 +13,13 @@ import (
 type herdClickAction int
 
 const (
-	herdClickIgnore herdClickAction = iota // nothing happens
-	herdClickSelect                        // move the cursor only, like j/k
-	herdClickNew                           // header's "+ new" button: launch in that group
-	herdClickClose                         // row's "✕" button: arm / confirm close
-	herdClickMenu                          // right click: open the context menu
+	herdClickIgnore   herdClickAction = iota // nothing happens
+	herdClickSelect                          // move the cursor only, like j/k
+	herdClickNew                             // header's "+ new" button: arm the shell | agent selector
+	herdClickNewShell                        // armed selector's "shell": open a shell window
+	herdClickNewAgent                        // armed selector's "agent": launch an agent
+	herdClickClose                           // row's "✕" button: arm / confirm close
+	herdClickMenu                            // right click: open the context menu
 )
 
 // herdListTop returns the screen row where the list (or sidebar) begins: the
@@ -80,6 +82,31 @@ func (m HerdModel) onNewButton(x int) bool {
 	return x >= end-lipgloss.Width(herdNewLabel)-1 && x < end+1
 }
 
+// selectorSpans returns the [start,end) columns of the armed selector's
+// "shell" and "agent" labels. The "|" separator belongs to neither.
+func (m HerdModel) selectorSpans() (shell, agent [2]int) {
+	end := m.listColWidth() - herdSidebarRightGutter
+	aw := lipgloss.Width(herdAgentLabel)
+	sw := lipgloss.Width(herdShellLabel)
+	agent = [2]int{end - aw, end}
+	shell = [2]int{agent[0] - lipgloss.Width(herdSelSep) - sw, agent[0] - lipgloss.Width(herdSelSep)}
+	return shell, agent
+}
+
+// onSelector reports which side of the armed selector column x hits: the
+// outer edges get one column of slack, the inner separator's spaces go to the
+// adjacent label and the "|" itself hits nothing.
+func (m HerdModel) onSelector(x int) herdHoverRegion {
+	shell, agent := m.selectorSpans()
+	switch {
+	case x >= shell[0]-1 && x < shell[1]+1:
+		return herdHoverNewShell
+	case x >= agent[0]-1 && x < agent[1]+1:
+		return herdHoverNewAgent
+	}
+	return herdHoverNone
+}
+
 // onCloseButton reports whether column x hits a row's right-aligned "✕"
 // (with slack that includes the gutter).
 func (m HerdModel) onCloseButton(x int) bool {
@@ -114,8 +141,17 @@ func (m HerdModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, ac
 	}
 	switch l.kind {
 	case herdLineHeader:
-		if groupCanLaunch(l.group) && m.onNewButton(x) {
-			return idx, herdClickNew
+		if groupCanLaunch(l.group) {
+			if m.newArmedFor(l.group) {
+				switch m.onSelector(x) {
+				case herdHoverNewShell:
+					return idx, herdClickNewShell
+				case herdHoverNewAgent:
+					return idx, herdClickNewAgent
+				}
+			} else if m.onNewButton(x) {
+				return idx, herdClickNew
+			}
 		}
 		return idx, herdClickSelect
 	case herdLineRow:
@@ -143,6 +179,9 @@ func (m HerdModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m.clickMenu(msg.X)
 	}
 	idx, action := m.buttonDecision(msg.X, msg.Y, msg.Button)
+	if action != herdClickNewShell && action != herdClickNewAgent {
+		m.cancelNew() // any other click dismisses the selector
+	}
 	switch action {
 	case herdClickSelect:
 		m.menuOpen = false
@@ -152,6 +191,15 @@ func (m HerdModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	case herdClickNew:
 		m.menuOpen = false
 		m.selectLine(idx)
+		m.armNew(idx)
+		return m, nil
+	case herdClickNewShell:
+		m.menuOpen = false
+		m.cancelNew()
+		return m, m.shellForLine(idx)
+	case herdClickNewAgent:
+		m.menuOpen = false
+		m.cancelNew()
 		return m, m.launchForLine(idx)
 	case herdClickClose:
 		m.menuOpen = false
@@ -188,10 +236,12 @@ func (m HerdModel) clickMenu(x int) (tea.Model, tea.Cmd) {
 type herdHoverRegion int
 
 const (
-	herdHoverNone  herdHoverRegion = iota
-	herdHoverBody                  // a row's body (not its ✕)
-	herdHoverClose                 // a row's ✕ button
-	herdHoverNew                   // a group header's "+ new" button
+	herdHoverNone     herdHoverRegion = iota
+	herdHoverBody                     // a row's body (not its ✕)
+	herdHoverClose                    // a row's ✕ button
+	herdHoverNew                      // a group header's "+ new" button
+	herdHoverNewShell                 // armed selector's "shell"
+	herdHoverNewAgent                 // armed selector's "agent"
 )
 
 // herdHover is the hover target: a line index plus the region on it. The zero
@@ -219,8 +269,14 @@ func (m HerdModel) hoverAt(x, y int) herdHover {
 	l := m.lines[idx]
 	switch l.kind {
 	case herdLineHeader:
-		if groupCanLaunch(l.group) && m.onNewButton(x) {
-			return herdHover{line: idx, reg: herdHoverNew}
+		if groupCanLaunch(l.group) {
+			if m.newArmedFor(l.group) {
+				if r := m.onSelector(x); r != herdHoverNone {
+					return herdHover{line: idx, reg: r}
+				}
+			} else if m.onNewButton(x) {
+				return herdHover{line: idx, reg: herdHoverNew}
+			}
 		}
 	case herdLineRow:
 		if sub != 0 { // detail lines: no hover effect
