@@ -7,7 +7,7 @@ export { expect };
 
 /** Action mirrors servetest.Action: one side effect the server performed. */
 export type Action = {
-  kind: "close" | "key" | "reply" | "dispatch" | "approval";
+  kind: "close" | "key" | "reply" | "queue" | "dispatch" | "approval";
   session?: string;
   window?: string;
   key?: string;
@@ -27,6 +27,13 @@ export type FixtureWindow = {
   parent?: string;
   activity?: string;
   pane?: "idle" | "working" | "dialog";
+  branch?: string;
+  context_pct?: number;
+  title?: string;
+  issue?: number;
+  model?: string;
+  cost_usd?: number;
+  pr_url?: string;
 };
 
 export type FixtureGroup = { session: string; project: string; dir: string; windows: FixtureWindow[] };

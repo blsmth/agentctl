@@ -61,6 +61,10 @@ func (s *Server) registerWrite(rt *Router) {
 	const win = "/v1/sessions/{session}/windows/{window}"
 	rt.Write("POST "+win+"/answer", writeRoute(s, "answer", s.handleAnswer))
 	rt.Write("POST "+win+"/reply", writeRoute(s, "reply", s.handleReply))
+	if rt.allowWrite {
+		rt.Feature("queue")
+	}
+	rt.Write("POST "+win+"/queue", writeRoute(s, "queue", s.handleQueue))
 	rt.Write("POST "+win+"/interrupt", writeRoute(s, "interrupt", s.handleInterrupt))
 	rt.Write("POST "+win+"/close", writeRoute(s, "close", s.handleClose))
 	rt.Write("POST /v1/dispatch", writeRoute(s, "dispatch", s.handleDispatch))
@@ -286,6 +290,24 @@ type replyIn struct {
 
 // handleReply types a reply into an idle agent and submits it.
 func (s *Server) handleReply(r *http.Request, in replyIn, a *auditEntry) outcome {
+	return s.typeText(r, in, a, false)
+}
+
+// handleQueue types a message into a working agent and submits it, as a
+// person typing mid-turn would: Claude Code queues the input and delivers it
+// after the current step. It is a separate, explicitly requested action (and
+// audit kind) from reply. It also accepts an idle agent, since the turn may
+// end between the phone's tap and the send, and the message then simply
+// lands as a reply. A blocked record, a dialog or an unrecognised pane is
+// refused exactly as for reply.
+func (s *Server) handleQueue(r *http.Request, in replyIn, a *auditEntry) outcome {
+	return s.typeText(r, in, a, true)
+}
+
+// typeText is reply and queue: the shared text checks, the state and pane
+// guards under the window lock, then the guarded inject. allowWorking admits
+// a working record and a busy pane (queue).
+func (s *Server) typeText(r *http.Request, in replyIn, a *auditEntry, allowWorking bool) outcome {
 	if utf8.RuneCountInString(in.Text) > maxReplyRunes {
 		return failure(http.StatusRequestEntityTooLarge, codeTooLarge, fmt.Sprintf("reply exceeds %d characters", maxReplyRunes))
 	}
@@ -301,27 +323,47 @@ func (s *Server) handleReply(r *http.Request, in replyIn, a *auditEntry) outcome
 	}
 	defer unlock()
 
-	if st := rw.window.State; st == "working" || st == "blocked" {
+	st := rw.window.State
+	if st == "blocked" || (st == "working" && !allowWorking) {
 		return failure(http.StatusConflict, codeNotIdle, "the agent is "+st)
 	}
 	pane, out, ok := s.capturePane(rw)
 	if !ok {
 		return out
 	}
-	if pane.Verdict != "idle" {
+	if !textAccepted(pane.Verdict, allowWorking) {
+		if allowWorking {
+			return failure(http.StatusConflict, codeNotIdle, "the agent is not at a prompt that accepts input")
+		}
 		return failure(http.StatusConflict, codeNotIdle, "the agent is not at an idle prompt")
 	}
 	s.auditAttempt(*a)
 	// The inject path re-checks the pane before every keystroke and refuses
 	// a dialog (tmux.ErrDialogBlocking).
-	if err := s.injector.Inject(rw.target(), in.Text); err != nil {
-		logging.Warn("serve: reply %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
+	if err := s.inject(rw.target(), in.Text, allowWorking); err != nil {
+		logging.Warn("serve: %s %s:%s: %v", a.Action, rw.group.Session, rw.window.WindowID, err)
 		if errors.Is(err, tmux.ErrDialogBlocking) {
 			return failure(http.StatusConflict, codeNotIdle, "a dialog appeared; refresh and try again")
 		}
-		return failure(http.StatusBadGateway, codeActionFailed, "the reply could not be delivered")
+		return failure(http.StatusBadGateway, codeActionFailed, "the message could not be delivered")
 	}
 	return success(okBody)
+}
+
+// textAccepted reports whether a pane verdict admits typed text: idle for a
+// reply, idle or working for a queued message. A dialog or an unknown pane
+// never does.
+func textAccepted(verdict string, allowWorking bool) bool {
+	return verdict == "idle" || (allowWorking && verdict == "working")
+}
+
+// inject delivers text through the Injector, or its Queue method for a
+// queued message when the Injector distinguishes the two.
+func (s *Server) inject(t WindowTarget, text string, queued bool) error {
+	if q, ok := s.injector.(Queuer); ok && queued {
+		return q.Queue(t, text)
+	}
+	return s.injector.Inject(t, text)
 }
 
 type emptyIn struct{}

@@ -132,6 +132,9 @@ func TestHarnessRecordsWrites(t *testing.T) {
 	if w := call(t, h, "POST", win+"@11/reply", `{"text":"ship it"}`, false); w.Code != http.StatusOK {
 		t.Errorf("reply = %d %s", w.Code, w.Body)
 	}
+	if w := call(t, h, "POST", win+"@13/queue", `{"text":"then lint"}`, false); w.Code != http.StatusOK {
+		t.Errorf("queue = %d %s", w.Code, w.Body)
+	}
 	d, ok := panestate.ParseDialog(panestate.StripANSI(DialogPane))
 	if !ok {
 		t.Fatal("DialogPane does not parse")
@@ -144,7 +147,7 @@ func TestHarnessRecordsWrites(t *testing.T) {
 	for _, a := range h.Actions() {
 		got = append(got, a.Kind+":"+a.Window+":"+a.Key+a.Text)
 	}
-	want := "close:@15: reply:@11:ship it key:@14:1"
+	want := "close:@15: reply:@11:ship it queue:@13:then lint key:@14:1"
 	if strings.Join(got, " ") != want {
 		t.Errorf("actions = %q, want %q", strings.Join(got, " "), want)
 	}
