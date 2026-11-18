@@ -563,12 +563,25 @@ export function formatCost(usd) {
   return `$${usd.toFixed(2)}`;
 }
 
-/** taskLine is what the window is doing: its task title, else its issue, else its activity. */
+/** taskLine is the task the window was given: its ticket title, else its issue, else "". */
 export function taskLine(win) {
   const title = win?.detail?.title?.trim();
   if (title) return title;
   if (win?.issue > 0) return `Issue #${win.issue}`;
   if (win?.ticket) return /^\d+$/.test(win.ticket) ? `Issue #${win.ticket}` : win.ticket;
+  return "";
+}
+
+/**
+ * recapLine is the header's "what is it doing" line: the recap (away summary
+ * or session title) in place of the last tool call, which is only shown when
+ * there is no recap. A task recap repeats the task line, so it is skipped when
+ * that line is already shown.
+ */
+export function recapLine(win) {
+  if (win && hasRecap(win) && !(win.recap_source === "task" && taskLine(win))) {
+    return win.recap_source === "task" ? win.recap.replace(/^#\d+\s+/, "") : win.recap;
+  }
   return win?.activity ?? "";
 }
 

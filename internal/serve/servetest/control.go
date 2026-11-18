@@ -88,14 +88,16 @@ func (h *Harness) handleSetFleet(w http.ResponseWriter, r *http.Request) {
 // windowPatch carries the fields a test may change on one window; nil
 // leaves a field alone.
 type windowPatch struct {
-	Session  string  `json:"session"`
-	ID       string  `json:"id"`
-	State    *string `json:"state"`
-	Done     *bool   `json:"done"`
-	Activity *string `json:"activity"`
-	Agent    *string `json:"agent"`
-	Pane     *string `json:"pane"`
-	PaneText *string `json:"pane_text"`
+	Session     string  `json:"session"`
+	ID          string  `json:"id"`
+	State       *string `json:"state"`
+	Done        *bool   `json:"done"`
+	Activity    *string `json:"activity"`
+	Agent       *string `json:"agent"`
+	Pane        *string `json:"pane"`
+	PaneText    *string `json:"pane_text"`
+	Recap       *string `json:"recap"`
+	RecapSource *string `json:"recap_source"`
 }
 
 func (h *Harness) handlePatchWindow(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +118,8 @@ func (h *Harness) handlePatchWindow(w http.ResponseWriter, r *http.Request) {
 		set(&x.Agent, p.Agent)
 		set(&x.Pane, p.Pane)
 		set(&x.PaneText, p.PaneText)
+		set(&x.Recap, p.Recap)
+		set(&x.RecapSource, p.RecapSource)
 	})
 	if errors.Is(err, errNoWindow) {
 		writeErr(w, http.StatusNotFound, err)

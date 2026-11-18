@@ -9,7 +9,7 @@ import {
   bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
   actionsWithQueue, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
-  liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine,
+  liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, recapLine,
 } from "./logic.js";
 
 const fixtures = JSON.parse(readFileSync(new URL("./logic.fixtures.json", import.meta.url), "utf8"));
@@ -273,8 +273,16 @@ console.log("ok: resolved text");
   assert.equal(taskLine({ detail: { title: " Cover the cart " }, issue: 9, activity: "x" }), "Cover the cart");
   assert.equal(taskLine({ detail: {}, issue: 9, activity: "x" }), "Issue #9");
   assert.equal(taskLine({ ticket: "42", activity: "x" }), "Issue #42");
-  assert.equal(taskLine({ activity: "go test" }), "go test");
+  assert.equal(taskLine({ activity: "go test" }), "");
   assert.equal(taskLine({}), "");
+
+  assert.equal(recapLine({ recap: "Fixing the cart totals.", recap_source: "summary", activity: "Bash: go test" }), "Fixing the cart totals.");
+  assert.equal(recapLine({ recap: "Cart totals", recap_source: "title", activity: "Bash: go test" }), "Cart totals");
+  assert.equal(recapLine({ recap: "Bash: go test", recap_source: "activity", activity: "Bash: go test" }), "Bash: go test");
+  assert.equal(recapLine({ activity: "Bash: go test" }), "Bash: go test");
+  assert.equal(recapLine({ recap: "#7 Add a retry", recap_source: "task", issue: 7, activity: "Edit" }), "Edit");
+  assert.equal(recapLine({ recap: "#7 Add a retry", recap_source: "task", activity: "Edit" }), "Add a retry");
+  assert.equal(recapLine({}), "");
 
   const now = Date.parse("2026-11-17T10:03:00Z");
   assert.equal(stateLabel({ state: "working", state_since: "2026-11-17T10:00:00Z" }, now), "working for 3m");

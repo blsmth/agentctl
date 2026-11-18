@@ -35,6 +35,8 @@ export type FixtureWindow = {
   cost_usd?: number;
   pr_url?: string;
   scheduled_by?: string;
+  recap?: string;
+  recap_source?: "summary" | "task" | "title" | "activity";
 };
 
 export type FixtureGroup = { session: string; project: string; dir: string; windows: FixtureWindow[] };

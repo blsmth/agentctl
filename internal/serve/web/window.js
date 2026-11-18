@@ -23,6 +23,7 @@ import {
   scheduledLine,
   splitPane,
   stateLabel,
+  recapLine,
   taskLine,
   terminalHash,
   windowApiPath,
@@ -259,8 +260,10 @@ export function mountWindow(root, ctx, { session, windowId }) {
   const where = h("span", { class: "win-where" });
   const task = h("div", { class: "win-task", hidden: true });
   const scheduled = h("div", { class: "win-scheduled", hidden: true });
+  // Tap the recap to show it in full; it is clamped to three lines.
+  const recap = h("div", { class: "win-recap", hidden: true, onclick: () => recap.classList.toggle("open") });
   const chips = h("div", { class: "chips", hidden: true });
-  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, scheduled, chips);
+  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, recap, scheduled, chips);
 
   const liveChip = h("span", { class: "live-chip", role: "status" });
   const modeBtns = {
@@ -348,6 +351,9 @@ export function mountWindow(root, ctx, { session, windowId }) {
     const line = taskLine(win);
     task.textContent = line;
     task.hidden = !line;
+    const summary = recapLine(win);
+    recap.textContent = summary;
+    recap.hidden = !summary;
     const sched = scheduledLine(win);
     scheduled.textContent = sched;
     scheduled.hidden = !sched;
