@@ -45,6 +45,8 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 .win-title { display: flex; align-items: baseline; gap: .4rem; }
 .win-title .agent { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .win-title .tag { flex: none; font-weight: 500; font-size: .75rem; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.activity.recap { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
+.win-title .tag.agent-chip { opacity: .8; }
 .activity { color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .win-side { display: flex; flex-direction: column; align-items: flex-end; font-size: .8rem; color: var(--muted); }
 

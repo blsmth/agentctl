@@ -36,6 +36,11 @@ type Window struct {
 	StateSince   string `json:"state_since,omitempty"`
 	PendingTool  string `json:"pending_tool,omitempty"`
 	PRNumber     int    `json:"pr_number,omitempty"`
+
+	// Recap is the row's one-line "what is this agent working on" (see Recap)
+	// and RecapSource names where it came from: summary, task, title or activity.
+	Recap       string `json:"recap,omitempty"`
+	RecapSource string `json:"recap_source,omitempty"`
 }
 
 // ToWindow converts a row and its windowstate metadata to a Window.
@@ -60,6 +65,9 @@ func ToWindow(r Row, m Meta) Window {
 		Issue:        r.Ticket,
 		PRURL:        r.PRURL,
 		PRNumber:     m.PRNumber,
+	}
+	if r.Recap.Text != "" {
+		w.Recap, w.RecapSource = r.Recap.Text, r.Recap.Source.String()
 	}
 	if m.PRURL != "" {
 		w.PRURL = m.PRURL

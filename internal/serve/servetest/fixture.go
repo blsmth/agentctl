@@ -47,6 +47,10 @@ type Window struct {
 	Branch      string `json:"branch,omitempty"`
 	Parent      string `json:"parent,omitempty"` // dispatching window ID in the same session
 	Activity    string `json:"activity,omitempty"`
+	// Recap and RecapSource (summary, task, title, activity) fill the row's
+	// recap line as fleet.TagLogs would.
+	Recap       string `json:"recap,omitempty"`
+	RecapSource string `json:"recap_source,omitempty"`
 	ContextPct  int    `json:"context_pct,omitempty"`
 	PendingTool string `json:"pending_tool,omitempty"`
 	// Title is the task title (windowstate ticket_title), Issue the GitHub
@@ -61,6 +65,11 @@ type Window struct {
 	// one from State. PaneText, when set, is used verbatim instead.
 	Pane     string `json:"pane,omitempty"`
 	PaneText string `json:"pane_text,omitempty"`
+}
+
+var recapSources = map[string]fleet.RecapSource{
+	"summary": fleet.RecapSummary, "task": fleet.RecapTask,
+	"title": fleet.RecapTitle, "activity": fleet.RecapActivity,
 }
 
 // Group is one fixture session.
@@ -103,7 +112,8 @@ func DefaultFixture() []Group {
 				{ID: "@11", Index: 1, Agent: "orchestrator", State: "idle", Activity: "waiting for review"},
 				{ID: "@12", Index: 2, Agent: "go-engineer", State: "idle", Done: true, Mode: "dispatch", Parent: "@11",
 					Branch: "agent/go-engineer/issue-7", Activity: "opened PR #8", ContextPct: 42,
-					Title: "Add a checkout retry", Issue: 7, Model: "claude-opus-4-1", CostUSD: 1.84,
+					Title: "Add a checkout retry", Issue: 7,
+					Recap: "#7 Add a checkout retry", RecapSource: "task", Model: "claude-opus-4-1", CostUSD: 1.84,
 					PRURL: "https://github.com/example/shop/pull/8"},
 				{ID: "@13", Index: 3, Agent: "test-writer", State: "working", Mode: "dispatch", Parent: "@11", Activity: "go test ./...",
 					Branch: "agent/test-writer/issue-9", ContextPct: 9, Title: "Cover the cart service", Issue: 9,
@@ -189,6 +199,9 @@ func rowFor(g Group, w Window, now time.Time) (fleet.Row, fleet.Meta) {
 		ContextPct: w.ContextPct, LastText: w.Activity, MainPane: paneID(w.ID),
 		ModelName: w.Model, Ticket: w.Issue,
 	}}
+	if w.Recap != "" {
+		row.Recap = fleet.RecapLine{Text: w.Recap, Source: recapSources[w.RecapSource]}
+	}
 	mode := w.Mode
 	if mode == "" {
 		mode = "bare"

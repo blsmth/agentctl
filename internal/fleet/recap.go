@@ -17,6 +17,22 @@ const (
 	RecapActivity                    // last tool detail / assistant text
 )
 
+// String is the wire name of the source: "summary", "task", "title" or
+// "activity"; "" for RecapNone.
+func (s RecapSource) String() string {
+	switch s {
+	case RecapSummary:
+		return "summary"
+	case RecapTask:
+		return "task"
+	case RecapTitle:
+		return "title"
+	case RecapActivity:
+		return "activity"
+	}
+	return ""
+}
+
 // RecapLine is the one-line "what is this agent working on" for a row.
 type RecapLine struct {
 	Text   string

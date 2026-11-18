@@ -40,3 +40,38 @@ func TestToWindowPR(t *testing.T) {
 		t.Errorf("empty meta produced PR: %+v", w)
 	}
 }
+
+func TestToWindowRecap(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		line       RecapLine
+		wantText   string
+		wantSource string
+	}{
+		{"none", RecapLine{}, "", ""},
+		{"summary", RecapLine{Text: "Building the app.", Source: RecapSummary}, "Building the app.", "summary"},
+		{"task", RecapLine{Text: "#7 Add retry", Source: RecapTask}, "#7 Add retry", "task"},
+		{"title", RecapLine{Text: "Fix bug", Source: RecapTitle}, "Fix bug", "title"},
+		{"activity", RecapLine{Text: "go test", Source: RecapActivity}, "go test", "activity"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := Row{AgentState: state.AgentState{Name: "a", WindowID: "@1", State: "idle"}, Recap: tc.line}
+			w := ToWindow(row, Meta{})
+			if w.Recap != tc.wantText || w.RecapSource != tc.wantSource {
+				t.Errorf("got %q/%q, want %q/%q", w.Recap, w.RecapSource, tc.wantText, tc.wantSource)
+			}
+		})
+	}
+}
+
+func TestCleanRecapStripsHint(t *testing.T) {
+	for in, want := range map[string]string{
+		"Building it.\n (disable recaps in /config)": "Building it.",
+		"Building it. (disable recaps in /config)":   "Building it.",
+		"Plain recap":                                "Plain recap",
+	} {
+		if got := cleanRecap(in); got != want {
+			t.Errorf("cleanRecap(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

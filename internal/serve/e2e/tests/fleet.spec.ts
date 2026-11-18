@@ -30,8 +30,12 @@ test("rows show the state glyph and agent", async ({ page }) => {
   await expect(row(page, "@13").locator(".agent")).toHaveText("test-writer");
   await expect(row(page, "@13").locator(".activity")).toHaveText("go test ./...");
   // Internal identifiers (window ID, launch mode, generated branch) stay off the row.
-  await expect(row(page, "@12").locator(".win-title .agent")).toHaveText("go-engineer");
-  await expect(row(page, "@12").locator(".win-title .tag")).toHaveText(["#7", "PR #8"]);
+  // A recap replaces the agent name as the headline; the name becomes a chip.
+  await expect(row(page, "@12").locator(".win-title .agent")).toHaveText("Add a checkout retry");
+  await expect(row(page, "@12").locator(".win-title .tag")).toHaveText(["#7", "PR #8", "go-engineer"]);
+  // The task is already the headline, so the second line is the activity.
+  await expect(row(page, "@12").locator(".activity")).toHaveText("opened PR #8");
+  await expect(row(page, "@12").locator(".activity.recap")).toHaveCount(0);
   await expect(row(page, "@12").locator(".win-title")).not.toContainText("@12");
   await expect(row(page, "@12").locator(".win-side")).toContainText("42% ctx");
 });

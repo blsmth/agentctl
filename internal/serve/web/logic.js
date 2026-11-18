@@ -58,6 +58,54 @@ export function rowTitle(win) {
   return win.agent || "Claude";
 }
 
+const HEADLINE_MAX = 80;
+const RECAP_SOURCES = new Set(["summary", "task", "title"]);
+
+/** hasRecap is true when the window carries a recap worth showing in place of raw activity. */
+function hasRecap(win) {
+  return Boolean(win.recap) && RECAP_SOURCES.has(win.recap_source);
+}
+
+/** firstClause is the first sentence of text, trimmed and capped at max characters. */
+function firstClause(text, max) {
+  const t = text.replace(/\s+/g, " ").trim();
+  const m = /^(.+?[.!?])(\s|$)/.exec(t);
+  let out = m ? m[1] : t;
+  out = out.replace(/[.!?]+$/, "");
+  if (out.length > max) out = `${out.slice(0, max - 1).trimEnd()}…`;
+  return out;
+}
+
+/**
+ * rowHeadline is the short human title of a fleet row: the ticket title for a
+ * task dispatch, else the first sentence of the recap, else the agent name.
+ */
+export function rowHeadline(win) {
+  if (hasRecap(win)) {
+    const text = win.recap_source === "task" ? win.recap.replace(/^#\d+\s+/, "") : win.recap;
+    const line = firstClause(text, HEADLINE_MAX);
+    if (line) return line;
+  }
+  return rowTitle(win);
+}
+
+/** agentChip is the agent name (no :N suffix) shown as a muted chip, or "" when it is the headline already. */
+export function agentChip(win) {
+  const name = (win.agent ?? "").replace(/[:~]\d+$/, "");
+  if (!name || rowHeadline(win) === rowTitle(win)) return "";
+  return name;
+}
+
+/**
+ * rowDetailLine is the second line: the full recap, else the activity line,
+ * else "". A task recap is already the headline and #issue chip, so it falls
+ * through to the activity line.
+ */
+export function rowDetailLine(win) {
+  if (hasRecap(win) && win.recap_source !== "task") return win.recap;
+  return win.activity ?? "";
+}
+
 /**
  * rowTags are the identifiers worth showing on a fleet row: the issue being
  * worked and the PR it produced. Window IDs, launch modes and generated branch

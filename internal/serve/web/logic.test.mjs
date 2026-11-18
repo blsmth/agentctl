@@ -6,7 +6,7 @@ import {
   ansiColor, approvalBannerText, approvalConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
   buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
-  bucketLabel, kindLabel, rowTags, rowTitle, treeRows,
+  bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
   actionsWithQueue, buildQueueRequest, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine,
 } from "./logic.js";
@@ -159,6 +159,28 @@ console.log("ok: resolved text");
   assert.equal(swipeCommit(50, 300, -2), false);
   assert.equal(swipeCommit(-200, 0), false);
   console.log("ok: swipe close");
+}
+
+{
+  const ticket = { agent: "go-engineer:3", recap: "#7 Add a checkout retry", recap_source: "task", activity: "go test" };
+  assert.equal(rowHeadline(ticket), "Add a checkout retry");
+  assert.equal(agentChip(ticket), "go-engineer");
+  assert.equal(rowDetailLine(ticket), "go test");
+  const summary = { agent: "brandon:55", recap: "Wiring recaps into the phone app. Next up: tests.", recap_source: "summary", activity: "ls" };
+  assert.equal(rowHeadline(summary), "Wiring recaps into the phone app");
+  assert.equal(rowDetailLine(summary), summary.recap);
+  assert.equal(agentChip(summary), "brandon");
+  const long = rowHeadline({ agent: "a", recap: "word ".repeat(40), recap_source: "title" });
+  assert.ok(long.length <= 80 && long.endsWith("…"));
+  const act = { agent: "brandon:55", recap: "go test ./...", recap_source: "activity", activity: "go test ./..." };
+  assert.equal(rowHeadline(act), "brandon:55");
+  assert.equal(agentChip(act), "");
+  assert.equal(rowDetailLine(act), "go test ./...");
+  const none = { agent: "", activity: "" };
+  assert.equal(rowHeadline(none), "Claude");
+  assert.equal(agentChip(none), "");
+  assert.equal(rowDetailLine(none), "");
+  console.log("ok: row headline");
 }
 
 {
