@@ -1,16 +1,24 @@
 // Fleet screen: project groups ordered by attention.
 import {
   approvalBannerText,
+  applyGroupOrder,
   approvalHash,
+  autoscrollDelta,
   bucketLabel,
+  buildGroupOrderRequest,
   collapseKey,
   dispatchHash,
   descendants,
+  dropIndex,
   effectiveState,
   formatClock,
   formatSince,
   groupCounts,
   groupKey,
+  groupKeys,
+  LONG_PRESS_MS,
+  LONG_PRESS_SLOP,
+  moveKey,
   rollup,
   agentChip,
   rowDetailLine,
@@ -18,6 +26,7 @@ import {
   rowTags,
   rowTitle,
   scheduledChip,
+  sameOrder,
   sortGroups,
   treeLines,
   treeRows,
@@ -146,6 +155,124 @@ function bucketRow(entry, toggle, expanded) {
   return h("div", { class: "node bucket" }, expanded ? stubSpan(entry) : null, h("span", { class: "bucket-label" }, bucketLabel(entry.count ?? 0, entry.kind)), toggle);
 }
 
+/**
+ * attachGroupDrag lets a project group be reordered by holding its header
+ * (long press, or a held mouse button) and dragging. A short tap is left to
+ * the header's own click (fold); a touch that starts scrolling before the
+ * hold completes is cancelled by the browser (pointercancel) or by the slop
+ * check, so the page scrolls as usual. Pointer Events only; while a drag is
+ * live the page is kept from scrolling under the finger and autoscrolls near
+ * the top and bottom edges.
+ *
+ * onBusy(true|false) brackets the whole gesture so renders are held, and
+ * onDrop(index) is called with the target slot among the other groups' order
+ * (index into the list with this group removed).
+ */
+function attachGroupDrag(section, head, { list, onBusy, onDrop }) {
+  let press = null; // { id, x, y, timer }
+  let drag = null; // { id, grab, y, slot, raf }
+
+  const others = () => [...list.querySelectorAll(":scope > section.group")].filter((el) => el !== section);
+
+  const place = () => {
+    // Follow the pointer: measure the header's natural spot, then offset it.
+    head.style.transform = "";
+    const natural = head.getBoundingClientRect().top;
+    head.style.transform = `translateY(${drag.y - drag.grab - natural}px)`;
+    const rest = others();
+    const mids = rest.map((el) => {
+      const r = el.getBoundingClientRect();
+      return r.top + Math.min(r.height, 56) / 2; // collapsed while dragging: ~ the header
+    });
+    drag.slot = dropIndex(mids, drag.y);
+    rest.forEach((el, i) => {
+      el.classList.toggle("drop-before", i === drag.slot);
+      el.classList.toggle("drop-after", i === rest.length - 1 && drag.slot === rest.length);
+    });
+  };
+
+  const frame = () => {
+    if (!drag) return;
+    const dy = autoscrollDelta(drag.y, window.innerHeight);
+    if (dy !== 0) {
+      window.scrollBy(0, dy);
+      place();
+    }
+    drag.raf = requestAnimationFrame(frame);
+  };
+
+  const blockScroll = (e) => e.preventDefault();
+
+  const clearPress = () => {
+    if (press) clearTimeout(press.timer);
+    press = null;
+  };
+
+  const start = () => {
+    const p = press;
+    press = null;
+    onBusy(true);
+    drag = { id: p.id, grab: p.y - head.getBoundingClientRect().top, y: p.y, slot: 0, raf: 0 };
+    head.setPointerCapture?.(p.id);
+    // touch-action only governs a gesture before it starts scrolling, so also
+    // veto touchmove (iOS) while the drag is live.
+    head.classList.add("dragging");
+    window.addEventListener("touchmove", blockScroll, { passive: false });
+    list.classList.add("reordering");
+    section.classList.add("lifted");
+    navigator.vibrate?.(12);
+    place();
+    drag.raf = requestAnimationFrame(frame);
+  };
+
+  const finish = (drop) => {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    cancelAnimationFrame(d.raf);
+    window.removeEventListener("touchmove", blockScroll);
+    head.releasePointerCapture?.(d.id);
+    head.style.transform = "";
+    head.classList.remove("dragging");
+    list.classList.remove("reordering");
+    section.classList.remove("lifted");
+    others().forEach((el) => el.classList.remove("drop-before", "drop-after"));
+    // The click that follows the release must not fold the group.
+    const stop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    head.addEventListener("click", stop, { capture: true, once: true });
+    setTimeout(() => head.removeEventListener("click", stop, { capture: true }), 400);
+    if (drop) onDrop(d.slot);
+    onBusy(false);
+  };
+
+  head.addEventListener("pointerdown", (e) => {
+    if (press || drag || (e.pointerType === "mouse" && e.button !== 0) || e.target.closest(".group-add")) return;
+    press = { id: e.pointerId, x: e.clientX, y: e.clientY, timer: setTimeout(start, LONG_PRESS_MS) };
+  });
+  head.addEventListener("pointermove", (e) => {
+    if (press && e.pointerId === press.id && Math.hypot(e.clientX - press.x, e.clientY - press.y) > LONG_PRESS_SLOP) clearPress();
+    if (!drag || e.pointerId !== drag.id) return;
+    e.preventDefault();
+    drag.y = e.clientY;
+    place();
+  });
+  head.addEventListener("pointerup", (e) => {
+    if (press && e.pointerId === press.id) clearPress();
+    if (drag && e.pointerId === drag.id) finish(true);
+  });
+  head.addEventListener("pointercancel", (e) => {
+    if (press && e.pointerId === press.id) clearPress();
+    if (drag && e.pointerId === drag.id) finish(false);
+  });
+  // A long press on Android opens a context menu; it would end the drag.
+  head.addEventListener("contextmenu", (e) => {
+    if (press || drag) e.preventDefault();
+  });
+}
+
 export function mountFleet(root, ctx) {
   const banner = h("div", { class: "banner", hidden: true });
   const approvalBanner = h("a", { class: "banner approval-banner", hidden: true, href: approvalHash("") });
@@ -171,6 +298,9 @@ export function mountFleet(root, ctx) {
   // render() rebuilds every row and would destroy the one being dragged.
   let busyCount = 0;
   let renderPending = false;
+  // The order just dropped, shown until the server's fleet reports it (or it
+  // is refused): { keys, at }.
+  let pending = null;
   const closed = new Map(); // windowKey -> ms; rows closed, awaiting the fleet event
   const swipe = {
     can: (win) => canSwipeClose(win, win.session, ctx.features),
@@ -195,6 +325,44 @@ export function mountFleet(root, ctx) {
       return true;
     },
   };
+
+  /** displayedKeys are the keyed groups as listed now (the pending order applies). */
+  function displayedKeys() {
+    const served = sortGroups(ctx.store.fleet?.groups ?? []);
+    return groupKeys(pending ? applyGroupOrder(served, pending.keys) : served);
+  }
+
+  /**
+   * reorder moves the group with key to slot (an index among the other
+   * groups), shows the result at once and saves it. A refused save puts the
+   * previous order back.
+   */
+  async function reorder(key, slot) {
+    const before = displayedKeys();
+    const keys = moveKey(before, key, slot);
+    if (sameOrder(keys, before) && keys.every((k, i) => k === before[i])) return;
+    const prev = pending;
+    pending = { keys, at: Date.now() };
+    render();
+    try {
+      await send(buildGroupOrderRequest(keys));
+    } catch (err) {
+      pending = prev;
+      toast(err instanceof ApiError || err instanceof Error ? err.message : "Could not save the order", "error");
+      render();
+    }
+  }
+
+  /** keyMove is the keyboard path: Alt+ArrowUp / Alt+ArrowDown on a group header. */
+  function keyMove(e, key) {
+    if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+    e.preventDefault();
+    const keys = displayedKeys();
+    const i = keys.indexOf(key);
+    const to = e.key === "ArrowUp" ? i - 1 : i + 1;
+    if (i < 0 || to < 0 || to >= keys.length) return;
+    reorder(key, to);
+  }
 
   function groupNodes(g) {
     const entries = treeRows(g.windows);
@@ -229,12 +397,15 @@ export function mountFleet(root, ctx) {
     } else {
       banner.hidden = true;
     }
+    const focusKey = list.contains(document.activeElement) ? (document.activeElement.dataset?.key ?? "") : "";
     clear(list);
     if (!fleet) {
       list.append(h("p", { class: "muted pad" }, "Loading…"));
       return;
     }
-    const groups = sortGroups(fleet.groups ?? []);
+    const served = sortGroups(fleet.groups ?? []);
+    if (pending && (sameOrder(groupKeys(served), pending.keys) || Date.now() - pending.at > 10000)) pending = null;
+    const groups = pending ? applyGroupOrder(served, pending.keys) : served;
     if (groups.length === 0) list.append(h("p", { class: "muted pad" }, "No agents running."));
     const live = new Set();
     for (const g of groups) {
@@ -251,24 +422,30 @@ export function mountFleet(root, ctx) {
         saveCollapsed(collapsed);
         render();
       };
-      list.append(
+      const head = h(
+        "div",
+        { class: "group-head" },
+        // Heading text stays the bare name; the chevron is drawn by CSS.
         h(
-          "section",
-          { class: `group ${g.rollup}${folded ? " folded" : ""}` },
-          h(
-            "div",
-            { class: "group-head" },
-            // Heading text stays the bare name; the chevron is drawn by CSS.
-            h("h2", {}, h("button", { class: "group-toggle", type: "button", "aria-expanded": String(!folded), onclick: toggle }, name)),
-            folded ? groupSummary(g.windows, toggle) : null,
-            g.dir && ctx.hasFeature("write")
-              ? h("a", { class: "group-add", href: dispatchHash(g.dir), "aria-label": `Dispatch to ${name}` }, "+")
-              : null,
-          ),
-          ...(folded ? [] : nodes),
+          "h2",
+          {},
+          h("button", { class: "group-toggle", type: "button", "aria-expanded": String(!folded), "data-key": g.key || null, onclick: toggle, onkeydown: g.key && ctx.hasFeature("write") ? (e) => keyMove(e, g.key) : null }, name),
         ),
+        folded ? groupSummary(g.windows, toggle) : null,
+        g.dir && ctx.hasFeature("write")
+          ? h("a", { class: "group-add", href: dispatchHash(g.dir), "aria-label": `Dispatch to ${name}` }, "+")
+          : null,
       );
+      const section = h("section", { class: `group ${g.rollup}${folded ? " folded" : ""}` }, head, ...(folded ? [] : nodes));
+      // Only keyed project groups reorder, and only with the write feature
+      // (the route is a write); a lone group has nowhere to go.
+      if (g.key && groups.length > 1 && ctx.hasFeature("write")) {
+        attachGroupDrag(section, head, { list, onBusy: swipe.busy, onDrop: (slot) => reorder(g.key, slot) });
+      }
+      list.append(section);
     }
+    // Rendering rebuilds the list; keep keyboard focus on the same header.
+    if (focusKey) [...list.querySelectorAll(".group-toggle")].find((b) => b.dataset.key === focusKey)?.focus();
     const present = new Set(groups.flatMap((g) => g.windows.map(windowKey)));
     for (const [k, t] of closed) if (!present.has(k) || Date.now() - t > 15000) closed.delete(k);
     // Forget collapsed keys whose window or bucket is gone.

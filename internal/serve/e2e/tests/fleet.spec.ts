@@ -5,8 +5,8 @@ test.beforeEach(async ({ page }) => {
   await openFleet(page);
 });
 
-test("groups are ordered by attention and every window is listed", async ({ page }) => {
-  // shop has a blocked window, so it comes first; the idle ones follow.
+test("groups keep the server's order and every window is listed", async ({ page }) => {
+  // The server's saved order decides; urgency shows through the rollup class.
   await expect(page.locator(".fleet section.group h2")).toHaveText(["shop", "blog", "hub"]);
   await expect(page.locator(".fleet section.group").first()).toHaveClass(/\bblocked\b/);
   for (const id of ["@11", "@12", "@13", "@14", "@15", "@31", "@41"]) {

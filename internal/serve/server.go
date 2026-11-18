@@ -22,6 +22,7 @@ import (
 	"github.com/blsmth/agentctl/internal/buildid"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/phoneview"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
@@ -75,6 +76,9 @@ type Options struct {
 	// PhoneViewDir is where live terminals record which windows the phone is
 	// watching (internal/phoneview); empty means <StateDir>/phone-viewed.
 	PhoneViewDir string
+	// GroupOrderPath resolves the saved project group order's path (see
+	// fleet.GroupOrderPath); nil means the real one. Resolved per request.
+	GroupOrderPath func() (string, error)
 	// BusOptions tunes the fleet event bus (debounce, rediscovery).
 	BusOptions fleetwatch.Options
 	// PingEvery is the SSE keep-alive interval; 0 means 20s.
@@ -106,12 +110,14 @@ type Server struct {
 	bus       *fleetwatch.Bus
 	holder    Holder
 	pingEvery time.Duration
-	subs      *SubscriptionStore
-	vapid     VAPIDKeys
-	sender    *Sender
-	ntfy      *Ntfy
-	notifier  *Notifier
-	pushQ     *pushDispatcher
+	// groupOrderPath is the saved group order's path (Options.GroupOrderPath).
+	groupOrderPath func() (string, error)
+	subs           *SubscriptionStore
+	vapid          VAPIDKeys
+	sender         *Sender
+	ntfy           *Ntfy
+	notifier       *Notifier
+	pushQ          *pushDispatcher
 
 	keys       KeySender
 	injector   Injector
@@ -214,6 +220,10 @@ func New(opts Options) (*Server, error) {
 	}
 	if s.holder == nil {
 		s.holder = newHolder()
+	}
+	s.groupOrderPath = opts.GroupOrderPath
+	if s.groupOrderPath == nil {
+		s.groupOrderPath = fleet.GroupOrderPath
 	}
 	s.pingEvery = opts.PingEvery
 	if s.pingEvery <= 0 {

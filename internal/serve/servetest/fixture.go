@@ -1,6 +1,7 @@
 package servetest
 
 import (
+	"cmp"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -77,6 +78,8 @@ var recapSources = map[string]fleet.RecapSource{
 
 // Group is one fixture session.
 type Group struct {
+	// Key is the group's saved-order key; empty means Dir, then Session.
+	Key     string   `json:"key,omitempty"`
 	Session string   `json:"session"`
 	Project string   `json:"project"`
 	Dir     string   `json:"dir"`
@@ -180,7 +183,7 @@ func build(groups []Group, root string, now time.Time) []fleetwatch.Group {
 	out := make([]fleetwatch.Group, 0, len(groups))
 	for _, g := range groups {
 		fg := fleetwatch.Group{
-			Session: g.Session, Project: g.Project, Dir: g.Dir,
+			Session: g.Session, Key: cmp.Or(g.Key, g.Dir, g.Session), Project: g.Project, Dir: g.Dir,
 			RuntimeDir: filepath.Join(root, "fixture", g.Session, ".agentctl"),
 			Meta:       map[string]fleet.Meta{},
 		}

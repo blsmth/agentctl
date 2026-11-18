@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/serve"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 )
@@ -35,7 +36,9 @@ type Action struct {
 // actions. Every fake backend reads and writes it under one lock.
 type world struct {
 	root string
-	now  func() time.Time
+	// orderPath is the saved group order the fleet applies.
+	orderPath string
+	now       func() time.Time
 
 	mu      sync.Mutex
 	groups  []Group
@@ -125,7 +128,18 @@ func (w *world) find(match func(Window) bool) (Window, bool) {
 
 // Fleet implements serve.FleetSource.
 func (w *world) Fleet() ([]fleetwatch.Group, error) {
-	return build(w.snapshot(), w.root, w.now()), nil
+	groups := build(w.snapshot(), w.root, w.now())
+	// Apply the saved order the way fleet.Load does: saved keys first, in
+	// order, the rest in fixture order.
+	saved := fleet.ReadGroupOrder(w.orderPath)
+	pos := func(g fleetwatch.Group) int {
+		if i := slices.Index(saved, g.Key); i >= 0 {
+			return i
+		}
+		return len(saved)
+	}
+	slices.SortStableFunc(groups, func(a, b fleetwatch.Group) int { return pos(a) - pos(b) })
+	return groups, nil
 }
 
 // panes is serve.PaneSource, serve.PaneSizer and serve.MainPanes.
