@@ -37,9 +37,13 @@ func multipartBody(t *testing.T, parts ...part) (string, string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		w.Write(p.data)
+		if _, err := w.Write(p.data); err != nil {
+			t.Fatal(err)
+		}
 	}
-	mw.Close()
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
 	return buf.String(), mw.FormDataContentType()
 }
 
