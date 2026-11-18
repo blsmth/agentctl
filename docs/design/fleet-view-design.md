@@ -278,6 +278,7 @@ without the hub causing it (`viewerSyncTarget`).
 | `n` / `x` | New agent in the selected group / close the selected agent |
 | `b` | Select the next blocked agent and focus its live pane (stays in the hub) |
 | `z` / `Z` | Fold the group under the cursor / toggle focus mode (fold every group with nothing blocked or working) |
+| `o` | Toggle row order inside each group between window order (default) and most recent activity first |
 | `f` | Cycle the attention filter: all, active, needs you |
 | `r` | Refresh |
 | `q` / `esc` | Back to the previous tmux session (`switch-client -l`) |

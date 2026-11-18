@@ -477,8 +477,10 @@ type FleetModel struct {
 	// persisted).
 	folded    map[string]bool
 	focusMode bool
-	filter    fleetFilter
-	viewPath  string
+	// sortRecent orders rows inside each group by latest activity (`o`).
+	sortRecent bool
+	filter     fleetFilter
+	viewPath   string
 	// orderPath is the saved group order (see fleet_order.go); "" persists
 	// nothing. drag is a pending or active header drag.
 	orderPath string
@@ -996,6 +998,9 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 	case "f":
 		return *m, m.cycleFilter()
 
+	case "o":
+		return *m, m.toggleSort()
+
 	case fleetServeKey:
 		return *m, m.toggleServe()
 	}
@@ -1506,7 +1511,11 @@ func (m *FleetModel) rebuildLines() {
 	for i, g := range m.groups {
 		rows, context := g.Rows, map[string]bool(nil)
 		if !m.isFolded(g.Session) {
-			rows, context = filterRows(g.Rows, m.filter)
+			src := g.Rows
+			if m.sortRecent {
+				src = fleet.SortRowsRecent(g.Rows)
+			}
+			rows, context = filterRows(src, m.filter)
 		}
 		body := !m.isFolded(g.Session) && (len(rows) > 0 || (len(g.Rows) == 0 && m.filter == fleetFilterAll))
 		if i > 0 && (body || prevBody) {
@@ -1602,8 +1611,8 @@ func (m FleetModel) fleetCounts() (blocked, working, done, idle int) {
 // totals right-aligned: a yellow inverse ⏸ cell (only when something is
 // blocked, and the only filled cell), then ● ✓ ○ counts and a dim agent and
 // session total. An active attention filter adds a muted tag after the title
-// ("· needs you"), then come the serve indicator and the "+ new session"
-// button. See titleLayout for how narrow widths degrade.
+// ("· needs you"), then come the serve indicator, the "↻ recent" sort tag
+// and the "+ new session" button. See titleLayout for how narrow widths degrade.
 func (m FleetModel) renderTitle(cw int) string {
 	return m.titleLayout(cw).line
 }
@@ -1701,6 +1710,9 @@ func (m FleetModel) titleLeft(tag, label string) (string, fleetTitleLayout) {
 		start := lipgloss.Width(left)
 		left += badge
 		l.badge = [2]int{start, lipgloss.Width(left)}
+	}
+	if m.sortRecent {
+		left += fleetCountStyle.Render(" ↻ recent")
 	}
 	if label != "" {
 		left += fleetServeGap

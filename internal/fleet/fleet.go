@@ -299,6 +299,23 @@ func SortRows(rows []Row) []Row {
 	return sorted
 }
 
+// SortRowsRecent orders rows within a group by most recent activity first
+// (LastActivity). Rows with no recorded activity sort last, and ties fall
+// back to WindowIndex so the order is stable. State plays no part. Returns a
+// new slice; the input is left untouched.
+func SortRowsRecent(rows []Row) []Row {
+	sorted := make([]Row, len(rows))
+	copy(sorted, rows)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		a, b := sorted[i], sorted[j]
+		if a.LastActivity != b.LastActivity {
+			return a.LastActivity > b.LastActivity
+		}
+		return a.WindowIndex < b.WindowIndex
+	})
+	return sorted
+}
+
 // rollupOf returns the group-level RollupStatus contribution of a single
 // row: blocked if State is "blocked", else working if State is "working",
 // else done if Done is true (unseen completion), else idle.
