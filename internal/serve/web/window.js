@@ -23,7 +23,7 @@ import {
   scheduledLine,
   splitPane,
   stateLabel,
-  taskLine,
+  headerLines,
   terminalHash,
   windowApiPath,
 } from "./logic.js";
@@ -259,8 +259,10 @@ export function mountWindow(root, ctx, { session, windowId }) {
   const where = h("span", { class: "win-where" });
   const task = h("div", { class: "win-task", hidden: true });
   const scheduled = h("div", { class: "win-scheduled", hidden: true });
+  // Tap the recap to show it in full; it is clamped to two lines.
+  const recap = h("div", { class: "win-recap", hidden: true, onclick: () => recap.classList.toggle("open") });
   const chips = h("div", { class: "chips", hidden: true });
-  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, scheduled, chips);
+  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, recap, scheduled, chips);
 
   const liveChip = h("span", { class: "live-chip", role: "status" });
   const modeBtns = {
@@ -345,9 +347,11 @@ export function mountWindow(root, ctx, { session, windowId }) {
     statePill.className = `state-pill ${st}`;
     statePill.querySelector(".state-text").textContent = stateLabel(win, Date.now());
     where.textContent = [win.project, win.branch].filter(Boolean).join(" · ");
-    const line = taskLine(win);
+    const { task: line, recap: summary } = headerLines(win);
     task.textContent = line;
     task.hidden = !line;
+    recap.textContent = summary;
+    recap.hidden = !summary;
     const sched = scheduledLine(win);
     scheduled.textContent = sched;
     scheduled.hidden = !sched;

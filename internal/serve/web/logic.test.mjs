@@ -9,7 +9,7 @@ import {
   bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
   actionsWithQueue, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
-  liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine,
+  liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines,
 } from "./logic.js";
 
 const fixtures = JSON.parse(readFileSync(new URL("./logic.fixtures.json", import.meta.url), "utf8"));
@@ -273,8 +273,19 @@ console.log("ok: resolved text");
   assert.equal(taskLine({ detail: { title: " Cover the cart " }, issue: 9, activity: "x" }), "Cover the cart");
   assert.equal(taskLine({ detail: {}, issue: 9, activity: "x" }), "Issue #9");
   assert.equal(taskLine({ ticket: "42", activity: "x" }), "Issue #42");
-  assert.equal(taskLine({ activity: "go test" }), "go test");
+  assert.equal(taskLine({ activity: "go test" }), "");
   assert.equal(taskLine({}), "");
+
+  const hl = (w) => headerLines(w);
+  assert.deepEqual(hl({ recap: "Fixing the cart totals.", recap_source: "summary", activity: "Bash" }), { task: "", recap: "Fixing the cart totals." });
+  assert.deepEqual(hl({ detail: { title: "Cover the cart" }, recap: "Writing tests.", recap_source: "summary", activity: "Bash" }), { task: "Cover the cart", recap: "Writing tests." });
+  assert.deepEqual(hl({ recap: "Cart totals", recap_source: "title", activity: "Bash" }), { task: "", recap: "Cart totals" });
+  assert.deepEqual(hl({ recap: "Bash", recap_source: "activity", activity: "Bash" }), { task: "Bash", recap: "" });
+  assert.deepEqual(hl({ activity: "go test" }), { task: "go test", recap: "" });
+  assert.deepEqual(hl({ detail: { title: "Cover the cart" }, activity: "go test" }), { task: "Cover the cart", recap: "" });
+  assert.deepEqual(hl({ recap: "#7 Add a retry", recap_source: "task", issue: 7, activity: "Edit" }), { task: "Issue #7", recap: "" });
+  assert.deepEqual(hl({ recap: "#7 Add a retry", recap_source: "task", activity: "Edit" }), { task: "Add a retry", recap: "" });
+  assert.deepEqual(hl({}), { task: "", recap: "" });
 
   const now = Date.parse("2026-11-17T10:03:00Z");
   assert.equal(stateLabel({ state: "working", state_since: "2026-11-17T10:00:00Z" }, now), "working for 3m");

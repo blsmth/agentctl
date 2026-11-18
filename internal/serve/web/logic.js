@@ -563,13 +563,31 @@ export function formatCost(usd) {
   return `$${usd.toFixed(2)}`;
 }
 
-/** taskLine is what the window is doing: its task title, else its issue, else its activity. */
+/** taskLine is the task the window was given: its ticket title, else its issue, else "". */
 export function taskLine(win) {
   const title = win?.detail?.title?.trim();
   if (title) return title;
   if (win?.issue > 0) return `Issue #${win.issue}`;
   if (win?.ticket) return /^\d+$/.test(win.ticket) ? `Issue #${win.ticket}` : win.ticket;
-  return win?.activity ?? "";
+  return "";
+}
+
+/**
+ * headerLines are the window header's two text lines. task is the task the
+ * window was given; recap is what it is doing (away summary or session title),
+ * shown in place of the last tool call. A task recap repeats the task line, so
+ * it stands in for the task only when there is none. With neither, the task
+ * line falls back to the last tool call, keeping the header to one line.
+ */
+export function headerLines(win) {
+  let task = taskLine(win);
+  let recap = "";
+  if (win && hasRecap(win)) {
+    if (win.recap_source !== "task") recap = win.recap;
+    else if (!task) task = win.recap.replace(/^#\d+\s+/, "");
+  }
+  if (!task && !recap) task = win?.activity ?? "";
+  return { task, recap };
 }
 
 /** stateLabel is the header pill text: "working for 3m", "idle". */
