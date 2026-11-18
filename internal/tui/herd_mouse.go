@@ -5,6 +5,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"github.com/blsmth/agentctl/internal/herd"
 )
 
 // herdClickAction is what a mouse click on the hub should do. Clicks only
@@ -20,6 +22,7 @@ const (
 	herdClickNewAgent                        // armed selector's "agent": launch an agent
 	herdClickClose                           // row's "✕" button: arm / confirm close
 	herdClickMenu                            // right click: open the context menu
+	herdClickFold                            // header's project name: fold / unfold the group
 )
 
 // herdListTop returns the screen row where the list (or sidebar) begins: the
@@ -153,6 +156,9 @@ func (m HerdModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, ac
 				return idx, herdClickNew
 			}
 		}
+		if m.onHeaderName(l.group, x) {
+			return idx, herdClickFold
+		}
 		return idx, herdClickSelect
 	case herdLineRow:
 		if sub == 0 && m.onCloseButton(x) { // detail lines have no ✕
@@ -213,6 +219,10 @@ func (m HerdModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		m.startClose(idx)
 		show := m.maybeShowCmd()
 		return m, show
+	case herdClickFold:
+		m.closeMenu()
+		m.selectLine(idx)
+		return m, m.toggleFoldAt(idx)
 	case herdClickMenu:
 		m.openMenu(idx)
 		show := m.maybeShowCmd()
@@ -245,6 +255,7 @@ const (
 	herdHoverNew                      // a group header's "+ new" button
 	herdHoverNewShell                 // armed selector's "shell"
 	herdHoverNewAgent                 // armed selector's "agent"
+	herdHoverFold                     // a group header's fold marker and project name
 )
 
 // herdHover is the hover target: a line index plus the region on it. The zero
@@ -280,6 +291,9 @@ func (m HerdModel) hoverAt(x, y int) herdHover {
 			} else if m.onNewButton(x) {
 				return herdHover{line: idx, reg: herdHoverNew}
 			}
+		}
+		if m.onHeaderName(l.group, x) {
+			return herdHover{line: idx, reg: herdHoverFold}
 		}
 	case herdLineRow:
 		if sub != 0 { // detail lines: no hover effect
@@ -322,4 +336,11 @@ func (m *HerdModel) refreshHover() {
 	if r, idx, ok := m.rowForCard(m.card); m.card != nil && (!ok || m.hover.reg != herdHoverBody || m.hover.line != idx || r.WindowID == "") {
 		m.hideCard()
 	}
+}
+
+// onHeaderName reports whether column x hits group g's fold marker or project
+// name on its header (the fold toggle), never overlapping the "+ new" button.
+func (m HerdModel) onHeaderName(g herd.Group, x int) bool {
+	span := m.headerNameSpan(g, m.listColWidth())
+	return x >= span[0] && x < span[1]
 }

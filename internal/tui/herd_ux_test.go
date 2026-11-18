@@ -494,8 +494,8 @@ func TestInfoMessageExpires(t *testing.T) {
 func TestOverflowIndicators(t *testing.T) {
 	m := captureSidebar(t, 56, 30)
 	top := m.herdListTop()
-	if top != 3 {
-		t.Fatalf("list top = %d, want 3", top)
+	if top != 2 {
+		t.Fatalf("list top = %d, want 2 (title, one blank/indicator row)", top)
 	}
 	// With slack: no indicators.
 	out := strings.Split(ansi.Strip(m.render()), "\n")

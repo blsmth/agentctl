@@ -440,6 +440,7 @@ func (m *HerdModel) applyPendingFocus() bool {
 	if p == nil {
 		return false
 	}
+	m.revealRow(p.session, p.windowID) // unfold (or unfilter) the target first
 	for i, l := range m.lines {
 		if l.kind == herdLineRow && l.row.Session == p.session && l.row.WindowID == p.windowID {
 			m.selectLine(i)
