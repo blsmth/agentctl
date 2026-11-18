@@ -14,6 +14,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/phoneview"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
@@ -43,6 +44,8 @@ type terminals struct {
 	ptys      PTYStarter
 	sizeEvery time.Duration
 	slots     chan struct{}
+	// markers is the phoneview directory; empty disables the markers.
+	markers string
 
 	mu     sync.Mutex
 	closed bool
@@ -96,6 +99,10 @@ func (ts *terminals) close() {
 // SweepTerminals kills phone viewer sessions left over from a previous run
 // (a crash, or a kill -9). Run calls it once at startup, before serving.
 func (s *Server) SweepTerminals() {
+	// No terminal is open yet, so every marker is stale.
+	if s.term.markers != "" {
+		phoneview.Prune(s.term.markers, nil)
+	}
 	names, err := s.term.tmux.Viewers()
 	if err != nil {
 		logging.Warn("serve: listing stale terminal viewers: %v", err)
@@ -238,6 +245,7 @@ func (s *Server) runTerminal(r *http.Request, conn *websocket.Conn, d Device, t 
 		return
 	}
 	defer func() { _ = p.Close() }()
+	defer s.markPhoneView(t.WindowID, viewer)()
 
 	var st termStats
 	s.terminalOpened(r, d, t, viewer, readOnly)
@@ -250,6 +258,25 @@ func (s *Server) runTerminal(r *http.Request, conn *websocket.Conn, d Device, t 
 	go pipeInput(ctx, cancel, conn, p, readOnly, &st)
 	s.watchTerminal(ctx, conn, p, t.WindowID, cols, rows, readOnly)
 	_ = conn.Close(websocket.StatusNormalClosure, "")
+}
+
+// markPhoneView records that viewer shows windowID to the phone and returns
+// the func that removes the record. A failure to write is logged and never
+// blocks the terminal: the statusline just keeps its normal format.
+func (s *Server) markPhoneView(windowID, viewer string) func() {
+	dir := s.term.markers
+	if dir == "" {
+		return func() {}
+	}
+	if err := phoneview.Add(dir, windowID, viewer); err != nil {
+		logging.Warn("serve: terminal: phone-view marker: %v", err)
+		return func() {}
+	}
+	return func() {
+		if err := phoneview.Remove(dir, windowID, viewer); err != nil {
+			logging.Warn("serve: terminal: removing phone-view marker: %v", err)
+		}
+	}
 }
 
 // watchTerminal resends the window size when it changes and sends keepalive

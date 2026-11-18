@@ -1,56 +1,28 @@
 package hooks
 
 import (
-	"os/exec"
-	"strconv"
-	"strings"
-
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
-// tmuxClient is one row of `tmux list-clients` across all sessions.
-type tmuxClient struct {
-	Name     string
-	WindowID string // window the client is currently showing
-	Activity int64  // client_activity, unix seconds
-	Flags    string
-	Session  string // client_session
-}
+// tmuxClient is one row of `tmux list-clients` across all sessions. The
+// listing and parsing live in internal/tmux, shared with the statusline.
+type tmuxClient tmux.Client
 
 // listClients lists every attached tmux client, in every session. Package-level
 // var so tests do not shell out, like clientDimensions.
 var listClients = tmuxListClients
 
-const listClientsFormat = "#{client_name}\t#{window_id}\t#{client_activity}\t#{client_flags}\t#{client_session}"
+func tmuxListClients() []tmuxClient { return fromTmuxClients(tmux.ListClients()) }
 
-func tmuxListClients() []tmuxClient {
-	out, err := exec.Command("tmux", "list-clients", "-F", listClientsFormat).Output()
-	if err != nil {
-		return nil
-	}
-	return parseClients(string(out))
-}
+// parseClients parses list-clients output, skipping malformed lines.
+func parseClients(out string) []tmuxClient { return fromTmuxClients(tmux.ParseClients(out)) }
 
-// parseClients parses list-clients output in listClientsFormat, skipping
-// malformed lines.
-func parseClients(out string) []tmuxClient {
-	var clients []tmuxClient
-	for _, line := range strings.Split(out, "\n") {
-		f := strings.Split(strings.TrimRight(line, "\r"), "\t")
-		if len(f) < 3 || f[0] == "" {
-			continue
-		}
-		act, _ := strconv.ParseInt(strings.TrimSpace(f[2]), 10, 64)
-		c := tmuxClient{Name: f[0], WindowID: f[1], Activity: act}
-		if len(f) > 3 {
-			c.Flags = f[3]
-		}
-		if len(f) > 4 {
-			c.Session = f[4]
-		}
-		clients = append(clients, c)
+func fromTmuxClients(cs []tmux.Client) []tmuxClient {
+	var res []tmuxClient
+	for _, c := range cs {
+		res = append(res, tmuxClient(c))
 	}
-	return clients
+	return res
 }
 
 // popupTarget is the client an approval popup is opened, sized and closed on.
@@ -77,7 +49,7 @@ func selectPopupClient(clients []tmuxClient, windowID string) popupTarget {
 	var best *tmuxClient
 	for i := range clients {
 		c := &clients[i]
-		if strings.Contains(c.Flags, "control-mode") || tmux.IsMobileViewerSession(c.Session) {
+		if !tmux.Client(*c).IsCandidateViewer() {
 			continue
 		}
 		viewing := windowID != "" && c.WindowID == windowID

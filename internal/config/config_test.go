@@ -2574,3 +2574,33 @@ func TestMonitorEnabled(t *testing.T) {
 		})
 	}
 }
+
+func TestEffectiveStatuslineMobileFormat(t *testing.T) {
+	tests := []struct{ name, val, want string }{
+		{"unset defaults to full", "", "full"},
+		{"rich", "rich", "rich"},
+		{"complementary", "complementary", "complementary"},
+		{"full", "full", "full"},
+		{"minimal", "minimal", "minimal"},
+		{"unrecognized falls back to full", "fancy", "full"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := (Config{StatuslineMobileFormat: tt.val}).EffectiveStatuslineMobileFormat(); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeConfig_StatuslineMobileFormat(t *testing.T) {
+	base := &Config{Agents: map[string]AgentConfig{}, StatuslineMobileFormat: "full"}
+	mergeConfig(base, &Config{Agents: map[string]AgentConfig{}, StatuslineMobileFormat: "minimal"})
+	if base.StatuslineMobileFormat != "minimal" {
+		t.Errorf("overlay should win, got %q", base.StatuslineMobileFormat)
+	}
+	mergeConfig(base, &Config{Agents: map[string]AgentConfig{}})
+	if base.StatuslineMobileFormat != "minimal" {
+		t.Errorf("empty overlay should leave base, got %q", base.StatuslineMobileFormat)
+	}
+}

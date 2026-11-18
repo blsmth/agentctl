@@ -625,6 +625,13 @@ type Config struct {
 	// value falls back to "rich" -- use EffectiveStatuslineFormat to read the
 	// normalized value; this never errors on an unrecognized string.
 	StatuslineFormat string `json:"statusline_format,omitempty"`
+	// StatuslineMobileFormat is the statusline format used while the phone web
+	// app has a live terminal open on the window and no laptop tmux client is
+	// looking at it. Same values as StatuslineFormat; empty or unrecognized
+	// falls back to "full" (one short line). Setting it equal to
+	// statusline_format disables the switch. Use
+	// EffectiveStatuslineMobileFormat to read the normalized value.
+	StatuslineMobileFormat string `json:"statusline_mobile_format,omitempty"`
 	// StatuslineAlign controls whether the "rich" statusline format is
 	// left-aligned (default, today's behavior) or right-aligned. Right
 	// alignment pads each line with plain spaces so it is flush with the
@@ -670,6 +677,18 @@ func (c Config) EffectiveNotifyCmd() (cmd string, set bool) {
 		return "", false
 	}
 	return *c.NotifyCmd, true
+}
+
+// EffectiveStatuslineMobileFormat returns the configured
+// statusline_mobile_format, normalized to one of "rich", "complementary",
+// "full" (default) or "minimal".
+func (c Config) EffectiveStatuslineMobileFormat() string {
+	switch c.StatuslineMobileFormat {
+	case "full", "minimal", "complementary", "rich":
+		return c.StatuslineMobileFormat
+	default:
+		return "full"
+	}
 }
 
 // EffectiveStatuslineFormat returns the configured statusline_format,
@@ -1011,6 +1030,9 @@ func mergeConfig(base, overlay *Config) {
 	// OpenPRInBrowser: overlay if explicitly set (nil means "not specified").
 	if overlay.OpenPRInBrowser != nil {
 		base.OpenPRInBrowser = overlay.OpenPRInBrowser
+	}
+	if overlay.StatuslineMobileFormat != "" {
+		base.StatuslineMobileFormat = overlay.StatuslineMobileFormat
 	}
 	if overlay.StatuslineFormat != "" {
 		base.StatuslineFormat = overlay.StatuslineFormat

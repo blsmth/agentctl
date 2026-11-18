@@ -52,8 +52,9 @@ func Run(dryRun bool) {
 //   - Every persistence path (windowstate, the shared rate-limits file) is
 //     atomic tmp+rename, because a cancelled invocation could be killed
 //     mid-write.
-//   - No network I/O, no subprocesses: read stdin, resolve the window,
-//     write, print.
+//   - No network I/O, no subprocesses on the hot path: read stdin, resolve
+//     the window, write, print. The one exception is `tmux list-clients`
+//     (150ms timeout), only while the phone has a terminal open on the window.
 func RunWithIO(r io.Reader, w io.Writer, dryRun bool) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -84,7 +85,7 @@ func RunWithIO(r io.Reader, w io.Writer, dryRun bool) {
 	windowID := signal.ResolveWindowID()
 
 	cfg := config.Load()
-	format := cfg.EffectiveStatuslineFormat()
+	format := effectiveFormat(cfg, windowID)
 	rich := format == "rich"
 	// Same resolver persistRateLimits names ratelimits-<account>.json with,
 	// so the label and the 5h/7d numbers cannot disagree. Reuses cfg rather
