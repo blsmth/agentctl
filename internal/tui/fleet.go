@@ -478,6 +478,10 @@ type FleetModel struct {
 	focusMode bool
 	filter    fleetFilter
 	viewPath  string
+	// orderPath is the saved group order (see fleet_order.go); "" persists
+	// nothing. drag is a pending or active header drag.
+	orderPath string
+	drag      *fleetDrag
 	// viewDirty marks a fold/filter change made on the way to a jump
 	// (revealRow) that flushView has not persisted yet.
 	viewDirty bool
@@ -811,7 +815,10 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		m.hideCard()
-		return m.handleClick(msg)
+		return m.pressHeader(msg)
+
+	case tea.MouseReleaseMsg:
+		return m.releaseDrag(msg)
 
 	case tea.MouseWheelMsg:
 		m.hideCard()
@@ -826,6 +833,11 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMotionMsg:
+		if m.drag != nil {
+			if next, cmd, ok := m.dragMotion(msg); ok {
+				return next, cmd
+			}
+		}
 		return m.handleMotion(msg)
 
 	case tea.KeyPressMsg:
@@ -840,6 +852,12 @@ func (m *FleetModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	// An error stays on screen until the next key, which dismisses it.
 	m.jumpErr = ""
+	if m.drag != nil {
+		m.drag = nil // any key abandons a drag; esc is just that
+		if key == "esc" {
+			return *m, nil
+		}
+	}
 	if m.menuOpen && m.menuHelp {
 		// The key reference closes on any key; a binding it lists then runs
 		// as usual, so the menu never swallows a keystroke.
@@ -940,6 +958,14 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 
 	case "c":
 		return *m, m.toggleChrome()
+
+	case "shift+up":
+		m.moveSelectedGroup(-1)
+		return *m, nil
+
+	case "shift+down":
+		m.moveSelectedGroup(1)
+		return *m, nil
 
 	case "z":
 		return *m, m.toggleFoldAt(m.splitPane.Cursor())
@@ -1721,9 +1747,16 @@ func (m FleetModel) renderOverflowBelow(cw int) string {
 func (m FleetModel) renderLine(i int, cw int) string {
 	l := m.lines[i]
 	selected := i == m.splitPane.Cursor()
+	if at, ok := m.dragIndicatorLine(); ok && at == i {
+		return renderDragIndicator(cw)
+	}
 	switch l.kind {
 	case fleetLineHeader:
-		return m.renderGroupHeaderHover(l.group, selected, m.hover.region(i), cw)
+		out := m.renderGroupHeaderHover(l.group, selected, m.hover.region(i), cw)
+		if m.dragging() && l.group.Session == m.drag.session {
+			out = dimDraggedHeader(l.group.Project, out)
+		}
+		return out
 	case fleetLinePlaceholder:
 		marker := "    "
 		if selected {
