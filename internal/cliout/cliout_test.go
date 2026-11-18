@@ -4,30 +4,17 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
 
 func TestShouldStrip(t *testing.T) {
-	env := func(m map[string]string) func(string) string {
-		return func(k string) string { return m[k] }
+	if ShouldStrip(true) {
+		t.Error("a terminal must keep its stdout untouched")
 	}
-	tests := []struct {
-		name  string
-		tty   bool
-		env   map[string]string
-		strip bool
-	}{
-		{"tty keeps color", true, nil, false},
-		{"pipe strips", false, nil, true},
-		{"NO_COLOR on tty strips", true, map[string]string{"NO_COLOR": "1"}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ShouldStrip(tt.tty, env(tt.env)); got != tt.strip {
-				t.Fatalf("ShouldStrip = %v, want %v", got, tt.strip)
-			}
-		})
+	if !ShouldStrip(false) {
+		t.Error("a pipe must be stripped")
 	}
 }
 
@@ -54,10 +41,36 @@ func TestPlainStripsStdoutWhenNotTTY(t *testing.T) {
 	restore := Plain()
 	os.Stdout.WriteString("\x1b[31mred\x1b[0m\n")
 	restore()
+	restore() // idempotent
 	w.Close()
 
 	got, _ := io.ReadAll(out)
 	if string(got) != "red\n" {
 		t.Fatalf("got %q, want %q", got, "red\n")
+	}
+}
+
+// TestMain lets the test binary double as a helper process for the Exit test.
+func TestMain(m *testing.M) {
+	if os.Getenv("CLIOUT_EXIT_HELPER") == "1" {
+		Plain()
+		os.Stdout.WriteString("\x1b[31mbefore exit\x1b[0m\n")
+		Exit(3)
+	}
+	os.Exit(m.Run())
+}
+
+func TestExitFlushesOutput(t *testing.T) {
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(), "CLIOUT_EXIT_HELPER=1")
+	var out bytes.Buffer
+	cmd.Stdout = &out // a pipe, not a TTY
+	err := cmd.Run()
+	ee, ok := err.(*exec.ExitError)
+	if !ok || ee.ExitCode() != 3 {
+		t.Fatalf("want exit code 3, got %v", err)
+	}
+	if out.String() != "before exit\n" {
+		t.Fatalf("output lost or unstripped: %q", out.String())
 	}
 }

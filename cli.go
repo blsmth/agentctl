@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/audit"
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/cmd"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/hooks"
@@ -417,13 +418,13 @@ func (c *AgentsCmd) Run() error {
 	if c.Name != "" {
 		if err := cmd.PrintAgentDetail(c.Name, c.JSON); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		return nil
 	}
 	if err := cmd.PrintAgentsTable(c.JSON); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	return nil
 }
@@ -442,7 +443,7 @@ func (c *SkillsCmd) Run() error {
 	}
 	if err := cmd.PrintSkillsTable(c.JSON); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	return nil
 }
@@ -461,7 +462,7 @@ func (c *MemoryCmd) Run() error {
 	}
 	if err := cmd.PrintMemoryTable(c.JSON); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	return nil
 }
@@ -477,7 +478,7 @@ type OpenAgentsWindowCmd struct{}
 func (c *OpenAgentsWindowCmd) Run() error {
 	if err := tmux.OpenOrFocusAgentsWindow(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	return nil
 }
@@ -568,13 +569,13 @@ func (c *TicketBrowseCmd) Run() error {
 	if c.Number > 0 {
 		if err := cmd.PrintTicketDetail(c.Number, c.JSON); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		return nil
 	}
 	if err := cmd.PrintTicketsTable(c.JSON); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	return nil
 }
@@ -605,7 +606,7 @@ type OpenTicketsWindowCmd struct{}
 func (c *OpenTicketsWindowCmd) Run() error {
 	if err := tmux.OpenOrFocusTicketsWindow(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	return nil
 }
@@ -638,13 +639,13 @@ func (c *SessionsBrowseCmd) Run() error {
 	if c.ID != "" {
 		if err := cmd.PrintSessionDetail(c.ID, c.JSON); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		return nil
 	}
 	if err := cmd.PrintSessionsTable(c.JSON); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	return nil
 }
@@ -659,7 +660,7 @@ func (c *SessionsSyncCmd) Run() error {
 	if c.Session != "" {
 		if err := sessions.SyncOne(c.Session, c.Transcript); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		return nil
 	}
@@ -697,7 +698,7 @@ func (c *SessionsSearchCmd) Run() error {
 	since, err := sessions.ParseSince(c.Since)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	opts := sessions.SearchOptions{
 		Query:         c.Query,
@@ -713,7 +714,7 @@ func (c *SessionsSearchCmd) Run() error {
 	}
 	if err := cmd.PrintSessionsSearch(opts, c.JSON); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	return nil
 }
@@ -734,7 +735,7 @@ type OpenSessionsWindowCmd struct{}
 func (c *OpenSessionsWindowCmd) Run() error {
 	if err := tmux.OpenOrFocusSessionsWindow(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	return nil
 }
@@ -800,12 +801,12 @@ func (c *AuditCmd) Run() error {
 	filter, err := c.buildFilter()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	if err := cmd.PrintAuditTable(filter, c.JSON, c.AllProjects, c.Full, c.Mode); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	return nil
 }
@@ -1128,7 +1129,7 @@ func (c *HooksInstallCmd) Run() error {
 	path, err := cmd.InstallHooks(c.Global)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	fmt.Printf("Hooks configured in %s\n", path)
 	return nil
@@ -1183,7 +1184,7 @@ type StatuslineInstallCmd struct {
 func (c *StatuslineInstallCmd) Run() error {
 	if err := statusline.Install(c.Force, c.Uninstall); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	return nil
 }
@@ -1202,7 +1203,7 @@ func runCmdSessionsSummary(dateFlag, dirFlag string) {
 		dir, err = os.Getwd()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: could not determine working directory: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 	}
 
@@ -1215,7 +1216,7 @@ func runCmdSessionsSummary(dateFlag, dirFlag string) {
 		queryDate, err = cmd.ParseDateFlag(dateFlag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Invalid date format. Expected MM-DD-YYYY, got: %s\n", dateFlag)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 	}
 
@@ -1231,7 +1232,7 @@ func runCmdTicketCreate(title, body, bodyFile, labelsStr string) {
 		data, err := os.ReadFile(bodyFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading --body-file: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		bodyContent = string(data)
 	}

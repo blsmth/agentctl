@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/blsmth/agentctl/internal/cliout"
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
@@ -17,7 +18,7 @@ import (
 func RunContext() {
 	if len(os.Args) < 3 {
 		printContextUsage()
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	switch os.Args[2] {
 	case "set":
@@ -32,7 +33,7 @@ func RunContext() {
 		cmdContextPush()
 	default:
 		printContextUsage()
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 }
 
@@ -52,7 +53,7 @@ func cmdContextSet() {
 	args := os.Args[3:]
 	if len(args) < 2 {
 		fmt.Fprintln(os.Stderr, "Usage: agentctl context set <key> <value> [--agent <name>] [--tag <tag>]...")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	key := args[0]
@@ -66,20 +67,20 @@ func cmdContextSet() {
 		case "--agent":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "Error: --agent requires a value")
-				os.Exit(1)
+				cliout.Exit(1)
 			}
 			i++
 			agentName = args[i]
 		case "--tag":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "Error: --tag requires a value")
-				os.Exit(1)
+				cliout.Exit(1)
 			}
 			i++
 			tags = append(tags, args[i])
 		default:
 			fmt.Fprintf(os.Stderr, "Error: unknown flag: %s\n", args[i])
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 	}
 
@@ -90,7 +91,7 @@ func cmdContextSet() {
 	}
 	if err := ctxstore.Set(key, e); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	if agentName == "" {
 		fmt.Fprintf(os.Stderr, "context: %q has no --agent, so it will NOT be auto-injected into any prompt -- use --agent <name> or add it to that agent's context_keys to opt in\n", key)
@@ -103,18 +104,18 @@ func cmdContextGet() {
 	args := os.Args[3:]
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: agentctl context get <key>")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	key := args[0]
 	e, ok, err := ctxstore.Get(key)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	if !ok {
 		fmt.Fprintf(os.Stderr, "Error: key %q not found\n", key)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	// Print header metadata and content.
@@ -134,7 +135,7 @@ func cmdContextList() {
 	entries, err := ctxstore.List()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	if len(entries) == 0 {
@@ -181,13 +182,13 @@ func cmdContextClear() {
 	args := os.Args[3:]
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: agentctl context clear <key>")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	key := args[0]
 	if err := ctxstore.Delete(key); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	fmt.Printf("context: cleared %q\n", key)
 }
@@ -197,7 +198,7 @@ func cmdContextPush() {
 	args := os.Args[3:]
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: agentctl context push <key> --agent <name>")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	key := args[0]
@@ -208,35 +209,35 @@ func cmdContextPush() {
 		case "--agent":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "Error: --agent requires a value")
-				os.Exit(1)
+				cliout.Exit(1)
 			}
 			i++
 			agentName = args[i]
 		default:
 			fmt.Fprintf(os.Stderr, "Error: unknown flag: %s\n", args[i])
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 	}
 
 	if agentName == "" {
 		fmt.Fprintln(os.Stderr, "Error: --agent <name> is required")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	e, ok, err := ctxstore.Get(key)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	if !ok {
 		fmt.Fprintf(os.Stderr, "Error: key %q not found\n", key)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	message := ctxstore.Format(e)
 	if err := tmux.InjectPromptToAgent(agentName, message); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	fmt.Printf("context: pushed %q to %s\n", key, agentName)
 }
@@ -274,7 +275,7 @@ func RunContextPushMenu() {
 	entries, err := ctxstore.List()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading context store: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	displayEntries := tui.BuildContextPushEntries(entries)
@@ -283,7 +284,7 @@ func RunContextPushMenu() {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.ContextPushModel).Result()
@@ -294,23 +295,23 @@ func RunContextPushMenu() {
 	target := result.TargetAgent
 	if target == "" {
 		fmt.Fprintf(os.Stderr, "Error: no target agent\n")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	// Fetch the full entry and inject it.
 	e, ok, err := ctxstore.Get(result.Key)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	if !ok {
 		fmt.Fprintf(os.Stderr, "Error: key %q not found\n", result.Key)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	message := ctxstore.Format(e)
 	if err := tmux.InjectPromptToAgent(target, message); err != nil {
 		fmt.Fprintf(os.Stderr, "Error pushing context: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 }

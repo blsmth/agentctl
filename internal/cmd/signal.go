@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/signal"
 )
 
@@ -13,11 +14,11 @@ func RunSignal(subcommand, state string) {
 	windowID := signal.ResolveWindowID()
 	if windowID == "" {
 		fmt.Fprintln(os.Stderr, "cannot determine window ID")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	agentName := signal.ResolveAgentName(windowID)
 	if err := signal.Apply(windowID, state, agentName); err != nil {
 		fmt.Fprintf(os.Stderr, "signal %s: %v\n", subcommand, err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strconv"
 
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/shellquote"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -38,7 +39,7 @@ func RunCmdCtl(async bool, rest []string) {
 		for name := range CtlCommands {
 			fmt.Fprintf(os.Stderr, "  %s\n", name)
 		}
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	cmdName := rest[0]
@@ -51,7 +52,7 @@ func RunCmdCtl(async bool, rest []string) {
 		for name := range CtlCommands {
 			fmt.Fprintf(os.Stderr, "  %s\n", name)
 		}
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	// Resolve the agentctl binary — prefer the running executable so dev builds
@@ -78,9 +79,12 @@ func RunCmdCtl(async bool, rest []string) {
 	popupExec.Stderr = os.Stderr
 
 	if async {
+		// The child is released and outlives this process; it must not hold
+		// the cliout pipe's write end open.
+		popupExec.Stdout = nil
 		if err := popupExec.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "agentctl ctl: failed to launch popup: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		_ = popupExec.Process.Release()
 		return
@@ -95,10 +99,10 @@ func RunCmdCtl(async bool, rest []string) {
 			} else {
 				fmt.Fprintf(os.Stderr, "agentctl ctl: tmux display-popup exited with code %d\n", exitErr.ExitCode())
 			}
-			os.Exit(exitErr.ExitCode())
+			cliout.Exit(exitErr.ExitCode())
 		}
 		fmt.Fprintf(os.Stderr, "agentctl ctl: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 }
 

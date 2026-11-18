@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/dashboards"
 )
 
@@ -32,7 +33,7 @@ func RunDashboards() {
 		fmt.Fprintf(os.Stderr, "  list                              list available dashboards\n")
 		fmt.Fprintf(os.Stderr, "  export [--dir ./dashboards]       write JSON files to disk\n")
 		fmt.Fprintf(os.Stderr, "  install --url <url> --token <key> push to Grafana via API\n")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 }
 
@@ -56,19 +57,19 @@ func cmdDashboardsExport() {
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating directory %q: %v\n", dir, err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	for _, name := range dashboards.List() {
 		data, err := dashboards.Get(name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading dashboard %q: %v\n", name, err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		dest := filepath.Join(dir, name)
 		if err := os.WriteFile(dest, data, 0o644); err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing %q: %v\n", dest, err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		fmt.Printf("exported %s\n", dest)
 	}
@@ -102,11 +103,11 @@ func cmdDashboardsInstall() {
 
 	if grafanaURL == "" {
 		fmt.Fprintln(os.Stderr, "Error: --url is required")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	if token == "" {
 		fmt.Fprintln(os.Stderr, "Error: --token is required")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	grafanaURL = strings.TrimRight(grafanaURL, "/")
@@ -116,7 +117,7 @@ func cmdDashboardsInstall() {
 		data, err := dashboards.Get(name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading dashboard %q: %v\n", name, err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 
 		payload := grafanaImportPayload{
@@ -127,14 +128,14 @@ func cmdDashboardsInstall() {
 		body, err := json.Marshal(payload)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error marshalling payload for %q: %v\n", name, err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 
 		apiURL := grafanaURL + "/api/dashboards/db"
 		req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(body))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error building request for %q: %v\n", name, err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -142,14 +143,14 @@ func cmdDashboardsInstall() {
 		resp, err := client.Do(req)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error posting dashboard %q: %v\n", name, err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		respBody, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 
 		if resp.StatusCode >= 300 {
 			fmt.Fprintf(os.Stderr, "Grafana API error for %q (status %d): %s\n", name, resp.StatusCode, string(respBody))
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		fmt.Printf("installed %s (status %d)\n", name, resp.StatusCode)
 	}

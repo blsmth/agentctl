@@ -11,6 +11,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/agentlabel"
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -52,14 +53,14 @@ func RunTicketMenu() {
 		logging.Error("ticket menu: %v", err)
 		fmt.Fprintf(os.Stderr, "Error: cannot determine GitHub repo: %v\nPress Enter to close.", err)
 		_, _ = fmt.Scanln()
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	labels := fetchRepoLabels(slug)
 	model := tui.NewStandaloneCreateTicket(slug, labels)
 	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 }
 
@@ -80,7 +81,7 @@ func RunTickets() {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.TicketsModel).Result()
@@ -102,7 +103,7 @@ func RunTickets() {
 			agentName, ticketBody, fetchErr = fetchIssueForLaunch(dir, result.TicketNumber, result.TicketBody)
 			if fetchErr != nil {
 				fmt.Fprintf(os.Stderr, "Error fetching issue: %v\n", fetchErr)
-				os.Exit(1)
+				cliout.Exit(1)
 			}
 		} else if ticketBody == "" {
 			// Agent selected but body not yet fetched (list view path) — fetch body now.
@@ -110,13 +111,13 @@ func RunTickets() {
 			_, ticketBody, fetchErr = fetchIssueForLaunch(dir, result.TicketNumber, "")
 			if fetchErr != nil {
 				fmt.Fprintf(os.Stderr, "Error fetching issue: %v\n", fetchErr)
-				os.Exit(1)
+				cliout.Exit(1)
 			}
 		}
 		mode := PromptModeToDispatchMode(result.PromptMode)
 		if err := launchTicketMode(agentName, dir, result.TicketNumber, result.TicketTitle, ticketBody, result.CustomPrompt, "", mode); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 	}
 
@@ -148,7 +149,7 @@ func RunTicketCreateBody(title, bodyContent string, labels []string) {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.TicketsModel).Result()
@@ -166,20 +167,20 @@ func RunTicketCreateBody(title, bodyContent string, labels []string) {
 			agentName, ticketBody, fetchErr = fetchIssueForLaunch(dir, result.TicketNumber, result.TicketBody)
 			if fetchErr != nil {
 				fmt.Fprintf(os.Stderr, "Error fetching issue: %v\n", fetchErr)
-				os.Exit(1)
+				cliout.Exit(1)
 			}
 		} else if ticketBody == "" {
 			var fetchErr error
 			_, ticketBody, fetchErr = fetchIssueForLaunch(dir, result.TicketNumber, "")
 			if fetchErr != nil {
 				fmt.Fprintf(os.Stderr, "Error fetching issue: %v\n", fetchErr)
-				os.Exit(1)
+				cliout.Exit(1)
 			}
 		}
 		mode := PromptModeToDispatchMode(result.PromptMode)
 		if err := launchTicketMode(agentName, dir, result.TicketNumber, result.TicketTitle, ticketBody, result.CustomPrompt, "", mode); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 	}
 
@@ -192,7 +193,7 @@ func RunTicketLaunch() {
 	agents, err := agent.DiscoverFromCwd(config.Load())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	model := tui.NewTicketLaunchModel(agents)
@@ -200,7 +201,7 @@ func RunTicketLaunch() {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.TicketLaunchModel).Result()
@@ -212,7 +213,7 @@ func RunTicketLaunch() {
 		mode := PromptModeToDispatchMode(result.PromptMode)
 		if err := launchTicketMode(result.Agent, result.Dir, result.Ticket, result.TicketTitle, result.TicketBody, result.CustomPrompt, "", mode); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		return
 	}
@@ -224,7 +225,7 @@ func RunTicketLaunch() {
 		WorkDir:   result.Dir,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 }
 

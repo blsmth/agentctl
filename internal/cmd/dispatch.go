@@ -11,6 +11,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/agentlabel"
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/config"
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/dispatch"
@@ -67,18 +68,18 @@ func RunDispatch(opts DispatchOptions) {
 	}
 	if suppliedCount > 1 {
 		fmt.Fprintln(os.Stderr, "Error: --issue, --prompt, and --prompt-key are mutually exclusive\n"+usageStr)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	if suppliedCount == 0 {
 		fmt.Fprintln(os.Stderr, "Error: one of --issue, --prompt, or --prompt-key is required\n"+usageStr)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	// --agent is required when --prompt or --prompt-key is used (no label-based
 	// inference without an issue).
 	if (promptText != "" || promptKey != "") && agentName == "" {
 		fmt.Fprintln(os.Stderr, "Error: --agent is required when using --prompt or --prompt-key\n"+usageStr)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	// An explicit --agent must name a discovered agent. Besides catching
@@ -87,7 +88,7 @@ func RunDispatch(opts DispatchOptions) {
 	if agentName != "" {
 		if err := validateAgentName(agentName, workDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 	}
 
@@ -98,7 +99,7 @@ func RunDispatch(opts DispatchOptions) {
 		resolved, err := resolvePromptKey(promptKey)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		promptText = resolved
 	}
@@ -119,14 +120,14 @@ func RunDispatch(opts DispatchOptions) {
 		wid, resolvedAgent, err = dispatchIssue(issueNumber, agentName, workDir, model, backend, account, harnessName, repo, !noWorktree)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		fmt.Printf("Dispatched #%d → %s (window %s)\n", issueNumber, resolvedAgent, linkWindow(wid, wid))
 	} else {
 		wid, resolvedAgent, err = dispatchPrompt(promptText, promptKey, agentName, workDir, model, backend, account, harnessName, !noWorktree)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		fmt.Printf("Dispatched prompt → %s (window %s)\n", resolvedAgent, linkWindow(wid, wid))
 	}
@@ -163,7 +164,7 @@ func RunDispatch(opts DispatchOptions) {
 		case <-deadline:
 			fmt.Printf("\rWaiting for %s (%s, window %s)… %s — timeout\n",
 				subject, resolvedAgent, linkWindow(wid, wid), formatElapsed(time.Since(start)))
-			os.Exit(2)
+			cliout.Exit(2)
 
 		case <-ticker.C:
 			elapsed := time.Since(start)
@@ -172,14 +173,14 @@ func RunDispatch(opts DispatchOptions) {
 			if tmux.WindowNameByID(wid) == "" {
 				fmt.Printf("\rWaiting for %s (%s, window %s)… %s — window gone\n",
 					subject, resolvedAgent, linkWindow(wid, wid), formatElapsed(elapsed))
-				os.Exit(1)
+				cliout.Exit(1)
 			}
 
 			// Check for done signal.
 			if ws, _ := windowstate.Read(wid); ws.Done {
 				fmt.Printf("\rWaiting for %s (%s, window %s)… %s — done\n",
 					subject, resolvedAgent, linkWindow(wid, wid), formatElapsed(elapsed))
-				os.Exit(0)
+				cliout.Exit(0)
 			}
 
 			// Still running — update status line in place.

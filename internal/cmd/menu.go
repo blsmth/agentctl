@@ -16,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/blsmth/agentctl/internal/agent"
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/fleet"
@@ -40,7 +41,7 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 	done()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	done = logging.Timing("RunMenu: running agents")
@@ -75,7 +76,7 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.MenuModel).Result()
@@ -96,12 +97,12 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 		if switchID != "" {
 			if err := tmux.SwitchToWindow(switchID); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				cliout.Exit(1)
 			}
 		} else {
 			if err := tmux.SwitchToAgent(result.Instance); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				cliout.Exit(1)
 			}
 		}
 	case "launch":
@@ -291,14 +292,14 @@ func RunLaunch(name string, opts LaunchOptions) {
 		name = usableDefaultAgent(cfg, os.Stderr)
 		if name == "" {
 			fmt.Fprintln(os.Stderr, "No agent specified and no usable default_agent configured")
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 	}
 	// Resolve base agent name (strip ~N if someone passes an instance name).
 	baseName := tmux.BaseAgentName(name)
 	if !agent.ValidLaunchName(baseName) {
 		fmt.Fprintf(os.Stderr, "Error: invalid agent name %q\n", baseName)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	workDir := resolveAgentDir(baseName)
 	RunLaunchAgentOpts(baseName, workDir, opts)
@@ -329,7 +330,7 @@ func RunLaunchAgentOpts(name string, workDir string, opts LaunchOptions) {
 	res, err := dispatch.Launch(req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	// Machine-readable: the hub parses the last stdout line to focus the new
 	// window. Only emitted for background launches; interactive output is

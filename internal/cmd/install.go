@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/blsmth/agentctl/internal/agent"
+	"github.com/blsmth/agentctl/internal/cliout"
 )
 
 // RunCmdInstallTemplates copies built-in agent templates into ./.claude/agents/.
@@ -15,14 +16,14 @@ func RunCmdInstallTemplates(force bool) {
 	dir, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: getting working directory: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	destDir := filepath.Join(dir, ".claude", "agents")
 
 	installed, skipped, err := agent.InstallTemplates(destDir, force)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	if len(installed) == 0 && len(skipped) == 0 {

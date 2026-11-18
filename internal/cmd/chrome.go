@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/selfexec"
@@ -36,7 +37,7 @@ func runWithReload(name string, model reloadable, run func(tea.Model) (tea.Model
 		final, err := run(model)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s error: %v\n", name, err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		rm, ok := final.(reloadable)
 		if !ok || !rm.Reexec() {

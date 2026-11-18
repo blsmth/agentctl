@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/logging"
 )
 
@@ -16,7 +17,7 @@ func RunSync(dryRun, clean, unlink bool) {
 	if err != nil {
 		logging.Error("sync: could not determine home directory: %v", err)
 		fmt.Fprintf(os.Stderr, "Error: could not determine home directory: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	registryDir := filepath.Join(home, ".claude", "agents")
@@ -25,7 +26,7 @@ func RunSync(dryRun, clean, unlink bool) {
 	if err != nil {
 		logging.Error("sync: could not determine working directory: %v", err)
 		fmt.Fprintf(os.Stderr, "Error: could not determine working directory: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	projectAgentsDir := filepath.Join(cwd, ".claude", "agents")
@@ -42,7 +43,7 @@ func RunSync(dryRun, clean, unlink bool) {
 
 	if err := runSync(cwd, dryRun); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 }
 
@@ -162,14 +163,14 @@ func cmdSyncClean(registryDir, projectAgentsDir string, dryRun bool) {
 	if err != nil {
 		logging.Error("sync clean: could not resolve project agents dir: %v", err)
 		fmt.Fprintf(os.Stderr, "Error: could not resolve project agents dir: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	entries, err := os.ReadDir(registryDir)
 	if err != nil {
 		logging.Error("sync clean: reading registry dir: %v", err)
 		fmt.Fprintf(os.Stderr, "Error: reading registry dir: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	removed := 0
@@ -237,14 +238,14 @@ func cmdSyncUnlink(registryDir, projectAgentsDir string, dryRun bool) {
 	if err != nil {
 		logging.Error("sync unlink: could not resolve project agents dir: %v", err)
 		fmt.Fprintf(os.Stderr, "Error: could not resolve project agents dir: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	entries, err := os.ReadDir(registryDir)
 	if err != nil {
 		logging.Error("sync unlink: reading registry dir: %v", err)
 		fmt.Fprintf(os.Stderr, "Error: reading registry dir: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	removed := 0

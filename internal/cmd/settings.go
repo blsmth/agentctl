@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/blsmth/agentctl/internal/claude"
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -43,7 +44,7 @@ func CmdSettingsPopup(windowIDOrName string) {
 	}
 	if agentName == "" || agentName == "shell" {
 		fmt.Fprintf(os.Stderr, "Switch to an agent window first\n")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	cfg := config.Load()
@@ -54,7 +55,7 @@ func CmdSettingsPopup(windowIDOrName string) {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.SettingsModel).Result()
@@ -89,7 +90,7 @@ func CmdSettingsPopup(windowIDOrName string) {
 	}
 	if err := cfg.SetAgent(agentName, ac); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 }
 
@@ -105,7 +106,7 @@ func CmdPermissionsPopup() {
 	logging.Log("permissions-menu: agentName=%q", agentName)
 	if agentName == "" || agentName == "shell" {
 		fmt.Fprintf(os.Stderr, "Switch to an agent window first\n")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	// Get the agent's working directory from its tmux pane.
@@ -113,7 +114,7 @@ func CmdPermissionsPopup() {
 	logging.Log("permissions-menu: workDir=%q", workDir)
 	if workDir == "" {
 		fmt.Fprintf(os.Stderr, "Could not determine agent working directory\n")
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	// Find the project root; outside a git repo, use workDir itself.
@@ -127,7 +128,7 @@ func CmdPermissionsPopup() {
 	settings, err := claude.LoadSettings(settingsPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading settings: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	// Load global settings (read-only context).
@@ -144,7 +145,7 @@ func CmdPermissionsPopup() {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.PermissionsModel).Result()
@@ -211,7 +212,7 @@ func CmdPermissionsPopup() {
 
 	if err := claude.SaveSettings(settingsPath, settings); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving settings: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	logging.Log("permissions: saved %s", settingsPath)
 }

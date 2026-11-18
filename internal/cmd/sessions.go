@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/fleet"
@@ -57,7 +58,7 @@ func CmdSessionsMenu(writeSettings WriteAgentSettingsFn) {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.SessionsModel).Result()
@@ -101,7 +102,7 @@ func CmdSessions(writeSettings WriteAgentSettingsFn) {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	result := finalModel.(tui.SessionsModel).Result()
@@ -148,7 +149,7 @@ func CmdSessionsSync() {
 	added, updated, pruned, err := sessions.Sync(cfg.SessionRetentionDays)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	totalBytes, _, _ := sessions.DiskUsage()
 	fmt.Printf("Synced %d sessions (%d updated, %d pruned). Metadata: %.1f KB\n",
@@ -164,7 +165,7 @@ func CallCmdSessionsSummaryBody(dir string, queryDate time.Time) {
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 
 	if len(metas) == 0 {
@@ -203,14 +204,14 @@ func LaunchWithResume(name string, sessionID string, workDir string, writeSettin
 		acct, err := dispatch.ResumeAccount(cfg, sessionID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: resolving account: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		dispatch.ApplyAccountEnv(extraEnv, acct)
 	}
 	hb, err := dispatch.PrepareBackendFor(cfg, h, &ac, "", "", workDir, extraEnv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	windowName := tmux.NextInstanceName(name)
 	// The forked session's ID is chosen by the harness, so the log path
@@ -223,21 +224,21 @@ func LaunchWithResume(name string, sessionID string, workDir string, writeSettin
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	inv := dispatch.BaseInvocation(name, sessionName, ac, prep)
 	inv.Resume, inv.ForkSession = sessionID, true
 	shellCmd, err := h.Command(inv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	extraEnv[dispatch.EnvSessionName] = sessionName
 	dispatch.ApplyHarnessEnv(extraEnv, h, "", prep)
 	wid, err := tmux.LaunchAgent(windowName, workDir, shellCmd, "", name, "", extraEnv, true)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 	if wid != "" {
 		if err := tmux.SwitchToWindow(wid); err != nil {

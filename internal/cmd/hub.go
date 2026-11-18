@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/blsmth/agentctl/internal/cliout"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/selfexec"
@@ -18,7 +19,7 @@ import (
 func RunHub() {
 	if err := tmux.SwitchToHub(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		cliout.Exit(1)
 	}
 }
 
@@ -32,7 +33,7 @@ func RunHubView() {
 		if err != nil {
 			hubClearZoom()
 			fmt.Fprintf(os.Stderr, "hub-view error: %v\n", err)
-			os.Exit(1)
+			cliout.Exit(1)
 		}
 		hm, ok := final.(tui.FleetModel)
 		if !ok || !hm.Reexec() {
