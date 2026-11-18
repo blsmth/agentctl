@@ -48,7 +48,7 @@ export function sortGroups(groups) {
   return decorated.map((d) => d.group);
 }
 
-/** isDispatched mirrors herd.Meta.Dispatched: launched by another agent. */
+/** isDispatched mirrors fleet.Meta.Dispatched: launched by another agent. */
 export function isDispatched(win) {
   return Boolean(win.mode) && win.mode !== "bare";
 }
@@ -98,7 +98,7 @@ export function treeLines(entry) {
 
 /**
  * treeRows flattens one group's windows into display order. It ports
- * internal/tui/herd_tree.go treeRows (shared cases: internal/tui/testdata/
+ * internal/tui/fleet_tree.go treeRows (shared cases: internal/tui/testdata/
  * tree_cases.json). A window nests under win.parent when that is another
  * window of the group (and not itself). Non-dispatched windows without such a
  * parent are roots. Dispatched windows with no usable parent, plus windows

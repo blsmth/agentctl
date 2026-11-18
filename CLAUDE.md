@@ -35,7 +35,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 - **tmux/** — All tmux interactions (sessions, windows, panes, keybindings, `display-popup`/`display-menu`). The native status bar is off; chrome is a two-row Bubble Tea pane docked at the bottom of every window. Session name is `tmux.SessionName` (`agentctl-<dir>`).
 - **windowstate/** — Authoritative per-window hook state at `.agentctl/windows/<windowID>.json`. Written by hooks, read by the monitor.
 - **winname/** — Computes the window name (glyph + instance) from windowstate and renames the tmux window inside the writer's transaction (`winname.Update`/`Transact`, `SyncName`).
-- **state/** — The `state.json` snapshot the monitor writes each tick (agentctl readers build their view from `herd.LoadAgents` and use a fresh snapshot only as optional token enrichment; also the one-release restore fallback), plus `AgentState`, the restore builders, and the snapshot types.
+- **state/** — The `state.json` snapshot the monitor writes each tick (agentctl readers build their view from `fleet.LoadAgents` and use a fresh snapshot only as optional token enrichment; also the one-release restore fallback), plus `AgentState`, the restore builders, and the snapshot types.
 - **agent/** — Agent discovery from `~/.claude/agents/*.md` and project-local `.claude/agents/` (local shadows global); `Extends` composes agents.
 - **sessions/** — Parses Claude Code's JSONL logs in every account's `projects/` dir (`~/.claude/projects/` by default) for summaries, metrics, and session metadata sidecars. Also owns session cost: `CostOfSummary` prices per request through `tokens.Lookup` (unknown model = unknown cost, never a Sonnet default) and `ClassifyBilling` assigns `metered`/`sub`/`free`; surfaced by `agentctl cost`. Pricing lives only in `internal/tokens`.
 - **claudehome/** — Resolves Claude Code config dirs (`CLAUDE_CONFIG_DIR`), one per configured account: `Dir`, `All`, `Current`, and `Resolve` (flag > agent > `account_rules` on the repo root > dispatching window > `default_account`). Every transcript/settings path that used to hardcode `~/.claude` goes through it; shared content (agents, `settings.json`, …) still lives in `HomeDir()` and is symlinked into each account. agentctl never touches credentials (grep-tested). See [docs/configuration.md](docs/configuration.md#accounts-multiple-claude-logins).
@@ -51,7 +51,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 - **claude/** — Persistent `claude` CLI subprocess client (NDJSON over stdio), retained as a non-default `llm` provider selectable only with `llm.provider: "claude"`. Kept deliberately as the basis for any future Go agent integration.
 - **worktree/** — Git worktree create/remove/list/prune for isolated dispatch, under `<repo>/.worktrees/<slug>/`.
 - **cleanup/** — Classifies worktrees (`empty`, `landed`, dirty, unpushed, …) so `agentctl cleanup` and SessionEnd reclaim only what is safe.
-- **herd/** — Cross-session aggregation behind `agentctl hub` and `agentctl status`, including pane classification (`ClassifyPane`).
+- **fleet/** — Cross-session aggregation behind `agentctl hub` and `agentctl status`, including pane classification (`ClassifyPane`).
 - **mailbox/** — Per-window store for agentctl-originated notices (done/blocked backstop), delivered by the UserPromptSubmit/PostToolUse hooks. Agent-to-agent messaging is Claude Code's native `SendMessage`/`ListAgents`, not this package.
 - **metrics/**, **metricsserve/**, **metricsproc/** — Prometheus registry, collectors and remote write; `metrics/events` is the hook-written transition log; `metricsserve` is `agentctl metrics serve`; `metricsproc` is its pidfile/lock/start plumbing. See [docs/monitor-architecture.md](docs/monitor-architecture.md#metrics-without-the-monitor).
 - **notify/** — Desktop notifications from `notify_cmd` (`alerter` on macOS, `notify-send` on Linux).
@@ -78,9 +78,9 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 
 1. `agentctl` starts a tmux session → runs the monitor as a background process (pidfile-guarded)
 2. Claude Code hooks write per-window state to `.agentctl/windows/<windowID>.json` (`working`/`blocked`/`idle`)
-3. Monitor loops every 500ms, reads each window's hook state, and resolves it to an `AgentStatus`; `Gone` is detected when a window disappears (monitor after two absent ticks, or the monitor-free `agentctl reconcile` via the shared `internal/reconcile` claim). JSONL is parsed only for token/detail enrichment. Readers (chrome bar, hub, `status`, popups) do not depend on it: they join `tmux list-windows` with `windowstate.AllFrom` via `herd.LoadAgents`. Config `monitor: false` stops agentctl starting it.
+3. Monitor loops every 500ms, reads each window's hook state, and resolves it to an `AgentStatus`; `Gone` is detected when a window disappears (monitor after two absent ticks, or the monitor-free `agentctl reconcile` via the shared `internal/reconcile` claim). JSONL is parsed only for token/detail enrichment. Readers (chrome bar, hub, `status`, popups) do not depend on it: they join `tmux list-windows` with `windowstate.AllFrom` via `fleet.LoadAgents`. Config `monitor: false` stops agentctl starting it.
 4. On a state change the monitor builds a `Transition` and calls `improve.HandleTransition` directly (no plugin registry). Prometheus metrics are not a monitor handler: the state writers (`winname.Apply`, `reconcile.Finish`) append events to `<runtimeDir>/metrics/events-<date>.ndjson` when `metrics.enabled`, and the per-machine `agentctl metrics serve` (`internal/metricsserve`, started by session start and the hook janitor) tails them and reads window logs for usage, with a `project` label on every series. Dispatch completion is hook-driven instead: the hook that sets `Done=true` (Stop hook, `signal done`) stamps `CompleteFiredAt` and spawns a detached `agentctl dispatch-complete <window>` (PR lookup, label swap, open PR, `dispatch_complete` hooks)
-5. The state writers (hooks, `signal`, `set-active-window`) rename tmux windows via `internal/winname` inside their windowstate transaction (● working, ⏸ blocked, ✓ done-unseen, bare name idle); `Seen` is a persisted windowstate field. The monitor writes `state.json` (optional token enrichment and restore fallback only); the chrome bar pane watches `.agentctl/windows/` and `active-window` via fsnotify, rebuilds through `herd.BuildAgents`, and re-renders only when a rendered field changed
+5. The state writers (hooks, `signal`, `set-active-window`) rename tmux windows via `internal/winname` inside their windowstate transaction (● working, ⏸ blocked, ✓ done-unseen, bare name idle); `Seen` is a persisted windowstate field. The monitor writes `state.json` (optional token enrichment and restore fallback only); the chrome bar pane watches `.agentctl/windows/` and `active-window` via fsnotify, rebuilds through `fleet.BuildAgents`, and re-renders only when a rendered field changed
 
 ### Dispatch & Worktrees
 
@@ -112,12 +112,12 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 
 ### Querying agent status (`agentctl status`)
 
-`agentctl status` is the scriptable counterpart to `agentctl hub` (same `internal/herd` aggregation). Use it instead of hand-joining `tmux list-windows` with `jq` over windowstate files. Subcommands: `status [<window>]` (table or detail; `--json`, `--session`, `--state`, `--blocked`, `--verify`), `status peek <window>`, and `status whoami`.
+`agentctl status` is the scriptable counterpart to `agentctl hub` (same `internal/fleet` aggregation). Use it instead of hand-joining `tmux list-windows` with `jq` over windowstate files. Subcommands: `status [<window>]` (table or detail; `--json`, `--session`, `--state`, `--blocked`, `--verify`), `status peek <window>`, and `status whoami`.
 
-Rows come from `tmux list-windows` plus windowstate (`herd.LoadAgents`), so `status` works with the monitor off. Two behaviors are deliberate:
+Rows come from `tmux list-windows` plus windowstate (`fleet.LoadAgents`), so `status` works with the monitor off. Two behaviors are deliberate:
 
-- **`PARENT` is blank for bare windows.** Only dispatched windows record a dispatcher; bare windows would otherwise report whichever window was created last (`herd.Meta.Parent()` returns `""` rather than a plausible wrong answer).
-- **`--verify` trusts the pane over the record** via `herd.ClassifyPane`. `⏸` is not a blocked signal (it is in every pane's footer); classification matches dialog text.
+- **`PARENT` is blank for bare windows.** Only dispatched windows record a dispatcher; bare windows would otherwise report whichever window was created last (`fleet.Meta.Parent()` returns `""` rather than a plausible wrong answer).
+- **`--verify` trusts the pane over the record** via `fleet.ClassifyPane`. `⏸` is not a blocked signal (it is in every pane's footer); classification matches dialog text.
 
 ## Adding a transition handler
 

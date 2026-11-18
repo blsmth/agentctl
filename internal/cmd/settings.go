@@ -10,7 +10,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/claude"
 	"github.com/blsmth/agentctl/internal/config"
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
@@ -34,7 +34,7 @@ func CmdSettingsPopup(windowIDOrName string) {
 	var agentName string
 	if strings.HasPrefix(windowIDOrName, "@") {
 		// Try windowstate first.
-		_, agentName = herd.LocalWindowNames(windowIDOrName)
+		_, agentName = fleet.LocalWindowNames(windowIDOrName)
 		if agentName == "" {
 			agentName = tmux.ResolveAgentByWindowID(windowIDOrName)
 		}

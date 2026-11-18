@@ -19,7 +19,7 @@ Non-goals: code review / merging (deep-link to GitHub), editing config, exposure
 - **Web app (PWA), not native iOS.** Served by the Go binary from `go:embed`, installed to the Home Screen. iOS 16.4+ supports Web Push for Home Screen web apps. No Apple developer account, no Xcode, no Swift.
 - **No frontend build step.** Plain HTML + CSS + vanilla JavaScript ES modules. Third-party JS is vendored (minified file + LICENSE) under `internal/serve/web/vendor/`. No npm, no bundler, no node in CI.
 - **Events use Server-Sent Events** (`EventSource`), not WebSocket. Only the live terminal (PR6) uses WebSocket.
-- **One process per machine**: `agentctl serve`, launchd-managed. It does not depend on per-project monitors: fleet data comes from `herd` (tmux + windowstate), exactly like `agentctl status --json`. It is the natural home for the per-machine process in the monitor-removal plan (PR9 `metrics serve` can later fold in; not in scope here).
+- **One process per machine**: `agentctl serve`, launchd-managed. It does not depend on per-project monitors: fleet data comes from `fleet` (tmux + windowstate), exactly like `agentctl status --json`. It is the natural home for the per-machine process in the monitor-removal plan (PR9 `metrics serve` can later fold in; not in scope here).
 - **Write actions are in scope from the start** (answer dialogs, reply, interrupt, dispatch), behind `serve.allow_write` and strong guards.
 - **Keep-awake**: on by default. While any agent anywhere is `working` or `blocked`, `serve` holds a `caffeinate -s` child (prevents system sleep on AC power only; macOS ignores `-s` on battery). Released when the fleet is all idle/done. `serve.keep_awake: false` disables.
 - **Push transports**: Web Push (VAPID) is primary. ntfy is an optional fallback (`serve.ntfy_topic`) for when the PWA isn't installed or Web Push misbehaves. Push payloads never contain pane text or prompt text.
@@ -31,7 +31,7 @@ Phone (Safari / Home Screen PWA)
    │  HTTPS (local CA, trusted on the phone) over home LAN or UDM VPN
    ▼
 agentctl serve  (internal/serve; launchd LaunchAgent; selfexec hot reload)
-   ├─ reads: herd (tmux list-sessions/list-windows + windowstate), tmux capture-pane, agent discovery
+   ├─ reads: fleet (tmux list-sessions/list-windows + windowstate), tmux capture-pane, agent discovery
    ├─ writes: tmux send-keys (guarded), in-process ad-hoc dispatch
    ├─ events: fsnotify on every session runtime dir windows/ → diff → SSE + push triggers
    └─ push: Web Push (VAPID) → Apple push service → phone; optional ntfy
@@ -104,8 +104,8 @@ All JSON. Errors: `{"error": "message", "code": "snake_case"}` with an appropria
 | `GET /v1/projects` | `{"projects":[{"name":"agentctl","dir":"/Users/…","session":"agentctl-agentctl"}]}` (live sessions + registry; dispatch targets) |
 | `GET /v1/events` | SSE stream (below) |
 
-`Group` = `{"session","project","dir","rollup":"blocked|working|done|idle","windows":[Window]}`, ordered with `herd.OrderGroups`.
-`Window` = the same field names as `agentctl status --json` rows (`session, project, window_id, window_index, agent, state, done, mode, context_pct, branch, worktree_path, parent, activity`) plus `pr_url`, `issue`, `blocked_since`, `state_since`, `pending_tool` where available. Implement one shared conversion from `herd.Row` so `status --json` and `serve` cannot drift (refactor `status --json` to use it).
+`Group` = `{"session","project","dir","rollup":"blocked|working|done|idle","windows":[Window]}`, ordered with `fleet.OrderGroups`.
+`Window` = the same field names as `agentctl status --json` rows (`session, project, window_id, window_index, agent, state, done, mode, context_pct, branch, worktree_path, parent, activity`) plus `pr_url`, `issue`, `blocked_since`, `state_since`, `pending_tool` where available. Implement one shared conversion from `fleet.Row` so `status --json` and `serve` cannot drift (refactor `status --json` to use it).
 
 ### Events (PR2)
 
@@ -113,7 +113,7 @@ All JSON. Errors: `{"error": "message", "code": "snake_case"}` with an appropria
 - `event: window` `data: Window` — a window appeared or a **rendered** field changed (state, done, activity, context_pct, pr_url…). Hooks rewrite windowstate on every tool call, so diff the rendered `Window`, never raw file events.
 - `event: gone` `data: {"session","window_id"}`.
 - `: ping` comment every 20s.
-Source: an internal event bus (`internal/serve/fleetwatch`) that fsnotify-watches every live session runtime dir `windows/` (and re-discovers sessions every 5s, since sessions come and go), debounces 200ms, rebuilds rows with `herd`, and diffs. PR3 (push) and keep-awake subscribe to the same bus, receiving typed transitions `{window, from, to}`.
+Source: an internal event bus (`internal/serve/fleetwatch`) that fsnotify-watches every live session runtime dir `windows/` (and re-discovers sessions every 5s, since sessions come and go), debounces 200ms, rebuilds rows with `fleet`, and diffs. PR3 (push) and keep-awake subscribe to the same bus, receiving typed transitions `{window, from, to}`.
 
 ### Write (PR4) — all require `allow_write: true`, CSRF header, and are audit-logged
 
@@ -153,7 +153,7 @@ Push is a server-side request a paired device controls, so it is fenced: `POST /
 - **Protocol**: binary frames are raw terminal bytes both ways; text frames are JSON control messages (`size` from the server, `ping` either way every 20s).
 - **Write gate**: input is accepted only with `serve.allow_write`. Read-only mode drops input frames and attaches with `-r`. In write mode each connection writes two audit lines (`action: "terminal"`, `connected`/`disconnected` with `bytes_in`/`bytes_out`, never content).
 - **Cleanup**: on socket close, PTY EOF, `Server.Close` (shutdown and selfexec re-exec) the PTY process is killed and the viewer killed; `destroy-unattached` is also turned on once attached, so a viewer dies with its client even if serve crashes. Serve startup sweeps stale `agentctl-mobileview-*` sessions. At most 4 terminals (429 `too_many_terminals`).
-- **Discovery**: `tmux.IsAnyViewerSession` (hub and phone viewers) is excluded from session listing, herd discovery, hub leave, and home-session resolution; pane/window → session lookups map a viewer to its home session; approval popups never target a phone client.
+- **Discovery**: `tmux.IsAnyViewerSession` (hub and phone viewers) is excluded from session listing, fleet discovery, hub leave, and home-session resolution; pane/window → session lookups map a viewer to its home session; approval popups never target a phone client.
 - **Frontend** (`terminal.js`, route `#/t/<session>/<window>`): full-screen xterm.js sized to the server's cols/rows with the font scaled to the screen width (never `fit()`), pinch-zoom and pan as a fallback, a key bar (Esc, Tab, ^C, arrows, 1, 2, Enter) above the soft keyboard in write mode, a `read-only` badge otherwise, reconnect with backoff.
 
 ## Remote approvals
@@ -228,7 +228,7 @@ Hot reload: use `internal/selfexec` exactly like the hub/monitor, so `just insta
 ## PR plan
 
 1. **Foundation** — config block (global-only), `internal/serve` server skeleton, CIDR filter, CA + leaf certs, control socket, pairing (bootstrap listener, QR, mobileconfig), devices + cookie auth + CSRF middleware, `/healthz`, placeholder page at `/`, CLI (`serve`, `install`, `uninstall`, `status`, `pair`, `devices`), selfexec hot reload, pidfile, logging. Commits this design doc.
-2. **Read API + events + keep-awake** — shared `herd.Row` → `Window` conversion (and `status --json` uses it), `/v1/fleet|windows|pane|agents|projects`, fleetwatch bus, SSE, caffeinate management.
+2. **Read API + events + keep-awake** — shared `fleet.Row` → `Window` conversion (and `status --json` uses it), `/v1/fleet|windows|pane|agents|projects`, fleetwatch bus, SSE, caffeinate management.
 3. **Push** — VAPID, subscriptions, triggers off the bus, quiet hours/mute, reminders, ntfy fallback.
 4. **Write API** — answer/reply/interrupt/dispatch/close with guards, rate limit, audit log.
 5. **Web app** — the PWA described above.

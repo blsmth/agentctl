@@ -47,7 +47,7 @@ type Options struct {
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 
-	// Read API dependencies; nil means the production implementation (herd,
+	// Read API dependencies; nil means the production implementation (fleet,
 	// tmux, agent discovery, caffeinate on darwin). Tests inject fakes.
 	Fleet  FleetSource
 	Panes  PaneSource
@@ -165,7 +165,7 @@ func New(opts Options) (*Server, error) {
 	s := &Server{opts: opts, now: now, started: now(), cidrs: cidrs, devices: devices, restart: make(chan struct{}, 1)}
 	s.fleet, s.panes, s.agents, s.holder = opts.Fleet, opts.Panes, opts.Agents, opts.Awake
 	if s.fleet == nil {
-		s.fleet = fleetwatch.HerdSource{}
+		s.fleet = fleetwatch.LiveSource{}
 	}
 	s.fleet = lockedFleet{src: s.fleet}
 	s.keys, s.injector, s.closer, s.dispatcher = opts.Keys, opts.Injector, opts.Closer, opts.Dispatcher

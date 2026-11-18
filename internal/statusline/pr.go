@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
@@ -56,7 +56,7 @@ func resolvePR(p *Payload, ws windowstate.WindowState) (pr *PR, cache windowstat
 	if next.Path != path {
 		next = windowstate.LogPRScan{Path: path}
 	}
-	offset, size, info, fresh, ok := herd.ScanLogFrom(path, next.Offset, next.Size)
+	offset, size, info, fresh, ok := fleet.ScanLogFrom(path, next.Offset, next.Size)
 	if !ok {
 		return nil, cache, false
 	}

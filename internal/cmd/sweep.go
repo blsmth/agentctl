@@ -13,7 +13,7 @@ import (
 	"charm.land/lipgloss/v2/table"
 
 	"github.com/blsmth/agentctl/internal/cleanup"
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/mailbox"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/state"
@@ -91,12 +91,12 @@ type sweepDeps struct {
 }
 
 func paneVerdict(text string) string {
-	switch herd.ClassifyPane(text) {
-	case herd.PaneAwaitingInput:
+	switch fleet.ClassifyPane(text) {
+	case fleet.PaneAwaitingInput:
 		return "awaiting"
-	case herd.PaneBusy:
+	case fleet.PaneBusy:
 		return "busy"
-	case herd.PaneIdle:
+	case fleet.PaneIdle:
 		return "idle"
 	}
 	return ""
@@ -136,7 +136,7 @@ func runSweep(d sweepDeps, session, selfID string, opts SweepOptions) sweepRepor
 
 		f := cleanup.SweepFacts{
 			IsSelf:      w.ID == selfID,
-			NonAgent:    herd.IsNonAgentWindow(w.Name),
+			NonAgent:    fleet.IsNonAgentWindow(w.Name),
 			Tracked:     tracked,
 			IncludeBare: opts.IncludeBare,
 			Activity:    activity,
@@ -228,7 +228,7 @@ func RunSweep(opts SweepOptions) error {
 
 	cwd, _ := os.Getwd()
 	cwdRoot, _ := worktree.Toplevel(cwd)
-	built, _ := herd.LoadAgents(session, paths.RuntimeDir())
+	built, _ := fleet.LoadAgents(session, paths.RuntimeDir())
 	byWindow := make(map[string]*state.AgentState, len(built))
 	for i := range built {
 		byWindow[built[i].WindowID] = &built[i]
@@ -255,7 +255,7 @@ func RunSweep(opts SweepOptions) error {
 			if name == "" {
 				name = a.Name
 			}
-			return name, herd.ActivityLine(herd.Row{AgentState: *a})
+			return name, fleet.ActivityLine(fleet.Row{AgentState: *a})
 		},
 		DirExists: func(p string) bool { st, err := os.Stat(p); return err == nil && st.IsDir() },
 		WorktreeInfo: func(ws windowstate.WindowState) (cleanup.Facts, cleanup.PRInfo, string) {

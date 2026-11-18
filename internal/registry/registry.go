@@ -1,4 +1,4 @@
-// Package registry tracks live agentctl sessions on the machine so the herd
+// Package registry tracks live agentctl sessions on the machine so the fleet
 // hub (a future central aggregator) can discover every project's state.json
 // without a shared, contended file.
 //

@@ -1497,7 +1497,7 @@ func agentctlKeybindings(exe string) []keyBinding {
 		{"h", run("", "hud-toggle #{window_id}")},
 		{"H", nested(80, 30, "hud #{window_id}")},
 		{"C", nested(60, 24, "context-push-menu #{window_id}")},
-		// Herd hub: summon the cross-session dashboard, and jump straight to
+		// Fleet hub: summon the cross-session dashboard, and jump straight to
 		// the next blocked agent anywhere. bind-key is server-global — these
 		// two keys end up live in every agentctl session, including the hub
 		// itself, which is what we want (see StartHubSession's docs for why
@@ -1506,7 +1506,7 @@ func agentctlKeybindings(exe string) []keyBinding {
 		// Deliberately left unpinned: both are cross-project by design.
 		// StartHubSession explicitly clears AGENTCTL_RUNTIME_DIR and pins the
 		// hub session's own cwd to hubDir(), and jump-next-blocked resolves
-		// each candidate's RuntimeDir from the herd registry (internal/herd),
+		// each candidate's RuntimeDir from the fleet registry (internal/fleet),
 		// not from paths.RuntimeDir() of the invoking process.
 		{"g", "run-shell -b " + shellquote.Quote(invokeRS("hub"))},
 		{"b", "run-shell -b " + shellquote.Quote(invokeRS("jump-next-blocked --client-session '#{client_session}'"))},

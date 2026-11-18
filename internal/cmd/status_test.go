@@ -7,20 +7,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 func TestSessionMatches(t *testing.T) {
-	widgetco := herd.Group{Session: "agentctl-widgetco", Project: "widgetco"}
-	self := herd.Group{Session: "agentctl-agentctl", Project: "agentctl"}
-	ops := herd.Group{Session: "agentctl-acme-ops", Project: "acme-ops"}
+	widgetco := fleet.Group{Session: "agentctl-widgetco", Project: "widgetco"}
+	self := fleet.Group{Session: "agentctl-agentctl", Project: "agentctl"}
+	ops := fleet.Group{Session: "agentctl-acme-ops", Project: "acme-ops"}
 
 	tests := []struct {
 		name  string
-		group herd.Group
+		group fleet.Group
 		want  string
 		match bool
 	}{
@@ -50,14 +50,14 @@ func TestSessionMatches(t *testing.T) {
 	}
 }
 
-func row(id, name, st string, done bool) herd.Row {
-	return herd.Row{AgentState: state.AgentState{WindowID: id, Name: name, State: st, Done: done}}
+func row(id, name, st string, done bool) fleet.Row {
+	return fleet.Row{AgentState: state.AgentState{WindowID: id, Name: name, State: st, Done: done}}
 }
 
 func TestStateMatches(t *testing.T) {
 	tests := []struct {
 		name string
-		r    herd.Row
+		r    fleet.Row
 		want string
 		ok   bool
 	}{
@@ -82,11 +82,11 @@ func TestStateMatches(t *testing.T) {
 
 func TestFindWindow(t *testing.T) {
 	rows := []statusRow{
-		{row: row("@275", "lead:17", "idle", false), group: herd.Group{Project: "agentctl"}},
-		{row: row("@306", "go-engineer:15", "idle", true), group: herd.Group{Project: "agentctl"}},
-		{row: row("@10", "remi", "idle", false), group: herd.Group{Project: "widgetco-infra"}},
-		{row: row("@181", "alex", "idle", false), group: herd.Group{Project: "widgetco"}},
-		{row: row("@280", "alex", "idle", false), group: herd.Group{Project: "acme-ops"}},
+		{row: row("@275", "lead:17", "idle", false), group: fleet.Group{Project: "agentctl"}},
+		{row: row("@306", "go-engineer:15", "idle", true), group: fleet.Group{Project: "agentctl"}},
+		{row: row("@10", "remi", "idle", false), group: fleet.Group{Project: "widgetco-infra"}},
+		{row: row("@181", "alex", "idle", false), group: fleet.Group{Project: "widgetco"}},
+		{row: row("@280", "alex", "idle", false), group: fleet.Group{Project: "acme-ops"}},
 	}
 
 	t.Run("by window ID", func(t *testing.T) {
@@ -254,14 +254,14 @@ func TestStatusRowsWithoutStateJSON(t *testing.T) {
 	write("@2", `{"state":"blocked","instance":"go-engineer","mode":"dispatch","ticket":"7","spawned_by":"@1","spawned_by_session":"s1"}`)
 	write("@3", `{"state":"working","instance":"py-eng"}`)
 	wins := []tmux.WindowInfo{{ID: "@1", Name: "shell"}, {ID: "@2", Name: "⏸ go-engineer"}, {ID: "@3", Name: "● py-eng"}, {ID: "@4", Name: "bare"}}
-	agents := herd.BuildAgents(wins, windowstate.AllFrom(winDir), nil, time.Now())
-	rows := herd.TagAgents("agentctl-x", "x", agents)
-	g := herd.Group{Session: "agentctl-x", Project: "x", RuntimeDir: dir, Rows: rows, Rollup: herd.RollupRows(rows)}
+	agents := fleet.BuildAgents(wins, windowstate.AllFrom(winDir), nil, time.Now())
+	rows := fleet.TagAgents("agentctl-x", "x", agents)
+	g := fleet.Group{Session: "agentctl-x", Project: "x", RuntimeDir: dir, Rows: rows, Rollup: fleet.RollupRows(rows)}
 	if _, err := os.Stat(filepath.Join(dir, "state.json")); err == nil {
 		t.Fatal("state.json must not exist")
 	}
 
-	all := statusRowsFromGroups([]herd.Group{g}, StatusOptions{})
+	all := statusRowsFromGroups([]fleet.Group{g}, StatusOptions{})
 	if len(all) != 3 {
 		t.Fatalf("got %d rows, want 3 (shell excluded, bare window kept)", len(all))
 	}
@@ -269,7 +269,7 @@ func TestStatusRowsWithoutStateJSON(t *testing.T) {
 		t.Errorf("untracked row = %+v", all[2].row)
 	}
 
-	blocked := statusRowsFromGroups([]herd.Group{g}, StatusOptions{Blocked: true})
+	blocked := statusRowsFromGroups([]fleet.Group{g}, StatusOptions{Blocked: true})
 	if len(blocked) != 1 || blocked[0].row.WindowID != "@2" {
 		t.Fatalf("--blocked = %+v, want only @2", blocked)
 	}

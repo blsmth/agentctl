@@ -21,7 +21,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/winlink"
 )
@@ -36,16 +36,16 @@ type StatusOptions struct {
 }
 
 // statusJSONRow is the machine-readable shape of one agent window: the shared
-// herd.Window (also served by `agentctl serve`) plus the optional pane check.
+// fleet.Window (also served by `agentctl serve`) plus the optional pane check.
 type statusJSONRow struct {
-	herd.Window
+	fleet.Window
 	PaneVerdict  string `json:"pane_verdict,omitempty"`
 	PaneDisagree bool   `json:"pane_disagrees,omitempty"`
 }
 
 // jsonRow builds the JSON form of a status row.
 func (sr statusRow) jsonRow() statusJSONRow {
-	j := statusJSONRow{Window: herd.ToWindow(sr.row, sr.meta)}
+	j := statusJSONRow{Window: fleet.ToWindow(sr.row, sr.meta)}
 	if sr.checked {
 		j.PaneVerdict = sr.verdict.String()
 		j.PaneDisagree = !sr.verdict.AgreesWith(sr.row.State)
@@ -53,20 +53,20 @@ func (sr statusRow) jsonRow() statusJSONRow {
 	return j
 }
 
-// statusRow pairs a herd row with the windowstate metadata for that window and
+// statusRow pairs a fleet row with the windowstate metadata for that window and
 // (optionally) a pane verdict.
 type statusRow struct {
-	row     herd.Row
-	meta    herd.Meta
-	group   herd.Group
-	verdict herd.PaneVerdict
+	row     fleet.Row
+	meta    fleet.Meta
+	group   fleet.Group
+	verdict fleet.PaneVerdict
 	checked bool
 }
 
 // collectStatusRows loads every live session, enriches each row with its
 // windowstate metadata, and applies the caller's filters.
-func collectStatusRows(opts StatusOptions) ([]statusRow, []herd.Group, error) {
-	groups, err := herd.Load()
+func collectStatusRows(opts StatusOptions) ([]statusRow, []fleet.Group, error) {
+	groups, err := fleet.Load()
 	if err != nil {
 		return nil, nil, fmt.Errorf("loading agent sessions: %w", err)
 	}
@@ -75,7 +75,7 @@ func collectStatusRows(opts StatusOptions) ([]statusRow, []herd.Group, error) {
 
 // statusRowsFromGroups joins each group's rows with its windowstate metadata
 // and applies the caller's filters. Pure apart from reading windowstate.
-func statusRowsFromGroups(groups []herd.Group, opts StatusOptions) []statusRow {
+func statusRowsFromGroups(groups []fleet.Group, opts StatusOptions) []statusRow {
 	wantState := opts.State
 	if opts.Blocked {
 		wantState = "blocked"
@@ -86,7 +86,7 @@ func statusRowsFromGroups(groups []herd.Group, opts StatusOptions) []statusRow {
 		if opts.Session != "" && !sessionMatches(g, opts.Session) {
 			continue
 		}
-		meta := herd.LoadMeta(g)
+		meta := fleet.LoadMeta(g)
 		for _, r := range g.Rows {
 			if !stateMatches(r, wantState) {
 				continue
@@ -110,7 +110,7 @@ func statusRowsFromGroups(groups []herd.Group, opts StatusOptions) []statusRow {
 // naive strings.Contains(g.Session, want) makes `--session agentctl` match
 // every session in existence — a filter that silently returns everything,
 // which reads as "no other sessions exist" rather than as a broken filter.
-func sessionMatches(g herd.Group, want string) bool {
+func sessionMatches(g fleet.Group, want string) bool {
 	if want == "" {
 		return true
 	}
@@ -123,7 +123,7 @@ func sessionMatches(g herd.Group, want string) bool {
 
 // stateMatches applies the --state filter. "done" is not a State value but a
 // separate boolean, so it is handled explicitly rather than by string compare.
-func stateMatches(r herd.Row, want string) bool {
+func stateMatches(r fleet.Row, want string) bool {
 	switch want {
 	case "":
 		return true
@@ -137,12 +137,12 @@ func stateMatches(r herd.Row, want string) bool {
 // verifyPane captures a window's pane and classifies it. Returns checked=false
 // when the pane could not be read, so callers can distinguish "no verdict"
 // from "verdict is unknown".
-func verifyPane(session, windowID, harnessName string) (herd.PaneVerdict, bool) {
+func verifyPane(session, windowID, harnessName string) (fleet.PaneVerdict, bool) {
 	text, err := tmux.CapturePane(session, windowID, 60)
 	if err != nil {
-		return herd.PaneUnknown, false
+		return fleet.PaneUnknown, false
 	}
-	return herd.ClassifyPaneFor(harnessName, text), true
+	return fleet.ClassifyPaneFor(harnessName, text), true
 }
 
 // RunStatus prints the cross-session agent table (or JSON).
@@ -182,7 +182,7 @@ func RunStatus(opts StatusOptions) error {
 			ctxCell(sr.row.ContextPct),
 			cell{text: dashIfEmpty(sr.meta.Mode), style: cliMuted()},
 			cell{text: dashIfEmpty(sr.meta.Parent()), style: cliMuted()},
-			cell{text: truncateDisplay(herd.ActivityLine(sr.row), 44), style: cliMuted()},
+			cell{text: truncateDisplay(fleet.ActivityLine(sr.row), 44), style: cliMuted()},
 		)
 		grid = append(grid, c)
 	}
@@ -320,7 +320,7 @@ func printAttentionSummary(rows []statusRow) {
 
 // stateCell renders the recorded state. "done" takes precedence over the
 // underlying idle state, matching how the monitor names windows.
-func stateCell(r herd.Row) cell {
+func stateCell(r fleet.Row) cell {
 	switch {
 	case r.State == "blocked":
 		return cell{text: "blocked", style: cliRed()}
@@ -336,7 +336,7 @@ func stateCell(r herd.Row) cell {
 }
 
 // renderState is the string form of stateCell, for the detail view.
-func renderState(r herd.Row) string {
+func renderState(r fleet.Row) string {
 	c := stateCell(r)
 	return c.style.Render(c.text)
 }
@@ -456,7 +456,7 @@ func RunStatusDetail(window string, jsonOut bool) error {
 		line("dispatched by", strings.TrimSpace(p+"  "+parentName))
 	} else if sr.meta.SpawnedBy != "" {
 		line("dispatched by", muted.Render(fmt.Sprintf(
-			"- (recorded %s, but not trustworthy: bare-mode launch, see herd.Meta.ParentTrusted)", sr.meta.SpawnedBy)))
+			"- (recorded %s, but not trustworthy: bare-mode launch, see fleet.Meta.ParentTrusted)", sr.meta.SpawnedBy)))
 	}
 
 	line("session id", sr.meta.SessionID)
@@ -464,7 +464,7 @@ func RunStatusDetail(window string, jsonOut bool) error {
 	if !sr.meta.UpdatedAt.IsZero() {
 		line("state written", fmtAge(time.Since(sr.meta.UpdatedAt)))
 	}
-	line("activity", herd.ActivityLine(sr.row))
+	line("activity", fleet.ActivityLine(sr.row))
 
 	if err := w.Flush(); err != nil {
 		return err
@@ -546,8 +546,8 @@ func RunPeek(window string, lines int, jsonOut bool) error {
 	if err != nil {
 		return fmt.Errorf("capturing pane for %s: %w", sr.row.WindowID, err)
 	}
-	verdict := herd.ClassifyPaneFor(sr.row.Harness, text)
-	prompts := herd.PromptCount(text)
+	verdict := fleet.ClassifyPaneFor(sr.row.Harness, text)
+	prompts := fleet.PromptCount(text)
 
 	if jsonOut {
 		enc := json.NewEncoder(os.Stdout)
@@ -744,12 +744,12 @@ func whoamiAgree(sources []whoamiSource) bool {
 // lookupWindowBySession finds the window whose windowstate records sessionID,
 // across every live session rather than just the caller's project.
 func lookupWindowBySession(sessionID string) string {
-	groups, err := herd.Load()
+	groups, err := fleet.Load()
 	if err != nil {
 		return ""
 	}
 	for _, g := range groups {
-		for id, m := range herd.LoadMeta(g) {
+		for id, m := range fleet.LoadMeta(g) {
 			if m.SessionID == sessionID {
 				return id
 			}

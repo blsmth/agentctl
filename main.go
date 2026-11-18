@@ -17,7 +17,7 @@ import (
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/detach"
 	"github.com/blsmth/agentctl/internal/dispatch"
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/hubtarget"
 	"github.com/blsmth/agentctl/internal/improve"
@@ -60,7 +60,7 @@ func main() {
 		}
 	}
 
-	// Prefix keys pressed in the herd hub act on the agent shown in the live
+	// Prefix keys pressed in the fleet hub act on the agent shown in the live
 	// viewer, not on the hub window. This must run before paths.Init (it may
 	// redirect AGENTCTL_RUNTIME_DIR) and is a no-op for anything that did not
 	// come from a keybinding. See internal/hubtarget.
@@ -333,7 +333,7 @@ func cmdImprove() {
 func cmdImproveMenu(windowID string) {
 	var agentName string
 	if strings.HasPrefix(windowID, "@") {
-		_, agentName = herd.LocalWindowNames(windowID)
+		_, agentName = fleet.LocalWindowNames(windowID)
 		if agentName == "" {
 			agentName = tmux.ResolveAgentByWindowID(windowID)
 		}

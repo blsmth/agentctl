@@ -18,7 +18,7 @@ import (
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/sessionname"
@@ -48,7 +48,7 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 	// list joined with windowstate; falls back to a plain tmux query.
 	runningByID := make(map[string]string)
 	liveSessions := make(map[string]bool)
-	if built, err := herd.LocalAgents(); err == nil {
+	if built, err := fleet.LocalAgents(); err == nil {
 		for _, as := range built {
 			if as.WindowID != "" {
 				runningByID[as.WindowID] = as.Name

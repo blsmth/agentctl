@@ -229,7 +229,7 @@ func cmdMonitor() {
 	}
 	defer pidfile.Remove(runtimeDir, "monitor.pid")
 
-	// Register this session in the herd registry so a future central hub can
+	// Register this session in the fleet registry so a future central hub can
 	// discover it. Best-effort: a registry problem must never take down the
 	// monitor.
 	now := time.Now().Unix()
@@ -1086,7 +1086,7 @@ func (m *monitorModel) persistState(cfg *config.Config, windows []tmux.WindowInf
 		go reaper.ReapOrphans(tmux.SessionName, paths.SettingsDir())
 	}
 
-	// Heartbeat this session's registry entry so the herd hub can tell we're
+	// Heartbeat this session's registry entry so the fleet hub can tell we're
 	// still alive. Throttled to every ~5 s (10 ticks x 500 ms) — writing a
 	// file twice a second per session is exactly the kind of churn that
 	// produced multi-gigabyte log files in this repo before. Best-effort:

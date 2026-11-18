@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/state"
 )
@@ -58,17 +58,17 @@ type fakeAgents struct{ list []AgentInfo }
 func (f fakeAgents) Agents([]string) ([]AgentInfo, error) { return f.list, nil }
 
 func testGroup() fleetwatch.Group {
-	row := herd.Row{Session: "agentctl-proj", Project: "proj", AgentState: state.AgentState{
+	row := fleet.Row{Session: "agentctl-proj", Project: "proj", AgentState: state.AgentState{
 		Name: "go-engineer", WindowID: "@523", WindowIndex: 1, State: "blocked", LastText: "waiting on you",
 		LastToolDetail: "go test ./...", ContextPct: 40, ModelName: "claude-x",
 	}}
-	meta := herd.Meta{Mode: "dispatch", PendingTool: "Bash", BlockedSince: time.Date(2026, 11, 16, 11, 0, 0, 0, time.UTC),
+	meta := fleet.Meta{Mode: "dispatch", PendingTool: "Bash", BlockedSince: time.Date(2026, 11, 16, 11, 0, 0, 0, time.UTC),
 		UpdatedAt: time.Date(2026, 11, 16, 11, 30, 0, 0, time.UTC), CostUSD: 1.5}
 	return fleetwatch.Group{
 		Session: "agentctl-proj", Project: "proj", Dir: "/code/proj", Rollup: "blocked",
-		Windows: []herd.Window{herd.ToWindow(row, meta)},
-		Rows:    []herd.Row{row},
-		Meta:    map[string]herd.Meta{"@523": meta},
+		Windows: []fleet.Window{fleet.ToWindow(row, meta)},
+		Rows:    []fleet.Row{row},
+		Meta:    map[string]fleet.Meta{"@523": meta},
 	}
 }
 

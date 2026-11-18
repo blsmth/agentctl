@@ -20,7 +20,7 @@
 |---|---|
 | [design/tmux-as-agent-runtime.md](design/tmux-as-agent-runtime.md) | Why tmux is the runtime |
 | [design/agent-messaging-design.md](design/agent-messaging-design.md) | Agent-to-agent mailboxes (superseded by native cross-session messaging) |
-| [design/herd-view-design.md](design/herd-view-design.md) | The cross-session herd hub |
+| [design/fleet-view-design.md](design/fleet-view-design.md) | The cross-session fleet hub |
 | [design/multi-harness.md](design/multi-harness.md) | Research: running harnesses other than Claude Code (Codex CLI, pi, opencode) |
 
 ## Other

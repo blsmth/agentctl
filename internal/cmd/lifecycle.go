@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/reaper"
 	"github.com/blsmth/agentctl/internal/selfpath"
@@ -27,7 +27,7 @@ func RunKillMenu(nameOrID string) {
 	var windowID string
 	var displayName string
 	if strings.HasPrefix(nameOrID, "@") {
-		if instance, _ := herd.LocalWindowNames(nameOrID); instance != "" {
+		if instance, _ := fleet.LocalWindowNames(nameOrID); instance != "" {
 			windowID = nameOrID
 			displayName = instance
 		}
@@ -152,7 +152,7 @@ func RunQuit() {
 func RunQuitMenu() {
 	// Collect running instance names for the quit confirmation dialog.
 	var agents []string
-	if built, err := herd.LocalAgents(); err == nil {
+	if built, err := fleet.LocalAgents(); err == nil {
 		for i := range built {
 			agents = append(agents, built[i].Name)
 		}
@@ -211,7 +211,7 @@ func RunHubQuitMenu() {
 func RunRestartMenu() {
 	// Collect running instance names for the restart confirmation dialog.
 	var agents []string
-	if built, err := herd.LocalAgents(); err == nil {
+	if built, err := fleet.LocalAgents(); err == nil {
 		for i := range built {
 			agents = append(agents, built[i].Name)
 		}

@@ -1,5 +1,5 @@
 // Package panestate classifies captured Claude Code pane text. It is a leaf
-// package (imports nothing of ours) so both internal/herd and internal/tmux
+// package (imports nothing of ours) so both internal/fleet and internal/tmux
 // can share ONE dialog predicate -- two detectors that must agree about "is a
 // permission dialog showing" would drift, and the drift is a silent
 // auto-approval.

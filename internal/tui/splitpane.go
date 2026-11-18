@@ -14,7 +14,7 @@ import (
 // detail-on-bottom layout used by the Memory, Tickets, Sessions, and Agents
 // browsers; OrientHorizontal places them side by side (list = a narrow
 // sidebar on the left, detail = the main panel on the right), used by the
-// herd hub's sidebar + detail layout.
+// fleet hub's sidebar + detail layout.
 type SplitOrientation int
 
 const (
