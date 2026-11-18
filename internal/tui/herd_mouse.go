@@ -175,7 +175,10 @@ func (m *HerdModel) selectLine(idx int) {
 }
 
 func (m HerdModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
-	if msg.Button == tea.MouseLeft && m.menuOpen && msg.Y == m.footerMessageY() {
+	if line, ok := m.helpLineAt(msg.Y); ok && msg.Button == tea.MouseLeft {
+		return m.clickHelp(msg.X, line)
+	}
+	if msg.Button == tea.MouseLeft && m.menuOpen && !m.menuHelp && msg.Y == m.footerMessageY() {
 		return m.clickMenu(msg.X)
 	}
 	idx, action := m.buttonDecision(msg.X, msg.Y, msg.Button)
@@ -184,25 +187,25 @@ func (m HerdModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	}
 	switch action {
 	case herdClickSelect:
-		m.menuOpen = false
+		m.closeMenu()
 		m.selectLine(idx)
 		show := m.maybeShowCmd()
 		return m, show
 	case herdClickNew:
-		m.menuOpen = false
+		m.closeMenu()
 		m.selectLine(idx)
 		m.armNew(idx)
 		return m, nil
 	case herdClickNewShell:
-		m.menuOpen = false
+		m.closeMenu()
 		m.cancelNew()
 		return m, m.shellForGroup(m.groupForSession(m.lines[idx].group.Session))
 	case herdClickNewAgent:
-		m.menuOpen = false
+		m.closeMenu()
 		m.cancelNew()
 		return m, m.launchForGroup(m.groupForSession(m.lines[idx].group.Session))
 	case herdClickClose:
-		m.menuOpen = false
+		m.closeMenu()
 		if m.confirmingRow(m.lines[idx].row) {
 			return m, m.confirmClose() // second click on the armed ✕
 		}
@@ -215,7 +218,7 @@ func (m HerdModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		show := m.maybeShowCmd()
 		return m, show
 	}
-	m.menuOpen = false
+	m.closeMenu()
 	return m, nil
 }
 
@@ -228,7 +231,7 @@ func (m HerdModel) clickMenu(x int) (tea.Model, tea.Cmd) {
 			return m, m.runMenuKey(items[i].key)
 		}
 	}
-	m.menuOpen = false
+	m.closeMenu()
 	return m, nil
 }
 

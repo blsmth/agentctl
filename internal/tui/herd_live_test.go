@@ -66,7 +66,7 @@ func TestHerdLiveView(t *testing.T) {
 func TestHerdLiveHints(t *testing.T) {
 	m := liveTestModel(t, 48, 40)
 	out := ansi.Strip(m.render())
-	for _, want := range []string{"enter/tab focus live", "^b o back"} {
+	for _, want := range []string{"j/k move", "⏎ focus", "? more"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("hints missing %q:\n%s", want, out)
 		}
@@ -76,8 +76,8 @@ func TestHerdLiveHints(t *testing.T) {
 			t.Errorf("stale hint %q:\n%s", gone, out)
 		}
 	}
-	if n := m.liveHintRows(); n < 1 {
-		t.Errorf("narrow hint bar should wrap onto extra rows, got %d", n)
+	if n := m.liveHintRows(); n != 0 {
+		t.Errorf("hint bar must stay on one line, got %d extra rows", n)
 	}
 }
 

@@ -224,7 +224,7 @@ func cardContent(r herd.Row, st *cardStats, parentName string, now time.Time, w 
 	if !r.StateSince.IsZero() {
 		stateTxt += " " + herd.CompactAge(now.Sub(r.StateSince))
 	}
-	title := cs.text.Bold(true).Render(r.Name) + cs.bg.Render("  ") + gs.Background(cs.bg.GetBackground()).Render(glyph) + cs.dim.Render(" "+stateTxt)
+	title := herdNameStyle(rowWeight(r)).Background(cs.bg.GetBackground()).Render(r.Name) + cs.bg.Render("  ") + gs.Background(cs.bg.GetBackground()).Render(glyph) + cs.dim.Render(" "+stateTxt)
 	out := []string{truncateToWidth(title, w)}
 
 	model := r.ModelName
