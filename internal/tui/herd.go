@@ -1517,19 +1517,19 @@ func (m HerdModel) renderGroupHeader(g herd.Group, selected bool, cw int) string
 // renderGroupHeaderHover is renderGroupHeader with the "+ new" button hovered.
 func (m HerdModel) renderGroupHeaderHover(g herd.Group, selected, newHover bool, cw int) string {
 	glyph, style := rollupGlyph(g.Rollup)
-	count := fmt.Sprintf("(%d agent%s)", len(g.Rows), plural(len(g.Rows)))
 	marker := strings.Repeat(" ", herdSidebarLeftInset)
 	if selected {
 		marker = " " + cursorActiveStyle.Render("▸") + " "
 	}
 	projStyle := herdProjectStyle.Bold(true).Foreground(lipgloss.Color(herdColorFor(g.Project)))
-	line := fmt.Sprintf("%s%s  %s  %s  %s",
-		marker,
-		style.Render(glyph),
-		projStyle.Render(g.Project),
-		herdCountStyle.Render(g.Session),
-		herdCountStyle.Render(count),
-	)
+	parts := []string{marker + style.Render(glyph), projStyle.Render(g.Project)}
+	if g.Session != "" && g.Session != "agentctl-"+g.Project {
+		parts = append(parts, herdCountStyle.Render(g.Session))
+	}
+	if counts := groupStateCounts(g); counts != "" {
+		parts = append(parts, counts)
+	}
+	line := strings.Join(parts, "  ")
 	if groupCanLaunch(g) {
 		btnW := lipgloss.Width(herdNewLabel)
 		line = truncateToWidth(line, cw-herdSidebarRightGutter-btnW-1)
@@ -1544,6 +1544,27 @@ func (m HerdModel) renderGroupHeaderHover(g herd.Group, selected, newHover bool,
 		line += strings.Repeat(" ", pad) + newStyle.Render(herdNewLabel)
 	}
 	return herdFitLine(line, selected, cw)
+}
+
+// groupStateCounts renders a group's per-state row counts with the row
+// glyphs, in the order working, blocked, done, idle; empty buckets are
+// omitted.
+func groupStateCounts(g herd.Group) string {
+	glyphs := []string{"●", "⏸", "✓", "○"}
+	n := map[string]int{}
+	styles := map[string]lipgloss.Style{}
+	for _, r := range g.Rows {
+		gl, st := rowGlyph(r)
+		n[gl]++
+		styles[gl] = st
+	}
+	var out []string
+	for _, gl := range glyphs {
+		if n[gl] > 0 {
+			out = append(out, styles[gl].Render(gl)+" "+herdCountStyle.Render(fmt.Sprint(n[gl])))
+		}
+	}
+	return strings.Join(out, "  ")
 }
 
 // renderRow renders one agent row.
@@ -1612,16 +1633,17 @@ func herdNameBudget(cw int) int {
 }
 
 // rowRight renders the right-aligned status before the close button: the PR
-// badge ("#60", or "#60 ✓" on a done row, which replaces the age) and the
-// dim time in the current state (blocked style on a blocked row).
+// badge ("#60", in the done style on a done row) and the dim time in the
+// current state (blocked style on a blocked row).
 func rowRight(r herd.Row) string {
 	var parts []string
 	if r.PRNumber > 0 {
 		badge := fmt.Sprintf("#%d", r.PRNumber)
+		bs := herdProjectStyle
 		if r.Done {
-			return herdDoneStyle.Render(badge + " ✓")
+			bs = herdDoneStyle
 		}
-		parts = append(parts, herdProjectStyle.Render(badge))
+		parts = append(parts, bs.Render(badge))
 	}
 	if !r.StateSince.IsZero() {
 		style := herdDimStyle
@@ -1666,11 +1688,8 @@ func (m HerdModel) renderTreeRowHover(r herd.Row, treePrefix string, nameCol int
 	maxCol := inner - 5 - 2 - closeW - herdMinRecapWidth
 	nameBudget := min(herdNameBudget(cw), max(maxCol, 0))
 	col := min(nameCol, nameBudget)
-	if tw := lipgloss.Width(treePrefix); tw > 0 {
-		keep := min(tw, nameBudget-6)
-		treePrefix = ansi.Truncate(treePrefix, max(keep, 0), "")
-		nameBudget -= lipgloss.Width(treePrefix)
-	}
+	treePrefix = herdKeptPrefix(treePrefix, cw)
+	nameBudget -= lipgloss.Width(treePrefix)
 	name := truncateToWidth(herd.BaseName(r), nameBudget)
 
 	padW := max(col-lipgloss.Width(treePrefix)-lipgloss.Width(name), 0)
@@ -1718,7 +1737,7 @@ func (m HerdModel) renderTreeRowHover(r herd.Row, treePrefix string, nameCol int
 	if !selected {
 		return out
 	}
-	for _, d := range rowDetailStyled(r, cw) {
+	for _, d := range rowDetailStyled(r, treePrefix, cw) {
 		out += "\n" + herdFitLine(d, true, cw)
 	}
 	return out
@@ -1733,12 +1752,48 @@ func rowRecap(r herd.Row) herd.RecapLine {
 	return herd.Recap(r, herd.LogInfo{})
 }
 
+// herdKeptPrefix clamps a row's tree prefix the way renderTreeRowHover does,
+// so deep nesting cannot starve the name. Rendering and detail-line layout
+// both go through it.
+func herdKeptPrefix(treePrefix string, cw int) string {
+	tw := lipgloss.Width(treePrefix)
+	if tw == 0 {
+		return ""
+	}
+	inner := cw - herdSidebarRightGutter
+	maxCol := inner - 5 - 2 - (1 + lipgloss.Width(herdCloseLabel)) - herdMinRecapWidth
+	nameBudget := min(herdNameBudget(cw), max(maxCol, 0))
+	keep := min(tw, nameBudget-6)
+	return ansi.Truncate(treePrefix, max(keep, 0), "")
+}
+
+// herdContinuation turns a (kept) tree prefix into the continuation drawn
+// beside detail lines: "│  " where siblings follow at that depth, spaces
+// otherwise. The result has the same display width as the prefix.
+func herdContinuation(prefix string) string {
+	rs := []rune(prefix)
+	var b strings.Builder
+	for i := 0; i < len(rs); i += 3 {
+		chunk := string(rs[i:min(i+3, len(rs))])
+		switch {
+		case chunk == treeBar || chunk == treeBranch:
+			b.WriteString(treeBar)
+		case chunk == treeLast || chunk == treeGap:
+			b.WriteString(treeGap)
+		default:
+			b.WriteString(strings.Repeat(" ", len(rs[i:min(i+3, len(rs))])))
+		}
+	}
+	return b.String()
+}
+
 // herdMinRecapWidth is the narrowest recap the right-aligned age/badge may
 // leave; below it the age/badge is dropped.
 const herdMinRecapWidth = 8
 
-// herdDetailIndent is how far a selected row's detail lines are indented:
-// the bar, the cursor slot and the glyph column, so they align with the name.
+// herdDetailIndent is how far a selected row's detail lines are indented
+// before the tree prefix: the bar, the cursor slot and the glyph column, so
+// they align with the name.
 const herdDetailIndent = 5
 
 // herdDetailMaxLines caps a selected row's extra lines.
@@ -1755,9 +1810,9 @@ type herdDetailLine struct {
 // itself at width cw: the full recap wrapped, then the last activity line
 // when it differs from the recap, at most herdDetailMaxLines in total. Hit
 // testing and scrolling count these lines, so rendering must use exactly
-// this.
-func rowDetail(r herd.Row, cw int) []herdDetailLine {
-	w := cw - herdSidebarRightGutter - herdDetailIndent
+// this. prefixW is the width of the row's kept tree prefix (herdKeptPrefix).
+func rowDetail(r herd.Row, prefixW, cw int) []herdDetailLine {
+	w := cw - herdSidebarRightGutter - herdDetailIndent - prefixW
 	if w < herdMinRecapWidth {
 		return nil
 	}
@@ -1776,22 +1831,29 @@ func rowDetail(r herd.Row, cw int) []herdDetailLine {
 		out = append(out, herdDetailLine{text: l, activity: isActivity})
 	}
 	if showActivity {
-		out = append(out, herdDetailLine{text: truncateToWidth(activity, w), activity: true})
+		out = append(out, herdDetailLine{text: truncateToWidth(activity, w-herdActivityMarkerW), activity: true})
 	}
 	return out
 }
 
-// rowDetailStyled renders rowDetail's lines with the bar and indent.
-func rowDetailStyled(r herd.Row, cw int) []string {
+// herdActivityMarker leads the last-action line.
+const (
+	herdActivityMarker  = "› "
+	herdActivityMarkerW = 2
+)
+
+// rowDetailStyled renders rowDetail's lines with the bar, indent and the
+// tree continuation for the row's (already clamped) prefix.
+func rowDetailStyled(r herd.Row, treePrefix string, cw int) []string {
 	bar := lipgloss.NewStyle().Foreground(lipgloss.Color(herdColorFor(r.Project))).Render("▎")
-	indent := bar + strings.Repeat(" ", herdDetailIndent-1)
+	indent := bar + strings.Repeat(" ", herdDetailIndent-1) + herdDimStyle.Render(herdContinuation(treePrefix))
 	var out []string
-	for _, d := range rowDetail(r, cw) {
-		style := herdActivityStyle
-		if d.activity {
-			style = herdDimStyle.Italic(true)
+	for _, d := range rowDetail(r, lipgloss.Width(treePrefix), cw) {
+		text := herdActivityStyle.Render(d.text)
+		if d.activity && rowRecap(r).Source != herd.RecapActivity {
+			text = herdDimStyle.Render(herdActivityMarker) + text
 		}
-		out = append(out, indent+style.Render(d.text))
+		out = append(out, indent+text)
 	}
 	return out
 }
@@ -1825,7 +1887,7 @@ func (m HerdModel) lineHeight(i, cw int) int {
 		return 0
 	}
 	if l := m.lines[i]; l.kind == herdLineRow && i == m.splitPane.Cursor() {
-		return 1 + len(rowDetail(l.row, cw))
+		return 1 + len(rowDetail(l.row, lipgloss.Width(herdKeptPrefix(l.treePrefix, cw)), cw))
 	}
 	return 1
 }

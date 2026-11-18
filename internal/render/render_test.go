@@ -225,3 +225,14 @@ func TestResetTime(t *testing.T) {
 		}
 	})
 }
+
+func TestTokensCompact(t *testing.T) {
+	for _, tt := range []struct {
+		n    int
+		want string
+	}{{0, "0"}, {999, "999"}, {25000, "25k"}, {999999, "999k"}, {1_000_000, "1.0M"}, {4_516_000, "4.5M"}} {
+		if got := TokensCompact(tt.n); got != tt.want {
+			t.Errorf("TokensCompact(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+}
