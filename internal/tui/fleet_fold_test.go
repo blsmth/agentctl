@@ -10,13 +10,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/state"
 )
 
 // foldRow builds a row for the fold fixture.
-func foldRow(sess, project, win, name, st string, done bool, parent string) herd.Row {
-	return herd.Row{
+func foldRow(sess, project, win, name, st string, done bool, parent string) fleet.Row {
+	return fleet.Row{
 		Session: sess,
 		Project: project,
 		Parent:  parent,
@@ -32,12 +32,12 @@ func foldRow(sess, project, win, name, st string, done bool, parent string) herd
 //	s2 beta:  d (done), e (idle)
 //	s3 gamma: g (blocked)
 //	s4 delta: no agents
-func foldGroups() []herd.Group {
-	g := func(sess, project string, rows ...herd.Row) herd.Group {
-		return herd.Group{Session: sess, Project: project, Rows: rows,
+func foldGroups() []fleet.Group {
+	g := func(sess, project string, rows ...fleet.Row) fleet.Group {
+		return fleet.Group{Session: sess, Project: project, Rows: rows,
 			ProjectDir: "/src/" + project, RuntimeDir: "/src/" + project + "/.agentctl"}
 	}
-	return []herd.Group{
+	return []fleet.Group{
 		g("s1", "alpha",
 			foldRow("s1", "alpha", "@1", "p", "idle", false, ""),
 			foldRow("s1", "alpha", "@2", "k", "working", false, "@1"),
@@ -51,10 +51,10 @@ func foldGroups() []herd.Group {
 }
 
 // foldModel is a loaded hub over foldGroups.
-func foldModel(t *testing.T) HerdModel {
+func foldModel(t *testing.T) FleetModel {
 	t.Helper()
 	InitStyles()
-	m := newHerdModel()
+	m := newFleetModel()
 	m.termWidth, m.termHeight = 120, 40
 	m.configureSplitPane()
 	m.loaded = true
@@ -66,23 +66,23 @@ func foldModel(t *testing.T) HerdModel {
 
 // lineKeys describes m.lines compactly: "H:s1" header, "R:k" row ("R:p~"
 // when dimmed), "P:s4" placeholder, "S" sub-section label, "-" divider.
-func lineKeys(m HerdModel) []string {
+func lineKeys(m FleetModel) []string {
 	var out []string
 	for _, l := range m.lines {
 		switch l.kind {
-		case herdLineHeader:
+		case fleetLineHeader:
 			out = append(out, "H:"+l.group.Session)
-		case herdLinePlaceholder:
+		case fleetLinePlaceholder:
 			out = append(out, "P:"+l.group.Session)
-		case herdLineRow:
+		case fleetLineRow:
 			k := "R:" + l.row.Name
 			if l.dimmed {
 				k += "~"
 			}
 			out = append(out, k)
-		case herdLineSubheader:
+		case fleetLineSubheader:
 			out = append(out, "S")
-		case herdLineDivider:
+		case fleetLineDivider:
 			out = append(out, "-")
 		}
 	}
@@ -90,7 +90,7 @@ func lineKeys(m HerdModel) []string {
 }
 
 // lineIndex finds the line with key (see lineKeys).
-func lineIndex(t *testing.T, m HerdModel, key string) int {
+func lineIndex(t *testing.T, m FleetModel, key string) int {
 	t.Helper()
 	i := slices.Index(lineKeys(m), key)
 	if i < 0 {
@@ -99,10 +99,10 @@ func lineIndex(t *testing.T, m HerdModel, key string) int {
 	return i
 }
 
-func pressHub(m HerdModel, key string) (HerdModel, tea.Cmd) {
+func pressHub(m FleetModel, key string) (FleetModel, tea.Cmd) {
 	code := []rune(key)[0]
 	next, cmd := m.Update(tea.KeyPressMsg{Code: code, Text: key})
-	return next.(HerdModel), cmd
+	return next.(FleetModel), cmd
 }
 
 func TestFoldToggle(t *testing.T) {
@@ -130,7 +130,7 @@ func TestFoldToggle(t *testing.T) {
 				t.Errorf("cursor = %d (%s header=%v), want header %d", cursorOf(m), m.selSession, m.selIsHeader, head)
 			}
 			for _, l := range m.lines {
-				if (l.kind == herdLineRow && l.row.Session == tt.session) || (l.kind == herdLinePlaceholder && l.group.Session == tt.session) {
+				if (l.kind == fleetLineRow && l.row.Session == tt.session) || (l.kind == fleetLinePlaceholder && l.group.Session == tt.session) {
 					t.Errorf("folded group still shows %v", lineKeys(m))
 					break
 				}
@@ -183,12 +183,12 @@ func TestFoldSurvivesReload(t *testing.T) {
 	m := foldModel(t)
 	m.selectLine(lineIndex(t, m, "R:e"))
 	m, _ = pressHub(m, "z")
-	m.filter = herdFilterNeeds
+	m.filter = fleetFilterNeeds
 	m.relayout()
 	before := lineKeys(m)
-	next, _ := m.Update(herdLoadedMsg{groups: foldGroups()})
-	m = next.(HerdModel)
-	if !m.isFolded("s2") || m.filter != herdFilterNeeds {
+	next, _ := m.Update(fleetLoadedMsg{groups: foldGroups()})
+	m = next.(FleetModel)
+	if !m.isFolded("s2") || m.filter != fleetFilterNeeds {
 		t.Fatalf("reload lost view state: folded=%v filter=%v", m.folded, m.filter)
 	}
 	if got := lineKeys(m); !slices.Equal(got, before) {
@@ -199,12 +199,12 @@ func TestFoldSurvivesReload(t *testing.T) {
 	}
 	// A reload where the selected row is still there but filtered out keeps
 	// the cursor on its group's header rather than jumping to the top.
-	m.filter = herdFilterAll
+	m.filter = fleetFilterAll
 	m.rebuildLines()
 	m.selectLine(lineIndex(t, m, "R:x"))
-	m.filter = herdFilterNeeds
-	next, _ = m.Update(herdLoadedMsg{groups: foldGroups()})
-	m = next.(HerdModel)
+	m.filter = fleetFilterNeeds
+	next, _ = m.Update(fleetLoadedMsg{groups: foldGroups()})
+	m = next.(FleetModel)
 	if !m.selIsHeader || m.selSession != "s1" {
 		t.Errorf("filtered-out selection = %s header=%v, want s1 header", m.selSession, m.selIsHeader)
 	}
@@ -215,7 +215,7 @@ func TestHubViewReexecRoundTrip(t *testing.T) {
 	m.setFolded("s2", true)
 	m.setFolded("s4", true)
 	m.focusMode = true
-	m.filter = herdFilterActive
+	m.filter = fleetFilterActive
 	var val string
 	for _, e := range m.ReexecEnv() {
 		if v, ok := strings.CutPrefix(e, HubViewEnv+"="); ok {
@@ -233,8 +233,8 @@ func TestHubViewReexecRoundTrip(t *testing.T) {
 	}
 	withHubViewPath(t, path)
 	t.Setenv(HubViewEnv, val)
-	got := NewHerdModel()
-	if !got.isFolded("s2") || !got.isFolded("s4") || got.isFolded("s1") || !got.focusMode || got.filter != herdFilterActive {
+	got := NewFleetModel()
+	if !got.isFolded("s2") || !got.isFolded("s4") || got.isFolded("s1") || !got.focusMode || got.filter != fleetFilterActive {
 		t.Errorf("round trip = folded %v focus %v filter %v", got.folded, got.focusMode, got.filter)
 	}
 	if _, ok := os.LookupEnv(HubViewEnv); ok {
@@ -276,9 +276,9 @@ func TestHubViewFile(t *testing.T) {
 			if !slices.Equal(got.Folded, tt.want.Folded) || got.Focus != tt.want.Focus || got.Filter != tt.want.Filter {
 				t.Errorf("readHubView = %+v, want %+v", got, tt.want)
 			}
-			// NewHerdModel never errors on it either.
+			// NewFleetModel never errors on it either.
 			withHubViewPath(t, path)
-			m := NewHerdModel()
+			m := NewFleetModel()
 			if len(m.folded) != len(tt.want.Folded) {
 				t.Errorf("model folded = %v", m.folded)
 			}
@@ -333,7 +333,7 @@ func TestHubViewFile(t *testing.T) {
 	})
 
 	t.Run("no prune before the first load", func(t *testing.T) {
-		m := newHerdModel()
+		m := newFleetModel()
 		m.setFolded("s9", true)
 		if got := m.viewState().Folded; !slices.Equal(got, []string{"s9"}) {
 			t.Errorf("unloaded hub pruned folds: %v", got)
@@ -370,9 +370,9 @@ func TestPendingFocusReveals(t *testing.T) {
 		m := foldModel(t)
 		m.setFolded("s2", true)
 		m.rebuildLines()
-		m.pendingFocus = &herdPendingFocus{session: "s2", windowID: "@5"}
-		next, _ := m.Update(herdLoadedMsg{groups: foldGroups()})
-		m = next.(HerdModel)
+		m.pendingFocus = &fleetPendingFocus{session: "s2", windowID: "@5"}
+		next, _ := m.Update(fleetLoadedMsg{groups: foldGroups()})
+		m = next.(FleetModel)
 		if m.isFolded("s2") {
 			t.Error("pending focus should unfold its group")
 		}
@@ -382,12 +382,12 @@ func TestPendingFocusReveals(t *testing.T) {
 	})
 	t.Run("filtered row clears the filter", func(t *testing.T) {
 		m := foldModel(t)
-		m.filter = herdFilterNeeds
+		m.filter = fleetFilterNeeds
 		m.rebuildLines()
-		m.pendingFocus = &herdPendingFocus{session: "s1", windowID: "@3"}
-		next, _ := m.Update(herdLoadedMsg{groups: foldGroups()})
-		m = next.(HerdModel)
-		if m.filter != herdFilterAll {
+		m.pendingFocus = &fleetPendingFocus{session: "s1", windowID: "@3"}
+		next, _ := m.Update(fleetLoadedMsg{groups: foldGroups()})
+		m = next.(FleetModel)
+		if m.filter != fleetFilterAll {
 			t.Errorf("filter = %v, want all", m.filter)
 		}
 		if r := m.selectedRow(); r == nil || r.WindowID != "@3" {
@@ -398,15 +398,15 @@ func TestPendingFocusReveals(t *testing.T) {
 
 func TestFilterModes(t *testing.T) {
 	tests := []struct {
-		filter herdFilter
+		filter fleetFilter
 		want   []string
 	}{
-		{herdFilterAll, []string{"H:s1", "R:p", "R:k", "R:x", "-", "H:s2", "R:d", "R:e", "-", "H:s3", "R:g", "-", "H:s4", "P:s4"}},
+		{fleetFilterAll, []string{"H:s1", "R:p", "R:k", "R:x", "-", "H:s2", "R:d", "R:e", "-", "H:s3", "R:g", "-", "H:s4", "P:s4"}},
 		// p is idle but kept, dimmed, as k's parent; s2 has nothing active.
-		{herdFilterActive, []string{"H:s1", "R:p~", "R:k", "-", "H:s2", "-", "H:s3", "R:g", "-", "H:s4"}},
+		{fleetFilterActive, []string{"H:s1", "R:p~", "R:k", "-", "H:s2", "-", "H:s3", "R:g", "-", "H:s4"}},
 		// Nothing in s1 needs you: header only, and no divider between two
 		// header-only groups.
-		{herdFilterNeeds, []string{"H:s1", "-", "H:s2", "R:d", "-", "H:s3", "R:g", "-", "H:s4"}},
+		{fleetFilterNeeds, []string{"H:s1", "-", "H:s2", "R:d", "-", "H:s3", "R:g", "-", "H:s4"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.filter.label(), func(t *testing.T) {
@@ -422,7 +422,7 @@ func TestFilterModes(t *testing.T) {
 
 func TestFilterCycle(t *testing.T) {
 	m := foldModel(t)
-	want := []herdFilter{herdFilterActive, herdFilterNeeds, herdFilterAll}
+	want := []fleetFilter{fleetFilterActive, fleetFilterNeeds, fleetFilterAll}
 	for _, w := range want {
 		m, _ = pressHub(m, "f")
 		if m.filter != w {
@@ -432,7 +432,7 @@ func TestFilterCycle(t *testing.T) {
 }
 
 func TestFilterRowsAncestors(t *testing.T) {
-	rows := []herd.Row{
+	rows := []fleet.Row{
 		foldRow("s", "p", "@1", "root", "idle", false, ""),
 		foldRow("s", "p", "@2", "mid", "idle", false, "@1"),
 		foldRow("s", "p", "@3", "leaf", "blocked", false, "@2"),
@@ -441,7 +441,7 @@ func TestFilterRowsAncestors(t *testing.T) {
 		foldRow("s", "p", "@5", "c1", "working", false, "@6"),
 		foldRow("s", "p", "@6", "c2", "idle", false, "@5"),
 	}
-	kept, ctx := filterRows(rows, herdFilterActive)
+	kept, ctx := filterRows(rows, fleetFilterActive)
 	var names []string
 	for _, r := range kept {
 		names = append(names, r.Name)
@@ -458,7 +458,7 @@ func TestFoldAndFilterCompose(t *testing.T) {
 	m := foldModel(t)
 	m.selectLine(lineIndex(t, m, "H:s3"))
 	m, _ = pressHub(m, "z")
-	for _, f := range []herdFilter{herdFilterActive, herdFilterNeeds, herdFilterAll} {
+	for _, f := range []fleetFilter{fleetFilterActive, fleetFilterNeeds, fleetFilterAll} {
 		m, _ = pressHub(m, "f")
 		if m.filter != f {
 			t.Fatalf("filter = %v, want %v", m.filter, f)
@@ -470,7 +470,7 @@ func TestFoldAndFilterCompose(t *testing.T) {
 			t.Errorf("filter %v shows a folded group's row: %v", f, lineKeys(m))
 		}
 	}
-	m.filter = herdFilterNeeds
+	m.filter = fleetFilterNeeds
 	m.relayout()
 	want := []string{"H:s1", "-", "H:s2", "R:d", "-", "H:s3", "H:s4"}
 	if got := lineKeys(m); !slices.Equal(got, want) {
@@ -505,7 +505,7 @@ func TestOverflowCountsWithHiddenRows(t *testing.T) {
 	m.setFolded("s2", true)
 	m.relayout()
 	// H:s1 H:s2 - H:s3 R:g - H:s4 P:s4; three visible list rows.
-	m.termHeight = herdChromeRows + 3
+	m.termHeight = fleetChromeRows + 3
 	m.configureSplitPane()
 	m.selectLine(0)
 	cw := m.contentWidth()
@@ -520,48 +520,48 @@ func TestOverflowCountsWithHiddenRows(t *testing.T) {
 
 func TestClickProjectNameTogglesFold(t *testing.T) {
 	m := foldModel(t)
-	top := m.herdListTop()
+	top := m.fleetListTop()
 	span := m.headerNameSpan(m.groups[0], m.listColWidth())
-	if span[0] != herdHeaderNameCol || span[1] != herdHeaderNameCol+2+len("alpha") {
+	if span[0] != fleetHeaderNameCol || span[1] != fleetHeaderNameCol+2+len("alpha") {
 		t.Fatalf("name span = %v", span)
 	}
 	hdr := ansi.Strip(m.renderLine(0, m.listColWidth()))
-	if got := string([]rune(hdr)[span[0]:span[1]]); got != herdUnfoldedGlyph+" alpha" {
+	if got := string([]rune(hdr)[span[0]:span[1]]); got != fleetUnfoldedGlyph+" alpha" {
 		t.Errorf("span covers %q, want the fold marker and name", got)
 	}
 	for _, x := range []int{span[0], span[1] - 1} {
-		if h := m.hoverAt(x, top); h.reg != herdHoverFold {
+		if h := m.hoverAt(x, top); h.reg != fleetHoverFold {
 			t.Errorf("hover at %d = %v, want fold", x, h.reg)
 		}
 	}
-	click := func(m HerdModel, x int) HerdModel {
+	click := func(m FleetModel, x int) FleetModel {
 		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: top})
-		return next.(HerdModel)
+		return next.(FleetModel)
 	}
 	m = click(m, span[0]+3)
 	if !m.isFolded("s1") || cursorOf(m) != 0 {
 		t.Fatalf("click on name: folded=%v cursor=%d", m.isFolded("s1"), cursorOf(m))
 	}
-	if hdr := ansi.Strip(m.renderLine(0, m.listColWidth())); !strings.Contains(hdr, herdFoldedGlyph+" alpha") {
-		t.Errorf("folded header = %q, want %s marker", hdr, herdFoldedGlyph)
+	if hdr := ansi.Strip(m.renderLine(0, m.listColWidth())); !strings.Contains(hdr, fleetFoldedGlyph+" alpha") {
+		t.Errorf("folded header = %q, want %s marker", hdr, fleetFoldedGlyph)
 	}
 	m = click(m, span[0])
 	if m.isFolded("s1") {
 		t.Error("second click should unfold")
 	}
 	// The "+ new" button and the gap before the counts keep their behaviour.
-	newX := m.listColWidth() - herdSidebarRightGutter - 2
-	if _, act := m.clickDecision(newX, top); act != herdClickNew {
+	newX := m.listColWidth() - fleetSidebarRightGutter - 2
+	if _, act := m.clickDecision(newX, top); act != fleetClickNew {
 		t.Errorf("+ new click = %v, want new", act)
 	}
-	if _, act := m.clickDecision(span[1]+2, top); act != herdClickSelect {
+	if _, act := m.clickDecision(span[1]+2, top); act != fleetClickSelect {
 		t.Errorf("click past the name = %v, want select", act)
 	}
 }
 
 func TestTitleSpacing(t *testing.T) {
 	m := foldModel(t)
-	if top := m.herdListTop(); top != 2 {
+	if top := m.fleetListTop(); top != 2 {
 		t.Fatalf("list top = %d, want 2", top)
 	}
 	out := strings.Split(ansi.Strip(m.render()), "\n")
@@ -575,7 +575,7 @@ func TestTitleSpacing(t *testing.T) {
 		t.Errorf("row 2 = %q, want the first group header", out[2])
 	}
 	// The footer message line follows the list area directly.
-	if y := m.footerMessageY(); y != 2+m.herdListRows()+1 {
+	if y := m.footerMessageY(); y != 2+m.fleetListRows()+1 {
 		t.Errorf("footerMessageY = %d", y)
 	}
 }
@@ -584,27 +584,27 @@ func TestHeaderNewGap(t *testing.T) {
 	m := foldModel(t)
 	for _, w := range []int{44, 56, 120} {
 		hdr := strings.TrimRight(ansi.Strip(m.renderGroupHeader(m.groups[1], false, w)), " ")
-		before, ok := strings.CutSuffix(hdr, herdNewLabel)
+		before, ok := strings.CutSuffix(hdr, fleetNewLabel)
 		if !ok {
-			t.Fatalf("w=%d: header %q lacks %q", w, hdr, herdNewLabel)
+			t.Fatalf("w=%d: header %q lacks %q", w, hdr, fleetNewLabel)
 		}
 		if !strings.HasSuffix(before, "○ 1  ") || strings.HasSuffix(before, "○ 1   ") {
-			t.Errorf("w=%d: want exactly two spaces between the counts and %q: %q", w, herdNewLabel, hdr)
+			t.Errorf("w=%d: want exactly two spaces between the counts and %q: %q", w, fleetNewLabel, hdr)
 		}
 	}
 }
 
 func TestTitleFilterTag(t *testing.T) {
 	tests := []struct {
-		filter herdFilter
+		filter fleetFilter
 		width  int
 		want   string
 		counts bool
 	}{
-		{herdFilterAll, 120, "", true},
-		{herdFilterActive, 120, "· active", true},
-		{herdFilterNeeds, 120, "· needs you", true},
-		{herdFilterNeeds, 44, "· needs", true},
+		{fleetFilterAll, 120, "", true},
+		{fleetFilterActive, 120, "· active", true},
+		{fleetFilterNeeds, 120, "· needs you", true},
+		{fleetFilterNeeds, 44, "· needs", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.filter.label(), func(t *testing.T) {
@@ -629,7 +629,7 @@ func TestTitleFilterTag(t *testing.T) {
 
 func TestHelpListsFoldKeys(t *testing.T) {
 	var keys []string
-	for _, it := range herdHelpItems() {
+	for _, it := range fleetHelpItems() {
 		keys = append(keys, it.keys)
 	}
 	for _, k := range []string{"z", "Z", "f"} {
@@ -638,7 +638,7 @@ func TestHelpListsFoldKeys(t *testing.T) {
 		}
 	}
 	// The one-line footer is already full at 67 columns: z/Z/f stay in "? more".
-	if w := ansi.StringWidth(strings.TrimSpace(ansi.Strip(fitHints(herdFooterHints, 200)))); w > 67 {
+	if w := ansi.StringWidth(strings.TrimSpace(ansi.Strip(fitHints(fleetFooterHints, 200)))); w > 67 {
 		t.Errorf("footer hints are %d columns, over 67", w)
 	}
 }
@@ -647,8 +647,8 @@ func TestViewerSwitchToHiddenRowUnfolds(t *testing.T) {
 	m := foldModel(t)
 	m.setFolded("s2", true)
 	m.relayout()
-	next, _ := m.Update(herdViewerMsg{home: "s2", window: "@4"})
-	m = next.(HerdModel)
+	next, _ := m.Update(fleetViewerMsg{home: "s2", window: "@4"})
+	m = next.(FleetModel)
 	if m.isFolded("s2") {
 		t.Error("a live-pane switch to a folded row should unfold its group")
 	}
@@ -659,15 +659,15 @@ func TestViewerSwitchToHiddenRowUnfolds(t *testing.T) {
 
 func TestDimmedContextRow(t *testing.T) {
 	m := foldModel(t)
-	m.filter = herdFilterActive
+	m.filter = fleetFilterActive
 	m.relayout()
 	m.selectLine(lineIndex(t, m, "R:g"))
 	i := lineIndex(t, m, "R:p~")
 	got := m.renderLine(i, 120)
-	if ansi.Strip(got) != ansi.Strip(m.renderTreeRowHover(m.lines[i].row, m.lines[i].treePrefix, m.lines[i].nameCol, false, herdHoverNone, 120)) {
+	if ansi.Strip(got) != ansi.Strip(m.renderTreeRowHover(m.lines[i].row, m.lines[i].treePrefix, m.lines[i].nameCol, false, fleetHoverNone, 120)) {
 		t.Errorf("dimming changed the text: %q", ansi.Strip(got))
 	}
-	if !strings.HasPrefix(got, herdProjectBar("alpha")) || !strings.Contains(got, herdDimStyle.Render(strings.TrimPrefix(ansi.Strip(got), "▎"))) {
+	if !strings.HasPrefix(got, fleetProjectBar("alpha")) || !strings.Contains(got, fleetDimStyle.Render(strings.TrimPrefix(ansi.Strip(got), "▎"))) {
 		t.Errorf("context row should keep its bar and dim the rest: %q", got)
 	}
 }

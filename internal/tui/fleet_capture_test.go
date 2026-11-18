@@ -85,7 +85,7 @@ func TestHubCaptureFoldedFiltered(t *testing.T) {
 				}
 			}
 		}
-		if !strings.Contains(focus, herdFoldedGlyph+" spacewalker") && !strings.Contains(focus, herdFoldedGlyph+" energy") {
+		if !strings.Contains(focus, fleetFoldedGlyph+" spacewalker") && !strings.Contains(focus, fleetFoldedGlyph+" energy") {
 			t.Errorf("focus mode should fold a quiet project:\n%s", focus)
 		}
 		if !strings.Contains(needs, "· needs") {

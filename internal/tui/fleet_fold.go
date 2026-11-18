@@ -11,75 +11,75 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/blsmth/agentctl/internal/config"
-	"github.com/blsmth/agentctl/internal/herd"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 )
 
 // ── Attention filter ─────────────────────────────────────────────────────────
 
-// herdFilter is the hub's attention filter: which agent rows the list shows.
+// fleetFilter is the hub's attention filter: which agent rows the list shows.
 // `f` cycles all → active → needs you → all.
-type herdFilter int
+type fleetFilter int
 
 const (
-	herdFilterAll    herdFilter = iota // every row
-	herdFilterActive                   // working and blocked
-	herdFilterNeeds                    // blocked and done-unseen
+	fleetFilterAll    fleetFilter = iota // every row
+	fleetFilterActive                    // working and blocked
+	fleetFilterNeeds                     // blocked and done-unseen
 )
 
 // label is the filter's name as shown in the title tag and notices.
-func (f herdFilter) label() string {
+func (f fleetFilter) label() string {
 	switch f {
-	case herdFilterActive:
+	case fleetFilterActive:
 		return "active"
-	case herdFilterNeeds:
+	case fleetFilterNeeds:
 		return "needs you"
 	}
 	return "all"
 }
 
 // key is the filter's persisted spelling ("" for all).
-func (f herdFilter) key() string {
+func (f fleetFilter) key() string {
 	switch f {
-	case herdFilterActive:
+	case fleetFilterActive:
 		return "active"
-	case herdFilterNeeds:
+	case fleetFilterNeeds:
 		return "needs"
 	}
 	return ""
 }
 
-// parseHerdFilter is the inverse of key; anything unknown is all.
-func parseHerdFilter(s string) herdFilter {
+// parseFleetFilter is the inverse of key; anything unknown is all.
+func parseFleetFilter(s string) fleetFilter {
 	switch s {
 	case "active":
-		return herdFilterActive
+		return fleetFilterActive
 	case "needs":
-		return herdFilterNeeds
+		return fleetFilterNeeds
 	}
-	return herdFilterAll
+	return fleetFilterAll
 }
 
 // next is the filter `f` switches to.
-func (f herdFilter) next() herdFilter {
+func (f fleetFilter) next() fleetFilter {
 	switch f {
-	case herdFilterAll:
-		return herdFilterActive
-	case herdFilterActive:
-		return herdFilterNeeds
+	case fleetFilterAll:
+		return fleetFilterActive
+	case fleetFilterActive:
+		return fleetFilterNeeds
 	}
-	return herdFilterAll
+	return fleetFilterAll
 }
 
 // matches reports whether row r passes the filter on its own (ancestor
 // retention is filterRows' job).
-func (f herdFilter) matches(r herd.Row) bool {
+func (f fleetFilter) matches(r fleet.Row) bool {
 	w := rowWeight(r)
 	switch f {
-	case herdFilterActive:
-		return w == herdWeightWorking || w == herdWeightBlocked
-	case herdFilterNeeds:
-		return w == herdWeightBlocked || w == herdWeightDone
+	case fleetFilterActive:
+		return w == fleetWeightWorking || w == fleetWeightBlocked
+	case fleetFilterNeeds:
+		return w == fleetWeightBlocked || w == fleetWeightDone
 	}
 	return true
 }
@@ -87,9 +87,9 @@ func (f herdFilter) matches(r herd.Row) bool {
 // filterRows returns the rows of one group the filter keeps, in their
 // original order, plus the window IDs kept only as context: the ancestors
 // (by Parent, within the group) of a matching row, so the tree still makes
-// sense. Under herdFilterAll it returns rows unchanged and no context.
-func filterRows(rows []herd.Row, f herdFilter) (kept []herd.Row, context map[string]bool) {
-	if f == herdFilterAll {
+// sense. Under fleetFilterAll it returns rows unchanged and no context.
+func filterRows(rows []fleet.Row, f fleetFilter) (kept []fleet.Row, context map[string]bool) {
+	if f == fleetFilterAll {
 		return rows, nil
 	}
 	idx := make(map[string]int, len(rows))
@@ -139,12 +139,12 @@ func filterRows(rows []herd.Row, f herdFilter) (kept []herd.Row, context map[str
 // ── Fold state ───────────────────────────────────────────────────────────────
 
 // isFolded reports whether the group for session is folded.
-func (m HerdModel) isFolded(session string) bool {
+func (m FleetModel) isFolded(session string) bool {
 	return m.folded[session]
 }
 
 // setFolded folds or unfolds the group for session.
-func (m *HerdModel) setFolded(session string, fold bool) {
+func (m *FleetModel) setFolded(session string, fold bool) {
 	if fold {
 		if m.folded == nil {
 			m.folded = make(map[string]bool)
@@ -157,9 +157,9 @@ func (m *HerdModel) setFolded(session string, fold bool) {
 
 // groupIsQuiet reports whether g has no blocked and no working agent: the
 // groups focus mode folds.
-func groupIsQuiet(g herd.Group) bool {
+func groupIsQuiet(g fleet.Group) bool {
 	for _, r := range g.Rows {
-		if w := rowWeight(r); w == herdWeightBlocked || w == herdWeightWorking {
+		if w := rowWeight(r); w == fleetWeightBlocked || w == fleetWeightWorking {
 			return false
 		}
 	}
@@ -168,7 +168,7 @@ func groupIsQuiet(g herd.Group) bool {
 
 // relayout rebuilds the line list after a fold or filter change and
 // re-resolves everything that is keyed by line index.
-func (m *HerdModel) relayout() {
+func (m *FleetModel) relayout() {
 	m.rebuildLines()
 	m.validateNew()
 	m.resolveSelection()
@@ -178,7 +178,7 @@ func (m *HerdModel) relayout() {
 // toggleFoldAt is `z` (and a click on a header's project name): fold or
 // unfold the group owning line idx. The cursor lands on the group header,
 // which is all a folded group shows.
-func (m *HerdModel) toggleFoldAt(idx int) tea.Cmd {
+func (m *FleetModel) toggleFoldAt(idx int) tea.Cmd {
 	g := m.groupOfLine(idx)
 	if g == nil {
 		return nil
@@ -193,7 +193,7 @@ func (m *HerdModel) toggleFoldAt(idx int) tea.Cmd {
 
 // toggleFocusMode is `Z`: the first press folds every group with no blocked
 // and no working agent; the next press unfolds everything.
-func (m *HerdModel) toggleFocusMode() tea.Cmd {
+func (m *FleetModel) toggleFocusMode() tea.Cmd {
 	m.jumpErr = ""
 	if m.focusMode {
 		m.focusMode = false
@@ -219,7 +219,7 @@ func (m *HerdModel) toggleFocusMode() tea.Cmd {
 }
 
 // cycleFilter is `f`: all → active → needs you → all.
-func (m *HerdModel) cycleFilter() tea.Cmd {
+func (m *FleetModel) cycleFilter() tea.Cmd {
 	m.filter = m.filter.next()
 	m.jumpErr = ""
 	m.setSuccess("filter: " + m.filter.label())
@@ -229,21 +229,21 @@ func (m *HerdModel) cycleFilter() tea.Cmd {
 
 // rowExists reports whether a loaded group has the row (session, windowID),
 // whether or not the list currently shows it.
-func (m *HerdModel) rowExists(session, windowID string) bool {
+func (m *FleetModel) rowExists(session, windowID string) bool {
 	g := m.groupForSession(session)
-	return g != nil && slices.ContainsFunc(g.Rows, func(r herd.Row) bool { return r.WindowID == windowID })
+	return g != nil && slices.ContainsFunc(g.Rows, func(r fleet.Row) bool { return r.WindowID == windowID })
 }
 
 // revealRow makes the row (session, windowID) visible when it exists but is
 // hidden: its group is unfolded and, if the filter would still hide it, the
 // filter is cleared. It reports whether anything changed (the line list was
 // then rebuilt, but the selection was not moved).
-func (m *HerdModel) revealRow(session, windowID string) bool {
+func (m *FleetModel) revealRow(session, windowID string) bool {
 	g := m.groupForSession(session)
 	if g == nil {
 		return false
 	}
-	var row *herd.Row
+	var row *fleet.Row
 	for i := range g.Rows {
 		if g.Rows[i].WindowID == windowID {
 			row = &g.Rows[i]
@@ -258,9 +258,9 @@ func (m *HerdModel) revealRow(session, windowID string) bool {
 		m.setFolded(session, false)
 		changed = true
 	}
-	if m.filter != herdFilterAll {
-		if kept, _ := filterRows(g.Rows, m.filter); !slices.ContainsFunc(kept, func(r herd.Row) bool { return r.WindowID == windowID }) {
-			m.filter = herdFilterAll
+	if m.filter != fleetFilterAll {
+		if kept, _ := filterRows(g.Rows, m.filter); !slices.ContainsFunc(kept, func(r fleet.Row) bool { return r.WindowID == windowID }) {
+			m.filter = fleetFilterAll
 			changed = true
 		}
 	}
@@ -303,7 +303,7 @@ var hubViewPath = func() (string, error) {
 // sessions whose group has disappeared are dropped here (lazily, when the
 // state is written) as long as the hub has a loaded, non-empty list to
 // compare against; a failed or empty load keeps everything.
-func (m HerdModel) viewState() hubViewState {
+func (m FleetModel) viewState() hubViewState {
 	live := make(map[string]bool, len(m.groups))
 	for _, g := range m.groups {
 		live[g.Session] = true
@@ -320,7 +320,7 @@ func (m HerdModel) viewState() hubViewState {
 }
 
 // applyViewState replaces the model's fold set, focus mode and filter.
-func (m *HerdModel) applyViewState(s hubViewState) {
+func (m *FleetModel) applyViewState(s hubViewState) {
 	m.folded = nil
 	for _, sess := range s.Folded {
 		if sess != "" {
@@ -328,7 +328,7 @@ func (m *HerdModel) applyViewState(s hubViewState) {
 		}
 	}
 	m.focusMode = s.Focus
-	m.filter = parseHerdFilter(s.Filter)
+	m.filter = parseFleetFilter(s.Filter)
 }
 
 // parseHubView decodes a hubViewState; ok is false for anything that is not
@@ -393,7 +393,7 @@ func writeHubView(path string, s hubViewState) error {
 // saveViewCmd persists the current view state in the background. A model
 // without a state path (tests, or no resolvable state dir) persists nothing.
 // Failures are logged, never shown: the state is a convenience.
-func (m HerdModel) saveViewCmd() tea.Cmd {
+func (m FleetModel) saveViewCmd() tea.Cmd {
 	if m.viewPath == "" {
 		return nil
 	}
@@ -407,7 +407,7 @@ func (m HerdModel) saveViewCmd() tea.Cmd {
 }
 
 // viewEnv is the HubViewEnv entry for ReexecEnv.
-func (m HerdModel) viewEnv() string {
+func (m FleetModel) viewEnv() string {
 	data, err := json.Marshal(m.viewState())
 	if err != nil {
 		return ""
@@ -417,7 +417,7 @@ func (m HerdModel) viewEnv() string {
 
 // loadViewState sets the persisted view state at startup: the state file,
 // overridden by HubViewEnv after a hot reload (consumed once).
-func (m *HerdModel) loadViewState() {
+func (m *FleetModel) loadViewState() {
 	if path, err := hubViewPath(); err != nil {
 		logging.Log("hub: view state not persisted: %v", err)
 	} else {
@@ -433,7 +433,7 @@ func (m *HerdModel) loadViewState() {
 }
 
 // flushView persists a view change revealRow made, once (nil when none).
-func (m *HerdModel) flushView() tea.Cmd {
+func (m *FleetModel) flushView() tea.Cmd {
 	if !m.viewDirty {
 		return nil
 	}

@@ -55,7 +55,7 @@ func TestGroupHeaderCountsAndSession(t *testing.T) {
 	if !strings.Contains(out, "⏸ 1  ● 2  ✓ 1  ○ 1") {
 		t.Errorf("counts missing: %q", out)
 	}
-	if !strings.HasPrefix(out, "  ⏸ "+herdUnfoldedGlyph+" proj") {
+	if !strings.HasPrefix(out, "  ⏸ "+fleetUnfoldedGlyph+" proj") {
 		t.Errorf("blocked group should carry the ⏸ flag: %q", out)
 	}
 	if strings.Contains(out, "agentctl-proj") || strings.Contains(out, "agent") {
@@ -69,7 +69,7 @@ func TestGroupHeaderCountsAndSession(t *testing.T) {
 	if !strings.Contains(out, "custom") || strings.Contains(out, "⏸") || strings.Contains(out, "✓") || strings.Contains(out, "○") {
 		t.Errorf("custom session shown and zero buckets blank: %q", out)
 	}
-	if !strings.HasPrefix(out, "    "+herdUnfoldedGlyph+" proj") {
+	if !strings.HasPrefix(out, "    "+fleetUnfoldedGlyph+" proj") {
 		t.Errorf("no rollup glyph without a blocked agent: %q", out)
 	}
 }

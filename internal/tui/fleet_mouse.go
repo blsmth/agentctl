@@ -16,13 +16,13 @@ type fleetClickAction int
 
 const (
 	fleetClickIgnore   fleetClickAction = iota // nothing happens
-	fleetClickSelect                          // move the cursor only, like j/k
-	fleetClickNew                             // header's "+ new" button: arm the shell | agent selector
-	fleetClickNewShell                        // armed selector's "shell": open a shell window
-	fleetClickNewAgent                        // armed selector's "agent": launch an agent
-	fleetClickClose                           // row's "✕" button: arm / confirm close
-	fleetClickMenu                            // right click: open the context menu
-	fleetClickFold                            // header's project name: fold / unfold the group
+	fleetClickSelect                           // move the cursor only, like j/k
+	fleetClickNew                              // header's "+ new" button: arm the shell | agent selector
+	fleetClickNewShell                         // armed selector's "shell": open a shell window
+	fleetClickNewAgent                         // armed selector's "agent": launch an agent
+	fleetClickClose                            // row's "✕" button: arm / confirm close
+	fleetClickMenu                             // right click: open the context menu
+	fleetClickFold                             // header's project name: fold / unfold the group
 )
 
 // fleetListTop returns the screen row where the list (or sidebar) begins: the
@@ -250,12 +250,12 @@ type fleetHoverRegion int
 
 const (
 	fleetHoverNone     fleetHoverRegion = iota
-	fleetHoverBody                     // a row's body (not its ✕)
-	fleetHoverClose                    // a row's ✕ button
-	fleetHoverNew                      // a group header's "+ new" button
-	fleetHoverNewShell                 // armed selector's "shell"
-	fleetHoverNewAgent                 // armed selector's "agent"
-	fleetHoverFold                     // a group header's fold marker and project name
+	fleetHoverBody                      // a row's body (not its ✕)
+	fleetHoverClose                     // a row's ✕ button
+	fleetHoverNew                       // a group header's "+ new" button
+	fleetHoverNewShell                  // armed selector's "shell"
+	fleetHoverNewAgent                  // armed selector's "agent"
+	fleetHoverFold                      // a group header's fold marker and project name
 )
 
 // fleetHover is the hover target: a line index plus the region on it. The zero
