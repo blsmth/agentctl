@@ -157,7 +157,7 @@ The phone web app gets a read-only Schedules screen later (next fire, last resul
 ## Rollout
 
 1. **`cron` core, Claude only, `window` mode:** schedules.json, `robfig/cron/v3`, tick with flock and state, catch-up, overlap, `max_concurrent`, usage gate, launchd install (extract `internal/launchd`), `RunDispatch` options struct, `scheduled_by` in windowstate, the CLI above, `health` lines. Can ship before the Harness refactor.
-2. **Approval popup for agent-run `cron add`** plus `--prompt-file`.
+2. **Approval popup for agent-run `cron add`** plus `--prompt-file`. Done: `cron add`, `cron resume` and `cron run --force` are gated by the dispatch popup (`PreviewKindCron`, `internal/hooks/cron_preview.go`) and phone approvals (`remoteapproval.KindCron`); plain `cron run` honors every throttle and is not gated. The Bash validator and the `PreToolUse` `hook-pre-tool` deny direct writes to `schedules.json` and `<stateDir>/cron/`. There is no `cron edit`/`enable` subcommand; `resume` is the enable.
 3. **`headless` mode** for Claude, with run output and push body.
 4. **Harness plumbing** once multi-harness phase 1 lands: route launches through `Harness`, add `Headless`/`HeadlessCommand`, accept `harness: codex|pi`.
 5. Later: hub ⏲ marker, phone Schedules screen, Linux timer install, event triggers (a GitHub webhook via `serve`) if wanted.

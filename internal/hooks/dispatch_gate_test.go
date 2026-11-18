@@ -114,7 +114,7 @@ func TestDenyBashPopup_OutputSchema(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			raw, _, _ := captureDenyEmitter(t, func() {
-				denyBashPopup(tt.agentName, tt.command, true, denyAuditContext{})
+				denyBashPopup(tt.agentName, tt.command, PreviewKindDispatch, denyAuditContext{})
 			})
 
 			var got map[string]interface{}

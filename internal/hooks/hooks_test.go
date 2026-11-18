@@ -1238,13 +1238,15 @@ func denyEmitterCases() []denyEmitterCase {
 			wantStderr: "blocked",
 		},
 		{
-			name:       "denyBashPopup_dispatch",
-			emit:       func() { denyBashPopup("test-agent", "agentctl dispatch --issue 1", true, denyAuditContext{}) },
+			name: "denyBashPopup_dispatch",
+			emit: func() {
+				denyBashPopup("test-agent", "agentctl dispatch --issue 1", PreviewKindDispatch, denyAuditContext{})
+			},
 			wantStderr: "Dispatch denied in preview popup",
 		},
 		{
 			name:       "denyBashPopup_plain",
-			emit:       func() { denyBashPopup("test-agent", "rm -rf /tmp/scratch", false, denyAuditContext{}) },
+			emit:       func() { denyBashPopup("test-agent", "rm -rf /tmp/scratch", PreviewKindBash, denyAuditContext{}) },
 			wantStderr: "Command denied in preview popup",
 		},
 	}

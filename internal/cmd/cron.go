@@ -104,7 +104,7 @@ func (e cronEnv) add(w io.Writer, opts CronAddOptions) error {
 	}
 	sched, _ := cron.ParseSchedule(job.Schedule)
 	next := cron.NextFire(sched, now, cron.Jitter(job.Name))
-	fmt.Fprintf(w, "Added %s (%s), next fire %s\n", job.Name, job.Schedule, next.Format("Mon 2 Jan 15:04"))
+	fmt.Fprintf(w, "Added %s (%s), next fire %s\n", job.Name, job.Schedule, next.Format(cron.NextFireFormat))
 	if e.schedulerInstalled != nil && !e.schedulerInstalled() {
 		fmt.Fprintln(w, "The scheduler is not installed yet: run agentctl cron install")
 	}

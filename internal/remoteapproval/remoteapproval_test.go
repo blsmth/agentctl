@@ -64,6 +64,13 @@ func TestRequestValidate(t *testing.T) {
 	if err := ok.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	for _, kind := range []string{KindDispatch, KindBash, KindCron} {
+		r := ok
+		r.Kind = kind
+		if err := r.Validate(); err != nil {
+			t.Errorf("kind %q: %v", kind, err)
+		}
+	}
 	for name, m := range map[string]func(*Request){
 		"bad id":      func(r *Request) { r.ID = "xyz" },
 		"bad kind":    func(r *Request) { r.Kind = "shell" },

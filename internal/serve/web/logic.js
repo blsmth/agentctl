@@ -968,6 +968,7 @@ export function formatCountdown(secs) {
 export function approvalSummary(a) {
   const who = a.asking_agent || "An agent";
   if (a.kind === "dispatch") return `${who} wants to dispatch ${a.target_agent || "an agent"}`;
+  if (a.kind === "cron") return `${who} wants to schedule ${a.target_agent || "an agent"}`;
   return `${who} wants to run a command`;
 }
 
@@ -977,6 +978,13 @@ export function approvalBannerText(n) {
   return n === 1 ? "1 approval waiting" : `${n} approvals waiting`;
 }
 
+/** approvalConfirmTitle is the allow sheet's title for an approval kind. */
+function approvalConfirmTitle(kind) {
+  if (kind === "dispatch") return "Approve this dispatch?";
+  if (kind === "cron") return "Approve this schedule?";
+  return "Approve this command?";
+}
+
 /** approvalConfirm is the confirm sheet for answering an approval: everything that runs, in full. */
 export function approvalConfirm(a, decision) {
   const allow = decision === "allow";
@@ -984,12 +992,14 @@ export function approvalConfirm(a, decision) {
   if (a.kind === "dispatch") {
     head.push(`target agent: ${a.target_agent || "(default)"}`);
     if (a.issue) head.push(`issue: #${a.issue}`);
+  } else if (a.kind === "cron") {
+    head.push(`scheduled agent: ${a.target_agent || "(unknown)"}`);
   }
   const lines = [head.join("\n")];
   if (a.prompt) lines.push(a.prompt);
   lines.push(a.command);
   return {
-    title: allow ? (a.kind === "dispatch" ? "Approve this dispatch?" : "Approve this command?") : "Deny?",
+    title: allow ? approvalConfirmTitle(a.kind) : "Deny?",
     lines,
     confirmLabel: allow ? "Approve" : "Deny",
     danger: !allow,

@@ -120,13 +120,31 @@ func ValidateBash() {
 	// opted into bash_preview for this agent (default: off, since an
 	// unattended dispatched agent must never block on a popup nobody will
 	// ever see -- see bashPreviewGate / hasAttachedClient).
+	//
+	// Gated "agentctl cron" subcommands (add, resume, run --force; see
+	// cron_preview.go) are always gated too, for the same reason as
+	// dispatch: one approval authorizes unattended runs.
 	isDispatch := isAgentctlDispatch(command)
-	if isDispatch || cfg.EffectiveBashPreview(agentName) {
+	isCron := isAgentctlCronGated(command)
+	if isDispatch && isCron {
+		// Each popup previews one invocation; mixing them would leave one
+		// unseen.
+		denyCommand(agentName, command, "Run agentctl dispatch and agentctl cron in separate Bash calls, "+
+			"so each can be shown for approval.", actx)
+		return
+	}
+	if isDispatch || isCron || cfg.EffectiveBashPreview(agentName) {
 		var approved, decided bool
 		var denyReason string
-		if isDispatch {
+		gate := PreviewKindBash
+		switch {
+		case isCron:
+			gate = PreviewKindCron
+			approved, decided, denyReason = cronPreviewGate(agentName, command)
+		case isDispatch:
+			gate = PreviewKindDispatch
 			approved, decided, denyReason = dispatchPreviewGate(agentName, command)
-		} else {
+		default:
 			approved, decided, denyReason = bashPreviewGate(agentName, command)
 		}
 		if denyReason != "" {
@@ -145,7 +163,7 @@ func ValidateBash() {
 			} else {
 				// See the comment on the global-deny-list `return` above --
 				// same reasoning applies here.
-				denyBashPopup(agentName, command, isDispatch, actx)
+				denyBashPopup(agentName, command, gate, actx)
 			}
 			return
 		}
@@ -310,9 +328,87 @@ func checkServeTamper(command string) string {
 	return ""
 }
 
-// checkGlobalDenyList matches globalDenyPatterns and the serve-tamper rules
-// against command with data-only heredoc bodies removed (see
-// stripDataHeredocs). Quoted arguments are still matched literally.
+// cronTamperReason is the deny reason for commands that write the cron jobs
+// file or cron state directly.
+const cronTamperReason = "\U0001F6D1 BLOCKED: this writes agentctl's cron schedules or state directly. " +
+	"Scheduled jobs need human approval: use `agentctl cron add` (shown for approval), " +
+	"`agentctl cron pause|rm` to stop one, and `agentctl cron list` to read them."
+
+// cronTargetPattern matches a reference to the cron jobs file or the cron
+// state dir (<StateDir>/cron: state.json, runs.ndjson, tick.lock). The
+// resolved state dir is matched literally on top, see cronStateDir.
+const cronTargetPattern = `(?:schedules\.json|(?:state/agentctl|XDG_STATE_HOME\}?/agentctl)/cron\b)`
+
+// cronWriteVerbs are commands that create, replace, move, delete or change a
+// file named among their arguments.
+const cronWriteVerbs = `cp|mv|rm|ln|install|rsync|dd|truncate|chmod|chown|touch|unlink|shred|sponge|tee`
+
+// cronTamperPatterns close the side doors around `cron add` approval
+// (docs/design/cron.md, "Safety and approval"): an agent that cannot get a
+// job approved could write ~/.config/agentctl/schedules.json, or re-enable or
+// reset a job in <StateDir>/cron/state.json, itself. They deny a redirect
+// into either, a write-ish command (cp, mv, rm, tee, sponge, ...) or an
+// in-place sed/perl naming either in the same simple command, and any
+// script interpreter whose command line mentions either. Reading is fine
+// (cat, jq, head, grep without a redirect into the file), and `agentctl cron
+// list` is the intended read path. Like serveTamperPatterns this is a speed
+// bump against accidents and naive attempts, not a sandbox: a program
+// written to disk can still write the file. Copying the file elsewhere with
+// cp is denied too; that is the price of matching the verb, not the
+// direction.
+//
+// %[1]s is the target alternation (cronTargetPattern, plus the resolved
+// state dir).
+var cronTamperTemplates = []string{
+	// > file, >> file, >| file, &> file, with optional quotes and a path prefix.
+	`>\|?\s*["']?[^\s;|&<>]*%[1]s`,
+	`\b(?:` + cronWriteVerbs + `)\b[^\n|;&]*%[1]s`,
+	`\b(?:sed|gsed|perl)\b[^\n|;&]*\s(?:-[A-Za-z]*i|--in-place)[^\n|;&]*%[1]s`,
+	`\b(?:python[0-9.]*|node|ruby|deno|bun|osascript)\b[^\n]*%[1]s`,
+}
+
+// cronStateDir is the resolved <StateDir>/cron, matched literally (absolute,
+// ~- and $HOME-relative) on top of cronTargetPattern. A var so tests can pin
+// it.
+var cronStateDir = func() string {
+	dir, err := config.StateDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "cron")
+}
+
+// checkCronTamper reports whether command writes the cron jobs file or state.
+func checkCronTamper(command string) string {
+	targets := []string{cronTargetPattern}
+	if dir := cronStateDir(); dir != "" {
+		targets = append(targets, regexp.QuoteMeta(dir)+`\b`)
+		if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(dir, home+"/") {
+			rel := regexp.QuoteMeta(strings.TrimPrefix(dir, home+"/"))
+			targets = append(targets, `(?:~|\$HOME|\$\{HOME\})/`+rel+`\b`)
+		}
+	}
+	// Cheap prefilter: no mention of either target, nothing to match.
+	if !strings.Contains(command, "schedules.json") && !strings.Contains(command, "cron") {
+		return ""
+	}
+	alt := "(?:" + strings.Join(targets, "|") + ")"
+	for _, tmpl := range cronTamperTemplates {
+		re, err := regexp.Compile(fmt.Sprintf(tmpl, alt))
+		if err != nil {
+			logging.Log("hook-validate-bash: bad cron tamper pattern: %v", err)
+			continue
+		}
+		if re.MatchString(command) {
+			return cronTamperReason
+		}
+	}
+	return ""
+}
+
+// checkGlobalDenyList matches globalDenyPatterns and the serve- and
+// cron-tamper rules against command with data-only heredoc bodies removed
+// (see stripDataHeredocs). Quoted arguments are still matched literally.
 func checkGlobalDenyList(command string) string {
 	command = stripDataHeredocs(command)
 	for _, deny := range globalDenyPatterns {
@@ -320,7 +416,10 @@ func checkGlobalDenyList(command string) string {
 			return deny.reason
 		}
 	}
-	return checkServeTamper(command)
+	if reason := checkServeTamper(command); reason != "" {
+		return reason
+	}
+	return checkCronTamper(command)
 }
 
 // denyAuditContext carries the PreToolUse fields both deny emitters need to
@@ -400,9 +499,9 @@ func denyCommand(agentName, command, reason string, actx denyAuditContext) {
 }
 
 // denyBashPopup emits the flat deny decision for a Bash command the human
-// rejected in a preview popup -- either the always-on "agentctl dispatch"
-// gate or the opt-in bash_preview gate for every other command; isDispatch
-// only changes the wording of the reason shown to Claude Code. Uses the same
+// rejected in a preview popup -- the always-on "agentctl dispatch" and
+// "agentctl cron" gates or the opt-in bash_preview gate for every other
+// command; gate only changes the wording of the reason shown to Claude Code. Uses the same
 // flat hookSpecificOutput schema as denyCommand (proven to work) rather than
 // the nested decision.behavior form writePermissionDecision emits. Like
 // denyCommand, it includes hookEventName -- required as of Claude Code
@@ -415,12 +514,15 @@ func denyCommand(agentName, command, reason string, actx denyAuditContext) {
 // comment for the full rationale) and lives inside this function rather than
 // at its single call site in ValidateBash, for the same one-record-per-denial
 // reasoning.
-func denyBashPopup(agentName, command string, isDispatch bool, actx denyAuditContext) {
+func denyBashPopup(agentName, command string, gate PreviewKind, actx denyAuditContext) {
 	reason := "Command denied in preview popup"
-	if isDispatch {
+	switch gate {
+	case PreviewKindDispatch:
 		reason = "Dispatch denied in preview popup"
+	case PreviewKindCron:
+		reason = "Cron job denied in preview popup"
 	}
-	logging.Log("hook-validate-bash: DENIED via popup agent=%s dispatch=%v cmd=%q", agentName, isDispatch, textutil.Truncate(command, 100, "..."))
+	logging.Log("hook-validate-bash: DENIED via popup agent=%s gate=%s cmd=%q", agentName, gate, textutil.Truncate(command, 100, "..."))
 	emitDecision(harness.Decision{Kind: harness.Deny, HookEvent: "PreToolUse", Reason: reason})
 
 	appendAuditRecord(audit.Record{

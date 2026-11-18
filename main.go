@@ -459,6 +459,7 @@ func runCmdDispatchPreview(argsFile, resultFile string) {
 		tui.WithMaxViewportHeight(args.VPHeight),
 		tui.WithKind(string(args.Kind)),
 		tui.WithAccount(args.Account),
+		tui.WithCron(tui.CronPreview{Action: args.CronAction, Job: args.CronJob, Schedule: args.CronSchedule}),
 	)
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()

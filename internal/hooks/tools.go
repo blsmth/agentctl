@@ -35,6 +35,14 @@ func PreTool() {
 	}
 	decodeInput(&input) // non-fatal: ignore return value
 
+	// The Edit/Write side door around cron approval (see checkCronTamper for
+	// the Bash one). This is the only PreToolUse registration that sees
+	// file-editing tools.
+	if p := cronEditTarget(input.ToolName, input.ToolInput); p != "" {
+		denyFileEdit(input.ToolName, p, input.ToolInput)
+		return
+	}
+
 	windowID := resolveHookWindowID()
 	if windowID == "" {
 		logging.Log("hook-pre-tool: cannot determine window ID, skipping")

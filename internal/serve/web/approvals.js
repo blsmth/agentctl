@@ -52,9 +52,11 @@ export function approvalCard(ctx, a, countdowns, { compact = false } = {}) {
   if (a.kind === "dispatch") {
     facts.push(h("div", {}, h("span", { class: "meta" }, "target "), a.target_agent || "(default agent)"));
     if (a.issue) facts.push(h("div", {}, h("span", { class: "meta" }, "issue "), `#${a.issue}`));
+  } else if (a.kind === "cron") {
+    facts.push(h("div", {}, h("span", { class: "meta" }, "scheduled agent "), a.target_agent || "(unknown)"));
   }
   const body = [];
-  if (a.prompt) body.push(h("div", { class: "meta" }, "Prompt"), h("pre", { class: "approval-text" }, a.prompt));
+  if (a.prompt) body.push(h("div", { class: "meta" }, a.kind === "cron" ? "Job" : "Prompt"), h("pre", { class: "approval-text" }, a.prompt));
   body.push(h("div", { class: "meta" }, "Command"), h("pre", { class: "approval-text" }, a.command));
 
   const canWrite = ctx.hasFeature("write");
