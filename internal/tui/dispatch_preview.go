@@ -37,14 +37,16 @@ const dpLabelWidth = 13
 // so 22 + 16 = 38, leaving 2 rows of headroom.
 const dpMaxVPHeight = 22
 
-// PreviewKindDispatch and PreviewKindBash mirror
-// internal/hooks.PreviewKindDispatch / PreviewKindBash. This package cannot
+// PreviewKindDispatch, PreviewKindBash and PreviewKindCron mirror
+// internal/hooks.PreviewKindDispatch / PreviewKindBash / PreviewKindCron
+// (pinned by internal/hooks/preview_kind_drift_test.go). This package cannot
 // import internal/hooks (hooks already imports tui to build the model), so
 // the string values are duplicated here rather than shared -- keep them in
 // sync if either side changes.
 const (
 	PreviewKindDispatch = "dispatch"
 	PreviewKindBash     = "bash"
+	PreviewKindCron     = "cron"
 )
 
 // dispatchPreviewOpts holds the resolved, optional sizing inputs for a
@@ -56,6 +58,18 @@ type dispatchPreviewOpts struct {
 	kind         string
 	now          func() time.Time
 	account      string
+	cron         CronPreview
+}
+
+// CronPreview is the job-specific part of a PreviewKindCron popup.
+type CronPreview struct {
+	// Action is what the command does: "add", "resume" or "run --force".
+	Action string
+	// Job is the job name.
+	Job string
+	// Schedule is the one-line schedule summary (expression, words, next
+	// fire) or the parse error.
+	Schedule string
 }
 
 // DispatchPreviewOption configures optional sizing inputs to NewDispatchPreview
@@ -106,6 +120,11 @@ func WithKind(kind string) DispatchPreviewOption {
 // configured).
 func WithAccount(account string) DispatchPreviewOption {
 	return func(o *dispatchPreviewOpts) { o.account = account }
+}
+
+// WithCron fills the job rows of a PreviewKindCron popup.
+func WithCron(c CronPreview) DispatchPreviewOption {
+	return func(o *dispatchPreviewOpts) { o.cron = c }
 }
 
 // WithClock injects the time source used for the click arming delay. Nil is
@@ -231,8 +250,10 @@ type DispatchPreviewModel struct {
 	renderedContent string // markdown/syntax-highlighted (or plain, for the placeholder) form
 
 	// kind selects the popup layout -- PreviewKindDispatch (default, zero
-	// value) or PreviewKindBash. See WithKind.
+	// value), PreviewKindBash or PreviewKindCron. See WithKind.
 	kind string
+	// cron holds the job rows for PreviewKindCron.
+	cron CronPreview
 
 	// now is the clock for the click arming delay (nil = time.Now);
 	// openedAt is when the popup was created; pressed is the target of the
@@ -272,6 +293,13 @@ type dpHintSeg struct {
 // resolveDispatchPreviewOpts's default.
 func (m DispatchPreviewModel) isBash() bool {
 	return m.kind == PreviewKindBash
+}
+
+// isCron reports whether this model previews an `agentctl cron` command
+// (PreviewKindCron): the job summary and prompt are in the viewport, the
+// job name and schedule in the metadata rows.
+func (m DispatchPreviewModel) isCron() bool {
+	return m.kind == PreviewKindCron
 }
 
 // NewDispatchPreview creates a DispatchPreviewModel.
@@ -349,6 +377,11 @@ func NewDispatchPreview(agentName, targetAgent string, issue int, prompt, prompt
 	vp.SetHeight(vpHeight)
 	vp.SetContent(renderedContent)
 
+	// A cron popup opens expanded: the job details (dir, harness, worktree,
+	// timeout) live in the viewport and are the point of the review.
+	// PopupSize already budgets for the expanded layout.
+	expanded := o.kind == PreviewKindCron
+
 	return DispatchPreviewModel{
 		agentName:       agentName,
 		targetAgent:     targetAgent,
@@ -363,6 +396,8 @@ func NewDispatchPreview(agentName, targetAgent string, issue int, prompt, prompt
 		rawContent:      rawContent,
 		renderedContent: renderedContent,
 		kind:            o.kind,
+		cron:            o.cron,
+		expanded:        expanded,
 		now:             o.now,
 		openedAt:        o.now(),
 	}
@@ -555,8 +590,11 @@ func (m DispatchPreviewModel) preToggle() string {
 	// dispatch preview, or "{agentName} wants to run a command" for a plain
 	// Bash preview (there is no target agent to name).
 	title := fmt.Sprintf("%s wants to dispatch %s", m.agentName, m.targetAgent)
-	if m.isBash() {
+	switch {
+	case m.isBash():
 		title = fmt.Sprintf("%s wants to run a command", m.agentName)
+	case m.isCron():
+		title = m.cronTitle()
 	}
 	b.WriteString(dpTitleStyle.Width(width).Render(title))
 	b.WriteString("\n\n")
@@ -577,8 +615,11 @@ func (m DispatchPreviewModel) toggleText() string {
 		toggleIcon = "▼"
 	}
 	toggleLabel := "View prompt"
-	if m.isBash() {
+	switch {
+	case m.isBash():
 		toggleLabel = "View command"
+	case m.isCron():
+		toggleLabel = "View job"
 	}
 	lineCount := strings.Count(m.rawContent, "\n") + 1
 	return dpToggleStyle.Render(toggleIcon+" "+toggleLabel) + " " +
@@ -649,6 +690,20 @@ func (m DispatchPreviewModel) metadataLines() []string {
 			dpLabelStyle.Render("Requested by") + dpSubtleStyle.Render(m.agentName),
 		}
 	}
+	if m.isCron() {
+		// Exactly three rows, like the dispatch layout, so PopupSize's
+		// line budget holds.
+		job := m.cron.Job
+		if job == "" {
+			job = "(unnamed)"
+		}
+		return []string{
+			dpLabelStyle.Render("Requested by") + dpSubtleStyle.Render(m.agentName),
+			dpLabelStyle.Render("Job") + dpSkyStyle.Render(job) + dpDimStyle.Render(" · agent ") +
+				dpTargetStyle.Render(m.targetAgent) + m.accountSuffix(),
+			dpLabelStyle.Render("Schedule") + dpBodyStyle.Render(m.cron.Schedule),
+		}
+	}
 
 	lines := []string{
 		dpLabelStyle.Render("Requested by") + dpSubtleStyle.Render(m.agentName),
@@ -668,6 +723,17 @@ func (m DispatchPreviewModel) metadataLines() []string {
 		lines = append(lines, dpLabelStyle.Render("Prompt")+dpDimStyle.Render(m.summaryLine()))
 	}
 	return lines
+}
+
+// cronTitle is the title line of a cron popup.
+func (m DispatchPreviewModel) cronTitle() string {
+	switch m.cron.Action {
+	case "resume":
+		return fmt.Sprintf("%s wants to resume cron job %s", m.agentName, m.cron.Job)
+	case "run --force":
+		return fmt.Sprintf("%s wants to force-run cron job %s", m.agentName, m.cron.Job)
+	}
+	return fmt.Sprintf("%s wants to schedule %s", m.agentName, m.targetAgent)
 }
 
 // accountSuffix renders the resolved account after the target agent, on the

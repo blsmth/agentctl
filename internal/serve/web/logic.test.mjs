@@ -92,6 +92,7 @@ assert.throws(() => buildApprovalRequest(ap, "yes"));
 assert.throws(() => buildApprovalRequest({ id: "a1" }, "allow"));
 assert.equal(approvalSummary(ap), "orch wants to dispatch go-engineer");
 assert.equal(approvalSummary({ kind: "bash", asking_agent: "w" }), "w wants to run a command");
+assert.equal(approvalSummary({ kind: "cron", asking_agent: "w", target_agent: "go-engineer" }), "w wants to schedule go-engineer");
 assert.equal(approvalBannerText(0), "");
 assert.equal(approvalBannerText(1), "1 approval waiting");
 assert.equal(approvalBannerText(3), "3 approvals waiting");
@@ -114,6 +115,9 @@ assert.equal(conf.confirmLabel, "Approve");
 assert.equal(conf.danger, false);
 assert.ok(conf.lines.includes("do it") && conf.lines.includes("agentctl dispatch -k k"));
 assert.equal(approvalConfirm({ ...ap, kind: "bash", prompt: "" }, "deny").danger, true);
+const cronConf = approvalConfirm({ ...ap, kind: "cron", prompt: "Job: nightly" }, "allow");
+assert.equal(cronConf.title, "Approve this schedule?");
+assert.ok(cronConf.lines[0].includes("scheduled agent: go-engineer") && cronConf.lines.includes("Job: nightly"));
 console.log("ok: approval helpers");
 
 // Resolved approval text.

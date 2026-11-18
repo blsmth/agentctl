@@ -7,7 +7,8 @@ import (
 )
 
 // TestPreviewKindConstants_MatchTUI pins the fact that internal/tui's
-// untyped string constants (PreviewKindDispatch / PreviewKindBash) stay in
+// untyped string constants (PreviewKindDispatch / PreviewKindBash /
+// PreviewKindCron) stay in
 // sync with internal/hooks.PreviewKind's constants of the same name. The two
 // packages can't share a single defined type -- tui.WithKind takes a plain
 // string precisely so tui doesn't have to import hooks -- so the only thing
@@ -20,5 +21,8 @@ func TestPreviewKindConstants_MatchTUI(t *testing.T) {
 	}
 	if string(PreviewKindBash) != tui.PreviewKindBash {
 		t.Errorf("PreviewKindBash = %q, tui.PreviewKindBash = %q, want equal", PreviewKindBash, tui.PreviewKindBash)
+	}
+	if string(PreviewKindCron) != tui.PreviewKindCron {
+		t.Errorf("PreviewKindCron = %q, tui.PreviewKindCron = %q, want equal", PreviewKindCron, tui.PreviewKindCron)
 	}
 }

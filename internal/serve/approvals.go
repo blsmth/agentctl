@@ -485,13 +485,16 @@ func (s *Server) pushApproval(p *pendingApproval) {
 	if asking == "" {
 		asking = "An agent"
 	}
+	target := p.req.TargetAgent
+	if target == "" {
+		target = "an agent"
+	}
 	body := asking + " wants to run a command"
-	if p.req.Kind == remoteapproval.KindDispatch {
-		target := p.req.TargetAgent
-		if target == "" {
-			target = "an agent"
-		}
+	switch p.req.Kind {
+	case remoteapproval.KindDispatch:
 		body = fmt.Sprintf("%s wants to dispatch %s", asking, target)
+	case remoteapproval.KindCron:
+		body = fmt.Sprintf("%s wants to schedule %s", asking, target)
 	}
 	ttl := int(p.deadline.Sub(p.opened).Seconds())
 	if ttl < 1 {

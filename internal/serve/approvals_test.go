@@ -452,6 +452,7 @@ func TestApprovalPush(t *testing.T) {
 	}{
 		{"dispatch", nil, remoteapproval.KindDispatch, true, "orch wants to dispatch go-engineer"},
 		{"bash", nil, remoteapproval.KindBash, true, "orch wants to run a command"},
+		{"cron", nil, remoteapproval.KindCron, true, "orch wants to schedule go-engineer"},
 		{"quiet hours ignored", func(o *Options) { o.Config.Push.QuietHours = "00:00-23:59" }, remoteapproval.KindDispatch, true, "orch wants to dispatch go-engineer"},
 		{"muted project", func(o *Options) { o.Config.Push.MutedProjects = []string{"proj"} }, remoteapproval.KindDispatch, false, ""},
 		{"approvals off", func(o *Options) { off := false; o.Config.Push.Approvals = &off }, remoteapproval.KindDispatch, false, ""},

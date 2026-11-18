@@ -40,6 +40,9 @@ const (
 const (
 	KindDispatch = "dispatch"
 	KindBash     = "bash"
+	// KindCron approves creating, resuming or force-running a scheduled job;
+	// TargetAgent is the job's agent and Prompt the job summary plus prompt.
+	KindCron = "cron"
 )
 
 // Decisions.
@@ -143,7 +146,7 @@ func (r Request) Validate() error {
 	switch {
 	case !ValidID(r.ID):
 		return errors.New("invalid approval id")
-	case r.Kind != KindDispatch && r.Kind != KindBash:
+	case r.Kind != KindDispatch && r.Kind != KindBash && r.Kind != KindCron:
 		return fmt.Errorf("invalid approval kind %q", r.Kind)
 	case r.Command == "":
 		return errors.New("empty command")

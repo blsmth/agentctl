@@ -24,11 +24,15 @@ import (
 // PreviewKindBash is a plain Bash command preview -- gated behind the
 // bash_preview config setting rather than always shown -- which renders just
 // the command itself, since the dispatch-specific metadata rows don't apply.
+// PreviewKindCron is an `agentctl cron add/resume/run --force` preview (see
+// cron_preview.go): job name and schedule rows, job details and prompt in
+// the viewport.
 type PreviewKind string
 
 const (
 	PreviewKindDispatch PreviewKind = "dispatch"
 	PreviewKindBash     PreviewKind = "bash"
+	PreviewKindCron     PreviewKind = "cron"
 )
 
 // DispatchPreviewArgs is the JSON structure written to the temp file passed to
@@ -47,6 +51,12 @@ type DispatchPreviewArgs struct {
 	// (the zero value) is treated as PreviewKindDispatch for backward
 	// compatibility with args files written before this field existed.
 	Kind PreviewKind `json:"kind,omitempty"`
+
+	// CronAction, CronJob and CronSchedule fill a PreviewKindCron popup's
+	// title and rows (see tui.CronPreview).
+	CronAction   string `json:"cron_action,omitempty"`
+	CronJob      string `json:"cron_job,omitempty"`
+	CronSchedule string `json:"cron_schedule,omitempty"`
 
 	// ContentWidth and VPHeight are the popup-sizing INPUTS resolved from the
 	// attached tmux client's dimensions by dispatchPreviewFit(), at the same
@@ -135,15 +145,32 @@ func isRedirection(tok string) bool {
 // segmentHasHelp reports whether a dispatch segment asks for help. Values of
 // value-taking flags and quoted words are never treated as help flags.
 func segmentHasHelp(seg []cmdToken) bool {
+	return segmentHasHelpFlags(seg, isDispatchValueFlag)
+}
+
+// isDispatchValueFlag reports whether tok is a dispatch flag whose value is
+// the next word.
+func isDispatchValueFlag(tok string) bool {
+	switch tok {
+	case "--agent", "-a", "--issue", "-i", "--prompt", "-p", "--prompt-key", "-k":
+		return true
+	}
+	return false
+}
+
+// segmentHasHelpFlags reports whether a segment asks for help, skipping the
+// value word of every flag valueFlag reports. Quoted words are never help
+// flags.
+func segmentHasHelpFlags(seg []cmdToken, valueFlag func(string) bool) bool {
 	for i := 0; i < len(seg); i++ {
 		t := seg[i]
 		if t.quoted {
 			continue
 		}
-		switch t.text {
-		case "--agent", "-a", "--issue", "-i", "--prompt", "-p", "--prompt-key", "-k":
+		switch {
+		case valueFlag(t.text):
 			i++ // skip the value
-		case "--help", "-h":
+		case t.text == "--help" || t.text == "-h":
 			return true
 		}
 	}

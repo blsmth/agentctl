@@ -45,7 +45,7 @@ func TestDenyEmitters_WriteExactlyOneDenialRecord(t *testing.T) {
 			name:    "denyBashPopup human refusal (plain command)",
 			command: "kubectl delete pod mypod",
 			emit: func(actx denyAuditContext) {
-				denyBashPopup("go-engineer", "kubectl delete pod mypod", false, actx)
+				denyBashPopup("go-engineer", "kubectl delete pod mypod", PreviewKindBash, actx)
 			},
 			wantDeniedBy: deniedByHuman,
 		},
@@ -53,7 +53,7 @@ func TestDenyEmitters_WriteExactlyOneDenialRecord(t *testing.T) {
 			name:    "denyBashPopup human refusal (dispatch)",
 			command: "agentctl dispatch --issue 1 --agent go-engineer",
 			emit: func(actx denyAuditContext) {
-				denyBashPopup("go-engineer", "agentctl dispatch --issue 1 --agent go-engineer", true, actx)
+				denyBashPopup("go-engineer", "agentctl dispatch --issue 1 --agent go-engineer", PreviewKindDispatch, actx)
 			},
 			wantDeniedBy: deniedByHuman,
 		},
@@ -152,7 +152,7 @@ func TestDenyEmitters_StillDenyWhenAuditAppendFails(t *testing.T) {
 		{
 			name: "denyBashPopup",
 			emit: func(actx denyAuditContext) {
-				denyBashPopup("go-engineer", "rm -rf /tmp/scratch", false, actx)
+				denyBashPopup("go-engineer", "rm -rf /tmp/scratch", PreviewKindBash, actx)
 			},
 		},
 	}
