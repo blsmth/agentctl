@@ -365,6 +365,10 @@ type FleetModel struct {
 
 	// scrollOffset is the list's vertical scroll position.
 	scrollOffset int
+	// wheelHold is set by a mouse-wheel scroll and stops ensureCursorVisible
+	// from snapping the viewport back to the cursor (notably on the reload
+	// tick). A key press or a selection change clears it.
+	wheelHold bool
 
 	// selSession/selWindowID/selIsHeader identify the selection by
 	// (session, windowID) — or by session alone when a header/placeholder
@@ -793,8 +797,14 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.validateNew()
 			m.refreshHover()
 			m.applyClosePending()
+			selBefore := [3]any{m.selSession, m.selWindowID, m.selIsHeader}
 			m.resolveSelection()
+			if selBefore != [3]any{m.selSession, m.selWindowID, m.selIsHeader} {
+				m.wheelHold = false // the selection moved: follow it
+				m.ensureCursorVisible()
+			}
 			m.applyPendingFocus()
+			m.clampScroll()
 		}
 		show := m.maybeShowCmd()
 		return m, tea.Batch(show, m.flushView())
@@ -805,6 +815,7 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseWheelMsg:
 		m.hideCard()
+		m.handleWheel(msg)
 		return m, nil
 
 	case fleetCardTickMsg:
@@ -819,6 +830,7 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		m.hideCard()
+		m.wheelHold = false
 		return m.handleKey(msg)
 	}
 	return m, nil
@@ -1118,6 +1130,7 @@ func (m *FleetModel) configureSplitPane() {
 		h = 3
 	}
 	m.splitPane.SetSize(m.contentWidth(), h)
+	m.clampScroll() // the list area may have grown
 }
 
 // ── Selection / navigation ───────────────────────────────────────────────────
@@ -1198,6 +1211,7 @@ func (m *FleetModel) moveCursor(delta int) {
 	// rather than waiting for the next View().
 	m.splitPane.SetListContent(m.splitPane.listContent, len(m.lines))
 	m.pendingFocus = nil
+	m.wheelHold = false
 	m.splitPane.SetCursor(m.nextSelectable(m.splitPane.Cursor(), delta))
 	m.syncSelectionFromCursor()
 	m.ensureCursorVisible()
@@ -1304,11 +1318,10 @@ func (m *FleetModel) visibleLines() int {
 }
 
 // ensureCursorVisible keeps the flat fallback's own scroll position
-// (scrollOffset) following the cursor. It's a no-op in split mode (which
-// uses SplitPane's own listScroll instead) but harmless to call
-// unconditionally.
+// (scrollOffset) following the cursor. It's a no-op while wheelHold is set
+// (the user wheel-scrolled; a key press or selection change clears it).
 func (m *FleetModel) ensureCursorVisible() {
-	if len(m.lines) == 0 {
+	if len(m.lines) == 0 || m.wheelHold {
 		return
 	}
 	defer func(before int) {
@@ -2564,6 +2577,7 @@ func (m FleetModel) syncFromViewer(msg fleetViewerMsg) FleetModel {
 	}
 	m.selSession, m.selWindowID, m.selIsHeader = msg.home, msg.window, false
 	m.liveShown = key
+	m.wheelHold = false // the selection changed: follow it
 	m.resolveSelection()
 	return m
 }
@@ -2628,4 +2642,67 @@ func dimContextRow(r fleet.Row, line string) string {
 		return fleetDimStyle.Render(plain)
 	}
 	return fleetProjectBar(r.Project) + fleetDimStyle.Render(rest)
+}
+
+// fleetWheelLines is how many lines one wheel notch scrolls the list.
+const fleetWheelLines = 3
+
+// maxScrollOffset is the largest scrollOffset that still fills the list area:
+// the first line from which everything to the end fits on screen (0 when the
+// whole list fits).
+func (m FleetModel) maxScrollOffset() int {
+	if len(m.lines) == 0 {
+		return 0
+	}
+	cw := m.contentWidth()
+	visible := m.visibleLines()
+	used := 0
+	i := len(m.lines)
+	for i > 0 {
+		h := m.lineHeight(i-1, cw)
+		if used+h > visible {
+			break
+		}
+		used += h
+		i--
+	}
+	return i
+}
+
+// clampScroll pulls scrollOffset back into range (the list may have shrunk).
+func (m *FleetModel) clampScroll() {
+	if mx := m.maxScrollOffset(); m.scrollOffset > mx {
+		m.scrollOffset = mx
+	}
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
+}
+
+// handleWheel scrolls the viewport (not the selection) by fleetWheelLines per
+// notch, clamped to the list. Ignored while the menu or key help is open, and
+// for events over the live pane column.
+func (m *FleetModel) handleWheel(msg tea.MouseWheelMsg) {
+	if m.menuOpen || !m.clickable() {
+		return
+	}
+	if m.liveLeft > 0 && msg.X >= m.liveLeft {
+		return
+	}
+	var delta int
+	switch msg.Button {
+	case tea.MouseWheelUp:
+		delta = -fleetWheelLines
+	case tea.MouseWheelDown:
+		delta = fleetWheelLines
+	default:
+		return
+	}
+	before := m.scrollOffset
+	m.scrollOffset += delta
+	m.clampScroll()
+	m.wheelHold = true
+	if m.scrollOffset != before {
+		m.refreshHover() // content moved under the pointer
+	}
 }
