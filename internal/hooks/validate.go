@@ -279,8 +279,11 @@ const serveTamperReason = "\U0001F6D1 BLOCKED: this touches agentctl serve's sta
 // bind its own control socket, or pair a device, could answer its own
 // approval popups. They deny: references to the serve state dir, its control
 // socket or pidfile; stopping or reinstalling the serve LaunchAgent or
-// systemd unit; killing agentctl processes; and the serve subcommands that
-// pair devices, restart or remove the server. This is a speed bump against
+// systemd unit (launchctl and the label in either order, across lines);
+// killing agentctl processes; and the serve subcommands that pair devices,
+// start, stop, restart or remove the server (`serve start|stop|toggle` are
+// for the human: the prefix+W binding and the hub's S key and indicator run
+// outside Claude Code and are unaffected). This is a speed bump against
 // accidents and naive attempts, not a sandbox: a program written to disk can
 // still do any of this. Ordinary commands that mention "serve" (go test
 // ./internal/serve/..., agentctl serve status|logs, npm run serve) pass;
@@ -290,11 +293,14 @@ var serveTamperPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`control\.sock\b`),
 	regexp.MustCompile(`\bserve\.pid\b`),
 	regexp.MustCompile(`(?:state/agentctl|XDG_STATE_HOME\}?/agentctl)/serve\b`),
-	regexp.MustCompile(`\blaunchctl\b[^\n]*agentctl\.serve\b`),
+	regexp.MustCompile(`(?s)\blaunchctl\b.*agentctl\.serve\b`),
+	regexp.MustCompile(`(?s)agentctl\.serve\b.*\blaunchctl\b`),
 	regexp.MustCompile(`\bsystemctl\b[^\n]*agentctl`),
 	regexp.MustCompile(`\b(?:pkill|killall)\b[^\n|;&]*agentctl`),
 	regexp.MustCompile(`\bkill\b[^\n]*\bagentctl\b[^\n]*\bserve\b`),
-	regexp.MustCompile(`\bagentctl\s+serve\s+(?:install|uninstall|pair|ca)\b`),
+	regexp.MustCompile(`\bagentctl\b["')]*\s+["']?serve["']?\s+["']?(?:install|uninstall|pair|ca|start|stop|toggle)\b`),
+	// The same from source (agents in this repo run the CLI with go run).
+	regexp.MustCompile(`\bgo\s+run\b[^\n;&|]*\s["']?serve["']?\s+["']?(?:install|uninstall|pair|ca|start|stop|toggle)\b`),
 }
 
 // serveStateDir is the resolved serve state dir, matched literally (absolute

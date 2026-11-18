@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -139,24 +140,64 @@ func (a Agent) Install(label string, plist []byte) (string, error) {
 		return "", fmt.Errorf("writing %s: %w", path, err)
 	}
 	// bootout fails when the job is not loaded; that is the normal case.
-	_, _ = a.Run("launchctl", "bootout", a.Domain()+"/"+label)
-	// bootout returns before the old job is fully gone, and bootstrapping
-	// over it fails with an I/O error, so retry briefly.
+	_ = a.Bootout(label)
+	return path, a.Bootstrap(label)
+}
+
+// Target is the launchctl service target, gui/<uid>/<label>.
+func (a Agent) Target(label string) string { return a.Domain() + "/" + label }
+
+// Bootstrap loads the installed plist for label into the gui domain. With
+// RunAtLoad that also starts the job. bootout returns before an old job is
+// fully gone, and bootstrapping over it fails with an I/O error, so it
+// retries briefly.
+func (a Agent) Bootstrap(label string) error {
+	path := PlistPath(a.Home, label)
 	var out []byte
 	var err error
 	for attempt := 0; attempt < 5; attempt++ {
 		if out, err = a.Run("launchctl", "bootstrap", a.Domain(), path); err == nil {
-			return path, nil
+			return nil
 		}
 		a.Sleep(500 * time.Millisecond)
 	}
-	return path, fmt.Errorf("launchctl bootstrap %s %s: %v: %s", a.Domain(), path, err, bytes.TrimSpace(out))
+	return fmt.Errorf("launchctl bootstrap %s %s: %v: %s", a.Domain(), path, err, bytes.TrimSpace(out))
+}
+
+// Bootout unloads the job, stopping it, and leaves the plist on disk, so
+// launchd loads it again at the next login. It fails when the job is not
+// loaded.
+func (a Agent) Bootout(label string) error {
+	if out, err := a.Run("launchctl", "bootout", a.Target(label)); err != nil {
+		return fmt.Errorf("launchctl bootout %s: %v: %s", a.Target(label), err, bytes.TrimSpace(out))
+	}
+	return nil
+}
+
+// Kickstart starts a loaded job; restart (-k) kills a running instance
+// first.
+func (a Agent) Kickstart(label string, restart bool) error {
+	args := []string{"kickstart"}
+	if restart {
+		args = append(args, "-k")
+	}
+	args = append(args, a.Target(label))
+	if out, err := a.Run("launchctl", args...); err != nil {
+		return fmt.Errorf("launchctl %s: %v: %s", strings.Join(args, " "), err, bytes.TrimSpace(out))
+	}
+	return nil
+}
+
+// Installed reports whether the plist for label exists.
+func (a Agent) Installed(label string) bool {
+	_, err := os.Stat(PlistPath(a.Home, label))
+	return err == nil
 }
 
 // Uninstall unloads the job and removes the plist. Missing pieces are fine.
 func (a Agent) Uninstall(label string) (string, error) {
 	path := PlistPath(a.Home, label)
-	_, _ = a.Run("launchctl", "bootout", a.Domain()+"/"+label)
+	_ = a.Bootout(label)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return path, fmt.Errorf("removing %s: %w", path, err)
 	}
@@ -166,6 +207,6 @@ func (a Agent) Uninstall(label string) (string, error) {
 // Loaded reports whether launchd has the job loaded (launchctl print
 // succeeds for it).
 func (a Agent) Loaded(label string) bool {
-	_, err := a.Run("launchctl", "print", a.Domain()+"/"+label)
+	_, err := a.Run("launchctl", "print", a.Target(label))
 	return err == nil
 }

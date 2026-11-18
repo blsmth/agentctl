@@ -21,12 +21,13 @@ import (
 	"github.com/blsmth/agentctl/internal/pidfile"
 	"github.com/blsmth/agentctl/internal/selfexec"
 	"github.com/blsmth/agentctl/internal/selfpath"
+	"github.com/blsmth/agentctl/internal/servectl"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // Files under the serve dir.
 const (
-	PIDFile = "serve.pid"
+	PIDFile = servectl.PIDFile
 	LogFile = "serve.log"
 )
 
@@ -35,13 +36,7 @@ const (
 const reloadEvery = 2 * time.Second
 
 // Dir returns the serve state dir, <StateDir>/serve.
-func Dir() (string, error) {
-	state, err := config.StateDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(state, "serve"), nil
-}
+func Dir() (string, error) { return servectl.Dir() }
 
 // EnsureDir creates dir 0700 (tightening an existing one).
 func EnsureDir(dir string) error {

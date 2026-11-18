@@ -1273,3 +1273,23 @@ func TestRestartMonitor(t *testing.T) {
 		})
 	}
 }
+
+// TestServeToggleBinding pins prefix+W: a background run-shell of
+// `agentctl serve toggle` that reports to the pressing client.
+func TestServeToggleBinding(t *testing.T) {
+	exe := "/usr/local/bin/agentctl"
+	for _, kb := range agentctlKeybindings(exe) {
+		if kb.key != "W" {
+			continue
+		}
+		if !strings.HasPrefix(kb.command, "run-shell -b ") {
+			t.Errorf("W = %q, want a background run-shell", kb.command)
+		}
+		want := []string{exe, "serve", "toggle", "--message-client", "#{client_name}"}
+		if got := agentctlArgv(t, kb.command); strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Errorf("W argv = %q, want %q", got, want)
+		}
+		return
+	}
+	t.Fatal("no prefix+W binding")
+}

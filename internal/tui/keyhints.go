@@ -31,6 +31,7 @@ var defaultStatusBarHints = []KeyHint{
 	{"Q", "quick-tkt"},
 	{"m", "agents"},
 	{"A", "agent"},
+	{"W", "serve"},
 	{"q", "quit"},
 	{"R", "restart"},
 	{"n/p", "switch"},

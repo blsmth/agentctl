@@ -1297,6 +1297,9 @@ type ServeCmd struct {
 	Run       ServeRunCmd       `cmd:"" default:"1" hidden:"" help:"Run the server in the foreground"`
 	Install   ServeInstallCmd   `cmd:"" help:"Install the launchd LaunchAgent (prints a systemd unit on Linux)"`
 	Uninstall ServeUninstallCmd `cmd:"" help:"Remove the launchd LaunchAgent"`
+	Start     ServeStartCmd     `cmd:"" help:"Start the installed LaunchAgent (prints the systemctl command on Linux)"`
+	Stop      ServeStopCmd      `cmd:"" help:"Stop the server until next login; the LaunchAgent stays installed"`
+	Toggle    ServeToggleCmd    `cmd:"" help:"Stop the server if it runs, else start it"`
 	Status    ServeStatusCmd    `cmd:"" help:"Show whether the server runs, its URL, devices, cert expiry and CA fingerprint"`
 	Logs      ServeLogsCmd      `cmd:"" help:"Print the tail of serve.log (or audit.jsonl with --audit); read-only"`
 	Pair      ServePairCmd      `cmd:"" help:"Open a 5-minute pairing window and print QR codes for a phone"`
@@ -1317,6 +1320,22 @@ func (c *ServeInstallCmd) Run() error { return cmd.RunServeInstall(os.Stdout) }
 type ServeUninstallCmd struct{}
 
 func (c *ServeUninstallCmd) Run() error { return cmd.RunServeUninstall(os.Stdout) }
+
+type ServeStartCmd struct{}
+
+func (c *ServeStartCmd) Run() error { return cmd.RunServeStart(os.Stdout) }
+
+type ServeStopCmd struct{}
+
+func (c *ServeStopCmd) Run() error { return cmd.RunServeStop(os.Stdout) }
+
+// ServeToggleCmd implements `agentctl serve toggle`. The prefix-key binding
+// passes --message-client so the result shows as a tmux message.
+type ServeToggleCmd struct {
+	MessageClient string `name:"message-client" hidden:"" help:"Also show the result as a tmux message on this client"`
+}
+
+func (c *ServeToggleCmd) Run() error { return cmd.RunServeToggle(os.Stdout, c.MessageClient) }
 
 type ServeStatusCmd struct{}
 
