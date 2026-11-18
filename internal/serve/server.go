@@ -131,6 +131,11 @@ type Server struct {
 	closeOnce sync.Once
 	cancel    context.CancelFunc
 	bgWG      sync.WaitGroup
+	// ctlMu guards ctlStopped; ctlWG counts control-socket approval
+	// handlers, which Close waits for so none outlives the server.
+	ctlMu      sync.Mutex
+	ctlStopped bool
+	ctlWG      sync.WaitGroup
 
 	bootMu    sync.Mutex
 	boot      *http.Server
@@ -414,6 +419,10 @@ func (s *Server) Close() {
 		}
 		s.term.close()
 		s.bgWG.Wait()
+		s.ctlMu.Lock()
+		s.ctlStopped = true
+		s.ctlMu.Unlock()
+		s.ctlWG.Wait()
 		s.holder.Stop()
 	})
 	s.bootMu.Lock()
