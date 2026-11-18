@@ -298,7 +298,9 @@ var serveTamperPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bsystemctl\b[^\n]*agentctl`),
 	regexp.MustCompile(`\b(?:pkill|killall)\b[^\n|;&]*agentctl`),
 	regexp.MustCompile(`\bkill\b[^\n]*\bagentctl\b[^\n]*\bserve\b`),
-	regexp.MustCompile(`\bagentctl\b["')]*\s+serve\s+(?:install|uninstall|pair|ca|start|stop|toggle)\b`),
+	regexp.MustCompile(`\bagentctl\b["')]*\s+["']?serve["']?\s+["']?(?:install|uninstall|pair|ca|start|stop|toggle)\b`),
+	// The same from source (agents in this repo run the CLI with go run).
+	regexp.MustCompile(`\bgo\s+run\b[^\n;&|]*\s["']?serve["']?\s+["']?(?:install|uninstall|pair|ca|start|stop|toggle)\b`),
 }
 
 // serveStateDir is the resolved serve state dir, matched literally (absolute

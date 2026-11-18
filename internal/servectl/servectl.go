@@ -82,22 +82,25 @@ func RunningPID(dir string) (int, bool) {
 	return pidfile.Running(dir, PIDFile, "serve")
 }
 
-// Probe classifies serve's state cheaply: a pidfile liveness check and, only
-// when that finds a process, one local socket connect (no request is sent;
-// the server answers the empty request with an error and closes). A missing
-// serve dir reads as off.
+// Probe classifies serve's state cheaply: one local socket connect (no
+// request is sent; the server answers the empty request with an error and
+// closes) and, only when that fails, the pidfile liveness check, which forks
+// ps. While serve is up that is a single connect with no fork. The socket
+// lives in the 0700 serve dir, so an accepting one is taken as serve; this
+// is a display hint, not the remote-approval Guard. A missing serve dir
+// reads as off.
 func Probe(dir string) State {
 	return probe(dir, RunningPID, dialControl)
 }
 
 func probe(dir string, running func(string) (int, bool), dial func(string) error) State {
-	if _, ok := running(dir); !ok {
-		return StateOff
+	if dial(dir) == nil {
+		return StateRunning
 	}
-	if dial(dir) != nil {
+	if _, ok := running(dir); ok {
 		return StateUnresponsive
 	}
-	return StateRunning
+	return StateOff
 }
 
 func dialControl(dir string) error {
@@ -270,7 +273,9 @@ func (c Controller) Stop() (string, error) {
 	}
 	_, alive := c.Running(c.Dir)
 	booted := false
-	if c.Agent.Installed(Label) && c.Agent.Loaded(Label) {
+	// Loaded alone: a job loaded with its plist deleted must still be booted
+	// out, or KeepAlive respawns whatever SIGTERM stops.
+	if c.Agent.Loaded(Label) {
 		if err := c.Agent.Bootout(Label); err != nil {
 			return "", fmt.Errorf("stopping agentctl serve: %w", err)
 		}

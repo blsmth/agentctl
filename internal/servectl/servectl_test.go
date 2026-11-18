@@ -201,6 +201,12 @@ func TestControllerStop(t *testing.T) {
 			wantTerminated: true,
 		},
 		{
+			name:      "loaded but plist deleted: still bootout",
+			f:         fakeServe{loaded: true, alive: true, answering: true, managed: true},
+			want:      "serve stopped (it starts again at login, or with agentctl serve start)",
+			wantCalls: []string{"print gui/501/" + Label, "bootout gui/501/" + Label},
+		},
+		{
 			name: "nothing running",
 			f:    fakeServe{installed: true},
 			want: "serve is not running",
@@ -300,19 +306,19 @@ func TestProbe(t *testing.T) {
 		dialErr error
 		want    State
 	}{
-		{"no process", false, nil, StateOff},
+		{"no process", false, errors.New("no socket"), StateOff},
 		{"alive and answering", true, nil, StateRunning},
 		{"alive, socket dead", true, errors.New("refused"), StateUnresponsive},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dialed := false
-			got := probe("/d", func(string) (int, bool) { return 1, tt.alive }, func(string) error { dialed = true; return tt.dialErr })
+			checked := false
+			got := probe("/d", func(string) (int, bool) { checked = true; return 1, tt.alive }, func(string) error { return tt.dialErr })
 			if got != tt.want {
 				t.Errorf("probe = %v, want %v", got, tt.want)
 			}
-			if !tt.alive && dialed {
-				t.Error("dialed the socket with no live process")
+			if tt.dialErr == nil && checked {
+				t.Error("ran the pidfile check (a ps fork) although the socket answered")
 			}
 		})
 	}
