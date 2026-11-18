@@ -37,6 +37,36 @@ func LoadAgents(session, runtimeDir string) ([]state.AgentState, error) {
 	return BuildAgents(wins, records, snap, time.Now()), nil
 }
 
+// loadAgentsAndShells is LoadAgents plus the session's "shell" windows,
+// from a single list-windows call. Only the hub wants the shells; every other
+// caller keeps using LoadAgents, which skips them.
+func loadAgentsAndShells(session, runtimeDir string) (agents, shells []state.AgentState, err error) {
+	wins, err := listWindowsFn(session)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listing windows: %w", err)
+	}
+	records := windowstate.AllFrom(windowstate.WindowsDirFor(runtimeDir))
+	var snap *state.Snapshot
+	if runtimeDir != "" {
+		snap, _ = state.LoadSnapshotFrom(runtimeDir + "/state.json")
+	}
+	return BuildAgents(wins, records, snap, time.Now()), ShellWindows(wins), nil
+}
+
+// ShellWindows returns one state per window named "shell", with the same
+// WindowIndex BuildAgents would assign. They carry no state, so they are
+// neutral rather than idle agents.
+func ShellWindows(wins []tmux.WindowInfo) []state.AgentState {
+	var out []state.AgentState
+	for i, w := range wins {
+		if w.ID == "" || tmux.StripAgentPrefix(w.Name) != "shell" {
+			continue
+		}
+		out = append(out, state.AgentState{Name: "shell", WindowID: w.ID, WindowIndex: i, WorkDir: w.Path})
+	}
+	return out
+}
+
 // BuildAgents is the pure core of LoadAgents. wins is tmux's window list for
 // the session in tmux order; records maps window ID to windowstate. tmux is
 // the source of truth for which windows exist: records without a window are

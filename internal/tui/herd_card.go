@@ -100,6 +100,9 @@ func (m HerdModel) handleCardTick(msg herdCardTickMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	r := m.lines[m.hover.line].row
+	if r.Shell {
+		return m, nil // nothing agent-specific to show
+	}
 	m.card = &herdCard{session: r.Session, windowID: r.WindowID}
 	if r.LogPath == "" {
 		return m, nil
