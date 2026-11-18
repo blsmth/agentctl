@@ -83,8 +83,13 @@ func RunWithIO(r io.Reader, w io.Writer, dryRun bool) {
 	// calling ResolveWindowID() twice.
 	windowID := signal.ResolveWindowID()
 
-	format := config.Load().EffectiveStatuslineFormat()
+	cfg := config.Load()
+	format := cfg.EffectiveStatuslineFormat()
 	rich := format == "rich"
+	// Same resolver persistRateLimits names ratelimits-<account>.json with,
+	// so the label and the 5h/7d numbers cannot disagree. Reuses cfg rather
+	// than loading config a second time.
+	payload.account = claudehome.CurrentAccountIn(cfg)
 	if !dryRun {
 		// The PR log scan rides the same windowstate write, and only runs
 		// when the rich format will render it.
@@ -175,6 +180,10 @@ func renderFull(p *Payload) string {
 		parts = append(parts, *p.Agent.Name)
 	}
 
+	if p.account != "" {
+		parts = append(parts, p.account)
+	}
+
 	if len(parts) == 0 {
 		return fallbackLine
 	}
@@ -209,6 +218,10 @@ func renderComplementary(p *Payload) string {
 		if cost, ok := coerceNonNegative(p.Cost.TotalCostUSD); ok {
 			parts = append(parts, fmt.Sprintf("$%.2f", cost))
 		}
+	}
+
+	if p.account != "" {
+		parts = append([]string{p.account}, parts...)
 	}
 
 	if len(parts) == 0 {
@@ -526,6 +539,15 @@ func renderRichLine1(p *Payload, cols int) (string, bool) {
 		return "", false
 	}
 
+	// The account leads the line (these numbers belong to it) but is dropped
+	// after every rate-limit segment except the floor, before the floor itself.
+	hasAcct := p.account != ""
+	if hasAcct {
+		acct := segment{text: render.ValueStyle().Render(p.account)}
+		acct.w = lipgloss.Width(acct.text)
+		segments = append([]segment{acct}, segments...)
+	}
+
 	const minKeep = 1
 	sepW := lipgloss.Width(sepStr)
 	for len(segments) > minKeep {
@@ -539,6 +561,11 @@ func renderRichLine1(p *Payload, cols int) (string, bool) {
 		if total <= cols {
 			break
 		}
+		if hasAcct && len(segments) == minKeep+1 {
+			segments = segments[1:]
+			hasAcct = false
+			continue
+		}
 		segments = segments[:len(segments)-1]
 	}
 
@@ -550,6 +577,12 @@ func renderRichLine1(p *Payload, cols int) (string, bool) {
 		sb.WriteString(s.text)
 	}
 	return sb.String(), true
+}
+
+// line1Rendered reports whether renderRichLine1 emits a line for p at all.
+func line1Rendered(p *Payload) bool {
+	_, ok := renderRichLine1(p, math.MaxInt32)
+	return ok
 }
 
 // renderRichLine2 renders the session metrics row: model, context%, used/
@@ -882,6 +915,13 @@ func renderRichLine3(p *Payload, cols int) (string, bool) {
 		return "", false
 	}
 	addSeg(valueStyle.Render(formatDir(dir)))
+
+	// 1b. Account, only when line 1 (rate limits) is not rendered, so it is
+	// always visible when accounts exist. Droppable like the segments after it
+	// but kept longer: it is trimmed last among the droppable ones.
+	if p.account != "" && !line1Rendered(p) {
+		addSeg(labelStyle.Render(p.account))
+	}
 
 	// 2. Branch (droppable).
 	if branch := gitBranch(dir); branch != "" {

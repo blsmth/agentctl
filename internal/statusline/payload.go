@@ -33,6 +33,10 @@ import (
 // deliberately not used. The payload gains fields on every Claude Code
 // release; a strict decoder would break on each one.
 type Payload struct {
+	// account is the Claude account of this process (claudehome), resolved
+	// by RunWithIO, never decoded from JSON. "" renders nothing.
+	account string
+
 	SessionID      *string `json:"session_id"`
 	SessionName    *string `json:"session_name"`
 	TranscriptPath *string `json:"transcript_path"`
