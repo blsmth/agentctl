@@ -218,6 +218,31 @@ func (m *FleetModel) toggleFocusMode() tea.Cmd {
 	return m.saveViewCmd()
 }
 
+// sortRecentKey is the persisted spelling of the recent-activity row order.
+const sortRecentKey = "recent"
+
+// sortKey is the persisted spelling of the row order ("" = window order).
+func sortKey(recent bool) string {
+	if recent {
+		return sortRecentKey
+	}
+	return ""
+}
+
+// toggleSort is `o`: switch rows within each group between window order and
+// most-recent-activity-first. The selection follows its window ID.
+func (m *FleetModel) toggleSort() tea.Cmd {
+	m.sortRecent = !m.sortRecent
+	m.jumpErr = ""
+	if m.sortRecent {
+		m.setSuccess("sort: recent activity")
+	} else {
+		m.setSuccess("sort: window order")
+	}
+	m.relayout()
+	return m.saveViewCmd()
+}
+
 // cycleFilter is `f`: all → active → needs you → all.
 func (m *FleetModel) cycleFilter() tea.Cmd {
 	m.filter = m.filter.next()
@@ -280,6 +305,8 @@ type hubViewState struct {
 	Folded []string `json:"folded,omitempty"`
 	Focus  bool     `json:"focus,omitempty"`
 	Filter string   `json:"filter,omitempty"`
+	// Sort is the in-group row order: "recent" or "" for window order.
+	Sort string `json:"sort,omitempty"`
 }
 
 // HubViewEnv carries the hub's fold set, focus mode and filter (JSON, see
@@ -316,7 +343,7 @@ func (m FleetModel) viewState() hubViewState {
 		}
 	}
 	slices.Sort(folded)
-	return hubViewState{Folded: folded, Focus: m.focusMode, Filter: m.filter.key()}
+	return hubViewState{Folded: folded, Focus: m.focusMode, Filter: m.filter.key(), Sort: sortKey(m.sortRecent)}
 }
 
 // applyViewState replaces the model's fold set, focus mode and filter.
@@ -329,6 +356,7 @@ func (m *FleetModel) applyViewState(s hubViewState) {
 	}
 	m.focusMode = s.Focus
 	m.filter = parseFleetFilter(s.Filter)
+	m.sortRecent = s.Sort == sortRecentKey
 }
 
 // parseHubView decodes a hubViewState; ok is false for anything that is not

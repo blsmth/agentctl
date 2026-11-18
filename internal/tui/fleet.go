@@ -476,8 +476,10 @@ type FleetModel struct {
 	// persisted).
 	folded    map[string]bool
 	focusMode bool
-	filter    fleetFilter
-	viewPath  string
+	// sortRecent orders rows inside each group by latest activity (`o`).
+	sortRecent bool
+	filter     fleetFilter
+	viewPath   string
 	// orderPath is the saved group order (see fleet_order.go); "" persists
 	// nothing. drag is a pending or active header drag.
 	orderPath string
@@ -975,6 +977,9 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 
 	case "f":
 		return *m, m.cycleFilter()
+
+	case "o":
+		return *m, m.toggleSort()
 
 	case fleetServeKey:
 		return *m, m.toggleServe()
@@ -1486,7 +1491,11 @@ func (m *FleetModel) rebuildLines() {
 	for i, g := range m.groups {
 		rows, context := g.Rows, map[string]bool(nil)
 		if !m.isFolded(g.Session) {
-			rows, context = filterRows(g.Rows, m.filter)
+			src := g.Rows
+			if m.sortRecent {
+				src = fleet.SortRowsRecent(g.Rows)
+			}
+			rows, context = filterRows(src, m.filter)
 		}
 		body := !m.isFolded(g.Session) && (len(rows) > 0 || (len(g.Rows) == 0 && m.filter == fleetFilterAll))
 		if i > 0 && (body || prevBody) {
@@ -1588,6 +1597,9 @@ func (m FleetModel) renderTitle(cw int) string {
 	title := strings.Repeat(" ", fleetSidebarLeftInset) + fleetTitleStyle.Render("agentctl hub")
 	if badge := m.serveBadge(); badge != "" {
 		title += fleetServeGap + badge // serveBadgeSpan mirrors this layout
+	}
+	if m.sortRecent {
+		title += fleetCountStyle.Render(" ↻ recent")
 	}
 	left, shortLeft := title, title
 	if m.filter != fleetFilterAll {
