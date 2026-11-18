@@ -74,12 +74,23 @@ const orchWatchSection = "### Watch\n" +
 	"- Use these instead of `tmux capture-pane`, `tmux list-windows` or reading `.agentctl/windows/*.json`; output is plain text when piped\n"
 
 const orchWaitMessagingSection = "### Wait\n" +
-	"- Do not poll. Workers report back with SendMessage when done, and agentctl adds an `agentctl notice:` line when a worker goes idle or blocks\n" +
-	"- CI: `gh pr checks <N> --watch --interval 20`; exit code 8 means checks are pending, not failed\n"
+	"- Never `sleep` or loop-and-poll. Workers report with SendMessage and agentctl adds `agentctl notice:` lines when a worker goes idle or blocks; end your turn and let them arrive. `SendMessage` with `notify_when_idle: true` gives a one-shot idle notice for one session\n" +
+	"- CI or any single long command: run it as a background Bash command (`run_in_background`), e.g. `gh pr checks <N> --watch --interval 20`, and act on its exit notice; exit code 8 means checks are pending, not failed\n" +
+	"- A condition with output worth streaming: the Monitor tool (default deadline 5m, max 30m; re-arm if still needed)\n" +
+	"- Check back later or repeatedly: `CronCreate` (one-shot or recurring cron expression; `CronList`/`CronDelete`) or `/loop <interval> <prompt>`. Session-scoped: fires only between turns while this session lives, recurring jobs expire after 7 days, 1-minute minimum. Delete the job once the thing you waited for happens\n" +
+	"- Anything that must outlive the session: `agentctl cron`, not Claude Code cron\n"
 
 const orchWaitNoMessagingSection = "### Wait\n" +
 	"- Do not poll. agentctl tells you when a worker finishes or blocks (`agentctl notice:` lines)\n" +
-	"- CI: `gh pr checks <N> --watch --interval 20`; exit code 8 means checks are pending, not failed\n"
+	"- CI: `gh pr checks <N> --watch --interval 20` as a single command that returns when checks finish; exit code 8 means checks are pending, not failed\n"
+
+// workerWaitSection is the Wait group for workers on harnesses with Claude
+// Code's tools (messaging true). It is not part of the shared sections: the
+// no-messaging preamble must not name tools that do not exist there.
+const workerWaitSection = "### Wait\n" +
+	"- Never `sleep` or loop-and-poll\n" +
+	"- A long command (CI, slow build): run it as a background Bash command (`run_in_background`) and act on its exit notice\n" +
+	"- To check back later: `CronCreate` (`CronList`/`CronDelete`), and delete the job once done"
 
 // orchReviewSection routes every PR through a reviewer (dispatch
 // --review-pr). Messaging harnesses only: the reviewer reports its verdict
@@ -124,7 +135,7 @@ var orchestratorDelegationSection = orchestratorSections(true)
 // kicking off further dispatches.
 const WorkerPreamble = "## agentctl Runtime Environment\n\n" +
 	"You are running inside an agentctl-managed tmux session. The following tools are available:\n\n" +
-	sharedRuntimeSections
+	sharedRuntimeSections + "\n\n" + workerWaitSection
 
 // OrchestratorPreamble is the system-prompt section injected into
 // orchestrator-role sessions (mode `bare`, i.e. the human-facing lead
