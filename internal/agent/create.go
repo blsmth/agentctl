@@ -22,7 +22,7 @@ type CreateOpts struct {
 
 // Exists checks if an agent with the given name already exists.
 func Exists(name string) bool {
-	path := filepath.Join(RegistryDir, name+".md")
+	path := filepath.Join(registryDir(), name+".md")
 	_, err := os.Stat(path)
 	return err == nil
 }
@@ -38,7 +38,7 @@ func Create(opts CreateOpts) error {
 
 	// Build the .md file content
 	content := buildAgentFile(opts)
-	path := filepath.Join(RegistryDir, opts.Name+".md")
+	path := filepath.Join(registryDir(), opts.Name+".md")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing agent file: %w", err)
 	}

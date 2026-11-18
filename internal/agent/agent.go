@@ -78,15 +78,34 @@ type Frontmatter struct {
 // frontmatter is an alias kept for internal use.
 type frontmatter = Frontmatter
 
-// RegistryDir is the default directory containing agent .md files.
-var RegistryDir = paths.ExpandHome("~/.claude/agents")
+// RegistryDir overrides the directory containing global agent .md files.
+// Empty (the default) means ~/.claude/agents for the current HOME, resolved
+// on each use rather than at package init, so a HOME set before use (by
+// TestMain, say) is honored. Tests point it at a temp dir.
+var RegistryDir string
 
-// SharedDir is the directory containing files referenced by @shared/foo.md
-// include directives in agent bodies. It is a sibling of RegistryDir
-// (~/.claude/shared), NOT a "shared" subdirectory of it -- ExpandSharedRefs
-// joins against this. Kept as a var (not a const)
-// so tests can point it at a temp dir.
-var SharedDir = paths.ExpandHome("~/.claude/shared")
+// SharedDir overrides the directory containing files referenced by
+// @shared/foo.md include directives in agent bodies. Empty (the default)
+// means ~/.claude/shared, a sibling of the registry dir, NOT a "shared"
+// subdirectory of it -- ExpandSharedRefs joins against this. Resolved on each
+// use like RegistryDir.
+var SharedDir string
+
+// registryDir returns RegistryDir, or ~/.claude/agents when it is unset.
+func registryDir() string {
+	if RegistryDir != "" {
+		return RegistryDir
+	}
+	return paths.ExpandHome("~/.claude/agents")
+}
+
+// sharedDir returns SharedDir, or ~/.claude/shared when it is unset.
+func sharedDir() string {
+	if SharedDir != "" {
+		return SharedDir
+	}
+	return paths.ExpandHome("~/.claude/shared")
+}
 
 // SharedDirIn returns the shared-include directory (~/.claude/shared) for the
 // given home. SharedDir is the same path for the current user.
@@ -131,7 +150,7 @@ func DiscoverFromCwd(cfg *config.Config) ([]Agent, error) {
 // agents with the same name.
 func DiscoverAll(cfg *config.Config, projectDirs []string) ([]Agent, error) {
 	// Phase 1: scan global registry.
-	globalAgents, err := scanDir(RegistryDir, ScopeGlobal, cfg)
+	globalAgents, err := scanDir(registryDir(), ScopeGlobal, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("reading registry dir: %w", err)
 	}
@@ -310,7 +329,7 @@ func resolveExtends(agents []Agent, cfg *config.Config) []Agent {
 		if base == nil {
 			// The base agent wasn't found among discovered agents. Check if the
 			// registry path for the base name is a regular file (not a symlink).
-			basePath := filepath.Join(RegistryDir, ag.Extends+".md")
+			basePath := filepath.Join(registryDir(), ag.Extends+".md")
 			fi, err := os.Lstat(basePath)
 			if err != nil || fi.Mode()&os.ModeSymlink != 0 {
 				logging.Log("agent.Discover: extends=%q for agent %q not resolvable (symlink or missing)", ag.Extends, ag.Name)

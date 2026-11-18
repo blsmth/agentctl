@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/blsmth/agentctl/internal/testenv"
 )
 
 func settingsFilePath(t *testing.T, home string) string {
@@ -318,9 +320,12 @@ func TestInstall_PreservesHooksBlock(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	cleanup := testenv.Setup()
 	// The test binary lives in a temp dir, which the real resolver refuses.
 	persistedPrefixFn = func() (string, error) { return "agentctl", nil }
-	os.Exit(m.Run())
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }
 
 func TestInstall_UsesPersistedPrefix(t *testing.T) {

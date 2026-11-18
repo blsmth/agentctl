@@ -33,7 +33,7 @@ func ParseSharedRefs(body string) []string {
 // (~/.claude/shared), so that prefix must be stripped before joining --
 // joining it unstripped would look for ~/.claude/shared/shared/foo.md.
 func sharedFilePath(ref string) string {
-	return filepath.Join(SharedDir, strings.TrimPrefix(ref, "shared/"))
+	return filepath.Join(sharedDir(), strings.TrimPrefix(ref, "shared/"))
 }
 
 // maxSharedRefDepth bounds how many levels of @shared/... nesting

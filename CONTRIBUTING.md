@@ -19,6 +19,8 @@ golangci-lint run          # config in .golangci.yml
 
 Tests that need a real tmux server or network resources are skipped unless the environment provides them. Bug fixes need a regression test that fails before the fix and passes after.
 
+Every package with tests has a `TestMain` that calls `testenv.Main(m)` (or `testenv.Setup()` first, when the `TestMain` does more). It unsets the inherited `AGENTCTL_*`, `CLAUDE*`, `ANTHROPIC_*`, `TMUX` and `TMUX_PANE` variables and points `HOME`, the XDG dirs and `TMUX_TMPDIR` at a temp dir, so tests run from inside an agentctl pane cannot touch your live runtime dir, Claude config or tmux server. A guard test in `internal/testenv` fails if a new package skips it. Resolve home-derived paths lazily, not in package-level `var` initializers, which run before `TestMain`.
+
 ## Pull requests
 
 - Branch from `main`; never commit directly to it.

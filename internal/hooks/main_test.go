@@ -6,12 +6,14 @@ import (
 
 	"github.com/blsmth/agentctl/internal/notify"
 	"github.com/blsmth/agentctl/internal/remoteapproval"
+	"github.com/blsmth/agentctl/internal/testenv"
 	"github.com/blsmth/agentctl/internal/winname"
 )
 
 // TestMain keeps tests that reach beginApproval (via the popup gates) from
 // firing real desktop notifications or resolving the developer's real window.
 func TestMain(m *testing.M) {
+	cleanup := testenv.Setup()
 	deps.Notify = func(notify.Options) {}
 	approvalWindowID = func() string { return "" }
 	approvalSessionName = func() string { return "agentctl-test" }
@@ -35,5 +37,7 @@ func TestMain(m *testing.M) {
 	openRemote = func(remoteapproval.Request) (*remoteapproval.Approval, error) {
 		return nil, remoteapproval.ErrNotRunning
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }

@@ -412,3 +412,24 @@ func TestDiscover_Extends(t *testing.T) {
 		t.Errorf("ComposedBody missing local body; got: %q", local.ComposedBody)
 	}
 }
+
+// TestDefaultDirsFollowHome guards against resolving the default dirs at
+// package init, which runs before TestMain isolates HOME and so pointed tests
+// at the real ~/.claude.
+func TestDefaultDirsFollowHome(t *testing.T) {
+	setRegistryDir(t, "")
+	setSharedDir(t, "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if got, want := registryDir(), filepath.Join(home, ".claude", "agents"); got != want {
+		t.Errorf("registryDir() = %q, want %q", got, want)
+	}
+	if got, want := sharedDir(), SharedDirIn(home); got != want {
+		t.Errorf("sharedDir() = %q, want %q", got, want)
+	}
+	override := t.TempDir()
+	setRegistryDir(t, override)
+	if got := registryDir(); got != override {
+		t.Errorf("registryDir() with override = %q, want %q", got, override)
+	}
+}
