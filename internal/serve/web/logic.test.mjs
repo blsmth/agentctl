@@ -8,6 +8,7 @@ import {
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   actionsWithQueue, buildQueueRequest, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine,
+  bucketLabel, rowTags, rowTitle, treeRows,
 } from "./logic.js";
 
 const fixtures = JSON.parse(readFileSync(new URL("./logic.fixtures.json", import.meta.url), "utf8"));
@@ -196,9 +197,10 @@ console.log("ok: resolved text");
     pr_url: "https://github.com/o/r/pull/8", context_pct: 41.6, window_id: "@12", mode: "dispatch",
     detail: { cost_usd: 1.84, model: "claude-opus-4-1" },
   }, safeHttpsUrl);
-  assert.deepEqual(chips.map((c) => c.text), ["PR #8", "42% ctx", "$1.84", "opus-4-1", "@12 · dispatch"]);
+  assert.deepEqual(chips.map((c) => c.text), ["PR #8", "42% ctx", "$1.84", "opus-4-1", "@12 · task"]);
   assert.equal(chips[0].href, "https://github.com/o/r/pull/8");
   assert.deepEqual(headerChips({ pr_url: "javascript:alert(1)", pr_number: 3, window_id: "@1" }, safeHttpsUrl).map((c) => c.text), ["@1"]);
+  assert.deepEqual(headerChips({ window_id: "@2", mode: "bare" }, safeHttpsUrl).map((c) => c.text), ["@2"]);
   assert.deepEqual(headerChips({ pr_url: "https://x.test/p", pr_number: 3 }, safeHttpsUrl).map((c) => c.text), ["PR #3"]);
 
   const t0 = Date.parse("2026-11-17T10:00:00Z");
@@ -228,4 +230,18 @@ console.log("ok: resolved text");
   assert.equal(actionsWithQueue({ state: "blocked" }, { verdict: "awaiting_input", dialog }, true), "answer");
   assert.deepEqual(buildQueueRequest("s", "@1", "hi"), { method: "POST", path: "/v1/sessions/s/windows/%401/queue", body: { text: "hi" } });
   console.log("ok: window view helpers");
+}
+
+{
+  assert.equal(rowTitle({ agent: "go-engineer" }), "go-engineer");
+  assert.equal(rowTitle({ agent: "" }), "Claude");
+  assert.deepEqual(rowTags({}), []);
+  assert.deepEqual(rowTags({ issue: 42 }), ["#42"]);
+  assert.deepEqual(rowTags({ issue: 42, pr_number: 99, pr_url: "https://github.com/o/r/pull/7" }), ["#42", "PR #99"]);
+  assert.deepEqual(rowTags({ pr_url: "https://github.com/o/r/pull/7" }), ["PR #7"]);
+  assert.deepEqual(rowTags({ pr_url: "https://example.com/x" }), ["PR"]);
+  assert.equal(bucketLabel(2), "Tasks from other sessions (2)");
+  const bucket = treeRows([{ window_id: "@1", mode: "dispatch", parent: "@9" }]).find((e) => e.bucket);
+  assert.equal(bucket.count, 1);
+  console.log("ok: fleet row labels");
 }

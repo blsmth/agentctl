@@ -135,7 +135,7 @@ test("header: state pill, project and branch, task line and chips", async ({ pag
   await expect(page.locator(".state-pill")).toHaveText(/^working for \d+m$/);
   await expect(page.locator(".win-where")).toHaveText("shop · agent/test-writer/issue-9");
   await expect(page.locator(".win-task")).toHaveText("Cover the cart service");
-  await expect(page.locator(".chips .chip")).toHaveText(["9% ctx", "$0.98", "sonnet-4-5", "@13 · dispatch"]);
+  await expect(page.locator(".chips .chip")).toHaveText(["9% ctx", "$0.98", "sonnet-4-5", "@13 · task"]);
   // No header Live terminal button: Live is the third pane segment.
   await expect(page.locator("header.bar .btn")).toHaveCount(0);
   await expect(page.locator(".segmented .seg")).toHaveText(["Reflow", "Exact", "Live"]);

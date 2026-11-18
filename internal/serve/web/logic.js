@@ -53,6 +53,33 @@ export function isDispatched(win) {
   return Boolean(win.mode) && win.mode !== "bare";
 }
 
+/** rowTitle names a fleet row: the agent, or "Claude" for a session started without one. */
+export function rowTitle(win) {
+  return win.agent || "Claude";
+}
+
+/**
+ * rowTags are the identifiers worth showing on a fleet row: the issue being
+ * worked and the PR it produced. Window IDs, launch modes and generated branch
+ * names are internal and stay in the detail view.
+ */
+export function rowTags(win) {
+  const tags = [];
+  if (win.issue > 0) tags.push(`#${win.issue}`);
+  const pr = win.pr_number > 0 ? win.pr_number : Number(/\/pull\/(\d+)/.exec(win.pr_url ?? "")?.[1] ?? 0);
+  if (pr > 0) tags.push(`PR #${pr}`);
+  else if (win.pr_url) tags.push("PR");
+  return tags;
+}
+
+/**
+ * bucketLabel heads the tasks whose starting session is not in this group:
+ * it was closed, or lives in another project.
+ */
+export function bucketLabel(count) {
+  return `Tasks from other sessions (${count})`;
+}
+
 /**
  * treeLines describes the connector lines for a tree entry as data: `through`
  * has one boolean per ancestor level (true = that ancestor has later siblings,
@@ -121,7 +148,8 @@ export function treeRows(windows) {
   if (lastTop < 0) return out.slice(0, head);
   out[lastTop].last = true;
   for (let j = lastTop + 1; j < out.length; j++) out[j].ancestorsLast[0] = true;
-  out[head].label = `dispatched (${out.length - head - 1})`;
+  out[head].count = out.length - head - 1;
+  out[head].label = `dispatched (${out[head].count})`;
   return out;
 }
 
@@ -403,7 +431,7 @@ export function headerChips(win, safeUrl) {
   if (cost) chips.push({ kind: "cost", text: cost });
   const model = shortModel(win.detail?.model);
   if (model) chips.push({ kind: "model", text: model });
-  const id = [win.window_id, win.mode].filter(Boolean).join(" · ");
+  const id = [win.window_id, isDispatched(win) ? "task" : ""].filter(Boolean).join(" · ");
   if (id) chips.push({ kind: "id", text: id });
   return chips;
 }
