@@ -1,5 +1,5 @@
 // Window detail: header, pane (reflowed or exact), state-aware actions.
-import { ApiError, get, send } from "./api.js";
+import { ApiError, get, send, uploadImages } from "./api.js";
 import { approvalCard, tickCountdowns } from "./approvals.js";
 import {
   INTERRUPT_FOLLOWUP_MS,
@@ -8,6 +8,8 @@ import {
   buildAnswerRequest,
   buildQueueRequest,
   buildReplyRequest,
+  buildUploadPath,
+  checkAttachment,
   dialogQuestion,
   effectiveState,
   exactRows,
@@ -240,6 +242,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
   const base = windowApiPath(session, windowId);
   const canWrite = ctx.hasFeature("write");
   const canQueue = canWrite && ctx.hasFeature("queue");
+  const canUpload = canWrite && ctx.hasFeature("upload");
   let win = null;
   let pane = null;
   let lastText = null;
@@ -393,7 +396,8 @@ export function mountWindow(root, ctx, { session, windowId }) {
     if (!(await confirmSheet(confirm))) return false;
     let ok = false;
     try {
-      await send(req);
+      // req may be a function, for requests that first upload attachments.
+      await send(typeof req === "function" ? await req() : req);
       ok = true;
       toast("Sent");
       onOk?.();
@@ -443,17 +447,99 @@ export function mountWindow(root, ctx, { session, windowId }) {
     );
   }
 
+  // attachments is the composer's image picker: an attach button and
+  // thumbnails with remove buttons. Previews are data: URLs (the CSP allows
+  // no blob: images). null when the server cannot take uploads.
+  function attachments() {
+    if (!canUpload) return null;
+    let files = [];
+    const thumbs = h("div", { class: "thumbs", hidden: true });
+    const input = h("input", {
+      type: "file",
+      accept: "image/*",
+      multiple: "",
+      class: "file-input",
+      hidden: true,
+      onchange: () => {
+        for (const f of input.files) {
+          const why = checkAttachment(f, files.length);
+          if (why) {
+            toast(why, "error");
+            continue;
+          }
+          files.push(f);
+        }
+        input.value = "";
+        draw();
+      },
+    });
+    function draw() {
+      clear(thumbs);
+      thumbs.hidden = files.length === 0;
+      for (const f of files) {
+        const img = h("img", { alt: "Attached image" });
+        const reader = new FileReader();
+        reader.onload = () => {
+          img.src = reader.result;
+        };
+        reader.readAsDataURL(f);
+        thumbs.append(
+          h(
+            "div",
+            { class: "thumb" },
+            img,
+            h(
+              "button",
+              {
+                class: "thumb-remove",
+                "aria-label": "Remove image",
+                onclick: () => {
+                  files = files.filter((x) => x !== f);
+                  draw();
+                },
+              },
+              "×",
+            ),
+          ),
+        );
+      }
+    }
+    const button = h("button", { class: "btn small attach", onclick: () => input.click() }, "Attach image");
+    return {
+      controls: [thumbs, h("div", { class: "row" }, button, input)],
+      count: () => files.length,
+      // upload stores the files and returns their IDs.
+      upload: () => (files.length ? uploadImages(buildUploadPath(session, windowId), files) : Promise.resolve([])),
+      clear: () => {
+        files = [];
+        draw();
+      },
+    };
+  }
+
+  function imageLine(n) {
+    return n ? [`+ ${n} image${n === 1 ? "" : "s"}`] : [];
+  }
+
   function replyBox() {
     const text = h("textarea", { rows: "2", placeholder: "Reply to the agent…", maxlength: "4000" });
+    const att = attachments();
     return [
       text,
+      ...(att ? att.controls : []),
       h(
         "button",
         {
           class: "btn primary",
           onclick: () => {
             const value = text.value.trim();
-            if (value) run({ title: "Send reply?", lines: [value], confirmLabel: "Send" }, buildReplyRequest(session, windowId, value));
+            const n = att ? att.count() : 0;
+            if (!value && !n) return;
+            run(
+              { title: "Send reply?", lines: [...(value ? [value] : []), ...imageLine(n)], confirmLabel: "Send" },
+              async () => buildReplyRequest(session, windowId, value, att ? await att.upload() : []),
+              () => att?.clear(),
+            );
           },
         },
         "Reply",
@@ -503,8 +589,10 @@ export function mountWindow(root, ctx, { session, windowId }) {
         text.style.height = `${text.scrollHeight + 2}px`;
       },
     });
+    const att = attachments();
     return [
       text,
+      ...(att ? att.controls : []),
       h(
         "div",
         { class: "row" },
@@ -514,13 +602,15 @@ export function mountWindow(root, ctx, { session, windowId }) {
             class: "btn",
             onclick: () => {
               const value = text.value.trim();
-              if (!value) return;
+              const n = att ? att.count() : 0;
+              if (!value && !n) return;
               run(
-                { title: "Queue message?", lines: [value, "Delivered after the current step."], confirmLabel: "Queue" },
-                buildQueueRequest(session, windowId, value),
+                { title: "Queue message?", lines: [...(value ? [value] : []), ...imageLine(n), "Delivered after the current step."], confirmLabel: "Queue" },
+                async () => buildQueueRequest(session, windowId, value, att ? await att.upload() : []),
                 () => {
                   text.value = "";
                   text.style.height = "";
+                  att?.clear();
                 },
               );
             },

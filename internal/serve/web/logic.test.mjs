@@ -8,7 +8,7 @@ import {
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines,
-  actionsWithQueue, buildQueueRequest, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
+  actionsWithQueue, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine,
 } from "./logic.js";
 
@@ -316,5 +316,14 @@ console.log("ok: resolved text");
   assert.equal(actionsWithQueue({ state: "idle" }, { verdict: "idle" }, true), "reply");
   assert.equal(actionsWithQueue({ state: "blocked" }, { verdict: "awaiting_input", dialog }, true), "answer");
   assert.deepEqual(buildQueueRequest("s", "@1", "hi"), { method: "POST", path: "/v1/sessions/s/windows/%401/queue", body: { text: "hi" } });
+  assert.deepEqual(buildQueueRequest("s", "@1", "hi", ["a.png"]).body, { text: "hi", images: ["a.png"] });
+  assert.deepEqual(buildReplyRequest("s", "@1", "hi", []).body, { text: "hi" });
+  assert.deepEqual(buildReplyRequest("s", "@1", "", ["a.png"]).body, { text: "", images: ["a.png"] });
+  assert.equal(buildUploadPath("s", "@1"), "/v1/sessions/s/windows/%401/upload");
+  const png = { name: "a.png", type: "image/png", size: 1000 };
+  assert.equal(checkAttachment(png, 0), "");
+  assert.match(checkAttachment(png, MAX_IMAGES), /At most/);
+  assert.match(checkAttachment({ ...png, type: "image/heic" }, 0), /not a png/);
+  assert.match(checkAttachment({ ...png, size: 11 * 1024 * 1024 }, 0), /larger than 10 MB/);
   console.log("ok: window view helpers");
 }

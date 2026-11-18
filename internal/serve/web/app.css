@@ -223,3 +223,10 @@ body.term-open nav { display: none; }
 .swipe:not(.swiping) > .swipe-action { visibility: hidden; }
 .swipe-gone { display: none; }
 @media (prefers-reduced-motion: reduce) { .swipe > .node { transition: none !important; } }
+
+.thumbs { display: flex; flex-wrap: wrap; gap: .5rem; }
+.thumb { position: relative; width: 64px; height: 64px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--card); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb-remove { position: absolute; top: 0; right: 0; width: 28px; height: 28px; border: 0; border-radius: 0 0 0 8px;
+  background: rgba(0, 0, 0, .65); color: #fff; font-size: 18px; line-height: 1; padding: 0; }
+.file-input { display: none; }

@@ -36,3 +36,24 @@ export const get = (path) => api("GET", path);
 
 /** send runs a request built by logic.js (method, path, body). */
 export const send = (req) => api(req.method, req.path, req.body);
+
+/** uploadImages POSTs files as multipart "image" parts and returns the stored image IDs. */
+export async function uploadImages(path, files) {
+  const form = new FormData();
+  for (const f of files) form.append("image", f, "image");
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { Accept: "application/json", "X-Agentctl-CSRF": "1" },
+    body: form,
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    // non-JSON body: fall through to the status check
+  }
+  if (!res.ok) throw new ApiError(res.status, data?.code ?? "http_error", data?.error ?? `HTTP ${res.status}`);
+  return data.images;
+}

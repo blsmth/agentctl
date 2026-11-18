@@ -405,8 +405,35 @@ export function buildAnswerRequest(session, windowId, dialog, key) {
   };
 }
 
-export function buildReplyRequest(session, windowId, text) {
-  return { method: "POST", path: `${windowApiPath(session, windowId)}/reply`, body: { text } };
+/** MAX_IMAGES: the most images one message carries (the server enforces the same). */
+export const MAX_IMAGES = 4;
+/** MAX_IMAGE_BYTES: the largest image the server accepts. */
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/** messageBody is the JSON body of a reply or queue: text, plus uploaded image IDs when there are any. */
+function messageBody(text, images) {
+  return images && images.length ? { text, images } : { text };
+}
+
+/** buildReplyRequest builds POST …/reply. images are IDs returned by an upload. */
+export function buildReplyRequest(session, windowId, text, images) {
+  return { method: "POST", path: `${windowApiPath(session, windowId)}/reply`, body: messageBody(text, images) };
+}
+
+/** buildUploadPath is the POST …/upload path of a window. */
+export function buildUploadPath(session, windowId) {
+  return `${windowApiPath(session, windowId)}/upload`;
+}
+
+/**
+ * checkAttachment reports why a picked file cannot be attached ("" when it can):
+ * images only, within the size cap, and within the per-message count.
+ */
+export function checkAttachment(file, count) {
+  if (count >= MAX_IMAGES) return `At most ${MAX_IMAGES} images per message.`;
+  if (!/^image\/(png|jpe?g|gif|webp)$/i.test(file.type ?? "")) return `${file.name || "File"} is not a png, jpeg, gif or webp image.`;
+  if (file.size > MAX_IMAGE_BYTES) return `${file.name || "Image"} is larger than ${MAX_IMAGE_BYTES >> 20} MB.`;
+  return "";
 }
 
 /**
@@ -470,8 +497,8 @@ export function actionsWithQueue(win, pane, hasQueue) {
   return kind === "interrupt" && hasQueue ? "queue" : kind;
 }
 
-export function buildQueueRequest(session, windowId, text) {
-  return { method: "POST", path: `${windowApiPath(session, windowId)}/queue`, body: { text } };
+export function buildQueueRequest(session, windowId, text, images) {
+  return { method: "POST", path: `${windowApiPath(session, windowId)}/queue`, body: messageBody(text, images) };
 }
 
 /**
