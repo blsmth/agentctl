@@ -88,3 +88,21 @@ logs:
     set -euo pipefail
     runtime_dir="${AGENTCTL_RUNTIME_DIR:-{{justfile_directory()}}/.agentctl}"
     tail -f "$runtime_dir/logs/agentctl.log"
+
+# Installs npm deps and the WebKit build on first run. Extra args go to
+# `playwright test`, e.g. `just web-test -g swipe` or `just web-test --headed`.
+# Browser tests for the phone web app (Playwright, WebKit, iPhone profile)
+web-test *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}/internal/serve/e2e"
+    [ -d node_modules/@playwright/test ] || npm ci
+    npx playwright install webkit
+    node ../web/logic.test.mjs
+    npx playwright test {{args}}
+
+# Fixture fleet, recorded actions, loopback only. Open the printed /__login
+# URL first to get the device cookie.
+# Serve the phone web app on fake backends for manual testing
+web-dev addr="127.0.0.1:8787":
+    go run ./internal/serve/servetest/devserver -addr {{addr}}

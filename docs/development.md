@@ -54,3 +54,23 @@ Claude Code hooks write each window's state to `.agentctl/windows/<windowID>.jso
 ### tmux patterns
 
 Tmux interactions all live in `internal/tmux/`. Read the existing popup, menu, and keybinding code there before adding new ones.
+
+### Phone web app: browser tests
+
+The phone app (`internal/serve/web`) has three layers of checks:
+
+- `go test ./internal/serve/` includes `TestWebReferencesServed` and `TestServiceWorkerPrecachesShell` (`webjs_imports_test.go`): every URL loaded by a static `import`, `index.html`, the manifest or the `sw.js` precache list must be in `staticAssets` (`assets.go`) and serve 200, and every served shell asset must be precached. No node needed. A new module that is imported but missing from the asset table fails here.
+- `node internal/serve/web/logic.test.mjs`: the pure logic in `logic.js`.
+- `just web-test`: Playwright on WebKit (the engine iOS Safari uses) with an iPhone 15 profile (`hasTouch`, `isMobile`, iPhone viewport and UA). It boots the app, checks the service worker, the fleet, swipe-to-close, the window view and live updates. The CI `web` job runs it on every PR and uploads the HTML report and traces when it fails.
+
+`just web-test` installs the npm deps and WebKit on first run; extra arguments go to `playwright test` (`just web-test -g swipe`, `just web-test --headed`, `just web-test --debug`). The report is in `internal/serve/e2e/playwright-report/` (`npx playwright show-report` from that directory).
+
+**How it runs.** `playwright.config.ts` starts `internal/serve/servetest/devserver`, which runs the real serve handler (Router, middleware, embedded assets) over fakes from `internal/serve/servetest`: a fixture fleet (`DefaultFixture`: idle, done, working and blocked windows, a three-level dispatch tree, a second project and the hub), canned pane captures, and backends that record every close, key, reply, dispatch and approval decision instead of touching tmux. A device is paired for real in a temp state dir and the browser gets its cookie, so requests go through device auth and CSRF as on a phone. It listens on plain HTTP on loopback only (loopback is a secure context, so the service worker registers) and is never linked into the agentctl binary.
+
+The dev server's control API lives under `/__test/` (see `internal/serve/servetest/control.go`): `POST reset`, `GET actions`, `GET`/`PUT fleet` (swap fixtures, or `{"fixture":"empty"}`), `POST window` (patch one window's state, activity or pane) and `POST approvals` (open a remote approval as a hook would). Fixture changes reach the page as real SSE events, because the fleet bus re-reads the fixture every 50ms.
+
+**Adding a test.** Put a `*.spec.ts` in `internal/serve/e2e/tests/` and import `test`, `expect`, `openFleet` and `row` from `./fixtures`. Each test starts on a reset server with the device cookie set; the `control` fixture drives the server and reads recorded actions (`control.waitForActions(...)`). An automatic guard fails any test whose page logged a console error or had a same-origin request fail or return >= 400; call `guard.allow(/.../)` for an error the test provokes on purpose. Touch drags use `drag`/`move`/`lift` from `./touch`, which dispatch `PointerEvent`s with `pointerType: "touch"` (Playwright's touchscreen can only tap, and WebKit has no protocol-level touch moves); taps use `locator.tap()`. Tests run serially against one server.
+
+**Poking at it by hand.** `just web-dev` serves the app at `http://127.0.0.1:8787`. Open the printed `/__login` URL to get the device cookie, then use the browser's device emulation (Chrome DevTools device toolbar, or Safari's Responsive Design Mode) to get a phone viewport and touch events. `curl` the control API to change the fleet while you watch.
+
+The iOS Simulator (macOS with Xcode only) is still useful as an occasional manual smoke check of real Safari behaviour (installing to the home screen, push, safe areas), but it is not part of CI.
