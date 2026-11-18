@@ -281,10 +281,10 @@ type fleetLineKind int
 
 const (
 	fleetLineHeader      fleetLineKind = iota // a group's session/project/rollup header
-	fleetLinePlaceholder                     // "no agents" / "snapshot unavailable"
-	fleetLineRow                             // a selectable agent row
-	fleetLineDivider                         // a non-selectable rule between two groups
-	fleetLineSubheader                       // a non-selectable "dispatched (N)" label
+	fleetLinePlaceholder                      // "no agents" / "snapshot unavailable"
+	fleetLineRow                              // a selectable agent row
+	fleetLineDivider                          // a non-selectable rule between two groups
+	fleetLineSubheader                        // a non-selectable "dispatched (N)" label
 )
 
 // fleetLine is one renderable line. Every kind except fleetLineDivider is also
@@ -293,9 +293,9 @@ type fleetLine struct {
 	kind       fleetLineKind
 	group      fleet.Group // set for fleetLineHeader / fleetLinePlaceholder
 	row        fleet.Row   // set for fleetLineRow
-	groupHead  bool       // true for the first row of a group (blank line above)
-	label      string     // set for fleetLineSubheader, e.g. "dispatched (2)"
-	treePrefix string     // connector prefix for fleetLineRow ("" for roots)
+	groupHead  bool        // true for the first row of a group (blank line above)
+	label      string      // set for fleetLineSubheader, e.g. "dispatched (2)"
+	treePrefix string      // connector prefix for fleetLineRow ("" for roots)
 	// nameCol is the group's uncapped name-column width (tree prefix plus
 	// base name, max over its rows) for fleetLineRow; renderTreeRow caps it
 	// at render time so recaps line up within a group.
@@ -1982,8 +1982,8 @@ type fleetRightSlots int
 
 const (
 	fleetRightNone fleetRightSlots = iota // neither column
-	fleetRightPR                         // PR column only
-	fleetRightFull                       // PR and age columns
+	fleetRightPR                          // PR column only
+	fleetRightFull                        // PR and age columns
 )
 
 // width is the columns the slots take, excluding the gap before them.
