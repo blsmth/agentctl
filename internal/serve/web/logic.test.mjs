@@ -195,10 +195,26 @@ console.log("ok: resolved text");
   assert.equal(kindLabel({ mode: "adhoc" }), "task");
   assert.equal(kindLabel({ mode: "bare" }), "session");
   assert.equal(kindLabel({}), "session");
+  assert.equal(kindLabel({ mode: "adhoc", detached: true }), "session");
   assert.equal(bucketLabel(2), "Tasks from other sessions (2)");
   const bucket = treeRows([{ window_id: "@1", mode: "dispatch", parent: "@9" }]).find((e) => e.bucket);
   assert.equal(bucket.count, 1);
   console.log("ok: fleet row labels");
+}
+
+// Shared tree cases (also driven by internal/tui TestTreeRows).
+{
+  const shared = JSON.parse(readFileSync(new URL("../../tui/testdata/tree_cases.json", import.meta.url), "utf8"));
+  for (const c of shared.cases) {
+    const wins = c.rows.map((r) => ({
+      window_id: r.window_id, parent: r.parent, state: r.state, window_index: r.index,
+      mode: r.dispatched ? "adhoc" : "", detached: r.detached,
+    }));
+    const got = treeRows(wins).map((e) => (e.bucket ? { label: e.label } : { id: e.win.window_id, depth: e.depth }));
+    const want = c.want.map((w) => (w.label ? { label: w.label } : { id: w.id, depth: w.depth }));
+    assert.deepEqual(got, want, c.name);
+  }
+  console.log(`ok: ${shared.cases.length} shared tree cases`);
 }
 
 // Window view helpers.

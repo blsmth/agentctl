@@ -87,6 +87,28 @@ func TestMetaDispatched(t *testing.T) {
 	}
 }
 
+func TestMetaDetached(t *testing.T) {
+	tests := []struct {
+		name string
+		m    Meta
+		want bool
+	}{
+		{"bare", Meta{Mode: "bare"}, false},
+		{"no record", Meta{}, false},
+		{"adhoc with spawned_by", Meta{Mode: "adhoc", SpawnedBy: "@1", SpawnedBySession: "s"}, false},
+		{"adhoc without", Meta{Mode: "adhoc"}, true},
+		{"dispatch without", Meta{Mode: "dispatch"}, true},
+		{"untrusted spawned_by, empty session", Meta{Mode: "adhoc", SpawnedBy: "@1"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.m.Detached(); got != tt.want {
+				t.Errorf("Detached() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadMeta(t *testing.T) {
 	runtimeDir := t.TempDir()
 	windowsDir := filepath.Join(runtimeDir, "windows")

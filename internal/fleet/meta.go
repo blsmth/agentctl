@@ -78,6 +78,11 @@ func (m Meta) Parent() string {
 // opposed to interactively from the menu or hub.
 func (m Meta) Dispatched() bool { return m.Mode != "" && m.Mode != "bare" }
 
+// Detached reports whether this window was dispatched but never recorded a
+// dispatcher (phone dispatch, cron): it has no parent by definition. It keys
+// off the raw SpawnedBy, not Parent(), which blanks untrusted values.
+func (m Meta) Detached() bool { return m.Dispatched() && m.SpawnedBy == "" }
+
 // LoadMeta reads every windowstate record in a group's runtime directory,
 // keyed by window ID. Returns an empty (non-nil) map when the group has no
 // runtime dir or the directory is unreadable — a group whose windowstate is

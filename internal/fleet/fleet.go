@@ -31,6 +31,10 @@ type Row struct {
 	// menu or hub (and for windows with no windowstate record).
 	Dispatched bool
 
+	// Detached is true for a dispatched window that recorded no dispatcher
+	// (launched from the phone or cron). It is a tree root, like a bare session.
+	Detached bool
+
 	// Shell marks a plain "shell" window. It is shown in the hub so it can be
 	// selected, viewed and closed, but it is not an agent: no state, no
 	// windowstate record, and it never feeds the group rollup.

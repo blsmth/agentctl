@@ -57,6 +57,18 @@
     {"name": "roots sorted by attention",
      "rows": [{"window_id": "@1", "parent": "", "dispatched": false, "state": "idle", "index": 0},
               {"window_id": "@2", "parent": "", "dispatched": false, "state": "blocked", "index": 1}],
-     "want": [{"id": "@2", "depth": 0, "prefix": ""}, {"id": "@1", "depth": 0, "prefix": ""}]}
+     "want": [{"id": "@2", "depth": 0, "prefix": ""}, {"id": "@1", "depth": 0, "prefix": ""}]},
+    {"name": "detached dispatched is a root beside bare sessions",
+     "rows": [{"window_id": "@1", "parent": "", "dispatched": false, "state": "idle", "index": 0},
+              {"window_id": "@2", "parent": "", "dispatched": true, "detached": true, "state": "idle", "index": 1}],
+     "want": [{"id": "@1", "depth": 0, "prefix": ""}, {"id": "@2", "depth": 0, "prefix": ""}]},
+    {"name": "dispatched with absent recorded parent stays in bucket",
+     "rows": [{"window_id": "@1", "parent": "", "dispatched": false, "state": "idle", "index": 0},
+              {"window_id": "@2", "parent": "@9", "dispatched": true, "state": "idle", "index": 1}],
+     "want": [{"id": "@1", "depth": 0, "prefix": ""}, {"label": "dispatched (1)"}, {"id": "@2", "depth": 1, "prefix": "└─ "}]},
+    {"name": "detached with in-group parent still nests",
+     "rows": [{"window_id": "@1", "parent": "", "dispatched": false, "state": "idle", "index": 0},
+              {"window_id": "@2", "parent": "@1", "dispatched": true, "detached": true, "state": "idle", "index": 1}],
+     "want": [{"id": "@1", "depth": 0, "prefix": ""}, {"id": "@2", "depth": 1, "prefix": "└─ "}]}
   ]
 }

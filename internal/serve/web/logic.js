@@ -53,6 +53,11 @@ export function isDispatched(win) {
   return Boolean(win.mode) && win.mode !== "bare";
 }
 
+/** isDetached mirrors fleet.Meta.Detached: dispatched with no recorded dispatcher (phone, cron). */
+export function isDetached(win) {
+  return Boolean(win.detached);
+}
+
 /** rowTitle names a fleet row: the agent, or "Claude" for a session started without one. */
 export function rowTitle(win) {
   return win.agent || "Claude";
@@ -120,14 +125,15 @@ export function rowTags(win) {
   return tags;
 }
 
-/** kindLabel is "task" for a window another agent started, "session" for one a person started. */
+/** kindLabel is "task" for a window another agent started, "session" for one a person (or the phone/cron) started. */
 export function kindLabel(win) {
-  return isDispatched(win) ? "task" : "session";
+  return isDispatched(win) && !isDetached(win) ? "task" : "session";
 }
 
 /**
- * bucketLabel heads the tasks whose starting session is not in this group:
- * it was closed, or lives in another project.
+ * bucketLabel heads the tasks whose recorded dispatcher is not in this group:
+ * it was closed, or lives in another project. Detached windows (no recorded
+ * dispatcher) are never bucketed.
  */
 export function bucketLabel(count) {
   return `Tasks from other sessions (${count})`;
@@ -148,8 +154,9 @@ export function treeLines(entry) {
  * treeRows flattens one group's windows into display order. It ports
  * internal/tui/fleet_tree.go treeRows (shared cases: internal/tui/testdata/
  * tree_cases.json). A window nests under win.parent when that is another
- * window of the group (and not itself). Non-dispatched windows without such a
- * parent are roots. Dispatched windows with no usable parent, plus windows
+ * window of the group (and not itself). Windows that are not dispatched or are
+ * detached (no recorded dispatcher) and have no such parent are roots.
+ * Dispatched windows whose recorded parent is unusable, plus windows
  * stuck in a parent cycle, go under a trailing {label, bucket:true} entry.
  * Roots and children are in attention order; every window is emitted once.
  * Entries are {win, depth, last, ancestorsLast[]} or {label, bucket:true, depth:0}.
@@ -184,7 +191,7 @@ export function treeRows(windows) {
   };
 
   rows.forEach((r, i) => {
-    if (!isDispatched(r) && !hasParent[i]) walk(i, 0, [], true);
+    if ((!isDispatched(r) || isDetached(r)) && !hasParent[i]) walk(i, 0, [], true);
   });
 
   // Bucket: walk every top-level entry as non-last, then fix up the final one.
@@ -193,7 +200,7 @@ export function treeRows(windows) {
   let lastTop = -1;
   for (let pass = 0; pass < 2; pass++) {
     rows.forEach((r, i) => {
-      if (visited[i] || (pass === 0 && (hasParent[i] || !isDispatched(r)))) return;
+      if (visited[i] || (pass === 0 && (hasParent[i] || !isDispatched(r) || isDetached(r)))) return;
       lastTop = out.length;
       walk(i, 1, [], false);
     });
