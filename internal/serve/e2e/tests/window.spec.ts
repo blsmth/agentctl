@@ -135,8 +135,8 @@ test("header: state pill, project and branch, task line and chips", async ({ pag
   await expect(page.locator(".state-pill")).toHaveText(/^working for \d+m$/);
   await expect(page.locator(".win-where")).toHaveText("shop · agent/test-writer/issue-9");
   await expect(page.locator(".win-task")).toHaveText("Cover the cart service");
-  // With no recap the line under the task is the last tool call.
-  await expect(page.locator(".win-recap")).toHaveText("go test ./...");
+  // No recap: no second line (the pane already shows the last tool call).
+  await expect(page.locator(".win-recap")).toBeHidden();
   await expect(page.locator(".chips .chip")).toHaveText(["9% ctx", "$0.98", "sonnet-4-5", "@13 · dispatch"]);
   // No header Live terminal button: Live is the third pane segment.
   await expect(page.locator("header.bar .btn")).toHaveCount(0);

@@ -573,16 +573,21 @@ export function taskLine(win) {
 }
 
 /**
- * recapLine is the header's "what is it doing" line: the recap (away summary
- * or session title) in place of the last tool call, which is only shown when
- * there is no recap. A task recap repeats the task line, so it is skipped when
- * that line is already shown.
+ * headerLines are the window header's two text lines. task is the task the
+ * window was given; recap is what it is doing (away summary or session title),
+ * shown in place of the last tool call. A task recap repeats the task line, so
+ * it stands in for the task only when there is none. With neither, the task
+ * line falls back to the last tool call, keeping the header to one line.
  */
-export function recapLine(win) {
-  if (win && hasRecap(win) && !(win.recap_source === "task" && taskLine(win))) {
-    return win.recap_source === "task" ? win.recap.replace(/^#\d+\s+/, "") : win.recap;
+export function headerLines(win) {
+  let task = taskLine(win);
+  let recap = "";
+  if (win && hasRecap(win)) {
+    if (win.recap_source !== "task") recap = win.recap;
+    else if (!task) task = win.recap.replace(/^#\d+\s+/, "");
   }
-  return win?.activity ?? "";
+  if (!task && !recap) task = win?.activity ?? "";
+  return { task, recap };
 }
 
 /** stateLabel is the header pill text: "working for 3m", "idle". */

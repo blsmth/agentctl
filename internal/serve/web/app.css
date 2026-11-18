@@ -82,7 +82,7 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 .state-pill.working { --c: var(--working); } .state-pill.blocked { --c: var(--blocked); } .state-pill.done { --c: var(--done); }
 .win-task { font-size: .95rem; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .win-scheduled { font-size: .85rem; color: var(--muted); }
-.win-recap { font-size: .9rem; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; cursor: pointer; }
+.win-recap { font-size: .9rem; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; cursor: pointer; }
 .win-recap.open { display: block; }
 .chips { display: flex; flex-wrap: wrap; gap: .35rem; }
 .chip { font-size: .75rem; line-height: 1.2; padding: .2rem .55rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted);
