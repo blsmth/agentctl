@@ -40,10 +40,12 @@ func treeOrder(tr []treeRow) []fleet.Row {
 //
 // A row nests under Row.Parent when that window is another row of the same
 // group (and not itself). Rows that are not dispatched, or are detached (they
-// never recorded a dispatcher: phone or cron launches), and have no such
-// parent are roots, in incoming order. Dispatched rows that did record a
-// dispatcher which is now absent, plus any row left over because it sits in a
-// parent cycle, go under a trailing "dispatched (N)" bucket. Children keep incoming row order, and every row is
+// never recorded a dispatcher: phone launches), and have no such parent are
+// roots, in incoming order. Dispatched rows that did record a dispatcher which
+// is now absent, plus any row left over because it sits in a parent cycle, go
+// under a trailing "dispatched (N)" bucket; cron rows with no usable parent
+// (detached or not) go under a "scheduled (N)" bucket after it. Children keep
+// incoming row order, and every row is
 // emitted exactly once.
 func treeRows(rows []fleet.Row) []treeRow {
 	idx := make(map[string]int, len(rows))
@@ -94,40 +96,77 @@ func treeRows(rows []fleet.Row) []treeRow {
 		}
 	}
 
+	// Cron windows have no dispatcher. Those without a usable parent go under
+	// their own "scheduled (N)" bucket rather than reading as orphaned
+	// dispatches.
+	schedRoot := func(i int) bool { return !hasParent[i] && rows[i].ScheduledBy != "" }
+	// schedTree marks scheduled roots and everything below them, so the
+	// dispatched bucket's cycle pass leaves their subtrees alone.
+	schedTree := make([]bool, len(rows))
+	var mark func(i int)
+	mark = func(i int) {
+		if schedTree[i] {
+			return
+		}
+		schedTree[i] = true
+		for _, c := range children[i] {
+			mark(c)
+		}
+	}
+	for i := range rows {
+		if schedRoot(i) {
+			mark(i)
+		}
+	}
+
 	for i, r := range rows {
-		if (!r.Dispatched || r.Detached) && !hasParent[i] {
+		if (!r.Dispatched || r.Detached) && !hasParent[i] && !schedRoot(i) {
 			walk(i, 0, "", true)
 		}
 	}
 
-	// Bucket: dispatched rows with no usable parent, then anything still
-	// unreached (cycles), each walked as a depth-1 child of the label. Whether
-	// a top-level entry is the last is only known after walking (a cycle member
-	// may be absorbed into an earlier subtree), so walk all as non-last and fix
-	// up the final one afterwards.
-	head := len(out)
-	out = append(out, treeRow{})
-	lastTop := -1
-	for pass := 0; pass < 2; pass++ {
-		for i := range rows {
-			if visited[i] || (pass == 0 && (hasParent[i] || !rows[i].Dispatched || rows[i].Detached)) {
-				continue
+	// bucket appends a "<label> (N)" header followed by every unvisited row
+	// that pick selects, over two passes, each walked as a depth-1 child of the
+	// label. Whether a top-level entry is the last is only known after walking
+	// (a cycle member may be absorbed into an earlier subtree), so walk all as
+	// non-last and fix up the final one afterwards. An empty bucket adds
+	// nothing.
+	bucket := func(label string, pick func(i, pass int) bool) {
+		head := len(out)
+		out = append(out, treeRow{})
+		lastTop := -1
+		for pass := 0; pass < 2; pass++ {
+			for i := range rows {
+				if visited[i] || !pick(i, pass) {
+					continue
+				}
+				lastTop = len(out)
+				walk(i, 1, "", false)
 			}
-			lastTop = len(out)
-			walk(i, 1, "", false)
 		}
-	}
-	if lastTop < 0 {
-		return out[:head]
-	}
-	for j := lastTop; j < len(out); j++ {
-		p := out[j].Prefix
-		if j == lastTop {
-			out[j].Prefix = treeLast + strings.TrimPrefix(p, treeBranch)
-		} else {
-			out[j].Prefix = treeGap + strings.TrimPrefix(p, treeBar)
+		if lastTop < 0 {
+			out = out[:head]
+			return
 		}
+		for j := lastTop; j < len(out); j++ {
+			p := out[j].Prefix
+			if j == lastTop {
+				out[j].Prefix = treeLast + strings.TrimPrefix(p, treeBranch)
+			} else {
+				out[j].Prefix = treeGap + strings.TrimPrefix(p, treeBar)
+			}
+		}
+		out[head] = treeRow{Label: fmt.Sprintf("%s (%d)", label, len(out)-head-1)}
 	}
-	out[head] = treeRow{Label: fmt.Sprintf("dispatched (%d)", len(out)-head-1)}
+
+	// Dispatched rows with no usable parent, then anything still unreached
+	// (cycles); scheduled subtrees are kept for their own bucket.
+	bucket("dispatched", func(i, pass int) bool {
+		if schedTree[i] {
+			return false
+		}
+		return pass == 1 || (!hasParent[i] && rows[i].Dispatched && !rows[i].Detached)
+	})
+	bucket("scheduled", func(i, pass int) bool { return pass == 0 && schedRoot(i) })
 	return out
 }

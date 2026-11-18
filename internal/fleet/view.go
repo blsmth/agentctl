@@ -174,6 +174,8 @@ func agentFromWindow(idx int, w tmux.WindowInfo, name string, records map[string
 		SpawnedBy:        ws.SpawnedBy,
 		SpawnedBySession: ws.SpawnedBySession,
 		SessionName:      ws.SessionName,
+		ScheduledBy:      ws.ScheduledBy,
+		ScheduledAt:      ws.ScheduledAt,
 	}
 }
 

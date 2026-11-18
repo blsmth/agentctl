@@ -2133,7 +2133,13 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 				rs = fleetActivityHoverStyle
 			}
 		}
-		text = rs.Render(truncateToWidth(recap.Text, available))
+		var tag string
+		if t := scheduledTag(r); t != "" && available > 0 {
+			tag = truncateToWidth(t, min(available, fleetScheduledTagMaxW))
+			available -= lipgloss.Width(tag) + 1
+			tag = fleetDimStyle.Render(tag) + " "
+		}
+		text = tag + rs.Render(truncateToWidth(recap.Text, available))
 	}
 
 	closeBtn := strings.Repeat(" ", lipgloss.Width(fleetCloseLabel))
@@ -2158,6 +2164,23 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 		out += "\n" + fleetFitLine(d, true, cw)
 	}
 	return out
+}
+
+// fleetScheduledGlyph marks a window launched by `agentctl cron`. It is drawn
+// in the recap column, never the state-glyph slot, so it cannot be mistaken
+// for ● ⏸ ✓ or $.
+const fleetScheduledGlyph = "⏲"
+
+// fleetScheduledTagMaxW caps the "⏲ job" tag so a long job name cannot crowd
+// out the recap.
+const fleetScheduledTagMaxW = 24
+
+// scheduledTag is the "⏲ <job>" marker for a cron-launched row, or "".
+func scheduledTag(r fleet.Row) string {
+	if r.ScheduledBy == "" {
+		return ""
+	}
+	return fleetScheduledGlyph + " " + r.ScheduledBy
 }
 
 // rowRecap is the row's recap as loaded (fleet.TagLogs), or, for a row that

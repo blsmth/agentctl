@@ -34,6 +34,7 @@ export type FixtureWindow = {
   model?: string;
   cost_usd?: number;
   pr_url?: string;
+  scheduled_by?: string;
 };
 
 export type FixtureGroup = { session: string; project: string; dir: string; windows: FixtureWindow[] };

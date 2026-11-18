@@ -15,6 +15,7 @@ import {
   rowHeadline,
   rowTags,
   rowTitle,
+  scheduledChip,
   sortGroups,
   treeLines,
   treeRows,
@@ -97,6 +98,8 @@ function windowRow(entry, toggle, expanded, swipe) {
   const tags = rowTags(win).map((t) => h("span", { class: "tag" }, t));
   const chip = agentChip(win);
   if (chip) tags.push(h("span", { class: "tag agent-chip" }, chip));
+  const sched = scheduledChip(win);
+  if (sched) tags.push(h("span", { class: "tag sched-chip", title: "Started by agentctl cron" }, sched));
   const detail = rowDetailLine(win);
   const link = h(
     "a",
@@ -127,7 +130,7 @@ function windowRow(entry, toggle, expanded, swipe) {
 }
 
 function bucketRow(entry, toggle, expanded) {
-  return h("div", { class: "node bucket" }, expanded ? stubSpan(entry) : null, h("span", { class: "bucket-label" }, bucketLabel(entry.count ?? 0)), toggle);
+  return h("div", { class: "node bucket" }, expanded ? stubSpan(entry) : null, h("span", { class: "bucket-label" }, bucketLabel(entry.count ?? 0, entry.kind)), toggle);
 }
 
 export function mountFleet(root, ctx) {

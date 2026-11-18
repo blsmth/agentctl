@@ -111,7 +111,7 @@ Fold state and the filter are kept per hub across reloads, hot reloads and resta
 
 ### Hub list tree
 
-Within each project group the hub list is a parent/child tree. An agent dispatched by another agent renders directly under its dispatcher, indented with `├─` / `└─` / `│` connectors (nesting is recursive). Bare windows with no dispatcher are roots, in their usual order. Dispatched agents whose dispatcher is unknown, untrusted (no recorded session), or not in the same group are listed under a trailing `dispatched (N)` label. Every row stays selectable, and cursor movement, close-neighbour selection and jump-to-blocked all follow the displayed order.
+Within each project group the hub list is a parent/child tree. An agent dispatched by another agent renders directly under its dispatcher, indented with `├─` / `└─` / `│` connectors (nesting is recursive). Bare windows with no dispatcher are roots, in their usual order. Dispatched agents whose dispatcher is unknown, untrusted (no recorded session), or not in the same group are listed under a trailing `dispatched (N)` label. Windows launched by `agentctl cron` have no dispatcher: they show a muted `⏲ <job>` marker before their recap and, unless they have a parent in the group, sit under a `scheduled (N)` label after that. Every row stays selectable, and cursor movement, close-neighbour selection and jump-to-blocked all follow the displayed order.
 
 ## Notes
 

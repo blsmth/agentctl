@@ -18,6 +18,7 @@ import {
   paneLinesForExact,
   paneModeOrDefault,
   safeHttpsUrl,
+  scheduledLine,
   splitPane,
   stateLabel,
   taskLine,
@@ -254,8 +255,9 @@ export function mountWindow(root, ctx, { session, windowId }) {
   const statePill = h("span", { class: "state-pill" }, h("span", { class: "dot" }), h("span", { class: "state-text" }));
   const where = h("span", { class: "win-where" });
   const task = h("div", { class: "win-task", hidden: true });
+  const scheduled = h("div", { class: "win-scheduled", hidden: true });
   const chips = h("div", { class: "chips", hidden: true });
-  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, chips);
+  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, scheduled, chips);
 
   const liveChip = h("span", { class: "live-chip", role: "status" });
   const modeBtns = {
@@ -343,6 +345,9 @@ export function mountWindow(root, ctx, { session, windowId }) {
     const line = taskLine(win);
     task.textContent = line;
     task.hidden = !line;
+    const sched = scheduledLine(win);
+    scheduled.textContent = sched;
+    scheduled.hidden = !sched;
     clear(chips);
     for (const c of headerChips(win, safeHttpsUrl)) {
       chips.append(

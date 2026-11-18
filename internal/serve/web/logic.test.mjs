@@ -7,6 +7,7 @@ import {
   buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
+  isScheduled, scheduledChip, scheduledLine, treeLines,
   actionsWithQueue, buildQueueRequest, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine,
 } from "./logic.js";
@@ -202,19 +203,46 @@ console.log("ok: resolved text");
   console.log("ok: fleet row labels");
 }
 
-// Shared tree cases (also driven by internal/tui TestTreeRows).
+// Shared tree cases (internal/tui/testdata/tree_cases.json, also run by Go's
+// TestTreeRows): the JS port must flatten them identically.
 {
-  const shared = JSON.parse(readFileSync(new URL("../../tui/testdata/tree_cases.json", import.meta.url), "utf8"));
-  for (const c of shared.cases) {
+  const tree = JSON.parse(readFileSync(new URL("../../tui/testdata/tree_cases.json", import.meta.url), "utf8"));
+  const prefix = (e) => {
+    if (e.depth === 0) return "";
+    const { through, last } = treeLines(e);
+    return through.map((c) => (c ? "│  " : "   ")).join("") + (last ? "└─ " : "├─ ");
+  };
+  for (const c of tree.cases) {
     const wins = c.rows.map((r) => ({
-      window_id: r.window_id, parent: r.parent, state: r.state, window_index: r.index,
-      mode: r.dispatched ? "adhoc" : "", detached: r.detached,
+      window_id: r.window_id, parent: r.parent, mode: r.dispatched ? "dispatch" : "", state: r.state,
+      window_index: r.index, detached: r.detached, scheduled_by: r.scheduled_by ?? "",
     }));
-    const got = treeRows(wins).map((e) => (e.bucket ? { label: e.label } : { id: e.win.window_id, depth: e.depth }));
-    const want = c.want.map((w) => (w.label ? { label: w.label } : { id: w.id, depth: w.depth }));
-    assert.deepEqual(got, want, c.name);
+    const got = treeRows(wins).map((e) => (e.bucket ? { label: e.label } : { id: e.win.window_id, depth: e.depth, prefix: prefix(e) }));
+    assert.deepEqual(got, c.want, c.name);
   }
-  console.log(`ok: ${shared.cases.length} shared tree cases`);
+  console.log(`ok: ${tree.cases.length} shared tree cases`);
+}
+
+// Scheduled (cron) windows.
+{
+  assert.equal(isScheduled({}), false);
+  assert.equal(isScheduled({ scheduled_by: "nightly-triage" }), true);
+  assert.equal(scheduledChip({}), "");
+  assert.equal(scheduledChip({ scheduled_by: "nightly-triage" }), "⏲ nightly-triage");
+  assert.equal(bucketLabel(3, "scheduled"), "Scheduled jobs (3)");
+  assert.equal(bucketLabel(3, "dispatched"), "Tasks from other sessions (3)");
+  assert.equal(scheduledLine({}), "");
+  assert.equal(scheduledLine({ scheduled_by: "nightly-triage" }), "Scheduled run: nightly-triage");
+  // Local-time fields, so the expectation is built the same way in any zone.
+  const at = new Date(2026, 10, 18, 7, 0);
+  assert.equal(scheduledLine({ scheduled_by: "nightly-triage", scheduled_at: at.toISOString() }), "Scheduled run: nightly-triage, fired Wed 18 Nov 07:00");
+  const entries = treeRows([
+    { window_id: "@1", mode: "adhoc", parent: "" },
+    { window_id: "@2", mode: "adhoc", scheduled_by: "nightly-triage" },
+  ]);
+  const buckets = entries.filter((e) => e.bucket).map((e) => [e.kind, e.count]);
+  assert.deepEqual(buckets, [["dispatched", 1], ["scheduled", 1]]);
+  console.log("ok: scheduled windows");
 }
 
 // Window view helpers.
