@@ -23,6 +23,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/phoneview"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 )
 
@@ -71,6 +72,9 @@ type Options struct {
 	Terminal          TerminalTmux
 	PTY               PTYStarter
 	TerminalSizeEvery time.Duration
+	// PhoneViewDir is where live terminals record which windows the phone is
+	// watching (internal/phoneview); empty means <StateDir>/phone-viewed.
+	PhoneViewDir string
 	// BusOptions tunes the fleet event bus (debounce, rediscovery).
 	BusOptions fleetwatch.Options
 	// PingEvery is the SSE keep-alive interval; 0 means 20s.
@@ -196,6 +200,12 @@ func New(opts Options) (*Server, error) {
 	s.audit = newAuditLog(opts.Dir)
 	s.approvals = newApprovalStore()
 	s.term = newTerminals(opts.Terminal, opts.PTY, opts.TerminalSizeEvery)
+	s.term.markers = opts.PhoneViewDir
+	if s.term.markers == "" {
+		if d, err := phoneview.DefaultDir(); err == nil {
+			s.term.markers = d
+		}
+	}
 	if s.panes == nil {
 		s.panes = tmuxPanes{}
 	}

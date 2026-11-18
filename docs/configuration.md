@@ -53,6 +53,7 @@ Rationale: a project-local file can arrive with a cloned repository. Executing c
 | `monitor` | bool | `true` | Kill switch for the per-project monitor. When `false`, session start and the hook watchdog do not start or replace a monitor and `agentctl health` says "monitor disabled". A running monitor is not killed; the next relaunch just does not start one. Everything except the macapp's `state.json` feed works without it. Global-only in the enabling direction: a project-local `"monitor": false` switches it off for that project, but a project can never switch it back on. |
 | `hub_chrome` | bool | `false` | Show each agent's chrome bar inside the hub's live pane. When `false` the hub zooms the viewed window's main pane, which hides the bar there (the hub list already shows every agent); the zoom is undone when the hub moves to another row, closes, or you switch to the project session. Project sessions attached directly always show the bar. The hub key `c` toggles it for the running hub. Global config only. |
 | `bash_preview` | bool | `false` | Show the human approval popup before **every** Bash tool call, not just `agentctl dispatch` and `agentctl cron add/resume/run --force`. See [bash_preview](#bash_preview). |
+| `statusline_mobile_format` | string | `full` | Statusline format used while the phone web app has a live terminal open on the window and no laptop tmux client is looking at it. Same values as `statusline_format`; unknown values fall back to `full`. Set it equal to `statusline_format` to disable the switch. See [statusline_format and statusline_align](#statusline_format-and-statusline_align). |
 | `statusline_format` | string | `rich` | What `agentctl statusline` prints: `rich`, `complementary`, `full`, or `minimal`. Unknown values fall back to `rich`. |
 | `statusline_align` | string | `left` | `left` or `right`. Right-aligns the `rich` format's lines. Unknown values fall back to `left`. |
 | `work_journal` | bool | `false` | Journal a session summary on session end for all agents (needs `llm.provider`). Per-agent values can also enable it. |
@@ -122,6 +123,12 @@ A per-agent value overrides the global one.
 `statusline_align: "right"` pads the `rich` lines flush with the terminal's right edge.
 
 When accounts are configured (see [Accounts](#accounts-multiple-claude-logins)), every format except `minimal` shows the name of the account the session runs under (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), the same one whose rate limits are shown: first on the `rich` rate-limit line (on the workspace line when there are no rate limits), dropped before the 5h figure when the line is narrow. With no accounts, or a dir that matches none, nothing is added.
+
+#### Phone format
+
+A window has one statusline, so the laptop and the phone see the same output. While `agentctl serve` has a live terminal open on a window **and** no laptop tmux client (any session, including the hub; not the phone's own viewer) is showing that window, the statusline renders `statusline_mobile_format` (default `full`: one short line) instead of `statusline_format`. It switches back within about a second of the phone disconnecting or the laptop looking at the window again (Claude Code refreshes the statusline every second). Set `statusline_mobile_format` to the same value as `statusline_format` to turn this off. If tmux cannot be queried, the normal format is used.
+
+Serve records open terminals as marker files under `<state dir>/phone-viewed/<window id>/`, one per connection; the statusline only runs `tmux list-clients` when such a marker exists.
 
 ### hooks
 

@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -16,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/phoneview"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
@@ -155,17 +158,21 @@ type termEnv struct {
 	tmux *fakeTermTmux
 	ptys *fakePTYs
 	http *httptest.Server
+	// markers is the phone-view marker dir.
+	markers string
 }
 
 func newTermEnv(t *testing.T, allowWrite bool) *termEnv {
 	t.Helper()
 	e := &termEnv{
-		tmux: &fakeTermTmux{cols: 120, rows: 40},
-		ptys: &fakePTYs{ch: make(chan *fakePTY, 8)},
+		markers: t.TempDir(),
+		tmux:    &fakeTermTmux{cols: 120, rows: 40},
+		ptys:    &fakePTYs{ch: make(chan *fakePTY, 8)},
 	}
 	e.writeEnv = newWriteEnvWith(t, allowWrite, func(o *Options) {
 		o.Terminal, o.PTY = e.tmux, e.ptys
 		o.TerminalSizeEvery = 20 * time.Millisecond
+		o.PhoneViewDir = e.markers
 	})
 	e.http = httptest.NewServer(e.Handler())
 	t.Cleanup(e.http.Close)
@@ -541,5 +548,98 @@ func TestTerminalAssetsServed(t *testing.T) {
 		if strings.Contains(body, bad) {
 			t.Errorf("terminal.js contains %q", bad)
 		}
+	}
+}
+
+func TestTerminalPhoneViewMarker(t *testing.T) {
+	t.Run("created on open and removed on client close", func(t *testing.T) {
+		e := newTermEnv(t, true)
+		c, _ := e.open(t)
+		readSize(t, c)
+		waitFor(t, "marker", func() bool { return phoneview.Active(e.markers, "@523") })
+		_ = c.Close(websocket.StatusNormalClosure, "")
+		waitFor(t, "marker removed", func() bool { return !phoneview.Active(e.markers, "@523") })
+	})
+	t.Run("removed when the PTY exits", func(t *testing.T) {
+		e := newTermEnv(t, true)
+		c, p := e.open(t)
+		readSize(t, c)
+		waitFor(t, "marker", func() bool { return phoneview.Active(e.markers, "@523") })
+		_ = p.outW.Close()
+		waitFor(t, "marker removed", func() bool { return !phoneview.Active(e.markers, "@523") })
+	})
+	t.Run("removed when the window disappears", func(t *testing.T) {
+		e := newTermEnv(t, true)
+		c, _ := e.open(t)
+		readSize(t, c)
+		waitFor(t, "marker", func() bool { return phoneview.Active(e.markers, "@523") })
+		e.tmux.mu.Lock()
+		e.tmux.sizeErr = errors.New("gone")
+		e.tmux.mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for {
+			if _, _, err := c.Read(ctx); err != nil {
+				break
+			}
+		}
+		waitFor(t, "marker removed", func() bool { return !phoneview.Active(e.markers, "@523") })
+	})
+	t.Run("removed on server close", func(t *testing.T) {
+		e := newTermEnv(t, true)
+		c, _ := e.open(t)
+		readSize(t, c)
+		waitFor(t, "marker", func() bool { return phoneview.Active(e.markers, "@523") })
+		e.Close()
+		if phoneview.Active(e.markers, "@523") {
+			t.Error("marker survived server close")
+		}
+	})
+	t.Run("never created when the viewer cannot be made", func(t *testing.T) {
+		e := newTermEnv(t, true)
+		e.tmux.createErr = errors.New("boom")
+		c, _, err := e.dial(t, e.http.URL, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _, _ = c.Read(ctx)
+		waitFor(t, "slot released", func() bool { return len(e.term.slots) == 0 })
+		if phoneview.Active(e.markers, "@523") {
+			t.Error("marker written without a viewer")
+		}
+	})
+	t.Run("overlapping connections keep it until both close", func(t *testing.T) {
+		e := newTermEnv(t, true)
+		c1, _ := e.open(t)
+		readSize(t, c1)
+		c2, _ := e.open(t)
+		readSize(t, c2)
+		waitFor(t, "two markers", func() bool {
+			entries, _ := os.ReadDir(filepath.Join(e.markers, "@523"))
+			return len(entries) == 2
+		})
+		_ = c1.Close(websocket.StatusNormalClosure, "")
+		waitFor(t, "one marker", func() bool {
+			entries, _ := os.ReadDir(filepath.Join(e.markers, "@523"))
+			return len(entries) == 1
+		})
+		if !phoneview.Active(e.markers, "@523") {
+			t.Fatal("marker dropped while one connection is still open")
+		}
+		_ = c2.Close(websocket.StatusNormalClosure, "")
+		waitFor(t, "marker removed", func() bool { return !phoneview.Active(e.markers, "@523") })
+	})
+}
+
+func TestSweepTerminalsClearsStaleMarkers(t *testing.T) {
+	e := newTermEnv(t, true)
+	if err := phoneview.Add(e.markers, "@523", tmux.MobileViewerSessionPrefix+"stale"); err != nil {
+		t.Fatal(err)
+	}
+	e.SweepTerminals()
+	if phoneview.Active(e.markers, "@523") {
+		t.Fatal("stale marker survived startup sweep")
 	}
 }
