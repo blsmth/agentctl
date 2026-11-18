@@ -133,6 +133,7 @@ func normalizeWindowID(id string) string {
 // windowDetail is the "detail" object of the window endpoint.
 type windowDetail struct {
 	Summary           string  `json:"summary,omitempty"`
+	LastActivityText  string  `json:"last_activity_text,omitempty"`
 	LastActivity      string  `json:"last_activity,omitempty"`
 	PendingTool       string  `json:"pending_tool,omitempty"`
 	PendingToolDetail string  `json:"pending_tool_detail,omitempty"`
@@ -150,11 +151,15 @@ type windowBody struct {
 func detailFor(row fleet.Row, m fleet.Meta) windowDetail {
 	d := windowDetail{
 		Summary:           row.LastText,
+		LastActivityText:  row.LastText,
 		PendingTool:       m.PendingTool,
 		PendingToolDetail: m.PendingToolDetail,
 		Model:             row.ModelName,
 		CostUSD:           m.CostUSD,
 		Title:             m.TicketTitle,
+	}
+	if row.Recap.Text != "" {
+		d.Summary = row.Recap.Text
 	}
 	if !m.UpdatedAt.IsZero() {
 		d.LastActivity = m.UpdatedAt.UTC().Format(time.RFC3339)

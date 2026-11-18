@@ -61,7 +61,7 @@ func testGroup() fleetwatch.Group {
 	row := fleet.Row{Session: "agentctl-proj", Project: "proj", AgentState: state.AgentState{
 		Name: "go-engineer", WindowID: "@523", WindowIndex: 1, State: "blocked", LastText: "waiting on you",
 		LastToolDetail: "go test ./...", ContextPct: 40, ModelName: "claude-x",
-	}}
+	}, Recap: fleet.RecapLine{Text: "Fixing the flaky checkout test.", Source: fleet.RecapSummary}}
 	meta := fleet.Meta{Mode: "dispatch", PendingTool: "Bash", BlockedSince: time.Date(2026, 11, 16, 11, 0, 0, 0, time.UTC),
 		UpdatedAt: time.Date(2026, 11, 16, 11, 30, 0, 0, time.UTC), CostUSD: 1.5}
 	return fleetwatch.Group{
@@ -147,6 +147,7 @@ func TestFleetJSONShape(t *testing.T) {
 		"window_id": "@523", "agent": "go-engineer", "state": "blocked", "mode": "dispatch",
 		"activity": "go test ./...", "pending_tool": "Bash", "blocked_since": "2026-11-16T11:00:00Z",
 		"context_pct": float64(40), "session": "agentctl-proj", "project": "proj",
+			"recap": "Fixing the flaky checkout test.", "recap_source": "summary",
 	} {
 		if win[k] != want {
 			t.Errorf("window[%q] = %v, want %v", k, win[k], want)
@@ -201,6 +202,7 @@ func TestWindowEndpoint(t *testing.T) {
 				WindowID string `json:"window_id"`
 				Detail   struct {
 					Summary      string  `json:"summary"`
+					LastText     string  `json:"last_activity_text"`
 					LastActivity string  `json:"last_activity"`
 					PendingTool  string  `json:"pending_tool"`
 					BlockedSince string  `json:"blocked_since"`
@@ -211,7 +213,7 @@ func TestWindowEndpoint(t *testing.T) {
 				t.Fatal(err)
 			}
 			d := body.Detail
-			if body.WindowID != "@523" || d.Summary != "waiting on you" || d.PendingTool != "Bash" ||
+			if body.WindowID != "@523" || d.Summary != "Fixing the flaky checkout test." || d.LastText != "waiting on you" || d.PendingTool != "Bash" ||
 				d.BlockedSince != "2026-11-16T11:00:00Z" || d.LastActivity != "2026-11-16T11:30:00Z" || d.CostUSD != 1.5 {
 				t.Errorf("body = %+v", body)
 			}
