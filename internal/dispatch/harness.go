@@ -140,6 +140,9 @@ func PrepareBackendFor(cfg *config.Config, h harness.Harness, ac *config.AgentCo
 	}
 	if be == nil {
 		ac.Backend = ""
+		if err := preflightPiDefault(); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	}
 	if be.IsNous() {
