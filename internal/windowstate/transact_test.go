@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/testenv"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
@@ -21,6 +22,7 @@ const (
 
 // TestMain doubles as the subprocess worker for TestTransactAcrossProcesses.
 func TestMain(m *testing.M) {
+	cleanup := testenv.Setup()
 	if dir := os.Getenv(helperEnvDir); dir != "" {
 		windowstate.SetDirForTest(dir)
 		n, _ := strconv.Atoi(os.Getenv(helperEnvN))
@@ -31,7 +33,9 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }
 
 func TestTransactGoroutinesNoLostUpdates(t *testing.T) {

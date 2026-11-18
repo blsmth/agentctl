@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/blsmth/agentctl/internal/testenv"
 )
 
 func TestShouldStrip(t *testing.T) {
@@ -52,12 +54,15 @@ func TestPlainStripsStdoutWhenNotTTY(t *testing.T) {
 
 // TestMain lets the test binary double as a helper process for the Exit test.
 func TestMain(m *testing.M) {
+	cleanup := testenv.Setup()
 	if os.Getenv("CLIOUT_EXIT_HELPER") == "1" {
 		Plain()
 		os.Stdout.WriteString("\x1b[31mbefore exit\x1b[0m\n")
 		Exit(3)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }
 
 func TestExitFlushesOutput(t *testing.T) {

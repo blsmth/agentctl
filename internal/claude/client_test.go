@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/blsmth/agentctl/internal/testenv"
 )
 
 // TestMain handles the "helper subprocess" pattern: when the test binary is
@@ -18,11 +20,14 @@ import (
 // instead of running tests. This lets TestClient_* use exec.Command pointing
 // at the test binary itself as a controllable fake.
 func TestMain(m *testing.M) {
+	cleanup := testenv.Setup()
 	if os.Getenv("GO_HELPER_PROCESS") == "1" {
 		runHelperProcess()
 		return
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }
 
 // runHelperProcess implements the mock Claude CLI subprocess.

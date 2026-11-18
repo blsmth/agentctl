@@ -11,11 +11,13 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/testenv"
 )
 
 // TestMain points the process logger at a private dir so tests never depend
 // on a resolvable home dir (CI has none) or write into the real one.
 func TestMain(m *testing.M) {
+	cleanup := testenv.Setup()
 	dir, err := os.MkdirTemp("", "serve-test-log")
 	if err != nil {
 		panic(err)
@@ -23,6 +25,7 @@ func TestMain(m *testing.M) {
 	logging.InitFile(filepath.Join(dir, "serve.log"))
 	code := m.Run()
 	_ = os.RemoveAll(dir)
+	cleanup()
 	os.Exit(code)
 }
 

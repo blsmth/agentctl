@@ -14,9 +14,11 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/panestate"
 	"github.com/blsmth/agentctl/internal/serve"
+	"github.com/blsmth/agentctl/internal/testenv"
 )
 
 func TestMain(m *testing.M) {
+	cleanup := testenv.Setup()
 	dir, err := os.MkdirTemp("", "servetest-log-")
 	if err != nil {
 		panic(err)
@@ -24,6 +26,7 @@ func TestMain(m *testing.M) {
 	logging.InitFile(filepath.Join(dir, "serve.log"))
 	code := m.Run()
 	_ = os.RemoveAll(dir)
+	cleanup()
 	os.Exit(code)
 }
 

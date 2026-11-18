@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/blsmth/agentctl/internal/testenv"
 )
 
 func TestViewerArgBuilders(t *testing.T) {
@@ -155,6 +157,10 @@ func TestShowHideLiveViewer_Integration(t *testing.T) {
 	if winA == "" || winB == "" {
 		t.Skip("set AGENTCTL_SPIKE_WIN_A and AGENTCTL_SPIKE_WIN_B")
 	}
+	// The developer started this server by hand under the real socket dir;
+	// testenv moved TMUX_TMPDIR into the sandbox, so put it back.
+	orig, _ := testenv.Original("TMUX_TMPDIR")
+	t.Setenv("TMUX_TMPDIR", orig)
 	out, err := exec.Command("tmux", "-L", name, "display-message", "-p", "#{socket_path},1,0").Output()
 	if err != nil {
 		t.Skipf("no private server: %v", err)
