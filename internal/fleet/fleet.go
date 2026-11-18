@@ -136,7 +136,7 @@ func load(shells bool) ([]Group, error) {
 	for _, e := range merged {
 		groups = append(groups, loadGroup(e, shells))
 	}
-	return OrderGroups(groups), nil
+	return OrderGroupsBy(groups, LoadGroupOrder()), nil
 }
 
 // MergeSessions combines tmux's live agentctl-* sessions — the primary
@@ -333,8 +333,9 @@ func RollupRows(rows []Row) RollupStatus {
 
 // OrderGroups sorts groups alphabetically by project display name
 // (case-insensitive), breaking ties by session name. Rollup status plays no
-// part, so groups stay put as their agents change state. Returns a new slice;
-// the input is left untouched.
+// part, so groups stay put as their agents change state. This is the default
+// order; Load applies the user's saved order on top of it (OrderGroupsBy).
+// Returns a new slice; the input is left untouched.
 func OrderGroups(groups []Group) []Group {
 	sorted := make([]Group, len(groups))
 	copy(sorted, groups)
@@ -349,8 +350,9 @@ func OrderGroups(groups []Group) []Group {
 }
 
 // FirstBlocked returns the first blocked agent across all groups, walking
-// groups then rows in the exact order Load produces (groups alphabetical by
-// project, rows by window index within each group) — so the hub view and the
+// groups then rows in the exact order Load produces (groups in the user's
+// saved order, new ones alphabetical after them; rows by window index within
+// each group) — so the hub view and the
 // `jump-next-blocked` command always agree on which agent is "next".
 // Returns nil if no agent is blocked anywhere.
 func FirstBlocked(groups []Group) *Row {

@@ -418,6 +418,11 @@ func (m FleetModel) viewEnv() string {
 // loadViewState sets the persisted view state at startup: the state file,
 // overridden by HubViewEnv after a hot reload (consumed once).
 func (m *FleetModel) loadViewState() {
+	if path, err := groupOrderPath(); err != nil {
+		logging.Log("hub: group order not persisted: %v", err)
+	} else {
+		m.orderPath = path
+	}
 	if path, err := hubViewPath(); err != nil {
 		logging.Log("hub: view state not persisted: %v", err)
 	} else {

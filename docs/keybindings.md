@@ -106,6 +106,7 @@ The hub window has no chrome bar or HUD of its own. By default the agent's chrom
 | `n` / `x` | Launch a new agent / close the selected one. |
 | `b` | Select the next blocked agent. |
 | `z` | **Fold** the project group under the cursor (on its header or any of its rows; the cursor moves to the header). A folded group shows only its header line, with its counts and the ⏸ flag. Clicking a header's project name toggles it too. |
+| `shift+↑` / `shift+↓` | **Reorder** the project group under the cursor one slot up or down (the selection goes with it). You can also drag a group header: press it, move the pointer off the header row, and release where it should go; a rule marks the drop spot, and `esc` or releasing outside the list cancels. A plain click is still a click. |
 | `Z` | **Focus mode** — fold every project with no blocked (⏸) and no working (●) agent; press again to unfold everything. |
 | `f` | **Filter** — cycle `all` → `active` (working + blocked) → `needs you` (blocked + done-unseen). The title shows the active filter. Parents of a matching agent stay visible, dimmed, so the tree still reads; a project with nothing matching shows its header only. |
 | `p` | Open the selected agent's PR. |
@@ -116,7 +117,7 @@ The hub window has no chrome bar or HUD of its own. By default the agent's chrom
 
 The title row shows `agentctl serve`'s state after "agentctl hub": `📱 serve` (green) when it runs, `📱 off` (dim) when it does not, and `📱 stuck` (yellow) when its process is alive but its control socket refuses connections (phone approvals are not offered). It is refreshed on the hub's poll tick and does not need the monitor. Clicking it toggles serve, like `S`.
 
-Fold state and the filter are kept per hub across reloads, hot reloads and restarts, in `hub-view.json` in the agentctl state dir (`$XDG_STATE_HOME/agentctl`, default `~/.local/state/agentctl`). Jumps that target a hidden agent (`b`, a just-launched agent, a tab click in the live pane) unfold its group first, and clear the filter if it would still hide it. The one-line footer has no room for `z`, `Z`, `f` and `S`; they are listed under `?`.
+Project order is saved globally in `group-order.json` in the same state dir (keyed by project directory); projects not in it follow alphabetically, and `agentctl status` and `jump-next-blocked` use the same order; the phone list uses it among projects of equal urgency. Fold state and the filter are kept per hub across reloads, hot reloads and restarts, in `hub-view.json` in the agentctl state dir (`$XDG_STATE_HOME/agentctl`, default `~/.local/state/agentctl`). Jumps that target a hidden agent (`b`, a just-launched agent, a tab click in the live pane) unfold its group first, and clear the filter if it would still hide it. The one-line footer has no room for `z`, `Z`, `f` and `S`; they are listed under `?`.
 
 ### Hub list tree
 
