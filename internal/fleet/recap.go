@@ -81,6 +81,7 @@ func TagMeta(rows []Row, meta map[string]Meta) {
 	for i := range rows {
 		m := meta[rows[i].WindowID]
 		rows[i].Dispatched = m.Dispatched()
+		rows[i].Detached = m.Detached()
 		rows[i].Parent = m.Parent()
 		rows[i].StateSince = m.stateSince(rows[i].State)
 	}

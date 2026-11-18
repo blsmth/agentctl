@@ -27,6 +27,7 @@ type treeFixtureRow struct {
 	WindowID   string `json:"window_id"`
 	Parent     string `json:"parent"`
 	Dispatched bool   `json:"dispatched"`
+	Detached   bool   `json:"detached"`
 	State      string `json:"state"`
 	Index      int    `json:"index"`
 }
@@ -70,6 +71,7 @@ func TestTreeRows(t *testing.T) {
 			for _, r := range in {
 				row := tRow(r.WindowID, r.Parent, r.Dispatched)
 				row.State = r.State
+				row.Detached = r.Detached
 				rows = append(rows, row)
 			}
 			var got, want []treeFixtureWant

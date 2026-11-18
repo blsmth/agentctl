@@ -39,10 +39,11 @@ func treeOrder(tr []treeRow) []fleet.Row {
 // treeRows flattens one group's rows into display order.
 //
 // A row nests under Row.Parent when that window is another row of the same
-// group (and not itself). Non-dispatched rows without such a parent are roots,
-// in incoming order. Dispatched rows with no usable parent, plus any row left
-// over because it sits in a parent cycle, go under a trailing
-// "dispatched (N)" bucket. Children keep incoming row order, and every row is
+// group (and not itself). Rows that are not dispatched, or are detached (they
+// never recorded a dispatcher: phone or cron launches), and have no such
+// parent are roots, in incoming order. Dispatched rows that did record a
+// dispatcher which is now absent, plus any row left over because it sits in a
+// parent cycle, go under a trailing "dispatched (N)" bucket. Children keep incoming row order, and every row is
 // emitted exactly once.
 func treeRows(rows []fleet.Row) []treeRow {
 	idx := make(map[string]int, len(rows))
@@ -94,7 +95,7 @@ func treeRows(rows []fleet.Row) []treeRow {
 	}
 
 	for i, r := range rows {
-		if !r.Dispatched && !hasParent[i] {
+		if (!r.Dispatched || r.Detached) && !hasParent[i] {
 			walk(i, 0, "", true)
 		}
 	}
@@ -109,7 +110,7 @@ func treeRows(rows []fleet.Row) []treeRow {
 	lastTop := -1
 	for pass := 0; pass < 2; pass++ {
 		for i := range rows {
-			if visited[i] || (pass == 0 && (hasParent[i] || !rows[i].Dispatched)) {
+			if visited[i] || (pass == 0 && (hasParent[i] || !rows[i].Dispatched || rows[i].Detached)) {
 				continue
 			}
 			lastTop = len(out)

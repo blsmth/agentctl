@@ -41,6 +41,10 @@ type Window struct {
 	// and RecapSource names where it came from: summary, task, title or activity.
 	Recap       string `json:"recap,omitempty"`
 	RecapSource string `json:"recap_source,omitempty"`
+
+	// Detached: dispatched with no recorded dispatcher (phone, cron); shown as a
+	// plain session.
+	Detached bool `json:"detached,omitempty"`
 }
 
 // ToWindow converts a row and its windowstate metadata to a Window.
@@ -65,6 +69,7 @@ func ToWindow(r Row, m Meta) Window {
 		Issue:        r.Ticket,
 		PRURL:        r.PRURL,
 		PRNumber:     m.PRNumber,
+		Detached:     m.Detached(),
 	}
 	if r.Recap.Text != "" {
 		w.Recap, w.RecapSource = r.Recap.Text, r.Recap.Source.String()
