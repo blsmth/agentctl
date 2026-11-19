@@ -292,8 +292,9 @@ type fleetTickMsg struct{}
 
 // fleetLoadedMsg carries the result of an async fleet.Load() call.
 type fleetLoadedMsg struct {
-	groups []fleet.Group
-	err    error
+	groups  []fleet.Group
+	err     error
+	display fleetDisplay
 }
 
 // ── Flattened line model ─────────────────────────────────────────────────────
@@ -358,6 +359,10 @@ type FleetModel struct {
 
 	groups []fleet.Group
 	lines  []fleetLine
+
+	// display is the config the row chips depend on (context thresholds,
+	// default account), refreshed with every fleet load.
+	display fleetDisplay
 
 	// splitPane owns cursor position and scrolling bookkeeping. FleetModel does
 	// NOT delegate key handling to SplitPane.Update(): the list mixes
@@ -671,7 +676,7 @@ func fleetTickCmd() tea.Cmd {
 func fleetLoadCmd() tea.Cmd {
 	return func() tea.Msg {
 		groups, err := fleet.LoadWithShells()
-		return fleetLoadedMsg{groups: groups, err: err}
+		return fleetLoadedMsg{groups: groups, err: err, display: fleetDisplayLoad()}
 	}
 }
 
@@ -818,6 +823,7 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loadErr = msg.err
 		if msg.err == nil {
 			m.groups = msg.groups
+			m.display = msg.display
 			m.rebuildLines()
 			m.validateNew()
 			m.validateSweep()
@@ -2245,27 +2251,38 @@ func fleetNameBudget(cw int) int {
 }
 
 // Fixed right-hand columns of a row: the PR badge slot ("#1025" is the widest
-// seen) and the age slot, both right-aligned and blank when absent.
+// seen) and the age slot, both right-aligned and blank when absent. The
+// model+context slot (fleetModelSlotW, fleetCtxSlotW) sits left of the PR.
 const (
 	fleetPRSlotW  = 5
 	fleetAgeSlotW = 3
 )
 
 // fleetRightSlots is how many of the right-hand columns a row draws; narrow
-// rows drop the age first, then the PR.
+// rows drop the age first, then the model+context slot, then the PR. The PR
+// goes last because it is the one link to the outcome of the work; the age
+// goes first because the glyph already says the state and the hover card the
+// time.
 type fleetRightSlots int
 
 const (
-	fleetRightNone fleetRightSlots = iota // neither column
-	fleetRightPR                          // PR column only
-	fleetRightFull                        // PR and age columns
+	fleetRightNone    fleetRightSlots = iota // no column
+	fleetRightPR                             // PR column only
+	fleetRightModelPR                        // model+context and PR columns
+	fleetRightFull                           // model+context, PR and age columns
 )
+
+// fleetModelSlotTotalW is the model+context slot: both sub-columns and the
+// space between them.
+const fleetModelSlotTotalW = fleetModelSlotW + 1 + fleetCtxSlotW
 
 // width is the columns the slots take, excluding the gap before them.
 func (s fleetRightSlots) width() int {
 	switch s {
 	case fleetRightFull:
-		return fleetPRSlotW + 1 + fleetAgeSlotW
+		return fleetModelSlotTotalW + 1 + fleetPRSlotW + 1 + fleetAgeSlotW
+	case fleetRightModelPR:
+		return fleetModelSlotTotalW + 1 + fleetPRSlotW
 	case fleetRightPR:
 		return fleetPRSlotW
 	}
@@ -2275,7 +2292,7 @@ func (s fleetRightSlots) width() int {
 // fitRightSlots picks the most right-hand columns that still leave the recap
 // fleetMinRecapWidth of the available columns (one more goes to the gap).
 func fitRightSlots(available int) fleetRightSlots {
-	for _, s := range []fleetRightSlots{fleetRightFull, fleetRightPR} {
+	for _, s := range []fleetRightSlots{fleetRightFull, fleetRightModelPR, fleetRightPR} {
 		if available-s.width()-1 >= fleetMinRecapWidth {
 			return s
 		}
@@ -2289,13 +2306,18 @@ func padLeft(s string, w int) string {
 }
 
 // rowRight renders the right-aligned status columns before the close button:
-// the PR badge ("#60", in the done style on a done row) in a fleetPRSlotW slot
-// and the dim time in the current state (blocked style on a blocked row) in a
-// fleetAgeSlotW slot, one space apart. An absent value leaves its slot blank so
-// the columns line up down the sidebar.
-func rowRight(r fleet.Row, slots fleetRightSlots) string {
+// the model and context use ("opus  42%", see rowModelSlot), the PR badge
+// ("#60", in the done style on a done row) in a fleetPRSlotW slot and the dim
+// time in the current state (blocked style on a blocked row) in a
+// fleetAgeSlotW slot, one space apart. An absent value leaves its slot blank
+// so the columns line up down the sidebar.
+func rowRight(r fleet.Row, slots fleetRightSlots, d fleetDisplay) string {
 	if slots == fleetRightNone {
 		return ""
+	}
+	var out string
+	if slots >= fleetRightModelPR {
+		out = rowModelSlot(r, d) + " "
 	}
 	var pr string
 	if r.PRNumber > 0 {
@@ -2305,8 +2327,8 @@ func rowRight(r fleet.Row, slots fleetRightSlots) string {
 		}
 		pr = bs.Render(fmt.Sprintf("#%d", r.PRNumber))
 	}
-	out := padLeft(pr, fleetPRSlotW)
-	if slots == fleetRightPR {
+	out += padLeft(pr, fleetPRSlotW)
+	if slots != fleetRightFull {
 		return out
 	}
 	var age string
@@ -2369,10 +2391,7 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 	hovered := hover == fleetHoverBody || hover == fleetHoverClose
 	closeW := 1 + lipgloss.Width(fleetCloseLabel)
 	inner := cw - fleetSidebarRightGutter
-	// Columns before the name: bar, cursor slot, glyph and a space. The
-	// name column may not push the recap below fleetMinRecapWidth.
-	maxCol := inner - 5 - 2 - closeW - fleetMinRecapWidth
-	nameBudget := min(fleetNameBudget(cw), max(maxCol, 0))
+	nameBudget := fleetRowNameCap(cw)
 	col := min(nameCol, nameBudget)
 	treePrefix = fleetKeptPrefix(treePrefix, cw)
 	nameBudget -= lipgloss.Width(treePrefix)
@@ -2396,7 +2415,7 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 		}
 		// The columns sit at fixed positions, but the recap may run into a
 		// slot this row leaves blank: only what is drawn is reserved.
-		right = strings.TrimLeft(rowRight(r, fitRightSlots(available)), " ")
+		right = strings.TrimLeft(rowRight(r, fitRightSlots(available), m.display), " ")
 		if rw := lipgloss.Width(right); rw > 0 {
 			available -= rw + 1
 		}
@@ -2441,7 +2460,7 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 	if !selected {
 		return out
 	}
-	for _, d := range rowDetailStyled(r, treePrefix, cw) {
+	for _, d := range rowDetailStyled(r, treePrefix, cw, m.display) {
 		out += "\n" + fleetFitLine(d, true, cw)
 	}
 	return out
@@ -2512,11 +2531,24 @@ func fleetKeptPrefix(treePrefix string, cw int) string {
 	if tw == 0 {
 		return ""
 	}
+	keep := min(tw, fleetRowNameCap(cw)-6)
+	return ansi.Truncate(treePrefix, max(keep, 0), "")
+}
+
+// fleetRowNameCap is the most columns a row's tree prefix plus name may take
+// at width cw: the name budget, less whatever would push the recap below
+// fleetMinRecapWidth. The columns before the name are the bar, cursor slot,
+// glyph and a space; after it come the two-space gap and the close button.
+func fleetRowNameCap(cw int) int {
 	inner := cw - fleetSidebarRightGutter
 	maxCol := inner - 5 - 2 - (1 + lipgloss.Width(fleetCloseLabel)) - fleetMinRecapWidth
-	nameBudget := min(fleetNameBudget(cw), max(maxCol, 0))
-	keep := min(tw, nameBudget-6)
-	return ansi.Truncate(treePrefix, max(keep, 0), "")
+	return min(fleetNameBudget(cw), max(maxCol, 0))
+}
+
+// rowNameFits reports whether the row's name column shows its whole base
+// name (see renderTreeRowHover) for a kept tree prefix of width prefixW.
+func rowNameFits(r fleet.Row, prefixW, cw int) bool {
+	return lipgloss.Width(fleet.BaseName(r)) <= fleetRowNameCap(cw)-prefixW
 }
 
 // fleetContinuation turns a (kept) tree prefix into the continuation drawn
@@ -2548,7 +2580,8 @@ const fleetMinRecapWidth = 8
 // they align with the name.
 const fleetDetailIndent = 5
 
-// fleetDetailMaxLines caps a selected row's extra lines.
+// fleetDetailMaxLines caps a selected row's recap and activity lines; the
+// chip line (see rowChips) comes on top.
 const fleetDetailMaxLines = 3
 
 // fleetDetailLine is one plain-text detail line and its marker ("" for recap
@@ -2556,20 +2589,34 @@ const fleetDetailMaxLines = 3
 type fleetDetailLine struct {
 	text   string
 	marker string
+	// styled, when set, is the line pre-rendered (the chip line); text is
+	// then its plain form.
+	styled string
 }
 
 // rowDetail returns the plain detail lines a selected row renders beneath
 // itself at width cw: the full recap wrapped, then the last activity line
-// when it differs from the recap, at most fleetDetailMaxLines in total. A
-// recap that is itself the activity (fleet.RecapActivity: the last tool
-// command or text) is one marked, truncated line and never wraps. Hit
-// testing and scrolling count these lines, so rendering must use exactly
-// this. prefixW is the width of the row's kept tree prefix (fleetKeptPrefix).
-func rowDetail(r fleet.Row, prefixW, cw int) []fleetDetailLine {
+// when it differs from the recap, at most fleetDetailMaxLines in total, then
+// one chip line (rowChips) when the row has any. A recap that is itself the
+// activity (fleet.RecapActivity: the last tool command or text) is one
+// marked, truncated line and never wraps. Hit testing and scrolling count
+// these lines, so rendering must use exactly this. prefixW is the width of
+// the row's kept tree prefix (fleetKeptPrefix).
+func rowDetail(r fleet.Row, prefixW, cw int, d fleetDisplay) []fleetDetailLine {
 	w := cw - fleetSidebarRightGutter - fleetDetailIndent - prefixW
 	if w < fleetMinRecapWidth {
 		return nil
 	}
+	out := rowDetailText(r, w)
+	if chips := rowChips(r, rowNameFits(r, prefixW, cw), d); len(chips) > 0 {
+		styled := renderChips(r, chips, d, w)
+		out = append(out, fleetDetailLine{text: ansi.Strip(styled), styled: styled})
+	}
+	return out
+}
+
+// rowDetailText is rowDetail's recap and activity lines at text width w.
+func rowDetailText(r fleet.Row, w int) []fleetDetailLine {
 	activity := fleet.ActivityLine(r)
 	rc := rowRecap(r)
 	if rc.Source == fleet.RecapNone {
@@ -2617,10 +2664,14 @@ func activityMarker(r fleet.Row, text string) (marker, shown string) {
 
 // rowDetailStyled renders rowDetail's lines with the bar, indent and the
 // tree continuation for the row's (already clamped) prefix.
-func rowDetailStyled(r fleet.Row, treePrefix string, cw int) []string {
+func rowDetailStyled(r fleet.Row, treePrefix string, cw int, disp fleetDisplay) []string {
 	indent := fleetProjectBar(r.Project) + strings.Repeat(" ", fleetDetailIndent-1) + fleetDimStyle.Render(fleetContinuation(treePrefix))
 	var out []string
-	for _, d := range rowDetail(r, lipgloss.Width(treePrefix), cw) {
+	for _, d := range rowDetail(r, lipgloss.Width(treePrefix), cw, disp) {
+		if d.styled != "" {
+			out = append(out, indent+d.styled)
+			continue
+		}
 		text := fleetActivityStyle.Render(d.text)
 		if d.marker != "" {
 			text = fleetDimStyle.Render(d.marker) + text
@@ -2659,7 +2710,7 @@ func (m FleetModel) lineHeight(i, cw int) int {
 		return 0
 	}
 	if l := m.lines[i]; l.kind == fleetLineRow && i == m.splitPane.Cursor() {
-		return 1 + len(rowDetail(l.row, lipgloss.Width(fleetKeptPrefix(l.treePrefix, cw)), cw))
+		return 1 + len(rowDetail(l.row, lipgloss.Width(fleetKeptPrefix(l.treePrefix, cw)), cw, m.display))
 	}
 	return 1
 }

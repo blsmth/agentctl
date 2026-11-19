@@ -267,16 +267,21 @@ func TestRowRight(t *testing.T) {
 		row  fleet.Row
 		want string
 	}{
-		{"no age no pr", fleet.Row{}, "         "},
-		{"age", fleet.Row{StateSince: since}, "       4m"},
-		{"pr and age", fleet.Row{StateSince: since, PRNumber: 60}, "  #60  4m"},
-		{"done pr keeps age, no check", fleet.Row{StateSince: since, PRNumber: 60, AgentState: state.AgentState{Done: true}}, "  #60  4m"},
-		{"done without pr keeps age", fleet.Row{StateSince: since, AgentState: state.AgentState{Done: true}}, "       4m"},
-		{"four-digit pr", fleet.Row{StateSince: since, PRNumber: 1025}, "#1025  4m"},
+		{"no age no pr", fleet.Row{}, "            " + "         "},
+		{"age", fleet.Row{StateSince: since}, "            " + "       4m"},
+		{"pr and age", fleet.Row{StateSince: since, PRNumber: 60}, "            " + "  #60  4m"},
+		{"done pr keeps age, no check", fleet.Row{StateSince: since, PRNumber: 60, AgentState: state.AgentState{Done: true}}, "            " + "  #60  4m"},
+		{"done without pr keeps age", fleet.Row{StateSince: since, AgentState: state.AgentState{Done: true}}, "            " + "       4m"},
+		{"four-digit pr", fleet.Row{StateSince: since, PRNumber: 1025}, "            " + "#1025  4m"},
+		{"model and ctx", fleet.Row{StateSince: since, PRNumber: 60, AgentState: state.AgentState{ModelName: "claude-opus-4-7", ContextPct: 42}}, "  opus  42% " + "  #60  4m"},
+		{"model, no ctx yet", fleet.Row{StateSince: since, AgentState: state.AgentState{ModelName: "claude-sonnet-4-5-20250929"}}, "sonnet      " + "       4m"},
+		{"ctx 0 is blank", fleet.Row{AgentState: state.AgentState{ModelName: "claude-haiku-4-5", ContextPct: 0}}, " haiku      " + "         "},
+		{"full context", fleet.Row{AgentState: state.AgentState{ModelName: "claude-opus-4-7[1m]", ContextPct: 100}}, "  opus 100% " + "         "},
+		{"shell has no model", fleet.Row{Shell: true, AgentState: state.AgentState{ModelName: "claude-opus-4-7", ContextPct: 5}}, "            " + "         "},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ansi.Strip(rowRight(tt.row, fleetRightFull)); got != tt.want {
+			if got := ansi.Strip(rowRight(tt.row, fleetRightFull, fleetDisplay{})); got != tt.want {
 				t.Errorf("rowRight = %q, want %q", got, tt.want)
 			}
 		})
@@ -287,7 +292,7 @@ func TestRowRight_BlockedUsesBlockedStyle(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
 	r := fleet.Row{StateSince: sidebarNow.Add(-2 * time.Minute), AgentState: state.AgentState{State: "blocked"}}
-	if got, want := rowRight(r, fleetRightFull), fleetBlockedStyle.Render("2m"); !strings.HasSuffix(got, want) {
+	if got, want := rowRight(r, fleetRightFull, fleetDisplay{}), fleetBlockedStyle.Render("2m"); !strings.HasSuffix(got, want) {
 		t.Errorf("blocked age = %q, want %q", got, want)
 	}
 }
@@ -320,7 +325,7 @@ func TestRowDetail(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := rowDetail(tt.row, 0, 52)
+			got := rowDetail(tt.row, 0, 52, fleetDisplay{})
 			if len(got) != tt.wantLines {
 				t.Fatalf("rowDetail lines = %d, want %d: %+v", len(got), tt.wantLines, got)
 			}
