@@ -578,6 +578,7 @@ export function hasFeature(features, name) {
  */
 export function buildAnswerRequest(session, windowId, dialog, key) {
   if (!dialog || !dialog.hash) throw new Error("no dialog to answer");
+  if (dialog.multi && key !== "esc") throw new Error("multi-select: answer on the terminal");
   const valid = key === "esc" || (dialog.options ?? []).some((o) => o.key === key);
   if (!valid) throw new Error(`key ${key} is not an option of this dialog`);
   return {

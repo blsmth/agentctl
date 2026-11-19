@@ -23,11 +23,16 @@ type Dialog struct {
 	// the server re-parses the live pane to prove the same dialog is still up.
 	Hash    string   `json:"hash"`
 	Options []Option `json:"options"`
+	// Multi is true for a multi-select AskUserQuestion: its options are
+	// "[ ]"/"[x]" checkboxes, so pressing a number toggles one and submits
+	// nothing. Only Esc is a safe remote answer.
+	Multi bool `json:"multi,omitempty"`
 }
 
 var (
-	ansiEscape = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
-	optionLine = regexp.MustCompile(`^(\d+)\.\s+(\S.*)$`)
+	ansiEscape    = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
+	optionLine    = regexp.MustCompile(`^(\d+)\.\s+(\S.*)$`)
+	checkboxLabel = regexp.MustCompile(`^\[[ xX✔✓]\]\s`)
 )
 
 // boxChars are the border glyphs Claude Code draws around a dialog.
@@ -102,14 +107,23 @@ func ParseDialog(pane string) (Dialog, bool) {
 		return Dialog{}, false
 	}
 	first := last
+	optIndent := indentOf(lines[last])
+run:
 	for i := last - 1; i >= 0; i-- {
 		switch {
 		case optionLine.MatchString(cleaned[i]):
 			first = i
+			if m := optionLine.FindStringSubmatch(cleaned[i]); m[1] == "1" {
+				break run
+			}
 		case cleaned[i] == "":
-			// tolerate blank lines inside the run
+			// blank lines and separator rules (AskUserQuestion draws one
+			// above its trailing "Chat about this" row) are tolerated
+		case indentOf(lines[i]) > optIndent:
+			// an option's description or the "Submit" row: indented deeper
+			// than the option labels, so part of the run
 		default:
-			i = -1
+			break run
 		}
 	}
 	var opts []Option
@@ -122,6 +136,13 @@ func ParseDialog(pane string) (Dialog, bool) {
 		return Dialog{}, false
 	}
 
+	multi := false
+	for _, o := range opts {
+		if checkboxLabel.MatchString(o.Label) {
+			multi = true
+		}
+	}
+
 	start := dialogStart(lines, cleaned, first)
 	var kept []string
 	for _, l := range cleaned[start : last+1] {
@@ -130,7 +151,7 @@ func ParseDialog(pane string) (Dialog, bool) {
 		}
 	}
 	text := strings.Join(kept, "\n")
-	return Dialog{Text: text, Hash: HashDialogText(text), Options: opts}, true
+	return Dialog{Text: text, Hash: HashDialogText(text), Options: opts, Multi: multi}, true
 }
 
 // isRule reports whether a raw line is a horizontal separator (a run of ─,
@@ -142,4 +163,22 @@ func isRule(line string) bool {
 		return false
 	}
 	return strings.Count(t, "─") >= 10 && !strings.ContainsAny(t, "│")
+}
+
+// indentOf is the display column of a raw line's content, after any box
+// border, with the selection cursor counted as a space so "❯ 1." and "  2."
+// share an indent.
+func indentOf(line string) int {
+	t := StripANSI(line)
+	if b := strings.TrimLeft(t, " \t"); strings.HasPrefix(b, "│") || strings.HasPrefix(b, "┃") {
+		t = strings.TrimPrefix(strings.TrimPrefix(b, "│"), "┃")
+	}
+	n := 0
+	for _, r := range t {
+		if r != ' ' && r != '\t' && r != '❯' {
+			break
+		}
+		n++
+	}
+	return n
 }
