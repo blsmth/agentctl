@@ -100,6 +100,12 @@ type Request struct {
 	Harness string
 	// ReviewPR is the pull request a ModeReviewPR launch reviews.
 	ReviewPR *PullRequest
+	// VerifyAgent, when set, runs once the worktree exists and before
+	// anything is launched, with the directories the agent definition is
+	// resolved from (the launch dir, then the repo dir). An error aborts the
+	// launch and removes a worktree this launch created. The --review-pr
+	// approval check uses it to see the reviewer the launch will really run.
+	VerifyAgent func(dirs ...string) error
 
 	// Set by Launch from the resolved harness, for buildSystemPrompt.
 	persona          string // full agent body, for harnesses without --agent
@@ -270,6 +276,17 @@ func Launch(req Request) (Result, error) {
 		} else {
 			workDir = wtPath
 			logging.Log("dispatch: created worktree at %s (branch %s)", wtPath, branch)
+		}
+	}
+
+	if req.VerifyAgent != nil {
+		if err := req.VerifyAgent(workDir, repoDir); err != nil {
+			if workDir != repoDir {
+				if rmErr := worktree.Remove(workDir); rmErr != nil {
+					logging.Warn("dispatch: removing worktree %s after a refused launch: %v", workDir, rmErr)
+				}
+			}
+			return Result{}, err
 		}
 	}
 
@@ -1124,6 +1141,14 @@ func launchOrchestrator(req Request, spec modeSpec) Orchestrator {
 		return Orchestrator{}
 	}
 	return resolveOrchestratorFn()
+}
+
+// CallerIsAgentSession reports whether this process was started from a
+// tracked Claude session (an agent's Bash tool) rather than by a person in a
+// plain shell: the same test that decides whether a launch has an
+// orchestrator.
+func CallerIsAgentSession() bool {
+	return resolveOrchestratorFn().Known()
 }
 
 // resolveOrchestratorFn is the seam launchOrchestrator resolves through.

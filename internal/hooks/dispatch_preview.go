@@ -225,12 +225,20 @@ func dispatchSegments(command string) [][]cmdToken {
 
 func takeSegment(tokens []cmdToken) []cmdToken {
 	var seg []cmdToken
+	skipTarget := false
 	for _, t := range tokens {
+		if skipTarget {
+			// The target of a redirection written as a separate word
+			// ("> out.txt") is not an argument either.
+			skipTarget = false
+			continue
+		}
 		if t.quoted {
 			seg = append(seg, t)
 			continue
 		}
 		if isRedirection(t.text) {
+			skipTarget = redirectionNeedsTarget(t.text)
 			continue
 		}
 		switch t.text {
@@ -254,6 +262,13 @@ func takeSegment(tokens []cmdToken) []cmdToken {
 func isRedirection(tok string) bool {
 	tok = strings.TrimLeft(tok, "0123456789")
 	return strings.HasPrefix(tok, ">") || strings.HasPrefix(tok, "<") || strings.HasPrefix(tok, "&>")
+}
+
+// redirectionNeedsTarget reports whether a redirection token is only the
+// operator (">", "2>>", "&>"), so its target is the next word. "2>&1" and
+// ">file" carry their target.
+func redirectionNeedsTarget(tok string) bool {
+	return strings.TrimLeft(strings.TrimLeft(tok, "0123456789"), "<>&|") == ""
 }
 
 // segmentHasHelp reports whether a dispatch segment asks for help. Values of

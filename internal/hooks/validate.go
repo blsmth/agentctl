@@ -39,6 +39,7 @@ func ValidateBash() {
 		ToolInput      json.RawMessage `json:"tool_input"`
 		SessionID      string          `json:"session_id"`
 		PermissionMode string          `json:"permission_mode"`
+		Cwd            string          `json:"cwd"`
 	}
 	if !decodeInput(&input) {
 		return
@@ -142,7 +143,18 @@ func ValidateBash() {
 			"so each can be shown for approval.", actx)
 		return
 	}
-	gateDispatch := isDispatch && dispatchNeedsApproval(command, cfg.EffectiveDispatchApproval())
+	approvalMode := cfg.EffectiveDispatchApproval()
+	gateDispatch := isDispatch && dispatchNeedsApproval(command, approvalMode)
+	if isDispatch && !gateDispatch && approvalMode == config.DispatchApprovalNonReview {
+		// The review exemption holds only where the CLI will find the
+		// global reviewer; see reviewExemptionTrusted. The Bash tool's
+		// current directory is the payload's cwd, not this process's.
+		bashCwd := input.Cwd
+		if bashCwd == "" {
+			bashCwd = cwd
+		}
+		gateDispatch = !reviewExemptionTrusted(cfg, command, bashCwd)
+	}
 	if gateDispatch || isCron || cfg.EffectiveBashPreview(agentName) {
 		var approved, decided bool
 		var denyReason string
@@ -169,6 +181,11 @@ func ValidateBash() {
 				// PreToolUse allow: a human gave an affirmative verdict for
 				// THIS EXACT command in the popup. See allowCommand's doc
 				// comment for the safety invariant this enforces.
+				if isDispatch {
+					// What the dispatch CLI checks when the launch needs
+					// proof of a human's approval (dispatchapproval).
+					recordDispatchApprovals(windowID, command)
+				}
 				allowCommand(agentName, command)
 			} else {
 				// See the comment on the global-deny-list `return` above --
@@ -410,24 +427,33 @@ func checkCronTamper(command string) string {
 	}
 	// Arguments to agentctl (a context set value, a dispatch prompt) are
 	// text, not shell write targets.
-	command = maskAgentctlArgs(command)
-	alt := "(?:" + strings.Join(targets, "|") + ")"
-	for _, tmpl := range cronTamperTemplates {
-		re, err := regexp.Compile(fmt.Sprintf(tmpl, alt))
-		if err != nil {
-			logging.Log("hook-validate-bash: bad cron tamper pattern: %v", err)
-			continue
-		}
-		if re.MatchString(command) {
-			return cronTamperReason
-		}
+	if matchesWriteTemplates(maskAgentctlArgs(command), targets) {
+		return cronTamperReason
 	}
 	return ""
 }
 
-// checkGlobalDenyList matches globalDenyPatterns and the serve-, cron- and
-// config-tamper rules against command with data-only heredoc bodies removed
-// (see stripDataHeredocs). Quoted arguments are still matched literally.
+// matchesWriteTemplates reports whether command matches any of
+// cronTamperTemplates with %[1]s replaced by the alternation of targets
+// (regular expressions).
+func matchesWriteTemplates(command string, targets []string) bool {
+	alt := "(?:" + strings.Join(targets, "|") + ")"
+	for _, tmpl := range cronTamperTemplates {
+		re, err := regexp.Compile(fmt.Sprintf(tmpl, alt))
+		if err != nil {
+			logging.Log("hook-validate-bash: bad tamper pattern: %v", err)
+			continue
+		}
+		if re.MatchString(command) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkGlobalDenyList matches globalDenyPatterns and the serve-, cron-,
+// dispatch-approval- and config-tamper rules against command with data-only
+// heredoc bodies removed (see stripDataHeredocs). Quoted arguments are still matched literally.
 func checkGlobalDenyList(command string) string {
 	command = stripDataHeredocs(command)
 	for _, deny := range globalDenyPatterns {
@@ -439,6 +465,9 @@ func checkGlobalDenyList(command string) string {
 		return reason
 	}
 	if reason := checkCronTamper(command); reason != "" {
+		return reason
+	}
+	if reason := checkApprovalTamper(command); reason != "" {
 		return reason
 	}
 	return checkConfigTamper(command)

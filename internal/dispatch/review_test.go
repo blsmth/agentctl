@@ -248,3 +248,43 @@ func TestLaunchReviewPR(t *testing.T) {
 		})
 	}
 }
+
+func TestLaunchVerifyAgent(t *testing.T) {
+	no := false
+	tests := []struct {
+		name    string
+		verify  error
+		wantErr bool
+	}{
+		{"verified launches", nil, false},
+		{"refused does not launch", errors.New("not approved"), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := launchtest.Setup(t, `{}`, map[string]string{"code-reviewer": "---\nname: code-reviewer\n---\nReview.\n"})
+			prevOrch, prevParent, prevExec := resolveOrchestratorFn, parentAccountFn, execPath
+			resolveOrchestratorFn = func() Orchestrator { return Orchestrator{} }
+			parentAccountFn = func() string { return "" }
+			execPath = func() (string, error) { return "/opt/bin/agentctl", nil }
+			t.Cleanup(func() { resolveOrchestratorFn, parentAccountFn, execPath = prevOrch, prevParent, prevExec })
+
+			rec := launchtest.Capture(t)
+			pr := samplePullRequest()
+			var gotDirs []string
+			_, err := Launch(Request{AgentName: "code-reviewer", Mode: ModeReviewPR, ReviewPR: &pr, WorkDir: env.Project,
+				UseWorktree: &no, Background: true, VerifyAgent: func(dirs ...string) error {
+					gotDirs = dirs
+					return tt.verify
+				}})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Launch err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if len(gotDirs) != 2 || gotDirs[0] != env.Project || gotDirs[1] != env.Project {
+				t.Errorf("VerifyAgent dirs = %v, want the launch and repo dirs", gotDirs)
+			}
+			if n := len(rec.Launches()); n != map[bool]int{true: 0, false: 1}[tt.wantErr] {
+				t.Errorf("launches = %d", n)
+			}
+		})
+	}
+}

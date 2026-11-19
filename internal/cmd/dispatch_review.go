@@ -2,12 +2,16 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
+	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/dispatchapproval"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/mailbox"
+	"github.com/blsmth/agentctl/internal/signal"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
@@ -65,6 +69,10 @@ func dispatchReviewPR(opts DispatchOptions) (string, string, error) {
 	if workDir == "" {
 		workDir = resolveAgentDir(agentName)
 	}
+	gate := newReviewerGate(agentName, opts.Detached)
+	if err := gate.check(workDir); err != nil {
+		return "", "", err
+	}
 
 	groups, err := loadFleetGroups()
 	if err != nil {
@@ -95,6 +103,7 @@ func dispatchReviewPR(opts DispatchOptions) (string, string, error) {
 		Account:     opts.Account,
 		Harness:     opts.Harness,
 		Background:  true,
+		VerifyAgent: gate.check,
 	})
 	if err != nil {
 		return "", "", err
@@ -161,4 +170,93 @@ func introduceReviewer(author prAuthorWindow, res dispatch.Result, pr int) {
 		return
 	}
 	logging.Log("dispatch: queued reviewer notice for author %s (PR #%d)", author.WindowID, pr)
+}
+
+// Seams for the reviewer approval check (reviewerGate).
+var (
+	callerIsAgentSession = dispatch.CallerIsAgentSession
+	approvalWindowID     = signal.ResolveWindowID
+	consumeApproval      = dispatchapproval.Consume
+	dispatchArgs         = func() []string { return dispatchArgsFrom(os.Args) }
+	reviewerResolution   = agent.ResolvesGlobal
+	loadGateConfig       = config.Load
+)
+
+// reviewerGate closes the gap in the dispatch_approval review exemption. The
+// hook exempts a review by the NAME config.DefaultReviewAgent, but discovery
+// lets a project-local .claude/agents/<name>.md (or an extends chain through
+// one) shadow the global definition, and the hook cannot see the directory
+// this process runs in. So when the reviewer does not resolve to the global
+// file, a launch from an agent session needs proof that a human approved
+// THIS dispatch: a dispatchapproval marker the hook recorded when the popup
+// was approved, keyed by window and arguments, consumed here.
+//
+// No proof is needed for any other agent (the hook always gates those
+// unless dispatch_approval is "off"), under "off", for a Detached launch,
+// or for a person in a plain shell (no tracked Claude session), whom the
+// popup never applies to.
+type reviewerGate struct {
+	agent  string
+	cfg    *config.Config
+	needed bool // proof is required when the reviewer is local
+	// claimed is set once the approval marker has been looked up; approval
+	// is the result (nil = approved). The marker is consumed on the first
+	// check whatever the reviewer resolves to, so an approval is never left
+	// live for a later run of the same command.
+	claimed  bool
+	approval error
+}
+
+func newReviewerGate(agentName string, detached bool) *reviewerGate {
+	g := &reviewerGate{agent: agentName}
+	if agentName != defaultReviewAgent || detached {
+		return g
+	}
+	g.cfg = loadGateConfig()
+	if g.cfg.EffectiveDispatchApproval() == config.DispatchApprovalOff {
+		return g
+	}
+	g.needed = callerIsAgentSession()
+	return g
+}
+
+// check resolves the reviewer from dirs (plus the cwd, as the launch's body
+// resolution does) and, when it is not the global definition, consumes the
+// approval marker or refuses. Launch calls it again once the worktree exists;
+// one consumed marker covers both calls.
+func (g *reviewerGate) check(dirs ...string) error {
+	if !g.needed {
+		return nil
+	}
+	if !g.claimed {
+		g.claimed = true
+		g.approval = consumeApproval(approvalWindowID(), dispatchArgs())
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		dirs = append(dirs, cwd)
+	}
+	res := reviewerResolution(g.cfg, g.agent, dirs...)
+	if res.Global {
+		return nil
+	}
+	if err := g.approval; err != nil {
+		logging.Warn("dispatch: refusing review by %s (%s): %v", g.agent, res.Reason, err)
+		return fmt.Errorf("--review-pr: %s here is not your global agent definition (%s), and no human approval was recorded for this dispatch (%v). "+
+			"A project-local reviewer launches only after the approval popup: rerun this exact command as its own Bash call, "+
+			"starting with agentctl (no cd, env, variable assignments or other commands before it), from the directory it should run in "+
+			"(cd there in a separate call first), so the popup is shown", g.agent, res.Reason, err)
+	}
+	logging.Log("dispatch: review by %s (%s) launched with a recorded human approval", g.agent, res.Reason)
+	return nil
+}
+
+// dispatchArgsFrom returns the words after "dispatch" in argv, which is what
+// the hook keyed the approval on; nil when argv is not a dispatch.
+func dispatchArgsFrom(argv []string) []string {
+	for i := 1; i < len(argv); i++ {
+		if argv[i] == "dispatch" {
+			return append([]string{}, argv[i+1:]...)
+		}
+	}
+	return nil
 }
