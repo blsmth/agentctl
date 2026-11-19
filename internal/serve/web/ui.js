@@ -34,9 +34,11 @@ export function toast(message, kind = "info") {
  * confirmSheet shows a bottom sheet with a title and body lines and resolves
  * true on confirm, false on cancel. Navigating away (hashchange) cancels it:
  * the sheet belongs to the view that opened it, and confirming it from the
- * next view would act on the previous one's target.
+ * next view would act on the previous one's target. With a toggle
+ * ({label, value}) the sheet shows a checkbox; flipping it resolves
+ * { fullSweep: checked } so the caller can rebuild the sheet.
  */
-export function confirmSheet({ title, lines = [], confirmLabel = "Confirm", danger = false }) {
+export function confirmSheet({ title, lines = [], confirmLabel = "Confirm", danger = false, toggle = null }) {
   return new Promise((resolve) => {
     let settled = false;
     const done = (v) => {
@@ -56,6 +58,18 @@ export function confirmSheet({ title, lines = [], confirmLabel = "Confirm", dang
         { class: "sheet", role: "dialog", "aria-modal": "true" },
         h("h2", {}, title),
         ...lines.map((l) => h("pre", { class: "sheet-body" }, l)),
+        toggle &&
+          h(
+            "label",
+            { class: "sheet-toggle" },
+            h("input", {
+              type: "checkbox",
+              checked: toggle.value,
+              onchange: (e) => done({ fullSweep: e.target.checked }),
+            }),
+            " ",
+            toggle.label,
+          ),
         h(
           "div",
           { class: "row" },

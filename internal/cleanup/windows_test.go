@@ -13,6 +13,16 @@ func tracked(mut func(*SweepFacts)) SweepFacts {
 	return f
 }
 
+// bare is an idle interactive window that completed a turn, with IncludeBare
+// on. Done is false, as it is in practice: hooks never mark bare windows done.
+func bare(mut func(*SweepFacts)) SweepFacts {
+	f := SweepFacts{Tracked: true, State: "idle", Mode: "bare", IncludeBare: true, TurnCount: 1}
+	if mut != nil {
+		mut(&f)
+	}
+	return f
+}
+
 func TestClassifyWindow(t *testing.T) {
 	landed := Facts{HasUpstream: true, AheadOfBase: 2, PR: PRMerged}
 	tests := []struct {
@@ -32,8 +42,20 @@ func TestClassifyWindow(t *testing.T) {
 		{"pending mail on done window", tracked(func(f *SweepFacts) { f.PendingMail = 2 }), SweepAction, "2 unread", false},
 		{"idle not done", tracked(func(f *SweepFacts) { f.Done = false; f.Activity = "Editing x.go" }), SweepAction, "waiting for input: Editing x.go", false},
 		{"bare without include", tracked(func(f *SweepFacts) { f.Mode = "bare" }), SweepAction, "idle interactive", false},
-		{"bare with include closes", tracked(func(f *SweepFacts) { f.Mode = "bare"; f.IncludeBare = true }), SweepClose, "done, no branch", false},
-		{"bare include but not done", tracked(func(f *SweepFacts) { f.Mode = "bare"; f.IncludeBare = true; f.Done = false }), SweepAction, "waiting", false},
+		{"bare idle after a turn closes (Done never set)", bare(nil), SweepClose, "done, no branch", false},
+		{"bare idle after a turn closes even if Done set", bare(func(f *SweepFacts) { f.Done = true }), SweepClose, "done, no branch", false},
+		{"fresh bare stays", bare(func(f *SweepFacts) { f.TurnCount = 0 }), SweepAction, "no turn completed", false},
+		{"bare with live child stays", bare(func(f *SweepFacts) { f.LiveChildren = 2 }), SweepAction, "2 live child session(s)", false},
+		{"bare open PR stays", bare(func(f *SweepFacts) { f.Branch = "b"; f.BranchPR = PRInfo{State: PROpen, Number: 9, URL: "u"} }), SweepAction, "review PR #9", false},
+		{"bare dirty worktree stays", bare(func(f *SweepFacts) { f.HasWorktree = true; w := landed; w.Dirty = true; f.WT = w }), SweepAction, "dirty", false},
+		{"bare landed worktree closes via reclaim", bare(func(f *SweepFacts) { f.HasWorktree = true; f.WT = landed }), SweepClose, "merged", true},
+		{"bare blocked stays", bare(func(f *SweepFacts) { f.State = "blocked" }), SweepAction, "approve/answer", false},
+		{"bare pane dialog stays", bare(func(f *SweepFacts) { f.Pane = "awaiting" }), SweepAction, "approve/answer", false},
+		{"bare working stays", bare(func(f *SweepFacts) { f.State = "working" }), SweepWorking, "", false},
+		{"bare pane busy stays", bare(func(f *SweepFacts) { f.Pane = "busy" }), SweepWorking, "", false},
+		{"bare pending mail stays", bare(func(f *SweepFacts) { f.PendingMail = 1 }), SweepAction, "1 unread", false},
+		{"bare pane idle beats working record", bare(func(f *SweepFacts) { f.State = "working"; f.Pane = "idle" }), SweepClose, "done, no branch", false},
+		{"non-bare ignores turn count and children", tracked(func(f *SweepFacts) { f.LiveChildren = 3; f.TurnCount = 0 }), SweepClose, "done, no branch", false},
 		{"done no branch no worktree", tracked(nil), SweepClose, "done, no branch", false},
 		{"done landed worktree", tracked(func(f *SweepFacts) { f.HasWorktree = true; f.WT = landed }), SweepClose, "merged", true},
 		{"done empty worktree", tracked(func(f *SweepFacts) { f.HasWorktree = true; f.WT = Facts{HasUpstream: true} }), SweepClose, "no commits", true},
