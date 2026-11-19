@@ -168,17 +168,45 @@ test("an Interrupt sheet left open does not survive navigation to another window
   expect(guard.unexpected()).toEqual([]);
 });
 
-test("a closed window says so and offers the way back", async ({ page, control, guard }) => {
+test("closing a window returns to the fleet", async ({ page, control, guard }) => {
   guard.allow(/HTTP 404|status of 404/);
   await openWindow(page, "@15");
   await page.getByRole("button", { name: "Close window" }).tap();
   await expect(sheet(page)).toContainText("Close window?");
   await sheet(page).getByRole("button", { name: "Close" }).tap();
   await control.waitForActions((a) => a.some((x) => x.kind === "close"));
+  await expect(page.locator("header.bar h1")).toHaveText("Fleet");
+  expect(new URL(page.url()).hash).toBe("#/");
+  await expect(page.locator(".gone")).toHaveCount(0);
+  await page.waitForTimeout(500);
+  await expect(page.locator("#toasts .toast.error")).toHaveCount(0);
+});
+
+test("a failed close stays on the window", async ({ page, guard }) => {
+  await openWindow(page, "@15");
+  // Stub in the page: page.route does not see requests once the service worker controls it.
+  await page.evaluate(() => {
+    const real = window.fetch;
+    window.fetch = (input, init) =>
+      String(input).endsWith("/close")
+        ? Promise.resolve(new Response(JSON.stringify({ error: "boom" }), { status: 500, headers: { "Content-Type": "application/json" } }))
+        : real(input, init);
+  });
+  await page.getByRole("button", { name: "Close window" }).tap();
+  await sheet(page).getByRole("button", { name: "Close" }).tap();
+  await expect(page.locator("#toasts .toast.error")).toBeVisible();
+  expect(new URL(page.url()).hash).toContain("/w/");
+  await expect(page.locator(".pane")).toBeVisible();
+  await expect(page.locator("header.bar h1")).toHaveText("docs");
+});
+
+test("a window closed elsewhere says so and offers the way back", async ({ page, guard }) => {
+  guard.allow(/HTTP 404|status of 404/);
+  await page.route(/\/v1\/sessions\/[^/]+\/windows\/[^/?]+(\/pane)?(\?.*)?$/, (r) => r.fulfill({ status: 404, contentType: "application/json", body: "{}" }));
+  await page.goto(`/#/w/${SHOP}/${encodeURIComponent("@15")}`);
+  await expect(page.locator(".gone")).toBeVisible();
   await expect(page.locator(".gone")).toContainText("This window was closed.");
   await expect(page.locator("header.bar h1")).toHaveText("Window closed");
-  await expect(page.locator(".pane-bar")).toBeHidden();
-  await expect(page.locator(".actions")).toBeEmpty();
   await page.locator(".gone").getByRole("link", { name: "Back to Fleet" }).tap();
   await expect(page.locator("header.bar h1")).toHaveText("Fleet");
 });
