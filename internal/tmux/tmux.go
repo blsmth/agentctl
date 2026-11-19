@@ -1278,6 +1278,7 @@ var utilityWindowNames = map[string]bool{
 	"tickets":  true,
 	"sessions": true,
 	"agents":   true,
+	"context":  true,
 }
 
 // FormatEscape escapes s for a tmux string that tmux format-expands, by
@@ -1528,6 +1529,7 @@ func agentctlKeybindings(exe string) []keyBinding {
 		{"h", run("", "hud-toggle #{window_id}")},
 		{"H", nested(80, 30, "hud #{window_id}")},
 		{"C", nested(60, 24, "context-push-menu #{window_id}")},
+		{"X", run("-b ", "open-context-window")},
 		// Toggle agentctl serve (the phone web app) and report the outcome as
 		// a tmux message on the pressing client. Machine-wide, so not
 		// redirected in the hub (hubtarget scopes it ScopeOther).
@@ -2227,6 +2229,33 @@ func OpenOrFocusAgentsWindow() error {
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("new-window agents: %s: %w", string(out), err)
+	}
+	return nil
+}
+
+// OpenOrFocusContextWindow opens a dedicated "context" window in the agentctl
+// session, or focuses it if it already exists. The window runs
+// `agentctl context --tui` in full-screen alt-screen mode.
+func OpenOrFocusContextWindow() error {
+	exe := selfpath.SpawnableOrFallback()
+	windowName := "context"
+	target := sessionWindowTarget(SessionName, windowName)
+
+	if err := exec.Command("tmux", "select-window", "-t", target).Run(); err == nil {
+		return nil
+	}
+
+	originID := CurrentWindowID()
+
+	cmd := exec.Command("tmux", "new-window",
+		"-t", ExactSessionTarget(SessionName),
+		"-n", windowName,
+		"-e", "AGENTCTL=1",
+		"-e", "AGENTCTL_ORIGIN_WINDOW="+originID,
+		exe, "context", "--tui",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("new-window context: %s: %w", string(out), err)
 	}
 	return nil
 }

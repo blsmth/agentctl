@@ -52,6 +52,7 @@ var scopes = map[string]Scope{
 	"open-tickets-window":  ScopeProject,
 	"open-sessions-window": ScopeProject,
 	"open-agents-window":   ScopeProject,
+	"open-context-window":  ScopeProject,
 
 	"quit-menu":     ScopeHubQuit,
 	"restart-menu":  ScopeHubRefused,

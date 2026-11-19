@@ -18,7 +18,7 @@ func TestClassify(t *testing.T) {
 		{"context-push-menu", ScopeWindow},
 		{"menu", ScopeProject}, {"launch", ScopeProject}, {"create-menu", ScopeProject},
 		{"ticket-launch", ScopeProject}, {"ticket-menu", ScopeProject}, {"permissions-menu", ScopeProject},
-		{"open-tickets-window", ScopeProject}, {"open-sessions-window", ScopeProject}, {"open-agents-window", ScopeProject},
+		{"open-tickets-window", ScopeProject}, {"open-sessions-window", ScopeProject}, {"open-agents-window", ScopeProject}, {"open-context-window", ScopeProject},
 		{"quit-menu", ScopeHubQuit},
 		{"restart-menu", ScopeHubRefused}, {"kill-all-menu", ScopeHubRefused},
 		{"hub", ScopeOther}, {"jump-next-blocked", ScopeOther}, {"theme-picker", ScopeOther}, {"status", ScopeOther},

@@ -91,6 +91,7 @@ type CLI struct {
 	Sessions           SessionsCmd           `cmd:"" help:"List sessions (--tui for interactive browser, --json for machine-readable)"`
 	SessionsMenu       SessionsMenuCmd       `cmd:"" name:"sessions-menu" hidden:""`
 	OpenSessionsWindow OpenSessionsWindowCmd `cmd:"" name:"open-sessions-window" hidden:""`
+	OpenContextWindow  OpenContextWindowCmd  `cmd:"" name:"open-context-window" hidden:""`
 
 	// Audit trail (hook-sourced -- every tool call, not just Bash)
 	Audit AuditCmd `cmd:"" help:"Query the hook-sourced audit trail (--json for machine-readable)"`
@@ -746,6 +747,16 @@ type OpenSessionsWindowCmd struct{}
 
 func (c *OpenSessionsWindowCmd) Run() error {
 	if err := tmux.OpenOrFocusSessionsWindow(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		cliout.Exit(1)
+	}
+	return nil
+}
+
+type OpenContextWindowCmd struct{}
+
+func (c *OpenContextWindowCmd) Run() error {
+	if err := tmux.OpenOrFocusContextWindow(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		cliout.Exit(1)
 	}
