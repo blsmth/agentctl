@@ -64,7 +64,7 @@ test("a short drag snaps back without asking or navigating", async ({ page, cont
 });
 
 test("a vertical drag is left to the browser: no slide, no sheet, no navigation", async ({ page, control }) => {
-  const link = row(page, "@11");
+  const link = row(page, "@15");
   // touch-action: pan-y is what lets the browser scroll the list natively.
   await expect(link).toHaveCSS("touch-action", "pan-y");
   // Mostly vertical, with some sideways drift; checked mid-gesture.
