@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -323,8 +325,8 @@ func TestTagLogsTitles(t *testing.T) {
 		if got.Title != w {
 			t.Errorf("row %d Title = %q, want %q (recap %+v)", i, got.Title, w, got)
 		}
-		if w == "" && got.Short() != got.Text {
-			t.Errorf("row %d Short = %q, want the recap text", i, got.Short())
+		if w == "" && got.Short() != FirstSentence(got.Text) {
+			t.Errorf("row %d Short = %q, want the recap's first sentence", i, got.Short())
 		}
 		if w != "" && got.Short() != w {
 			t.Errorf("row %d Short = %q, want %q", i, got.Short(), w)
@@ -363,5 +365,57 @@ func TestTagLogsTitleStandsInForEmptyRecap(t *testing.T) {
 	}
 	if got := rows[1].Recap; got.Source != RecapNone {
 		t.Errorf("recap = %+v", got)
+	}
+}
+
+func TestShortFirstSentence(t *testing.T) {
+	tests := []struct {
+		name string
+		l    RecapLine
+		want string
+	}{
+		{"title wins", RecapLine{Text: "A. B.", Title: "Fixing Hub"}, "Fixing Hub"},
+		{"summary first sentence", RecapLine{Text: "Rebuilt the hub sort.  Next:\nadd tests.", Source: RecapSummary}, "Rebuilt the hub sort"},
+		{"question", RecapLine{Text: "Should we ship? Waiting on you.", Source: RecapSummary}, "Should we ship"},
+		{"url dots are not sentence ends", RecapLine{Text: "Review https://github.com/a/b.c/pull/1 please", Source: RecapTask}, "Review https://github.com/a/b.c/pull/1 please"},
+		{"no sentence end", RecapLine{Text: "#60 Ticket title", Source: RecapTask}, "#60 Ticket title"},
+		{"leading dots", RecapLine{Text: "... then more", Source: RecapActivity}, "... then more"},
+		{"empty", RecapLine{}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.l.Short(); got != tt.want {
+				t.Errorf("Short() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTruncateWords(t *testing.T) {
+	tests := []struct {
+		name  string
+		s     string
+		width int
+		want  string
+	}{
+		{"fits", "Fixing hub sort", 15, "Fixing hub sort"},
+		{"cut at word", "Fixing the hub sort order", 14, "Fixing the…"},
+		{"cut exactly before a space", "Fixing the hub sort", 11, "Fixing the…"},
+		{"drops trailing punctuation", "Rebuilt sort, then tests", 15, "Rebuilt sort…"},
+		{"single long word", "https://github.com/blsmth/agentctl/pull/188", 12, "https://git…"},
+		{"wide runes", "日本語 テキスト です", 9, "日本語…"},
+		{"zero width", "abc", 0, ""},
+		{"width one", "abc def", 1, "…"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TruncateWords(tt.s, tt.width)
+			if got != tt.want {
+				t.Errorf("TruncateWords(%q, %d) = %q, want %q", tt.s, tt.width, got, tt.want)
+			}
+			if w := ansi.StringWidth(got); w > tt.width {
+				t.Errorf("width %d > %d", w, tt.width)
+			}
+		})
 	}
 }

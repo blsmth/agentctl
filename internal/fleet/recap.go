@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // RecapSource says which signal a RecapLine came from, strongest first.
@@ -45,12 +47,56 @@ type RecapLine struct {
 	Kind string
 }
 
-// Short is what a list row shows: Title when there is one, else Text.
+// Short is what a list row shows: Title when there is one, else the first
+// sentence of Text, so an untitled row leads with what the recap says rather
+// than a paragraph cut off at the edge. Fit it to a width with TruncateWords.
 func (l RecapLine) Short() string {
 	if l.Title != "" {
 		return l.Title
 	}
-	return l.Text
+	return FirstSentence(l.Text)
+}
+
+// FirstSentence is the first sentence of s with whitespace collapsed and its
+// closing punctuation dropped: everything up to the first '.', '!' or '?'
+// that ends s or is followed by a space. A URL's dots do not end a sentence.
+// s with no sentence end is returned whole.
+func FirstSentence(s string) string {
+	s = flattenWhitespace(s)
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '.', '!', '?':
+			if i+1 == len(s) || s[i+1] == ' ' {
+				if out := strings.TrimRight(s[:i+1], ".!?"); out != "" {
+					return out
+				}
+			}
+		}
+	}
+	return s
+}
+
+// TruncateWords fits s into width terminal cells, cutting at a word boundary
+// and marking the cut with "…". Only a single word wider than width (a long
+// URL) is cut inside the word. Trailing punctuation before the "…" is
+// dropped.
+func TruncateWords(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if ansi.StringWidth(s) <= width {
+		return s
+	}
+	const tail = "…"
+	head := ansi.Truncate(s, width-ansi.StringWidth(tail), "")
+	// head ends at a word boundary when the next byte of s is a space.
+	if len(head) < len(s) && s[len(head)] != ' ' {
+		if i := strings.LastIndexByte(head, ' '); i > 0 {
+			head = head[:i]
+		}
+	}
+	head = strings.TrimRight(head, " ,;:-–—")
+	return head + tail
 }
 
 // titleSource reports whether a row with recap l shows the generated short

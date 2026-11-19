@@ -7,7 +7,7 @@ import {
   approvalProject, approvalRows, approvalRowText, promptFold, PROMPT_FOLD_LINES,
   DISPATCH_UPLOAD_PATH, buildDispatchRequest, buildShellRequest, canShell, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
-  bucketLabel, kindLabel, rowTags, rowChips, rowTitle, rowHeadline, rowKind, agentChip, rowDetailLine, treeRows,
+  bucketLabel, kindLabel, rowTags, rowChips, rowTitle, rowHeadline, rowKind, truncateWords, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
   actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
@@ -264,6 +264,11 @@ console.log("ok: resolved text");
   assert.equal(agentChip(summary), "brandon");
   const long = rowHeadline({ agent: "a", recap: "word ".repeat(40), recap_source: "title" });
   assert.ok(long.length <= 80 && long.endsWith("…"));
+  assert.ok(/(^| )word…$/.test(long), `cut mid-word: ${long}`);
+  assert.equal(truncateWords("Fixing the hub sort order", 11), "Fixing the…");
+  assert.equal(truncateWords("Rebuilt sort, then tests", 14), "Rebuilt sort…");
+  assert.equal(truncateWords("https://github.com/x/y", 10), "https://g…");
+  assert.equal(truncateWords("short", 10), "short");
   const act = { agent: "brandon:55", recap: "go test ./...", recap_source: "activity", activity: "go test ./..." };
   assert.equal(rowHeadline(act), "brandon:55");
   assert.equal(agentChip(act), "");

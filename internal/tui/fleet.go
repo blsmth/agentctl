@@ -2439,7 +2439,7 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 			available -= lipgloss.Width(kt) + 1
 			tag += fleetDimStyle.Render(kt) + " "
 		}
-		text = tag + rs.Render(truncateToWidth(recap.Short(), max(available, 0)))
+		text = tag + rs.Render(fleet.TruncateWords(recap.Short(), max(available, 0)))
 	}
 
 	closeBtn := strings.Repeat(" ", lipgloss.Width(fleetCloseLabel))

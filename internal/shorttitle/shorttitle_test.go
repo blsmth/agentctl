@@ -304,3 +304,51 @@ func TestSanitizeDropsKindPrefix(t *testing.T) {
 		t.Errorf("Sanitize = %q", got)
 	}
 }
+
+func TestTakeBackfillBudgetLeavesReserve(t *testing.T) {
+	useStateDir(t)
+	now := time.Now()
+	n := 0
+	for TakeBackfillBudget(now) {
+		n++
+		if n > HourlyBudget {
+			t.Fatal("backfill budget never ran out")
+		}
+	}
+	if want := HourlyBudget - BackfillReserve; n != want {
+		t.Fatalf("backfill took %d, want %d", n, want)
+	}
+	for i := 0; i < BackfillReserve; i++ {
+		if !TakeBudget(now) {
+			t.Fatalf("hook request %d refused: reserve not left", i+1)
+		}
+	}
+	if TakeBudget(now) {
+		t.Fatal("budget exceeded")
+	}
+}
+
+func TestRecapInput(t *testing.T) {
+	now := time.Now()
+	in := Input{Recap: "Rebuilt the hub sort. Next: tests."}
+	if in.Empty() {
+		t.Fatal("recap-only input is empty")
+	}
+	if !in.Refinement() {
+		t.Fatal("recap input is not a refinement")
+	}
+	if !Due(windowstate.ShortTitle{}, in, now) {
+		t.Fatal("recap input not due on an untitled window")
+	}
+	if Hash := (Input{Task: "x"}).Hash(); Hash == (Input{Task: "x", Recap: "y"}).Hash() {
+		t.Fatal("recap not part of the hash")
+	}
+	if p := Prompt(in); !strings.Contains(p, "Session so far:\nRebuilt the hub sort.") {
+		t.Fatalf("prompt lacks the recap:\n%s", p)
+	}
+	var st windowstate.ShortTitle
+	Apply(&st, in, "Rebuilding Hub Sort", "go", nil, now)
+	if !st.Final {
+		t.Fatal("title from a recap not final")
+	}
+}

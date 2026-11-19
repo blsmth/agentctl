@@ -34,7 +34,10 @@ var (
 	// (a local file read, no network).
 	titleNoCredits  = backendauth.NoCreditsFresh
 	titleTakeBudget = shorttitle.TakeBudget
-	titleNow        = time.Now
+	// titleTakeBackfillBudget is the housekeeping backfill's budget, which
+	// leaves shorttitle.BackfillReserve requests to the hooks.
+	titleTakeBackfillBudget = shorttitle.TakeBackfillBudget
+	titleNow                = time.Now
 )
 
 // Title is hook-title, registered async on Stop, UserPromptSubmit and
@@ -107,24 +110,57 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 	if !shorttitle.Due(ws.ShortTitle, in, now) {
 		return
 	}
+	if !titleReady(s, now) {
+		return
+	}
+	titleWindow(ctx, s, windowID, in, now, titleTakeBudget, nil)
+}
+
+// titleReady reports whether a title request may be tried at all: the backend
+// is not out of credits and a key is available. Both checks are local (a
+// marker file, backendauth.Available), never the network.
+func titleReady(s config.TitleSettings, now time.Time) bool {
 	// Out of credits: skip silently, with no budget spent and no backoff
 	// recorded, until the marker goes stale and one request probes again.
 	// A :free model cannot 402, so a marker set elsewhere does not pause it.
 	if _, out := titleNoCredits(s.BackendName, now); out && !strings.HasSuffix(s.Model, ":free") {
 		logging.Debug("hook-title: backend %s out of credits, skipping", s.BackendName)
-		return
+		return false
 	}
 	if err := titleKeyAvailable(s); err != nil {
 		logging.Debug("hook-title: %v", err)
-		return
+		return false
 	}
+	return true
+}
+
+// titleOutcome is what titleWindow did.
+type titleOutcome int
+
+const (
+	// titleNotClaimed: the window was not due inside its transaction (another
+	// run holds it, it was titled meanwhile, or it is gone). No request.
+	titleNotClaimed titleOutcome = iota
+	// titleDeferred: no key, no budget or no credits. No request was
+	// recorded against the window and its lease was dropped.
+	titleDeferred
+	// titleRequested: a request was sent and its outcome recorded.
+	titleRequested
+)
+
+// titleWindow claims windowID, asks the backend for a title of in (spending
+// one unit of budget through take) and records the outcome. still, when set,
+// must also hold for the record inside the claim transaction.
+func titleWindow(ctx context.Context, s config.TitleSettings, windowID string, in shorttitle.Input, now time.Time,
+	take func(time.Time) bool, still func(windowstate.WindowState) bool,
+) titleOutcome {
 	// Claim the window before the request: the hook can fire twice for one
 	// event (project settings.local.json plus a per-agent --settings file),
 	// and only one of them may spend a request. The lease outlives the hook
 	// timeout, so a killed hook only delays the next try.
 	claimed := false
-	err = windowstate.Update(windowID, func(w *windowstate.WindowState) {
-		if !shorttitle.Due(w.ShortTitle, in, now) {
+	err := windowstate.Update(windowID, func(w *windowstate.WindowState) {
+		if !shorttitle.Due(w.ShortTitle, in, now) || (still != nil && !still(*w)) {
 			return
 		}
 		w.ShortTitle.RetryAfter = now.Add(titleLease)
@@ -132,9 +168,9 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 	})
 	if err != nil || !claimed {
 		logUpdateErr("hook-title", err)
-		return
+		return titleNotClaimed
 	}
-	title, kind, genErr := generateTitle(ctx, s, in, now)
+	title, kind, genErr := generateTitle(ctx, s, in, now, take)
 	if errors.Is(genErr, llm.ErrNoKey) || errors.Is(genErr, errTitleBudget) || errors.Is(genErr, backendauth.ErrNoCredits) {
 		// Not a failure of this input: drop the lease, write nothing else.
 		logging.Log("hook-title: window=%s: %v", windowID, genErr)
@@ -144,7 +180,7 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 			}
 		})
 		logUpdateErr("hook-title", err)
-		return
+		return titleDeferred
 	}
 	if genErr != nil {
 		logging.Log("hook-title: window=%s: %v", windowID, genErr)
@@ -161,6 +197,7 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 	if err == nil && genErr == nil {
 		logging.Debug("hook-title: window=%s title=%q", windowID, title)
 	}
+	return titleRequested
 }
 
 // titleLease is how long a claimed window is skipped by other hook-title
@@ -170,9 +207,12 @@ const titleLease = 2 * titleHookTimeoutSeconds * time.Second
 // errTitleBudget means the global hourly cap is spent.
 var errTitleBudget = errors.New("hourly title request cap reached")
 
-// generateTitle spends one unit of the hourly budget and asks the backend.
-func generateTitle(ctx context.Context, s config.TitleSettings, in shorttitle.Input, now time.Time) (title, kind string, err error) {
-	if !titleTakeBudget(now) {
+// generateTitle spends one unit of the hourly budget (through take) and asks
+// the backend.
+func generateTitle(ctx context.Context, s config.TitleSettings, in shorttitle.Input, now time.Time,
+	take func(time.Time) bool,
+) (title, kind string, err error) {
+	if !take(now) {
 		return "", "", fmt.Errorf("%w (%d/hour)", errTitleBudget, shorttitle.HourlyBudget)
 	}
 	comp, err := newTitleCompleter(s)
