@@ -25,7 +25,31 @@ func stubDispatchGate(t *testing.T) *bool {
 
 // runValidateBashWith runs ValidateBash for command under cfg and reports
 // whether the dispatch gate ran and what was written to stdout.
+// The review agent resolves to its global definition unless a test says
+// otherwise (stubReviewerGlobal).
 func runValidateBashWith(t *testing.T, cfg *config.Config, command string) (gated bool, out string) {
+	t.Helper()
+	stubReviewerGlobal(t, true)
+	return runValidateBashPayload(t, cfg, command, "")
+}
+
+// stubReviewerGlobal pins whether the review agent resolves to its global
+// definition, recording each directory it was asked about.
+func stubReviewerGlobal(t *testing.T, global bool) *[]string {
+	t.Helper()
+	var dirs []string
+	orig := reviewerGlobalFrom
+	reviewerGlobalFrom = func(_ *config.Config, dir string) bool {
+		dirs = append(dirs, dir)
+		return global
+	}
+	t.Cleanup(func() { reviewerGlobalFrom = orig })
+	return &dirs
+}
+
+// runValidateBashPayload is runValidateBashWith with the payload's cwd and
+// without pinning the reviewer.
+func runValidateBashPayload(t *testing.T, cfg *config.Config, command, cwd string) (gated bool, out string) {
 	t.Helper()
 	d := DefaultDeps()
 	d.LoadConfig = func() *config.Config { return cfg }
@@ -36,7 +60,7 @@ func runValidateBashWith(t *testing.T, cfg *config.Config, command string) (gate
 	called := stubDispatchGate(t)
 	failIfDispatchPopupRunnerCalled(t)
 
-	stdin := `{"tool_name":"Bash","tool_input":{"command":` + strconv.Quote(command) + `}}`
+	stdin := `{"tool_name":"Bash","cwd":` + strconv.Quote(cwd) + `,"tool_input":{"command":` + strconv.Quote(command) + `}}`
 	envVars := map[string]string{
 		"AGENTCTL":            "1",
 		"AGENTCTL_AGENT_NAME": "lead",
