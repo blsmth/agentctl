@@ -319,6 +319,8 @@ func answerKeys(d *panestate.Dialog, in answerIn) ([]string, outcome, bool) {
 		return []string{"Escape"}, outcome{}, true
 	case in.Key == submitKey:
 		return submitKeys(d, in.Select)
+	case d.Multi && !isToggleKey(d, in.Key):
+		return nil, failure(http.StatusConflict, codeDialogChanged, fmt.Sprintf("%q is not a checkbox of this dialog", in.Key)), false
 	case !hasOptionIn(d, in.Key):
 		return nil, failure(http.StatusConflict, codeDialogChanged, fmt.Sprintf("%q is not an option of this dialog", in.Key)), false
 	}
@@ -359,6 +361,16 @@ func submitKeys(d *panestate.Dialog, want []string) ([]string, outcome, bool) {
 		keys = append(keys, move)
 	}
 	return append(keys, "Enter"), outcome{}, true
+}
+
+// isToggleKey reports whether key is a checkbox option other than free text.
+func isToggleKey(d *panestate.Dialog, key string) bool {
+	for _, o := range d.Options {
+		if o.Key == key {
+			return strings.HasPrefix(o.Label, "[") && !panestate.IsFreeText(o.Label)
+		}
+	}
+	return false
 }
 
 func hasOptionIn(d *panestate.Dialog, key string) bool {

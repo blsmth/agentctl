@@ -490,7 +490,8 @@ func TestAnswerMultiSelect(t *testing.T) {
 	}{
 		{"toggle", `{"key":"2","dialog_hash":%q}`, d.Hash, 200, []string{"2"}},
 		{"toggle unknown option", `{"key":"9","dialog_hash":%q}`, d.Hash, 409, nil},
-		{"esc", `{"key":"esc","dialog_hash":%q}`, d.Hash, 200, []string{"Escape"}},
+		{"toggle free text refused", `{"key":"3","dialog_hash":%q}`, d.Hash, 409, nil},
+		{"chat option refused", `{"key":"4","dialog_hash":%q}`, d.Hash, 409, nil},		{"esc", `{"key":"esc","dialog_hash":%q}`, d.Hash, 200, []string{"Escape"}},
 		{"stale hash", `{"key":"1","dialog_hash":%q}`, strings.Repeat("0", 64), 409, nil},
 		{"submit", `{"key":"submit","select":["1","2"],"dialog_hash":%q}`, d.Hash, 200,
 			[]string{"1", "2", "Down", "Down", "Down", "Enter"}},

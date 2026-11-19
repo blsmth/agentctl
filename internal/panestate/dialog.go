@@ -186,8 +186,8 @@ run:
 
 // findSubmitRow locates the confirm row of a multi-select question within
 // lines[first..last] and the arrow presses from the ❯ cursor to it. The row
-// is the first unnumbered line after the last checkbox option (descriptions
-// sit before the next option, so none intervene). Navigable rows are the
+// is the unnumbered line after the last checkbox option reading exactly
+// "Next" or "Submit" (a described last option's description is not it). Navigable rows are the
 // numbered options plus that row, in screen order. Returns nil without a
 // cursor or confirm row.
 func findSubmitRow(lines, cleaned []string, first, last int) *SubmitRow {
@@ -201,10 +201,11 @@ func findSubmitRow(lines, cleaned []string, first, last int) *SubmitRow {
 		return nil
 	}
 	row, cursor, submitRow := -1, -1, -1
+	cursorFree := false
 	label := ""
 	for i := first; i <= last; i++ {
 		isOpt := optionLine.MatchString(cleaned[i])
-		isSubmit := !isOpt && submitRow < 0 && i > lastBox && cleaned[i] != "" && !isRule(lines[i])
+		isSubmit := !isOpt && submitRow < 0 && i > lastBox && (cleaned[i] == "Next" || cleaned[i] == "Submit")
 		if !isOpt && !isSubmit {
 			continue
 		}
@@ -214,9 +215,14 @@ func findSubmitRow(lines, cleaned []string, first, last int) *SubmitRow {
 		}
 		if strings.HasPrefix(strings.TrimLeft(lines[i], boxChars+" \t"), "❯") {
 			cursor = row
+			if m := optionLine.FindStringSubmatch(cleaned[i]); m != nil {
+				cursorFree = IsFreeText(m[2])
+			}
 		}
 	}
-	if submitRow < 0 || cursor < 0 {
+	// With the cursor on the free-text row, digits would be typed into its
+	// field instead of toggling boxes.
+	if submitRow < 0 || cursor < 0 || cursorFree {
 		return nil
 	}
 	return &SubmitRow{Label: label, Moves: submitRow - cursor}

@@ -230,3 +230,27 @@ func TestDialogShowingReviewPage(t *testing.T) {
 		t.Error("heading alone is not a dialog")
 	}
 }
+
+func TestParseDialogSubmitRowEdgeCases(t *testing.T) {
+	describedLast := rule + "\n" +
+		"Pick\n" +
+		"❯ 1. [ ] A\n" +
+		"         Option A\n" +
+		"  2. [ ] C\n" +
+		"         Option C\n" +
+		"     Next\n" +
+		rule + "\n" +
+		"  3. Chat about this\n"
+	d, ok := ParseDialog(describedLast)
+	if !ok || !d.Multi || d.Submit == nil || d.Submit.Label != "Next" || d.Submit.Moves != 2 {
+		t.Errorf("described last option: ok=%v submit=%+v", ok, d.Submit)
+	}
+	noRow := strings.Replace(describedLast, "     Next\n", "", 1)
+	if d, _ := ParseDialog(noRow); d.Submit != nil {
+		t.Errorf("no confirm row: submit = %+v", d.Submit)
+	}
+	onFree := strings.Replace(strings.Replace(askUserMultiNext, "❯    Next", "     Next", 1), "  4. [ ] Type something", "❯ 4. [ ] Type something", 1)
+	if d, _ := ParseDialog(onFree); d.Submit != nil {
+		t.Errorf("cursor on free text: submit = %+v", d.Submit)
+	}
+}
