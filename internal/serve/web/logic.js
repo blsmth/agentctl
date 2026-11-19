@@ -26,7 +26,13 @@ export function stateRank(state) {
  */
 export function waitingIndex(groups) {
   const all = [];
-  for (const g of groups ?? []) for (const w of g.windows ?? []) all.push(w);
+  const byId = new Map();
+  for (const g of groups ?? []) {
+    for (const w of g.windows ?? []) {
+      all.push(w);
+      if (w.window_id && !byId.has(w.window_id)) byId.set(w.window_id, w);
+    }
+  }
   const byParent = new Map();
   for (const w of all) {
     if (!w.parent || !w.window_id || w.parent === w.window_id) continue;
@@ -42,7 +48,7 @@ export function waitingIndex(groups) {
     changed = false;
     for (const [id, kids] of byParent) {
       if (waiting.has(id)) continue;
-      const parent = all.find((w) => w.window_id === id);
+      const parent = byId.get(id);
       if (!parent || !["idle", "done"].includes(effectiveState(parent))) continue;
       const live = kids.filter(active);
       if (live.length > 0) {
@@ -1614,13 +1620,15 @@ export const SWIPE_REVEAL = 88;
 
 /**
  * canSwipeClose reports whether a row offers swipe-to-close: the write feature
- * is on, the window is idle or done, and it is not a hub session. The server
- * still re-verifies the pane and may answer 409.
+ * is on, the window is idle or done and not waiting on sub-agents (closing it
+ * would close them), and it is not a hub session. index is an optional
+ * waitingIndex; without one, win.waiting_on (set by sortGroups) is used. The
+ * server still re-verifies the pane and may answer 409.
  */
-export function canSwipeClose(win, session, features) {
+export function canSwipeClose(win, session, features, index) {
   if (!win || !hasFeature(features, "write")) return false;
   if (session === HUB_SESSION) return false;
-  const s = effectiveState(win);
+  const s = displayState(win, index);
   return s === "idle" || s === "done";
 }
 
