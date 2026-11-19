@@ -59,6 +59,8 @@ var nowFn = time.Now
 //  1. no settings layer sets a competing Anthropic credential,
 //  2. every configured model is in the public catalog (GET /v1/models),
 //  3. an API key can be resolved locally.
+//
+// It first refuses outright when the backend's no-credits marker is fresh.
 func preflightNous(name string, b config.BackendConfig, configDir, workDir, explicitModel string) (nousInfo, error) {
 	if err := checkShadowingCredentials(configDir, workDir); err != nil {
 		return nousInfo{}, err
@@ -71,6 +73,12 @@ func preflightNous(name string, b config.BackendConfig, configDir, workDir, expl
 // resolved locally. Harnesses that do not read Claude settings (pi) use it
 // directly.
 func preflightNousCatalog(name string, b config.BackendConfig, explicitModel string) (nousInfo, error) {
+	// A fresh out-of-credits marker refuses the launch from local state: no
+	// paid probe per dispatch. Every launch path (claude, pi, phone, cron)
+	// reaches here.
+	if st, out := backendauth.NoCreditsFresh(name, nowFn()); out {
+		return nousInfo{}, errors.New(backendauth.NoCreditsMessage(name, st, nowFn()))
+	}
 	cat, err := loadNousCatalog(b.BaseURL)
 	if err != nil {
 		return nousInfo{}, err

@@ -108,6 +108,9 @@ func RunHealth() {
 	// Agent definitions whose tools: list contradicts their role. Warn only.
 	printAgentToolsHealth(os.Stdout, cwdOrEmpty())
 
+	// Nous backends marked out of credits (local state, no network).
+	printCreditsHealth(os.Stdout, config.Load().Backends, time.Now())
+
 	fmt.Println()
 
 	// Orphan monitor detection. See healthDecideOrphans for the correctness

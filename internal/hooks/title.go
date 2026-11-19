@@ -29,6 +29,9 @@ var (
 	newTitleCompleter = func(s config.TitleSettings) (llm.Completer, error) {
 		return llm.NewNousClient(s.BackendName, s.Backend, s.Model)
 	}
+	// titleNoCredits reports a fresh out-of-credits marker for the backend
+	// (a local file read, no network).
+	titleNoCredits  = backendauth.NoCreditsFresh
 	titleTakeBudget = shorttitle.TakeBudget
 	titleNow        = time.Now
 )
@@ -77,6 +80,12 @@ func runTitle(ctx context.Context, windowID, transcript, lastMessage string) {
 	if !shorttitle.Due(ws.ShortTitle, in, now) {
 		return
 	}
+	// Out of credits: skip silently, with no budget spent and no backoff
+	// recorded, until the marker goes stale and one request probes again.
+	if _, out := titleNoCredits(s.BackendName, now); out {
+		logging.Debug("hook-title: backend %s out of credits, skipping", s.BackendName)
+		return
+	}
 	if err := titleKeyAvailable(s); err != nil {
 		logging.Debug("hook-title: %v", err)
 		return
@@ -98,7 +107,7 @@ func runTitle(ctx context.Context, windowID, transcript, lastMessage string) {
 		return
 	}
 	title, genErr := generateTitle(ctx, s, in, now)
-	if errors.Is(genErr, llm.ErrNoKey) || errors.Is(genErr, errTitleBudget) {
+	if errors.Is(genErr, llm.ErrNoKey) || errors.Is(genErr, errTitleBudget) || errors.Is(genErr, backendauth.ErrNoCredits) {
 		// Not a failure of this input: drop the lease, write nothing else.
 		logging.Log("hook-title: window=%s: %v", windowID, genErr)
 		err = windowstate.Update(windowID, func(w *windowstate.WindowState) {

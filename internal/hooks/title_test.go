@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/backendauth"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/llm"
 	"github.com/blsmth/agentctl/internal/shorttitle"
@@ -299,5 +300,40 @@ func TestBuildHooksConfigRegistersTitle(t *testing.T) {
 		if s := fmt.Sprint(v); strings.Contains(s, "hook-title") {
 			t.Errorf("%s registers hook-title", event)
 		}
+	}
+}
+
+func TestTitleSkipsWhileOutOfCredits(t *testing.T) {
+	e := setupTitle(t)
+	fresh := false
+	old := titleNoCredits
+	titleNoCredits = func(string, time.Time) (backendauth.CreditState, bool) { return backendauth.CreditState{}, fresh }
+	t.Cleanup(func() { titleNoCredits = old })
+
+	seedWindow(t, "@4", windowstate.WindowState{State: "idle", Task: "sort my photo library by year"})
+	fresh = true
+	runTitle(context.Background(), "@4", "", "done")
+	if e.built.Load() != 0 || e.budget.Load() != 0 {
+		t.Fatalf("fresh marker: built=%d budget=%d, want no request", e.built.Load(), e.budget.Load())
+	}
+	if st := readTitle(t, "@4"); st.Failures != 0 || !st.RetryAfter.IsZero() {
+		t.Errorf("skip must leave no backoff: %+v", st)
+	}
+
+	// Marker expired: one probe goes through.
+	fresh = false
+	runTitle(context.Background(), "@4", "", "done")
+	if e.built.Load() != 1 || e.budget.Load() != 1 {
+		t.Fatalf("probe: built=%d budget=%d, want 1/1", e.built.Load(), e.budget.Load())
+	}
+}
+
+func TestTitleNoCreditsErrorLeavesNoBackoff(t *testing.T) {
+	e := setupTitle(t)
+	e.fake.err = fmt.Errorf("llm: nous returned HTTP 402: %w", backendauth.ErrNoCredits)
+	seedWindow(t, "@4", windowstate.WindowState{State: "idle", Task: "sort my photo library by year"})
+	runTitle(context.Background(), "@4", "", "done")
+	if st := readTitle(t, "@4"); st.Failures != 0 || !st.RetryAfter.IsZero() {
+		t.Errorf("no-credits must not count as a failure: %+v", st)
 	}
 }
