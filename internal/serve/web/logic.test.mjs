@@ -12,6 +12,7 @@ import {
   actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
   defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines,
+  waitingIndex, displayState, waitingLabel, actionsFor,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
 } from "./logic.js";
 
@@ -604,4 +605,48 @@ console.log("ok: shell request");
   assert.deepEqual(rowChips(full).map((c) => c.kind), ["pr", "issue", "agent-chip", "model-chip", "backend-chip", "sched-chip"]);
   assert.deepEqual(texts({ agent: "x", pr_url: "https://h/o/r/pull/9" }), ["PR #9"]);
   console.log("ok: rowChips");
+}
+
+{
+  const w = (id, state, parent, extra = {}) => ({ window_id: id, session: "s", state, parent, ...extra });
+  const ids = (m, id) => (m.get(id) ?? []).map((k) => k.window_id);
+  // Zero windows, no groups.
+  assert.equal(waitingIndex([]).size, 0);
+  assert.equal(waitingIndex(undefined).size, 0);
+  // Idle and done parents wait on working and blocked children, across sessions.
+  const fleet = [
+    { windows: [w("@1", "idle"), w("@2", "idle", undefined, { done: true }), w("@3", "working", "@1")] },
+    { windows: [w("@4", "blocked", "@1"), w("@5", "idle", "@2", { done: true }), w("@6", "working", "@2")] },
+  ];
+  const idx = waitingIndex(fleet);
+  assert.deepEqual(ids(idx, "@1"), ["@3", "@4"]);
+  assert.deepEqual(ids(idx, "@2"), ["@6"]); // the done child @5 does not count
+  assert.equal(displayState(fleet[0].windows[0], idx), "waiting");
+  assert.equal(displayState(fleet[0].windows[2], idx), "working");
+  assert.equal(displayState(fleet[1].windows[0], idx), "blocked");
+  assert.equal(waitingLabel(1), "waiting on 1 agent");
+  assert.equal(waitingLabel(2), "waiting on 2 agents");
+  assert.equal(stateLabel(fleet[0].windows[0], Date.now(), idx), "waiting on 2 agents");
+  // A grandchild under an idle child does not make the grandparent wait; a waiting child does.
+  const deep = waitingIndex([{ windows: [w("@1", "idle"), w("@2", "idle", "@1"), w("@3", "working", "@2")] }]);
+  assert.ok(deep.has("@2") && deep.has("@1")); // @2 waits on @3, so @1 waits on waiting @2
+  const gap = waitingIndex([{ windows: [w("@1", "idle"), w("@2", "done", "@1", { done: true }), w("@3", "working", "@2", { state: "idle", done: true })] }]);
+  assert.equal(gap.size, 0);
+  // Missing parent, self parent, and cycles neither crash nor flag.
+  assert.equal(waitingIndex([{ windows: [w("@2", "working", "@gone"), w("@3", "idle", "@3")] }]).size, 0);
+  assert.equal(waitingIndex([{ windows: [w("@1", "idle", "@2"), w("@2", "idle", "@1")] }]).size, 0);
+  // A cycle with one working member waits (terminates).
+  assert.ok(waitingIndex([{ windows: [w("@1", "idle", "@2"), w("@2", "working", "@1")] }]).has("@1"));
+  // Last child finishing flips the parent back to idle.
+  const done = [{ windows: [w("@1", "idle"), w("@3", "idle", "@1", { done: true })] }];
+  assert.equal(waitingIndex(done).size, 0);
+  // sortGroups: annotation, rank (after blocked, with working), rollup and counts.
+  const sorted = sortGroups([{ session: "s", windows: [w("@1", "idle", undefined, { window_index: 1 }), w("@9", "idle", undefined, { window_index: 0 }), w("@3", "working", "@1", { window_index: 2 }), w("@4", "blocked", undefined, { window_index: 3 })] }]);
+  assert.deepEqual(sorted[0].windows.map((x) => x.window_id), ["@4", "@1", "@3", "@9"]);
+  assert.equal(sorted[0].rollup, "blocked");
+  assert.deepEqual(groupCounts(sorted[0].windows), [{ state: "blocked", n: 1 }, { state: "working", n: 1 }, { state: "waiting", n: 1 }, { state: "idle", n: 1 }]);
+  assert.equal(sortGroups([{ session: "s", windows: [w("@1", "idle"), w("@3", "working", "@1")] }])[0].rollup, "working");
+  // Waiting keeps the reply composer.
+  assert.equal(actionsFor(sorted[0].windows[1], null), "reply");
+  console.log("ok: waiting on sub-agents");
 }

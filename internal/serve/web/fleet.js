@@ -13,7 +13,8 @@ import {
   dispatchHash,
   descendants,
   dropIndex,
-  effectiveState,
+  displayState,
+  waitingLabel,
   formatClock,
   formatSince,
   groupCounts,
@@ -49,7 +50,7 @@ function closeError(err) {
   return err instanceof ApiError || err instanceof Error ? err.message : "Close failed";
 }
 
-const GLYPH = { blocked: "⏸", working: "●", done: "✓", idle: "○" };
+const GLYPH = { blocked: "⏸", working: "●", waiting: "◷", done: "✓", idle: "○" };
 
 const STORE_KEY = "agentctl.fleet.collapsed";
 
@@ -107,7 +108,7 @@ function treeSpans(entry, expanded) {
 
 function windowRow(entry, toggle, expanded, swipe) {
   const win = entry.win;
-  const state = effectiveState(win);
+  const state = displayState(win);
   const since = formatSince(win.blocked_since || win.state_since, Date.now());
   // Window ID, launch mode and branch are internal; the detail view has them.
   const chips = rowChips(win);
@@ -134,6 +135,7 @@ function windowRow(entry, toggle, expanded, swipe) {
     h(
       "span",
       { class: "win-side" },
+      state === "waiting" ? h("span", { class: "waiting-on" }, waitingLabel(win.waiting_on.length)) : null,
       since ? h("span", {}, since) : null,
       win.context_pct ? h("span", { class: "meta" }, `${Math.round(win.context_pct)}% ctx`) : null,
     ),
