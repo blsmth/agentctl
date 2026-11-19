@@ -6,6 +6,9 @@ import {
   autoscrollDelta,
   bucketLabel,
   buildGroupOrderRequest,
+  buildShellRequest,
+  canShell,
+  terminalHash,
   collapseKey,
   dispatchHash,
   descendants,
@@ -40,7 +43,7 @@ import {
 } from "./logic.js";
 import { send, ApiError } from "./api.js";
 import { attachSwipe } from "./swipe.js";
-import { clear, confirmSheet, h, toast } from "./ui.js";
+import { clear, confirmSheet, h, newSheet, toast } from "./ui.js";
 
 /** closeError is the message to toast for a failed close. */
 function closeError(err) {
@@ -517,7 +520,7 @@ export function mountFleet(root, ctx) {
         folded ? groupSummary(g.windows, toggle) : null,
         canSweep(g, ctx.features) ? sweepButton(g, name) : null,
         g.dir && ctx.hasFeature("write")
-          ? h("a", { class: "group-add", href: dispatchHash(g.dir), "aria-label": `Dispatch to ${name}` }, "+")
+          ? addButton(g, name)
           : null,
       );
       const section = h("section", { class: `group ${g.rollup}${folded ? " folded" : ""}` }, head, ...(folded ? [] : nodes));
@@ -538,6 +541,32 @@ export function mountFleet(root, ctx) {
       stale.forEach((k) => collapsed.delete(k));
       saveCollapsed(collapsed);
     }
+  }
+
+  // addButton is the group's "+": a plain Dispatch link, or a Shell | Agent
+  // sheet when the server can open shells.
+  function addButton(g, name) {
+    if (!canShell(ctx.features)) {
+      return h("a", { class: "group-add", href: dispatchHash(g.dir), "aria-label": `Dispatch to ${name}` }, "+");
+    }
+    return h(
+      "button",
+      {
+        class: "group-add",
+        type: "button",
+        "aria-label": `New in ${name}`,
+        onclick: () =>
+          newSheet({
+            title: `New in ${name}`,
+            agentHref: dispatchHash(g.dir),
+            onShell: async () => {
+              const res = await send(buildShellRequest(g.dir));
+              location.hash = terminalHash(res.session, res.window_id);
+            },
+          }),
+      },
+      "+",
+    );
   }
 
   render();

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/phoneview"
+	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
@@ -146,6 +148,27 @@ func sameOrigin(r *http.Request) bool {
 	return u.Scheme == scheme && strings.EqualFold(u.Host, r.Host)
 }
 
+// terminalTarget resolves the request's window. A fleet window is the usual
+// case; a plain "shell" window is not in the fleet (the phone list hides
+// them), so a window the session's tmux reports as a shell is accepted too.
+func (s *Server) terminalTarget(w http.ResponseWriter, r *http.Request) (WindowTarget, bool) {
+	groups, ok := s.loadFleet(w)
+	if !ok {
+		return WindowTarget{}, false
+	}
+	session, id := r.PathValue("session"), normalizeWindowID(r.PathValue("window"))
+	if g, i, found := fleetwatch.Find(groups, session, id); found {
+		return WindowTarget{Session: g.Session, RuntimeDir: g.RuntimeDir, WindowID: g.Windows[i].WindowID}, true
+	}
+	for _, g := range groups {
+		if g.Session == session && g.Session != tmux.HubSessionName && s.shells.IsShell(session, id) {
+			return WindowTarget{Session: g.Session, RuntimeDir: g.RuntimeDir, WindowID: id}, true
+		}
+	}
+	writeError(w, http.StatusNotFound, codeNotFound, fmt.Sprintf("no window %s in session %s", id, session))
+	return WindowTarget{}, false
+}
+
 // termSize is the {type:"size"} control message. ReadOnly tells the phone
 // whether its input is accepted.
 type termSize struct {
@@ -165,11 +188,10 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, codeForbiddenOrigin, "cross-origin terminal request refused")
 		return
 	}
-	g, i, ok := s.lookup(w, r)
+	target, ok := s.terminalTarget(w, r)
 	if !ok {
 		return
 	}
-	target := WindowTarget{Session: g.Session, RuntimeDir: g.RuntimeDir, WindowID: g.Windows[i].WindowID}
 	if code, ok := s.term.acquire(); !ok {
 		if code == codeTooManyTerminals {
 			w.Header().Set("Retry-After", "5")

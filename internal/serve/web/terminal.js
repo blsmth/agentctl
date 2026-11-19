@@ -40,7 +40,7 @@ export function mountTerminal(root, ctx, { session, windowId }) {
   const screen = h(
     "div",
     { class: "term-screen" },
-    h("header", { class: "bar" }, h("a", { class: "btn", href: windowHash(session, windowId) }, "‹ Back"), title, badge),
+    h("header", { class: "bar" }, h("a", { class: "btn", href: win ? windowHash(session, windowId) : "#/" }, "‹ Back"), title, badge),
     h("div", { class: "term-statusline" }, status),
     viewport,
     keybar,
