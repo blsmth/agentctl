@@ -18,27 +18,58 @@ func TestRowRight_DoneBadgeAndAge(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
 	since := sidebarNow.Add(-4 * time.Hour)
+	ex := fleetExceptions{common: "opus"}
+	full := fitRightCols(200, ex, false, false)
 	done := fleet.Row{StateSince: since, PRNumber: 105, AgentState: state.AgentState{Done: true}}
-	got := rowRight(done, fleetRightFull, fleetDisplay{})
-	if plain := ansi.Strip(got); plain != "             #105  4h" {
-		t.Errorf("done right = %q, want %q", plain, "             #105  4h")
+	got := rowRight(done, full, ex, fleetDisplay{})
+	if plain := ansi.Strip(got); plain != "#105  4h" {
+		t.Errorf("done right = %q, want %q", plain, "#105  4h")
 	}
 	if !strings.Contains(got, fleetDoneStyle.Render("#105")) {
 		t.Errorf("done badge should use the done style: %q", got)
 	}
 	working := fleet.Row{StateSince: sidebarNow.Add(-time.Second), PRNumber: 108, AgentState: state.AgentState{State: "working"}}
-	if plain := ansi.Strip(rowRight(working, fleetRightFull, fleetDisplay{})); plain != "             #108  1s" {
+	if plain := ansi.Strip(rowRight(working, full, ex, fleetDisplay{})); plain != "#108  1s" {
 		t.Errorf("working right = %q", plain)
 	}
-	if plain := ansi.Strip(rowRight(working, fleetRightPR, fleetDisplay{})); plain != " #108" {
+	if plain := ansi.Strip(rowRight(working, fleetRightCols{pr: true}, ex, fleetDisplay{})); plain != "#108" {
 		t.Errorf("PR-only right = %q", plain)
 	}
+	// The usual model and a calm context are not shown at all: the slot is
+	// blank and its width goes back to the recap.
 	working.ModelName, working.ContextPct = "claude-opus-4-7", 42
-	if plain := ansi.Strip(rowRight(working, fleetRightModelPR, fleetDisplay{})); plain != "  opus  42%  #108" {
-		t.Errorf("model+PR right = %q", plain)
+	if plain := ansi.Strip(rowRight(working, full, ex, fleetDisplay{})); plain != "#108  1s" {
+		t.Errorf("usual model right = %q", plain)
 	}
-	if got := rowRight(working, fleetRightNone, fleetDisplay{}); got != "" {
+	if got := rowRight(working, fleetRightCols{}, ex, fleetDisplay{}); got != "" {
 		t.Errorf("no slots = %q", got)
+	}
+}
+
+func TestRowAgeFallback(t *testing.T) {
+	InitStyles()
+	fixedFleetNow(t)
+	tests := []struct {
+		name string
+		row  fleet.Row
+		want string
+	}{
+		{"state since", fleet.Row{StateSince: sidebarNow.Add(-2 * time.Minute)}, "2m"},
+		{"last activity", fleet.Row{AgentState: state.AgentState{LastActivity: sidebarNow.Add(-3 * time.Hour).Unix(), StartTime: sidebarNow.Add(-50 * time.Hour).Unix()}}, "3h"},
+		{"start time", fleet.Row{AgentState: state.AgentState{StartTime: sidebarNow.Add(-50 * time.Hour).Unix()}}, "2d"},
+		{"nothing known", fleet.Row{}, fleetNoAge},
+		{"shell", fleet.Row{Shell: true}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := rowAge(tt.row)
+			if plain := ansi.Strip(got); plain != tt.want {
+				t.Errorf("rowAge = %q, want %q", plain, tt.want)
+			}
+			if tt.want == fleetNoAge && got != fleetDimStyle.Render(fleetNoAge) {
+				t.Errorf("unknown age should be a dim dash: %q", got)
+			}
+		})
 	}
 }
 

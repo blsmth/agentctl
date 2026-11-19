@@ -128,10 +128,13 @@ func TestSweepButtonLayoutAndHitColumns(t *testing.T) {
 			m := mouseTestModel(t, width, 40)
 			m.groups[0].ProjectDir, m.groups[0].RuntimeDir = "/p/one", "/p/one/.agentctl"
 			m.groups[0].Project = "project-one"
+			m.groups[0].Rows[1].Done = true // one sweepable row: "sweep 1"
 			m.rebuildLines()
 			m.resolveSelection()
 			cw := m.listColWidth()
 			g := m.lines[0].group
+			// Hit testing is for the header under the pointer, drawn hovered.
+			m.hover = fleetHover{line: 0, reg: fleetHoverHeader}
 			hdr := []rune(ansi.Strip(m.renderLine(0, cw)))
 			span := m.headerSweepSpan(g, cw)
 			if span == [2]int{} {
@@ -146,7 +149,7 @@ func TestSweepButtonLayoutAndHitColumns(t *testing.T) {
 				}
 				return
 			}
-			if got := string(hdr[span[0]:span[1]]); got != fleetSweepLabel {
+			if got := string(hdr[span[0]:span[1]]); got != sweepLabel(1) {
 				t.Fatalf("cw=%d: span %v holds %q in %q", cw, span, got, string(hdr))
 			}
 			name := m.headerNameSpan(g, cw)
@@ -161,8 +164,8 @@ func TestSweepButtonLayoutAndHitColumns(t *testing.T) {
 					t.Errorf("cw=%d x=%d: hover %v, want sweep", cw, x, h.reg)
 				}
 			}
-			if _, a := m.buttonDecision(span[1], 2, tea.MouseLeft); a != fleetClickNew {
-				t.Errorf("cw=%d: column after sweep is %v, want new", cw, a)
+			if _, a := m.buttonDecision(span[1]+fleetSweepSep, 2, tea.MouseLeft); a != fleetClickNew {
+				t.Errorf("cw=%d: \"+ new\" after sweep is %v, want new", cw, a)
 			}
 			if _, a := m.buttonDecision(span[0]-2, 2, tea.MouseLeft); a == fleetClickSweep {
 				t.Errorf("cw=%d: column before the slack still sweeps", cw)
@@ -172,6 +175,92 @@ func TestSweepButtonLayoutAndHitColumns(t *testing.T) {
 				t.Errorf("cw=%d: row hit-tests as sweep", cw)
 			}
 		})
+	}
+}
+
+// markSweepable makes the first group's row b done, so its header offers
+// "sweep 1".
+func markSweepable(m *FleetModel) {
+	m.groups[0].Rows[1].Done = true
+	m.rebuildLines()
+	m.resolveSelection()
+}
+
+func TestSweepButtonOnlyWithSweepableRows(t *testing.T) {
+	tests := []struct {
+		name string
+		done int
+		want string // "" = no button
+	}{
+		{"nothing to sweep", 0, ""},
+		{"one done row", 1, "sweep 1"},
+		{"two done rows", 2, "sweep 2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := buttonTestModel(t)
+			for i := 0; i < tt.done; i++ {
+				m.groups[0].Rows[i].Done = true
+			}
+			m.rebuildLines()
+			cw := m.listColWidth()
+			g := m.lines[0].group
+			m.hover = fleetHover{line: 0, reg: fleetHoverHeader}
+			hdr := ansi.Strip(m.renderLine(0, cw))
+			span := m.headerSweepSpan(g, cw)
+			if tt.want == "" {
+				if strings.Contains(hdr, fleetSweepLabel) || span != [2]int{} {
+					t.Errorf("header offers sweep with nothing to sweep: %q span %v", hdr, span)
+				}
+				// The counts sit flush right when no button is drawn.
+				m.hover = fleetHover{}
+				if plain := ansi.Strip(m.renderLine(0, cw)); !strings.HasSuffix(strings.TrimRight(plain, " "), "○ 2") {
+					t.Errorf("counts not flush right: %q", plain)
+				}
+				return
+			}
+			if !strings.Contains(hdr, tt.want) || string([]rune(hdr)[span[0]:span[1]]) != tt.want {
+				t.Errorf("header %q span %v, want %q", hdr, span, tt.want)
+			}
+		})
+	}
+}
+
+func TestHeaderNewOnlySelectedOrHovered(t *testing.T) {
+	m := buttonTestModel(t)
+	m.selectLine(3) // a row: the header is neither selected nor hovered
+	cw := m.listColWidth()
+	g := m.lines[0].group
+	tests := []struct {
+		name     string
+		selected bool
+		hover    fleetHoverRegion
+		want     bool
+	}{
+		{"plain", false, fleetHoverNone, false},
+		{"selected", true, fleetHoverNone, true},
+		{"hovered", false, fleetHoverHeader, true},
+		{"hovering the name", false, fleetHoverFold, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hdr := ansi.Strip(m.renderGroupHeaderHover(g, tt.selected, tt.hover, cw))
+			if got := strings.Contains(hdr, fleetNewLabel); got != tt.want {
+				t.Errorf("shows + new = %v, want %v: %q", got, tt.want, hdr)
+			}
+		})
+	}
+	// Hit testing lays the header out as drawn under the pointer: "+ new"
+	// is there, so its columns click.
+	span := m.headerNewSpan(g, cw)
+	if span[1] != cw-fleetSidebarRightGutter || span[1]-span[0] != len(fleetNewLabel) {
+		t.Errorf("new span = %v", span)
+	}
+	if _, a := m.buttonDecision(span[0], 2, tea.MouseLeft); a != fleetClickNew {
+		t.Errorf("click on + new = %v", a)
+	}
+	if h := m.hoverAt(span[0]-5, 2); h.reg != fleetHoverHeader || h.line != 0 {
+		t.Errorf("hover on the header body = %+v", h)
 	}
 }
 
@@ -187,10 +276,11 @@ func TestSweepButtonHiddenWhileSelectorArmed(t *testing.T) {
 
 func TestSweepHoverStyle(t *testing.T) {
 	m := buttonTestModel(t)
+	markSweepable(&m)
 	cw := m.listColWidth()
 	g := m.lines[0].group
 	span := m.headerSweepSpan(g, cw)
-	plain := m.renderGroupHeaderHover(g, false, fleetHoverNone, cw)
+	plain := m.renderGroupHeaderHover(g, false, fleetHoverHeader, cw)
 	hovered := m.renderGroupHeaderHover(g, false, fleetHoverSweep, cw)
 	if ansi.Strip(plain) != ansi.Strip(hovered) {
 		t.Error("hover changed the header text")
@@ -363,6 +453,7 @@ func TestSweepClickButton(t *testing.T) {
 	stub := installSweepStub(t)
 	stub.preview = sweeprun.Report{Closed: rows("a")}
 	m := buttonTestModel(t)
+	markSweepable(&m)
 	m.selectLine(3) // row b; the click selects the header
 	span := m.headerSweepSpan(m.lines[0].group, m.listColWidth())
 	click := func(m FleetModel, x, y int) (FleetModel, tea.Cmd) {

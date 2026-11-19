@@ -17,7 +17,7 @@ import (
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
-// The hub's "+ new session" action: a button on the title row (and N) opens
+// The hub's "new session" action: N (listed under ?) opens
 // an inline directory prompt in the footer. Enter opens an agent in that
 // directory as its own agentctl project: a live group with the same project
 // dir just gets a new agent (launchForGroup); anything else goes to the
@@ -27,10 +27,6 @@ import (
 
 // fleetNewSessionKey opens the directory prompt.
 const fleetNewSessionKey = "N"
-
-// fleetNewSessionLabels are the title button's labels, widest first; the
-// title uses the widest one that leaves room for the counts.
-var fleetNewSessionLabels = []string{"+ new session", "+ session", "+"}
 
 // fleetNewSessionPrompt leads the directory prompt in the footer.
 const fleetNewSessionPrompt = "  new session in: "
@@ -248,14 +244,4 @@ func (m FleetModel) newSessionView(cw int) string {
 	in.SetWidth(fleetNewSessionInputWidth(cw))
 	in.SetCursor(in.Position()) // re-run the scroll for this width
 	return fleetBlockedStyle.Render(fleetNewSessionPrompt) + in.View()
-}
-
-// onNewSessionButton reports whether (x, y) hits the title's "+ new session"
-// button (title row only).
-func (m FleetModel) onNewSessionButton(x, y int) bool {
-	if y != 0 {
-		return false
-	}
-	span := m.titleLayout(m.contentWidth()).newSession
-	return span[1] > 0 && x >= span[0] && x < span[1]
 }

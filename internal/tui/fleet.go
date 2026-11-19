@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os"
-	"slices"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -79,10 +79,14 @@ var (
 	fleetDoneStyle    lipgloss.Style
 	fleetIdleStyle    lipgloss.Style
 
-	fleetProjectStyle  lipgloss.Style
-	fleetCountStyle    lipgloss.Style
-	fleetActivityStyle lipgloss.Style
-	fleetRecapStyle    lipgloss.Style
+	fleetProjectStyle lipgloss.Style
+	// fleetGroupNameStyle is a group header's project name: neutral bold, so
+	// a palette colour never competes with the state colours (the ▎ bar
+	// keeps the project colour).
+	fleetGroupNameStyle lipgloss.Style
+	fleetCountStyle     lipgloss.Style
+	fleetActivityStyle  lipgloss.Style
+	fleetRecapStyle     lipgloss.Style
 
 	// Row weight by state (see rowWeight): the glyph carries the state
 	// colour, the name and recap only get brighter or dimmer.
@@ -102,7 +106,7 @@ var (
 	fleetEmptyStyle lipgloss.Style
 
 	// fleetPaletteColors is the stable accent palette (theme colours) that
-	// project groups hash into: the left bar and the group header only.
+	// project groups hash into: the left bar only.
 	fleetPaletteColors []string
 
 	// fleetStylesTheme is the theme name the fleet styles were last built
@@ -137,6 +141,7 @@ func initFleetStyles() {
 	fleetIdleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Subtle))
 
 	fleetProjectStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Sky))
+	fleetGroupNameStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Text))
 	fleetCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
 	fleetActivityStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
 	fleetRecapStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Subtle))
@@ -363,6 +368,9 @@ type FleetModel struct {
 	// display is the config the row chips depend on (context thresholds,
 	// default account), refreshed with every fleet load.
 	display fleetDisplay
+	// except is the list-wide state of the rows' model and context exception
+	// columns, recomputed by rebuildLines.
+	except fleetExceptions
 
 	// splitPane owns cursor position and scrolling bookkeeping. FleetModel does
 	// NOT delegate key handling to SplitPane.Update(): the list mixes
@@ -439,6 +447,9 @@ type FleetModel struct {
 	// only once the selection changes. liveLeft/liveRight are the column split
 	// of the hub window (list column / live pane).
 	liveShown string
+	// liveFailed is the liveShown key whose hand-off to the viewer failed, so
+	// the viewer is not showing it.
+	liveFailed string
 	// viewerSeen is the "session|window" the viewer last reported on a poll;
 	// a change relative to it that the hub did not cause drives the selection
 	// (see viewerSyncTarget).
@@ -495,6 +506,9 @@ type FleetModel struct {
 	focusMode bool
 	// sortRecent orders rows inside each group by latest activity (`o`).
 	sortRecent bool
+	// showShells shows plain shell rows ("$ shell"); hidden by default
+	// (fleetShellsKey).
+	showShells bool
 	filter     fleetFilter
 	viewPath   string
 	// orderPath is the saved group order (see fleet_order.go); "" persists
@@ -513,7 +527,7 @@ type FleetModel struct {
 	serveProbing bool
 	serveBusy    bool
 
-	// dirPrompt is the open "+ new session" directory prompt (see
+	// dirPrompt is the open new-session (N) directory prompt (see
 	// fleet_newsession.go); nil when closed.
 	dirPrompt *fleetNewSessionState
 }
@@ -745,6 +759,7 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case fleetLiveMsg:
 		if msg.err != nil {
 			// No fallback: surface the error; the next selection change retries.
+			m.liveFailed = msg.key
 			m.jumpErr = msg.err.Error()
 			return m, func() tea.Msg {
 				_ = tmux.HideLiveViewer() // drop any half-built viewer
@@ -752,6 +767,9 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.jumpErr = ""
+		if m.liveFailed == msg.key {
+			m.liveFailed = ""
+		}
 		m.liveLeft, m.liveRight = msg.left, msg.right
 		if msg.win > 0 {
 			m.liveWinWidth = msg.win
@@ -792,11 +810,17 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.jumpErr = ""
 		m.setSuccess("opened shell in " + m.projectLabel(msg.session))
 		m.pendingFocus = nil
+		var save tea.Cmd
+		if !m.showShells {
+			// The new shell must be visible to be focused when it appears.
+			m.setShowShells(true)
+			save = m.saveViewCmd()
+		}
 		if msg.windowID == "" {
-			return m, fleetLoadCmd()
+			return m, tea.Batch(fleetLoadCmd(), save)
 		}
 		m.pendingFocus = &fleetPendingFocus{session: msg.session, windowID: msg.windowID}
-		return m, tea.Batch(fleetLoadCmd(), fleetFocusRetryCmd(msg.session, msg.windowID))
+		return m, tea.Batch(fleetLoadCmd(), fleetFocusRetryCmd(msg.session, msg.windowID), save)
 
 	case fleetFocusRetryMsg:
 		return m, m.focusRetry(msg)
@@ -1035,6 +1059,9 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 
 	case "o":
 		return *m, m.toggleSort()
+
+	case fleetShellsKey:
+		return *m, m.toggleShells()
 
 	case fleetServeKey:
 		return *m, m.toggleServe()
@@ -1544,18 +1571,20 @@ func (m *FleetModel) rebuildLines() {
 		// Keep SplitPane's row count (cursor clamping) in step at once.
 		m.splitPane.SetListContent(m.splitPane.listContent, len(m.lines))
 	}()
+	m.except = computeExceptions(m.groups, m.display)
 	var lines []fleetLine
 	prevBody := false
 	for i, g := range m.groups {
-		rows, context := g.Rows, map[string]bool(nil)
+		all := m.shownRows(g.Rows)
+		rows, context := all, map[string]bool(nil)
 		if !m.isFolded(g.Session) {
-			src := g.Rows
+			src := all
 			if m.sortRecent {
-				src = fleet.SortRowsRecent(g.Rows)
+				src = fleet.SortRowsRecent(all)
 			}
 			rows, context = filterRows(src, m.filter)
 		}
-		body := !m.isFolded(g.Session) && (len(rows) > 0 || (len(g.Rows) == 0 && m.filter == fleetFilterAll))
+		body := !m.isFolded(g.Session) && (len(rows) > 0 || (len(all) == 0 && m.filter == fleetFilterAll))
 		if i > 0 && (body || prevBody) {
 			lines = append(lines, fleetLine{kind: fleetLineDivider})
 		}
@@ -1564,7 +1593,7 @@ func (m *FleetModel) rebuildLines() {
 		if !body {
 			continue
 		}
-		if len(g.Rows) == 0 {
+		if len(all) == 0 {
 			lines = append(lines, fleetLine{kind: fleetLinePlaceholder, group: g})
 			continue
 		}
@@ -1586,6 +1615,20 @@ func (m *FleetModel) rebuildLines() {
 		}
 	}
 	m.lines = lines
+}
+
+// shownRows is rows without the shell rows while they are hidden.
+func (m FleetModel) shownRows(rows []fleet.Row) []fleet.Row {
+	if m.showShells {
+		return rows
+	}
+	var out []fleet.Row
+	for _, r := range rows {
+		if !r.Shell {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
@@ -1630,6 +1673,9 @@ func (m FleetModel) renderHeader(cw int) string {
 func (m FleetModel) fleetCounts() (blocked, working, done, idle int) {
 	for _, g := range m.groups {
 		for _, r := range g.Rows {
+			if r.Shell {
+				continue // not an agent
+			}
 			switch rowWeight(r) {
 			case fleetWeightBlocked:
 				blocked++
@@ -1649,24 +1695,25 @@ func (m FleetModel) fleetCounts() (blocked, working, done, idle int) {
 // totals right-aligned: a yellow inverse ⏸ cell (only when something is
 // blocked, and the only filled cell), then ● ✓ ○ counts and a dim agent and
 // session total. An active attention filter adds a muted tag after the title
-// ("· needs you"), then come the serve indicator, the "↻ recent" sort tag
-// and the "+ new session" button. See titleLayout for how narrow widths degrade.
+// ("· needs you"), then come the serve indicator and the "· sort: recent"
+// tag. There is no new-session button: N (in the ? reference) opens it, and
+// the footer's "n new" launches into a group. See titleLayout for how narrow
+// widths degrade.
 func (m FleetModel) renderTitle(cw int) string {
 	return m.titleLayout(cw).line
 }
 
-// fleetTitleLayout is the rendered title row plus the columns of its two
-// click targets; a span is [0,0] when that target is not shown.
+// fleetTitleLayout is the rendered title row plus the columns of its click
+// target; a span is [0,0] when that target is not shown.
 type fleetTitleLayout struct {
-	line              string
-	badge, newSession [2]int
+	line  string
+	badge [2]int
 }
 
 // titleLayout lays out the title row. Narrow widths drop the totals, then
-// tighten the counts and shorten the filter tag, then shorten the "+ new
-// session" button (fleetNewSessionLabels) and finally hide it (N still
-// works), then drop the counts, then truncate. Rendering and hit-testing
-// both come from here, so they cannot disagree.
+// tighten the counts and shorten the filter tag, then drop the counts, then
+// truncate. Rendering and hit-testing both come from here, so they cannot
+// disagree.
 func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 	tags := []string{""}
 	if m.filter != fleetFilterAll {
@@ -1680,25 +1727,15 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 			line += strings.Repeat(" ", pad) + right
 		}
 		l.line = fleetFitLine(line, false, cw)
-		limit := cw - fleetSidebarRightGutter
-		if l.badge[1] > limit {
+		if l.badge[1] > cw-fleetSidebarRightGutter {
 			l.badge = [2]int{}
-		}
-		if l.newSession[1] > limit {
-			l.newSession = [2]int{}
 		}
 		return l
 	}
-	labels := append(slices.Clone(fleetNewSessionLabels), "")
-	// bare is the title without counts, with the widest button that fits.
+	// bare is the title without counts.
 	bare := func() fleetTitleLayout {
-		for _, label := range labels {
-			left, l := m.titleLeft(tags[0], label)
-			if label == "" || lipgloss.Width(left) <= cw-fleetSidebarRightGutter {
-				return fit(l, left, "")
-			}
-		}
-		return fleetTitleLayout{} // unreachable: the "" label always returns
+		left, l := m.titleLeft(tags[0])
+		return fit(l, left, "")
 	}
 	if !m.loaded || m.loadErr != nil {
 		return bare()
@@ -1722,22 +1759,20 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 		tight := strings.Join(cells, " ")
 		candidates = append(candidates, candidate{tags[0], tight}, candidate{tags[1], tight})
 	}
-	for _, label := range labels {
-		for _, c := range candidates {
-			left, l := m.titleLeft(c.tag, label)
-			room := cw - fleetSidebarRightGutter - lipgloss.Width(left) - 1
-			if lipgloss.Width(c.right) <= room {
-				return fit(l, left, c.right)
-			}
+	for _, c := range candidates {
+		left, l := m.titleLeft(c.tag)
+		room := cw - fleetSidebarRightGutter - lipgloss.Width(left) - 1
+		if lipgloss.Width(c.right) <= room {
+			return fit(l, left, c.right)
 		}
 	}
 	return bare()
 }
 
 // titleLeft builds the title row's left part: the title, the filter tag
-// (when tag is not empty), the serve indicator and the "+ new session"
-// button showing label ("" hides it), with the columns of the last two.
-func (m FleetModel) titleLeft(tag, label string) (string, fleetTitleLayout) {
+// (when tag is not empty), the serve indicator with its columns, and the
+// sort tag.
+func (m FleetModel) titleLeft(tag string) (string, fleetTitleLayout) {
 	var l fleetTitleLayout
 	left := strings.Repeat(" ", fleetSidebarLeftInset) + fleetTitleStyle.Render("agentctl hub")
 	if tag != "" {
@@ -1750,20 +1785,13 @@ func (m FleetModel) titleLeft(tag, label string) (string, fleetTitleLayout) {
 		l.badge = [2]int{start, lipgloss.Width(left)}
 	}
 	if m.sortRecent {
-		left += fleetCountStyle.Render(" ↻ recent")
-	}
-	if label != "" {
-		left += fleetServeGap
-		start := lipgloss.Width(left)
-		style := fleetDimStyle
-		if m.hover.reg == fleetHoverNewSession {
-			style = fleetNewHoverStyle
-		}
-		left += style.Render(label)
-		l.newSession = [2]int{start, lipgloss.Width(left)}
+		left += fleetCountStyle.Render(fleetSortTag)
 	}
 	return left, l
 }
+
+// fleetSortTag marks the title while rows are sorted by recent activity.
+const fleetSortTag = " · sort: recent"
 
 // renderStatusOrEmpty renders the loading/error/empty states shared by both
 // layouts. Returns ("", false) when there's real data to render (the caller
@@ -2002,38 +2030,79 @@ const fleetNewGap = 2
 // headerNameSpan is the [start, end) columns of group g's fold marker and
 // project name on its header: the click target that toggles the fold.
 func (m FleetModel) headerNameSpan(g fleet.Group, cw int) [2]int {
-	_, spans := m.groupHeaderLayout(g, false, fleetHoverNone, cw)
-	return spans.name
+	return m.pointerHeaderSpans(g, cw).name
 }
 
 // headerSweepSpan is the [start, end) columns of group g's sweep button, or
 // the zero span when the header does not show one.
 func (m FleetModel) headerSweepSpan(g fleet.Group, cw int) [2]int {
-	_, spans := m.groupHeaderLayout(g, false, fleetHoverNone, cw)
-	return spans.sweep
+	return m.pointerHeaderSpans(g, cw).sweep
+}
+
+// headerNewSpan is the [start, end) columns of group g's "+ new" button (or
+// the armed shell | agent selector), or the zero span when it is not shown.
+func (m FleetModel) headerNewSpan(g fleet.Group, cw int) [2]int {
+	return m.pointerHeaderSpans(g, cw).add
+}
+
+// pointerHeaderSpans lays out g's header as it is drawn with the pointer on
+// it (hit testing only ever asks about the header under the pointer, which
+// shows its "+ new"), so click targets follow what is drawn.
+func (m FleetModel) pointerHeaderSpans(g fleet.Group, cw int) fleetHeaderSpans {
+	selected := false
+	if c := m.splitPane.Cursor(); c >= 0 && c < len(m.lines) {
+		l := m.lines[c]
+		selected = l.kind == fleetLineHeader && l.group.Session == g.Session
+	}
+	_, spans := m.groupHeaderLayout(g, selected, fleetHoverHeader, cw)
+	return spans
 }
 
 // fleetHeaderSpans are the clickable column ranges of a group header.
 type fleetHeaderSpans struct {
 	name  [2]int // fold marker and project name
 	sweep [2]int // sweep button; zero when not shown
+	add   [2]int // "+ new" button or armed selector; zero when not shown
 }
 
-// fleetSweepSep is the blank column between the sweep button and the "+ new"
-// slot.
-const fleetSweepSep = 1
+// fleetSweepSep is the blank columns between the sweep button and "+ new".
+const fleetSweepSep = 2
 
 // fleetMinSweepName is the project-name width the sweep button never takes
 // below: on a narrower header the button is dropped instead.
 const fleetMinSweepName = 4
 
+// groupSweepable is how many of g's rows a sweep would close, as far as the
+// rows say: done agent rows. Sweep's own classification (cleanup.
+// ClassifyWindow) also checks worktrees and open PRs, which is too costly
+// for every frame, so this is the upper bound the header advertises.
+func groupSweepable(g fleet.Group) int {
+	n := 0
+	for _, r := range g.Rows {
+		if !r.Shell && rowWeight(r) == fleetWeightDone {
+			n++
+		}
+	}
+	return n
+}
+
+// sweepLabel is g's sweep button text: "sweep N", or plain "sweep" while a
+// sweep of a group with nothing advertised runs or is armed.
+func sweepLabel(n int) string {
+	if n > 0 {
+		return fmt.Sprintf("%s %d", fleetSweepLabel, n)
+	}
+	return fleetSweepLabel
+}
+
 // groupHeaderLayout renders a group header (see renderGroupHeaderHover) and
-// reports the columns of its fold toggle and sweep button.
+// reports the columns of its fold toggle and buttons.
 //
-// The right side is the counts, the sweep slot and the "+ new" slot (both
-// reserved, so the counts and buttons line up down the list). The sweep slot
-// is blank for groups sweep cannot target, and left out while the shell |
-// agent selector is armed or when it would squeeze the project name below
+// The per-state counts sit flush right; buttons, when shown, follow them:
+// "sweep N" only when the group has N > 0 sweepable rows (or its sweep is
+// running or armed), and "+ new" only on the selected or hovered header (or
+// as the armed shell | agent selector). The sweep button is left out while
+// the selector is armed or when it would squeeze the project name below
 // fleetMinSweepName columns.
 func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetHoverRegion, cw int) (string, fleetHeaderSpans) {
 	marker := strings.Repeat(" ", fleetSidebarLeftInset)
@@ -2045,11 +2114,12 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 	if counts.blocked > 0 {
 		flag = fleetBlockedStyle.Render("⏸")
 	}
+	limit := cw - fleetSidebarRightGutter
 
-	var btn string
-	btnW := lipgloss.Width(fleetNewLabel)
-	if groupCanLaunch(g) {
-		if m.newArmedFor(g) {
+	var add string
+	armed := m.newArmedFor(g)
+	if groupCanLaunch(g) && (armed || selected || hover != fleetHoverNone) {
+		if armed {
 			shell, agent := fleetDimStyle, fleetDimStyle
 			switch hover {
 			case fleetHoverNewShell:
@@ -2057,37 +2127,54 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 			case fleetHoverNewAgent:
 				agent = fleetNewHoverStyle
 			}
-			btn = shell.Render(fleetShellLabel) + fleetDimStyle.Render(fleetSelSep) + agent.Render(fleetAgentLabel)
+			add = shell.Render(fleetShellLabel) + fleetDimStyle.Render(fleetSelSep) + agent.Render(fleetAgentLabel)
 		} else {
 			style := fleetDimStyle
 			if hover == fleetHoverNew {
 				style = fleetNewHoverStyle
 			}
-			btn = style.Render(fleetNewLabel)
+			add = style.Render(fleetNewLabel)
 		}
-		btnW = lipgloss.Width(btn)
 	}
-	newSlot := btn + strings.Repeat(" ", btnW-lipgloss.Width(btn))
-	right := counts.text + strings.Repeat(" ", fleetNewGap) + newSlot
+	var sweep string
+	if n := groupSweepable(g); groupCanSweep(g) && !armed && (n > 0 || m.sweepBusy == g.Session || m.sweepArmedFor(g)) {
+		sweep = m.sweepButtonStyle(g, hover).Render(sweepLabel(n))
+	}
 
-	leftW := cw - fleetSidebarRightGutter - lipgloss.Width(right) - 1
 	var spans fleetHeaderSpans
-	// Like "+ new", the sweep slot is reserved (blank when g cannot be swept)
-	// so the counts stay in one column down the list. Whether it fits depends
-	// only on the width, never on the group.
-	sweepW := lipgloss.Width(fleetSweepLabel) + fleetSweepSep
 	headW := fleetHeaderNameCol + 2 // marker, flag, fold marker and its space
-	if !m.newArmedFor(g) && leftW-sweepW >= headW+fleetMinSweepName {
-		label := strings.Repeat(" ", lipgloss.Width(fleetSweepLabel))
-		if groupCanSweep(g) {
-			label = m.sweepButtonStyle(g, hover).Render(fleetSweepLabel)
-			end := cw - fleetSidebarRightGutter - lipgloss.Width(newSlot) - fleetSweepSep
-			spans.sweep = [2]int{end - lipgloss.Width(fleetSweepLabel), end}
+	build := func(sweep string) string {
+		right := counts.text
+		btns := sweep
+		if add != "" {
+			if btns != "" {
+				btns += strings.Repeat(" ", fleetSweepSep)
+			}
+			btns += add
 		}
-		right = counts.text + strings.Repeat(" ", fleetNewGap) + label + strings.Repeat(" ", fleetSweepSep) + newSlot
-		leftW -= sweepW
+		if btns != "" {
+			right += strings.Repeat(" ", fleetNewGap) + btns
+		}
+		return right
 	}
-	projStyle := fleetProjectStyle.Bold(true).Foreground(lipgloss.Color(fleetColorFor(g.Project)))
+	right := build(sweep)
+	if sweep != "" && limit-lipgloss.Width(right)-1 < headW+fleetMinSweepName {
+		sweep = ""
+		right = build("")
+	}
+	if add != "" {
+		spans.add = [2]int{limit - lipgloss.Width(add), limit}
+	}
+	if sweep != "" {
+		end := limit
+		if add != "" {
+			end = spans.add[0] - fleetSweepSep
+		}
+		spans.sweep = [2]int{end - lipgloss.Width(sweep), end}
+	}
+	leftW := limit - lipgloss.Width(right) - 1
+
+	projStyle := fleetGroupNameStyle
 	if hover == fleetHoverFold {
 		projStyle = projStyle.Underline(true)
 	}
@@ -2110,7 +2197,7 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 		line = truncateToWidth(line, max(leftW, 0))
 		span[1] = min(span[1], max(leftW, 0))
 	}
-	pad := max(cw-fleetSidebarRightGutter-lipgloss.Width(right)-lipgloss.Width(line), 1)
+	pad := max(limit-lipgloss.Width(right)-lipgloss.Width(line), 1)
 	return fleetFitLine(line+strings.Repeat(" ", pad)+right, selected, cw), spans
 }
 
@@ -2251,53 +2338,64 @@ func fleetNameBudget(cw int) int {
 }
 
 // Fixed right-hand columns of a row: the PR badge slot ("#1025" is the widest
-// seen) and the age slot, both right-aligned and blank when absent. The
-// model+context slot (fleetModelSlotW, fleetCtxSlotW) sits left of the PR.
+// seen) and the age slot, both right-aligned. The exception columns (model,
+// context; see fleetExceptions) sit left of the PR.
 const (
 	fleetPRSlotW  = 5
 	fleetAgeSlotW = 3
 )
 
-// fleetRightSlots is how many of the right-hand columns a row draws; narrow
-// rows drop the age first, then the model+context slot, then the PR. The PR
-// goes last because it is the one link to the outcome of the work; the age
-// goes first because the glyph already says the state and the hover card the
-// time.
-type fleetRightSlots int
-
-const (
-	fleetRightNone    fleetRightSlots = iota // no column
-	fleetRightPR                             // PR column only
-	fleetRightModelPR                        // model+context and PR columns
-	fleetRightFull                           // model+context, PR and age columns
-)
-
-// fleetModelSlotTotalW is the model+context slot: both sub-columns and the
-// space between them.
-const fleetModelSlotTotalW = fleetModelSlotW + 1 + fleetCtxSlotW
-
-// width is the columns the slots take, excluding the gap before them.
-func (s fleetRightSlots) width() int {
-	switch s {
-	case fleetRightFull:
-		return fleetModelSlotTotalW + 1 + fleetPRSlotW + 1 + fleetAgeSlotW
-	case fleetRightModelPR:
-		return fleetModelSlotTotalW + 1 + fleetPRSlotW
-	case fleetRightPR:
-		return fleetPRSlotW
-	}
-	return 0
+// fleetRightCols is which right-hand columns a row draws and how wide the
+// model column is. Narrow rows drop the age first, then the model, then the
+// PR; a context warning is never dropped (it is fleetCtxSlotW columns). The
+// PR goes after the model because it is the one link to the outcome of the
+// work; the age goes first because the glyph already says the state and the
+// hover card the time.
+type fleetRightCols struct {
+	modelW       int  // model column width; 0 = not drawn
+	ctx          bool // context column drawn (blank on rows below the warn threshold)
+	pr, age      bool
+	ownCtxWarned bool // this row shows a context warning
 }
 
-// fitRightSlots picks the most right-hand columns that still leave the recap
-// fleetMinRecapWidth of the available columns (one more goes to the gap).
-func fitRightSlots(available int) fleetRightSlots {
-	for _, s := range []fleetRightSlots{fleetRightFull, fleetRightModelPR, fleetRightPR} {
-		if available-s.width()-1 >= fleetMinRecapWidth {
-			return s
+// joinedWidth is the columns of the given column widths one space apart,
+// skipping zero widths.
+func joinedWidth(ws ...int) int {
+	total, n := 0, 0
+	for _, w := range ws {
+		if w > 0 {
+			total += w
+			n++
 		}
 	}
-	return fleetRightNone
+	return total + max(n-1, 0)
+}
+
+// fitRightCols picks the right-hand columns for a row with available columns
+// between its name and its close button. The age is the rightmost column,
+// so whether it shows depends only on the width and the list-wide
+// exceptions (the PR and age then line up down the list). The model and
+// context sit left of the PR, so they move nothing when absent: they count
+// only on the rows that draw them (ownModel, ownCtx), and a blank leading
+// column is trimmed at render time, so its width goes back to the recap.
+// Order as the row narrows: age, then the model, then the PR; the context
+// warning is never dropped.
+func fitRightCols(available int, ex fleetExceptions, ownCtx, ownModel bool) fleetRightCols {
+	fits := func(w int) bool { return available-w-1 >= fleetMinRecapWidth }
+	ctxAll, ctxRow := 0, 0
+	if ex.ctx || ownCtx {
+		ctxAll = fleetCtxSlotW
+	}
+	if ownCtx {
+		ctxRow = fleetCtxSlotW
+	}
+	c := fleetRightCols{ctx: ctxAll > 0, ownCtxWarned: ownCtx}
+	c.pr = fits(joinedWidth(ctxRow, fleetPRSlotW))
+	if ownModel && ex.modelW > 0 && fits(joinedWidth(ex.modelW, ctxAll, fleetPRSlotW)) {
+		c.modelW = ex.modelW
+	}
+	c.age = c.pr && fits(joinedWidth(ex.modelW, ctxAll, fleetPRSlotW, fleetAgeSlotW))
+	return c
 }
 
 // padLeft right-aligns a rendered s in w columns.
@@ -2305,41 +2403,69 @@ func padLeft(s string, w int) string {
 	return strings.Repeat(" ", max(w-lipgloss.Width(s), 0)) + s
 }
 
-// rowRight renders the right-aligned status columns before the close button:
-// the model and context use ("opus  42%", see rowModelSlot), the PR badge
-// ("#60", in the done style on a done row) in a fleetPRSlotW slot and the dim
-// time in the current state (blocked style on a blocked row) in a
-// fleetAgeSlotW slot, one space apart. An absent value leaves its slot blank
-// so the columns line up down the sidebar.
-func rowRight(r fleet.Row, slots fleetRightSlots, d fleetDisplay) string {
-	if slots == fleetRightNone {
+// rowAge is the dim age cell: the time in the current state (blocked style
+// on a blocked row), else the time since the last activity or the start,
+// else a dim "–". Shell rows have none.
+func rowAge(r fleet.Row) string {
+	if r.Shell {
 		return ""
 	}
-	var out string
-	if slots >= fleetRightModelPR {
-		out = rowModelSlot(r, d) + " "
-	}
-	var pr string
-	if r.PRNumber > 0 {
-		bs := fleetProjectStyle
-		if r.Done {
-			bs = fleetDoneStyle
-		}
-		pr = bs.Render(fmt.Sprintf("#%d", r.PRNumber))
-	}
-	out += padLeft(pr, fleetPRSlotW)
-	if slots != fleetRightFull {
-		return out
-	}
-	var age string
-	if !r.StateSince.IsZero() {
+	now := fleetNow()
+	switch {
+	case !r.StateSince.IsZero():
 		style := fleetDimStyle
 		if r.State == "blocked" {
 			style = fleetBlockedStyle
 		}
-		age = style.Render(fleet.CompactAge(fleetNow().Sub(r.StateSince)))
+		return style.Render(fleet.CompactAge(now.Sub(r.StateSince)))
+	case r.LastActivity > 0:
+		return fleetDimStyle.Render(fleet.CompactAge(now.Sub(time.Unix(r.LastActivity, 0))))
+	case r.StartTime > 0:
+		return fleetDimStyle.Render(fleet.CompactAge(now.Sub(time.Unix(r.StartTime, 0))))
 	}
-	return out + " " + padLeft(age, fleetAgeSlotW)
+	return fleetDimStyle.Render(fleetNoAge)
+}
+
+// fleetNoAge fills the age cell of a row with no known time.
+const fleetNoAge = "–"
+
+// rowRight renders the right-aligned status columns before the close button:
+// the model exception (ex.rowModel), the context warning in its threshold
+// colour, the PR badge ("#60", in the done style on a done row) and the age
+// (rowAge), each right-aligned in its slot one space apart. Blank leading
+// columns are trimmed so the recap may use them; inner blanks stay so the
+// columns line up down the list.
+func rowRight(r fleet.Row, c fleetRightCols, ex fleetExceptions, d fleetDisplay) string {
+	var parts []string
+	if c.modelW > 0 {
+		var model string
+		if mn := ex.rowModel(r); mn != "" {
+			model = fleetDimStyle.Render(mn)
+		}
+		parts = append(parts, padLeft(model, c.modelW))
+	}
+	if c.ctx {
+		var ctx string
+		if c.ownCtxWarned {
+			ctx = d.ctxStyle(r.ContextPct).Render(ctxLabel(r.ContextPct))
+		}
+		parts = append(parts, padLeft(ctx, fleetCtxSlotW))
+	}
+	if c.pr {
+		var pr string
+		if r.PRNumber > 0 {
+			bs := fleetProjectStyle
+			if r.Done {
+				bs = fleetDoneStyle
+			}
+			pr = bs.Render(fmt.Sprintf("#%d", r.PRNumber))
+		}
+		parts = append(parts, padLeft(pr, fleetPRSlotW))
+	}
+	if c.age {
+		parts = append(parts, padLeft(rowAge(r), fleetAgeSlotW))
+	}
+	return strings.TrimLeft(strings.Join(parts, " "), " ")
 }
 
 // recapStyle is the style for a row's recap text, by row weight: working in
@@ -2384,7 +2510,7 @@ func (m FleetModel) renderTreeRow(r fleet.Row, treePrefix string, nameCol int, s
 // its one-cell slot blank so alignment and hit regions never change.
 func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol int, selected bool, hover fleetHoverRegion, cw int) string {
 	glyph, style := rowGlyph(r)
-	weight := rowWeight(r)
+	weight := rowStyleWeight(r, fleetNow())
 	cursor := fleetRowCursor(r, selected)
 	glyphStr := style.Render(glyph)
 
@@ -2396,6 +2522,19 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 	treePrefix = fleetKeptPrefix(treePrefix, cw)
 	nameBudget -= lipgloss.Width(treePrefix)
 	name := truncateToWidth(fleet.BaseName(r), nameBudget)
+
+	ctxWarn := rowCtxWarn(r, m.display)
+	// A context warning is never dropped: on a sidebar too narrow for it and
+	// the minimum recap, the name gives way instead (contentWidth keeps the
+	// hub wider than this, so it only bites below 40 columns).
+	if ctxWarn && !m.confirmingRow(r) {
+		used := lipgloss.Width(cursor) + 2 + max(col, lipgloss.Width(treePrefix)+lipgloss.Width(name)) + 2 + closeW
+		if short := fleetMinRecapWidth + fleetCtxSlotW + 1 - (inner - used); short > 0 {
+			nameBudget = max(nameBudget-short, 1)
+			name = truncateToWidth(fleet.BaseName(r), nameBudget)
+			col = min(col, lipgloss.Width(treePrefix)+nameBudget)
+		}
+	}
 
 	padW := max(col-lipgloss.Width(treePrefix)-lipgloss.Width(name), 0)
 	prefix := cursor + glyphStr + " " + fleetDimStyle.Render(treePrefix) + renderAgentNameHover(name, weight, hovered) + strings.Repeat(" ", padW) + "  "
@@ -2415,7 +2554,10 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 		}
 		// The columns sit at fixed positions, but the recap may run into a
 		// slot this row leaves blank: only what is drawn is reserved.
-		right = strings.TrimLeft(rowRight(r, fitRightSlots(available), m.display), " ")
+		if !r.Shell {
+			cols := fitRightCols(available, m.except, ctxWarn, m.except.rowModel(r) != "")
+			right = rowRight(r, cols, m.except, m.display)
+		}
 		if rw := lipgloss.Width(right); rw > 0 {
 			available -= rw + 1
 		}
@@ -2433,13 +2575,7 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 			available -= lipgloss.Width(tag) + 1
 			tag = fleetDimStyle.Render(tag) + " "
 		}
-		// Skip the tag when it would leave no room for the title.
-		if recap.Kind != "" && available >= lipgloss.Width("["+recap.Kind+"]")+8 {
-			kt := truncateToWidth("["+recap.Kind+"]", available)
-			available -= lipgloss.Width(kt) + 1
-			tag += fleetDimStyle.Render(kt) + " "
-		}
-		text = tag + rs.Render(fleet.TruncateWords(recap.Short(), max(available, 0)))
+		text = tag + renderRecapTitle(fleet.TruncateWords(recap.Short(), max(available, 0)), rs)
 	}
 
 	closeBtn := strings.Repeat(" ", lipgloss.Width(fleetCloseLabel))
@@ -2460,10 +2596,50 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 	if !selected {
 		return out
 	}
-	for _, d := range rowDetailStyled(r, treePrefix, cw, m.display) {
+	for _, d := range rowDetailStyled(r, treePrefix, cw, m.display, m.viewerShows(r)) {
 		out += "\n" + fleetFitLine(d, true, cw)
 	}
 	return out
+}
+
+// leadingIssue matches a title's leading issue number ("#21 Crotch…").
+var leadingIssue = regexp.MustCompile(`^#\d+\b`)
+
+// renderRecapTitle renders a row's (already truncated) title in style rs,
+// with a leading issue number dim so it does not read like the PR column.
+func renderRecapTitle(title string, rs lipgloss.Style) string {
+	if loc := leadingIssue.FindStringIndex(title); loc != nil {
+		return fleetDimStyle.Render(title[:loc[1]]) + rs.Render(title[loc[1]:])
+	}
+	return rs.Render(title)
+}
+
+// fleetDoneDecay is how long a done-unseen row keeps its done weight; after
+// it the row renders at idle weight but keeps its green ✓ (and still counts
+// as done).
+const fleetDoneDecay = 24 * time.Hour
+
+// rowStyleWeight is the weight a row's name and recap render at: rowWeight,
+// except a done row whose state is older than fleetDoneDecay is idle.
+func rowStyleWeight(r fleet.Row, now time.Time) fleetWeight {
+	w := rowWeight(r)
+	if w == fleetWeightDone && !r.StateSince.IsZero() && now.Sub(r.StateSince) > fleetDoneDecay {
+		return fleetWeightIdle
+	}
+	return w
+}
+
+// rowNoPrompt reports whether r is an agent still waiting for its first
+// prompt: no turn yet and nothing to recap.
+func rowNoPrompt(r fleet.Row) bool {
+	return !r.Shell && r.TurnCount == 0 && rowRecap(r).Source == fleet.RecapNone
+}
+
+// viewerShows reports whether the live viewer is showing r's window, so its
+// last-activity line would only repeat what the viewer shows.
+func (m FleetModel) viewerShows(r fleet.Row) bool {
+	key := r.Session + "|" + r.WindowID
+	return r.WindowID != "" && m.liveShown == key && m.liveFailed != key
 }
 
 // fleetScheduledGlyph marks a window launched by `agentctl cron`. It is drawn
@@ -2490,7 +2666,7 @@ func scheduledTag(r fleet.Row) string {
 // renders as a fallback; fleet.Recap itself stays pure.
 func rowRecap(r fleet.Row) fleet.RecapLine {
 	if r.Shell {
-		return fleet.RecapLine{Text: "shell"}
+		return fleet.RecapLine{} // the name already says "shell"
 	}
 	if r.Recap.Source != fleet.RecapNone {
 		return r.Recap
@@ -2501,8 +2677,8 @@ func rowRecap(r fleet.Row) fleet.RecapLine {
 	return fleet.RecapLine{Text: emptyRecapText(r, fleetNow())}
 }
 
-// emptyRecapText is the sentence a row with no recap shows: "waiting for
-// first prompt · 4m" before the first turn, otherwise "no activity yet ·
+// emptyRecapText is the sentence a row with no recap shows: "no prompt yet
+// · 4m" before the first turn, otherwise "no activity yet ·
 // started 2d ago". The age is omitted when the start time is unknown.
 func emptyRecapText(r fleet.Row, now time.Time) string {
 	var since time.Time
@@ -2513,9 +2689,9 @@ func emptyRecapText(r fleet.Row, now time.Time) string {
 	}
 	if r.TurnCount == 0 {
 		if since.IsZero() {
-			return "waiting for first prompt"
+			return "no prompt yet"
 		}
-		return "waiting for first prompt · " + fleet.CompactAge(now.Sub(since))
+		return "no prompt yet · " + fleet.CompactAge(now.Sub(since))
 	}
 	if since.IsZero() {
 		return "no activity yet"
@@ -2581,7 +2757,7 @@ const fleetMinRecapWidth = 8
 const fleetDetailIndent = 5
 
 // fleetDetailMaxLines caps a selected row's recap and activity lines; the
-// chip line (see rowChips) comes on top.
+// chip line (see rowChips), when there is one, comes on top.
 const fleetDetailMaxLines = 3
 
 // fleetDetailLine is one plain-text detail line and its marker ("" for recap
@@ -2599,35 +2775,40 @@ type fleetDetailLine struct {
 // when it differs from the recap, at most fleetDetailMaxLines in total, then
 // one chip line (rowChips) when the row has any. A recap that is itself the
 // activity (fleet.RecapActivity: the last tool command or text) is one
-// marked, truncated line and never wraps. Hit testing and scrolling count
-// these lines, so rendering must use exactly this. prefixW is the width of
-// the row's kept tree prefix (fleetKeptPrefix).
-func rowDetail(r fleet.Row, prefixW, cw int, d fleetDisplay) []fleetDetailLine {
+// marked, truncated line and never wraps. viewed drops the activity line:
+// the live viewer is showing that window, so it would only repeat it. Hit
+// testing and scrolling count these lines, so rendering must use exactly
+// this. prefixW is the width of the row's kept tree prefix
+// (fleetKeptPrefix).
+func rowDetail(r fleet.Row, prefixW, cw int, d fleetDisplay, viewed bool) []fleetDetailLine {
 	w := cw - fleetSidebarRightGutter - fleetDetailIndent - prefixW
 	if w < fleetMinRecapWidth {
 		return nil
 	}
-	out := rowDetailText(r, w)
+	out := rowDetailText(r, w, viewed)
 	if chips := rowChips(r, rowNameFits(r, prefixW, cw), d); len(chips) > 0 {
-		styled := renderChips(r, chips, d, w)
+		styled := renderChips(chips, w)
 		out = append(out, fleetDetailLine{text: ansi.Strip(styled), styled: styled})
 	}
 	return out
 }
 
 // rowDetailText is rowDetail's recap and activity lines at text width w.
-func rowDetailText(r fleet.Row, w int) []fleetDetailLine {
+func rowDetailText(r fleet.Row, w int, viewed bool) []fleetDetailLine {
 	activity := fleet.ActivityLine(r)
 	rc := rowRecap(r)
 	if rc.Source == fleet.RecapNone {
 		return nil // the fallback sentence is already the whole story
 	}
 	if rc.Source == fleet.RecapActivity {
+		if viewed {
+			return nil
+		}
 		marker, text := activityMarker(r, rc.Text)
 		return []fleetDetailLine{{text: truncateToWidth(text, w-lipgloss.Width(marker)), marker: marker}}
 	}
 	recap := rc.Text
-	showActivity := activity != "" && activity != recap
+	showActivity := !viewed && activity != "" && activity != recap
 
 	recapMax := fleetDetailMaxLines
 	if showActivity {
@@ -2664,10 +2845,10 @@ func activityMarker(r fleet.Row, text string) (marker, shown string) {
 
 // rowDetailStyled renders rowDetail's lines with the bar, indent and the
 // tree continuation for the row's (already clamped) prefix.
-func rowDetailStyled(r fleet.Row, treePrefix string, cw int, disp fleetDisplay) []string {
+func rowDetailStyled(r fleet.Row, treePrefix string, cw int, disp fleetDisplay, viewed bool) []string {
 	indent := fleetProjectBar(r.Project) + strings.Repeat(" ", fleetDetailIndent-1) + fleetDimStyle.Render(fleetContinuation(treePrefix))
 	var out []string
-	for _, d := range rowDetail(r, lipgloss.Width(treePrefix), cw, disp) {
+	for _, d := range rowDetail(r, lipgloss.Width(treePrefix), cw, disp, viewed) {
 		if d.styled != "" {
 			out = append(out, indent+d.styled)
 			continue
@@ -2710,7 +2891,7 @@ func (m FleetModel) lineHeight(i, cw int) int {
 		return 0
 	}
 	if l := m.lines[i]; l.kind == fleetLineRow && i == m.splitPane.Cursor() {
-		return 1 + len(rowDetail(l.row, lipgloss.Width(fleetKeptPrefix(l.treePrefix, cw)), cw, m.display))
+		return 1 + len(rowDetail(l.row, lipgloss.Width(fleetKeptPrefix(l.treePrefix, cw)), cw, m.display, m.viewerShows(l.row)))
 	}
 	return 1
 }

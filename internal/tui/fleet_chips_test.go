@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/state"
 )
 
 func TestShortModel(t *testing.T) {
@@ -67,20 +69,12 @@ func TestCtxStyleThresholds(t *testing.T) {
 	}
 }
 
-func chipTexts(cs []fleetChip) []string {
-	out := make([]string, len(cs))
-	for i, c := range cs {
-		out[i] = c.text
-	}
-	return out
-}
-
 func TestRowChips(t *testing.T) {
 	full := func(r *fleet.Row) {
 		r.PRNumber = 186
 		r.Ticket = 42
 		r.ModelName = "claude-opus-4-7"
-		r.ContextPct = 42
+		r.ContextPct = 92
 		r.Backend = "nous"
 		r.Account = "work"
 		r.ScheduledBy = "nightly"
@@ -93,13 +87,15 @@ func TestRowChips(t *testing.T) {
 		want     []string
 	}{
 		{"nothing", nil, true, fleetDisplay{}, []string{}},
-		{"phone order", full, false, fleetDisplay{}, []string{"PR #186", "#42", "go-engineer", "opus-4-7", "ctx 42%", "nous", "acct work", "⏲ nightly"}},
-		{"agent hidden when the name fits", full, true, fleetDisplay{}, []string{"PR #186", "#42", "opus-4-7", "ctx 42%", "nous", "acct work", "⏲ nightly"}},
-		{"default account hidden", full, true, fleetDisplay{defaultAccount: "work"}, []string{"PR #186", "#42", "opus-4-7", "ctx 42%", "nous", "⏲ nightly"}},
-		{"pr url only", func(r *fleet.Row) { r.PRURL = "https://x/pull/x" }, true, fleetDisplay{}, []string{"PR"}},
+		// Model, context, PR and the cron job are on the row itself: no chips.
+		{"row facts are not chips", full, false, fleetDisplay{}, []string{"#42", "go-engineer", "nous", "acct work"}},
+		{"agent hidden when the name fits", full, true, fleetDisplay{}, []string{"#42", "nous", "acct work"}},
+		{"default account hidden", full, true, fleetDisplay{defaultAccount: "work"}, []string{"#42", "nous"}},
+		{"pr url only has no chip", func(r *fleet.Row) { r.PRURL = "https://x/pull/x" }, true, fleetDisplay{}, []string{}},
+		{"model only has no chip", func(r *fleet.Row) { r.ModelName = "claude-haiku-4-5"; r.ContextPct = 99 }, true, fleetDisplay{}, []string{}},
+		{"scheduled only has no chip", func(r *fleet.Row) { r.ScheduledBy = "nightly" }, true, fleetDisplay{}, []string{}},
 		{"default backends hidden", func(r *fleet.Row) { r.Backend = "Anthropic" }, true, fleetDisplay{}, []string{}},
 		{"claude backend hidden", func(r *fleet.Row) { r.Backend = "claude" }, true, fleetDisplay{}, []string{}},
-		{"ctx 0 has no chip", func(r *fleet.Row) { r.ModelName = "claude-haiku-4-5" }, true, fleetDisplay{}, []string{"haiku-4-5"}},
 		{"shell has none", func(r *fleet.Row) { full(r); r.Shell = true }, false, fleetDisplay{}, []string{}},
 	}
 	for _, tt := range tests {
@@ -109,7 +105,7 @@ func TestRowChips(t *testing.T) {
 			if tt.mod != nil {
 				tt.mod(&r)
 			}
-			got := chipTexts(rowChips(r, tt.nameFits, tt.d))
+			got := rowChips(r, tt.nameFits, tt.d)
 			if strings.Join(got, "|") != strings.Join(tt.want, "|") {
 				t.Errorf("chips = %q, want %q", got, tt.want)
 			}
@@ -117,7 +113,8 @@ func TestRowChips(t *testing.T) {
 	}
 }
 
-// chipRow is a selected-row fixture with every chip and a two-line recap.
+// chipRow is a selected-row fixture with an issue, a backend, a two-line
+// recap, a PR and a model and context use.
 func chipRow(name string) fleet.Row {
 	r := sampleRow("s", "proj", "@1", name+":1", name, "working", false,
 		fleet.LogInfo{Recap: "Bringing the phone fleet chips to the terminal hub rows.", PRNumber: 186, PRURL: "https://github.com/blsmth/agentctl/pull/186"},
@@ -166,54 +163,305 @@ func TestSelectedRowChipLine(t *testing.T) {
 					t.Fatalf("row %d has no detail lines", i)
 				}
 				chips := ansi.Strip(lines[len(lines)-1])
-				if !strings.Contains(chips, "[PR #186]") {
+				if !strings.Contains(chips, "[#42]") {
 					t.Errorf("row %d: last line is not the chip line: %q", i, chips)
 				}
+				for _, gone := range []string{"[PR", "[opus", "[ctx"} {
+					if strings.Contains(chips, gone) {
+						t.Errorf("row %d: chip line repeats a row fact %q: %q", i, gone, chips)
+					}
+				}
 				if width >= 120 {
-					want := "[PR #186] [#42] "
+					want := "[#42] "
 					if l.row.AgentName != "dev" {
 						want += "[" + l.row.AgentName + "] "
 					}
-					want += "[opus-4-7] [ctx 81%] [nous]"
+					want += "[nous]"
 					if !strings.Contains(chips, want) {
 						t.Errorf("row %d chips = %q, want %q", i, chips, want)
 					}
-					if !strings.Contains(lines[len(lines)-1], fleetBlockedStyle.Render("ctx 81%")) {
-						t.Errorf("ctx chip above the warn threshold should use the warn style")
-					}
-				} else if width <= 40 && !strings.Contains(chips, "…") {
-					t.Errorf("narrow chip line should truncate with …: %q", chips)
 				}
 			}
 		})
 	}
 }
 
+func TestSelectedRowWithoutChipsHasNoChipLine(t *testing.T) {
+	InitStyles()
+	fixedFleetNow(t)
+	m := newFleetModel()
+	m.termWidth, m.termHeight, m.liveLeft = 120, 30, 120
+	m.configureSplitPane()
+	m.loaded = true
+	r := sampleRow("s", "proj", "@1", "dev:1", "dev", "working", false,
+		fleet.LogInfo{Recap: "One short recap.", PRNumber: 186}, func(r *fleet.Row) {
+			r.ModelName, r.ContextPct, r.ScheduledBy = "claude-opus-4-7", 95, "nightly"
+		})
+	m.groups = []fleet.Group{{Session: "s", Project: "proj", Rows: []fleet.Row{r}}}
+	m.rebuildLines()
+	cw := m.contentWidth()
+	for i, l := range m.lines {
+		if l.kind != fleetLineRow {
+			continue
+		}
+		m.splitPane.SetCursor(i)
+		lines := strings.Split(m.renderTreeRow(l.row, l.treePrefix, l.nameCol, true, cw), "\n")
+		if len(lines) != 2 || m.lineHeight(i, cw) != 2 {
+			t.Fatalf("want the row and its recap only, got %d lines (lineHeight %d): %q", len(lines), m.lineHeight(i, cw), ansi.Strip(strings.Join(lines, "\n")))
+		}
+		if strings.Contains(ansi.Strip(lines[1]), "[") {
+			t.Errorf("unexpected chip line: %q", ansi.Strip(lines[1]))
+		}
+	}
+}
+
+func TestMostCommonModel(t *testing.T) {
+	row := func(model string) fleet.Row {
+		return fleet.Row{AgentState: state.AgentState{ModelName: model}}
+	}
+	shell := fleet.Row{Shell: true, AgentState: state.AgentState{ModelName: "claude-sonnet-4-5"}}
+	tests := []struct {
+		name string
+		rows [][]fleet.Row
+		want string
+	}{
+		{"none", nil, ""},
+		{"no models", [][]fleet.Row{{row(""), row("")}}, ""},
+		{"single", [][]fleet.Row{{row("claude-opus-4-7")}}, "opus"},
+		{"majority across groups", [][]fleet.Row{{row("claude-opus-4-7"), row("claude-sonnet-4-5")}, {row("claude-opus-4-5")}}, "opus"},
+		{"tie shows both", [][]fleet.Row{{row("claude-opus-4-7"), row("claude-sonnet-4-5")}}, ""},
+		{"shells do not count", [][]fleet.Row{{row("claude-opus-4-7"), shell, shell}}, "opus"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var groups []fleet.Group
+			for _, rs := range tt.rows {
+				groups = append(groups, fleet.Group{Rows: rs})
+			}
+			if got := mostCommonModel(groups); got != tt.want {
+				t.Errorf("mostCommonModel = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRowModelException(t *testing.T) {
+	ex := fleetExceptions{common: "opus"}
+	tests := []struct {
+		name string
+		row  fleet.Row
+		want string
+	}{
+		{"usual model hidden", fleet.Row{AgentState: state.AgentState{ModelName: "claude-opus-4-7", TurnCount: 1}}, ""},
+		{"other model shown", fleet.Row{AgentState: state.AgentState{ModelName: "claude-sonnet-4-5", TurnCount: 1}}, "sonnet"},
+		{"no prompt yet hides it", fleet.Row{AgentState: state.AgentState{ModelName: "claude-sonnet-4-5"}}, ""},
+		{"shell hides it", fleet.Row{Shell: true, AgentState: state.AgentState{ModelName: "claude-sonnet-4-5", TurnCount: 1}}, ""},
+		{"unknown model", fleet.Row{AgentState: state.AgentState{TurnCount: 1}}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ex.rowModel(tt.row); got != tt.want {
+				t.Errorf("rowModel = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	tie := fleetExceptions{}
+	if got := tie.rowModel(fleet.Row{AgentState: state.AgentState{ModelName: "claude-opus-4-7", TurnCount: 1}}); got != "opus" {
+		t.Errorf("with no usual model every model shows, got %q", got)
+	}
+}
+
+func TestRowCtxWarn(t *testing.T) {
+	tests := []struct {
+		name string
+		pct  int
+		d    fleetDisplay
+		want bool
+	}{
+		{"unknown", 0, fleetDisplay{}, false},
+		{"below default warn", 74, fleetDisplay{}, false},
+		{"at default warn", 75, fleetDisplay{}, true},
+		{"critical", 96, fleetDisplay{}, true},
+		{"configured warn", 55, fleetDisplay{ctxWarn: 50, ctxCrit: 60}, true},
+		{"below configured warn", 49, fleetDisplay{ctxWarn: 50, ctxCrit: 60}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := fleet.Row{AgentState: state.AgentState{ContextPct: tt.pct}}
+			if got := rowCtxWarn(r, tt.d); got != tt.want {
+				t.Errorf("rowCtxWarn(%d) = %v, want %v", tt.pct, got, tt.want)
+			}
+		})
+	}
+	if rowCtxWarn(fleet.Row{Shell: true, AgentState: state.AgentState{ContextPct: 99}}, fleetDisplay{}) {
+		t.Error("shell rows never warn")
+	}
+}
+
+func TestRowRightExceptions(t *testing.T) {
+	InitStyles()
+	fixedFleetNow(t)
+	base := func(model string, ctx, pr int) fleet.Row {
+		return fleet.Row{StateSince: sidebarNow.Add(-4 * time.Minute), PRNumber: pr,
+			AgentState: state.AgentState{State: "working", ModelName: model, ContextPct: ctx, TurnCount: 1}}
+	}
+	wide := 200
+	tests := []struct {
+		name string
+		row  fleet.Row
+		ex   fleetExceptions
+		want string
+	}{
+		{"usual model, low ctx: PR and age only", base("claude-opus-4-7", 42, 108), fleetExceptions{common: "opus"}, "#108  4m"},
+		{"no PR keeps the age column", base("claude-opus-4-7", 42, 0), fleetExceptions{common: "opus"}, "4m"},
+		{"model exception", base("claude-sonnet-4-5", 42, 108), fleetExceptions{common: "opus", modelW: 6}, "sonnet  #108  4m"},
+		{"usual model in a list with exceptions", base("claude-opus-4-7", 42, 108), fleetExceptions{common: "opus", modelW: 6}, "#108  4m"},
+		{"ctx warning", base("claude-opus-4-7", 82, 108), fleetExceptions{common: "opus", ctx: true}, "82%  #108  4m"},
+		{"ctx column blank on calm rows", base("claude-opus-4-7", 42, 108), fleetExceptions{common: "opus", ctx: true}, "#108  4m"},
+		{"model and ctx", base("claude-sonnet-4-5", 96, 0), fleetExceptions{common: "opus", modelW: 6, ctx: true}, "sonnet  96%        4m"},
+		{"model with calm ctx keeps the ctx slot", base("claude-sonnet-4-5", 10, 7), fleetExceptions{common: "opus", modelW: 6, ctx: true}, "sonnet         #7  4m"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := fleetDisplay{}
+			cols := fitRightCols(wide, tt.ex, rowCtxWarn(tt.row, d), tt.ex.rowModel(tt.row) != "")
+			if got := ansi.Strip(rowRight(tt.row, cols, tt.ex, d)); got != tt.want {
+				t.Errorf("rowRight = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	r := base("claude-opus-4-7", 92, 0)
+	cols := fitRightCols(wide, fleetExceptions{ctx: true}, true, false)
+	if got := rowRight(r, cols, fleetExceptions{ctx: true}, fleetDisplay{}); !strings.Contains(got, fleetErrStyle.Render("92%")) {
+		t.Errorf("critical ctx should use the error style: %q", got)
+	}
+}
+
+func TestFitRightColsDropOrder(t *testing.T) {
+	ex := fleetExceptions{common: "opus", modelW: 6, ctx: true}
+	full := joinedWidth(6, fleetCtxSlotW, fleetPRSlotW, fleetAgeSlotW) + 1 + fleetMinRecapWidth
+	noAge := joinedWidth(6, fleetCtxSlotW, fleetPRSlotW) + 1 + fleetMinRecapWidth
+	noModel := joinedWidth(fleetCtxSlotW, fleetPRSlotW) + 1 + fleetMinRecapWidth
+	type want struct {
+		model, pr, age bool
+	}
+	tests := []struct {
+		available int
+		want      want
+	}{
+		{full + 10, want{true, true, true}},
+		{full, want{true, true, true}},
+		{full - 1, want{true, true, false}},   // age goes first
+		{noAge, want{true, true, false}},      //
+		{noAge - 1, want{false, true, false}}, // then the model
+		{noModel, want{false, true, false}},   //
+		{noModel - 1, want{false, false, false}},
+		{0, want{false, false, false}},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprint(tt.available), func(t *testing.T) {
+			c := fitRightCols(tt.available, ex, true, true)
+			got := want{c.modelW > 0, c.pr, c.age}
+			if got != tt.want {
+				t.Errorf("fitRightCols(%d) = %+v, want %+v", tt.available, got, tt.want)
+			}
+			if !c.ctx {
+				t.Error("the ctx warning is never dropped")
+			}
+		})
+	}
+	// Another row's context warning or model costs this row nothing to the
+	// left of its PR: at a 40-column sidebar's 17 columns the PR stays.
+	calm := fitRightCols(17, ex, false, false)
+	if !calm.pr || calm.age || calm.modelW != 0 {
+		t.Errorf("calm row at 17 columns: %+v", calm)
+	}
+	if warned := fitRightCols(17, ex, true, false); warned.pr {
+		t.Errorf("a warned row at 17 columns keeps its ctx and drops the PR: %+v", warned)
+	}
+	// With no exceptions in the list the model and ctx columns take no
+	// width, so the PR and age survive to narrower rows.
+	plain := fitRightCols(joinedWidth(fleetPRSlotW, fleetAgeSlotW)+1+fleetMinRecapWidth, fleetExceptions{}, false, false)
+	if plain.modelW != 0 || plain.ctx || !plain.pr || !plain.age {
+		t.Errorf("no exceptions: %+v", plain)
+	}
+}
+
 func TestNarrowRowKeepsRecap(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
+	ex := fleetExceptions{common: "opus", modelW: 6, ctx: true}
 	for cw := 30; cw <= 40; cw++ {
 		r := chipRow("go-engineer")
+		r.ModelName = "claude-sonnet-4-5"
 		r.StateSince = sidebarNow
 		m := newFleetModel()
+		m.except = ex
 		plain := firstLine(m.renderTreeRowHover(r, "", 11, false, fleetHoverNone, cw))
-		if strings.Contains(plain, "opus") {
+		if strings.Contains(plain, "sonnet") {
 			t.Errorf("cw %d: model slot must drop before starving the recap: %q", cw, plain)
+		}
+		if !strings.Contains(plain, "81%") {
+			t.Errorf("cw %d: the ctx warning is never dropped: %q", cw, plain)
 		}
 		if !strings.Contains(plain, "Bringin") {
 			t.Errorf("cw %d: recap missing: %q", cw, plain)
 		}
 	}
-	// Wide enough for the model but not the age: the age goes first.
+	// Age, then model, then PR.
 	r := chipRow("go-engineer")
+	r.ModelName = "claude-sonnet-4-5"
 	r.StateSince = sidebarNow.Add(-4 * 60e9)
 	m := newFleetModel()
+	m.except = ex
 	for cw := 40; cw < 120; cw++ {
 		plain := firstLine(m.renderTreeRowHover(r, "", 11, false, fleetHoverNone, cw))
-		hasModel, hasAge := strings.Contains(plain, "opus"), strings.Contains(plain, " 4m")
+		hasModel, hasAge, hasPR := strings.Contains(plain, "sonnet"), strings.Contains(plain, " 4m"), strings.Contains(plain, "#186")
 		if hasAge && !hasModel {
 			t.Fatalf("cw %d: age shown without the model: %q", cw, plain)
 		}
+		if hasModel && !hasPR {
+			t.Fatalf("cw %d: model shown without the PR: %q", cw, plain)
+		}
+		if !strings.Contains(plain, "81%") {
+			t.Fatalf("cw %d: ctx warning dropped: %q", cw, plain)
+		}
+	}
+}
+
+func TestBlankExceptionWidthGoesToRecap(t *testing.T) {
+	InitStyles()
+	fixedFleetNow(t)
+	r := sampleRow("s", "proj", "@1", "dev:1", "dev", "working", false,
+		fleet.LogInfo{Recap: strings.Repeat("word ", 40)}, func(r *fleet.Row) {
+			r.ModelName, r.ContextPct, r.TurnCount = "claude-opus-4-7", 10, 1
+			r.StateSince = sidebarNow.Add(-time.Minute)
+		})
+	m := newFleetModel()
+	m.except = fleetExceptions{common: "opus", modelW: 6, ctx: true}
+	withEx := firstLine(m.renderTreeRowHover(r, "", 3, false, fleetHoverNone, 100))
+	m.except = fleetExceptions{common: "opus"}
+	without := firstLine(m.renderTreeRowHover(r, "", 3, false, fleetHoverNone, 100))
+	if withEx != without {
+		t.Errorf("a row with no exceptions must not reserve their columns:\n%q\n%q", withEx, without)
+	}
+	if strings.Contains(without, "opus") || strings.Contains(without, "10%") {
+		t.Errorf("usual model and calm ctx must not show: %q", without)
+	}
+}
+
+func TestComputeExceptions(t *testing.T) {
+	mk := func(model string, ctx int) fleet.Row {
+		return fleet.Row{AgentState: state.AgentState{ModelName: model, ContextPct: ctx, TurnCount: 1}}
+	}
+	groups := []fleet.Group{{Rows: []fleet.Row{mk("claude-opus-4-7", 10), mk("claude-opus-4-7", 20)}}, {Rows: []fleet.Row{mk("claude-haiku-4-5", 80)}}}
+	ex := computeExceptions(groups, fleetDisplay{})
+	if ex.common != "opus" || ex.modelW != len("haiku") || !ex.ctx {
+		t.Errorf("exceptions = %+v", ex)
+	}
+	ex = computeExceptions(groups[:1], fleetDisplay{})
+	if ex.modelW != 0 || ex.ctx {
+		t.Errorf("all-usual list = %+v", ex)
 	}
 }
 

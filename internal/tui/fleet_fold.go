@@ -243,6 +243,28 @@ func (m *FleetModel) toggleSort() tea.Cmd {
 	return m.saveViewCmd()
 }
 
+// fleetShellsKey shows or hides the plain shell rows.
+const fleetShellsKey = "$"
+
+// toggleShells is fleetShellsKey: show or hide the shell rows. A selected
+// shell row that disappears hands the cursor on like any vanished row.
+func (m *FleetModel) toggleShells() tea.Cmd {
+	m.setShowShells(!m.showShells)
+	m.jumpErr = ""
+	if m.showShells {
+		m.setSuccess("shells shown")
+	} else {
+		m.setSuccess("shells hidden")
+	}
+	return m.saveViewCmd()
+}
+
+// setShowShells shows or hides the shell rows and re-lays out the list.
+func (m *FleetModel) setShowShells(show bool) {
+	m.showShells = show
+	m.relayout()
+}
+
 // cycleFilter is `f`: all → active → needs you → all.
 func (m *FleetModel) cycleFilter() tea.Cmd {
 	m.filter = m.filter.next()
@@ -307,6 +329,8 @@ type hubViewState struct {
 	Filter string   `json:"filter,omitempty"`
 	// Sort is the in-group row order: "recent" or "" for window order.
 	Sort string `json:"sort,omitempty"`
+	// Shells shows the plain shell rows (hidden by default).
+	Shells bool `json:"shells,omitempty"`
 }
 
 // HubViewEnv carries the hub's fold set, focus mode and filter (JSON, see
@@ -343,7 +367,7 @@ func (m FleetModel) viewState() hubViewState {
 		}
 	}
 	slices.Sort(folded)
-	return hubViewState{Folded: folded, Focus: m.focusMode, Filter: m.filter.key(), Sort: sortKey(m.sortRecent)}
+	return hubViewState{Folded: folded, Focus: m.focusMode, Filter: m.filter.key(), Sort: sortKey(m.sortRecent), Shells: m.showShells}
 }
 
 // applyViewState replaces the model's fold set, focus mode and filter.
@@ -357,6 +381,7 @@ func (m *FleetModel) applyViewState(s hubViewState) {
 	m.focusMode = s.Focus
 	m.filter = parseFleetFilter(s.Filter)
 	m.sortRecent = s.Sort == sortRecentKey
+	m.showShells = s.Shells
 }
 
 // parseHubView decodes a hubViewState; ok is false for anything that is not
