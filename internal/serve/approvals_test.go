@@ -208,6 +208,54 @@ func TestApprovalHashMismatch(t *testing.T) {
 	}
 }
 
+// The dispatch details are listed for the phone and covered by the hash: an
+// answer bound to the payload without them is refused.
+func TestApprovalDetailsShownAndHashed(t *testing.T) {
+	e := newApprovalEnv(t, true, nil)
+	req := e.request(t)
+	req.Details = remoteapproval.Details{
+		Project: "blsmth.com", Dir: "~/code/personal/blsmth.com", DirSource: "flag", AskingProject: "agentctl", OtherProject: true,
+		Agent: "general-purpose", AgentSource: "built-in", Model: "opus", ModelSource: "flag", Backend: "nous",
+		Account: "personal", Mode: "ad-hoc", Worktree: "worktree", PermissionMode: "auto",
+	}
+	a := e.open(t, req)
+	got := e.list(t)[0]
+	if got.Details != req.Details {
+		t.Fatalf("listed details = %+v, want %+v", got.Details, req.Details)
+	}
+	if got.PayloadSHA256 != remoteapproval.PayloadHash(req) {
+		t.Fatalf("listed hash %q is not the hash of the request", got.PayloadSHA256)
+	}
+	stripped := req
+	stripped.Details = remoteapproval.Details{}
+	if w := e.answer(req.ID, "allow", remoteapproval.PayloadHash(stripped)); w.Code != http.StatusConflict || errCode(t, w) != codeApprovalChanged {
+		t.Fatalf("answer without details: %d %s", w.Code, w.Body)
+	}
+	changed := req
+	changed.Details.Project = "agentctl"
+	if w := e.answer(req.ID, "allow", remoteapproval.PayloadHash(changed)); w.Code != http.StatusConflict {
+		t.Fatalf("answer for another project: %d %s", w.Code, w.Body)
+	}
+	if w := e.answer(req.ID, "deny", got.PayloadSHA256); w.Code != http.StatusOK {
+		t.Fatalf("answer: %d %s", w.Code, w.Body)
+	}
+	if d, err := waitDecision(t, a); err != nil || d.Decision != "deny" {
+		t.Fatalf("hook got %+v %v", d, err)
+	}
+	e.waitPending(t, 0)
+	w := do(e.Handler(), http.MethodGet, "/v1/approvals/"+req.ID, withCookie(e.tok))
+	var res resolvedApproval
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.TargetProject != "blsmth.com" {
+		t.Errorf("resolved target_project = %q, want blsmth.com", res.TargetProject)
+	}
+	if strings.Contains(w.Body.String(), "~/code") {
+		t.Errorf("resolved history carries the dir: %s", w.Body)
+	}
+}
+
 func TestApprovalUnknownAndBadBody(t *testing.T) {
 	e := newApprovalEnv(t, true, nil)
 	if w := e.answer(strings.Repeat("b", 32), "allow", "x"); w.Code != http.StatusNotFound {
@@ -449,13 +497,15 @@ func TestApprovalPush(t *testing.T) {
 		kind     string
 		wantPush bool
 		wantBody string
+		project  string
 	}{
-		{"dispatch", nil, remoteapproval.KindDispatch, true, "orch wants to dispatch go-engineer"},
-		{"bash", nil, remoteapproval.KindBash, true, "orch wants to run a command"},
-		{"cron", nil, remoteapproval.KindCron, true, "orch wants to schedule go-engineer"},
-		{"quiet hours ignored", func(o *Options) { o.Config.Push.QuietHours = "00:00-23:59" }, remoteapproval.KindDispatch, true, "orch wants to dispatch go-engineer"},
-		{"muted project", func(o *Options) { o.Config.Push.MutedProjects = []string{"proj"} }, remoteapproval.KindDispatch, false, ""},
-		{"approvals off", func(o *Options) { off := false; o.Config.Push.Approvals = &off }, remoteapproval.KindDispatch, false, ""},
+		{"dispatch", nil, remoteapproval.KindDispatch, true, "orch wants to dispatch go-engineer", ""},
+		{"dispatch to a project", nil, remoteapproval.KindDispatch, true, "orch wants to dispatch go-engineer to blsmth.com", "blsmth.com"},
+		{"bash", nil, remoteapproval.KindBash, true, "orch wants to run a command", ""},
+		{"cron", nil, remoteapproval.KindCron, true, "orch wants to schedule go-engineer", ""},
+		{"quiet hours ignored", func(o *Options) { o.Config.Push.QuietHours = "00:00-23:59" }, remoteapproval.KindDispatch, true, "orch wants to dispatch go-engineer", ""},
+		{"muted project", func(o *Options) { o.Config.Push.MutedProjects = []string{"proj"} }, remoteapproval.KindDispatch, false, "", ""},
+		{"approvals off", func(o *Options) { off := false; o.Config.Push.Approvals = &off }, remoteapproval.KindDispatch, false, "", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -465,6 +515,7 @@ func TestApprovalPush(t *testing.T) {
 			}
 			req := e.request(t)
 			req.Kind = tc.kind
+			req.Details.Project = tc.project
 			e.open(t, req)
 			calls := e.pusher.waitCalls(t, 1)
 			if !tc.wantPush {

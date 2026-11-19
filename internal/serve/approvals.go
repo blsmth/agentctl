@@ -57,20 +57,23 @@ const (
 // approvalView is one pending approval as GET /v1/approvals and the SSE
 // "approval" event show it: everything the human needs to decide.
 type approvalView struct {
-	ID               string `json:"id"`
-	Kind             string `json:"kind"`
-	AskingAgent      string `json:"asking_agent"`
-	Session          string `json:"session"`
-	Project          string `json:"project"`
-	WindowID         string `json:"window_id"`
-	TargetAgent      string `json:"target_agent"`
-	Issue            int    `json:"issue"`
-	Prompt           string `json:"prompt"`
-	Command          string `json:"command"`
-	Opened           string `json:"opened"`
-	Deadline         string `json:"deadline"`
-	SecondsRemaining int    `json:"seconds_remaining"`
-	PayloadSHA256    string `json:"payload_sha256"`
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	AskingAgent string `json:"asking_agent"`
+	Session     string `json:"session"`
+	Project     string `json:"project"`
+	WindowID    string `json:"window_id"`
+	TargetAgent string `json:"target_agent"`
+	Issue       int    `json:"issue"`
+	Prompt      string `json:"prompt"`
+	Command     string `json:"command"`
+	// Details is the dispatch's resolved where/how (empty for other kinds);
+	// covered by PayloadSHA256 like every other shown field.
+	Details          remoteapproval.Details `json:"details"`
+	Opened           string                 `json:"opened"`
+	Deadline         string                 `json:"deadline"`
+	SecondsRemaining int                    `json:"seconds_remaining"`
+	PayloadSHA256    string                 `json:"payload_sha256"`
 }
 
 // Resolved outcomes shown to the phone.
@@ -91,13 +94,15 @@ type resolvedApproval struct {
 	Kind        string `json:"kind"`
 	AskingAgent string `json:"asking_agent"`
 	TargetAgent string `json:"target_agent"`
-	Session     string `json:"session"`
-	Project     string `json:"project"`
-	WindowID    string `json:"window_id"`
-	Opened      string `json:"opened"`
-	ResolvedAt  string `json:"resolved_at"`
-	Outcome     string `json:"outcome"`
-	Source      string `json:"source,omitempty"`
+	// TargetProject is the project a dispatch went to (Details.Project).
+	TargetProject string `json:"target_project,omitempty"`
+	Session       string `json:"session"`
+	Project       string `json:"project"`
+	WindowID      string `json:"window_id"`
+	Opened        string `json:"opened"`
+	ResolvedAt    string `json:"resolved_at"`
+	Outcome       string `json:"outcome"`
+	Source        string `json:"source,omitempty"`
 
 	at time.Time
 }
@@ -108,7 +113,7 @@ type resolvedApproval struct {
 func newResolved(p *pendingApproval, outcome, decision, device string, now time.Time) resolvedApproval {
 	r := resolvedApproval{
 		ID: p.req.ID, Status: "resolved", Kind: p.req.Kind, AskingAgent: p.req.AskingAgent,
-		TargetAgent: p.req.TargetAgent, Session: p.req.Session, Project: p.project, WindowID: p.req.WindowID,
+		TargetAgent: p.req.TargetAgent, TargetProject: p.req.Details.Project, Session: p.req.Session, Project: p.project, WindowID: p.req.WindowID,
 		Opened: p.opened.UTC().Format(time.RFC3339), ResolvedAt: now.UTC().Format(time.RFC3339), at: now,
 	}
 	switch outcome {
@@ -171,7 +176,7 @@ func (p *pendingApproval) view(now time.Time) approvalView {
 	return approvalView{
 		ID: p.req.ID, Kind: p.req.Kind, AskingAgent: p.req.AskingAgent, Session: p.req.Session,
 		Project: p.project, WindowID: p.req.WindowID, TargetAgent: p.req.TargetAgent, Issue: p.req.Issue,
-		Prompt: p.req.Prompt, Command: p.req.Command,
+		Prompt: p.req.Prompt, Command: p.req.Command, Details: p.req.Details,
 		Opened:           p.opened.UTC().Format(time.RFC3339),
 		Deadline:         p.deadline.UTC().Format(time.RFC3339),
 		SecondsRemaining: secs,
@@ -493,6 +498,9 @@ func (s *Server) pushApproval(p *pendingApproval) {
 	switch p.req.Kind {
 	case remoteapproval.KindDispatch:
 		body = fmt.Sprintf("%s wants to dispatch %s", asking, target)
+		if proj := p.req.Details.Project; proj != "" {
+			body += " to " + proj
+		}
 	case remoteapproval.KindCron:
 		body = fmt.Sprintf("%s wants to schedule %s", asking, target)
 	}

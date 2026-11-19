@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -56,6 +57,68 @@ func TestPayloadHashCoversShownFields(t *testing.T) {
 		if PayloadHash(r) == h {
 			t.Errorf("%s change did not change the hash", name)
 		}
+	}
+}
+
+// Every Details field is shown by the phone, so changing any one of them
+// must change the hash. Reflection keeps a field added later honest.
+func TestPayloadHashCoversEveryDetailsField(t *testing.T) {
+	base := testRequest(t)
+	h := PayloadHash(base)
+	typ := reflect.TypeOf(Details{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		t.Run(f.Name, func(t *testing.T) {
+			r := base
+			v := reflect.ValueOf(&r.Details).Elem().Field(i)
+			switch v.Kind() {
+			case reflect.String:
+				v.SetString("x")
+			case reflect.Bool:
+				v.SetBool(true)
+			default:
+				t.Fatalf("Details.%s: unhandled kind %s; extend this test", f.Name, v.Kind())
+			}
+			if PayloadHash(r) == h {
+				t.Errorf("Details.%s change did not change the hash", f.Name)
+			}
+			if strings.Contains(f.Tag.Get("json"), "omitempty") {
+				t.Errorf("Details.%s is omitempty; the canonical payload must not omit fields", f.Name)
+			}
+		})
+	}
+}
+
+// The canonical payload carries an empty details object for kinds without
+// one, with every key present, so the JSON stays fixed-shape.
+func TestCanonicalPayloadEmptyDetails(t *testing.T) {
+	r := testRequest(t)
+	r.Kind = KindBash
+	b, err := json.Marshal(canonicalPayload{Details: r.Details})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"details":{`, `"project":""`, `"other_project":false`, `"permission_mode":""`} {
+		if !strings.Contains(string(b), key) {
+			t.Errorf("canonical JSON %s missing %s", b, key)
+		}
+	}
+}
+
+// A request round-trips its details over the wire.
+func TestRequestDetailsJSON(t *testing.T) {
+	r := testRequest(t)
+	r.Details = Details{Project: "blsmth.com", Dir: "~/code/personal/blsmth.com", OtherProject: true, Model: "opus"}
+	b, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Request
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Details != r.Details || PayloadHash(got) != PayloadHash(r) {
+		t.Errorf("details round trip = %+v, want %+v", got.Details, r.Details)
 	}
 }
 

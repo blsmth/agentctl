@@ -60,6 +60,7 @@ type dispatchPreviewOpts struct {
 	account      string
 	cron         CronPreview
 	reviewPR     int
+	project      string
 }
 
 // CronPreview is the job-specific part of a PreviewKindCron popup.
@@ -121,6 +122,12 @@ func WithKind(kind string) DispatchPreviewOption {
 // configured).
 func WithAccount(account string) DispatchPreviewOption {
 	return func(o *dispatchPreviewOpts) { o.account = account }
+}
+
+// WithProject names the project the dispatched agent will run in, shown in
+// the title ("X wants to dispatch Y to P"). Empty leaves the title as is.
+func WithProject(project string) DispatchPreviewOption {
+	return func(o *dispatchPreviewOpts) { o.project = project }
 }
 
 // WithReviewPR marks a `dispatch --review-pr` preview: the third metadata
@@ -242,6 +249,7 @@ type DispatchPreviewModel struct {
 	promptKey   string // --prompt-key flag value (empty unless dispatching via a context key)
 	command     string // full original bash command (shown in collapsible section)
 	account     string // resolved Claude account of the dispatched agent; "" = none configured
+	project     string // target project of the dispatch; "" = unknown
 	expanded    bool   // whether the prompt viewport is visible
 	viewport    viewport.Model
 	decision    string // "allow" or "deny"
@@ -401,6 +409,7 @@ func NewDispatchPreview(agentName, targetAgent string, issue int, prompt, prompt
 		promptKey:       promptKey,
 		command:         command,
 		account:         o.account,
+		project:         o.project,
 		viewport:        vp,
 		vpHeight:        vpHeight,
 		contentWidth:    o.contentWidth,
@@ -606,6 +615,10 @@ func (m DispatchPreviewModel) preToggle() string {
 		title = fmt.Sprintf("%s wants to run a command", m.agentName)
 	case m.isCron():
 		title = m.cronTitle()
+	case m.project != "":
+		// One line (inside the title's 2-column padding), so PopupSize's
+		// line budget holds.
+		title = textutil.Truncate(title+" to "+m.project, width-4, "…")
 	}
 	b.WriteString(dpTitleStyle.Width(width).Render(title))
 	b.WriteString("\n\n")

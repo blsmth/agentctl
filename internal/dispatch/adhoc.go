@@ -8,6 +8,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/dispatchplan"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 )
@@ -122,9 +123,7 @@ var discoverAgents = DiscoverAgents
 // claudeBuiltinAgents are the agents Claude Code ships with. They appear in
 // `claude --agent`'s "Available agents" list but have no .md file for
 // agentctl's discovery to find.
-var claudeBuiltinAgents = []string{
-	"general-purpose", "Explore", "Plan", "claude-code-guide", "statusline-setup",
-}
+var claudeBuiltinAgents = dispatchplan.BuiltinAgents
 
 // ClaudeBuiltinAgents returns a copy of the Claude Code built-in agent names.
 func ClaudeBuiltinAgents() []string { return slices.Clone(claudeBuiltinAgents) }

@@ -11,22 +11,6 @@ import (
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
-func TestParseDispatchAccountFlags(t *testing.T) {
-	tests := []struct {
-		cmd, account, dir string
-	}{
-		{"agentctl dispatch --issue 1", "", ""},
-		{"agentctl dispatch --issue 1 --account personal --dir ~/code/x", "personal", "~/code/x"},
-		{"agentctl dispatch --account=ll --dir=/srv/y --prompt 'hi --account x'", "ll", "/srv/y"},
-	}
-	for _, tt := range tests {
-		a, d := parseDispatchAccountFlags(tt.cmd)
-		if a != tt.account || d != tt.dir {
-			t.Errorf("%q = (%q, %q), want (%q, %q)", tt.cmd, a, d, tt.account, tt.dir)
-		}
-	}
-}
-
 func TestDispatchPreviewAccount(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
 	config.SetConfigPathForTest(cfgPath)
@@ -37,7 +21,10 @@ func TestDispatchPreviewAccount(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := dispatchPreviewAccount("go-engineer", "agentctl dispatch --issue 1"); got != "" {
+	account := func(command string) string {
+		return resolveDispatchDetails(config.Load(), command, "/srv/cwd").Account
+	}
+	if got := account("agentctl dispatch --issue 1"); got != "" {
 		t.Errorf("no accounts = %q, want empty", got)
 	}
 
@@ -52,16 +39,16 @@ func TestDispatchPreviewAccount(t *testing.T) {
 		gotFlag, gotDir = flag, workDir
 		return claudehome.Resolve(cfg, claudehome.Request{Flag: flag, Parent: parent})
 	}
-	if got := dispatchPreviewAccount("go-engineer", "agentctl dispatch --issue 1 --dir /srv/x"); got != "ll (Lincoln Loop)" {
+	if got := account("agentctl dispatch --issue 1 --dir /srv/x"); got != "ll (Lincoln Loop)" {
 		t.Errorf("default = %q", got)
 	}
 	if gotDir != "/srv/x" {
 		t.Errorf("workDir = %q, want --dir", gotDir)
 	}
-	if got := dispatchPreviewAccount("go-engineer", "agentctl dispatch --issue 1 --account personal"); got != "personal" || gotFlag != "personal" {
+	if got := account("agentctl dispatch --issue 1 --account personal"); got != "personal" || gotFlag != "personal" {
 		t.Errorf("--account personal = %q (flag %q)", got, gotFlag)
 	}
-	if got := dispatchPreviewAccount("go-engineer", "agentctl dispatch --issue 1 --account ghost"); !strings.HasPrefix(got, "error: ") {
+	if got := account("agentctl dispatch --issue 1 --account ghost"); !strings.HasPrefix(got, "error: ") {
 		t.Errorf("unknown account = %q, want an error", got)
 	}
 }
@@ -119,7 +106,7 @@ func TestDispatchPreviewAccountIgnoresInheritedWindowID(t *testing.T) {
 		gotParent = parent
 		return claudehome.Resolve(cfg, claudehome.Request{Flag: flag, Parent: parent})
 	}
-	dispatchPreviewAccount("go-engineer", "agentctl dispatch --issue 1 --dir /srv/x")
+	resolveDispatchDetails(config.Load(), "agentctl dispatch --issue 1 --dir /srv/x", "/srv/cwd")
 	if gotParent != "personal" {
 		t.Errorf("parent account = %q, want personal (this window's, not @943's)", gotParent)
 	}

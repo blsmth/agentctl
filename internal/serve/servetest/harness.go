@@ -164,6 +164,8 @@ type ApprovalSpec struct {
 	TargetAgent string `json:"target_agent"`
 	Prompt      string `json:"prompt"`
 	Command     string `json:"command"`
+	// Details is a dispatch's where/how block.
+	Details remoteapproval.Details `json:"details"`
 }
 
 // OpenApproval opens an approval on an in-memory connection, as the hook
@@ -180,7 +182,7 @@ func (h *Harness) OpenApproval(spec ApprovalSpec) (string, error) {
 	req := remoteapproval.Request{
 		Op: remoteapproval.OpRequest, ID: id, Kind: spec.Kind, AskingAgent: spec.AskingAgent,
 		Session: spec.Session, WindowID: spec.WindowID, TargetAgent: spec.TargetAgent,
-		Prompt: spec.Prompt, Command: spec.Command, Deadline: time.Now().Add(10 * time.Minute),
+		Prompt: spec.Prompt, Command: spec.Command, Details: spec.Details, Deadline: time.Now().Add(10 * time.Minute),
 	}
 	if err := req.Validate(); err != nil {
 		return "", err

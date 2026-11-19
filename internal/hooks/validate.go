@@ -165,7 +165,7 @@ func ValidateBash() {
 			approved, decided, denyReason = cronPreviewGate(agentName, command)
 		case gateDispatch:
 			gate = PreviewKindDispatch
-			approved, decided, denyReason = dispatchGate(agentName, command)
+			approved, decided, denyReason = dispatchGate(agentName, command, input.Cwd)
 		default:
 			approved, decided, denyReason = bashPreviewGate(agentName, command)
 		}

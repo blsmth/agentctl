@@ -3,6 +3,8 @@ package dispatch
 import (
 	"fmt"
 	"strings"
+
+	"github.com/blsmth/agentctl/internal/dispatchplan"
 )
 
 // Mode identifies the dispatch launch mode.
@@ -92,7 +94,7 @@ var modes = map[Mode]modeSpec{
 		Autonomous:            true,
 		IncludeTicketBody:     true,
 		IncludeFinishingSteps: true,
-		DefaultModel:          "sonnet",
+		DefaultModel:          dispatchplan.IssueDefaultModel,
 		Role:                  RoleWorker,
 		DefaultWorktree:       true,
 	},

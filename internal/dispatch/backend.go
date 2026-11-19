@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/dispatchplan"
 	"github.com/blsmth/agentctl/internal/launchopts"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
@@ -96,11 +97,8 @@ func nousEnv(b config.BackendConfig) map[string]string {
 // Claude model name would otherwise run on the Anthropic subscription while
 // windowstate records nous.
 func ResolveBackend(cfg *config.Config, ac *config.AgentConfig, override, explicitModel string) (*Backend, error) {
-	name := override
+	name := dispatchplan.BackendName(override, ac.Backend)
 	if name == "" {
-		name = ac.Backend
-	}
-	if name == "" || name == BackendNone {
 		return nil, nil
 	}
 	b, err := cfg.ResolveBackend(name)

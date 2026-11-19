@@ -16,6 +16,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/dispatchplan"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/textutil"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -379,16 +380,8 @@ func resolveDispatchRepo(workDir, repo string) (string, error) {
 func resolveAgentDir(name string) string {
 	cfg := config.Load()
 	agents, _ := agent.DiscoverFromCwd(cfg)
-	for _, a := range agents {
-		if a.Name == name && a.Dir != "" {
-			return a.Dir
-		}
-	}
-	dir, _ := os.Getwd()
-	if dir == "" {
-		home, _ := os.UserHomeDir()
-		dir = home
-	}
+	cwd, _ := os.Getwd()
+	dir, _ := dispatchplan.AgentDir(agents, name, cwd)
 	return dir
 }
 
