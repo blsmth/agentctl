@@ -626,9 +626,10 @@ type whoamiSource struct {
 // disagree, and the disagreement is the useful output. A forked or background
 // Claude session inherits AGENTCTL_SESSION_ID from the shell that launched it,
 // so the "reliable" session-UUID lookup confidently returns the *parent's*
-// window. AGENTCTL_WINDOW_ID is worse: it is session-global in tmux and
-// last-writer-wins, so it usually names whichever window was created most
-// recently. Only TMUX_PANE is set by tmux itself for the calling pane.
+// window. AGENTCTL_WINDOW_ID is worse: launches unset it, but a process can
+// still inherit one from a shell or an older build's session-global value
+// (last-writer-wins, naming whichever window was created most recently).
+// Only TMUX_PANE is set by tmux itself for the calling pane.
 func RunWhoami(jsonOut bool) error {
 	var sources []whoamiSource
 
@@ -649,7 +650,7 @@ func RunWhoami(jsonOut bool) error {
 	if wid := os.Getenv("AGENTCTL_WINDOW_ID"); wid != "" {
 		sources = append(sources, whoamiSource{
 			Name: "AGENTCTL_WINDOW_ID", Value: wid, WindowID: wid, Trusted: false,
-			Note: "tmux session-global, last-writer-wins — usually the most recently created window",
+			Note: "inherited, not set by tmux — may name another window",
 		})
 	}
 

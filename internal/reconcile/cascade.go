@@ -69,7 +69,7 @@ func DefaultCascadeDeps(runtimeDir, session string) CascadeDeps {
 
 // IsChild reports whether w was dispatched by the window parentID running
 // session parentSessionID. Both must match: spawned_by alone is untrustworthy
-// (bare launches inherit a session-global AGENTCTL_WINDOW_ID, see
+// (bare launches could inherit a session-global AGENTCTL_WINDOW_ID, see
 // fleet.Meta.ParentTrusted) and tmux recycles @N IDs. Cron-scheduled windows
 // are never children.
 func IsChild(w LiveWindow, parentID, parentSessionID string) bool {

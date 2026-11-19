@@ -8,6 +8,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 func TestParseDispatchAccountFlags(t *testing.T) {
@@ -82,5 +83,44 @@ func TestSessionLogPath(t *testing.T) {
 				t.Errorf("sessionLogPath = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// The preview hook runs with Claude Code's env, whose AGENTCTL_WINDOW_ID can
+// name another window (inherited at launch). The parent account must come
+// from this window, resolved by session ID or pane, not from that value.
+func TestDispatchPreviewAccountIgnoresInheritedWindowID(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	config.SetConfigPathForTest(cfgPath)
+	t.Cleanup(func() { config.SetConfigPathForTest("") })
+	body := `{"accounts":{"ll":{"config_dir":"/abs/ll"},"personal":{"config_dir":"/abs/p"}},"default_account":"ll"}`
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	windowstate.SetDirForTest(t.TempDir())
+	t.Cleanup(func() { windowstate.SetDirForTest("") })
+	for id, ws := range map[string]windowstate.WindowState{
+		"@943":  {Account: "ll", SessionID: "other-session"},
+		"@1125": {Account: "personal", SessionID: "own-session"},
+	} {
+		if err := windowstate.Write(id, ws); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("AGENTCTL_WINDOW_ID", "@943")
+	t.Setenv("AGENTCTL_SESSION_ID", "own-session")
+
+	old := resolvePreviewAccount
+	t.Cleanup(func() { resolvePreviewAccount = old })
+	var gotParent string
+	resolvePreviewAccount = func(cfg *config.Config, flag, agent, workDir, parent string) (claudehome.Resolution, error) {
+		gotParent = parent
+		return claudehome.Resolve(cfg, claudehome.Request{Flag: flag, Parent: parent})
+	}
+	dispatchPreviewAccount("go-engineer", "agentctl dispatch --issue 1 --dir /srv/x")
+	if gotParent != "personal" {
+		t.Errorf("parent account = %q, want personal (this window's, not @943's)", gotParent)
 	}
 }

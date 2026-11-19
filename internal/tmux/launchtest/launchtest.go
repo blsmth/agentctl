@@ -37,10 +37,48 @@ type Launch struct {
 	Command string
 }
 
+// Unset returns the variables the launch script unsets before the agent
+// command (its leading `unset` line), nil when there is none.
+func (l Launch) Unset() []string {
+	first, _, _ := strings.Cut(l.Command, "\n")
+	if !strings.HasPrefix(first, "unset ") {
+		return nil
+	}
+	return strings.Fields(first)[1:]
+}
+
+// ChildEnv returns the environment the agent command would start with when
+// tmux seeds the new window from inherited (the tmux global and session
+// environments): inherited, overlaid by the -e values, minus the variables
+// the launch script unsets.
+func (l Launch) ChildEnv(inherited map[string]string) map[string]string {
+	env := make(map[string]string, len(inherited)+len(l.Env))
+	for k, v := range inherited {
+		env[k] = v
+	}
+	for k, v := range l.Env {
+		env[k] = v
+	}
+	for _, k := range l.Unset() {
+		delete(env, k)
+	}
+	return env
+}
+
+// AgentCommand returns the command block without its leading `unset` line:
+// the agent command itself.
+func (l Launch) AgentCommand() string {
+	if first, rest, ok := strings.Cut(l.Command, "\n"); ok && strings.HasPrefix(first, "unset ") {
+		return rest
+	}
+	return l.Command
+}
+
 // Recorder collects the launches made while it is installed.
 type Recorder struct {
 	mu       sync.Mutex
 	launches []Launch
+	calls    [][]string
 	t        *testing.T
 }
 
@@ -53,6 +91,9 @@ func Capture(t *testing.T) *Recorder {
 	prevSession := tmux.SessionName
 	tmux.SessionName = "agentctl-launchtest"
 	restore := tmux.SetLaunchTmuxForTest(func(args ...string) ([]byte, error) {
+		r.mu.Lock()
+		r.calls = append(r.calls, append([]string(nil), args...))
+		r.mu.Unlock()
 		if len(args) > 0 && args[0] == "new-window" {
 			r.record(args)
 			return []byte("@9001\n"), nil
@@ -71,6 +112,14 @@ func (r *Recorder) Launches() []Launch {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]Launch(nil), r.launches...)
+}
+
+// Calls returns every tmux argv the launch runner was given, new-window
+// included, in order.
+func (r *Recorder) Calls() [][]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][]string(nil), r.calls...)
 }
 
 // Only returns the single recorded launch, failing the test otherwise.
