@@ -89,3 +89,17 @@ test("a render during the hold does not freeze later renders", async ({ page, co
   await expect(page.getByText("changed after the hold")).toBeVisible();
   await expect(names(page)).toHaveText(["shop", "blog", "hub"]);
 });
+
+test("a mouse press released off the header does not leave the group lifted", async ({ page, control }) => {
+  const box = (await page.locator(".fleet section.group .group-head").first().boundingBox())!;
+  await page.mouse.move(box.x + 40, box.y + box.height / 2);
+  await page.mouse.down();
+  // One jump off the header (no intermediate moves over it), then release.
+  await page.mouse.move(box.x + 40, box.y + box.height + 300);
+  await page.mouse.up();
+  await page.waitForTimeout(700);
+  await expect(page.locator(".fleet section.lifted")).toHaveCount(0);
+  await expect(page.locator(".fleet.reordering")).toHaveCount(0);
+  await control.patchWindow("agentctl-shop", "@11", { activity: "changed after the mouse release" });
+  await expect(page.getByText("changed after the mouse release")).toBeVisible();
+});
