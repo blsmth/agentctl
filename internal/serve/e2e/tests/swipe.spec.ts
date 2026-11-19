@@ -15,7 +15,8 @@ async function settled(link: import("@playwright/test").Locator) {
 
 test.beforeEach(async ({ page }) => {
   await openFleet(page);
-  // Let the initial SSE-driven re-render land so the drag does not hit a row about to be replaced.
+  // Let the initial re-render land so a drag does not hit a row about to be replaced
+  // (there is no DOM signal for it).
   await page.waitForTimeout(500);
 });
 
@@ -109,4 +110,51 @@ test("a 409 from the server toasts and snaps back", async ({ page, control, guar
   await expect(wrap(link)).not.toHaveCSS("height", "0px");
   await expect(row(page, "@15")).toBeVisible();
   expect(await control.actions()).toEqual([]);
+});
+
+test("renders resume after a reveal is closed by tapping the row", async ({ page, control }) => {
+  const link = row(page, "@15");
+  await drag(link, { dx: -260, stepMs: 25 });
+  await expect.poll(() => offsetX(node(link))).toBe(-88);
+  // Held open: a change elsewhere must wait.
+  await control.patchWindow(SHOP, "@11", { activity: "while open" });
+  await page.waitForTimeout(500);
+  await expect(row(page, "@11").locator(".activity")).not.toHaveText("while open");
+  await link.tap();
+  await settled(link);
+  await expect(row(page, "@11").locator(".activity")).toHaveText("while open");
+  // And later renders still land: the hold was fully released.
+  await control.patchWindow(SHOP, "@11", { activity: "after close" });
+  await expect(row(page, "@11").locator(".activity")).toHaveText("after close", { timeout: 2000 });
+});
+
+test("renders resume after a failed close snaps the row back", async ({ page, control, guard }) => {
+  guard.allow(/HTTP 409: POST \/v1\/sessions\/agentctl-shop\/windows\/%4015\/close/);
+  guard.allow(/console error: .*409/);
+  await control.patchWindow(SHOP, "@15", { pane: "working" });
+  const link = row(page, "@15");
+  await drag(link, { dx: -260, stepMs: 25 });
+  await closeBtn(page, link).tap();
+  await expect(page.locator("#toasts .toast.error")).toContainText("cannot be closed");
+  await settled(link);
+  await control.patchWindow(SHOP, "@11", { activity: "after failure" });
+  await expect(row(page, "@11").locator(".activity")).toHaveText("after failure", { timeout: 2000 });
+});
+
+test("a double tap on Close sends one close", async ({ page, control }) => {
+  // Hold the response so the second tap lands while the first is in flight.
+  await page.route(/\/windows\/%4015\/close$/, async (route) => {
+    await new Promise((r) => setTimeout(r, 600));
+    await route.continue();
+  });
+  const link = row(page, "@15");
+  await drag(link, { dx: -260, stepMs: 25 });
+  const btn = closeBtn(page, link);
+  await btn.evaluate((el: HTMLElement) => {
+    el.click();
+    el.click();
+  });
+  await control.waitForActions((a) => a.some((x) => x.kind === "close"));
+  await page.waitForTimeout(800);
+  expect((await control.actions()).filter((x) => x.kind === "close")).toHaveLength(1);
 });

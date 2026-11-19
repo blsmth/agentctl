@@ -28,7 +28,6 @@ let openRow = null; // { snapBack() }
  */
 export function attachSwipe(wrap, node, handle, action, { onClose, onBusy }) {
   let start = null; // { id, x, y, t, axis, width, samples, base }
-  let settling = false;
   let isOpen = false;
   let busy = false;
   let closing = false;
@@ -153,14 +152,14 @@ export function attachSwipe(wrap, node, handle, action, { onClose, onBusy }) {
   }
 
   handle.addEventListener("pointerdown", (e) => {
-    if (settling || start || closing || (e.pointerType === "mouse" && e.button !== 0)) return;
+    if (start || closing || (e.pointerType === "mouse" && e.button !== 0)) return;
     const width = node.offsetWidth;
     const base = isOpen ? -Math.min(SWIPE_REVEAL, width) : 0;
     start = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, axis: "", width, base, samples: [[e.timeStamp, e.clientX]] };
   });
 
   handle.addEventListener("pointermove", (e) => {
-    if (!start || e.pointerId !== start.id || settling) return;
+    if (!start || e.pointerId !== start.id) return;
     const dx = e.clientX - start.x;
     const dy = e.clientY - start.y;
     if (!start.axis) {
@@ -183,12 +182,12 @@ export function attachSwipe(wrap, node, handle, action, { onClose, onBusy }) {
   });
 
   const end = (e, cancelled) => {
-    if (!start || e.pointerId !== start.id || settling) return;
+    if (!start || e.pointerId !== start.id) return;
     const s = start;
     if (s.axis !== "x") {
       start = null;
-      if (isOpen && !cancelled) {
-        suppressClick(); // a tap on the open row only closes the reveal
+      if (isOpen) {
+        if (!cancelled) suppressClick(); // a tap on the open row only closes the reveal
         snapBack();
       }
       return;
