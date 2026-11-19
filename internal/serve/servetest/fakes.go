@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,13 +13,14 @@ import (
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/serve"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
+	"github.com/blsmth/agentctl/internal/sweeprun"
 )
 
 // Action is one side effect the server asked a backend for. Tests read
 // them through the control API instead of watching tmux.
 type Action struct {
-	// Kind is close, key (answer and interrupt), reply, queue, dispatch or
-	// approval.
+	// Kind is close, key (answer and interrupt), reply, queue, dispatch,
+	// approval or sweep (an applied sweep; Text lists the closed window IDs).
 	Kind     string `json:"kind"`
 	Session  string `json:"session,omitempty"`
 	Window   string `json:"window,omitempty"`
@@ -206,6 +208,45 @@ func (c closer) CloseWindow(t serve.WindowTarget) error {
 	c.w.record(Action{Kind: "close", Session: t.Session, Window: t.WindowID})
 	c.w.remove(t.Session, t.WindowID)
 	return nil
+}
+
+// sweeper fakes `agentctl sweep` over the fixture: finished, idle,
+// non-bare windows close; blocked ones need attention; working ones are in
+// progress. An apply removes the closed windows and records a sweep action.
+type sweeper struct{ w *world }
+
+func (s sweeper) run(_ context.Context, t sweeprun.Target, dryRun bool) (sweeprun.Report, error) {
+	rep := sweeprun.Report{Session: t.Session, DryRun: dryRun,
+		Closed: []sweeprun.Row{}, Attention: []sweeprun.Row{}, InProgress: []sweeprun.Row{}, Skipped: []sweeprun.Row{}}
+	var ids []string
+	for _, g := range s.w.snapshot() {
+		if g.Session != t.Session {
+			continue
+		}
+		for _, x := range g.Windows {
+			row := sweeprun.Row{WindowID: x.ID, Name: x.Agent, Agent: x.Agent, Status: x.State}
+			switch {
+			case x.State == "blocked":
+				row.Detail = "answer the prompt"
+				rep.Attention = append(rep.Attention, row)
+			case x.State == "working":
+				rep.InProgress = append(rep.InProgress, row)
+			case x.Done && x.Mode != "" && x.Mode != "bare":
+				row.Status, row.Detail = "done", "done"
+				rep.Closed = append(rep.Closed, row)
+				ids = append(ids, x.ID)
+			default:
+				rep.Skipped = append(rep.Skipped, row)
+			}
+		}
+	}
+	if !dryRun {
+		for _, id := range ids {
+			s.w.remove(t.Session, id)
+		}
+		s.w.record(Action{Kind: "sweep", Session: t.Session, Text: strings.Join(ids, ",")})
+	}
+	return rep, nil
 }
 
 type dispatcher struct{ w *world }

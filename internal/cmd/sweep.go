@@ -17,6 +17,7 @@ import (
 	"github.com/blsmth/agentctl/internal/mailbox"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/state"
+	"github.com/blsmth/agentctl/internal/sweeprun"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -31,27 +32,12 @@ type SweepOptions struct {
 	JSON        bool
 }
 
-// sweepRow is one window in the report.
-type sweepRow struct {
-	WindowID string `json:"window_id"`
-	Name     string `json:"name"`
-	Agent    string `json:"agent,omitempty"`
-	Status   string `json:"status"`
-	// Detail is the close reason (Closed), the action (Needs attention), or
-	// empty (in progress / skipped).
-	Detail string   `json:"detail,omitempty"`
-	Errors []string `json:"errors,omitempty"`
-}
-
-// sweepReport is the full result of a sweep.
-type sweepReport struct {
-	Session    string     `json:"session"`
-	DryRun     bool       `json:"dry_run,omitempty"`
-	Closed     []sweepRow `json:"closed"`
-	Attention  []sweepRow `json:"attention"`
-	InProgress []sweepRow `json:"in_progress"`
-	Skipped    []sweepRow `json:"skipped"`
-}
+// sweepRow and sweepReport are the JSON report shared with the hub and serve,
+// which run sweep as a subprocess (see internal/sweeprun).
+type (
+	sweepRow    = sweeprun.Row
+	sweepReport = sweeprun.Report
+)
 
 // errSweepNoTmux is returned when sweep cannot tell which session to scope to.
 var errSweepNoTmux = errors.New("not inside tmux ($TMUX_PANE unset): run from an agentctl window or pass --session <name>")
@@ -71,6 +57,15 @@ func resolveSweepSession(flag, pane string, paneSession func(string) string) (st
 		return "", fmt.Errorf("could not resolve the tmux session of pane %s", pane)
 	}
 	return name, nil
+}
+
+// checkSweepSession fails when session does not exist, so a session that died
+// (or a mistyped --session) is an error rather than an empty "closed 0".
+func checkSweepSession(session string, exists func(string) bool) error {
+	if !exists(session) {
+		return fmt.Errorf("no tmux session %q", session)
+	}
+	return nil
 }
 
 // sweepDeps are the side-effecting operations sweep performs, injected so the
@@ -217,6 +212,9 @@ func RunSweep(opts SweepOptions) error {
 	pane := os.Getenv("TMUX_PANE")
 	session, err := resolveSweepSession(opts.Session, pane, tmux.SessionNameForPane)
 	if err != nil {
+		return err
+	}
+	if err := checkSweepSession(session, tmux.HasSessionNamed); err != nil {
 		return err
 	}
 	// Self is resolved from the pane first; AGENTCTL_SESSION_ID can be inherited.

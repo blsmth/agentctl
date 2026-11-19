@@ -45,6 +45,9 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 .group-counts .count.working .glyph { color: var(--working); } .group-counts .count.done .glyph { color: var(--done); }
 .group-add { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px;
   margin: -.4rem 0; border-radius: 10px; font-size: 1.4rem; line-height: 1; text-decoration: none; color: var(--accent); }
+.group-sweep { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px;
+  margin: -.4rem 0; padding: 0; border: 0; border-radius: 10px; background: none; font-size: 1.15rem; line-height: 1; color: var(--accent); cursor: pointer; }
+.group-sweep.busy { opacity: .5; cursor: progress; }
 .fleet, .group { --glyph-w: 1.4rem; --indent: 1.4rem; --row-pad: 1rem; --tree-w: 1.5px; --tree-line: color-mix(in srgb, var(--muted) 55%, transparent); }
 .win { display: flex; align-items: center; gap: .75rem; min-height: 56px; padding: .6rem 1rem; text-decoration: none; color: var(--fg);
   background: var(--card); border-bottom: 1px solid var(--line); border-left: 4px solid var(--idle); }

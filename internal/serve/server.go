@@ -26,6 +26,7 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/phoneview"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
+	"github.com/blsmth/agentctl/internal/sweeprun"
 )
 
 // Options configures a Server.
@@ -60,6 +61,9 @@ type Options struct {
 	Injector   Injector
 	Closer     WindowCloser
 	Dispatcher Dispatcher
+	// Sweep runs `agentctl sweep` for a session; nil means the
+	// sweeprun.Run subprocess. Tests inject a fake.
+	Sweep sweeprun.Func
 	// MainPanes finds and captures the pane a window write checks and types
 	// into; nil means tmux.
 	MainPanes MainPanes
@@ -123,6 +127,8 @@ type Server struct {
 	injector   Injector
 	closer     WindowCloser
 	dispatcher Dispatcher
+	sweep      sweeprun.Func
+	sweeps     sweepGuard
 	mainPanes  MainPanes
 	launchCfg  LaunchConfigSource
 	ollama     *ollamaCache
@@ -190,6 +196,10 @@ func New(opts Options) (*Server, error) {
 	}
 	if s.dispatcher == nil {
 		s.dispatcher = newLaunchDispatcher()
+	}
+	s.sweep = opts.Sweep
+	if s.sweep == nil {
+		s.sweep = sweeprun.Run
 	}
 	s.launchCfg = opts.LaunchConfig
 	if s.launchCfg == nil {

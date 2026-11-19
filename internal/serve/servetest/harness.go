@@ -100,7 +100,7 @@ func New(opts Options) (*Harness, error) {
 		Dir: opts.Dir, Version: "servetest", CA: ca, GroupOrderPath: func() (string, error) { return w.orderPath, nil },
 		AdvertiseHost: "127.0.0.1", HTTPSPort: 8443,
 		Fleet: w, Panes: p, MainPanes: p, Agents: agents{}, Awake: holder{},
-		Keys: keys{w}, Injector: injector{w}, Closer: closer{w}, Dispatcher: dispatcher{w},
+		Keys: keys{w}, Injector: injector{w}, Closer: closer{w}, Dispatcher: dispatcher{w}, Sweep: sweeper{w}.run,
 		LaunchConfig: launchConfig{}, OllamaModels: noOllama,
 		Terminal: terminal{}, PTY: ptys{},
 		Pusher: pusher{}, NtfyBase: "http://127.0.0.1:1",

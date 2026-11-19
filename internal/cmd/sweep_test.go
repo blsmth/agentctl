@@ -172,3 +172,12 @@ func TestSweepCloseThenReconcileFiresGoneOnce(t *testing.T) {
 		t.Fatalf("Gone handlers = %v, want exactly [@3]", handled)
 	}
 }
+
+func TestCheckSweepSession(t *testing.T) {
+	if err := checkSweepSession("gone", func(string) bool { return false }); err == nil {
+		t.Fatal("missing session accepted")
+	}
+	if err := checkSweepSession("here", func(string) bool { return true }); err != nil {
+		t.Fatalf("live session: %v", err)
+	}
+}

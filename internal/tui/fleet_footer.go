@@ -120,6 +120,8 @@ func (m FleetModel) footerBody(cw int) string {
 	case m.menuOpen:
 		text, _ := menuItemSpans(m.fleetMenuItems(m.menuLine))
 		b.WriteString(fleetBlockedStyle.Render(truncateToWidth(text+"   esc", cw)))
+	case m.sweepArmed():
+		b.WriteString(fleetBlockedStyle.Render("  " + m.sweepPrompt(cw-2)))
 	case m.jumpErr != "":
 		b.WriteString(fleetErrStyle.Render("  " + truncateToWidth(m.jumpErr, cw-2)))
 	case m.infoMsg != "" && m.infoOK:
@@ -139,6 +141,8 @@ func (m FleetModel) footerBody(cw int) string {
 		hints = fleetNewSessionHints
 	case m.newArmed():
 		hints = fleetNewHints
+	case m.sweepArmed():
+		hints = fleetSweepHints
 	}
 	b.WriteString(fitHints(hints, cw))
 	return b.String()
@@ -171,6 +175,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"n", "new", "n"},
 		{fleetNewSessionKey, "new session", fleetNewSessionKey},
 		{"x", "close", "x"},
+		{fleetSweepKey, "sweep project", fleetSweepKey},
 		{"J", "home", "J"},
 		{"p", "open PR", "p"},
 		{"r", "refresh", "r"},
@@ -228,6 +233,7 @@ func (m *FleetModel) openHelp() {
 	m.cancelNewSession()
 	m.cancelClose()
 	m.cancelNew()
+	m.cancelSweep()
 	m.menuOpen, m.menuHelp, m.menuLine = true, true, m.splitPane.Cursor()
 	m.ensureCursorVisible() // the footer grew; keep the cursor on screen
 }

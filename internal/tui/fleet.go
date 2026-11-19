@@ -19,6 +19,7 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/selfexec"
 	"github.com/blsmth/agentctl/internal/servectl"
+	"github.com/blsmth/agentctl/internal/sweeprun"
 	"github.com/blsmth/agentctl/internal/theme"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
@@ -405,6 +406,16 @@ type FleetModel struct {
 	newSession string
 	newLine    int
 
+	// sweepSession/sweepLine/sweepPlan are the group whose sweep preview is
+	// awaiting y/n, the cursor line it was armed on and the previewed plan;
+	// empty when none. Cleared when the cursor moves off sweepLine.
+	// sweepBusy is the session a sweep subprocess (preview or apply) is
+	// running for; a second sweep is refused until it reports.
+	sweepSession string
+	sweepLine    int
+	sweepPlan    sweeprun.Report
+	sweepBusy    string
+
 	// closePending remembers where a just-closed row sat so the next reload
 	// can select its neighbour instead of jumping to the first row. Cleared
 	// after one use.
@@ -785,6 +796,9 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case fleetFocusRetryMsg:
 		return m, m.focusRetry(msg)
 
+	case fleetSweptMsg:
+		return m, m.applySwept(msg)
+
 	case fleetClosedMsg:
 		if msg.err != nil {
 			m.closePending = nil
@@ -806,6 +820,7 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.groups = msg.groups
 			m.rebuildLines()
 			m.validateNew()
+			m.validateSweep()
 			m.refreshHover()
 			m.applyClosePending()
 			selBefore := [3]any{m.selSession, m.selWindowID, m.selIsHeader}
@@ -899,6 +914,17 @@ func (m *FleetModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.closeMenu()
 		return *m, nil
 	}
+	if m.sweepArmed() {
+		// y applies; anything else cancels, and keys other than n/esc then
+		// run as usual.
+		if key == "y" || key == "Y" {
+			return *m, m.confirmSweep()
+		}
+		m.cancelSweep()
+		if key == "n" || key == "N" || key == "esc" {
+			return *m, nil
+		}
+	}
 	if m.closeArmed() {
 		switch key {
 		case "y", "Y":
@@ -935,6 +961,9 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 	case "x":
 		m.startClose(m.splitPane.Cursor())
 		return *m, nil
+
+	case fleetSweepKey:
+		return *m, m.startSweep(m.splitPane.Cursor())
 
 	case "p":
 		return *m, m.openSelectedPR()
@@ -1221,6 +1250,9 @@ func (m *FleetModel) syncSelectionFromCursor() {
 		}
 		if m.newArmed() && m.splitPane.Cursor() != m.newLine {
 			m.cancelNew()
+		}
+		if m.sweepArmed() && m.splitPane.Cursor() != m.sweepLine {
+			m.cancelSweep()
 		}
 		m.validateNew()
 		if m.menuOpen && m.splitPane.Cursor() != m.menuLine {
@@ -1964,13 +1996,40 @@ const fleetNewGap = 2
 // headerNameSpan is the [start, end) columns of group g's fold marker and
 // project name on its header: the click target that toggles the fold.
 func (m FleetModel) headerNameSpan(g fleet.Group, cw int) [2]int {
-	_, span := m.groupHeaderLayout(g, false, fleetHoverNone, cw)
-	return span
+	_, spans := m.groupHeaderLayout(g, false, fleetHoverNone, cw)
+	return spans.name
 }
 
+// headerSweepSpan is the [start, end) columns of group g's sweep button, or
+// the zero span when the header does not show one.
+func (m FleetModel) headerSweepSpan(g fleet.Group, cw int) [2]int {
+	_, spans := m.groupHeaderLayout(g, false, fleetHoverNone, cw)
+	return spans.sweep
+}
+
+// fleetHeaderSpans are the clickable column ranges of a group header.
+type fleetHeaderSpans struct {
+	name  [2]int // fold marker and project name
+	sweep [2]int // sweep button; zero when not shown
+}
+
+// fleetSweepSep is the blank column between the sweep button and the "+ new"
+// slot.
+const fleetSweepSep = 1
+
+// fleetMinSweepName is the project-name width the sweep button never takes
+// below: on a narrower header the button is dropped instead.
+const fleetMinSweepName = 4
+
 // groupHeaderLayout renders a group header (see renderGroupHeaderHover) and
-// reports the columns its fold marker and project name occupy.
-func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetHoverRegion, cw int) (string, [2]int) {
+// reports the columns of its fold toggle and sweep button.
+//
+// The right side is the counts, the sweep slot and the "+ new" slot (both
+// reserved, so the counts and buttons line up down the list). The sweep slot
+// is blank for groups sweep cannot target, and left out while the shell |
+// agent selector is armed or when it would squeeze the project name below
+// fleetMinSweepName columns.
+func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetHoverRegion, cw int) (string, fleetHeaderSpans) {
 	marker := strings.Repeat(" ", fleetSidebarLeftInset)
 	if selected {
 		marker = " " + cursorActiveStyle.Render("▸") + " "
@@ -2002,9 +2061,26 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 		}
 		btnW = lipgloss.Width(btn)
 	}
-	right := counts.text + strings.Repeat(" ", fleetNewGap) + btn + strings.Repeat(" ", btnW-lipgloss.Width(btn))
+	newSlot := btn + strings.Repeat(" ", btnW-lipgloss.Width(btn))
+	right := counts.text + strings.Repeat(" ", fleetNewGap) + newSlot
 
 	leftW := cw - fleetSidebarRightGutter - lipgloss.Width(right) - 1
+	var spans fleetHeaderSpans
+	// Like "+ new", the sweep slot is reserved (blank when g cannot be swept)
+	// so the counts stay in one column down the list. Whether it fits depends
+	// only on the width, never on the group.
+	sweepW := lipgloss.Width(fleetSweepLabel) + fleetSweepSep
+	headW := fleetHeaderNameCol + 2 // marker, flag, fold marker and its space
+	if !m.newArmedFor(g) && leftW-sweepW >= headW+fleetMinSweepName {
+		label := strings.Repeat(" ", lipgloss.Width(fleetSweepLabel))
+		if groupCanSweep(g) {
+			label = m.sweepButtonStyle(g, hover).Render(fleetSweepLabel)
+			end := cw - fleetSidebarRightGutter - lipgloss.Width(newSlot) - fleetSweepSep
+			spans.sweep = [2]int{end - lipgloss.Width(fleetSweepLabel), end}
+		}
+		right = counts.text + strings.Repeat(" ", fleetNewGap) + label + strings.Repeat(" ", fleetSweepSep) + newSlot
+		leftW -= sweepW
+	}
 	projStyle := fleetProjectStyle.Bold(true).Foreground(lipgloss.Color(fleetColorFor(g.Project)))
 	if hover == fleetHoverFold {
 		projStyle = projStyle.Underline(true)
@@ -2015,7 +2091,8 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 	}
 	head := marker + flag + " " + fold + " "
 	name := truncateToWidth(g.Project, leftW-lipgloss.Width(head))
-	span := [2]int{fleetHeaderNameCol, lipgloss.Width(head) + lipgloss.Width(name)}
+	span := &spans.name
+	*span = [2]int{fleetHeaderNameCol, lipgloss.Width(head) + lipgloss.Width(name)}
 	line := head + projStyle.Render(name)
 	if groupCustomSession(g) {
 		if room := leftW - lipgloss.Width(line) - 2; room >= fleetMinSessionLabel {
@@ -2028,7 +2105,7 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 		span[1] = min(span[1], max(leftW, 0))
 	}
 	pad := max(cw-fleetSidebarRightGutter-lipgloss.Width(right)-lipgloss.Width(line), 1)
-	return fleetFitLine(line+strings.Repeat(" ", pad)+right, selected, cw), span
+	return fleetFitLine(line+strings.Repeat(" ", pad)+right, selected, cw), spans
 }
 
 // countDigits is the widest per-state count across all groups, so the count

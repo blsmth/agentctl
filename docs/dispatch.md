@@ -56,7 +56,7 @@ agentctl cleanup --json                    # machine-readable output
 agentctl sweep --dry-run                   # window-centric, current session only
 ```
 
-To clean up by *window* instead of by worktree, run `agentctl sweep` from inside tmux. It only touches the current session, closes finished windows (with or without a worktree), and prints a table of what needs you. Flags: `--dry-run`, `--include-bare`, `--session <name>` (required outside tmux), `--json`.
+To clean up by *window* instead of by worktree, run `agentctl sweep` from inside tmux. It only touches the current session, closes finished windows (with or without a worktree), and prints a table of what needs you. Flags: `--dry-run`, `--include-bare`, `--session <name>` (required outside tmux; a session that does not exist is an error), `--json`. The hub (`w`, or a group header's `sweep` button) and the phone (a group header's 🧹) run the same sweep for one project with a preview and a confirm; see [keybindings](keybindings.md) and the [mobile web app design](design/mobile-web-app.md).
 
 ```sh
 git worktree list                          # see all worktrees
