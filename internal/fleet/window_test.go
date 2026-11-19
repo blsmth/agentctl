@@ -68,7 +68,7 @@ func TestCleanRecapStripsHint(t *testing.T) {
 	for in, want := range map[string]string{
 		"Building it.\n (disable recaps in /config)": "Building it.",
 		"Building it. (disable recaps in /config)":   "Building it.",
-		"Plain recap":                                "Plain recap",
+		"Plain recap": "Plain recap",
 	} {
 		if got := cleanRecap(in); got != want {
 			t.Errorf("cleanRecap(%q) = %q, want %q", in, got, want)
@@ -84,5 +84,15 @@ func TestToWindowKind(t *testing.T) {
 	r.Recap.Kind = ""
 	if w := ToWindow(r, Meta{}); w.Kind != "" {
 		t.Fatalf("kind = %q", w.Kind)
+	}
+}
+
+func TestToWindowModel(t *testing.T) {
+	row := Row{AgentState: state.AgentState{Name: "a", WindowID: "@1", State: "idle", ModelName: "claude-x"}}
+	if w := ToWindow(row, Meta{}); w.Model != "claude-x" {
+		t.Errorf("Model = %q", w.Model)
+	}
+	if w := ToWindow(Row{}, Meta{}); w.Model != "" {
+		t.Errorf("empty row Model = %q", w.Model)
 	}
 }

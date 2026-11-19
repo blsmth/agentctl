@@ -57,6 +57,10 @@ type Window struct {
 	// Kind is the work-kind tag of Title ("go", "review", ...); omitted when
 	// there is none.
 	Kind string `json:"kind,omitempty"`
+
+	// Model is the model the window is running (the log's latest model id), as
+	// in the window detail; omitted until known.
+	Model string `json:"model,omitempty"`
 }
 
 // ToWindow converts a row and its windowstate metadata to a Window.
@@ -82,6 +86,7 @@ func ToWindow(r Row, m Meta) Window {
 		PRURL:        r.PRURL,
 		PRNumber:     m.PRNumber,
 		Detached:     m.Detached(),
+		Model:        r.ModelName,
 	}
 	if r.Recap.Text != "" {
 		w.Recap, w.RecapSource = r.Recap.Text, r.Recap.Source.String()

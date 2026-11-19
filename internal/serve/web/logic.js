@@ -308,10 +308,40 @@ export function rowDetailLine(win) {
 export function rowTags(win) {
   const tags = [];
   if (win.issue > 0) tags.push(`#${win.issue}`);
-  const pr = win.pr_number > 0 ? win.pr_number : Number(/\/pull\/(\d+)/.exec(win.pr_url ?? "")?.[1] ?? 0);
-  if (pr > 0) tags.push(`PR #${pr}`);
-  else if (win.pr_url) tags.push("PR");
+  const pr = prChip(win);
+  if (pr) tags.push(pr);
   return tags;
+}
+
+/** prChip is "PR #N" (or "PR" when only a URL without a number is known), or "". */
+function prChip(win) {
+  const pr = win.pr_number > 0 ? win.pr_number : Number(/\/pull\/(\d+)/.exec(win.pr_url ?? "")?.[1] ?? 0);
+  if (pr > 0) return `PR #${pr}`;
+  return win.pr_url ? "PR" : "";
+}
+
+/** DEFAULT_BACKENDS are backend names that mean plain Claude; no chip is shown for them. */
+const DEFAULT_BACKENDS = new Set(["", "anthropic", "claude", "default"]);
+
+/**
+ * rowChips is the ordered chip list for a fleet row's last line, as
+ * {kind, text}: PR, #issue, agent, model, backend, scheduled. Empty when the
+ * window has nothing worth showing.
+ */
+export function rowChips(win) {
+  const chips = [];
+  const pr = prChip(win);
+  if (pr) chips.push({ kind: "pr", text: pr });
+  if (win.issue > 0) chips.push({ kind: "issue", text: `#${win.issue}` });
+  const agent = agentChip(win);
+  if (agent) chips.push({ kind: "agent-chip", text: agent });
+  const model = shortModel(win.model);
+  if (model) chips.push({ kind: "model-chip", text: model });
+  const backend = (win.backend ?? "").trim();
+  if (!DEFAULT_BACKENDS.has(backend.toLowerCase())) chips.push({ kind: "backend-chip", text: backend });
+  const sched = scheduledChip(win);
+  if (sched) chips.push({ kind: "sched-chip", text: sched });
+  return chips;
 }
 
 /** kindLabel is "task" for a window another agent started, "session" for one a person (or the phone/cron) started. */

@@ -32,7 +32,7 @@ test("rows show the state glyph and agent", async ({ page }) => {
   // Internal identifiers (window ID, launch mode, generated branch) stay off the row.
   // A recap replaces the agent name as the headline; the name becomes a chip.
   await expect(row(page, "@12").locator(".win-title .agent")).toHaveText("Add a checkout retry");
-  await expect(row(page, "@12").locator(".win-title .tag")).toHaveText(["#7", "PR #8", "go-engineer"]);
+  await expect(row(page, "@12").locator(".win-chips .tag")).toHaveText(["PR #8", "#7", "go-engineer", "opus-4-1"]);
   // The task is already the headline, so the second line is the activity.
   await expect(row(page, "@12").locator(".activity")).toHaveText("opened PR #8");
   await expect(row(page, "@12").locator(".activity.recap")).toHaveCount(0);
@@ -96,7 +96,7 @@ test("cron windows get a job chip and their own bucket", async ({ page, control 
   groups[0].windows.push({ id: "@16", index: 6, agent: "triage", state: "working", mode: "adhoc", scheduled_by: "nightly-triage", activity: "triaging" });
   await control.setFleet(groups);
   const r = row(page, "@16");
-  await expect(r.locator(".win-title .tag.sched-chip")).toHaveText("⏲ nightly-triage");
+  await expect(r.locator(".win-chips .tag.sched-chip")).toHaveText("⏲ nightly-triage");
   await expect(r.locator(".glyph")).toHaveText("●");
   // Not filed under "Tasks from other sessions": cron has no starting session.
   const shop = page.locator(".fleet section.group").first();
