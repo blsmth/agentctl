@@ -305,6 +305,10 @@ func (m *FleetModel) revealRow(session, windowID string) bool {
 		m.setFolded(session, false)
 		changed = true
 	}
+	if row.Shell && !m.showShells {
+		m.showShells = true
+		changed = true
+	}
 	if m.filter != fleetFilterAll {
 		if kept, _ := filterRows(g.Rows, m.filter); !slices.ContainsFunc(kept, func(r fleet.Row) bool { return r.WindowID == windowID }) {
 			m.filter = fleetFilterAll

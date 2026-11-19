@@ -760,6 +760,7 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			// No fallback: surface the error; the next selection change retries.
 			m.liveFailed = msg.key
+			m.ensureCursorVisible() // the selected row regains its activity line
 			m.jumpErr = msg.err.Error()
 			return m, func() tea.Msg {
 				_ = tmux.HideLiveViewer() // drop any half-built viewer
@@ -1571,7 +1572,6 @@ func (m *FleetModel) rebuildLines() {
 		// Keep SplitPane's row count (cursor clamping) in step at once.
 		m.splitPane.SetListContent(m.splitPane.listContent, len(m.lines))
 	}()
-	m.except = computeExceptions(m.groups, m.display)
 	var lines []fleetLine
 	prevBody := false
 	for i, g := range m.groups {
@@ -1615,6 +1615,15 @@ func (m *FleetModel) rebuildLines() {
 		}
 	}
 	m.lines = lines
+	// The usual model is fleet-wide; column widths come from drawn rows only,
+	// so a folded or filtered-out row cannot cost visible rows their age.
+	var shown []fleet.Row
+	for _, l := range lines {
+		if l.kind == fleetLineRow {
+			shown = append(shown, l.row)
+		}
+	}
+	m.except = computeExceptions(m.groups, []fleet.Group{{Rows: shown}}, m.display)
 }
 
 // shownRows is rows without the shell rows while they are hidden.
@@ -2103,7 +2112,9 @@ func sweepLabel(n int) string {
 // running or armed), and "+ new" only on the selected or hovered header (or
 // as the armed shell | agent selector). The sweep button is left out while
 // the selector is armed or when it would squeeze the project name below
-// fleetMinSweepName columns.
+// fleetMinSweepName columns; when sweep fits alone but not beside "+ new",
+// the hovered or selected header drops "+ new" instead, so hovering never
+// hides a button that was showing.
 func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetHoverRegion, cw int) (string, fleetHeaderSpans) {
 	marker := strings.Repeat(" ", fleetSidebarLeftInset)
 	if selected {
@@ -2143,7 +2154,7 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 
 	var spans fleetHeaderSpans
 	headW := fleetHeaderNameCol + 2 // marker, flag, fold marker and its space
-	build := func(sweep string) string {
+	build := func(sweep, add string) string {
 		right := counts.text
 		btns := sweep
 		if add != "" {
@@ -2157,11 +2168,18 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 		}
 		return right
 	}
-	right := build(sweep)
-	if sweep != "" && limit-lipgloss.Width(right)-1 < headW+fleetMinSweepName {
-		sweep = ""
-		right = build("")
+	fits := func(right string) bool { return limit-lipgloss.Width(right)-1 >= headW+fleetMinSweepName }
+	if sweep != "" && !fits(build(sweep, add)) {
+		// Too narrow for both: a hover or selection never takes away a
+		// sweep button that was showing without it, so "+ new" gives way
+		// (n still launches). Sweep goes only when it never fit.
+		if add != "" && !armed && fits(build(sweep, "")) {
+			add = ""
+		} else {
+			sweep = ""
+		}
 	}
+	right := build(sweep, add)
 	if add != "" {
 		spans.add = [2]int{limit - lipgloss.Width(add), limit}
 	}

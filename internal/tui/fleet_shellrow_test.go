@@ -133,3 +133,21 @@ func TestHelpListsShellsKey(t *testing.T) {
 	}
 	t.Errorf("? reference lacks %q", fleetShellsKey)
 }
+
+func TestRevealHiddenShellShowsShells(t *testing.T) {
+	InitStyles()
+	shell := testRow("shell", "s1", "", "")
+	shell.WindowID, shell.Shell = "@9", true
+	agent := testRow("a", "s1", "idle", "")
+	agent.WindowID = "@1"
+	m := newFleetModel()
+	m.loaded = true
+	m.groups = []fleet.Group{{Session: "s1", Project: "p1", Rows: []fleet.Row{agent, shell}}}
+	m.rebuildLines()
+	if !m.revealRow("s1", "@9") || !m.showShells || !m.viewDirty {
+		t.Fatalf("reveal of a hidden shell: shown=%v dirty=%v", m.showShells, m.viewDirty)
+	}
+	if got := strings.Join(lineKeys(m), " "); got != "H:s1 R:a R:shell" {
+		t.Errorf("lines = %q", got)
+	}
+}

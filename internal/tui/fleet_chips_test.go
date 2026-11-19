@@ -455,13 +455,19 @@ func TestComputeExceptions(t *testing.T) {
 		return fleet.Row{AgentState: state.AgentState{ModelName: model, ContextPct: ctx, TurnCount: 1}}
 	}
 	groups := []fleet.Group{{Rows: []fleet.Row{mk("claude-opus-4-7", 10), mk("claude-opus-4-7", 20)}}, {Rows: []fleet.Row{mk("claude-haiku-4-5", 80)}}}
-	ex := computeExceptions(groups, fleetDisplay{})
+	ex := computeExceptions(groups, groups, fleetDisplay{})
 	if ex.common != "opus" || ex.modelW != len("haiku") || !ex.ctx {
 		t.Errorf("exceptions = %+v", ex)
 	}
-	ex = computeExceptions(groups[:1], fleetDisplay{})
+	ex = computeExceptions(groups[:1], groups[:1], fleetDisplay{})
 	if ex.modelW != 0 || ex.ctx {
 		t.Errorf("all-usual list = %+v", ex)
+	}
+	// A hidden (folded or filtered-out) haiku row still shapes the usual
+	// model but reserves no column width.
+	ex = computeExceptions(groups, groups[:1], fleetDisplay{})
+	if ex.common != "opus" || ex.modelW != 0 || ex.ctx {
+		t.Errorf("hidden exception reserved width: %+v", ex)
 	}
 }
 

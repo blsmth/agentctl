@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/sweeprun"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
@@ -164,7 +165,12 @@ func TestSweepButtonLayoutAndHitColumns(t *testing.T) {
 					t.Errorf("cw=%d x=%d: hover %v, want sweep", cw, x, h.reg)
 				}
 			}
-			if _, a := m.buttonDecision(span[1]+fleetSweepSep, 2, tea.MouseLeft); a != fleetClickNew {
+			if m.headerNewSpan(g, cw) == [2]int{} {
+				// Too narrow for both: "+ new" gives way, sweep stays.
+				if strings.Contains(string(hdr), fleetNewLabel) {
+					t.Errorf("cw=%d: \"+ new\" drawn without a span: %q", cw, string(hdr))
+				}
+			} else if _, a := m.buttonDecision(span[1]+fleetSweepSep, 2, tea.MouseLeft); a != fleetClickNew {
 				t.Errorf("cw=%d: \"+ new\" after sweep is %v, want new", cw, a)
 			}
 			if _, a := m.buttonDecision(span[0]-2, 2, tea.MouseLeft); a == fleetClickSweep {
@@ -533,4 +539,88 @@ func TestSweepInHelp(t *testing.T) {
 		}
 	}
 	t.Error("key reference lacks the sweep key")
+}
+
+// On a narrow sidebar a hovered or selected header gives up "+ new" rather
+// than the sweep button that showed before the hover.
+func TestNarrowSweepSurvivesHover(t *testing.T) {
+	InitStyles()
+	mk := func(name string, done bool) fleet.Row {
+		r := testRow(name, "agentctl-brim", "idle", "")
+		r.Done = done
+		return r
+	}
+	for _, tt := range []struct {
+		name string
+		rows []fleet.Row
+	}{
+		{"one done", []fleet.Row{mk("a", true), mk("b", false)}},
+		{"two-digit counts", func() []fleet.Row {
+			var rs []fleet.Row
+			for i := 0; i < 12; i++ {
+				rs = append(rs, mk("d", true), mk("i", false))
+			}
+			return rs
+		}()},
+	} {
+		for cw := 40; cw <= 46; cw++ {
+			t.Run(fmt.Sprintf("%s/cw%d", tt.name, cw), func(t *testing.T) {
+				g := fleet.Group{Session: "agentctl-brim", Project: "brim", ProjectDir: "/p/brim", RuntimeDir: "/p/brim/.agentctl", Rows: tt.rows}
+				m := newFleetModel()
+				m.loaded = true
+				m.groups = []fleet.Group{g}
+				m.rebuildLines()
+				label := sweepLabel(groupSweepable(g))
+				_, plain := m.groupHeaderLayout(g, false, fleetHoverNone, cw)
+				if plain.sweep == [2]int{} {
+					// Too narrow for sweep even alone: then nothing shows it.
+					if tt.name == "one done" {
+						t.Fatalf("single-digit header lost sweep at cw %d", cw)
+					}
+					for _, h := range []fleetHoverRegion{fleetHoverHeader} {
+						if _, sp := m.groupHeaderLayout(g, true, h, cw); sp.sweep != [2]int{} {
+							t.Errorf("sweep appears only on hover: %+v", sp)
+						}
+					}
+					return
+				}
+				for _, st := range []struct {
+					name     string
+					selected bool
+					hover    fleetHoverRegion
+				}{
+					{"plain", false, fleetHoverNone},
+					{"hovered", false, fleetHoverHeader},
+					{"selected", true, fleetHoverNone},
+				} {
+					line, spans := m.groupHeaderLayout(g, st.selected, st.hover, cw)
+					if spans.sweep == [2]int{} {
+						t.Fatalf("%s: no sweep span: %q", st.name, ansi.Strip(line))
+					}
+					if got := ansi.Cut(ansi.Strip(line), spans.sweep[0], spans.sweep[1]); got != label {
+						t.Errorf("%s: sweep span %v holds %q", st.name, spans.sweep, got)
+					}
+					if spans.add != [2]int{} {
+						if got := ansi.Cut(ansi.Strip(line), spans.add[0], spans.add[1]); got != fleetNewLabel {
+							t.Errorf("%s: new span %v holds %q", st.name, spans.add, got)
+						}
+					}
+					if w := lipgloss.Width(line); w > cw {
+						t.Errorf("%s: header %d wide > %d", st.name, w, cw)
+					}
+				}
+				// Under the pointer, the drawn sweep button clicks.
+				if span := m.headerSweepSpan(g, cw); span == [2]int{} {
+					t.Errorf("pointer layout lost the sweep span")
+				}
+			})
+		}
+	}
+	// Wide enough for both, the hovered header keeps "+ new".
+	g := fleet.Group{Session: "agentctl-brim", Project: "brim", ProjectDir: "/p/brim", RuntimeDir: "/p/brim/.agentctl", Rows: []fleet.Row{mk("a", true)}}
+	m := newFleetModel()
+	m.groups = []fleet.Group{g}
+	if _, spans := m.groupHeaderLayout(g, false, fleetHoverHeader, 80); spans.add == [2]int{} || spans.sweep == [2]int{} {
+		t.Errorf("at 80 cols both buttons should show: %+v", spans)
+	}
 }

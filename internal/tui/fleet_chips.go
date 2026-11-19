@@ -151,10 +151,11 @@ func mostCommonModel(groups []fleet.Group) string {
 	return best
 }
 
-// computeExceptions builds the exception state for groups under display d.
-func computeExceptions(groups []fleet.Group, d fleetDisplay) fleetExceptions {
+// computeExceptions builds the exception state under display d: the usual
+// model across all groups, the column widths from the shown rows only.
+func computeExceptions(groups, shown []fleet.Group, d fleetDisplay) fleetExceptions {
 	ex := fleetExceptions{common: mostCommonModel(groups)}
-	for _, g := range groups {
+	for _, g := range shown {
 		for _, r := range g.Rows {
 			if m := ex.rowModel(r); m != "" {
 				ex.modelW = max(ex.modelW, lipgloss.Width(m))
