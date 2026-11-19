@@ -71,6 +71,8 @@ type Window struct {
 	RecapSource string `json:"recap_source,omitempty"`
 	// ShortTitle is the recap's generated short title (served as "title").
 	ShortTitle string `json:"short_title,omitempty"`
+	// ShortKind is the title's work-kind tag (served as "kind").
+	ShortKind string `json:"short_kind,omitempty"`
 	ContextPct  int    `json:"context_pct,omitempty"`
 	PendingTool string `json:"pending_tool,omitempty"`
 	// Title is the task title (windowstate ticket_title), Issue the GitHub
@@ -227,7 +229,7 @@ func rowFor(g Group, w Window, now time.Time) (fleet.Row, fleet.Meta) {
 		ModelName: w.Model, Ticket: w.Issue,
 	}}
 	if w.Recap != "" {
-		row.Recap = fleet.RecapLine{Text: w.Recap, Source: recapSources[w.RecapSource], Title: w.ShortTitle}
+		row.Recap = fleet.RecapLine{Text: w.Recap, Source: recapSources[w.RecapSource], Title: w.ShortTitle, Kind: w.ShortKind}
 	}
 	mode := w.Mode
 	if mode == "" {

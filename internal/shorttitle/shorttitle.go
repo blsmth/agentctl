@@ -37,11 +37,16 @@ const (
 // keep showing their "#N title". FirstPrompt is the first user prompt of a
 // bare window (no Task, no Ticket). LastText is the agent's first response;
 // an Input with it is the refinement, one without it the first title.
+//
+// Agent and Mode are hints for the model only (the window's agent name and
+// dispatch mode); they are not part of Hash.
 type Input struct {
 	Task        string
 	FirstPrompt string
 	Ticket      string
 	LastText    string
+	Agent       string
+	Mode        string
 }
 
 // normalize collapses whitespace so cosmetic differences hash alike.
@@ -113,8 +118,8 @@ func backoff(n int) time.Duration {
 
 // Apply records the outcome of titling in at now: the new title (frozen when
 // in was a refinement), or (on err) the old title kept, unfrozen, with a
-// retry-after backoff.
-func Apply(st *windowstate.ShortTitle, in Input, title string, err error, now time.Time) {
+// retry-after backoff. A failed attempt keeps the old kind too.
+func Apply(st *windowstate.ShortTitle, in Input, title, kind string, err error, now time.Time) {
 	if err != nil || title == "" {
 		st.Failures++
 		st.RetryAfter = now.Add(backoff(st.Failures))
@@ -122,6 +127,7 @@ func Apply(st *windowstate.ShortTitle, in Input, title string, err error, now ti
 	}
 	*st = windowstate.ShortTitle{
 		Title:     title,
+		Kind:      kind,
 		At:        now,
 		InputHash: in.Hash(),
 		Final:     in.Refinement(),
@@ -131,34 +137,64 @@ func Apply(st *windowstate.ShortTitle, in Input, title string, err error, now ti
 // ErrEmptyTitle is returned when the reply sanitizes to nothing.
 var ErrEmptyTitle = errors.New("shorttitle: empty title after sanitizing")
 
-// Generate asks comp for a title for in and sanitizes the reply. It never
-// returns a blank title without an error.
-func Generate(ctx context.Context, comp llm.Completer, in Input) (string, error) {
+// Generate asks comp for a kind and title for in. The reply is
+// "<kind> | <title>"; a reply without a known kind keeps the whole reply as
+// the title and returns an empty kind. A review-pr window is always kind
+// "review". It never returns a blank title without an error.
+func Generate(ctx context.Context, comp llm.Completer, in Input) (title, kind string, err error) {
 	ctx, cancel := context.WithTimeout(ctx, RequestTimeout)
 	defer cancel()
 	out, err := comp.Complete(ctx, Prompt(in))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	t := Sanitize(out)
-	if t == "" {
-		return "", ErrEmptyTitle
+	kind, title = ParseReply(out)
+	if title == "" {
+		return "", "", ErrEmptyTitle
 	}
-	return t, nil
+	if in.Mode == ReviewPRMode {
+		kind = "review"
+	}
+	return title, kind, nil
+}
+
+// ParseReply splits a model reply into its kind and sanitized title.
+func ParseReply(out string) (kind, title string) {
+	line := stripLead(firstLine(out))
+	if head, rest, ok := strings.Cut(line, "|"); ok {
+		if k := normalizeKind(head); k != "" {
+			return k, sanitize(rest, false)
+		}
+		// A single stray word before the pipe ("refactor | ...") is a kind
+		// the model invented: drop it, never let it into the title.
+		if isSingleWord(head) {
+			if t := sanitize(rest, false); t != "" {
+				return "", t
+			}
+		}
+	}
+	return "", sanitize(line, false)
 }
 
 // Prompt is the instruction sent for in.
 func Prompt(in Input) string {
 	var b strings.Builder
-	b.WriteString("Write a short title for what a coding agent is working on, from the notes below.\n")
-	b.WriteString("Rules: 2 to 5 words, in title case, describing the work. Prefer a present participle, ")
+	b.WriteString("Write a short title for what a coding agent is working on, from the notes below, and classify the kind of work.\n")
+	b.WriteString("Title rules: 2 to 5 words, in title case, describing the work. Prefer a present participle, ")
 	b.WriteString("for example \"Organizing your Photos\" or \"Fixing Hub Sort Order\". ")
-	b.WriteString("No quotes, no markdown, no trailing punctuation. Reply with the title only.\n")
+	b.WriteString("No quotes, no markdown, no trailing punctuation.\n")
+	b.WriteString("Kind: exactly one of these words:\n")
+	for _, k := range kinds {
+		b.WriteString("- " + k.name + ": " + k.meaning + "\n")
+	}
+	b.WriteString("Reply on one line as `<kind> | <title>`, for example `go | Fixing Hub Sort Order`. Nothing else.\n")
 	section := func(label, text string) {
 		if text != "" {
 			b.WriteString("\n" + label + ":\n" + text + "\n")
 		}
 	}
+	section("Agent", headRunes(normalize(in.Agent), 80))
+	section("Dispatch mode", headRunes(normalize(in.Mode), 80))
 	section("Ticket", headRunes(normalize(in.Ticket), maxTaskRunes))
 	section("Task", headRunes(normalize(in.Task), maxTaskRunes))
 	section("First request", headRunes(normalize(in.FirstPrompt), maxPromptRunes))

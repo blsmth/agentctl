@@ -97,3 +97,41 @@ func TestCardShowsSchedule(t *testing.T) {
 		t.Errorf("card missing schedule:\n%s", full)
 	}
 }
+
+// TestKindTagRender: a titled row shows a dim "[kind]" before the title; a
+// row with no kind shows no brackets; width budgets hold.
+func TestKindTagRender(t *testing.T) {
+	InitStyles()
+	fixedFleetNow(t)
+	for _, width := range []int{44, 56, 120} {
+		t.Run(fmt.Sprintf("cw%d", width), func(t *testing.T) {
+			with := sampleRow("s", "proj", "@1", "lead:1", "lead", "idle", false, fleet.LogInfo{Recap: "x"}, nil)
+			with.Recap = fleet.RecapLine{Text: "full recap", Source: fleet.RecapSummary, Title: "Fixing Hub Sort Order", Kind: "go"}
+			without := sampleRow("s", "proj", "@2", "lead:2", "lead", "idle", false, fleet.LogInfo{Recap: "x"}, nil)
+			without.Recap = fleet.RecapLine{Text: "full recap", Source: fleet.RecapSummary, Title: "Fixing Hub Sort Order"}
+			m := newFleetModel()
+			m.termWidth, m.termHeight, m.liveLeft = width, 30, width
+			m.liveShown = "x"
+			m.configureSplitPane()
+			m.loaded = true
+			m.groups = []fleet.Group{{Session: "s", Project: "proj", Rows: []fleet.Row{with, without}}}
+			m.rebuildLines()
+			cw := m.contentWidth()
+			for _, l := range m.lines {
+				if l.kind != fleetLineRow {
+					continue
+				}
+				first := ansi.Strip(strings.Split(m.renderTreeRow(l.row, l.treePrefix, l.nameCol, false, cw), "\n")[0])
+				if w := lipgloss.Width(first); w > cw {
+					t.Errorf("%s width %d > cw %d", l.row.WindowID, w, cw)
+				}
+				if l.row.WindowID == "@1" && width >= 56 && !strings.Contains(first, "[go] Fixing") {
+					t.Errorf("kind row = %q", first)
+				}
+				if l.row.WindowID == "@2" && strings.Contains(first, "[") {
+					t.Errorf("no-kind row has brackets: %q", first)
+				}
+			}
+		})
+	}
+}

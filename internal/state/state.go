@@ -74,6 +74,8 @@ type AgentState struct {
 	// short_title.title, written by hook-title). Display-only: never in
 	// state.json or restore.json.
 	ShortTitle string `json:"-"`
+	// ShortKind is the work-kind tag of ShortTitle (short_title.kind).
+	ShortKind string `json:"-"`
 }
 
 // State is the snapshot of running agents, written by the monitor.

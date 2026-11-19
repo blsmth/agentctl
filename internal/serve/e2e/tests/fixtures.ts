@@ -38,6 +38,7 @@ export type FixtureWindow = {
   recap?: string;
   recap_source?: "summary" | "task" | "title" | "activity";
   short_title?: string;
+  short_kind?: string;
 };
 
 export type FixtureGroup = { session: string; project: string; dir: string; windows: FixtureWindow[] };
