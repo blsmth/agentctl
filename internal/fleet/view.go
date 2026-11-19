@@ -172,7 +172,7 @@ func agentFromWindow(idx int, w tmux.WindowInfo, name string, records map[string
 		TicketTitle:      ws.TicketTitle,
 		Task:             ws.Task,
 		ShortTitle:       ws.ShortTitle.Title,
-		ShortKind:        ws.ShortTitle.Kind,
+		ShortKind:        shortKind(ws),
 		Branch:           ws.Branch,
 		WorktreeDir:      ws.WorktreeDir,
 		SpawnedBy:        ws.SpawnedBy,
@@ -181,6 +181,15 @@ func agentFromWindow(idx int, w tmux.WindowInfo, name string, records map[string
 		ScheduledBy:      ws.ScheduledBy,
 		ScheduledAt:      ws.ScheduledAt,
 	}
+}
+
+// shortKind is the display work-kind tag: shown on dispatched windows only,
+// never on interactive (bare) ones. The record keeps the kind either way.
+func shortKind(ws windowstate.WindowState) string {
+	if !(Meta{Mode: ws.Mode}).Dispatched() {
+		return ""
+	}
+	return ws.ShortTitle.Kind
 }
 
 // LocalWindowNames resolves a window of the current project to its instance
