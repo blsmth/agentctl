@@ -169,7 +169,7 @@ function bucketRow(entry, toggle, expanded) {
  * (index into the list with this group removed).
  */
 function attachGroupDrag(section, head, { list, onBusy, onDrop }) {
-  let press = null; // { id, x, y, timer }
+  let press = null; // { id, x, y, timer, buttons }
   let drag = null; // { id, grab, y, slot, raf }
 
   const others = () => [...list.querySelectorAll(":scope > section.group")].filter((el) => el !== section);
@@ -206,10 +206,25 @@ function attachGroupDrag(section, head, { list, onBusy, onDrop }) {
   // The press holds renders from pointerdown, so the list is not rebuilt
   // under a finger that is still deciding between tap, scroll and drag. A
   // tap's release is delayed past its click, which a render would swallow.
+  // A mouse has no implicit pointer capture, so a press released off the
+  // header never reaches it. While a press is pending, watch the window too.
+  const onWinMove = (e) => {
+    if (press && e.pointerId === press.id) press.buttons = e.buttons;
+  };
+  const onWinEnd = (e) => {
+    if (press && e.pointerId === press.id) clearPress();
+  };
+  const unwatchPress = () => {
+    window.removeEventListener("pointermove", onWinMove);
+    window.removeEventListener("pointerup", onWinEnd);
+    window.removeEventListener("pointercancel", onWinEnd);
+  };
+
   const clearPress = (delayMs = 0) => {
     if (!press) return;
     clearTimeout(press.timer);
     press = null;
+    unwatchPress();
     if (delayMs > 0) setTimeout(() => onBusy(false), delayMs);
     else onBusy(false);
   };
@@ -217,9 +232,10 @@ function attachGroupDrag(section, head, { list, onBusy, onDrop }) {
   const start = () => {
     const p = press;
     press = null;
+    unwatchPress();
     // The press already holds renders (busy). Still, never drag a header
-    // that has left the page.
-    if (!p || !head.isConnected) {
+    // that has left the page, or one whose pointer was already released.
+    if (!p || !head.isConnected || p.buttons === 0) {
       onBusy(false);
       return;
     }
@@ -269,7 +285,10 @@ function attachGroupDrag(section, head, { list, onBusy, onDrop }) {
   head.addEventListener("pointerdown", (e) => {
     if (press || drag || (e.pointerType === "mouse" && e.button !== 0) || e.target.closest(".group-add")) return;
     onBusy(true);
-    press = { id: e.pointerId, x: e.clientX, y: e.clientY, timer: setTimeout(start, LONG_PRESS_MS) };
+    press = { id: e.pointerId, x: e.clientX, y: e.clientY, timer: setTimeout(start, LONG_PRESS_MS), buttons: e.buttons };
+    window.addEventListener("pointermove", onWinMove);
+    window.addEventListener("pointerup", onWinEnd);
+    window.addEventListener("pointercancel", onWinEnd);
   });
   head.addEventListener("pointermove", (e) => {
     if (press && e.pointerId === press.id && Math.hypot(e.clientX - press.x, e.clientY - press.y) > LONG_PRESS_SLOP) clearPress();
