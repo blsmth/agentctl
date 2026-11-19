@@ -84,9 +84,9 @@ type sweepDeps struct {
 	CloseWindow  func(id string) error
 	Reclaim      func(c *cleanup.Candidate)
 	RemoveMail   func(id string) error
-	// RunningChildren counts live working/blocked windows dispatched by the
+	// LiveChildren counts live windows (any state) dispatched by the
 	// window with this ID and session ID (any tmux session).
-	RunningChildren func(id, sessionID string) int
+	LiveChildren func(id, sessionID string) int
 }
 
 func paneVerdict(text string) string {
@@ -116,8 +116,8 @@ func (d sweepDeps) refresh(f *cleanup.SweepFacts, id string) bool {
 	d.applyDynamic(f, ws)
 	f.Pane = paneVerdict(d.Capture(id))
 	f.PendingMail = d.Mail(id)
-	if f.IncludeBare && ws.Mode == "bare" && d.RunningChildren != nil {
-		f.RunningChildren = d.RunningChildren(id, ws.SessionID)
+	if f.IncludeBare && ws.Mode == "bare" && d.LiveChildren != nil {
+		f.LiveChildren = d.LiveChildren(id, ws.SessionID)
 	}
 	return true
 }
@@ -215,12 +215,12 @@ func runSweep(d sweepDeps, session, selfID string, opts SweepOptions) sweepRepor
 	return rep
 }
 
-// countRunningChildren counts live windows in any session whose windowstate
-// names (id, sessionID) as spawner and whose state is working or blocked. It
+// countLiveChildren counts live windows in any session that reconcile.IsChild
+// matches (the close_children cascade would kill each, whatever its state). It
 // needs a non-empty sessionID (spawned_by alone is untrustworthy: @N is
 // recycled), matching reconcile's close_children rule. A failed listing counts
 // as one child so the window is kept.
-func countRunningChildren(list func() ([]reconcile.LiveWindow, error), id, sessionID string) int {
+func countLiveChildren(list func() ([]reconcile.LiveWindow, error), id, sessionID string) int {
 	if sessionID == "" {
 		return 0
 	}
@@ -230,10 +230,7 @@ func countRunningChildren(list func() ([]reconcile.LiveWindow, error), id, sessi
 	}
 	n := 0
 	for _, w := range live {
-		if w.Record.SpawnedBy != id || w.Record.SpawnedBySession != sessionID {
-			continue
-		}
-		if w.Record.State == "working" || w.Record.State == "blocked" {
+		if reconcile.IsChild(w, id, sessionID) {
 			n++
 		}
 	}
@@ -311,8 +308,8 @@ func RunSweep(opts SweepOptions) error {
 		CloseWindow: tmux.KillWindow,
 		Reclaim:     cleanup.Reclaim,
 		RemoveMail:  mailbox.RemoveInbox,
-		RunningChildren: func(id, sessionID string) int {
-			return countRunningChildren(reconcile.ListLiveWindows, id, sessionID)
+		LiveChildren: func(id, sessionID string) int {
+			return countLiveChildren(reconcile.ListLiveWindows, id, sessionID)
 		},
 	}
 

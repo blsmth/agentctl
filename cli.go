@@ -348,7 +348,7 @@ func (c *CleanupCmd) Run() error {
 type SweepCmd struct {
 	Session     string `help:"tmux session to sweep (required outside tmux; default: the session this command runs in)"`
 	DryRun      bool   `name:"dry-run" help:"Print the plan without closing anything"`
-	IncludeBare bool   `name:"include-bare" help:"Also close finished bare (interactive) windows: idle after at least one completed turn, with no pending mail, no running child sessions and no unsent prompt text; worktree/branch/open-PR safety still applies"`
+	IncludeBare bool   `name:"include-bare" help:"Also close finished bare (interactive) windows: idle after at least one completed turn, with no pending mail, no live child sessions; worktree/branch/open-PR safety still applies"`
 	JSON        bool   `help:"Output as JSON"`
 }
 

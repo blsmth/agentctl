@@ -183,7 +183,7 @@ func TestCheckSweepSession(t *testing.T) {
 	}
 }
 
-func TestCountRunningChildren(t *testing.T) {
+func TestCountLiveChildren(t *testing.T) {
 	live := func(id, sess, state string) reconcile.LiveWindow {
 		return reconcile.LiveWindow{WindowID: "@x", Record: windowstate.WindowState{SpawnedBy: id, SpawnedBySession: sess, State: state}}
 	}
@@ -196,7 +196,8 @@ func TestCountRunningChildren(t *testing.T) {
 		sess string
 		want int
 	}{
-		{"working and blocked count", list(live("@1", "S", "working"), live("@1", "S", "blocked"), live("@1", "S", "idle")), "S", 2},
+		{"every state counts, idle included", list(live("@1", "S", "working"), live("@1", "S", "blocked"), live("@1", "S", "idle")), "S", 3},
+		{"cron-scheduled window is not a child", list(reconcile.LiveWindow{WindowID: "@y", Record: windowstate.WindowState{SpawnedBy: "@1", SpawnedBySession: "S", ScheduledBy: "job"}}), "S", 0},
 		{"recycled window id (other session) ignored", list(live("@1", "OLD", "working")), "S", 0},
 		{"other parent ignored", list(live("@2", "S", "working")), "S", 0},
 		{"no parent session id counts nothing", list(live("@1", "", "working")), "", 0},
@@ -204,7 +205,7 @@ func TestCountRunningChildren(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := countRunningChildren(tt.list, "@1", tt.sess); got != tt.want {
+			if got := countLiveChildren(tt.list, "@1", tt.sess); got != tt.want {
 				t.Errorf("got %d, want %d", got, tt.want)
 			}
 		})
@@ -215,7 +216,7 @@ func TestRunSweepIncludeBare(t *testing.T) {
 	states := map[string]windowstate.WindowState{
 		"@1": {State: "idle", Mode: "bare", TurnCount: 3, SessionID: "S1"},                      // closes
 		"@2": {State: "idle", Mode: "bare", TurnCount: 0, SessionID: "S2"},                      // fresh, stays
-		"@3": {State: "idle", Mode: "bare", TurnCount: 2, SessionID: "S3"},                      // has running child, stays
+		"@3": {State: "idle", Mode: "bare", TurnCount: 2, SessionID: "S3"},                      // has live child, stays
 		"@4": {State: "idle", Mode: "bare", TurnCount: 2, SessionID: "S4", Branch: "feat/open"}, // open PR, stays
 	}
 	windows := []tmux.WindowInfo{{ID: "@1", Name: "a"}, {ID: "@2", Name: "b"}, {ID: "@3", Name: "c"}, {ID: "@4", Name: "d"}}
@@ -229,7 +230,7 @@ func TestRunSweepIncludeBare(t *testing.T) {
 		Agent:     func(string) (string, string) { return "", "" },
 		DirExists: func(string) bool { return false },
 		BranchPR:  func(string) cleanup.PRInfo { return cleanup.PRInfo{State: cleanup.PROpen, Number: 5, URL: "u"} },
-		RunningChildren: func(id, sess string) int {
+		LiveChildren: func(id, sess string) int {
 			if id == "@3" && sess == "S3" {
 				return 2
 			}
@@ -252,7 +253,7 @@ func TestRunSweepIncludeBare(t *testing.T) {
 	for _, r := range rep.Attention {
 		details[r.WindowID] = r.Detail
 	}
-	if !strings.Contains(details["@2"], "no turn") || !strings.Contains(details["@3"], "2 running child session(s)") || !strings.Contains(details["@4"], "review PR #5") {
+	if !strings.Contains(details["@2"], "no turn") || !strings.Contains(details["@3"], "2 live child session(s)") || !strings.Contains(details["@4"], "review PR #5") {
 		t.Errorf("attention details = %v", details)
 	}
 }
