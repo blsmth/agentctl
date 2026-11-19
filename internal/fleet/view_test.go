@@ -226,3 +226,34 @@ func TestLastActivity(t *testing.T) {
 		})
 	}
 }
+
+func TestShortKindDispatchedOnly(t *testing.T) {
+	tests := []struct {
+		mode string
+		want string
+	}{
+		{"", ""},
+		{"bare", ""},
+		{"adhoc", "go"},
+		{"issue", "go"},
+		{"review-pr", "go"},
+	}
+	for _, tt := range tests {
+		t.Run("mode="+tt.mode, func(t *testing.T) {
+			records := map[string]windowstate.WindowState{
+				"@5": {Instance: "go-engineer", Mode: tt.mode,
+					ShortTitle: windowstate.ShortTitle{Title: "Fixing X", Kind: "go"}},
+			}
+			agents := BuildAgents([]tmux.WindowInfo{{ID: "@5", Name: "go-engineer"}}, records, nil, time.Now())
+			if len(agents) != 1 {
+				t.Fatalf("agents = %d", len(agents))
+			}
+			if got := agents[0].ShortKind; got != tt.want {
+				t.Errorf("ShortKind = %q, want %q", got, tt.want)
+			}
+			if agents[0].ShortTitle != "Fixing X" {
+				t.Errorf("title lost: %q", agents[0].ShortTitle)
+			}
+		})
+	}
+}
