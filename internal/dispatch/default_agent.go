@@ -72,7 +72,7 @@ func ResolveDefaultAgent(cfg *config.Config, workDir string, d DefaultAgentDisco
 	return name
 }
 
-// DefaultAgentRejection returns why name cannot be launched as the default
+// rejection returns why name cannot be launched as the default
 // agent, or "" when it is a valid agent name that discovery actually finds,
 // a Claude Code built-in, or a valid plugin:agent reference.
 func (d DefaultAgentDiscovery) rejection(workDir, name string) string {
@@ -144,7 +144,20 @@ func (d DefaultAgentDiscovery) repoControlledRejection(workDir, name string) str
 	if err != nil {
 		return fmt.Sprintf("discovering agents: %v", err)
 	}
-	if path, ok := agentFilePath(all, name); !ok || path != userPath {
+	// Discovery for a workDir other than the cwd lists the cwd's agents first
+	// and appends the workDir's, so any entry that differs from the user-level
+	// file is a repo-local definition, not just the first match.
+	found := false
+	for _, a := range all {
+		if a.Name != name {
+			continue
+		}
+		found = true
+		if a.FilePath != userPath {
+			return "shadowed by a repo-local agent definition"
+		}
+	}
+	if !found {
 		return "shadowed by a repo-local agent definition"
 	}
 	return ""

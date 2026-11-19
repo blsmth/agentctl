@@ -92,10 +92,18 @@ export function mountDispatch(root, ctx, { dir } = {}) {
   // project change from overriding a hand-picked agent.
   let projects = [];
   let userPickedAgent = false;
+  let autoApplied = ""; // the agent applyDefaultAgent last selected, "" if none
   function applyDefaultAgent() {
     const names = [...agent.options].map((o) => o.value);
     const def = defaultAgentFor(projects, project.value, names, userPickedAgent);
-    if (def) agent.value = def;
+    if (def) {
+      agent.value = def;
+      autoApplied = def;
+    } else if (autoApplied && !userPickedAgent && agent.value === autoApplied && names.length) {
+      // The previous project's default no longer applies: back to the first agent.
+      agent.value = names[0];
+      autoApplied = "";
+    }
   }
   agent.addEventListener("change", () => {
     userPickedAgent = true;
