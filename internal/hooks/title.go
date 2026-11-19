@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -55,6 +56,9 @@ func Title() {
 	var input struct {
 		TranscriptPath       string `json:"transcript_path"`
 		LastAssistantMessage string `json:"last_assistant_message"`
+		// Prompt is the UserPromptSubmit payload's user text; other events
+		// have none.
+		Prompt string `json:"prompt"`
 	}
 	if !decodeInput(&input) {
 		return
@@ -63,11 +67,11 @@ func Title() {
 	if windowID == "" {
 		return
 	}
-	runTitle(context.Background(), windowID, input.TranscriptPath, input.LastAssistantMessage)
+	runTitle(context.Background(), windowID, input.TranscriptPath, input.LastAssistantMessage, input.Prompt)
 }
 
 // runTitle is Title after payload decoding.
-func runTitle(ctx context.Context, windowID, transcript, lastMessage string) {
+func runTitle(ctx context.Context, windowID, transcript, lastMessage, prompt string) {
 	s := titleSettings()
 	if !s.Enabled {
 		return
@@ -75,6 +79,9 @@ func runTitle(ctx context.Context, windowID, transcript, lastMessage string) {
 	ws, err := windowstate.Read(windowID)
 	if err != nil {
 		return
+	}
+	if fp, ok := firstPromptFor(ws, prompt); ok {
+		ws.FirstPrompt = recordFirstPrompt(windowID, fp)
 	}
 	in := titleInput(ws, transcript, lastMessage)
 	now := titleNow()
@@ -152,7 +159,7 @@ func generateTitle(ctx context.Context, s config.TitleSettings, in shorttitle.In
 }
 
 // titleInput gathers what the title is made from: the ad-hoc task (or the
-// ticket title as context), the newest away_summary in the session log, and
+// ticket title as context; for a bare window, its first prompt), the newest away_summary in the session log, and
 // the last assistant message (the Stop payload's, else the one hook-check-done
 // recorded).
 func titleInput(ws windowstate.WindowState, transcript, lastMessage string) shorttitle.Input {
@@ -167,5 +174,64 @@ func titleInput(ws windowstate.WindowState, transcript, lastMessage string) shor
 	if lastMessage == "" {
 		lastMessage = ws.LastText
 	}
-	return shorttitle.Input{Task: ws.Task, Ticket: ws.TicketTitle, Summary: summary, LastText: lastMessage}
+	return shorttitle.Input{Task: ws.Task, FirstPrompt: ws.FirstPrompt, Ticket: ws.TicketTitle, Summary: summary, LastText: lastMessage}
+}
+
+// maxFirstPromptRunes caps the stored first prompt.
+const maxFirstPromptRunes = 500
+
+// injectedBlockRes match synthetic blocks Claude Code or agentctl put in a
+// user turn; Go's RE2 has no backreferences, so one per tag.
+var injectedBlockRes = []*regexp.Regexp{
+	regexp.MustCompile(`(?s)<task-notification>.*?</task-notification>`),
+	regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`),
+}
+
+// realPrompt returns the user-typed part of a prompt, and false when there
+// is none: empty text, a slash command, or only injected content (task
+// notifications, system reminders, `agentctl notice:` lines).
+func realPrompt(prompt string) (string, bool) {
+	for _, re := range injectedBlockRes {
+		prompt = re.ReplaceAllString(prompt, "")
+	}
+	var kept []string
+	for _, line := range strings.Split(prompt, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "agentctl notice:") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	text := strings.TrimSpace(strings.Join(kept, "\n"))
+	if text == "" || strings.HasPrefix(text, "/") {
+		return "", false
+	}
+	if r := []rune(text); len(r) > maxFirstPromptRunes {
+		text = string(r[:maxFirstPromptRunes])
+	}
+	return text, true
+}
+
+// firstPromptFor reports the prompt to record as the window's first prompt:
+// a real user request on a window with no Task, no ticket title and no first
+// prompt yet. Dispatched windows already have their Task.
+func firstPromptFor(ws windowstate.WindowState, prompt string) (string, bool) {
+	if ws.FirstPrompt != "" || ws.Task != "" || ws.TicketTitle != "" {
+		return "", false
+	}
+	return realPrompt(prompt)
+}
+
+// recordFirstPrompt stores fp when the window still has none and returns what
+// the record holds afterwards (a concurrent run may have won). A failed write
+// still returns fp so this run can title from it.
+func recordFirstPrompt(windowID, fp string) string {
+	held := fp
+	err := windowstate.Update(windowID, func(w *windowstate.WindowState) {
+		if w.FirstPrompt == "" {
+			w.FirstPrompt = fp
+		}
+		held = w.FirstPrompt
+	})
+	logUpdateErr("hook-title", err)
+	return held
 }

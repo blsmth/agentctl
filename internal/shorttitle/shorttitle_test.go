@@ -215,3 +215,19 @@ func TestTakeBudgetFailsClosed(t *testing.T) {
 		t.Fatal("budget granted without a state dir")
 	}
 }
+
+func TestFirstPromptIsInput(t *testing.T) {
+	in := Input{FirstPrompt: "sort my photos"}
+	if in.Empty() {
+		t.Fatal("first prompt alone should not be empty")
+	}
+	if !Due(windowstate.ShortTitle{}, in, time.Now()) {
+		t.Fatal("first prompt should be due with no title")
+	}
+	if !strings.Contains(Prompt(in), "First request:\nsort my photos") {
+		t.Fatalf("prompt = %q", Prompt(in))
+	}
+	if (Input{Task: "a"}).Hash() == (Input{Task: "a", FirstPrompt: "b"}).Hash() {
+		t.Fatal("first prompt must change the hash")
+	}
+}

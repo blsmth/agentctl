@@ -110,7 +110,7 @@ func TestTitleWritesAndThrottles(t *testing.T) {
 	seedWindow(t, "@4", windowstate.WindowState{State: "idle", Task: "sort my photo library by year"})
 	log := logWithSummary(t, "Sorted 2019 into albums; next is 2020.")
 
-	runTitle(context.Background(), "@4", log, "I finished the 2019 folder.")
+	runTitle(context.Background(), "@4", log, "I finished the 2019 folder.", "")
 	st := readTitle(t, "@4")
 	if st.Title != "Organizing your Photos" || !st.At.Equal(e.now) || st.SummaryHash != shorttitle.Hash("Sorted 2019 into albums; next is 2020.") {
 		t.Fatalf("title state = %+v", st)
@@ -123,21 +123,21 @@ func TestTitleWritesAndThrottles(t *testing.T) {
 	}
 
 	// Same input again: nothing to do.
-	runTitle(context.Background(), "@4", log, "I finished the 2019 folder.")
+	runTitle(context.Background(), "@4", log, "I finished the 2019 folder.", "")
 	// New last message within the interval: throttled.
 	e.now = e.now.Add(time.Minute)
-	runTitle(context.Background(), "@4", log, "Now working on 2020.")
+	runTitle(context.Background(), "@4", log, "Now working on 2020.", "")
 	if e.fake.calls != 1 {
 		t.Fatalf("calls = %d, want 1 (same input, then throttled)", e.fake.calls)
 	}
 	// A new away_summary beats the throttle.
-	runTitle(context.Background(), "@4", logWithSummary(t, "Sorted 2020 as well."), "")
+	runTitle(context.Background(), "@4", logWithSummary(t, "Sorted 2020 as well."), "", "")
 	if e.fake.calls != 2 {
 		t.Fatalf("calls = %d, want 2 after a new away_summary", e.fake.calls)
 	}
 	// After the interval a new message retitles.
 	e.now = e.now.Add(shorttitle.RetitleInterval)
-	runTitle(context.Background(), "@4", log, "Moving on to tagging.")
+	runTitle(context.Background(), "@4", log, "Moving on to tagging.", "")
 	if e.fake.calls != 3 {
 		t.Fatalf("calls = %d, want 3 after the interval", e.fake.calls)
 	}
@@ -146,7 +146,7 @@ func TestTitleWritesAndThrottles(t *testing.T) {
 func TestTitleUsesRecordedLastText(t *testing.T) {
 	e := setupTitle(t)
 	seedWindow(t, "@4", windowstate.WindowState{State: "working", LastText: "Refactored the sort comparator."})
-	runTitle(context.Background(), "@4", "", "")
+	runTitle(context.Background(), "@4", "", "", "")
 	if e.fake.calls != 1 || !strings.Contains(e.fake.prompts[0], "Refactored the sort comparator.") {
 		t.Fatalf("calls = %d prompts = %q", e.fake.calls, e.fake.prompts)
 	}
@@ -156,21 +156,21 @@ func TestTitleFailureBacksOff(t *testing.T) {
 	e := setupTitle(t)
 	e.fake.err = errors.New("llm: nous returned HTTP 503")
 	seedWindow(t, "@4", windowstate.WindowState{Task: "sort the photos"})
-	runTitle(context.Background(), "@4", "", "")
+	runTitle(context.Background(), "@4", "", "", "")
 	st := readTitle(t, "@4")
 	if st.Title != "" || st.Failures != 1 || !st.RetryAfter.After(e.now) {
 		t.Fatalf("after failure = %+v", st)
 	}
 	// Every Stop during the backoff stays off the network.
 	e.now = e.now.Add(time.Minute)
-	runTitle(context.Background(), "@4", "", "new text")
+	runTitle(context.Background(), "@4", "", "new text", "")
 	if e.fake.calls != 1 {
 		t.Fatalf("calls = %d during backoff", e.fake.calls)
 	}
 	// After it, a retry that succeeds clears the backoff.
 	e.now = st.RetryAfter.Add(time.Second)
 	e.fake.err = nil
-	runTitle(context.Background(), "@4", "", "new text")
+	runTitle(context.Background(), "@4", "", "new text", "")
 	if st := readTitle(t, "@4"); st.Title != "Organizing your Photos" || st.Failures != 0 || !st.RetryAfter.IsZero() {
 		t.Fatalf("after retry = %+v", st)
 	}
@@ -180,7 +180,7 @@ func TestTitleBlankReplyIsAFailure(t *testing.T) {
 	e := setupTitle(t)
 	e.fake.out = "  \"...\" "
 	seedWindow(t, "@4", windowstate.WindowState{Task: "sort the photos"})
-	runTitle(context.Background(), "@4", "", "")
+	runTitle(context.Background(), "@4", "", "", "")
 	if st := readTitle(t, "@4"); st.Title != "" || st.Failures != 1 {
 		t.Fatalf("blank reply = %+v", st)
 	}
@@ -203,7 +203,7 @@ func TestTitleDisabledWritesNothing(t *testing.T) {
 			tt.set(e)
 			seedWindow(t, "@4", windowstate.WindowState{State: "idle", Task: "sort the photos"})
 			before, _ := windowstate.Read("@4")
-			runTitle(context.Background(), "@4", "", "")
+			runTitle(context.Background(), "@4", "", "", "")
 			after, _ := windowstate.Read("@4")
 			if after.ShortTitle != (windowstate.ShortTitle{}) {
 				t.Fatalf("title state written: %+v", after.ShortTitle)
@@ -230,7 +230,7 @@ func TestTitleConcurrentFiresSpendOneRequest(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runTitle(context.Background(), "@4", "", "")
+			runTitle(context.Background(), "@4", "", "", "")
 		}()
 	}
 	// Let the claimed run finish; the others must already have bailed.
@@ -312,7 +312,7 @@ func TestTitleSkipsWhileOutOfCredits(t *testing.T) {
 
 	seedWindow(t, "@4", windowstate.WindowState{State: "idle", Task: "sort my photo library by year"})
 	fresh = true
-	runTitle(context.Background(), "@4", "", "done")
+	runTitle(context.Background(), "@4", "", "done", "")
 	if e.built.Load() != 0 || e.budget.Load() != 0 {
 		t.Fatalf("fresh marker: built=%d budget=%d, want no request", e.built.Load(), e.budget.Load())
 	}
@@ -322,7 +322,7 @@ func TestTitleSkipsWhileOutOfCredits(t *testing.T) {
 
 	// Marker expired: one probe goes through.
 	fresh = false
-	runTitle(context.Background(), "@4", "", "done")
+	runTitle(context.Background(), "@4", "", "done", "")
 	if e.built.Load() != 1 || e.budget.Load() != 1 {
 		t.Fatalf("probe: built=%d budget=%d, want 1/1", e.built.Load(), e.budget.Load())
 	}
@@ -332,7 +332,7 @@ func TestTitleNoCreditsErrorLeavesNoBackoff(t *testing.T) {
 	e := setupTitle(t)
 	e.fake.err = fmt.Errorf("llm: nous returned HTTP 402: %w", backendauth.ErrNoCredits)
 	seedWindow(t, "@4", windowstate.WindowState{State: "idle", Task: "sort my photo library by year"})
-	runTitle(context.Background(), "@4", "", "done")
+	runTitle(context.Background(), "@4", "", "done", "")
 	if st := readTitle(t, "@4"); st.Failures != 0 || !st.RetryAfter.IsZero() {
 		t.Errorf("no-credits must not count as a failure: %+v", st)
 	}
@@ -345,8 +345,139 @@ func TestTitleFreeModelIgnoresNoCreditsMarker(t *testing.T) {
 	titleNoCredits = func(string, time.Time) (backendauth.CreditState, bool) { return backendauth.CreditState{}, true }
 	t.Cleanup(func() { titleNoCredits = old })
 	seedWindow(t, "@4", windowstate.WindowState{State: "idle", Task: "sort my photo library by year"})
-	runTitle(context.Background(), "@4", "", "done")
+	runTitle(context.Background(), "@4", "", "done", "")
 	if e.built.Load() != 1 {
 		t.Fatalf("built=%d, want a request for a :free model", e.built.Load())
+	}
+}
+
+func readWS(t *testing.T, id string) windowstate.WindowState {
+	t.Helper()
+	ws, err := windowstate.Read(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ws
+}
+
+func TestTitleBareWindowTitlesFromFirstPrompt(t *testing.T) {
+	e := setupTitle(t)
+	seedWindow(t, "@4", windowstate.WindowState{State: "working"})
+	runTitle(context.Background(), "@4", "", "", "sort my photo library by year")
+	if e.fake.calls != 1 || !strings.Contains(e.fake.prompts[0], "sort my photo library by year") {
+		t.Fatalf("calls = %d prompts = %q", e.fake.calls, e.fake.prompts)
+	}
+	if st := readTitle(t, "@4"); st.Title == "" {
+		t.Fatal("no title written")
+	}
+	if ws := readWS(t, "@4"); ws.FirstPrompt != "sort my photo library by year" || ws.Task != "" {
+		t.Fatalf("first_prompt = %q task = %q", ws.FirstPrompt, ws.Task)
+	}
+}
+
+func TestTitleHookReadsPromptPayload(t *testing.T) {
+	e := setupTitle(t)
+	t.Setenv("AGENTCTL", "1")
+	t.Setenv("AGENTCTL_WINDOW_ID", "@9")
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("AGENTCTL_SESSION_ID", "")
+	seedWindow(t, "@9", windowstate.WindowState{State: "working"})
+	runHookCaptured(t, nil, `{"hook_event_name":"UserPromptSubmit","prompt":"fix the hub sort order"}`, Title)
+	if e.fake.calls != 1 || readTitle(t, "@9").Title == "" {
+		t.Fatalf("calls = %d", e.fake.calls)
+	}
+}
+
+func TestTitleIgnoresNonRequests(t *testing.T) {
+	for name, prompt := range map[string]string{
+		"slash command": "/compact keep the plan",
+		"empty":         "",
+		"whitespace":    " \n\t ",
+		"notice only":   "agentctl notice: @5 (go-engineer) finished its turn and is idle.\nagentctl notice: @6 is blocked.",
+		"task notif":    "<task-notification>\n<task-id>x</task-id>\n</task-notification>",
+		"reminder":      "<system-reminder>\nstuff\n</system-reminder>\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := setupTitle(t)
+			seedWindow(t, "@4", windowstate.WindowState{State: "working"})
+			runTitle(context.Background(), "@4", "", "", prompt)
+			if e.fake.calls != 0 || e.built.Load() != 0 {
+				t.Fatalf("request made: calls = %d", e.fake.calls)
+			}
+			if ws := readWS(t, "@4"); ws.FirstPrompt != "" || ws.ShortTitle.InputHash != "" {
+				t.Fatalf("state recorded: %+v", ws)
+			}
+		})
+	}
+}
+
+func TestTitleStripsInjectedPromptParts(t *testing.T) {
+	e := setupTitle(t)
+	seedWindow(t, "@4", windowstate.WindowState{State: "working"})
+	runTitle(context.Background(), "@4", "", "", "agentctl notice: @5 is idle.\n<system-reminder>x</system-reminder>\nrename the flag")
+	if got := readWS(t, "@4").FirstPrompt; got != "rename the flag" || e.fake.calls != 1 {
+		t.Fatalf("first_prompt = %q calls = %d", got, e.fake.calls)
+	}
+}
+
+func TestTitleDispatchedWindowIgnoresPrompt(t *testing.T) {
+	for name, ws := range map[string]windowstate.WindowState{
+		"task":   {State: "working", Task: "sort my photo library by year"},
+		"ticket": {State: "working", TicketTitle: "Fix the thing"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := setupTitle(t)
+			seedWindow(t, "@4", ws)
+			runTitle(context.Background(), "@4", "", "", "a different request")
+			if got := readWS(t, "@4").FirstPrompt; got != "" {
+				t.Fatalf("first_prompt = %q", got)
+			}
+			if ws.Task != "" {
+				if e.fake.calls != 1 || strings.Contains(e.fake.prompts[0], "a different request") {
+					t.Fatalf("calls = %d prompts = %q", e.fake.calls, e.fake.prompts)
+				}
+			} else if e.fake.calls != 0 {
+				t.Fatalf("ticket window titled from prompt")
+			}
+		})
+	}
+}
+
+func TestTitleFirstPromptNotOverwritten(t *testing.T) {
+	e := setupTitle(t)
+	seedWindow(t, "@4", windowstate.WindowState{State: "working"})
+	runTitle(context.Background(), "@4", "", "", "first request")
+	e.now = e.now.Add(shorttitle.RetitleInterval + time.Minute)
+	runTitle(context.Background(), "@4", "", "", "second request")
+	if got := readWS(t, "@4").FirstPrompt; got != "first request" {
+		t.Fatalf("first_prompt = %q", got)
+	}
+	if last := e.fake.prompts[len(e.fake.prompts)-1]; strings.Contains(last, "second request") {
+		t.Fatalf("later prompt used as input: %q", last)
+	}
+}
+
+func TestTitleFirstPromptTrimmed(t *testing.T) {
+	setupTitle(t)
+	seedWindow(t, "@4", windowstate.WindowState{State: "working"})
+	runTitle(context.Background(), "@4", "", "", strings.Repeat("é", 800))
+	if n := len([]rune(readWS(t, "@4").FirstPrompt)); n != maxFirstPromptRunes {
+		t.Fatalf("runes = %d", n)
+	}
+}
+
+func TestTitleSessionStartThenPromptStillTitles(t *testing.T) {
+	e := setupTitle(t)
+	seedWindow(t, "@4", windowstate.WindowState{State: "idle"})
+	runTitle(context.Background(), "@4", "", "", "")
+	if e.fake.calls != 0 {
+		t.Fatal("SessionStart on an empty window made a request")
+	}
+	if st := readTitle(t, "@4"); st.InputHash != "" || st.RetryAfter != (time.Time{}) || st.Failures != 0 {
+		t.Fatalf("SessionStart burned the slot: %+v", st)
+	}
+	runTitle(context.Background(), "@4", "", "", "organize my photos")
+	if e.fake.calls != 1 || readTitle(t, "@4").Title == "" {
+		t.Fatalf("calls = %d", e.fake.calls)
 	}
 }

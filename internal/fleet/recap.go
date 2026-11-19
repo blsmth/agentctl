@@ -51,11 +51,13 @@ func (l RecapLine) Short() string {
 }
 
 // titleSource reports whether a row with recap l shows the generated short
-// title: an away_summary or an ad-hoc task line. Ticket titles ("#N title")
-// and AI titles are already short and stay as they are.
+// title: an away_summary, an activity line (what a bare window shows until
+// its first recap, so its title from the first prompt is visible at once) or
+// an ad-hoc task line. Ticket titles ("#N title") and AI titles are already
+// short and stay as they are.
 func titleSource(r Row, l RecapLine) bool {
 	switch l.Source {
-	case RecapSummary:
+	case RecapSummary, RecapActivity:
 		return true
 	case RecapTask:
 		return flattenWhitespace(r.TicketTitle) == ""
@@ -128,6 +130,11 @@ func TagLogs(rows []Row) {
 	for i := range rows {
 		info := ReadLogInfo(rows[i].LogPath)
 		rows[i].Recap = Recap(rows[i], info)
+		// A window with nothing else to show (a bare one just after its
+		// first prompt) shows its generated title as the recap.
+		if rows[i].Recap.Source == RecapNone && rows[i].ShortTitle != "" {
+			rows[i].Recap = RecapLine{Text: rows[i].ShortTitle, Source: RecapTitle}
+		}
 		rows[i].PRNumber, rows[i].PRURL = info.PRNumber, info.PRURL
 		if titleSource(rows[i], rows[i].Recap) {
 			rows[i].Recap.Title = rows[i].ShortTitle

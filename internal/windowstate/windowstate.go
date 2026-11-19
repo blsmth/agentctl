@@ -46,7 +46,12 @@ type WindowState struct {
 	// dispatch's prompt, recorded at dispatch time (ticket dispatches have
 	// TicketTitle instead). The hub shows it until a recap exists.
 	Task string `json:"task,omitempty"`
-	Mode string `json:"mode,omitempty"`
+	// FirstPrompt is the window's first real user prompt (trimmed to ~500
+	// runes), written once by hook-title on a window that has neither Task nor
+	// TicketTitle. It is a short-title input only; it never drives the recap
+	// row, which is what Task is for.
+	FirstPrompt string `json:"first_prompt,omitempty"`
+	Mode        string `json:"mode,omitempty"`
 	// Backend is the name of the config backend this window's claude was
 	// launched against ("" = Anthropic). Restore re-resolves it from config.
 	Backend string `json:"backend,omitempty"`
