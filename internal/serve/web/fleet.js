@@ -26,7 +26,7 @@ import {
   agentChip,
   rowDetailLine,
   rowHeadline,
-  rowTags,
+  rowChips,
   rowTitle,
   scheduledChip,
   sameOrder,
@@ -111,11 +111,7 @@ function windowRow(entry, toggle, expanded, swipe) {
   const state = effectiveState(win);
   const since = formatSince(win.blocked_since || win.state_since, Date.now());
   // Window ID, launch mode and branch are internal; the detail view has them.
-  const tags = rowTags(win).map((t) => h("span", { class: "tag" }, t));
-  const chip = agentChip(win);
-  if (chip) tags.push(h("span", { class: "tag agent-chip" }, chip));
-  const sched = scheduledChip(win);
-  if (sched) tags.push(h("span", { class: "tag sched-chip", title: "Started by agentctl cron" }, sched));
+  const chips = rowChips(win);
   const detail = rowDetailLine(win);
   const link = h(
     "a",
@@ -125,8 +121,15 @@ function windowRow(entry, toggle, expanded, swipe) {
     h(
       "span",
       { class: "win-main" },
-      h("span", { class: "win-title" }, h("span", { class: "agent" }, rowHeadline(win)), ...tags),
+      h("span", { class: "win-title" }, h("span", { class: "agent" }, rowHeadline(win))),
       detail ? h("span", { class: detail === win.recap ? "activity recap" : "activity" }, detail) : null,
+      chips.length
+        ? h(
+            "span",
+            { class: "win-chips" },
+            ...chips.map((c) => h("span", { class: `tag ${c.kind}`, title: c.kind === "sched-chip" ? "Started by agentctl cron" : null }, c.text)),
+          )
+        : null,
     ),
     h(
       "span",

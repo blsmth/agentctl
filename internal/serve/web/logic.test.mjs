@@ -7,7 +7,7 @@ import {
   approvalProject, approvalRows, approvalRowText, promptFold, PROMPT_FOLD_LINES,
   DISPATCH_UPLOAD_PATH, buildDispatchRequest, buildShellRequest, canShell, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
-  bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
+  bucketLabel, kindLabel, rowTags, rowChips, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
   actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
@@ -586,3 +586,13 @@ assert.equal(canShell(["write"]), false);
 assert.equal(canShell(["shell"]), false);
 assert.equal(canShell([]), false);
 console.log("ok: shell request");
+
+{
+  const texts = (w) => rowChips(w).map((c) => c.text);
+  const full = { agent: "go-engineer:3", recap: "#7 Add a retry", recap_source: "task", issue: 7, pr_number: 8, model: "claude-opus-4-20250514", backend: "nous", scheduled_by: "nightly" };
+  assert.deepEqual(texts(full), ["PR #8", "#7", "go-engineer", "opus-4", "nous", "⏲ nightly"]);
+  assert.deepEqual(texts({ agent: "x:1", recap: "t", recap_source: "title", title: "t", backend: "anthropic" }), ["x"]);
+  assert.deepEqual(rowChips({ agent: "brandon:5" }), []);
+  assert.deepEqual(texts({ agent: "brandon:5", model: "claude-sonnet-4-5" }), ["sonnet-4-5"]);
+  console.log("ok: rowChips");
+}

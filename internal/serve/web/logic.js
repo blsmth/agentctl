@@ -308,6 +308,30 @@ export function rowTags(win) {
   return tags;
 }
 
+/** DEFAULT_BACKENDS are backend names that mean plain Claude; no chip is shown for them. */
+const DEFAULT_BACKENDS = new Set(["", "anthropic", "claude", "default"]);
+
+/**
+ * rowChips is the ordered chip list for a fleet row's last line, as
+ * {kind, text}: PR, #issue, agent, model, backend, scheduled. Empty when the
+ * window has nothing worth showing.
+ */
+export function rowChips(win) {
+  const chips = [];
+  const tags = rowTags(win);
+  for (const t of tags) if (t.startsWith("PR")) chips.push({ kind: "pr", text: t });
+  for (const t of tags) if (!t.startsWith("PR")) chips.push({ kind: "issue", text: t });
+  const agent = agentChip(win);
+  if (agent) chips.push({ kind: "agent-chip", text: agent });
+  const model = shortModel(win.model);
+  if (model) chips.push({ kind: "model-chip", text: model });
+  const backend = (win.backend ?? "").trim();
+  if (!DEFAULT_BACKENDS.has(backend.toLowerCase())) chips.push({ kind: "backend-chip", text: backend });
+  const sched = scheduledChip(win);
+  if (sched) chips.push({ kind: "sched-chip", text: sched });
+  return chips;
+}
+
 /** kindLabel is "task" for a window another agent started, "session" for one a person (or the phone/cron) started. */
 export function kindLabel(win) {
   return isDispatched(win) && !isDetached(win) ? "task" : "session";
