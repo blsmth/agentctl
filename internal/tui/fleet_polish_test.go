@@ -19,21 +19,25 @@ func TestRowRight_DoneBadgeAndAge(t *testing.T) {
 	fixedFleetNow(t)
 	since := sidebarNow.Add(-4 * time.Hour)
 	done := fleet.Row{StateSince: since, PRNumber: 105, AgentState: state.AgentState{Done: true}}
-	got := rowRight(done, fleetRightFull)
-	if plain := ansi.Strip(got); plain != " #105  4h" {
-		t.Errorf("done right = %q, want %q", plain, " #105  4h")
+	got := rowRight(done, fleetRightFull, fleetDisplay{})
+	if plain := ansi.Strip(got); plain != "             #105  4h" {
+		t.Errorf("done right = %q, want %q", plain, "             #105  4h")
 	}
 	if !strings.Contains(got, fleetDoneStyle.Render("#105")) {
 		t.Errorf("done badge should use the done style: %q", got)
 	}
 	working := fleet.Row{StateSince: sidebarNow.Add(-time.Second), PRNumber: 108, AgentState: state.AgentState{State: "working"}}
-	if plain := ansi.Strip(rowRight(working, fleetRightFull)); plain != " #108  1s" {
+	if plain := ansi.Strip(rowRight(working, fleetRightFull, fleetDisplay{})); plain != "             #108  1s" {
 		t.Errorf("working right = %q", plain)
 	}
-	if plain := ansi.Strip(rowRight(working, fleetRightPR)); plain != " #108" {
+	if plain := ansi.Strip(rowRight(working, fleetRightPR, fleetDisplay{})); plain != " #108" {
 		t.Errorf("PR-only right = %q", plain)
 	}
-	if got := rowRight(working, fleetRightNone); got != "" {
+	working.ModelName, working.ContextPct = "claude-opus-4-7", 42
+	if plain := ansi.Strip(rowRight(working, fleetRightModelPR, fleetDisplay{})); plain != "  opus  42%  #108" {
+		t.Errorf("model+PR right = %q", plain)
+	}
+	if got := rowRight(working, fleetRightNone, fleetDisplay{}); got != "" {
 		t.Errorf("no slots = %q", got)
 	}
 }

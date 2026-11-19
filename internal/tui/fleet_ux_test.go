@@ -66,15 +66,17 @@ func TestRowRightColumnsAlign(t *testing.T) {
 	fixedFleetNow(t)
 	ago := func(d time.Duration) time.Time { return sidebarNow.Add(-d) }
 	rows := []struct {
-		name string
-		pr   int
-		age  time.Duration
+		name  string
+		pr    int
+		age   time.Duration
+		model string
+		ctx   int
 	}{
-		{"no pr", 0, 4 * time.Minute},
-		{"two digit", 60, 25 * time.Minute},
-		{"four digit", 1025, 3 * time.Hour},
-		{"pr no age", 7, 0},
-		{"short age", 0, 40 * time.Second},
+		{"no pr", 0, 4 * time.Minute, "", 0},
+		{"two digit", 60, 25 * time.Minute, "claude-opus-4-7", 42},
+		{"four digit", 1025, 3 * time.Hour, "claude-sonnet-4-5-20250929", 7},
+		{"pr no age", 7, 0, "claude-haiku-4-5", 0},
+		{"short age", 0, 40 * time.Second, "claude-opus-4-7[1m]", 100},
 	}
 	m := newFleetModel()
 	m.termWidth, m.liveLeft = 56, 56
@@ -84,6 +86,7 @@ func TestRowRightColumnsAlign(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := testRow("worker", "s", "idle", "Reading a fairly long file name.go")
 			r.PRNumber = tt.pr
+			r.ModelName, r.ContextPct = tt.model, tt.ctx
 			if tt.age > 0 {
 				r.StateSince = ago(tt.age)
 			}
@@ -91,6 +94,14 @@ func TestRowRightColumnsAlign(t *testing.T) {
 			// Right edge: gutter, ✕ slot, space, then the age slot.
 			ageCol := cw - fleetSidebarRightGutter - 1 - 1 - 1
 			prCol := ageCol - fleetAgeSlotW - 1
+			ctxCol := prCol - fleetPRSlotW - 1
+			modelCol := ctxCol - fleetCtxSlotW - 1
+			if tt.ctx > 0 && string(line[ctxCol]) != "%" {
+				t.Errorf("ctx must end at col %d: %q", ctxCol, string(line))
+			}
+			if tt.model != "" && (line[modelCol] == ' ' || line[modelCol+1] != ' ') {
+				t.Errorf("model must end at col %d: %q", modelCol, string(line))
+			}
 			if tt.age > 0 && line[ageCol] == ' ' {
 				t.Errorf("age must end at col %d: %q", ageCol, string(line))
 			}
@@ -115,14 +126,21 @@ func TestRowRightColumnsAlign(t *testing.T) {
 
 func TestFitRightSlotsDegrades(t *testing.T) {
 	full := fleetRightFull.width() + 1 + fleetMinRecapWidth
+	model := fleetRightModelPR.width() + 1 + fleetMinRecapWidth
 	pr := fleetRightPR.width() + 1 + fleetMinRecapWidth
+	if full != 30 || model != 26 || pr != 14 {
+		t.Fatalf("slot thresholds = %d/%d/%d, want 30/26/14", full, model, pr)
+	}
 	tests := []struct {
 		available int
 		want      fleetRightSlots
 	}{
 		{full + 10, fleetRightFull},
 		{full, fleetRightFull},
-		{full - 1, fleetRightPR},
+		// The age drops first, then the model, and the PR last.
+		{full - 1, fleetRightModelPR},
+		{model, fleetRightModelPR},
+		{model - 1, fleetRightPR},
 		{pr, fleetRightPR},
 		{pr - 1, fleetRightNone},
 		{0, fleetRightNone},
@@ -293,7 +311,7 @@ func TestRowDetailActivityIsOneLine(t *testing.T) {
 			if r.Recap.Source != fleet.RecapActivity {
 				t.Fatalf("fixture: source = %v", r.Recap.Source)
 			}
-			d := rowDetail(r, 0, 56)
+			d := rowDetail(r, 0, 56, fleetDisplay{})
 			if len(d) != 1 {
 				t.Fatalf("activity expansion = %d lines, want 1: %+v", len(d), d)
 			}
@@ -305,7 +323,7 @@ func TestRowDetailActivityIsOneLine(t *testing.T) {
 	// Summary text still wraps.
 	r := testRow("w", "s", "working", "")
 	r.Recap = fleet.RecapLine{Text: long, Source: fleet.RecapSummary}
-	if n := len(rowDetail(r, 0, 56)); n != fleetDetailMaxLines {
+	if n := len(rowDetail(r, 0, 56, fleetDisplay{})); n != fleetDetailMaxLines {
 		t.Errorf("summary expansion = %d lines, want %d", n, fleetDetailMaxLines)
 	}
 }
@@ -348,7 +366,7 @@ func TestEmptyRowFallback(t *testing.T) {
 	if !strings.Contains(out, fleetEmptyStyle.Render("waiting for first prompt · 4m")) {
 		t.Errorf("fallback not rendered muted italic: %q", ansi.Strip(out))
 	}
-	if d := rowDetail(r, 0, 80); len(d) != 0 {
+	if d := rowDetail(r, 0, 80, fleetDisplay{}); len(d) != 0 {
 		t.Errorf("fallback must not expand: %+v", d)
 	}
 }
