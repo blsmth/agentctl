@@ -632,6 +632,16 @@ export function buildDispatchRequest(agent, projectDir, prompt, choice = {}, ima
   return { method: "POST", path: "/v1/dispatch", body };
 }
 
+/** buildShellRequest builds POST /v1/shell: a plain shell in the project's session. */
+export function buildShellRequest(projectDir) {
+  return { method: "POST", path: "/v1/shell", body: { project_dir: projectDir } };
+}
+
+/** canShell reports whether the "+" sheet may offer Shell (the server advertises it). */
+export function canShell(features) {
+  return hasFeature(features, "write") && hasFeature(features, "shell");
+}
+
 /** launchOptionsPath is GET /v1/launch-options for an agent in a project. */
 export function launchOptionsPath(agent, projectDir) {
   return `/v1/launch-options?agent=${encodeURIComponent(agent)}&project_dir=${encodeURIComponent(projectDir)}`;

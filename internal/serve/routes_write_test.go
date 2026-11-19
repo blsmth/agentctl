@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -161,6 +162,25 @@ func (f *fakeDispatcher) Dispatch(req DispatchRequest) (DispatchResult, error) {
 	return DispatchResult{WindowID: "@900", Session: req.Session, Branch: "agent/go-engineer/adhoc-1234"}, nil
 }
 
+type fakeShells struct {
+	mu      sync.Mutex
+	stopped bool
+	err     error
+	opened  [][2]string
+}
+
+func (f *fakeShells) SessionRunning(string) bool { return !f.stopped }
+func (f *fakeShells) IsShell(_, id string) bool  { return id == "@77" }
+func (f *fakeShells) NewShell(session, dir string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return "", f.err
+	}
+	f.opened = append(f.opened, [2]string{session, dir})
+	return "@77", nil
+}
+
 type writeEnv struct {
 	*testServer
 	fleet  *fakeFleet
@@ -169,6 +189,7 @@ type writeEnv struct {
 	inj    *fakeInjector
 	closer *fakeCloser
 	disp   *fakeDispatcher
+	shells *fakeShells
 	sweep  *fakeSweeper
 	tok    string
 	dev    Device
@@ -254,7 +275,7 @@ func newWriteEnvWith(t *testing.T, allowWrite bool, mutate func(*Options)) *writ
 	fleet.set(writeGroup("blocked", false, "go-engineer", "dispatch"))
 	e := &writeEnv{
 		fleet: fleet, panes: &syncPanes{text: dialogPane}, keys: &fakeKeys{},
-		inj: &fakeInjector{}, closer: &fakeCloser{}, disp: &fakeDispatcher{}, sweep: &fakeSweeper{},
+		inj: &fakeInjector{}, closer: &fakeCloser{}, disp: &fakeDispatcher{}, shells: &fakeShells{}, sweep: &fakeSweeper{},
 	}
 	dir := t.TempDir()
 	clock := newClock()
@@ -266,7 +287,7 @@ func newWriteEnvWith(t *testing.T, allowWrite bool, mutate func(*Options)) *writ
 		Config: config.ServeConfig{AllowWrite: allowWrite}, Dir: dir, Version: "test", CA: ca, Now: clock.Now,
 		Fleet: fleet, Panes: e.panes, Awake: &fakeHolder{},
 		Agents: fakeAgents{list: []AgentInfo{{Name: "go-engineer", Scope: "global"}}},
-		Keys:   e.keys, Injector: e.inj, Closer: e.closer, Dispatcher: e.disp,
+		Keys:   e.keys, Injector: e.inj, Closer: e.closer, Dispatcher: e.disp, Shells: e.shells,
 		MainPanes:      e.panes,
 		Sweep:          e.sweep.run,
 		GroupOrderPath: func() (string, error) { return filepath.Join(dir, "group-order.json"), nil },
@@ -357,6 +378,7 @@ func writeRoutes(t *testing.T) []struct{ name, path, body string } {
 		{"close", winPath + "/close", `{}`},
 		{"group-order", "/v1/group-order", `{"keys":["/code/proj"]}`},
 		{"dispatch", "/v1/dispatch", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"p"}`},
+		{"shell", "/v1/shell", `{"project_dir":"/code/proj"}`},
 		{"sweep-preview", "/v1/sweep/preview", `{"session":"agentctl-proj"}`},
 		{"sweep", "/v1/sweep", `{"session":"agentctl-proj"}`},
 		{"approval", "/v1/approvals/" + strings.Repeat("a", 32), `{"decision":"allow","payload_sha256":"x"}`},
@@ -368,7 +390,7 @@ func (e *writeEnv) assertNothingSent(t *testing.T) {
 	if n := len(e.keys.all()); n != 0 {
 		t.Errorf("%d keys sent", n)
 	}
-	if len(e.inj.got) != 0 || len(e.closer.closed) != 0 || len(e.disp.got) != 0 || len(e.sweep.all()) != 0 {
+	if len(e.inj.got) != 0 || len(e.closer.closed) != 0 || len(e.disp.got) != 0 || len(e.shells.opened) != 0 || len(e.sweep.all()) != 0 {
 		t.Errorf("action ran: inject %v close %v dispatch %v sweep %v", e.inj.got, e.closer.closed, e.disp.got, e.sweep.all())
 	}
 }
@@ -1155,6 +1177,73 @@ func TestReplyRejectsCommandPrefixes(t *testing.T) {
 		e.panes.set(idlePane)
 		if w := e.post(winPath+"/reply", `{"text":"run /tmp/x.sh! #1"}`); w.Code != 200 {
 			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+	})
+}
+
+func TestShell(t *testing.T) {
+	tests := []struct {
+		name   string
+		body   string
+		mutate func(*fakeShells)
+		status int
+		code   string
+	}{
+		{"unknown project", `{"project_dir":"/code/other"}`, nil, 400, codeUnknownProject},
+		{"relative dir", `{"project_dir":"proj"}`, nil, 400, codeUnknownProject},
+		{"empty dir", `{"project_dir":""}`, nil, 400, codeUnknownProject},
+		{"unknown field", `{"project_dir":"/code/proj","cmd":"x"}`, nil, 400, codeBadRequest},
+		{"session not running", `{"project_dir":"/code/proj"}`, func(f *fakeShells) { f.stopped = true }, 409, codeSessionNotRunning},
+		{"tmux failure", `{"project_dir":"/code/proj"}`, func(f *fakeShells) { f.err = errors.New("boom") }, 502, codeActionFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWriteEnv(t, true)
+			if tt.mutate != nil {
+				tt.mutate(e.shells)
+			}
+			w := e.post("/v1/shell", tt.body)
+			if w.Code != tt.status || errCode(t, w) != tt.code {
+				t.Fatalf("status %d: %s, want %d %s", w.Code, w.Body, tt.status, tt.code)
+			}
+			if len(e.shells.opened) != 0 {
+				t.Errorf("opened %v", e.shells.opened)
+			}
+		})
+	}
+
+	t.Run("hub session refused", func(t *testing.T) {
+		e := newWriteEnv(t, true)
+		g := writeGroup("idle", false, "go-engineer", "dispatch")
+		g.Session = tmux.HubSessionName
+		e.fleet.set(g)
+		if w := e.post("/v1/shell", `{"project_dir":"/code/proj"}`); w.Code != 400 {
+			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+		if len(e.shells.opened) != 0 {
+			t.Errorf("opened %v", e.shells.opened)
+		}
+	})
+
+	t.Run("happy path", func(t *testing.T) {
+		e := newWriteEnv(t, true)
+		w := e.post("/v1/shell", `{"project_dir":"/code/proj"}`)
+		if w.Code != 200 {
+			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+		var got map[string]string
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got["window_id"] != "@77" || got["session"] != "agentctl-proj" || len(got) != 2 {
+			t.Errorf("body = %v", got)
+		}
+		if len(e.shells.opened) != 1 || e.shells.opened[0] != [2]string{"agentctl-proj", "/code/proj"} {
+			t.Errorf("opened = %v", e.shells.opened)
+		}
+		lines := e.auditLines(t)
+		if len(lines) != 2 || lines[0].Result != auditAttemptResult || lines[1].Result != "ok" || lines[1].Window != "@77" || lines[1].Action != "shell" {
+			t.Errorf("audit = %+v", lines)
 		}
 	})
 }

@@ -183,6 +183,11 @@ const termPath = "/v1/sessions/agentctl-proj/windows/@523/terminal"
 
 func (e *termEnv) dial(t *testing.T, origin string, cookie bool) (*websocket.Conn, *http.Response, error) {
 	t.Helper()
+	return e.dialPath(t, termPath, origin, cookie)
+}
+
+func (e *termEnv) dialPath(t *testing.T, path, origin string, cookie bool) (*websocket.Conn, *http.Response, error) {
+	t.Helper()
 	h := http.Header{}
 	if origin != "" {
 		h.Set("Origin", origin)
@@ -192,7 +197,7 @@ func (e *termEnv) dial(t *testing.T, origin string, cookie bool) (*websocket.Con
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	c, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(e.http.URL, "http")+termPath, &websocket.DialOptions{HTTPHeader: h})
+	c, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(e.http.URL, "http")+path, &websocket.DialOptions{HTTPHeader: h})
 	if c != nil {
 		t.Cleanup(func() { _ = c.CloseNow() })
 	}
@@ -291,6 +296,25 @@ func TestTerminalUnknownWindow(t *testing.T) {
 	_, resp, err := e.dial(t, e.http.URL, true)
 	if err == nil || resp == nil || resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown window: err %v resp %v, want 404", err, resp)
+	}
+}
+
+// A shell window is not in the fleet, but the session's tmux vouches for it.
+func TestTerminalShellWindow(t *testing.T) {
+	e := newTermEnv(t, true)
+	c, _, err := e.dialPath(t, "/v1/sessions/agentctl-proj/windows/@77/terminal", e.http.URL, true)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	<-e.ptys.ch
+	readSize(t, c)
+	if got := e.tmux.created; len(got) != 1 || got[0] != "agentctl-proj @77" {
+		t.Errorf("viewer created for %v", got)
+	}
+	// A window that is neither a fleet window nor a shell stays a 404.
+	_, resp, err := e.dialPath(t, "/v1/sessions/agentctl-proj/windows/@78/terminal", e.http.URL, true)
+	if err == nil || resp == nil || resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("non-shell window: err %v resp %v, want 404", err, resp)
 	}
 }
 
