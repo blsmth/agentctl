@@ -1,7 +1,7 @@
 // Dispatch screen: agent + project + prompt, launch options, and a confirm sheet.
 import { ApiError, get, send } from "./api.js";
 import {
-  buildDispatchRequest, choiceLabel, confirmLines, launchOptionsPath, modelPicker, windowHash,
+  buildDispatchRequest, choiceLabel, confirmLines, defaultAgentFor, launchOptionsPath, modelPicker, windowHash,
 } from "./logic.js";
 import { clear, confirmSheet, h, toast } from "./ui.js";
 
@@ -88,14 +88,39 @@ export function mountDispatch(root, ctx, { dir } = {}) {
       if (seq === loadSeq) toast(`Could not load launch options: ${e.message}`, "error");
     }
   }
-  agent.addEventListener("change", loadOptions);
-  project.addEventListener("change", loadOptions);
+  // projects is the loaded /v1/projects list; userPickedAgent stops a later
+  // project change from overriding a hand-picked agent.
+  let projects = [];
+  let userPickedAgent = false;
+  let autoApplied = ""; // the agent applyDefaultAgent last selected, "" if none
+  function applyDefaultAgent() {
+    const names = [...agent.options].map((o) => o.value);
+    const def = defaultAgentFor(projects, project.value, names, userPickedAgent);
+    if (def) {
+      agent.value = def;
+      autoApplied = def;
+    } else if (autoApplied && !userPickedAgent && agent.value === autoApplied && names.length) {
+      // The previous project's default no longer applies: back to the first agent.
+      agent.value = names[0];
+      autoApplied = "";
+    }
+  }
+  agent.addEventListener("change", () => {
+    userPickedAgent = true;
+    loadOptions();
+  });
+  project.addEventListener("change", () => {
+    applyDefaultAgent();
+    loadOptions();
+  });
 
   Promise.all([get("/v1/agents"), get("/v1/projects")])
     .then(([a, p]) => {
       for (const x of a.agents ?? []) agent.append(h("option", { value: x.name }, x.name));
       for (const x of p.projects ?? []) project.append(h("option", { value: x.dir }, x.name));
-      if (dir && (p.projects ?? []).some((x) => x.dir === dir)) project.value = dir;
+      projects = p.projects ?? [];
+      if (dir && projects.some((x) => x.dir === dir)) project.value = dir;
+      applyDefaultAgent();
       submit.disabled = !ctx.hasFeature("write");
       return loadOptions();
     })
