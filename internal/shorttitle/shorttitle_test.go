@@ -77,6 +77,8 @@ func TestDue(t *testing.T) {
 	}{
 		{"no title yet", windowstate.ShortTitle{}, in, now, true},
 		{"nothing to title from", windowstate.ShortTitle{}, Input{Ticket: "only context"}, now, false},
+		{"ticket window without a summary", windowstate.ShortTitle{}, Input{Ticket: "Mobile app", LastText: "Edited a.go"}, now, false},
+		{"ticket window with a summary", windowstate.ShortTitle{}, Input{Ticket: "Mobile app", Summary: "Built the app.", LastText: "Edited a.go"}, now, true},
 		{"same input as last time", windowstate.ShortTitle{Title: "T", At: now.Add(-time.Hour), InputHash: in.Hash()}, in, now, false},
 		{"throttled within the interval", titled, in, now, false},
 		{"interval passed", titled, in, now.Add(RetitleInterval), true},

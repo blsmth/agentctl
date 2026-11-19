@@ -65,11 +65,17 @@ func (in Input) Hash() string {
 }
 
 // Due reports whether a window with title state st should be retitled from
-// in at now: there is something to title from, no backoff is pending, the
+// in at now: there is something to title from (for a ticket window, an
+// away_summary), no backoff is pending, the
 // input changed since the last attempt, and either the window has no title,
 // a new away_summary appeared, or RetitleInterval has passed.
 func Due(st windowstate.ShortTitle, in Input, now time.Time) bool {
 	if in.Empty() || now.Before(st.RetryAfter) {
+		return false
+	}
+	// A ticket window shows its "#N title" until an away_summary takes over
+	// the recap, so a title made before then would never be seen.
+	if normalize(in.Task) == "" && normalize(in.Ticket) != "" && normalize(in.Summary) == "" {
 		return false
 	}
 	if st.InputHash != "" && st.InputHash == in.Hash() {

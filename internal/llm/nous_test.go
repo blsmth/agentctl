@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/blsmth/agentctl/internal/config"
 )
@@ -177,5 +178,15 @@ func TestNewNousClient(t *testing.T) {
 	}
 	if _, err := NewNousClient("nous", config.BackendConfig{Kind: config.BackendKindNous}, ""); err == nil {
 		t.Error("empty model accepted")
+	}
+}
+
+func TestSnippetCapsRunes(t *testing.T) {
+	got := snippet(strings.Repeat("é", 300)+"\nsecond line", "")
+	if n := len([]rune(got)); n != 200 || !utf8.ValidString(got) {
+		t.Fatalf("snippet = %d runes, valid=%v", n, utf8.ValidString(got))
+	}
+	if got := snippet("bad key "+testKey, testKey); strings.Contains(got, testKey) {
+		t.Fatalf("snippet leaks the key: %q", got)
 	}
 }

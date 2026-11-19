@@ -175,8 +175,8 @@ func snippet(body, key string) string {
 	if key != "" {
 		s = strings.ReplaceAll(s, key, "[redacted]")
 	}
-	if len(s) > 200 {
-		s = s[:200]
+	if r := []rune(s); len(r) > 200 {
+		s = string(r[:200])
 	}
 	return s
 }
