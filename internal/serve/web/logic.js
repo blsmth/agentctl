@@ -114,9 +114,14 @@ export function buildGroupOrderRequest(keys) {
 export const SWEEP_PREVIEW_PATH = "/v1/sweep/preview";
 export const SWEEP_PATH = "/v1/sweep";
 
-/** buildSweepRequest previews (preview=true) or applies a sweep of a group's tmux session. */
-export function buildSweepRequest(session, preview) {
-  return { method: "POST", path: preview ? SWEEP_PREVIEW_PATH : SWEEP_PATH, body: { session } };
+/**
+ * buildSweepRequest previews (preview=true) or applies a sweep of a group's
+ * tmux session. includeBare (the "Full sweep" toggle) is only sent when on, so
+ * the body stays what older servers expect when it is off.
+ */
+export function buildSweepRequest(session, preview, includeBare = false) {
+  const body = includeBare ? { session, include_bare: true } : { session };
+  return { method: "POST", path: preview ? SWEEP_PREVIEW_PATH : SWEEP_PATH, body };
 }
 
 /**
@@ -143,14 +148,19 @@ export function sweepCounts(report) {
  * sweepConfirm builds the confirm sheet for a sweep preview, or returns null
  * when there is nothing to close: { title, lines, confirmLabel }.
  */
-export function sweepConfirm(report, project) {
+export function sweepConfirm(report, project, fullSweep = false) {
   const closed = report?.closed ?? [];
   if (closed.length === 0) return null;
   const list = closed.map((r) => (r.detail ? `${r.name}  (${r.detail})` : r.name)).join("\n");
   const lines = [`Close ${closed.length} ${closed.length === 1 ? "window" : "windows"}:\n${list}`];
   const rest = sweepCounts(report);
   if (rest) lines.push(rest);
-  return { title: `Sweep ${project || report.session}?`, lines, confirmLabel: `Close ${closed.length}` };
+  return {
+    title: `Sweep ${project || report.session}?`,
+    lines,
+    confirmLabel: `Close ${closed.length}`,
+    toggle: { label: "Full sweep (also close finished interactive sessions)", value: fullSweep },
+  };
 }
 
 /** nothingToSweep is the toast for a preview with no windows to close. */
@@ -173,34 +183,44 @@ export function sweptMessage(report) {
 
 /**
  * runSweep is the sweep confirm flow, with its effects injected: send(req)
- * performs a request, confirm(sheet) resolves true to apply, toast(text,
- * kind) reports. Returns "applied", "cancelled", "nothing" or "failed".
+ * performs a request, confirm(sheet) resolves true to apply, false to cancel,
+ * or { fullSweep: bool } when the user flipped the "Full sweep" toggle (the
+ * preview is then re-run with the new value), toast(text, kind) reports.
+ * Apply always uses the value of the preview the user confirmed. Returns
+ * "applied", "cancelled", "nothing" or "failed".
  */
-export async function runSweep(group, { send, confirm, toast }) {
+export async function runSweep(group, { send, confirm, toast, fullSweep = true }) {
   const project = group.project || group.session;
-  let preview;
-  try {
-    preview = await send(buildSweepRequest(group.session, true));
-  } catch (err) {
-    toast(err?.message || "Sweep preview failed", "error");
-    return "failed";
+  for (;;) {
+    let preview;
+    try {
+      preview = await send(buildSweepRequest(group.session, true, fullSweep));
+    } catch (err) {
+      toast(err?.message || "Sweep preview failed", "error");
+      return "failed";
+    }
+    const sheet = sweepConfirm(preview, project, fullSweep);
+    if (!sheet) {
+      toast(nothingToSweep(preview), "info");
+      return "nothing";
+    }
+    const answer = await confirm(sheet);
+    if (answer && typeof answer === "object") {
+      fullSweep = Boolean(answer.fullSweep);
+      continue;
+    }
+    if (!answer) return "cancelled";
+    let applied;
+    try {
+      applied = await send(buildSweepRequest(group.session, false, fullSweep));
+    } catch (err) {
+      toast(err?.message || "Sweep failed", "error");
+      return "failed";
+    }
+    const msg = sweptMessage(applied);
+    toast(msg.text, msg.kind);
+    return "applied";
   }
-  const sheet = sweepConfirm(preview, project);
-  if (!sheet) {
-    toast(nothingToSweep(preview), "info");
-    return "nothing";
-  }
-  if (!(await confirm(sheet))) return "cancelled";
-  let applied;
-  try {
-    applied = await send(buildSweepRequest(group.session, false));
-  } catch (err) {
-    toast(err?.message || "Sweep failed", "error");
-    return "failed";
-  }
-  const msg = sweptMessage(applied);
-  toast(msg.text, msg.kind);
-  return "applied";
 }
 
 /** LONG_PRESS_MS is how long a group header is held before a drag starts. */
@@ -576,16 +596,32 @@ export function hasFeature(features, name) {
  * the hash of the dialog the user was shown, so the server can refuse (409)
  * when the pane has moved on. key is an option key or "esc".
  */
-export function buildAnswerRequest(session, windowId, dialog, key) {
+export function buildAnswerRequest(session, windowId, dialog, key, selected) {
   if (!dialog || !dialog.hash) throw new Error("no dialog to answer");
-  if (dialog.multi && key !== "esc") throw new Error("multi-select: answer on the terminal");
+  const path = `${windowApiPath(session, windowId)}/answer`;
+  if (key === "submit") {
+    if (!dialog.multi || !dialog.submit) throw new Error("this question cannot be submitted from here");
+    return { method: "POST", path, body: { key, dialog_hash: dialog.hash, select: [...(selected ?? [])] } };
+  }
+  if (dialog.multi && key !== "esc") throw new Error("multi-select: tick boxes, then submit");
   const valid = key === "esc" || (dialog.options ?? []).some((o) => o.key === key);
   if (!valid) throw new Error(`key ${key} is not an option of this dialog`);
-  return {
-    method: "POST",
-    path: `${windowApiPath(session, windowId)}/answer`,
-    body: { key, dialog_hash: dialog.hash },
-  };
+  return { method: "POST", path, body: { key, dialog_hash: dialog.hash } };
+}
+
+/**
+ * checkboxChoices lists the tickable options of a multi-select dialog:
+ * [{key, label, checked}], with the "[ ]"/"[x]" marker stripped from the label
+ * and the free-text "Type something" row left out (it needs the terminal).
+ */
+export function checkboxChoices(dialog) {
+  const out = [];
+  for (const o of dialog?.options ?? []) {
+    const m = /^\[(.)\]\s+(.*)$/.exec(o.label ?? "");
+    if (!m || /^Type something/i.test(m[2])) continue;
+    out.push({ key: o.key, label: m[2], checked: m[1] !== " " });
+  }
+  return out;
 }
 
 /** MAX_IMAGES: the most images one message carries (the server enforces the same). */

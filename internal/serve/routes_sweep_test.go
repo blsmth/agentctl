@@ -204,3 +204,23 @@ func TestSweepDeadlineExtendsWriteTimeout(t *testing.T) {
 		t.Errorf("write deadline %v from now, want at least %v", until, sweeprun.Timeout)
 	}
 }
+
+func TestSweepHonorsIncludeBare(t *testing.T) {
+	e := newWriteEnv(t, true)
+	for _, body := range []string{`{"session":"agentctl-proj","include_bare":true}`, `{"session":"agentctl-proj","include_bare":false}`, `{"session":"agentctl-proj"}`} {
+		for _, path := range []string{"/v1/sweep/preview", "/v1/sweep"} {
+			if w := e.post(path, body); w.Code != http.StatusOK {
+				t.Fatalf("%s %s: %d %s", path, body, w.Code, w.Body)
+			}
+		}
+	}
+	calls := e.sweep.all()
+	if len(calls) != 6 {
+		t.Fatalf("calls = %+v", calls)
+	}
+	for i, c := range calls {
+		if want := i < 2; c.target.IncludeBare != want {
+			t.Errorf("call %d IncludeBare = %v, want %v", i, c.target.IncludeBare, want)
+		}
+	}
+}

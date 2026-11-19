@@ -27,6 +27,31 @@ type Dialog struct {
 	// "[ ]"/"[x]" checkboxes, so pressing a number toggles one and submits
 	// nothing. Only Esc is a safe remote answer.
 	Multi bool `json:"multi,omitempty"`
+	// Submit locates the row that confirms a multi-select question ("Next" or
+	// "Submit", an unnumbered row under the options). Nil when the pane shows
+	// no such row or no cursor, in which case the question cannot be submitted
+	// remotely.
+	Submit *SubmitRow `json:"submit,omitempty"`
+}
+
+// SubmitRow is the confirm row of a multi-select question.
+type SubmitRow struct {
+	Label string `json:"label"`
+	// Moves is how many arrow presses take the cursor from where it is to the
+	// row: positive = Down, negative = Up. Enter then confirms. Pressing an
+	// option's number toggles it without moving the cursor.
+	Moves int `json:"moves"`
+}
+
+// IsFreeText reports whether a multi-select option label is the free-text
+// "Type something" row, which needs typing and is not answerable by a toggle.
+func IsFreeText(label string) bool {
+	return strings.HasPrefix(strings.TrimSpace(checkboxLabel.ReplaceAllString(label, "")), "Type something")
+}
+
+// Checked reports whether a multi-select option label shows a ticked box.
+func Checked(label string) bool {
+	return checkboxLabel.MatchString(label) && !strings.HasPrefix(label, "[ ]")
 }
 
 var (
@@ -143,6 +168,11 @@ run:
 		}
 	}
 
+	var submit *SubmitRow
+	if multi {
+		submit = findSubmitRow(lines, cleaned, first, last)
+	}
+
 	start := dialogStart(lines, cleaned, first)
 	var kept []string
 	for _, l := range cleaned[start : last+1] {
@@ -151,7 +181,51 @@ run:
 		}
 	}
 	text := strings.Join(kept, "\n")
-	return Dialog{Text: text, Hash: HashDialogText(text), Options: opts, Multi: multi}, true
+	return Dialog{Text: text, Hash: HashDialogText(text), Options: opts, Multi: multi, Submit: submit}, true
+}
+
+// findSubmitRow locates the confirm row of a multi-select question within
+// lines[first..last] and the arrow presses from the ❯ cursor to it. The row
+// is the unnumbered line after the last checkbox option reading exactly
+// "Next" or "Submit" (a described last option's description is not it). Navigable rows are the
+// numbered options plus that row, in screen order. Returns nil without a
+// cursor or confirm row.
+func findSubmitRow(lines, cleaned []string, first, last int) *SubmitRow {
+	lastBox := -1
+	for i := first; i <= last; i++ {
+		if m := optionLine.FindStringSubmatch(cleaned[i]); m != nil && checkboxLabel.MatchString(m[2]) {
+			lastBox = i
+		}
+	}
+	if lastBox < 0 {
+		return nil
+	}
+	row, cursor, submitRow := -1, -1, -1
+	cursorFree := false
+	label := ""
+	for i := first; i <= last; i++ {
+		isOpt := optionLine.MatchString(cleaned[i])
+		isSubmit := !isOpt && submitRow < 0 && i > lastBox && (cleaned[i] == "Next" || cleaned[i] == "Submit")
+		if !isOpt && !isSubmit {
+			continue
+		}
+		row++
+		if isSubmit {
+			submitRow, label = row, cleaned[i]
+		}
+		if strings.HasPrefix(strings.TrimLeft(lines[i], boxChars+" \t"), "❯") {
+			cursor = row
+			if m := optionLine.FindStringSubmatch(cleaned[i]); m != nil {
+				cursorFree = IsFreeText(m[2])
+			}
+		}
+	}
+	// With the cursor on the free-text row, digits would be typed into its
+	// field instead of toggling boxes.
+	if submitRow < 0 || cursor < 0 || cursorFree {
+		return nil
+	}
+	return &SubmitRow{Label: label, Moves: submitRow - cursor}
 }
 
 // isRule reports whether a raw line is a horizontal separator (a run of ─,

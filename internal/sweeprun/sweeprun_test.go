@@ -8,11 +8,22 @@ import (
 	"testing"
 )
 
+func TestArgsIncludeBare(t *testing.T) {
+	want := []string{"sweep", "--session", "agentctl-x", "--json", "--dry-run", "--include-bare"}
+	if got := Args("agentctl-x", true, true); !slices.Equal(got, want) {
+		t.Errorf("Args = %v, want %v", got, want)
+	}
+	want = []string{"sweep", "--session", "agentctl-x", "--json", "--include-bare"}
+	if got := Args("agentctl-x", false, true); !slices.Equal(got, want) {
+		t.Errorf("Args = %v, want %v", got, want)
+	}
+}
+
 func TestArgs(t *testing.T) {
-	if got, want := Args("agentctl-x", true), []string{"sweep", "--session", "agentctl-x", "--json", "--dry-run"}; !slices.Equal(got, want) {
+	if got, want := Args("agentctl-x", true, false), []string{"sweep", "--session", "agentctl-x", "--json", "--dry-run"}; !slices.Equal(got, want) {
 		t.Errorf("dry run args = %v, want %v", got, want)
 	}
-	if got, want := Args("agentctl-x", false), []string{"sweep", "--session", "agentctl-x", "--json"}; !slices.Equal(got, want) {
+	if got, want := Args("agentctl-x", false, false), []string{"sweep", "--session", "agentctl-x", "--json"}; !slices.Equal(got, want) {
 		t.Errorf("apply args = %v, want %v", got, want)
 	}
 }

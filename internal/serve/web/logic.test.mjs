@@ -9,7 +9,7 @@ import {
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
-  actionsWithQueue, buildAnswerRequest, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
+  actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
   defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
@@ -349,6 +349,20 @@ console.log("ok: resolved text");
   const multi = { ...dialog, multi: true };
   assert.throws(() => buildAnswerRequest("s", "@1", multi, "1"), /multi-select/);
   assert.equal(buildAnswerRequest("s", "@1", multi, "esc").body.key, "esc");
+  // Multi-select submit: one request carrying the chosen keys.
+  assert.throws(() => buildAnswerRequest("s", "@1", multi, "submit", ["1"]), /cannot be submitted/);
+  const withSubmit = { ...multi, submit: { label: "Next", moves: 3 } };
+  const sub = buildAnswerRequest("s", "@1", withSubmit, "submit", ["2", "1"]);
+  assert.deepEqual(sub.body, { key: "submit", dialog_hash: "h", select: ["2", "1"] });
+  assert.equal(buildAnswerRequest("s", "@1", withSubmit, "submit").body.select.length, 0);
+  assert.throws(() => buildAnswerRequest("s", "@1", dialog, "submit", []), /cannot be submitted/);
+  assert.deepEqual(
+    checkboxChoices({ options: [
+      { key: "1", label: "[ ] A" }, { key: "2", label: "[✔] B" }, { key: "3", label: "[ ] Type something" },
+      { key: "4", label: "Chat about this" },
+    ] }),
+    [{ key: "1", label: "A", checked: false }, { key: "2", label: "B", checked: true }],
+  );
   assert.equal(dialogQuestion({ text: "Edit file\nfoo.go\n1. Yes\n2. No" }), "foo.go");
   assert.equal(dialogQuestion({ text: "" }), "");
   assert.equal(focusedOption("│ \x1b[36m❯ 1. Yes\x1b[0m │\n│   2. No │", dialog), "1");
@@ -452,6 +466,8 @@ console.log("ok: resolved text");
   const write = ["fleet", "write"];
   assert.deepEqual(buildSweepRequest("agentctl-shop", true), { method: "POST", path: "/v1/sweep/preview", body: { session: "agentctl-shop" } });
   assert.deepEqual(buildSweepRequest("agentctl-shop", false), { method: "POST", path: "/v1/sweep", body: { session: "agentctl-shop" } });
+  assert.deepEqual(buildSweepRequest("agentctl-shop", true, true), { method: "POST", path: "/v1/sweep/preview", body: { session: "agentctl-shop", include_bare: true } });
+  assert.deepEqual(buildSweepRequest("agentctl-shop", false, true).body, { session: "agentctl-shop", include_bare: true });
   assert.equal(canSweep({ session: "agentctl-shop", dir: "/x" }, write), true);
   assert.equal(canSweep({ session: "agentctl-shop", dir: "/x" }, ["fleet"]), false, "needs write");
   assert.equal(canSweep({ session: "agentctl-hub", dir: "/x" }, write), false, "never the hub");
@@ -465,7 +481,9 @@ console.log("ok: resolved text");
     title: "Sweep shop?",
     lines: ["Close 2 windows:\na  (done)\nb", "1 needs attention, 2 in progress"],
     confirmLabel: "Close 2",
+    toggle: { label: "Full sweep (also close finished interactive sessions)", value: false },
   });
+  assert.equal(sweepConfirm(preview, "shop", true).toggle.value, true);
   assert.equal(sweepConfirm({ session: "s", closed: [], attention: [row("c")] }, "shop"), null);
   assert.equal(nothingToSweep({ closed: [], attention: [row("c"), row("d")] }), "Nothing to sweep (2 need attention)");
   assert.equal(nothingToSweep({ closed: [] }), "Nothing to sweep");
@@ -514,6 +532,39 @@ console.log("ok: resolved text");
   r = await flow({ previewRep: preview, confirmed: true, failApply: 'sweep s: no tmux session "s"' });
   assert.equal(r.result, "failed");
   assert.deepEqual(r.toasts, [['sweep s: no tmux session "s"', "error"]]);
+
+  // Full sweep defaults on, flipping the toggle re-runs the preview, and the
+  // apply uses the value of the preview that was confirmed.
+  const bodies = [];
+  const answers = [{ fullSweep: false }, { fullSweep: true }, true];
+  const sheetsSeen = [];
+  const res = await runSweep({ session: "agentctl-shop", project: "shop" }, {
+    send: async (req) => {
+      bodies.push([req.path, req.body.include_bare === true]);
+      return req.path.endsWith("/preview") ? preview : { closed: [row("a")] };
+    },
+    confirm: async (sheet) => {
+      sheetsSeen.push(sheet.toggle.value);
+      return answers.shift();
+    },
+    toast: () => {},
+  });
+  assert.equal(res, "applied");
+  assert.deepEqual(bodies, [
+    ["/v1/sweep/preview", true],
+    ["/v1/sweep/preview", false],
+    ["/v1/sweep/preview", true],
+    ["/v1/sweep", true],
+  ]);
+  assert.deepEqual(sheetsSeen, [true, false, true]);
+  const bodies2 = [];
+  const answers2 = [{ fullSweep: false }, true];
+  await runSweep({ session: "s" }, {
+    send: async (req) => { bodies2.push([req.path, req.body.include_bare === true]); return req.path.endsWith("/preview") ? preview : { closed: [] }; },
+    confirm: async () => answers2.shift(),
+    toast: () => {},
+  });
+  assert.deepEqual(bodies2.at(-1), ["/v1/sweep", false], "apply matches the previewed toggle");
   console.log("ok: sweep helpers and confirm flow");
 }
 for (const f of fixtures.defaultAgent) {

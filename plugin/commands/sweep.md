@@ -12,6 +12,6 @@ Because it closes windows, preview first:
 - `json` → add `--json`.
 - `--session <name>` → pass through (required when not running inside tmux).
 
-Examples: `bare now` → `agentctl sweep --include-bare`; `json` → `agentctl sweep --dry-run --json`.
+Examples: `bare now` → `agentctl sweep --include-bare` (also closes finished interactive windows); `json` → `agentctl sweep --dry-run --json`.
 
 After a real run, summarize what was closed and list the windows sweep reported as needing attention, with the action each needs.

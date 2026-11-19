@@ -19,6 +19,7 @@ import (
 	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/launchopts"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/panestate"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/uploads"
@@ -31,6 +32,10 @@ const (
 	maxPromptRunes = 32000
 	// escKey is the answer key that dismisses a dialog.
 	escKey = "esc"
+	// submitKey is the answer key that confirms a multi-select question: it
+	// ticks the boxes named in answerIn.Select, then moves to and presses its
+	// Submit/Next row.
+	submitKey = "submit"
 	// answeredTTL is how long an answered dialog's hash is remembered per
 	// window. Claude Code redraws some time after the key lands; until then
 	// a second answer (a double tap, a second phone) would re-capture the
@@ -195,6 +200,9 @@ func (s *Server) capturePane(rw resolved) (paneBody, outcome, bool) {
 type answerIn struct {
 	Key        string `json:"key"`
 	DialogHash string `json:"dialog_hash"`
+	// Select is the full set of option keys that should end up ticked when
+	// Key is "submit" on a multi-select question.
+	Select []string `json:"select,omitempty"`
 }
 
 // handleAnswer answers a permission dialog. The pane is re-captured and
@@ -209,7 +217,7 @@ type answerIn struct {
 // the answer waits (up to answerSettle) for the dialog to leave the pane
 // before releasing the lock.
 func (s *Server) handleAnswer(r *http.Request, in answerIn, a *auditEntry) outcome {
-	if in.Key != escKey && !answerKeyRE.MatchString(in.Key) {
+	if in.Key != escKey && in.Key != submitKey && !answerKeyRE.MatchString(in.Key) {
 		return failure(http.StatusBadRequest, codeBadRequest, `key must be a dialog option key or "esc"`)
 	}
 	if !dialogHashRE.MatchString(in.DialogHash) {
@@ -232,18 +240,21 @@ func (s *Server) handleAnswer(r *http.Request, in answerIn, a *auditEntry) outco
 	if s.answered.recent(winKey, in.DialogHash, s.now()) {
 		return failure(http.StatusConflict, codeAlreadyAnswered, "this dialog was already answered; refresh and try again")
 	}
-	key := in.Key
-	if key == escKey {
-		key = "Escape"
-	} else if pane.Dialog.Multi {
-		return failure(http.StatusConflict, codeDialogChanged, "this is a multi-select question: answer it on the terminal")
-	} else if !hasOption(pane, key) {
-		return failure(http.StatusConflict, codeDialogChanged, fmt.Sprintf("%q is not an option of this dialog", in.Key))
+	keys, out, ok := answerKeys(pane.Dialog, in)
+	if !ok {
+		return out
 	}
 	s.auditAttempt(*a)
-	if err := s.keys.SendKey(rw.target(), key); err != nil {
-		logging.Warn("serve: answer %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
-		return failure(http.StatusBadGateway, codeActionFailed, "sending the key failed")
+	for _, key := range keys {
+		if err := s.keys.SendKey(rw.target(), key); err != nil {
+			logging.Warn("serve: answer %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
+			return failure(http.StatusBadGateway, codeActionFailed, "sending the key failed")
+		}
+	}
+	if pane.Dialog.Multi && in.Key != escKey && in.Key != submitKey {
+		// A lone toggle: toggling back restores an earlier hash, which must
+		// not read as "already answered", and the dialog stays up.
+		return success(okBody)
 	}
 	s.answered.remember(winKey, in.DialogHash, s.now())
 	s.awaitDialogGone(rw, in.DialogHash)
@@ -304,8 +315,70 @@ func (d *answeredDialogs) remember(key, hash string, now time.Time) {
 	d.m[key] = answeredDialog{hash: hash, at: now}
 }
 
-func hasOption(pane paneBody, key string) bool {
-	for _, o := range pane.Dialog.Options {
+// answerKeys is the tmux key sequence for an answer to dialog d, or a 409
+// when the answer does not fit it.
+func answerKeys(d *panestate.Dialog, in answerIn) ([]string, outcome, bool) {
+	switch {
+	case in.Key == escKey:
+		return []string{"Escape"}, outcome{}, true
+	case in.Key == submitKey:
+		return submitKeys(d, in.Select)
+	case d.Multi && !isToggleKey(d, in.Key):
+		return nil, failure(http.StatusConflict, codeDialogChanged, fmt.Sprintf("%q is not a checkbox of this dialog", in.Key)), false
+	case !hasOptionIn(d, in.Key):
+		return nil, failure(http.StatusConflict, codeDialogChanged, fmt.Sprintf("%q is not an option of this dialog", in.Key)), false
+	}
+	return []string{in.Key}, outcome{}, true
+}
+
+// submitKeys toggles every checkbox whose state differs from want, then moves
+// the cursor to the question's Submit/Next row and presses Enter. A number key
+// toggles without moving the cursor, so the arrow count read from the pane
+// stays right after the toggles.
+func submitKeys(d *panestate.Dialog, want []string) ([]string, outcome, bool) {
+	if !d.Multi || d.Submit == nil {
+		return nil, failure(http.StatusConflict, codeDialogChanged, "this question has no submit row to confirm remotely"), false
+	}
+	desired := make(map[string]bool, len(want))
+	for _, k := range want {
+		desired[k] = true
+	}
+	var keys []string
+	for _, o := range d.Options {
+		if !strings.HasPrefix(o.Label, "[") || panestate.IsFreeText(o.Label) {
+			// Free text ("Type something") is never toggled remotely.
+			continue
+		}
+		if desired[o.Key] != panestate.Checked(o.Label) {
+			keys = append(keys, o.Key)
+		}
+		delete(desired, o.Key)
+	}
+	if len(desired) > 0 {
+		return nil, failure(http.StatusConflict, codeDialogChanged, "selection names an option this dialog does not have"), false
+	}
+	move, n := "Down", d.Submit.Moves
+	if n < 0 {
+		move, n = "Up", -n
+	}
+	for i := 0; i < n; i++ {
+		keys = append(keys, move)
+	}
+	return append(keys, "Enter"), outcome{}, true
+}
+
+// isToggleKey reports whether key is a checkbox option other than free text.
+func isToggleKey(d *panestate.Dialog, key string) bool {
+	for _, o := range d.Options {
+		if o.Key == key {
+			return strings.HasPrefix(o.Label, "[") && !panestate.IsFreeText(o.Label)
+		}
+	}
+	return false
+}
+
+func hasOptionIn(d *panestate.Dialog, key string) bool {
+	for _, o := range d.Options {
 		if o.Key == key {
 			return true
 		}
