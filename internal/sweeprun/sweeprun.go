@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -154,21 +155,12 @@ func Env(t Target, parent []string) []string {
 	out := make([]string, 0, len(parent)+1)
 	for _, kv := range parent {
 		name, _, _ := strings.Cut(kv, "=")
-		if contains(stripEnv, name) {
+		if slices.Contains(stripEnv, name) {
 			continue
 		}
 		out = append(out, kv)
 	}
 	return append(out, "AGENTCTL_RUNTIME_DIR="+t.RuntimeDir)
-}
-
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 // Parse turns the subprocess result into a report. A failed run reports the

@@ -76,8 +76,8 @@ func (s *Server) registerWrite(rt *Router) {
 	rt.Write("POST /v1/dispatch", writeRoute(s, "dispatch", s.handleDispatch))
 	// The preview only reads, but it runs a subprocess that shells out to
 	// git and gh for every finished window, and is only useful with apply.
-	rt.Write("POST /v1/sweep/preview", writeRoute(s, "sweep-preview", s.handleSweepPreview))
-	rt.Write("POST /v1/sweep", writeRoute(s, "sweep", s.handleSweep))
+	rt.Write("POST /v1/sweep/preview", sweepDeadline(writeRoute(s, "sweep-preview", s.handleSweepPreview)))
+	rt.Write("POST /v1/sweep", sweepDeadline(writeRoute(s, "sweep", s.handleSweep)))
 }
 
 // windowLocks serializes write actions per window, so two phones cannot

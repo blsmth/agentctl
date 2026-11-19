@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/blsmth/agentctl/internal/logging"
@@ -23,6 +24,22 @@ type sweepIn struct {
 type sweepOut struct {
 	Project string `json:"project"`
 	sweeprun.Report
+}
+
+// sweepWriteDeadline is how long a sweep request may take to answer: a sweep
+// runs for up to sweeprun.Timeout, past the server's 30s WriteTimeout.
+const sweepWriteDeadline = sweeprun.Timeout + 15*time.Second
+
+// sweepDeadline extends the write deadline for a sweep route, so a slow sweep
+// (gh and git lookups per finished window) still delivers its response
+// instead of the phone seeing a network error after the apply ran.
+func sweepDeadline(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(sweepWriteDeadline)); err != nil {
+			logging.Debug("serve: extending sweep write deadline: %v", err)
+		}
+		h(w, r)
+	}
 }
 
 // sweepGuard allows one sweep (preview or apply) per session at a time, so a

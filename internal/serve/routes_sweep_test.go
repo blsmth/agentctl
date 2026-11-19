@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/sweeprun"
 )
@@ -176,5 +178,29 @@ func TestSweepDefaultSeamRefusesTestBinary(t *testing.T) {
 	w := e.post("/v1/sweep/preview", `{"session":"agentctl-proj"}`)
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+}
+
+// deadlineRecorder records the write deadline a handler sets.
+type deadlineRecorder struct {
+	http.ResponseWriter
+	deadline time.Time
+}
+
+func (d *deadlineRecorder) SetWriteDeadline(t time.Time) error {
+	d.deadline = t
+	return nil
+}
+
+// A sweep can outlast the server's 30s WriteTimeout, so its routes extend it.
+func TestSweepDeadlineExtendsWriteTimeout(t *testing.T) {
+	rec := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
+	called := false
+	sweepDeadline(func(http.ResponseWriter, *http.Request) { called = true })(rec, httptest.NewRequest("POST", "/v1/sweep", nil))
+	if !called {
+		t.Fatal("handler not called")
+	}
+	if until := time.Until(rec.deadline); until < sweeprun.Timeout {
+		t.Errorf("write deadline %v from now, want at least %v", until, sweeprun.Timeout)
 	}
 }
