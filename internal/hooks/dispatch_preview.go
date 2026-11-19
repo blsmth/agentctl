@@ -109,23 +109,44 @@ func dispatchNeedsApproval(command, mode string) bool {
 	}
 }
 
-// segmentIsReview reports whether a dispatch segment carries --review-pr
-// (either "--review-pr N" or "--review-pr=N") as a flag, not as a quoted word
-// or the value of another flag.
+// segmentIsReview reports whether a dispatch segment is a PR review
+// dispatch: its last --review-pr flag ("--review-pr N" or "--review-pr=N"; the
+// CLI keeps the last one) carries a literal positive integer. A missing,
+// zero, non-numeric or shell-expanded value is not a review: 0 means "unset"
+// to dispatch, so "--review-pr=0" would otherwise exempt an ordinary
+// dispatch. Quoted words and values of other flags are never the flag.
 func segmentIsReview(seg []cmdToken) bool {
+	found, ok := false, false
 	for i := 0; i < len(seg); i++ {
 		t := seg[i]
 		if t.quoted {
 			continue
 		}
 		switch {
-		case t.text == "--review-pr" || strings.HasPrefix(t.text, "--review-pr="):
-			return true
+		case t.text == "--review-pr":
+			found, ok = true, false
+			if i+1 < len(seg) {
+				ok = positiveLiteral(seg[i+1])
+				i++
+			}
+		case strings.HasPrefix(t.text, "--review-pr="):
+			found = true
+			ok = !t.expands && positiveInt(strings.TrimPrefix(t.text, "--review-pr="))
 		case isDispatchValueFlag(t.text):
 			i++ // skip the value
 		}
 	}
-	return false
+	return found && ok
+}
+
+// positiveLiteral reports whether t is a non-expanding positive integer.
+func positiveLiteral(t cmdToken) bool {
+	return !t.expands && positiveInt(t.text)
+}
+
+func positiveInt(s string) bool {
+	n, err := strconv.Atoi(s)
+	return err == nil && n > 0
 }
 
 // cmdToken is a shell word plus whether any part of it was quoted.
@@ -545,7 +566,8 @@ func tokenizeCommand(s string) []string {
 }
 
 // tokenizeQuoted is tokenizeCommand but records whether each token had any
-// quoted part, and keeps empty quoted tokens ("").
+// quoted part, and keeps empty quoted tokens (""). Unquoted shell comments are
+// dropped and an unquoted newline becomes a ";" token.
 func tokenizeQuoted(s string) []cmdToken {
 	var tokens []cmdToken
 	var cur strings.Builder
@@ -578,8 +600,23 @@ func tokenizeQuoted(s string) []cmdToken {
 			inQuote = true
 			hadQuote = true
 			quoteChar = c
-		case ' ', '\t', '\n':
+		case ' ', '\t':
 			flush()
+		case '\n':
+			// An unquoted newline ends the command like ';' does, so a
+			// segment never runs on into the next line.
+			flush()
+			tokens = append(tokens, cmdToken{text: ";"})
+		case '#':
+			if cur.Len() > 0 || hadQuote {
+				cur.WriteByte(c) // mid-word, e.g. a#b: not a comment
+				continue
+			}
+			// A comment runs to the end of the line; the shell never passes
+			// it to the command, so neither does the tokenizer.
+			for i+1 < len(s) && s[i+1] != '\n' {
+				i++
+			}
 		case '\\':
 			// Outside quotes a backslash makes the next character literal
 			// ('don'\''t' is don't), and backslash-newline is a line

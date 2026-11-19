@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"slices"
 	"strconv"
 	"testing"
 
@@ -134,11 +135,81 @@ func TestDispatchNeedsApproval(t *testing.T) {
 		{"agentctl dispatch --review-pr 5", config.DispatchApprovalAll, true},
 		{"agentctl dispatch --issue 3", config.DispatchApprovalOff, false},
 		{"agentctl dispatch --review-pr 5", "bogus", true},
+		// --review-pr must carry a literal positive PR number: 0 means
+		// "unset" to dispatch and would run an ordinary dispatch.
+		{"agentctl dispatch --agent go-engineer --prompt evil --review-pr=0", config.DispatchApprovalNonReview, true},
+		{"agentctl dispatch --agent go-engineer --prompt evil --review-pr 0", config.DispatchApprovalNonReview, true},
+		{"agentctl dispatch --agent go-engineer --prompt evil --review-pr", config.DispatchApprovalNonReview, true},
+		{"agentctl dispatch --review-pr $N", config.DispatchApprovalNonReview, true},
+		{"agentctl dispatch --review-pr=$N", config.DispatchApprovalNonReview, true},
+		{"agentctl dispatch --review-pr abc", config.DispatchApprovalNonReview, true},
+		{"agentctl dispatch --review-pr --prompt evil", config.DispatchApprovalNonReview, true},
+		{`agentctl dispatch --review-pr "7"`, config.DispatchApprovalNonReview, false},
+		// The CLI keeps the last occurrence.
+		{"agentctl dispatch --review-pr 5 --review-pr 0", config.DispatchApprovalNonReview, true},
+		{"agentctl dispatch --review-pr 0 --review-pr 5", config.DispatchApprovalNonReview, false},
+		// A comment or a newline ends the dispatch segment.
+		{"agentctl dispatch --agent go-engineer --prompt evil # --review-pr 5", config.DispatchApprovalNonReview, true},
+		{"agentctl dispatch --agent go-engineer --prompt evil\necho --review-pr 5", config.DispatchApprovalNonReview, true},
+		{"agentctl dispatch --review-pr 5 # reviewing the tmux change", config.DispatchApprovalNonReview, false},
+		{"agentctl dispatch --review-pr 5\necho done", config.DispatchApprovalNonReview, false},
+		// A backslash-newline continuation keeps the segment going.
+		{"agentctl dispatch \\\n  --review-pr 5", config.DispatchApprovalNonReview, false},
+		{"agentctl dispatch --agent go-engineer \\\n  --prompt evil", config.DispatchApprovalNonReview, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.mode+"/"+tt.command, func(t *testing.T) {
 			if got := dispatchNeedsApproval(tt.command, tt.mode); got != tt.want {
 				t.Errorf("dispatchNeedsApproval = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// A shell comment or a newline must end the dispatch segment for help
+// detection too: neither "# -h" nor a -h on the next line makes the dispatch
+// a help lookup.
+func TestIsAgentctlDispatch_CommentAndNewlineEndSegment(t *testing.T) {
+	for _, cmd := range []string{
+		"agentctl dispatch -a x --prompt evil # -h",
+		"agentctl dispatch -a x --prompt evil #--help",
+		"agentctl dispatch -a x --prompt evil\necho -h",
+	} {
+		if !isAgentctlDispatch(cmd) {
+			t.Errorf("isAgentctlDispatch(%q) = false, want true", cmd)
+		}
+	}
+	for _, cmd := range []string{
+		"agentctl dispatch -h # show flags",
+		"agentctl dispatch -a 'x#y' -h",
+	} {
+		if isAgentctlDispatch(cmd) {
+			t.Errorf("isAgentctlDispatch(%q) = true, want false (help lookup)", cmd)
+		}
+	}
+}
+
+func TestTokenizeQuoted_CommentsAndNewlines(t *testing.T) {
+	tests := []struct {
+		in   string
+		want []string
+	}{
+		{"a b # c d", []string{"a", "b"}},
+		{"a # c\nb", []string{"a", ";", "b"}},
+		{"a#b c", []string{"a#b", "c"}},
+		{"a '# not a comment'", []string{"a", "# not a comment"}},
+		{"a \\# b", []string{"a", "#", "b"}},
+		{"a 'x\ny'", []string{"a", "x\ny"}},
+		{"a \\\nb", []string{"a", "b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			var got []string
+			for _, tok := range tokenizeQuoted(tt.in) {
+				got = append(got, tok.text)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("tokenizeQuoted(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}
