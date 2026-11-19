@@ -152,6 +152,13 @@ func TestDispatchNeedsApproval(t *testing.T) {
 		{"agentctl dispatch --agent go-engineer --prompt evil # --review-pr 5", config.DispatchApprovalNonReview, true},
 		{"agentctl dispatch --agent go-engineer --prompt evil\necho --review-pr 5", config.DispatchApprovalNonReview, true},
 		{"agentctl dispatch --review-pr 5 # reviewing the tmux change", config.DispatchApprovalNonReview, false},
+		// '#' right after an unquoted metacharacter also starts a comment.
+		{"agentctl dispatch --prompt evil -a x;# --review-pr 5", config.DispatchApprovalNonReview, true},
+		{"(agentctl dispatch --prompt evil -a x)# --review-pr 5", config.DispatchApprovalNonReview, true},
+		{"agentctl dispatch --prompt evil -a x&# --review-pr 5", config.DispatchApprovalNonReview, true},
+		{"agentctl dispatch --prompt evil -a x|# --review-pr 5", config.DispatchApprovalNonReview, true},
+		{"agentctl dispatch --review-pr 5 --prompt 'see #12'", config.DispatchApprovalNonReview, false},
+		{"agentctl dispatch --prompt 'x;'# --review-pr 5", config.DispatchApprovalNonReview, false},
 		{"agentctl dispatch --review-pr 5\necho done", config.DispatchApprovalNonReview, false},
 		// A backslash-newline continuation keeps the segment going.
 		{"agentctl dispatch \\\n  --review-pr 5", config.DispatchApprovalNonReview, false},
@@ -174,6 +181,9 @@ func TestIsAgentctlDispatch_CommentAndNewlineEndSegment(t *testing.T) {
 		"agentctl dispatch -a x --prompt evil # -h",
 		"agentctl dispatch -a x --prompt evil #--help",
 		"agentctl dispatch -a x --prompt evil\necho -h",
+		"agentctl dispatch -a x --prompt evil;# -h",
+		"agentctl dispatch -a x --prompt evil&# -h",
+		"(agentctl dispatch -a x --prompt evil)# -h",
 	} {
 		if !isAgentctlDispatch(cmd) {
 			t.Errorf("isAgentctlDispatch(%q) = false, want true", cmd)
@@ -197,6 +207,11 @@ func TestTokenizeQuoted_CommentsAndNewlines(t *testing.T) {
 		{"a b # c d", []string{"a", "b"}},
 		{"a # c\nb", []string{"a", ";", "b"}},
 		{"a#b c", []string{"a#b", "c"}},
+		{"a;# c", []string{"a;"}},
+		{"a)#c\nb", []string{"a)", ";", "b"}},
+		{"'a;'#b", []string{"a;#b"}},
+		{"a\\;#b", []string{"a;#b"}},
+		{"a 'see #12'", []string{"a", "see #12"}},
 		{"a '# not a comment'", []string{"a", "# not a comment"}},
 		{"a \\# b", []string{"a", "#", "b"}},
 		{"a 'x\ny'", []string{"a", "x\ny"}},

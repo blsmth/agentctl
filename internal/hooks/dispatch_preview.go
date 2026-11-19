@@ -573,13 +573,18 @@ func tokenizeQuoted(s string) []cmdToken {
 	var cur strings.Builder
 	inQuote, hadQuote, expands := false, false, false
 	var quoteChar byte
+	// afterMeta is true when the last byte written to cur was an unquoted
+	// shell metacharacter (;&|()<>). The tokenizer keeps those inside words,
+	// but to the shell they end a word, so a '#' right after one starts a
+	// comment ("x;# ...") even though cur is not empty.
+	afterMeta := false
 
 	flush := func() {
 		if cur.Len() > 0 || hadQuote {
 			tokens = append(tokens, cmdToken{text: cur.String(), quoted: hadQuote, expands: expands})
 		}
 		cur.Reset()
-		hadQuote, expands = false, false
+		hadQuote, expands, afterMeta = false, false, false
 	}
 
 	for i := 0; i < len(s); i++ {
@@ -592,6 +597,7 @@ func tokenizeQuoted(s string) []cmdToken {
 					expands = true
 				}
 				cur.WriteByte(c)
+				afterMeta = false
 			}
 			continue
 		}
@@ -608,12 +614,14 @@ func tokenizeQuoted(s string) []cmdToken {
 			flush()
 			tokens = append(tokens, cmdToken{text: ";"})
 		case '#':
-			if cur.Len() > 0 || hadQuote {
+			if (cur.Len() > 0 || hadQuote) && !afterMeta {
 				cur.WriteByte(c) // mid-word, e.g. a#b: not a comment
 				continue
 			}
 			// A comment runs to the end of the line; the shell never passes
-			// it to the command, so neither does the tokenizer.
+			// it to the command, so neither does the tokenizer. Bytes already
+			// in cur ("x;") stay, so takeSegment still sees an attached
+			// terminator.
 			for i+1 < len(s) && s[i+1] != '\n' {
 				i++
 			}
@@ -628,16 +636,19 @@ func tokenizeQuoted(s string) []cmdToken {
 					// word, never a redirection or control operator.
 					cur.WriteByte(s[i])
 					hadQuote = true
+					afterMeta = false
 				}
 				continue
 			}
 			expands = true
 			cur.WriteByte(c)
+			afterMeta = false
 		default:
 			if c == '$' || c == '`' {
 				expands = true
 			}
 			cur.WriteByte(c)
+			afterMeta = strings.IndexByte(";&|()<>", c) >= 0
 		}
 	}
 	flush()
