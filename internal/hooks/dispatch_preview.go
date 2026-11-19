@@ -227,10 +227,12 @@ func dispatchSegments(command string) [][]cmdToken {
 // invocationTokens tokenizes command for finding agentctl invocations
 // (invocationText): the bodies of data-only heredocs are stripped, since text
 // written to a file through `cat > f <<EOF` or passed to `gh pr create
-// --body-file -` is not a command, and substitution bodies are scanned on
-// their own, since a quoted "$(...)" would otherwise be one word. Every gate that looks for dispatch or cron invocations
-// uses it, so the popup, the plan, the account lookup and the approval marker
-// all see the same view. Anything that does not parse is tokenized raw.
+// --body-file -` is not a command, and quoted command lines (a "$(...)", a
+// shell's -c argument, eval) are scanned on their own, since each would
+// otherwise be one word. Every gate that looks for dispatch or cron
+// invocations uses it, so the popup, the plan, the account lookup and the
+// approval marker all see the same view. Anything that does not parse is
+// tokenized raw.
 func invocationTokens(command string) []cmdToken {
 	return tokenizeQuoted(strings.TrimSpace(invocationText(command)))
 }
