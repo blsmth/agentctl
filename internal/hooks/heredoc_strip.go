@@ -23,8 +23,10 @@ var dataReceivers = map[string]bool{
 
 // stripDataHeredocs returns command with the bodies of heredocs removed when
 // the receiving command does not execute its stdin. Quoted arguments are not
-// touched: they are still matched literally. It fails closed: on any parse
-// error the raw command is returned unchanged.
+// touched: they are still matched literally. A statement anywhere inside a
+// command or process substitution is never data, since the enclosing command
+// consumes its output (`eval "$(cat <<EOF ...)"`, `bash -c "$(cat <<EOF ...)"`).
+// It fails closed: on any parse error the raw command is returned unchanged.
 func stripDataHeredocs(command string) string {
 	if !strings.Contains(command, "<<") {
 		return command
@@ -33,7 +35,11 @@ func stripDataHeredocs(command string) string {
 	if err != nil {
 		return command
 	}
+	return stripParsedHeredocs(f, command)
+}
 
+// stripParsedHeredocs is stripDataHeredocs on an already parsed command.
+func stripParsedHeredocs(f *syntax.File, command string) string {
 	// Statements piped into another command may have their output executed
 	// (e.g. `cat <<EOF | bash`), so their heredocs are never treated as data.
 	piped := map[*syntax.Stmt]bool{}
@@ -44,11 +50,23 @@ func stripDataHeredocs(command string) string {
 		return true
 	})
 
-	type span struct{ start, end uint }
+	// Substitutions run their statements for the enclosing command, which
+	// may execute the output, so nothing nested in one is stripped.
+	substs := substitutionSpans(f)
+	inSubst := func(st *syntax.Stmt) bool {
+		off := st.Pos().Offset()
+		for _, s := range substs {
+			if off >= s.start && off < s.end {
+				return true
+			}
+		}
+		return false
+	}
+
 	var spans []span
 	syntax.Walk(f, func(n syntax.Node) bool {
 		st, ok := n.(*syntax.Stmt)
-		if !ok || piped[st] || !isDataReceiver(st) || hasSubstitution(st) {
+		if !ok || piped[st] || !isDataReceiver(st) || hasSubstitution(st) || inSubst(st) {
 			return true
 		}
 		for _, r := range st.Redirs {
@@ -69,6 +87,74 @@ func stripDataHeredocs(command string) string {
 		out = out[:s.start] + out[s.end:]
 	}
 	return out
+}
+
+// span is a byte range [start, end) of a command string.
+type span struct{ start, end uint }
+
+// substitutionSpans returns the byte range of every command and process
+// substitution in f, outermost and nested alike.
+func substitutionSpans(f *syntax.File) []span {
+	var out []span
+	syntax.Walk(f, func(n syntax.Node) bool {
+		switch n.(type) {
+		case *syntax.CmdSubst, *syntax.ProcSubst:
+			out = append(out, span{n.Pos().Offset(), n.End().Offset()})
+		}
+		return true
+	})
+	return out
+}
+
+// substitutionBodies returns the text inside every command and process
+// substitution in f (without the `$(`, backtick, `<(` or `>(` and the closing
+// delimiter). Nested substitutions are returned on their own as well.
+func substitutionBodies(f *syntax.File, command string) []string {
+	var out []string
+	add := func(start, end uint) {
+		if start <= end && int(end) <= len(command) {
+			out = append(out, command[start:end])
+		}
+	}
+	syntax.Walk(f, func(n syntax.Node) bool {
+		switch c := n.(type) {
+		case *syntax.CmdSubst:
+			start := c.Left.Offset() + 1 // backtick or $
+			if !c.Backquotes {
+				start++ // the ( of $(
+			}
+			add(start, c.Right.Offset())
+		case *syntax.ProcSubst:
+			add(c.OpPos.Offset()+2, c.Rparen.Offset())
+		}
+		return true
+	})
+	return out
+}
+
+// invocationText is the view of command that the dispatch and cron gates
+// scan for agentctl invocations: data heredoc bodies stripped
+// (stripParsedHeredocs), plus the body of every command or process
+// substitution appended as lines of its own. The scanners tokenize a quoted
+// word whole, so without the appended bodies `eval "$(cat <<EOF ...)"` would
+// hide a dispatch inside one quoted word. It fails closed: on a parse error
+// the raw command is returned.
+func invocationText(command string) string {
+	if !strings.Contains(command, "<<") && !strings.ContainsAny(command, "$`") &&
+		!strings.Contains(command, "<(") && !strings.Contains(command, ">(") {
+		return command
+	}
+	f, err := syntax.NewParser().Parse(strings.NewReader(command), "")
+	if err != nil {
+		return command
+	}
+	var b strings.Builder
+	b.WriteString(stripParsedHeredocs(f, command))
+	for _, body := range substitutionBodies(f, command) {
+		b.WriteString("\n")
+		b.WriteString(body)
+	}
+	return b.String()
 }
 
 // isDataReceiver reports whether st is a plain command whose name is a known
