@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   SWIPE_REVEAL, canSwipeClose, swipeAxis, swipeCommit, swipeOffset,
   ansiColor, approvalBannerText, approvalConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
-  buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
+  DISPATCH_UPLOAD_PATH, buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
@@ -96,6 +96,10 @@ assert.deepEqual(confirmLines({ agent: "a", project_dir: "/d", prompt: "p", back
   "agent: a\nproject: /d\nbackend: local\nmodel: m\neffort: low", "p",
 ]);
 assert.deepEqual(confirmLines({ agent: "a", project_dir: "/d", prompt: "p" }), ["agent: a\nproject: /d", "p"]);
+assert.deepEqual(confirmLines({ agent: "a", project_dir: "/d", prompt: "p" }, 2), ["agent: a\nproject: /d\nimages: 2", "p"]);
+assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, ["x.png"]).body, { agent: "a", project_dir: "/d", prompt: "p", images: ["x.png"] });
+assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, []).body, { agent: "a", project_dir: "/d", prompt: "p" });
+assert.equal(DISPATCH_UPLOAD_PATH, "/v1/dispatch/upload");
 console.log("ok: launch option helpers");
 
 assert.deepEqual(parseRoute("#/dispatch"), { name: "dispatch" });

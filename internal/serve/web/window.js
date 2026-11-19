@@ -1,6 +1,7 @@
 // Window detail: header, pane (reflowed or exact), state-aware actions.
 import { ApiError, get, send, uploadImages } from "./api.js";
 import { approvalCard, tickCountdowns } from "./approvals.js";
+import { imagePicker } from "./attach.js";
 import {
   INTERRUPT_FOLLOWUP_MS,
   actionsWithQueue,
@@ -9,7 +10,6 @@ import {
   buildQueueRequest,
   buildReplyRequest,
   buildUploadPath,
-  checkAttachment,
   dialogQuestion,
   effectiveState,
   exactRows,
@@ -451,73 +451,17 @@ export function mountWindow(root, ctx, { session, windowId }) {
     );
   }
 
-  // attachments is the composer's image picker: an attach button and
-  // thumbnails with remove buttons. Previews are data: URLs (the CSP allows
-  // no blob: images). null when the server cannot take uploads.
+  // attachments is the composer's image picker (attach.js); null when the
+  // server cannot take uploads.
   function attachments() {
     if (!canUpload) return null;
-    let files = [];
-    const thumbs = h("div", { class: "thumbs", hidden: true });
-    const input = h("input", {
-      type: "file",
-      accept: "image/*",
-      multiple: "",
-      class: "file-input",
-      hidden: true,
-      onchange: () => {
-        for (const f of input.files) {
-          const why = checkAttachment(f, files.length);
-          if (why) {
-            toast(why, "error");
-            continue;
-          }
-          files.push(f);
-        }
-        input.value = "";
-        draw();
-      },
-    });
-    function draw() {
-      clear(thumbs);
-      thumbs.hidden = files.length === 0;
-      for (const f of files) {
-        const img = h("img", { alt: "Attached image" });
-        const reader = new FileReader();
-        reader.onload = () => {
-          img.src = reader.result;
-        };
-        reader.readAsDataURL(f);
-        thumbs.append(
-          h(
-            "div",
-            { class: "thumb" },
-            img,
-            h(
-              "button",
-              {
-                class: "thumb-remove",
-                "aria-label": "Remove image",
-                onclick: () => {
-                  files = files.filter((x) => x !== f);
-                  draw();
-                },
-              },
-              "×",
-            ),
-          ),
-        );
-      }
-    }
-    const button = h("button", { class: "btn small attach", onclick: () => input.click() }, "Attach image");
+    const picker = imagePicker();
     return {
-      controls: [thumbs, h("div", { class: "row" }, button, input)],
-      count: () => files.length,
+      controls: picker.controls,
+      count: picker.count,
       // upload stores the files and returns their IDs.
-      upload: () => (files.length ? uploadImages(buildUploadPath(session, windowId), files) : Promise.resolve([])),
-      clear: () => {
-        files = [];
-        draw();
-      },
+      upload: () => (picker.count() ? uploadImages(buildUploadPath(session, windowId), picker.files()) : Promise.resolve([])),
+      clear: picker.clear,
     };
   }
 

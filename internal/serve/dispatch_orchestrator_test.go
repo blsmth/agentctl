@@ -75,3 +75,34 @@ func TestPhoneDispatchOrchestratorIsInteractive(t *testing.T) {
 		})
 	}
 }
+
+// TestPhoneDispatchKeepsScreenshotLines: the "[Screenshot: <path>]" lines the
+// phone appends to a prompt reach the agent intact, newlines included, in
+// both the orchestrator (bare, first message) and worker launches.
+func TestPhoneDispatchKeepsScreenshotLines(t *testing.T) {
+	prompt := "the bug\nis here\n\n[Screenshot: /proj/.agentctl/uploads/dispatch/0123456789abcdef0123456789abcdef.png]"
+	for name, md := range map[string]string{
+		"orchestrator": "---\nname: lead\nrole: orchestrator\n---\nYou coordinate.\n",
+		"worker":       "---\nname: lead\n---\nYou implement.\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := launchtest.Setup(t, `{}`, map[string]string{"lead": md})
+			rec := launchtest.Capture(t)
+			d := launchDispatcher{
+				repoSlug:        func(string) (string, error) { return "o/r", nil },
+				checkRuntimeDir: func(string) error { return nil },
+				validateAgent:   func(string, string) error { return nil },
+				launch:          dispatch.LaunchAdhoc,
+			}
+			if _, err := d.Dispatch(DispatchRequest{
+				Agent: "lead", Prompt: prompt, Dir: env.Project,
+				Session: "agentctl-launchtest", RuntimeDir: filepath.Join(env.Project, ".agentctl"),
+			}); err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			if cmd := rec.Only().Command; !strings.HasSuffix(strings.TrimSpace(cmd), "'"+prompt+"'") {
+				t.Errorf("prompt not passed intact:\n%s", cmd)
+			}
+		})
+	}
+}
