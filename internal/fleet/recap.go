@@ -34,9 +34,33 @@ func (s RecapSource) String() string {
 }
 
 // RecapLine is the one-line "what is this agent working on" for a row.
+// Title, when set, is a short generated title for Text (see TagLogs); Text
+// stays the full recap for detail views.
 type RecapLine struct {
 	Text   string
 	Source RecapSource
+	Title  string
+}
+
+// Short is what a list row shows: Title when there is one, else Text.
+func (l RecapLine) Short() string {
+	if l.Title != "" {
+		return l.Title
+	}
+	return l.Text
+}
+
+// titleSource reports whether a row with recap l shows the generated short
+// title: an away_summary or an ad-hoc task line. Ticket titles ("#N title")
+// and AI titles are already short and stay as they are.
+func titleSource(r Row, l RecapLine) bool {
+	switch l.Source {
+	case RecapSummary:
+		return true
+	case RecapTask:
+		return flattenWhitespace(r.TicketTitle) == ""
+	}
+	return false
 }
 
 // Recap picks the row's recap line, first non-empty wins: the newest
@@ -97,12 +121,17 @@ func (m Meta) stateSince(state string) time.Time {
 }
 
 // TagLogs fills each row's Recap and PR link from its session log (see
-// ReadLogInfo; cheap on an unchanged log).
+// ReadLogInfo; cheap on an unchanged log), and the recap's short Title from
+// the window's generated title (windowstate, written by hook-title) when the
+// recap is one that is worth shortening (see titleSource).
 func TagLogs(rows []Row) {
 	for i := range rows {
 		info := ReadLogInfo(rows[i].LogPath)
 		rows[i].Recap = Recap(rows[i], info)
 		rows[i].PRNumber, rows[i].PRURL = info.PRNumber, info.PRURL
+		if titleSource(rows[i], rows[i].Recap) {
+			rows[i].Recap.Title = rows[i].ShortTitle
+		}
 	}
 }
 

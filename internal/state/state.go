@@ -68,6 +68,11 @@ type AgentState struct {
 	// when it fired (windowstate scheduled_by/scheduled_at); empty otherwise.
 	ScheduledBy string    `json:"scheduled_by,omitempty"`
 	ScheduledAt time.Time `json:"scheduled_at,omitzero"`
+
+	// ShortTitle is the window's generated row title (windowstate
+	// short_title.title, written by hook-title). Display-only: never in
+	// state.json or restore.json.
+	ShortTitle string `json:"-"`
 }
 
 // State is the snapshot of running agents, written by the monitor.

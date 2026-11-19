@@ -17,7 +17,7 @@ agentctl follows the XDG base directory spec and splits user-level files by role
 |---|---|---|
 | Config | `$XDG_CONFIG_HOME/agentctl` (default `~/.config/agentctl`) | `config.json`, `schedules.json` (`agentctl cron` jobs), user-authored `themes/*.json` |
 | Data | `$XDG_DATA_HOME/agentctl` (default `~/.local/share/agentctl`) | `context/` (context store), `journal/` (work journal) |
-| State | `$XDG_STATE_HOME/agentctl` (default `~/.local/state/agentctl`) | `registry/` (live sessions), `ratelimits.json`, `hub/` (hub session working directory), `serve/` (`agentctl serve` certificates, devices, log), `cron/` (`agentctl cron` tick lock, state, run history, log) |
+| State | `$XDG_STATE_HOME/agentctl` (default `~/.local/state/agentctl`) | `registry/` (live sessions), `ratelimits.json`, `hub/` (hub session working directory), `serve/` (`agentctl serve` certificates, devices, log), `cron/` (`agentctl cron` tick lock, state, run history, log), `titles/` (hourly request cap for short row titles) |
 
 A relative `XDG_*` value is invalid per the spec and is ignored. `AGENTCTL_REGISTRY_DIR` still overrides the registry location.
 
@@ -40,7 +40,7 @@ Keys that make agentctl run a shell command are honored **only from the global c
 - `hooks.*` (and per-agent `agents.<name>.hooks`)
 - `dispatch.on_complete` (and per-agent `dispatch.on_complete`)
 
-`backends`, `accounts`, `default_account`, `account_rules`, `agents.<name>.account` and `agents.<name>.harness` are global-only for the same reason: they decide where prompts go, which login pays for them, and (for `harness`) which approval layer an agent runs under.
+`backends`, `titles`, `accounts`, `default_account`, `account_rules`, `agents.<name>.account` and `agents.<name>.harness` are global-only for the same reason: they decide where prompts go, which login pays for them, and (for `harness`) which approval layer an agent runs under.
 
 Rationale: a project-local file can arrive with a cloned repository. Executing commands named by an untrusted repo would be remote code execution. See [SECURITY.md](../SECURITY.md).
 
@@ -60,6 +60,7 @@ Rationale: a project-local file can arrive with a cloned repository. Executing c
 | `statusline_align` | string | `left` | `left` or `right`. Right-aligns the `rich` format's lines. Unknown values fall back to `left`. |
 | `work_journal` | bool | `false` | Journal a session summary on session end for all agents (needs `llm.provider`). Per-agent values can also enable it. |
 | `llm` | object | disabled | Local model provider. See [llm](#llm). |
+| `titles` | object | on with a `nous` backend | Short AI row titles in the hub and the phone app, generated through a Nous Portal backend. Global-only. See [titles](#titles). |
 | `default_agent` | string | first discovered agent | Agent launched by the quick-launch keybinding. A project-local value overrides the global one only when it passes the safety checks in [permissions.md](permissions.md) (otherwise the global value is used, with a warning); ignored with a warning if it is not a discovered agent. |
 | `theme` | string | `catppuccin-mocha` | Color theme name. |
 | `auto_poll` | bool | `false` | Ticket-browser autopilot mode. |
@@ -198,6 +199,28 @@ A small single-turn completion provider. Its only consumer today is the work jou
 ```
 
 Journal output goes to `~/.local/share/agentctl/journal/<agent>.md` with a machine-readable line per entry in `~/.local/share/agentctl/journal/entries.jsonl`.
+
+### titles
+
+A row's recap (Claude Code's away summary, or an ad-hoc task prompt) is often a paragraph. With `titles` on, the hub list row and the phone fleet row show a 2-5 word title instead ("Organizing your Photos", "Fixing Hub Sort Order"). The full recap stays where it was: the hub's selected-row detail lines and the phone's window view, and the serve JSON keeps it in `recap` next to the new `title`. A row whose recap is still its ticket (`#N title`) or Claude Code's AI title is short already and keeps it; once an away_summary takes over the recap, the generated title is shown instead.
+
+| Key | Default | Description |
+|---|---|---|
+| `titles.enabled` | `true` when a `nous`-kind backend exists | `false` turns the feature off entirely (no requests, no writes). |
+| `titles.backend` | first `nous`-kind backend, by name | Backend to call. Must be `kind: "nous"`; anything else disables titles. |
+| `titles.model` | the backend's `models.haiku`, else its `model` | Model id sent to `/v1/chat/completions`. |
+
+Titles are made by `agentctl hook-title`, registered as an **async** hook (Claude Code never waits on it) next to the existing handlers on `Stop`, `UserPromptSubmit` and `SessionStart`. It builds its input from what exists at that moment: the ad-hoc task line (the ticket title too, as context only), the newest away_summary in the session log, and the last assistant message (the tail, about 1500 characters). The result goes into the window's windowstate record (`short_title`), which the hub, `agentctl status` and `agentctl serve` already read, so readers make no network call and read no extra files.
+
+A window is retitled at most once every 10 minutes, unless it has no title yet or a new away_summary appeared since the last one. Claude Code writes the away_summary about three minutes after a turn ends, when no hook fires, so a new summary is picked up on the next prompt or session start. Identical input is never sent twice. A failed request (network, HTTP error, empty or unusable reply) keeps the old title and backs off for 10m, 30m, 2h, then 12h. On top of that, a machine-wide cap of 30 requests per rolling hour applies (`<StateDir>/titles/budget.json`). Each request times out after 15s. Before a request, the window is claimed inside its windowstate transaction, so a hook that is registered twice (the project `settings.local.json` plus a per-agent `--settings` file) still sends one request. When titles are off, or no API key is available, the hook makes no request and writes nothing. A row with no title yet shows the full recap text, as before. pi sessions do not run `hook-title`.
+
+The key comes from the same place as for agent launches (`api_key_cmd` or `agentctl backend login`). It is never written to windowstate, the log or an error message. The `claude` CLI is never used for titles.
+
+```json
+{
+  "titles": { "model": "meta-llama/llama-3.1-8b-instruct" }
+}
+```
 
 ### metrics
 

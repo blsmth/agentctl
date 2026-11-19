@@ -98,6 +98,7 @@ type windowPatch struct {
 	PaneText    *string `json:"pane_text"`
 	Recap       *string `json:"recap"`
 	RecapSource *string `json:"recap_source"`
+	ShortTitle  *string `json:"short_title"`
 }
 
 func (h *Harness) handlePatchWindow(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +121,7 @@ func (h *Harness) handlePatchWindow(w http.ResponseWriter, r *http.Request) {
 		set(&x.PaneText, p.PaneText)
 		set(&x.Recap, p.Recap)
 		set(&x.RecapSource, p.RecapSource)
+		set(&x.ShortTitle, p.ShortTitle)
 	})
 	if errors.Is(err, errNoWindow) {
 		writeErr(w, http.StatusNotFound, err)

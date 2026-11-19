@@ -52,6 +52,8 @@ type Window struct {
 	// recap line as fleet.TagLogs would.
 	Recap       string `json:"recap,omitempty"`
 	RecapSource string `json:"recap_source,omitempty"`
+	// ShortTitle is the recap's generated short title (served as "title").
+	ShortTitle string `json:"short_title,omitempty"`
 	ContextPct  int    `json:"context_pct,omitempty"`
 	PendingTool string `json:"pending_tool,omitempty"`
 	// Title is the task title (windowstate ticket_title), Issue the GitHub
@@ -206,7 +208,7 @@ func rowFor(g Group, w Window, now time.Time) (fleet.Row, fleet.Meta) {
 		ModelName: w.Model, Ticket: w.Issue,
 	}}
 	if w.Recap != "" {
-		row.Recap = fleet.RecapLine{Text: w.Recap, Source: recapSources[w.RecapSource]}
+		row.Recap = fleet.RecapLine{Text: w.Recap, Source: recapSources[w.RecapSource], Title: w.ShortTitle}
 	}
 	mode := w.Mode
 	if mode == "" {
