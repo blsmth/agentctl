@@ -55,7 +55,7 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 .win.working { border-left-color: var(--working); }
 .win.done { border-left-color: var(--done); }
 .glyph { width: var(--glyph-w); text-align: center; font-size: 1.1rem; }
-.blocked .glyph { color: var(--blocked); } .working .glyph { color: var(--working); } .done .glyph { color: var(--done); }
+.win.blocked > .glyph { color: var(--blocked); } .win.working > .glyph { color: var(--working); } .win.done > .glyph { color: var(--done); }
 .win-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .win-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .win-title { display: flex; align-items: baseline; gap: .4rem; }

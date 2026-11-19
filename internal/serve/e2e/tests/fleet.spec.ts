@@ -105,3 +105,11 @@ test("cron windows get a job chip and their own bucket", async ({ page, control 
   // Other rows carry no job chip.
   await expect(row(page, "@15").locator(".sched-chip")).toHaveCount(0);
 });
+
+test("a group's rollup class does not recolor its idle rows", async ({ page }) => {
+  // shop rolls up blocked and holds idle @11 plus blocked @14.
+  await expect(page.locator(".fleet section.group").first()).toHaveClass(/\bblocked\b/);
+  const color = (id: string) => row(page, id).locator(".glyph").evaluate((el) => getComputedStyle(el).color);
+  const blocked = await color("@14");
+  expect(await color("@11")).not.toBe(blocked);
+});
