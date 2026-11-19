@@ -11,7 +11,9 @@ import (
 
 // Group is one session's worth of windows as served by /v1/fleet.
 type Group struct {
-	Session string         `json:"session"`
+	Session string `json:"session"`
+	// Key is the group's fleet.GroupKey, the identity of the saved order.
+	Key     string         `json:"key"`
 	Project string         `json:"project"`
 	Dir     string         `json:"dir"`
 	Rollup  string         `json:"rollup"`
@@ -48,6 +50,7 @@ func FromFleet(groups []fleet.Group) []Group {
 		meta := fleet.LoadMeta(g)
 		out = append(out, Group{
 			Session:    g.Session,
+			Key:        fleet.GroupKey(g),
 			Project:    g.Project,
 			Dir:        g.ProjectDir,
 			Rollup:     g.Rollup.String(),

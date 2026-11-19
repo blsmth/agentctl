@@ -156,6 +156,9 @@ func writeActionFor(path string) (action, session, window string, ok bool) {
 	if path == "/v1/dispatch" {
 		return "dispatch", "", "", true
 	}
+	if path == "/v1/group-order" {
+		return "group-order", "", "", true
+	}
 	if strings.HasPrefix(path, "/v1/approvals/") {
 		return "approval", "", "", true
 	}

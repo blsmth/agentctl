@@ -180,7 +180,7 @@ func writeGroup(st string, done bool, name, mode string) fleetwatch.Group {
 	}}
 	meta := fleet.Meta{WindowID: "@523", Mode: mode}
 	return fleetwatch.Group{
-		Session: "agentctl-proj", Project: "proj", Dir: "/code/proj", Rollup: st,
+		Session: "agentctl-proj", Key: "/code/proj", Project: "proj", Dir: "/code/proj", Rollup: st,
 		RuntimeDir: "/code/proj/.agentctl",
 		Windows:    []fleet.Window{fleet.ToWindow(row, meta)},
 		Rows:       []fleet.Row{row},
@@ -266,7 +266,8 @@ func newWriteEnvWith(t *testing.T, allowWrite bool, mutate func(*Options)) *writ
 		Fleet: fleet, Panes: e.panes, Awake: &fakeHolder{},
 		Agents: fakeAgents{list: []AgentInfo{{Name: "go-engineer", Scope: "global"}}},
 		Keys:   e.keys, Injector: e.inj, Closer: e.closer, Dispatcher: e.disp,
-		MainPanes: e.panes,
+		MainPanes:      e.panes,
+		GroupOrderPath: func() (string, error) { return filepath.Join(dir, "group-order.json"), nil },
 	}
 	if mutate != nil {
 		mutate(&opts)
@@ -352,6 +353,7 @@ func writeRoutes(t *testing.T) []struct{ name, path, body string } {
 		{"queue", winPath + "/queue", `{"text":"hi"}`},
 		{"interrupt", winPath + "/interrupt", `{}`},
 		{"close", winPath + "/close", `{}`},
+		{"group-order", "/v1/group-order", `{"keys":["/code/proj"]}`},
 		{"dispatch", "/v1/dispatch", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"p"}`},
 		{"approval", "/v1/approvals/" + strings.Repeat("a", 32), `{"decision":"allow","payload_sha256":"x"}`},
 	}
@@ -953,6 +955,7 @@ func TestWriteActionFor(t *testing.T) {
 		{"/v1/push/subscribe", "", "", "", false},
 		{"/v1/approvals/abc", "approval", "", "", true},
 		{"/v1/approvals", "", "", "", false},
+		{"/v1/group-order", "group-order", "", "", true},
 	}
 	for _, tt := range tests {
 		a, s, w, ok := writeActionFor(tt.path)

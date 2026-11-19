@@ -72,6 +72,7 @@ func (s *Server) registerWrite(rt *Router) {
 	rt.Write("POST "+win+"/upload", s.handleUpload)
 	rt.Write("POST "+win+"/interrupt", writeRoute(s, "interrupt", s.handleInterrupt))
 	rt.Write("POST "+win+"/close", writeRoute(s, "close", s.handleClose))
+	rt.Write("POST /v1/group-order", writeRoute(s, "group-order", s.handleGroupOrder))
 	rt.Write("POST /v1/dispatch", writeRoute(s, "dispatch", s.handleDispatch))
 }
 

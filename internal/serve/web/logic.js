@@ -36,17 +36,85 @@ export function rollup(windows) {
 }
 
 /**
- * sortGroups orders project groups by their most urgent window, keeping the
- * server's order among equals, and sorts the windows inside each group.
+ * sortGroups keeps the server's group order (the saved order shared with the
+ * hub) and sorts the windows inside each group. Urgency shows through each
+ * group's rollup styling and counts, not through its position.
  */
 export function sortGroups(groups) {
-  const decorated = groups.map((g, i) => {
+  return groups.map((g) => {
     const windows = sortWindows(g.windows ?? []);
-    return { group: { ...g, windows, rollup: rollup(windows) }, i };
+    return { ...g, windows, rollup: rollup(windows) };
   });
-  decorated.sort((a, b) => stateRank(a.group.rollup) - stateRank(b.group.rollup) || a.i - b.i);
-  return decorated.map((d) => d.group);
 }
+
+/** groupKeys lists the reorderable (keyed) groups' keys in display order. */
+export function groupKeys(groups) {
+  return groups.map((g) => g.key).filter((k) => typeof k === "string" && k !== "");
+}
+
+/** moveKey returns keys with key moved to index to (clamped); the input is untouched. */
+export function moveKey(keys, key, to) {
+  const from = keys.indexOf(key);
+  if (from < 0) return [...keys];
+  const out = keys.filter((k) => k !== key);
+  out.splice(Math.max(0, Math.min(to, out.length)), 0, key);
+  return out;
+}
+
+/**
+ * applyGroupOrder reorders groups to follow order (keys); groups whose key is
+ * not in it keep their relative order after the ordered ones.
+ */
+export function applyGroupOrder(groups, order) {
+  if (!order || order.length === 0) return groups;
+  const pos = new Map(order.map((k, i) => [k, i]));
+  const rank = (g) => (pos.has(g.key) ? pos.get(g.key) : order.length);
+  return groups.map((g, i) => ({ g, i })).sort((a, b) => rank(a.g) - rank(b.g) || a.i - b.i).map((d) => d.g);
+}
+
+/** sameOrder reports whether a and b list the keys they share in the same order. */
+export function sameOrder(a, b) {
+  const inB = new Set(b);
+  const inA = new Set(a);
+  const x = a.filter((k) => inB.has(k));
+  const y = b.filter((k) => inA.has(k));
+  return x.length === y.length && x.every((k, i) => k === y[i]);
+}
+
+/**
+ * dropIndex is the slot a dragged group lands in: how many of the other
+ * groups lie wholly above y. mids are the other groups' vertical midpoints in
+ * display order.
+ */
+export function dropIndex(mids, y) {
+  let n = 0;
+  for (const m of mids) if (m < y) n++;
+  return n;
+}
+
+/**
+ * autoscrollDelta is the px to scroll per frame while dragging at pointer
+ * height y in a viewport of height vh: negative near the top edge, positive
+ * near the bottom, scaled up to max at the edge itself.
+ */
+export function autoscrollDelta(y, vh, edge = 80, max = 18) {
+  if (y < edge) return -Math.ceil((max * (edge - Math.max(y, 0))) / edge);
+  if (y > vh - edge) return Math.ceil((max * (Math.min(y, vh) - (vh - edge))) / edge);
+  return 0;
+}
+
+/** GROUP_ORDER_PATH is the write route that saves the group order. */
+export const GROUP_ORDER_PATH = "/v1/group-order";
+
+/** buildGroupOrderRequest saves keys (the visible project groups, in order). */
+export function buildGroupOrderRequest(keys) {
+  return { method: "POST", path: GROUP_ORDER_PATH, body: { keys } };
+}
+
+/** LONG_PRESS_MS is how long a group header is held before a drag starts. */
+export const LONG_PRESS_MS = 400;
+/** LONG_PRESS_SLOP is the movement in px that turns a pending press into a scroll. */
+export const LONG_PRESS_SLOP = 10;
 
 /** isDispatched mirrors fleet.Meta.Dispatched: launched by another agent. */
 export function isDispatched(win) {

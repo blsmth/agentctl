@@ -9,6 +9,7 @@ import {
   bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
   actionsWithQueue, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
+  sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
   liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines,
 } from "./logic.js";
 
@@ -41,6 +42,34 @@ assert.equal(ansiColor(1), "#cd3131");
 assert.equal(ansiColor(16), "#000000");
 assert.equal(ansiColor(196), "#ff0000");
 assert.equal(ansiColor(232), "#080808");
+
+// Group order: the server's order wins over urgency; windows still sort.
+{
+  const win = (id, state) => ({ window_id: id, state });
+  const gs = sortGroups([
+    { key: "/idle", windows: [win("@1", "idle")] },
+    { key: "/blocked", windows: [win("@2", "idle"), win("@3", "blocked")] },
+  ]);
+  assert.deepEqual(gs.map((g) => g.key), ["/idle", "/blocked"]);
+  assert.deepEqual(gs.map((g) => g.rollup), ["idle", "blocked"]);
+  assert.deepEqual(gs[1].windows.map((w) => w.window_id), ["@3", "@2"]);
+  assert.deepEqual(groupKeys([{ key: "/a" }, {}, { key: "" }, { key: "/b" }]), ["/a", "/b"]);
+  assert.deepEqual(moveKey(["a", "b", "c"], "a", 2), ["b", "c", "a"]);
+  assert.deepEqual(moveKey(["a", "b", "c"], "c", 0), ["c", "a", "b"]);
+  assert.deepEqual(moveKey(["a", "b"], "b", 9), ["a", "b"]);
+  assert.deepEqual(moveKey(["a", "b"], "x", 0), ["a", "b"]);
+  assert.deepEqual(applyGroupOrder([{ key: "a" }, { key: "b" }, { key: "c" }], ["c", "a"]).map((g) => g.key), ["c", "a", "b"]);
+  assert.equal(sameOrder(["a", "x", "b"], ["b", "a"]), false);
+  assert.equal(sameOrder(["a", "x", "b"], ["a", "b", "y"]), true);
+  assert.equal(dropIndex([10, 30, 50], 40), 2);
+  assert.equal(dropIndex([10, 30, 50], 5), 0);
+  assert.equal(autoscrollDelta(300, 600), 0);
+  assert.ok(autoscrollDelta(10, 600) < 0 && autoscrollDelta(595, 600) > 0);
+  assert.ok(autoscrollDelta(0, 600) < autoscrollDelta(40, 600));
+  assert.deepEqual(buildGroupOrderRequest(["/a"]), { method: "POST", path: "/v1/group-order", body: { keys: ["/a"] } });
+  n += 17;
+}
+
 console.log(`ok: ${n} fixtures`);
 
 // Launch options helpers.

@@ -245,3 +245,15 @@ body.term-open nav { display: none; }
 .thumb-remove { position: absolute; top: 0; right: 0; width: 28px; height: 28px; border: 0; border-radius: 0 0 0 8px;
   background: rgba(0, 0, 0, .65); color: #fff; font-size: 18px; line-height: 1; padding: 0; }
 .file-input { display: none; }
+
+/* Reordering project groups (fleet.js attachGroupDrag): long-press a header. */
+.group-head { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.group-head.dragging { touch-action: none; }
+.fleet.reordering { user-select: none; -webkit-user-select: none; }
+/* Collapsed height while dragging keeps every target on screen. */
+.fleet.reordering .group > :not(.group-head) { display: none; }
+.fleet.reordering .group.folded .group-counts { display: none; }
+.group.lifted { position: relative; z-index: 5; }
+.group.lifted .group-head { position: relative; background: var(--bg, Canvas); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .35); opacity: .96; }
+.group.drop-before { box-shadow: 0 -3px 0 0 var(--accent); }
+.group.drop-after { box-shadow: 0 3px 0 0 var(--accent); }
