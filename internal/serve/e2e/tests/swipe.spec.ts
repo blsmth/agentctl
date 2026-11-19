@@ -102,6 +102,9 @@ test("a 409 from the server toasts and snaps back", async ({ page, control, guar
   guard.allow(/console error: .*409/);
   // The fleet still says idle, but the pane is busy: the server refuses.
   await control.patchWindow(SHOP, "@15", { pane: "working" });
+  // Nothing visible changes, so let the render it triggers land before dragging;
+  // one arriving mid-gesture would rebuild the row under the finger.
+  await page.waitForTimeout(500);
   const link = row(page, "@15");
   await drag(link, { dx: -260, stepMs: 25 });
   await closeBtn(page, link).tap();
@@ -110,6 +113,9 @@ test("a 409 from the server toasts and snaps back", async ({ page, control, guar
   await expect(wrap(link)).not.toHaveCSS("height", "0px");
   await expect(row(page, "@15")).toBeVisible();
   expect(await control.actions()).toEqual([]);
+  // The hold was released: later renders still land.
+  await control.patchWindow(SHOP, "@11", { activity: "after failure" });
+  await expect(row(page, "@11").locator(".activity")).toHaveText("after failure", { timeout: 2000 });
 });
 
 test("renders resume after a reveal is closed by tapping the row", async ({ page, control }) => {
@@ -126,19 +132,6 @@ test("renders resume after a reveal is closed by tapping the row", async ({ page
   // And later renders still land: the hold was fully released.
   await control.patchWindow(SHOP, "@11", { activity: "after close" });
   await expect(row(page, "@11").locator(".activity")).toHaveText("after close", { timeout: 2000 });
-});
-
-test("renders resume after a failed close snaps the row back", async ({ page, control, guard }) => {
-  guard.allow(/HTTP 409: POST \/v1\/sessions\/agentctl-shop\/windows\/%4015\/close/);
-  guard.allow(/console error: .*409/);
-  await control.patchWindow(SHOP, "@15", { pane: "working" });
-  const link = row(page, "@15");
-  await drag(link, { dx: -260, stepMs: 25 });
-  await closeBtn(page, link).tap();
-  await expect(page.locator("#toasts .toast.error")).toContainText("cannot be closed");
-  await settled(link);
-  await control.patchWindow(SHOP, "@11", { activity: "after failure" });
-  await expect(row(page, "@11").locator(".activity")).toHaveText("after failure", { timeout: 2000 });
 });
 
 test("a double tap on Close sends one close", async ({ page, control }) => {
