@@ -226,6 +226,8 @@ func (s *Server) handleAnswer(r *http.Request, in answerIn, a *auditEntry) outco
 	key := in.Key
 	if key == escKey {
 		key = "Escape"
+	} else if pane.Dialog.Multi {
+		return failure(http.StatusConflict, codeDialogChanged, "this is a multi-select question: answer it on the terminal")
 	} else if !hasOption(pane, key) {
 		return failure(http.StatusConflict, codeDialogChanged, fmt.Sprintf("%q is not an option of this dialog", in.Key))
 	}

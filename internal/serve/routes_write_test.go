@@ -467,6 +467,33 @@ func TestWriteBodyValidation(t *testing.T) {
 	}
 }
 
+const multiSelectPane = "────────────────────────────────────────────────────────────────────────────────\n" +
+	"←  ☐ Next  ✔ Submit  →\n\nWhich threads?\n\n" +
+	"❯ 1. [ ] Merge\n         desc\n  2. [ ] Fix\n         desc\n  3. [ ] Type something\n     Submit\n" +
+	"────────────────────────────────────────────────────────────────────────────────\n" +
+	"  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · Esc to cancel\n"
+
+// A number only toggles a checkbox in a multi-select, so the server refuses
+// it and sends nothing; Esc still dismisses.
+func TestAnswerMultiSelect(t *testing.T) {
+	d, ok := panestate.ParseDialog(multiSelectPane)
+	if !ok || !d.Multi {
+		t.Fatalf("fixture: ok=%v multi=%v", ok, d.Multi)
+	}
+	for _, tt := range []struct {
+		key  string
+		code int
+		sent int
+	}{{"1", 409, 0}, {"esc", 200, 1}} {
+		e := newWriteEnv(t, true)
+		e.panes.set(multiSelectPane)
+		w := e.post(winPath+"/answer", fmt.Sprintf(`{"key":%q,"dialog_hash":%q}`, tt.key, d.Hash))
+		if w.Code != tt.code || len(e.keys.all()) != tt.sent {
+			t.Errorf("key %s: status %d sent %v: %s", tt.key, w.Code, e.keys.all(), w.Body)
+		}
+	}
+}
+
 func TestAnswer(t *testing.T) {
 	hash := dialogHash(t)
 	tests := []struct {

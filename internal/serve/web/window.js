@@ -436,10 +436,13 @@ export function mountWindow(root, ctx, { session, windowId }) {
       "section",
       { class: "answer" },
       h("p", { class: "question" }, dialogQuestion(dialog)),
+      dialog.multi
+        ? h("p", { class: "note" }, "Multi-select question: choose and submit on the terminal. You can still dismiss it here.")
+        : null,
       h(
         "div",
         { class: "choices" },
-        ...(dialog.options ?? []).map((o) =>
+        ...(dialog.multi ? [] : dialog.options ?? []).map((o) =>
           h(
             "button",
             { class: `btn choice${o.key === recommended ? " primary" : ""}`, onclick: () => answer(o.key) },

@@ -8,7 +8,7 @@ import {
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
-  actionsWithQueue, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
+  actionsWithQueue, buildAnswerRequest, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
   defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
@@ -294,6 +294,9 @@ console.log("ok: resolved text");
     options: [{ key: "1", label: "Yes" }, { key: "2", label: "No, and tell Claude what to do differently" }],
   };
   assert.equal(dialogQuestion(dialog), "Do you want to proceed?");
+  const multi = { ...dialog, multi: true };
+  assert.throws(() => buildAnswerRequest("s", "@1", multi, "1"), /multi-select/);
+  assert.equal(buildAnswerRequest("s", "@1", multi, "esc").body.key, "esc");
   assert.equal(dialogQuestion({ text: "Edit file\nfoo.go\n1. Yes\n2. No" }), "foo.go");
   assert.equal(dialogQuestion({ text: "" }), "");
   assert.equal(focusedOption("│ \x1b[36m❯ 1. Yes\x1b[0m │\n│   2. No │", dialog), "1");
