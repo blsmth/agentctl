@@ -3,6 +3,8 @@ package hooks
 import (
 	"slices"
 	"testing"
+
+	"github.com/blsmth/agentctl/internal/config"
 )
 
 func TestParseDispatchReviewPR(t *testing.T) {
@@ -31,7 +33,10 @@ func TestParseDispatchReviewPR(t *testing.T) {
 	}
 }
 
-func TestReviewPRDispatchIsGated(t *testing.T) {
+// Review dispatches are still recognized as dispatches (so the dispatch+cron
+// mix deny and help handling apply), but under the default dispatch_approval
+// ("non-review") they skip the approval popup; "all" gates them again.
+func TestReviewPRDispatchIsExemptByDefault(t *testing.T) {
 	for _, cmd := range []string{
 		"agentctl dispatch --review-pr 42",
 		"agentctl dispatch --review-pr 42 --author @12",
@@ -39,7 +44,13 @@ func TestReviewPRDispatchIsGated(t *testing.T) {
 		"agentctl dispatch --review-pr 42 --author --help",
 	} {
 		if !isAgentctlDispatch(cmd) {
-			t.Errorf("%q is not gated", cmd)
+			t.Errorf("%q is not recognized as a dispatch", cmd)
+		}
+		if dispatchNeedsApproval(cmd, config.Config{}.EffectiveDispatchApproval()) {
+			t.Errorf("%q is gated under the default dispatch_approval", cmd)
+		}
+		if !dispatchNeedsApproval(cmd, config.DispatchApprovalAll) {
+			t.Errorf("%q is not gated under dispatch_approval=all", cmd)
 		}
 	}
 	if isAgentctlDispatch("agentctl dispatch --review-pr 42 --help") {

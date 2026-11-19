@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/blsmth/agentctl/internal/config"
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/remoteapproval"
@@ -22,7 +23,7 @@ import (
 // serialized args from before this field existed) is the full "agentctl
 // dispatch" preview with target agent / issue / prompt metadata.
 // PreviewKindBash is a plain Bash command preview -- gated behind the
-// bash_preview config setting rather than always shown -- which renders just
+// bash_preview config setting rather than dispatch_approval -- which renders just
 // the command itself, since the dispatch-specific metadata rows don't apply.
 // PreviewKindCron is an `agentctl cron add/resume/run --force` preview (see
 // cron_preview.go): job name and schedule rows, job details and prompt in
@@ -84,6 +85,68 @@ func isAgentctlDispatch(command string) bool {
 		}
 	}
 	return false
+}
+
+// dispatchNeedsApproval reports whether a command that isAgentctlDispatch
+// must show the dispatch approval popup under the given (normalized)
+// dispatch_approval mode. "off" gates nothing; "non-review" gates the command
+// unless EVERY non-help dispatch segment is a PR review dispatch, so one
+// ordinary dispatch in the line keeps the gate for the whole command; "all"
+// and anything unrecognized gate everything (fail closed).
+func dispatchNeedsApproval(command, mode string) bool {
+	switch mode {
+	case config.DispatchApprovalOff:
+		return false
+	case config.DispatchApprovalNonReview:
+		for _, seg := range dispatchSegments(command) {
+			if !segmentHasHelp(seg) && !segmentIsReview(seg) {
+				return true
+			}
+		}
+		return false
+	default:
+		return true
+	}
+}
+
+// segmentIsReview reports whether a dispatch segment is a PR review
+// dispatch: its last --review-pr flag ("--review-pr N" or "--review-pr=N"; the
+// CLI keeps the last one) carries a literal positive integer. A missing,
+// zero, non-numeric or shell-expanded value is not a review: 0 means "unset"
+// to dispatch, so "--review-pr=0" would otherwise exempt an ordinary
+// dispatch. Quoted words and values of other flags are never the flag.
+func segmentIsReview(seg []cmdToken) bool {
+	found, ok := false, false
+	for i := 0; i < len(seg); i++ {
+		t := seg[i]
+		if t.quoted {
+			continue
+		}
+		switch {
+		case t.text == "--review-pr":
+			found, ok = true, false
+			if i+1 < len(seg) {
+				ok = positiveLiteral(seg[i+1])
+				i++
+			}
+		case strings.HasPrefix(t.text, "--review-pr="):
+			found = true
+			ok = !t.expands && positiveInt(strings.TrimPrefix(t.text, "--review-pr="))
+		case isDispatchValueFlag(t.text):
+			i++ // skip the value
+		}
+	}
+	return found && ok
+}
+
+// positiveLiteral reports whether t is a non-expanding positive integer.
+func positiveLiteral(t cmdToken) bool {
+	return !t.expands && positiveInt(t.text)
+}
+
+func positiveInt(s string) bool {
+	n, err := strconv.Atoi(s)
+	return err == nil && n > 0
 }
 
 // cmdToken is a shell word plus whether any part of it was quoted.
@@ -503,19 +566,25 @@ func tokenizeCommand(s string) []string {
 }
 
 // tokenizeQuoted is tokenizeCommand but records whether each token had any
-// quoted part, and keeps empty quoted tokens ("").
+// quoted part, and keeps empty quoted tokens (""). Unquoted shell comments are
+// dropped and an unquoted newline becomes a ";" token.
 func tokenizeQuoted(s string) []cmdToken {
 	var tokens []cmdToken
 	var cur strings.Builder
 	inQuote, hadQuote, expands := false, false, false
 	var quoteChar byte
+	// afterMeta is true when the last byte written to cur was an unquoted
+	// shell metacharacter (;&|()<>). The tokenizer keeps those inside words,
+	// but to the shell they end a word, so a '#' right after one starts a
+	// comment ("x;# ...") even though cur is not empty.
+	afterMeta := false
 
 	flush := func() {
 		if cur.Len() > 0 || hadQuote {
 			tokens = append(tokens, cmdToken{text: cur.String(), quoted: hadQuote, expands: expands})
 		}
 		cur.Reset()
-		hadQuote, expands = false, false
+		hadQuote, expands, afterMeta = false, false, false
 	}
 
 	for i := 0; i < len(s); i++ {
@@ -528,6 +597,7 @@ func tokenizeQuoted(s string) []cmdToken {
 					expands = true
 				}
 				cur.WriteByte(c)
+				afterMeta = false
 			}
 			continue
 		}
@@ -536,8 +606,25 @@ func tokenizeQuoted(s string) []cmdToken {
 			inQuote = true
 			hadQuote = true
 			quoteChar = c
-		case ' ', '\t', '\n':
+		case ' ', '\t':
 			flush()
+		case '\n':
+			// An unquoted newline ends the command like ';' does, so a
+			// segment never runs on into the next line.
+			flush()
+			tokens = append(tokens, cmdToken{text: ";"})
+		case '#':
+			if (cur.Len() > 0 || hadQuote) && !afterMeta {
+				cur.WriteByte(c) // mid-word, e.g. a#b: not a comment
+				continue
+			}
+			// A comment runs to the end of the line; the shell never passes
+			// it to the command, so neither does the tokenizer. Bytes already
+			// in cur ("x;") stay, so takeSegment still sees an attached
+			// terminator.
+			for i+1 < len(s) && s[i+1] != '\n' {
+				i++
+			}
 		case '\\':
 			// Outside quotes a backslash makes the next character literal
 			// ('don'\''t' is don't), and backslash-newline is a line
@@ -549,16 +636,19 @@ func tokenizeQuoted(s string) []cmdToken {
 					// word, never a redirection or control operator.
 					cur.WriteByte(s[i])
 					hadQuote = true
+					afterMeta = false
 				}
 				continue
 			}
 			expands = true
 			cur.WriteByte(c)
+			afterMeta = false
 		default:
 			if c == '$' || c == '`' {
 				expands = true
 			}
 			cur.WriteByte(c)
+			afterMeta = strings.IndexByte(";&|()<>", c) >= 0
 		}
 	}
 	flush()

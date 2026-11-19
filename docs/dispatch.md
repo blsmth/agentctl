@@ -106,6 +106,7 @@ agentctl dispatch --review-pr 57 --model sonnet --prompt 'Focus on the tmux call
 - Fetches the PR with `gh pr view` (title, URL, base/head branch, head sha, changed files, body). A closed or merged PR is an error. Exclusive with `--issue`; `--prompt` / `--prompt-key` add text under "Additional review instructions".
 - The worktree is `.worktrees/agent-<agent>-review-pr-<N>-<id>/` on `agent/<agent>/review-pr-<N>-<id>` (a fresh id per review, so two reviews never share a worktree), cut from the default branch. The reviewer checks out the PR head detached and returns to that branch when done, so SessionEnd can reclaim it. It is never pushed.
 - **Author**: the live window whose worktree branch equals the PR's head branch, across every agentctl session (`--author @N` overrides). When it runs under the same Claude account, the prompt names it by `@N.%P` and agentctl queues an `agentctl notice:` in the author's window introducing the reviewer. Otherwise the reviewer reports to its orchestrator only.
+- With the default `dispatch_approval` (`non-review`) a review dispatch does not need approval in the popup; set `dispatch_approval: "all"` to gate it too (see [configuration](configuration.md#dispatch_approval)).
 - The deliverable is one `REVIEW PR #<N> — VERDICT: MERGE | MERGE-WITH-FOLLOWUPS | BLOCKED | NEEDS-BRENDAN` message to the orchestrator, after at most 3 fix rounds with the author.
 
 ## Context injection

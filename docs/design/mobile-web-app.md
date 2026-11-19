@@ -161,7 +161,7 @@ Push is a server-side request a paired device controls, so it is fenced: `POST /
 
 ## Remote approvals
 
-Away mode: when only the phone is at hand, the approval popups that gate `agentctl dispatch` and `agentctl cron add/resume/run --force` (always) and Bash commands (`bash_preview`) can be answered from the web app. Without this, a popup nobody sees blocks the agent until its 9-minute deadline and is then denied.
+Away mode: when only the phone is at hand, the approval popups that gate `agentctl dispatch` (per `dispatch_approval`; review dispatches skip it by default) and `agentctl cron add/resume/run --force` (always) and Bash commands (`bash_preview`) can be answered from the web app. Without this, a popup nobody sees blocks the agent until its 9-minute deadline and is then denied.
 
 ### Hook side (`internal/hooks`, `internal/remoteapproval`)
 
