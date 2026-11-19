@@ -1,7 +1,10 @@
 package dispatch
 
 import (
+	"os"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/blsmth/agentctl/internal/tmux/launchtest"
@@ -115,5 +118,34 @@ func TestLaunchDoesNotPublishWindowIDToSession(t *testing.T) {
 	}
 	if !cleared {
 		t.Error("launch does not clear a stale session AGENTCTL_WINDOW_ID")
+	}
+}
+
+// When worktree creation falls back to the shared dir, the prompt must not
+// tell the agent to push a branch the window does not record (dispatch
+// completion looks the PR up by the recorded branch): it gets the
+// shared-dir, commit-only finishing steps.
+func TestLaunchWorktreeFallbackPromptIsSharedDir(t *testing.T) {
+	yes := true
+	env := setupGolden(t, goldenConfig)
+	rec := launchtest.Capture(t)
+	if _, err := Launch(Request{AgentName: "golden", Mode: ModeAdhoc, CustomPrompt: "hi", WorkDir: env.Project, UseWorktree: &yes, Background: true}); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	m := regexp.MustCompile(`--append-system-prompt-file '([^']+)'`).FindStringSubmatch(rec.Only().Command)
+	if m == nil {
+		t.Fatalf("no system prompt file: %s", rec.Only().Command)
+	}
+	sys, err := os.ReadFile(m[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"git push -u origin", "git worktree on branch", "gh pr create"} {
+		if strings.Contains(string(sys), bad) {
+			t.Errorf("fallback prompt contains %q", bad)
+		}
+	}
+	if !strings.Contains(string(sys), "working directly in the shared repo directory") {
+		t.Error("fallback prompt lacks the shared-dir finishing steps")
 	}
 }

@@ -280,9 +280,10 @@ func Launch(req Request) (Result, error) {
 	}
 	// inWorktree is whether a worktree actually exists for this launch. When
 	// worktree.Create fell back to the shared dir (e.g. workDir is not a git
-	// repo) the generated branch was never created, so the window's env,
-	// windowstate and Result record no branch (ownBranch) rather than one it
-	// does not have.
+	// repo) the generated branch was never created, so the prompt, env,
+	// windowstate and Result carry no branch (ownBranch) rather than one the
+	// window does not have: the agent gets the shared-dir finishing steps,
+	// matching what dispatch completion will look the PR up by.
 	inWorktree := useWorktree && workDir != repoDir
 	ownBranch := ""
 	if inWorktree {
@@ -346,7 +347,7 @@ func Launch(req Request) (Result, error) {
 		req.noMessaging = true
 	}
 	messagesAuthor := prepareReview(&req, cfg, caps.Accounts, acct.Dir, inWorktree)
-	systemPrompt := buildSystemPrompt(req, spec, workDir, branch, useWorktree, contextEntries, sharedConventions)
+	systemPrompt := buildSystemPrompt(req, spec, workDir, ownBranch, inWorktree, contextEntries, sharedConventions)
 
 	// 8. Determine user message.
 	userMessage := req.UserMessage
