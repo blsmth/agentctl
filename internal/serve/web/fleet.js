@@ -339,6 +339,7 @@ export function mountFleet(root, ctx) {
   // render() rebuilds every row and would destroy the one being dragged.
   let busyCount = 0;
   let renderPending = false;
+  let renders = 0; // exposed as data-renders on the list so tests can await a render
   // The order just dropped, shown until the server's fleet reports it (or it
   // is refused): { keys, at }.
   let pending = null;
@@ -470,6 +471,7 @@ export function mountFleet(root, ctx) {
       renderPending = true;
       return;
     }
+    list.dataset.renders = String(++renders);
     renderApprovalBanner();
     const { fleet, downSince } = ctx.store;
     if (downSince && Date.now() - downSince > 15000) {

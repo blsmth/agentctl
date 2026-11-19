@@ -48,6 +48,29 @@ export function attachSwipe(wrap, node, handle, action, { onClose, onBusy }) {
     releaseTimer = setTimeout(() => setBusy(false), 450);
   };
 
+  // The gesture hold: taken on pointerdown so a render cannot rebuild the row
+  // before the axis locks, released exactly once when the gesture ends. It is
+  // separate from `busy` (the x-locked drag / open row hold). A tap releases late
+  // so a render cannot replace the link before its click lands.
+  let gestureHeld = false;
+  let gestureTimer = 0;
+  const holdGesture = () => {
+    clearTimeout(gestureTimer);
+    if (gestureHeld) return;
+    gestureHeld = true;
+    onBusy(true);
+  };
+  const releaseGesture = (delay = 0) => {
+    clearTimeout(gestureTimer);
+    const done = () => {
+      if (!gestureHeld) return;
+      gestureHeld = false;
+      onBusy(false);
+    };
+    if (delay > 0) gestureTimer = setTimeout(done, delay);
+    else done();
+  };
+
   const setX = (x, animate) => {
     node.style.transition = animate && !reducedMotion() ? "transform .2s ease-out" : "none";
     node.style.transform = x === 0 ? "" : `translateX(${x}px)`;
@@ -153,6 +176,7 @@ export function attachSwipe(wrap, node, handle, action, { onClose, onBusy }) {
 
   handle.addEventListener("pointerdown", (e) => {
     if (start || closing || (e.pointerType === "mouse" && e.button !== 0)) return;
+    holdGesture();
     const width = node.offsetWidth;
     const base = isOpen ? -Math.min(SWIPE_REVEAL, width) : 0;
     start = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, axis: "", width, base, samples: [[e.timeStamp, e.clientX]] };
@@ -167,6 +191,7 @@ export function attachSwipe(wrap, node, handle, action, { onClose, onBusy }) {
       if (start.axis === "y") {
         start = null; // page scroll wins
         snapBack();
+        releaseGesture();
         return;
       }
       if (start.axis === "x") {
@@ -186,6 +211,7 @@ export function attachSwipe(wrap, node, handle, action, { onClose, onBusy }) {
     const s = start;
     if (s.axis !== "x") {
       start = null;
+      releaseGesture(cancelled ? 0 : 450);
       if (isOpen) {
         if (!cancelled) suppressClick(); // a tap on the open row only closes the reveal
         snapBack();
@@ -200,6 +226,7 @@ export function attachSwipe(wrap, node, handle, action, { onClose, onBusy }) {
     const velocity = dt > 0 ? (e.clientX - first[1]) / dt : 0;
     const commit = !cancelled && swipeCommit(swipeOffset(s.base + dx, s.width), s.width, velocity);
     release(commit, s.width, cancelled || dx > 0);
+    releaseGesture();
   };
   handle.addEventListener("pointerup", (e) => end(e, false));
   handle.addEventListener("pointercancel", (e) => end(e, true));
