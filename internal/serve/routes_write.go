@@ -21,6 +21,7 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/uploads"
 )
 
 const (
@@ -73,6 +74,10 @@ func (s *Server) registerWrite(rt *Router) {
 	rt.Write("POST "+win+"/interrupt", writeRoute(s, "interrupt", s.handleInterrupt))
 	rt.Write("POST "+win+"/close", writeRoute(s, "close", s.handleClose))
 	rt.Write("POST /v1/group-order", writeRoute(s, "group-order", s.handleGroupOrder))
+	if rt.allowWrite {
+		rt.Feature("dispatch-upload")
+	}
+	rt.Write("POST /v1/dispatch/upload", s.handleDispatchUpload)
 	rt.Write("POST /v1/dispatch", writeRoute(s, "dispatch", s.handleDispatch))
 	// The preview only reads, but it runs a subprocess that shells out to
 	// git and gh for every finished window, and is only useful with apply.
@@ -509,6 +514,8 @@ type dispatchIn struct {
 	Model      string `json:"model,omitempty"`
 	Backend    string `json:"backend,omitempty"`
 	Effort     string `json:"effort,omitempty"`
+	// Images are IDs from POST /v1/dispatch/upload for the same project.
+	Images []string `json:"images,omitempty"`
 }
 
 // checkText rejects empty text and control characters other than newline
@@ -558,6 +565,9 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	if out, ok := checkText("prompt", in.Prompt); !ok {
 		return out
 	}
+	if len(in.Images) > maxImages {
+		return failure(http.StatusBadRequest, codeBadRequest, fmt.Sprintf("at most %d images per dispatch", maxImages))
+	}
 	if in.Model != "" && !modelRE.MatchString(in.Model) {
 		return failure(http.StatusBadRequest, codeBadRequest, "invalid model")
 	}
@@ -568,6 +578,17 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	}
 	g, out, ok := s.dispatchTarget(in.Agent, in.ProjectDir, a)
 	if !ok {
+		return out
+	}
+	// The prompt text is required above; images only add screenshot lines to it.
+	prompt, out, ok := appendImages(in.Prompt, g.RuntimeDir, uploads.DispatchKey, in.Images)
+	if !ok {
+		return out
+	}
+	if utf8.RuneCountInString(prompt) > maxPromptRunes {
+		return failure(http.StatusRequestEntityTooLarge, codeTooLarge, fmt.Sprintf("prompt exceeds %d characters", maxPromptRunes))
+	}
+	if out, ok := checkText("prompt", prompt); !ok {
 		return out
 	}
 	backend, model, effort := in.Backend, in.Model, in.Effort
@@ -586,7 +607,7 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	s.auditAttempt(*a)
 
 	res, err := s.dispatcher.Dispatch(DispatchRequest{
-		Agent: in.Agent, Prompt: in.Prompt, Model: model, Backend: backend, Effort: effort,
+		Agent: in.Agent, Prompt: prompt, Model: model, Backend: backend, Effort: effort,
 		Dir: g.Dir, Session: g.Session, RuntimeDir: g.RuntimeDir,
 	})
 	if err != nil {
@@ -646,14 +667,9 @@ func effortOrInherit(e string, c launchChoices) string {
 	return e
 }
 
-// dispatchTarget validates an agent name and project dir as a dispatch (and
-// its launch options) require: the dir must be exactly a fleet project's dir
-// and the agent one of the agents discoverable there. a, when non-nil,
-// receives the audit fields.
-func (s *Server) dispatchTarget(agentName, projectDir string, a *auditEntry) (fleetwatch.Group, outcome, bool) {
-	if agentName == "" || !agent.ValidLaunchName(agentName) {
-		return fleetwatch.Group{}, failure(http.StatusBadRequest, codeUnknownAgent, "invalid agent name"), false
-	}
+// projectGroup finds the fleet project whose dir is exactly projectDir (one of
+// /v1/projects' dirs). a, when non-nil, receives the audit fields.
+func (s *Server) projectGroup(projectDir string, a *auditEntry) (fleetwatch.Group, outcome, bool) {
 	if !filepath.IsAbs(projectDir) {
 		return fleetwatch.Group{}, failure(http.StatusBadRequest, codeUnknownProject, "project_dir must be an absolute path from /v1/projects"), false
 	}
@@ -662,20 +678,29 @@ func (s *Server) dispatchTarget(agentName, projectDir string, a *auditEntry) (fl
 		logging.Warn("serve: loading fleet: %v", err)
 		return fleetwatch.Group{}, failure(http.StatusInternalServerError, codeInternal, "loading fleet"), false
 	}
-	var g fleetwatch.Group
-	found := false
-	for _, cand := range groups {
-		if cand.Dir != "" && cand.Dir == projectDir {
-			g, found = cand, true
-			break
+	for _, g := range groups {
+		if g.Dir != "" && g.Dir == projectDir {
+			if a != nil {
+				a.Session = g.Session
+				a.Project = clip(g.Project)
+			}
+			return g, outcome{}, true
 		}
 	}
-	if !found {
-		return fleetwatch.Group{}, failure(http.StatusBadRequest, codeUnknownProject, "project_dir is not a known project"), false
+	return fleetwatch.Group{}, failure(http.StatusBadRequest, codeUnknownProject, "project_dir is not a known project"), false
+}
+
+// dispatchTarget validates an agent name and project dir as a dispatch (and
+// its launch options) require: the dir must be exactly a fleet project's dir
+// and the agent one of the agents discoverable there. a, when non-nil,
+// receives the audit fields.
+func (s *Server) dispatchTarget(agentName, projectDir string, a *auditEntry) (fleetwatch.Group, outcome, bool) {
+	if agentName == "" || !agent.ValidLaunchName(agentName) {
+		return fleetwatch.Group{}, failure(http.StatusBadRequest, codeUnknownAgent, "invalid agent name"), false
 	}
-	if a != nil {
-		a.Session = g.Session
-		a.Project = clip(g.Project)
+	g, out, ok := s.projectGroup(projectDir, a)
+	if !ok {
+		return fleetwatch.Group{}, out, false
 	}
 	agents, err := s.agents.Agents([]string{g.Dir})
 	if err != nil {

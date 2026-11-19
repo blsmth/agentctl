@@ -1,5 +1,7 @@
 // Package uploads stores images a phone attaches to a reply, in the project
-// runtime dir where the agent can read them: <runtimeDir>/uploads/<window>/.
+// runtime dir where the agent can read them: <runtimeDir>/uploads/<window>/,
+// or <runtimeDir>/uploads/dispatch/ for images attached to a new agent's
+// first prompt, which has no window yet.
 // Files are 0600 in 0700 directories and named by random IDs; the client's
 // file name is never used.
 package uploads
@@ -23,6 +25,17 @@ import (
 const MaxAge = 7 * 24 * time.Hour
 
 const dirName = "uploads"
+
+// DispatchKey is the reserved key, in place of a window ID, for uploads that
+// belong to a dispatch. It cannot collide with a window: window keys are
+// digits only.
+const DispatchKey = "dispatch"
+
+// validKey reports whether key names an upload directory: a window ID or
+// DispatchKey.
+func validKey(key string) bool {
+	return key == DispatchKey || windowRE.MatchString(key)
+}
 
 var (
 	windowRE = regexp.MustCompile(`^@?[0-9]{1,9}$`)
@@ -49,15 +62,15 @@ func ExtFor(data []byte) (string, error) {
 	return "", ErrUnsupported
 }
 
-// Dir is the upload directory of a window.
-func Dir(runtimeDir, windowID string) string {
-	return filepath.Join(runtimeDir, dirName, strings.TrimPrefix(windowID, "@"))
+// Dir is the upload directory of a window, or of DispatchKey.
+func Dir(runtimeDir, key string) string {
+	return filepath.Join(runtimeDir, dirName, strings.TrimPrefix(key, "@"))
 }
 
 // Save stores data (already sniffed to extension ext) and returns its ID.
-func Save(runtimeDir, windowID, ext string, data []byte) (string, error) {
-	if runtimeDir == "" || !windowRE.MatchString(windowID) {
-		return "", fmt.Errorf("uploads: bad target %q %q", runtimeDir, windowID)
+func Save(runtimeDir, key, ext string, data []byte) (string, error) {
+	if runtimeDir == "" || !validKey(key) {
+		return "", fmt.Errorf("uploads: bad target %q %q", runtimeDir, key)
 	}
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -67,18 +80,19 @@ func Save(runtimeDir, windowID, ext string, data []byte) (string, error) {
 	if !IDRE.MatchString(id) {
 		return "", fmt.Errorf("uploads: bad extension %q", ext)
 	}
-	if err := safefs.WriteFile(runtimeDir, filepath.Join(Dir(runtimeDir, windowID), id), data, 0o600); err != nil {
+	if err := safefs.WriteFile(runtimeDir, filepath.Join(Dir(runtimeDir, key), id), data, 0o600); err != nil {
 		return "", fmt.Errorf("writing upload: %w", err)
 	}
 	return id, nil
 }
 
-// Path returns the absolute path of upload id of a window, which must exist.
-func Path(runtimeDir, windowID, id string) (string, error) {
-	if !IDRE.MatchString(id) || runtimeDir == "" || !windowRE.MatchString(windowID) {
+// Path returns the absolute path of upload id under a window or DispatchKey,
+// which must exist.
+func Path(runtimeDir, key, id string) (string, error) {
+	if !IDRE.MatchString(id) || runtimeDir == "" || !validKey(key) {
 		return "", fmt.Errorf("invalid image %q", id)
 	}
-	p := filepath.Join(Dir(runtimeDir, windowID), id)
+	p := filepath.Join(Dir(runtimeDir, key), id)
 	if !filepath.IsAbs(p) {
 		abs, err := filepath.Abs(p)
 		if err != nil {

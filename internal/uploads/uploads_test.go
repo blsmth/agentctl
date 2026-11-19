@@ -91,3 +91,69 @@ func TestPrune(t *testing.T) {
 		t.Errorf("missing dir: %d %v", n, err)
 	}
 }
+
+func TestDispatchKey(t *testing.T) {
+	rt := filepath.Join(t.TempDir(), ".agentctl")
+	id, err := Save(rt, DispatchKey, ".png", pngMagic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Path(rt, DispatchKey, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(rt, "uploads", "dispatch", id); p != want {
+		t.Errorf("path = %s, want %s", p, want)
+	}
+	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
+		t.Errorf("file mode %v", fi.Mode().Perm())
+	}
+	if di, _ := os.Stat(filepath.Dir(p)); di.Mode().Perm() != 0o700 {
+		t.Errorf("dir mode %v", di.Mode().Perm())
+	}
+	// A window's upload is not visible under the dispatch key and vice versa.
+	wid, _ := Save(rt, "@7", ".png", pngMagic)
+	if _, err := Path(rt, DispatchKey, wid); err == nil {
+		t.Error("dispatch key resolved a window upload")
+	}
+	if _, err := Path(rt, "@7", id); err == nil {
+		t.Error("window resolved a dispatch upload")
+	}
+	// Only the exact reserved key is accepted besides window IDs.
+	for _, bad := range []string{"@dispatch", "Dispatch", "dispatch/", "dispatch/..", "../dispatch", "dispatchx", ""} {
+		if _, err := Save(rt, bad, ".png", pngMagic); err == nil {
+			t.Errorf("Save accepted key %q", bad)
+		}
+		if _, err := Path(rt, bad, id); err == nil {
+			t.Errorf("Path accepted key %q", bad)
+		}
+	}
+}
+
+func TestPruneDispatchDir(t *testing.T) {
+	rt := t.TempDir()
+	oldID, _ := Save(rt, DispatchKey, ".png", pngMagic)
+	newID, _ := Save(rt, DispatchKey, ".png", pngMagic)
+	oldP, _ := Path(rt, DispatchKey, oldID)
+	now := time.Now()
+	old := now.Add(-8 * 24 * time.Hour)
+	if err := os.Chtimes(oldP, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := Prune(rt, now, MaxAge); err != nil || n != 1 {
+		t.Fatalf("Prune = %d, %v", n, err)
+	}
+	if _, err := Path(rt, DispatchKey, newID); err != nil {
+		t.Errorf("fresh dispatch upload removed: %v", err)
+	}
+	newP, _ := Path(rt, DispatchKey, newID)
+	if err := os.Chtimes(newP, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := Prune(rt, now, MaxAge); err != nil || n != 1 {
+		t.Fatalf("Prune = %d, %v", n, err)
+	}
+	if _, err := os.Stat(Dir(rt, DispatchKey)); !os.IsNotExist(err) {
+		t.Error("empty dispatch dir kept")
+	}
+}
