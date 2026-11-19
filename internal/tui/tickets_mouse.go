@@ -141,6 +141,9 @@ func (m TicketsModel) click(zone string) (tea.Model, tea.Cmd) {
 	if m.modalOpen() {
 		return m.clickModal(zone)
 	}
+	if m.edit.active && m.viewMode == tkViewDetail {
+		return m.clickEdit(zone, double)
+	}
 	if m.searchMode && !strings.HasSuffix(zone, "@search") {
 		m.commitSearch() // clicking elsewhere keeps the typed query
 	}
@@ -198,6 +201,28 @@ func (m TicketsModel) activate(zone string, double bool) (tea.Model, tea.Cmd) {
 
 	case "url":
 		return m.handleKey(tkKey("o"))
+
+	case "edit":
+		// The ✎ beside the title or body.
+		if m.viewMode != tkViewDetail {
+			return m, nil
+		}
+		if arg == "title" {
+			return m.startEdit(editTitle)
+		}
+		return m.startEdit(editBody)
+
+	case "dbl":
+		// Text that edits on double-click (the detail title).
+		if double && arg == "title" && m.viewMode == tkViewDetail {
+			return m.startEdit(editTitle)
+		}
+
+	case "pane":
+		// A double-click on the body text edits it; a single click does nothing.
+		if double && arg == "body" && m.viewMode == tkViewDetail {
+			return m.startEdit(editBody)
+		}
 	}
 	return m, nil
 }
@@ -226,6 +251,11 @@ func (m TicketsModel) clickModal(zone string) (tea.Model, tea.Cmd) {
 // moving the cursor there and pressing enter.
 func (m TicketsModel) clickModalRow(zone string, i int) (tea.Model, tea.Cmd) {
 	switch {
+	case strings.HasSuffix(zone, "@picker") && m.pickerModal.Visible:
+		if p, ok := m.pickerModal.Content.(tkPickerModel); ok {
+			m.pickerModal.Content = p.clickRow(i)
+			return m.checkPickerDone()
+		}
 	case strings.HasSuffix(zone, "@prompt") && m.promptModal.Visible:
 		if psm, ok := m.promptModal.Content.(PromptSelectModel); ok && i >= 0 && i < len(tlPromptOptions) {
 			psm.cursor = i
@@ -258,9 +288,8 @@ func (m TicketsModel) dismissModalByClick() (tea.Model, tea.Cmd) {
 			return m, nil // never discard a typed form
 		}
 		return m.handleKey(tkKey("esc"))
-	case m.helpModal.Visible:
-		m.helpModal.Visible = false
-		return m, nil
+	case m.pickerModal.Visible, m.helpModal.Visible:
+		return m.handleKey(tkKey("esc"))
 	}
 	return m, nil
 }

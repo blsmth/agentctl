@@ -172,14 +172,6 @@ func tkCloseIssueCmd(slug string, number int) tea.Cmd {
 	}
 }
 
-// tkAssignSelfCmd assigns the current user to a GitHub issue.
-func tkAssignSelfCmd(slug string, number int) tea.Cmd {
-	return func() tea.Msg {
-		_, err := tkExec("gh", "issue", "edit", strconv.Itoa(number), "--repo", slug, "--add-assignee", "@me")
-		return tkSelfAssignedMsg{number: number, err: err}
-	}
-}
-
 // tkCopiedMsg reports the outcome of copying an issue URL to the tmux buffer.
 type tkCopiedMsg struct {
 	url string

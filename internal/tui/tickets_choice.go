@@ -28,6 +28,8 @@ type tkChoiceModel struct {
 	cancel  int // index picked by esc / outside click
 	chosen  int // -1 while open
 	hover   string
+	// theirs is the remote copy behind a stale-edit prompt.
+	theirs *tkDetailFetchedMsg
 }
 
 func (c tkChoiceModel) Init() tea.Cmd { return nil }

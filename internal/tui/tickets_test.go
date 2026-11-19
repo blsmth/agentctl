@@ -626,26 +626,66 @@ func TestTkEditIssueCmd(t *testing.T) {
 	}
 }
 
-// TestEditKeyInListViewOpensEdit verifies that pressing "e" in the list view
-// returns a non-nil command (the edit command) when an issue is present.
+// TestEditKeyInListViewOpensEdit verifies that "e" in the list loads the
+// highlighted issue and opens it in the detail view with the title focused
+// for editing in place.
 func TestEditKeyInListViewOpensEdit(t *testing.T) {
+	InitStyles()
+	rec := recordExec(t, nil)
 	m := makeTestTicketsModel(t)
-	_, cmd := m.Update(charKey('e'))
-	if cmd == nil {
-		t.Error("pressing e in list view should return a non-nil edit command")
+	next, cmd := m.Update(charKey('e'))
+	m = next.(TicketsModel)
+	runCmds(cmd)
+	if !rec.called("gh issue view 42 --json") {
+		t.Fatalf("e should load #42, got %v", rec.all())
+	}
+	m = tkSendMsg(t, m, tkDetailFetchedMsg{number: 42, title: "test issue", body: "b"})
+	if m.viewMode != tkViewDetail || !m.edit.active || m.edit.field != editTitle {
+		t.Errorf("want the detail open with the title focused; view=%d edit=%+v", m.viewMode, m.edit.field)
 	}
 }
 
-// TestEditKeyInDetailViewOpensEdit verifies that pressing "e" in the detail view
-// returns a non-nil command when detail is set.
+// TestEditKeyInDetailViewOpensEdit verifies that "e" in the detail view
+// starts an in-place edit with the body focused, without leaving the TUI.
 func TestEditKeyInDetailViewOpensEdit(t *testing.T) {
+	InitStyles()
+	rec := recordExec(t, nil)
 	m := makeTestTicketsModel(t)
 	m.viewMode = 1
-	m.detail = &tkDetailFetchedMsg{number: 42, title: "test"}
-	_, cmd := m.Update(charKey('e'))
-	if cmd == nil {
-		t.Error("pressing e in detail view should return a non-nil edit command")
+	m.detail = &tkDetailFetchedMsg{number: 42, title: "test", body: "body"}
+	m = tkSendKey(t, m, charKey('e'))
+	if !m.edit.active || m.edit.field != editBody {
+		t.Errorf("e in detail should focus the body editor, got active=%v field=%v", m.edit.active, m.edit.field)
 	}
+	if len(rec.all()) != 0 {
+		t.Errorf("starting an edit must not call gh, got %v", rec.all())
+	}
+}
+
+// TestBrowserEditKey verifies that "E" (formerly "e") still edits the issue
+// in the browser from both views.
+func TestBrowserEditKey(t *testing.T) {
+	InitStyles()
+	for _, detail := range []bool{false, true} {
+		rec := recordExec(t, nil)
+		m := makeTestTicketsModel(t)
+		if detail {
+			m.viewMode = 1
+			m.detail = &tkDetailFetchedMsg{number: 42, title: "test"}
+		}
+		_, cmd := m.Update(charKey('E'))
+		runCmds(cmd)
+		if !rec.called("gh issue edit 42 --web") {
+			t.Errorf("detail=%v: E should run gh issue edit --web, got %v", detail, rec.all())
+		}
+	}
+}
+
+// tkSendMsg sends any message and returns the updated model.
+func tkSendMsg(t *testing.T, m TicketsModel, msg tea.Msg) TicketsModel {
+	t.Helper()
+	next, _ := m.Update(msg)
+	return next.(TicketsModel)
 }
 
 // ── SplitPane integration tests ─────────────────────────────────────────────

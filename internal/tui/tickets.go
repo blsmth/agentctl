@@ -120,12 +120,6 @@ type tkIssueClosedMsg struct {
 	err    error
 }
 
-// tkSelfAssignedMsg is sent after a self-assign command completes.
-type tkSelfAssignedMsg struct {
-	number int
-	err    error
-}
-
 // tkDetailFetchedMsg is sent when we fetch full issue details for the detail view.
 type tkDetailFetchedMsg struct {
 	number    int
@@ -242,8 +236,18 @@ type TicketsModel struct {
 
 	// autopilot is the auto_poll state (tickets_autopilot.go).
 	autopilot tkAutopilot
-	// choiceModal is the small button dialog (autopilot confirmation).
+	// choiceModal is the small button dialog (autopilot confirmation,
+	// discard and stale-edit prompts).
 	choiceModal Modal
+	// pickerModal is the label / assignee / label-filter picker.
+	pickerModal Modal
+
+	// edit is the in-place title/body draft (tickets_edit.go).
+	edit tkEdit
+	// pendingEdit opens the editor on pendingEditNum once its detail loads
+	// (e from the list).
+	pendingEdit    tkEditField
+	pendingEditNum int
 }
 
 // CreateOpts contains optional pre-filled values for the ticket create form.
@@ -313,19 +317,19 @@ func NewTicketsModel(dir string, agents []agent.Agent) TicketsModel {
 	on, interval := tkLoadAutoPoll()
 
 	m := TicketsModel{
-		termWidth:        120,
-		termHeight:       40,
-		loading:          true,
-		repoSlug:         slug,
-		dir:              dir,
-		issueState:       tkStateOpen,
-		result:           TicketsResult{Cancelled: true},
-		searchInput:      si,
-		labelIdx:         -1,
-		agents:           agents,
-		autopilot:        tkAutopilot{on: on, interval: interval},
-		detailCache:      make(map[int]*tkDetailFetchedMsg),
-		zones:            &zoneList{},
+		termWidth:   120,
+		termHeight:  40,
+		loading:     true,
+		repoSlug:    slug,
+		dir:         dir,
+		issueState:  tkStateOpen,
+		result:      TicketsResult{Cancelled: true},
+		searchInput: si,
+		labelIdx:    -1,
+		agents:      agents,
+		autopilot:   tkAutopilot{on: on, interval: interval},
+		detailCache: make(map[int]*tkDetailFetchedMsg),
+		zones:       &zoneList{},
 		splitPane: SplitPane{
 			ListRatio:     0.30,
 			MinListRows:   3,
@@ -526,6 +530,9 @@ func (m TicketsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.termHeight = msg.Height
 		m.splitPane.SetSize(msg.Width, m.paneHeight())
 		m.hover, m.hoverRow = "", "" // zones move on resize; the next motion re-resolves
+		if m.edit.active {
+			m.sizeEditor()
+		}
 		return m, nil
 
 	case ticketsFetchedMsg:
@@ -564,23 +571,17 @@ func (m TicketsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyFilters()
 		return m, tea.Batch(flash, m.previewCmdForCursor())
 
-	case tkSelfAssignedMsg:
-		if msg.err != nil {
-			return m, m.setFlash(fmt.Sprintf("✗ assign #%d failed: %v", msg.number, msg.err), true)
-		}
-		m.forgetPreview(msg.number)
-		cmds := []tea.Cmd{m.setFlash(fmt.Sprintf("assigned #%d to you", msg.number), false)}
-		if m.detail != nil && m.detail.number == msg.number {
-			cmds = append(cmds, tkFetchDetailCmd(m.repoSlug, msg.number))
-		} else if m.repoSlug != "" {
-			cmds = append(cmds, tkFetchPreviewCmd(m.repoSlug, msg.number))
-		}
-		cmds = append(cmds, tkFetchTicketsCmd(m.dir, m.issueState))
-		return m, tea.Batch(cmds...)
-
 	case tkDetailFetchedMsg:
+		pending := m.pendingEdit
+		if m.pendingEditNum != msg.number {
+			pending = 0
+		}
+		m.pendingEdit, m.pendingEditNum = 0, 0
 		if msg.err != nil {
 			return m, m.setFlash(fmt.Sprintf("✗ #%d: %v", msg.number, msg.err), true)
+		}
+		if m.edit.active {
+			return m, nil // never swap the issue out from under a draft
 		}
 		m.detail = &msg
 		m.scrollOffset = 0
@@ -589,6 +590,9 @@ func (m TicketsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cachePreview(&msg)
 		if m.previewDetail == nil || m.previewDetail.number == msg.number {
 			m.previewDetail = &msg
+		}
+		if pending != 0 {
+			return m.startEdit(pending)
 		}
 		return m, nil
 
@@ -603,7 +607,7 @@ func (m TicketsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.previewDetail = &d
 			}
-			if m.detail != nil && m.detail.number == msg.number && m.viewMode == tkViewDetail {
+			if m.detail != nil && m.detail.number == msg.number && m.viewMode == tkViewDetail && !m.edit.active {
 				m.detail = &d
 			}
 		}
@@ -642,6 +646,42 @@ func (m TicketsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 
+	case tkEditRemoteMsg:
+		return m.onEditRemote(msg)
+	case tkEditSavedMsg:
+		return m.onEditSaved(msg)
+	case tkEditorDoneMsg:
+		return m.onEditorDone(msg)
+	case tkDetailRefreshedMsg:
+		return m.onDetailRefreshed(msg)
+	case tkPickerOptionsMsg:
+		return m.onPickerOptions(msg)
+	case tkPickerAppliedMsg:
+		return m.onPickerApplied(msg)
+
+	case tea.PasteMsg:
+		switch {
+		case m.pickerModal.Visible:
+			var cmd tea.Cmd
+			m.pickerModal, cmd = m.pickerModal.Update(msg)
+			return m, cmd
+		case m.createModal.Visible:
+			var cmd tea.Cmd
+			m.createModal, cmd = m.createModal.Update(msg)
+			return m.checkCreateModalDone(cmd)
+		case m.modalOpen():
+			return m, nil
+		case m.edit.active:
+			return m.forwardToEditor(msg)
+		case m.searchMode:
+			var cmd tea.Cmd
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			m.searchQuery = m.searchInput.Value()
+			m.applyFilters()
+			return m, cmd
+		}
+		return m, nil
+
 	default:
 		// Forward non-key and background messages (e.g. cursor blink, issueCreatedMsg)
 		// to the active modal.
@@ -654,6 +694,13 @@ func (m TicketsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.promptModal, cmd = m.promptModal.Update(msg)
 			return m.checkPromptModalDone(cmd)
+		}
+		if m.edit.active {
+			// Cursor blink and other component messages.
+			var c1, c2 tea.Cmd
+			m.edit.title, c1 = m.edit.title.Update(msg)
+			m.edit.body, c2 = m.edit.body.Update(msg)
+			return m, tea.Batch(c1, c2)
 		}
 		if m.searchMode {
 			var cmd tea.Cmd
@@ -734,18 +781,39 @@ func (m TicketsModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.createModal, cmd = m.createModal.Update(msg)
 		return m.checkCreateModalDone(cmd)
 	}
-	if m.helpModal.Visible {
+	if m.pickerModal.Visible {
 		if msg.String() == "ctrl+c" {
-			m.result = TicketsResult{Cancelled: true}
-			m.quitting = true
-			return m, tea.Quit
+			return m.quit()
+		}
+		var cmd tea.Cmd
+		m.pickerModal, cmd = m.pickerModal.Update(msg)
+		next, applyCmd := m.checkPickerDone()
+		return next, tea.Batch(cmd, applyCmd)
+	}
+	if m.helpModal.Visible {
+		if msg.String() == "ctrl+c" && !m.edit.dirty() {
+			return m.quit()
 		}
 		var cmd tea.Cmd
 		m.helpModal, cmd = m.helpModal.Update(msg)
-		if h, ok := m.helpModal.Content.(tkHelpModel); ok && h.done {
-			m.helpModal.Visible = false
+		switch c := m.helpModal.Content.(type) {
+		case tkHelpModel:
+			if c.done {
+				m.helpModal.Visible = false
+			}
+		case tkTheirsModel:
+			if c.done {
+				// Back to the conflict prompt: the user still has to choose.
+				m.helpModal.Visible = false
+				prompt := c.prompt
+				prompt.chosen = -1
+				m.choiceModal = NewModal("Edit conflict", prompt, ModalMedium)
+			}
 		}
 		return m, cmd
+	}
+	if m.edit.active && m.viewMode == tkViewDetail {
+		return m.updateEdit(msg)
 	}
 	if m.viewMode == tkViewDetail {
 		return m.updateDetail(msg)
@@ -955,19 +1023,10 @@ func (m TicketsModel) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, content.Init()
 
 	case "l":
-		// Cycle label filter
-		if len(m.labelOptions) == 0 {
-			break
-		}
-		m.labelIdx++
-		if m.labelIdx >= len(m.labelOptions) {
-			m.labelIdx = -1
-			m.filterLabel = ""
-		} else {
-			m.filterLabel = m.labelOptions[m.labelIdx]
-		}
-		m.applyFilters()
-		return m, m.previewCmdForCursor()
+		return m.openLabelPicker()
+
+	case "f":
+		return m.openFilterPicker()
 
 	case "/":
 		m.searchMode = true
@@ -996,9 +1055,7 @@ func (m TicketsModel) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.copyURL()
 
 	case "a":
-		if hasIssue && m.repoSlug != "" {
-			return m, tkAssignSelfCmd(m.repoSlug, iss.Number)
-		}
+		return m.openAssignPicker()
 
 	case "t":
 		if hasIssue {
@@ -1023,7 +1080,18 @@ func (m TicketsModel) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.previewCmdForCursor()
 
 	case "e":
-		// Open the highlighted issue for editing in the browser.
+		// Edit in place: open the detail with the title focused.
+		if !hasIssue {
+			break
+		}
+		if m.repoSlug == "" {
+			return m, m.setFlash("✗ editing needs a GitHub remote for this directory", true)
+		}
+		m.pendingEdit, m.pendingEditNum = editTitle, iss.Number
+		return m, tkFetchDetailCmd(m.repoSlug, iss.Number)
+
+	case "E":
+		// Edit in the browser.
 		if hasIssue && m.repoSlug != "" {
 			return m, tkEditIssueCmd(m.repoSlug, iss.Number)
 		}
@@ -1114,13 +1182,20 @@ func (m TicketsModel) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "a":
-		// Self-assign the current issue.
-		if m.repoSlug != "" {
-			return m, tkAssignSelfCmd(m.repoSlug, d.number)
-		}
+		return m.openAssignPicker()
+
+	case "l":
+		return m.openLabelPicker()
+
+	case "f":
+		return m.openFilterPicker()
 
 	case "e":
-		// Open the current issue for editing in the browser.
+		// Edit in place, body focused.
+		return m.startEdit(editBody)
+
+	case "E":
+		// Edit in the browser.
 		if m.repoSlug != "" {
 			return m, tkEditIssueCmd(m.repoSlug, d.number)
 		}
@@ -1185,6 +1260,17 @@ func (m TicketsModel) checkChoiceModalDone(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 			next, onCmd := m.setAutopilot(true)
 			return next, tea.Batch(cmd, onCmd)
 		}
+	case "discard":
+		if c.picked() == "d" {
+			m.endEdit()
+		}
+	case "quit":
+		if c.picked() == "d" {
+			return m.quit()
+		}
+	case "stale":
+		next, staleCmd := m.onStaleChoice(c)
+		return next, tea.Batch(cmd, staleCmd)
 	}
 	return m, cmd
 }

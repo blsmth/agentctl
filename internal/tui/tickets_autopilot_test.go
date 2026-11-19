@@ -266,7 +266,9 @@ func TestAutopilotStaleTickAfterOffDoesNotDispatch(t *testing.T) {
 	stubAutopilotConfig(t, cfg)
 	dispatched := 0
 	stubAutoPollRunner(t, autoPollRunner{
-		list:     func(string) ([]byte, error) { return []byte(`[{"number":7,"title":"x","labels":[{"name":"ready"}]}]`), nil },
+		list: func(string) ([]byte, error) {
+			return []byte(`[{"number":7,"title":"x","labels":[{"name":"ready"}]}]`), nil
+		},
 		dispatch: func(int, string) error { dispatched++; return nil },
 	})
 	m := autopilotOnModel(t)

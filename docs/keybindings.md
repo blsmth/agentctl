@@ -41,6 +41,25 @@ agentctl binds only the keys below; tmux's defaults (`n` next window, `0`–`9` 
 | `T` | **Ticket launcher** — pick an issue and dispatch an agent on it (see [dispatch.md](dispatch.md#dispatch-modes)) |
 | `Q` | **Ticket menu** — create a new GitHub issue |
 
+### Inside the ticket browser
+
+The browser (`agentctl tickets --tui`) works with the keyboard alone; the mouse is optional. `?` lists every key and gesture.
+
+| Key | Action |
+|-----|--------|
+| `enter` / `esc` | Open the detail / go back (`esc` in the list clears the search, then quits) |
+| `e` | Edit in place: from the list it opens the detail with the title focused, in the detail it focuses the body. `ctrl+s` saves (`enter` in the title), `tab` switches field, `ctrl+e` hands the body to `$EDITOR`, `esc` cancels and asks first if you changed something. A save is blocked when the same field changed on GitHub since you opened it |
+| `E` | Edit in the browser (`gh issue edit --web`) |
+| `l` / `a` | Pick the issue's labels / assignees (type to filter, `space` toggles, `enter` applies at once) |
+| `f` | Filter the list by a label |
+| `s` / `S` / `/` | Cycle the sort / cycle open, closed and all issues / search titles |
+| `c` / `d` | New issue / close the issue (confirms) |
+| `o` / `p` / `y` | Open the issue / its linked PR in the browser / copy its URL to the tmux buffer |
+| `t` / `T` | Launch a triage agent / pick an agent to dispatch |
+| `P` | Autopilot on (asks first: it is a global setting) or off |
+
+With the mouse: click a row to select it and double-click to open it. Label chips filter, `#`/`AGE` headers sort, `#N↗` opens the linked PR, and the chips, sidebar buttons, autopilot pill and every hint at the bottom do what their key does. `✎`, or a double-click on the title or body, starts an edit. A click outside a dialog cancels it, except an edit with unsaved changes. The wheel scrolls the pane under the pointer. To select text natively, hold Shift (Option in iTerm2).
+
 ## Settings & permissions
 
 | Key | Action |

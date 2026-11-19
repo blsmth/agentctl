@@ -198,9 +198,10 @@ func TestTicketsClickZones(t *testing.T) {
 				t.Errorf("sortBy = %v, want oldest", m.sortBy)
 			}
 		}},
-		{name: "label chip filters", zone: "key:l@chip", check: func(t *testing.T, m TicketsModel, _ *execRecorder) {
-			if m.filterLabel != "bug" {
-				t.Errorf("filterLabel = %q, want bug", m.filterLabel)
+		{name: "label chip opens the filter picker", zone: "key:f@chip", check: func(t *testing.T, m TicketsModel, _ *execRecorder) {
+			p, ok := m.pickerModal.Content.(tkPickerModel)
+			if !m.pickerModal.Visible || !ok || p.kind != pickFilter {
+				t.Error("the label chip should open the label filter picker")
 			}
 		}},
 		{name: "search chip opens search", zone: "key:/@chip", check: func(t *testing.T, m TicketsModel, _ *execRecorder) {
@@ -233,9 +234,9 @@ func TestTicketsClickZones(t *testing.T) {
 				t.Errorf("want gh pr view --web, got %v", rec.all())
 			}
 		}},
-		{name: "preview Edit button", zone: "key:e@prev", check: func(t *testing.T, m TicketsModel, rec *execRecorder) {
-			if !rec.called("gh issue edit 3 --web") {
-				t.Errorf("want gh issue edit 3 --web, got %v", rec.all())
+		{name: "preview Edit button edits in place", zone: "key:e@prev", check: func(t *testing.T, m TicketsModel, rec *execRecorder) {
+			if m.pendingEdit != editTitle || m.pendingEditNum != 3 || !rec.called("gh issue view 3 --json") {
+				t.Errorf("Edit should load #3 to edit its title; pending=%v/%d calls=%v", m.pendingEdit, m.pendingEditNum, rec.all())
 			}
 		}},
 		{name: "preview Close button confirms", zone: "key:d@prev", check: func(t *testing.T, m TicketsModel, rec *execRecorder) {
@@ -261,9 +262,10 @@ func TestTicketsClickZones(t *testing.T) {
 				t.Errorf("want gh issue view 3 --web, got %v", rec.all())
 			}
 		}},
-		{name: "preview assignee assigns", zone: "assign:3@prev", check: func(t *testing.T, m TicketsModel, rec *execRecorder) {
-			if !rec.called("gh issue edit 3 --add-assignee @me") {
-				t.Errorf("want self-assign of #3, got %v", rec.all())
+		{name: "preview assignee opens the assign picker", zone: "assign:3@prev", check: func(t *testing.T, m TicketsModel, rec *execRecorder) {
+			p, ok := m.pickerModal.Content.(tkPickerModel)
+			if !m.pickerModal.Visible || !ok || p.kind != pickAssignees || p.number != 3 {
+				t.Errorf("assignee click should open the assign picker for #3")
 			}
 		}},
 		{name: "preview label filters", zone: "label:bug@prev", check: func(t *testing.T, m TicketsModel, _ *execRecorder) {

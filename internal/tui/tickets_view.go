@@ -274,18 +274,33 @@ func (m TicketsModel) renderHintBar(hints []tkHint) string {
 }
 
 // renderTitleBar renders the accent title bar, optionally preceded by the
-// detail view's "← back" link, filling width columns.
+// detail view's "← back" link and followed by its ✎ (edit title), filling
+// width columns.
 func (m TicketsModel) renderTitleBar(title string, back bool, width int) string {
-	prefix := ""
+	prefix, suffix := "", ""
 	if back {
 		prefix = m.link("key:esc@back", "← back", fgStyle(theme.Current().Accent).Bold(true)) + "  "
+		suffix = " " + m.pencil("edit:title@detail")
 	}
-	barW := width - lipgloss.Width(prefix)
+	barW := width - lipgloss.Width(prefix) - lipgloss.Width(suffix)
 	if barW < 10 {
 		barW = 10
 	}
 	text := ansi.Truncate(title, barW-4, "…")
-	return prefix + tkStyles.Title.Width(barW).Render(text)
+	if back {
+		text = zoneMark("dbl:title@detail", text) // double-click edits the title
+	}
+	return prefix + tkStyles.Title.Width(barW).Render(text) + suffix
+}
+
+// pencil renders a dim ✎ edit affordance that brightens on hover.
+func (m TicketsModel) pencil(id string) string {
+	t := theme.Current()
+	st := fgStyle(t.Muted)
+	if m.hover == id {
+		st = fgStyle(t.Accent).Bold(true)
+	}
+	return zoneMark(id, st.Render("✎"))
 }
 
 // View renders the frame, records its click zones and strips the markers.
@@ -327,7 +342,7 @@ func (m TicketsModel) render() string {
 // activeModal returns the modal on top, with the pointer's hover applied to
 // its content, if any is open.
 func (m TicketsModel) activeModal() (Modal, bool) {
-	for _, md := range []Modal{m.choiceModal, m.confirmModal, m.promptModal, m.agentModal, m.createModal, m.helpModal} {
+	for _, md := range []Modal{m.choiceModal, m.confirmModal, m.pickerModal, m.promptModal, m.agentModal, m.createModal, m.helpModal} {
 		if md.Visible {
 			if h, ok := md.Content.(tkHoverable); ok {
 				md.Content = h.withHover(m.hover)
@@ -452,10 +467,10 @@ func (m TicketsModel) renderChips() string {
 	}
 
 	if m.filterLabel == "" {
-		parts = append(parts, m.button("key:l@chip", "label: any ▾", chip))
+		parts = append(parts, m.button("key:f@chip", "label: any ▾", chip))
 	} else {
 		clear := m.link("chip:label-clear", "×", fgStyle(t.Red).Bold(true))
-		parts = append(parts, m.chipWithClear("key:l@chip", "label: "+m.filterLabel, clear, active))
+		parts = append(parts, m.chipWithClear("key:f@chip", "label: "+m.filterLabel, clear, active))
 	}
 
 	if m.searchQuery == "" {
@@ -568,7 +583,9 @@ func (m TicketsModel) listHintBar() string {
 		{key: "e", label: "edit"},
 		{key: "d", label: "close"},
 		{key: "c", label: "new"},
-		{key: "l", label: "label"},
+		{key: "l", label: "labels"},
+		{key: "a", label: "assign"},
+		{key: "f", label: "filter"},
 		{key: "s", label: "sort"},
 		{key: "/", label: "search"},
 		{key: "o", label: "open"},
@@ -999,10 +1016,11 @@ func (m TicketsModel) detailBodyLines() []string {
 	return m.renderBody(m.detail.body, m.detailLayout().leftW)
 }
 
-// detailBodyRows is how many body rows the detail view shows (the narrow
-// layout spends three rows on the action strip and meta line).
+// detailBodyRows is how many body text rows the detail view shows: the
+// column minus its "Body ✎" line (the narrow layout also spends three rows
+// on the action strip and meta line).
 func (m TicketsModel) detailBodyRows() int {
-	rows := m.detailVisibleRows()
+	rows := m.detailVisibleRows() - 1
 	if m.detailLayout().narrow {
 		rows -= 3
 	}
@@ -1030,27 +1048,38 @@ func (m TicketsModel) viewDetail() string {
 	lay := m.detailLayout()
 
 	var b strings.Builder
-	b.WriteString("  " + m.renderHeaderLine(fmt.Sprintf("Issue #%d  %s", d.number, d.title), true, cw))
+	if m.edit.active {
+		b.WriteString("  " + m.renderEditTitleLine(cw))
+	} else {
+		b.WriteString("  " + m.renderHeaderLine(fmt.Sprintf("Issue #%d  %s", d.number, d.title), true, cw))
+	}
 	b.WriteString("\n")
 	b.WriteString("  " + m.renderStatusLine(cw))
 	b.WriteString("\n")
 
-	bodyLines := m.detailBodyLines()
 	rows := m.detailBodyRows()
 	maxScroll := m.detailMaxScroll()
 	off := m.scrollOffset
 	if off > maxScroll {
 		off = maxScroll
 	}
-	end := off + rows
-	if end > len(bodyLines) {
-		end = len(bodyLines)
+	var column []string
+	if m.edit.active {
+		column = m.renderEditBox(lay.leftW, rows+1)
+	} else {
+		bodyLines := m.detailBodyLines()
+		end := off + rows
+		if end > len(bodyLines) {
+			end = len(bodyLines)
+		}
+		visible := append([]string(nil), bodyLines[off:end]...)
+		for len(visible) < rows {
+			visible = append(visible, "")
+		}
+		head := tkDetailSectionStyle.Render("Body") + " " + m.pencil("edit:body@detail")
+		column = append([]string{head}, strings.Split(zoneMarkLines("pane:body", clipLines(visible, rows, lay.leftW)), "\n")...)
 	}
-	visible := append([]string(nil), bodyLines[off:end]...)
-	for len(visible) < rows {
-		visible = append(visible, "")
-	}
-	bodyBlock := zoneMarkLines("pane:body", clipLines(visible, rows, lay.leftW))
+	colBlock := clipLines(column, rows+1, lay.leftW)
 
 	if lay.narrow {
 		var top []string
@@ -1059,26 +1088,29 @@ func (m TicketsModel) viewDetail() string {
 		for _, l := range top {
 			b.WriteString("  " + l + "\n")
 		}
-		for _, l := range strings.Split(bodyBlock, "\n") {
+		for _, l := range strings.Split(colBlock, "\n") {
 			b.WriteString("  " + l + "\n")
 		}
 	} else {
 		right := m.detailSidebar(d, lay.rightW)
-		rows := m.detailVisibleRows()
-		leftCol := lipgloss.NewStyle().Width(lay.leftW).Render(bodyBlock)
-		rightCol := lipgloss.NewStyle().Width(lay.rightW).Render(clipLines(right, rows, lay.rightW))
+		leftCol := lipgloss.NewStyle().Width(lay.leftW).Render(colBlock)
+		rightCol := lipgloss.NewStyle().Width(lay.rightW).Render(clipLines(right, m.detailVisibleRows(), lay.rightW))
 		for _, l := range strings.Split(lipgloss.JoinHorizontal(lipgloss.Top, leftCol, "  ", rightCol), "\n") {
 			b.WriteString("  " + l + "\n")
 		}
 	}
 
 	// Scroll indicator (always one line, blank when everything fits).
-	if maxScroll > 0 {
+	if maxScroll > 0 && !m.edit.active {
 		b.WriteString(tkDimStyle.Render(fmt.Sprintf("  ── %d%% ──", off*100/maxScroll)))
 	}
 	b.WriteString("\n")
 
-	return fitFrame(b.String(), m.detailHintBar(), m.termHeight)
+	hint := m.detailHintBar()
+	if m.edit.active {
+		hint = m.editHintBar()
+	}
+	return fitFrame(b.String(), hint, m.termHeight)
 }
 
 // detailSidebar is the wide detail view's right column.
@@ -1088,9 +1120,11 @@ func (m TicketsModel) detailSidebar(d *tkDetailFetchedMsg, width int) []string {
 	lines = append(lines, tkDetailValueStyle.Width(width).Render(d.title))
 	lines = append(lines, "")
 	lines = append(lines, tkDetailLabelStyle.Render("Number:")+tkDetailValueStyle.Render(fmt.Sprintf("#%d", d.number)))
+	labels := tkDimStyle.Render("none")
 	if len(d.labels) > 0 {
-		lines = append(lines, tkDetailLabelStyle.Render("Labels:")+m.labelChips(d.labels, "detail", false))
+		labels = m.labelChips(d.labels, "detail", false)
 	}
+	lines = append(lines, tkDetailLabelStyle.Render("Labels:")+labels+" "+m.pencil("key:l@labels"))
 	lines = append(lines, "")
 	lines = append(lines, m.sidebarMeta(d, "detail", width)...)
 	lines = append(lines, "", tkDetailSectionStyle.Render("── Actions ──"), "")
@@ -1105,8 +1139,9 @@ func (m TicketsModel) detailHintBar() string {
 		{key: "esc", label: "back", pin: true},
 		{key: "j/k", label: "scroll", send: "j"},
 		{key: "e", label: "edit"},
-		{key: "d", label: "close"},
+		{key: "l", label: "labels"},
 		{key: "a", label: "assign"},
+		{key: "d", label: "close"},
 		{key: "o", label: "open"},
 		{key: "t", label: "triage"},
 		{key: "T", label: "dispatch"},

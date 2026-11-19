@@ -63,7 +63,7 @@ Rationale: a project-local file can arrive with a cloned repository. Executing c
 | `titles` | object | on with a `nous` backend | Short AI row titles in the hub and the phone app, generated through a Nous Portal backend. Global-only. See [titles](#titles). |
 | `default_agent` | string | first discovered agent | Agent launched by the quick-launch keybinding. A project-local value overrides the global one only when it passes the safety checks in [permissions.md](permissions.md) (otherwise the global value is used, with a warning); ignored with a warning if it is not a discovered agent. |
 | `theme` | string | `catppuccin-mocha` | Color theme name. |
-| `auto_poll` | bool | `false` | Ticket-browser autopilot mode. |
+| `auto_poll` | bool | `false` | Ticket-browser autopilot mode: every `auto_poll_interval` the open ticket browser dispatches open issues labelled `ready` (skipping `in-progress`). Global config only. Toggle it with `P` or the header pill in the browser, which asks before turning it on. |
 | `auto_poll_interval` | string | `5m` | Autopilot poll interval (Go duration). |
 | `restore_max_age` | string | `168h` | Oldest saved `state.json` that `agentctl restore` will restore agents from after a relaunch (Go duration). `0` or negative disables the gate. Global config only. Skipped agents are named in the log. |
 | `new_window_position` | string | `left` | Where new agent windows open in the tmux window list: `left` (first position) or `right` (appended). Unknown values fall back to `left`. Global config only. Utility windows (tickets, sessions, agents, shell) are unaffected. |

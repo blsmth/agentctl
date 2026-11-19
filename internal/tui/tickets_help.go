@@ -36,57 +36,85 @@ func (h tkHelpModel) withHover(id string) tea.Model {
 // HintKeys implements ModalContent.
 func (h tkHelpModel) HintKeys() []string { return []string{"esc / ?", "close"} }
 
-// tkHelpKeys are the keyboard bindings, as key/description pairs.
+// tkHelpKeys are the keyboard bindings, as key/description pairs. The
+// overlay lays them out two per row, so descriptions stay short.
 var tkHelpKeys = [][2]string{
-	{"j/k ↑/↓", "move / scroll"},
-	{"J/K", "scroll the preview"},
+	{"j/k ↑↓", "move / scroll"},
+	{"J/K", "scroll preview"},
 	{"enter", "open detail"},
-	{"esc", "back / clear search / quit"},
-	{"e", "edit in the browser"},
-	{"d", "close issue (confirms)"},
-	{"a", "assign yourself"},
-	{"c", "new issue"},
-	{"l", "cycle label filter"},
-	{"s", "cycle sort"},
-	{"S", "cycle open / closed / all"},
+	{"esc", "back / clear / quit"},
+	{"e", "edit in place"},
+	{"E", "edit in browser"},
+	{"l", "edit labels"},
+	{"a", "edit assignees"},
+	{"f", "filter by label"},
 	{"/", "search titles"},
-	{"o", "open issue in browser"},
+	{"s", "cycle sort"},
+	{"S", "open/closed/all"},
+	{"c", "new issue"},
+	{"d", "close (confirms)"},
+	{"o", "open in browser"},
 	{"p", "open linked PR"},
-	{"y", "copy issue URL (tmux buffer)"},
-	{"t / T", "triage / dispatch an agent"},
-	{"tab", "focus list / preview"},
-	{"P", "autopilot on (confirms) / off"},
+	{"t", "triage agent"},
+	{"T", "dispatch agent…"},
+	{"y", "copy issue URL"},
+	{"P", "autopilot on/off"},
+	{"tab", "list / preview"},
 	{"q", "quit"},
+}
+
+// tkHelpEdit are the keys while a title or body field has focus.
+var tkHelpEdit = [][2]string{
+	{"ctrl+s", "save"},
+	{"enter", "save (title)"},
+	{"tab", "title ⇄ body"},
+	{"ctrl+e", "body in $EDITOR"},
+	{"esc", "cancel (asks)"},
 }
 
 // tkHelpMouse are the mouse gestures.
 var tkHelpMouse = [][2]string{
-	{"click", "select a row, press a button or chip"},
-	{"double-click", "open a row's detail"},
-	{"wheel", "scroll the pane under the pointer"},
-	{"click a label", "filter by that label"},
-	{"click # / AGE", "sort by that column"},
-	{"click #N↗", "open the linked PR"},
-	{"click outside", "cancel a dialog"},
+	{"click", "select / press"},
+	{"dbl-click", "open a row"},
+	{"wheel", "scroll that pane"},
+	{"label", "filter by it"},
+	{"# / AGE", "sort by column"},
+	{"#N↗", "open the PR"},
+	{"✎ / dbl", "edit title/body"},
+	{"outside", "cancel a dialog"},
+}
+
+// helpGrid renders pairs two per row.
+func helpGrid(pairs [][2]string, keySt, descSt lipgloss.Style, colW int) string {
+	var b strings.Builder
+	for i := 0; i < len(pairs); i += 2 {
+		left := keySt.Render(pairs[i][0]) + descSt.Render(pairs[i][1])
+		line := padTo(left, colW, lipgloss.NewStyle())
+		if i+1 < len(pairs) {
+			line += keySt.Render(pairs[i+1][0]) + descSt.Render(pairs[i+1][1])
+		}
+		b.WriteString("  " + line + "\n")
+	}
+	return b.String()
 }
 
 func (h tkHelpModel) View() tea.View {
 	t := theme.Current()
-	keySt := fgStyle(t.Accent).Bold(true).Width(16)
+	cw := modalContentWidth(ModalMedium) - 4
+	colW := (cw - 2) / 2
+	keySt := fgStyle(t.Accent).Bold(true).Width(10)
 	descSt := fgStyle(t.Text)
 	section := fgStyle(t.Sky).Bold(true)
 
 	var b strings.Builder
 	b.WriteString(section.Render("Keyboard") + "\n")
-	for _, kv := range tkHelpKeys {
-		b.WriteString("  " + keySt.Render(kv[0]) + descSt.Render(kv[1]) + "\n")
-	}
-	b.WriteString("\n" + section.Render("Mouse") + "\n")
-	for _, kv := range tkHelpMouse {
-		b.WriteString("  " + keySt.Render(kv[0]) + descSt.Render(kv[1]) + "\n")
-	}
-	note := "To select text natively, hold Shift (Option in iTerm2) while dragging: the app has the mouse."
-	b.WriteString("\n" + lipgloss.NewStyle().Width(modalContentWidth(ModalMedium)).Foreground(lipgloss.Color(t.Muted)).Italic(true).Render(note) + "\n\n")
+	b.WriteString(helpGrid(tkHelpKeys, keySt, descSt, colW))
+	b.WriteString(section.Render("While editing") + "\n")
+	b.WriteString(helpGrid(tkHelpEdit, keySt, descSt, colW))
+	b.WriteString(section.Render("Mouse") + "\n")
+	b.WriteString(helpGrid(tkHelpMouse, keySt, descSt, colW))
+	note := "Native text selection: hold Shift (Option in iTerm2) while dragging — the app has the mouse."
+	b.WriteString("\n" + lipgloss.NewStyle().Width(cw).Foreground(lipgloss.Color(t.Muted)).Italic(true).Render(note) + "\n\n")
 
 	st := btnNormalStyle
 	if h.hover == "mkey:esc@help" {
