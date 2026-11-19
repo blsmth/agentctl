@@ -92,7 +92,7 @@ func TestSessionHookArgs(t *testing.T) {
 		{"unlinked", reconcileHookArgs("s", "/bin/agentctl", "/p/.agentctl"), "window-unlinked", "reconcile"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.args[0] != "set-hook" || tc.args[1] != "-t" || tc.args[2] != "s" || tc.args[3] != tc.hook {
+			if tc.args[0] != "set-hook" || tc.args[1] != "-t" || tc.args[2] != "=s:" || tc.args[3] != tc.hook {
 				t.Fatalf("not a session-scoped %s hook: %v", tc.hook, tc.args)
 			}
 			run := tc.args[4]

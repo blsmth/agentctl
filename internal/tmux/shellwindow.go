@@ -16,7 +16,7 @@ const ShellWindowName = "shell"
 func newShellWindowArgs(session, dir string) []string {
 	args := []string{
 		"new-window", "-d", "-P", "-F", "#{window_id}",
-		"-t", session + ":",
+		"-t", ExactSessionTarget(session),
 	}
 	if dir != "" {
 		args = append(args, "-c", dir)

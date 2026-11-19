@@ -11,10 +11,10 @@ func TestNewShellWindowArgs(t *testing.T) {
 		want               []string
 	}{
 		{"with dir", "agentctl-proj", "/work/proj", []string{
-			"new-window", "-d", "-P", "-F", "#{window_id}", "-t", "agentctl-proj:",
+			"new-window", "-d", "-P", "-F", "#{window_id}", "-t", "=agentctl-proj:",
 			"-c", "/work/proj", "-n", "shell", "-e", "AGENTCTL=1"}},
 		{"no dir", "s", "", []string{
-			"new-window", "-d", "-P", "-F", "#{window_id}", "-t", "s:",
+			"new-window", "-d", "-P", "-F", "#{window_id}", "-t", "=s:",
 			"-n", "shell", "-e", "AGENTCTL=1"}},
 	}
 	for _, tt := range tests {

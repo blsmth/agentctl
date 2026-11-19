@@ -16,13 +16,13 @@ func TestViewerArgBuilders(t *testing.T) {
 		want []string
 	}{
 		{"new-session", viewerNewSessionArgs("agentctl-proj", "agentctl-hubview-2"),
-			[]string{"new-session", "-d", "-t", "agentctl-proj", "-s", "agentctl-hubview-2"}},
+			[]string{"new-session", "-d", "-t", "=agentctl-proj", "-s", "agentctl-hubview-2"}},
 		{"select-window", viewerSelectWindowArgs("agentctl-hubview-2", "@7"),
-			[]string{"select-window", "-t", "agentctl-hubview-2:@7"}},
+			[]string{"select-window", "-t", "=agentctl-hubview-2:@7"}},
 		{"switch-client", viewerSwitchClientArgs("/dev/ttys004", "agentctl-hubview-2"),
-			[]string{"switch-client", "-c", "/dev/ttys004", "-t", "agentctl-hubview-2"}},
+			[]string{"switch-client", "-c", "/dev/ttys004", "-t", "=agentctl-hubview-2:"}},
 		{"destroy-unattached", viewerDestroyUnattachedArgs("agentctl-hubview"),
-			[]string{"set-option", "-t", "agentctl-hubview", "destroy-unattached", "on"}},
+			[]string{"set-option", "-t", "=agentctl-hubview:", "destroy-unattached", "on"}},
 		{"split", viewerSplitArgs("agentctl-hub:fleet-list", 80, "cmd"),
 			[]string{"split-window", "-h", "-d", "-P", "-F", "#{pane_id}", "-t", "agentctl-hub:fleet-list", "-l", "80", "cmd"}},
 	}
@@ -78,7 +78,7 @@ func TestParseViewerSessionsAndClients(t *testing.T) {
 func TestViewerOptionArgs(t *testing.T) {
 	got := map[string]string{}
 	for _, a := range viewerOptionArgs("agentctl-hubview-2") {
-		if len(a) != 5 || a[0] != "set-option" || a[2] != "agentctl-hubview-2" {
+		if len(a) != 5 || a[0] != "set-option" || a[2] != "=agentctl-hubview-2:" {
 			t.Fatalf("unexpected option args %v", a)
 		}
 		got[a[3]] = a[4]
@@ -98,9 +98,9 @@ func TestViewerAttachCommand(t *testing.T) {
 	tests := []struct {
 		name, sock, want string
 	}{
-		{"no socket", "", `env -u TMUX tmux attach -t agentctl-hubview-2 \; set-option -t agentctl-hubview-2 destroy-unattached on`},
-		{"socket", "/tmp/tmux-1/default", `env -u TMUX tmux -S '/tmp/tmux-1/default' attach -t agentctl-hubview-2 \; set-option -t agentctl-hubview-2 destroy-unattached on`},
-		{"quote", "/a b/it's", `env -u TMUX tmux -S '/a b/it'\''s' attach -t agentctl-hubview-2 \; set-option -t agentctl-hubview-2 destroy-unattached on`},
+		{"no socket", "", `env -u TMUX tmux attach -t =agentctl-hubview-2 \; set-option -t =agentctl-hubview-2: destroy-unattached on`},
+		{"socket", "/tmp/tmux-1/default", `env -u TMUX tmux -S '/tmp/tmux-1/default' attach -t =agentctl-hubview-2 \; set-option -t =agentctl-hubview-2: destroy-unattached on`},
+		{"quote", "/a b/it's", `env -u TMUX tmux -S '/a b/it'\''s' attach -t =agentctl-hubview-2 \; set-option -t =agentctl-hubview-2: destroy-unattached on`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

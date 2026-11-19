@@ -85,7 +85,7 @@ func ResolveWindowID() string {
 // WindowName returns the current tmux window name for windowID.
 // Returns an empty string if tmux cannot be reached.
 func WindowName(windowID string) string {
-	target := fmt.Sprintf("%s:%s", tmux.SessionName, windowID)
+	target := tmux.ExactSessionTarget(tmux.SessionName) + windowID
 	return deps.TmuxDisplay(target, "#{window_name}")
 }
 
