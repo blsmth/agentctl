@@ -68,6 +68,35 @@ type MainPanes interface {
 	CapturePane(paneID string, lines int) (string, error)
 }
 
+// Shells opens plain shell windows (the hub's shell selector) and recognises
+// them: they are not fleet windows, so the live terminal asks here.
+type Shells interface {
+	// SessionRunning reports whether the tmux session exists.
+	SessionRunning(session string) bool
+	// NewShell opens a detached shell window in session rooted at dir and
+	// returns its window ID.
+	NewShell(session, dir string) (string, error)
+	// IsShell reports whether windowID is a "shell" window of session.
+	IsShell(session, windowID string) bool
+}
+
+type tmuxShells struct{}
+
+func (tmuxShells) SessionRunning(session string) bool { return tmux.HasSessionNamed(session) }
+
+func (tmuxShells) NewShell(session, dir string) (string, error) {
+	return tmux.NewShellWindow(session, dir)
+}
+
+func (tmuxShells) IsShell(session, windowID string) bool {
+	for _, w := range tmux.ListWindowsIn(session) {
+		if w.ID == windowID && tmux.StripAgentPrefix(w.Name) == tmux.ShellWindowName {
+			return true
+		}
+	}
+	return false
+}
+
 // Dispatcher launches an ad-hoc agent, as `agentctl dispatch --agent A
 // --prompt P --dir D` does.
 type Dispatcher interface {

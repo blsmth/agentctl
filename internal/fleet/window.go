@@ -50,6 +50,10 @@ type Window struct {
 	// ScheduledAt (RFC 3339) when it fired; both omitted for other windows.
 	ScheduledBy string `json:"scheduled_by,omitempty"`
 	ScheduledAt string `json:"scheduled_at,omitempty"`
+
+	// Title is a short generated title for Recap (2-5 words), for list rows;
+	// omitted until one is cached. Recap stays the full text.
+	Title string `json:"title,omitempty"`
 }
 
 // ToWindow converts a row and its windowstate metadata to a Window.
@@ -78,6 +82,7 @@ func ToWindow(r Row, m Meta) Window {
 	}
 	if r.Recap.Text != "" {
 		w.Recap, w.RecapSource = r.Recap.Text, r.Recap.Source.String()
+		w.Title = r.Recap.Title
 	}
 	if m.ScheduledBy != "" {
 		w.ScheduledBy = m.ScheduledBy

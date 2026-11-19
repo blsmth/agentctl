@@ -55,6 +55,7 @@ agentctl binds only the keys below; tmux's defaults (`n` next window, `0`–`9` 
 |-----|--------|
 | `i` | **Self-improve** — agent analyzes its session logs and rewrites its own instructions |
 | `C` | **Context push** — pick a context-store entry to push to the focused agent |
+| `X` | **Context viewer** — open the context window (`agentctl context --tui`): browse entries with a scrollable preview, `/` filter, `d` delete (y/n), `r` reload, `q`/`esc` back to the previous window |
 
 ## Phone web app
 
@@ -88,7 +89,7 @@ pressed in (`AGENTCTL_KEY_WINDOW`), and `agentctl` (see `internal/hubtarget`)
 redirects hub keypresses to the agent shown in the live pane:
 
 - **Window-scoped** (`x` kill, `o` logs, `s` settings, `i` improve, `h`/`H` HUD, `C` context push) act on the viewed agent's window.
-- **Project-scoped** (`a` menu, `A` launch, `c` create, `T`/`Q` tickets, `P` permissions, `m`/`t`/`S` windows) run as if pressed in the viewed agent's project session; new windows land there.
+- **Project-scoped** (`a` menu, `A` launch, `c` create, `T`/`Q` tickets, `P` permissions, `m`/`t`/`S`/`X` windows) run as if pressed in the viewed agent's project session; new windows land there.
 - `q` closes the hub (back to the previous session). `R` (restart) and `K` (kill all) are refused in the hub.
 - With no agent viewed yet, these keys show "select an agent in the hub first".
 - Popups may open over the hub window; only their target changes.
@@ -104,7 +105,9 @@ The hub window has no chrome bar or HUD of its own. By default the agent's chrom
 | `enter`/`tab` | Focus the live pane. |
 | `J` | Jump to the selected agent's home session. |
 | `n` / `x` | Launch a new agent / close the selected one. |
+| `N` | **New session** — open an agent in another directory as its own agentctl project. See below. |
 | `b` | Select the next blocked agent. |
+| `w` | **Sweep** the project group under the cursor. See below. |
 | `z` | **Fold** the project group under the cursor (on its header or any of its rows; the cursor moves to the header). A folded group shows only its header line, with its counts and the ⏸ flag. Clicking a header's project name toggles it too. |
 | `shift+↑` / `shift+↓` | **Reorder** the project group under the cursor one slot up or down (the selection goes with it). You can also drag a group header: press it, move the pointer off the header row, and release where it should go; a rule marks the drop spot, and `esc` or releasing outside the list cancels. A plain click is still a click. |
 | `Z` | **Focus mode** — fold every project with no blocked (⏸) and no working (●) agent; press again to unfold everything. |
@@ -117,7 +120,11 @@ The hub window has no chrome bar or HUD of its own. By default the agent's chrom
 
 The title row shows `agentctl serve`'s state after "agentctl hub": `📱 serve` (green) when it runs, `📱 off` (dim) when it does not, and `📱 stuck` (yellow) when its process is alive but its control socket refuses connections (phone approvals are not offered). It is refreshed on the hub's poll tick and does not need the monitor. Clicking it toggles serve, like `S`.
 
-Project order is saved globally in `group-order.json` in the same state dir (keyed by project directory); projects not in it follow alphabetically, and `agentctl status` and `jump-next-blocked` use the same order; the phone list uses it among projects of equal urgency. Fold state and the filter are kept per hub across reloads, hot reloads and restarts, in `hub-view.json` in the agentctl state dir (`$XDG_STATE_HOME/agentctl`, default `~/.local/state/agentctl`). Jumps that target a hidden agent (`b`, a just-launched agent, a tab click in the live pane) unfold its group first, and clear the filter if it would still hide it. The one-line footer has no room for `z`, `Z`, `f` and `S`; they are listed under `?`.
+`N`, or the `+ new session` button on the title row (shortened to `+ session` or `+` when the list is narrow), opens a directory prompt in the footer, prefilled with the directory `agentctl hub` was last run from (recorded in `hub-origin` in the agentctl state dir on every `agentctl hub`; `$HOME` when there is none). `~`, `~/...` and paths relative to the prefill are accepted; `enter` confirms and `esc` cancels. When a project in the list already has that directory (symlinks resolved), the hub launches an agent there, like its `+ new`. Otherwise it starts the directory's own session (`agentctl-<dir>`, detached, as if `agentctl` were run there) and launches an agent in it with `agentctl launch --background --permission-mode auto`; a directory without `.claude/agents/` is initialized first, without starter templates and without the hooks or default-agent prompts of `agentctl init`. The hub refuses `$HOME` (it would create the global `~/.claude/agents`), `/`, files and missing directories; the error shows in the footer and the prompt stays open. A git repository is not required. Two directories with the same name map to the same session name; when that name is already taken by another directory's session, the hub reports it rather than launching there.
+
+Project order is saved globally in `group-order.json` in the same state dir (keyed by project directory); projects not in it follow alphabetically, and `agentctl status` and `jump-next-blocked` use the same order; the phone list uses the same order (and reorders it by long-press and drag). Fold state and the filter are kept per hub across reloads, hot reloads and restarts, in `hub-view.json` in the agentctl state dir (`$XDG_STATE_HOME/agentctl`, default `~/.local/state/agentctl`). Jumps that target a hidden agent (`b`, a just-launched agent, a tab click in the live pane) unfold its group first, and clear the filter if it would still hide it. The one-line footer has no room for `N`, `w`, `z`, `Z`, `f` and `S`; they are listed under `?`.
+
+`w`, the `sweep` button on a group header (left of `+ new`; dropped on headers too narrow to keep four columns of project name, and hidden while the `shell | agent` selector is armed), or `[sweep]` in a header's right-click menu previews [`agentctl sweep`](dispatch.md) for that project's tmux session. The hub runs `agentctl sweep --session <name> --dry-run --json` as a subprocess, pinned to the project's runtime dir, and shows the plan in the footer: `sweep <project>: close 3 (a, b, c), 2 need attention, 1 in progress  y/n`. `y` applies it (`agentctl sweep --session <name> --json`) and then reports `swept N` from what actually closed, since sweep re-checks every window at apply time; any other key, a click elsewhere, or moving the cursor off the line cancels. With nothing to close the footer says `nothing to sweep` and nothing is armed. While a sweep runs the footer shows `sweeping <project>…` and further sweeps are ignored. A failed sweep (session gone, non-zero exit) shows its error. Sweep's own rules decide what closes (`shell`, `improve~*`, untracked and bare windows never do), and the hub's own window is the sweep's self, so it is never closed. Groups that are not agentctl project sessions have no button.
 
 ### Hub list tree
 

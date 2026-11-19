@@ -78,6 +78,7 @@ type CLI struct {
 	// Fleet hub — cross-session aggregator view
 	Hub             HubCmd             `cmd:"" help:"Open the fleet hub (cross-session dashboard)"`
 	HubView         HubViewCmd         `cmd:"" name:"hub-view" hidden:""`
+	HubNewSession   HubNewSessionCmd   `cmd:"" name:"hub-new-session" hidden:""`
 	JumpNextBlocked JumpNextBlockedCmd `cmd:"" name:"jump-next-blocked" hidden:""`
 
 	// Tickets
@@ -90,6 +91,7 @@ type CLI struct {
 	Sessions           SessionsCmd           `cmd:"" help:"List sessions (--tui for interactive browser, --json for machine-readable)"`
 	SessionsMenu       SessionsMenuCmd       `cmd:"" name:"sessions-menu" hidden:""`
 	OpenSessionsWindow OpenSessionsWindowCmd `cmd:"" name:"open-sessions-window" hidden:""`
+	OpenContextWindow  OpenContextWindowCmd  `cmd:"" name:"open-context-window" hidden:""`
 
 	// Audit trail (hook-sourced -- every tool call, not just Bash)
 	Audit AuditCmd `cmd:"" help:"Query the hook-sourced audit trail (--json for machine-readable)"`
@@ -532,6 +534,15 @@ type HubViewCmd struct{}
 
 func (c *HubViewCmd) Run() error { cmd.RunHubView(); return nil }
 
+// HubNewSessionCmd is the hub's "+ new session" helper: run with cwd = Dir,
+// it initializes the project if needed, starts its tmux session detached and
+// launches an agent there in the background, printing the window ID.
+type HubNewSessionCmd struct {
+	Dir string `arg:"" help:"Absolute project directory"`
+}
+
+func (c *HubNewSessionCmd) Run() error { return cmd.RunHubNewSession(c.Dir) }
+
 // JumpNextBlockedCmd finds the first blocked agent across every live
 // agentctl session and switches to it. Works from any session.
 type JumpNextBlockedCmd struct {
@@ -736,6 +747,16 @@ type OpenSessionsWindowCmd struct{}
 
 func (c *OpenSessionsWindowCmd) Run() error {
 	if err := tmux.OpenOrFocusSessionsWindow(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		cliout.Exit(1)
+	}
+	return nil
+}
+
+type OpenContextWindowCmd struct{}
+
+func (c *OpenContextWindowCmd) Run() error {
+	if err := tmux.OpenOrFocusContextWindow(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		cliout.Exit(1)
 	}

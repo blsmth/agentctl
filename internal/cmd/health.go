@@ -36,6 +36,11 @@ func RunHealth() {
 	monitorEnabled := config.Load().MonitorEnabled()
 	fmt.Printf("  Monitor: %s\n", healthMonitorLine(monitorEnabled, healthMonitorStatus(runtimeDir)))
 
+	// Config values that fail closed rather than erroring.
+	if w := config.Load().DispatchApprovalWarning(); w != "" {
+		fmt.Printf("  Config:  warning: %s\n", w)
+	}
+
 	// Metrics serve (per machine), only when metrics are enabled.
 	mc := config.Load().EffectiveMetricsConfig()
 	pid, running := metricsproc.Running()
@@ -102,6 +107,9 @@ func RunHealth() {
 
 	// Agent definitions whose tools: list contradicts their role. Warn only.
 	printAgentToolsHealth(os.Stdout, cwdOrEmpty())
+
+	// Nous backends marked out of credits (local state, no network).
+	printCreditsHealth(os.Stdout, config.Load().Backends, time.Now())
 
 	fmt.Println()
 

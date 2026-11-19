@@ -17,35 +17,40 @@ test.beforeEach(async ({ page }) => {
   await openFleet(page);
 });
 
-test("a long left swipe on an idle row asks to close; confirm closes it", async ({ page, control }) => {
+/** renders is how many fleet renders have landed (data-renders on the list). */
+const renders = async (page: import("@playwright/test").Page) =>
+  Number(await page.locator(".fleet").getAttribute("data-renders"));
+
+const closeBtn = (page: import("@playwright/test").Page, link: import("@playwright/test").Locator) =>
+  wrap(link).getByRole("button", { name: /^Close / });
+
+test("a long left swipe reveals Close; tapping it closes the window with no sheet", async ({ page, control }) => {
   const link = row(page, "@15");
   await expect(wrap(link)).toHaveClass(/\bswipe\b/);
   await drag(link, { dx: -260, stepMs: 25 });
 
-  await expect(sheet(page)).toBeVisible();
-  await expect(sheet(page)).toContainText("Close window?");
-  await expect(sheet(page)).toContainText("docs");
   // The click after the lift was swallowed: still on the fleet, row held open.
+  await expect(sheet(page)).toHaveCount(0);
   expect(new URL(page.url()).hash).toBe("");
-  expect(await offsetX(node(link))).toBeLessThan(-50);
+  await expect.poll(() => offsetX(node(link))).toBe(-88);
+  expect(await control.actions()).toEqual([]);
 
-  await sheet(page).getByRole("button", { name: "Close" }).tap();
+  await closeBtn(page, link).tap();
   const actions = await control.waitForActions((a) => a.some((x) => x.kind === "close"));
   expect(actions).toEqual([{ kind: "close", session: SHOP, window: "@15" }]);
-  // The row collapses (height animates to 0, or the next render hides it as
-  // closed) before the fleet reports the window gone and the row is dropped.
+  await expect(sheet(page)).toHaveCount(0);
   await expect(link).toBeHidden();
   await expect(row(page, "@15")).toHaveCount(0);
 });
 
-test("cancel in the confirm sheet snaps the row back and sends nothing", async ({ page, control }) => {
+test("tapping the open row snaps it back without navigating or closing", async ({ page, control }) => {
   const link = row(page, "@15");
   await drag(link, { dx: -260, stepMs: 25 });
-  await expect(sheet(page)).toBeVisible();
-  await sheet(page).getByRole("button", { name: "Cancel" }).tap();
-  await expect(sheet(page)).toHaveCount(0);
+  await expect.poll(() => offsetX(node(link))).toBe(-88);
+  await link.tap();
   await settled(link);
   await expect(wrap(link)).not.toHaveClass(/swiping/);
+  expect(new URL(page.url()).hash).toBe("");
   expect(await control.actions()).toEqual([]);
 });
 
@@ -100,10 +105,83 @@ test("a 409 from the server toasts and snaps back", async ({ page, control, guar
   await control.patchWindow(SHOP, "@15", { pane: "working" });
   const link = row(page, "@15");
   await drag(link, { dx: -260, stepMs: 25 });
-  await sheet(page).getByRole("button", { name: "Close" }).tap();
+  await closeBtn(page, link).tap();
   await expect(page.locator("#toasts .toast.error")).toContainText("cannot be closed");
   await settled(link);
   await expect(wrap(link)).not.toHaveCSS("height", "0px");
   await expect(row(page, "@15")).toBeVisible();
   expect(await control.actions()).toEqual([]);
+  // The hold was released: later renders still land.
+  await control.patchWindow(SHOP, "@11", { activity: "after failure" });
+  await expect(row(page, "@11").locator(".activity")).toHaveText("after failure", { timeout: 2000 });
+});
+
+test("renders resume after a reveal is closed by tapping the row", async ({ page, control }) => {
+  const link = row(page, "@15");
+  await drag(link, { dx: -260, stepMs: 25 });
+  await expect.poll(() => offsetX(node(link))).toBe(-88);
+  // Held open: a change elsewhere must wait.
+  await control.patchWindow(SHOP, "@11", { activity: "while open" });
+  await page.waitForTimeout(500);
+  await expect(row(page, "@11").locator(".activity")).not.toHaveText("while open");
+  await link.tap();
+  await settled(link);
+  await expect(row(page, "@11").locator(".activity")).toHaveText("while open");
+  // And later renders still land: the hold was fully released.
+  await control.patchWindow(SHOP, "@11", { activity: "after close" });
+  await expect(row(page, "@11").locator(".activity")).toHaveText("after close", { timeout: 2000 });
+});
+
+test("a double tap on Close sends one close", async ({ page, control }) => {
+  // Hold the response so the second tap lands while the first is in flight.
+  await page.route(/\/windows\/%4015\/close$/, async (route) => {
+    await new Promise((r) => setTimeout(r, 600));
+    await route.continue();
+  });
+  const link = row(page, "@15");
+  await drag(link, { dx: -260, stepMs: 25 });
+  const btn = closeBtn(page, link);
+  await btn.evaluate((el: HTMLElement) => {
+    el.click();
+    el.click();
+  });
+  await control.waitForActions((a) => a.some((x) => x.kind === "close"));
+  await page.waitForTimeout(800);
+  expect((await control.actions()).filter((x) => x.kind === "close")).toHaveLength(1);
+});
+
+test("a render arriving after pointerdown, before the axis locks, does not drop the swipe", async ({ page, control }) => {
+  const link = row(page, "@15");
+  const before = await renders(page);
+  // Finger down, no movement yet.
+  await link.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    (window as unknown as { __drag: unknown }).__drag = { x0: r.left + r.width / 2, y0: r.top + r.height / 2 };
+    el.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        pointerId: 1, pointerType: "touch", isPrimary: true, bubbles: true, cancelable: true,
+        clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0, buttons: 1,
+      }),
+    );
+  });
+  await control.patchWindow(SHOP, "@11", { activity: "changed before lock" });
+  // The render is held: the counter does not move and the row stays connected.
+  await page.waitForTimeout(800);
+  expect(await renders(page)).toBe(before);
+  expect(await link.evaluate((el) => el.isConnected)).toBe(true);
+
+  await move(link, -90, 0);
+  await expect.poll(() => offsetX(node(link))).toBeLessThan(-60);
+  await lift(link, -260);
+  await expect.poll(() => offsetX(node(link))).toBe(-88);
+  // Releasing the open row lets the held render land.
+  await closeBtn(page, link).waitFor();
+});
+
+test("a plain tap releases the render hold and still navigates", async ({ page, control }) => {
+  await row(page, "@15").tap();
+  await expect.poll(() => new URL(page.url()).hash).not.toBe("");
+  await page.goBack();
+  await control.patchWindow(SHOP, "@11", { activity: "after tap" });
+  await expect(row(page, "@11").locator(".activity")).toHaveText("after tap", { timeout: 3000 });
 });

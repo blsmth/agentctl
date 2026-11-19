@@ -39,7 +39,19 @@ func PreTool() {
 	// the Bash one). This is the only PreToolUse registration that sees
 	// file-editing tools.
 	if p := cronEditTarget(input.ToolName, input.ToolInput); p != "" {
-		denyFileEdit(input.ToolName, p, input.ToolInput)
+		denyFileEdit(input.ToolName, p, "cron schedule or state", cronEditDenyReason(p), input.ToolInput)
+		return
+	}
+	// And for forging a dispatch approval marker (checkApprovalTamper is the
+	// Bash side).
+	if p := approvalEditTarget(input.ToolName, input.ToolInput); p != "" {
+		denyFileEdit(input.ToolName, p, "dispatch approval record", approvalEditDenyReason(p), input.ToolInput)
+		return
+	}
+	// The same for loosening dispatch_approval in the global config (see
+	// checkConfigTamper for the Bash side).
+	if p := globalConfigEditTarget(input.ToolName, input.ToolInput); p != "" {
+		denyFileEdit(input.ToolName, p, "dispatch_approval change in", configTamperReason, input.ToolInput)
 		return
 	}
 

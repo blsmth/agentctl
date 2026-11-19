@@ -2,14 +2,16 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  canSwipeClose, swipeAxis, swipeCommit, swipeOffset,
+  SWIPE_REVEAL, canSwipeClose, swipeAxis, swipeCommit, swipeOffset,
   ansiColor, approvalBannerText, approvalConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
-  buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
+  DISPATCH_UPLOAD_PATH, buildDispatchRequest, buildShellRequest, canShell, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
   actionsWithQueue, buildAnswerRequest, multiSelectLabel, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
-  liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines,
+  sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
+  defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines,
+  buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
 } from "./logic.js";
 
 const fixtures = JSON.parse(readFileSync(new URL("./logic.fixtures.json", import.meta.url), "utf8"));
@@ -41,6 +43,34 @@ assert.equal(ansiColor(1), "#cd3131");
 assert.equal(ansiColor(16), "#000000");
 assert.equal(ansiColor(196), "#ff0000");
 assert.equal(ansiColor(232), "#080808");
+
+// Group order: the server's order wins over urgency; windows still sort.
+{
+  const win = (id, state) => ({ window_id: id, state });
+  const gs = sortGroups([
+    { key: "/idle", windows: [win("@1", "idle")] },
+    { key: "/blocked", windows: [win("@2", "idle"), win("@3", "blocked")] },
+  ]);
+  assert.deepEqual(gs.map((g) => g.key), ["/idle", "/blocked"]);
+  assert.deepEqual(gs.map((g) => g.rollup), ["idle", "blocked"]);
+  assert.deepEqual(gs[1].windows.map((w) => w.window_id), ["@3", "@2"]);
+  assert.deepEqual(groupKeys([{ key: "/a" }, {}, { key: "" }, { key: "/b" }]), ["/a", "/b"]);
+  assert.deepEqual(moveKey(["a", "b", "c"], "a", 2), ["b", "c", "a"]);
+  assert.deepEqual(moveKey(["a", "b", "c"], "c", 0), ["c", "a", "b"]);
+  assert.deepEqual(moveKey(["a", "b"], "b", 9), ["a", "b"]);
+  assert.deepEqual(moveKey(["a", "b"], "x", 0), ["a", "b"]);
+  assert.deepEqual(applyGroupOrder([{ key: "a" }, { key: "b" }, { key: "c" }], ["c", "a"]).map((g) => g.key), ["c", "a", "b"]);
+  assert.equal(sameOrder(["a", "x", "b"], ["b", "a"]), false);
+  assert.equal(sameOrder(["a", "x", "b"], ["a", "b", "y"]), true);
+  assert.equal(dropIndex([10, 30, 50], 40), 2);
+  assert.equal(dropIndex([10, 30, 50], 5), 0);
+  assert.equal(autoscrollDelta(300, 600), 0);
+  assert.ok(autoscrollDelta(10, 600) < 0 && autoscrollDelta(595, 600) > 0);
+  assert.ok(autoscrollDelta(0, 600) < autoscrollDelta(40, 600));
+  assert.deepEqual(buildGroupOrderRequest(["/a"]), { method: "POST", path: "/v1/group-order", body: { keys: ["/a"] } });
+  n += 17;
+}
+
 console.log(`ok: ${n} fixtures`);
 
 // Launch options helpers.
@@ -66,6 +96,10 @@ assert.deepEqual(confirmLines({ agent: "a", project_dir: "/d", prompt: "p", back
   "agent: a\nproject: /d\nbackend: local\nmodel: m\neffort: low", "p",
 ]);
 assert.deepEqual(confirmLines({ agent: "a", project_dir: "/d", prompt: "p" }), ["agent: a\nproject: /d", "p"]);
+assert.deepEqual(confirmLines({ agent: "a", project_dir: "/d", prompt: "p" }, 2), ["agent: a\nproject: /d\nimages: 2", "p"]);
+assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, ["x.png"]).body, { agent: "a", project_dir: "/d", prompt: "p", images: ["x.png"] });
+assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, []).body, { agent: "a", project_dir: "/d", prompt: "p" });
+assert.equal(DISPATCH_UPLOAD_PATH, "/v1/dispatch/upload");
 console.log("ok: launch option helpers");
 
 assert.deepEqual(parseRoute("#/dispatch"), { name: "dispatch" });
@@ -159,6 +193,7 @@ console.log("ok: resolved text");
   assert.equal(swipeCommit(-20, 300, -2), false);
   assert.equal(swipeCommit(50, 300, -2), false);
   assert.equal(swipeCommit(-200, 0), false);
+  assert.equal(SWIPE_REVEAL, 88);
   console.log("ok: swipe close");
 }
 
@@ -181,6 +216,16 @@ console.log("ok: resolved text");
   assert.equal(rowHeadline(none), "Claude");
   assert.equal(agentChip(none), "");
   assert.equal(rowDetailLine(none), "");
+  // A generated short title wins the headline; the full recap stays the second line.
+  const titled = { ...summary, title: "Wiring Phone Recaps" };
+  assert.equal(rowHeadline(titled), "Wiring Phone Recaps");
+  assert.equal(rowDetailLine(titled), summary.recap);
+  assert.equal(agentChip(titled), "brandon");
+  const titledTask = { agent: "a:1", recap: "please sort every photo into albums by year", recap_source: "task", title: "Sorting Photos by Year", activity: "ls" };
+  assert.equal(rowHeadline(titledTask), "Sorting Photos by Year");
+  assert.equal(rowDetailLine(titledTask), "ls");
+  // A title without a showable recap is ignored.
+  assert.equal(rowHeadline({ agent: "a:1", recap: "go test", recap_source: "activity", title: "Stale" }), "a:1");
   console.log("ok: row headline");
 }
 
@@ -253,6 +298,11 @@ console.log("ok: resolved text");
     options: [{ key: "1", label: "Yes" }, { key: "2", label: "No, and tell Claude what to do differently" }],
   };
   assert.equal(dialogQuestion(dialog), "Do you want to proceed?");
+  const multi = { ...dialog, multi: true };
+  // A single key only toggles a box: a multi-select is answered with the set.
+  assert.throws(() => buildAnswerRequest("s", "@1", multi, "1"), /choose options/);
+  assert.deepEqual(buildAnswerRequest("s", "@1", multi, ["1"]).body.keys, ["1"]);
+  assert.equal(buildAnswerRequest("s", "@1", multi, "esc").body.key, "esc");
   assert.equal(dialogQuestion({ text: "Edit file\nfoo.go\n1. Yes\n2. No" }), "foo.go");
   assert.equal(dialogQuestion({ text: "" }), "");
   assert.equal(focusedOption("│ \x1b[36m❯ 1. Yes\x1b[0m │\n│   2. No │", dialog), "1");
@@ -326,15 +376,15 @@ console.log("ok: resolved text");
   assert.equal(actionsWithQueue(working, { verdict: "working" }, false), "interrupt");
   assert.equal(actionsWithQueue({ state: "idle" }, { verdict: "idle" }, true), "reply");
   assert.equal(actionsWithQueue({ state: "blocked" }, { verdict: "awaiting_input", dialog }, true), "answer");
-  const multi = { hash: "h", kind: "multi", options: [{ key: "1", label: "Small" }, { key: "2", label: "Medium" }, { key: "3", label: "Large" }], checked: ["2"] };
-  assert.deepEqual(buildAnswerRequest("s", "@1", multi, ["1", "3"]).body, { keys: ["1", "3"], dialog_hash: "h" });
-  assert.deepEqual(buildAnswerRequest("s", "@1", multi, "esc").body, { key: "esc", dialog_hash: "h" });
-  assert.throws(() => buildAnswerRequest("s", "@1", multi, "1"));
-  assert.throws(() => buildAnswerRequest("s", "@1", multi, []));
-  assert.throws(() => buildAnswerRequest("s", "@1", multi, ["4"]));
+  const sizes = { hash: "h", multi: true, options: [{ key: "1", label: "Small" }, { key: "2", label: "Medium" }, { key: "3", label: "Large" }], checked: ["2"] };
+  assert.deepEqual(buildAnswerRequest("s", "@1", sizes, ["1", "3"]).body, { keys: ["1", "3"], dialog_hash: "h" });
+  assert.deepEqual(buildAnswerRequest("s", "@1", sizes, "esc").body, { key: "esc", dialog_hash: "h" });
+  assert.throws(() => buildAnswerRequest("s", "@1", sizes, "1"));
+  assert.throws(() => buildAnswerRequest("s", "@1", sizes, []));
+  assert.throws(() => buildAnswerRequest("s", "@1", sizes, ["4"]));
   assert.throws(() => buildAnswerRequest("s", "@1", { hash: "h", options: [{ key: "1", label: "Yes" }] }, ["1"]));
-  assert.deepEqual(buildAnswerRequest("s", "@1", { hash: "h", kind: "question", options: [{ key: "1", label: "Red" }] }, "1").body, { key: "1", dialog_hash: "h" });
-  assert.equal(multiSelectLabel(multi, ["3", "1"]), "Choose Small, Large?");
+  assert.deepEqual(buildAnswerRequest("s", "@1", { hash: "h", options: [{ key: "1", label: "Red" }] }, "1").body, { key: "1", dialog_hash: "h" });
+  assert.equal(multiSelectLabel(sizes, ["3", "1"]), "Choose Small, Large?");
   assert.deepEqual(buildQueueRequest("s", "@1", "hi"), { method: "POST", path: "/v1/sessions/s/windows/%401/queue", body: { text: "hi" } });
   assert.deepEqual(buildQueueRequest("s", "@1", "hi", ["a.png"]).body, { text: "hi", images: ["a.png"] });
   assert.deepEqual(buildReplyRequest("s", "@1", "hi", []).body, { text: "hi" });
@@ -360,3 +410,83 @@ console.log("ok: resolved text");
   assert.notEqual(groupKey("a"), groupKey("b"));
   console.log("ok: project fold helpers");
 }
+
+{
+  const write = ["fleet", "write"];
+  assert.deepEqual(buildSweepRequest("agentctl-shop", true), { method: "POST", path: "/v1/sweep/preview", body: { session: "agentctl-shop" } });
+  assert.deepEqual(buildSweepRequest("agentctl-shop", false), { method: "POST", path: "/v1/sweep", body: { session: "agentctl-shop" } });
+  assert.equal(canSweep({ session: "agentctl-shop", dir: "/x" }, write), true);
+  assert.equal(canSweep({ session: "agentctl-shop", dir: "/x" }, ["fleet"]), false, "needs write");
+  assert.equal(canSweep({ session: "agentctl-hub", dir: "/x" }, write), false, "never the hub");
+  assert.equal(canSweep({ session: "agentctl-shop", dir: "" }, write), false, "needs a project dir");
+  assert.equal(canSweep(null, write), false);
+
+  const row = (name, detail) => ({ window_id: "@" + name, name, detail });
+  const preview = { session: "s", closed: [row("a", "done"), row("b")], attention: [row("c")], in_progress: [row("d"), row("e")] };
+  assert.equal(sweepCounts(preview), "1 needs attention, 2 in progress");
+  assert.deepEqual(sweepConfirm(preview, "shop"), {
+    title: "Sweep shop?",
+    lines: ["Close 2 windows:\na  (done)\nb", "1 needs attention, 2 in progress"],
+    confirmLabel: "Close 2",
+  });
+  assert.equal(sweepConfirm({ session: "s", closed: [], attention: [row("c")] }, "shop"), null);
+  assert.equal(nothingToSweep({ closed: [], attention: [row("c"), row("d")] }), "Nothing to sweep (2 need attention)");
+  assert.equal(nothingToSweep({ closed: [] }), "Nothing to sweep");
+  assert.deepEqual(sweptMessage({ closed: [row("a")] }), { text: "Swept 1", kind: "info" });
+  assert.deepEqual(sweptMessage({ closed: [row("a"), { name: "b", errors: ["kill failed"] }] }), { text: "Swept 1; 1 failed: b: kill failed", kind: "error" });
+
+  // The confirm flow, effects stubbed.
+  const flow = async ({ previewRep, applyRep, confirmed, failPreview, failApply }) => {
+    const sent = [];
+    const toasts = [];
+    const sheets = [];
+    const result = await runSweep({ session: "agentctl-shop", project: "shop" }, {
+      send: async (req) => {
+        sent.push(req.path);
+        if (req.path.endsWith("/preview")) {
+          if (failPreview) throw new Error(failPreview);
+          return previewRep;
+        }
+        if (failApply) throw new Error(failApply);
+        return applyRep;
+      },
+      confirm: async (sheet) => {
+        sheets.push(sheet);
+        return confirmed;
+      },
+      toast: (text, kind) => toasts.push([text, kind]),
+    });
+    return { result, sent, toasts, sheets };
+  };
+  let r = await flow({ previewRep: preview, applyRep: { closed: [row("a")] }, confirmed: true });
+  assert.equal(r.result, "applied");
+  assert.deepEqual(r.sent, ["/v1/sweep/preview", "/v1/sweep"]);
+  assert.equal(r.sheets[0].title, "Sweep shop?");
+  assert.deepEqual(r.toasts, [["Swept 1", "info"]], "reports what actually closed, not the preview");
+  r = await flow({ previewRep: preview, confirmed: false });
+  assert.equal(r.result, "cancelled");
+  assert.deepEqual(r.sent, ["/v1/sweep/preview"], "cancel never applies");
+  assert.deepEqual(r.toasts, []);
+  r = await flow({ previewRep: { closed: [], attention: [], in_progress: [] }, confirmed: true });
+  assert.equal(r.result, "nothing");
+  assert.equal(r.sheets.length, 0, "no confirm when nothing would close");
+  assert.deepEqual(r.toasts, [["Nothing to sweep", "info"]]);
+  r = await flow({ failPreview: "unknown session" });
+  assert.equal(r.result, "failed");
+  assert.deepEqual(r.toasts, [["unknown session", "error"]]);
+  r = await flow({ previewRep: preview, confirmed: true, failApply: 'sweep s: no tmux session "s"' });
+  assert.equal(r.result, "failed");
+  assert.deepEqual(r.toasts, [['sweep s: no tmux session "s"', "error"]]);
+  console.log("ok: sweep helpers and confirm flow");
+}
+for (const f of fixtures.defaultAgent) {
+  assert.equal(defaultAgentFor(f.projects, f.dir, f.agents, f.userPicked), f.expect, f.name);
+}
+console.log("ok: dispatch default agent");
+
+assert.deepEqual(buildShellRequest("/code/p"), { method: "POST", path: "/v1/shell", body: { project_dir: "/code/p" } });
+assert.equal(canShell(["write", "shell"]), true);
+assert.equal(canShell(["write"]), false);
+assert.equal(canShell(["shell"]), false);
+assert.equal(canShell([]), false);
+console.log("ok: shell request");

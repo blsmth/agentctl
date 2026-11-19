@@ -737,3 +737,47 @@ func TestCatalogCachePreservesPricing(t *testing.T) {
 		t.Error("a catalog without pricing must not count as priced (old cache files are refetched)")
 	}
 }
+
+func TestPreflightNousRefusesWhileOutOfCredits(t *testing.T) {
+	nousEnvSetup(t, map[string]string{"nous": "k"})
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	var hits atomic.Int32
+	srv := catalogServer(t, 200, nousCatalogJSON, &hits)
+	b := config.BackendConfig{Kind: "nous", Model: "qwen/qwen3-coder-next", BaseURL: srv.URL}
+
+	backendauth.MarkNoCredits("nous")
+	_, err := preflightNousCatalog("nous", b, "")
+	if err == nil {
+		t.Fatal("expected refusal")
+	}
+	for _, s := range []string{"Nous Portal account nous is out of credits (since just now)", "https://portal.nousresearch.com", ":free model", "agentctl backend status --verify"} {
+		if !strings.Contains(err.Error(), s) {
+			t.Errorf("err %q missing %q", err, s)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Errorf("catalog fetched %d times; refusal must be local", hits.Load())
+	}
+	// preflightNous (claude path) refuses too.
+	if _, err := preflightNous("nous", b, "", "", ""); err == nil {
+		t.Error("claude-path preflight did not refuse")
+	}
+
+	// All-free models: a fresh marker does not refuse.
+	free := config.BackendConfig{Kind: "nous", Model: "meituan/longcat-2.5:free", BaseURL: srv.URL,
+		Models: &config.BackendModels{Opus: "meituan/longcat-2.5:free", Sonnet: "meituan/longcat-2.5:free", Haiku: "meituan/longcat-2.5:free", Subagent: "meituan/longcat-2.5:free"}}
+	if err := func() error {
+		_, err := preflightNousCatalog("nous", free, "")
+		return err
+	}(); err != nil && strings.Contains(err.Error(), "out of credits") {
+		t.Errorf("all-free launch refused: %v", err)
+	}
+
+	// Stale marker: launches proceed again.
+	old := nowFn
+	nowFn = func() time.Time { return time.Now().Add(backendauth.CreditsFreshFor + time.Minute) }
+	t.Cleanup(func() { nowFn = old })
+	if _, err := preflightNousCatalog("nous", b, ""); err != nil {
+		t.Errorf("stale marker should not refuse: %v", err)
+	}
+}

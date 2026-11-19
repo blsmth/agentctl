@@ -191,6 +191,14 @@ test("header: the recap replaces the last tool call", async ({ page, control }) 
   await expect(page.locator(".win-head")).not.toContainText("go test ./...");
 });
 
+test("header: a short row title keeps the full recap in the window view", async ({ page, control }) => {
+  const recap = "Wrote table tests for the cart totals and the discount rounding, next the tax edge cases.";
+  await control.patchWindow(SHOP, "@13", { recap, recap_source: "summary", short_title: "Testing Cart Totals" });
+  await openWindow(page, "@13");
+  await expect(page.locator(".win-recap")).toHaveText(recap);
+  await expect(page.locator(".win-head")).not.toContainText("Testing Cart Totals");
+});
+
 test("done windows show the PR chip, a full-width Reply and a small Close", async ({ page }) => {
   await openWindow(page, "@12");
   const pr = page.locator(".chips a.chip.pr");

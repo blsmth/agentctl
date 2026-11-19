@@ -1,7 +1,8 @@
 // Dispatch screen: agent + project + prompt, launch options, and a confirm sheet.
-import { ApiError, get, send } from "./api.js";
+import { ApiError, get, send, uploadImages } from "./api.js";
+import { imagePicker } from "./attach.js";
 import {
-  buildDispatchRequest, choiceLabel, confirmLines, launchOptionsPath, modelPicker, windowHash,
+  DISPATCH_UPLOAD_PATH, buildDispatchRequest, choiceLabel, confirmLines, defaultAgentFor, launchOptionsPath, modelPicker, windowHash,
 } from "./logic.js";
 import { clear, confirmSheet, h, toast } from "./ui.js";
 
@@ -12,6 +13,8 @@ export function mountDispatch(root, ctx, { dir } = {}) {
   const submit = h("button", { class: "btn primary", disabled: true }, "Review & send");
   const launchBox = h("div", { class: "launch-opts" });
   const withOptions = ctx.hasFeature("launch-options");
+  // Attaching a screenshot needs writes and the dispatch upload route.
+  const att = ctx.hasFeature("write") && ctx.hasFeature("dispatch-upload") ? imagePicker() : null;
   root.append(
     h("header", { class: "bar" }, h("a", { class: "btn", href: "#/" }, "‹ Fleet"), h("h1", {}, "Dispatch")),
     h(
@@ -21,6 +24,7 @@ export function mountDispatch(root, ctx, { dir } = {}) {
       h("label", {}, "Project", project),
       withOptions ? launchBox : null,
       h("label", {}, "Prompt", prompt),
+      ...(att ? att.controls : []),
       ctx.hasFeature("write") ? null : h("p", { class: "muted" }, "Write actions are not enabled on this server."),
       submit,
     ),
@@ -88,14 +92,39 @@ export function mountDispatch(root, ctx, { dir } = {}) {
       if (seq === loadSeq) toast(`Could not load launch options: ${e.message}`, "error");
     }
   }
-  agent.addEventListener("change", loadOptions);
-  project.addEventListener("change", loadOptions);
+  // projects is the loaded /v1/projects list; userPickedAgent stops a later
+  // project change from overriding a hand-picked agent.
+  let projects = [];
+  let userPickedAgent = false;
+  let autoApplied = ""; // the agent applyDefaultAgent last selected, "" if none
+  function applyDefaultAgent() {
+    const names = [...agent.options].map((o) => o.value);
+    const def = defaultAgentFor(projects, project.value, names, userPickedAgent);
+    if (def) {
+      agent.value = def;
+      autoApplied = def;
+    } else if (autoApplied && !userPickedAgent && agent.value === autoApplied && names.length) {
+      // The previous project's default no longer applies: back to the first agent.
+      agent.value = names[0];
+      autoApplied = "";
+    }
+  }
+  agent.addEventListener("change", () => {
+    userPickedAgent = true;
+    loadOptions();
+  });
+  project.addEventListener("change", () => {
+    applyDefaultAgent();
+    loadOptions();
+  });
 
   Promise.all([get("/v1/agents"), get("/v1/projects")])
     .then(([a, p]) => {
       for (const x of a.agents ?? []) agent.append(h("option", { value: x.name }, x.name));
       for (const x of p.projects ?? []) project.append(h("option", { value: x.dir }, x.name));
-      if (dir && (p.projects ?? []).some((x) => x.dir === dir)) project.value = dir;
+      projects = p.projects ?? [];
+      if (dir && projects.some((x) => x.dir === dir)) project.value = dir;
+      applyDefaultAgent();
       submit.disabled = !ctx.hasFeature("write");
       return loadOptions();
     })
@@ -107,16 +136,29 @@ export function mountDispatch(root, ctx, { dir } = {}) {
       toast("Pick an agent and project, and write a prompt", "error");
       return;
     }
-    const req = buildDispatchRequest(agent.value, project.value, text, opts ? choice : {});
-    const ok = await confirmSheet({
+    const n = att ? att.count() : 0;
+    const [agentName, dir, picked] = [agent.value, project.value, opts ? choice : {}];
+    const confirmed = await confirmSheet({
       title: "Dispatch?",
-      lines: confirmLines(req.body),
+      lines: confirmLines(buildDispatchRequest(agentName, dir, text, picked).body, n),
       confirmLabel: "Dispatch",
     });
-    if (!ok) return;
+    if (!confirmed) return;
     submit.disabled = true;
+    // Upload only now, to the project actually being dispatched to, so a
+    // cancelled sheet stores nothing. A failed upload dispatches nothing.
+    let images = [];
+    if (n) {
+      try {
+        images = await uploadImages(DISPATCH_UPLOAD_PATH, att.files(), { project_dir: dir });
+      } catch (e) {
+        toast(`Image upload failed: ${e instanceof ApiError ? e.message : String(e)}`, "error");
+        submit.disabled = false;
+        return;
+      }
+    }
     try {
-      const res = await send(req);
+      const res = await send(buildDispatchRequest(agentName, dir, text, picked, images));
       toast("Dispatched");
       location.hash = res?.window_id ? windowHash(res.session, res.window_id) : "#/";
     } catch (e) {

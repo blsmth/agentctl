@@ -14,6 +14,15 @@ test("a window update re-renders its row", async ({ page, control }) => {
   await expect(row(page, "@11").locator(".activity")).toHaveText("reviewing PR #8");
 });
 
+test("a short title becomes the row headline over the full recap", async ({ page, control }) => {
+  const recap = "Moved the photo library into albums by year and started on the 2019 duplicates.";
+  await control.patchWindow(SHOP, "@15", { recap, recap_source: "summary" });
+  await expect(row(page, "@15").locator(".win-title .agent")).toHaveText("Moved the photo library into albums by year and started on the 2019 duplicates");
+  await control.patchWindow(SHOP, "@15", { short_title: "Organizing your Photos" });
+  await expect(row(page, "@15").locator(".win-title .agent")).toHaveText("Organizing your Photos");
+  await expect(row(page, "@15").locator(".activity.recap")).toHaveText(recap);
+});
+
 test("a state change moves the row and makes it swipeable", async ({ page, control }) => {
   const r = row(page, "@13");
   await expect(r.locator("xpath=../..")).not.toHaveClass(/\bswipe\b/);

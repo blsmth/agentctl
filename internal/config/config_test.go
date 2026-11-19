@@ -1296,6 +1296,7 @@ func TestEffectiveStatuslineFormat(t *testing.T) {
 		{name: "explicit complementary", val: "complementary", want: "complementary"},
 		{name: "explicit full", val: "full", want: "full"},
 		{name: "explicit minimal", val: "minimal", want: "minimal"},
+		{name: "explicit mobile", val: "mobile", want: "mobile"},
 		{name: "unrecognized value falls back to rich", val: "fancy", want: "rich"},
 	}
 
@@ -2575,14 +2576,49 @@ func TestMonitorEnabled(t *testing.T) {
 	}
 }
 
+// TestCloseChildrenEnabled covers the cascade-close switch: absent means
+// true, only the global layer can change it.
+func TestCloseChildrenEnabled(t *testing.T) {
+	tests := []struct {
+		name    string
+		global  string
+		project string
+		want    bool
+	}{
+		{"absent everywhere defaults to true", `{}`, `{}`, true},
+		{"global false", `{"close_children": false}`, `{}`, false},
+		{"global true", `{"close_children": true}`, `{}`, true},
+		{"project false is ignored", `{}`, `{"close_children": false}`, true},
+		{"project true cannot re-enable a global false", `{"close_children": false}`, `{"close_children": true}`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			globalPath := filepath.Join(dir, "global.json")
+			projectPath := filepath.Join(dir, "project.json")
+			if err := os.WriteFile(globalPath, []byte(tt.global), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(projectPath, []byte(tt.project), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			setTestPaths(t, projectPath, globalPath)
+			if got := Load().CloseChildrenEnabled(); got != tt.want {
+				t.Errorf("CloseChildrenEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEffectiveStatuslineMobileFormat(t *testing.T) {
 	tests := []struct{ name, val, want string }{
-		{"unset defaults to full", "", "full"},
+		{"unset defaults to mobile", "", "mobile"},
+		{"mobile", "mobile", "mobile"},
 		{"rich", "rich", "rich"},
 		{"complementary", "complementary", "complementary"},
 		{"full", "full", "full"},
 		{"minimal", "minimal", "minimal"},
-		{"unrecognized falls back to full", "fancy", "full"},
+		{"unrecognized falls back to mobile", "fancy", "mobile"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

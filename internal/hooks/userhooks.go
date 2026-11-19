@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -15,6 +16,9 @@ import (
 // userHookTimeout is the per-command timeout for user lifecycle hooks.
 // It is a variable so tests can shorten it without rebuilding.
 var userHookTimeout = 30 * time.Second
+
+// userHooksWG tracks in-process hook goroutines so tests can join them.
+var userHooksWG sync.WaitGroup
 
 // runUserHooks fires user-configured shell commands for the given lifecycle
 // event. It is fire-and-forget: commands run in a goroutine so callers are
@@ -60,9 +64,14 @@ func runUserHooks(event string, extraEnv map[string]string) {
 		env = append(env, k+"="+v)
 	}
 
+	// Read the timeout here, on the caller's goroutine, so the background
+	// goroutine never touches the package variable.
+	timeout := userHookTimeout
+	userHooksWG.Add(1)
 	go func() {
+		defer userHooksWG.Done()
 		for _, cmd := range cmds {
-			runSingleUserHook(event, cmd, env)
+			runSingleUserHook(event, cmd, env, timeout)
 		}
 	}()
 }
@@ -97,8 +106,9 @@ func RunUserHooksSync(event string) {
 		agentCfg = cfg.ForAgent(name)
 	}
 	env := os.Environ()
+	timeout := userHookTimeout
 	for _, cmd := range cfg.EffectiveHooks(event, agentCfg) {
-		runSingleUserHook(event, cmd, env)
+		runSingleUserHook(event, cmd, env, timeout)
 	}
 }
 
@@ -114,9 +124,9 @@ func RunUserHooksSync(event string) {
 // pipes open, so CombinedOutput blocks until the full command finishes on
 // its own -- exactly the timeout-not-enforced bug this guards against. Same
 // process-group-kill pattern as internal/tmux.sigTermPaneGroups.
-func runSingleUserHook(event, cmd string, env []string) {
+func runSingleUserHook(event, cmd string, env []string, timeout time.Duration) {
 	logging.Log("user-hook: event=%s running: %s", event, cmd)
-	ctx, cancel := context.WithTimeout(context.Background(), userHookTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	c := exec.CommandContext(ctx, "sh", "-c", cmd)
 	c.Env = env

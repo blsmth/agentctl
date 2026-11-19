@@ -28,9 +28,9 @@ var HTTPClient = &http.Client{Timeout: 30 * time.Second}
 var errorTypeRe = regexp.MustCompile(`^[a-z_]{1,64}$`)
 
 // Verify makes one paid, one-token POST /v1/messages with key against b's
-// configured model. Failures are mapped to short messages; the response body
+// configured model (name is the backend name, whose credit marker it updates). Failures are mapped to short messages; the response body
 // is never echoed beyond the Anthropic-style error.type.
-func Verify(ctx context.Context, b config.BackendConfig, key string) error {
+func Verify(ctx context.Context, name string, b config.BackendConfig, key string) error {
 	body, err := json.Marshal(map[string]any{
 		"model":      b.Model,
 		"max_tokens": 1,
@@ -55,19 +55,19 @@ func Verify(ctx context.Context, b config.BackendConfig, key string) error {
 	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		ClearNoCredits(name)
 		return nil
+	}
+	if IsNoCredits(resp.StatusCode, raw) {
+		MarkNoCredits(name)
+		return fmt.Errorf("%w; add credits or use a :free model", ErrNoCredits)
 	}
 	var e struct {
 		Error struct {
 			Type string `json:"type"`
-			Code any    `json:"code"`
 		} `json:"error"`
 	}
 	isJSON := json.Unmarshal(raw, &e) == nil
-	if isJSON && e.Error.Code == any(noCreditsCode) &&
-		(resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
-		return fmt.Errorf("%w; add credits or use a :free model", ErrNoCredits)
-	}
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("key invalid or out of credits (HTTP 401)")

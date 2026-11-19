@@ -46,6 +46,7 @@ type AgentState struct {
 	LastText            string  `json:"last_text,omitempty"`              // last assistant text block (already truncated to ~100 chars upstream)
 	Backend             string  `json:"backend,omitempty"`                // config backend name the window runs against ("" = Anthropic); restore re-resolves it
 	Account             string  `json:"account,omitempty"`                // configured Claude account the window runs under; restore relaunches under it
+	LastActivity        int64   `json:"last_activity,omitempty"`          // unix seconds of the latest real activity (tool call or state change); 0 = unknown
 	Harness             string  `json:"harness,omitempty"`                // agent program the window runs ("" = claude); restore relaunches on it
 	// Launch metadata carried through session restore (copied from windowstate
 	// by BuildRestoreAgents; absent in monitor snapshots and old files). Ticket
@@ -67,6 +68,11 @@ type AgentState struct {
 	// when it fired (windowstate scheduled_by/scheduled_at); empty otherwise.
 	ScheduledBy string    `json:"scheduled_by,omitempty"`
 	ScheduledAt time.Time `json:"scheduled_at,omitzero"`
+
+	// ShortTitle is the window's generated row title (windowstate
+	// short_title.title, written by hook-title). Display-only: never in
+	// state.json or restore.json.
+	ShortTitle string `json:"-"`
 }
 
 // State is the snapshot of running agents, written by the monitor.

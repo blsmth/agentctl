@@ -254,3 +254,38 @@ func TestActive(t *testing.T) {
 		})
 	}
 }
+
+func TestBusPublishesFleetOnGroupReorder(t *testing.T) {
+	src := &fakeSource{}
+	a := Group{Session: "agentctl-a", Key: "/a", Windows: []fleet.Window{{Session: "agentctl-a", WindowID: "@1"}}}
+	c := Group{Session: "agentctl-c", Key: "/c", Windows: []fleet.Window{{Session: "agentctl-c", WindowID: "@2"}}}
+	src.set(a, c)
+	b := NewBus(src, Options{})
+	_, sub := b.Subscribe()
+	defer sub.Close()
+
+	b.Refresh() // unchanged
+	none(t, sub)
+
+	src.set(c, a)
+	b.Refresh()
+	ev := next(t, sub)
+	if ev.Kind != KindFleet || len(ev.Fleet) != 2 || ev.Fleet[0].Key != "/c" {
+		t.Fatalf("event = %+v", ev)
+	}
+
+	// A group arriving or leaving is not a reorder of the others.
+	src.set(c)
+	b.Refresh()
+	for {
+		select {
+		case ev := <-sub.C:
+			if ev.Kind == KindFleet {
+				t.Fatalf("unexpected fleet event %+v", ev)
+			}
+			continue
+		case <-time.After(20 * time.Millisecond):
+		}
+		break
+	}
+}

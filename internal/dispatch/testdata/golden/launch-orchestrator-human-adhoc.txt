@@ -3,7 +3,7 @@ argv:
   -d
   -b
   -t
-  agentctl-launchtest:^
+  =agentctl-launchtest:^
   -n
   lead
   -c
@@ -27,10 +27,11 @@ env:
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
   CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
   CLAUDE_CODE_SHELL_PREFIX=$PROJECT/.agentctl/shell-prefix.sh
-  CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1
+  CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0
   DISABLE_AUTOUPDATER=1
 command:
-  claude --agent 'lead' -n 'lead-002-1' --session-id '<UUID>' --settings '$PROJECT/.agentctl/settings/lead.json' --append-system-prompt-file '$PROJECT/.agentctl/launch/bare-sys-<RAND>.txt' 'Audit the repo.
+  unset AGENTCTL_WINDOW_ID AGENTCTL_WINDOW_INDEX AGENTCTL_BRANCH AGENTCTL_WORKTREE AGENTCTL_TICKET AGENTCTL_TICKET_TITLE AGENTCTL_SPAWNED_BY AGENTCTL_SPAWNED_BY_SESSION AGENTCTL_BACKEND AGENTCTL_ACCOUNT AGENTCTL_HARNESS AGENTCTL_PI_PROVIDER
+  claude --agent 'lead' -n 'lead-002-1' --session-id '<UUID>' --permission-mode 'auto' --settings '$PROJECT/.agentctl/settings/lead.json' --append-system-prompt-file '$PROJECT/.agentctl/launch/bare-sys-<RAND>.txt' 'Audit the repo.
   
   Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. '
 windowstate:

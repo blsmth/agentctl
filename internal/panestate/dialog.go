@@ -8,25 +8,14 @@ import (
 	"strings"
 )
 
-// Option is one selectable answer in a dialog: the key to press ("1", "2",
-// ...) and the label shown next to it.
+// Option is one selectable answer in a permission dialog: the key to press
+// ("1", "2", ...) and the label shown next to it.
 type Option struct {
 	Key   string `json:"key"`
 	Label string `json:"label"`
 }
 
-// Dialog kinds. A permission dialog has no kind.
-const (
-	// KindQuestion is a single-select AskUserQuestion tab: a digit picks the
-	// option and moves on (to the next tab, or submits a lone question).
-	KindQuestion = "question"
-	// KindMulti is a multi-select AskUserQuestion tab: a digit toggles the
-	// option's checkbox and Tab moves on.
-	KindMulti = "multi"
-)
-
-// Dialog is a parsed Claude Code dialog: a permission prompt or an
-// AskUserQuestion tab.
+// Dialog is a parsed Claude Code permission dialog.
 type Dialog struct {
 	// Text is the normalized dialog: ANSI escapes, box-drawing borders and the
 	// selection cursor removed, lines trimmed, blank lines dropped.
@@ -34,23 +23,26 @@ type Dialog struct {
 	// Hash is HashDialogText(Text). A client sends it back with an answer and
 	// the server re-parses the live pane to prove the same dialog is still up.
 	Hash string `json:"hash"`
-	// Kind is "" for a permission dialog, else KindQuestion or KindMulti.
-	Kind string `json:"kind,omitempty"`
-	// Options are the answers a key press gives. For an AskUserQuestion tab
-	// the free-text entries ("Type something", "Chat about this") are left
-	// out: they need typing in the terminal. They stay in Text.
+	// Options are the answers a key press gives. Checkbox prefixes are
+	// split off the labels (see Checked). For an AskUserQuestion tab the
+	// free-text entries ("Type something", "Chat about this") are left out:
+	// they need typing in the terminal. They stay in Text.
 	Options []Option `json:"options"`
-	// Checked are the keys of a multi-select tab's ticked options ("[✔]").
+	// Multi is true for a multi-select AskUserQuestion: its options are
+	// "[ ]"/"[✔]" checkboxes, so pressing a number toggles one and submits
+	// nothing; Tab moves on. The server answers it with the set of keys to
+	// tick (see serve's answerMulti).
+	Multi bool `json:"multi,omitempty"`
+	// Checked are the keys of a multi-select tab's ticked options.
 	Checked []string `json:"checked,omitempty"`
 }
 
 var (
-	ansiEscape = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
-	optionLine = regexp.MustCompile(`^(\d+)\.\s+(\S.*)$`)
-	// checkbox is a multi-select option's "[ ] " / "[✔] " label prefix.
-	checkbox = regexp.MustCompile(`^\[(.)\]\s*(.*)$`)
-	// checkboxMark is checkbox anywhere in a normalized option line.
-	checkboxMark = regexp.MustCompile(`(?m)^(\d+\.\s+)\[.\]`)
+	ansiEscape    = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
+	optionLine    = regexp.MustCompile(`^(\d+)\.\s+(\S.*)$`)
+	checkboxLabel = regexp.MustCompile(`^\[([ xX✔✓])\]\s+(.*)$`)
+	// checkboxMark is a checkbox in a normalized option line of Text.
+	checkboxMark = regexp.MustCompile(`(?m)^(\d+\.\s+)\[[ xX✔✓]\]`)
 )
 
 // boxChars are the border glyphs Claude Code draws around a dialog.
@@ -101,23 +93,52 @@ func dialogStart(lines, cleaned []string, first int) int {
 	return start
 }
 
-// ParseDialog extracts the dialog from the captured pane (ANSI is accepted).
-// It finds the last run of numbered options starting at "1" (see optionRun),
-// takes the lines above it, back to the nearest separator rule, as the dialog
-// body (see dialogStart), and returns ok=false when the pane has no such run.
+// ParseDialog extracts the permission dialog from the captured pane (ANSI is
+// accepted). It finds the last run of numbered options starting at "1", takes
+// the lines above it, back to the nearest separator rule, as the dialog body
+// (see dialogStart), and returns ok=false when the pane has no such run.
 func ParseDialog(pane string) (Dialog, bool) {
 	lines := strings.Split(StripANSI(pane), "\n")
 	cleaned := make([]string, len(lines))
 	for i, l := range lines {
 		cleaned[i] = cleanLine(l)
 	}
-	first, last, ok := optionRun(lines, cleaned)
-	if !ok {
+
+	// Find the last option run: walk back to the last option line, then up to
+	// the start of its contiguous (blank-tolerant) run.
+	last := -1
+	for i := len(cleaned) - 1; i >= 0; i-- {
+		if optionLine.MatchString(cleaned[i]) {
+			last = i
+			break
+		}
+	}
+	if last < 0 {
 		return Dialog{}, false
 	}
+	first := last
+	optIndent := indentOf(lines[last])
+run:
+	for i := last - 1; i >= 0; i-- {
+		switch {
+		case optionLine.MatchString(cleaned[i]):
+			first = i
+			if m := optionLine.FindStringSubmatch(cleaned[i]); m[1] == "1" {
+				break run
+			}
+		case cleaned[i] == "":
+			// blank lines and separator rules (AskUserQuestion draws one
+			// above its trailing "Chat about this" row) are tolerated
+		case indentOf(lines[i]) > optIndent:
+			// an option's description or the "Submit" row: indented deeper
+			// than the option labels, so part of the run
+		default:
+			break run
+		}
+	}
 	var opts []Option
-	for i := first; i <= last; i++ {
-		if m := optionLine.FindStringSubmatch(cleaned[i]); m != nil {
+	for _, l := range cleaned[first : last+1] {
+		if m := optionLine.FindStringSubmatch(l); m != nil {
 			opts = append(opts, Option{Key: m[1], Label: strings.TrimSpace(m[2])})
 		}
 	}
@@ -133,60 +154,9 @@ func ParseDialog(pane string) (Dialog, bool) {
 		}
 	}
 	text := strings.Join(kept, "\n")
-	d := Dialog{Text: text, Hash: HashDialogText(text), Options: opts}
-	if isQuestion(opts, cleaned[last+1:]) {
-		d.Kind, d.Options, d.Checked = questionOptions(opts)
-	}
+	d := Dialog{Text: text, Hash: HashDialogText(text)}
+	d.Options, d.Multi, d.Checked = answerOptions(opts, isQuestion(opts, cleaned[last+1:]))
 	return d, true
-}
-
-// optionRun finds the last run of numbered options: the last option line,
-// then up through option lines, blank lines, and, inside the run, indented
-// continuation lines (an AskUserQuestion option's description, a wrapped
-// label) and separator rules (AskUserQuestion draws one above "Chat about
-// this"). It stops above option "1" or at any other line. first and last are
-// the run's first and last option lines.
-func optionRun(lines, cleaned []string) (first, last int, ok bool) {
-	last = -1
-	for i := len(cleaned) - 1; i >= 0; i-- {
-		if optionLine.MatchString(cleaned[i]) {
-			last = i
-			break
-		}
-	}
-	if last < 0 {
-		return 0, 0, false
-	}
-	first, col := last, optionColumn(lines[last])
-	for i := last - 1; i >= 0; i-- {
-		if strings.HasPrefix(cleaned[first], "1.") {
-			break
-		}
-		switch {
-		case optionLine.MatchString(cleaned[i]):
-			first = i
-		case cleaned[i] == "" || isRule(lines[i]):
-			// blank lines and rules inside the run
-		case optionColumn(lines[i]) > col:
-			// a continuation of the option above
-		default:
-			i = -1
-		}
-	}
-	return first, last, true
-}
-
-// optionColumn is the column (in runes) of a line's first character other
-// than a box border, the selection cursor or space: an option line's number,
-// a description line's first letter.
-func optionColumn(line string) int {
-	line = strings.TrimLeft(line, "│┃")
-	for i, r := range []rune(line) {
-		if r != ' ' && r != '\t' && r != '❯' {
-			return i
-		}
-	}
-	return len(line)
 }
 
 // freeTextLabels are the AskUserQuestion entries that open a text input.
@@ -195,30 +165,23 @@ var freeTextLabels = []string{"Type something", "Type something.", "Chat about t
 // isQuestion reports whether an option run is an AskUserQuestion tab: it
 // offers "Chat about this" or its footer reads "Enter to select".
 func isQuestion(opts []Option, below []string) bool {
-	for _, o := range opts {
-		if o.Label == "Chat about this" {
-			return true
-		}
+	if slices.ContainsFunc(opts, func(o Option) bool { return o.Label == "Chat about this" }) {
+		return true
 	}
-	for _, l := range below {
-		if strings.HasPrefix(l, "Enter to select") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(below, func(l string) bool { return strings.HasPrefix(l, "Enter to select") })
 }
 
-// questionOptions drops the free-text entries of an AskUserQuestion tab and
-// splits checkboxes off the labels; any checkbox makes it multi-select.
-func questionOptions(opts []Option) (kind string, out []Option, checked []string) {
-	kind = KindQuestion
+// answerOptions splits checkboxes off the labels (any checkbox makes the
+// dialog multi-select) and, for an AskUserQuestion tab, drops the free-text
+// entries.
+func answerOptions(opts []Option, question bool) (out []Option, multi bool, checked []string) {
 	for _, o := range opts {
 		ticked := false
-		if m := checkbox.FindStringSubmatch(o.Label); m != nil {
-			kind = KindMulti
+		if m := checkboxLabel.FindStringSubmatch(o.Label); m != nil {
+			multi = true
 			o.Label, ticked = strings.TrimSpace(m[2]), m[1] != " "
 		}
-		if slices.Contains(freeTextLabels, o.Label) {
+		if question && slices.Contains(freeTextLabels, o.Label) {
 			continue
 		}
 		out = append(out, o)
@@ -226,7 +189,7 @@ func questionOptions(opts []Option) (kind string, out []Option, checked []string
 			checked = append(checked, o.Key)
 		}
 	}
-	return kind, out, checked
+	return out, multi, checked
 }
 
 // IsChecked reports whether key is a ticked option of a multi-select tab.
@@ -251,4 +214,22 @@ func isRule(line string) bool {
 		return false
 	}
 	return strings.Count(t, "─") >= 10 && !strings.ContainsAny(t, "│")
+}
+
+// indentOf is the display column of a raw line's content, after any box
+// border, with the selection cursor counted as a space so "❯ 1." and "  2."
+// share an indent.
+func indentOf(line string) int {
+	t := StripANSI(line)
+	if b := strings.TrimLeft(t, " \t"); strings.HasPrefix(b, "│") || strings.HasPrefix(b, "┃") {
+		t = strings.TrimPrefix(strings.TrimPrefix(b, "│"), "┃")
+	}
+	n := 0
+	for _, r := range t {
+		if r != ' ' && r != '\t' && r != '❯' {
+			break
+		}
+		n++
+	}
+	return n
 }

@@ -3,7 +3,7 @@ argv:
   -d
   -b
   -t
-  agentctl-launchtest:^
+  =agentctl-launchtest:^
   -n
   golden
   -c
@@ -31,6 +31,7 @@ env:
   DISABLE_AUTOUPDATER=1
   MAX_THINKING_TOKENS=4096
 command:
+  unset AGENTCTL_WINDOW_ID AGENTCTL_WINDOW_INDEX AGENTCTL_BRANCH AGENTCTL_WORKTREE AGENTCTL_TICKET AGENTCTL_TICKET_TITLE AGENTCTL_SPAWNED_BY AGENTCTL_SPAWNED_BY_SESSION AGENTCTL_BACKEND AGENTCTL_ACCOUNT AGENTCTL_HARNESS AGENTCTL_PI_PROVIDER
   claude --agent 'golden' -n 'golden-002-1' --session-id '<UUID>' --model 'opus' --effort 'high' --permission-mode 'auto' --settings '$PROJECT/.agentctl/settings/golden.json' --append-system-prompt-file '$PROJECT/.agentctl/launch/adhoc-sys-<RAND>.txt' 'say hi'
 windowstate:
   instance=golden
@@ -42,5 +43,5 @@ windowstate:
   account=
 settings:
 {
-  "hooks": "sha256:cbe19c252939c4820f718e911a5e11aeddcc59c3e21695660a44730999bceb58"
+  "hooks": "sha256:7c9f7f0e909e47f314cf8816be99acaeb63d70be27d3486a06cc4bb45925332f"
 }

@@ -112,12 +112,16 @@ func (m FleetModel) footerBody(cw int) string {
 	var b strings.Builder
 	b.WriteString("\n")
 	switch {
+	case m.newSessionOpen():
+		b.WriteString(m.newSessionView(cw))
 	case m.menuOpen && m.menuHelp:
 		lines, _ := fleetHelpLayout(fleetHelpItems(), cw)
 		b.WriteString(strings.Join(lines, "\n"))
 	case m.menuOpen:
 		text, _ := menuItemSpans(m.fleetMenuItems(m.menuLine))
 		b.WriteString(fleetBlockedStyle.Render(truncateToWidth(text+"   esc", cw)))
+	case m.sweepArmed():
+		b.WriteString(fleetBlockedStyle.Render("  " + m.sweepPrompt(cw-2)))
 	case m.jumpErr != "":
 		b.WriteString(fleetErrStyle.Render("  " + truncateToWidth(m.jumpErr, cw-2)))
 	case m.infoMsg != "" && m.infoOK:
@@ -126,9 +130,19 @@ func (m FleetModel) footerBody(cw int) string {
 		b.WriteString(fleetDimStyle.Render("  " + truncateToWidth(m.infoMsg, cw-2)))
 	}
 	b.WriteString("\n")
+	if m.newSessionOpen() && m.jumpErr != "" {
+		// The message line holds the prompt: its error takes the hint bar.
+		b.WriteString(fleetErrStyle.Render("  " + truncateToWidth(m.jumpErr, cw-2)))
+		return b.String()
+	}
 	hints := fleetFooterHints
-	if m.newArmed() {
+	switch {
+	case m.newSessionOpen():
+		hints = fleetNewSessionHints
+	case m.newArmed():
 		hints = fleetNewHints
+	case m.sweepArmed():
+		hints = fleetSweepHints
 	}
 	b.WriteString(fitHints(hints, cw))
 	return b.String()
@@ -159,7 +173,9 @@ func fleetHelpItems() []fleetHelpItem {
 		{"^b o", "back to list", ""},
 		{"b", "next blocked", "b"},
 		{"n", "new", "n"},
+		{fleetNewSessionKey, "new session", fleetNewSessionKey},
 		{"x", "close", "x"},
+		{fleetSweepKey, "sweep project", fleetSweepKey},
 		{"J", "home", "J"},
 		{"p", "open PR", "p"},
 		{"r", "refresh", "r"},
@@ -168,6 +184,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"z", "fold", "z"},
 		{"Z", "focus mode", "Z"},
 		{"f", "filter", "f"},
+		{"o", "sort recent", "o"},
 		{fleetServeKey, "serve on/off", fleetServeKey},
 		{"q", "leave", "q"},
 		{"esc", "close help", "?"},
@@ -213,8 +230,10 @@ func fleetHelpLayout(items []fleetHelpItem, cw int) (lines []string, spans []fle
 
 // openHelp opens the "?" key reference in the footer.
 func (m *FleetModel) openHelp() {
+	m.cancelNewSession()
 	m.cancelClose()
 	m.cancelNew()
+	m.cancelSweep()
 	m.menuOpen, m.menuHelp, m.menuLine = true, true, m.splitPane.Cursor()
 	m.ensureCursorVisible() // the footer grew; keep the cursor on screen
 }

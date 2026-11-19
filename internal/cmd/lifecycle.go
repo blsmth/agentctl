@@ -9,12 +9,15 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/blsmth/agentctl/internal/cliout"
+	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/reaper"
+	"github.com/blsmth/agentctl/internal/reconcile"
 	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // RunKillMenu shows the Bubble Tea kill confirmation popup for the named agent
@@ -58,7 +61,7 @@ func RunKillMenu(nameOrID string) {
 		cliout.Exit(1)
 	}
 
-	model := tui.NewKillModel(displayName)
+	model := tui.NewKillModel(displayName).WithChildren(killCascadeNames(windowID))
 	p := tea.NewProgram(model)
 	finalModel, err := p.Run()
 	if err != nil {
@@ -83,6 +86,33 @@ func RunKillMenu(nameOrID string) {
 			cliout.Exit(1)
 		}
 	}
+}
+
+// killCascadeNames lists the live dispatched sessions that closing windowID
+// will also close (close_children), for the kill confirmation. Any failure
+// yields none: the note is informational.
+func killCascadeNames(windowID string) []string {
+	if windowID == "" || !config.Load().CloseChildrenEnabled() {
+		return nil
+	}
+	ws, err := windowstate.Read(windowID)
+	if err != nil || ws.SessionID == "" {
+		return nil
+	}
+	wins, err := reconcile.ListLiveWindows()
+	if err != nil {
+		return nil
+	}
+	return cascadeNames(windowID, ws.SessionID, wins)
+}
+
+// cascadeNames names the descendants of parentID/parentSessionID in wins.
+func cascadeNames(parentID, parentSessionID string, wins []reconcile.LiveWindow) []string {
+	var names []string
+	for _, w := range reconcile.Descendants(parentID, parentSessionID, wins) {
+		names = append(names, w.Name())
+	}
+	return names
 }
 
 // RunKill kills the named agent window (non-interactive, for scripting).

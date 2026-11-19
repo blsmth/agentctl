@@ -19,6 +19,52 @@ import (
 	"github.com/blsmth/agentctl/internal/safefs"
 )
 
+// InitResult reports what InitProject did.
+type InitResult struct {
+	// Created is true when .claude/agents/ did not exist and was created.
+	Created bool
+	// Installed and Skipped list template names, when templates were asked for.
+	Installed, Skipped []string
+}
+
+// agentsDir is the project-local agents directory InitProject creates.
+func agentsDir(dir string) string { return filepath.Join(dir, ".claude", "agents") }
+
+// needsInit reports whether dir has no .claude/agents/ yet.
+func needsInit(dir string) bool {
+	info, err := os.Stat(agentsDir(dir))
+	return err != nil || !info.IsDir()
+}
+
+// InitProject is the non-interactive core of `agentctl init`: it creates
+// dir/.claude/agents/ (a no-op when it exists) plus the shell-prefix
+// bootstrap script, and installs the starter templates when templates is
+// true. It never reads stdin, never prints, and never exits the process.
+func InitProject(dir string, templates bool) (InitResult, error) {
+	var res InitResult
+	agents := agentsDir(dir)
+	logging.Log("InitProject: target dir=%s", agents)
+	if needsInit(dir) {
+		// .claude/ may be repository content; never create through a symlink.
+		if err := safefs.MkdirAll(dir, agents, 0o755); err != nil {
+			return res, fmt.Errorf("could not create .claude/agents/: %w", err)
+		}
+		res.Created = true
+		// Write the shell-prefix bootstrap script and create plugin directories.
+		if err := hooks.EnsureShellPrefixScript(); err != nil {
+			logging.Log("InitProject: ensureShellPrefixScript: %v", err)
+		}
+	}
+	if templates {
+		installed, skipped, err := agent.InstallTemplates(agents, false)
+		if err != nil {
+			return res, fmt.Errorf("installing templates: %w", err)
+		}
+		res.Installed, res.Skipped = installed, skipped
+	}
+	return res, nil
+}
+
 // RunInit is the entry point for `agentctl init`. It sets up the .claude/agents/
 // directory, installs starter templates, and configures Claude Code hooks.
 func RunInit() {
@@ -28,26 +74,17 @@ func RunInit() {
 		cliout.Exit(1)
 	}
 
-	dir := filepath.Join(cwd, ".claude", "agents")
-	logging.Log("RunInit: target dir=%s", dir)
-
-	info, err := os.Stat(dir)
-	if err == nil && info.IsDir() {
-		fmt.Println("Already initialized — .claude/agents/ exists")
-	} else {
-		// .claude/ may be repository content; never create through a symlink.
-		if err := safefs.MkdirAll(cwd, dir, 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: could not create .claude/agents/: %v\n", err)
-			cliout.Exit(1)
-		}
-
+	dir := agentsDir(cwd)
+	res, err := InitProject(cwd, false)
+	switch {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		cliout.Exit(1)
+	case res.Created:
 		fmt.Println("Created .claude/agents/")
 		fmt.Println("Use `agentctl new <name>` to create agents, then `agentctl sync` to register them.")
-
-		// Write the shell-prefix bootstrap script and create plugin directories.
-		if err := hooks.EnsureShellPrefixScript(); err != nil {
-			logging.Log("RunInit: ensureShellPrefixScript: %v", err)
-		}
+	default:
+		fmt.Println("Already initialized — .claude/agents/ exists")
 	}
 
 	fmt.Print("Install starter agent templates? [Y/n] ")

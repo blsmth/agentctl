@@ -20,6 +20,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -85,7 +87,7 @@ func New(opts Options) (*Harness, error) {
 		return nil, fmt.Errorf("creating CA: %w", err)
 	}
 
-	w := &world{root: opts.Dir, now: time.Now}
+	w := &world{root: opts.Dir, now: time.Now, orderPath: filepath.Join(opts.Dir, "group-order.json")}
 	w.setGroups(DefaultFixture())
 	off := false
 	p := panes{w}
@@ -95,10 +97,10 @@ func New(opts Options) (*Harness, error) {
 			AllowWrite: !opts.ReadOnly,
 			KeepAwake:  &off,
 		},
-		Dir: opts.Dir, Version: "servetest", CA: ca,
+		Dir: opts.Dir, Version: "servetest", CA: ca, GroupOrderPath: func() (string, error) { return w.orderPath, nil },
 		AdvertiseHost: "127.0.0.1", HTTPSPort: 8443,
 		Fleet: w, Panes: p, MainPanes: p, Agents: agents{}, Awake: holder{},
-		Keys: keys{w}, Injector: injector{w}, Closer: closer{w}, Dispatcher: dispatcher{w},
+		Keys: keys{w}, Injector: injector{w}, Closer: closer{w}, Dispatcher: dispatcher{w}, Shells: shells{w}, Sweep: sweeper{w}.run,
 		LaunchConfig: launchConfig{}, OllamaModels: noOllama,
 		Terminal: terminal{}, PTY: ptys{},
 		Pusher: pusher{}, NtfyBase: "http://127.0.0.1:1",
@@ -147,6 +149,7 @@ func (h *Harness) SetFleet(groups []Group) error {
 // previous test mid-gesture.
 func (h *Harness) Reset() {
 	h.closeApprovals()
+	_ = os.Remove(h.world.orderPath) // forget a reorder made by the last test
 	h.world.setGroups(DefaultFixture())
 	h.world.clearActions()
 	time.Sleep(3*h.rediscover + 50*time.Millisecond)

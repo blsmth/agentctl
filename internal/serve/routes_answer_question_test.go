@@ -171,8 +171,8 @@ func TestAnswerMultiSelect(t *testing.T) {
 func TestAnswerSingleSelectQuestion(t *testing.T) {
 	q1 := readServeCapture(t, "askuser-q1.txt")
 	d := parseCapture(t, q1)
-	if d.Kind != panestate.KindQuestion {
-		t.Fatalf("kind = %q", d.Kind)
+	if d.Multi {
+		t.Fatal("single-select parsed as multi")
 	}
 	for _, tc := range []struct {
 		key    string

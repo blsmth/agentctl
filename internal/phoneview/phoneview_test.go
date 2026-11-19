@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestAddRemoveActive(t *testing.T) {
@@ -60,5 +61,45 @@ func TestPrune(t *testing.T) {
 	}
 	if n := Prune(dir, nil); n != 1 || Active(dir, "@1") {
 		t.Fatalf("clear all: %d", n)
+	}
+}
+
+func TestPaneMarkerTTL(t *testing.T) {
+	dir := t.TempDir()
+	v := PaneViewer("dev.1/x")
+	if v != "pane-dev_1_x" {
+		t.Fatalf("PaneViewer = %q", v)
+	}
+	if err := Touch(dir, "@1", "plain"); err == nil {
+		t.Fatal("Touch accepted a non-snapshot viewer")
+	}
+	if err := Touch(dir, "@1", v); err != nil {
+		t.Fatal(err)
+	}
+	if !Active(dir, "@1") {
+		t.Fatal("fresh pane marker not active")
+	}
+	old := time.Now().Add(-2 * PaneTTL)
+	if err := os.Chtimes(filepath.Join(dir, "@1", v), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if Active(dir, "@1") {
+		t.Fatal("expired pane marker active")
+	}
+	// A live terminal marker never expires by age.
+	if err := Add(dir, "@1", "term-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(dir, "@1", "term-a"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if !Active(dir, "@1") {
+		t.Fatal("old terminal marker expired")
+	}
+	if n := PruneExpired(dir); n != 1 {
+		t.Fatalf("PruneExpired = %d, want 1", n)
+	}
+	if !Active(dir, "@1") {
+		t.Fatal("terminal marker pruned")
 	}
 }

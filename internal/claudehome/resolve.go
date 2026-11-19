@@ -59,7 +59,7 @@ func Resolve(cfg *config.Config, req Request) (Resolution, error) {
 	}
 	name, source := pick(cfg, req)
 	if name == "" {
-		d := DefaultDir()
+		d := defaultDirIn(cfg)
 		if d == "" {
 			return Resolution{}, fmt.Errorf("cannot resolve the default Claude config dir")
 		}
@@ -146,7 +146,9 @@ func underDir(dir, p string) bool {
 
 // ParentAccount returns the account of the dispatching window: its recorded
 // windowstate account, else the dispatching process's own CLAUDE_CONFIG_DIR
-// when that is explicitly set. "" when unknown.
+// when that is explicitly set, else, under Claude Code's subprocess env scrub
+// (which drops CLAUDE_CONFIG_DIR), its AGENTCTL_ACCOUNT (see
+// scrubbedAccountDir). "" when unknown.
 func ParentAccount(windowID string) string {
 	if windowID != "" {
 		if ws, err := windowstate.Read(windowID); err == nil && ws.Account != "" {
@@ -155,6 +157,9 @@ func ParentAccount(windowID string) string {
 	}
 	if env := os.Getenv(EnvConfigDir); env != "" {
 		return AccountForDir(env)
+	}
+	if d := scrubbedAccountDir(nil); d != "" {
+		return AccountForDir(d)
 	}
 	return ""
 }

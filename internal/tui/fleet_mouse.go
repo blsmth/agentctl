@@ -11,7 +11,7 @@ import (
 
 // fleetClickAction is what a mouse click on the hub should do. Clicks only
 // select (the live pane follows the selection). The only side effects are the
-// explicit "+ new" / "✕" buttons and the right-click menu.
+// explicit "+ new" / "sweep" / "✕" buttons and the right-click menu.
 type fleetClickAction int
 
 const (
@@ -23,6 +23,7 @@ const (
 	fleetClickClose                            // row's "✕" button: arm / confirm close
 	fleetClickMenu                             // right click: open the context menu
 	fleetClickFold                             // header's project name: fold / unfold the group
+	fleetClickSweep                            // header's "sweep" button: preview a sweep of the group
 )
 
 // fleetListTop returns the screen row where the list (or sidebar) begins: the
@@ -156,6 +157,9 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 				return idx, fleetClickNew
 			}
 		}
+		if m.onSweepButton(l.group, x) {
+			return idx, fleetClickSweep
+		}
 		if m.onHeaderName(l.group, x) {
 			return idx, fleetClickFold
 		}
@@ -188,6 +192,15 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	if msg.Button == tea.MouseLeft && m.menuOpen && !m.menuHelp && msg.Y == m.footerMessageY() {
 		return m.clickMenu(msg.X)
 	}
+	if msg.Button == tea.MouseLeft && m.onNewSessionButton(msg.X, msg.Y) {
+		return m.runKey(fleetNewSessionKey) // same as the key
+	}
+	if m.newSessionOpen() {
+		if msg.Y == m.footerMessageY() {
+			return m, nil // a click on the prompt itself keeps it open
+		}
+		m.cancelNewSession() // any other click dismisses the prompt
+	}
 	if msg.Button == tea.MouseLeft && m.onServeBadge(msg.X, msg.Y) {
 		m.closeMenu()
 		m.cancelNew()
@@ -196,6 +209,9 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	idx, action := m.buttonDecision(msg.X, msg.Y, msg.Button)
 	if action != fleetClickNewShell && action != fleetClickNewAgent {
 		m.cancelNew() // any other click dismisses the selector
+	}
+	if action != fleetClickSweep {
+		m.cancelSweep() // any other click cancels an armed sweep
 	}
 	switch action {
 	case fleetClickSelect:
@@ -225,6 +241,13 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		m.startClose(idx)
 		show := m.maybeShowCmd()
 		return m, show
+	case fleetClickSweep:
+		m.closeMenu()
+		if m.sweepArmedFor(m.lines[idx].group) || m.sweepBusy != "" {
+			return m, nil // a repeat click neither confirms nor starts a second sweep
+		}
+		m.selectLine(idx)
+		return m, m.startSweep(idx)
 	case fleetClickFold:
 		m.closeMenu()
 		m.selectLine(idx)
@@ -255,13 +278,15 @@ func (m FleetModel) clickMenu(x int) (tea.Model, tea.Cmd) {
 type fleetHoverRegion int
 
 const (
-	fleetHoverNone     fleetHoverRegion = iota
-	fleetHoverBody                      // a row's body (not its ✕)
-	fleetHoverClose                     // a row's ✕ button
-	fleetHoverNew                       // a group header's "+ new" button
-	fleetHoverNewShell                  // armed selector's "shell"
-	fleetHoverNewAgent                  // armed selector's "agent"
-	fleetHoverFold                      // a group header's fold marker and project name
+	fleetHoverNone       fleetHoverRegion = iota
+	fleetHoverBody                        // a row's body (not its ✕)
+	fleetHoverClose                       // a row's ✕ button
+	fleetHoverNew                         // a group header's "+ new" button
+	fleetHoverNewShell                    // armed selector's "shell"
+	fleetHoverNewAgent                    // armed selector's "agent"
+	fleetHoverFold                        // a group header's fold marker and project name
+	fleetHoverNewSession                  // the title's "+ new session" button (line -1)
+	fleetHoverSweep                       // a group header's "sweep" button
 )
 
 // fleetHover is the hover target: a line index plus the region on it. The zero
@@ -282,6 +307,9 @@ func (h fleetHover) region(i int) fleetHoverRegion {
 // hoverAt resolves the hover target under (x, y) with the same hit-testing as
 // clicks, so hover and click can never disagree.
 func (m FleetModel) hoverAt(x, y int) fleetHover {
+	if m.onNewSessionButton(x, y) {
+		return fleetHover{line: -1, reg: fleetHoverNewSession}
+	}
 	idx, sub, ok := m.lineAtSub(x, y)
 	if !ok {
 		return fleetHover{}
@@ -297,6 +325,9 @@ func (m FleetModel) hoverAt(x, y int) fleetHover {
 			} else if m.onNewButton(x) {
 				return fleetHover{line: idx, reg: fleetHoverNew}
 			}
+		}
+		if m.onSweepButton(l.group, x) {
+			return fleetHover{line: idx, reg: fleetHoverSweep}
 		}
 		if m.onHeaderName(l.group, x) {
 			return fleetHover{line: idx, reg: fleetHoverFold}

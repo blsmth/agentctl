@@ -211,6 +211,7 @@ func InitStyles() {
 	initTicketLaunchStyles()
 	initSkillsStyles()
 	initMemoryStyles()
+	initContextStyles()
 	initAgentsStyles()
 	initPermissionStyles()
 	initHudStyles()

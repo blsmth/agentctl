@@ -491,5 +491,232 @@
         "────"
       ]
     }
+  ],
+  "defaultAgent": [
+    {
+      "name": "default present",
+      "projects": [
+        {
+          "dir": "/a",
+          "name": "a",
+          "default_agent": "go-engineer"
+        },
+        {
+          "dir": "/b",
+          "name": "b",
+          "default_agent": "gone"
+        },
+        {
+          "dir": "/c",
+          "name": "c",
+          "default_agent": ""
+        },
+        {
+          "dir": "/d",
+          "name": "d"
+        }
+      ],
+      "dir": "/a",
+      "agents": [
+        "alpha",
+        "go-engineer"
+      ],
+      "userPicked": false,
+      "expect": "go-engineer"
+    },
+    {
+      "name": "default missing from list",
+      "projects": [
+        {
+          "dir": "/a",
+          "name": "a",
+          "default_agent": "go-engineer"
+        },
+        {
+          "dir": "/b",
+          "name": "b",
+          "default_agent": "gone"
+        },
+        {
+          "dir": "/c",
+          "name": "c",
+          "default_agent": ""
+        },
+        {
+          "dir": "/d",
+          "name": "d"
+        }
+      ],
+      "dir": "/b",
+      "agents": [
+        "alpha",
+        "go-engineer"
+      ],
+      "userPicked": false,
+      "expect": ""
+    },
+    {
+      "name": "user already chose",
+      "projects": [
+        {
+          "dir": "/a",
+          "name": "a",
+          "default_agent": "go-engineer"
+        },
+        {
+          "dir": "/b",
+          "name": "b",
+          "default_agent": "gone"
+        },
+        {
+          "dir": "/c",
+          "name": "c",
+          "default_agent": ""
+        },
+        {
+          "dir": "/d",
+          "name": "d"
+        }
+      ],
+      "dir": "/a",
+      "agents": [
+        "alpha",
+        "go-engineer"
+      ],
+      "userPicked": true,
+      "expect": ""
+    },
+    {
+      "name": "empty default",
+      "projects": [
+        {
+          "dir": "/a",
+          "name": "a",
+          "default_agent": "go-engineer"
+        },
+        {
+          "dir": "/b",
+          "name": "b",
+          "default_agent": "gone"
+        },
+        {
+          "dir": "/c",
+          "name": "c",
+          "default_agent": ""
+        },
+        {
+          "dir": "/d",
+          "name": "d"
+        }
+      ],
+      "dir": "/c",
+      "agents": [
+        "alpha",
+        "go-engineer"
+      ],
+      "userPicked": false,
+      "expect": ""
+    },
+    {
+      "name": "no default field",
+      "projects": [
+        {
+          "dir": "/a",
+          "name": "a",
+          "default_agent": "go-engineer"
+        },
+        {
+          "dir": "/b",
+          "name": "b",
+          "default_agent": "gone"
+        },
+        {
+          "dir": "/c",
+          "name": "c",
+          "default_agent": ""
+        },
+        {
+          "dir": "/d",
+          "name": "d"
+        }
+      ],
+      "dir": "/d",
+      "agents": [
+        "alpha",
+        "go-engineer"
+      ],
+      "userPicked": false,
+      "expect": ""
+    },
+    {
+      "name": "project not in list",
+      "projects": [
+        {
+          "dir": "/a",
+          "name": "a",
+          "default_agent": "go-engineer"
+        },
+        {
+          "dir": "/b",
+          "name": "b",
+          "default_agent": "gone"
+        },
+        {
+          "dir": "/c",
+          "name": "c",
+          "default_agent": ""
+        },
+        {
+          "dir": "/d",
+          "name": "d"
+        }
+      ],
+      "dir": "/zzz",
+      "agents": [
+        "alpha",
+        "go-engineer"
+      ],
+      "userPicked": false,
+      "expect": ""
+    },
+    {
+      "name": "zero projects",
+      "projects": [],
+      "dir": "",
+      "agents": [
+        "alpha",
+        "go-engineer"
+      ],
+      "userPicked": false,
+      "expect": ""
+    },
+    {
+      "name": "zero agents",
+      "projects": [
+        {
+          "dir": "/a",
+          "name": "a",
+          "default_agent": "go-engineer"
+        },
+        {
+          "dir": "/b",
+          "name": "b",
+          "default_agent": "gone"
+        },
+        {
+          "dir": "/c",
+          "name": "c",
+          "default_agent": ""
+        },
+        {
+          "dir": "/d",
+          "name": "d"
+        }
+      ],
+      "dir": "/a",
+      "agents": [],
+      "userPicked": false,
+      "expect": ""
+    }
   ]
 }

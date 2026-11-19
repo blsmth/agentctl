@@ -434,7 +434,7 @@ func TestChromeBarHookArgs(t *testing.T) {
 			if args[1] != "-t" {
 				t.Errorf("args[1] = %q, want %q (session-scoped, not -g)", args[1], "-t")
 			}
-			if args[2] != tt.wantSession {
+			if args[2] != "="+tt.wantSession+":" {
 				t.Errorf("session = %q, want %q", args[2], tt.wantSession)
 			}
 			if args[3] != "after-new-window" {
@@ -492,7 +492,7 @@ func TestActiveWindowHookArgs(t *testing.T) {
 	if args[1] != "-t" {
 		t.Errorf("args[1] = %q, want %q (session-scoped, not -g)", args[1], "-t")
 	}
-	if args[2] != session {
+	if args[2] != "="+session+":" {
 		t.Errorf("session = %q, want %q", args[2], session)
 	}
 	if args[3] != "after-select-window" {

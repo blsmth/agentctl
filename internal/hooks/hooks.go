@@ -42,6 +42,8 @@ func Dispatch(subcmd string) bool {
 		ValidateBash()
 	case "hook-check-done":
 		CheckDone()
+	case "hook-title":
+		Title()
 	case "hook-session-end":
 		SessionEnd()
 	case "hook-pre-compact":
@@ -117,8 +119,11 @@ func BuildHooksConfig(exePrefix string) map[string]interface{} {
 	// hook builds a single hook entry with type "command".
 	hook := func(cmd string, async bool) map[string]interface{} {
 		timeout := 0
-		if cmd == "hook-validate-bash" {
+		switch cmd {
+		case "hook-validate-bash":
 			timeout = validateBashTimeoutSeconds
+		case "hook-title":
+			timeout = titleHookTimeoutSeconds
 		}
 		h := map[string]interface{}{
 			"type":    "command",
@@ -142,6 +147,17 @@ func BuildHooksConfig(exePrefix string) map[string]interface{} {
 		}
 	}
 
+	// eventWithTitle is event plus the async hook-title after cmd, in the
+	// same entry: the short row title refreshes on this event without
+	// Claude Code waiting on it.
+	eventWithTitle := func(cmd string, async bool) []interface{} {
+		return []interface{}{
+			map[string]interface{}{
+				"hooks": []interface{}{hook(cmd, async), hook("hook-title", true)},
+			},
+		}
+	}
+
 	// eventWithMatcher builds an event entry with a matcher string.
 	eventWithMatcher := func(matcher, cmd string, async bool) map[string]interface{} {
 		return map[string]interface{}{
@@ -151,7 +167,7 @@ func BuildHooksConfig(exePrefix string) map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"SessionStart": event("hook-session-start", false),
+		"SessionStart": eventWithTitle("hook-session-start", false),
 		"SessionEnd":   event("hook-session-end", true),
 		"Notification": []interface{}{
 			eventWithMatcher("idle_prompt|permission_prompt", "hook-notify", true),
@@ -166,9 +182,9 @@ func BuildHooksConfig(exePrefix string) map[string]interface{} {
 		"PostToolUseFailure": []interface{}{
 			eventWithMatcher("*", "hook-post-tool-failure", false),
 		},
-		"Stop":               event("hook-check-done", false),
+		"Stop":               eventWithTitle("hook-check-done", false),
 		"StopFailure":        event("hook-stop-failure", false),
-		"UserPromptSubmit":   event("hook-user-prompt", false),
+		"UserPromptSubmit":   eventWithTitle("hook-user-prompt", false),
 		"SubagentStart":      event("hook-subagent-start", true),
 		"SubagentStop":       event("hook-subagent-stop", false),
 		"PostCompact":        event("hook-post-compact", false),

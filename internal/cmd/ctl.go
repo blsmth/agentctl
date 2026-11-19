@@ -64,7 +64,7 @@ func RunCmdCtl(async bool, rest []string) {
 
 	// Target the operator's last-active window in the agentctl session.
 	// tmux.SessionName already accounts for --instance overrides.
-	target := tmux.SessionName + ":!"
+	target := tmux.ExactSessionTarget(tmux.SessionName) + "!"
 
 	tmuxArgs := []string{
 		"display-popup", "-E",

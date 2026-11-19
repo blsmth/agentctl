@@ -203,3 +203,26 @@ func writeBenchWS(b *testing.B, dir, id string) {
 		b.Fatal(err)
 	}
 }
+
+func TestLastActivity(t *testing.T) {
+	now := time.Unix(2_000_000, 0)
+	tests := []struct {
+		name string
+		ws   windowstate.WindowState
+		want int64
+	}{
+		{"empty", windowstate.WindowState{}, 0},
+		{"tool only", windowstate.WindowState{LastToolTime: 100}, 100},
+		{"state only", windowstate.WindowState{StateSince: now}, 2_000_000},
+		{"later tool wins", windowstate.WindowState{LastToolTime: 2_000_100, StateSince: now}, 2_000_100},
+		{"later state wins", windowstate.WindowState{LastToolTime: 5, StateSince: now}, 2_000_000},
+		{"UpdatedAt ignored", windowstate.WindowState{UpdatedAt: now}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := lastActivity(tt.ws); got != tt.want {
+				t.Errorf("got %d, want %d", got, tt.want)
+			}
+		})
+	}
+}

@@ -56,7 +56,7 @@ agentctl cleanup --json                    # machine-readable output
 agentctl sweep --dry-run                   # window-centric, current session only
 ```
 
-To clean up by *window* instead of by worktree, run `agentctl sweep` from inside tmux. It only touches the current session, closes finished windows (with or without a worktree), and prints a table of what needs you. Flags: `--dry-run`, `--include-bare`, `--session <name>` (required outside tmux), `--json`.
+To clean up by *window* instead of by worktree, run `agentctl sweep` from inside tmux. It only touches the current session, closes finished windows (with or without a worktree), and prints a table of what needs you. Flags: `--dry-run`, `--include-bare`, `--session <name>` (required outside tmux; a session that does not exist is an error), `--json`. The hub (`w`, or a group header's `sweep` button) and the phone (a group header's 🧹) run the same sweep for one project with a preview and a confirm; see [keybindings](keybindings.md) and the [mobile web app design](design/mobile-web-app.md).
 
 ```sh
 git worktree list                          # see all worktrees
@@ -92,7 +92,7 @@ A dispatch is launched in one of several modes (`internal/dispatch/modes.go`). E
 
 An agent with `role: orchestrator` in its frontmatter (see [configuration.md](configuration.md#agent-frontmatter-role)) coordinates others, so it never gets the worker tail: no finishing steps (commit, push, open a PR) and no "do not merge to main" worktree line, and its preamble is the orchestrator one.
 
-- **Human-initiated `--prompt`** (the phone's new-session button, or the CLI from a shell with no tracked Claude session): launched as a `bare` interactive session. The prompt is the first user message, there are no autonomous instructions, and the permission mode is the interactive default.
+- **Human-initiated `--prompt`** (the phone's new-session button, or the CLI from a shell with no tracked Claude session): launched as a `bare` interactive session. The prompt is the first user message, there are no autonomous instructions, and the permission mode resolves like a worker dispatch (per-launch override, then the agent's `permission_mode`, then `auto`).
 - **Unattended** (a cron job, or `--prompt` dispatched from another agent session, so done notices and `--wait` work) **and `--issue`**: the mode is kept, with its autonomous instructions and the task in the system prompt.
 
 ## PR review (`--review-pr`)
@@ -106,6 +106,7 @@ agentctl dispatch --review-pr 57 --model sonnet --prompt 'Focus on the tmux call
 - Fetches the PR with `gh pr view` (title, URL, base/head branch, head sha, changed files, body). A closed or merged PR is an error. Exclusive with `--issue`; `--prompt` / `--prompt-key` add text under "Additional review instructions".
 - The worktree is `.worktrees/agent-<agent>-review-pr-<N>-<id>/` on `agent/<agent>/review-pr-<N>-<id>` (a fresh id per review, so two reviews never share a worktree), cut from the default branch. The reviewer checks out the PR head detached and returns to that branch when done, so SessionEnd can reclaim it. It is never pushed.
 - **Author**: the live window whose worktree branch equals the PR's head branch, across every agentctl session (`--author @N` overrides). When it runs under the same Claude account, the prompt names it by `@N.%P` and agentctl queues an `agentctl notice:` in the author's window introducing the reviewer. Otherwise the reviewer reports to its orchestrator only.
+- With the default `dispatch_approval` (`non-review`) a review dispatch run by `code-reviewer` (no `--agent`, or `--agent code-reviewer`) does not need approval in the popup; a review by any other agent is gated. Set `dispatch_approval: "all"` to gate every review too (see [configuration](configuration.md#dispatch_approval)).
 - The deliverable is one `REVIEW PR #<N> — VERDICT: MERGE | MERGE-WITH-FOLLOWUPS | BLOCKED | NEEDS-BRENDAN` message to the orchestrator, after at most 3 fix rounds with the author.
 
 ## Context injection

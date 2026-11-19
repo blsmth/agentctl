@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
 )
@@ -23,6 +25,16 @@ var (
 	windowRe = regexp.MustCompile(`^@[0-9]+$`)
 	viewerRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 )
+
+// PanePrefix starts the viewer name of a snapshot (capture-pane) view: the
+// phone's window detail screen polls the pane instead of holding a socket, so
+// its marker has no close event and expires PaneTTL after its last Touch.
+const PanePrefix = "pane-"
+
+// PaneTTL is how long a snapshot marker counts after its last Touch. The
+// phone polls every 2s; this survives a few missed polls and a phone that
+// vanished without a close.
+const PaneTTL = 10 * time.Second
 
 // DefaultDir returns <StateDir>/phone-viewed.
 func DefaultDir() (string, error) {
@@ -58,6 +70,37 @@ func Add(dir, windowID, viewer string) error {
 	return nil
 }
 
+// PaneViewer is the viewer name for a snapshot view by the given device. Any
+// character outside the marker alphabet is replaced.
+func PaneViewer(device string) string {
+	b := []byte(device)
+	for i, c := range b {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			b[i] = '_'
+		}
+	}
+	return PanePrefix + string(b)
+}
+
+// Touch records (or refreshes) a snapshot view of windowID by viewer, which
+// must start with PanePrefix. The marker stops counting PaneTTL later.
+func Touch(dir, windowID, viewer string) error {
+	if !strings.HasPrefix(viewer, PanePrefix) {
+		return fmt.Errorf("viewer %q is not a snapshot viewer", viewer)
+	}
+	if err := Add(dir, windowID, viewer); err != nil {
+		return err
+	}
+	now := time.Now()
+	return os.Chtimes(filepath.Join(dir, windowID, viewer), now, now)
+}
+
+// expired reports whether a snapshot marker is past its TTL. Live terminal
+// markers never expire here: serve removes them on close or prunes at startup.
+func expired(name string, info os.FileInfo, now time.Time) bool {
+	return strings.HasPrefix(name, PanePrefix) && now.Sub(info.ModTime()) > PaneTTL
+}
+
 // Remove deletes viewer's marker and the window directory once it is empty.
 // A missing marker is not an error.
 func Remove(dir, windowID, viewer string) error {
@@ -84,7 +127,45 @@ func Active(dir, windowID string) bool {
 		return false
 	}
 	entries, err := os.ReadDir(wd)
-	return err == nil && len(entries) > 0
+	if err != nil {
+		return false
+	}
+	now := time.Now()
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), PanePrefix) {
+			return true
+		}
+		if info, err := e.Info(); err == nil && !expired(e.Name(), info, now) {
+			return true
+		}
+	}
+	return false
+}
+
+// PruneExpired removes snapshot markers past their TTL (and emptied window
+// directories), for views that vanished without a close. It returns the number
+// removed.
+func PruneExpired(dir string) int {
+	windows, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	now := time.Now()
+	n := 0
+	for _, w := range windows {
+		if !w.IsDir() {
+			continue
+		}
+		wd := filepath.Join(dir, w.Name())
+		markers, _ := os.ReadDir(wd)
+		for _, m := range markers {
+			if info, err := m.Info(); err == nil && expired(m.Name(), info, now) && os.Remove(filepath.Join(wd, m.Name())) == nil {
+				n++
+			}
+		}
+		_ = os.Remove(wd)
+	}
+	return n
 }
 
 // Prune removes every marker for which keep(viewer) is false, and empty window

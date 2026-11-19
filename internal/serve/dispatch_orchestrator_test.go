@@ -22,7 +22,7 @@ func TestPhoneDispatchOrchestratorIsInteractive(t *testing.T) {
 		name        string
 		md          string
 		wantMode    string
-		wantAuto    bool
+		wantAuto    bool // autonomous: finishing steps present
 		wantMessage string
 	}{
 		{"orchestrator", "---\nname: lead\nrole: orchestrator\n---\nYou coordinate.\n", "bare", false, "'audit the docs'"},
@@ -46,8 +46,8 @@ func TestPhoneDispatchOrchestratorIsInteractive(t *testing.T) {
 				t.Fatalf("Dispatch: %v", err)
 			}
 			l := rec.Only()
-			if got := strings.Contains(l.Command, "--permission-mode 'auto'"); got != tt.wantAuto {
-				t.Errorf("--permission-mode auto = %v, want %v\n%s", got, tt.wantAuto, l.Command)
+			if got := strings.Contains(l.Command, "--permission-mode 'auto'"); !got {
+				t.Errorf("--permission-mode auto missing (both roles run in auto)\n%s", l.Command)
 			}
 			if !strings.HasSuffix(strings.TrimSpace(l.Command), tt.wantMessage) {
 				t.Errorf("first message is not the prompt: %s", l.Command)
@@ -63,12 +63,45 @@ func TestPhoneDispatchOrchestratorIsInteractive(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := strings.Contains(string(sys), "Open a pull request"); got != tt.wantAuto {
+			// The project is not a git repo, so the worktree falls back to
+			// the shared dir and the worker gets the commit-only steps.
+			if got := strings.Contains(string(sys), "When you are finished"); got != tt.wantAuto {
 				t.Errorf("finishing steps present = %v, want %v", got, tt.wantAuto)
 			}
 			ws, err := windowstate.Read(res.WindowID)
 			if err != nil || ws.Mode != tt.wantMode || ws.Task != "audit the docs" {
 				t.Errorf("windowstate = mode %q task %q (%v)", ws.Mode, ws.Task, err)
+			}
+		})
+	}
+}
+
+// TestPhoneDispatchKeepsScreenshotLines: the "[Screenshot: <path>]" lines the
+// phone appends to a prompt reach the agent intact, newlines included, in
+// both the orchestrator (bare, first message) and worker launches.
+func TestPhoneDispatchKeepsScreenshotLines(t *testing.T) {
+	prompt := "the bug\nis here\n\n[Screenshot: /proj/.agentctl/uploads/dispatch/0123456789abcdef0123456789abcdef.png]"
+	for name, md := range map[string]string{
+		"orchestrator": "---\nname: lead\nrole: orchestrator\n---\nYou coordinate.\n",
+		"worker":       "---\nname: lead\n---\nYou implement.\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := launchtest.Setup(t, `{}`, map[string]string{"lead": md})
+			rec := launchtest.Capture(t)
+			d := launchDispatcher{
+				repoSlug:        func(string) (string, error) { return "o/r", nil },
+				checkRuntimeDir: func(string) error { return nil },
+				validateAgent:   func(string, string) error { return nil },
+				launch:          dispatch.LaunchAdhoc,
+			}
+			if _, err := d.Dispatch(DispatchRequest{
+				Agent: "lead", Prompt: prompt, Dir: env.Project,
+				Session: "agentctl-launchtest", RuntimeDir: filepath.Join(env.Project, ".agentctl"),
+			}); err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			if cmd := rec.Only().Command; !strings.HasSuffix(strings.TrimSpace(cmd), "'"+prompt+"'") {
+				t.Errorf("prompt not passed intact:\n%s", cmd)
 			}
 		})
 	}

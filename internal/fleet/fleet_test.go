@@ -682,3 +682,22 @@ func TestLoadGroupNestedParentFirstBlocked(t *testing.T) {
 		t.Errorf("FirstBlocked = %v, want nested child @3", b)
 	}
 }
+
+func TestSortRowsRecent(t *testing.T) {
+	r := func(name string, idx int, act int64) Row {
+		x := row(name, "idle", false, idx)
+		x.LastActivity = act
+		return x
+	}
+	in := []Row{r("old", 0, 10), r("none", 1, 0), r("new", 2, 30), r("tieB", 4, 20), r("tieA", 3, 20), r("none0", 0, 0)}
+	got := SortRowsRecent(in)
+	want := []string{"new", "tieA", "tieB", "old", "none0", "none"}
+	for i, w := range want {
+		if got[i].Name != w {
+			t.Fatalf("order[%d] = %s, want %s (all: %v)", i, got[i].Name, w, got)
+		}
+	}
+	if in[0].Name != "old" {
+		t.Error("input mutated")
+	}
+}

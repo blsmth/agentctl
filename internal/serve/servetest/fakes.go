@@ -10,16 +10,18 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/panestate"
 	"github.com/blsmth/agentctl/internal/serve"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
+	"github.com/blsmth/agentctl/internal/sweeprun"
 )
 
 // Action is one side effect the server asked a backend for. Tests read
 // them through the control API instead of watching tmux.
 type Action struct {
-	// Kind is close, key (answer and interrupt), reply, queue, dispatch or
-	// approval.
+	// Kind is close, key (answer and interrupt), reply, queue, dispatch,
+	// approval, shell or sweep (an applied sweep; Text lists the closed window IDs).
 	Kind     string `json:"kind"`
 	Session  string `json:"session,omitempty"`
 	Window   string `json:"window,omitempty"`
@@ -37,7 +39,9 @@ type Action struct {
 // actions. Every fake backend reads and writes it under one lock.
 type world struct {
 	root string
-	now  func() time.Time
+	// orderPath is the saved group order the fleet applies.
+	orderPath string
+	now       func() time.Time
 
 	mu      sync.Mutex
 	groups  []Group
@@ -127,7 +131,18 @@ func (w *world) find(match func(Window) bool) (Window, bool) {
 
 // Fleet implements serve.FleetSource.
 func (w *world) Fleet() ([]fleetwatch.Group, error) {
-	return build(w.snapshot(), w.root, w.now()), nil
+	groups := build(w.snapshot(), w.root, w.now())
+	// Apply the saved order the way fleet.Load does: saved keys first, in
+	// order, the rest in fixture order.
+	saved := fleet.ReadGroupOrder(w.orderPath)
+	pos := func(g fleetwatch.Group) int {
+		if i := slices.Index(saved, g.Key); i >= 0 {
+			return i
+		}
+		return len(saved)
+	}
+	slices.SortStableFunc(groups, func(a, b fleetwatch.Group) int { return pos(a) - pos(b) })
+	return groups, nil
 }
 
 // panes is serve.PaneSource, serve.PaneSizer and serve.MainPanes.
@@ -234,11 +249,61 @@ func (c closer) CloseWindow(t serve.WindowTarget) error {
 	return nil
 }
 
+// sweeper fakes `agentctl sweep` over the fixture: finished, idle,
+// non-bare windows close; blocked ones need attention; working ones are in
+// progress. An apply removes the closed windows and records a sweep action.
+type sweeper struct{ w *world }
+
+func (s sweeper) run(_ context.Context, t sweeprun.Target, dryRun bool) (sweeprun.Report, error) {
+	rep := sweeprun.Report{Session: t.Session, DryRun: dryRun,
+		Closed: []sweeprun.Row{}, Attention: []sweeprun.Row{}, InProgress: []sweeprun.Row{}, Skipped: []sweeprun.Row{}}
+	var ids []string
+	for _, g := range s.w.snapshot() {
+		if g.Session != t.Session {
+			continue
+		}
+		for _, x := range g.Windows {
+			row := sweeprun.Row{WindowID: x.ID, Name: x.Agent, Agent: x.Agent, Status: x.State}
+			switch {
+			case x.State == "blocked":
+				row.Detail = "answer the prompt"
+				rep.Attention = append(rep.Attention, row)
+			case x.State == "working":
+				rep.InProgress = append(rep.InProgress, row)
+			case x.Done && x.Mode != "" && x.Mode != "bare":
+				row.Status, row.Detail = "done", "done"
+				rep.Closed = append(rep.Closed, row)
+				ids = append(ids, x.ID)
+			default:
+				rep.Skipped = append(rep.Skipped, row)
+			}
+		}
+	}
+	if !dryRun {
+		for _, id := range ids {
+			s.w.remove(t.Session, id)
+		}
+		s.w.record(Action{Kind: "sweep", Session: t.Session, Text: strings.Join(ids, ",")})
+	}
+	return rep, nil
+}
+
 type dispatcher struct{ w *world }
 
 func (d dispatcher) Dispatch(req serve.DispatchRequest) (serve.DispatchResult, error) {
 	d.w.record(Action{Kind: "dispatch", Session: req.Session, Agent: req.Agent, Text: req.Prompt, Dir: req.Dir})
 	return serve.DispatchResult{WindowID: "@900", Session: req.Session, Branch: "agent/" + req.Agent + "/adhoc"}, nil
+}
+
+// shells records the shell windows the server opens; no tmux is involved.
+// Its session is always running and no window counts as a shell.
+type shells struct{ w *world }
+
+func (shells) SessionRunning(string) bool  { return true }
+func (shells) IsShell(string, string) bool { return false }
+func (s shells) NewShell(session, dir string) (string, error) {
+	s.w.record(Action{Kind: "shell", Session: session, Dir: dir})
+	return "@901", nil
 }
 
 type agents struct{}

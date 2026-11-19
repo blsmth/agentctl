@@ -22,9 +22,11 @@ import (
 	"github.com/blsmth/agentctl/internal/buildid"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/phoneview"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
+	"github.com/blsmth/agentctl/internal/sweeprun"
 )
 
 // Options configures a Server.
@@ -59,6 +61,11 @@ type Options struct {
 	Injector   Injector
 	Closer     WindowCloser
 	Dispatcher Dispatcher
+	// Shells opens and recognises plain shell windows; nil means tmux.
+	Shells Shells
+	// Sweep runs `agentctl sweep` for a session; nil means the
+	// sweeprun.Run subprocess. Tests inject a fake.
+	Sweep sweeprun.Func
 	// MainPanes finds and captures the pane a window write checks and types
 	// into; nil means tmux.
 	MainPanes MainPanes
@@ -75,6 +82,9 @@ type Options struct {
 	// PhoneViewDir is where live terminals record which windows the phone is
 	// watching (internal/phoneview); empty means <StateDir>/phone-viewed.
 	PhoneViewDir string
+	// GroupOrderPath resolves the saved project group order's path (see
+	// fleet.GroupOrderPath); nil means the real one. Resolved per request.
+	GroupOrderPath func() (string, error)
 	// BusOptions tunes the fleet event bus (debounce, rediscovery).
 	BusOptions fleetwatch.Options
 	// PingEvery is the SSE keep-alive interval; 0 means 20s.
@@ -106,17 +116,22 @@ type Server struct {
 	bus       *fleetwatch.Bus
 	holder    Holder
 	pingEvery time.Duration
-	subs      *SubscriptionStore
-	vapid     VAPIDKeys
-	sender    *Sender
-	ntfy      *Ntfy
-	notifier  *Notifier
-	pushQ     *pushDispatcher
+	// groupOrderPath is the saved group order's path (Options.GroupOrderPath).
+	groupOrderPath func() (string, error)
+	subs           *SubscriptionStore
+	vapid          VAPIDKeys
+	sender         *Sender
+	ntfy           *Ntfy
+	notifier       *Notifier
+	pushQ          *pushDispatcher
 
 	keys       KeySender
 	injector   Injector
 	closer     WindowCloser
 	dispatcher Dispatcher
+	shells     Shells
+	sweep      sweeprun.Func
+	sweeps     sweepGuard
 	mainPanes  MainPanes
 	launchCfg  LaunchConfigSource
 	ollama     *ollamaCache
@@ -182,8 +197,16 @@ func New(opts Options) (*Server, error) {
 	if s.closer == nil {
 		s.closer = tmuxCloser{}
 	}
+	s.shells = opts.Shells
+	if s.shells == nil {
+		s.shells = tmuxShells{}
+	}
 	if s.dispatcher == nil {
 		s.dispatcher = newLaunchDispatcher()
+	}
+	s.sweep = opts.Sweep
+	if s.sweep == nil {
+		s.sweep = sweeprun.Run
 	}
 	s.launchCfg = opts.LaunchConfig
 	if s.launchCfg == nil {
@@ -214,6 +237,10 @@ func New(opts Options) (*Server, error) {
 	}
 	if s.holder == nil {
 		s.holder = newHolder()
+	}
+	s.groupOrderPath = opts.GroupOrderPath
+	if s.groupOrderPath == nil {
+		s.groupOrderPath = fleet.GroupOrderPath
 	}
 	s.pingEvery = opts.PingEvery
 	if s.pingEvery <= 0 {

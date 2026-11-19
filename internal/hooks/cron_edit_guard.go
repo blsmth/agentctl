@@ -24,7 +24,8 @@ var cronJobsPath = cron.JobsPath
 // cronEditTarget returns the protected cron path a file-editing tool call
 // would write ("" when it is not one): the jobs file, or anything under the
 // cron state dir. It is the Edit/Write counterpart of checkCronTamper, and
-// the same speed bump: symlinks and hard links are not resolved.
+// the same speed bump: the jobs file is matched through symlinks and case
+// (sameFilePath), the state dir by path only.
 func cronEditTarget(toolName string, rawInput json.RawMessage) string {
 	if !fileEditTools[toolName] || len(rawInput) == 0 {
 		return ""
@@ -44,7 +45,7 @@ func cronEditTarget(toolName string, rawInput json.RawMessage) string {
 		return ""
 	}
 	p = filepath.Clean(paths.ExpandHome(p))
-	if jobs, err := cronJobsPath(); err == nil && jobs != "" && p == filepath.Clean(jobs) {
+	if jobs, err := cronJobsPath(); err == nil && jobs != "" && sameFilePath(p, filepath.Clean(jobs)) {
 		return p
 	}
 	if dir := cronStateDir(); dir != "" {
@@ -66,9 +67,9 @@ func cronEditDenyReason(path string) string {
 
 // denyFileEdit blocks a file-editing tool call from PreToolUse. Like
 // denyCommand, exit 2 is the enforcement and the JSON is presentation; the
-// audit record is best-effort.
-func denyFileEdit(toolName, path string, rawInput json.RawMessage) {
-	reason := cronEditDenyReason(path)
+// audit record is best-effort. what names the protected file in the audit
+// summary.
+func denyFileEdit(toolName, path, what, reason string, rawInput json.RawMessage) {
 	agentName := os.Getenv("AGENTCTL_AGENT_NAME")
 	logging.Log("hook-pre-tool: DENIED agent=%s tool=%s path=%s", agentName, toolName, path)
 	emitDecision(harness.Decision{Kind: harness.Deny, HookEvent: "PreToolUse", Reason: reason})
@@ -80,7 +81,7 @@ func denyFileEdit(toolName, path string, rawInput json.RawMessage) {
 		Window:   resolveHookWindowID(),
 		OK:       false,
 		Error:    reason,
-		Summary:  truncateSummary(fmt.Sprintf("%s denied by rule: cron schedule or state %s", toolName, path)),
+		Summary:  truncateSummary(fmt.Sprintf("%s denied by rule: %s %s", toolName, what, path)),
 		DeniedBy: deniedByRule,
 		Input:    rawInput,
 	})

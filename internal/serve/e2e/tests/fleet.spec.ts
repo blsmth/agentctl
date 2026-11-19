@@ -5,8 +5,8 @@ test.beforeEach(async ({ page }) => {
   await openFleet(page);
 });
 
-test("groups are ordered by attention and every window is listed", async ({ page }) => {
-  // shop has a blocked window, so it comes first; the idle ones follow.
+test("groups keep the server's order and every window is listed", async ({ page }) => {
+  // The server's saved order decides; urgency shows through the rollup class.
   await expect(page.locator(".fleet section.group h2")).toHaveText(["shop", "blog", "hub"]);
   await expect(page.locator(".fleet section.group").first()).toHaveClass(/\bblocked\b/);
   for (const id of ["@11", "@12", "@13", "@14", "@15", "@17", "@31", "@41"]) {
@@ -105,4 +105,12 @@ test("cron windows get a job chip and their own bucket", async ({ page, control 
   await expect(r).toHaveAttribute("style", /--depth:\s*1/);
   // Other rows carry no job chip.
   await expect(row(page, "@15").locator(".sched-chip")).toHaveCount(0);
+});
+
+test("a group's rollup class does not recolor its idle rows", async ({ page }) => {
+  // shop rolls up blocked and holds idle @11 plus blocked @14.
+  await expect(page.locator(".fleet section.group").first()).toHaveClass(/\bblocked\b/);
+  const color = (id: string) => row(page, id).locator(".glyph").evaluate((el) => getComputedStyle(el).color);
+  const blocked = await color("@14");
+  expect(await color("@11")).not.toBe(blocked);
 });

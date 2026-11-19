@@ -609,6 +609,12 @@ type Config struct {
 	// auto_improve, a project-local config may switch it off but can never
 	// switch it back on. Use MonitorEnabled() to read the effective value.
 	Monitor *bool `json:"monitor,omitempty"`
+	// CloseChildren makes closing an agent window also close the windows it
+	// dispatched (recursively, through each child's own reconcile). nil
+	// (unset) means enabled; an explicit false keeps dispatched windows
+	// running as orphans. Global config only. Use CloseChildrenEnabled() to
+	// read the effective value.
+	CloseChildren *bool `json:"close_children,omitempty"`
 	// HubChrome shows each agent window's chrome bar inside the hub's live pane.
 	// false (default) hides it there by zooming the viewed window's main pane;
 	// a project session attached directly always shows its chrome bar. The hub
@@ -621,7 +627,8 @@ type Config struct {
 	// model/context/tokens/cache/turns/cost/duration on line 2, replacing
 	// the equivalent rows the chrome bar used to own), "complementary"
 	// (account-level rate limit/cost figures only), "full" (model + ctx% +
-	// agent name), or "minimal" (a bare placeholder). Empty or any other
+	// agent name), "mobile" (two phone-width lines: model/ctx/cost and
+	// 5h/7d/account/branch), or "minimal" (a bare placeholder). Empty or any other
 	// value falls back to "rich" -- use EffectiveStatuslineFormat to read the
 	// normalized value; this never errors on an unrecognized string.
 	StatuslineFormat string `json:"statusline_format,omitempty"`
@@ -643,7 +650,8 @@ type Config struct {
 	// normalized value; this never errors on an unrecognized string.
 	StatuslineAlign string `json:"statusline_align,omitempty"`
 	// BashPreview controls whether EVERY Bash PreToolUse command (not just
-	// "agentctl dispatch", which is always gated regardless of this setting)
+	// "agentctl dispatch", which is gated per DispatchApproval regardless of
+	// this setting)
 	// is routed through the human-in-the-loop preview popup
 	// (internal/hooks.ValidateBash). nil (unset) means disabled; only an
 	// explicit true enables it. Defaults to false because an unattended
@@ -652,6 +660,14 @@ type Config struct {
 	// internal/hooks. Use EffectiveBashPreview to read the effective value,
 	// and AgentConfig.BashPreview to override per-agent.
 	BashPreview *bool `json:"bash_preview,omitempty"`
+	// DispatchApproval selects which "agentctl dispatch" Bash commands are
+	// gated behind the approval popup (internal/hooks.ValidateBash):
+	// "all" (every dispatch), "non-review" (default when unset: every
+	// dispatch except PR review dispatches, --review-pr), or "off" (none).
+	// An unrecognized value fails closed to "all". A project-local config may
+	// tighten it but never loosen it (sanitizeProjectConfig). Use
+	// EffectiveDispatchApproval to read the normalized value.
+	DispatchApproval string `json:"dispatch_approval,omitempty"`
 	// LLM configures the local model provider used for text completion (see
 	// internal/llm). Empty/unset Provider means the feature is disabled.
 	LLM LLMConfig `json:"llm,omitempty"`
@@ -663,6 +679,9 @@ type Config struct {
 	// Cron holds the global defaults and kill switch for `agentctl cron`
 	// (internal/cron). Global config only; the jobs live in schedules.json.
 	Cron CronConfig `json:"cron,omitzero"`
+	// Titles configures short AI row titles for the hub and the phone app
+	// (internal/shorttitle). Global config only: it makes paid network calls.
+	Titles TitlesConfig `json:"titles,omitzero"`
 }
 
 // StringPtr returns a pointer to s, for setting optional string fields such as
@@ -681,13 +700,13 @@ func (c Config) EffectiveNotifyCmd() (cmd string, set bool) {
 
 // EffectiveStatuslineMobileFormat returns the configured
 // statusline_mobile_format, normalized to one of "rich", "complementary",
-// "full" (default) or "minimal".
+// "full", "minimal" or "mobile" (default).
 func (c Config) EffectiveStatuslineMobileFormat() string {
 	switch c.StatuslineMobileFormat {
-	case "full", "minimal", "complementary", "rich":
+	case "full", "minimal", "complementary", "rich", "mobile":
 		return c.StatuslineMobileFormat
 	default:
-		return "full"
+		return "mobile"
 	}
 }
 
@@ -697,7 +716,7 @@ func (c Config) EffectiveStatuslineMobileFormat() string {
 // to "rich" rather than erroring.
 func (c Config) EffectiveStatuslineFormat() string {
 	switch c.StatuslineFormat {
-	case "full", "minimal", "complementary", "rich":
+	case "full", "minimal", "complementary", "rich", "mobile":
 		return c.StatuslineFormat
 	default:
 		return "rich"
@@ -727,6 +746,12 @@ func (c Config) OpenPRInBrowserEnabled() bool {
 // defaulting to true when unset.
 func (c Config) MonitorEnabled() bool {
 	return c.Monitor == nil || *c.Monitor
+}
+
+// CloseChildrenEnabled reports whether closing a window cascades to the
+// windows it dispatched, defaulting to true when unset.
+func (c Config) CloseChildrenEnabled() bool {
+	return c.CloseChildren == nil || *c.CloseChildren
 }
 
 // EffectiveWorkJournal returns true if journaling is enabled for the given agent.
@@ -767,6 +792,66 @@ func (c *Config) EffectiveBashPreview(name string) bool {
 		return *c.BashPreview
 	}
 	return false
+}
+
+// DefaultReviewAgent is the agent `agentctl dispatch --review-pr` launches
+// when --agent is not given. The dispatch_approval "non-review" exemption
+// keys on it, so the CLI and the hook must agree.
+const DefaultReviewAgent = "code-reviewer"
+
+// Values of Config.DispatchApproval, strictest first.
+const (
+	DispatchApprovalAll       = "all"
+	DispatchApprovalNonReview = "non-review"
+	DispatchApprovalOff       = "off"
+)
+
+// ValidDispatchApproval reports whether v is a recognized dispatch_approval
+// value. The empty string (unset) is valid and means the default.
+func ValidDispatchApproval(v string) bool {
+	switch v {
+	case "", DispatchApprovalAll, DispatchApprovalNonReview, DispatchApprovalOff:
+		return true
+	}
+	return false
+}
+
+// EffectiveDispatchApproval returns the normalized dispatch_approval:
+// "non-review" when unset, the value itself when recognized, and "all" for
+// anything else (fail closed: a typo must never disable the gate).
+func (c Config) EffectiveDispatchApproval() string {
+	switch c.DispatchApproval {
+	case "":
+		return DispatchApprovalNonReview
+	case DispatchApprovalNonReview, DispatchApprovalOff:
+		return c.DispatchApproval
+	default:
+		return DispatchApprovalAll
+	}
+}
+
+// DispatchApprovalWarning returns a human-readable warning when
+// dispatch_approval holds an unrecognized value, or "" when it is fine.
+func (c Config) DispatchApprovalWarning() string {
+	if ValidDispatchApproval(c.DispatchApproval) {
+		return ""
+	}
+	return fmt.Sprintf("dispatch_approval %q is not one of %q, %q, %q; treating it as %q",
+		c.DispatchApproval, DispatchApprovalAll, DispatchApprovalNonReview, DispatchApprovalOff, DispatchApprovalAll)
+}
+
+// DispatchApprovalStrictness ranks a raw dispatch_approval value: higher
+// gates more dispatches. Unset ranks as "non-review" and unrecognized values
+// rank as "all".
+func DispatchApprovalStrictness(v string) int {
+	switch (Config{DispatchApproval: v}).EffectiveDispatchApproval() {
+	case DispatchApprovalOff:
+		return 0
+	case DispatchApprovalNonReview:
+		return 1
+	default:
+		return 2
+	}
 }
 
 // EffectiveOnComplete returns the on_complete hook for the given agent config,
@@ -941,6 +1026,30 @@ func GlobalDir() (string, error) {
 	return GlobalDirIn(home), nil
 }
 
+// GlobalFilePath returns the user-wide config file, <GlobalDir>/config.json.
+// Unlike the path Init records, it is resolved on every call.
+func GlobalFilePath() (string, error) {
+	dir, err := GlobalDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.json"), nil
+}
+
+// ParseDispatchApproval returns the raw dispatch_approval value in config
+// file content data ("" when unset). Empty or whitespace-only content is an
+// empty config. It errors when data is not a valid config file.
+func ParseDispatchApproval(data []byte) (string, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return "", nil
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("parsing config: %w", err)
+	}
+	return cfg.DispatchApproval, nil
+}
+
 // Init sets the config path. Must be called once at startup before Load or
 // Save are used. The primary config lives at .agentctl/config.json inside the
 // project root; the global fallback is <GlobalDir>/config.json. It returns an
@@ -1045,6 +1154,11 @@ func mergeConfig(base, overlay *Config) {
 	// merge, not be indistinguishable from "unset".
 	if overlay.BashPreview != nil {
 		base.BashPreview = overlay.BashPreview
+	}
+	// DispatchApproval: sanitizeProjectConfig has already dropped a project
+	// value that would loosen the global one.
+	if overlay.DispatchApproval != "" {
+		base.DispatchApproval = overlay.DispatchApproval
 	}
 	// LLM: overlay if provider is explicitly set.
 	if overlay.LLM.Provider != "" {
@@ -1208,8 +1322,11 @@ func containsAll(have, want []string) bool {
 //   - monitor set to true (a project may switch the monitor off, never back on)
 //   - auto_poll (autopilot dispatches every "ready" issue unattended)
 //   - hub_chrome (the hub belongs to no project)
+//   - close_children (closing a window may close windows in other projects)
 //   - bash_preview / agents.*.bash_preview set to false when the global layer
 //     enables it (a project may tighten the guard, never loosen it)
+//   - dispatch_approval set to a value less strict than the global one
+//     (all > non-review > off; a project may tighten, never loosen)
 //   - agents.*.model / effort_level values outside [A-Za-z0-9._:-]+ (they are
 //     interpolated into the launch command); the global value is kept instead
 //
@@ -1237,6 +1354,10 @@ func sanitizeProjectConfig(project, global *Config) {
 		}
 		project.Monitor = nil
 	}
+	if project.CloseChildren != nil {
+		warn("close_children", globalOnly)
+		project.CloseChildren = nil
+	}
 	if project.HubChrome {
 		warn("hub_chrome", globalOnly)
 		project.HubChrome = false
@@ -1256,6 +1377,11 @@ func sanitizeProjectConfig(project, global *Config) {
 	if project.BashPreview != nil && !*project.BashPreview && globalPreview {
 		warn("bash_preview", noLoosen)
 		project.BashPreview = nil
+	}
+	if project.DispatchApproval != "" &&
+		DispatchApprovalStrictness(project.DispatchApproval) < DispatchApprovalStrictness(global.DispatchApproval) {
+		warn("dispatch_approval", noLoosen)
+		project.DispatchApproval = ""
 	}
 	if len(project.Backends) > 0 {
 		warn("backends", globalOnly)
@@ -1284,6 +1410,12 @@ func sanitizeProjectConfig(project, global *Config) {
 		warn("llm", globalOnly)
 		project.LLM = LLMConfig{}
 	}
+	// Titles make paid network calls with a stored key: a cloned repo must
+	// not be able to switch them on or pick the backend or model.
+	if !reflect.DeepEqual(project.Titles, TitlesConfig{}) {
+		warn("titles", globalOnly)
+	}
+	project.Titles = TitlesConfig{}
 	for name, ac := range project.Agents {
 		g, hasGlobal := global.Agents[name]
 		pre := "agents." + name + "."
@@ -1388,6 +1520,9 @@ func Load() *Config {
 	}
 	validateBackends(cfg)
 	validateAccounts(cfg)
+	if w := cfg.DispatchApprovalWarning(); w != "" {
+		logOnce("config: " + w)
+	}
 
 	// Convert config.ModelOverride to tokens.ModelOverride and push into the
 	// registry. Every process (monitor, chrome bar pane, CLI commands) picks
@@ -1662,6 +1797,8 @@ func applyProjectChanges(layer, before, after, global *Config) {
 	layer.Serve = protected.Serve
 	restore("cron", !reflect.DeepEqual(layer.Cron, protected.Cron))
 	layer.Cron = protected.Cron
+	restore("titles", !reflect.DeepEqual(layer.Titles, protected.Titles))
+	layer.Titles = protected.Titles
 	restore("auto_poll", layer.AutoPoll != protected.AutoPoll)
 	restore("default_agent", layer.DefaultAgent != protected.DefaultAgent)
 	restore("accounts", !reflect.DeepEqual(layer.Accounts, protected.Accounts) ||

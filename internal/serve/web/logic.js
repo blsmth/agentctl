@@ -36,17 +36,177 @@ export function rollup(windows) {
 }
 
 /**
- * sortGroups orders project groups by their most urgent window, keeping the
- * server's order among equals, and sorts the windows inside each group.
+ * sortGroups keeps the server's group order (the saved order shared with the
+ * hub) and sorts the windows inside each group. Urgency shows through each
+ * group's rollup styling and counts, not through its position.
  */
 export function sortGroups(groups) {
-  const decorated = groups.map((g, i) => {
+  return groups.map((g) => {
     const windows = sortWindows(g.windows ?? []);
-    return { group: { ...g, windows, rollup: rollup(windows) }, i };
+    return { ...g, windows, rollup: rollup(windows) };
   });
-  decorated.sort((a, b) => stateRank(a.group.rollup) - stateRank(b.group.rollup) || a.i - b.i);
-  return decorated.map((d) => d.group);
 }
+
+/** groupKeys lists the reorderable (keyed) groups' keys in display order. */
+export function groupKeys(groups) {
+  return groups.map((g) => g.key).filter((k) => typeof k === "string" && k !== "");
+}
+
+/** moveKey returns keys with key moved to index to (clamped); the input is untouched. */
+export function moveKey(keys, key, to) {
+  const from = keys.indexOf(key);
+  if (from < 0) return [...keys];
+  const out = keys.filter((k) => k !== key);
+  out.splice(Math.max(0, Math.min(to, out.length)), 0, key);
+  return out;
+}
+
+/**
+ * applyGroupOrder reorders groups to follow order (keys); groups whose key is
+ * not in it keep their relative order after the ordered ones.
+ */
+export function applyGroupOrder(groups, order) {
+  if (!order || order.length === 0) return groups;
+  const pos = new Map(order.map((k, i) => [k, i]));
+  const rank = (g) => (pos.has(g.key) ? pos.get(g.key) : order.length);
+  return groups.map((g, i) => ({ g, i })).sort((a, b) => rank(a.g) - rank(b.g) || a.i - b.i).map((d) => d.g);
+}
+
+/** sameOrder reports whether a and b list the keys they share in the same order. */
+export function sameOrder(a, b) {
+  const inB = new Set(b);
+  const inA = new Set(a);
+  const x = a.filter((k) => inB.has(k));
+  const y = b.filter((k) => inA.has(k));
+  return x.length === y.length && x.every((k, i) => k === y[i]);
+}
+
+/**
+ * dropIndex is the slot a dragged group lands in: how many of the other
+ * groups lie wholly above y. mids are the other groups' vertical midpoints in
+ * display order.
+ */
+export function dropIndex(mids, y) {
+  let n = 0;
+  for (const m of mids) if (m < y) n++;
+  return n;
+}
+
+/**
+ * autoscrollDelta is the px to scroll per frame while dragging at pointer
+ * height y in a viewport of height vh: negative near the top edge, positive
+ * near the bottom, scaled up to max at the edge itself.
+ */
+export function autoscrollDelta(y, vh, edge = 80, max = 18) {
+  if (y < edge) return -Math.ceil((max * (edge - Math.max(y, 0))) / edge);
+  if (y > vh - edge) return Math.ceil((max * (Math.min(y, vh) - (vh - edge))) / edge);
+  return 0;
+}
+
+/** GROUP_ORDER_PATH is the write route that saves the group order. */
+export const GROUP_ORDER_PATH = "/v1/group-order";
+
+/** buildGroupOrderRequest saves keys (the visible project groups, in order). */
+export function buildGroupOrderRequest(keys) {
+  return { method: "POST", path: GROUP_ORDER_PATH, body: { keys } };
+}
+
+export const SWEEP_PREVIEW_PATH = "/v1/sweep/preview";
+export const SWEEP_PATH = "/v1/sweep";
+
+/** buildSweepRequest previews (preview=true) or applies a sweep of a group's tmux session. */
+export function buildSweepRequest(session, preview) {
+  return { method: "POST", path: preview ? SWEEP_PREVIEW_PATH : SWEEP_PATH, body: { session } };
+}
+
+/**
+ * canSweep reports whether a group header offers sweep: the write feature is
+ * on and the group is a project's tmux session (it has a project dir and is
+ * not the hub). The server resolves the session against the fleet again.
+ */
+export function canSweep(group, features) {
+  if (!group || !hasFeature(features, "write")) return false;
+  return Boolean(group.session) && Boolean(group.dir) && group.session !== HUB_SESSION;
+}
+
+/** sweepCounts summarises the parts of a sweep report besides the closes. */
+export function sweepCounts(report) {
+  const parts = [];
+  const attention = report?.attention?.length ?? 0;
+  const progress = report?.in_progress?.length ?? 0;
+  if (attention > 0) parts.push(`${attention} ${attention === 1 ? "needs" : "need"} attention`);
+  if (progress > 0) parts.push(`${progress} in progress`);
+  return parts.join(", ");
+}
+
+/**
+ * sweepConfirm builds the confirm sheet for a sweep preview, or returns null
+ * when there is nothing to close: { title, lines, confirmLabel }.
+ */
+export function sweepConfirm(report, project) {
+  const closed = report?.closed ?? [];
+  if (closed.length === 0) return null;
+  const list = closed.map((r) => (r.detail ? `${r.name}  (${r.detail})` : r.name)).join("\n");
+  const lines = [`Close ${closed.length} ${closed.length === 1 ? "window" : "windows"}:\n${list}`];
+  const rest = sweepCounts(report);
+  if (rest) lines.push(rest);
+  return { title: `Sweep ${project || report.session}?`, lines, confirmLabel: `Close ${closed.length}` };
+}
+
+/** nothingToSweep is the toast for a preview with no windows to close. */
+export function nothingToSweep(report) {
+  const rest = sweepCounts(report);
+  return rest ? `Nothing to sweep (${rest})` : "Nothing to sweep";
+}
+
+/**
+ * sweptMessage is the toast after an apply, from what actually closed (sweep
+ * re-checks every window, so it can differ from the preview): { text, kind }.
+ */
+export function sweptMessage(report) {
+  const closed = report?.closed ?? [];
+  const failed = closed.filter((r) => (r.errors ?? []).length > 0);
+  const ok = closed.length - failed.length;
+  if (failed.length === 0) return { text: `Swept ${ok}`, kind: "info" };
+  return { text: `Swept ${ok}; ${failed.length} failed: ${failed[0].name}: ${failed[0].errors.join("; ")}`, kind: "error" };
+}
+
+/**
+ * runSweep is the sweep confirm flow, with its effects injected: send(req)
+ * performs a request, confirm(sheet) resolves true to apply, toast(text,
+ * kind) reports. Returns "applied", "cancelled", "nothing" or "failed".
+ */
+export async function runSweep(group, { send, confirm, toast }) {
+  const project = group.project || group.session;
+  let preview;
+  try {
+    preview = await send(buildSweepRequest(group.session, true));
+  } catch (err) {
+    toast(err?.message || "Sweep preview failed", "error");
+    return "failed";
+  }
+  const sheet = sweepConfirm(preview, project);
+  if (!sheet) {
+    toast(nothingToSweep(preview), "info");
+    return "nothing";
+  }
+  if (!(await confirm(sheet))) return "cancelled";
+  let applied;
+  try {
+    applied = await send(buildSweepRequest(group.session, false));
+  } catch (err) {
+    toast(err?.message || "Sweep failed", "error");
+    return "failed";
+  }
+  const msg = sweptMessage(applied);
+  toast(msg.text, msg.kind);
+  return "applied";
+}
+
+/** LONG_PRESS_MS is how long a group header is held before a drag starts. */
+export const LONG_PRESS_MS = 400;
+/** LONG_PRESS_SLOP is the movement in px that turns a pending press into a scroll. */
+export const LONG_PRESS_SLOP = 10;
 
 /** isDispatched mirrors fleet.Meta.Dispatched: launched by another agent. */
 export function isDispatched(win) {
@@ -82,10 +242,12 @@ function firstClause(text, max) {
 }
 
 /**
- * rowHeadline is the short human title of a fleet row: the ticket title for a
+ * rowHeadline is the short human title of a fleet row: the generated short
+ * title of the recap when the server has one, else the ticket title for a
  * task dispatch, else the first sentence of the recap, else the agent name.
  */
 export function rowHeadline(win) {
+  if (hasRecap(win) && win.title) return win.title;
   if (hasRecap(win)) {
     const text = win.recap_source === "task" ? win.recap.replace(/^#\d+\s+/, "") : win.recap;
     const line = firstClause(text, HEADLINE_MAX);
@@ -413,7 +575,7 @@ export function hasFeature(features, name) {
  * buildAnswerRequest builds the request that answers a dialog. It always sends
  * the hash of the dialog the user was shown, so the server can refuse (409)
  * when the pane has moved on. key is an option key or "esc"; for a
- * multi-select question (dialog.kind "multi") it is the array of option keys
+ * multi-select question (dialog.multi) it is the array of option keys
  * to tick, and the server ticks exactly those and moves to the next tab.
  */
 export function buildAnswerRequest(session, windowId, dialog, key) {
@@ -421,12 +583,12 @@ export function buildAnswerRequest(session, windowId, dialog, key) {
   const isOption = (k) => (dialog.options ?? []).some((o) => o.key === k);
   const path = `${windowApiPath(session, windowId)}/answer`;
   if (Array.isArray(key)) {
-    if (dialog.kind !== "multi") throw new Error("this dialog takes a single answer");
+    if (!dialog.multi) throw new Error("this dialog takes a single answer");
     if (key.length === 0) throw new Error("choose at least one option");
     for (const k of key) if (!isOption(k)) throw new Error(`key ${k} is not an option of this dialog`);
     return { method: "POST", path, body: { keys: [...new Set(key)], dialog_hash: dialog.hash } };
   }
-  if (key !== "esc" && dialog.kind === "multi") throw new Error("choose options, then continue");
+  if (key !== "esc" && dialog.multi) throw new Error("choose options, then continue");
   if (key !== "esc" && !isOption(key)) throw new Error(`key ${key} is not an option of this dialog`);
   return { method: "POST", path, body: { key, dialog_hash: dialog.hash } };
 }
@@ -474,12 +636,24 @@ export function checkAttachment(file, count) {
 /**
  * buildDispatchRequest builds POST /v1/dispatch. choice is the optional
  * {backend, model, effort} picked from launch options; empty fields are left
- * out so the server keeps the agent's own configuration.
+ * out so the server keeps the agent's own configuration. images are IDs from
+ * POST /v1/dispatch/upload for the same project.
  */
-export function buildDispatchRequest(agent, projectDir, prompt, choice = {}) {
+export function buildDispatchRequest(agent, projectDir, prompt, choice = {}, images = []) {
   const body = { agent, project_dir: projectDir, prompt };
+  if (images.length) body.images = images;
   for (const k of ["backend", "model", "effort"]) if (choice[k]) body[k] = choice[k];
   return { method: "POST", path: "/v1/dispatch", body };
+}
+
+/** buildShellRequest builds POST /v1/shell: a plain shell in the project's session. */
+export function buildShellRequest(projectDir) {
+  return { method: "POST", path: "/v1/shell", body: { project_dir: projectDir } };
+}
+
+/** canShell reports whether the "+" sheet may offer Shell (the server advertises it). */
+export function canShell(features) {
+  return hasFeature(features, "write") && hasFeature(features, "shell");
 }
 
 /** launchOptionsPath is GET /v1/launch-options for an agent in a project. */
@@ -504,9 +678,17 @@ export function choiceLabel(c) {
   return `${c.value}${c.note ? ` (${c.note})` : ""}${c.default ? " \u2605 default" : ""}`;
 }
 
-/** confirmLines are the sheet lines for a dispatch: settings, then the prompt. */
-export function confirmLines(body) {
+/** DISPATCH_UPLOAD_PATH is the POST path that stores a dispatch's images. */
+export const DISPATCH_UPLOAD_PATH = "/v1/dispatch/upload";
+
+/**
+ * confirmLines are the sheet lines for a dispatch: settings, then the prompt.
+ * imageCount is the number of attached images (not yet uploaded when the
+ * sheet is shown, so it is not in body).
+ */
+export function confirmLines(body, imageCount = 0) {
   const rows = [`agent: ${body.agent}`, `project: ${body.project_dir}`];
+  if (imageCount) rows.push(`images: ${imageCount}`);
   if (body.backend) rows.push(`backend: ${body.backend}`);
   if (body.model) rows.push(`model: ${body.model}`);
   if (body.effort) rows.push(`effort: ${body.effort}`);
@@ -1234,6 +1416,9 @@ const HUB_SESSION = "agentctl-hub";
 /** SWIPE_SLOP is the movement in px after which a gesture's direction is locked. */
 export const SWIPE_SLOP = 10;
 
+/** SWIPE_REVEAL is the width in px of the red Close action a committed swipe uncovers. */
+export const SWIPE_REVEAL = 88;
+
 /**
  * canSwipeClose reports whether a row offers swipe-to-close: the write feature
  * is on, the window is idle or done, and it is not a hub session. The server
@@ -1268,4 +1453,18 @@ export function swipeCommit(dx, width, velocity = 0) {
   const dist = -dx;
   if (dist >= width * 0.38) return true;
   return velocity < -0.6 && dist >= 40;
+}
+
+/**
+ * defaultAgentFor picks the agent the Dispatch screen should preselect for the
+ * project at projectDir: that project's default_agent when it is one of the
+ * listed agent names. Returns "" (keep the current selection) when the user
+ * already picked an agent by hand, the project is unknown, or its default is
+ * empty or not listed.
+ */
+export function defaultAgentFor(projects, projectDir, agentNames, userPicked) {
+  if (userPicked) return "";
+  const p = (projects ?? []).find((x) => x.dir === projectDir);
+  const def = p?.default_agent ?? "";
+  return def && (agentNames ?? []).includes(def) ? def : "";
 }

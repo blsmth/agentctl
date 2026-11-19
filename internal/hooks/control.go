@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/backendauth"
+	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/mailbox"
 	"github.com/blsmth/agentctl/internal/notify"
@@ -333,6 +335,12 @@ func StopFailure() {
 		message = "Authentication failed"
 	case "billing_error":
 		message = "Billing error"
+		if be := nousBackendOf(windowID); be != "" {
+			// A 402 inside a session on a Nous backend: remember it so titles
+			// and dispatches stop spending requests, and say what it is.
+			backendauth.MarkNoCredits(be)
+			message = "Nous Portal out of credits"
+		}
 	case "server_error":
 		message = "Server error"
 	case "max_output_tokens":
@@ -365,6 +373,30 @@ func StopFailure() {
 		"AGENTCTL_ERROR_TYPE":    input.ErrorType,
 		"AGENTCTL_ERROR_MESSAGE": input.ErrorMessage,
 	})
+}
+
+// nousBackendOf returns the name of the nous-kind backend the window runs on,
+// or "" for an Anthropic-account window, an unknown window or a backend that
+// is not configured as nous.
+func nousBackendOf(windowID string) string {
+	if windowID == "" {
+		return ""
+	}
+	ws, err := windowstate.Read(windowID)
+	if err != nil || ws.Backend == "" {
+		return ""
+	}
+	var cfg *config.Config
+	if deps.LoadConfig != nil {
+		cfg = deps.LoadConfig()
+	}
+	if cfg == nil {
+		return ""
+	}
+	if b, ok := cfg.Backends[ws.Backend]; !ok || !b.IsNous() {
+		return ""
+	}
+	return ws.Backend
 }
 
 // UserPrompt is called by Claude Code's UserPromptSubmit hook.

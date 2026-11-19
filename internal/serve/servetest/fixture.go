@@ -1,6 +1,7 @@
 package servetest
 
 import (
+	"cmp"
 	_ "embed"
 	"fmt"
 	"path/filepath"
@@ -68,6 +69,8 @@ type Window struct {
 	// recap line as fleet.TagLogs would.
 	Recap       string `json:"recap,omitempty"`
 	RecapSource string `json:"recap_source,omitempty"`
+	// ShortTitle is the recap's generated short title (served as "title").
+	ShortTitle string `json:"short_title,omitempty"`
 	ContextPct  int    `json:"context_pct,omitempty"`
 	PendingTool string `json:"pending_tool,omitempty"`
 	// Title is the task title (windowstate ticket_title), Issue the GitHub
@@ -95,6 +98,8 @@ var recapSources = map[string]fleet.RecapSource{
 
 // Group is one fixture session.
 type Group struct {
+	// Key is the group's saved-order key; empty means Dir, then Session.
+	Key     string   `json:"key,omitempty"`
 	Session string   `json:"session"`
 	Project string   `json:"project"`
 	Dir     string   `json:"dir"`
@@ -200,7 +205,7 @@ func build(groups []Group, root string, now time.Time) []fleetwatch.Group {
 	out := make([]fleetwatch.Group, 0, len(groups))
 	for _, g := range groups {
 		fg := fleetwatch.Group{
-			Session: g.Session, Project: g.Project, Dir: g.Dir,
+			Session: g.Session, Key: cmp.Or(g.Key, g.Dir, g.Session), Project: g.Project, Dir: g.Dir,
 			RuntimeDir: filepath.Join(root, "fixture", g.Session, ".agentctl"),
 			Meta:       map[string]fleet.Meta{},
 		}
@@ -223,7 +228,7 @@ func rowFor(g Group, w Window, now time.Time) (fleet.Row, fleet.Meta) {
 		ModelName: w.Model, Ticket: w.Issue,
 	}}
 	if w.Recap != "" {
-		row.Recap = fleet.RecapLine{Text: w.Recap, Source: recapSources[w.RecapSource]}
+		row.Recap = fleet.RecapLine{Text: w.Recap, Source: recapSources[w.RecapSource], Title: w.ShortTitle}
 	}
 	mode := w.Mode
 	if mode == "" {

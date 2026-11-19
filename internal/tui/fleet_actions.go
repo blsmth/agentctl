@@ -125,6 +125,9 @@ func fleetLaunchArgs() []string {
 	return []string{"launch", "--background", "--permission-mode", "auto"}
 }
 
+// fleetLaunch is the per-group launch; a seam so tests never spawn agentctl.
+var fleetLaunch = fleetLaunchCmd
+
 // fleetLaunchCmd runs `agentctl launch --background` for g as a subprocess so
 // the TUI never blocks and the hub's own process state cannot leak in.
 func fleetLaunchCmd(g fleet.Group) tea.Cmd {
@@ -215,7 +218,7 @@ func (m *FleetModel) launchForGroup(g *fleet.Group) tea.Cmd {
 	}
 	m.jumpErr = ""
 	m.setProgress("launching agent in " + m.projectLabel(g.Session) + "…")
-	return fleetLaunchCmd(*g)
+	return fleetLaunch(*g)
 }
 
 // shellForGroup opens a shell window in g's project.
@@ -359,6 +362,9 @@ func (m *FleetModel) fleetMenuItems(idx int) []fleetMenuItem {
 	if g != nil && groupCanLaunch(*g) {
 		items = append(items, fleetMenuItem{"new", "n"})
 	}
+	if g != nil && m.lines[idx].kind == fleetLineHeader && groupCanSweep(*g) {
+		items = append(items, fleetMenuItem{"sweep", fleetSweepKey})
+	}
 	return items
 }
 
@@ -391,6 +397,7 @@ func (m *FleetModel) openMenu(idx int) {
 	m.menuHelp = false
 	m.cancelClose()
 	m.cancelNew()
+	m.cancelSweep()
 	m.selectLine(idx)
 	if len(m.fleetMenuItems(idx)) == 0 {
 		m.closeMenu()
@@ -414,6 +421,8 @@ func (m *FleetModel) runMenuKey(key string) tea.Cmd {
 		return cmd
 	case "n":
 		m.armNew(line)
+	case fleetSweepKey:
+		return m.startSweep(line)
 	case "p":
 		return m.openSelectedPR()
 	}

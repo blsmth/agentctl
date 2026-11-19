@@ -100,6 +100,12 @@ type Request struct {
 	Harness string
 	// ReviewPR is the pull request a ModeReviewPR launch reviews.
 	ReviewPR *PullRequest
+	// VerifyAgent, when set, runs once the worktree exists and before
+	// anything is launched, with the directories the agent definition is
+	// resolved from (the launch dir, then the repo dir). An error aborts the
+	// launch and removes a worktree this launch created. The --review-pr
+	// approval check uses it to see the reviewer the launch will really run.
+	VerifyAgent func(dirs ...string) error
 
 	// Set by Launch from the resolved harness, for buildSystemPrompt.
 	persona          string // full agent body, for harnesses without --agent
@@ -272,6 +278,28 @@ func Launch(req Request) (Result, error) {
 			logging.Log("dispatch: created worktree at %s (branch %s)", wtPath, branch)
 		}
 	}
+	// inWorktree is whether a worktree actually exists for this launch. When
+	// worktree.Create fell back to the shared dir (e.g. workDir is not a git
+	// repo) the generated branch was never created, so the prompt, env,
+	// windowstate and Result carry no branch (ownBranch) rather than one the
+	// window does not have: the agent gets the shared-dir finishing steps,
+	// matching what dispatch completion will look the PR up by.
+	inWorktree := useWorktree && workDir != repoDir
+	ownBranch := ""
+	if inWorktree {
+		ownBranch = branch
+	}
+
+	if req.VerifyAgent != nil {
+		if err := req.VerifyAgent(workDir, repoDir); err != nil {
+			if workDir != repoDir {
+				if rmErr := worktree.Remove(workDir); rmErr != nil {
+					logging.Warn("dispatch: removing worktree %s after a refused launch: %v", workDir, rmErr)
+				}
+			}
+			return Result{}, err
+		}
+	}
 
 	// 4. (see above) agent config is loaded before the worktree is created.
 
@@ -318,8 +346,8 @@ func Launch(req Request) (Result, error) {
 		req.Orchestrator = Orchestrator{}
 		req.noMessaging = true
 	}
-	messagesAuthor := prepareReview(&req, cfg, caps.Accounts, acct.Dir, useWorktree && workDir != repoDir)
-	systemPrompt := buildSystemPrompt(req, spec, workDir, branch, useWorktree, contextEntries, sharedConventions)
+	messagesAuthor := prepareReview(&req, cfg, caps.Accounts, acct.Dir, inWorktree)
+	systemPrompt := buildSystemPrompt(req, spec, workDir, ownBranch, inWorktree, contextEntries, sharedConventions)
 
 	// 8. Determine user message.
 	userMessage := req.UserMessage
@@ -345,7 +373,7 @@ func Launch(req Request) (Result, error) {
 	sessionID := ids.NewUUID()
 	windowName := tmux.NextInstanceName(req.AgentName)
 	sessionName := SessionNameFor(req.AgentName, windowName, workDir, repoDir, useWorktree)
-	permissionMode := resolvePermissionMode(req.Mode, ac, req.PermissionMode)
+	permissionMode := launchPermissionMode(req, spec, ac)
 	inv := baseInvocation(req.AgentName, sessionName, ac, prep)
 	inv.SessionID = sessionID
 	if caps.PermissionModes {
@@ -386,7 +414,7 @@ func Launch(req Request) (Result, error) {
 		// Non-fatal — continue launch without shell-prefix if the write failed.
 	}
 	logPath := h.LaunchLogPath(acct.Dir, workDir, sessionID)
-	extraEnv := buildDispatchEnv(req, ac, workDir, repoDir, branch, useWorktree)
+	extraEnv := buildDispatchEnv(req, ac, workDir, repoDir, ownBranch, inWorktree)
 	for k, v := range backendEnv {
 		extraEnv[k] = v
 	}
@@ -422,13 +450,13 @@ func Launch(req Request) (Result, error) {
 			// The name is unique per window by construction (worktree
 			// slug or instance number), so it is safe to show others.
 			ws.SessionNameVerified = true
-			ws.Branch = branch
+			ws.Branch = ownBranch
 			// Only record WorktreeDir when a worktree was actually created for
 			// this dispatch -- workDir still equals repoDir when useWorktree was
 			// requested but worktree.Create fell back to the shared repo dir, and
 			// recording that as a "worktree" would make `agentctl cleanup` treat
 			// the main checkout itself as a reclaimable dispatch worktree.
-			if useWorktree && workDir != repoDir {
+			if inWorktree {
 				ws.WorktreeDir = workDir
 			}
 		})
@@ -446,7 +474,7 @@ func Launch(req Request) (Result, error) {
 		AgentName: req.AgentName,
 		SessionID: sessionID,
 		WorkDir:   workDir,
-		Branch:    branch,
+		Branch:    ownBranch,
 		Account:   acct.Name,
 		Harness:   h.Name(),
 
@@ -493,9 +521,12 @@ func prepareReview(req *Request, cfg *config.Config, accounts bool, reviewerDir 
 // ".agentctl"; anchoring on the main repo root keeps a dispatcher that has
 // cd-ed into a subdirectory from producing a bogus runtime dir.
 //
-// useWorktree is the already-resolved mode-default-or-override value from
-// Launch; this function never dereferences req.UseWorktree (a *bool).
-func buildDispatchEnv(req Request, ac config.AgentConfig, workDir, repoDir, branch string, useWorktree bool) map[string]string {
+// inWorktree reports whether Launch actually created a worktree (not just
+// requested one); this function never dereferences req.UseWorktree (a *bool).
+// AGENTCTL_WORKTREE and AGENTCTL_BRANCH are set only then: tmux.LaunchAgent
+// unsets identity variables a launch does not set, so they are never
+// inherited from the launcher either.
+func buildDispatchEnv(req Request, ac config.AgentConfig, workDir, repoDir, branch string, inWorktree bool) map[string]string {
 	extraEnv := AgentEnvOverrides(ac)
 	if req.RepoSlug != "" {
 		extraEnv["AGENTCTL_REPO"] = req.RepoSlug
@@ -505,7 +536,7 @@ func buildDispatchEnv(req Request, ac config.AgentConfig, workDir, repoDir, bran
 	} else {
 		extraEnv["AGENTCTL_RUNTIME_DIR"] = filepath.Join(worktree.MainRepoRoot(repoDir), ".agentctl")
 	}
-	if useWorktree && branch != "" {
+	if inWorktree && branch != "" {
 		extraEnv["AGENTCTL_WORKTREE"] = workDir
 		extraEnv["AGENTCTL_BRANCH"] = branch
 	}
@@ -617,7 +648,9 @@ var validPermissionModes = map[string]bool{
 // one is logged and ignored. Otherwise the default applies only to worker
 // dispatch modes (ModeDispatch, ModeAdhoc, ModeReviewPR) -- interactive modes (bare,
 // discuss, triage, review, custom) have a human at the keyboard and keep
-// Claude's own default.
+// Claude's own default. The one exception is a human ad-hoc launch of an
+// orchestrator converted to ModeBare: the caller passes ModeAdhoc for it
+// (modeSpec.WorkerPermissionMode) so it gets the worker default too.
 func resolvePermissionMode(mode Mode, ac config.AgentConfig, override string) string {
 	if override != "" && validPermissionModes[override] {
 		return override
@@ -632,6 +665,17 @@ func resolvePermissionMode(mode Mode, ac config.AgentConfig, override string) st
 		return defaultDispatchPermissionMode
 	}
 	return ""
+}
+
+// launchPermissionMode resolves the permission mode for a launch. An ad-hoc
+// orchestrator launch converted to ModeBare (spec.WorkerPermissionMode)
+// resolves like the ad-hoc launch it started as.
+func launchPermissionMode(req Request, spec modeSpec, ac config.AgentConfig) string {
+	mode := req.Mode
+	if spec.WorkerPermissionMode {
+		mode = ModeAdhoc
+	}
+	return resolvePermissionMode(mode, ac, req.PermissionMode)
 }
 
 // execPath resolves the path of the running binary, used to prefix hook
@@ -1111,6 +1155,14 @@ func launchOrchestrator(req Request, spec modeSpec) Orchestrator {
 		return Orchestrator{}
 	}
 	return resolveOrchestratorFn()
+}
+
+// CallerIsAgentSession reports whether this process was started from a
+// tracked Claude session (an agent's Bash tool) rather than by a person in a
+// plain shell: the same test that decides whether a launch has an
+// orchestrator.
+func CallerIsAgentSession() bool {
+	return resolveOrchestratorFn().Known()
 }
 
 // resolveOrchestratorFn is the seam launchOrchestrator resolves through.

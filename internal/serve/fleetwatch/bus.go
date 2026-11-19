@@ -3,6 +3,7 @@ package fleetwatch
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -141,6 +142,9 @@ func (b *Bus) Refresh() {
 
 	b.mu.Lock()
 	events, next, snapshot := b.diffLocked(groups)
+	if b.loaded && groupOrderChanged(b.cur, snapshot) {
+		events = append(events, Event{Kind: KindFleet, Fleet: snapshot})
+	}
 	b.cur = snapshot
 	b.windows = next
 	b.loaded = true
@@ -148,6 +152,30 @@ func (b *Bus) Refresh() {
 		b.publishLocked(ev)
 	}
 	b.mu.Unlock()
+}
+
+// groupOrderChanged reports whether the groups present in both prev and next
+// are in a different relative order: a saved-order change (the hub or the
+// phone moved a project) that no window event would carry.
+func groupOrderChanged(prev, next []Group) bool {
+	inNext := make(map[string]bool, len(next))
+	for _, g := range next {
+		inNext[g.Session] = true
+	}
+	inPrev := make(map[string]bool, len(prev))
+	var a, b []string
+	for _, g := range prev {
+		inPrev[g.Session] = true
+		if inNext[g.Session] {
+			a = append(a, g.Session)
+		}
+	}
+	for _, g := range next {
+		if inPrev[g.Session] {
+			b = append(b, g.Session)
+		}
+	}
+	return !slices.Equal(a, b)
 }
 
 // diffLocked computes events against b.windows and returns the new window

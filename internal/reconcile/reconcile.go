@@ -48,6 +48,9 @@ type Deps struct {
 	AgentConfig func(base string) config.AgentConfig
 	// RemoveInbox deletes a window's mailbox.
 	RemoveInbox func(windowID string) error
+	// Cascade closes the windows a gone window dispatched (close_children).
+	// The zero value does nothing.
+	Cascade CascadeDeps
 }
 
 // DefaultDeps wires Deps to tmux, config and mailbox for the current session
@@ -64,6 +67,7 @@ func DefaultDeps(runtimeDir string, handle func(state.Transition, config.AgentCo
 		Handle:      handle,
 		AgentConfig: func(base string) config.AgentConfig { return config.Load().ForAgent(base) },
 		RemoveInbox: mailbox.RemoveInbox,
+		Cascade:     DefaultCascadeDeps(runtimeDir, session),
 	}
 }
 
@@ -116,14 +120,18 @@ func parseStatus(s string) state.AgentStatus {
 }
 
 // Finish fires the Gone transition (From is the record's state) unless the
-// window is shell/improve~ or unidentifiable, then removes the window's
-// mailbox. A handler panic is recovered and logged.
+// window is shell/improve~ or unidentifiable, removes the window's mailbox,
+// and closes the live windows it dispatched (see closeChildren). A handler
+// panic is recovered and logged.
 func Finish(c Claimed, d Deps) {
 	instance, base := identity(c.Record)
 	logging.Log("reconcile: window gone window=%s instance=%q (was %q)", c.WindowID, instance, c.Record.State)
 	// The metrics serve reads Gone from the event log; the in-process monitor
 	// tracker is gone. No-op unless metrics are enabled.
 	events.RecordGone(d.RuntimeDir, c.WindowID, c.Record)
+	// Before the handlers: they can be slow (auto-improve), and the children
+	// should close promptly.
+	closeChildren(c, d.Cascade)
 	if base != "" && !untracked(instance) && d.Handle != nil {
 		t := state.Transition{
 			Agent:    base,

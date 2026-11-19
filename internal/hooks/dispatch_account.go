@@ -58,7 +58,9 @@ func dispatchPreviewAccount(targetAgent, command string) string {
 	if workDir == "" {
 		workDir, _ = os.Getwd()
 	}
-	parent := claudehome.ParentAccount(os.Getenv("AGENTCTL_WINDOW_ID"))
+	// The hook runs with Claude Code's own env, whose AGENTCTL_WINDOW_ID may
+	// be inherited from another window: resolve from the pane instead.
+	parent := claudehome.ParentAccount(resolveHookWindowID())
 	r, err := resolvePreviewAccount(cfg, flag, targetAgent, paths.ExpandHome(workDir), parent)
 	if err != nil {
 		return "error: " + err.Error()

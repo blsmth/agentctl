@@ -166,10 +166,12 @@ func agentFromWindow(idx int, w tmux.WindowInfo, name string, records map[string
 		Backend:          ws.Backend,
 		Account:          ws.Account,
 		Harness:          ws.Harness,
+		LastActivity:     lastActivity(ws),
 		Mode:             ws.Mode,
 		TicketRef:        ws.Ticket,
 		TicketTitle:      ws.TicketTitle,
 		Task:             ws.Task,
+		ShortTitle:       ws.ShortTitle.Title,
 		Branch:           ws.Branch,
 		WorktreeDir:      ws.WorktreeDir,
 		SpawnedBy:        ws.SpawnedBy,
@@ -199,4 +201,22 @@ func LocalWindowNames(windowID string) (instance, base string) {
 // dir, for the popups and menus that act on their own project.
 func LocalAgents() ([]state.AgentState, error) {
 	return LoadAgents(tmux.SessionName, paths.RuntimeDir())
+}
+
+// lastActivity is the unix time of the window's latest real activity: the
+// later of its last tool call (LastToolTime, unix seconds) and its last state
+// change (StateSince, which covers prompt submit and Stop). UpdatedAt is
+// deliberately not used: every write stamps it, including statusline context
+// pushes, so idle windows would look active. 0 when neither is recorded.
+func lastActivity(ws windowstate.WindowState) int64 {
+	t := ws.LastToolTime
+	if !ws.StateSince.IsZero() {
+		if s := ws.StateSince.Unix(); s > t {
+			t = s
+		}
+	}
+	if t < 0 {
+		return 0
+	}
+	return t
 }
