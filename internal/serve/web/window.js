@@ -415,11 +415,11 @@ export function mountWindow(root, ctx, { session, windowId }) {
     goneHost.hidden = false;
   }
 
-  // run confirms, sends, and on failure toasts; it always refreshes (a 409
+  // run confirms (skipped when confirm is null), sends, and on failure toasts; it always refreshes (a 409
   // means the view was stale). onOk runs before that refresh. Returns
   // whether the request succeeded.
   async function run(confirm, req, onOk) {
-    if (!(await confirmSheet(confirm))) return false;
+    if (confirm && !(await confirmSheet(confirm))) return false;
     let ok = false;
     try {
       // req may be a function, for requests that first upload attachments.
@@ -438,6 +438,22 @@ export function mountWindow(root, ctx, { session, windowId }) {
   // [x] marks and kept across polls while the same dialog (hash) is up.
   let multiSel = { hash: "", keys: new Set() };
 
+  // True while an answer request is in flight: further taps are ignored and
+  // the choice buttons are disabled, so one tap cannot send two keys.
+  let answering = false;
+  async function sendAnswer(confirm, req) {
+    if (answering) return;
+    answering = true;
+    const btns = [...document.querySelectorAll(".answer button.choice")];
+    if (!confirm) btns.forEach((b) => (b.disabled = true));
+    try {
+      await run(confirm, req);
+    } finally {
+      answering = false;
+      btns.forEach((b) => (b.disabled = false));
+    }
+  }
+
   function multiAnswer(dialog, answer) {
     const choices = checkboxChoices(dialog);
     if (multiSel.hash !== dialog.hash) {
@@ -451,15 +467,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
         toast(e.message, "error");
         return;
       }
-      const picked = choices.filter((c) => multiSel.keys.has(c.key)).map((c) => c.label);
-      run(
-        {
-          title: `${dialog.submit?.label ?? "Submit"} this answer?`,
-          lines: [picked.length ? picked.join("\n") : "(nothing ticked)"],
-          confirmLabel: "Send",
-        },
-        req,
-      );
+      sendAnswer(null, req);
     };
     return [
       h(
@@ -490,12 +498,9 @@ export function mountWindow(root, ctx, { session, windowId }) {
         toast(e.message, "error");
         return;
       }
-      run(
-        {
-          title: key === "esc" ? "Dismiss the dialog (Esc)?" : `Answer "${key}"?`,
-          lines: [dialog.text],
-          confirmLabel: "Send",
-        },
+      // Dismiss cancels a whole AskUserQuestion set, so it still confirms.
+      sendAnswer(
+        key === "esc" ? { title: "Dismiss the dialog (Esc)?", lines: [dialog.text], confirmLabel: "Send" } : null,
         req,
       );
     };

@@ -22,15 +22,25 @@ test("reply to an idle agent", async ({ page, control }) => {
   expect(actions).toEqual([{ kind: "reply", session: SHOP, window: "@15", pane: "%15", text: "please also update CHANGELOG" }]);
 });
 
-test("answer a blocked agent's dialog", async ({ page, control }) => {
+test("answer a blocked agent's dialog; a double tap sends one key", async ({ page, control }) => {
   await openWindow(page, "@14");
   await expect(page.locator(".answer .question")).toHaveText("Do you want to proceed?");
   const yes = page.locator(".answer .choices button", { hasText: "1. Yes" });
   await expect(page.locator(".answer .choices button")).toHaveCount(3); // 1, 2, Dismiss
-  await yes.tap();
-  await expect(sheet(page)).toContainText('Answer "1"?');
-  await sheet(page).getByRole("button", { name: "Send" }).tap();
-  const actions = await control.waitForActions((a) => a.length > 0);
+  // Hold the response so a second tap lands while the first is in flight:
+  // it must not send a second key.
+  await page.route(/\/windows\/%4014\/answer$/, async (route) => {
+    await new Promise((r) => setTimeout(r, 600));
+    await route.continue();
+  });
+  await yes.evaluate((b: HTMLElement) => {
+    b.click();
+    b.click();
+  });
+  await expect(sheet(page)).toHaveCount(0);
+  await control.waitForActions((a) => a.length > 0);
+  await page.waitForTimeout(800);
+  const actions = await control.actions();
   expect(actions).toEqual([{ kind: "key", session: SHOP, window: "@14", pane: "%14", key: "1" }]);
   // The fake dismisses the dialog; the refreshed view stops offering answers.
   await expect(page.locator(".answer")).toHaveCount(0);
@@ -43,26 +53,23 @@ test("answer a blocked agent's dialog", async ({ page, control }) => {
 test("answer an AskUserQuestion: single-select, multi-select, review page", async ({ page, control }) => {
   await openWindow(page, "@17");
   const answer = page.locator(".answer");
-  const send = () => sheet(page).getByRole("button", { name: "Send" }).tap();
 
   // Tab 1: a digit picks and moves on.
   await expect(answer.locator(".question")).toHaveText("Which color should the button be?");
   await answer.locator(".choices button", { hasText: "2. Green" }).tap();
-  await expect(sheet(page)).toContainText('Answer "2"?');
-  await send();
+  await expect(sheet(page)).toHaveCount(0);
 
   // Tab 2: local checkboxes, one Submit that sends the set.
   await expect(answer.locator(".question")).toHaveText("Which sizes should we ship?");
   await answer.locator("label", { hasText: "Small" }).locator("input").check();
   await answer.locator("label", { hasText: "Large" }).locator("input").check();
   await answer.getByRole("button", { name: "Submit", exact: true }).tap();
-  await expect(sheet(page)).toContainText("Small");
-  await send();
+  await expect(sheet(page)).toHaveCount(0);
 
   // Review page: an ordinary dialog.
   await expect(answer.locator(".question")).toHaveText("Ready to submit your answers?");
   await answer.locator(".choices button", { hasText: "1. Submit answers" }).tap();
-  await send();
+  await expect(sheet(page)).toHaveCount(0);
   await expect(answer).toHaveCount(0);
 
   // Toggles 1 and 3, four rows down to Submit, Enter: each sent only after
@@ -71,7 +78,7 @@ test("answer an AskUserQuestion: single-select, multi-select, review page", asyn
   expect(keys).toEqual(["2", "1", "3", "Down", "Down", "Down", "Down", "Enter", "1"]);
 });
 
-test("blocked layout: answers above the pane, question only, recommended option primary", async ({ page }) => {
+test("blocked layout: answers above the pane, question only, recommended option primary", async ({ page, control }) => {
   await openWindow(page, "@14");
   const answer = page.locator(".answer");
   await expect(answer).toBeVisible();
@@ -92,6 +99,8 @@ test("blocked layout: answers above the pane, question only, recommended option 
   expect(second!.y).toBeGreaterThan(first!.y);
   await choices.nth(2).tap();
   await expect(sheet(page)).toContainText("Dismiss the dialog (Esc)?");
+  // Nothing is sent until the sheet is confirmed.
+  expect(await control.actions()).toEqual([]);
 });
 
 test("interrupt a working agent", async ({ page, control }) => {
