@@ -130,8 +130,8 @@ func TestDispatchSegments_HeredocViewShared(t *testing.T) {
 	if got := len(dispatchSegments(cmd)); got != 1 {
 		t.Fatalf("segments = %d, want 1", got)
 	}
-	if acct, dir := parseDispatchAccountFlags(cmd); acct != "work" || dir != "/src" {
-		t.Errorf("account, dir = %q, %q; want work, /src", acct, dir)
+	if f := parseDispatchPlanFlags(cmd); f.account != "work" || f.plan.Dir != "/src" || f.plan.Issue != 3 {
+		t.Errorf("account, dir, issue = %q, %q, %d; want work, /src, 3", f.account, f.plan.Dir, f.plan.Issue)
 	}
 	want := []string{"--issue", "3", "--account", "work", "--dir", "/src"}
 	if got := dispatchTokens(cmd); !slices.Equal(got, want) {
