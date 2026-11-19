@@ -169,6 +169,7 @@ type writeEnv struct {
 	inj    *fakeInjector
 	closer *fakeCloser
 	disp   *fakeDispatcher
+	sweep  *fakeSweeper
 	tok    string
 	dev    Device
 }
@@ -253,7 +254,7 @@ func newWriteEnvWith(t *testing.T, allowWrite bool, mutate func(*Options)) *writ
 	fleet.set(writeGroup("blocked", false, "go-engineer", "dispatch"))
 	e := &writeEnv{
 		fleet: fleet, panes: &syncPanes{text: dialogPane}, keys: &fakeKeys{},
-		inj: &fakeInjector{}, closer: &fakeCloser{}, disp: &fakeDispatcher{},
+		inj: &fakeInjector{}, closer: &fakeCloser{}, disp: &fakeDispatcher{}, sweep: &fakeSweeper{},
 	}
 	dir := t.TempDir()
 	clock := newClock()
@@ -267,6 +268,7 @@ func newWriteEnvWith(t *testing.T, allowWrite bool, mutate func(*Options)) *writ
 		Agents: fakeAgents{list: []AgentInfo{{Name: "go-engineer", Scope: "global"}}},
 		Keys:   e.keys, Injector: e.inj, Closer: e.closer, Dispatcher: e.disp,
 		MainPanes:      e.panes,
+		Sweep:          e.sweep.run,
 		GroupOrderPath: func() (string, error) { return filepath.Join(dir, "group-order.json"), nil },
 	}
 	if mutate != nil {
@@ -355,6 +357,8 @@ func writeRoutes(t *testing.T) []struct{ name, path, body string } {
 		{"close", winPath + "/close", `{}`},
 		{"group-order", "/v1/group-order", `{"keys":["/code/proj"]}`},
 		{"dispatch", "/v1/dispatch", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"p"}`},
+		{"sweep-preview", "/v1/sweep/preview", `{"session":"agentctl-proj"}`},
+		{"sweep", "/v1/sweep", `{"session":"agentctl-proj"}`},
 		{"approval", "/v1/approvals/" + strings.Repeat("a", 32), `{"decision":"allow","payload_sha256":"x"}`},
 	}
 }
@@ -364,8 +368,8 @@ func (e *writeEnv) assertNothingSent(t *testing.T) {
 	if n := len(e.keys.all()); n != 0 {
 		t.Errorf("%d keys sent", n)
 	}
-	if len(e.inj.got) != 0 || len(e.closer.closed) != 0 || len(e.disp.got) != 0 {
-		t.Errorf("action ran: inject %v close %v dispatch %v", e.inj.got, e.closer.closed, e.disp.got)
+	if len(e.inj.got) != 0 || len(e.closer.closed) != 0 || len(e.disp.got) != 0 || len(e.sweep.all()) != 0 {
+		t.Errorf("action ran: inject %v close %v dispatch %v sweep %v", e.inj.got, e.closer.closed, e.disp.got, e.sweep.all())
 	}
 }
 

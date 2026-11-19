@@ -31,6 +31,8 @@ import {
   treeLines,
   treeRows,
   canSwipeClose,
+  canSweep,
+  runSweep,
   visibleTree,
   windowApiPath,
   windowHash,
@@ -283,7 +285,7 @@ function attachGroupDrag(section, head, { list, onBusy, onDrop }) {
   };
 
   head.addEventListener("pointerdown", (e) => {
-    if (press || drag || (e.pointerType === "mouse" && e.button !== 0) || e.target.closest(".group-add")) return;
+    if (press || drag || (e.pointerType === "mouse" && e.button !== 0) || e.target.closest(".group-add, .group-sweep")) return;
     onBusy(true);
     press = { id: e.pointerId, x: e.clientX, y: e.clientY, timer: setTimeout(start, LONG_PRESS_MS), buttons: e.buttons };
     window.addEventListener("pointermove", onWinMove);
@@ -363,6 +365,48 @@ export function mountFleet(root, ctx) {
       return true;
     },
   };
+
+  // Sessions with a sweep preview or apply in flight: their button is
+  // disabled, so a double tap never starts a second sweep.
+  const sweeping = new Set();
+
+  /** sweep previews a sweep of group g, confirms it in a sheet and applies it. */
+  async function sweep(g) {
+    if (sweeping.has(g.session)) return;
+    sweeping.add(g.session);
+    render();
+    try {
+      await runSweep(g, {
+        send,
+        confirm: (sheet) => confirmSheet({ ...sheet, danger: true }),
+        toast,
+      });
+    } finally {
+      sweeping.delete(g.session);
+      render();
+    }
+  }
+
+  /** sweepButton is a group header's sweep action. */
+  function sweepButton(g, name) {
+    const busy = sweeping.has(g.session);
+    return h(
+      "button",
+      {
+        class: `group-sweep${busy ? " busy" : ""}`,
+        type: "button",
+        disabled: busy,
+        "aria-busy": busy ? "true" : null,
+        "aria-label": busy ? `Sweeping ${name}…` : `Sweep ${name}`,
+        title: busy ? "Sweeping…" : "Sweep finished windows",
+        onclick: (e) => {
+          e.stopPropagation();
+          sweep(g);
+        },
+      },
+      busy ? "…" : "🧹",
+    );
+  }
 
   /** displayedKeys are the keyed groups as listed now (the pending order applies). */
   function displayedKeys() {
@@ -470,6 +514,7 @@ export function mountFleet(root, ctx) {
           h("button", { class: "group-toggle", type: "button", "aria-expanded": String(!folded), "data-key": g.key || null, onclick: toggle, onkeydown: g.key && ctx.hasFeature("write") ? (e) => keyMove(e, g.key) : null }, name),
         ),
         folded ? groupSummary(g.windows, toggle) : null,
+        canSweep(g, ctx.features) ? sweepButton(g, name) : null,
         g.dir && ctx.hasFeature("write")
           ? h("a", { class: "group-add", href: dispatchHash(g.dir), "aria-label": `Dispatch to ${name}` }, "+")
           : null,

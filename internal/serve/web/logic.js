@@ -111,6 +111,98 @@ export function buildGroupOrderRequest(keys) {
   return { method: "POST", path: GROUP_ORDER_PATH, body: { keys } };
 }
 
+export const SWEEP_PREVIEW_PATH = "/v1/sweep/preview";
+export const SWEEP_PATH = "/v1/sweep";
+
+/** buildSweepRequest previews (preview=true) or applies a sweep of a group's tmux session. */
+export function buildSweepRequest(session, preview) {
+  return { method: "POST", path: preview ? SWEEP_PREVIEW_PATH : SWEEP_PATH, body: { session } };
+}
+
+/**
+ * canSweep reports whether a group header offers sweep: the write feature is
+ * on and the group is a project's tmux session (it has a project dir and is
+ * not the hub). The server resolves the session against the fleet again.
+ */
+export function canSweep(group, features) {
+  if (!group || !hasFeature(features, "write")) return false;
+  return Boolean(group.session) && Boolean(group.dir) && group.session !== HUB_SESSION;
+}
+
+/** sweepCounts summarises the parts of a sweep report besides the closes. */
+export function sweepCounts(report) {
+  const parts = [];
+  const attention = report?.attention?.length ?? 0;
+  const progress = report?.in_progress?.length ?? 0;
+  if (attention > 0) parts.push(`${attention} ${attention === 1 ? "needs" : "need"} attention`);
+  if (progress > 0) parts.push(`${progress} in progress`);
+  return parts.join(", ");
+}
+
+/**
+ * sweepConfirm builds the confirm sheet for a sweep preview, or returns null
+ * when there is nothing to close: { title, lines, confirmLabel }.
+ */
+export function sweepConfirm(report, project) {
+  const closed = report?.closed ?? [];
+  if (closed.length === 0) return null;
+  const list = closed.map((r) => (r.detail ? `${r.name}  (${r.detail})` : r.name)).join("\n");
+  const lines = [`Close ${closed.length} ${closed.length === 1 ? "window" : "windows"}:\n${list}`];
+  const rest = sweepCounts(report);
+  if (rest) lines.push(rest);
+  return { title: `Sweep ${project || report.session}?`, lines, confirmLabel: `Close ${closed.length}` };
+}
+
+/** nothingToSweep is the toast for a preview with no windows to close. */
+export function nothingToSweep(report) {
+  const rest = sweepCounts(report);
+  return rest ? `Nothing to sweep (${rest})` : "Nothing to sweep";
+}
+
+/**
+ * sweptMessage is the toast after an apply, from what actually closed (sweep
+ * re-checks every window, so it can differ from the preview): { text, kind }.
+ */
+export function sweptMessage(report) {
+  const closed = report?.closed ?? [];
+  const failed = closed.filter((r) => (r.errors ?? []).length > 0);
+  const ok = closed.length - failed.length;
+  if (failed.length === 0) return { text: `Swept ${ok}`, kind: "info" };
+  return { text: `Swept ${ok}; ${failed.length} failed: ${failed[0].name}: ${failed[0].errors.join("; ")}`, kind: "error" };
+}
+
+/**
+ * runSweep is the sweep confirm flow, with its effects injected: send(req)
+ * performs a request, confirm(sheet) resolves true to apply, toast(text,
+ * kind) reports. Returns "applied", "cancelled", "nothing" or "failed".
+ */
+export async function runSweep(group, { send, confirm, toast }) {
+  const project = group.project || group.session;
+  let preview;
+  try {
+    preview = await send(buildSweepRequest(group.session, true));
+  } catch (err) {
+    toast(err?.message || "Sweep preview failed", "error");
+    return "failed";
+  }
+  const sheet = sweepConfirm(preview, project);
+  if (!sheet) {
+    toast(nothingToSweep(preview), "info");
+    return "nothing";
+  }
+  if (!(await confirm(sheet))) return "cancelled";
+  let applied;
+  try {
+    applied = await send(buildSweepRequest(group.session, false));
+  } catch (err) {
+    toast(err?.message || "Sweep failed", "error");
+    return "failed";
+  }
+  const msg = sweptMessage(applied);
+  toast(msg.text, msg.kind);
+  return "applied";
+}
+
 /** LONG_PRESS_MS is how long a group header is held before a drag starts. */
 export const LONG_PRESS_MS = 400;
 /** LONG_PRESS_SLOP is the movement in px that turns a pending press into a scroll. */

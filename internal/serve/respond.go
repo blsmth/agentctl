@@ -31,6 +31,8 @@ const (
 	codeActionFailed     = "action_failed"
 	codeAlreadyAnswered  = "already_answered"
 	codeReplyIsCommand   = "reply_is_command"
+	codeUnknownSession   = "unknown_session"
+	codeBusy             = "busy"
 )
 
 // apiError is the JSON body of every error response.

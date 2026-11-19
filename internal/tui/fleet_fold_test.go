@@ -588,8 +588,9 @@ func TestHeaderNewGap(t *testing.T) {
 		if !ok {
 			t.Fatalf("w=%d: header %q lacks %q", w, hdr, fleetNewLabel)
 		}
-		if !strings.HasSuffix(before, "○ 1  ") || strings.HasSuffix(before, "○ 1   ") {
-			t.Errorf("w=%d: want exactly two spaces between the counts and %q: %q", w, fleetNewLabel, hdr)
+		// The sweep button sits between them: counts, two spaces, "sweep", one space.
+		if !strings.HasSuffix(before, "○ 1  "+fleetSweepLabel+" ") || strings.HasSuffix(before, "○ 1   "+fleetSweepLabel+" ") {
+			t.Errorf("w=%d: want exactly two spaces between the counts and %q: %q", w, fleetSweepLabel, hdr)
 		}
 	}
 }

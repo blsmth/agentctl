@@ -11,6 +11,7 @@ import {
   actionsWithQueue, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
   liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines,
+  buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
 } from "./logic.js";
 
 const fixtures = JSON.parse(readFileSync(new URL("./logic.fixtures.json", import.meta.url), "utf8"));
@@ -379,4 +380,73 @@ console.log("ok: resolved text");
   assert.notEqual(groupKey("s"), collapseKey("s", { bucket: true }));
   assert.notEqual(groupKey("a"), groupKey("b"));
   console.log("ok: project fold helpers");
+}
+
+{
+  const write = ["fleet", "write"];
+  assert.deepEqual(buildSweepRequest("agentctl-shop", true), { method: "POST", path: "/v1/sweep/preview", body: { session: "agentctl-shop" } });
+  assert.deepEqual(buildSweepRequest("agentctl-shop", false), { method: "POST", path: "/v1/sweep", body: { session: "agentctl-shop" } });
+  assert.equal(canSweep({ session: "agentctl-shop", dir: "/x" }, write), true);
+  assert.equal(canSweep({ session: "agentctl-shop", dir: "/x" }, ["fleet"]), false, "needs write");
+  assert.equal(canSweep({ session: "agentctl-hub", dir: "/x" }, write), false, "never the hub");
+  assert.equal(canSweep({ session: "agentctl-shop", dir: "" }, write), false, "needs a project dir");
+  assert.equal(canSweep(null, write), false);
+
+  const row = (name, detail) => ({ window_id: "@" + name, name, detail });
+  const preview = { session: "s", closed: [row("a", "done"), row("b")], attention: [row("c")], in_progress: [row("d"), row("e")] };
+  assert.equal(sweepCounts(preview), "1 needs attention, 2 in progress");
+  assert.deepEqual(sweepConfirm(preview, "shop"), {
+    title: "Sweep shop?",
+    lines: ["Close 2 windows:\na  (done)\nb", "1 needs attention, 2 in progress"],
+    confirmLabel: "Close 2",
+  });
+  assert.equal(sweepConfirm({ session: "s", closed: [], attention: [row("c")] }, "shop"), null);
+  assert.equal(nothingToSweep({ closed: [], attention: [row("c"), row("d")] }), "Nothing to sweep (2 need attention)");
+  assert.equal(nothingToSweep({ closed: [] }), "Nothing to sweep");
+  assert.deepEqual(sweptMessage({ closed: [row("a")] }), { text: "Swept 1", kind: "info" });
+  assert.deepEqual(sweptMessage({ closed: [row("a"), { name: "b", errors: ["kill failed"] }] }), { text: "Swept 1; 1 failed: b: kill failed", kind: "error" });
+
+  // The confirm flow, effects stubbed.
+  const flow = async ({ previewRep, applyRep, confirmed, failPreview, failApply }) => {
+    const sent = [];
+    const toasts = [];
+    const sheets = [];
+    const result = await runSweep({ session: "agentctl-shop", project: "shop" }, {
+      send: async (req) => {
+        sent.push(req.path);
+        if (req.path.endsWith("/preview")) {
+          if (failPreview) throw new Error(failPreview);
+          return previewRep;
+        }
+        if (failApply) throw new Error(failApply);
+        return applyRep;
+      },
+      confirm: async (sheet) => {
+        sheets.push(sheet);
+        return confirmed;
+      },
+      toast: (text, kind) => toasts.push([text, kind]),
+    });
+    return { result, sent, toasts, sheets };
+  };
+  let r = await flow({ previewRep: preview, applyRep: { closed: [row("a")] }, confirmed: true });
+  assert.equal(r.result, "applied");
+  assert.deepEqual(r.sent, ["/v1/sweep/preview", "/v1/sweep"]);
+  assert.equal(r.sheets[0].title, "Sweep shop?");
+  assert.deepEqual(r.toasts, [["Swept 1", "info"]], "reports what actually closed, not the preview");
+  r = await flow({ previewRep: preview, confirmed: false });
+  assert.equal(r.result, "cancelled");
+  assert.deepEqual(r.sent, ["/v1/sweep/preview"], "cancel never applies");
+  assert.deepEqual(r.toasts, []);
+  r = await flow({ previewRep: { closed: [], attention: [], in_progress: [] }, confirmed: true });
+  assert.equal(r.result, "nothing");
+  assert.equal(r.sheets.length, 0, "no confirm when nothing would close");
+  assert.deepEqual(r.toasts, [["Nothing to sweep", "info"]]);
+  r = await flow({ failPreview: "unknown session" });
+  assert.equal(r.result, "failed");
+  assert.deepEqual(r.toasts, [["unknown session", "error"]]);
+  r = await flow({ previewRep: preview, confirmed: true, failApply: 'sweep s: no tmux session "s"' });
+  assert.equal(r.result, "failed");
+  assert.deepEqual(r.toasts, [['sweep s: no tmux session "s"', "error"]]);
+  console.log("ok: sweep helpers and confirm flow");
 }

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"os"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/servectl"
+	"github.com/blsmth/agentctl/internal/sweeprun"
 	"github.com/blsmth/agentctl/internal/testenv"
 )
 
@@ -36,6 +38,10 @@ func TestMain(m *testing.M) {
 		return "", errors.New("hub-new-session disabled in tests")
 	}
 	fleetHubOrigin = func() (string, bool) { return "", false }
+	// Never spawn `agentctl sweep`; sweep tests install their own stub.
+	fleetSweep = func(context.Context, sweeprun.Target, bool) (sweeprun.Report, error) {
+		return sweeprun.Report{}, errors.New("sweep disabled in tests")
+	}
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
