@@ -210,11 +210,17 @@ func TestButtonDecision(t *testing.T) {
 func TestRenderedButtonsLineUpWithHitColumns(t *testing.T) {
 	m := buttonTestModel(t)
 	w := m.listColWidth()
+	// "+ new" is drawn only on the selected or hovered header.
+	if hdr := ansi.Strip(m.renderLine(0, w)); strings.Contains(hdr, fleetNewLabel) {
+		t.Errorf("unselected, unhovered header %q should not draw %q", hdr, fleetNewLabel)
+	}
+	m.hover = fleetHover{line: 0, reg: fleetHoverHeader}
 	hdr := ansi.Strip(m.renderLine(0, w))
 	if !strings.HasSuffix(strings.TrimRight(hdr, " "), fleetNewLabel) {
-		t.Errorf("header %q should end with %q", hdr, fleetNewLabel)
+		t.Errorf("hovered header %q should end with %q", hdr, fleetNewLabel)
 	}
-	if x := len([]rune(hdr[:strings.Index(hdr, fleetNewLabel)])); !m.onNewButton(x) || !m.onNewButton(x+len(fleetNewLabel)-1) {
+	g := m.lines[0].group
+	if x := len([]rune(hdr[:strings.Index(hdr, fleetNewLabel)])); !m.onNewButton(g, x) || !m.onNewButton(g, x+len(fleetNewLabel)-1) {
 		t.Errorf("new button at col %d not hit-testable", x)
 	}
 	row := ansi.Strip(m.renderLine(2, w))

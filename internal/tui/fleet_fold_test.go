@@ -583,14 +583,19 @@ func TestTitleSpacing(t *testing.T) {
 func TestHeaderNewGap(t *testing.T) {
 	m := foldModel(t)
 	for _, w := range []int{44, 56, 120} {
-		hdr := strings.TrimRight(ansi.Strip(m.renderGroupHeader(m.groups[1], false, w)), " ")
+		// "+ new" is drawn on the selected header only (or a hovered one).
+		hdr := strings.TrimRight(ansi.Strip(m.renderGroupHeader(m.groups[1], true, w)), " ")
 		before, ok := strings.CutSuffix(hdr, fleetNewLabel)
 		if !ok {
-			t.Fatalf("w=%d: header %q lacks %q", w, hdr, fleetNewLabel)
+			t.Fatalf("w=%d: selected header %q lacks %q", w, hdr, fleetNewLabel)
 		}
-		// The sweep button sits between them: counts, two spaces, "sweep", one space.
-		if !strings.HasSuffix(before, "○ 1  "+fleetSweepLabel+" ") || strings.HasSuffix(before, "○ 1   "+fleetSweepLabel+" ") {
-			t.Errorf("w=%d: want exactly two spaces between the counts and %q: %q", w, fleetSweepLabel, hdr)
+		// The sweep button sits between them: counts, two spaces, "sweep N", two spaces.
+		sweep := sweepLabel(groupSweepable(m.groups[1]))
+		if !strings.HasSuffix(before, "○ 1  "+sweep+"  ") || strings.HasSuffix(before, "○ 1   "+sweep+"  ") {
+			t.Errorf("w=%d: want exactly two spaces between the counts and %q: %q", w, sweep, hdr)
+		}
+		if plain := strings.TrimRight(ansi.Strip(m.renderGroupHeader(m.groups[1], false, w)), " "); strings.Contains(plain, fleetNewLabel) {
+			t.Errorf("w=%d: unselected header shows %q: %q", w, fleetNewLabel, plain)
 		}
 	}
 }
@@ -638,9 +643,9 @@ func TestHelpListsFoldKeys(t *testing.T) {
 			t.Errorf("? reference lacks %q", k)
 		}
 	}
-	// The one-line footer is already full at 67 columns: z/Z/f stay in "? more".
-	if w := ansi.StringWidth(strings.TrimSpace(ansi.Strip(fitHints(fleetFooterHints, 200)))); w > 67 {
-		t.Errorf("footer hints are %d columns, over 67", w)
+	// The one-line footer is already full at 77 columns: z/Z/f stay in "? more".
+	if w := ansi.StringWidth(strings.TrimSpace(ansi.Strip(fitHints(fleetFooterHints, 200)))); w > 77 {
+		t.Errorf("footer hints are %d columns, over 77", w)
 	}
 }
 

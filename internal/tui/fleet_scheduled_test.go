@@ -98,8 +98,8 @@ func TestCardShowsSchedule(t *testing.T) {
 	}
 }
 
-// TestKindTagRender: a titled row shows a dim "[kind]" before the title; a
-// row with no kind shows no brackets; width budgets hold.
+// TestKindTagRender: the hub never draws the title's "[kind]" tag (the data
+// stays, the phone still shows it); width budgets hold.
 func TestKindTagRender(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
@@ -125,11 +125,8 @@ func TestKindTagRender(t *testing.T) {
 				if w := lipgloss.Width(first); w > cw {
 					t.Errorf("%s width %d > cw %d", l.row.WindowID, w, cw)
 				}
-				if l.row.WindowID == "@1" && width >= 56 && !strings.Contains(first, "[go] Fixing") {
-					t.Errorf("kind row = %q", first)
-				}
-				if l.row.WindowID == "@2" && strings.Contains(first, "[") {
-					t.Errorf("no-kind row has brackets: %q", first)
+				if strings.Contains(first, "[") || !strings.Contains(first, "  Fixing Hub") {
+					t.Errorf("row %s should show the bare title: %q", l.row.WindowID, first)
 				}
 			}
 		})

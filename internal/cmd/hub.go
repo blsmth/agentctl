@@ -17,7 +17,7 @@ import (
 // RunHub summons the fleet hub — creating the agentctl-hub session if it
 // doesn't already exist — and switches the caller into it.
 func RunHub() {
-	// Remember where the hub was summoned from: the hub's "+ new session"
+	// Remember where the hub was summoned from: the hub's new-session (N)
 	// prompt defaults to it (hub-view's own cwd is pinned to the hub dir).
 	if cwd, err := os.Getwd(); err == nil {
 		if err := hubRecordOrigin(cwd); err != nil {

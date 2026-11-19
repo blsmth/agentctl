@@ -79,11 +79,11 @@ func (m FleetModel) listColWidth() int {
 	return m.contentWidth()
 }
 
-// onNewButton reports whether column x hits a header's right-aligned "+ new"
-// button (with one column of slack either side).
-func (m FleetModel) onNewButton(x int) bool {
-	end := m.listColWidth() - fleetSidebarRightGutter
-	return x >= end-lipgloss.Width(fleetNewLabel)-1 && x < end+1
+// onNewButton reports whether column x hits group g's "+ new" button as
+// drawn under the pointer (with one column of slack either side).
+func (m FleetModel) onNewButton(g fleet.Group, x int) bool {
+	span := m.headerNewSpan(g, m.listColWidth())
+	return span[1] > 0 && x >= span[0]-1 && x < span[1]+1
 }
 
 // selectorSpans returns the [start,end) columns of the armed selector's
@@ -153,7 +153,7 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 				case fleetHoverNewAgent:
 					return idx, fleetClickNewAgent
 				}
-			} else if m.onNewButton(x) {
+			} else if m.onNewButton(l.group, x) {
 				return idx, fleetClickNew
 			}
 		}
@@ -191,9 +191,6 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.Button == tea.MouseLeft && m.menuOpen && !m.menuHelp && msg.Y == m.footerMessageY() {
 		return m.clickMenu(msg.X)
-	}
-	if msg.Button == tea.MouseLeft && m.onNewSessionButton(msg.X, msg.Y) {
-		return m.runKey(fleetNewSessionKey) // same as the key
 	}
 	if m.newSessionOpen() {
 		if msg.Y == m.footerMessageY() {
@@ -278,15 +275,15 @@ func (m FleetModel) clickMenu(x int) (tea.Model, tea.Cmd) {
 type fleetHoverRegion int
 
 const (
-	fleetHoverNone       fleetHoverRegion = iota
-	fleetHoverBody                        // a row's body (not its ✕)
-	fleetHoverClose                       // a row's ✕ button
-	fleetHoverNew                         // a group header's "+ new" button
-	fleetHoverNewShell                    // armed selector's "shell"
-	fleetHoverNewAgent                    // armed selector's "agent"
-	fleetHoverFold                        // a group header's fold marker and project name
-	fleetHoverNewSession                  // the title's "+ new session" button (line -1)
-	fleetHoverSweep                       // a group header's "sweep" button
+	fleetHoverNone     fleetHoverRegion = iota
+	fleetHoverBody                      // a row's body (not its ✕)
+	fleetHoverClose                     // a row's ✕ button
+	fleetHoverNew                       // a group header's "+ new" button
+	fleetHoverNewShell                  // armed selector's "shell"
+	fleetHoverNewAgent                  // armed selector's "agent"
+	fleetHoverFold                      // a group header's fold marker and project name
+	fleetHoverSweep                     // a group header's "sweep" button
+	fleetHoverHeader                    // a group header outside its buttons
 )
 
 // fleetHover is the hover target: a line index plus the region on it. The zero
@@ -307,9 +304,6 @@ func (h fleetHover) region(i int) fleetHoverRegion {
 // hoverAt resolves the hover target under (x, y) with the same hit-testing as
 // clicks, so hover and click can never disagree.
 func (m FleetModel) hoverAt(x, y int) fleetHover {
-	if m.onNewSessionButton(x, y) {
-		return fleetHover{line: -1, reg: fleetHoverNewSession}
-	}
 	idx, sub, ok := m.lineAtSub(x, y)
 	if !ok {
 		return fleetHover{}
@@ -322,7 +316,7 @@ func (m FleetModel) hoverAt(x, y int) fleetHover {
 				if r := m.onSelector(x); r != fleetHoverNone {
 					return fleetHover{line: idx, reg: r}
 				}
-			} else if m.onNewButton(x) {
+			} else if m.onNewButton(l.group, x) {
 				return fleetHover{line: idx, reg: fleetHoverNew}
 			}
 		}
@@ -332,6 +326,9 @@ func (m FleetModel) hoverAt(x, y int) fleetHover {
 		if m.onHeaderName(l.group, x) {
 			return fleetHover{line: idx, reg: fleetHoverFold}
 		}
+		// Anywhere else on the header still counts as hovering it: the
+		// header then shows its "+ new" button.
+		return fleetHover{line: idx, reg: fleetHoverHeader}
 	case fleetLineRow:
 		if sub != 0 { // detail lines: no hover effect
 			break

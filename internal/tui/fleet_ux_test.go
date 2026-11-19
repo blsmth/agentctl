@@ -80,13 +80,16 @@ func TestRowRightColumnsAlign(t *testing.T) {
 	}
 	m := newFleetModel()
 	m.termWidth, m.liveLeft = 56, 56
+	// A list where some row shows a model and some a context warning, so
+	// every column is drawn; opus is the usual model.
+	m.except = fleetExceptions{common: "opus", modelW: fleetModelSlotW, ctx: true}
 	cw := m.contentWidth()
 	prEnd, ageEnd := -1, -1
 	for _, tt := range rows {
 		t.Run(tt.name, func(t *testing.T) {
 			r := testRow("worker", "s", "idle", "Reading a fairly long file name.go")
 			r.PRNumber = tt.pr
-			r.ModelName, r.ContextPct = tt.model, tt.ctx
+			r.ModelName, r.ContextPct, r.TurnCount = tt.model, tt.ctx, 1
 			if tt.age > 0 {
 				r.StateSince = ago(tt.age)
 			}
@@ -96,11 +99,19 @@ func TestRowRightColumnsAlign(t *testing.T) {
 			prCol := ageCol - fleetAgeSlotW - 1
 			ctxCol := prCol - fleetPRSlotW - 1
 			modelCol := ctxCol - fleetCtxSlotW - 1
-			if tt.ctx > 0 && string(line[ctxCol]) != "%" {
+			warned := rowCtxWarn(r, fleetDisplay{})
+			if warned && string(line[ctxCol]) != "%" {
 				t.Errorf("ctx must end at col %d: %q", ctxCol, string(line))
 			}
-			if tt.model != "" && (line[modelCol] == ' ' || line[modelCol+1] != ' ') {
+			if !warned && strings.Contains(string(line), "%") {
+				t.Errorf("a calm context must not show: %q", string(line))
+			}
+			shown := slotModel(tt.model) != "" && slotModel(tt.model) != "opus"
+			if shown && (line[modelCol] == ' ' || line[modelCol+1] != ' ') {
 				t.Errorf("model must end at col %d: %q", modelCol, string(line))
+			}
+			if !shown && tt.model != "" && strings.Contains(string(line), "opus") {
+				t.Errorf("the usual model must not show: %q", string(line))
 			}
 			if tt.age > 0 && line[ageCol] == ' ' {
 				t.Errorf("age must end at col %d: %q", ageCol, string(line))
@@ -124,30 +135,30 @@ func TestRowRightColumnsAlign(t *testing.T) {
 	}
 }
 
-func TestFitRightSlotsDegrades(t *testing.T) {
-	full := fleetRightFull.width() + 1 + fleetMinRecapWidth
-	model := fleetRightModelPR.width() + 1 + fleetMinRecapWidth
-	pr := fleetRightPR.width() + 1 + fleetMinRecapWidth
-	if full != 30 || model != 26 || pr != 14 {
-		t.Fatalf("slot thresholds = %d/%d/%d, want 30/26/14", full, model, pr)
+func TestFitRightColsDegradesWithoutExceptions(t *testing.T) {
+	// No row shows a model or a context warning: those columns take no
+	// width, so the PR and age need only their own.
+	full := joinedWidth(fleetPRSlotW, fleetAgeSlotW) + 1 + fleetMinRecapWidth
+	pr := fleetPRSlotW + 1 + fleetMinRecapWidth
+	if full != 18 || pr != 14 {
+		t.Fatalf("thresholds = %d/%d, want 18/14", full, pr)
 	}
 	tests := []struct {
 		available int
-		want      fleetRightSlots
+		pr, age   bool
 	}{
-		{full + 10, fleetRightFull},
-		{full, fleetRightFull},
-		// The age drops first, then the model, and the PR last.
-		{full - 1, fleetRightModelPR},
-		{model, fleetRightModelPR},
-		{model - 1, fleetRightPR},
-		{pr, fleetRightPR},
-		{pr - 1, fleetRightNone},
-		{0, fleetRightNone},
+		{full + 10, true, true},
+		{full, true, true},
+		// The age drops first, the PR last.
+		{full - 1, true, false},
+		{pr, true, false},
+		{pr - 1, false, false},
+		{0, false, false},
 	}
 	for _, tt := range tests {
-		if got := fitRightSlots(tt.available); got != tt.want {
-			t.Errorf("fitRightSlots(%d) = %v, want %v", tt.available, got, tt.want)
+		c := fitRightCols(tt.available, fleetExceptions{}, false, false)
+		if c.pr != tt.pr || c.age != tt.age || c.modelW != 0 || c.ctx {
+			t.Errorf("fitRightCols(%d) = %+v, want pr=%v age=%v", tt.available, c, tt.pr, tt.age)
 		}
 	}
 }
@@ -311,7 +322,7 @@ func TestRowDetailActivityIsOneLine(t *testing.T) {
 			if r.Recap.Source != fleet.RecapActivity {
 				t.Fatalf("fixture: source = %v", r.Recap.Source)
 			}
-			d := rowDetail(r, 0, 56, fleetDisplay{})
+			d := rowDetail(r, 0, 56, fleetDisplay{}, false)
 			if len(d) != 1 {
 				t.Fatalf("activity expansion = %d lines, want 1: %+v", len(d), d)
 			}
@@ -323,7 +334,7 @@ func TestRowDetailActivityIsOneLine(t *testing.T) {
 	// Summary text still wraps.
 	r := testRow("w", "s", "working", "")
 	r.Recap = fleet.RecapLine{Text: long, Source: fleet.RecapSummary}
-	if n := len(rowDetail(r, 0, 56, fleetDisplay{})); n != fleetDetailMaxLines {
+	if n := len(rowDetail(r, 0, 56, fleetDisplay{}, false)); n != fleetDetailMaxLines {
 		t.Errorf("summary expansion = %d lines, want %d", n, fleetDetailMaxLines)
 	}
 }
@@ -335,9 +346,9 @@ func TestEmptyRowFallback(t *testing.T) {
 		row  fleet.Row
 		want string
 	}{
-		{"no turns, started", fleet.Row{AgentState: state.AgentState{StartTime: now.Add(-4 * time.Minute).Unix()}}, "waiting for first prompt · 4m"},
-		{"no turns, unknown start", fleet.Row{}, "waiting for first prompt"},
-		{"no turns, state since", fleet.Row{StateSince: now.Add(-90 * time.Second)}, "waiting for first prompt · 1m"},
+		{"no turns, started", fleet.Row{AgentState: state.AgentState{StartTime: now.Add(-4 * time.Minute).Unix()}}, "no prompt yet · 4m"},
+		{"no turns, unknown start", fleet.Row{}, "no prompt yet"},
+		{"no turns, state since", fleet.Row{StateSince: now.Add(-90 * time.Second)}, "no prompt yet · 1m"},
 		{"turns", fleet.Row{AgentState: state.AgentState{TurnCount: 3, StartTime: now.Add(-50 * time.Hour).Unix()}}, "no activity yet · started 2d ago"},
 		{"turns, unknown start", fleet.Row{AgentState: state.AgentState{TurnCount: 3}}, "no activity yet"},
 	}
@@ -355,7 +366,7 @@ func TestEmptyRowFallback(t *testing.T) {
 	r := testRow("w", "s", "idle", "")
 	r.StartTime = sidebarNow.Add(-4 * time.Minute).Unix()
 	rc := rowRecap(r)
-	if rc.Source != fleet.RecapNone || rc.Text != "waiting for first prompt · 4m" {
+	if rc.Source != fleet.RecapNone || rc.Text != "no prompt yet · 4m" {
 		t.Errorf("rowRecap = %+v", rc)
 	}
 	if fleet.Recap(r, fleet.LogInfo{}).Text != "" {
@@ -363,10 +374,10 @@ func TestEmptyRowFallback(t *testing.T) {
 	}
 	m := newFleetModel()
 	out := m.renderTreeRowHover(r, "", 1, false, fleetHoverNone, 80)
-	if !strings.Contains(out, fleetEmptyStyle.Render("waiting for first prompt · 4m")) {
+	if !strings.Contains(out, fleetEmptyStyle.Render("no prompt yet · 4m")) {
 		t.Errorf("fallback not rendered muted italic: %q", ansi.Strip(out))
 	}
-	if d := rowDetail(r, 0, 80, fleetDisplay{}); len(d) != 0 {
+	if d := rowDetail(r, 0, 80, fleetDisplay{}, false); len(d) != 0 {
 		t.Errorf("fallback must not expand: %+v", d)
 	}
 }
@@ -379,7 +390,8 @@ func TestFleetFooterSingleLine(t *testing.T) {
 		dropped  []string
 		lastHint string
 	}{
-		{67, []string{"j/k move", "⏎ focus", "b blocked", "n new", "x close", "q leave", "? more"}, nil, "? more"},
+		{77, []string{"j/k move", "⏎ focus", "b blocked", "n new", "w sweep", "x close", "q leave", "? more"}, nil, "? more"},
+		{67, []string{"j/k move", "⏎ focus", "b blocked", "n new", "w sweep", "? more"}, []string{"q leave"}, "? more"},
 		{44, []string{"j/k move", "⏎ focus", "? more"}, []string{"q leave"}, "? more"},
 	}
 	for _, tt := range tests {

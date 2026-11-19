@@ -344,38 +344,23 @@ func TestNewSessionClosesOtherInlineStates(t *testing.T) {
 	}
 }
 
-func TestNewSessionTitleButton(t *testing.T) {
+func TestTitleHasNoNewSessionButton(t *testing.T) {
 	stubNewSession(t, "/start", t.TempDir())
 	m := foldModel(t)
-	m.liveLeft = 0 // the whole 120 columns: room for the full label
-	layout := m.titleLayout(m.contentWidth())
-	span := layout.newSession
-	if span[1] == 0 {
-		t.Fatal("button not shown at 120 columns")
+	m.liveLeft = 0 // the whole 120 columns: room for anything
+	line := ansi.Strip(m.titleLayout(m.contentWidth()).line)
+	if strings.Contains(line, "+ new") || strings.Contains(line, "+ session") {
+		t.Errorf("title still shows a new-session button: %q", line)
 	}
-	if got := ansi.Cut(ansi.Strip(layout.line), span[0], span[1]); got != fleetNewSessionLabels[0] {
-		t.Errorf("span %v covers %q", span, got)
-	}
-	// Off the button, or on another row: nothing opens.
-	for _, pos := range [][2]int{{span[0] - 1, 0}, {span[1], 0}, {span[0], 1}} {
-		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: pos[0], Y: pos[1]})
+	// Clicks along the title open nothing; N still does.
+	for x := 0; x < m.contentWidth(); x++ {
+		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: 0})
 		if next.(FleetModel).newSessionOpen() {
-			t.Errorf("click at %v opened the prompt", pos)
+			t.Fatalf("click at %d on the title opened the prompt", x)
 		}
 	}
-	next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: span[0], Y: 0})
-	m = next.(FleetModel)
-	if !m.newSessionOpen() || m.dirPrompt.input.Value() != "/start" {
-		t.Fatal("click did not open the prompt")
-	}
-	// Hover highlights it.
-	if h := m.hoverAt(span[0], 0); h.reg != fleetHoverNewSession {
-		t.Errorf("hover = %+v", h)
-	}
-	// A click elsewhere dismisses the prompt.
-	next, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: m.fleetListTop()})
-	if next.(FleetModel).newSessionOpen() {
-		t.Error("click on the list kept the prompt open")
+	if m, _ = hubKey(t, m, fleetNewSessionKey); !m.newSessionOpen() {
+		t.Error("N no longer opens the prompt")
 	}
 }
 
@@ -388,14 +373,8 @@ func TestNewSessionTitleKeepsCounts(t *testing.T) {
 		if ansi.StringWidth(plain) > w {
 			t.Errorf("w=%d: title %d wide: %q", w, ansi.StringWidth(plain), plain)
 		}
-		if w >= 56 && !strings.Contains(plain, "⏸ 1") {
-			t.Errorf("w=%d: counts dropped for the button: %q", w, plain)
-		}
-		if s := l.newSession; s[1] > 0 {
-			label := ansi.Cut(plain, s[0], s[1])
-			if !slices.Contains(fleetNewSessionLabels, label) {
-				t.Errorf("w=%d: span %v covers %q", w, s, label)
-			}
+		if w >= 50 && !strings.Contains(plain, "⏸ 1") {
+			t.Errorf("w=%d: counts dropped: %q", w, plain)
 		}
 		if s := l.badge; s[1] > 0 && ansi.Cut(plain, s[0], s[1]) != "📱 off" {
 			t.Errorf("w=%d: badge span %v covers %q", w, s, ansi.Cut(plain, s[0], s[1]))
