@@ -252,7 +252,6 @@ test("header: a long title ellipsizes and keeps Close on screen", async ({ page,
   const close = await page.locator(".close-window").boundingBox();
   const vp = page.viewportSize();
   expect(close && vp && close.x + close.width <= vp.width).toBe(true);
-  await page.screenshot({ path: "test-results/detail-title.png" });
 });
 
 test("done windows show the PR chip and a chat-style composer with Close in the header", async ({ page }) => {
