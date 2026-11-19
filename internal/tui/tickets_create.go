@@ -95,6 +95,11 @@ func (m CreateTicketModel) HintKeys() []string {
 	return []string{"tab/shift+tab", "cycle", "ctrl+d", "submit", "esc", "cancel"}
 }
 
+// dirty reports whether the form holds typed text that a cancel would lose.
+func (m CreateTicketModel) dirty() bool {
+	return strings.TrimSpace(m.createInput.Value()) != "" || strings.TrimSpace(m.bodyInput.Value()) != ""
+}
+
 // Done reports whether the form has a result (submitted or cancelled).
 func (m CreateTicketModel) Done() bool { return m.result != nil }
 

@@ -157,6 +157,7 @@ type ghIssue struct {
 	CreatedAt time.Time `json:"createdAt"`
 	URL       string    `json:"url"`
 	Assignees []ghUser  `json:"assignees"`
+	State     string    `json:"state"` // OPEN / CLOSED; empty from older callers
 }
 
 type ghLabel struct {

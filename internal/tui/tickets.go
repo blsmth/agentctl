@@ -18,7 +18,6 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/theme"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // tkStyles holds the pre-configured styles for the tickets browser popup (-w 90).
@@ -44,21 +43,62 @@ var (
 // Column widths for the tickets list view.
 const (
 	tkColNum      = 8
-	tkColPR       = 8 // "PR#NNN  " badge or blank
+	tkColPR       = 8 // "#NNN↗" link or blank
 	tkColLabels   = 24
 	tkColAssignee = 12 // "@loginname  " badge or blank
-	tkColAge      = 6
+	tkColAge      = 8  // "16h ago"
+	tkRowPrefix   = 3  // selection gutter + cursor marker + space
 	// title fills the remaining space
 )
+
+// Width breakpoints (terminal columns).
+const (
+	// tkDropAssigneeCols and the two below drop list columns, in this order,
+	// as the terminal narrows: ASSIGNEE, then LABELS, then PR.
+	tkDropAssigneeCols = 110
+	tkDropLabelsCols   = 96
+	tkDropPRCols       = 80
+	// tkNarrowCols is where the preview/detail sidebar of action buttons
+	// collapses into a one-line strip.
+	tkNarrowCols = 90
+)
+
+// Views.
+const (
+	tkViewList   = 0
+	tkViewDetail = 1
+)
+
+// tkDoubleClick is the longest gap between two clicks on the same zone that
+// still counts as a double-click.
+const tkDoubleClick = 400 * time.Millisecond
+
+// tkNow is the browser's clock; tests replace it to drive double-click timing.
+var tkNow = time.Now
 
 // sortMode controls how the issue list is ordered.
 type sortMode int
 
 const (
-	sortNewest sortMode = iota // newest first (default)
-	sortOldest                 // oldest first
-	sortNumber                 // ascending issue number
+	sortNewest     sortMode = iota // newest first (default)
+	sortOldest                     // oldest first
+	sortNumber                     // ascending issue number
+	sortNumberDesc                 // descending issue number
+	sortModeCount
 )
+
+// label is the chip text for the sort mode.
+func (s sortMode) label() string {
+	switch s {
+	case sortOldest:
+		return "oldest"
+	case sortNumber:
+		return "# ↑"
+	case sortNumberDesc:
+		return "# ↓"
+	}
+	return "newest"
+}
 
 // createFocus is the focused section in the single-screen create form.
 type createFocus int
@@ -116,11 +156,16 @@ type tkDetailFetchedMsg struct {
 	labels    []ghLabel
 	url       string
 	assignees []ghUser
+	state     string    // OPEN / CLOSED
+	updatedAt time.Time // GitHub's updatedAt when fetched (stale-edit check)
 	err       error
 }
 
 // tkPreviewFetchedMsg is sent when a background preview fetch completes for the split pane.
 type tkPreviewFetchedMsg tkDetailFetchedMsg
+
+// tkFlashExpireMsg clears the flash line if it is still showing flash id.
+type tkFlashExpireMsg struct{ id int }
 
 // TicketsResult is the output of the tickets browser popup.
 type TicketsResult struct {
@@ -141,15 +186,16 @@ type TicketsModel struct {
 	termHeight int
 
 	// List view state
-	issues    []ghIssue
-	allIssues []ghIssue
-	cursor    int
-	repoSlug  string
-	loading   bool
-	err       error
+	issues     []ghIssue
+	allIssues  []ghIssue
+	cursor     int
+	repoSlug   string
+	loading    bool
+	err        error
+	issueState string // "open" (default), "closed" or "all"
 
 	// Detail view state
-	viewMode     int // 0=list, 1=detail
+	viewMode     int // tkViewList or tkViewDetail
 	detail       *tkDetailFetchedMsg
 	scrollOffset int
 
@@ -164,8 +210,14 @@ type TicketsModel struct {
 	searchQuery string          // current active query (persists after closing input)
 
 	// Create mode — the form is rendered inside a Modal overlay.
-	createModal   Modal
-	createConfirm string // brief "#N created" message shown after successful create
+	createModal Modal
+
+	// flash is the transient one-line message under the title ("✓ created
+	// #12", "✗ close failed: ..."); flashErr renders it red. flashID lets a
+	// stale expiry tick leave a newer message alone.
+	flash    string
+	flashErr bool
+	flashID  int
 
 	// Agent list for the agent-selection overlay.
 	agents []agent.Agent
@@ -176,6 +228,8 @@ type TicketsModel struct {
 	agentModal Modal
 	// promptModal wraps PromptSelectModel for prompt selection.
 	promptModal Modal
+	// helpModal lists keys and mouse gestures (?).
+	helpModal Modal
 
 	result   TicketsResult
 	quitting bool
@@ -185,6 +239,7 @@ type TicketsModel struct {
 
 	// Split-pane preview state
 	previewDetail    *tkDetailFetchedMsg
+	previewScroll    int // preview body scroll (mouse wheel over the preview)
 	detailCache      map[int]*tkDetailFetchedMsg
 	detailCacheOrder []int // tracks insertion order for LRU eviction (max 20)
 
@@ -197,6 +252,16 @@ type TicketsModel struct {
 	// Linked PRs: map of issue number → open PR whose branch references that issue.
 	linkedPRs map[int]ghPR
 
+	// Mouse state (tickets_mouse.go). zones is shared by every copy of the
+	// model: View records the frame's click zones into it, so hit-testing
+	// always runs against exactly what is on screen.
+	zones         *zoneList
+	hover         string // innermost zone under the pointer
+	hoverRow      string // row zone under the pointer (for the row tint)
+	press         tkPress
+	lastClick     tkPress            // last activated zone, for double-click
+	deferredFetch *ticketsFetchedMsg // list refresh held back during a press
+
 	// Autopilot state
 	autoPoll         bool          // mirrors config.AutoPoll
 	autoPollInterval time.Duration // effective interval
@@ -204,7 +269,6 @@ type TicketsModel struct {
 	lastPollTime     time.Time     // last successful poll
 	lastPollResult   string        // status message from most recent cycle
 	dispatching      bool          // true while a dispatch is in flight
-
 }
 
 // CreateOpts contains optional pre-filled values for the ticket create form.
@@ -279,19 +343,25 @@ func NewTicketsModel(dir string, agents []agent.Agent) TicketsModel {
 		loading:          true,
 		repoSlug:         slug,
 		dir:              dir,
+		issueState:       tkStateOpen,
 		result:           TicketsResult{Cancelled: true},
 		searchInput:      si,
 		labelIdx:         -1,
 		agents:           agents,
 		autoPoll:         cfg.AutoPoll,
 		autoPollInterval: cfg.EffectiveAutoPollInterval(),
-		detailCache:      make(map[int]*tkDetailFetchedMsg),
+		// Init starts the tick loop when autopilot is on; recording that
+		// here keeps a later P from starting a second loop.
+		autoPollTicker: cfg.AutoPoll,
+		detailCache:    make(map[int]*tkDetailFetchedMsg),
+		zones:          &zoneList{},
 		splitPane: SplitPane{
 			ListRatio:     0.30,
 			MinListRows:   3,
 			MinDetailRows: 4,
 		},
 	}
+	m.splitPane.SetSize(m.termWidth, m.paneHeight())
 	return m
 }
 
@@ -302,6 +372,27 @@ func (m TicketsModel) contentWidth() int {
 		w = 40
 	}
 	return w
+}
+
+// narrow reports whether the sidebar actions collapse to a one-line strip.
+func (m TicketsModel) narrow() bool { return m.termWidth < tkNarrowCols }
+
+// List-view chrome around the split pane: title, flash line, chips, blank,
+// column header and rule above it; a blank line and the hint bar below.
+const (
+	tkListChromeTop    = 6
+	tkListChromeBottom = 2
+)
+
+// paneHeight is the height handed to the split pane, chosen so the list,
+// its separator and the bordered preview box fill the screen exactly
+// between the list chrome and the hint bar.
+func (m TicketsModel) paneHeight() int {
+	h := m.termHeight - tkListChromeTop - tkListChromeBottom - detailBoxVerticalOverhead
+	if h < 8 {
+		h = 8
+	}
+	return h
 }
 
 // cachePreview stores a fetched detail in the LRU cache (max 20 entries).
@@ -318,10 +409,31 @@ func (m *TicketsModel) cachePreview(d *tkDetailFetchedMsg) {
 	m.detailCache[d.number] = d
 }
 
+// forgetPreview drops an issue from the preview cache so the next preview
+// fetch goes to GitHub (after an edit, assign or close).
+func (m *TicketsModel) forgetPreview(number int) {
+	if m.detailCache == nil {
+		return
+	}
+	delete(m.detailCache, number)
+	for i, n := range m.detailCacheOrder {
+		if n == number {
+			m.detailCacheOrder = append(m.detailCacheOrder[:i], m.detailCacheOrder[i+1:]...)
+			break
+		}
+	}
+}
+
+// Detail-view chrome: header and a blank line above the body; the scroll
+// indicator, a blank line and the hint bar below.
+const (
+	tkDetailChromeTop    = 2
+	tkDetailChromeBottom = 3
+)
+
 // detailVisibleRows returns how many content lines fit in the detail view.
 func (m TicketsModel) detailVisibleRows() int {
-	// title (1) + blank (1) + hint bar (1) + scroll indicator (1) = 4 chrome lines
-	rows := m.termHeight - 4
+	rows := m.termHeight - tkDetailChromeTop - tkDetailChromeBottom
 	if rows < 3 {
 		rows = 3
 	}
@@ -332,7 +444,7 @@ func (m TicketsModel) detailVisibleRows() int {
 func (m TicketsModel) Result() TicketsResult { return m.result }
 
 func (m TicketsModel) Init() tea.Cmd {
-	cmds := []tea.Cmd{tkFetchTicketsCmd(m.dir)}
+	cmds := []tea.Cmd{tkFetchTicketsCmd(m.dir, m.issueState)}
 	if m.autoPoll {
 		cmds = append(cmds, autoPollTickCmd(m.autoPollInterval))
 	}
@@ -347,92 +459,158 @@ func (m TicketsModel) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// setFlash shows a transient message under the title and returns the tick
+// that clears it.
+func (m *TicketsModel) setFlash(text string, isErr bool) tea.Cmd {
+	m.flashID++
+	m.flash, m.flashErr = text, isErr
+	id := m.flashID
+	d := 4 * time.Second
+	if isErr {
+		d = 8 * time.Second
+	}
+	return tea.Tick(d, func(time.Time) tea.Msg { return tkFlashExpireMsg{id: id} })
+}
+
+// selectedIssue returns the highlighted list issue.
+func (m TicketsModel) selectedIssue() (ghIssue, bool) {
+	if m.cursor < 0 || m.cursor >= len(m.issues) {
+		return ghIssue{}, false
+	}
+	return m.issues[m.cursor], true
+}
+
+// selectedNumber is the highlighted issue's number, 0 when none.
+func (m TicketsModel) selectedNumber() int {
+	if iss, ok := m.selectedIssue(); ok {
+		return iss.Number
+	}
+	return 0
+}
+
+// currentNumber is the issue the keys act on: the detail's issue in the
+// detail view, the highlighted row in the list.
+func (m TicketsModel) currentNumber() int {
+	if m.viewMode == tkViewDetail && m.detail != nil {
+		return m.detail.number
+	}
+	return m.selectedNumber()
+}
+
+// currentURL is the web URL of the issue the keys act on.
+func (m TicketsModel) currentURL() string {
+	if m.viewMode == tkViewDetail && m.detail != nil && m.detail.url != "" {
+		return m.detail.url
+	}
+	if iss, ok := m.selectedIssue(); ok {
+		if iss.URL != "" {
+			return iss.URL
+		}
+		if d, ok := m.detailCache[iss.Number]; ok && d.url != "" {
+			return d.url
+		}
+	}
+	if n := m.currentNumber(); n > 0 && m.repoSlug != "" {
+		return fmt.Sprintf("https://github.com/%s/issues/%d", m.repoSlug, n)
+	}
+	return ""
+}
+
+// selectIssue moves the list cursor to issue number n and fetches its
+// preview. It is a no-op returning nil when n is not in the list.
+func (m *TicketsModel) selectIssue(n int) tea.Cmd {
+	for i, iss := range m.issues {
+		if iss.Number == n {
+			m.cursor = i
+			m.splitPane.SetCursor(i)
+			return m.previewCmdForCursor()
+		}
+	}
+	return nil
+}
+
+// previewCmdForCursor fetches the preview of the highlighted issue when the
+// preview pane is showing.
+func (m TicketsModel) previewCmdForCursor() tea.Cmd {
+	if m.splitPane.DetailHeight() < 4 || m.repoSlug == "" {
+		return nil
+	}
+	if iss, ok := m.selectedIssue(); ok {
+		return m.previewFetchCmd(iss.Number)
+	}
+	return nil
+}
+
 func (m TicketsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
-		// Reserve chrome lines: 7 header + 2 hint bar = 9.
-		paneH := m.termHeight - 9
-		if paneH < 10 {
-			paneH = 10
-		}
-		m.splitPane.SetSize(msg.Width, paneH)
+		m.splitPane.SetSize(msg.Width, m.paneHeight())
+		m.hover, m.hoverRow = "", "" // zones move on resize; the next motion re-resolves
 		return m, nil
 
 	case ticketsFetchedMsg:
-		m.loading = false
-		if msg.err != nil || msg.repoSlug == "" {
-			m.err = msg.err
-			m.issues = nil
-			m.allIssues = nil
-		} else {
-			m.repoSlug = msg.repoSlug
-			m.allIssues = msg.issues
-			m.labelOptions = extractLabels(msg.issues)
-			m.labelIdx = -1
-			m.filterLabel = ""
-			m.searchQuery = ""
-			m.applyFilters()
-			// Kick off a preview fetch for the initially highlighted issue.
-			if m.splitPane.DetailHeight() >= 4 && len(m.issues) > 0 && m.repoSlug != "" {
-				first := m.issues[0]
-				if _, ok := m.detailCache[first.Number]; !ok {
-					return m, tkFetchPreviewCmd(m.repoSlug, first.Number)
-				}
-			}
+		if m.press.active {
+			// Never move rows out from under a click in progress: apply the
+			// refresh once the button is released.
+			m.deferredFetch = &msg
+			return m, nil
 		}
-		if msg.linkedPRs != nil {
-			m.linkedPRs = msg.linkedPRs
-		} else {
-			m.linkedPRs = make(map[int]ghPR)
-		}
-		return m, nil
+		return m.applyFetched(msg)
 
 	case tkIssueClosedMsg:
-		if msg.err == nil {
-			n := msg.number
-			var newAll []ghIssue
-			for _, iss := range m.allIssues {
-				if iss.Number != n {
-					newAll = append(newAll, iss)
-				}
-			}
-			m.allIssues = newAll
-			m.applyFilters()
-			if m.cursor >= len(m.issues) {
-				m.cursor = len(m.issues) - 1
-			}
-			if m.cursor < 0 {
-				m.cursor = 0
-			}
-			m.createConfirm = fmt.Sprintf("closed #%d", n)
-			// Return to list view if we were in detail view.
-			if m.viewMode == 1 {
-				m.viewMode = 0
-				m.detail = nil
-				m.scrollOffset = 0
+		if msg.err != nil {
+			return m, m.setFlash(fmt.Sprintf("✗ close #%d failed: %v", msg.number, msg.err), true)
+		}
+		n := msg.number
+		m.forgetPreview(n)
+		flash := m.setFlash(fmt.Sprintf("closed #%d", n), false)
+		if m.viewMode == tkViewDetail {
+			m.viewMode = tkViewList
+			m.detail = nil
+			m.scrollOffset = 0
+		}
+		if m.issueState != tkStateOpen {
+			// The issue stays listed (closed/all): refetch to show its state.
+			m.loading = true
+			return m, tea.Batch(flash, tkFetchTicketsCmd(m.dir, m.issueState))
+		}
+		var newAll []ghIssue
+		for _, iss := range m.allIssues {
+			if iss.Number != n {
+				newAll = append(newAll, iss)
 			}
 		}
-		return m, nil
+		m.allIssues = newAll
+		m.applyFilters()
+		return m, tea.Batch(flash, m.previewCmdForCursor())
 
 	case tkSelfAssignedMsg:
-		if msg.err == nil && m.detail != nil && m.detail.number == msg.number {
-			// Re-fetch the detail to get the updated assignees.
-			return m, tkFetchDetailCmd(m.repoSlug, msg.number)
+		if msg.err != nil {
+			return m, m.setFlash(fmt.Sprintf("✗ assign #%d failed: %v", msg.number, msg.err), true)
 		}
-		return m, nil
+		m.forgetPreview(msg.number)
+		cmds := []tea.Cmd{m.setFlash(fmt.Sprintf("assigned #%d to you", msg.number), false)}
+		if m.detail != nil && m.detail.number == msg.number {
+			cmds = append(cmds, tkFetchDetailCmd(m.repoSlug, msg.number))
+		} else if m.repoSlug != "" {
+			cmds = append(cmds, tkFetchPreviewCmd(m.repoSlug, msg.number))
+		}
+		cmds = append(cmds, tkFetchTicketsCmd(m.dir, m.issueState))
+		return m, tea.Batch(cmds...)
 
 	case tkDetailFetchedMsg:
-		if msg.err == nil {
-			m.detail = &msg
-			m.scrollOffset = 0
-			m.viewMode = 1
-			// Also populate the preview cache with this data.
-			m.cachePreview(&msg)
-			if m.previewDetail == nil || m.previewDetail.number == msg.number {
-				m.previewDetail = &msg
-			}
+		if msg.err != nil {
+			return m, m.setFlash(fmt.Sprintf("✗ #%d: %v", msg.number, msg.err), true)
+		}
+		m.detail = &msg
+		m.scrollOffset = 0
+		m.viewMode = tkViewDetail
+		// Also populate the preview cache with this data.
+		m.cachePreview(&msg)
+		if m.previewDetail == nil || m.previewDetail.number == msg.number {
+			m.previewDetail = &msg
 		}
 		return m, nil
 
@@ -441,9 +619,33 @@ func (m TicketsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			d := tkDetailFetchedMsg(msg)
 			m.cachePreview(&d)
 			// Only update the visible preview if it's still the current cursor item.
-			if len(m.issues) > 0 && m.cursor < len(m.issues) && m.issues[m.cursor].Number == msg.number {
+			if m.selectedNumber() == msg.number {
+				if m.previewDetail == nil || m.previewDetail.number != msg.number {
+					m.previewScroll = 0
+				}
 				m.previewDetail = &d
 			}
+			if m.detail != nil && m.detail.number == msg.number && m.viewMode == tkViewDetail {
+				m.detail = &d
+			}
+		}
+		return m, nil
+
+	case tkBrowserOpenedMsg:
+		if msg.err != nil {
+			return m, m.setFlash("✗ open in browser failed: "+msg.err.Error(), true)
+		}
+		return m, nil
+
+	case tkCopiedMsg:
+		if msg.err != nil {
+			return m, m.setFlash("✗ copy failed: "+msg.err.Error(), true)
+		}
+		return m, m.setFlash("copied "+msg.url, false)
+
+	case tkFlashExpireMsg:
+		if msg.id == m.flashID {
+			m.flash, m.flashErr = "", false
 		}
 		return m, nil
 
@@ -474,43 +676,19 @@ func (m TicketsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Refresh ticket list since labels may have changed.
 		m.loading = true
-		return m, tkFetchTicketsCmd(m.dir)
+		return m, tkFetchTicketsCmd(m.dir, m.issueState)
+
+	case tea.MouseClickMsg:
+		return m.handleMousePress(msg)
+	case tea.MouseReleaseMsg:
+		return m.handleMouseRelease(msg)
+	case tea.MouseMotionMsg:
+		return m.handleMouseMotion(msg)
+	case tea.MouseWheelMsg:
+		return m.handleMouseWheel(msg)
 
 	case tea.KeyPressMsg:
-		// ctrl+c / q always quit the application when any overlay is active.
-		if (m.confirmModal.Visible || m.agentModal.Visible || m.promptModal.Visible) &&
-			(msg.String() == "ctrl+c" || msg.String() == "q") {
-			m.result = TicketsResult{Cancelled: true}
-			m.quitting = true
-			return m, tea.Quit
-		}
-		if m.confirmModal.Visible {
-			var cmd tea.Cmd
-			m.confirmModal, cmd = m.confirmModal.Update(msg)
-			return m.checkConfirmModalDone(cmd)
-		}
-		if m.promptModal.Visible {
-			var cmd tea.Cmd
-			m.promptModal, cmd = m.promptModal.Update(msg)
-			return m.checkPromptModalDone(cmd)
-		}
-		if m.agentModal.Visible {
-			var cmd tea.Cmd
-			m.agentModal, cmd = m.agentModal.Update(msg)
-			return m.checkAgentModalDone(cmd)
-		}
-		if m.createModal.Visible {
-			var cmd tea.Cmd
-			m.createModal, cmd = m.createModal.Update(msg)
-			return m.checkCreateModalDone(cmd)
-		}
-		if m.viewMode == 1 {
-			return m.updateDetail(msg)
-		}
-		if m.searchMode {
-			return m.updateSearch(msg)
-		}
-		return m.updateList(msg)
+		return m.handleKey(msg)
 
 	default:
 		// Forward non-key and background messages (e.g. cursor blink, issueCreatedMsg)
@@ -525,48 +703,249 @@ func (m TicketsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.promptModal, cmd = m.promptModal.Update(msg)
 			return m.checkPromptModalDone(cmd)
 		}
+		if m.searchMode {
+			var cmd tea.Cmd
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			return m, cmd
+		}
 	}
 	return m, nil
 }
 
-// applyFilters rebuilds m.issues from m.allIssues applying label, search, and sort.
+// applyFetched installs a fetched issue list, keeping the selection (by
+// issue number), filters and search across the refresh.
+func (m TicketsModel) applyFetched(msg ticketsFetchedMsg) (tea.Model, tea.Cmd) {
+	m.loading = false
+	if msg.linkedPRs != nil {
+		m.linkedPRs = msg.linkedPRs
+	} else {
+		m.linkedPRs = make(map[int]ghPR)
+	}
+	if msg.err != nil || msg.repoSlug == "" {
+		m.err = msg.err
+		if msg.repoSlug == "" && msg.err == nil {
+			m.err = errNoRepo
+		}
+		m.issues = nil
+		m.allIssues = nil
+		return m, nil
+	}
+	m.err = nil
+	m.repoSlug = msg.repoSlug
+	m.allIssues = msg.issues
+	m.labelOptions = extractLabels(msg.issues)
+	if m.filterLabel != "" && !containsString(m.labelOptions, m.filterLabel) {
+		m.filterLabel = ""
+		m.labelIdx = -1
+	}
+	m.applyFilters()
+	return m, m.previewCmdForCursor()
+}
+
+// errNoRepo is shown when the directory has no GitHub remote.
+var errNoRepo = fmt.Errorf("no GitHub remote found in this directory")
+
+// handleKey routes a key press to the open overlay or the active view.
+func (m TicketsModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// ctrl+c / q always quit the application when any overlay is active.
+	if (m.confirmModal.Visible || m.agentModal.Visible || m.promptModal.Visible) &&
+		(msg.String() == "ctrl+c" || msg.String() == "q") {
+		m.result = TicketsResult{Cancelled: true}
+		m.quitting = true
+		return m, tea.Quit
+	}
+	if m.confirmModal.Visible {
+		var cmd tea.Cmd
+		m.confirmModal, cmd = m.confirmModal.Update(msg)
+		return m.checkConfirmModalDone(cmd)
+	}
+	if m.promptModal.Visible {
+		var cmd tea.Cmd
+		m.promptModal, cmd = m.promptModal.Update(msg)
+		return m.checkPromptModalDone(cmd)
+	}
+	if m.agentModal.Visible {
+		var cmd tea.Cmd
+		m.agentModal, cmd = m.agentModal.Update(msg)
+		return m.checkAgentModalDone(cmd)
+	}
+	if m.createModal.Visible {
+		var cmd tea.Cmd
+		m.createModal, cmd = m.createModal.Update(msg)
+		return m.checkCreateModalDone(cmd)
+	}
+	if m.helpModal.Visible {
+		if msg.String() == "ctrl+c" {
+			m.result = TicketsResult{Cancelled: true}
+			m.quitting = true
+			return m, tea.Quit
+		}
+		var cmd tea.Cmd
+		m.helpModal, cmd = m.helpModal.Update(msg)
+		if h, ok := m.helpModal.Content.(tkHelpModel); ok && h.done {
+			m.helpModal.Visible = false
+		}
+		return m, cmd
+	}
+	if m.viewMode == tkViewDetail {
+		return m.updateDetail(msg)
+	}
+	if m.searchMode {
+		return m.updateSearch(msg)
+	}
+	return m.updateList(msg)
+}
+
+// applyFilters rebuilds m.issues from m.allIssues applying label, search, and
+// sort. The highlighted issue stays highlighted when it survives the filter.
 func (m *TicketsModel) applyFilters() {
+	sel := m.selectedNumber()
 	filtered := filterByLabel(m.allIssues, m.filterLabel)
 	if m.searchQuery != "" {
 		q := strings.ToLower(m.searchQuery)
 		var searched []ghIssue
 		for _, iss := range filtered {
-			if strings.Contains(strings.ToLower(iss.Title), q) {
+			if strings.Contains(strings.ToLower(iss.Title), q) ||
+				strings.Contains("#"+strconv.Itoa(iss.Number), q) {
 				searched = append(searched, iss)
 			}
 		}
 		filtered = searched
 	}
+	// filterByLabel returns its input unfiltered; never sort the master list in place.
+	filtered = append([]ghIssue(nil), filtered...)
 	switch m.sortBy {
 	case sortNewest:
-		sort.Slice(filtered, func(i, j int) bool {
+		sort.SliceStable(filtered, func(i, j int) bool {
 			return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
 		})
 	case sortOldest:
-		sort.Slice(filtered, func(i, j int) bool {
+		sort.SliceStable(filtered, func(i, j int) bool {
 			return filtered[i].CreatedAt.Before(filtered[j].CreatedAt)
 		})
 	case sortNumber:
-		sort.Slice(filtered, func(i, j int) bool {
+		sort.SliceStable(filtered, func(i, j int) bool {
 			return filtered[i].Number < filtered[j].Number
+		})
+	case sortNumberDesc:
+		sort.SliceStable(filtered, func(i, j int) bool {
+			return filtered[i].Number > filtered[j].Number
 		})
 	}
 	m.issues = filtered
 	m.cursor = 0
-	m.splitPane.SetCursor(0)
+	for i, iss := range filtered {
+		if iss.Number == sel {
+			m.cursor = i
+			break
+		}
+	}
+	m.splitPane.SetListContent(m.splitPane.listContent, len(m.issues))
+	m.splitPane.SetCursor(m.cursor)
+}
+
+// setLabelFilter filters the list to one label ("" clears the filter).
+func (m *TicketsModel) setLabelFilter(label string) {
+	m.filterLabel = label
+	m.labelIdx = -1
+	for i, l := range m.labelOptions {
+		if l == label {
+			m.labelIdx = i
+		}
+	}
+	m.applyFilters()
+}
+
+// toggleSortColumn handles a click on a sortable column header: "num"
+// toggles ascending/descending issue number, "age" newest/oldest.
+func (m *TicketsModel) toggleSortColumn(col string) {
+	switch col {
+	case "num":
+		if m.sortBy == sortNumber {
+			m.sortBy = sortNumberDesc
+		} else {
+			m.sortBy = sortNumber
+		}
+	case "age":
+		if m.sortBy == sortNewest {
+			m.sortBy = sortOldest
+		} else {
+			m.sortBy = sortNewest
+		}
+	}
+	m.applyFilters()
+}
+
+// quit ends the browser without launching anything.
+func (m TicketsModel) quit() (tea.Model, tea.Cmd) {
+	m.result = TicketsResult{Cancelled: true}
+	m.quitting = true
+	return m, tea.Quit
+}
+
+// openHelp shows the keys-and-gestures overlay.
+func (m TicketsModel) openHelp() (tea.Model, tea.Cmd) {
+	m.helpModal = NewModal("Tickets — keys & mouse", tkHelpModel{}, ModalMedium)
+	return m, nil
+}
+
+// launchTriage quits with a triage launch of issue n.
+func (m TicketsModel) launchTriage(n int, title, body string) (tea.Model, tea.Cmd) {
+	m.result = TicketsResult{
+		LaunchAgent:  true,
+		TicketNumber: n,
+		TicketTitle:  title,
+		TicketBody:   body,
+		PromptMode:   "triage",
+	}
+	m.quitting = true
+	return m, tea.Quit
+}
+
+// launchDispatch opens the agent picker for issue n, or quits with a launch
+// on the label-inferred agent when no agents are known.
+func (m TicketsModel) launchDispatch(n int, title, body string) (tea.Model, tea.Cmd) {
+	if len(m.agents) > 0 {
+		asm := newAgentSelectModel(m.agents, n, title, body)
+		m.agentModal = NewModal(fmt.Sprintf("Select Agent  #%d", n), asm, ModalMedium)
+		return m, nil
+	}
+	m.result = TicketsResult{LaunchAgent: true, TicketNumber: n, TicketTitle: title, TicketBody: body}
+	m.quitting = true
+	return m, tea.Quit
+}
+
+// confirmClose opens the close-confirmation modal for issue n.
+func (m TicketsModel) confirmClose(n int, state string) (tea.Model, tea.Cmd) {
+	if strings.EqualFold(state, "closed") {
+		return m, m.setFlash(fmt.Sprintf("#%d is already closed", n), false)
+	}
+	m.confirmModal = NewModal("Close Ticket", newConfirmCloseModel(n), ModalSmall)
+	return m, nil
+}
+
+// openLinkedPR opens issue n's linked PR, if it has one.
+func (m TicketsModel) openLinkedPR(n int) (tea.Model, tea.Cmd) {
+	if pr, ok := m.linkedPRs[n]; ok {
+		return m, tkOpenPRInBrowserCmd(pr.URL)
+	}
+	return m, m.setFlash(fmt.Sprintf("#%d has no linked PR", n), false)
+}
+
+// copyURL copies the current issue's URL to the tmux buffer.
+func (m TicketsModel) copyURL() (tea.Model, tea.Cmd) {
+	url := m.currentURL()
+	if url == "" {
+		return m, nil
+	}
+	return m, tkCopyURLCmd(url)
 }
 
 func (m TicketsModel) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	iss, hasIssue := m.selectedIssue()
 	switch msg.String() {
 	case "ctrl+c", "q":
-		m.result = TicketsResult{Cancelled: true}
-		m.quitting = true
-		return m, tea.Quit
+		return m.quit()
 
 	case "esc":
 		if m.searchQuery != "" {
@@ -574,45 +953,41 @@ func (m TicketsModel) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.searchQuery = ""
 			m.searchInput.SetValue("")
 			m.applyFilters()
-			return m, nil
+			return m, m.previewCmdForCursor()
 		}
-		m.result = TicketsResult{Cancelled: true}
-		m.quitting = true
-		return m, tea.Quit
+		return m.quit()
 
 	case "up", "k":
-		m.createConfirm = ""
 		if m.cursor > 0 {
 			m.cursor--
 			m.splitPane.SetCursor(m.cursor)
 		}
-		if m.splitPane.DetailHeight() >= 4 && m.cursor < len(m.issues) {
-			return m, m.previewFetchCmd(m.issues[m.cursor].Number)
-		}
+		return m, m.previewCmdForCursor()
 
 	case "down", "j":
-		m.createConfirm = ""
 		if m.cursor < len(m.issues)-1 {
 			m.cursor++
 			m.splitPane.SetCursor(m.cursor)
 		}
-		if m.splitPane.DetailHeight() >= 4 && m.cursor < len(m.issues) {
-			return m, m.previewFetchCmd(m.issues[m.cursor].Number)
-		}
+		return m, m.previewCmdForCursor()
 
 	case "tab":
 		m.splitPane.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 		return m, nil
 
+	case "J":
+		m.scrollPreview(tkWheelStep)
+		return m, nil
+
+	case "K":
+		m.scrollPreview(-tkWheelStep)
+		return m, nil
+
 	case "enter":
-		if len(m.issues) == 0 {
+		if !hasIssue || m.repoSlug == "" {
 			break
 		}
-		issue := m.issues[m.cursor]
-		if m.repoSlug == "" {
-			break
-		}
-		return m, tkFetchDetailCmd(m.repoSlug, issue.Number)
+		return m, tkFetchDetailCmd(m.repoSlug, iss.Number)
 
 	case "c":
 		content := NewCreateTicketModel(m.repoSlug, m.labelOptions)
@@ -632,6 +1007,7 @@ func (m TicketsModel) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.filterLabel = m.labelOptions[m.labelIdx]
 		}
 		m.applyFilters()
+		return m, m.previewCmdForCursor()
 
 	case "/":
 		m.searchMode = true
@@ -639,71 +1015,61 @@ func (m TicketsModel) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.searchInput.Focus()
 		return m, textinput.Blink
 
+	case "S":
+		// Cycle the issue state shown: open → closed → all.
+		m.issueState = nextIssueState(m.issueState)
+		m.loading = true
+		return m, tkFetchTicketsCmd(m.dir, m.issueState)
+
 	case "o":
-		if len(m.issues) == 0 || m.repoSlug == "" {
+		if !hasIssue || m.repoSlug == "" {
 			break
 		}
-		issue := m.issues[m.cursor]
-		return m, openIssueInBrowserCmd(m.repoSlug, issue.Number)
+		return m, openIssueInBrowserCmd(m.repoSlug, iss.Number)
+
+	case "p":
+		if hasIssue {
+			return m.openLinkedPR(iss.Number)
+		}
+
+	case "y":
+		return m.copyURL()
+
+	case "a":
+		if hasIssue && m.repoSlug != "" {
+			return m, tkAssignSelfCmd(m.repoSlug, iss.Number)
+		}
 
 	case "t":
-		if len(m.issues) == 0 {
-			break
+		if hasIssue {
+			return m.launchTriage(iss.Number, iss.Title, "")
 		}
-		issue := m.issues[m.cursor]
-		m.result = TicketsResult{
-			LaunchAgent:  true,
-			TicketNumber: issue.Number,
-			TicketTitle:  issue.Title,
-			AgentName:    "",
-			PromptMode:   "triage",
-		}
-		m.quitting = true
-		return m, tea.Quit
 
 	case "T":
-		if len(m.issues) == 0 {
-			break
+		if hasIssue {
+			return m.launchDispatch(iss.Number, iss.Title, "")
 		}
-		issue := m.issues[m.cursor]
-		if len(m.agents) > 0 {
-			asm := newAgentSelectModel(m.agents, issue.Number, issue.Title, "")
-			m.agentModal = NewModal(
-				fmt.Sprintf("Select Agent  #%d", issue.Number),
-				asm, ModalMedium,
-			)
-			return m, nil
-		}
-		m.result = TicketsResult{
-			LaunchAgent:  true,
-			TicketNumber: issue.Number,
-			TicketTitle:  issue.Title,
-		}
-		m.quitting = true
-		return m, tea.Quit
 
 	case "d":
 		// Show close-confirmation overlay before closing the highlighted issue.
-		if len(m.issues) == 0 || m.repoSlug == "" {
-			break
+		if hasIssue && m.repoSlug != "" {
+			return m.confirmClose(iss.Number, iss.State)
 		}
-		num := m.issues[m.cursor].Number
-		m.confirmModal = NewModal("Close Ticket", newConfirmCloseModel(num), ModalSmall)
-		return m, nil
 
 	case "s":
-		// Cycle sort modes: newest → oldest → number → newest
-		m.sortBy = (m.sortBy + 1) % 3
+		// Cycle sort modes: newest → oldest → # ascending → # descending.
+		m.sortBy = (m.sortBy + 1) % sortModeCount
 		m.applyFilters()
-		return m, nil
+		return m, m.previewCmdForCursor()
 
 	case "e":
 		// Open the highlighted issue for editing in the browser.
-		if len(m.issues) == 0 || m.repoSlug == "" {
-			break
+		if hasIssue && m.repoSlug != "" {
+			return m, tkEditIssueCmd(m.repoSlug, iss.Number)
 		}
-		issue := m.issues[m.cursor]
-		return m, tkEditIssueCmd(m.repoSlug, issue.Number)
+
+	case "?":
+		return m.openHelp()
 
 	case "P":
 		// Toggle autopilot on/off.
@@ -730,14 +1096,11 @@ func (m TicketsModel) updateSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.searchInput.SetValue("")
 		m.searchInput.Blur()
 		m.applyFilters()
-		return m, nil
+		return m, m.previewCmdForCursor()
 
 	case "enter":
-		m.searchMode = false
-		m.searchQuery = m.searchInput.Value()
-		m.searchInput.Blur()
-		m.applyFilters()
-		return m, nil
+		m.commitSearch()
+		return m, m.previewCmdForCursor()
 	}
 
 	var cmd tea.Cmd
@@ -747,93 +1110,90 @@ func (m TicketsModel) updateSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// commitSearch closes the search input, keeping its query as the filter.
+func (m *TicketsModel) commitSearch() {
+	m.searchMode = false
+	m.searchQuery = m.searchInput.Value()
+	m.searchInput.Blur()
+	m.applyFilters()
+}
+
+// backToList leaves the detail view.
+func (m *TicketsModel) backToList() {
+	m.viewMode = tkViewList
+	m.detail = nil
+	m.scrollOffset = 0
+}
+
 func (m TicketsModel) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	d := m.detail
+	if d == nil {
+		m.viewMode = tkViewList
+		return m.updateList(msg)
+	}
 	switch msg.String() {
 	case "ctrl+c", "q":
-		m.result = TicketsResult{Cancelled: true}
-		m.quitting = true
-		return m, tea.Quit
+		return m.quit()
 
 	case "esc":
-		m.viewMode = 0
-		m.detail = nil
-		m.scrollOffset = 0
+		m.backToList()
 
 	case "up", "k":
-		if m.scrollOffset > 0 {
-			m.scrollOffset--
-		}
+		m.scrollDetail(-1)
 
 	case "down", "j":
-		m.scrollOffset++
+		m.scrollDetail(1)
 
 	case "o":
-		if m.detail != nil && m.repoSlug != "" {
-			return m, openIssueInBrowserCmd(m.repoSlug, m.detail.number)
+		if m.repoSlug != "" {
+			return m, openIssueInBrowserCmd(m.repoSlug, d.number)
 		}
+
+	case "y":
+		return m.copyURL()
 
 	case "t":
-		if m.detail != nil {
-			m.result = TicketsResult{
-				LaunchAgent:  true,
-				TicketNumber: m.detail.number,
-				TicketTitle:  m.detail.title,
-				TicketBody:   m.detail.body,
-				AgentName:    "",
-				PromptMode:   "triage",
-			}
-			m.quitting = true
-			return m, tea.Quit
-		}
+		return m.launchTriage(d.number, d.title, d.body)
 
 	case "T":
-		if m.detail != nil {
-			if len(m.agents) > 0 {
-				asm := newAgentSelectModel(m.agents, m.detail.number, m.detail.title, m.detail.body)
-				m.agentModal = NewModal(
-					fmt.Sprintf("Select Agent  #%d", m.detail.number),
-					asm, ModalMedium,
-				)
-				return m, nil
-			}
-			m.result = TicketsResult{
-				LaunchAgent:  true,
-				TicketNumber: m.detail.number,
-				TicketTitle:  m.detail.title,
-				TicketBody:   m.detail.body,
-			}
-			m.quitting = true
-			return m, tea.Quit
-		}
+		return m.launchDispatch(d.number, d.title, d.body)
 
 	case "d":
 		// Show close-confirmation overlay before closing the current issue.
-		if m.detail != nil && m.repoSlug != "" {
-			m.confirmModal = NewModal("Close Ticket", newConfirmCloseModel(m.detail.number), ModalSmall)
-			return m, nil
+		if m.repoSlug != "" {
+			return m.confirmClose(d.number, d.state)
 		}
 
 	case "a":
 		// Self-assign the current issue.
-		if m.detail != nil && m.repoSlug != "" {
-			return m, tkAssignSelfCmd(m.repoSlug, m.detail.number)
+		if m.repoSlug != "" {
+			return m, tkAssignSelfCmd(m.repoSlug, d.number)
 		}
 
 	case "e":
 		// Open the current issue for editing in the browser.
-		if m.detail != nil && m.repoSlug != "" {
-			return m, tkEditIssueCmd(m.repoSlug, m.detail.number)
+		if m.repoSlug != "" {
+			return m, tkEditIssueCmd(m.repoSlug, d.number)
 		}
 
 	case "p":
-		// Open the linked PR in browser.
-		if m.detail != nil {
-			if pr, ok := m.linkedPRs[m.detail.number]; ok {
-				return m, tkOpenPRInBrowserCmd(pr.URL)
-			}
-		}
+		return m.openLinkedPR(d.number)
+
+	case "?":
+		return m.openHelp()
 	}
 	return m, nil
+}
+
+// scrollDetail moves the detail body by delta lines, clamped to its length.
+func (m *TicketsModel) scrollDetail(delta int) {
+	m.scrollOffset += delta
+	if maxScroll := m.detailMaxScroll(); m.scrollOffset > maxScroll {
+		m.scrollOffset = maxScroll
+	}
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
 }
 
 // checkCreateModalDone inspects the create modal's content after an update.
@@ -849,16 +1209,15 @@ func (m TicketsModel) checkCreateModalDone(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if ctm.result.Err != nil {
-		return m, cmd
+		return m, tea.Batch(cmd, m.setFlash("✗ create failed: "+ctm.result.Err.Error(), true))
 	}
 	// Successful creation — show confirmation and refresh the list.
+	text := "issue created"
 	if ctm.result.Number > 0 {
-		m.createConfirm = fmt.Sprintf("created #%d", ctm.result.Number)
-	} else {
-		m.createConfirm = "issue created"
+		text = fmt.Sprintf("created #%d", ctm.result.Number)
 	}
 	m.loading = true
-	return m, tea.Batch(cmd, tkFetchTicketsCmd(m.dir))
+	return m, tea.Batch(cmd, m.setFlash(text, false), tkFetchTicketsCmd(m.dir, m.issueState))
 }
 
 // checkConfirmModalDone inspects the confirmModal content after an update.
@@ -929,894 +1288,6 @@ func (m TicketsModel) checkPromptModalDone(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
-func (m TicketsModel) View() tea.View {
-	var s string
-	switch {
-	case m.confirmModal.Visible:
-		// Render the confirmation overlay over whichever view is currently active.
-		var bg string
-		if m.viewMode == 1 {
-			bg = m.viewDetail()
-		} else {
-			bg = m.viewList()
-		}
-		s = m.confirmModal.Overlay(bg, m.termWidth, m.termHeight)
-	case m.promptModal.Visible:
-		s = m.promptModal.Overlay(m.viewList(), m.termWidth, m.termHeight)
-	case m.agentModal.Visible:
-		s = m.agentModal.Overlay(m.viewList(), m.termWidth, m.termHeight)
-	case m.createModal.Visible:
-		// Render the create form as a Modal overlay over the current background view.
-		var bg string
-		if m.viewMode == 1 {
-			bg = m.viewDetail()
-		} else {
-			bg = m.viewList()
-		}
-		s = m.createModal.Overlay(bg, m.termWidth, m.termHeight)
-	case m.viewMode == 1:
-		s = m.viewDetail()
-	default:
-		s = m.viewList()
-	}
-	v := tea.NewView(s)
-	v.AltScreen = true
-	return v
-}
-
-// autopilotOnStyle is a bright green dot for active autopilot.
-var autopilotOnStyle lipgloss.Style
-
-// initTicketStyles initialises tickets-browser styles from the active theme.
-// Shared styles (ColHeader, Rule, Dim, etc.) are sourced from tableStyles,
-// which must be initialised first by initTableStyles().
-func initTicketStyles() {
-	t := theme.Current()
-
-	tkStyles = NewStyles(90)
-
-	// ── Shared table styles ───────────────────────────────────────────────────
-	tkColHeaderStyle = tableStyles.ColHeader
-	tkRuleStyle = tableStyles.Rule
-	tkDimStyle = tableStyles.Dim
-	tkDetailLabelStyle = tableStyles.DetailLabel.Width(16)
-	tkDetailValueStyle = tableStyles.DetailValue
-	tkDetailSectionStyle = tableStyles.DetailSection
-	tkSubtitleStyle = tableStyles.Subtitle
-
-	// ── Ticket-specific styles ────────────────────────────────────────────────
-	tkNumStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Muted)).
-		Width(8)
-
-	tkNumSelectedStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Accent)).
-		Bold(true).
-		Width(8)
-
-	tkTitleColStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Text))
-
-	tkTitleSelectedStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Accent)).
-		Bold(true)
-
-	tkAgeStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Muted)).
-		Width(8)
-
-	tkCodeBlockStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Muted)).
-		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(lipgloss.Color(t.Surface)).
-		PaddingLeft(1)
-
-	autopilotOnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Green)).Bold(true)
-}
-
-// labelColor maps known label names to theme colors for visual differentiation.
-func labelColor(name string) string {
-	t := theme.Current()
-	switch name {
-	case "bug":
-		return t.Red
-	case "enhancement":
-		return t.Blue
-	case "quick-fix":
-		return t.Green
-	case "refactor":
-		return t.Muted
-	case "triage":
-		return t.Yellow
-	default:
-		return t.Subtle
-	}
-}
-
-func (m TicketsModel) viewList() string {
-	var b strings.Builder
-	contentWidth := m.contentWidth()
-
-	// Title banner
-	titleText := "Tickets"
-	if m.repoSlug != "" {
-		titleText = fmt.Sprintf("Tickets  %s", m.repoSlug)
-	}
-	b.WriteString(tkStyles.Title.Width(contentWidth).Render(titleText))
-	b.WriteString("\n")
-
-	// Autopilot status line — always occupies exactly one line so that total
-	// chrome height is stable regardless of whether autopilot is enabled.
-	// Leaving this conditional caused viewList() to produce a variable number
-	// of lines, which made Bubble Tea leave stale content in the preview pane
-	// when the rendered frame shrank by one line.
-	if m.autoPoll {
-		intervalStr := m.autoPollInterval.String()
-		dot := autopilotOnStyle.Render("●")
-		b.WriteString(autopilotOnStyle.Render("  Autopilot ") + dot + " " + tkDimStyle.Render(intervalStr))
-		if m.lastPollResult != "" {
-			b.WriteString("  " + tkDimStyle.Render(m.lastPollResult))
-		}
-	}
-	b.WriteString("\n")
-
-	// Subtitle / filter indicator
-	b.WriteString("\n")
-	if m.createConfirm != "" && !m.loading {
-		checkmark := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current().Green)).Bold(true).Render("✓")
-		b.WriteString("  " + checkmark + " " + tkDimStyle.Render(m.createConfirm))
-	} else if m.loading {
-		b.WriteString(tkSubtitleStyle.Render("  Loading..."))
-	} else if m.err != nil {
-		b.WriteString(tkSubtitleStyle.Render("  No git remote found in this directory"))
-	} else {
-		sortLabel := [3]string{"newest", "oldest", "number"}[m.sortBy]
-		var subtitle string
-		if m.filterLabel != "" && m.searchQuery != "" {
-			subtitle = fmt.Sprintf("  label:%s  ·  filtering: %q  (%d)  ·  sort:%s", m.filterLabel, m.searchQuery, len(m.issues), sortLabel)
-		} else if m.filterLabel != "" {
-			subtitle = fmt.Sprintf("  label:%s  (%d)  ·  sort:%s", m.filterLabel, len(m.issues), sortLabel)
-		} else if m.searchQuery != "" {
-			subtitle = fmt.Sprintf("  filtering: %q  (%d of %d issues)  ·  sort:%s", m.searchQuery, len(m.issues), len(m.allIssues), sortLabel)
-		} else {
-			subtitle = fmt.Sprintf("  open (%d)  ·  sort:%s", len(m.issues), sortLabel)
-		}
-		b.WriteString(tkSubtitleStyle.Render(subtitle))
-	}
-	b.WriteString("\n\n")
-
-	if !m.loading && m.err == nil {
-		// Column headers — title column fills remaining space.
-		titleColWidth := contentWidth - tkColNum - tkColPR - tkColLabels - tkColAssignee - tkColAge - 3
-		if titleColWidth < 10 {
-			titleColWidth = 10
-		}
-
-		b.WriteString(fmt.Sprintf("  %s%s%s%s%s%s",
-			tkColHeaderStyle.Render(fmt.Sprintf("%-*s", tkColNum, "#")),
-			tkColHeaderStyle.Render(fmt.Sprintf("%-*s", tkColPR, "PR")),
-			tkColHeaderStyle.Render(fmt.Sprintf("%-*s", titleColWidth, "TITLE")),
-			tkColHeaderStyle.Render(fmt.Sprintf("%-*s", tkColLabels, "LABELS")),
-			tkColHeaderStyle.Render(fmt.Sprintf("%-*s", tkColAssignee, "ASSIGNEE")),
-			tkColHeaderStyle.Render(fmt.Sprintf("%-*s", tkColAge, "AGE")),
-		))
-		b.WriteString("\n")
-		b.WriteString("  " + tkRuleStyle.Render(strings.Repeat("╌", contentWidth-2)))
-		b.WriteString("\n")
-
-		// SplitPane: list rows + separator + detail preview.
-		sp := m.splitPane
-		sp.SetListContent(m.buildListContent(), len(m.issues))
-		// SetListContent establishes totalRows; now sync the cursor so that
-		// scroll clamping uses the actual cursor position.
-		sp.SetCursor(m.cursor)
-		sp.SetDetailContent(m.buildPreviewContent())
-		b.WriteString(sp.View())
-	} else if !m.loading {
-		// Error state already shown in subtitle
-		for i := 0; i < 3; i++ {
-			b.WriteString("\n")
-		}
-	}
-
-	// Pin hint bar to terminal bottom: pad content to termHeight-1, then render hint bar.
-	var hintBar string
-	if m.searchMode {
-		dot := "  " + menuHintDotStyle.Render("·") + "  "
-		searchLine := menuHintKeyStyle.Render("/") + " " + m.searchInput.View()
-		hintBar = searchLine + dot +
-			menuHintKeyStyle.Render("enter") + " " + menuHintLabelStyle.Render("confirm") + dot +
-			menuHintKeyStyle.Render("esc") + " " + menuHintLabelStyle.Render("clear")
-	} else {
-		type hint struct{ key, label string }
-		hints := []hint{
-			{"j/k", "navigate"},
-			{"enter", "detail"},
-			{"e", "edit"},
-			{"d", "close"},
-			{"c", "create"},
-			{"l", "filter"},
-			{"s", "sort"},
-			{"o", "open"},
-			{"t", "triage"},
-			{"T", "launch"},
-			{"P", "autopilot"},
-		}
-		if m.searchQuery != "" {
-			hints = append(hints, hint{"/", "edit filter"}, hint{"esc", "clear"})
-		} else {
-			hints = append(hints, hint{"/", "search"}, hint{"esc/q", "quit"})
-		}
-		sep := "  " + menuHintDotStyle.Render("·") + "  "
-		var hintParts []string
-		for _, h := range hints {
-			hintParts = append(hintParts, menuHintKeyStyle.Render(h.key)+" "+menuHintLabelStyle.Render(h.label))
-		}
-		hintBarCentered := lipgloss.NewStyle().Width(m.contentWidth()).Align(lipgloss.Center)
-		hintBar = hintBarCentered.Render(strings.Join(hintParts, sep))
-	}
-
-	out := b.String()
-
-	// Pad content so the hint bar lands on the last terminal line (termHeight-1).
-	if m.termHeight > 0 {
-		lineCount := strings.Count(out, "\n")
-		targetLines := m.termHeight - 1
-		if lineCount < targetLines {
-			out += strings.Repeat("\n", targetLines-lineCount)
-		}
-	}
-	out += hintBar
-
-	// Safety net: ensure the output is exactly termHeight lines so Bubble Tea
-	// always overwrites the full frame.  Without this, any short-by-N render
-	// leaves N stale lines from the previous frame visible on screen.
-	if m.termHeight > 0 {
-		lineCount := strings.Count(out, "\n")
-		if lineCount < m.termHeight {
-			out += strings.Repeat("\n", m.termHeight-lineCount)
-		}
-	}
-
-	return out
-}
-
-// renderBodyLines renders a markdown body string into display lines, applying
-// per-line styling and visually differentiating fenced code blocks (``` ... ```)
-// from prose. Lines inside a code block are styled with tkCodeBlockStyle; prose
-// lines use tkDetailValueStyle. Long lines are hard-wrapped at maxWidth.
-func renderBodyLines(body string, maxWidth int) []string {
-	var out []string
-	inCodeBlock := false
-
-	appendLine := func(text string, inBlock bool) {
-		if inBlock {
-			out = append(out, tkCodeBlockStyle.Render(text))
-		} else {
-			out = append(out, "  "+tkDetailValueStyle.Render(text))
-		}
-	}
-
-	wrapAndAppend := func(rawLine string, inBlock bool) {
-		if len(rawLine) <= maxWidth {
-			appendLine(rawLine, inBlock)
-			return
-		}
-		for len(rawLine) > maxWidth {
-			appendLine(rawLine[:maxWidth], inBlock)
-			rawLine = rawLine[maxWidth:]
-		}
-		if rawLine != "" {
-			appendLine(rawLine, inBlock)
-		}
-	}
-
-	for _, rawLine := range strings.Split(body, "\n") {
-		if strings.HasPrefix(rawLine, "```") {
-			inCodeBlock = !inCodeBlock
-			// Render the fence marker itself in code-block style so there's
-			// no gap in the left border gutter.
-			appendLine(rawLine, true)
-			continue
-		}
-		wrapAndAppend(rawLine, inCodeBlock)
-	}
-	return out
-}
-
-func (m TicketsModel) viewDetail() string {
-	if m.detail == nil {
-		return m.viewList()
-	}
-
-	d := m.detail
-	contentWidth := m.contentWidth()
-
-	// Column widths: left 60% (body), right 40% (metadata+actions).
-	leftWidth := contentWidth * 60 / 100
-	rightWidth := contentWidth - leftWidth - 2 // -2 for separator gap
-	if leftWidth < 20 {
-		leftWidth = 20
-	}
-	if rightWidth < 15 {
-		rightWidth = 15
-	}
-
-	// ── Right column: metadata + actions (static) ────────────────────────────
-	var rightLines []string
-	rightLines = append(rightLines, tkDetailSectionStyle.Render("── Details ──"))
-	rightLines = append(rightLines, "")
-	rightLines = append(rightLines, tkDetailLabelStyle.Render("Title:"))
-	rightLines = append(rightLines, tkDetailValueStyle.Render(d.title))
-	rightLines = append(rightLines, "")
-	rightLines = append(rightLines, tkDetailLabelStyle.Render("Number:")+tkDetailValueStyle.Render(fmt.Sprintf("#%d", d.number)))
-	rightLines = append(rightLines, tkDimStyle.Render(d.url))
-
-	// Labels
-	if len(d.labels) > 0 {
-		rightLines = append(rightLines, "")
-		rightLines = append(rightLines, tkDetailLabelStyle.Render("Labels:"))
-		for _, l := range d.labels {
-			rightLines = append(rightLines, "  "+lipgloss.NewStyle().Foreground(lipgloss.Color(labelColor(l.Name))).Render(l.Name))
-		}
-	}
-
-	// Assignees
-	rightLines = append(rightLines, "")
-	if len(d.assignees) > 0 {
-		var logins []string
-		for _, u := range d.assignees {
-			logins = append(logins, u.Login)
-		}
-		rightLines = append(rightLines, tkDetailLabelStyle.Render("Assignees:"))
-		rightLines = append(rightLines, tkDetailValueStyle.Render(strings.Join(logins, ", ")))
-	} else {
-		rightLines = append(rightLines, tkDimStyle.Render("(unassigned)"))
-		rightLines = append(rightLines, tkDimStyle.Render("  press a to assign"))
-	}
-
-	// Linked PR
-	if pr, ok := m.linkedPRs[d.number]; ok {
-		rightLines = append(rightLines, "")
-		rightLines = append(rightLines, tkDetailSectionStyle.Render("── Linked PR ──"))
-		rightLines = append(rightLines, "")
-		prNumStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current().Green)).Bold(true)
-		rightLines = append(rightLines, tkDetailLabelStyle.Render("PR:")+prNumStyle.Render(fmt.Sprintf("#%d", pr.Number)))
-		rightLines = append(rightLines, tkDetailValueStyle.Render(pr.Title))
-		rightLines = append(rightLines, tkDimStyle.Render(pr.HeadRefName))
-	}
-
-	// ── Left column: body (scrollable) ────────────────────────────────────────
-	var bodyLines []string
-	if d.body != "" {
-		maxBodyWidth := leftWidth - 2
-		if maxBodyWidth < 20 {
-			maxBodyWidth = 20
-		}
-		rendered := glamourRender(d.body, maxBodyWidth)
-		bodyLines = append(bodyLines, strings.Split(strings.TrimRight(rendered, "\n"), "\n")...)
-	} else {
-		bodyLines = append(bodyLines, tkDimStyle.Render("  (no body)"))
-	}
-
-	// Apply scroll to the body lines.
-	detailVisible := m.detailVisibleRows()
-	totalLines := len(bodyLines)
-	maxScroll := totalLines - detailVisible
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	scrollOffset := m.scrollOffset
-	if scrollOffset > maxScroll {
-		scrollOffset = maxScroll
-	}
-	end := scrollOffset + detailVisible
-	if end > totalLines {
-		end = totalLines
-	}
-	visibleBody := bodyLines[scrollOffset:end]
-	for len(visibleBody) < detailVisible {
-		visibleBody = append(visibleBody, "")
-	}
-
-	// Pad right column to detailVisible rows.
-	for len(rightLines) < detailVisible {
-		rightLines = append(rightLines, "")
-	}
-	if len(rightLines) > detailVisible {
-		rightLines = rightLines[:detailVisible]
-	}
-
-	leftCol := lipgloss.NewStyle().Width(leftWidth).Render(strings.Join(visibleBody, "\n"))
-	rightCol := lipgloss.NewStyle().Width(rightWidth).Render(strings.Join(rightLines, "\n"))
-	twoCol := lipgloss.JoinHorizontal(lipgloss.Top, leftCol, "  ", rightCol)
-
-	var b strings.Builder
-	b.WriteString(tkStyles.Title.Width(contentWidth).Render(fmt.Sprintf("Issue #%d  %s", d.number, d.title)))
-	b.WriteString("\n")
-
-	b.WriteString(twoCol)
-	b.WriteString("\n")
-
-	// Scroll indicator
-	if totalLines > detailVisible {
-		scrollPct := 0
-		if maxScroll > 0 {
-			scrollPct = scrollOffset * 100 / maxScroll
-		}
-		b.WriteString(tkDimStyle.Render(fmt.Sprintf("  ── %d%% ──", scrollPct)))
-		b.WriteString("\n")
-	}
-
-	// Build hint bar for detail view.
-	detailHints := []struct{ key, label string }{
-		{"j/k", "scroll"},
-		{"e", "edit"},
-		{"d", "close"},
-		{"a", "assign"},
-		{"o", "open"},
-		{"t", "triage"},
-		{"T", "launch"},
-		{"esc", "back"},
-	}
-	if _, ok := m.linkedPRs[d.number]; ok {
-		detailHints = append(detailHints, struct{ key, label string }{"p", "open PR"})
-	}
-	sep := "  " + menuHintDotStyle.Render("·") + "  "
-	var hintParts []string
-	for _, h := range detailHints {
-		hintParts = append(hintParts, menuHintKeyStyle.Render(h.key)+" "+menuHintLabelStyle.Render(h.label))
-	}
-	hintBarCentered := lipgloss.NewStyle().Width(contentWidth).Align(lipgloss.Center)
-	hintBar := hintBarCentered.Render(strings.Join(hintParts, sep))
-
-	out := b.String()
-
-	// Pad content so the hint bar lands on the last terminal line (termHeight-1).
-	if m.termHeight > 0 {
-		lineCount := strings.Count(out, "\n")
-		targetLines := m.termHeight - 1
-		if lineCount < targetLines {
-			out += strings.Repeat("\n", targetLines-lineCount)
-		}
-	}
-	out += hintBar
-
-	// Safety net: ensure the output is exactly termHeight lines.
-	if m.termHeight > 0 {
-		lineCount := strings.Count(out, "\n")
-		if lineCount < m.termHeight {
-			out += strings.Repeat("\n", m.termHeight-lineCount)
-		}
-	}
-
-	return out
-}
-
-// previewFetchCmd returns a command to fetch a preview for the given issue, using the cache
-// to avoid redundant API calls.
-func (m TicketsModel) previewFetchCmd(number int) tea.Cmd {
-	if cached, ok := m.detailCache[number]; ok {
-		// Serve from cache immediately via a synthetic message.
-		d := *cached
-		return func() tea.Msg { return tkPreviewFetchedMsg(d) }
-	}
-	return tkFetchPreviewCmd(m.repoSlug, number)
-}
-
-// buildListContent returns all issue rows rendered as a single string (one row
-// per line).  SplitPane handles viewport scrolling based on the cursor.
-func (m TicketsModel) buildListContent() string {
-	if len(m.issues) == 0 {
-		return "   " + tkDimStyle.Render("No open issues found")
-	}
-
-	contentWidth := m.contentWidth()
-	titleColWidth := contentWidth - tkColNum - tkColPR - tkColLabels - tkColAssignee - tkColAge - 3
-	if titleColWidth < 10 {
-		titleColWidth = 10
-	}
-
-	prBadgeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current().Green))
-	assigneeBadgeStyle := tkDimStyle
-
-	var rows []string
-	for i, issue := range m.issues {
-		selected := i == m.cursor
-
-		cur := "   "
-		if selected {
-			cur = " " + cursorActiveStyle.Render("▸") + " "
-		}
-
-		numStr := fmt.Sprintf("#%-*d", tkColNum-2, issue.Number)
-		if selected {
-			numStr = tkNumSelectedStyle.Render(numStr)
-		} else {
-			numStr = tkNumStyle.Render(numStr)
-		}
-
-		// PR badge column
-		var prBadge string
-		if pr, ok := m.linkedPRs[issue.Number]; ok {
-			raw := fmt.Sprintf("PR#%d", pr.Number)
-			prBadge = prBadgeStyle.Width(tkColPR).Render(raw)
-		} else {
-			prBadge = lipgloss.NewStyle().Width(tkColPR).Render("")
-		}
-
-		// Labels column — each label gets its own color.
-		// Pre-truncate to tkColLabels-1 visible chars to prevent overflow.
-		const labelsMax = tkColLabels - 1
-		var labelParts []string
-		for _, l := range issue.Labels {
-			labelParts = append(labelParts, lipgloss.NewStyle().Foreground(lipgloss.Color(labelColor(l.Name))).Render(l.Name))
-		}
-		labelsRaw := strings.Join(labelParts, ",")
-		if len(ansi.Strip(labelsRaw)) > labelsMax {
-			var kept []string
-			for _, part := range labelParts {
-				candidate := strings.Join(append(kept, part), ",")
-				if len(ansi.Strip(candidate))+1 > labelsMax { // +1 for "…"
-					break
-				}
-				kept = append(kept, part)
-			}
-			if len(kept) == 0 {
-				plain := ansi.Strip(labelParts[0])
-				if len(plain) > labelsMax-1 {
-					plain = plain[:labelsMax-1]
-				}
-				labelsRaw = lipgloss.NewStyle().Foreground(lipgloss.Color(labelColor(issue.Labels[0].Name))).Render(plain) + "…"
-			} else {
-				labelsRaw = strings.Join(kept, ",") + "…"
-			}
-		}
-		labelsCol := lipgloss.NewStyle().Width(tkColLabels).Render(labelsRaw)
-
-		// Assignee badge column
-		var assigneeCol string
-		if len(issue.Assignees) > 0 {
-			login := issue.Assignees[0].Login
-			if len(login) > tkColAssignee-2 {
-				login = login[:tkColAssignee-3] + "…"
-			}
-			assigneeCol = assigneeBadgeStyle.Width(tkColAssignee).Render("@" + login)
-		} else {
-			assigneeCol = lipgloss.NewStyle().Width(tkColAssignee).Render("")
-		}
-
-		// Age column
-		age := fmtAge(time.Since(issue.CreatedAt))
-		ageCol := tkAgeStyle.Render(fmt.Sprintf("%-*s", tkColAge, age))
-
-		// Title column fills remaining space
-		title := issue.Title
-		if len(title) > titleColWidth-1 {
-			title = title[:titleColWidth-2] + "…"
-		}
-		var titleCol string
-		if selected {
-			titleCol = tkTitleSelectedStyle.Width(titleColWidth).Render(fmt.Sprintf("%-*s", titleColWidth, title))
-		} else {
-			titleCol = tkTitleColStyle.Width(titleColWidth).Render(fmt.Sprintf("%-*s", titleColWidth, title))
-		}
-
-		rowContent := cur + numStr + prBadge + titleCol + labelsCol + assigneeCol + ageCol
-		if selected {
-			selectedRowStyle := lipgloss.NewStyle().
-				Border(lipgloss.NormalBorder(), false, false, false, true).
-				BorderForeground(lipgloss.Color(theme.Current().Accent)).
-				PaddingLeft(0)
-			rowContent = selectedRowStyle.Render(rowContent)
-		}
-		rows = append(rows, rowContent)
-	}
-	return strings.Join(rows, "\n")
-}
-
-// buildPreviewContent returns the rendered detail preview content for the
-// currently highlighted issue.  Uses a two-column layout: body on the left
-// (60%), metadata/actions on the right (40%).  SplitPane handles clipping.
-func (m TicketsModel) buildPreviewContent() string {
-	maxH := m.splitPane.DetailHeight()
-	if maxH < 1 {
-		maxH = 1
-	}
-	contentWidth := m.contentWidth()
-
-	if m.previewDetail == nil {
-		// Nothing fetched yet — show a loading indicator.
-		var loadingLines []string
-		loadingLines = append(loadingLines, tkDimStyle.Render("  Loading preview..."))
-		for len(loadingLines) < maxH {
-			loadingLines = append(loadingLines, "")
-		}
-		return strings.Join(loadingLines, "\n")
-	}
-
-	d := m.previewDetail
-
-	// Column widths: left 60%, right 40%.
-	leftWidth := contentWidth * 60 / 100
-	rightWidth := contentWidth - leftWidth - 2 // -2 for separator gap
-	if leftWidth < 20 {
-		leftWidth = 20
-	}
-	if rightWidth < 10 {
-		rightWidth = 10
-	}
-
-	// ── Left column: title + body ─────────────────────────────────────────────
-	var leftLines []string
-
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(theme.Current().Text))
-	titleLine := titleStyle.Render(fmt.Sprintf("#%d  %s", d.number, d.title))
-	leftLines = append(leftLines, titleLine)
-
-	// Labels badges
-	if len(d.labels) > 0 {
-		var badges []string
-		for _, l := range d.labels {
-			badges = append(badges, lipgloss.NewStyle().Foreground(lipgloss.Color(labelColor(l.Name))).Render("["+l.Name+"]"))
-		}
-		leftLines = append(leftLines, strings.Join(badges, " "))
-	}
-
-	leftLines = append(leftLines, "")
-
-	maxBodyWidth := leftWidth - 2
-	if maxBodyWidth < 20 {
-		maxBodyWidth = 20
-	}
-	if d.body != "" {
-		rendered := glamourRender(d.body, maxBodyWidth)
-		leftLines = append(leftLines, strings.Split(strings.TrimRight(rendered, "\n"), "\n")...)
-	} else {
-		leftLines = append(leftLines, tkDimStyle.Render("(no body)"))
-	}
-
-	// ── Right column: actions panel ───────────────────────────────────────────
-	var rightLines []string
-
-	rightLines = append(rightLines, tkDetailSectionStyle.Render("Actions"))
-	rightLines = append(rightLines, "")
-
-	// Linked PR
-	if pr, ok := m.linkedPRs[d.number]; ok {
-		prNumStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current().Green)).Bold(true)
-		rightLines = append(rightLines, tkDetailLabelStyle.Render("PR:")+prNumStyle.Render(fmt.Sprintf("#%d", pr.Number)))
-		rightLines = append(rightLines, tkDimStyle.Render(pr.HeadRefName))
-		rightLines = append(rightLines, "")
-	}
-
-	// Assignees
-	if len(d.assignees) > 0 {
-		var logins []string
-		for _, u := range d.assignees {
-			logins = append(logins, u.Login)
-		}
-		rightLines = append(rightLines, tkDetailLabelStyle.Render("Assignees:"))
-		rightLines = append(rightLines, tkDetailValueStyle.Render(strings.Join(logins, ", ")))
-		rightLines = append(rightLines, "")
-	} else {
-		rightLines = append(rightLines, tkDimStyle.Render("unassigned"))
-		rightLines = append(rightLines, "")
-	}
-
-	// Labels
-	if len(d.labels) > 0 {
-		rightLines = append(rightLines, tkDetailLabelStyle.Render("Labels:"))
-		for _, l := range d.labels {
-			rightLines = append(rightLines, lipgloss.NewStyle().Foreground(lipgloss.Color(labelColor(l.Name))).Render("  "+l.Name))
-		}
-		rightLines = append(rightLines, "")
-	}
-
-	// Hint at bottom
-	rightLines = append(rightLines, tkDimStyle.Render("enter detail · o open · e edit"))
-
-	// ── Compose two-column layout ─────────────────────────────────────────────
-	// Reserve 1 line at the bottom for the hint row (handled inside rightLines).
-	maxBodyLines := maxH - 1
-	if maxBodyLines < 1 {
-		maxBodyLines = 1
-	}
-	if len(leftLines) > maxBodyLines {
-		leftLines = leftLines[:maxBodyLines]
-	}
-	for len(leftLines) < maxBodyLines {
-		leftLines = append(leftLines, "")
-	}
-	if len(rightLines) > maxH {
-		rightLines = rightLines[:maxH]
-	}
-	for len(rightLines) < maxH {
-		rightLines = append(rightLines, "")
-	}
-
-	leftCol := lipgloss.NewStyle().Width(leftWidth).Render(strings.Join(leftLines, "\n"))
-	rightCol := lipgloss.NewStyle().Width(rightWidth).Render(strings.Join(rightLines, "\n"))
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftCol, "  ", rightCol)
-}
-
-// tkFetchPreviewCmd fetches full details for a single issue and returns tkPreviewFetchedMsg.
-func tkFetchPreviewCmd(slug string, number int) tea.Cmd {
-	return func() tea.Msg {
-		cmd := exec.Command("gh", "issue", "view",
-			fmt.Sprintf("%d", number),
-			"--repo", slug,
-			"--json", "title,body,labels,assignees,url",
-		)
-		out, err := cmd.Output()
-		if err != nil {
-			return tkPreviewFetchedMsg{number: number, err: err}
-		}
-		var v struct {
-			Title     string    `json:"title"`
-			Body      string    `json:"body"`
-			Labels    []ghLabel `json:"labels"`
-			Assignees []ghUser  `json:"assignees"`
-			URL       string    `json:"url"`
-		}
-		if err := json.Unmarshal(out, &v); err != nil {
-			return tkPreviewFetchedMsg{number: number, err: err}
-		}
-		return tkPreviewFetchedMsg{
-			number:    number,
-			title:     v.Title,
-			body:      v.Body,
-			labels:    v.Labels,
-			assignees: v.Assignees,
-			url:       v.URL,
-		}
-	}
-}
-
-// tkFetchTicketsCmd fetches open issues for the repo in the given directory.
-// It also fetches open PRs and builds a map of issue number → linked PR.
-func tkFetchTicketsCmd(dir string) tea.Cmd {
-	return func() tea.Msg {
-		slug := TLRepoSlug(dir)
-		if slug == "" {
-			return ticketsFetchedMsg{repoSlug: ""}
-		}
-		issues, err := listOpenIssues(slug, 20)
-		if err != nil {
-			return ticketsFetchedMsg{repoSlug: slug, err: err}
-		}
-
-		// Fetch open PRs and build issue number → PR map from branch names.
-		linkedPRs := make(map[int]ghPR)
-		prCmd := exec.Command("gh", "pr", "list",
-			"--repo", slug,
-			"--state", "open",
-			"--limit", "50",
-			"--json", "number,title,headRefName,url",
-		)
-		if prOut, prErr := prCmd.Output(); prErr == nil {
-			var prs []ghPR
-			if json.Unmarshal(prOut, &prs) == nil {
-				for _, pr := range prs {
-					if issNum := extractIssueFromBranch(pr.HeadRefName); issNum > 0 {
-						linkedPRs[issNum] = pr
-					}
-				}
-			}
-		}
-
-		return ticketsFetchedMsg{issues: issues, repoSlug: slug, linkedPRs: linkedPRs}
-	}
-}
-
-// tkFetchDetailCmd fetches full details for a single issue.
-func tkFetchDetailCmd(slug string, number int) tea.Cmd {
-	return func() tea.Msg {
-		cmd := exec.Command("gh", "issue", "view",
-			fmt.Sprintf("%d", number),
-			"--repo", slug,
-			"--json", "title,body,labels,assignees,url",
-		)
-		out, err := cmd.Output()
-		if err != nil {
-			return tkDetailFetchedMsg{number: number, err: err}
-		}
-		var v struct {
-			Title     string    `json:"title"`
-			Body      string    `json:"body"`
-			Labels    []ghLabel `json:"labels"`
-			Assignees []ghUser  `json:"assignees"`
-			URL       string    `json:"url"`
-		}
-		if err := json.Unmarshal(out, &v); err != nil {
-			return tkDetailFetchedMsg{number: number, err: err}
-		}
-		return tkDetailFetchedMsg{
-			number:    number,
-			title:     v.Title,
-			body:      v.Body,
-			labels:    v.Labels,
-			assignees: v.Assignees,
-			url:       v.URL,
-		}
-	}
-}
-
-// listOpenIssues returns up to limit open issues for the repo slug via
-// `gh issue list`. Shared by the tickets browser and the ticket launcher.
-func listOpenIssues(slug string, limit int) ([]ghIssue, error) {
-	out, err := exec.Command("gh", "issue", "list",
-		"--repo", slug,
-		"--limit", strconv.Itoa(limit),
-		"--state", "open",
-		"--json", "number,title,labels,createdAt,url,assignees",
-	).Output()
-	if err != nil {
-		return nil, err
-	}
-	var issues []ghIssue
-	if err := json.Unmarshal(out, &issues); err != nil {
-		return nil, err
-	}
-	return issues, nil
-}
-
-// openIssueInBrowserCmd opens the given issue in the browser.
-func openIssueInBrowserCmd(slug string, number int) tea.Cmd {
-	return func() tea.Msg {
-		_ = exec.Command("gh", "issue", "view",
-			fmt.Sprintf("%d", number),
-			"--repo", slug,
-			"--web",
-		).Run()
-		return nil
-	}
-}
-
-// tkCloseIssueCmd closes a GitHub issue and returns tkIssueClosedMsg.
-func tkCloseIssueCmd(slug string, number int) tea.Cmd {
-	return func() tea.Msg {
-		cmd := exec.Command("gh", "issue", "close",
-			fmt.Sprintf("%d", number),
-			"--repo", slug,
-		)
-		_, err := cmd.CombinedOutput()
-		return tkIssueClosedMsg{number: number, err: err}
-	}
-}
-
-// tkAssignSelfCmd assigns the current user to a GitHub issue.
-func tkAssignSelfCmd(slug string, number int) tea.Cmd {
-	return func() tea.Msg {
-		cmd := exec.Command("gh", "issue", "edit",
-			fmt.Sprintf("%d", number),
-			"--repo", slug,
-			"--add-assignee", "@me",
-		)
-		_, err := cmd.CombinedOutput()
-		return tkSelfAssignedMsg{number: number, err: err}
-	}
-}
-
-// tkEditIssueCmd opens the given issue for editing in the browser via `gh issue edit --web`.
-func tkEditIssueCmd(slug string, number int) tea.Cmd {
-	return func() tea.Msg {
-		_ = exec.Command("gh", "issue", "edit",
-			fmt.Sprintf("%d", number),
-			"--repo", slug,
-			"--web",
-		).Run()
-		return nil
-	}
-}
-
-// tkOpenPRInBrowserCmd opens a PR URL in the browser.
-func tkOpenPRInBrowserCmd(url string) tea.Cmd {
-	return func() tea.Msg {
-		_ = exec.Command("gh", "pr", "view", url, "--web").Run()
-		return nil
-	}
-}
-
 // extractIssueFromBranch parses an issue number from branch names like
 // "agent/go-engineer/issue-42" or "fix/issue-123".
 func extractIssueFromBranch(branch string) int {
@@ -1862,12 +1333,8 @@ func tkCreateIssueCmd(slug, title, body string, selectedLabels map[string]bool) 
 		if len(labelNames) > 0 {
 			args = append(args, "--label", strings.Join(labelNames, ","))
 		}
-		cmd := exec.Command("gh", args...)
-		out, err := cmd.Output()
+		out, err := tkExec("gh", args...)
 		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				return issueCreatedMsg{Err: fmt.Errorf("%s", strings.TrimSpace(string(exitErr.Stderr)))}
-			}
 			return issueCreatedMsg{Err: err}
 		}
 		url := strings.TrimSpace(string(out))

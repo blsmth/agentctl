@@ -31,6 +31,13 @@ type ConfirmCloseModel struct {
 	issueNumber int
 	cursorIdx   int // 0=Yes, 1=No; defaults to 1 (No) for safety
 	state       confirmCloseState
+	hover       string // zone under the pointer (button hover feedback)
+}
+
+// withHover implements tkHoverable.
+func (m ConfirmCloseModel) withHover(id string) tea.Model {
+	m.hover = id
+	return m
 }
 
 // newConfirmCloseModel creates a ConfirmCloseModel for the given issue number.
@@ -75,14 +82,19 @@ func (m ConfirmCloseModel) View() tea.View {
 	b.WriteString(popupRuleStyle.Render(strings.Repeat("─", popupContentWidth)))
 	b.WriteString("\n\n")
 
-	var yesBtn, noBtn string
+	yesSt, noSt := btnNormalStyle, btnSelectedStyle
 	if m.cursorIdx == 0 {
-		yesBtn = btnDangerStyle.Render("Yes, close")
-		noBtn = btnNormalStyle.Render("No, cancel")
-	} else {
-		yesBtn = btnNormalStyle.Render("Yes, close")
-		noBtn = btnSelectedStyle.Render("No, cancel")
+		yesSt, noSt = btnDangerStyle, btnNormalStyle
 	}
+	const yesID, noID = "mkey:y@close", "mkey:n@close"
+	if m.hover == yesID {
+		yesSt = yesSt.Reverse(true)
+	}
+	if m.hover == noID {
+		noSt = noSt.Reverse(true)
+	}
+	yesBtn := zoneMark(yesID, yesSt.Render("Yes, close"))
+	noBtn := zoneMark(noID, noSt.Render("No, cancel"))
 	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, yesBtn, "   ", noBtn))
 
 	return tea.NewView(b.String())
@@ -210,7 +222,7 @@ func (m AgentSelectModel) View() tea.View {
 			desc = desc[:maxDesc-1] + "…"
 		}
 
-		b.WriteString(cur + nameStyle.Render(a.Name) + descStyle.Render(desc))
+		b.WriteString(zoneMark(fmt.Sprintf("mrow:%d@agent", i), cur+nameStyle.Render(a.Name)+descStyle.Render(desc)))
 		b.WriteString("\n")
 	}
 
@@ -401,7 +413,7 @@ func (m PromptSelectModel) View() tea.View {
 			nameStyle = tkTitleSelectedStyle.Width(24)
 		}
 
-		b.WriteString(cur + nameStyle.Render(opt.label) + descStyle.Render(opt.description))
+		b.WriteString(zoneMark(fmt.Sprintf("mrow:%d@prompt", i), cur+nameStyle.Render(opt.label)+descStyle.Render(opt.description)))
 		b.WriteString("\n")
 
 		// Show custom prompt input below the "Custom" option when editing.

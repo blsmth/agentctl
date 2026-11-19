@@ -757,8 +757,9 @@ func TestSplitPane_CursorSyncOnNavigation(t *testing.T) {
 	}
 }
 
-// TestSplitPane_CursorSyncOnFilterReset verifies that applyFilters resets the
-// SplitPane cursor to 0.
+// TestSplitPane_CursorSyncOnFilterReset verifies that applyFilters keeps the
+// highlighted issue (selection is tracked by issue number) and falls back to
+// the first row when the filter removes it, keeping SplitPane in sync.
 func TestSplitPane_CursorSyncOnFilterReset(t *testing.T) {
 	InitStyles()
 	m := makeTestTicketsModelWithIssues(t, 5)
@@ -766,14 +767,23 @@ func TestSplitPane_CursorSyncOnFilterReset(t *testing.T) {
 	// Move cursor to position 3.
 	m.cursor = 3
 	m.splitPane.SetCursor(3)
+	want := m.issues[3].Number
 
-	// Apply filters (simulating a label or search change) resets cursor to 0.
+	// Re-sorting keeps the same issue highlighted.
+	m.sortBy = sortNumber
 	m.applyFilters()
-	if m.cursor != 0 {
-		t.Errorf("after applyFilters: cursor = %d, want 0", m.cursor)
+	if got := m.selectedNumber(); got != want {
+		t.Errorf("after re-sort: selected #%d, want #%d", got, want)
 	}
-	if m.splitPane.Cursor() != 0 {
-		t.Errorf("after applyFilters: splitPane.Cursor() = %d, want 0", m.splitPane.Cursor())
+	if m.splitPane.Cursor() != m.cursor {
+		t.Errorf("splitPane.Cursor() = %d, want %d", m.splitPane.Cursor(), m.cursor)
+	}
+
+	// A search that drops the selected issue resets to the first row.
+	m.searchQuery = "issue 1"
+	m.applyFilters()
+	if m.cursor != 0 || m.splitPane.Cursor() != 0 {
+		t.Errorf("after filtering the selection out: cursor = %d / %d, want 0", m.cursor, m.splitPane.Cursor())
 	}
 }
 

@@ -42,6 +42,9 @@ func TestMain(m *testing.M) {
 	fleetSweep = func(context.Context, sweeprun.Target, bool) (sweeprun.Report, error) {
 		return sweeprun.Report{}, errors.New("sweep disabled in tests")
 	}
+	// Never spawn gh or tmux from the tickets browser; tests that need a
+	// result install their own stub.
+	tkExec = func(string, ...string) ([]byte, error) { return nil, errExecDisabled }
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
