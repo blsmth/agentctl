@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blsmth/agentctl/internal/detach"
 	"github.com/blsmth/agentctl/internal/paths"
 )
 
@@ -152,5 +153,38 @@ func TestSessionHookArgs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSpawnReconcileStripsWindowAccount: reconcile claims every gone window of
+// the project and can launch improve sessions, so it must not run under the
+// account of the window that spawned it.
+func TestSpawnReconcileStripsWindowAccount(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "/accounts/work")
+	t.Setenv("AGENTCTL_ACCOUNT", "work")
+	t.Setenv("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1")
+	var gotArgs, gotEnv []string
+	t.Cleanup(detach.SetStartSelfForTest(func(args, env []string) error {
+		gotArgs, gotEnv = args, env
+		return nil
+	}))
+	rd := t.TempDir()
+	if err := spawnReconcileFn(rd); err != nil {
+		t.Fatal(err)
+	}
+	if len(gotArgs) != 1 || gotArgs[0] != "reconcile" {
+		t.Fatalf("args = %q", gotArgs)
+	}
+	pinned := false
+	for _, e := range gotEnv {
+		for _, name := range []string{"CLAUDE_CONFIG_DIR=", "AGENTCTL_ACCOUNT=", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB="} {
+			if strings.HasPrefix(e, name) {
+				t.Errorf("child env keeps %s", e)
+			}
+		}
+		pinned = pinned || e == "AGENTCTL_RUNTIME_DIR="+rd
+	}
+	if !pinned {
+		t.Errorf("child env lacks AGENTCTL_RUNTIME_DIR=%s", rd)
 	}
 }

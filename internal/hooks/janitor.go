@@ -18,7 +18,7 @@ const (
 
 // spawnJanitorFn starts the detached janitor process; a seam for tests.
 var spawnJanitorFn = func(runtimeDir string) error {
-	return detach.StartSelfPinned([]string{"reconcile", "--housekeeping"}, runtimeDir)
+	return detach.StartDaemon([]string{"reconcile", "--housekeeping"}, runtimeDir)
 }
 
 // janitor is called next to monitorWatchdog from the frequent, non-per-tool

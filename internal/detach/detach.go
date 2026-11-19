@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -100,8 +102,9 @@ func Start(exe string, args, env []string) error {
 	return nil
 }
 
-// StartSelf is Start with exe set to the current executable.
-func StartSelf(args, env []string) error {
+// startSelfFn is StartSelf's implementation; SetStartSelfForTest replaces it
+// so spawn sites can assert the args and env they would launch with.
+var startSelfFn = func(args, env []string) error {
 	exe, err := selfpath.Spawnable()
 	if err != nil {
 		return fmt.Errorf("resolving executable: %w", err)
@@ -109,10 +112,91 @@ func StartSelf(args, env []string) error {
 	return Start(exe, args, env)
 }
 
-// StartSelfPinned is StartSelf with AGENTCTL_RUNTIME_DIR pinned to runtimeDir
-// in the child's environment, so a process spawned from a hook or tmux
-// run-shell resolves this project's runtime dir whatever its cwd is.
-func StartSelfPinned(args []string, runtimeDir string) error {
-	env := append(os.Environ(), "AGENTCTL_RUNTIME_DIR="+runtimeDir)
-	return StartSelf(args, env)
+// StartSelf is Start with exe set to the current executable.
+func StartSelf(args, env []string) error {
+	return startSelfFn(args, env)
+}
+
+// SetStartSelfForTest replaces what StartSelf (and so StartDaemon) runs and
+// returns a restore func. It exists so tests of spawn sites never fork.
+func SetStartSelfForTest(fn func(args, env []string) error) (restore func()) {
+	old := startSelfFn
+	startSelfFn = fn
+	return func() { startSelfFn = old }
+}
+
+// StartDaemon starts a long-lived or multi-window agentctl process (metrics
+// serve, reconcile) detached, with DaemonEnv(os.Environ(), runtimeDir): the
+// spawning window's Claude account is stripped and, when runtimeDir is not
+// empty, AGENTCTL_RUNTIME_DIR is pinned to it so a process spawned from a hook
+// or tmux run-shell resolves that project's runtime dir whatever its cwd is.
+func StartDaemon(args []string, runtimeDir string) error {
+	return StartSelf(args, DaemonEnv(os.Environ(), runtimeDir))
+}
+
+// DaemonEnv returns env with the spawning window's account removed
+// (StripAccountEnv) and, when runtimeDir is not empty, AGENTCTL_RUNTIME_DIR
+// set to it.
+func DaemonEnv(env []string, runtimeDir string) []string {
+	env = StripAccountEnv(env)
+	if runtimeDir == "" {
+		return env
+	}
+	env = removeVars(env, envRuntimeDir)
+	return append(env, envRuntimeDir+"="+runtimeDir)
+}
+
+const envRuntimeDir = "AGENTCTL_RUNTIME_DIR"
+
+// The per-window Claude account variables (claudehome.EnvConfigDir,
+// claudehome.EnvAccount, and the subprocess env scrub switch set by the
+// Claude harness). Spelled out here because detach is a leaf package; a
+// claudehome test keeps the names in sync.
+const (
+	EnvConfigDir       = "CLAUDE_CONFIG_DIR"
+	EnvAccount         = "AGENTCTL_ACCOUNT"
+	EnvSubprocessScrub = "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
+)
+
+// StripAccountEnv returns a copy of env without the Claude account a window
+// launch set for that one window, so a process that outlives the window or
+// serves several windows does not resolve claudehome.DefaultDir/Current to
+// whichever window happened to spawn it.
+//
+// AGENTCTL_ACCOUNT and CLAUDE_CODE_SUBPROCESS_ENV_SCRUB are always removed:
+// agentctl's launch env is their only source. CLAUDE_CONFIG_DIR is removed
+// only together with AGENTCTL_ACCOUNT, the marker that a launch picked a
+// named account for the window (dispatch.ApplyAccountEnv sets both). Without
+// it the variable was not set per window (the unnamed default dir is
+// selected by unsetting it), so it is the user's own machine-wide setting,
+// e.g. a single login in a custom dir with no accounts configured, and is
+// kept.
+func StripAccountEnv(env []string) []string {
+	drop := []string{EnvAccount, EnvSubprocessScrub}
+	if hasVar(env, EnvAccount) {
+		drop = append(drop, EnvConfigDir)
+	}
+	return removeVars(env, drop...)
+}
+
+// hasVar reports whether env assigns name.
+func hasVar(env []string, name string) bool {
+	for _, e := range env {
+		if strings.HasPrefix(e, name+"=") {
+			return true
+		}
+	}
+	return false
+}
+
+// removeVars returns a copy of env without any assignment to names.
+func removeVars(env []string, names ...string) []string {
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		k, _, _ := strings.Cut(e, "=")
+		if !slices.Contains(names, k) {
+			out = append(out, e)
+		}
+	}
+	return out
 }

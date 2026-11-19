@@ -29,7 +29,7 @@ const (
 var (
 	stateDir = func() (string, error) { return config.StateDir() }
 	enabled  = func() bool { return config.Load().EffectiveMetricsConfig().Enabled }
-	spawn    = func() error { return detach.StartSelf([]string{"metrics", "serve"}, nil) }
+	spawn    = func() error { return detach.StartDaemon([]string{"metrics", "serve"}, "") }
 )
 
 // SetSeamsForTest overrides the seams and returns a restore func.
