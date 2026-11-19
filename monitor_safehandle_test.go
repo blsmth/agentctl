@@ -7,6 +7,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/mailbox"
+	"github.com/blsmth/agentctl/internal/reconcile"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -94,6 +95,9 @@ func TestReconcileWindowsGonePathSurvivesHandlerPanic(t *testing.T) {
 // record the monitor's shared Gone claim consumes for window id.
 func seedGoneRecord(t *testing.T, id, st, instance string) {
 	t.Helper()
+	origCascade := cascadeDepsFn
+	cascadeDepsFn = func(string, string) reconcile.CascadeDeps { return reconcile.CascadeDeps{} }
+	t.Cleanup(func() { cascadeDepsFn = origCascade })
 	windowstate.SetDirForTest(filepath.Join(t.TempDir(), "windows"))
 	if err := os.MkdirAll(windowstate.Dir(), 0o700); err != nil {
 		t.Fatal(err)

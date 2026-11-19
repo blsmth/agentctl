@@ -609,6 +609,12 @@ type Config struct {
 	// auto_improve, a project-local config may switch it off but can never
 	// switch it back on. Use MonitorEnabled() to read the effective value.
 	Monitor *bool `json:"monitor,omitempty"`
+	// CloseChildren makes closing an agent window also close the windows it
+	// dispatched (recursively, through each child's own reconcile). nil
+	// (unset) means enabled; an explicit false keeps dispatched windows
+	// running as orphans. Global config only. Use CloseChildrenEnabled() to
+	// read the effective value.
+	CloseChildren *bool `json:"close_children,omitempty"`
 	// HubChrome shows each agent window's chrome bar inside the hub's live pane.
 	// false (default) hides it there by zooming the viewed window's main pane;
 	// a project session attached directly always shows its chrome bar. The hub
@@ -727,6 +733,12 @@ func (c Config) OpenPRInBrowserEnabled() bool {
 // defaulting to true when unset.
 func (c Config) MonitorEnabled() bool {
 	return c.Monitor == nil || *c.Monitor
+}
+
+// CloseChildrenEnabled reports whether closing a window cascades to the
+// windows it dispatched, defaulting to true when unset.
+func (c Config) CloseChildrenEnabled() bool {
+	return c.CloseChildren == nil || *c.CloseChildren
 }
 
 // EffectiveWorkJournal returns true if journaling is enabled for the given agent.
@@ -1208,6 +1220,7 @@ func containsAll(have, want []string) bool {
 //   - monitor set to true (a project may switch the monitor off, never back on)
 //   - auto_poll (autopilot dispatches every "ready" issue unattended)
 //   - hub_chrome (the hub belongs to no project)
+//   - close_children (closing a window may close windows in other projects)
 //   - bash_preview / agents.*.bash_preview set to false when the global layer
 //     enables it (a project may tighten the guard, never loosen it)
 //   - agents.*.model / effort_level values outside [A-Za-z0-9._:-]+ (they are
@@ -1236,6 +1249,10 @@ func sanitizeProjectConfig(project, global *Config) {
 			warn("monitor", "project may switch the monitor off but not back on")
 		}
 		project.Monitor = nil
+	}
+	if project.CloseChildren != nil {
+		warn("close_children", globalOnly)
+		project.CloseChildren = nil
 	}
 	if project.HubChrome {
 		warn("hub_chrome", globalOnly)
