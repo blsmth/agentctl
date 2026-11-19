@@ -26,16 +26,17 @@ const trailingPunct = ".,;:!?…-–—"
 // with any "Title:" label, markdown, quotes and trailing punctuation removed,
 // whitespace collapsed, and capped at MaxWords words and MaxChars characters.
 // It returns "" when nothing title-like is left.
-func Sanitize(s string) string {
+func Sanitize(s string) string { return sanitize(s, true) }
+
+// sanitize is Sanitize; stripKind drops a leading "<word> |" lead-in.
+// ParseReply passes false for a half it has already split.
+func sanitize(s string, stripKind bool) string {
 	line := firstLine(s)
-	line = strings.NewReplacer("**", "", "__", "", "`", "", "\"", "", "“", "", "”", "", "«", "", "»", "").Replace(line)
-	line = strings.TrimLeft(line, "#*-•> \t")
-	for _, p := range labelPrefixes {
-		if len(line) >= len(p) && strings.EqualFold(line[:len(p)], p) {
-			line = line[len(p):]
-			break
-		}
+	line = stripLead(line)
+	if stripKind {
+		line = stripKindPrefix(line)
 	}
+	line = strings.ReplaceAll(line, "|", " ")
 	words := strings.Fields(line)
 	out := make([]string, 0, len(words))
 	for _, w := range words {
@@ -53,6 +54,28 @@ func Sanitize(s string) string {
 		return ""
 	}
 	return title
+}
+
+// stripLead removes markdown and quote marks from a line and any leading
+// "Title:"-style label.
+func stripLead(line string) string {
+	line = strings.NewReplacer("**", "", "__", "", "`", "", "\"", "", "“", "", "”", "", "«", "", "»", "").Replace(line)
+	line = strings.TrimLeft(line, "#*-•> \t")
+	for _, p := range labelPrefixes {
+		if len(line) >= len(p) && strings.EqualFold(line[:len(p)], p) {
+			return strings.TrimSpace(line[len(p):])
+		}
+	}
+	return line
+}
+
+// stripKindPrefix drops a leading "<kind> |" so a reply that was not parsed
+// as kind and title never leaks the kind into the title.
+func stripKindPrefix(line string) string {
+	if head, rest, ok := strings.Cut(line, "|"); ok && (normalizeKind(head) != "" || isSingleWord(head)) {
+		return strings.TrimSpace(rest)
+	}
+	return line
 }
 
 func firstLine(s string) string {

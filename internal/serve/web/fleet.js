@@ -26,6 +26,7 @@ import {
   agentChip,
   rowDetailLine,
   rowHeadline,
+  rowKind,
   rowTags,
   rowTitle,
   scheduledChip,
@@ -116,6 +117,7 @@ function windowRow(entry, toggle, expanded, swipe) {
   if (chip) tags.push(h("span", { class: "tag agent-chip" }, chip));
   const sched = scheduledChip(win);
   if (sched) tags.push(h("span", { class: "tag sched-chip", title: "Started by agentctl cron" }, sched));
+  const kind = rowKind(win);
   const detail = rowDetailLine(win);
   const link = h(
     "a",
@@ -125,7 +127,7 @@ function windowRow(entry, toggle, expanded, swipe) {
     h(
       "span",
       { class: "win-main" },
-      h("span", { class: "win-title" }, h("span", { class: "agent" }, rowHeadline(win)), ...tags),
+      h("span", { class: "win-title" }, kind ? h("span", { class: "tag kind-chip", title: "Kind of work" }, kind) : null, h("span", { class: "agent" }, rowHeadline(win)), ...tags),
       detail ? h("span", { class: detail === win.recap ? "activity recap" : "activity" }, detail) : null,
     ),
     h(

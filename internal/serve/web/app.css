@@ -64,6 +64,7 @@ button.group-add { padding: 0; border: 0; background: none; cursor: pointer; }
 .win-title .tag { flex: none; font-weight: 500; font-size: .75rem; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .activity.recap { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
 .win-title .tag.agent-chip { opacity: .8; }
+.win-title .tag.kind-chip { opacity: .8; font-size: .7rem; text-transform: lowercase; }
 .win-title .tag.sched-chip { white-space: nowrap; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; }
 .activity { color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .win-side { display: flex; flex-direction: column; align-items: flex-end; font-size: .8rem; color: var(--muted); }

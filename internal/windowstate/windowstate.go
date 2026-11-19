@@ -251,7 +251,10 @@ type WindowState struct {
 // frozen. Failures never set it. An older record may still carry a
 // summary_hash key; it is ignored.
 type ShortTitle struct {
-	Title      string    `json:"title,omitempty"`
+	Title string `json:"title,omitempty"`
+	// Kind is the work-kind tag ("go", "review", ...; see internal/shorttitle),
+	// empty when the model gave none. Older records have none.
+	Kind       string    `json:"kind,omitempty"`
 	At         time.Time `json:"at,omitzero"`
 	InputHash  string    `json:"input_hash,omitempty"`
 	Final      bool      `json:"final,omitempty"`
