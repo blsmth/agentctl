@@ -14,7 +14,7 @@ test("reply to an idle agent", async ({ page, control }) => {
   await openWindow(page, "@15");
   await expect(page.locator("header.bar h1")).toHaveText("docs");
   await page.locator(".actions textarea").fill("please also update CHANGELOG");
-  await page.getByRole("button", { name: "Reply" }).tap();
+  await page.getByRole("button", { name: "Send reply" }).tap();
   await expect(sheet(page)).toContainText("Send reply?");
   await sheet(page).getByRole("button", { name: "Send" }).tap();
   await expect(page.locator("#toasts .toast").first()).toHaveText("Sent");
@@ -152,7 +152,7 @@ test("an Interrupt sheet left open does not survive navigation to another window
 test("a closed window says so and offers the way back", async ({ page, control, guard }) => {
   guard.allow(/HTTP 404|status of 404/);
   await openWindow(page, "@15");
-  await page.locator(".actions .close-window").tap();
+  await page.getByRole("button", { name: "Close window" }).tap();
   await expect(sheet(page)).toContainText("Close window?");
   await sheet(page).getByRole("button", { name: "Close" }).tap();
   await control.waitForActions((a) => a.some((x) => x.kind === "close"));
@@ -195,17 +195,34 @@ test("header: a short row title keeps the full recap in the window view", async 
   await expect(page.locator(".win-head")).not.toContainText("Testing Cart Totals");
 });
 
-test("done windows show the PR chip, a full-width Reply and a small Close", async ({ page }) => {
+test("done windows show the PR chip and a chat-style composer with Close in the header", async ({ page }) => {
   await openWindow(page, "@12");
   const pr = page.locator(".chips a.chip.pr");
   await expect(pr).toHaveText("PR #8");
   await expect(pr).toHaveAttribute("href", "https://github.com/example/shop/pull/8");
-  const reply = await page.getByRole("button", { name: "Reply" }).boundingBox();
-  const text = await page.locator(".actions textarea").boundingBox();
-  expect(Math.abs(reply!.width - text!.width)).toBeLessThan(1);
-  const close = page.locator(".actions .close-window");
-  await expect(close).toHaveText("Close window");
-  expect((await close.boundingBox())!.y).toBeGreaterThan(reply!.y);
+  const send = (await page.getByRole("button", { name: "Send reply" }).boundingBox())!;
+  const text = (await page.locator(".actions textarea").boundingBox())!;
+  const cam = (await page.getByRole("button", { name: "Attach image" }).boundingBox())!;
+  // One row: camera, textarea, send; all tap targets at least 44px.
+  expect(cam.x).toBeLessThan(text.x);
+  expect(text.x).toBeLessThan(send.x);
+  expect(Math.min(send.width, send.height, cam.width, cam.height)).toBeGreaterThanOrEqual(44);
+  expect(text.x + text.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  await expect(page.locator(".actions").getByRole("button", { name: "Close window" })).toHaveCount(0);
+  const close = page.locator("header.bar").getByRole("button", { name: "Close window" });
+  await expect(close).toBeVisible();
+  expect((await close.boundingBox())!.width).toBeGreaterThanOrEqual(44);
+});
+
+test("the composer textarea grows with its text, up to a cap", async ({ page }) => {
+  await openWindow(page, "@15");
+  const ta = page.locator(".actions textarea");
+  const one = (await ta.boundingBox())!.height;
+  await ta.fill("a\nb\nc");
+  const three = (await ta.boundingBox())!.height;
+  expect(three).toBeGreaterThan(one);
+  await ta.fill(Array(30).fill("x").join("\n"));
+  expect((await ta.boundingBox())!.height).toBeLessThan(150);
 });
 
 test("the pane fills the screen down to the actions", async ({ page }) => {
@@ -375,7 +392,7 @@ test("reply with an attached screenshot", async ({ page, control }) => {
   await page.locator(".actions textarea").fill("what is wrong here?");
   await page.locator(".actions input[type=file]").setInputFiles({ name: "IMG_0001.png", mimeType: "image/png", buffer: png });
   await expect(page.locator(".actions .thumb img")).toHaveCount(1);
-  await page.getByRole("button", { name: "Reply" }).tap();
+  await page.getByRole("button", { name: "Send reply" }).tap();
   await expect(sheet(page)).toContainText("+ 1 image");
   await sheet(page).getByRole("button", { name: "Send" }).tap();
   await expect(page.locator("#toasts .toast").first()).toHaveText("Sent");

@@ -4,11 +4,24 @@
 import { checkAttachment } from "./logic.js";
 import { clear, h, toast } from "./ui.js";
 
+export const CAMERA_SVG =
+  '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/></svg>';
+
+/** svgIcon builds an element from a trusted, static SVG string. */
+export function svgIcon(markup) {
+  const t = document.createElement("template");
+  t.innerHTML = markup;
+  return t.content.firstElementChild;
+}
+
 /**
- * imagePicker returns {controls, count, files, clear}: controls are the
- * elements to place in a form, files() the picked File objects.
+ * imagePicker returns {controls, trigger, count, files, clear}: controls are
+ * the elements to place in a form, files() the picked File objects. With
+ * {icon: true} the controls are only the thumbnails, and trigger is the
+ * camera icon button (plus its hidden input) for the caller to place; the
+ * default puts a text "Attach image" button in controls.
  */
-export function imagePicker() {
+export function imagePicker({ icon = false } = {}) {
   let files = [];
   const thumbs = h("div", { class: "thumbs", hidden: true });
   const input = h("input", {
@@ -62,9 +75,12 @@ export function imagePicker() {
       );
     }
   }
-  const button = h("button", { type: "button", class: "btn small attach", onclick: () => input.click() }, "Attach image");
+  const button = icon
+    ? h("button", { type: "button", class: "icon-btn attach", "aria-label": "Attach image", onclick: () => input.click() }, svgIcon(CAMERA_SVG))
+    : h("button", { type: "button", class: "btn small attach", onclick: () => input.click() }, "Attach image");
   return {
-    controls: [thumbs, h("div", { class: "row" }, button, input)],
+    controls: icon ? [thumbs] : [thumbs, h("div", { class: "row" }, button, input)],
+    trigger: icon ? [button, input] : [],
     count: () => files.length,
     files: () => [...files],
     clear: () => {
