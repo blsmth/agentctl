@@ -60,9 +60,9 @@ type cronSegment struct {
 // with the tokens after the subcommand up to the first control operator. Like
 // dispatchSegments it matches absolute paths and the bare name, and a quoted
 // string containing the words ("echo 'agentctl cron add'") is one token and
-// never matches.
+// never matches. Data heredoc bodies are ignored (invocationTokens).
 func cronSegments(command string) []cronSegment {
-	tokens := tokenizeQuoted(strings.TrimSpace(command))
+	tokens := invocationTokens(command)
 	var segs []cronSegment
 	for i := 0; i+2 < len(tokens); i++ {
 		if !strings.HasSuffix(tokens[i].text, "agentctl") || tokens[i+1].text != "cron" {
