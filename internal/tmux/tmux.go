@@ -1278,6 +1278,7 @@ var utilityWindowNames = map[string]bool{
 	"tickets":  true,
 	"sessions": true,
 	"agents":   true,
+	"context":  true,
 }
 
 // FormatEscape escapes s for a tmux string that tmux format-expands, by

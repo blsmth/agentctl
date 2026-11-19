@@ -119,6 +119,7 @@ func (m *ContextModel) reload() {
 		}
 		m.splitPane.SetCursor(m.cursor)
 	}
+	m.sync()
 }
 
 func (m ContextModel) selectedKey() string {
@@ -139,7 +140,15 @@ func (m *ContextModel) applyFilter() {
 	if m.cursor >= len(m.entries) {
 		m.cursor = max(0, len(m.entries)-1)
 	}
+	m.sync()
 	m.splitPane.SetCursor(m.cursor)
+}
+
+// sync pushes the current list and preview content into the model's own
+// SplitPane so its row count, cursor and scroll clamps see real data.
+func (m *ContextModel) sync() {
+	m.splitPane.SetListContent(m.buildListContent(m.contentWidth()), len(m.entries))
+	m.splitPane.SetDetailContent(m.buildDetailContent(m.contentWidth() - detailBoxHorizontalOverhead))
 }
 
 func contextMatches(e ctxstore.Entry, q string) bool {
@@ -195,6 +204,15 @@ func (m ContextModel) Init() tea.Cmd { return nil }
 
 // Update satisfies tea.Model.
 func (m ContextModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if cm, ok := next.(ContextModel); ok {
+		cm.sync()
+		return cm, cmd
+	}
+	return next, cmd
+}
+
+func (m ContextModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.termWidth, m.termHeight = msg.Width, msg.Height
@@ -275,10 +293,11 @@ func (m *ContextModel) move(delta int) {
 		return
 	}
 	m.cursor = n
-	m.splitPane.SetCursor(n)
-	m.splitPane.SetDetailContent("")
 	m.splitPane.detailScroll = 0
+	m.sync()
+	m.splitPane.SetCursor(n)
 	m.verifyCurrent()
+	m.sync()
 }
 
 func (m ContextModel) updateSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -341,8 +360,6 @@ func (m ContextModel) buildView() string {
 	sb.WriteString(ctxRuleStyle.Render(strings.Repeat("─", cw)) + "\n")
 
 	sp := m.splitPane
-	sp.SetListContent(m.buildListContent(cw), len(m.entries))
-	sp.SetDetailContent(m.buildDetailContent(cw - detailBoxHorizontalOverhead))
 	sb.WriteString(sp.View())
 	sb.WriteString("\n" + m.renderHints(cw))
 	return sb.String()

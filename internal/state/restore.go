@@ -31,7 +31,7 @@ type LiveWindow struct {
 
 // utilityWindows are never restored as agents.
 var utilityWindows = map[string]bool{
-	"shell": true, "hub": true, "tickets": true, "sessions": true, "agents": true,
+	"shell": true, "hub": true, "tickets": true, "sessions": true, "agents": true, "context": true,
 }
 
 // BuildRestoreAgents produces the restore entries from per-window hook state.

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -68,7 +69,11 @@ func TestContextModel_EmptyState(t *testing.T) {
 }
 
 func TestContextModel_MissingStoreDir(t *testing.T) {
-	ctxstore.SetPathForTest(t.TempDir() + "/does/not/exist")
+	dir := t.TempDir() + "/store"
+	ctxstore.SetPathForTest(dir)
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
 	m := NewContextModel()
 	if m.loadErr != nil {
 		t.Fatalf("missing dir must not error: %v", m.loadErr)
@@ -214,3 +219,41 @@ func chtimesContext(key string, ts time.Time) error {
 }
 
 var osChtimes = func(p string, ts time.Time) error { return os.Chtimes(p, ts, ts) }
+
+func TestContextModel_DetailScrollsWithJK(t *testing.T) {
+	var lines []string
+	for i := 0; i < 200; i++ {
+		lines = append(lines, fmt.Sprintf("line-%03d", i))
+	}
+	m := newContextTestModel(t, map[string]ctxstore.Entry{"long": {Content: strings.Join(lines, "\n")}})
+	before := m.buildView()
+	for i := 0; i < 5; i++ {
+		m = ctxKey(m, "J")
+	}
+	after := m.buildView()
+	if before == after {
+		t.Fatal("J did not change the rendered preview")
+	}
+	if m = ctxKey(ctxKey(ctxKey(ctxKey(ctxKey(m, "K"), "K"), "K"), "K"), "K"); m.buildView() != before {
+		t.Error("K should scroll back to the top")
+	}
+}
+
+func TestContextModel_SelectedRowStaysVisible(t *testing.T) {
+	entries := map[string]ctxstore.Entry{}
+	for i := 0; i < 40; i++ {
+		entries[fmt.Sprintf("key%02d", i)] = ctxstore.Entry{Content: "x"}
+	}
+	m := newContextTestModel(t, entries)
+	for i := 0; i < 30; i++ {
+		m = ctxKey(m, "j")
+	}
+	if m.cursor != 30 || m.splitPane.Cursor() != 30 {
+		t.Fatalf("cursor=%d splitPane=%d, want 30", m.cursor, m.splitPane.Cursor())
+	}
+	want := "> " + m.entries[30].Key
+	plain := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(m.buildView(), "")
+	if !strings.Contains(plain, want) {
+		t.Errorf("selected row %q not in view:\n%s", want, plain)
+	}
+}
