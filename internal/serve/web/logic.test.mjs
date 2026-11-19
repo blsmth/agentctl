@@ -594,5 +594,7 @@ console.log("ok: shell request");
   assert.deepEqual(texts({ agent: "x:1", recap: "t", recap_source: "title", title: "t", backend: "anthropic" }), ["x"]);
   assert.deepEqual(rowChips({ agent: "brandon:5" }), []);
   assert.deepEqual(texts({ agent: "brandon:5", model: "claude-sonnet-4-5" }), ["sonnet-4-5"]);
+  assert.deepEqual(rowChips(full).map((c) => c.kind), ["pr", "issue", "agent-chip", "model-chip", "backend-chip", "sched-chip"]);
+  assert.deepEqual(texts({ agent: "x", pr_url: "https://h/o/r/pull/9" }), ["PR #9"]);
   console.log("ok: rowChips");
 }
