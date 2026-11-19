@@ -1322,3 +1322,17 @@ export function swipeCommit(dx, width, velocity = 0) {
   if (dist >= width * 0.38) return true;
   return velocity < -0.6 && dist >= 40;
 }
+
+/**
+ * defaultAgentFor picks the agent the Dispatch screen should preselect for the
+ * project at projectDir: that project's default_agent when it is one of the
+ * listed agent names. Returns "" (keep the current selection) when the user
+ * already picked an agent by hand, the project is unknown, or its default is
+ * empty or not listed.
+ */
+export function defaultAgentFor(projects, projectDir, agentNames, userPicked) {
+  if (userPicked) return "";
+  const p = (projects ?? []).find((x) => x.dir === projectDir);
+  const def = p?.default_agent ?? "";
+  return def && (agentNames ?? []).includes(def) ? def : "";
+}
