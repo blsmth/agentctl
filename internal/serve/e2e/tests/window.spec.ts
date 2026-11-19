@@ -102,16 +102,26 @@ test("interrupt a working agent", async ({ page, control }) => {
   expect(actions).toEqual([{ kind: "key", session: SHOP, window: "@13", pane: "%13", key: "Escape" }]);
 });
 
-test("Interrupt is a small right-aligned button beside the queue composer", async ({ page }) => {
+test("queue state: Interrupt on its own line above a chat-style composer", async ({ page }) => {
   await openWindow(page, "@13");
   const interrupt = page.getByRole("button", { name: "Interrupt" });
-  const queue = page.getByRole("button", { name: "Queue message" });
+  await expect(interrupt).toBeVisible();
   await expect(interrupt).toHaveClass(/\bsmall\b/);
-  const ib = await interrupt.boundingBox();
-  const qb = await queue.boundingBox();
-  expect(ib!.x).toBeGreaterThan(qb!.x);
-  expect(ib!.width).toBeLessThan(qb!.width);
-  expect(ib!.height).toBeLessThan(44);
+  const send = (await page.getByRole("button", { name: "Queue message" }).boundingBox())!;
+  const text = (await page.locator(".actions textarea").boundingBox())!;
+  const cam = (await page.getByRole("button", { name: "Attach image" }).boundingBox())!;
+  const ib = (await interrupt.boundingBox())!;
+  const width = page.viewportSize()!.width;
+  // One row: camera, textarea, send; all tap targets at least 44px.
+  expect(cam.x).toBeLessThan(text.x);
+  expect(text.x).toBeLessThan(send.x);
+  expect(Math.min(send.width, send.height, cam.width, cam.height)).toBeGreaterThanOrEqual(44);
+  expect(text.x + text.width).toBeLessThanOrEqual(width);
+  // Interrupt: small, right-aligned, above the composer row.
+  expect(ib.height).toBeLessThan(44);
+  expect(ib.y + ib.height).toBeLessThanOrEqual(text.y);
+  expect(ib.x + ib.width).toBeGreaterThan(send.x);
+  await expect(page.locator(".actions textarea")).toHaveAttribute("placeholder", "Queue a message for the agent…");
 });
 
 test("after an interrupt, the reply box that follows gets focus", async ({ page, control }) => {
