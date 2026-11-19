@@ -1346,7 +1346,9 @@ export function approvalRows(a) {
   const add = (label, value, detail = "", flag = "") => {
     if (value) rows.push({ label, value, detail, flag });
   };
-  add("Project", d.project, d.dir, d.other_project ? `not ${d.asking_project || "the asking project"}` : "");
+  if (d.project) add("Project", d.project, d.dir, d.other_project ? `not ${d.asking_project || "the asking project"}` : "");
+  // A cwd the command changes before dispatching: the project is not known.
+  else if (d.dir_source) add("Project", "unknown", "", d.dir_source);
   add("Agent", d.agent, d.agent_source);
   add("Model", d.model, d.model_source);
   add("Backend", d.backend);
@@ -1373,7 +1375,9 @@ export const PROMPT_FOLD_LINES = 12;
 export function promptFold(text) {
   const s = String(text ?? "");
   const lines = s === "" ? 0 : s.split("\n").length;
-  return { lines, fold: lines > PROMPT_FOLD_LINES || s.length > PROMPT_FOLD_LINES * 80 };
+  const fold = lines > PROMPT_FOLD_LINES || s.length > PROMPT_FOLD_LINES * 80;
+  const label = lines > PROMPT_FOLD_LINES ? `Show all ${lines} lines` : "Show all";
+  return { lines, fold, label };
 }
 
 /** approvalBannerText is the fleet banner for n pending approvals ("" for none). */

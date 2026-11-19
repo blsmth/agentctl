@@ -10,6 +10,8 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatchplan"
 	"github.com/blsmth/agentctl/internal/harness"
+	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/remoteapproval"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
@@ -74,10 +76,26 @@ func askingCwd(payloadCwd string) string {
 	return cwd
 }
 
+// dirChangedFirst is the DirSource shown when the dispatch dir depends on a
+// cwd the command line may change before the dispatch runs.
+const dirChangedFirst = "command changes dir first"
+
 // resolveDispatchDetails works out where and how the dispatch in command will
-// run, for the approval popup and the phone. Best effort: it never fails, and
-// anything it cannot resolve is left empty.
-func resolveDispatchDetails(cfg *config.Config, command, cwd string) remoteapproval.Details {
+// run, for the approval popup and the phone. Best effort: it never fails or
+// panics (a panic would make the hook exit non-blocking and let the dispatch
+// run unapproved), and anything it cannot resolve is left empty.
+func resolveDispatchDetails(cfg *config.Config, command, cwd string) (d remoteapproval.Details) {
+	defer func() {
+		if r := recover(); r != nil {
+			logging.Log("hook-validate-bash: resolving dispatch details panicked: %v", r)
+			d = remoteapproval.Details{}
+		}
+	}()
+	return dispatchDetails(cfg, command, cwd)
+}
+
+// dispatchDetails is resolveDispatchDetails without the panic guard.
+func dispatchDetails(cfg *config.Config, command, cwd string) remoteapproval.Details {
 	f := parseDispatchPlanFlags(command)
 	f.plan.Cwd = cwd
 	p := dispatchplan.Resolve(cfg, f.plan)
@@ -107,7 +125,14 @@ func resolveDispatchDetails(cfg *config.Config, command, cwd string) remoteappro
 	case p.Harness != harness.Claude:
 		d.Harness = p.Harness
 	}
-	if root := dispatchplan.ProjectRoot(p.WorkDir); root != "" {
+	// Something before the dispatch (cd, pushd, a subshell, ...) may change
+	// the cwd, so a dir that depends on it is not known: say so rather than
+	// name the asking project with confidence.
+	cwdDependent := p.DirSource == dispatchplan.SourceCwd ||
+		(p.DirSource == dispatchplan.SourceFlag && !filepath.IsAbs(paths.ExpandHome(f.plan.Dir)))
+	if cwdDependent && lineChangesContext(command) {
+		d.DirSource = dirChangedFirst
+	} else if root := dispatchplan.ProjectRoot(p.WorkDir); root != "" {
 		d.Project = filepath.Base(root)
 		d.Dir = dispatchplan.AbbrevHome(p.WorkDir)
 		d.DirSource = p.DirSource

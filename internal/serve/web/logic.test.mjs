@@ -190,11 +190,17 @@ assert.ok(confd.lines[0].includes("model: opus (agent file)"));
 assert.ok(!confd.lines[0].includes("target agent:"));
 assert.ok(conf.lines[0].includes("target agent: go-engineer"));
 // Long prompts fold.
-assert.deepEqual(promptFold(""), { lines: 0, fold: false });
-assert.deepEqual(promptFold("one"), { lines: 1, fold: false });
+assert.deepEqual(promptFold(""), { lines: 0, fold: false, label: "Show all" });
+assert.equal(promptFold("one").fold, false);
 assert.equal(promptFold(Array(PROMPT_FOLD_LINES).fill("x").join("\n")).fold, false);
-assert.deepEqual(promptFold(Array(PROMPT_FOLD_LINES + 1).fill("x").join("\n")), { lines: PROMPT_FOLD_LINES + 1, fold: true });
-assert.equal(promptFold("x".repeat(PROMPT_FOLD_LINES * 80 + 1)).fold, true);
+assert.deepEqual(promptFold(Array(PROMPT_FOLD_LINES + 1).fill("x").join("\n")),
+  { lines: PROMPT_FOLD_LINES + 1, fold: true, label: `Show all ${PROMPT_FOLD_LINES + 1} lines` });
+// One very long line folds too, without claiming "1 line".
+assert.deepEqual(promptFold("x".repeat(PROMPT_FOLD_LINES * 80 + 1)), { lines: 1, fold: true, label: "Show all" });
+// Unknown project (the command changes dir first) is a flagged row, and no "to ..." in the title.
+const unknownDir = { ...apd, details: { ...details, project: "", dir: "", asking_project: "", other_project: false, dir_source: "command changes dir first" } };
+assert.deepEqual(approvalRows(unknownDir)[0], { label: "Project", value: "unknown", detail: "", flag: "command changes dir first" });
+assert.equal(approvalSummary(unknownDir), "orch wants to dispatch general-purpose");
 console.log("ok: approval helpers");
 
 // Resolved approval text.

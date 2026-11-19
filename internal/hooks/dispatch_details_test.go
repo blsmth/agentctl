@@ -151,6 +151,44 @@ func TestResolveDispatchDetails(t *testing.T) {
 				Mode: "ad-hoc", Worktree: "worktree", PermissionMode: "auto",
 			},
 		},
+		{
+			"cd before the dispatch: project unknown",
+			"cd ~/code/personal/blsmth.com && agentctl dispatch --agent go-engineer --prompt-key k",
+			remoteapproval.Details{
+				DirSource: dirChangedFirst,
+				Agent:     "go-engineer", AgentSource: "global", Model: "default",
+				Mode: "ad-hoc", Worktree: "worktree", PermissionMode: "auto",
+			},
+		},
+		{
+			"cd before a relative --dir: project unknown",
+			"cd /srv && agentctl dispatch --agent go-engineer --dir site --prompt-key k",
+			remoteapproval.Details{
+				DirSource: dirChangedFirst,
+				Agent:     "go-engineer", AgentSource: "global", Model: "default",
+				Mode: "ad-hoc", Worktree: "worktree", PermissionMode: "auto",
+			},
+		},
+		{
+			"cd before an absolute --dir: still known",
+			"cd /srv && agentctl dispatch --agent go-engineer --dir " + f.blog + " --prompt-key k",
+			remoteapproval.Details{
+				Project: "blsmth.com", Dir: dispatchplan.AbbrevHome(f.blog), DirSource: "flag",
+				AskingProject: "agentctl", OtherProject: true,
+				Agent: "go-engineer", AgentSource: "global", Model: "default",
+				Mode: "ad-hoc", Worktree: "worktree", PermissionMode: "auto",
+			},
+		},
+		{
+			"cd before an agent with a configured dir: still known",
+			"cd /srv && agentctl dispatch --agent blogger --prompt-key k",
+			remoteapproval.Details{
+				Project: "blsmth.com", Dir: dispatchplan.AbbrevHome(f.blog), DirSource: "agent config",
+				AskingProject: "agentctl", OtherProject: true,
+				Agent: "blogger", AgentSource: "global", Model: "opus", ModelSource: "agent file",
+				Mode: "ad-hoc", Worktree: "worktree", PermissionMode: "acceptEdits",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -197,5 +235,38 @@ func TestDispatchGateSendsDetailsToPhone(t *testing.T) {
 	fs.answer(remoteapproval.Allow)
 	if g := waitGate(t, out); !g.approved || !g.decided {
 		t.Fatalf("got %+v, want phone approval", g)
+	}
+}
+
+// A panic while resolving details must not escape the gate (a crashing
+// PreToolUse hook is a non-blocking error, so the dispatch would run
+// unapproved): the popup and the phone request still go out, with no details.
+func TestDispatchGateSurvivesPanickingDetails(t *testing.T) {
+	f := newDetailsFixture(t, func(string) string { return `{}` })
+	orig := dispatchplan.Discover
+	dispatchplan.Discover = func(*config.Config, []string) ([]agent.Agent, error) { panic("boom") }
+	t.Cleanup(func() { dispatchplan.Discover = orig })
+	if got := resolveDispatchDetails(config.Load(), "agentctl dispatch --agent x --prompt hi", f.asking); got != (remoteapproval.Details{}) {
+		t.Errorf("details after a panic = %+v, want zero", got)
+	}
+
+	t.Setenv("TMUX", "/tmp/fake-tmux-socket")
+	t.Setenv("AGENTCTL_SESSION_ID", "sess-details-panic")
+	command := "agentctl dispatch --agent go-engineer --prompt hi"
+	removeDispatchLockForTest(t, command)
+	stubPopupSeams(t, 5*time.Second)
+	fs := withFakeServe(t)
+	installBlockingRunner(t)
+	out := make(chan gateOut, 1)
+	go func() {
+		a, d, r := dispatchPreviewGate("brandon", command, f.asking)
+		out <- gateOut{a, d, r}
+	}()
+	if req := fs.waitRequest(); req.Prompt != "hi" || req.Details != (remoteapproval.Details{}) {
+		t.Errorf("request = %+v", req)
+	}
+	fs.answer(remoteapproval.Deny)
+	if g := waitGate(t, out); g.approved || !g.decided {
+		t.Fatalf("got %+v, want phone deny", g)
 	}
 }

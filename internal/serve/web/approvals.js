@@ -75,10 +75,9 @@ function detailRows(a) {
  */
 function textBlock(label, text) {
   const pre = h("pre", { class: "approval-text" }, text);
-  const { lines, fold } = promptFold(text);
+  const { fold, label: more } = promptFold(text);
   if (!fold) return [h("div", { class: "meta" }, label), pre];
   pre.classList.add("foldable", "folded");
-  const more = `Show all ${lines} line${lines === 1 ? "" : "s"}`;
   const toggle = h("button", { class: "btn approval-more", type: "button", "aria-expanded": "false" }, more);
   toggle.addEventListener("click", () => {
     const open = pre.classList.toggle("folded") === false;
