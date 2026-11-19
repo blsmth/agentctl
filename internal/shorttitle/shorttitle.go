@@ -160,7 +160,7 @@ func Generate(ctx context.Context, comp llm.Completer, in Input) (title, kind st
 
 // ParseReply splits a model reply into its kind and sanitized title.
 func ParseReply(out string) (kind, title string) {
-	line := firstLine(out)
+	line := stripLead(firstLine(out))
 	if head, rest, ok := strings.Cut(line, "|"); ok {
 		if k := normalizeKind(head); k != "" {
 			return k, sanitize(rest, false)
@@ -173,7 +173,7 @@ func ParseReply(out string) (kind, title string) {
 			}
 		}
 	}
-	return "", sanitize(out, false)
+	return "", sanitize(line, false)
 }
 
 // Prompt is the instruction sent for in.
