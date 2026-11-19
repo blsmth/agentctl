@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/blsmth/agentctl/internal/config"
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/remoteapproval"
@@ -22,7 +23,7 @@ import (
 // serialized args from before this field existed) is the full "agentctl
 // dispatch" preview with target agent / issue / prompt metadata.
 // PreviewKindBash is a plain Bash command preview -- gated behind the
-// bash_preview config setting rather than always shown -- which renders just
+// bash_preview config setting rather than dispatch_approval -- which renders just
 // the command itself, since the dispatch-specific metadata rows don't apply.
 // PreviewKindCron is an `agentctl cron add/resume/run --force` preview (see
 // cron_preview.go): job name and schedule rows, job details and prompt in
@@ -81,6 +82,47 @@ func isAgentctlDispatch(command string) bool {
 	for _, seg := range dispatchSegments(command) {
 		if !segmentHasHelp(seg) {
 			return true
+		}
+	}
+	return false
+}
+
+// dispatchNeedsApproval reports whether a command that isAgentctlDispatch
+// must show the dispatch approval popup under the given (normalized)
+// dispatch_approval mode. "off" gates nothing; "non-review" gates the command
+// unless EVERY non-help dispatch segment is a PR review dispatch, so one
+// ordinary dispatch in the line keeps the gate for the whole command; "all"
+// and anything unrecognized gate everything (fail closed).
+func dispatchNeedsApproval(command, mode string) bool {
+	switch mode {
+	case config.DispatchApprovalOff:
+		return false
+	case config.DispatchApprovalNonReview:
+		for _, seg := range dispatchSegments(command) {
+			if !segmentHasHelp(seg) && !segmentIsReview(seg) {
+				return true
+			}
+		}
+		return false
+	default:
+		return true
+	}
+}
+
+// segmentIsReview reports whether a dispatch segment carries --review-pr
+// (either "--review-pr N" or "--review-pr=N") as a flag, not as a quoted word
+// or the value of another flag.
+func segmentIsReview(seg []cmdToken) bool {
+	for i := 0; i < len(seg); i++ {
+		t := seg[i]
+		if t.quoted {
+			continue
+		}
+		switch {
+		case t.text == "--review-pr" || strings.HasPrefix(t.text, "--review-pr="):
+			return true
+		case isDispatchValueFlag(t.text):
+			i++ // skip the value
 		}
 	}
 	return false

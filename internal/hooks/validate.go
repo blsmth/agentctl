@@ -22,6 +22,10 @@ import (
 // swap it for a recorder via t.Cleanup so the test binary survives the call.
 var exitFunc = os.Exit
 
+// dispatchGate is the seam ValidateBash uses to show the dispatch approval
+// popup; tests swap it to assert whether a dispatch was gated.
+var dispatchGate = dispatchPreviewGate
+
 // ValidateBash is called by Claude Code's PreToolUse hook (matcher: Bash).
 // It checks the command against per-agent blocked commands/patterns and a global
 // deny list. Returns a deny decision if the command is blocked.
@@ -114,26 +118,32 @@ func ValidateBash() {
 	// PermissionRequest's popup was racing the tool call and losing every
 	// time.
 	//
-	// "agentctl dispatch ..." commands are ALWAYS gated, independent of the
-	// bash_preview setting -- this is unchanged from before bash_preview
-	// existed. Every other Bash command is gated only when the operator has
-	// opted into bash_preview for this agent (default: off, since an
+	// "agentctl dispatch ..." commands are gated per the global
+	// dispatch_approval setting (default "non-review": every dispatch except
+	// PR review dispatches; see dispatchNeedsApproval), independent of
+	// bash_preview. Every other Bash command is gated only when the operator
+	// has opted into bash_preview for this agent (default: off, since an
 	// unattended dispatched agent must never block on a popup nobody will
-	// ever see -- see bashPreviewGate / hasAttachedClient).
+	// ever see -- see bashPreviewGate / hasAttachedClient). A dispatch that
+	// dispatch_approval exempts is treated exactly like any other Bash
+	// command: with bash_preview on it gets the generic Bash popup, otherwise
+	// it passes through silently like the !decided path below (no explicit
+	// allow, no approval-pending marker, no blocked state).
 	//
 	// Gated "agentctl cron" subcommands (add, resume, run --force; see
-	// cron_preview.go) are always gated too, for the same reason as
-	// dispatch: one approval authorizes unattended runs.
+	// cron_preview.go) are always gated, for the same reason as dispatch:
+	// one approval authorizes unattended runs.
 	isDispatch := isAgentctlDispatch(command)
 	isCron := isAgentctlCronGated(command)
 	if isDispatch && isCron {
 		// Each popup previews one invocation; mixing them would leave one
-		// unseen.
+		// unseen. Denied regardless of dispatch_approval.
 		denyCommand(agentName, command, "Run agentctl dispatch and agentctl cron in separate Bash calls, "+
 			"so each can be shown for approval.", actx)
 		return
 	}
-	if isDispatch || isCron || cfg.EffectiveBashPreview(agentName) {
+	gateDispatch := isDispatch && dispatchNeedsApproval(command, cfg.EffectiveDispatchApproval())
+	if gateDispatch || isCron || cfg.EffectiveBashPreview(agentName) {
 		var approved, decided bool
 		var denyReason string
 		gate := PreviewKindBash
@@ -141,9 +151,9 @@ func ValidateBash() {
 		case isCron:
 			gate = PreviewKindCron
 			approved, decided, denyReason = cronPreviewGate(agentName, command)
-		case isDispatch:
+		case gateDispatch:
 			gate = PreviewKindDispatch
-			approved, decided, denyReason = dispatchPreviewGate(agentName, command)
+			approved, decided, denyReason = dispatchGate(agentName, command)
 		default:
 			approved, decided, denyReason = bashPreviewGate(agentName, command)
 		}

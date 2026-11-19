@@ -643,7 +643,8 @@ type Config struct {
 	// normalized value; this never errors on an unrecognized string.
 	StatuslineAlign string `json:"statusline_align,omitempty"`
 	// BashPreview controls whether EVERY Bash PreToolUse command (not just
-	// "agentctl dispatch", which is always gated regardless of this setting)
+	// "agentctl dispatch", which is gated per DispatchApproval regardless of
+	// this setting)
 	// is routed through the human-in-the-loop preview popup
 	// (internal/hooks.ValidateBash). nil (unset) means disabled; only an
 	// explicit true enables it. Defaults to false because an unattended
@@ -652,6 +653,14 @@ type Config struct {
 	// internal/hooks. Use EffectiveBashPreview to read the effective value,
 	// and AgentConfig.BashPreview to override per-agent.
 	BashPreview *bool `json:"bash_preview,omitempty"`
+	// DispatchApproval selects which "agentctl dispatch" Bash commands are
+	// gated behind the approval popup (internal/hooks.ValidateBash):
+	// "all" (every dispatch), "non-review" (default when unset: every
+	// dispatch except PR review dispatches, --review-pr), or "off" (none).
+	// An unrecognized value fails closed to "all". A project-local config may
+	// tighten it but never loosen it (sanitizeProjectConfig). Use
+	// EffectiveDispatchApproval to read the normalized value.
+	DispatchApproval string `json:"dispatch_approval,omitempty"`
 	// LLM configures the local model provider used for text completion (see
 	// internal/llm). Empty/unset Provider means the feature is disabled.
 	LLM LLMConfig `json:"llm,omitempty"`
@@ -767,6 +776,60 @@ func (c *Config) EffectiveBashPreview(name string) bool {
 		return *c.BashPreview
 	}
 	return false
+}
+
+// Values of Config.DispatchApproval, strictest first.
+const (
+	DispatchApprovalAll       = "all"
+	DispatchApprovalNonReview = "non-review"
+	DispatchApprovalOff       = "off"
+)
+
+// ValidDispatchApproval reports whether v is a recognized dispatch_approval
+// value. The empty string (unset) is valid and means the default.
+func ValidDispatchApproval(v string) bool {
+	switch v {
+	case "", DispatchApprovalAll, DispatchApprovalNonReview, DispatchApprovalOff:
+		return true
+	}
+	return false
+}
+
+// EffectiveDispatchApproval returns the normalized dispatch_approval:
+// "non-review" when unset, the value itself when recognized, and "all" for
+// anything else (fail closed: a typo must never disable the gate).
+func (c Config) EffectiveDispatchApproval() string {
+	switch c.DispatchApproval {
+	case "":
+		return DispatchApprovalNonReview
+	case DispatchApprovalNonReview, DispatchApprovalOff:
+		return c.DispatchApproval
+	default:
+		return DispatchApprovalAll
+	}
+}
+
+// DispatchApprovalWarning returns a human-readable warning when
+// dispatch_approval holds an unrecognized value, or "" when it is fine.
+func (c Config) DispatchApprovalWarning() string {
+	if ValidDispatchApproval(c.DispatchApproval) {
+		return ""
+	}
+	return fmt.Sprintf("dispatch_approval %q is not one of %q, %q, %q; treating it as %q",
+		c.DispatchApproval, DispatchApprovalAll, DispatchApprovalNonReview, DispatchApprovalOff, DispatchApprovalAll)
+}
+
+// dispatchApprovalStrictness ranks a dispatch_approval value: higher gates
+// more dispatches. Unrecognized values rank as "all".
+func dispatchApprovalStrictness(v string) int {
+	switch (Config{DispatchApproval: v}).EffectiveDispatchApproval() {
+	case DispatchApprovalOff:
+		return 0
+	case DispatchApprovalNonReview:
+		return 1
+	default:
+		return 2
+	}
 }
 
 // EffectiveOnComplete returns the on_complete hook for the given agent config,
@@ -1046,6 +1109,11 @@ func mergeConfig(base, overlay *Config) {
 	if overlay.BashPreview != nil {
 		base.BashPreview = overlay.BashPreview
 	}
+	// DispatchApproval: sanitizeProjectConfig has already dropped a project
+	// value that would loosen the global one.
+	if overlay.DispatchApproval != "" {
+		base.DispatchApproval = overlay.DispatchApproval
+	}
 	// LLM: overlay if provider is explicitly set.
 	if overlay.LLM.Provider != "" {
 		base.LLM = overlay.LLM
@@ -1210,6 +1278,8 @@ func containsAll(have, want []string) bool {
 //   - hub_chrome (the hub belongs to no project)
 //   - bash_preview / agents.*.bash_preview set to false when the global layer
 //     enables it (a project may tighten the guard, never loosen it)
+//   - dispatch_approval set to a value less strict than the global one
+//     (all > non-review > off; a project may tighten, never loosen)
 //   - agents.*.model / effort_level values outside [A-Za-z0-9._:-]+ (they are
 //     interpolated into the launch command); the global value is kept instead
 //
@@ -1256,6 +1326,11 @@ func sanitizeProjectConfig(project, global *Config) {
 	if project.BashPreview != nil && !*project.BashPreview && globalPreview {
 		warn("bash_preview", noLoosen)
 		project.BashPreview = nil
+	}
+	if project.DispatchApproval != "" &&
+		dispatchApprovalStrictness(project.DispatchApproval) < dispatchApprovalStrictness(global.DispatchApproval) {
+		warn("dispatch_approval", noLoosen)
+		project.DispatchApproval = ""
 	}
 	if len(project.Backends) > 0 {
 		warn("backends", globalOnly)
@@ -1388,6 +1463,9 @@ func Load() *Config {
 	}
 	validateBackends(cfg)
 	validateAccounts(cfg)
+	if w := cfg.DispatchApprovalWarning(); w != "" {
+		logOnce("config: " + w)
+	}
 
 	// Convert config.ModelOverride to tokens.ModelOverride and push into the
 	// registry. Every process (monitor, chrome bar pane, CLI commands) picks
