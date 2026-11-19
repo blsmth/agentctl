@@ -16,6 +16,7 @@ import (
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/mailbox"
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/reconcile"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/sweeprun"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -83,6 +84,9 @@ type sweepDeps struct {
 	CloseWindow  func(id string) error
 	Reclaim      func(c *cleanup.Candidate)
 	RemoveMail   func(id string) error
+	// RunningChildren counts live working/blocked windows dispatched by the
+	// window with this ID and session ID (any tmux session).
+	RunningChildren func(id, sessionID string) int
 }
 
 func paneVerdict(text string) string {
@@ -101,6 +105,7 @@ func paneVerdict(text string) string {
 func (d sweepDeps) applyDynamic(f *cleanup.SweepFacts, ws windowstate.WindowState) {
 	f.State, f.Done, f.Mode = ws.State, ws.Done, ws.Mode
 	f.PendingTool, f.PendingToolDetail = ws.PendingTool, ws.PendingToolDetail
+	f.TurnCount = ws.TurnCount
 }
 
 func (d sweepDeps) refresh(f *cleanup.SweepFacts, id string) bool {
@@ -111,6 +116,9 @@ func (d sweepDeps) refresh(f *cleanup.SweepFacts, id string) bool {
 	d.applyDynamic(f, ws)
 	f.Pane = paneVerdict(d.Capture(id))
 	f.PendingMail = d.Mail(id)
+	if f.IncludeBare && ws.Mode == "bare" && d.RunningChildren != nil {
+		f.RunningChildren = d.RunningChildren(id, ws.SessionID)
+	}
 	return true
 }
 
@@ -142,7 +150,7 @@ func runSweep(d sweepDeps, session, selfID string, opts SweepOptions) sweepRepor
 		}
 		var repoDir string
 		var candidate cleanup.Candidate
-		if tracked && !f.IsSelf && !f.NonAgent && ws.Done && f.PendingMail == 0 {
+		if tracked && !f.IsSelf && !f.NonAgent && (ws.Done || (opts.IncludeBare && ws.Mode == "bare")) && f.PendingMail == 0 {
 			// Only gather git/gh facts for windows that could actually close.
 			if ws.WorktreeDir != "" && d.DirExists(ws.WorktreeDir) {
 				f.HasWorktree = true
@@ -205,6 +213,31 @@ func runSweep(d sweepDeps, session, selfID string, opts SweepOptions) sweepRepor
 		}
 	}
 	return rep
+}
+
+// countRunningChildren counts live windows in any session whose windowstate
+// names (id, sessionID) as spawner and whose state is working or blocked. It
+// needs a non-empty sessionID (spawned_by alone is untrustworthy: @N is
+// recycled), matching reconcile's close_children rule. A failed listing counts
+// as one child so the window is kept.
+func countRunningChildren(list func() ([]reconcile.LiveWindow, error), id, sessionID string) int {
+	if sessionID == "" {
+		return 0
+	}
+	live, err := list()
+	if err != nil {
+		return 1
+	}
+	n := 0
+	for _, w := range live {
+		if w.Record.SpawnedBy != id || w.Record.SpawnedBySession != sessionID {
+			continue
+		}
+		if w.Record.State == "working" || w.Record.State == "blocked" {
+			n++
+		}
+	}
+	return n
 }
 
 // RunSweep implements `agentctl sweep`.
@@ -278,6 +311,9 @@ func RunSweep(opts SweepOptions) error {
 		CloseWindow: tmux.KillWindow,
 		Reclaim:     cleanup.Reclaim,
 		RemoveMail:  mailbox.RemoveInbox,
+		RunningChildren: func(id, sessionID string) int {
+			return countRunningChildren(reconcile.ListLiveWindows, id, sessionID)
+		},
 	}
 
 	rep := runSweep(d, session, selfID, opts)

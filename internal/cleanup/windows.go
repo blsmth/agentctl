@@ -40,6 +40,15 @@ type SweepFacts struct {
 	PendingMail int
 	Activity    string // last activity line, for "waiting for input"
 
+	// TurnCount is windowstate.TurnCount: completed turns, bumped by the
+	// Stop hook. A bare window with zero was never used, so IncludeBare does
+	// not treat it as finished.
+	TurnCount int
+	// RunningChildren counts live windows (any session) dispatched by this one
+	// (spawned_by + spawned_by_session) that are working or blocked. Closing
+	// the parent would cascade-close them (reconcile.Finish close_children).
+	RunningChildren int
+
 	// Worktree linkage. HasWorktree is true only when the recorded
 	// worktree directory still exists; WT then holds its git/gh facts and
 	// WTPR the open PR's number/URL (when WT.PR == PROpen).
@@ -117,8 +126,8 @@ func ClassifyWindow(f SweepFacts) SweepVerdict {
 		return SweepVerdict{Kind: SweepAction, Reason: "idle", Action: fmt.Sprintf("%d unread message(s)", f.PendingMail)}
 	}
 
-	if f.Mode == "bare" && !f.IncludeBare {
-		return SweepVerdict{Kind: SweepAction, Reason: "idle", Action: "idle interactive session"}
+	if f.Mode == "bare" {
+		return classifyBare(f)
 	}
 
 	if !f.Done {
@@ -129,6 +138,23 @@ func ClassifyWindow(f SweepFacts) SweepVerdict {
 		return SweepVerdict{Kind: SweepAction, Reason: "idle", Action: action}
 	}
 
+	return classifyDone(f)
+}
+
+// classifyBare handles an idle, mail-free bare (interactive) window. Bare
+// windows never get windowstate Done, so with IncludeBare "finished" means
+// idle at a turn end after at least one completed turn (TurnCount, written by
+// the Stop hook), with no running child sessions. It then goes through classifyDone for the worktree/branch/PR checks.
+func classifyBare(f SweepFacts) SweepVerdict {
+	if !f.IncludeBare {
+		return SweepVerdict{Kind: SweepAction, Reason: "idle", Action: "idle interactive session"}
+	}
+	switch {
+	case f.TurnCount == 0:
+		return SweepVerdict{Kind: SweepAction, Reason: "idle", Action: "idle interactive session (no turn completed yet)"}
+	case f.RunningChildren > 0:
+		return SweepVerdict{Kind: SweepAction, Reason: "idle", Action: fmt.Sprintf("%d running child session(s)", f.RunningChildren)}
+	}
 	return classifyDone(f)
 }
 

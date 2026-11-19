@@ -99,6 +99,9 @@ type Target struct {
 	// ProjectDir is the subprocess's working directory (optional; it
 	// resolves PR lookups for windows without a worktree).
 	ProjectDir string
+	// IncludeBare also closes finished bare (interactive) sessions
+	// (`agentctl sweep --include-bare`). The hub's sweep leaves it off.
+	IncludeBare bool
 }
 
 // HubSession is the fleet hub's tmux session (tmux.HubSessionName), which is
@@ -128,10 +131,13 @@ type Func func(ctx context.Context, t Target, dryRun bool) (Report, error)
 const Timeout = 2 * time.Minute
 
 // Args is the argv (after the executable) for sweeping session.
-func Args(session string, dryRun bool) []string {
+func Args(session string, dryRun, includeBare bool) []string {
 	args := []string{"sweep", "--session", session, "--json"}
 	if dryRun {
 		args = append(args, "--dry-run")
+	}
+	if includeBare {
+		args = append(args, "--include-bare")
 	}
 	return args
 }
@@ -196,7 +202,7 @@ func lastLine(s string) string {
 }
 
 // Run is the production Func: it runs the running agentctl binary as
-// `agentctl sweep --session <t.Session> --json [--dry-run]`. Inside a test
+// `agentctl sweep --session <t.Session> --json [--dry-run] [--include-bare]`. Inside a test
 // binary selfpath.Spawnable refuses, so a missed stub fails instead of
 // re-running the test suite.
 func Run(ctx context.Context, t Target, dryRun bool) (Report, error) {
@@ -209,7 +215,7 @@ func Run(ctx context.Context, t Target, dryRun bool) (Report, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, exe, Args(t.Session, dryRun)...)
+	c := exec.CommandContext(ctx, exe, Args(t.Session, dryRun, t.IncludeBare)...)
 	c.Dir = t.ProjectDir
 	if c.Dir == "" {
 		c.Dir = filepath.Dir(t.RuntimeDir)

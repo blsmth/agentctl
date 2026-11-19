@@ -404,6 +404,8 @@ console.log("ok: resolved text");
   const write = ["fleet", "write"];
   assert.deepEqual(buildSweepRequest("agentctl-shop", true), { method: "POST", path: "/v1/sweep/preview", body: { session: "agentctl-shop" } });
   assert.deepEqual(buildSweepRequest("agentctl-shop", false), { method: "POST", path: "/v1/sweep", body: { session: "agentctl-shop" } });
+  assert.deepEqual(buildSweepRequest("agentctl-shop", true, true), { method: "POST", path: "/v1/sweep/preview", body: { session: "agentctl-shop", include_bare: true } });
+  assert.deepEqual(buildSweepRequest("agentctl-shop", false, true).body, { session: "agentctl-shop", include_bare: true });
   assert.equal(canSweep({ session: "agentctl-shop", dir: "/x" }, write), true);
   assert.equal(canSweep({ session: "agentctl-shop", dir: "/x" }, ["fleet"]), false, "needs write");
   assert.equal(canSweep({ session: "agentctl-hub", dir: "/x" }, write), false, "never the hub");
@@ -417,7 +419,9 @@ console.log("ok: resolved text");
     title: "Sweep shop?",
     lines: ["Close 2 windows:\na  (done)\nb", "1 needs attention, 2 in progress"],
     confirmLabel: "Close 2",
+    toggle: { label: "Full sweep (also close finished interactive sessions)", value: false },
   });
+  assert.equal(sweepConfirm(preview, "shop", true).toggle.value, true);
   assert.equal(sweepConfirm({ session: "s", closed: [], attention: [row("c")] }, "shop"), null);
   assert.equal(nothingToSweep({ closed: [], attention: [row("c"), row("d")] }), "Nothing to sweep (2 need attention)");
   assert.equal(nothingToSweep({ closed: [] }), "Nothing to sweep");
@@ -466,6 +470,39 @@ console.log("ok: resolved text");
   r = await flow({ previewRep: preview, confirmed: true, failApply: 'sweep s: no tmux session "s"' });
   assert.equal(r.result, "failed");
   assert.deepEqual(r.toasts, [['sweep s: no tmux session "s"', "error"]]);
+
+  // Full sweep defaults on, flipping the toggle re-runs the preview, and the
+  // apply uses the value of the preview that was confirmed.
+  const bodies = [];
+  const answers = [{ fullSweep: false }, { fullSweep: true }, true];
+  const sheetsSeen = [];
+  const res = await runSweep({ session: "agentctl-shop", project: "shop" }, {
+    send: async (req) => {
+      bodies.push([req.path, req.body.include_bare === true]);
+      return req.path.endsWith("/preview") ? preview : { closed: [row("a")] };
+    },
+    confirm: async (sheet) => {
+      sheetsSeen.push(sheet.toggle.value);
+      return answers.shift();
+    },
+    toast: () => {},
+  });
+  assert.equal(res, "applied");
+  assert.deepEqual(bodies, [
+    ["/v1/sweep/preview", true],
+    ["/v1/sweep/preview", false],
+    ["/v1/sweep/preview", true],
+    ["/v1/sweep", true],
+  ]);
+  assert.deepEqual(sheetsSeen, [true, false, true]);
+  const bodies2 = [];
+  const answers2 = [{ fullSweep: false }, true];
+  await runSweep({ session: "s" }, {
+    send: async (req) => { bodies2.push([req.path, req.body.include_bare === true]); return req.path.endsWith("/preview") ? preview : { closed: [] }; },
+    confirm: async () => answers2.shift(),
+    toast: () => {},
+  });
+  assert.deepEqual(bodies2.at(-1), ["/v1/sweep", false], "apply matches the previewed toggle");
   console.log("ok: sweep helpers and confirm flow");
 }
 for (const f of fixtures.defaultAgent) {

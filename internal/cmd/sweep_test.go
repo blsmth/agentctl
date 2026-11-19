@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -179,5 +180,79 @@ func TestCheckSweepSession(t *testing.T) {
 	}
 	if err := checkSweepSession("here", func(string) bool { return true }); err != nil {
 		t.Fatalf("live session: %v", err)
+	}
+}
+
+func TestCountRunningChildren(t *testing.T) {
+	live := func(id, sess, state string) reconcile.LiveWindow {
+		return reconcile.LiveWindow{WindowID: "@x", Record: windowstate.WindowState{SpawnedBy: id, SpawnedBySession: sess, State: state}}
+	}
+	list := func(ws ...reconcile.LiveWindow) func() ([]reconcile.LiveWindow, error) {
+		return func() ([]reconcile.LiveWindow, error) { return ws, nil }
+	}
+	tests := []struct {
+		name string
+		list func() ([]reconcile.LiveWindow, error)
+		sess string
+		want int
+	}{
+		{"working and blocked count", list(live("@1", "S", "working"), live("@1", "S", "blocked"), live("@1", "S", "idle")), "S", 2},
+		{"recycled window id (other session) ignored", list(live("@1", "OLD", "working")), "S", 0},
+		{"other parent ignored", list(live("@2", "S", "working")), "S", 0},
+		{"no parent session id counts nothing", list(live("@1", "", "working")), "", 0},
+		{"listing failure keeps the window", func() ([]reconcile.LiveWindow, error) { return nil, errors.New("tmux") }, "S", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := countRunningChildren(tt.list, "@1", tt.sess); got != tt.want {
+				t.Errorf("got %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunSweepIncludeBare(t *testing.T) {
+	states := map[string]windowstate.WindowState{
+		"@1": {State: "idle", Mode: "bare", TurnCount: 3, SessionID: "S1"},                      // closes
+		"@2": {State: "idle", Mode: "bare", TurnCount: 0, SessionID: "S2"},                      // fresh, stays
+		"@3": {State: "idle", Mode: "bare", TurnCount: 2, SessionID: "S3"},                      // has running child, stays
+		"@4": {State: "idle", Mode: "bare", TurnCount: 2, SessionID: "S4", Branch: "feat/open"}, // open PR, stays
+	}
+	windows := []tmux.WindowInfo{{ID: "@1", Name: "a"}, {ID: "@2", Name: "b"}, {ID: "@3", Name: "c"}, {ID: "@4", Name: "d"}}
+	var closed []string
+	d := sweepDeps{
+		Windows:   func() []tmux.WindowInfo { return windows },
+		States:    func() map[string]windowstate.WindowState { return states },
+		ReadState: func(id string) (windowstate.WindowState, bool) { ws, ok := states[id]; return ws, ok },
+		Capture:   func(string) string { return "" },
+		Mail:      func(string) int { return 0 },
+		Agent:     func(string) (string, string) { return "", "" },
+		DirExists: func(string) bool { return false },
+		BranchPR:  func(string) cleanup.PRInfo { return cleanup.PRInfo{State: cleanup.PROpen, Number: 5, URL: "u"} },
+		RunningChildren: func(id, sess string) int {
+			if id == "@3" && sess == "S3" {
+				return 2
+			}
+			return 0
+		},
+		CloseWindow: func(id string) error { closed = append(closed, id); return nil },
+		Reclaim:     func(*cleanup.Candidate) { t.Fatal("no worktrees here") },
+		RemoveMail:  func(string) error { return nil },
+	}
+	// Without include-bare nothing closes.
+	rep := runSweep(d, "sess", "@9", SweepOptions{})
+	if len(closed) != 0 || len(rep.Attention) != 4 {
+		t.Fatalf("no include-bare: closed %v attention %d", closed, len(rep.Attention))
+	}
+	rep = runSweep(d, "sess", "@9", SweepOptions{IncludeBare: true})
+	if len(closed) != 1 || closed[0] != "@1" {
+		t.Fatalf("closed = %v, want only @1", closed)
+	}
+	details := map[string]string{}
+	for _, r := range rep.Attention {
+		details[r.WindowID] = r.Detail
+	}
+	if !strings.Contains(details["@2"], "no turn") || !strings.Contains(details["@3"], "2 running child session(s)") || !strings.Contains(details["@4"], "review PR #5") {
+		t.Errorf("attention details = %v", details)
 	}
 }

@@ -18,6 +18,9 @@ const maxSessionBytes = 256
 // ever matched against the fleet; it is never passed through as is.
 type sweepIn struct {
 	Session string `json:"session"`
+	// IncludeBare also closes finished interactive (bare) sessions. Optional;
+	// false keeps the behavior of clients that predate it.
+	IncludeBare bool `json:"include_bare,omitempty"`
 }
 
 // sweepOut is the sweep report plus the group's project name.
@@ -83,6 +86,7 @@ func (s *Server) runSweep(in sweepIn, a *auditEntry, dryRun bool) outcome {
 	if !ok {
 		return out
 	}
+	t.IncludeBare = in.IncludeBare
 	release, ok := s.sweeps.acquire(t.Session)
 	if !ok {
 		return failure(http.StatusConflict, codeBusy, "a sweep is already running for this project")
