@@ -2414,7 +2414,8 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 			available -= lipgloss.Width(tag) + 1
 			tag = fleetDimStyle.Render(tag) + " "
 		}
-		if recap.Kind != "" && available > 0 {
+		// Skip the tag when it would leave no room for the title.
+		if recap.Kind != "" && available >= lipgloss.Width("["+recap.Kind+"]")+8 {
 			kt := truncateToWidth("["+recap.Kind+"]", available)
 			available -= lipgloss.Width(kt) + 1
 			tag += fleetDimStyle.Render(kt) + " "

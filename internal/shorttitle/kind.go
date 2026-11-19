@@ -44,6 +44,13 @@ func IsKind(s string) bool {
 	return false
 }
 
+// isSingleWord reports whether s, minus markdown and bracket decoration, is
+// exactly one word.
+func isSingleWord(s string) bool {
+	s = strings.Trim(strings.TrimSpace(s), "#*-•>`[]() \t")
+	return s != "" && len(strings.Fields(s)) == 1
+}
+
 // normalizeKind lowercases and trims s (markdown, brackets, a "kind:" label)
 // and returns it when it is an allowed kind, else "".
 func normalizeKind(s string) string {

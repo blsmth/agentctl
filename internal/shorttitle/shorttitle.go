@@ -163,10 +163,17 @@ func ParseReply(out string) (kind, title string) {
 	line := firstLine(out)
 	if head, rest, ok := strings.Cut(line, "|"); ok {
 		if k := normalizeKind(head); k != "" {
-			return k, Sanitize(rest)
+			return k, sanitize(rest, false)
+		}
+		// A single stray word before the pipe ("refactor | ...") is a kind
+		// the model invented: drop it, never let it into the title.
+		if isSingleWord(head) {
+			if t := sanitize(rest, false); t != "" {
+				return "", t
+			}
 		}
 	}
-	return "", Sanitize(out)
+	return "", sanitize(out, false)
 }
 
 // Prompt is the instruction sent for in.
