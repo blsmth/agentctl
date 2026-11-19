@@ -15,10 +15,11 @@ async function settled(link: import("@playwright/test").Locator) {
 
 test.beforeEach(async ({ page }) => {
   await openFleet(page);
-  // Let the initial re-render land so a drag does not hit a row about to be replaced
-  // (there is no DOM signal for it).
-  await page.waitForTimeout(500);
 });
+
+/** renders is how many fleet renders have landed (data-renders on the list). */
+const renders = async (page: import("@playwright/test").Page) =>
+  Number(await page.locator(".fleet").getAttribute("data-renders"));
 
 const closeBtn = (page: import("@playwright/test").Page, link: import("@playwright/test").Locator) =>
   wrap(link).getByRole("button", { name: /^Close / });
@@ -102,9 +103,6 @@ test("a 409 from the server toasts and snaps back", async ({ page, control, guar
   guard.allow(/console error: .*409/);
   // The fleet still says idle, but the pane is busy: the server refuses.
   await control.patchWindow(SHOP, "@15", { pane: "working" });
-  // Nothing visible changes, so let the render it triggers land before dragging;
-  // one arriving mid-gesture would rebuild the row under the finger.
-  await page.waitForTimeout(500);
   const link = row(page, "@15");
   await drag(link, { dx: -260, stepMs: 25 });
   await closeBtn(page, link).tap();
@@ -150,4 +148,40 @@ test("a double tap on Close sends one close", async ({ page, control }) => {
   await control.waitForActions((a) => a.some((x) => x.kind === "close"));
   await page.waitForTimeout(800);
   expect((await control.actions()).filter((x) => x.kind === "close")).toHaveLength(1);
+});
+
+test("a render arriving after pointerdown, before the axis locks, does not drop the swipe", async ({ page, control }) => {
+  const link = row(page, "@15");
+  const before = await renders(page);
+  // Finger down, no movement yet.
+  await link.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    (window as unknown as { __drag: unknown }).__drag = { x0: r.left + r.width / 2, y0: r.top + r.height / 2 };
+    el.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        pointerId: 1, pointerType: "touch", isPrimary: true, bubbles: true, cancelable: true,
+        clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0, buttons: 1,
+      }),
+    );
+  });
+  await control.patchWindow(SHOP, "@11", { activity: "changed before lock" });
+  // The render is held: the counter does not move and the row stays connected.
+  await page.waitForTimeout(800);
+  expect(await renders(page)).toBe(before);
+  expect(await link.evaluate((el) => el.isConnected)).toBe(true);
+
+  await move(link, -90, 0);
+  await expect.poll(() => offsetX(node(link))).toBeLessThan(-60);
+  await lift(link, -260);
+  await expect.poll(() => offsetX(node(link))).toBe(-88);
+  // Releasing the open row lets the held render land.
+  await closeBtn(page, link).waitFor();
+});
+
+test("a plain tap releases the render hold and still navigates", async ({ page, control }) => {
+  await row(page, "@15").tap();
+  await expect.poll(() => new URL(page.url()).hash).not.toBe("");
+  await page.goBack();
+  await control.patchWindow(SHOP, "@11", { activity: "after tap" });
+  await expect(row(page, "@11").locator(".activity")).toHaveText("after tap", { timeout: 3000 });
 });
