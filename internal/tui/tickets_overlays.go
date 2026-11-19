@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/theme"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,7 +30,8 @@ const (
 // title ("Close issue"), and hint bar.
 type ConfirmCloseModel struct {
 	issueNumber int
-	cursorIdx   int // 0=Yes, 1=No; defaults to 1 (No) for safety
+	issueTitle  string // shown in the prompt when known
+	cursorIdx   int    // 0=Yes, 1=No; defaults to 1 (No) for safety
 	state       confirmCloseState
 	hover       string // zone under the pointer (button hover feedback)
 }
@@ -73,27 +75,33 @@ func (m ConfirmCloseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m ConfirmCloseModel) View() tea.View {
 	var b strings.Builder
 
+	num := fmt.Sprintf("#%d", m.issueNumber)
+	title := ""
+	if m.issueTitle != "" {
+		// "Close #171  <title…>?" within the dialog's width.
+		room := modalContentWidth(ModalSmall) - 4 - lipgloss.Width("Close "+num+"  ?")
+		title = "  " + ansi.Truncate(m.issueTitle, room, "…")
+	}
 	b.WriteString(
 		popupBodyStyle.Render("Close ") +
-			popupAgentStyle.Render(fmt.Sprintf("#%d", m.issueNumber)) +
-			popupBodyStyle.Render("?"),
+			popupAgentStyle.Render(num) +
+			popupBodyStyle.Render(title+"?"),
 	)
-	b.WriteString("\n")
-	b.WriteString(popupRuleStyle.Render(strings.Repeat("─", popupContentWidth)))
 	b.WriteString("\n\n")
 
+	// The safe button comes first; cursorIdx 1 (Cancel) is the default.
 	const yesID, noID = "mkey:y@close", "mkey:n@close"
 	t := theme.Current()
-	yesBtn := zoneMark(yesID, tkButton("Close issue", fgStyle(t.Red), false, m.cursorIdx == 0 || m.hover == yesID))
 	noBtn := zoneMark(noID, tkButton("Cancel", tkButtonText(), false, m.cursorIdx == 1 || m.hover == noID))
-	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, yesBtn, "  ", noBtn))
+	yesBtn := zoneMark(yesID, tkButton("Close issue", fgStyle(t.Red), false, m.cursorIdx == 0 || m.hover == yesID))
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, noBtn, "  ", yesBtn))
 
 	return tea.NewView(b.String())
 }
 
 // HintKeys implements ModalContent.
 func (m ConfirmCloseModel) HintKeys() []string {
-	return []string{"y", "confirm", "n/esc", "cancel", "tab", "switch"}
+	return []string{"tab", "switch", "y", "close", "esc", "cancel"}
 }
 
 // Done returns true when the dialog has been resolved (confirmed or cancelled).

@@ -109,9 +109,9 @@ func (h tkHelpModel) View() tea.View {
 	var b strings.Builder
 	b.WriteString(section.Render("Keyboard") + "\n")
 	b.WriteString(helpGrid(tkHelpKeys, keySt, descSt, colW))
-	b.WriteString(section.Render("While editing") + "\n")
+	b.WriteString("\n" + section.Render("While editing") + "\n")
 	b.WriteString(helpGrid(tkHelpEdit, keySt, descSt, colW))
-	b.WriteString(section.Render("Mouse") + "\n")
+	b.WriteString("\n" + section.Render("Mouse") + "\n")
 	b.WriteString(helpGrid(tkHelpMouse, keySt, descSt, colW))
 	note := "Native text selection: hold Shift (Option in iTerm2) while dragging — the app has the mouse."
 	b.WriteString("\n" + lipgloss.NewStyle().Width(cw).Foreground(lipgloss.Color(t.Muted)).Italic(true).Render(note) + "\n\n")

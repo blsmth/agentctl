@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -1046,6 +1047,16 @@ func (m TicketsModel) renderBody(body string, width int) []string {
 	if strings.TrimSpace(body) == "" {
 		return []string{tkDimStyle.Render("(no body)")}
 	}
+	if m.narrow() {
+		// Narrow terminals can't spare glamour's 2-column page margin.
+		lines := strings.Split(strings.TrimRight(tkGlamour(body, width+2), "\n"), "\n")
+		for i, l := range lines {
+			if strings.HasPrefix(ansi.Strip(l), "  ") {
+				lines[i] = ansi.TruncateLeft(l, 2, "")
+			}
+		}
+		return lines
+	}
 	wrap := width - 2
 	if wrap < 20 {
 		wrap = 20
@@ -1085,19 +1096,35 @@ func tkGlamour(body string, width int) string {
 	return s
 }
 
-// tkRenderMarkdown renders body with glamour and wraps it to width itself.
+// tkRenderMarkdown renders body with glamour and fits it to width.
 // glamour's own word wrap double-wraps some lines (a paragraph line that
-// ends near the limit leaves an orphan word on a line of its own), so it
-// renders unwrapped and each long line is re-wrapped here, keeping its
-// indent and a hanging indent for list items.
+// ends near the limit leaves an orphan word on a line of its own), so a
+// body is normally rendered unwrapped and each long line is re-wrapped
+// here, keeping its indent and a hanging indent for list items. Tables
+// need glamour's layout (it wraps inside cells and keeps the columns), so
+// a body with a table renders at width and only lines that still overflow
+// are fixed: table rows are truncated, anything else re-wrapped.
 func tkRenderMarkdown(body string, width int) string {
-	raw := glamourRender(body, 0)
+	hasTable := tkTableSepRE.MatchString(body)
+	wrap := 0
+	if hasTable {
+		wrap = width
+	}
+	raw := glamourRender(body, wrap)
 	var out []string
 	for _, line := range strings.Split(strings.TrimRight(raw, "\n"), "\n") {
-		out = append(out, rewrapLine(strings.TrimRight(line, " "), width)...)
+		line = strings.TrimRight(line, " ")
+		if hasTable && ansi.StringWidth(line) > width && strings.ContainsAny(ansi.Strip(line), "│┼") {
+			out = append(out, ansi.Truncate(line, width, "…"))
+			continue
+		}
+		out = append(out, rewrapLine(line, width)...)
 	}
 	return strings.Join(out, "\n")
 }
+
+// tkTableSepRE matches a markdown table's header separator row.
+var tkTableSepRE = regexp.MustCompile(`(?m)^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$`)
 
 // rewrapLine word-wraps one rendered line to width, indenting continuation
 // lines under the text (past a "• " or "1. " list marker).
@@ -1118,17 +1145,42 @@ func rewrapLine(line string, width int) []string {
 	if limit < 10 {
 		limit = 10
 	}
-	body := ansi.TruncateLeft(line, ind, "")
-	parts := strings.Split(ansi.Wrap(body, limit, ""), "\n")
+	// ansi.Wrap always breaks after "-"; a non-breaking hyphen stands in
+	// for it while wrapping so hyphenated words and URLs stay whole.
+	body := strings.ReplaceAll(ansi.TruncateLeft(line, ind, ""), "-", "\u2011")
+	parts := strings.Split(strings.ReplaceAll(ansi.Wrap(body, limit, ""), "\u2011", "-"), "\n")
 	out := make([]string, 0, len(parts))
+	carry := "" // SGR still open at the end of the previous part
 	for i, p := range parts {
 		pad := ind
 		if i > 0 {
 			pad += hang
 		}
-		out = append(out, strings.Repeat(" ", pad)+strings.TrimLeft(p, " "))
+		// Wrap keeps the space it broke at; never let it overflow.
+		p = ansi.Truncate(p, limit, "")
+		next := lastSGR(p)
+		// Each line closes its styles and reopens the carried ones, so a
+		// background (a code span) never bleeds into the next line's indent.
+		out = append(out, strings.Repeat(" ", pad)+carry+strings.TrimLeft(p, " ")+"\x1b[0m")
+		if next != "" {
+			carry = next
+		}
+		if next == "\x1b[0m" || next == "\x1b[m" {
+			carry = ""
+		}
 	}
 	return out
+}
+
+var sgrRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// lastSGR is the last SGR sequence in s ("" when there is none).
+func lastSGR(s string) string {
+	all := sgrRE.FindAllString(s, -1)
+	if len(all) == 0 {
+		return ""
+	}
+	return all[len(all)-1]
 }
 
 // renderBodyLines renders a markdown body string into display lines, applying

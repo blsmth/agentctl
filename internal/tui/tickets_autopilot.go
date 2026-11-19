@@ -312,7 +312,8 @@ func (m TicketsModel) autopilotConfirm(ready []autoPollCandidate, checking bool)
 	lines := []string{
 		text.Render(fmt.Sprintf("Picks open issues labelled %q (not %q); the agent comes from the issue's labels.",
 			autoPollReadyLabel, autoPollSkipLabel)),
-		ansi.Truncate(fgStyle(t.Yellow).Bold(true).Render("Global setting")+fgStyle(t.Muted).Render(" · saved to "+displayConfigPath()), cw, "…"),
+		fgStyle(t.Yellow).Bold(true).Render("Global setting") + fgStyle(t.Muted).Render(" · saved to "+
+			truncateMiddle(displayConfigPath(), cw-lipgloss.Width("Global setting · saved to "))),
 		"",
 	}
 	head := fmt.Sprintf("First poll in %s. Right now it would dispatch:", fmtInterval(m.autopilot.interval))
@@ -358,6 +359,18 @@ func displayConfigPath() string {
 		}
 	}
 	return p
+}
+
+// truncateMiddle shortens s to width by replacing its middle with "…", so
+// both ends (a path's root and its file name) stay readable.
+func truncateMiddle(s string, width int) string {
+	r := []rune(s)
+	if len(r) <= width || width < 5 {
+		return s
+	}
+	tail := (width - 1) / 2
+	head := width - 1 - tail
+	return string(r[:head]) + "…" + string(r[len(r)-tail:])
 }
 
 // fmtInterval renders a poll interval compactly ("5m", "90s", "1h30m").

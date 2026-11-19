@@ -33,7 +33,7 @@ func setupOverlayTest(t *testing.T) {
 func TestConfirmCloseModel_HintKeys(t *testing.T) {
 	m := newConfirmCloseModel(42)
 	keys := m.HintKeys()
-	want := []string{"y", "confirm", "n/esc", "cancel", "tab", "switch"}
+	want := []string{"tab", "switch", "y", "close", "esc", "cancel"}
 	if len(keys) != len(want) {
 		t.Fatalf("HintKeys() len = %d, want %d", len(keys), len(want))
 	}

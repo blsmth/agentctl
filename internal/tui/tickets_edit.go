@@ -357,7 +357,7 @@ func (m TicketsModel) staleChoice(r tkDetailFetchedMsg) tkChoiceModel {
 	c := tkChoiceModel{
 		kind: "stale",
 		lines: []string{
-			fgStyle(t.Yellow).Bold(true).Render(fmt.Sprintf("Changed on GitHub %s:", ago)),
+			fgStyle(t.Yellow).Bold(true).Render(fmt.Sprintf("Changed on GitHub %s", ago)),
 			popupBodyStyle.Render(fmt.Sprintf("Someone else edited the %s of #%d while you were editing.", strings.Join(fields, " and "), r.number)),
 			popupDimStyle.Render("Overwrite replaces their version with yours."),
 		},
@@ -639,7 +639,7 @@ func (m TicketsModel) renderEditBox(width, height int) []string {
 func (m TicketsModel) editHintBar() string {
 	hints := []tkHint{{key: "ctrl+s", label: "save", pin: true}}
 	if m.edit.field == editTitle {
-		hints = append(hints, tkHint{key: "enter", label: "save"})
+		hints[0] = tkHint{key: "enter/ctrl+s", label: "save", send: "ctrl+s", pin: true}
 	}
 	hints = append(hints,
 		tkHint{key: "tab", label: "switch field"},

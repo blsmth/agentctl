@@ -957,11 +957,13 @@ func (m TicketsModel) launchDispatch(n int, title, body string) (tea.Model, tea.
 }
 
 // confirmClose opens the close-confirmation modal for issue n.
-func (m TicketsModel) confirmClose(n int, state string) (tea.Model, tea.Cmd) {
+func (m TicketsModel) confirmClose(n int, title, state string) (tea.Model, tea.Cmd) {
 	if strings.EqualFold(state, "closed") {
 		return m, m.setFlash(fmt.Sprintf("#%d is already closed", n), false)
 	}
-	m.confirmModal = NewModal("Close issue", newConfirmCloseModel(n), ModalSmall)
+	c := newConfirmCloseModel(n)
+	c.issueTitle = title
+	m.confirmModal = NewModal("Close issue", c, ModalSmall)
 	return m, nil
 }
 
@@ -1083,7 +1085,7 @@ func (m TicketsModel) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		// Show close-confirmation overlay before closing the highlighted issue.
 		if hasIssue && m.repoSlug != "" {
-			return m.confirmClose(iss.Number, iss.State)
+			return m.confirmClose(iss.Number, iss.Title, iss.State)
 		}
 
 	case "s":
@@ -1192,7 +1194,7 @@ func (m TicketsModel) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		// Show close-confirmation overlay before closing the current issue.
 		if m.repoSlug != "" {
-			return m.confirmClose(d.number, d.state)
+			return m.confirmClose(d.number, d.title, d.state)
 		}
 
 	case "a":
