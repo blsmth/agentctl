@@ -246,15 +246,17 @@ type WindowState struct {
 }
 
 // ShortTitle is a generated row title plus what hook-title needs to decide
-// when to regenerate it: the hash of the input it was made from, the hash of
-// the away_summary in that input, and a retry-after backoff on failure.
+// whether to generate it again. A window gets a first title and at most one
+// refinement; Final records that the refinement was made and the title is
+// frozen. Failures never set it. An older record may still carry a
+// summary_hash key; it is ignored.
 type ShortTitle struct {
-	Title       string    `json:"title,omitempty"`
-	At          time.Time `json:"at,omitzero"`
-	InputHash   string    `json:"input_hash,omitempty"`
-	SummaryHash string    `json:"summary_hash,omitempty"`
-	RetryAfter  time.Time `json:"retry_after,omitzero"`
-	Failures    int       `json:"failures,omitempty"`
+	Title      string    `json:"title,omitempty"`
+	At         time.Time `json:"at,omitzero"`
+	InputHash  string    `json:"input_hash,omitempty"`
+	Final      bool      `json:"final,omitempty"`
+	RetryAfter time.Time `json:"retry_after,omitzero"`
+	Failures   int       `json:"failures,omitempty"`
 }
 
 // ErrGone is returned by Transact/Update for a window that was removed

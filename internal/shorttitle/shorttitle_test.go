@@ -57,7 +57,7 @@ func TestHash(t *testing.T) {
 	if Hash("   ") != "" {
 		t.Fatal("blank text has a hash")
 	}
-	a := Input{Task: "x", Summary: "y"}
+	a := Input{Task: "x", LastText: "y"}
 	b := Input{Task: "x y"}
 	if a.Hash() == b.Hash() {
 		t.Fatal("field boundaries are not part of the input hash")
@@ -66,8 +66,9 @@ func TestHash(t *testing.T) {
 
 func TestDue(t *testing.T) {
 	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
-	in := Input{Task: "sort the photos", Summary: "Sorted 2019.", LastText: "Done with 2019"}
-	titled := windowstate.ShortTitle{Title: "Sorting Photos", At: now.Add(-time.Minute), InputHash: "old", SummaryHash: Hash(in.Summary)}
+	first := Input{Task: "sort the photos"}
+	refine := Input{Task: "sort the photos", LastText: "Done with 2019"}
+	titled := windowstate.ShortTitle{Title: "Sorting Photos", At: now.Add(-time.Minute), InputHash: first.Hash()}
 	tests := []struct {
 		name string
 		st   windowstate.ShortTitle
@@ -75,17 +76,19 @@ func TestDue(t *testing.T) {
 		now  time.Time
 		want bool
 	}{
-		{"no title yet", windowstate.ShortTitle{}, in, now, true},
-		{"nothing to title from", windowstate.ShortTitle{}, Input{Ticket: "only context"}, now, false},
-		{"ticket window without a summary", windowstate.ShortTitle{}, Input{Ticket: "Mobile app", LastText: "Edited a.go"}, now, false},
-		{"ticket window with a summary", windowstate.ShortTitle{}, Input{Ticket: "Mobile app", Summary: "Built the app.", LastText: "Edited a.go"}, now, true},
-		{"same input as last time", windowstate.ShortTitle{Title: "T", At: now.Add(-time.Hour), InputHash: in.Hash()}, in, now, false},
-		{"throttled within the interval", titled, in, now, false},
-		{"interval passed", titled, in, now.Add(RetitleInterval), true},
-		{"new away_summary beats the throttle", titled, Input{Task: in.Task, Summary: "Now on 2020.", LastText: in.LastText}, now, true},
-		{"summary gone is not new", titled, Input{Task: in.Task, LastText: "other"}, now, false},
-		{"backoff pending", windowstate.ShortTitle{RetryAfter: now.Add(time.Minute), Failures: 1}, in, now, false},
-		{"backoff over", windowstate.ShortTitle{RetryAfter: now.Add(-time.Second), Failures: 1}, in, now, true},
+		{"no title yet", windowstate.ShortTitle{}, first, now, true},
+		{"nothing to title from", windowstate.ShortTitle{}, Input{}, now, false},
+		{"response alone is not enough", windowstate.ShortTitle{}, Input{LastText: "hi"}, now, false},
+		{"ticket window", windowstate.ShortTitle{}, Input{Ticket: "Mobile app"}, now, true},
+		{"first title failed, later Stop makes the one title", windowstate.ShortTitle{Failures: 1, RetryAfter: now.Add(-time.Second)}, refine, now, true},
+		{"first title, no response yet", titled, first, now, false},
+		{"first title, next prompt", titled, Input{Task: first.Task, FirstPrompt: "more"}, now, false},
+		{"refinement at the first Stop", titled, refine, now, true},
+		{"refinement long after the first title", titled, refine, now.Add(48 * time.Hour), true},
+		{"same input as last time", windowstate.ShortTitle{Title: "T", InputHash: refine.Hash()}, refine, now, false},
+		{"frozen", windowstate.ShortTitle{Title: "T", Final: true, InputHash: "old"}, Input{Task: "x", LastText: "new"}, now.Add(24 * time.Hour), false},
+		{"refinement backoff pending", windowstate.ShortTitle{Title: "T", RetryAfter: now.Add(time.Minute), Failures: 1}, refine, now, false},
+		{"refinement backoff over", windowstate.ShortTitle{Title: "T", RetryAfter: now.Add(-time.Second), Failures: 1}, refine, now, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -98,24 +101,26 @@ func TestDue(t *testing.T) {
 
 func TestApply(t *testing.T) {
 	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
-	in := Input{Task: "sort", Summary: "Sorted."}
+	first := Input{Task: "sort"}
+	refine := Input{Task: "sort", LastText: "Sorted."}
 	var st windowstate.ShortTitle
-	Apply(&st, in, "Sorting Photos", nil, now)
-	want := windowstate.ShortTitle{Title: "Sorting Photos", At: now, InputHash: in.Hash(), SummaryHash: Hash(in.Summary)}
+	Apply(&st, first, "Sorting Photos", nil, now)
+	want := windowstate.ShortTitle{Title: "Sorting Photos", At: now, InputHash: first.Hash()}
 	if st != want {
-		t.Fatalf("success = %+v, want %+v", st, want)
+		t.Fatalf("first = %+v, want %+v", st, want)
 	}
-	// Failures keep the old title and back off further each time.
+	// Failures keep the old title, stay unfrozen, and back off further each time.
 	for i, d := range []time.Duration{10 * time.Minute, 30 * time.Minute, 2 * time.Hour, 12 * time.Hour, 12 * time.Hour} {
-		Apply(&st, Input{Task: "other"}, "", errors.New("down"), now)
-		if st.Title != "Sorting Photos" || st.Failures != i+1 || !st.RetryAfter.Equal(now.Add(d)) {
+		Apply(&st, refine, "", errors.New("down"), now)
+		if st.Title != "Sorting Photos" || st.Final || st.Failures != i+1 || !st.RetryAfter.Equal(now.Add(d)) {
 			t.Fatalf("failure %d = %+v", i+1, st)
 		}
 	}
-	// A success clears the backoff.
-	Apply(&st, in, "Sorting Photos Again", nil, now)
-	if st.Failures != 0 || !st.RetryAfter.IsZero() {
-		t.Fatalf("success after failures = %+v", st)
+	// A refinement clears the backoff and freezes.
+	Apply(&st, refine, "Sorting Photos Again", nil, now)
+	want = windowstate.ShortTitle{Title: "Sorting Photos Again", At: now, InputHash: refine.Hash(), Final: true}
+	if st != want {
+		t.Fatalf("refinement = %+v, want %+v", st, want)
 	}
 }
 
@@ -131,13 +136,13 @@ func (f *fakeCompleter) Complete(_ context.Context, p string) (string, error) {
 }
 
 func TestGenerate(t *testing.T) {
-	in := Input{Ticket: "Mobile app", Task: "make titles short", Summary: "Added the Nous client.", LastText: strings.Repeat("ζ", maxLastTextRunes) + "THE END"}
+	in := Input{Ticket: "Mobile app", Task: "make titles short", LastText: strings.Repeat("ζ", maxLastTextRunes) + "THE END"}
 	fc := &fakeCompleter{out: "\"Shortening Row Titles.\"\n"}
 	got, err := Generate(context.Background(), fc, in)
 	if err != nil || got != "Shortening Row Titles" {
 		t.Fatalf("Generate = %q, %v", got, err)
 	}
-	for _, s := range []string{"Ticket:\nMobile app", "Task:\nmake titles short", "Latest recap:\nAdded the Nous client.", "THE END", "Organizing your Photos", "2 to 5 words"} {
+	for _, s := range []string{"Ticket:\nMobile app", "Task:\nmake titles short", "THE END", "Organizing your Photos", "2 to 5 words"} {
 		if !strings.Contains(fc.prompt, s) {
 			t.Errorf("prompt missing %q", s)
 		}

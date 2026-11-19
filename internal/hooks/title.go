@@ -10,7 +10,6 @@ import (
 
 	"github.com/blsmth/agentctl/internal/backendauth"
 	"github.com/blsmth/agentctl/internal/config"
-	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/llm"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/shorttitle"
@@ -39,39 +38,52 @@ var (
 )
 
 // Title is hook-title, registered async on Stop, UserPromptSubmit and
-// SessionStart: it refreshes the window's short row title from what exists
-// right now (task, newest away_summary, last assistant message), at most
-// once per shorttitle.RetitleInterval unless the window has no title yet or
-// a new away_summary appeared. Claude Code never waits on it. It does
-// nothing (no network, no writes) when titles are off or no key is
-// available, and it never spawns anything.
+// SessionStart. A window gets at most two titles: the first from its task, or
+// for a bare window its first real prompt, and one refinement at the first
+// Stop that carries a last assistant message. After that the title is frozen
+// (windowstate ShortTitle.Final): no time-based retitle. A failed refinement
+// keeps the first title and is retried at a later Stop once its backoff has
+// passed. Claude Code never waits on it. It does nothing (no network, no
+// writes) when titles are off or no key is available, and it never spawns
+// anything.
 //
 // The hook can fire twice for one event (project settings.local.json plus a
-// per-agent --settings file); the input hash, re-checked inside the
-// windowstate transaction, makes the second run a no-op.
+// per-agent --settings file); the claim inside the windowstate transaction
+// makes the second run a no-op.
 func Title() {
 	if !guardAgentctl() {
 		return
 	}
 	var input struct {
-		TranscriptPath       string `json:"transcript_path"`
 		LastAssistantMessage string `json:"last_assistant_message"`
 		// Prompt is the UserPromptSubmit payload's user text; other events
 		// have none.
 		Prompt string `json:"prompt"`
+		// Source is SessionStart's: startup, resume, clear or compact.
+		Source string `json:"source"`
 	}
 	if !decodeInput(&input) {
+		return
+	}
+	// SessionStart resets the title state on /clear (resetTitleOnClear); the
+	// title restarts from the next prompt, so there is nothing to do here.
+	if input.Source == sessionSourceClear {
 		return
 	}
 	windowID := resolveHookWindowID()
 	if windowID == "" {
 		return
 	}
-	runTitle(context.Background(), windowID, input.TranscriptPath, input.LastAssistantMessage, input.Prompt)
+	runTitle(context.Background(), windowID, input.LastAssistantMessage, input.Prompt)
 }
 
-// runTitle is Title after payload decoding.
-func runTitle(ctx context.Context, windowID, transcript, lastMessage, prompt string) {
+// sessionSourceClear is the SessionStart source after /clear.
+const sessionSourceClear = "clear"
+
+// runTitle is Title after payload decoding. lastMessage is the Stop payload's
+// last assistant message; only Stop carries one, so it also marks the
+// refinement.
+func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 	s := titleSettings()
 	if !s.Enabled {
 		return
@@ -80,10 +92,13 @@ func runTitle(ctx context.Context, windowID, transcript, lastMessage, prompt str
 	if err != nil {
 		return
 	}
+	if ws.ShortTitle.Final {
+		return
+	}
 	if fp, ok := firstPromptFor(ws, prompt); ok {
 		ws.FirstPrompt = recordFirstPrompt(windowID, fp)
 	}
-	in := titleInput(ws, transcript, lastMessage)
+	in := titleInput(ws, lastMessage)
 	now := titleNow()
 	if !shorttitle.Due(ws.ShortTitle, in, now) {
 		return
@@ -159,22 +174,18 @@ func generateTitle(ctx context.Context, s config.TitleSettings, in shorttitle.In
 }
 
 // titleInput gathers what the title is made from: the ad-hoc task (or the
-// ticket title as context; for a bare window, its first prompt), the newest away_summary in the session log, and
-// the last assistant message (the Stop payload's, else the one hook-check-done
-// recorded).
-func titleInput(ws windowstate.WindowState, transcript, lastMessage string) shorttitle.Input {
-	logPath := transcript
-	if logPath == "" {
-		logPath = ws.LogPath
-	}
-	var summary string
-	if logPath != "" {
-		summary = fleet.ReadLogInfo(logPath).Recap
-	}
-	if lastMessage == "" {
-		lastMessage = ws.LastText
-	}
-	return shorttitle.Input{Task: ws.Task, FirstPrompt: ws.FirstPrompt, Ticket: ws.TicketTitle, Summary: summary, LastText: lastMessage}
+// ticket title; for a bare window, its first prompt) and the Stop payload's
+// last assistant message, which is empty on every other event.
+func titleInput(ws windowstate.WindowState, lastMessage string) shorttitle.Input {
+	return shorttitle.Input{Task: ws.Task, FirstPrompt: ws.FirstPrompt, Ticket: ws.TicketTitle, LastText: lastMessage}
+}
+
+// resetTitleOnClear forgets a window's title and first prompt so the next
+// prompt titles the new work fresh. Called from SessionStart with the
+// window's record inside its transaction.
+func resetTitleOnClear(ws *windowstate.WindowState) {
+	ws.ShortTitle = windowstate.ShortTitle{}
+	ws.FirstPrompt = ""
 }
 
 // maxFirstPromptRunes caps the stored first prompt.
