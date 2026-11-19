@@ -1296,6 +1296,7 @@ func TestEffectiveStatuslineFormat(t *testing.T) {
 		{name: "explicit complementary", val: "complementary", want: "complementary"},
 		{name: "explicit full", val: "full", want: "full"},
 		{name: "explicit minimal", val: "minimal", want: "minimal"},
+		{name: "explicit mobile", val: "mobile", want: "mobile"},
 		{name: "unrecognized value falls back to rich", val: "fancy", want: "rich"},
 	}
 
@@ -2611,12 +2612,13 @@ func TestCloseChildrenEnabled(t *testing.T) {
 
 func TestEffectiveStatuslineMobileFormat(t *testing.T) {
 	tests := []struct{ name, val, want string }{
-		{"unset defaults to full", "", "full"},
+		{"unset defaults to mobile", "", "mobile"},
+		{"mobile", "mobile", "mobile"},
 		{"rich", "rich", "rich"},
 		{"complementary", "complementary", "complementary"},
 		{"full", "full", "full"},
 		{"minimal", "minimal", "minimal"},
-		{"unrecognized falls back to full", "fancy", "full"},
+		{"unrecognized falls back to mobile", "fancy", "mobile"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

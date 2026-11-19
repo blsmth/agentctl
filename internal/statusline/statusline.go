@@ -106,6 +106,10 @@ func RunWithIO(r io.Reader, w io.Writer, dryRun bool) {
 		fmt.Fprintln(w, renderRichLine(payload, windowID))
 		return
 	}
+	if format == "mobile" {
+		fmt.Fprintln(w, renderMobileLine(payload, windowID))
+		return
+	}
 	fmt.Fprintln(w, renderLine(payload, format))
 }
 
@@ -586,6 +590,42 @@ func line1Rendered(p *Payload) bool {
 	return ok
 }
 
+// contextSegment renders the context-usage segment shared by the rich and
+// mobile formats: battery, threshold-colored percent, and " ctx". A 0%
+// reading renders in LabelStyle rather than green, since 0% usually means "no
+// data yet" rather than "healthy".
+func contextSegment(pct float64, th theme.Theme, warnPct, critPct int) string {
+	labelStyle := render.LabelStyle()
+	pctInt := int(math.Round(pct))
+	var pctStr string
+	if pctInt == 0 {
+		pctStr = labelStyle.Render("0%")
+	} else {
+		thresholds := []render.Threshold{
+			{Cutoff: warnPct - 1, Color: th.Green},
+			{Cutoff: critPct - 1, Color: th.Yellow},
+			{Cutoff: 100, Color: th.Red},
+		}
+		pctStr = render.ThresholdStyle(pctInt, thresholds).Render(fmt.Sprintf("%d%%", pctInt))
+	}
+	return render.Battery(pctInt) + " " + pctStr + labelStyle.Render(" ctx")
+}
+
+// sessionDuration renders the session length segment text: the payload's
+// cost.total_duration_ms, falling back to the snapshot's start time. ok is
+// false when neither is available.
+func sessionDuration(p *Payload, snap *state.AgentState) (string, bool) {
+	if p.Cost != nil {
+		if ms, ok := coerceNonNegative(p.Cost.TotalDurationMS); ok && ms > 0 {
+			return render.Duration(time.Duration(ms * float64(time.Millisecond))), true
+		}
+	}
+	if snap != nil && snap.StartTime > 0 {
+		return render.Duration(time.Since(time.Unix(snap.StartTime, 0))), true
+	}
+	return "", false
+}
+
 // renderRichLine2 renders the session metrics row: model, context%, used/
 // window tokens, last-turn tokens, cache hit rate, turns, cumulative tokens,
 // cost, and duration, in that order, dropping segments right-to-left
@@ -649,20 +689,8 @@ func renderRichLine2(p *Payload, cols int, snap *state.AgentState) (string, bool
 	// usually means "no data yet" rather than "healthy".
 	ctxIdx := -1
 	if pct, ok := p.ContextWindow.UsedPercentage(); ok {
-		pctInt := int(math.Round(pct))
 		ctxIdx = len(segments)
-		var pctStr string
-		if pctInt == 0 {
-			pctStr = labelStyle.Render("0%")
-		} else {
-			thresholds := []render.Threshold{
-				{Cutoff: warnPct - 1, Color: th.Green},
-				{Cutoff: critPct - 1, Color: th.Yellow},
-				{Cutoff: 100, Color: th.Red},
-			}
-			pctStr = render.ThresholdStyle(pctInt, thresholds).Render(fmt.Sprintf("%d%%", pctInt))
-		}
-		addSeg(render.Battery(pctInt) + " " + pctStr + labelStyle.Render(" ctx"))
+		addSeg(contextSegment(pct, th, warnPct, critPct))
 	}
 
 	// The model badge and ctx% segment are the two segments the trimming
@@ -830,15 +858,8 @@ func renderRichLine2(p *Payload, cols int, snap *state.AgentState) (string, bool
 
 	// 9. Duration -- from the payload's cost.total_duration_ms, falling back
 	// to the monitor's start time in state.json.
-	haveDuration := false
-	if p.Cost != nil {
-		if ms, ok := coerceNonNegative(p.Cost.TotalDurationMS); ok && ms > 0 {
-			addSeg(valueStyle.Render(render.Duration(time.Duration(ms * float64(time.Millisecond)))))
-			haveDuration = true
-		}
-	}
-	if !haveDuration && snap != nil && snap.StartTime > 0 {
-		addSeg(valueStyle.Render(render.Duration(time.Since(time.Unix(snap.StartTime, 0)))))
+	if d, ok := sessionDuration(p, snap); ok {
+		addSeg(valueStyle.Render(d))
 	}
 
 	if len(segments) == 0 {
