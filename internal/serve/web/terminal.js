@@ -5,6 +5,7 @@
 import {
   backoffDelay,
   KEY_BAR,
+  detailTitle,
   keySequence,
   parseControl,
   terminalSocketUrl,
@@ -33,7 +34,11 @@ export function mountTerminal(root, ctx, { session, windowId }) {
   const win = ctx.store.fleet?.groups
     ?.find((g) => g.session === session)
     ?.windows?.find((w) => w.window_id === windowId);
-  if (win?.agent) title.textContent = win.agent;
+  const setTitle = () => {
+    const w = ctx.store.fleet?.groups?.find((g) => g.session === session)?.windows?.find((x) => x.window_id === windowId);
+    title.textContent = detailTitle(w, windowId).text;
+  };
+  setTitle();
   const host = h("div", { class: "term-host" });
   const viewport = h("div", { class: "term-viewport" }, host);
   const keybar = h("div", { class: "keybar", hidden: true });
@@ -183,7 +188,12 @@ export function mountTerminal(root, ctx, { session, windowId }) {
 
   connect();
 
+  const unsubTitle = ctx.store.subscribe((ev) => {
+    if (ev?.type === "fleet" || ev?.type === "window") setTitle();
+  });
+
   return () => {
+    unsubTitle();
     stopped = true;
     clearTimeout(retryTimer);
     clearInterval(pinger);

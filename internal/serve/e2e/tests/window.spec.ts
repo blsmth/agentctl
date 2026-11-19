@@ -242,6 +242,19 @@ test("header: a short row title keeps the full recap in the window view", async 
   await expect(page.locator(".win-head")).not.toContainText("Testing Cart Totals");
 });
 
+test("header: a long title ellipsizes and keeps Close on screen", async ({ page, control }) => {
+  await control.patchWindow(SHOP, "@13", { recap: "Writing tests.", recap_source: "summary", short_title: "A very long generated title that cannot possibly fit on a phone header", short_kind: "go" });
+  await openWindow(page, "@13");
+  const h1 = page.locator("header.bar h1");
+  await expect(h1).toContainText("A very long generated title");
+  await expect(page.locator(".win-where")).toContainText("test-writer");
+  await expect(page.locator("header.bar h1 .kind-chip")).toHaveText("go");
+  const close = await page.locator(".close-window").boundingBox();
+  const vp = page.viewportSize();
+  expect(close && vp && close.x + close.width <= vp.width).toBe(true);
+  await page.screenshot({ path: "test-results/detail-title.png" });
+});
+
 test("done windows show the PR chip and a chat-style composer with Close in the header", async ({ page }) => {
   await openWindow(page, "@12");
   const pr = page.locator(".chips a.chip.pr");
