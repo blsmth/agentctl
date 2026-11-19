@@ -147,7 +147,7 @@ When a human approves a dispatch popup (on the laptop or the phone), the hook re
 | `rich` (default) | Colored, up to three lines: account rate limits; session metrics (model, context %, tokens, cache hit rate, turns, cost, duration); workspace (directory, branch, dirty count, worktree, PR). |
 | `complementary` | Account-level figures only, e.g. `5h 12% · 7d 9% · $13.43`. Absent components are omitted; if all are absent it prints `-`. |
 | `full` | Model, context %, and agent name. |
-| `mobile` | Phone-width, up to two lines: `model · ctx N% · $cost` and `5h N% · 7d N% · account · ⎇ branch`. Same numbers, colors and cost trust rules as `rich` (cost hidden for non-`claude-*` models and when zero). Absent values are omitted; when narrow, segments drop from the end of each line (branch, then account, then 7d). No subprocess, no dirty count. |
+| `mobile` | Phone-width, up to two lines: `model · <battery> N% ctx · session length` and `5h N% · 7d N% · $cost · account`. Same numbers, colors and trust rules as `rich` (context bar, session length from the payload with a state-snapshot fallback; cost hidden for non-`claude-*` models and when zero). Absent values are omitted; when narrow, line 1 drops session length first and line 2 drops account, then 7d, then cost (5h is kept longest). No git branch, no subprocess. |
 | `minimal` | A bare `-`. |
 
 `statusline_align: "right"` pads the `rich` and `mobile` lines flush with the terminal's right edge.
