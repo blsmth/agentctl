@@ -345,7 +345,7 @@ func Launch(req Request) (Result, error) {
 	sessionID := ids.NewUUID()
 	windowName := tmux.NextInstanceName(req.AgentName)
 	sessionName := SessionNameFor(req.AgentName, windowName, workDir, repoDir, useWorktree)
-	permissionMode := resolvePermissionMode(req.Mode, ac, req.PermissionMode)
+	permissionMode := launchPermissionMode(req, spec, ac)
 	inv := baseInvocation(req.AgentName, sessionName, ac, prep)
 	inv.SessionID = sessionID
 	if caps.PermissionModes {
@@ -617,7 +617,9 @@ var validPermissionModes = map[string]bool{
 // one is logged and ignored. Otherwise the default applies only to worker
 // dispatch modes (ModeDispatch, ModeAdhoc, ModeReviewPR) -- interactive modes (bare,
 // discuss, triage, review, custom) have a human at the keyboard and keep
-// Claude's own default.
+// Claude's own default. The one exception is a human ad-hoc launch of an
+// orchestrator converted to ModeBare: the caller passes ModeAdhoc for it
+// (modeSpec.WorkerPermissionMode) so it gets the worker default too.
 func resolvePermissionMode(mode Mode, ac config.AgentConfig, override string) string {
 	if override != "" && validPermissionModes[override] {
 		return override
@@ -632,6 +634,17 @@ func resolvePermissionMode(mode Mode, ac config.AgentConfig, override string) st
 		return defaultDispatchPermissionMode
 	}
 	return ""
+}
+
+// launchPermissionMode resolves the permission mode for a launch. An ad-hoc
+// orchestrator launch converted to ModeBare (spec.WorkerPermissionMode)
+// resolves like the ad-hoc launch it started as.
+func launchPermissionMode(req Request, spec modeSpec, ac config.AgentConfig) string {
+	mode := req.Mode
+	if spec.WorkerPermissionMode {
+		mode = ModeAdhoc
+	}
+	return resolvePermissionMode(mode, ac, req.PermissionMode)
 }
 
 // execPath resolves the path of the running binary, used to prefix hook

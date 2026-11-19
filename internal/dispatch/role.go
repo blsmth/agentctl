@@ -43,7 +43,8 @@ func frontmatterRole(cfg *config.Config, agentName, workDir string) string {
 //   - A human-initiated ad-hoc launch (the phone's new-session button,
 //     `dispatch --prompt` from a plain shell) is converted to ModeBare: an interactive session
 //     with the prompt as its first user message, no execInstructions and the
-//     interactive permission mode. The caller's worktree choice is kept.
+//     worker permission mode (override, then agent config, then `auto`). The
+//     caller's worktree choice is kept.
 //   - An unattended launch (ad-hoc with ScheduledBy set, i.e. cron; ad-hoc
 //     dispatched by another agent session; and ModeDispatch) keeps its mode and autonomous instructions; only the
 //     preamble role and the finishing steps change.
@@ -64,7 +65,9 @@ func applyAgentRole(req Request, spec modeSpec, role string, human bool) (Reques
 		}
 		logging.Log("dispatch: %s is an orchestrator; launching the ad-hoc prompt as an interactive session", req.AgentName)
 		req.Mode = ModeBare
-		return req, modes[ModeBare]
+		bare := modes[ModeBare]
+		bare.WorkerPermissionMode = true
+		return req, bare
 	}
 	spec.Role = RoleOrchestrator
 	spec.IncludeFinishingSteps = false
