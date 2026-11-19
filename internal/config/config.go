@@ -790,6 +790,11 @@ func (c *Config) EffectiveBashPreview(name string) bool {
 	return false
 }
 
+// DefaultReviewAgent is the agent `agentctl dispatch --review-pr` launches
+// when --agent is not given. The dispatch_approval "non-review" exemption
+// keys on it, so the CLI and the hook must agree.
+const DefaultReviewAgent = "code-reviewer"
+
 // Values of Config.DispatchApproval, strictest first.
 const (
 	DispatchApprovalAll       = "all"
@@ -831,9 +836,10 @@ func (c Config) DispatchApprovalWarning() string {
 		c.DispatchApproval, DispatchApprovalAll, DispatchApprovalNonReview, DispatchApprovalOff, DispatchApprovalAll)
 }
 
-// dispatchApprovalStrictness ranks a dispatch_approval value: higher gates
-// more dispatches. Unrecognized values rank as "all".
-func dispatchApprovalStrictness(v string) int {
+// DispatchApprovalStrictness ranks a raw dispatch_approval value: higher
+// gates more dispatches. Unset ranks as "non-review" and unrecognized values
+// rank as "all".
+func DispatchApprovalStrictness(v string) int {
 	switch (Config{DispatchApproval: v}).EffectiveDispatchApproval() {
 	case DispatchApprovalOff:
 		return 0
@@ -1014,6 +1020,30 @@ func GlobalDir() (string, error) {
 		return "", fmt.Errorf("resolving home directory: %w", err)
 	}
 	return GlobalDirIn(home), nil
+}
+
+// GlobalFilePath returns the user-wide config file, <GlobalDir>/config.json.
+// Unlike the path Init records, it is resolved on every call.
+func GlobalFilePath() (string, error) {
+	dir, err := GlobalDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.json"), nil
+}
+
+// ParseDispatchApproval returns the raw dispatch_approval value in config
+// file content data ("" when unset). Empty or whitespace-only content is an
+// empty config. It errors when data is not a valid config file.
+func ParseDispatchApproval(data []byte) (string, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return "", nil
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("parsing config: %w", err)
+	}
+	return cfg.DispatchApproval, nil
 }
 
 // Init sets the config path. Must be called once at startup before Load or
@@ -1345,7 +1375,7 @@ func sanitizeProjectConfig(project, global *Config) {
 		project.BashPreview = nil
 	}
 	if project.DispatchApproval != "" &&
-		dispatchApprovalStrictness(project.DispatchApproval) < dispatchApprovalStrictness(global.DispatchApproval) {
+		DispatchApprovalStrictness(project.DispatchApproval) < DispatchApprovalStrictness(global.DispatchApproval) {
 		warn("dispatch_approval", noLoosen)
 		project.DispatchApproval = ""
 	}

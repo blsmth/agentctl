@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -11,8 +12,9 @@ import (
 )
 
 // defaultReviewAgent is the agent `dispatch --review-pr` launches when
-// --agent is not given.
-const defaultReviewAgent = "code-reviewer"
+// --agent is not given. It lives in config because the dispatch_approval
+// review exemption (internal/hooks) keys on the same name.
+const defaultReviewAgent = config.DefaultReviewAgent
 
 // Seams for tests: every one of these reaches gh, tmux or another session.
 var (

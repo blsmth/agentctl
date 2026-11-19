@@ -229,3 +229,50 @@ func TestTokenizeQuoted_CommentsAndNewlines(t *testing.T) {
 		})
 	}
 }
+
+// Under "non-review" only a reviewer dispatch is exempt: --review-pr N run by
+// code-reviewer, either as the CLI default (no --agent) or named literally.
+func TestValidateBash_ReviewExemptionRequiresCodeReviewer(t *testing.T) {
+	if config.DefaultReviewAgent != "code-reviewer" {
+		t.Fatalf("DefaultReviewAgent = %q; the cases below assume code-reviewer", config.DefaultReviewAgent)
+	}
+	tests := []struct {
+		name      string
+		command   string
+		wantGated bool
+	}{
+		{"no --agent resolves to the default reviewer", "agentctl dispatch --review-pr 5", false},
+		{"--agent code-reviewer", "agentctl dispatch --agent code-reviewer --review-pr 5", false},
+		{"-a code-reviewer", "agentctl dispatch -a code-reviewer --review-pr 5", false},
+		{"--agent=code-reviewer", "agentctl dispatch --review-pr 5 --agent=code-reviewer", false},
+		{"quoted reviewer value", "agentctl dispatch --review-pr 5 --agent 'code-reviewer'", false},
+		{"reviewer with review focus prompt", `agentctl dispatch --review-pr 5 --prompt "focus on the locking"`, false},
+		{"reviewer with quoted expanding prompt", `agentctl dispatch --review-pr 5 --prompt "$(cat focus.md)"`, false},
+		{"repeated --agent ending in the reviewer", "agentctl dispatch --agent go-engineer --review-pr 5 -a code-reviewer", false},
+
+		{"--agent go-engineer", "agentctl dispatch --agent go-engineer --review-pr 5", true},
+		{"-a go-engineer", "agentctl dispatch -a go-engineer --review-pr 5", true},
+		{"--agent=go-engineer", "agentctl dispatch --review-pr=5 --agent=go-engineer", true},
+		{"arbitrary agent with free text prompt", `agentctl dispatch --review-pr 5 --agent anything --prompt "do whatever"`, true},
+		{"repeated --agent ending in a non-reviewer", "agentctl dispatch --agent code-reviewer --review-pr 5 --agent go-engineer", true},
+		{"-a ending in a non-reviewer", "agentctl dispatch -a code-reviewer -a go-engineer --review-pr 5", true},
+		{"quoted --agent flag", `agentctl dispatch --review-pr 5 "--agent" go-engineer`, true},
+		{"expanding agent value", "agentctl dispatch --review-pr 5 --agent $AGENT", true},
+		{"expanding word in flag position", "agentctl dispatch --review-pr 5 $EXTRA", true},
+		{"unquoted expanding prompt splits", "agentctl dispatch --review-pr 5 --prompt $(echo x --agent go-engineer)", true},
+		{"attached short agent flag", "agentctl dispatch --review-pr 5 -ago-engineer", true},
+		{"--agent without a value", "agentctl dispatch --review-pr 5 --agent", true},
+		{"reviewer review plus non-reviewer review", "agentctl dispatch --review-pr 1; agentctl dispatch --review-pr 2 --agent go-engineer", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gated, out := runValidateBashWith(t, &config.Config{}, tt.command)
+			if gated != tt.wantGated {
+				t.Errorf("dispatch gate called = %v, want %v", gated, tt.wantGated)
+			}
+			if out != "" {
+				t.Errorf("ValidateBash wrote %q, want no output", out)
+			}
+		})
+	}
+}

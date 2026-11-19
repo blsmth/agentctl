@@ -408,6 +408,9 @@ func checkCronTamper(command string) string {
 	if !strings.Contains(command, "schedules.json") && !strings.Contains(command, "cron") {
 		return ""
 	}
+	// Arguments to agentctl (a context set value, a dispatch prompt) are
+	// text, not shell write targets.
+	command = maskAgentctlArgs(command)
 	alt := "(?:" + strings.Join(targets, "|") + ")"
 	for _, tmpl := range cronTamperTemplates {
 		re, err := regexp.Compile(fmt.Sprintf(tmpl, alt))
@@ -422,8 +425,8 @@ func checkCronTamper(command string) string {
 	return ""
 }
 
-// checkGlobalDenyList matches globalDenyPatterns and the serve- and
-// cron-tamper rules against command with data-only heredoc bodies removed
+// checkGlobalDenyList matches globalDenyPatterns and the serve-, cron- and
+// config-tamper rules against command with data-only heredoc bodies removed
 // (see stripDataHeredocs). Quoted arguments are still matched literally.
 func checkGlobalDenyList(command string) string {
 	command = stripDataHeredocs(command)
@@ -435,7 +438,10 @@ func checkGlobalDenyList(command string) string {
 	if reason := checkServeTamper(command); reason != "" {
 		return reason
 	}
-	return checkCronTamper(command)
+	if reason := checkCronTamper(command); reason != "" {
+		return reason
+	}
+	return checkConfigTamper(command)
 }
 
 // denyAuditContext carries the PreToolUse fields both deny emitters need to

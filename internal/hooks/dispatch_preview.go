@@ -90,9 +90,10 @@ func isAgentctlDispatch(command string) bool {
 // dispatchNeedsApproval reports whether a command that isAgentctlDispatch
 // must show the dispatch approval popup under the given (normalized)
 // dispatch_approval mode. "off" gates nothing; "non-review" gates the command
-// unless EVERY non-help dispatch segment is a PR review dispatch, so one
-// ordinary dispatch in the line keeps the gate for the whole command; "all"
-// and anything unrecognized gate everything (fail closed).
+// unless EVERY non-help dispatch segment is an exempt reviewer dispatch (see
+// segmentIsReview), so one ordinary dispatch in the line keeps the gate for
+// the whole command; "all" and anything unrecognized gate everything (fail
+// closed).
 func dispatchNeedsApproval(command, mode string) bool {
 	switch mode {
 	case config.DispatchApprovalOff:
@@ -109,34 +110,62 @@ func dispatchNeedsApproval(command, mode string) bool {
 	}
 }
 
-// segmentIsReview reports whether a dispatch segment is a PR review
-// dispatch: its last --review-pr flag ("--review-pr N" or "--review-pr=N"; the
-// CLI keeps the last one) carries a literal positive integer. A missing,
-// zero, non-numeric or shell-expanded value is not a review: 0 means "unset"
-// to dispatch, so "--review-pr=0" would otherwise exempt an ordinary
-// dispatch. Quoted words and values of other flags are never the flag.
+// segmentIsReview reports whether a dispatch segment is exempt from the
+// "non-review" gate: a PR review dispatch run by the code-reviewer agent.
+//
+//   - Its last --review-pr flag ("--review-pr N" or "--review-pr=N"; the CLI
+//     keeps the last one) carries a literal positive integer. A missing,
+//     zero, non-numeric or shell-expanded value is not a review: 0 means
+//     "unset" to dispatch, so "--review-pr=0" would otherwise exempt an
+//     ordinary dispatch.
+//   - Its agent resolves to config.DefaultReviewAgent: no --agent/-a at all
+//     (the CLI default for --review-pr), or a last --agent/-a/--agent=
+//     whose literal value is that name. Anything else would be an
+//     unattended launch of an arbitrary agent with arbitrary --prompt
+//     instructions.
+//
+// Values of other flags are never read as flags. It fails closed on anything
+// the shell could turn into extra or different arguments: an expanding word
+// in flag position, an unquoted expanding value (word splitting), or an
+// attached short agent flag ("-ax").
 func segmentIsReview(seg []cmdToken) bool {
 	found, ok := false, false
+	agent, agentOK := config.DefaultReviewAgent, true
 	for i := 0; i < len(seg); i++ {
 		t := seg[i]
-		if t.quoted {
-			continue
+		if t.expands {
+			return false
 		}
 		switch {
-		case t.text == "--review-pr":
+		case t.text == "--review-pr" && !t.quoted:
 			found, ok = true, false
 			if i+1 < len(seg) {
 				ok = positiveLiteral(seg[i+1])
 				i++
 			}
-		case strings.HasPrefix(t.text, "--review-pr="):
+		case strings.HasPrefix(t.text, "--review-pr=") && !t.quoted:
 			found = true
-			ok = !t.expands && positiveInt(strings.TrimPrefix(t.text, "--review-pr="))
+			ok = positiveInt(strings.TrimPrefix(t.text, "--review-pr="))
+		case t.text == "--agent" || t.text == "-a":
+			agent, agentOK = "", false
+			if i+1 < len(seg) {
+				agent, agentOK = seg[i+1].text, !seg[i+1].expands
+				i++
+			}
+		case strings.HasPrefix(t.text, "--agent="):
+			agent, agentOK = strings.TrimPrefix(t.text, "--agent="), true
+		case strings.HasPrefix(t.text, "-a") && !strings.HasPrefix(t.text, "--"):
+			return false // "-ax" / "-a=x": not worth parsing, gate it
 		case isDispatchValueFlag(t.text):
-			i++ // skip the value
+			if i+1 < len(seg) {
+				if v := seg[i+1]; v.expands && !v.quoted {
+					return false
+				}
+				i++
+			}
 		}
 	}
-	return found && ok
+	return found && ok && agentOK && agent == config.DefaultReviewAgent
 }
 
 // positiveLiteral reports whether t is a non-expanding positive integer.
@@ -277,7 +306,7 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool, den
 	targetAgent, issue, prompt, promptKey := parseDispatchFlags(command)
 	reviewPR := parseDispatchReviewPR(command)
 	if reviewPR > 0 && targetAgent == "" {
-		targetAgent = "code-reviewer"
+		targetAgent = config.DefaultReviewAgent
 	}
 
 	// Resolve the popup's sizing inputs from the attached client BEFORE
