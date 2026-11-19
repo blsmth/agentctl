@@ -209,7 +209,7 @@ func viewerSessionHome(session string) string {
 func killViewerSessions(except string) {
 	for _, s := range viewerSessions() {
 		if s != except {
-			_ = exec.Command("tmux", "kill-session", "-t", "="+s).Run()
+			_ = exec.Command("tmux", "kill-session", "-t", ExactSession(s)).Run()
 		}
 	}
 }
@@ -233,15 +233,8 @@ func ShowLiveViewer(homeSession, windowID string, rightWidth int) error {
 	}
 
 	name := nextViewerName(sessions)
-	if _, err := tmuxRun(viewerNewSessionArgs(homeSession, name)...); err != nil {
-		return err
-	}
-	for _, a := range viewerOptionArgs(name) {
-		if _, err := tmuxRun(a...); err != nil {
-			return err
-		}
-	}
-	if _, err := tmuxRun(viewerSelectWindowArgs(name, windowID)...); err != nil {
+	if err := createViewerSession(viewerDeps{run: tmuxRun, hasSession: HasSessionNamed, kill: killSession},
+		homeSession, name, windowID); err != nil {
 		return err
 	}
 
@@ -266,6 +259,38 @@ func ShowLiveViewer(homeSession, windowID string, rightWidth int) error {
 	}
 	_, err = tmuxRun("set-option", "-p", "-t", id, viewerPaneOption, "1")
 	return err
+}
+
+// viewerDeps are the tmux operations createViewerSession needs, as seams.
+type viewerDeps struct {
+	run        func(args ...string) (string, error)
+	hasSession func(name string) bool
+	kill       func(name string)
+}
+
+func killSession(name string) {
+	_ = exec.Command("tmux", "kill-session", "-t", ExactSession(name)).Run()
+}
+
+// createViewerSession creates the grouped viewer session for homeSession and
+// selects windowID in it. The home session is checked first: if it vanished,
+// `new-session -t =home` would create a session in a group literally named
+// "=home". Any failure after the viewer exists kills it so it cannot leak.
+func createViewerSession(d viewerDeps, homeSession, name, windowID string) error {
+	if !d.hasSession(homeSession) {
+		return fmt.Errorf("home session %q not found", homeSession)
+	}
+	if _, err := d.run(viewerNewSessionArgs(homeSession, name)...); err != nil {
+		return err
+	}
+	steps := append(viewerOptionArgs(name), viewerSelectWindowArgs(name, windowID))
+	for _, a := range steps {
+		if _, err := d.run(a...); err != nil {
+			d.kill(name)
+			return err
+		}
+	}
+	return nil
 }
 
 func viewerSessionExists() bool {

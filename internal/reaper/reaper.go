@@ -29,6 +29,7 @@ import (
 	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/textutil"
+	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // ProcessInfo holds the minimal fields needed for orphan detection.
@@ -202,7 +203,7 @@ var (
 
 // tmuxServerPID returns the PID of the tmux server hosting sessionName.
 func tmuxServerPID(sessionName string) (int, error) {
-	out, err := exec.Command("tmux", "display-message", "-p", "-t", "="+sessionName+":", "#{pid}").Output()
+	out, err := exec.Command("tmux", "display-message", "-p", "-t", tmux.ExactSessionTarget(sessionName), "#{pid}").Output()
 	if err != nil {
 		return 0, fmt.Errorf("tmux display-message: %w", err)
 	}

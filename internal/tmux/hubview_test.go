@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -265,5 +266,50 @@ func TestKeybindingsCarryKeyWindow(t *testing.T) {
 		if !strings.Contains(kb.command, KeyClientEnv+"=#{client_name}") {
 			t.Errorf("binding %q lacks %s: %s", kb.key, KeyClientEnv, kb.command)
 		}
+	}
+}
+
+func TestCreateViewerSession(t *testing.T) {
+	boom := errors.New("boom")
+	tests := []struct {
+		name       string
+		hasHome    bool
+		failVerb   string
+		wantErr    bool
+		wantRan    int
+		wantKilled bool
+	}{
+		{name: "ok", hasHome: true, wantRan: 5},
+		{name: "home vanished", hasHome: false, wantErr: true, wantRan: 0},
+		{name: "new-session fails", hasHome: true, failVerb: "new-session", wantErr: true, wantRan: 1},
+		{name: "option fails", hasHome: true, failVerb: "set-option", wantErr: true, wantRan: 2, wantKilled: true},
+		{name: "select-window fails", hasHome: true, failVerb: "select-window", wantErr: true, wantRan: 5, wantKilled: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var ran int
+			var killed []string
+			d := viewerDeps{
+				run: func(args ...string) (string, error) {
+					ran++
+					if args[0] == tt.failVerb {
+						return "", boom
+					}
+					return "", nil
+				},
+				hasSession: func(string) bool { return tt.hasHome },
+				kill:       func(n string) { killed = append(killed, n) },
+			}
+			err := createViewerSession(d, "home", "v", "@1")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if ran != tt.wantRan {
+				t.Errorf("ran %d commands, want %d", ran, tt.wantRan)
+			}
+			if tt.wantKilled != (len(killed) == 1 && killed[0] == "v") || len(killed) > 1 {
+				t.Errorf("killed = %v, want killed=%v", killed, tt.wantKilled)
+			}
+		})
 	}
 }
