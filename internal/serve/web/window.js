@@ -316,6 +316,12 @@ export function mountWindow(root, ctx, { session, windowId }) {
         run(
           { title: "Close window?", lines: [`${win?.agent ?? ""} ${windowId}`], confirmLabel: "Close", danger: true },
           { method: "POST", path: `${base}/close`, body: {} },
+          () => {
+            // Leave for Fleet; the hashchange tears this view down. Until then
+            // refresh() is a no-op so the closed window is not re-fetched.
+            disposed = true;
+            location.hash = "#/";
+          },
         ),
     },
     svgIcon(CLOSE_SVG),
@@ -341,6 +347,9 @@ export function mountWindow(root, ctx, { session, windowId }) {
 
   let mode = loadMode();
   let view = null;
+  // Set when the view is leaving (after a close, or on teardown): refreshes
+  // become no-ops so nothing renders or toasts against a dead view.
+  let disposed = false;
 
   function mountView() {
     view?.destroy();
@@ -700,8 +709,9 @@ export function mountWindow(root, ctx, { session, windowId }) {
   }
 
   async function refresh() {
-    if (gone) return;
+    if (gone || disposed) return;
     const [okWin, okPane] = await Promise.all([refreshWindow(), refreshPane()]);
+    if (disposed) return;
     if (gone) {
       showGone();
       return;
@@ -749,6 +759,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
   });
 
   return () => {
+    disposed = true;
     clearInterval(timer);
     clearInterval(tick);
     unsub();
