@@ -279,6 +279,22 @@ func (s *Server) markPhoneView(windowID, viewer string) func() {
 	}
 }
 
+// touchPhoneView refreshes the snapshot marker for the device polling
+// windowID's pane (the window detail screen, which has no socket to close).
+// The marker expires on its own (phoneview.PaneTTL), so a phone that vanishes
+// needs no cleanup; expired markers of other windows are pruned here.
+func (s *Server) touchPhoneView(r *http.Request, windowID string) {
+	dir := s.term.markers
+	if dir == "" {
+		return
+	}
+	d, _ := DeviceFrom(r.Context())
+	phoneview.PruneExpired(dir)
+	if err := phoneview.Touch(dir, windowID, phoneview.PaneViewer(d.ID)); err != nil {
+		logging.Debug("serve: pane phone-view marker: %v", err)
+	}
+}
+
 // watchTerminal resends the window size when it changes and sends keepalive
 // pings, until ctx ends or the window disappears.
 func (s *Server) watchTerminal(ctx context.Context, conn *websocket.Conn, p PTY, windowID string, cols, rows int, readOnly bool) {

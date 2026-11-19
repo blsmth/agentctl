@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/phoneview"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/state"
 )
@@ -496,5 +499,37 @@ func TestPaneAndAnswerHashSameDialog(t *testing.T) {
 	guard := buildPaneBody(e.panes.text)
 	if guard.Dialog == nil || guard.Dialog.Hash == "" || guard.Dialog.Hash != viaPane.Dialog.Hash {
 		t.Errorf("guard hash %+v != pane hash %q", guard.Dialog, viaPane.Dialog.Hash)
+	}
+}
+
+func TestPaneEndpointMarksPhoneView(t *testing.T) {
+	e := newReadEnv(t)
+	e.term.markers = t.TempDir()
+	if phoneview.Active(e.term.markers, "@523") {
+		t.Fatal("marker before any pane request")
+	}
+	if w := e.get("/v1/sessions/agentctl-proj/windows/@9/pane"); w.Code != 404 {
+		t.Fatalf("unknown window = %d", w.Code)
+	}
+	if phoneview.Active(e.term.markers, "@9") {
+		t.Fatal("marker written for a window that does not exist")
+	}
+	if w := e.get("/v1/sessions/agentctl-proj/windows/@523/pane"); w.Code != 200 {
+		t.Fatalf("pane = %d", w.Code)
+	}
+	if !phoneview.Active(e.term.markers, "@523") {
+		t.Fatal("pane request wrote no marker")
+	}
+	// Phone vanished: the marker ages out on its own.
+	old := time.Now().Add(-2 * phoneview.PaneTTL)
+	entries, _ := os.ReadDir(filepath.Join(e.term.markers, "@523"))
+	if len(entries) != 1 {
+		t.Fatalf("markers = %d, want 1", len(entries))
+	}
+	if err := os.Chtimes(filepath.Join(e.term.markers, "@523", entries[0].Name()), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if phoneview.Active(e.term.markers, "@523") {
+		t.Fatal("stale marker still active")
 	}
 }
