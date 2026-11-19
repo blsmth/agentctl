@@ -8,7 +8,7 @@ import {
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
-  actionsWithQueue, buildAnswerRequest, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
+  actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
   defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
@@ -301,6 +301,20 @@ console.log("ok: resolved text");
   const multi = { ...dialog, multi: true };
   assert.throws(() => buildAnswerRequest("s", "@1", multi, "1"), /multi-select/);
   assert.equal(buildAnswerRequest("s", "@1", multi, "esc").body.key, "esc");
+  // Multi-select submit: one request carrying the chosen keys.
+  assert.throws(() => buildAnswerRequest("s", "@1", multi, "submit", ["1"]), /cannot be submitted/);
+  const withSubmit = { ...multi, submit: { label: "Next", moves: 3 } };
+  const sub = buildAnswerRequest("s", "@1", withSubmit, "submit", ["2", "1"]);
+  assert.deepEqual(sub.body, { key: "submit", dialog_hash: "h", select: ["2", "1"] });
+  assert.equal(buildAnswerRequest("s", "@1", withSubmit, "submit").body.select.length, 0);
+  assert.throws(() => buildAnswerRequest("s", "@1", dialog, "submit", []), /cannot be submitted/);
+  assert.deepEqual(
+    checkboxChoices({ options: [
+      { key: "1", label: "[ ] A" }, { key: "2", label: "[✔] B" }, { key: "3", label: "[ ] Type something" },
+      { key: "4", label: "Chat about this" },
+    ] }),
+    [{ key: "1", label: "A", checked: false }, { key: "2", label: "B", checked: true }],
+  );
   assert.equal(dialogQuestion({ text: "Edit file\nfoo.go\n1. Yes\n2. No" }), "foo.go");
   assert.equal(dialogQuestion({ text: "" }), "");
   assert.equal(focusedOption("│ \x1b[36m❯ 1. Yes\x1b[0m │\n│   2. No │", dialog), "1");

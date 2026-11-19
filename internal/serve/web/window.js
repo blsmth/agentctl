@@ -7,6 +7,7 @@ import {
   actionsWithQueue,
   approvalsForWindow,
   buildAnswerRequest,
+  checkboxChoices,
   buildQueueRequest,
   buildReplyRequest,
   buildUploadPath,
@@ -412,6 +413,51 @@ export function mountWindow(root, ctx, { session, windowId }) {
     return ok;
   }
 
+  // Local tick state for a multi-select question, seeded from the pane's
+  // [x] marks and kept across polls while the same dialog (hash) is up.
+  let multiSel = { hash: "", keys: new Set() };
+
+  function multiAnswer(dialog, answer) {
+    const choices = checkboxChoices(dialog);
+    if (multiSel.hash !== dialog.hash) {
+      multiSel = { hash: dialog.hash, keys: new Set(choices.filter((c) => c.checked).map((c) => c.key)) };
+    }
+    const submit = () => {
+      let req;
+      try {
+        req = buildAnswerRequest(session, windowId, dialog, "submit", [...multiSel.keys]);
+      } catch (e) {
+        toast(e.message, "error");
+        return;
+      }
+      const picked = choices.filter((c) => multiSel.keys.has(c.key)).map((c) => c.label);
+      run(
+        {
+          title: `${dialog.submit?.label ?? "Submit"} this answer?`,
+          lines: [picked.length ? picked.join("\n") : "(nothing ticked)"],
+          confirmLabel: "Send",
+        },
+        req,
+      );
+    };
+    return [
+      h(
+        "div",
+        { class: "choices" },
+        ...choices.map((c) => {
+          const box = h("input", { type: "checkbox" });
+          box.checked = multiSel.keys.has(c.key);
+          box.onchange = () => (box.checked ? multiSel.keys.add(c.key) : multiSel.keys.delete(c.key));
+          return h("label", { class: "btn choice" }, box, ` ${c.label}`);
+        }),
+        dialog.submit
+          ? h("button", { class: "btn choice primary", onclick: submit }, dialog.submit.label || "Submit")
+          : h("p", { class: "note" }, "Cannot find the submit row; finish this question on the terminal."),
+        h("button", { class: "btn choice", onclick: () => answer("esc") }, "Dismiss (Esc)"),
+      ),
+    ];
+  }
+
   function answerSection() {
     const dialog = pane.dialog;
     const recommended = focusedOption(pane.text, dialog) || dialog.options?.[0]?.key || "";
@@ -432,17 +478,17 @@ export function mountWindow(root, ctx, { session, windowId }) {
         req,
       );
     };
+    if (dialog.multi) {
+      return h("section", { class: "answer" }, h("p", { class: "question" }, dialogQuestion(dialog)), ...multiAnswer(dialog, answer));
+    }
     return h(
       "section",
       { class: "answer" },
       h("p", { class: "question" }, dialogQuestion(dialog)),
-      dialog.multi
-        ? h("p", { class: "note" }, "Multi-select question: choose and submit on the terminal. You can still dismiss it here.")
-        : null,
       h(
         "div",
         { class: "choices" },
-        ...(dialog.multi ? [] : dialog.options ?? []).map((o) =>
+        ...(dialog.options ?? []).map((o) =>
           h(
             "button",
             { class: `btn choice${o.key === recommended ? " primary" : ""}`, onclick: () => answer(o.key) },
