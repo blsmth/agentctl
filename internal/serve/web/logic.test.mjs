@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   SWIPE_REVEAL, canSwipeClose, swipeAxis, swipeCommit, swipeOffset,
   ansiColor, approvalBannerText, approvalConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
+  approvalProject, approvalRows, approvalRowText, promptFold, PROMPT_FOLD_LINES,
   DISPATCH_UPLOAD_PATH, buildDispatchRequest, buildShellRequest, canShell, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
@@ -153,6 +154,53 @@ assert.equal(approvalConfirm({ ...ap, kind: "bash", prompt: "" }, "deny").danger
 const cronConf = approvalConfirm({ ...ap, kind: "cron", prompt: "Job: nightly" }, "allow");
 assert.equal(cronConf.title, "Approve this schedule?");
 assert.ok(cronConf.lines[0].includes("scheduled agent: go-engineer") && cronConf.lines.includes("Job: nightly"));
+
+// Dispatch where/how details.
+const details = {
+  project: "blsmth.com", dir: "~/code/personal/blsmth.com", dir_source: "flag", asking_project: "agentctl", other_project: true,
+  agent: "general-purpose", agent_source: "built-in", model: "opus", model_source: "agent file", backend: "", harness: "",
+  account: "personal (Personal)", mode: "ad-hoc", worktree: "worktree", permission_mode: "auto",
+};
+const apd = { ...ap, target_agent: "general-purpose", details };
+assert.equal(approvalSummary(apd), "orch wants to dispatch general-purpose to blsmth.com");
+assert.equal(approvalSummary({ ...ap, details: { ...details, project: "" } }), "orch wants to dispatch general-purpose");
+assert.equal(approvalSummary({ kind: "dispatch", asking_agent: "orch", target_agent: "x", target_project: "site" }), "orch wants to dispatch x to site");
+assert.equal(approvalProject({ target_project: "site" }), "site");
+assert.equal(approvalProject({}), "");
+assert.deepEqual(approvalRows(apd), [
+  { label: "Project", value: "blsmth.com", detail: "~/code/personal/blsmth.com", flag: "not agentctl" },
+  { label: "Agent", value: "general-purpose", detail: "built-in", flag: "" },
+  { label: "Model", value: "opus", detail: "agent file", flag: "" },
+  { label: "Account", value: "personal (Personal)", detail: "", flag: "" },
+  { label: "Mode", value: "ad-hoc", detail: "worktree · auto permissions", flag: "" },
+]);
+const sameProject = approvalRows({ ...apd, details: { ...details, other_project: false, backend: "nous", harness: "pi", account: "", permission_mode: "" } });
+assert.deepEqual(sameProject.map((r) => r.label), ["Project", "Agent", "Model", "Backend", "Harness", "Mode"]);
+assert.equal(sameProject[0].flag, "");
+assert.equal(sameProject.at(-1).detail, "worktree");
+// No details (older hook) or another kind: no rows, the old facts stay.
+assert.deepEqual(approvalRows(ap), []);
+assert.deepEqual(approvalRows({ ...ap, kind: "bash", details }), []);
+assert.equal(approvalRowText({ label: "Project", value: "blsmth.com", detail: "~/x", flag: "not agentctl" }), "project: blsmth.com (~/x · ⚠ not agentctl)");
+assert.equal(approvalRowText({ label: "Model", value: "default", detail: "", flag: "" }), "model: default");
+const confd = approvalConfirm(apd, "allow");
+assert.ok(confd.lines[0].startsWith("orch wants to dispatch general-purpose to blsmth.com\n"));
+assert.ok(confd.lines[0].includes("project: blsmth.com (~/code/personal/blsmth.com · ⚠ not agentctl)"));
+assert.ok(confd.lines[0].includes("model: opus (agent file)"));
+assert.ok(!confd.lines[0].includes("target agent:"));
+assert.ok(conf.lines[0].includes("target agent: go-engineer"));
+// Long prompts fold.
+assert.deepEqual(promptFold(""), { lines: 0, fold: false, label: "Show all" });
+assert.equal(promptFold("one").fold, false);
+assert.equal(promptFold(Array(PROMPT_FOLD_LINES).fill("x").join("\n")).fold, false);
+assert.deepEqual(promptFold(Array(PROMPT_FOLD_LINES + 1).fill("x").join("\n")),
+  { lines: PROMPT_FOLD_LINES + 1, fold: true, label: `Show all ${PROMPT_FOLD_LINES + 1} lines` });
+// One very long line folds too, without claiming "1 line".
+assert.deepEqual(promptFold("x".repeat(PROMPT_FOLD_LINES * 80 + 1)), { lines: 1, fold: true, label: "Show all" });
+// Unknown project (the command changes dir first) is a flagged row, and no "to ..." in the title.
+const unknownDir = { ...apd, details: { ...details, project: "", dir: "", asking_project: "", other_project: false, dir_source: "command changes dir first" } };
+assert.deepEqual(approvalRows(unknownDir)[0], { label: "Project", value: "unknown", detail: "", flag: "command changes dir first" });
+assert.equal(approvalSummary(unknownDir), "orch wants to dispatch general-purpose");
 console.log("ok: approval helpers");
 
 // Resolved approval text.

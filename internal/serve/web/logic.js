@@ -1358,12 +1358,72 @@ export function formatCountdown(secs) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+/**
+ * approvalProject is the project a dispatch approval targets: the pending
+ * view's details.project, or a history entry's target_project ("" if unknown).
+ */
+export function approvalProject(a) {
+  return a?.details?.project || a?.target_project || "";
+}
+
 /** approvalSummary is the one-line description of what is being asked. */
 export function approvalSummary(a) {
   const who = a.asking_agent || "An agent";
-  if (a.kind === "dispatch") return `${who} wants to dispatch ${a.target_agent || "an agent"}`;
+  if (a.kind === "dispatch") {
+    const agent = a.details?.agent || a.target_agent || "an agent";
+    const project = approvalProject(a);
+    return `${who} wants to dispatch ${agent}${project ? ` to ${project}` : ""}`;
+  }
   if (a.kind === "cron") return `${who} wants to schedule ${a.target_agent || "an agent"}`;
   return `${who} wants to run a command`;
+}
+
+/**
+ * approvalRows is a dispatch approval's resolved where/how block as compact
+ * rows: {label, value, detail, flag}. detail is muted context (the full dir,
+ * where a value came from); flag marks something to look at twice (a
+ * different project). Rows whose value is unknown are left out; no details
+ * (older hook, bash and cron kinds) gives [].
+ */
+export function approvalRows(a) {
+  const d = a?.kind === "dispatch" ? a.details : null;
+  if (!d) return [];
+  const rows = [];
+  const add = (label, value, detail = "", flag = "") => {
+    if (value) rows.push({ label, value, detail, flag });
+  };
+  if (d.project) add("Project", d.project, d.dir, d.other_project ? `not ${d.asking_project || "the asking project"}` : "");
+  // A cwd the command changes before dispatching: the project is not known.
+  else if (d.dir_source) add("Project", "unknown", "", d.dir_source);
+  add("Agent", d.agent, d.agent_source);
+  add("Model", d.model, d.model_source);
+  add("Backend", d.backend);
+  add("Harness", d.harness);
+  add("Account", d.account);
+  const how = [d.worktree, d.permission_mode ? `${d.permission_mode} permissions` : ""].filter(Boolean).join(" · ");
+  add("Mode", d.mode, how);
+  return rows;
+}
+
+/** approvalRowText renders one approvalRows row as plain text. */
+export function approvalRowText(r) {
+  const extra = [r.detail, r.flag ? `⚠ ${r.flag}` : ""].filter(Boolean).join(" · ");
+  return `${r.label.toLowerCase()}: ${r.value}${extra ? ` (${extra})` : ""}`;
+}
+
+/** PROMPT_FOLD_LINES is how many lines a long prompt shows before "Show all". */
+export const PROMPT_FOLD_LINES = 12;
+
+/**
+ * promptFold says whether a prompt is long enough to fold behind a "Show all"
+ * toggle, and how many lines it has.
+ */
+export function promptFold(text) {
+  const s = String(text ?? "");
+  const lines = s === "" ? 0 : s.split("\n").length;
+  const fold = lines > PROMPT_FOLD_LINES || s.length > PROMPT_FOLD_LINES * 80;
+  const label = lines > PROMPT_FOLD_LINES ? `Show all ${lines} lines` : "Show all";
+  return { lines, fold, label };
 }
 
 /** approvalBannerText is the fleet banner for n pending approvals ("" for none). */
@@ -1383,7 +1443,10 @@ function approvalConfirmTitle(kind) {
 export function approvalConfirm(a, decision) {
   const allow = decision === "allow";
   const head = [approvalSummary(a), `window: ${a.window_id}${a.project ? ` (${a.project})` : ""}`];
-  if (a.kind === "dispatch") {
+  const rows = approvalRows(a);
+  if (rows.length) {
+    head.push(...rows.map(approvalRowText));
+  } else if (a.kind === "dispatch") {
     head.push(`target agent: ${a.target_agent || "(default)"}`);
     if (a.issue) head.push(`issue: #${a.issue}`);
   } else if (a.kind === "cron") {

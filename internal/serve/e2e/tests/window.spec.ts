@@ -310,6 +310,46 @@ test("deny sends a deny decision", async ({ page, control }) => {
   expect(actions[0]).toMatchObject({ kind: "approval", id, decision: "deny" });
 });
 
+test("a dispatch approval shows where and how the agent runs, and folds a long prompt", async ({ page, control }) => {
+  const prompt = Array.from({ length: 40 }, (_, i) => `line ${i + 1} of the blog turnaround post`).join("\n");
+  const id = await control.openApproval({
+    kind: "dispatch", session: SHOP, window_id: "@14", asking_agent: "brandon", target_agent: "general-purpose", prompt,
+    command: "agentctl dispatch --agent general-purpose --dir ~/code/personal/blsmth.com --prompt-key blog-turnaround-post",
+    details: {
+      project: "blsmth.com", dir: "~/code/personal/blsmth.com", dir_source: "flag", asking_project: "agentctl", other_project: true,
+      agent: "general-purpose", agent_source: "built-in", model: "opus", model_source: "flag", backend: "", harness: "",
+      account: "personal", mode: "ad-hoc", worktree: "worktree", permission_mode: "auto",
+    },
+  });
+  await page.goto(`/#/approvals/${id}`);
+  const card = page.locator("section.approval");
+  await expect(card.locator(".approval-head strong")).toHaveText("brandon wants to dispatch general-purpose to blsmth.com");
+  const project = card.locator('.approval-row[data-row="project"]');
+  await expect(project).toContainText("blsmth.com");
+  await expect(project).toContainText("~/code/personal/blsmth.com");
+  await expect(project.locator(".approval-flag")).toHaveText("not agentctl");
+  await expect(card.locator('.approval-row[data-row="model"]')).toContainText("opus");
+  await expect(card.locator('.approval-row[data-row="account"]')).toContainText("personal");
+  await expect(card.locator('.approval-row[data-row="mode"]')).toContainText("worktree · auto permissions");
+  await expect(card.locator('.approval-row[data-row="backend"]')).toHaveCount(0);
+
+  const pre = card.locator("pre.approval-text").first();
+  await expect(pre).toHaveClass(/folded/);
+  const toggle = card.getByRole("button", { name: "Show all 40 lines" });
+  await toggle.tap();
+  await expect(pre).not.toHaveClass(/folded/);
+  await expect(card.getByRole("button", { name: "Show less" })).toBeVisible();
+  const box = await pre.boundingBox();
+  const full = await pre.evaluate((el) => el.scrollHeight);
+  expect(Math.round(box!.height)).toBeGreaterThanOrEqual(full - 1);
+
+  await card.getByRole("button", { name: "Approve…" }).tap();
+  await expect(sheet(page)).toContainText("project: blsmth.com");
+  await sheet(page).locator(".row button").last().tap();
+  const actions = await control.waitForActions((a) => a.some((x) => x.kind === "approval"));
+  expect(actions[0]).toMatchObject({ kind: "approval", id, decision: "allow" });
+});
+
 test("a cron window says which job started it", async ({ page, control }) => {
   const groups = await control.fleet();
   groups[0].windows.push({ id: "@16", index: 6, agent: "triage", state: "idle", mode: "adhoc", scheduled_by: "nightly-triage", activity: "triaged 3 issues" });

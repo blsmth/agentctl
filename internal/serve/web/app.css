@@ -236,6 +236,22 @@ body.term-open nav { display: none; }
 .approval-text { margin: 0; padding: .6rem; background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
   white-space: pre-wrap; overflow-wrap: anywhere; font: .8rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
   max-height: 45vh; overflow: auto; -webkit-overflow-scrolling: touch; }
+/* A long prompt folds to ~12 lines with a fade and a "Show all" toggle;
+   unfolded it grows with the page instead of scrolling inside a box. */
+.approval-text.foldable { max-height: none; }
+.approval-text.foldable.folded { max-height: calc(12 * 1.4em + 1.2rem); overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent); mask-image: linear-gradient(to bottom, #000 70%, transparent); }
+.approval-more { align-self: flex-start; min-height: 36px; font-size: .85rem; }
+/* Dispatch where/how rows under the title. */
+.approval-rows { margin: 0; display: grid; grid-template-columns: max-content 1fr; column-gap: .75rem; row-gap: .3rem; font-size: .9rem; }
+.approval-row { display: contents; }
+.approval-row dt { color: var(--muted); }
+.approval-row dd { margin: 0; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .45rem; }
+.approval-value { font-weight: 600; overflow-wrap: anywhere; }
+.approval-detail { color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; flex-basis: 100%; }
+.approval-row[data-row="agent"] .approval-detail, .approval-row[data-row="model"] .approval-detail,
+.approval-row[data-row="mode"] .approval-detail { flex-basis: auto; }
+.approval-flag { font-size: .75rem; font-weight: 600; color: var(--blocked); border: 1px solid var(--blocked); border-radius: 999px; padding: 0 .45em; }
 
 /* Swipe-left-to-close on fleet rows. */
 .swipe { position: relative; overflow: hidden; background: var(--blocked); }

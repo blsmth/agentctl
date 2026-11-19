@@ -29,7 +29,7 @@ func TestDispatchGateTimeoutDenies(t *testing.T) {
 	t.Setenv("TMUX", "/tmp/fake-tmux-socket")
 	t.Setenv("AGENTCTL_SESSION_ID", t.Name())
 	closes := withBlockingPopup(t)
-	approved, decided, reason := dispatchPreviewGate("a", "agentctl dispatch --agent go-engineer --prompt hi")
+	approved, decided, reason := dispatchPreviewGate("a", "agentctl dispatch --agent go-engineer --prompt hi", "")
 	if approved || decided || !strings.Contains(reason, "timed out") {
 		t.Fatalf("got approved=%v decided=%v reason=%q", approved, decided, reason)
 	}

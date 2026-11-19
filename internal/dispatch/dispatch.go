@@ -19,6 +19,7 @@ import (
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	ctxstore "github.com/blsmth/agentctl/internal/context"
+	"github.com/blsmth/agentctl/internal/dispatchplan"
 	"github.com/blsmth/agentctl/internal/gittracked"
 	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/hooks"
@@ -121,15 +122,10 @@ type Request struct {
 // name one). Model priority: Request.Model > AgentConfig.Model > defaultModel.
 func applyOverrides(ac *config.AgentConfig, req Request, defaultModel string) (string, error) {
 	explicitModel := req.Model
-	switch {
-	case req.Model == Inherit:
-		ac.Model = ""
+	if req.Model == Inherit {
 		explicitModel = ""
-	case req.Model != "":
-		ac.Model = req.Model
-	case ac.Model == "" && defaultModel != "":
-		ac.Model = defaultModel
 	}
+	ac.Model = dispatchplan.Model(req.Model, ac.Model, defaultModel)
 	if req.Effort != "" {
 		if err := ValidateEffort(req.Effort); err != nil {
 			return "", err
@@ -629,19 +625,8 @@ func logLaunchBanner(agentName, windowName, mode string, ticket int, ticketTitle
 	logging.Log("======================")
 }
 
-// defaultDispatchPermissionMode is the claude --permission-mode used for
-// worker dispatches (issue + adhoc) when the agent config doesn't set one.
-const defaultDispatchPermissionMode = "auto"
-
 // validPermissionModes is the set of values `claude --permission-mode` accepts.
-var validPermissionModes = map[string]bool{
-	"acceptEdits":       true,
-	"auto":              true,
-	"bypassPermissions": true,
-	"manual":            true,
-	"dontAsk":           true,
-	"plan":              true,
-}
+var validPermissionModes = dispatchplan.ValidPermissionModes
 
 // resolvePermissionMode returns the permission mode to pass to claude, or ""
 // to pass none. A valid per-launch override wins over everything. An explicit valid config value wins in every mode; an invalid
@@ -650,21 +635,14 @@ var validPermissionModes = map[string]bool{
 // discuss, triage, review, custom) have a human at the keyboard and keep
 // Claude's own default. The one exception is a human ad-hoc launch of an
 // orchestrator converted to ModeBare: the caller passes ModeAdhoc for it
-// (modeSpec.WorkerPermissionMode) so it gets the worker default too.
+// (modeSpec.WorkerPermissionMode) so it gets the worker default too. The
+// precedence lives in dispatchplan.PermissionMode, which the approval
+// preview shares.
 func resolvePermissionMode(mode Mode, ac config.AgentConfig, override string) string {
-	if override != "" && validPermissionModes[override] {
-		return override
-	}
-	if pm := ac.PermissionMode; pm != "" {
-		if validPermissionModes[pm] {
-			return pm
-		}
+	if pm := ac.PermissionMode; pm != "" && !validPermissionModes[pm] && (override == "" || !validPermissionModes[override]) {
 		logging.Warn("dispatch: invalid permission_mode %q for agent; falling back to default", pm)
 	}
-	if mode == ModeDispatch || mode == ModeAdhoc || mode == ModeReviewPR {
-		return defaultDispatchPermissionMode
-	}
-	return ""
+	return dispatchplan.PermissionMode(mode == ModeDispatch || mode == ModeAdhoc || mode == ModeReviewPR, ac.PermissionMode, override)
 }
 
 // launchPermissionMode resolves the permission mode for a launch. An ad-hoc

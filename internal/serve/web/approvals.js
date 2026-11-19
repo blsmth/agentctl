@@ -7,9 +7,11 @@ import {
   approvalConfirm,
   approvalApiPath,
   approvalHash,
+  approvalRows,
   approvalSummary,
   buildApprovalRequest,
   formatCountdown,
+  promptFold,
   resolvedText,
   secondsLeft,
   windowHash,
@@ -40,6 +42,52 @@ async function answerApproval(ctx, a, decision) {
 }
 
 /**
+ * detailRows renders the dispatch's resolved where/how block as compact
+ * label/value rows (see approvalRows).
+ */
+function detailRows(a) {
+  const rows = approvalRows(a);
+  if (!rows.length) return null;
+  return h(
+    "dl",
+    { class: "approval-rows" },
+    ...rows.map((r) =>
+      h(
+        "div",
+        { class: r.flag ? "approval-row flagged" : "approval-row", "data-row": r.label.toLowerCase() },
+        h("dt", {}, r.label),
+        h(
+          "dd",
+          {},
+          h("span", { class: "approval-value" }, r.value),
+          r.flag ? h("span", { class: "approval-flag" }, r.flag) : null,
+          r.detail ? h("span", { class: "approval-detail" }, r.detail) : null,
+        ),
+      ),
+    ),
+  );
+}
+
+/**
+ * textBlock is a labelled pre block. A long one is folded to a few lines
+ * behind a "Show all" toggle, so a clipped prompt is never mistaken for the
+ * whole prompt.
+ */
+function textBlock(label, text) {
+  const pre = h("pre", { class: "approval-text" }, text);
+  const { fold, label: more } = promptFold(text);
+  if (!fold) return [h("div", { class: "meta" }, label), pre];
+  pre.classList.add("foldable", "folded");
+  const toggle = h("button", { class: "btn approval-more", type: "button", "aria-expanded": "false" }, more);
+  toggle.addEventListener("click", () => {
+    const open = pre.classList.toggle("folded") === false;
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.textContent = open ? "Show less" : more;
+  });
+  return [h("div", { class: "meta" }, label), pre, toggle];
+}
+
+/**
  * approvalCard renders one approval. countdowns collects {el, approval} so
  * the caller can tick them.
  */
@@ -49,15 +97,18 @@ export function approvalCard(ctx, a, countdowns, { compact = false } = {}) {
   const facts = [
     h("div", {}, h("span", { class: "meta" }, "from "), h("a", { href: windowHash(a.session, a.window_id) }, `${a.asking_agent || "agent"} ${a.window_id}`), a.project ? h("span", { class: "meta" }, ` · ${a.project}`) : null),
   ];
-  if (a.kind === "dispatch") {
+  const rows = detailRows(a);
+  if (rows) {
+    facts.push(rows);
+  } else if (a.kind === "dispatch") {
     facts.push(h("div", {}, h("span", { class: "meta" }, "target "), a.target_agent || "(default agent)"));
     if (a.issue) facts.push(h("div", {}, h("span", { class: "meta" }, "issue "), `#${a.issue}`));
   } else if (a.kind === "cron") {
     facts.push(h("div", {}, h("span", { class: "meta" }, "scheduled agent "), a.target_agent || "(unknown)"));
   }
   const body = [];
-  if (a.prompt) body.push(h("div", { class: "meta" }, a.kind === "cron" ? "Job" : "Prompt"), h("pre", { class: "approval-text" }, a.prompt));
-  body.push(h("div", { class: "meta" }, "Command"), h("pre", { class: "approval-text" }, a.command));
+  if (a.prompt) body.push(...textBlock(a.kind === "cron" ? "Job" : "Prompt", a.prompt));
+  body.push(...textBlock("Command", a.command));
 
   const canWrite = ctx.hasFeature("write");
   const buttons = canWrite

@@ -24,6 +24,8 @@ type remoteDetails struct {
 	// content).
 	Prompt  string
 	Command string
+	// Details is the resolved where/how of a dispatch (zero for other kinds).
+	Details remoteapproval.Details
 }
 
 // openRemote opens a remote approval with the running agentctl serve. It
@@ -80,6 +82,7 @@ func startRemote(d *remoteDetails, logPrefix string, deadline time.Time) *remote
 		Issue:       d.Issue,
 		Prompt:      d.Prompt,
 		Command:     d.Command,
+		Details:     d.Details,
 		Deadline:    deadline,
 	}
 	a, err := openRemote(req)

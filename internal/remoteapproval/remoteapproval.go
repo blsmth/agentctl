@@ -78,17 +78,56 @@ func NewID() (string, error) {
 // Request opens a remote approval. Prompt is the fully resolved prompt
 // (including --prompt-key content); Command is the raw Bash command.
 type Request struct {
-	Op          string    `json:"op"`
-	ID          string    `json:"id"`
-	Kind        string    `json:"kind"`
-	AskingAgent string    `json:"asking_agent"`
-	Session     string    `json:"session"`
-	WindowID    string    `json:"window_id"`
-	TargetAgent string    `json:"target_agent"`
-	Issue       int       `json:"issue"`
-	Prompt      string    `json:"prompt"`
-	Command     string    `json:"command"`
-	Deadline    time.Time `json:"deadline"`
+	Op          string `json:"op"`
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	AskingAgent string `json:"asking_agent"`
+	Session     string `json:"session"`
+	WindowID    string `json:"window_id"`
+	TargetAgent string `json:"target_agent"`
+	Issue       int    `json:"issue"`
+	Prompt      string `json:"prompt"`
+	Command     string `json:"command"`
+	// Details is the resolved where/how of a dispatch; zero for other
+	// kinds. Part of the payload hash.
+	Details  Details   `json:"details"`
+	Deadline time.Time `json:"deadline"`
+}
+
+// Details is where and how a dispatched agent will run, resolved by the hook
+// with the rules dispatch uses (internal/dispatchplan). Resolution is best
+// effort: an empty field is unknown or does not apply, and the phone omits
+// its row. Every field is shown by the phone, so every field is hashed.
+type Details struct {
+	// Project is the target project's name (basename of its root) and Dir
+	// the dispatch dir, "~"-abbreviated. DirSource says where Dir came from
+	// ("flag", "agent config", "current dir").
+	Project   string `json:"project"`
+	Dir       string `json:"dir"`
+	DirSource string `json:"dir_source"`
+	// AskingProject is the asking window's project; OtherProject is set when
+	// the target is a different project.
+	AskingProject string `json:"asking_project"`
+	OtherProject  bool   `json:"other_project"`
+	// Agent is the agent that will launch; AgentSource where it resolved
+	// from ("global", "project <name>", "built-in", "issue labels", ...).
+	Agent       string `json:"agent"`
+	AgentSource string `json:"agent_source"`
+	// Model is the model ("" = default) and ModelSource where it came from.
+	Model       string `json:"model"`
+	ModelSource string `json:"model_source"`
+	// Backend is the agentctl backend ("" = none, plain Claude).
+	Backend string `json:"backend"`
+	// Harness is set only when it is not claude.
+	Harness string `json:"harness"`
+	// Account is the Claude account as "name (label)", "" without accounts.
+	Account string `json:"account"`
+	// Mode is "issue #N", "review PR #N" or "ad-hoc"; Worktree is
+	// "worktree" or "no worktree"; PermissionMode is the claude
+	// --permission-mode.
+	Mode           string `json:"mode"`
+	Worktree       string `json:"worktree"`
+	PermissionMode string `json:"permission_mode"`
 }
 
 // Cancel withdraws a remote approval (the laptop answered, or the hook gave
@@ -118,15 +157,16 @@ type PingInfo struct {
 // Field order is fixed by the struct, and nothing is omitted, so the JSON is
 // canonical.
 type canonicalPayload struct {
-	ID          string `json:"id"`
-	Kind        string `json:"kind"`
-	AskingAgent string `json:"asking_agent"`
-	Session     string `json:"session"`
-	WindowID    string `json:"window_id"`
-	TargetAgent string `json:"target_agent"`
-	Issue       int    `json:"issue"`
-	Prompt      string `json:"prompt"`
-	Command     string `json:"command"`
+	ID          string  `json:"id"`
+	Kind        string  `json:"kind"`
+	AskingAgent string  `json:"asking_agent"`
+	Session     string  `json:"session"`
+	WindowID    string  `json:"window_id"`
+	TargetAgent string  `json:"target_agent"`
+	Issue       int     `json:"issue"`
+	Prompt      string  `json:"prompt"`
+	Command     string  `json:"command"`
+	Details     Details `json:"details"`
 }
 
 // PayloadHash is the SHA-256 (hex) of the canonical JSON of the fields the
@@ -134,7 +174,7 @@ type canonicalPayload struct {
 func PayloadHash(r Request) string {
 	b, _ := json.Marshal(canonicalPayload{
 		ID: r.ID, Kind: r.Kind, AskingAgent: r.AskingAgent, Session: r.Session, WindowID: r.WindowID,
-		TargetAgent: r.TargetAgent, Issue: r.Issue, Prompt: r.Prompt, Command: r.Command,
+		TargetAgent: r.TargetAgent, Issue: r.Issue, Prompt: r.Prompt, Command: r.Command, Details: r.Details,
 	})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])

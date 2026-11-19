@@ -50,6 +50,9 @@ type DispatchPreviewArgs struct {
 	// Account is the Claude account the dispatched agent resolves to, as
 	// "name (label)"; empty when no accounts are configured.
 	Account string `json:"account,omitempty"`
+	// Project is the project the dispatched agent runs in (the phone's
+	// details.project); empty when unknown.
+	Project string `json:"project,omitempty"`
 	// Kind selects which popup layout to render -- see PreviewKind. Empty
 	// (the zero value) is treated as PreviewKindDispatch for backward
 	// compatibility with args files written before this field existed.
@@ -329,7 +332,10 @@ func segmentHasHelpFlags(seg []cmdToken, valueFlag func(string) bool) bool {
 // caller must stay silent -- emitting nothing is how ValidateBash's PreToolUse
 // hook signals "allow" to Claude Code, same as the existing deny checks in
 // validate.go signal "allow" by simply returning without writing anything.
-func dispatchPreviewGate(agentName, command string) (approved, decided bool, denyReason string) {
+//
+// cwd is the directory the Bash command runs in (the payload's cwd; "" falls
+// back to the asking window's), which the where/how rows resolve against.
+func dispatchPreviewGate(agentName, command, cwd string) (approved, decided bool, denyReason string) {
 	// Check if we're in a tmux session — can't show popup otherwise.
 	// Pass through rather than allowing: an unreviewed dispatch is exactly
 	// what this popup exists to prevent. See PermissionRequest's doc comment.
@@ -367,6 +373,9 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool, den
 
 	target := resolvePopupTarget()
 
+	// Where and how the agent will run. Best effort: it never fails the gate.
+	details := resolveDispatchDetails(config.Load(), command, askingCwd(cwd))
+
 	// Build the args struct.
 	args := DispatchPreviewArgs{
 		AgentName:    target.label(agentName),
@@ -379,7 +388,8 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool, den
 		Kind:         PreviewKindDispatch,
 		ContentWidth: contentWidth,
 		VPHeight:     vpHeight,
-		Account:      dispatchPreviewAccount(targetAgent, command),
+		Account:      details.Account,
+		Project:      details.Project,
 	}
 
 	// Resolve --prompt-key to its actual content so the human reviewing the
@@ -451,6 +461,7 @@ func dispatchPreviewGate(agentName, command string) (approved, decided bool, den
 		Issue:       issue,
 		Prompt:      args.Prompt,
 		Command:     command,
+		Details:     details,
 	}
 	return runPopupWithDeadline(target, "dispatch", "hook-validate-bash: dispatch", popupW, popupH, tmpPath, notice)
 }

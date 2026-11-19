@@ -277,6 +277,21 @@ func TestDispatchPreviewModel_TitleRendering(t *testing.T) {
 	}
 }
 
+func TestDispatchPreviewModel_TitleNamesProject(t *testing.T) {
+	m := NewDispatchPreview("brandon", "general-purpose", 0, "post", "", "agentctl dispatch", WithProject("blsmth.com"))
+	if !strings.Contains(m.View().Content, "brandon wants to dispatch general-purpose to blsmth.com") {
+		t.Errorf("View() title missing the project: %s", m.View().Content)
+	}
+	// A long project name stays on one line, so the popup's line budget
+	// holds.
+	long := NewDispatchPreview("brandon", "general-purpose", 0, "post", "", "agentctl dispatch",
+		WithProject(strings.Repeat("p", 200)), WithContentWidth(60))
+	short := NewDispatchPreview("brandon", "general-purpose", 0, "post", "", "agentctl dispatch", WithContentWidth(60))
+	if got, want := strings.Count(long.preToggle(), "\n"), strings.Count(short.preToggle(), "\n"); got != want {
+		t.Errorf("long project title takes %d lines above the toggle, want %d", got, want)
+	}
+}
+
 func TestDispatchPreviewModel_SummaryLineIssue(t *testing.T) {
 	m := NewDispatchPreview("go-engineer", "python-engineer", 99, "", "", "agentctl dispatch --issue 99")
 	summary := m.summaryLine()

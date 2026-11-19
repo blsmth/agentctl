@@ -134,7 +134,7 @@ func runValidateBashGate(t *testing.T, command string, approved bool) string {
 	SetDepsForTest(d)
 	t.Cleanup(func() { SetDepsForTest(DefaultDeps()) })
 	orig := dispatchGate
-	dispatchGate = func(_, _ string) (bool, bool, string) { return approved, true, "" }
+	dispatchGate = func(_, _, _ string) (bool, bool, string) { return approved, true, "" }
 	t.Cleanup(func() { dispatchGate = orig })
 	stdin := `{"tool_name":"Bash","tool_input":{"command":` + strconv.Quote(command) + `}}`
 	out, _ := runHookCaptured(t, map[string]string{

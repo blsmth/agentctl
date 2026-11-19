@@ -366,7 +366,7 @@ func TestDispatchPreviewGate_UnresolvedPromptKeyDenies(t *testing.T) {
 	removeDispatchLockForTest(t, command)
 	failIfDispatchPopupRunnerCalled(t)
 
-	approved, decided, reason := dispatchPreviewGate("lead", command)
+	approved, decided, reason := dispatchPreviewGate("lead", command, "")
 	if approved || decided {
 		t.Errorf("got approved=%v decided=%v, want false, false", approved, decided)
 	}

@@ -154,7 +154,7 @@ func TestDispatchPreviewGate_NotInTmux_StaysSilent(t *testing.T) {
 	t.Setenv("TMUX", "")
 	failIfDispatchPopupRunnerCalled(t)
 
-	approved, decided, _ := dispatchPreviewGate("go-engineer", "agentctl dispatch --issue 1")
+	approved, decided, _ := dispatchPreviewGate("go-engineer", "agentctl dispatch --issue 1", "")
 	if decided {
 		t.Errorf("decided = true, want false when not in tmux")
 	}
@@ -175,7 +175,7 @@ func TestDispatchPreviewGate_PopupApproves(t *testing.T) {
 		return nil // exit 0 == approved
 	})
 
-	approved, decided, _ := dispatchPreviewGate("go-engineer", command)
+	approved, decided, _ := dispatchPreviewGate("go-engineer", command, "")
 	if !*called {
 		t.Fatalf("expected dispatchPopupRunner to be called")
 	}
@@ -198,7 +198,7 @@ func TestDispatchPreviewGate_PopupDenies(t *testing.T) {
 		return exitError1(t)
 	})
 
-	approved, decided, _ := dispatchPreviewGate("go-engineer", command)
+	approved, decided, _ := dispatchPreviewGate("go-engineer", command, "")
 	if !decided {
 		t.Fatalf("decided = false, want true")
 	}
@@ -226,7 +226,7 @@ func TestDispatchPreviewGate_LockAlreadyHeld_LoserStaysSilent(t *testing.T) {
 	failIfDispatchPopupRunnerCalled(t)
 
 	raw := captureStdout(t, func() {
-		approved, decided, _ := dispatchPreviewGate("go-engineer", command)
+		approved, decided, _ := dispatchPreviewGate("go-engineer", command, "")
 		if decided {
 			t.Errorf("decided = true, want false when lock is already held")
 		}
@@ -264,7 +264,7 @@ func TestDispatchPreviewGate_StaleLockIsReclaimed(t *testing.T) {
 		return nil
 	})
 
-	approved, decided, _ := dispatchPreviewGate("go-engineer", command)
+	approved, decided, _ := dispatchPreviewGate("go-engineer", command, "")
 	if !*called {
 		t.Fatalf("expected the stale lock to be reclaimed and the popup path entered")
 	}
@@ -290,7 +290,7 @@ func TestDispatchPreviewGate_FreshLockIsNotReclaimed(t *testing.T) {
 
 	failIfDispatchPopupRunnerCalled(t)
 
-	approved, decided, _ := dispatchPreviewGate("go-engineer", command)
+	approved, decided, _ := dispatchPreviewGate("go-engineer", command, "")
 	if decided || approved {
 		t.Errorf("approved=%v decided=%v, want both false (fresh lock must not be reclaimed)", approved, decided)
 	}

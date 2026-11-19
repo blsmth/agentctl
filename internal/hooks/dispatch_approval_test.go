@@ -15,7 +15,7 @@ func stubDispatchGate(t *testing.T) *bool {
 	t.Helper()
 	called := new(bool)
 	orig := dispatchGate
-	dispatchGate = func(_, _ string) (bool, bool, string) {
+	dispatchGate = func(_, _, _ string) (bool, bool, string) {
 		*called = true
 		return false, false, ""
 	}
