@@ -82,21 +82,33 @@ func fgStyle(color string) lipgloss.Style {
 
 // ── Interactive pieces ───────────────────────────────────────────────────────
 
-// button renders "[ label ]" as a click zone; it renders reversed while the
-// pointer is over it.
-func (m TicketsModel) button(id, label string, st lipgloss.Style) string {
-	if m.hover == id {
-		st = st.Reverse(true)
+// tkButton renders "[ label ]" (or "[label]" when compact): the label in
+// st's colour between dim brackets, or the whole button in reverse video
+// when active (focused or under the pointer). Every button in the browser,
+// in the views and in dialogs, renders through it.
+func tkButton(label string, st lipgloss.Style, compact, active bool) string {
+	open, closeB := "[ ", " ]"
+	if compact {
+		open, closeB = "[", "]"
 	}
-	return zoneMark(id, st.Render("[ "+label+" ]"))
+	if active {
+		return st.Reverse(true).Render(open + label + closeB)
+	}
+	dim := fgStyle(theme.Current().Muted)
+	return dim.Render(open) + st.Render(label) + dim.Render(closeB)
+}
+
+// tkButtonText is the default button label style (normal foreground).
+func tkButtonText() lipgloss.Style { return fgStyle(theme.Current().Text) }
+
+// button renders a click-zone button; it reverses while hovered.
+func (m TicketsModel) button(id, label string, st lipgloss.Style) string {
+	return zoneMark(id, tkButton(label, st, false, m.hover == id))
 }
 
 // compactButton is button without the inner padding, for the narrow strip.
 func (m TicketsModel) compactButton(id, label string, st lipgloss.Style) string {
-	if m.hover == id {
-		st = st.Reverse(true)
-	}
-	return zoneMark(id, st.Render("["+label+"]"))
+	return zoneMark(id, tkButton(label, st, true, m.hover == id))
 }
 
 // link renders a text click target; it underlines while hovered.
@@ -107,15 +119,15 @@ func (m TicketsModel) link(id, text string, st lipgloss.Style) string {
 	return zoneMark(id, st.Render(text))
 }
 
-// tkAction is one sidebar action: its button label, compact label, the key
-// it runs and whether it is destructive.
+// tkAction is one sidebar action: its button label, compact label and the
+// key it runs.
 type tkAction struct {
 	label, short, key string
-	danger            bool
 }
 
 // tkSidebarActions are the issue actions shown as buttons in the preview
-// and detail sidebars, in display order.
+// and detail sidebars, in display order. The destructive close comes last,
+// on its own row (tkCloseAction).
 func tkSidebarActions() []tkAction {
 	return []tkAction{
 		{label: "Edit", short: "Edit", key: "e"},
@@ -123,30 +135,32 @@ func tkSidebarActions() []tkAction {
 		{label: "Dispatch…", short: "Dispatch…", key: "T"},
 		{label: "Assign", short: "Assign", key: "a"},
 		{label: "Open ↗", short: "Open↗", key: "o"},
-		{label: "Close", short: "Close", key: "d", danger: true},
 	}
 }
 
+// tkCloseAction closes the issue (through the confirm dialog).
+var tkCloseAction = tkAction{label: "Close issue", short: "Close issue", key: "d"}
+
 // actionButtons renders the sidebar actions flowed into lines of at most
-// width columns (one line when compact).
+// width columns, then a blank line and [ Close issue ] on its own row. The
+// compact strip is one line with Close issue last.
 func (m TicketsModel) actionButtons(where string, width int, compact bool) []string {
 	t := theme.Current()
+	id := func(a tkAction) string { return "key:" + a.key + "@" + where }
+	if compact {
+		var parts []string
+		for _, a := range tkSidebarActions() {
+			parts = append(parts, m.compactButton(id(a), a.short, tkButtonText()))
+		}
+		parts = append(parts, m.compactButton(id(tkCloseAction), tkCloseAction.short, fgStyle(t.Red)))
+		return []string{strings.Join(parts, " ")}
+	}
 	var lines []string
 	cur, curW := "", 0
 	for _, a := range tkSidebarActions() {
-		st := fgStyle(t.Subtle)
-		if a.danger {
-			st = fgStyle(t.Red)
-		}
-		id := "key:" + a.key + "@" + where
-		var b string
-		if compact {
-			b = m.compactButton(id, a.short, st)
-		} else {
-			b = m.button(id, a.label, st)
-		}
+		b := m.button(id(a), a.label, tkButtonText())
 		bw := lipgloss.Width(b)
-		if curW > 0 && curW+1+bw > width && !compact {
+		if curW > 0 && curW+1+bw > width {
 			lines = append(lines, cur)
 			cur, curW = "", 0
 		}
@@ -160,7 +174,7 @@ func (m TicketsModel) actionButtons(where string, width int, compact bool) []str
 	if cur != "" {
 		lines = append(lines, cur)
 	}
-	return lines
+	return append(lines, "", m.button(id(tkCloseAction), tkCloseAction.label, fgStyle(t.Red)))
 }
 
 // labelChips renders an issue's labels as clickable filter chips.
@@ -277,20 +291,28 @@ func (m TicketsModel) renderHintBar(hints []tkHint) string {
 // detail view's "← back" link and followed by its ✎ (edit title), filling
 // width columns.
 func (m TicketsModel) renderTitleBar(title string, back bool, width int) string {
-	prefix, suffix := "", ""
+	t := theme.Current()
+	prefix := ""
 	if back {
-		prefix = m.link("key:esc@back", "← back", fgStyle(theme.Current().Accent).Bold(true)) + "  "
-		suffix = " " + m.pencil("edit:title@detail")
+		prefix = m.link("key:esc@back", "← back", fgStyle(t.Accent).Bold(true)) + "  "
 	}
-	barW := width - lipgloss.Width(prefix) - lipgloss.Width(suffix)
+	barW := width - lipgloss.Width(prefix)
 	if barW < 10 {
 		barW = 10
 	}
-	text := ansi.Truncate(title, barW-4, "…")
-	if back {
-		text = zoneMark("dbl:title@detail", text) // double-click edits the title
+	// Left-aligned, so the title stays put while the pill beside it changes.
+	bar := tkStyles.Title.Align(lipgloss.Left)
+	if !back {
+		return prefix + bar.Width(barW).Render(ansi.Truncate(title, barW-4, "…"))
 	}
-	return prefix + tkStyles.Title.Width(barW).Render(text) + suffix
+	// The detail title: double-click edits it, and ✎ follows the text.
+	text := zoneMark("dbl:title@detail", ansi.Truncate(title, barW-6, "…"))
+	pen := lipgloss.NewStyle().Background(lipgloss.Color(t.Accent)).Foreground(lipgloss.Color(t.Bright)).Faint(true)
+	if m.hover == "edit:title@detail" {
+		pen = pen.Faint(false).Bold(true).Underline(true)
+	}
+	text += pen.Render(" ") + zoneMark("edit:title@detail", pen.Render("✎"))
+	return prefix + bar.Width(barW).Render(text)
 }
 
 // pencil renders a dim ✎ edit affordance that brightens on hover.
@@ -335,8 +357,61 @@ func (m TicketsModel) render() string {
 	if !ok {
 		return bg
 	}
-	box := zoneMarkLines("modal:box", modal.View())
-	return compositeOverlay(stripZones(bg), box, m.termWidth, m.termHeight)
+	box := zoneMarkLines("modal:box", tkModalView(modal))
+	return compositeOverlay(faint(stripZones(bg)), box, m.termWidth, m.termHeight)
+}
+
+// faint renders the view behind a dialog in the muted colour, so the
+// dialog reads as the only live thing on screen.
+func faint(s string) string {
+	st := fgStyle(theme.Current().Overlay)
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = st.Render(ansi.Strip(l))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// tkModalView renders a dialog: a title bar spanning the full inner width,
+// the content, a blank line, and the hints wrapped at their separators.
+func tkModalView(md Modal) string {
+	cw := modalContentWidth(md.Size)
+	inner := cw - 2 // the box's border and padding come out of cw+4
+	var b strings.Builder
+	b.WriteString(modalTitleStyle.Width(inner).Render(md.Title))
+	b.WriteString("\n")
+	b.WriteString(strings.TrimRight(md.Content.View().Content, "\n"))
+	if mc, ok := md.Content.(ModalContent); ok {
+		if keys := mc.HintKeys(); len(keys) > 0 {
+			b.WriteString("\n\n")
+			b.WriteString(wrapHints(keys, inner))
+		}
+	}
+	return modalBoxStyle.Width(cw + 4).Render(b.String())
+}
+
+// wrapHints lays key/label pairs out in lines of at most width columns,
+// breaking only between pairs so no line starts or ends with a separator.
+func wrapHints(keys []string, width int) string {
+	sep := "  " + menuHintDotStyle.Render("·") + "  "
+	var lines []string
+	cur := ""
+	for i := 0; i+1 < len(keys); i += 2 {
+		part := menuHintKeyStyle.Render(keys[i]) + " " + menuHintLabelStyle.Render(keys[i+1])
+		switch {
+		case cur == "":
+			cur = part
+		case lipgloss.Width(cur+sep+part) <= width:
+			cur += sep + part
+		default:
+			lines = append(lines, cur)
+			cur = part
+		}
+	}
+	if cur != "" {
+		lines = append(lines, cur)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // activeModal returns the modal on top, with the pointer's hover applied to
@@ -412,7 +487,7 @@ func (m TicketsModel) renderStatusLine(cw int) string {
 			return ansi.Truncate(fgStyle(t.Red).Render(m.flash), cw, "…")
 		}
 		check := fgStyle(t.Green).Bold(true).Render("✓")
-		return ansi.Truncate(check+" "+tkDimStyle.Render(m.flash), cw, "…")
+		return ansi.Truncate(check+" "+fgStyle(t.Text).Render(m.flash), cw, "…")
 	}
 	return ""
 }
@@ -436,15 +511,32 @@ func (m TicketsModel) renderHeaderLine(title string, back bool, cw int) string {
 // title. Each chip runs the same code path as its key.
 func (m TicketsModel) renderChips() string {
 	t := theme.Current()
+	cw := m.contentWidth()
 	if m.err != nil && !m.loading {
 		msg := m.err.Error()
 		if m.err == errNoRepo {
 			msg = "No GitHub remote found in this directory"
 		}
-		return fgStyle(t.Red).Render("✗ " + msg)
+		return ansi.Truncate(fgStyle(t.Red).Render("✗ "+msg), cw, "…")
 	}
-	chip := fgStyle(t.Subtle)
+	// Full chips first; on narrow terminals compact them, then drop the
+	// search and new chips (their keys still work), then truncate.
+	for _, level := range []int{0, 1, 2} {
+		row := m.chipRow(level)
+		if lipgloss.Width(row) <= cw || level == 2 {
+			return ansi.Truncate(row, cw, "")
+		}
+	}
+	return ""
+}
+
+// chipRow renders the chips at a compactness level: 0 full, 1 compact
+// labels, 2 compact without the search and new chips.
+func (m TicketsModel) chipRow(level int) string {
+	t := theme.Current()
+	chip := tkButtonText()
 	active := fgStyle(t.Accent).Bold(true)
+	compact := level > 0
 
 	state := m.issueState
 	if state == "" {
@@ -461,40 +553,79 @@ func (m TicketsModel) renderChips() string {
 	if state != tkStateOpen {
 		stateSt = active
 	}
-	parts := []string{
-		m.button("key:S@chip", state+" "+count+" ▾", stateSt),
-		m.button("key:s@chip", "sort: "+m.sortBy.label()+" ▾", chip),
+	btn := func(id, label string, st lipgloss.Style) string {
+		if compact {
+			return m.compactButton(id, label, st)
+		}
+		return m.button(id, label, st)
 	}
-
+	sortLabel := "sort: " + m.sortBy.label() + " ▾"
+	labelAny := "label: any ▾"
+	if compact {
+		sortLabel, labelAny = m.sortBy.label()+" ▾", "label ▾"
+	}
+	parts := []string{
+		btn("key:S@chip", state+" "+count+" ▾", stateSt),
+		btn("key:s@chip", sortLabel, chip),
+	}
 	if m.filterLabel == "" {
-		parts = append(parts, m.button("key:f@chip", "label: any ▾", chip))
+		parts = append(parts, btn("key:f@chip", labelAny, chip))
 	} else {
 		clear := m.link("chip:label-clear", "×", fgStyle(t.Red).Bold(true))
 		parts = append(parts, m.chipWithClear("key:f@chip", "label: "+m.filterLabel, clear, active))
 	}
-
-	if m.searchQuery == "" {
-		parts = append(parts, m.button("key:/@chip", "/ search", chip))
-	} else {
-		clear := m.link("chip:search-clear", "×", fgStyle(t.Red).Bold(true))
-		parts = append(parts, m.chipWithClear("key:/@chip", fmt.Sprintf("/ %q", m.searchQuery), clear, active))
+	if level < 2 || m.searchQuery != "" {
+		if m.searchQuery == "" {
+			search := "/ search"
+			if compact {
+				search = "/"
+			}
+			parts = append(parts, btn("key:/@chip", search, chip))
+		} else {
+			clear := m.link("chip:search-clear", "×", fgStyle(t.Red).Bold(true))
+			parts = append(parts, m.chipWithClear("key:/@chip", fmt.Sprintf("/ %q", m.searchQuery), clear, active))
+		}
 	}
-	parts = append(parts, m.button("key:c@chip", "+ New", fgStyle(t.Green)))
-	return strings.Join(parts, "  ")
+	if level < 2 {
+		newLabel := "+ New"
+		if compact {
+			newLabel = "+"
+		}
+		parts = append(parts, btn("key:c@chip", newLabel, fgStyle(t.Green)))
+	}
+	sep := "  "
+	if compact {
+		sep = " "
+	}
+	return strings.Join(parts, sep)
 }
 
 // chipWithClear renders "[ text × ]": the chip runs id, the × clears it.
 func (m TicketsModel) chipWithClear(id, text, clear string, st lipgloss.Style) string {
 	if m.hover == id {
 		st = st.Reverse(true)
+		return zoneMark(id, st.Render("[ "+text+" ")+clear+st.Render(" ]"))
 	}
-	return zoneMark(id, st.Render("[ "+text+" ")+clear+st.Render(" ]"))
+	dim := fgStyle(theme.Current().Muted)
+	return zoneMark(id, dim.Render("[ ")+st.Render(text+" ")+clear+dim.Render(" ]"))
 }
 
 // tkListCols is which optional list columns fit, and the title width.
 type tkListCols struct {
 	pr, labels, assignee bool
-	title                int
+	num, title           int
+}
+
+// numColWidth fits the # column to the widest "#N" (or the "# ↑" header)
+// plus two columns of gap.
+func (m TicketsModel) numColWidth() int {
+	w := lipgloss.Width("# ↑")
+	for _, iss := range m.issues {
+		if n := len(strconv.Itoa(iss.Number)) + 1; n > w {
+			w = n
+		}
+	}
+	return w + 2
 }
 
 // listColumns drops ASSIGNEE, then LABELS, then PR as the terminal narrows.
@@ -502,9 +633,10 @@ func (m TicketsModel) listColumns() tkListCols {
 	c := tkListCols{
 		pr:       m.termWidth >= tkDropPRCols,
 		labels:   m.termWidth >= tkDropLabelsCols,
+		num:      m.numColWidth(),
 		assignee: m.termWidth >= tkDropAssigneeCols,
 	}
-	w := m.contentWidth() - tkRowPrefix - tkColNum - tkColAge
+	w := m.contentWidth() - tkRowPrefix - c.num - tkColAge
 	if c.pr {
 		w -= tkColPR
 	}
@@ -554,7 +686,7 @@ func (m TicketsModel) renderColumnHeaders() string {
 
 	var b strings.Builder
 	b.WriteString(strings.Repeat(" ", tkRowPrefix))
-	b.WriteString(padTo(m.link("sort:num@hdr", num, numSt), tkColNum, plain))
+	b.WriteString(padTo(m.link("sort:num@hdr", num, numSt), c.num, plain))
 	if c.pr {
 		b.WriteString(hdr.Width(tkColPR).Render("PR"))
 	}
@@ -586,13 +718,13 @@ func (m TicketsModel) listHintBar() string {
 		{key: "l", label: "labels"},
 		{key: "a", label: "assign"},
 		{key: "f", label: "filter"},
+		{key: "P", label: "autopilot"},
 		{key: "s", label: "sort"},
 		{key: "/", label: "search"},
 		{key: "o", label: "open"},
 		{key: "t", label: "triage"},
 		{key: "T", label: "dispatch"},
 		{key: "y", label: "copy url"},
-		{key: "P", label: "autopilot"},
 	}
 	if m.searchQuery != "" {
 		hints = append(hints, tkHint{key: "esc", label: "clear search", pin: true})
@@ -658,7 +790,7 @@ func (m TicketsModel) renderRow(i int, issue ghIssue, c tkListCols) string {
 	if selected {
 		numSt = tkNumSelectedStyle
 	}
-	b.WriteString(tint(numSt).Render("#" + n))
+	b.WriteString(tint(numSt).Width(c.num).Render("#" + n))
 
 	if c.pr {
 		b.WriteString(padTo(m.prLinkTinted(issue.Number, tint), tkColPR, plain))
@@ -792,8 +924,8 @@ func (m TicketsModel) buildPreviewContent() string {
 	}
 	rightW := width - bodyW - 2
 	right := []string{tkDetailSectionStyle.Render("Actions"), ""}
-	right = append(right, m.actionButtons("prev", rightW, false)...)
-	right = append(right, "")
+	right = append(right, m.sidebarActions("prev", rightW)...)
+	right = append(right, "", tkDetailSectionStyle.Render("Details"), "")
 	right = append(right, m.sidebarMeta(d, "prev", rightW)...)
 
 	leftCol := lipgloss.NewStyle().Width(bodyW).Render(clipLines(left, maxH, bodyW))
@@ -814,11 +946,7 @@ func (m TicketsModel) previewParts(d *tkDetailFetchedMsg, width int) (head, body
 		return head, m.renderBody(d.body, width), width
 	}
 	colW = width * 60 / 100
-	head = []string{ansi.Truncate(titleSt.Render(title), colW, "…")}
-	if len(d.labels) > 0 {
-		head = append(head, ansi.Truncate(m.labelChips(d.labels, "prev", true), colW, "…"))
-	}
-	head = append(head, "")
+	head = []string{ansi.Truncate(titleSt.Render(title), colW, "…"), ""}
 	return head, m.renderBody(d.body, colW), colW
 }
 
@@ -862,23 +990,43 @@ func (m TicketsModel) metaLine(d *tkDetailFetchedMsg, where string) string {
 
 // sidebarMeta is the sidebar's PR, assignee and URL block.
 func (m TicketsModel) sidebarMeta(d *tkDetailFetchedMsg, where string, width int) []string {
-	lbl := tkDetailLabelStyle.Width(10)
-	var lines []string
-	if pr := m.prLink(d.number, where); pr != "" {
-		lines = append(lines, lbl.Render("PR")+pr)
-		if p, ok := m.linkedPRs[d.number]; ok {
-			lines = append(lines, ansi.Truncate(tkDimStyle.Render(p.HeadRefName), width, "…"))
-		}
-		lines = append(lines, "")
+	const labelW = 10
+	lbl := tkDetailLabelStyle.Width(labelW)
+	valW := width - labelW
+	row := func(name, value string) string {
+		return lbl.Render(name) + ansi.Truncate(value, valW, "…")
 	}
-	lines = append(lines, lbl.Render("Assignee")+m.assigneeLink(d.number, d.assignees, where))
+	labels := tkDimStyle.Render("none")
+	if len(d.labels) > 0 {
+		labels = m.labelChips(d.labels, where, false)
+	}
+	lines := []string{
+		row("Labels", labels+" "+m.pencil("key:l@labels-"+where)),
+		row("Assignee", m.assigneeLink(d.number, d.assignees, where)),
+	}
+	if pr := m.prLink(d.number, where); pr != "" {
+		v := pr
+		if p, ok := m.linkedPRs[d.number]; ok {
+			v += "  " + tkDimStyle.Render(p.HeadRefName)
+		}
+		lines = append(lines, row("PR", v))
+	}
 	if strings.EqualFold(d.state, "closed") {
-		lines = append(lines, lbl.Render("State")+fgStyle(theme.Current().Red).Render("closed"))
+		lines = append(lines, row("State", fgStyle(theme.Current().Red).Render("closed")))
 	}
 	if d.url != "" {
-		lines = append(lines, "", m.link("url@"+where, ansi.Truncate(d.url, width, "…"), tkDimStyle))
+		lines = append(lines, row("URL", m.link("url@"+where, ansi.Truncate(d.url, valW, "…"), tkDimStyle)))
 	}
 	return lines
+}
+
+// sidebarActions is the Actions block, or [ Save ] [ Cancel ] while an
+// edit is open.
+func (m TicketsModel) sidebarActions(where string, width int) []string {
+	if m.edit.active && where == "detail" {
+		return []string{m.editButtons()}
+	}
+	return m.actionButtons(where, width, false)
 }
 
 // clipLines truncates every line to width and keeps at most h lines.
@@ -922,7 +1070,7 @@ func tkGlamour(body string, width int) string {
 		return s
 	}
 	tkGlamourCache.Unlock()
-	s := glamourRender(body, width)
+	s := tkRenderMarkdown(body, width)
 	tkGlamourCache.Lock()
 	defer tkGlamourCache.Unlock()
 	if _, ok := tkGlamourCache.entries[key]; !ok {
@@ -935,6 +1083,52 @@ func tkGlamour(body string, width int) string {
 	}
 	tkGlamourCache.entries[key] = s
 	return s
+}
+
+// tkRenderMarkdown renders body with glamour and wraps it to width itself.
+// glamour's own word wrap double-wraps some lines (a paragraph line that
+// ends near the limit leaves an orphan word on a line of its own), so it
+// renders unwrapped and each long line is re-wrapped here, keeping its
+// indent and a hanging indent for list items.
+func tkRenderMarkdown(body string, width int) string {
+	raw := glamourRender(body, 0)
+	var out []string
+	for _, line := range strings.Split(strings.TrimRight(raw, "\n"), "\n") {
+		out = append(out, rewrapLine(strings.TrimRight(line, " "), width)...)
+	}
+	return strings.Join(out, "\n")
+}
+
+// rewrapLine word-wraps one rendered line to width, indenting continuation
+// lines under the text (past a "• " or "1. " list marker).
+func rewrapLine(line string, width int) []string {
+	if ansi.StringWidth(line) <= width {
+		return []string{line}
+	}
+	plain := ansi.Strip(line)
+	rest := strings.TrimLeft(plain, " ")
+	ind := len(plain) - len(rest)
+	hang := 0
+	if strings.HasPrefix(rest, "• ") {
+		hang = 2
+	} else if i := strings.Index(rest, ". "); i > 0 && i <= 3 && strings.Trim(rest[:i], "0123456789") == "" {
+		hang = i + 2
+	}
+	limit := width - ind - hang
+	if limit < 10 {
+		limit = 10
+	}
+	body := ansi.TruncateLeft(line, ind, "")
+	parts := strings.Split(ansi.Wrap(body, limit, ""), "\n")
+	out := make([]string, 0, len(parts))
+	for i, p := range parts {
+		pad := ind
+		if i > 0 {
+			pad += hang
+		}
+		out = append(out, strings.Repeat(" ", pad)+strings.TrimLeft(p, " "))
+	}
+	return out
 }
 
 // renderBodyLines renders a markdown body string into display lines, applying
@@ -1083,7 +1277,11 @@ func (m TicketsModel) viewDetail() string {
 
 	if lay.narrow {
 		var top []string
-		top = append(top, m.actionButtons("detail", cw, true)...)
+		if m.edit.active {
+			top = append(top, m.editButtons()) // in place of the action strip
+		} else {
+			top = append(top, m.actionButtons("detail", cw, true)...)
+		}
 		top = append(top, ansi.Truncate(m.metaLine(d, "detail"), cw, "…"), "")
 		for _, l := range top {
 			b.WriteString("  " + l + "\n")
@@ -1102,7 +1300,11 @@ func (m TicketsModel) viewDetail() string {
 
 	// Scroll indicator (always one line, blank when everything fits).
 	if maxScroll > 0 && !m.edit.active {
-		b.WriteString(tkDimStyle.Render(fmt.Sprintf("  ── %d%% ──", off*100/maxScroll)))
+		marker := fmt.Sprintf("  ↓ more · %d%%", off*100/maxScroll)
+		if off >= maxScroll {
+			marker = "  end · 100%"
+		}
+		b.WriteString(tkDimStyle.Render(marker))
 	}
 	b.WriteString("\n")
 
@@ -1115,22 +1317,10 @@ func (m TicketsModel) viewDetail() string {
 
 // detailSidebar is the wide detail view's right column.
 func (m TicketsModel) detailSidebar(d *tkDetailFetchedMsg, width int) []string {
-	lines := []string{tkDetailSectionStyle.Render("── Details ──"), ""}
-	lines = append(lines, tkDetailLabelStyle.Render("Title:"))
-	lines = append(lines, tkDetailValueStyle.Width(width).Render(d.title))
-	lines = append(lines, "")
-	lines = append(lines, tkDetailLabelStyle.Render("Number:")+tkDetailValueStyle.Render(fmt.Sprintf("#%d", d.number)))
-	labels := tkDimStyle.Render("none")
-	if len(d.labels) > 0 {
-		labels = m.labelChips(d.labels, "detail", false)
-	}
-	lines = append(lines, tkDetailLabelStyle.Render("Labels:")+labels+" "+m.pencil("key:l@labels"))
-	lines = append(lines, "")
-	lines = append(lines, m.sidebarMeta(d, "detail", width)...)
-	lines = append(lines, "", tkDetailSectionStyle.Render("── Actions ──"), "")
-	lines = append(lines, m.actionButtons("detail", width, false)...)
-	// The title can wrap to several lines inside its Width style.
-	return strings.Split(strings.Join(lines, "\n"), "\n")
+	lines := []string{tkDetailSectionStyle.Render("Actions"), ""}
+	lines = append(lines, m.sidebarActions("detail", width)...)
+	lines = append(lines, "", tkDetailSectionStyle.Render("Details"), "")
+	return append(lines, m.sidebarMeta(d, "detail", width)...)
 }
 
 // detailHintBar is the detail view's bottom hint bar.

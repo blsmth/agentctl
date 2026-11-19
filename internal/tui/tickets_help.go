@@ -116,10 +116,7 @@ func (h tkHelpModel) View() tea.View {
 	note := "Native text selection: hold Shift (Option in iTerm2) while dragging — the app has the mouse."
 	b.WriteString("\n" + lipgloss.NewStyle().Width(cw).Foreground(lipgloss.Color(t.Muted)).Italic(true).Render(note) + "\n\n")
 
-	st := btnNormalStyle
-	if h.hover == "mkey:esc@help" {
-		st = st.Reverse(true)
-	}
-	b.WriteString(zoneMark("mkey:esc@help", st.Render("[ Close ]")))
+	// Close is the only button, so it has the focus.
+	b.WriteString(zoneMark("mkey:esc@help", tkButton("Close", tkButtonText(), false, true)))
 	return tea.NewView(b.String())
 }

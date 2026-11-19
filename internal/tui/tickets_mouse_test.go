@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/blsmth/agentctl/internal/agent"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -229,7 +230,7 @@ func TestTicketsClickZones(t *testing.T) {
 				t.Errorf("filterLabel = %q, want bug", m.filterLabel)
 			}
 		}},
-		{name: "PR cell opens the PR", zone: "pr:2@row", check: func(t *testing.T, m TicketsModel, rec *execRecorder) {
+		{name: "PR cell opens the PR", zone: "pr:2@row", wide: true, check: func(t *testing.T, m TicketsModel, rec *execRecorder) {
 			if !rec.called("gh pr view https://github.com/owner/repo/pull/172 --web") {
 				t.Errorf("want gh pr view --web, got %v", rec.all())
 			}
@@ -307,7 +308,7 @@ func TestTicketsClickZones(t *testing.T) {
 	for _, width := range []int{130, 85} {
 		for _, tt := range tests {
 			t.Run(fmt.Sprintf("%d/%s", width, tt.name), func(t *testing.T) {
-				if tt.wide && width < tkDropLabelsCols {
+				if tt.wide && width < tkDropPRCols {
 					t.Skip("column dropped at this width")
 				}
 				rec := recordExec(t, nil)
@@ -331,11 +332,11 @@ func TestTicketsNarrowLayout(t *testing.T) {
 	if !wide.currentZones().has("assign:1@row") {
 		t.Error("ASSIGNEE column should render at 130 cols")
 	}
-	if narrow.currentZones().has("assign:1@row") || narrow.currentZones().has("label:bug@1") {
-		t.Error("ASSIGNEE and LABELS columns should drop at 85 cols")
+	if narrow.currentZones().has("assign:1@row") || narrow.currentZones().has("pr:2@row") {
+		t.Error("ASSIGNEE and PR columns should drop at 85 cols")
 	}
-	if !narrow.currentZones().has("pr:2@row") {
-		t.Error("PR column should survive at 85 cols")
+	if !narrow.currentZones().has("label:bug@1") {
+		t.Error("LABELS column should survive at 85 cols")
 	}
 	// The narrow action strip is a single line of buttons.
 	e, _ := narrow.currentZones().find("key:e@prev")
@@ -598,5 +599,47 @@ func TestTicketsCopyURLUsesTmuxBuffer(t *testing.T) {
 	next, _ := m.Update(msgs[0])
 	if !strings.Contains(next.(TicketsModel).flash, "copied") {
 		t.Errorf("flash = %q, want a copied confirmation", next.(TicketsModel).flash)
+	}
+}
+
+// TestTicketsFrameFitsEverySize renders the list, detail and edit views over
+// a sweep of terminal sizes: every line must fit the width and the frame
+// must be exactly the terminal height, or a real terminal wraps and leaves
+// stale lines.
+func TestTicketsFrameFitsEverySize(t *testing.T) {
+	views := map[string]func(m TicketsModel) TicketsModel{
+		"list": func(m TicketsModel) TicketsModel { return m },
+		"detail": func(m TicketsModel) TicketsModel {
+			m.detail, m.viewMode = m.detailCache[3], tkViewDetail
+			return m
+		},
+		"edit": func(m TicketsModel) TicketsModel {
+			m.detail, m.viewMode = m.detailCache[3], tkViewDetail
+			next, _ := m.startEdit(editBody)
+			return tkType(t, next.(TicketsModel), "x")
+		},
+		"search": func(m TicketsModel) TicketsModel {
+			m.searchQuery = "issue"
+			m.filterLabel = "bug"
+			m.applyFilters()
+			return m
+		},
+	}
+	for name, setup := range views {
+		for _, w := range []int{60, 70, 75, 85, 95, 110, 140, 200} {
+			for _, h := range []int{15, 24, 40} {
+				m := setup(tkMouseModel(t, w, h))
+				m.autopilot = tkAutopilot{on: true, interval: 24 * time.Hour, ticker: true, nextPoll: tkNow().Add(23 * time.Hour)}
+				lines := strings.Split(m.View().Content, "\n")
+				if len(lines) != h {
+					t.Errorf("%s %dx%d: %d lines", name, w, h, len(lines))
+				}
+				for i, l := range lines {
+					if lw := ansi.StringWidth(l); lw > w {
+						t.Errorf("%s %dx%d: line %d is %d wide: %q", name, w, h, i, lw, ansi.Strip(l))
+					}
+				}
+			}
+		}
 	}
 }

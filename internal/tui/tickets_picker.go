@@ -227,7 +227,9 @@ func (p tkPickerModel) View() tea.View {
 		}
 		name := o
 		st := fgStyle(t.Text)
-		if p.kind == pickLabels || (p.kind == pickFilter && o != tkPickerAny) {
+		// Unchecked labels keep their colour; checked rows read in the
+		// normal foreground next to their green tick.
+		if (p.kind == pickLabels && !p.selected[o]) || (p.kind == pickFilter && o != tkPickerAny) {
 			st = fgStyle(labelColor(o))
 		}
 		if p.kind == pickAssignees && o != tkMeOption {
@@ -261,14 +263,9 @@ func (p tkPickerModel) View() tea.View {
 	if p.kind == pickFilter {
 		apply = "Pick"
 	}
-	applySt, cancelSt := btnSelectedStyle, btnNormalStyle
-	if p.hover == "mkey:enter@picker" {
-		applySt = applySt.Reverse(true)
-	}
-	if p.hover == "mkey:esc@picker" {
-		cancelSt = cancelSt.Reverse(true)
-	}
-	b.WriteString(zoneMark("mkey:enter@picker", applySt.Render(apply)) + "   " + zoneMark("mkey:esc@picker", cancelSt.Render("Cancel")))
+	// enter applies, so Apply is the focused button.
+	b.WriteString(zoneMark("mkey:enter@picker", tkButton(apply, tkButtonText(), false, true)) + "  " +
+		zoneMark("mkey:esc@picker", tkButton("Cancel", tkButtonText(), false, p.hover == "mkey:esc@picker")))
 	return tea.NewView(b.String())
 }
 

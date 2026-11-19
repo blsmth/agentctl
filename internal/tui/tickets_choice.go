@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
+	"github.com/blsmth/agentctl/internal/theme"
 )
 
 // tkChoice is one button of a tkChoiceModel. key is its shortcut, which is
@@ -87,21 +87,19 @@ func (c tkChoiceModel) View() tea.View {
 	}
 	b.WriteString("\n")
 	var btns []string
+	t := theme.Current()
 	for i, ch := range c.choices {
-		st := btnNormalStyle
-		if i == c.focus {
-			st = btnSelectedStyle
-			if ch.danger {
-				st = btnDangerStyle
-			}
+		st := tkButtonText()
+		switch {
+		case ch.danger:
+			st = fgStyle(t.Red)
+		case ch.primary:
+			st = fgStyle(t.Green).Bold(true)
 		}
 		id := c.choiceZone(i)
-		if c.hover == id {
-			st = st.Reverse(true)
-		}
-		btns = append(btns, zoneMark(id, st.Render(ch.label)))
+		btns = append(btns, zoneMark(id, tkButton(ch.label, st, false, i == c.focus || c.hover == id)))
 	}
-	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(btns, "   ")))
+	b.WriteString(strings.Join(btns, "  "))
 	return tea.NewView(b.String())
 }
 

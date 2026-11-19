@@ -106,7 +106,7 @@ func TestAutopilotTurnOnConfirms(t *testing.T) {
 		t.Fatalf("want the autopilot confirmation focused on Cancel, got %+v", c)
 	}
 	body := ansi.Strip(m.View().Content)
-	for _, want := range []string{"global setting", "5m", "#1", "would dispatch"} {
+	for _, want := range []string{"Global setting", "First poll in 5m", "#1", "would dispatch", `labelled "ready" (not "in-progress")`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("confirmation should mention %q", want)
 		}
@@ -303,7 +303,7 @@ func TestAutopilotPill(t *testing.T) {
 
 	m.autopilot = tkAutopilot{on: true, interval: 5 * time.Minute, ticker: true, nextPoll: tkNow().Add(192 * time.Second)}
 	on := ansi.Strip(m.renderPill(false))
-	if !strings.Contains(on, "[ Autopilot ● ON ]") || !strings.Contains(on, "next 3:1") {
+	if !strings.Contains(on, "[ Autopilot ● ON ]") || !strings.Contains(on, "next 3m") {
 		t.Errorf("on pill = %q", on)
 	}
 	m.autopilot.phase, m.autopilot.issue = pollDispatching, 171
@@ -342,5 +342,33 @@ func TestCycleStatus(t *testing.T) {
 		if got != tt.want || isErr != tt.wantErr {
 			t.Errorf("cycleStatus(%v, %v) = %q,%v; want %q,%v", tt.done, tt.fails, got, isErr, tt.want, tt.wantErr)
 		}
+	}
+}
+
+func TestFmtCountdown(t *testing.T) {
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{42 * time.Second, "42s"},
+		{59 * time.Second, "59s"},
+		{60 * time.Second, "1m"},
+		{4*time.Minute + 59*time.Second, "4m"},
+		{24*time.Hour - time.Minute, "23h 59m"},
+		{2 * time.Hour, "2h 0m"},
+	}
+	for _, tt := range tests {
+		if got := fmtCountdown(tt.d); got != tt.want {
+			t.Errorf("fmtCountdown(%v) = %q, want %q", tt.d, got, tt.want)
+		}
+	}
+}
+
+func TestAutoPollLabelsIgnoreCase(t *testing.T) {
+	if _, ok := autoPollCandidateFor(1, "x", []ghLabel{{Name: "Ready"}}); !ok {
+		t.Error(`an issue labelled "Ready" should be picked up`)
+	}
+	if _, ok := autoPollCandidateFor(1, "x", []ghLabel{{Name: "ready"}, {Name: "In-Progress"}}); ok {
+		t.Error(`"In-Progress" should be skipped`)
 	}
 }

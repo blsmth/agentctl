@@ -131,16 +131,16 @@ func TestEditDirtyGuard(t *testing.T) {
 	t.Run("click outside a dirty edit is ignored", func(t *testing.T) {
 		m := editingModel(t, editBody)
 		m = tkType(t, m, "x")
-		m, _ = tkClickZone(t, m, "key:d@detail")
-		if !m.edit.active || m.confirmModal.Visible {
+		m, _ = tkClickZone(t, m, "label:bug@detail")
+		if !m.edit.active || m.viewMode != tkViewDetail || m.filterLabel != "" {
 			t.Error("a stray click acted on a dirty draft")
 		}
 	})
 	t.Run("click outside a clean edit acts", func(t *testing.T) {
 		m := editingModel(t, editBody)
-		m, _ = tkClickZone(t, m, "key:d@detail")
-		if m.edit.active || !m.confirmModal.Visible {
-			t.Error("a click on Close should leave a clean edit and confirm the close")
+		m, _ = tkClickZone(t, m, "label:bug@detail")
+		if m.edit.active || m.filterLabel != "bug" {
+			t.Error("a click on a label should leave a clean edit and filter by it")
 		}
 	})
 	t.Run("ctrl+c with a dirty draft asks", func(t *testing.T) {
@@ -417,18 +417,28 @@ func TestEditEntryPoints(t *testing.T) {
 	})
 }
 
-func TestEditViewShowsModified(t *testing.T) {
+func TestEditViewShowsModifiedPerField(t *testing.T) {
 	m := editingModel(t, editBody)
 	if strings.Contains(m.View().Content, "● modified") {
 		t.Fatal("a clean draft shows ● modified")
 	}
 	m = tkType(t, m, "x")
-	v := m.View().Content
-	if strings.Count(v, "● modified") < 2 {
-		t.Error("a dirty draft should show ● modified in the header and the edit box")
+	lines := strings.Split(m.View().Content, "\n")
+	if strings.Contains(lines[0], "● modified") {
+		t.Error("a body-only change marked the title")
 	}
-	if got := strings.Count(v, "\n") + 1; got != m.termHeight {
+	if strings.Count(strings.Join(lines, "\n"), "● modified") != 1 {
+		t.Error("a body change should show exactly one marker, on the body border")
+	}
+	if got := len(lines); got != m.termHeight {
 		t.Errorf("edit frame is %d lines, want %d", got, m.termHeight)
+	}
+
+	m = editingModel(t, editTitle)
+	m = tkType(t, m, "x")
+	lines = strings.Split(m.View().Content, "\n")
+	if !strings.Contains(lines[0], "● modified") || strings.Count(m.View().Content, "● modified") != 1 {
+		t.Error("a title-only change should mark the title only")
 	}
 }
 
@@ -519,5 +529,40 @@ func TestNormBody(t *testing.T) {
 	}
 	if normBody("x") == normBody("y") {
 		t.Error("different bodies compare equal")
+	}
+}
+
+// TestCloseFinishingMidEditKeepsDraft is the regression for a close that
+// lands after an edit started: the draft stays, and later opens still work.
+func TestCloseFinishingMidEditKeepsDraft(t *testing.T) {
+	m := editingModel(t, editBody)
+	m = tkType(t, m, "x")
+	m = tkSendMsg(t, m, tkIssueClosedMsg{number: 3})
+	if m.viewMode != tkViewDetail || !m.edit.active || !m.edit.dirty() {
+		t.Fatalf("the close dropped the draft (view=%d active=%v)", m.viewMode, m.edit.active)
+	}
+	if !strings.Contains(m.edit.err, "closed") {
+		t.Errorf("err = %q, want the closed notice", m.edit.err)
+	}
+
+	// Leaving the detail ends the edit, so another issue can open.
+	m = tkSendKey(t, m, tkKey("esc"))
+	m = tkSendKey(t, m, charKey('d')) // discard
+	m = tkSendKey(t, m, tkKey("esc")) // back to the list
+	m = tkSendMsg(t, m, tkDetailFetchedMsg{number: 2, title: "two"})
+	if m.detail == nil || m.detail.number != 2 {
+		t.Error("a detail could not be opened after the edit")
+	}
+}
+
+// TestOrphanedEditNeverBlocksOpens covers an edit left behind by any path
+// out of the detail view.
+func TestOrphanedEditNeverBlocksOpens(t *testing.T) {
+	m := editingModel(t, editBody)
+	m = tkType(t, m, "x")
+	m.viewMode = tkViewList // as if something left the detail without ending the edit
+	m = tkSendMsg(t, m, tkDetailFetchedMsg{number: 2, title: "two"})
+	if m.detail == nil || m.detail.number != 2 || m.edit.active {
+		t.Error("an edit outside the detail view blocked opening an issue")
 	}
 }

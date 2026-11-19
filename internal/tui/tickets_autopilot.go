@@ -159,7 +159,8 @@ func autoPollReady(repoSlug string, r autoPollRunner) ([]autoPollCandidate, erro
 
 // autoPollCandidateFor applies the autopilot filter to one issue.
 func autoPollCandidateFor(number int, title string, labels []ghLabel) (autoPollCandidate, bool) {
-	if !hasLabel(labels, autoPollReadyLabel) || hasLabel(labels, autoPollSkipLabel) {
+	// GitHub label names match case-insensitively (gh's --label does too).
+	if !hasLabelFold(labels, autoPollReadyLabel) || hasLabelFold(labels, autoPollSkipLabel) {
 		return autoPollCandidate{}, false
 	}
 	agent := inferAgentFromLabels(labels)
@@ -167,6 +168,16 @@ func autoPollCandidateFor(number int, title string, labels []ghLabel) (autoPollC
 		agent = agentlabel.Default
 	}
 	return autoPollCandidate{number: number, title: title, agent: agent}, true
+}
+
+// hasLabelFold reports whether labels include name, ignoring case.
+func hasLabelFold(labels []ghLabel, name string) bool {
+	for _, l := range labels {
+		if strings.EqualFold(l.Name, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // readyFromList is the autopilot filter over the loaded (open) issues.
@@ -297,19 +308,16 @@ func (m TicketsModel) autopilotConfirm(ready []autoPollCandidate, checking bool)
 	cw := modalContentWidth(ModalMedium) - 4
 	text := lipgloss.NewStyle().Width(cw).Foreground(lipgloss.Color(t.Text))
 	dim := lipgloss.NewStyle().Width(cw).Foreground(lipgloss.Color(t.Muted))
-	warn := lipgloss.NewStyle().Width(cw).Foreground(lipgloss.Color(t.Yellow)).Bold(true)
 
 	lines := []string{
-		warn.Render("This is a global setting."),
-		text.Render(fmt.Sprintf("It is saved to %s and applies to the ticket browser in every project.", displayConfigPath())),
-		"",
-		text.Render(fmt.Sprintf("Every %s it dispatches open issues labelled %q (skipping %q) to the agent their labels name, unattended.",
-			fmtInterval(m.autopilot.interval), autoPollReadyLabel, autoPollSkipLabel)),
+		text.Render(fmt.Sprintf("Picks open issues labelled %q (not %q); the agent comes from the issue's labels.",
+			autoPollReadyLabel, autoPollSkipLabel)),
+		ansi.Truncate(fgStyle(t.Yellow).Bold(true).Render("Global setting")+fgStyle(t.Muted).Render(" · saved to "+displayConfigPath()), cw, "…"),
 		"",
 	}
-	head := "The first poll would dispatch:"
+	head := fmt.Sprintf("First poll in %s. Right now it would dispatch:", fmtInterval(m.autopilot.interval))
 	if checking {
-		head = "The first poll would dispatch (checking GitHub…):"
+		head = fmt.Sprintf("First poll in %s. Right now it would dispatch (checking GitHub…):", fmtInterval(m.autopilot.interval))
 	}
 	lines = append(lines, text.Render(head))
 	if len(ready) == 0 {
@@ -525,7 +533,11 @@ func (m TicketsModel) renderPill(compact bool) string {
 			if n == 1 {
 				noun = "issue"
 			}
-			return pill + "  " + fgStyle(t.Yellow).Render(fmt.Sprintf("%d %s %s waiting", n, autoPollReadyLabel, noun))
+			hint := fmt.Sprintf("%d %s %s waiting", n, autoPollReadyLabel, noun)
+			if m.narrow() {
+				hint = fmt.Sprintf("%d %s", n, autoPollReadyLabel)
+			}
+			return pill + "  " + fgStyle(t.Yellow).Render(hint)
 		}
 		return pill
 	}
@@ -564,11 +576,15 @@ func (m TicketsModel) renderPill(compact bool) string {
 	return parts[0] + "  " + strings.Join(detail, sep)
 }
 
-// fmtCountdown renders d as m:ss (h:mm:ss past an hour).
+// fmtCountdown renders d as "4m" or "23h 59m", with seconds only in the
+// last minute ("42s").
 func fmtCountdown(d time.Duration) string {
 	s := int(d.Round(time.Second).Seconds())
-	if s >= 3600 {
-		return fmt.Sprintf("%d:%02d:%02d", s/3600, s%3600/60, s%60)
+	switch {
+	case s < 60:
+		return fmt.Sprintf("%ds", s)
+	case s < 3600:
+		return fmt.Sprintf("%dm", s/60)
 	}
-	return fmt.Sprintf("%d:%02d", s/60, s%60)
+	return fmt.Sprintf("%dh %dm", s/3600, s%3600/60)
 }

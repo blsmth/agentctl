@@ -97,9 +97,12 @@ func newTitleInput(value string) textinput.Model {
 	ti.Prompt = ""
 	ti.CharLimit = 256
 	ti.Placeholder = "Issue title"
+	bg := lipgloss.NewStyle().Background(lipgloss.Color(t.Surface))
 	st := ti.Styles()
-	st.Focused.Text = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Bright)).Bold(true)
-	st.Blurred.Text = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Text))
+	st.Focused.Text = bg.Foreground(lipgloss.Color(t.Bright)).Bold(true)
+	st.Blurred.Text = bg.Foreground(lipgloss.Color(t.Text))
+	st.Focused.Placeholder = bg.Foreground(lipgloss.Color(t.Muted))
+	st.Blurred.Placeholder = bg.Foreground(lipgloss.Color(t.Muted))
 	ti.SetStyles(st)
 	ti.SetValue(value)
 	return ti
@@ -161,8 +164,9 @@ func (m *TicketsModel) sizeEditor() {
 	w, h := m.editorSize()
 	m.edit.body.SetWidth(w)
 	m.edit.body.SetHeight(h)
-	// One column for the cursor past the last character.
-	m.edit.title.SetWidth(m.titleInputWidth() - 1)
+	// The field is a bar, a space and the input; keep one column for the
+	// cursor past the last character.
+	m.edit.title.SetWidth(m.titleInputWidth() - 2)
 }
 
 // tkModifiedMark is the dirty marker in the header; its width is always
@@ -172,7 +176,7 @@ const tkModifiedMark = "  ● modified"
 // titleInputWidth is the width of the title field in the edit header.
 func (m TicketsModel) titleInputWidth() int {
 	w := m.contentWidth() - lipgloss.Width("← back") - 2 -
-		lipgloss.Width(fmt.Sprintf("#%d ", m.edit.number)) - 2 - // field edges
+		lipgloss.Width(fmt.Sprintf("#%d ", m.edit.number)) - 1 - // the field's left bar
 		lipgloss.Width(tkModifiedMark) - 2 - lipgloss.Width(m.renderPill(true))
 	if w < 10 {
 		w = 10
@@ -181,9 +185,9 @@ func (m TicketsModel) titleInputWidth() int {
 }
 
 // tkEditChrome is the rows the edit box spends around the textarea: its
-// top and bottom border, the message line and the button row. The box takes
-// the body column's "Body ✎" line plus its body rows.
-const tkEditChrome = 4
+// top and bottom border and the message line. The box takes the body
+// column's "Body ✎" line plus its body rows.
+const tkEditChrome = 3
 
 // editorSize is the textarea's inner width and height.
 func (m TicketsModel) editorSize() (int, int) {
@@ -533,29 +537,54 @@ func (m TicketsModel) onEditorDone(msg tkEditorDoneMsg) (tea.Model, tea.Cmd) {
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
-// renderEditTitleLine replaces the detail header while editing.
+// renderEditTitleLine replaces the detail header while editing: the title
+// as a full-width field on a subtle background, with a left bar that is the
+// accent while it has focus, and "● modified" beside it only when the title
+// changed.
 func (m TicketsModel) renderEditTitleLine(width int) string {
 	t := theme.Current()
 	back := m.link("edit:cancel@back", "← back", fgStyle(t.Accent).Bold(true))
 	num := fgStyle(t.Accent).Bold(true).Render(fmt.Sprintf("#%d ", m.edit.number))
 	mark := strings.Repeat(" ", lipgloss.Width(tkModifiedMark))
-	if m.edit.dirty() {
+	if m.edit.titleDirty() {
 		mark = "  " + fgStyle(t.Yellow).Bold(true).Render("● modified")
 	}
 	pill := m.renderPill(true)
 	inputW := m.titleInputWidth()
-	edge := fgStyle(t.Overlay)
+	bar := fgStyle(t.Overlay)
 	if m.edit.field == editTitle {
-		edge = fgStyle(t.Accent)
+		bar = fgStyle(t.Accent)
 	}
-	input := ansi.Truncate(m.edit.title.View(), inputW, "")
-	field := zoneMark("edit:focus-title", edge.Render("▏")+padTo(input, inputW, lipgloss.NewStyle())+edge.Render("▕"))
+	bg := lipgloss.NewStyle().Background(lipgloss.Color(t.Surface))
+	input := ansi.Truncate(m.edit.title.View(), inputW-1, "")
+	field := zoneMark("edit:focus-title", bar.Render("▌")+withBackground(" "+padTo(input, inputW-1, bg), t.Surface))
 	line := back + "  " + num + field + mark + "  " + pill
 	return ansi.Truncate(line, width, "")
 }
 
-// renderEditBox renders the body editor, its message line and buttons in a
-// column of the given width and height.
+// withBackground paints color behind s, including the cells its own
+// styles reset (the text input's cursor cell renders unstyled).
+func withBackground(s, color string) string {
+	on, _, _ := strings.Cut(lipgloss.NewStyle().Background(lipgloss.Color(color)).Render("x"), "x")
+	if on == "" {
+		return s
+	}
+	s = strings.ReplaceAll(s, "\x1b[0m", "\x1b[0m"+on)
+	s = strings.ReplaceAll(s, "\x1b[m", "\x1b[m"+on)
+	return on + s + "\x1b[m"
+}
+
+// editButtons is [ Save ] [ Cancel ], shown in place of the actions while
+// editing.
+func (m TicketsModel) editButtons() string {
+	t := theme.Current()
+	return m.button("edit:save", "Save", fgStyle(t.Green).Bold(true)) + " " +
+		m.button("edit:cancel", "Cancel", tkButtonText())
+}
+
+// renderEditBox renders the body editor and its message line (saving, or
+// an error in red) in a column of the given width and height. "● modified"
+// sits on the border only when the body changed.
 func (m TicketsModel) renderEditBox(width, height int) []string {
 	t := theme.Current()
 	border := fgStyle(t.Overlay)
@@ -567,7 +596,7 @@ func (m TicketsModel) renderEditBox(width, height int) []string {
 		label = " Body · markdown · ctrl+e $EDITOR "
 	}
 	mark := ""
-	if m.edit.dirty() {
+	if m.edit.bodyDirty() {
 		mark = " ● modified "
 	}
 	inner := width - 2
@@ -599,16 +628,7 @@ func (m TicketsModel) renderEditBox(width, height int) []string {
 		lines = append(lines, fgStyle(t.Sky).Render("saving…"))
 	case m.edit.err != "":
 		lines = append(lines, ansi.Truncate(fgStyle(t.Red).Render(m.edit.err), width, "…"))
-	default:
-		hint := "ctrl+s save · tab switch field · esc cancel"
-		if m.edit.field == editTitle {
-			hint = "enter save · tab edit body · esc cancel"
-		}
-		lines = append(lines, tkDimStyle.Render(hint))
 	}
-	save := m.button("edit:save", "Save", fgStyle(t.Green).Bold(true))
-	cancel := m.button("edit:cancel", "Cancel", fgStyle(t.Subtle))
-	lines = append(lines, save+"  "+cancel)
 	for len(lines) < height {
 		lines = append(lines, "")
 	}
@@ -620,8 +640,6 @@ func (m TicketsModel) editHintBar() string {
 	hints := []tkHint{{key: "ctrl+s", label: "save", pin: true}}
 	if m.edit.field == editTitle {
 		hints = append(hints, tkHint{key: "enter", label: "save"})
-	} else {
-		hints = append(hints, tkHint{key: "ctrl+e", label: "$EDITOR"})
 	}
 	hints = append(hints,
 		tkHint{key: "tab", label: "switch field"},
@@ -705,10 +723,7 @@ func (v tkTheirsModel) View() tea.View {
 		body = append(body[:maxLines], popupDimStyle.Render(fmt.Sprintf("… %d more lines", len(body)-maxLines)))
 	}
 	b.WriteString(fgStyle(t.Text).Render(strings.Join(body, "\n")) + "\n\n")
-	st := btnNormalStyle
-	if v.hover == "mkey:esc@theirs" {
-		st = st.Reverse(true)
-	}
-	b.WriteString(zoneMark("mkey:esc@theirs", st.Render("[ Back ]")))
+	// Back is the only button, so it has the focus.
+	b.WriteString(zoneMark("mkey:esc@theirs", tkButton("Back", tkButtonText(), false, true)))
 	return tea.NewView(b.String())
 }

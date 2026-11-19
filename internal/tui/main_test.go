@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -53,6 +54,7 @@ func TestMain(m *testing.M) {
 	}
 	tkLoadAutoPoll = func() (bool, time.Duration) { return false, 5 * time.Minute }
 	tkWriteAutoPoll = func(bool) error { return errExecDisabled }
+	tkEditorCmd = func(string) *exec.Cmd { return nil }
 	code := m.Run()
 	cleanup()
 	os.Exit(code)

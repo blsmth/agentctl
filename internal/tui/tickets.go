@@ -49,10 +49,10 @@ const (
 // Width breakpoints (terminal columns).
 const (
 	// tkDropAssigneeCols and the two below drop list columns, in this order,
-	// as the terminal narrows: ASSIGNEE, then LABELS, then PR.
+	// as the terminal narrows: ASSIGNEE, then PR, then LABELS.
 	tkDropAssigneeCols = 110
-	tkDropLabelsCols   = 96
-	tkDropPRCols       = 80
+	tkDropPRCols       = 96
+	tkDropLabelsCols   = 80
 	// tkNarrowCols is where the preview/detail sidebar of action buttons
 	// collapses into a one-line strip.
 	tkNarrowCols = 90
@@ -550,11 +550,19 @@ func (m TicketsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		n := msg.number
 		m.forgetPreview(n)
+		if m.edit.active && m.edit.number == n {
+			// The close finished after an edit started: stay on the draft.
+			m.edit.err = fmt.Sprintf("✗ #%d was closed · your draft is kept", n)
+			if m.detail != nil {
+				d := *m.detail
+				d.state = "CLOSED"
+				m.detail = &d
+			}
+			return m, tea.Batch(m.setFlash(fmt.Sprintf("closed #%d", n), false), tkFetchTicketsCmd(m.dir, m.issueState))
+		}
 		flash := m.setFlash(fmt.Sprintf("closed #%d", n), false)
 		if m.viewMode == tkViewDetail {
-			m.viewMode = tkViewList
-			m.detail = nil
-			m.scrollOffset = 0
+			m.backToList()
 		}
 		if m.issueState != tkStateOpen {
 			// The issue stays listed (closed/all): refetch to show its state.
@@ -580,9 +588,10 @@ func (m TicketsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m, m.setFlash(fmt.Sprintf("✗ #%d: %v", msg.number, msg.err), true)
 		}
-		if m.edit.active {
+		if m.edit.active && m.viewMode == tkViewDetail {
 			return m, nil // never swap the issue out from under a draft
 		}
+		m.endEdit()
 		m.detail = &msg
 		m.scrollOffset = 0
 		m.viewMode = tkViewDetail
@@ -755,7 +764,11 @@ func (m TicketsModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.choiceModal.Visible {
 		if msg.String() == "ctrl+c" {
-			return m.quit()
+			if m.edit.dirty() {
+				msg = tkKey("esc") // cancel the dialog; never drop a draft on ctrl+c
+			} else {
+				return m.quit()
+			}
 		}
 		var cmd tea.Cmd
 		m.choiceModal, cmd = m.choiceModal.Update(msg)
@@ -948,7 +961,7 @@ func (m TicketsModel) confirmClose(n int, state string) (tea.Model, tea.Cmd) {
 	if strings.EqualFold(state, "closed") {
 		return m, m.setFlash(fmt.Sprintf("#%d is already closed", n), false)
 	}
-	m.confirmModal = NewModal("Close Ticket", newConfirmCloseModel(n), ModalSmall)
+	m.confirmModal = NewModal("Close issue", newConfirmCloseModel(n), ModalSmall)
 	return m, nil
 }
 
@@ -1137,6 +1150,7 @@ func (m *TicketsModel) commitSearch() {
 
 // backToList leaves the detail view.
 func (m *TicketsModel) backToList() {
+	m.endEdit() // an edit never outlives its detail view
 	m.viewMode = tkViewList
 	m.detail = nil
 	m.scrollOffset = 0

@@ -26,7 +26,7 @@ const (
 
 // ConfirmCloseModel is the content model for the close-confirmation overlay.
 // It renders only the dialog body; the wrapping Modal provides the border,
-// title ("Close Ticket"), and hint bar.
+// title ("Close issue"), and hint bar.
 type ConfirmCloseModel struct {
 	issueNumber int
 	cursorIdx   int // 0=Yes, 1=No; defaults to 1 (No) for safety
@@ -82,20 +82,11 @@ func (m ConfirmCloseModel) View() tea.View {
 	b.WriteString(popupRuleStyle.Render(strings.Repeat("─", popupContentWidth)))
 	b.WriteString("\n\n")
 
-	yesSt, noSt := btnNormalStyle, btnSelectedStyle
-	if m.cursorIdx == 0 {
-		yesSt, noSt = btnDangerStyle, btnNormalStyle
-	}
 	const yesID, noID = "mkey:y@close", "mkey:n@close"
-	if m.hover == yesID {
-		yesSt = yesSt.Reverse(true)
-	}
-	if m.hover == noID {
-		noSt = noSt.Reverse(true)
-	}
-	yesBtn := zoneMark(yesID, yesSt.Render("Yes, close"))
-	noBtn := zoneMark(noID, noSt.Render("No, cancel"))
-	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, yesBtn, "   ", noBtn))
+	t := theme.Current()
+	yesBtn := zoneMark(yesID, tkButton("Close issue", fgStyle(t.Red), false, m.cursorIdx == 0 || m.hover == yesID))
+	noBtn := zoneMark(noID, tkButton("Cancel", tkButtonText(), false, m.cursorIdx == 1 || m.hover == noID))
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, yesBtn, "  ", noBtn))
 
 	return tea.NewView(b.String())
 }

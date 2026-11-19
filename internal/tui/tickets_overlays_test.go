@@ -146,11 +146,11 @@ func TestConfirmCloseModel_View(t *testing.T) {
 	if !strings.Contains(view.Content, "#42") {
 		t.Errorf("View() does not contain issue number #42; got: %q", view.Content)
 	}
-	if !strings.Contains(view.Content, "Yes") {
-		t.Error("View() does not contain 'Yes' button")
+	if !strings.Contains(view.Content, "Close issue") {
+		t.Error("View() does not contain the 'Close issue' button")
 	}
-	if !strings.Contains(view.Content, "No") {
-		t.Error("View() does not contain 'No' button")
+	if !strings.Contains(view.Content, "Cancel") {
+		t.Error("View() does not contain the 'Cancel' button")
 	}
 }
 
