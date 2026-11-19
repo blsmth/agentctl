@@ -289,12 +289,19 @@ func (s *Server) awaitDialogGone(rw resolved, hash string) {
 // arrow moves, Enter) one key at a time. After every key but the final
 // Enter it re-captures and re-parses the pane and sends the next key only
 // when that key landed: the same question is still up (QuestionKey) and a
-// toggle flipped its box, or an arrow moved the cursor one row. Anything else
+// toggle flipped its box, or an arrow moved the cursor one row (keyLanded).
+// Enter goes out only with the cursor on the confirm row. Anything else
 // stops the sequence with a 409, so no key is ever sent into a screen the
 // sequence was not computed for. d is the dialog the sequence was built from.
 func (s *Server) sendChecked(rw resolved, d panestate.Dialog, keys []string) (outcome, bool) {
 	question := panestate.QuestionKey(d)
 	for i, key := range keys {
+		if i == len(keys)-1 && !confirmReady(d) {
+			// Every move landed, yet the cursor is not on the confirm row:
+			// Enter would pick whatever row it is on.
+			logging.Warn("serve: answer %s:%s: cursor not on the confirm row; stopped before Enter", rw.group.Session, rw.window.WindowID)
+			return failure(http.StatusConflict, codeDialogChanged, "the question did not take the answer; refresh and try again"), false
+		}
 		if err := s.keys.SendKey(rw.target(), key); err != nil {
 			logging.Warn("serve: answer %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
 			return failure(http.StatusBadGateway, codeActionFailed, "sending the key failed"), false
@@ -316,7 +323,8 @@ func (s *Server) sendChecked(rw resolved, d panestate.Dialog, keys []string) (ou
 }
 
 // keyLanded is the check for one key of a submit sequence sent to d: a
-// number flips that option's box, Down/Up moves the cursor one row.
+// number flips that option's box and leaves the cursor where it was, Down/Up
+// moves the cursor one row.
 func keyLanded(d panestate.Dialog, key string) func(panestate.Dialog) bool {
 	switch key {
 	case "Down", "Up":
@@ -326,9 +334,15 @@ func keyLanded(d panestate.Dialog, key string) func(panestate.Dialog) bool {
 		}
 		return func(n panestate.Dialog) bool { return n.Cursor == want }
 	}
-	was := isChecked(d, key)
-	return func(n panestate.Dialog) bool { return isChecked(n, key) != was }
+	// A number toggles without moving the cursor: a moved cursor means the
+	// key did something else, and the arrow count is no longer right.
+	was, cursor := isChecked(d, key), d.Cursor
+	return func(n panestate.Dialog) bool { return isChecked(n, key) != was && n.Cursor == cursor }
 }
+
+// confirmReady reports whether d's cursor is on its confirm (Next/Submit)
+// row, where Enter submits the question.
+func confirmReady(d panestate.Dialog) bool { return d.Submit != nil && d.Submit.Moves == 0 }
 
 // isChecked reports whether option key of d shows a ticked box.
 func isChecked(d panestate.Dialog, key string) bool {

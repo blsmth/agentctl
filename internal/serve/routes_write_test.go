@@ -590,6 +590,61 @@ func TestAnswerMultiSelectStopsWhenKeyDoesNotLand(t *testing.T) {
 	}
 }
 
+// A number toggles without moving the cursor. A toggle that also moved it
+// did something else, and the arrow count read before it is no longer
+// right, so the sequence stops before any arrow is sent.
+func TestAnswerMultiSelectToggleMustNotMoveCursor(t *testing.T) {
+	d, _ := panestate.ParseDialog(multiSelectPane)
+	e := newWriteEnv(t, true)
+	e.panes.set(multiSelectPane)
+	e.keys.onSend = func(key string) {
+		e.panes.mu.Lock()
+		defer e.panes.mu.Unlock()
+		e.panes.text, _ = panesim.Press(e.panes.text, key)
+		e.panes.text, _ = panesim.Press(e.panes.text, "Down")
+	}
+	w := e.post(winPath+"/answer", fmt.Sprintf(`{"key":"submit","select":["1"],"dialog_hash":%q}`, d.Hash))
+	if got := sentKeys(e); w.Code != http.StatusConflict || !reflect.DeepEqual(got, []string{"1"}) {
+		t.Errorf("status %d sent %v, want 409 [1]: %s", w.Code, got, w.Body)
+	}
+}
+
+// Enter goes out only with the cursor on the confirm row, even when every
+// earlier key landed.
+func TestSendCheckedEnterNeedsConfirmRow(t *testing.T) {
+	d, _ := panestate.ParseDialog(multiSelectPane)
+	if d.Submit == nil || d.Submit.Moves != 3 {
+		t.Fatalf("fixture submit = %+v", d.Submit)
+	}
+	for _, tt := range []struct {
+		name string
+		keys []string
+		ok   bool
+		sent []string
+	}{
+		{"short of the row", []string{"Down", "Enter"}, false, []string{"Down"}},
+		{"on the row", []string{"Down", "Down", "Down", "Enter"}, true, []string{"Down", "Down", "Down", "Enter"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWriteEnv(t, true)
+			e.panes.set(multiSelectPane)
+			reactLikeClaude(e)
+			out, ok := e.sendChecked(resolved{pane: testMainPane}, d, tt.keys)
+			if ok != tt.ok || !reflect.DeepEqual(sentKeys(e), tt.sent) {
+				t.Errorf("ok=%v (%+v) sent %v, want ok=%v %v", ok, out, sentKeys(e), tt.ok, tt.sent)
+			}
+		})
+	}
+}
+
+func sentKeys(e *writeEnv) []string {
+	var out []string
+	for _, k := range e.keys.all() {
+		out = append(out, k.key)
+	}
+	return out
+}
+
 // Toggling a box on and straight back off lands on an earlier hash; the
 // second toggle must not be refused as an already-answered dialog.
 func TestAnswerMultiSelectToggleTwice(t *testing.T) {
