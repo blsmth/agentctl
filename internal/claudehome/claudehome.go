@@ -52,16 +52,81 @@ func HomeDir() string {
 }
 
 // DefaultDir returns Claude Code's own config dir for this process:
-// $CLAUDE_CONFIG_DIR when set (made absolute), else ~/.claude. It is what
+// $CLAUDE_CONFIG_DIR when set (made absolute), else, in a process Claude
+// Code's subprocess env scrub ran on, the dir of the account named by
+// $AGENTCTL_ACCOUNT (see scrubbedAccountDir), else ~/.claude. It is what
 // Current returns, and what a launch falls back to when no account applies
 // and default_account is unset. It never reflects default_account.
 func DefaultDir() string {
+	return defaultDirIn(nil)
+}
+
+// defaultDirIn is DefaultDir for a caller that may already hold the loaded
+// config. cfg may be nil: the config is then loaded only when the
+// scrubbed-env fallback is reached.
+func defaultDirIn(cfg *config.Config) string {
 	if env := os.Getenv(EnvConfigDir); env != "" {
 		if d, err := ExpandDir(env); err == nil {
 			return d
 		}
 	}
+	if d := scrubbedAccountDir(cfg); d != "" {
+		return d
+	}
 	return HomeDir()
+}
+
+// envSubprocessScrub is set on a Claude Code process (see
+// harness.subprocessEnvScrub) to make it strip sensitive variables from the
+// env of everything it spawns: hooks, the statusline command, Bash tools.
+const envSubprocessScrub = "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
+
+// scrubbedAccountDir recovers the config dir that Claude Code's subprocess
+// env scrub hid from this process: the dir of the configured account named
+// by $AGENTCTL_ACCOUNT. It returns "" unless $CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+// is on, or when AGENTCTL_ACCOUNT is unset or names no configured account.
+//
+// Windows launched without --permission-mode auto run with the scrub on, and
+// Claude Code then drops CLAUDE_CONFIG_DIR from its subprocesses while
+// AGENTCTL_ACCOUNT and the scrub variable itself survive (checked against
+// Claude Code 2.1.327). Every launch sets AGENTCTL_ACCOUNT together with the
+// account's CLAUDE_CONFIG_DIR (dispatch.ApplyAccountEnv), so under the scrub
+// it names the dir the claude process really uses. Outside the scrub
+// CLAUDE_CONFIG_DIR is visible when set, and an absent one means the process
+// physically uses ~/.claude whatever AGENTCTL_ACCOUNT says, so the account
+// name is not consulted there. With no accounts configured no name matches.
+func scrubbedAccountDir(cfg *config.Config) string {
+	if !scrubOn() {
+		return ""
+	}
+	name := os.Getenv(EnvAccount)
+	if name == "" {
+		return ""
+	}
+	if cfg == nil {
+		cfg = loadConfig()
+	}
+	if cfg == nil {
+		return ""
+	}
+	a, ok := cfg.Accounts[name]
+	if !ok {
+		return ""
+	}
+	d, err := ExpandDir(a.ConfigDir)
+	if err != nil {
+		return ""
+	}
+	return d
+}
+
+// scrubOn reports whether $CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is enabled.
+func scrubOn() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(envSubprocessScrub))) {
+	case "", "0", "false", "no", "off":
+		return false
+	}
+	return true
 }
 
 // ExpandDir expands a leading "~" and returns the cleaned absolute path.
@@ -95,7 +160,7 @@ func dirIn(cfg *config.Config, account string) (string, error) {
 	if account == "" {
 		account = cfg.DefaultAccount
 		if account == "" {
-			if d := DefaultDir(); d != "" {
+			if d := defaultDirIn(cfg); d != "" {
 				return d, nil
 			}
 			return "", errors.New("cannot resolve the Claude config dir: home directory unknown")
@@ -110,8 +175,10 @@ func dirIn(cfg *config.Config, account string) (string, error) {
 
 // Current returns the config dir the running process itself uses: an
 // explicit $CLAUDE_CONFIG_DIR (hooks and the statusline inherit it from the
-// claude process that spawned them), else ~/.claude (HomeDir). Returns ""
-// when nothing resolves.
+// claude process that spawned them), else, when Claude Code's subprocess env
+// scrub dropped that variable, the $AGENTCTL_ACCOUNT account's dir (see
+// scrubbedAccountDir), else ~/.claude (HomeDir). Returns "" when nothing
+// resolves.
 //
 // default_account is never consulted: it picks where a new launch goes
 // (Resolve/ForLaunch), not where a running process is. A claude process with
@@ -132,7 +199,7 @@ func CurrentAccount() string {
 // CurrentAccountIn is CurrentAccount for a caller that already holds the
 // loaded config, saving a second config load on hot paths.
 func CurrentAccountIn(cfg *config.Config) string {
-	return accountForDirIn(cfg, Current())
+	return accountForDirIn(cfg, defaultDirIn(cfg))
 }
 
 // HomeAccount returns the configured account whose dir is ~/.claude
@@ -167,7 +234,7 @@ func allIn(cfg *config.Config) []Account {
 		seen[d] = true
 		out = append(out, Account{Name: name, Dir: d, Label: cfg.Accounts[name].Label})
 	}
-	if d := DefaultDir(); d != "" && !seen[d] {
+	if d := defaultDirIn(cfg); d != "" && !seen[d] {
 		out = append(out, Account{Dir: d})
 	}
 	return out
@@ -243,5 +310,5 @@ func IsDefaultAccount(name string) bool {
 	if cfg.DefaultAccount != "" {
 		return cfg.DefaultAccount == name
 	}
-	return accountForDirIn(cfg, DefaultDir()) == name
+	return accountForDirIn(cfg, defaultDirIn(cfg)) == name
 }

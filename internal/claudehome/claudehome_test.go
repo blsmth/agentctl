@@ -19,6 +19,7 @@ func setup(t *testing.T, cfg *config.Config) string {
 	t.Setenv("HOME", home)
 	t.Setenv(EnvConfigDir, "")
 	t.Setenv(EnvAccount, "")
+	t.Setenv(envSubprocessScrub, "")
 	origLoad, origHome := loadConfig, userHomeDir
 	loadConfig = func() *config.Config { return cfg }
 	userHomeDir = func() (string, error) { return home, nil }
@@ -273,5 +274,64 @@ func TestHomeAccount(t *testing.T) {
 	setup(t, &config.Config{Accounts: map[string]config.AccountConfig{"p": {ConfigDir: "~/.claude-p"}}})
 	if got := HomeAccount(); got != "" {
 		t.Errorf("HomeAccount() with no ~/.claude account = %q, want \"\"", got)
+	}
+}
+
+// Claude Code's subprocess env scrub (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1)
+// drops CLAUDE_CONFIG_DIR from hooks and the statusline but keeps
+// AGENTCTL_ACCOUNT; the process must still resolve its own account.
+// Outside the scrub AGENTCTL_ACCOUNT is ignored (see TestCurrent).
+func TestCurrentUnderSubprocessScrub(t *testing.T) {
+	tests := []struct {
+		name        string
+		cfg         *config.Config
+		scrub       string
+		configDir   string // relative to HOME; "" = unset
+		account     string // AGENTCTL_ACCOUNT
+		wantDir     string // relative to HOME
+		wantAccount string
+	}{
+		{"scrubbed: account env restores dir", twoAccounts(), "1", "", "personal", ".claude-personal", "personal"},
+		{"scrubbed, true", twoAccounts(), "true", "", "personal", ".claude-personal", "personal"},
+		{"scrubbed ~/.claude account", twoAccounts(), "1", "", "ll", ".claude", "ll"},
+		{"scrubbed, CLAUDE_CONFIG_DIR still wins", twoAccounts(), "1", ".claude", "personal", ".claude", "ll"},
+		{"scrubbed, no account env", twoAccounts(), "1", "", "", ".claude", "ll"},
+		{"scrubbed, unknown account ignored", twoAccounts(), "1", "", "gone", ".claude", "ll"},
+		{"scrubbed, no accounts configured", &config.Config{}, "1", "", "personal", ".claude", ""},
+		{"scrub off", twoAccounts(), "0", "", "personal", ".claude", "ll"},
+		{"scrub off, CLAUDE_CONFIG_DIR set", twoAccounts(), "0", ".claude-personal", "personal", ".claude-personal", "personal"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := setup(t, tt.cfg)
+			if tt.configDir != "" {
+				t.Setenv(EnvConfigDir, filepath.Join(home, tt.configDir))
+			}
+			t.Setenv(EnvAccount, tt.account)
+			t.Setenv(envSubprocessScrub, tt.scrub)
+			want := filepath.Join(home, tt.wantDir)
+			if got := Current(); got != want {
+				t.Errorf("Current() = %q, want %q", got, want)
+			}
+			if got := CurrentAccount(); got != tt.wantAccount {
+				t.Errorf("CurrentAccount() = %q, want %q", got, tt.wantAccount)
+			}
+			if got := CurrentAccountIn(tt.cfg); got != tt.wantAccount {
+				t.Errorf("CurrentAccountIn() = %q, want %q", got, tt.wantAccount)
+			}
+		})
+	}
+}
+
+func TestParentAccountUnderSubprocessScrub(t *testing.T) {
+	setup(t, twoAccounts())
+	t.Setenv(EnvAccount, "personal")
+	t.Setenv(envSubprocessScrub, "")
+	if got := ParentAccount(""); got != "" {
+		t.Errorf("ParentAccount without scrub = %q, want \"\"", got)
+	}
+	t.Setenv(envSubprocessScrub, "1")
+	if got := ParentAccount(""); got != "personal" {
+		t.Errorf("ParentAccount under scrub = %q, want personal from AGENTCTL_ACCOUNT", got)
 	}
 }

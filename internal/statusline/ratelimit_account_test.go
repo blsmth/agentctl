@@ -47,3 +47,59 @@ func TestRunWithIO_PersistsRateLimitsPerAccount(t *testing.T) {
 		}
 	}
 }
+
+// A window launched without --permission-mode auto runs claude with
+// CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1, which drops CLAUDE_CONFIG_DIR from the
+// statusline's env but keeps AGENTCTL_ACCOUNT. The label and the rate-limit
+// file must still name the window's account, not the ~/.claude one.
+func TestRunWithIO_ScrubbedEnvUsesAgentctlAccount(t *testing.T) {
+	const cfg = `{"statusline_format":"rich","accounts":{"ll":{"config_dir":"~/.claude"},"personal":{"config_dir":"~/.claude-personal"}},"default_account":"ll"}`
+	tests := []struct {
+		name      string
+		cfg       string
+		scrub     string
+		configDir string // relative to HOME; "" = unset
+		account   string
+		want      string // account in the label and file name; "" = none
+	}{
+		{"scrubbed personal window", cfg, "1", "", "personal", "personal"},
+		{"scrubbed ~/.claude window", cfg, "1", "", "ll", "ll"},
+		{"config dir set wins", cfg, "1", ".claude", "personal", "ll"},
+		{"unscrubbed personal window", cfg, "0", ".claude-personal", "personal", "personal"},
+		{"no accounts configured", `{"statusline_format":"rich"}`, "1", "", "personal", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := setupAccounts(t, tt.cfg)
+			if tt.configDir != "" {
+				t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, tt.configDir))
+			} else {
+				os.Unsetenv("CLAUDE_CONFIG_DIR")
+			}
+			t.Setenv("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", tt.scrub)
+			t.Setenv("AGENTCTL_ACCOUNT", tt.account)
+
+			var out bytes.Buffer
+			RunWithIO(strings.NewReader(withLimits), &out, false)
+			got := out.String()
+			for _, name := range []string{"ll", "personal"} {
+				if has := strings.Contains(got, name); has != (tt.want == name) {
+					t.Errorf("label %q present = %v, want %v in %q", name, has, tt.want == name, got)
+				}
+			}
+
+			pr, err := ratelimit.LoadPushedFor(tt.want, false)
+			if err != nil || pr == nil || pr.FiveHour == nil || pr.FiveHour.UsedPercentage != 26 {
+				t.Errorf("ratelimits for %q = %+v, %v; want five_hour 26", tt.want, pr, err)
+			}
+			for _, other := range []string{"ll", "personal"} {
+				if other == tt.want {
+					continue
+				}
+				if pr, _ := ratelimit.LoadPushedFor(other, false); pr != nil {
+					t.Errorf("ratelimits leaked into account %q: %+v", other, pr)
+				}
+			}
+		})
+	}
+}
