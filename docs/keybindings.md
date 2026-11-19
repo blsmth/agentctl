@@ -55,6 +55,7 @@ agentctl binds only the keys below; tmux's defaults (`n` next window, `0`–`9` 
 |-----|--------|
 | `i` | **Self-improve** — agent analyzes its session logs and rewrites its own instructions |
 | `C` | **Context push** — pick a context-store entry to push to the focused agent |
+| `X` | **Context viewer** — open the context window (`agentctl context --tui`): browse entries with a scrollable preview, `/` filter, `d` delete (y/n), `r` reload, `q`/`esc` back to the previous window |
 
 ## Phone web app
 
@@ -88,7 +89,7 @@ pressed in (`AGENTCTL_KEY_WINDOW`), and `agentctl` (see `internal/hubtarget`)
 redirects hub keypresses to the agent shown in the live pane:
 
 - **Window-scoped** (`x` kill, `o` logs, `s` settings, `i` improve, `h`/`H` HUD, `C` context push) act on the viewed agent's window.
-- **Project-scoped** (`a` menu, `A` launch, `c` create, `T`/`Q` tickets, `P` permissions, `m`/`t`/`S` windows) run as if pressed in the viewed agent's project session; new windows land there.
+- **Project-scoped** (`a` menu, `A` launch, `c` create, `T`/`Q` tickets, `P` permissions, `m`/`t`/`S`/`X` windows) run as if pressed in the viewed agent's project session; new windows land there.
 - `q` closes the hub (back to the previous session). `R` (restart) and `K` (kill all) are refused in the hub.
 - With no agent viewed yet, these keys show "select an agent in the hub first".
 - Popups may open over the hub window; only their target changes.

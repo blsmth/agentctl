@@ -21,6 +21,8 @@ func RunContext() {
 		cliout.Exit(1)
 	}
 	switch os.Args[2] {
+	case "--tui":
+		cmdContextTUI()
 	case "set":
 		cmdContextSet()
 	case "get":
@@ -39,13 +41,32 @@ func RunContext() {
 
 func printContextUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: agentctl context <subcommand> [flags]
+       agentctl context --tui
 
 Subcommands:
   set   <key> <value>   Write a context entry (flags: --agent, --tag)
   get   <key>           Print a context entry
   list                  Table of all entries
   clear <key>           Delete an entry
-  push  <key>           Push an entry to a running agent (flag: --agent)`)
+  push  <key>           Push an entry to a running agent (flag: --agent)
+
+Flags:
+  --tui                 Full-screen browser (filter, preview, delete)`)
+}
+
+// cmdContextTUI runs the full-screen context store viewer. Inside the
+// dedicated tmux window (AGENTCTL_ORIGIN_WINDOW is set by
+// tmux.OpenOrFocusContextWindow) it returns focus to the origin window and
+// removes its own window on exit; from a plain shell it just runs and exits.
+func cmdContextTUI() {
+	p := tea.NewProgram(tui.NewContextModel())
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		cliout.Exit(1)
+	}
+	if origin, ok := os.LookupEnv("AGENTCTL_ORIGIN_WINDOW"); ok {
+		tmux.ReturnFocusAndKillWindow(origin, "context")
+	}
 }
 
 // cmdContextSet handles "agentctl context set <key> <value> [--agent NAME] [--tag TAG]...".
