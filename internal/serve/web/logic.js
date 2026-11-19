@@ -242,10 +242,12 @@ function firstClause(text, max) {
 }
 
 /**
- * rowHeadline is the short human title of a fleet row: the ticket title for a
+ * rowHeadline is the short human title of a fleet row: the generated short
+ * title of the recap when the server has one, else the ticket title for a
  * task dispatch, else the first sentence of the recap, else the agent name.
  */
 export function rowHeadline(win) {
+  if (hasRecap(win) && win.title) return win.title;
   if (hasRecap(win)) {
     const text = win.recap_source === "task" ? win.recap.replace(/^#\d+\s+/, "") : win.recap;
     const line = firstClause(text, HEADLINE_MAX);

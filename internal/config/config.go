@@ -679,6 +679,9 @@ type Config struct {
 	// Cron holds the global defaults and kill switch for `agentctl cron`
 	// (internal/cron). Global config only; the jobs live in schedules.json.
 	Cron CronConfig `json:"cron,omitzero"`
+	// Titles configures short AI row titles for the hub and the phone app
+	// (internal/shorttitle). Global config only: it makes paid network calls.
+	Titles TitlesConfig `json:"titles,omitzero"`
 }
 
 // StringPtr returns a pointer to s, for setting optional string fields such as
@@ -1407,6 +1410,12 @@ func sanitizeProjectConfig(project, global *Config) {
 		warn("llm", globalOnly)
 		project.LLM = LLMConfig{}
 	}
+	// Titles make paid network calls with a stored key: a cloned repo must
+	// not be able to switch them on or pick the backend or model.
+	if !reflect.DeepEqual(project.Titles, TitlesConfig{}) {
+		warn("titles", globalOnly)
+	}
+	project.Titles = TitlesConfig{}
 	for name, ac := range project.Agents {
 		g, hasGlobal := global.Agents[name]
 		pre := "agents." + name + "."
@@ -1788,6 +1797,8 @@ func applyProjectChanges(layer, before, after, global *Config) {
 	layer.Serve = protected.Serve
 	restore("cron", !reflect.DeepEqual(layer.Cron, protected.Cron))
 	layer.Cron = protected.Cron
+	restore("titles", !reflect.DeepEqual(layer.Titles, protected.Titles))
+	layer.Titles = protected.Titles
 	restore("auto_poll", layer.AutoPoll != protected.AutoPoll)
 	restore("default_agent", layer.DefaultAgent != protected.DefaultAgent)
 	restore("accounts", !reflect.DeepEqual(layer.Accounts, protected.Accounts) ||

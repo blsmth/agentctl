@@ -595,3 +595,31 @@ func TestFleetHover_BackgroundContinuous(t *testing.T) {
 		}
 	}
 }
+
+// A row with a generated short title shows it on the list line; the
+// selected row's detail lines keep the full recap.
+func TestRenderTreeRow_ShortTitle(t *testing.T) {
+	m := sampleSidebar(t, 120)
+	l := m.lines[m.splitPane.Cursor()]
+	const full = "Moved the photo library into albums by year and started deduplicating"
+	r := l.row
+	r.Recap = fleet.RecapLine{Text: full, Source: fleet.RecapSummary, Title: "Organizing your Photos"}
+	cw := m.contentWidth()
+
+	row := ansi.Strip(m.renderTreeRow(r, l.treePrefix, l.nameCol, false, cw))
+	if !strings.Contains(row, "Organizing your Photos") || strings.Contains(row, "photo library") {
+		t.Errorf("list row should show the short title only: %q", row)
+	}
+	lines := strings.Split(ansi.Strip(m.renderTreeRow(r, l.treePrefix, l.nameCol, true, cw)), "\n")
+	if !strings.Contains(lines[0], "Organizing your Photos") {
+		t.Errorf("selected row line = %q", lines[0])
+	}
+	if detail := strings.Join(lines[1:], " "); !strings.Contains(detail, "photo library into albums") {
+		t.Errorf("selected detail should carry the full recap: %q", detail)
+	}
+
+	r.Recap.Title = ""
+	if row := ansi.Strip(m.renderTreeRow(r, l.treePrefix, l.nameCol, false, cw)); !strings.Contains(row, "Moved the photo") {
+		t.Errorf("without a title the row shows the recap text: %q", row)
+	}
+}

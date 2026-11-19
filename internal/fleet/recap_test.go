@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/state"
+	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // jsonl encodes records as JSONL lines.
@@ -62,13 +64,13 @@ func TestRecapChain(t *testing.T) {
 		info LogInfo
 		want RecapLine
 	}{
-		{"summary beats everything", ticket, LogInfo{Recap: "We are building X.", AITitle: "T"}, RecapLine{"We are building X.", RecapSummary}},
-		{"ticket task", ticket, LogInfo{AITitle: "T"}, RecapLine{"#60 Mobile app", RecapTask}},
-		{"ticket ref with hash", Row{AgentState: state.AgentState{TicketRef: "#7", TicketTitle: "x"}}, LogInfo{}, RecapLine{"#7 x", RecapTask}},
-		{"ticket int only", Row{AgentState: state.AgentState{Ticket: 9, TicketTitle: "x"}}, LogInfo{}, RecapLine{"#9 x", RecapTask}},
-		{"ad-hoc task", adhoc, LogInfo{AITitle: "T"}, RecapLine{"Fix the flaky test", RecapTask}},
-		{"ai title", activity, LogInfo{AITitle: "Local network"}, RecapLine{"Local network", RecapTitle}},
-		{"activity fallback", activity, LogInfo{}, RecapLine{"Editing a.go", RecapActivity}},
+		{"summary beats everything", ticket, LogInfo{Recap: "We are building X.", AITitle: "T"}, RecapLine{Text: "We are building X.", Source: RecapSummary}},
+		{"ticket task", ticket, LogInfo{AITitle: "T"}, RecapLine{Text: "#60 Mobile app", Source: RecapTask}},
+		{"ticket ref with hash", Row{AgentState: state.AgentState{TicketRef: "#7", TicketTitle: "x"}}, LogInfo{}, RecapLine{Text: "#7 x", Source: RecapTask}},
+		{"ticket int only", Row{AgentState: state.AgentState{Ticket: 9, TicketTitle: "x"}}, LogInfo{}, RecapLine{Text: "#9 x", Source: RecapTask}},
+		{"ad-hoc task", adhoc, LogInfo{AITitle: "T"}, RecapLine{Text: "Fix the flaky test", Source: RecapTask}},
+		{"ai title", activity, LogInfo{AITitle: "Local network"}, RecapLine{Text: "Local network", Source: RecapTitle}},
+		{"activity fallback", activity, LogInfo{}, RecapLine{Text: "Editing a.go", Source: RecapActivity}},
 		{"nothing", Row{}, LogInfo{}, RecapLine{}},
 	}
 	for _, tt := range tests {
@@ -221,10 +223,10 @@ func TestTagLogs(t *testing.T) {
 		{AgentState: state.AgentState{LastText: "hi"}},
 	}
 	TagLogs(rows)
-	if rows[0].Recap != (RecapLine{"Recap here", RecapSummary}) || rows[0].PRNumber != 60 || rows[0].PRURL != "https://x/60" {
+	if rows[0].Recap != (RecapLine{Text: "Recap here", Source: RecapSummary}) || rows[0].PRNumber != 60 || rows[0].PRURL != "https://x/60" {
 		t.Errorf("row 0 = %+v", rows[0])
 	}
-	if rows[1].Recap != (RecapLine{"hi", RecapActivity}) || rows[1].PRURL != "" {
+	if rows[1].Recap != (RecapLine{Text: "hi", Source: RecapActivity}) || rows[1].PRURL != "" {
 		t.Errorf("row 1 = %+v", rows[1])
 	}
 	if w := ToWindow(rows[0], Meta{}); w.PRURL != "https://x/60" {
@@ -294,5 +296,57 @@ func TestCompactAge(t *testing.T) {
 		if got := CompactAge(tt.d); got != tt.want {
 			t.Errorf("CompactAge(%v) = %q, want %q", tt.d, got, tt.want)
 		}
+	}
+}
+
+func TestTagLogsTitles(t *testing.T) {
+	const summary = "We reorganized the photo library into albums by year and started deduplicating."
+	const task = "Please go through every photo in the library and sort them into albums by year"
+	rows := []Row{
+		{AgentState: state.AgentState{LogPath: writeLog(t, jsonl(t, awaySummary(summary))), ShortTitle: "Organizing your Photos"}},
+		{AgentState: state.AgentState{Task: task, ShortTitle: "Sorting Photos by Year"}},
+		// A ticket recap keeps its "#N title"...
+		{AgentState: state.AgentState{TicketRef: "60", TicketTitle: "A long ticket title that stays as it is", ShortTitle: "X"}},
+		// ...and so do AI titles and activity lines.
+		{AgentState: state.AgentState{LogPath: writeLog(t, jsonl(t, aiTitle("Some AI title"))), ShortTitle: "X"}},
+		{AgentState: state.AgentState{LastText: "activity text", ShortTitle: "X"}},
+		// A ticket window whose recap is an away_summary does get the title.
+		{AgentState: state.AgentState{TicketRef: "61", TicketTitle: "Ticket", LogPath: writeLog(t, jsonl(t, awaySummary(summary))), ShortTitle: "Fixing Ticket 61"}},
+		// No generated title: the row shows the recap text.
+		{AgentState: state.AgentState{LogPath: writeLog(t, jsonl(t, awaySummary(summary)))}},
+	}
+	TagLogs(rows)
+	want := []string{"Organizing your Photos", "Sorting Photos by Year", "", "", "", "Fixing Ticket 61", ""}
+	for i, w := range want {
+		got := rows[i].Recap
+		if got.Title != w {
+			t.Errorf("row %d Title = %q, want %q (recap %+v)", i, got.Title, w, got)
+		}
+		if w == "" && got.Short() != got.Text {
+			t.Errorf("row %d Short = %q, want the recap text", i, got.Short())
+		}
+		if w != "" && got.Short() != w {
+			t.Errorf("row %d Short = %q, want %q", i, got.Short(), w)
+		}
+	}
+	if rows[0].Recap.Text != summary {
+		t.Errorf("full recap lost: %q", rows[0].Recap.Text)
+	}
+	w := ToWindow(rows[0], Meta{})
+	if w.Title != "Organizing your Photos" || w.Recap != summary {
+		t.Errorf("ToWindow title=%q recap=%q", w.Title, w.Recap)
+	}
+	if w := ToWindow(rows[2], Meta{}); w.Title != "" {
+		t.Errorf("ticket row title = %q", w.Title)
+	}
+}
+
+func TestAgentFromWindowCarriesShortTitle(t *testing.T) {
+	recs := map[string]windowstate.WindowState{
+		"@3": {State: "idle", ShortTitle: windowstate.ShortTitle{Title: "Organizing your Photos", InputHash: "h"}},
+	}
+	a := agentFromWindow(1, tmux.WindowInfo{ID: "@3"}, "x", recs)
+	if a.ShortTitle != "Organizing your Photos" {
+		t.Fatalf("ShortTitle = %q", a.ShortTitle)
 	}
 }

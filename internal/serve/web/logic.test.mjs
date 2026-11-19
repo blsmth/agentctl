@@ -212,6 +212,16 @@ console.log("ok: resolved text");
   assert.equal(rowHeadline(none), "Claude");
   assert.equal(agentChip(none), "");
   assert.equal(rowDetailLine(none), "");
+  // A generated short title wins the headline; the full recap stays the second line.
+  const titled = { ...summary, title: "Wiring Phone Recaps" };
+  assert.equal(rowHeadline(titled), "Wiring Phone Recaps");
+  assert.equal(rowDetailLine(titled), summary.recap);
+  assert.equal(agentChip(titled), "brandon");
+  const titledTask = { agent: "a:1", recap: "please sort every photo into albums by year", recap_source: "task", title: "Sorting Photos by Year", activity: "ls" };
+  assert.equal(rowHeadline(titledTask), "Sorting Photos by Year");
+  assert.equal(rowDetailLine(titledTask), "ls");
+  // A title without a showable recap is ignored.
+  assert.equal(rowHeadline({ agent: "a:1", recap: "go test", recap_source: "activity", title: "Stale" }), "a:1");
   console.log("ok: row headline");
 }
 

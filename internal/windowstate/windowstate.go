@@ -226,6 +226,10 @@ type WindowState struct {
 	// LogPR is the statusline's incremental pr-link scan cache; see LogPRScan.
 	LogPR LogPRScan `json:"log_pr,omitempty"`
 
+	// ShortTitle is the window's generated 2-5 word title and its throttle
+	// state, written only by hook-title (internal/shorttitle).
+	ShortTitle ShortTitle `json:"short_title,omitzero"`
+
 	// CompleteFiredAt is when the done-edge completion handlers last fired.
 	// Reserved: a later step (done-edge completion) writes it.
 	CompleteFiredAt time.Time `json:"complete_fired_at,omitempty"`
@@ -234,6 +238,18 @@ type WindowState struct {
 	// Read and merged back by Write so an older binary cannot erase fields
 	// written by a newer one.
 	extra map[string]json.RawMessage
+}
+
+// ShortTitle is a generated row title plus what hook-title needs to decide
+// when to regenerate it: the hash of the input it was made from, the hash of
+// the away_summary in that input, and a retry-after backoff on failure.
+type ShortTitle struct {
+	Title       string    `json:"title,omitempty"`
+	At          time.Time `json:"at,omitzero"`
+	InputHash   string    `json:"input_hash,omitempty"`
+	SummaryHash string    `json:"summary_hash,omitempty"`
+	RetryAfter  time.Time `json:"retry_after,omitzero"`
+	Failures    int       `json:"failures,omitempty"`
 }
 
 // ErrGone is returned by Transact/Update for a window that was removed
