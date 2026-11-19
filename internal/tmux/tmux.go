@@ -942,6 +942,24 @@ func KillWindow(windowID string) error {
 	return nil
 }
 
+// KillWindowIn is KillWindow for a window in any agentctl session: it kills
+// windowID in its home session (KillSessionWindow, which SIGTERMs the pane
+// process groups) and spawns a reconcile pinned to that session's runtimeDir,
+// so the window's own Gone handling (and its own cascade) runs in the right
+// project. With an empty runtimeDir no reconcile is spawned.
+func KillWindowIn(session, runtimeDir, windowID string) error {
+	if err := KillSessionWindow(session, windowID); err != nil {
+		return err
+	}
+	if runtimeDir == "" {
+		return nil
+	}
+	if err := spawnReconcileFn(runtimeDir); err != nil {
+		logging.Log("tmux: spawning reconcile in %s: %v", runtimeDir, err)
+	}
+	return nil
+}
+
 // spawnReconcileFn starts the detached reconcile process; a seam for tests.
 var spawnReconcileFn = func(runtimeDir string) error {
 	return detach.StartSelfPinned([]string{"reconcile"}, runtimeDir)

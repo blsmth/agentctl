@@ -4,6 +4,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/blsmth/agentctl/internal/reconcile"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 func TestRestartScript(t *testing.T) {
@@ -46,5 +49,26 @@ func TestWriteRestartScript(t *testing.T) {
 	b, _ := os.ReadFile(path)
 	if string(b) != restartScript("/opt/my agentctl/agentctl") {
 		t.Errorf("unexpected script contents %q", b)
+	}
+}
+
+func TestCascadeNames(t *testing.T) {
+	lw := func(id, instance, parent, parentSID, sid string) reconcile.LiveWindow {
+		return reconcile.LiveWindow{WindowID: id, Record: windowstate.WindowState{
+			Instance: instance, SessionID: sid, SpawnedBy: parent, SpawnedBySession: parentSID,
+		}}
+	}
+	wins := []reconcile.LiveWindow{
+		lw("@2", "go-engineer-3", "@1", "P", "C"),
+		lw("@3", "code-reviewer-1", "@2", "C", "R"),
+		lw("@4", "stranger", "@1", "OTHER", "S"),
+	}
+	got := cascadeNames("@1", "P", wins)
+	want := []string{"go-engineer-3", "code-reviewer-1"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("cascadeNames = %v, want %v", got, want)
+	}
+	if got := cascadeNames("@4", "S", wins); len(got) != 0 {
+		t.Errorf("childless window: %v", got)
 	}
 }
