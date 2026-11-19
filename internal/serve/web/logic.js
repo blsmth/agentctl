@@ -257,8 +257,22 @@ function firstClause(text, max) {
   const m = /^(.+?[.!?])(\s|$)/.exec(t);
   let out = m ? m[1] : t;
   out = out.replace(/[.!?]+$/, "");
-  if (out.length > max) out = `${out.slice(0, max - 1).trimEnd()}…`;
-  return out;
+  return truncateWords(out, max);
+}
+
+/**
+ * truncateWords caps text at max characters, cutting at a word boundary and
+ * marking the cut with "…" (mirrors fleet.TruncateWords). Only a single word
+ * longer than max (a long URL) is cut inside the word.
+ */
+export function truncateWords(text, max) {
+  if (text.length <= max) return text;
+  let head = text.slice(0, max - 1);
+  if (text[max - 1] !== " ") {
+    const i = head.lastIndexOf(" ");
+    if (i > 0) head = head.slice(0, i);
+  }
+  return `${head.replace(/[\s,;:\-–—]+$/, "")}…`;
 }
 
 /**

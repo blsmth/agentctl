@@ -31,12 +31,18 @@ const (
 	maxTaskRunes     = 300
 	maxPromptRunes   = 500
 	maxLastTextRunes = 1500
+	maxRecapRunes    = 800
 )
 
 // Input is the text a title is made from. Ticket is context only: ticket rows
 // keep showing their "#N title". FirstPrompt is the first user prompt of a
 // bare window (no Task, no Ticket). LastText is the agent's first response;
 // an Input with it is the refinement, one without it the first title.
+//
+// Recap is a description of the session so far (Claude Code's away_summary),
+// set only by the housekeeping backfill for a window that has finished a
+// turn; like LastText it makes the input a refinement, and it is enough to
+// title from on its own.
 //
 // Agent and Mode are hints for the model only (the window's agent name and
 // dispatch mode); they are not part of Hash.
@@ -45,6 +51,7 @@ type Input struct {
 	FirstPrompt string
 	Ticket      string
 	LastText    string
+	Recap       string
 	Agent       string
 	Mode        string
 }
@@ -62,15 +69,16 @@ func Hash(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Empty reports whether there is nothing to title from: no task, first prompt
-// or ticket. A response alone is not enough.
+// Empty reports whether there is nothing to title from: no task, first prompt,
+// ticket or session recap. A response alone is not enough.
 func (in Input) Empty() bool {
-	return normalize(in.Task) == "" && normalize(in.FirstPrompt) == "" && normalize(in.Ticket) == ""
+	return normalize(in.Task) == "" && normalize(in.FirstPrompt) == "" && normalize(in.Ticket) == "" &&
+		normalize(in.Recap) == ""
 }
 
-// Refinement reports whether in carries the agent's response, so a title made
-// from it is the window's last.
-func (in Input) Refinement() bool { return normalize(in.LastText) != "" }
+// Refinement reports whether in carries the agent's response or a recap of
+// the session, so a title made from it is the window's last.
+func (in Input) Refinement() bool { return normalize(in.LastText) != "" || normalize(in.Recap) != "" }
 
 // Hash identifies the input as a whole.
 func (in Input) Hash() string {
@@ -79,6 +87,9 @@ func (in Input) Hash() string {
 	// hashes recorded before the field existed.
 	if fp := normalize(in.FirstPrompt); fp != "" {
 		parts = append(parts, fp)
+	}
+	if rc := normalize(in.Recap); rc != "" {
+		parts = append(parts, "recap", rc)
 	}
 	return Hash(strings.Join(parts, "\x00"))
 }
@@ -200,6 +211,7 @@ func Prompt(in Input) string {
 	section("First request", headRunes(normalize(in.FirstPrompt), maxPromptRunes))
 	// The end of a long message is the freshest part.
 	section("Agent's first response", tailRunes(normalize(in.LastText), maxLastTextRunes))
+	section("Session so far", headRunes(normalize(in.Recap), maxRecapRunes))
 	return b.String()
 }
 

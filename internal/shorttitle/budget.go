@@ -40,11 +40,24 @@ type budget struct {
 // concurrent hooks cannot overspend. Any error returns false: a cap that
 // cannot record itself must not let every caller through.
 func TakeBudget(now time.Time) bool {
-	ok, err := takeBudget(now)
+	ok, err := takeBudget(now, HourlyBudget)
 	return err == nil && ok
 }
 
-func takeBudget(now time.Time) (bool, error) {
+// BackfillReserve is the part of HourlyBudget the housekeeping backfill
+// leaves to the hooks, so titling old windows never starves new ones.
+const BackfillReserve = 10
+
+// TakeBackfillBudget is TakeBudget for the housekeeping backfill: it only
+// spends while more than BackfillReserve requests remain in the hour.
+func TakeBackfillBudget(now time.Time) bool {
+	ok, err := takeBudget(now, HourlyBudget-BackfillReserve)
+	return err == nil && ok
+}
+
+// takeBudget records one request at now unless limit requests already
+// happened in the hour before now.
+func takeBudget(now time.Time, limit int) (bool, error) {
 	p, err := budgetPath()
 	if err != nil {
 		return false, err
@@ -74,7 +87,7 @@ func takeBudget(now time.Time) (bool, error) {
 		}
 	}
 	b.Calls = kept
-	if len(b.Calls) >= HourlyBudget {
+	if len(b.Calls) >= limit {
 		return false, nil
 	}
 	b.Calls = append(b.Calls, nowS)

@@ -34,7 +34,14 @@ type HousekeepingDeps struct {
 	PruneUploads  func(now time.Time) (int, error)
 	Records       func() map[string]windowstate.WindowState
 	SessionLogDir func() string
+	// BackfillTitles titles this session's live windows that never got a
+	// short title (hooks.BackfillTitles, wired by internal/cmd so this
+	// package stays clear of the hooks dependency tree). Nil skips it.
+	BackfillTitles func(now time.Time)
 }
+
+// TitleBackfillInterval is how often housekeeping runs the title backfill.
+const TitleBackfillInterval = 5 * time.Minute
 
 // DefaultHousekeepingDeps wires the sweeps to the real implementations for
 // the current session.
@@ -107,5 +114,9 @@ func Housekeep(d HousekeepingDeps) {
 		case n > 0:
 			logging.Log("janitor: pruned %d stale session log file(s) older than %s", n, logging.MaxSessionLogAge)
 		}
+	}
+	// Last: it is the only sweep that can wait on the network.
+	if d.BackfillTitles != nil && stamp.Try(filepath.Join(d.RuntimeDir, "backfill-titles.stamp"), TitleBackfillInterval, now) {
+		d.BackfillTitles(now)
 	}
 }

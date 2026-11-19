@@ -51,6 +51,9 @@ type titleEnv struct {
 	keyErr    error
 	settings  config.TitleSettings
 	now       time.Time
+	// recap is what the stubbed log read returns for every window.
+	recap         string
+	backfillTakes atomic.Int32
 }
 
 // setupTitle stubs every hook-title seam: settings, key check, budget,
@@ -76,8 +79,12 @@ func setupTitle(t *testing.T) *titleEnv {
 		return true
 	}
 	titleNow = func() time.Time { return e.now }
+	oldBB, oldR := titleTakeBackfillBudget, titleRecap
+	titleTakeBackfillBudget = func(now time.Time) bool { e.backfillTakes.Add(1); return titleTakeBudget(now) }
+	titleRecap = func(string) string { return e.recap }
 	t.Cleanup(func() {
 		titleSettings, titleKeyAvailable, newTitleCompleter, titleTakeBudget, titleNow = oldS, oldK, oldC, oldB, oldN
+		titleTakeBackfillBudget, titleRecap = oldBB, oldR
 	})
 	return e
 }

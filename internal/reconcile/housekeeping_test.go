@@ -88,3 +88,24 @@ func TestHousekeepPrunesUploadsOnce(t *testing.T) {
 		t.Fatalf("PruneUploads ran %d times within the interval, want 1", n)
 	}
 }
+
+func TestHousekeepBackfillsTitlesOncePerInterval(t *testing.T) {
+	var n int
+	now := time.Now()
+	d := HousekeepingDeps{
+		RuntimeDir:     t.TempDir(),
+		Now:            func() time.Time { return now },
+		BackfillTitles: func(time.Time) { n++ },
+	}
+	Housekeep(d)
+	now = now.Add(time.Minute)
+	Housekeep(d) // double run within the interval
+	if n != 1 {
+		t.Fatalf("BackfillTitles ran %d times within the interval, want 1", n)
+	}
+	now = now.Add(TitleBackfillInterval)
+	Housekeep(d)
+	if n != 2 {
+		t.Fatalf("BackfillTitles ran %d times after the interval, want 2", n)
+	}
+}

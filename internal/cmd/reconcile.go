@@ -1,7 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"errors"
+	"time"
+
+	"github.com/blsmth/agentctl/internal/hooks"
+	"github.com/blsmth/agentctl/internal/logging"
 
 	"github.com/blsmth/agentctl/internal/improve"
 	"github.com/blsmth/agentctl/internal/paths"
@@ -25,8 +30,25 @@ func RunReconcile(housekeeping bool) {
 	}
 	reconcile.Run(reconcile.DefaultDeps(rd, improve.HandleTransitionSync))
 	if housekeeping {
-		reconcile.Housekeep(reconcile.DefaultHousekeepingDeps(rd))
+		d := reconcile.DefaultHousekeepingDeps(rd)
+		d.BackfillTitles = backfillTitles
+		reconcile.Housekeep(d)
 	}
+}
+
+// backfillTitles runs hooks.BackfillTitles for this session's live windows.
+// A failed listing skips the run: an error is not zero windows.
+func backfillTitles(time.Time) {
+	wins, err := tmux.ListWindowsInErr(tmux.SessionName)
+	if err != nil {
+		logging.Log("title-backfill: list windows: %v", err)
+		return
+	}
+	live := make(map[string]bool, len(wins))
+	for _, w := range wins {
+		live[w.ID] = true
+	}
+	hooks.BackfillTitles(context.Background(), live)
 }
 
 // RunEnforceChrome is the body of the hidden `agentctl enforce-chrome`, run by
