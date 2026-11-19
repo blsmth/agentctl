@@ -1,6 +1,10 @@
-// Package shorttitle turns what a window is doing (its task, newest
-// away_summary and last assistant message) into a 2-5 word row title, via a
-// Nous backend (internal/llm.NousClient).
+// Package shorttitle turns what a window is doing (its task or first prompt,
+// and the agent's first response) into a 2-5 word row title, via a Nous
+// backend (internal/llm.NousClient).
+//
+// A window gets at most two titles: the first from its task or first prompt,
+// then one refinement from the first response (an input with LastText). The
+// refinement sets windowstate ShortTitle.Final and the title is frozen.
 //
 // It holds the pure decisions and the request; hook-title (internal/hooks)
 // gathers the input and stores the result in the window's windowstate
@@ -20,27 +24,23 @@ import (
 )
 
 const (
-	// RetitleInterval is the least time between two titles for one window,
-	// unless it has none yet or a new away_summary appeared.
-	RetitleInterval = 10 * time.Minute
 	// RequestTimeout bounds one title request, key resolution included.
 	RequestTimeout = 15 * time.Second
 
 	// Prompt input caps, in runes.
 	maxTaskRunes     = 300
 	maxPromptRunes   = 500
-	maxSummaryRunes  = 1000
 	maxLastTextRunes = 1500
 )
 
 // Input is the text a title is made from. Ticket is context only: ticket rows
 // keep showing their "#N title". FirstPrompt is the first user prompt of a
-// bare window (no Task, no Ticket).
+// bare window (no Task, no Ticket). LastText is the agent's first response;
+// an Input with it is the refinement, one without it the first title.
 type Input struct {
 	Task        string
 	FirstPrompt string
 	Ticket      string
-	Summary     string
 	LastText    string
 }
 
@@ -57,14 +57,19 @@ func Hash(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Empty reports whether there is nothing to title from.
+// Empty reports whether there is nothing to title from: no task, first prompt
+// or ticket. A response alone is not enough.
 func (in Input) Empty() bool {
-	return normalize(in.Task) == "" && normalize(in.FirstPrompt) == "" && normalize(in.Summary) == "" && normalize(in.LastText) == ""
+	return normalize(in.Task) == "" && normalize(in.FirstPrompt) == "" && normalize(in.Ticket) == ""
 }
+
+// Refinement reports whether in carries the agent's response, so a title made
+// from it is the window's last.
+func (in Input) Refinement() bool { return normalize(in.LastText) != "" }
 
 // Hash identifies the input as a whole.
 func (in Input) Hash() string {
-	parts := []string{normalize(in.Task), normalize(in.Ticket), normalize(in.Summary), normalize(in.LastText)}
+	parts := []string{normalize(in.Task), normalize(in.Ticket), normalize(in.LastText)}
 	// Appended only when set, so windows without a first prompt keep the
 	// hashes recorded before the field existed.
 	if fp := normalize(in.FirstPrompt); fp != "" {
@@ -73,18 +78,14 @@ func (in Input) Hash() string {
 	return Hash(strings.Join(parts, "\x00"))
 }
 
-// Due reports whether a window with title state st should be retitled from
-// in at now: there is something to title from (for a ticket window, an
-// away_summary), no backoff is pending, the
-// input changed since the last attempt, and either the window has no title,
-// a new away_summary appeared, or RetitleInterval has passed.
+// Due reports whether a window with title state st should be titled from in
+// at now. Never when the title is frozen (st.Final), a backoff is pending,
+// there is nothing to title from, or in is what the last attempt used. A
+// window with no title is due for its first one; a window with a first title
+// is due only for the refinement, once in carries the agent's response.
+// Time and new recaps play no part.
 func Due(st windowstate.ShortTitle, in Input, now time.Time) bool {
-	if in.Empty() || now.Before(st.RetryAfter) {
-		return false
-	}
-	// A ticket window shows its "#N title" until an away_summary takes over
-	// the recap, so a title made before then would never be seen.
-	if normalize(in.Task) == "" && normalize(in.Ticket) != "" && normalize(in.Summary) == "" {
+	if st.Final || in.Empty() || now.Before(st.RetryAfter) {
 		return false
 	}
 	if st.InputHash != "" && st.InputHash == in.Hash() {
@@ -93,10 +94,7 @@ func Due(st windowstate.ShortTitle, in Input, now time.Time) bool {
 	if st.Title == "" {
 		return true
 	}
-	if sh := Hash(in.Summary); sh != "" && sh != st.SummaryHash {
-		return true
-	}
-	return now.Sub(st.At) >= RetitleInterval
+	return in.Refinement()
 }
 
 // backoff is the retry delay after the n-th consecutive failure.
@@ -113,8 +111,9 @@ func backoff(n int) time.Duration {
 	}
 }
 
-// Apply records the outcome of titling in at now: the new title, or (on err)
-// the old title kept with a retry-after backoff.
+// Apply records the outcome of titling in at now: the new title (frozen when
+// in was a refinement), or (on err) the old title kept, unfrozen, with a
+// retry-after backoff.
 func Apply(st *windowstate.ShortTitle, in Input, title string, err error, now time.Time) {
 	if err != nil || title == "" {
 		st.Failures++
@@ -122,10 +121,10 @@ func Apply(st *windowstate.ShortTitle, in Input, title string, err error, now ti
 		return
 	}
 	*st = windowstate.ShortTitle{
-		Title:       title,
-		At:          now,
-		InputHash:   in.Hash(),
-		SummaryHash: Hash(in.Summary),
+		Title:     title,
+		At:        now,
+		InputHash: in.Hash(),
+		Final:     in.Refinement(),
 	}
 }
 
@@ -163,9 +162,8 @@ func Prompt(in Input) string {
 	section("Ticket", headRunes(normalize(in.Ticket), maxTaskRunes))
 	section("Task", headRunes(normalize(in.Task), maxTaskRunes))
 	section("First request", headRunes(normalize(in.FirstPrompt), maxPromptRunes))
-	section("Latest recap", headRunes(normalize(in.Summary), maxSummaryRunes))
 	// The end of a long message is the freshest part.
-	section("Agent's last message", tailRunes(normalize(in.LastText), maxLastTextRunes))
+	section("Agent's first response", tailRunes(normalize(in.LastText), maxLastTextRunes))
 	return b.String()
 }
 

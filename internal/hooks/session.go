@@ -79,6 +79,9 @@ func SessionStart() {
 		SessionID      string `json:"session_id"`
 		Cwd            string `json:"cwd"`
 		TranscriptPath string `json:"transcript_path"`
+		// Source is why the session started: startup, resume, clear or
+		// compact.
+		Source string `json:"source"`
 	}
 	decodeInput(&input) // non-fatal: ignore return value
 
@@ -150,6 +153,11 @@ func SessionStart() {
 			ws.Harness = harness.Canonical(active.Name())
 			// A new session cannot still have the old one's subagents running.
 			ws.ClearSubagents()
+			// /clear starts new work in this window: its title and first
+			// prompt belong to the old work. Resume and compact keep both.
+			if input.Source == sessionSourceClear {
+				resetTitleOnClear(ws)
+			}
 			if input.Cwd != "" {
 				ws.WorkDir = input.Cwd
 			}
