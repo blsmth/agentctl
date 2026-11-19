@@ -155,11 +155,11 @@ func TestAutoPollSkipsInProgress(t *testing.T) {
 	}
 }
 
-func TestRunAutoPoll(t *testing.T) {
+func TestAutoPollCycle(t *testing.T) {
 	const issuesJSON = `[
-		{"number":1,"title":"a","labels":[{"name":"python"}]},
-		{"number":2,"title":"b","labels":[{"name":"in-progress"}]},
-		{"number":3,"title":"c","labels":[{"name":"infra"}]}
+		{"number":1,"title":"a","labels":[{"name":"ready"},{"name":"python"}]},
+		{"number":2,"title":"b","labels":[{"name":"ready"},{"name":"in-progress"}]},
+		{"number":3,"title":"c","labels":[{"name":"ready"},{"name":"infra"}]}
 	]`
 	tests := []struct {
 		name         string
@@ -194,38 +194,43 @@ func TestRunAutoPoll(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			agents := map[int]string{}
-			res := runAutoPoll("o/r", autoPollRunner{
+			stubAutoPollRunner(t, autoPollRunner{
 				list: func(string) ([]byte, error) { return []byte(issuesJSON), nil },
 				dispatch: func(i int, a string) error {
 					agents[i] = a
 					return tc.dispatchErr(i)
 				},
 			})
-			var got []int
-			for _, d := range res.dispatched {
-				got = append(got, d.issueNumber)
-				if want, ok := tc.wantAgents[d.issueNumber]; ok && d.agentName != want {
-					t.Errorf("#%d agent = %q, want %q", d.issueNumber, d.agentName, want)
-				}
-			}
+			m := autopilotOnModel(t)
+			m = runPollCycle(t, m)
+
+			got := m.autopilot.done
 			if !reflect.DeepEqual(got, tc.wantDisp) {
 				t.Errorf("dispatched = %v, want %v", got, tc.wantDisp)
 			}
-			if len(res.failures) != tc.wantFailures {
-				t.Errorf("failures = %v, want %d", res.failures, tc.wantFailures)
+			for n, want := range tc.wantAgents {
+				if agents[n] != want {
+					t.Errorf("#%d agent = %q, want %q", n, agents[n], want)
+				}
+			}
+			if len(m.autopilot.fails) != tc.wantFailures {
+				t.Errorf("failures = %v, want %d", m.autopilot.fails, tc.wantFailures)
 			}
 			if _, ok := agents[2]; ok {
 				t.Error("in-progress issue #2 must not be dispatched")
+			}
+			if m.autopilot.phase != pollIdle {
+				t.Errorf("phase = %v after the cycle, want idle", m.autopilot.phase)
 			}
 		})
 	}
 }
 
-func TestRunAutoPollListError(t *testing.T) {
-	res := runAutoPoll("o/r", autoPollRunner{
+func TestAutoPollReadyListError(t *testing.T) {
+	_, err := autoPollReady("o/r", autoPollRunner{
 		list: func(string) ([]byte, error) { return nil, errors.New("gh down") },
 	})
-	if res.err == nil {
+	if err == nil {
 		t.Fatal("want error")
 	}
 }

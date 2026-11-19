@@ -95,6 +95,11 @@ func (m CreateTicketModel) HintKeys() []string {
 	return []string{"tab/shift+tab", "cycle", "ctrl+d", "submit", "esc", "cancel"}
 }
 
+// dirty reports whether the form holds typed text that a cancel would lose.
+func (m CreateTicketModel) dirty() bool {
+	return strings.TrimSpace(m.createInput.Value()) != "" || strings.TrimSpace(m.bodyInput.Value()) != ""
+}
+
 // Done reports whether the form has a result (submitted or cancelled).
 func (m CreateTicketModel) Done() bool { return m.result != nil }
 
@@ -326,21 +331,12 @@ func (m CreateTicketModel) viewContent() string {
 	}
 
 	// ── Buttons ──────────────────────────────────────────────────────────────────
-	var submitBtn, cancelBtn string
-	switch {
-	case m.creating:
-		submitBtn = btnSelectedStyle.Render("Creating...")
-		cancelBtn = btnNormalStyle.Render("Cancel")
-	case m.createFocus == focusSubmit:
-		submitBtn = btnSelectedStyle.Render("Submit")
-		cancelBtn = btnNormalStyle.Render("Cancel")
-	case m.createFocus == focusCancel:
-		submitBtn = btnNormalStyle.Render("Submit")
-		cancelBtn = btnSelectedStyle.Render("Cancel")
-	default:
-		submitBtn = btnNormalStyle.Render("Submit")
-		cancelBtn = btnNormalStyle.Render("Cancel")
+	submitLabel := "Submit"
+	if m.creating {
+		submitLabel = "Creating…"
 	}
+	submitBtn := tkButton(submitLabel, fgStyle(theme.Current().Green), false, m.creating || m.createFocus == focusSubmit)
+	cancelBtn := tkButton("Cancel", tkButtonText(), false, !m.creating && m.createFocus == focusCancel)
 	b.WriteString(rule)
 	b.WriteString("\n")
 	b.WriteString("  " + lipgloss.JoinHorizontal(lipgloss.Top, submitBtn, "   ", cancelBtn))

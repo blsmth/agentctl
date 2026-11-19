@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/theme"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -26,11 +27,19 @@ const (
 
 // ConfirmCloseModel is the content model for the close-confirmation overlay.
 // It renders only the dialog body; the wrapping Modal provides the border,
-// title ("Close Ticket"), and hint bar.
+// title ("Close issue"), and hint bar.
 type ConfirmCloseModel struct {
 	issueNumber int
-	cursorIdx   int // 0=Yes, 1=No; defaults to 1 (No) for safety
+	issueTitle  string // shown in the prompt when known
+	cursorIdx   int    // 0=Yes, 1=No; defaults to 1 (No) for safety
 	state       confirmCloseState
+	hover       string // zone under the pointer (button hover feedback)
+}
+
+// withHover implements tkHoverable.
+func (m ConfirmCloseModel) withHover(id string) tea.Model {
+	m.hover = id
+	return m
 }
 
 // newConfirmCloseModel creates a ConfirmCloseModel for the given issue number.
@@ -66,31 +75,33 @@ func (m ConfirmCloseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m ConfirmCloseModel) View() tea.View {
 	var b strings.Builder
 
+	num := fmt.Sprintf("#%d", m.issueNumber)
+	title := ""
+	if m.issueTitle != "" {
+		// "Close #171  <title…>?" within the dialog's width.
+		room := modalContentWidth(ModalSmall) - 4 - lipgloss.Width("Close "+num+"  ?")
+		title = "  " + ansi.Truncate(m.issueTitle, room, "…")
+	}
 	b.WriteString(
 		popupBodyStyle.Render("Close ") +
-			popupAgentStyle.Render(fmt.Sprintf("#%d", m.issueNumber)) +
-			popupBodyStyle.Render("?"),
+			popupAgentStyle.Render(num) +
+			popupBodyStyle.Render(title+"?"),
 	)
-	b.WriteString("\n")
-	b.WriteString(popupRuleStyle.Render(strings.Repeat("─", popupContentWidth)))
 	b.WriteString("\n\n")
 
-	var yesBtn, noBtn string
-	if m.cursorIdx == 0 {
-		yesBtn = btnDangerStyle.Render("Yes, close")
-		noBtn = btnNormalStyle.Render("No, cancel")
-	} else {
-		yesBtn = btnNormalStyle.Render("Yes, close")
-		noBtn = btnSelectedStyle.Render("No, cancel")
-	}
-	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, yesBtn, "   ", noBtn))
+	// The safe button comes first; cursorIdx 1 (Cancel) is the default.
+	const yesID, noID = "mkey:y@close", "mkey:n@close"
+	t := theme.Current()
+	noBtn := zoneMark(noID, tkButton("Cancel", tkButtonText(), false, m.cursorIdx == 1 || m.hover == noID))
+	yesBtn := zoneMark(yesID, tkButton("Close issue", fgStyle(t.Red), false, m.cursorIdx == 0 || m.hover == yesID))
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, noBtn, "  ", yesBtn))
 
 	return tea.NewView(b.String())
 }
 
 // HintKeys implements ModalContent.
 func (m ConfirmCloseModel) HintKeys() []string {
-	return []string{"y", "confirm", "n/esc", "cancel", "tab", "switch"}
+	return []string{"tab", "switch", "y", "close", "esc", "cancel"}
 }
 
 // Done returns true when the dialog has been resolved (confirmed or cancelled).
@@ -210,7 +221,7 @@ func (m AgentSelectModel) View() tea.View {
 			desc = desc[:maxDesc-1] + "…"
 		}
 
-		b.WriteString(cur + nameStyle.Render(a.Name) + descStyle.Render(desc))
+		b.WriteString(zoneMark(fmt.Sprintf("mrow:%d@agent", i), cur+nameStyle.Render(a.Name)+descStyle.Render(desc)))
 		b.WriteString("\n")
 	}
 
@@ -401,7 +412,7 @@ func (m PromptSelectModel) View() tea.View {
 			nameStyle = tkTitleSelectedStyle.Width(24)
 		}
 
-		b.WriteString(cur + nameStyle.Render(opt.label) + descStyle.Render(opt.description))
+		b.WriteString(zoneMark(fmt.Sprintf("mrow:%d@prompt", i), cur+nameStyle.Render(opt.label)+descStyle.Render(opt.description)))
 		b.WriteString("\n")
 
 		// Show custom prompt input below the "Custom" option when editing.

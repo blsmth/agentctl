@@ -626,26 +626,66 @@ func TestTkEditIssueCmd(t *testing.T) {
 	}
 }
 
-// TestEditKeyInListViewOpensEdit verifies that pressing "e" in the list view
-// returns a non-nil command (the edit command) when an issue is present.
+// TestEditKeyInListViewOpensEdit verifies that "e" in the list loads the
+// highlighted issue and opens it in the detail view with the title focused
+// for editing in place.
 func TestEditKeyInListViewOpensEdit(t *testing.T) {
+	InitStyles()
+	rec := recordExec(t, nil)
 	m := makeTestTicketsModel(t)
-	_, cmd := m.Update(charKey('e'))
-	if cmd == nil {
-		t.Error("pressing e in list view should return a non-nil edit command")
+	next, cmd := m.Update(charKey('e'))
+	m = next.(TicketsModel)
+	runCmds(cmd)
+	if !rec.called("gh issue view 42 --json") {
+		t.Fatalf("e should load #42, got %v", rec.all())
+	}
+	m = tkSendMsg(t, m, tkDetailFetchedMsg{number: 42, title: "test issue", body: "b"})
+	if m.viewMode != tkViewDetail || !m.edit.active || m.edit.field != editTitle {
+		t.Errorf("want the detail open with the title focused; view=%d edit=%+v", m.viewMode, m.edit.field)
 	}
 }
 
-// TestEditKeyInDetailViewOpensEdit verifies that pressing "e" in the detail view
-// returns a non-nil command when detail is set.
+// TestEditKeyInDetailViewOpensEdit verifies that "e" in the detail view
+// starts an in-place edit with the body focused, without leaving the TUI.
 func TestEditKeyInDetailViewOpensEdit(t *testing.T) {
+	InitStyles()
+	rec := recordExec(t, nil)
 	m := makeTestTicketsModel(t)
 	m.viewMode = 1
-	m.detail = &tkDetailFetchedMsg{number: 42, title: "test"}
-	_, cmd := m.Update(charKey('e'))
-	if cmd == nil {
-		t.Error("pressing e in detail view should return a non-nil edit command")
+	m.detail = &tkDetailFetchedMsg{number: 42, title: "test", body: "body"}
+	m = tkSendKey(t, m, charKey('e'))
+	if !m.edit.active || m.edit.field != editBody {
+		t.Errorf("e in detail should focus the body editor, got active=%v field=%v", m.edit.active, m.edit.field)
 	}
+	if len(rec.all()) != 0 {
+		t.Errorf("starting an edit must not call gh, got %v", rec.all())
+	}
+}
+
+// TestBrowserEditKey verifies that "E" (formerly "e") still edits the issue
+// in the browser from both views.
+func TestBrowserEditKey(t *testing.T) {
+	InitStyles()
+	for _, detail := range []bool{false, true} {
+		rec := recordExec(t, nil)
+		m := makeTestTicketsModel(t)
+		if detail {
+			m.viewMode = 1
+			m.detail = &tkDetailFetchedMsg{number: 42, title: "test"}
+		}
+		_, cmd := m.Update(charKey('E'))
+		runCmds(cmd)
+		if !rec.called("gh issue edit 42 --web") {
+			t.Errorf("detail=%v: E should run gh issue edit --web, got %v", detail, rec.all())
+		}
+	}
+}
+
+// tkSendMsg sends any message and returns the updated model.
+func tkSendMsg(t *testing.T, m TicketsModel, msg tea.Msg) TicketsModel {
+	t.Helper()
+	next, _ := m.Update(msg)
+	return next.(TicketsModel)
 }
 
 // ── SplitPane integration tests ─────────────────────────────────────────────
@@ -757,8 +797,9 @@ func TestSplitPane_CursorSyncOnNavigation(t *testing.T) {
 	}
 }
 
-// TestSplitPane_CursorSyncOnFilterReset verifies that applyFilters resets the
-// SplitPane cursor to 0.
+// TestSplitPane_CursorSyncOnFilterReset verifies that applyFilters keeps the
+// highlighted issue (selection is tracked by issue number) and falls back to
+// the first row when the filter removes it, keeping SplitPane in sync.
 func TestSplitPane_CursorSyncOnFilterReset(t *testing.T) {
 	InitStyles()
 	m := makeTestTicketsModelWithIssues(t, 5)
@@ -766,14 +807,23 @@ func TestSplitPane_CursorSyncOnFilterReset(t *testing.T) {
 	// Move cursor to position 3.
 	m.cursor = 3
 	m.splitPane.SetCursor(3)
+	want := m.issues[3].Number
 
-	// Apply filters (simulating a label or search change) resets cursor to 0.
+	// Re-sorting keeps the same issue highlighted.
+	m.sortBy = sortNumber
 	m.applyFilters()
-	if m.cursor != 0 {
-		t.Errorf("after applyFilters: cursor = %d, want 0", m.cursor)
+	if got := m.selectedNumber(); got != want {
+		t.Errorf("after re-sort: selected #%d, want #%d", got, want)
 	}
-	if m.splitPane.Cursor() != 0 {
-		t.Errorf("after applyFilters: splitPane.Cursor() = %d, want 0", m.splitPane.Cursor())
+	if m.splitPane.Cursor() != m.cursor {
+		t.Errorf("splitPane.Cursor() = %d, want %d", m.splitPane.Cursor(), m.cursor)
+	}
+
+	// A search that drops the selected issue resets to the first row.
+	m.searchQuery = "issue 1"
+	m.applyFilters()
+	if m.cursor != 0 || m.splitPane.Cursor() != 0 {
+		t.Errorf("after filtering the selection out: cursor = %d / %d, want 0", m.cursor, m.splitPane.Cursor())
 	}
 }
 

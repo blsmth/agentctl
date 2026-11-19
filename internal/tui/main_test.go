@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -42,6 +44,17 @@ func TestMain(m *testing.M) {
 	fleetSweep = func(context.Context, sweeprun.Target, bool) (sweeprun.Report, error) {
 		return sweeprun.Report{}, errors.New("sweep disabled in tests")
 	}
+	// Never spawn gh or tmux from the tickets browser; tests that need a
+	// result install their own stub.
+	tkExec = func(string, ...string) ([]byte, error) { return nil, errExecDisabled }
+	// Never list ready issues, dispatch, or read/write the autopilot setting.
+	tkAutoPollRunner = autoPollRunner{
+		list:     func(string) ([]byte, error) { return nil, errExecDisabled },
+		dispatch: func(int, string) error { return errExecDisabled },
+	}
+	tkLoadAutoPoll = func() (bool, time.Duration) { return false, 5 * time.Minute }
+	tkWriteAutoPoll = func(bool) error { return errExecDisabled }
+	tkEditorCmd = func(string) *exec.Cmd { return nil }
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
