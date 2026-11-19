@@ -337,3 +337,16 @@ func TestTitleNoCreditsErrorLeavesNoBackoff(t *testing.T) {
 		t.Errorf("no-credits must not count as a failure: %+v", st)
 	}
 }
+
+func TestTitleFreeModelIgnoresNoCreditsMarker(t *testing.T) {
+	e := setupTitle(t)
+	e.settings.Model = "meituan/longcat-2.5:free"
+	old := titleNoCredits
+	titleNoCredits = func(string, time.Time) (backendauth.CreditState, bool) { return backendauth.CreditState{}, true }
+	t.Cleanup(func() { titleNoCredits = old })
+	seedWindow(t, "@4", windowstate.WindowState{State: "idle", Task: "sort my photo library by year"})
+	runTitle(context.Background(), "@4", "", "done")
+	if e.built.Load() != 1 {
+		t.Fatalf("built=%d, want a request for a :free model", e.built.Load())
+	}
+}

@@ -763,6 +763,16 @@ func TestPreflightNousRefusesWhileOutOfCredits(t *testing.T) {
 		t.Error("claude-path preflight did not refuse")
 	}
 
+	// All-free models: a fresh marker does not refuse.
+	free := config.BackendConfig{Kind: "nous", Model: "meituan/longcat-2.5:free", BaseURL: srv.URL,
+		Models: &config.BackendModels{Opus: "meituan/longcat-2.5:free", Sonnet: "meituan/longcat-2.5:free", Haiku: "meituan/longcat-2.5:free", Subagent: "meituan/longcat-2.5:free"}}
+	if err := func() error {
+		_, err := preflightNousCatalog("nous", free, "")
+		return err
+	}(); err != nil && strings.Contains(err.Error(), "out of credits") {
+		t.Errorf("all-free launch refused: %v", err)
+	}
+
 	// Stale marker: launches proceed again.
 	old := nowFn
 	nowFn = func() time.Time { return time.Now().Add(backendauth.CreditsFreshFor + time.Minute) }

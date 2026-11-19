@@ -73,10 +73,18 @@ func preflightNous(name string, b config.BackendConfig, configDir, workDir, expl
 // resolved locally. Harnesses that do not read Claude settings (pi) use it
 // directly.
 func preflightNousCatalog(name string, b config.BackendConfig, explicitModel string) (nousInfo, error) {
+	wanted := []string{b.Model}
+	if explicitModel != "" {
+		wanted = append(wanted, explicitModel)
+	}
+	for _, a := range []string{"opus", "sonnet", "haiku", "subagent"} {
+		wanted = append(wanted, b.AliasModel(a))
+	}
 	// A fresh out-of-credits marker refuses the launch from local state: no
 	// paid probe per dispatch. Every launch path (claude, pi, phone, cron)
-	// reaches here.
-	if st, out := backendauth.NoCreditsFresh(name, nowFn()); out {
+	// reaches here. A launch whose models are all :free cannot hit a 402, so
+	// it proceeds.
+	if st, out := backendauth.NoCreditsFresh(name, nowFn()); out && anyPaidModel(wanted) {
 		return nousInfo{}, errors.New(backendauth.NoCreditsMessage(name, st, nowFn()))
 	}
 	cat, err := loadNousCatalog(b.BaseURL)
@@ -86,13 +94,6 @@ func preflightNousCatalog(name string, b config.BackendConfig, explicitModel str
 	byID := make(map[string]nousModel, len(cat.Data))
 	for _, m := range cat.Data {
 		byID[m.ID] = m
-	}
-	wanted := []string{b.Model}
-	if explicitModel != "" {
-		wanted = append(wanted, explicitModel)
-	}
-	for _, a := range []string{"opus", "sonnet", "haiku", "subagent"} {
-		wanted = append(wanted, b.AliasModel(a))
 	}
 	seen := map[string]bool{}
 	for _, id := range wanted {
@@ -121,6 +122,16 @@ func preflightNousCatalog(name string, b config.BackendConfig, explicitModel str
 		return nousInfo{}, err
 	}
 	return info, nil
+}
+
+// anyPaidModel reports whether any id lacks the ":free" suffix.
+func anyPaidModel(ids []string) bool {
+	for _, id := range ids {
+		if !strings.HasSuffix(id, ":free") {
+			return true
+		}
+	}
+	return false
 }
 
 // suggestModels lists up to nousMaxSuggestions catalog ids sharing id's

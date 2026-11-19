@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/backendauth"
@@ -82,7 +83,8 @@ func runTitle(ctx context.Context, windowID, transcript, lastMessage string) {
 	}
 	// Out of credits: skip silently, with no budget spent and no backoff
 	// recorded, until the marker goes stale and one request probes again.
-	if _, out := titleNoCredits(s.BackendName, now); out {
+	// A :free model cannot 402, so a marker set elsewhere does not pause it.
+	if _, out := titleNoCredits(s.BackendName, now); out && !strings.HasSuffix(s.Model, ":free") {
 		logging.Debug("hook-title: backend %s out of credits, skipping", s.BackendName)
 		return
 	}
