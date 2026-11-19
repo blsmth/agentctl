@@ -258,6 +258,7 @@ func (s *Server) handlePane(w http.ResponseWriter, r *http.Request) {
 		}
 		lines = min(n, maxPaneLines)
 	}
+	s.touchPhoneView(r, g.Windows[i].WindowID)
 	text, err := s.panes.Capture(g.Session, g.Windows[i].WindowID, lines)
 	if err != nil {
 		logging.Warn("serve: capturing pane: %v", err)
