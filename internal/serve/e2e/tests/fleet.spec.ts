@@ -16,8 +16,10 @@ test("groups keep the server's order and every window is listed", async ({ page 
 
 test("rows show the state glyph and agent", async ({ page }) => {
   const glyphs: Record<string, [string, string]> = {
-    "@11": ["○", "idle"],
-    "@12": ["✓", "done"],
+    "@15": ["○", "idle"],
+    // @11 and @12 are idle/done but have working or blocked children.
+    "@11": ["◷", "waiting"],
+    "@12": ["◷", "waiting"],
     "@13": ["●", "working"],
     "@14": ["⏸", "blocked"],
   };

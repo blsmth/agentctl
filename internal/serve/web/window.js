@@ -12,7 +12,10 @@ import {
   buildReplyRequest,
   buildUploadPath,
   dialogQuestion,
-  effectiveState,
+  displayState,
+  waitingIndex,
+  windowHash,
+  rowHeadline,
   exactRows,
   focusedOption,
   hangingIndent,
@@ -30,6 +33,7 @@ import {
 } from "./logic.js";
 import { clear, confirmSheet, fitTermFont, h, toast } from "./ui.js";
 
+const CHILD_GLYPH = { blocked: "⏸", working: "●", waiting: "◷" };
 const PANE_REFRESH_MS = 2000;
 const MODE_KEY = "agentctl.paneMode";
 const STATUS_KEY = "agentctl.statusBarOpen";
@@ -250,6 +254,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
   const canQueue = canWrite && ctx.hasFeature("queue");
   const canUpload = canWrite && ctx.hasFeature("upload");
   let win = null;
+  let waiting = new Map();
   let pane = null;
   let lastText = null;
   let lastActionsKey = null;
@@ -268,7 +273,8 @@ export function mountWindow(root, ctx, { session, windowId }) {
   // Tap the recap to show it in full; it is clamped to two lines.
   const recap = h("div", { class: "win-recap", hidden: true, onclick: () => recap.classList.toggle("open") });
   const chips = h("div", { class: "chips", hidden: true });
-  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, recap, scheduled, chips);
+  const waitingKids = h("div", { class: "win-waiting", hidden: true });
+  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, recap, scheduled, chips, waitingKids);
 
   const liveChip = h("span", { class: "live-chip", role: "status" });
   const modeBtns = {
@@ -373,9 +379,18 @@ export function mountWindow(root, ctx, { session, windowId }) {
   function renderHeader() {
     if (!win) return;
     title.textContent = win.agent || windowId;
-    const st = effectiveState(win);
+    waiting = waitingIndex(ctx.store.fleet?.groups);
+    const st = displayState(win, waiting);
     statePill.className = `state-pill ${st}`;
-    statePill.querySelector(".state-text").textContent = stateLabel(win, Date.now());
+    statePill.querySelector(".state-text").textContent = stateLabel(win, Date.now(), waiting);
+    clear(waitingKids);
+    for (const k of st === "waiting" ? (waiting.get(win.window_id) ?? []) : []) {
+      const ks = displayState(k, waiting);
+      waitingKids.append(
+        h("a", { class: `waiting-child ${ks}`, href: windowHash(k.session, k.window_id) }, h("span", { class: "glyph", "aria-label": ks }, CHILD_GLYPH[ks]), h("span", {}, rowHeadline(k))),
+      );
+    }
+    waitingKids.hidden = waitingKids.childElementCount === 0;
     where.textContent = [win.project, win.branch].filter(Boolean).join(" · ");
     const { task: line, recap: summary } = headerLines(win);
     task.textContent = line;
@@ -738,7 +753,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
     tickCountdowns(approvalCountdowns);
     if (document.hidden || gone) return;
     renderLiveness();
-    if (win) statePill.querySelector(".state-text").textContent = stateLabel(win, Date.now());
+    if (win) statePill.querySelector(".state-text").textContent = stateLabel(win, Date.now(), waiting);
   }, 1000);
 
   refresh();
@@ -750,6 +765,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
   const unsub = ctx.store.subscribe((ev) => {
     if (ev?.type === "window" && ev.win.session === session && ev.win.window_id === windowId) refresh();
     if (ev?.type === "gone") refresh();
+    if (ev?.type === "fleet" || ev?.type === "window" || ev?.type === "gone") renderHeader();
     if (ev?.type === "status") {
       renderLiveness();
       // Back online: fetch at once rather than on the next poll.

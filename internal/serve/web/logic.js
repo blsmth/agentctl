@@ -2,7 +2,7 @@
 // a function of its arguments so it can be read and reasoned about on its own.
 
 /** Attention order: lower sorts first. */
-const RANK = { blocked: 0, working: 1, done: 2, idle: 3 };
+const RANK = { blocked: 0, working: 1, waiting: 1, done: 2, idle: 3 };
 
 /** effectiveState folds the done flag into a single display state. */
 export function effectiveState(win) {
@@ -16,11 +16,65 @@ export function stateRank(state) {
   return state in RANK ? RANK[state] : RANK.idle;
 }
 
+/**
+ * waitingIndex finds the windows that are waiting on sub-agents: idle or done
+ * at the prompt while a direct child (win.parent === their window_id, as
+ * treeRows matches, but across every group) is working, blocked or itself
+ * waiting. It returns Map<window_id, child windows> for waiting windows only.
+ * Computed as a least fixpoint, so a parent cycle of idle windows never
+ * becomes waiting and the loop always ends.
+ */
+export function waitingIndex(groups) {
+  const all = [];
+  for (const g of groups ?? []) for (const w of g.windows ?? []) all.push(w);
+  const byParent = new Map();
+  for (const w of all) {
+    if (!w.parent || !w.window_id || w.parent === w.window_id) continue;
+    if (!byParent.has(w.parent)) byParent.set(w.parent, []);
+    byParent.get(w.parent).push(w);
+  }
+  const waiting = new Map();
+  const active = (w) => {
+    const s = effectiveState(w);
+    return s === "working" || s === "blocked" || waiting.has(w.window_id);
+  };
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [id, kids] of byParent) {
+      if (waiting.has(id)) continue;
+      const parent = all.find((w) => w.window_id === id);
+      if (!parent || !["idle", "done"].includes(effectiveState(parent))) continue;
+      const live = kids.filter(active);
+      if (live.length > 0) {
+        waiting.set(id, live);
+        changed = true;
+      }
+    }
+  }
+  return waiting;
+}
+
+/**
+ * displayState is effectiveState plus "waiting". index is a waitingIndex;
+ * without one, a window annotated by sortGroups (win.waiting_on) is used.
+ */
+export function displayState(win, index) {
+  const s = effectiveState(win);
+  if (s !== "idle" && s !== "done") return s;
+  const kids = index ? index.get(win.window_id) : win.waiting_on;
+  return kids && kids.length > 0 ? "waiting" : s;
+}
+
+/** waitingLabel is "waiting on 2 agents" / "waiting on 1 agent". */
+export function waitingLabel(n) {
+  return `waiting on ${n} agent${n === 1 ? "" : "s"}`;
+}
+
 /** sortWindows orders windows by attention, then by window index. */
 export function sortWindows(windows) {
   return [...windows].sort(
     (a, b) =>
-      stateRank(effectiveState(a)) - stateRank(effectiveState(b)) ||
+      stateRank(displayState(a)) - stateRank(displayState(b)) ||
       (a.window_index ?? 0) - (b.window_index ?? 0),
   );
 }
@@ -29,8 +83,8 @@ export function sortWindows(windows) {
 export function rollup(windows) {
   let best = "idle";
   for (const w of windows) {
-    const s = effectiveState(w);
-    if (stateRank(s) < stateRank(best)) best = s;
+    const s = displayState(w);
+    if (stateRank(s) < stateRank(best) || (s === "working" && best === "waiting")) best = s;
   }
   return best;
 }
@@ -41,8 +95,10 @@ export function rollup(windows) {
  * group's rollup styling and counts, not through its position.
  */
 export function sortGroups(groups) {
+  const waiting = waitingIndex(groups);
   return groups.map((g) => {
-    const windows = sortWindows(g.windows ?? []);
+    const annotated = (g.windows ?? []).map((w) => (waiting.has(w.window_id) ? { ...w, waiting_on: waiting.get(w.window_id) } : w));
+    const windows = sortWindows(annotated);
     return { ...g, windows, rollup: rollup(windows) };
   });
 }
@@ -513,8 +569,8 @@ export function groupKey(session) {
  * omitting empty states: what a folded project header shows (as on the hub).
  */
 export function groupCounts(windows) {
-  const n = { blocked: 0, working: 0, done: 0, idle: 0 };
-  for (const w of windows) n[effectiveState(w)]++;
+  const n = { blocked: 0, working: 0, waiting: 0, done: 0, idle: 0 };
+  for (const w of windows) n[displayState(w)]++;
   return Object.keys(RANK)
     .filter((s) => n[s] > 0)
     .map((state) => ({ state, n: n[state] }));
@@ -759,7 +815,7 @@ export function actionsFor(win, pane) {
   if (pane && pane.verdict === "awaiting_input" && pane.dialog) return "answer";
   const s = effectiveState(win);
   if (s === "working") return "interrupt";
-  if (s === "idle" || s === "done") return "reply";
+  if (s === "idle" || s === "done") return "reply"; // a waiting window is idle at the prompt
   return "none";
 }
 
@@ -847,10 +903,11 @@ export function headerLines(win) {
 }
 
 /** stateLabel is the header pill text: "working for 3m", "idle". */
-export function stateLabel(win, nowMs) {
-  const s = effectiveState(win);
+export function stateLabel(win, nowMs, index) {
+  const s = displayState(win, index);
+  const text = s === "waiting" ? waitingLabel((index ? index.get(win.window_id) : win.waiting_on).length) : s;
   const since = formatSince(win.blocked_since || win.state_since, nowMs);
-  return since ? `${s} for ${since}` : s;
+  return since ? `${text} for ${since}` : text;
 }
 
 /**
