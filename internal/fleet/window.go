@@ -54,6 +54,9 @@ type Window struct {
 	// Title is a short generated title for Recap (2-5 words), for list rows;
 	// omitted until one is cached. Recap stays the full text.
 	Title string `json:"title,omitempty"`
+	// Kind is the work-kind tag of Title ("go", "review", ...); omitted when
+	// there is none.
+	Kind string `json:"kind,omitempty"`
 }
 
 // ToWindow converts a row and its windowstate metadata to a Window.
@@ -83,6 +86,7 @@ func ToWindow(r Row, m Meta) Window {
 	if r.Recap.Text != "" {
 		w.Recap, w.RecapSource = r.Recap.Text, r.Recap.Source.String()
 		w.Title = r.Recap.Title
+		w.Kind = r.Recap.Kind
 	}
 	if m.ScheduledBy != "" {
 		w.ScheduledBy = m.ScheduledBy

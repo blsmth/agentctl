@@ -134,7 +134,7 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 		logUpdateErr("hook-title", err)
 		return
 	}
-	title, genErr := generateTitle(ctx, s, in, now)
+	title, kind, genErr := generateTitle(ctx, s, in, now)
 	if errors.Is(genErr, llm.ErrNoKey) || errors.Is(genErr, errTitleBudget) || errors.Is(genErr, backendauth.ErrNoCredits) {
 		// Not a failure of this input: drop the lease, write nothing else.
 		logging.Log("hook-title: window=%s: %v", windowID, genErr)
@@ -155,7 +155,7 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 		if !w.ShortTitle.RetryAfter.Equal(now.Add(titleLease)) {
 			return
 		}
-		shorttitle.Apply(&w.ShortTitle, in, title, genErr, now)
+		shorttitle.Apply(&w.ShortTitle, in, title, kind, genErr, now)
 	})
 	logUpdateErr("hook-title", err)
 	if err == nil && genErr == nil {
@@ -171,13 +171,13 @@ const titleLease = 2 * titleHookTimeoutSeconds * time.Second
 var errTitleBudget = errors.New("hourly title request cap reached")
 
 // generateTitle spends one unit of the hourly budget and asks the backend.
-func generateTitle(ctx context.Context, s config.TitleSettings, in shorttitle.Input, now time.Time) (string, error) {
+func generateTitle(ctx context.Context, s config.TitleSettings, in shorttitle.Input, now time.Time) (title, kind string, err error) {
 	if !titleTakeBudget(now) {
-		return "", fmt.Errorf("%w (%d/hour)", errTitleBudget, shorttitle.HourlyBudget)
+		return "", "", fmt.Errorf("%w (%d/hour)", errTitleBudget, shorttitle.HourlyBudget)
 	}
 	comp, err := newTitleCompleter(s)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	return shorttitle.Generate(ctx, comp, in)
 }
@@ -186,7 +186,7 @@ func generateTitle(ctx context.Context, s config.TitleSettings, in shorttitle.In
 // ticket title; for a bare window, its first prompt) and the Stop payload's
 // last assistant message, which is empty on every other event.
 func titleInput(ws windowstate.WindowState, lastMessage string) shorttitle.Input {
-	return shorttitle.Input{Task: ws.Task, FirstPrompt: ws.FirstPrompt, Ticket: ws.TicketTitle, LastText: lastMessage}
+	return shorttitle.Input{Task: ws.Task, FirstPrompt: ws.FirstPrompt, Ticket: ws.TicketTitle, LastText: lastMessage, Agent: ws.AgentName, Mode: ws.Mode}
 }
 
 // resetTitleOnClear forgets a window's title and first prompt so the next

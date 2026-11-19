@@ -36,6 +36,8 @@ func Sanitize(s string) string {
 			break
 		}
 	}
+	line = stripKindPrefix(line)
+	line = strings.ReplaceAll(line, "|", " ")
 	words := strings.Fields(line)
 	out := make([]string, 0, len(words))
 	for _, w := range words {
@@ -53,6 +55,15 @@ func Sanitize(s string) string {
 		return ""
 	}
 	return title
+}
+
+// stripKindPrefix drops a leading "<kind> |" so a reply that was not parsed
+// as kind and title never leaks the kind into the title.
+func stripKindPrefix(line string) string {
+	if head, rest, ok := strings.Cut(line, "|"); ok && normalizeKind(head) != "" {
+		return strings.TrimSpace(rest)
+	}
+	return line
 }
 
 func firstLine(s string) string {

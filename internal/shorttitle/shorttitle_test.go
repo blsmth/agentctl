@@ -104,21 +104,21 @@ func TestApply(t *testing.T) {
 	first := Input{Task: "sort"}
 	refine := Input{Task: "sort", LastText: "Sorted."}
 	var st windowstate.ShortTitle
-	Apply(&st, first, "Sorting Photos", nil, now)
-	want := windowstate.ShortTitle{Title: "Sorting Photos", At: now, InputHash: first.Hash()}
+	Apply(&st, first, "Sorting Photos", "chat", nil, now)
+	want := windowstate.ShortTitle{Title: "Sorting Photos", Kind: "chat", At: now, InputHash: first.Hash()}
 	if st != want {
 		t.Fatalf("first = %+v, want %+v", st, want)
 	}
 	// Failures keep the old title, stay unfrozen, and back off further each time.
 	for i, d := range []time.Duration{10 * time.Minute, 30 * time.Minute, 2 * time.Hour, 12 * time.Hour, 12 * time.Hour} {
-		Apply(&st, refine, "", errors.New("down"), now)
-		if st.Title != "Sorting Photos" || st.Final || st.Failures != i+1 || !st.RetryAfter.Equal(now.Add(d)) {
+		Apply(&st, refine, "", "go", errors.New("down"), now)
+		if st.Title != "Sorting Photos" || st.Kind != "chat" || st.Final || st.Failures != i+1 || !st.RetryAfter.Equal(now.Add(d)) {
 			t.Fatalf("failure %d = %+v", i+1, st)
 		}
 	}
 	// A refinement clears the backoff and freezes.
-	Apply(&st, refine, "Sorting Photos Again", nil, now)
-	want = windowstate.ShortTitle{Title: "Sorting Photos Again", At: now, InputHash: refine.Hash(), Final: true}
+	Apply(&st, refine, "Sorting Photos Again", "go", nil, now)
+	want = windowstate.ShortTitle{Title: "Sorting Photos Again", Kind: "go", At: now, InputHash: refine.Hash(), Final: true}
 	if st != want {
 		t.Fatalf("refinement = %+v, want %+v", st, want)
 	}
@@ -138,7 +138,7 @@ func (f *fakeCompleter) Complete(_ context.Context, p string) (string, error) {
 func TestGenerate(t *testing.T) {
 	in := Input{Ticket: "Mobile app", Task: "make titles short", LastText: strings.Repeat("ζ", maxLastTextRunes) + "THE END"}
 	fc := &fakeCompleter{out: "\"Shortening Row Titles.\"\n"}
-	got, err := Generate(context.Background(), fc, in)
+	got, _, err := Generate(context.Background(), fc, in)
 	if err != nil || got != "Shortening Row Titles" {
 		t.Fatalf("Generate = %q, %v", got, err)
 	}
@@ -151,11 +151,11 @@ func TestGenerate(t *testing.T) {
 		t.Errorf("last message carries %d runes of filler; the tail must be kept", n)
 	}
 
-	if _, err := Generate(context.Background(), &fakeCompleter{out: "..."}, in); !errors.Is(err, ErrEmptyTitle) {
+	if _, _, err := Generate(context.Background(), &fakeCompleter{out: "..."}, in); !errors.Is(err, ErrEmptyTitle) {
 		t.Errorf("blank reply err = %v", err)
 	}
 	boom := errors.New("boom")
-	if got, err := Generate(context.Background(), &fakeCompleter{out: "Ignored", err: boom}, in); !errors.Is(err, boom) || got != "" {
+	if got, _, err := Generate(context.Background(), &fakeCompleter{out: "Ignored", err: boom}, in); !errors.Is(err, boom) || got != "" {
 		t.Errorf("error reply = %q, %v", got, err)
 	}
 }
@@ -234,5 +234,67 @@ func TestFirstPromptIsInput(t *testing.T) {
 	}
 	if (Input{Task: "a"}).Hash() == (Input{Task: "a", FirstPrompt: "b"}).Hash() {
 		t.Fatal("first prompt must change the hash")
+	}
+}
+
+func TestGenerateKind(t *testing.T) {
+	tests := []struct {
+		name, reply, mode string
+		wantKind, want    string
+		wantErr           error
+	}{
+		{"good", "go | Fixing X Now", "", "go", "Fixing X Now", nil},
+		{"whitespace and case", "  Review|  Checking This PR \n", "", "review", "Checking This PR", nil},
+		{"markdown", "`go` | **Fixing X**", "", "go", "Fixing X", nil},
+		{"unknown kind", "rust | Fixing X", "", "", "rust Fixing X", nil},
+		{"no pipe", "Fixing X", "", "", "Fixing X", nil},
+		{"extra pipes", "web | Fixing | X | Y", "", "web", "Fixing X Y", nil},
+		{"empty title half", "go |  ", "", "", "", ErrEmptyTitle},
+		{"review-pr override", "go | Reading A Diff", ReviewPRMode, "review", "Reading A Diff", nil},
+		{"override without kind", "Reading A Diff", ReviewPRMode, "review", "Reading A Diff", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, kind, err := Generate(context.Background(), &fakeCompleter{out: tt.reply}, Input{Task: "t", Mode: tt.mode})
+			if !errors.Is(err, tt.wantErr) || got != tt.want || kind != tt.wantKind {
+				t.Fatalf("Generate = %q, %q, %v; want %q, %q, %v", got, kind, err, tt.want, tt.wantKind, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestPromptKindsAndHints(t *testing.T) {
+	p := Prompt(Input{Task: "t", Agent: "go-engineer", Mode: "review-pr"})
+	for _, k := range Kinds() {
+		if !strings.Contains(p, "- "+k+": ") {
+			t.Errorf("prompt missing kind %q", k)
+		}
+	}
+	for _, s := range []string{"<kind> | <title>", "Agent:\ngo-engineer", "Dispatch mode:\nreview-pr", "moving, renaming or upgrading"} {
+		if !strings.Contains(p, s) {
+			t.Errorf("prompt missing %q", s)
+		}
+	}
+	if strings.Contains(Prompt(Input{Task: "t"}), "Agent:\n") {
+		t.Error("empty agent should add no section")
+	}
+}
+
+func TestHashIgnoresAgentAndMode(t *testing.T) {
+	a := Input{Task: "t", Ticket: "k", LastText: "l"}
+	b := a
+	b.Agent, b.Mode = "go-engineer", "review-pr"
+	if a.Hash() != b.Hash() {
+		t.Fatal("agent and mode must not change the hash")
+	}
+	// Pinned: hashes recorded before kinds existed must not change.
+	if got := (Input{Task: "a"}).Hash(); got != Hash("a\x00\x00") {
+		t.Fatalf("hash layout changed: %s", got)
+	}
+}
+
+func TestSanitizeDropsKindPrefix(t *testing.T) {
+	if got := Sanitize("go | Fixing X"); got != "Fixing X" {
+		t.Errorf("Sanitize = %q", got)
 	}
 }

@@ -276,6 +276,12 @@ export function rowHeadline(win) {
   return rowTitle(win);
 }
 
+/** rowKind is the work-kind tag of the row's generated title ("go", "review"), or "" when there is none. */
+export function rowKind(win) {
+  const k = typeof win.kind === "string" ? win.kind.trim() : "";
+  return /^[a-z]{1,16}$/.test(k) ? k : "";
+}
+
 /** agentChip is the agent name (no :N suffix) shown as a muted chip, or "" when it is the headline already. */
 export function agentChip(win) {
   const name = (win.agent ?? "").replace(/[:~]\d+$/, "");

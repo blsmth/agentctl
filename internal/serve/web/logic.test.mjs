@@ -7,7 +7,7 @@ import {
   approvalProject, approvalRows, approvalRowText, promptFold, PROMPT_FOLD_LINES,
   DISPATCH_UPLOAD_PATH, buildDispatchRequest, buildShellRequest, canShell, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
-  bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
+  bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, rowKind, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
   actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
@@ -243,6 +243,13 @@ console.log("ok: resolved text");
   assert.equal(swipeCommit(-200, 0), false);
   assert.equal(SWIPE_REVEAL, 88);
   console.log("ok: swipe close");
+}
+
+{
+  assert.equal(rowKind({ kind: "go" }), "go");
+  assert.equal(rowKind({}), "");
+  assert.equal(rowKind({ kind: "<b>x</b>" }), "");
+  console.log("ok: rowKind");
 }
 
 {

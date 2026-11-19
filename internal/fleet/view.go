@@ -172,6 +172,7 @@ func agentFromWindow(idx int, w tmux.WindowInfo, name string, records map[string
 		TicketTitle:      ws.TicketTitle,
 		Task:             ws.Task,
 		ShortTitle:       ws.ShortTitle.Title,
+		ShortKind:        ws.ShortTitle.Kind,
 		Branch:           ws.Branch,
 		WorktreeDir:      ws.WorktreeDir,
 		SpawnedBy:        ws.SpawnedBy,

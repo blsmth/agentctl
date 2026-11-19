@@ -40,6 +40,9 @@ type RecapLine struct {
 	Text   string
 	Source RecapSource
 	Title  string
+	// Kind is the work-kind tag of Title ("go", "review", ...), empty when
+	// there is none. Only set together with Title.
+	Kind string
 }
 
 // Short is what a list row shows: Title when there is one, else Text.
@@ -133,11 +136,12 @@ func TagLogs(rows []Row) {
 		// A window with nothing else to show (a bare one just after its
 		// first prompt) shows its generated title as the recap.
 		if rows[i].Recap.Source == RecapNone && rows[i].ShortTitle != "" {
-			rows[i].Recap = RecapLine{Text: rows[i].ShortTitle, Source: RecapTitle}
+			rows[i].Recap = RecapLine{Text: rows[i].ShortTitle, Source: RecapTitle, Kind: rows[i].ShortKind}
 		}
 		rows[i].PRNumber, rows[i].PRURL = info.PRNumber, info.PRURL
 		if titleSource(rows[i], rows[i].Recap) {
 			rows[i].Recap.Title = rows[i].ShortTitle
+			rows[i].Recap.Kind = rows[i].ShortKind
 		}
 	}
 }
