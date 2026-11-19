@@ -1379,6 +1379,9 @@ const HUB_SESSION = "agentctl-hub";
 /** SWIPE_SLOP is the movement in px after which a gesture's direction is locked. */
 export const SWIPE_SLOP = 10;
 
+/** SWIPE_REVEAL is the width in px of the red Close action a committed swipe uncovers. */
+export const SWIPE_REVEAL = 88;
+
 /**
  * canSwipeClose reports whether a row offers swipe-to-close: the write feature
  * is on, the window is idle or done, and it is not a hub session. The server

@@ -235,7 +235,7 @@ body.term-open nav { display: none; }
 
 /* Swipe-left-to-close on fleet rows. */
 .swipe { position: relative; overflow: hidden; background: var(--blocked); }
-.swipe-action { position: absolute; inset: 0 0 0 auto; display: flex; align-items: center; justify-content: flex-end; padding-right: 1.25rem; color: #fff; font-weight: 600; }
+.swipe-action { position: absolute; inset: 0 0 0 auto; width: 88px; display: flex; align-items: center; justify-content: center; border: 0; padding: 0; background: var(--blocked); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
 .swipe > .node { position: relative; will-change: transform; }
 .swipe .win { touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .swipe:not(.swiping) > .swipe-action { visibility: hidden; }

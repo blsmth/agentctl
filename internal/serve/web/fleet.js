@@ -134,10 +134,11 @@ function windowRow(entry, toggle, expanded, swipe) {
   );
   const node = h("div", { class: "node" }, link, toggle);
   if (!swipe || !swipe.can(win)) return node;
-  const wrap = h("div", { class: `swipe${swipe.gone(win) ? " swipe-gone" : ""}` }, h("span", { class: "swipe-action", "aria-hidden": "true" }, "Close"), node);
-  attachSwipe(wrap, node, link, {
+  const action = h("button", { class: "swipe-action", type: "button", "aria-label": `Close ${rowTitle(win)}` }, "Close");
+  const wrap = h("div", { class: `swipe${swipe.gone(win) ? " swipe-gone" : ""}` }, action, node);
+  attachSwipe(wrap, node, link, action, {
     onBusy: swipe.busy,
-    onCommit: () => swipe.close(win),
+    onClose: () => swipe.close(win),
   });
   return wrap;
 }
@@ -353,8 +354,6 @@ export function mountFleet(root, ctx) {
       }
     },
     close: async (win) => {
-      const ok = await confirmSheet({ title: "Close window?", lines: [[rowTitle(win), ...rowTags(win)].join(" ")], confirmLabel: "Close", danger: true });
-      if (!ok) return false;
       try {
         await send({ method: "POST", path: `${windowApiPath(win.session, win.window_id)}/close`, body: {} });
       } catch (err) {
