@@ -229,6 +229,14 @@ console.log("ok: resolved text");
   assert.equal(canSwipeClose(idle, "s", ["read"]), false);
   assert.equal(canSwipeClose(idle, "s", undefined), false);
   assert.equal(canSwipeClose(idle, "agentctl-hub", feats), false);
+  {
+    const parent = { window_id: "@1", session: "s", state: "idle", done: true };
+    const kid = (state, extra = {}) => ({ window_id: "@2", session: "s", state, parent: "@1", ...extra });
+    const busy = waitingIndex([{ windows: [parent, kid("working")] }]);
+    assert.equal(canSwipeClose(parent, "s", feats, busy), false);
+    assert.equal(canSwipeClose(parent, "s", feats, waitingIndex([{ windows: [parent, kid("idle", { done: true })] }])), true);
+    assert.equal(canSwipeClose({ ...parent, waiting_on: busy.get("@1") }, "s", feats), false);
+  }
   assert.equal(swipeAxis(3, 4), "");
   assert.equal(swipeAxis(-12, 4), "x");
   assert.equal(swipeAxis(5, 14), "y");

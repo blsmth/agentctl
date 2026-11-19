@@ -32,6 +32,11 @@ test("a parent with working or blocked children shows waiting", async ({ page, c
   await expect(row(page, "@3")).toHaveClass(/\bblocked\b/);
   await expect(row(page, "@2")).toHaveClass(/\bworking\b/);
   await expect(row(page, "@4")).toHaveClass(/\bdone\b/);
+  // Closing it would close its children, so the row has no swipe action.
+  await expect(parent.locator("xpath=../..")).not.toHaveClass(/\bswipe\b/);
+  await expect(parent.locator("xpath=../..").getByRole("button", { name: /^Close / })).toHaveCount(0);
+  // The finished child still swipes, so the missing action is specific to the waiting row.
+  await expect(row(page, "@4").locator("xpath=../..")).toHaveClass(/\bswipe\b/);
   // Cross-session child.
   await expect(row(page, "@5").locator(".waiting-on")).toHaveText("waiting on 1 agent");
   await page.setViewportSize({ width: 390, height: 800 });
