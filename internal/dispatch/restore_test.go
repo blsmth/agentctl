@@ -54,8 +54,8 @@ func TestRestoreRequest_DuplicateSession(t *testing.T) {
 func TestApplyRestoreMeta(t *testing.T) {
 	var ws windowstate.WindowState
 	ws.SpawnedBy = "@old"
-	applyRestoreMeta(&ws, RestoreRequest{Mode: "adhoc", Ticket: "7", TicketTitle: "t", Task: "do x", Branch: "b", WorktreeDir: "/wt"})
-	if ws.Mode != "adhoc" || ws.Ticket != "7" || ws.TicketTitle != "t" || ws.Task != "do x" || ws.Branch != "b" || ws.WorktreeDir != "/wt" {
+	applyRestoreMeta(&ws, RestoreRequest{Mode: "adhoc", Ticket: "7", TicketTitle: "t", Task: "do x", FirstPrompt: "first", Branch: "b", WorktreeDir: "/wt"})
+	if ws.Mode != "adhoc" || ws.Ticket != "7" || ws.TicketTitle != "t" || ws.Task != "do x" || ws.FirstPrompt != "first" || ws.Branch != "b" || ws.WorktreeDir != "/wt" {
 		t.Errorf("got %+v", ws)
 	}
 	if ws.SpawnedBy != "@old" {

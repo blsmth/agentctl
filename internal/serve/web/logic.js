@@ -267,7 +267,7 @@ function firstClause(text, max) {
  * task dispatch, else the first sentence of the recap, else the agent name.
  */
 export function rowHeadline(win) {
-  if (hasRecap(win) && win.title) return win.title;
+  if (win.title) return win.title;
   if (hasRecap(win)) {
     const text = win.recap_source === "task" ? win.recap.replace(/^#\d+\s+/, "") : win.recap;
     const line = firstClause(text, HEADLINE_MAX);
@@ -285,11 +285,12 @@ export function agentChip(win) {
 
 /**
  * rowDetailLine is the second line: the full recap, else the activity line,
- * else "". A task recap is already the headline and #issue chip, so it falls
+ * else "". A recap that is the headline itself (a generated title standing in
+ * for a missing recap) is not repeated. A task recap is already the headline and #issue chip, so it falls
  * through to the activity line.
  */
 export function rowDetailLine(win) {
-  if (hasRecap(win) && win.recap_source !== "task") return win.recap;
+  if (hasRecap(win) && win.recap_source !== "task" && win.recap !== rowHeadline(win)) return win.recap;
   return win.activity ?? "";
 }
 

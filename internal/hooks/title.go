@@ -187,6 +187,10 @@ var injectedBlockRes = []*regexp.Regexp{
 	regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`),
 }
 
+// slashCommandRe matches a slash command ("/compact ..."); an absolute path
+// such as "/Users/me/x.go fails" does not match.
+var slashCommandRe = regexp.MustCompile(`^/[\w:-]+(\s|$)`)
+
 // realPrompt returns the user-typed part of a prompt, and false when there
 // is none: empty text, a slash command, or only injected content (task
 // notifications, system reminders, `agentctl notice:` lines).
@@ -202,7 +206,7 @@ func realPrompt(prompt string) (string, bool) {
 		kept = append(kept, line)
 	}
 	text := strings.TrimSpace(strings.Join(kept, "\n"))
-	if text == "" || strings.HasPrefix(text, "/") {
+	if text == "" || slashCommandRe.MatchString(text) {
 		return "", false
 	}
 	if r := []rune(text); len(r) > maxFirstPromptRunes {

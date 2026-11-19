@@ -392,6 +392,7 @@ func TestTitleIgnoresNonRequests(t *testing.T) {
 	for name, prompt := range map[string]string{
 		"slash command": "/compact keep the plan",
 		"empty":         "",
+		"bare slash":    "/clear",
 		"whitespace":    " \n\t ",
 		"notice only":   "agentctl notice: @5 (go-engineer) finished its turn and is idle.\nagentctl notice: @6 is blocked.",
 		"task notif":    "<task-notification>\n<task-id>x</task-id>\n</task-notification>",
@@ -478,6 +479,15 @@ func TestTitleSessionStartThenPromptStillTitles(t *testing.T) {
 	}
 	runTitle(context.Background(), "@4", "", "", "organize my photos")
 	if e.fake.calls != 1 || readTitle(t, "@4").Title == "" {
+		t.Fatalf("calls = %d", e.fake.calls)
+	}
+}
+
+func TestTitleAbsolutePathPromptCounts(t *testing.T) {
+	e := setupTitle(t)
+	seedWindow(t, "@4", windowstate.WindowState{State: "working"})
+	runTitle(context.Background(), "@4", "", "", "/Users/me/x.go fails to build")
+	if e.fake.calls != 1 {
 		t.Fatalf("calls = %d", e.fake.calls)
 	}
 }
