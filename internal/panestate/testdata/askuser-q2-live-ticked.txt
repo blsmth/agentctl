@@ -1,0 +1,40 @@
+
+[38;2;215;119;87m ▐[48;2;0;0;0m▛███▛█[39m[49m   [1mClaude Code[0m [38;2;153;153;153mv2.1.327[39m
+[38;2;215;119;87m▝▜[48;2;0;0;0m█████[49m█▀[39m  [38;2;153;153;153mHaiku 5.5 · Claude Team[39m
+[38;2;215;119;87m ▝▝   ▝▝ [39m  [38;2;153;153;153m~/…/agentctl/.worktrees/agent-go-engineer-opus-adhoc-b532d4e1[39m
+
+  [1mUpdated: 17 features, 322 fixes, 167 other changes[0m
+  [38;2;153;153;153m]8;id=1rmwg0m;https://code.claude.com/docs/en/changelog\code.claude.com/docs/en/changelog]8;;\ for details[39m
+
+  Fable 5.2 is here for your longest and toughest coding tasks. It draws down
+  usage faster than Opus 5.5. Switch with [38;2;177;185;249m/model[39m.
+
+[38;2;153;153;153m⏺[39m [38;2;153;153;153mYour organization may apply global configuration to Claude Code. These[39m
+  [38;2;153;153;153msettings are centrally managed by your IT administrator.[39m
+
+[38;2;153;153;153m[48;2;55;55;55m❯ [38;2;255;255;255mCall the AskUserQuestion tool exactly once with two questions: (1) header [39m
+  [38;2;255;255;255mColor, "Which color should the button be?", options Red/Green/Blue with short[39m
+  [38;2;255;255;255mdescriptions; (2) header Size, multiSelect true, "Which sizes should we [39m
+  [38;2;255;255;255mship?", options Small/Medium/Large. Do nothing else.[39m
+[38;2;153;153;153m[49m────────────────────────────────────────────────────────────────────────────────
+[39m←  ☒ Color [38;2;0;0;0m[48;2;177;185;249m ☒ Size [39m[49m ✔ Submit  →
+
+[1m[38;2;255;255;255mWhich sizes should we ship?[0m
+
+[38;2;177;185;249m❯[39m [38;2;153;153;153m1.[39m [ ] [38;2;177;185;249mSmall[39m
+         [38;2;153;153;153mCompact variant[39m
+  [38;2;153;153;153m2.[39m [38;2;78;186;101m[✔][39m Medium
+         [38;2;153;153;153mDefault-sized variant[39m
+  [38;2;153;153;153m3.[39m [ ] Large
+         [38;2;153;153;153mProminent, larger variant[39m
+  [38;2;153;153;153m4. [39m[ ] [38;2;153;153;153mType something[39m
+     [1mSubmit[0m
+[38;2;153;153;153m────────────────────────────────────────────────────────────────────────────────
+[39m  5. Chat about this
+
+[38;2;153;153;153mEnter to select · Tab/Arrow keys to navigate · Esc to cancel[39m
+
+
+
+
+

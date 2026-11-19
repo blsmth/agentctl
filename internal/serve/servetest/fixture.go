@@ -2,6 +2,7 @@ package servetest
 
 import (
 	"cmp"
+	_ "embed"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -28,11 +29,27 @@ const (
 		"╰────────────────────────────────────────────────╯\n"
 )
 
+// AskUserQuestion screens captured from Claude Code (v2.1.311, 80 columns):
+// tab 1 of 2 (single-select, options with descriptions), tab 2 (multi-select
+// checkboxes with a Submit row) and the review page. The review page is a
+// real three-question capture trimmed to these two questions.
+var (
+	//go:embed panes/askuser-q1.txt
+	AskUserPane string
+	//go:embed panes/askuser-q2.txt
+	AskUserMultiPane string
+	//go:embed panes/askuser-review.txt
+	AskUserReviewPane string
+)
+
 // paneKinds maps Window.Pane names to pane text.
 var paneKinds = map[string]string{
-	"idle":    IdlePane,
-	"working": WorkingPane,
-	"dialog":  DialogPane,
+	"idle":           IdlePane,
+	"working":        WorkingPane,
+	"dialog":         DialogPane,
+	"askuser":        AskUserPane,
+	"askuser-multi":  AskUserMultiPane,
+	"askuser-review": AskUserReviewPane,
 }
 
 // Window is one fixture window. It is the JSON the control API accepts, and
@@ -129,6 +146,8 @@ func DefaultFixture() []Group {
 				{ID: "@14", Index: 4, Agent: "reviewer", State: "blocked", Mode: "dispatch", Parent: "@12",
 					PendingTool: "Bash", Activity: "go test ./...", Branch: "agent/reviewer/adhoc-3f2a", Model: "claude-haiku-4-5"},
 				{ID: "@15", Index: 5, Agent: "docs", State: "idle", Activity: "updated README"},
+				{ID: "@17", Index: 7, Agent: "designer", State: "blocked", Pane: "askuser",
+					PendingTool: "AskUserQuestion", Activity: "Which color should the button be?", Model: "claude-haiku-4-5"},
 			},
 		},
 		{

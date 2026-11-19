@@ -1,0 +1,40 @@
+
+[38;2;215;119;87m ▐[48;2;0;0;0m▛███▛█[39m[49m   [1mClaude Code[0m [38;2;153;153;153mv2.1.311[39m
+[38;2;215;119;87m▝▜[48;2;0;0;0m█████[49m█▀[39m  [38;2;153;153;153mHaiku 5.5 · Claude Team[39m
+[38;2;215;119;87m ▝▝   ▝▝ [39m  [38;2;153;153;153m~/code/personal/agentctl[39m
+
+[38;2;255;193;7m⚠[39m [38;2;255;193;7m6 MCP servers need authentication[38;2;153;153;153m · run /mcp[39m
+
+[38;2;153;153;153m[48;2;55;55;55m❯ [38;2;255;255;255mCall the AskUserQuestion tool exactly once with two questions: (1) header [39m
+  [38;2;255;255;255mColor, "Which color should the button be?", options Red/Green/Blue with short[39m
+  [38;2;255;255;255mdescriptions; (2) header Size, multiSelect true, "Which sizes should we [39m
+  [38;2;255;255;255mship?", options Small/Medium/Large. Do nothing else.[39m
+[38;2;153;153;153m[49m────────────────────────────────────────────────────────────────────────────────
+← [38;2;0;0;0m[48;2;177;185;249m ☐ Color [39m[49m ☐ Size  ✔ Submit  →
+
+[1m[38;2;255;255;255mWhich color should the button be?[0m
+
+[38;2;177;185;249m❯[39m [38;2;153;153;153m1.[39m [38;2;177;185;249mRed[39m
+     [38;2;153;153;153mBold, high-urgency accent color[39m
+  [38;2;153;153;153m2.[39m Green
+     [38;2;153;153;153mPositive, go-ahead accent color[39m
+  [38;2;153;153;153m3.[39m Blue
+     [38;2;153;153;153mNeutral, calm accent color[39m
+  [38;2;153;153;153m4. Type something.[39m
+[38;2;153;153;153m────────────────────────────────────────────────────────────────────────────────
+[39m  5. Chat about this
+
+[38;2;153;153;153mEnter to select · Tab/Arrow keys to navigate · Esc to cancel[39m
+
+
+
+
+
+
+
+
+
+
+
+
+

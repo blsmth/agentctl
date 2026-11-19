@@ -11,6 +11,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/panestate/panesim"
 	"github.com/blsmth/agentctl/internal/serve"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/sweeprun"
@@ -173,17 +174,35 @@ func (p panes) CapturePane(pane string, _ int) (string, error) {
 }
 
 // keys records answers and interrupts. A key sent to a dialog dismisses it,
-// so the server's post-answer settle loop returns at once.
+// so the server's post-answer settle loop returns at once. The
+// AskUserQuestion screens step as Claude Code does: a digit on the
+// single-select tab picks and moves to the multi-select tab, which redraws
+// per key (panesim.Press: digits toggle, arrows move the cursor) until Enter
+// on its Submit row moves to the review page. Any answer there, or Escape on
+// any of them, ends the dialog.
 type keys struct{ w *world }
 
 func (k keys) SendKey(t serve.WindowTarget, key string) error {
 	k.w.record(Action{Kind: "key", Session: t.Session, Window: t.WindowID, Pane: t.Pane, Key: key})
-	_ = k.w.update(t.Session, t.WindowID, func(x *Window) {
-		if x.paneText() == DialogPane {
-			x.Pane, x.PaneText = "idle", ""
-		}
-	})
+	_ = k.w.update(t.Session, t.WindowID, func(x *Window) { stepPane(x, key) })
 	return nil
+}
+
+// stepPane applies key to the screen x shows.
+func stepPane(x *Window, key string) {
+	switch {
+	case x.Pane == "askuser-multi" && key != "Escape":
+		next, submitted := panesim.Press(x.paneText(), key)
+		if submitted {
+			x.Pane, x.PaneText = "askuser-review", ""
+			return
+		}
+		x.PaneText = next
+	case x.Pane == "askuser" && key != "Escape":
+		x.Pane, x.PaneText = "askuser-multi", ""
+	case x.paneText() == DialogPane || strings.HasPrefix(x.Pane, "askuser"):
+		x.Pane, x.PaneText = "idle", ""
+	}
 }
 
 type injector struct{ w *world }

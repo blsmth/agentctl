@@ -107,9 +107,7 @@ func DialogShowing(text string) bool {
 			return true
 		}
 	}
-	// The final page of a multi-question AskUserQuestion flow has no "Esc to
-	// cancel" footer: only the review list and its Submit/Cancel choices.
-	if strings.Contains(text, "Review your answers") && strings.Contains(text, ". Submit answers") {
+	if reviewPageShowing(text) {
 		return true
 	}
 	// A numbered-choice dialog that phrases its question some other way still
@@ -152,6 +150,36 @@ func spinnerShowing(text string) bool {
 		seen++
 		if spinnerLine.MatchString(line) || backgroundHint.MatchString(line) {
 			return true
+		}
+	}
+	return false
+}
+
+// reviewQuestion and reviewSubmit are the final page of a multi-question
+// AskUserQuestion flow: the question line, then (blank lines allowed) its
+// first choice.
+const reviewQuestion = "Ready to submit your answers?"
+
+var reviewSubmit = regexp.MustCompile(`^(❯\s*)?1\.\s+Submit answers$`)
+
+// reviewPageShowing reports whether AskUserQuestion's review page is up. It
+// has no "Esc to cancel" footer, so no marker matches it. The match is
+// structural (the question alone on its line, then "1. Submit answers")
+// because the phrases alone turn up in scrollback, in prose about this very
+// page, and a pane misread as a dialog offers its numbered prose as answers.
+func reviewPageShowing(text string) bool {
+	lines := strings.Split(StripANSI(text), "\n")
+	for i, l := range lines {
+		if strings.TrimSpace(l) != reviewQuestion {
+			continue
+		}
+		for _, next := range lines[i+1:] {
+			if t := strings.TrimSpace(next); t != "" {
+				if reviewSubmit.MatchString(t) {
+					return true
+				}
+				break
+			}
 		}
 	}
 	return false

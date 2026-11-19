@@ -36,6 +36,41 @@ test("answer a blocked agent's dialog", async ({ page, control }) => {
   await expect(page.locator(".answer")).toHaveCount(0);
 });
 
+// @17 is a two-question AskUserQuestion from real Claude Code captures: a
+// single-select tab, a multi-select tab, then the review page. The fake
+// redraws each screen per key as Claude Code does, so the server's re-parse
+// between the keys of a submit sees every toggle and cursor move land.
+test("answer an AskUserQuestion: single-select, multi-select, review page", async ({ page, control }) => {
+  await openWindow(page, "@17");
+  const answer = page.locator(".answer");
+  const send = () => sheet(page).getByRole("button", { name: "Send" }).tap();
+
+  // Tab 1: a digit picks and moves on.
+  await expect(answer.locator(".question")).toHaveText("Which color should the button be?");
+  await answer.locator(".choices button", { hasText: "2. Green" }).tap();
+  await expect(sheet(page)).toContainText('Answer "2"?');
+  await send();
+
+  // Tab 2: local checkboxes, one Submit that sends the set.
+  await expect(answer.locator(".question")).toHaveText("Which sizes should we ship?");
+  await answer.locator("label", { hasText: "Small" }).locator("input").check();
+  await answer.locator("label", { hasText: "Large" }).locator("input").check();
+  await answer.getByRole("button", { name: "Submit", exact: true }).tap();
+  await expect(sheet(page)).toContainText("Small");
+  await send();
+
+  // Review page: an ordinary dialog.
+  await expect(answer.locator(".question")).toHaveText("Ready to submit your answers?");
+  await answer.locator(".choices button", { hasText: "1. Submit answers" }).tap();
+  await send();
+  await expect(answer).toHaveCount(0);
+
+  // Toggles 1 and 3, four rows down to Submit, Enter: each sent only after
+  // the previous one showed up in the pane.
+  const keys = (await control.actions()).filter((a) => a.window === "@17").map((a) => a.key);
+  expect(keys).toEqual(["2", "1", "3", "Down", "Down", "Down", "Down", "Enter", "1"]);
+});
+
 test("blocked layout: answers above the pane, question only, recommended option primary", async ({ page }) => {
   await openWindow(page, "@14");
   const answer = page.locator(".answer");

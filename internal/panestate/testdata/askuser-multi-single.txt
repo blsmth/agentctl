@@ -1,0 +1,40 @@
+
+
+[38;2;255;255;255m⏺[39m Answers:
+
+  - [1mColor:[0m Green
+  - [1mSize:[0m Small, Large
+  - [1mShape:[0m Round
+
+[38;2;153;153;153m✻[39m [38;2;153;153;153mCogitated for 2s · done 3:24 PM[39m
+
+[38;2;153;153;153m[48;2;55;55;55m❯ [38;2;255;255;255mNow call AskUserQuestion once with ONE question: header Pet, "Cat or dog?", [39m
+  [38;2;255;255;255moptions Cat/Dog with descriptions. Then print the answer.[39m
+[49m
+[38;2;153;153;153m⏺ [39mUser answered Claude's questions:
+[38;2;153;153;153m  ⎿  · Cat or dog? → Dog[39m
+
+[38;2;255;255;255m⏺[39m - [1mPet:[0m Dog
+
+[38;2;153;153;153m✻[39m [38;2;153;153;153mBrewed for 1s · done 3:24 PM[39m
+
+[38;2;153;153;153m[48;2;55;55;55m❯ [38;2;255;255;255mNow call AskUserQuestion once with ONE question: header Fruit, multiSelect [39m
+  [38;2;255;255;255mtrue, "Which fruits?", options Apple/Banana/Cherry with descriptions. Then [39m
+  [38;2;255;255;255mprint the answer.[39m
+[38;2;153;153;153m[49m────────────────────────────────────────────────────────────────────────────────
+← [38;2;0;0;0m[48;2;177;185;249m ☐ Fruit [39m[49m ✔ Submit  →
+
+[1m[38;2;255;255;255mWhich fruits?[0m
+
+[38;2;177;185;249m❯[39m [38;2;153;153;153m1.[39m [ ] [38;2;177;185;249mApple[39m
+         [38;2;153;153;153mCrisp and sweet, widely available[39m
+  [38;2;153;153;153m2.[39m [ ] Banana
+         [38;2;153;153;153mSoft and creamy, easy to carry[39m
+  [38;2;153;153;153m3.[39m [ ] Cherry
+         [38;2;153;153;153mSmall and tart-sweet, seasonal[39m
+  [38;2;153;153;153m4. [39m[ ] [38;2;153;153;153mType something[39m
+     [1mSubmit[0m
+[38;2;153;153;153m────────────────────────────────────────────────────────────────────────────────
+[39m  5. Chat about this
+
+[38;2;153;153;153mEnter to select · ↑/↓ to navigate · Esc to cancel[39m
