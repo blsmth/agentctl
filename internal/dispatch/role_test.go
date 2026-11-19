@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/blsmth/agentctl/internal/agent"
+	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/tmux/launchtest"
 )
 
@@ -148,7 +149,7 @@ func TestLaunchGoldenOrchestrator(t *testing.T) {
 		exec       bool
 		permission bool // --permission-mode auto
 	}{
-		{"orchestrator-human-adhoc", Request{Mode: ModeAdhoc, CustomPrompt: longPrompt, Detached: true}, true, false, false, false},
+		{"orchestrator-human-adhoc", Request{Mode: ModeAdhoc, CustomPrompt: longPrompt, Detached: true}, true, false, false, true},
 		{"orchestrator-scheduled-adhoc", Request{Mode: ModeAdhoc, CustomPrompt: longPrompt, Detached: true, ScheduledBy: "nightly-triage"}, false, true, true, true},
 		// Dispatched by another agent session (the stub resolves a tracked
 		// dispatcher, Detached is false): unattended, so done and --wait work.
@@ -212,5 +213,34 @@ func TestBareOversizedPromptGoesToSystemPrompt(t *testing.T) {
 	small := Request{Mode: ModeBare, CustomPrompt: "hi"}
 	if bareUserMessage(small) != "hi" || strings.Contains(buildSystemPrompt(small, modes[ModeBare], "/w", "", false, nil, ""), taskHeading) {
 		t.Error("short bare prompt not delivered as the message")
+	}
+}
+
+func TestLaunchPermissionMode_OrchestratorAdhoc(t *testing.T) {
+	manual := config.AgentConfig{PermissionMode: "manual"}
+	tests := []struct {
+		name  string
+		req   Request
+		ac    config.AgentConfig
+		human bool
+		want  string
+	}{
+		{"human adhoc orchestrator gets auto", Request{Mode: ModeAdhoc}, config.AgentConfig{}, true, "auto"},
+		{"config manual wins", Request{Mode: ModeAdhoc}, manual, true, "manual"},
+		{"override wins", Request{Mode: ModeAdhoc, PermissionMode: "plan"}, manual, true, "plan"},
+		{"unattended orchestrator unchanged", Request{Mode: ModeAdhoc}, config.AgentConfig{}, false, "auto"},
+		{"plain bare gets no flag", Request{Mode: ModeBare}, config.AgentConfig{}, true, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			role := agent.RoleOrchestrator
+			if tt.req.Mode == ModeBare {
+				role = "" // menu launch of a plain agent
+			}
+			req, spec := applyAgentRole(tt.req, modes[tt.req.Mode], role, tt.human)
+			if got := launchPermissionMode(req, spec, tt.ac); got != tt.want {
+				t.Errorf("launchPermissionMode() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

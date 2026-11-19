@@ -92,7 +92,7 @@ A dispatch is launched in one of several modes (`internal/dispatch/modes.go`). E
 
 An agent with `role: orchestrator` in its frontmatter (see [configuration.md](configuration.md#agent-frontmatter-role)) coordinates others, so it never gets the worker tail: no finishing steps (commit, push, open a PR) and no "do not merge to main" worktree line, and its preamble is the orchestrator one.
 
-- **Human-initiated `--prompt`** (the phone's new-session button, or the CLI from a shell with no tracked Claude session): launched as a `bare` interactive session. The prompt is the first user message, there are no autonomous instructions, and the permission mode is the interactive default.
+- **Human-initiated `--prompt`** (the phone's new-session button, or the CLI from a shell with no tracked Claude session): launched as a `bare` interactive session. The prompt is the first user message, there are no autonomous instructions, and the permission mode resolves like a worker dispatch (per-launch override, then the agent's `permission_mode`, then `auto`).
 - **Unattended** (a cron job, or `--prompt` dispatched from another agent session, so done notices and `--wait` work) **and `--issue`**: the mode is kept, with its autonomous instructions and the task in the system prompt.
 
 ## PR review (`--review-pr`)

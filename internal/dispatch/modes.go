@@ -72,6 +72,12 @@ type modeSpec struct {
 	// explicitly via a non-nil Request.UseWorktree pointer, not by relying on
 	// a mode default.
 	DefaultWorktree bool
+
+	// WorkerPermissionMode makes permission-mode resolution treat the launch
+	// like a worker dispatch (default `auto`) although the mode is
+	// interactive. Set only by applyAgentRole for a human ad-hoc launch of an
+	// orchestrator converted to ModeBare.
+	WorkerPermissionMode bool
 }
 
 var modes = map[Mode]modeSpec{

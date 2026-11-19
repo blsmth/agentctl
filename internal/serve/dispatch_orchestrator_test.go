@@ -22,7 +22,7 @@ func TestPhoneDispatchOrchestratorIsInteractive(t *testing.T) {
 		name        string
 		md          string
 		wantMode    string
-		wantAuto    bool
+		wantAuto    bool // autonomous: finishing steps present
 		wantMessage string
 	}{
 		{"orchestrator", "---\nname: lead\nrole: orchestrator\n---\nYou coordinate.\n", "bare", false, "'audit the docs'"},
@@ -46,8 +46,8 @@ func TestPhoneDispatchOrchestratorIsInteractive(t *testing.T) {
 				t.Fatalf("Dispatch: %v", err)
 			}
 			l := rec.Only()
-			if got := strings.Contains(l.Command, "--permission-mode 'auto'"); got != tt.wantAuto {
-				t.Errorf("--permission-mode auto = %v, want %v\n%s", got, tt.wantAuto, l.Command)
+			if got := strings.Contains(l.Command, "--permission-mode 'auto'"); !got {
+				t.Errorf("--permission-mode auto missing (both roles run in auto)\n%s", l.Command)
 			}
 			if !strings.HasSuffix(strings.TrimSpace(l.Command), tt.wantMessage) {
 				t.Errorf("first message is not the prompt: %s", l.Command)
