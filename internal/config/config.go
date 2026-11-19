@@ -627,7 +627,8 @@ type Config struct {
 	// model/context/tokens/cache/turns/cost/duration on line 2, replacing
 	// the equivalent rows the chrome bar used to own), "complementary"
 	// (account-level rate limit/cost figures only), "full" (model + ctx% +
-	// agent name), or "minimal" (a bare placeholder). Empty or any other
+	// agent name), "mobile" (two phone-width lines: model/ctx/cost and
+	// 5h/7d/account/branch), or "minimal" (a bare placeholder). Empty or any other
 	// value falls back to "rich" -- use EffectiveStatuslineFormat to read the
 	// normalized value; this never errors on an unrecognized string.
 	StatuslineFormat string `json:"statusline_format,omitempty"`
@@ -696,13 +697,13 @@ func (c Config) EffectiveNotifyCmd() (cmd string, set bool) {
 
 // EffectiveStatuslineMobileFormat returns the configured
 // statusline_mobile_format, normalized to one of "rich", "complementary",
-// "full" (default) or "minimal".
+// "full", "minimal" or "mobile" (default).
 func (c Config) EffectiveStatuslineMobileFormat() string {
 	switch c.StatuslineMobileFormat {
-	case "full", "minimal", "complementary", "rich":
+	case "full", "minimal", "complementary", "rich", "mobile":
 		return c.StatuslineMobileFormat
 	default:
-		return "full"
+		return "mobile"
 	}
 }
 
@@ -712,7 +713,7 @@ func (c Config) EffectiveStatuslineMobileFormat() string {
 // to "rich" rather than erroring.
 func (c Config) EffectiveStatuslineFormat() string {
 	switch c.StatuslineFormat {
-	case "full", "minimal", "complementary", "rich":
+	case "full", "minimal", "complementary", "rich", "mobile":
 		return c.StatuslineFormat
 	default:
 		return "rich"

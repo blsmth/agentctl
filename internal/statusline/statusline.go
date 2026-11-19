@@ -106,6 +106,10 @@ func RunWithIO(r io.Reader, w io.Writer, dryRun bool) {
 		fmt.Fprintln(w, renderRichLine(payload, windowID))
 		return
 	}
+	if format == "mobile" {
+		fmt.Fprintln(w, renderMobileLine(payload))
+		return
+	}
 	fmt.Fprintln(w, renderLine(payload, format))
 }
 
