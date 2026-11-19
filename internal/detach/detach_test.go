@@ -37,8 +37,8 @@ func TestStartSelf_RefusesUnderTest(t *testing.T) {
 	if err := StartSelf([]string{"-test.run=NONE"}, nil); !errors.Is(err, selfpath.ErrTestBinary) {
 		t.Fatalf("StartSelf err = %v, want ErrTestBinary", err)
 	}
-	if err := StartSelfPinned([]string{"-test.run=NONE"}, t.TempDir()); !errors.Is(err, selfpath.ErrTestBinary) {
-		t.Fatalf("StartSelfPinned err = %v, want ErrTestBinary", err)
+	if err := StartDaemon([]string{"-test.run=NONE"}, t.TempDir()); !errors.Is(err, selfpath.ErrTestBinary) {
+		t.Fatalf("StartDaemon err = %v, want ErrTestBinary", err)
 	}
 }
 

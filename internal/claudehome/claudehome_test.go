@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/detach"
 )
 
 // setup points HOME at a temp dir, clears CLAUDE_CONFIG_DIR and makes
@@ -333,5 +334,14 @@ func TestParentAccountUnderSubprocessScrub(t *testing.T) {
 	t.Setenv(envSubprocessScrub, "1")
 	if got := ParentAccount(""); got != "personal" {
 		t.Errorf("ParentAccount under scrub = %q, want personal from AGENTCTL_ACCOUNT", got)
+	}
+}
+
+// TestDetachAccountEnvNames keeps detach's copies of the account variable
+// names (detach is a leaf package) in sync with the ones launches set.
+func TestDetachAccountEnvNames(t *testing.T) {
+	if detach.EnvConfigDir != EnvConfigDir || detach.EnvAccount != EnvAccount || detach.EnvSubprocessScrub != envSubprocessScrub {
+		t.Fatalf("detach account env names %q/%q/%q drifted from claudehome %q/%q/%q",
+			detach.EnvConfigDir, detach.EnvAccount, detach.EnvSubprocessScrub, EnvConfigDir, EnvAccount, envSubprocessScrub)
 	}
 }
