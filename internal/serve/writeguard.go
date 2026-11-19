@@ -156,6 +156,9 @@ func writeActionFor(path string) (action, session, window string, ok bool) {
 	if path == "/v1/dispatch" {
 		return "dispatch", "", "", true
 	}
+	if path == "/v1/shell" {
+		return "shell", "", "", true
+	}
 	if path == "/v1/dispatch/upload" {
 		return "dispatch-upload", "", "", true
 	}

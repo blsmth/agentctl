@@ -45,6 +45,7 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 .group-counts .count.working .glyph { color: var(--working); } .group-counts .count.done .glyph { color: var(--done); }
 .group-add { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px;
   margin: -.4rem 0; border-radius: 10px; font-size: 1.4rem; line-height: 1; text-decoration: none; color: var(--accent); }
+button.group-add { padding: 0; border: 0; background: none; cursor: pointer; }
 .group-sweep { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px;
   margin: -.4rem 0; padding: 0; border: 0; border-radius: 10px; background: none; font-size: 1.15rem; line-height: 1; color: var(--accent); cursor: pointer; }
 .group-sweep.busy { opacity: .5; cursor: progress; }
@@ -160,6 +161,7 @@ nav a.active { color: var(--accent); font-weight: 600; }
 .sheet { width: 100%; max-height: 80vh; overflow: auto; background: var(--card); border-radius: 16px 16px 0 0;
   padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: .75rem; }
 .sheet h2 { margin: 0; color: var(--fg); font-size: 1.1rem; text-transform: none; letter-spacing: 0; }
+.sheet-error { margin: 0; color: var(--blocked); }
 .sheet-body { margin: 0; white-space: pre-wrap; word-break: break-word; font: .85rem/1.35 ui-monospace, Menlo, monospace; max-height: 40vh; overflow: auto; }
 
 #toasts { position: fixed; left: 0; right: 0; bottom: calc(64px + env(safe-area-inset-bottom)); display: flex; flex-direction: column;

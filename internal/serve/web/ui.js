@@ -69,6 +69,55 @@ export function confirmSheet({ title, lines = [], confirmLabel = "Confirm", dang
 }
 
 /**
+ * newSheet is the "+" sheet: Agent (a link to agentHref) and, when onShell is
+ * given, Shell. onShell is async; a throw shows its message inline and keeps
+ * the sheet open, success closes it. Like confirmSheet it closes on navigation.
+ */
+export function newSheet({ title, agentHref, onShell }) {
+  const onNavigate = () => overlay.remove();
+  const close = () => {
+    removeEventListener("hashchange", onNavigate);
+    overlay.remove();
+  };
+  addEventListener("hashchange", onNavigate, { once: true });
+  const err = h("p", { class: "sheet-error", role: "alert", hidden: true });
+  const shell = onShell
+    ? h(
+        "button",
+        {
+          class: "btn primary",
+          onclick: async () => {
+            shell.disabled = true;
+            err.hidden = true;
+            try {
+              await onShell();
+              close();
+            } catch (e) {
+              err.textContent = e instanceof Error ? e.message : "Could not open a shell";
+              err.hidden = false;
+              shell.disabled = false;
+            }
+          },
+        },
+        "Shell",
+      )
+    : null;
+  const overlay = h(
+    "div",
+    { class: "overlay", onclick: (e) => e.target === overlay && close() },
+    h(
+      "div",
+      { class: "sheet", role: "dialog", "aria-modal": "true" },
+      h("h2", {}, title),
+      err,
+      h("div", { class: "row" }, shell, h("a", { class: "btn", href: agentHref, onclick: close }, "Agent")),
+      h("button", { class: "btn", onclick: close }, "Cancel"),
+    ),
+  );
+  document.body.append(overlay);
+}
+
+/**
  * fitTermFont scales an xterm's font so its current columns fill availWidth.
  * Shared by the live terminal and the exact pane view; never changes cols.
  * Returns true when the font changed.

@@ -1013,7 +1013,7 @@ func KillWindowIn(session, runtimeDir, windowID string) error {
 
 // spawnReconcileFn starts the detached reconcile process; a seam for tests.
 var spawnReconcileFn = func(runtimeDir string) error {
-	return detach.StartSelfPinned([]string{"reconcile"}, runtimeDir)
+	return detach.StartDaemon([]string{"reconcile"}, runtimeDir)
 }
 
 // SpawnReconcile starts a detached `agentctl reconcile` so a window this
@@ -1592,7 +1592,9 @@ func agentctlKeybindings(exe string) []keyBinding {
 // projectRoot as its cwd, so the monitor resolves the right runtime dir
 // regardless of which pane is active. run-shell hands its command to sh, so
 // the binary path is quoted, and tmux format-expands that command first, so it
-// is format-escaped too. (run-shell's -c is not format-expanded.)
+// is format-escaped too. (run-shell's -c is not format-expanded.) The monitor
+// gets the tmux server's global and session environment, not the caller's, so
+// a hook-triggered start does not hand it the window's Claude account.
 func StartMonitor(exe, projectRoot string) error {
 	if testing.Testing() {
 		return selfpath.ErrTestBinary

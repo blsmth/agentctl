@@ -79,6 +79,10 @@ func (s *Server) registerWrite(rt *Router) {
 	}
 	rt.Write("POST /v1/dispatch/upload", s.handleDispatchUpload)
 	rt.Write("POST /v1/dispatch", writeRoute(s, "dispatch", s.handleDispatch))
+	if rt.allowWrite {
+		rt.Feature("shell")
+	}
+	rt.Write("POST /v1/shell", writeRoute(s, "shell", s.handleShell))
 	// The preview only reads, but it runs a subprocess that shells out to
 	// git and gh for every finished window, and is only useful with apply.
 	rt.Write("POST /v1/sweep/preview", sweepDeadline(writeRoute(s, "sweep-preview", s.handleSweepPreview)))
@@ -616,6 +620,40 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	}
 	a.Window = res.WindowID
 	return success(res)
+}
+
+type shellIn struct {
+	ProjectDir string `json:"project_dir"`
+}
+
+// ShellResult is the body of POST /v1/shell.
+type ShellResult struct {
+	Session  string `json:"session"`
+	WindowID string `json:"window_id"`
+}
+
+// handleShell opens a plain shell window in a project's running session, as
+// the hub's shell selector does. The project resolves exactly as for dispatch
+// (projectGroup). It never creates a session.
+func (s *Server) handleShell(_ *http.Request, in shellIn, a *auditEntry) outcome {
+	g, out, ok := s.projectGroup(in.ProjectDir, a)
+	if !ok {
+		return out
+	}
+	if g.Session == "" || g.Session == tmux.HubSessionName {
+		return failure(http.StatusBadRequest, codeBadRequest, "a shell cannot be opened in this session")
+	}
+	if !s.shells.SessionRunning(g.Session) {
+		return failure(http.StatusConflict, codeSessionNotRunning, "the project's tmux session is not running; start it on the laptop first")
+	}
+	s.auditAttempt(*a)
+	id, err := s.shells.NewShell(g.Session, g.Dir)
+	if err != nil {
+		logging.Warn("serve: shell in %s: %v", g.Session, err)
+		return failure(http.StatusBadGateway, codeActionFailed, "opening the shell failed; see serve.log")
+	}
+	a.Window = id
+	return success(ShellResult{Session: g.Session, WindowID: id})
 }
 
 // resolveLaunchChoice checks the requested backend, model and effort against

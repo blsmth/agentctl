@@ -5,7 +5,7 @@ import {
   SWIPE_REVEAL, canSwipeClose, swipeAxis, swipeCommit, swipeOffset,
   ansiColor, approvalBannerText, approvalConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
   approvalProject, approvalRows, approvalRowText, promptFold, PROMPT_FOLD_LINES,
-  DISPATCH_UPLOAD_PATH, buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
+  DISPATCH_UPLOAD_PATH, buildDispatchRequest, buildShellRequest, canShell, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowTitle, rowHeadline, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
@@ -520,3 +520,10 @@ for (const f of fixtures.defaultAgent) {
   assert.equal(defaultAgentFor(f.projects, f.dir, f.agents, f.userPicked), f.expect, f.name);
 }
 console.log("ok: dispatch default agent");
+
+assert.deepEqual(buildShellRequest("/code/p"), { method: "POST", path: "/v1/shell", body: { project_dir: "/code/p" } });
+assert.equal(canShell(["write", "shell"]), true);
+assert.equal(canShell(["write"]), false);
+assert.equal(canShell(["shell"]), false);
+assert.equal(canShell([]), false);
+console.log("ok: shell request");

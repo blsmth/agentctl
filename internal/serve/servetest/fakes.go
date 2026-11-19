@@ -20,7 +20,7 @@ import (
 // them through the control API instead of watching tmux.
 type Action struct {
 	// Kind is close, key (answer and interrupt), reply, queue, dispatch,
-	// approval or sweep (an applied sweep; Text lists the closed window IDs).
+	// approval, shell or sweep (an applied sweep; Text lists the closed window IDs).
 	Kind     string `json:"kind"`
 	Session  string `json:"session,omitempty"`
 	Window   string `json:"window,omitempty"`
@@ -254,6 +254,17 @@ type dispatcher struct{ w *world }
 func (d dispatcher) Dispatch(req serve.DispatchRequest) (serve.DispatchResult, error) {
 	d.w.record(Action{Kind: "dispatch", Session: req.Session, Agent: req.Agent, Text: req.Prompt, Dir: req.Dir})
 	return serve.DispatchResult{WindowID: "@900", Session: req.Session, Branch: "agent/" + req.Agent + "/adhoc"}, nil
+}
+
+// shells records the shell windows the server opens; no tmux is involved.
+// Its session is always running and no window counts as a shell.
+type shells struct{ w *world }
+
+func (shells) SessionRunning(string) bool  { return true }
+func (shells) IsShell(string, string) bool { return false }
+func (s shells) NewShell(session, dir string) (string, error) {
+	s.w.record(Action{Kind: "shell", Session: session, Dir: dir})
+	return "@901", nil
 }
 
 type agents struct{}

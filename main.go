@@ -599,6 +599,12 @@ func isReadOnlyInvocation(args []string) bool {
 // wireCompletion connects the seams that start dispatch completion as a
 // detached `agentctl dispatch-complete` process. internal/hooks and
 // internal/signal cannot import internal/dispatch, so main wires both.
+//
+// Both children keep the spawning window's environment, Claude account
+// included (unlike detach.StartDaemon): each is a one-shot for that one window
+// (PR lookup, label swap, opening the PR, the user's dispatch_complete and
+// event hooks), resolves no account itself, and a user hook may legitimately
+// act as that window's login.
 func wireCompletion() {
 	spawn := func(windowID string) error {
 		return detach.StartSelf([]string{"dispatch-complete", windowID}, nil)

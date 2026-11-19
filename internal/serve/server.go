@@ -61,6 +61,8 @@ type Options struct {
 	Injector   Injector
 	Closer     WindowCloser
 	Dispatcher Dispatcher
+	// Shells opens and recognises plain shell windows; nil means tmux.
+	Shells Shells
 	// Sweep runs `agentctl sweep` for a session; nil means the
 	// sweeprun.Run subprocess. Tests inject a fake.
 	Sweep sweeprun.Func
@@ -127,6 +129,7 @@ type Server struct {
 	injector   Injector
 	closer     WindowCloser
 	dispatcher Dispatcher
+	shells     Shells
 	sweep      sweeprun.Func
 	sweeps     sweepGuard
 	mainPanes  MainPanes
@@ -193,6 +196,10 @@ func New(opts Options) (*Server, error) {
 	}
 	if s.closer == nil {
 		s.closer = tmuxCloser{}
+	}
+	s.shells = opts.Shells
+	if s.shells == nil {
+		s.shells = tmuxShells{}
 	}
 	if s.dispatcher == nil {
 		s.dispatcher = newLaunchDispatcher()
