@@ -198,7 +198,13 @@ var (
 type reviewerGate struct {
 	agent  string
 	cfg    *config.Config
-	needed bool // proof still required; false once consumed
+	needed bool // proof is required when the reviewer is local
+	// claimed is set once the approval marker has been looked up; approval
+	// is the result (nil = approved). The marker is consumed on the first
+	// check whatever the reviewer resolves to, so an approval is never left
+	// live for a later run of the same command.
+	claimed  bool
+	approval error
 }
 
 func newReviewerGate(agentName string, detached bool) *reviewerGate {
@@ -222,6 +228,10 @@ func (g *reviewerGate) check(dirs ...string) error {
 	if !g.needed {
 		return nil
 	}
+	if !g.claimed {
+		g.claimed = true
+		g.approval = consumeApproval(approvalWindowID(), dispatchArgs())
+	}
 	if cwd, err := os.Getwd(); err == nil {
 		dirs = append(dirs, cwd)
 	}
@@ -229,15 +239,14 @@ func (g *reviewerGate) check(dirs ...string) error {
 	if res.Global {
 		return nil
 	}
-	if err := consumeApproval(approvalWindowID(), dispatchArgs()); err != nil {
+	if err := g.approval; err != nil {
 		logging.Warn("dispatch: refusing review by %s (%s): %v", g.agent, res.Reason, err)
 		return fmt.Errorf("--review-pr: %s here is not your global agent definition (%s), and no human approval was recorded for this dispatch (%v). "+
 			"A project-local reviewer launches only after the approval popup: rerun this exact command as its own Bash call, "+
-			"with no cd, env or variable assignments in it, from the directory it should run in (cd there in a separate call first), "+
-			"so the popup is shown", g.agent, res.Reason, err)
+			"starting with agentctl (no cd, env, variable assignments or other commands before it), from the directory it should run in "+
+			"(cd there in a separate call first), so the popup is shown", g.agent, res.Reason, err)
 	}
 	logging.Log("dispatch: review by %s (%s) launched with a recorded human approval", g.agent, res.Reason)
-	g.needed = false
 	return nil
 }
 

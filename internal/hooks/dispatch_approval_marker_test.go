@@ -54,6 +54,10 @@ func TestValidateBash_ReviewGatedWhenLineChangesContext(t *testing.T) {
 		{"AGENTCTL_SESSION_ID= agentctl dispatch --review-pr 5", true},
 		{"unset TMUX_PANE; agentctl dispatch --review-pr 5", true},
 		{"$DIR/agentctl dispatch --review-pr 5", true},
+		{"time cd evil; time env -u AGENTCTL_SESSION_ID -u TMUX_PANE -u AGENTCTL_WINDOW_ID agentctl dispatch --review-pr 5", true},
+		{"! cd evil && nohup env -u AGENTCTL_SESSION_ID -u TMUX_PANE -u AGENTCTL_WINDOW_ID agentctl dispatch --review-pr 5", true},
+		{"nice -n 0 env -u AGENTCTL_SESSION_ID agentctl dispatch --review-pr 5", true},
+		{"agentctl dispatch --review-pr 5 > out.txt", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {
@@ -73,8 +77,17 @@ func TestLineChangesContext(t *testing.T) {
 		{`agentctl dispatch --review-pr 5 --prompt "cd somewhere first"`, false},
 		{`agentctl dispatch --review-pr 5 --prompt "$(cat focus.md)"`, false},
 		{`agentctl dispatch --review-pr 5 --model sonnet`, false},
-		{`go test ./... && agentctl dispatch --review-pr 5`, false},
-		{`echo cd | agentctl dispatch --review-pr 5`, false},
+		{`go test ./... && agentctl dispatch --review-pr 5`, true},
+		{`echo cd | agentctl dispatch --review-pr 5`, true},
+		{`agentctl dispatch --review-pr 5 | tail -3 && echo done`, false},
+		{`agentctl context set k v; /usr/local/bin/agentctl dispatch --review-pr 5 2>&1`, false},
+		{`agentctl dispatch --review-pr 5 > out.txt`, false},
+		{`time cd evil; time env -u AGENTCTL_SESSION_ID -u TMUX_PANE -u AGENTCTL_WINDOW_ID agentctl dispatch --review-pr 5`, true},
+		{`! cd evil && nohup env -u AGENTCTL_SESSION_ID -u TMUX_PANE -u AGENTCTL_WINDOW_ID agentctl dispatch --review-pr 5`, true},
+		{`nice -n 0 env -u AGENTCTL_SESSION_ID agentctl dispatch --review-pr 5`, true},
+		{`if true; then cd evil; fi; agentctl dispatch --review-pr 5`, true},
+		{`nohup agentctl dispatch --review-pr 5`, true},
+		{`agentctl dispatch --review-pr 1; cd evil; agentctl dispatch --review-pr 2`, true},
 		{`cd x && agentctl dispatch --review-pr 5`, true},
 		{`X=1 agentctl dispatch --review-pr 5`, true},
 		{`true || cd x; agentctl dispatch --review-pr 5`, true},
@@ -83,7 +96,7 @@ func TestLineChangesContext(t *testing.T) {
 		{`. ./env.sh && agentctl dispatch --review-pr 5`, true},
 		{`/usr/bin/env agentctl dispatch --review-pr 5`, true},
 		{`"cd" x && agentctl dispatch --review-pr 5`, true},
-		{"`which agentctl` dispatch --review-pr 5", true},
+		{"(agentctl dispatch --review-pr 5)", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {
@@ -152,6 +165,12 @@ func TestValidateBash_ApprovedDispatchRecordsApproval(t *testing.T) {
 				{"w99", []string{"--review-pr", "1"}},
 				{"w99", []string{"--review-pr", "2", "--agent", "code-reviewer"}},
 			},
+		},
+		{
+			name:     "separate redirection target is not an argument",
+			command:  `agentctl dispatch --review-pr 5 > out.txt`,
+			approved: true,
+			want:     []recordedApproval{{"w99", []string{"--review-pr", "5"}}},
 		},
 		{
 			name:     "expanding words are not recorded",

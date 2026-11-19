@@ -98,8 +98,8 @@ func TestDispatchReviewPR_ReviewerApproval(t *testing.T) {
 	}{
 		{name: "global reviewer from an agent session launches",
 			gate: gateStubs{agentSession: true}, approval: -1},
-		{name: "global reviewer leaves an approval unused",
-			gate: gateStubs{agentSession: true}, approval: 0},
+		{name: "global reviewer still uses up an approval",
+			gate: gateStubs{agentSession: true}, approval: 0, wantConsumed: true},
 		{name: "local reviewer without approval is refused",
 			gate: gateStubs{agentSession: true, local: []string{"*"}}, approval: -1,
 			wantErr: "no human approval was recorded"},
@@ -177,26 +177,33 @@ func TestDispatchReviewPR_ApprovalIsSingleUse(t *testing.T) {
 }
 
 // A reviewer that turns local only in the worktree (a definition committed on
-// the default branch) is caught by Launch's VerifyAgent call.
+// the default branch) is caught by Launch's VerifyAgent call, and passes it
+// with the approval the pre-launch check claimed.
 func TestDispatchReviewPR_LocalOnlyInWorktree(t *testing.T) {
-	clearApprovals(t)
-	s := &reviewStubs{pr: dispatch.PullRequest{State: "OPEN"}, result: dispatch.Result{WindowID: "@40"}}
-	stubReviewDispatch(t, s)
-	g := &gateStubs{agentSession: true, local: []string{"/repo/.worktrees/review"}}
-	stubReviewerGate(t, g)
-	if _, _, err := dispatchReviewPR(DispatchOptions{ReviewPR: 42, Dir: t.TempDir()}); err != nil {
-		t.Fatal(err)
-	}
-	err := s.launched.VerifyAgent("/repo/.worktrees/review", "/repo")
-	if err == nil || !strings.Contains(err.Error(), "no human approval") {
-		t.Fatalf("VerifyAgent = %v, want a refusal", err)
-	}
-	if last := g.resolved[len(g.resolved)-1]; !slices.Contains(last, "/repo/.worktrees/review") || !slices.Contains(last, "/repo") {
-		t.Errorf("resolved from %v, want the worktree and repo dirs", last)
-	}
-	writeApproval(t, time.Now())
-	if err := s.launched.VerifyAgent("/repo/.worktrees/review", "/repo"); err != nil {
-		t.Fatalf("VerifyAgent with approval: %v", err)
+	for _, approved := range []bool{false, true} {
+		t.Run(map[bool]string{false: "no approval", true: "approved"}[approved], func(t *testing.T) {
+			clearApprovals(t)
+			s := &reviewStubs{pr: dispatch.PullRequest{State: "OPEN"}, result: dispatch.Result{WindowID: "@40"}}
+			stubReviewDispatch(t, s)
+			g := &gateStubs{agentSession: true, local: []string{"/repo/.worktrees/review"}}
+			stubReviewerGate(t, g)
+			if approved {
+				writeApproval(t, time.Now())
+			}
+			if _, _, err := dispatchReviewPR(DispatchOptions{ReviewPR: 42, Dir: t.TempDir()}); err != nil {
+				t.Fatal(err)
+			}
+			err := s.launched.VerifyAgent("/repo/.worktrees/review", "/repo")
+			if last := g.resolved[len(g.resolved)-1]; !slices.Contains(last, "/repo/.worktrees/review") || !slices.Contains(last, "/repo") {
+				t.Errorf("resolved from %v, want the worktree and repo dirs", last)
+			}
+			if approved && err != nil {
+				t.Fatalf("VerifyAgent with approval: %v", err)
+			}
+			if !approved && (err == nil || !strings.Contains(err.Error(), "no human approval")) {
+				t.Fatalf("VerifyAgent = %v, want a refusal", err)
+			}
+		})
 	}
 }
 
@@ -214,5 +221,28 @@ func TestDispatchArgsFrom(t *testing.T) {
 		if !slices.Equal(got, tt.want) || (got == nil) != (tt.want == nil) {
 			t.Errorf("dispatchArgsFrom(%v) = %#v, want %#v", tt.argv, got, tt.want)
 		}
+	}
+}
+
+// An approval used by a run whose reviewer was global cannot be picked up by
+// a later identical run that finds a local reviewer.
+func TestDispatchReviewPR_ApprovalNotLeftForALaterRun(t *testing.T) {
+	clearApprovals(t)
+	s := &reviewStubs{pr: dispatch.PullRequest{State: "OPEN"}, result: dispatch.Result{WindowID: "@40"}}
+	stubReviewDispatch(t, s)
+	g := &gateStubs{agentSession: true}
+	stubReviewerGate(t, g)
+	writeApproval(t, time.Now())
+	if _, _, err := dispatchReviewPR(DispatchOptions{ReviewPR: 42, Dir: t.TempDir()}); err != nil {
+		t.Fatalf("global run: %v", err)
+	}
+	if approvalLeft(t) {
+		t.Fatal("approval left after the global run")
+	}
+	g.local = []string{"*"}
+	s.launched = nil
+	_, _, err := dispatchReviewPR(DispatchOptions{ReviewPR: 42, Dir: t.TempDir()})
+	if err == nil || s.launched != nil {
+		t.Fatalf("local rerun: err = %v, launched = %v; want a refusal", err, s.launched != nil)
 	}
 }

@@ -82,41 +82,70 @@ var reviewerGlobalFrom = func(cfg *config.Config, dir string) bool {
 // dispatch is gated, so the human sees it and the CLI finds an approval.
 func reviewExemptionTrusted(cfg *config.Config, command, cwd string) bool {
 	if lineChangesContext(command) {
-		logging.Log("hook-validate-bash: review dispatch line changes directory or environment; gating")
+		logging.Log("hook-validate-bash: review dispatch line runs non-agentctl commands before the dispatch; gating")
 		return false
 	}
 	return reviewerGlobalFrom(cfg, cwd)
 }
 
-// contextCommands change the directory or environment the rest of the line
-// runs in, or run a command line this scanner cannot see into.
-var contextCommands = map[string]bool{
-	"cd": true, "pushd": true, "popd": true,
-	"env": true, "export": true, "unset": true, "declare": true, "typeset": true, "readonly": true, "local": true, "set": true,
-	"source": true, ".": true, "eval": true, "exec": true, "command": true, "builtin": true,
-	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "fish": true,
-	"sudo": true, "doas": true, "su": true, "xargs": true,
+// lineChangesContext reports whether something in the line could make a
+// dispatch run in another directory or environment than the hook sees. It is
+// an allowlist: every simple command up to the last `agentctl dispatch` must
+// itself be an agentctl invocation (`agentctl` or a path ending in
+// /agentctl), since agentctl subcommands cannot change the shell's directory
+// or environment. Anything else before a dispatch (cd, env, a variable
+// assignment, a keyword such as `!`, `time` or `if`, an exec wrapper such as
+// nohup or nice, a subshell, group or expanded command word) counts as a
+// change. Commands after the last dispatch cannot affect it, so pipes and
+// trailing `&& echo` are fine. It is a scanner, not a shell parser; anything
+// it does not model counts as a change (fail toward the popup).
+func lineChangesContext(command string) bool {
+	words := commandWords(command)
+	foreign := false
+	for i, w := range words {
+		if w.structural {
+			foreign = true
+			continue
+		}
+		// Every word dispatchSegments takes for a dispatch must be the
+		// command word, reached with nothing foreign before it.
+		if strings.HasSuffix(w.text, "agentctl") && i+1 < len(words) && !words[i+1].atCmd && words[i+1].text == "dispatch" {
+			if foreign || !w.atCmd || !isAgentctlWord(w) {
+				return true
+			}
+			continue
+		}
+		if w.atCmd && !isAgentctlWord(w) {
+			foreign = true
+		}
+	}
+	return false
 }
 
-var assignmentRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\+?=`)
+// lineWord is one word of a command line, split at control operators.
+type lineWord struct {
+	text    string
+	expands bool
+	// atCmd marks the command word of a simple command.
+	atCmd bool
+	// structural marks syntax the scanner does not model: a subshell,
+	// group or backtick.
+	structural bool
+}
 
-// lineChangesContext reports whether some simple command in the line could
-// make a later agentctl dispatch run in another directory or environment: a
-// command word in contextCommands, a leading variable assignment, a subshell
-// or group, or a command word the shell expands. It is a scanner, not a
-// shell parser; anything odd counts as a change (fail toward the popup).
-func lineChangesContext(command string) bool {
+// commandWords tokenizes command and marks each simple command's command
+// word. Redirections in command position (">x agentctl ...") are skipped.
+func commandWords(command string) []lineWord {
+	var words []lineWord
 	atCmd := true
 	for _, t := range tokenizeQuoted(strings.TrimSpace(command)) {
 		if t.quoted {
-			if atCmd && (t.expands || isContextWord(t.text)) {
-				return true
-			}
+			words = append(words, lineWord{text: t.text, expands: t.expands, atCmd: atCmd})
 			atCmd = false
 			continue
 		}
-		if strings.ContainsAny(t.text, "(){}`") || t.expands && atCmd {
-			return true
+		if strings.ContainsAny(t.text, "(){}`") {
+			words = append(words, lineWord{text: t.text, structural: true})
 		}
 		// Split on attached control operators ("x&&cd"): each piece after
 		// an operator is a command word.
@@ -125,20 +154,28 @@ func lineChangesContext(command string) bool {
 				atCmd = true
 				continue
 			}
-			if atCmd && isContextWord(piece) {
-				return true
+			if atCmd && isRedirection(piece) {
+				continue
 			}
-			if !isRedirection(piece) {
-				atCmd = false
-			}
+			words = append(words, lineWord{text: piece, expands: t.expands, atCmd: atCmd})
+			atCmd = false
 		}
 	}
-	return false
+	return words
+}
+
+// isAgentctlWord reports whether a command word runs the agentctl binary.
+func isAgentctlWord(w lineWord) bool {
+	return !w.expands && (w.text == "agentctl" || strings.HasSuffix(w.text, "/agentctl"))
 }
 
 // splitControl splits an unquoted word at the control operator bytes ; & |,
-// returning "" in place of each operator run (a command boundary).
+// returning "" in place of each operator run (a command boundary). A
+// redirection's "&" ("2>&1", "&>log") is not a control operator.
 func splitControl(w string) []string {
+	if isRedirection(w) {
+		return []string{w}
+	}
 	var out []string
 	start := 0
 	for i := 0; i < len(w); i++ {
@@ -158,10 +195,6 @@ func splitControl(w string) []string {
 		out = append(out, w[start:])
 	}
 	return out
-}
-
-func isContextWord(w string) bool {
-	return contextCommands[filepath.Base(w)] || assignmentRE.MatchString(w)
 }
 
 // approvalTamperReason is the deny reason for commands that write the
