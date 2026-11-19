@@ -10,7 +10,7 @@ import {
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
   actionsWithQueue, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
-  liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines,
+  defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
 } from "./logic.js";
 
@@ -450,3 +450,7 @@ console.log("ok: resolved text");
   assert.deepEqual(r.toasts, [['sweep s: no tmux session "s"', "error"]]);
   console.log("ok: sweep helpers and confirm flow");
 }
+for (const f of fixtures.defaultAgent) {
+  assert.equal(defaultAgentFor(f.projects, f.dir, f.agents, f.userPicked), f.expect, f.name);
+}
+console.log("ok: dispatch default agent");

@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -79,6 +80,55 @@ func TestKillWindowSpawnsReconcile(t *testing.T) {
 	}
 }
 
+// KillWindowIn kills a window in a named session and spawns a reconcile
+// pinned to that session's runtime dir, never the caller's.
+func TestKillWindowInSpawnsPinnedReconcile(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	t.Setenv("TMUX_TMPDIR", shortTempDir(t))
+	t.Setenv("TMUX", "")
+	if out, err := exec.Command("tmux", "-f", "/dev/null", "new-session", "-d", "-s", "kwin", "sleep 600").CombinedOutput(); err != nil {
+		t.Skipf("cannot start private tmux: %v: %s", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("tmux", "kill-server").Run() })
+	idOut, err := exec.Command("tmux", "new-window", "-d", "-t", "kwin", "-P", "-F", "#{window_id}", "sleep 600").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strings.TrimSpace(string(idOut))
+	oldSession := SessionName
+	SessionName = "some-other-session"
+	t.Cleanup(func() { SessionName = oldSession })
+	got := captureSpawn(t)
+	rd := filepath.Join(t.TempDir(), "child", ".agentctl")
+
+	if err := KillWindowIn("kwin", rd, "@999"); err == nil {
+		t.Fatal("KillWindowIn of a missing window succeeded")
+	}
+	if len(*got) != 0 {
+		t.Fatalf("reconcile spawned for a failed kill: %v", *got)
+	}
+	if err := KillWindowIn("kwin", rd, id); err != nil {
+		t.Fatalf("KillWindowIn(%s): %v", id, err)
+	}
+	if len(*got) != 1 || (*got)[0] != rd {
+		t.Fatalf("spawns = %v, want one pinned to %q", *got, rd)
+	}
+}
+
+// shortTempDir returns a temp dir short enough for a tmux socket path (the
+// macOS t.TempDir is too long for sun_path).
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "kw")
+	if err != nil {
+		t.Skipf("no short temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 func TestSessionHookArgs(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -92,7 +142,7 @@ func TestSessionHookArgs(t *testing.T) {
 		{"unlinked", reconcileHookArgs("s", "/bin/agentctl", "/p/.agentctl"), "window-unlinked", "reconcile"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.args[0] != "set-hook" || tc.args[1] != "-t" || tc.args[2] != "s" || tc.args[3] != tc.hook {
+			if tc.args[0] != "set-hook" || tc.args[1] != "-t" || tc.args[2] != "=s:" || tc.args[3] != tc.hook {
 				t.Fatalf("not a session-scoped %s hook: %v", tc.hook, tc.args)
 			}
 			run := tc.args[4]

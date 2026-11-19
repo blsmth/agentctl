@@ -14,10 +14,10 @@ func TestBuildNewWindowArgs(t *testing.T) {
 		wantB      bool
 		wantTarget string
 	}{
-		{"focus right", true, false, false, false, "s:"},
-		{"focus left", true, true, false, true, "s:^"},
-		{"background right", false, false, true, false, "s:"},
-		{"background left", false, true, true, true, "s:^"},
+		{"focus right", true, false, false, false, "=s:"},
+		{"focus left", true, true, false, true, "=s:^"},
+		{"background right", false, false, true, false, "=s:"},
+		{"background left", false, true, true, true, "=s:^"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

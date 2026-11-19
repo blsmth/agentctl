@@ -11,6 +11,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/panestate"
@@ -305,6 +306,28 @@ type projectInfo struct {
 	Name    string `json:"name"`
 	Dir     string `json:"dir"`
 	Session string `json:"session"`
+	// DefaultAgent is the agent a launch in this project would default to
+	// (project default_agent, else the global one); "" when none is usable.
+	DefaultAgent string `json:"default_agent"`
+}
+
+// projectDefaultAgent resolves the default agent of a project the way a
+// launch there would (dispatch.ResolveDefaultAgent). It binds the project's
+// session via withSession, since config.Load reads state that rebinds. Any
+// failure yields "": a bad default must never fail the request.
+func projectDefaultAgent(session, runtimeDir, dir string) string {
+	var name string
+	err := withSession(session, runtimeDir, func() error {
+		name = dispatch.ResolveDefaultAgent(config.Load(), dir, dispatch.DefaultAgentDiscovery{}, func(msg string) {
+			logging.Debug("serve: projects: %s", msg)
+		})
+		return nil
+	})
+	if err != nil {
+		logging.Debug("serve: project default agent for %s: %v", dir, err)
+		return ""
+	}
+	return name
 }
 
 func (s *Server) handleProjects(w http.ResponseWriter, _ *http.Request) {
@@ -317,7 +340,10 @@ func (s *Server) handleProjects(w http.ResponseWriter, _ *http.Request) {
 		if g.Dir == "" {
 			continue
 		}
-		projects = append(projects, projectInfo{Name: g.Project, Dir: g.Dir, Session: g.Session})
+		projects = append(projects, projectInfo{
+			Name: g.Project, Dir: g.Dir, Session: g.Session,
+			DefaultAgent: projectDefaultAgent(g.Session, g.RuntimeDir, g.Dir),
+		})
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Projects []projectInfo `json:"projects"`

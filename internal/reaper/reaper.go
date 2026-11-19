@@ -202,7 +202,7 @@ var (
 
 // tmuxServerPID returns the PID of the tmux server hosting sessionName.
 func tmuxServerPID(sessionName string) (int, error) {
-	out, err := exec.Command("tmux", "display-message", "-p", "-t", sessionName, "#{pid}").Output()
+	out, err := exec.Command("tmux", "display-message", "-p", "-t", "="+sessionName+":", "#{pid}").Output()
 	if err != nil {
 		return 0, fmt.Errorf("tmux display-message: %w", err)
 	}

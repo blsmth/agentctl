@@ -87,9 +87,9 @@ func TestSessionWindowTarget(t *testing.T) {
 		windowID string
 		want     string
 	}{
-		{"typical", "agentctl-myproject", "@5", "agentctl-myproject:@5"},
-		{"hub session", "agentctl-hub", "@0", "agentctl-hub:@0"},
-		{"empty window id", "agentctl-acme", "", "agentctl-acme:"},
+		{"typical", "agentctl-myproject", "@5", "=agentctl-myproject:@5"},
+		{"hub session", "agentctl-hub", "@0", "=agentctl-hub:@0"},
+		{"empty window id", "agentctl-acme", "", "=agentctl-acme:"},
 	}
 
 	for _, tt := range tests {
@@ -225,7 +225,7 @@ func TestSendKeyToWindow(t *testing.T) {
 	if err := SendKeyToWindow("agentctl-proj", "@523", "Escape"); err != nil {
 		t.Fatal(err)
 	}
-	if gotTarget != "agentctl-proj:@523" || gotKey != "Escape" {
+	if gotTarget != "=agentctl-proj:@523" || gotKey != "Escape" {
 		t.Errorf("sent %q to %q", gotKey, gotTarget)
 	}
 	want := []string{"send-keys", "-t", "s:@1", "--", "-X"}

@@ -3,7 +3,7 @@ argv:
   -d
   -b
   -t
-  agentctl-launchtest:^
+  =agentctl-launchtest:^
   -n
   lead
   -c

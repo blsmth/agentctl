@@ -493,6 +493,10 @@ func (m *monitorModel) reconcileWindows(cfg *config.Config, windows []tmux.Windo
 	}
 }
 
+// cascadeDepsFn builds the close_children cascade deps; a seam so tests never
+// reach real tmux kills.
+var cascadeDepsFn = reconcile.DefaultCascadeDeps
+
 // reconcileDeps wires the shared Gone finisher to this monitor's handlers.
 func (m *monitorModel) reconcileDeps(cfg *config.Config) reconcile.Deps {
 	return reconcile.Deps{
@@ -500,6 +504,7 @@ func (m *monitorModel) reconcileDeps(cfg *config.Config) reconcile.Deps {
 		Handle:      func(t state.Transition, ac config.AgentConfig) { m.fireHandlers(t, ac) },
 		AgentConfig: cfg.ForAgent,
 		RemoveInbox: mailbox.RemoveInbox,
+		Cascade:     cascadeDepsFn(m.runtimeDir, tmux.SessionName),
 	}
 }
 
