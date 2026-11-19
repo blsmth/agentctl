@@ -3,6 +3,9 @@ package hooks
 import (
 	"encoding/json"
 	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -50,6 +53,10 @@ func TestCheckConfigTamper(t *testing.T) {
 		{"dispatch_approval with the dir", `cd ~/.config/agentctl && jq '.dispatch_approval="off"' config.json > t && mv t config.json`, true},
 		{"redirect after agentctl args", `agentctl status --json > ~/.config/agentctl/config.json`, true},
 		{"agentctl with a command substitution", `agentctl context set k "$(tee ~/.config/agentctl/config.json </tmp/x)"`, true},
+		{"comment hides a newline", "agentctl status #'\ntee ~/.config/agentctl/config.json </tmp/x\n'", true},
+		{"ANSI-C quote", `agentctl status $'\''; tee ~/.config/agentctl/config.json </tmp/x #'`, true},
+		{"cd then bare file", `cd ~/.config/agentctl && printf '{}' > config.json`, true},
+		{"cd then mv bare file", `cd ~/.config/agentctl && mv /tmp/x config.json`, true},
 
 		// Allowed: reads, the project config, and agentctl argument text.
 		{"cat", `cat ~/.config/agentctl/config.json`, false},
@@ -169,6 +176,13 @@ func TestMaskAgentctlArgs(t *testing.T) {
 		{"single-quoted substitution is text", `agentctl context set k '$(tee x)'`, `agentctl _ _ _ _`},
 		{"not agentctl", `tee 'agentctl x'`, `tee 'agentctl x'`},
 		{"newline ends the command", "agentctl context set k v\ntee x", "agentctl _ _ _ _\ntee x"},
+		{"comment left whole", "agentctl status # x", "agentctl status # x"},
+		{"ANSI-C quote left whole", `agentctl status $'x'`, `agentctl status $'x'`},
+		{"parameter expansion left whole", `agentctl status ${X}`, `agentctl status ${X}`},
+		{"unterminated single quote left whole", `agentctl status 'x`, `agentctl status 'x`},
+		{"unterminated double quote left whole", `agentctl status "x`, `agentctl status "x`},
+		{"# inside a word is not a comment", `agentctl context set k a#b`, `agentctl _ _ _ _`},
+		{"# inside quotes is text", `agentctl context set k '# x'`, `agentctl _ _ _ _`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -195,6 +209,9 @@ func TestCheckCronTamper_IgnoresAgentctlArgumentText(t *testing.T) {
 		}
 	}
 	denied := []string{
+		"agentctl status #'\ntee ~/.config/agentctl/schedules.json </tmp/x\n'",
+		`agentctl status $'\''; tee ~/.config/agentctl/schedules.json </tmp/x #'`,
+		`agentctl context set k 'unterminated && tee ~/.config/agentctl/schedules.json`,
 		`agentctl context set k v && tee ~/.config/agentctl/schedules.json </tmp/x`,
 		`agentctl cron list > ~/.config/agentctl/schedules.json`,
 		`agentctl context set k "$(cp /tmp/x ~/.config/agentctl/schedules.json)"`,
@@ -202,6 +219,51 @@ func TestCheckCronTamper_IgnoresAgentctlArgumentText(t *testing.T) {
 	for _, cmd := range denied {
 		if reason := checkGlobalDenyList(cmd); reason != cronTamperReason {
 			t.Errorf("checkGlobalDenyList(%q) = %q, want the cron deny", cmd, reason)
+		}
+	}
+}
+
+// The Write/Edit guard sees through a symlinked directory and, on macOS,
+// through case: both name the same file.
+func TestGlobalConfigEditTarget_SameFile(t *testing.T) {
+	root := t.TempDir()
+	cfgDir := filepath.Join(root, "home", ".config", "agentctl")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(cfgDir, "config.json")
+	link := filepath.Join(root, "c")
+	if err := os.Symlink(filepath.Join(root, "home", ".config"), link); err != nil {
+		t.Fatal(err)
+	}
+	origFile, origRead := globalConfigFile, readGlobalConfig
+	t.Cleanup(func() { globalConfigFile, readGlobalConfig = origFile, origRead })
+	globalConfigFile = func() (string, error) { return target, nil }
+	readGlobalConfig = os.ReadFile
+
+	off := func(path string) json.RawMessage {
+		b, _ := json.Marshal(map[string]any{"file_path": path, "content": `{"dispatch_approval": "off"}`})
+		return b
+	}
+	viaLink := filepath.Join(link, "agentctl", "config.json")
+
+	// No file yet: matched through the parent directory.
+	if got := globalConfigEditTarget("Write", off(viaLink)); got == "" {
+		t.Error("write through a symlinked dir (no file yet) was not denied")
+	}
+	if err := os.WriteFile(target, []byte(`{"dispatch_approval": "all"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := globalConfigEditTarget("Write", off(viaLink)); got == "" {
+		t.Error("write through a symlinked dir was not denied")
+	}
+	if got := globalConfigEditTarget("Write", off(filepath.Join(cfgDir, "other.json"))); got != "" {
+		t.Errorf("write of a sibling file denied: %q", got)
+	}
+	if runtime.GOOS == "darwin" {
+		upper := filepath.Join(root, "home", ".Config", "agentctl", "CONFIG.json")
+		if got := globalConfigEditTarget("Write", off(upper)); got == "" {
+			t.Error("write via a case variant was not denied")
 		}
 	}
 }

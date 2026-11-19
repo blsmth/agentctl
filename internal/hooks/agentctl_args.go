@@ -15,11 +15,13 @@ import (
 // writes file). An agentctl command that contains a command substitution
 // ($(...), backticks, <(...) or >(...) outside single quotes) is left whole,
 // since the shell runs that part. This is a scanner for the tamper rules, not
-// a shell parser.
+// a shell parser, so anything it does not model -- a comment (a word that
+// starts with #), ANSI-C $'...' quoting, ${...}, an unterminated quote --
+// returns command unchanged (fail closed: the rules see every word).
 func maskAgentctlArgs(command string) string {
 	m := argMasker{s: command, cmdStart: true}
 	m.scan()
-	if len(m.masked) == 0 {
+	if m.unsure || len(m.masked) == 0 {
 		return command
 	}
 	var b strings.Builder
@@ -44,6 +46,7 @@ type argMasker struct {
 	pending   [][2]int // argument word spans to mask if the command qualifies
 
 	masked [][2]int
+	unsure bool // the command uses shell syntax the scanner does not model
 }
 
 // endCommand closes the current simple command.
@@ -90,6 +93,9 @@ func (m *argMasker) scan() {
 				i++
 			}
 			m.redirNext = true
+		case c == '#':
+			m.unsure = true // a comment: its end is not modeled
+			return
 		default:
 			start := i
 			var text strings.Builder
@@ -118,7 +124,7 @@ func (m *argMasker) scanWord(i int, text *strings.Builder) int {
 		case '\'':
 			end := strings.IndexByte(s[i+1:], '\'')
 			if end < 0 {
-				text.WriteString(s[i+1:])
+				m.unsure = true
 				return len(s)
 			}
 			text.WriteString(s[i+1 : i+1+end])
@@ -138,13 +144,21 @@ func (m *argMasker) scanWord(i int, text *strings.Builder) int {
 				text.WriteByte(s[i])
 				i++
 			}
+			if i >= len(s) {
+				m.unsure = true
+			}
 			i++ // closing quote
 			continue
 		case '`':
 			m.subst = true
 		case '$':
-			if i+1 < len(s) && s[i+1] == '(' {
-				m.subst = true
+			if i+1 < len(s) {
+				switch s[i+1] {
+				case '(':
+					m.subst = true
+				case '\'', '{':
+					m.unsure = true // ANSI-C quoting, parameter expansion
+				}
 			}
 		}
 		text.WriteByte(c)

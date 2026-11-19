@@ -24,7 +24,8 @@ var cronJobsPath = cron.JobsPath
 // cronEditTarget returns the protected cron path a file-editing tool call
 // would write ("" when it is not one): the jobs file, or anything under the
 // cron state dir. It is the Edit/Write counterpart of checkCronTamper, and
-// the same speed bump: symlinks and hard links are not resolved.
+// the same speed bump: the jobs file is matched through symlinks and case
+// (sameFilePath), the state dir by path only.
 func cronEditTarget(toolName string, rawInput json.RawMessage) string {
 	if !fileEditTools[toolName] || len(rawInput) == 0 {
 		return ""
@@ -44,7 +45,7 @@ func cronEditTarget(toolName string, rawInput json.RawMessage) string {
 		return ""
 	}
 	p = filepath.Clean(paths.ExpandHome(p))
-	if jobs, err := cronJobsPath(); err == nil && jobs != "" && p == filepath.Clean(jobs) {
+	if jobs, err := cronJobsPath(); err == nil && jobs != "" && sameFilePath(p, filepath.Clean(jobs)) {
 		return p
 	}
 	if dir := cronStateDir(); dir != "" {

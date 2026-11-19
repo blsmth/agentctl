@@ -263,6 +263,25 @@ func TestValidateBash_ReviewExemptionRequiresCodeReviewer(t *testing.T) {
 		{"attached short agent flag", "agentctl dispatch --review-pr 5 -ago-engineer", true},
 		{"--agent without a value", "agentctl dispatch --review-pr 5 --agent", true},
 		{"reviewer review plus non-reviewer review", "agentctl dispatch --review-pr 1; agentctl dispatch --review-pr 2 --agent go-engineer", true},
+
+		// A quoted or escaped --review-pr is a real flag; the last one wins.
+		{"quoted --review-pr 0 overrides", `agentctl dispatch --review-pr 5 "--review-pr" 0 --issue 7`, true},
+		{"quoted --review-pr=0 overrides", `agentctl dispatch --review-pr 5 '--review-pr=0' --issue 7`, true},
+		{"escaped --review-pr 0 overrides", `agentctl dispatch --review-pr 5 \--review-pr 0`, true},
+		{"quoted --review-pr alone", `agentctl dispatch "--review-pr" 5`, false},
+
+		// Only the allowlisted flags keep the exemption.
+		{"--issue", "agentctl dispatch --review-pr 5 --issue 7", true},
+		{"-i", "agentctl dispatch --review-pr 5 -i 7", true},
+		{"--dir", "agentctl dispatch --dir /tmp/evil --review-pr 5", true},
+		{"--dir=", "agentctl dispatch --review-pr 5 --dir=/tmp/evil", true},
+		{"--harness", "agentctl dispatch --review-pr 5 --harness pi", true},
+		{"--backend", "agentctl dispatch --review-pr 5 --backend ollama", true},
+		{"--account", "agentctl dispatch --review-pr 5 --account work", true},
+		{"--no-worktree", "agentctl dispatch --review-pr 5 --no-worktree", true},
+		{"stray word", "agentctl dispatch --review-pr 5 extra", true},
+		{"allowlisted flags", "agentctl dispatch --review-pr 5 --author @12 --repo o/r --model sonnet -k focus --wait --timeout 30m", false},
+		{"allowlisted = forms", "agentctl dispatch --review-pr=5 --author=@12 --repo=o/r --model=sonnet --timeout=1h", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

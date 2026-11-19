@@ -111,7 +111,8 @@ func dispatchNeedsApproval(command, mode string) bool {
 }
 
 // segmentIsReview reports whether a dispatch segment is exempt from the
-// "non-review" gate: a PR review dispatch run by the code-reviewer agent.
+// "non-review" gate: the code-reviewer agent reviewing PR N, and nothing
+// else.
 //
 //   - Its last --review-pr flag ("--review-pr N" or "--review-pr=N"; the CLI
 //     keeps the last one) carries a literal positive integer. A missing,
@@ -120,14 +121,16 @@ func dispatchNeedsApproval(command, mode string) bool {
 //     ordinary dispatch.
 //   - Its agent resolves to config.DefaultReviewAgent: no --agent/-a at all
 //     (the CLI default for --review-pr), or a last --agent/-a/--agent=
-//     whose literal value is that name. Anything else would be an
-//     unattended launch of an arbitrary agent with arbitrary --prompt
-//     instructions.
+//     whose literal value is that name.
+//   - Every flag is in reviewExemptValueFlags or reviewExemptBoolFlags. Any
+//     other flag (--issue, --dir, which picks where the agent body is
+//     resolved, --backend, --account, --harness, --no-worktree) or a stray
+//     word means it is not exempt.
 //
-// Values of other flags are never read as flags. It fails closed on anything
-// the shell could turn into extra or different arguments: an expanding word
-// in flag position, an unquoted expanding value (word splitting), or an
-// attached short agent flag ("-ax").
+// Quoting does not matter for flags (the shell strips it). It fails closed
+// on anything the shell could turn into extra or different arguments: an
+// expanding word in flag position, an unquoted expanding value (word
+// splitting), or an attached short flag ("-ax").
 func segmentIsReview(seg []cmdToken) bool {
 	found, ok := false, false
 	agent, agentOK := config.DefaultReviewAgent, true
@@ -136,37 +139,52 @@ func segmentIsReview(seg []cmdToken) bool {
 		if t.expands {
 			return false
 		}
-		switch {
-		case t.text == "--review-pr" && !t.quoted:
-			found, ok = true, false
-			if i+1 < len(seg) {
-				ok = positiveLiteral(seg[i+1])
-				i++
+		name, inline, hasInline := t.text, "", false
+		if strings.HasPrefix(name, "--") {
+			if eq := strings.IndexByte(name, '='); eq > 0 {
+				name, inline, hasInline = name[:eq], name[eq+1:], true
 			}
-		case strings.HasPrefix(t.text, "--review-pr=") && !t.quoted:
-			found = true
-			ok = positiveInt(strings.TrimPrefix(t.text, "--review-pr="))
-		case t.text == "--agent" || t.text == "-a":
-			agent, agentOK = "", false
-			if i+1 < len(seg) {
-				agent, agentOK = seg[i+1].text, !seg[i+1].expands
-				i++
+		}
+		if reviewExemptBoolFlags[name] && !hasInline {
+			continue
+		}
+		if !reviewExemptValueFlags[name] {
+			return false
+		}
+		value := cmdToken{text: inline}
+		if !hasInline {
+			if i+1 >= len(seg) {
+				return false
 			}
-		case strings.HasPrefix(t.text, "--agent="):
-			agent, agentOK = strings.TrimPrefix(t.text, "--agent="), true
-		case strings.HasPrefix(t.text, "-a") && !strings.HasPrefix(t.text, "--"):
-			return false // "-ax" / "-a=x": not worth parsing, gate it
-		case isDispatchValueFlag(t.text):
-			if i+1 < len(seg) {
-				if v := seg[i+1]; v.expands && !v.quoted {
-					return false
-				}
-				i++
+			i++
+			value = seg[i]
+			if value.expands && !value.quoted {
+				return false
 			}
+		}
+		switch name {
+		case "--review-pr":
+			found, ok = true, positiveLiteral(value)
+		case "--agent", "-a":
+			agent, agentOK = value.text, !value.expands
 		}
 	}
 	return found && ok && agentOK && agent == config.DefaultReviewAgent
 }
+
+// reviewExemptValueFlags are the value-taking dispatch flags an exempt
+// review dispatch may carry. --prompt/--prompt-key are review focus;
+// --model only picks the model (orchestrators pass --model sonnet for small
+// PRs).
+var reviewExemptValueFlags = map[string]bool{
+	"--review-pr": true, "--agent": true, "-a": true, "--author": true,
+	"--prompt": true, "-p": true, "--prompt-key": true, "-k": true,
+	"--repo": true, "--timeout": true, "--model": true, "-m": true,
+}
+
+// reviewExemptBoolFlags are the boolean dispatch flags an exempt review
+// dispatch may carry.
+var reviewExemptBoolFlags = map[string]bool{"--wait": true}
 
 // positiveLiteral reports whether t is a non-expanding positive integer.
 func positiveLiteral(t cmdToken) bool {
@@ -183,7 +201,9 @@ type cmdToken struct {
 	text   string
 	quoted bool
 	// expands is true when the shell would not pass text through verbatim:
-	// it contains $, a backtick or a backslash outside single quotes.
+	// it contains $ or a backtick outside single quotes, a backslash inside
+	// double quotes, or a trailing backslash. An unquoted backslash escape
+	// (\x) is literal and marks the word quoted instead.
 	expands bool
 }
 
@@ -246,7 +266,8 @@ func segmentHasHelp(seg []cmdToken) bool {
 // the next word.
 func isDispatchValueFlag(tok string) bool {
 	switch tok {
-	case "--agent", "-a", "--issue", "-i", "--prompt", "-p", "--prompt-key", "-k", "--review-pr", "--author":
+	case "--agent", "-a", "--issue", "-i", "--prompt", "-p", "--prompt-key", "-k", "--review-pr", "--author",
+		"--dir", "--model", "-m", "--backend", "--account", "--harness", "--repo", "--timeout":
 		return true
 	}
 	return false

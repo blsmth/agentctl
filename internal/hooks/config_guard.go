@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/blsmth/agentctl/internal/config"
@@ -23,8 +24,9 @@ import (
 // outright, like the cron tamper rules. The project-local
 // .agentctl/config.json needs no guard: a project may only tighten the
 // setting (config.sanitizeProjectConfig). Like the cron and serve rules this
-// is a speed bump, not a sandbox: symlinks are not resolved and a program
-// written to disk can still write the file.
+// is a speed bump, not a sandbox: Write/Edit sees through symlinks and case
+// (sameFilePath) but Bash matches text, and a program written to disk can
+// still write the file.
 
 // configTamperReason is the deny reason for a change to dispatch_approval in
 // the global config, or a Bash write to that file.
@@ -64,6 +66,11 @@ func checkConfigTamper(command string) string {
 	if p, err := globalConfigFile(); err == nil && p != "" {
 		files = append(files, homeRelativeAlternatives(p)...)
 		dirs = append(dirs, homeRelativeAlternatives(filepath.Dir(p))...)
+	}
+	dirRE, err := regexp.Compile("(?:" + strings.Join(dirs, "|") + ")")
+	if err == nil && dirRE.MatchString(command) {
+		// cd ~/.config/agentctl && printf x > config.json
+		files = append(files, `config\.json\b`)
 	}
 	file := "(?:" + strings.Join(files, "|") + ")"
 	for _, tmpl := range cronTamperTemplates {
@@ -136,11 +143,11 @@ func globalConfigEditTarget(toolName string, rawInput json.RawMessage) string {
 	}
 	p = filepath.Clean(paths.ExpandHome(p))
 	target, err := globalConfigFile()
-	if err != nil || target == "" || p != filepath.Clean(target) {
+	if err != nil || target == "" || !sameFilePath(p, filepath.Clean(target)) {
 		return ""
 	}
 
-	current, err := readGlobalConfig(p)
+	current, err := readGlobalConfig(target)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		logging.Log("hook-pre-tool: reading %s: %v", p, err)
 	}
@@ -190,4 +197,36 @@ func applyEdit(content string, op editOp) string {
 		return strings.ReplaceAll(content, op.OldString, op.NewString)
 	}
 	return strings.Replace(content, op.OldString, op.NewString, 1)
+}
+
+// sameFilePath reports whether p and target name the same file: equal
+// cleaned paths, the same existing file (os.SameFile, which sees through
+// symlinks, hard links and a case-insensitive file system), or, when the
+// file does not exist yet, the same existing parent directory and a base
+// name equal to target's (case-folded on macOS, whose default file system
+// ignores case).
+func sameFilePath(p, target string) bool {
+	if p == target {
+		return true
+	}
+	if a, err := os.Stat(p); err == nil {
+		b, err := os.Stat(target)
+		return err == nil && os.SameFile(a, b)
+	}
+	if !sameName(filepath.Base(p), filepath.Base(target)) {
+		return false
+	}
+	a, err := os.Stat(filepath.Dir(p))
+	if err != nil {
+		return false
+	}
+	b, err := os.Stat(filepath.Dir(target))
+	return err == nil && os.SameFile(a, b)
+}
+
+func sameName(a, b string) bool {
+	if runtime.GOOS == "darwin" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
