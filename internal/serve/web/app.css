@@ -139,7 +139,6 @@ a.chip { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45
 .choices, .row { display: flex; flex-wrap: wrap; gap: .5rem; }
 .row > .btn { flex: 1; }
 .row > .btn.small { flex: none; align-self: center; }
-.actions textarea.compact { min-height: 44px; max-height: 8rem; resize: none; }
 .row.end { justify-content: flex-end; }
 .choices .btn { flex: 1 1 40%; justify-content: flex-start; }
 .btn.small { min-height: 36px; padding: 0 .85rem; font-size: .9rem; }

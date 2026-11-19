@@ -540,14 +540,17 @@ export function mountWindow(root, ctx, { session, windowId }) {
     return n ? [`+ ${n} image${n === 1 ? "" : "s"}`] : [];
   }
 
-  // replyBox is the chat-style composer: thumbnails above one row of camera
-  // button, auto-growing textarea and a round send button.
-  function replyBox() {
+  // composer is the chat-style row shared by the reply and queue boxes:
+  // thumbnails above one row of camera button, auto-growing textarea and a
+  // round send button. onSend gets the trimmed text and the attachments; it
+  // returns the confirm popup options, the request builder and the success
+  // callback (which receives a reset function for the box).
+  function composer({ placeholder, sendLabel, confirm, buildRequest, onSuccess }) {
     const att = attachments({ icon: true });
     const text = h("textarea", {
       rows: "1",
       class: "composer-text",
-      placeholder: "Reply to the agent…",
+      placeholder,
       maxlength: "4000",
       oninput: () => grow(text),
     });
@@ -556,15 +559,18 @@ export function mountWindow(root, ctx, { session, windowId }) {
       {
         type: "button",
         class: "icon-btn send",
-        "aria-label": "Send reply",
+        "aria-label": sendLabel,
         onclick: () => {
           const value = text.value.trim();
           const n = att ? att.count() : 0;
           if (!value && !n) return;
           run(
-            { title: "Send reply?", lines: [...(value ? [value] : []), ...imageLine(n)], confirmLabel: "Send" },
-            async () => buildReplyRequest(session, windowId, value, att ? await att.upload() : []),
-            () => att?.clear(),
+            confirm(value, n),
+            async () => buildRequest(value, att ? await att.upload() : []),
+            () => {
+              onSuccess?.();
+              att?.clear();
+            },
           );
         },
       },
@@ -572,6 +578,15 @@ export function mountWindow(root, ctx, { session, windowId }) {
     );
     const row = h("div", { class: "composer" }, ...(att ? att.trigger : []), text, send);
     return { text, nodes: [...(att ? att.controls : []), row] };
+  }
+
+  function replyBox() {
+    return composer({
+      placeholder: "Reply to the agent…",
+      sendLabel: "Send reply",
+      confirm: (value, n) => ({ title: "Send reply?", lines: [...(value ? [value] : []), ...imageLine(n)], confirmLabel: "Send" }),
+      buildRequest: (value, ids) => buildReplyRequest(session, windowId, value, ids),
+    });
   }
 
   function grow(el) {
@@ -598,48 +613,21 @@ export function mountWindow(root, ctx, { session, windowId }) {
   }
 
   function queueBox() {
-    // One line until there is more to show: the pane keeps the height.
-    const text = h("textarea", {
-      rows: "1",
-      class: "compact",
+    const box = composer({
       placeholder: "Queue a message for the agent…",
-      maxlength: "4000",
-      oninput: () => {
-        text.style.height = "auto";
-        text.style.height = `${text.scrollHeight + 2}px`;
+      sendLabel: "Queue message",
+      confirm: (value, n) => ({
+        title: "Queue message?",
+        lines: [...(value ? [value] : []), ...imageLine(n), "Delivered after the current step."],
+        confirmLabel: "Queue",
+      }),
+      buildRequest: (value, ids) => buildQueueRequest(session, windowId, value, ids),
+      onSuccess: () => {
+        box.text.value = "";
+        box.text.style.height = "";
       },
     });
-    const att = attachments();
-    return [
-      text,
-      ...(att ? att.controls : []),
-      h(
-        "div",
-        { class: "row" },
-        h(
-          "button",
-          {
-            class: "btn",
-            onclick: () => {
-              const value = text.value.trim();
-              const n = att ? att.count() : 0;
-              if (!value && !n) return;
-              run(
-                { title: "Queue message?", lines: [...(value ? [value] : []), ...imageLine(n), "Delivered after the current step."], confirmLabel: "Queue" },
-                async () => buildQueueRequest(session, windowId, value, att ? await att.upload() : []),
-                () => {
-                  text.value = "";
-                  text.style.height = "";
-                  att?.clear();
-                },
-              );
-            },
-          },
-          "Queue message",
-        ),
-        interruptButton(),
-      ),
-    ];
+    return [h("div", { class: "row end" }, interruptButton()), ...box.nodes];
   }
 
   function renderActions() {
