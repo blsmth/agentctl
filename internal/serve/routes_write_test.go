@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -473,24 +474,76 @@ const multiSelectPane = "──────────────────�
 	"────────────────────────────────────────────────────────────────────────────────\n" +
 	"  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · Esc to cancel\n"
 
-// A number only toggles a checkbox in a multi-select, so the server refuses
-// it and sends nothing; Esc still dismisses.
+// In a multi-select a number key toggles one checkbox (dialog stays up); esc
+// dismisses; "submit" ticks the differences, moves to the Submit row, Enter.
 func TestAnswerMultiSelect(t *testing.T) {
 	d, ok := panestate.ParseDialog(multiSelectPane)
-	if !ok || !d.Multi {
-		t.Fatalf("fixture: ok=%v multi=%v", ok, d.Multi)
+	if !ok || !d.Multi || d.Submit == nil {
+		t.Fatalf("fixture: ok=%v multi=%v submit=%v", ok, d.Multi, d.Submit)
 	}
-	for _, tt := range []struct {
-		key  string
+	tests := []struct {
+		name string
+		body string
+		hash string
 		code int
-		sent int
-	}{{"1", 409, 0}, {"esc", 200, 1}} {
-		e := newWriteEnv(t, true)
-		e.panes.set(multiSelectPane)
-		w := e.post(winPath+"/answer", fmt.Sprintf(`{"key":%q,"dialog_hash":%q}`, tt.key, d.Hash))
-		if w.Code != tt.code || len(e.keys.all()) != tt.sent {
-			t.Errorf("key %s: status %d sent %v: %s", tt.key, w.Code, e.keys.all(), w.Body)
+		keys []string
+	}{
+		{"toggle", `{"key":"2","dialog_hash":%q}`, d.Hash, 200, []string{"2"}},
+		{"toggle unknown option", `{"key":"9","dialog_hash":%q}`, d.Hash, 409, nil},
+		{"esc", `{"key":"esc","dialog_hash":%q}`, d.Hash, 200, []string{"Escape"}},
+		{"stale hash", `{"key":"1","dialog_hash":%q}`, strings.Repeat("0", 64), 409, nil},
+		{"submit", `{"key":"submit","select":["1","2"],"dialog_hash":%q}`, d.Hash, 200,
+			[]string{"1", "2", "Down", "Down", "Down", "Enter"}},
+		{"submit nothing ticked", `{"key":"submit","dialog_hash":%q}`, d.Hash, 200,
+			[]string{"Down", "Down", "Down", "Enter"}},
+		{"submit unknown option", `{"key":"submit","select":["8"],"dialog_hash":%q}`, d.Hash, 409, nil},
+		{"submit stale", `{"key":"submit","select":["1"],"dialog_hash":%q}`, strings.Repeat("0", 64), 409, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWriteEnv(t, true)
+			e.panes.set(multiSelectPane)
+			w := e.post(winPath+"/answer", fmt.Sprintf(tt.body, tt.hash))
+			var got []string
+			for _, k := range e.keys.all() {
+				got = append(got, k.key)
+			}
+			if w.Code != tt.code || !reflect.DeepEqual(got, tt.keys) {
+				t.Errorf("status %d sent %v, want %d %v: %s", w.Code, got, tt.code, tt.keys, w.Body)
+			}
+		})
+	}
+}
+
+// Toggling a box on and straight back off lands on an earlier hash; the
+// second toggle must not be refused as an already-answered dialog.
+func TestAnswerMultiSelectToggleTwice(t *testing.T) {
+	d, _ := panestate.ParseDialog(multiSelectPane)
+	e := newWriteEnv(t, true)
+	e.panes.set(multiSelectPane)
+	for i := 0; i < 2; i++ {
+		if w := e.post(winPath+"/answer", fmt.Sprintf(`{"key":"1","dialog_hash":%q}`, d.Hash)); w.Code != 200 {
+			t.Fatalf("toggle %d: %d %s", i, w.Code, w.Body)
 		}
+	}
+}
+
+// The review page ends a multi-question flow; its Submit answers choice is an
+// ordinary single-select answer (key 1).
+func TestAnswerReviewPage(t *testing.T) {
+	const review = "────────────────────────────────────────────────────────────────────────────────\n" +
+		"←  ☒ Pick  ☒ Mode  ✔ Submit  →\nReview your answers\n ● Pick\n   → B\n\n❯ 1. Submit answers\n  2. Cancel\n"
+	d, ok := panestate.ParseDialog(review)
+	if !ok {
+		t.Fatal("not parsed")
+	}
+	e := newWriteEnv(t, true)
+	e.panes.set(review)
+	if w := e.post(winPath+"/answer", fmt.Sprintf(`{"key":"1","dialog_hash":%q}`, d.Hash)); w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if ks := e.keys.all(); len(ks) != 1 || ks[0].key != "1" {
+		t.Errorf("sent %v", ks)
 	}
 }
 

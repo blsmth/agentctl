@@ -576,16 +576,32 @@ export function hasFeature(features, name) {
  * the hash of the dialog the user was shown, so the server can refuse (409)
  * when the pane has moved on. key is an option key or "esc".
  */
-export function buildAnswerRequest(session, windowId, dialog, key) {
+export function buildAnswerRequest(session, windowId, dialog, key, selected) {
   if (!dialog || !dialog.hash) throw new Error("no dialog to answer");
-  if (dialog.multi && key !== "esc") throw new Error("multi-select: answer on the terminal");
+  const path = `${windowApiPath(session, windowId)}/answer`;
+  if (key === "submit") {
+    if (!dialog.multi || !dialog.submit) throw new Error("this question cannot be submitted from here");
+    return { method: "POST", path, body: { key, dialog_hash: dialog.hash, select: [...(selected ?? [])] } };
+  }
+  if (dialog.multi && key !== "esc") throw new Error("multi-select: tick boxes, then submit");
   const valid = key === "esc" || (dialog.options ?? []).some((o) => o.key === key);
   if (!valid) throw new Error(`key ${key} is not an option of this dialog`);
-  return {
-    method: "POST",
-    path: `${windowApiPath(session, windowId)}/answer`,
-    body: { key, dialog_hash: dialog.hash },
-  };
+  return { method: "POST", path, body: { key, dialog_hash: dialog.hash } };
+}
+
+/**
+ * checkboxChoices lists the tickable options of a multi-select dialog:
+ * [{key, label, checked}], with the "[ ]"/"[x]" marker stripped from the label
+ * and the free-text "Type something" row left out (it needs the terminal).
+ */
+export function checkboxChoices(dialog) {
+  const out = [];
+  for (const o of dialog?.options ?? []) {
+    const m = /^\[(.)\]\s+(.*)$/.exec(o.label ?? "");
+    if (!m || /^Type something/i.test(m[2])) continue;
+    out.push({ key: o.key, label: m[2], checked: m[1] !== " " });
+  }
+  return out;
 }
 
 /** MAX_IMAGES: the most images one message carries (the server enforces the same). */

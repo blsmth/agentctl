@@ -107,6 +107,11 @@ func DialogShowing(text string) bool {
 			return true
 		}
 	}
+	// The final page of a multi-question AskUserQuestion flow has no "Esc to
+	// cancel" footer: only the review list and its Submit/Cancel choices.
+	if strings.Contains(text, "Review your answers") && strings.Contains(text, ". Submit answers") {
+		return true
+	}
 	// A numbered-choice dialog that phrases its question some other way still
 	// renders a selected first option and a decline option.
 	return strings.Contains(text, "❯ 1. Yes") && strings.Contains(text, ". No")

@@ -124,3 +124,109 @@ func TestParseDialogStopsAtOptionOne(t *testing.T) {
 		t.Fatalf("ok=%v keys=%v", ok, keys(d))
 	}
 }
+
+// askUserReview is the "Review your answers" page that ends a multi-question
+// AskUserQuestion flow, captured live (Claude Code 2.1.328).
+const askUserReview = "" +
+	"❯ Use the AskUserQuestion tool right now with two questions.\n" +
+	rule + "\n" +
+	"←  ☒ Pick  ☒ Mode  ✔ Submit  →\n" +
+	"\n" +
+	"Review your answers\n" +
+	"\n" +
+	" ● Pick\n" +
+	"   → B\n" +
+	" ● Mode\n" +
+	"   → X\n" +
+	"\n" +
+	"Ready to submit your answers?\n" +
+	"\n" +
+	"❯ 1. Submit answers\n" +
+	"  2. Cancel\n"
+
+func TestParseDialogReviewPage(t *testing.T) {
+	d, ok := ParseDialog(askUserReview)
+	if !ok {
+		t.Fatal("not parsed")
+	}
+	if d.Multi {
+		t.Errorf("multi=%v", d.Multi)
+	}
+	if !reflect.DeepEqual(keys(d), []string{"1", "2"}) || d.Options[0].Label != "Submit answers" {
+		t.Errorf("options = %+v", d.Options)
+	}
+	for _, s := range []string{"Review your answers", "→ B", "→ X"} {
+		if !strings.Contains(d.Text, s) {
+			t.Errorf("text missing %q:\n%s", s, d.Text)
+		}
+	}
+}
+
+// askUserMultiNext is a live multi-select tab of a two-question flow with B
+// ticked ("[✔]") and the cursor moved down onto the Next row.
+const askUserMultiNext = "" +
+	rule + "\n" +
+	"←  ☒ Pick  ☐ Mode  ✔ Submit  →\n" +
+	"Pick\n" +
+	"  1. [ ] A\n" +
+	"         Option A\n" +
+	"  2. [✔] B\n" +
+	"         Option B\n" +
+	"  3. [ ] C\n" +
+	"         Option C\n" +
+	"  4. [ ] Type something\n" +
+	"❯    Next\n" +
+	rule + "\n" +
+	"  5. Chat about this\n" +
+	"Enter to select · Tab/Arrow keys to navigate · Esc to cancel\n"
+
+func TestParseDialogMultiSubmitRow(t *testing.T) {
+	chat := strings.Replace(strings.Replace(askUserMultiNext, "❯    Next", "     Next", 1), "  5. Chat", "❯ 5. Chat", 1)
+	noCursor := strings.Replace(askUserMultiNext, "❯    Next", "     Next", 1)
+	tests := []struct {
+		name  string
+		pane  string
+		want  *SubmitRow
+		ticks []bool
+	}{
+		{"cursor on first option", askUserMulti, &SubmitRow{Label: "Submit", Moves: 5}, nil},
+		{"cursor on Next", askUserMultiNext, &SubmitRow{Label: "Next", Moves: 0}, []bool{false, true, false, false}},
+		{"cursor on Chat about this", chat, &SubmitRow{Label: "Next", Moves: -1}, nil},
+		{"no cursor", noCursor, nil, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d, ok := ParseDialog(tt.pane)
+			if !ok || !d.Multi {
+				t.Fatalf("ok=%v multi=%v", ok, d.Multi)
+			}
+			if !reflect.DeepEqual(d.Submit, tt.want) {
+				t.Errorf("Submit = %+v, want %+v", d.Submit, tt.want)
+			}
+			for i, want := range tt.ticks {
+				if got := Checked(d.Options[i].Label); got != want {
+					t.Errorf("Checked(%q) = %v, want %v", d.Options[i].Label, got, want)
+				}
+			}
+		})
+	}
+}
+
+// Toggling a box changes the hash; moving the cursor does not.
+func TestMultiHashTracksTicksNotCursor(t *testing.T) {
+	a, _ := ParseDialog(askUserMultiNext)
+	moved, _ := ParseDialog(strings.Replace(strings.Replace(askUserMultiNext, "❯    Next", "     Next", 1), "  1. [ ] A", "❯ 1. [ ] A", 1))
+	toggled, _ := ParseDialog(strings.Replace(askUserMultiNext, "[✔] B", "[ ] B", 1))
+	if a.Hash != moved.Hash || a.Hash == toggled.Hash {
+		t.Errorf("hashes: base=%s moved=%s toggled=%s", a.Hash, moved.Hash, toggled.Hash)
+	}
+}
+
+func TestDialogShowingReviewPage(t *testing.T) {
+	if Classify(askUserReview) != AwaitingInput {
+		t.Error("review page should classify as awaiting input")
+	}
+	if Classify("Review your answers\n") == AwaitingInput {
+		t.Error("heading alone is not a dialog")
+	}
+}
