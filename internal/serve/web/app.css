@@ -145,7 +145,15 @@ a.chip { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45
 .btn.small { min-height: 36px; padding: 0 .85rem; font-size: .9rem; }
 .btn-text { min-height: 44px; padding: 0 .5rem; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
 .btn-text.danger { color: var(--blocked); }
-.close-window { align-self: center; font-size: .9rem; }
+.icon-btn { flex: none; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: none;
+  color: var(--accent); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.icon-btn:disabled { opacity: .5; }
+.icon-btn.send { background: var(--accent); color: #fff; }
+.icon-btn.close-window { margin-left: auto; color: var(--muted); }
+/* Chat-style composer: camera, growing textarea, send; bottom-aligned. */
+.composer { display: flex; align-items: flex-end; gap: .35rem; min-width: 0; }
+.composer .composer-text { flex: 1 1 auto; min-width: 0; width: auto; resize: none; overflow-y: auto;
+  min-height: 44px; max-height: 7.5rem; border-radius: 22px; padding: .65rem 1rem; line-height: 1.25; box-sizing: border-box; }
 
 .form { padding: 0 1rem; display: flex; flex-direction: column; gap: .75rem; }
 .form label { display: flex; flex-direction: column; gap: .3rem; color: var(--muted); font-size: .85rem; }

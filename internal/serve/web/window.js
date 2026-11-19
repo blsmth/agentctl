@@ -1,7 +1,7 @@
 // Window detail: header, pane (reflowed or exact), state-aware actions.
 import { ApiError, get, send, uploadImages } from "./api.js";
 import { approvalCard, tickCountdowns } from "./approvals.js";
-import { imagePicker } from "./attach.js";
+import { imagePicker, svgIcon } from "./attach.js";
 import {
   INTERRUPT_FOLLOWUP_MS,
   actionsWithQueue,
@@ -38,6 +38,11 @@ const EXACT_MIN_FONT = 8;
 const EXACT_MAX_FONT = 14;
 // The live feed counts as down (for the liveness chip) after this long.
 const FEED_DOWN_MS = 15000;
+
+const SEND_SVG =
+  '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+const CLOSE_SVG =
+  '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 
 function loadFlag(key) {
   try {
@@ -300,6 +305,21 @@ export function mountWindow(root, ctx, { session, windowId }) {
     h("p", { class: "muted" }, "This window was closed."),
     h("a", { class: "btn", href: "#/" }, "Back to Fleet"),
   );
+  const closeBtn = h(
+    "button",
+    {
+      type: "button",
+      class: "icon-btn close-window",
+      "aria-label": "Close window",
+      hidden: !canWrite,
+      onclick: () =>
+        run(
+          { title: "Close window?", lines: [`${win?.agent ?? ""} ${windowId}`], confirmLabel: "Close", danger: true },
+          { method: "POST", path: `${base}/close`, body: {} },
+        ),
+    },
+    svgIcon(CLOSE_SVG),
+  );
   const approvalHost = h("div", { class: "window-approvals" });
   let approvalCountdowns = [];
   let approvalKey = null;
@@ -307,7 +327,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
     h(
       "div",
       { class: "window-view" },
-      h("header", { class: "bar" }, h("a", { class: "back-link", href: "#/" }, "‹ Fleet"), title),
+      h("header", { class: "bar" }, h("a", { class: "back-link", href: "#/" }, "‹ Fleet"), title, closeBtn),
       head,
       approvalHost,
       answerHost,
@@ -389,6 +409,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
     clear(actions);
     clear(answerHost);
     lastActionsKey = null;
+    closeBtn.hidden = true;
     paneBar.hidden = true;
     exactHint.hidden = true;
     goneHost.hidden = false;
@@ -502,11 +523,12 @@ export function mountWindow(root, ctx, { session, windowId }) {
 
   // attachments is the composer's image picker (attach.js); null when the
   // server cannot take uploads.
-  function attachments() {
+  function attachments({ icon = false } = {}) {
     if (!canUpload) return null;
-    const picker = imagePicker();
+    const picker = imagePicker({ icon });
     return {
       controls: picker.controls,
+      trigger: picker.trigger,
       count: picker.count,
       // upload stores the files and returns their IDs.
       upload: () => (picker.count() ? uploadImages(buildUploadPath(session, windowId), picker.files()) : Promise.resolve([])),
@@ -518,42 +540,43 @@ export function mountWindow(root, ctx, { session, windowId }) {
     return n ? [`+ ${n} image${n === 1 ? "" : "s"}`] : [];
   }
 
+  // replyBox is the chat-style composer: thumbnails above one row of camera
+  // button, auto-growing textarea and a round send button.
   function replyBox() {
-    const text = h("textarea", { rows: "2", placeholder: "Reply to the agent…", maxlength: "4000" });
-    const att = attachments();
-    return [
-      text,
-      ...(att ? att.controls : []),
-      h(
-        "button",
-        {
-          class: "btn primary",
-          onclick: () => {
-            const value = text.value.trim();
-            const n = att ? att.count() : 0;
-            if (!value && !n) return;
-            run(
-              { title: "Send reply?", lines: [...(value ? [value] : []), ...imageLine(n)], confirmLabel: "Send" },
-              async () => buildReplyRequest(session, windowId, value, att ? await att.upload() : []),
-              () => att?.clear(),
-            );
-          },
+    const att = attachments({ icon: true });
+    const text = h("textarea", {
+      rows: "1",
+      class: "composer-text",
+      placeholder: "Reply to the agent…",
+      maxlength: "4000",
+      oninput: () => grow(text),
+    });
+    const send = h(
+      "button",
+      {
+        type: "button",
+        class: "icon-btn send",
+        "aria-label": "Send reply",
+        onclick: () => {
+          const value = text.value.trim();
+          const n = att ? att.count() : 0;
+          if (!value && !n) return;
+          run(
+            { title: "Send reply?", lines: [...(value ? [value] : []), ...imageLine(n)], confirmLabel: "Send" },
+            async () => buildReplyRequest(session, windowId, value, att ? await att.upload() : []),
+            () => att?.clear(),
+          );
         },
-        "Reply",
-      ),
-      h(
-        "button",
-        {
-          class: "btn-text danger close-window",
-          onclick: () =>
-            run(
-              { title: "Close window?", lines: [`${win?.agent ?? ""} ${windowId}`], confirmLabel: "Close", danger: true },
-              { method: "POST", path: `${base}/close`, body: {} },
-            ),
-        },
-        "Close window",
-      ),
-    ];
+      },
+      svgIcon(SEND_SVG),
+    );
+    const row = h("div", { class: "composer" }, ...(att ? att.trigger : []), text, send);
+    return { text, nodes: [...(att ? att.controls : []), row] };
+  }
+
+  function grow(el) {
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
   }
 
   function interruptButton() {
@@ -635,8 +658,8 @@ export function mountWindow(root, ctx, { session, windowId }) {
     clear(answerHost);
     if (kind === "answer") answerHost.append(answerSection());
     else if (kind === "reply") {
-      const [text, ...rest] = replyBox();
-      actions.append(text, ...rest);
+      const { text, nodes } = replyBox();
+      actions.append(...nodes);
       if (interruptedAt && Date.now() - interruptedAt < INTERRUPT_FOLLOWUP_MS) {
         text.focus();
         toast("Interrupted. Tell it what to do next.");
