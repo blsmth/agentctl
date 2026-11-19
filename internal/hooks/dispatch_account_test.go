@@ -53,6 +53,48 @@ func TestDispatchPreviewAccount(t *testing.T) {
 	}
 }
 
+// When the line changes dir before a dispatch whose dir depends on the cwd,
+// account_rules would match the wrong dir: the account shows as unknown
+// unless --account or the agent's own account decides it.
+func TestDispatchDetailsAccountUnknownAfterCd(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	config.SetConfigPathForTest(cfgPath)
+	t.Cleanup(func() { config.SetConfigPathForTest("") })
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("AGENTCTL_WINDOW_ID", "")
+	body := `{"accounts":{"ll":{"config_dir":"/abs/ll"},"personal":{"config_dir":"/abs/p"}},"default_account":"ll",` +
+		`"agents":{"pinned":{"account":"personal"}}}`
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	old := resolvePreviewAccount
+	t.Cleanup(func() { resolvePreviewAccount = old })
+	resolvePreviewAccount = func(cfg *config.Config, flag, agent, workDir, parent string) (claudehome.Resolution, error) {
+		calls++
+		return claudehome.Resolve(cfg, claudehome.Request{Flag: flag, Agent: cfg.ForAgent(agent).Account, Parent: parent})
+	}
+	tests := []struct {
+		name, command, want string
+		resolved          bool
+	}{
+		{"cd first", "cd ~/code/x && agentctl dispatch --issue 1", accountDirUnknown, false},
+		{"cd first with --account", "cd ~/code/x && agentctl dispatch --issue 1 --account personal", "personal", true},
+		{"cd first with the agent's account", "cd ~/code/x && agentctl dispatch --agent pinned --prompt hi", "personal", true},
+		{"cd first, absolute --dir", "cd ~/code/x && agentctl dispatch --issue 1 --dir /srv/x", "ll", true},
+		{"no cd", "agentctl dispatch --issue 1", "ll", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls = 0
+			got := resolveDispatchDetails(config.Load(), tt.command, "/srv/cwd").Account
+			if got != tt.want || (calls > 0) != tt.resolved {
+				t.Errorf("account = %q (resolved %v), want %q (resolved %v)", got, calls > 0, tt.want, tt.resolved)
+			}
+		})
+	}
+}
+
 func TestSessionLogPath(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "/cfg")
 	tests := []struct {

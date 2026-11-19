@@ -80,6 +80,12 @@ func askingCwd(payloadCwd string) string {
 // cwd the command line may change before the dispatch runs.
 const dirChangedFirst = "command changes dir first"
 
+// accountDirUnknown is the Account shown when the account would resolve
+// against a dir that is not known (see dirChangedFirst). An explicit
+// --account or agents.<name>.account wins over account_rules, so those are
+// still resolved.
+const accountDirUnknown = "unknown (command changes dir first)"
+
 // resolveDispatchDetails works out where and how the dispatch in command will
 // run, for the approval popup and the phone. Best effort: it never fails or
 // panics (a panic would make the hook exit non-blocking and let the dispatch
@@ -130,7 +136,8 @@ func dispatchDetails(cfg *config.Config, command, cwd string) remoteapproval.Det
 	// name the asking project with confidence.
 	cwdDependent := p.DirSource == dispatchplan.SourceCwd ||
 		(p.DirSource == dispatchplan.SourceFlag && !filepath.IsAbs(paths.ExpandHome(f.plan.Dir)))
-	if cwdDependent && lineChangesContext(command) {
+	dirUnknown := cwdDependent && lineChangesContext(command)
+	if dirUnknown {
 		d.DirSource = dirChangedFirst
 	} else if root := dispatchplan.ProjectRoot(p.WorkDir); root != "" {
 		d.Project = filepath.Base(root)
@@ -142,7 +149,12 @@ func dispatchDetails(cfg *config.Config, command, cwd string) remoteapproval.Det
 		}
 	}
 	if p.Accounts && cfg.HasAccounts() {
-		d.Account = previewAccount(cfg, f.account, p.Agent, p.WorkDir)
+		if dirUnknown && f.account == "" && cfg.ForAgent(p.Agent).Account == "" {
+			// account_rules match the target dir, which is not known.
+			d.Account = accountDirUnknown
+		} else {
+			d.Account = previewAccount(cfg, f.account, p.Agent, p.WorkDir)
+		}
 	}
 	return d
 }
