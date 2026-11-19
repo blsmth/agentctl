@@ -26,11 +26,15 @@ type titleFake struct {
 	err     error
 	prompts []string
 	block   chan struct{} // when set, Complete waits on it
+	hook    func()        // when set, runs inside Complete
 }
 
 func (f *titleFake) Complete(_ context.Context, p string) (string, error) {
 	if f.block != nil {
 		<-f.block
+	}
+	if f.hook != nil {
+		f.hook()
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -592,5 +596,22 @@ func TestTitleAbsolutePathPromptCounts(t *testing.T) {
 	runTitle(context.Background(), "@4", "", "/Users/me/x.go fails to build")
 	if e.fake.calls != 1 {
 		t.Fatalf("calls = %d", e.fake.calls)
+	}
+}
+
+// A request in flight across /clear must not write the old work's title over
+// the reset record.
+func TestTitleInFlightRequestDroppedAfterClear(t *testing.T) {
+	e := setupTitle(t)
+	seedWindow(t, "@4", windowstate.WindowState{State: "working", FirstPrompt: "old work"})
+	e.fake.hook = func() {
+		if err := windowstate.Update("@4", resetTitleOnClear); err != nil {
+			t.Error(err)
+		}
+	}
+	runTitle(context.Background(), "@4", "Did the old work.", "")
+	ws := readWS(t, "@4")
+	if ws.ShortTitle.Title != "" || ws.ShortTitle.Final || ws.FirstPrompt != "" {
+		t.Fatalf("stale title written after clear: %+v", ws)
 	}
 }

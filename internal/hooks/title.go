@@ -47,6 +47,10 @@ var (
 // writes) when titles are off or no key is available, and it never spawns
 // anything.
 //
+// A Stop that lands while the first-title request is in flight loses its
+// refinement to the lease and waits for the next Stop. In a dispatched window
+// /clear re-titles from the old Task, which survives the reset.
+//
 // The hook can fire twice for one event (project settings.local.json plus a
 // per-agent --settings file); the claim inside the windowstate transaction
 // makes the second run a no-op.
@@ -146,6 +150,11 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 		logging.Log("hook-title: window=%s: %v", windowID, genErr)
 	}
 	err = windowstate.Update(windowID, func(w *windowstate.WindowState) {
+		// Only while our claim is still held: a /clear that reset the record
+		// while the request was in flight must not get the old work's title.
+		if !w.ShortTitle.RetryAfter.Equal(now.Add(titleLease)) {
+			return
+		}
 		shorttitle.Apply(&w.ShortTitle, in, title, genErr, now)
 	})
 	logUpdateErr("hook-title", err)
