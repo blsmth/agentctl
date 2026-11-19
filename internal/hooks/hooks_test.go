@@ -1783,6 +1783,9 @@ func TestRunUserHooks_EnvVarsInjected(t *testing.T) {
 	const wantWindowID = "@42"
 	runUserHooks("session_start", map[string]string{"AGENTCTL_WINDOW_ID": wantWindowID})
 
+	// Join the async goroutine so it cannot outlive the test.
+	t.Cleanup(userHooksWG.Wait)
+
 	// Wait for the async goroutine.
 	deadline := time.Now().Add(3 * time.Second)
 	var got string
@@ -1840,7 +1843,7 @@ func TestRunUserHooksTimeout(t *testing.T) {
 
 	start := time.Now()
 	// "sleep 10" would normally block; with a 100ms timeout it should be killed quickly.
-	runSingleUserHook("test_event", "sleep 10", env)
+	runSingleUserHook("test_event", "sleep 10", env, userHookTimeout)
 	elapsed := time.Since(start)
 
 	// The timeout is 100ms; allow up to 2s for process setup/teardown overhead.
@@ -2086,6 +2089,7 @@ func TestRunUserHooks_ErrorContinues(t *testing.T) {
 	}()
 
 	runUserHooks("session_start", nil)
+	t.Cleanup(userHooksWG.Wait)
 
 	deadline := time.Now().Add(3 * time.Second)
 	var got string
