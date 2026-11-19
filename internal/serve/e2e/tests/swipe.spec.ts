@@ -15,37 +15,40 @@ async function settled(link: import("@playwright/test").Locator) {
 
 test.beforeEach(async ({ page }) => {
   await openFleet(page);
+  // Let the initial SSE-driven re-render land so the drag does not hit a row about to be replaced.
+  await page.waitForTimeout(500);
 });
 
-test("a long left swipe on an idle row asks to close; confirm closes it", async ({ page, control }) => {
+const closeBtn = (page: import("@playwright/test").Page, link: import("@playwright/test").Locator) =>
+  wrap(link).getByRole("button", { name: /^Close / });
+
+test("a long left swipe reveals Close; tapping it closes the window with no sheet", async ({ page, control }) => {
   const link = row(page, "@15");
   await expect(wrap(link)).toHaveClass(/\bswipe\b/);
   await drag(link, { dx: -260, stepMs: 25 });
 
-  await expect(sheet(page)).toBeVisible();
-  await expect(sheet(page)).toContainText("Close window?");
-  await expect(sheet(page)).toContainText("docs");
   // The click after the lift was swallowed: still on the fleet, row held open.
+  await expect(sheet(page)).toHaveCount(0);
   expect(new URL(page.url()).hash).toBe("");
-  expect(await offsetX(node(link))).toBeLessThan(-50);
+  await expect.poll(() => offsetX(node(link))).toBe(-88);
+  expect(await control.actions()).toEqual([]);
 
-  await sheet(page).getByRole("button", { name: "Close" }).tap();
+  await closeBtn(page, link).tap();
   const actions = await control.waitForActions((a) => a.some((x) => x.kind === "close"));
   expect(actions).toEqual([{ kind: "close", session: SHOP, window: "@15" }]);
-  // The row collapses (height animates to 0, or the next render hides it as
-  // closed) before the fleet reports the window gone and the row is dropped.
+  await expect(sheet(page)).toHaveCount(0);
   await expect(link).toBeHidden();
   await expect(row(page, "@15")).toHaveCount(0);
 });
 
-test("cancel in the confirm sheet snaps the row back and sends nothing", async ({ page, control }) => {
+test("tapping the open row snaps it back without navigating or closing", async ({ page, control }) => {
   const link = row(page, "@15");
   await drag(link, { dx: -260, stepMs: 25 });
-  await expect(sheet(page)).toBeVisible();
-  await sheet(page).getByRole("button", { name: "Cancel" }).tap();
-  await expect(sheet(page)).toHaveCount(0);
+  await expect.poll(() => offsetX(node(link))).toBe(-88);
+  await link.tap();
   await settled(link);
   await expect(wrap(link)).not.toHaveClass(/swiping/);
+  expect(new URL(page.url()).hash).toBe("");
   expect(await control.actions()).toEqual([]);
 });
 
@@ -100,7 +103,7 @@ test("a 409 from the server toasts and snaps back", async ({ page, control, guar
   await control.patchWindow(SHOP, "@15", { pane: "working" });
   const link = row(page, "@15");
   await drag(link, { dx: -260, stepMs: 25 });
-  await sheet(page).getByRole("button", { name: "Close" }).tap();
+  await closeBtn(page, link).tap();
   await expect(page.locator("#toasts .toast.error")).toContainText("cannot be closed");
   await settled(link);
   await expect(wrap(link)).not.toHaveCSS("height", "0px");

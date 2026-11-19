@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  canSwipeClose, swipeAxis, swipeCommit, swipeOffset,
+  SWIPE_REVEAL, canSwipeClose, swipeAxis, swipeCommit, swipeOffset,
   ansiColor, approvalBannerText, approvalConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
   buildDispatchRequest, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
@@ -189,6 +189,7 @@ console.log("ok: resolved text");
   assert.equal(swipeCommit(-20, 300, -2), false);
   assert.equal(swipeCommit(50, 300, -2), false);
   assert.equal(swipeCommit(-200, 0), false);
+  assert.equal(SWIPE_REVEAL, 88);
   console.log("ok: swipe close");
 }
 
