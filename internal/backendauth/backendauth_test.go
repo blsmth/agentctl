@@ -103,13 +103,13 @@ func TestNoKeyInErrors(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"type":"api_error","message":"`+secret+`"}}`)
 	}))
 	defer srv.Close()
-	err = Verify(context.Background(), config.BackendConfig{BaseURL: srv.URL, Model: "a/b"}, secret)
+	err = Verify(context.Background(), "t", config.BackendConfig{BaseURL: srv.URL, Model: "a/b"}, secret)
 	if err == nil || strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "api_error") {
 		t.Fatalf("Verify err = %v", err)
 	}
 	// Transport failure.
 	srv.Close()
-	err = Verify(context.Background(), config.BackendConfig{BaseURL: srv.URL, Model: "a/b"}, secret)
+	err = Verify(context.Background(), "t", config.BackendConfig{BaseURL: srv.URL, Model: "a/b"}, secret)
 	if err == nil || strings.Contains(err.Error(), secret) {
 		t.Fatalf("Verify transport err = %v", err)
 	}
@@ -141,7 +141,7 @@ func TestVerifyStatusMapping(t *testing.T) {
 				_, _ = io.WriteString(w, tt.body)
 			}))
 			defer srv.Close()
-			err := Verify(context.Background(), config.BackendConfig{BaseURL: srv.URL, Model: "a/b"}, "k")
+			err := Verify(context.Background(), "t", config.BackendConfig{BaseURL: srv.URL, Model: "a/b"}, "k")
 			if gotAuth != "Bearer k" || gotPath != "/v1/messages" {
 				t.Errorf("auth=%q path=%q", gotAuth, gotPath)
 			}

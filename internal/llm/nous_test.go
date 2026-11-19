@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/blsmth/agentctl/internal/backendauth"
 	"github.com/blsmth/agentctl/internal/config"
 )
 
@@ -188,5 +189,36 @@ func TestSnippetCapsRunes(t *testing.T) {
 	}
 	if got := snippet("bad key "+testKey, testKey); strings.Contains(got, testKey) {
 		t.Fatalf("snippet leaks the key: %q", got)
+	}
+}
+
+func TestNousComplete402IsNoCredits(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	status := 402
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if status != 200 {
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, `{"status":402,"message":"Insufficient available credits for this inference request."}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"Fixing Things"},"finish_reason":"stop"}]}`)
+	}))
+	defer srv.Close()
+	c := newTestNous(t, srv.URL)
+	c.name = "nous-test"
+
+	_, err := c.Complete(context.Background(), "p")
+	if !errors.Is(err, backendauth.ErrNoCredits) {
+		t.Fatalf("err = %v, want ErrNoCredits", err)
+	}
+	if _, fresh := backendauth.NoCreditsFresh("nous-test", time.Now()); !fresh {
+		t.Error("marker not set")
+	}
+	status = 200
+	if _, err := c.Complete(context.Background(), "p"); err != nil {
+		t.Fatal(err)
+	}
+	if _, fresh := backendauth.NoCreditsFresh("nous-test", time.Now()); fresh {
+		t.Error("marker not cleared by success")
 	}
 }

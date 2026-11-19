@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/backendauth"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/mailbox"
 	"github.com/blsmth/agentctl/internal/notify"
@@ -1057,5 +1058,59 @@ func TestSessionStart_RecordsSessionName(t *testing.T) {
 
 	if got := sessionname.Lookup("sid-name-test"); got != "agent-go-engineer-issue-42" {
 		t.Errorf("recorded name = %q", got)
+	}
+}
+
+// TestStopFailure_BillingErrorOnNousBackend verifies a billing_error in a
+// window on a nous backend sets the no-credits marker and says so, while an
+// Anthropic-account window (or a non-nous backend) keeps the generic message
+// and sets nothing.
+func TestStopFailure_BillingErrorOnNousBackend(t *testing.T) {
+	cases := []struct {
+		name        string
+		backend     string
+		wantMessage string
+		wantMarker  bool
+	}{
+		{"nous window", "nous", "Nous Portal out of credits", true},
+		{"anthropic window", "", "Billing error", false},
+		{"non-nous backend", "local", "Billing error", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setupWindowstate(t)
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+			var gotMessage string
+			d := stubDeps(t)
+			d.Notify = func(opts notify.Options) { gotMessage = opts.Message }
+			d.LoadConfig = func() *config.Config {
+				cfg := &config.Config{Agents: make(map[string]config.AgentConfig)}
+				cfg.Backends = map[string]config.BackendConfig{
+					"nous":  {Kind: config.BackendKindNous},
+					"local": {BaseURL: "http://localhost:11434"},
+				}
+				return cfg
+			}
+			SetDepsForTest(d)
+			t.Cleanup(func() { SetDepsForTest(DefaultDeps()) })
+
+			seedWindow(t, "@23", windowstate.WindowState{State: "working", Backend: tc.backend})
+			t.Setenv("AGENTCTL", "1")
+			t.Setenv("AGENTCTL_AGENT_NAME", "go-engineer")
+			t.Setenv("AGENTCTL_WINDOW_ID", "@23")
+			t.Setenv("TMUX_PANE", "")
+			t.Setenv("AGENTCTL_SESSION_ID", "")
+
+			runHookCaptured(t, nil, `{"error_type":"billing_error"}`, StopFailure)
+
+			if gotMessage != tc.wantMessage {
+				t.Errorf("message = %q, want %q", gotMessage, tc.wantMessage)
+			}
+			_, fresh := backendauth.NoCreditsFresh("nous", time.Now())
+			if fresh != tc.wantMarker {
+				t.Errorf("marker fresh = %v, want %v", fresh, tc.wantMarker)
+			}
+		})
 	}
 }

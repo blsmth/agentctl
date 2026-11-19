@@ -39,6 +39,7 @@ type KeyFunc func(ctx context.Context) (string, error)
 // NousClient is a Completer backed by an OpenAI-compatible
 // /v1/chat/completions endpoint on a Nous Portal backend.
 type NousClient struct {
+	name       string // backend name, "" when built for tests; keys the credit marker
 	baseURL    string
 	model      string
 	key        KeyFunc
@@ -57,9 +58,14 @@ func NewNousClient(name string, b config.BackendConfig, model string) (*NousClie
 	if base == "" {
 		base = config.NousDefaultBaseURL
 	}
-	return newNousClient(base, model, func(ctx context.Context) (string, error) {
+	c, err := newNousClient(base, model, func(ctx context.Context) (string, error) {
 		return backendauth.Resolve(ctx, name, b)
 	})
+	if err != nil {
+		return nil, err
+	}
+	c.name = name
+	return c, nil
 }
 
 // newNousClient is the constructor tests use: any base URL, any key source.
@@ -146,6 +152,12 @@ func (c *NousClient) Complete(ctx context.Context, prompt string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("llm: read nous response: %w", redactErr(err, key))
 	}
+	if backendauth.IsNoCredits(resp.StatusCode, body) {
+		if c.name != "" {
+			backendauth.MarkNoCredits(c.name)
+		}
+		return "", fmt.Errorf("llm: nous returned HTTP %d: %w", resp.StatusCode, backendauth.ErrNoCredits)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("llm: nous returned HTTP %d: %s", resp.StatusCode, snippet(string(body), key))
 	}
@@ -165,6 +177,9 @@ func (c *NousClient) Complete(ctx context.Context, prompt string) (string, error
 	if content == "" || (ch.FinishReason != "" && ch.FinishReason != "stop") {
 		return "", fmt.Errorf("llm: invalid nous completion: finish_reason=%q content_len=%d reasoning_len=%d",
 			ch.FinishReason, len(content), len(ch.Message.Reasoning)+len(ch.Message.ReasoningContent))
+	}
+	if c.name != "" {
+		backendauth.ClearNoCredits(c.name)
 	}
 	return content, nil
 }
