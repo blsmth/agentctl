@@ -32,6 +32,11 @@ type Dialog struct {
 	// no such row or no cursor, in which case the question cannot be submitted
 	// remotely.
 	Submit *SubmitRow `json:"submit,omitempty"`
+	// Cursor is the ❯ cursor's row among a multi-select question's
+	// navigable rows (the numbered options, then the confirm row), -1 when
+	// none shows. The server checks it after each arrow press of a submit.
+	// Zero for any other dialog.
+	Cursor int `json:"-"`
 }
 
 // SubmitRow is the confirm row of a multi-select question.
@@ -169,8 +174,9 @@ run:
 	}
 
 	var submit *SubmitRow
+	cursor := 0
 	if multi {
-		submit = findSubmitRow(lines, cleaned, first, last)
+		submit, cursor = findSubmitRow(lines, cleaned, first, last)
 	}
 
 	start := dialogStart(lines, cleaned, first)
@@ -181,7 +187,7 @@ run:
 		}
 	}
 	text := strings.Join(kept, "\n")
-	return Dialog{Text: text, Hash: HashDialogText(text), Options: opts, Multi: multi, Submit: submit}, true
+	return Dialog{Text: text, Hash: HashDialogText(text), Options: opts, Multi: multi, Submit: submit, Cursor: cursor}, true
 }
 
 // findSubmitRow locates the confirm row of a multi-select question within
@@ -189,8 +195,9 @@ run:
 // is the unnumbered line after the last checkbox option reading exactly
 // "Next" or "Submit" (a described last option's description is not it). Navigable rows are the
 // numbered options plus that row, in screen order. Returns nil without a
-// cursor or confirm row.
-func findSubmitRow(lines, cleaned []string, first, last int) *SubmitRow {
+// cursor or confirm row. cursor is the ❯ row (-1 when none), whether or not
+// a confirm row was found.
+func findSubmitRow(lines, cleaned []string, first, last int) (submit *SubmitRow, cursor int) {
 	lastBox := -1
 	for i := first; i <= last; i++ {
 		if m := optionLine.FindStringSubmatch(cleaned[i]); m != nil && checkboxLabel.MatchString(m[2]) {
@@ -198,9 +205,10 @@ func findSubmitRow(lines, cleaned []string, first, last int) *SubmitRow {
 		}
 	}
 	if lastBox < 0 {
-		return nil
+		return nil, -1
 	}
-	row, cursor, submitRow := -1, -1, -1
+	row, submitRow := -1, -1
+	cursor = -1
 	cursorFree := false
 	label := ""
 	for i := first; i <= last; i++ {
@@ -223,9 +231,22 @@ func findSubmitRow(lines, cleaned []string, first, last int) *SubmitRow {
 	// With the cursor on the free-text row, digits would be typed into its
 	// field instead of toggling boxes.
 	if submitRow < 0 || cursor < 0 || cursorFree {
-		return nil
+		return nil, cursor
 	}
-	return &SubmitRow{Label: label, Moves: submitRow - cursor}
+	return &SubmitRow{Label: label, Moves: submitRow - cursor}, cursor
+}
+
+// checkboxMark is a checkbox at the start of an option line of Text.
+var checkboxMark = regexp.MustCompile(`(?m)^(\d+\.\s+)\[[ xX✔✓]\]`)
+
+// QuestionKey identifies the question a dialog asks regardless of which of
+// its boxes are ticked: toggling a multi-select option changes the dialog's
+// Hash (the boxes are part of Text) but not its QuestionKey. Tab header
+// marks (☐/☒) are normalized too, since ticking a box marks the tab
+// answered.
+func QuestionKey(d Dialog) string {
+	t := checkboxMark.ReplaceAllString(d.Text, "$1[ ]")
+	return HashDialogText(strings.ReplaceAll(t, "☒", "☐"))
 }
 
 // isRule reports whether a raw line is a horizontal separator (a run of ─,

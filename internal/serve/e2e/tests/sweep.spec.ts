@@ -23,7 +23,7 @@ test("sweep previews the plan, and confirm closes the finished windows", async (
   await expect(sheet(page)).toContainText("Sweep shop?");
   await expect(sheet(page)).toContainText("Close 1 window:");
   await expect(sheet(page)).toContainText("go-engineer");
-  await expect(sheet(page)).toContainText("1 needs attention, 1 in progress");
+  await expect(sheet(page)).toContainText("2 need attention, 1 in progress"); // @14 (Bash dialog) and @17 (AskUserQuestion)
   // The preview changed nothing.
   expect((await control.actions()).filter((a) => a.kind === "sweep")).toEqual([]);
 

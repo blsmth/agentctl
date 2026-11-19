@@ -245,10 +245,16 @@ func (s *Server) handleAnswer(r *http.Request, in answerIn, a *auditEntry) outco
 		return out
 	}
 	s.auditAttempt(*a)
-	for _, key := range keys {
-		if err := s.keys.SendKey(rw.target(), key); err != nil {
-			logging.Warn("serve: answer %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
-			return failure(http.StatusBadGateway, codeActionFailed, "sending the key failed")
+	if in.Key == submitKey {
+		if out, ok := s.sendChecked(rw, *pane.Dialog, keys); !ok {
+			return out
+		}
+	} else {
+		for _, key := range keys {
+			if err := s.keys.SendKey(rw.target(), key); err != nil {
+				logging.Warn("serve: answer %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
+				return failure(http.StatusBadGateway, codeActionFailed, "sending the key failed")
+			}
 		}
 	}
 	if pane.Dialog.Multi && in.Key != escKey && in.Key != submitKey {
@@ -274,6 +280,96 @@ func (s *Server) awaitDialogGone(rw resolved, hash string) {
 		}
 		if p := buildPaneBodyFor(rw.harness(), text); p.Dialog == nil || p.Dialog.Hash != hash {
 			return
+		}
+		time.Sleep(answerSettlePoll)
+	}
+}
+
+// sendChecked sends a multi-select submit sequence (submitKeys: toggles,
+// arrow moves, Enter) one key at a time. After every key but the final
+// Enter it re-captures and re-parses the pane and sends the next key only
+// when that key landed: the same question is still up (QuestionKey) and a
+// toggle flipped its box, or an arrow moved the cursor one row (keyLanded).
+// Enter goes out only with the cursor on the confirm row. Anything else
+// stops the sequence with a 409, so no key is ever sent into a screen the
+// sequence was not computed for. d is the dialog the sequence was built from.
+func (s *Server) sendChecked(rw resolved, d panestate.Dialog, keys []string) (outcome, bool) {
+	question := panestate.QuestionKey(d)
+	for i, key := range keys {
+		if i == len(keys)-1 && !confirmReady(d) {
+			// Every move landed, yet the cursor is not on the confirm row:
+			// Enter would pick whatever row it is on.
+			logging.Warn("serve: answer %s:%s: cursor not on the confirm row; stopped before Enter", rw.group.Session, rw.window.WindowID)
+			return failure(http.StatusConflict, codeDialogChanged, "the question did not take the answer; refresh and try again"), false
+		}
+		if err := s.keys.SendKey(rw.target(), key); err != nil {
+			logging.Warn("serve: answer %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
+			return failure(http.StatusBadGateway, codeActionFailed, "sending the key failed"), false
+		}
+		if i == len(keys)-1 {
+			return outcome{}, true // Enter: the caller waits for the dialog to go
+		}
+		landed := keyLanded(d, key)
+		next, ok := s.awaitDialog(rw, func(n *panestate.Dialog) bool {
+			return n == nil || panestate.QuestionKey(*n) != question || landed(*n)
+		})
+		if !ok || next == nil || panestate.QuestionKey(*next) != question || !landed(*next) {
+			logging.Warn("serve: answer %s:%s: key %d (%s) did not land; stopped", rw.group.Session, rw.window.WindowID, i+1, key)
+			return failure(http.StatusConflict, codeDialogChanged, "the question did not take the answer; refresh and try again"), false
+		}
+		d = *next
+	}
+	return outcome{}, true
+}
+
+// keyLanded is the check for one key of a submit sequence sent to d: a
+// number flips that option's box and leaves the cursor where it was, Down/Up
+// moves the cursor one row.
+func keyLanded(d panestate.Dialog, key string) func(panestate.Dialog) bool {
+	switch key {
+	case "Down", "Up":
+		want := d.Cursor + 1
+		if key == "Up" {
+			want = d.Cursor - 1
+		}
+		return func(n panestate.Dialog) bool { return n.Cursor == want }
+	}
+	// A number toggles without moving the cursor: a moved cursor means the
+	// key did something else, and the arrow count is no longer right.
+	was, cursor := isChecked(d, key), d.Cursor
+	return func(n panestate.Dialog) bool { return isChecked(n, key) != was && n.Cursor == cursor }
+}
+
+// confirmReady reports whether d's cursor is on its confirm (Next/Submit)
+// row, where Enter submits the question.
+func confirmReady(d panestate.Dialog) bool { return d.Submit != nil && d.Submit.Moves == 0 }
+
+// isChecked reports whether option key of d shows a ticked box.
+func isChecked(d panestate.Dialog, key string) bool {
+	for _, o := range d.Options {
+		if o.Key == key {
+			return panestate.Checked(o.Label)
+		}
+	}
+	return false
+}
+
+// awaitDialog re-captures the pane until done reports true for its dialog
+// (nil when none is showing), for at most s.answerSettle. It returns the
+// last dialog seen and whether done was reached.
+func (s *Server) awaitDialog(rw resolved, done func(*panestate.Dialog) bool) (*panestate.Dialog, bool) {
+	deadline := time.Now().Add(s.answerSettle)
+	for {
+		text, err := s.mainPanes.CapturePane(rw.pane, defaultPaneLines)
+		if err != nil {
+			return nil, false
+		}
+		p := buildPaneBodyFor(rw.harness(), text)
+		if done(p.Dialog) {
+			return p.Dialog, true
+		}
+		if !time.Now().Before(deadline) {
+			return p.Dialog, false
 		}
 		time.Sleep(answerSettlePoll)
 	}

@@ -9,7 +9,7 @@ test("groups keep the server's order and every window is listed", async ({ page 
   // The server's saved order decides; urgency shows through the rollup class.
   await expect(page.locator(".fleet section.group h2")).toHaveText(["shop", "blog", "hub"]);
   await expect(page.locator(".fleet section.group").first()).toHaveClass(/\bblocked\b/);
-  for (const id of ["@11", "@12", "@13", "@14", "@15", "@31", "@41"]) {
+  for (const id of ["@11", "@12", "@13", "@14", "@15", "@17", "@31", "@41"]) {
     await expect(row(page, id)).toBeVisible();
   }
 });
@@ -65,9 +65,9 @@ test("tapping a project header folds the whole group and remembers it", async ({
   await toggle.tap();
   await expect(shop).toHaveClass(/\bfolded\b/);
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  for (const id of ["@11", "@12", "@13", "@14"]) await expect(row(page, id)).toHaveCount(0);
+  for (const id of ["@11", "@12", "@13", "@14", "@17"]) await expect(row(page, id)).toHaveCount(0);
   // The folded header keeps the attention signal: a blocked count.
-  await expect(shop.locator(".group-counts .count.blocked")).toHaveText("⏸1");
+  await expect(shop.locator(".group-counts .count.blocked")).toHaveText("⏸2"); // @14 (Bash dialog) and @17 (AskUserQuestion)
   // Other projects are untouched, and the heading text is still the bare name.
   await expect(row(page, "@31")).toBeVisible();
   await expect(page.locator(".fleet section.group h2")).toHaveText(["shop", "blog", "hub"]);

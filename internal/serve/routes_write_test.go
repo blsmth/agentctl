@@ -22,6 +22,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/panestate"
+	"github.com/blsmth/agentctl/internal/panestate/panesim"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -93,7 +94,7 @@ type fakeKeys struct {
 	inside atomic.Int32
 	maxIn  atomic.Int32
 	delay  time.Duration
-	onSend func()
+	onSend func(key string)
 }
 
 func (f *fakeKeys) SendKey(t WindowTarget, key string) error {
@@ -107,7 +108,7 @@ func (f *fakeKeys) SendKey(t WindowTarget, key string) error {
 	}
 	time.Sleep(f.delay)
 	if f.onSend != nil {
-		f.onSend()
+		f.onSend(key)
 	}
 	f.mu.Lock()
 	f.sent = append(f.sent, sentKey{t, key})
@@ -496,6 +497,20 @@ const multiSelectPane = "──────────────────�
 	"────────────────────────────────────────────────────────────────────────────────\n" +
 	"  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · Esc to cancel\n"
 
+// reactLikeClaude makes e's pane redraw as Claude Code does on a multi-select
+// tab (panesim.Press), unless a key is in ignore: that key leaves the pane
+// as it was, as a key Claude Code dropped would.
+func reactLikeClaude(e *writeEnv, ignore ...string) {
+	e.keys.onSend = func(key string) {
+		if slices.Contains(ignore, key) {
+			return
+		}
+		e.panes.mu.Lock()
+		defer e.panes.mu.Unlock()
+		e.panes.text, _ = panesim.Press(e.panes.text, key)
+	}
+}
+
 // In a multi-select a number key toggles one checkbox (dialog stays up); esc
 // dismisses; "submit" ticks the differences, moves to the Submit row, Enter.
 func TestAnswerMultiSelect(t *testing.T) {
@@ -526,6 +541,7 @@ func TestAnswerMultiSelect(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newWriteEnv(t, true)
 			e.panes.set(multiSelectPane)
+			reactLikeClaude(e)
 			w := e.post(winPath+"/answer", fmt.Sprintf(tt.body, tt.hash))
 			var got []string
 			for _, k := range e.keys.all() {
@@ -536,6 +552,97 @@ func TestAnswerMultiSelect(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A submit is sent one key at a time with a re-parse in between: when a
+// toggle or a move does not show up in the pane, nothing after it is sent.
+func TestAnswerMultiSelectStopsWhenKeyDoesNotLand(t *testing.T) {
+	d, _ := panestate.ParseDialog(multiSelectPane)
+	body := fmt.Sprintf(`{"key":"submit","select":["1","2"],"dialog_hash":%q}`, d.Hash)
+	for _, tt := range []struct {
+		name   string
+		ignore string
+		sent   []string
+	}{
+		{"toggle dropped", "2", []string{"1", "2"}},
+		{"move dropped", "Down", []string{"1", "2", "Down"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWriteEnv(t, true)
+			e.panes.set(multiSelectPane)
+			reactLikeClaude(e, tt.ignore)
+			w := e.post(winPath+"/answer", body)
+			var got []string
+			for _, k := range e.keys.all() {
+				got = append(got, k.key)
+			}
+			if w.Code != http.StatusConflict || errCode(t, w) != codeDialogChanged || !reflect.DeepEqual(got, tt.sent) {
+				t.Errorf("status %d sent %v, want 409 %v: %s", w.Code, got, tt.sent, w.Body)
+			}
+		})
+	}
+	// A different screen after a key (the question was dismissed) stops it too.
+	e := newWriteEnv(t, true)
+	e.panes.set(multiSelectPane)
+	e.keys.onSend = func(string) { e.panes.set(idlePane) }
+	if w := e.post(winPath+"/answer", body); w.Code != http.StatusConflict || len(e.keys.all()) != 1 {
+		t.Errorf("status %d sent %v", w.Code, e.keys.all())
+	}
+}
+
+// A number toggles without moving the cursor. A toggle that also moved it
+// did something else, and the arrow count read before it is no longer
+// right, so the sequence stops before any arrow is sent.
+func TestAnswerMultiSelectToggleMustNotMoveCursor(t *testing.T) {
+	d, _ := panestate.ParseDialog(multiSelectPane)
+	e := newWriteEnv(t, true)
+	e.panes.set(multiSelectPane)
+	e.keys.onSend = func(key string) {
+		e.panes.mu.Lock()
+		defer e.panes.mu.Unlock()
+		e.panes.text, _ = panesim.Press(e.panes.text, key)
+		e.panes.text, _ = panesim.Press(e.panes.text, "Down")
+	}
+	w := e.post(winPath+"/answer", fmt.Sprintf(`{"key":"submit","select":["1"],"dialog_hash":%q}`, d.Hash))
+	if got := sentKeys(e); w.Code != http.StatusConflict || !reflect.DeepEqual(got, []string{"1"}) {
+		t.Errorf("status %d sent %v, want 409 [1]: %s", w.Code, got, w.Body)
+	}
+}
+
+// Enter goes out only with the cursor on the confirm row, even when every
+// earlier key landed.
+func TestSendCheckedEnterNeedsConfirmRow(t *testing.T) {
+	d, _ := panestate.ParseDialog(multiSelectPane)
+	if d.Submit == nil || d.Submit.Moves != 3 {
+		t.Fatalf("fixture submit = %+v", d.Submit)
+	}
+	for _, tt := range []struct {
+		name string
+		keys []string
+		ok   bool
+		sent []string
+	}{
+		{"short of the row", []string{"Down", "Enter"}, false, []string{"Down"}},
+		{"on the row", []string{"Down", "Down", "Down", "Enter"}, true, []string{"Down", "Down", "Down", "Enter"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWriteEnv(t, true)
+			e.panes.set(multiSelectPane)
+			reactLikeClaude(e)
+			out, ok := e.sendChecked(resolved{pane: testMainPane}, d, tt.keys)
+			if ok != tt.ok || !reflect.DeepEqual(sentKeys(e), tt.sent) {
+				t.Errorf("ok=%v (%+v) sent %v, want ok=%v %v", ok, out, sentKeys(e), tt.ok, tt.sent)
+			}
+		})
+	}
+}
+
+func sentKeys(e *writeEnv) []string {
+	var out []string
+	for _, k := range e.keys.all() {
+		out = append(out, k.key)
+	}
+	return out
 }
 
 // Toggling a box on and straight back off lands on an earlier hash; the
@@ -555,7 +662,7 @@ func TestAnswerMultiSelectToggleTwice(t *testing.T) {
 // ordinary single-select answer (key 1).
 func TestAnswerReviewPage(t *testing.T) {
 	const review = "────────────────────────────────────────────────────────────────────────────────\n" +
-		"←  ☒ Pick  ☒ Mode  ✔ Submit  →\nReview your answers\n ● Pick\n   → B\n\n❯ 1. Submit answers\n  2. Cancel\n"
+		"←  ☒ Pick  ☒ Mode  ✔ Submit  →\nReview your answers\n ● Pick\n   → B\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel\n"
 	d, ok := panestate.ParseDialog(review)
 	if !ok {
 		t.Fatal("not parsed")
@@ -1114,7 +1221,7 @@ func TestAnswerWaitsForRedraw(t *testing.T) {
 	e := newWriteEnv(t, true)
 	e.answerSettle = 5 * time.Second
 	const redraw = 150 * time.Millisecond
-	e.keys.onSend = func() { time.AfterFunc(redraw, func() { e.panes.set(idlePane) }) }
+	e.keys.onSend = func(string) { time.AfterFunc(redraw, func() { e.panes.set(idlePane) }) }
 	start := time.Now()
 	if w := e.post(winPath+"/answer", fmt.Sprintf(`{"key":"1","dialog_hash":%q}`, dialogHash(t))); w.Code != 200 {
 		t.Fatalf("status %d: %s", w.Code, w.Body)

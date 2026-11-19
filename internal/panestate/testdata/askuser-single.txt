@@ -1,0 +1,40 @@
+[38;2;215;119;87m▝▜[48;2;0;0;0m█████[49m█▀[39m  [38;2;153;153;153mHaiku 5.5 · Claude Team[39m
+[38;2;215;119;87m ▝▝   ▝▝ [39m  [38;2;153;153;153m~/…/agentctl/.worktrees/agent-go-engineer-opus-adhoc-b532d4e1[39m
+
+
+[38;2;153;153;153m[48;2;55;55;55m❯ [38;2;255;255;255mCall the AskUserQuestion tool exactly once with three questions: (1) header [39m
+  [38;2;255;255;255mColor, "Which color should the button be?", options Red/Green/Blue with short[39m
+  [38;2;255;255;255mdescriptions; (2) header Size, multiSelect true, "Which sizes should we [39m
+  [38;2;255;255;255mship?", options Small/Medium/Large with descriptions; (3) header Shape, [39m
+  [38;2;255;255;255m"Which shape?", options Round/Square. Do nothing else. After the answer, just[39m
+  [38;2;255;255;255mprint the answers verbatim.[39m
+
+[38;2;153;153;153m[49m⏺ [39mUser answered Claude's questions:
+[38;2;153;153;153m  ⎿  · Which color should the button be? → Green[39m
+     [38;2;153;153;153m· Which sizes should we ship? → Small, Large[39m
+     [38;2;153;153;153m· Which shape? → Round[39m
+
+[38;2;255;255;255m⏺[39m Answers:
+
+  - [1mColor:[0m Green
+  - [1mSize:[0m Small, Large
+  - [1mShape:[0m Round
+
+[38;2;153;153;153m✻[39m [38;2;153;153;153mCogitated for 2s · done 3:24 PM[39m
+
+[38;2;153;153;153m[48;2;55;55;55m❯ [38;2;255;255;255mNow call AskUserQuestion once with ONE question: header Pet, "Cat or dog?", [39m
+  [38;2;255;255;255moptions Cat/Dog with descriptions. Then print the answer.[39m
+[38;2;153;153;153m[49m────────────────────────────────────────────────────────────────────────────────
+[38;2;0;0;0m[48;2;177;185;249m ☐ Pet [39m[49m
+
+[1m[38;2;255;255;255mCat or dog?[0m
+
+[38;2;177;185;249m❯[39m [38;2;153;153;153m1.[39m [38;2;177;185;249mCat[39m
+     [38;2;153;153;153mIndependent, low-maintenance companion[39m
+  [38;2;153;153;153m2.[39m Dog
+     [38;2;153;153;153mLoyal, active companion that needs regular walks[39m
+  [38;2;153;153;153m3. Type something.[39m
+[38;2;153;153;153m────────────────────────────────────────────────────────────────────────────────
+[39m  4. Chat about this
+
+[38;2;153;153;153mEnter to select · ↑/↓ to navigate · Esc to cancel[39m
