@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"path"
+	"slices"
 	"sort"
 	"strings"
 
@@ -343,31 +344,64 @@ func nodeText(n syntax.Node) string {
 //   - a here-string fed to a shell (`bash <<< '...'`).
 func nestedCommandLines(f *syntax.File, command string) []string {
 	var out []string
+	// stack holds, per open node, 'q' for a double-quoted word, 'c' for a
+	// command substitution and 0 otherwise. A substitution is scanned on its
+	// own when its nearest quoting context is a double quote, at any depth
+	// ("${x:-$(...)}", "$(( $(...) ))"); one nested in an unquoted or another
+	// substitution's body is already seen in that text.
+	var stack []byte
+	quoted := func() bool {
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i] != 0 {
+				return stack[i] == 'q'
+			}
+		}
+		return false
+	}
 	syntax.Walk(f, func(n syntax.Node) bool {
+		if n == nil {
+			stack = stack[:len(stack)-1]
+			return true
+		}
+		var kind byte
 		switch c := n.(type) {
 		case *syntax.DblQuoted:
-			for _, p := range c.Parts {
-				if cs, ok := p.(*syntax.CmdSubst); ok {
-					if body, ok := cmdSubstBody(cs, command); ok {
-						out = append(out, body)
-					}
+			kind = 'q'
+		case *syntax.CmdSubst:
+			if quoted() {
+				if body, ok := cmdSubstBody(c, command); ok {
+					out = append(out, body)
 				}
 			}
+			kind = 'c'
 		case *syntax.CallExpr:
 			out = append(out, callCommandLines(c)...)
 		case *syntax.Stmt:
-			if call, ok := c.Cmd.(*syntax.CallExpr); ok && len(call.Args) > 0 && shellNames[path.Base(call.Args[0].Lit())] {
-				for _, r := range c.Redirs {
-					if r.Op == syntax.WordHdoc && r.Word != nil {
-						out = append(out, wordText(r.Word))
-					}
-				}
-			}
+			out = append(out, shellHereStrings(c)...)
 		}
+		stack = append(stack, kind)
 		return true
 	})
 	return out
 }
+
+// shellHereStrings returns the here-strings of st when any word of its
+// command names a shell (`bash <<< '...'`, `timeout 5 bash <<< '...'`).
+func shellHereStrings(st *syntax.Stmt) []string {
+	call, ok := st.Cmd.(*syntax.CallExpr)
+	if !ok || !slices.ContainsFunc(call.Args, isShellWord) {
+		return nil
+	}
+	var out []string
+	for _, r := range st.Redirs {
+		if r.Op == syntax.WordHdoc && r.Word != nil {
+			out = append(out, wordText(r.Word))
+		}
+	}
+	return out
+}
+
+func isShellWord(w *syntax.Word) bool { return shellNames[path.Base(w.Lit())] }
 
 // cmdSubstBody returns the source between a command substitution's
 // delimiters.
@@ -395,21 +429,39 @@ func callCommandLines(call *syntax.CallExpr) []string {
 		out = append(out, strings.Join(parts, " "))
 	}
 	for i, w := range call.Args {
-		if !shellNames[path.Base(w.Lit())] {
+		if !isShellWord(w) {
 			continue
 		}
-		for j := i + 1; j+1 < len(call.Args); j++ {
-			flag := call.Args[j].Lit()
-			if !strings.HasPrefix(flag, "-") || strings.HasPrefix(flag, "--") {
-				break
-			}
-			if strings.Contains(flag, "c") {
-				out = append(out, wordText(call.Args[j+1]))
-				break
-			}
+		if line, ok := shellCArg(call.Args[i+1:]); ok {
+			out = append(out, line)
 		}
 	}
 	return out
+}
+
+// shellCArg returns the -c command line among a shell's arguments, skipping
+// long options (--norc), option-argument pairs (-o pipefail, +O extglob) and
+// option clusters (-lc, -ec).
+func shellCArg(args []*syntax.Word) (string, bool) {
+	for j := 0; j < len(args); j++ {
+		flag := wordText(args[j])
+		switch {
+		case strings.HasPrefix(flag, "--"):
+			continue
+		case !strings.HasPrefix(flag, "-") && !strings.HasPrefix(flag, "+"):
+			return "", false
+		}
+		if strings.HasPrefix(flag, "-") && strings.Contains(flag, "c") {
+			if j+1 < len(args) {
+				return wordText(args[j+1]), true
+			}
+			return "", false
+		}
+		if strings.ContainsAny(flag[1:], "oO") {
+			j++ // the option name
+		}
+	}
+	return "", false
 }
 
 // invocationText is the view of command that the dispatch and cron gates

@@ -61,6 +61,11 @@ func TestDispatchGate_Heredocs(t *testing.T) {
 		{"env bash -lc", "env X=1 bash -lc '" + d + "'", true},
 		{"eval literal", "eval '" + d + "'", true},
 		{"here-string to bash", "bash <<< '" + d + "'", true},
+		{"subst in quoted param expansion", "echo \"${x:-$(" + d + ")}\"", true},
+		{"subst in quoted arithmetic", "echo \"$(( $(" + d + ") ))\"", true},
+		{"bash -o pipefail -c", "bash -o pipefail -c '" + d + "'", true},
+		{"bash --norc -c", "bash --norc -c '" + d + "'", true},
+		{"here-string behind timeout", "timeout 5 bash <<< '" + d + "'", true},
 		// No longer gated: the body is data.
 		{"cat >", "cat > f <<EOF\n" + d + "\nEOF\n", false},
 		{"cat >> quoted delimiter", "cat >> internal/hooks/x_test.go <<'EOF'\npackage hooks\n\tcmd := `" + d + "`\nEOF\n", false},
@@ -102,6 +107,7 @@ func TestCronGate_Heredocs(t *testing.T) {
 		{"fd wired to proc subst", "exec 3> >(bash); cat >&3 <<'EOF'\n" + c + "\nEOF\n", true},
 		{"write then bash", "cat > /tmp/s.sh <<'EOF'\n" + c + "\nEOF\nbash /tmp/s.sh", true},
 		{"bash -c literal", "bash -c '" + c + "'", true},
+		{"subst in quoted param expansion", "echo \"${x:-$(" + c + ")}\"", true},
 		{"cat >", "cat > f <<'EOF'\n" + c + "\nEOF\n", false},
 		{"tee", "tee f <<EOF\n" + c + "\nEOF\n", false},
 		{"gh pr body", "gh pr create --body-file - <<'EOF'\n" + c + "\nEOF\n", false},
@@ -187,6 +193,7 @@ func TestDispatchSegments_SubstitutionsCountedOnce(t *testing.T) {
 		"x=$(agentctl dispatch --issue 3)",
 		"eval \"$(cat <<'EOF'\nagentctl dispatch --issue 3\nEOF\n)\"",
 		"bash -c 'agentctl dispatch --issue 3'",
+		"echo \"$(echo $(agentctl dispatch --issue 3))\"",
 		"eval `cat <<EOF\nagentctl dispatch --issue 3\nEOF\n`",
 	} {
 		if got := len(dispatchSegments(c)); got != 1 {
