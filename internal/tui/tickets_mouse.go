@@ -246,7 +246,7 @@ func (m TicketsModel) clickModalRow(zone string, i int) (tea.Model, tea.Cmd) {
 // and pickers cancel; a form with typed content is left alone.
 func (m TicketsModel) dismissModalByClick() (tea.Model, tea.Cmd) {
 	switch {
-	case m.confirmModal.Visible:
+	case m.choiceModal.Visible, m.confirmModal.Visible:
 		return m.handleKey(tkKey("esc"))
 	case m.promptModal.Visible:
 		m.promptModal.Visible = false // close the whole dispatch flow

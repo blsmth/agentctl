@@ -13,9 +13,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// autopilotOnStyle is a bright green dot for active autopilot.
-var autopilotOnStyle lipgloss.Style
-
 // initTicketStyles initialises tickets-browser styles from the active theme.
 // Shared styles (ColHeader, Rule, Dim, etc.) are sourced from tableStyles,
 // which must be initialised first by initTableStyles().
@@ -58,8 +55,6 @@ func initTicketStyles() {
 		Border(lipgloss.NormalBorder(), false, false, false, true).
 		BorderForeground(lipgloss.Color(t.Surface)).
 		PaddingLeft(1)
-
-	autopilotOnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Green)).Bold(true)
 }
 
 // labelColor maps known label names to theme colors for visual differentiation.
@@ -332,7 +327,7 @@ func (m TicketsModel) render() string {
 // activeModal returns the modal on top, with the pointer's hover applied to
 // its content, if any is open.
 func (m TicketsModel) activeModal() (Modal, bool) {
-	for _, md := range []Modal{m.confirmModal, m.promptModal, m.agentModal, m.createModal, m.helpModal} {
+	for _, md := range []Modal{m.choiceModal, m.confirmModal, m.promptModal, m.agentModal, m.createModal, m.helpModal} {
 		if md.Visible {
 			if h, ok := md.Content.(tkHoverable); ok {
 				md.Content = h.withHover(m.hover)
@@ -404,20 +399,22 @@ func (m TicketsModel) renderStatusLine(cw int) string {
 		check := fgStyle(t.Green).Bold(true).Render("✓")
 		return ansi.Truncate(check+" "+tkDimStyle.Render(m.flash), cw, "…")
 	}
-	if m.autoPoll {
-		dot := autopilotOnStyle.Render("●")
-		s := autopilotOnStyle.Render("Autopilot ") + dot + " " + tkDimStyle.Render(m.autoPollInterval.String())
-		if m.lastPollResult != "" {
-			s += "  " + tkDimStyle.Render(m.lastPollResult)
-		}
-		return s
-	}
 	return ""
 }
 
-// renderHeaderLine is the title bar line of the list and detail views.
+// tkMinTitleBar is the narrowest the title bar may get before the
+// autopilot pill drops its detail.
+const tkMinTitleBar = 28
+
+// renderHeaderLine is the title bar line of the list and detail views: the
+// title bar, then the always-visible autopilot pill at the right.
 func (m TicketsModel) renderHeaderLine(title string, back bool, cw int) string {
-	return m.renderTitleBar(title, back, cw)
+	pill := m.renderPill(false)
+	if cw-lipgloss.Width(pill)-2 < tkMinTitleBar {
+		pill = m.renderPill(true)
+	}
+	bar := m.renderTitleBar(title, back, cw-lipgloss.Width(pill)-2)
+	return bar + "  " + pill
 }
 
 // renderChips renders the clickable filter/sort/search/new chips under the

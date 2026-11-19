@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -45,6 +46,13 @@ func TestMain(m *testing.M) {
 	// Never spawn gh or tmux from the tickets browser; tests that need a
 	// result install their own stub.
 	tkExec = func(string, ...string) ([]byte, error) { return nil, errExecDisabled }
+	// Never list ready issues, dispatch, or read/write the autopilot setting.
+	tkAutoPollRunner = autoPollRunner{
+		list:     func(string) ([]byte, error) { return nil, errExecDisabled },
+		dispatch: func(int, string) error { return errExecDisabled },
+	}
+	tkLoadAutoPoll = func() (bool, time.Duration) { return false, 5 * time.Minute }
+	tkWriteAutoPoll = func(bool) error { return errExecDisabled }
 	code := m.Run()
 	cleanup()
 	os.Exit(code)

@@ -55,7 +55,7 @@ var tkHelpKeys = [][2]string{
 	{"y", "copy issue URL (tmux buffer)"},
 	{"t / T", "triage / dispatch an agent"},
 	{"tab", "focus list / preview"},
-	{"P", "toggle autopilot"},
+	{"P", "autopilot on (confirms) / off"},
 	{"q", "quit"},
 }
 

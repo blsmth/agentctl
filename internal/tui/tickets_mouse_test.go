@@ -156,7 +156,7 @@ func runCmds(cmd tea.Cmd) []tea.Msg {
 	var msg tea.Msg
 	select {
 	case msg = <-ch:
-	case <-time.After(300 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond):
 		return nil
 	}
 	if batch, ok := msg.(tea.BatchMsg); ok {

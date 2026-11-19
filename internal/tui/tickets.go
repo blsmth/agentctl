@@ -1,9 +1,7 @@
 package tui
 
 import (
-	"encoding/json"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,9 +12,6 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/agentlabel"
-	"github.com/blsmth/agentctl/internal/config"
-	"github.com/blsmth/agentctl/internal/logging"
-	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/theme"
 )
 
@@ -110,23 +105,6 @@ const (
 	focusSubmit                    // Submit button
 	focusCancel                    // Cancel button
 )
-
-// autoPollTickMsg fires on each poll interval.
-type autoPollTickMsg struct{}
-
-// autoPollDispatch records a single auto-dispatch that occurred this cycle.
-type autoPollDispatch struct {
-	issueNumber int
-	issueTitle  string
-	agentName   string
-}
-
-// autoPollResultMsg is sent after a poll+dispatch cycle completes.
-type autoPollResultMsg struct {
-	dispatched []autoPollDispatch
-	failures   []string // per-issue dispatch failures (not recorded as dispatched)
-	err        error
-}
 
 // ghPR is a single GitHub pull request returned by gh pr list.
 type ghPR struct {
@@ -262,13 +240,10 @@ type TicketsModel struct {
 	lastClick     tkPress            // last activated zone, for double-click
 	deferredFetch *ticketsFetchedMsg // list refresh held back during a press
 
-	// Autopilot state
-	autoPoll         bool          // mirrors config.AutoPoll
-	autoPollInterval time.Duration // effective interval
-	autoPollTicker   bool          // true when tick loop is active
-	lastPollTime     time.Time     // last successful poll
-	lastPollResult   string        // status message from most recent cycle
-	dispatching      bool          // true while a dispatch is in flight
+	// autopilot is the auto_poll state (tickets_autopilot.go).
+	autopilot tkAutopilot
+	// choiceModal is the small button dialog (autopilot confirmation).
+	choiceModal Modal
 }
 
 // CreateOpts contains optional pre-filled values for the ticket create form.
@@ -334,8 +309,8 @@ func NewTicketsModel(dir string, agents []agent.Agent) TicketsModel {
 	siS.Focused.Text = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current().Text))
 	si.SetStyles(siS)
 
-	// Load config to initialise autopilot state.
-	cfg := config.Load()
+	// Resolve the autopilot setting the way the toggle will.
+	on, interval := tkLoadAutoPoll()
 
 	m := TicketsModel{
 		termWidth:        120,
@@ -348,13 +323,9 @@ func NewTicketsModel(dir string, agents []agent.Agent) TicketsModel {
 		searchInput:      si,
 		labelIdx:         -1,
 		agents:           agents,
-		autoPoll:         cfg.AutoPoll,
-		autoPollInterval: cfg.EffectiveAutoPollInterval(),
-		// Init starts the tick loop when autopilot is on; recording that
-		// here keeps a later P from starting a second loop.
-		autoPollTicker: cfg.AutoPoll,
-		detailCache:    make(map[int]*tkDetailFetchedMsg),
-		zones:          &zoneList{},
+		autopilot:        tkAutopilot{on: on, interval: interval},
+		detailCache:      make(map[int]*tkDetailFetchedMsg),
+		zones:            &zoneList{},
 		splitPane: SplitPane{
 			ListRatio:     0.30,
 			MinListRows:   3,
@@ -362,6 +333,13 @@ func NewTicketsModel(dir string, agents []agent.Agent) TicketsModel {
 		},
 	}
 	m.splitPane.SetSize(m.termWidth, m.paneHeight())
+	// Init schedules this loop's ticks; marking it running here keeps a
+	// later P from starting a second loop.
+	if on {
+		m.autopilot.gen = 1
+		m.autopilot.ticker = true
+		m.autopilot.nextPoll = tkNow().Add(interval)
+	}
 	return m
 }
 
@@ -445,8 +423,8 @@ func (m TicketsModel) Result() TicketsResult { return m.result }
 
 func (m TicketsModel) Init() tea.Cmd {
 	cmds := []tea.Cmd{tkFetchTicketsCmd(m.dir, m.issueState)}
-	if m.autoPoll {
-		cmds = append(cmds, autoPollTickCmd(m.autoPollInterval))
+	if m.autopilot.on && m.autopilot.ticker {
+		cmds = append(cmds, autoPollTickCmd(m.autopilot.interval, m.autopilot.gen), autopilotClockCmd(m.autopilot.gen))
 	}
 	// When the model is created with pre-filled opts (via NewTicketsModelWithOpts)
 	// the createModal may already be visible.  Fire the content's Init() so the
@@ -649,34 +627,8 @@ func (m TicketsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case autoPollTickMsg:
-		if !m.autoPoll || m.dispatching {
-			// Reschedule but skip this cycle.
-			return m, autoPollTickCmd(m.autoPollInterval)
-		}
-		m.dispatching = true
-		return m, tea.Batch(
-			autoPollCmd(m.repoSlug),
-			autoPollTickCmd(m.autoPollInterval),
-		)
-
-	case autoPollResultMsg:
-		m.dispatching = false
-		m.lastPollTime = time.Now()
-		if msg.err != nil {
-			m.lastPollResult = fmt.Sprintf("poll error: %v", msg.err)
-		} else if len(msg.dispatched) == 0 {
-			m.lastPollResult = "no ready tickets"
-		} else {
-			var parts []string
-			for _, d := range msg.dispatched {
-				parts = append(parts, fmt.Sprintf("#%d → %s", d.issueNumber, d.agentName))
-			}
-			m.lastPollResult = strings.Join(parts, ", ")
-		}
-		// Refresh ticket list since labels may have changed.
-		m.loading = true
-		return m, tkFetchTicketsCmd(m.dir, m.issueState)
+	case autoPollTickMsg, autopilotClockMsg, autoPollListedMsg, autoPollDispatchedMsg, autopilotPreviewMsg:
+		return m.updateAutopilot(msg)
 
 	case tea.MouseClickMsg:
 		return m.handleMousePress(msg)
@@ -753,6 +705,14 @@ func (m TicketsModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.result = TicketsResult{Cancelled: true}
 		m.quitting = true
 		return m, tea.Quit
+	}
+	if m.choiceModal.Visible {
+		if msg.String() == "ctrl+c" {
+			return m.quit()
+		}
+		var cmd tea.Cmd
+		m.choiceModal, cmd = m.choiceModal.Update(msg)
+		return m.checkChoiceModalDone(cmd)
 	}
 	if m.confirmModal.Visible {
 		var cmd tea.Cmd
@@ -1072,18 +1032,7 @@ func (m TicketsModel) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.openHelp()
 
 	case "P":
-		// Toggle autopilot on/off.
-		cfg := config.Load()
-		newVal, err := cfg.ToggleAutoPoll()
-		if err == nil {
-			m.autoPoll = newVal
-			m.autoPollInterval = cfg.EffectiveAutoPollInterval()
-		}
-		if m.autoPoll && !m.autoPollTicker {
-			m.autoPollTicker = true
-			return m, autoPollTickCmd(m.autoPollInterval)
-		}
-		return m, nil
+		return m.toggleAutopilot()
 	}
 	return m, nil
 }
@@ -1179,6 +1128,9 @@ func (m TicketsModel) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "p":
 		return m.openLinkedPR(d.number)
 
+	case "P":
+		return m.toggleAutopilot()
+
 	case "?":
 		return m.openHelp()
 	}
@@ -1218,6 +1170,23 @@ func (m TicketsModel) checkCreateModalDone(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	}
 	m.loading = true
 	return m, tea.Batch(cmd, m.setFlash(text, false), tkFetchTicketsCmd(m.dir, m.issueState))
+}
+
+// checkChoiceModalDone acts on a finished choice dialog.
+func (m TicketsModel) checkChoiceModalDone(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	c, ok := m.choiceModal.Content.(tkChoiceModel)
+	if !ok || !c.done() {
+		return m, cmd
+	}
+	m.choiceModal.Visible = false
+	switch c.kind {
+	case "autopilot":
+		if c.picked() == "y" {
+			next, onCmd := m.setAutopilot(true)
+			return next, tea.Batch(cmd, onCmd)
+		}
+	}
+	return m, cmd
 }
 
 // checkConfirmModalDone inspects the confirmModal content after an update.
@@ -1341,102 +1310,6 @@ func tkCreateIssueCmd(slug, title, body string, selectedLabels map[string]bool) 
 		num := extractIssueNumber(url)
 		return issueCreatedMsg{URL: url, Num: num}
 	}
-}
-
-// autoPollTickCmd schedules the next autopilot poll tick.
-func autoPollTickCmd(interval time.Duration) tea.Cmd {
-	return tea.Tick(interval, func(t time.Time) tea.Msg {
-		return autoPollTickMsg{}
-	})
-}
-
-// autoPollRunner abstracts the external effects of an autopoll cycle so tests
-// can inject them.
-type autoPollRunner struct {
-	// list returns the JSON of ready issues for repoSlug.
-	list func(repoSlug string) ([]byte, error)
-	// dispatch launches an agent on an issue.
-	dispatch func(issue int, agent string) error
-}
-
-// execAutoPollRunner is the production runner. It dispatches via the running
-// binary (os.Executable) rather than whatever "agentctl" happens to be first on
-// PATH, which may be a different version or absent.
-var execAutoPollRunner = autoPollRunner{
-	list: func(repoSlug string) ([]byte, error) {
-		return exec.Command("gh", "issue", "list",
-			"--repo", repoSlug,
-			"--label", "ready",
-			"--state", "open",
-			"--json", "number,title,labels",
-		).Output()
-	},
-	dispatch: func(issue int, agent string) error {
-		exe, err := selfpath.Spawnable()
-		if err != nil {
-			return fmt.Errorf("locating agentctl executable: %w", err)
-		}
-		out, err := exec.Command(exe, "dispatch",
-			"--issue", fmt.Sprintf("%d", issue),
-			"--agent", agent,
-		).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
-		}
-		return nil
-	},
-}
-
-// autoPollCmd polls GitHub for ready issues and dispatches them via `agentctl dispatch`.
-func autoPollCmd(repoSlug string) tea.Cmd {
-	return func() tea.Msg { return runAutoPoll(repoSlug, execAutoPollRunner) }
-}
-
-// runAutoPoll performs one poll cycle. An issue is recorded as dispatched only
-// when the dispatch actually succeeded; failures are collected in the result's
-// failures so the UI can surface them.
-func runAutoPoll(repoSlug string, r autoPollRunner) autoPollResultMsg {
-	if repoSlug == "" {
-		return autoPollResultMsg{}
-	}
-	out, err := r.list(repoSlug)
-	if err != nil {
-		return autoPollResultMsg{err: err}
-	}
-
-	var issues []struct {
-		Number int       `json:"number"`
-		Title  string    `json:"title"`
-		Labels []ghLabel `json:"labels"`
-	}
-	if err := json.Unmarshal(out, &issues); err != nil {
-		return autoPollResultMsg{err: err}
-	}
-
-	var res autoPollResultMsg
-	for _, iss := range issues {
-		// Skip issues that are already in-progress.
-		if hasLabel(iss.Labels, "in-progress") {
-			continue
-		}
-
-		agent := inferAgentFromLabels(iss.Labels)
-		if agent == "" {
-			agent = agentlabel.Default
-		}
-
-		if err := r.dispatch(iss.Number, agent); err != nil {
-			logging.Warn("autopoll: dispatch #%d to %s failed: %v", iss.Number, agent, err)
-			res.failures = append(res.failures, fmt.Sprintf("#%d: %v", iss.Number, err))
-			continue
-		}
-		res.dispatched = append(res.dispatched, autoPollDispatch{
-			issueNumber: iss.Number,
-			issueTitle:  iss.Title,
-			agentName:   agent,
-		})
-	}
-	return res
 }
 
 // inferAgentFromLabels determines the target agent from issue labels.
