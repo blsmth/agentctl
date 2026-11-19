@@ -28,17 +28,20 @@ const (
 
 	// Prompt input caps, in runes.
 	maxTaskRunes     = 300
+	maxPromptRunes   = 500
 	maxSummaryRunes  = 1000
 	maxLastTextRunes = 1500
 )
 
 // Input is the text a title is made from. Ticket is context only: ticket rows
-// keep showing their "#N title".
+// keep showing their "#N title". FirstPrompt is the first user prompt of a
+// bare window (no Task, no Ticket).
 type Input struct {
-	Task     string
-	Ticket   string
-	Summary  string
-	LastText string
+	Task        string
+	FirstPrompt string
+	Ticket      string
+	Summary     string
+	LastText    string
 }
 
 // normalize collapses whitespace so cosmetic differences hash alike.
@@ -56,12 +59,18 @@ func Hash(s string) string {
 
 // Empty reports whether there is nothing to title from.
 func (in Input) Empty() bool {
-	return normalize(in.Task) == "" && normalize(in.Summary) == "" && normalize(in.LastText) == ""
+	return normalize(in.Task) == "" && normalize(in.FirstPrompt) == "" && normalize(in.Summary) == "" && normalize(in.LastText) == ""
 }
 
 // Hash identifies the input as a whole.
 func (in Input) Hash() string {
-	return Hash(strings.Join([]string{normalize(in.Task), normalize(in.Ticket), normalize(in.Summary), normalize(in.LastText)}, "\x00"))
+	parts := []string{normalize(in.Task), normalize(in.Ticket), normalize(in.Summary), normalize(in.LastText)}
+	// Appended only when set, so windows without a first prompt keep the
+	// hashes recorded before the field existed.
+	if fp := normalize(in.FirstPrompt); fp != "" {
+		parts = append(parts, fp)
+	}
+	return Hash(strings.Join(parts, "\x00"))
 }
 
 // Due reports whether a window with title state st should be retitled from
@@ -153,6 +162,7 @@ func Prompt(in Input) string {
 	}
 	section("Ticket", headRunes(normalize(in.Ticket), maxTaskRunes))
 	section("Task", headRunes(normalize(in.Task), maxTaskRunes))
+	section("First request", headRunes(normalize(in.FirstPrompt), maxPromptRunes))
 	section("Latest recap", headRunes(normalize(in.Summary), maxSummaryRunes))
 	// The end of a long message is the freshest part.
 	section("Agent's last message", tailRunes(normalize(in.LastText), maxLastTextRunes))

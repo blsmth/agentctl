@@ -228,6 +228,7 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 			Ticket:           as.TicketRef,
 			TicketTitle:      as.TicketTitle,
 			Task:             as.Task,
+			FirstPrompt:      as.FirstPrompt,
 			Branch:           as.Branch,
 			WorktreeDir:      as.WorktreeDir,
 			PRNumber:         as.PRNumber,

@@ -260,6 +260,14 @@ console.log("ok: resolved text");
   assert.equal(rowHeadline(act), "brandon:55");
   assert.equal(agentChip(act), "");
   assert.equal(rowDetailLine(act), "go test ./...");
+  // A generated title over an activity row is the headline.
+  const actTitled = { agent: "claude:2", recap: "Bash: go test ./...", recap_source: "activity", title: "Fix flaky tests", activity: "Bash: go test ./..." };
+  assert.equal(rowHeadline(actTitled), "Fix flaky tests");
+  assert.equal(rowDetailLine(actTitled), "Bash: go test ./...");
+  // A title standing in for a missing recap is not repeated on the second line.
+  const standIn = { agent: "claude:2", recap: "Fix flaky tests", recap_source: "title", title: "", activity: "" };
+  assert.equal(rowHeadline(standIn), "Fix flaky tests");
+  assert.equal(rowDetailLine(standIn), "");
   const none = { agent: "", activity: "" };
   assert.equal(rowHeadline(none), "Claude");
   assert.equal(agentChip(none), "");
@@ -272,8 +280,8 @@ console.log("ok: resolved text");
   const titledTask = { agent: "a:1", recap: "please sort every photo into albums by year", recap_source: "task", title: "Sorting Photos by Year", activity: "ls" };
   assert.equal(rowHeadline(titledTask), "Sorting Photos by Year");
   assert.equal(rowDetailLine(titledTask), "ls");
-  // A title without a showable recap is ignored.
-  assert.equal(rowHeadline({ agent: "a:1", recap: "go test", recap_source: "activity", title: "Stale" }), "a:1");
+  // The generated title shows over an activity recap too (a bare window's first prompt).
+  assert.equal(rowHeadline({ agent: "a:1", recap: "go test", recap_source: "activity", title: "Testing Things" }), "Testing Things");
   console.log("ok: row headline");
 }
 

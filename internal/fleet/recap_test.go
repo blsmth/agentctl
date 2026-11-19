@@ -307,16 +307,17 @@ func TestTagLogsTitles(t *testing.T) {
 		{AgentState: state.AgentState{Task: task, ShortTitle: "Sorting Photos by Year"}},
 		// A ticket recap keeps its "#N title"...
 		{AgentState: state.AgentState{TicketRef: "60", TicketTitle: "A long ticket title that stays as it is", ShortTitle: "X"}},
-		// ...and so do AI titles and activity lines.
+		// ...and so do AI titles.
 		{AgentState: state.AgentState{LogPath: writeLog(t, jsonl(t, aiTitle("Some AI title"))), ShortTitle: "X"}},
-		{AgentState: state.AgentState{LastText: "activity text", ShortTitle: "X"}},
+		// A bare window with only an activity line shows its generated title.
+		{AgentState: state.AgentState{LastText: "activity text", ShortTitle: "Fixing Hub Sort"}},
 		// A ticket window whose recap is an away_summary does get the title.
 		{AgentState: state.AgentState{TicketRef: "61", TicketTitle: "Ticket", LogPath: writeLog(t, jsonl(t, awaySummary(summary))), ShortTitle: "Fixing Ticket 61"}},
 		// No generated title: the row shows the recap text.
 		{AgentState: state.AgentState{LogPath: writeLog(t, jsonl(t, awaySummary(summary)))}},
 	}
 	TagLogs(rows)
-	want := []string{"Organizing your Photos", "Sorting Photos by Year", "", "", "", "Fixing Ticket 61", ""}
+	want := []string{"Organizing your Photos", "Sorting Photos by Year", "", "", "Fixing Hub Sort", "Fixing Ticket 61", ""}
 	for i, w := range want {
 		got := rows[i].Recap
 		if got.Title != w {
@@ -348,5 +349,19 @@ func TestAgentFromWindowCarriesShortTitle(t *testing.T) {
 	a := agentFromWindow(1, tmux.WindowInfo{ID: "@3"}, "x", recs)
 	if a.ShortTitle != "Organizing your Photos" {
 		t.Fatalf("ShortTitle = %q", a.ShortTitle)
+	}
+}
+
+func TestTagLogsTitleStandsInForEmptyRecap(t *testing.T) {
+	rows := []Row{
+		{AgentState: state.AgentState{ShortTitle: "Organizing your Photos"}},
+		{AgentState: state.AgentState{}},
+	}
+	TagLogs(rows)
+	if got := rows[0].Recap; got.Short() != "Organizing your Photos" || got.Source != RecapTitle {
+		t.Errorf("recap = %+v", got)
+	}
+	if got := rows[1].Recap; got.Source != RecapNone {
+		t.Errorf("recap = %+v", got)
 	}
 }
