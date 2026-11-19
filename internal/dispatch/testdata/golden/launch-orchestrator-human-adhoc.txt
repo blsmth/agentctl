@@ -30,6 +30,7 @@ env:
   CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0
   DISABLE_AUTOUPDATER=1
 command:
+  unset AGENTCTL_WINDOW_ID AGENTCTL_WINDOW_INDEX AGENTCTL_BRANCH AGENTCTL_WORKTREE AGENTCTL_TICKET AGENTCTL_TICKET_TITLE AGENTCTL_SPAWNED_BY AGENTCTL_SPAWNED_BY_SESSION AGENTCTL_BACKEND AGENTCTL_ACCOUNT AGENTCTL_HARNESS AGENTCTL_PI_PROVIDER
   claude --agent 'lead' -n 'lead-002-1' --session-id '<UUID>' --permission-mode 'auto' --settings '$PROJECT/.agentctl/settings/lead.json' --append-system-prompt-file '$PROJECT/.agentctl/launch/bare-sys-<RAND>.txt' 'Audit the repo.
   
   Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. '

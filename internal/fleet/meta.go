@@ -59,11 +59,13 @@ type Meta struct {
 //
 //   - A bare/menu launch has neither AGENTCTL_SESSION_ID nor TMUX_PANE, so
 //     resolution falls through to the last-resort step: the AGENTCTL_WINDOW_ID
-//     environment variable. That variable is set with `tmux set-environment
-//     -t <session>`, and tmux has no window-scoped environment — it is
-//     session-global and last-writer-wins. Every bare window therefore
-//     inherits, and reports, the *previously created* window as its parent.
-//     SpawnedBySession stays empty because there was no session UUID to record.
+//     environment variable. Older builds published it with `tmux
+//     set-environment -t <session>` (tmux has no window-scoped environment,
+//     so it was session-global and last-writer-wins), and windows they left
+//     behind still report the *previously created* window as their parent.
+//     Launches now clear that session value instead, but records written
+//     before remain. SpawnedBySession stays empty because there was no
+//     session UUID to record.
 //
 // So: non-empty SpawnedBySession means a real dispatcher; empty means the
 // SpawnedBy value is an artifact of that env leak and must not be displayed as

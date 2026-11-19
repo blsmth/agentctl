@@ -33,6 +33,7 @@ env:
   DISABLE_AUTOUPDATER=1
   MAX_THINKING_TOKENS=4096
 command:
+  unset AGENTCTL_WINDOW_ID AGENTCTL_WINDOW_INDEX AGENTCTL_BRANCH AGENTCTL_WORKTREE AGENTCTL_SPAWNED_BY AGENTCTL_SPAWNED_BY_SESSION AGENTCTL_BACKEND AGENTCTL_ACCOUNT AGENTCTL_HARNESS AGENTCTL_PI_PROVIDER
   claude --agent 'golden' -n 'golden-002-1' --session-id '<UUID>' --model 'sonnet' --effort 'low' --permission-mode 'plan' --settings '$PROJECT/.agentctl/settings/golden.json' --append-system-prompt-file '$PROJECT/.agentctl/launch/dispatch-sys-<RAND>.txt' 'Implement #7: Fix it. The spec is in your system prompt — read it and open a PR when done.'
 windowstate:
   instance=golden

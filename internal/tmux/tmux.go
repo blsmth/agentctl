@@ -462,16 +462,51 @@ func RemoveUnsetEnv(env map[string]string, names ...string) {
 // ANTHROPIC_AUTH_TOKEN, and tmux -e values must survive).
 func launchUnsetEnv(extraEnv map[string]string) string {
 	names := strings.Fields(extraEnv[EnvUnset])
-	if extraEnv[claudehome.EnvConfigDir] == "" && !slices.Contains(names, claudehome.EnvConfigDir) {
-		return strings.Join(names, " ")
+	if extraEnv[claudehome.EnvConfigDir] != "" || slices.Contains(names, claudehome.EnvConfigDir) {
+		names = appendUnsetUnlessSet(names, extraEnv, accountCredentialEnv)
 	}
-	for _, n := range accountCredentialEnv {
+	names = appendUnsetUnlessSet(names, extraEnv, launchIdentityEnv)
+	return strings.Join(names, " ")
+}
+
+// appendUnsetUnlessSet appends each of candidates to names unless extraEnv
+// sets it (a key present with any value, "" included, is a deliberate tmux -e
+// value that must survive) or names already lists it.
+func appendUnsetUnlessSet(names []string, extraEnv map[string]string, candidates []string) []string {
+	for _, n := range candidates {
 		if _, set := extraEnv[n]; set || slices.Contains(names, n) {
 			continue
 		}
 		names = append(names, n)
 	}
-	return strings.Join(names, " ")
+	return names
+}
+
+// launchIdentityEnv are the per-window identity variables. A launch either
+// sets each one for the new window (in extraEnv) or the launch script unsets
+// it; it never inherits one. tmux seeds a new window's environment from the
+// global and session environments, and a value there describes some other
+// window: LaunchAgent used to `set-environment -t <session>
+// AGENTCTL_WINDOW_ID` after every launch, so each new window started with the
+// previous window's ID. AGENTCTL_WINDOW_ID is always in the unset list: the
+// window ID is unknown until new-window returns, and the SessionStart hook
+// writes the right one for tool commands (CLAUDE_ENV_FILE).
+var launchIdentityEnv = []string{
+	"AGENTCTL_WINDOW_ID",
+	"AGENTCTL_WINDOW_INDEX",
+	"AGENTCTL_BRANCH",
+	"AGENTCTL_WORKTREE",
+	"AGENTCTL_TICKET",
+	"AGENTCTL_TICKET_TITLE",
+	"AGENTCTL_MODE",
+	"AGENTCTL_REPO",
+	"AGENTCTL_SPAWNED_BY",
+	"AGENTCTL_SPAWNED_BY_SESSION",
+	"AGENTCTL_CLAUDE_NAME",
+	"AGENTCTL_BACKEND",
+	claudehome.EnvAccount,
+	harness.EnvHarness,
+	harness.EnvPiProvider,
 }
 
 // unsetLineFor turns a space-separated list of variable names into an
@@ -587,7 +622,9 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 
 	// The SessionStart hook (agentctl hook-session-start) handles dynamic
 	// identity var injection (AGENTCTL_WINDOW_ID, AGENTCTL_WINDOW_INDEX) via
-	// $CLAUDE_ENV_FILE, so no shell wrapper is needed here.
+	// $CLAUDE_ENV_FILE, so no shell wrapper is needed here. The launch script
+	// unsets them (launchIdentityEnv) so the agent never starts with values
+	// tmux seeded from the session environment.
 	//
 	// Write shellCmd to a script to avoid quoting issues with nested single
 	// quotes and $(cat ...) expansion inside a `sh -c '...'` argument.
@@ -635,10 +672,11 @@ func LaunchAgent(windowName string, workDir string, shellCmd string, logPath str
 	_, _ = launchTmux("set-option", "-w", "-t", idTarget, "monitor-silence", "2")
 	_, _ = launchTmux("set-option", "-w", "-t", idTarget, "monitor-activity", "off")
 
-	// Inject the stable window ID as an env var so the process inside can read it.
-	if windowID != "" {
-		_, _ = launchTmux("set-environment", "-t", ExactSession(SessionName), "AGENTCTL_WINDOW_ID", windowID)
-	}
+	// Never publish the window ID through the session environment: tmux
+	// has no window-scoped environment, so a session value is inherited by
+	// the NEXT window launched in the session (and by run-shell jobs) as a
+	// wrong identity. Clear a value left there by older agentctl builds.
+	_, _ = launchTmux("set-environment", "-u", "-t", ExactSession(SessionName), "AGENTCTL_WINDOW_ID")
 
 	// Bootstrap the windowstate file with launch-time metadata so the monitor
 	// and TUI can find the JSONL file and dispatch context immediately without

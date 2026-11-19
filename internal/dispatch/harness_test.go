@@ -54,7 +54,7 @@ func TestLaunch_PiHarness(t *testing.T) {
 		t.Errorf("Result.Harness = %q", res.Harness)
 	}
 	l := rec.Only()
-	argv := fields(t, l.Command)
+	argv := fields(t, l.AgentCommand())
 	ext := filepath.Join(env.Project, ".agentctl", "launch", harness.PiExtensionFile)
 	if argv[0] != "pi" || !slices.Contains(argv, "--session-id") || argv[slices.Index(argv, "-e")+1] != ext {
 		t.Fatalf("command = %q", argv)
@@ -143,7 +143,7 @@ func TestLaunch_HarnessSelection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := fields(t, rec.Only().Command)[0]; got != tt.wantCmd {
+			if got := fields(t, rec.Only().AgentCommand())[0]; got != tt.wantCmd {
 				t.Errorf("launched %s, want %s", got, tt.wantCmd)
 			}
 		})
@@ -162,7 +162,7 @@ func TestRestore_Pi(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := rec.Only()
-	argv := fields(t, l.Command)
+	argv := fields(t, l.AgentCommand())
 	if argv[0] != "pi" || argv[slices.Index(argv, "--session-id")+1] != "sid-1" {
 		t.Errorf("restore command = %q", argv)
 	}
@@ -247,7 +247,7 @@ func TestLaunch_PiOllamaBackend(t *testing.T) {
 		t.Fatalf("Launch: %v", err)
 	}
 	l := rec.Only()
-	argv := fields(t, l.Command)
+	argv := fields(t, l.AgentCommand())
 	for _, want := range [][]string{{"--provider", "agentctl-local"}, {"--model", "qwen3:8b"}} {
 		i := slices.Index(argv, want[0])
 		if i < 0 || argv[i+1] != want[1] {
@@ -277,7 +277,7 @@ func TestRestore_PiKeepsBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := rec.Only()
-	if argv := fields(t, l.Command); !slices.Contains(argv, "agentctl-local") || l.Env[EnvBackend] != "local" || l.Env[harness.EnvPiProvider] == "" {
+	if argv := fields(t, l.AgentCommand()); !slices.Contains(argv, "agentctl-local") || l.Env[EnvBackend] != "local" || l.Env[harness.EnvPiProvider] == "" {
 		t.Errorf("restore = %q env %v", argv, l.Env)
 	}
 }

@@ -34,9 +34,9 @@ import (
 // end of the prompt are followed most reliably, and this is the sequence we
 // most need the agent to get right (it's what actually turns work into a
 // reviewable PR).
-// useWorktree is the already-resolved mode-default-or-override value from
-// Launch's single resolution site (see Request.UseWorktree's doc comment) --
-// this function never reads req.UseWorktree directly.
+// useWorktree is whether Launch actually created a worktree (the resolved
+// mode-default-or-override value, false when worktree creation fell back to
+// the shared dir) -- this function never reads req.UseWorktree directly.
 func buildSystemPrompt(req Request, spec modeSpec, workDir, branch string, useWorktree bool, contextEntries []ctxstore.Entry, sharedConventions string) string {
 	var parts []string
 

@@ -63,7 +63,9 @@ func TestPhoneDispatchOrchestratorIsInteractive(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := strings.Contains(string(sys), "Open a pull request"); got != tt.wantAuto {
+			// The project is not a git repo, so the worktree falls back to
+			// the shared dir and the worker gets the commit-only steps.
+			if got := strings.Contains(string(sys), "When you are finished"); got != tt.wantAuto {
 				t.Errorf("finishing steps present = %v, want %v", got, tt.wantAuto)
 			}
 			ws, err := windowstate.Read(res.WindowID)

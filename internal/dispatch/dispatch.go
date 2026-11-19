@@ -278,6 +278,17 @@ func Launch(req Request) (Result, error) {
 			logging.Log("dispatch: created worktree at %s (branch %s)", wtPath, branch)
 		}
 	}
+	// inWorktree is whether a worktree actually exists for this launch. When
+	// worktree.Create fell back to the shared dir (e.g. workDir is not a git
+	// repo) the generated branch was never created, so the prompt, env,
+	// windowstate and Result carry no branch (ownBranch) rather than one the
+	// window does not have: the agent gets the shared-dir finishing steps,
+	// matching what dispatch completion will look the PR up by.
+	inWorktree := useWorktree && workDir != repoDir
+	ownBranch := ""
+	if inWorktree {
+		ownBranch = branch
+	}
 
 	if req.VerifyAgent != nil {
 		if err := req.VerifyAgent(workDir, repoDir); err != nil {
@@ -335,8 +346,8 @@ func Launch(req Request) (Result, error) {
 		req.Orchestrator = Orchestrator{}
 		req.noMessaging = true
 	}
-	messagesAuthor := prepareReview(&req, cfg, caps.Accounts, acct.Dir, useWorktree && workDir != repoDir)
-	systemPrompt := buildSystemPrompt(req, spec, workDir, branch, useWorktree, contextEntries, sharedConventions)
+	messagesAuthor := prepareReview(&req, cfg, caps.Accounts, acct.Dir, inWorktree)
+	systemPrompt := buildSystemPrompt(req, spec, workDir, ownBranch, inWorktree, contextEntries, sharedConventions)
 
 	// 8. Determine user message.
 	userMessage := req.UserMessage
@@ -403,7 +414,7 @@ func Launch(req Request) (Result, error) {
 		// Non-fatal — continue launch without shell-prefix if the write failed.
 	}
 	logPath := h.LaunchLogPath(acct.Dir, workDir, sessionID)
-	extraEnv := buildDispatchEnv(req, ac, workDir, repoDir, branch, useWorktree)
+	extraEnv := buildDispatchEnv(req, ac, workDir, repoDir, ownBranch, inWorktree)
 	for k, v := range backendEnv {
 		extraEnv[k] = v
 	}
@@ -439,13 +450,13 @@ func Launch(req Request) (Result, error) {
 			// The name is unique per window by construction (worktree
 			// slug or instance number), so it is safe to show others.
 			ws.SessionNameVerified = true
-			ws.Branch = branch
+			ws.Branch = ownBranch
 			// Only record WorktreeDir when a worktree was actually created for
 			// this dispatch -- workDir still equals repoDir when useWorktree was
 			// requested but worktree.Create fell back to the shared repo dir, and
 			// recording that as a "worktree" would make `agentctl cleanup` treat
 			// the main checkout itself as a reclaimable dispatch worktree.
-			if useWorktree && workDir != repoDir {
+			if inWorktree {
 				ws.WorktreeDir = workDir
 			}
 		})
@@ -463,7 +474,7 @@ func Launch(req Request) (Result, error) {
 		AgentName: req.AgentName,
 		SessionID: sessionID,
 		WorkDir:   workDir,
-		Branch:    branch,
+		Branch:    ownBranch,
 		Account:   acct.Name,
 		Harness:   h.Name(),
 
@@ -510,9 +521,12 @@ func prepareReview(req *Request, cfg *config.Config, accounts bool, reviewerDir 
 // ".agentctl"; anchoring on the main repo root keeps a dispatcher that has
 // cd-ed into a subdirectory from producing a bogus runtime dir.
 //
-// useWorktree is the already-resolved mode-default-or-override value from
-// Launch; this function never dereferences req.UseWorktree (a *bool).
-func buildDispatchEnv(req Request, ac config.AgentConfig, workDir, repoDir, branch string, useWorktree bool) map[string]string {
+// inWorktree reports whether Launch actually created a worktree (not just
+// requested one); this function never dereferences req.UseWorktree (a *bool).
+// AGENTCTL_WORKTREE and AGENTCTL_BRANCH are set only then: tmux.LaunchAgent
+// unsets identity variables a launch does not set, so they are never
+// inherited from the launcher either.
+func buildDispatchEnv(req Request, ac config.AgentConfig, workDir, repoDir, branch string, inWorktree bool) map[string]string {
 	extraEnv := AgentEnvOverrides(ac)
 	if req.RepoSlug != "" {
 		extraEnv["AGENTCTL_REPO"] = req.RepoSlug
@@ -522,7 +536,7 @@ func buildDispatchEnv(req Request, ac config.AgentConfig, workDir, repoDir, bran
 	} else {
 		extraEnv["AGENTCTL_RUNTIME_DIR"] = filepath.Join(worktree.MainRepoRoot(repoDir), ".agentctl")
 	}
-	if useWorktree && branch != "" {
+	if inWorktree && branch != "" {
 		extraEnv["AGENTCTL_WORKTREE"] = workDir
 		extraEnv["AGENTCTL_BRANCH"] = branch
 	}
