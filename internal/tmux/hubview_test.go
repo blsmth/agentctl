@@ -98,9 +98,9 @@ func TestViewerAttachCommand(t *testing.T) {
 	tests := []struct {
 		name, sock, want string
 	}{
-		{"no socket", "", `env -u TMUX tmux attach -t =agentctl-hubview-2 \; set-option -t =agentctl-hubview-2: destroy-unattached on`},
-		{"socket", "/tmp/tmux-1/default", `env -u TMUX tmux -S '/tmp/tmux-1/default' attach -t =agentctl-hubview-2 \; set-option -t =agentctl-hubview-2: destroy-unattached on`},
-		{"quote", "/a b/it's", `env -u TMUX tmux -S '/a b/it'\''s' attach -t =agentctl-hubview-2 \; set-option -t =agentctl-hubview-2: destroy-unattached on`},
+		{"no socket", "", `env -u TMUX tmux attach -t '=agentctl-hubview-2' \; set-option -t '=agentctl-hubview-2:' destroy-unattached on`},
+		{"socket", "/tmp/tmux-1/default", `env -u TMUX tmux -S '/tmp/tmux-1/default' attach -t '=agentctl-hubview-2' \; set-option -t '=agentctl-hubview-2:' destroy-unattached on`},
+		{"quote", "/a b/it's", `env -u TMUX tmux -S '/a b/it'\''s' attach -t '=agentctl-hubview-2' \; set-option -t '=agentctl-hubview-2:' destroy-unattached on`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -265,5 +265,29 @@ func TestKeybindingsCarryKeyWindow(t *testing.T) {
 		if !strings.Contains(kb.command, KeyClientEnv+"=#{client_name}") {
 			t.Errorf("binding %q lacks %s: %s", kb.key, KeyClientEnv, kb.command)
 		}
+	}
+}
+
+// TestViewerAttachCommandZshEquals runs the command through zsh, whose EQUALS
+// option expands an unquoted =name into a command lookup and fails.
+func TestViewerAttachCommandZshEquals(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not installed")
+	}
+	bin := t.TempDir()
+	stub := "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done\n"
+	if err := os.WriteFile(bin+"/tmux", []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(zsh, "-f", "-c", viewerAttachCommand("", "agentctl-hubview-2"))
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("zsh run failed: %v\n%s", err, out)
+	}
+	want := "attach\n-t\n=agentctl-hubview-2\n;\nset-option\n-t\n=agentctl-hubview-2:\ndestroy-unattached\non\n"
+	if string(out) != want {
+		t.Errorf("tmux args = %q, want %q", out, want)
 	}
 }
