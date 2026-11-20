@@ -1101,7 +1101,7 @@ func (m HudModel) renderHeader(w int) string {
 		if fill < 0 {
 			fill = 0
 		}
-		return left + hudHeaderFillStyle.Render(strings.Repeat("─", fill))
+		return ansi.Truncate(left+hudHeaderFillStyle.Render(strings.Repeat("─", fill)), w, "")
 	}
 	name := m.agentName
 	if name == "" {
@@ -1130,11 +1130,16 @@ func (m HudModel) renderHeader(w int) string {
 	if fill < 0 {
 		fill = 0
 	}
-	return left + hudHeaderFillStyle.Render(strings.Repeat("─", fill))
+	// Clip to the pane width: a long name wraps otherwise, pushing the tab bar
+	// off its row.
+	return ansi.Truncate(left+hudHeaderFillStyle.Render(strings.Repeat("─", fill)), w, "")
 }
 
-// hudTabBarRow is the screen row of the tab bar (below the 1-row header).
-const hudTabBarRow = 1
+// tabBarRow is the screen row of the tab bar: directly below the header,
+// whatever height the header actually renders at.
+func (m HudModel) tabBarRow(w int) int {
+	return lipgloss.Height(m.renderHeader(w))
+}
 
 // hudTabSpan is the horizontal extent [x0, x1) of one tab label.
 type hudTabSpan struct {
@@ -1176,10 +1181,11 @@ func (m HudModel) hudTabSpans(w int) []hudTabSpan {
 
 // tabAt returns the tab under screen cell (x, y), or -1.
 func (m HudModel) tabAt(x, y int) int {
-	if m.height <= 5 || y != hudTabBarRow {
+	w := max(m.width, 20)
+	if m.height <= 5 || y != m.tabBarRow(w) {
 		return -1
 	}
-	for _, sp := range m.hudTabSpans(max(m.width, 20)) {
+	for _, sp := range m.hudTabSpans(w) {
 		if x >= sp.x0 && x < sp.x1 {
 			return sp.tab
 		}
