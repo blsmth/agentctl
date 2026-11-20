@@ -1,14 +1,22 @@
 package demo
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// Label is the demo tmux server's socket name (`tmux -L agentctl-demo`).
-const Label = "agentctl-demo"
+// DefaultLabel is the socket name of the demo server for the default root
+// (`tmux -L agentctl-demo`).
+const DefaultLabel = "agentctl-demo"
+
+// ownerVar is the tmux global environment variable that records which root a
+// demo server belongs to. It deliberately avoids the AGENTCTL_ prefix: the
+// server's global environment is inherited by every pane.
+const ownerVar = "DEMO_ROOT_OWNER"
 
 // Layout is the demo's temp root and everything under it. Nothing the demo
 // writes lives outside it, apart from the tmux socket.
@@ -32,6 +40,43 @@ func NewLayout(root string) (Layout, error) {
 
 // DefaultRoot is $TMPDIR/agentctl-demo.
 func DefaultRoot() string { return filepath.Join(os.TempDir(), "agentctl-demo") }
+
+// ResolveScene turns the --scene value into a path. A value with a path
+// separator is a path (relative to the cwd). A bare name is looked up in
+// scenesDir, with or without a .yaml/.yml suffix.
+func ResolveScene(scenesDir, scene string) (string, error) {
+	if scene == "" {
+		return "", fmt.Errorf("no scene given")
+	}
+	if strings.ContainsRune(scene, '/') || strings.ContainsRune(scene, filepath.Separator) {
+		return filepath.Abs(scene)
+	}
+	name := scene
+	if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
+		name += ".yaml"
+	}
+	return filepath.Abs(filepath.Join(scenesDir, name))
+}
+
+// Label is the tmux socket name of this root's server: plain agentctl-demo
+// for the default root, otherwise agentctl-demo-<hash of the root>, so
+// concurrent demos with different roots never share (or kill) a server.
+func (l Layout) Label() string {
+	if l.Root == DefaultRoot() {
+		return DefaultLabel
+	}
+	sum := sha256.Sum256([]byte(l.Root))
+	return DefaultLabel + "-" + hex.EncodeToString(sum[:])[:8]
+}
+
+// AttachCommand is the command that attaches to session on this demo's server.
+func (l Layout) AttachCommand(session string) string {
+	cmd := "tmux -L " + l.Label() + " attach"
+	if session != "" {
+		cmd += " -t " + session
+	}
+	return cmd
+}
 
 func (l Layout) Bin() string        { return filepath.Join(l.Root, "bin") }
 func (l Layout) Agentctl() string   { return filepath.Join(l.Bin(), "agentctl") }
