@@ -350,6 +350,9 @@ func (m *FleetModel) fleetMenuItems(idx int) []fleetMenuItem {
 	if idx < 0 || idx >= len(m.lines) {
 		return nil
 	}
+	if m.lines[idx].kind == fleetLineClosed {
+		return closedMenuItems(m.lines[idx].closed)
+	}
 	var items []fleetMenuItem
 	g := m.groupOfLine(idx)
 	if m.lines[idx].kind == fleetLineRow {
@@ -419,6 +422,9 @@ func (m *FleetModel) runMenuKey(key string) tea.Cmd {
 	m.closeMenu()
 	switch key {
 	case "enter":
+		if line >= 0 && line < len(m.lines) && m.lines[line].kind == fleetLineClosed {
+			return m.resumeClosed(m.lines[line].closed)
+		}
 		_, cmd := m.focusLive()
 		return cmd
 	case "x":
@@ -444,6 +450,9 @@ var fleetOpenURL = tkOpenPRInBrowserCmd
 // openSelectedPR opens the selected row's PR (from its session log's pr-link
 // record), or does nothing when the row has none.
 func (m *FleetModel) openSelectedPR() tea.Cmd {
+	if c := m.selectedClosed(); c != nil && c.PRURL != "" {
+		return fleetOpenURL(c.PRURL)
+	}
 	r := m.selectedRow()
 	if r == nil || r.PRURL == "" {
 		return nil

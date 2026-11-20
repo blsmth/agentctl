@@ -244,6 +244,12 @@ type WindowState struct {
 	// set from the hub (ShortTitle.Manual).
 	ShortTitle ShortTitle `json:"short_title,omitzero"`
 
+	// ClosedBy is the dispatcher window whose close is cascading to this one
+	// (close_children): reconcile marks the child just before killing it, so
+	// the child's own Finish records the close reason in the closed ledger
+	// (internal/closedlog). Cleared again if the kill fails.
+	ClosedBy string `json:"closed_by,omitempty"`
+
 	// CompleteFiredAt is when the done-edge completion handlers last fired.
 	// Reserved: a later step (done-edge completion) writes it.
 	CompleteFiredAt time.Time `json:"complete_fired_at,omitempty"`

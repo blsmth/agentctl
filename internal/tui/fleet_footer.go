@@ -191,6 +191,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"f", "filter", "f"},
 		{"o", "sort recent", "o"},
 		{fleetShellsKey, "shells", fleetShellsKey},
+		{fleetClosedKey, "closed agents", fleetClosedKey},
 		{fleetServeKey, "serve on/off", fleetServeKey},
 		{"q", "leave", "q"},
 		{"esc", "close help", "?"},

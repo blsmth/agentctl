@@ -130,3 +130,24 @@ func TestHousekeepPrunesLLMUsageOncePerDay(t *testing.T) {
 		t.Fatalf("prunes = %d after a day, want 2", prunes)
 	}
 }
+
+func TestHousekeepPrunesClosedLedgerOncePerDay(t *testing.T) {
+	var prunes int
+	now := time.Now()
+	d := HousekeepingDeps{
+		RuntimeDir:  t.TempDir(),
+		Now:         func() time.Time { return now },
+		PruneClosed: func(time.Time) (int, error) { prunes++; return 1, nil },
+	}
+	Housekeep(d)
+	now = now.Add(time.Hour)
+	Housekeep(d)
+	if prunes != 1 {
+		t.Fatalf("prunes = %d after an hour, want 1", prunes)
+	}
+	now = now.Add(LLMUsagePruneInterval)
+	Housekeep(d)
+	if prunes != 2 {
+		t.Fatalf("prunes = %d after a day, want 2", prunes)
+	}
+}

@@ -79,6 +79,7 @@ type CLI struct {
 	Hub             HubCmd             `cmd:"" help:"Open the fleet hub (cross-session dashboard)"`
 	HubView         HubViewCmd         `cmd:"" name:"hub-view" hidden:""`
 	HubNewSession   HubNewSessionCmd   `cmd:"" name:"hub-new-session" hidden:""`
+	HubResume       HubResumeCmd       `cmd:"" name:"hub-resume" hidden:""`
 	JumpNextBlocked JumpNextBlockedCmd `cmd:"" name:"jump-next-blocked" hidden:""`
 
 	// Tickets
@@ -563,6 +564,20 @@ type HubNewSessionCmd struct {
 }
 
 func (c *HubNewSessionCmd) Run() error { return cmd.RunHubNewSession(c.Dir) }
+
+// HubResumeCmd is the hub's Resume for a closed row: run with cwd = Dir, it
+// starts the project's tmux session if needed and relaunches the agent
+// resuming the recorded session, printing the window ID.
+type HubResumeCmd struct {
+	Dir       string `arg:"" help:"Absolute project directory"`
+	WorkDir   string `name:"work-dir" help:"Directory the agent ran in (default: the project)"`
+	Agent     string `required:"" help:"Agent to relaunch"`
+	SessionID string `name:"session-id" required:"" help:"Session to resume"`
+}
+
+func (c *HubResumeCmd) Run() error {
+	return cmd.RunHubResume(os.Stdout, cmd.HubResumeOptions{ProjectDir: c.Dir, WorkDir: c.WorkDir, Agent: c.Agent, SessionID: c.SessionID})
+}
 
 // JumpNextBlockedCmd finds the first blocked agent across every live
 // agentctl session and switches to it. Works from any session.
@@ -1091,9 +1106,20 @@ type StatusListCmd struct {
 	State   string `help:"Only show agents in this state: blocked, working, idle, done" enum:"blocked,working,idle,done," default:""`
 	Blocked bool   `help:"Only show blocked agents (shorthand for --state blocked)"`
 	Verify  bool   `help:"Capture each pane and flag any that contradict the recorded state"`
+	Closed  bool   `help:"List agent windows closed recently (newest first) instead of live ones"`
+	Since   string `help:"With --closed: how far back to look (e.g. 36h, 7d, 2w; default 7d)"`
 }
 
 func (c *StatusListCmd) Run() error {
+	if c.Closed {
+		if c.Window != "" || c.State != "" || c.Blocked || c.Verify {
+			return fmt.Errorf("--closed cannot be combined with a window, --state, --blocked or --verify")
+		}
+		return cmd.RunStatusClosed(os.Stdout, cmd.ClosedOptions{Since: c.Since, JSON: c.JSON, Session: c.Session})
+	}
+	if c.Since != "" {
+		return fmt.Errorf("--since needs --closed")
+	}
 	if c.Window != "" {
 		return cmd.RunStatusDetail(c.Window, c.JSON)
 	}

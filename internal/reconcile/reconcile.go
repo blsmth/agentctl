@@ -36,6 +36,9 @@ const LockName = "reconcile.lock"
 // Deps are the side effects of reconciling, injectable for tests.
 type Deps struct {
 	RuntimeDir string
+	// Session is the project's tmux session name, recorded in the closed
+	// ledger; empty means tmux.SessionName.
+	Session string
 	// List lists this project session's windows. An error is NOT zero windows.
 	List func() ([]tmux.WindowInfo, error)
 	// HasSession reports whether the project's tmux session exists.
@@ -60,6 +63,7 @@ func DefaultDeps(runtimeDir string, handle func(state.Transition, config.AgentCo
 	session := tmux.SessionName
 	return Deps{
 		RuntimeDir:  runtimeDir,
+		Session:     session,
 		List:        func() ([]tmux.WindowInfo, error) { return tmux.ListWindowsInErr(session) },
 		HasSession:  func() bool { return tmux.HasSessionNamed(session) },
 		Settle:      DefaultSettle,
@@ -121,14 +125,18 @@ func parseStatus(s string) state.AgentStatus {
 
 // Finish fires the Gone transition (From is the record's state) unless the
 // window is shell/improve~ or unidentifiable, removes the window's mailbox,
-// and closes the live windows it dispatched (see closeChildren). A handler
-// panic is recovered and logged.
+// and closes the live windows it dispatched (see closeChildren). The same
+// tracked windows get one line in the closed ledger (internal/closedlog). A
+// handler panic is recovered and logged.
 func Finish(c Claimed, d Deps) {
 	instance, base := identity(c.Record)
 	logging.Log("reconcile: window gone window=%s instance=%q (was %q)", c.WindowID, instance, c.Record.State)
 	// The metrics serve reads Gone from the event log; the in-process monitor
 	// tracker is gone. No-op unless metrics are enabled.
 	events.RecordGone(d.RuntimeDir, c.WindowID, c.Record)
+	if base != "" && !untracked(instance) {
+		recordClosed(c, d, instance, base)
+	}
 	// Before the handlers: they can be slow (auto-improve), and the children
 	// should close promptly.
 	closeChildren(c, d.Cascade)

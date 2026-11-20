@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/approval"
+	"github.com/blsmth/agentctl/internal/closedlog"
 	"github.com/blsmth/agentctl/internal/llmusage"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/mailbox"
@@ -35,6 +36,9 @@ type HousekeepingDeps struct {
 	PruneUploads func(now time.Time) (int, error)
 	// PruneLLMUsage removes usage-ledger files older than llmusage.MaxAge.
 	PruneLLMUsage func(now time.Time) (int, error)
+	// PruneClosed removes closed-window ledger files older than
+	// closedlog.MaxAge.
+	PruneClosed   func(now time.Time) (int, error)
 	Records       func() map[string]windowstate.WindowState
 	SessionLogDir func() string
 	// BackfillTitles titles this session's live windows that never got a
@@ -70,6 +74,9 @@ func DefaultHousekeepingDeps(runtimeDir string) HousekeepingDeps {
 		},
 		PruneLLMUsage: func(now time.Time) (int, error) {
 			return llmusage.Prune(now, llmusage.MaxAge)
+		},
+		PruneClosed: func(now time.Time) (int, error) {
+			return closedlog.Prune(now, closedlog.MaxAge)
 		},
 		Records:       windowstate.All,
 		SessionLogDir: paths.SessionLogDir,
@@ -121,6 +128,15 @@ func Housekeep(d HousekeepingDeps) {
 			logging.Log("janitor: llmusage.Prune: %v", err)
 		case n > 0:
 			logging.Log("janitor: pruned %d LLM usage file(s) older than %s", n, llmusage.MaxAge)
+		}
+	}
+	if d.PruneClosed != nil && stamp.Try(filepath.Join(d.RuntimeDir, "prune-closed.stamp"), LLMUsagePruneInterval, now) {
+		n, err := d.PruneClosed(now)
+		switch {
+		case err != nil:
+			logging.Log("janitor: closedlog.Prune: %v", err)
+		case n > 0:
+			logging.Log("janitor: pruned %d closed-window ledger file(s) older than %s", n, closedlog.MaxAge)
 		}
 	}
 	if stamp.Try(filepath.Join(d.RuntimeDir, "prune-session-logs.stamp"), PruneInterval, now) && d.PruneSessionLogs != nil {
