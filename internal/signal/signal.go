@@ -61,15 +61,16 @@ func ResolveWindowID() string {
 	// 1. Session ID lookup — unambiguous UUID, never reused across sessions.
 	if sessionID := os.Getenv("AGENTCTL_SESSION_ID"); sessionID != "" {
 		if id := windowstate.FindBySessionID(sessionID); id != "" {
-			logging.Log("signal: resolved window_id=%s via AGENTCTL_SESSION_ID=%s", id, sessionID)
+			logging.Debug("signal: resolved window_id=%s via AGENTCTL_SESSION_ID=%s", id, sessionID)
 			return id
 		}
+		logging.Log("signal: no window found for AGENTCTL_SESSION_ID=%s; falling back", sessionID)
 	}
 
 	// 2. TMUX_PANE — set by tmux itself, always accurate within the pane.
 	if pane := os.Getenv("TMUX_PANE"); pane != "" {
 		if id := deps.TmuxDisplay(pane, "#{window_id}"); id != "" {
-			logging.Log("signal: resolved window_id=%s via TMUX_PANE=%s", id, pane)
+			logging.Debug("signal: resolved window_id=%s via TMUX_PANE=%s", id, pane)
 			return id
 		}
 	}
@@ -94,15 +95,15 @@ func WindowName(windowID string) string {
 // prefix from the live tmux window name.
 func ResolveAgentName(windowID string) string {
 	if name := os.Getenv("AGENTCTL_INSTANCE_NAME"); name != "" {
-		logging.Log("signal: agent_name=%q (from AGENTCTL_INSTANCE_NAME)", name)
+		logging.Debug("signal: agent_name=%q (from AGENTCTL_INSTANCE_NAME)", name)
 		return name
 	}
 	if name := os.Getenv("AGENTCTL_AGENT_NAME"); name != "" {
-		logging.Log("signal: agent_name=%q (from AGENTCTL_AGENT_NAME)", name)
+		logging.Debug("signal: agent_name=%q (from AGENTCTL_AGENT_NAME)", name)
 		return name
 	}
 	name := tmux.StripAgentPrefix(WindowName(windowID))
-	logging.Log("signal: resolved agent_name=%q from window name", name)
+	logging.Debug("signal: resolved agent_name=%q from window name", name)
 	return name
 }
 
