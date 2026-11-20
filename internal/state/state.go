@@ -28,6 +28,7 @@ type AgentState struct {
 	ContextWindow       int     `json:"context_window,omitempty"`         // usable window (model-aware, reserve-aware) for the active model
 	WorktreePath        string  `json:"worktree_path,omitempty"`          // if launched in a worktree
 	Done                bool    `json:"done,omitempty"`                   // true when agent signaled done
+	TurnDone            bool    `json:"turn_done,omitempty"`              // bare window finished a turn and is unseen (display ✓ only; not Done)
 	InputTokens         int     `json:"input_tokens,omitempty"`           // cumulative input tokens
 	OutputTokens        int     `json:"output_tokens,omitempty"`          // cumulative output tokens
 	CacheReadTokens     int     `json:"cache_read_tokens,omitempty"`      // cumulative cache read tokens

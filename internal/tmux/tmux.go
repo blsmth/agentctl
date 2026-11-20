@@ -718,6 +718,7 @@ func applyLaunchBootstrap(ws *windowstate.WindowState, windowName, agentName, lo
 	// previous window's Seen/Done.
 	ws.RenderedName = windowName
 	ws.Seen = false
+	ws.TurnDone = false
 	ws.AgentName = agentName
 	ws.LogPath = logPath
 	ws.Ticket = extraEnv["AGENTCTL_TICKET"]
