@@ -445,7 +445,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
     goneHost.hidden = false;
   }
 
-  // run confirms (skipped when confirm is null), sends, and on failure toasts; it always refreshes (a 409
+  // run confirms (skipped when confirm is null; reply and queue sends pass null), sends, and on failure toasts; it always refreshes (a 409
   // means the view was stale). onOk runs before that refresh. Returns
   // whether the request succeeded.
   async function run(confirm, req, onOk) {
@@ -571,16 +571,14 @@ export function mountWindow(root, ctx, { session, windowId }) {
     };
   }
 
-  function imageLine(n) {
-    return n ? [`+ ${n} image${n === 1 ? "" : "s"}`] : [];
-  }
-
   // composer is the chat-style row shared by the reply and queue boxes:
   // thumbnails above one row of camera button, auto-growing textarea and a
-  // round send button. onSend gets the trimmed text and the attachments; it
-  // returns the confirm popup options, the request builder and the success
-  // callback (which receives a reset function for the box).
-  function composer({ placeholder, sendLabel, confirm, buildRequest, onSuccess }) {
+  // round send button. Tapping send sends at once, with no confirm sheet;
+  // while a send (including the image upload) is in flight further taps are
+  // ignored and the button is disabled. buildRequest turns the trimmed text
+  // and uploaded image IDs into the request. On success the text and images
+  // are cleared; on failure they are kept so nothing typed is lost.
+  function composer({ placeholder, sendLabel, buildRequest }) {
     const att = attachments({ icon: true });
     const text = h("textarea", {
       rows: "1",
@@ -589,24 +587,30 @@ export function mountWindow(root, ctx, { session, windowId }) {
       maxlength: "4000",
       oninput: () => grow(text),
     });
+    let sending = false;
     const send = h(
       "button",
       {
         type: "button",
         class: "icon-btn send",
         "aria-label": sendLabel,
-        onclick: () => {
+        onclick: async () => {
+          if (sending) return;
           const value = text.value.trim();
           const n = att ? att.count() : 0;
           if (!value && !n) return;
-          run(
-            confirm(value, n),
-            async () => buildRequest(value, att ? await att.upload() : []),
-            () => {
-              onSuccess?.();
+          sending = true;
+          send.disabled = true;
+          try {
+            await run(null, async () => buildRequest(value, att ? await att.upload() : []), () => {
+              text.value = "";
+              text.style.height = "";
               att?.clear();
-            },
-          );
+            });
+          } finally {
+            sending = false;
+            send.disabled = false;
+          }
         },
       },
       svgIcon(SEND_SVG),
@@ -619,7 +623,6 @@ export function mountWindow(root, ctx, { session, windowId }) {
     return composer({
       placeholder: "Reply to the agent…",
       sendLabel: "Send reply",
-      confirm: (value, n) => ({ title: "Send reply?", lines: [...(value ? [value] : []), ...imageLine(n)], confirmLabel: "Send" }),
       buildRequest: (value, ids) => buildReplyRequest(session, windowId, value, ids),
     });
   }
@@ -651,16 +654,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
     const box = composer({
       placeholder: "Queue a message for the agent…",
       sendLabel: "Queue message",
-      confirm: (value, n) => ({
-        title: "Queue message?",
-        lines: [...(value ? [value] : []), ...imageLine(n), "Delivered after the current step."],
-        confirmLabel: "Queue",
-      }),
       buildRequest: (value, ids) => buildQueueRequest(session, windowId, value, ids),
-      onSuccess: () => {
-        box.text.value = "";
-        box.text.style.height = "";
-      },
     });
     return [h("div", { class: "row end" }, interruptButton()), ...box.nodes];
   }

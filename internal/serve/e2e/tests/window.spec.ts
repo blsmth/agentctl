@@ -15,11 +15,27 @@ test("reply to an idle agent", async ({ page, control }) => {
   await expect(page.locator("header.bar h1")).toHaveText("docs");
   await page.locator(".actions textarea").fill("please also update CHANGELOG");
   await page.getByRole("button", { name: "Send reply" }).tap();
-  await expect(sheet(page)).toContainText("Send reply?");
-  await sheet(page).getByRole("button", { name: "Send" }).tap();
+  await expect(sheet(page)).toHaveCount(0);
   await expect(page.locator("#toasts .toast").first()).toHaveText("Sent");
   const actions = await control.waitForActions((a) => a.length > 0);
   expect(actions).toEqual([{ kind: "reply", session: SHOP, window: "@15", pane: "%15", text: "please also update CHANGELOG" }]);
+});
+
+test("a double tap on send sends the reply once", async ({ page, control }) => {
+  await openWindow(page, "@15");
+  await page.route(/\/reply$/, async (route) => {
+    await new Promise((r) => setTimeout(r, 600));
+    await route.continue();
+  });
+  await page.locator(".actions textarea").fill("only once");
+  await page.getByRole("button", { name: "Send reply" }).evaluate((b: HTMLElement) => {
+    b.click();
+    b.click();
+  });
+  await expect(sheet(page)).toHaveCount(0);
+  await control.waitForActions((a) => a.length > 0);
+  await page.waitForTimeout(800);
+  expect(await control.actions()).toHaveLength(1);
 });
 
 test("answer a blocked agent's dialog; a double tap sends one key", async ({ page, control }) => {
@@ -148,9 +164,7 @@ test("queue a message for a working agent", async ({ page, control }) => {
   const text = page.locator(".actions textarea");
   await text.fill("then run the linter");
   await page.getByRole("button", { name: "Queue message" }).tap();
-  await expect(sheet(page)).toContainText("Queue message?");
-  await expect(sheet(page)).toContainText("Delivered after the current step.");
-  await sheet(page).getByRole("button", { name: "Queue" }).tap();
+  await expect(sheet(page)).toHaveCount(0);
   const actions = await control.waitForActions((a) => a.length > 0);
   expect(actions).toEqual([{ kind: "queue", session: SHOP, window: "@13", pane: "%13", text: "then run the linter" }]);
   await expect(text).toHaveValue("");
@@ -452,8 +466,7 @@ test("reply with an attached screenshot", async ({ page, control }) => {
   await page.locator(".actions input[type=file]").setInputFiles({ name: "IMG_0001.png", mimeType: "image/png", buffer: png });
   await expect(page.locator(".actions .thumb img")).toHaveCount(1);
   await page.getByRole("button", { name: "Send reply" }).tap();
-  await expect(sheet(page)).toContainText("+ 1 image");
-  await sheet(page).getByRole("button", { name: "Send" }).tap();
+  await expect(sheet(page)).toHaveCount(0);
   await expect(page.locator("#toasts .toast").first()).toHaveText("Sent");
   const actions = await control.waitForActions((a) => a.length > 0);
   expect(actions).toHaveLength(1);
