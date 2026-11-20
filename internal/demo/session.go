@@ -136,7 +136,7 @@ func startSession(l Layout, t Tmux, sock, project string) (string, error) {
 // "key @id" lines it prints.
 func runProjectSeed(l Layout, sock string, opts UpOptions, project string) (map[string]string, error) {
 	cmd := exec.Command(opts.Self, "project", "--root", l.Root, "--scene", opts.ScenePath,
-		"--fixtures", opts.Fixtures, "--project", project)
+		"--fixtures", opts.Fixtures, "--project", project, "--label", l.Label())
 	cmd.Env = l.Env(sock)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

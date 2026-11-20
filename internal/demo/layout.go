@@ -21,7 +21,8 @@ const ownerVar = "DEMO_ROOT_OWNER"
 // Layout is the demo's temp root and everything under it. Nothing the demo
 // writes lives outside it, apart from the tmux socket.
 type Layout struct {
-	Root string
+	Root  string
+	label string // pinned by WithLabel; empty means derive from Root
 }
 
 // NewLayout validates root and returns its layout. The root must be an
@@ -58,10 +59,23 @@ func ResolveScene(scenesDir, scene string) (string, error) {
 	return filepath.Abs(filepath.Join(scenesDir, name))
 }
 
+// WithLabel returns l with its tmux label fixed to label (empty: derive it).
+func (l Layout) WithLabel(label string) Layout {
+	l.label = label
+	return l
+}
+
 // Label is the tmux socket name of this root's server: plain agentctl-demo
 // for the default root, otherwise agentctl-demo-<hash of the root>, so
 // concurrent demos with different roots never share (or kill) a server.
+//
+// The default root depends on $TMPDIR, which the demo environment overrides,
+// so a child process must not re-derive the label: the parent passes it down
+// and the child pins it with WithLabel.
 func (l Layout) Label() string {
+	if l.label != "" {
+		return l.label
+	}
 	if l.Root == DefaultRoot() {
 		return DefaultLabel
 	}

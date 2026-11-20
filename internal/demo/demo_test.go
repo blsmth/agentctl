@@ -451,3 +451,20 @@ func TestResolveScene(t *testing.T) {
 		})
 	}
 }
+
+// The demo environment overrides TMPDIR, which moves DefaultRoot. A child
+// that re-derived the label there would get a hashed one; pinning keeps it.
+func TestLabelPinnedAcrossTMPDIROverride(t *testing.T) {
+	l := Layout{Root: DefaultRoot()}
+	if l.Label() != DefaultLabel {
+		t.Fatalf("parent label = %q", l.Label())
+	}
+	label := l.Label()
+	t.Setenv("TMPDIR", l.Tmp()+"/") // what Layout.Env gives every child
+	if got := (Layout{Root: l.Root}).Label(); got == DefaultLabel {
+		t.Fatalf("test premise: re-deriving under the overridden TMPDIR should differ, got %q", got)
+	}
+	if got := (Layout{Root: l.Root}).WithLabel(label).Label(); got != DefaultLabel {
+		t.Errorf("pinned label = %q, want %q", got, DefaultLabel)
+	}
+}
