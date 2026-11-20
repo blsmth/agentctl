@@ -62,6 +62,7 @@ Most former root-level helpers now live under `internal/` (`internal/improve`, `
 - **dispatchplan/** — Leaf below `internal/dispatch` (which imports `internal/hooks`): the dispatch precedence rules (`PermissionMode`, `Model`, `BackendName`, `AgentDir`, built-in agents) that `dispatch`/`cmd` call, and `Resolve`, which the approval hook uses to show where and how a gated dispatch will run (project dir, agent and its source, model, backend, harness, permission mode, worktree) without network or spawns. See "Remote approvals" in [docs/design/mobile-web-app.md](docs/design/mobile-web-app.md#remote-approvals).
 - **dispatchapproval/** — Single-use, 2-minute records that a human approved one `agentctl dispatch` in the popup (`Record` by the hook, `Consume` by the CLI), under `<stateDir>/dispatch-approvals/`; see "Gated commands" below.
 - **launchd/** — LaunchAgent plist rendering and `launchctl` bootstrap/bootout, shared by `serve install` and `cron install`.
+- **demo/** — The screenshot harness behind `just demo`/`just demo-shot`: seeds a fake, isolated world (own tmux server `-L agentctl-demo`, temp HOME, fake repos, transcripts and canned panes) from a `demo/scenes/*.yaml` scene, writing records through `windowstate`, and generates the vhs tape from the scene's steps. Never linked into the agentctl binary. See [docs/development.md](docs/development.md#demo-harness-and-screenshots).
 
 ### Behavior notes
 

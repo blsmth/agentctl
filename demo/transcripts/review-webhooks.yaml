@@ -1,0 +1,16 @@
+title: Review webhook retry PR
+entries:
+  - user: "Review PR #138: Retry idempotent webhook deliveries with backoff."
+  - tool: Bash
+    input: {command: "gh pr diff 138"}
+    result: |
+      internal/webhooks/deliver.go   | 64 ++++++++++++++++-----
+      internal/webhooks/backoff.go   | 41 +++++++++++++
+      internal/webhooks/deliver_test.go | 88 +++++++++++++++++++++++++++
+  - tool: Read
+    input: {file_path: internal/webhooks/deliver.go}
+    result: Read 211 lines
+  - say: "The backoff caps at 5 attempts but the jitter is computed before the cap, so the last retry can exceed the documented 10-minute ceiling. Checking the tests for that case."
+  - tool: Grep
+    input: {pattern: "TestBackoffCeiling"}
+    running: true

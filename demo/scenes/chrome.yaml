@@ -1,0 +1,64 @@
+# One agent window with agentctl's two-row chrome bar at the bottom: key
+# hints, then the session's tabs with their state glyphs.
+description: Agent window with the chrome bar
+terminal:
+  cols: 140
+  rows: 36
+projects:
+  - name: acme-api
+    commits: [Initial commit, Add orders endpoint]
+windows:
+  - key: orch
+    project: acme-api
+    agent: orchestrator
+    state: working
+    title: Rate limiter rollout
+    transcript: orchestrator
+    cost_usd: 4.12
+    ctx_pct: 38
+    turns: 6
+    since: 2m
+  - key: limiter
+    project: acme-api
+    agent: go-engineer
+    mode: dispatched
+    state: working
+    ticket: 142
+    ticket_title: Add token-bucket rate limiter to POST /v1/orders
+    title: Orders rate limiter
+    kind: go
+    spawned_by: orch
+    dirty: [internal/ratelimit/bucket.go, internal/http/router.go]
+    transcript: rate-limiter
+    spinner: "Testing… (41s · ↓ 1.2k tokens · esc to interrupt)"
+    cost_usd: 1.87
+    ctx_pct: 22
+    turns: 9
+    since: 41s
+  - key: review
+    project: acme-api
+    agent: code-reviewer
+    mode: review-pr
+    review_pr: 138
+    state: blocked
+    title: Review webhook retries
+    spawned_by: orch
+    transcript: review-webhooks
+    pending_tool: Bash
+    pending_detail: gh pr checkout 138 --detach
+    since: 1m
+  - key: fixup
+    project: acme-api
+    agent: go-engineer
+    mode: dispatched
+    state: done
+    ticket: 139
+    ticket_title: Return 404 for unknown order IDs
+    title: Order 404s
+    spawned_by: orch
+    pr: 141
+    since: 5m
+steps:
+  - attach: limiter
+  - sleep: 1s
+  - screenshot

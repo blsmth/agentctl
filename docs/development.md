@@ -74,3 +74,22 @@ The dev server's control API lives under `/__test/` (see `internal/serve/servete
 **Poking at it by hand.** `just web-dev` serves the app at `http://127.0.0.1:8787`. Open the printed `/__login` URL to get the device cookie, then use the browser's device emulation (Chrome DevTools device toolbar, or Safari's Responsive Design Mode) to get a phone viewport and touch events. `curl` the control API to change the fleet while you watch.
 
 The iOS Simulator (macOS with Xcode only) is still useful as an occasional manual smoke check of real Safari behaviour (installing to the home screen, push, safe areas), but it is not part of CI.
+
+### Demo harness and screenshots
+
+`just demo` builds a fake, fully isolated agentctl world for screenshots and bug reports: fake projects, fake agent windows that print canned Claude Code output (no `claude`, no tokens), and real agentctl chrome bars, hub, HUD, popups and statusline on top. Scenes are data files in `demo/scenes/` (schema in [demo/scenes/README.md](../demo/scenes/README.md)); the code is `internal/demo` and its CLI `internal/demo/cmd/seed`.
+
+- `just demo [scene]`: start (or re-seed) a scene, default `hub` (a bit of everything), and print the windows and how to attach: `tmux -L agentctl-demo attach`.
+- `just demo-stop`: kill the demo tmux server and remove the temp root.
+- `just demo-shot <scene-or-path> [out]`: seed the scene, generate a vhs tape from its steps and render `demo/out/<scene>.png` (or `.gif`, or `out` + extension). `just demo-shots` renders every scene. Needs `vhs` (`brew install vhs`). `demo/out/` is gitignored.
+- `just demo-check <scene-or-path>`: validate a scene without starting anything.
+
+**Isolation.** Everything lives under `$TMPDIR/agentctl-demo` (override with `AGENTCTL_DEMO_ROOT`; the last path element must contain `agentctl-demo`): the fake `HOME`, `XDG_*` dirs, the fake Claude account (`CLAUDE_CONFIG_DIR=<home>/.claude`, agents in `agents/`, transcripts in `projects/`), the repos under `~/code/`, and `bin/` with the agentctl built from the checkout plus stub `claude`, `gh`, `alerter`, `notify-send` and `terminal-notifier` that fail at once. The tmux server is `-L agentctl-demo` with its own config and is started with an environment built from scratch, so it inherits no `TMUX`, `CLAUDE_*` or `AGENTCTL_*` from the session you run it in; every pane, hook and run-shell inherits the demo environment, and agentctl's plain `tmux` calls reach the demo server through the panes' `TMUX`. The seeder replaces its own environment the same way before it touches `internal/paths` or `internal/windowstate`. The global config turns off the monitor, titles, notifications (`notify_cmd: ""`), metrics, cron, PR auto-open and `bash_preview`. Each project's session is started by running the real `agentctl` in the fake repo, so session hooks, keybindings and chrome bars are the real ones; window records are written through `windowstate.Update` (and renamed through `winname.SyncName`) from the scene.
+
+**Adding a scene.** Copy the closest file in `demo/scenes/`, edit the windows and steps, and run `just demo-check` then `just demo-shot <name>`. Steps attach to a window by key, send prefix keys (`prefix: g` opens the hub, `prefix: h` the HUD), wait for screen text and take screenshots; see the existing scenes. New canned output goes in `demo/transcripts/<name>.yaml` or inline under the window's `transcript:`. `TestCheckedInScenes` keeps every checked-in scene and fixture valid.
+
+**Reproducing a bug.** Write a scene anywhere (`/tmp/bug-123.yaml`) with the state that shows the bug (a window `blocked` with a `pending_tool`, a `done` window left unseen, a child whose `spawned_by` names its parent, a narrow `terminal.cols`), run `just demo /tmp/bug-123.yaml` to poke at it, then `just demo-shot /tmp/bug-123.yaml /tmp/bug-123` for the image.
+
+**The approval scene** is a real round trip: Enter in a window with `approval:` makes its fake pane feed a PreToolUse payload to `agentctl hook-validate-bash`, which marks the window blocked and opens the dispatch approval popup, exactly as under Claude Code.
+
+**Workarounds in the demo world:** the hub session is started up front (the first prefix+`g` after session start does not switch the pressing client to the hub), and the fake `~/.zshenv` sets `unsetopt EQUALS` (the hub's live viewer command passes an unquoted `-t =<session>`, which zsh expands and fails on). Both are agentctl bugs reproduced with the harness.

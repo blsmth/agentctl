@@ -1,0 +1,25 @@
+title: Token-bucket rate limiter for POST /v1/orders
+entries:
+  - user: "Issue #142: add a token-bucket rate limiter to POST /v1/orders (100 req/min per API key, burst 20). Return 429 with Retry-After."
+  - say: "I'll start by looking at how middleware is wired into the router, then add the limiter as its own package."
+  - tool: Read
+    input: {file_path: internal/http/router.go}
+    result: Read 142 lines
+  - tool: Grep
+    input: {pattern: "func .*Middleware"}
+    result: "Found 4 files"
+  - tool: Write
+    input: {file_path: internal/ratelimit/bucket.go}
+    result: "Wrote 86 lines to internal/ratelimit/bucket.go"
+  - tool: Edit
+    input: {file_path: internal/http/router.go}
+    diff: |2
+       	r.Use(requestID, logging)
+      -	r.Post("/v1/orders", h.createOrder)
+      +	orders := ratelimit.New(ratelimit.Config{Rate: 100, Per: time.Minute, Burst: 20})
+      +	r.With(orders.ByAPIKey).Post("/v1/orders", h.createOrder)
+       	r.Get("/v1/orders/{id}", h.getOrder)
+  - say: "The limiter is in place. Running the package tests, including the new burst and refill cases."
+  - tool: Bash
+    input: {command: "go test ./internal/ratelimit/... ./internal/http/..."}
+    running: true

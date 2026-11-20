@@ -1,0 +1,39 @@
+# The per-window HUD (prefix + h) under an agent: the Stream tab replays the
+# session transcript from the fake account's projects/ dir.
+description: Per-window HUD with the transcript stream
+terminal:
+  cols: 140
+  rows: 40
+projects:
+  - name: acme-api
+    commits: [Initial commit, Add orders endpoint]
+windows:
+  - key: orch
+    project: acme-api
+    agent: orchestrator
+    state: working
+    title: Rate limiter rollout
+    transcript: orchestrator
+    since: 2m
+  - key: limiter
+    project: acme-api
+    agent: go-engineer
+    mode: dispatched
+    state: working
+    ticket: 142
+    ticket_title: Add token-bucket rate limiter to POST /v1/orders
+    title: Orders rate limiter
+    kind: go
+    spawned_by: orch
+    transcript: rate-limiter
+    spinner: "Testing… (41s · ↓ 1.2k tokens · esc to interrupt)"
+    cost_usd: 1.87
+    ctx_pct: 22
+    turns: 9
+    since: 41s
+steps:
+  - attach: limiter
+  - prefix: h
+  - wait: Stream
+  - sleep: 1500ms
+  - screenshot

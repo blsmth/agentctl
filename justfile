@@ -106,3 +106,47 @@ web-test *args:
 # Serve the phone web app on fake backends for manual testing
 web-dev addr="127.0.0.1:8787":
     go run ./internal/serve/servetest/devserver -addr {{addr}}
+
+# Demo harness (docs/development.md, "Demo harness and screenshots"): a fake,
+# isolated agentctl world on its own tmux server (-L agentctl-demo) under a
+# temp root, for screenshots. Nothing touches the real ~/.claude, agentctl
+# config or the default tmux server.
+_demo_root := env_var_or_default("AGENTCTL_DEMO_ROOT", trim_end_match(env_var_or_default("TMPDIR", "/tmp"), "/") / "agentctl-demo")
+_demo_bin := _demo_root / "bin" / "agentctl-demo"
+_demo_flags := "--root '" + _demo_root + "' --scenes demo/scenes --fixtures demo/transcripts"
+
+[private]
+demo-build:
+    mkdir -p "{{_demo_root}}/bin"
+    go build -o "{{_demo_root}}/bin/agentctl" .
+    go build -o "{{_demo_bin}}" ./internal/demo/cmd/seed
+
+# Start (or re-seed) the demo world for a scene (name in demo/scenes, or a path)
+demo scene="hub": demo-build
+    "{{_demo_bin}}" up {{_demo_flags}} --scene "{{scene}}"
+
+# Stop the demo tmux server and remove the demo temp root
+demo-stop:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -x "{{_demo_bin}}" ]; then
+        "{{_demo_bin}}" down --root "{{_demo_root}}"
+    else
+        tmux -L agentctl-demo kill-server 2>/dev/null || true
+    fi
+
+# Render one scene to demo/out/<scene>.png|gif (or to out, a path without extension)
+demo-shot scene out="": demo-build
+    "{{_demo_bin}}" shot {{_demo_flags}} --scene "{{scene}}" --out "{{out}}"
+
+# Render every scene in demo/scenes
+demo-shots: demo-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for f in demo/scenes/*.yaml; do
+        "{{_demo_bin}}" shot {{_demo_flags}} --scene "$f"
+    done
+
+# Validate a scene file without starting anything
+demo-check scene: demo-build
+    "{{_demo_bin}}" check {{_demo_flags}} --scene "{{scene}}"
