@@ -50,7 +50,11 @@ func TestLaunchFocusesLivePane(t *testing.T) {
 		return mm.(FleetModel)
 	}
 	for _, shell := range []bool{false, true} {
-		t.Run("focus after show", func(t *testing.T) {
+		name := "focus after show agent"
+		if shell {
+			name = "focus after show shell"
+		}
+		t.Run(name, func(t *testing.T) {
 			n := stubFocusViewer(t)
 			m := launch(mouseTestModel(t, 80, 24), shell)
 			m = loadedWithNew(m, "@9")
@@ -75,6 +79,38 @@ func TestLaunchFocusesLivePane(t *testing.T) {
 		execCmds(cmd)
 		if *n != 0 || mm.(FleetModel).focusOnShow != "" {
 			t.Fatalf("calls=%d", *n)
+		}
+	})
+	t.Run("keyboard move in between", func(t *testing.T) {
+		n := stubFocusViewer(t)
+		m := loadedWithNew(launch(mouseTestModel(t, 80, 24), false), "@9")
+		m.moveCursor(-1)
+		_, cmd := m.Update(fleetLiveMsg{key: "s1|@9"})
+		execCmds(cmd)
+		if *n != 0 {
+			t.Fatalf("calls=%d", *n)
+		}
+	})
+	t.Run("stale selection without clearing", func(t *testing.T) {
+		n := stubFocusViewer(t)
+		m := loadedWithNew(launch(mouseTestModel(t, 80, 24), false), "@9")
+		m.focusOnShow = "s1|@9"
+		m.splitPane.SetCursor(0)
+		m.syncSelectionFromCursor()
+		_, cmd := m.Update(fleetLiveMsg{key: "s1|@9"})
+		execCmds(cmd)
+		if *n != 0 {
+			t.Fatalf("calls=%d", *n)
+		}
+	})
+	t.Run("second load while show in flight", func(t *testing.T) {
+		n := stubFocusViewer(t)
+		m := loadedWithNew(launch(mouseTestModel(t, 80, 24), false), "@9")
+		m.liveShown = "s1|@9" // show issued, result pending
+		mm, cmd := m.Update(fleetLoadedMsg{groups: m.groups})
+		execCmds(cmd)
+		if *n != 0 || mm.(FleetModel).focusOnShow != "s1|@9" {
+			t.Fatalf("calls=%d focusOnShow=%q", *n, mm.(FleetModel).focusOnShow)
 		}
 	})
 	t.Run("retry give-up", func(t *testing.T) {

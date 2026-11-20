@@ -789,11 +789,12 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.configureSplitPane()
 		if m.focusOnShow != "" {
-			if m.focusOnShow == msg.key {
+			sel := m.selSession + "|" + m.selWindowID
+			if msg.key == m.focusOnShow && msg.key == sel && msg.key == m.liveShown {
 				m.focusOnShow = ""
 				return m, focusViewerCmd()
 			}
-			if m.focusOnShow != m.selSession+"|"+m.selWindowID {
+			if m.focusOnShow != sel {
 				m.focusOnShow = "" // the user moved on
 			}
 		}
@@ -865,6 +866,7 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, fleetLoadCmd()
 
 	case fleetLoadedMsg:
+		justApplied := false
 		m.loaded = true
 		m.loadErr = msg.err
 		if msg.err == nil {
@@ -886,13 +888,14 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			p := m.pendingFocus
 			if m.applyPendingFocus() && p != nil && p.focus {
 				m.focusOnShow = m.selSession + "|" + m.selWindowID
+				justApplied = true
 			}
 			m.clampScroll()
 		}
 		show := m.maybeShowCmd()
 		var focus tea.Cmd
-		if show == nil && m.focusOnShow != "" && m.focusOnShow == m.selSession+"|"+m.selWindowID && m.liveShown == m.focusOnShow && m.liveFailed != m.focusOnShow {
-			// Already showing (or a show is in flight): focus now.
+		if show == nil && justApplied && m.focusOnShow == m.selSession+"|"+m.selWindowID && m.liveShown == m.focusOnShow && m.liveFailed != m.focusOnShow {
+			// Already showing: focus now.
 			m.focusOnShow = ""
 			focus = focusViewerCmd()
 		}
@@ -1372,6 +1375,7 @@ func (m *FleetModel) moveCursor(delta int) {
 	// rather than waiting for the next View().
 	m.splitPane.SetListContent(m.splitPane.listContent, len(m.lines))
 	m.pendingFocus = nil
+	m.focusOnShow = ""
 	m.wheelHold = false
 	m.splitPane.SetCursor(m.nextSelectable(m.splitPane.Cursor(), delta))
 	m.syncSelectionFromCursor()
