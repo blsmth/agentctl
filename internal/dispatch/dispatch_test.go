@@ -1509,3 +1509,90 @@ func TestBuildDispatchEnvOmitsEmptyRepo(t *testing.T) {
 		t.Errorf("AGENTCTL_REPO = %q, want unset when RepoSlug is empty", v)
 	}
 }
+
+// --- Worktree-root boundary for the --settings hooks decision ---
+
+const rootHooksJSON = `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"/Users/x/.local/bin/agentctl hook-pre-tool"}]}]}}`
+
+// worktreeUnderRoot builds <root>/.worktrees/<slug> as a linked worktree and,
+// when rootSettings is non-empty, writes it to <root>/.claude/settings.local.json.
+func worktreeUnderRoot(t *testing.T, rootSettings string) (root, wt string) {
+	t.Helper()
+	root = t.TempDir()
+	wt = filepath.Join(root, ".worktrees", "agent-x-session-1")
+	makeLinkedWorktree(t, root, wt)
+	if rootSettings != "" {
+		dir := filepath.Join(root, ".claude")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "settings.local.json"), []byte(rootSettings), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	withRuntimeDir(t, filepath.Join(root, ".agentctl"))
+	return root, wt
+}
+
+func readSettingsHasHooks(t *testing.T, path string) bool {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading --settings file: %v", err)
+	}
+	return jsonHasHooksKey(t, data)
+}
+
+func TestWriteLaunchSettings_NoWorktreeInsideWorktree(t *testing.T) {
+	tests := []struct {
+		name         string
+		rootSettings string
+		wantHooks    bool
+	}{
+		{name: "root registers hooks", rootSettings: rootHooksJSON, wantHooks: false},
+		{name: "root has no hooks", rootSettings: "", wantHooks: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, wt := worktreeUnderRoot(t, tt.rootSettings)
+			path, err := writeLaunchSettings("general-purpose", config.AgentConfig{}, wt, wt, false)
+			if err != nil {
+				t.Fatalf("writeLaunchSettings: %v", err)
+			}
+			if got := readSettingsHasHooks(t, path); got != tt.wantHooks {
+				t.Errorf("--settings has hooks = %v, want %v", got, tt.wantHooks)
+			}
+		})
+	}
+}
+
+func TestWriteAgentSettings_WorktreeRootHooks(t *testing.T) {
+	_, wt := worktreeUnderRoot(t, rootHooksJSON)
+	path := WriteAgentSettings("go-engineer", config.AgentConfig{}, wt)
+	if path == "" {
+		t.Fatal("empty settings path")
+	}
+	if readSettingsHasHooks(t, path) {
+		t.Error("--settings carries hooks although the worktree root registers them")
+	}
+}
+
+// A plain repo dir is not climbed above: hooks in its parent do not count.
+func TestWriteAgentSettings_PlainDirDoesNotClimb(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "repo")
+	if err := os.MkdirAll(filepath.Join(parent, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, ".claude", "settings.local.json"), []byte(rootHooksJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withRuntimeDir(t, filepath.Join(parent, ".agentctl"))
+	path := WriteAgentSettings("go-engineer", config.AgentConfig{}, dir)
+	if !readSettingsHasHooks(t, path) {
+		t.Error("plain dir: --settings lacks hooks; walk must not climb above the repo")
+	}
+}

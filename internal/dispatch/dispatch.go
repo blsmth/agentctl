@@ -813,7 +813,16 @@ func WriteAgentSettings(name string, ac config.AgentConfig, workDir string) stri
 // empty. WriteAgentSettings passes workDir as its own boundary, i.e. no
 // ancestor walk, preserving its documented single-directory behavior for
 // every other caller.
+//
+// When workDir is itself an agentctl worktree, the boundary always extends to
+// the worktree's root (the main checkout), whatever the caller passed: Claude
+// Code loads <root>/.claude/settings.local.json from the parent directory, so
+// a --no-worktree launch or a restore inside a worktree would otherwise
+// register the hooks twice.
 func writeAgentSettings(name string, ac config.AgentConfig, workDir, hooksBoundary string) (string, error) {
+	if root, ok := agentctlWorktreeRoot(workDir); ok {
+		hooksBoundary = root
+	}
 	includeHooks := !ancestorHasAgentctlHooks(workDir, hooksBoundary)
 	data, err := BuildAgentSettingsJSON(ac, includeHooks)
 	if err != nil {
