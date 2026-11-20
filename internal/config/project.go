@@ -49,7 +49,7 @@ func LoadProject(dir string) *ProjectConfig {
 				logging.Log("LoadProject: invalid JSON at %s: %v", candidate, jsonErr)
 				return nil
 			}
-			logging.Log("LoadProject: loaded project config from %s", candidate)
+			logging.Debug("LoadProject: loaded project config from %s", candidate)
 			return &cfg
 		}
 

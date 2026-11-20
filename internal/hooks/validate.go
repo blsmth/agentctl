@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/audit"
 	"github.com/blsmth/agentctl/internal/config"
@@ -58,8 +59,7 @@ func ValidateBash() {
 		return
 	}
 
-	doneTimer := logging.Timing("hook/validate-bash")
-	defer doneTimer()
+	t0 := time.Now()
 
 	agentName := os.Getenv("AGENTCTL_AGENT_NAME")
 	command := toolInput.Command
@@ -201,7 +201,7 @@ func ValidateBash() {
 	}
 
 	// Allow -- exit 0 with no output.
-	logging.Log("hook/validate-bash: approved window=%s agent=%s cmd=%s", windowID, agentName, textutil.Truncate(command, 100, "..."))
+	logging.Log("hook/validate-bash: approved window=%s agent=%s cmd=%s Δ%s", windowID, agentName, textutil.Truncate(command, 100, "..."), time.Since(t0).Round(100*time.Microsecond))
 }
 
 // checkAgentDenyList checks a command against the per-agent blocked commands

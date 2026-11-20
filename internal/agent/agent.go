@@ -212,12 +212,12 @@ func DiscoverAll(cfg *config.Config, projectDirs []string) ([]Agent, error) {
 			if idx, exists := byName[la.Name]; exists {
 				existing := agents[idx]
 				if existing.Scope == ScopeGlobal {
-					logging.Warn("agent.DiscoverAll: project agent %q (%s) shadows global agent (%s)", la.Name, la.FilePath, existing.FilePath)
+					logging.Debug("agent.DiscoverAll: project agent %q (%s) shadows global agent (%s)", la.Name, la.FilePath, existing.FilePath)
 					la.Shadows = existing.FilePath
 					agents[idx] = la
 				} else {
 					// Same name in two project dirs — first one wins.
-					logging.Log("agent.DiscoverAll: duplicate project agent %q from %s (already from %s), skipping", la.Name, projectName, existing.ProjectName)
+					logging.Debug("agent.DiscoverAll: duplicate project agent %q from %s (already from %s), skipping", la.Name, projectName, existing.ProjectName)
 				}
 			} else {
 				byName[la.Name] = len(agents)

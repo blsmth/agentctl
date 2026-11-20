@@ -60,3 +60,9 @@ func TestCaptureUnderGoTest(t *testing.T) {
 		t.Skip("test binary not ephemeral on this platform")
 	}
 }
+
+func TestReexecFailureLeavesEnv(t *testing.T) {
+	if err := Reexec("/nonexistent/agentctl"); err == nil {
+		t.Fatal("expected exec failure")
+	}
+}

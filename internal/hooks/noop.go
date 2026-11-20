@@ -3,16 +3,11 @@ package hooks
 import (
 	"io"
 	"os"
-
-	"github.com/blsmth/agentctl/internal/logging"
 )
 
 // Noop is a generic no-op handler for hook events that aren't yet implemented.
-// It drains stdin and logs the event name for diagnostics.
-func Noop(eventName string) {
+// It drains stdin and logs nothing: it fires for several events on every
+// session, so a line per call would be pure noise.
+func Noop(_ string) {
 	io.Copy(io.Discard, os.Stdin) //nolint:errcheck
-	if os.Getenv("AGENTCTL") != "1" {
-		return
-	}
-	logging.Log("hook-%s: no-op (not yet implemented)", eventName)
 }

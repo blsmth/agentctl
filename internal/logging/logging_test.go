@@ -699,3 +699,25 @@ func TestStartupBannerInteractiveIsInfoSingleRecord(t *testing.T) {
 		t.Errorf("banner spans %d extra lines, want a single record:\n%s", n, got)
 	}
 }
+
+func TestStartupBannerAfterReexecIsDebugAndConsumed(t *testing.T) {
+	resetState()
+	SetFastPath(false)
+	t.Setenv(ReexecEnv, "1")
+	f := openTempLog(t)
+	defer func() { _ = os.Remove(f.Name()) }()
+	defer func() { _ = f.Close() }()
+
+	writeStartupBanner()
+	if got := readLog(t, f); got != "" {
+		t.Errorf("re-exec banner emitted without AGENTCTL_DEBUG: %q", got)
+	}
+	if v := os.Getenv(ReexecEnv); v != "" {
+		t.Errorf("%s not consumed: %q", ReexecEnv, v)
+	}
+	// Consumed: the next banner is a normal INFO one.
+	writeStartupBanner()
+	if got := readLog(t, f); !strings.Contains(got, "INFO") {
+		t.Errorf("banner after consume should be INFO:\n%s", got)
+	}
+}

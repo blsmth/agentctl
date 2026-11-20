@@ -223,18 +223,30 @@ var fastPath bool
 // every hook would add a banner to the session log.
 func SetFastPath(v bool) { fastPath = v }
 
+// ReexecEnv is set (to "1") by internal/selfexec when a long-lived process
+// replaces itself with a newer binary. The new image's startup banner is
+// written at DEBUG instead of INFO, since the "binary changed, re-executing"
+// line already marks the event. The variable is consumed (unset) by the first
+// banner so child processes do not inherit it.
+const ReexecEnv = "AGENTCTL_REEXEC"
+
 // writeStartupBanner emits a single structured header record to the log file:
 // pid, binary, args, cwd, plus any set env vars that matter for debugging.
 // INFO for interactive/long-lived commands; DEBUG (gated by AGENTCTL_DEBUG=1)
 // for fast-path invocations. Called from initInternal.
 func writeStartupBanner() {
+	reexeced := os.Getenv(ReexecEnv) != ""
+	if reexeced {
+		_ = os.Unsetenv(ReexecEnv)
+	}
 	mu.Lock()
 	l := logger
 	mu.Unlock()
 	if l == nil {
 		return
 	}
-	if fastPath && !debugOn {
+	quiet := fastPath || reexeced
+	if quiet && !debugOn {
 		return
 	}
 
@@ -261,7 +273,7 @@ func writeStartupBanner() {
 			fields = append(fields, k, v)
 		}
 	}
-	if fastPath {
+	if quiet {
 		l.Debug("agentctl startup", fields...)
 		return
 	}

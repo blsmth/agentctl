@@ -48,7 +48,9 @@ func recordDispatchApprovals(windowID, command string) {
 		}
 		if err := recordApproval(windowID, args); err != nil {
 			logging.Warn("hook-validate-bash: recording dispatch approval: %v", err)
+			continue
 		}
+		logging.Log("dispatch-approval: recorded window=%s args=%s", windowID, dispatchapproval.ShortKey(windowID, args))
 	}
 }
 
