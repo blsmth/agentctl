@@ -394,6 +394,12 @@ type FleetModel struct {
 	selWindowID string
 	selIsHeader bool
 
+	// lastSelection is the selection last written to the hub selection file
+	// for the follow-hub HUD (selPublished: one has been written). See
+	// publishSelection.
+	lastSelection HubSelection
+	selPublished  bool
+
 	loaded  bool
 	loadErr error
 	jumpErr string // a real failure: styled as an error, triggers a refresh
@@ -710,8 +716,18 @@ func (m *FleetModel) maybeShowCmd() tea.Cmd {
 	return m.liveShowCmd()
 }
 
-// Update handles Bubble Tea messages.
+// Update handles Bubble Tea messages, then publishes the selection for the
+// follow-hub HUD if it changed.
 func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if fm, ok := next.(FleetModel); ok {
+		fm.publishSelection()
+		return fm, cmd
+	}
+	return next, cmd
+}
+
+func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.termWidth = msg.Width

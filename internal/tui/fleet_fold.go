@@ -422,29 +422,7 @@ func writeHubView(path string, s hubViewState) error {
 	if err != nil {
 		return fmt.Errorf("encoding hub view: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+hubViewFile+".*")
-	if err != nil {
-		return fmt.Errorf("creating temp file: %w", err)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod %s: %w", tmp.Name(), err)
-	}
-	if _, err := tmp.Write(append(data, '\n')); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("writing %s: %w", tmp.Name(), err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("closing %s: %w", tmp.Name(), err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("renaming to %s: %w", path, err)
-	}
-	return nil
+	return writeFileAtomic(path, append(data, '\n'))
 }
 
 // saveViewCmd persists the current view state in the background. A model
