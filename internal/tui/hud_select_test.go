@@ -595,3 +595,65 @@ func TestClearingSelectionResumesFollow(t *testing.T) {
 		}
 	})
 }
+
+func TestReselectPressDoesNotScroll(t *testing.T) {
+	stubClipboard(t)
+	var lines []string
+	for i := range 60 {
+		lines = append(lines, fmt.Sprintf("line %02d", i))
+	}
+	m := newTestHud()
+	textStream(&m, lines...)
+	m.scrollToBottom()
+	m.streamAtBottom = true
+	row := m.bodyTop() + 2
+	m, _ = hudMouse(t, m, selPressAt(1, row))
+	m, _ = hudMouse(t, m, selDragTo(4, row+1))
+	m, _ = hudMouse(t, m, selReleaseAt(4, row+1))
+	for i := range 10 {
+		m.logEntries = append(m.logEntries, LogEntry{Kind: "text", FullText: fmt.Sprintf("new %d", i), Style: lipgloss.NewStyle()})
+	}
+	m.rebuildStreamLineBuffer()
+	scroll := m.scrollTop
+	want, _ := m.screenPoint(1, row)
+
+	m, _ = hudMouse(t, m, selPressAt(1, row))
+	if m.scrollTop != scroll {
+		t.Errorf("press scrolled: scrollTop %d -> %d", scroll, m.scrollTop)
+	}
+	if m.sel.state != selPending || m.sel.anchor != want {
+		t.Errorf("anchor = %+v (state %d), want %+v", m.sel.anchor, m.sel.state, want)
+	}
+	if !m.sel.repin {
+		t.Error("the pending re-pin should carry over to the new selection")
+	}
+
+	t.Run("a second drag keeps the re-pin", func(t *testing.T) {
+		m, _ := hudMouse(t, m, selDragTo(4, row+1))
+		m, _ = hudMouse(t, m, selReleaseAt(4, row+1))
+		if got, _ := m.selectionText(); got != "line 43\nline" {
+			t.Errorf("selection = %q", got)
+		}
+		m, _ = hudMouse(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+		if !m.streamAtBottom || !m.isStreamAtBottom() {
+			t.Error("clearing the second selection should resume following")
+		}
+	})
+	t.Run("a plain click re-pins", func(t *testing.T) {
+		m, _ := hudMouse(t, m, selReleaseAt(1, row))
+		if m.sel.state != selNone || !m.streamAtBottom || !m.isStreamAtBottom() {
+			t.Errorf("a body click with no drag should clear and resume following (state %d, scrollTop %d)", m.sel.state, m.scrollTop)
+		}
+	})
+	t.Run("a header click re-pins", func(t *testing.T) {
+		m, _ := hudMouse(t, m, selReleaseAt(1, row))
+		m2 := m
+		m2.sel = hudSelection{state: selShown, tab: tabStream, repin: true}
+		m2.streamAtBottom = false
+		m2.scrollTop = 0
+		m2, _ = hudMouse(t, m2, selPressAt(0, 0))
+		if !m2.streamAtBottom || !m2.isStreamAtBottom() {
+			t.Error("a header click should clear and resume following")
+		}
+	})
+}

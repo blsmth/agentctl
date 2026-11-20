@@ -283,16 +283,26 @@ func (m *HudModel) scrollTabToBottom(tab int) {
 
 // selPress handles a left press: it clears any selection and, in the body,
 // arms a possible drag. The press keeps its normal click meaning.
+//
+// A body press is anchored before anything scrolls: it replaces the old
+// selection without re-pinning, carrying the pending re-pin over, so the
+// anchor lands on the text under the pointer. The re-pin happens when the
+// press turns out to be a plain click (selRelease) or is not a body press.
 func (m *HudModel) selPress(msg tea.MouseClickMsg) {
-	m.clearSelection()
-	if msg.Button != tea.MouseLeft || !m.inBody(msg.Y) || m.followIdle() {
-		return
+	var p hudSelPoint
+	ok := msg.Button == tea.MouseLeft && m.inBody(msg.Y) && !m.followIdle()
+	if ok {
+		p, ok = m.screenPoint(msg.X, msg.Y)
 	}
-	p, ok := m.screenPoint(msg.X, msg.Y)
 	if !ok {
+		m.clearSelection()
 		return
 	}
-	m.sel = hudSelection{state: selPending, tab: m.activeTab, anchor: p, head: p, lastX: msg.X}
+	repin := m.sel.repin && m.sel.tab == m.activeTab
+	if !repin {
+		m.clearSelection() // re-pins another tab's selection, if any
+	}
+	m.sel = hudSelection{state: selPending, tab: m.activeTab, anchor: p, head: p, lastX: msg.X, repin: repin}
 }
 
 // selMotion handles pointer motion while a press is pending or a drag is in
@@ -325,7 +335,7 @@ func (m *HudModel) selMotion(msg tea.MouseMotionMsg) (cmd tea.Cmd, handled bool)
 		m.sel.state = selDragging
 		// Stop following new output while selecting, so the viewport (and
 		// the text under the pointer) holds still; clearing resumes it.
-		m.sel.repin = m.atBottom(m.activeTab)
+		m.sel.repin = m.sel.repin || m.atBottom(m.activeTab)
 		m.setAtBottom(m.activeTab, false)
 	}
 	m.sel.head = p
