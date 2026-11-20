@@ -141,8 +141,25 @@ func sessionWindowTarget(session, windowID string) string {
 // primitive: existing SwitchToWindow only targets the package-global
 // SessionName, so it can't reach a window living in another session.
 func SwitchToSessionWindow(session, windowID string) error {
+	return SwitchClientToSessionWindow("", session, windowID)
+}
+
+// switchClientArgs builds `switch-client [-c client] -t target`. An empty
+// client leaves tmux to pick one, which from run-shell -b is the most
+// recently active client — wrong when another client attached a moment ago.
+func switchClientArgs(client, target string) []string {
+	args := []string{"switch-client"}
+	if client != "" {
+		args = append(args, "-c", client)
+	}
+	return append(args, "-t", target)
+}
+
+// SwitchClientToSessionWindow is SwitchToSessionWindow aimed at a specific
+// client (-c) when client is non-empty.
+func SwitchClientToSessionWindow(client, session, windowID string) error {
 	target := sessionWindowTarget(session, windowID)
-	cmd := exec.Command("tmux", "switch-client", "-t", target)
+	cmd := exec.Command("tmux", switchClientArgs(client, target)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("switch-client %s: %s: %w", target, string(out), err)
 	}
@@ -291,11 +308,7 @@ func SwitchClientToLast(client string) error {
 // SwitchClientToSession switches client (or the current one when empty) to
 // the named session. The target is "=name:" for an exact-match session.
 func SwitchClientToSession(client, session string) error {
-	args := []string{"switch-client"}
-	if client != "" {
-		args = append(args, "-c", client)
-	}
-	args = append(args, "-t", ExactSessionTarget(session))
+	args := switchClientArgs(client, ExactSessionTarget(session))
 	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("switch-client %s: %s: %w", session, strings.TrimSpace(string(out)), err)
 	}
@@ -357,6 +370,19 @@ func CurrentSessionName() string {
 		return ""
 	}
 	out, err := exec.Command("tmux", "display-message", "-p", "#{session_name}").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// clientSessionName returns the session client is attached to, or
+// CurrentSessionName when client is empty.
+func clientSessionName(client string) string {
+	if client == "" {
+		return CurrentSessionName()
+	}
+	out, err := exec.Command("tmux", "display-message", "-c", client, "-p", "#{client_session}").Output()
 	if err != nil {
 		return ""
 	}
@@ -492,16 +518,23 @@ func StartHubSession() error {
 // SelectFleetListWindow), `switch-client` if attached to a different tmux
 // session, or `attach-session` if not inside any tmux client at all (e.g.
 // summoning the hub from outside tmux entirely).
-func SwitchToHub() error {
+func SwitchToHub() error { return SwitchToHubFor("") }
+
+// SwitchToHubFor is SwitchToHub aimed at a specific tmux client (its
+// #{client_name}) when client is non-empty. Bindings run under run-shell -b
+// have no current client, so without it tmux switches whichever client was
+// most recently active, which on the first press is the hub's own nested
+// viewer.
+func SwitchToHubFor(client string) error {
 	if err := StartHubSession(); err != nil {
 		return err
 	}
 
 	if os.Getenv("TMUX") != "" {
-		if CurrentSessionName() == HubSessionName {
+		if clientSessionName(client) == HubSessionName {
 			return SelectFleetListWindow()
 		}
-		cmd := exec.Command("tmux", "switch-client", "-t", ExactSessionTarget(HubSessionName))
+		cmd := exec.Command("tmux", switchClientArgs(client, ExactSessionTarget(HubSessionName))...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("switch-client %s: %s: %w", HubSessionName, string(out), err)
 		}

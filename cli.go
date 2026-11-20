@@ -540,9 +540,13 @@ func (c *DispatchCmd) Run() error {
 
 // HubCmd summons the fleet hub — creating the agentctl-hub session if it
 // doesn't already exist — and switches into it.
-type HubCmd struct{}
+type HubCmd struct {
+	// Client is the invoking tmux client (the prefix+g binding passes
+	// #{client_name}); empty when run from a shell or pane.
+	Client string `name:"client" hidden:"" help:"Invoking client's tmux client name"`
+}
 
-func (c *HubCmd) Run() error { cmd.RunHub(); return nil }
+func (c *HubCmd) Run() error { cmd.RunHub(c.Client); return nil }
 
 // HubViewCmd is what actually runs *inside* the hub session's sole window,
 // rendering the cross-session aggregator. Mirrors how `agentctl tickets
@@ -566,9 +570,14 @@ type JumpNextBlockedCmd struct {
 	// ClientSession is the invoking client's session (the prefix+b binding
 	// passes #{client_session}); when it is the hub the hub does the jump.
 	ClientSession string `name:"client-session" hidden:"" help:"Invoking client's tmux session"`
+	// Client is the invoking client's name, so the switch targets it.
+	Client string `name:"client" hidden:"" help:"Invoking client's tmux client name"`
 }
 
-func (c *JumpNextBlockedCmd) Run() error { cmd.RunJumpNextBlocked(c.ClientSession); return nil }
+func (c *JumpNextBlockedCmd) Run() error {
+	cmd.RunJumpNextBlocked(c.ClientSession, c.Client)
+	return nil
+}
 
 // ---------------------------------------------------------------------------
 // Tickets

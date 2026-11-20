@@ -1595,8 +1595,8 @@ func agentctlKeybindings(exe string) []keyBinding {
 		// hub session's own cwd to hubDir(), and jump-next-blocked resolves
 		// each candidate's RuntimeDir from the fleet registry (internal/fleet),
 		// not from paths.RuntimeDir() of the invoking process.
-		{"g", "run-shell -b " + shellquote.Quote(invokeRS("hub"))},
-		{"b", "run-shell -b " + shellquote.Quote(invokeRS("jump-next-blocked --client-session '#{client_session}'"))},
+		{"g", "run-shell -b " + shellquote.Quote(invokeRS("hub --client '#{client_name}'"))},
+		{"b", "run-shell -b " + shellquote.Quote(invokeRS("jump-next-blocked --client-session '#{client_session}' --client '#{client_name}'"))},
 	}
 }
 
