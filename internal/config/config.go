@@ -668,6 +668,13 @@ type Config struct {
 	// tighten it but never loosen it (sanitizeProjectConfig). Use
 	// EffectiveDispatchApproval to read the normalized value.
 	DispatchApproval string `json:"dispatch_approval,omitempty"`
+	// PRReview selects whether orchestrators are told to send every PR to a
+	// dispatched reviewer: "always" (default, also for empty or unknown
+	// values), "optional" (the orchestrator decides by size and risk) or
+	// "off" (no dispatched reviewer). It only shapes the injected preamble;
+	// `dispatch --review-pr` works under every mode. A project-local config
+	// may override it. Use EffectivePRReview to read the normalized value.
+	PRReview string `json:"pr_review,omitempty"`
 	// LLM configures the local model provider used for text completion (see
 	// internal/llm). Empty/unset Provider means the feature is disabled.
 	LLM LLMConfig `json:"llm,omitempty"`
@@ -828,6 +835,44 @@ func (c Config) EffectiveDispatchApproval() string {
 	default:
 		return DispatchApprovalAll
 	}
+}
+
+// Values of Config.PRReview.
+const (
+	PRReviewAlways   = "always"
+	PRReviewOptional = "optional"
+	PRReviewOff      = "off"
+)
+
+// ValidPRReview reports whether v is a recognized pr_review value (empty
+// means unset).
+func ValidPRReview(v string) bool {
+	switch v {
+	case "", PRReviewAlways, PRReviewOptional, PRReviewOff:
+		return true
+	}
+	return false
+}
+
+// EffectivePRReview returns the normalized pr_review: always, optional or
+// off. Empty and unrecognized values mean always.
+func (c Config) EffectivePRReview() string {
+	switch c.PRReview {
+	case PRReviewOptional, PRReviewOff:
+		return c.PRReview
+	default:
+		return PRReviewAlways
+	}
+}
+
+// PRReviewWarning returns a human-readable warning when pr_review holds an
+// unrecognized value, or "" when it is valid.
+func (c Config) PRReviewWarning() string {
+	if ValidPRReview(c.PRReview) {
+		return ""
+	}
+	return fmt.Sprintf("pr_review %q is not recognized (want %s, %s or %s); treating it as %s",
+		c.PRReview, PRReviewAlways, PRReviewOptional, PRReviewOff, PRReviewAlways)
 }
 
 // DispatchApprovalWarning returns a human-readable warning when
@@ -1159,6 +1204,10 @@ func mergeConfig(base, overlay *Config) {
 	// value that would loosen the global one.
 	if overlay.DispatchApproval != "" {
 		base.DispatchApproval = overlay.DispatchApproval
+	}
+	// PRReview is a workflow preference, so a project may set it either way.
+	if overlay.PRReview != "" {
+		base.PRReview = overlay.PRReview
 	}
 	// LLM: overlay if provider is explicitly set.
 	if overlay.LLM.Provider != "" {
