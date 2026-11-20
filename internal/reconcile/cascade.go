@@ -206,3 +206,20 @@ func ListLiveWindows() ([]LiveWindow, error) {
 	}
 	return out, nil
 }
+
+// CloseDescendants kills the descendants of parentID/parentSessionID in wins
+// deepest-first, so a parent is never left alone while its children vanish
+// after it. A failed kill is logged and skipped. It returns the windows that
+// were killed, in kill order.
+func CloseDescendants(parentID, parentSessionID string, wins []LiveWindow, kill func(LiveWindow) error) []LiveWindow {
+	desc := Descendants(parentID, parentSessionID, wins)
+	var closed []LiveWindow
+	for i := len(desc) - 1; i >= 0; i-- {
+		if err := kill(desc[i]); err != nil {
+			logging.Warn("reconcile: closing sub-session %s:%s: %v", desc[i].Session, desc[i].WindowID, err)
+			continue
+		}
+		closed = append(closed, desc[i])
+	}
+	return closed
+}

@@ -23,9 +23,11 @@ import (
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/panestate"
 	"github.com/blsmth/agentctl/internal/panestate/panesim"
+	"github.com/blsmth/agentctl/internal/reconcile"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 const (
@@ -290,6 +292,7 @@ func newWriteEnvWith(t *testing.T, allowWrite bool, mutate func(*Options)) *writ
 		Fleet: fleet, Panes: e.panes, Awake: &fakeHolder{},
 		Agents: fakeAgents{list: []AgentInfo{{Name: "go-engineer", Scope: "global"}}},
 		Keys:   e.keys, Injector: e.inj, Closer: e.closer, Dispatcher: e.disp, Shells: e.shells,
+		Children: noChildren{},
 		MainPanes:      e.panes,
 		Sweep:          e.sweep.run,
 		GroupOrderPath: func() (string, error) { return filepath.Join(dir, "group-order.json"), nil },
@@ -1407,4 +1410,86 @@ func TestShell(t *testing.T) {
 			t.Errorf("audit = %+v", lines)
 		}
 	})
+}
+
+// noChildren is the default test seam: no sub-sessions, no tmux.
+type noChildren struct{}
+
+func (noChildren) CloseChildren(_, _ string) []WindowKey { return nil }
+
+func childWin(session, id, spawnedBy, spawnedBySession, sessionID string) reconcile.LiveWindow {
+	return reconcile.LiveWindow{Session: session, RuntimeDir: "/rt", WindowID: id,
+		Record: windowstate.WindowState{SessionID: sessionID, SpawnedBy: spawnedBy, SpawnedBySession: spawnedBySession}}
+}
+
+func TestCloseChildrenOrderAndResponse(t *testing.T) {
+	wins := []reconcile.LiveWindow{
+		childWin("agentctl-proj", "@600", "@523", "sid-parent", "sid-child"),
+		childWin("agentctl-proj", "@601", "@600", "sid-child", "sid-grand"),
+		childWin("agentctl-proj", "@602", "@999", "other", "x"),
+	}
+	tests := []struct {
+		name    string
+		enabled bool
+		listErr error
+		failID  string
+		want    []string
+	}{
+		{"deepest first", true, nil, "", []string{"@601", "@600"}},
+		{"kill failure tolerated", true, nil, "@601", []string{"@600"}},
+		{"list failure", true, errors.New("tmux down"), "", nil},
+		{"disabled", false, nil, "", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var killed []string
+			var e *writeEnv
+			e = newWriteEnvWith(t, true, func(o *Options) {
+				o.Children = liveChildren{
+					enabled: func() bool { return tt.enabled },
+					list:    func() ([]reconcile.LiveWindow, error) { return wins, tt.listErr },
+					kill: func(w reconcile.LiveWindow) error {
+						if len(e.closer.closed) != 0 {
+							t.Errorf("parent closed before child %s", w.WindowID)
+						}
+						if w.WindowID == tt.failID {
+							return errors.New("kill failed")
+						}
+						killed = append(killed, w.WindowID)
+						return nil
+					},
+				}
+			})
+			g := writeGroup("idle", true, "go-engineer", "dispatch")
+			m := g.Meta["@523"]
+			m.SessionID = "sid-parent"
+			g.Meta["@523"] = m
+			e.fleet.set(g)
+			e.panes.set(idlePane)
+			w := e.post("/v1/sessions/agentctl-proj/windows/@523/close", `{}`)
+			if w.Code != 200 {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			if len(e.closer.closed) != 1 || e.closer.closed[0].WindowID != "@523" {
+				t.Errorf("parent closed %+v", e.closer.closed)
+			}
+			var body struct {
+				OK     bool        `json:"ok"`
+				Closed []WindowKey `json:"closed_children"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, k := range body.Closed {
+				if k.Session != "agentctl-proj" {
+					t.Errorf("key %+v", k)
+				}
+				got = append(got, k.WindowID)
+			}
+			if !body.OK || !reflect.DeepEqual(got, tt.want) || !reflect.DeepEqual(killed, tt.want) {
+				t.Errorf("ok=%v response %v killed %v, want %v", body.OK, got, killed, tt.want)
+			}
+		})
+	}
 }

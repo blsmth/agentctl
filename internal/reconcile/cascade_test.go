@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/blsmth/agentctl/internal/state"
@@ -364,5 +365,23 @@ func TestLiveWindowName(t *testing.T) {
 		if got := tc.w.Name(); got != tc.want {
 			t.Errorf("Name() = %q, want %q", got, tc.want)
 		}
+	}
+}
+
+func TestCloseDescendantsDeepestFirst(t *testing.T) {
+	mk := func(id, by, bySID, sid string) LiveWindow {
+		return LiveWindow{WindowID: id, Record: windowstate.WindowState{SessionID: sid, SpawnedBy: by, SpawnedBySession: bySID}}
+	}
+	wins := []LiveWindow{mk("@2", "@1", "p", "c"), mk("@3", "@2", "c", "g"), mk("@4", "@1", "p", "c2")}
+	var order []string
+	got := CloseDescendants("@1", "p", wins, func(w LiveWindow) error {
+		if w.WindowID == "@4" {
+			return errors.New("boom")
+		}
+		order = append(order, w.WindowID)
+		return nil
+	})
+	if want := []string{"@3", "@2"}; !reflect.DeepEqual(order, want) || len(got) != 2 {
+		t.Errorf("order %v closed %d, want %v", order, len(got), want)
 	}
 }
