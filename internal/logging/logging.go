@@ -226,19 +226,30 @@ func SetFastPath(v bool) { fastPath = v }
 // ReexecEnv is set (to "1") by internal/selfexec when a long-lived process
 // replaces itself with a newer binary. The new image's startup banner is
 // written at DEBUG instead of INFO, since the "binary changed, re-executing"
-// line already marks the event. The variable is consumed (unset) by the first
-// banner so child processes do not inherit it.
+// line already marks the event. The variable is consumed (unset) at process start
+// so child processes do not inherit it.
 const ReexecEnv = "AGENTCTL_REEXEC"
+
+// reexeced records, for the life of this process, that it was started by a
+// re-exec. It is read (and the variable unset) at package init rather than at
+// banner time: logging initialises lazily, so a child spawned before the first
+// log call would otherwise inherit the variable.
+var reexeced = consumeReexecEnv()
+
+// consumeReexecEnv reports whether ReexecEnv is set and unsets it.
+func consumeReexecEnv() bool {
+	if os.Getenv(ReexecEnv) == "" {
+		return false
+	}
+	_ = os.Unsetenv(ReexecEnv)
+	return true
+}
 
 // writeStartupBanner emits a single structured header record to the log file:
 // pid, binary, args, cwd, plus any set env vars that matter for debugging.
 // INFO for interactive/long-lived commands; DEBUG (gated by AGENTCTL_DEBUG=1)
 // for fast-path invocations. Called from initInternal.
 func writeStartupBanner() {
-	reexeced := os.Getenv(ReexecEnv) != ""
-	if reexeced {
-		_ = os.Unsetenv(ReexecEnv)
-	}
 	mu.Lock()
 	l := logger
 	mu.Unlock()

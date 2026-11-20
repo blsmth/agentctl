@@ -105,7 +105,7 @@ const sessionSourceClear = "clear"
 func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 	s := titleSettings()
 	if !s.Enabled {
-		logging.Log("hook-title: window=%s skipped: titles disabled", windowID)
+		logging.Debug("hook-title: window=%s skipped: titles disabled", windowID)
 		return
 	}
 	// Deferred so a slow catalog fetch never delays the title, and so runs
@@ -116,11 +116,11 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 		return
 	}
 	if ws.ShortTitle.Manual {
-		logging.Log("hook-title: window=%s skipped: manual title", windowID)
+		logging.Debug("hook-title: window=%s skipped: manual title", windowID)
 		return
 	}
 	if ws.ShortTitle.Final {
-		logging.Log("hook-title: window=%s skipped: title is final", windowID)
+		logging.Debug("hook-title: window=%s skipped: title is final", windowID)
 		return
 	}
 	if fp, ok := firstPromptFor(ws, prompt); ok {
@@ -130,7 +130,7 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 	now := titleNow()
 	if !shorttitle.Due(ws.ShortTitle, in, now) {
 		if now.Before(ws.ShortTitle.RetryAfter) {
-			logging.Log("hook-title: window=%s skipped: backoff until %s", windowID, ws.ShortTitle.RetryAfter.Format(time.TimeOnly))
+			logging.Debug("hook-title: window=%s skipped: backoff until %s", windowID, ws.ShortTitle.RetryAfter.Format(time.TimeOnly))
 		} else {
 			logging.Debug("hook-title: window=%s skipped: not due", windowID)
 		}
@@ -172,11 +172,11 @@ func titleReady(s config.TitleSettings, now time.Time) bool {
 	// recorded, until the marker goes stale and one request probes again.
 	// A :free model cannot 402, so a marker set elsewhere does not pause it.
 	if _, out := titleNoCredits(s.BackendName, now); out && !strings.HasSuffix(s.Model, ":free") {
-		logging.Log("hook-title: skipped: backend %s out of credits", s.BackendName)
+		logging.Debug("hook-title: skipped: backend %s out of credits", s.BackendName)
 		return false
 	}
 	if err := titleKeyAvailable(s); err != nil {
-		logging.Log("hook-title: skipped: no key available: %v", err)
+		logging.Debug("hook-title: skipped: no key available: %v", err)
 		return false
 	}
 	return true

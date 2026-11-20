@@ -700,10 +700,24 @@ func TestStartupBannerInteractiveIsInfoSingleRecord(t *testing.T) {
 	}
 }
 
-func TestStartupBannerAfterReexecIsDebugAndConsumed(t *testing.T) {
+func TestConsumeReexecEnv(t *testing.T) {
+	t.Setenv(ReexecEnv, "1")
+	if !consumeReexecEnv() {
+		t.Error("consumeReexecEnv = false with the variable set")
+	}
+	if v := os.Getenv(ReexecEnv); v != "" {
+		t.Errorf("%s not unset: %q", ReexecEnv, v)
+	}
+	if consumeReexecEnv() {
+		t.Error("consumeReexecEnv = true after consumption")
+	}
+}
+
+func TestStartupBannerAfterReexecIsDebug(t *testing.T) {
 	resetState()
 	SetFastPath(false)
-	t.Setenv(ReexecEnv, "1")
+	reexeced = true
+	t.Cleanup(func() { reexeced = false })
 	f := openTempLog(t)
 	defer func() { _ = os.Remove(f.Name()) }()
 	defer func() { _ = f.Close() }()
@@ -711,13 +725,5 @@ func TestStartupBannerAfterReexecIsDebugAndConsumed(t *testing.T) {
 	writeStartupBanner()
 	if got := readLog(t, f); got != "" {
 		t.Errorf("re-exec banner emitted without AGENTCTL_DEBUG: %q", got)
-	}
-	if v := os.Getenv(ReexecEnv); v != "" {
-		t.Errorf("%s not consumed: %q", ReexecEnv, v)
-	}
-	// Consumed: the next banner is a normal INFO one.
-	writeStartupBanner()
-	if got := readLog(t, f); !strings.Contains(got, "INFO") {
-		t.Errorf("banner after consume should be INFO:\n%s", got)
 	}
 }
