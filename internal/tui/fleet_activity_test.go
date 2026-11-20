@@ -533,3 +533,45 @@ func (m FleetModel) firstRowLine() int {
 	}
 	return 0
 }
+
+func TestFleetActivityFreshStartIgnoresRecordedPane(t *testing.T) {
+	s := installActivityStub(t, 200)
+	path := filepath.Join(t.TempDir(), "hub-view.json")
+	if err := writeHubView(path, hubViewState{ActivityPane: "%7", ActivityWidth: 50}); err != nil {
+		t.Fatal(err)
+	}
+	orig := hubViewPath
+	hubViewPath = func() (string, error) { return path, nil }
+	t.Cleanup(func() { hubViewPath = orig })
+
+	m := liveTestModel(t, 56, 40)
+	m.loadViewState()
+	if m.activity.open() || m.activity.userWidth != 50 {
+		t.Fatalf("fresh start: activity = %+v, want closed with width 50", m.activity)
+	}
+	m.selectLine(m.firstRowLine())
+	m.liveShown = ""
+	m = activityPump(t, m, activityRun(m.maybeShowCmd())...)
+	if want := fmt.Sprintf("=%d", 200-56-1); len(s.shows) != 1 || !strings.HasSuffix(s.shows[0], want) {
+		t.Errorf("viewer shown as %v, want the two-pane width %s", s.shows, want)
+	}
+	path2, _ := hubSelectionPath()
+	m.publishSelection()
+	if got, _ := readHubSelection(path2); got != (HubSelection{}) {
+		t.Errorf("selection published with no activity pane: %+v", got)
+	}
+}
+
+func TestFleetActivityHotReloadKeepsPane(t *testing.T) {
+	installActivityStub(t, 200)
+	path := filepath.Join(t.TempDir(), "hub-view.json")
+	orig := hubViewPath
+	hubViewPath = func() (string, error) { return path, nil }
+	t.Cleanup(func() { hubViewPath = orig })
+	m := liveTestModel(t, 56, 40)
+	t.Setenv(HubViewEnv, `{"activity_pane":"%7","activity_width":50}`) // after the constructor, which consumes it
+	m.loadViewState()
+	if m.activity.pane != "%7" || m.activity.userWidth != 50 {
+		t.Errorf("hot reload: activity = %+v, want pane %%7 width 50", m.activity)
+	}
+}

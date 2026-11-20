@@ -268,8 +268,11 @@ window resizes. List-pane resizes while the pane opens, slides or closes are
 tmux reflowing the split and are not read as drags (`paneQuietUntil`), and a
 list pane as wide as the window (no live pane) is never a drag. The pane is
 marked with the `@agentctl_activity` pane option; its ID and the dragged
-width are kept in `hub-view.json`, so a hot reload of the hub reattaches to
-it rather than opening a second one. The hub polls the window's panes on
+width are kept in the view state, so a hot reload of the hub reattaches to
+it rather than opening a second one (the pane ID only counts when carried
+across the re-exec in `AGENTCTL_HUB_VIEW`; on a fresh start the ID in
+`hub-view.json` is ignored, since the previous hub killed its pane, and
+only the dragged width is kept). The hub polls the window's panes on
 its tick while the pane is open: one that died on its own (its HUD quit)
 resets the toggle. Quitting the hub process kills it, and it dies with the
 hub session. In the activity pane the mouse wheel scrolls the feed; a click

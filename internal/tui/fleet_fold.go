@@ -472,7 +472,12 @@ func (m *FleetModel) loadViewState() {
 		logging.Log("hub: view state not persisted: %v", err)
 	} else {
 		m.viewPath = path
-		m.applyViewState(readHubView(path))
+		s := readHubView(path)
+		// A pane ID in the file is from a previous hub process, whose exit
+		// killed the pane: only a hot reload (HubViewEnv, below) carries a
+		// live one. The dragged width is kept.
+		s.ActivityPane = ""
+		m.applyViewState(s)
 	}
 	if v, ok := os.LookupEnv(HubViewEnv); ok {
 		_ = os.Unsetenv(HubViewEnv)

@@ -45,6 +45,17 @@ func TestPaneWidthArgs(t *testing.T) {
 	}
 }
 
+func TestViewerSplitTarget(t *testing.T) {
+	// Split from the list pane, never the window (whose active pane may be
+	// the activity pane).
+	if got := viewerSplitTarget("%1"); got != "%1" {
+		t.Errorf("viewerSplitTarget(%%1) = %q", got)
+	}
+	if got, want := viewerSplitTarget(""), sessionWindowTarget(HubSessionName, FleetListWindowName); got != want {
+		t.Errorf("fallback = %q, want %q", got, want)
+	}
+}
+
 func TestParseListPaneSkipsActivity(t *testing.T) {
 	// The activity pane (rightmost) is flagged too, so it is never taken for
 	// the list.

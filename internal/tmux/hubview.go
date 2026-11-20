@@ -128,6 +128,18 @@ func viewerSplitArgs(listTarget string, width int, attachCmd string) []string {
 		"-t", listTarget, "-l", fmt.Sprint(width), attachCmd}
 }
 
+// viewerSplitTarget is the pane the live viewer is split from: the hub list
+// pane itself, so the viewer lands right of the list even while another
+// pane (the activity pane) is active. A window target would split the
+// window's active pane. Falls back to the window when the list pane cannot
+// be resolved.
+func viewerSplitTarget(listPane string) string {
+	if listPane != "" {
+		return listPane
+	}
+	return sessionWindowTarget(HubSessionName, FleetListWindowName)
+}
+
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
@@ -259,7 +271,7 @@ func ShowLiveViewer(homeSession, windowID string, rightWidth int) error {
 		_ = exec.Command("tmux", "kill-pane", "-t", pane).Run()
 	}
 	killViewerSessions(name)
-	list := sessionWindowTarget(HubSessionName, FleetListWindowName)
+	list := viewerSplitTarget(hubListPaneID())
 	id, err := tmuxRun(viewerSplitArgs(list, rightWidth, viewerAttachCommand(outerSocketPath(), name))...)
 	if err != nil {
 		return err
