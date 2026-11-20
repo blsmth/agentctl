@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -284,7 +285,7 @@ func TestTmuxAlwaysUsesDemoSocket(t *testing.T) {
 	if _, err := tm.Run("list-sessions"); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) < 2 || got[0] != "-L" || got[1] != Label {
+	if len(got) < 2 || got[0] != "-L" || got[1] != tm.Layout.Label() {
 		t.Errorf("args = %v", got)
 	}
 	for _, kv := range gotEnv {
@@ -359,5 +360,94 @@ func TestWriteWorld(t *testing.T) {
 	}
 	if agent, _ := os.ReadFile(filepath.Join(l.ClaudeDir(), "agents", "orchestrator.md")); !bytes.Contains(agent, []byte("role: orchestrator")) {
 		t.Errorf("orchestrator agent lacks its role:\n%s", agent)
+	}
+}
+
+func TestLabel(t *testing.T) {
+	if got := (Layout{Root: DefaultRoot()}).Label(); got != DefaultLabel {
+		t.Errorf("default root label = %q", got)
+	}
+	a := Layout{Root: "/w/a/agentctl-demo"}.Label()
+	b := Layout{Root: "/w/b/agentctl-demo"}.Label()
+	if a == b || a == DefaultLabel || !strings.HasPrefix(a, DefaultLabel+"-") || len(a) != len(DefaultLabel)+9 {
+		t.Errorf("labels = %q, %q", a, b)
+	}
+	if a != (Layout{Root: "/w/a/agentctl-demo"}).Label() {
+		t.Error("label is not stable")
+	}
+	if got := (Layout{Root: "/w/a/agentctl-demo"}).AttachCommand("s"); got != "tmux -L "+a+" attach -t s" {
+		t.Errorf("attach = %q", got)
+	}
+}
+
+// fakeTmux answers show-environment with owner (empty = unset) and records
+// every command.
+func fakeTmux(root, owner string, calls *[][]string) Tmux {
+	return Tmux{Layout: Layout{Root: root}, run: func(_ []string, args ...string) ([]byte, error) {
+		*calls = append(*calls, args)
+		switch args[2] {
+		case "show-environment":
+			if owner == "" {
+				return nil, errors.New("unknown variable")
+			}
+			return []byte(ownerVar + "=" + owner + "\n"), nil
+		}
+		return nil, nil
+	}}
+}
+
+func TestCheckOwner(t *testing.T) {
+	tests := []struct {
+		name, owner string
+		wantErr     bool
+	}{
+		{"same root", "/r/agentctl-demo", false},
+		{"unset", "", false},
+		{"other root", "/other/agentctl-demo", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls [][]string
+			err := fakeTmux("/r/agentctl-demo", tt.owner, &calls).CheckOwner()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v", err)
+			}
+			if err != nil && !strings.Contains(err.Error(), tt.owner) {
+				t.Errorf("error does not name the owner: %v", err)
+			}
+		})
+	}
+}
+
+func TestResetRefusesOtherRoot(t *testing.T) {
+	var calls [][]string
+	tm := fakeTmux(t.TempDir(), "/other/agentctl-demo", &calls)
+	if err := Reset(tm.Layout, tm); err == nil {
+		t.Fatal("expected refusal")
+	}
+	for _, c := range calls {
+		if c[2] == "kill-server" {
+			t.Error("killed a server owned by another root")
+		}
+	}
+}
+
+func TestResolveScene(t *testing.T) {
+	abs := func(p string) string { a, _ := filepath.Abs(p); return a }
+	tests := []struct{ in, want string }{
+		{"hub", abs("demo/scenes/hub.yaml")},
+		{"hub.yaml", abs("demo/scenes/hub.yaml")},
+		{"hub.yml", abs("demo/scenes/hub.yml")},
+		{"./hub.yaml", abs("hub.yaml")},
+		{"/tmp/bug.yaml", "/tmp/bug.yaml"},
+		{"x/hub", abs("x/hub")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := ResolveScene("demo/scenes", tt.in)
+			if err != nil || got != tt.want {
+				t.Errorf("got %q, %v; want %q", got, err, tt.want)
+			}
+		})
 	}
 }

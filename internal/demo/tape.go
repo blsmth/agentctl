@@ -68,7 +68,7 @@ func Tape(s *Scene, m *Manifest, base, scratchGIF string) (string, TapeOutputs, 
 			if !attached {
 				// The vhs shell may have inherited a TMUX from the caller;
 				// drop it so attach does not refuse to nest.
-				line("Type %s", quoteTape("exec env -u TMUX -u TMUX_PANE LANG=en_US.UTF-8 tmux -L "+Label+" attach -t '"+place.Target()+"'"))
+				line("Type %s", quoteTape("exec env -u TMUX -u TMUX_PANE LANG=en_US.UTF-8 tmux -L "+m.label()+" attach -t '"+place.Target()+"'"))
 			} else {
 				line("Ctrl+B")
 				line(`Type ":"`)

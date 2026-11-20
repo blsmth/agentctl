@@ -1,6 +1,6 @@
 # Demo scenes
 
-Each `*.yaml` file here describes one demo world and the keys a generated vhs tape sends to it. `just demo <scene>` seeds it for poking around; `just demo-shot <scene> [out]` seeds it and renders it to `demo/out/<scene>.png` (or `.gif`). A scene can be a bare name (resolved here) or a path to any file, e.g. `just demo-shot /tmp/bug-123.yaml`. Relative paths are resolved from the repo root. `just demo-check <scene>` validates a file without starting anything.
+Each `*.yaml` file here describes one demo world and the keys a generated vhs tape sends to it. `just demo <scene>` seeds it for poking around; `just demo-shot <scene> [out]` seeds it and renders it to `demo/out/<scene>.png` (or `.gif`). A scene can be a bare name (resolved here, with or without `.yaml`) or a path to any file; anything containing a `/` is a path, e.g. `just demo-shot /tmp/bug-123.yaml` or `./hub.yaml`. Relative paths are resolved from the repo root. `just demo` prints the exact `tmux -L <label> attach` command; the label is `agentctl-demo` for the default root and `agentctl-demo-<hash>` for a custom `AGENTCTL_DEMO_ROOT`. `just demo-check <scene>` validates a file without starting anything.
 
 Decoding is strict: an unknown key, a bad state or mode, a `spawned_by` that names no window, or a step with two actions fails with an error naming the field.
 

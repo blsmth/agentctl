@@ -21,10 +21,19 @@ const bootSession = "demo-boot"
 
 // Manifest records what `up` built, for the tape generator and `status`.
 type Manifest struct {
+	Label    string                 `json:"label,omitempty"` // tmux socket label
 	Scene    string                 `json:"scene"`
 	Sessions map[string]string      `json:"sessions"` // project -> tmux session
 	Windows  map[string]WindowPlace `json:"windows"`  // window key -> place
 	Selected map[string]string      `json:"selected"` // project -> selected window key
+}
+
+// label is the socket label the demo ran on (the default for old manifests).
+func (m *Manifest) label() string {
+	if m.Label == "" {
+		return DefaultLabel
+	}
+	return m.Label
 }
 
 // WindowPlace is where a scene window ended up.
@@ -68,11 +77,14 @@ func Up(l Layout, s *Scene, opts UpOptions) (*Manifest, error) {
 	if _, err := t.Run("-f", l.TmuxConf(), "new-session", "-d", "-s", bootSession, "-c", l.Home()); err != nil {
 		return nil, fmt.Errorf("starting demo tmux server: %w", err)
 	}
+	if err := t.Claim(); err != nil {
+		return nil, fmt.Errorf("recording demo root on tmux server: %w", err)
+	}
 	sock, err := t.SocketEnv()
 	if err != nil {
 		return nil, err
 	}
-	m := &Manifest{Scene: opts.ScenePath, Sessions: map[string]string{}, Windows: map[string]WindowPlace{}, Selected: map[string]string{}}
+	m := &Manifest{Label: l.Label(), Scene: opts.ScenePath, Sessions: map[string]string{}, Windows: map[string]WindowPlace{}, Selected: map[string]string{}}
 	for _, p := range s.Projects {
 		name, err := startSession(l, t, sock, p.Name)
 		if err != nil {
@@ -167,6 +179,9 @@ func runProjectSeed(l Layout, sock string, opts UpOptions, project string) (map[
 // Reset kills the demo server and empties the root, keeping bin/ (the
 // freshly built binaries live there).
 func Reset(l Layout, t Tmux) error {
+	if err := t.CheckOwner(); err != nil {
+		return err
+	}
 	if t.Running() {
 		if _, err := t.Run("kill-server"); err != nil {
 			return fmt.Errorf("stopping demo server: %w", err)
@@ -193,6 +208,9 @@ func Reset(l Layout, t Tmux) error {
 // Down kills the demo server and removes the whole root.
 func Down(l Layout) error {
 	t := Tmux{Layout: l}
+	if err := t.CheckOwner(); err != nil {
+		return err
+	}
 	if t.Running() {
 		if _, err := t.Run("kill-server"); err != nil {
 			return fmt.Errorf("stopping demo server: %w", err)

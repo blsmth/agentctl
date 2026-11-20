@@ -72,13 +72,10 @@ func (c *common) register(fs *flag.FlagSet) {
 	fs.StringVar(&c.fixtures, "fixtures", "demo/transcripts", "transcript fixture directory")
 }
 
-// scenePath resolves a bare scene name to <scenes>/<name>.yaml.
+// scenePath resolves --scene: a bare name is looked up in --scenes (with or
+// without .yaml), anything containing a slash is a path.
 func (c *common) scenePath() (string, error) {
-	p := c.scene
-	if !strings.ContainsRune(p, filepath.Separator) && !strings.HasSuffix(p, ".yaml") && !strings.HasSuffix(p, ".yml") {
-		p = filepath.Join(c.scenes, p+".yaml")
-	}
-	return filepath.Abs(p)
+	return demo.ResolveScene(c.scenes, c.scene)
 }
 
 func (c *common) load() (demo.Layout, *demo.Scene, string, error) {
@@ -136,7 +133,7 @@ func runUp(args []string) error {
 	}
 	first := s.Projects[0].Name
 	fmt.Printf("demo scene %q is up under %s\n\n%s\n", s.Name, l.Root, m.Summary())
-	fmt.Printf("attach:  tmux -L %s attach -t %s\nstop:    just demo-stop\n", demo.Label, m.Sessions[first])
+	fmt.Printf("attach:  %s\nstop:    just demo-stop\n", l.AttachCommand(m.Sessions[first]))
 	return nil
 }
 
@@ -312,7 +309,7 @@ func runProject(args []string) error {
 		return err
 	}
 	sock := os.Getenv("TMUX")
-	if !strings.Contains(sock, "/"+demo.Label+",") {
+	if !strings.Contains(sock, "/"+l.Label()+",") {
 		return fmt.Errorf("TMUX=%q is not the demo server; run through `agentctl-demo up`", sock)
 	}
 	if err := l.Isolate(sock); err != nil {

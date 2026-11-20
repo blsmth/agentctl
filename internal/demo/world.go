@@ -66,15 +66,9 @@ set -as terminal-features ",xterm-256color:RGB"
 set -g escape-time 10
 `
 
-// zshenv turns off zsh's =cmd expansion for every `zsh -c` tmux runs. The
-// hub's live-viewer command passes an unquoted "-t =<session>", which plain
-// zsh expands as a command path and fails on, leaving the hub without its
-// live pane.
-const zshenv = "unsetopt EQUALS\n"
-
 func writeHome(l Layout) error {
 	zshrc := "# agentctl demo shell\nPROMPT='%F{blue}%~%f %F{magenta}❯%f '\nunsetopt BEEP\n"
-	for name, body := range map[string]string{".zshrc": zshrc, ".zshenv": zshenv, ".hushlogin": "", ".bashrc": "PS1='\\w ❯ '\n"} {
+	for name, body := range map[string]string{".zshrc": zshrc, ".hushlogin": "", ".bashrc": "PS1='\\w ❯ '\n"} {
 		if err := writeFile(filepath.Join(l.Home(), name), []byte(body), 0o600); err != nil {
 			return err
 		}

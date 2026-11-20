@@ -108,7 +108,7 @@ web-dev addr="127.0.0.1:8787":
     go run ./internal/serve/servetest/devserver -addr {{addr}}
 
 # Demo harness (docs/development.md, "Demo harness and screenshots"): a fake,
-# isolated agentctl world on its own tmux server (-L agentctl-demo) under a
+# isolated agentctl world on its own tmux server (-L agentctl-demo, or agentctl-demo-<hash> for a custom root) under a
 # temp root, for screenshots. Nothing touches the real ~/.claude, agentctl
 # config or the default tmux server.
 _demo_root := env_var_or_default("AGENTCTL_DEMO_ROOT", trim_end_match(env_var_or_default("TMPDIR", "/tmp"), "/") / "agentctl-demo")
@@ -121,7 +121,7 @@ demo-build:
     go build -o "{{_demo_root}}/bin/agentctl" .
     go build -o "{{_demo_bin}}" ./internal/demo/cmd/seed
 
-# Start (or re-seed) the demo world for a scene (name in demo/scenes, or a path)
+# Start (or re-seed) the demo world for a scene (name in demo/scenes, or a path containing a /)
 demo scene="hub": demo-build
     "{{_demo_bin}}" up {{_demo_flags}} --scene "{{scene}}"
 
@@ -132,7 +132,9 @@ demo-stop:
     if [ -x "{{_demo_bin}}" ]; then
         "{{_demo_bin}}" down --root "{{_demo_root}}"
     else
-        tmux -L agentctl-demo kill-server 2>/dev/null || true
+        # Never built for this root, so no server of ours can be running;
+        # killing a guessed label could stop another demo.
+        echo "nothing to stop: no demo was started for {{_demo_root}}"
     fi
 
 # Render one scene to demo/out/<scene>.png|gif (or to out, a path without extension)
