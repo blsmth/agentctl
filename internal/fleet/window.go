@@ -61,6 +61,11 @@ type Window struct {
 	// Model is the model the window is running (the log's latest model id), as
 	// in the window detail; omitted until known.
 	Model string `json:"model,omitempty"`
+
+	// TurnDone marks a bare window that finished a turn and is unseen: the
+	// display-only ✓ (never Done: sweep and completion ignore it). Omitted
+	// when false.
+	TurnDone bool `json:"turn_done,omitempty"`
 }
 
 // ToWindow converts a row and its windowstate metadata to a Window.
@@ -87,6 +92,7 @@ func ToWindow(r Row, m Meta) Window {
 		PRNumber:     m.PRNumber,
 		Detached:     m.Detached(),
 		Model:        r.ModelName,
+		TurnDone:     r.TurnDone,
 	}
 	if r.Recap.Text != "" {
 		w.Recap, w.RecapSource = r.Recap.Text, r.Recap.Source.String()
