@@ -290,6 +290,17 @@ func FocusLivePane() error {
 	return err
 }
 
+// FocusViewerPane selects the live viewer pane by ID. Unlike FocusLivePane it
+// is idempotent, and it does nothing when there is no live pane.
+func FocusViewerPane() error {
+	pane := viewerPaneID()
+	if pane == "" {
+		return nil
+	}
+	_, err := tmuxRun("select-pane", "-t", pane)
+	return err
+}
+
 // hubListPaneID returns the hub list pane's ID: the pane in the fleet-list
 // window that is not the live viewer pane. Empty when it cannot be resolved.
 func hubListPaneID() string {

@@ -469,6 +469,10 @@ type FleetModel struct {
 	// newer launch.
 	pendingFocus *fleetPendingFocus
 
+	// focusOnShow is the "session|window" key of a launched row whose live
+	// pane should take tmux focus once it is showing.
+	focusOnShow string
+
 	// hover is the line/region under the pointer (see fleet_mouse.go);
 	// hoverX/hoverY/hasPointer remember the last pointer cell so the target
 	// can be recomputed when the content moves under a still pointer.
@@ -784,6 +788,15 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.liveWinWidth = msg.win
 		}
 		m.configureSplitPane()
+		if m.focusOnShow != "" {
+			if m.focusOnShow == msg.key {
+				m.focusOnShow = ""
+				return m, focusViewerCmd()
+			}
+			if m.focusOnShow != m.selSession+"|"+m.selWindowID {
+				m.focusOnShow = "" // the user moved on
+			}
+		}
 		return m, nil
 
 	case fleetLiveSizedMsg:
@@ -807,7 +820,7 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.windowID == "" {
 			return m, fleetLoadCmd()
 		}
-		m.pendingFocus = &fleetPendingFocus{session: msg.session, windowID: msg.windowID}
+		m.pendingFocus = &fleetPendingFocus{session: msg.session, windowID: msg.windowID, focus: true}
 		return m, tea.Batch(fleetLoadCmd(), fleetFocusRetryCmd(msg.session, msg.windowID))
 
 	case fleetShellOpenedMsg:
@@ -828,7 +841,7 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.windowID == "" {
 			return m, tea.Batch(fleetLoadCmd(), save)
 		}
-		m.pendingFocus = &fleetPendingFocus{session: msg.session, windowID: msg.windowID}
+		m.pendingFocus = &fleetPendingFocus{session: msg.session, windowID: msg.windowID, focus: true}
 		return m, tea.Batch(fleetLoadCmd(), fleetFocusRetryCmd(msg.session, msg.windowID), save)
 
 	case fleetFocusRetryMsg:
@@ -870,11 +883,20 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.wheelHold = false // the selection moved: follow it
 				m.ensureCursorVisible()
 			}
-			m.applyPendingFocus()
+			p := m.pendingFocus
+			if m.applyPendingFocus() && p != nil && p.focus {
+				m.focusOnShow = m.selSession + "|" + m.selWindowID
+			}
 			m.clampScroll()
 		}
 		show := m.maybeShowCmd()
-		return m, tea.Batch(show, m.flushView())
+		var focus tea.Cmd
+		if show == nil && m.focusOnShow != "" && m.focusOnShow == m.selSession+"|"+m.selWindowID && m.liveShown == m.focusOnShow && m.liveFailed != m.focusOnShow {
+			// Already showing (or a show is in flight): focus now.
+			m.focusOnShow = ""
+			focus = focusViewerCmd()
+		}
+		return m, tea.Batch(show, focus, m.flushView())
 
 	case tea.MouseClickMsg:
 		m.hideCard()
@@ -1499,6 +1521,7 @@ func (m *FleetModel) rowsBetween(from, to, cw int) int {
 var (
 	switchToSessionWindow = tmux.SwitchToSessionWindow
 	focusLivePane         = tmux.FocusLivePane
+	focusViewerPane       = tmux.FocusViewerPane
 )
 
 // focusLive is Enter's and tab's action: move tmux focus to the live pane so
@@ -1567,6 +1590,15 @@ func (m *FleetModel) jumpToNextBlocked() (tea.Model, tea.Cmd) {
 		return *m, tea.Batch(tea.Sequence(show, focus), m.flushView())
 	}
 	return *m, tea.Batch(focus, m.flushView())
+}
+
+// focusViewerCmd moves tmux focus to the live pane (idempotent). Failures are
+// ignored: with no live pane there is nothing to focus.
+func focusViewerCmd() tea.Cmd {
+	return func() tea.Msg {
+		_ = focusViewerPane()
+		return nil
+	}
 }
 
 // fleetFocusErrMsg reports a failure to move focus to the live pane.

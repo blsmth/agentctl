@@ -183,6 +183,7 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 // selectLine moves the cursor to idx with the same bookkeeping as moveCursor.
 func (m *FleetModel) selectLine(idx int) {
 	m.pendingFocus = nil // a manual selection beats a pending launch focus
+	m.focusOnShow = ""
 	m.wheelHold = false
 	m.splitPane.SetListContent(m.splitPane.listContent, len(m.lines))
 	m.splitPane.SetCursor(idx)

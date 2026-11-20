@@ -94,6 +94,9 @@ type fleetPendingFocus struct {
 	session  string
 	windowID string
 	tries    int
+	// focus moves tmux focus to the live pane once the row is shown. Set only
+	// for launches, never for restore/reselect uses of pendingFocus.
+	focus bool
 }
 
 // parseLaunchWindowID extracts the window ID from `agentctl launch
