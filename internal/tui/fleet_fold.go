@@ -335,6 +335,11 @@ type hubViewState struct {
 	Sort string `json:"sort,omitempty"`
 	// Shells shows the plain shell rows (hidden by default).
 	Shells bool `json:"shells,omitempty"`
+	// ActivityPane is the open activity pane's tmux pane ID ("" = closed),
+	// so a hot reload reattaches to it; ActivityWidth is the width the user
+	// dragged it to (0 = the default).
+	ActivityPane  string `json:"activity_pane,omitempty"`
+	ActivityWidth int    `json:"activity_width,omitempty"`
 }
 
 // HubViewEnv carries the hub's fold set, focus mode and filter (JSON, see
@@ -371,7 +376,10 @@ func (m FleetModel) viewState() hubViewState {
 		}
 	}
 	slices.Sort(folded)
-	return hubViewState{Folded: folded, Focus: m.focusMode, Filter: m.filter.key(), Sort: sortKey(m.sortRecent), Shells: m.showShells}
+	return hubViewState{
+		Folded: folded, Focus: m.focusMode, Filter: m.filter.key(), Sort: sortKey(m.sortRecent), Shells: m.showShells,
+		ActivityPane: m.activity.pane, ActivityWidth: m.activity.userWidth,
+	}
 }
 
 // applyViewState replaces the model's fold set, focus mode and filter.
@@ -386,6 +394,8 @@ func (m *FleetModel) applyViewState(s hubViewState) {
 	m.filter = parseFleetFilter(s.Filter)
 	m.sortRecent = s.Sort == sortRecentKey
 	m.showShells = s.Shells
+	// The recorded pane is confirmed or dropped by the first pane poll.
+	m.activity = fleetActivity{pane: s.ActivityPane, userWidth: max(s.ActivityWidth, 0)}
 }
 
 // parseHubView decodes a hubViewState; ok is false for anything that is not

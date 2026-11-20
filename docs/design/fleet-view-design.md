@@ -205,13 +205,15 @@ sources. No change to the view model — remote is just more rows.
 
 ## Live agent pane
 
-The hub window is two panes. The left pane runs the `FleetModel` list (the
+The hub window is two panes (three with the activity pane, see below). The
+left pane runs the `FleetModel` list (the
 grouped session/agent list, narrow: roughly 30% of the window, clamped to
 44–56 columns by default). The right pane is a **live, fully interactive view
 of the selected agent**: a nested tmux client attached to a *grouped viewer
 session* that shares windows with the agent's home session
 (`internal/tmux/hubview.go`). There is no other mode: the earlier
-capture-pane preview panel, the `v` toggle, and the link-window "open in hub"
+capture-pane preview panel, the old `v` preview toggle (`v` now toggles the
+activity pane), and the link-window "open in hub"
 flow were all removed in favour of this.
 
 **Selection drives the pane.** Moving the cursor onto an agent row (keys,
@@ -230,7 +232,8 @@ leaves every agent untouched (verified on a private tmux server).
 
 **Focus.** `enter` (on an agent row) and `tab` move keyboard focus into the
 live pane; `prefix+Left` / `prefix+Right` (tmux's default `select-pane`
-bindings, which agentctl does not rebind) move focus between list and live pane
+bindings, which agentctl does not rebind) move focus between list, live pane
+and, when open, the activity pane
 (`prefix+o` is agentctl's logs key). The list pane's mouse clicks only
 select; they never open anything.
 
@@ -242,6 +245,36 @@ keeps at least 20) and preserved across later window resizes and selection
 changes rather than snapping back to the default ratio
 (`decideLiveResize`).
 
+**Activity pane.** `v` (or the title row's `[activity]` button, shown when
+the title has room for it next to the counts) toggles a third pane at the
+right edge of the hub window running `agentctl hud --follow-hub`: the HUD in
+follow mode, a terminal-style feed of the selected agent's tool activity
+(each Bash command as `$ cmd` with its output, other tools as one dim line).
+It is the same HUD model as the per-window HUD, with a second host. While
+the pane is open, and only then, the hub publishes its selection to
+`<stateDir>/hub-selection.json`; the HUD reads it each tick and retargets,
+and also retargets when the followed window's session changes under it
+(`/clear`). The pane is created 4 columns wide (`split-window -h -f`) and
+widened in three `resize-pane -x` steps over ~120ms (tea ticks, never a
+blocking Update); closing kills it. Its width is 35% of the window (at
+least 40 columns), and the live viewer keeps at least 60: the activity pane
+gives up width down to 40, and when list + 60 + 40 does not fit it replaces
+the viewer (the viewer pane is killed and re-created when the pane closes or
+the window grows back). The split is computed by `decideHubLayout`. With
+three panes the hub pins the list and activity widths (the viewer between
+them absorbs the change) instead of resizing the viewer. A drag of the
+viewer | activity divider is remembered like a list drag and kept across
+window resizes. List-pane resizes while the pane opens, slides or closes are
+tmux reflowing the split and are not read as drags (`paneQuietUntil`), and a
+list pane as wide as the window (no live pane) is never a drag. The pane is
+marked with the `@agentctl_activity` pane option; its ID and the dragged
+width are kept in `hub-view.json`, so a hot reload of the hub reattaches to
+it rather than opening a second one. The hub polls the window's panes on
+its tick while the pane is open: one that died on its own (its HUD quit)
+resets the toggle. Quitting the hub process kills it, and it dies with the
+hub session. In the activity pane the mouse wheel scrolls the feed; a click
+focuses it (tmux), after which the HUD keys work.
+
 **Returning to the list.** The fleet-list window is pinned to the stable name
 `FleetListWindowName`; `agentctl hub` (and so the `prefix+g` summon key)
 selects it when the caller is already inside the hub session, otherwise it
@@ -249,8 +282,9 @@ switches into the hub.
 
 ### Prefix keys and tabs act on the viewed agent
 
-The hub window carries no chrome-bar or HUD pane (`LaunchChromeBar` and
-`ToggleHud` skip it); the agent's chrome bar inside the live pane is the only
+The hub window carries no chrome-bar or per-window HUD pane (`LaunchChromeBar`
+and `ToggleHud` skip it; the activity pane is the hub's own follow-mode HUD,
+opened with `v`, and prefix+h in the hub still toggles the viewed agent's HUD); the agent's chrome bar inside the live pane is the only
 tab bar. Every agentctl prefix binding sets `AGENTCTL_KEY_WINDOW=#{window_id}`
 and `agentctl` calls `hubtarget.Apply` once, before paths are resolved. If that
 window belongs to `agentctl-hub`, it resolves the current `agentctl-hubview*`
@@ -276,6 +310,7 @@ without the hub causing it (`viewerSyncTarget`).
 | `prefix+←` / `prefix+→` | Move focus between the list and the live pane |
 | `J` | Jump to the selected agent's window in its own home session |
 | `n` / `x` | New agent in the selected group / close the selected agent |
+| `v` | Toggle the activity pane (the selected agent's tool activity, right of the live pane); also the title row's `[activity]` button |
 | `b` | Select the next blocked agent and focus its live pane (stays in the hub) |
 | `z` / `Z` | Fold the group under the cursor / toggle focus mode (fold every group with nothing blocked or working) |
 | `o` | Toggle row order inside each group between window order (default) and most recent activity first |
@@ -399,6 +434,10 @@ Where things ended up:
   for sweep/status; the hub itself no longer captures panes).
 - Live pane primitives: `internal/tmux/hubview.go` — `ShowLiveViewer`,
   `HideLiveViewer`, `FocusLivePane`, `HubWindowWidth`, `ResizeLiveViewer`.
+  Activity pane primitives: `internal/tmux/hubactivity.go` —
+  `OpenActivityPane`, `HubPanes`, `ResizeHubPane`, `KillHubActivity`; the
+  model side is `internal/tui/fleet_activity.go` (`decideHubLayout`,
+  `toggleActivity`, `applyActivityPanes`).
 - The view: `internal/tui/fleet.go` (`FleetModel`), following the existing
   full-screen browser pattern (`hud.go`, `agents.go`, `sessions.go`). List
   rendering: `renderList`, `renderLine`, `renderGroupHeader`, `renderRow`,

@@ -160,6 +160,7 @@ func TestFollowHudPlaceholder(t *testing.T) {
 			}
 			m := f.model()
 			m.poll()
+			m.poll() // a vanished window needs two consecutive misses
 			if !m.followIdle() {
 				t.Fatalf("followIdle = false, target %q", m.windowID)
 			}
@@ -349,6 +350,12 @@ func TestFleetPublishSelection(t *testing.T) {
 
 	m.loaded = true
 	m.publishSelection()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("published with the activity pane closed: %v", err)
+	}
+
+	m.activity.pane = "%9"
+	m.publishSelection()
 	if got, _ := readHubSelection(path); got.WindowID != "@1" {
 		t.Fatalf("published %+v", got)
 	}
@@ -372,5 +379,106 @@ func TestFleetPublishSelection(t *testing.T) {
 	m.publishSelection()
 	if got, err := readHubSelection(path); err != nil || got != (HubSelection{}) {
 		t.Errorf("header selection published %+v, %v; want the zero selection", got, err)
+	}
+}
+
+func TestFollowHudSingleLivenessMissKeepsTarget(t *testing.T) {
+	a := newFollowProject(t, "@1", "sess-a", "", "alpha")
+	f := &fakeFollow{
+		sel:     HubSelection{Session: "s", WindowID: "@1", RuntimeDir: a.runtimeDir},
+		windows: map[string]string{"s|@1": "one"},
+	}
+	m := f.model()
+	m.poll()
+	if m.windowID != "@1" {
+		t.Fatalf("target = %q", m.windowID)
+	}
+
+	// One failed lookup (a transient tmux error), then the window answers.
+	delete(f.windows, "s|@1")
+	for i := 0; i < followAliveEvery && m.follow.misses == 0; i++ {
+		m.poll()
+	}
+	if m.follow.misses != 1 || m.followIdle() {
+		t.Fatalf("after one miss: misses=%d idle=%v", m.follow.misses, m.followIdle())
+	}
+	f.windows["s|@1"] = "one"
+	m.poll()
+	if m.followIdle() || m.follow.misses != 0 {
+		t.Fatalf("recovered window dropped: idle=%v misses=%d", m.followIdle(), m.follow.misses)
+	}
+	if got := entryTexts(m); len(got) != 1 || got[0] != "alpha" {
+		t.Errorf("entries reset by a transient miss: %v", got)
+	}
+
+	// Two consecutive misses drop it.
+	delete(f.windows, "s|@1")
+	for i := 0; i < followAliveEvery*2 && !m.followIdle(); i++ {
+		m.poll()
+	}
+	if !m.followIdle() || !m.follow.gone {
+		t.Errorf("window gone for two checks still followed: target=%q", m.windowID)
+	}
+}
+
+func TestFollowHudRetargetsOnClear(t *testing.T) {
+	a := newFollowProject(t, "@1", "sess-a", "", "before clear")
+	f := &fakeFollow{
+		sel:     HubSelection{Session: "s", WindowID: "@1", RuntimeDir: a.runtimeDir},
+		windows: map[string]string{"s|@1": "one"},
+	}
+	m := f.model()
+	m.poll()
+	if got := entryTexts(m); len(got) != 1 || got[0] != "before clear" {
+		t.Fatalf("entries = %v", got)
+	}
+	if m.agentctlSessionID != "sess-a" {
+		t.Fatalf("session id = %q", m.agentctlSessionID)
+	}
+	m.streamCursor = 0
+	m.expandedEntries[0] = true
+
+	// /clear: the same window now records a new session and transcript.
+	newLog := writeTestLog(t, t.TempDir(), "sess-c.jsonl",
+		`{"type":"assistant","message":{"model":"claude-x","content":[{"type":"text","text":"after clear"}]}}`+"\n")
+	writeTestLog(t, filepath.Join(a.runtimeDir, "logs", "sessions"), "sess-c.log", "")
+	rec := `{"state":"working","session_id":"sess-c","log_path":"` + newLog + `"}`
+	if err := os.WriteFile(filepath.Join(windowstate.WindowsDirFor(a.runtimeDir), "@1.json"), []byte(rec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m.poll()
+	if m.logPath != newLog {
+		t.Errorf("logPath = %q, want %q", m.logPath, newLog)
+	}
+	if got := entryTexts(m); len(got) != 1 || got[0] != "after clear" {
+		t.Errorf("entries after /clear = %v", got)
+	}
+	if m.agentctlSessionID != "sess-c" {
+		t.Errorf("agentctl session id = %q, want sess-c", m.agentctlSessionID)
+	}
+	if m.streamCursor != -1 || len(m.expandedEntries) != 0 {
+		t.Errorf("cursor/expansion leaked across /clear: %d %v", m.streamCursor, m.expandedEntries)
+	}
+}
+
+func TestTailLogSanitizesText(t *testing.T) {
+	jsonl := `{"type":"assistant","message":{"content":[{"type":"text","text":"hi \u001b[31mred\u001b[0m\u0007 there"}]}}` + "\n" +
+		`{"type":"user","message":{"content":[{"type":"text","text":"\u001b]0;evil\u0007ok\r\nnext"}]}}` + "\n"
+	p := writeTestLog(t, t.TempDir(), "s.jsonl", jsonl)
+	res, err := TailLog(p, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Entries) != 2 {
+		t.Fatalf("entries = %d", len(res.Entries))
+	}
+	want := []string{"hi red there", "ok\nnext"}
+	for i, e := range res.Entries {
+		if e.FullText != want[i] {
+			t.Errorf("entry %d FullText = %q, want %q", i, e.FullText, want[i])
+		}
+		if strings.ContainsAny(e.Summary, "\x1b\x07") {
+			t.Errorf("entry %d summary keeps control chars: %q", i, e.Summary)
+		}
 	}
 }

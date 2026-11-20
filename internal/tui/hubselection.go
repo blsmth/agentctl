@@ -142,12 +142,14 @@ func selectionForRow(g fleet.Group, r fleet.Row) HubSelection {
 }
 
 // publishSelection writes the current selection to the selection file when
-// it differs from the last one written. It does nothing until the list has
-// loaded, so a hot-reloaded hub does not blank the follower before its
-// pending focus is re-applied. A failed write is logged once per distinct
-// selection and retried on the next change.
+// it differs from the last one written. It runs only while the activity pane
+// (the follower) is open, and does nothing until the list has loaded, so a
+// hot-reloaded hub does not blank the follower before its pending focus is
+// re-applied. Opening the pane forces a fresh write (selPublished is reset).
+// A failed write is logged once per distinct selection and retried on the
+// next change.
 func (m *FleetModel) publishSelection() {
-	if !m.loaded {
+	if !m.loaded || !m.activity.open() {
 		return
 	}
 	sel := m.hubSelection()

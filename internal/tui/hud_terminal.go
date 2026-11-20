@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/blsmth/agentctl/internal/theme"
 )
 
@@ -59,14 +61,7 @@ func wrapCells(s string, width int) []string {
 
 // truncateCells cuts s to width cells, ending in "…" when shortened.
 func truncateCells(s string, width int) string {
-	if lipgloss.Width(s) <= width {
-		return s
-	}
-	runes := []rune(s)
-	for len(runes) > 0 && lipgloss.Width(string(runes))+1 > width {
-		runes = runes[:len(runes)-1]
-	}
-	return string(runes) + "…"
+	return ansi.Truncate(s, width, "…")
 }
 
 // toolIcon returns the one-line glyph for a non-Bash tool.

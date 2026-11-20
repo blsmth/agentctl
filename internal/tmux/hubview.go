@@ -291,18 +291,20 @@ func FocusLivePane() error {
 }
 
 // hubListPaneID returns the hub list pane's ID: the pane in the fleet-list
-// window that is not the live viewer pane. Empty when it cannot be resolved.
+// window that is neither the live viewer nor the activity pane. Empty when
+// it cannot be resolved.
 func hubListPaneID() string {
 	out, err := tmuxRun("list-panes", "-t", sessionWindowTarget(HubSessionName, FleetListWindowName),
-		"-F", "#{pane_id} #{"+viewerPaneOption+"}")
+		"-F", "#{pane_id} #{"+viewerPaneOption+"}#{"+activityPaneOption+"}")
 	if err != nil {
 		return ""
 	}
 	return parseListPane(out)
 }
 
-// parseListPane picks the first pane not flagged as the viewer from
-// `#{pane_id} #{@agentctl_viewer}` lines.
+// parseListPane picks the first pane flagged as neither the viewer nor the
+// activity pane from `#{pane_id} #{@agentctl_viewer}#{@agentctl_activity}`
+// lines (a flagged pane has a second field).
 func parseListPane(out string) string {
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
