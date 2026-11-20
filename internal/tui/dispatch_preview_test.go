@@ -26,8 +26,8 @@ func TestDispatchPreviewModel_Init(t *testing.T) {
 	if m.decision != "" {
 		t.Errorf("decision = %q, want empty", m.decision)
 	}
-	if m.expanded {
-		t.Error("expanded should be false by default")
+	if !m.expanded {
+		t.Error("dispatch preview should open expanded")
 	}
 }
 
@@ -103,6 +103,7 @@ func TestDispatchPreviewModel_CtrlCSetsDeny(t *testing.T) {
 
 func TestDispatchPreviewModel_ToggleExpand(t *testing.T) {
 	m := NewDispatchPreview("go-engineer", "python-engineer", 42, "", "", "agentctl dispatch --issue 42")
+	m.expanded = false // dispatch popups open expanded; start collapsed
 
 	// Initially collapsed.
 	if m.expanded {
@@ -126,6 +127,7 @@ func TestDispatchPreviewModel_ToggleExpand(t *testing.T) {
 
 func TestDispatchPreviewModel_SpaceToggles(t *testing.T) {
 	m := NewDispatchPreview("go-engineer", "python-engineer", 42, "", "", "agentctl dispatch --issue 42")
+	m.expanded = false // dispatch popups open expanded; start collapsed
 	next, _ := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 	dm := next.(DispatchPreviewModel)
 	if !dm.expanded {
@@ -480,6 +482,7 @@ func TestDispatchPreviewModel_RendererSelection_Command(t *testing.T) {
 // bar reflects the current mode when the viewport is expanded.
 func TestDispatchPreviewModel_RawToggle(t *testing.T) {
 	m := NewDispatchPreview("go-engineer", "python-engineer", 0, "some prompt text", "", "")
+	m.expanded = false // dispatch popups open expanded; start collapsed
 
 	// Expand first so the raw/rendered hint is surfaced.
 	next, _ := m.Update(tea.KeyPressMsg{Code: 'v', Text: "v"})
@@ -516,6 +519,7 @@ func TestDispatchPreviewModel_RawToggle(t *testing.T) {
 // after pressing 'r'.
 func TestDispatchPreviewModel_RawToggle_NoOpCueWhenCollapsed(t *testing.T) {
 	m := NewDispatchPreview("go-engineer", "python-engineer", 0, "some prompt text", "", "")
+	m.expanded = false // dispatch popups open expanded; start collapsed
 
 	next, _ := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	dm := next.(DispatchPreviewModel)
@@ -587,6 +591,7 @@ func TestDispatchPreviewModel_ViewCollapsedDoesNotContainPrompt(t *testing.T) {
 func TestDispatchPreviewModel_ViewExpandedContainsPrompt(t *testing.T) {
 	const uniquePrompt = "UNIQUE_PROMPT_SENTINEL_XYZ123"
 	m := NewDispatchPreview("go-engineer", "python-engineer", 42, uniquePrompt, "", "agentctl dispatch --issue 42 --agent python-engineer")
+	m.expanded = false // dispatch popups open expanded; start collapsed
 	// Expand.
 	next, _ := m.Update(tea.KeyPressMsg{Code: 'v', Text: "v"})
 	dm := next.(DispatchPreviewModel)

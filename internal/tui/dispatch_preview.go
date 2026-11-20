@@ -398,7 +398,9 @@ func NewDispatchPreview(agentName, targetAgent string, issue int, prompt, prompt
 	// A cron popup opens expanded: the job details (dir, harness, worktree,
 	// timeout) live in the viewport and are the point of the review.
 	// PopupSize already budgets for the expanded layout.
-	expanded := o.kind == PreviewKindCron
+	// Dispatch popups open expanded too, so the full prompt is visible
+	// without a keypress.
+	expanded := o.kind == PreviewKindCron || o.kind == PreviewKindDispatch
 
 	return DispatchPreviewModel{
 		agentName:       agentName,

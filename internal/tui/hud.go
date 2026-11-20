@@ -91,6 +91,15 @@ type HudModel struct {
 	sysLogOffset   int64    // read offset into the global agentctl.log
 	sysLogPath     string   // always the global agentctl.log
 
+	// Parsed records behind agentLogLines/sysLogLines (which are the wrapped,
+	// rendered lines), and the first display line of each record.
+	agentRecs   []logRec
+	agentStarts []int
+	sysRecs     []logRec
+	sysStarts   []int
+	// showSource toggles the <file:line> column in the log tabs.
+	showSource bool
+
 	// logPollTick counts consecutive poll ticks where @agentctl_log was
 	// not yet set, used to trigger a filesystem-scan fallback.
 	logPollTick int
@@ -223,6 +232,7 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.rebuildStreamLineBuffer()
 		m.clampScroll()
+		m.relayoutLogs()
 		m.clampAgentLogScroll()
 		m.clampSysLogScroll()
 		return m, nil
@@ -253,6 +263,11 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Key handling for Stream / Agent Logs / System Logs tabs.
 		switch msg.String() {
+		case "s":
+			if m.activeTab != tabStream {
+				m.showSource = !m.showSource
+				m.relayoutLogs()
+			}
 		case "t":
 			if m.activeTab == tabStream {
 				m.terminalMode = !m.terminalMode
@@ -430,6 +445,14 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wheel(msg.Button)
 		return m, nil
 
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			if tab := m.tabAt(msg.X, msg.Y); tab >= 0 {
+				m.activeTab = tab
+			}
+		}
+		return m, nil
+
 	case hudTickMsg:
 		if m.reload.due() {
 			return m, tea.Quit
@@ -495,6 +518,7 @@ func (m *HudModel) followPoll() {
 func (m *HudModel) retarget(session, runtimeDir, windowID string) {
 	if runtimeDir != m.runtimeDir {
 		m.sysLogPath, m.sysLogOffset, m.sysLogLines = "", 0, nil
+		m.sysRecs, m.sysStarts = nil, nil
 		m.sysLogScroll, m.sysLogAtBottom = 0, true
 	}
 	m.session, m.runtimeDir, m.windowID = session, runtimeDir, windowID
@@ -518,6 +542,7 @@ func (m *HudModel) resetTranscript() {
 
 	m.agentctlLogPath, m.agentctlSessionID, m.agentctlLogIsGlobal, m.agentctlLogErr = "", "", false, ""
 	m.agentLogLines, m.agentLogScroll, m.agentLogOffset, m.agentLogAtBottom = nil, 0, 0, true
+	m.agentRecs, m.agentStarts = nil, nil
 }
 
 // transcriptChanged reports whether the followed window's record names a
@@ -734,23 +759,7 @@ func (m *HudModel) poll() {
 		newLines, newOffset, _ := TailAgentctlLog(m.agentctlLogPath, m.agentLogOffset)
 		if len(newLines) > 0 {
 			m.agentLogOffset = newOffset
-			m.agentLogLines = append(m.agentLogLines, newLines...)
-			// Cap the buffer.
-			if len(m.agentLogLines) > maxLogLines {
-				trim := len(m.agentLogLines) - maxLogLines
-				m.agentLogLines = m.agentLogLines[trim:]
-				if m.agentLogScroll >= trim {
-					m.agentLogScroll -= trim
-				} else {
-					m.agentLogScroll = 0
-				}
-			}
-			// Auto-scroll if pinned to bottom.
-			if m.agentLogAtBottom {
-				m.scrollAgentLogToBottom()
-			} else {
-				m.clampAgentLogScroll()
-			}
+			m.appendLog(m.agentPane(), newLines)
 		}
 	}
 
@@ -759,23 +768,7 @@ func (m *HudModel) poll() {
 		newLines, newOffset, _ := TailAgentctlLog(m.sysLogPath, m.sysLogOffset)
 		if len(newLines) > 0 {
 			m.sysLogOffset = newOffset
-			m.sysLogLines = append(m.sysLogLines, newLines...)
-			// Cap the buffer.
-			if len(m.sysLogLines) > maxLogLines {
-				trim := len(m.sysLogLines) - maxLogLines
-				m.sysLogLines = m.sysLogLines[trim:]
-				if m.sysLogScroll >= trim {
-					m.sysLogScroll -= trim
-				} else {
-					m.sysLogScroll = 0
-				}
-			}
-			// Auto-scroll if pinned to bottom.
-			if m.sysLogAtBottom {
-				m.scrollSysLogToBottom()
-			} else {
-				m.clampSysLogScroll()
-			}
+			m.appendLog(m.sysPane(), newLines)
 		}
 	}
 }
@@ -1062,11 +1055,10 @@ func (m HudModel) View() tea.View {
 
 	v := tea.NewView(sb.String())
 	v.AltScreen = true
-	if m.follow.enabled {
-		// The hub's activity pane: the wheel scrolls the feed instead of
-		// dropping tmux into copy mode over the alt screen.
-		v.MouseMode = tea.MouseModeCellMotion
-	}
+	// The wheel scrolls the feed instead of dropping tmux into copy mode over
+	// the alt screen, and tab labels are clickable. In a per-window HUD pane
+	// this means tmux drag-select needs the terminal's bypass modifier.
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
@@ -1141,26 +1133,77 @@ func (m HudModel) renderHeader(w int) string {
 	return left + hudHeaderFillStyle.Render(strings.Repeat("─", fill))
 }
 
+// hudTabBarRow is the screen row of the tab bar (below the 1-row header).
+const hudTabBarRow = 1
+
+// hudTabSpan is the horizontal extent [x0, x1) of one tab label.
+type hudTabSpan struct {
+	tab    int
+	x0, x1 int
+}
+
+// tabLabels returns the plain (unstyled) label of each tab; the active tab is
+// bracketed.
+func (m HudModel) tabLabels() [hudNumTabs]string {
+	names := [hudNumTabs]string{"Stream", "Agent Logs", "System Logs"}
+	var out [hudNumTabs]string
+	for i, n := range names {
+		if i == m.activeTab {
+			out[i] = "[" + n + "]"
+		} else {
+			out[i] = " " + n + " "
+		}
+	}
+	return out
+}
+
+// hudTabSpans lays the labels out left to right (one leading cell, one cell
+// between labels) and clips them to width w. Labels fully past w are dropped.
+// renderTabBar and tabAt both use it so they cannot drift.
+func (m HudModel) hudTabSpans(w int) []hudTabSpan {
+	var spans []hudTabSpan
+	x := 1
+	for i, l := range m.tabLabels() {
+		lw := lipgloss.Width(l)
+		if x >= w {
+			break
+		}
+		spans = append(spans, hudTabSpan{tab: i, x0: x, x1: min(x+lw, w)})
+		x += lw + 1
+	}
+	return spans
+}
+
+// tabAt returns the tab under screen cell (x, y), or -1.
+func (m HudModel) tabAt(x, y int) int {
+	if m.height <= 5 || y != hudTabBarRow {
+		return -1
+	}
+	for _, sp := range m.hudTabSpans(max(m.width, 20)) {
+		if x >= sp.x0 && x < sp.x1 {
+			return sp.tab
+		}
+	}
+	return -1
+}
+
 // renderTabBar builds the tab bar line shown below the header.
 func (m HudModel) renderTabBar(w int) string {
-	var stream, agentLogs, sysLogs string
-	switch m.activeTab {
-	case tabStream:
-		stream = hudTabActiveStyle.Render("[Stream]")
-		agentLogs = hudTabInactiveStyle.Render(" Agent Logs ")
-		sysLogs = hudTabInactiveStyle.Render(" System Logs ")
-	case tabAgentLogs:
-		stream = hudTabInactiveStyle.Render(" Stream ")
-		agentLogs = hudTabActiveStyle.Render("[Agent Logs]")
-		sysLogs = hudTabInactiveStyle.Render(" System Logs ")
-	case tabSysLogs:
-		stream = hudTabInactiveStyle.Render(" Stream ")
-		agentLogs = hudTabInactiveStyle.Render(" Agent Logs ")
-		sysLogs = hudTabActiveStyle.Render("[System Logs]")
+	labels := m.tabLabels()
+	var sb strings.Builder
+	sb.WriteByte(' ')
+	for _, sp := range m.hudTabSpans(w) {
+		if sp.tab > 0 {
+			sb.WriteByte(' ')
+		}
+		style := hudTabInactiveStyle
+		if sp.tab == m.activeTab {
+			style = hudTabActiveStyle
+		}
+		sb.WriteString(style.Render(ansi.Truncate(labels[sp.tab], sp.x1-sp.x0, "")))
 	}
-	tabs := " " + stream + " " + agentLogs + " " + sysLogs
-	tabsW := lipgloss.Width(tabs)
-	fill := w - tabsW
+	tabs := sb.String()
+	fill := w - lipgloss.Width(tabs)
 	if fill < 0 {
 		fill = 0
 	}
@@ -1487,7 +1530,7 @@ func (m HudModel) renderFooter(w int) string {
 	} else {
 		hint = "Tab/Shift+Tab switch · j/k scroll · Ctrl+d/u page · t term · q quit "
 		if m.activeTab != tabStream {
-			hint = "Tab/Shift+Tab switch · j/k scroll · Ctrl+d/u page · g/G top/bottom · q quit "
+			hint = "Tab/Shift+Tab switch · j/k scroll · Ctrl+d/u page · g/G top/bottom · s source · q quit "
 		}
 	}
 	hint = truncateCells(hint, w)
@@ -1633,4 +1676,83 @@ func initHudStyles() {
 	hudDetailBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Overlay))
 	hudDetailKeyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Blue))
 	hudDetailValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Subtle))
+}
+
+// logPane addresses one log tab's fields so poll, resize and toggles share
+// the same layout code.
+type logPane struct {
+	recs     *[]logRec
+	starts   *[]int
+	lines    *[]string
+	scroll   *int
+	atBottom *bool
+}
+
+func (m *HudModel) agentPane() logPane {
+	return logPane{&m.agentRecs, &m.agentStarts, &m.agentLogLines, &m.agentLogScroll, &m.agentLogAtBottom}
+}
+
+func (m *HudModel) sysPane() logPane {
+	return logPane{&m.sysRecs, &m.sysStarts, &m.sysLogLines, &m.sysLogScroll, &m.sysLogAtBottom}
+}
+
+// anchor returns the record at the top of the viewport and how many display
+// lines into it the viewport starts.
+func (p logPane) anchor() (rec, intra int) {
+	for i, st := range *p.starts {
+		if st > *p.scroll {
+			break
+		}
+		rec = i
+	}
+	if rec < len(*p.starts) {
+		intra = *p.scroll - (*p.starts)[rec]
+	}
+	return rec, intra
+}
+
+// layout re-renders the pane at the current width. When pinned to the bottom
+// it stays there; otherwise the viewport stays on the anchor record, at the
+// same offset inside it (clamped to the record's new height).
+func (m *HudModel) layout(p logPane, rec, intra int) {
+	if len(*p.recs) == 0 {
+		return
+	}
+	*p.lines, *p.starts = renderLogRecs(*p.recs, m.width, m.showSource)
+	maxScroll := max(len(*p.lines)-m.visibleLines(), 0)
+	switch {
+	case *p.atBottom:
+		*p.scroll = maxScroll
+	case rec >= 0 && rec < len(*p.starts):
+		end := len(*p.lines)
+		if rec+1 < len(*p.starts) {
+			end = (*p.starts)[rec+1]
+		}
+		off := min(max(intra, 0), max(end-(*p.starts)[rec]-1, 0))
+		*p.scroll = min((*p.starts)[rec]+off, maxScroll)
+	default:
+		*p.scroll = min(*p.scroll, maxScroll)
+	}
+}
+
+// appendLog parses raw lines into the pane, collapsing repeats and applying
+// the record cap, then re-lays it out keeping the viewport stable.
+func (m *HudModel) appendLog(p logPane, raw []string) {
+	rec, intra := p.anchor()
+	var trimmed int
+	*p.recs, trimmed = appendLogRecs(*p.recs, raw)
+	if rec < trimmed {
+		rec, intra = 0, 0
+	} else {
+		rec -= trimmed
+	}
+	m.layout(p, rec, intra)
+}
+
+// relayoutLogs re-wraps both log tabs (resize, source toggle).
+func (m *HudModel) relayoutLogs() {
+	for _, p := range []logPane{m.agentPane(), m.sysPane()} {
+		rec, intra := p.anchor()
+		m.layout(p, rec, intra)
+	}
 }

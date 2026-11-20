@@ -298,11 +298,12 @@ func abbreviateHudPath(p string) string {
 // ── Agentctl Runtime Log (Logs tab) ─────────────────────────────────────────
 
 var (
-	hudRuntimeErrorStyle   lipgloss.Style
-	hudRuntimeHeaderStyle  lipgloss.Style
-	hudRuntimeHookStyle    lipgloss.Style
-	hudRuntimeStateStyle   lipgloss.Style
 	hudRuntimeDefaultStyle lipgloss.Style
+	hudLogDimStyle         lipgloss.Style
+	hudLogCompStyle        lipgloss.Style
+	hudLogErrStyle         lipgloss.Style
+	hudLogWarnStyle        lipgloss.Style
+	hudLogInfoStyle        lipgloss.Style
 )
 
 // initHudlogStyles initialises HUD log styles from the active theme.
@@ -315,10 +316,11 @@ func initHudlogStyles() {
 
 	initHudTerminalStyles()
 
-	hudRuntimeErrorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Red))
-	hudRuntimeHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Sky))
-	hudRuntimeHookStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Overlay))
-	hudRuntimeStateStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Yellow))
+	hudLogDimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
+	hudLogCompStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Accent))
+	hudLogErrStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Red))
+	hudLogWarnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Yellow))
+	hudLogInfoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Blue))
 	hudRuntimeDefaultStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Text))
 }
 
@@ -335,7 +337,8 @@ func agentctlLogPath() (string, error) {
 // TailAgentctlLog reads new plain-text lines from the agentctl runtime log
 // starting at fromOffset. The caller provides the logPath (either a
 // session-specific path or the global agentctl.log fallback).
-// Returns styled lines, new offset, and any error.
+// Returns sanitized raw lines (parse them with appendLogRecs), the new
+// offset, and any error.
 func TailAgentctlLog(logPath string, fromOffset int64) ([]string, int64, error) {
 	f, err := os.Open(logPath)
 	if err != nil {
@@ -367,29 +370,10 @@ func TailAgentctlLog(logPath string, fromOffset int64) ([]string, int64, error) 
 		text := scanner.Text()
 		currentOffset += int64(len(scanner.Bytes())) + 1 // +1 for newline
 
-		lines = append(lines, colorizeRuntimeLine(text))
+		lines = append(lines, sanitizeToolOutput(text))
 	}
 
 	return lines, currentOffset, scanner.Err()
-}
-
-// colorizeRuntimeLine applies basic colorization to a single agentctl log line.
-func colorizeRuntimeLine(line string) string {
-	lower := strings.ToLower(line)
-	switch {
-	case strings.Contains(lower, "error"):
-		return hudRuntimeErrorStyle.Render(line)
-	case strings.HasPrefix(line, "==="):
-		return hudRuntimeHeaderStyle.Render(line)
-	case strings.Contains(line, "hook-"):
-		return hudRuntimeHookStyle.Render(line)
-	case strings.Contains(line, "state=working") ||
-		strings.Contains(line, "state=idle") ||
-		strings.Contains(line, "state=blocked"):
-		return hudRuntimeStateStyle.Render(line)
-	default:
-		return hudRuntimeDefaultStyle.Render(line)
-	}
 }
 
 // ── Tool results ────────────────────────────────────────────────────────────
