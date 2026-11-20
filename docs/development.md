@@ -91,5 +91,3 @@ The iOS Simulator (macOS with Xcode only) is still useful as an occasional manua
 **Reproducing a bug.** Write a scene anywhere (`/tmp/bug-123.yaml`) with the state that shows the bug (a window `blocked` with a `pending_tool`, a `done` window left unseen, a child whose `spawned_by` names its parent, a narrow `terminal.cols`), run `just demo /tmp/bug-123.yaml` to poke at it, then `just demo-shot /tmp/bug-123.yaml /tmp/bug-123` for the image.
 
 **The approval scene** is a real round trip: Enter in a window with `approval:` makes its fake pane feed a PreToolUse payload to `agentctl hook-validate-bash`, which marks the window blocked and opens the dispatch approval popup, exactly as under Claude Code.
-
-**Workaround in the demo world:** the hub session is started up front (the first prefix+`g` after session start does not switch the pressing client to the hub), an agentctl bug reproduced with the harness.

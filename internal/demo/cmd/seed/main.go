@@ -301,6 +301,7 @@ func runProject(args []string) error {
 	fs := flag.NewFlagSet("project", flag.ExitOnError)
 	c.register(fs)
 	project := fs.String("project", "", "project to seed")
+	label := fs.String("label", "", "tmux socket label, as computed by up (never re-derived here)")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -308,6 +309,7 @@ func runProject(args []string) error {
 	if err != nil {
 		return err
 	}
+	l = l.WithLabel(*label)
 	sock := os.Getenv("TMUX")
 	if !strings.Contains(sock, "/"+l.Label()+",") {
 		return fmt.Errorf("TMUX=%q is not the demo server; run through `agentctl-demo up`", sock)
