@@ -202,7 +202,7 @@ func TestFleetEnterAndTabNoopOffRowsOrFocus(t *testing.T) {
 }
 
 func TestFleetRemovedKeysAreInert(t *testing.T) {
-	for _, k := range []rune{'v', 'u'} {
+	for _, k := range []rune{'u'} { // 'v' is the activity pane toggle now
 		m := liveTestModel(t, 48, 40)
 		before := m.liveShown
 		next, cmd := m.Update(tea.KeyPressMsg{Code: k, Text: string(k)})
@@ -231,6 +231,7 @@ func TestDecideLiveResize(t *testing.T) {
 		{"drag below the minimum is clamped and re-applied", 200, 200, 56, 10, 0, true, 30, 169, 30, 200},
 		{"drag past the maximum is clamped and re-applied", 200, 200, 56, 190, 0, true, 179, 20, 179, 200},
 		{"pane size unknown is ignored", 200, 200, 56, 0, 0, false, 0, 0, 0, 200},
+		{"list fills the window (no live pane): not a drag", 200, 200, 56, 200, 0, false, 0, 0, 0, 200},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

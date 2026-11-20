@@ -161,6 +161,9 @@ func TailLog(logPath string, fromOffset int64) (TailResult, error) {
 					})
 				case "text":
 					text, _ := b["text"].(string)
+					// Transcript text is untrusted too: strip escapes and
+					// control characters before it reaches either render mode.
+					text = sanitizeToolOutput(text)
 					if text == "" {
 						continue
 					}
@@ -204,6 +207,9 @@ func TailLog(logPath string, fromOffset int64) (TailResult, error) {
 				}
 				if b["type"] == "text" {
 					text, _ := b["text"].(string)
+					// Transcript text is untrusted too: strip escapes and
+					// control characters before it reaches either render mode.
+					text = sanitizeToolOutput(text)
 					if text == "" {
 						continue
 					}

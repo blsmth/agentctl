@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/sessions"
@@ -128,7 +129,15 @@ type hudFollow struct {
 	readErr bool
 	// aliveIn counts ticks until the next liveness check of the target.
 	aliveIn int
+	// misses counts consecutive liveness checks that found no window; the
+	// target is dropped only at followGoneMisses, so one failed tmux call
+	// does not blank the view.
+	misses int
 }
+
+// followGoneMisses is how many consecutive liveness misses mean the
+// followed window is gone.
+const followGoneMisses = 2
 
 // followAliveEvery is how many poll ticks pass between tmux liveness checks
 // of the followed window (2s at the 500ms tick).
@@ -417,6 +426,10 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.MouseWheelMsg:
+		m.wheel(msg.Button)
+		return m, nil
+
 	case hudTickMsg:
 		if m.reload.due() {
 			return m, tea.Quit
@@ -457,12 +470,18 @@ func (m *HudModel) followPoll() {
 	m.follow.aliveIn = followAliveEvery
 	name := m.follow.windowName(m.session, m.windowID)
 	if name == "" {
+		m.follow.misses++
+		if m.follow.misses < followGoneMisses {
+			m.follow.aliveIn = 1 // confirm on the next tick
+			return
+		}
 		// Still selected but gone: drop the target and keep the selection,
 		// so the HUD does not re-adopt it until the hub selects something.
 		m.retarget("", "", "")
 		m.follow.gone = true
 		return
 	}
+	m.follow.misses = 0
 	if m.agentName == "" {
 		m.agentName = tmux.AgentNameFromWindowName(name)
 	}
@@ -480,7 +499,16 @@ func (m *HudModel) retarget(session, runtimeDir, windowID string) {
 	}
 	m.session, m.runtimeDir, m.windowID = session, runtimeDir, windowID
 	m.agentName, m.title, m.state, m.done = "", "", "", false
+	m.resetTranscript()
+	m.follow.aliveIn = 0 // check the new target (and resolve its name) now
+	m.follow.misses = 0
+}
 
+// resetTranscript drops everything read from the target's transcript and
+// agentctl session log: entries, offsets, cursor, expansion, scroll pins and
+// the cached paths. retarget uses it, and so does a /clear on the followed
+// window (its SessionID and LogPath change under the same window).
+func (m *HudModel) resetTranscript() {
 	// Tool results pair against logEntries only, so clearing them (and the
 	// offset) drops all pairing state from the previous target.
 	m.logPath, m.logOffset, m.logEntries, m.logPollTick = "", 0, nil, 0
@@ -490,8 +518,16 @@ func (m *HudModel) retarget(session, runtimeDir, windowID string) {
 
 	m.agentctlLogPath, m.agentctlSessionID, m.agentctlLogIsGlobal, m.agentctlLogErr = "", "", false, ""
 	m.agentLogLines, m.agentLogScroll, m.agentLogOffset, m.agentLogAtBottom = nil, 0, 0, true
+}
 
-	m.follow.aliveIn = 0 // check the new target (and resolve its name) now
+// transcriptChanged reports whether the followed window's record names a
+// different session or transcript than the one being shown (a /clear).
+// Empty record fields never count: the hook may not have written them yet.
+func (m *HudModel) transcriptChanged(ws windowstate.WindowState) bool {
+	if ws.LogPath != "" && m.logPath != "" && ws.LogPath != m.logPath {
+		return true
+	}
+	return ws.SessionID != "" && m.agentctlSessionID != "" && ws.SessionID != m.agentctlSessionID
 }
 
 // readTarget reads the target window's windowstate record: from this
@@ -569,6 +605,9 @@ func (m *HudModel) poll() {
 			m.done = true
 		}
 		if m.follow.enabled {
+			if m.transcriptChanged(ws) {
+				m.resetTranscript()
+			}
 			m.title = ws.ShortTitle.Title
 			if m.title == "" {
 				m.title = m.follow.sel.Title
@@ -1023,7 +1062,43 @@ func (m HudModel) View() tea.View {
 
 	v := tea.NewView(sb.String())
 	v.AltScreen = true
+	if m.follow.enabled {
+		// The hub's activity pane: the wheel scrolls the feed instead of
+		// dropping tmux into copy mode over the alt screen.
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	return v
+}
+
+// hudWheelLines is how far one wheel notch scrolls.
+const hudWheelLines = 3
+
+// wheel scrolls the active tab by one notch. Only the follow-hub HUD asks
+// for mouse events, so the per-window HUD never sees these.
+func (m *HudModel) wheel(b tea.MouseButton) {
+	delta := 0
+	switch b {
+	case tea.MouseWheelUp:
+		delta = -hudWheelLines
+	case tea.MouseWheelDown:
+		delta = hudWheelLines
+	default:
+		return
+	}
+	switch m.activeTab {
+	case tabAgentLogs:
+		m.agentLogScroll = max(m.agentLogScroll+delta, 0)
+		m.clampAgentLogScroll()
+		m.agentLogAtBottom = m.isAgentLogAtBottom()
+	case tabSysLogs:
+		m.sysLogScroll = max(m.sysLogScroll+delta, 0)
+		m.clampSysLogScroll()
+		m.sysLogAtBottom = m.isSysLogAtBottom()
+	default:
+		m.scrollTop = max(m.scrollTop+delta, 0)
+		m.clampScroll()
+		m.streamAtBottom = m.isStreamAtBottom()
+	}
 }
 
 // renderHeader builds the top status bar.
@@ -1443,14 +1518,7 @@ func truncateHudTitle(s string, width int) string {
 	if width < 2 {
 		return ""
 	}
-	if lipgloss.Width(s) <= width {
-		return s
-	}
-	r := []rune(s)
-	for len(r) > 0 && lipgloss.Width(string(r))+1 > width {
-		r = r[:len(r)-1]
-	}
-	return string(r) + "…"
+	return ansi.Truncate(s, width, "…")
 }
 
 // emptyStreamHint returns a diagnostic message for the Stream tab when no
