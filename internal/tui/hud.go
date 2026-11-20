@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/sessions"
@@ -40,9 +42,21 @@ const hudNumTabs = 3
 type hudTickMsg struct{}
 
 // HudModel is the Bubble Tea model for the Agent HUD.
+//
+// It has two hosts. The per-window HUD (NewHudModel) shows one window of its
+// own project for its whole life. The follow-hub HUD (NewFollowHudModel)
+// shows whichever agent the hub list has selected, in any project, and
+// retargets when the selection changes (see followPoll).
 type HudModel struct {
+	// windowID, session and runtimeDir are the target window. session and
+	// runtimeDir are empty for the per-window HUD, meaning this process's own
+	// tmux.SessionName and paths.RuntimeDir().
 	windowID   string
+	session    string
+	runtimeDir string
 	agentName  string
+	// title is the target's short title (follow mode only; header display).
+	title      string
 	state      string // "working", "idle", "blocked", "done"
 	logPath    string
 	logOffset  int64
@@ -54,6 +68,7 @@ type HudModel struct {
 	done       bool
 
 	// Stream interactivity state.
+	terminalMode    bool         // Stream tab renders as a terminal feed (tool results)
 	streamCursor    int          // index into logEntries of selected entry (-1 = no selection)
 	expandedEntries map[int]bool // set of logEntry indices that are expanded
 
@@ -93,10 +108,77 @@ type HudModel struct {
 
 	// reload watches the binary for hot reload.
 	reload *reloader
+
+	// follow is the follow-hub state; zero (disabled) for a per-window HUD.
+	follow hudFollow
 }
+
+// hudFollow is the follow-hub HUD's view of the hub selection.
+type hudFollow struct {
+	enabled bool
+	// read returns the hub's current selection (the selection file).
+	read func() (HubSelection, error)
+	// windowName returns the tmux name of a window in a session, "" when it
+	// does not exist. A seam over tmux.WindowNameIn.
+	windowName func(session, windowID string) string
+	// sel is the last selection read; a retarget happens when it changes.
+	sel HubSelection
+	// gone is set when the followed window disappeared while still selected.
+	gone bool
+	// readErr is set while the selection file is unreadable or corrupt.
+	readErr bool
+	// aliveIn counts ticks until the next liveness check of the target.
+	aliveIn int
+	// misses counts consecutive liveness checks that found no window; the
+	// target is dropped only at followGoneMisses, so one failed tmux call
+	// does not blank the view.
+	misses int
+}
+
+// followGoneMisses is how many consecutive liveness misses mean the
+// followed window is gone.
+const followGoneMisses = 2
+
+// followAliveEvery is how many poll ticks pass between tmux liveness checks
+// of the followed window (2s at the 500ms tick).
+const followAliveEvery = 4
+
+// followTailBytes caps how much of an existing transcript a retarget reads:
+// following an agent starts this far from the end of its log, so moving the
+// hub cursor across long-running sessions never re-parses whole transcripts.
+const followTailBytes = 2 << 20
 
 // NewHudModel creates a new HUD model targeting the given tmux window ID.
 func NewHudModel(windowID string) HudModel {
+	m := newHudModel(windowID)
+	m.reload = newReloader("hud", windowID)
+	return m
+}
+
+// NewFollowHudModel creates a HUD that follows the hub list's selection (the
+// hub selection file) across every project, instead of one window.
+func NewFollowHudModel() HudModel {
+	m := newHudModel("")
+	m.follow = hudFollow{
+		enabled:    true,
+		read:       readPublishedHubSelection,
+		windowName: tmux.WindowNameIn,
+	}
+	m.reload = newReloader("hud", "follow-hub")
+	m.terminalMode = true
+	return m
+}
+
+// readPublishedHubSelection reads the hub selection file.
+func readPublishedHubSelection() (HubSelection, error) {
+	path, err := hubSelectionPath()
+	if err != nil {
+		return HubSelection{}, err
+	}
+	return readHubSelection(path)
+}
+
+func newHudModel(windowID string) HudModel {
 	return HudModel{
 		windowID:         windowID,
 		startTime:        time.Now(),
@@ -107,9 +189,12 @@ func NewHudModel(windowID string) HudModel {
 		sysLogAtBottom:   true,
 		streamCursor:     -1,
 		expandedEntries:  make(map[int]bool),
-		reload:           newReloader("hud", windowID),
 	}
 }
+
+// WithTerminalMode sets the Stream tab's default render mode (the hub's
+// follow mode starts in terminal mode). The `t` key toggles it.
+func (m HudModel) WithTerminalMode(on bool) HudModel { m.terminalMode = on; return m }
 
 // Reexec reports whether the HUD quit because the binary changed; the caller
 // must exec the new image after the program returns.
@@ -168,6 +253,13 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Key handling for Stream / Agent Logs / System Logs tabs.
 		switch msg.String() {
+		case "t":
+			if m.activeTab == tabStream {
+				m.terminalMode = !m.terminalMode
+				m.rebuildStreamLineBuffer()
+				m.ensureCursorVisible()
+			}
+
 		case "esc":
 			if m.activeTab == tabStream && m.streamCursor != -1 {
 				// Deactivate cursor (collapse any expansion too).
@@ -334,6 +426,10 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.MouseWheelMsg:
+		m.wheel(msg.Button)
+		return m, nil
+
 	case hudTickMsg:
 		if m.reload.due() {
 			return m, tea.Quit
@@ -345,11 +441,162 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// followPoll reads the hub selection and retargets when it changed, and
+// periodically checks that the followed window still exists. A missing,
+// corrupt or non-agent selection, or a vanished window, leaves no target: the
+// HUD then shows its "select an agent" placeholder.
+func (m *HudModel) followPoll() {
+	sel, err := m.follow.read()
+	m.follow.readErr = err != nil
+	if err != nil || !sel.valid() {
+		sel = HubSelection{}
+	}
+	if !sel.sameTarget(m.follow.sel) {
+		m.follow.sel = sel
+		m.follow.gone = false
+		m.retarget(sel.Session, sel.RuntimeDir, sel.WindowID)
+	}
+	m.follow.sel = sel // refresh the display hints
+	if m.windowID == "" {
+		return
+	}
+	if sel.Name != "" {
+		m.agentName = sel.Name
+	}
+	m.follow.aliveIn--
+	if m.follow.aliveIn > 0 {
+		return
+	}
+	m.follow.aliveIn = followAliveEvery
+	name := m.follow.windowName(m.session, m.windowID)
+	if name == "" {
+		m.follow.misses++
+		if m.follow.misses < followGoneMisses {
+			m.follow.aliveIn = 1 // confirm on the next tick
+			return
+		}
+		// Still selected but gone: drop the target and keep the selection,
+		// so the HUD does not re-adopt it until the hub selects something.
+		m.retarget("", "", "")
+		m.follow.gone = true
+		return
+	}
+	m.follow.misses = 0
+	if m.agentName == "" {
+		m.agentName = tmux.AgentNameFromWindowName(name)
+	}
+}
+
+// retarget points the HUD at a new window and resets every piece of
+// per-target state, so nothing of the previous agent (entries, offsets,
+// cursor, expansion, log paths, state) leaks into the new view. The System
+// Logs tab is per project in follow mode and resets only when the project
+// changes.
+func (m *HudModel) retarget(session, runtimeDir, windowID string) {
+	if runtimeDir != m.runtimeDir {
+		m.sysLogPath, m.sysLogOffset, m.sysLogLines = "", 0, nil
+		m.sysLogScroll, m.sysLogAtBottom = 0, true
+	}
+	m.session, m.runtimeDir, m.windowID = session, runtimeDir, windowID
+	m.agentName, m.title, m.state, m.done = "", "", "", false
+	m.resetTranscript()
+	m.follow.aliveIn = 0 // check the new target (and resolve its name) now
+	m.follow.misses = 0
+}
+
+// resetTranscript drops everything read from the target's transcript and
+// agentctl session log: entries, offsets, cursor, expansion, scroll pins and
+// the cached paths. retarget uses it, and so does a /clear on the followed
+// window (its SessionID and LogPath change under the same window).
+func (m *HudModel) resetTranscript() {
+	// Tool results pair against logEntries only, so clearing them (and the
+	// offset) drops all pairing state from the previous target.
+	m.logPath, m.logOffset, m.logEntries, m.logPollTick = "", 0, nil, 0
+	m.scrollTop, m.streamAtBottom = 0, true
+	m.streamCursor, m.expandedEntries = -1, make(map[int]bool)
+	m.streamLineBuffer, m.streamEntryStart = nil, nil
+
+	m.agentctlLogPath, m.agentctlSessionID, m.agentctlLogIsGlobal, m.agentctlLogErr = "", "", false, ""
+	m.agentLogLines, m.agentLogScroll, m.agentLogOffset, m.agentLogAtBottom = nil, 0, 0, true
+}
+
+// transcriptChanged reports whether the followed window's record names a
+// different session or transcript than the one being shown (a /clear).
+// Empty record fields never count: the hook may not have written them yet.
+func (m *HudModel) transcriptChanged(ws windowstate.WindowState) bool {
+	if ws.LogPath != "" && m.logPath != "" && ws.LogPath != m.logPath {
+		return true
+	}
+	return ws.SessionID != "" && m.agentctlSessionID != "" && ws.SessionID != m.agentctlSessionID
+}
+
+// readTarget reads the target window's windowstate record: from this
+// project for a per-window HUD, from the target's runtime dir when following.
+func (m *HudModel) readTarget() windowstate.WindowState {
+	if m.follow.enabled {
+		ws, _ := windowstate.ReadIn(m.runtimeDir, m.windowID)
+		return ws
+	}
+	ws, _ := windowstate.Read(m.windowID)
+	return ws
+}
+
+// targetLogDir is the target project's agentctl log dir.
+func (m *HudModel) targetLogDir() string {
+	if m.follow.enabled {
+		if m.runtimeDir == "" {
+			return ""
+		}
+		return filepath.Join(m.runtimeDir, "logs")
+	}
+	return paths.LogDir()
+}
+
+// targetSessionLogDir is the target project's per-session agentctl log dir.
+func (m *HudModel) targetSessionLogDir() string {
+	if m.follow.enabled {
+		if m.runtimeDir == "" {
+			return ""
+		}
+		return filepath.Join(m.runtimeDir, "logs", "sessions")
+	}
+	return paths.SessionLogDir()
+}
+
+// targetAgentctlLogPath is the target project's shared agentctl.log.
+func (m *HudModel) targetAgentctlLogPath() (string, error) {
+	if !m.follow.enabled {
+		return agentctlLogPath()
+	}
+	dir := m.targetLogDir()
+	if dir == "" {
+		return "", fmt.Errorf("no target project")
+	}
+	return filepath.Join(dir, "agentctl.log"), nil
+}
+
+// followStartOffset is where a follow-mode HUD starts reading a newly linked
+// transcript: followTailBytes from its end (TailLog skips the partial first
+// line). The per-window HUD reads from the start.
+func (m *HudModel) followStartOffset(logPath string) int64 {
+	if !m.follow.enabled {
+		return 0
+	}
+	fi, err := os.Stat(logPath)
+	if err != nil || fi.Size() <= followTailBytes {
+		return 0
+	}
+	return fi.Size() - followTailBytes
+}
+
 // poll reads fresh state from windowstate files and tails the log file.
 func (m *HudModel) poll() {
+	if m.follow.enabled {
+		m.followPoll()
+	}
 	// Read window state.
 	if m.windowID != "" {
-		ws, _ := windowstate.Read(m.windowID)
+		ws := m.readTarget()
 		m.state = ws.State
 		if m.state == "" {
 			m.state = "idle"
@@ -357,9 +604,19 @@ func (m *HudModel) poll() {
 		if ws.Done {
 			m.done = true
 		}
+		if m.follow.enabled {
+			if m.transcriptChanged(ws) {
+				m.resetTranscript()
+			}
+			m.title = ws.ShortTitle.Title
+			if m.title == "" {
+				m.title = m.follow.sel.Title
+			}
+		}
 
-		// Resolve agent name from window on first poll.
-		if m.agentName == "" {
+		// Resolve agent name from window on first poll (follow mode resolves
+		// it in followPoll, in the target's own session).
+		if m.agentName == "" && !m.follow.enabled {
 			m.agentName = tmux.ResolveAgentByWindowID(m.windowID)
 		}
 		// Always retry log path — late-bound windows (predating hook-session-start
@@ -367,12 +624,15 @@ func (m *HudModel) poll() {
 		// so we must keep checking.
 		if m.logPath == "" && ws.LogPath != "" {
 			m.logPath = ws.LogPath
+			m.logOffset = m.followStartOffset(m.logPath)
 			m.logPollTick = 0
 		}
 		if m.logPath == "" {
 			m.logPollTick++
 			// After ~5 seconds of no log path, fall back to a filesystem scan.
-			if m.logPollTick >= 10 && m.agentName != "" {
+			// Never when following: the scan is by agent name across every
+			// project and could show another project's log.
+			if m.logPollTick >= 10 && m.agentName != "" && !m.follow.enabled {
 				if ss, err := sessions.FindSessionsForAgent(m.agentName, 1); err == nil && len(ss) > 0 {
 					m.logPath = ss[0].LogFile
 				}
@@ -385,6 +645,7 @@ func (m *HudModel) poll() {
 		result, err := TailLog(m.logPath, m.logOffset)
 		if err == nil {
 			m.logOffset = result.NewOffset
+			ApplyToolResults(m.logEntries, result.Results)
 			m.logEntries = append(m.logEntries, result.Entries...)
 			// Trim ring buffer.
 			if len(m.logEntries) > maxLogEntries {
@@ -409,7 +670,7 @@ func (m *HudModel) poll() {
 			// Rebuild line buffer after entries changed.
 			m.rebuildStreamLineBuffer()
 			// Auto-scroll to bottom only when pinned to bottom.
-			if len(result.Entries) > 0 {
+			if len(result.Entries) > 0 || len(result.Results) > 0 {
 				if m.streamAtBottom {
 					m.scrollToBottom()
 					// Keep cursor pinned to last entry when at bottom.
@@ -426,7 +687,7 @@ func (m *HudModel) poll() {
 
 	// Always resolve the global system log path (instance-aware).
 	if m.sysLogPath == "" {
-		if p, err := agentctlLogPath(); err == nil {
+		if p, err := m.targetAgentctlLogPath(); err == nil {
 			m.sysLogPath = p
 		}
 	}
@@ -438,14 +699,14 @@ func (m *HudModel) poll() {
 	if m.agentctlLogPath == "" {
 		// Try to read the session ID pinned by hook-session-start via windowstate.
 		if m.windowID != "" && m.agentctlSessionID == "" {
-			ws, _ := windowstate.Read(m.windowID)
+			ws := m.readTarget()
 			if ws.SessionID != "" {
 				m.agentctlSessionID = ws.SessionID
 			}
 		}
 		if m.agentctlSessionID != "" {
 			// Session-specific log path.
-			sessionLogDir := paths.SessionLogDir()
+			sessionLogDir := m.targetSessionLogDir()
 			if sessionLogDir == "" {
 				m.agentctlLogErr = "paths not initialized"
 			} else {
@@ -456,7 +717,7 @@ func (m *HudModel) poll() {
 		} else if m.agentName != "" {
 			// agentName is resolved but no session ID — pre-hook window.
 			// Fall back to the global (instance-aware) agentctl.log.
-			p, err := agentctlLogPath()
+			p, err := m.targetAgentctlLogPath()
 			if err != nil {
 				m.agentctlLogErr = "could not resolve log path: " + err.Error()
 			} else {
@@ -547,6 +808,12 @@ func (m *HudModel) rebuildStreamLineBuffer() {
 	for i, e := range m.logEntries {
 		m.streamEntryStart[i] = len(m.streamLineBuffer)
 		selected := m.streamCursor == i
+		if m.terminalMode {
+			for _, l := range renderTerminalEntry(e, logWidth, selected, m.expandedEntries[i]) {
+				m.streamLineBuffer = append(m.streamLineBuffer, " "+l)
+			}
+			continue
+		}
 		line := m.renderEntry(e, logWidth, selected)
 		m.streamLineBuffer = append(m.streamLineBuffer, " "+line)
 		if m.expandedEntries[i] {
@@ -795,11 +1062,55 @@ func (m HudModel) View() tea.View {
 
 	v := tea.NewView(sb.String())
 	v.AltScreen = true
+	if m.follow.enabled {
+		// The hub's activity pane: the wheel scrolls the feed instead of
+		// dropping tmux into copy mode over the alt screen.
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	return v
+}
+
+// hudWheelLines is how far one wheel notch scrolls.
+const hudWheelLines = 3
+
+// wheel scrolls the active tab by one notch. Only the follow-hub HUD asks
+// for mouse events, so the per-window HUD never sees these.
+func (m *HudModel) wheel(b tea.MouseButton) {
+	delta := 0
+	switch b {
+	case tea.MouseWheelUp:
+		delta = -hudWheelLines
+	case tea.MouseWheelDown:
+		delta = hudWheelLines
+	default:
+		return
+	}
+	switch m.activeTab {
+	case tabAgentLogs:
+		m.agentLogScroll = max(m.agentLogScroll+delta, 0)
+		m.clampAgentLogScroll()
+		m.agentLogAtBottom = m.isAgentLogAtBottom()
+	case tabSysLogs:
+		m.sysLogScroll = max(m.sysLogScroll+delta, 0)
+		m.clampSysLogScroll()
+		m.sysLogAtBottom = m.isSysLogAtBottom()
+	default:
+		m.scrollTop = max(m.scrollTop+delta, 0)
+		m.clampScroll()
+		m.streamAtBottom = m.isStreamAtBottom()
+	}
 }
 
 // renderHeader builds the top status bar.
 func (m HudModel) renderHeader(w int) string {
+	if m.followIdle() {
+		left := hudHeaderNameStyle.Render(" activity ")
+		fill := w - lipgloss.Width(left)
+		if fill < 0 {
+			fill = 0
+		}
+		return left + hudHeaderFillStyle.Render(strings.Repeat("─", fill))
+	}
 	name := m.agentName
 	if name == "" {
 		name = m.windowID
@@ -807,10 +1118,19 @@ func (m HudModel) renderHeader(w int) string {
 
 	stateBadge := m.stateLabel()
 
-	// Build left portion: name + state badge.
+	// Build left portion: name (+ title when following) + state badge.
 	left := hudHeaderNameStyle.Render(" "+name+" ") +
 		hudHeaderSepStyle.Render(" ─ ") +
 		stateBadge
+	if m.title != "" {
+		title := m.title
+		if room := w - lipgloss.Width(left) - 4; room < lipgloss.Width(title) {
+			title = truncateHudTitle(title, room)
+		}
+		if title != "" {
+			left += hudHeaderSepStyle.Render(" ─ ") + hudHeaderNameStyle.Render(title)
+		}
+	}
 
 	// Fill to the right (metrics moved to footer).
 	leftW := lipgloss.Width(left)
@@ -1163,10 +1483,14 @@ func (m HudModel) renderMiniFooter(w int) string {
 func (m HudModel) renderFooter(w int) string {
 	var hint string
 	if m.activeTab == tabStream && m.streamCursor != -1 {
-		hint = "↑/↓ navigate · Enter expand · h collapse · Esc back · g/G top/bottom · q quit "
+		hint = "↑/↓ navigate · Enter expand · h collapse · Esc back · g/G ends · t term · q quit "
 	} else {
-		hint = "Tab/Shift+Tab switch · j/k scroll · Ctrl+d/u page · g/G top/bottom · q quit "
+		hint = "Tab/Shift+Tab switch · j/k scroll · Ctrl+d/u page · t term · q quit "
+		if m.activeTab != tabStream {
+			hint = "Tab/Shift+Tab switch · j/k scroll · Ctrl+d/u page · g/G top/bottom · q quit "
+		}
 	}
+	hint = truncateCells(hint, w)
 	hintFillW := w - lipgloss.Width(hint)
 	if hintFillW < 0 {
 		hintFillW = 0
@@ -1175,9 +1499,34 @@ func (m HudModel) renderFooter(w int) string {
 		hudFooterHintStyle.Render(hint)
 }
 
+// followIdle reports whether a follow-hub HUD has no target to show.
+func (m HudModel) followIdle() bool { return m.follow.enabled && m.windowID == "" }
+
+// followPlaceholder is the muted line a follow-hub HUD shows with no target.
+func (m HudModel) followPlaceholder() string {
+	switch {
+	case m.follow.readErr:
+		return "Hub selection unavailable — select an agent in the hub"
+	case m.follow.gone:
+		return "Window closed — select an agent in the hub"
+	}
+	return "Select an agent in the hub"
+}
+
+// truncateHudTitle cuts s to at most width display cells, with an ellipsis.
+func truncateHudTitle(s string, width int) string {
+	if width < 2 {
+		return ""
+	}
+	return ansi.Truncate(s, width, "…")
+}
+
 // emptyStreamHint returns a diagnostic message for the Stream tab when no
 // log entries have been loaded yet.
 func (m HudModel) emptyStreamHint() string {
+	if m.followIdle() {
+		return m.followPlaceholder()
+	}
 	if m.logPath == "" {
 		if m.logPollTick < 10 {
 			return "No log linked yet — waiting for @agentctl_log…"
@@ -1190,6 +1539,9 @@ func (m HudModel) emptyStreamHint() string {
 // emptyAgentLogsHint returns a diagnostic message for the Agent Logs tab
 // when no agent-specific log lines have been loaded yet.
 func (m HudModel) emptyAgentLogsHint() string {
+	if m.followIdle() {
+		return m.followPlaceholder()
+	}
 	if m.agentctlLogErr != "" {
 		return "Log error: " + m.agentctlLogErr
 	}
@@ -1205,6 +1557,9 @@ func (m HudModel) emptyAgentLogsHint() string {
 // emptySysLogsHint returns a diagnostic message for the System Logs tab
 // when no global log lines have been loaded yet.
 func (m HudModel) emptySysLogsHint() string {
+	if m.followIdle() {
+		return m.followPlaceholder()
+	}
 	if m.sysLogPath == "" {
 		return "System log path not yet resolved."
 	}

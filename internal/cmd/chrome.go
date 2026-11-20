@@ -76,6 +76,15 @@ func CmdHud(windowID string) {
 	})
 }
 
+// CmdHudFollowHub runs the HUD in follow-hub mode: it shows whichever agent
+// the hub list has selected, in any project. It keeps no state across a hot
+// reload re-exec; the new image re-reads the hub selection file.
+func CmdHudFollowHub() {
+	runWithReload("hud", tui.NewFollowHudModel(), runProgram, func(m tea.Model) reloadable {
+		return m.(tui.HudModel).WithoutReload()
+	})
+}
+
 // CmdChromeBar runs the 3-row bottom chrome bar as a Bubble Tea program.
 // It composes the context-metrics line, keybind-hints line, and agent-tabs line
 // into a single pane, eliminating the two tmux pane-border lines that would

@@ -394,6 +394,12 @@ type FleetModel struct {
 	selWindowID string
 	selIsHeader bool
 
+	// lastSelection is the selection last written to the hub selection file
+	// for the follow-hub HUD (selPublished: one has been written). See
+	// publishSelection.
+	lastSelection HubSelection
+	selPublished  bool
+
 	loaded  bool
 	loadErr error
 	jumpErr string // a real failure: styled as an error, triggers a refresh
@@ -540,6 +546,12 @@ type FleetModel struct {
 	// "session|windowID".
 	rename     *fleetRenameState
 	titleHolds map[string]fleetTitleHold
+
+	// activity is the activity pane (see fleet_activity.go). paneQuietUntil
+	// is set while it opens, slides or closes: list-pane resizes until then
+	// are tmux reflowing the panes, not the user dragging the divider.
+	activity       fleetActivity
+	paneQuietUntil time.Time
 }
 
 // HubSelectEnv carries the selected agent ("session|windowID") across a hot
@@ -714,8 +726,18 @@ func (m *FleetModel) maybeShowCmd() tea.Cmd {
 	return m.liveShowCmd()
 }
 
-// Update handles Bubble Tea messages.
+// Update handles Bubble Tea messages, then publishes the selection for the
+// follow-hub HUD if it changed.
 func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if fm, ok := next.(FleetModel); ok {
+		fm.publishSelection()
+		return fm, cmd
+	}
+	return next, cmd
+}
+
+func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.termWidth = msg.Width
@@ -724,6 +746,9 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, fleetProbeCmd(msg.Width)
 
 	case fleetProbeMsg:
+		if msg.win == m.liveWinWidth && fleetNow().Before(m.paneQuietUntil) {
+			return m, nil // the activity pane reflowed the split
+		}
 		d := decideLiveResize(msg.win, m.liveWinWidth, m.liveLeft, msg.pane, m.userLeft)
 		m.liveWinWidth, m.userLeft = d.winWidth, d.userLeft
 		if d.err != nil {
@@ -735,6 +760,12 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if !d.apply {
 			return m, nil
+		}
+		if m.activity.open() {
+			// Three panes: pin the list and activity columns and let the
+			// viewer between them take the rest (resizing the viewer would
+			// move the wrong divider).
+			return m, m.applyActivityLayout(msg.win)
 		}
 		left, right := d.left, d.right
 		return m, func() tea.Msg {
@@ -752,7 +783,20 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		refreshThemeIfChanged()
 		show := m.maybeShowCmd()
 		probe := m.serveProbeCmd()
-		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome), probe)
+		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome), probe, m.activityPollCmd())
+
+	case fleetActivityOpenedMsg:
+		return m, m.applyActivityOpened(msg)
+
+	case fleetActivitySlideMsg:
+		return m, m.applyActivitySlide(msg)
+
+	case fleetActivityPanesMsg:
+		return m, m.applyActivityPanes(msg)
+
+	case fleetActivityErrMsg:
+		m.jumpErr = "activity: " + msg.err.Error()
+		return m, nil
 
 	case fleetServeProbedMsg:
 		m.applyServeProbe(msg)
@@ -769,6 +813,15 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.jumpErr = msg.err.Error()
 		return m, nil
 	case fleetLiveMsg:
+		if msg.hidden {
+			// The activity pane replaces the viewer at this window width.
+			m.liveShown = ""
+			if !m.activity.open() {
+				return m, m.maybeShowCmd() // it closed meanwhile: show it after all
+			}
+			m.activity.hidesViewer = true
+			return m, nil
+		}
 		if msg.err != nil {
 			// No fallback: surface the error; the next selection change retries.
 			m.liveFailed = msg.key
@@ -1113,6 +1166,9 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 
 	case fleetServeKey:
 		return *m, m.toggleServe()
+
+	case fleetActivityKey:
+		return *m, m.toggleActivity()
 	}
 	return *m, nil
 }
@@ -1124,6 +1180,9 @@ type fleetLiveMsg struct {
 	win         int // hub window width the split was computed for
 	left, right int
 	err         error
+	// hidden reports that nothing was shown: the activity pane takes the
+	// viewer's place at this window width.
+	hidden bool
 }
 
 // fleetLiveSizedMsg reports the outcome of re-applying the live split sizes.
@@ -1209,8 +1268,9 @@ type fleetResizeDecision struct {
 // the TUI just saw it, userLeft the remembered user-chosen list width.
 //
 //   - window width changed: re-apply the split, keeping userLeft if set;
-//   - window width unchanged and the pane differs from what we applied: the
-//     user dragged the divider; remember it (clamped) and leave tmux alone
+//   - window width unchanged and the pane differs from what we applied (and
+//     is narrower than the window, so a divider exists): the user dragged
+//     the divider; remember it (clamped) and leave tmux alone
 //     unless clamping moved it;
 //   - otherwise nothing.
 func decideLiveResize(winWidth, lastWin, appliedLeft, paneWidth, userLeft int) fleetResizeDecision {
@@ -1224,7 +1284,9 @@ func decideLiveResize(winWidth, lastWin, appliedLeft, paneWidth, userLeft int) f
 		d.apply = err == nil
 		return d
 	}
-	if paneWidth <= 0 || paneWidth == appliedLeft {
+	// A list pane as wide as the window has no divider to drag: there is no
+	// live pane (it has not started, or died), so nothing to remember.
+	if paneWidth <= 0 || paneWidth == appliedLeft || paneWidth >= winWidth {
 		return d
 	}
 	left := clampUserLeft(paneWidth, winWidth)
@@ -1237,7 +1299,7 @@ func decideLiveResize(winWidth, lastWin, appliedLeft, paneWidth, userLeft int) f
 // hub's own pane is only the list column once live), falling back to the
 // width the TUI last saw.
 func liveWindowWidth(fallback int) int {
-	if w, err := tmux.HubWindowWidth(); err == nil && w > 0 {
+	if w, err := hubWindowWidth(); err == nil && w > 0 {
 		return w
 	}
 	return fallback
@@ -1261,6 +1323,9 @@ func fleetProbeCmd(paneWidth int) tea.Cmd {
 // selection change (a failed attempt is not retried until the selection
 // changes again). The split honours a user-dragged divider.
 func (m *FleetModel) liveShowCmd() tea.Cmd {
+	if m.activity.hidesViewer {
+		return nil // the activity pane has the viewer's place
+	}
 	key := m.selSession + "|" + m.selWindowID
 	if key == m.liveShown {
 		return nil
@@ -1269,11 +1334,21 @@ func (m *FleetModel) liveShowCmd() tea.Cmd {
 	session, window := m.selSession, m.selWindowID
 	fallback, userLeft := m.termWidth, m.userLeft
 	shown := m.hubChrome
+	activity, userAct := m.activity.open(), m.activity.userWidth
 	return func() tea.Msg {
 		win := liveWindowWidth(fallback)
 		left, right, err := fleetLiveSplitFor(win, userLeft)
+		if err == nil && activity {
+			lay := decideHubLayout(win, left, userAct)
+			if lay.hideViewer {
+				return fleetLiveMsg{key: key, win: win, hidden: true}
+			}
+			if lay.err == nil {
+				right = lay.viewer
+			}
+		}
 		if err == nil {
-			err = tmux.ShowLiveViewer(session, window, right)
+			err = showLiveViewer(session, window, right)
 			if err == nil {
 				hubZoomSync(!shown)
 			}
@@ -1526,6 +1601,8 @@ var (
 	switchToSessionWindow = tmux.SwitchToSessionWindow
 	focusLivePane         = tmux.FocusLivePane
 	focusViewerPane       = tmux.FocusViewerPane
+	hubWindowWidth        = tmux.HubWindowWidth
+	showLiveViewer        = tmux.ShowLiveViewer
 )
 
 // focusLive is Enter's and tab's action: move tmux focus to the live pane so
@@ -1773,8 +1850,9 @@ func (m FleetModel) renderTitle(cw int) string {
 // fleetTitleLayout is the rendered title row plus the columns of its click
 // target; a span is [0,0] when that target is not shown.
 type fleetTitleLayout struct {
-	line  string
-	badge [2]int
+	line     string
+	badge    [2]int
+	activity [2]int // the [activity] button
 }
 
 // titleLayout lays out the title row. Narrow widths drop the totals, then
@@ -1797,11 +1875,14 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 		if l.badge[1] > cw-fleetSidebarRightGutter {
 			l.badge = [2]int{}
 		}
+		if l.activity[1] > cw-fleetSidebarRightGutter {
+			l.activity = [2]int{}
+		}
 		return l
 	}
 	// bare is the title without counts.
 	bare := func() fleetTitleLayout {
-		left, l := m.titleLeft(tags[0])
+		left, l := m.titleLeft(tags[0], true)
 		return fit(l, left, "")
 	}
 	if !m.loaded || m.loadErr != nil {
@@ -1826,20 +1907,25 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 		tight := strings.Join(cells, " ")
 		candidates = append(candidates, candidate{tags[0], tight}, candidate{tags[1], tight})
 	}
-	for _, c := range candidates {
-		left, l := m.titleLeft(c.tag)
-		room := cw - fleetSidebarRightGutter - lipgloss.Width(left) - 1
-		if lipgloss.Width(c.right) <= room {
-			return fit(l, left, c.right)
+	// The [activity] button outranks the counts' suffix but not the counts:
+	// without room for both, the button is dropped (v still toggles the
+	// pane).
+	for _, button := range []bool{true, false} {
+		for _, c := range candidates {
+			left, l := m.titleLeft(c.tag, button)
+			room := cw - fleetSidebarRightGutter - lipgloss.Width(left) - 1
+			if lipgloss.Width(c.right) <= room {
+				return fit(l, left, c.right)
+			}
 		}
 	}
 	return bare()
 }
 
 // titleLeft builds the title row's left part: the title, the filter tag
-// (when tag is not empty), the serve indicator with its columns, and the
-// sort tag.
-func (m FleetModel) titleLeft(tag string) (string, fleetTitleLayout) {
+// (when tag is not empty), the serve indicator with its columns, the
+// [activity] button with its columns (when button is set), and the sort tag.
+func (m FleetModel) titleLeft(tag string, button bool) (string, fleetTitleLayout) {
 	var l fleetTitleLayout
 	left := strings.Repeat(" ", fleetSidebarLeftInset) + fleetTitleStyle.Render("agentctl hub")
 	if tag != "" {
@@ -1850,6 +1936,12 @@ func (m FleetModel) titleLeft(tag string) (string, fleetTitleLayout) {
 		start := lipgloss.Width(left)
 		left += badge
 		l.badge = [2]int{start, lipgloss.Width(left)}
+	}
+	if button {
+		left += fleetActivityGap
+		start := lipgloss.Width(left)
+		left += m.activityButton()
+		l.activity = [2]int{start, lipgloss.Width(left)}
 	}
 	if m.sortRecent {
 		left += fleetCountStyle.Render(fleetSortTag)
@@ -1905,7 +1997,7 @@ func (m FleetModel) renderList() string {
 			}
 		}
 		if pad := visible - used; pad > 0 {
-			if m.liveShown == "" {
+			if m.liveShown == "" && !m.activity.hidesViewer {
 				b.WriteString(fleetDimStyle.Render("  " + truncateToWidth(fleetNoViewHint, cw-2)))
 				b.WriteString("\n")
 				pad--

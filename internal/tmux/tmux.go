@@ -1288,8 +1288,13 @@ func CurrentWindowID() string {
 // WindowNameByID returns the current window name for the given window ID (e.g., "@3").
 // This queries tmux directly with an explicit target, so it works from any context
 // (popups, background processes, etc.).
-func WindowNameByID(windowID string) string {
-	target := sessionWindowTarget(SessionName, windowID)
+func WindowNameByID(windowID string) string { return WindowNameIn(SessionName, windowID) }
+
+// WindowNameIn is WindowNameByID for a window in an explicit session, for
+// callers that follow windows outside the package-global SessionName (the
+// hub's activity HUD). Returns "" when the window does not exist.
+func WindowNameIn(session, windowID string) string {
+	target := sessionWindowTarget(session, windowID)
 	cmd := exec.Command("tmux", "display-message", "-p", "-t", target, "#{window_name}")
 	out, err := cmd.Output()
 	if err != nil {
@@ -1302,7 +1307,13 @@ func WindowNameByID(windowID string) string {
 // It fetches the window name, strips spinner/status prefixes, and returns the base name.
 // Returns "" if the window doesn't exist or is the shell window.
 func ResolveAgentByWindowID(windowID string) string {
-	name := WindowNameByID(windowID)
+	return AgentNameFromWindowName(WindowNameByID(windowID))
+}
+
+// AgentNameFromWindowName returns the base agent name for a tmux window name
+// (status glyphs and instance suffix stripped), or "" for an empty name or
+// the shell window.
+func AgentNameFromWindowName(name string) string {
 	if name == "" || name == "shell" {
 		return ""
 	}

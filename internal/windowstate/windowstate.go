@@ -676,6 +676,18 @@ func UpdateIn(runtimeDir, windowID string, fn func(*WindowState)) error {
 	return err
 }
 
+// ReadIn is Read for another project's runtime dir (the "<project>/.agentctl"
+// path of a fleet.Group), for readers that follow a window outside their own
+// project (the hub's activity HUD). Like Read it never creates anything: a
+// missing record, windows dir or runtime dir yields the zero WindowState and
+// no error, and it applies the same symlink and log-path consistency guards.
+func ReadIn(runtimeDir, windowID string) (WindowState, error) {
+	if runtimeDir == "" {
+		return WindowState{}, nil
+	}
+	return store{root: runtimeDir, dir: WindowsDirFor(runtimeDir)}.read(windowID)
+}
+
 // Exists reports whether windowID has a state file.
 func Exists(windowID string) bool {
 	if windowsDir == "" || checkDir() != nil {

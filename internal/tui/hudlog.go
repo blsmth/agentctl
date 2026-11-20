@@ -24,6 +24,10 @@ type LogEntry struct {
 	FullInput map[string]any // Raw tool input (nil for non-tool entries)
 	FullText  string         // Full text content (for text/user entries, untruncated)
 	ToolName  string         // e.g. "Bash", "Edit", "Read" (empty for non-tool entries)
+	ToolUseID string         // tool_use id, used to pair the later tool_result
+	HasResult bool           // a tool_result has been paired to this call
+	Output    string         // sanitized, capped tool output (valid when HasResult)
+	IsError   bool           // the tool_result was flagged is_error
 	Style     lipgloss.Style
 }
 
@@ -45,6 +49,9 @@ type TailResult struct {
 	CacheCreateTokens int
 	Turns             int
 	Model             string
+	// Results holds tool results whose tool_use was not in this read (it was
+	// returned by an earlier call). Apply them with ApplyToolResults.
+	Results []ToolResult
 }
 
 // TailLog reads new JSONL entries from the given file starting at fromOffset.
@@ -54,6 +61,9 @@ type TailResult struct {
 func TailLog(logPath string, fromOffset int64) (TailResult, error) {
 	var result TailResult
 	result.NewOffset = fromOffset
+	// Index of tool_use id -> position in result.Entries, for pairing results
+	// that arrive in the same read as their call.
+	pending := map[string]int{}
 
 	f, err := os.Open(logPath)
 	if err != nil {
@@ -136,16 +146,24 @@ func TailLog(logPath string, fromOffset int64) (TailResult, error) {
 					if detail != "" {
 						summary += "  " + detail
 					}
+					id, _ := b["id"].(string)
+					if id != "" {
+						pending[id] = len(result.Entries)
+					}
 					result.Entries = append(result.Entries, LogEntry{
 						Timestamp: ts,
 						Kind:      "tool_call",
 						Summary:   summary,
 						FullInput: input,
 						ToolName:  name,
+						ToolUseID: id,
 						Style:     hudToolStyle,
 					})
 				case "text":
 					text, _ := b["text"].(string)
+					// Transcript text is untrusted too: strip escapes and
+					// control characters before it reaches either render mode.
+					text = sanitizeToolOutput(text)
 					if text == "" {
 						continue
 					}
@@ -175,11 +193,23 @@ func TailLog(logPath string, fromOffset int64) (TailResult, error) {
 					continue
 				}
 				if b["type"] == "tool_result" {
-					// Skip tool results — they are noise.
+					tr := parseToolResult(b)
+					if tr.ToolUseID == "" {
+						continue
+					}
+					if idx, ok := pending[tr.ToolUseID]; ok {
+						result.Entries[idx].applyResult(tr)
+						delete(pending, tr.ToolUseID)
+					} else {
+						result.Results = append(result.Results, tr)
+					}
 					continue
 				}
 				if b["type"] == "text" {
 					text, _ := b["text"].(string)
+					// Transcript text is untrusted too: strip escapes and
+					// control characters before it reaches either render mode.
+					text = sanitizeToolOutput(text)
 					if text == "" {
 						continue
 					}
@@ -283,6 +313,8 @@ func initHudlogStyles() {
 	hudUserStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Yellow))
 	hudTimeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Subtle))
 
+	initHudTerminalStyles()
+
 	hudRuntimeErrorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Red))
 	hudRuntimeHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Sky))
 	hudRuntimeHookStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Overlay))
@@ -357,5 +389,136 @@ func colorizeRuntimeLine(line string) string {
 		return hudRuntimeStateStyle.Render(line)
 	default:
 		return hudRuntimeDefaultStyle.Render(line)
+	}
+}
+
+// ── Tool results ────────────────────────────────────────────────────────────
+
+// maxToolOutputBytes caps the output stored per entry to bound memory.
+const maxToolOutputBytes = 64 * 1024
+
+// ToolResult is a parsed tool_result block awaiting pairing with its call.
+type ToolResult struct {
+	ToolUseID string
+	Output    string
+	IsError   bool
+}
+
+func (e *LogEntry) applyResult(tr ToolResult) {
+	e.HasResult = true
+	e.Output = tr.Output
+	e.IsError = tr.IsError
+}
+
+// ApplyToolResults pairs results returned by TailLog with calls already in
+// entries (searching newest first). Results with no matching call (evicted
+// from the ring buffer, or from before the tail started) are dropped.
+// It reports whether any entry changed.
+func ApplyToolResults(entries []LogEntry, results []ToolResult) bool {
+	changed := false
+	for _, tr := range results {
+		for i := len(entries) - 1; i >= 0; i-- {
+			if entries[i].ToolUseID == tr.ToolUseID && entries[i].Kind == "tool_call" {
+				entries[i].applyResult(tr)
+				changed = true
+				break
+			}
+		}
+	}
+	return changed
+}
+
+// parseToolResult extracts the id, text and error flag from a tool_result
+// block. Content may be a string or a list of text/image blocks.
+func parseToolResult(b map[string]any) ToolResult {
+	id, _ := b["tool_use_id"].(string)
+	isErr, _ := b["is_error"].(bool)
+	var text string
+	switch c := b["content"].(type) {
+	case string:
+		text = c
+	case []any:
+		var parts []string
+		for _, item := range c {
+			blk, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			switch blk["type"] {
+			case "text":
+				if t, _ := blk["text"].(string); t != "" {
+					parts = append(parts, t)
+				}
+			case "image":
+				parts = append(parts, "[image]")
+			}
+		}
+		text = strings.Join(parts, "\n")
+	}
+	return ToolResult{ToolUseID: id, Output: sanitizeToolOutput(text), IsError: isErr}
+}
+
+// sanitizeToolOutput strips ANSI escape sequences and control characters
+// (other than newline and tab) so untrusted output cannot drive the terminal,
+// normalizes line endings, and caps the size.
+func sanitizeToolOutput(s string) string {
+	if len(s) > maxToolOutputBytes {
+		s = s[:maxToolOutputBytes]
+		// Do not leave a split rune at the cut.
+		s = strings.ToValidUTF8(s, "")
+		s += "\n… (output truncated)"
+	}
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	var sb strings.Builder
+	sb.Grow(len(s))
+	rs := []rune(s)
+	for i := 0; i < len(rs); i++ {
+		r := rs[i]
+		if r == 0x1b {
+			i = skipEscape(rs, i)
+			continue
+		}
+		if r == '\r' {
+			continue
+		}
+		if r == '\n' || r == '\t' {
+			sb.WriteRune(r)
+			continue
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			continue
+		}
+		sb.WriteRune(r)
+	}
+	return sb.String()
+}
+
+// skipEscape returns the index of the last rune of the escape sequence that
+// starts at rs[i] (an ESC).
+func skipEscape(rs []rune, i int) int {
+	if i+1 >= len(rs) {
+		return i
+	}
+	switch rs[i+1] {
+	case '[': // CSI: params then a final byte 0x40-0x7e
+		j := i + 2
+		for j < len(rs) && !(rs[j] >= 0x40 && rs[j] <= 0x7e) {
+			j++
+		}
+		return j
+	case ']', 'P', '_', '^', 'X': // OSC/DCS/APC/PM/SOS: until BEL or ST
+		j := i + 2
+		for j < len(rs) {
+			if rs[j] == 0x07 {
+				return j
+			}
+			if rs[j] == 0x1b && j+1 < len(rs) && rs[j+1] == '\\' {
+				return j + 1
+			}
+			j++
+		}
+		return j
+	default: // two-byte escape
+		return i + 1
 	}
 }

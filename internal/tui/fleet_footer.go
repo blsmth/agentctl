@@ -184,6 +184,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"p", "open PR", "p"},
 		{"r", "refresh", "r"},
 		{"c", "chrome", "c"},
+		{fleetActivityKey, "activity pane", fleetActivityKey},
 		{"⇧↑/⇧↓", "move project", "shift+up"},
 		{"z", "fold", "z"},
 		{"Z", "focus mode", "Z"},

@@ -899,10 +899,23 @@ type MonitorCmd struct{}
 func (c *MonitorCmd) Run() error { cmdMonitor(); return nil }
 
 type HudCmd struct {
-	WindowID string `arg:"" help:"Tmux window ID"`
+	WindowID  string `arg:"" optional:"" help:"Tmux window ID"`
+	FollowHub bool   `name:"follow-hub" hidden:"" help:"Follow the hub list's selected agent instead of one window"`
 }
 
-func (c *HudCmd) Run() error { cmd.CmdHud(c.WindowID); return nil }
+// Run runs the HUD for one window, or, with --follow-hub, for whichever agent
+// the hub has selected.
+func (c *HudCmd) Run() error {
+	if c.FollowHub {
+		cmd.CmdHudFollowHub()
+		return nil
+	}
+	if c.WindowID == "" {
+		return fmt.Errorf("hud: a window ID is required without --follow-hub")
+	}
+	cmd.CmdHud(c.WindowID)
+	return nil
+}
 
 type HudToggleCmd struct {
 	WindowID string `arg:"" optional:"" help:"Tmux window ID"`

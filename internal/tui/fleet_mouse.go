@@ -215,6 +215,11 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		m.cancelNew()
 		return m, m.toggleServe()
 	}
+	if msg.Button == tea.MouseLeft && m.onActivityButton(msg.X, msg.Y) {
+		m.closeMenu()
+		m.cancelNew()
+		return m, m.toggleActivity()
+	}
 	idx, action := m.buttonDecision(msg.X, msg.Y, msg.Button)
 	if action != fleetClickNewShell && action != fleetClickNewAgent {
 		m.cancelNew() // any other click dismisses the selector

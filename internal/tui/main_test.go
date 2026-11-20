@@ -14,6 +14,7 @@ import (
 	"github.com/blsmth/agentctl/internal/servectl"
 	"github.com/blsmth/agentctl/internal/sweeprun"
 	"github.com/blsmth/agentctl/internal/testenv"
+	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // TestMain keeps the hub's view state (folds, filter) off the real state
@@ -44,6 +45,14 @@ func TestMain(m *testing.M) {
 	fleetSweep = func(context.Context, sweeprun.Target, bool) (sweeprun.Report, error) {
 		return sweeprun.Report{}, errors.New("sweep disabled in tests")
 	}
+	// Never touch the real hub window's panes or spawn the activity HUD;
+	// activity tests install their own stubs.
+	activityOpenPane = func(int) (string, error) { return "", errors.New("activity pane disabled in tests") }
+	activityKillPanes = func() error { return nil }
+	activityResize = func(string, int) error { return nil }
+	activityPanes = func() ([]tmux.HubPane, error) { return nil, errors.New("activity poll disabled in tests") }
+	activityListPane = func() string { return "" }
+	activityHideViewer = func() error { return nil }
 	// Never spawn gh or tmux from the tickets browser; tests that need a
 	// result install their own stub.
 	tkExec = func(string, ...string) ([]byte, error) { return nil, errExecDisabled }

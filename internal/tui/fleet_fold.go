@@ -335,6 +335,11 @@ type hubViewState struct {
 	Sort string `json:"sort,omitempty"`
 	// Shells shows the plain shell rows (hidden by default).
 	Shells bool `json:"shells,omitempty"`
+	// ActivityPane is the open activity pane's tmux pane ID ("" = closed),
+	// so a hot reload reattaches to it; ActivityWidth is the width the user
+	// dragged it to (0 = the default).
+	ActivityPane  string `json:"activity_pane,omitempty"`
+	ActivityWidth int    `json:"activity_width,omitempty"`
 }
 
 // HubViewEnv carries the hub's fold set, focus mode and filter (JSON, see
@@ -371,7 +376,10 @@ func (m FleetModel) viewState() hubViewState {
 		}
 	}
 	slices.Sort(folded)
-	return hubViewState{Folded: folded, Focus: m.focusMode, Filter: m.filter.key(), Sort: sortKey(m.sortRecent), Shells: m.showShells}
+	return hubViewState{
+		Folded: folded, Focus: m.focusMode, Filter: m.filter.key(), Sort: sortKey(m.sortRecent), Shells: m.showShells,
+		ActivityPane: m.activity.pane, ActivityWidth: m.activity.userWidth,
+	}
 }
 
 // applyViewState replaces the model's fold set, focus mode and filter.
@@ -386,6 +394,8 @@ func (m *FleetModel) applyViewState(s hubViewState) {
 	m.filter = parseFleetFilter(s.Filter)
 	m.sortRecent = s.Sort == sortRecentKey
 	m.showShells = s.Shells
+	// The recorded pane is confirmed or dropped by the first pane poll.
+	m.activity = fleetActivity{pane: s.ActivityPane, userWidth: max(s.ActivityWidth, 0)}
 }
 
 // parseHubView decodes a hubViewState; ok is false for anything that is not
@@ -422,29 +432,7 @@ func writeHubView(path string, s hubViewState) error {
 	if err != nil {
 		return fmt.Errorf("encoding hub view: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+hubViewFile+".*")
-	if err != nil {
-		return fmt.Errorf("creating temp file: %w", err)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod %s: %w", tmp.Name(), err)
-	}
-	if _, err := tmp.Write(append(data, '\n')); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("writing %s: %w", tmp.Name(), err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("closing %s: %w", tmp.Name(), err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("renaming to %s: %w", path, err)
-	}
-	return nil
+	return writeFileAtomic(path, append(data, '\n'))
 }
 
 // saveViewCmd persists the current view state in the background. A model
@@ -484,7 +472,12 @@ func (m *FleetModel) loadViewState() {
 		logging.Log("hub: view state not persisted: %v", err)
 	} else {
 		m.viewPath = path
-		m.applyViewState(readHubView(path))
+		s := readHubView(path)
+		// A pane ID in the file is from a previous hub process, whose exit
+		// killed the pane: only a hot reload (HubViewEnv, below) carries a
+		// live one. The dragged width is kept.
+		s.ActivityPane = ""
+		m.applyViewState(s)
 	}
 	if v, ok := os.LookupEnv(HubViewEnv); ok {
 		_ = os.Unsetenv(HubViewEnv)
