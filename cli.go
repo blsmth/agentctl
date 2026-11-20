@@ -124,7 +124,7 @@ type CLI struct {
 	// Tools
 	Context    ContextCmd    `cmd:"" help:"Manage cross-agent context store"`
 	Usage      UsageCmd      `cmd:"" help:"Show API usage stats"`
-	Cost       CostCmd       `cmd:"" help:"Per-session cost report (metered / sub / free) across all models"`
+	Cost       CostCmd       `cmd:"" help:"Cost report (metered / sub / free), background LLM calls, and model prices"`
 	Health     HealthCmd     `cmd:"" help:"Run health checks"`
 	Status     StatusCmd     `cmd:"" help:"Query agent status across every live session"`
 	Dashboards DashboardsCmd `cmd:"" help:"View dashboards"`
@@ -361,8 +361,14 @@ func (c *SweepCmd) Run() error {
 	})
 }
 
-// CostCmd implements `agentctl cost [session-id]`.
+// CostCmd groups `agentctl cost` (the report, default) and `cost prices`.
 type CostCmd struct {
+	Report CostReportCmd `cmd:"" default:"withargs" help:"Per-session cost report (default)"`
+	Prices CostPricesCmd `cmd:"" help:"Model prices ($ per 1M tokens) and where each comes from"`
+}
+
+// CostReportCmd implements `agentctl cost [session-id]`.
+type CostReportCmd struct {
 	Session string `arg:"" optional:"" help:"Session ID (prefix) for a per-model breakdown of one session"`
 	Since   string `default:"7d" help:"How far back to look (e.g. 36h, 7d, 2w)"`
 	By      string `enum:",agent,model,day,project" default:"" help:"Group totals by agent, model, day or project"`
@@ -370,8 +376,19 @@ type CostCmd struct {
 	JSON    bool   `help:"Output as JSON"`
 }
 
-func (c *CostCmd) Run() error {
+func (c *CostReportCmd) Run() error {
 	return cmd.RunCost(cmd.CostOptions{Session: c.Session, Since: c.Since, By: c.By, Metered: c.Metered, JSON: c.JSON})
+}
+
+// CostPricesCmd implements `agentctl cost prices [filter]`.
+type CostPricesCmd struct {
+	Filter  string `arg:"" optional:"" help:"Only models whose id contains this text"`
+	Refresh bool   `help:"Fetch the catalog of every nous backend first and rewrite the price cache"`
+	JSON    bool   `help:"Output as JSON"`
+}
+
+func (c *CostPricesCmd) Run() error {
+	return cmd.RunCostPrices(cmd.PricesOptions{Filter: c.Filter, Refresh: c.Refresh, JSON: c.JSON})
 }
 
 type KillAllCmd struct{}

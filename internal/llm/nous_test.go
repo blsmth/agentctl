@@ -14,6 +14,8 @@ import (
 
 	"github.com/blsmth/agentctl/internal/backendauth"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/llmusage"
+	"github.com/blsmth/agentctl/internal/tokens"
 )
 
 const testKey = "sk-test-SECRET-123"
@@ -220,5 +222,130 @@ func TestNousComplete402IsNoCredits(t *testing.T) {
 	}
 	if _, fresh := backendauth.NoCreditsFresh("nous-test", time.Now()); fresh {
 		t.Error("marker not cleared by success")
+	}
+}
+
+// ledgerNous is a client wired to a recorder instead of the real ledger.
+func ledgerNous(t *testing.T, url string) (*NousClient, *[]llmusage.Record) {
+	t.Helper()
+	c := newTestNous(t, url)
+	var recs []llmusage.Record
+	c.record = func(r llmusage.Record) error { recs = append(recs, r); return nil }
+	return c, &recs
+}
+
+func TestNousUsageReportedAndLedgered(t *testing.T) {
+	tokens.SetOverrides(map[string]tokens.ModelOverride{"openai/gpt-oss-120b": {InputPerMTok: 1, OutputPerMTok: 4, CacheReadPerMTok: 0.1}}, 0)
+	t.Cleanup(func() { tokens.SetOverrides(nil, 0) })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"A Title"},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":1000,"completion_tokens":50,"prompt_tokens_details":{"cached_tokens":400}}}`)
+	}))
+	defer srv.Close()
+	c, recs := ledgerNous(t, srv.URL)
+	c.clock = func() time.Time { return time.Date(2026, 11, 20, 1, 2, 3, 0, time.UTC) }
+	c.name = "nous"
+
+	var comp Completer = c
+	ctx := llmusage.WithMeta(context.Background(), llmusage.Meta{Feature: "titles", Window: "@7", Project: "agentctl"})
+	if _, err := comp.Complete(ctx, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	ur, ok := comp.(UsageReporter)
+	if !ok {
+		t.Fatal("NousClient should implement UsageReporter")
+	}
+	if u, have := ur.LastUsage(); !have || u != (Usage{PromptTokens: 1000, CompletionTokens: 50, CachedTokens: 400}) {
+		t.Errorf("usage = %+v, %v", u, have)
+	}
+	if len(*recs) != 1 {
+		t.Fatalf("records = %d", len(*recs))
+	}
+	r := (*recs)[0]
+	if !r.OK || r.Feature != "titles" || r.Backend != "nous" || r.Model != "openai/gpt-oss-120b" ||
+		r.Window != "@7" || r.Project != "agentctl" || r.PromptTokens != 1000 || r.CompletionTokens != 50 || r.CachedTokens != 400 {
+		t.Errorf("record = %+v", r)
+	}
+	if r.CostUSD == nil || *r.CostUSD < 0.00083999 || *r.CostUSD > 0.00084001 {
+		t.Errorf("cost = %v", r.CostUSD)
+	}
+}
+
+func TestNousLedgerFailuresAndMissingUsage(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   int
+		body     string
+		wantKind string
+		wantCost bool
+	}{
+		{"http error", 500, `oops`, "http_500", false},
+		{"no credits", 402, `{"error":{"message":"insufficient credits"}}`, "no_credits", false},
+		{"bad json", 200, `not json`, "decode", false},
+		{"no choices", 200, `{"choices":[]}`, "no_choices", false},
+		{"truncated still billed", 200, `{"choices":[{"message":{"content":"x"},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":1024}}`, "invalid_completion", true},
+	}
+	tokens.SetOverrides(map[string]tokens.ModelOverride{"openai/gpt-oss-120b": {InputPerMTok: 1, OutputPerMTok: 4}}, 0)
+	t.Cleanup(func() { tokens.SetOverrides(nil, 0) })
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.status)
+				_, _ = io.WriteString(w, tt.body)
+			}))
+			defer srv.Close()
+			c, recs := ledgerNous(t, srv.URL)
+			if _, err := c.Complete(context.Background(), "hi"); err == nil {
+				t.Fatal("want error")
+			}
+			if len(*recs) != 1 {
+				t.Fatalf("records = %d", len(*recs))
+			}
+			r := (*recs)[0]
+			if r.OK || r.Error != tt.wantKind || (r.CostUSD != nil) != tt.wantCost || r.Feature != "unknown" {
+				t.Errorf("record = %+v", r)
+			}
+		})
+	}
+}
+
+func TestNousLedgerNoKeyAndTimeout(t *testing.T) {
+	c, err := newNousClient("http://127.0.0.1:1", "m/x", func(context.Context) (string, error) { return "", errors.New("none") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recs []llmusage.Record
+	c.record = func(r llmusage.Record) error { recs = append(recs, r); return nil }
+	if _, err := c.Complete(context.Background(), "hi"); !errors.Is(err, ErrNoKey) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(recs) != 1 || recs[0].Error != "no_key" || recs[0].OK {
+		t.Errorf("records = %+v", recs)
+	}
+
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.Copy(io.Discard, r.Body); <-r.Context().Done() }))
+	defer slow.Close()
+	c2, recs2 := ledgerNous(t, slow.URL)
+	c2.timeout = 50 * time.Millisecond
+	_, _ = c2.Complete(context.Background(), "hi")
+	if len(*recs2) != 1 || (*recs2)[0].Error != "timeout" {
+		t.Errorf("records = %+v", *recs2)
+	}
+}
+
+func TestNousSuccessWithoutUsageHasNullCost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"T"},"finish_reason":"stop"}]}`)
+	}))
+	defer srv.Close()
+	c, recs := ledgerNous(t, srv.URL)
+	if _, err := c.Complete(context.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if _, have := c.LastUsage(); have {
+		t.Error("no usage block: LastUsage must report none")
+	}
+	if r := (*recs)[0]; !r.OK || r.CostUSD != nil {
+		t.Errorf("record = %+v", r)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -11,7 +12,9 @@ import (
 	"github.com/blsmth/agentctl/internal/backendauth"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/llm"
+	"github.com/blsmth/agentctl/internal/llmusage"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/pricecache"
 	"github.com/blsmth/agentctl/internal/shorttitle"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
@@ -39,6 +42,15 @@ var (
 	titleTakeBackfillBudget = shorttitle.TakeBackfillBudget
 	titleNow                = time.Now
 )
+
+// titlePriceRefresh keeps the machine-wide model price cache fresh (at most
+// one refresh a day, machine-wide), silently. Tests replace it.
+var titlePriceRefresh = func(ctx context.Context, s config.TitleSettings) {
+	backends := map[string]config.BackendConfig{s.BackendName: s.Backend}
+	if _, err := pricecache.RefreshIfStale(ctx, backends, pricecache.DefaultKey); err != nil {
+		logging.Debug("hook-title: price refresh: %v", err)
+	}
+}
 
 // Title is hook-title, registered async on Stop, UserPromptSubmit and
 // SessionStart. A window gets at most two titles: the first from its task, or
@@ -95,6 +107,9 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 	if !s.Enabled {
 		return
 	}
+	// Deferred so a slow catalog fetch never delays the title, and so runs
+	// that find nothing to title still keep the price cache fresh.
+	defer titlePriceRefresh(ctx, s)
 	ws, err := windowstate.Read(windowID)
 	if err != nil {
 		return
@@ -114,6 +129,28 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 		return
 	}
 	titleWindow(ctx, s, windowID, in, now, titleTakeBudget, nil)
+}
+
+// titleMeta attributes a title request in the usage ledger: the window and its
+// project (the work dir's repo name, worktree paths folded into their repo).
+func titleMeta(windowID string) llmusage.Meta {
+	m := llmusage.Meta{Feature: "titles", Window: windowID}
+	if ws, err := windowstate.Read(windowID); err == nil {
+		m.Project = projectName(ws.WorkDir)
+	}
+	return m
+}
+
+// projectName is the base name of dir, with a trailing "/.worktrees/<slug>"
+// folded into its repo.
+func projectName(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	if i := strings.Index(dir, "/.worktrees/"); i > 0 {
+		dir = dir[:i]
+	}
+	return filepath.Base(dir)
 }
 
 // titleReady reports whether a title request may be tried at all: the backend
@@ -170,6 +207,7 @@ func titleWindow(ctx context.Context, s config.TitleSettings, windowID string, i
 		logUpdateErr("hook-title", err)
 		return titleNotClaimed
 	}
+	ctx = llmusage.WithMeta(ctx, titleMeta(windowID))
 	title, kind, genErr := generateTitle(ctx, s, in, now, take)
 	if errors.Is(genErr, llm.ErrNoKey) || errors.Is(genErr, errTitleBudget) || errors.Is(genErr, backendauth.ErrNoCredits) {
 		// Not a failure of this input: drop the lease, write nothing else.

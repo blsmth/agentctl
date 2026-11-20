@@ -781,3 +781,29 @@ func TestPreflightNousRefusesWhileOutOfCredits(t *testing.T) {
 		t.Errorf("stale marker should not refuse: %v", err)
 	}
 }
+
+// A fetched catalog is also written to the machine-wide price cache (0600, in
+// the state dir) that internal/tokens reads at any age.
+func TestLoadNousCatalogWritesStateDirCopy(t *testing.T) {
+	nousEnvSetup(t, map[string]string{"nous": "k"})
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	srv := catalogServer(t, 200, nousCatalogJSON, nil)
+
+	if _, err := loadNousCatalog(srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(state, "agentctl", "pricing")
+	matches, _ := filepath.Glob(filepath.Join(dir, "nous-*.json"))
+	if len(matches) != 1 {
+		t.Fatalf("state-dir copies = %v", matches)
+	}
+	fi, _ := os.Stat(matches[0])
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v", fi.Mode().Perm())
+	}
+	data, _ := os.ReadFile(matches[0])
+	if p := tokens.ParseCatalog(data)["qwen/qwen3-coder-next"]; p.InputPerMTok == 0 {
+		t.Errorf("copy carries no pricing: %s", data)
+	}
+}

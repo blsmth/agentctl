@@ -15,6 +15,7 @@ import (
 	"github.com/blsmth/agentctl/internal/backendauth"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/llm"
+	"github.com/blsmth/agentctl/internal/llmusage"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
@@ -27,9 +28,10 @@ type titleFake struct {
 	prompts []string
 	block   chan struct{} // when set, Complete waits on it
 	hook    func()        // when set, runs inside Complete
+	meta    llmusage.Meta
 }
 
-func (f *titleFake) Complete(_ context.Context, p string) (string, error) {
+func (f *titleFake) Complete(ctx context.Context, p string) (string, error) {
 	if f.block != nil {
 		<-f.block
 	}
@@ -39,6 +41,7 @@ func (f *titleFake) Complete(_ context.Context, p string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
+	f.meta = llmusage.MetaFrom(ctx)
 	f.prompts = append(f.prompts, p)
 	return f.out, f.err
 }
@@ -54,6 +57,7 @@ type titleEnv struct {
 	// recap is what the stubbed log read returns for every window.
 	recap         string
 	backfillTakes atomic.Int32
+	refreshes     atomic.Int32
 }
 
 // setupTitle stubs every hook-title seam: settings, key check, budget,
@@ -79,12 +83,14 @@ func setupTitle(t *testing.T) *titleEnv {
 		return true
 	}
 	titleNow = func() time.Time { return e.now }
+	oldPR := titlePriceRefresh
+	titlePriceRefresh = func(context.Context, config.TitleSettings) { e.refreshes.Add(1) }
 	oldBB, oldR := titleTakeBackfillBudget, titleRecap
 	titleTakeBackfillBudget = func(now time.Time) bool { e.backfillTakes.Add(1); return titleTakeBudget(now) }
 	titleRecap = func(string) string { return e.recap }
 	t.Cleanup(func() {
 		titleSettings, titleKeyAvailable, newTitleCompleter, titleTakeBudget, titleNow = oldS, oldK, oldC, oldB, oldN
-		titleTakeBackfillBudget, titleRecap = oldBB, oldR
+		titleTakeBackfillBudget, titleRecap, titlePriceRefresh = oldBB, oldR, oldPR
 	})
 	return e
 }
@@ -620,6 +626,49 @@ func TestTitleInFlightRequestDroppedAfterClear(t *testing.T) {
 	ws := readWS(t, "@4")
 	if ws.ShortTitle.Title != "" || ws.ShortTitle.Final || ws.FirstPrompt != "" {
 		t.Fatalf("stale title written after clear: %+v", ws)
+	}
+}
+
+// Every title request is attributed in the usage ledger: feature, window and
+// the project (worktree paths fold into their repo).
+func TestTitleRequestCarriesLedgerMeta(t *testing.T) {
+	e := setupTitle(t)
+	seedWindow(t, "@4", windowstate.WindowState{State: "idle", Task: "sort photos", WorkDir: "/src/agentctl/.worktrees/agent-x-issue-3"})
+	runTitle(context.Background(), "@4", "", "")
+	want := llmusage.Meta{Feature: "titles", Window: "@4", Project: "agentctl"}
+	if e.fake.calls != 1 || e.fake.meta != want {
+		t.Fatalf("calls=%d meta=%+v, want %+v", e.fake.calls, e.fake.meta, want)
+	}
+}
+
+func TestProjectName(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                                 "",
+		"/src/agentctl":                    "agentctl",
+		"/src/agentctl/.worktrees/agent-1": "agentctl",
+		"/src/agentctl/sub/dir":            "dir",
+	} {
+		if got := projectName(in); got != want {
+			t.Errorf("projectName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The price cache is kept fresh whenever hook-title runs with titles on,
+// including runs that find nothing to title; never when titles are off.
+func TestTitleKeepsPriceCacheFresh(t *testing.T) {
+	e := setupTitle(t)
+	seedWindow(t, "@4", windowstate.WindowState{State: "idle", Task: "sort photos"})
+	runTitle(context.Background(), "@4", "", "")
+	runTitle(context.Background(), "@4", "Done.", "") // refinement, then frozen
+	runTitle(context.Background(), "@4", "More.", "") // frozen: nothing to title
+	if got := e.refreshes.Load(); got != 3 {
+		t.Errorf("refresh checks = %d, want 3", got)
+	}
+	e.settings.Enabled = false
+	runTitle(context.Background(), "@4", "", "")
+	if got := e.refreshes.Load(); got != 3 {
+		t.Errorf("refreshed with titles off (%d)", got)
 	}
 }
 

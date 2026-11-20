@@ -1544,6 +1544,8 @@ func Load() *Config {
 	// Nous catalog pricing is read lazily from the dispatch cache in the
 	// runtime dir; no-op when the dir is unchanged.
 	tokens.SetCatalogDir(paths.RuntimeDir())
+	// The machine-wide copy under the state dir (any age) is resolved lazily.
+	tokens.SetStateCatalogDir(pricingDirOrEmpty)
 
 	return cfg
 }

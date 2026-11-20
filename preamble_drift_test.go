@@ -85,6 +85,10 @@ func checkInvocation(model *kong.Node, ctxCases map[string]bool, span string) st
 		}
 		return ""
 	}
+	// A bare parent command runs its default subcommand, so its flags count.
+	if node.DefaultCmd != nil {
+		node = node.DefaultCmd
+	}
 	for _, f := range preambleFlagRe.FindAllString(span, -1) {
 		if !nodeHasFlag(node, strings.TrimPrefix(f, "--")) {
 			return "unknown flag " + f + " for `agentctl " + strings.Join(path, " ") + "`"

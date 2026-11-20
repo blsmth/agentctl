@@ -9,10 +9,12 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/backendauth"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/llmusage"
 )
 
 // nousTimeout bounds one chat-completions request, key resolution included.
@@ -45,6 +47,14 @@ type NousClient struct {
 	key        KeyFunc
 	timeout    time.Duration
 	httpClient *http.Client
+
+	// record receives one ledger line per Complete call; nil skips it (tests).
+	record func(llmusage.Record) error
+	clock  func() time.Time
+
+	mu    sync.Mutex
+	usage Usage
+	have  bool
 }
 
 // NewNousClient builds a client for the nous-kind backend name, sending model.
@@ -65,6 +75,7 @@ func NewNousClient(name string, b config.BackendConfig, model string) (*NousClie
 		return nil, err
 	}
 	c.name = name
+	c.record = llmusage.Append
 	return c, nil
 }
 
@@ -82,6 +93,7 @@ func newNousClient(baseURL, model string, key KeyFunc) (*NousClient, error) {
 		key:        key,
 		timeout:    nousTimeout,
 		httpClient: &http.Client{},
+		clock:      time.Now,
 	}, nil
 }
 
@@ -110,19 +122,96 @@ type chatResponse struct {
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens        int `json:"prompt_tokens"`
+		CompletionTokens    int `json:"completion_tokens"`
+		PromptTokensDetails *struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+	} `json:"usage"`
+}
+
+// Usage is the token usage a completion reported. PromptTokens includes
+// CachedTokens.
+type Usage struct {
+	PromptTokens     int
+	CompletionTokens int
+	CachedTokens     int
+}
+
+// UsageReporter is implemented by Completers that learn token usage from the
+// provider. LastUsage is the usage of the most recent Complete call, and false
+// when that call reported none (or failed before a response).
+type UsageReporter interface {
+	LastUsage() (Usage, bool)
+}
+
+// LastUsage implements UsageReporter.
+func (c *NousClient) LastUsage() (Usage, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.usage, c.have
 }
 
 // Complete sends prompt as one user message and returns the assistant's
 // content, trimmed. Reasoning fields are ignored. Every failure (key,
 // network, timeout, non-200, malformed or truncated or blank completion) is an
 // error with an empty string; no error carries the key.
+//
+// Every call, failed ones included, is appended to the usage ledger
+// (internal/llmusage), attributed by the llmusage.Meta in ctx.
 func (c *NousClient) Complete(ctx context.Context, prompt string) (string, error) {
+	c.mu.Lock()
+	c.usage, c.have = Usage{}, false
+	c.mu.Unlock()
+	content, kind, err := c.complete(ctx, prompt)
+	c.log(ctx, kind, err)
+	return content, err
+}
+
+// log appends the ledger line for the call that just finished. A failed write
+// is dropped: the ledger never fails a completion.
+func (c *NousClient) log(ctx context.Context, kind string, err error) {
+	if c.record == nil {
+		return
+	}
+	m := llmusage.MetaFrom(ctx)
+	feature := m.Feature
+	if feature == "" {
+		feature = "unknown"
+	}
+	u, have := c.LastUsage()
+	r := llmusage.Record{
+		TS: c.clock(), Feature: feature, Backend: c.name, Model: c.model,
+		PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, CachedTokens: u.CachedTokens,
+		Window: m.Window, Project: m.Project, OK: err == nil,
+	}
+	if have {
+		// Priced only when the provider said what was used; null otherwise.
+		r.CostUSD = llmusage.Cost(c.model, u.PromptTokens, u.CompletionTokens, u.CachedTokens)
+	}
+	if err != nil {
+		r.Error = kind
+	}
+	_ = c.record(r)
+}
+
+// complete is Complete without the ledger; kind names the failure.
+func (c *NousClient) complete(ctx context.Context, prompt string) (content, kind string, err error) {
+	content, kind, err = c.doComplete(ctx, prompt)
+	if err != nil && kind == "" {
+		kind = "error"
+	}
+	return content, kind, err
+}
+
+func (c *NousClient) doComplete(ctx context.Context, prompt string) (content, kind string, err error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
 	key, err := c.key(ctx)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrNoKey, err)
+		return "", "no_key", fmt.Errorf("%w: %v", ErrNoKey, err)
 	}
 
 	payload, err := json.Marshal(chatRequest{
@@ -132,12 +221,12 @@ func (c *NousClient) Complete(ctx context.Context, prompt string) (string, error
 		Temperature: nousTemperature,
 	})
 	if err != nil {
-		return "", fmt.Errorf("llm: marshal nous request: %w", err)
+		return "", "error", fmt.Errorf("llm: marshal nous request: %w", err)
 	}
 	url := c.baseURL + "/v1/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return "", fmt.Errorf("llm: build nous request: %w", err)
+		return "", "error", fmt.Errorf("llm: build nous request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
@@ -145,43 +234,68 @@ func (c *NousClient) Complete(ctx context.Context, prompt string) (string, error
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("llm: nous request to %s failed: %w", url, redactErr(err, key))
+		return "", transportKind(err), fmt.Errorf("llm: nous request to %s failed: %w", url, redactErr(err, key))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, nousMaxBody))
 	if err != nil {
-		return "", fmt.Errorf("llm: read nous response: %w", redactErr(err, key))
+		return "", transportKind(err), fmt.Errorf("llm: read nous response: %w", redactErr(err, key))
 	}
 	if backendauth.IsNoCredits(resp.StatusCode, body) {
 		if c.name != "" {
 			backendauth.MarkNoCredits(c.name)
 		}
-		return "", fmt.Errorf("llm: nous returned HTTP %d: %w", resp.StatusCode, backendauth.ErrNoCredits)
+		return "", "no_credits", fmt.Errorf("llm: nous returned HTTP %d: %w", resp.StatusCode, backendauth.ErrNoCredits)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("llm: nous returned HTTP %d: %s", resp.StatusCode, snippet(string(body), key))
+		return "", fmt.Sprintf("http_%d", resp.StatusCode), fmt.Errorf("llm: nous returned HTTP %d: %s", resp.StatusCode, snippet(string(body), key))
 	}
 
 	var cr chatResponse
 	if err := json.Unmarshal(body, &cr); err != nil {
-		return "", fmt.Errorf("llm: decode nous response: %w", err)
+		return "", "decode", fmt.Errorf("llm: decode nous response: %w", err)
 	}
+	c.noteUsage(cr)
 	if len(cr.Choices) == 0 {
-		return "", errors.New("llm: nous response has no choices")
+		return "", "no_choices", errors.New("llm: nous response has no choices")
 	}
 	ch := cr.Choices[0]
-	var content string
 	if ch.Message.Content != nil {
 		content = strings.TrimSpace(*ch.Message.Content)
 	}
 	if content == "" || (ch.FinishReason != "" && ch.FinishReason != "stop") {
-		return "", fmt.Errorf("llm: invalid nous completion: finish_reason=%q content_len=%d reasoning_len=%d",
+		return "", "invalid_completion", fmt.Errorf("llm: invalid nous completion: finish_reason=%q content_len=%d reasoning_len=%d",
 			ch.FinishReason, len(content), len(ch.Message.Reasoning)+len(ch.Message.ReasoningContent))
 	}
 	if c.name != "" {
 		backendauth.ClearNoCredits(c.name)
 	}
-	return content, nil
+	return content, "", nil
+}
+
+// noteUsage keeps the usage block of a decoded response for LastUsage.
+func (c *NousClient) noteUsage(cr chatResponse) {
+	if cr.Usage == nil {
+		return
+	}
+	u := Usage{PromptTokens: cr.Usage.PromptTokens, CompletionTokens: cr.Usage.CompletionTokens}
+	if d := cr.Usage.PromptTokensDetails; d != nil {
+		u.CachedTokens = d.CachedTokens
+	}
+	c.mu.Lock()
+	c.usage, c.have = u, true
+	c.mu.Unlock()
+}
+
+// transportKind classifies a request or body-read failure.
+func transportKind(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	return "network"
 }
 
 // snippet is the first line of a response body, capped, with the key removed.
