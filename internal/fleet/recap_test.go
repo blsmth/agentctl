@@ -419,3 +419,64 @@ func TestTruncateWords(t *testing.T) {
 		})
 	}
 }
+
+// A human title is the row's title whatever the recap source, ticket and AI
+// title rows included.
+func TestTagLogsManualTitle(t *testing.T) {
+	rows := []Row{
+		{AgentState: state.AgentState{TicketRef: "60", TicketTitle: "A ticket title", ShortTitle: "Mine", ShortManual: true}},
+		{AgentState: state.AgentState{LogPath: writeLog(t, jsonl(t, aiTitle("Some AI title"))), ShortTitle: "Mine", ShortManual: true}},
+		{AgentState: state.AgentState{ShortTitle: "Mine", ShortManual: true}},
+	}
+	TagLogs(rows)
+	for i, r := range rows {
+		if r.Recap.Short() != "Mine" {
+			t.Errorf("row %d Short = %q, want the manual title (recap %+v)", i, r.Recap.Short(), r.Recap)
+		}
+	}
+	if w := ToWindow(rows[0], Meta{}); w.Title != "Mine" {
+		t.Errorf("ToWindow title = %q", w.Title)
+	}
+}
+
+func TestAgentFromWindowCarriesManual(t *testing.T) {
+	recs := map[string]windowstate.WindowState{
+		"@3": {State: "idle", ShortTitle: windowstate.ShortTitle{Title: "Mine", Final: true, Manual: true}},
+		"@4": {State: "idle", ShortTitle: windowstate.ShortTitle{Title: "Auto", Final: true}},
+	}
+	if a := agentFromWindow(1, tmux.WindowInfo{ID: "@3"}, "x", recs); !a.ShortManual {
+		t.Error("manual title not carried")
+	}
+	if a := agentFromWindow(1, tmux.WindowInfo{ID: "@4"}, "x", recs); a.ShortManual {
+		t.Error("auto title marked manual")
+	}
+}
+
+func TestRetitle(t *testing.T) {
+	const summary = "We reorganized the photo library. Then more."
+	tests := []struct {
+		name      string
+		row       Row
+		title     string
+		wantShort string
+		wantSrc   RecapSource
+	}{
+		{"summary gets the title", Row{AgentState: state.AgentState{ShortTitle: "Auto"}, Recap: RecapLine{Text: summary, Source: RecapSummary, Title: "Auto"}}, "Mine", "Mine", RecapSummary},
+		{"ticket gets a manual title", Row{AgentState: state.AgentState{TicketRef: "1", TicketTitle: "T"}, Recap: RecapLine{Text: "#1 T", Source: RecapTask}}, "Mine", "Mine", RecapTask},
+		{"clear returns to the recap sentence", Row{AgentState: state.AgentState{ShortTitle: "Mine", ShortManual: true}, Recap: RecapLine{Text: summary, Source: RecapSummary, Title: "Mine"}}, "", "We reorganized the photo library", RecapSummary},
+		{"title standing in for a recap is replaced", Row{AgentState: state.AgentState{ShortTitle: "Auto"}, Recap: RecapLine{Text: "Auto", Source: RecapTitle}}, "Mine", "Mine", RecapTitle},
+		{"clearing a stand-in leaves no recap", Row{AgentState: state.AgentState{ShortTitle: "Mine", ShortManual: true}, Recap: RecapLine{Text: "Mine", Source: RecapTitle, Title: "Mine"}}, "", "", RecapNone},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := tt.row
+			Retitle(&r, tt.title)
+			if r.Recap.Short() != tt.wantShort || r.Recap.Source != tt.wantSrc {
+				t.Errorf("recap = %+v, want short %q source %v", r.Recap, tt.wantShort, tt.wantSrc)
+			}
+			if r.ShortTitle != tt.title || r.ShortManual != (tt.title != "") {
+				t.Errorf("short title = %q manual=%v", r.ShortTitle, r.ShortManual)
+			}
+		})
+	}
+}

@@ -140,6 +140,8 @@ func (m FleetModel) footerBody(cw int) string {
 	switch {
 	case m.newSessionOpen():
 		hints = fleetNewSessionHints
+	case m.renameOpen():
+		hints = fleetRenameHints
 	case m.newArmed():
 		hints = fleetNewHints
 	case m.sweepArmed():
@@ -176,6 +178,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"n", "new", "n"},
 		{fleetNewSessionKey, "new session", fleetNewSessionKey},
 		{"x", "close", "x"},
+		{fleetRenameKey, "rename", fleetRenameKey},
 		{fleetSweepKey, "sweep project", fleetSweepKey},
 		{"J", "home", "J"},
 		{"p", "open PR", "p"},
@@ -233,6 +236,7 @@ func fleetHelpLayout(items []fleetHelpItem, cw int) (lines []string, spans []fle
 // openHelp opens the "?" key reference in the footer.
 func (m *FleetModel) openHelp() {
 	m.cancelNewSession()
+	m.cancelRename()
 	m.cancelClose()
 	m.cancelNew()
 	m.cancelSweep()

@@ -671,3 +671,53 @@ func TestTitleKeepsPriceCacheFresh(t *testing.T) {
 		t.Errorf("refreshed with titles off (%d)", got)
 	}
 }
+
+// A human title (set from the hub) is never replaced: not by hook-title,
+// not by a request already in flight, and not by the /clear reset.
+func TestTitleManualTitleIsKept(t *testing.T) {
+	manual := windowstate.ShortTitle{Title: "My Name", Kind: "go", Final: true, Manual: true}
+
+	t.Run("hook-title skips it", func(t *testing.T) {
+		e := setupTitle(t)
+		// Manual alone (even unfrozen) is enough.
+		seedWindow(t, "@4", windowstate.WindowState{State: "idle", FirstPrompt: "work", ShortTitle: windowstate.ShortTitle{Title: "My Name", Manual: true}})
+		runTitle(context.Background(), "@4", "Did the work.", "")
+		if e.fake.calls != 0 || readTitle(t, "@4").Title != "My Name" {
+			t.Fatalf("calls=%d title=%+v", e.fake.calls, readTitle(t, "@4"))
+		}
+	})
+
+	t.Run("in-flight request dropped", func(t *testing.T) {
+		e := setupTitle(t)
+		seedWindow(t, "@4", windowstate.WindowState{State: "working", FirstPrompt: "work"})
+		e.fake.hook = func() {
+			if err := windowstate.Update("@4", func(ws *windowstate.WindowState) { ws.ShortTitle = manual }); err != nil {
+				t.Error(err)
+			}
+		}
+		runTitle(context.Background(), "@4", "Did the work.", "")
+		if got := readTitle(t, "@4"); got != manual {
+			t.Fatalf("in-flight title replaced the manual one: %+v", got)
+		}
+	})
+
+	t.Run("survives clear", func(t *testing.T) {
+		e := setupTitle(t)
+		t.Setenv("AGENTCTL", "1")
+		t.Setenv("AGENTCTL_WINDOW_ID", "@9")
+		t.Setenv("TMUX_PANE", "")
+		t.Setenv("AGENTCTL_SESSION_ID", "")
+		t.Setenv("CLAUDE_ENV_FILE", filepath.Join(t.TempDir(), "env"))
+		seedWindow(t, "@9", windowstate.WindowState{State: "idle", FirstPrompt: "old work", ShortTitle: manual})
+		payload := fmt.Sprintf(`{"session_id":"s2","cwd":%q,"source":"clear"}`, t.TempDir())
+		runHookCaptured(t, nil, payload, SessionStart)
+		ws := readWS(t, "@9")
+		if ws.ShortTitle != manual || ws.FirstPrompt != "" {
+			t.Fatalf("after clear: title=%+v first_prompt=%q", ws.ShortTitle, ws.FirstPrompt)
+		}
+		runTitle(context.Background(), "@9", "", "new work entirely")
+		if e.fake.calls != 0 || readTitle(t, "@9") != manual {
+			t.Fatalf("retitled after clear: calls=%d %+v", e.fake.calls, readTitle(t, "@9"))
+		}
+	})
+}

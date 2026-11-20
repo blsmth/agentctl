@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/llmusage"
@@ -126,7 +127,7 @@ func printLLMSection(recs []llmusage.Record, by string) {
 			fmtCount(t.Completion), llmCostCell(t)}
 	}
 	if groups := groupLLM(recs, by); groups != nil {
-		t := costTable(append([]string{upper(by)}, headers...)...)
+		t := costTable(append([]string{strings.ToUpper(by)}, headers...)...)
 		for _, g := range groups {
 			t.Row(append([]string{g.Key}, row(g.llmTotals)...)...)
 		}
@@ -140,16 +141,6 @@ func printLLMSection(recs []llmusage.Record, by string) {
 	if totals.Unpriced > 0 {
 		fmt.Println(cliMuted().Render(fmt.Sprintf("%d call(s) have no known price (+?) and are not in the cost", totals.Unpriced)))
 	}
-}
-
-func upper(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if c >= 'a' && c <= 'z' {
-			b[i] = c - 32
-		}
-	}
-	return string(b)
 }
 
 // ─── JSON ─────────────────────────────────────────────────────────────────────

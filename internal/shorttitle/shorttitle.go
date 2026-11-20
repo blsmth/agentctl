@@ -101,7 +101,7 @@ func (in Input) Hash() string {
 // is due only for the refinement, once in carries the agent's response.
 // Time and new recaps play no part.
 func Due(st windowstate.ShortTitle, in Input, now time.Time) bool {
-	if st.Final || in.Empty() || now.Before(st.RetryAfter) {
+	if st.Final || st.Manual || in.Empty() || now.Before(st.RetryAfter) {
 		return false
 	}
 	if st.InputHash != "" && st.InputHash == in.Hash() {
@@ -131,6 +131,9 @@ func backoff(n int) time.Duration {
 // in was a refinement), or (on err) the old title kept, unfrozen, with a
 // retry-after backoff. A failed attempt keeps the old kind too.
 func Apply(st *windowstate.ShortTitle, in Input, title, kind string, err error, now time.Time) {
+	if st.Manual {
+		return // a human title is never replaced
+	}
 	if err != nil || title == "" {
 		st.Failures++
 		st.RetryAfter = now.Add(backoff(st.Failures))

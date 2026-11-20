@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -239,7 +240,8 @@ type WindowState struct {
 	LogPR LogPRScan `json:"log_pr,omitempty"`
 
 	// ShortTitle is the window's generated 2-5 word title and its throttle
-	// state, written only by hook-title (internal/shorttitle).
+	// state, written by hook-title (internal/shorttitle), or a human title
+	// set from the hub (ShortTitle.Manual).
 	ShortTitle ShortTitle `json:"short_title,omitzero"`
 
 	// CompleteFiredAt is when the done-edge completion handlers last fired.
@@ -267,6 +269,10 @@ type ShortTitle struct {
 	Final      bool      `json:"final,omitempty"`
 	RetryAfter time.Time `json:"retry_after,omitzero"`
 	Failures   int       `json:"failures,omitempty"`
+	// Manual marks a title a human set (the hub's rename). The title
+	// pipeline never replaces it: hook-title, the housekeeping backfill and
+	// the /clear reset all leave it alone. Manual titles are also Final.
+	Manual bool `json:"manual,omitempty"`
 }
 
 // ErrGone is returned by Transact/Update for a window that was removed
@@ -408,12 +414,24 @@ func Dir() string {
 	return windowsDir
 }
 
+// store is one windows directory and its no-symlink root. The package-level
+// functions use the one Init set (local); UpdateIn builds one for another
+// project's runtime dir, so cross-session writers never rebind the globals.
+type store struct {
+	root, dir string
+}
+
+// local is the store Init set up for this process's project.
+func local() store { return store{root: rootDir, dir: windowsDir} }
+
 // filePath returns the path to the state file for windowID (e.g. "@97" → "<dir>/@97.json").
-func filePath(windowID string) string {
+func filePath(windowID string) string { return local().filePath(windowID) }
+
+func (s store) filePath(windowID string) string {
 	// windowID characters like "@" are valid in filenames on Unix.
 	// Sanitize path separators just in case.
 	safe := strings.ReplaceAll(windowID, string(filepath.Separator), "_")
-	return filepath.Join(windowsDir, safe+".json")
+	return filepath.Join(s.dir, safe+".json")
 }
 
 // Read loads the state file for windowID. Returns a zero-value WindowState
@@ -430,17 +448,19 @@ func filePath(windowID string) string {
 // The windows dir sits in the repo-controlled runtime dir, so Read refuses a
 // symlinked dir chain or state file (see checkDir) rather than trusting
 // whatever a planted link points at.
-func Read(windowID string) (WindowState, error) {
-	if windowsDir == "" {
+func Read(windowID string) (WindowState, error) { return local().read(windowID) }
+
+func (s store) read(windowID string) (WindowState, error) {
+	if s.dir == "" {
 		return WindowState{}, nil
 	}
-	if err := checkDir(); err != nil {
+	if err := s.checkDir(); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return WindowState{}, nil
 		}
 		return WindowState{}, fmt.Errorf("reading window state %s: %w", windowID, err)
 	}
-	data, err := readNoFollow(filePath(windowID))
+	data, err := readNoFollow(s.filePath(windowID))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return WindowState{}, nil
@@ -507,8 +527,10 @@ func warnInconsistentLogPath(windowID, logPath, sessionID string) {
 
 // Write atomically writes ws as the state file for windowID (tmp+rename).
 // It sets UpdatedAt to the current time before writing.
-func Write(windowID string, ws WindowState) error {
-	if windowsDir == "" {
+func Write(windowID string, ws WindowState) error { return local().write(windowID, ws) }
+
+func (s store) write(windowID string, ws WindowState) error {
+	if s.dir == "" {
 		return fmt.Errorf("windowstate: Init not called")
 	}
 	ws.UpdatedAt = time.Now()
@@ -520,23 +542,29 @@ func Write(windowID string, ws WindowState) error {
 
 	// The windows dir lives in the runtime dir inside the user's repository;
 	// safefs refuses to write through any symlink a cloned repo planted.
-	if err := safefs.WriteFile(rootDir, filePath(windowID), data, 0o600); err != nil {
+	if err := safefs.WriteFile(s.root, s.filePath(windowID), data, 0o600); err != nil {
 		return fmt.Errorf("writing window state %s: %w", windowID, err)
 	}
-	tightenWindowsDir()
+	if s == local() {
+		tightenWindowsDir()
+	}
 	return nil
 }
 
 // goneFilePath returns the tombstone path for windowID ("<dir>/@97.gone").
-func goneFilePath(windowID string) string {
-	return strings.TrimSuffix(filePath(windowID), ".json") + ".gone"
+func goneFilePath(windowID string) string { return local().goneFilePath(windowID) }
+
+func (s store) goneFilePath(windowID string) string {
+	return strings.TrimSuffix(s.filePath(windowID), ".json") + ".gone"
 }
 
 // lockWindow takes the exclusive per-window flock. O_NOFOLLOW: a symlinked
 // lock file must not create or open its target. The returned func releases it.
-func lockWindow(windowID string) (func(), error) {
-	lockPath := filePath(windowID) + ".lock"
-	lockFile, err := safefs.OpenNoFollow(rootDir, lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+func lockWindow(windowID string) (func(), error) { return local().lockWindow(windowID) }
+
+func (s store) lockWindow(windowID string) (func(), error) {
+	lockPath := s.filePath(windowID) + ".lock"
+	lockFile, err := safefs.OpenNoFollow(s.root, lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("opening lock file for %s: %w", windowID, err)
 	}
@@ -553,8 +581,8 @@ func lockWindow(windowID string) (func(), error) {
 
 // tombstoneFresh reports whether windowID has an unexpired tombstone. An
 // expired one is deleted lazily. Callers hold the window lock.
-func tombstoneFresh(windowID string) bool {
-	gp := goneFilePath(windowID)
+func (s store) tombstoneFresh(windowID string) bool {
+	gp := s.goneFilePath(windowID)
 	data, err := readNoFollow(gp)
 	if err != nil {
 		return false
@@ -577,19 +605,30 @@ func tombstoneFresh(windowID string) bool {
 // holds the per-window flock for the whole read-modify-write. If the window
 // has a fresh tombstone nothing is written and ErrGone is returned.
 func Transact(windowID string, fn func(*WindowState)) (old, updated WindowState, err error) {
-	if windowsDir == "" {
+	return local().transact(windowID, false, fn)
+}
+
+// transact is Transact on s. With mustExist, a window with no record gets
+// ErrNoRecord and nothing is written (no record is created).
+func (s store) transact(windowID string, mustExist bool, fn func(*WindowState)) (old, updated WindowState, err error) {
+	if s.dir == "" {
 		return old, updated, fmt.Errorf("windowstate: Init not called")
 	}
-	unlock, err := lockWindow(windowID)
+	unlock, err := s.lockWindow(windowID)
 	if err != nil {
 		return old, updated, err
 	}
 	defer unlock()
 
-	if tombstoneFresh(windowID) {
+	if s.tombstoneFresh(windowID) {
 		return old, updated, ErrGone
 	}
-	ws, err := Read(windowID)
+	if mustExist {
+		if _, err := os.Lstat(s.filePath(windowID)); err != nil {
+			return old, updated, ErrNoRecord
+		}
+	}
+	ws, err := s.read(windowID)
 	if err != nil {
 		return old, updated, err
 	}
@@ -599,7 +638,7 @@ func Transact(windowID string, fn func(*WindowState)) (old, updated WindowState,
 		ws.StateSince = time.Now()
 	}
 	updated = ws.clone()
-	if err := Write(windowID, ws); err != nil {
+	if err := s.write(windowID, ws); err != nil {
 		return old, updated, err
 	}
 	return old, updated, nil
@@ -610,6 +649,30 @@ func Transact(windowID string, fn func(*WindowState)) (old, updated WindowState,
 // ErrGone for a recently removed window.
 func Update(windowID string, fn func(*WindowState)) error {
 	_, _, err := Transact(windowID, fn)
+	return err
+}
+
+// ErrNoRecord is returned by UpdateIn for a window with no state file.
+var ErrNoRecord = errors.New("windowstate: no record for window")
+
+// UpdateIn is Update against another project's runtime dir (a fleet group's
+// RuntimeDir), for cross-session writers such as the hub. It never creates a
+// record: a window with none gets ErrNoRecord. Like Read and Write it refuses
+// a symlink anywhere from runtimeDir down to the state file.
+func UpdateIn(runtimeDir, windowID string, fn func(*WindowState)) error {
+	if runtimeDir == "" {
+		return fmt.Errorf("windowstate: no runtime dir for %s", windowID)
+	}
+	s := store{root: runtimeDir, dir: WindowsDirFor(runtimeDir)}
+	// Check before locking: taking the lock creates the windows dir and a
+	// lock file, which a record-less window must not leave behind.
+	if _, err := os.Lstat(s.filePath(windowID)); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return ErrNoRecord
+		}
+		return fmt.Errorf("windowstate: checking record for %s: %w", windowID, err)
+	}
+	_, _, err := s.transact(windowID, true, fn)
 	return err
 }
 
@@ -712,12 +775,14 @@ func globEscape(s string) string {
 // checkDir verifies the windows dir and every directory from rootDir down
 // to it are real directories (not symlinks). A missing dir wraps
 // os.ErrNotExist.
-func checkDir() error {
-	root := rootDir
+func checkDir() error { return local().checkDir() }
+
+func (s store) checkDir() error {
+	root := s.root
 	if root == "" {
-		root = windowsDir
+		root = s.dir
 	}
-	return safefs.CheckDir(root, windowsDir)
+	return safefs.CheckDir(root, s.dir)
 }
 
 // readNoFollow reads path, refusing (ELOOP) when it is a symlink.

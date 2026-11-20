@@ -117,10 +117,10 @@ func backfillCandidates(recs map[string]windowstate.WindowState, live map[string
 }
 
 // backfillEligible reports whether ws is an agent window the backfill may
-// title: a started Claude session, not frozen, not a shell or improvement
+// title: a started Claude session, not frozen or human-titled, not a shell or improvement
 // window, and not a cron run (short-lived; its own hooks title it).
 func backfillEligible(ws windowstate.WindowState) bool {
-	if ws.ShortTitle.Final || ws.SessionID == "" || ws.ScheduledBy != "" {
+	if ws.ShortTitle.Final || ws.ShortTitle.Manual || ws.SessionID == "" || ws.ScheduledBy != "" {
 		return false
 	}
 	instance := tmux.StripAgentPrefix(ws.Instance)

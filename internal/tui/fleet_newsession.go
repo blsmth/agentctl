@@ -172,6 +172,7 @@ func (m *FleetModel) openNewSession() {
 	}
 	m.cancelClose()
 	m.cancelNew()
+	m.cancelRename()
 	m.closeMenu()
 	m.jumpErr = ""
 	base := fleetDefaultDir()

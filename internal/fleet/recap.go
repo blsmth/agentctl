@@ -175,21 +175,47 @@ func (m Meta) stateSince(state string) time.Time {
 // ReadLogInfo; cheap on an unchanged log), and the recap's short Title from
 // the window's generated title (windowstate, written by hook-title) when the
 // recap is one that is worth shortening (see titleSource).
+//
+// A human title (ShortManual) is the row's title whatever the recap source.
 func TagLogs(rows []Row) {
 	for i := range rows {
 		info := ReadLogInfo(rows[i].LogPath)
-		rows[i].Recap = Recap(rows[i], info)
-		// A window with nothing else to show (a bare one just after its
-		// first prompt) shows its generated title as the recap.
-		if rows[i].Recap.Source == RecapNone && rows[i].ShortTitle != "" {
-			rows[i].Recap = RecapLine{Text: rows[i].ShortTitle, Source: RecapTitle, Kind: rows[i].ShortKind}
-		}
 		rows[i].PRNumber, rows[i].PRURL = info.PRNumber, info.PRURL
-		if titleSource(rows[i], rows[i].Recap) {
-			rows[i].Recap.Title = rows[i].ShortTitle
-			rows[i].Recap.Kind = rows[i].ShortKind
-		}
+		tagRecap(&rows[i], info)
 	}
+}
+
+// tagRecap sets r.Recap from info and r's short title (see TagLogs).
+func tagRecap(r *Row, info LogInfo) {
+	r.Recap = Recap(*r, info)
+	applyTitle(r)
+}
+
+// applyTitle adds r's short title to its recap line (r.Recap as Recap
+// derived it): a window with nothing else to show (a bare one just after its
+// first prompt) shows the title as the recap, and a recap worth shortening,
+// or any recap when the title is a human one, gets it as its Title.
+func applyTitle(r *Row) {
+	if r.Recap.Source == RecapNone && r.ShortTitle != "" {
+		r.Recap = RecapLine{Text: r.ShortTitle, Source: RecapTitle, Kind: r.ShortKind}
+	}
+	if r.ShortTitle != "" && (titleSource(*r, r.Recap) || r.ShortManual) {
+		r.Recap.Title = r.ShortTitle
+		r.Recap.Kind = r.ShortKind
+	}
+}
+
+// Retitle sets r's short title to a human title or clears it (title "") and
+// updates its recap line as TagLogs would, so a caller that just wrote the
+// title shows it without a reload. No I/O: the recap text already on r is
+// kept. Kind is kept.
+func Retitle(r *Row, title string) {
+	if r.ShortTitle != "" && r.Recap.Source == RecapTitle && r.Recap.Text == r.ShortTitle {
+		r.Recap = RecapLine{} // the old title stood in for a missing recap
+	}
+	r.ShortTitle, r.ShortManual = title, title != ""
+	r.Recap.Title, r.Recap.Kind = "", ""
+	applyTitle(r)
 }
 
 // BaseName is the row's agent name without its instance suffix: AgentName

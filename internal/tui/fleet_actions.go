@@ -355,6 +355,9 @@ func (m *FleetModel) fleetMenuItems(idx int) []fleetMenuItem {
 			fleetMenuItem{"close", "x"},
 			fleetMenuItem{"home", "J"},
 		)
+		if m.rowCanRename(m.lines[idx].row) {
+			items = append(items, fleetMenuItem{"rename", fleetRenameKey})
+		}
 		if m.lines[idx].row.PRURL != "" {
 			items = append(items, fleetMenuItem{"open PR", "p"})
 		}
@@ -395,6 +398,7 @@ func (m FleetModel) footerMessageY() int {
 // openMenu opens the context menu for line idx (selecting it first).
 func (m *FleetModel) openMenu(idx int) {
 	m.menuHelp = false
+	m.cancelRename()
 	m.cancelClose()
 	m.cancelNew()
 	m.cancelSweep()
@@ -421,6 +425,8 @@ func (m *FleetModel) runMenuKey(key string) tea.Cmd {
 		return cmd
 	case "n":
 		m.armNew(line)
+	case fleetRenameKey:
+		m.openRename(line)
 	case fleetSweepKey:
 		return m.startSweep(line)
 	case "p":
