@@ -144,6 +144,7 @@ func TestBackfillTitlesSkips(t *testing.T) {
 		{name: "no session", live: true, ws: windowstate.WindowState{Task: "t"}},
 		{name: "no input", live: true, ws: windowstate.WindowState{SessionID: "s"}},
 		{name: "final", live: true, ws: windowstate.WindowState{SessionID: "s", Task: "t", ShortTitle: windowstate.ShortTitle{Title: "X", Final: true}}},
+		{name: "manual", live: true, ws: windowstate.WindowState{SessionID: "s", Task: "t", TurnCount: 2, ShortTitle: windowstate.ShortTitle{Title: "Mine", Manual: true}}},
 		{name: "backoff", live: true, ws: windowstate.WindowState{SessionID: "s", Task: "t", ShortTitle: windowstate.ShortTitle{Failures: 1, RetryAfter: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)}}},
 		{name: "titles disabled", live: true, ws: windowstate.WindowState{SessionID: "s", Task: "t"},
 			setup: func(_ *testing.T, e *titleEnv) { e.settings.Enabled = false }},

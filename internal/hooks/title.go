@@ -99,7 +99,7 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 	if err != nil {
 		return
 	}
-	if ws.ShortTitle.Final {
+	if ws.ShortTitle.Final || ws.ShortTitle.Manual {
 		return
 	}
 	if fp, ok := firstPromptFor(ws, prompt); ok {
@@ -230,10 +230,13 @@ func titleInput(ws windowstate.WindowState, lastMessage string) shorttitle.Input
 }
 
 // resetTitleOnClear forgets a window's title and first prompt so the next
-// prompt titles the new work fresh. Called from SessionStart with the
-// window's record inside its transaction.
+// prompt titles the new work fresh. A human title (ShortTitle.Manual, set
+// from the hub) survives: the human named the window, not the work. Called
+// from SessionStart with the window's record inside its transaction.
 func resetTitleOnClear(ws *windowstate.WindowState) {
-	ws.ShortTitle = windowstate.ShortTitle{}
+	if !ws.ShortTitle.Manual {
+		ws.ShortTitle = windowstate.ShortTitle{}
+	}
 	ws.FirstPrompt = ""
 }
 

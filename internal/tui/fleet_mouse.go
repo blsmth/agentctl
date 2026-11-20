@@ -22,6 +22,7 @@ const (
 	fleetClickNewAgent                         // armed selector's "agent": launch an agent
 	fleetClickClose                            // row's "✕" button: arm / confirm close
 	fleetClickMenu                             // right click: open the context menu
+	fleetClickRename                           // right click on a row's title: open the rename editor
 	fleetClickFold                             // header's project name: fold / unfold the group
 	fleetClickSweep                            // header's "sweep" button: preview a sweep of the group
 )
@@ -125,7 +126,8 @@ func (m FleetModel) clickDecision(x, y int) (idx int, action fleetClickAction) {
 }
 
 // buttonDecision resolves a click with the given button. Right click on a
-// row or header opens the context menu; left click on a header's "+ new" or a
+// renamable row's title text opens the rename editor, anywhere else on a row
+// or header the context menu; left click on a header's "+ new" or a
 // row's "✕" triggers that button, anything else on a line just selects it.
 func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, action fleetClickAction) {
 	idx, sub, ok := m.lineAtSub(x, y)
@@ -135,6 +137,9 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 	l := m.lines[idx]
 	switch button {
 	case tea.MouseRight:
+		if l.kind == fleetLineRow && sub == 0 && m.rowCanRenameAt(idx) && m.onRowTitle(idx, x) {
+			return idx, fleetClickRename
+		}
 		if l.kind == fleetLineRow || l.kind == fleetLineHeader {
 			return idx, fleetClickMenu
 		}
@@ -198,6 +203,12 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		}
 		m.cancelNewSession() // any other click dismisses the prompt
 	}
+	if m.renameOpen() {
+		if idx, sub, ok := m.lineAtSub(msg.X, msg.Y); ok && sub == 0 && m.renamingRow(m.lines[idx].row) && m.onRowTitle(idx, msg.X) {
+			return m, nil // a click on the editor itself keeps it open
+		}
+		m.cancelRename() // any other click cancels the rename
+	}
 	if msg.Button == tea.MouseLeft && m.onServeBadge(msg.X, msg.Y) {
 		m.closeMenu()
 		m.cancelNew()
@@ -249,6 +260,10 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		m.closeMenu()
 		m.selectLine(idx)
 		return m, m.toggleFoldAt(idx)
+	case fleetClickRename:
+		m.openRename(idx)
+		show := m.maybeShowCmd()
+		return m, show
 	case fleetClickMenu:
 		m.openMenu(idx)
 		show := m.maybeShowCmd()

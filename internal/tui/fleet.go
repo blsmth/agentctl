@@ -530,6 +530,12 @@ type FleetModel struct {
 	// dirPrompt is the open new-session (N) directory prompt (see
 	// fleet_newsession.go); nil when closed.
 	dirPrompt *fleetNewSessionState
+
+	// rename is the open title editor (see fleet_rename.go); nil when closed.
+	// titleHolds are just-saved titles shown until a load reflects them, by
+	// "session|windowID".
+	rename     *fleetRenameState
+	titleHolds map[string]fleetTitleHold
 }
 
 // HubSelectEnv carries the selected agent ("session|windowID") across a hot
@@ -733,7 +739,9 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case fleetTickMsg:
 		m.expireInfo(fleetNow())
-		if m.exeChanged != nil && m.exeChanged() {
+		// A hot reload waits for an open rename editor: it would lose the
+		// typed text.
+		if m.exeChanged != nil && !m.renameOpen() && m.exeChanged() {
 			m.reexec = true
 			return m, tea.Quit
 		}
@@ -849,8 +857,10 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.groups = msg.groups
 			m.display = msg.display
+			m.applyTitleHolds()
 			m.rebuildLines()
 			m.validateNew()
+			m.validateRename()
 			m.validateSweep()
 			m.refreshHover()
 			m.applyClosePending()
@@ -899,6 +909,11 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dirPrompt.input, cmd = m.dirPrompt.input.Update(msg)
 			return m, cmd
 		}
+		if m.renameOpen() {
+			var cmd tea.Cmd
+			m.rename.input, cmd = m.rename.input.Update(msg)
+			return m, cmd
+		}
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -921,6 +936,9 @@ func (m *FleetModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.newSessionOpen() {
 		return *m, m.handleNewSessionKey(msg)
+	}
+	if m.renameOpen() {
+		return *m, m.handleRenameKey(msg)
 	}
 	if m.menuOpen && m.menuHelp {
 		// The key reference closes on any key; a binding it lists then runs
@@ -987,6 +1005,10 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 
 	case fleetNewSessionKey:
 		m.openNewSession()
+		return *m, nil
+
+	case fleetRenameKey:
+		m.openRename(m.splitPane.Cursor())
 		return *m, nil
 
 	case "x":
@@ -2532,6 +2554,24 @@ func (m FleetModel) renderTreeRow(r fleet.Row, treePrefix string, nameCol int, s
 // is drawn only on the selected and the hovered row; every other row keeps
 // its one-cell slot blank so alignment and hit regions never change.
 func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol int, selected bool, hover fleetHoverRegion, cw int) string {
+	out, _ := m.treeRowLayout(r, treePrefix, nameCol, selected, hover, cw)
+	if !selected {
+		return out
+	}
+	for _, d := range rowDetailStyled(r, treePrefix, cw, m.display, m.viewerShows(r)) {
+		out += "\n" + fleetFitLine(d, true, cw)
+	}
+	return out
+}
+
+// treeRowLayout renders a row's own line (no detail lines) and reports the
+// [start, end) columns of its title text: the recap title or truncated recap
+// sentence as drawn, which is the rename click target (see onRowTitle).
+// The span is zero when no title text is drawn (a shell row, a close
+// confirmation, a column too narrow). While the row is being renamed the
+// editor is drawn there and the span covers the editor.
+func (m FleetModel) treeRowLayout(r fleet.Row, treePrefix string, nameCol int, selected bool, hover fleetHoverRegion, cw int) (string, [2]int) {
+	var titleSpan [2]int
 	glyph, style := rowGlyph(r)
 	weight := rowStyleWeight(r, fleetNow())
 	cursor := fleetRowCursor(r, selected)
@@ -2598,7 +2638,18 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 			available -= lipgloss.Width(tag) + 1
 			tag = fleetDimStyle.Render(tag) + " "
 		}
-		text = tag + renderRecapTitle(fleet.TruncateWords(recap.Short(), max(available, 0)), rs)
+		start := lipgloss.Width(prefix) + lipgloss.Width(tag)
+		if m.renamingRow(r) {
+			editor := m.renameView(max(available, 0))
+			text = tag + editor
+			titleSpan = [2]int{start, start + max(available, lipgloss.Width(editor))}
+		} else {
+			title := fleet.TruncateWords(recap.Short(), max(available, 0))
+			text = tag + renderRecapTitle(title, rs)
+			if w := lipgloss.Width(title); w > 0 {
+				titleSpan = [2]int{start, start + w}
+			}
+		}
 	}
 
 	closeBtn := strings.Repeat(" ", lipgloss.Width(fleetCloseLabel))
@@ -2615,14 +2666,7 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 	case hovered:
 		hl = &fleetHoverStyle
 	}
-	out := fleetFitLineStyled(line, hl, cw)
-	if !selected {
-		return out
-	}
-	for _, d := range rowDetailStyled(r, treePrefix, cw, m.display, m.viewerShows(r)) {
-		out += "\n" + fleetFitLine(d, true, cw)
-	}
-	return out
+	return fleetFitLineStyled(line, hl, cw), titleSpan
 }
 
 // leadingIssue matches a title's leading issue number ("#21 Crotch…").
