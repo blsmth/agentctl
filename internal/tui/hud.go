@@ -73,8 +73,9 @@ type HudModel struct {
 	expandedEntries map[int]bool // set of logEntry indices that are expanded
 
 	// Pre-rendered stream line buffer (rebuilt whenever entries or expansion changes).
-	streamLineBuffer []string // flat list of rendered lines for the stream viewport
-	streamEntryStart []int    // streamEntryStart[i] = first line index for logEntries[i]
+	streamLineBuffer []string      // flat list of rendered lines for the stream viewport
+	streamEntryStart []int         // streamEntryStart[i] = first line index for logEntries[i]
+	streamLineMeta   []hudLineMeta // wrap metadata per streamLineBuffer line (copy rejoin)
 
 	// Tab state.
 	activeTab        int      // 0 = stream, 1 = agent logs, 2 = system logs
@@ -97,8 +98,21 @@ type HudModel struct {
 	agentStarts []int
 	sysRecs     []logRec
 	sysStarts   []int
+	// Wrap metadata per rendered log line (copy rejoin).
+	agentLineMeta []hudLineMeta
+	sysLineMeta   []hudLineMeta
 	// showSource toggles the <file:line> column in the log tabs.
 	showSource bool
+
+	// sel is the in-app mouse text selection (hud_select.go).
+	sel hudSelection
+	// selTicking is set while an auto-scroll tick is scheduled. It lives
+	// outside sel so clearing a selection cannot start a second tick chain.
+	selTicking bool
+	// flash is a brief footer message ("copied 3 lines"), shown for
+	// flashTicks more poll ticks.
+	flash      string
+	flashTicks int
 
 	// logPollTick counts consecutive poll ticks where @agentctl_log was
 	// not yet set, used to trigger a filesystem-scan fallback.
@@ -230,6 +244,7 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.clearSelection() // re-wrapping moves every cell
 		m.rebuildStreamLineBuffer()
 		m.clampScroll()
 		m.relayoutLogs()
@@ -241,6 +256,21 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Global quit — handled before any tab-specific delegation.
 		if msg.String() == "q" || msg.String() == "ctrl+c" {
 			return m, tea.Quit
+		}
+		switch msg.String() {
+		case "y":
+			return m, m.copyKey()
+		case "esc":
+			if m.sel.state != selNone {
+				m.clearSelection()
+				return m, nil
+			}
+		case "j", "k", "up", "down", "ctrl+d", "ctrl+u", "G":
+			// Scrolling keeps the selection: it is anchored to the buffer.
+		default:
+			// Anything else may re-render the buffer (tabs, expansion,
+			// toggles): drop the selection rather than let it drift.
+			m.clearSelection()
 		}
 
 		// Tab switching is universal: always handled regardless of active tab.
@@ -446,6 +476,9 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseClickMsg:
+		// A press clears any selection and, in the body, may start a drag;
+		// the click itself keeps its meaning.
+		m.selPress(msg)
 		if msg.Button == tea.MouseLeft {
 			if tab := m.tabAt(msg.X, msg.Y); tab >= 0 {
 				m.activeTab = tab
@@ -453,9 +486,25 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.MouseMotionMsg:
+		cmd, _ := m.selMotion(msg)
+		return m, cmd
+
+	case tea.MouseReleaseMsg:
+		return m, m.selRelease(msg)
+
+	case hudSelScrollMsg:
+		return m, m.selScrollStep()
+
 	case hudTickMsg:
 		if m.reload.due() {
 			return m, tea.Quit
+		}
+		if m.flashTicks > 0 {
+			m.flashTicks--
+			if m.flashTicks == 0 {
+				m.flash = ""
+			}
 		}
 		m.poll()
 		return m, hudTick()
@@ -518,7 +567,7 @@ func (m *HudModel) followPoll() {
 func (m *HudModel) retarget(session, runtimeDir, windowID string) {
 	if runtimeDir != m.runtimeDir {
 		m.sysLogPath, m.sysLogOffset, m.sysLogLines = "", 0, nil
-		m.sysRecs, m.sysStarts = nil, nil
+		m.sysRecs, m.sysStarts, m.sysLineMeta = nil, nil, nil
 		m.sysLogScroll, m.sysLogAtBottom = 0, true
 	}
 	m.session, m.runtimeDir, m.windowID = session, runtimeDir, windowID
@@ -538,11 +587,12 @@ func (m *HudModel) resetTranscript() {
 	m.logPath, m.logOffset, m.logEntries, m.logPollTick = "", 0, nil, 0
 	m.scrollTop, m.streamAtBottom = 0, true
 	m.streamCursor, m.expandedEntries = -1, make(map[int]bool)
-	m.streamLineBuffer, m.streamEntryStart = nil, nil
+	m.streamLineBuffer, m.streamEntryStart, m.streamLineMeta = nil, nil, nil
+	m.clearSelection()
 
 	m.agentctlLogPath, m.agentctlSessionID, m.agentctlLogIsGlobal, m.agentctlLogErr = "", "", false, ""
 	m.agentLogLines, m.agentLogScroll, m.agentLogOffset, m.agentLogAtBottom = nil, 0, 0, true
-	m.agentRecs, m.agentStarts = nil, nil
+	m.agentRecs, m.agentStarts, m.agentLineMeta = nil, nil, nil
 }
 
 // transcriptChanged reports whether the followed window's record names a
@@ -673,9 +723,16 @@ func (m *HudModel) poll() {
 			ApplyToolResults(m.logEntries, result.Results)
 			m.logEntries = append(m.logEntries, result.Entries...)
 			// Trim ring buffer.
+			droppedLines := 0
 			if len(m.logEntries) > maxLogEntries {
 				trim := len(m.logEntries) - maxLogEntries
+				if trim < len(m.streamEntryStart) {
+					droppedLines = m.streamEntryStart[trim]
+				} else {
+					droppedLines = len(m.streamLineBuffer)
+				}
 				m.logEntries = m.logEntries[trim:]
+				m.shiftSelection(tabStream, trim)
 				// Adjust cursor index.
 				if m.streamCursor >= 0 {
 					m.streamCursor -= trim
@@ -694,6 +751,11 @@ func (m *HudModel) poll() {
 			}
 			// Rebuild line buffer after entries changed.
 			m.rebuildStreamLineBuffer()
+			// While selecting, keep the viewport on the same text when
+			// lines were dropped from the front.
+			if droppedLines > 0 && m.sel.state != selNone && !m.streamAtBottom {
+				m.scrollTop = max(m.scrollTop-droppedLines, 0)
+			}
 			// Auto-scroll to bottom only when pinned to bottom.
 			if len(result.Entries) > 0 || len(result.Results) > 0 {
 				if m.streamAtBottom {
@@ -796,23 +858,34 @@ func (m *HudModel) rebuildStreamLineBuffer() {
 	}
 
 	m.streamLineBuffer = m.streamLineBuffer[:0]
+	m.streamLineMeta = m.streamLineMeta[:0]
 	m.streamEntryStart = make([]int, len(m.logEntries))
+	add := func(line string, lm hudLineMeta) {
+		if lm.join != joinNone {
+			lm.indent++ // the leading pane margin
+		}
+		m.streamLineBuffer = append(m.streamLineBuffer, " "+line)
+		m.streamLineMeta = append(m.streamLineMeta, lm)
+	}
 
 	for i, e := range m.logEntries {
 		m.streamEntryStart[i] = len(m.streamLineBuffer)
 		selected := m.streamCursor == i
 		if m.terminalMode {
-			for _, l := range renderTerminalEntry(e, logWidth, selected, m.expandedEntries[i]) {
-				m.streamLineBuffer = append(m.streamLineBuffer, " "+l)
+			lines, meta := renderTerminalEntryMeta(e, logWidth, selected, m.expandedEntries[i])
+			for j, l := range lines {
+				var lm hudLineMeta
+				if j < len(meta) {
+					lm = meta[j]
+				}
+				add(l, lm)
 			}
 			continue
 		}
-		line := m.renderEntry(e, logWidth, selected)
-		m.streamLineBuffer = append(m.streamLineBuffer, " "+line)
+		add(m.renderEntry(e, logWidth, selected), hudLineMeta{})
 		if m.expandedEntries[i] {
-			detailLines := renderExpandedDetail(e, logWidth)
-			for _, dl := range detailLines {
-				m.streamLineBuffer = append(m.streamLineBuffer, " "+dl)
+			for _, dl := range renderExpandedDetail(e, logWidth) {
+				add(dl, hudLineMeta{})
 			}
 		}
 	}
@@ -999,7 +1072,7 @@ func (m HudModel) View() tea.View {
 				end = len(m.agentLogLines)
 			}
 			for i := m.agentLogScroll; i < end; i++ {
-				sb.WriteString(m.agentLogLines[i])
+				sb.WriteString(m.renderSelected(i, m.agentLogLines[i]))
 				sb.WriteByte('\n')
 				rendered++
 			}
@@ -1018,7 +1091,7 @@ func (m HudModel) View() tea.View {
 				end = len(m.sysLogLines)
 			}
 			for i := m.sysLogScroll; i < end; i++ {
-				sb.WriteString(m.sysLogLines[i])
+				sb.WriteString(m.renderSelected(i, m.sysLogLines[i]))
 				sb.WriteByte('\n')
 				rendered++
 			}
@@ -1037,7 +1110,7 @@ func (m HudModel) View() tea.View {
 				end = len(m.streamLineBuffer)
 			}
 			for i := m.scrollTop; i < end; i++ {
-				sb.WriteString(m.streamLineBuffer[i])
+				sb.WriteString(m.renderSelected(i, m.streamLineBuffer[i]))
 				sb.WriteByte('\n')
 				rendered++
 			}
@@ -1056,8 +1129,9 @@ func (m HudModel) View() tea.View {
 	v := tea.NewView(sb.String())
 	v.AltScreen = true
 	// The wheel scrolls the feed instead of dropping tmux into copy mode over
-	// the alt screen, and tab labels are clickable. In a per-window HUD pane
-	// this means tmux drag-select needs the terminal's bypass modifier.
+	// the alt screen, tab labels are clickable, and a drag in the body
+	// selects text inside this pane (hud_select.go): the terminal's bypass
+	// modifier would select across every pane of the window.
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
@@ -1068,15 +1142,29 @@ const hudWheelLines = 3
 // wheel scrolls the active tab by one notch. Only the follow-hub HUD asks
 // for mouse events, so the per-window HUD never sees these.
 func (m *HudModel) wheel(b tea.MouseButton) {
-	delta := 0
 	switch b {
 	case tea.MouseWheelUp:
-		delta = -hudWheelLines
+		m.scrollBy(-hudWheelLines)
 	case tea.MouseWheelDown:
-		delta = hudWheelLines
-	default:
-		return
+		m.scrollBy(hudWheelLines)
 	}
+}
+
+// setAtBottom sets a tab's pinned-to-bottom flag.
+func (m *HudModel) setAtBottom(tab int, v bool) {
+	switch tab {
+	case tabAgentLogs:
+		m.agentLogAtBottom = v
+	case tabSysLogs:
+		m.sysLogAtBottom = v
+	default:
+		m.streamAtBottom = v
+	}
+}
+
+// scrollBy scrolls the active tab by delta lines and re-pins it when that
+// reaches the bottom.
+func (m *HudModel) scrollBy(delta int) {
 	switch m.activeTab {
 	case tabAgentLogs:
 		m.agentLogScroll = max(m.agentLogScroll+delta, 0)
@@ -1508,7 +1596,7 @@ func (m HudModel) renderMiniFooter(w int) string {
 	}
 
 	// height >= 3: line 1 = name + state, line 2 = keybind hints, pad to height.
-	hint := "Tab/Shift+Tab switch · j/k scroll · Ctrl+d/u page · g/G top/bottom · q quit "
+	hint := "Tab switch · j/k scroll · Ctrl+d/u page · g/G ends · y copy · q quit "
 	hintFillW := w - lipgloss.Width(hint)
 	if hintFillW < 0 {
 		hintFillW = 0
@@ -1527,24 +1615,31 @@ func (m HudModel) renderMiniFooter(w int) string {
 	return sb.String()
 }
 
-// renderFooter builds the single-line bottom bar: keybind hints only.
+// renderFooter builds the single-line bottom bar: keybind hints, with a
+// brief flash ("copied 3 lines") on the left. Every hint fits 80 columns.
 // Metrics have moved to the chrome bar (ChromeBarModel).
 func (m HudModel) renderFooter(w int) string {
 	var hint string
-	if m.activeTab == tabStream && m.streamCursor != -1 {
-		hint = "↑/↓ navigate · Enter expand · h collapse · Esc back · g/G ends · t term · q quit "
-	} else {
-		hint = "Tab/Shift+Tab switch · j/k scroll · Ctrl+d/u page · t term · q quit "
-		if m.activeTab != tabStream {
-			hint = "Tab/Shift+Tab switch · j/k scroll · Ctrl+d/u page · g/G top/bottom · s source · q quit "
-		}
+	switch {
+	case m.sel.visible() && m.sel.tab == m.activeTab:
+		hint = "y copy again · Esc clear · drag to reselect · q quit "
+	case m.activeTab == tabStream && m.streamCursor != -1:
+		hint = "↑/↓ navigate · Enter expand · h collapse · y copy · Esc back · g/G · q quit "
+	case m.activeTab == tabStream:
+		hint = "Tab/Shift+Tab switch · j/k scroll · Ctrl+d/u page · y copy · t term · q quit "
+	default:
+		hint = "Tab switch · j/k scroll · Ctrl+d/u page · g/G ends · s source · y copy · q quit "
 	}
-	hint = truncateCells(hint, w)
-	hintFillW := w - lipgloss.Width(hint)
+	left := ""
+	if m.flash != "" {
+		left = hudFlashStyle.Render(truncateCells(" ✓ "+m.flash+" ", w))
+	}
+	hint = truncateCells(hint, max(w-lipgloss.Width(left), 0))
+	hintFillW := w - lipgloss.Width(left) - lipgloss.Width(hint)
 	if hintFillW < 0 {
 		hintFillW = 0
 	}
-	return hudFooterFillStyle.Render(strings.Repeat(" ", hintFillW)) +
+	return left + hudFooterFillStyle.Render(strings.Repeat(" ", hintFillW)) +
 		hudFooterHintStyle.Render(hint)
 }
 
@@ -1634,6 +1729,8 @@ var (
 	hudDetailBorderStyle lipgloss.Style
 	hudDetailKeyStyle    lipgloss.Style
 	hudDetailValueStyle  lipgloss.Style
+	hudSelectionStyle    lipgloss.Style
+	hudFlashStyle        lipgloss.Style
 )
 
 // initHudStyles initialises HUD-specific styles from the active theme.
@@ -1682,24 +1779,30 @@ func initHudStyles() {
 	hudDetailBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Overlay))
 	hudDetailKeyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Blue))
 	hudDetailValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Subtle))
+	// Mouse text selection: reverse video over the theme's text color, so it
+	// reads like a terminal selection on every palette.
+	hudSelectionStyle = lipgloss.NewStyle().Reverse(true).Foreground(lipgloss.Color(t.Text))
+	hudFlashStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Green))
 }
 
 // logPane addresses one log tab's fields so poll, resize and toggles share
 // the same layout code.
 type logPane struct {
+	tab      int
 	recs     *[]logRec
 	starts   *[]int
 	lines    *[]string
+	meta     *[]hudLineMeta
 	scroll   *int
 	atBottom *bool
 }
 
 func (m *HudModel) agentPane() logPane {
-	return logPane{&m.agentRecs, &m.agentStarts, &m.agentLogLines, &m.agentLogScroll, &m.agentLogAtBottom}
+	return logPane{tabAgentLogs, &m.agentRecs, &m.agentStarts, &m.agentLogLines, &m.agentLineMeta, &m.agentLogScroll, &m.agentLogAtBottom}
 }
 
 func (m *HudModel) sysPane() logPane {
-	return logPane{&m.sysRecs, &m.sysStarts, &m.sysLogLines, &m.sysLogScroll, &m.sysLogAtBottom}
+	return logPane{tabSysLogs, &m.sysRecs, &m.sysStarts, &m.sysLogLines, &m.sysLineMeta, &m.sysLogScroll, &m.sysLogAtBottom}
 }
 
 // anchor returns the record at the top of the viewport and how many display
@@ -1724,7 +1827,7 @@ func (m *HudModel) layout(p logPane, rec, intra int) {
 	if len(*p.recs) == 0 {
 		return
 	}
-	*p.lines, *p.starts = renderLogRecs(*p.recs, m.width, m.showSource)
+	*p.lines, *p.starts, *p.meta = renderLogRecsMeta(*p.recs, m.width, m.showSource)
 	maxScroll := max(len(*p.lines)-m.visibleLines(), 0)
 	switch {
 	case *p.atBottom:
@@ -1747,6 +1850,7 @@ func (m *HudModel) appendLog(p logPane, raw []string) {
 	rec, intra := p.anchor()
 	var trimmed int
 	*p.recs, trimmed = appendLogRecs(*p.recs, raw)
+	m.shiftSelection(p.tab, trimmed)
 	if rec < trimmed {
 		rec, intra = 0, 0
 	} else {

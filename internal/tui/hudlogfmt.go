@@ -190,9 +190,17 @@ const hudLogClockW = 8
 // renderLogRec renders rec into display lines no wider than width, with a
 // hanging indent under the message column.
 func renderLogRec(rec logRec, width int, showSource bool) []string {
+	lines, _ := renderLogRecMeta(rec, width, showSource)
+	return lines
+}
+
+// renderLogRecMeta is renderLogRec plus each line's wrap metadata: every line
+// after the first continues the record (a word wrap, so it rejoins with a
+// space), under its hanging indent.
+func renderLogRecMeta(rec logRec, width int, showSource bool) ([]string, []hudLineMeta) {
 	width = max(width, 20)
 	if !rec.parsed {
-		return renderPlainLog(rec.raw, width)
+		return renderPlainLogMeta(rec.raw, width)
 	}
 
 	prefixW := hudLogClockW + 1 + 3 + 1
@@ -205,11 +213,13 @@ func renderLogRec(rec logRec, width int, showSource bool) []string {
 
 	avail := width - 1 - prefixW
 	var lines []string
+	var meta []hudLineMeta
 	indent := strings.Repeat(" ", prefixW)
 	if avail < 16 {
 		// Too narrow for a hanging indent: prefix on its own line, message
 		// below with a small indent.
 		lines = append(lines, " "+prefix)
+		meta = append(meta, hudLineMeta{})
 		prefix, indent = "", "  "
 		prefixW = 2
 		avail = width - 1 - prefixW
@@ -232,8 +242,16 @@ func renderLogRec(rec logRec, width int, showSource bool) []string {
 
 	cur, curW := first, 0
 	started := false
+	push := func(line string) {
+		lm := hudLineMeta{}
+		if len(lines) > 0 {
+			lm = hudLineMeta{join: joinSpace, indent: 1 + len(indent)}
+		}
+		lines = append(lines, line)
+		meta = append(meta, lm)
+	}
 	flush := func() {
-		lines = append(lines, " "+cur)
+		push(" " + cur)
 		cur, curW, started = indent, 0, false
 	}
 	for _, t := range toks {
@@ -253,23 +271,29 @@ func renderLogRec(rec logRec, width int, showSource bool) []string {
 		started = true
 	}
 	if started || prefix != "" {
-		lines = append(lines, " "+cur)
+		push(" " + cur)
 	}
-	return lines
+	return lines, meta
 }
 
-// renderPlainLog wraps an unparsed line to width with no styling beyond the
-// normal text color.
-func renderPlainLog(raw string, width int) []string {
+// renderPlainLogMeta wraps an unparsed line to width with no styling beyond
+// the normal text color. Rows after the first are hard-wrap continuations.
+func renderPlainLogMeta(raw string, width int) ([]string, []hudLineMeta) {
 	raw = strings.ReplaceAll(raw, "\t", "    ")
 	if raw == "" {
-		return []string{""}
+		return []string{""}, []hudLineMeta{{}}
 	}
 	var out []string
-	for _, l := range strings.Split(ansi.Hardwrap(raw, width-1, true), "\n") {
+	var meta []hudLineMeta
+	for i, l := range strings.Split(ansi.Hardwrap(raw, width-1, true), "\n") {
 		out = append(out, " "+hudRuntimeDefaultStyle.Render(l))
+		lm := hudLineMeta{}
+		if i > 0 {
+			lm = hudLineMeta{join: joinHard, indent: 1}
+		}
+		meta = append(meta, lm)
 	}
-	return out
+	return out, meta
 }
 
 func levelStyle(level string) lipgloss.Style {
@@ -290,6 +314,12 @@ func levelStyle(level string) lipgloss.Style {
 // first record of each day. starts[i] is the first display line of recs[i]
 // (including its divider).
 func renderLogRecs(recs []logRec, width int, showSource bool) (lines []string, starts []int) {
+	lines, starts, _ = renderLogRecsMeta(recs, width, showSource)
+	return lines, starts
+}
+
+// renderLogRecsMeta is renderLogRecs plus the wrap metadata of every line.
+func renderLogRecsMeta(recs []logRec, width int, showSource bool) (lines []string, starts []int, meta []hudLineMeta) {
 	starts = make([]int, len(recs))
 	lastDay := ""
 	for i, rec := range recs {
@@ -297,8 +327,11 @@ func renderLogRecs(recs []logRec, width int, showSource bool) (lines []string, s
 		if rec.parsed && rec.day != lastDay {
 			lastDay = rec.day
 			lines = append(lines, " "+hudLogDimStyle.Render("── "+rec.day+" ──"))
+			meta = append(meta, hudLineMeta{})
 		}
-		lines = append(lines, renderLogRec(rec, width, showSource)...)
+		rl, rm := renderLogRecMeta(rec, width, showSource)
+		lines = append(lines, rl...)
+		meta = append(meta, rm...)
 	}
-	return lines, starts
+	return lines, starts, meta
 }
