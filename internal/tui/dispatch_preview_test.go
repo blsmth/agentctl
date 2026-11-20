@@ -954,3 +954,29 @@ func TestDispatchPreviewMouse_Negative(t *testing.T) {
 	})
 	_ = clk
 }
+
+func TestDispatchPreviewModel_OpensCollapsedOnShortTerminal(t *testing.T) {
+	prompt := strings.Repeat("line of prompt text\n\n", 30)
+	for _, kind := range []string{PreviewKindDispatch, PreviewKindCron} {
+		for _, tc := range []struct {
+			rows     int
+			expanded bool
+		}{{20, false}, {40, true}} {
+			m := NewDispatchPreview("a", "b", 0, prompt, "", "", WithKind(kind), WithMaxViewportHeight(22))
+			updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: tc.rows})
+			m = updated.(DispatchPreviewModel)
+			if m.expanded != tc.expanded {
+				t.Errorf("%s at %d rows: expanded = %v, want %v", kind, tc.rows, m.expanded, tc.expanded)
+			}
+			// Hint bar must be on screen.
+			if h := lipgloss.Height(m.View().Content); h > tc.rows {
+				t.Errorf("%s at %d rows: view height %d overflows", kind, tc.rows, h)
+			}
+			// The user can still expand.
+			updated, _ = m.Update(tea.KeyPressMsg{Code: 'v', Text: "v"})
+			if got := updated.(DispatchPreviewModel).expanded; got == tc.expanded {
+				t.Errorf("%s at %d rows: v did not toggle", kind, tc.rows)
+			}
+		}
+	}
+}

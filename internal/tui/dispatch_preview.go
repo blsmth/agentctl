@@ -277,6 +277,12 @@ type DispatchPreviewModel struct {
 	now      func() time.Time
 	openedAt time.Time
 	pressed  dpTarget
+
+	// autoExpand is true when the popup opens expanded by default (dispatch
+	// and cron); toggled records that the user flipped the section by hand,
+	// after which the window size no longer overrides it.
+	autoExpand bool
+	toggled    bool
 }
 
 // dpClickArmDelay is how long after opening the popup ignores mouse clicks.
@@ -420,6 +426,7 @@ func NewDispatchPreview(agentName, targetAgent string, issue int, prompt, prompt
 		kind:            o.kind,
 		cron:            o.cron,
 		expanded:        expanded,
+		autoExpand:      expanded,
 		now:             o.now,
 		openedAt:        o.now(),
 	}
@@ -517,6 +524,13 @@ func (m DispatchPreviewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.PageDown()
 			}
 		}
+	case tea.WindowSizeMsg:
+		// The popup may be clamped to a short terminal. Open collapsed when
+		// the expanded layout plus the hint bar cannot fit, so the approve
+		// and deny hints never fall off screen. A manual toggle wins.
+		if !m.toggled && m.autoExpand {
+			m.expanded = m.fitsExpanded(msg.Height)
+		}
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
 			m.pressed = m.targetAt(msg.X, msg.Y)
@@ -556,6 +570,17 @@ func (m DispatchPreviewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// fitsExpanded reports whether the expanded box plus the hint bar row fit in
+// height rows. It measures the real View layout, so it follows any change to
+// the chrome. A non-positive height (size unknown) fits.
+func (m DispatchPreviewModel) fitsExpanded(height int) bool {
+	if height <= 0 {
+		return true
+	}
+	m.expanded = true
+	return lipgloss.Height(m.renderBox())+1 <= height
 }
 
 // currentViewportContent returns whichever of rawContent/renderedContent
