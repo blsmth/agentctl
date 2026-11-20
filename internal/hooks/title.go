@@ -105,6 +105,7 @@ const sessionSourceClear = "clear"
 func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 	s := titleSettings()
 	if !s.Enabled {
+		logging.Debug("hook-title: window=%s skipped: titles disabled", windowID)
 		return
 	}
 	// Deferred so a slow catalog fetch never delays the title, and so runs
@@ -114,7 +115,12 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 	if err != nil {
 		return
 	}
-	if ws.ShortTitle.Final || ws.ShortTitle.Manual {
+	if ws.ShortTitle.Manual {
+		logging.Debug("hook-title: window=%s skipped: manual title", windowID)
+		return
+	}
+	if ws.ShortTitle.Final {
+		logging.Debug("hook-title: window=%s skipped: title is final", windowID)
 		return
 	}
 	if fp, ok := firstPromptFor(ws, prompt); ok {
@@ -123,6 +129,11 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 	in := titleInput(ws, lastMessage)
 	now := titleNow()
 	if !shorttitle.Due(ws.ShortTitle, in, now) {
+		if now.Before(ws.ShortTitle.RetryAfter) {
+			logging.Debug("hook-title: window=%s skipped: backoff until %s", windowID, ws.ShortTitle.RetryAfter.Format(time.TimeOnly))
+		} else {
+			logging.Debug("hook-title: window=%s skipped: not due", windowID)
+		}
 		return
 	}
 	if !titleReady(s, now) {
@@ -161,11 +172,11 @@ func titleReady(s config.TitleSettings, now time.Time) bool {
 	// recorded, until the marker goes stale and one request probes again.
 	// A :free model cannot 402, so a marker set elsewhere does not pause it.
 	if _, out := titleNoCredits(s.BackendName, now); out && !strings.HasSuffix(s.Model, ":free") {
-		logging.Debug("hook-title: backend %s out of credits, skipping", s.BackendName)
+		logging.Debug("hook-title: skipped: backend %s out of credits", s.BackendName)
 		return false
 	}
 	if err := titleKeyAvailable(s); err != nil {
-		logging.Debug("hook-title: %v", err)
+		logging.Debug("hook-title: skipped: no key available: %v", err)
 		return false
 	}
 	return true
@@ -211,7 +222,7 @@ func titleWindow(ctx context.Context, s config.TitleSettings, windowID string, i
 	title, kind, genErr := generateTitle(ctx, s, in, now, take)
 	if errors.Is(genErr, llm.ErrNoKey) || errors.Is(genErr, errTitleBudget) || errors.Is(genErr, backendauth.ErrNoCredits) {
 		// Not a failure of this input: drop the lease, write nothing else.
-		logging.Log("hook-title: window=%s: %v", windowID, genErr)
+		logging.Log("hook-title: window=%s skipped: %v", windowID, genErr)
 		err = windowstate.Update(windowID, func(w *windowstate.WindowState) {
 			if w.ShortTitle.RetryAfter.Equal(now.Add(titleLease)) {
 				w.ShortTitle.RetryAfter = time.Time{}
@@ -221,7 +232,7 @@ func titleWindow(ctx context.Context, s config.TitleSettings, windowID string, i
 		return titleDeferred
 	}
 	if genErr != nil {
-		logging.Log("hook-title: window=%s: %v", windowID, genErr)
+		logging.Log("hook-title: window=%s failed: %v", windowID, genErr)
 	}
 	err = windowstate.Update(windowID, func(w *windowstate.WindowState) {
 		// Only while our claim is still held: a /clear that reset the record
@@ -233,7 +244,7 @@ func titleWindow(ctx context.Context, s config.TitleSettings, windowID string, i
 	})
 	logUpdateErr("hook-title", err)
 	if err == nil && genErr == nil {
-		logging.Debug("hook-title: window=%s title=%q", windowID, title)
+		logging.Log("hook-title: window=%s generated kind=%s title=%q", windowID, kind, title)
 	}
 	return titleRequested
 }

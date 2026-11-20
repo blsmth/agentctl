@@ -1,6 +1,7 @@
 package selfexec
 
 import (
+	"github.com/blsmth/agentctl/internal/logging"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -58,5 +59,14 @@ func TestCaptureUnderGoTest(t *testing.T) {
 	// The test binary lives in a temp dir, so hot reload is disabled.
 	if _, err := Capture(); err == nil {
 		t.Skip("test binary not ephemeral on this platform")
+	}
+}
+
+func TestReexecFailureDoesNotSetEnvInThisProcess(t *testing.T) {
+	if err := Reexec("/nonexistent/agentctl"); err == nil {
+		t.Fatal("expected exec failure")
+	}
+	if v := os.Getenv(logging.ReexecEnv); v != "" {
+		t.Errorf("%s leaked into the current process: %q", logging.ReexecEnv, v)
 	}
 }

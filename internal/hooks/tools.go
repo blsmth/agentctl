@@ -62,10 +62,11 @@ func PreTool() {
 	}
 
 	agentName := os.Getenv("AGENTCTL_AGENT_NAME")
-	logging.Log("hook/pre-tool: tool=%s window=%s agent=%s", input.ToolName, windowID, agentName)
-
-	doneTimer := logging.Timing("hook/pre-tool: " + input.ToolName)
-	defer doneTimer()
+	// One INFO line per call, written when the handler returns so it carries
+	// the state change (if any) and the total duration.
+	t0 := time.Now()
+	var change string
+	defer func() { logToolHook("pre-tool", input.ToolName, windowID, agentName, change, time.Since(t0)) }()
 
 	detail := toolinput.Summarize(input.ToolName, input.ToolInput, maxToolDetailLen)
 	pendingAt := time.Now()
@@ -74,6 +75,7 @@ func PreTool() {
 	// to describe a permission prompt) in one Update -- visual updates
 	// (window renaming, tab style) are owned by the Bubble Tea monitor view.
 	if err := winname.Update(windowID, func(ws *windowstate.WindowState) {
+		change = stateChange(ws.State, "working")
 		ws.State = "working"
 		ws.PendingTool = input.ToolName
 		ws.PendingToolDetail = detail
@@ -81,7 +83,6 @@ func PreTool() {
 	}); err != nil {
 		logUpdateErr("hook-pre-tool", err)
 	}
-	logging.Log("hook-pre-tool: set state=working window=%s agent=%s tool=%s", windowID, agentName, input.ToolName)
 
 	// Auto-accept is now handled via broad permission allows in --settings
 	// (see dispatch.WriteAgentSettings). Returning hookSpecificOutput JSON
@@ -131,15 +132,15 @@ func PostTool() {
 	}
 
 	agentName := os.Getenv("AGENTCTL_AGENT_NAME")
-	logging.Log("hook/post-tool: tool=%s window=%s agent=%s", input.ToolName, windowID, agentName)
-
-	doneTimer := logging.Timing("hook/post-tool: " + input.ToolName)
-	defer doneTimer()
+	t0 := time.Now()
+	var change string
+	defer func() { logToolHook("post-tool", input.ToolName, windowID, agentName, change, time.Since(t0)) }()
 
 	nowUnix := time.Now().Unix()
 	lastToolDetail := toolinput.Summarize(input.ToolName, input.ToolInput, maxToolDetailLen)
 	var ws windowstate.WindowState
 	if err := winname.Update(windowID, func(w *windowstate.WindowState) {
+		change = stateChange(w.State, "working")
 		w.State = "working"
 		w.LastToolTime = nowUnix
 		w.LastToolDetail = lastToolDetail
@@ -148,7 +149,6 @@ func PostTool() {
 	}); err != nil {
 		logUpdateErr("hook-post-tool", err)
 	}
-	logging.Log("hook-post-tool: set state=working last_tool_time=%d window=%s agent=%s tool=%s", nowUnix, windowID, agentName, input.ToolName)
 
 	appendAuditRecord(audit.Record{
 		Event:          audit.EventTool,
@@ -255,6 +255,28 @@ func PostToolFailure() {
 		Error:          input.Error,
 		Summary:        errSummary,
 	})
+}
+
+// stateChange renders a windowstate transition as "from->to", or "" when the
+// state is unchanged (the common case on a tool call in a working window).
+func stateChange(from, to string) string {
+	if from == to {
+		return ""
+	}
+	if from == "" {
+		from = "none"
+	}
+	return from + "->" + to
+}
+
+// logToolHook writes the single INFO line for a pre/post-tool hook call. The
+// state field appears only when the hook changed the window's state.
+func logToolHook(hook, tool, windowID, agent, change string, d time.Duration) {
+	state := ""
+	if change != "" {
+		state = " state=" + change
+	}
+	logging.Log("hook/%s: tool=%s window=%s agent=%s%s Δ%s", hook, tool, windowID, agent, state, d.Round(100*time.Microsecond))
 }
 
 // clearPendingToolIfMatch clears ws's pending-tool fields when they belong

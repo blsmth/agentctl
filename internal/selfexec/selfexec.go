@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/buildid"
+	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/selfpath"
 )
 
@@ -74,12 +75,14 @@ func CheckChanged(start Identity, now time.Time) bool {
 }
 
 // Reexec replaces the process image with the binary at path, keeping the
-// original args and environment. It returns only on failure.
+// original args and environment. It returns only on failure. The new image is
+// told it was re-exec'd so its startup banner is logged at DEBUG.
 func Reexec(path string) error {
-	return syscall.Exec(path, os.Args, os.Environ())
+	return ReexecEnv(path)
 }
 
 // ReexecEnv is like Reexec but adds extra KEY=VALUE entries to the environment.
 func ReexecEnv(path string, extra ...string) error {
-	return syscall.Exec(path, os.Args, append(os.Environ(), extra...))
+	env := append(os.Environ(), logging.ReexecEnv+"=1")
+	return syscall.Exec(path, os.Args, append(env, extra...))
 }

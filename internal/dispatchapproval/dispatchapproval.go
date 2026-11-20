@@ -76,6 +76,13 @@ func Key(windowID string, args []string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// ShortKey is the first 8 hex characters of Key: enough to correlate the
+// record and consume log lines without logging the arguments (which carry
+// the prompt).
+func ShortKey(windowID string, args []string) string {
+	return Key(windowID, args)[:8]
+}
+
 // Record stores an approval for one dispatch from windowID with args, and
 // prunes expired markers.
 func Record(windowID string, args []string) error {

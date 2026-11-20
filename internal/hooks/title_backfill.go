@@ -53,6 +53,13 @@ func BackfillTitles(ctx context.Context, live map[string]bool) (sent int) {
 			logging.Log("title-backfill: recovered: %v", r)
 		}
 	}()
+	// One summary line per run, only when it sent something (including a run
+	// cut short by budget, key or credits after some requests).
+	defer func() {
+		if sent > 0 {
+			logging.Log("title-backfill: sent %d title request(s)", sent)
+		}
+	}()
 	s := titleSettings()
 	if !s.Enabled || len(live) == 0 {
 		return 0
@@ -77,9 +84,6 @@ func BackfillTitles(ctx context.Context, live map[string]bool) (sent int) {
 		case titleRequested:
 			sent++
 		}
-	}
-	if sent > 0 {
-		logging.Log("title-backfill: sent %d title request(s)", sent)
 	}
 	return sent
 }

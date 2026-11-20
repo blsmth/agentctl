@@ -230,7 +230,11 @@ func (g *reviewerGate) check(dirs ...string) error {
 	}
 	if !g.claimed {
 		g.claimed = true
-		g.approval = consumeApproval(approvalWindowID(), dispatchArgs())
+		win, args := approvalWindowID(), dispatchArgs()
+		g.approval = consumeApproval(win, args)
+		if g.approval == nil {
+			logging.Log("dispatch-approval: consumed window=%s args=%s", win, dispatchapproval.ShortKey(win, args))
+		}
 	}
 	if cwd, err := os.Getwd(); err == nil {
 		dirs = append(dirs, cwd)
