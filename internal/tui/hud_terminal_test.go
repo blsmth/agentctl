@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -196,5 +197,39 @@ func TestHudTerminalToggleAndRebuild(t *testing.T) {
 	}
 	if !NewHudModel("").WithTerminalMode(true).terminalMode {
 		t.Fatal("WithTerminalMode")
+	}
+}
+
+func TestRenderTerminalBash_BoundedWork(t *testing.T) {
+	var sb strings.Builder
+	for i := 0; i < 600; i++ {
+		sb.WriteString(strings.Repeat("x", 120) + "\n")
+	}
+	e := bashEntry("cat big", sb.String(), true, false)
+	lines := renderTerminalEntry(e, 80, false, false)
+	// prompt + "more lines" + 8 tail rows
+	if len(lines) != 10 {
+		t.Fatalf("got %d lines", len(lines))
+	}
+	if !strings.Contains(ansi.Strip(lines[1]), "more lines") {
+		t.Fatalf("missing hidden marker: %q", lines[1])
+	}
+	entries := make([]LogEntry, 500)
+	for i := range entries {
+		entries[i] = e
+	}
+	start := time.Now()
+	for _, en := range entries {
+		renderTerminalEntry(en, 80, false, false)
+	}
+	if d := time.Since(start); d > 500*time.Millisecond {
+		t.Fatalf("500 collapsed big entries took %v", d)
+	}
+}
+
+func BenchmarkRenderTerminalBashCollapsed(b *testing.B) {
+	e := bashEntry("cat big", strings.Repeat(strings.Repeat("x", 120)+"\n", 600), true, false)
+	for i := 0; i < b.N; i++ {
+		renderTerminalEntry(e, 80, false, false)
 	}
 }

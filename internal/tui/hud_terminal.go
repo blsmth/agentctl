@@ -153,7 +153,7 @@ func renderTerminalBash(e LogEntry, width int, selected, expanded bool) []string
 	if cmd == "" {
 		cmd, _ = e.FullInput["description"].(string)
 	}
-	cmd = strings.TrimRight(cmd, "\n ")
+	cmd = strings.TrimRight(sanitizeToolOutput(cmd), "\n ")
 
 	prompt := "$ "
 	if selected {
@@ -190,23 +190,38 @@ func renderTerminalBash(e LogEntry, width int, selected, expanded bool) []string
 		}
 		return out
 	}
+	srcLines := strings.Split(body, "\n")
 	var rows []string
-	for _, l := range strings.Split(body, "\n") {
-		rows = append(rows, wrapCells(l, width-2)...)
-	}
+	hidden := 0
 	if expanded {
-		if len(rows) > maxExpandedOutputLines {
-			rows = rows[:maxExpandedOutputLines]
-			rows = append(rows, "… (truncated)")
+		for _, l := range srcLines {
+			rows = append(rows, wrapCells(l, width-2)...)
+			if len(rows) > maxExpandedOutputLines {
+				rows = append(rows[:maxExpandedOutputLines], "… (truncated)")
+				break
+			}
 		}
-	} else if len(rows) > terminalTailLines {
-		hidden := len(rows) - terminalTailLines
-		noun := "lines"
-		if hidden == 1 {
-			noun = "line"
+	} else {
+		// Wrap only from the end until the tail is full, so the cost is
+		// bounded by the tail, not by the total output size.
+		for i := len(srcLines) - 1; i >= 0 && len(rows) < terminalTailLines; i-- {
+			l := srcLines[i]
+			if rs := []rune(l); len(rs) > terminalTailLines*width {
+				l = string(rs[len(rs)-terminalTailLines*width:])
+			}
+			rows = append(wrapCells(l, width-2), rows...)
+			hidden = i
 		}
-		out = append(out, "  "+hudDimStyle.Render(fmt.Sprintf("… %d more %s", hidden, noun)))
-		rows = rows[hidden:]
+		if len(rows) > terminalTailLines {
+			rows = rows[len(rows)-terminalTailLines:]
+		}
+		if hidden > 0 {
+			noun := "lines"
+			if hidden == 1 {
+				noun = "line"
+			}
+			out = append(out, "  "+hudDimStyle.Render(fmt.Sprintf("… %d more %s", hidden, noun)))
+		}
 	}
 	for _, r := range rows {
 		out = append(out, "  "+outStyle.Render(r))

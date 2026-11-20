@@ -1413,10 +1413,14 @@ func (m HudModel) renderMiniFooter(w int) string {
 func (m HudModel) renderFooter(w int) string {
 	var hint string
 	if m.activeTab == tabStream && m.streamCursor != -1 {
-		hint = "↑/↓ navigate · Enter expand · h collapse · Esc back · g/G top/bottom · t term · q quit "
+		hint = "↑/↓ navigate · Enter expand · h collapse · Esc back · g/G ends · t term · q quit "
 	} else {
 		hint = "Tab/Shift+Tab switch · j/k scroll · Ctrl+d/u page · t term · q quit "
+		if m.activeTab != tabStream {
+			hint = "Tab/Shift+Tab switch · j/k scroll · Ctrl+d/u page · g/G top/bottom · q quit "
+		}
 	}
+	hint = truncateCells(hint, w)
 	hintFillW := w - lipgloss.Width(hint)
 	if hintFillW < 0 {
 		hintFillW = 0
