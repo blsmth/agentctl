@@ -980,3 +980,22 @@ func TestDispatchPreviewModel_OpensCollapsedOnShortTerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestDispatchPreviewModel_ManualToggleSurvivesResize(t *testing.T) {
+	prompt := strings.Repeat("line of prompt text\n\n", 30)
+	m := NewDispatchPreview("a", "b", 0, prompt, "", "", WithMaxViewportHeight(22))
+	u, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	u, _ = u.Update(tea.KeyPressMsg{Code: 'v', Text: "v"}) // collapse
+	u, _ = u.Update(tea.WindowSizeMsg{Width: 100, Height: 45})
+	if u.(DispatchPreviewModel).expanded {
+		t.Error("resize overrode the user's key toggle")
+	}
+
+	m = NewDispatchPreview("a", "b", 0, prompt, "", "", WithMaxViewportHeight(22))
+	u, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 20}) // auto-collapsed
+	u, _ = u.Update(tea.KeyPressMsg{Code: 'v', Text: "v"})     // expand
+	u, _ = u.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	if !u.(DispatchPreviewModel).expanded {
+		t.Error("resize overrode the user's expand")
+	}
+}

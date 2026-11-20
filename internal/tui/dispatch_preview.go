@@ -504,6 +504,7 @@ func (m DispatchPreviewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "v", " ", "space", "enter":
 			m.expanded = !m.expanded
+			m.toggled = true
 		case "r":
 			m.rawMode = !m.rawMode
 			m.viewport.SetContent(m.currentViewportContent())
@@ -555,6 +556,7 @@ func (m DispatchPreviewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case dpTargetToggle:
 			m.expanded = !m.expanded
+			m.toggled = true
 		case dpTargetRaw:
 			m.rawMode = !m.rawMode
 			m.viewport.SetContent(m.currentViewportContent())
