@@ -65,3 +65,50 @@ func TestUpdateIn(t *testing.T) {
 		}
 	})
 }
+
+func TestUpdateInNoRecordCreatesNothing(t *testing.T) {
+	windowstate.SetDirForTest(t.TempDir())
+	noop := func(*windowstate.WindowState) {}
+	t.Run("missing record", func(t *testing.T) {
+		rt := t.TempDir()
+		dir := windowstate.WindowsDirFor(rt)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := windowstate.UpdateIn(rt, "@3", noop); !errors.Is(err, windowstate.ErrNoRecord) {
+			t.Fatalf("err = %v", err)
+		}
+		if ents, _ := os.ReadDir(dir); len(ents) != 0 {
+			t.Errorf("files created: %v", ents)
+		}
+	})
+	t.Run("missing windows dir", func(t *testing.T) {
+		rt := t.TempDir()
+		if err := windowstate.UpdateIn(rt, "@3", noop); !errors.Is(err, windowstate.ErrNoRecord) {
+			t.Fatalf("err = %v", err)
+		}
+		if _, err := os.Stat(windowstate.WindowsDirFor(rt)); !os.IsNotExist(err) {
+			t.Errorf("windows dir created: %v", err)
+		}
+	})
+}
+
+func TestUpdateInPermissionDenied(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	windowstate.SetDirForTest(t.TempDir())
+	rt := t.TempDir()
+	dir := windowstate.WindowsDirFor(rt)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) }) //nolint:errcheck
+	err := windowstate.UpdateIn(rt, "@1", func(*windowstate.WindowState) {})
+	if err == nil || errors.Is(err, windowstate.ErrNoRecord) {
+		t.Fatalf("err = %v, want a non-ErrNoRecord error", err)
+	}
+}
