@@ -92,11 +92,13 @@ func viewerDestroyUnattachedArgs(session string) []string {
 
 // viewerOptionArgs builds the per-session option commands that make the
 // viewer transparent: no prefix (the outer client's prefix still drives the
-// hub, every other key reaches the agent) and no status line. Note
+// hub, every other key reaches the agent) and no status line. Mouse is on so
+// the wheel enters copy-mode for plain shells; the viewer session would
+// otherwise inherit the global default (off). Note
 // destroy-unattached is NOT here: setting it on a detached session destroys
 // it immediately (verified), so it is set once a client is attached.
 func viewerOptionArgs(session string) [][]string {
-	opts := [][2]string{{"prefix", "None"}, {"prefix2", "None"}, {"status", "off"}}
+	opts := [][2]string{{"prefix", "None"}, {"prefix2", "None"}, {"status", "off"}, {"mouse", "on"}}
 	out := make([][]string, 0, len(opts))
 	for _, o := range opts {
 		out = append(out, []string{"set-option", "-t", ExactSessionTarget(session), o[0], o[1]})

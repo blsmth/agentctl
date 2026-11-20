@@ -83,7 +83,7 @@ func TestViewerOptionArgs(t *testing.T) {
 		}
 		got[a[3]] = a[4]
 	}
-	want := map[string]string{"prefix": "None", "prefix2": "None", "status": "off"}
+	want := map[string]string{"prefix": "None", "prefix2": "None", "status": "off", "mouse": "on"}
 	for k, v := range want {
 		if got[k] != v {
 			t.Errorf("option %s = %q, want %q", k, got[k], v)
