@@ -1,0 +1,112 @@
+# The whole fleet in the hub: working, blocked on a permission, done-unseen,
+# idle bare, a PR review, and workers under an orchestrator. This is also the
+# default scene for `just demo`.
+description: Fleet hub with every state
+terminal:
+  cols: 160
+  rows: 45
+projects:
+  - name: acme-api
+    commits: [Initial commit, Add orders endpoint, Add webhook delivery]
+  - name: billing-svc
+    commits: [Initial commit, Invoice line items]
+    dirty: [README.md]
+  - name: docs-site
+    commits: [Initial commit, Add getting started guide]
+windows:
+  - key: orch
+    project: acme-api
+    agent: orchestrator
+    state: working
+    title: Rate limiter rollout
+    transcript: orchestrator
+    spinner: "Waiting on workers… (2m 10s · ↓ 3.4k tokens · esc to interrupt)"
+    cost_usd: 4.12
+    ctx_pct: 38
+    turns: 6
+    since: 2m
+    select: true
+  - key: limiter
+    project: acme-api
+    agent: go-engineer
+    mode: dispatched
+    state: working
+    ticket: 142
+    ticket_title: Add token-bucket rate limiter to POST /v1/orders
+    title: Orders rate limiter
+    kind: go
+    spawned_by: orch
+    dirty: [internal/ratelimit/bucket.go, internal/http/router.go]
+    transcript: rate-limiter
+    spinner: "Testing… (41s · ↓ 1.2k tokens · esc to interrupt)"
+    cost_usd: 1.87
+    ctx_pct: 22
+    turns: 9
+    since: 41s
+  - key: review
+    project: acme-api
+    agent: code-reviewer
+    mode: review-pr
+    review_pr: 138
+    state: working
+    title: Review webhook retries
+    spawned_by: orch
+    transcript: review-webhooks
+    spinner: "Reviewing… (1m 3s · ↓ 860 tokens · esc to interrupt)"
+    cost_usd: 0.64
+    ctx_pct: 15
+    turns: 4
+    since: 1m
+  - key: backfill
+    project: billing-svc
+    agent: go-engineer
+    mode: dispatched
+    state: blocked
+    ticket: 57
+    ticket_title: Backfill invoice totals for legacy accounts
+    title: Invoice totals backfill
+    kind: go
+    transcript: invoice-backfill
+    pending_tool: Bash
+    pending_detail: psql "$DATABASE_URL" -f migrations/0042_backfill_invoice_totals.sql
+    permission:
+      command: psql "$DATABASE_URL" -f migrations/0042_backfill_invoice_totals.sql
+      description: Apply the invoice totals backfill to the dev database
+      option2: Yes, and don't ask again for psql commands in ~/code/billing-svc
+    cost_usd: 2.31
+    ctx_pct: 31
+    turns: 7
+    since: 4m
+    select: true
+  - key: csv
+    project: billing-svc
+    agent: python-engineer
+    mode: dispatched
+    state: done
+    ticket: 61
+    ticket_title: CSV exports round half-cent amounts down
+    title: CSV rounding fix
+    kind: python
+    pr: 64
+    transcript: csv-rounding
+    cost_usd: 0.92
+    ctx_pct: 12
+    turns: 5
+    since: 6m
+  - key: docs
+    project: docs-site
+    agent: docs-writer
+    state: idle
+    title: Quickstart rewrite
+    transcript: docs-quickstart
+    cost_usd: 0.48
+    ctx_pct: 9
+    turns: 3
+    since: 18m
+    select: true
+steps:
+  - attach: orch
+  - prefix: g
+  - wait: agentctl hub
+  - sleep: 2s
+  - screenshot

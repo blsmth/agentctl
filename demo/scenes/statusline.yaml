@@ -1,0 +1,31 @@
+# Claude Code's prompt box with agentctl's statusline under it (the real
+# `agentctl statusline`, fed the payload Claude Code would push).
+description: The agentctl statusline under Claude Code's prompt
+terminal:
+  cols: 110
+  rows: 12
+config:
+  statusline_format: rich
+projects:
+  - name: billing-svc
+    commits: [Initial commit, Invoice line items]
+windows:
+  - key: csv
+    project: billing-svc
+    agent: python-engineer
+    mode: dispatched
+    state: idle
+    ticket: 61
+    ticket_title: CSV exports round half-cent amounts down
+    title: CSV rounding fix
+    dirty: [exports/csv.py, tests/exports/test_csv.py]
+    pr: 64
+    transcript: csv-rounding
+    cost_usd: 0.92
+    ctx_pct: 41
+    turns: 5
+    since: 1m
+steps:
+  - attach: csv
+  - sleep: 1s
+  - screenshot

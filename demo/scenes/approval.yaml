@@ -1,0 +1,43 @@
+# The dispatch approval popup. Enter in the orchestrator's pane runs the real
+# `agentctl hook-validate-bash` with a dispatch command, as Claude Code's
+# PreToolUse hook would; agentctl marks the window blocked and opens the
+# popup. Escape at the end denies it.
+description: Dispatch approval popup
+terminal:
+  cols: 150
+  rows: 44
+config:
+  dispatch_approval: all
+projects:
+  - name: acme-api
+    commits: [Initial commit, Add orders endpoint]
+windows:
+  - key: orch
+    project: acme-api
+    agent: orchestrator
+    state: working
+    title: Rate limiter rollout
+    transcript: orchestrator
+    cost_usd: 4.12
+    ctx_pct: 38
+    turns: 6
+    since: 2m
+    approval: agentctl dispatch --agent go-engineer --prompt "Add cursor pagination to GET /v1/orders (50 per page, opaque cursor, stable sort by created_at then id)"
+  - key: limiter
+    project: acme-api
+    agent: go-engineer
+    mode: dispatched
+    state: working
+    ticket: 142
+    ticket_title: Add token-bucket rate limiter to POST /v1/orders
+    title: Orders rate limiter
+    spawned_by: orch
+    transcript: rate-limiter
+    since: 41s
+steps:
+  - attach: orch
+  - key: Enter
+  - wait: Dispatch
+  - sleep: 1500ms
+  - screenshot
+  - key: Escape

@@ -1,0 +1,14 @@
+title: Quickstart rewrite
+recap: Rewrote the quickstart around the new CLI login flow; the screenshots still need updating.
+entries:
+  - user: "The quickstart still describes API keys in env vars. Rewrite it around `acme login`."
+  - tool: Read
+    input: {file_path: content/docs/quickstart.md}
+    result: Read 96 lines
+  - tool: Edit
+    input: {file_path: content/docs/quickstart.md}
+    diff: |2
+       ## Authenticate
+      -Export your API key: `export ACME_API_KEY=...`
+      +Run `acme login` and approve the device code in your browser.
+  - say: "The quickstart now walks through `acme login`. The two screenshots in step 3 still show the old dashboard; want me to list what needs re-capturing?"

@@ -1,0 +1,17 @@
+title: Rate limiter rollout
+entries:
+  - user: "We need rate limiting on orders before Friday's launch, and someone should review the webhook retry PR. Coordinate it."
+  - say: "Plan: dispatch go-engineer on #142 (orders rate limiter) and a reviewer on PR #138 (webhook retries). I'll track both and merge once CI and review are green."
+  - tool: Bash
+    input: {command: "agentctl dispatch --issue 142 --agent go-engineer"}
+    result: "dispatched go-engineer on #142 → @3 (worktree .worktrees/agent-go-engineer-issue-142)"
+  - tool: Bash
+    input: {command: "agentctl dispatch --review-pr 138"}
+    result: "dispatched code-reviewer on PR #138 → @4"
+  - tool: Bash
+    input: {command: "agentctl status"}
+    result: |
+      WINDOW  STATE    AGENT          TASK
+      @3      working  go-engineer    #142 Add token-bucket rate limiter
+      @4      working  code-reviewer  Review PR #138
+  - say: "Both workers are running. I'll check back when either one reports."
