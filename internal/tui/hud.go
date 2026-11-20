@@ -1696,21 +1696,25 @@ func (m *HudModel) sysPane() logPane {
 	return logPane{&m.sysRecs, &m.sysStarts, &m.sysLogLines, &m.sysLogScroll, &m.sysLogAtBottom}
 }
 
-// anchor returns the index of the record at the top of the viewport.
-func (p logPane) anchor() int {
-	a := 0
+// anchor returns the record at the top of the viewport and how many display
+// lines into it the viewport starts.
+func (p logPane) anchor() (rec, intra int) {
 	for i, st := range *p.starts {
 		if st > *p.scroll {
 			break
 		}
-		a = i
+		rec = i
 	}
-	return a
+	if rec < len(*p.starts) {
+		intra = *p.scroll - (*p.starts)[rec]
+	}
+	return rec, intra
 }
 
 // layout re-renders the pane at the current width. When pinned to the bottom
-// it stays there; otherwise the viewport stays on the anchor record.
-func (m *HudModel) layout(p logPane, anchor int) {
+// it stays there; otherwise the viewport stays on the anchor record, at the
+// same offset inside it (clamped to the record's new height).
+func (m *HudModel) layout(p logPane, rec, intra int) {
 	if len(*p.recs) == 0 {
 		return
 	}
@@ -1719,8 +1723,13 @@ func (m *HudModel) layout(p logPane, anchor int) {
 	switch {
 	case *p.atBottom:
 		*p.scroll = maxScroll
-	case anchor >= 0 && anchor < len(*p.starts):
-		*p.scroll = min((*p.starts)[anchor], maxScroll)
+	case rec >= 0 && rec < len(*p.starts):
+		end := len(*p.lines)
+		if rec+1 < len(*p.starts) {
+			end = (*p.starts)[rec+1]
+		}
+		off := min(max(intra, 0), max(end-(*p.starts)[rec]-1, 0))
+		*p.scroll = min((*p.starts)[rec]+off, maxScroll)
 	default:
 		*p.scroll = min(*p.scroll, maxScroll)
 	}
@@ -1729,16 +1738,21 @@ func (m *HudModel) layout(p logPane, anchor int) {
 // appendLog parses raw lines into the pane, collapsing repeats and applying
 // the record cap, then re-lays it out keeping the viewport stable.
 func (m *HudModel) appendLog(p logPane, raw []string) {
-	anchor := p.anchor()
+	rec, intra := p.anchor()
 	var trimmed int
 	*p.recs, trimmed = appendLogRecs(*p.recs, raw)
-	anchor = max(anchor-trimmed, 0)
-	m.layout(p, anchor)
+	if rec < trimmed {
+		rec, intra = 0, 0
+	} else {
+		rec -= trimmed
+	}
+	m.layout(p, rec, intra)
 }
 
 // relayoutLogs re-wraps both log tabs (resize, source toggle).
 func (m *HudModel) relayoutLogs() {
 	for _, p := range []logPane{m.agentPane(), m.sysPane()} {
-		m.layout(p, p.anchor())
+		rec, intra := p.anchor()
+		m.layout(p, rec, intra)
 	}
 }

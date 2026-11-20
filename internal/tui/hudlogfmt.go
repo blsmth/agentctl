@@ -168,7 +168,7 @@ func bodyTokens(body string, avail int) []logToken {
 			key, val := f[:eq+1], f[eq+1:]
 			room := min(hudMaxToken, avail-ansi.StringWidth(key))
 			if room < 4 {
-				key, room = ellipsizeMiddle(key, avail), 0
+				key = ellipsizeMiddle(key, avail)
 				val = ""
 			} else {
 				val = ellipsizeMiddle(val, room)
@@ -243,7 +243,6 @@ func renderLogRec(rec logRec, width int, showSource bool) []string {
 		}
 		if started && curW+need > avail {
 			flush()
-			need = t.w
 		}
 		if started {
 			cur += " "

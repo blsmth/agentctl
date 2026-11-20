@@ -189,10 +189,10 @@ func TestLogScrollStableAcrossResize(t *testing.T) {
 	}
 	m.agentLogAtBottom = false
 	m.agentLogScroll = (m.agentStarts[30]) // top of record 30
-	anchor := m.agentPane().anchor()
+	anchor, _ := m.agentPane().anchor()
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
 	m = next.(HudModel)
-	if got := m.agentPane().anchor(); got != anchor {
+	if got, _ := m.agentPane().anchor(); got != anchor {
 		t.Errorf("anchor %d after resize, want %d", got, anchor)
 	}
 	// Pinned stays pinned after resize.
@@ -297,5 +297,22 @@ func TestSourceToggleKeyOnlyOnLogTabs(t *testing.T) {
 	m.activeTab = tabStream
 	if strings.Contains(ansi.Strip(m.renderFooter(120)), "s source") {
 		t.Error("footer on stream tab should not mention s")
+	}
+}
+
+func TestLogScrollKeepsOffsetInsideRecordOnAppend(t *testing.T) {
+	m := newTestHud()
+	m.width, m.height = 40, 24
+	var raw []string
+	for i := 0; i < 30; i++ {
+		raw = append(raw, "2026/11/19 09:00:00 INFO a.go: msg "+strings.Repeat("word ", 30)+string(rune('A'+i%26)))
+	}
+	m.appendLog(m.sysPane(), raw)
+	m.sysLogAtBottom = false
+	m.sysLogScroll = m.sysStarts[5] + 3
+	want := m.sysLogScroll
+	m.appendLog(m.sysPane(), []string{"2026/11/19 09:00:01 INFO a.go: new line"})
+	if m.sysLogScroll != want {
+		t.Errorf("scroll = %d after append, want %d", m.sysLogScroll, want)
 	}
 }
