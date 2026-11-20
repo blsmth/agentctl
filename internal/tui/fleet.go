@@ -955,6 +955,12 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(show, focus, m.flushView())
 
 	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			if url := m.cardLinkAt(msg.X, msg.Y); url != "" {
+				m.hideCard()
+				return m, fleetOpenURL(url)
+			}
+		}
 		m.hideCard()
 		return m.pressHeader(msg)
 

@@ -182,13 +182,13 @@ func TestCardAlignmentAndContextBar(t *testing.T) {
 	r.OutputTokens = 25000
 	r.CacheReadTokens = 4_516_000
 	r.Branch = "agent/x"
-	lines := cardContent(r, nil, "boss", now, 50, cs)
+	lines := cardContent(r, nil, cardOpts{parent: "boss"}, now, 50, cs).lines
 	plain := make([]string, len(lines))
 	for i, l := range lines {
 		plain[i] = ansi.Strip(l)
 	}
 	joined := strings.Join(plain, "\n")
-	for _, want := range []string{"██░░░░░░░░ 13%", "100 in · 25k out · 4.5M cached", "model   sonnet", "branch  agent", "from    boss"} {
+	for _, want := range []string{"██░░░░░░░░ 13%", "100 new in · 25k out · 4.5M cached", "model   sonnet", "branch  agent", "from    boss"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in\n%s", want, joined)
 		}
@@ -207,7 +207,7 @@ func TestCardAlignmentAndContextBar(t *testing.T) {
 	}
 
 	r.Branch = ""
-	for _, l := range cardContent(r, nil, "", now, 50, cs) {
+	for _, l := range cardContent(r, nil, cardOpts{}, now, 50, cs).lines {
 		if strings.TrimSpace(ansi.Strip(l)) == "" {
 			t.Errorf("no blank line without provenance section")
 		}

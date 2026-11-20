@@ -1739,6 +1739,7 @@ func applyStylingAndKeybindings(exe string) {
 	set("set-titles", "on")
 	set("set-titles-string", titleString(paths.DirName()))
 	applyExtendedKeys()
+	applyHyperlinks()
 	// Invisible pane borders — match terminal background so chrome panes blend in.
 	// Uses the theme's Base color so it adapts to the active theme.
 	borderColor := theme.Current().Base

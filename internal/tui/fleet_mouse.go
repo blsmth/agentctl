@@ -366,6 +366,9 @@ func (m FleetModel) hoverAt(x, y int) fleetHover {
 // move that lands on the same target changes nothing and returns a nil cmd.
 func (m FleetModel) handleMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	m.hoverX, m.hoverY, m.hasPointer = msg.X, msg.Y, true
+	if m.holdCardUnderPointer() {
+		return m, nil // moving across the card (toward its PR link) keeps it
+	}
 	prev := m.hover
 	m.hover = m.hoverAt(msg.X, msg.Y)
 	if m.hover == prev {
@@ -386,6 +389,9 @@ func (m *FleetModel) refreshHover() {
 		m.hideCard()
 		return
 	}
+	if m.holdCardUnderPointer() {
+		return
+	}
 	m.hover = m.hoverAt(m.hoverX, m.hoverY)
 	// The card survives a reload only while its row is still under the pointer.
 	if r, idx, ok := m.rowForCard(m.card); m.card != nil && (!ok || m.hover.reg != fleetHoverBody || m.hover.line != idx || r.WindowID == "") {
@@ -398,4 +404,23 @@ func (m *FleetModel) refreshHover() {
 func (m FleetModel) onHeaderName(g fleet.Group, x int) bool {
 	span := m.headerNameSpan(g, m.listColWidth())
 	return x >= span[0] && x < span[1]
+}
+
+// holdCardUnderPointer keeps a visible card while the pointer is over it:
+// the hover stays on the card's anchor row, so the row under the card does
+// not take the hover and no new dwell starts. Reports whether it held.
+func (m *FleetModel) holdCardUnderPointer() bool {
+	if m.card == nil {
+		return false
+	}
+	_, idx, ok := m.rowForCard(m.card)
+	if !ok {
+		return false
+	}
+	p, ok := m.cardLayout()
+	if !ok || !p.contains(m.hoverX, m.hoverY) {
+		return false
+	}
+	m.hover = fleetHover{line: idx, reg: fleetHoverBody}
+	return true
 }

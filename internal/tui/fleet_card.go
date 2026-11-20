@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/render"
@@ -22,7 +25,7 @@ import (
 const fleetCardDwell = 400 * time.Millisecond
 
 const (
-	fleetCardMaxW  = 44
+	fleetCardMaxW  = 72
 	fleetCardMinW  = 30
 	fleetCardMinH  = 6 // list rows needed before a card is worth drawing
 	fleetCardInset = 4
@@ -44,13 +47,14 @@ type fleetCard struct {
 
 // cardStats is what needs the session log to compute.
 type cardStats struct {
-	model     string
-	in, out   int
-	cacheRead int
-	turns     int
-	cost      sessions.SessionCost
-	hasCost   bool
-	duration  time.Duration
+	model       string
+	in, out     int
+	cacheRead   int
+	cacheCreate int
+	turns       int
+	cost        sessions.SessionCost
+	hasCost     bool
+	duration    time.Duration
 }
 
 // cardCacheEntry is cardStats keyed by the log's identity.
@@ -137,11 +141,12 @@ func cardStatsCmd(r fleet.Row, cached *cardCacheEntry) tea.Cmd {
 
 func statsFromSummary(sum *sessions.Summary, backend string) cardStats {
 	st := cardStats{
-		model:     sum.ModelName,
-		in:        sum.TotalInputTokens,
-		out:       sum.TotalOutputTokens,
-		cacheRead: sum.CacheReadTokens,
-		turns:     sum.TurnCount,
+		model:       sum.ModelName,
+		in:          sum.TotalInputTokens,
+		out:         sum.TotalOutputTokens,
+		cacheRead:   sum.CacheReadTokens,
+		cacheCreate: sum.CacheCreateTokens,
+		turns:       sum.TurnCount,
 	}
 	billing := sessions.ClassifyBilling(sum.ModelName, backend, config.Load().Backends)
 	if c := sessions.CostOfSummary(sum, billing); c.Known {
@@ -206,12 +211,34 @@ func contextBar(pct int, cs cardStyles) string {
 type cardRow struct {
 	label, value string
 	styled       bool
+	pr           bool // the PR row: its screen line is the click target
+}
+
+// cardOpts is what cardContent needs beyond the row and its stats.
+type cardOpts struct {
+	parent  string // dispatcher's name, "" when none
+	account string // the row's account when it is not the default one
+	compact bool   // one line each for title and last: the fallback when the full card has no room
+}
+
+// Wrap limits for the card's free-text lines.
+const (
+	cardTitleLines = 2
+	cardLastLines  = 3
+)
+
+// cardLines is a rendered card body: its lines (each at most w columns) and
+// the index of the PR line in it (-1 when there is none).
+type cardLines struct {
+	lines  []string
+	prLine int
 }
 
 // cardContent builds the card's lines (each at most w columns). A line whose
 // data is unknown is omitted. stats may be nil while the log is still parsing.
-// Layout: title, divider, usage rows, then (after a blank line) provenance rows.
-func cardContent(r fleet.Row, st *cardStats, parentName string, now time.Time, w int, cs cardStyles) []string {
+// Layout: name/state header, the row's title, divider, usage rows, then
+// (after a blank line) provenance rows and the last activity.
+func cardContent(r fleet.Row, st *cardStats, o cardOpts, now time.Time, w int, cs cardStyles) cardLines {
 	var usage, prov []cardRow
 	add := func(dst *[]cardRow, label, value string) {
 		if value != "" {
@@ -227,15 +254,24 @@ func cardContent(r fleet.Row, st *cardStats, parentName string, now time.Time, w
 	if !r.StateSince.IsZero() {
 		stateTxt += " " + fleet.CompactAge(now.Sub(r.StateSince))
 	}
-	title := fleetNameStyle(rowWeight(r)).Background(cs.bg.GetBackground()).Render(r.Name) + cs.bg.Render("  ") + gs.Background(cs.bg.GetBackground()).Render(glyph) + cs.dim.Render(" "+stateTxt)
-	out := []string{truncateToWidth(title, w)}
+	header := fleetNameStyle(rowWeight(r)).Background(cs.bg.GetBackground()).Render(r.Name) + cs.bg.Render("  ") + gs.Background(cs.bg.GetBackground()).Render(glyph) + cs.dim.Render(" "+stateTxt)
+	out := cardLines{lines: []string{truncateToWidth(header, w)}, prLine: -1}
+
+	titleLines := cardTitleLines
+	if o.compact {
+		titleLines = 1
+	}
+	for _, l := range wrapFill(cardTitle(r), w, titleLines) {
+		out.lines = append(out.lines, cs.text.Bold(true).Render(l))
+	}
 
 	model := r.ModelName
-	in, outTok, cacheRead, turns := r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.TurnCount
+	in, outTok, cacheRead, cacheCreate, turns := r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheCreateTokens, r.TurnCount
 	var dur time.Duration
 	if st != nil {
 		model = firstNonEmpty(st.model, model)
 		in, outTok, cacheRead = firstPos(st.in, in), firstPos(st.out, outTok), firstPos(st.cacheRead, cacheRead)
+		cacheCreate = firstPos(st.cacheCreate, cacheCreate)
 		turns = firstPos(st.turns, turns)
 		dur = st.duration
 	}
@@ -249,17 +285,7 @@ func cardContent(r fleet.Row, st *cardStats, parentName string, now time.Time, w
 	if r.ContextPct > 0 {
 		usage = append(usage, cardRow{label: "context", value: contextBar(r.ContextPct, cs), styled: true})
 	}
-	var tok []string
-	if in > 0 {
-		tok = append(tok, render.TokensCompact(in)+" in")
-	}
-	if outTok > 0 {
-		tok = append(tok, render.TokensCompact(outTok)+" out")
-	}
-	if cacheRead > 0 {
-		tok = append(tok, render.TokensCompact(cacheRead)+" cached")
-	}
-	add(&usage, "tokens", strings.Join(tok, " · "))
+	add(&usage, "tokens", tokenSummary(in+cacheCreate, outTok, cacheRead))
 	if st != nil && st.hasCost {
 		c := fmt.Sprintf("$%.2f", st.cost.USD)
 		if st.cost.Billing == sessions.BillingFree {
@@ -280,18 +306,19 @@ func cardContent(r fleet.Row, st *cardStats, parentName string, now time.Time, w
 		add(&usage, "turns", fmt.Sprint(turns))
 	}
 
+	if base := fleet.BaseName(r); base != "" && base != fleet.StripInstanceSuffix(r.Name) {
+		add(&prov, "agent", base)
+	}
+	add(&prov, "account", o.account)
 	add(&prov, "branch", r.Branch)
 	if wt := firstNonEmpty(r.WorktreeDir, r.WorktreePath); wt != "" {
 		add(&prov, "worktree", filepath.Base(wt))
 	}
-	if r.PRNumber > 0 {
-		pr := fmt.Sprintf("#%d", r.PRNumber)
-		if r.PRURL != "" {
-			pr += " " + r.PRURL
-		}
-		add(&prov, "pr", pr)
+	prText, prURL := prLabel(r.PRNumber, r.PRURL)
+	if prText != "" {
+		prov = append(prov, cardRow{label: "pr", value: prText, pr: true})
 	}
-	add(&prov, "from", parentName)
+	add(&prov, "from", o.parent)
 	if r.ScheduledBy != "" {
 		v := r.ScheduledBy
 		if !r.ScheduledAt.IsZero() {
@@ -314,34 +341,143 @@ func cardContent(r fleet.Row, st *cardStats, parentName string, now time.Time, w
 	if last != "" {
 		labelW = max(labelW, len("last"))
 	}
+	labelCell := func(label string) string {
+		return cs.dim.Render(label + strings.Repeat(" ", labelW-lipgloss.Width(label)+1))
+	}
+	valueW := max(w-labelW-1, 0)
 	line := func(cr cardRow) string {
-		label := cs.dim.Render(cr.label + strings.Repeat(" ", labelW-lipgloss.Width(cr.label)+1))
 		v := cr.value
-		if !cr.styled {
-			v = cs.text.Render(v)
+		switch {
+		case cr.pr:
+			// Cut the text before styling so the OSC 8 link is never split.
+			v = cs.text.Underline(prURL != "").Hyperlink(prURL).Render(truncateToWidth(v, valueW))
+		case !cr.styled:
+			v = cs.text.Render(truncateToWidth(v, valueW))
 		}
-		return truncateToWidth(label+v, w)
+		return truncateToWidth(labelCell(cr.label)+v, w)
 	}
 
 	if len(usage)+len(prov) == 0 && last == "" {
 		return out
 	}
-	out = append(out, cs.dim.Render(strings.Repeat("─", max(w, 0))))
+	out.lines = append(out.lines, cs.dim.Render(strings.Repeat("─", max(w, 0))))
 	for _, cr := range usage {
-		out = append(out, line(cr))
+		out.lines = append(out.lines, line(cr))
 	}
 	if len(prov) > 0 && len(usage) > 0 {
-		out = append(out, cs.bg.Render(""))
+		out.lines = append(out.lines, cs.bg.Render(""))
 	}
 	for _, cr := range prov {
-		out = append(out, line(cr))
+		if cr.pr {
+			out.prLine = len(out.lines)
+		}
+		out.lines = append(out.lines, line(cr))
 	}
 	if last != "" {
-		// Marker then text, matching the sidebar's last-action line.
-		label := cs.dim.Render("last" + strings.Repeat(" ", labelW-len("last")+1))
-		out = append(out, truncateToWidth(label+cs.dim.Render(fleetActivityMarker)+cs.text.Render(last), w))
+		out.lines = append(out.lines, lastLines(last, labelCell("last"), labelW+1, w, o.compact, cs)...)
 	}
 	return out
+}
+
+// lastLines renders the last activity after its label and marker, wrapped
+// to cardLastLines (1 when compact) with continuation lines indented under
+// the text, so the label column stays clear. Words longer than a line
+// (paths, flags) are hard-wrapped; only the final line gets an ellipsis.
+func lastLines(last, label string, labelW, w int, compact bool, cs cardStyles) []string {
+	n := cardLastLines
+	if compact {
+		n = 1
+	}
+	indent := labelW + lipgloss.Width(fleetActivityMarker)
+	var out []string
+	for i, l := range wrapFill(last, w-indent, n) {
+		if i == 0 {
+			out = append(out, label+cs.dim.Render(fleetActivityMarker)+cs.text.Render(l))
+			continue
+		}
+		out = append(out, cs.bg.Render(strings.Repeat(" ", indent))+cs.text.Render(l))
+	}
+	return out
+}
+
+// wrapFill is wrapLines for plain text whose final kept line, when the
+// text does not fit, carries on with the rest of the text cut at w with
+// "…", rather than stopping where the wrap broke (a hyphen in a long path
+// would leave a near-empty last line).
+func wrapFill(s string, w, n int) []string {
+	lines := wrapLines(s, w, n)
+	if len(lines) < n || !strings.HasSuffix(lines[n-1], "…") {
+		return lines
+	}
+	pos := 0
+	for _, l := range lines[:n-1] {
+		i := strings.Index(s[pos:], l)
+		if i < 0 {
+			return lines
+		}
+		pos += i + len(l)
+	}
+	lines[n-1] = truncateToWidth(strings.TrimLeft(s[pos:], " "), w)
+	return lines
+}
+
+// cardTitle is the title the row's list line shows (manual titles
+// included), or "" when the row only has the empty-recap placeholder.
+func cardTitle(r fleet.Row) string {
+	rc := rowRecap(r)
+	if rc.Source == fleet.RecapNone {
+		return ""
+	}
+	return rc.Short()
+}
+
+// tokenSummary reads "1.2k new in · 11k out · 2.3M cached". newIn is every
+// input token not served from cache (uncached input plus cache writes); a
+// bare "in" for the uncached part alone reads like a bug next to "cached".
+func tokenSummary(newIn, out, cacheRead int) string {
+	var tok []string
+	if newIn > 0 {
+		tok = append(tok, render.TokensCompact(newIn)+" new in")
+	}
+	if out > 0 {
+		tok = append(tok, render.TokensCompact(out)+" out")
+	}
+	if cacheRead > 0 {
+		tok = append(tok, render.TokensCompact(cacheRead)+" cached")
+	}
+	return strings.Join(tok, " · ")
+}
+
+var prNumberRe = regexp.MustCompile(`/pull/(\d+)`)
+
+// prLabel is the PR row's text ("#N owner/repo") and the URL to link it to.
+// A URL with no recorded number takes its number from the /pull/N path; with
+// neither the text is the shortened URL. Both empty means no PR row.
+func prLabel(num int, url string) (text, link string) {
+	if num <= 0 && url != "" {
+		if m := prNumberRe.FindStringSubmatch(url); m != nil {
+			num, _ = strconv.Atoi(m[1])
+		}
+	}
+	short := shortPRURL(url)
+	switch {
+	case num > 0 && short != "":
+		return fmt.Sprintf("#%d %s", num, short), url
+	case num > 0:
+		return fmt.Sprintf("#%d", num), ""
+	}
+	return short, url
+}
+
+// shortPRURL drops the scheme, a github.com host and the /pull/N tail
+// ("https://github.com/o/r/pull/7" → "o/r"): the number is shown already.
+func shortPRURL(url string) string {
+	s := strings.TrimPrefix(strings.TrimPrefix(url, "https://"), "http://")
+	s = strings.TrimPrefix(s, "github.com/")
+	if loc := prNumberRe.FindStringIndex(s); loc != nil {
+		s = s[:loc[0]]
+	}
+	return strings.TrimSuffix(s, "/")
 }
 
 func firstNonEmpty(a, b string) string {
@@ -401,45 +537,102 @@ func cardRect(rowY, rowH, top, rows, h int) (y int, ok bool) {
 	return 0, false
 }
 
-// withCard overlays the hover card on the rendered view, or returns bg as is
-// when there is no card, no room, or the anchor row is out of view.
-func (m FleetModel) withCard(bg string) string {
+// cardPlacement is a rendered card and where it goes on screen.
+type cardPlacement struct {
+	body   string
+	x, y   int // top-left cell
+	w      int
+	prY    int    // screen row of the PR line, -1 when none
+	prLink string // URL the PR line opens, "" when none
+}
+
+// contains reports whether screen cell (x, y) is on the placed card.
+func (p cardPlacement) contains(x, y int) bool {
+	return x >= p.x && x < p.x+p.w && y >= p.y && y < p.y+strings.Count(p.body, "\n")+1
+}
+
+// cardLayout renders the visible card and places it, or reports false when
+// there is no card, no room, or the anchor row is out of view. A card too
+// tall for the space above and below its row is retried in compact form
+// (one-line title and last activity) before giving up.
+func (m FleetModel) cardLayout() (cardPlacement, bool) {
 	row, idx, ok := m.rowForCard(m.card)
 	if !ok {
-		return bg
+		return cardPlacement{}, false
 	}
 	cw := m.listColWidth()
 	w := min(fleetCardMaxW, cw-fleetCardInset)
 	top, rows := m.fleetListTop(), m.fleetListRows()
 	if w < fleetCardMinW || rows < fleetCardMinH {
-		return bg
+		return cardPlacement{}, false
 	}
 	rowY, vis := m.lineScreenY(idx)
 	if !vis {
-		return bg
+		return cardPlacement{}, false
 	}
 	var st *cardStats
 	if e, ok := m.cardCache[row.LogPath]; ok && row.LogPath != "" {
 		st = &e.stats
 	}
+	opts := cardOpts{parent: m.parentName(row), account: cardAccount(row.Account)}
 	cs := newCardStyles()
-	lines := cardContent(row, st, m.parentName(row), fleetNow(), w-4, cs)
 	t := theme.Current()
-	body := lipgloss.NewStyle().
+	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(t.Accent)).
 		BorderBackground(lipgloss.Color(t.Surface)).
 		Background(lipgloss.Color(t.Surface)).
 		Padding(0, 1).
-		Width(w).
-		Render(strings.Join(lines, "\n"))
-	h := strings.Count(body, "\n") + 1
-	y, ok := cardRect(rowY, m.lineHeight(idx, cw), top, rows, h)
+		Width(w)
+	for _, compact := range []bool{false, true} {
+		opts.compact = compact
+		c := cardContent(row, st, opts, fleetNow(), w-4, cs)
+		body := box.Render(strings.Join(c.lines, "\n"))
+		h := strings.Count(body, "\n") + 1
+		y, ok := cardRect(rowY, m.lineHeight(idx, cw), top, rows, h)
+		if !ok {
+			continue
+		}
+		p := cardPlacement{body: body, x: min(fleetCardInset, max(cw-fleetSidebarRightGutter-w, 0)), y: y, w: w, prY: -1}
+		if c.prLine >= 0 {
+			p.prY = y + 1 + c.prLine // +1: the top border
+			_, p.prLink = prLabel(row.PRNumber, row.PRURL)
+		}
+		return p, true
+	}
+	return cardPlacement{}, false
+}
+
+// cardAccount is the account to show on the card: "" for none or the default.
+func cardAccount(account string) string {
+	if account == "" || claudehome.IsDefaultAccount(account) {
+		return ""
+	}
+	return account
+}
+
+// withCard overlays the hover card on the rendered view, or returns bg as is
+// when there is no card, no room, or the anchor row is out of view.
+func (m FleetModel) withCard(bg string) string {
+	p, ok := m.cardLayout()
 	if !ok {
 		return bg
 	}
-	x := min(fleetCardInset, max(cw-fleetSidebarRightGutter-w, 0))
-	return compositeOverlayAt(bg, body, x, y, cw-fleetSidebarRightGutter, m.termHeight)
+	cw := m.listColWidth()
+	return compositeOverlayAt(bg, p.body, p.x, p.y, cw-fleetSidebarRightGutter, m.termHeight)
+}
+
+// cardLinkAt is the URL a left click at (x, y) opens: the visible card's PR
+// line, when it has a link. Everything else on or off the card is "".
+func (m FleetModel) cardLinkAt(x, y int) string {
+	if m.card == nil {
+		return ""
+	}
+	p, ok := m.cardLayout()
+	if !ok || p.prLink == "" || y != p.prY || x < p.x || x >= p.x+p.w {
+		return ""
+	}
+	return p.prLink
 }
 
 // storeCardStats records parsed stats; the card picks them up on next render.

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -195,7 +196,7 @@ func TestCardContentOmitsUnknown(t *testing.T) {
 	cs := newCardStyles()
 	now := time.Unix(1_000_000, 0)
 	r := testRow("worker", "s1", "idle", "")
-	lines := cardContent(r, nil, "", now, 40, cs)
+	lines := cardContent(r, nil, cardOpts{}, now, 40, cs).lines
 	if len(lines) != 1 {
 		t.Fatalf("bare row should only have a title, got %d lines: %q", len(lines), lines)
 	}
@@ -213,13 +214,354 @@ func TestCardContentOmitsUnknown(t *testing.T) {
 	r.PRNumber = 7
 	r.LastToolDetail = "go test"
 	r.Recap = fleet.RecapLine{Text: "go test"} // same as activity: omitted
-	full := ansi.Strip(strings.Join(cardContent(r, nil, "boss", now, 60, cs), "\n"))
-	for _, want := range []string{"worker", "model", "42%", "12k in", "agent/x", "#7", "boss"} {
+	full := ansi.Strip(strings.Join(cardContent(r, nil, cardOpts{parent: "boss"}, now, 60, cs).lines, "\n"))
+	for _, want := range []string{"worker", "model", "42%", "12k new in", "agent/x", "#7", "boss"} {
 		if !strings.Contains(full, want) {
 			t.Errorf("missing %q in %q", want, full)
 		}
 	}
 	if strings.Contains(full, "last") {
 		t.Errorf("activity equal to recap should be omitted: %q", full)
+	}
+}
+
+func TestCardTitle(t *testing.T) {
+	InitStyles()
+	cs := newCardStyles()
+	now := time.Unix(1_000_000, 0)
+	long := "Reducing signal log noise across the monitor, the hooks and every chrome bar pane in the session"
+	tests := []struct {
+		name   string
+		recap  fleet.RecapLine
+		manual bool
+		want   []string // the lines right under the header
+	}{
+		{"short title", fleet.RecapLine{Title: "Reducing Signal Log Noise", Source: fleet.RecapTitle}, false,
+			[]string{"Reducing Signal Log Noise"}},
+		{"manual title", fleet.RecapLine{Title: "My own name", Source: fleet.RecapTitle}, true,
+			[]string{"My own name"}},
+		{"wraps to two lines", fleet.RecapLine{Title: long, Source: fleet.RecapTitle}, false,
+			[]string{"Reducing signal log noise across the", "monitor, the hooks and every chrome bar…"}},
+		{"empty", fleet.RecapLine{}, false, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := testRow("worker", "s1", "idle", "")
+			r.Recap = tc.recap
+			r.ShortManual = tc.manual
+			lines := cardContent(r, nil, cardOpts{}, now, 40, cs).lines
+			var got []string
+			for _, l := range lines[1:] {
+				got = append(got, ansi.Strip(l))
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("lines after header = %q, want %q", got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("line %d = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+			for _, l := range lines {
+				if w := lipgloss.Width(l); w > 40 {
+					t.Errorf("line %q is %d wide, over 40", ansi.Strip(l), w)
+				}
+			}
+		})
+	}
+}
+
+func TestCardLastWraps(t *testing.T) {
+	InitStyles()
+	cs := newCardStyles()
+	now := time.Unix(1_000_000, 0)
+	tests := []struct {
+		name    string
+		last    string
+		compact bool
+		want    []string
+	}{
+		{"fits", "go test ./...", false, []string{"last   › go test ./..."}},
+		{"wraps under the value", "agentctl status peek @1405 --lines 200 --since 10m --follow and then some more words here to fill", false, []string{
+			"last   › agentctl status peek @1405 --lines",
+			"         200 --since 10m --follow and then",
+			"         some more words here to fill",
+		}},
+		{"ellipsis on the third line", strings.Repeat("word ", 40), false, []string{
+			"last   › word word word word word word word",
+			"         word word word word word word word",
+			"         word word word word word word wor…",
+		}},
+		{"long path hard-wraps", "/Users/someone/code/personal/agentctl/.worktrees/agent-go-engineer-opus-adhoc/internal/tui/fleet_card.go", false, []string{
+			"last   › /Users/someone/code/personal/agent",
+			"         ctl/.worktrees/agent-go-engineer-",
+			"         opus-adhoc/internal/tui/fleet_car…",
+		}},
+		{"compact keeps one line", strings.Repeat("word ", 40), true, []string{
+			"last   › word word word word word word wor…",
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := testRow("worker", "s1", "idle", tc.last)
+			r.Branch = "b" // a row so labelW includes "branch"
+			lines := cardContent(r, nil, cardOpts{compact: tc.compact}, now, 43, cs).lines
+			got := lines[len(lines)-len(tc.want):]
+			for i, want := range tc.want {
+				if g := ansi.Strip(got[i]); g != want {
+					t.Errorf("line %d = %q, want %q", i, g, want)
+				}
+				if w := lipgloss.Width(got[i]); w > 43 {
+					t.Errorf("line %d is %d wide, over 43", i, w)
+				}
+			}
+			if ansi.Strip(lines[len(lines)-len(tc.want)-1]) != "branch b" {
+				t.Errorf("unexpected extra last lines: %q", lines)
+			}
+		})
+	}
+}
+
+func TestPRLabel(t *testing.T) {
+	tests := []struct {
+		num            int
+		url            string
+		wantText, link string
+	}{
+		{7, "https://github.com/blsmth/agentctl/pull/7", "#7 blsmth/agentctl", "https://github.com/blsmth/agentctl/pull/7"},
+		{0, "https://github.com/blsmth/agentctl/pull/12", "#12 blsmth/agentctl", "https://github.com/blsmth/agentctl/pull/12"},
+		{0, "https://git.example.com/o/r/merge_requests/3", "git.example.com/o/r/merge_requests/3", "https://git.example.com/o/r/merge_requests/3"},
+		{9, "", "#9", ""},
+		{0, "", "", ""},
+	}
+	for _, tc := range tests {
+		text, link := prLabel(tc.num, tc.url)
+		if text != tc.wantText || link != tc.link {
+			t.Errorf("prLabel(%d, %q) = %q, %q; want %q, %q", tc.num, tc.url, text, link, tc.wantText, tc.link)
+		}
+	}
+}
+
+func TestCardPRHyperlink(t *testing.T) {
+	InitStyles()
+	cs := newCardStyles()
+	now := time.Unix(1_000_000, 0)
+	const url = "https://github.com/blsmth/agentctl/pull/211"
+	r := testRow("worker", "s1", "idle", "")
+	r.PRNumber, r.PRURL = 211, url
+	c := cardContent(r, nil, cardOpts{}, now, 40, cs)
+	if c.prLine < 0 {
+		t.Fatal("no PR line")
+	}
+	pr := c.lines[c.prLine]
+	if !strings.Contains(pr, ansi.SetHyperlink(url)) || !strings.Contains(pr, ansi.ResetHyperlink()) {
+		t.Fatalf("PR line has no OSC 8 link: %q", pr)
+	}
+	plain := ansi.Strip(pr)
+	if plain != "pr #211 blsmth/agentctl" {
+		t.Errorf("PR line = %q", plain)
+	}
+	if w := lipgloss.Width(pr); w != lipgloss.Width(plain) {
+		t.Errorf("OSC 8 counted as width: %d vs %d", w, lipgloss.Width(plain))
+	}
+
+	t.Run("truncate keeps the link closed and width-neutral", func(t *testing.T) {
+		got := truncateToWidth(pr, 10)
+		if w := lipgloss.Width(got); w != 10 {
+			t.Errorf("width %d, want 10: %q", w, got)
+		}
+		if strings.Count(got, "\x1b]8;") != 2 {
+			t.Errorf("link open/close not both kept: %q", got)
+		}
+	})
+	t.Run("composite does not count OSC 8 bytes", func(t *testing.T) {
+		bg := strings.Repeat("x", 60) + "\nsecond"
+		out := strings.Split(compositeOverlayAt(bg, pr, 5, 0, 80, 2), "\n")
+		if w := lipgloss.Width(out[0]); w != 60 {
+			t.Errorf("composited width %d, want 60", w)
+		}
+		plain := ansi.Strip(out[0])
+		if want := "xxxxx" + "pr #211 blsmth/agentctl" + strings.Repeat("x", 60-5-len("pr #211 blsmth/agentctl")); plain != want {
+			t.Errorf("composited = %q, want %q", plain, want)
+		}
+		if !strings.Contains(out[0], ansi.SetHyperlink(url)) {
+			t.Error("link lost in composite")
+		}
+	})
+	t.Run("no URL, no link", func(t *testing.T) {
+		r.PRURL = ""
+		c := cardContent(r, nil, cardOpts{}, now, 40, cs)
+		if strings.Contains(c.lines[c.prLine], "\x1b]8;") {
+			t.Errorf("link without URL: %q", c.lines[c.prLine])
+		}
+	})
+}
+
+func TestCardTokensFoldCacheWrites(t *testing.T) {
+	InitStyles()
+	r := testRow("worker", "s1", "idle", "")
+	st := &cardStats{in: 68, cacheCreate: 40_000, out: 11_000, cacheRead: 2_300_000}
+	full := ansi.Strip(strings.Join(cardContent(r, st, cardOpts{}, time.Unix(0, 0), 60, newCardStyles()).lines, "\n"))
+	if !strings.Contains(full, "40k new in · 11k out · 2.3M cached") {
+		t.Errorf("tokens row: %q", full)
+	}
+}
+
+func TestCardAgentAndAccount(t *testing.T) {
+	InitStyles()
+	r := testRow("brandon:112", "s1", "idle", "")
+	r.AgentName = "go-engineer"
+	full := ansi.Strip(strings.Join(cardContent(r, nil, cardOpts{account: "work"}, time.Unix(0, 0), 60, newCardStyles()).lines, "\n"))
+	for _, want := range []string{"agent   go-engineer", "account work"} {
+		if !strings.Contains(full, want) {
+			t.Errorf("missing %q in %q", want, full)
+		}
+	}
+	r.AgentName = "brandon" // the name already says it
+	full = ansi.Strip(strings.Join(cardContent(r, nil, cardOpts{}, time.Unix(0, 0), 60, newCardStyles()).lines, "\n"))
+	if strings.Contains(full, "agent") || strings.Contains(full, "account") {
+		t.Errorf("redundant agent/account rows: %q", full)
+	}
+}
+
+// cardShownModel is cardModel with the card visible and row "a" carrying a
+// title, a PR and a long last activity.
+func cardShownModel(t *testing.T, w, h int) FleetModel {
+	t.Helper()
+	m, target := cardModel(t, w, h)
+	r := &m.groups[0].Rows[0]
+	r.Recap = fleet.RecapLine{Title: "Reducing Signal Log Noise", Source: fleet.RecapTitle}
+	r.PRNumber, r.PRURL = 211, "https://github.com/blsmth/agentctl/pull/211"
+	r.Branch = "agent/go-engineer-opus/adhoc-f7f8052e"
+	r.ModelName = "claude-opus-4-5"
+	r.LastToolDetail = "agentctl status peek @1405 --lines 200 --since 10m and a few more words to wrap it"
+	m.rebuildLines()
+	m = update(m, fleetCardTickMsg{gen: m.hoverGen, target: target})
+	if m.card == nil {
+		t.Fatal("card not shown")
+	}
+	return m
+}
+
+func TestCardClickOpensPR(t *testing.T) {
+	m := cardShownModel(t, 120, 40)
+	p, ok := m.cardLayout()
+	if !ok || p.prY < 0 {
+		t.Fatalf("layout %+v ok=%v", p, ok)
+	}
+	if row := ansi.Strip(strings.Split(m.render(), "\n")[p.prY]); !strings.Contains(row, "#211 blsmth/agentctl") {
+		t.Fatalf("screen row %d is not the PR line: %q", p.prY, row)
+	}
+	var opened []string
+	old := fleetOpenURL
+	fleetOpenURL = func(url string) tea.Cmd { opened = append(opened, url); return nil }
+	t.Cleanup(func() { fleetOpenURL = old })
+
+	got := update(m, tea.MouseClickMsg{X: p.x + 3, Y: p.prY, Button: tea.MouseLeft})
+	if len(opened) != 1 || opened[0] != "https://github.com/blsmth/agentctl/pull/211" {
+		t.Fatalf("opened = %q", opened)
+	}
+	if got.card != nil {
+		t.Error("card should hide after opening")
+	}
+
+	opened = nil
+	for _, c := range []tea.MouseClickMsg{
+		{X: p.x + 3, Y: p.prY - 1, Button: tea.MouseLeft},   // another card line
+		{X: p.x + 3, Y: p.prY, Button: tea.MouseRight},      // right click
+		{X: p.x + p.w + 2, Y: p.prY, Button: tea.MouseLeft}, // beside the card
+	} {
+		update(m, c)
+	}
+	if len(opened) != 0 {
+		t.Errorf("only a left click on the PR line opens: %q", opened)
+	}
+}
+
+func TestCardRendersCleanly(t *testing.T) {
+	for _, width := range []int{fleetCardMinW + fleetCardInset, 60, 120} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			m := cardShownModel(t, width, 40)
+			p, ok := m.cardLayout()
+			if !ok {
+				t.Fatal("card not placed")
+			}
+			if p.w > fleetCardMaxW {
+				t.Errorf("card %d wide, over max", p.w)
+			}
+			for i, l := range strings.Split(p.body, "\n") {
+				if w := lipgloss.Width(l); w != p.w {
+					t.Errorf("line %d is %d wide, want %d (gaps in the Surface fill): %q", i, w, p.w, ansi.Strip(l))
+				}
+			}
+			if !strings.Contains(ansi.Strip(p.body), "Reducing Signal Log") {
+				t.Error("title missing")
+			}
+		})
+	}
+}
+
+func TestCardCompactFallback(t *testing.T) {
+	m := cardShownModel(t, 120, 40)
+	full, ok := m.cardLayout()
+	if !ok {
+		t.Fatal("card not placed")
+	}
+	fullH := strings.Count(full.body, "\n") + 1
+	// Shrink the list until the full card fits neither below nor above row a.
+	for h := 40; h > 10; h-- {
+		m.termHeight = h
+		p, ok := m.cardLayout()
+		if !ok {
+			break
+		}
+		if strings.Count(p.body, "\n")+1 < fullH {
+			return // compact card drawn where the full one does not fit
+		}
+	}
+	t.Fatal("never fell back to the compact card")
+}
+
+// TestCardSurvivesPointerOnCard is the real path to the PR link: the pointer
+// moves from the anchor row across the card onto the PR line, then clicks.
+func TestCardSurvivesPointerOnCard(t *testing.T) {
+	m := cardShownModel(t, 120, 40)
+	p, ok := m.cardLayout()
+	if !ok || p.prY < 0 {
+		t.Fatalf("layout %+v ok=%v", p, ok)
+	}
+	var opened []string
+	old := fleetOpenURL
+	fleetOpenURL = func(url string) tea.Cmd { opened = append(opened, url); return nil }
+	t.Cleanup(func() { fleetOpenURL = old })
+
+	anchor := m.hover
+	for y := p.y; y <= p.prY; y++ {
+		var cmd tea.Cmd
+		var mm tea.Model
+		mm, cmd = m.Update(tea.MouseMotionMsg{X: p.x + 3, Y: y})
+		m = mm.(FleetModel)
+		if m.card == nil {
+			t.Fatalf("card hidden by motion onto card row %d", y)
+		}
+		if cmd != nil {
+			t.Errorf("motion on the card started a dwell at row %d", y)
+		}
+		if m.hover != anchor {
+			t.Errorf("hover moved to %+v at row %d, want anchor %+v", m.hover, y, anchor)
+		}
+	}
+	m.refreshHover() // a reload while the pointer rests on the card
+	if m.card == nil {
+		t.Fatal("refreshHover hid the card under the pointer")
+	}
+	update(m, tea.MouseClickMsg{X: p.x + 3, Y: p.prY, Button: tea.MouseLeft})
+	if len(opened) != 1 || opened[0] != "https://github.com/blsmth/agentctl/pull/211" {
+		t.Fatalf("opened = %q", opened)
+	}
+
+	// Leaving the card still hides it as before.
+	if got := update(m, tea.MouseMotionMsg{X: p.x + p.w + 2, Y: p.prY}); got.card != nil {
+		t.Error("card kept after the pointer left it")
 	}
 }
