@@ -662,7 +662,13 @@ func UpdateIn(runtimeDir, windowID string, fn func(*WindowState)) error {
 	if runtimeDir == "" {
 		return fmt.Errorf("windowstate: no runtime dir for %s", windowID)
 	}
-	_, _, err := store{root: runtimeDir, dir: WindowsDirFor(runtimeDir)}.transact(windowID, true, fn)
+	s := store{root: runtimeDir, dir: WindowsDirFor(runtimeDir)}
+	// Check before locking: taking the lock creates the windows dir and a
+	// lock file, which a record-less window must not leave behind.
+	if _, err := os.Lstat(s.filePath(windowID)); err != nil {
+		return ErrNoRecord
+	}
+	_, _, err := s.transact(windowID, true, fn)
 	return err
 }
 

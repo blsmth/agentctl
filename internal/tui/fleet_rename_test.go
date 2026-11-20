@@ -432,3 +432,39 @@ func TestRenameFooterHints(t *testing.T) {
 		t.Errorf("footer lacks rename hints:\n%s", out)
 	}
 }
+
+func TestRenamePrefillAutoShortTitle(t *testing.T) {
+	f := newRenameFixture(t, 120)
+	g := f.m.groups[0]
+	g.Rows[1].Recap = fleet.RecapLine{Text: "Auto Short Title", Source: fleet.RecapTitle}
+	f.m.groups = []fleet.Group{g}
+	f.m.rebuildLines()
+	f.m.openRename(f.lineOf(t, "@2"))
+	if got := f.m.rename.input.Value(); got != "Auto Short Title" {
+		t.Errorf("prefill = %q", got)
+	}
+}
+
+func TestRenameDefersHotReload(t *testing.T) {
+	f := newRenameFixture(t, 120)
+	f.m.exeChanged = func() bool { return true }
+	f.m.openRename(f.lineOf(t, "@1"))
+	cmd := f.send(t, fleetTickMsg{})
+	if f.m.Reexec() {
+		t.Fatal("reload fired while the editor was open")
+	}
+	if cmd == nil {
+		t.Fatal("tick should keep polling")
+	}
+	f.send(t, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if f.m.renameOpen() {
+		t.Fatal("editor still open")
+	}
+	cmd = f.send(t, fleetTickMsg{})
+	if !f.m.Reexec() {
+		t.Fatal("reload did not resume")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Error("want tea.Quit")
+	}
+}

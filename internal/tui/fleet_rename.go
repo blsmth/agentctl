@@ -94,7 +94,7 @@ func (m *FleetModel) openRename(idx int) {
 	m.closeMenu()
 	m.jumpErr = ""
 	m.selectLine(idx)
-	orig := rowRecap(r).Title
+	orig := renamePrefill(r)
 	ti := textinput.New()
 	ti.Prompt = ""
 	ti.Placeholder = fleetRenamePlaceholder
@@ -106,6 +106,16 @@ func (m *FleetModel) openRename(idx int) {
 	ti.CursorEnd()
 	ti.Focus()
 	m.rename = &fleetRenameState{session: r.Session, windowID: r.WindowID, orig: orig, input: ti}
+}
+
+// renamePrefill is the title text r shows: its title, or the auto short title
+// standing in for a missing recap. A row showing a recap sentence is empty.
+func renamePrefill(r fleet.Row) string {
+	rc := rowRecap(r)
+	if rc.Title == "" && rc.Source == fleet.RecapTitle {
+		return rc.Short()
+	}
+	return rc.Title
 }
 
 // cancelRename closes the editor without saving.
