@@ -4,11 +4,15 @@
 /** Attention order: lower sorts first. */
 const RANK = { blocked: 0, working: 1, waiting: 1, done: 2, idle: 3 };
 
-/** effectiveState folds the done flag into a single display state. */
+/**
+ * effectiveState folds the done flag into a single display state. turn_done
+ * (a bare window at a turn end) is display only: it shows "done" but is not
+ * the dispatched win.done, which behavior-bearing code reads directly.
+ */
 export function effectiveState(win) {
   if (win.state === "blocked") return "blocked";
   if (win.state === "working") return "working";
-  if (win.done) return "done";
+  if (win.done || win.turn_done) return "done";
   return "idle";
 }
 

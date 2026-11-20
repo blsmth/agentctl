@@ -12,7 +12,7 @@ import {
   actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
   defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines,
-  waitingIndex, displayState, waitingLabel, actionsFor,
+  waitingIndex, displayState, waitingLabel, actionsFor, effectiveState,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
 } from "./logic.js";
 
@@ -627,6 +627,26 @@ console.log("ok: shell request");
   assert.deepEqual(rowChips(full).map((c) => c.kind), ["pr", "issue", "agent-chip", "model-chip", "backend-chip", "sched-chip"]);
   assert.deepEqual(texts({ agent: "x", pr_url: "https://h/o/r/pull/9" }), ["PR #9"]);
   console.log("ok: rowChips");
+}
+
+{
+  // turn_done (a bare window at a turn end) displays as done, display only.
+  assert.equal(effectiveState({ state: "idle", turn_done: true }), "done");
+  assert.equal(effectiveState({ state: "idle", turn_done: false }), "idle");
+  assert.equal(effectiveState({ state: "idle" }), "idle"); // older server
+  assert.equal(effectiveState({ state: "working", turn_done: true }), "working");
+  assert.equal(effectiveState({ state: "blocked", turn_done: true }), "blocked");
+  assert.equal(displayState({ state: "idle", turn_done: true }, new Map()), "done");
+  assert.equal(stateLabel({ state: "idle", turn_done: true }, 0), "done");
+  assert.equal(actionsFor({ state: "idle", turn_done: true }), "reply");
+  assert.equal(canSwipeClose({ state: "idle", turn_done: true }, "s", ["write"]), true);
+  // Still waiting when a child works.
+  const fl = [{ windows: [
+    { window_id: "@1", session: "s", state: "idle", turn_done: true },
+    { window_id: "@2", session: "s", state: "working", parent: "@1" },
+  ] }];
+  assert.equal(displayState(fl[0].windows[0], waitingIndex(fl)), "waiting");
+  assert.deepEqual(groupCounts([{ state: "idle", turn_done: true }, { state: "idle" }]), [{ state: "done", n: 1 }, { state: "idle", n: 1 }]);
 }
 
 {
