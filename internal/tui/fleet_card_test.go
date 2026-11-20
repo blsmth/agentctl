@@ -521,3 +521,47 @@ func TestCardCompactFallback(t *testing.T) {
 	}
 	t.Fatal("never fell back to the compact card")
 }
+
+// TestCardSurvivesPointerOnCard is the real path to the PR link: the pointer
+// moves from the anchor row across the card onto the PR line, then clicks.
+func TestCardSurvivesPointerOnCard(t *testing.T) {
+	m := cardShownModel(t, 120, 40)
+	p, ok := m.cardLayout()
+	if !ok || p.prY < 0 {
+		t.Fatalf("layout %+v ok=%v", p, ok)
+	}
+	var opened []string
+	old := fleetOpenURL
+	fleetOpenURL = func(url string) tea.Cmd { opened = append(opened, url); return nil }
+	t.Cleanup(func() { fleetOpenURL = old })
+
+	anchor := m.hover
+	for y := p.y; y <= p.prY; y++ {
+		var cmd tea.Cmd
+		var mm tea.Model
+		mm, cmd = m.Update(tea.MouseMotionMsg{X: p.x + 3, Y: y})
+		m = mm.(FleetModel)
+		if m.card == nil {
+			t.Fatalf("card hidden by motion onto card row %d", y)
+		}
+		if cmd != nil {
+			t.Errorf("motion on the card started a dwell at row %d", y)
+		}
+		if m.hover != anchor {
+			t.Errorf("hover moved to %+v at row %d, want anchor %+v", m.hover, y, anchor)
+		}
+	}
+	m.refreshHover() // a reload while the pointer rests on the card
+	if m.card == nil {
+		t.Fatal("refreshHover hid the card under the pointer")
+	}
+	update(m, tea.MouseClickMsg{X: p.x + 3, Y: p.prY, Button: tea.MouseLeft})
+	if len(opened) != 1 || opened[0] != "https://github.com/blsmth/agentctl/pull/211" {
+		t.Fatalf("opened = %q", opened)
+	}
+
+	// Leaving the card still hides it as before.
+	if got := update(m, tea.MouseMotionMsg{X: p.x + p.w + 2, Y: p.prY}); got.card != nil {
+		t.Error("card kept after the pointer left it")
+	}
+}

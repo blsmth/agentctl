@@ -50,6 +50,8 @@ func applyExtendedKeys() {
 // terminal-features is a server-wide array, so appending unconditionally
 // would add a duplicate entry on every apply. tmux reads it when a client
 // attaches: clients already attached pick it up on their next attach.
+// Any existing hyperlinks entry counts, even one scoped to a terminal
+// pattern ("xterm*:hyperlinks"): a user who configured it is left alone.
 func hyperlinksArgs(current string) []string {
 	if strings.Contains(current, "hyperlinks") {
 		return nil

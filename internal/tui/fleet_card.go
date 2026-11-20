@@ -546,6 +546,11 @@ type cardPlacement struct {
 	prLink string // URL the PR line opens, "" when none
 }
 
+// contains reports whether screen cell (x, y) is on the placed card.
+func (p cardPlacement) contains(x, y int) bool {
+	return x >= p.x && x < p.x+p.w && y >= p.y && y < p.y+strings.Count(p.body, "\n")+1
+}
+
 // cardLayout renders the visible card and places it, or reports false when
 // there is no card, no room, or the anchor row is out of view. A card too
 // tall for the space above and below its row is retried in compact form
