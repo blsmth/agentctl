@@ -92,7 +92,7 @@ func Compute(ws windowstate.WindowState) string {
 		return glyphWorking + base
 	case ws.State == "blocked":
 		return glyphBlocked + base
-	case ws.Done && !ws.Seen:
+	case (ws.Done || ws.TurnDone) && !ws.Seen:
 		return glyphDone + base
 	}
 	return base
@@ -121,13 +121,14 @@ func SyncName(windowID string, ws *windowstate.WindowState) {
 }
 
 // Apply runs fn on ws, then enforces the Seen rules and syncs the window name.
-// Seen is cleared whenever State changes or Done goes true; if Done went true
+// Seen is cleared whenever State changes or Done (or a bare window's
+// TurnDone) goes true; if Done went true
 // on the window the user is looking at, Seen is set at once so a focused
 // window never shows ✓. Done itself is never cleared here.
 func Apply(windowID string, ws *windowstate.WindowState, fn func(*windowstate.WindowState)) {
-	prevState, prevDone := ws.State, ws.Done
+	prevState, prevDone := ws.State, ws.Done || ws.TurnDone
 	fn(ws)
-	doneEdge := ws.Done && !prevDone
+	doneEdge := (ws.Done || ws.TurnDone) && !prevDone
 	if ws.State != prevState || doneEdge {
 		ws.Seen = false
 	}

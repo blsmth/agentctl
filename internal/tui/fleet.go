@@ -1983,6 +1983,11 @@ func rowGlyph(r fleet.Row) (string, lipgloss.Style) {
 	case fleetWeightDone:
 		return "✓", fleetDoneStyle
 	default:
+		if r.TurnDone {
+			// Bare window at a turn end: ✓ display only. Not Done, so
+			// counts, filters and sweep are unchanged.
+			return "✓", fleetDoneStyle
+		}
 		return "○", fleetIdleStyle
 	}
 }

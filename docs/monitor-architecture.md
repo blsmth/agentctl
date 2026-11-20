@@ -14,7 +14,7 @@ Monitors that predate this mechanism never wrote `monitor.build`. The hook watch
 
 Known consequences of a re-exec, since in-memory state resets:
 
-- The done-unseen ✓ is unaffected: `Done` and `Seen` are persisted in windowstate and window names are written by the state writers, not the monitor.
+- The done-unseen ✓ is unaffected: `Done`, `TurnDone` (bare windows' display-only turn-end ✓) and `Seen` are persisted in windowstate and window names are written by the state writers, not the monitor.
 - Prometheus counters restart from zero.
 - Dispatch completion is not affected by a re-exec: it is hook-driven (see below), not detected by the monitor.
 

@@ -218,6 +218,13 @@ type WindowState struct {
 	// set-active-window (see internal/winname). With Done it decides the ✓.
 	Seen bool `json:"seen,omitempty"`
 
+	// TurnDone is the display-only "finished a turn" fact for bare
+	// (interactive) windows, which never get Done: set by hook-check-done at
+	// a bare window's turn end (unless it still waits on working or blocked
+	// child windows), cleared when the next prompt starts. With !Seen it
+	// shows ✓ like Done does. Nothing else keys on it.
+	TurnDone bool `json:"turn_done,omitempty"`
+
 	// RenderedName is the tmux window name last written by internal/winname.
 	// It lets the writers skip the rename when nothing changed.
 	RenderedName string `json:"rendered_name,omitempty"`
@@ -852,4 +859,25 @@ func ReleaseComplete(windowID string, claimedAt time.Time) error {
 			w.CompleteFiredAt = time.Time{}
 		}
 	})
+}
+
+// HasBusyChild reports whether any record in all is a window dispatched by
+// parentID running parentSessionID (spawned_by and spawned_by_session both
+// match, not cron-scheduled; the same rule as reconcile.IsChild) that is
+// working or blocked. Records of vanished windows are claimed by reconcile, so
+// the records passed in are treated as live.
+func HasBusyChild(parentID, parentSessionID string, all map[string]WindowState) bool {
+	if parentID == "" || parentSessionID == "" {
+		return false
+	}
+	for id, r := range all {
+		if id == parentID || r.ScheduledBy != "" ||
+			r.SpawnedBy != parentID || r.SpawnedBySession != parentSessionID {
+			continue
+		}
+		if r.State == "working" || r.State == "blocked" {
+			return true
+		}
+	}
+	return false
 }

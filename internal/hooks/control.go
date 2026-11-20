@@ -74,6 +74,13 @@ func CheckDone() {
 			}
 			w.LastText = textutil.Truncate(input.LastAssistantMessage, maxLastTextRunes, "")
 			w.TurnCount++
+			// A bare window that ends its turn shows ✓ until focused, unless
+			// it still waits on working/blocked children. Done stays
+			// untouched: it drives sweep and dispatch completion.
+			if w.Mode == "bare" {
+				w.TurnDone = activeSubagents == 0 &&
+					!windowstate.HasBusyChild(windowID, w.SessionID, windowstate.All())
+			}
 			ws = *w
 		}); err != nil {
 			logUpdateErr("hook-check-done", err)
@@ -429,6 +436,7 @@ func UserPrompt() {
 		w.State = "working"
 		w.LastToolTime = nowUnix
 		windowstate.ClearDone(w)
+		w.TurnDone = false
 		ws = *w
 	}); err != nil {
 		logUpdateErr("hook-user-prompt", err)

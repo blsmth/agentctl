@@ -127,6 +127,7 @@ func agentFromWindow(idx int, w tmux.WindowInfo, name string, records map[string
 		base = tmux.BaseAgentName(name)
 	}
 	done := ws.Done && !ws.Seen
+	turnDone := ws.TurnDone && !ws.Seen
 	st := ws.State
 	// Never report "working" for a finished agent: the Stop hook may have set
 	// Done before State settles.
@@ -156,6 +157,7 @@ func agentFromWindow(idx int, w tmux.WindowInfo, name string, records map[string
 		ContextWindow:    ws.ContextWindowSize,
 		WorktreePath:     worktree,
 		Done:             done,
+		TurnDone:         turnDone,
 		ModelName:        ws.Model,
 		CostUSD:          ws.CostUSD,
 		TurnCount:        ws.TurnCount,

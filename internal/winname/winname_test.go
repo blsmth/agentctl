@@ -54,6 +54,10 @@ func TestCompute(t *testing.T) {
 		{"no state", windowstate.WindowState{Instance: "a:1"}, "a:1"},
 		{"done unseen", windowstate.WindowState{Instance: "a:1", State: "idle", Done: true}, "✓ a:1"},
 		{"done seen", windowstate.WindowState{Instance: "a:1", State: "idle", Done: true, Seen: true}, "a:1"},
+		{"turn done unseen", windowstate.WindowState{Instance: "a:1", State: "idle", TurnDone: true}, "✓ a:1"},
+		{"turn done seen", windowstate.WindowState{Instance: "a:1", State: "idle", TurnDone: true, Seen: true}, "a:1"},
+		{"working beats turn done", windowstate.WindowState{Instance: "a:1", State: "working", TurnDone: true}, "● a:1"},
+		{"blocked beats turn done", windowstate.WindowState{Instance: "a:1", State: "blocked", TurnDone: true}, "⏸ a:1"},
 		{"working beats done", windowstate.WindowState{Instance: "a:1", State: "working", Done: true}, "● a:1"},
 		{"fallback working glyph", windowstate.WindowState{RenderedName: "● b", State: "idle"}, "b"},
 		{"fallback blocked glyph", windowstate.WindowState{RenderedName: "⏸ b", State: "idle"}, "b"},
@@ -177,6 +181,36 @@ func TestApply_Seen(t *testing.T) {
 			},
 			wantSeen: true,
 			wantName: "a",
+		},
+		{
+			name:   "turn done on background window is unseen",
+			active: "@9",
+			start:  windowstate.WindowState{Instance: "a", State: "working", Seen: true},
+			mutate: func(ws *windowstate.WindowState) {
+				ws.State = "idle"
+				ws.TurnDone = true
+			},
+			wantSeen: false,
+			wantName: "✓ a",
+		},
+		{
+			name:   "turn done on active window is seen at once",
+			active: "@1",
+			start:  windowstate.WindowState{Instance: "a", State: "working"},
+			mutate: func(ws *windowstate.WindowState) {
+				ws.State = "idle"
+				ws.TurnDone = true
+			},
+			wantSeen: true,
+			wantName: "a",
+		},
+		{
+			name:     "state change after turn done clears glyph",
+			active:   "@9",
+			start:    windowstate.WindowState{Instance: "a", State: "idle", TurnDone: true},
+			mutate:   func(ws *windowstate.WindowState) { ws.State = "working" },
+			wantSeen: false,
+			wantName: "● a",
 		},
 		{
 			name:     "state change clears seen",

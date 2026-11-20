@@ -412,7 +412,7 @@ func (m *ChromeBarModel) rebuild(relist bool) bool {
 	ctxPct := m.ctxPct
 	for _, a := range agents {
 		st := a.State
-		if a.Done {
+		if a.Done || (a.TurnDone && st != "working" && st != "blocked") {
 			st = "done"
 		}
 		tabs = append(tabs, TabInfo{
