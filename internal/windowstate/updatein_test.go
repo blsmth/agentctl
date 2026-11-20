@@ -92,3 +92,23 @@ func TestUpdateInNoRecordCreatesNothing(t *testing.T) {
 		}
 	})
 }
+
+func TestUpdateInPermissionDenied(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	windowstate.SetDirForTest(t.TempDir())
+	rt := t.TempDir()
+	dir := windowstate.WindowsDirFor(rt)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) }) //nolint:errcheck
+	err := windowstate.UpdateIn(rt, "@1", func(*windowstate.WindowState) {})
+	if err == nil || errors.Is(err, windowstate.ErrNoRecord) {
+		t.Fatalf("err = %v, want a non-ErrNoRecord error", err)
+	}
+}
