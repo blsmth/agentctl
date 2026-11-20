@@ -475,6 +475,10 @@ type FleetModel struct {
 	// newer launch.
 	pendingFocus *fleetPendingFocus
 
+	// focusOnShow is the "session|window" key of a launched row whose live
+	// pane should take tmux focus once it is showing.
+	focusOnShow string
+
 	// hover is the line/region under the pointer (see fleet_mouse.go);
 	// hoverX/hoverY/hasPointer remember the last pointer cell so the target
 	// can be recomputed when the content moves under a still pointer.
@@ -837,6 +841,16 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.liveWinWidth = msg.win
 		}
 		m.configureSplitPane()
+		if m.focusOnShow != "" {
+			sel := m.selSession + "|" + m.selWindowID
+			if msg.key == m.focusOnShow && msg.key == sel && msg.key == m.liveShown {
+				m.focusOnShow = ""
+				return m, focusViewerCmd()
+			}
+			if m.focusOnShow != sel {
+				m.focusOnShow = "" // the user moved on
+			}
+		}
 		return m, nil
 
 	case fleetLiveSizedMsg:
@@ -860,7 +874,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.windowID == "" {
 			return m, fleetLoadCmd()
 		}
-		m.pendingFocus = &fleetPendingFocus{session: msg.session, windowID: msg.windowID}
+		m.pendingFocus = &fleetPendingFocus{session: msg.session, windowID: msg.windowID, focus: true}
 		return m, tea.Batch(fleetLoadCmd(), fleetFocusRetryCmd(msg.session, msg.windowID))
 
 	case fleetShellOpenedMsg:
@@ -881,7 +895,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.windowID == "" {
 			return m, tea.Batch(fleetLoadCmd(), save)
 		}
-		m.pendingFocus = &fleetPendingFocus{session: msg.session, windowID: msg.windowID}
+		m.pendingFocus = &fleetPendingFocus{session: msg.session, windowID: msg.windowID, focus: true}
 		return m, tea.Batch(fleetLoadCmd(), fleetFocusRetryCmd(msg.session, msg.windowID), save)
 
 	case fleetFocusRetryMsg:
@@ -905,6 +919,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, fleetLoadCmd()
 
 	case fleetLoadedMsg:
+		justApplied := false
 		m.loaded = true
 		m.loadErr = msg.err
 		if msg.err == nil {
@@ -923,11 +938,21 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.wheelHold = false // the selection moved: follow it
 				m.ensureCursorVisible()
 			}
-			m.applyPendingFocus()
+			p := m.pendingFocus
+			if m.applyPendingFocus() && p != nil && p.focus {
+				m.focusOnShow = m.selSession + "|" + m.selWindowID
+				justApplied = true
+			}
 			m.clampScroll()
 		}
 		show := m.maybeShowCmd()
-		return m, tea.Batch(show, m.flushView())
+		var focus tea.Cmd
+		if show == nil && justApplied && m.focusOnShow == m.selSession+"|"+m.selWindowID && m.liveShown == m.focusOnShow && m.liveFailed != m.focusOnShow {
+			// Already showing: focus now.
+			m.focusOnShow = ""
+			focus = focusViewerCmd()
+		}
+		return m, tea.Batch(show, focus, m.flushView())
 
 	case tea.MouseClickMsg:
 		m.hideCard()
@@ -1425,6 +1450,7 @@ func (m *FleetModel) moveCursor(delta int) {
 	// rather than waiting for the next View().
 	m.splitPane.SetListContent(m.splitPane.listContent, len(m.lines))
 	m.pendingFocus = nil
+	m.focusOnShow = ""
 	m.wheelHold = false
 	m.splitPane.SetCursor(m.nextSelectable(m.splitPane.Cursor(), delta))
 	m.syncSelectionFromCursor()
@@ -1574,6 +1600,7 @@ func (m *FleetModel) rowsBetween(from, to, cw int) int {
 var (
 	switchToSessionWindow = tmux.SwitchToSessionWindow
 	focusLivePane         = tmux.FocusLivePane
+	focusViewerPane       = tmux.FocusViewerPane
 	hubWindowWidth        = tmux.HubWindowWidth
 	showLiveViewer        = tmux.ShowLiveViewer
 )
@@ -1644,6 +1671,15 @@ func (m *FleetModel) jumpToNextBlocked() (tea.Model, tea.Cmd) {
 		return *m, tea.Batch(tea.Sequence(show, focus), m.flushView())
 	}
 	return *m, tea.Batch(focus, m.flushView())
+}
+
+// focusViewerCmd moves tmux focus to the live pane (idempotent). Failures are
+// ignored: with no live pane there is nothing to focus.
+func focusViewerCmd() tea.Cmd {
+	return func() tea.Msg {
+		_ = focusViewerPane()
+		return nil
+	}
 }
 
 // fleetFocusErrMsg reports a failure to move focus to the live pane.
