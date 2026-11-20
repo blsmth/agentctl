@@ -106,9 +106,6 @@ func Up(l Layout, s *Scene, opts UpOptions) (*Manifest, error) {
 			}
 		}
 	}
-	if err := startHub(l, t, sock); err != nil {
-		return nil, err
-	}
 	_, _ = t.Run("kill-session", "-t", tmux.ExactSession(bootSession))
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
@@ -133,26 +130,6 @@ func startSession(l Layout, t Tmux, sock, project string) (string, error) {
 		return "", fmt.Errorf("agentctl did not start session %s: %s", name, strings.TrimSpace(out.String()))
 	}
 	return name, nil
-}
-
-// startHub starts the hub session up front, with `agentctl hub` (whose
-// switch-client finds no client and fails harmlessly). When prefix+g opens
-// the hub for the first time with a client attached, the client is not
-// switched to it: the binding passes no client name, and by the time
-// `agentctl hub` runs switch-client, hub-view's nested viewer client has
-// attached too (reproduced on tmux 3.6a). With the hub already running, the
-// key press switches the client that pressed it.
-func startHub(l Layout, t Tmux, sock string) error {
-	cmd := exec.Command(l.Agentctl(), "hub")
-	cmd.Dir = l.Home()
-	cmd.Env = l.Env(sock)
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
-	_ = cmd.Run()
-	if _, err := t.Run("has-session", "-t", tmux.ExactSession(tmux.HubSessionName)); err != nil {
-		return fmt.Errorf("agentctl did not start the hub: %s", strings.TrimSpace(out.String()))
-	}
-	return nil
 }
 
 // runProjectSeed runs `<self> project` for one project and parses the
