@@ -118,7 +118,7 @@ func viewerAttachCommand(socketPath, session string) string {
 		sock = " -S " + shellQuote(socketPath)
 	}
 	return fmt.Sprintf("env -u TMUX tmux%s attach -t %s \\; set-option -t %s destroy-unattached on",
-		sock, ExactSession(session), ExactSessionTarget(session))
+		sock, shellQuote(ExactSession(session)), shellQuote(ExactSessionTarget(session)))
 }
 
 // viewerSplitArgs builds the split-window args creating the live pane to the
