@@ -363,13 +363,17 @@ export function mountFleet(root, ctx) {
       }
     },
     close: async (win) => {
+      let res;
       try {
-        await send({ method: "POST", path: `${windowApiPath(win.session, win.window_id)}/close`, body: {} });
+        res = await send({ method: "POST", path: `${windowApiPath(win.session, win.window_id)}/close`, body: {} });
       } catch (err) {
         toast(closeError(err), "error");
         return false;
       }
-      closed.set(windowKey(win), Date.now());
+      const now = Date.now();
+      closed.set(windowKey(win), now);
+      // Sub-sessions the server closed first go away with their parent.
+      for (const k of res?.closed_children ?? []) closed.set(windowKey({ session: k.session, window_id: k.window_id }), now);
       return true;
     },
   };

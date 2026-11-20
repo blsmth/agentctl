@@ -61,6 +61,9 @@ type Options struct {
 	Injector   Injector
 	Closer     WindowCloser
 	Dispatcher Dispatcher
+	// Children finds and closes a window's sub-sessions before the window
+	// itself is closed; nil means tmux and the close_children config.
+	Children ChildCloser
 	// Shells opens and recognises plain shell windows; nil means tmux.
 	Shells Shells
 	// Sweep runs `agentctl sweep` for a session; nil means the
@@ -128,6 +131,7 @@ type Server struct {
 	keys       KeySender
 	injector   Injector
 	closer     WindowCloser
+	children   ChildCloser
 	dispatcher Dispatcher
 	shells     Shells
 	sweep      sweeprun.Func
@@ -196,6 +200,10 @@ func New(opts Options) (*Server, error) {
 	}
 	if s.closer == nil {
 		s.closer = tmuxCloser{}
+	}
+	s.children = opts.Children
+	if s.children == nil {
+		s.children = tmuxChildren()
 	}
 	s.shells = opts.Shells
 	if s.shells == nil {

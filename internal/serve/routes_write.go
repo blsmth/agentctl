@@ -673,11 +673,24 @@ func (s *Server) handleClose(r *http.Request, _ emptyIn, a *auditEntry) outcome 
 		return failure(http.StatusConflict, codeNotClosable, "window cannot be closed: "+v.Reason)
 	}
 	s.auditAttempt(*a)
+	// Sub-sessions go first, so the phone never sees the parent vanish while
+	// its children linger.
+	closedKids := s.children.CloseChildren(rw.window.WindowID, rw.group.Meta[rw.window.WindowID].SessionID)
 	if err := s.closer.CloseWindow(rw.target()); err != nil {
 		logging.Warn("serve: close %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
 		return failure(http.StatusBadGateway, codeActionFailed, "closing the window failed")
 	}
-	return success(okBody)
+	if closedKids == nil {
+		closedKids = []WindowKey{}
+	}
+	return success(closeBody{OK: true, Closed: closedKids})
+}
+
+// closeBody is the close response: the ok flag every window action returns,
+// plus the sub-sessions closed with the window (older clients ignore it).
+type closeBody struct {
+	OK     bool        `json:"ok"`
+	Closed []WindowKey `json:"closed_children"`
 }
 
 type dispatchIn struct {

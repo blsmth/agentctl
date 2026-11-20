@@ -229,6 +229,12 @@ func (c closer) CloseWindow(t serve.WindowTarget) error {
 	return nil
 }
 
+// noChildren closes no sub-sessions, so the harness never lists or kills
+// real tmux windows.
+type noChildren struct{}
+
+func (noChildren) CloseChildren(_, _ string) []serve.WindowKey { return nil }
+
 // sweeper fakes `agentctl sweep` over the fixture: finished, idle,
 // non-bare windows close; blocked ones need attention; working ones are in
 // progress. An apply removes the closed windows and records a sweep action.

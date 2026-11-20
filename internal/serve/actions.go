@@ -11,6 +11,7 @@ import (
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/reconcile"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -211,6 +212,60 @@ func (tmuxInjector) Inject(t WindowTarget, text string) error {
 		return tmux.InjectUnclassifiedToPane(t.Pane, text)
 	}
 	return tmux.InjectPromptToPane(t.Pane, text)
+}
+
+// ChildCloser closes the sub-sessions of a window ahead of the window.
+type ChildCloser interface {
+	// CloseChildren closes the windows dispatched by the window with the
+	// given ID and Claude session ID, deepest first, and returns the ones it
+	// closed. It never fails: a window it cannot close is skipped.
+	CloseChildren(windowID, sessionID string) []WindowKey
+}
+
+// WindowKey identifies a window across sessions.
+type WindowKey struct {
+	Session  string `json:"session"`
+	WindowID string `json:"window_id"`
+}
+
+// liveChildren closes real sub-sessions when close_children is enabled. The
+// seams let tests run without tmux.
+type liveChildren struct {
+	enabled func() bool
+	list    func() ([]reconcile.LiveWindow, error)
+	kill    func(reconcile.LiveWindow) error
+}
+
+func tmuxChildren() liveChildren {
+	return liveChildren{
+		enabled: func() bool { return config.Load().CloseChildrenEnabled() },
+		list:    reconcile.ListLiveWindows,
+		kill: func(w reconcile.LiveWindow) error {
+			return tmux.KillWindowIn(w.Session, w.RuntimeDir, w.WindowID)
+		},
+	}
+}
+
+func (c liveChildren) CloseChildren(windowID, sessionID string) []WindowKey {
+	if sessionID == "" || !c.enabled() {
+		return nil
+	}
+	return closeChildren(windowID, sessionID, c.list, c.kill)
+}
+
+// closeChildren lists live windows and kills the descendants of the window
+// deepest-first. A listing failure closes nothing.
+func closeChildren(windowID, sessionID string, list func() ([]reconcile.LiveWindow, error), kill func(reconcile.LiveWindow) error) []WindowKey {
+	wins, err := list()
+	if err != nil {
+		logging.Warn("serve: listing windows to close sub-sessions: %v", err)
+		return nil
+	}
+	var keys []WindowKey
+	for _, w := range reconcile.CloseDescendants(windowID, sessionID, wins, kill) {
+		keys = append(keys, WindowKey{Session: w.Session, WindowID: w.WindowID})
+	}
+	return keys
 }
 
 type tmuxCloser struct{}
