@@ -43,3 +43,28 @@ func applyExtendedKeys() {
 		_ = exec.Command("tmux", args...).Run()
 	}
 }
+
+// hyperlinksArgs returns the call that lets OSC 8 hyperlinks through tmux
+// to the outer terminal (the hub card's PR link), or nil when current, the
+// `show-options -s terminal-features` output, already has the feature.
+// terminal-features is a server-wide array, so appending unconditionally
+// would add a duplicate entry on every apply. tmux reads it when a client
+// attaches: clients already attached pick it up on their next attach.
+func hyperlinksArgs(current string) []string {
+	if strings.Contains(current, "hyperlinks") {
+		return nil
+	}
+	return []string{"set-option", "-as", "terminal-features", ",*:hyperlinks"}
+}
+
+// applyHyperlinks enables the hyperlinks terminal feature on the tmux
+// server. Failures are ignored, like applyExtendedKeys.
+func applyHyperlinks() {
+	out, err := exec.Command("tmux", "show-options", "-s", "terminal-features").Output()
+	if err != nil {
+		return
+	}
+	if args := hyperlinksArgs(string(out)); args != nil {
+		_ = exec.Command("tmux", args...).Run()
+	}
+}

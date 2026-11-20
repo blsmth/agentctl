@@ -29,6 +29,25 @@ func TestExtendedKeysArgs(t *testing.T) {
 	}
 }
 
+func TestHyperlinksArgs(t *testing.T) {
+	add := []string{"set-option", "-as", "terminal-features", ",*:hyperlinks"}
+	tests := []struct {
+		name, current string
+		want          []string
+	}{
+		{"defaults", "terminal-features[0] xterm*:clipboard:ccolour:cstyle:focus:title\nterminal-features[1] screen*:title\n", add},
+		{"empty", "", add},
+		{"already on", "terminal-features[0] xterm*:clipboard\nterminal-features[1] *:hyperlinks\n", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hyperlinksArgs(tt.current); !slices.Equal(got, tt.want) {
+				t.Errorf("hyperlinksArgs = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLaunchBootstrapRecordsHarness(t *testing.T) {
 	var ws windowstate.WindowState
 	applyLaunchBootstrap(&ws, "w", "a", "", map[string]string{"AGENTCTL_HARNESS": "pi"})

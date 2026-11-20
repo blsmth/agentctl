@@ -92,7 +92,7 @@ func TestCardShowsSchedule(t *testing.T) {
 		r.ScheduledBy = "nightly-triage"
 		r.ScheduledAt = now.Add(-3 * time.Hour)
 	})
-	full := ansi.Strip(strings.Join(cardContent(r, nil, "", now, 60, newCardStyles()), "\n"))
+	full := ansi.Strip(strings.Join(cardContent(r, nil, cardOpts{}, now, 60, newCardStyles()).lines, "\n"))
 	if !strings.Contains(full, "scheduled") || !strings.Contains(full, "nightly-triage · fired 3h ago") {
 		t.Errorf("card missing schedule:\n%s", full)
 	}

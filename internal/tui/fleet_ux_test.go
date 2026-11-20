@@ -217,7 +217,7 @@ func TestCardTitleUsesNameWeight(t *testing.T) {
 	cs := newCardStyles()
 	r := testRow("worker:1", "s", "idle", "")
 	r.Done = true
-	title := cardContent(r, nil, "", time.Unix(0, 0), 50, cs)[0]
+	title := cardContent(r, nil, cardOpts{}, time.Unix(0, 0), 50, cs).lines[0]
 	want := fleetNameStyle(fleetWeightDone).Background(cs.bg.GetBackground()).Render("worker:1")
 	if !strings.HasPrefix(title, want) {
 		t.Errorf("card title should use the done name style: %q", title)
