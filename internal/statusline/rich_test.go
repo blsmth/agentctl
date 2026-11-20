@@ -3,6 +3,7 @@ package statusline
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1508,5 +1509,65 @@ func TestRichLine2_PayloadSupplies(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Errorf("line %q missing %q", line, want)
 		}
+	}
+}
+
+func TestRenderRichLine3_Worktree(t *testing.T) {
+	homeDirForDisplay = func() (string, error) { return "/home/u", nil }
+	t.Cleanup(func() { homeDirForDisplay = os.UserHomeDir })
+	root := "/home/u/code/agentctl/.worktrees/agent-x"
+	tests := []struct {
+		name string
+		dir  string
+		wt   string
+		cols int
+		want string
+		not  string
+	}{
+		{"root, redundant slug dropped", root, "agent-x", 200, "agentctl ⑂", "agent-x"},
+		{"subdir", root + "/internal/hooks", "agent-x", 200, "agentctl ⑂/internal/hooks", "agent-x"},
+		{"differing worktree kept", root, "other", 200, "other", ".worktrees"},
+		{"no slug after .worktrees", "/home/u/code/agentctl/.worktrees", "", 200, "~/code/agentctl/.worktrees", "⑂"},
+		{"claude worktree outside .worktrees", "/home/u/code/proj", "wt1", 200, "wt1", "⑂"},
+		{"narrow cols keeps dir", root, "other", 5, "agentctl ⑂", "other"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Payload{Workspace: &Workspace{CurrentDir: strPtr(tt.dir)}}
+			if tt.wt != "" {
+				p.Workspace.GitWorktree = strPtr(tt.wt)
+			}
+			line, ok := renderRichLine3(p, tt.cols)
+			if !ok {
+				t.Fatal("ok = false")
+			}
+			line = stripANSI(line)
+			if !strings.Contains(line, tt.want) {
+				t.Errorf("line = %q, want %q", line, tt.want)
+			}
+			if strings.Contains(line, tt.not) {
+				t.Errorf("line = %q, must not contain %q", line, tt.not)
+			}
+			if strings.Contains(line, "+-") {
+				t.Errorf("line = %q contains +-", line)
+			}
+		})
+	}
+}
+
+func TestRenderRichLine3_DirtyUsesPlusMinusSign(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := &Payload{Workspace: &Workspace{CurrentDir: strPtr(dir)}}
+	line, ok := renderRichLine3(p, 200)
+	if !ok {
+		t.Fatal("ok = false")
+	}
+	line = stripANSI(line)
+	if !strings.Contains(line, "±1") || strings.Contains(line, "+-") {
+		t.Errorf("line = %q, want ±1", line)
 	}
 }

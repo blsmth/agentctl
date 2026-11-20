@@ -410,7 +410,7 @@ func padLeftTo(line string, width int) string {
 //
 //	<battery> 5h 11% · resets 5pm · 7d 1%
 //	opus-4.6 · <battery> 34% ctx · 68k/200k · turn: 3k↑ 1k↓ · 78% cached · 12 turns · total: 789k↑ 6k↓ · $13.43 · 1h23m
-//	~/code/agentctl · ⎇ main · +-3 · PR #42 approved · issue-1023
+//	~/code/agentctl · ⎇ main · ±3 · PR #42 approved · issue-1023
 //
 // Line 1 (account rate limits), line 2 (session metrics), and line 3
 // (workspace/git) are each built independently and only included if they
@@ -936,7 +936,12 @@ func renderRichLine3(p *Payload, cols int) (string, bool) {
 	if dir == "" {
 		return "", false
 	}
-	addSeg(valueStyle.Render(formatDir(dir)))
+	dirText := formatDir(dir)
+	wtRepo, wtSlug, wtSub, inWorktree := splitWorktreeDir(dir)
+	if inWorktree {
+		dirText = formatWorktreeDir(wtRepo, wtSub)
+	}
+	addSeg(valueStyle.Render(dirText))
 
 	// 1b. Account, only when line 1 (rate limits) is not rendered, so it is
 	// always visible when accounts exist. Droppable like the segments after it
@@ -951,9 +956,9 @@ func renderRichLine3(p *Payload, cols int) (string, bool) {
 	}
 
 	// 3. Dirty count (droppable). Omitted on any gitDirtyCount error/timeout,
-	// and when the tree is clean (n == 0) -- a "+-0" segment would be noise.
+	// and when the tree is clean (n == 0) -- a "±0" segment would be noise.
 	if n, ok := gitDirtyCount(context.Background(), dir); ok && n > 0 {
-		addSeg(dirtyStyle.Render(fmt.Sprintf("+-%d", n)))
+		addSeg(dirtyStyle.Render(fmt.Sprintf("±%d", n)))
 	}
 
 	// 4. PR (droppable), linked to its URL via OSC 8. Sits beside the
@@ -972,7 +977,8 @@ func renderRichLine3(p *Payload, cols int) (string, bool) {
 	// 5. agentctl worktree name (droppable, dropped first). Bare name, no
 	// branch semantics -- see payload.go's NOTE on why this is NOT
 	// windowstate.Branch/WorktreeDir and must not be treated as one.
-	if p.Workspace != nil && p.Workspace.GitWorktree != nil && *p.Workspace.GitWorktree != "" {
+	if p.Workspace != nil && p.Workspace.GitWorktree != nil && *p.Workspace.GitWorktree != "" &&
+		!(inWorktree && *p.Workspace.GitWorktree == wtSlug) {
 		addSeg(mutedStyle.Render(*p.Workspace.GitWorktree))
 	}
 

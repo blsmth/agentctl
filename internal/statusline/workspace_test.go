@@ -322,3 +322,46 @@ func TestFormatDir_TruncatesOverBudget(t *testing.T) {
 		t.Errorf("formatDir(long) = %q, want to end with the last path component", got)
 	}
 }
+
+func TestWorktreeMarkerIsOneColumnWide(t *testing.T) {
+	if got := lipgloss.Width(string(worktreeMarker)); got != 1 {
+		t.Fatalf("width = %d, want 1", got)
+	}
+}
+
+func TestSplitWorktreeDir(t *testing.T) {
+	tests := []struct {
+		dir             string
+		repo, slug, sub string
+		ok              bool
+	}{
+		{"/h/code/agentctl/.worktrees/agent-x", "agentctl", "agent-x", "", true},
+		{"/h/code/agentctl/.worktrees/agent-x/", "agentctl", "agent-x", "", true},
+		{"/h/code/agentctl/.worktrees/agent-x/internal/hooks", "agentctl", "agent-x", "internal/hooks", true},
+		{"/h/code/agentctl/.worktrees", "", "", "", false},
+		{"/.worktrees/x", "", "", "", false},
+		{"/h/code/agentctl", "", "", "", false},
+		{"/h/code/agentctl/worktrees/x", "", "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.dir, func(t *testing.T) {
+			repo, slug, sub, ok := splitWorktreeDir(tt.dir)
+			if repo != tt.repo || slug != tt.slug || sub != tt.sub || ok != tt.ok {
+				t.Errorf("got (%q,%q,%q,%v)", repo, slug, sub, ok)
+			}
+		})
+	}
+}
+
+func TestFormatWorktreeDir(t *testing.T) {
+	if got := formatWorktreeDir("agentctl", ""); got != "agentctl ⑂" {
+		t.Errorf("root = %q", got)
+	}
+	if got := formatWorktreeDir("agentctl", "internal/hooks"); got != "agentctl ⑂/internal/hooks" {
+		t.Errorf("sub = %q", got)
+	}
+	got := formatWorktreeDir("agentctl", "internal/statusline/testdata/golden/deep/er")
+	if got != "agentctl ⑂/…/deep/er" {
+		t.Errorf("long = %q", got)
+	}
+}

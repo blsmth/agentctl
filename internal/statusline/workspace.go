@@ -243,3 +243,41 @@ func gitDirtyCount(ctx context.Context, dir string) (count int, ok bool) {
 	}
 	return count, true
 }
+
+// worktreeMarker follows the repo name on the directory segment when the
+// session runs inside an agentctl worktree. U+2442 OCR FORK (⑂) is one cell
+// wide; see TestWorktreeMarkerIsOneColumnWide.
+const worktreeMarker = '⑂'
+
+// splitWorktreeDir recognises dir at or under `<repo>/.worktrees/<slug>` by
+// path components alone (no git, no filesystem access). It returns the repo
+// basename, the worktree slug, and the slash-joined subpath below the
+// worktree root ("" at the root). ok is false when no `.worktrees` component
+// with a repo before it and a slug after it exists.
+func splitWorktreeDir(dir string) (repo, slug, sub string, ok bool) {
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(dir)), "/")
+	for i := 1; i+1 < len(parts); i++ {
+		if parts[i] != ".worktrees" || parts[i-1] == "" || parts[i+1] == "" {
+			continue
+		}
+		return parts[i-1], parts[i+1], strings.Join(parts[i+2:], "/"), true
+	}
+	return "", "", "", false
+}
+
+// formatWorktreeDir renders the directory segment for a worktree session as
+// `<repo> ⑂[/<sub>]`, collapsing a long subpath to its last two components.
+func formatWorktreeDir(repo, sub string) string {
+	out := repo + " " + string(worktreeMarker)
+	if sub == "" {
+		return out
+	}
+	if lipgloss.Width(out+"/"+sub) > maxDirDisplayWidth {
+		comps := strings.Split(sub, "/")
+		if len(comps) > 2 {
+			comps = comps[len(comps)-2:]
+		}
+		sub = "…/" + strings.Join(comps, "/")
+	}
+	return out + "/" + sub
+}
