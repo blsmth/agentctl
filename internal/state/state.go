@@ -77,6 +77,9 @@ type AgentState struct {
 	ShortTitle string `json:"-"`
 	// ShortKind is the work-kind tag of ShortTitle (short_title.kind).
 	ShortKind string `json:"-"`
+	// ShortManual marks ShortTitle as set by a human (short_title.manual):
+	// it is shown whatever the recap source.
+	ShortManual bool `json:"-"`
 }
 
 // State is the snapshot of running agents, written by the monitor.
