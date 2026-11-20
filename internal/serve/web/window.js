@@ -16,6 +16,7 @@ import {
   waitingIndex,
   windowHash,
   rowHeadline,
+  detailTitle,
   exactRows,
   focusedOption,
   hangingIndent,
@@ -265,7 +266,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
   // Set by a successful interrupt; the reply box that follows gets focus.
   let interruptedAt = 0;
 
-  const title = h("h1", {}, windowId);
+  const title = h("h1", { class: "win-h1" }, windowId);
   const statePill = h("span", { class: "state-pill" }, h("span", { class: "dot" }), h("span", { class: "state-text" }));
   const where = h("span", { class: "win-where" });
   const task = h("div", { class: "win-task", hidden: true });
@@ -378,7 +379,12 @@ export function mountWindow(root, ctx, { session, windowId }) {
 
   function renderHeader() {
     if (!win) return;
-    title.textContent = win.agent || windowId;
+    // The fetched detail can lag the fleet feed; a newer title or kind from the feed wins.
+    const live = ctx.store.fleet?.groups?.find((g) => g.session === session)?.windows?.find((x) => x.window_id === windowId);
+    const dt = detailTitle(live ? { ...win, title: live.title, kind: live.kind } : win, windowId);
+    clear(title);
+    if (dt.kind) title.append(h("span", { class: "tag kind-chip", title: "Kind of work" }, dt.kind));
+    title.append(h("span", { class: "h1-text" }, dt.text));
     waiting = waitingIndex(ctx.store.fleet?.groups);
     const st = displayState(win, waiting);
     statePill.className = `state-pill ${st}`;
@@ -391,7 +397,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
       );
     }
     waitingKids.hidden = waitingKids.childElementCount === 0;
-    where.textContent = [win.project, win.branch].filter(Boolean).join(" · ");
+    where.textContent = [dt.agent, win.project, win.branch].filter(Boolean).join(" · ");
     const { task: line, recap: summary } = headerLines(win);
     task.textContent = line;
     task.hidden = !line;
