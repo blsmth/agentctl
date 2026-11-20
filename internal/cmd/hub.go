@@ -16,7 +16,7 @@ import (
 
 // RunHub summons the fleet hub — creating the agentctl-hub session if it
 // doesn't already exist — and switches the caller into it.
-func RunHub() {
+func RunHub(client string) {
 	// Remember where the hub was summoned from: the hub's new-session (N)
 	// prompt defaults to it (hub-view's own cwd is pinned to the hub dir).
 	if cwd, err := os.Getwd(); err == nil {
@@ -24,7 +24,7 @@ func RunHub() {
 			logging.Warn("hub: %v", err)
 		}
 	}
-	if err := tmux.SwitchToHub(); err != nil {
+	if err := hubSwitch(client); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		cliout.Exit(1)
 	}
@@ -92,7 +92,8 @@ var (
 	hubRecordOrigin = tmux.RecordHubOrigin
 	hubSendKey      = tmux.SendKeyToHubList
 	hubLoad         = fleet.Load
-	switchHome      = tmux.SwitchToSessionWindow
+	switchHome      = tmux.SwitchClientToSessionWindow
+	hubSwitch       = tmux.SwitchToHubFor
 	displayMsg      = tmux.DisplayMessage
 )
 
@@ -103,7 +104,7 @@ var (
 // and focuses it, keeping ordering and selection in one place. From any
 // other session it switches to the agent's home window. No-op (with a tmux
 // status message) when nothing is blocked.
-func RunJumpNextBlocked(clientSession string) {
+func RunJumpNextBlocked(clientSession, client string) {
 	if clientSession == tmux.HubSessionName {
 		if err := hubSendKey("b"); err != nil {
 			displayMsg(fmt.Sprintf("jump-next-blocked: %v", err))
@@ -123,7 +124,7 @@ func RunJumpNextBlocked(clientSession string) {
 		return
 	}
 
-	if err := switchHome(row.Session, row.WindowID); err != nil {
+	if err := switchHome(client, row.Session, row.WindowID); err != nil {
 		displayMsg(fmt.Sprintf("jump-next-blocked: %v", err))
 	}
 }

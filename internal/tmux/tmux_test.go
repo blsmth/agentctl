@@ -1314,3 +1314,46 @@ func TestServeToggleBinding(t *testing.T) {
 	}
 	t.Fatal("no prefix+W binding")
 }
+
+// TestHubBindingsCarryClient pins prefix+g and prefix+b: run-shell -b has no
+// current client, so both must hand the pressing client's name through.
+func TestHubBindingsCarryClient(t *testing.T) {
+	exe := "/usr/local/bin/agentctl"
+	want := map[string][]string{
+		"g": {exe, "hub", "--client", "#{client_name}"},
+		"b": {exe, "jump-next-blocked", "--client-session", "#{client_session}", "--client", "#{client_name}"},
+	}
+	seen := 0
+	for _, kb := range agentctlKeybindings(exe) {
+		w, ok := want[kb.key]
+		if !ok {
+			continue
+		}
+		seen++
+		if got := agentctlArgv(t, kb.command); strings.Join(got, "\x00") != strings.Join(w, "\x00") {
+			t.Errorf("%s argv = %q, want %q", kb.key, got, w)
+		}
+	}
+	if seen != len(want) {
+		t.Fatalf("found %d of %d bindings", seen, len(want))
+	}
+}
+
+func TestSwitchClientArgs(t *testing.T) {
+	tests := []struct {
+		name, client string
+		want         []string
+	}{
+		{"no client", "", []string{"switch-client", "-t", "=s:"}},
+		{"tty client", "/dev/ttys004", []string{"switch-client", "-c", "/dev/ttys004", "-t", "=s:"}},
+		{"name with space", "my client", []string{"switch-client", "-c", "my client", "-t", "=s:"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := switchClientArgs(tt.client, "=s:")
+			if strings.Join(got, "\x00") != strings.Join(tt.want, "\x00") {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
