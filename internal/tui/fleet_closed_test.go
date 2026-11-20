@@ -62,8 +62,12 @@ func closedRecs(t *testing.T) []closedlog.Record {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	p1 := filepath.Join(t.TempDir(), "p1")
+	if err := os.MkdirAll(p1, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	return []closedlog.Record{
-		{ClosedAt: now.Add(-2 * time.Hour), WindowID: "@5", Session: "agentctl-p1", ProjectDir: "/x/p1", Agent: "go-engineer", Instance: "go-engineer-2", SessionID: "u1", LogPath: log, ShortTitle: "Fix login", PRURL: "https://x/pull/1"},
+		{ClosedAt: now.Add(-2 * time.Hour), WindowID: "@5", Session: "agentctl-p1", ProjectDir: p1, Agent: "go-engineer", Instance: "go-engineer-2", SessionID: "u1", LogPath: log, ShortTitle: "Fix login", PRURL: "https://x/pull/1"},
 		{ClosedAt: now.Add(-3 * time.Hour), WindowID: "@6", Session: "agentctl-p2", ProjectDir: "/x/p2", Agent: "reviewer", Instance: "reviewer", SessionID: "u2"},
 		{ClosedAt: now.Add(-4 * time.Hour), WindowID: "@7", Session: "agentctl-p1", ProjectDir: "/x/p1", Agent: "go-engineer", Instance: "go-engineer", ShortTitle: "No session"},
 	}
@@ -215,7 +219,8 @@ func TestClosedRowSelectionNeverShowsLive(t *testing.T) {
 }
 
 func TestClosedEnterResumes(t *testing.T) {
-	f := newClosedFixture(t, closedRecs(t))
+	recs := closedRecs(t)
+	f := newClosedFixture(t, recs)
 	m := toggleClosedOn(t, closedModel(t))
 	selectClosed(t, &m, "@5")
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -227,7 +232,7 @@ func TestClosedEnterResumes(t *testing.T) {
 	if !ok || msg.err != nil || msg.windowID != "@99" || msg.session != "agentctl-p1" {
 		t.Fatalf("msg = %+v", msg)
 	}
-	if len(f.calls) != 1 || f.calls[0].SessionID != "u1" || f.calls[0].Agent != "go-engineer" || f.calls[0].ProjectDir != "/x/p1" {
+	if len(f.calls) != 1 || f.calls[0].SessionID != "u1" || f.calls[0].Agent != "go-engineer" || f.calls[0].ProjectDir != recs[0].ProjectDir {
 		t.Errorf("resume calls = %+v", f.calls)
 	}
 }
@@ -236,6 +241,11 @@ func TestClosedEnterRefusesUnresumable(t *testing.T) {
 	recs := closedRecs(t)
 	missing := recs[1]
 	missing.LogPath = "/nonexistent/u2.jsonl"
+	// A dispatched worker whose worktree SessionEnd reclaimed.
+	reclaimed := recs[0]
+	reclaimed.WorkDir = filepath.Join(reclaimed.ProjectDir, ".worktrees", "agent-go-engineer-issue-7")
+	gone := recs[0]
+	gone.WorkDir = filepath.Join(gone.ProjectDir, "elsewhere")
 	tests := []struct {
 		name string
 		rec  closedlog.Record
@@ -243,6 +253,8 @@ func TestClosedEnterRefusesUnresumable(t *testing.T) {
 	}{
 		{"no session id", recs[2], "no session id"},
 		{"log missing", missing, "missing"},
+		{"worktree reclaimed", reclaimed, "worktree agent-go-engineer-issue-7 was reclaimed"},
+		{"work dir gone", gone, "is gone"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

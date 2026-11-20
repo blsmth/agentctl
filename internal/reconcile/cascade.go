@@ -164,7 +164,14 @@ func mark(d CascadeDeps, w LiveWindow, parentID string) {
 	if d.Mark == nil {
 		return
 	}
-	if err := d.Mark(w, parentID); err != nil {
+	err := d.Mark(w, parentID)
+	switch {
+	case err == nil:
+	case parentID == "":
+		// The window survived a failed kill: a stale mark would record its
+		// eventual close as a cascade.
+		logging.Log("reconcile: clearing closed_by on %s after a failed kill: %v", w.WindowID, err)
+	default:
 		logging.Debug("reconcile: marking %s closed by %q: %v", w.WindowID, parentID, err)
 	}
 }

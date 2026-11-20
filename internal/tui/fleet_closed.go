@@ -185,6 +185,16 @@ func resumeCheck(r closedlog.Record) error {
 	if r.Agent == "" {
 		return errors.New("no agent recorded for " + r.Title())
 	}
+	work := r.WorkDir
+	if work == "" {
+		work = r.ProjectDir
+	}
+	if fi, err := fleetStat(work); err != nil || !fi.IsDir() {
+		if rel, err := filepath.Rel(filepath.Join(r.ProjectDir, ".worktrees"), work); err == nil && !strings.HasPrefix(rel, "..") && rel != "." {
+			return fmt.Errorf("worktree %s was reclaimed", rel)
+		}
+		return fmt.Errorf("directory %s is gone", work)
+	}
 	return nil
 }
 

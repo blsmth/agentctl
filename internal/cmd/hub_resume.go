@@ -17,8 +17,9 @@ type HubResumeOptions struct {
 	SessionID  string
 }
 
-// hubResumeLaunch launches the resumed session in the bound project and
-// returns its window ID; a seam for tests.
+// hubResumeLaunch launches the resumed session in workDir, as a window of
+// the bound project's tmux session, and returns its window ID; a seam for
+// tests.
 var hubResumeLaunch = func(agent, sessionID, workDir string) (string, error) {
 	return launchResume(agent, sessionID, workDir, dispatch.WriteAgentSettings, false)
 }
