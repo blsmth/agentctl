@@ -40,6 +40,9 @@ func RunHealth() {
 	if w := config.Load().DispatchApprovalWarning(); w != "" {
 		fmt.Printf("  Config:  warning: %s\n", w)
 	}
+	if w := config.Load().PRReviewWarning(); w != "" {
+		fmt.Printf("  Config:  warning: %s\n", w)
+	}
 
 	// Metrics serve (per machine), only when metrics are enabled.
 	mc := config.Load().EffectiveMetricsConfig()

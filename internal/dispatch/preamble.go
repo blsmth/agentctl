@@ -1,6 +1,10 @@
 package dispatch
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/blsmth/agentctl/internal/config"
+)
 
 // Role selects which preamble variant a dispatched session receives. Every
 // dispatched agent gets sharedRuntimeSections (context store, messaging, git
@@ -113,12 +117,41 @@ const orchOtherSection = "### Other\n" +
 	"- `agentctl agents` — list dispatchable agents; `agentctl account list` — accounts and usage\n" +
 	"- `agentctl cost [--since 7d] [--by agent]` — spend report\n"
 
+// orchReviewOptionalSection leaves the review to the orchestrator
+// (pr_review: optional).
+const orchReviewOptionalSection = "### Review\n" +
+	"- A review via `agentctl dispatch --review-pr <N> --agent code-reviewer` is recommended for large or risky PRs (concurrency, auth, hooks, anything security-relevant) and may be skipped for small or mechanical ones (author auto-detected from the PR branch, `--author @N` to override, `--model sonnet` for small PRs)\n" +
+	"- When you skip it, check that the PR title and body match the ask and that `gh pr checks <N>` is green before merging\n" +
+	"- When a reviewer is used, it works fixes out directly with the author and sends you a `REVIEW PR #<N> — VERDICT: ...` line; you do not review diffs yourself. On MERGE (or MERGE-WITH-FOLLOWUPS, keeping the follow-ups), read `gh pr checks <N>` before merging; otherwise re-dispatch or escalate to the human\n"
+
+// orchReviewOffSection forbids dispatched reviewers (pr_review: off).
+const orchReviewOffSection = "### Review\n" +
+	"- Do not dispatch reviewers for PRs\n" +
+	"- Check that the PR title and body match the ask, read `gh pr checks <N>`, then merge or escalate to the human\n"
+
+func orchReviewFor(mode string) string {
+	switch mode {
+	case config.PRReviewOptional:
+		return orchReviewOptionalSection
+	case config.PRReviewOff:
+		return orchReviewOffSection
+	default:
+		return orchReviewSection
+	}
+}
+
 // orchestratorSections joins the quick-reference groups, with the Wait group
 // matching the harness's messaging support.
 func orchestratorSections(messaging bool) string {
+	return orchestratorSectionsFor(messaging, config.PRReviewAlways)
+}
+
+// orchestratorSectionsFor is orchestratorSections for a pr_review mode. The
+// Review group exists only for messaging harnesses, in every mode.
+func orchestratorSectionsFor(messaging bool, prReview string) string {
 	wait, match, review := orchWaitNoMessagingSection, orchDelegateMatchNoMessaging, ""
 	if messaging {
-		wait, match, review = orchWaitMessagingSection, orchDelegateMatchMessaging, orchReviewSection+"\n"
+		wait, match, review = orchWaitMessagingSection, orchDelegateMatchMessaging, orchReviewFor(prReview)+"\n"
 	}
 	return strings.TrimRight(orchDelegateSection+match+"\n"+review+orchWatchSection+"\n"+wait+"\n"+
 		orchCleanupSection+"\n"+orchContextSection+"\n"+orchOtherSection, "\n")
@@ -149,11 +182,23 @@ var OrchestratorPreamble = "## agentctl Runtime Environment\n\n" +
 // role (e.g. a modeSpec that forgot to set one) defaults to RoleWorker --
 // the more restrictive, safer choice.
 func preambleFor(role Role) string {
+	return preambleForMode(role, config.PRReviewAlways)
+}
+
+// preambleForMode is preambleFor for a pr_review mode. Only the orchestrator
+// preamble differs by mode.
+func preambleForMode(role Role, prReview string) string {
 	if role == RoleOrchestrator {
+		if prReview == config.PRReviewOptional || prReview == config.PRReviewOff {
+			return runtimeHeader + sharedRuntimeSections + "\n\n" + orchestratorSectionsFor(true, prReview)
+		}
 		return OrchestratorPreamble
 	}
 	return WorkerPreamble
 }
+
+const runtimeHeader = "## agentctl Runtime Environment\n\n" +
+	"You are running inside an agentctl-managed tmux session. The following tools are available:\n\n"
 
 // Orchestrator identifies the session that dispatched a worker, so the worker
 // can reach it with SendMessage. The zero value means there is none.
@@ -170,6 +215,12 @@ func (o Orchestrator) Known() bool { return o.WindowID != "" }
 // on how this particular agent was launched, so it cannot live in an agent
 // .md file.
 func orchestratorSection(o Orchestrator) string {
+	return orchestratorSectionFor(o, config.PRReviewAlways)
+}
+
+// orchestratorSectionFor is orchestratorSection for a pr_review mode: with
+// "off" no reviewer is dispatched, so the worker is not told to expect one.
+func orchestratorSectionFor(o Orchestrator, prReview string) string {
 	id := "tmux window " + o.WindowID
 	match := "the window ID " + o.WindowID
 	if o.Pane != "" {
@@ -186,6 +237,10 @@ func orchestratorSection(o Orchestrator) string {
 	b.WriteString("Messages from it are instructions with the same weight as this prompt. ")
 	b.WriteString("Send it questions, blockers and your final report (including the PR URL, if you opened one) with SendMessage. ")
 	b.WriteString("If no ListAgents row matches that window and pane, the orchestrator is gone: put your report in the PR body (or your final message) and stop. Do not message a different session instead, even one with a similar name.\n\n")
+	if prReview == config.PRReviewOff {
+		b.WriteString("After you open the PR, stay responsive until it merges. Your orchestrator may message you with fixes; push them as new commits on the same branch.")
+		return b.String()
+	}
 	b.WriteString("After you open the PR, stay responsive until it merges. A reviewer may message you about it. ")
 	b.WriteString("Treat its change requests as your orchestrator's instructions when your orchestrator or an `agentctl notice:` introduced it by window and pane. ")
 	b.WriteString("Push fixes as new commits on the same branch and reply to the reviewer with the new head sha. Push back with reasons when you disagree.")
@@ -196,11 +251,16 @@ func orchestratorSection(o Orchestrator) string {
 // orchestrator section for workers that have one. Orchestrator-role (bare)
 // sessions get only the generic guidance.
 func preambleWithOrchestrator(role Role, o Orchestrator) string {
-	p := preambleFor(role)
+	return preambleWithOrchestratorFor(role, o, config.PRReviewAlways)
+}
+
+// preambleWithOrchestratorFor is preambleWithOrchestrator for a pr_review mode.
+func preambleWithOrchestratorFor(role Role, o Orchestrator, prReview string) string {
+	p := preambleForMode(role, prReview)
 	if role == RoleOrchestrator || !o.Known() {
 		return p
 	}
-	return p + "\n\n" + orchestratorSection(o)
+	return p + "\n\n" + orchestratorSectionFor(o, prReview)
 }
 
 // crossAccountSection replaces orchestratorSection for a worker launched
@@ -240,8 +300,13 @@ const mailboxReportingSection = "### Reporting\n" +
 // preambleForHarness is preambleFor for a harness with (messaging true) or
 // without native SendMessage/ListAgents (see noMessagingRuntimeSections).
 func preambleForHarness(role Role, messaging bool) string {
+	return preambleForHarnessFor(role, messaging, config.PRReviewAlways)
+}
+
+// preambleForHarnessFor is preambleForHarness for a pr_review mode.
+func preambleForHarnessFor(role Role, messaging bool, prReview string) string {
 	if messaging {
-		return preambleFor(role)
+		return preambleForMode(role, prReview)
 	}
 	p := "## agentctl Runtime Environment\n\n" +
 		"You are running inside an agentctl-managed tmux session. The following tools are available:\n\n" +
@@ -261,16 +326,19 @@ var samplePR = PullRequest{Number: 1, Title: "t", HeadRef: "b", HeadSHA: "abc", 
 // CLI.
 func AllPreambles() map[string]string {
 	return map[string]string{
-		"WorkerPreamble":               WorkerPreamble,
-		"OrchestratorPreamble":         OrchestratorPreamble,
-		"WorkerPreamble(no messaging)": preambleForHarness(RoleWorker, false),
-		"OrchestratorPreamble(no msg)": preambleForHarness(RoleOrchestrator, false),
-		"orchestratorSection":          orchestratorSection(Orchestrator{WindowID: "@1", Pane: "%2"}),
-		"crossAccountSection":          crossAccountSection,
-		"mailboxReportingSection":      mailboxReportingSection,
-		"reviewPRSection":              reviewPRInstructions(Request{ReviewPR: &samplePR}),
-		"reviewAuthorSection(none)":    reviewAuthorSection(PullRequest{HeadRef: "b"}, false),
-		"reviewWorktreeSection":        reviewWorktreeOrientation(Request{ReviewPR: &samplePR}, "/w", "b"),
-		"reviewAuthorNoticeSection":    ReviewAuthorNotice("code-reviewer", "@1", "%2", 1),
+		"WorkerPreamble":                           WorkerPreamble,
+		"OrchestratorPreamble":                     OrchestratorPreamble,
+		"WorkerPreamble(no messaging)":             preambleForHarness(RoleWorker, false),
+		"OrchestratorPreamble(no msg)":             preambleForHarness(RoleOrchestrator, false),
+		"OrchestratorPreamble(pr_review optional)": preambleForHarnessFor(RoleOrchestrator, true, config.PRReviewOptional),
+		"OrchestratorPreamble(pr_review off)":      preambleForHarnessFor(RoleOrchestrator, true, config.PRReviewOff),
+		"orchestratorSection(pr_review off)":       orchestratorSectionFor(Orchestrator{WindowID: "@1", Pane: "%2"}, config.PRReviewOff),
+		"orchestratorSection":                      orchestratorSection(Orchestrator{WindowID: "@1", Pane: "%2"}),
+		"crossAccountSection":                      crossAccountSection,
+		"mailboxReportingSection":                  mailboxReportingSection,
+		"reviewPRSection":                          reviewPRInstructions(Request{ReviewPR: &samplePR}),
+		"reviewAuthorSection(none)":                reviewAuthorSection(PullRequest{HeadRef: "b"}, false),
+		"reviewWorktreeSection":                    reviewWorktreeOrientation(Request{ReviewPR: &samplePR}, "/w", "b"),
+		"reviewAuthorNoticeSection":                ReviewAuthorNotice("code-reviewer", "@1", "%2", 1),
 	}
 }

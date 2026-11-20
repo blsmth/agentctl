@@ -111,6 +111,7 @@ type Request struct {
 	// Set by Launch from the resolved harness, for buildSystemPrompt.
 	persona          string // full agent body, for harnesses without --agent
 	noMessaging      bool   // harness has no SendMessage/ListAgents
+	prReview         string // config pr_review mode; empty means always
 	reportViaMailbox bool   // a dispatcher exists but cannot be messaged
 	// reviewSharedCheckout is set for a ModeReviewPR launch that runs in the
 	// shared checkout (no worktree, or worktree creation failed).
@@ -330,6 +331,7 @@ func Launch(req Request) (Result, error) {
 	}
 
 	// 7. Build system prompt.
+	req.prReview = cfg.EffectivePRReview()
 	req.Orchestrator = launchOrchestrator(req, spec)
 	if req.Orchestrator.Known() && cfg.HasAccounts() && caps.Accounts {
 		dropCrossAccountOrchestrator(&req, acct.Dir, claudehome.ParentDir(acct.parent))

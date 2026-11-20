@@ -55,6 +55,7 @@ Rationale: a project-local file can arrive with a cloned repository. Executing c
 | `hub_chrome` | bool | `false` | Show each agent's chrome bar inside the hub's live pane. When `false` the hub zooms the viewed window's main pane, which hides the bar there (the hub list already shows every agent); the zoom is undone when the hub moves to another row, closes, or you switch to the project session. Project sessions attached directly always show the bar. The hub key `c` toggles it for the running hub. Global config only. |
 | `bash_preview` | bool | `false` | Show the human approval popup before **every** Bash tool call, not just `agentctl dispatch` and `agentctl cron add/resume/run --force`. See [bash_preview](#bash_preview). |
 | `dispatch_approval` | string | `non-review` | Which `agentctl dispatch` commands need the approval popup: `all`, `non-review` (all except PR review dispatches), or `off`. Global-only in the loosening direction. See [dispatch_approval](#dispatch_approval). |
+| `pr_review` | string | `always` | Whether orchestrators send every PR to a dispatched reviewer: `always`, `optional` (their call, by size and risk) or `off`. Project config may override it. See [pr_review](#pr_review). |
 | `statusline_mobile_format` | string | `mobile` | Statusline format used while the phone web app has a live terminal or the window detail screen open on the window and no laptop tmux client is looking at it. Same values as `statusline_format`; unknown values fall back to `mobile`. Set it equal to `statusline_format` to disable the switch. See [statusline_format and statusline_align](#statusline_format-and-statusline_align). |
 | `statusline_format` | string | `rich` | What `agentctl statusline` prints: `rich`, `complementary`, `full`, `mobile`, or `minimal`. Unknown values fall back to `rich`. |
 | `statusline_align` | string | `left` | `left` or `right`. Right-aligns the `rich` format's lines. Unknown values fall back to `left`. |
@@ -138,6 +139,18 @@ Two places enforce this:
 - **The CLI** (`dispatch --review-pr`) is the backstop, because only it knows the directory it really runs in. When `dispatch_approval` is not `off`, the caller is an agent session (a tracked Claude session, the same test that gives a worker an orchestrator) and `code-reviewer` resolves to a local definition (from `--dir` or the agent dir, the current directory, and again from the reviewer's worktree once it is created), the launch needs a recorded human approval. Without one it is refused, and the message tells the agent to rerun the command as its own Bash call from the directory it should run in, which shows the popup. A person running `agentctl dispatch` in a plain shell is never refused, and the global reviewer is unaffected.
 
 When a human approves a dispatch popup (on the laptop or the phone), the hook records one approval per dispatch in the command under `<XDG_STATE_HOME or ~/.local/state>/agentctl/dispatch-approvals/` (directory 0700, files 0600). Each is keyed by the issuing window and a SHA-256 of the dispatch's arguments, is consumed by the first matching `--review-pr` launch from an agent session (whether or not its reviewer turned out to need it) and expires after 2 minutes; a dispatch whose arguments the shell expands (`$(...)`, `$VAR`, globs) gets no record. Agents cannot write that directory: the Bash validator denies redirects, write commands, in-place edits and interpreters naming `dispatch-approvals`, and `hook-pre-tool` denies `Write`/`Edit`/`MultiEdit`/`NotebookEdit` inside it. Like the cron rules this is a speed bump, not a sandbox.
+
+### pr_review
+
+Controls whether orchestrator sessions are told to send every PR to a dispatched reviewer. It only changes the preamble injected at launch; `agentctl dispatch --review-pr` still works under every mode, and `dispatch_approval` is unaffected. A project-local config may override it.
+
+| Value | Effect |
+|---|---|
+| `always` (default; also empty or unrecognized values) | The orchestrator reviews every PR with `agentctl dispatch --review-pr <N> --agent code-reviewer`. Workers are told a reviewer may message them. |
+| `optional` | The orchestrator decides: a review is recommended for large or risky PRs (concurrency, auth, hooks, anything security-relevant) and may be skipped for small or mechanical ones. When skipped, it checks the PR title and body match the ask and `gh pr checks <N>` is green before merging. Worker text is unchanged. |
+| `off` | The orchestrator is told not to dispatch reviewers: it checks the PR matches the ask, reads `gh pr checks <N>`, then merges or escalates to the human. Workers are not told to expect a reviewer, but still stay responsive until the PR merges. |
+
+Harnesses without native messaging (pi) have no Review section in any mode.
 
 ### statusline_format and statusline_align
 
