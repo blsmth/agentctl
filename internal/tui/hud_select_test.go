@@ -30,8 +30,12 @@ func hudMouse(t *testing.T, m HudModel, msg tea.Msg) (HudModel, tea.Cmd) {
 	return next.(HudModel), cmd
 }
 
-func selPressAt(x, y int) tea.MouseClickMsg { return tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft} }
-func selDragTo(x, y int) tea.MouseMotionMsg { return tea.MouseMotionMsg{X: x, Y: y, Button: tea.MouseLeft} }
+func selPressAt(x, y int) tea.MouseClickMsg {
+	return tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft}
+}
+func selDragTo(x, y int) tea.MouseMotionMsg {
+	return tea.MouseMotionMsg{X: x, Y: y, Button: tea.MouseLeft}
+}
 func selReleaseAt(x, y int) tea.MouseReleaseMsg {
 	return tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft}
 }
@@ -192,7 +196,7 @@ func TestClickWithoutMotionFallsThrough(t *testing.T) {
 		}
 	})
 	t.Run("tab click still switches tabs", func(t *testing.T) {
-		m, _ := hudMouse(t, m, selPressAt(m.hudTabSpans(80)[1].x0, hudTabBarRow))
+		m, _ := hudMouse(t, m, selPressAt(m.hudTabSpans(80)[1].x0, m.tabBarRow(80)))
 		if m.activeTab != tabAgentLogs {
 			t.Errorf("activeTab = %d, want %d", m.activeTab, tabAgentLogs)
 		}

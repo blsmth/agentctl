@@ -178,9 +178,9 @@ func (m *HudModel) selRange() (l0, c0, l1, c1 int) {
 	return la, ca, lh, ch + 1
 }
 
-// bodyTop is the screen row of the first body line: below the header and
-// the tab bar.
-func (m *HudModel) bodyTop() int { return hudTabBarRow + 1 }
+// bodyTop is the screen row of the first body line: below the tab bar,
+// whose row follows the header's rendered height (tabBarRow).
+func (m *HudModel) bodyTop() int { return m.tabBarRow(max(m.width, 20)) + 1 }
 
 // inBody reports whether screen row y is a body row.
 func (m *HudModel) inBody(y int) bool {
