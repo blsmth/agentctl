@@ -219,7 +219,7 @@ func renderLogRecMeta(rec logRec, width int, showSource bool) ([]string, []hudLi
 		// Too narrow for a hanging indent: prefix on its own line, message
 		// below with a small indent.
 		lines = append(lines, " "+prefix)
-		meta = append(meta, hudLineMeta{})
+		meta = append(meta, hudLineMeta{indent: 1})
 		prefix, indent = "", "  "
 		prefixW = 2
 		avail = width - 1 - prefixW
@@ -243,7 +243,7 @@ func renderLogRecMeta(rec logRec, width int, showSource bool) ([]string, []hudLi
 	cur, curW := first, 0
 	started := false
 	push := func(line string) {
-		lm := hudLineMeta{}
+		lm := hudLineMeta{indent: 1} // the pane margin
 		if len(lines) > 0 {
 			lm = hudLineMeta{join: joinSpace, indent: 1 + len(indent)}
 		}
@@ -281,15 +281,15 @@ func renderLogRecMeta(rec logRec, width int, showSource bool) ([]string, []hudLi
 func renderPlainLogMeta(raw string, width int) ([]string, []hudLineMeta) {
 	raw = strings.ReplaceAll(raw, "\t", "    ")
 	if raw == "" {
-		return []string{""}, []hudLineMeta{{}}
+		return []string{""}, []hudLineMeta{{indent: 1}}
 	}
 	var out []string
 	var meta []hudLineMeta
 	for i, l := range strings.Split(ansi.Hardwrap(raw, width-1, true), "\n") {
 		out = append(out, " "+hudRuntimeDefaultStyle.Render(l))
-		lm := hudLineMeta{}
+		lm := hudLineMeta{indent: 1}
 		if i > 0 {
-			lm = hudLineMeta{join: joinHard, indent: 1}
+			lm.join = joinHard
 		}
 		meta = append(meta, lm)
 	}
@@ -327,7 +327,7 @@ func renderLogRecsMeta(recs []logRec, width int, showSource bool) (lines []strin
 		if rec.parsed && rec.day != lastDay {
 			lastDay = rec.day
 			lines = append(lines, " "+hudLogDimStyle.Render("── "+rec.day+" ──"))
-			meta = append(meta, hudLineMeta{})
+			meta = append(meta, hudLineMeta{indent: 1})
 		}
 		rl, rm := renderLogRecMeta(rec, width, showSource)
 		lines = append(lines, rl...)

@@ -152,14 +152,20 @@ func oneLine(s string) string {
 	return strings.Join(strings.Fields(strings.ReplaceAll(s, "\n", " ")), " ")
 }
 
+// hudBashIndent is the layout indent of Bash rows under the prompt.
+var hudBashIndent = hudLineMeta{indent: 2}
+
 // wrapRowsMeta wraps one source line with wrapCells and returns the wrap
-// metadata of each row: the first starts a logical line, the rest continue
-// it (hard wrap) under a two-cell indent.
+// metadata of each row, all drawn under the two-cell indent: the first
+// starts a logical line, the rest continue it (hard wrap).
 func wrapRowsMeta(l string, width int) ([]string, []hudLineMeta) {
 	rows := wrapCells(l, width)
 	meta := make([]hudLineMeta, len(rows))
-	for i := 1; i < len(rows); i++ {
-		meta[i] = hudLineMeta{join: joinHard, indent: 2}
+	for i := range rows {
+		meta[i] = hudBashIndent
+		if i > 0 {
+			meta[i].join = joinHard
+		}
 	}
 	return rows, meta
 }
@@ -186,7 +192,8 @@ func renderTerminalBash(e LogEntry, width int, selected, expanded bool) ([]strin
 		rows, rm := wrapRowsMeta(cl, width-2)
 		for i, row := range rows {
 			if first {
-				add(hudPromptStyle.Render(prompt)+hudCmdStyle.Render(row), rm[i])
+				// The prompt is part of the copied text, not layout.
+				add(hudPromptStyle.Render(prompt)+hudCmdStyle.Render(row), hudLineMeta{join: rm[i].join})
 				first = false
 			} else {
 				add("  "+hudCmdStyle.Render(row), rm[i])
@@ -198,7 +205,7 @@ func renderTerminalBash(e LogEntry, width int, selected, expanded bool) ([]strin
 	}
 
 	if !e.HasResult {
-		add("  "+hudRunningStyle.Render("⠋ running…"), hudLineMeta{})
+		add("  "+hudRunningStyle.Render("⠋ running…"), hudBashIndent)
 		return out, meta
 	}
 
@@ -209,7 +216,7 @@ func renderTerminalBash(e LogEntry, width int, selected, expanded bool) ([]strin
 	body := strings.TrimRight(e.Output, "\n")
 	if body == "" {
 		if e.IsError {
-			add("  "+hudErrOutStyle.Render("(error, no output)"), hudLineMeta{})
+			add("  "+hudErrOutStyle.Render("(error, no output)"), hudBashIndent)
 		}
 		return out, meta
 	}
@@ -224,7 +231,7 @@ func renderTerminalBash(e LogEntry, width int, selected, expanded bool) ([]strin
 			rowMeta = append(rowMeta, rm...)
 			if len(rows) > maxExpandedOutputLines {
 				rows = append(rows[:maxExpandedOutputLines], "… (truncated)")
-				rowMeta = append(rowMeta[:maxExpandedOutputLines], hudLineMeta{})
+				rowMeta = append(rowMeta[:maxExpandedOutputLines], hudBashIndent)
 				break
 			}
 		}
@@ -246,14 +253,14 @@ func renderTerminalBash(e LogEntry, width int, selected, expanded bool) ([]strin
 			rowMeta = rowMeta[len(rowMeta)-terminalTailLines:]
 			// The first kept row's line starts above the tail: nothing to
 			// join it to.
-			rowMeta[0] = hudLineMeta{}
+			rowMeta[0] = hudBashIndent
 		}
 		if hidden > 0 {
 			noun := "lines"
 			if hidden == 1 {
 				noun = "line"
 			}
-			add("  "+hudDimStyle.Render(fmt.Sprintf("… %d more %s", hidden, noun)), hudLineMeta{})
+			add("  "+hudDimStyle.Render(fmt.Sprintf("… %d more %s", hidden, noun)), hudBashIndent)
 		}
 	}
 	for i, r := range rows {

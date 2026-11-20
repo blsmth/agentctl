@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -37,8 +38,8 @@ const (
 )
 
 // hudLineMeta is one rendered line's wrap metadata. indent is how many
-// leading cells are layout (margin plus hanging indent), dropped when the
-// line is joined back onto the previous one.
+// leading cells are layout (pane margin, Bash output indent, hanging
+// indent); they are never copied.
 type hudLineMeta struct {
 	join   hudLineJoin
 	indent int
@@ -70,6 +71,10 @@ type hudSelection struct {
 	// edge is -1 while the pointer is above the body during a drag, +1
 	// below it, 0 inside: auto-scroll moves that way on every tick.
 	edge int
+	// repin is set when the tab was following new output when the drag
+	// started (which unpins it) and has not been scrolled by hand since:
+	// clearing the selection then resumes following.
+	repin bool
 }
 
 // visible reports whether there is a selection to draw.
@@ -88,6 +93,35 @@ const hudFlashTicks = 4
 // nothing ever spawns tmux or writes OSC 52.
 var hudClipboard = copyToClipboard
 
+// hudOSC52Max caps the text sent in one OSC 52 sequence: terminals (and
+// tmux) reject or cut much larger payloads. tmux load-buffer has no cap.
+const hudOSC52Max = 100 << 10
+
+// hudClipboardLimit is the byte cap copyCmd applies before the seam: none
+// inside tmux, hudOSC52Max otherwise. A seam for tests.
+var hudClipboardLimit = func() int {
+	if os.Getenv("TMUX") != "" {
+		return 0
+	}
+	return hudOSC52Max
+}
+
+// capText cuts text to at most limit bytes, at the last line break when
+// there is one, else at a rune boundary.
+func capText(text string, limit int) string {
+	if limit <= 0 || len(text) <= limit {
+		return text
+	}
+	cut := text[:limit]
+	if i := strings.LastIndexByte(cut, '\n'); i > 0 {
+		return cut[:i]
+	}
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return cut
+}
+
 // copyToClipboard returns a command that copies text: through tmux when the
 // HUD runs inside it (load-buffer -w also sets the system clipboard through
 // set-clipboard / OSC 52, and tmux knows which client to send it to), and by
@@ -99,7 +133,7 @@ func copyToClipboard(text string) tea.Cmd {
 	return func() tea.Msg {
 		if err := tmuxLoadBuffer(text); err != nil {
 			logging.Log("hud: tmux load-buffer: %v", err)
-			return tea.SetClipboard(text)()
+			return tea.SetClipboard(capText(text, hudOSC52Max))()
 		}
 		return nil
 	}
@@ -200,9 +234,51 @@ func (m *HudModel) screenPoint(x, y int) (hudSelPoint, bool) {
 	return b.point(line, x), true
 }
 
-// clearSelection drops the selection and any auto-scroll in progress.
+// clearSelection drops the selection and any auto-scroll in progress, and
+// resumes following new output when the drag interrupted it.
 func (m *HudModel) clearSelection() {
+	if m.sel.repin {
+		m.setAtBottom(m.sel.tab, true)
+		m.scrollTabToBottom(m.sel.tab)
+	}
 	m.sel = hudSelection{}
+}
+
+// selScrolledByHand is called on a scroll key or the wheel. The user now
+// owns the viewport, so clearing the selection will not re-pin it, and a
+// drag whose release was lost (the pointer left the pane) ends here.
+func (m *HudModel) selScrolledByHand() {
+	m.sel.repin = false
+	switch m.sel.state {
+	case selDragging:
+		m.sel.state = selShown
+	case selPending:
+		m.sel = hudSelection{}
+	}
+	m.sel.edge = 0
+}
+
+// atBottom reports a tab's pinned-to-bottom flag.
+func (m *HudModel) atBottom(tab int) bool {
+	switch tab {
+	case tabAgentLogs:
+		return m.agentLogAtBottom
+	case tabSysLogs:
+		return m.sysLogAtBottom
+	}
+	return m.streamAtBottom
+}
+
+// scrollTabToBottom scrolls a tab to its last line.
+func (m *HudModel) scrollTabToBottom(tab int) {
+	switch tab {
+	case tabAgentLogs:
+		m.scrollAgentLogToBottom()
+	case tabSysLogs:
+		m.scrollSysLogToBottom()
+	default:
+		m.scrollToBottom()
+	}
 }
 
 // selPress handles a left press: it clears any selection and, in the body,
@@ -248,7 +324,8 @@ func (m *HudModel) selMotion(msg tea.MouseMotionMsg) (cmd tea.Cmd, handled bool)
 		}
 		m.sel.state = selDragging
 		// Stop following new output while selecting, so the viewport (and
-		// the text under the pointer) holds still.
+		// the text under the pointer) holds still; clearing resumes it.
+		m.sel.repin = m.atBottom(m.activeTab)
 		m.setAtBottom(m.activeTab, false)
 	}
 	m.sel.head = p
@@ -267,13 +344,20 @@ func selScrollTick() tea.Cmd {
 }
 
 // selScrollStep handles an auto-scroll tick: scroll one line toward the edge
-// the pointer is past and extend the selection to it.
+// the pointer is past and extend the selection to it. The chain stops once
+// the viewport cannot move (top or bottom reached), so a release lost
+// outside the pane cannot leave it ticking; the next motion re-arms it.
 func (m *HudModel) selScrollStep() tea.Cmd {
 	if m.sel.state != selDragging || m.sel.edge == 0 {
 		m.selTicking = false
 		return nil
 	}
+	before := m.selBuffer(m.activeTab).scroll
 	m.selAutoScroll()
+	if m.selBuffer(m.activeTab).scroll == before {
+		m.selTicking = false
+		return nil
+	}
 	return selScrollTick()
 }
 
@@ -329,11 +413,17 @@ func (m *HudModel) copyCmd(text string, n int) tea.Cmd {
 		m.setFlash("nothing to copy")
 		return nil
 	}
+	suffix := ""
+	if limit := hudClipboardLimit(); limit > 0 && len(text) > limit {
+		text = capText(text, limit)
+		n = strings.Count(text, "\n") + 1
+		suffix = fmt.Sprintf(" (cut to %dKB)", limit>>10)
+	}
 	noun := "lines"
 	if n == 1 {
 		noun = "line"
 	}
-	m.setFlash(fmt.Sprintf("copied %d %s", n, noun))
+	m.setFlash(fmt.Sprintf("copied %d %s%s", n, noun, suffix))
 	return hudClipboard(text)
 }
 
@@ -361,12 +451,9 @@ func extractSelection(lines []string, meta []hudLineMeta, l0, c0, l1, c1 int) (s
 		if l < len(meta) {
 			lm = meta[l]
 		}
-		from, to := 0, ansi.StringWidth(plain)
+		from, to := lm.indent, ansi.StringWidth(plain) // never copy layout cells
 		if l == l0 {
-			from = c0
-			if lm.join != joinNone {
-				from = max(from, lm.indent) // never copy the hanging indent
-			}
+			from = max(c0, lm.indent)
 		}
 		if l == l1 {
 			to = min(to, c1)
@@ -376,7 +463,6 @@ func extractSelection(lines []string, meta []hudLineMeta, l0, c0, l1, c1 int) (s
 			seg = ansi.Cut(plain, from, to)
 		}
 		if l > l0 && lm.join != joinNone {
-			seg = ansi.TruncateLeft(seg, lm.indent, "")
 			if lm.join == joinSpace {
 				if c := strings.TrimRight(cur, " "); c != "" {
 					cur = c + " " + strings.TrimLeft(seg, " ")

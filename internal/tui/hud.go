@@ -267,6 +267,7 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "j", "k", "up", "down", "ctrl+d", "ctrl+u", "G":
 			// Scrolling keeps the selection: it is anchored to the buffer.
+			m.selScrolledByHand()
 		default:
 			// Anything else may re-render the buffer (tabs, expansion,
 			// toggles): drop the selection rather than let it drift.
@@ -472,6 +473,7 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseWheelMsg:
+		m.selScrolledByHand()
 		m.wheel(msg.Button)
 		return m, nil
 
@@ -861,9 +863,8 @@ func (m *HudModel) rebuildStreamLineBuffer() {
 	m.streamLineMeta = m.streamLineMeta[:0]
 	m.streamEntryStart = make([]int, len(m.logEntries))
 	add := func(line string, lm hudLineMeta) {
-		if lm.join != joinNone {
-			lm.indent++ // the leading pane margin
-		}
+		lm.indent++ // the leading pane margin is layout too
+
 		m.streamLineBuffer = append(m.streamLineBuffer, " "+line)
 		m.streamLineMeta = append(m.streamLineMeta, lm)
 	}

@@ -110,10 +110,9 @@ func TestSelectionRejoinsWrappedBashOutput(t *testing.T) {
 		t.Fatalf("expected the output to wrap, got %d lines", len(m.streamLineBuffer))
 	}
 	got, n := extractSelection(m.streamLineBuffer, m.streamLineMeta, 0, 0, len(m.streamLineBuffer)-1, 1<<30)
-	want := "$ echo hi\n" + long + "\nshort"
-	// Output rows are indented by the margin and two cells.
-	if got != " "+want[:9]+"\n   "+long+"\n   short" || n != 3 {
-		t.Errorf("got %q (%d lines)", got, n)
+	// The pane margin and the output indent are layout, not copied.
+	if want := "$ echo hi\n" + long + "\nshort"; got != want || n != 3 {
+		t.Errorf("got %q (%d lines), want %q", got, n, want)
 	}
 }
 
@@ -125,7 +124,7 @@ func TestSelectionRejoinsWrappedLogRecord(t *testing.T) {
 		t.Fatalf("expected a wrapped record, got %d lines", len(lines))
 	}
 	got, n := extractSelection(lines, meta, 1, 0, len(lines)-1, 1<<30)
-	want := " 09:16:06 INF hooks: " + strings.Repeat("word ", 30) + "end"
+	want := "09:16:06 INF hooks: " + strings.Repeat("word ", 30) + "end"
 	if got != want || n != 1 {
 		t.Errorf("got %q (%d lines), want %q", got, n, want)
 	}
@@ -167,8 +166,8 @@ func TestDragSelectCopiesOnRelease(t *testing.T) {
 	if m.sel.state != selShown {
 		t.Fatalf("release: state = %d, want shown", m.sel.state)
 	}
-	if len(*got) != 1 || (*got)[0] != "alpha one\n beta" {
-		t.Fatalf("clipboard got %q, want [\"alpha one\\n beta\"]", *got)
+	if len(*got) != 1 || (*got)[0] != "alpha one\nbeta" {
+		t.Fatalf("clipboard got %q, want [\"alpha one\\nbeta\"]", *got)
 	}
 	if !strings.Contains(ansi.Strip(m.renderFooter(80)), "copied 2 lines") {
 		t.Errorf("footer should flash the copy: %q", ansi.Strip(m.renderFooter(80)))
@@ -334,7 +333,7 @@ func TestSelectionAnchoredToBuffer(t *testing.T) {
 		m, _ = hudMouse(t, m, selPressAt(1, m.bodyTop()))
 		m, _ = hudMouse(t, m, selDragTo(6, m.bodyTop()+1))
 		before, _ := m.selectionText()
-		if before != "first line\n second" {
+		if before != "first line\nsecond" {
 			t.Fatalf("selection = %q", before)
 		}
 		m.appendLog(m.sysPane(), []string{"third line"})
@@ -365,7 +364,7 @@ func TestCopyKey(t *testing.T) {
 		m.activeTab = tabSysLogs
 		m.appendLog(m.sysPane(), []string{"plain one", "plain two"})
 		m = sendKey(m, "y")
-		if len(*got) != 1 || (*got)[0] != " plain one\n plain two" {
+		if len(*got) != 1 || (*got)[0] != "plain one\nplain two" {
 			t.Errorf("clipboard got %q", *got)
 		}
 	})
@@ -458,4 +457,141 @@ func TestHudFootersFit80(t *testing.T) {
 	if l := strings.Split(ansi.Strip(mini.renderMiniFooter(80)), "\n")[1]; strings.Contains(l, "…") || lipgloss.Width(l) > 80 || !strings.Contains(l, "y copy") {
 		t.Errorf("mini footer hint: %q", l)
 	}
+}
+
+func TestLostReleaseStopsAutoScroll(t *testing.T) {
+	stubClipboard(t)
+	var lines []string
+	for i := range 40 {
+		lines = append(lines, fmt.Sprintf("line %02d", i))
+	}
+
+	t.Run("tick chain ends at the top", func(t *testing.T) {
+		m := newTestHud()
+		textStream(&m, lines...)
+		m.scrollTop, m.streamAtBottom = 2, false
+		m, _ = hudMouse(t, m, selPressAt(1, m.bodyTop()+3))
+		m, cmd := hudMouse(t, m, selDragTo(1, 0)) // out past the header, never released
+		ticks := 0
+		for cmd != nil && ticks < 100 {
+			m, cmd = hudMouse(t, m, hudSelScrollMsg{})
+			ticks++
+		}
+		if cmd != nil || m.selTicking {
+			t.Fatalf("auto-scroll still ticking after %d ticks", ticks)
+		}
+		if m.scrollTop != 0 || ticks > 3 {
+			t.Errorf("scrollTop = %d after %d ticks, want 0 within 3", m.scrollTop, ticks)
+		}
+		// A new motion past the edge re-arms it once there is room again.
+		m.scrollTop = 1
+		if _, cmd := hudMouse(t, m, selDragTo(1, 0)); cmd == nil {
+			t.Error("motion past the edge should re-arm the auto-scroll")
+		}
+	})
+
+	t.Run("a scroll key ends the drag", func(t *testing.T) {
+		m := newTestHud()
+		textStream(&m, lines...)
+		m.scrollTop, m.streamAtBottom = 10, false
+		m, _ = hudMouse(t, m, selPressAt(1, m.bodyTop()+3))
+		m, _ = hudMouse(t, m, selDragTo(1, 0))
+		m = sendKey(m, "k")
+		if m.sel.state != selShown || m.sel.edge != 0 {
+			t.Fatalf("state %d edge %d: a key should end a drag whose release was lost", m.sel.state, m.sel.edge)
+		}
+		if _, cmd := hudMouse(t, m, hudSelScrollMsg{}); cmd != nil {
+			t.Error("the tick chain should stop once the drag ended")
+		}
+	})
+}
+
+func TestOSC52CopyIsCapped(t *testing.T) {
+	got := stubClipboard(t)
+	prev := hudClipboardLimit
+	hudClipboardLimit = func() int { return 1 << 10 }
+	t.Cleanup(func() { hudClipboardLimit = prev })
+
+	m := newTestHud()
+	out := strings.Repeat(strings.Repeat("x", 99)+"\n", 30) // 3000 bytes
+	m.logEntries = []LogEntry{bashEntry("cat big", out, true, false)}
+	m.rebuildStreamLineBuffer()
+	m = sendKey(m, "j")
+	m = sendKey(m, "y")
+	if len(*got) != 1 || len((*got)[0]) > 1<<10 || !strings.HasPrefix((*got)[0], "$ cat big\nxxx") {
+		t.Fatalf("clipboard got %d copies, first %d bytes", len(*got), len((*got)[0]))
+	}
+	if strings.HasSuffix((*got)[0], "x\n") || !strings.HasSuffix((*got)[0], "x") {
+		t.Error("the cut should fall on a line break")
+	}
+	if !strings.Contains(m.flash, "cut to 1KB") {
+		t.Errorf("flash should say the copy was cut: %q", m.flash)
+	}
+
+	hudClipboardLimit = func() int { return 0 } // inside tmux: no cap
+	m = sendKey(m, "y")
+	if len((*got)[1]) < len(out) {
+		t.Errorf("tmux copy should be whole, got %d bytes", len((*got)[1]))
+	}
+}
+
+func TestCapText(t *testing.T) {
+	tests := []struct {
+		name, in string
+		limit    int
+		want     string
+	}{
+		{"under the cap", "abc", 10, "abc"},
+		{"at a line break", "ab\ncd\nef", 6, "ab\ncd"},
+		{"no line break, rune boundary", "aé", 2, "a"},
+		{"no limit", "abc", 0, "abc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := capText(tt.in, tt.limit); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClearingSelectionResumesFollow(t *testing.T) {
+	stubClipboard(t)
+	var lines []string
+	for i := range 40 {
+		lines = append(lines, fmt.Sprintf("line %02d", i))
+	}
+	selectThenAppend := func(t *testing.T, scrollKey string) HudModel {
+		t.Helper()
+		m := newTestHud()
+		textStream(&m, lines...)
+		m.scrollToBottom()
+		m.streamAtBottom = true
+		m, _ = hudMouse(t, m, selPressAt(1, m.bodyTop()))
+		m, _ = hudMouse(t, m, selDragTo(4, m.bodyTop()+1))
+		m, _ = hudMouse(t, m, selReleaseAt(4, m.bodyTop()+1))
+		if m.streamAtBottom {
+			t.Fatal("a drag should stop following while the selection is up")
+		}
+		if scrollKey != "" {
+			m = sendKey(m, scrollKey)
+		}
+		m.logEntries = append(m.logEntries, LogEntry{Kind: "text", FullText: "new", Style: lipgloss.NewStyle()})
+		m.rebuildStreamLineBuffer()
+		m, _ = hudMouse(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+		return m
+	}
+
+	t.Run("esc resumes following", func(t *testing.T) {
+		m := selectThenAppend(t, "")
+		if !m.streamAtBottom || !m.isStreamAtBottom() {
+			t.Errorf("following should resume: pinned %v, scrollTop %d", m.streamAtBottom, m.scrollTop)
+		}
+	})
+	t.Run("a hand scroll keeps the viewport", func(t *testing.T) {
+		m := selectThenAppend(t, "k")
+		if m.streamAtBottom {
+			t.Error("after scrolling by hand, clearing should not jump back to the bottom")
+		}
+	})
 }
