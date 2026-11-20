@@ -13,6 +13,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/blsmth/agentctl/internal/closedlog"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/hubtarget"
@@ -314,6 +315,8 @@ const (
 	fleetLineRow                              // a selectable agent row
 	fleetLineDivider                          // a non-selectable rule between two groups
 	fleetLineSubheader                        // a non-selectable "dispatched (N)" label
+	fleetLineClosedLabel                      // a non-selectable Closed section or project label
+	fleetLineClosed                           // a selectable closed (ledger) row; see fleet_closed.go
 )
 
 // fleetLine is one renderable line. Every kind except fleetLineDivider is also
@@ -332,12 +335,14 @@ type fleetLine struct {
 	// dimmed marks a fleetLineRow the attention filter keeps only as the
 	// ancestor of a matching row; it renders muted.
 	dimmed bool
+	// closed is the ledger record of a fleetLineClosed row.
+	closed closedlog.Record
 }
 
 // selectable reports whether the cursor may rest on this line. Dividers and
 // sub-section labels are decoration only.
 func (l fleetLine) selectable() bool {
-	return l.kind != fleetLineDivider && l.kind != fleetLineSubheader
+	return l.kind != fleetLineDivider && l.kind != fleetLineSubheader && l.kind != fleetLineClosedLabel
 }
 
 // ── FleetModel ────────────────────────────────────────────────────────────────
@@ -393,6 +398,10 @@ type FleetModel struct {
 	selSession  string
 	selWindowID string
 	selIsHeader bool
+	// selClosed is the selected closed row's closedlog Key ("" when the
+	// selection is not a closed row; selSession is then empty, so the live
+	// viewer is never handed a window that no longer exists).
+	selClosed string
 
 	// lastSelection is the selection last written to the hub selection file
 	// for the follow-hub HUD (selPublished: one has been written). See
@@ -519,8 +528,14 @@ type FleetModel struct {
 	// showShells shows plain shell rows ("$ shell"); hidden by default
 	// (fleetShellsKey).
 	showShells bool
-	filter     fleetFilter
-	viewPath   string
+	// showClosed shows the Closed section (fleetClosedKey, fleet_closed.go);
+	// closed is its last ledger read, closedCache the reader (shared by the
+	// model's copies).
+	showClosed  bool
+	closed      []closedlog.Record
+	closedCache *closedlog.Cache
+	filter      fleetFilter
+	viewPath    string
 	// orderPath is the saved group order (see fleet_order.go); "" persists
 	// nothing. drag is a pending or active header drag.
 	orderPath string
@@ -680,10 +695,11 @@ func newFleetModel() FleetModel {
 	const defaultWidth = 120
 	left, right, _ := fleetLiveSplit(defaultWidth)
 	return FleetModel{
-		termWidth:  defaultWidth,
-		termHeight: 40,
-		liveLeft:   left,
-		liveRight:  right,
+		termWidth:   defaultWidth,
+		termHeight:  40,
+		liveLeft:    left,
+		liveRight:   right,
+		closedCache: &closedlog.Cache{},
 		splitPane: SplitPane{
 			Orientation:   OrientHorizontal,
 			ListRatio:     fleetSidebarRatio,
@@ -695,7 +711,7 @@ func newFleetModel() FleetModel {
 
 // Init kicks off the first load and starts the poll loop.
 func (m FleetModel) Init() tea.Cmd {
-	return tea.Batch(fleetLoadCmd(), fleetTickCmd(), fleetZoomSyncCmd(m.hubChrome), fleetServeProbeOnce())
+	return tea.Batch(fleetLoadCmd(), fleetTickCmd(), fleetZoomSyncCmd(m.hubChrome), fleetServeProbeOnce(), m.closedLoadCmd())
 }
 
 // fleetServeProbeOnce is the first serve probe. Init has a value receiver,
@@ -783,7 +799,11 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		refreshThemeIfChanged()
 		show := m.maybeShowCmd()
 		probe := m.serveProbeCmd()
-		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome), probe, m.activityPollCmd())
+		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome), probe, m.activityPollCmd(), m.closedLoadCmd())
+
+	case fleetClosedLoadedMsg:
+		m.applyClosedLoaded(msg)
+		return m, nil
 
 	case fleetActivityOpenedMsg:
 		return m, m.applyActivityOpened(msg)
@@ -1119,12 +1139,18 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 		return *m, show
 
 	case "enter":
+		if c := m.selectedClosed(); c != nil {
+			return *m, m.resumeClosed(*c)
+		}
 		if m.selectedRow() == nil {
 			return *m, nil
 		}
 		return m.focusLive()
 
 	case "tab":
+		if m.selectedClosed() != nil {
+			return *m, nil // nothing live to focus
+		}
 		return m.focusLive()
 
 	case "J":
@@ -1163,6 +1189,9 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 
 	case fleetShellsKey:
 		return *m, m.toggleShells()
+
+	case fleetClosedKey:
+		return *m, m.toggleClosed()
 
 	case fleetServeKey:
 		return *m, m.toggleServe()
@@ -1417,16 +1446,22 @@ func (m *FleetModel) syncSelectionFromCursor() {
 	}()
 	idx := m.splitPane.Cursor()
 	if idx < 0 || idx >= len(m.lines) {
-		m.selSession, m.selWindowID, m.selIsHeader = "", "", false
+		m.selSession, m.selWindowID, m.selIsHeader, m.selClosed = "", "", false, ""
 		return
 	}
 	l := m.lines[idx]
+	if l.kind != fleetLineDivider && l.kind != fleetLineSubheader && l.kind != fleetLineClosedLabel {
+		m.selClosed = ""
+	}
 	switch l.kind {
 	case fleetLineRow:
 		m.selSession = l.row.Session
 		m.selWindowID = l.row.WindowID
 		m.selIsHeader = false
-	case fleetLineDivider, fleetLineSubheader:
+	case fleetLineClosed:
+		m.selSession, m.selWindowID, m.selIsHeader = "", "", false
+		m.selClosed = l.closed.Key()
+	case fleetLineDivider, fleetLineSubheader, fleetLineClosedLabel:
 		// Unreachable in practice — moveCursor/resolveSelection never park
 		// the cursor on a divider or subheader — but defend against adopting a
 		// divider's zero-value Group as the selection rather than leaving
@@ -1471,7 +1506,12 @@ func (m *FleetModel) nextSelectable(cursor, delta int) int {
 	for {
 		next := idx + delta
 		if next < 0 || next >= len(m.lines) {
-			return idx // boundary reached; idx is the last selectable stop
+			// Boundary reached: stay put unless the walk ended on a stop
+			// (the Closed section can end in a label line).
+			if m.lines[idx].selectable() {
+				return idx
+			}
+			return cursor
 		}
 		idx = next
 		if m.lines[idx].selectable() {
@@ -1492,6 +1532,18 @@ func (m *FleetModel) resolveSelection() {
 	// SplitPane's totalRows (used for cursor clamping) in sync immediately,
 	// rather than waiting for the next View().
 	m.splitPane.SetListContent(m.splitPane.listContent, len(m.lines))
+
+	if m.selClosed != "" {
+		for i, l := range m.lines {
+			if l.kind == fleetLineClosed && l.closed.Key() == m.selClosed {
+				m.splitPane.SetCursor(i)
+				m.syncSelectionFromCursor()
+				m.ensureCursorVisible()
+				return
+			}
+		}
+		m.selClosed = ""
+	}
 
 	if m.selSession != "" {
 		for i, l := range m.lines {
@@ -1546,7 +1598,7 @@ func (m *FleetModel) resolveSelection() {
 		}
 	}
 
-	m.selSession, m.selWindowID, m.selIsHeader = "", "", false
+	m.selSession, m.selWindowID, m.selIsHeader, m.selClosed = "", "", false, ""
 }
 
 func (m *FleetModel) visibleLines() int {
@@ -1748,6 +1800,12 @@ func (m *FleetModel) rebuildLines() {
 			lines = append(lines, fleetLine{kind: fleetLineRow, row: t.Row, groupHead: first, treePrefix: t.Prefix, nameCol: nameCol, dimmed: context[t.Row.WindowID]})
 			first = false
 		}
+	}
+	if closed := m.closedLines(); len(closed) > 0 {
+		if len(lines) > 0 {
+			lines = append(lines, fleetLine{kind: fleetLineDivider})
+		}
+		lines = append(lines, closed...)
 	}
 	m.lines = lines
 	// The usual model is fleet-wide; column widths come from drawn rows only,
@@ -2026,7 +2084,7 @@ func (m FleetModel) shownEnd(cw int) int {
 func (m FleetModel) hiddenRows(from, to int) (rows, other int) {
 	for i := max(from, 0); i < min(to, len(m.lines)); i++ {
 		switch m.lines[i].kind {
-		case fleetLineRow:
+		case fleetLineRow, fleetLineClosed:
 			rows++
 		case fleetLineHeader, fleetLinePlaceholder:
 			other++
@@ -2091,6 +2149,10 @@ func (m FleetModel) renderLine(i int, cw int) string {
 		return marker + fleetDimStyle.Render("no agents")
 	case fleetLineDivider:
 		return renderFleetDivider(cw)
+	case fleetLineClosedLabel:
+		return renderClosedLabel(l, cw)
+	case fleetLineClosed:
+		return renderClosedRow(l.closed, selected, cw)
 	case fleetLineSubheader:
 		// The group's bar keeps the spine unbroken; the label aligns under
 		// agent names: bar + cursor slot + glyph + space.

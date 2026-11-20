@@ -51,6 +51,10 @@ type CascadeDeps struct {
 	// Kill closes one child window (and spawns its own reconcile, which is
 	// what cascades to grandchildren).
 	Kill func(w LiveWindow) error
+	// Mark records on the child's windowstate that parentID's close is
+	// closing it ("" clears it), so its closed-ledger line says why. Nil
+	// skips it.
+	Mark func(w LiveWindow, parentID string) error
 }
 
 // DefaultCascadeDeps wires the cascade to config, tmux and the restore file
@@ -64,6 +68,7 @@ func DefaultCascadeDeps(runtimeDir, session string) CascadeDeps {
 		Kill: func(w LiveWindow) error {
 			return tmux.KillWindowIn(w.Session, w.RuntimeDir, w.WindowID)
 		},
+		Mark: markClosedBy,
 	}
 }
 
@@ -143,12 +148,30 @@ func closeChildren(c Claimed, d CascadeDeps) {
 		}
 	}
 	for _, w := range children {
+		mark(d, w, c.WindowID)
 		if err := d.Kill(w); err != nil {
 			logging.Log("reconcile: cascade close of %s (%s, child of %s) failed: %v", w.WindowID, w.Name(), c.WindowID, err)
+			mark(d, w, "")
 			continue
 		}
 		logging.Log("reconcile: cascade closed %s (%s) in %s, dispatched by gone window %s", w.WindowID, w.Name(), w.Session, c.WindowID)
 	}
+}
+
+// mark sets (or clears) a child's ClosedBy through d.Mark; failures are
+// logged, never fatal: the close reason is a convenience.
+func mark(d CascadeDeps, w LiveWindow, parentID string) {
+	if d.Mark == nil {
+		return
+	}
+	if err := d.Mark(w, parentID); err != nil {
+		logging.Debug("reconcile: marking %s closed by %q: %v", w.WindowID, parentID, err)
+	}
+}
+
+// markClosedBy writes ClosedBy on w's own record (never creating one).
+func markClosedBy(w LiveWindow, parentID string) error {
+	return windowstate.UpdateIn(w.RuntimeDir, w.WindowID, func(ws *windowstate.WindowState) { ws.ClosedBy = parentID })
 }
 
 // Snapshotted reports whether runtimeDir's restore.json holds windowID with

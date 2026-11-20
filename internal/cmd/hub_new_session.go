@@ -58,6 +58,17 @@ func RunHubNewSession(dir string) error {
 }
 
 func runHubNewSession(dir string, d hubNewSessionDeps) error {
+	if err := ensureHubSession(dir, d); err != nil {
+		return err
+	}
+	d.launch()
+	return nil
+}
+
+// ensureHubSession checks that this process is bound to dir's project,
+// initializes it when needed and starts its tmux session detached when it is
+// not running (refusing a same-named session of another directory).
+func ensureHubSession(dir string, d hubNewSessionDeps) error {
 	if err := tmux.CheckNewSessionDir(dir); err != nil {
 		return err
 	}
@@ -87,6 +98,5 @@ func runHubNewSession(dir string, d hubNewSessionDeps) error {
 			return fmt.Errorf("starting session %s: %w", name, err)
 		}
 	}
-	d.launch()
 	return nil
 }

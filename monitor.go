@@ -501,6 +501,7 @@ var cascadeDepsFn = reconcile.DefaultCascadeDeps
 func (m *monitorModel) reconcileDeps(cfg *config.Config) reconcile.Deps {
 	return reconcile.Deps{
 		RuntimeDir:  m.runtimeDir,
+		Session:     tmux.SessionName,
 		Handle:      func(t state.Transition, ac config.AgentConfig) { m.fireHandlers(t, ac) },
 		AgentConfig: cfg.ForAgent,
 		RemoveInbox: mailbox.RemoveInbox,

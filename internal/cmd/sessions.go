@@ -189,8 +189,25 @@ func ParseDateFlag(s string) (time.Time, error) {
 }
 
 // LaunchWithResume launches an agent window and resumes the given session,
-// forked into a new one, on the harness that recorded the session.
+// forked into a new one, on the harness that recorded the session, and
+// switches to it. Errors exit the process.
 func LaunchWithResume(name string, sessionID string, workDir string, writeSettings WriteAgentSettingsFn) {
+	wid, err := launchResume(name, sessionID, workDir, writeSettings, true)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		cliout.Exit(1)
+	}
+	if wid != "" {
+		if err := tmux.SwitchToWindow(wid); err != nil {
+			logging.Warn("launchWithResume: switch to window %s: %v", wid, err)
+		}
+	}
+}
+
+// launchResume is LaunchWithResume without the exits and the switch: it
+// launches the resumed session in the current project's tmux session and
+// returns the new window ID. focus selects the window in that session.
+func launchResume(name string, sessionID string, workDir string, writeSettings WriteAgentSettingsFn, focus bool) (string, error) {
 	cfg := config.Load()
 	ac := cfg.ForAgent(name)
 	h := harness.For(sessionHarnessFn(sessionID))
@@ -203,15 +220,13 @@ func LaunchWithResume(name string, sessionID string, workDir string, writeSettin
 		// transcript, so the account follows the session, not the rules.
 		acct, err := dispatch.ResumeAccount(cfg, sessionID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: resolving account: %v\n", err)
-			cliout.Exit(1)
+			return "", fmt.Errorf("resolving account: %w", err)
 		}
 		dispatch.ApplyAccountEnv(extraEnv, acct)
 	}
 	hb, err := dispatch.PrepareBackendFor(cfg, h, &ac, "", "", workDir, extraEnv)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		cliout.Exit(1)
+		return "", err
 	}
 	windowName := tmux.NextInstanceName(name)
 	// The forked session's ID is chosen by the harness, so the log path
@@ -223,28 +238,17 @@ func LaunchWithResume(name string, sessionID string, workDir string, writeSettin
 		Backend:       hb,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		cliout.Exit(1)
+		return "", err
 	}
 	inv := dispatch.BaseInvocation(name, sessionName, ac, prep)
 	inv.Resume, inv.ForkSession = sessionID, true
 	shellCmd, err := h.Command(inv)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		cliout.Exit(1)
+		return "", err
 	}
 	extraEnv[dispatch.EnvSessionName] = sessionName
 	dispatch.ApplyHarnessEnv(extraEnv, h, "", prep)
-	wid, err := tmux.LaunchAgent(windowName, workDir, shellCmd, "", name, "", extraEnv, true)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		cliout.Exit(1)
-	}
-	if wid != "" {
-		if err := tmux.SwitchToWindow(wid); err != nil {
-			logging.Warn("launchWithResume: switch to window %s: %v", wid, err)
-		}
-	}
+	return tmux.LaunchAgent(windowName, workDir, shellCmd, "", name, "", extraEnv, focus)
 }
 
 // GetSessionPreview returns a short preview string for the given session.

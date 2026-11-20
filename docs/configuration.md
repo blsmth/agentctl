@@ -17,7 +17,7 @@ agentctl follows the XDG base directory spec and splits user-level files by role
 |---|---|---|
 | Config | `$XDG_CONFIG_HOME/agentctl` (default `~/.config/agentctl`) | `config.json`, `schedules.json` (`agentctl cron` jobs), user-authored `themes/*.json` |
 | Data | `$XDG_DATA_HOME/agentctl` (default `~/.local/share/agentctl`) | `context/` (context store), `journal/` (work journal) |
-| State | `$XDG_STATE_HOME/agentctl` (default `~/.local/state/agentctl`) | `registry/` (live sessions), `ratelimits.json`, `hub/` (hub session working directory), `serve/` (`agentctl serve` certificates, devices, log), `cron/` (`agentctl cron` tick lock, state, run history, log), `titles/` (hourly request cap for short row titles), `pricing/` (machine-wide model price cache), `llm-usage/` (ledger of agentctl's own background LLM calls) |
+| State | `$XDG_STATE_HOME/agentctl` (default `~/.local/state/agentctl`) | `registry/` (live sessions), `ratelimits.json`, `hub/` (hub session working directory), `serve/` (`agentctl serve` certificates, devices, log), `cron/` (`agentctl cron` tick lock, state, run history, log), `titles/` (hourly request cap for short row titles), `pricing/` (machine-wide model price cache), `llm-usage/` (ledger of agentctl's own background LLM calls), `closed/` (ledger of closed agent windows behind `status list --closed` and the hub's Closed section) |
 
 A relative `XDG_*` value is invalid per the spec and is ignored. `AGENTCTL_REGISTRY_DIR` still overrides the registry location.
 

@@ -47,11 +47,17 @@ var (
 // runHubNewSessionHelper runs `agentctl hub-new-session <dir>` with cwd = dir
 // and env, returning its stdout and, on failure, the last line of its output.
 func runHubNewSessionHelper(dir string, env []string) (string, error) {
+	return runAgentctlHelper(dir, env, "hub-new-session", dir)
+}
+
+// runAgentctlHelper runs `agentctl <args>` with cwd = dir and env, returning
+// its stdout and, on failure, the last line of its output.
+func runAgentctlHelper(dir string, env []string, args ...string) (string, error) {
 	exe, err := selfpath.Spawnable()
 	if err != nil {
 		return "", fmt.Errorf("locating agentctl: %w", err)
 	}
-	c := exec.Command(exe, "hub-new-session", dir)
+	c := exec.Command(exe, args...)
 	c.Dir = dir
 	c.Env = env
 	var stdout, stderr bytes.Buffer
