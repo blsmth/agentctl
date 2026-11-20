@@ -57,6 +57,22 @@ func StateDir() (string, error) {
 	return xdgDir("XDG_STATE_HOME", filepath.Join(".local", "state"))
 }
 
+// PricingDir is where the machine-wide model price cache lives:
+// <stateDir>/pricing (nous-<hash>.json, one per catalog base URL).
+func PricingDir() (string, error) {
+	d, err := StateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "pricing"), nil
+}
+
+// pricingDirOrEmpty is PricingDir for callers that treat failure as "none".
+func pricingDirOrEmpty() string {
+	d, _ := PricingDir()
+	return d
+}
+
 // MigrateLegacy moves oldPath to newPath once, when newPath does not exist and
 // oldPath does. It returns the path the caller should use: newPath normally,
 // or oldPath when the move failed for a reason other than a lost race (for

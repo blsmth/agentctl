@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/approval"
+	"github.com/blsmth/agentctl/internal/llmusage"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/mailbox"
 	"github.com/blsmth/agentctl/internal/metrics/events"
@@ -31,7 +32,9 @@ type HousekeepingDeps struct {
 	// while alive, so housekeeping covers machines where it is not running).
 	PruneEvents func(now time.Time)
 	// PruneUploads removes phone-attached images older than uploads.MaxAge.
-	PruneUploads  func(now time.Time) (int, error)
+	PruneUploads func(now time.Time) (int, error)
+	// PruneLLMUsage removes usage-ledger files older than llmusage.MaxAge.
+	PruneLLMUsage func(now time.Time) (int, error)
 	Records       func() map[string]windowstate.WindowState
 	SessionLogDir func() string
 	// BackfillTitles titles this session's live windows that never got a
@@ -42,6 +45,9 @@ type HousekeepingDeps struct {
 
 // TitleBackfillInterval is how often housekeeping runs the title backfill.
 const TitleBackfillInterval = 5 * time.Minute
+
+// LLMUsagePruneInterval is how often housekeeping prunes the usage ledger.
+const LLMUsagePruneInterval = 24 * time.Hour
 
 // DefaultHousekeepingDeps wires the sweeps to the real implementations for
 // the current session.
@@ -61,6 +67,9 @@ func DefaultHousekeepingDeps(runtimeDir string) HousekeepingDeps {
 		},
 		PruneUploads: func(now time.Time) (int, error) {
 			return uploads.Prune(runtimeDir, now, uploads.MaxAge)
+		},
+		PruneLLMUsage: func(now time.Time) (int, error) {
+			return llmusage.Prune(now, llmusage.MaxAge)
 		},
 		Records:       windowstate.All,
 		SessionLogDir: paths.SessionLogDir,
@@ -103,6 +112,15 @@ func Housekeep(d HousekeepingDeps) {
 			logging.Log("janitor: uploads.Prune: %v", err)
 		case n > 0:
 			logging.Log("janitor: pruned %d phone upload(s) older than %s", n, uploads.MaxAge)
+		}
+	}
+	if d.PruneLLMUsage != nil && stamp.Try(filepath.Join(d.RuntimeDir, "prune-llm-usage.stamp"), LLMUsagePruneInterval, now) {
+		n, err := d.PruneLLMUsage(now)
+		switch {
+		case err != nil:
+			logging.Log("janitor: llmusage.Prune: %v", err)
+		case n > 0:
+			logging.Log("janitor: pruned %d LLM usage file(s) older than %s", n, llmusage.MaxAge)
 		}
 	}
 	if stamp.Try(filepath.Join(d.RuntimeDir, "prune-session-logs.stamp"), PruneInterval, now) && d.PruneSessionLogs != nil {

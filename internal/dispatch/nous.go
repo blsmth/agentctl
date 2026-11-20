@@ -20,6 +20,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/pricecache"
 	"github.com/blsmth/agentctl/internal/safefs"
 	"github.com/blsmth/agentctl/internal/tokens"
 )
@@ -180,11 +181,15 @@ func loadNousCatalog(baseURL string) (nousCatalog, error) {
 	if err != nil {
 		return nousCatalog{}, err
 	}
-	if cachePath != "" {
-		if data, err := json.Marshal(cat); err == nil {
+	if data, err := json.Marshal(cat); err == nil {
+		if cachePath != "" {
 			if err := safefs.WriteFile(paths.RuntimeDir(), cachePath, data, 0o600); err != nil {
 				logging.Debug("nous: catalog cache write: %v", err)
 			}
+		}
+		// The machine-wide price copy, whatever the runtime dir.
+		if err := pricecache.Write(baseURL, data); err != nil {
+			logging.Debug("nous: price cache write: %v", err)
 		}
 	}
 	return cat, nil

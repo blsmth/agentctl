@@ -14,8 +14,12 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/llmusage"
 	"github.com/blsmth/agentctl/internal/sessions"
 )
+
+// costNow is the clock for the ledger window; tests replace it.
+var costNow = time.Now
 
 // CostOptions are the flags of `agentctl cost`.
 type CostOptions struct {
@@ -252,15 +256,17 @@ func RunCost(o CostOptions) error {
 	if err != nil {
 		return err
 	}
+	llmRecs := loadLLMUsage(since, costNow())
 	totals := sumCosts(rows)
 	var groups []costGroup
 	if o.By != "" {
 		groups, _ = groupCosts(rows, o.By)
 	}
 	if o.JSON {
-		return printCostJSON(rows, groups, totals, o)
+		return printCostJSON(rows, groups, totals, llmRecs, o)
 	}
 	printCostTable(rows, groups, totals, o)
+	printLLMSection(llmRecs, o.By)
 	return nil
 }
 
@@ -464,14 +470,17 @@ type costTotalsJSON struct {
 	Excluded int     `json:"excluded_sessions"`
 }
 
-func printCostJSON(rows []costRow, groups []costGroup, totals costTotals, o CostOptions) error {
+func printCostJSON(rows []costRow, groups []costGroup, totals costTotals, llmRecs []llmusage.Record, o CostOptions) error {
 	out := struct {
 		Since    string          `json:"since"`
 		By       string          `json:"by,omitempty"`
 		Sessions []costRowJSON   `json:"sessions,omitempty"`
 		Groups   []costGroupJSON `json:"groups,omitempty"`
 		Totals   costTotalsJSON  `json:"totals"`
-	}{Since: o.Since, By: o.By}
+		// BackgroundLLM is agentctl's own LLM calls (titles); kept apart from
+		// the session totals above.
+		BackgroundLLM llmSectionJSON `json:"background_llm"`
+	}{Since: o.Since, By: o.By, BackgroundLLM: llmSection(llmRecs, o.By)}
 	if out.Since == "" {
 		out.Since = "7d"
 	}
