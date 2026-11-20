@@ -67,6 +67,7 @@ type HudModel struct {
 	done       bool
 
 	// Stream interactivity state.
+	terminalMode    bool         // Stream tab renders as a terminal feed (tool results)
 	streamCursor    int          // index into logEntries of selected entry (-1 = no selection)
 	expandedEntries map[int]bool // set of logEntry indices that are expanded
 
@@ -181,6 +182,18 @@ func newHudModel(windowID string) HudModel {
 	}
 }
 
+// WithTerminalMode sets the Stream tab's default render mode (the hub's
+// follow mode starts in terminal mode). The `t` key toggles it.
+func (m HudModel) WithTerminalMode(on bool) HudModel { m.terminalMode = on; return m }
+
+// resetToolPairing clears per-target tool-result state. Results are paired
+// against logEntries, so dropping the entries is all that is needed; call this
+// (or reset logEntries/logOffset) when retargeting to another window.
+func (m *HudModel) resetToolPairing() {
+	m.logEntries = nil
+	m.logOffset = 0
+}
+
 // Reexec reports whether the HUD quit because the binary changed; the caller
 // must exec the new image after the program returns.
 func (m HudModel) Reexec() bool { return m.reload.triggered() }
@@ -238,6 +251,13 @@ func (m HudModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Key handling for Stream / Agent Logs / System Logs tabs.
 		switch msg.String() {
+		case "t":
+			if m.activeTab == tabStream {
+				m.terminalMode = !m.terminalMode
+				m.rebuildStreamLineBuffer()
+				m.ensureCursorVisible()
+			}
+
 		case "esc":
 			if m.activeTab == tabStream && m.streamCursor != -1 {
 				// Deactivate cursor (collapse any expansion too).
@@ -591,6 +611,7 @@ func (m *HudModel) poll() {
 		result, err := TailLog(m.logPath, m.logOffset)
 		if err == nil {
 			m.logOffset = result.NewOffset
+			ApplyToolResults(m.logEntries, result.Results)
 			m.logEntries = append(m.logEntries, result.Entries...)
 			// Trim ring buffer.
 			if len(m.logEntries) > maxLogEntries {
@@ -615,7 +636,7 @@ func (m *HudModel) poll() {
 			// Rebuild line buffer after entries changed.
 			m.rebuildStreamLineBuffer()
 			// Auto-scroll to bottom only when pinned to bottom.
-			if len(result.Entries) > 0 {
+			if len(result.Entries) > 0 || len(result.Results) > 0 {
 				if m.streamAtBottom {
 					m.scrollToBottom()
 					// Keep cursor pinned to last entry when at bottom.
@@ -753,6 +774,12 @@ func (m *HudModel) rebuildStreamLineBuffer() {
 	for i, e := range m.logEntries {
 		m.streamEntryStart[i] = len(m.streamLineBuffer)
 		selected := m.streamCursor == i
+		if m.terminalMode {
+			for _, l := range renderTerminalEntry(e, logWidth, selected, m.expandedEntries[i]) {
+				m.streamLineBuffer = append(m.streamLineBuffer, " "+l)
+			}
+			continue
+		}
 		line := m.renderEntry(e, logWidth, selected)
 		m.streamLineBuffer = append(m.streamLineBuffer, " "+line)
 		if m.expandedEntries[i] {
@@ -1386,9 +1413,9 @@ func (m HudModel) renderMiniFooter(w int) string {
 func (m HudModel) renderFooter(w int) string {
 	var hint string
 	if m.activeTab == tabStream && m.streamCursor != -1 {
-		hint = "↑/↓ navigate · Enter expand · h collapse · Esc back · g/G top/bottom · q quit "
+		hint = "↑/↓ navigate · Enter expand · h collapse · Esc back · g/G top/bottom · t term · q quit "
 	} else {
-		hint = "Tab/Shift+Tab switch · j/k scroll · Ctrl+d/u page · g/G top/bottom · q quit "
+		hint = "Tab/Shift+Tab switch · j/k scroll · Ctrl+d/u page · t term · q quit "
 	}
 	hintFillW := w - lipgloss.Width(hint)
 	if hintFillW < 0 {
