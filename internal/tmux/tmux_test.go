@@ -66,6 +66,27 @@ func TestBaseAgentName(t *testing.T) {
 	}
 }
 
+func TestAgentNameFromWindowName(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty (window gone)", "", ""},
+		{"shell window", "shell", ""},
+		{"bare name", "go-engineer", "go-engineer"},
+		{"instance suffix", "go-engineer:2", "go-engineer"},
+		{"working glyph", "● go-engineer:3", "go-engineer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := AgentNameFromWindowName(tt.input); got != tt.want {
+				t.Errorf("AgentNameFromWindowName(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestFindMainPaneExcludesHUD verifies that findMainPane skips all chrome pane
 // IDs — including the HUD pane — and returns only the terminal pane.
 //
