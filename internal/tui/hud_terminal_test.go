@@ -191,10 +191,6 @@ func TestHudTerminalToggleAndRebuild(t *testing.T) {
 	if !m.terminalMode || !strings.Contains(ansi.Strip(strings.Join(m.streamLineBuffer, "\n")), "$ ls") {
 		t.Fatalf("toggle failed: %v", m.streamLineBuffer)
 	}
-	m.resetToolPairing()
-	if len(m.logEntries) != 0 || m.logOffset != 0 {
-		t.Fatal("resetToolPairing did not clear")
-	}
 	if !NewHudModel("").WithTerminalMode(true).terminalMode {
 		t.Fatal("WithTerminalMode")
 	}
@@ -231,5 +227,47 @@ func BenchmarkRenderTerminalBashCollapsed(b *testing.B) {
 	e := bashEntry("cat big", strings.Repeat(strings.Repeat("x", 120)+"\n", 600), true, false)
 	for i := 0; i < b.N; i++ {
 		renderTerminalEntry(e, 80, false, false)
+	}
+}
+
+func TestFollowHudDefaultsToTerminalMode(t *testing.T) {
+	if !NewFollowHudModel().terminalMode {
+		t.Fatal("follow HUD should default to terminal mode")
+	}
+}
+
+func TestTailLog_OrphanResultFromMidFileStart(t *testing.T) {
+	// A tail that starts mid-file sees a result whose call is before the offset.
+	path := writeTestLog(t, t.TempDir(), "s.jsonl", resBash)
+	res, err := TailLog(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Entries) != 0 || len(res.Results) != 1 {
+		t.Fatalf("entries=%d results=%d", len(res.Entries), len(res.Results))
+	}
+	entries := []LogEntry{{Kind: "text", FullText: "x"}}
+	if ApplyToolResults(entries, res.Results) || entries[0].HasResult {
+		t.Fatal("orphan result changed an unrelated entry")
+	}
+	if ApplyToolResults(nil, res.Results) {
+		t.Fatal("orphan result changed nil entries")
+	}
+}
+
+func TestRetargetDoesNotPairResultsToPreviousTarget(t *testing.T) {
+	m := NewFollowHudModel()
+	m.logEntries = []LogEntry{bashEntry("ls", "", false, false)}
+	m.logEntries[0].ToolUseID = "t1"
+	m.retarget("sess-b", t.TempDir(), "@2")
+	if len(m.logEntries) != 0 || m.logOffset != 0 {
+		t.Fatal("retarget kept entries/offset")
+	}
+	path := writeTestLog(t, t.TempDir(), "b.jsonl", resBash) // result for id t1
+	m.logPath = path
+	res, _ := TailLog(m.logPath, m.logOffset)
+	ApplyToolResults(m.logEntries, res.Results)
+	if len(m.logEntries) != 0 {
+		t.Fatal("result paired into previous target's state")
 	}
 }

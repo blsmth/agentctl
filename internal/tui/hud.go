@@ -156,6 +156,7 @@ func NewFollowHudModel() HudModel {
 		windowName: tmux.WindowNameIn,
 	}
 	m.reload = newReloader("hud", "follow-hub")
+	m.terminalMode = true
 	return m
 }
 
@@ -185,14 +186,6 @@ func newHudModel(windowID string) HudModel {
 // WithTerminalMode sets the Stream tab's default render mode (the hub's
 // follow mode starts in terminal mode). The `t` key toggles it.
 func (m HudModel) WithTerminalMode(on bool) HudModel { m.terminalMode = on; return m }
-
-// resetToolPairing clears per-target tool-result state. Results are paired
-// against logEntries, so dropping the entries is all that is needed; call this
-// (or reset logEntries/logOffset) when retargeting to another window.
-func (m *HudModel) resetToolPairing() {
-	m.logEntries = nil
-	m.logOffset = 0
-}
 
 // Reexec reports whether the HUD quit because the binary changed; the caller
 // must exec the new image after the program returns.
@@ -488,6 +481,8 @@ func (m *HudModel) retarget(session, runtimeDir, windowID string) {
 	m.session, m.runtimeDir, m.windowID = session, runtimeDir, windowID
 	m.agentName, m.title, m.state, m.done = "", "", "", false
 
+	// Tool results pair against logEntries only, so clearing them (and the
+	// offset) drops all pairing state from the previous target.
 	m.logPath, m.logOffset, m.logEntries, m.logPollTick = "", 0, nil, 0
 	m.scrollTop, m.streamAtBottom = 0, true
 	m.streamCursor, m.expandedEntries = -1, make(map[int]bool)
