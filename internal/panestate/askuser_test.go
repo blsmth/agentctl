@@ -192,6 +192,16 @@ func TestParseDialogReviewPageNoQuestion(t *testing.T) {
 	}
 }
 
+func TestReviewPageNoQuestionCursorOnCancel(t *testing.T) {
+	pane := strings.Replace(askUserReviewNoQuestion, "❯ 1. Submit answers\n  2. Cancel", "  1. Submit answers\n❯ 2. Cancel", 1)
+	if pane == askUserReviewNoQuestion {
+		t.Fatal("fixture not rewritten")
+	}
+	if !DialogShowing(pane) {
+		t.Fatal("DialogShowing = false with cursor on Cancel")
+	}
+}
+
 // askUserMultiNext is a live multi-select tab of a two-question flow with B
 // ticked ("[✔]") and the cursor moved down onto the Next row.
 const askUserMultiNext = "" +

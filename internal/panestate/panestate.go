@@ -213,6 +213,8 @@ func spinnerShowing(text string) bool {
 // first choice.
 const reviewQuestion = "Ready to submit your answers?"
 
+var reviewCancel = regexp.MustCompile(`^(❯\s*)?2\.\s+Cancel$`)
+
 var reviewSubmit = regexp.MustCompile(`^(❯\s*)?1\.\s+Submit answers$`)
 
 // reviewPageShowing reports whether AskUserQuestion's review page is up. It
@@ -227,7 +229,10 @@ func reviewPageShowing(text string) bool {
 
 const (
 	reviewHeading = "Review your answers"
-	reviewCancel  = "2. Cancel"
+	// reviewHeadingReach is how many non-blank lines above "1. Submit answers"
+	// the heading may sit: two lines per answered question (up to four
+	// questions, more when an answer wraps), plus slack.
+	reviewHeadingReach = 16
 	// reviewTailLines is how many non-blank lines may follow "2. Cancel"
 	// (a footer hint) on the live page.
 	reviewTailLines = 2
@@ -246,10 +251,10 @@ func reviewPageBottom(lines []string) bool {
 	}
 	for k := len(tail) - 2; k >= 0 && k >= len(tail)-2-reviewTailLines; k-- {
 		if !reviewSubmit.MatchString(strings.TrimSpace(lines[tail[k]])) ||
-			strings.TrimSpace(lines[tail[k+1]]) != reviewCancel {
+			!reviewCancel.MatchString(strings.TrimSpace(lines[tail[k+1]])) {
 			continue
 		}
-		for j := k - 1; j >= 0; j-- {
+		for j := k - 1; j >= 0 && j >= k-reviewHeadingReach; j-- {
 			if strings.TrimSpace(lines[tail[j]]) == reviewHeading {
 				return true
 			}
