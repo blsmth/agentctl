@@ -69,6 +69,9 @@ func run() error {
 
 	opts := servetest.Options{Dir: dir, ReadOnly: *readOnly}
 	if sc != nil {
+		if err := sc.realizeDirs(filepath.Join(dir, "code")); err != nil {
+			return err
+		}
 		opts.Fleet = sc.groups
 	}
 	h, err := servetest.New(opts)

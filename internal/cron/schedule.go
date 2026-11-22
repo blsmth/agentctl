@@ -1,8 +1,10 @@
 package cron
 
 import (
+	"errors"
 	"fmt"
 	"hash/fnv"
+	"regexp"
 	"strings"
 	"time"
 
@@ -33,6 +35,9 @@ func parseScheduleIn(spec string, loc *time.Location) (rc.Schedule, error) {
 	}
 	sched, err := parser.Parse(s)
 	if err != nil {
+		if msg, ok := fieldCountMessage(err); ok {
+			return nil, errors.New(msg)
+		}
 		return nil, fmt.Errorf("invalid schedule %q: %w", spec, err)
 	}
 	ss, ok := sched.(*rc.SpecSchedule)
@@ -149,3 +154,15 @@ func NextFire(sched rc.Schedule, now time.Time, jitter time.Duration) time.Time 
 
 // allHours is a SpecSchedule.Hour mask with every hour 0-23 set.
 const allHours = 1<<24 - 1
+
+var fieldCountRE = regexp.MustCompile(`expected exactly (\d+) fields, found (\d+)`)
+
+// fieldCountMessage rewrites the parser's wrong-field-count error as
+// "needs 5 fields, has 6".
+func fieldCountMessage(err error) (string, bool) {
+	m := fieldCountRE.FindStringSubmatch(err.Error())
+	if m == nil {
+		return "", false
+	}
+	return fmt.Sprintf("needs %s fields, has %s", m[1], m[2]), true
+}

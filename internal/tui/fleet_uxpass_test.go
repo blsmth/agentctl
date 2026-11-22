@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -189,6 +190,51 @@ func TestTitleSortTag(t *testing.T) {
 	got := ansi.Strip(m.renderTitle(120))
 	if !strings.Contains(got, "· sort: recent") || strings.Contains(got, "↻") {
 		t.Errorf("title = %q, want the \"sort: recent\" tag", got)
+	}
+}
+
+func TestTitleSortTagClick(t *testing.T) {
+	m := foldModel(t)
+	m.liveLeft = 0
+	for _, recent := range []bool{false, true} {
+		m.sortRecent = recent
+		want := fleetSortWindow
+		if recent {
+			want = fleetSortRecent
+		}
+		l := m.titleLayout(m.contentWidth())
+		plain := ansi.Strip(l.line)
+		if l.sort[1] == 0 || ansi.Cut(plain, l.sort[0], l.sort[1]) != want {
+			t.Fatalf("recent=%v: sort span %v covers %q in %q", recent, l.sort, ansi.Cut(plain, l.sort[0], l.sort[1]), plain)
+		}
+		if !m.onSortTag(l.sort[0], 0) || m.onSortTag(l.sort[0], 1) || m.onSortTag(l.sort[1], 0) {
+			t.Errorf("recent=%v: hit test wrong", recent)
+		}
+		next, _ := m.Update(tea.MouseClickMsg{X: l.sort[0] + 1, Y: 0, Button: tea.MouseLeft})
+		if got := next.(FleetModel).sortRecent; got == recent {
+			t.Errorf("recent=%v: click did not toggle", recent)
+		}
+	}
+}
+
+func TestTitleSortTagDropsWhenNarrow(t *testing.T) {
+	m := foldModel(t)
+	for _, w := range []int{40, 44, 50, 56, 80, 120} {
+		m.liveLeft = 0
+		with := m.titleLayout(w)
+		plain := ansi.Strip(with.line)
+		if ansi.StringWidth(plain) > w {
+			t.Errorf("w=%d: title %d wide", w, ansi.StringWidth(plain))
+		}
+		if !strings.Contains(plain, "○") {
+			t.Errorf("w=%d: counts dropped: %q", w, plain)
+		}
+		if with.sort[1] == 0 && strings.Contains(plain, "sort:") {
+			t.Errorf("w=%d: tag shown without span: %q", w, plain)
+		}
+	}
+	if l := m.titleLayout(120); l.sort[1] == 0 {
+		t.Error("no sort tag at 120 columns")
 	}
 }
 

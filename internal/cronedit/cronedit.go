@@ -93,6 +93,9 @@ type Store struct {
 	// SchedulerInstalled reports whether the ticker is installed. nil means
 	// the launchd plist check (SchedulerInstalled).
 	SchedulerInstalled func() bool
+	// Options supplies the values the pinned model, backend and account may
+	// take (DefaultOptions in production). nil skips those checks.
+	Options func() Options
 }
 
 // Default is the production store. validateAgent is
@@ -104,6 +107,7 @@ func Default(validateAgent func(name, dir string) error) Store {
 		Now:           time.Now,
 		Config:        func() config.CronConfig { return config.Load().Cron },
 		ValidateAgent: validateAgent,
+		Options:       DefaultOptions,
 	}
 }
 
@@ -172,6 +176,11 @@ func (s Store) Validate(job cron.Job, original string) (cron.Job, []cron.FieldEr
 		sched, _ := cron.ParseSchedule(job.Schedule)
 		if err := cron.CheckMinInterval(sched, s.now(), s.config().EffectiveMinInterval()); err != nil {
 			add(cron.FieldSchedule, err.Error())
+		}
+	}
+	for _, e := range s.optionErrors(job) {
+		if !has(e.Field) {
+			errs = append(errs, e)
 		}
 	}
 	dirOK := false

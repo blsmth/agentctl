@@ -170,3 +170,16 @@ func ValidateAgentName(name, workDir string) error {
 	names = slices.Compact(names)
 	return fmt.Errorf("unknown agent %q; available agents: %s (or plugin:name)", name, strings.Join(names, ", "))
 }
+
+// AgentNames lists the agent names a schedule or dispatch from workDir can
+// name (discovered agents plus the Claude Code built-ins), sorted. Plugin
+// agents are not listed; ValidateAgentName still accepts them.
+func AgentNames(workDir string) []string {
+	agents, _ := discoverAgents(workDir)
+	names := slices.Clone(claudeBuiltinAgents)
+	for _, a := range agents {
+		names = append(names, a.Name)
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
+}

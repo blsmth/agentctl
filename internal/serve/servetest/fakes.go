@@ -323,7 +323,8 @@ func (agents) Agents([]string) ([]serve.AgentInfo, error) {
 type launchConfig struct{}
 
 func (launchConfig) LaunchConfig(string, string, string) (serve.LaunchConfig, error) {
-	return serve.LaunchConfig{}, nil
+	// Two accounts, so the Schedules form's Account select has something to show.
+	return serve.LaunchConfig{Accounts: []string{"personal", "work"}, DefaultAccount: "personal"}, nil
 }
 
 func noOllama(context.Context, config.BackendConfig) ([]string, error) { return nil, nil }

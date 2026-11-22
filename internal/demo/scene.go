@@ -58,6 +58,8 @@ type Terminal struct {
 	// HubLeft is the hub list's width in columns, as if dragged there (the
 	// live hub otherwise caps the list at 56). 0 keeps the default.
 	HubLeft int `yaml:"hub_left"`
+	// Framerate is the gif's vhs framerate (0 keeps vhs's default, 50).
+	Framerate int `yaml:"framerate"`
 }
 
 // Config is the subset of agentctl config a scene may set. Everything that
@@ -76,6 +78,9 @@ type Config struct {
 	// and claude is stubbed, so no job fires on its own either way; true
 	// only drops the hub's "cron is off" warning.
 	Cron bool `yaml:"cron"`
+	// NewWindowPosition is new_window_position: left (agentctl's default)
+	// or right.
+	NewWindowPosition string `yaml:"new_window_position"`
 }
 
 // Schedule is one cron job of the scene.
@@ -150,6 +155,10 @@ type Window struct {
 	// command when Enter is pressed in it, which opens agentctl's dispatch
 	// approval popup the way Claude Code's PreToolUse hook would.
 	Approval string `yaml:"approval"`
+	// Reply is a scripted turn: the pane echoes what is typed into its
+	// input box, and Enter submits it and plays these entries with the real
+	// hooks firing (an `agentctl dispatch` Bash call really runs).
+	Reply []ReplyEntry `yaml:"reply"`
 	// ScheduledBy names the scene schedule that launched the window (it
 	// then shows ⏲ <job> and counts as that job's running window).
 	ScheduledBy string `yaml:"scheduled_by"`
@@ -174,6 +183,7 @@ type Step struct {
 	Key        string `yaml:"key"`        // Enter, Escape, Tab, Space, Backspace, Up, Down, Left, Right
 	Ctrl       string `yaml:"ctrl"`       // a letter sent with Ctrl
 	Repeat     int    `yaml:"repeat"`     // with key: how many times (default 1)
+	Speed      string `yaml:"speed"`      // with type: delay per character (Go duration; default 30ms)
 	Sleep      string `yaml:"sleep"`      // Go duration
 	Wait       string `yaml:"wait"`       // regexp the screen must match
 	Screenshot string `yaml:"screenshot"` // optional file suffix
@@ -405,6 +415,9 @@ func (s *Scene) Validate() error {
 	if t.Rows < 8 || t.Rows > 200 {
 		add("terminal.rows: %d out of range 8-200", t.Rows)
 	}
+	if t.Framerate != 0 && (t.Framerate < 5 || t.Framerate > 60) {
+		add("terminal.framerate: %d out of range 5-60", t.Framerate)
+	}
 	if t.FontSize < 8 || t.FontSize > 48 {
 		add("terminal.font_size: %d out of range 8-48", t.FontSize)
 	}
@@ -421,6 +434,9 @@ func (s *Scene) Validate() error {
 		add("config.statusline_format: unknown format %q", s.Config.StatuslineFormat)
 	}
 
+	if p := s.Config.NewWindowPosition; p != "" && p != "left" && p != "right" {
+		add("config.new_window_position: %q is not left or right", p)
+	}
 	if d := s.Config.DefaultAgent; d != "" && !nameRE.MatchString(d) {
 		add("config.default_agent: %q must be lowercase letters, digits and dashes", d)
 	}
@@ -518,6 +534,17 @@ func (s *Scene) Validate() error {
 		if w.Transcript.Inline != nil {
 			if err := w.Transcript.Inline.validate(); err != nil {
 				add("%s.transcript: %v", f, err)
+			}
+		}
+		if len(w.Reply) > 0 {
+			if w.State != "idle" {
+				add("%s.reply: only valid with state idle (the prompt is typed into an idle pane)", f)
+			}
+			if w.Approval != "" {
+				add("%s.reply: approval and reply both use Enter; set one", f)
+			}
+			if err := validateReply(w.Reply); err != nil {
+				add("%s.reply: %v", f, err)
 			}
 		}
 	}
@@ -641,6 +668,14 @@ func (st Step) validate(keys map[string]int) error {
 	if st.Repeat != 0 && st.Key == "" {
 		return fmt.Errorf("repeat: only valid with key")
 	}
+	if st.Speed != "" {
+		if st.Type == "" {
+			return fmt.Errorf("speed: only valid with type")
+		}
+		if d, err := time.ParseDuration(st.Speed); err != nil || d <= 0 || d > time.Second {
+			return fmt.Errorf("speed: %q is not a duration up to 1s", st.Speed)
+		}
+	}
 	switch {
 	case st.Attach != "" && keys[st.Attach] == 0:
 		return fmt.Errorf("attach: no window with key %q", st.Attach)
@@ -714,6 +749,13 @@ func (s *Scene) Agents() []string {
 	for _, sc := range s.Schedules {
 		if !slices.Contains(out, sc.Agent) {
 			out = append(out, sc.Agent)
+		}
+	}
+	for _, w := range s.Windows {
+		for _, a := range replyAgents(w.Reply) {
+			if !slices.Contains(out, a) {
+				out = append(out, a)
+			}
 		}
 	}
 	if d := s.Config.DefaultAgent; d != "" && !slices.Contains(out, d) {

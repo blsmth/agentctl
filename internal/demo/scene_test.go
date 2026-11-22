@@ -3,8 +3,10 @@ package demo
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const minimalScene = `
@@ -97,6 +99,16 @@ func TestParseSceneErrors(t *testing.T) {
 		{"schedule bad run", "schedules:\n  - {name: n1, project: acme-api, agent: go-engineer, schedule: \"0 9 * * *\", prompt: x, runs: [{ago: 1h, result: ok}]}\n" + minimalScene, `runs[0].result: "ok"`},
 		{"duplicate schedule", "schedules:\n  - {name: n1, project: acme-api, agent: go-engineer, schedule: \"0 9 * * *\", prompt: x}\n  - {name: n1, project: acme-api, agent: go-engineer, schedule: \"0 9 * * *\", prompt: x}\n" + minimalScene, `duplicate schedule "n1"`},
 		{"dangling scheduled_by", strings.Replace(minimalScene, "state: working", "state: working\n    scheduled_by: ghost", 1), `scheduled_by: no schedule named "ghost"`},
+		{"reply on a working window", strings.Replace(minimalScene, "state: working", "state: working\n    reply:\n      - say: hi", 1), "reply: only valid with state idle"},
+		{"reply with a user entry", strings.Replace(minimalScene, "    state: working\n", "    reply:\n      - user: hi\n", 1), "a reply has only say and tool"},
+		{"reply running", strings.Replace(minimalScene, "    state: working\n", "    reply:\n      - tool: Bash\n        running: true\n", 1), "running is not valid in a reply"},
+		{"reply bad delay", strings.Replace(minimalScene, "    state: working\n", "    reply:\n      - say: hi\n        delay: 11s\n", 1), `entries[0].delay: "11s"`},
+		{"reply unknown key", strings.Replace(minimalScene, "    state: working\n", "    reply:\n      - say: hi\n        pause: 1s\n", 1), "field pause not found"},
+		{"reply with approval", strings.Replace(minimalScene, "    state: working\n", "    approval: agentctl dispatch --prompt x\n    reply:\n      - say: hi\n", 1), "approval and reply both use Enter"},
+		{"speed without type", strings.Replace(minimalScene, "  - prefix: g", "  - prefix: g\n    speed: 50ms", 1), "speed: only valid with type"},
+		{"bad speed", strings.Replace(minimalScene, "  - prefix: g", "  - type: hello\n    speed: 2s", 1), `speed: "2s"`},
+		{"bad framerate", "terminal:\n  framerate: 100\n" + minimalScene, "terminal.framerate: 100"},
+		{"bad new_window_position", "config:\n  new_window_position: middle\n" + minimalScene, "config.new_window_position"},
 		{"inline transcript two kinds", strings.Replace(minimalScene, "state: working", "state: working\n    transcript:\n      entries:\n        - user: hi\n          say: there", 1), "exactly one of user, say or tool"},
 	}
 	for _, tt := range tests {
@@ -146,6 +158,26 @@ func TestCheckedInScenes(t *testing.T) {
 		if _, err := LoadFixture(filepath.Dir(f), name); err != nil {
 			t.Errorf("fixture %s: %v", name, err)
 		}
+	}
+}
+
+func TestReplySceneAgents(t *testing.T) {
+	scene := strings.Replace(minimalScene, "    state: working\n", `    reply:
+      - say: Splitting it.
+      - tool: Bash
+        input: {command: 'agentctl dispatch --agent code-reviewer --prompt "Review PR 138"'}
+        delay: 500ms
+`, 1)
+	s, err := ParseScene([]byte(scene))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Agents(); !slices.Contains(got, "code-reviewer") {
+		t.Errorf("Agents() = %q, want the reply's dispatch agent too", got)
+	}
+	w, _ := s.Window("orch")
+	if len(w.Reply) != 2 || w.Reply[1].Tool != "Bash" || w.Reply[1].delay(1) != 500*time.Millisecond || w.Reply[0].delay(0) != firstDelay {
+		t.Errorf("reply = %+v", w.Reply)
 	}
 }
 

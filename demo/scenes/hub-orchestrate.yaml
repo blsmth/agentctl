@@ -1,0 +1,87 @@
+# An orchestrator dispatching workers, live: open the hub, focus the idle
+# orchestrator's live viewer (Enter), type a prompt and submit it. The pane
+# plays a scripted turn with the real hooks firing (the row goes working),
+# its two `agentctl dispatch` calls really run through hook-validate-bash and
+# agentctl dispatch, and each new worker (the demo's fake claude, working on
+# its prompt) appears under the orchestrator in the hub.
+description: An orchestrator dispatching workers from the hub
+output: gif
+config:
+  dispatch_approval: "off"
+  new_window_position: right  # left (the default) shifts window indices, and the hub viewer jumps off the orchestrator
+terminal:
+  cols: 190
+  rows: 30
+  font_size: 13
+  hub_left: 84
+  framerate: 15
+projects:
+  - name: acme-api
+    commits: [Initial commit, Add orders endpoint, Add webhook delivery]
+  - name: billing-svc
+    commits: [Initial commit, Invoice line items]
+  - name: docs-site
+    commits: [Initial commit, Add getting started guide]
+windows:
+  - key: orch
+    project: acme-api
+    agent: orchestrator
+    title: Orders API Lead
+    since: 3m
+    select: true
+    reply:
+      - say: Two independent pieces, so I'll split them. A go-engineer takes the limiter and a code-reviewer takes PR 138.
+        delay: 1600ms
+      - tool: Bash
+        input:
+          command: agentctl dispatch --agent go-engineer --prompt "Add a token-bucket rate limiter to POST /v1/orders, 20 req/s per API key with a burst of 40, and return 429 with Retry-After"
+          description: Dispatch the rate limiter
+        delay: 700ms
+      - tool: Bash
+        input:
+          command: agentctl dispatch --agent code-reviewer --prompt "Review PR 138 (webhook delivery retries) for retry caps, jitter and idempotency keys"
+          description: Dispatch the PR review
+        delay: 500ms
+      - say: Both workers are running. I'll check in when they report back.
+        delay: 600ms
+  - key: backfill
+    project: billing-svc
+    agent: go-engineer
+    mode: dispatched
+    state: working
+    ticket: 57
+    ticket_title: Backfill invoice totals for legacy accounts
+    title: Backfilling Invoice Totals
+    kind: go
+    transcript: invoice-backfill
+    spinner: "Migrating… (2m 4s · ↓ 2.2k tokens · esc to interrupt)"
+    cost_usd: 2.31
+    ctx_pct: 31
+    turns: 7
+    since: 2m
+    select: true
+  - key: docs
+    project: docs-site
+    agent: docs-writer
+    state: idle
+    title: Rewriting Quickstart Guide
+    transcript: docs-quickstart
+    cost_usd: 0.48
+    ctx_pct: 9
+    turns: 3
+    since: 18m
+    select: true
+steps:
+  - attach: orch
+  - prefix: g
+  - wait: agentctl hub
+  - sleep: 600ms
+  - key: Enter
+  - sleep: 500ms
+  - type: Add rate limiting to POST /v1/orders and get someone to review the webhook retry PR (138).
+    speed: 35ms
+  - sleep: 300ms
+  - key: Enter
+  - wait: check in when they report back
+  - sleep: 2s
+  - screenshot

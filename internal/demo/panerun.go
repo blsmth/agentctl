@@ -99,16 +99,48 @@ type pane struct {
 	status string
 	extra  []string
 	busy   bool
+
+	// Typing and the scripted turn (reply.go).
+	input   []rune
+	partial []byte // an incomplete UTF-8 sequence
+	esc     int    // 1 after ESC, 2 inside a CSI/SS3 sequence
+	turn    *turnState
+
+	// Seams: terminal width, clock, pauses, how the turn goroutine starts,
+	// and the hooks and Bash tool.
+	width func() int
+	now   func() time.Time
+	sleep func(time.Duration)
+	start func(func())
+	hooks turnHooks
+}
+
+// newPane is a pane writing to stdout with the real clock and hooks.
+func newPane(spec PaneSpec) *pane {
+	return &pane{
+		spec: spec, out: os.Stdout,
+		width: termWidth, now: time.Now, sleep: time.Sleep,
+		start: func(f func()) { go f() },
+		hooks: execHooks{agentctl: spec.Agentctl, dir: spec.WorkDir},
+	}
+}
+
+func termWidth() int {
+	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
+		return w
+	}
+	return 100
 }
 
 // RunPane draws the fake Claude Code screen and idles, redrawing on resize.
-// With an approval command, Enter runs the real PreToolUse hook for it.
+// With an approval command, Enter runs the real PreToolUse hook for it; with
+// a reply, typing echoes into the input box and Enter plays the turn.
 func RunPane(specPath string) error {
 	spec, err := ReadPaneSpec(specPath)
 	if err != nil {
 		return err
 	}
-	p := &pane{spec: spec, out: os.Stdout}
+	p := newPane(spec)
 	restore := quietTerminal(int(os.Stdin.Fd()))
 	defer restore()
 	fmt.Fprint(p.out, "\x1b[?25l") // Claude Code draws its own cursor
@@ -121,19 +153,36 @@ func RunPane(specPath string) error {
 	signal.Notify(winch, syscall.SIGWINCH)
 	keys := make(chan byte)
 	go readKeys(os.Stdin, keys)
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
 	for {
 		select {
 		case <-winch:
 			p.draw()
+		case <-tick.C:
+			if p.playing() {
+				p.draw() // the spinner counts up
+			}
 		case k, ok := <-keys:
 			if !ok {
-				select {} // stdin closed: keep the screen up until killed
+				keys = nil // stdin closed: keep the screen up until killed
+				continue
 			}
-			if (k == '\r' || k == '\n') && spec.Window.Approval != "" {
+			switch {
+			case len(spec.Window.Reply) > 0:
+				p.key(k)
+			case (k == '\r' || k == '\n') && spec.Window.Approval != "":
 				p.startApproval()
 			}
 		}
 	}
+}
+
+// playing reports whether a scripted turn is running.
+func (p *pane) playing() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.turn != nil && !p.turn.done
 }
 
 func readKeys(r io.Reader, keys chan<- byte) {
@@ -170,11 +219,22 @@ func quietTerminal(fd int) func() {
 func (p *pane) draw() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	width := 100
-	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
-		width = w
+	fmt.Fprint(p.out, "\x1b[H\x1b[2J\x1b[3J"+renderView(p.spec, p.width(), p.viewLocked()))
+}
+
+// viewLocked is what the pane draws on top of its spec; p.mu must be held.
+func (p *pane) viewLocked() paneView {
+	v := paneView{Status: p.status, Extra: p.extra, Input: string(p.input)}
+	if t := p.turn; t != nil {
+		tv := &turnView{Entries: append([]Entry(nil), t.entries...)}
+		if t.done {
+			tv.Footer = "Brewed for " + clockText(max(t.took, time.Second))
+		} else {
+			tv.Spinner = spinnerText(p.now().Sub(t.start))
+		}
+		v.Turn = tv
 	}
-	fmt.Fprint(p.out, "\x1b[H\x1b[2J\x1b[3J"+Render(p.spec, width, p.status, p.extra))
+	return v
 }
 
 // startApproval runs the dispatch through hook-validate-bash, as Claude Code
@@ -221,38 +281,11 @@ func ApprovalWaitingLines(cmdline string) []string {
 // runHook feeds a PreToolUse payload to `agentctl hook-validate-bash` and
 // reports whether it allowed the command (no decision output also allows).
 func (p *pane) runHook(cmdline string) (bool, string) {
-	payload, err := json.Marshal(map[string]any{
-		"session_id":      p.spec.SessionID,
-		"transcript_path": p.spec.LogPath,
-		"cwd":             p.spec.WorkDir,
-		"hook_event_name": "PreToolUse",
-		"permission_mode": "default",
-		"tool_name":       "Bash",
-		"tool_input":      map[string]any{"command": cmdline, "description": "Dispatch a worker"},
-	})
-	if err != nil {
-		return false, err.Error()
-	}
-	cmd := exec.Command(p.spec.Agentctl, "hook-validate-bash")
-	cmd.Dir = p.spec.WorkDir
-	cmd.Stdin = bytes.NewReader(payload)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, runErr := cmd.Output()
-	var dec struct {
-		Out struct {
-			Decision string `json:"permissionDecision"`
-			Reason   string `json:"permissionDecisionReason"`
-		} `json:"hookSpecificOutput"`
-	}
-	_ = json.Unmarshal(bytes.TrimSpace(out), &dec)
-	switch {
-	case dec.Out.Decision == "deny":
-		return false, firstLine(dec.Out.Reason)
-	case runErr != nil:
-		return false, firstLine(strings.TrimSpace(stderr.String()))
-	}
-	return true, ""
+	pay := p.hookPayload("PreToolUse")
+	pay["permission_mode"] = "default"
+	pay["tool_name"] = "Bash"
+	pay["tool_input"] = map[string]any{"command": cmdline, "description": "Dispatch a worker"}
+	return p.hooks.Validate(pay)
 }
 
 func firstLine(s string) string {

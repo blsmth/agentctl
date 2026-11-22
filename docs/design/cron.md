@@ -1,6 +1,6 @@
 # Scheduled agent runs (`agentctl cron`)
 
-Status: proposal, 2026-11-17. Nothing here is approved yet. Companion to [multi-harness.md](multi-harness.md) (PR #88).
+Status: implemented (PR #98, then editing in #239, the phone Schedules screen in #240 and the hub's Schedules section in #243). This is the design record; where it differs from what shipped, [configuration.md](../configuration.md#cron) is the reference. Companion to [multi-harness.md](multi-harness.md) (PR #88).
 
 ## Goal
 

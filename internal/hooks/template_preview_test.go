@@ -2,7 +2,6 @@ package hooks
 
 import (
 	"encoding/json"
-	"github.com/blsmth/agentctl/internal/remoteapproval"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatchplan"
 	"github.com/blsmth/agentctl/internal/prompttemplate"
+	"github.com/blsmth/agentctl/internal/remoteapproval"
 	"github.com/blsmth/agentctl/internal/tui"
 )
 

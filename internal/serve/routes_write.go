@@ -842,7 +842,7 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	}
 	backend, model, effort := in.Backend, in.Model, in.Effort
 	if in.Backend != "" || in.Model != "" || in.Effort != "" {
-		c, err := s.launchChoices(g.Session, g.RuntimeDir, in.Agent)
+		c, err := s.launchChoices(g.Session, g.RuntimeDir, in.Agent, g.Dir)
 		if err != nil {
 			logging.Warn("serve: dispatch launch options: %v", err)
 			return failure(http.StatusInternalServerError, codeInternal, "reading launch options")

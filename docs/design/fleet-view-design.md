@@ -6,6 +6,8 @@ sidebar group dividers implemented
 Date: 2026-08-07 (Phase 1 landed 2026-08-13; sidebar + main panel landed
 2026-08-14; link-window + sidebar dividers landed 2026-08-14)
 
+> **Note (2026-11).** This is the original design record. The hub has grown well past it: rows now come from tmux plus windowstate (`fleet.LoadAgents`), not each monitor's `state.json`; the hub launches, closes, renames, sweeps and resumes agents, shows schedules, and has an activity pane. Current behaviour: [keybindings.md](../keybindings.md#fleet-hub).
+
 ## Motivation
 
 [Herdr](https://herdr.dev/) solves almost exactly the problem agentctl solves —

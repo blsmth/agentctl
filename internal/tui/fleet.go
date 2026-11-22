@@ -569,6 +569,8 @@ type FleetModel struct {
 	schedPaneOn     bool
 	schedPrevLive   string
 	schedAgentCheck func(name, dir string) error
+	// schedAgentNames lists the agents the form offers for a project dir.
+	schedAgentNames func(dir string) []string
 	filter          fleetFilter
 	viewPath        string
 	// orderPath is the saved group order (see fleet_order.go); "" persists
@@ -595,6 +597,7 @@ type FleetModel struct {
 	// titleHolds are just-saved titles shown until a load reflects them, by
 	// "session|windowID".
 	rename     *fleetRenameState
+	lastClick  *fleetLastClick // previous left click on a title, for double-click detection
 	titleHolds map[string]fleetTitleHold
 
 	// activity is the activity pane (see fleet_activity.go). paneQuietUntil
@@ -785,6 +788,9 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		fm.publishSelection()
 		if pane := fm.syncSchedPane(); pane != nil {
 			cmd = tea.Batch(cmd, pane)
+		}
+		if detail := fm.syncSchedDetail(); detail != nil {
+			cmd = tea.Batch(cmd, detail)
 		}
 		return fm, cmd
 	}
@@ -1085,9 +1091,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.pasteSchedForm(msg)
 		}
 		if m.newSessionOpen() {
-			var cmd tea.Cmd
-			m.dirPrompt.input, cmd = m.dirPrompt.input.Update(msg)
-			return m, cmd
+			return m, m.updateNewSessionInput(msg)
 		}
 		if m.renameOpen() {
 			var cmd tea.Cmd
@@ -1100,6 +1104,13 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.hideCard()
 		m.wheelHold = false
 		return m.handleKey(msg)
+	}
+	if m.renameOpen() {
+		// Cursor blink ticks: only the open editor consumes them, so the loop
+		// ends when it closes.
+		var cmd tea.Cmd
+		m.rename.input, cmd = m.rename.input.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -1199,8 +1210,7 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 		return *m, nil
 
 	case fleetRenameKey:
-		m.openRename(m.splitPane.Cursor())
-		return *m, nil
+		return *m, m.openRename(m.splitPane.Cursor())
 
 	case "x":
 		m.startClose(m.splitPane.Cursor())
@@ -2073,8 +2083,8 @@ func (m FleetModel) fleetCounts() (blocked, working, done, idle int) {
 // totals right-aligned: a yellow inverse ⏸ cell (only when something is
 // blocked, and the only filled cell), then ● ✓ ○ counts and a dim agent and
 // session total. An active attention filter adds a muted tag after the title
-// ("· needs you"), then come the serve indicator and the "· sort: recent"
-// tag. There is no new-session button: N (in the ? reference) opens it, and
+// ("· needs you"), then come the serve indicator and the clickable
+// "· sort: recent" / "· sort: window" tag (click = o; dropped first when narrow). There is no new-session button: N (in the ? reference) opens it, and
 // the footer's "n new" launches into a group. See titleLayout for how narrow
 // widths degrade.
 func (m FleetModel) renderTitle(cw int) string {
@@ -2087,6 +2097,7 @@ type fleetTitleLayout struct {
 	line     string
 	badge    [2]int
 	activity [2]int // the [activity] button
+	sort     [2]int // the "sort: recent|window" tag
 }
 
 // titleLayout lays out the title row. Narrow widths drop the totals, then
@@ -2112,11 +2123,17 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 		if l.activity[1] > cw-fleetSidebarRightGutter {
 			l.activity = [2]int{}
 		}
+		if l.sort[1] > cw-fleetSidebarRightGutter {
+			l.sort = [2]int{}
+		}
 		return l
 	}
 	// bare is the title without counts.
 	bare := func() fleetTitleLayout {
-		left, l := m.titleLeft(tags[0], true)
+		left, l := m.titleLeft(tags[0], true, true)
+		if lipgloss.Width(left) > cw-fleetSidebarRightGutter {
+			left, l = m.titleLeft(tags[0], true, false)
+		}
 		return fit(l, left, "")
 	}
 	if !m.loaded || m.loadErr != nil {
@@ -2143,13 +2160,16 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 	}
 	// The [activity] button outranks the counts' suffix but not the counts:
 	// without room for both, the button is dropped (v still toggles the
-	// pane).
+	// pane). The sort tag ranks lowest: it is shown only when it fits beside
+	// the same counts that would be shown without it (o still sorts).
 	for _, button := range []bool{true, false} {
 		for _, c := range candidates {
-			left, l := m.titleLeft(c.tag, button)
-			room := cw - fleetSidebarRightGutter - lipgloss.Width(left) - 1
-			if lipgloss.Width(c.right) <= room {
-				return fit(l, left, c.right)
+			for _, sortTag := range []bool{true, false} {
+				left, l := m.titleLeft(c.tag, button, sortTag)
+				room := cw - fleetSidebarRightGutter - lipgloss.Width(left) - 1
+				if lipgloss.Width(c.right) <= room {
+					return fit(l, left, c.right)
+				}
 			}
 		}
 	}
@@ -2158,8 +2178,9 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 
 // titleLeft builds the title row's left part: the title, the filter tag
 // (when tag is not empty), the serve indicator with its columns, the
-// [activity] button with its columns (when button is set), and the sort tag.
-func (m FleetModel) titleLeft(tag string, button bool) (string, fleetTitleLayout) {
+// [activity] button with its columns (when button is set), and the sort tag
+// with its columns (when sortTag is set).
+func (m FleetModel) titleLeft(tag string, button, sortTag bool) (string, fleetTitleLayout) {
 	var l fleetTitleLayout
 	left := strings.Repeat(" ", fleetSidebarLeftInset) + fleetTitleStyle.Render("agentctl hub")
 	if tag != "" {
@@ -2177,14 +2198,35 @@ func (m FleetModel) titleLeft(tag string, button bool) (string, fleetTitleLayout
 		left += m.activityButton()
 		l.activity = [2]int{start, lipgloss.Width(left)}
 	}
-	if m.sortRecent {
-		left += fleetCountStyle.Render(fleetSortTag)
+	if sortTag {
+		text := fleetSortWindow
+		if m.sortRecent {
+			text = fleetSortRecent
+		}
+		left += fleetCountStyle.Render(fleetSortSep)
+		start := lipgloss.Width(left)
+		left += fleetCountStyle.Render(text)
+		l.sort = [2]int{start, lipgloss.Width(left)}
 	}
 	return left, l
 }
 
-// fleetSortTag marks the title while rows are sorted by recent activity.
-const fleetSortTag = " · sort: recent"
+// The title's sort tag: the separator, then the clickable label naming the
+// current row order.
+const (
+	fleetSortSep    = " · "
+	fleetSortRecent = "sort: recent"
+	fleetSortWindow = "sort: window"
+)
+
+// onSortTag reports whether (x, y) hits the title row's sort tag.
+func (m FleetModel) onSortTag(x, y int) bool {
+	if y != 0 {
+		return false
+	}
+	span := m.titleLayout(m.contentWidth()).sort
+	return span[1] > 0 && x >= span[0] && x < span[1]
+}
 
 // renderStatusOrEmpty renders the loading/error/empty states shared by both
 // layouts. Returns ("", false) when there's real data to render (the caller
@@ -2225,7 +2267,9 @@ func (m FleetModel) renderList() string {
 			b.WriteString(l)
 			b.WriteString("\n")
 		}
-		b.WriteString(strings.Repeat("\n", max(visible-len(lines), 0)))
+		// Blank rows are padded too, so no cell of the previous frame survives.
+		blank := strings.Repeat(" ", cw-1) + "\n"
+		b.WriteString(strings.Repeat(blank, max(visible-len(lines), 0)))
 	} else {
 		visible := m.visibleLines()
 		used := 0

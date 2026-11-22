@@ -35,6 +35,11 @@ type Preview struct {
 	Valid  bool              `json:"valid"`
 	// Changed lists the fields an update would change (original set).
 	Changed []string `json:"changed,omitempty"`
+	// Diff is the same as Changed with the old and new values (an update).
+	Diff []FieldChange `json:"diff,omitempty"`
+	// Warnings are non-blocking problems (a model outside a list that
+	// cannot be complete); they never make the preview invalid.
+	Warnings []cron.FieldError `json:"warnings"`
 }
 
 // ApplySimple sets job.Schedule from a picker model. A model that does not
@@ -63,6 +68,7 @@ func (s Store) Preview(job cron.Job, original string, simple *SimpleSchedule) Pr
 	norm, errs := s.Validate(job, original)
 	errs = append(errs, extra...)
 	var changed []string
+	var diff []FieldChange
 	switch jobs, err := s.Load(); {
 	case err != nil:
 		errs = append(errs, cron.FieldError{Field: cron.FieldName, Message: err.Error()})
@@ -75,10 +81,11 @@ func (s Store) Preview(job cron.Job, original string, simple *SimpleSchedule) Pr
 			errs = append(errs, cron.FieldError{Field: cron.FieldName, Message: (&NotFoundError{Name: original}).Error()})
 		} else {
 			changed = ChangedFields(jobs.Jobs[i], norm)
+			diff = Diff(jobs.Jobs[i], norm)
 		}
 	}
 	now := s.now()
-	p := Preview{Job: norm, Schedule: norm.Schedule, Words: cron.Describe(norm.Schedule), Errors: sortFields(errs), Changed: changed}
+	p := Preview{Job: norm, Schedule: norm.Schedule, Words: cron.Describe(norm.Schedule), Errors: sortFields(errs), Changed: changed, Diff: diff, Warnings: s.Warnings(norm)}
 	if ss, ok := ParseSimple(norm.Schedule); ok {
 		p.Simple = &ss
 	}

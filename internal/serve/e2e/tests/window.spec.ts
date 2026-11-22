@@ -433,9 +433,9 @@ test("a dispatch approval shows where and how the agent runs, and folds a long p
   const full = await pre.evaluate((el) => el.scrollHeight);
   expect(Math.round(box!.height)).toBeGreaterThanOrEqual(full - 1);
 
-  await card.getByRole("button", { name: "Approve…" }).tap();
-  await expect(sheet(page)).toContainText("project: blsmth.com");
-  await sheet(page).locator(".row button").last().tap();
+  // No confirm sheet for an approved dispatch: the tap sends the answer.
+  await card.getByRole("button", { name: "Approve", exact: true }).tap();
+  await expect(sheet(page)).toHaveCount(0);
   const actions = await control.waitForActions((a) => a.some((x) => x.kind === "approval"));
   expect(actions[0]).toMatchObject({ kind: "approval", id, decision: "allow" });
 });

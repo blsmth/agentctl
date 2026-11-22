@@ -1668,7 +1668,17 @@ export function approvalBannerText(n) {
 function approvalConfirmTitle(kind) {
   if (kind === "dispatch") return "Approve this dispatch?";
   if (kind === "cron") return "Approve this schedule?";
+  if (kind === "template") return "Approve this template change?";
   return "Approve this command?";
+}
+
+/**
+ * approvalNeedsConfirm says whether answering needs the confirm sheet. A
+ * dispatch approval's card already shows everything, so allowing it sends
+ * straight away; Deny and every other kind keep the sheet.
+ */
+export function approvalNeedsConfirm(a, decision) {
+  return !(a.kind === "dispatch" && decision === "allow");
 }
 
 /** approvalConfirm is the confirm sheet for answering an approval: everything that runs, in full. */
@@ -1978,7 +1988,7 @@ export function dirName(dir) {
   return (dir ?? "").replace(/\/+$/, "").split("/").pop() || dir || "";
 }
 
-const DEFAULT_SIMPLE = { kind: "daily", minute: 0, hour: 9, days: [] };
+const DEFAULT_SIMPLE = { kind: "weekdays", minute: 0, hour: 9, days: [] };
 
 /**
  * newScheduleForm is the form model. base is the full stored job (every field
@@ -1986,12 +1996,13 @@ const DEFAULT_SIMPLE = { kind: "daily", minute: 0, hour: 9, days: [] };
  * simple is the server's picker model for the stored schedule, or null: then
  * the form opens in Custom with the raw expression.
  */
-export function newScheduleForm({ job = null, simple = null, promptText = "", copy = false } = {}) {
+export function newScheduleForm({ job = null, simple = null, promptText = "", copy = false, words = "" } = {}) {
   const base = job ? structuredClone(job) : {};
   const custom = job ? !simple : false;
   const sim = simple ?? DEFAULT_SIMPLE;
   return {
     original: job && !copy ? job.name : "",
+    oldWhen: words || job?.schedule || "",
     base,
     name: copy ? `${job.name}-copy` : (job?.name ?? ""),
     dir: job?.dir ?? "",
@@ -2113,10 +2124,68 @@ export function worktreeFact(job) {
   return job.worktree === false ? `off (${WORKTREE_OFF})` : `on (${WORKTREE_ON})`;
 }
 
+const USAGE_STEPS = [50, 60, 70, 80, 90];
+
+/** TIMEOUT_PRESETS are the timeout select's values; "" = none. */
+export const TIMEOUT_PRESETS = ["", "15m", "30m", "45m", "1h", "2h"];
+
+/**
+ * usageOptions are the options of one "Skip above" select: [value, label].
+ * "" is the global threshold (named), 100 is "off". A stored value that is
+ * not a step is kept as its own option.
+ */
+export function usageOptions(global, current = "") {
+  const out = [["", `global (${global || "?"}%)`], ...USAGE_STEPS.map((n) => [String(n), String(n)]), ["100", "off"]];
+  if (current && !out.some(([v]) => v === String(current))) out.splice(out.length - 1, 0, [String(current), `${current}`]);
+  return out;
+}
+
+/** timeoutIsPreset reports whether a stored timeout is one of the presets. */
+export function timeoutIsPreset(v) {
+  return TIMEOUT_PRESETS.includes(v ?? "");
+}
+
+const FIELD_LABELS = {
+  dir: "project", agent: "agent", prompt: "prompt", schedule: "when", worktree: "worktree", model: "model", effort: "effort",
+  backend: "backend", account: "account", timeout: "timeout", overlap: "overlap", catchup: "catch-up", usage: "skip above",
+};
+const FIELD_DEFAULTS = { model: "agent default", effort: "default", backend: "default", account: "default", timeout: "none", overlap: "skip", catchup: "latest" };
+
+function gateText(g) {
+  if (!g || (!g.five_hour && !g.seven_day)) return "global";
+  const f = (v) => (!v ? "global" : v >= 100 ? "off" : `${v}%`);
+  return `5h ${f(g.five_hour)}, 7d ${f(g.seven_day)}`;
+}
+
+/**
+ * changeLines lists the fields that differ between the stored job and the one
+ * the preview would save as "label  old \u2192 new" rows. oldWhen/newWhen are the
+ * schedule in words.
+ */
+export function changeLines(oldJob, newJob, oldWhen = "", newWhen = "") {
+  const o = oldJob ?? {};
+  const n = newJob ?? {};
+  const out = [];
+  const row = (k, a, b) => out.push(`${FIELD_LABELS[k]}  ${a || FIELD_DEFAULTS[k] || "none"} \u2192 ${b || FIELD_DEFAULTS[k] || "none"}`);
+  const clip = (t) => (t.length > 40 ? `${t.slice(0, 40).trim()}\u2026` : t);
+  if (o.dir !== n.dir) row("dir", tildePath(o.dir), tildePath(n.dir));
+  if (o.agent !== n.agent) row("agent", o.agent, n.agent);
+  const op = o.prompt || (o.prompt_key ? `context key ${o.prompt_key}` : "");
+  const np = n.prompt || (n.prompt_key ? `context key ${n.prompt_key}` : "");
+  if (op !== np) row("prompt", clip(op.replace(/\s+/g, " ")), clip(np.replace(/\s+/g, " ")));
+  if (o.schedule !== n.schedule) row("schedule", oldWhen || o.schedule, newWhen || n.schedule);
+  if ((o.worktree !== false) !== (n.worktree !== false)) row("worktree", o.worktree === false ? "off" : "on", n.worktree === false ? "off" : "on");
+  for (const k of ["model", "effort", "backend", "account", "timeout"]) if ((o[k] ?? "") !== (n[k] ?? "")) row(k, o[k], n[k]);
+  if ((o.overlap || "skip") !== (n.overlap || "skip")) row("overlap", o.overlap || "skip", n.overlap || "skip");
+  if ((o.catchup || "latest") !== (n.catchup || "latest")) row("catchup", o.catchup || "latest", n.catchup || "latest");
+  if (gateText(o.skip_if_usage_above) !== gateText(n.skip_if_usage_above)) row("usage", gateText(o.skip_if_usage_above), gateText(n.skip_if_usage_above));
+  return out;
+}
+
 /**
  * scheduleReview are the lines of the review sheet, which must say what runs,
  * where, when, unattended, and the next fires. p is the preview response; for
- * an edit only the changed fields are listed (Changed names them).
+ * an edit the changed fields are listed old \u2192 new.
  */
 export function scheduleReview(p, f) {
   const job = p.job;
@@ -2124,11 +2193,47 @@ export function scheduleReview(p, f) {
   const when = p.words || p.schedule;
   const tz = p.time_zone ? ` ${p.time_zone}` : "";
   const lines = [];
-  lines.push(`Runs ${job.agent} in ${where}, ${when}${tz}, unattended${p.permission_mode ? `, permission mode ${p.permission_mode}` : ""}, until paused.`);
+  lines.push(
+    [
+      `Runs   ${job.agent} in ${where}`,
+      `When   ${when}${tz}`,
+      `Mode   unattended${p.permission_mode ? `, permission mode ${p.permission_mode}` : ""}, until paused`,
+    ].join("\n"),
+  );
   if (p.next_fires_text?.length) lines.push(`Next: ${p.next_fires_text.join(", ")}`);
-  if (f?.original && p.changed?.length) lines.push(`Changing: ${p.changed.join(", ")}`);
+  if (f?.original) {
+    const ch = changeLines(f.base, job, f.oldWhen, when);
+    if (ch.length) lines.push(`Changes:\n${ch.join("\n")}`);
+  }
   const adv = f ? advancedSummary(f) : "";
   if (adv) lines.push(`Advanced: ${adv}`);
   lines.push(`Prompt:\n${job.prompt || (job.prompt_key ? `(context key ${job.prompt_key}, read at every run)` : "")}`);
   return lines;
+}
+
+/** runResultCard describes a run entry on the card: "failed \u00B7 launch: reason", "skipped \u00B7 usage 5h 82%". */
+export function runResultCard(e) {
+  if (!e) return "";
+  const r = e.result ?? "";
+  const note = e.note ?? "";
+  if (r.startsWith("failed:")) return `failed \u00B7 ${r.slice(7)}${note ? `: ${note}` : ""}`;
+  if (r.startsWith("skipped:")) return `skipped \u00B7 ${note || r.slice(8)}`;
+  return note && r !== "fired" ? `${r}: ${note}` : r;
+}
+
+/** cardStatus is the card's lead line: {glyph, kind, text}. next is the next fire text. */
+export function cardStatus(st, next = "") {
+  const g = scheduleGlyph(st);
+  let state = st.enabled ? (st.running ? "running" : "enabled") : "paused";
+  if (st.invalid || st.schedule_error) state = "invalid";
+  const parts = [state];
+  if (st.enabled && !st.invalid && !st.schedule_error) parts.push(next ? `next ${next}` : "no next fire");
+  return { glyph: g.glyph, kind: st.invalid || st.schedule_error ? "failed" : g.kind, text: parts.join(" \u00B7 ") };
+}
+
+/** cardLastFailure is "Last run failed \u00B7 launch: reason \u00B7 2h ago", "" unless the newest run failed. */
+export function cardLastFailure(st, now = Date.now()) {
+  if (!st.last?.result?.startsWith("failed:")) return "";
+  const ago = formatAgo(st.last.ts, now);
+  return `Last run ${runResultCard(st.last)}${ago ? ` \u00B7 ${ago}` : ""}`;
 }

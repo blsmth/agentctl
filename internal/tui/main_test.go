@@ -78,6 +78,7 @@ func TestMain(m *testing.M) {
 	}
 	fleetSchedHideViewer = func() error { return nil }
 	fleetSchedPermMode = func(string) string { return "auto" }
+	fleetSchedEnvLoad = testSchedEnv
 	fleetSchedExec = func(*exec.Cmd, tea.ExecCallback) tea.Cmd { return nil }
 	code := m.Run()
 	cleanup()

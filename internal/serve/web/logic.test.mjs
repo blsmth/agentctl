@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   SWIPE_REVEAL, canSwipeClose, swipeAxis, swipeCommit, swipeOffset,
-  ansiColor, approvalBannerText, approvalConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
+  ansiColor, approvalBannerText, approvalConfirm, approvalNeedsConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
   approvalProject, approvalRows, approvalRowText, promptFold, PROMPT_FOLD_LINES,
   DISPATCH_UPLOAD_PATH, buildDispatchRequest, buildShellRequest, canShell, templateFill, templateLabel, templatesPath, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
@@ -15,7 +15,7 @@ import {
   waitingIndex, displayState, waitingLabel, actionsFor, effectiveState,
   applyGone, shellRows, shellDirName, shellApiPath,
   formatBytes, formatUptime, hostLevels, hostConnection, pushSample, formatSkew,
-  advancedSummary, fieldErrors, formClientErrors, formatAgo, formatNextFire, newScheduleForm, previewBody, runResultLabel, scheduleBanners, scheduleBody,
+  advancedSummary, cardLastFailure, cardStatus, changeLines, fieldErrors, runResultCard, timeoutIsPreset, usageOptions, formClientErrors, formatAgo, formatNextFire, newScheduleForm, previewBody, runResultLabel, scheduleBanners, scheduleBody,
   scheduleException, scheduleGlyph, scheduleHash, scheduleLastText, scheduleReview, scheduleWhen, worktreeFact,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
 } from "./logic.js";
@@ -161,6 +161,11 @@ list = upsertApproval(list, { ...ap, prompt: "x" });
 assert.equal(list.length, 2);
 assert.deepEqual(approvalsForWindow(list, "agentctl-p", "@5").map((x) => x.id), ["a1"]);
 assert.deepEqual(removeApproval(list, "a1").map((x) => x.id), ["b2"]);
+assert.equal(approvalNeedsConfirm({ kind: "dispatch" }, "allow"), false);
+assert.equal(approvalNeedsConfirm({ kind: "dispatch" }, "deny"), true);
+assert.equal(approvalNeedsConfirm({ kind: "cron" }, "allow"), true);
+assert.equal(approvalNeedsConfirm({ kind: "bash" }, "allow"), true);
+assert.equal(approvalNeedsConfirm({ kind: "template" }, "allow"), true);
 const conf = approvalConfirm(ap, "allow");
 assert.equal(conf.confirmLabel, "Approve");
 assert.ok(!conf.lines.some((l) => /window: @/.test(l)), "approval confirm must not show the raw window id");
@@ -832,12 +837,36 @@ console.log("ok: shell request");
 
   const lines = scheduleReview({ job: { agent: "brandon", dir: "/Users/b/code/x", worktree: true, prompt: "Do it" }, words: "weekdays 07:30",
     time_zone: "EST", permission_mode: "bypassPermissions", next_fires_text: ["Mon 23 Nov 07:31"] }, newScheduleForm());
-  assert.match(lines[0], /^Runs brandon in ~\/code\/x \(a worktree per fire\), weekdays 07:30 EST, unattended, permission mode bypassPermissions, until paused\.$/);
+  assert.equal(lines[0], [
+    "Runs   brandon in ~/code/x (a worktree per fire)",
+    "When   weekdays 07:30 EST",
+    "Mode   unattended, permission mode bypassPermissions, until paused",
+  ].join("\n"));
   assert.equal(lines[1], "Next: Mon 23 Nov 07:31");
   assert.match(lines.at(-1), /Prompt:\nDo it/);
   assert.equal(worktreeFact({ worktree: false }), "off (runs in the project checkout)");
   assert.equal(worktreeFact({}), "on (a worktree per fire)");
   assert.doesNotMatch(scheduleReview({ job: { agent: "a", dir: "/d", worktree: false, prompt: "p" }, schedule: "x" }, newScheduleForm())[0], /permission mode/);
+  assert.equal(newScheduleForm().mode, "weekdays");
+  // old -> new in the review of an edit
+  const old = { name: "n", dir: "/d", agent: "a", prompt: "p", schedule: "0 9 * * *", worktree: true, overlap: "skip" };
+  const ef = newScheduleForm({ job: old, simple: { kind: "daily", hour: 9, minute: 0 }, words: "daily 09:00" });
+  const rv = scheduleReview({ job: { ...old, model: "opus", account: "work", schedule: "0 9 * * 1-5" }, words: "weekdays 09:00" }, ef);
+  assert.ok(rv.includes("Changes:\nwhen  daily 09:00 \u2192 weekdays 09:00\nmodel  agent default \u2192 opus\naccount  default \u2192 work"));
+  assert.deepEqual(changeLines(old, old), []);
+  assert.deepEqual(changeLines(old, { ...old, skip_if_usage_above: { five_hour: 100 } }), ["skip above  global \u2192 5h off, 7d global"]);
+  // usage options and timeout presets
+  assert.deepEqual(usageOptions(80).map((o) => o[1]), ["global (80%)", "50", "60", "70", "80", "90", "off"]);
+  assert.ok(usageOptions(80, "85").some(([v]) => v === "85"));
+  assert.equal(timeoutIsPreset("45m"), true);
+  assert.equal(timeoutIsPreset("20m"), false);
+  // card
+  assert.equal(runResultCard({ result: "failed:launch", note: "no such agent" }), "failed \u00B7 launch: no such agent");
+  assert.equal(runResultCard({ result: "skipped:usage", note: "usage 5h 82%" }), "skipped \u00B7 usage 5h 82%");
+  assert.deepEqual(cardStatus({ enabled: true, running: false }, "Mon 07:30"), { glyph: "\u23F2", kind: "enabled", text: "enabled \u00B7 next Mon 07:30" });
+  assert.equal(cardStatus({ enabled: false }).text, "paused");
+  assert.equal(cardLastFailure({ last: { result: "fired" } }), "");
+  assert.match(cardLastFailure({ last: { result: "failed:launch", note: "boom", ts: new Date().toISOString() } }), /^Last run failed \u00B7 launch: boom/);
   console.log("ok: schedules logic");
 }
 
@@ -866,4 +895,5 @@ console.log("ok: templates");
   const disp = { kind: "dispatch", details: { project: "p", agent: "a", template: "triage", mode: "ad-hoc" } };
   assert.deepEqual(approvalRows(disp)[0], { label: "Template", value: "triage", detail: "", flag: "" });
 }
+assert.equal(approvalConfirm({ kind: "template", command: "c", details: {} }, "allow").title, "Approve this template change?");
 console.log("ok: template approvals");
