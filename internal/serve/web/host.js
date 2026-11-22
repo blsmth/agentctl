@@ -24,6 +24,7 @@ export function mountHost(root, ctx) {
   );
   let stopped = false;
   let timer = null;
+  let gen = 0; // bumped on every (re)start so a stale reply never re-arms
   let rtts = [];
   let data = null;
   let conn = null;
@@ -104,22 +105,24 @@ export function mountHost(root, ctx) {
   }
 
   async function refresh() {
-    if (stopped) return;
+    if (stopped || document.hidden) return;
+    const my = ++gen;
+    clearTimeout(timer);
     const sent = Date.now();
     try {
       const res = await get("/v1/host");
       const got = Date.now();
-      if (stopped) return;
+      if (stopped || my !== gen) return;
       data = res;
       conn = hostConnection(res.server_time, sent, got);
       rtts = pushSample(rtts, conn.rtt);
       error = "";
     } catch (e) {
-      if (stopped) return;
+      if (stopped || my !== gen) return;
       error = e instanceof Error ? e.message : String(e);
     }
     render();
-    timer = setTimeout(refresh, REFRESH_MS);
+    if (!document.hidden) timer = setTimeout(refresh, REFRESH_MS);
   }
 
   // Also repaint the connection ages when the fleet feed changes.
@@ -128,8 +131,10 @@ export function mountHost(root, ctx) {
   });
   // Pause while the page is hidden; resume on return.
   const onVis = () => {
-    clearTimeout(timer);
-    if (!document.hidden) refresh();
+    if (document.hidden) {
+      gen++; // invalidate any in-flight reply
+      clearTimeout(timer);
+    } else refresh();
   };
   document.addEventListener("visibilitychange", onVis);
 

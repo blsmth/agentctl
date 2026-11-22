@@ -2383,3 +2383,24 @@ func DisplayTarget(target, format string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+// CountAllWindows counts distinct windows across every session on the tmux
+// server. Windows linked into several sessions count once. It does not read
+// SessionName.
+func CountAllWindows() (int, error) {
+	out, err := exec.Command("tmux", "list-windows", "-a", "-F", "#{window_id}").Output()
+	if err != nil {
+		return 0, fmt.Errorf("tmux list-windows -a: %w", err)
+	}
+	return countUniqueLines(string(out)), nil
+}
+
+func countUniqueLines(s string) int {
+	seen := map[string]struct{}{}
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			seen[l] = struct{}{}
+		}
+	}
+	return len(seen)
+}

@@ -1357,3 +1357,9 @@ func TestSwitchClientArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestCountUniqueLines(t *testing.T) {
+	if got := countUniqueLines("@1\n@2\n@1\n\n@3\n"); got != 3 {
+		t.Errorf("got %d, want 3", got)
+	}
+}

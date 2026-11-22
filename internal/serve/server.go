@@ -232,10 +232,7 @@ func New(opts Options) (*Server, error) {
 		s.host = newLiveHost(now)
 	}
 	if s.hostWin == nil {
-		s.hostWin = func() (int, error) {
-			list, err := tmux.ListWindowsErr()
-			return len(list), err
-		}
+		s.hostWin = tmux.CountAllWindows
 	}
 	s.launchCfg = opts.LaunchConfig
 	if s.launchCfg == nil {

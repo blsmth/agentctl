@@ -164,3 +164,22 @@ func TestClassifyProcess(t *testing.T) {
 		}
 	}
 }
+
+func TestLiveHostStaleDeltaOmitted(t *testing.T) {
+	clock := newClock()
+	l := newLiveHost(clock.Now)
+	l.Collect(context.Background())
+	clock.Advance(5 * time.Second)
+	st := l.Collect(context.Background())
+	_ = st // a delta inside the bound may or may not be computable on this host
+	clock.Advance(hostMaxDelta + time.Second)
+	st = l.Collect(context.Background())
+	if st.System.CPUPercent != nil {
+		t.Errorf("cpu_percent = %v after a long gap, want omitted", *st.System.CPUPercent)
+	}
+	for _, p := range st.Processes.Top {
+		if p.CPUPercent != 0 {
+			t.Errorf("process %d cpu = %v after a long gap, want 0", p.PID, p.CPUPercent)
+		}
+	}
+}

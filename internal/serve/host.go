@@ -23,6 +23,11 @@ import (
 // interval. CPU percentages are deltas between consecutive collections.
 const hostCacheTTL = 3 * time.Second
 
+// hostMaxDelta bounds the interval a CPU delta may span. Past it (nobody
+// watched for a while) the averaged figure would pass as current load, so the
+// collection only reseeds the previous sample.
+const hostMaxDelta = 15 * time.Second
+
 // HostSource collects machine and agentctl process statistics.
 type HostSource interface {
 	Collect(ctx context.Context) HostStats
@@ -157,7 +162,7 @@ func (l *liveHost) Collect(ctx context.Context) HostStats {
 	if !l.at.IsZero() && l.now().Sub(l.at) < hostCacheTTL {
 		return l.last
 	}
-	l.last = l.collect(ctx)
+	l.last = l.collect(context.WithoutCancel(ctx))
 	l.at = l.now()
 	return l.last
 }
@@ -190,7 +195,7 @@ func (l *liveHost) collect(ctx context.Context) HostStats {
 	sys.MemoryPressure = memoryPressure()
 
 	elapsed := now.Sub(l.prevAt).Seconds()
-	haveDelta := !l.prevAt.IsZero() && elapsed > 0.5
+	haveDelta := !l.prevAt.IsZero() && elapsed > 0.5 && now.Sub(l.prevAt) <= hostMaxDelta
 	if ts, err := cpu.TimesWithContext(ctx, false); err == nil && len(ts) == 1 {
 		if haveDelta && l.prevCPU != nil {
 			if p := cpuBusyPercent(*l.prevCPU, ts[0]); p >= 0 {
