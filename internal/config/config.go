@@ -1040,6 +1040,16 @@ var globalConfigPath string
 // FilePath returns the resolved project-local config file path (set by Init).
 func FilePath() string { return configPath }
 
+// LayerPaths returns the files Load reads, global first. Callers that cache
+// something derived from Load (theme.Current) stat these to know when to
+// reload.
+func LayerPaths() []string {
+	if configPath == globalConfigPath {
+		return []string{globalConfigPath}
+	}
+	return []string{globalConfigPath, configPath}
+}
+
 // legacyWarnOnce ensures the XDG-migration warning is logged once per process.
 var legacyWarnOnce sync.Once
 

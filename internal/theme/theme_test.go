@@ -363,3 +363,70 @@ func TestUserThemeOverlay(t *testing.T) {
 		t.Errorf("expected 7 themes (6 built-in + 1 user), got %d: %v", len(names), names)
 	}
 }
+
+// TestCurrentFollowsConfigEdit: Current caches its answer, but an edit to a
+// config layer is picked up on the next call.
+func TestCurrentFollowsConfigEdit(t *testing.T) {
+	resetLoader()
+	dir := t.TempDir()
+	global := filepath.Join(dir, "global.json")
+	project := filepath.Join(dir, "project.json")
+	config.SetConfigPathForTest(project)
+	config.SetGlobalConfigPathForTest(global)
+	t.Cleanup(func() { config.SetConfigPathForTest("") })
+
+	if got := Current().Name; got != defaultTheme {
+		t.Fatalf("no config: %s, want %s", got, defaultTheme)
+	}
+	writeConfig(t, global, `{"theme":"bitchx"}`)
+	if got := Current().Name; got != "bitchx" {
+		t.Fatalf("after global edit: %s, want bitchx", got)
+	}
+	writeConfig(t, project, `{"theme":"catppuccin-mocha"}`)
+	if got := Current().Name; got != "catppuccin-mocha" {
+		t.Fatalf("after project edit: %s, want catppuccin-mocha", got)
+	}
+	if err := os.Remove(project); err != nil {
+		t.Fatal(err)
+	}
+	if got := Current().Name; got != "bitchx" {
+		t.Fatalf("after project config removed: %s, want bitchx", got)
+	}
+}
+
+// TestCurrentDoesNotReloadUnchangedConfig: with the config unchanged, Current
+// does not re-read it (it is called on every chrome bar frame). An
+// unreadable but unchanged file proves it: a reload would fall back to the
+// default theme.
+func TestCurrentDoesNotReloadUnchangedConfig(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads mode 000 files")
+	}
+	resetLoader()
+	cfg := filepath.Join(t.TempDir(), "config.json")
+	writeConfig(t, cfg, `{"theme":"bitchx"}`)
+	config.SetConfigPathForTest(cfg)
+	t.Cleanup(func() { config.SetConfigPathForTest("") })
+
+	if got := Current().Name; got != "bitchx" {
+		t.Fatalf("first call: %s", got)
+	}
+	if err := os.Chmod(cfg, 0); err != nil { // chmod leaves size, mtime and inode alone
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(cfg, 0o600) })
+	if got := Current().Name; got != "bitchx" {
+		t.Errorf("unchanged config was re-read: got %s", got)
+	}
+}
+
+func writeConfig(t *testing.T, path, body string) {
+	t.Helper()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatal(err)
+	}
+}

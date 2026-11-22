@@ -68,6 +68,13 @@ func reexecPane(name string) bool {
 
 func runProgram(m tea.Model) (tea.Model, error) { return tea.NewProgram(m).Run() }
 
+// runChromeBarProgram caps the renderer at tui.ChromeBarFPS. Bubble Tea's
+// renderer wakes on a fixed ticker (60/s by default) even when nothing
+// changed, and a session runs one bar per window.
+func runChromeBarProgram(m tea.Model) (tea.Model, error) {
+	return tea.NewProgram(m, tea.WithFPS(tui.ChromeBarFPS)).Run()
+}
+
 // CmdHud runs the HUD Bubble Tea app for the given tmux window ID.
 // It runs inline (the HUD IS the pane content) — no popup wrapper.
 func CmdHud(windowID string) {
@@ -90,7 +97,7 @@ func CmdHudFollowHub() {
 // into a single pane, eliminating the two tmux pane-border lines that would
 // otherwise separate three independent panes.
 func CmdChromeBar(windowID string) {
-	runWithReload("chrome-bar", tui.NewChromeBarModel(windowID, paths.RuntimeDir()), runProgram, func(m tea.Model) reloadable {
+	runWithReload("chrome-bar", tui.NewChromeBarModel(windowID, paths.RuntimeDir()), runChromeBarProgram, func(m tea.Model) reloadable {
 		return m.(tui.ChromeBarModel).WithoutReload()
 	})
 }

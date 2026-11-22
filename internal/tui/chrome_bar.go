@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -12,7 +11,6 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/fsnotify/fsnotify"
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/fleet"
@@ -28,6 +26,8 @@ const (
 
 	// chromeBarDebounce coalesces a burst of windowstate writes (statusline
 	// pushes and PreTool writes hit them constantly) into one rebuild.
+	// Every bar in the project wakes for every write, so this also bounds
+	// the rebuild rate per bar.
 	chromeBarDebounce = 100 * time.Millisecond
 
 	// chromeBarPrefixInterval is how often the active window's bar polls
@@ -37,6 +37,10 @@ const (
 	// chromeBarPollInterval drives rebuilds when fsnotify is unavailable.
 	chromeBarPollInterval = time.Second
 )
+
+// ChromeBarFPS is the chrome bar's renderer frame rate: the toast animation
+// frame rate (the fastest thing it draws; the spinner is 12/s).
+const ChromeBarFPS = int(time.Second / toastAnimInterval)
 
 // TabInfo holds display data for one agent (or shell) window tab.
 type TabInfo struct {
@@ -107,7 +111,8 @@ type ChromeBarModel struct {
 
 	wins     []tmux.WindowInfo // last successful tmux list-windows result
 	haveWins bool
-	rebuilds int // number of view rebuilds (diagnostic and test hook)
+	records  *windowstate.DirCache // live windows' records, re-read when a file changes
+	rebuilds int                   // number of view rebuilds (diagnostic and test hook)
 
 	// ── Toast notifications ──────────────────────────────────────────────────
 	toast ToastModel
@@ -141,6 +146,14 @@ type ChromeBarModel struct {
 
 	// reload watches the binary for hot reload; nil in tests.
 	reload *reloader
+
+	// spinning / prefixPolling record whether a spinner or prefix tick chain
+	// is in flight. Every message re-renders the bar, so neither chain runs
+	// when it has nothing to show: the spinner only while a tab is working,
+	// the prefix poll only in the active window's bar. ensureTicks restarts
+	// them.
+	spinning      bool
+	prefixPolling bool
 }
 
 // NewChromeBarModel creates a new ChromeBarModel for the given tmux window ID.
@@ -173,6 +186,7 @@ func newChromeBarModel(windowID, runtimeDir string, list func() ([]tmux.WindowIn
 		width:      80,
 		windowID:   windowID,
 		runtimeDir: runtimeDir,
+		records:    windowstate.NewDirCache(windowstate.WindowsDirFor(runtimeDir)),
 		listFn:     list,
 		prefixFn:   prefix,
 		hints:      defaultStatusBarHints,
@@ -180,6 +194,9 @@ func newChromeBarModel(windowID, runtimeDir string, list func() ([]tmux.WindowIn
 		toast:      newToastModel(),
 		warnPct:    zeroModelsCfg.EffectiveContextWarnPct(),
 		critPct:    zeroModelsCfg.EffectiveContextCriticalPct(),
+		// Init starts both chains; the first tick stops a chain not needed.
+		spinning:      true,
+		prefixPolling: true,
 	}
 }
 
@@ -223,147 +240,6 @@ func chromeBarPrefixTick() tea.Cmd {
 	})
 }
 
-// watchedEvent is one filtered fsnotify event after classification.
-type watchedEvent struct {
-	active bool // active-window file written
-	write  bool // an existing windowstate record changed
-	relist bool // a windowstate record was created or removed
-}
-
-// classifyEvent maps a raw fsnotify event to a watchedEvent. known is the set
-// of record file names (e.g. "@3.json") seen so far and is updated in place:
-// windowstate writes are tmp+rename, which fsnotify reports as Create, so
-// "created" only counts as a new window when the name was not known before.
-func classifyEvent(ev fsnotify.Event, windowsDir, activePath string, known map[string]bool) (watchedEvent, bool) {
-	if ev.Name == activePath {
-		if ev.Op&(fsnotify.Create|fsnotify.Write) != 0 {
-			return watchedEvent{active: true}, true
-		}
-		return watchedEvent{}, false
-	}
-	if filepath.Dir(ev.Name) != windowsDir || !strings.HasSuffix(ev.Name, ".json") {
-		return watchedEvent{}, false
-	}
-	name := filepath.Base(ev.Name)
-	switch {
-	case ev.Op&(fsnotify.Remove|fsnotify.Rename) != 0:
-		if known[name] {
-			delete(known, name)
-			return watchedEvent{relist: true}, true
-		}
-		return watchedEvent{}, false
-	case ev.Op&(fsnotify.Create|fsnotify.Write) != 0:
-		if !known[name] {
-			known[name] = true
-			return watchedEvent{relist: true}, true
-		}
-		return watchedEvent{write: true}, true
-	}
-	return watchedEvent{}, false
-}
-
-// startWatcher creates one persistent fsnotify.Watcher over runtimeDir/windows
-// and runtimeDir (for the active-window file) and returns a channel on which
-// it delivers windowsChangedMsg (debounced) and activeWindowChangedMsg
-// values. The watcher runs for the lifetime of the process. When fsnotify is
-// unavailable it falls back to polling at chromeBarPollInterval.
-func startWatcher(runtimeDir string) chan tea.Msg {
-	ch := make(chan tea.Msg, 1)
-	go func() {
-		w, err := fsnotify.NewWatcher()
-		if err == nil {
-			defer func() { _ = w.Close() }()
-			err = watchDirs(w, runtimeDir)
-		}
-		if err != nil {
-			pollLoop(ch)
-			return
-		}
-		watchLoop(w, runtimeDir, ch, chromeBarDebounce)
-	}()
-	return ch
-}
-
-func watchDirs(w *fsnotify.Watcher, runtimeDir string) error {
-	windowsDir := windowstate.WindowsDirFor(runtimeDir)
-	// windows/ may not exist yet; watching it is best-effort so the
-	// runtime dir (and the active-window file) still works.
-	_ = w.Add(windowsDir)
-	return w.Add(runtimeDir)
-}
-
-// pollLoop is the fallback when fsnotify cannot be used: rebuild every
-// chromeBarPollInterval, re-listing tmux each time.
-func pollLoop(ch chan<- tea.Msg) {
-	for {
-		time.Sleep(chromeBarPollInterval)
-		ch <- windowsChangedMsg{relist: true}
-	}
-}
-
-// watchLoop turns raw events into debounced messages: a burst of events inside
-// one debounce window yields at most one windowsChangedMsg (relist OR'd
-// together) plus at most one activeWindowChangedMsg.
-func watchLoop(w *fsnotify.Watcher, runtimeDir string, ch chan<- tea.Msg, debounce time.Duration) {
-	windowsDir := windowstate.WindowsDirFor(runtimeDir)
-	activePath := filepath.Join(runtimeDir, "active-window")
-	known := map[string]bool{}
-	if entries, err := readJSONNames(windowsDir); err == nil {
-		for _, e := range entries {
-			known[e] = true
-		}
-	}
-
-	var (
-		timer   *time.Timer
-		fire    <-chan time.Time
-		pending bool
-		relist  bool
-		active  bool
-	)
-	for {
-		select {
-		case ev, ok := <-w.Events:
-			if !ok {
-				return
-			}
-			we, relevant := classifyEvent(ev, windowsDir, activePath, known)
-			if !relevant {
-				continue
-			}
-			if we.active {
-				active = true
-			} else {
-				pending = true
-				relist = relist || we.relist
-			}
-			if fire == nil {
-				timer = time.NewTimer(debounce)
-				fire = timer.C
-			}
-		case _, ok := <-w.Errors:
-			if !ok {
-				return
-			}
-			pending, relist = true, true
-			if fire == nil {
-				timer = time.NewTimer(debounce)
-				fire = timer.C
-			}
-		case <-fire:
-			fire = nil
-			if active {
-				ch <- activeWindowChangedMsg{}
-				active = false
-			}
-			if pending {
-				ch <- windowsChangedMsg{relist: relist}
-				pending, relist = false, false
-			}
-		}
-	}
-}
-
 // waitForStateChange returns a Bubble Tea Cmd that blocks until the persistent
 // watcher delivers the next message, then forwards it to the Bubble Tea runtime.
 func waitForStateChange(ch chan tea.Msg) tea.Cmd {
@@ -393,8 +269,13 @@ func (m *ChromeBarModel) rebuild(relist bool) bool {
 		m.wins, m.haveWins = wins, true
 	}
 
-	records := windowstate.AllFrom(windowstate.WindowsDirFor(m.runtimeDir))
-	agents := fleet.BuildAgents(m.wins, records, nil, time.Now())
+	// BuildAgents only joins records of listed windows, so only those are
+	// read; the directory also holds every other session's records.
+	ids := make([]string, len(m.wins))
+	for i, w := range m.wins {
+		ids[i] = w.ID
+	}
+	agents := fleet.BuildAgents(m.wins, m.records.Records(ids), nil, time.Now())
 
 	active := tmux.ActiveWindowIDFast(filepath.Join(m.runtimeDir, "active-window"))
 
@@ -463,7 +344,7 @@ func (m ChromeBarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.tabs = tabs
 		}
-		return m, waitForStateChange(m.watchEvents)
+		return m, tea.Batch(waitForStateChange(m.watchEvents), m.ensureTicks())
 
 	case chromeBarReloadTickMsg:
 		if m.reload.due() {
@@ -472,17 +353,16 @@ func (m ChromeBarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, chromeBarReloadTick()
 
 	case prefixTickMsg:
-		next := chromeBarPrefixTick()
-		if m.windowID == "" || m.windowID != m.activeWindowID {
+		if !m.isActiveBar() {
 			// Only the active window's bar shows the indicator: one tmux
-			// exec per 250ms in total, not one per window.
-			if m.prefixActive {
-				m.prefixActive = false
-			}
-			return m, next
+			// exec per 250ms in total, not one per window. The other bars
+			// stop ticking until their window becomes active.
+			m.prefixActive = false
+			m.prefixPolling = false
+			return m, nil
 		}
 		prefixFn := m.prefixFn
-		return m, tea.Batch(next, func() tea.Msg { return prefixResultMsg{active: prefixFn()} })
+		return m, tea.Batch(chromeBarPrefixTick(), func() tea.Msg { return prefixResultMsg{active: prefixFn()} })
 
 	case prefixResultMsg:
 		m.prefixActive = msg.active
@@ -529,7 +409,7 @@ func (m ChromeBarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				WithToastDuration(5*time.Second),
 			)
 		}
-		return m, tea.Batch(waitForStateChange(m.watchEvents), toastCmd)
+		return m, tea.Batch(waitForStateChange(m.watchEvents), toastCmd, m.ensureTicks())
 
 	case chromeBarClockTickMsg:
 		// The slow tick also re-reads the tmux window list, catching windows
@@ -537,9 +417,15 @@ func (m ChromeBarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clock = time.Now().Format("15:04")
 		m.rebuild(true)
 		m.refreshThresholds()
-		return m, chromeBarClockTick()
+		return m, tea.Batch(chromeBarClockTick(), m.ensureTicks())
 
 	case spinner.TickMsg:
+		if !m.anyWorking() {
+			// Nothing spins: let the chain end (12 renders a second for
+			// nothing otherwise). ensureTicks restarts it.
+			m.spinning = false
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
@@ -550,6 +436,37 @@ func (m ChromeBarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+// isActiveBar reports whether this bar is in the active window.
+func (m ChromeBarModel) isActiveBar() bool {
+	return m.windowID != "" && m.windowID == m.activeWindowID
+}
+
+// anyWorking reports whether a tab shows the spinner.
+func (m ChromeBarModel) anyWorking() bool {
+	for _, t := range m.tabs {
+		if t.State == "working" {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureTicks restarts the spinner and prefix tick chains that were stopped
+// while idle, once they have something to show again. It never starts a
+// second chain: the flags record a chain in flight.
+func (m *ChromeBarModel) ensureTicks() tea.Cmd {
+	var cmds []tea.Cmd
+	if !m.spinning && m.anyWorking() {
+		m.spinning = true
+		cmds = append(cmds, m.spinner.Tick)
+	}
+	if !m.prefixPolling && m.isActiveBar() {
+		m.prefixPolling = true
+		cmds = append(cmds, chromeBarPrefixTick())
+	}
+	return tea.Batch(cmds...)
 }
 
 // View returns the 2-row chrome bar as a newline-joined string:
@@ -772,19 +689,4 @@ func (m ChromeBarModel) handleClick(msg tea.MouseClickMsg) tea.Cmd {
 		return nil
 	}
 	return tabClickCmd(m.windowID, target)
-}
-
-// readJSONNames lists the *.json record file names in dir.
-func readJSONNames(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".json") {
-			out = append(out, e.Name())
-		}
-	}
-	return out, nil
 }
