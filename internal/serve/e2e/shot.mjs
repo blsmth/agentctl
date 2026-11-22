@@ -32,6 +32,8 @@ function route(target) {
   switch (kind) {
     case "fleet":
       return "/#/";
+    case "schedules":
+      return "/#/schedules";
     case "window": {
       const w = win(key);
       return `/#/w/${encodeURIComponent(w.session)}/${encodeURIComponent(w.window_id)}`;

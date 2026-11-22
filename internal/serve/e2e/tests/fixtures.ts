@@ -52,6 +52,14 @@ export type FixtureGroup = {
   shells?: { id: string; index: number; dir: string }[];
 };
 
+export type SchedulesSpec = {
+  jobs?: Record<string, unknown>[];
+  runs?: Record<string, unknown>[];
+  not_installed?: boolean;
+  cron_disabled?: boolean;
+  run?: Record<string, unknown>;
+};
+
 /** Control wraps the dev server's /__test/ API. */
 export class Control {
   constructor(private readonly request: APIRequestContext) {}
@@ -89,6 +97,26 @@ export class Control {
   /** patchWindow changes fields of one fixture window; the bus publishes it within a refresh (50ms). */
   patchWindow(session: string, id: string, patch: Partial<Omit<FixtureWindow, "id">> & { pane_text?: string }) {
     return this.call("POST", "window", { session, id, ...patch });
+  }
+
+  /**
+   * seedSchedules replaces the cron jobs and runs the API sees. "{dir}" in a
+   * job's dir becomes a real project directory, and a fleet group with that
+   * dir is set so the project picker offers it. Returns the dir.
+   */
+  async seedSchedules(spec: SchedulesSpec = {}): Promise<string> {
+    const { dir } = await this.call<{ dir: string }>("PUT", "schedules", {});
+    const jobs = (spec.jobs ?? []).map((j) => ({ ...j, dir: String(j.dir ?? "{dir}").replace("{dir}", dir) }));
+    await this.call("PUT", "schedules", { ...spec, jobs });
+    await this.setFleet([
+      { session: "agentctl-sched", project: "sched", dir, windows: [{ id: "@90", index: 1, agent: "go-engineer", state: "idle" }] },
+    ]);
+    return dir;
+  }
+
+  /** scheduleRuns are the job names run-now fired since the last seed. */
+  async scheduleRuns(): Promise<string[]> {
+    return (await this.call<{ runs: string[] }>("GET", "schedules")).runs;
   }
 
   async openApproval(spec: Record<string, unknown>): Promise<string> {

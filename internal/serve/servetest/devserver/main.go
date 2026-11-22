@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/serve"
 	"github.com/blsmth/agentctl/internal/serve/servetest"
@@ -77,6 +78,9 @@ func run() error {
 	defer h.Close()
 	if sc != nil {
 		if err := sc.openApprovals(h); err != nil {
+			return err
+		}
+		if err := seedDemoSchedules(h, sc); err != nil {
 			return err
 		}
 	}
@@ -139,4 +143,36 @@ func listenLoopback(addr string) (net.Listener, error) {
 		return nil, fmt.Errorf("-addr %q resolved to a non-loopback address", addr)
 	}
 	return ln, nil
+}
+
+// seedDemoSchedules gives a scene's Schedules screen a few jobs to show: one
+// healthy, one whose last run failed, one skipped by the usage gate and one
+// paused. They point at the scene's first project.
+func seedDemoSchedules(h *servetest.Harness, sc *scene) error {
+	dir := "/demo"
+	if len(sc.groups) > 0 && sc.groups[0].Dir != "" {
+		dir = sc.groups[0].Dir
+	}
+	job := func(name, schedule, agent, prompt string, extra func(*cron.Job)) cron.Job {
+		j := cron.Job{Name: name, Schedule: schedule, Dir: dir, Agent: agent, Prompt: prompt, Harness: "claude", Mode: "window", Overlap: "skip", Catchup: "latest"}
+		if extra != nil {
+			extra(&j)
+		}
+		return j
+	}
+	paused := false
+	ago := func(m int) time.Time { return time.Now().Add(-time.Duration(m) * time.Minute) }
+	return h.SeedSchedules(servetest.SchedulesSpec{
+		Jobs: []cron.Job{
+			job("nightly-triage", "30 7 * * 1-5", "go-engineer", "Triage new issues and label them.", nil),
+			job("dependency-sweep", "0 3 * * 1", "go-engineer", "Check for outdated dependencies and open a PR.", nil),
+			job("changelog-draft", "15 17 * * 5", "go-engineer", "Draft the weekly changelog.", nil),
+			job("stale-branches", "0 6 1 * *", "go-engineer", "List stale branches.", func(j *cron.Job) { j.Enabled = &paused }),
+		},
+		Runs: []cron.Entry{
+			{Time: ago(95), Job: "nightly-triage", Result: cron.ResultFired},
+			{Time: ago(40), Job: "dependency-sweep", Result: cron.Failed("launch"), Note: "agent go-engineer not found"},
+			{Time: ago(20), Job: "changelog-draft", Result: cron.ResultSkippedUsage, Note: "usage 5h 82%"},
+		},
+	})
 }

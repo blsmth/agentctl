@@ -14,6 +14,7 @@ import {
   upsertApproval,
   withReceived,
 } from "./logic.js";
+import { mountSchedules } from "./schedules.js";
 import { mountSettings } from "./settings.js";
 import { mountTerminal } from "./terminal.js";
 import { h } from "./ui.js";
@@ -84,6 +85,7 @@ function route() {
   else if (r.name === "terminal" && ctx.hasFeature("terminal")) cleanup = mountTerminal(root, ctx, r);
   else if (r.name === "approvals" && ctx.hasFeature("approvals")) cleanup = mountApprovals(root, ctx, r);
   else if (r.name === "dispatch") cleanup = mountDispatch(root, ctx, { dir: r.dir });
+  else if (r.name === "schedules" && ctx.hasFeature("schedules")) cleanup = mountSchedules(root, ctx, r);
   else if (r.name === "host") cleanup = mountHost(root, ctx);
   else if (r.name === "settings") cleanup = mountSettings(root, ctx);
   else cleanup = mountFleet(root, ctx);
@@ -144,6 +146,7 @@ async function main() {
     return;
   }
   document.getElementById("nav-dispatch").hidden = !ctx.hasFeature("write");
+  document.getElementById("nav-schedules").hidden = !ctx.hasFeature("schedules");
   document.getElementById("nav-approvals").hidden = !ctx.hasFeature("approvals");
   startFeed();
   if (ctx.hasFeature("approvals")) {

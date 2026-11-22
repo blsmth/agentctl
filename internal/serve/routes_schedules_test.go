@@ -332,3 +332,81 @@ func TestScheduleActionFor(t *testing.T) {
 		}
 	}
 }
+
+// Schedule-changing updates and resume wait on the cron tick lock, which a
+// slow launch holds, so they extend the write deadline like run-now.
+func TestScheduleSlowRoutesExtendWriteDeadline(t *testing.T) {
+	se := newScheduleEnv(t, true)
+	if w := se.post("/v1/schedules", se.jobBody("triage")); w.Code != http.StatusOK {
+		t.Fatalf("create: %d %s", w.Code, w.Body)
+	}
+	tests := []struct {
+		name, method, path, body string
+		want                     time.Duration
+	}{
+		{"put", "PUT", "/v1/schedules/triage", se.jobBody("triage"), scheduleSlowDeadline},
+		{"post update", "POST", "/v1/schedules/triage", se.jobBody("triage"), scheduleSlowDeadline},
+		{"resume", "POST", "/v1/schedules/triage/resume", "{}", scheduleSlowDeadline},
+		{"run", "POST", "/v1/schedules/triage/run", "{}", scheduleWriteDeadline},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			r.RemoteAddr = "192.168.1.20:51515"
+			r.Header.Set("Content-Type", "application/json")
+			r.Header.Set(CSRFHeader, "1")
+			r.AddCookie(&http.Cookie{Name: DeviceCookie, Value: se.tok})
+			rec := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
+			se.Handler().ServeHTTP(rec, r)
+			if until := time.Until(rec.deadline); until < tt.want-5*time.Second {
+				t.Errorf("write deadline %v from now, want about %v", until, tt.want)
+			}
+		})
+	}
+}
+
+// The review sheet states the permission mode a fire really launches with:
+// the agent's configured mode, else the worker default.
+func TestSchedulePreviewPermissionMode(t *testing.T) {
+	se := newScheduleEnv(t, true)
+	modeOf := func() string {
+		w := se.post("/v1/schedules/preview", se.jobBody("triage"))
+		if w.Code != http.StatusOK {
+			t.Fatalf("preview: %d %s", w.Code, w.Body)
+		}
+		return decode[map[string]any](t, w)["permission_mode"].(string)
+	}
+	se.Server.agentPermission = func(string) string { return "" }
+	if got := modeOf(); got != "auto" {
+		t.Errorf("default mode = %q, want auto", got)
+	}
+	se.Server.agentPermission = func(agent string) string {
+		if agent == "go-engineer" {
+			return "bypassPermissions"
+		}
+		return ""
+	}
+	if got := modeOf(); got != "bypassPermissions" {
+		t.Errorf("configured mode = %q", got)
+	}
+	se.Server.agentPermission = func(string) string { return "bogus" }
+	if got := modeOf(); got != "auto" {
+		t.Errorf("invalid configured mode = %q, want auto", got)
+	}
+}
+
+func TestResetWriteLimitsRefillsBudget(t *testing.T) {
+	se := newScheduleEnv(t, true)
+	for i := 0; i < writesPerMinute; i++ {
+		if w := se.post("/v1/schedules/preview", se.jobBody("triage")); w.Code != http.StatusOK {
+			t.Fatalf("preview %d: %d %s", i, w.Code, w.Body)
+		}
+	}
+	if w := se.post("/v1/schedules/preview", se.jobBody("triage")); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("over budget: %d", w.Code)
+	}
+	se.Server.ResetWriteLimits()
+	if w := se.post("/v1/schedules/preview", se.jobBody("triage")); w.Code != http.StatusOK {
+		t.Fatalf("after reset: %d %s", w.Code, w.Body)
+	}
+}

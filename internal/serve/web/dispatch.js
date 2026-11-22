@@ -41,68 +41,8 @@ export function mountDispatch(root, ctx, { dir } = {}) {
     ),
   );
 
-  // opts is the launch-options body for the current agent/project; choice is
-  // what the pickers currently select. loadSeq drops stale responses.
-  let opts = null;
-  let choice = {};
-  let loadSeq = 0;
-
-  function renderOptions() {
-    clear(launchBox);
-    if (!opts) return;
-    const backends = h("div", { class: "seg", role: "group", "aria-label": "Backend" });
-    for (const b of opts.backends ?? []) {
-      backends.append(
-        h(
-          "button",
-          {
-            type: "button",
-            class: "btn",
-            "aria-pressed": String(choice.backend === b.name),
-            onclick: () => {
-              choice = { ...choice, backend: b.name, model: modelPicker(opts, b.name).def };
-              renderOptions();
-            },
-          },
-          b.name,
-        ),
-      );
-    }
-    const mp = modelPicker(opts, choice.backend);
-    let model;
-    if (mp.freeText) {
-      model = h("input", { type: "text", value: choice.model ?? "", autocapitalize: "off", autocorrect: "off", spellcheck: "false" });
-      model.addEventListener("input", () => (choice = { ...choice, model: model.value.trim() }));
-    } else {
-      model = h("select", { "aria-label": "Model" }, ...mp.choices.map((c) => h("option", { value: c.value }, choiceLabel(c))));
-      model.value = choice.model ?? mp.def;
-      model.addEventListener("change", () => (choice = { ...choice, model: model.value }));
-    }
-    const effort = h("select", { "aria-label": "Effort" }, ...(opts.efforts ?? []).map((e) => h("option", { value: e }, e)));
-    effort.value = choice.effort;
-    effort.addEventListener("change", () => (choice = { ...choice, effort: effort.value }));
-    launchBox.append(
-      h("div", {}, h("div", { class: "muted" }, "Backend"), backends),
-      h("label", {}, "Model", model, mp.freeText ? h("span", { class: "muted" }, `${mp.error}; type a model name`) : null),
-      h("label", {}, "Effort", effort),
-    );
-  }
-
-  async function loadOptions() {
-    if (!withOptions || !agent.value || !project.value) return;
-    const seq = ++loadSeq;
-    opts = null;
-    renderOptions();
-    try {
-      const o = await get(launchOptionsPath(agent.value, project.value));
-      if (seq !== loadSeq) return;
-      opts = o;
-      choice = { backend: o.defaults.backend, model: o.defaults.model, effort: o.defaults.effort };
-      renderOptions();
-    } catch (e) {
-      if (seq === loadSeq) toast(`Could not load launch options: ${e.message}`, "error");
-    }
-  }
+  const picker = launchPicker(launchBox, { onError: (e) => toast(`Could not load launch options: ${e.message}`, "error") });
+  const loadOptions = () => (withOptions ? picker.load(agent.value, project.value) : undefined);
   // projects is the loaded /v1/projects list; userPickedAgent stops a later
   // project change from overriding a hand-picked agent.
   let projects = [];
@@ -149,7 +89,7 @@ export function mountDispatch(root, ctx, { dir } = {}) {
     }
     const extra = withInstructions ? instructions.value.trim() : "";
     const n = att ? att.count() : 0;
-    const [agentName, dir, picked] = [agent.value, project.value, opts ? choice : {}];
+    const [agentName, dir, picked] = [agent.value, project.value, picker.options() ? picker.choice() : {}];
     const confirmed = await confirmSheet({
       title: "Dispatch?",
       lines: confirmLines(buildDispatchRequest(agentName, dir, text, picked, [], extra).body, n),
@@ -178,7 +118,88 @@ export function mountDispatch(root, ctx, { dir } = {}) {
       submit.disabled = false;
     }
   });
-  return () => {
-    loadSeq++;
+  return () => picker.stop();
+}
+
+/**
+ * launchPicker renders the backend/model/effort pickers of the launch-options
+ * body for an agent in a project into box, shared by the Dispatch and
+ * Schedules screens. load(agent, project, preset) fetches the options; preset
+ * ({backend, model, effort}, any may be empty) overrides the server defaults
+ * for the fields it sets. onChange(choice, opts) fires on every user change.
+ * A stale response (a newer load, or stop()) is dropped.
+ */
+export function launchPicker(box, { onError = () => {}, onChange = () => {} } = {}) {
+  let opts = null;
+  let choice = {};
+  let loadSeq = 0;
+  const changed = (c) => {
+    choice = c;
+    onChange(choice, opts);
+  };
+
+  function render() {
+    clear(box);
+    if (!opts) return;
+    const backends = h("div", { class: "seg", role: "group", "aria-label": "Backend" });
+    for (const b of opts.backends ?? []) {
+      backends.append(
+        h(
+          "button",
+          {
+            type: "button",
+            class: "btn",
+            "aria-pressed": String(choice.backend === b.name),
+            onclick: () => {
+              changed({ ...choice, backend: b.name, model: modelPicker(opts, b.name).def });
+              render();
+            },
+          },
+          b.name,
+        ),
+      );
+    }
+    const mp = modelPicker(opts, choice.backend);
+    let model;
+    if (mp.freeText) {
+      model = h("input", { type: "text", value: choice.model ?? "", autocapitalize: "off", autocorrect: "off", spellcheck: "false" });
+      model.addEventListener("input", () => changed({ ...choice, model: model.value.trim() }));
+    } else {
+      model = h("select", { "aria-label": "Model" }, ...mp.choices.map((c) => h("option", { value: c.value }, choiceLabel(c))));
+      model.value = choice.model ?? mp.def;
+      model.addEventListener("change", () => changed({ ...choice, model: model.value }));
+    }
+    const effort = h("select", { "aria-label": "Effort" }, ...(opts.efforts ?? []).map((e) => h("option", { value: e }, e)));
+    effort.value = choice.effort;
+    effort.addEventListener("change", () => changed({ ...choice, effort: effort.value }));
+    box.append(
+      h("div", {}, h("div", { class: "muted" }, "Backend"), backends),
+      h("label", {}, "Model", model, mp.freeText ? h("span", { class: "muted" }, `${mp.error}; type a model name`) : null),
+      h("label", {}, "Effort", effort),
+    );
+  }
+
+  return {
+    async load(agent, project, preset = {}) {
+      if (!agent || !project) return;
+      const seq = ++loadSeq;
+      opts = null;
+      render();
+      try {
+        const o = await get(launchOptionsPath(agent, project));
+        if (seq !== loadSeq) return;
+        opts = o;
+        choice = { backend: o.defaults.backend, model: o.defaults.model, effort: o.defaults.effort };
+        for (const k of ["backend", "model", "effort"]) if (preset[k]) choice[k] = preset[k];
+        render();
+      } catch (e) {
+        if (seq === loadSeq) onError(e);
+      }
+    },
+    choice: () => choice,
+    options: () => opts,
+    stop() {
+      loadSeq++;
+    },
   };
 }

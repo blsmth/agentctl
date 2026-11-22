@@ -176,7 +176,7 @@ function groupSummary(windows, onToggle) {
 }
 
 function bucketRow(entry, toggle, expanded) {
-  return h("div", { class: "node bucket" }, expanded ? stubSpan(entry) : null, h("span", { class: "bucket-label" }, bucketLabel(entry.count ?? 0, entry.kind)), toggle);
+  return h("div", { class: "node bucket" }, expanded ? stubSpan(entry) : null, h("span", { class: "bucket-label" }, bucketLabel(entry.count ?? 0, entry.kind)), entry.kind === "scheduled" ? h("a", { class: "bucket-link", href: "#/schedules" }, "Schedules ›") : null, toggle);
 }
 
 /**

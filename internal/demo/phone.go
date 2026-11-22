@@ -30,7 +30,7 @@ type Viewport struct {
 // PhoneStep is one phone action. Exactly one field is set. The scalar form
 // "screenshot" is accepted as shorthand.
 type PhoneStep struct {
-	// Open navigates: fleet, window:<key>, terminal:<key> or approval:<key>.
+	// Open navigates: fleet, schedules (the Schedules screen, with a few demo jobs), window:<key>, terminal:<key> or approval:<key>.
 	Open string `yaml:"open"`
 	// Tap taps an element: visible text, or "css:<selector>".
 	Tap string `yaml:"tap"`
@@ -160,12 +160,12 @@ func (st PhoneStep) validate(s *Scene) error {
 }
 
 func validateOpen(s *Scene, target string) error {
-	if target == "fleet" {
+	if target == "fleet" || target == "schedules" {
 		return nil
 	}
 	kind, key := ParseOpen(target)
 	if !slices.Contains([]string{"window", "terminal", "approval"}, kind) || key == "" {
-		return fmt.Errorf("open: %q is not fleet, window:<key>, terminal:<key> or approval:<key>", target)
+		return fmt.Errorf("open: %q is not fleet, schedules, window:<key>, terminal:<key> or approval:<key>", target)
 	}
 	w, ok := s.Window(key)
 	switch {

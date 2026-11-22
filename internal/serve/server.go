@@ -82,6 +82,10 @@ type Options struct {
 	// RunSchedule fires a job now (plain `cron run`); nil means the
 	// cronedit.RunSubprocess subprocess. Tests inject a fake.
 	RunSchedule cronedit.RunFunc
+	// AgentPermissionMode returns the permission_mode configured for an
+	// agent ("" = none); a cron fire resolves its launch mode from it. nil
+	// reads the global config.
+	AgentPermissionMode func(agent string) string
 	// MainPanes finds and captures the pane a window write checks and types
 	// into; nil means tmux.
 	MainPanes MainPanes
@@ -158,12 +162,14 @@ type Server struct {
 	sweeps     sweepGuard
 	// schedules is the cron editing core (see scheduleStore); runSchedule
 	// fires a job now; scheduleRuns allows one run-now per job at a time.
-	schedules    cronedit.Store
-	runSchedule  cronedit.RunFunc
-	scheduleRuns sweepGuard
-	mainPanes    MainPanes
-	launchCfg    LaunchConfigSource
-	ollama       *ollamaCache
+	schedules   cronedit.Store
+	runSchedule cronedit.RunFunc
+	// agentPermission resolves an agent's configured permission_mode.
+	agentPermission func(agent string) string
+	scheduleRuns    sweepGuard
+	mainPanes       MainPanes
+	launchCfg       LaunchConfigSource
+	ollama          *ollamaCache
 	// answered remembers recently answered dialogs (see handleAnswer);
 	// answerSettle bounds the wait for an answered dialog to redraw.
 	answered     answeredDialogs
@@ -246,6 +252,10 @@ func New(opts Options) (*Server, error) {
 	} else {
 		s.schedules = cronedit.Default(nil)
 	}
+	s.agentPermission = opts.AgentPermissionMode
+	if s.agentPermission == nil {
+		s.agentPermission = func(agent string) string { return config.Load().Agents[agent].PermissionMode }
+	}
 	s.runSchedule = opts.RunSchedule
 	if s.runSchedule == nil {
 		s.runSchedule = cronedit.RunSubprocess
@@ -309,6 +319,10 @@ func New(opts Options) (*Server, error) {
 
 // Handler returns the full HTTPS request pipeline.
 func (s *Server) Handler() http.Handler { return s.handler }
+
+// ResetWriteLimits refills every device's write budget. For the browser-test
+// harness, whose tests share one device token; never called in production.
+func (s *Server) ResetWriteLimits() { s.limiter.reset() }
 
 // chain wraps h in the middleware every HTTPS request passes, outermost
 // first: CIDR filter, security headers, CSRF.

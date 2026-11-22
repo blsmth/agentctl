@@ -2,10 +2,12 @@
 // every non-GET request carries the CSRF header.
 
 export class ApiError extends Error {
-  constructor(status, code, message) {
+  constructor(status, code, message, fields) {
     super(message);
     this.status = status;
     this.code = code;
+    // fields are a 422's per-field errors ([{field, message}]).
+    this.fields = fields ?? [];
   }
 }
 
@@ -27,7 +29,7 @@ export async function api(method, path, body) {
     // non-JSON body: fall through to the status check
   }
   if (!res.ok) {
-    throw new ApiError(res.status, data?.code ?? "http_error", data?.error ?? `HTTP ${res.status}`);
+    throw new ApiError(res.status, data?.code ?? "http_error", data?.error ?? `HTTP ${res.status}`, data?.fields);
   }
   return data;
 }

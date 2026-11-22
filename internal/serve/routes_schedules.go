@@ -14,6 +14,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
+	"github.com/blsmth/agentctl/internal/dispatchplan"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 )
@@ -35,6 +36,9 @@ const (
 	// scheduleWriteDeadline bounds a run-now response (the subprocess may
 	// start a session and a worktree).
 	scheduleWriteDeadline = cronedit.RunTimeout + 15*time.Second
+	// scheduleSlowDeadline bounds an update or resume: both take the cron
+	// tick lock, which a slow launch holds for a while.
+	scheduleSlowDeadline = 90 * time.Second
 )
 
 // scheduleIn is the body of create and update: the job, and optionally the
@@ -80,10 +84,10 @@ func (s *Server) registerSchedules(rt *Router) {
 	rt.Device("GET /v1/schedules/{name}", s.handleSchedule)
 	rt.Write("POST /v1/schedules/preview", writeRoute(s, "schedule-preview", s.handleSchedulePreview))
 	rt.Write("POST /v1/schedules", writeRoute(s, "schedule-create", s.handleScheduleCreate))
-	rt.Write("PUT /v1/schedules/{name}", writeRoute(s, "schedule-update", s.handleScheduleUpdate))
-	rt.Write("POST /v1/schedules/{name}", writeRoute(s, "schedule-update", s.handleScheduleUpdate))
+	rt.Write("PUT /v1/schedules/{name}", extendDeadline(scheduleSlowDeadline, writeRoute(s, "schedule-update", s.handleScheduleUpdate)))
+	rt.Write("POST /v1/schedules/{name}", extendDeadline(scheduleSlowDeadline, writeRoute(s, "schedule-update", s.handleScheduleUpdate)))
 	rt.Write("POST /v1/schedules/{name}/pause", writeRoute(s, "schedule-pause", s.handleSchedulePause))
-	rt.Write("POST /v1/schedules/{name}/resume", writeRoute(s, "schedule-resume", s.handleScheduleResume))
+	rt.Write("POST /v1/schedules/{name}/resume", extendDeadline(scheduleSlowDeadline, writeRoute(s, "schedule-resume", s.handleScheduleResume)))
 	rt.Write("POST /v1/schedules/{name}/run", extendDeadline(scheduleWriteDeadline, writeRoute(s, "schedule-run", s.handleScheduleRun)))
 	rt.Write("DELETE /v1/schedules/{name}", writeRoute(s, "schedule-delete", s.handleScheduleDelete))
 	rt.Write("POST /v1/schedules/{name}/delete", writeRoute(s, "schedule-delete", s.handleScheduleDelete))
@@ -264,6 +268,13 @@ func auditJob(a *auditEntry, job cron.Job) {
 	}
 }
 
+// previewOut is the preview plus the permission mode a fire would launch
+// with, so the review sheet states what the job will really run under.
+type previewOut struct {
+	cronedit.Preview
+	PermissionMode string `json:"permission_mode,omitempty"`
+}
+
 func (s *Server) handleSchedulePreview(_ *http.Request, in schedulePreviewIn, a *auditEntry) outcome {
 	auditJob(a, in.Job)
 	p := s.scheduleStore().Preview(in.Job, in.Original, in.Simple)
@@ -271,7 +282,8 @@ func (s *Server) handleSchedulePreview(_ *http.Request, in schedulePreviewIn, a 
 		p.Errors = append(p.Errors, extra...)
 		p.Valid = false
 	}
-	return success(p)
+	// A cron fire is a worker launch: the agent's configured mode, else auto.
+	return success(previewOut{Preview: p, PermissionMode: dispatchplan.PermissionMode(true, s.agentPermission(p.Job.Agent), "")})
 }
 
 // checkSchedule runs the core validation plus serve's checks, so a save
