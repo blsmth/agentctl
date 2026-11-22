@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   SWIPE_REVEAL, canSwipeClose, swipeAxis, swipeCommit, swipeOffset,
-  ansiColor, approvalBannerText, approvalConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
+  ansiColor, approvalBannerText, approvalConfirm, approvalNeedsConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
   approvalProject, approvalRows, approvalRowText, promptFold, PROMPT_FOLD_LINES,
   DISPATCH_UPLOAD_PATH, buildDispatchRequest, buildShellRequest, canShell, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
@@ -161,6 +161,11 @@ list = upsertApproval(list, { ...ap, prompt: "x" });
 assert.equal(list.length, 2);
 assert.deepEqual(approvalsForWindow(list, "agentctl-p", "@5").map((x) => x.id), ["a1"]);
 assert.deepEqual(removeApproval(list, "a1").map((x) => x.id), ["b2"]);
+assert.equal(approvalNeedsConfirm({ kind: "dispatch" }, "allow"), false);
+assert.equal(approvalNeedsConfirm({ kind: "dispatch" }, "deny"), true);
+assert.equal(approvalNeedsConfirm({ kind: "cron" }, "allow"), true);
+assert.equal(approvalNeedsConfirm({ kind: "bash" }, "allow"), true);
+assert.equal(approvalNeedsConfirm({ kind: "template" }, "allow"), true);
 const conf = approvalConfirm(ap, "allow");
 assert.equal(conf.confirmLabel, "Approve");
 assert.ok(!conf.lines.some((l) => /window: @/.test(l)), "approval confirm must not show the raw window id");
