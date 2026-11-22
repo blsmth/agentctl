@@ -121,6 +121,7 @@ func dispatchDetails(cfg *config.Config, command, cwd string, tmpl *prompttempla
 		PermissionMode: p.PermissionMode,
 		Mode:           planModeText(p, f.plan),
 		Worktree:       "worktree",
+		Template:       templateName(tmpl),
 	}
 	if !p.Worktree {
 		d.Worktree = "no worktree"

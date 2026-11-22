@@ -5,7 +5,7 @@ import {
   SWIPE_REVEAL, canSwipeClose, swipeAxis, swipeCommit, swipeOffset,
   ansiColor, approvalBannerText, approvalConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
   approvalProject, approvalRows, approvalRowText, promptFold, PROMPT_FOLD_LINES,
-  DISPATCH_UPLOAD_PATH, buildDispatchRequest, buildShellRequest, canShell, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
+  DISPATCH_UPLOAD_PATH, buildDispatchRequest, buildShellRequest, canShell, templateFill, templateLabel, templatesPath, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowChips, rowTitle, rowHeadline, rowRole, detailTitle, truncateWords, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
@@ -840,3 +840,30 @@ console.log("ok: shell request");
   assert.doesNotMatch(scheduleReview({ job: { agent: "a", dir: "/d", worktree: false, prompt: "p" }, schedule: "x" }, newScheduleForm())[0], /permission mode/);
   console.log("ok: schedules logic");
 }
+
+// Prompt templates on the dispatch sheet.
+assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, [], "", false, "triage").body, { agent: "a", project_dir: "/d", prompt: "p", template: "triage" });
+assert.ok(confirmLines({ agent: "a", project_dir: "/d", prompt: "p", template: "triage" }).join("\n").includes("template: triage"));
+assert.equal(templatesPath(""), "/v1/templates");
+assert.equal(templatesPath("/a b"), "/v1/templates?dir=%2Fa%20b");
+assert.equal(templateLabel({ name: "t", description: "d" }), "t · d");
+assert.equal(templateLabel({ name: "t" }), "t");
+{
+  const projects = [{ dir: "/p1" }];
+  assert.deepEqual(templateFill({ prompt: "x", agent: "a", dir: "/p1", model: "opus", effort: "high" }, projects, ["a"]), {
+    prompt: "x", agent: "a", project: "/p1", preset: { model: "opus", effort: "high" },
+  });
+  // Unknown agent or project is left alone; the prompt still fills.
+  assert.deepEqual(templateFill({ prompt: "x", agent: "zz", dir: "/nope" }, projects, ["a"]), { prompt: "x", preset: {} });
+}
+console.log("ok: templates");
+
+// Approval cards name the template.
+{
+  const tpl = { kind: "template", asking_agent: "w", details: { template: "triage", mode: "add template", agent: "go-engineer" } };
+  assert.equal(approvalSummary(tpl), "w wants to add template triage");
+  assert.deepEqual(approvalRows(tpl).map((r) => [r.label, r.value]), [["Template", "triage"], ["Action", "add template"], ["Agent", "go-engineer"]]);
+  const disp = { kind: "dispatch", details: { project: "p", agent: "a", template: "triage", mode: "ad-hoc" } };
+  assert.deepEqual(approvalRows(disp)[0], { label: "Template", value: "triage", detail: "", flag: "" });
+}
+console.log("ok: template approvals");

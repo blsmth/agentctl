@@ -503,6 +503,8 @@ func (s *Server) pushApproval(p *pendingApproval) {
 		}
 	case remoteapproval.KindCron:
 		body = fmt.Sprintf("%s wants to schedule %s", asking, target)
+	case remoteapproval.KindTemplate:
+		body = asking + " wants to change a prompt template"
 	}
 	ttl := int(p.deadline.Sub(p.opened).Seconds())
 	if ttl < 1 {

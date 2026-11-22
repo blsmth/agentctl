@@ -113,7 +113,9 @@ type DispatchRequest struct {
 	Instructions string
 	// SkipReview launches as if config pr_review were off.
 	SkipReview bool
-	Model      string
+	// Template is the display-only name of the template the prompt came from.
+	Template string
+	Model    string
 	// Backend and Effort are the launch overrides, already resolved the way
 	// the launch popup does ("" = agent config).
 	Backend    string
@@ -335,6 +337,7 @@ func (d launchDispatcher) Dispatch(req DispatchRequest) (DispatchResult, error) 
 			PRReview:          prReview,
 			Prompt:            req.Prompt,
 			ExtraInstructions: req.Instructions,
+			Template:          req.Template,
 			AgentName:         req.Agent,
 			WorkDir:           req.Dir,
 			Model:             req.Model,
