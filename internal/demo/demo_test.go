@@ -15,6 +15,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/cron"
+	"github.com/blsmth/agentctl/internal/launchd"
 	"github.com/blsmth/agentctl/internal/transcript"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
@@ -238,6 +240,12 @@ func TestApplyWindow(t *testing.T) {
 					t.Errorf("LastToolDetail = %q", ws.LastToolDetail)
 				}
 			}},
+		{"scheduled", Window{Key: "c", Project: "p", Agent: "code-reviewer", Mode: "adhoc", State: "working", ScheduledBy: "pr-babysit"},
+			func(t *testing.T, ws windowstate.WindowState) {
+				if ws.ScheduledBy != "pr-babysit" || !ws.ScheduledAt.Equal(since) {
+					t.Errorf("scheduled_by %q at %v", ws.ScheduledBy, ws.ScheduledAt)
+				}
+			}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -360,6 +368,53 @@ func TestWriteWorld(t *testing.T) {
 	}
 	if agent, _ := os.ReadFile(filepath.Join(l.ClaudeDir(), "agents", "orchestrator.md")); !bytes.Contains(agent, []byte("role: orchestrator")) {
 		t.Errorf("orchestrator agent lacks its role:\n%s", agent)
+	}
+}
+
+func TestWriteWorldSchedules(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	l, err := NewLayout(filepath.Join(t.TempDir(), "agentctl-demo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene := "config:\n  cron: true\nschedules:\n" +
+		"  - {name: nightly, project: acme-api, agent: docs-writer, schedule: \"30 2 * * *\", prompt: Bump deps., runs: [{ago: 4h, result: \"failed:launch\", note: boom}]}\n" +
+		"  - {name: weekly, project: acme-api, agent: go-engineer, schedule: \"0 9 * * 1\", prompt: Docs., paused: true}\n" +
+		strings.Replace(minimalScene, "state: working", "state: working\n    scheduled_by: nightly", 1)
+	s, err := ParseScene([]byte(scene))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := WriteWorld(l, s, t.TempDir(), now); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := cron.LoadJobs(filepath.Join(l.ConfigHome(), "agentctl", cron.SchedulesFile))
+	if err != nil || len(jobs.Jobs) != 2 {
+		t.Fatalf("jobs = %+v, %v", jobs, err)
+	}
+	if j := jobs.Jobs[0]; j.Dir != l.Repo("acme-api") || j.Schedule != "30 2 * * *" || !j.IsEnabled() || j.Validate() != nil {
+		t.Errorf("nightly = %+v", j)
+	}
+	if jobs.Jobs[1].IsEnabled() {
+		t.Error("weekly should be paused")
+	}
+	runs, err := cron.ReadRuns(filepath.Join(l.StateHome(), "agentctl", "cron"), "nightly")
+	if err != nil || len(runs) != 1 || runs[0].Result != "failed:launch" || runs[0].Note != "boom" {
+		t.Errorf("runs = %+v, %v", runs, err)
+	}
+	if _, err := os.Stat(launchd.PlistPath(l.Home(), cron.LaunchdLabel)); err != nil {
+		t.Errorf("placeholder ticker plist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(l.ClaudeDir(), "agents", "docs-writer.md")); err != nil {
+		t.Errorf("a schedule's agent has no agent file: %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(l.ConfigHome(), "agentctl", "config.json"))
+	var cfg config.Config
+	if err := json.Unmarshal(data, &cfg); err != nil || !cfg.Cron.EnabledOrDefault() {
+		t.Errorf("config.cron = %s", data)
 	}
 }
 

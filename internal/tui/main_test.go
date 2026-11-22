@@ -10,6 +10,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/blsmth/agentctl/internal/cron"
+	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/servectl"
 	"github.com/blsmth/agentctl/internal/sweeprun"
@@ -64,6 +66,19 @@ func TestMain(m *testing.M) {
 	tkLoadAutoPoll = func() (bool, time.Duration) { return false, 5 * time.Minute }
 	tkWriteAutoPoll = func(bool) error { return errExecDisabled }
 	tkEditorCmd = func(string) *exec.Cmd { return nil }
+	// Never read or write the real schedules, run `agentctl cron run`, close
+	// the real viewer pane or exec an editor; schedule tests install their
+	// own stubs.
+	fleetSchedStore = func(func(string, string) error) cronedit.Store {
+		disabled := func() (string, error) { return "", errors.New("schedules disabled in tests") }
+		return cronedit.Store{JobsPath: disabled, StateDir: disabled, SchedulerInstalled: func() bool { return true }}
+	}
+	fleetSchedRun = func(context.Context, string) (cron.Entry, error) {
+		return cron.Entry{}, errors.New("cron run disabled in tests")
+	}
+	fleetSchedHideViewer = func() error { return nil }
+	fleetSchedPermMode = func(string) string { return "auto" }
+	fleetSchedExec = func(*exec.Cmd, tea.ExecCallback) tea.Cmd { return nil }
 	code := m.Run()
 	cleanup()
 	os.Exit(code)

@@ -71,6 +71,7 @@ var fleetFooterHints = []fleetHint{
 var fleetNewHints = []fleetHint{
 	{"s", "shell"},
 	{"a", "agent"},
+	{"t", "schedule"},
 	{"esc", "cancel"},
 }
 
@@ -123,6 +124,8 @@ func (m FleetModel) footerBody(cw int) string {
 		b.WriteString(fleetBlockedStyle.Render(truncateToWidth(text+"   esc", cw)))
 	case m.sweepArmed():
 		b.WriteString(fleetBlockedStyle.Render("  " + m.sweepPrompt(cw-2)))
+	case m.schedConfirm != nil:
+		b.WriteString(fleetBlockedStyle.Render("  " + truncateToWidth(m.schedConfirmPrompt(), cw-2)))
 	case m.jumpErr != "":
 		b.WriteString(fleetErrStyle.Render("  " + truncateToWidth(m.jumpErr, cw-2)))
 	case m.infoMsg != "" && m.infoOK:
@@ -146,6 +149,17 @@ func (m FleetModel) footerBody(cw int) string {
 		hints = fleetNewHints
 	case m.sweepArmed():
 		hints = fleetSweepHints
+	case m.schedFormOpen() && (m.schedForm.review || m.schedForm.discard):
+		hints = fleetSchedYesNoHints
+		if m.schedForm.review {
+			hints = fleetSchedReviewHints
+		}
+	case m.schedFormOpen():
+		hints = fleetSchedFormHints
+	case m.schedConfirm != nil:
+		hints = fleetSchedYesNoHints
+	case m.selectedSchedLineValue() != nil:
+		hints = m.schedHints()
 	}
 	b.WriteString(fitHints(hints, cw))
 	return b.String()
@@ -192,6 +206,8 @@ func fleetHelpItems() []fleetHelpItem {
 		{"o", "sort recent", "o"},
 		{fleetShellsKey, "shells", fleetShellsKey},
 		{fleetClosedKey, "closed agents", fleetClosedKey},
+		{fleetSchedulesKey, "schedules", fleetSchedulesKey},
+		{"e/space/g/d/x", "schedule row: edit/pause/run/dup/delete", ""},
 		{fleetServeKey, "serve on/off", fleetServeKey},
 		{"q", "leave", "q"},
 		{"esc", "close help", "?"},

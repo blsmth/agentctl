@@ -18,11 +18,12 @@ terminal:                             # all optional
   hub_left: 95                        # hub list width in columns (the live hub caps it at 56 otherwise); default: unset
   padding: 20                         # px, default 20
 
-config:                               # optional; network, notifications, monitor, titles, metrics and cron are always off
+config:                               # optional; network, notifications, monitor, titles and metrics are always off
   theme: catppuccin-mocha             # agentctl theme (see `agentctl` theme picker); default: agentctl's default
   dispatch_approval: all              # all (default) | non-review | off
   serve: true                         # fake a running `agentctl serve` so the hub shows "📱 serve" (a stub on a socket in the demo's state dir); default false
   statusline_format: rich             # rich | complementary | full | mobile | minimal; default: agentctl's default
+  cron: true                          # set cron.enabled (default false). No ticker is installed and claude is stubbed, so nothing fires either way; true only drops the hub's "cron is off" warning
 
 projects:                             # at least one; each becomes ~/code/<name> and session agentctl-<name>
   - name: acme-api                    # lowercase letters, digits, dashes
@@ -70,6 +71,19 @@ windows:                              # in tmux order per project
     spinner: "Testing… (41s · ↓ 1.2k tokens · esc to interrupt)"   # working only
     transcript: rate-limiter          # fixture demo/transcripts/<name>.yaml, or an inline transcript (below)
     approval: agentctl dispatch ...   # Enter in this pane runs the real hook-validate-bash with this command
+    scheduled_by: nightly-deps        # a schedule's name: the window was launched by that cron job (⏲ tag, the job's running window)
+
+schedules:                            # optional `agentctl cron` jobs for the hub's Schedules section (T)
+  - name: nightly-deps                # cron job name rules
+    project: billing-svc              # must be in projects; the job's dir is its checkout
+    agent: go-engineer                # a fake agent file is written for it
+    schedule: "30 2 * * *"            # 5-field cron or @daily etc.
+    prompt: Bump the dependencies.    # required
+    paused: false                     # default false
+    worktree: true                    # default true
+    timeout: 45m                      # optional Go duration
+    runs:                             # runs.ndjson entries, oldest first
+      - {ago: 4h, result: "failed:launch", note: "worktree exists"}   # fired | failed:<reason> | skipped:<kind> | timeout
 
 steps:                                # one action per step
   - attach: orch                      # attach the vhs client to a window (later attaches switch-client)

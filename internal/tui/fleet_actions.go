@@ -283,12 +283,15 @@ func (m *FleetModel) handleNewKey(key string) (cmd tea.Cmd, handled bool) {
 	g := m.groupForSession(m.newSession)
 	if g == nil || !groupCanLaunch(*g) {
 		m.cancelNew()
-		return nil, key == "s" || key == "a" || key == "enter" || key == "esc" || key == "n"
+		return nil, key == "s" || key == "a" || key == "t" || key == "enter" || key == "esc" || key == "n"
 	}
 	switch key {
 	case "s":
 		m.cancelNew()
 		return m.shellForGroup(g), true
+	case "t":
+		m.cancelNew()
+		return m.openSchedForm(schedFormNew, nil, g.ProjectDir), true
 	case "a", "enter":
 		m.cancelNew()
 		return m.launchForGroup(g), true
@@ -352,6 +355,9 @@ func (m *FleetModel) fleetMenuItems(idx int) []fleetMenuItem {
 	}
 	if m.lines[idx].kind == fleetLineClosed {
 		return closedMenuItems(m.lines[idx].closed)
+	}
+	if m.lines[idx].kind == fleetLineSchedule {
+		return schedMenuItems(m.lines[idx])
 	}
 	var items []fleetMenuItem
 	g := m.groupOfLine(idx)
@@ -420,6 +426,11 @@ func (m *FleetModel) openMenu(idx int) {
 func (m *FleetModel) runMenuKey(key string) tea.Cmd {
 	line := m.menuLine
 	m.closeMenu()
+	if line >= 0 && line < len(m.lines) && m.lines[line].kind == fleetLineSchedule {
+		m.selectLine(line)
+		cmd, _ := m.scheduleKey(key)
+		return cmd
+	}
 	switch key {
 	case "enter":
 		if line >= 0 && line < len(m.lines) && m.lines[line].kind == fleetLineClosed {

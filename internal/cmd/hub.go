@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/blsmth/agentctl/internal/cliout"
+	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/selfexec"
@@ -34,7 +35,9 @@ func RunHub(client string) {
 // executes *inside* the hub session's sole window — mirrors how `agentctl
 // tickets --tui` is launched inside its own dedicated window.
 func RunHubView() {
-	model := tui.NewFleetModel()
+	// The Schedules section validates agents the way dispatch does
+	// (internal/tui cannot import internal/dispatch).
+	model := tui.NewFleetModel().WithScheduleAgentCheck(dispatch.ValidateAgentName)
 	for {
 		final, err := tea.NewProgram(model).Run()
 		if err != nil {

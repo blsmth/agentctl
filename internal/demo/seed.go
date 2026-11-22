@@ -148,6 +148,9 @@ func applyWindow(ws *windowstate.WindowState, l Layout, w Window, t *Transcript,
 		ws.PRURL = PRURL(w.Project, w.PR)
 	}
 	ws.SpawnedBy, ws.SpawnedBySession = parent.WindowID, parent.SessionID
+	if w.ScheduledBy != "" {
+		ws.ScheduledBy, ws.ScheduledAt = w.ScheduledBy, since
+	}
 
 	switch w.State {
 	case "done":

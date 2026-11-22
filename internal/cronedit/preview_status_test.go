@@ -151,6 +151,20 @@ func TestDetail(t *testing.T) {
 	if d.PromptResolved != "text of spec-237" || len(d.Runs) != DetailRuns || d.Runs[0].Time.Before(d.Runs[1].Time) {
 		t.Errorf("detail = %+v", d)
 	}
+	want := NextFires(j.Schedule, "keyed", *ts.now, PreviewFires)
+	if len(want) != PreviewFires || !slices.EqualFunc(d.NextFires, want, time.Time.Equal) || len(d.NextFiresText) != PreviewFires ||
+		d.NextFiresText[0] != want[0].In(time.Local).Format(cron.NextFireFormat) {
+		t.Errorf("next fires = %v %v, want %v", d.NextFires, d.NextFiresText, want)
+	}
+	if _, err := ts.SetEnabled("keyed", false); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := ts.Detail("keyed"); len(d.NextFires) != 0 || d.NextFiresText == nil {
+		t.Errorf("paused job next fires = %v %v", d.NextFires, d.NextFiresText)
+	}
+	if _, err := ts.SetEnabled("keyed", true); err != nil {
+		t.Fatal(err)
+	}
 	ts.ResolvePromptKey = func(string) (string, error) { return "", errors.New("missing") }
 	if d, _ := ts.Detail("keyed"); d.PromptKeyError != "missing" {
 		t.Errorf("key error = %q", d.PromptKeyError)

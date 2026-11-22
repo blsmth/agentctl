@@ -15,6 +15,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/closedlog"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/hubtarget"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -317,6 +318,8 @@ const (
 	fleetLineSubheader                        // a non-selectable "dispatched (N)" label
 	fleetLineClosedLabel                      // a non-selectable Closed section or project label
 	fleetLineClosed                           // a selectable closed (ledger) row; see fleet_closed.go
+	fleetLineSchedLabel                       // a non-selectable Schedules label or warning; see fleet_schedules.go
+	fleetLineSchedule                         // a selectable cron job row (or "+ new schedule")
 )
 
 // fleetLine is one renderable line. Every kind except fleetLineDivider is also
@@ -337,12 +340,17 @@ type fleetLine struct {
 	dimmed bool
 	// closed is the ledger record of a fleetLineClosed row.
 	closed closedlog.Record
+	// sched is the job of a fleetLineSchedule row; schedNew marks the
+	// "+ new schedule" line and schedWarn a warning label.
+	sched     cronedit.Status
+	schedNew  bool
+	schedWarn bool
 }
 
 // selectable reports whether the cursor may rest on this line. Dividers and
 // sub-section labels are decoration only.
 func (l fleetLine) selectable() bool {
-	return l.kind != fleetLineDivider && l.kind != fleetLineSubheader && l.kind != fleetLineClosedLabel
+	return l.kind != fleetLineDivider && l.kind != fleetLineSubheader && l.kind != fleetLineClosedLabel && l.kind != fleetLineSchedLabel
 }
 
 // ── FleetModel ────────────────────────────────────────────────────────────────
@@ -402,6 +410,9 @@ type FleetModel struct {
 	// selection is not a closed row; selSession is then empty, so the live
 	// viewer is never handed a window that no longer exists).
 	selClosed string
+	// selSchedule is the selected schedule line's job name (or
+	// fleetSchedNewSel); like selClosed, selSession is then empty.
+	selSchedule string
 
 	// lastSelection is the selection last written to the hub selection file
 	// for the follow-hub HUD (selPublished: one has been written). See
@@ -534,8 +545,20 @@ type FleetModel struct {
 	showClosed  bool
 	closed      []closedlog.Record
 	closedCache *closedlog.Cache
-	filter      fleetFilter
-	viewPath    string
+	// showSchedules shows the Schedules section (fleetSchedulesKey,
+	// fleet_schedules.go); sched is its data, schedForm the open form,
+	// schedConfirm an armed run/delete y/n. schedPaneOn records that the
+	// card or form took the viewer's place (schedPrevLive is what the viewer
+	// showed). schedAgentCheck is the injected agent validation.
+	showSchedules   bool
+	sched           fleetSchedState
+	schedForm       *fleetSchedForm
+	schedConfirm    *fleetSchedConfirm
+	schedPaneOn     bool
+	schedPrevLive   string
+	schedAgentCheck func(name, dir string) error
+	filter          fleetFilter
+	viewPath        string
 	// orderPath is the saved group order (see fleet_order.go); "" persists
 	// nothing. drag is a pending or active header drag.
 	orderPath string
@@ -711,7 +734,7 @@ func newFleetModel() FleetModel {
 
 // Init kicks off the first load and starts the poll loop.
 func (m FleetModel) Init() tea.Cmd {
-	return tea.Batch(fleetLoadCmd(), fleetTickCmd(), fleetZoomSyncCmd(m.hubChrome), fleetServeProbeOnce(), m.closedLoadCmd())
+	return tea.Batch(fleetLoadCmd(), fleetTickCmd(), fleetZoomSyncCmd(m.hubChrome), fleetServeProbeOnce(), m.closedLoadCmd(), m.schedLoadCmd())
 }
 
 // fleetServeProbeOnce is the first serve probe. Init has a value receiver,
@@ -748,6 +771,9 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
 	if fm, ok := next.(FleetModel); ok {
 		fm.publishSelection()
+		if pane := fm.syncSchedPane(); pane != nil {
+			cmd = tea.Batch(cmd, pane)
+		}
 		return fm, cmd
 	}
 	return next, cmd
@@ -762,6 +788,11 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, fleetProbeCmd(msg.Width)
 
 	case fleetProbeMsg:
+		if m.schedPaneOn {
+			// The hub pane spans the window while the schedules pane is up;
+			// its resizes are the viewer closing, not a divider drag.
+			return m, nil
+		}
 		if msg.win == m.liveWinWidth && fleetNow().Before(m.paneQuietUntil) {
 			return m, nil // the activity pane reflowed the split
 		}
@@ -790,20 +821,47 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case fleetTickMsg:
 		m.expireInfo(fleetNow())
-		// A hot reload waits for an open rename editor: it would lose the
-		// typed text.
-		if m.exeChanged != nil && !m.renameOpen() && m.exeChanged() {
+		// A hot reload waits for an open rename editor or schedule form: it
+		// would lose the typed text.
+		if m.exeChanged != nil && !m.renameOpen() && !m.schedFormOpen() && m.exeChanged() {
 			m.reexec = true
 			return m, tea.Quit
 		}
 		refreshThemeIfChanged()
 		show := m.maybeShowCmd()
 		probe := m.serveProbeCmd()
-		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome), probe, m.activityPollCmd(), m.closedLoadCmd())
+		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome), probe, m.activityPollCmd(), m.closedLoadCmd(), m.schedTickCmd())
 
 	case fleetClosedLoadedMsg:
 		m.applyClosedLoaded(msg)
 		return m, nil
+
+	case fleetSchedLoadedMsg:
+		m.applySchedLoaded(msg)
+		return m, nil
+
+	case fleetSchedDetailMsg:
+		m.applySchedDetail(msg)
+		return m, nil
+
+	case fleetSchedWroteMsg:
+		return m, m.applySchedWrote(msg)
+
+	case fleetSchedRanMsg:
+		return m, m.applySchedRan(msg)
+
+	case fleetSchedPreviewMsg:
+		m.applySchedPreview(msg)
+		return m, nil
+
+	case fleetSchedSavedMsg:
+		return m, m.applySchedSaved(msg)
+
+	case fleetSchedEditorMsg:
+		return m, m.applySchedEditor(msg)
+
+	case fleetSchedViewerHiddenMsg:
+		return m, m.applySchedViewerHidden()
 
 	case fleetActivityOpenedMsg:
 		return m, m.applyActivityOpened(msg)
@@ -833,6 +891,12 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.jumpErr = msg.err.Error()
 		return m, nil
 	case fleetLiveMsg:
+		if m.schedPaneOn {
+			// A show that was in flight when the schedules pane took over:
+			// close the viewer it opened again and keep the old split.
+			m.liveShown = ""
+			return m, fleetSchedHideCmd()
+		}
 		if msg.hidden {
 			// The activity pane replaces the viewer at this window width.
 			m.liveShown = ""
@@ -976,6 +1040,9 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		m.hideCard()
+		if m.schedFormOpen() {
+			return m, nil // the form owns input until it closes
+		}
 		return m.pressHeader(msg)
 
 	case tea.MouseReleaseMsg:
@@ -1002,6 +1069,9 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMotion(msg)
 
 	case tea.PasteMsg:
+		if m.schedFormOpen() {
+			return m, m.pasteSchedForm(msg)
+		}
 		if m.newSessionOpen() {
 			var cmd tea.Cmd
 			m.dirPrompt.input, cmd = m.dirPrompt.input.Update(msg)
@@ -1037,6 +1107,14 @@ func (m *FleetModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.renameOpen() {
 		return *m, m.handleRenameKey(msg)
+	}
+	if m.schedFormOpen() {
+		return *m, m.handleSchedFormKey(msg)
+	}
+	if m.schedConfirm != nil {
+		if cmd, handled := m.handleSchedConfirmKey(key); handled {
+			return *m, cmd
+		}
 	}
 	if m.menuOpen && m.menuHelp {
 		// The key reference closes on any key; a binding it lists then runs
@@ -1092,6 +1170,9 @@ func (m *FleetModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // runKey runs the hub binding for key (as tea.KeyPressMsg.String() spells
 // it). Shared by the keyboard and the clickable "?" key reference.
 func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
+	if cmd, handled := m.scheduleKey(key); handled {
+		return *m, cmd
+	}
 	switch key {
 	case "?":
 		m.openHelp()
@@ -1162,7 +1243,7 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 	case "r":
 		m.jumpErr = ""
 		m.clearInfo()
-		return *m, fleetLoadCmd()
+		return *m, tea.Batch(fleetLoadCmd(), m.schedLoadCmd())
 
 	case "c":
 		return *m, m.toggleChrome()
@@ -1192,6 +1273,9 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 
 	case fleetClosedKey:
 		return *m, m.toggleClosed()
+
+	case fleetSchedulesKey:
+		return *m, m.toggleSchedules()
 
 	case fleetServeKey:
 		return *m, m.toggleServe()
@@ -1355,12 +1439,20 @@ func (m *FleetModel) liveShowCmd() tea.Cmd {
 	if m.activity.hidesViewer {
 		return nil // the activity pane has the viewer's place
 	}
-	key := m.selSession + "|" + m.selWindowID
+	return m.liveShowFor(m.selSession, m.selWindowID)
+}
+
+// liveShowFor hands session's window to the live viewer unless it is
+// already the one shown.
+func (m *FleetModel) liveShowFor(session, window string) tea.Cmd {
+	if m.activity.hidesViewer {
+		return nil
+	}
+	key := session + "|" + window
 	if key == m.liveShown {
 		return nil
 	}
 	m.liveShown = key
-	session, window := m.selSession, m.selWindowID
 	fallback, userLeft := m.termWidth, m.userLeft
 	shown := m.hubChrome
 	activity, userAct := m.activity.open(), m.activity.userWidth
@@ -1377,7 +1469,9 @@ func (m *FleetModel) liveShowCmd() tea.Cmd {
 			}
 		}
 		if err == nil {
+			fleetViewerMu.Lock()
 			err = showLiveViewer(session, window, right)
+			fleetViewerMu.Unlock()
 			if err == nil {
 				hubZoomSync(!shown)
 			}
@@ -1443,15 +1537,21 @@ func (m *FleetModel) syncSelectionFromCursor() {
 		if m.menuOpen && m.splitPane.Cursor() != m.menuLine {
 			m.closeMenu()
 		}
+		if m.schedConfirm != nil && (m.selSchedule != m.schedConfirm.name) {
+			m.schedConfirm = nil
+		}
+		if m.sched.detailName != "" && m.selSchedule != m.sched.detailName {
+			m.sched.detail, m.sched.detailName = nil, ""
+		}
 	}()
 	idx := m.splitPane.Cursor()
 	if idx < 0 || idx >= len(m.lines) {
-		m.selSession, m.selWindowID, m.selIsHeader, m.selClosed = "", "", false, ""
+		m.selSession, m.selWindowID, m.selIsHeader, m.selClosed, m.selSchedule = "", "", false, "", ""
 		return
 	}
 	l := m.lines[idx]
-	if l.kind != fleetLineDivider && l.kind != fleetLineSubheader && l.kind != fleetLineClosedLabel {
-		m.selClosed = ""
+	if l.selectable() {
+		m.selClosed, m.selSchedule = "", ""
 	}
 	switch l.kind {
 	case fleetLineRow:
@@ -1461,7 +1561,10 @@ func (m *FleetModel) syncSelectionFromCursor() {
 	case fleetLineClosed:
 		m.selSession, m.selWindowID, m.selIsHeader = "", "", false
 		m.selClosed = l.closed.Key()
-	case fleetLineDivider, fleetLineSubheader, fleetLineClosedLabel:
+	case fleetLineSchedule:
+		m.selSession, m.selWindowID, m.selIsHeader = "", "", false
+		m.selSchedule = schedLineKey(l)
+	case fleetLineDivider, fleetLineSubheader, fleetLineClosedLabel, fleetLineSchedLabel:
 		// Unreachable in practice — moveCursor/resolveSelection never park
 		// the cursor on a divider or subheader — but defend against adopting a
 		// divider's zero-value Group as the selection rather than leaving
@@ -1545,6 +1648,28 @@ func (m *FleetModel) resolveSelection() {
 		m.selClosed = ""
 	}
 
+	if m.selSchedule != "" {
+		for i, l := range m.lines {
+			if l.kind == fleetLineSchedule && schedLineKey(l) == m.selSchedule {
+				m.splitPane.SetCursor(i)
+				m.syncSelectionFromCursor()
+				m.ensureCursorVisible()
+				return
+			}
+		}
+		// The job is gone (deleted, or the list is still loading): stay in
+		// the section on its first row.
+		for i, l := range m.lines {
+			if l.kind == fleetLineSchedule {
+				m.splitPane.SetCursor(i)
+				m.syncSelectionFromCursor()
+				m.ensureCursorVisible()
+				return
+			}
+		}
+		m.selSchedule = ""
+	}
+
 	if m.selSession != "" {
 		for i, l := range m.lines {
 			if m.selIsHeader {
@@ -1598,7 +1723,7 @@ func (m *FleetModel) resolveSelection() {
 		}
 	}
 
-	m.selSession, m.selWindowID, m.selIsHeader, m.selClosed = "", "", false, ""
+	m.selSession, m.selWindowID, m.selIsHeader, m.selClosed, m.selSchedule = "", "", false, "", ""
 }
 
 func (m *FleetModel) visibleLines() int {
@@ -1807,6 +1932,12 @@ func (m *FleetModel) rebuildLines() {
 		}
 		lines = append(lines, closed...)
 	}
+	if sched := m.schedLines(); len(sched) > 0 {
+		if len(lines) > 0 {
+			lines = append(lines, fleetLine{kind: fleetLineDivider})
+		}
+		lines = append(lines, sched...)
+	}
 	m.lines = lines
 	// The usual model is fleet-wide; column widths come from drawn rows only,
 	// so a folded or filtered-out row cannot cost visible rows their age.
@@ -1860,7 +1991,7 @@ func (m FleetModel) render() string {
 	if m.card != nil {
 		out = m.withCard(out)
 	}
-	return out
+	return m.withSchedPane(out)
 }
 
 // renderHeader renders the title line and the row below it, which is blank
@@ -2019,7 +2150,7 @@ func (m FleetModel) renderStatusOrEmpty() (string, bool) {
 		return fleetDimStyle.Render("  loading…") + "\n", true
 	case m.loadErr != nil:
 		return fleetErrStyle.Render(fmt.Sprintf("  error loading sessions: %v", m.loadErr)) + "\n", true
-	case len(m.groups) == 0:
+	case len(m.groups) == 0 && !m.showSchedules:
 		return fleetDimStyle.Render("  no agentctl sessions running") + "\n", true
 	}
 	return "", false
@@ -2041,6 +2172,15 @@ func (m FleetModel) renderList() string {
 
 	if status, isStatus := m.renderStatusOrEmpty(); isStatus {
 		b.WriteString(status)
+	} else if m.schedFormReplacesList() {
+		// No room beside the list: the form takes the list's rows.
+		visible := m.visibleLines()
+		lines := fitPane(m.schedFormLines(cw-4, visible-1), cw-1, visible, 2)
+		for _, l := range lines {
+			b.WriteString(l)
+			b.WriteString("\n")
+		}
+		b.WriteString(strings.Repeat("\n", max(visible-len(lines), 0)))
 	} else {
 		visible := m.visibleLines()
 		used := 0
@@ -2055,7 +2195,7 @@ func (m FleetModel) renderList() string {
 			}
 		}
 		if pad := visible - used; pad > 0 {
-			if m.liveShown == "" && !m.activity.hidesViewer {
+			if m.liveShown == "" && !m.activity.hidesViewer && !m.schedPaneActive() {
 				b.WriteString(fleetDimStyle.Render("  " + truncateToWidth(fleetNoViewHint, cw-2)))
 				b.WriteString("\n")
 				pad--
@@ -2084,7 +2224,7 @@ func (m FleetModel) shownEnd(cw int) int {
 func (m FleetModel) hiddenRows(from, to int) (rows, other int) {
 	for i := max(from, 0); i < min(to, len(m.lines)); i++ {
 		switch m.lines[i].kind {
-		case fleetLineRow, fleetLineClosed:
+		case fleetLineRow, fleetLineClosed, fleetLineSchedule:
 			rows++
 		case fleetLineHeader, fleetLinePlaceholder:
 			other++
@@ -2153,10 +2293,21 @@ func (m FleetModel) renderLine(i int, cw int) string {
 		return renderClosedLabel(l, cw)
 	case fleetLineClosed:
 		return renderClosedRow(l.closed, selected, cw)
+	case fleetLineSchedLabel:
+		return renderSchedLabel(l, cw)
+	case fleetLineSchedule:
+		return m.renderSchedRow(l, selected, cw)
 	case fleetLineSubheader:
 		// The group's bar keeps the spine unbroken; the label aligns under
 		// agent names: bar + cursor slot + glyph + space.
-		return fleetProjectBar(l.group.Project) + strings.Repeat(" ", fleetDetailIndent-1) + fleetDimStyle.Render(l.label)
+		label := fleetProjectBar(l.group.Project) + strings.Repeat(" ", fleetDetailIndent-1) + fleetDimStyle.Render(l.label)
+		if strings.HasPrefix(l.label, "scheduled") && !m.showSchedules {
+			hint := fleetDimStyle.Render(" · ") + menuHintKeyStyle.Render(fleetSchedulesKey) + fleetDimStyle.Render(" schedules")
+			if lipgloss.Width(label)+lipgloss.Width(hint) <= cw-fleetSidebarRightGutter {
+				label += hint
+			}
+		}
+		return label
 	default: // fleetLineRow
 		out := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, selected, m.hover.region(i), cw)
 		if l.dimmed && !selected && m.hover.region(i) == fleetHoverNone {
