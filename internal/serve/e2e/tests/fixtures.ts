@@ -39,6 +39,8 @@ export type FixtureWindow = {
   recap?: string;
   recap_source?: "summary" | "task" | "title" | "activity";
   short_title?: string;
+  prompt?: string;
+  task?: string;
   short_kind?: string;
 };
 

@@ -442,6 +442,7 @@ func Launch(req Request) (Result, error) {
 				ws.TicketTitle = req.TicketTitle
 			} else if task := TaskFor(req); task != "" {
 				ws.Task = task
+				ws.Prompt = windowstate.CapPrompt(PromptFor(req))
 			}
 			ws.Mode = string(req.Mode)
 			if req.ScheduledBy != "" {
@@ -1188,6 +1189,15 @@ func orchestratorFor(windowID, envSessionID string, read func(string) (windowsta
 		o.Name = ws.SessionName
 	}
 	return o
+}
+
+// PromptFor returns the full initial prompt of an ad-hoc dispatch (the review
+// focus prompt for a PR review), or "" for ticket dispatches.
+func PromptFor(req Request) string {
+	if req.Ticket > 0 {
+		return ""
+	}
+	return strings.TrimSpace(req.CustomPrompt)
 }
 
 // taskLineMax is the rune budget for the recorded ad-hoc task line.

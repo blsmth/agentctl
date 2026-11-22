@@ -57,6 +57,7 @@ type AgentState struct {
 	TicketTitle      string `json:"ticket_title,omitempty"`
 	Task             string `json:"task,omitempty"`         // ad-hoc dispatch task line (windowstate Task)
 	FirstPrompt      string `json:"first_prompt,omitempty"` // first user prompt of a bare window (windowstate FirstPrompt)
+	Prompt           string `json:"prompt,omitempty"`       // full ad-hoc dispatch prompt (windowstate Prompt)
 	Branch           string `json:"branch,omitempty"`
 	WorktreeDir      string `json:"worktree_dir,omitempty"`
 	SpawnedBy        string `json:"spawned_by,omitempty"`

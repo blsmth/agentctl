@@ -481,3 +481,37 @@ test("a screenshot can be removed before sending", async ({ page }) => {
   await page.getByRole("button", { name: "Remove image" }).tap();
   await expect(page.locator(".actions .thumb")).toHaveCount(0);
 });
+
+test("header: tapping the task line shows the full prompt, again collapses, and a poll keeps it open", async ({ page, control }) => {
+  const prompt = "Cover the cart service\n\nWrite table tests for totals.\n  Keep <b>markup</b> literal.\n" + "more detail line\n".repeat(60);
+  // An ad-hoc window: no ticket title or issue, a summary recap in place.
+  await control.patchWindow(SHOP, "@13", { title: "", issue: 0, mode: "adhoc", task: "Cover the cart service", prompt, recap: "Writing table tests.", recap_source: "summary" });
+  await openWindow(page, "@13");
+  await expect(page.locator(".win-recap")).toHaveText("Writing table tests.");
+  const task = page.locator(".win-task");
+  await expect(task).toHaveClass(/\bexpandable\b/);
+  const short = (await task.textContent()) ?? "";
+  await task.tap();
+  await expect(task).toHaveClass(/\bopen\b/);
+  await expect(task).toContainText("Write table tests for totals.");
+  await expect(task).toContainText("Keep <b>markup</b> literal.");
+  expect(await task.evaluate((e) => getComputedStyle(e).whiteSpace)).toBe("pre-wrap");
+  expect(await task.evaluate((e) => e.scrollHeight > e.clientHeight)).toBe(true);
+  // Scroll, then let a poll re-render: it stays open and keeps its scroll.
+  await task.evaluate((e) => { e.scrollTop = 40; });
+  await control.patchWindow(SHOP, "@13", { activity: "go vet ./..." });
+  await page.waitForTimeout(1500);
+  await expect(task).toHaveClass(/\bopen\b/);
+  expect(await task.evaluate((e) => e.scrollTop)).toBe(40);
+  await task.tap();
+  await expect(task).not.toHaveClass(/\bopen\b/);
+  await expect(task).toHaveText(short);
+});
+
+test("header: a task line with nothing more to show is not tappable", async ({ page }) => {
+  await openWindow(page, "@13");
+  const task = page.locator(".win-task");
+  await expect(task).not.toHaveClass(/\bexpandable\b/);
+  await task.tap();
+  await expect(task).not.toHaveClass(/\bopen\b/);
+});
