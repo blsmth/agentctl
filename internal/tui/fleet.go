@@ -595,6 +595,7 @@ type FleetModel struct {
 	// titleHolds are just-saved titles shown until a load reflects them, by
 	// "session|windowID".
 	rename     *fleetRenameState
+	lastClick  *fleetLastClick // previous left click on a title, for double-click detection
 	titleHolds map[string]fleetTitleHold
 
 	// activity is the activity pane (see fleet_activity.go). paneQuietUntil
@@ -1101,6 +1102,13 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wheelHold = false
 		return m.handleKey(msg)
 	}
+	if m.renameOpen() {
+		// Cursor blink ticks: only the open editor consumes them, so the loop
+		// ends when it closes.
+		var cmd tea.Cmd
+		m.rename.input, cmd = m.rename.input.Update(msg)
+		return m, cmd
+	}
 	return m, nil
 }
 
@@ -1199,8 +1207,7 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 		return *m, nil
 
 	case fleetRenameKey:
-		m.openRename(m.splitPane.Cursor())
-		return *m, nil
+		return *m, m.openRename(m.splitPane.Cursor())
 
 	case "x":
 		m.startClose(m.splitPane.Cursor())

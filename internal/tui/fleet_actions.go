@@ -446,7 +446,7 @@ func (m *FleetModel) runMenuKey(key string) tea.Cmd {
 	case "n":
 		m.armNew(line)
 	case fleetRenameKey:
-		m.openRename(line)
+		return m.openRename(line)
 	case fleetSweepKey:
 		return m.startSweep(line)
 	case "p":
