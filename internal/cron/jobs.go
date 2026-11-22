@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/agentname"
@@ -182,11 +183,17 @@ func (j Job) FieldErrors() []FieldError {
 	case !filepath.IsAbs(j.Dir):
 		add(FieldDir, "dir %q must be an absolute path", j.Dir)
 	}
-	if !agentname.ValidLaunch(j.Agent) {
+	switch {
+	case strings.TrimSpace(j.Agent) == "":
+		add(FieldAgent, "pick an agent")
+	case !agentname.ValidLaunch(j.Agent):
 		add(FieldAgent, "invalid agent name %q", j.Agent)
 	}
-	if (j.Prompt == "") == (j.PromptKey == "") {
-		add(FieldPrompt, "exactly one of prompt or prompt_key is required")
+	switch {
+	case j.Prompt == "" && j.PromptKey == "":
+		add(FieldPrompt, "write a prompt")
+	case j.Prompt != "" && j.PromptKey != "":
+		add(FieldPrompt, "use a prompt or a prompt key, not both")
 	}
 	if j.Harness != HarnessClaude {
 		add(FieldHarness, "harness %q is not supported yet (only %q)", j.Harness, HarnessClaude)

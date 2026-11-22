@@ -87,6 +87,9 @@ type OverviewInput struct {
 	Runs               []cron.Entry // oldest first, as cron.ReadRuns
 	Windows            []cron.Window
 	SchedulerInstalled bool
+	// Check returns extra problems of a valid job (the pinned model, backend
+	// and account against the real option sets); nil skips it.
+	Check func(cron.Job) []cron.FieldError
 }
 
 // BuildOverview computes the list. It is pure.
@@ -113,15 +116,19 @@ func BuildOverview(in OverviewInput) Overview {
 		}
 	}
 	for _, j := range in.Jobs {
-		o.Jobs = append(o.Jobs, buildStatus(j, in.Now, byJob[j.Name], in.Windows))
+		o.Jobs = append(o.Jobs, buildStatus(j, in.Now, byJob[j.Name], in.Windows, in.Check))
 	}
 	return o
 }
 
-func buildStatus(j cron.Job, now time.Time, runs []cron.Entry, windows []cron.Window) Status {
+func buildStatus(j cron.Job, now time.Time, runs []cron.Entry, windows []cron.Window, check func(cron.Job) []cron.FieldError) Status {
 	st := Status{Name: j.Name, Job: j, Enabled: j.IsEnabled(), Words: cron.Describe(j.Schedule), Windows: []RunningWindow{}}
 	if err := j.Validate(); err != nil {
 		st.Invalid = err.Error()
+	} else if check != nil {
+		if errs := check(normalize(j)); len(errs) > 0 {
+			st.Invalid = errs[0].Message
+		}
 	}
 	if ss, ok := ParseSimple(j.Schedule); ok {
 		st.Simple = &ss
@@ -193,7 +200,7 @@ func (s Store) Overview() (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
-	in := OverviewInput{Now: s.now(), Config: s.config(), Jobs: jobs.Jobs, SchedulerInstalled: s.schedulerInstalled()}
+	in := OverviewInput{Now: s.now(), Config: s.config(), Jobs: jobs.Jobs, SchedulerInstalled: s.schedulerInstalled(), Check: s.optionErrors}
 	if dir, err := s.StateDir(); err == nil {
 		in.Runs, _ = cron.ReadRuns(dir, "")
 	}
@@ -245,7 +252,7 @@ func (s Store) Detail(name string) (Detail, error) {
 	}
 	now := s.now()
 	d := Detail{
-		Status:        buildStatus(job, now, runs, s.windows([]cron.Job{job})),
+		Status:        buildStatus(job, now, runs, s.windows([]cron.Job{job}), s.optionErrors),
 		Runs:          newest(runs, DetailRuns),
 		NextFires:     []time.Time{},
 		NextFiresText: []string{},
