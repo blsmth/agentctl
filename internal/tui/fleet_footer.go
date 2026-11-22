@@ -67,7 +67,7 @@ var fleetFooterHints = []fleetHint{
 	{"?", "more"},
 }
 
-// fleetNewHints replace the footer while the shell | agent selector is armed.
+// fleetNewHints replace the footer while the shell | cron | agent selector is armed.
 var fleetNewHints = []fleetHint{
 	{"s", "shell"},
 	{"a", "agent"},

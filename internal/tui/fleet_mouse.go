@@ -18,7 +18,7 @@ type fleetClickAction int
 const (
 	fleetClickIgnore   fleetClickAction = iota // nothing happens
 	fleetClickSelect                           // move the cursor only, like j/k
-	fleetClickNew                              // header's "+ new" button: arm the shell | agent selector
+	fleetClickNew                              // header's "+ new" button: arm the shell | cron | agent selector
 	fleetClickNewShell                         // armed selector's "shell": open a shell window
 	fleetClickNewAgent                         // armed selector's "agent": launch an agent
 	fleetClickNewCron                          // armed selector's "cron": new schedule in the project
@@ -91,18 +91,19 @@ func (m FleetModel) onNewButton(g fleet.Group, x int) bool {
 }
 
 // selectorSpans returns the [start,end) columns of group g's armed selector
-// labels as drawn. The "|" separators belong to none; cron is the zero span
+// labels as drawn (shell, cron, agent left to right; agent is rightmost). The "|" separators belong to none; cron is the zero span
 // when the header was too narrow to show it.
 func (m FleetModel) selectorSpans(g fleet.Group) (shell, agent, cron [2]int) {
 	spans := m.pointerHeaderSpans(g, m.listColWidth())
 	end := m.listColWidth() - fleetSidebarRightGutter
 	sep := lipgloss.Width(fleetSelSep)
+	agent = [2]int{end - lipgloss.Width(fleetAgentLabel), end}
+	end = agent[0] - sep
 	if spans.cron {
 		cron = [2]int{end - lipgloss.Width(fleetCronLabel), end}
 		end = cron[0] - sep
 	}
-	agent = [2]int{end - lipgloss.Width(fleetAgentLabel), end}
-	shell = [2]int{agent[0] - sep - lipgloss.Width(fleetShellLabel), agent[0] - sep}
+	shell = [2]int{end - lipgloss.Width(fleetShellLabel), end}
 	return shell, agent, cron
 }
 

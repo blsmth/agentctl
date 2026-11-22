@@ -452,7 +452,7 @@ type FleetModel struct {
 	confirmWindow  string
 
 	// newSession/newLine identify the group header whose "+ new" button is
-	// armed as the shell | agent selector (newLine is the cursor line it was
+	// armed as the shell | cron | agent selector (newLine is the cursor line it was
 	// armed from); empty when none. Cleared when the cursor moves off newLine.
 	newSession string
 	newLine    int
@@ -2541,7 +2541,7 @@ func groupCustomSession(g fleet.Group) bool {
 const fleetMinSessionLabel = 6
 
 // renderGroupHeaderHover is renderGroupHeader with a hovered region: the "+ new"
-// button, or one side of the shell | agent selector when it is armed.
+// button, or one side of the shell | cron | agent selector when it is armed.
 //
 // Layout: marker, a ⏸ flag slot (yellow when the group has a blocked agent),
 // the project name, a custom session name when there is one, then the
@@ -2580,7 +2580,7 @@ func (m FleetModel) headerSweepSpan(g fleet.Group, cw int) [2]int {
 }
 
 // headerNewSpan is the [start, end) columns of group g's "+ new" button (or
-// the armed shell | agent selector), or the zero span when it is not shown.
+// the armed shell | cron | agent selector), or the zero span when it is not shown.
 func (m FleetModel) headerNewSpan(g fleet.Group, cw int) [2]int {
 	return m.pointerHeaderSpans(g, cw).add
 }
@@ -2642,7 +2642,7 @@ func sweepLabel(n int) string {
 // The per-state counts sit flush right; buttons, when shown, follow them:
 // "sweep N" only when the group has N > 0 sweepable rows (or its sweep is
 // running or armed), and "+ new" only on the selected or hovered header (or
-// as the armed shell | agent selector). The sweep button is left out while
+// as the armed shell | cron | agent selector). The sweep button is left out while
 // the selector is armed or when it would squeeze the project name below
 // fleetMinSweepName columns; when sweep fits alone but not beside "+ new",
 // the hovered or selected header drops "+ new" instead, so hovering never
@@ -2663,17 +2663,18 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 	armed := m.newArmedFor(g)
 	if groupCanLaunch(g) && (armed || selected || hover != fleetHoverNone) {
 		if armed {
-			shell, agent, cron := fleetDimStyle, fleetDimStyle, fleetDimStyle
+			// Agent is the default (Enter): it is emphasised unless the
+			// pointer is on another choice.
+			shell, agent, cron := fleetDimStyle, fleetNewHoverStyle, fleetDimStyle
 			switch hover {
 			case fleetHoverNewShell:
-				shell = fleetNewHoverStyle
-			case fleetHoverNewAgent:
-				agent = fleetNewHoverStyle
+				shell, agent = fleetNewHoverStyle, fleetDimStyle
 			case fleetHoverNewCron:
-				cron = fleetNewHoverStyle
+				cron, agent = fleetNewHoverStyle, fleetDimStyle
 			}
-			add = shell.Render(fleetShellLabel) + fleetDimStyle.Render(fleetSelSep) + agent.Render(fleetAgentLabel)
-			addCron = add + fleetDimStyle.Render(fleetSelSep) + cron.Render(fleetCronLabel)
+			sep := fleetDimStyle.Render(fleetSelSep)
+			add = shell.Render(fleetShellLabel) + sep + agent.Render(fleetAgentLabel)
+			addCron = shell.Render(fleetShellLabel) + sep + cron.Render(fleetCronLabel) + sep + agent.Render(fleetAgentLabel)
 		} else {
 			style := fleetDimStyle
 			if hover == fleetHoverNew {

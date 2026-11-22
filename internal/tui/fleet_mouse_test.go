@@ -320,7 +320,7 @@ func TestSelectorHitColumns(t *testing.T) {
 	m := armedHeaderModel(t)
 	shell, agent, cron := m.selectorSpans(m.groups[0])
 	end := m.listColWidth() - fleetSidebarRightGutter
-	if cron[1] != end || cron[1]-cron[0] != len(fleetCronLabel) || agent[1]-agent[0] != len(fleetAgentLabel) || shell[1]-shell[0] != len(fleetShellLabel) {
+	if agent[1] != end || cron[1]-cron[0] != len(fleetCronLabel) || agent[1]-agent[0] != len(fleetAgentLabel) || shell[1]-shell[0] != len(fleetShellLabel) {
 		t.Fatalf("spans shell=%v agent=%v cron=%v end=%d", shell, agent, cron, end)
 	}
 	tests := []struct {
@@ -334,16 +334,16 @@ func TestSelectorHitColumns(t *testing.T) {
 		{"shell last col", shell[1] - 1, fleetClickNewShell},
 		{"space after shell", shell[1], fleetClickNewShell},
 		{"pipe", shell[1] + 1, fleetClickSelect},
-		{"space before agent", agent[0] - 1, fleetClickNewAgent},
-		{"agent first col", agent[0], fleetClickNewAgent},
-		{"agent last col", agent[1] - 1, fleetClickNewAgent},
-		{"space after agent", agent[1], fleetClickNewAgent},
-		{"second pipe", agent[1] + 1, fleetClickSelect},
 		{"space before cron", cron[0] - 1, fleetClickNewCron},
 		{"cron first col", cron[0], fleetClickNewCron},
 		{"cron last col", cron[1] - 1, fleetClickNewCron},
-		{"slack right of cron", cron[1], fleetClickNewCron},
-		{"past slack", cron[1] + 1, fleetClickSelect},
+		{"space after cron", cron[1], fleetClickNewCron},
+		{"second pipe", cron[1] + 1, fleetClickSelect},
+		{"space before agent", agent[0] - 1, fleetClickNewAgent},
+		{"agent first col", agent[0], fleetClickNewAgent},
+		{"agent last col", agent[1] - 1, fleetClickNewAgent},
+		{"slack right of agent", agent[1], fleetClickNewAgent},
+		{"past slack", agent[1] + 1, fleetClickSelect},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -498,7 +498,7 @@ func TestSelectorRenderingAndHints(t *testing.T) {
 			t.Errorf("width %d: header %d wide > %d", width, w, cw)
 		}
 		plain := strings.TrimRight(ansi.Strip(out), " ")
-		if !strings.HasSuffix(plain, fleetShellLabel+fleetSelSep+fleetAgentLabel+fleetSelSep+fleetCronLabel) {
+		if !strings.HasSuffix(plain, fleetShellLabel+fleetSelSep+fleetCronLabel+fleetSelSep+fleetAgentLabel) {
 			t.Errorf("width %d: selector truncated: %q", width, plain)
 		}
 		shell, _, _ := m.selectorSpans(m.groups[0])
@@ -653,5 +653,33 @@ func TestSelectorCronNarrow(t *testing.T) {
 	wide := armedHeaderModel(t)
 	if _, _, cron := wide.selectorSpans(wide.groups[0]); cron[1] == 0 {
 		t.Error("cron missing at the default width")
+	}
+}
+
+func TestSelectorAgentIsDefaultStyle(t *testing.T) {
+	m := armedHeaderModel(t)
+	cw := m.listColWidth()
+	g := m.groups[0]
+	tests := []struct {
+		name  string
+		hover fleetHoverRegion
+		want  string // label rendered with the emphasis style
+	}{
+		{"unhovered", fleetHoverNone, fleetAgentLabel},
+		{"header hover", fleetHoverHeader, fleetAgentLabel},
+		{"shell hover", fleetHoverNewShell, fleetShellLabel},
+		{"cron hover", fleetHoverNewCron, fleetCronLabel},
+		{"agent hover", fleetHoverNewAgent, fleetAgentLabel},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := m.renderGroupHeaderHover(g, true, tt.hover, cw)
+			for _, l := range []string{fleetShellLabel, fleetCronLabel, fleetAgentLabel} {
+				emph := fleetNewHoverStyle.Render(l)
+				if got := strings.Contains(out, emph); got != (l == tt.want) {
+					t.Errorf("%q emphasised=%v, want %v", l, got, l == tt.want)
+				}
+			}
+		})
 	}
 }
