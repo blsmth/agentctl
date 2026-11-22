@@ -320,6 +320,7 @@ const (
 	fleetLineClosed                           // a selectable closed (ledger) row; see fleet_closed.go
 	fleetLineSchedLabel                       // a non-selectable Schedules label or warning; see fleet_schedules.go
 	fleetLineSchedule                         // a selectable cron job row (or "+ new schedule")
+	fleetLineSchedHead                        // a selectable, collapsible schedules block header; see fleet_schedgroup.go
 )
 
 // fleetLine is one renderable line. Every kind except fleetLineDivider is also
@@ -347,6 +348,14 @@ type fleetLine struct {
 	sched     cronedit.Status
 	schedNew  bool
 	schedWarn bool
+	// schedBlock is the key of the schedules block a fleetLineSchedHead or
+	// fleetLineSchedule line belongs to (a group's resolved project dir, or
+	// fleetSchedOtherKey; "" for the bottom block's lines when it has no
+	// header); schedDir seeds a "+ new schedule" line's form. A
+	// fleetLineSchedHead uses collapsed and carries its jobs' tally.
+	schedBlock string
+	schedDir   string
+	schedSum   fleetSchedCounts
 }
 
 // selectable reports whether the cursor may rest on this line. Dividers and
@@ -412,8 +421,9 @@ type FleetModel struct {
 	// selection is not a closed row; selSession is then empty, so the live
 	// viewer is never handed a window that no longer exists).
 	selClosed string
-	// selSchedule is the selected schedule line's job name (or
-	// fleetSchedNewSel); like selClosed, selSession is then empty.
+	// selSchedule is the selected schedule line's job name (or a
+	// fleetSchedNewSel / fleetSchedHeadSel key, see schedLineKey); like
+	// selClosed, selSession is then empty.
 	selSchedule string
 
 	// lastSelection is the selection last written to the hub selection file
@@ -576,8 +586,16 @@ type FleetModel struct {
 	schedAgentCheck func(name, dir string) error
 	// schedAgentNames lists the agents the form offers for a project dir.
 	schedAgentNames func(dir string) []string
-	filter          fleetFilter
-	viewPath        string
+	// schedCollapsed is the set of collapsed schedules blocks by block key
+	// (fleet_schedgroup.go), persisted like collapsed; schedHidden maps the
+	// selection key of each schedule line a collapse or fold hides to what
+	// hides it, rebuilt by rebuildLines. schedDirs caches resolved project
+	// and job dirs (shared by the model's copies).
+	schedCollapsed map[string]bool
+	schedHidden    map[string]fleetSchedHider
+	schedDirs      *fleetDirCache
+	filter         fleetFilter
+	viewPath       string
 	// orderPath is the saved group order (see fleet_order.go); "" persists
 	// nothing. drag is a pending or active header drag.
 	orderPath string
@@ -743,6 +761,7 @@ func newFleetModel() FleetModel {
 		liveLeft:    left,
 		liveRight:   right,
 		closedCache: &closedlog.Cache{},
+		schedDirs:   newFleetDirCache(),
 		splitPane: SplitPane{
 			Orientation:   OrientHorizontal,
 			ListRatio:     fleetSidebarRatio,
@@ -1601,7 +1620,7 @@ func (m *FleetModel) syncSelectionFromCursor() {
 	case fleetLineClosed:
 		m.selSession, m.selWindowID, m.selIsHeader = "", "", false
 		m.selClosed = l.closed.Key()
-	case fleetLineSchedule:
+	case fleetLineSchedule, fleetLineSchedHead:
 		m.selSession, m.selWindowID, m.selIsHeader = "", "", false
 		m.selSchedule = schedLineKey(l)
 	case fleetLineDivider, fleetLineSubheader, fleetLineClosedLabel, fleetLineSchedLabel:
@@ -1690,12 +1709,20 @@ func (m *FleetModel) resolveSelection() {
 
 	if m.selSchedule != "" {
 		for i, l := range m.lines {
-			if l.kind == fleetLineSchedule && schedLineKey(l) == m.selSchedule {
+			if (l.kind == fleetLineSchedule || l.kind == fleetLineSchedHead) && schedLineKey(l) == m.selSchedule {
 				m.splitPane.SetCursor(i)
 				m.syncSelectionFromCursor()
 				m.ensureCursorVisible()
 				return
 			}
+		}
+		// The line is hidden in a collapsed block or a folded group: select
+		// what hides it.
+		if i, ok := m.schedHiddenLine(m.selSchedule); ok {
+			m.splitPane.SetCursor(i)
+			m.syncSelectionFromCursor()
+			m.ensureCursorVisible()
+			return
 		}
 		// The job is gone (deleted, or the list is still loading): stay in
 		// the section on its first row.
@@ -1937,6 +1964,8 @@ func (m *FleetModel) rebuildLines() {
 	}()
 	var lines []fleetLine
 	m.hiddenUnder = nil
+	place := m.placeSchedules()
+	m.schedHidden = nil
 	prevBody := false
 	for i, g := range m.groups {
 		all := m.shownRows(g.Rows)
@@ -1949,16 +1978,26 @@ func (m *FleetModel) rebuildLines() {
 			rows, context = filterRows(src, m.filter)
 		}
 		body := !m.isFolded(g.Session) && (len(rows) > 0 || (len(all) == 0 && m.filter == fleetFilterAll))
-		if i > 0 && (body || prevBody) {
+		// The attention filter never hides an unfolded group's schedules.
+		var sched []fleetLine
+		if m.isFolded(g.Session) {
+			m.noteFoldedSched(g, place.keys[i], place.byGroup[i])
+		} else {
+			sched = m.schedGroupLines(g, place.keys[i], place.byGroup[i])
+		}
+		shown := body || len(sched) > 0
+		if i > 0 && (shown || prevBody) {
 			lines = append(lines, fleetLine{kind: fleetLineDivider})
 		}
-		prevBody = body
+		prevBody = shown
 		lines = append(lines, fleetLine{kind: fleetLineHeader, group: g})
 		if !body {
+			lines = append(lines, sched...)
 			continue
 		}
 		if len(all) == 0 {
 			lines = append(lines, fleetLine{kind: fleetLinePlaceholder, group: g})
+			lines = append(lines, sched...)
 			continue
 		}
 		first := true
@@ -1986,6 +2025,7 @@ func (m *FleetModel) rebuildLines() {
 			lines = append(lines, l)
 			first = false
 		}
+		lines = append(lines, sched...)
 	}
 	if closed := m.closedLines(); len(closed) > 0 {
 		if len(lines) > 0 {
@@ -1993,7 +2033,7 @@ func (m *FleetModel) rebuildLines() {
 		}
 		lines = append(lines, closed...)
 	}
-	if sched := m.schedLines(); len(sched) > 0 {
+	if sched := m.schedBottomLines(place); len(sched) > 0 {
 		if len(lines) > 0 {
 			lines = append(lines, fleetLine{kind: fleetLineDivider})
 		}
@@ -2321,7 +2361,7 @@ func (m FleetModel) hiddenRows(from, to int) (rows, other int) {
 		switch m.lines[i].kind {
 		case fleetLineRow, fleetLineClosed, fleetLineSchedule:
 			rows++
-		case fleetLineHeader, fleetLinePlaceholder:
+		case fleetLineHeader, fleetLinePlaceholder, fleetLineSchedHead:
 			other++
 		}
 	}
@@ -2392,6 +2432,8 @@ func (m FleetModel) renderLine(i int, cw int) string {
 		return renderSchedLabel(l, cw)
 	case fleetLineSchedule:
 		return m.renderSchedRow(l, selected, cw)
+	case fleetLineSchedHead:
+		return m.renderSchedHead(l, selected, cw)
 	case fleetLineSubheader:
 		// The group's bar keeps the spine unbroken; the label aligns under
 		// agent names: bar + cursor slot + glyph + space.
