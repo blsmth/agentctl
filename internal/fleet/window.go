@@ -9,12 +9,9 @@ import (
 // `agentctl serve`, so the two cannot drift. Existing field names are a
 // compatibility contract; add new fields at the end, with omitempty.
 type Window struct {
-	Session  string `json:"session"`
-	Project  string `json:"project"`
-	WindowID string `json:"window_id"`
-	// Label is the human-facing identifier (see DisplayName); window_id stays
-	// the machine key.
-	Label        string `json:"label"`
+	Session      string `json:"session"`
+	Project      string `json:"project"`
+	WindowID     string `json:"window_id"`
 	WindowIndex  int    `json:"window_index"`
 	Agent        string `json:"agent"`
 	State        string `json:"state"`
@@ -69,6 +66,10 @@ type Window struct {
 	// display-only ✓ (never Done: sweep and completion ignore it). Omitted
 	// when false.
 	TurnDone bool `json:"turn_done,omitempty"`
+
+	// Label is the human-facing identifier (see DisplayName); window_id stays
+	// the machine key. Serve fills it for the phone; `status --json` blanks it.
+	Label string `json:"label,omitempty"`
 }
 
 // ToWindow converts a row and its windowstate metadata to a Window.
@@ -77,7 +78,6 @@ func ToWindow(r Row, m Meta) Window {
 		Session:      r.Session,
 		Project:      r.Project,
 		WindowID:     r.WindowID,
-		Label:        RowDisplayName(r),
 		WindowIndex:  r.WindowIndex,
 		Agent:        r.Name,
 		State:        r.State,
@@ -97,6 +97,7 @@ func ToWindow(r Row, m Meta) Window {
 		Detached:     m.Detached(),
 		Model:        r.ModelName,
 		TurnDone:     r.TurnDone,
+		Label:        RowDisplayName(r),
 	}
 	if r.Recap.Text != "" {
 		w.Recap, w.RecapSource = r.Recap.Text, r.Recap.Source.String()
