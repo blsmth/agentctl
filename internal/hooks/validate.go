@@ -75,8 +75,16 @@ func ValidateBash() {
 		RawInput:       input.ToolInput,
 	}
 
+	// The Bash tool's current directory is the payload's cwd, not this
+	// process's.
+	cwd, _ := os.Getwd()
+	bashCwd := input.Cwd
+	if bashCwd == "" {
+		bashCwd = cwd
+	}
+
 	// Check global deny list first.
-	if reason := checkGlobalDenyList(command); reason != "" {
+	if reason := checkGlobalDenyListIn(command, bashCwd); reason != "" {
 		// denyCommand exits the process (exit 2) in production, so this
 		// `return` is unreachable there. It stays in place because tests
 		// stub exitFunc to a no-op recorder so the test binary survives the
@@ -101,7 +109,6 @@ func ValidateBash() {
 	}
 
 	// Check project-level deny list.
-	cwd, _ := os.Getwd()
 	projectCfg := deps.LoadProjectConfig(cwd)
 	if projectCfg != nil {
 		if reason := checkProjectDenyList(command, agentName, projectCfg); reason != "" {
@@ -147,12 +154,7 @@ func ValidateBash() {
 	gateDispatch := isDispatch && dispatchNeedsApproval(command, approvalMode)
 	if isDispatch && !gateDispatch && approvalMode == config.DispatchApprovalNonReview {
 		// The review exemption holds only where the CLI will find the
-		// global reviewer; see reviewExemptionTrusted. The Bash tool's
-		// current directory is the payload's cwd, not this process's.
-		bashCwd := input.Cwd
-		if bashCwd == "" {
-			bashCwd = cwd
-		}
+		// global reviewer; see reviewExemptionTrusted.
 		gateDispatch = !reviewExemptionTrusted(cfg, command, bashCwd)
 	}
 	if gateDispatch || isCron || cfg.EffectiveBashPreview(agentName) {
@@ -290,9 +292,8 @@ var globalDenyPatterns = []globalDenyEntry{
 	{regexp.MustCompile(`rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?~/?\s*$`), "\U0001F6D1 BLOCKED: recursive delete of home directory -- absolutely not"},
 	{regexp.MustCompile(`git\s+push\s+.*origin\s+main\b`), "\U0001F6D1 BLOCKED: direct push to main -- open a PR instead"},
 	{regexp.MustCompile(`curl\s.*\|\s*(ba)?sh`), "\U0001F6D1 BLOCKED: piping curl to shell -- download first, inspect, then run"},
-	// Catches attempts to invoke agentctl via "go run" (e.g. "cd ~/src/agentctl && go run .").
-	// agentctl is always on PATH -- call it directly.
-	{regexp.MustCompile(`go\s+run\s+.*agentctl|agentctl.*go\s+run\s+\.`), "\U0001F6D1 BLOCKED: never invoke agentctl via 'go run' -- call 'agentctl' directly from PATH instead"},
+	// Running agentctl from source is checkGoRunAgentctl (tokenized, needs
+	// the Bash cwd), not a pattern here.
 }
 
 // serveTamperReason is the deny reason for commands that could subvert
@@ -326,8 +327,24 @@ var serveTamperPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\b(?:pkill|killall)\b[^\n|;&]*agentctl`),
 	regexp.MustCompile(`\bkill\b[^\n]*\bagentctl\b[^\n]*\bserve\b`),
 	regexp.MustCompile(`\bagentctl\b["')]*\s+["']?serve["']?\s+["']?(?:install|uninstall|pair|ca|start|stop|toggle)\b`),
-	// The same from source (agents in this repo run the CLI with go run).
-	regexp.MustCompile(`\bgo\s+run\b[^\n;&|]*\s["']?serve["']?\s+["']?(?:install|uninstall|pair|ca|start|stop|toggle)\b`),
+	// The same from source is goRunServeTamper.
+}
+
+// serveTamperSubcommands are the serve subcommands serveTamperPatterns deny.
+var serveTamperSubcommands = map[string]bool{
+	"install": true, "uninstall": true, "pair": true, "ca": true, "start": true, "stop": true, "toggle": true,
+}
+
+// goRunServeTamper reports whether command runs one of
+// serveTamperSubcommands through a go run of the agentctl root package
+// (goRunAgentctlArgs), e.g. `go run . serve stop`.
+func goRunServeTamper(command string) bool {
+	for _, args := range goRunAgentctlArgs(command) {
+		if len(args) >= 2 && args[0].text == "serve" && serveTamperSubcommands[args[1].text] {
+			return true
+		}
+	}
+	return false
 }
 
 // serveStateDir is the resolved serve state dir, matched literally (absolute
@@ -346,6 +363,9 @@ func checkServeTamper(command string) string {
 		if re.MatchString(command) {
 			return serveTamperReason
 		}
+	}
+	if goRunServeTamper(command) {
+		return serveTamperReason
 	}
 	if dir := serveStateDir(); dir != "" {
 		if strings.Contains(command, dir) {
@@ -454,7 +474,15 @@ func matchesWriteTemplates(command string, targets []string) bool {
 // checkGlobalDenyList matches globalDenyPatterns and the serve-, cron-,
 // dispatch-approval- and config-tamper rules against command with data-only
 // heredoc bodies removed (see stripDataHeredocs). Quoted arguments are still matched literally.
+// The go run rule (checkGoRunAgentctl) sees no cwd here; see
+// checkGlobalDenyListIn.
 func checkGlobalDenyList(command string) string {
+	return checkGlobalDenyListIn(command, "")
+}
+
+// checkGlobalDenyListIn is checkGlobalDenyList with the Bash tool's cwd, which
+// checkGoRunAgentctl resolves `go run .` against ("" is unknown).
+func checkGlobalDenyListIn(command, cwd string) string {
 	command = stripDataHeredocs(command)
 	for _, deny := range globalDenyPatterns {
 		if deny.re.MatchString(command) {
@@ -470,7 +498,11 @@ func checkGlobalDenyList(command string) string {
 	if reason := checkApprovalTamper(command); reason != "" {
 		return reason
 	}
-	return checkConfigTamper(command)
+	if reason := checkConfigTamper(command); reason != "" {
+		return reason
+	}
+	// Last, so a go run that tampers with serve or cron gets that reason.
+	return checkGoRunAgentctl(command, cwd)
 }
 
 // denyAuditContext carries the PreToolUse fields both deny emitters need to

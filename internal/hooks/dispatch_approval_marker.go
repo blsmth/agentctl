@@ -83,6 +83,11 @@ var reviewerGlobalFrom = func(cfg *config.Config, dir string) bool {
 // from cwd the reviewer resolves to the global definition. When false the
 // dispatch is gated, so the human sees it and the CLI finds an approval.
 func reviewExemptionTrusted(cfg *config.Config, command, cwd string) bool {
+	if lineRunsAgentctlFromSource(command) {
+		// Built from whatever source is on disk: no exemption.
+		logging.Log("hook-validate-bash: review dispatch runs agentctl through go run; gating")
+		return false
+	}
 	if lineChangesContext(command) {
 		logging.Log("hook-validate-bash: review dispatch line runs non-agentctl commands before the dispatch; gating")
 		return false
