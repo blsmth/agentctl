@@ -352,3 +352,62 @@ func TestRecapInput(t *testing.T) {
 		t.Fatal("title from a recap not final")
 	}
 }
+
+func TestPromptParentSection(t *testing.T) {
+	base := Input{Task: "Fix it"}
+	if p := Prompt(base); strings.Contains(p, "sub-agent") || strings.Contains(p, "orchestrator") {
+		t.Errorf("no parent: prompt has a parent section:\n%s", p)
+	}
+	with := base
+	with.ParentTitle = "Fixing False Dialog Detection"
+	p := Prompt(with)
+	for _, want := range []string{"sub-agent", `"Fixing False Dialog Detection"`, "Line-Anchoring Dialog Markers", "Checking Dialog Marker Anchoring", "`<kind> | <title>`"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("prompt missing %q", want)
+		}
+	}
+}
+
+func TestPromptChildTaskCap(t *testing.T) {
+	long := strings.Repeat("a", 250) + " " + strings.Repeat("b", 400) + " END"
+	if p := Prompt(Input{Task: long}); strings.Contains(p, "END") || strings.Contains(p, strings.Repeat("b", 100)) {
+		t.Error("task cap of a plain window should stay 300 runes")
+	}
+	if p := Prompt(Input{Task: long, ParentTitle: "X"}); !strings.Contains(p, "END") {
+		t.Error("sub-agent task should keep its tail within the larger cap")
+	}
+}
+
+func TestHashIgnoresParentTitle(t *testing.T) {
+	a := Input{Task: "t", Ticket: "k", LastText: "l"}
+	b := a
+	b.ParentTitle = "Parent"
+	if a.Hash() != b.Hash() {
+		t.Error("ParentTitle must not change Hash")
+	}
+}
+
+func TestRole(t *testing.T) {
+	tests := []struct{ mode, kind, want string }{
+		{"review-pr", "go", "review"},
+		{"review-pr", "", "review"},
+		{"adhoc", "review", "review"},
+		{"adhoc", "research", "research"},
+		{"adhoc", "chat", "research"},
+		{"adhoc", "debug", "fix"},
+		{"adhoc", "docs", "docs"},
+		{"adhoc", "tests", "tests"},
+		{"adhoc", "go", "build"},
+		{"adhoc", "python", "build"},
+		{"adhoc", "swift", "build"},
+		{"adhoc", "web", "build"},
+		{"adhoc", "infra", "build"},
+		{"adhoc", "migration", "build"},
+		{"adhoc", "", "build"},
+	}
+	for _, tt := range tests {
+		if got := Role(tt.mode, tt.kind); got != tt.want {
+			t.Errorf("Role(%q,%q) = %q, want %q", tt.mode, tt.kind, got, tt.want)
+		}
+	}
+}

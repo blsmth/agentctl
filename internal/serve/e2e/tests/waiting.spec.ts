@@ -77,6 +77,6 @@ test("a child link opens the child's window", async ({ page, control }) => {
   await page.locator(".win-waiting a.waiting-child").first().tap();
   await expect(page).toHaveURL(/%402$/);
   // The generated title heads the screen; the agent name moves to the where line.
-  await expect(page.locator("header.bar h1")).toHaveText("Add retry");
+  await expect(page.locator("header.bar h1 .h1-text")).toHaveText("Add retry");
   await expect(page.locator(".win-where")).toContainText("go-engineer");
 });

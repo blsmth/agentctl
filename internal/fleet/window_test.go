@@ -76,14 +76,14 @@ func TestCleanRecapStripsHint(t *testing.T) {
 	}
 }
 
-func TestToWindowKind(t *testing.T) {
-	r := Row{Recap: RecapLine{Text: "full", Source: RecapSummary, Title: "Fixing X", Kind: "go"}}
-	if w := ToWindow(r, Meta{}); w.Kind != "go" || w.Title != "Fixing X" {
+func TestToWindowRole(t *testing.T) {
+	r := Row{Recap: RecapLine{Text: "full", Source: RecapSummary, Title: "Fixing X", Role: "build"}}
+	if w := ToWindow(r, Meta{}); w.Role != "build" || w.Title != "Fixing X" {
 		t.Fatalf("window = %+v", w)
 	}
-	r.Recap.Kind = ""
-	if w := ToWindow(r, Meta{}); w.Kind != "" {
-		t.Fatalf("kind = %q", w.Kind)
+	r.Recap.Role = ""
+	if w := ToWindow(r, Meta{}); w.Role != "" {
+		t.Fatalf("role = %q", w.Role)
 	}
 }
 

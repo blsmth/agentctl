@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/shorttitle"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -174,7 +175,7 @@ func agentFromWindow(idx int, w tmux.WindowInfo, name string, records map[string
 		TicketTitle:      ws.TicketTitle,
 		Task:             ws.Task,
 		ShortTitle:       ws.ShortTitle.Title,
-		ShortKind:        shortKind(ws),
+		ShortRole:        shortRole(ws),
 		ShortManual:      ws.ShortTitle.Manual && ws.ShortTitle.Title != "",
 		Branch:           ws.Branch,
 		WorktreeDir:      ws.WorktreeDir,
@@ -186,13 +187,14 @@ func agentFromWindow(idx int, w tmux.WindowInfo, name string, records map[string
 	}
 }
 
-// shortKind is the display work-kind tag: shown on dispatched windows only,
-// never on interactive (bare) ones. The record keeps the kind either way.
-func shortKind(ws windowstate.WindowState) string {
-	if !(Meta{Mode: ws.Mode}).Dispatched() {
+// shortRole is the display role label: shown on sub-agent windows only (a
+// trusted dispatcher: spawned_by and spawned_by_session), never on bare,
+// cron or phone-launched ones. The record keeps the kind either way.
+func shortRole(ws windowstate.WindowState) string {
+	if ws.SpawnedBy == "" || ws.SpawnedBySession == "" {
 		return ""
 	}
-	return ws.ShortTitle.Kind
+	return shorttitle.Role(ws.Mode, ws.ShortTitle.Kind)
 }
 
 // LocalWindowNames resolves a window of the current project to its instance

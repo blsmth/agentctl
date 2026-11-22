@@ -262,7 +262,7 @@ test("header: a long title ellipsizes and keeps Close on screen", async ({ page,
   const h1 = page.locator("header.bar h1");
   await expect(h1).toContainText("A very long generated title");
   await expect(page.locator(".win-where")).toContainText("test-writer");
-  await expect(page.locator("header.bar h1 .kind-chip")).toHaveText("go");
+  await expect(page.locator("header.bar h1 .kind-chip")).toHaveText("build");
   const close = await page.locator(".close-window").boundingBox();
   const vp = page.viewportSize();
   expect(close && vp && close.x + close.width <= vp.width).toBe(true);

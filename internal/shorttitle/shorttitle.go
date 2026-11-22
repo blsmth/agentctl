@@ -28,10 +28,13 @@ const (
 	RequestTimeout = 15 * time.Second
 
 	// Prompt input caps, in runes.
-	maxTaskRunes     = 300
-	maxPromptRunes   = 500
-	maxLastTextRunes = 1500
-	maxRecapRunes    = 800
+	maxTaskRunes = 300
+	// maxChildTaskRunes is the Task cap of a sub-agent window: a dispatch
+	// prompt opens with shared context, so the specific ask sits further in.
+	maxChildTaskRunes = 900
+	maxPromptRunes    = 500
+	maxLastTextRunes  = 1500
+	maxRecapRunes     = 800
 )
 
 // Input is the text a title is made from. Ticket is context only: ticket rows
@@ -44,8 +47,10 @@ const (
 // turn; like LastText it makes the input a refinement, and it is enough to
 // title from on its own.
 //
-// Agent and Mode are hints for the model only (the window's agent name and
-// dispatch mode); they are not part of Hash.
+// Agent, Mode and ParentTitle are hints for the model only (the window's agent
+// name, dispatch mode, and the title of the orchestrator window that
+// dispatched it); they are not part of Hash, so a parent retitle never makes
+// the child due again.
 type Input struct {
 	Task        string
 	FirstPrompt string
@@ -54,6 +59,7 @@ type Input struct {
 	Recap       string
 	Agent       string
 	Mode        string
+	ParentTitle string
 }
 
 // normalize collapses whitespace so cosmetic differences hash alike.
@@ -207,10 +213,23 @@ func Prompt(in Input) string {
 			b.WriteString("\n" + label + ":\n" + text + "\n")
 		}
 	}
+	if pt := headRunes(normalize(in.ParentTitle), 80); pt != "" {
+		b.WriteString("\nThis agent is a sub-agent working under an orchestrator whose row is titled \"" + pt + "\". ")
+		b.WriteString("The row is already nested under it, so the title must name the specific piece THIS agent owns: ")
+		b.WriteString("the concrete change, mechanism, file area, or what it is checking. ")
+		b.WriteString("Do not restate or paraphrase the orchestrator's title and reuse none of its distinctive words unless unavoidable.\n")
+		b.WriteString("Example: orchestrator \"Fixing False Dialog Detection\" -> `go | Line-Anchoring Dialog Markers`; ")
+		b.WriteString("its reviewer -> `review | Checking Dialog Marker Anchoring`. ")
+		b.WriteString("A pull request review window is titled for what is being checked, not \"Reviewing PR\".\n")
+	}
+	taskCap := maxTaskRunes
+	if in.ParentTitle != "" {
+		taskCap = maxChildTaskRunes
+	}
 	section("Agent", headRunes(normalize(in.Agent), 80))
 	section("Dispatch mode", headRunes(normalize(in.Mode), 80))
 	section("Ticket", headRunes(normalize(in.Ticket), maxTaskRunes))
-	section("Task", headRunes(normalize(in.Task), maxTaskRunes))
+	section("Task", headRunes(normalize(in.Task), taskCap))
 	section("First request", headRunes(normalize(in.FirstPrompt), maxPromptRunes))
 	// The end of a long message is the freshest part.
 	section("Agent's first response", tailRunes(normalize(in.LastText), maxLastTextRunes))

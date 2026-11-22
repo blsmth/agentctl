@@ -98,15 +98,17 @@ func TestCardShowsSchedule(t *testing.T) {
 	}
 }
 
-// TestKindTagRender: the hub never draws the title's "[kind]" tag (the data
-// stays, the phone still shows it); width budgets hold.
-func TestKindTagRender(t *testing.T) {
+// TestRoleTagRender: a sub-agent row shows its dim role tag before the title,
+// a row without a role shows the bare title, the tag is dropped before the
+// title is squeezed, and width budgets hold.
+func TestRoleTagRender(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
 	for _, width := range []int{44, 56, 120} {
 		t.Run(fmt.Sprintf("cw%d", width), func(t *testing.T) {
 			with := sampleRow("s", "proj", "@1", "lead:1", "lead", "idle", false, fleet.LogInfo{Recap: "x"}, nil)
-			with.Recap = fleet.RecapLine{Text: "full recap", Source: fleet.RecapSummary, Title: "Fixing Hub Sort Order", Kind: "go"}
+			with.ShortRole = "review"
+			with.Recap = fleet.RecapLine{Text: "full recap", Source: fleet.RecapSummary, Title: "Fixing Hub Sort Order", Role: "review"}
 			without := sampleRow("s", "proj", "@2", "lead:2", "lead", "idle", false, fleet.LogInfo{Recap: "x"}, nil)
 			without.Recap = fleet.RecapLine{Text: "full recap", Source: fleet.RecapSummary, Title: "Fixing Hub Sort Order"}
 			m := newFleetModel()
@@ -125,8 +127,15 @@ func TestKindTagRender(t *testing.T) {
 				if w := lipgloss.Width(first); w > cw {
 					t.Errorf("%s width %d > cw %d", l.row.WindowID, w, cw)
 				}
-				if strings.Contains(first, "[") || !strings.Contains(first, "  Fixing Hub") {
-					t.Errorf("row %s should show the bare title: %q", l.row.WindowID, first)
+				if !strings.Contains(first, "Fixing Hub") {
+					t.Errorf("row %s lost its title: %q", l.row.WindowID, first)
+				}
+				hasTag := strings.Contains(first, "review  Fixing")
+				if l.row.WindowID == "@2" && strings.Contains(first, "review") {
+					t.Errorf("bare row shows a role: %q", first)
+				}
+				if l.row.WindowID == "@1" && width == 120 && !hasTag {
+					t.Errorf("child row at %d cols should show the role tag: %q", width, first)
 				}
 			}
 		})

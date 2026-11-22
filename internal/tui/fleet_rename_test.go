@@ -59,7 +59,7 @@ func readRecord(t *testing.T, rt, id string) windowstate.ShortTitle {
 func renameRows() []fleet.Row {
 	a := testRow("alpha", "s1", "idle", "")
 	a.WindowID = "@1"
-	a.ShortTitle, a.ShortKind = renameTitled, "go"
+	a.ShortTitle, a.ShortRole = renameTitled, "build"
 	a.Recap = fleet.RecapLine{Text: "Worked on the hub. Then more.", Source: fleet.RecapSummary, Title: renameTitled}
 	b := testRow("beta", "s1", "idle", "")
 	b.WindowID = "@2"

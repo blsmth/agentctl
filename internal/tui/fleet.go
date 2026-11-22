@@ -2828,6 +2828,12 @@ func (m FleetModel) treeRowLayout(r fleet.Row, treePrefix string, nameCol int, s
 			available -= lipgloss.Width(tag) + 1
 			tag = fleetDimStyle.Render(tag) + " "
 		}
+		// The role tag of a sub-agent row goes before the title, and is
+		// dropped before the title would shrink below fleetMinTitleAfterRole.
+		if r.ShortRole != "" && available >= lipgloss.Width(r.ShortRole)+2+fleetMinTitleAfterRole {
+			tag += fleetDimStyle.Render(r.ShortRole) + "  "
+			available -= lipgloss.Width(r.ShortRole) + 2
+		}
 		start := lipgloss.Width(prefix) + lipgloss.Width(tag)
 		if m.renamingRow(r) {
 			editor := m.renameView(max(available, 0))
@@ -2858,6 +2864,10 @@ func (m FleetModel) treeRowLayout(r fleet.Row, treePrefix string, nameCol int, s
 	}
 	return fleetFitLineStyled(line, hl, cw), titleSpan
 }
+
+// fleetMinTitleAfterRole is the title width a row must keep for its role tag
+// to be drawn.
+const fleetMinTitleAfterRole = 12
 
 // leadingIssue matches a title's leading issue number ("#21 Crotch…").
 var leadingIssue = regexp.MustCompile(`^#\d+\b`)

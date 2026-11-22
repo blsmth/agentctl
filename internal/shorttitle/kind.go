@@ -63,3 +63,27 @@ func normalizeKind(s string) string {
 	}
 	return ""
 }
+
+// Role is the short label of what a dispatched (sub-agent) window is for,
+// derived from its dispatch mode and stored kind with no model call: "review"
+// (review-pr mode, kind review), "research" (research, chat), "fix" (debug),
+// "docs", "tests", and "build" for every other kind or none. Callers show it
+// on child rows only.
+func Role(mode, kind string) string {
+	if mode == ReviewPRMode {
+		return "review"
+	}
+	switch kind {
+	case "review":
+		return "review"
+	case "research", "chat":
+		return "research"
+	case "debug":
+		return "fix"
+	case "docs":
+		return "docs"
+	case "tests":
+		return "tests"
+	}
+	return "build"
+}

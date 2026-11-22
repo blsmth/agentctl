@@ -54,9 +54,9 @@ type Window struct {
 	// Title is a short generated title for Recap (2-5 words), for list rows;
 	// omitted until one is cached. Recap stays the full text.
 	Title string `json:"title,omitempty"`
-	// Kind is the work-kind tag of Title ("go", "review", ...); omitted when
-	// there is none.
-	Kind string `json:"kind,omitempty"`
+	// Role is the role label of a sub-agent window ("build", "review", ...,
+	// shorttitle.Role); omitted for windows no agent dispatched.
+	Role string `json:"role,omitempty"`
 
 	// Model is the model the window is running (the log's latest model id), as
 	// in the window detail; omitted until known.
@@ -97,7 +97,7 @@ func ToWindow(r Row, m Meta) Window {
 	if r.Recap.Text != "" {
 		w.Recap, w.RecapSource = r.Recap.Text, r.Recap.Source.String()
 		w.Title = r.Recap.Title
-		w.Kind = r.Recap.Kind
+		w.Role = r.Recap.Role
 	}
 	if m.ScheduledBy != "" {
 		w.ScheduledBy = m.ScheduledBy
