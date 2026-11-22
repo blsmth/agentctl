@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -79,6 +80,13 @@ var (
 // with (dispatch.ValidateAgentName; internal/tui cannot import it).
 func (m FleetModel) WithScheduleAgentCheck(fn func(name, dir string) error) FleetModel {
 	m.schedAgentCheck = fn
+	return m
+}
+
+// WithScheduleAgents sets the agent lister the Schedules form's agent
+// selector offers (dispatch.AgentNames; internal/tui cannot import it).
+func (m FleetModel) WithScheduleAgents(fn func(dir string) []string) FleetModel {
+	m.schedAgentNames = fn
 	return m
 }
 
@@ -178,6 +186,7 @@ func (m *FleetModel) applySchedLoaded(msg fleetSchedLoadedMsg) {
 		m.sched.err = ""
 		m.sched.ov = msg.ov
 		m.sched.loaded = true
+		m.sched.detailName = "" // re-read the card with the list
 	}
 	m.relayout()
 }
@@ -343,9 +352,7 @@ func (m *FleetModel) scheduleKey(key string) (cmd tea.Cmd, handled bool) {
 	}
 	st := l.sched
 	switch key {
-	case "enter":
-		return m.openSchedCard(st.Name), true
-	case "e":
+	case "enter", "e":
 		return m.openSchedForm(schedFormEdit, &st, ""), true
 	case "d":
 		return m.openSchedForm(schedFormDup, &st, ""), true
@@ -535,10 +542,15 @@ func runResultText(e cron.Entry) string {
 	return r
 }
 
-// openSchedCard is ⏎: load the full card (prompt_key text, more runs).
-func (m *FleetModel) openSchedCard(name string) tea.Cmd {
+// syncSchedDetail loads the full card (prompt_key text, more runs) of the
+// selected job; the card always shows it. Called after every Update. The
+// previous detail of the same job stays up while a refresh loads.
+func (m *FleetModel) syncSchedDetail() tea.Cmd {
+	name := m.selSchedule
+	if !m.showSchedules || name == "" || name == fleetSchedNewSel || m.schedForm != nil || m.sched.detailName == name {
+		return nil
+	}
 	m.sched.detailName = name
-	m.sched.detail = nil
 	store := m.schedStore()
 	return func() tea.Msg {
 		d, err := store.Detail(name)
@@ -552,7 +564,6 @@ func (m *FleetModel) applySchedDetail(msg fleetSchedDetailMsg) {
 	}
 	if msg.err != nil {
 		m.jumpErr = "schedule " + msg.name + ": " + msg.err.Error()
-		m.sched.detailName = ""
 		return
 	}
 	d := msg.d
@@ -569,7 +580,7 @@ func schedMenuItems(l fleetLine) []fleetMenuItem {
 		toggle = "resume"
 	}
 	return []fleetMenuItem{
-		{"card", "enter"}, {"edit", "e"}, {toggle, "space"}, {"run now", "g"},
+		{"edit", "enter"}, {toggle, "space"}, {"run now", "g"},
 		{"duplicate", "d"}, {"delete", "x"},
 	}
 }
@@ -588,8 +599,8 @@ func (m FleetModel) schedHints() []fleetHint {
 		toggle = "resume"
 	}
 	return []fleetHint{
-		{"j/k", "move"}, {"e", "edit"}, {"space", toggle}, {"g", "run now"},
-		{"d", "duplicate"}, {"x", "delete"}, {"n", "new"}, {"⏎", "card"}, {"?", "more"},
+		{"j/k", "move"}, {"⏎", "edit"}, {"space", toggle}, {"g", "run now"},
+		{"d", "duplicate"}, {"x", "delete"}, {"n", "new"}, {"?", "more"},
 	}
 }
 
@@ -641,22 +652,19 @@ func schedNextText(st cronedit.Status, now time.Time) string {
 	return st.NextFire.In(time.Local).Format("Mon 15:04")
 }
 
-// schedLastText is the last-result column ("" when it never ran).
+// schedLastText is the exception column: the last result unless it fired
+// ("" when it never ran or fired).
 func schedLastText(st cronedit.Status) string {
 	if st.Last == nil {
 		return ""
 	}
 	switch r := st.Last.Result; {
 	case r == cron.ResultFired:
-		return "fired"
+		return "" // the healthy result is not worth a column
 	case cron.IsFailed(r):
 		return "failed"
 	default:
-		kind, reason, ok := strings.Cut(r, ":")
-		if ok {
-			return kind + ": " + reason
-		}
-		return r
+		return strings.Replace(r, ":", " · ", 1)
 	}
 }
 
@@ -722,7 +730,7 @@ func (m FleetModel) renderSchedRow(l fleetLine, selected bool, cw int) string {
 func schedRowMiddle(st cronedit.Status, room int) string {
 	const sep = " · "
 	words, last := schedWords(st), schedLastText(st)
-	project, agent := projectOf(st.Job.Dir), st.Job.Agent
+	project := projectOf(st.Job.Dir)
 	lastSt := fleetDimStyle
 	if st.FailedLast {
 		lastSt = fleetErrStyle
@@ -733,8 +741,9 @@ func schedRowMiddle(st cronedit.Status, room int) string {
 		text string
 		st   lipgloss.Style
 	}
-	// Dropped from the end: agent, then project, then the last result.
-	all := []seg{{words, fleetRecapIdleStyle}, {last, lastSt}, {project, fleetDimStyle}, {agent, fleetDimStyle}}
+	// Order: words, project, exception. Narrow rows drop the project first,
+	// then the exception.
+	all := []seg{{words, fleetRecapIdleStyle}, {project, fleetDimStyle}, {last, lastSt}}
 	var segs []seg
 	for _, s := range all {
 		if s.text != "" {
@@ -752,7 +761,11 @@ func schedRowMiddle(st cronedit.Status, room int) string {
 		return w
 	}
 	for len(segs) > 1 && width(segs) > room {
-		segs = segs[:len(segs)-1]
+		drop := len(segs) - 1
+		if len(segs) == 3 {
+			drop = 1
+		}
+		segs = slices.Delete(segs, drop, drop+1)
 	}
 	if len(segs) == 0 || room < 6 {
 		return ""
@@ -782,12 +795,12 @@ func (m FleetModel) schedCardLines(w int) []string {
 			"",
 			wrapText("No cron jobs yet. A schedule runs an agent unattended at set times, each run in its own window.", w),
 			"",
-			fleetDimStyle.Render("enter or n: new schedule (or n, then t, on a project header)"),
+			fleetDimStyle.Render("n new schedule"),
 		}
 	}
 	st := l.sched
 	var detail *cronedit.Detail
-	if m.sched.detail != nil && m.sched.detailName == st.Name {
+	if m.sched.detail != nil && m.sched.detail.Name == st.Name {
 		detail = m.sched.detail
 	}
 	glyph, gst := schedGlyph(st)
@@ -819,7 +832,7 @@ func (m FleetModel) schedCardLines(w int) []string {
 		add(fleetErrStyle.Render(wrapText("invalid: "+st.Invalid, w)))
 	}
 	if adv := advancedSummary(st.Job); adv != "" {
-		add(fleetDimStyle.Render(wrapText(adv, w)))
+		add(fleetDimStyle.Render(wrapText("Advanced: "+adv, w)))
 	}
 	add("")
 	if st.Enabled {
@@ -867,9 +880,6 @@ func (m FleetModel) schedCardLines(w int) []string {
 	for _, e := range runs {
 		add(renderRunLine(e, w))
 	}
-	if detail == nil {
-		add("", fleetDimStyle.Render(truncateToWidth("enter full card · e edit · space pause/resume · g run now", w)))
-	}
 	return out
 }
 
@@ -909,7 +919,7 @@ func renderRunLine(e cron.Entry, w int) string {
 	if e.Manual {
 		extra = strings.TrimSpace("manual " + extra)
 	}
-	line := fleetDimStyle.Render(ts) + "  " + st.Render(e.Result)
+	line := fleetDimStyle.Render(ts) + "  " + st.Render(strings.Replace(e.Result, ":", " · ", 1))
 	if extra != "" {
 		line += "  " + fleetDimStyle.Render(extra)
 	}
@@ -1018,13 +1028,22 @@ func (m FleetModel) withSchedPane(list string) string {
 		if pad := cw - lipgloss.Width(l); pad > 0 {
 			l += strings.Repeat(" ", pad)
 		}
-		p := ""
+		p := strings.Repeat(" ", pw+2)
 		if i < len(pane) {
 			p = pane[i]
 		}
 		out[i] = l + sep + p
 	}
 	return strings.Join(out, "\n")
+}
+
+// padToWidth pads s with spaces to w columns, so a shorter line erases the
+// cells of the longer one drawn before it.
+func padToWidth(s string, w int) string {
+	if d := w - lipgloss.Width(s); d > 0 {
+		return s + strings.Repeat(" ", d)
+	}
+	return s
 }
 
 // fitPane splits pane lines on newlines, indents them, cuts them to w and
@@ -1040,7 +1059,10 @@ func fitPane(lines []string, w, h, indent int) []string {
 		if len(out) >= h {
 			break
 		}
-		out = append(out, truncateToWidth(pad+l, w))
+		out = append(out, padToWidth(truncateToWidth(pad+l, w), w))
+	}
+	for len(out) < h {
+		out = append(out, strings.Repeat(" ", w))
 	}
 	return out
 }
@@ -1093,17 +1115,28 @@ func sortDirs(dirs []string, first string) {
 	}
 }
 
-// tildify shows a path under the home directory as ~/...
+// tildify shows a path under the home directory as ~/... A symlinked home
+// (macOS /var → /private/var) matches either spelling: both sides are
+// compared as given and with symlinks resolved.
 func tildify(p string) string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" || p == "" {
 		return p
 	}
-	if p == home {
-		return "~"
+	real := func(s string) string {
+		if r, err := filepath.EvalSymlinks(s); err == nil {
+			return r
+		}
+		return s
 	}
-	if rel, ok := strings.CutPrefix(p, home+string(filepath.Separator)); ok {
-		return "~/" + rel
+	for _, pair := range [][2]string{{p, home}, {real(p), real(home)}} {
+		path, h := pair[0], pair[1]
+		if path == h {
+			return "~"
+		}
+		if rel, ok := strings.CutPrefix(path, h+string(filepath.Separator)); ok {
+			return "~/" + rel
+		}
 	}
 	return p
 }

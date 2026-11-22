@@ -455,8 +455,9 @@ func TestScheduleRowNarrowTruncation(t *testing.T) {
 		has, hasNot []string
 	}
 	cases := map[int]want{
-		150: {has: []string{"daily 02:30", "skipped: overlap", "acme-api", "python-engineer"}},
-		75:  {has: []string{"daily 02:30", "skipped: overlap"}, hasNot: []string{"python-engineer"}},
+		150: {has: []string{"daily 02:30", "skipped · overlap", "acme-api"}, hasNot: []string{"python-engineer"}},
+		85:  {has: []string{"daily 02:30", "skipped · overlap"}, hasNot: []string{"python-engineer", "acme-api"}},
+		75:  {has: []string{"daily 02:30"}, hasNot: []string{"python-engineer", "acme-api"}},
 		62:  {has: []string{"daily 02:30"}, hasNot: []string{"skipped", "python-engineer"}},
 		50:  {has: []string{"daily"}, hasNot: []string{"skipped", "acme-api"}},
 		44:  {hasNot: []string{"skipped", "acme-api"}},
@@ -534,7 +535,7 @@ func TestScheduleFooterAndHelp(t *testing.T) {
 	m = selectSched(t, m, "upcoming")
 	m.termWidth = 300 // room for every hint
 	foot := ansi.Strip(fitHints(m.schedHints(), 200))
-	for _, s := range []string{"e edit", "space pause", "g run now", "d duplicate", "x delete", "n new"} {
+	for _, s := range []string{"⏎ edit", "space pause", "g run now", "d duplicate", "x delete", "n new"} {
 		if !strings.Contains(foot, s) {
 			t.Errorf("schedule footer %q lacks %q", foot, s)
 		}
@@ -653,7 +654,7 @@ func TestScheduleCardInRightPaneAndViewerHandoff(t *testing.T) {
 		t.Fatalf("viewer hidden %d times, liveShown %q", f.hidden, m.liveShown)
 	}
 	out := ansi.Strip(m.render())
-	for _, s := range []string{"last run failed", "daily 02:30", "python-engineer in", "Next", "Last runs", "failed:launch", "tmux: no server", "Prompt", "Triage new issues."} {
+	for _, s := range []string{"last run failed", "daily 02:30", "python-engineer in", "Next", "Last runs", "failed · launch", "tmux: no server", "Prompt", "Triage new issues."} {
 		if !strings.Contains(out, s) {
 			t.Errorf("card missing %q:\n%s", s, out)
 		}
@@ -676,10 +677,9 @@ func TestScheduleCardInRightPaneAndViewerHandoff(t *testing.T) {
 		t.Errorf("running window not shown:\n%s", ansi.Strip(m.render()))
 	}
 
-	// ⏎ loads the full card.
-	m = schedPress(t, m, "enter")
+	// The card always carries the full detail, no key needed.
 	if m.sched.detail == nil || m.sched.detail.Name != "babysit" {
-		t.Fatal("enter did not load the full card")
+		t.Fatal("selecting a job did not load the full card")
 	}
 
 	// Back on an agent row the viewer returns.
@@ -772,7 +772,7 @@ func TestScheduleCreateViaPickerFromProjectHeader(t *testing.T) {
 	// The review wraps at the pane width, and where it wraps depends on the
 	// temp dir's length: check its words, not its line breaks.
 	review := strings.Join(strings.Fields(ansi.Strip(strings.Join(m.schedFormLines(m.schedPaneWidth(), m.termHeight), "\n"))), " ")
-	for _, s := range []string{"Review new schedule triage", "Runs go-engineer in", "(a worktree per fire), weekdays 07:30", "unattended, permission mode auto, until paused.", "Next fires", "Triage new issues", "y schedule it"} {
+	for _, s := range []string{"Review new schedule triage", "Runs go-engineer in", "(a worktree per fire)", "When weekdays 07:30", "unattended, permission mode auto, until paused.", "Next fires", "Triage new issues", "y schedule it"} {
 		if !strings.Contains(review, s) {
 			t.Errorf("review missing %q:\n%s", s, review)
 		}
@@ -862,7 +862,8 @@ func TestScheduleEditRoundTripsHiddenAndUntouchedFields(t *testing.T) {
 	m = schedType(t, m, "python-engineer")
 	m = schedPress(t, m, "ctrl+s")
 	out := ansi.Strip(m.render())
-	if !strings.Contains(out, "Review changes to custom") || !strings.Contains(out, "agent: python-engineer") || strings.Contains(out, "schedule:") {
+	flat := strings.Join(strings.Fields(out), " ")
+	if !strings.Contains(out, "Review changes to custom") || !strings.Contains(flat, "agent go-engineer → python-engineer") || strings.Contains(out, "schedule ") {
 		t.Errorf("edit review should list only the agent:\n%s", out)
 	}
 	m = schedPress(t, m, "y")
@@ -968,7 +969,7 @@ func TestScheduleFormEscAsksWhenDirty(t *testing.T) {
 	m = schedPress(t, m, "e")
 	m = focusStopT(t, m, stopAgent)
 	m = schedType(t, m, "x")
-	m = schedPress(t, m, "esc")
+	m = schedPress(t, m, "tab", "esc")
 	if !formOf(t, m).discard || !strings.Contains(ansi.Strip(m.render()), "discard changes? y/n") {
 		t.Fatal("esc on a dirty form should ask")
 	}
@@ -1063,7 +1064,7 @@ func TestScheduleRowMenu(t *testing.T) {
 	for _, it := range items {
 		labels = append(labels, it.label)
 	}
-	if !slices.Equal(labels, []string{"card", "edit", "resume", "run now", "duplicate", "delete"}) {
+	if !slices.Equal(labels, []string{"edit", "resume", "run now", "duplicate", "delete"}) {
 		t.Errorf("menu = %v", labels)
 	}
 	m.openMenu(m.splitPane.Cursor())
@@ -1154,5 +1155,15 @@ func TestScheduleEditTrailingSlashDirIsNoChange(t *testing.T) {
 	m = schedPress(t, m, "ctrl+s")
 	if m.schedForm != nil || !strings.Contains(m.infoMsg, "no changes to slash") {
 		t.Errorf("form open=%v info=%q", m.schedForm != nil, m.infoMsg)
+	}
+}
+
+// testSchedEnv is the form's option data in tests: no backends, no accounts,
+// two agents, nothing read from the real config.
+func testSchedEnv() schedEnv {
+	return schedEnv{
+		opts:    cronedit.Options{Models: map[string][]string{"anthropic": {"opus", "sonnet", "haiku"}}},
+		usage:   config.CronUsageThresholds{FiveHour: 80, SevenDay: 90},
+		efforts: []string{"low", "medium", "high", "xhigh", "max", "auto"},
 	}
 }
