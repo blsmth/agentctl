@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 )
 
 func TestInitProjectCreatesAgentsDir(t *testing.T) {
@@ -173,4 +175,64 @@ func TestRunHubNewSession(t *testing.T) {
 			t.Error("acted on $HOME")
 		}
 	})
+}
+
+func TestHubTemplateOptions(t *testing.T) {
+	stubTemplate(t, prompttemplate.Template{Agent: "writer", Model: "opus", Dir: "/elsewhere", Effort: "high", Prompt: "Review open PRs."}, nil)
+	prev := validateAgentName
+	t.Cleanup(func() { validateAgentName = prev })
+	var validated []string
+	validateAgentName = func(name, _ string) error {
+		validated = append(validated, name)
+		if name == "gone" {
+			return errors.New("agent not found")
+		}
+		return nil
+	}
+	dir := t.TempDir()
+
+	t.Run("template fills the form's blanks, the form's dir wins", func(t *testing.T) {
+		got, err := hubTemplateOptions(dir, HubTemplateLaunch{Template: "t"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Template != "t" || got.Agent != "writer" || got.Model != "opus" || got.Dir != dir || got.Effort != "high" || got.Prompt != "Review open PRs." {
+			t.Errorf("opts = %+v", got)
+		}
+	})
+	t.Run("form values and an edited prompt override, name still recorded", func(t *testing.T) {
+		got, err := hubTemplateOptions(dir, HubTemplateLaunch{Template: "t", Agent: "other", Model: "haiku", Prompt: "Edited."})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Template != "t" || got.Agent != "other" || got.Model != "haiku" || got.Prompt != "Edited." {
+			t.Errorf("opts = %+v", got)
+		}
+	})
+	t.Run("missing agent is an error", func(t *testing.T) {
+		if _, err := hubTemplateOptions(dir, HubTemplateLaunch{Template: "t", Agent: "gone"}); err == nil {
+			t.Error("no error for an unknown agent")
+		}
+	})
+}
+
+func TestRunHubNewSessionTemplate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	f := &fakeHubNewSession{exists: true, path: dir}
+	d := f.deps(filepath.Join(dir, ".agentctl"))
+	var got HubTemplateLaunch
+	d.launchTemplate = func(_ string, t HubTemplateLaunch) (string, error) { got = t; return "@9", nil }
+	wid, err := runHubNewSessionTemplate(dir, HubTemplateLaunch{Template: "t", Agent: "a"}, d)
+	if err != nil || wid != "@9" || got.Template != "t" || f.launched != 0 {
+		t.Fatalf("wid=%q err=%v got=%+v launched=%d", wid, err, got, f.launched)
+	}
+
+	// A session owned by another project is refused before any dispatch.
+	f2 := &fakeHubNewSession{exists: true, path: t.TempDir()}
+	d2 := f2.deps(filepath.Join(dir, ".agentctl"))
+	d2.launchTemplate = func(string, HubTemplateLaunch) (string, error) { t.Fatal("dispatched"); return "", nil }
+	if _, err := runHubNewSessionTemplate(dir, HubTemplateLaunch{Template: "t"}, d2); err == nil {
+		t.Error("no error for a foreign session")
+	}
 }

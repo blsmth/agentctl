@@ -13,6 +13,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
@@ -168,6 +169,16 @@ func (m FleetModel) newSessionOpen() bool { return m.dirPrompt != nil }
 type fleetNewSessionState struct {
 	input textinput.Model
 	base  string
+
+	// Template choice (fleet_newsession_tmpl.go); tmpls is empty, and the
+	// rest unused, when no templates exist.
+	tmpls                []prompttemplate.Template
+	agents               []string // known agent names; empty = unchecked
+	sel                  int      // 0 = none, i = tmpls[i-1]
+	focus                int
+	agent, model, prompt textinput.Model
+	promptEdited         bool
+	loadedFor            string // dir the templates were listed for
 }
 
 // openNewSession opens the directory prompt, prefilled with the default dir.
@@ -192,7 +203,13 @@ func (m *FleetModel) openNewSession() {
 	ti.SetValue(base)
 	ti.CursorEnd()
 	ti.Focus()
-	m.dirPrompt = &fleetNewSessionState{input: ti, base: base}
+	st := &fleetNewSessionState{
+		input: ti, base: base, focus: nsFieldDir,
+		agent: newSessionInput(""), model: newSessionInput(""), prompt: newSessionInput(""),
+	}
+	st.loadTemplates(base)
+	st.setFocus(nsFieldDir)
+	m.dirPrompt = st
 	m.ensureCursorVisible()
 }
 
@@ -212,9 +229,10 @@ func (m *FleetModel) handleNewSessionKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.quitting = true
 		return tea.Quit
 	}
-	var cmd tea.Cmd
-	m.dirPrompt.input, cmd = m.dirPrompt.input.Update(msg)
-	return cmd
+	if m.handleNewSessionFormKey(msg.String()) {
+		return nil
+	}
+	return m.updateNewSessionInput(msg)
 }
 
 // submitNewSession validates the typed directory and starts the action. An
@@ -228,6 +246,9 @@ func (m *FleetModel) submitNewSession() tea.Cmd {
 	if err != nil {
 		m.jumpErr = err.Error()
 		return nil
+	}
+	if m.dirPrompt.chosen() != nil {
+		return m.submitNewSessionTemplate(dir)
 	}
 	m.cancelNewSession()
 	if g := m.groupForDir(dir); g != nil {
@@ -247,6 +268,9 @@ func fleetNewSessionInputWidth(cw int) int {
 // newSessionView renders the prompt line for content width cw. The input is
 // sized here, not when the prompt opens, so a resize never overflows it.
 func (m FleetModel) newSessionView(cw int) string {
+	if m.dirPrompt.hasTemplates() {
+		return m.newSessionFormView(cw)
+	}
 	in := m.dirPrompt.input
 	in.SetWidth(fleetNewSessionInputWidth(cw))
 	in.SetCursor(in.Position()) // re-run the scroll for this width
