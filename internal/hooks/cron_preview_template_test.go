@@ -103,6 +103,22 @@ func TestBuildCronPreview_Templates(t *testing.T) {
 		{name: "edit template and prompt", command: `agentctl cron edit plain --template review -p x`, wantDeny: "do not combine"},
 		{name: "edit dir away from the template", command: `agentctl cron edit tmpl --dir /other --template triage`,
 			wantDeny: `template "triage" not found`},
+		{name: "edit relative dir of a stored template job after cd", command: `cd /other && agentctl cron edit tmpl --dir .`,
+			cwd: "/srv", wantDeny: "changes directory or environment"},
+		{name: "edit relative dir of a template job switched in after cd", command: `cd /other && agentctl cron edit plain --dir . --template triage`,
+			cwd: "/srv", wantDeny: "changes directory or environment"},
+		{
+			name:     "edit absolute dir of a stored template job after cd still previews",
+			command:  `cd /other && agentctl cron edit tmpl --dir /srv --timeout 1h`,
+			wantBody: []string{"Triage the backlog."},
+		},
+		{
+			name:     "edit relative dir of a stored template job resolves against the cwd",
+			command:  `agentctl cron edit tmpl --dir .`,
+			cwd:      "/srv",
+			wantBody: []string{"Triage the backlog."},
+			wantDir:  "/srv",
+		},
 		{
 			name:      "run --force on a template job",
 			command:   `agentctl cron run tmpl --force`,

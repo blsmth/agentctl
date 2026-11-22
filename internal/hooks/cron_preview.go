@@ -513,6 +513,14 @@ func buildCronEditPreview(a cronArgs, command, cwd string) (cronPreview, string)
 	if t, ok := a.values["dir"]; ok {
 		job.Dir = displayDir(t.text)
 		templateDir = cronAbsDir(t.text, cwd)
+		// A relative --dir behind a cd resolves elsewhere than cwd, so the
+		// template a fire reads from it cannot be shown (an explicit
+		// --template is checked by cronFlagTemplate).
+		if job.Template != "" && !filepath.IsAbs(paths.ExpandHome(t.text)) && lineChangesContextFor(command, "cron") {
+			return cronPreview{}, fmt.Sprintf("agentctl cron edit %s --dir %s: the command changes directory or environment "+
+				"first, so the approval popup cannot tell which template the job would read. Pass an absolute --dir, "+
+				"or run cron edit as its own Bash call.", name, t.text)
+		}
 	}
 	var tmpl *prompttemplate.Template
 	switch {
