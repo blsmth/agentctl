@@ -713,6 +713,7 @@ export function parseRoute(hash) {
     }
     return { name: "dispatch" };
   }
+  if (parts[0] === "schedules") return parseSchedulesRoute(parts.slice(1));
   if (parts[0] === "settings") return { name: "settings" };
   if (parts[0] === "host") return { name: "host" };
   return { name: "fleet" };
@@ -1817,4 +1818,265 @@ export function formatSkew(ms) {
   if (ms === null || ms === undefined) return "unknown";
   if (Math.abs(ms) < 500) return "in sync";
   return `${ms > 0 ? "+" : "-"}${(Math.abs(ms) / 1000).toFixed(1)}s`;
+}
+
+// ---- Schedules (cron jobs) ----
+
+/** RESERVED_JOB_NAMES are job names the Schedules routes cannot address. */
+export const RESERVED_JOB_NAMES = ["new"];
+
+/**
+ * parseSchedulesRoute reads what follows "#/schedules": nothing (list), "new",
+ * "<name>" (card), "<name>/edit" or "<name>/copy".
+ */
+export function parseSchedulesRoute(rest) {
+  const base = { name: "schedules" };
+  if (rest.length === 0) return { ...base, view: "list" };
+  if (rest[0] === "new") return { ...base, view: "new" };
+  let job = "";
+  try {
+    job = decodeURIComponent(rest[0]);
+  } catch {
+    return { ...base, view: "list" };
+  }
+  const view = { edit: "edit", copy: "copy" }[rest[1]] ?? "job";
+  return { ...base, view, job };
+}
+
+/** scheduleHash is the route of a job's card, edit form or copy form. */
+export function scheduleHash(job, view = "") {
+  if (!job) return "#/schedules";
+  return `#/schedules/${encodeURIComponent(job)}${view ? `/${view}` : ""}`;
+}
+
+const SCHED_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * formatNextFire is a fire time for a list row: relative under 24h
+ * ("in 3h 20m"), else "Mon 07:31"; "" for no time.
+ */
+export function formatNextFire(iso, now = Date.now()) {
+  if (!iso) return "";
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return "";
+  const mins = Math.round((t.getTime() - now) / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `in ${mins}m`;
+  if (mins < 24 * 60) {
+    const m = mins % 60;
+    return `in ${Math.floor(mins / 60)}h${m ? ` ${m}m` : ""}`;
+  }
+  return `${SCHED_DAYS[t.getDay()]} ${formatClock(t.getTime())}`;
+}
+
+/** formatAgo is a past time as "5m ago", "3h ago" or "2d ago". */
+export function formatAgo(iso, now = Date.now()) {
+  const t = new Date(iso).getTime();
+  if (!iso || Number.isNaN(t)) return "";
+  const mins = Math.max(0, Math.round((now - t) / 60000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (mins < 48 * 60) return `${Math.floor(mins / 60)}h ago`;
+  return `${Math.floor(mins / 1440)}d ago`;
+}
+
+/** runResultLabel describes a run entry: "fired", "skipped: usage 5h 82%", "failed: ...". */
+export function runResultLabel(e) {
+  if (!e) return "";
+  const r = e.result ?? "";
+  const note = e.note ?? "";
+  if (r.startsWith("skipped:")) return `skipped: ${note || r.slice("skipped:".length)}`;
+  if (r.startsWith("failed:")) return `failed: ${note || r.slice("failed:".length)}`;
+  return note && r !== "fired" ? `${r}: ${note}` : r;
+}
+
+/** scheduleGlyph is {glyph, kind} for a job row; kind drives the colour. */
+export function scheduleGlyph(st) {
+  if (!st.enabled) return { glyph: "\u23F8", kind: "paused" };
+  if (st.failed_last) return { glyph: "!", kind: "failed" };
+  if (st.running) return { glyph: "\u25CF", kind: "running" };
+  return { glyph: "\u23F2", kind: "enabled" };
+}
+
+/** scheduleWhen is the right-hand "next fire" text of a list row. */
+export function scheduleWhen(st, now = Date.now()) {
+  if (!st.enabled) return "paused";
+  if (st.invalid || st.schedule_error) return "invalid";
+  return formatNextFire(st.next_fire, now) || "never";
+}
+
+/** scheduleScheduleText is the schedule in words, or the raw expression. */
+export function scheduleScheduleText(st) {
+  return st.words || st.job?.schedule || "";
+}
+
+/** scheduleLastText is "last: failed: reason · 2h ago" for a row, "" for no runs. */
+export function scheduleLastText(st, now = Date.now()) {
+  if (!st.last) return "";
+  const ago = formatAgo(st.last.ts, now);
+  return `last: ${runResultLabel(st.last)}${ago ? ` \u00B7 ${ago}` : ""}`;
+}
+
+/** scheduleException is the chip for a run that was skipped, "" otherwise. */
+export function scheduleException(st) {
+  return st.last?.result?.startsWith("skipped:") ? runResultLabel(st.last) : "";
+}
+
+/** scheduleBanners are the warnings above the list. */
+export function scheduleBanners(ov) {
+  const out = [];
+  if (ov && ov.scheduler_installed === false) out.push("Scheduler not installed: run `agentctl cron install` on the Mac, or no job will fire.");
+  if (ov && ov.enabled === false) out.push("Scheduled runs are switched off (cron.enabled is false). Nothing will fire.");
+  return out;
+}
+
+/** dirName is the last path segment of a dir. */
+export function dirName(dir) {
+  return (dir ?? "").replace(/\/+$/, "").split("/").pop() || dir || "";
+}
+
+const DEFAULT_SIMPLE = { kind: "daily", minute: 0, hour: 9, days: [] };
+
+/**
+ * newScheduleForm is the form model. base is the full stored job (every field
+ * the form does not show rides along on save: PUT replaces the whole job).
+ * simple is the server's picker model for the stored schedule, or null: then
+ * the form opens in Custom with the raw expression.
+ */
+export function newScheduleForm({ job = null, simple = null, promptText = "", copy = false } = {}) {
+  const base = job ? structuredClone(job) : {};
+  const custom = job ? !simple : false;
+  const sim = simple ?? DEFAULT_SIMPLE;
+  return {
+    original: job && !copy ? job.name : "",
+    base,
+    name: copy ? `${job.name}-copy` : (job?.name ?? ""),
+    dir: job?.dir ?? "",
+    agent: job?.agent ?? "",
+    prompt: job ? (job.prompt || promptText || "") : "",
+    promptKey: job?.prompt_key && !job.prompt ? job.prompt_key : "",
+    promptKeyText: job?.prompt_key && !job.prompt ? promptText : "",
+    mode: custom ? "custom" : sim.kind,
+    minute: sim.minute,
+    hour: sim.hour,
+    days: [...(sim.days ?? DEFAULT_SIMPLE.days)],
+    raw: job?.schedule ?? "",
+    worktree: job ? job.worktree !== false : true,
+    model: job?.model ?? "",
+    effort: job?.effort ?? "",
+    backend: job?.backend ?? "",
+    account: job?.account ?? "",
+    timeout: job?.timeout ?? "",
+    overlap: job?.overlap || "skip",
+    catchup: job?.catchup || "latest",
+    gate5h: job?.skip_if_usage_above?.five_hour ? String(job.skip_if_usage_above.five_hour) : "",
+    gate7d: job?.skip_if_usage_above?.seven_day ? String(job.skip_if_usage_above.seven_day) : "",
+    // A copy is saved paused; an edit leaves enabled alone.
+    enabled: copy ? false : undefined,
+  };
+}
+
+/**
+ * scheduleBody builds the create/update/preview body: every field the form
+ * loaded or edited, so PUT never resets one (worktree is always explicit).
+ */
+export function scheduleBody(f) {
+  const job = { ...f.base };
+  job.name = f.original || f.name.trim();
+  job.dir = f.dir;
+  job.agent = f.agent;
+  const promptChanged = f.promptKey && f.prompt !== f.promptKeyText;
+  if (f.promptKey && !promptChanged) {
+    job.prompt_key = f.promptKey;
+    delete job.prompt;
+  } else {
+    job.prompt = f.prompt;
+    delete job.prompt_key;
+  }
+  job.worktree = f.worktree;
+  for (const k of ["model", "effort", "backend", "account", "timeout"]) {
+    if (f[k]) job[k] = f[k];
+    else delete job[k];
+  }
+  job.overlap = f.overlap;
+  job.catchup = f.catchup;
+  const gate = {};
+  if (Number(f.gate5h) > 0) gate.five_hour = Number(f.gate5h);
+  if (Number(f.gate7d) > 0) gate.seven_day = Number(f.gate7d);
+  if (Object.keys(gate).length) job.skip_if_usage_above = gate;
+  else delete job.skip_if_usage_above;
+  // An edit never sends enabled: omitted keeps the stored flag.
+  if (f.enabled !== undefined) job.enabled = f.enabled;
+  else delete job.enabled;
+  const body = { job };
+  if (f.mode === "custom") job.schedule = f.raw.trim();
+  else {
+    body.simple = { kind: f.mode, minute: Number(f.minute) || 0, hour: Number(f.hour) || 0 };
+    if (f.mode === "days") body.simple.days = [...f.days].sort((a, b) => a - b);
+    delete job.schedule;
+  }
+  return body;
+}
+
+/** previewBody is the preview request: the save body plus the stored name. */
+export function previewBody(f) {
+  const b = scheduleBody(f);
+  if (f.original) b.original = f.original;
+  return b;
+}
+
+/** fieldErrors maps a response's field errors to {field: message}. */
+export function fieldErrors(errors) {
+  const out = {};
+  for (const e of errors ?? []) out[e.field] ??= e.message;
+  return out;
+}
+
+/** formClientErrors are the checks the server cannot do before a round trip. */
+export function formClientErrors(f) {
+  const out = {};
+  if (!f.original && RESERVED_JOB_NAMES.includes(f.name.trim())) out.name = `"${f.name.trim()}" is reserved; pick another name`;
+  if (f.mode === "days" && f.days.length === 0) out.schedule = "Pick at least one day";
+  if (f.mode === "custom" && !f.raw.trim()) out.schedule = "Enter a cron expression";
+  return out;
+}
+
+/** advancedSummary lists the non-default advanced settings, "" when all defaults. */
+export function advancedSummary(f) {
+  const out = [];
+  if (!f.worktree) out.push("no worktree");
+  if (f.model) out.push(`model ${f.model}`);
+  if (f.effort) out.push(`effort ${f.effort}`);
+  if (f.backend) out.push(`backend ${f.backend}`);
+  if (f.account) out.push(`account ${f.account}`);
+  if (f.timeout) out.push(`timeout ${f.timeout}`);
+  if (f.overlap !== "skip") out.push(`overlap ${f.overlap}`);
+  if (f.catchup !== "latest") out.push(`catchup ${f.catchup}`);
+  if (f.gate5h || f.gate7d) out.push(`usage gate ${f.gate5h || "default"}/${f.gate7d || "default"}`);
+  return out.join(" \u00B7 ");
+}
+
+/** tildePath shortens a path under home-like prefixes for display. */
+export function tildePath(dir) {
+  return (dir ?? "").replace(/^\/(?:Users|home)\/[^/]+/, "~");
+}
+
+/**
+ * scheduleReview are the lines of the review sheet, which must say what runs,
+ * where, when, unattended, and the next fires. p is the preview response; for
+ * an edit only the changed fields are listed (Changed names them).
+ */
+export function scheduleReview(p, f) {
+  const job = p.job;
+  const where = `${tildePath(job.dir)}${job.worktree === false ? " (the project directory itself)" : " (new worktree each run)"}`;
+  const when = p.words || p.schedule;
+  const tz = p.time_zone ? ` ${p.time_zone}` : "";
+  const lines = [];
+  lines.push(`Runs ${job.agent} in ${where}, ${when}${tz}, unattended, permission mode auto, until paused.`);
+  if (p.next_fires_text?.length) lines.push(`Next: ${p.next_fires_text.join(", ")}`);
+  if (f?.original && p.changed?.length) lines.push(`Changing: ${p.changed.join(", ")}`);
+  const adv = f ? advancedSummary(f) : "";
+  if (adv) lines.push(`Advanced: ${adv}`);
+  lines.push(`Prompt:\n${job.prompt || (job.prompt_key ? `(context key ${job.prompt_key}, read at every run)` : "")}`);
+  return lines;
 }

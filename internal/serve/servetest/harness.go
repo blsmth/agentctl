@@ -69,6 +69,8 @@ type Harness struct {
 
 	apMu      sync.Mutex
 	approvals map[string]net.Conn
+
+	scheds *schedules
 }
 
 // New builds and starts a Harness on the default fixture.
@@ -102,6 +104,7 @@ func New(opts Options) (*Harness, error) {
 	w.setGroups(cloneGroups(initial))
 	off := false
 	p := panes{w}
+	scheds := newSchedules(opts.Dir)
 	s, err := serve.New(serve.Options{
 		Config: config.ServeConfig{
 			AllowCIDRs: []string{"127.0.0.0/8", "::1/128"},
@@ -117,13 +120,14 @@ func New(opts Options) (*Harness, error) {
 		Pusher: pusher{}, NtfyBase: "http://127.0.0.1:1",
 		BusOptions: fleetwatch.Options{Debounce: 10 * time.Millisecond, Rediscover: opts.Rediscover},
 		PingEvery:  5 * time.Second,
+		Schedules:  scheds.store(), RunSchedule: scheds.run,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("building server: %w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.Start(ctx)
-	h := &Harness{Server: s, Token: token, world: w, initial: initial, cancel: cancel, rediscover: opts.Rediscover, approvals: map[string]net.Conn{}}
+	h := &Harness{Server: s, Token: token, world: w, initial: initial, cancel: cancel, rediscover: opts.Rediscover, approvals: map[string]net.Conn{}, scheds: scheds}
 	mux := http.NewServeMux()
 	h.registerControl(mux)
 	mux.Handle("/", s.Handler())
@@ -163,6 +167,7 @@ func (h *Harness) Reset() {
 	_ = os.Remove(h.world.orderPath) // forget a reorder made by the last test
 	h.world.setGroups(cloneGroups(h.initial))
 	h.world.clearActions()
+	_ = h.scheds.set(SchedulesSpec{})
 	time.Sleep(3*h.rediscover + 50*time.Millisecond)
 }
 

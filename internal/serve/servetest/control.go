@@ -19,6 +19,8 @@ import (
 //	PUT  /__test/fleet     {groups: [...]} or {fixture: "<name>"}: swap fixtures
 //	POST /__test/window    {session, id, ...fields}: patch one window
 //	POST /__test/approvals ApprovalSpec -> {id}: open a remote approval
+//	PUT  /__test/schedules SchedulesSpec -> {dir}: replace the cron jobs/runs; dir is a real project dir
+//	GET  /__test/schedules {runs, dir}: the jobs run-now fired
 //
 // Fixture changes reach the browser the way real ones do: the fleet bus
 // re-reads the source (every Options.Rediscover) and publishes SSE events.
@@ -51,6 +53,8 @@ func (h *Harness) registerControl(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"id": id})
 	})
+	mux.HandleFunc("PUT "+p+"schedules", func(w http.ResponseWriter, r *http.Request) { h.scheds.handleSet(h, w, r) })
+	mux.HandleFunc("GET "+p+"schedules", func(w http.ResponseWriter, r *http.Request) { h.scheds.handleRuns(w, r) })
 	mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("no control route %s %s", r.Method, r.URL.Path))
 	})

@@ -35,6 +35,9 @@ const (
 	// scheduleWriteDeadline bounds a run-now response (the subprocess may
 	// start a session and a worktree).
 	scheduleWriteDeadline = cronedit.RunTimeout + 15*time.Second
+	// scheduleSlowDeadline bounds an update or resume: both take the cron
+	// tick lock, which a slow launch holds for a while.
+	scheduleSlowDeadline = 90 * time.Second
 )
 
 // scheduleIn is the body of create and update: the job, and optionally the
@@ -80,10 +83,10 @@ func (s *Server) registerSchedules(rt *Router) {
 	rt.Device("GET /v1/schedules/{name}", s.handleSchedule)
 	rt.Write("POST /v1/schedules/preview", writeRoute(s, "schedule-preview", s.handleSchedulePreview))
 	rt.Write("POST /v1/schedules", writeRoute(s, "schedule-create", s.handleScheduleCreate))
-	rt.Write("PUT /v1/schedules/{name}", writeRoute(s, "schedule-update", s.handleScheduleUpdate))
-	rt.Write("POST /v1/schedules/{name}", writeRoute(s, "schedule-update", s.handleScheduleUpdate))
+	rt.Write("PUT /v1/schedules/{name}", extendDeadline(scheduleSlowDeadline, writeRoute(s, "schedule-update", s.handleScheduleUpdate)))
+	rt.Write("POST /v1/schedules/{name}", extendDeadline(scheduleSlowDeadline, writeRoute(s, "schedule-update", s.handleScheduleUpdate)))
 	rt.Write("POST /v1/schedules/{name}/pause", writeRoute(s, "schedule-pause", s.handleSchedulePause))
-	rt.Write("POST /v1/schedules/{name}/resume", writeRoute(s, "schedule-resume", s.handleScheduleResume))
+	rt.Write("POST /v1/schedules/{name}/resume", extendDeadline(scheduleSlowDeadline, writeRoute(s, "schedule-resume", s.handleScheduleResume)))
 	rt.Write("POST /v1/schedules/{name}/run", extendDeadline(scheduleWriteDeadline, writeRoute(s, "schedule-run", s.handleScheduleRun)))
 	rt.Write("DELETE /v1/schedules/{name}", writeRoute(s, "schedule-delete", s.handleScheduleDelete))
 	rt.Write("POST /v1/schedules/{name}/delete", writeRoute(s, "schedule-delete", s.handleScheduleDelete))

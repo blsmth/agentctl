@@ -15,6 +15,8 @@ import {
   waitingIndex, displayState, waitingLabel, actionsFor, effectiveState,
   applyGone, shellRows, shellDirName, shellApiPath,
   formatBytes, formatUptime, hostLevels, hostConnection, pushSample, formatSkew,
+  advancedSummary, fieldErrors, formClientErrors, formatAgo, formatNextFire, newScheduleForm, previewBody, runResultLabel, scheduleBanners, scheduleBody,
+  scheduleException, scheduleGlyph, scheduleHash, scheduleLastText, scheduleReview, scheduleWhen,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
 } from "./logic.js";
 
@@ -745,4 +747,90 @@ console.log("ok: shell request");
   assert.equal(formatSkew(120), "in sync");
   assert.equal(formatSkew(-2500), "-2.5s");
   console.log("ok: host view logic");
+}
+
+// Schedules: routes, row text, and the form round trip.
+{
+  assert.deepEqual(parseRoute("#/schedules"), { name: "schedules", view: "list" });
+  assert.deepEqual(parseRoute("#/schedules/new"), { name: "schedules", view: "new" });
+  assert.deepEqual(parseRoute("#/schedules/nightly-triage"), { name: "schedules", view: "job", job: "nightly-triage" });
+  assert.deepEqual(parseRoute("#/schedules/a/edit"), { name: "schedules", view: "edit", job: "a" });
+  assert.deepEqual(parseRoute("#/schedules/a/copy"), { name: "schedules", view: "copy", job: "a" });
+  assert.equal(scheduleHash("a b", "edit"), "#/schedules/a%20b/edit");
+
+  const now = new Date(2026, 10, 22, 8, 0).getTime();
+  const at = (d, h, m) => new Date(2026, 10, d, h, m).toISOString();
+  assert.equal(formatNextFire(at(22, 8, 20), now), "in 20m");
+  assert.equal(formatNextFire(at(22, 11, 20), now), "in 3h 20m");
+  assert.equal(formatNextFire(at(22, 11, 0), now), "in 3h");
+  assert.equal(formatNextFire(at(24, 7, 31), now), "Tue 07:31");
+  assert.equal(formatNextFire(undefined, now), "");
+  assert.equal(formatAgo(at(22, 6, 0), now), "2h ago");
+
+  assert.equal(runResultLabel({ result: "skipped:usage", note: "usage 5h 82%" }), "skipped: usage 5h 82%");
+  assert.equal(runResultLabel({ result: "failed:launch", note: "boom" }), "failed: boom");
+  assert.equal(runResultLabel({ result: "fired" }), "fired");
+  assert.equal(scheduleException({ last: { result: "skipped:overlap", note: "still running" } }), "skipped: still running");
+  assert.equal(scheduleException({ last: { result: "fired" } }), "");
+  assert.deepEqual(scheduleGlyph({ enabled: false, failed_last: true }), { glyph: "\u23F8", kind: "paused" });
+  assert.equal(scheduleGlyph({ enabled: true, failed_last: true }).glyph, "!");
+  assert.equal(scheduleGlyph({ enabled: true, running: true }).glyph, "\u25CF");
+  assert.equal(scheduleGlyph({ enabled: true }).glyph, "\u23F2");
+  assert.equal(scheduleWhen({ enabled: false }, now), "paused");
+  assert.equal(scheduleLastText({ last: { ts: at(22, 7, 0), result: "fired" } }, now), "last: fired \u00B7 1h ago");
+  assert.deepEqual(scheduleBanners({ scheduler_installed: true, enabled: true }), []);
+  assert.equal(scheduleBanners({ scheduler_installed: false, enabled: false }).length, 2);
+  assert.deepEqual(fieldErrors([{ field: "name", message: "a" }, { field: "name", message: "b" }]), { name: "a" });
+
+  // Edit round trip: fields the form does not show survive, worktree is explicit.
+  const stored = { name: "j", schedule: "30 7 * * 1-5", dir: "/x", agent: "go", prompt: "p", harness: "claude", mode: "window",
+    worktree: false, overlap: "allow", catchup: "none", account: "work", enabled: false, skip_if_usage_above: { five_hour: 70 }, extra_future: 1 };
+  const f = newScheduleForm({ job: stored, simple: { kind: "weekdays", minute: 30, hour: 7 } });
+  const body = scheduleBody(f);
+  assert.equal(body.job.name, "j");
+  assert.equal(body.job.worktree, false);
+  assert.equal(body.job.account, "work");
+  assert.equal(body.job.extra_future, 1);
+  assert.deepEqual(body.job.skip_if_usage_above, { five_hour: 70 });
+  assert.equal(body.job.enabled, undefined, "an edit never sends enabled");
+  assert.equal(body.job.schedule, undefined);
+  assert.deepEqual(body.simple, { kind: "weekdays", minute: 30, hour: 7 });
+  assert.equal(previewBody(f).original, "j");
+  // Default worktree stays explicit true.
+  assert.equal(scheduleBody(newScheduleForm({ job: { ...stored, worktree: undefined }, simple: { kind: "daily", minute: 0, hour: 1 } })).job.worktree, true);
+  // A schedule the picker cannot show opens in Custom and is sent raw, untouched.
+  const raw = newScheduleForm({ job: { ...stored, schedule: "*/20 9-17 * * 1-5" }, simple: null });
+  assert.equal(raw.mode, "custom");
+  assert.deepEqual(scheduleBody(raw).job.schedule, "*/20 9-17 * * 1-5");
+  assert.equal(scheduleBody(raw).simple, undefined);
+  // Days mode.
+  const days = newScheduleForm({ job: stored, simple: { kind: "days", minute: 5, hour: 6, days: [3, 1] } });
+  assert.deepEqual(scheduleBody(days).simple, { kind: "days", minute: 5, hour: 6, days: [1, 3] });
+  days.days = [];
+  assert.equal(formClientErrors(days).schedule, "Pick at least one day");
+  // prompt_key survives until the text is edited.
+  const pk = newScheduleForm({ job: { ...stored, prompt: "", prompt_key: "k" }, simple: { kind: "daily", minute: 0, hour: 1 }, promptText: "resolved" });
+  assert.equal(pk.prompt, "resolved");
+  assert.equal(scheduleBody(pk).job.prompt_key, "k");
+  assert.equal(scheduleBody(pk).job.prompt, undefined);
+  pk.prompt = "mine";
+  assert.equal(scheduleBody(pk).job.prompt, "mine");
+  assert.equal(scheduleBody(pk).job.prompt_key, undefined);
+  // Duplicate: new name, saved paused, no original.
+  const cp = newScheduleForm({ job: stored, simple: { kind: "daily", minute: 0, hour: 1 }, copy: true });
+  assert.equal(cp.name, "j-copy");
+  assert.equal(scheduleBody(cp).job.enabled, false);
+  assert.equal(previewBody(cp).original, undefined);
+  // New job: no extra fields, default worktree on.
+  assert.equal(scheduleBody({ ...newScheduleForm(), name: " x " }).job.name, "x");
+  assert.equal(formClientErrors({ ...newScheduleForm(), name: "new" }).name, '"new" is reserved; pick another name');
+  assert.equal(advancedSummary(f), "no worktree \u00B7 account work \u00B7 overlap allow \u00B7 catchup none \u00B7 usage gate 70/default");
+  assert.equal(advancedSummary(newScheduleForm()), "");
+
+  const lines = scheduleReview({ job: { agent: "brandon", dir: "/Users/b/code/x", worktree: true, prompt: "Do it" }, words: "weekdays 07:30",
+    time_zone: "EST", next_fires_text: ["Mon 23 Nov 07:31"] }, newScheduleForm());
+  assert.match(lines[0], /^Runs brandon in ~\/code\/x \(new worktree each run\), weekdays 07:30 EST, unattended, permission mode auto, until paused\.$/);
+  assert.equal(lines[1], "Next: Mon 23 Nov 07:31");
+  assert.match(lines.at(-1), /Prompt:\nDo it/);
+  console.log("ok: schedules logic");
 }

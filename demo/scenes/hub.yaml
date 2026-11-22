@@ -131,3 +131,6 @@ phone:
     - open: window:limiter
     - wait: Claude Code
     - screenshot: limiter
+    - open: schedules
+    - wait: nightly-triage
+    - screenshot: schedules

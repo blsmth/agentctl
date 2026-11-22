@@ -330,3 +330,45 @@ body.term-open nav { display: none; }
   .hval.warn, td.warn { color: #ffb340; }
   .hval.bad, td.bad { color: #ff6961; }
 }
+
+/* Schedules screen. */
+.form input[type="text"], .form input[type="number"], .form input[type="time"] { font: inherit; font-size: 16px; color: var(--fg);
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: .6rem; min-height: 44px; width: 100%; box-sizing: border-box; }
+.form input:disabled { opacity: .6; }
+.banner.warn { margin: .5rem 1rem; padding: .6rem .8rem; border-radius: 10px; border: 1px solid var(--waiting);
+  background: color-mix(in srgb, var(--waiting) 14%, var(--card)); font-size: .9rem; }
+.sched-row { border-left-color: var(--line); }
+.sched-row.failed { border-left-color: var(--blocked); }
+.sched-row.running { border-left-color: var(--working); }
+.sched-row.paused { opacity: .6; }
+.sched-glyph.failed { color: var(--blocked); font-weight: 700; }
+.sched-glyph.running { color: var(--working); }
+.sched-words { font-weight: 400; color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; }
+.sched-when { font-size: .85rem; white-space: nowrap; }
+.win-chips .tag.sched-exc { border-color: var(--waiting); color: var(--waiting); }
+.sched-run { flex: none; align-self: center; margin-right: .5rem; }
+.node:has(> .sched-row) { display: flex; align-items: center; }
+.node > .sched-row { flex: 1; min-width: 0; }
+.bucket-link { margin-left: auto; padding: 0 .75rem; min-height: 44px; display: inline-flex; align-items: center; color: var(--accent); text-decoration: none; font-size: .85rem; }
+.sched-seg { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .5rem; }
+.sched-seg .btn { flex: 1 1 auto; padding: 0 .6rem; }
+.sched-seg .btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.day-chips { display: flex; gap: .3rem; margin-bottom: .5rem; }
+.day-chip { flex: 1; min-width: 44px; min-height: 44px; border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+  color: var(--fg); font: inherit; font-weight: 600; cursor: pointer; }
+.day-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sched-preview { margin: .4rem 0 0; font-size: .85rem; }
+.field-error { color: var(--blocked); font-size: .8rem; }
+.sched-check { flex-direction: row !important; align-items: center; min-height: 44px; gap: .5rem; }
+.sched-check input { width: 22px; height: 22px; }
+.sched-adv { display: flex; flex-direction: column; gap: .75rem; padding-top: .5rem; }
+.sched-facts { display: flex; flex-direction: column; gap: .3rem; margin-bottom: .75rem; }
+.sched-actions { flex-wrap: wrap; margin: .75rem 0; }
+.sched-actions .btn { flex: 1 1 40%; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.sched-runs { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; font-size: .9rem; }
+.swipe-action { min-height: 44px; }
+.swipe[data-job], .swipe[data-job] > .swipe-action { background: var(--accent); }
+.toast.action { pointer-events: auto; }
+.sched-row .win-title { flex-wrap: wrap; row-gap: 0; }
+.sched-row .win-chips .tag.sched-exc { height: auto; min-height: 0; line-height: 1.4; align-self: flex-start; }
+.sched-row { flex: 1; }

@@ -332,3 +332,35 @@ func TestScheduleActionFor(t *testing.T) {
 		}
 	}
 }
+
+// Schedule-changing updates and resume wait on the cron tick lock, which a
+// slow launch holds, so they extend the write deadline like run-now.
+func TestScheduleSlowRoutesExtendWriteDeadline(t *testing.T) {
+	se := newScheduleEnv(t, true)
+	if w := se.post("/v1/schedules", se.jobBody("triage")); w.Code != http.StatusOK {
+		t.Fatalf("create: %d %s", w.Code, w.Body)
+	}
+	tests := []struct {
+		name, method, path, body string
+		want                     time.Duration
+	}{
+		{"put", "PUT", "/v1/schedules/triage", se.jobBody("triage"), scheduleSlowDeadline},
+		{"post update", "POST", "/v1/schedules/triage", se.jobBody("triage"), scheduleSlowDeadline},
+		{"resume", "POST", "/v1/schedules/triage/resume", "{}", scheduleSlowDeadline},
+		{"run", "POST", "/v1/schedules/triage/run", "{}", scheduleWriteDeadline},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			r.RemoteAddr = "192.168.1.20:51515"
+			r.Header.Set("Content-Type", "application/json")
+			r.Header.Set(CSRFHeader, "1")
+			r.AddCookie(&http.Cookie{Name: DeviceCookie, Value: se.tok})
+			rec := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
+			se.Handler().ServeHTTP(rec, r)
+			if until := time.Until(rec.deadline); until < tt.want-5*time.Second {
+				t.Errorf("write deadline %v from now, want about %v", until, tt.want)
+			}
+		})
+	}
+}
