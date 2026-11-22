@@ -10,6 +10,14 @@ export function mountDispatch(root, ctx, { dir } = {}) {
   const agent = h("select", { "aria-label": "Agent" });
   const project = h("select", { "aria-label": "Project" });
   const prompt = h("textarea", { rows: "8", placeholder: "What should the agent do?" });
+  // Standing guidance for the agent's system prompt; only offered when the
+  // server accepts the field (an older serve would reject it as unknown).
+  const withInstructions = ctx.hasFeature("dispatch-instructions");
+  const instructions = h("textarea", {
+    rows: "4",
+    placeholder: "Extra guidance for this agent (added to its system prompt)",
+    "aria-label": "Additional instructions",
+  });
   const submit = h("button", { class: "btn primary", disabled: true }, "Review & send");
   const launchBox = h("div", { class: "launch-opts" });
   const withOptions = ctx.hasFeature("launch-options");
@@ -24,6 +32,9 @@ export function mountDispatch(root, ctx, { dir } = {}) {
       h("label", {}, "Project", project),
       withOptions ? launchBox : null,
       h("label", {}, "Prompt", prompt),
+      withInstructions
+        ? h("details", { class: "instructions" }, h("summary", {}, "Additional instructions"), instructions)
+        : null,
       ...(att ? att.controls : []),
       ctx.hasFeature("write") ? null : h("p", { class: "muted" }, "Write actions are not enabled on this server."),
       submit,
@@ -136,11 +147,12 @@ export function mountDispatch(root, ctx, { dir } = {}) {
       toast("Pick an agent and project, and write a prompt", "error");
       return;
     }
+    const extra = withInstructions ? instructions.value.trim() : "";
     const n = att ? att.count() : 0;
     const [agentName, dir, picked] = [agent.value, project.value, opts ? choice : {}];
     const confirmed = await confirmSheet({
       title: "Dispatch?",
-      lines: confirmLines(buildDispatchRequest(agentName, dir, text, picked).body, n),
+      lines: confirmLines(buildDispatchRequest(agentName, dir, text, picked, [], extra).body, n),
       confirmLabel: "Dispatch",
     });
     if (!confirmed) return;
@@ -158,7 +170,7 @@ export function mountDispatch(root, ctx, { dir } = {}) {
       }
     }
     try {
-      const res = await send(buildDispatchRequest(agentName, dir, text, picked, images));
+      const res = await send(buildDispatchRequest(agentName, dir, text, picked, images, extra));
       toast("Dispatched");
       location.hash = res?.window_id ? windowHash(res.session, res.window_id) : "#/";
     } catch (e) {

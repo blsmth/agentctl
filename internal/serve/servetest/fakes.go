@@ -33,6 +33,8 @@ type Action struct {
 	ID       string `json:"id,omitempty"`
 	Decision string `json:"decision,omitempty"`
 	Device   string `json:"device,omitempty"`
+	// Instructions is a dispatch's additional system-prompt text.
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // world is the fake machine: the fixture fleet, its panes and the recorded
@@ -277,7 +279,7 @@ func (s sweeper) run(_ context.Context, t sweeprun.Target, dryRun bool) (sweepru
 type dispatcher struct{ w *world }
 
 func (d dispatcher) Dispatch(req serve.DispatchRequest) (serve.DispatchResult, error) {
-	d.w.record(Action{Kind: "dispatch", Session: req.Session, Agent: req.Agent, Text: req.Prompt, Dir: req.Dir})
+	d.w.record(Action{Kind: "dispatch", Session: req.Session, Agent: req.Agent, Text: req.Prompt, Dir: req.Dir, Instructions: req.Instructions})
 	return serve.DispatchResult{WindowID: "@900", Session: req.Session, Branch: "agent/" + req.Agent + "/adhoc"}, nil
 }
 

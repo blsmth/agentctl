@@ -129,8 +129,17 @@ func buildSystemPrompt(req Request, spec modeSpec, workDir, branch string, useWo
 		parts = append(parts, buildFinishingSteps(req, branch, useWorktree))
 	}
 
+	// 10. User-supplied additional instructions, after everything else so they
+	// are the last standing guidance the model reads.
+	if extra := strings.TrimSpace(req.ExtraInstructions); extra != "" {
+		parts = append(parts, AdditionalInstructionsHeading+"\n\n"+extra)
+	}
+
 	return strings.Join(parts, "\n\n")
 }
+
+// AdditionalInstructionsHeading heads the user's extra system-prompt guidance.
+const AdditionalInstructionsHeading = "## Additional instructions from the user"
 
 // buildWorktreeOrientation returns the worktree orientation note included in
 // the system prompt when a launch was worktree-isolated. It splits on

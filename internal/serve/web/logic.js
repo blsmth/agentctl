@@ -789,10 +789,13 @@ export function checkAttachment(file, count) {
  * buildDispatchRequest builds POST /v1/dispatch. choice is the optional
  * {backend, model, effort} picked from launch options; empty fields are left
  * out so the server keeps the agent's own configuration. images are IDs from
- * POST /v1/dispatch/upload for the same project.
+ * POST /v1/dispatch/upload for the same project. instructions is optional
+ * text for the agent's system prompt; it is trimmed and omitted when empty.
  */
-export function buildDispatchRequest(agent, projectDir, prompt, choice = {}, images = []) {
+export function buildDispatchRequest(agent, projectDir, prompt, choice = {}, images = [], instructions = "") {
   const body = { agent, project_dir: projectDir, prompt };
+  const extra = (instructions ?? "").trim();
+  if (extra) body.instructions = extra;
   if (images.length) body.images = images;
   for (const k of ["backend", "model", "effort"]) if (choice[k]) body[k] = choice[k];
   return { method: "POST", path: "/v1/dispatch", body };
@@ -834,7 +837,8 @@ export function choiceLabel(c) {
 export const DISPATCH_UPLOAD_PATH = "/v1/dispatch/upload";
 
 /**
- * confirmLines are the sheet lines for a dispatch: settings, then the prompt.
+ * confirmLines are the sheet lines for a dispatch: settings, the prompt, then any additional
+ * instructions as their own labeled block.
  * imageCount is the number of attached images (not yet uploaded when the
  * sheet is shown, so it is not in body).
  */
@@ -844,7 +848,9 @@ export function confirmLines(body, imageCount = 0) {
   if (body.backend) rows.push(`backend: ${body.backend}`);
   if (body.model) rows.push(`model: ${body.model}`);
   if (body.effort) rows.push(`effort: ${body.effort}`);
-  return [rows.join("\n"), body.prompt];
+  const lines = [rows.join("\n"), body.prompt];
+  if (body.instructions) lines.push(`additional instructions (system prompt):\n${body.instructions}`);
+  return lines;
 }
 
 /** actionsFor decides which action-bar sections a window shows. */

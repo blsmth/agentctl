@@ -109,7 +109,9 @@ type Dispatcher interface {
 type DispatchRequest struct {
 	Agent  string
 	Prompt string
-	Model  string
+	// Instructions is optional standing guidance for the agent's system prompt.
+	Instructions string
+	Model        string
 	// Backend and Effort are the launch overrides, already resolved the way
 	// the launch popup does ("" = agent config).
 	Backend    string
@@ -324,14 +326,15 @@ func (d launchDispatcher) Dispatch(req DispatchRequest) (DispatchResult, error) 
 			return err
 		}
 		res, err := d.launch(dispatch.AdhocRequest{
-			Prompt:        req.Prompt,
-			AgentName:     req.Agent,
-			WorkDir:       req.Dir,
-			Model:         req.Model,
-			UseWorktree:   true,
-			Detached:      true,
-			RepoSlug:      slug,
-			RepoSlugKnown: true,
+			Prompt:            req.Prompt,
+			ExtraInstructions: req.Instructions,
+			AgentName:         req.Agent,
+			WorkDir:           req.Dir,
+			Model:             req.Model,
+			UseWorktree:       true,
+			Detached:          true,
+			RepoSlug:          slug,
+			RepoSlugKnown:     true,
 		})
 		if err != nil {
 			return err

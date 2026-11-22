@@ -57,7 +57,10 @@ type Request struct {
 	// already been resolved into CustomPrompt before Launch runs. Nothing in
 	// Launch re-reads the store using this field.
 	PromptKey string
-	WorkDir   string // empty = resolve from agent config
+	// ExtraInstructions is user-supplied standing guidance appended at the very
+	// end of the system prompt (ad-hoc dispatch from the phone). Empty = none.
+	ExtraInstructions string
+	WorkDir           string // empty = resolve from agent config
 	// UseWorktree overrides the mode's DefaultWorktree when non-nil. nil means
 	// "use whatever the mode spec says" -- see Launch's step 3 for the single
 	// resolution site. Every mode currently defaults to true (see modes.go),

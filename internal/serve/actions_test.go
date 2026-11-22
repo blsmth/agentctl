@@ -197,3 +197,24 @@ func TestDispatchRefusesUnsafeRuntimeDirBeforeLaunch(t *testing.T) {
 		t.Errorf("err = %v, launched = %v", err, launched)
 	}
 }
+
+func TestLaunchDispatcherPassesInstructions(t *testing.T) {
+	rt := testRuntimeDir(t)
+	var got dispatch.AdhocRequest
+	d := launchDispatcher{
+		repoSlug:        func(string) (string, error) { return "o/r", nil },
+		checkRuntimeDir: func(string) error { return nil },
+		validateAgent:   func(string, string) error { return nil },
+		launch: func(req dispatch.AdhocRequest) (dispatch.Result, error) {
+			got = req
+			return dispatch.Result{WindowID: "@9"}, nil
+		},
+	}
+	_, err := d.Dispatch(DispatchRequest{Agent: "a", Prompt: "p", Instructions: "be terse", Dir: filepath.Dir(rt), Session: "agentctl-proj", RuntimeDir: rt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ExtraInstructions != "be terse" || got.Prompt != "p" {
+		t.Errorf("launch request = %+v", got)
+	}
+}

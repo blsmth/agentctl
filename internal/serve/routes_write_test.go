@@ -1011,6 +1011,8 @@ func TestDispatch(t *testing.T) {
 		{"control chars in prompt", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"a\u0000b"}`, 400, codeBadRequest},
 		{"bad model", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"p","model":"x; rm"}`, 400, codeBadRequest},
 		{"unknown field", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"p","dir":"/"}`, 400, codeBadRequest},
+		{"control chars in instructions", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"p","instructions":"a\u001bb"}`, 400, codeBadRequest},
+		{"instructions too long", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"p","instructions":"` + strings.Repeat("x", maxInstructionsRunes+1) + `"}`, 413, codeTooLarge},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1053,6 +1055,43 @@ func TestDispatch(t *testing.T) {
 			t.Errorf("result line = %+v", a)
 		}
 	})
+}
+
+func TestDispatchInstructions(t *testing.T) {
+	tests := []struct {
+		name string
+		json string // the instructions member, or ""
+		want string
+	}{
+		{"omitted", "", ""},
+		{"empty", `,"instructions":""`, ""},
+		{"blank is dropped", `,"instructions":"  \n "`, ""},
+		{"trimmed", `,"instructions":"  be terse\nuse tabs \n"`, "be terse\nuse tabs"},
+		{"at the cap", `,"instructions":"` + strings.Repeat("é", maxInstructionsRunes) + `"`, strings.Repeat("é", maxInstructionsRunes)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWriteEnv(t, true)
+			w := e.post("/v1/dispatch", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"p"`+tt.json+`}`)
+			if w.Code != 200 {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			if len(e.disp.got) != 1 || e.disp.got[0].Instructions != tt.want {
+				t.Errorf("dispatch = %+v, want instructions %q", e.disp.got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDispatchInstructionsFeature(t *testing.T) {
+	e := newWriteEnv(t, true)
+	if !slices.Contains(e.Server.router.Features(), "dispatch-instructions") {
+		t.Error("dispatch-instructions not advertised with writes enabled")
+	}
+	e = newWriteEnv(t, false)
+	if slices.Contains(e.Server.router.Features(), "dispatch-instructions") {
+		t.Error("dispatch-instructions advertised with writes disabled")
+	}
 }
 
 func TestWriteRateLimit(t *testing.T) {
@@ -1115,7 +1154,8 @@ func TestAuditNoPlaintext(t *testing.T) {
 		t.Fatalf("status %d", w.Code)
 	}
 	const secretPrompt = "SECRET-PROMPT-TEXT"
-	if w := e.post("/v1/dispatch", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"`+secretPrompt+`"}`); w.Code != 200 {
+	const secretInstructions = "SECRET-INSTRUCTIONS-TEXT"
+	if w := e.post("/v1/dispatch", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"`+secretPrompt+`","instructions":"`+secretInstructions+`"}`); w.Code != 200 {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 
@@ -1123,7 +1163,7 @@ func TestAuditNoPlaintext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), secret) || strings.Contains(string(raw), secretPrompt) {
+	if strings.Contains(string(raw), secret) || strings.Contains(string(raw), secretPrompt) || strings.Contains(string(raw), secretInstructions) {
 		t.Fatalf("audit log contains request text:\n%s", raw)
 	}
 	fi, err := os.Stat(filepath.Join(e.dir, AuditFile))
