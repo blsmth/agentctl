@@ -41,6 +41,7 @@ func TestJobValidate(t *testing.T) {
 		{name: "bad catchup", mut: func(j *Job) { j.Catchup = "all" }, wantErr: "catchup"},
 		{name: "bad timeout", mut: func(j *Job) { j.Timeout = "soon" }, wantErr: "timeout"},
 		{name: "bad effort", mut: func(j *Job) { j.Effort = "extreme" }, wantErr: "effort"},
+		{name: "nous model slug", mut: func(j *Job) { j.Backend = "nous"; j.Model = "deepseek/deepseek-v4.1-flash-1017:batch" }},
 		{name: "bad model", mut: func(j *Job) { j.Model = "opus; rm -rf" }, wantErr: "model"},
 		{name: "bad agent", mut: func(j *Job) { j.Agent = "a b" }, wantErr: "agent"},
 		{name: "bad threshold", mut: func(j *Job) { j.SkipIfUsageAbove = &config.CronUsageThresholds{FiveHour: 120} }, wantErr: "between"},
