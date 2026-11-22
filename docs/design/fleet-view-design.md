@@ -303,8 +303,9 @@ window height change re-pins it to 6 rows (tmux spreads height changes over
 the column). The content comes through the same `hub-selection.json` the
 activity pane follows: while either pane is open the hub publishes the
 selection with a `status` block built from the row's own helpers (`rowGlyph`,
-`rowRecap`, `detailPartsFor`, `rowChips`); the pane lays it out to its width
-with the same `textLines` the list uses, re-reads the file every 250ms,
+`rowRecap`, `rowChips`; the recap only, never the last command, which the
+viewer and the activity pane show); the pane wraps the recap over its free
+lines (a muted placeholder when nothing is left), re-reads the file every 250ms,
 and hot-reloads like the HUD. While it is open the list draws no inline
 detail lines, and `lineHeight` (scrolling, hit testing, the hover card)
 counts none; without it the inline expansion is back. Focus, keys and

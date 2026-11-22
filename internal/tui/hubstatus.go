@@ -108,8 +108,8 @@ const hubStatusIndent = 2
 
 // renderHubStatus lays sel's status out in exactly h lines of at most w
 // columns: the glyph, role and title (project right-aligned), then the
-// recap wrapped and the activity line (detailPartsFor's parts, laid out by
-// the same textLines the list uses), then the chips. With no agent selected
+// recap wrapped over every free line (never the activity line), then the
+// chips. With no agent selected
 // it is one muted placeholder line.
 func renderHubStatus(sel HubSelection, readErr bool, w, h int) string {
 	if w <= 0 || h <= 0 {
@@ -150,12 +150,17 @@ func hubStatusLines(st *hubStatus, w, h int) []string {
 			lines = append(lines, indent+fleetEmptyStyle.Render(l))
 		}
 	}
-	for _, d := range st.Detail.textLines(tw, budget) {
-		text := fleetActivityStyle.Render(d.text)
-		if d.marker != "" {
-			text = fleetDimStyle.Render(d.marker) + text
+	// The recap only: never the activity line, even from a file written by
+	// an older hub that still carries one.
+	hasRecap := false
+	if st.Detail.Recap != "" && !st.Detail.RecapIsActivity && budget-len(lines)+1 > 0 {
+		for _, l := range wrapLines(st.Detail.Recap, tw, budget-(len(lines)-1)) {
+			lines = append(lines, indent+fleetActivityStyle.Render(l))
+			hasRecap = true
 		}
-		lines = append(lines, indent+text)
+	}
+	if !hasRecap && st.Note == "" && chips == "" && tw > 0 {
+		lines = append(lines, indent+fleetEmptyStyle.Render(truncateToWidth("nothing to summarise yet", tw)))
 	}
 	if chips != "" {
 		lines = append(lines, indent+chips)
