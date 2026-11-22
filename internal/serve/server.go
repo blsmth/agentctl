@@ -21,6 +21,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/buildid"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -74,6 +75,13 @@ type Options struct {
 	// Sweep runs `agentctl sweep` for a session; nil means the
 	// sweeprun.Run subprocess. Tests inject a fake.
 	Sweep sweeprun.Func
+	// Schedules is the cron editing core for /v1/schedules; nil means the
+	// real jobs file and state dir (cronedit.Default). Its ValidateAgent and
+	// Windows seams, when nil, are filled from Agents and Fleet.
+	Schedules *cronedit.Store
+	// RunSchedule fires a job now (plain `cron run`); nil means the
+	// cronedit.RunSubprocess subprocess. Tests inject a fake.
+	RunSchedule cronedit.RunFunc
 	// MainPanes finds and captures the pane a window write checks and types
 	// into; nil means tmux.
 	MainPanes MainPanes
@@ -148,9 +156,14 @@ type Server struct {
 	shells     Shells
 	sweep      sweeprun.Func
 	sweeps     sweepGuard
-	mainPanes  MainPanes
-	launchCfg  LaunchConfigSource
-	ollama     *ollamaCache
+	// schedules is the cron editing core (see scheduleStore); runSchedule
+	// fires a job now; scheduleRuns allows one run-now per job at a time.
+	schedules    cronedit.Store
+	runSchedule  cronedit.RunFunc
+	scheduleRuns sweepGuard
+	mainPanes    MainPanes
+	launchCfg    LaunchConfigSource
+	ollama       *ollamaCache
 	// answered remembers recently answered dialogs (see handleAnswer);
 	// answerSettle bounds the wait for an answered dialog to redraw.
 	answered     answeredDialogs
@@ -228,6 +241,15 @@ func New(opts Options) (*Server, error) {
 	if s.sweep == nil {
 		s.sweep = sweeprun.Run
 	}
+	if opts.Schedules != nil {
+		s.schedules = *opts.Schedules
+	} else {
+		s.schedules = cronedit.Default(nil)
+	}
+	s.runSchedule = opts.RunSchedule
+	if s.runSchedule == nil {
+		s.runSchedule = cronedit.RunSubprocess
+	}
 	s.host, s.hostWin = opts.Host, opts.TmuxWindows
 	if s.host == nil {
 		s.host = newLiveHost(now)
@@ -304,6 +326,7 @@ func (s *Server) routes(rt *Router) {
 	s.registerPush(rt)
 	s.registerPresence(rt)
 	s.registerWrite(rt)
+	s.registerSchedules(rt)
 	s.registerTerminal(rt)
 	s.registerApprovals(rt)
 }

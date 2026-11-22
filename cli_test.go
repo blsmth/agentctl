@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alecthomas/kong"
 )
 
 // cliCase describes a single CLI smoke-test scenario.
@@ -267,5 +269,36 @@ func TestIsReadOnlyInvocation(t *testing.T) {
 		if got := isReadOnlyInvocation(tt.args); got != tt.want {
 			t.Errorf("isReadOnlyInvocation(%v) = %v, want %v", tt.args, got, tt.want)
 		}
+	}
+}
+
+// TestCronEditFlagsParse: `cron edit` tells an absent flag (nil, unchanged)
+// from an empty one (clears the field), and --worktree/--no-worktree are
+// exclusive.
+func TestCronEditFlagsParse(t *testing.T) {
+	var cli CLI
+	k, err := kong.New(&cli, kong.Name("agentctl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.Parse([]string{"cron", "edit", "nightly", "--model", "", "--timeout", "30m", "--no-worktree"}); err != nil {
+		t.Fatal(err)
+	}
+	c := cli.Cron.Edit
+	if c.Name != "nightly" || c.Model == nil || *c.Model != "" || c.Timeout == nil || *c.Timeout != "30m" || !c.NoWorktree {
+		t.Errorf("parsed = %+v", c)
+	}
+	if c.Schedule != nil || c.Prompt != nil || c.Agent != nil || c.Dir != nil || c.Worktree {
+		t.Errorf("absent flags set: %+v", c)
+	}
+	var cli2 CLI
+	k2, _ := kong.New(&cli2, kong.Name("agentctl"))
+	if _, err := k2.Parse([]string{"cron", "edit", "x", "--worktree", "--no-worktree"}); err == nil {
+		t.Error("--worktree with --no-worktree accepted")
+	}
+	var cli3 CLI
+	k3, _ := kong.New(&cli3, kong.Name("agentctl"))
+	if _, err := k3.Parse([]string{"cron", "run", "--json", "--", "nightly"}); err != nil || !cli3.Cron.Run.JSON || cli3.Cron.Run.Name != "nightly" || cli3.Cron.Run.Force {
+		t.Errorf("cron run --json: %v %+v", err, cli3.Cron.Run)
 	}
 }

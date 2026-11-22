@@ -15,6 +15,7 @@ import (
 // File names under <StateDir>/cron.
 const (
 	lockFile  = "tick.lock"
+	jobsLock  = "jobs.lock"
 	stateFile = "state.json"
 	runsFile  = "runs.ndjson"
 )
@@ -84,12 +85,26 @@ func SaveState(dir string, s *State) error {
 // one running just exits); with wait true it blocks (a manual `cron run` or
 // `cron add` waits for the tick to finish).
 func Lock(dir string, wait bool) (unlock func(), ok bool, err error) {
+	return flockIn(dir, lockFile, wait)
+}
+
+// LockJobs takes an exclusive flock on <dir>/jobs.lock, blocking. It
+// serializes read-modify-write of schedules.json between the CLI, the hub
+// and serve. It is separate from the tick lock, so a long tick does not
+// hold up an edit that does not touch fire state; a writer that also needs
+// the tick lock takes this one first (the tick never takes it).
+func LockJobs(dir string) (unlock func(), err error) {
+	unlock, _, err = flockIn(dir, jobsLock, true)
+	return unlock, err
+}
+
+func flockIn(dir, name string, wait bool) (unlock func(), ok bool, err error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, false, fmt.Errorf("creating %s: %w", dir, err)
 	}
-	f, err := os.OpenFile(filepath.Join(dir, lockFile), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
-		return nil, false, fmt.Errorf("opening cron lock: %w", err)
+		return nil, false, fmt.Errorf("opening cron lock %s: %w", name, err)
 	}
 	how := syscall.LOCK_EX
 	if !wait {
@@ -100,7 +115,7 @@ func Lock(dir string, wait bool) (unlock func(), ok bool, err error) {
 		if !wait {
 			return nil, false, nil
 		}
-		return nil, false, fmt.Errorf("locking cron state: %w", err)
+		return nil, false, fmt.Errorf("locking %s: %w", name, err)
 	}
 	return func() {
 		syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck

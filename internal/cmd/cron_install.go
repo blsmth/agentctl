@@ -11,13 +11,14 @@ import (
 	"strings"
 
 	"github.com/blsmth/agentctl/internal/cron"
+	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/launchd"
 	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/shellquote"
 )
 
 // CronLaunchdLabel is the LaunchAgent label of the cron ticker.
-const CronLaunchdLabel = "com.blsmth.agentctl.cron"
+const CronLaunchdLabel = cron.LaunchdLabel
 
 // cronTickInterval is the launchd StartInterval, in seconds.
 const cronTickInterval = 60
@@ -62,17 +63,7 @@ func cronExe() (string, error) {
 
 // cronPlistExists reports whether the LaunchAgent plist is on disk. Off
 // macOS it cannot tell and reports true.
-func cronPlistExists() bool {
-	if runtime.GOOS != "darwin" {
-		return true
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return true
-	}
-	_, err = os.Stat(launchd.PlistPath(home, CronLaunchdLabel))
-	return err == nil
-}
+func cronPlistExists() bool { return cronedit.SchedulerInstalled() }
 
 // tickPath builds the ticker's PATH: the directories of the agentctl binary
 // and of claude, tmux and gh as resolved now, then the system fallbacks.

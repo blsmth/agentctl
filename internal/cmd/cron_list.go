@@ -14,6 +14,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/cron"
+	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/launchd"
 	"github.com/blsmth/agentctl/internal/ratelimit"
 )
@@ -24,19 +25,16 @@ func relTime(t, now time.Time) string {
 }
 
 // cronListView is everything `cron list` renders, gathered up front so the
-// rendering is a pure function.
+// rendering is a pure function. The per-job facts (next fire, last result,
+// active count) come from the shared cronedit.BuildOverview.
 type cronListView struct {
-	now    time.Time
-	cfg    config.CronConfig
-	jobs   []cron.Job
-	state  *cron.State
-	last   map[string]cron.Entry
-	active int
+	now time.Time
+	cfg config.CronConfig
+	ov  cronedit.Overview
 	// accounts maps each job to its resolved account ("" when no accounts
 	// are configured); usage holds each account's pushed rate limits.
-	accounts       map[string]string
-	usage          map[string]*ratelimit.PushedRateLimits
-	schedInstalled bool // scheduler installed
+	accounts map[string]string
+	usage    map[string]*ratelimit.PushedRateLimits
 }
 
 // RunCronList prints the jobs with their next fire, last result and
@@ -48,25 +46,19 @@ func (e cronEnv) list(w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	st, err := cron.LoadState(dir)
-	if err != nil {
+	if _, err := cron.LoadState(dir); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 	runs, _ := cron.ReadRuns(dir, "")
-	v := cronListView{now: e.now(), cfg: cfg, jobs: jobs.Jobs, state: st, last: cron.LastByJob(runs), schedInstalled: true}
+	in := cronedit.OverviewInput{Now: e.now(), Config: cfg, Jobs: jobs.Jobs, Runs: runs, SchedulerInstalled: true}
 	if e.schedulerInstalled != nil {
-		v.schedInstalled = e.schedulerInstalled()
+		in.SchedulerInstalled = e.schedulerInstalled()
 	}
 	d := e.deps(dir, cfg, jobs.Jobs)
 	if d.Windows != nil {
-		if ws, err := d.Windows(jobs.Jobs); err == nil {
-			for _, w := range ws {
-				if !w.Done {
-					v.active++
-				}
-			}
-		}
+		in.Windows, _ = d.Windows(jobs.Jobs)
 	}
+	v := cronListView{now: in.Now, cfg: cfg, ov: cronedit.BuildOverview(in)}
 	v.accounts, v.usage = map[string]string{}, map[string]*ratelimit.PushedRateLimits{}
 	for _, j := range jobs.Jobs {
 		acct := j.Account
@@ -86,14 +78,14 @@ func (e cronEnv) list(w io.Writer) error {
 
 func renderCronList(w io.Writer, v cronListView) {
 	switch {
-	case !v.cfg.EnabledOrDefault():
+	case !v.ov.Enabled:
 		fmt.Fprintln(w, "Scheduler: OFF (cron.enabled is false; tick does nothing)")
-	case !v.schedInstalled:
+	case !v.ov.SchedulerInstalled:
 		fmt.Fprintln(w, "Scheduler: not installed (run agentctl cron install)")
 	}
 	th := v.cfg.EffectiveUsageThresholds()
 	fmt.Fprintf(w, "Throttles: min_interval %s · max_concurrent %d (%d active) · catchup_window %s · usage gate 5h ≥ %.0f%%, 7d ≥ %.0f%%\n",
-		shortDuration(v.cfg.EffectiveMinInterval()), v.cfg.EffectiveMaxConcurrent(), v.active, shortDuration(v.cfg.EffectiveCatchupWindow()),
+		v.ov.Throttles.MinInterval, v.ov.Throttles.MaxConcurrent, v.ov.Active, v.ov.Throttles.CatchupWindow,
 		th.FiveHour, th.SevenDay)
 	for _, acct := range sortedKeys(v.usage) {
 		label := "Usage"
@@ -102,52 +94,50 @@ func renderCronList(w io.Writer, v cronListView) {
 		}
 		fmt.Fprintf(w, "%s: %s\n", label, usageSummary(v.usage[acct], v.now))
 	}
-	if len(v.jobs) == 0 {
+	if len(v.ov.Jobs) == 0 {
 		fmt.Fprintln(w, "\nNo cron jobs. Add one with agentctl cron add.")
 		return
 	}
 	fmt.Fprintln(w)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tSCHEDULE\tNEXT\tLAST\tENABLED\tAGENT\tACCOUNT\tTHROTTLE")
-	for _, j := range v.jobs {
+	for _, st := range v.ov.Jobs {
+		j := st.Job
 		acct := v.accounts[j.Name]
 		if acct == "" {
 			acct = "-"
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			j.Name, j.Schedule, nextColumn(j, v.now), lastColumn(v.last[j.Name], v.now),
-			enabledColumn(j), j.Agent, acct, throttleColumn(j, th))
+			j.Name, j.Schedule, nextColumn(st, v.now), lastColumn(st.Last, v.now),
+			enabledColumn(st), j.Agent, acct, throttleColumn(j, th))
 	}
 	_ = tw.Flush()
 }
 
-func nextColumn(j cron.Job, now time.Time) string {
-	if !j.IsEnabled() {
+func nextColumn(st cronedit.Status, now time.Time) string {
+	switch {
+	case !st.Enabled:
 		return "paused"
-	}
-	sched, err := cron.ParseSchedule(j.Schedule)
-	if err != nil {
+	case st.ScheduleError != "":
 		return "invalid schedule"
-	}
-	next := cron.NextFire(sched, now, cron.Jitter(j.Name))
-	if next.IsZero() {
+	case st.NextFire == nil:
 		return "never"
 	}
-	return fmt.Sprintf("%s (%s)", relTime(next, now), next.Format("Mon 2 Jan 15:04"))
+	return fmt.Sprintf("%s (%s)", relTime(*st.NextFire, now), st.NextFire.Format("Mon 2 Jan 15:04"))
 }
 
-func lastColumn(e cron.Entry, now time.Time) string {
-	if e.Result == "" {
+func lastColumn(e *cron.Entry, now time.Time) string {
+	if e == nil || e.Result == "" {
 		return "-"
 	}
 	return fmt.Sprintf("%s %s", e.Result, relTime(e.Time, now))
 }
 
-func enabledColumn(j cron.Job) string {
-	if err := j.Validate(); err != nil {
-		return "invalid: " + err.Error()
+func enabledColumn(st cronedit.Status) string {
+	if st.Invalid != "" {
+		return "invalid: " + st.Invalid
 	}
-	if j.IsEnabled() {
+	if st.Enabled {
 		return "yes"
 	}
 	return "paused"
@@ -338,18 +328,6 @@ func printCronHealth(now time.Time) {
 			fmt.Printf("           %s\n", l)
 		}
 	}
-}
-
-// shortDuration drops Duration.String's zero tails: 15m, 6h, 1h30m.
-func shortDuration(d time.Duration) string {
-	s := d.String()
-	if strings.HasSuffix(s, "m0s") {
-		s = strings.TrimSuffix(s, "0s")
-	}
-	if strings.HasSuffix(s, "h0m") {
-		s = strings.TrimSuffix(s, "0m")
-	}
-	return s
 }
 
 func sortedKeys[V any](m map[string]V) []string {

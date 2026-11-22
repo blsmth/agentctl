@@ -424,6 +424,11 @@ func Seed(dir, job string, now time.Time) error {
 		return err
 	}
 	defer unlock()
+	return SeedLocked(dir, job, now)
+}
+
+// SeedLocked is Seed for a caller that already holds the tick lock.
+func SeedLocked(dir, job string, now time.Time) error {
 	st, err := LoadState(dir)
 	if err != nil && st == nil {
 		return err

@@ -65,7 +65,7 @@ type dispatchPreviewOpts struct {
 
 // CronPreview is the job-specific part of a PreviewKindCron popup.
 type CronPreview struct {
-	// Action is what the command does: "add", "resume" or "run --force".
+	// Action is what the command does: "add", "edit", "resume" or "run --force".
 	Action string
 	// Job is the job name.
 	Job string
@@ -787,6 +787,8 @@ func (m DispatchPreviewModel) cronTitle() string {
 		return fmt.Sprintf("%s wants to resume cron job %s", m.agentName, m.cron.Job)
 	case "run --force":
 		return fmt.Sprintf("%s wants to force-run cron job %s", m.agentName, m.cron.Job)
+	case "edit":
+		return fmt.Sprintf("%s wants to edit cron job %s", m.agentName, m.cron.Job)
 	}
 	return fmt.Sprintf("%s wants to schedule %s", m.agentName, m.targetAgent)
 }

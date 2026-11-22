@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/cron"
+	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/mailbox"
 	"github.com/blsmth/agentctl/internal/notify"
@@ -68,6 +70,18 @@ var defaultCronEnv = cronEnv{
 	schedulerInstalled: cronPlistExists,
 }
 
+// store is the shared editing core over this environment's seams.
+func (e cronEnv) store() cronedit.Store {
+	return cronedit.Store{
+		JobsPath:           e.jobsPath,
+		StateDir:           e.stateDir,
+		Now:                e.now,
+		Config:             e.loadConfig,
+		ValidateAgent:      e.validateAgent,
+		SchedulerInstalled: e.schedulerInstalled,
+	}
+}
+
 // RunCronAdd validates and saves a new job, then seeds its state so it starts
 // from the next scheduled time.
 func RunCronAdd(w io.Writer, opts CronAddOptions) error {
@@ -75,35 +89,18 @@ func RunCronAdd(w io.Writer, opts CronAddOptions) error {
 }
 
 func (e cronEnv) add(w io.Writer, opts CronAddOptions) error {
-	job, err := e.buildJob(opts)
+	job, err := jobFromAdd(opts)
 	if err != nil {
 		return err
 	}
-	path, err := e.jobsPath()
+	job, err = e.store().Create(job)
+	if errors.Is(err, cronedit.ErrExists) {
+		return fmt.Errorf("a cron job named %q already exists (agentctl cron rm %s first, or agentctl cron edit %s)", opts.Name, opts.Name, opts.Name)
+	}
 	if err != nil {
 		return err
 	}
-	jobs, err := cron.LoadJobs(path)
-	if err != nil {
-		return err
-	}
-	if jobs.Find(job.Name) >= 0 {
-		return fmt.Errorf("a cron job named %q already exists (agentctl cron rm %s first)", job.Name, job.Name)
-	}
-	jobs.Jobs = append(jobs.Jobs, job)
-	if err := cron.SaveJobs(path, jobs); err != nil {
-		return err
-	}
-	dir, err := e.stateDir()
-	if err != nil {
-		return err
-	}
-	now := e.now()
-	if err := cron.Seed(dir, job.Name, now); err != nil {
-		return fmt.Errorf("seeding state for %s: %w", job.Name, err)
-	}
-	sched, _ := cron.ParseSchedule(job.Schedule)
-	next := cron.NextFire(sched, now, cron.Jitter(job.Name))
+	next, _ := cronedit.NextFire(job, e.now())
 	fmt.Fprintf(w, "Added %s (%s), next fire %s\n", job.Name, job.Schedule, next.Format(cron.NextFireFormat))
 	if e.schedulerInstalled != nil && !e.schedulerInstalled() {
 		fmt.Fprintln(w, "The scheduler is not installed yet: run agentctl cron install")
@@ -111,35 +108,20 @@ func (e cronEnv) add(w io.Writer, opts CronAddOptions) error {
 	return nil
 }
 
-// buildJob turns add options into a validated job. --prompt-file is read
-// now, so later edits to the file do not change what runs.
-func (e cronEnv) buildJob(opts CronAddOptions) (cron.Job, error) {
-	n := 0
-	for _, s := range []string{opts.Prompt, opts.PromptKey, opts.PromptFile} {
-		if s != "" {
-			n++
-		}
+// jobFromAdd turns add options into a job for the shared core, which
+// validates it. --prompt-file is read now, so later edits to the file do
+// not change what runs.
+func jobFromAdd(opts CronAddOptions) (cron.Job, error) {
+	prompt, err := promptFromFlags(opts.Prompt, opts.PromptKey, opts.PromptFile)
+	if err != nil {
+		return cron.Job{}, err
 	}
-	if n != 1 {
+	if n := countSet(opts.Prompt, opts.PromptKey, opts.PromptFile); n != 1 {
 		return cron.Job{}, errors.New("exactly one of --prompt, --prompt-key or --prompt-file is required")
 	}
-	prompt := opts.Prompt
-	if opts.PromptFile != "" {
-		data, err := os.ReadFile(paths.ExpandHome(opts.PromptFile))
-		if err != nil {
-			return cron.Job{}, fmt.Errorf("reading --prompt-file: %w", err)
-		}
-		prompt = string(data)
-		if strings.TrimSpace(prompt) == "" {
-			return cron.Job{}, fmt.Errorf("--prompt-file %s is empty", opts.PromptFile)
-		}
-	}
-	dir, err := filepath.Abs(paths.ExpandHome(opts.Dir))
+	dir, err := absDir(opts.Dir)
 	if err != nil {
-		return cron.Job{}, fmt.Errorf("resolving --dir: %w", err)
-	}
-	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		return cron.Job{}, fmt.Errorf("--dir %s is not a directory", dir)
+		return cron.Job{}, err
 	}
 	job := cron.Job{
 		Name: opts.Name, Schedule: opts.Schedule, Dir: dir, Agent: opts.Agent,
@@ -149,18 +131,142 @@ func (e cronEnv) buildJob(opts CronAddOptions) (cron.Job, error) {
 	}
 	wt, enabled := !opts.NoWorktree, true
 	job.Worktree, job.Enabled = &wt, &enabled
-	job.Normalize()
-	if err := job.Validate(); err != nil {
-		return cron.Job{}, err
-	}
-	sched, _ := cron.ParseSchedule(job.Schedule)
-	if err := cron.CheckMinInterval(sched, e.now(), e.loadConfig().EffectiveMinInterval()); err != nil {
-		return cron.Job{}, err
-	}
-	if err := e.validateAgent(job.Agent, dir); err != nil {
-		return cron.Job{}, err
-	}
 	return job, nil
+}
+
+func countSet(vals ...string) int {
+	n := 0
+	for _, s := range vals {
+		if s != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// promptFromFlags returns the inline prompt: --prompt, or --prompt-file's
+// contents. At most one of the three sources may be set.
+func promptFromFlags(prompt, key, file string) (string, error) {
+	if countSet(prompt, key, file) > 1 {
+		return "", errors.New("exactly one of --prompt, --prompt-key or --prompt-file is required")
+	}
+	if file == "" {
+		return prompt, nil
+	}
+	data, err := os.ReadFile(paths.ExpandHome(file))
+	if err != nil {
+		return "", fmt.Errorf("reading --prompt-file: %w", err)
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return "", fmt.Errorf("--prompt-file %s is empty", file)
+	}
+	return string(data), nil
+}
+
+// absDir resolves --dir against the working directory.
+func absDir(dir string) (string, error) {
+	abs, err := filepath.Abs(paths.ExpandHome(dir))
+	if err != nil {
+		return "", fmt.Errorf("resolving --dir: %w", err)
+	}
+	return abs, nil
+}
+
+// CronEditOptions are the inputs of `agentctl cron edit`. A nil field (or a
+// false Worktree/NoWorktree) leaves that part of the job unchanged.
+type CronEditOptions struct {
+	Name       string
+	Schedule   *string
+	Agent      *string
+	Dir        *string
+	Prompt     *string
+	PromptKey  *string
+	PromptFile *string
+	Worktree   bool
+	NoWorktree bool
+	Model      *string
+	Effort     *string
+	Backend    *string
+	Account    *string
+	Timeout    *string
+	Overlap    *string
+	Catchup    *string
+}
+
+// RunCronEdit changes the given fields of a job. The name cannot change.
+// Fire state is kept unless the schedule changes, which re-seeds last_fire
+// to now so nothing scheduled before the edit fires.
+func RunCronEdit(w io.Writer, opts CronEditOptions) error {
+	return defaultCronEnv.edit(w, opts)
+}
+
+func (e cronEnv) edit(w io.Writer, opts CronEditOptions) error {
+	if opts.Worktree && opts.NoWorktree {
+		return errors.New("--worktree and --no-worktree are mutually exclusive")
+	}
+	str := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	prompt, err := promptFromFlags(str(opts.Prompt), str(opts.PromptKey), str(opts.PromptFile))
+	if err != nil {
+		return err
+	}
+	var dir string
+	if opts.Dir != nil {
+		if dir, err = absDir(*opts.Dir); err != nil {
+			return err
+		}
+	}
+	res, err := e.store().Modify(opts.Name, func(j *cron.Job) error {
+		set := func(dst *string, src *string) {
+			if src != nil {
+				*dst = *src
+			}
+		}
+		set(&j.Schedule, opts.Schedule)
+		set(&j.Agent, opts.Agent)
+		if opts.Dir != nil {
+			j.Dir = dir
+		}
+		switch {
+		case opts.Prompt != nil || opts.PromptFile != nil:
+			j.Prompt, j.PromptKey = prompt, ""
+		case opts.PromptKey != nil:
+			j.Prompt, j.PromptKey = "", *opts.PromptKey
+		}
+		if opts.Worktree || opts.NoWorktree {
+			wt := opts.Worktree
+			j.Worktree = &wt
+		}
+		set(&j.Model, opts.Model)
+		set(&j.Effort, opts.Effort)
+		set(&j.Backend, opts.Backend)
+		set(&j.Account, opts.Account)
+		set(&j.Timeout, opts.Timeout)
+		set(&j.Overlap, opts.Overlap)
+		set(&j.Catchup, opts.Catchup)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if len(res.Changed) == 0 {
+		fmt.Fprintf(w, "No changes to %s\n", opts.Name)
+		return nil
+	}
+	fmt.Fprintf(w, "Updated %s: %s\n", opts.Name, strings.Join(res.Changed, ", "))
+	if res.Reseeded {
+		next, _ := cronedit.NextFire(res.Job, e.now())
+		if next.IsZero() {
+			fmt.Fprintln(w, "Schedule changed; the job is paused")
+		} else {
+			fmt.Fprintf(w, "Schedule changed; next fire %s (earlier fires are not caught up)\n", next.Format(cron.NextFireFormat))
+		}
+	}
+	return nil
 }
 
 // RunCronSetEnabled pauses or resumes a job. Resuming re-seeds last_fire, so
@@ -170,24 +276,12 @@ func RunCronSetEnabled(w io.Writer, name string, enabled bool) error {
 }
 
 func (e cronEnv) setEnabled(w io.Writer, name string, enabled bool) error {
-	path, jobs, i, err := e.findJob(name)
-	if err != nil {
-		return err
-	}
-	jobs.Jobs[i].Enabled = &enabled
-	if err := cron.SaveJobs(path, jobs); err != nil {
+	if _, err := e.store().SetEnabled(name, enabled); err != nil {
 		return err
 	}
 	verb := "Paused"
 	if enabled {
 		verb = "Resumed"
-		dir, err := e.stateDir()
-		if err != nil {
-			return err
-		}
-		if err := cron.Seed(dir, name, e.now()); err != nil {
-			return err
-		}
 	}
 	fmt.Fprintf(w, "%s %s\n", verb, name)
 	return nil
@@ -200,32 +294,11 @@ func RunCronRemove(w io.Writer, name string) error {
 }
 
 func (e cronEnv) remove(w io.Writer, name string) error {
-	path, jobs, i, err := e.findJob(name)
-	if err != nil {
-		return err
-	}
-	jobs.Jobs = append(jobs.Jobs[:i], jobs.Jobs[i+1:]...)
-	if err := cron.SaveJobs(path, jobs); err != nil {
+	if err := e.store().Delete(name); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, "Removed %s\n", name)
 	return nil
-}
-
-func (e cronEnv) findJob(name string) (string, *cron.Jobs, int, error) {
-	path, err := e.jobsPath()
-	if err != nil {
-		return "", nil, 0, err
-	}
-	jobs, err := cron.LoadJobs(path)
-	if err != nil {
-		return "", nil, 0, err
-	}
-	i := jobs.Find(name)
-	if i < 0 {
-		return "", nil, 0, fmt.Errorf("no cron job named %q", name)
-	}
-	return path, jobs, i, nil
 }
 
 // loadAll reads the jobs, config and state dir a tick or run needs.
@@ -277,13 +350,15 @@ func (e cronEnv) tick() error {
 	return err
 }
 
-// RunCronRun fires a job now.
-func RunCronRun(w io.Writer, name string, force bool) error {
+// RunCronRun fires a job now. With asJSON it prints the run entry as JSON
+// (whatever the result) for the hub and serve, which run it as a
+// subprocess (cronedit.RunSubprocess).
+func RunCronRun(w io.Writer, name string, force, asJSON bool) error {
 	initCronProcess()
-	return defaultCronEnv.run(w, name, force)
+	return defaultCronEnv.run(w, name, force, asJSON)
 }
 
-func (e cronEnv) run(w io.Writer, name string, force bool) error {
+func (e cronEnv) run(w io.Writer, name string, force, asJSON bool) error {
 	dir, cfg, jobs, err := e.loadAll()
 	if err != nil {
 		return err
@@ -298,6 +373,9 @@ func (e cronEnv) run(w io.Writer, name string, force bool) error {
 	entry, err := cron.RunNow(e.deps(dir, cfg, jobs.Jobs), name, force)
 	if err != nil {
 		return err
+	}
+	if asJSON {
+		return json.NewEncoder(w).Encode(entry)
 	}
 	switch {
 	case entry.Result == cron.ResultFired:
