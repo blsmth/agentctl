@@ -294,7 +294,8 @@ func parentTitle(ws windowstate.WindowState) string {
 		return ""
 	}
 	p, err := windowstate.Read(ws.SpawnedBy)
-	if err != nil {
+	// tmux reuses @N IDs: the pair must match, as in reconcile.IsChild.
+	if err != nil || p.SessionID != ws.SpawnedBySession {
 		return ""
 	}
 	return p.ShortTitle.Title

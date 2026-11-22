@@ -107,7 +107,7 @@ func TestRoleTagRender(t *testing.T) {
 	for _, width := range []int{44, 56, 120} {
 		t.Run(fmt.Sprintf("cw%d", width), func(t *testing.T) {
 			with := sampleRow("s", "proj", "@1", "lead:1", "lead", "idle", false, fleet.LogInfo{Recap: "x"}, nil)
-			with.ShortRole = "review"
+			with.ShortRole, with.ShortTitle = "review", "Fixing Hub Sort Order"
 			with.Recap = fleet.RecapLine{Text: "full recap", Source: fleet.RecapSummary, Title: "Fixing Hub Sort Order", Role: "review"}
 			without := sampleRow("s", "proj", "@2", "lead:2", "lead", "idle", false, fleet.LogInfo{Recap: "x"}, nil)
 			without.Recap = fleet.RecapLine{Text: "full recap", Source: fleet.RecapSummary, Title: "Fixing Hub Sort Order"}

@@ -2830,7 +2830,7 @@ func (m FleetModel) treeRowLayout(r fleet.Row, treePrefix string, nameCol int, s
 		}
 		// The role tag of a sub-agent row goes before the title, and is
 		// dropped before the title would shrink below fleetMinTitleAfterRole.
-		if r.ShortRole != "" && available >= lipgloss.Width(r.ShortRole)+2+fleetMinTitleAfterRole {
+		if r.ShortRole != "" && r.ShortTitle != "" && available >= lipgloss.Width(r.ShortRole)+2+fleetMinTitleAfterRole {
 			tag += fleetDimStyle.Render(r.ShortRole) + "  "
 			available -= lipgloss.Width(r.ShortRole) + 2
 		}

@@ -760,9 +760,9 @@ func TestResetTitleOnClearPrompt(t *testing.T) {
 
 func TestTitleInputParentTitle(t *testing.T) {
 	setupTitle(t)
-	seedWindow(t, "@1", windowstate.WindowState{ShortTitle: windowstate.ShortTitle{Title: "Adding Phone Shell Rows"}})
-	seedWindow(t, "@2", windowstate.WindowState{ShortTitle: windowstate.ShortTitle{Title: "Human Name", Manual: true}})
-	seedWindow(t, "@3", windowstate.WindowState{})
+	seedWindow(t, "@1", windowstate.WindowState{SessionID: "s1", ShortTitle: windowstate.ShortTitle{Title: "Adding Phone Shell Rows"}})
+	seedWindow(t, "@2", windowstate.WindowState{SessionID: "s1", ShortTitle: windowstate.ShortTitle{Title: "Human Name", Manual: true}})
+	seedWindow(t, "@3", windowstate.WindowState{SessionID: "s1"})
 	tests := []struct {
 		name string
 		ws   windowstate.WindowState
@@ -770,6 +770,7 @@ func TestTitleInputParentTitle(t *testing.T) {
 	}{
 		{"both fields", windowstate.WindowState{Task: "x", SpawnedBy: "@1", SpawnedBySession: "s1"}, "Adding Phone Shell Rows"},
 		{"manual parent title counts", windowstate.WindowState{Task: "x", SpawnedBy: "@2", SpawnedBySession: "s1"}, "Human Name"},
+		{"recycled window ID, other session", windowstate.WindowState{Task: "x", SpawnedBy: "@1", SpawnedBySession: "s2"}, ""},
 		{"spawned_by alone", windowstate.WindowState{Task: "x", SpawnedBy: "@1"}, ""},
 		{"session alone", windowstate.WindowState{Task: "x", SpawnedBySession: "s1"}, ""},
 		{"parent untitled", windowstate.WindowState{Task: "x", SpawnedBy: "@3", SpawnedBySession: "s1"}, ""},
