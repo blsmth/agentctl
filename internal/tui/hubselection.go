@@ -51,9 +51,8 @@ type hubStatus struct {
 }
 
 // hubStatusFor builds the status pane content for row r. The activity line
-// is always included: the status pane sits above the viewer, but the
-// activity line names the last tool call, which the viewer may have
-// scrolled past.
+// carries the recap only: the last command is visible in the viewer and the
+// activity pane, so the activity line and an activity recap are left out.
 func hubStatusFor(r fleet.Row, d fleetDisplay) *hubStatus {
 	glyph, _ := rowGlyph(r)
 	recap := rowRecap(r)
@@ -62,7 +61,7 @@ func hubStatusFor(r fleet.Row, d fleetDisplay) *hubStatus {
 		Role:    r.ShortRole,
 		Title:   recap.Short(),
 		Project: r.Project,
-		Detail:  detailPartsFor(r, false),
+		Detail:  statusDetailParts(r),
 		Chips:   rowChips(r, d),
 	}
 	if rowNeedsNameFallback(r, recap) {
@@ -72,6 +71,17 @@ func hubStatusFor(r fleet.Row, d fleetDisplay) *hubStatus {
 		st.Note = recap.Text
 	}
 	return st
+}
+
+// statusDetailParts is detailPartsFor without the activity: a recap that is
+// itself the activity is dropped, and no activity line or marker is set.
+// (Older status panes lay these parts out with textLines, so the shape stays.)
+func statusDetailParts(r fleet.Row) rowDetailParts {
+	p := detailPartsFor(r, false)
+	if p.RecapIsActivity {
+		return rowDetailParts{}
+	}
+	return rowDetailParts{Recap: p.Recap}
 }
 
 // valid reports whether s names a followable agent window.

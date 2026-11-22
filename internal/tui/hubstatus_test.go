@@ -32,8 +32,13 @@ func TestHubStatusFor(t *testing.T) {
 	if st.Glyph != "●" || st.Title != "Status pane" || st.Project != "agentctl" || st.Note != "" {
 		t.Errorf("status = %+v", st)
 	}
-	if st.Detail.Activity != "go test ./internal/tui/" || st.Detail.Marker != fleetCommandMarker {
-		t.Errorf("activity = %q marker %q; the status pane always shows it", st.Detail.Activity, st.Detail.Marker)
+	if st.Detail.Recap == "" || st.Detail.Activity != "" || st.Detail.Marker != "" || st.Detail.RecapIsActivity {
+		t.Errorf("detail = %+v; the status pane carries the recap only", st.Detail)
+	}
+	act := statusTestRow()
+	act.Recap = fleet.RecapLine{Source: fleet.RecapActivity, Text: "Bash: ls"}
+	if d := hubStatusFor(act, fleetDisplay{}).Detail; d != (rowDetailParts{}) {
+		t.Errorf("activity recap leaked into the status: %+v", d)
 	}
 	if len(st.Chips) == 0 || st.Chips[0] != "#42" {
 		t.Errorf("chips = %v", st.Chips)
@@ -50,7 +55,7 @@ func TestRenderHubStatus(t *testing.T) {
 	InitStyles()
 	sel := HubSelection{Session: "agentctl-p", WindowID: "@1", RuntimeDir: "/p/.agentctl"}
 	sel.Status = hubStatusFor(statusTestRow(), fleetDisplay{})
-	const w, h = 60, fleetStatusRows
+	const w, h = 44, fleetStatusRows
 	out := renderHubStatus(sel, false, w, h)
 	lines := strings.Split(out, "\n")
 	if len(lines) != h {
@@ -62,14 +67,17 @@ func TestRenderHubStatus(t *testing.T) {
 		}
 	}
 	plain := ansi.Strip(out)
-	for _, want := range []string{"● Status pane", "agentctl", "Moving the selected row", "$ go test ./internal/tui/", "[#42]"} {
+	for _, want := range []string{"● Status pane", "agentctl", "Moving the selected row", "[#42]"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("missing %q in:\n%s", want, plain)
 		}
 	}
-	// Title, three recap lines, activity, chips: the recap wraps over every
-	// row left, cut with an ellipsis.
-	if got := strings.TrimSpace(ansi.Strip(lines[3])); !strings.HasSuffix(got, "…") {
+	if strings.Contains(plain, "go test") {
+		t.Errorf("activity line shown:\n%s", plain)
+	}
+	// Title, four recap lines, chips: the recap wraps over every row left,
+	// cut with an ellipsis.
+	if got := strings.TrimSpace(ansi.Strip(lines[4])); !strings.HasSuffix(got, "…") {
 		t.Errorf("last recap line %q, want an ellipsis", got)
 	}
 	if got := ansi.Strip(lines[h-1]); !strings.Contains(got, "[#42]") {
@@ -79,6 +87,15 @@ func TestRenderHubStatus(t *testing.T) {
 	// A taller pane fits the whole recap.
 	if plain := ansi.Strip(renderHubStatus(sel, false, w, 12)); strings.Contains(plain, "…") {
 		t.Errorf("tall pane still cut the recap:\n%s", plain)
+	}
+}
+
+func TestRenderHubStatusIgnoresActivityFromOlderFile(t *testing.T) {
+	InitStyles()
+	st := &hubStatus{Glyph: "●", Title: "T", Detail: rowDetailParts{Recap: "ls", RecapIsActivity: true, Marker: "$ "}}
+	plain := ansi.Strip(renderHubStatus(HubSelection{Session: "s", WindowID: "@1", RuntimeDir: "/p", Status: st}, false, 60, 6))
+	if strings.Contains(plain, "$ ") || strings.Contains(plain, "ls") || !strings.Contains(plain, "nothing to summarise") {
+		t.Errorf("want a placeholder, got:\n%s", plain)
 	}
 }
 
