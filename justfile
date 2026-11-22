@@ -161,7 +161,7 @@ demo-shots: demo-build
         "{{_demo_bin}}" shot {{_demo_flags}} --scene "$f"
     done
 
-# Uses a temp HOME so the default theme applies and no real config is read.
+# Uses a temp HOME so the default theme applies and no real config is read. duration is whole seconds (e.g. 30s).
 # Record `agentctl race` over the canned transcript to a GIF at 120x35 (needs vhs)
 demo-race out="demo/out/race.gif" duration="30s":
     #!/usr/bin/env bash

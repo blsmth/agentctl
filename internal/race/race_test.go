@@ -374,11 +374,11 @@ func TestSummarize(t *testing.T) {
 	if s.Assumptions.WPM != 60 || s.Assumptions.MaxGapSeconds != 60 {
 		t.Errorf("assumptions = %+v", s.Assumptions)
 	}
-	if !strings.Contains(s.AssumptionTxt, "lower bound: never pauses, never typos") {
-		t.Errorf("assumptions text = %q, want the lower-bound note", s.AssumptionTxt)
+	if !strings.Contains(s.AssumptionTxt, "nonstop: never pauses, never typos, reads every result in full") {
+		t.Errorf("assumptions text = %q, want the nonstop note", s.AssumptionTxt)
 	}
 	r.Params.Think = 2 * time.Second
-	if strings.Contains(r.Assumptions(), "lower bound") || !strings.Contains(r.Assumptions(), "thinks 2s per step") {
+	if strings.Contains(r.Assumptions(), "nonstop") || !strings.Contains(r.Assumptions(), "thinks 2s per step") {
 		t.Errorf("with think: %q", r.Assumptions())
 	}
 }

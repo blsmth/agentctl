@@ -1162,13 +1162,12 @@ type ModelsCmd struct {
 
 func (c *ModelsCmd) Run() error { return cmd.RunModels(c.Resolve) }
 
-// DashboardsCmd uses passthrough to preserve os.Args for cmd.RunDashboards's own routing.
 // RaceCmd implements `agentctl race [<target>]`.
 type RaceCmd struct {
 	Target   string        `arg:"" optional:"" help:"Window (@N), session ID, or transcript path (default: this window)"`
 	WPM      float64       `name:"wpm" default:"60" help:"Human typing speed, words per minute"`
 	ReadWPM  float64       `name:"read-wpm" default:"250" help:"Human reading speed, words per minute"`
-	Think    time.Duration `default:"0s" help:"Human pause per step (0 = a lower bound)"`
+	Think    time.Duration `default:"0s" help:"Human pause per step (0 = no pauses)"`
 	MaxGap   time.Duration `name:"max-gap" default:"60s" help:"Longest gap between entries charged to the agent"`
 	Speed    float64       `help:"Replay at N times real time (overrides --duration)"`
 	Duration time.Duration `default:"45s" help:"Fit the agent's whole timeline into this long a replay"`
@@ -1185,6 +1184,7 @@ func (c *RaceCmd) Run() error {
 	})
 }
 
+// DashboardsCmd uses passthrough to preserve os.Args for cmd.RunDashboards's own routing.
 type DashboardsCmd struct {
 	Args []string `arg:"" optional:"" passthrough:""`
 }

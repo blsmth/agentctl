@@ -75,7 +75,7 @@ func (r *Race) HumanAssumptions() string {
 	if p.Think > 0 {
 		return s + fmt.Sprintf(", thinks %s per step", shortDur(p.Think))
 	}
-	return s + " · lower bound: never pauses, never typos"
+	return s + " · nonstop: never pauses, never typos, reads every result in full"
 }
 
 // AgentAssumptions is how the agent's time is measured.

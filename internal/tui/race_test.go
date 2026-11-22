@@ -53,9 +53,9 @@ func TestRaceViewWidths(t *testing.T) {
 		at   time.Duration
 		want []string
 	}{
-		{"wide", 120, 35, 10 * time.Second, []string{"AGENT", "SPEEDUP", "HUMAN @ 60 WPM", "typing", "lower bound: never pauses, never typos", "space pause"}},
+		{"wide", 120, 35, 10 * time.Second, []string{"AGENT", "SPEEDUP", "HUMAN @ 60 WPM", "typing", "nonstop: never pauses, never typos", "space pause"}},
 		{"wide typing", 120, 35, 1500 * time.Millisecond, []string{"⌨ typing", "▌"}},
-		{"narrow", 80, 30, 10 * time.Second, []string{"AGENT 0:", "HUMAN 0:", "faster", "lower bound"}},
+		{"narrow", 80, 30, 10 * time.Second, []string{"AGENT 0:", "HUMAN 0:", "faster", "nonstop"}},
 		{"tiny", 30, 8, 10 * time.Second, []string{"AGENT", "HUMAN", "enlarge"}},
 	}
 	for _, tt := range tests {
