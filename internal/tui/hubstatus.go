@@ -13,8 +13,8 @@ import (
 
 // HubStatusModel is `agentctl hub-status`, the hub's status pane above the
 // live viewer (see fleet_status.go): it follows the hub selection file and
-// shows the selected row's title, recap wrapped to the pane width, activity
-// line and chips. It takes no input: focus, a key or a click hands focus to
+// shows the selected row's title, recap wrapped to the pane width, and
+// chips (never the last command: the viewer and the activity pane show it). It takes no input: focus, a key or a click hands focus to
 // the viewer below, which is where typing belongs.
 type HubStatusModel struct {
 	read        func() (HubSelection, error)
