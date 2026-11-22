@@ -480,3 +480,32 @@ func TestRetitle(t *testing.T) {
 		})
 	}
 }
+
+func TestDisplayName(t *testing.T) {
+	tests := []struct {
+		name, instance, agent, id, want string
+	}{
+		{"instance", "code-reviewer:3", "code-reviewer", "@1482", "code-reviewer:3"},
+		{"glyph stripped", "● code-reviewer:3", "code-reviewer", "@1482", "code-reviewer:3"},
+		{"blocked glyph", "⏸ brandon~2", "", "@9", "brandon~2"},
+		{"done glyph", "✓ brandon:2", "", "@9", "brandon:2"},
+		{"no suffix kept", "my-renamed", "x", "@9", "my-renamed"},
+		{"agent fallback", "", "go-engineer", "@9", "go-engineer"},
+		{"id fallback", "", "", "@9", "@9"},
+		{"glyph only", "● ", "", "@9", "@9"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DisplayName(tt.instance, tt.agent, tt.id); got != tt.want {
+				t.Errorf("DisplayName(%q,%q,%q) = %q, want %q", tt.instance, tt.agent, tt.id, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWindowLabelField(t *testing.T) {
+	w := ToWindow(Row{AgentState: state.AgentState{Name: "code-reviewer:3", WindowID: "@1482"}}, Meta{})
+	if w.Label != "code-reviewer:3" {
+		t.Errorf("Label = %q", w.Label)
+	}
+}

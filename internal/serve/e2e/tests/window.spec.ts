@@ -381,7 +381,7 @@ test("a pending approval shows on the fleet and in its window, and approving ans
   await openWindow(page, "@14");
   const card = page.locator(".window-approvals section.approval");
   await expect(card).toContainText("rm -rf build/");
-  await expect(card).toContainText("reviewer @14");
+  await expect(card).toContainText("reviewer");
   await card.getByRole("button", { name: "Approve…" }).tap();
   await expect(sheet(page)).toContainText("rm -rf build/");
   await sheet(page).locator(".row button").last().tap();

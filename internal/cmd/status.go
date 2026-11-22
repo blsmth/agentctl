@@ -47,6 +47,7 @@ type statusJSONRow struct {
 // jsonRow builds the JSON form of a status row.
 func (sr statusRow) jsonRow() statusJSONRow {
 	j := statusJSONRow{Window: fleet.ToWindow(sr.row, sr.meta)}
+	j.Window.Label = "" // machine surface: the golden schema keeps window_id only
 	if sr.checked {
 		j.PaneVerdict = sr.verdict.String()
 		j.PaneDisagree = !sr.verdict.AgreesWith(sr.row.State)

@@ -131,6 +131,7 @@ func beginApproval(n popupNotice) (end func()) {
 			"AGENTCTL_WINDOW_ID":         windowID,
 			"AGENTCTL_TOOL_NAME":         n.Tool,
 			"AGENTCTL_SESSION_NAME":      sessionName,
+			"AGENTCTL_SWITCH_TARGET":     tmuxSwitchTarget(sessionName, windowID),
 		},
 	})
 

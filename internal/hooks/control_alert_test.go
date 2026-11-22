@@ -69,7 +69,7 @@ func TestBuildAlertContent(t *testing.T) {
 			},
 			wantTitle:    "go-engineer · acme",
 			wantSubtitle: "Needs permission — Bash",
-			wantMessage:  "git push --force origin main · #1030 · agentctl-acme:@61",
+			wantMessage:  "git push --force origin main · #1030",
 		},
 		{
 			name:             "permission prompt with stale pending tool is omitted",
@@ -86,7 +86,7 @@ func TestBuildAlertContent(t *testing.T) {
 			},
 			wantTitle:    "go-engineer · acme",
 			wantSubtitle: "Needs permission",
-			wantMessage:  "#1030 · agentctl-acme:@61",
+			wantMessage:  "#1030",
 			wantMessageOmits: []string{
 				"rm -rf /old/build",
 				"Bash",
@@ -114,7 +114,7 @@ func TestBuildAlertContent(t *testing.T) {
 			ws:               windowstate.WindowState{},
 			wantTitle:        "go-engineer · acme",
 			wantSubtitle:     "Idle — waiting for input",
-			wantMessage:      "agentctl-acme:@61",
+			wantMessage:      "waiting",
 		},
 		{
 			name:             "repeat block 12 minutes old shows blocked duration",
@@ -129,7 +129,7 @@ func TestBuildAlertContent(t *testing.T) {
 			},
 			wantTitle:    "go-engineer · acme",
 			wantSubtitle: "Needs permission",
-			wantMessage:  "#1030 · agentctl-acme:@61 · blocked 12m",
+			wantMessage:  "#1030 · blocked 12m",
 		},
 		{
 			name:             "repeat block 20 seconds old omits blocked duration",
@@ -144,7 +144,7 @@ func TestBuildAlertContent(t *testing.T) {
 			},
 			wantTitle:    "go-engineer · acme",
 			wantSubtitle: "Needs permission",
-			wantMessage:  "#1030 · agentctl-acme:@61",
+			wantMessage:  "#1030",
 			wantMessageOmits: []string{
 				"blocked",
 			},
@@ -161,7 +161,7 @@ func TestBuildAlertContent(t *testing.T) {
 			},
 			wantTitle:    "go-engineer · acme",
 			wantSubtitle: "Needs permission",
-			wantMessage:  "autonomous · agentctl-acme:@61",
+			wantMessage:  "autonomous",
 		},
 		{
 			name:             "neither ticket nor mode present",
@@ -173,7 +173,7 @@ func TestBuildAlertContent(t *testing.T) {
 			ws:               windowstate.WindowState{},
 			wantTitle:        "go-engineer · acme",
 			wantSubtitle:     "Needs permission",
-			wantMessage:      "agentctl-acme:@61",
+			wantMessage:      "Claude needs your permission",
 			wantMessageOmits: []string{"#", "autonomous"},
 		},
 		{
@@ -188,7 +188,7 @@ func TestBuildAlertContent(t *testing.T) {
 			},
 			wantTitle:    "go-engineer",
 			wantSubtitle: "Needs permission",
-			wantMessage:  "#1030 · @61",
+			wantMessage:  "#1030",
 		},
 		{
 			name:             "session name agentctl-acme: title shows acme, message target unstripped",
@@ -202,7 +202,7 @@ func TestBuildAlertContent(t *testing.T) {
 			},
 			wantTitle:    "go-engineer · acme",
 			wantSubtitle: "Needs permission",
-			wantMessage:  "#1030 · agentctl-acme:@61",
+			wantMessage:  "#1030",
 		},
 	}
 
@@ -215,6 +215,9 @@ func TestBuildAlertContent(t *testing.T) {
 			}
 			if got.Subtitle != tt.wantSubtitle {
 				t.Errorf("Subtitle = %q, want %q", got.Subtitle, tt.wantSubtitle)
+			}
+			if strings.Contains(got.Message, "@61") {
+				t.Errorf("Message %q shows the raw window ID", got.Message)
 			}
 			if got.Message != tt.wantMessage {
 				t.Errorf("Message = %q, want %q", got.Message, tt.wantMessage)

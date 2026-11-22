@@ -172,7 +172,7 @@ func (n *Notifier) fireBlockedLocked(ep *episode, w fleet.Window, now time.Time)
 		body += " · " + w.PendingTool
 	}
 	n.deliver(Message{
-		Title:  fmt.Sprintf("agentctl: %s blocked", w.Agent),
+		Title:  fmt.Sprintf("agentctl: %s blocked", pushName(w)),
 		Body:   body,
 		URL:    windowURL(w.Session, w.WindowID),
 		Tag:    w.Session + ":" + w.WindowID,
@@ -186,7 +186,7 @@ func (n *Notifier) fireReminderLocked(w fleet.Window, blockedFor time.Duration) 
 		return
 	}
 	n.deliver(Message{
-		Title:  fmt.Sprintf("agentctl: %s still blocked", w.Agent),
+		Title:  fmt.Sprintf("agentctl: %s still blocked", pushName(w)),
 		Body:   fmt.Sprintf("%s · waiting %d min", windowLabel(w), int(blockedFor.Minutes())),
 		URL:    windowURL(w.Session, w.WindowID),
 		Tag:    w.Session + ":" + w.WindowID,
@@ -222,7 +222,7 @@ func (n *Notifier) sendDoneLocked(ep *episode, w fleet.Window, now time.Time) {
 		what = "PR ready"
 	}
 	n.deliver(Message{
-		Title: fmt.Sprintf("agentctl: %s done", w.Agent),
+		Title: fmt.Sprintf("agentctl: %s done", pushName(w)),
 		Body:  windowLabel(w) + " · " + what,
 		URL:   windowURL(w.Session, w.WindowID),
 		Tag:   w.Session + ":" + w.WindowID,
@@ -238,8 +238,15 @@ func (n *Notifier) allowedLocked(w fleet.Window, now time.Time) bool {
 	return !InQuietHours(n.cfg.QuietHours, now)
 }
 
+// windowLabel is the project the push body leads with; the instance name is
+// already in the title (see pushName). The raw window ID is machine-only.
 func windowLabel(w fleet.Window) string {
-	return fmt.Sprintf("%s · %s", w.Project, w.WindowID)
+	return w.Project
+}
+
+// pushName is the window's human identifier for a push title.
+func pushName(w fleet.Window) string {
+	return fleet.DisplayName(w.Label, w.Agent, w.WindowID)
 }
 
 // InQuietHours reports whether t falls in spec, a local-time "HH:MM-HH:MM"

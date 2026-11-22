@@ -1630,7 +1630,7 @@ function approvalConfirmTitle(kind) {
 /** approvalConfirm is the confirm sheet for answering an approval: everything that runs, in full. */
 export function approvalConfirm(a, decision) {
   const allow = decision === "allow";
-  const head = [approvalSummary(a), `window: ${a.window_id}${a.project ? ` (${a.project})` : ""}`];
+  const head = [approvalSummary(a), `window: ${a.asking_agent || a.window_id}${a.project ? ` (${a.project})` : ""}`];
   const rows = approvalRows(a);
   if (rows.length) {
     head.push(...rows.map(approvalRowText));

@@ -29,7 +29,7 @@ func (e *notifyEnv) take() []Message {
 }
 
 func win(state string, done bool) fleet.Window {
-	return fleet.Window{Session: "agentctl-proj", Project: "proj", WindowID: "@5", Agent: "go-engineer",
+	return fleet.Window{Session: "agentctl-proj", Project: "proj", WindowID: "@5", Label: "go-engineer:3", Agent: "go-engineer:3",
 		State: state, Done: done, Mode: "bare"}
 }
 
@@ -51,9 +51,9 @@ func TestNotifierTriggers(t *testing.T) {
 		wantBody  string
 		urgent    bool
 	}{
-		{"blocked", config.ServePushConfig{}, blocked, "agentctl: go-engineer blocked", "proj · @5 · Bash", true},
-		{"done", config.ServePushConfig{}, win("idle", true), "agentctl: go-engineer done", "proj · @5 · finished", false},
-		{"done with PR", config.ServePushConfig{}, prDone, "agentctl: go-engineer done", "proj · @5 · PR #61 ready", false},
+		{"blocked", config.ServePushConfig{}, blocked, "agentctl: go-engineer:3 blocked", "proj · Bash", true},
+		{"done", config.ServePushConfig{}, win("idle", true), "agentctl: go-engineer:3 done", "proj · finished", false},
+		{"done with PR", config.ServePushConfig{}, prDone, "agentctl: go-engineer:3 done", "proj · PR #61 ready", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -223,7 +223,7 @@ func TestNotifierDoneWaitsForPR(t *testing.T) {
 		e.clock.Advance(5 * time.Second)
 		e.n.Handle(fleetwatch.Event{Kind: fleetwatch.KindWindow, Window: dispatched(9)})
 		got := e.take()
-		if len(got) != 1 || got[0].Body != "proj · @5 · PR #9 ready" {
+		if len(got) != 1 || got[0].Body != "proj · PR #9 ready" {
 			t.Fatalf("got %+v", got)
 		}
 		e.clock.Advance(time.Minute)
@@ -244,7 +244,7 @@ func TestNotifierDoneWaitsForPR(t *testing.T) {
 		e.clock.Advance(time.Second)
 		e.n.Tick()
 		got := e.take()
-		if len(got) != 1 || got[0].Body != "proj · @5 · finished" {
+		if len(got) != 1 || got[0].Body != "proj · finished" {
 			t.Fatalf("got %+v", got)
 		}
 	})

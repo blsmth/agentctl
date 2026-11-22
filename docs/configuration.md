@@ -98,6 +98,21 @@ Notifications are hook-driven. agentctl runs `notify_cmd` with `{{title}}` and `
 }
 ```
 
+The command runs with these environment variables (set for notification alerts; some may be empty):
+
+| Variable | Value |
+|---|---|
+| `AGENTCTL_AGENT_NAME` | The agent's name |
+| `AGENTCTL_NOTIFICATION_TYPE` | `permission_prompt`, `idle_prompt` or the approval type |
+| `AGENTCTL_WINDOW_ID` | tmux window ID, e.g. `@61` |
+| `AGENTCTL_SESSION_NAME` | Full tmux session name, e.g. `agentctl-acme` |
+| `AGENTCTL_SWITCH_TARGET` | `session:@N`, a `tmux switch-client -t` target (the message no longer carries it) |
+| `AGENTCTL_TOOL_NAME` | Tool the prompt asks about |
+| `AGENTCTL_TICKET` | Ticket number, if any |
+| `AGENTCTL_PROJECT` | Project name |
+
+For example, `tmux switch-client -t "$AGENTCTL_SWITCH_TARGET"` jumps to the window from a click action.
+
 `notify_cmd` is global-only (see [Command keys](#command-keys-are-global-only)).
 
 ### bash_preview
