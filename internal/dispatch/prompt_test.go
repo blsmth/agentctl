@@ -1163,3 +1163,28 @@ func TestWorkerPreambleContextClearAndWhoami(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildSystemPrompt_ExtraInstructions(t *testing.T) {
+	for _, mode := range []Mode{ModeAdhoc, ModeBare, ModeDispatch} {
+		t.Run(string(mode), func(t *testing.T) {
+			req := Request{AgentName: "go-engineer", Mode: mode, CustomPrompt: "do it", RepoSlug: "o/r"}
+			spec := modes[mode]
+			base := buildSystemPrompt(req, spec, "/tmp/wt", "agent/x/adhoc-1", true, nil, "")
+
+			req.ExtraInstructions = "   \n"
+			if got := buildSystemPrompt(req, spec, "/tmp/wt", "agent/x/adhoc-1", true, nil, ""); got != base {
+				t.Error("blank instructions changed the system prompt")
+			}
+			if strings.Contains(base, AdditionalInstructionsHeading) {
+				t.Error("heading present with no instructions")
+			}
+
+			req.ExtraInstructions = "  Prefer small commits.\nNo emojis.\n"
+			got := buildSystemPrompt(req, spec, "/tmp/wt", "agent/x/adhoc-1", true, nil, "")
+			want := base + "\n\n## Additional instructions from the user\n\nPrefer small commits.\nNo emojis."
+			if got != want {
+				t.Errorf("section is not appended at the very end:\n%s", got[max(0, len(got)-300):])
+			}
+		})
+	}
+}

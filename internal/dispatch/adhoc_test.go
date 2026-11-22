@@ -151,3 +151,13 @@ func TestLaunchOrchestratorDetached(t *testing.T) {
 		t.Errorf("worker: orchestrator %+v, %d resolves", o, calls)
 	}
 }
+
+func TestLaunchAdhocExtraInstructions(t *testing.T) {
+	got := stubAdhoc(t, "", nil)
+	if _, err := LaunchAdhoc(AdhocRequest{Prompt: "p", AgentName: "a", WorkDir: "/w", ExtraInstructions: "be terse"}); err != nil {
+		t.Fatal(err)
+	}
+	if got.ExtraInstructions != "be terse" {
+		t.Errorf("ExtraInstructions = %q", got.ExtraInstructions)
+	}
+}

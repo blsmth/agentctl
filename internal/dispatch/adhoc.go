@@ -17,6 +17,9 @@ import (
 // (or --prompt-key) and agentctl serve's POST /v1/dispatch.
 type AdhocRequest struct {
 	Prompt string
+	// ExtraInstructions is appended to the agent's system prompt (see
+	// Request.ExtraInstructions); empty leaves the prompt unchanged.
+	ExtraInstructions string
 	// PromptKey is the context store key the prompt was resolved from, or ""
 	// (display-only; see Request.PromptKey).
 	PromptKey string
@@ -69,22 +72,23 @@ func LaunchAdhoc(req AdhocRequest) (Result, error) {
 
 	useWorktree := req.UseWorktree
 	return adhocLaunch(Request{
-		AgentName:    req.AgentName,
-		Mode:         ModeAdhoc,
-		CustomPrompt: req.Prompt,
-		PromptKey:    req.PromptKey,
-		WorkDir:      req.WorkDir,
-		UseWorktree:  &useWorktree,
-		RepoSlug:     repoSlug,
-		Model:        req.Model,
-		Backend:      req.Backend,
-		Account:      req.Account,
-		Effort:       req.Effort,
-		Harness:      req.Harness,
-		Background:   true,
-		Detached:     req.Detached,
-		Branch:       req.Branch,
-		ScheduledBy:  req.ScheduledBy,
+		AgentName:         req.AgentName,
+		Mode:              ModeAdhoc,
+		CustomPrompt:      req.Prompt,
+		ExtraInstructions: req.ExtraInstructions,
+		PromptKey:         req.PromptKey,
+		WorkDir:           req.WorkDir,
+		UseWorktree:       &useWorktree,
+		RepoSlug:          repoSlug,
+		Model:             req.Model,
+		Backend:           req.Backend,
+		Account:           req.Account,
+		Effort:            req.Effort,
+		Harness:           req.Harness,
+		Background:        true,
+		Detached:          req.Detached,
+		Branch:            req.Branch,
+		ScheduledBy:       req.ScheduledBy,
 	})
 }
 

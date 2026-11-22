@@ -15,7 +15,7 @@ test("attach a screenshot, confirm, dispatch", async ({ page, control, guard }) 
   // The stub dispatcher returns a window the fixture fleet does not have.
   guard.allow(/HTTP 404|status of 404/);
   await openDispatch(page);
-  await page.locator("textarea").fill("the header overlaps the status bar");
+  await page.getByPlaceholder("What should the agent do?").fill("the header overlaps the status bar");
   await page.locator("input[type=file]").setInputFiles({ name: "IMG_0001.png", mimeType: "image/png", buffer: PNG });
   await expect(page.locator(".thumb img")).toHaveCount(1);
   await page.getByRole("button", { name: "Review & send" }).tap();
@@ -33,7 +33,7 @@ test("cancelling the confirm sheet uploads nothing and dispatches nothing", asyn
   page.on("request", (r) => {
     if (r.url().includes("/v1/dispatch")) uploads++;
   });
-  await page.locator("textarea").fill("x");
+  await page.getByPlaceholder("What should the agent do?").fill("x");
   await page.locator("input[type=file]").setInputFiles({ name: "a.png", mimeType: "image/png", buffer: PNG });
   await page.getByRole("button", { name: "Review & send" }).tap();
   await sheet(page).getByRole("button", { name: "Cancel" }).tap();
@@ -47,4 +47,29 @@ test("a screenshot can be removed before dispatching", async ({ page }) => {
   await expect(page.locator(".thumb")).toHaveCount(1);
   await page.getByRole("button", { name: "Remove image" }).tap();
   await expect(page.locator(".thumb")).toHaveCount(0);
+});
+
+test("additional instructions reach the confirm sheet and the dispatch", async ({ page, control, guard }) => {
+  guard.allow(/HTTP 404|status of 404/);
+  await openDispatch(page);
+  const box = page.getByLabel("Additional instructions");
+  await expect(box).toBeHidden(); // collapsed by default
+  await page.getByText("Additional instructions", { exact: true }).tap();
+  await expect(box).toBeVisible();
+  await page.getByPlaceholder("What should the agent do?").fill("fix the header");
+  await box.fill("  Keep commits small.  ");
+  await page.getByRole("button", { name: "Review & send" }).tap();
+  await expect(sheet(page)).toContainText("additional instructions (system prompt):");
+  await expect(sheet(page)).toContainText("Keep commits small.");
+  await sheet(page).getByRole("button", { name: "Dispatch" }).tap();
+  await expect(page.locator("#toasts .toast").first()).toHaveText("Dispatched");
+  const actions = await control.waitForActions((a) => a.some((x) => x.kind === "dispatch"));
+  expect(actions.find((x) => x.kind === "dispatch")!.instructions).toBe("Keep commits small.");
+});
+
+test("no instructions typed: the sheet has no instructions block", async ({ page }) => {
+  await openDispatch(page);
+  await page.getByPlaceholder("What should the agent do?").fill("x");
+  await page.getByRole("button", { name: "Review & send" }).tap();
+  await expect(sheet(page)).not.toContainText("additional instructions");
 });

@@ -101,6 +101,13 @@ assert.deepEqual(confirmLines({ agent: "a", project_dir: "/d", prompt: "p" }), [
 assert.deepEqual(confirmLines({ agent: "a", project_dir: "/d", prompt: "p" }, 2), ["agent: a\nproject: /d\nimages: 2", "p"]);
 assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, ["x.png"]).body, { agent: "a", project_dir: "/d", prompt: "p", images: ["x.png"] });
 assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, []).body, { agent: "a", project_dir: "/d", prompt: "p" });
+assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, [], "  be terse \n").body, { agent: "a", project_dir: "/d", prompt: "p", instructions: "be terse" });
+assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, [], "  \n").body, { agent: "a", project_dir: "/d", prompt: "p" });
+assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, [], undefined).body, { agent: "a", project_dir: "/d", prompt: "p" });
+assert.deepEqual(confirmLines({ agent: "a", project_dir: "/d", prompt: "p", instructions: "be terse" }), [
+  "agent: a\nproject: /d", "p", "additional instructions (system prompt):\nbe terse",
+]);
+assert.equal(confirmLines({ agent: "a", project_dir: "/d", prompt: "p" }).length, 2);
 assert.equal(DISPATCH_UPLOAD_PATH, "/v1/dispatch/upload");
 console.log("ok: launch option helpers");
 

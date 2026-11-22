@@ -15,6 +15,7 @@ export type Action = {
   agent?: string;
   id?: string;
   decision?: string;
+  instructions?: string;
 };
 
 export type FixtureWindow = {

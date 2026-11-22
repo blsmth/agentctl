@@ -30,6 +30,8 @@ const (
 	maxReplyRunes = 4000
 	// maxPromptRunes bounds a dispatch prompt; the body limit caps it too.
 	maxPromptRunes = 32000
+	// maxInstructionsRunes bounds a dispatch's additional instructions.
+	maxInstructionsRunes = 4000
 	// escKey is the answer key that dismisses a dialog.
 	escKey = "esc"
 	// submitKey is the answer key that confirms a multi-select question: it
@@ -81,6 +83,7 @@ func (s *Server) registerWrite(rt *Router) {
 	rt.Write("POST /v1/group-order", writeRoute(s, "group-order", s.handleGroupOrder))
 	if rt.allowWrite {
 		rt.Feature("dispatch-upload")
+		rt.Feature("dispatch-instructions")
 	}
 	rt.Write("POST /v1/dispatch/upload", s.handleDispatchUpload)
 	rt.Write("POST /v1/dispatch", writeRoute(s, "dispatch", s.handleDispatch))
@@ -697,9 +700,11 @@ type dispatchIn struct {
 	Agent      string `json:"agent"`
 	ProjectDir string `json:"project_dir"`
 	Prompt     string `json:"prompt"`
-	Model      string `json:"model,omitempty"`
-	Backend    string `json:"backend,omitempty"`
-	Effort     string `json:"effort,omitempty"`
+	// Instructions is optional text for the agent's system prompt.
+	Instructions string `json:"instructions,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Backend      string `json:"backend,omitempty"`
+	Effort       string `json:"effort,omitempty"`
 	// Images are IDs from POST /v1/dispatch/upload for the same project.
 	Images []string `json:"images,omitempty"`
 }
@@ -751,6 +756,15 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	if out, ok := checkText("prompt", in.Prompt); !ok {
 		return out
 	}
+	instructions := strings.TrimSpace(in.Instructions)
+	if utf8.RuneCountInString(instructions) > maxInstructionsRunes {
+		return failure(http.StatusRequestEntityTooLarge, codeTooLarge, fmt.Sprintf("instructions exceed %d characters", maxInstructionsRunes))
+	}
+	if instructions != "" {
+		if out, ok := checkText("instructions", instructions); !ok {
+			return out
+		}
+	}
 	if len(in.Images) > maxImages {
 		return failure(http.StatusBadRequest, codeBadRequest, fmt.Sprintf("at most %d images per dispatch", maxImages))
 	}
@@ -793,7 +807,7 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	s.auditAttempt(*a)
 
 	res, err := s.dispatcher.Dispatch(DispatchRequest{
-		Agent: in.Agent, Prompt: prompt, Model: model, Backend: backend, Effort: effort,
+		Agent: in.Agent, Prompt: prompt, Instructions: instructions, Model: model, Backend: backend, Effort: effort,
 		Dir: g.Dir, Session: g.Session, RuntimeDir: g.RuntimeDir,
 	})
 	if err != nil {
