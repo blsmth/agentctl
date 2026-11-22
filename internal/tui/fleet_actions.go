@@ -258,7 +258,7 @@ func (m *FleetModel) cronForGroup(g *fleet.Group) tea.Cmd {
 }
 
 // armNew turns the header's "+ new" button of the group owning line idx into
-// the shell | agent selector. Groups that cannot launch never arm.
+// the shell | cron | agent selector. Groups that cannot launch never arm.
 func (m *FleetModel) armNew(idx int) {
 	g := m.groupOfLine(idx)
 	if g == nil || !groupCanLaunch(*g) {
