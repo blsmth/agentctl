@@ -453,6 +453,23 @@ func UserPrompt() {
 	deliverMailbox("UserPromptSubmit", windowID, ws.SessionID)
 }
 
+// logNotifyHook writes the single INFO line for a Notification hook call. The
+// state field appears only when the state changed ("kept" when running
+// subagents held it).
+func logNotifyHook(typ, windowID, agent, change string, alerted bool, d time.Duration) {
+	logging.Log("%s", notifyLine(typ, windowID, agent, change, alerted, d))
+}
+
+// notifyLine formats the hook/notify INFO line. alert=true means an alert was
+// actually sent (not suppressed by config).
+func notifyLine(typ, windowID, agent, change string, alerted bool, d time.Duration) string {
+	state := ""
+	if change != "" {
+		state = " state=" + change
+	}
+	return fmt.Sprintf("hook/notify: type=%s window=%s agent=%s%s alert=%t Δ%s", typ, windowID, agent, state, alerted, d.Round(100*time.Microsecond))
+}
+
 // Notify is called by Claude Code's Notification hook.
 // It fires macOS notifications immediately for permission prompts and idle events,
 // bypassing the monitor's polling cycle for lower latency.
@@ -461,8 +478,7 @@ func Notify() {
 		return
 	}
 
-	doneTimer := logging.Timing("hook/notify")
-	defer doneTimer()
+	t0 := time.Now()
 
 	var input struct {
 		NotificationType string `json:"notification_type"`
@@ -480,12 +496,20 @@ func Notify() {
 
 	agentName := resolveAgentName()
 
+	// One INFO line per invocation, written on return so it carries the state
+	// change, whether an alert fired, and the total duration.
+	windowID := resolveHookWindowID()
+	var change string
+	alerted := false
+	defer func() {
+		logNotifyHook(input.NotificationType, windowID, agentName, change, alerted, time.Since(t0))
+	}()
+
 	// Set hook-driven state so the monitor picks it up instantly.
 	// This must happen before alerter, which blocks until the user interacts with
 	// the notification (potentially 20+ seconds). Without this ordering, the spinner
 	// keeps spinning while the alert is pending.
 	// Visual updates (window renaming, tab style) are owned by the Bubble Tea monitor view.
-	windowID := resolveHookWindowID()
 	var ws windowstate.WindowState
 	// prevState is the window's State *before* this hook invocation mutates
 	// it, captured inside the Update closure (which hands us the struct as
@@ -529,12 +553,13 @@ func Notify() {
 				}
 				ws = *w
 			})
-			if updateErr != nil {
+			switch {
+			case updateErr != nil:
 				logUpdateErr("hook-notify", updateErr)
-			} else if subagentsActive {
-				logging.Log("hook-notify: idle_prompt with subagents running, keeping state=%s window=%s", prevState, windowID)
-			} else {
-				logging.Log("hook-notify: set state=%s window=%s agent=%s", newState, windowID, agentName)
+			case subagentsActive:
+				change = "kept"
+			default:
+				change = stateChange(prevState, newState)
 			}
 		}
 	}
@@ -556,8 +581,7 @@ func Notify() {
 	sessionName := resolveInstanceSessionName()
 	alert := buildAlertContent(input.NotificationType, agentName, sessionName, windowID, input.Message, ws, time.Now())
 
-	logging.Log("hook-notify: firing alert type=%s agent=%s", input.NotificationType, agentName)
-	sendAlert(agentName, input.NotificationType, notify.Options{
+	alerted = sendAlert(agentName, input.NotificationType, notify.Options{
 		Title:    alert.Title,
 		Subtitle: alert.Subtitle,
 		Message:  alert.Message,

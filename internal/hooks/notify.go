@@ -41,13 +41,14 @@ func shouldAlert(ac config.AgentConfig, notificationType string) bool {
 // resolves the agent's config (project overlaid on global, defaults applied),
 // and calls send only if shouldAlert allows it. State writes must happen
 // before/independently of this call -- only the notification is suppressed.
-func sendAlert(agentName, notificationType string, opts notify.Options) {
-	sendAlertWith(*deps, agentName, notificationType, opts)
+// It reports whether an alert was actually sent.
+func sendAlert(agentName, notificationType string, opts notify.Options) bool {
+	return sendAlertWith(*deps, agentName, notificationType, opts)
 }
 
 // sendAlertWith is sendAlert against an explicit Deps snapshot, so a caller
 // that sends from a goroutine does not read the package-level deps var.
-func sendAlertWith(d Deps, agentName, notificationType string, opts notify.Options) {
+func sendAlertWith(d Deps, agentName, notificationType string, opts notify.Options) bool {
 	var ac config.AgentConfig
 	if d.LoadConfig != nil {
 		if cfg := d.LoadConfig(); cfg != nil {
@@ -58,14 +59,15 @@ func sendAlertWith(d Deps, agentName, notificationType string, opts notify.Optio
 	} else {
 		ac = config.DefaultAgentConfig()
 	}
-	dispatchAlert(ac, notificationType, agentName, opts, d.Notify)
+	return dispatchAlert(ac, notificationType, agentName, opts, d.Notify)
 }
 
 // dispatchAlert is the testable core of sendAlert with config and sender injected.
-func dispatchAlert(ac config.AgentConfig, notificationType, agentName string, opts notify.Options, send func(notify.Options)) {
+func dispatchAlert(ac config.AgentConfig, notificationType, agentName string, opts notify.Options, send func(notify.Options)) bool {
 	if !shouldAlert(ac, notificationType) {
 		logging.Log("hook-notify: alert suppressed by config type=%s agent=%s", notificationType, agentName)
-		return
+		return false
 	}
 	send(opts)
+	return true
 }

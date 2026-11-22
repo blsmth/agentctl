@@ -5,8 +5,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
+
+	"github.com/blsmth/agentctl/internal/logging"
 )
 
 func TestExeChanged(t *testing.T) {
@@ -57,5 +60,56 @@ func TestMaybeReexec(t *testing.T) {
 	m.maybeReexec(time.Now())
 	if calls != 0 {
 		t.Errorf("exec called %d times, want 0", calls)
+	}
+}
+
+func TestReexecEnvCarriesMarker(t *testing.T) {
+	t.Setenv("AGENTCTL_TEST_KEEP", "1")
+	env := reexecEnv()
+	if !slices.Contains(env, logging.ReexecEnv+"=1") {
+		t.Errorf("reexecEnv lacks %s=1", logging.ReexecEnv)
+	}
+	if !slices.Contains(env, "AGENTCTL_TEST_KEEP=1") {
+		t.Error("reexecEnv dropped the inherited environment")
+	}
+}
+
+// TestMaybeReexecPassesMarker drives a stubbed exec (never a real one) with a
+// binary that looks replaced, and checks the env handed to it.
+func TestMaybeReexecPassesMarker(t *testing.T) {
+	// selfexec ignores binaries under the temp dir, so stage one beside the test.
+	dir, err := os.MkdirTemp(".", "reexec-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(abs, "agentctl")
+	if err := os.WriteFile(exe, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(exe, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotPath string
+	var gotEnv []string
+	m := &monitorModel{
+		exeStart: exeIdentity{Path: exe, Ino: 1},
+		execFn: func(p string, _ []string, env []string) error {
+			gotPath, gotEnv = p, env
+			return errors.New("stubbed")
+		},
+	}
+	m.maybeReexec(time.Now())
+	if gotPath != exe {
+		t.Fatalf("exec path = %q, want %q (exec not reached)", gotPath, exe)
+	}
+	if !slices.Contains(gotEnv, logging.ReexecEnv+"=1") {
+		t.Errorf("exec env lacks %s=1", logging.ReexecEnv)
 	}
 }
