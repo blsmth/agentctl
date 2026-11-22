@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -177,9 +178,11 @@ func (m *FleetModel) openSchedForm(mode schedFormMode, st *cronedit.Status, dir 
 	m.cancelSweep()
 	m.closeMenu()
 	m.schedConfirm = nil
+	var save tea.Cmd
 	if !m.showSchedules {
 		m.showSchedules = true
 		m.relayout()
+		save = tea.Batch(m.saveViewCmd(), m.schedLoadCmd())
 	}
 	f := &fleetSchedForm{mode: mode, init: map[schedStop]string{}}
 	var job cron.Job
@@ -243,7 +246,7 @@ func (m *FleetModel) openSchedForm(mode schedFormMode, st *cronedit.Status, dir 
 	f.fingerprint = f.state()
 	m.schedForm = f
 	m.jumpErr = ""
-	return m.schedPreviewCmd()
+	return tea.Batch(save, m.schedPreviewCmd())
 }
 
 func newSchedPrompt(value string) textarea.Model {
@@ -492,6 +495,9 @@ func (f *fleetSchedForm) job() (cron.Job, []cron.FieldError) {
 	j.Dir = ""
 	if len(f.dirs) > 0 {
 		j.Dir = f.dirs[f.dirIdx]
+		if f.base.Dir != "" && filepath.Clean(f.base.Dir) == j.Dir {
+			j.Dir = f.base.Dir // the stored spelling ("…/x/" stays): not a change
+		}
 	}
 	j.Agent = f.text(stopAgent, f.base.Agent)
 	switch p := f.prompt.Value(); {

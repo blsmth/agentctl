@@ -182,7 +182,7 @@ func (m *FleetModel) toggleActivity() tea.Cmd {
 			return fleetActivityOpenedMsg{err: lay.err}
 		}
 		if lay.hideViewer {
-			_ = activityHideViewer()
+			hideViewerLocked(activityHideViewer)
 		}
 		pane, err := activityOpenPane(activitySlideStart)
 		return fleetActivityOpenedMsg{pane: pane, lay: lay, win: win, err: err}
@@ -400,7 +400,7 @@ func (m *FleetModel) applyActivityLayout(win int) tea.Cmd {
 	case lay.hideViewer && !wasHidden:
 		m.liveShown = ""
 		m.activity.sawViewer = false
-		hide := func() tea.Msg { _ = activityHideViewer(); return nil }
+		hide := func() tea.Msg { hideViewerLocked(activityHideViewer); return nil }
 		return tea.Sequence(hide, activityResizeCmd(pane, lay.activity))
 	case !lay.hideViewer && wasHidden:
 		// Narrow the activity pane first, then split the viewer from the

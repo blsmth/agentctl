@@ -766,10 +766,15 @@ func TestScheduleCreateViaPickerFromProjectHeader(t *testing.T) {
 	if !formOf(t, m).review {
 		t.Fatalf("ctrl+s did not open the review: err=%q errors=%v", formOf(t, m).err, formOf(t, m).errors())
 	}
-	out = ansi.Strip(m.render())
-	for _, s := range []string{"Review new schedule triage", "Runs go-engineer in", "a worktree per fire", "weekdays 07:30", "unattended", "permission mode auto", "until", "Next fires", "Triage new issues", "y schedule it"} {
-		if !strings.Contains(out, s) {
-			t.Errorf("review missing %q:\n%s", s, out)
+	if !strings.Contains(ansi.Strip(m.render()), "Review new schedule triage") {
+		t.Errorf("review not drawn:\n%s", ansi.Strip(m.render()))
+	}
+	// The review wraps at the pane width, and where it wraps depends on the
+	// temp dir's length: check its words, not its line breaks.
+	review := strings.Join(strings.Fields(ansi.Strip(strings.Join(m.schedFormLines(m.schedPaneWidth(), m.termHeight), "\n"))), " ")
+	for _, s := range []string{"Review new schedule triage", "Runs go-engineer in", "(a worktree per fire), weekdays 07:30", "unattended, permission mode auto, until paused.", "Next fires", "Triage new issues", "y schedule it"} {
+		if !strings.Contains(review, s) {
+			t.Errorf("review missing %q:\n%s", s, review)
 		}
 	}
 	next, cmd := m.Update(schedKeyMsg("y"))
@@ -1107,5 +1112,47 @@ func TestScheduleIgnoresViewerRacesWhilePaneIsUp(t *testing.T) {
 	next, _ = m.Update(fleetProbeMsg{pane: 120, win: 150})
 	if m = next.(FleetModel); m.userLeft != 0 || m.liveLeft != 62 {
 		t.Errorf("probe while the pane is up: userLeft %d liveLeft %d", m.userLeft, m.liveLeft)
+	}
+}
+
+func TestScheduleNewFromHeaderShowsAndPersistsSection(t *testing.T) {
+	f := newSchedFixture(t)
+	m := f.model(t)
+	dir := t.TempDir()
+	m.viewPath = filepath.Join(dir, "hub-view.json")
+	m.selectLine(0)
+	m = schedPress(t, m, "n")
+	next, cmd := m.Update(schedKeyMsg("t"))
+	m = next.(FleetModel)
+	if !m.showSchedules || m.schedForm == nil {
+		t.Fatal("n, t should open the form and show the section")
+	}
+	m = schedDrive(t, m, cmd)
+	if !readHubView(m.viewPath).Schedules {
+		t.Error("turning the section on from n, t was not persisted")
+	}
+	if !m.sched.loaded {
+		t.Error("the section was not loaded")
+	}
+}
+
+func TestScheduleEditTrailingSlashDirIsNoChange(t *testing.T) {
+	f := newSchedFixture(t)
+	f.create(t, cron.Job{Name: "slash", Schedule: "0 7 * * *"})
+	// A hand-edited file may carry a trailing slash.
+	data, _ := os.ReadFile(f.jobsPath)
+	data = []byte(strings.Replace(string(data), `"dir": "`+f.project+`"`, `"dir": "`+f.project+`/"`, 1))
+	if err := os.WriteFile(f.jobsPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := showSchedules(t, f.model(t))
+	m = selectSched(t, m, "slash")
+	m = schedPress(t, m, "e")
+	if j, _ := formOf(t, m).job(); j.Dir != f.project+"/" {
+		t.Errorf("untouched dir = %q, want the stored spelling", j.Dir)
+	}
+	m = schedPress(t, m, "ctrl+s")
+	if m.schedForm != nil || !strings.Contains(m.infoMsg, "no changes to slash") {
+		t.Errorf("form open=%v info=%q", m.schedForm != nil, m.infoMsg)
 	}
 }

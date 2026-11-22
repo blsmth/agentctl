@@ -912,7 +912,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ensureCursorVisible() // the selected row regains its activity line
 			m.jumpErr = msg.err.Error()
 			return m, func() tea.Msg {
-				_ = tmux.HideLiveViewer() // drop any half-built viewer
+				hideViewerLocked(tmux.HideLiveViewer) // drop any half-built viewer
 				return nil
 			}
 		}

@@ -278,17 +278,23 @@ func (m *FleetModel) syncSchedPane() tea.Cmd {
 	return nil
 }
 
-// fleetViewerMu serializes the hub's viewer pane changes: two shows racing
+// fleetViewerMu serializes the hub's viewer pane changes (every show in
+// liveShowFor and every hide, through hideViewerLocked): two shows racing
 // to create a missing viewer pane (as after the schedules pane closed it)
 // would each kill the other's viewer session.
 var fleetViewerMu sync.Mutex
 
+// hideViewerLocked runs a viewer hide under fleetViewerMu.
+func hideViewerLocked(hide func() error) {
+	fleetViewerMu.Lock()
+	defer fleetViewerMu.Unlock()
+	_ = hide()
+}
+
 // fleetSchedHideCmd closes the live viewer pane.
 func fleetSchedHideCmd() tea.Cmd {
 	return func() tea.Msg {
-		fleetViewerMu.Lock()
-		_ = fleetSchedHideViewer()
-		fleetViewerMu.Unlock()
+		hideViewerLocked(fleetSchedHideViewer)
 		return fleetSchedViewerHiddenMsg{}
 	}
 }
