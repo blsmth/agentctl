@@ -21,7 +21,10 @@ type Meta struct {
 	Ticket           string
 	TicketTitle      string
 	Task             string // ad-hoc dispatch task line
-	Prompt           string // full initial prompt (windowstate Prompt, else FirstPrompt)
+	Prompt           string // full initial prompt (windowstate Prompt only)
+	FirstPrompt      string // short first prompt (~500 runes), fallback for Prompt
+	PromptScanKey    string // see windowstate.PromptScanKey
+	PromptScanAt     time.Time
 	Branch           string
 	WorktreeDir      string
 	LogPath          string
@@ -105,7 +108,10 @@ func LoadMeta(g Group) map[string]Meta {
 			Ticket:           ws.Ticket,
 			TicketTitle:      ws.TicketTitle,
 			Task:             ws.Task,
-			Prompt:           firstNonEmpty(ws.Prompt, ws.FirstPrompt),
+			Prompt:           ws.Prompt,
+			FirstPrompt:      ws.FirstPrompt,
+			PromptScanKey:    ws.PromptScanKey,
+			PromptScanAt:     ws.PromptScanAt,
 			Branch:           ws.Branch,
 			WorktreeDir:      ws.WorktreeDir,
 			LogPath:          ws.LogPath,
@@ -129,11 +135,4 @@ func LoadMeta(g Group) map[string]Meta {
 		}
 	}
 	return out
-}
-
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }

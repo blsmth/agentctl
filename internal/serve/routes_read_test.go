@@ -19,6 +19,7 @@ import (
 	"github.com/blsmth/agentctl/internal/phoneview"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/state"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 type fakeFleet struct {
@@ -150,7 +151,7 @@ func TestFleetJSONShape(t *testing.T) {
 		"window_id": "@523", "agent": "go-engineer", "state": "blocked", "mode": "dispatch",
 		"activity": "go test ./...", "pending_tool": "Bash", "blocked_since": "2026-11-16T11:00:00Z",
 		"context_pct": float64(40), "session": "agentctl-proj", "project": "proj",
-			"recap": "Fixing the flaky checkout test.", "recap_source": "summary",
+		"recap": "Fixing the flaky checkout test.", "recap_source": "summary",
 	} {
 		if win[k] != want {
 			t.Errorf("window[%q] = %v, want %v", k, win[k], want)
@@ -538,6 +539,7 @@ func TestWindowEndpointPromptOnDetailOnly(t *testing.T) {
 	e := newReadEnv(t)
 	g := testGroup()
 	m := g.Meta["@523"]
+	m.WindowID = "@523"
 	m.Prompt = "line one\n\nline two"
 	m.Task = "line one"
 	g.Meta["@523"] = m
@@ -561,5 +563,36 @@ func TestWindowEndpointPromptOnDetailOnly(t *testing.T) {
 	}
 	if strings.Contains(e.get("/v1/fleet").Body.String(), "line two") {
 		t.Error("fleet list must not carry the prompt")
+	}
+}
+
+func TestWindowEndpointBackfillsPromptFromTranscript(t *testing.T) {
+	e := newReadEnv(t)
+	windowstate.Init()
+	if err := windowstate.Write("@523", windowstate.WindowState{SessionID: "sid", LogPath: "/logs/sid.jsonl"}); err != nil {
+		t.Fatal(err)
+	}
+	old := firstHumanTextF
+	firstHumanTextF = func(string) string { return "derived from the log" }
+	t.Cleanup(func() { firstHumanTextF = old })
+	g := testGroup()
+	g.RuntimeDir = filepath.Dir(windowstate.Dir())
+	g.Meta = fleet.LoadMeta(fleet.Group{RuntimeDir: g.RuntimeDir})
+	e.fleet.set(g)
+
+	var detail struct {
+		Detail struct {
+			Prompt string `json:"prompt"`
+		} `json:"detail"`
+	}
+	w := e.get("/v1/sessions/agentctl-proj/windows/@523")
+	if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.Detail.Prompt != "derived from the log" {
+		t.Errorf("prompt = %q", detail.Detail.Prompt)
+	}
+	if ws, _ := windowstate.ReadIn(g.RuntimeDir, "@523"); ws.Prompt != "derived from the log" {
+		t.Errorf("not persisted: %q", ws.Prompt)
 	}
 }

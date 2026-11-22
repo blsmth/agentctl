@@ -200,7 +200,9 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 	win := g.Windows[i]
 	body := windowBody{Window: win}
 	if i < len(g.Rows) {
-		body.Detail = detailFor(g.Rows[i], g.Meta[win.WindowID])
+		m := g.Meta[win.WindowID]
+		m.Prompt = s.promptFor(g.RuntimeDir, m)
+		body.Detail = detailFor(g.Rows[i], m)
 	}
 	writeJSON(w, http.StatusOK, body)
 }

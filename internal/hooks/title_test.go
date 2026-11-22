@@ -721,3 +721,39 @@ func TestTitleManualTitleIsKept(t *testing.T) {
 		}
 	})
 }
+
+func TestTitleRecordsFullPromptOnBareWindow(t *testing.T) {
+	setupTitle(t)
+	seedWindow(t, "@4", windowstate.WindowState{State: "working"})
+	long := strings.Repeat("word ", 400) // 2000 bytes, past the 500-rune first-prompt cut
+	runTitle(context.Background(), "@4", "", long)
+	ws := readWS(t, "@4")
+	if len([]rune(ws.FirstPrompt)) != maxFirstPromptRunes {
+		t.Errorf("first prompt runes = %d", len([]rune(ws.FirstPrompt)))
+	}
+	if ws.Prompt != strings.TrimSpace(long) {
+		t.Errorf("prompt len = %d, want full", len(ws.Prompt))
+	}
+}
+
+func TestTitleKeepsExistingPrompt(t *testing.T) {
+	setupTitle(t)
+	seedWindow(t, "@4", windowstate.WindowState{State: "working", Prompt: "kept"})
+	runTitle(context.Background(), "@4", "", "organize my photos")
+	if got := readWS(t, "@4").Prompt; got != "kept" {
+		t.Errorf("prompt = %q", got)
+	}
+}
+
+func TestResetTitleOnClearPrompt(t *testing.T) {
+	bare := windowstate.WindowState{Prompt: "p", FirstPrompt: "f", PromptScanKey: "k"}
+	resetTitleOnClear(&bare)
+	if bare.Prompt != "" || bare.PromptScanKey != "" {
+		t.Errorf("bare not reset: %+v", bare)
+	}
+	disp := windowstate.WindowState{Prompt: "p", Task: "do it"}
+	resetTitleOnClear(&disp)
+	if disp.Prompt != "p" {
+		t.Errorf("dispatched prompt lost: %+v", disp)
+	}
+}
