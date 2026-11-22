@@ -484,10 +484,19 @@ type FleetModel struct {
 	liveFailed string
 	// viewerSeen is the "session|window" the viewer last reported on a poll;
 	// a change relative to it that the hub did not cause drives the selection
-	// (see viewerSyncTarget).
+	// (see viewerSyncDecide).
 	viewerSeen string
-	liveLeft   int
-	liveRight  int
+	// viewerIntent is the viewer's tab-click token last seen on a poll, so
+	// each click is acted on once; viewerPolled marks the first poll, whose
+	// token predates this hub and is never followed.
+	viewerIntent string
+	viewerPolled bool
+	// viewerGen numbers the hub's decisions about the viewer's window (every
+	// show and repoint), so a repoint decided before a later show never
+	// lands after it (see fleetViewerApplied).
+	viewerGen uint64
+	liveLeft  int
+	liveRight int
 
 	// liveWinWidth is the hub window width the split was last applied for;
 	// a list-pane resize at the same window width is a divider drag, not a
@@ -902,8 +911,9 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyServeToggled(msg)
 
 	case fleetViewerMsg:
-		m = m.syncFromViewer(msg)
-		return m, m.flushView()
+		var repoint tea.Cmd
+		m, repoint = m.syncFromViewer(msg)
+		return m, tea.Batch(repoint, m.flushView())
 
 	case fleetFocusErrMsg:
 		m.jumpErr = msg.err.Error()
@@ -1475,6 +1485,8 @@ func (m *FleetModel) liveShowFor(session, window string) tea.Cmd {
 		return nil
 	}
 	m.liveShown = key
+	m.viewerGen++
+	showGen := m.viewerGen
 	fallback, userLeft := m.termWidth, m.userLeft
 	shown := m.hubChrome
 	activity, userAct := m.activity.open(), m.activity.userWidth
@@ -1492,6 +1504,9 @@ func (m *FleetModel) liveShowFor(session, window string) tea.Cmd {
 		}
 		if err == nil {
 			fleetViewerMu.Lock()
+			if showGen > fleetViewerApplied {
+				fleetViewerApplied = showGen
+			}
 			err = showLiveViewer(session, window, right)
 			fleetViewerMu.Unlock()
 			if err == nil {
@@ -3601,54 +3616,172 @@ func (m *FleetModel) applyClosePending() {
 	}
 }
 
-// fleetViewerMsg reports the window the live viewer currently shows.
-type fleetViewerMsg struct{ home, window string }
+// fleetViewerMsg reports the window the live viewer currently shows, and the
+// window a chrome-bar tab click inside it last asked for (intent, identified
+// per click by token).
+type fleetViewerMsg struct{ viewer, home, window, intent, token string }
+
+// Viewer poll seams, overridden in tests so they never touch tmux.
+var (
+	hubViewerState = tmux.HubViewerState
+	repointViewer  = tmux.RepointViewer
+)
 
 // fleetViewerPollCmd asks tmux which window the viewer shows.
 func fleetViewerPollCmd() tea.Cmd {
 	return func() tea.Msg {
-		home, win := tmux.ViewerActiveWindow()
-		return fleetViewerMsg{home: home, window: win}
+		st := hubViewerState()
+		return fleetViewerMsg{viewer: st.Viewer, home: st.Home, window: st.Window, intent: st.Intent, token: st.IntentToken}
 	}
 }
 
-// viewerSyncTarget decides whether the hub selection must follow the viewer.
-// The viewer shows home|win; seen is what the previous poll saw and liveShown
-// what the hub itself last handed to the viewer. Only a change the hub did not
-// cause (observed differs from both) is followed, and only when the window is
-// a row of the list. It returns the key to remember as seen.
-func viewerSyncTarget(lines []fleetLine, liveShown, seen, home, win string) (key string, follow bool) {
+// viewerSyncAction is what the hub does about the window its viewer shows.
+type viewerSyncAction int
+
+const (
+	viewerSyncNone    viewerSyncAction = iota
+	viewerSyncFollow                   // move the list selection to target
+	viewerSyncRepoint                  // put the viewer back on target
+)
+
+// viewerSyncDecision is the outcome of viewerSyncDecide. seen is the key to
+// remember as last observed; target is a "session|window" key. A follow may
+// also repoint the viewer (a tab click and an index shift in one poll).
+type viewerSyncDecision struct {
+	seen    string
+	action  viewerSyncAction
+	target  string
+	repoint bool
+}
+
+// viewerSyncState is the hub's memory between viewer polls.
+type viewerSyncState struct {
+	liveShown  string // "session|window" the hub last handed to the viewer
+	liveFailed string // liveShown key whose hand-off failed
+	seen       string // "session|window" the previous poll observed
+	intent     string // tab-click token already acted on (or found at start)
+}
+
+// viewerSyncDecide decides how the hub reacts to the viewer's state. The
+// viewer is a grouped session and tmux re-syncs grouped sessions by window
+// index, so inserting, moving or closing a window in the home session moves
+// the viewer to whatever window now sits at its old index. Only a change
+// attributable to a chrome-bar tab click (the viewer's intent, set by
+// tmux.SelectViewerWindow, acted on once per click token) is followed; any
+// other drift away from the window the hub shows (liveShown)
+// re-points the viewer at it by window ID. When the shown window is no longer
+// a row (it closed), or the hub has nothing shown, the old rule applies: a
+// change the hub did not cause is followed when it is a row of the list.
+//
+// isRow reports whether session|window is a row the list can select (after
+// revealing a folded or filtered one); it is only asked about follow targets.
+func viewerSyncDecide(lines []fleetLine, st viewerSyncState, msg fleetViewerMsg, isRow func(session, window string) bool) viewerSyncDecision {
+	liveShown, seen := st.liveShown, st.seen
+	home, win := msg.home, msg.window
 	if home == "" || win == "" {
-		return seen, false
+		return viewerSyncDecision{seen: seen}
 	}
-	key = home + "|" + win
+	key := home + "|" + win
+	liveHome, liveWin, _ := strings.Cut(liveShown, "|")
+	if msg.intent != "" && msg.token != st.intent && msg.intent != liveWin {
+		// A tab click the hub has not followed yet: the viewer belongs on
+		// the clicked window even if an index shift moved it since.
+		d := viewerSyncDecision{seen: key}
+		target := home + "|" + msg.intent
+		if win != msg.intent {
+			d.action, d.target = viewerSyncRepoint, target
+			d.repoint = true
+		}
+		if isRow(home, msg.intent) {
+			d.action, d.target = viewerSyncFollow, target
+		}
+		return d
+	}
 	if key == seen || key == liveShown {
-		return key, false
+		return viewerSyncDecision{seen: key}
 	}
+	if liveShown != "" && liveShown != st.liveFailed && liveHome == home && fleetLinesHaveRow(lines, liveHome, liveWin) {
+		// Drift: an index shift moved the viewer off the watched window.
+		// Expect the viewer back on it, so a failed repoint retries.
+		return viewerSyncDecision{seen: liveShown, action: viewerSyncRepoint, target: liveShown, repoint: true}
+	}
+	if isRow(home, win) {
+		return viewerSyncDecision{seen: key, action: viewerSyncFollow, target: key}
+	}
+	return viewerSyncDecision{seen: key}
+}
+
+// fleetLinesHaveRow reports whether session's window is a row of lines.
+func fleetLinesHaveRow(lines []fleetLine, session, window string) bool {
 	for _, l := range lines {
-		if l.kind == fleetLineRow && l.row.Session == home && l.row.WindowID == win {
-			return key, true
+		if l.kind == fleetLineRow && l.row.Session == session && l.row.WindowID == window {
+			return true
 		}
 	}
-	return key, false
+	return false
 }
 
-// syncFromViewer moves the list selection to the window the viewer switched
-// to by other means (a chrome-bar tab click inside the live pane).
-func (m FleetModel) syncFromViewer(msg fleetViewerMsg) FleetModel {
-	if key := msg.home + "|" + msg.window; msg.home != "" && msg.window != "" && key != m.viewerSeen && key != m.liveShown {
-		m.revealRow(msg.home, msg.window) // a switch to a hidden row unfolds it
+// syncFromViewer moves the list selection to the window a chrome-bar tab
+// click inside the live pane switched the viewer to, and puts the viewer back
+// on the hub's window when tmux moved it there by index (see viewerSyncDecide).
+func (m FleetModel) syncFromViewer(msg fleetViewerMsg) (FleetModel, tea.Cmd) {
+	isRow := func(session, window string) bool {
+		m.revealRow(session, window) // a switch to a hidden row unfolds it
+		return fleetLinesHaveRow(m.lines, session, window)
 	}
-	key, follow := viewerSyncTarget(m.lines, m.liveShown, m.viewerSeen, msg.home, msg.window)
-	m.viewerSeen = key
-	if !follow {
-		return m
+	if !m.viewerPolled {
+		// A click recorded before this hub started (a previous hub, or a
+		// hot reload) is not one to follow now.
+		m.viewerPolled, m.viewerIntent = true, msg.token
 	}
-	m.selSession, m.selWindowID, m.selIsHeader = msg.home, msg.window, false
-	m.liveShown = key
+	st := viewerSyncState{liveShown: m.liveShown, liveFailed: m.liveFailed, seen: m.viewerSeen, intent: m.viewerIntent}
+	d := viewerSyncDecide(m.lines, st, msg, isRow)
+	m.viewerSeen, m.viewerIntent = d.seen, msg.token
+	var cmd tea.Cmd
+	if d.repoint {
+		m.viewerGen++
+		cmd = fleetRepointCmd(msg.viewer, d.target, m.viewerGen, m.hubChrome)
+	}
+	if d.action != viewerSyncFollow {
+		return m, cmd
+	}
+	session, window, _ := strings.Cut(d.target, "|")
+	m.selSession, m.selWindowID, m.selIsHeader = session, window, false
+	m.liveShown = d.target
 	m.wheelHold = false // the selection changed: follow it
 	m.resolveSelection()
-	return m
+	return m, cmd
+}
+
+// fleetViewerApplied is the newest viewerGen whose show or repoint has run,
+// guarded by fleetViewerMu. Bubble Tea runs commands concurrently and the
+// mutex is not FIFO, so a repoint decided before a later show can reach the
+// lock after it; it is then stale and skipped, or it would leave the viewer
+// on a window the hub no longer selects (and the next poll, seeing the
+// viewer where it last expected it, would not correct it).
+var fleetViewerApplied uint64
+
+// fleetRepointCmd selects key's window (by ID) in the viewer session, unless
+// a newer hand-off (gen) has already run.
+func fleetRepointCmd(viewer, key string, gen uint64, chromeShown bool) tea.Cmd {
+	_, window, _ := strings.Cut(key, "|")
+	if viewer == "" || window == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		fleetViewerMu.Lock()
+		if gen < fleetViewerApplied {
+			fleetViewerMu.Unlock()
+			return nil
+		}
+		fleetViewerApplied = gen
+		err := repointViewer(viewer, window)
+		fleetViewerMu.Unlock()
+		if err == nil {
+			hubZoomSync(!chromeShown)
+		}
+		return nil
+	}
 }
 
 // fleetLeaver adapts the hub list to hubtarget.Leaver. The fleet process runs in

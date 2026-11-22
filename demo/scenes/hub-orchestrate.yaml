@@ -8,7 +8,6 @@ description: An orchestrator dispatching workers from the hub
 output: gif
 config:
   dispatch_approval: "off"
-  new_window_position: right  # left (the default) shifts window indices, and the hub viewer jumps off the orchestrator
 terminal:
   cols: 190
   rows: 30

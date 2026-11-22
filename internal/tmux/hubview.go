@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/selfpath"
@@ -107,6 +109,45 @@ func viewerOptionArgs(session string) [][]string {
 // viewerSelectWindowArgs selects an agent window inside a viewer session.
 func viewerSelectWindowArgs(session, windowID string) []string {
 	return []string{"select-window", "-t", sessionWindowTarget(session, windowID)}
+}
+
+// viewerIntentOption is a session user option on a viewer session recording
+// the last chrome-bar tab click inside the live pane, as "<window id>/<token>"
+// (the token makes every click distinct, so the hub acts on each one once).
+// The hub follows a viewer window change only when it comes from such a
+// click: tmux re-syncs grouped sessions by window index, so a window
+// inserted, moved or closed in the home session also moves the viewer, and
+// those changes must not drag the hub selection along.
+const viewerIntentOption = "@agentctl_viewer_intent"
+
+// viewerIntentValue builds the intent option value for a click on windowID.
+func viewerIntentValue(windowID string, token int64) string {
+	return windowID + "/" + strconv.FormatInt(token, 10)
+}
+
+// viewerSetIntentArgs records a tab-click intent on the viewer session.
+func viewerSetIntentArgs(session, value string) []string {
+	return []string{"set-option", "-t", ExactSessionTarget(session), viewerIntentOption, value}
+}
+
+// viewerStateFormat reads a viewer's active window and tab-click intent.
+const viewerStateFormat = "#{window_id} #{" + viewerIntentOption + "}"
+
+// parseViewerState splits viewerStateFormat output into the active window,
+// the intent's window and the whole intent value (its identity).
+func parseViewerState(out string) (window, intentWindow, intent string) {
+	f := strings.Fields(out)
+	if len(f) > 0 {
+		window = f[0]
+	}
+	if len(f) > 1 {
+		intent = f[1]
+		intentWindow, _, _ = strings.Cut(intent, "/")
+		if !strings.HasPrefix(intentWindow, "@") {
+			return window, "", ""
+		}
+	}
+	return window, intentWindow, intent
 }
 
 // viewerAttachCommand is the shell command run in the live pane: a nested
@@ -493,9 +534,46 @@ func ViewerActiveWindow() (home, windowID string) {
 	return homeOfViewer(viewer), windowID
 }
 
+// ViewerState is what the hub's poll reads from the live viewer.
+type ViewerState struct {
+	Viewer string // viewer session name
+	Home   string // home session of the viewer's group
+	Window string // the viewer's active window id
+	// Intent is the window id of the last chrome-bar tab click and
+	// IntentToken identifies that click (distinct per click).
+	Intent      string
+	IntentToken string
+}
+
+// HubViewerState returns the live viewer's session, home, active window and
+// tab-click intent (zero when there is no viewer).
+func HubViewerState() ViewerState {
+	viewer, _ := currentViewer(viewerSessions())
+	if viewer == "" {
+		return ViewerState{}
+	}
+	out, _ := tmuxRun("display-message", "-p", "-t", ExactSessionTarget(viewer), viewerStateFormat)
+	w, intent, token := parseViewerState(out)
+	return ViewerState{Viewer: viewer, Home: homeOfViewer(viewer), Window: w, Intent: intent, IntentToken: token}
+}
+
+// RepointViewer selects windowID (by ID, never index) in the viewer session.
+// The hub uses it to put the viewer back on the window it shows after an
+// index shift in the home session moved the viewer elsewhere.
+func RepointViewer(viewer, windowID string) error {
+	if !IsViewerSession(viewer) || !strings.HasPrefix(windowID, "@") {
+		return fmt.Errorf("cannot repoint viewer %q to %q", viewer, windowID)
+	}
+	_, err := tmuxRun(viewerSelectWindowArgs(viewer, windowID)...)
+	return err
+}
+
 // SelectViewerWindow switches the live viewer session containing windowID to
-// it. Used by chrome-bar tab clicks made from inside a viewer.
+// it. Used by chrome-bar tab clicks made from inside a viewer. The target is
+// recorded first as the viewer's intent, so the hub can tell this switch from
+// one caused by window indexes shifting in the home session.
 func SelectViewerWindow(viewer, windowID string) error {
+	_, _ = tmuxRun(viewerSetIntentArgs(viewer, viewerIntentValue(windowID, time.Now().UnixNano()))...)
 	_, err := tmuxRun(viewerSelectWindowArgs(viewer, windowID)...)
 	// Give the window the viewer just left its chrome bar back at once; the
 	// hub zooms the new one on its next poll.
