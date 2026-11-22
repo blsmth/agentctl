@@ -290,7 +290,7 @@ func TestBuildCronPreview(t *testing.T) {
 		{name: "edit unknown job", command: `agentctl cron edit nope -p hi`, wantDeny: `no cron job named "nope"`},
 		{name: "edit without a name", command: `agentctl cron edit`, wantDeny: "no job name"},
 		{name: "edit expanding prompt", command: `agentctl cron edit paused -p "$(cat x)"`, wantDeny: "cron edit: --prompt uses shell expansion"},
-		{name: "edit bad schedule", command: `agentctl cron edit paused --schedule nope`, wantDeny: "cron edit: invalid schedule"},
+		{name: "edit bad schedule", command: `agentctl cron edit paused --schedule nope`, wantDeny: "cron edit: needs 5 fields, has 1"},
 		{name: "edit unknown prompt key", command: `agentctl cron edit paused -k nope`, wantDeny: "cron edit --prompt-key nope: key not found"},
 		{name: "resume unknown job", command: `agentctl cron resume nope`, wantDeny: `no cron job named "nope"`},
 		{name: "resume without a name", command: `agentctl cron resume`, wantDeny: "no job name"},

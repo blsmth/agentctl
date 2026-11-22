@@ -2,9 +2,11 @@
 
 Technical reference for the agentctl monitor, hook system, transition handlers, and TUI.
 
+The monitor is optional. State, window names, notifications, dispatch completion, Gone handling, housekeeping, metrics and restore all run from hooks and short-lived commands; the monitor adds only `state.json` (optional token enrichment and the restore fallback). Its one transition handler, `improve.HandleTransition`, acts only on Gone, which `agentctl reconcile` also handles. Turn it off with [`monitor: false`](#turning-the-monitor-off-monitor-false).
+
 ## The Monitor — A Headless Bubble Tea Program
 
-The monitor (`monitor.go`) is the heart of agentctl. It's a **Bubble Tea `tea.Model` running headless** — `tea.WithoutRenderer()` with stdin wired to `/dev/null`. It has `Init()`, `Update()`, and `View()` (returns `""`), but never renders to a terminal. Instead it uses Bubble Tea purely as a **message loop and timer scheduler**. A single monitor runs per project, guarded by a pidfile.
+The monitor (`monitor.go`) is a **Bubble Tea `tea.Model` running headless** — `tea.WithoutRenderer()` with stdin wired to `/dev/null`. It has `Init()`, `Update()`, and `View()` (returns `""`), but never renders to a terminal. Instead it uses Bubble Tea purely as a **message loop and timer scheduler**. A single monitor runs per project, guarded by a pidfile.
 
 ## Hot Reload
 
@@ -20,13 +22,9 @@ Known consequences of a re-exec, since in-memory state resets:
 
 The chrome bar (`chrome-bar`) and the HUD (`hud`) panes are long-lived Bubble Tea processes and hot-reload the same way through `internal/selfexec`, as does the hub list. Each captures its identity at startup (on a `Capture` error hot reload is disabled for that process and logged). A chrome bar checks every 3 seconds and the HUD every 3 seconds on its 500ms poll tick. When `CheckChanged` reports a change, the pane waits a deterministic 0-2s jitter derived from its window ID (so dozens of panes do not re-exec in the same second), quits the program with `tea.Quit` so the terminal is restored, and `cmd.runWithReload` execs the new binary with the same args only after `Run` has returned. No state crosses the exec: the bar rebuilds from `tmux list-windows` plus windowstate, and the HUD re-reads its log. If the exec fails, the pane keeps running the old image with hot reload off rather than exiting, because nothing respawns a dead chrome bar (windowstate still records `chrome_bar_pane`, so `LaunchChromeBar` would refuse to create another).
 
-## Two Message Loops
+## The Tick
 
-The monitor runs on two interleaved timers:
-
-1. **`tickMsg` (500ms)** — The main poll cycle. Reloads config, discovers tmux windows, reads hook-driven state, fires transition handlers, parses JSONL for metrics, persists state to disk, and refreshes the chrome bar.
-
-2. **`spinner.TickMsg` (~80ms)** — Drives the spinner animation. On each tick the working-state windows get an animated name update.
+The monitor runs one timer, `tickMsg` (500ms). Each tick reloads config, lists tmux windows, reads hook-driven state, fires transition handlers, parses JSONL for token enrichment, and persists `state.json`. It does not rename windows or render anything; spinners are drawn by the chrome bar and the hub themselves.
 
 ## State Detection — Hook-Driven, Not Poll-Driven
 
@@ -52,7 +50,7 @@ Each tmux window gets an `instanceState` struct tracking:
 - **Identity**: instance name (`go-engineer~2`), base name (`go-engineer`)
 - **Log linkage**: JSONL log path (from windowstate `LogPath`, or a filesystem-scan fallback), a persistent `logstream.Stream`, and file-size tracking
 - **State machine**: previous state, `hasPrev` flag for first-tick suppression, `done` flag
-- **Token cache**: ctx%, input/output tokens, cumulative counts (for `state.json`; the monitor keeps its `logstream` for this enrichment, which the macapp and chrome bar read)
+- **Token cache**: ctx%, input/output tokens, cumulative counts (for `state.json`; the monitor keeps its `logstream` for this enrichment, which fleet readers merge in when fresh)
 - **Attention tracking**: `Seen` is a persisted windowstate field (set by `set-active-window`, cleared by the state writers)
 
 ## Log Discovery
@@ -61,9 +59,11 @@ The monitor needs each agent's JSONL session log. Two strategies:
 
 1. **Primary — windowstate `LogPath`**: Written by `hook-session-start` when Claude reports its session and cwd. The monitor reads it with zero scanning.
 
-2. **Fallback — `sessions.FindLatestLog()` filesystem scan**: Walks `~/.claude/projects/*/`, finds recent `.jsonl` files, and matches the agent. Used for old windows, `--fork-session` resumes, and post-`/clear` rotation.
+2. **Session ID**: when windowstate has a `SessionID` but no usable `LogPath`, the log is derived from it (`linkBySessionID`, `sessions.FindLogBySessionIDIn`, in the window's account's `projects/` dir). A linked log whose name does not match the session ID is dropped and relinked.
 
-**`/clear` detection**: When the current log has been stable and a newer log with a later birth time appears, the monitor resets that window's state so re-discovery kicks in.
+3. **Legacy fallback — project-scoped scan**: only windows with no `SessionID` (predating the hooks) scan for the newest log, and only inside the window's own Claude project directory (`sessions.FindLatestLogInProject`). The scan never crosses into another project's sessions.
+
+**`/clear` detection**: a real `/clear` fires SessionStart, which rewrites `SessionID` and `LogPath`. For legacy windows with no `SessionID`, a newer log with a later birth time in the same project dir resets the window's log link.
 
 ## Transition Handlers (No Plugin Registry)
 
@@ -93,7 +93,7 @@ The chrome bar watches `windows/` and the `active-window` file (on macOS with a 
 
 ### Turning the monitor off (`monitor: false`)
 
-The global config key `monitor` (default `true`) is the kill switch. When `false`, session start / `applyConfig` does not start a monitor, the hook watchdog neither respawns nor replaces one, and `agentctl health` reports "monitor disabled" instead of a missing-monitor problem. Flipping the flag never kills a running monitor; the next relaunch just does not start one. With no monitor, `state.json` stops updating (the macapp loses its feed) and the `improve.HandleTransition` handler does not run from the monitor (metrics are unaffected: see below), but the chrome bar, hub, `agentctl status`, popups and statusline keep working from tmux and windowstate.
+The global config key `monitor` (default `true`) is the kill switch. When `false`, session start / `applyConfig` does not start a monitor, the hook watchdog neither respawns nor replaces one, and `agentctl health` reports "monitor disabled" instead of a missing-monitor problem. Flipping the flag never kills a running monitor; the next relaunch just does not start one. With no monitor, `state.json` stops updating (token counts drop out of the hub and status views) and `auto_improve` runs only from `agentctl reconcile`'s Gone handling (metrics are unaffected: see below), but the chrome bar, hub, `agentctl status`, popups and statusline keep working from tmux and windowstate. A project-local `"monitor": false` switches it off for that project, but a project can never switch it back on.
 
 ### Gone and housekeeping without the monitor
 
@@ -135,7 +135,7 @@ The **chrome bar** (`chrome_bar.go`) is different: a mouse-enabled pane docked i
 
 ## Hook System (Separate Processes)
 
-Hooks are **not** part of the monitor — they're separate `agentctl` subcommand invocations triggered by Claude Code's hook system and dispatched by `hooks.Dispatch` (`internal/hooks/`) on a fast path before Kong. They run in the agent's process context and communicate with the monitor by writing the window's `windowstate` file. Key hooks include:
+Hooks are **not** part of the monitor — they're separate `agentctl` subcommand invocations triggered by Claude Code's hook system and dispatched by `hooks.Dispatch` (`internal/hooks/`) on a fast path before Kong. They run in the agent's process context and communicate with everything else by writing the window's `windowstate` file. Key hooks include:
 
 | Hook | Lifecycle Event | Key Action |
 |------|-----------------|------------|
@@ -144,9 +144,10 @@ Hooks are **not** part of the monitor — they're separate `agentctl` subcommand
 | `hook-pre-tool` / `hook-post-tool` | PreToolUse / PostToolUse | Sets state `working` |
 | `hook-notify` | Notification | Sets `blocked` (permission) or `idle`, fires alerts |
 | `hook-validate-bash` | PreToolUse (Bash) | Checks deny lists, can block commands |
-| `hook-check-done` | Stop | Verifies clean git status / passing build, sets done |
+| `hook-check-done` | Stop | Verifies clean git status / passing build, sets done (or `TurnDone` for bare windows), spawns `dispatch-complete` |
 | `hook-stop-failure` / `hook-post-tool-failure` | Stop / tool failure | Sets state `idle` |
-| `hook-session-end` | SessionEnd | Clears to idle |
+| `hook-session-end` | SessionEnd | Clears to idle; on a terminal reason kills the window and reclaims an `empty`/`landed` worktree |
+| `hook-title` | SessionStart, UserPromptSubmit, Stop (async) | Short row titles ([titles](configuration.md#titles)) |
 
 Additional hooks handle compaction, elicitation, worktree create/remove, subagent lifecycle, task events, and config/cwd changes. See `internal/hooks/` for the full set.
 

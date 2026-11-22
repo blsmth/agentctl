@@ -16,52 +16,46 @@ How we structure system prompts vs user messages when launching agents, based on
 
 | Layer | Content | Delivery |
 |---|---|---|
-| Agent definition | Role, persona, coding patterns, repo conventions | `--agent <name>` (reads `~/.claude/agents/<name>.md`) |
+| Agent definition | Role, persona, coding patterns, repo conventions | `--agent <name>` (reads `~/.claude/agents/<name>.md`; on pi, inlined into the system prompt file) |
 | System prompt file | Issue body, worktree note, context store entries, execution boilerplate | `--append-system-prompt-file <path>` (temp file, cleaned up after launch) |
 | User message | Short directive: "Implement issue #N: \<title\>" | Inline CLI argument |
 
 ### System prompt file ordering
 
-`internal/dispatch/prompt.go`'s `buildSystemPrompt` composes the file in this
-order:
+`internal/dispatch/prompt.go`'s `buildSystemPrompt` composes the file in this order:
 
 ```
 1. Frontmatter (ticket/title/agent/repo/started/mode)
 2. Task content (issue body, or a long custom prompt) — the bulk of the content
 3. "---" separator
-4. Preamble (agentctl capabilities: context store, messaging, etc.)
-5. Worktree orientation note (branch name only, if applicable)
-6. Mode instructions (autonomy/behavior boilerplate for dispatch/adhoc; a
+4. Preamble (agentctl runtime: context store, messaging, identity, waiting;
+   worker or orchestrator flavour, naming the orchestrator by @N.%P; the
+   review lines follow `pr_review`). Harnesses without native messaging (pi)
+   get a mailbox-reporting section instead, and a worker on a different
+   Claude account than its dispatcher gets a cross-account section with no
+   orchestrator
+4b. Agent definition body (pi only: it has no --agent flag)
+5. Shared Conventions (the agent's @shared/*.md includes, expanded, since
+   Claude Code does not expand them inside agent files)
+6. Worktree orientation note (branch name; for review-pr, the detached-head
+   review worktree)
+7. Mode instructions (autonomy/behavior boilerplate for dispatch/adhoc; a
    different block per mode for discuss/triage/review/custom; PR context,
    verdict format and author section for review-pr; empty for bare)
-7. Context store entries (entries stored for this agent + pinned context_keys)
-8. Finishing steps — verify, commit, push, open a PR (worktree-aware; only
+8. Context store entries (entries stored for this agent + pinned context_keys)
+9. Finishing steps — verify, commit, push, open a PR (worktree-aware; only
    for the fully autonomous dispatch/adhoc modes, since triage/review/review-pr
    forbid committing and discuss/custom/bare leave "done" to the human; never
    for a `role: orchestrator` agent)
+10. Additional instructions (the phone dispatch form's extra text), last so
+    it is the final guidance the model reads
 ```
 
 ### Agent role
 
-The preamble role is the mode's, upgraded to orchestrator when the agent's
-frontmatter says `role: orchestrator` (never downgraded). Such an agent never
-gets finishing steps or the "do not merge to main" line
-(`dispatch.applyAgentRole`). A human-initiated ad-hoc launch of it (the phone, or a shell with no tracked
-Claude session) becomes
-`bare`: the prompt is the first user message (moved to `## Task` only past
-64KB, the inline-argument cap) with no execution boilerplate. Cron launches, ad-hoc
-dispatches from another agent session, and `--issue` keep their mode and
-autonomous instructions.
+The preamble role is the mode's, upgraded to orchestrator when the agent's frontmatter says `role: orchestrator` (never downgraded). Such an agent never gets finishing steps or the "do not merge to main" line (`dispatch.applyAgentRole`). A human-initiated ad-hoc launch of it (the phone, or a shell with no tracked Claude session) becomes `bare`: the prompt is the first user message (moved to `## Task` only past 64KB, the inline-argument cap) with no execution boilerplate. Cron launches, ad-hoc dispatches from another agent session, and `--issue` keep their mode and autonomous instructions.
 
-Finishing steps are deliberately last — ordered instructions closest to the
-end of the prompt are followed most reliably, and getting the agent to
-actually push and open a PR (rather than stopping after a local commit) is
-the step most worth reinforcing. The workflow itself (verify → commit → push
-→ PR, and whether a worktree/ticket exists) lives in `internal/dispatch`,
-which is shared by every agent and every repo; it never hardcodes a
-language-specific build tool or a repo-specific deploy/restart step (e.g.
-`go build`, `just restart`) — those belong to the agent's own `.md` file,
-which is the only thing that knows the toolchain.
+Finishing steps are deliberately last (only the user's own additional instructions follow them) — ordered instructions closest to the end of the prompt are followed most reliably, and getting the agent to actually push and open a PR (rather than stopping after a local commit) is the step most worth reinforcing. The workflow itself (verify → commit → push → PR, and whether a worktree/ticket exists) lives in `internal/dispatch`, which is shared by every agent and every repo; it never hardcodes a language-specific build tool or a repo-specific deploy/restart step (e.g. `go build`, `just restart`) — those belong to the agent's own `.md` file, which is the only thing that knows the toolchain.
 
 ### User message
 
@@ -73,14 +67,7 @@ That's it. ~80 chars. Safe for any shell argument.
 
 ## Every mode obeys the short-user-message rule
 
-The user message is an inline CLI argument for **every** mode, not just
-dispatch/adhoc — so no mode's `DefaultUserMessage` may embed the ticket body.
-`ModeDiscuss` and `ModeReview` used to violate this (`IncludeTicketBody:
-false` paired with a `DefaultUserMessage` that interpolated the full body),
-which is the exact "shell argument too long" failure below, just scoped to
-two modes instead of all of them. Both now set `IncludeTicketBody: true` and
-have a short directive as their `DefaultUserMessage`, matching every other
-ticket-bearing mode (dispatch, triage, custom).
+The user message is an inline CLI argument for **every** mode, not just dispatch/adhoc — so no mode's `DefaultUserMessage` may embed the ticket body. `ModeDiscuss` and `ModeReview` used to violate this (`IncludeTicketBody: false` paired with a `DefaultUserMessage` that interpolated the full body), which is the exact "shell argument too long" failure below, just scoped to two modes instead of all of them. Both now set `IncludeTicketBody: true` and have a short directive as their `DefaultUserMessage`, matching every other ticket-bearing mode (dispatch, triage, custom).
 
 ## Why This Ordering
 

@@ -15,7 +15,7 @@ go vet ./...
 golangci-lint run          # config in .golangci.yml
 ```
 
-`just` shortcuts exist for developers: `just build` (local `./agentctl`), `just install` (installs to `~/.local/bin`, override with `BINDIR`), `just restart`, and `just logs`.
+`just` shortcuts exist for developers: `just build` (local `./agentctl`), `just install` (installs to `~/.local/bin`, override with `BINDIR`), `just restart`, `just logs`, `just web-test` (phone app browser tests) and `just demo` / `just demo-shot` (isolated screenshot harness). See [docs/development.md](docs/development.md).
 
 Tests that need a real tmux server or network resources are skipped unless the environment provides them. Bug fixes need a regression test that fails before the fix and passes after.
 

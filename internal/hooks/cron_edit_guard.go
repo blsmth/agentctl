@@ -57,6 +57,86 @@ func cronEditTarget(toolName string, rawInput json.RawMessage) string {
 	return ""
 }
 
+// editToolPath is the file a file-editing tool call writes, cleaned and
+// ~-expanded ("" when it is not one).
+func editToolPath(toolName string, rawInput json.RawMessage) string {
+	if !fileEditTools[toolName] || len(rawInput) == 0 {
+		return ""
+	}
+	var in struct {
+		FilePath     string `json:"file_path"`
+		NotebookPath string `json:"notebook_path"`
+	}
+	if err := json.Unmarshal(rawInput, &in); err != nil {
+		return ""
+	}
+	p := in.FilePath
+	if p == "" {
+		p = in.NotebookPath
+	}
+	if p == "" {
+		return ""
+	}
+	return filepath.Clean(paths.ExpandHome(p))
+}
+
+// templateEditTarget returns the prompt template path a file-editing tool
+// call would write ("" when it is not one): anything under the global
+// templates dir or under any project's .agentctl/templates. It is the
+// Edit/Write counterpart of checkTemplateTamper. Symlinked parents are
+// resolved too, so a link into a templates dir does not get around it.
+func templateEditTarget(toolName string, rawInput json.RawMessage) string {
+	p := editToolPath(toolName, rawInput)
+	if p == "" {
+		return ""
+	}
+	candidates := []string{p}
+	if resolved := resolveExistingPrefix(p); resolved != p {
+		candidates = append(candidates, resolved)
+	}
+	sep := string(filepath.Separator)
+	for _, c := range candidates {
+		if strings.Contains(c+sep, sep+".agentctl"+sep+"templates"+sep) {
+			return p
+		}
+		if dir := templateGlobalDir(); dir != "" {
+			dir = filepath.Clean(dir)
+			if c == dir || strings.HasPrefix(c, dir+sep) {
+				return p
+			}
+			if rd := resolveExistingPrefix(dir); rd != dir && (c == rd || strings.HasPrefix(c, rd+sep)) {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// resolveExistingPrefix resolves symlinks in the longest existing ancestor
+// of p and rejoins the rest; p unchanged when nothing resolves.
+func resolveExistingPrefix(p string) string {
+	rest := ""
+	for d := p; ; {
+		if r, err := filepath.EvalSymlinks(d); err == nil {
+			return filepath.Join(r, rest)
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(d), rest)
+		d = parent
+	}
+}
+
+// templateEditDenyReason is shown to the model when it tries to edit a
+// prompt template file directly.
+func templateEditDenyReason(path string) string {
+	return fmt.Sprintf("\U0001F6D1 BLOCKED: %s is an agentctl prompt template, a dispatch prompt. "+
+		"Changes need human approval: use `agentctl template add|edit|rm` (shown for approval), "+
+		"and `agentctl template show` to read one.", path)
+}
+
 // cronEditDenyReason is shown to the model when it tries to edit the cron
 // jobs file or state directly.
 func cronEditDenyReason(path string) string {

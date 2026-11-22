@@ -1,12 +1,10 @@
 # Claude Code Hooks — Complete Reference
 
-Reference for all Claude Code hook events and how agentctl handles each one.
-This document is the single source of truth for agents working on hook integration.
+Reference for all Claude Code hook events and how agentctl handles each one. This document is the single source of truth for agents working on hook integration.
 
 ## How Hooks Work
 
-Claude Code fires hook events at key lifecycle points. Hooks are configured in
-`~/.claude/settings.json` under the `hooks` key. Each hook entry specifies:
+Claude Code fires hook events at key lifecycle points. Hooks are configured in `~/.claude/settings.json` under the `hooks` key. Each hook entry specifies:
 
 - **event**: The lifecycle event name
 - **matcher**: Optional filter (tool name, notification type, etc.)
@@ -14,10 +12,7 @@ Claude Code fires hook events at key lifecycle points. Hooks are configured in
 - **async**: Whether to fire-and-forget (default: false)
 - **timeout**: Max execution time in seconds (default: 600)
 
-agentctl hooks are all `type: command` — they invoke `agentctl hook-<event>` which
-reads JSON from stdin and optionally writes JSON to stdout. `agentctl hooks-install`
-writes the full set (see [agentctl Hook Configuration](#agentctl-hook-configuration)).
-Handlers guard on `AGENTCTL=1` (`guardAgentctl` in `internal/hooks/helpers.go`) and skip their work in Claude Code sessions that agentctl did not launch.
+agentctl hooks are all `type: command` — they invoke `agentctl hook-<event>` which reads JSON from stdin and optionally writes JSON to stdout. `agentctl hooks-install` writes the full set (see [agentctl Hook Configuration](#agentctl-hook-configuration)). Handlers guard on `AGENTCTL=1` (`guardAgentctl` in `internal/hooks/helpers.go`) and skip their work in Claude Code sessions that agentctl did not launch.
 
 ### JSON Payload (Common Fields)
 
@@ -78,6 +73,9 @@ Blocking hooks can return JSON on stdout:
   - Writes `AGENTCTL_WINDOW_ID`, `AGENTCTL_WINDOW_INDEX` and dispatch metadata (ticket, mode, spawner) to `$CLAUDE_ENV_FILE`
   - Emits `additionalContext` with window identity info
   - Fires the user `session_start` lifecycle hooks
+  - On `clear`, resets the window's automatic short title and stored first prompt (manual titles are kept)
+  - Runs the hook watchdog (respawns or replaces a stale monitor unless `monitor: false`) and the 60s janitor that spawns `agentctl reconcile --housekeeping`
+  - `hook-title` (async) runs next to it; see [titles](configuration.md#titles)
 
 #### SessionEnd
 - **When**: Session terminates
@@ -103,7 +101,8 @@ Blocking hooks can return JSON on stdout:
 - **Response**: Can return `permissionDecision: "deny"` with reason
 - **agentctl status**: ✅ IMPLEMENTED (two handlers)
   - `hook-pre-tool` (matcher: `*`): Sets windowstate `state` to `working`
-  - `hook-validate-bash` (matcher: `Bash`): Checks global deny list and per-agent blocked commands/patterns
+  - `hook-pre-tool` also denies `Write`/`Edit`/`MultiEdit` edits that would loosen the global `dispatch_approval`, and edits to the cron and dispatch-approval state (see [configuration.md](configuration.md#dispatch_approval))
+  - `hook-validate-bash` (matcher: `Bash`, 600s timeout): checks the global deny list and per-agent blocked commands/patterns, denies tampering with serve, cron and approval state and `go run` of agentctl itself, and shows the approval popup for gated `agentctl dispatch` and `agentctl cron` commands (and every command with `bash_preview`). Unanswered popups deny after 9 minutes. See [permissions.md](permissions.md)
 
 #### PostToolUse
 - **When**: After tool execution succeeds
@@ -148,7 +147,9 @@ Blocking hooks can return JSON on stdout:
 - **Extra payload**: `last_assistant_message`, `stop_hook_active`
 - **agentctl status**: ✅ IMPLEMENTED (`hook-check-done`)
   - In autonomous modes, checks the worktree for uncommitted changes and build errors; exit 2 with a reason forces Claude to keep working
-  - Once the turn ends cleanly, marks the window `done` (see `shouldMarkDone` in `internal/hooks/control.go`)
+  - Once the turn ends cleanly, marks the window `done` (see `shouldMarkDone` in `internal/hooks/control.go`) and, for a dispatched window, spawns the detached `agentctl dispatch-complete` (PR lookup, labels, `open_pr_in_browser`, `dispatch_complete` hooks)
+  - A bare (interactive) window gets the display-only `TurnDone` ✓ instead of `done`
+  - `hook-title` (async) runs next to it
 
 #### StopFailure
 - **When**: Turn ends due to API error (not a clean stop)
@@ -165,7 +166,10 @@ Blocking hooks can return JSON on stdout:
 - **Async**: No
 - **Extra payload**: User prompt text
 - **agentctl status**: ✅ IMPLEMENTED (`hook-user-prompt`)
-  - Sets windowstate `state` to `working` immediately, before the first tool fires
+  - Sets windowstate `state` to `working` immediately, before the first tool fires, and clears `done`/`TurnDone`
+  - Delivers pending agentctl notices as `additionalContext`
+  - Runs the watchdog and janitor, like SessionStart
+  - `hook-title` (async) runs next to it and titles a bare window from its first prompt
 
 ---
 
@@ -208,7 +212,7 @@ Blocking hooks can return JSON on stdout:
 - **Async**: No
 - **Extra payload**: Compaction stats
 - **agentctl status**: ✅ IMPLEMENTED (`hook-post-compact`)
-  - Logs the compaction and fires an alert; the monitor recomputes ctx% on its next tick
+  - Logs the compaction and fires an alert; ctx% refreshes on the next statusline push
 
 #### InstructionsLoaded
 - **When**: CLAUDE.md or rules/*.md files are loaded
@@ -273,27 +277,14 @@ Blocking hooks can return JSON on stdout:
 - **Blocking**: Yes
 - **Async**: No
 - **agentctl status**: ✅ IMPLEMENTED — `internal/hooks/worktree.go`
-- **Verified stdin payload** (2026-08-20, against a real failing run): `session_id`,
-  `transcript_path`, `cwd`, `prompt_id`, `agent_type`, `hook_event_name`, `name` — there is
-  **no** `branch` field of any spelling. `name` (e.g. `agent-a6a3ff01c3c89551d`) is the only
-  field that is unique per agent; `session_id` is shared by every concurrent agent dispatched
-  within one session, so it must never be used alone to derive a branch name (doing so
-  silently hands every concurrent agent the same worktree — a shared session ID collided). The permissive
-  `branch`/`branchName` decode is kept in case a future Claude Code version adds one, but
-  neither has been observed.
-- **Output contract**: only a **bare absolute path** on stdout is accepted. A
-  `{"hookSpecificOutput": ...}` JSON envelope is **rejected** — the consumer treats the whole
-  JSON string as a relative path, joins it to the repo root, and aborts the launch (verified
-  empirically 2026-08-20; see `worktree_test.go`). This is the second time an output-format guess has
-  broken this hook (the first was a Noop wiring that wrote nothing), so `internal/hooks/worktree_test.go` pins the bare
-  path with a negative assertion (no `{`, `}`, `"`, or `hookSpecificOutput` in stdout).
+- **Verified stdin payload** (2026-08-20, against a real failing run): `session_id`, `transcript_path`, `cwd`, `prompt_id`, `agent_type`, `hook_event_name`, `name` — there is **no** `branch` field of any spelling. `name` (e.g. `agent-a6a3ff01c3c89551d`) is the only field that is unique per agent; `session_id` is shared by every concurrent agent dispatched within one session, so it must never be used alone to derive a branch name (doing so silently hands every concurrent agent the same worktree — a shared session ID collided). The permissive `branch`/`branchName` decode is kept in case a future Claude Code version adds one, but neither has been observed.
+- **Output contract**: only a **bare absolute path** on stdout is accepted. A `{"hookSpecificOutput": ...}` JSON envelope is **rejected** — the consumer treats the whole JSON string as a relative path, joins it to the repo root, and aborts the launch (verified empirically 2026-08-20; see `worktree_test.go`). This is the second time an output-format guess has broken this hook (the first was a Noop wiring that wrote nothing), so `internal/hooks/worktree_test.go` pins the bare path with a negative assertion (no `{`, `}`, `"`, or `hookSpecificOutput` in stdout).
 
 #### WorktreeRemove
 - **When**: Git worktree is removed
 - **Blocking**: No
 - **Async**: No
-- **agentctl status**: ✅ IMPLEMENTED — `internal/hooks/worktree.go`. No structured
-  output, cannot block; failures are debug-logged only and the handler always exits 0.
+- **agentctl status**: ✅ IMPLEMENTED — `internal/hooks/worktree.go`. No structured output, cannot block; failures are debug-logged only and the handler always exits 0.
 
 ---
 
@@ -338,7 +329,10 @@ The command prefix is bare `agentctl` when the running binary is the one on `PAT
 {
   "hooks": {
     "SessionStart": [{
-      "hooks": [{ "type": "command", "command": "agentctl hook-session-start" }]
+      "hooks": [
+        { "type": "command", "command": "agentctl hook-session-start" },
+        { "type": "command", "command": "agentctl hook-title", "async": true, "timeout": 30 }
+      ]
     }],
     "SessionEnd": [{
       "hooks": [{ "type": "command", "command": "agentctl hook-session-end", "async": true }]
@@ -349,13 +343,16 @@ The command prefix is bare `agentctl` when the running binary is the one on `PAT
     }],
     "PreToolUse": [
       { "matcher": "*",    "hooks": [{ "type": "command", "command": "agentctl hook-pre-tool" }] },
-      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "agentctl hook-validate-bash" }] }
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "agentctl hook-validate-bash", "timeout": 600 }] }
     ],
     "PostToolUse": [
       { "matcher": "*", "hooks": [{ "type": "command", "command": "agentctl hook-post-tool" }] }
     ],
     "Stop": [{
-      "hooks": [{ "type": "command", "command": "agentctl hook-check-done" }]
+      "hooks": [
+        { "type": "command", "command": "agentctl hook-check-done" },
+        { "type": "command", "command": "agentctl hook-title", "async": true, "timeout": 30 }
+      ]
     }]
   }
 }
@@ -377,39 +374,17 @@ The pattern is always: read stdin JSON → resolve window ID → update the wind
 ## Key Architecture Notes
 
 - **Hooks are separate processes.** Each hook invocation is a fresh `agentctl` process — no shared memory with the monitor.
-- **Windowstate files are the state bus.** Hooks write per-window JSON files at `.agentctl/windows/<windowID>.json` (`internal/windowstate`), using atomic tmp+rename writes under an flock. The monitor reads them on each tick, resolves an `AgentStatus`, and owns all visual output (window renames, `state.json`). Hooks stay fast: update a file and exit.
-- **The monitor reads, hooks write.** Hooks never touch the chrome bar or window names directly.
+- **Windowstate files are the state bus.** Hooks write per-window JSON files at `.agentctl/windows/<windowID>.json` (`internal/windowstate`), using atomic tmp+rename writes under an flock. Every reader (chrome bar, hub, `agentctl status`, popups, `agentctl serve`) builds its view from `tmux list-windows` plus these records (`fleet.LoadAgents`); the monitor reads them too, but only for its optional `state.json`. Hooks stay fast: update a file and exit.
+- **State writers rename windows.** A hook that changes `state` or `done` renames the tmux window (state glyph) inside the same windowstate transaction through `internal/winname`. Hooks never touch the chrome bar directly; it watches `windows/` with fsnotify.
 - **Window ID resolution** goes through `resolveHookWindowID()` (`internal/hooks/resolve.go`), which delegates to `signal.ResolveWindowID`: a 3-tier fallback of `AGENTCTL_SESSION_ID` windowstate lookup → `TMUX_PANE` → `AGENTCTL_WINDOW_ID` env. `SessionEnd` instead finds its window by scanning windowstate files for the payload's `session_id`, which is immune to stale `AGENTCTL_WINDOW_ID` values.
 - **Async hooks** should be used for anything that might block (alerter, network calls). The `async: true` flag tells Claude Code to fire-and-forget.
 
 ## CLAUDE_CODE_SHELL_PREFIX and the bash 3.2 heredoc trap
 
-`CLAUDE_CODE_SHELL_PREFIX` is wired to `.agentctl/shell-prefix.sh` for every launched
-agent (see `internal/hooks/shell-prefix.sh`). Claude Code passes each Bash tool call's
-entire command as one string, and the prefix script runs it via `eval "$@"` so that
-sourced `env.d`/`shell-hooks.d` state (env overrides, pre-exec hooks) actually applies
-to the executed command — a plain subprocess exec would not see that state.
+`CLAUDE_CODE_SHELL_PREFIX` is wired to `.agentctl/shell-prefix.sh` for every launched agent (see `internal/hooks/shell-prefix.sh`). Claude Code passes each Bash tool call's entire command as one string, and the prefix script runs it via `eval "$@"` so that sourced `env.d`/`shell-hooks.d` state (env overrides, pre-exec hooks) actually applies to the executed command — a plain subprocess exec would not see that state.
 
-macOS's system `/bin/bash` is **3.2.57 (2007)**, whose parser mis-handles a
-quoted-delimiter heredoc nested inside command substitution when the heredoc body
-contains an apostrophe — e.g. `git commit -m "$(cat <<'EOF' ... EOF )"` where the
-message contains a word like `don't`. The failure surfaces as `unexpected EOF while
-looking for matching '`, and the reported line number refers to the **evaluated
-string**, not to `shell-prefix.sh` itself — easy to misdiagnose as an agentctl bug in
-`eval "$@"`.
+macOS's system `/bin/bash` is **3.2.57 (2007)**, whose parser mis-handles a quoted-delimiter heredoc nested inside command substitution when the heredoc body contains an apostrophe — e.g. `git commit -m "$(cat <<'EOF' ... EOF )"` where the message contains a word like `don't`. The failure surfaces as `unexpected EOF while looking for matching '`, and the reported line number refers to the **evaluated string**, not to `shell-prefix.sh` itself — easy to misdiagnose as an agentctl bug in `eval "$@"`.
 
-It is not: `bash -c "<same command>"` and the same text saved to a plain script file
-both fail identically, so this is a bash-version parser bug, not an `eval` artifact.
-`zsh -c "<same command>"` handles it fine.
+It is not: `bash -c "<same command>"` and the same text saved to a plain script file both fail identically, so this is a bash-version parser bug, not an `eval` artifact. `zsh -c "<same command>"` handles it fine.
 
-`shell-prefix.sh`'s shebang is **resolved at write time**, not trusted to `env bash` /
-`PATH` order (see `internal/hooks/bash_resolve.go`). `EnsureShellPrefixScript` picks the
-first of `/opt/homebrew/bin/bash`, `/usr/local/bin/bash`, whatever `bash` resolves to on
-`PATH`, or `/bin/bash`, whose `--version` reports major version `>= 4`, and bakes that
-absolute path in as the shebang. This matters because PATH order is not something
-agentctl controls — it differs between login shells, non-interactive shells, and
-tmux-launched processes, so `#!/usr/bin/env bash` is not reliable: on a machine with
-`/bin` ahead of `/opt/homebrew/bin` on `PATH` (common), `env bash` silently resolves to
-the broken 3.2 interpreter even with a modern bash installed. The resolution is cached
-for the process lifetime (`sync.Once`) and logged once at startup — `shell-prefix: using
-bash <version> at <path>` at INFO, or a WARN if it had to fall back to a bash < 4.
+`shell-prefix.sh`'s shebang is **resolved at write time**, not trusted to `env bash` / `PATH` order (see `internal/hooks/bash_resolve.go`). `EnsureShellPrefixScript` picks the first of `/opt/homebrew/bin/bash`, `/usr/local/bin/bash`, whatever `bash` resolves to on `PATH`, or `/bin/bash`, whose `--version` reports major version `>= 4`, and bakes that absolute path in as the shebang. This matters because PATH order is not something agentctl controls — it differs between login shells, non-interactive shells, and tmux-launched processes, so `#!/usr/bin/env bash` is not reliable: on a machine with `/bin` ahead of `/opt/homebrew/bin` on `PATH` (common), `env bash` silently resolves to the broken 3.2 interpreter even with a modern bash installed. The resolution is cached for the process lifetime (`sync.Once`) and logged once at startup — `shell-prefix: using bash <version> at <path>` at INFO, or a WARN if it had to fall back to a bash < 4.

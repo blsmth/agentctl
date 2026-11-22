@@ -247,3 +247,48 @@ func TestDispatchAgentBackendForcedAnthropic(t *testing.T) {
 		t.Fatalf("status %d: %s; %+v", w.Code, w.Body, e.disp.got)
 	}
 }
+
+func TestLaunchOptionsAccounts(t *testing.T) {
+	cfg := testLaunchConfig()
+	cfg.Accounts = []string{"personal", "work"}
+	cfg.AccountRules = []config.AccountRule{{Path: "/code", Account: "work"}}
+	cfg.DefaultAccount = "personal"
+	e := newWriteEnvWith(t, true, func(o *Options) {
+		o.LaunchConfig = fakeLaunchCfg{cfg}
+		o.OllamaModels = (&fakeOllama{}).list
+	})
+	var got launchOptionsBody
+	if err := json.Unmarshal(e.get(optsPath).Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got.Accounts, ",") != "personal,work" || got.Defaults.Account != "work" {
+		t.Errorf("accounts = %v, default %q", got.Accounts, got.Defaults.Account)
+	}
+}
+
+func TestLaunchOptionsNoAccountsOmitted(t *testing.T) {
+	e := newLaunchEnv(t, &fakeOllama{})
+	if body := e.get(optsPath).Body.String(); strings.Contains(body, `"accounts"`) || strings.Contains(body, `"account"`) {
+		t.Errorf("body mentions accounts with none configured: %s", body)
+	}
+}
+
+func TestResolveDefaultAccount(t *testing.T) {
+	lc := LaunchConfig{Accounts: []string{"a", "b"}, DefaultAccount: "a", AccountRules: []config.AccountRule{{Path: "/x", Account: "b"}}}
+	for _, tc := range []struct{ name, agent, dir, want string }{
+		{"default", "", "/y", "a"},
+		{"rule", "", "/x/p", "b"},
+		{"agent wins", "a", "/x/p", "a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lc := lc
+			lc.AgentAccount = tc.agent
+			if got := resolveDefaultAccount(lc, tc.dir); got != tc.want {
+				t.Errorf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+	if got := resolveDefaultAccount(LaunchConfig{DefaultAccount: "a"}, "/x"); got != "" {
+		t.Errorf("no accounts configured: got %q", got)
+	}
+}

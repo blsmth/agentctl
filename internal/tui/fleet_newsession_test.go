@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 )
 
 // stubNewSession points the prompt's default dir at origin (missing when
@@ -35,6 +36,10 @@ func stubNewSession(t *testing.T, origin, home string) *newSessionCalls {
 		return home, nil
 	}
 	t.Setenv("HOME", home) // tmux.CheckNewSessionDir reads it
+	origT, origA := fleetNewSessionTemplates, fleetNewSessionAgents
+	t.Cleanup(func() { fleetNewSessionTemplates, fleetNewSessionAgents = origT, origA })
+	fleetNewSessionTemplates = func(string) []prompttemplate.Template { return nil }
+	fleetNewSessionAgents = func(string) []string { return nil }
 	fleetNewSessionRun = func(dir string, env []string) (string, error) {
 		calls.dirs = append(calls.dirs, dir)
 		calls.envs = append(calls.envs, env)

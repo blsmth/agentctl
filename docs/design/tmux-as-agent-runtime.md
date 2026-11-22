@@ -1,5 +1,7 @@
 # tmux as Agent Runtime: Why It's the Secret Weapon
 
+> **Note (2026-11).** Since this was written the monitor became optional: hooks write each window's state and rename the window themselves, readers build their view from tmux plus those state files, and the per-window chrome bar is off by default (`chrome_bar`), leaving the native tmux status line. The argument below is unchanged. See [architecture.md](../architecture.md).
+
 ## The insight
 
 Most AI agent frameworks treat the runtime as an API abstraction — agents are HTTP calls, queue consumers, or subprocess pipes. agentctl treats tmux as the runtime. Every agent is a tmux window. Every interaction is a tmux command. This sounds like a hack. It's actually the most powerful design decision in the system.

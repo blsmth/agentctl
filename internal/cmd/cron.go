@@ -57,6 +57,9 @@ type cronEnv struct {
 	// schedulerInstalled reports whether the launchd plist exists (true
 	// when it cannot tell).
 	schedulerInstalled func() bool
+	// options supplies the pinned model/backend/account sets; nil skips
+	// those checks.
+	options func() cronedit.Options
 }
 
 // defaultCronEnv is the real environment.
@@ -68,6 +71,7 @@ var defaultCronEnv = cronEnv{
 	validateAgent:      func(name, dir string) error { return validateAgentName(name, dir) },
 	deps:               realCronDeps,
 	schedulerInstalled: cronPlistExists,
+	options:            cronedit.DefaultOptions,
 }
 
 // store is the shared editing core over this environment's seams.
@@ -79,6 +83,7 @@ func (e cronEnv) store() cronedit.Store {
 		Config:             e.loadConfig,
 		ValidateAgent:      e.validateAgent,
 		SchedulerInstalled: e.schedulerInstalled,
+		Options:            e.options,
 	}
 }
 

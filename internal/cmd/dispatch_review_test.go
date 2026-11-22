@@ -25,11 +25,18 @@ func TestValidateDispatchOptions(t *testing.T) {
 		{"review-pr and issue", DispatchOptions{ReviewPR: 5, Issue: 1}, "--issue and --review-pr are mutually exclusive"},
 		{"issue and prompt", DispatchOptions{Issue: 1, Prompt: "x", Agent: "a"}, "mutually exclusive"},
 		{"prompt and prompt-key", DispatchOptions{Prompt: "x", PromptKey: "k", Agent: "a"}, "mutually exclusive"},
-		{"nothing", DispatchOptions{}, "one of --issue, --review-pr, --prompt, or --prompt-key is required"},
+		{"nothing", DispatchOptions{}, "one of --issue, --review-pr, --prompt, --prompt-key, or --template is required"},
 		{"prompt without agent", DispatchOptions{Prompt: "x"}, "--agent is required"},
 		{"author without review-pr", DispatchOptions{Prompt: "x", Agent: "a", Author: "@1"}, "--author requires --review-pr"},
 		{"bad author", DispatchOptions{ReviewPR: 5, Author: "go-engineer"}, "invalid --author"},
 		{"negative pr", DispatchOptions{ReviewPR: -1}, "positive number"},
+		{"template alone", DispatchOptions{Template: "t"}, ""},
+		{"template with prompt", DispatchOptions{Template: "t", Prompt: "extra"}, ""},
+		{"template and issue", DispatchOptions{Template: "t", Issue: 1}, "--template is mutually exclusive"},
+		{"template and prompt-key", DispatchOptions{Template: "t", PromptKey: "k"}, "--template is mutually exclusive"},
+		{"template and review-pr", DispatchOptions{Template: "t", ReviewPR: 2}, "--template is mutually exclusive"},
+		{"template bad name", DispatchOptions{Template: "../x"}, "invalid --template"},
+		{"template with author", DispatchOptions{Template: "t", Author: "@1"}, "--author requires --review-pr"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

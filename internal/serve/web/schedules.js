@@ -4,9 +4,10 @@
 import { ApiError, api, get } from "./api.js";
 import { launchPicker } from "./dispatch.js";
 import {
-  advancedSummary, defaultAgentFor, dirName, fieldErrors, formClientErrors, formatAgo, formatClock, formatNextFire, newScheduleForm,
-  previewBody, runResultLabel, scheduleBanners, scheduleBody, scheduleException, scheduleGlyph, scheduleHash, scheduleLastText,
-  scheduleReview, scheduleScheduleText, scheduleWhen, tildePath, windowHash, worktreeFact,
+  advancedSummary, cardLastFailure, cardStatus, defaultAgentFor, dirName, fieldErrors, formClientErrors, formatAgo, formatClock, formatNextFire,
+  newScheduleForm, previewBody, runResultCard, runResultLabel, scheduleBanners, scheduleBody, scheduleException, scheduleGlyph, scheduleHash,
+  scheduleLastText, scheduleReview, scheduleScheduleText, scheduleWhen, TIMEOUT_PRESETS, tildePath, timeoutIsPreset, usageOptions, windowHash,
+  worktreeFact,
 } from "./logic.js";
 import { attachSwipe } from "./swipe.js";
 import { clear, confirmSheet, h, toast } from "./ui.js";
@@ -221,16 +222,23 @@ function mountCard(root, ctx, name, write) {
   function render(st, fires, tz) {
     clear(body);
     const live = new Map((st.windows ?? []).map((w) => [w.window_id, w]));
+    const next = fires[0] ?? formatNextFire(st.next_fire);
+    const lead = cardStatus(st, next);
+    const failure = cardLastFailure(st);
+    const adv = advancedSummary(newScheduleForm({ job: st.job }));
     const facts = [
       ["Schedule", `${scheduleScheduleText(st)}${tz ? ` · ${tz}` : ""}`],
-      ["Status", st.enabled ? (st.running ? "running" : "enabled") : "paused"],
-      ["Next", st.enabled ? (fires.length ? fires.join(", ") : scheduleWhen(st)) : "paused"],
       ["Project", tildePath(st.job.dir)],
       ["Agent", st.job.agent],
       ["Worktree", worktreeFact(st.job)],
     ];
-    if (st.invalid) facts.push(["Problem", st.invalid]);
-    body.append(
+    if (fires.length > 1 && st.enabled) facts.push(["Next fires", fires.join(", ")]);
+    if (adv) facts.push(["Advanced", adv]);
+    // Native append stringifies null: build the list, then drop the empty slots.
+    body.append(...[
+      h("p", { class: `sched-status ${lead.kind}` }, h("span", { class: `glyph sched-glyph ${lead.kind}`, "aria-hidden": "true" }, lead.glyph), " ", lead.text),
+      failure ? h("p", { class: "sched-fail", role: "status" }, failure) : null,
+      st.invalid ? h("p", { class: "sched-fail" }, `Problem: ${st.invalid}`) : null,
       h("div", { class: "sched-facts" }, ...facts.map(([k, v]) => h("div", {}, h("span", { class: "meta" }, `${k} `), v))),
       h("pre", { class: "sheet-body sched-prompt" }, st.job.prompt || st.prompt_resolved || (st.job.prompt_key ? `(context key ${st.job.prompt_key})` : "")),
       write
@@ -238,7 +246,11 @@ function mountCard(root, ctx, name, write) {
             h("a", { class: "btn", href: scheduleHash(name, "edit") }, "Edit"),
             h("a", { class: "btn", href: scheduleHash(name, "copy") }, "Duplicate"),
             h("button", { class: "btn", type: "button", onclick: () => setPaused(st, st.enabled, load) }, st.enabled ? "Pause" : "Resume"),
-            h("button", { class: "btn", type: "button", onclick: () => runNow(st, load) }, "Run now"),
+            h("button", { class: "btn", type: "button", onclick: () => runNow(st, load) }, "Run now"))
+        : null,
+      write
+        ? h("details", { class: "sched-more" },
+            h("summary", { "aria-label": "More actions" }, "More"),
             h("button", { class: "btn danger", type: "button", onclick: async () => { if (await deleteJob(st)) location.hash = "#/schedules"; } }, "Delete"))
         : null,
       h("h2", {}, "Recent runs"),
@@ -246,11 +258,11 @@ function mountCard(root, ctx, name, write) {
         ? h("ul", { class: "sched-runs" }, ...st.runs.map((e) => {
             const w = e.window ? live.get(e.window) : null;
             const when = `${formatAgo(e.ts)} · ${formatClock(new Date(e.ts).getTime())}`;
-            return h("li", {}, h("span", { class: "meta" }, `${when} `), runResultLabel(e), e.manual ? " (manual)" : "",
+            return h("li", {}, h("span", { class: "meta" }, `${when} `), runResultCard(e), e.manual ? " (manual)" : "",
               w ? [" ", h("a", { href: windowHash(w.session, w.window_id) }, "open window")] : null);
           }))
         : h("p", { class: "muted" }, "No runs yet."),
-    );
+    ].filter(Boolean));
   }
 
   load();
@@ -264,6 +276,12 @@ function mountCard(root, ctx, name, write) {
 const MODES = [["hourly", "Hourly"], ["daily", "Daily"], ["weekdays", "Weekdays"], ["days", "Days…"], ["custom", "Custom"]];
 const DAY_CHIPS = [["M", 1], ["T", 2], ["W", 3], ["T", 4], ["F", 5], ["S", 6], ["S", 0]];
 const DAY_NAMES = { 0: "Sunday", 1: "Monday", 2: "Tuesday", 3: "Wednesday", 4: "Thursday", 5: "Friday", 6: "Saturday" };
+const pad2 = (n) => String(n).padStart(2, "0");
+const range = (n) => Array.from({ length: n }, (_, i) => pad2(i));
+const OVERLAP = [["skip", "Skip if running"], ["allow", "Allow overlap"]];
+const CATCHUP = [["latest", "Run latest missed"], ["none", "Skip missed"]];
+// Server field names that have their own slot under another name.
+const SLOT_ALIAS = { skip_if_usage_above: "usage" };
 
 function mountForm(root, ctx, { job, copy }) {
   const withOptions = ctx.hasFeature("launch-options");
@@ -272,14 +290,17 @@ function mountForm(root, ctx, { job, copy }) {
   let gone = false;
   let previewSeq = 0;
   let timer = 0;
+  let dirty = true; // the form changed since the last preview
   let preview = null; // the latest valid-or-not preview response
   let serverErrors = {};
+  let globalGate = { five_hour: "", seven_day: "" };
+  let timeoutCustom = false;
   const touched = new Set();
   let saving = false;
   let showAll = false;
 
   const title = editing ? `Edit ${job}` : copy ? `Duplicate ${job}` : "New schedule";
-  const form = h("form", { class: "form sched-form", onsubmit: (e) => e.preventDefault() });
+  const form = h("form", { class: "form sched-form", onsubmit: (e) => e.preventDefault(), novalidate: true });
   root.append(header(title, { href: editing ? scheduleHash(job) : "#/schedules", label: "‹ Back" }), form);
   form.append(h("p", { class: "muted" }, "Loading…"));
 
@@ -292,10 +313,12 @@ function mountForm(root, ctx, { job, copy }) {
   const advBox = h("div", { class: "sched-adv" });
   const launchBox = h("div", { class: "launch-opts" });
   const summary = h("span", { class: "muted sched-adv-summary" });
-  const submit = h("button", { class: "btn primary", type: "button", disabled: true }, editing ? "Review changes" : "Review & schedule");
+  // Always enabled: a tap on a form with a problem shows every error.
+  const submit = h("button", { class: "btn primary", type: "button" }, editing ? "Review changes" : "Review & schedule");
   const savingNote = h("p", { class: "muted", hidden: true, role: "status" });
   const picker = withOptions
     ? launchPicker(launchBox, {
+        schedule: true,
         onError: (e) => toast(`Could not load launch options: ${e.message}`, "error"),
         onChange: (c, opts) => {
           const d = opts?.defaults ?? {};
@@ -303,20 +326,25 @@ function mountForm(root, ctx, { job, copy }) {
           f.backend = c.backend === d.backend ? "" : c.backend;
           f.model = c.model === d.model ? "" : c.model;
           f.effort = c.effort === d.effort ? "" : c.effort;
+          f.account = c.account ?? "";
           changed();
         },
       })
     : null;
 
   // The launch pins the form holds; a reload keeps them so the picker shows what Save sends.
-  const launchPreset = () => ({ backend: f.backend, model: f.model, effort: f.effort });
-  const errors = () => ({ ...serverErrors, ...formClientErrors(f) });
+  const launchPreset = () => ({ backend: f.backend, model: f.model, effort: f.effort, account: f.account });
+  const errors = () => {
+    const out = {};
+    for (const [k, v] of Object.entries({ ...serverErrors, ...formClientErrors(f) })) out[SLOT_ALIAS[k] ?? k] = v;
+    return out;
+  };
   const fieldError = (field) => (showAll || touched.has(field) ? errors()[field] : "");
-  const ready = () => !saving && preview?.valid && Object.keys(formClientErrors(f)).length === 0;
+  const blocked = () => !preview?.valid || Object.keys(formClientErrors(f)).length > 0;
 
   function changed() {
+    dirty = true;
     summary.textContent = advancedSummary(f);
-    submit.disabled = true;
     clearTimeout(timer);
     timer = setTimeout(runPreview, PREVIEW_DEBOUNCE_MS);
     renderErrors();
@@ -329,6 +357,7 @@ function mountForm(root, ctx, { job, copy }) {
       const p = await post("/v1/schedules/preview", previewBody(f));
       if (seq !== previewSeq || gone) return;
       preview = p;
+      dirty = false;
       serverErrors = fieldErrors(p.errors);
       previewLine.textContent = p.valid || p.words || p.next_fires_text?.length
         ? [p.words || p.schedule, p.time_zone ? `${p.time_zone} time` : "", p.next_fires_text?.length ? `next ${p.next_fires_text.join(", ")}` : ""].filter(Boolean).join(" · ")
@@ -339,24 +368,35 @@ function mountForm(root, ctx, { job, copy }) {
       previewLine.textContent = `Could not preview: ${errText(e)}`;
     }
     renderErrors();
-    submit.disabled = !ready();
   }
 
   const slots = {};
   function slot(field) {
-    slots[field] ??= h("span", { class: "field-error", role: "alert" });
+    slots[field] ??= h("span", { class: "field-error", role: "alert", hidden: true });
     return slots[field];
   }
+  // Errors for a field with no slot of its own end up here, above the button.
+  const general = h("p", { class: "field-error", role: "alert", hidden: true });
   function renderErrors() {
+    const all = errors();
     for (const [field, el] of Object.entries(slots)) {
       el.textContent = fieldError(field) ?? "";
       el.hidden = !el.textContent;
     }
+    const orphans = Object.entries(all).filter(([k]) => !slots[k] && (showAll || touched.has(k))).map(([, v]) => v);
+    general.textContent = orphans.join(" · ");
+    general.hidden = !orphans.length;
   }
-  const touch = (field) => () => {
-    touched.add(field);
-    renderErrors();
-  };
+
+  /** revealFirstError scrolls to (and focuses) the first visible error. */
+  function revealFirstError() {
+    const el = [...form.querySelectorAll(".field-error")].find((e) => !e.hidden);
+    if (!el) return;
+    const det = el.closest("details");
+    if (det) det.open = true;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.parentElement?.querySelector("input:not([disabled]), select, textarea, button")?.focus({ preventScroll: true });
+  }
 
   // Leaving a text field previews at once (a pause already would after 1s).
   function previewNow() {
@@ -375,6 +415,27 @@ function mountForm(root, ctx, { job, copy }) {
     });
   }
 
+  /** selectField is a native select in a label; values are strings. */
+  function selectField(label, opts, cur, onPick, aria = label) {
+    const s = h("select", { "aria-label": aria }, ...opts.map(([v, l]) => h("option", { value: v }, l)));
+    s.value = cur;
+    s.addEventListener("change", () => onPick(s.value));
+    return label ? h("label", {}, label, s) : s;
+  }
+
+  /** segmented is a one-row control of mutually exclusive choices; a stored value not in opts is kept, marked unknown. */
+  function segmented(label, opts, key) {
+    const all = opts.some(([v]) => v === f[key]) ? opts : [...opts, [f[key], `${f[key]} (unknown)`]];
+    const btns = all.map(([v, l]) => h("button", { type: "button", class: "btn", "aria-pressed": String(f[key] === v),
+      onclick: () => {
+        f[key] = v;
+        btns.forEach((b, i) => b.setAttribute("aria-pressed", String(all[i][0] === v)));
+        touched.add(key);
+        changed();
+      } }, l));
+    return h("div", { class: "sched-field" }, h("div", { class: "muted" }, label), h("div", { class: "sched-seg2", role: "group", "aria-label": label }, ...btns), slot(key));
+  }
+
   // ---- schedule picker ----
   function renderSchedule() {
     clear(schedBox);
@@ -382,20 +443,14 @@ function mountForm(root, ctx, { job, copy }) {
       ...MODES.map(([m, label]) => h("button", { type: "button", class: "btn", "aria-pressed": String(f.mode === m),
         onclick: () => { f.mode = m; if (m === "custom" && !f.raw) f.raw = "0 9 * * *"; renderSchedule(); touched.add("schedule"); changed(); } }, label)));
     schedBox.append(seg);
+    const minuteSel = (label, aria = label) => selectField(label, range(60).map((v) => [String(Number(v)), v]), String(f.minute), (v) => { f.minute = Number(v); changed(); }, aria);
     if (f.mode === "hourly") {
-      const minute = h("input", { type: "number", min: "0", max: "59", inputmode: "numeric", value: String(f.minute), "aria-label": "Minute past the hour" });
-      minute.addEventListener("input", () => { f.minute = Number(minute.value) || 0; changed(); });
-      schedBox.append(h("label", {}, "Minute past the hour", minute));
+      schedBox.append(minuteSel("Minute past the hour"));
     } else if (f.mode === "custom") {
       const raw = h("input", { type: "text", value: f.raw, "aria-label": "Cron expression", autocapitalize: "off", autocorrect: "off", spellcheck: "false", placeholder: "30 7 * * 1-5" });
       raw.addEventListener("input", () => { f.raw = raw.value; touched.add("schedule"); changed(); });
       schedBox.append(h("label", {}, "Cron expression", raw));
     } else {
-      const time = h("input", { type: "time", value: `${String(f.hour).padStart(2, "0")}:${String(f.minute).padStart(2, "0")}`, "aria-label": "Time (local)" });
-      time.addEventListener("input", () => {
-        const [hh, mm] = time.value.split(":").map(Number);
-        if (Number.isFinite(hh) && Number.isFinite(mm)) { f.hour = hh; f.minute = mm; changed(); }
-      });
       if (f.mode === "days") {
         const chips = h("div", { class: "day-chips", role: "group", "aria-label": "Days" },
           ...DAY_CHIPS.map(([l, d]) => h("button", { type: "button", class: "day-chip", "aria-label": DAY_NAMES[d], "aria-pressed": String(f.days.includes(d)),
@@ -407,7 +462,13 @@ function mountForm(root, ctx, { job, copy }) {
             } }, l)));
         schedBox.append(chips);
       }
-      schedBox.append(h("label", {}, "Time (local)", time));
+      // 24h: two native selects, so the device's 12h clock never shows.
+      schedBox.append(h("div", { class: "sched-time", role: "group", "aria-label": "Time (local, 24h)" },
+        h("span", { class: "muted" }, "Time (local, 24h)"),
+        h("div", { class: "sched-time-sel" },
+          selectField("", range(24).map((v) => [String(Number(v)), v]), String(f.hour), (v) => { f.hour = Number(v); changed(); }, "Hour"),
+          h("span", {}, ":"),
+          minuteSel("", "Minute"))));
     }
     schedBox.append(slot("schedule"));
     renderErrors();
@@ -416,42 +477,61 @@ function mountForm(root, ctx, { job, copy }) {
   // ---- advanced ----
   function renderAdvanced() {
     clear(advBox);
-    const sel = (key, opts, label) => {
-      const s = h("select", { "aria-label": label }, ...opts.map(([v, l]) => h("option", { value: v }, l)));
-      s.value = f[key];
-      s.addEventListener("change", () => { f[key] = s.value; changed(); });
-      return h("label", {}, label, s);
-    };
     const text = (key, label, placeholder = "") => {
       const i = h("input", { type: "text", value: f[key], "aria-label": label, placeholder, autocapitalize: "off", autocorrect: "off", spellcheck: "false" });
       bind(i, key);
       return h("label", {}, label, i, slot(key));
     };
-    const num = (key, label) => {
-      const i = h("input", { type: "number", min: "1", max: "100", inputmode: "numeric", value: f[key], "aria-label": label, placeholder: "default" });
-      i.addEventListener("input", () => { f[key] = i.value; changed(); });
-      return h("label", {}, label, i);
-    };
     const wt = h("input", { type: "checkbox", checked: f.worktree, "aria-label": "Use a new worktree for each run" });
     wt.addEventListener("change", () => { f.worktree = wt.checked; changed(); });
+
+    // Timeout: presets, or custom… which reveals a text box. A stored value
+    // that is not a preset opens in custom.
+    timeoutCustom = !timeoutIsPreset(f.timeout);
+    const custom = h("input", { type: "text", value: f.timeout, "aria-label": "Custom timeout", placeholder: "e.g. 90m", autocapitalize: "off", autocorrect: "off", spellcheck: "false", hidden: !timeoutCustom });
+    bind(custom, "timeout");
+    const tsel = selectField("Timeout", [...TIMEOUT_PRESETS.map((v) => [v, v || "none"]), ["__custom", "custom…"]], timeoutCustom ? "__custom" : f.timeout, (v) => {
+      timeoutCustom = v === "__custom";
+      custom.hidden = !timeoutCustom;
+      f.timeout = timeoutCustom ? custom.value.trim() : v;
+      if (timeoutCustom) custom.focus();
+      touched.add("timeout");
+      changed();
+    });
+    tsel.append(custom, slot("timeout"));
+
+    const gate = (key, label) => selectField("", usageOptions(globalGate[key === "gate5h" ? "five_hour" : "seven_day"], f[key]), f[key], (v) => { f[key] = v; touched.add("usage"); changed(); }, label);
     advBox.append(
       h("label", { class: "sched-check" }, wt, " New worktree for each run"),
-      withOptions ? launchBox : h("div", {}, text("backend", "Backend"), text("model", "Model"), text("effort", "Effort")),
-      text("account", "Account"),
-      text("timeout", "Timeout (e.g. 30m)", "none"),
-      sel("overlap", [["skip", "Skip if still running"], ["allow", "Allow overlapping runs"]], "Overlap"),
-      sel("catchup", [["latest", "Run the latest missed fire"], ["none", "Skip missed fires"]], "Catch-up"),
-      num("gate5h", "Skip when 5h usage is above (%)"),
-      num("gate7d", "Skip when 7d usage is above (%)"),
+      withOptions
+        ? launchBox
+        : h("div", {}, text("backend", "Backend"), text("model", "Model"), text("effort", "Effort"), text("account", "Account")),
+      tsel,
+      segmented("Overlap", OVERLAP, "overlap"),
+      segmented("Catch-up", CATCHUP, "catchup"),
+      h("div", { class: "sched-field" }, h("div", { class: "muted" }, "Skip above"),
+        h("div", { class: "sched-gate" }, h("span", { class: "muted" }, "5h"), gate("gate5h", "Skip above, 5h usage"), h("span", { class: "muted" }, "7d"), gate("gate7d", "Skip above, 7d usage")),
+        slot("usage")),
+      // model/effort/backend/account errors from the server show under the launch controls
+      slot("backend"), slot("model"), slot("effort"), slot("account"),
     );
+  }
+
+  function promptBlock() {
+    if (f.promptKey) {
+      return h("div", { class: "sched-field" }, h("div", { class: "muted" }, "Prompt"),
+        h("p", { class: "sched-keyline" }, `from context key ${f.promptKey}`),
+        f.promptKeyText ? h("pre", { class: "sheet-body sched-prompt" }, f.promptKeyText) : null, slot("prompt"));
+    }
+    return h("label", {}, "Prompt", prompt, slot("prompt"));
   }
 
   function build(projects, agents) {
     clear(form);
     for (const x of projects) project.append(h("option", { value: x.dir }, x.name));
-    if (f.dir && !projects.some((x) => x.dir === f.dir)) project.append(h("option", { value: f.dir }, tildePath(f.dir)));
+    if (f.dir && !projects.some((x) => x.dir === f.dir)) project.append(h("option", { value: f.dir }, `${tildePath(f.dir)} (unknown)`));
     for (const x of agents) agent.append(h("option", { value: x.name }, x.name));
-    if (f.agent && !agents.some((x) => x.name === f.agent)) agent.append(h("option", { value: f.agent }, f.agent));
+    if (f.agent && !agents.some((x) => x.name === f.agent)) agent.append(h("option", { value: f.agent }, `${f.agent} (unknown)`));
     name.value = f.name;
     name.disabled = editing;
     prompt.value = f.prompt;
@@ -477,19 +557,18 @@ function mountForm(root, ctx, { job, copy }) {
     });
     renderSchedule();
     renderAdvanced();
-    form.append(
+    form.append(...[
       h("label", {}, "Name", name, editing ? h("span", { class: "muted" }, "The name cannot change after creation.") : null, slot("name")),
       h("label", {}, "Project", project, slot("dir")),
       h("label", {}, "Agent", agent, slot("agent")),
-      h("label", {}, "Prompt",
-        f.promptKey ? h("span", { class: "muted" }, `From context key ${f.promptKey}. Editing the text saves it as an inline prompt.`) : null,
-        prompt, slot("prompt")),
+      promptBlock(),
       h("div", { class: "sched-field" }, h("div", { class: "muted" }, "Schedule"), schedBox, previewLine),
-      h("details", { class: "instructions sched-advanced" }, h("summary", {}, "Advanced ", summary), advBox),
+      h("details", { class: "instructions sched-advanced" }, h("summary", {}, h("span", { class: "sched-adv-title" }, "Advanced"), summary), advBox),
       ctx.hasFeature("write") ? null : h("p", { class: "muted" }, "Write actions are not enabled on this server."),
+      general,
       savingNote,
       submit,
-    );
+    ].filter(Boolean));
     summary.textContent = advancedSummary(f);
     renderErrors();
   }
@@ -499,9 +578,17 @@ function mountForm(root, ctx, { job, copy }) {
       const [a, p] = await Promise.all([get("/v1/agents"), get("/v1/projects")]);
       const projects = p.projects ?? [];
       const agents = a.agents ?? [];
+      // The global usage thresholds name the "global (N%)" choices; the form works without them.
+      get("/v1/schedules")
+        .then((o) => {
+          const g = o?.throttles?.skip_if_usage_above ?? {};
+          globalGate = { five_hour: g.five_hour ?? "", seven_day: g.seven_day ?? "" };
+          if (!gone && form.contains(advBox)) renderAdvanced();
+        })
+        .catch(() => {});
       if (job) {
         const st = await get(`/v1/schedules/${enc(job)}`);
-        f = newScheduleForm({ job: st.job, simple: st.simple ?? null, promptText: st.prompt_resolved ?? "", copy });
+        f = newScheduleForm({ job: st.job, simple: st.simple ?? null, promptText: st.prompt_resolved ?? "", copy, words: st.words ?? "" });
       } else {
         const dir = projects[0]?.dir ?? "";
         f = newScheduleForm();
@@ -519,11 +606,19 @@ function mountForm(root, ctx, { job, copy }) {
   }
 
   submit.addEventListener("click", async () => {
+    if (saving) return;
     showAll = true;
     renderErrors();
-    if (!ready()) return;
-    await runPreview();
-    if (!ready()) return;
+    if (timer || dirty || !preview) {
+      clearTimeout(timer);
+      await runPreview();
+    }
+    renderErrors();
+    if (blocked()) {
+      if (!preview) toast("Could not preview the schedule; try again", "error");
+      revealFirstError();
+      return;
+    }
     const ok = await confirmSheet({
       title: editing ? "Save changes?" : "Schedule it?",
       lines: [...scheduleReview(preview, f), copy ? "Saved paused: resume it from the list when you are ready." : ""].filter(Boolean),
@@ -551,6 +646,7 @@ function mountForm(root, ctx, { job, copy }) {
         serverErrors = fieldErrors(e.fields);
         showAll = true;
         renderErrors();
+        revealFirstError();
         toast(e.message, "error");
       } else if (e instanceof ApiError) {
         toast(e.message, "error");
@@ -562,7 +658,7 @@ function mountForm(root, ctx, { job, copy }) {
       clearTimeout(slow);
       savingNote.hidden = true;
       saving = false;
-      if (!gone) submit.disabled = !ready();
+      if (!gone) submit.disabled = false;
     }
   }
 

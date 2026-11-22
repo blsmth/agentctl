@@ -72,14 +72,19 @@ test("create a schedule with the picker, review it, and save", async ({ page, co
   }
   await page.getByRole("button", { name: "Monday" }).tap();
   await page.getByRole("button", { name: "Wednesday" }).tap();
-  await page.getByLabel("Time (local)").fill("07:30");
+  await page.getByLabel("Hour", { exact: true }).selectOption("7");
+  await page.getByLabel("Minute", { exact: true }).selectOption("30");
   await expect(page.locator(".sched-preview")).toContainText("next");
   const review = page.getByRole("button", { name: "Review & schedule" });
   await expect(review).toBeEnabled();
   await review.tap();
 
+  await expect(sheet(page)).toContainText("Runs");
+  await expect(sheet(page)).toContainText("When");
+  await expect(sheet(page)).toContainText("Mode");
   await expect(sheet(page)).toContainText("unattended");
   await expect(sheet(page)).toContainText("permission mode auto");
+  await expect(sheet(page)).toContainText("until paused");
   await expect(sheet(page)).toContainText("a worktree per fire");
   await expect(sheet(page)).toContainText("Next:");
   await expect(sheet(page)).toContainText("Summarise open PRs.");
@@ -93,13 +98,105 @@ test("create a schedule with the picker, review it, and save", async ({ page, co
   expect(saved.enabled).toBe(true);
 });
 
-test("Review stays disabled while the form has an error", async ({ page, control }) => {
+test("Review stays enabled with an error; a tap shows every error and scrolls to the first", async ({ page, control }) => {
   await control.seedSchedules();
   await page.goto("/#/schedules/new");
+  const review = page.getByRole("button", { name: "Review & schedule" });
+  await expect(review).toBeEnabled();
   await page.getByLabel("Name", { exact: true }).fill("bad name!");
-  await page.getByLabel("Prompt", { exact: true }).fill("x");
   await expect(page.locator(".field-error:not([hidden])").first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Review & schedule" })).toBeDisabled();
+  await expect(review).toBeEnabled();
+  // Untouched, still-empty fields only complain after the tap.
+  await page.getByLabel("Name", { exact: true }).fill("");
+  await review.tap();
+  await expect(sheet(page)).toHaveCount(0);
+  const errs = page.locator(".field-error:not([hidden])");
+  expect(await errs.count()).toBeGreaterThanOrEqual(2);
+  await expect(errs.first()).toBeInViewport();
+});
+
+test("the form's new controls: weekdays default, one-row kinds, 24h time, segments, presets and usage", async ({ page, control }) => {
+  await control.seedSchedules();
+  await page.goto("/#/schedules/new");
+  await expect(page.getByRole("button", { name: "Weekdays" })).toHaveAttribute("aria-pressed", "true");
+  expect(await page.locator("form").innerText()).not.toMatch(/\bnull\b/);
+  const tops = await page.locator(".sched-seg .btn").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+  expect(new Set(tops).size).toBe(1);
+  // 24h: an hour select running 00-23.
+  const hours = await page.getByLabel("Hour", { exact: true }).locator("option").allTextContents();
+  expect(hours[0]).toBe("00");
+  expect(hours.at(-1)).toBe("23");
+  // Native selects are as tall as the inputs.
+  const sel = (await page.locator("select[aria-label=Project]").boundingBox())!;
+  const inp = (await page.getByLabel("Name", { exact: true }).boundingBox())!;
+  expect(Math.abs(sel.height - inp.height)).toBeLessThan(2);
+
+  await page.locator("details.sched-advanced summary").tap();
+  await expect(page.locator(".sched-adv-summary")).toHaveText("");
+  // Account select names the resolved default; model names the agent default.
+  await expect(page.locator("select[aria-label=Account] option").first()).toHaveText("default (personal)");
+  await expect(page.locator("select[aria-label=Model] option").first()).toContainText("agent default");
+  await page.locator("select[aria-label=Account]").selectOption("work");
+  await page.getByRole("button", { name: "Skip missed" }).tap();
+  await page.getByLabel("Timeout", { exact: true }).selectOption("45m");
+  await page.getByLabel("Skip above, 5h usage").selectOption("70");
+  await page.getByLabel("Skip above, 7d usage").selectOption("100");
+  await expect(page.locator(".sched-adv-summary")).toContainText("account work");
+  await expect(page.locator(".sched-adv-summary")).toContainText("timeout 45m");
+  await page.getByLabel("Timeout", { exact: true }).selectOption("__custom");
+  await page.getByLabel("Custom timeout").fill("90m");
+  await expect(page.locator(".sched-adv-summary")).toContainText("timeout 90m");
+
+  await page.getByLabel("Name", { exact: true }).fill("nightly-x");
+  await page.getByLabel("Prompt", { exact: true }).fill("Do it.");
+  // Let the preview settle: clearing an error moves the button.
+  await expect(page.locator(".field-error:not([hidden])")).toHaveCount(0);
+  await page.getByRole("button", { name: "Review & schedule" }).tap();
+  await sheet(page).getByRole("button", { name: "Schedule it" }).tap();
+  await expect(page).toHaveURL(/#\/schedules\/nightly-x$/);
+  const saved = (await jobFromApi(page, "nightly-x")).job;
+  expect(saved.account).toBe("work");
+  expect(saved.catchup).toBe("none");
+  expect(saved.timeout).toBe("90m");
+  expect(saved.skip_if_usage_above).toEqual({ five_hour: 70, seven_day: 100 });
+});
+
+test("an edit's review shows old → new, and a stored unknown value is kept", async ({ page, control }) => {
+  await control.seedSchedules({ jobs: [job("nightly", { model: "opsu", account: "soon" })] });
+  await page.goto("/#/schedules/nightly/edit");
+  await page.locator("details.sched-advanced summary").tap();
+  await expect(page.locator("select[aria-label=Model] option.unknown")).toHaveText("opsu (unknown)");
+  await expect(page.locator("select[aria-label=Account] option.unknown")).toHaveText("soon (unknown)");
+  await page.getByRole("button", { name: "Skip missed" }).tap();
+  await page.getByRole("button", { name: "Review changes" }).tap();
+  await expect(sheet(page)).toContainText("Changes:");
+  await expect(sheet(page)).toContainText("catch-up  latest → none");
+  await sheet(page).getByRole("button", { name: "Save changes" }).tap();
+  await expect(page).toHaveURL(/#\/schedules\/nightly$/);
+  const saved = (await jobFromApi(page, "nightly")).job;
+  expect(saved.model).toBe("opsu");
+  expect(saved.account).toBe("soon");
+});
+
+test("a prompt_key job shows the key read-only", async ({ page, control }) => {
+  await control.seedSchedules({ jobs: [job("keyed", { prompt: "", prompt_key: "my-key" })] });
+  await page.goto("/#/schedules/keyed/edit");
+  await expect(page.locator(".sched-keyline")).toHaveText("from context key my-key");
+  await expect(page.getByLabel("Prompt", { exact: true })).toHaveCount(0);
+});
+
+test("the card leads with the status line and failure reason; Delete is in the overflow", async ({ page, control }) => {
+  await control.seedSchedules({
+    jobs: [job("nightly")],
+    runs: [{ ts: ago(30), job: "nightly", result: "failed:launch", note: "no such agent" }],
+  });
+  await page.goto("/#/schedules/nightly");
+  await expect(page.locator(".sched-card > *").first()).toHaveClass(/sched-status/);
+  await expect(page.locator(".sched-status")).toContainText("next");
+  await expect(page.locator(".sched-fail")).toContainText("Last run failed · launch: no such agent");
+  await expect(page.getByRole("button", { name: "Delete" })).toBeHidden();
+  await expect(page.locator("ul.sched-runs")).toContainText("failed · launch");
+  expect(await page.locator("body").innerText()).not.toContain("null");
 });
 
 test("editing keeps the fields the form does not show", async ({ page, control }) => {
@@ -175,6 +272,7 @@ test("run now reports the window it started", async ({ page, control }) => {
 test("delete asks first and keeps history", async ({ page, control }) => {
   await control.seedSchedules({ jobs: [job("nightly")] });
   await page.goto("/#/schedules/nightly");
+  await page.getByLabel("More actions").tap();
   await page.getByRole("button", { name: "Delete" }).tap();
   await expect(sheet(page)).toContainText("run history is kept");
   await sheet(page).getByRole("button", { name: "Delete" }).tap();

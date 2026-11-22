@@ -17,7 +17,7 @@ func TestParseSchedule(t *testing.T) {
 		{spec: "@daily"},
 		{spec: "@weekly"},
 		{spec: "", wantErr: "required"},
-		{spec: "0 30 7 * * 1-5", wantErr: "invalid schedule"},
+		{spec: "0 30 7 * * 1-5", wantErr: "needs 5 fields, has 6"},
 		{spec: "61 * * * *", wantErr: "invalid schedule"},
 		{spec: "@every 5m", wantErr: "@every"},
 		{spec: "CRON_TZ=UTC 0 * * * *", wantErr: "time zone"},

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -64,37 +65,68 @@ const (
 // is what `agentctl statusline` printed for this window ("" when it was not
 // run); extra holds lines appended by the approval round-trip.
 func Render(spec PaneSpec, width int, statusline string, extra []string) string {
+	return renderView(spec, width, paneView{Status: statusline, Extra: extra})
+}
+
+// paneView is the live part of a fake pane drawn on top of its spec.
+type paneView struct {
+	Status string   // what `agentctl statusline` printed
+	Extra  []string // lines added by the approval round-trip
+	Input  string   // text typed into the input box
+	Turn   *turnView
+}
+
+// turnView is a scripted turn as drawn: the prompt and the entries so far,
+// then the spinner while it plays or the footer once it is done.
+type turnView struct {
+	Entries []Entry
+	Spinner string
+	Footer  string
+}
+
+func renderView(spec PaneSpec, width int, v paneView) string {
 	if width < 40 {
 		width = 40
 	}
 	boxW := min(width-2, 110)
 	w := spec.Window
+	entries := spec.Transcript.Entries
+	state, spin, footer := w.State, w.Spinner, ""
+	if t := v.Turn; t != nil {
+		entries = append(append([]Entry(nil), entries...), t.Entries...)
+		state, spin, footer = "idle", "", t.Footer
+		if t.Footer == "" {
+			state, spin = "working", t.Spinner
+		}
+	}
 	var out []string
 	out = append(out, banner(spec)...)
 	out = append(out, "")
-	out = append(out, renderEntries(spec.Transcript.Entries, width)...)
-	out = append(out, extra...)
-	if len(extra) > 0 {
+	out = append(out, renderEntries(entries, width)...)
+	out = append(out, v.Extra...)
+	if len(v.Extra) > 0 {
 		out = append(out, "")
 	}
-	switch w.State {
+	switch state {
 	case "blocked":
 		out = append(out, permissionBox(w, boxW)...)
 		return strings.Join(out, "\r\n")
 	case "working":
-		spin := w.Spinner
 		if spin == "" {
 			spin = "Working… (esc to interrupt)"
 		}
 		out = append(out, cClaude+"✻ "+spin+cReset, "")
 	default:
-		if len(spec.Transcript.Entries) > 0 {
+		switch {
+		case footer != "":
+			out = append(out, cClaude+"✻ "+cDim+footer+cReset, "")
+		case len(entries) > 0:
 			out = append(out, turnFooter(w), "")
 		}
 	}
-	out = append(out, inputArea(w, width)...)
-	if statusline != "" {
-		for _, l := range strings.Split(strings.TrimRight(statusline, "\n"), "\n") {
+	out = append(out, inputArea(w, width, v.Input)...)
+	if v.Status != "" {
+		for _, l := range strings.Split(strings.TrimRight(v.Status, "\n"), "\n") {
 			out = append(out, "  "+l+cReset)
 		}
 	}
@@ -108,9 +140,30 @@ func turnFooter(w Window) string {
 }
 
 // inputArea is the prompt between two full-width rules, then the mode line.
-func inputArea(w Window, width int) []string {
+// input is what has been typed, wrapped under the "❯ ", with the cursor
+// block after it.
+func inputArea(w Window, width int, input string) []string {
 	rule := cBorder + strings.Repeat("─", width) + cReset
-	out := []string{rule, cText + "❯ " + cInverse + " " + cReset, rule}
+	out := []string{rule}
+	lines := []string{""}
+	if input != "" {
+		lines = wrap(input, width-4)
+		if strings.HasSuffix(input, " ") {
+			lines[len(lines)-1] += " "
+		}
+	}
+	for i, l := range lines {
+		lead := "  "
+		if i == 0 {
+			lead = "❯ "
+		}
+		cursor := ""
+		if i == len(lines)-1 {
+			cursor = cInverse + " " + cReset
+		}
+		out = append(out, cText+lead+l+cReset+cursor)
+	}
+	out = append(out, rule)
 	if w.Mode == "bare" {
 		return append(out, cDim+"  ? for shortcuts"+cReset)
 	}
@@ -140,14 +193,37 @@ func ModelLabel(id string) string {
 
 func banner(spec PaneSpec) []string {
 	cwd := spec.WorkDir
-	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(cwd, home) {
-		cwd = "~" + strings.TrimPrefix(cwd, home)
+	if home, err := os.UserHomeDir(); err == nil {
+		cwd = abbreviateHome(cwd, home)
 	}
 	return []string{
 		cClaude + " ▐▛███▜▌" + cReset + "   " + cBold + "Claude Code" + cReset + cDim + " v" + ccVersion + cReset,
 		cClaude + "▝▜█████▛▘" + cReset + "  " + cDim + ModelLabel(spec.Window.Model) + " · " + ccPlan + cReset,
 		cClaude + "  ▘▘ ▝▝" + cReset + "    " + cDim + cwd + cReset,
 	}
+}
+
+// abbreviateHome shows dir under home as ~/..., comparing both with
+// symlinks resolved: on macOS the demo HOME is under $TMPDIR, which is
+// /var/folders/... behind the /private symlink, so a pane's cwd and HOME can
+// name the same directory two ways.
+func abbreviateHome(dir, home string) string {
+	resolve := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return filepath.Clean(p)
+	}
+	d, h := resolve(dir), resolve(home)
+	switch {
+	case h == "" || h == "/":
+		return dir
+	case d == h:
+		return "~"
+	case strings.HasPrefix(d, h+string(filepath.Separator)):
+		return "~" + strings.TrimPrefix(d, h)
+	}
+	return dir
 }
 
 // renderEntries draws the transcript, one blank line between items, with runs

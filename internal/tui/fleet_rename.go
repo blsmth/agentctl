@@ -13,7 +13,7 @@ import (
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
-// The hub's rename: R, the row menu's "rename", or a right click on a row's
+// The hub's rename: R, the row menu's "rename", or a double click on a row's
 // title opens an inline editor in place of the title. Enter saves the text
 // as the window's human title (windowstate short_title, Manual), which the
 // title pipeline never replaces; an empty save clears it so automatic titles
@@ -77,15 +77,17 @@ func (m *FleetModel) rowCanRename(r fleet.Row) bool {
 
 // openRename opens the editor on the row at line idx, prefilled with its
 // title as shown (empty for an untitled row, which shows a recap sentence)
-// and the cursor at the end. Every other inline state closes.
-func (m *FleetModel) openRename(idx int) {
+// and the cursor at the end. Every other inline state closes. The returned
+// command starts the cursor blinking; blink messages are routed to the input
+// only while the editor is open, so closing it ends the tick loop.
+func (m *FleetModel) openRename(idx int) tea.Cmd {
 	if idx < 0 || idx >= len(m.lines) || m.lines[idx].kind != fleetLineRow {
-		return
+		return nil
 	}
 	r := m.lines[idx].row
 	if !m.rowCanRename(r) {
 		m.jumpErr = "cannot rename this window"
-		return
+		return nil
 	}
 	m.cancelNewSession()
 	m.cancelClose()
@@ -100,12 +102,13 @@ func (m *FleetModel) openRename(idx int) {
 	ti.Placeholder = fleetRenamePlaceholder
 	ti.CharLimit = shorttitle.MaxManualRunes
 	s := ti.Styles()
-	s.Cursor.Blink = false
+	s.Cursor.Blink = true
 	ti.SetStyles(s)
 	ti.SetValue(orig)
 	ti.CursorEnd()
-	ti.Focus()
+	blink := ti.Focus()
 	m.rename = &fleetRenameState{session: r.Session, windowID: r.WindowID, orig: orig, input: ti}
+	return blink
 }
 
 // renamePrefill is the title text r shows: its title, or the auto short title

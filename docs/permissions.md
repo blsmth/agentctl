@@ -68,12 +68,14 @@ Put a `.agentctl/config.json` in your project to add project-wide restrictions f
 - Command keys: `notify_cmd`, `hooks`, `dispatch.on_complete` (and the per-agent forms).
 - Permission keys: `agents.<name>.auto_accept` and `agents.<name>.allowed_permissions`. A project may add to `blocked_commands` / `blocked_patterns` but never remove entries the global config set.
 - `permission_mode`, `llm`, and the `metrics` endpoint and credentials.
+- Routing and machine-wide keys: `backends`, `accounts`, `default_account`, `account_rules`, `agents.<name>.backend`/`account`/`harness`, `serve`, `cron`, `titles`, `close_children`, `chrome_bar`, `hub_chrome`, `auto_poll`, `restore_max_age`, `new_window_position`.
+- Guards a project may only tighten: `bash_preview` and `dispatch_approval` (stricter only), `monitor` (off only).
 - `default_agent` (what prefix+A launches) is honored from the project layer only when it is safe: a valid agent name, naming a built-in, a plugin agent, or an agent in `~/.claude/agents` that the repo's own `.claude/agents` does not define or shadow, and not an agent with `auto_accept` or an approval-skipping `permission_mode` (unless it is also the global default). Otherwise prefix+A warns and launches the global `default_agent`.
 - `agents.<name>.dir` (would point an `auto`-mode worker at any directory), `agents.<name>.context_keys` and `agents.<name>.cross_context` (would pull your global context store into the prompt of an agent working on the repo's input), and `agents.<name>.auto_improve`. A project may still switch `cross_context` and `auto_improve` off.
 
 Agent names themselves are also untrusted: an agent definition (`.claude/agents/*.md`) whose name is not `[A-Za-z0-9._-]+` (max 64 characters, no leading `.` or `-`) is skipped at discovery, and a project-local agent that shadows a global agent of the same name prints a warning naming the project file when it is launched.
 
-See [configuration.md](configuration.md#command-keys-are-global-only) for the layering rules.
+See [configuration.md](configuration.md#top-level-keys) (the Scope column) and [Layering](configuration.md#layering) for the full rules.
 
 **Precedence:** Project config is additive — it can only restrict, never relax. User-level blocks apply first, then project-level blocks are checked on top.
 
@@ -90,6 +92,17 @@ agentctl writes a per-session Claude Code settings file at launch (`.agentctl/se
 agentctl registers a `PreToolUse` hook that runs on every Bash call. It performs substring checks against `blocked_commands` and regex checks against `blocked_patterns` — for both user-level and project-level config — and returns a deny decision if matched. This layer catches commands that slip past the glob-based layer (e.g. multi-line scripts) and enforces project config, which is loaded at hook time, not at launch.
 
 Both layers must pass for a Bash command to run.
+
+### Built-in guards
+
+The same Bash hook (`hook-validate-bash`) and `hook-pre-tool` apply rules no config can turn off:
+
+- **Global deny list.** Deleting `/` or `~`, pushing to `origin main`, and piping `curl` into a shell are denied for every agent.
+- **Approval popups.** `agentctl dispatch` needs a human's approval per [`dispatch_approval`](configuration.md#dispatch_approval) (default: everything but `code-reviewer` PR reviews), `agentctl cron add`, `cron edit`, `cron resume` and `cron run --force` always do (see [cron](configuration.md#cron)), and with [`bash_preview`](configuration.md#bash_preview) every Bash command does. With `agentctl serve` running, the phone can answer the same popup. An unanswered popup denies after 9 minutes.
+- **Tamper rules.** Agents cannot touch `agentctl serve`'s state, control socket or process, pair devices, or start, stop or reinstall it; cannot write `schedules.json`, the cron state dir or the dispatch-approval records; and cannot loosen the global `dispatch_approval`. Reads pass, and `agentctl serve logs` / `agentctl cron list` are the intended read paths.
+- **No agentctl from source.** `go run` of the agentctl root package (`go run .` in this repo, `go run github.com/blsmth/agentctl`) is denied, so an agent cannot bypass the gates with an unbuilt copy; `go run ./internal/...` and other repos pass.
+
+These are speed bumps against accidents and naive attempts, not a sandbox: the agent runs as your user.
 
 ## Managing permissions in the UI
 

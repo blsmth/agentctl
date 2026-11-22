@@ -149,9 +149,10 @@ type CLI struct {
 	Statusline StatuslineCmd `cmd:"" help:"Claude Code statusLine integration (see: statusline install)"`
 
 	// Per-machine processes
-	Metrics MetricsCmd `cmd:"" help:"Prometheus metrics (serve: the per-machine metrics process)"`
-	Serve   ServeCmd   `cmd:"" help:"Run the HTTPS server for the mobile web app (install, pair, devices, status)"`
-	Cron    CronCmd    `cmd:"" help:"Scheduled agent runs (add, edit, list, runs, run, pause, resume, rm, install)"`
+	Metrics  MetricsCmd  `cmd:"" help:"Prometheus metrics (serve: the per-machine metrics process)"`
+	Serve    ServeCmd    `cmd:"" help:"Run the HTTPS server for the mobile web app (install, pair, devices, status)"`
+	Cron     CronCmd     `cmd:"" help:"Scheduled agent runs (add, edit, list, runs, run, pause, resume, rm, install)"`
+	Template TemplateCmd `cmd:"" help:"Prompt templates: saved, reusable dispatch prompts (list, show, add, edit, rm)"`
 }
 
 // ---------------------------------------------------------------------------
@@ -516,6 +517,7 @@ type DispatchCmd struct {
 	Author     string        `help:"Window of the --review-pr author, e.g. @12 (default: the live window on the PR branch)"`
 	Prompt     string        `help:"Ad-hoc prompt text" short:"p"`
 	PromptKey  string        `name:"prompt-key" help:"Read ad-hoc prompt from a context store key" short:"k"`
+	Template   string        `help:"Prompt template to dispatch (agentctl template list); its agent/model/dir/effort apply when those flags are unset, and --prompt adds instructions"`
 	Agent      string        `help:"Agent name (auto-detected from labels if omitted)" short:"a"`
 	Dir        string        `help:"Working directory"`
 	Model      string        `help:"Model override (e.g. sonnet, opus, haiku)" short:"m"`
@@ -530,7 +532,7 @@ type DispatchCmd struct {
 
 func (c *DispatchCmd) Run() error {
 	cmd.RunDispatch(cmd.DispatchOptions{
-		Issue: c.Issue, ReviewPR: c.ReviewPR, Author: c.Author, Prompt: c.Prompt, PromptKey: c.PromptKey, Agent: c.Agent, Dir: c.Dir,
+		Issue: c.Issue, ReviewPR: c.ReviewPR, Author: c.Author, Prompt: c.Prompt, PromptKey: c.PromptKey, Template: c.Template, Agent: c.Agent, Dir: c.Dir,
 		Model: c.Model, Backend: c.Backend, Account: c.Account, Harness: c.Harness, NoWorktree: c.NoWorktree,
 		Wait: c.Wait, Timeout: c.Timeout, Repo: c.Repo,
 	})
@@ -563,9 +565,22 @@ func (c *HubViewCmd) Run() error { cmd.RunHubView(); return nil }
 // launches an agent there in the background, printing the window ID.
 type HubNewSessionCmd struct {
 	Dir string `arg:"" help:"Absolute project directory"`
+	// Template launches a prompt template instead of a bare agent. Agent,
+	// Model override its values; Prompt is appended as extra instructions.
+	Template string `help:"Launch this prompt template"`
+	Agent    string `help:"Agent for the template launch"`
+	Model    string `help:"Model for the template launch"`
+	Prompt   string `help:"Extra instructions appended to the template prompt"`
 }
 
-func (c *HubNewSessionCmd) Run() error { return cmd.RunHubNewSession(c.Dir) }
+func (c *HubNewSessionCmd) Run() error {
+	if c.Template == "" {
+		return cmd.RunHubNewSession(c.Dir)
+	}
+	return cmd.RunHubNewSessionTemplate(c.Dir, cmd.HubTemplateLaunch{
+		Template: c.Template, Agent: c.Agent, Model: c.Model, Prompt: c.Prompt,
+	})
+}
 
 // HubResumeCmd is the hub's Resume for a closed row: run with cwd = Dir, it
 // starts the project's tmux session if needed and relaunches the agent
@@ -1525,6 +1540,78 @@ type ServeDevicesRmCmd struct {
 }
 
 func (c *ServeDevicesRmCmd) Run() error { return cmd.RunServeDevicesRm(os.Stdout, c.Device) }
+
+// ---------------------------------------------------------------------------
+// Prompt templates
+// ---------------------------------------------------------------------------
+
+// TemplateCmd groups `agentctl template`. Templates live in
+// ~/.config/agentctl/templates/<name>.md and <project>/.agentctl/templates/
+// (project shadows global); `dispatch --template <name>` runs one.
+type TemplateCmd struct {
+	List TemplateListCmd `cmd:"" help:"List templates (project shadows global)"`
+	Show TemplateShowCmd `cmd:"" help:"Print a template"`
+	Add  TemplateAddCmd  `cmd:"" help:"Add a template (prompt from --prompt, --prompt-file or $EDITOR)"`
+	Edit TemplateEditCmd `cmd:"" help:"Change a template: flags patch fields; with none, opens $EDITOR"`
+	Rm   TemplateRmCmd   `cmd:"" help:"Remove a template"`
+}
+
+type TemplateListCmd struct {
+	JSON bool `name:"json" help:"Print JSON"`
+}
+
+func (c *TemplateListCmd) Run() error { return cmd.RunTemplateList(os.Stdout, c.JSON) }
+
+type TemplateShowCmd struct {
+	Name string `arg:"" help:"Template name"`
+}
+
+func (c *TemplateShowCmd) Run() error { return cmd.RunTemplateShow(os.Stdout, c.Name) }
+
+type TemplateAddCmd struct {
+	Name        string `arg:"" help:"Template name (letters, digits, '.', '_' and '-')"`
+	Description string `help:"One-line description shown in pickers"`
+	Agent       string `help:"Default agent"`
+	Model       string `help:"Default model"`
+	Dir         string `help:"Default project directory (~ expanded at dispatch)"`
+	Effort      string `help:"Default effort (low, medium, high, xhigh, max, auto)"`
+	Prompt      string `help:"Prompt text"`
+	PromptFile  string `name:"prompt-file" help:"File holding the prompt (copied now)"`
+	Project     bool   `help:"Write to the project's .agentctl/templates instead of the global dir"`
+}
+
+func (c *TemplateAddCmd) Run() error {
+	return cmd.RunTemplateAdd(os.Stdout, cmd.TemplateAddOptions{
+		Name: c.Name, Description: c.Description, Agent: c.Agent, Model: c.Model, Dir: c.Dir,
+		Effort: c.Effort, Prompt: c.Prompt, PromptFile: c.PromptFile, Project: c.Project,
+	})
+}
+
+type TemplateEditCmd struct {
+	Name        string  `arg:"" help:"Template name"`
+	Description *string `help:"One-line description (empty clears it)"`
+	Agent       *string `help:"Default agent (empty clears it)"`
+	Model       *string `help:"Default model (empty clears it)"`
+	Dir         *string `help:"Default project directory (empty clears it)"`
+	Effort      *string `help:"Default effort (empty clears it)"`
+	Prompt      *string `help:"Replace the prompt"`
+	PromptFile  *string `name:"prompt-file" help:"Replace the prompt with this file's content"`
+	Project     bool    `help:"Edit the project's template instead of the global one"`
+}
+
+func (c *TemplateEditCmd) Run() error {
+	return cmd.RunTemplateEdit(os.Stdout, cmd.TemplateEditOptions{
+		Name: c.Name, Description: c.Description, Agent: c.Agent, Model: c.Model, Dir: c.Dir,
+		Effort: c.Effort, Prompt: c.Prompt, PromptFile: c.PromptFile, Project: c.Project,
+	})
+}
+
+type TemplateRmCmd struct {
+	Name    string `arg:"" help:"Template name"`
+	Project bool   `help:"Remove the project's template instead of the global one"`
+}
+
+func (c *TemplateRmCmd) Run() error { return cmd.RunTemplateRm(os.Stdout, c.Name, c.Project) }
 
 // ---------------------------------------------------------------------------
 // Cron (scheduled agent runs)

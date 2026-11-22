@@ -25,6 +25,9 @@ type AdhocRequest struct {
 	// PromptKey is the context store key the prompt was resolved from, or ""
 	// (display-only; see Request.PromptKey).
 	PromptKey string
+	// Template is the prompt template the prompt came from, or ""
+	// (display-only; see Request.Template).
+	Template  string
 	AgentName string
 	WorkDir   string // required; the CLI resolves its default before calling
 	Model     string
@@ -80,6 +83,7 @@ func LaunchAdhoc(req AdhocRequest) (Result, error) {
 		ExtraInstructions: req.ExtraInstructions,
 		PRReviewOverride:  req.PRReview,
 		PromptKey:         req.PromptKey,
+		Template:          req.Template,
 		WorkDir:           req.WorkDir,
 		UseWorktree:       &useWorktree,
 		RepoSlug:          repoSlug,
@@ -165,4 +169,17 @@ func ValidateAgentName(name, workDir string) error {
 	slices.Sort(names)
 	names = slices.Compact(names)
 	return fmt.Errorf("unknown agent %q; available agents: %s (or plugin:name)", name, strings.Join(names, ", "))
+}
+
+// AgentNames lists the agent names a schedule or dispatch from workDir can
+// name (discovered agents plus the Claude Code built-ins), sorted. Plugin
+// agents are not listed; ValidateAgentName still accepts them.
+func AgentNames(workDir string) []string {
+	agents, _ := discoverAgents(workDir)
+	names := slices.Clone(claudeBuiltinAgents)
+	for _, a := range agents {
+		names = append(names, a.Name)
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
 }
