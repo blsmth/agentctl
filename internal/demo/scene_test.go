@@ -191,16 +191,16 @@ phone:
 	}
 
 	bad := map[string]string{
-		"unknown key":      "phone:\n  bogus: 1\n  steps: [screenshot]\n",
-		"bad theme":        "phone:\n  theme: sepia\n  steps: [screenshot]\n",
-		"no steps":         "phone:\n  theme: dark\n",
-		"no screenshot":    "phone:\n  steps:\n    - open: fleet\n",
-		"bad open":         "phone:\n  steps:\n    - open: nowhere\n    - screenshot\n",
-		"unknown window":   "phone:\n  steps:\n    - open: window:nope\n    - screenshot\n",
-		"approval on idle": "phone:\n  steps:\n    - open: approval:orch\n    - screenshot\n",
-		"two actions":      "phone:\n  steps:\n    - {open: fleet, tap: x}\n    - screenshot\n",
-		"bad scalar":       "phone:\n  steps:\n    - tap\n",
-		"bad dpr":          "phone:\n  viewport: {dpr: 9}\n  steps: [screenshot]\n",
+		"unknown key":                "phone:\n  bogus: 1\n  steps: [screenshot]\n",
+		"bad theme":                  "phone:\n  theme: sepia\n  steps: [screenshot]\n",
+		"no steps":                   "phone:\n  theme: dark\n",
+		"no screenshot":              "phone:\n  steps:\n    - open: fleet\n",
+		"bad open":                   "phone:\n  steps:\n    - open: nowhere\n    - screenshot\n",
+		"unknown window":             "phone:\n  steps:\n    - open: window:nope\n    - screenshot\n",
+		"approval without approval:": "phone:\n  steps:\n    - open: approval:orch\n    - screenshot\n",
+		"two actions":                "phone:\n  steps:\n    - {open: fleet, tap: x}\n    - screenshot\n",
+		"bad scalar":                 "phone:\n  steps:\n    - tap\n",
+		"bad dpr":                    "phone:\n  viewport: {dpr: 9}\n  steps: [screenshot]\n",
 	}
 	for name, p := range bad {
 		t.Run(name, func(t *testing.T) {

@@ -26,9 +26,13 @@ type Ref struct {
 	Session  string `json:"session"`
 	WindowID string `json:"window_id"`
 	Agent    string `json:"agent"`
-	// Command is a blocked window's pending command; empty otherwise.
+	// Approval marks a window whose scene sets approval: its command is
+	// held by agentctl's approval gate, so it has a remote approval open.
+	// A plain blocked window shows Claude Code's own dialog instead, with no
+	// remote approval (the two never appear together).
+	Approval bool `json:"approval,omitempty"`
+	// Command is the approval's command; empty otherwise.
 	Command string `json:"command,omitempty"`
-	Blocked bool   `json:"blocked,omitempty"`
 }
 
 // Session is the fixture session name of a project.
@@ -51,8 +55,8 @@ func Convert(s *demo.Scene, fixtures string) ([]servetest.Group, []Ref, error) {
 			}
 			g.Windows = append(g.Windows, fw)
 			ref := Ref{Key: w.Key, Project: p.Name, Session: g.Session, WindowID: id, Agent: w.Agent}
-			if w.State == "blocked" {
-				ref.Blocked, ref.Command = true, pendingCommand(w)
+			if w.Approval != "" {
+				ref.Approval, ref.Command = true, w.Approval
 			}
 			refs = append(refs, ref)
 		}
@@ -100,6 +104,10 @@ func window(w demo.Window, id string, index int, ids map[string]string, fixtures
 	case "blocked":
 		fw.PendingTool, fw.PendingDetail = w.PendingTool, pendingCommand(w)
 	}
+	if w.Approval != "" {
+		// Mid-hook: blocked on agentctl's gate, no Claude dialog yet.
+		fw.State, fw.Done, fw.PendingTool, fw.PendingDetail = "blocked", false, "Bash", w.Approval
+	}
 	fw.Activity = w.LastTool
 	if fw.Activity == "" {
 		fw.Activity = t.LastTool()
@@ -121,8 +129,14 @@ func pane(w demo.Window, t *demo.Transcript) string {
 	if w.HasWorktree() {
 		dir += "/.worktrees/" + strings.ReplaceAll(w.Branch, "/", "-")
 	}
+	var extra []string
+	if w.Approval != "" {
+		// Drawn as the pane does between Enter and the popup's answer.
+		w.State, w.Spinner, w.Permission = "idle", "", nil
+		extra = demo.ApprovalWaitingLines(w.Approval)
+	}
 	spec := demo.PaneSpec{Window: w, Transcript: *t, WorkDir: dir, Branch: w.Branch}
-	return strings.ReplaceAll(demo.Render(spec, PaneWidth, "", nil), "\r\n", "\n") + "\n"
+	return strings.ReplaceAll(demo.Render(spec, PaneWidth, "", extra), "\r\n", "\n") + "\n"
 }
 
 // phoneMode is the windowstate mode string of a scene mode.

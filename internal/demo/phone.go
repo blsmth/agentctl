@@ -171,8 +171,8 @@ func validateOpen(s *Scene, target string) error {
 	switch {
 	case !ok:
 		return fmt.Errorf("open: no window with key %q", key)
-	case kind == "approval" && w.State != "blocked":
-		return fmt.Errorf("open: approval:%s needs a blocked window (it is %s)", key, w.State)
+	case kind == "approval" && w.Approval == "":
+		return fmt.Errorf("open: approval:%s needs a window with approval: set", key)
 	}
 	return nil
 }

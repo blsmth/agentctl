@@ -15,7 +15,7 @@ type scene struct {
 	name   string
 	groups []servetest.Group
 	refs   []phonefix.Ref
-	// approvals maps a blocked window's scene key to its open approval ID.
+	// approvals maps an approval window's scene key to its open approval ID.
 	approvals map[string]string
 }
 
@@ -38,11 +38,12 @@ func loadScene(scenesDir, name, fixtures string) (*scene, error) {
 	return &scene{name: s.Name, groups: groups, refs: refs, approvals: map[string]string{}}, nil
 }
 
-// openApprovals opens a remote approval for every blocked window, as its
-// PreToolUse hook would have, so the phone's approval screens have content.
+// openApprovals opens a remote approval for every window whose scene sets
+// approval:, as agentctl's PreToolUse gate would. A plain blocked window has
+// none: it shows Claude Code's own dialog.
 func (sc *scene) openApprovals(h *servetest.Harness) error {
 	for _, r := range sc.refs {
-		if !r.Blocked {
+		if !r.Approval {
 			continue
 		}
 		id, err := h.OpenApproval(servetest.ApprovalSpec{

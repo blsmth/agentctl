@@ -70,6 +70,12 @@ windows:
     since: 4m
     permission:
       command: psql -f m.sql
+  - key: gated
+    project: billing-svc
+    agent: go-engineer
+    mode: dispatched
+    state: working
+    approval: agentctl dispatch --agent go-engineer --prompt "Add paging"
   - key: idle
     project: billing-svc
     agent: docs
@@ -155,12 +161,20 @@ func TestConvertFields(t *testing.T) {
 
 func TestConvertApproval(t *testing.T) {
 	ws, refs, _ := load(t)
-	r := refs["blocked"]
-	if !r.Blocked || r.Command != "psql -f m.sql" || r.Session != "agentctl-billing-svc" {
-		t.Errorf("ref = %+v", r)
+	// A plain blocked window is Claude's dialog: no remote approval.
+	if r := refs["blocked"]; r.Approval || r.Command != "" {
+		t.Errorf("blocked ref has an approval: %+v", r)
 	}
-	if refs["idle"].Blocked {
-		t.Error("idle window marked blocked")
+	r := refs["gated"]
+	if !r.Approval || r.Command != `agentctl dispatch --agent go-engineer --prompt "Add paging"` || r.Session != "agentctl-billing-svc" {
+		t.Errorf("gated ref = %+v", r)
+	}
+	g := ws["gated"]
+	if g.State != "blocked" || g.PendingTool != "Bash" || g.PendingDetail != r.Command {
+		t.Errorf("gated = %+v", g)
+	}
+	if strings.Contains(g.PaneText, "Do you want to proceed?") || !strings.Contains(g.PaneText, "Waiting for approval in the agentctl popup") {
+		t.Errorf("gated pane should show the hook wait, not the dialog:\n%s", g.PaneText)
 	}
 	w := ws["blocked"]
 	if w.PendingTool != "Bash" || w.PendingDetail != "psql -f m.sql" || w.SinceSec != 240 {
@@ -186,7 +200,7 @@ func TestPaneIsTerminalRender(t *testing.T) {
 }
 
 func TestConvertUnknownFixture(t *testing.T) {
-	s, err := demo.ParseScene([]byte(strings.Replace(scene, "    title: Rolling Out\n", "    title: Rolling Out\n    transcript: nope\n", 0)))
+	s, err := demo.ParseScene([]byte(scene))
 	if err != nil {
 		t.Fatal(err)
 	}
