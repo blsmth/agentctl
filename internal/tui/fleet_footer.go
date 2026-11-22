@@ -164,7 +164,7 @@ func (m FleetModel) footerHints() []fleetHint {
 		hints = fleetSchedFormHints
 	case m.schedConfirm != nil:
 		hints = fleetSchedYesNoHints
-	case m.selectedSchedLineValue() != nil:
+	case m.selectedSchedLineValue() != nil || m.selectedSchedHead() != nil:
 		hints = m.schedHints()
 	}
 	return hints

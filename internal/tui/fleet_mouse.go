@@ -139,7 +139,7 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 	l := m.lines[idx]
 	switch button {
 	case tea.MouseRight:
-		if l.kind == fleetLineRow && m.lineCollapsible(idx) && !(sub == 0 && m.onCloseButton(x)) {
+		if (l.kind == fleetLineRow && m.lineCollapsible(idx) && !(sub == 0 && m.onCloseButton(x))) || l.kind == fleetLineSchedHead {
 			return idx, fleetClickCollapse
 		}
 		if l.kind == fleetLineRow || l.kind == fleetLineHeader || l.kind == fleetLineClosed || l.kind == fleetLineSchedule {
@@ -181,6 +181,9 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 		return idx, fleetClickSelect
 	case fleetLinePlaceholder, fleetLineClosed, fleetLineSchedule:
 		return idx, fleetClickSelect
+	case fleetLineSchedHead:
+		// The whole header is the collapse toggle.
+		return idx, fleetClickCollapse
 	}
 	return idx, fleetClickIgnore
 }

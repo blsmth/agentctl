@@ -344,6 +344,9 @@ type hubViewState struct {
 	Closed bool `json:"closed,omitempty"`
 	// Schedules shows the Schedules section (hidden by default).
 	Schedules bool `json:"schedules,omitempty"`
+	// SchedCollapsed is the collapsed schedules blocks by block key: a
+	// project's resolved dir, or ":other" for the bottom block.
+	SchedCollapsed []string `json:"sched_collapsed,omitempty"`
 	// ActivityPane is the open activity pane's tmux pane ID ("" = closed),
 	// so a hot reload reattaches to it; ActivityWidth is the width the user
 	// dragged it to (0 = the default).
@@ -387,7 +390,7 @@ func (m FleetModel) viewState() hubViewState {
 	slices.Sort(folded)
 	return hubViewState{
 		Folded: folded, Collapsed: m.liveCollapsed(prune), Focus: m.focusMode, Filter: m.filter.key(), Sort: sortKey(m.sortRecent), Shells: m.showShells, Closed: m.showClosed, Schedules: m.showSchedules,
-		ActivityPane: m.activity.pane, ActivityWidth: m.activity.userWidth,
+		SchedCollapsed: m.liveSchedCollapsed(prune), ActivityPane: m.activity.pane, ActivityWidth: m.activity.userWidth,
 	}
 }
 
@@ -435,6 +438,10 @@ func (m *FleetModel) applyViewState(s hubViewState) {
 		m.closed = nil
 	}
 	m.showSchedules = s.Schedules
+	m.schedCollapsed = nil
+	for _, key := range s.SchedCollapsed {
+		m.setSchedCollapsed(key, true)
+	}
 	if !m.showSchedules {
 		m.sched = fleetSchedState{}
 		m.schedForm, m.schedConfirm = nil, nil

@@ -21,9 +21,11 @@ import (
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
-// The hub's Schedules section (fleetSchedulesKey): the `agentctl cron` jobs
-// at the bottom of the list, read through the shared editing core
-// (internal/cronedit) in process, only while the section is shown. Selecting
+// The hub's Schedules section (fleetSchedulesKey): the `agentctl cron` jobs,
+// each listed under the project group it runs in (or in a block at the
+// bottom for projects with no session; see fleet_schedgroup.go), read
+// through the shared editing core (internal/cronedit) in process, only while
+// the section is shown. Selecting
 // a job shows its card to the right of the list; the editing form (see
 // fleet_schedform.go) takes the same place, so the list stays visible. While
 // either is showing, the live viewer pane is closed so the hub's own pane
@@ -206,51 +208,26 @@ func (m *FleetModel) toggleSchedules() tea.Cmd {
 	return tea.Batch(m.saveViewCmd(), m.schedLoadCmd())
 }
 
-// schedLines is the section for rebuildLines: the label, warnings, then one
-// line per job (or "+ new schedule" when there are none).
-func (m FleetModel) schedLines() []fleetLine {
-	if !m.showSchedules {
-		return nil
-	}
-	label := func(text string, warn bool) fleetLine {
-		return fleetLine{kind: fleetLineSchedLabel, label: text, schedWarn: warn}
-	}
-	switch {
-	case !m.sched.loaded && m.sched.err == "":
-		return []fleetLine{label("Schedules · loading…", false)}
-	case m.sched.err != "" && !m.sched.loaded:
-		return []fleetLine{label("Schedules · "+m.sched.err, true)}
-	}
-	ov := m.sched.ov
-	head := fmt.Sprintf("Schedules (%d)", len(ov.Jobs))
-	if len(ov.Jobs) == 0 {
-		head = "Schedules · none yet"
-	}
-	lines := []fleetLine{label(head, false)}
-	if m.sched.err != "" {
-		lines = append(lines, label(m.sched.err, true))
-	}
-	if !ov.SchedulerInstalled {
-		lines = append(lines, label("scheduler not installed: run agentctl cron install", true))
-	}
-	if !ov.Enabled {
-		lines = append(lines, label("cron is off (cron.enabled: false): nothing fires", true))
-	}
-	if len(ov.Jobs) == 0 {
-		return append(lines, fleetLine{kind: fleetLineSchedule, schedNew: true})
-	}
-	for _, st := range ov.Jobs {
-		lines = append(lines, fleetLine{kind: fleetLineSchedule, sched: st})
-	}
-	return lines
-}
-
 // schedLineKey is the selSchedule value of a schedule line.
+// A block header is fleetSchedHeadSel plus its block key; a project
+// block's "+ new schedule" line is schedNewSel of its block key, the bottom
+// one plain fleetSchedNewSel; a job row is the job's name.
 func schedLineKey(l fleetLine) string {
-	if l.schedNew {
+	switch {
+	case l.kind == fleetLineSchedHead:
+		return fleetSchedHeadSel + l.schedBlock
+	case l.schedNew && l.schedBlock != "" && l.schedBlock != fleetSchedOtherKey:
+		return schedNewSel(l.schedBlock)
+	case l.schedNew:
 		return fleetSchedNewSel
 	}
 	return l.sched.Name
+}
+
+// isSchedJobSel reports whether a selSchedule key names a job (not a "+ new"
+// line or a block header).
+func isSchedJobSel(sel string) bool {
+	return sel != "" && !strings.HasPrefix(sel, fleetSchedNewSel) && !strings.HasPrefix(sel, fleetSchedHeadSel)
 }
 
 // selectedSchedLine is the selected schedule line, or nil.
@@ -267,7 +244,7 @@ func (m *FleetModel) selectedSchedLine() *fleetLine {
 
 // schedPaneActive reports whether the card or the form wants the right side.
 func (m FleetModel) schedPaneActive() bool {
-	return m.showSchedules && (m.selSchedule != "" || m.schedForm != nil)
+	return m.showSchedules && ((m.selSchedule != "" && !strings.HasPrefix(m.selSchedule, fleetSchedHeadSel)) || m.schedForm != nil)
 }
 
 // syncSchedPane closes the live viewer when the card or form becomes active
@@ -337,6 +314,9 @@ func (m *FleetModel) applySchedViewerHidden() tea.Cmd {
 // scheduleKey runs key on a selected schedule line. handled is false for
 // keys that keep their usual meaning.
 func (m *FleetModel) scheduleKey(key string) (cmd tea.Cmd, handled bool) {
+	if h := m.selectedSchedHead(); h != nil {
+		return m.schedHeadKey(*h, key)
+	}
 	l := m.selectedSchedLine()
 	if l == nil {
 		return nil, false
@@ -344,7 +324,7 @@ func (m *FleetModel) scheduleKey(key string) (cmd tea.Cmd, handled bool) {
 	if l.schedNew {
 		switch key {
 		case "enter", "n", "e":
-			return m.openSchedForm(schedFormNew, nil, ""), true
+			return m.openSchedForm(schedFormNew, nil, l.schedDir), true
 		case "tab", "space", "g", "d", "x":
 			return nil, true
 		}
@@ -547,7 +527,7 @@ func runResultText(e cron.Entry) string {
 // previous detail of the same job stays up while a refresh loads.
 func (m *FleetModel) syncSchedDetail() tea.Cmd {
 	name := m.selSchedule
-	if !m.showSchedules || name == "" || name == fleetSchedNewSel || m.schedForm != nil || m.sched.detailName == name {
+	if !m.showSchedules || !isSchedJobSel(name) || m.schedForm != nil || m.sched.detailName == name {
 		return nil
 	}
 	m.sched.detailName = name
@@ -587,6 +567,9 @@ func schedMenuItems(l fleetLine) []fleetMenuItem {
 
 // schedHints are the footer hints on a schedule row.
 func (m FleetModel) schedHints() []fleetHint {
+	if h := m.selectedSchedHead(); h != nil {
+		return m.schedHeadHints(*h)
+	}
 	l := m.selectedSchedLine()
 	if l == nil {
 		return nil
@@ -685,16 +668,23 @@ func projectOf(dir string) string {
 }
 
 // renderSchedRow renders one job: glyph and name, then the schedule in
-// words, the last result, project and agent, with the next fire
-// right-aligned. Narrow widths drop the agent, then the project, then the
-// last result, then cut the words; the name and next fire always show.
+// words, the last result and (outside a project block) the project, with
+// the next fire right-aligned. Narrow widths drop the project, then the
+// last result, then cut the words; the name and next fire always show. In
+// a project block the row hangs off the group's project bar, indented under
+// the block header.
 func (m FleetModel) renderSchedRow(l fleetLine, selected bool, cw int) string {
 	cursor := "  "
 	if selected {
 		cursor = cursorActiveStyle.Render("▸") + " "
 	}
+	lead := "  " + cursor
+	inGroup := l.group.Session != ""
+	if inGroup {
+		lead = fleetProjectBar(l.group.Project) + cursor + "  "
+	}
 	if l.schedNew {
-		return fleetFitLine("  "+cursor+fleetNewHoverStyle.Render("+ new schedule")+fleetDimStyle.Render("  n"), selected, cw)
+		return fleetFitLine(lead+fleetNewHoverStyle.Render("+ new schedule")+fleetDimStyle.Render("  n"), selected, cw)
 	}
 	st := l.sched
 	glyph, gst := schedGlyph(st)
@@ -702,7 +692,7 @@ func (m FleetModel) renderSchedRow(l fleetLine, selected bool, cw int) string {
 	if !st.Enabled {
 		nameSt = fleetDimStyle
 	}
-	left := "  " + cursor + gst.Render(glyph) + " " + nameSt.Render(st.Name)
+	left := lead + gst.Render(glyph) + " " + nameSt.Render(st.Name)
 	nextSt := fleetCountStyle
 	if st.Enabled && st.Invalid != "" {
 		nextSt = fleetErrStyle
@@ -712,11 +702,11 @@ func (m FleetModel) renderSchedRow(l fleetLine, selected bool, cw int) string {
 	room := inner - lipgloss.Width(left) - lipgloss.Width(right) - 2
 	if room < 0 {
 		// Even the name does not fit: cut it, never the next fire.
-		nameW := max(inner-lipgloss.Width(right)-1-lipgloss.Width("  "+cursor+glyph+" "), 1)
-		left = "  " + cursor + gst.Render(glyph) + " " + nameSt.Render(truncateToWidth(st.Name, nameW))
+		nameW := max(inner-lipgloss.Width(right)-1-lipgloss.Width(lead+glyph+" "), 1)
+		left = lead + gst.Render(glyph) + " " + nameSt.Render(truncateToWidth(st.Name, nameW))
 		room = inner - lipgloss.Width(left) - lipgloss.Width(right) - 1
 	}
-	mid := schedRowMiddle(st, room)
+	mid := schedRowMiddle(st, room, !inGroup)
 	body := left + mid
 	gap := inner - lipgloss.Width(body) - lipgloss.Width(right)
 	if gap < 1 {
@@ -727,10 +717,13 @@ func (m FleetModel) renderSchedRow(l fleetLine, selected bool, cw int) string {
 
 // schedRowMiddle is the part between the name and the next fire, in room
 // columns ("" when there is none).
-func schedRowMiddle(st cronedit.Status, room int) string {
+func schedRowMiddle(st cronedit.Status, room int, withProject bool) string {
 	const sep = " · "
 	words, last := schedWords(st), schedLastText(st)
-	project := projectOf(st.Job.Dir)
+	project := ""
+	if withProject {
+		project = projectOf(st.Job.Dir)
+	}
 	lastSt := fleetDimStyle
 	if st.FailedLast {
 		lastSt = fleetErrStyle
@@ -788,6 +781,15 @@ func (m FleetModel) schedCardLines(w int) []string {
 	l := m.selectedSchedLineValue()
 	if l == nil {
 		return nil
+	}
+	if l.schedNew && l.group.Session != "" {
+		return []string{
+			fleetTitleStyle.Render("New schedule in " + l.group.Project),
+			"",
+			wrapText("A schedule runs an agent unattended at set times, each run in its own window. The form starts in "+tildify(l.schedDir)+".", w),
+			"",
+			fleetDimStyle.Render("n new schedule"),
+		}
 	}
 	if l.schedNew {
 		return []string{

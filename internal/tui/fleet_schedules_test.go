@@ -324,6 +324,8 @@ func schedKeys(m FleetModel) []string {
 		switch l.kind {
 		case fleetLineSchedLabel:
 			out = append(out, "SL:"+l.label)
+		case fleetLineSchedHead:
+			out = append(out, "SH:"+l.label)
 		case fleetLineSchedule:
 			if l.schedNew {
 				out = append(out, "S:+new")
@@ -335,10 +337,13 @@ func schedKeys(m FleetModel) []string {
 	return out
 }
 
+// selectSched selects the schedule line whose key is name; fleetSchedNewSel
+// matches the first "+ new schedule" line of any block.
 func selectSched(t *testing.T, m FleetModel, name string) FleetModel {
 	t.Helper()
 	for i, l := range m.lines {
-		if l.kind == fleetLineSchedule && schedLineKey(l) == name {
+		key := schedLineKey(l)
+		if l.kind == fleetLineSchedule && (key == name || (name == fleetSchedNewSel && l.schedNew)) {
 			m.selectLine(i)
 			next, cmd := m.Update(fleetSchedViewerHiddenMsg{}) // runs the post-update pane sync
 			return schedDrive(t, next.(FleetModel), cmd)
@@ -369,9 +374,11 @@ func TestSchedulesToggleLoadsAndSorts(t *testing.T) {
 		t.Fatal("schedules read while the section is hidden")
 	}
 	m = showSchedules(t, m)
-	want := []string{"SL:Schedules (4)", "S:nightly", "S:babysit", "S:upcoming", "S:weekly"}
+	// acme-api's jobs go under its group; nightly runs in billing, which
+	// has no session, so it goes in the bottom block.
+	want := []string{"SH:schedules (3)", "S:babysit", "S:upcoming", "S:weekly", "S:+new", "SH:Schedules · other projects (1)", "S:nightly"}
 	if got := schedKeys(m); !slices.Equal(got, want) {
-		t.Errorf("lines = %v, want %v (failed, running, by next fire, paused)", got, want)
+		t.Errorf("lines = %v, want %v (running, by next fire, paused; failed elsewhere)", got, want)
 	}
 	out := ansi.Strip(m.renderList())
 	for _, s := range []string{fleetSchedGlyphFailed + " nightly", fleetSchedGlyphRunning + " babysit", fleetSchedGlyphOn + " upcoming", fleetSchedGlyphPaused + " weekly", "paused", "in 3h"} {
@@ -413,19 +420,38 @@ func TestSchedulesZeroJobsMissingFileAndHints(t *testing.T) {
 	if _, err := os.Stat(f.jobsPath); !os.IsNotExist(err) {
 		t.Fatal("the fixture should have no schedules.json")
 	}
+	// The project's block is just its "+ new" line; the warnings go once
+	// after the last group.
 	got := schedKeys(m)
-	want := []string{"SL:Schedules · none yet", "SL:scheduler not installed: run agentctl cron install",
-		"SL:cron is off (cron.enabled: false): nothing fires", "S:+new"}
+	want := []string{"S:+new", "SL:scheduler not installed: run agentctl cron install",
+		"SL:cron is off (cron.enabled: false): nothing fires"}
 	if !slices.Equal(got, want) {
 		t.Errorf("lines = %v, want %v", got, want)
 	}
-	m = selectSched(t, m, fleetSchedNewSel)
-	if out := ansi.Strip(m.render()); !strings.Contains(out, "No cron jobs yet") {
-		t.Errorf("right pane missing the empty card:\n%s", out)
+	m = selectSched(t, m, schedNewSel(resolveDir(f.project)))
+	if out := ansi.Strip(m.render()); !strings.Contains(out, "New schedule in acme-api") {
+		t.Errorf("right pane missing the project's new card:\n%s", out)
 	}
 	m = schedPress(t, m, "enter")
 	if m.schedForm == nil || m.schedForm.mode != schedFormNew {
 		t.Fatal("enter on + new schedule should open the form")
+	}
+	if fm := m.schedForm; fm.dirs[fm.dirIdx] != f.project {
+		t.Errorf("form dir = %q, want the group's project %q", fm.dirs[fm.dirIdx], f.project)
+	}
+
+	// With no sessions at all the bottom block keeps its label and line.
+	m.schedForm = nil
+	m.groups = nil
+	m.relayout()
+	want = []string{"SL:Schedules · none yet", "SL:scheduler not installed: run agentctl cron install",
+		"SL:cron is off (cron.enabled: false): nothing fires", "S:+new"}
+	if got := schedKeys(m); !slices.Equal(got, want) {
+		t.Errorf("no sessions: lines = %v, want %v", got, want)
+	}
+	m = selectSched(t, m, fleetSchedNewSel)
+	if out := ansi.Strip(m.render()); !strings.Contains(out, "No cron jobs yet") {
+		t.Errorf("right pane missing the empty card:\n%s", out)
 	}
 }
 
@@ -447,10 +473,17 @@ func TestScheduleRowNarrowTruncation(t *testing.T) {
 	m := showSchedules(t, f.model(t))
 	var l fleetLine
 	for _, x := range m.lines {
-		if x.kind == fleetLineSchedule {
+		if x.kind == fleetLineSchedule && !x.schedNew {
 			l = x
 		}
 	}
+	// In its project's block the row hangs off the project bar and does not
+	// repeat the project name.
+	if in := ansi.Strip(m.renderSchedRow(l, false, 150)); !strings.HasPrefix(in, "▎    "+fleetSchedGlyphOn+" nightly") || strings.Contains(in, "acme-api") {
+		t.Errorf("in-group row = %q", in)
+	}
+	// The widths below are the bottom block's row, which names the project.
+	l.group, l.schedBlock = fleet.Group{}, fleetSchedOtherKey
 	type want struct {
 		has, hasNot []string
 	}
@@ -861,7 +894,8 @@ func TestScheduleEditRoundTripsHiddenAndUntouchedFields(t *testing.T) {
 	m = schedClear(t, m)
 	m = schedType(t, m, "python-engineer")
 	m = schedPress(t, m, "ctrl+s")
-	out := ansi.Strip(m.render())
+	// The review pane only: the list beside it has a "+ new schedule" line.
+	out := ansi.Strip(strings.Join(m.schedFormLines(m.schedPaneWidth(), m.termHeight), "\n"))
 	flat := strings.Join(strings.Fields(out), " ")
 	if !strings.Contains(out, "Review changes to custom") || !strings.Contains(flat, "agent go-engineer → python-engineer") || strings.Contains(out, "schedule ") {
 		t.Errorf("edit review should list only the agent:\n%s", out)
