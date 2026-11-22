@@ -300,6 +300,9 @@ func (s *Server) handleScheduleCreate(_ *http.Request, in scheduleIn, a *auditEn
 	return s.scheduleResult(job.Name, nil, false)
 }
 
+// handleScheduleUpdate replaces the whole job: clients send every field
+// (an omitted worktree means the default, true). Only an omitted enabled
+// keeps the stored value.
 func (s *Server) handleScheduleUpdate(r *http.Request, in scheduleIn, a *auditEntry) outcome {
 	name := r.PathValue("name")
 	auditJob(a, in.Job)

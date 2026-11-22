@@ -146,6 +146,9 @@ type cronArgs struct {
 	noWorktree bool
 	worktree   bool
 	force      bool
+	// unknown lists dash words parse does not model; a gated segment with
+	// any is denied (see buildCronPreview).
+	unknown []string
 }
 
 // value returns the text of a value flag ("" when absent).
@@ -179,13 +182,17 @@ func (s cronSegment) parse() cronArgs {
 				a.values[name] = s.tokens[i+1]
 				i++
 			}
-		case strings.HasPrefix(tok, "--") && strings.Contains(tok, "="):
+		case strings.HasPrefix(tok, "--") && strings.Contains(tok, "=") &&
+			cronValueFlags[strings.TrimPrefix(strings.SplitN(tok, "=", 2)[0], "--")]:
 			name, val, _ := strings.Cut(strings.TrimPrefix(tok, "--"), "=")
-			if cronValueFlags[name] {
-				a.values[name] = cmdToken{text: val, quoted: t.quoted, expands: t.expands}
-			}
-		case strings.HasPrefix(tok, "-") && !t.quoted && tok != "-":
-			// Some other flag; Kong rejects unknown ones.
+			a.values[name] = cmdToken{text: val, quoted: t.quoted, expands: t.expands}
+		case strings.HasPrefix(tok, "-"):
+			// A flag spelling the parser does not model: an attached short
+			// value (-pTEXT, -p=TEXT), --no-worktree=true, or any other
+			// flag. Kong would act on some of these, so the segment cannot
+			// be shown faithfully. Quoting does not help: the shell strips
+			// the quotes before Kong sees the word.
+			a.unknown = append(a.unknown, tok)
 		default:
 			a.positional = append(a.positional, t)
 		}
@@ -231,6 +238,11 @@ func buildCronPreview(command string) (cronPreview, string) {
 	}
 	seg := segs[0]
 	args := seg.parse()
+	if len(args.unknown) > 0 {
+		return cronPreview{}, fmt.Sprintf("agentctl cron %s: cannot show %q for approval. "+
+			"Spell flags as --name value (or --name=value), with no attached short-flag values, "+
+			"and use only the documented flags.", seg.sub, args.unknown[0])
+	}
 	switch seg.sub {
 	case "add":
 		return buildCronAddPreview(args, command)
