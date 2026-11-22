@@ -112,6 +112,33 @@ func TestRaceEndCardAfterBeat(t *testing.T) {
 	}
 }
 
+func TestRaceEndCardRealLife(t *testing.T) {
+	r := raceFixture(t)
+	// Stretch the effort so it crosses nights.
+	r.Params.RealLife = true
+	r.Params.Schedule = race.DefaultSchedule()
+	r.HumanTotal = 14 * time.Hour
+	m := raceAt(t, r, 120, 40, 31*time.Second+raceBeat)
+	if !m.endCard {
+		t.Fatal("no end card")
+	}
+	all := strings.Join(plainView(m), "\n")
+	c := r.Calendar()
+	for _, s := range []string{"Real life: " + race.FormatCalendar(c.Elapsed), "finishes " + c.Finish, "2 nights asleep", "0 weekends", "faster in calendar time", "faster than by hand", "nonstop typing and reading"} {
+		if !strings.Contains(all, s) {
+			t.Errorf("end card lacks %q:\n%s", s, all)
+		}
+	}
+	m = raceAt(t, r, 30, 8, 5*time.Second)
+	if !strings.Contains(strings.Join(plainView(m), "\n"), "AGENT") {
+		t.Error("tiny view broken")
+	}
+	m = raceAt(t, r, 120, 35, 10*time.Second)
+	if !strings.Contains(strings.Join(plainView(m), "\n"), "Mon ") {
+		t.Error("human status lacks the calendar moment")
+	}
+}
+
 func TestRaceKeys(t *testing.T) {
 	r := raceFixture(t)
 	m := raceAt(t, r, 120, 35, time.Second)

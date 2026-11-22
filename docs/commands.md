@@ -121,7 +121,10 @@ Starting, stopping and pairing serve are for humans: agents are denied them. See
 ```bash
 agentctl race                       # this window's session (or: @N, a session ID, a .jsonl path)
 agentctl race @12 --wpm 80 --think 5s
+agentctl race @12 --real-life --focus-hours 6 --days-per-week 5   # calendar time too
 agentctl race <session-id> --json   # totals only: steps, tool calls, chars typed/read, agent vs human time
 ```
 
 The agent's time comes from the transcript's timestamps, with any gap over `--max-gap` (default 60s) capped and time spent waiting on your next prompt not counted. The human's time is the characters they would type (commands, new code, prompts, messages; only the pattern or path for Read/Grep/Glob) at `--wpm` (60) plus the tool output they would read at `--read-wpm` (250), plus `--think` per step (0s by default). It is not a bound either way: the person never pauses or makes a typo, but they also read every tool result in full and type the agent's own messages. The gap cap also clips long tool runs and Task sub-agents, which makes the agent look faster. The replay is compressed to `--duration` (45s), or runs at `--speed N` times real time; both racers share the clock. Keys: space pause, `+`/`-` speed, `r` restart, `e` end card, `q` quit.
+
+`--real-life` (off by default) adds what the nonstop number means on a calendar: a person starting Monday 09:00 works `--focus-hours` (default 6, max 16; the real keyboard time left after meetings, Slack and context switches) a day on `--days-per-week` (default 5) days, with a 1h lunch and two 15m coffee breaks, then sleeps 8h. The end card gains a "Real life" line (finish time, nights asleep, weekends, lunch and coffee) and a calendar-time multiplier, and `--json` gains a `real_life` object. The big multiplier stays the nonstop one. `--think` is added to the effort before the conversion.

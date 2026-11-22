@@ -79,6 +79,10 @@ func validateRace(opts RaceOptions) error {
 		return errors.New("--think must not be negative")
 	case p.MaxGap <= 0:
 		return errors.New("--max-gap must be positive")
+	case p.RealLife && (p.Schedule.FocusHours <= 0 || p.Schedule.FocusHours > 16):
+		return errors.New("--focus-hours must be greater than 0 and at most 16")
+	case p.RealLife && (p.Schedule.DaysPerWeek < 1 || p.Schedule.DaysPerWeek > 7):
+		return errors.New("--days-per-week must be between 1 and 7")
 	case opts.Speed < 0:
 		return errors.New("--speed must not be negative")
 	case opts.Speed == 0 && opts.Duration <= 0:
