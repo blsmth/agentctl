@@ -364,7 +364,7 @@ func checkServeTamper(command string) string {
 // cronTamperReason is the deny reason for commands that write the cron jobs
 // file or cron state directly.
 const cronTamperReason = "\U0001F6D1 BLOCKED: this writes agentctl's cron schedules or state directly. " +
-	"Scheduled jobs need human approval: use `agentctl cron add` (shown for approval), " +
+	"Scheduled jobs need human approval: use `agentctl cron add` or `cron edit` (shown for approval), " +
 	"`agentctl cron pause|rm` to stop one, and `agentctl cron list` to read them."
 
 // cronTargetPattern matches a reference to the cron jobs file or the cron

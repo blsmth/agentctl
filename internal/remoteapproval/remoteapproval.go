@@ -40,7 +40,7 @@ const (
 const (
 	KindDispatch = "dispatch"
 	KindBash     = "bash"
-	// KindCron approves creating, resuming or force-running a scheduled job;
+	// KindCron approves creating, editing, resuming or force-running a scheduled job;
 	// TargetAgent is the job's agent and Prompt the job summary plus prompt.
 	KindCron = "cron"
 )

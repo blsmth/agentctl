@@ -61,7 +61,7 @@ func cronEditTarget(toolName string, rawInput json.RawMessage) string {
 // jobs file or state directly.
 func cronEditDenyReason(path string) string {
 	return fmt.Sprintf("\U0001F6D1 BLOCKED: %s is agentctl's cron schedule or state. "+
-		"Scheduled jobs need human approval: use `agentctl cron add` (shown for approval), "+
+		"Scheduled jobs need human approval: use `agentctl cron add` or `cron edit` (shown for approval), "+
 		"`agentctl cron pause|rm` to stop one, and `agentctl cron list` to read them.", path)
 }
 

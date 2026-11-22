@@ -11,7 +11,6 @@ package cron
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,6 +37,9 @@ const (
 
 // SchedulesFile is the jobs file name inside the global config dir.
 const SchedulesFile = "schedules.json"
+
+// LaunchdLabel is the LaunchAgent label of the cron ticker.
+const LaunchdLabel = "com.blsmth.agentctl.cron"
 
 // Job is one scheduled run. Optional enum fields are normalized by
 // Normalize; read Worktree and Enabled through UseWorktree and IsEnabled.
@@ -123,66 +125,109 @@ var (
 	backendRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
-// Validate checks a normalized job. It does not check min_interval (see
-// CheckMinInterval) or that the agent exists (the caller discovers agents).
+// Job field names, as in the JSON, used by FieldError.
+const (
+	FieldName             = "name"
+	FieldSchedule         = "schedule"
+	FieldDir              = "dir"
+	FieldAgent            = "agent"
+	FieldPrompt           = "prompt"
+	FieldHarness          = "harness"
+	FieldMode             = "mode"
+	FieldOverlap          = "overlap"
+	FieldCatchup          = "catchup"
+	FieldModel            = "model"
+	FieldEffort           = "effort"
+	FieldBackend          = "backend"
+	FieldAccount          = "account"
+	FieldTimeout          = "timeout"
+	FieldSkipIfUsageAbove = "skip_if_usage_above"
+)
+
+// FieldError is one validation problem, tied to the job field (its JSON
+// name) a form shows it under.
+type FieldError struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
+}
+
+func (e FieldError) Error() string { return e.Message }
+
+// Validate checks a normalized job and returns its first problem. It does
+// not check min_interval (see CheckMinInterval) or that the agent exists
+// (the caller discovers agents).
 func (j Job) Validate() error {
+	if errs := j.FieldErrors(); len(errs) > 0 {
+		return errs[0]
+	}
+	return nil
+}
+
+// FieldErrors checks a normalized job and returns every problem, in field
+// order (the order Validate reports them).
+func (j Job) FieldErrors() []FieldError {
+	var errs []FieldError
+	add := func(field, format string, args ...any) {
+		errs = append(errs, FieldError{Field: field, Message: fmt.Sprintf(format, args...)})
+	}
 	if !jobNameRE.MatchString(j.Name) {
-		return fmt.Errorf("invalid job name %q: use letters, digits, - and _ (max 48, starting with a letter or digit)", j.Name)
+		add(FieldName, "invalid job name %q: use letters, digits, - and _ (max 48, starting with a letter or digit)", j.Name)
 	}
 	if _, err := ParseSchedule(j.Schedule); err != nil {
-		return err
+		add(FieldSchedule, "%s", err.Error())
 	}
-	if j.Dir == "" {
-		return errors.New("dir is required")
-	}
-	if !filepath.IsAbs(j.Dir) {
-		return fmt.Errorf("dir %q must be an absolute path", j.Dir)
+	switch {
+	case j.Dir == "":
+		add(FieldDir, "dir is required")
+	case !filepath.IsAbs(j.Dir):
+		add(FieldDir, "dir %q must be an absolute path", j.Dir)
 	}
 	if !agentname.ValidLaunch(j.Agent) {
-		return fmt.Errorf("invalid agent name %q", j.Agent)
+		add(FieldAgent, "invalid agent name %q", j.Agent)
 	}
 	if (j.Prompt == "") == (j.PromptKey == "") {
-		return errors.New("exactly one of prompt or prompt_key is required")
+		add(FieldPrompt, "exactly one of prompt or prompt_key is required")
 	}
 	if j.Harness != HarnessClaude {
-		return fmt.Errorf("harness %q is not supported yet (only %q)", j.Harness, HarnessClaude)
+		add(FieldHarness, "harness %q is not supported yet (only %q)", j.Harness, HarnessClaude)
 	}
 	if j.Mode != ModeWindow {
-		return fmt.Errorf("mode %q is not supported yet (only %q)", j.Mode, ModeWindow)
+		add(FieldMode, "mode %q is not supported yet (only %q)", j.Mode, ModeWindow)
 	}
 	if !slices.Contains([]string{OverlapSkip, OverlapAllow}, j.Overlap) {
-		return fmt.Errorf("overlap %q: want skip or allow", j.Overlap)
+		add(FieldOverlap, "overlap %q: want skip or allow", j.Overlap)
 	}
 	if !slices.Contains([]string{CatchupLatest, CatchupNone}, j.Catchup) {
-		return fmt.Errorf("catchup %q: want latest or none", j.Catchup)
+		add(FieldCatchup, "catchup %q: want latest or none", j.Catchup)
 	}
 	if j.Model != "" && !modelRE.MatchString(j.Model) {
-		return fmt.Errorf("invalid model %q", j.Model)
+		add(FieldModel, "invalid model %q", j.Model)
 	}
 	if j.Effort != "" {
 		if err := launchopts.ValidateEffort(j.Effort); err != nil {
-			return err
+			add(FieldEffort, "%s", err.Error())
 		}
 	}
 	if j.Backend != "" && !backendRE.MatchString(j.Backend) {
-		return fmt.Errorf("invalid backend %q", j.Backend)
+		add(FieldBackend, "invalid backend %q", j.Backend)
 	}
 	if j.Account != "" && !backendRE.MatchString(j.Account) {
-		return fmt.Errorf("invalid account %q", j.Account)
+		add(FieldAccount, "invalid account %q", j.Account)
 	}
 	if j.Timeout != "" {
 		if d, err := time.ParseDuration(j.Timeout); err != nil || d <= 0 {
-			return fmt.Errorf("invalid timeout %q: want a positive Go duration such as 45m", j.Timeout)
+			add(FieldTimeout, "invalid timeout %q: want a positive Go duration such as 45m", j.Timeout)
 		}
 	}
 	if t := j.SkipIfUsageAbove; t != nil {
 		for _, v := range []float64{t.FiveHour, t.SevenDay} {
 			if v < 0 || v > 100 {
-				return fmt.Errorf("skip_if_usage_above values must be between 0 and 100, got %v", v)
+				add(FieldSkipIfUsageAbove, "skip_if_usage_above values must be between 0 and 100, got %v", v)
+				break
 			}
 		}
 	}
-	return nil
+	return errs
 }
 
 // Jobs is the on-disk shape of schedules.json.

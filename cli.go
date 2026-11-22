@@ -149,7 +149,7 @@ type CLI struct {
 	// Per-machine processes
 	Metrics MetricsCmd `cmd:"" help:"Prometheus metrics (serve: the per-machine metrics process)"`
 	Serve   ServeCmd   `cmd:"" help:"Run the HTTPS server for the mobile web app (install, pair, devices, status)"`
-	Cron    CronCmd    `cmd:"" help:"Scheduled agent runs (add, list, runs, run, pause, resume, rm, install)"`
+	Cron    CronCmd    `cmd:"" help:"Scheduled agent runs (add, edit, list, runs, run, pause, resume, rm, install)"`
 }
 
 // ---------------------------------------------------------------------------
@@ -1478,6 +1478,7 @@ func (c *ServeDevicesRmCmd) Run() error { return cmd.RunServeDevicesRm(os.Stdout
 // (global only); launchd runs the hidden `cron tick` every minute.
 type CronCmd struct {
 	Add       CronAddCmd       `cmd:"" help:"Add a scheduled job"`
+	Edit      CronEditCmd      `cmd:"" help:"Change fields of a scheduled job (only the flags given change; the name cannot)"`
 	List      CronListCmd      `cmd:"" help:"List jobs with next fire, last result and throttles"`
 	Runs      CronRunsCmd      `cmd:"" help:"Show run history (fired, skipped, failed)"`
 	Run       CronRunCmd       `cmd:"" help:"Fire a job now (honors overlap and the usage gate unless --force)"`
@@ -1516,6 +1517,35 @@ func (c *CronAddCmd) Run() error {
 	})
 }
 
+type CronEditCmd struct {
+	Name       string  `arg:"" help:"Job to edit (the name cannot change)"`
+	Schedule   *string `help:"5-field cron expression in local time, or @hourly/@daily/@weekly (re-seeds the schedule: earlier fires are not caught up)"`
+	Agent      *string `short:"a" help:"Agent to run"`
+	Dir        *string `help:"Project directory"`
+	Prompt     *string `short:"p" help:"Prompt text (replaces a prompt key)"`
+	PromptKey  *string `name:"prompt-key" short:"k" help:"Context store key holding the prompt (read at each fire)"`
+	PromptFile *string `name:"prompt-file" type:"path" help:"File holding the prompt (copied into the job now)"`
+	Worktree   bool    `help:"Run each fire in its own worktree" xor:"worktree"`
+	NoWorktree bool    `name:"no-worktree" help:"Run in the project checkout instead of a worktree per fire" xor:"worktree"`
+	Model      *string `short:"m" help:"Model override (empty clears it)"`
+	Effort     *string `help:"Effort override (low, medium, high, xhigh, max, auto; empty clears it)"`
+	Backend    *string `help:"Named backend from config; 'none' forces Anthropic (empty clears it)"`
+	Account    *string `help:"Claude account to run under (empty clears it)"`
+	Timeout    *string `help:"Interrupt a run after this long (e.g. 45m; empty for none)"`
+	Overlap    *string `help:"When the previous run is still active: skip or allow"`
+	Catchup    *string `help:"After missed fires: latest or none"`
+}
+
+func (c *CronEditCmd) Run() error {
+	return cmd.RunCronEdit(os.Stdout, cmd.CronEditOptions{
+		Name: c.Name, Schedule: c.Schedule, Agent: c.Agent, Dir: c.Dir,
+		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile,
+		Worktree: c.Worktree, NoWorktree: c.NoWorktree,
+		Model: c.Model, Effort: c.Effort, Backend: c.Backend, Account: c.Account,
+		Timeout: c.Timeout, Overlap: c.Overlap, Catchup: c.Catchup,
+	})
+}
+
 type CronListCmd struct{}
 
 func (c *CronListCmd) Run() error { return cmd.RunCronList(os.Stdout) }
@@ -1530,9 +1560,10 @@ func (c *CronRunsCmd) Run() error { return cmd.RunCronRuns(os.Stdout, c.Name, c.
 type CronRunCmd struct {
 	Name  string `arg:"" help:"Job to fire"`
 	Force bool   `help:"Ignore overlap, max_concurrent and the usage gate"`
+	JSON  bool   `name:"json" hidden:"" help:"Print the run entry as JSON, whatever the result (for the hub and serve)"`
 }
 
-func (c *CronRunCmd) Run() error { return cmd.RunCronRun(os.Stdout, c.Name, c.Force) }
+func (c *CronRunCmd) Run() error { return cmd.RunCronRun(os.Stdout, c.Name, c.Force, c.JSON) }
 
 type CronPauseCmd struct {
 	Name string `arg:"" help:"Job to pause"`

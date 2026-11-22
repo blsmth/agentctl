@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/cron"
+	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/remoteapproval"
@@ -22,6 +23,8 @@ import (
 // popup, lock, deadline, blocked state and phone approval as a dispatch:
 //
 //   - cron add: always gated (except a --help lookup).
+//   - cron edit <name>: always gated; the popup shows the job as it will be
+//     after the edit and which fields change.
 //   - cron resume <name>: gated; re-enabling a paused job restarts its fires.
 //   - cron run <name> --force: gated; --force skips overlap, max_concurrent
 //     and the usage gate.
@@ -35,6 +38,7 @@ import (
 // Cron actions shown in the popup title (tui.CronPreview.Action).
 const (
 	cronActionAdd    = "add"
+	cronActionEdit   = "edit"
 	cronActionResume = "resume"
 	cronActionForce  = "run --force"
 )
@@ -86,7 +90,7 @@ func (s cronSegment) gated() bool {
 		return false
 	}
 	switch s.sub {
-	case "add", "resume":
+	case "add", "edit", "resume":
 		return true
 	case "run":
 		return s.parse().force
@@ -101,6 +105,8 @@ func (s cronSegment) action() string {
 		return cronActionResume
 	case "run":
 		return cronActionForce
+	case "edit":
+		return cronActionEdit
 	}
 	return cronActionAdd
 }
@@ -138,6 +144,7 @@ type cronArgs struct {
 	positional []cmdToken
 	values     map[string]cmdToken
 	noWorktree bool
+	worktree   bool
 	force      bool
 }
 
@@ -161,6 +168,8 @@ func (s cronSegment) parse() cronArgs {
 			a.force = true
 		case tok == "--no-worktree":
 			a.noWorktree = true
+		case tok == "--worktree":
+			a.worktree = true
 		case isCronValueFlag(tok):
 			name := strings.TrimPrefix(tok, "--")
 			if long, ok := cronShortFlags[tok]; ok {
@@ -217,13 +226,16 @@ func buildCronPreview(command string) (cronPreview, string) {
 		return cronPreview{}, "agentctl cron: nothing to approve" // unreachable from ValidateBash
 	case 1:
 	default:
-		return cronPreview{}, "agentctl cron: run one cron add/resume/run --force per Bash call, " +
+		return cronPreview{}, "agentctl cron: run one cron add/edit/resume/run --force per Bash call, " +
 			"so each can be shown for approval."
 	}
 	seg := segs[0]
 	args := seg.parse()
-	if seg.sub == "add" {
+	switch seg.sub {
+	case "add":
 		return buildCronAddPreview(args, command)
+	case "edit":
+		return buildCronEditPreview(args, command)
 	}
 	return buildStoredCronPreview(seg.sub, seg.action(), args, command)
 }
@@ -315,6 +327,100 @@ func cronAddPrompt(a cronArgs, command string) (prompt, source, deny string) {
 		return a.value("prompt"), "--prompt", ""
 	}
 	return "", "", ""
+}
+
+// cronEditFlags are the value flags `cron edit` can change, checked for
+// shell expansion like cron add's.
+var cronEditFlags = []string{"schedule", "agent", "dir", "prompt", "prompt-key", "prompt-file", "account",
+	"model", "effort", "backend", "timeout", "overlap", "catchup"}
+
+// buildCronEditPreview previews `cron edit`: the stored job with the given
+// flags applied, the fields that change, and the prompt it will run.
+func buildCronEditPreview(a cronArgs, command string) (cronPreview, string) {
+	if len(a.positional) == 0 {
+		return cronPreview{}, "agentctl cron edit: no job name given."
+	}
+	if a.positional[0].expands {
+		return cronPreview{}, cronExpansionReason("edit", "")
+	}
+	for _, f := range cronEditFlags {
+		if a.values[f].expands {
+			return cronPreview{}, cronExpansionReason("edit", f)
+		}
+	}
+	name := a.positional[0].text
+	jobs, err := cronJobsLoader()
+	if err != nil {
+		return cronPreview{}, fmt.Sprintf("agentctl cron edit: cannot read the jobs to show for approval: %v", err)
+	}
+	i := jobs.Find(name)
+	if i < 0 {
+		return cronPreview{}, fmt.Sprintf("agentctl cron edit: no cron job named %q.", name)
+	}
+	old := jobs.Jobs[i]
+	job := old
+	_, has := a.values["prompt"]
+	promptSet := has || a.value("prompt-file") != "" || a.value("prompt-key") != ""
+	var prompt, source string
+	if promptSet {
+		var deny string
+		prompt, source, deny = cronAddPrompt(a, command)
+		if deny != "" {
+			return cronPreview{}, strings.Replace(deny, "cron add", "cron edit", 1)
+		}
+		if a.value("prompt-key") != "" {
+			job.Prompt, job.PromptKey = "", a.value("prompt-key")
+		} else {
+			job.Prompt, job.PromptKey = prompt, ""
+		}
+	}
+	for flag, dst := range map[string]*string{
+		"schedule": &job.Schedule, "agent": &job.Agent, "account": &job.Account, "model": &job.Model,
+		"effort": &job.Effort, "backend": &job.Backend, "timeout": &job.Timeout, "overlap": &job.Overlap,
+		"catchup": &job.Catchup,
+	} {
+		if t, ok := a.values[flag]; ok {
+			*dst = t.text
+		}
+	}
+	if t, ok := a.values["dir"]; ok {
+		job.Dir = displayDir(t.text)
+	}
+	if a.worktree || a.noWorktree {
+		wt := a.worktree && !a.noWorktree
+		job.Worktree = &wt
+	}
+	job.Normalize()
+	schedule, err := cron.Summary(job.Schedule, job.Name, cronNow())
+	if err != nil {
+		return cronPreview{}, fmt.Sprintf("agentctl cron edit: %v. Fix the schedule and retry.", err)
+	}
+	if !promptSet {
+		prompt, source = old.Prompt, "stored prompt (unchanged)"
+		if old.PromptKey != "" {
+			source = fmt.Sprintf("context key %s (unchanged; read at every fire)", old.PromptKey)
+			if content, ok := resolvePromptKey(old.PromptKey, command); ok {
+				prompt = content
+			} else {
+				prompt = fmt.Sprintf("(context key %s is not set; fires will fail until it is)", old.PromptKey)
+			}
+		}
+	}
+	note := "Edit changes nothing."
+	if changed := cronedit.ChangedFields(old, job); len(changed) > 0 {
+		note = "Edit changes: " + strings.Join(changed, ", ") + "."
+	}
+	if strings.TrimSpace(old.Schedule) != strings.TrimSpace(job.Schedule) {
+		note += " The schedule restarts from now; earlier fires are not caught up."
+	}
+	return cronPreview{
+		action:   cronActionEdit,
+		job:      job.Name,
+		agent:    job.Agent,
+		account:  job.Account,
+		schedule: schedule,
+		body:     cronJobBody(job, schedule, note, source, prompt),
+	}, ""
 }
 
 // displayDir is dir as cron add will resolve it, against the hook's working
@@ -490,6 +596,8 @@ func cronPreviewGate(agentName, command string) (approved, decided bool, denyRea
 func cronPopupNotice(agentName, command string, p cronPreview) popupNotice {
 	verb := "schedule"
 	switch p.action {
+	case cronActionEdit:
+		verb = "edit"
 	case cronActionResume:
 		verb = "resume"
 	case cronActionForce:

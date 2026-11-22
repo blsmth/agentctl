@@ -11,6 +11,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/cron"
+	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/launchd"
 	"github.com/blsmth/agentctl/internal/ratelimit"
 )
@@ -134,7 +135,7 @@ func TestCronPauseResumeRemoveRun(t *testing.T) {
 	if err := e.setEnabled(&out, "j", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.run(&out, "j", false); err != nil {
+	if err := e.run(&out, "j", false, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(launches) != 1 || launches[0].Job.Name != "j" || launches[0].Branch != "" {
@@ -149,7 +150,7 @@ func TestCronPauseResumeRemoveRun(t *testing.T) {
 	if err := e.remove(&out, "j"); err == nil {
 		t.Error("removing a missing job: no error")
 	}
-	if err := e.run(&out, "j", false); err == nil {
+	if err := e.run(&out, "j", false, false); err == nil {
 		t.Error("running a missing job: no error")
 	}
 }
@@ -275,8 +276,9 @@ func TestRenderCronList(t *testing.T) {
 	j2 := cron.Job{Name: "deps", Schedule: "@daily", Dir: "/p", Agent: "brandon", Prompt: "p", Enabled: &paused}
 	j2.Normalize()
 	v := cronListView{
-		now: now, jobs: []cron.Job{j1, j2},
-		last:     map[string]cron.Entry{"triage": {Time: now.Add(-25 * time.Hour), Result: cron.ResultFired}},
+		now: now,
+		ov: cronedit.BuildOverview(cronedit.OverviewInput{Now: now, Jobs: []cron.Job{j1, j2},
+			Runs: []cron.Entry{{Time: now.Add(-25 * time.Hour), Job: "triage", Result: cron.ResultFired}}}),
 		accounts: map[string]string{"triage": "ll", "deps": "personal"},
 		usage: map[string]*ratelimit.PushedRateLimits{
 			"ll":       {UpdatedAt: now.Add(-3 * time.Minute).Unix(), FiveHour: &ratelimit.PushedWindow{UsedPercentage: 42}},
@@ -347,5 +349,90 @@ func TestCronHealthLines(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCronEdit(t *testing.T) {
+	ptr := func(s string) *string { return &s }
+	var launches []cron.LaunchRequest
+	e := testCronEnv(t, &launches)
+	var out bytes.Buffer
+	projDir := t.TempDir()
+	if err := e.add(&out, CronAddOptions{Name: "j", Schedule: "30 7 * * 1-5", Agent: "brandon", Dir: projDir, Prompt: "p", Model: "opus"}); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := e.stateDir()
+	earlier := e.now().Add(-time.Hour)
+	if err := cron.Seed(dir, "j", earlier); err != nil {
+		t.Fatal(err)
+	}
+	get := func() cron.Job {
+		t.Helper()
+		path, _ := e.jobsPath()
+		jobs, err := cron.LoadJobs(path)
+		if err != nil || len(jobs.Jobs) != 1 {
+			t.Fatalf("jobs = %+v, %v", jobs, err)
+		}
+		return jobs.Jobs[0]
+	}
+	lastFire := func() time.Time {
+		st, _ := cron.LoadState(dir)
+		return st.Jobs["j"].LastFire
+	}
+
+	out.Reset()
+	if err := e.edit(&out, CronEditOptions{Name: "j", Prompt: ptr("new prompt"), Model: ptr(""), NoWorktree: true}); err != nil {
+		t.Fatal(err)
+	}
+	j := get()
+	if j.Prompt != "new prompt" || j.Model != "" || j.UseWorktree() || j.Schedule != "30 7 * * 1-5" || j.Agent != "brandon" {
+		t.Errorf("job = %+v", j)
+	}
+	if !strings.Contains(out.String(), "Updated j: prompt, model, worktree") || !lastFire().Equal(earlier) {
+		t.Errorf("output %q, last_fire %v (want kept %v)", out.String(), lastFire(), earlier)
+	}
+
+	out.Reset()
+	if err := e.edit(&out, CronEditOptions{Name: "j", Schedule: ptr("0 * * * *"), PromptKey: ptr("spec")}); err != nil {
+		t.Fatal(err)
+	}
+	if j := get(); j.Prompt != "" || j.PromptKey != "spec" || j.Schedule != "0 * * * *" {
+		t.Errorf("job = %+v", j)
+	}
+	if !lastFire().Equal(e.now()) || !strings.Contains(out.String(), "Schedule changed; next fire") {
+		t.Errorf("schedule edit: output %q, last_fire %v", out.String(), lastFire())
+	}
+
+	for name, opts := range map[string]CronEditOptions{
+		"unknown agent":  {Name: "j", Agent: ptr("nobody")},
+		"bad schedule":   {Name: "j", Schedule: ptr("* * * * *")},
+		"two prompts":    {Name: "j", Prompt: ptr("a"), PromptKey: ptr("k")},
+		"missing job":    {Name: "nope", Prompt: ptr("a")},
+		"both worktrees": {Name: "j", Worktree: true, NoWorktree: true},
+	} {
+		if err := e.edit(&out, opts); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+	out.Reset()
+	if err := e.edit(&out, CronEditOptions{Name: "j"}); err != nil || !strings.Contains(out.String(), "No changes to j") {
+		t.Errorf("no-op edit: %v %q", err, out.String())
+	}
+}
+
+func TestCronRunJSON(t *testing.T) {
+	var launches []cron.LaunchRequest
+	e := testCronEnv(t, &launches)
+	var out bytes.Buffer
+	if err := e.add(&out, CronAddOptions{Name: "j", Schedule: "@hourly", Agent: "brandon", Dir: t.TempDir(), Prompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := e.run(&out, "j", false, true); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := cronedit.ParseRunOutput("j", out.Bytes(), nil, nil)
+	if err != nil || entry.Result != cron.ResultFired || entry.WindowID != "@7" {
+		t.Errorf("entry = %+v, %v (output %q)", entry, err, out.String())
 	}
 }

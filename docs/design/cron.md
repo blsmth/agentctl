@@ -152,15 +152,17 @@ agentctl cron install|uninstall    # launchd plist
 agentctl cron tick                 # hidden; what launchd runs
 ```
 
-The phone web app gets a read-only Schedules screen later (next fire, last result, run-now button behind `serve.allow_write`).
+The phone web app and the hub get a Schedules view to list, create, edit, pause/resume, run now, duplicate and delete jobs (#237).
 
 ## Rollout
 
 1. **`cron` core, Claude only, `window` mode:** schedules.json, `robfig/cron/v3`, tick with flock and state, catch-up, overlap, `max_concurrent`, usage gate, launchd install (extract `internal/launchd`), `RunDispatch` options struct, `scheduled_by` in windowstate, the CLI above, `health` lines. Can ship before the Harness refactor.
-2. **Approval popup for agent-run `cron add`** plus `--prompt-file`. Done: `cron add`, `cron resume` and `cron run --force` are gated by the dispatch popup (`PreviewKindCron`, `internal/hooks/cron_preview.go`) and phone approvals (`remoteapproval.KindCron`); plain `cron run` honors every throttle and is not gated. The Bash validator and the `PreToolUse` `hook-pre-tool` deny direct writes to `schedules.json` and `<stateDir>/cron/`. There is no `cron edit`/`enable` subcommand; `resume` is the enable.
+2. **Approval popup for agent-run `cron add`** plus `--prompt-file`. Done: `cron add`, `cron resume` and `cron run --force` are gated by the dispatch popup (`PreviewKindCron`, `internal/hooks/cron_preview.go`) and phone approvals (`remoteapproval.KindCron`); plain `cron run` honors every throttle and is not gated. The Bash validator and the `PreToolUse` `hook-pre-tool` deny direct writes to `schedules.json` and `<stateDir>/cron/`. `cron edit` (added with the Schedules UI, step 6) is gated the same way; `resume` is the enable.
 3. **`headless` mode** for Claude, with run output and push body.
 4. **Harness plumbing** once multi-harness phase 1 lands: route launches through `Harness`, add `Headless`/`HeadlessCommand`, accept `harness: codex|pi`.
-5. Hub ⏲ marker done: cron windows show `⏲ <job>` in the hub recap column and on phone fleet rows, sit under a `scheduled (N)` / "Scheduled jobs (N)" bucket, the phone window view has a "Scheduled run" line, and `agentctl status` shows MODE `cron` (`scheduled_by`/`scheduled_at` on the window JSON). Later: phone Schedules screen, Linux timer install, event triggers (a GitHub webhook via `serve`) if wanted.
+5. Hub ⏲ marker done: cron windows show `⏲ <job>` in the hub recap column and on phone fleet rows, sit under a `scheduled (N)` / "Scheduled jobs (N)" bucket, the phone window view has a "Scheduled run" line, and `agentctl status` shows MODE `cron` (`scheduled_by`/`scheduled_at` on the window JSON). 
+6. **Schedules UI** ([#237](https://github.com/blsmth/agentctl/issues/237)). PR 1 done: the shared editing core `internal/cronedit` (per-field validation, a jobs-file flock around every read-modify-write, fire state kept on edit and re-seeded only when the schedule changes or a job resumes, name immutable, preview with words and next 3 fires, the `SimpleSchedule`/`ParseSimple` picker round trip, list status), `agentctl cron edit` behind the cron approval popup, `cron add/pause/resume/rm` on the shared path, and the `/v1/schedules` serve API (see [configuration.md](../configuration.md#cron)). Next: the phone Schedules screen and the hub Schedules section, both on that API and core.
+7. Later: Linux timer install, event triggers (a GitHub webhook via `serve`) if wanted.
 
 ## Tests worth writing
 

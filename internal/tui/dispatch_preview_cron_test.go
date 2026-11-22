@@ -22,6 +22,7 @@ func TestDispatchPreviewModel_CronKind_Title(t *testing.T) {
 		{"", "orch wants to schedule go-engineer"},
 		{"resume", "orch wants to resume cron job nightly"},
 		{"run --force", "orch wants to force-run cron job nightly"},
+		{"edit", "orch wants to edit cron job nightly"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.action, func(t *testing.T) {

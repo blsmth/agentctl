@@ -82,6 +82,8 @@ type auditEntry struct {
 	// Agent and Project name what a dispatch launches.
 	Agent   string `json:"agent,omitempty"`
 	Project string `json:"project,omitempty"`
+	// Schedule names the cron job a /v1/schedules write acts on.
+	Schedule string `json:"schedule,omitempty"`
 	// Backend, Model and Effort are the requested launch choices (not secret).
 	Backend string `json:"backend,omitempty"`
 	Model   string `json:"model,omitempty"`
@@ -173,6 +175,9 @@ func writeActionFor(path string) (action, session, window string, ok bool) {
 	}
 	if strings.HasPrefix(path, "/v1/approvals/") {
 		return "approval", "", "", true
+	}
+	if action, ok := scheduleActionFor(path); ok {
+		return action, "", "", true
 	}
 	// /v1/sessions/{s}/windows/{w}/{action}
 	p := strings.Split(strings.TrimPrefix(path, "/"), "/")
@@ -294,7 +299,11 @@ func writeRoute[T any](s *Server, action string, h func(r *http.Request, in T, a
 		}
 		if out.status >= 400 {
 			a.Result = out.code
-			writeError(w, out.status, out.code, out.msg)
+			if out.body != nil {
+				writeJSON(w, out.status, out.body)
+			} else {
+				writeError(w, out.status, out.code, out.msg)
+			}
 		} else {
 			a.Result = "ok"
 			writeJSON(w, out.status, out.body)
