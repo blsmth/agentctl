@@ -2061,6 +2061,15 @@ export function tildePath(dir) {
   return (dir ?? "").replace(/^\/(?:Users|home)\/[^/]+/, "~");
 }
 
+// The worktree phrases of the cron approval popup (cron_preview.go).
+const WORKTREE_ON = "a worktree per fire";
+const WORKTREE_OFF = "runs in the project checkout";
+
+/** worktreeFact is the card's Worktree line. */
+export function worktreeFact(job) {
+  return job.worktree === false ? `off (${WORKTREE_OFF})` : `on (${WORKTREE_ON})`;
+}
+
 /**
  * scheduleReview are the lines of the review sheet, which must say what runs,
  * where, when, unattended, and the next fires. p is the preview response; for
@@ -2068,11 +2077,11 @@ export function tildePath(dir) {
  */
 export function scheduleReview(p, f) {
   const job = p.job;
-  const where = `${tildePath(job.dir)}${job.worktree === false ? " (the project directory itself)" : " (new worktree each run)"}`;
+  const where = `${tildePath(job.dir)} (${job.worktree === false ? WORKTREE_OFF : WORKTREE_ON})`;
   const when = p.words || p.schedule;
   const tz = p.time_zone ? ` ${p.time_zone}` : "";
   const lines = [];
-  lines.push(`Runs ${job.agent} in ${where}, ${when}${tz}, unattended, permission mode auto, until paused.`);
+  lines.push(`Runs ${job.agent} in ${where}, ${when}${tz}, unattended${p.permission_mode ? `, permission mode ${p.permission_mode}` : ""}, until paused.`);
   if (p.next_fires_text?.length) lines.push(`Next: ${p.next_fires_text.join(", ")}`);
   if (f?.original && p.changed?.length) lines.push(`Changing: ${p.changed.join(", ")}`);
   const adv = f ? advancedSummary(f) : "";

@@ -120,7 +120,7 @@ func New(opts Options) (*Harness, error) {
 		Pusher: pusher{}, NtfyBase: "http://127.0.0.1:1",
 		BusOptions: fleetwatch.Options{Debounce: 10 * time.Millisecond, Rediscover: opts.Rediscover},
 		PingEvery:  5 * time.Second,
-		Schedules:  scheds.store(), RunSchedule: scheds.run,
+		Schedules:  scheds.store(), RunSchedule: scheds.run, AgentPermissionMode: func(string) string { return "" },
 	})
 	if err != nil {
 		return nil, fmt.Errorf("building server: %w", err)

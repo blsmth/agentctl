@@ -16,7 +16,7 @@ import {
   applyGone, shellRows, shellDirName, shellApiPath,
   formatBytes, formatUptime, hostLevels, hostConnection, pushSample, formatSkew,
   advancedSummary, fieldErrors, formClientErrors, formatAgo, formatNextFire, newScheduleForm, previewBody, runResultLabel, scheduleBanners, scheduleBody,
-  scheduleException, scheduleGlyph, scheduleHash, scheduleLastText, scheduleReview, scheduleWhen,
+  scheduleException, scheduleGlyph, scheduleHash, scheduleLastText, scheduleReview, scheduleWhen, worktreeFact,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
 } from "./logic.js";
 
@@ -828,9 +828,12 @@ console.log("ok: shell request");
   assert.equal(advancedSummary(newScheduleForm()), "");
 
   const lines = scheduleReview({ job: { agent: "brandon", dir: "/Users/b/code/x", worktree: true, prompt: "Do it" }, words: "weekdays 07:30",
-    time_zone: "EST", next_fires_text: ["Mon 23 Nov 07:31"] }, newScheduleForm());
-  assert.match(lines[0], /^Runs brandon in ~\/code\/x \(new worktree each run\), weekdays 07:30 EST, unattended, permission mode auto, until paused\.$/);
+    time_zone: "EST", permission_mode: "bypassPermissions", next_fires_text: ["Mon 23 Nov 07:31"] }, newScheduleForm());
+  assert.match(lines[0], /^Runs brandon in ~\/code\/x \(a worktree per fire\), weekdays 07:30 EST, unattended, permission mode bypassPermissions, until paused\.$/);
   assert.equal(lines[1], "Next: Mon 23 Nov 07:31");
   assert.match(lines.at(-1), /Prompt:\nDo it/);
+  assert.equal(worktreeFact({ worktree: false }), "off (runs in the project checkout)");
+  assert.equal(worktreeFact({}), "on (a worktree per fire)");
+  assert.doesNotMatch(scheduleReview({ job: { agent: "a", dir: "/d", worktree: false, prompt: "p" }, schedule: "x" }, newScheduleForm())[0], /permission mode/);
   console.log("ok: schedules logic");
 }

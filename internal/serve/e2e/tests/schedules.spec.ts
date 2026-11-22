@@ -80,7 +80,7 @@ test("create a schedule with the picker, review it, and save", async ({ page, co
 
   await expect(sheet(page)).toContainText("unattended");
   await expect(sheet(page)).toContainText("permission mode auto");
-  await expect(sheet(page)).toContainText("new worktree each run");
+  await expect(sheet(page)).toContainText("a worktree per fire");
   await expect(sheet(page)).toContainText("Next:");
   await expect(sheet(page)).toContainText("Summarise open PRs.");
   await sheet(page).getByRole("button", { name: "Schedule it" }).tap();
@@ -201,4 +201,18 @@ test("the fleet's scheduled bucket links to the screen", async ({ page, control 
   await page.goto("/");
   await page.getByRole("link", { name: "Schedules ›" }).tap();
   await expect(page.locator("header.bar h1")).toHaveText("Schedules");
+});
+
+test("typing in the prompt does not spend the write budget on previews", async ({ page, control }) => {
+  await control.seedSchedules();
+  await page.goto("/#/schedules/new");
+  await expect(page.locator(".sched-preview")).toContainText("next");
+  let previews = 0;
+  page.on("request", (r) => {
+    if (r.method() === "POST" && r.url().endsWith("/v1/schedules/preview")) previews++;
+  });
+  await page.getByLabel("Prompt", { exact: true }).pressSequentially("Triage every new issue and label it", { delay: 25 });
+  await page.getByLabel("Name", { exact: true }).pressSequentially("triage", { delay: 25 });
+  expect(previews).toBeLessThanOrEqual(2);
+  await expect(page.getByRole("button", { name: "Review & schedule" })).toBeEnabled();
 });

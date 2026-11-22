@@ -14,6 +14,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
+	"github.com/blsmth/agentctl/internal/dispatchplan"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 )
@@ -267,6 +268,13 @@ func auditJob(a *auditEntry, job cron.Job) {
 	}
 }
 
+// previewOut is the preview plus the permission mode a fire would launch
+// with, so the review sheet states what the job will really run under.
+type previewOut struct {
+	cronedit.Preview
+	PermissionMode string `json:"permission_mode,omitempty"`
+}
+
 func (s *Server) handleSchedulePreview(_ *http.Request, in schedulePreviewIn, a *auditEntry) outcome {
 	auditJob(a, in.Job)
 	p := s.scheduleStore().Preview(in.Job, in.Original, in.Simple)
@@ -274,7 +282,8 @@ func (s *Server) handleSchedulePreview(_ *http.Request, in schedulePreviewIn, a 
 		p.Errors = append(p.Errors, extra...)
 		p.Valid = false
 	}
-	return success(p)
+	// A cron fire is a worker launch: the agent's configured mode, else auto.
+	return success(previewOut{Preview: p, PermissionMode: dispatchplan.PermissionMode(true, s.agentPermission(p.Job.Agent), "")})
 }
 
 // checkSchedule runs the core validation plus serve's checks, so a save

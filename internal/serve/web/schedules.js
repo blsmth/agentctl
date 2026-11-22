@@ -6,13 +6,15 @@ import { launchPicker } from "./dispatch.js";
 import {
   advancedSummary, defaultAgentFor, dirName, fieldErrors, formClientErrors, formatAgo, formatClock, formatNextFire, newScheduleForm,
   previewBody, runResultLabel, scheduleBanners, scheduleBody, scheduleException, scheduleGlyph, scheduleHash, scheduleLastText,
-  scheduleReview, scheduleScheduleText, scheduleWhen, tildePath, windowHash,
+  scheduleReview, scheduleScheduleText, scheduleWhen, tildePath, windowHash, worktreeFact,
 } from "./logic.js";
 import { attachSwipe } from "./swipe.js";
 import { clear, confirmSheet, h, toast } from "./ui.js";
 
 const POLL_MS = 20000;
 const SLOW_SAVE_MS = 4000;
+// Preview is a write route (rate limited, audited): wait for a typing pause.
+const PREVIEW_DEBOUNCE_MS = 1000;
 const enc = encodeURIComponent;
 
 export function mountSchedules(root, ctx, route) {
@@ -225,7 +227,7 @@ function mountCard(root, ctx, name, write) {
       ["Next", st.enabled ? (fires.length ? fires.join(", ") : scheduleWhen(st)) : "paused"],
       ["Project", tildePath(st.job.dir)],
       ["Agent", st.job.agent],
-      ["Worktree", st.job.worktree === false ? "no" : "new each run"],
+      ["Worktree", worktreeFact(st.job)],
     ];
     if (st.invalid) facts.push(["Problem", st.invalid]);
     body.append(
@@ -306,6 +308,8 @@ function mountForm(root, ctx, { job, copy }) {
       })
     : null;
 
+  // The launch pins the form holds; a reload keeps them so the picker shows what Save sends.
+  const launchPreset = () => ({ backend: f.backend, model: f.model, effort: f.effort });
   const errors = () => ({ ...serverErrors, ...formClientErrors(f) });
   const fieldError = (field) => (showAll || touched.has(field) ? errors()[field] : "");
   const ready = () => !saving && preview?.valid && Object.keys(formClientErrors(f)).length === 0;
@@ -314,7 +318,7 @@ function mountForm(root, ctx, { job, copy }) {
     summary.textContent = advancedSummary(f);
     submit.disabled = true;
     clearTimeout(timer);
-    timer = setTimeout(runPreview, 300);
+    timer = setTimeout(runPreview, PREVIEW_DEBOUNCE_MS);
     renderErrors();
   }
 
@@ -353,7 +357,16 @@ function mountForm(root, ctx, { job, copy }) {
     renderErrors();
   };
 
+  // Leaving a text field previews at once (a pause already would after 1s).
+  function previewNow() {
+    clearTimeout(timer);
+    runPreview();
+  }
+
   function bind(el, key, field) {
+    el.addEventListener("blur", () => {
+      if (!gone && timer) previewNow();
+    });
     el.addEventListener("input", () => {
       f[key] = el.value;
       touched.add(field ?? key);
@@ -451,14 +464,14 @@ function mountForm(root, ctx, { job, copy }) {
       touched.add("dir");
       const def = defaultAgentFor(projects, f.dir, [...agent.options].map((o) => o.value), userAgent);
       if (def) { agent.value = def; f.agent = def; }
-      picker?.load(f.agent, f.dir);
+      picker?.load(f.agent, f.dir, launchPreset());
       changed();
     });
     agent.addEventListener("change", () => {
       userAgent = true;
       f.agent = agent.value;
       touched.add("agent");
-      picker?.load(f.agent, f.dir);
+      picker?.load(f.agent, f.dir, launchPreset());
       changed();
     });
     renderSchedule();
@@ -496,7 +509,7 @@ function mountForm(root, ctx, { job, copy }) {
       }
       if (gone) return;
       build(projects, agents);
-      picker?.load(f.agent, f.dir, { backend: f.backend, model: f.model, effort: f.effort });
+      picker?.load(f.agent, f.dir, launchPreset());
       runPreview();
     } catch (e) {
       clear(form);

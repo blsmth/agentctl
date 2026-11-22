@@ -364,3 +364,33 @@ func TestScheduleSlowRoutesExtendWriteDeadline(t *testing.T) {
 		})
 	}
 }
+
+// The review sheet states the permission mode a fire really launches with:
+// the agent's configured mode, else the worker default.
+func TestSchedulePreviewPermissionMode(t *testing.T) {
+	se := newScheduleEnv(t, true)
+	modeOf := func() string {
+		w := se.post("/v1/schedules/preview", se.jobBody("triage"))
+		if w.Code != http.StatusOK {
+			t.Fatalf("preview: %d %s", w.Code, w.Body)
+		}
+		return decode[map[string]any](t, w)["permission_mode"].(string)
+	}
+	se.Server.agentPermission = func(string) string { return "" }
+	if got := modeOf(); got != "auto" {
+		t.Errorf("default mode = %q, want auto", got)
+	}
+	se.Server.agentPermission = func(agent string) string {
+		if agent == "go-engineer" {
+			return "bypassPermissions"
+		}
+		return ""
+	}
+	if got := modeOf(); got != "bypassPermissions" {
+		t.Errorf("configured mode = %q", got)
+	}
+	se.Server.agentPermission = func(string) string { return "bogus" }
+	if got := modeOf(); got != "auto" {
+		t.Errorf("invalid configured mode = %q, want auto", got)
+	}
+}
