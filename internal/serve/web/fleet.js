@@ -153,7 +153,7 @@ function windowRow(entry, toggle, expanded, swipe) {
   return wrap;
 }
 
-/** shellRow is a compact, muted "$ shell" row: no state, never counted. Tapping opens its terminal; swiping closes it after a confirm. */
+/** shellRow is a compact, muted "$ shell" row: no state, never counted. Tapping opens its terminal; swiping closes it at once, with no confirm. */
 function shellRow(sh, swipe) {
   const link = h("a", { class: "win shell-row", href: terminalHash(sh.session, sh.window_id) }, h("span", { class: "shell-label" }, sh.label));
   const node = h("div", { class: "node" }, link);
@@ -368,7 +368,6 @@ export function mountFleet(root, ctx) {
   const swipe = {
     can: (win) => canSwipeClose(win, win.session, ctx.features),
     closeShell: async (sh) => {
-      if (!(await confirmSheet({ title: "Close shell?", lines: [sh.label], confirmLabel: "Close", danger: true }))) return false;
       try {
         await send({ method: "POST", path: shellApiPath(sh.session, sh.window_id), body: {} });
       } catch (err) {

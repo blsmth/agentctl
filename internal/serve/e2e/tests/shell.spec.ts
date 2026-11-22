@@ -34,7 +34,7 @@ test("Shell in the + sheet opens a shell and routes to its terminal", async ({ p
 // the agents (fleet.js shellRow).
 const shellRow = (page: Page) => page.locator(".fleet a.win.shell-row");
 
-test("a shell shows as a muted row, is not counted, opens its terminal and closes after a confirm", async ({ page, control, guard }) => {
+test("a shell shows as a muted row, is not counted, opens its terminal and closes at once with no confirm", async ({ page, control, guard }) => {
   guard.allow(/WebSocket|terminal|socket/i);
   const groups = await control.fleet();
   const shop = groups.find((g) => g.session === "agentctl-shop")!;
@@ -60,7 +60,7 @@ test("a shell shows as a muted row, is not counted, opens its terminal and close
   await expect(wrap).toHaveClass(/\bswipe\b/);
   await drag(link, { dx: -260, stepMs: 25 });
   await wrap.getByRole("button", { name: /^Close / }).tap();
-  await page.locator(".overlay .sheet").getByRole("button", { name: "Close" }).tap();
+  await expect(page.locator(".overlay .sheet")).toHaveCount(0);
   const actions = await control.waitForActions((a) => a.some((x) => x.kind === "close"));
   expect(actions).toEqual([{ kind: "close", session: "agentctl-shop", window: "@802" }]);
   await expect(shellRow(page)).toHaveCount(2);
