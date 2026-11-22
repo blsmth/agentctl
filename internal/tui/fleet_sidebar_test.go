@@ -286,7 +286,7 @@ func TestRowRight(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cols := fitRightCols(200, ex, rowCtxWarn(tt.row, fleetDisplay{}), ex.rowModel(tt.row) != "")
+			cols := fitRightCols(200, ex, rowCtxWarn(tt.row, fleetDisplay{}), ex.rowModel(tt.row) != "", 0)
 			if got := ansi.Strip(rowRight(tt.row, cols, ex, fleetDisplay{})); got != tt.want {
 				t.Errorf("rowRight = %q, want %q", got, tt.want)
 			}
@@ -298,7 +298,7 @@ func TestRowRight_BlockedUsesBlockedStyle(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
 	r := fleet.Row{StateSince: sidebarNow.Add(-2 * time.Minute), AgentState: state.AgentState{State: "blocked"}}
-	cols := fitRightCols(200, fleetExceptions{}, false, false)
+	cols := fitRightCols(200, fleetExceptions{}, false, false, 0)
 	if got, want := rowRight(r, cols, fleetExceptions{}, fleetDisplay{}), fleetBlockedStyle.Render("2m"); !strings.HasSuffix(got, want) {
 		t.Errorf("blocked age = %q, want %q", got, want)
 	}

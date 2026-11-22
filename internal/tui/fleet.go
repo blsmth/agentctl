@@ -338,6 +338,12 @@ type fleetLine struct {
 	// dimmed marks a fleetLineRow the attention filter keeps only as the
 	// ancestor of a matching row; it renders muted.
 	dimmed bool
+	// hasKids marks a fleetLineRow with children in the tree (it draws a
+	// ▾/▸ marker and `z` collapses it); collapsed marks it collapsed, kids
+	// then tallying the rows it hides (see fleet_collapse.go).
+	hasKids   bool
+	collapsed bool
+	kids      fleetSubtreeCounts
 	// closed is the ledger record of a fleetLineClosed row.
 	closed closedlog.Record
 	// sched is the job of a fleetLineSchedule row; schedNew marks the
@@ -534,6 +540,12 @@ type FleetModel struct {
 	// persisted).
 	folded    map[string]bool
 	focusMode bool
+	// collapsed is the set of collapsed parent rows by collapseKey (see
+	// fleet_collapse.go), persisted like folded. hiddenUnder maps each row a
+	// collapse hides (collapseKey) to the window ID of the visible collapsed
+	// ancestor hiding it; rebuilt by rebuildLines.
+	collapsed   map[string]bool
+	hiddenUnder map[string]string
 	// sortRecent orders rows inside each group by latest activity (`o`).
 	sortRecent bool
 	// showShells shows plain shell rows ("$ shell"); hidden by default
@@ -1257,7 +1269,7 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 		return *m, nil
 
 	case "z":
-		return *m, m.toggleFoldAt(m.splitPane.Cursor())
+		return *m, m.toggleFoldKey(m.splitPane.Cursor())
 
 	case "Z":
 		return *m, m.toggleFocusMode()
@@ -1688,6 +1700,17 @@ func (m *FleetModel) resolveSelection() {
 				return
 			}
 		}
+		// The row is hidden under a collapsed parent: select the parent.
+		if parent, ok := m.hiddenUnder[collapseKey(m.selSession, m.selWindowID)]; ok && !m.selIsHeader {
+			for i, l := range m.lines {
+				if l.kind == fleetLineRow && l.row.Session == m.selSession && l.row.WindowID == parent {
+					m.splitPane.SetCursor(i)
+					m.syncSelectionFromCursor()
+					m.ensureCursorVisible()
+					return
+				}
+			}
+		}
 		// The row still exists but is hidden (folded or filtered out): stay
 		// on its group's header.
 		if !m.selIsHeader && m.rowExists(m.selSession, m.selWindowID) {
@@ -1885,6 +1908,7 @@ func (m *FleetModel) rebuildLines() {
 		m.splitPane.SetListContent(m.splitPane.listContent, len(m.lines))
 	}()
 	var lines []fleetLine
+	m.hiddenUnder = nil
 	prevBody := false
 	for i, g := range m.groups {
 		all := m.shownRows(g.Rows)
@@ -1910,20 +1934,41 @@ func (m *FleetModel) rebuildLines() {
 			continue
 		}
 		first := true
+		start := len(lines)
 		tree := treeRows(rows)
-		nameCol := 0
-		for _, t := range tree {
-			if t.Label == "" {
-				nameCol = max(nameCol, lipgloss.Width(t.Prefix)+lipgloss.Width(fleet.BaseName(t.Row)))
-			}
-		}
-		for _, t := range tree {
+		for j := 0; j < len(tree); j++ {
+			t := tree[j]
 			if t.Label != "" {
 				lines = append(lines, fleetLine{kind: fleetLineSubheader, group: g, label: t.Label})
 				continue
 			}
-			lines = append(lines, fleetLine{kind: fleetLineRow, row: t.Row, groupHead: first, treePrefix: t.Prefix, nameCol: nameCol, dimmed: context[t.Row.WindowID]})
+			l := fleetLine{kind: fleetLineRow, row: t.Row, groupHead: first, treePrefix: t.Prefix, dimmed: context[t.Row.WindowID]}
+			end := subtreeEnd(tree, j)
+			l.hasKids = end > j+1
+			if l.hasKids && m.isCollapsed(g.Session, t.Row.WindowID) {
+				l.collapsed = true
+				l.kids = tallySubtree(tree[j+1 : end])
+				for _, h := range tree[j+1 : end] {
+					if m.hiddenUnder == nil {
+						m.hiddenUnder = make(map[string]string)
+					}
+					m.hiddenUnder[collapseKey(g.Session, h.Row.WindowID)] = t.Row.WindowID
+				}
+				j = end - 1
+			}
+			lines = append(lines, l)
 			first = false
+		}
+		// The name column fits every drawn row: tree prefix, collapse marker
+		// and name (the role, on a role row).
+		nameCol := 0
+		for _, l := range lines[start:] {
+			if l.kind == fleetLineRow {
+				nameCol = max(nameCol, rowNameColW(l))
+			}
+		}
+		for k := start; k < len(lines); k++ {
+			lines[k].nameCol = nameCol
 		}
 	}
 	if closed := m.closedLines(); len(closed) > 0 {
@@ -2309,7 +2354,7 @@ func (m FleetModel) renderLine(i int, cw int) string {
 		}
 		return label
 	default: // fleetLineRow
-		out := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, selected, m.hover.region(i), cw)
+		out := m.renderRowLine(l, selected, m.hover.region(i), cw)
 		if l.dimmed && !selected && m.hover.region(i) == fleetHoverNone {
 			out = dimContextRow(l.row, out)
 		}
@@ -2738,6 +2783,7 @@ const (
 // work; the age goes first because the glyph already says the state and the
 // hover card the time.
 type fleetRightCols struct {
+	agent        bool // a role row's agent name drawn (left of the model)
 	modelW       int  // model column width; 0 = not drawn
 	ctx          bool // context column drawn (blank on rows below the warn threshold)
 	pr, age      bool
@@ -2765,8 +2811,11 @@ func joinedWidth(ws ...int) int {
 // only on the rows that draw them (ownModel, ownCtx), and a blank leading
 // column is trimmed at render time, so its width goes back to the recap.
 // Order as the row narrows: age, then the model, then the PR; the context
-// warning is never dropped.
-func fitRightCols(available int, ex fleetExceptions, ownCtx, ownModel bool) fleetRightCols {
+// warning is never dropped. A role row's agent name (ownAgentW columns, 0 =
+// none) is leftmost and goes before all of them: it is drawn only when it
+// fits beside everything else the row draws and fleetMinTitleBesideAgent
+// columns of title, and like the model it counts on its own row only.
+func fitRightCols(available int, ex fleetExceptions, ownCtx, ownModel bool, ownAgentW int) fleetRightCols {
 	fits := func(w int) bool { return available-w-1 >= fleetMinRecapWidth }
 	ctxAll, ctxRow := 0, 0
 	if ex.ctx || ownCtx {
@@ -2781,6 +2830,17 @@ func fitRightCols(available int, ex fleetExceptions, ownCtx, ownModel bool) flee
 		c.modelW = ex.modelW
 	}
 	c.age = c.pr && fits(joinedWidth(ex.modelW, ctxAll, fleetPRSlotW, fleetAgeSlotW))
+	if ownAgentW > 0 {
+		prW, ageW := 0, 0
+		if c.pr {
+			prW = fleetPRSlotW
+		}
+		if c.age {
+			ageW = fleetAgeSlotW
+		}
+		w := joinedWidth(ownAgentW, c.modelW, ctxAll, prW, ageW)
+		c.agent = available-w-1 >= fleetMinTitleBesideAgent
+	}
 	return c
 }
 
@@ -2816,13 +2876,16 @@ func rowAge(r fleet.Row) string {
 const fleetNoAge = "–"
 
 // rowRight renders the right-aligned status columns before the close button:
-// the model exception (ex.rowModel), the context warning in its threshold
+// a role row's dim agent name (fitRightCols' agent), the model exception (ex.rowModel), the context warning in its threshold
 // colour, the PR badge ("#60", in the done style on a done row) and the age
 // (rowAge), each right-aligned in its slot one space apart. Blank leading
 // columns are trimmed so the recap may use them; inner blanks stay so the
 // columns line up down the list.
 func rowRight(r fleet.Row, c fleetRightCols, ex fleetExceptions, d fleetDisplay) string {
 	var parts []string
+	if c.agent && r.ShortRole != "" {
+		parts = append(parts, fleetDimStyle.Render(fleet.BaseName(r)))
+	}
 	if c.modelW > 0 {
 		var model string
 		if mn := ex.rowModel(r); mn != "" {
@@ -2895,11 +2958,18 @@ func (m FleetModel) renderTreeRow(r fleet.Row, treePrefix string, nameCol int, s
 // is drawn only on the selected and the hovered row; every other row keeps
 // its one-cell slot blank so alignment and hit regions never change.
 func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol int, selected bool, hover fleetHoverRegion, cw int) string {
-	out, _ := m.treeRowLayout(r, treePrefix, nameCol, selected, hover, cw)
+	return m.renderRowLine(fleetLine{kind: fleetLineRow, row: r, treePrefix: treePrefix, nameCol: nameCol}, selected, hover, cw)
+}
+
+// renderRowLine renders the agent row line l (see renderTreeRowHover), with
+// its collapse marker and summary, and its detail lines when selected.
+func (m FleetModel) renderRowLine(l fleetLine, selected bool, hover fleetHoverRegion, cw int) string {
+	lay := m.rowLayout(l, selected, hover, cw)
+	out := lay.line
 	if !selected {
 		return out
 	}
-	for _, d := range rowDetailStyled(r, treePrefix, cw, m.display, m.viewerShows(r)) {
+	for _, d := range rowDetailStyled(l.row, l.treePrefix, cw, m.display, m.viewerShows(l.row), lay.nameShown) {
 		out += "\n" + fleetFitLine(d, true, cw)
 	}
 	return out
@@ -2912,37 +2982,106 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 // confirmation, a column too narrow). While the row is being renamed the
 // editor is drawn there and the span covers the editor.
 func (m FleetModel) treeRowLayout(r fleet.Row, treePrefix string, nameCol int, selected bool, hover fleetHoverRegion, cw int) (string, [2]int) {
-	var titleSpan [2]int
+	lay := m.rowLayout(fleetLine{kind: fleetLineRow, row: r, treePrefix: treePrefix, nameCol: nameCol}, selected, hover, cw)
+	return lay.line, lay.title
+}
+
+// fleetRowLayout is a row line as rowLayout draws it, with its hit spans.
+type fleetRowLayout struct {
+	line string
+	// title is the [start, end) columns of the title text (see
+	// treeRowLayout); marker is the collapse marker's, zero when none.
+	title, marker [2]int
+	// nameShown reports whether the row shows the agent's whole base name:
+	// in the name column, or for a role row on the right (rowRight). The
+	// detail chips add it when not.
+	nameShown bool
+}
+
+// rowLabel is what a row's name column shows: the role of a sub-agent row
+// (Row.ShortRole), whose agent name moves to the right-hand columns, else
+// the base agent name.
+func rowLabel(r fleet.Row) string {
+	if r.ShortRole != "" {
+		return r.ShortRole
+	}
+	return fleet.BaseName(r)
+}
+
+// rowNameColW is the uncapped name-column width row line l needs: its tree
+// prefix, its collapse marker and its label.
+func rowNameColW(l fleetLine) int {
+	w := lipgloss.Width(l.treePrefix) + lipgloss.Width(rowLabel(l.row))
+	if l.hasKids {
+		w += fleetCollapseMarkerW
+	}
+	return w
+}
+
+// rowLayout lays out the row line l: cursor, glyph, tree prefix (dim), the
+// collapse marker of a parent row, the label (rowLabel), the recap title (a
+// collapsed parent's subtree summary after it), then the right-aligned
+// columns and the close button.
+func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion, cw int) fleetRowLayout {
+	var lay fleetRowLayout
+	r, treePrefix, nameCol := l.row, l.treePrefix, l.nameCol
 	glyph, style := rowGlyph(r)
 	weight := rowStyleWeight(r, fleetNow())
 	cursor := fleetRowCursor(r, selected)
 	glyphStr := style.Render(glyph)
 
-	hovered := hover == fleetHoverBody || hover == fleetHoverClose
+	hovered := hover == fleetHoverBody || hover == fleetHoverClose || hover == fleetHoverCollapse
 	closeW := 1 + lipgloss.Width(fleetCloseLabel)
 	inner := cw - fleetSidebarRightGutter
 	nameBudget := fleetRowNameCap(cw)
 	col := min(nameCol, nameBudget)
 	treePrefix = fleetKeptPrefix(treePrefix, cw)
-	nameBudget -= lipgloss.Width(treePrefix)
-	name := truncateToWidth(fleet.BaseName(r), nameBudget)
+	markerW := 0
+	if l.hasKids {
+		markerW = fleetCollapseMarkerW
+	}
+	nameBudget -= lipgloss.Width(treePrefix) + markerW
+	label := rowLabel(r)
+	name := truncateToWidth(label, nameBudget)
 
 	ctxWarn := rowCtxWarn(r, m.display)
 	// A context warning is never dropped: on a sidebar too narrow for it and
 	// the minimum recap, the name gives way instead (contentWidth keeps the
 	// hub wider than this, so it only bites below 40 columns).
 	if ctxWarn && !m.confirmingRow(r) {
-		used := lipgloss.Width(cursor) + 2 + max(col, lipgloss.Width(treePrefix)+lipgloss.Width(name)) + 2 + closeW
+		used := lipgloss.Width(cursor) + 2 + max(col, lipgloss.Width(treePrefix)+markerW+lipgloss.Width(name)) + 2 + closeW
 		if short := fleetMinRecapWidth + fleetCtxSlotW + 1 - (inner - used); short > 0 {
 			nameBudget = max(nameBudget-short, 1)
-			name = truncateToWidth(fleet.BaseName(r), nameBudget)
-			col = min(col, lipgloss.Width(treePrefix)+nameBudget)
+			name = truncateToWidth(label, nameBudget)
+			col = min(col, lipgloss.Width(treePrefix)+markerW+nameBudget)
 		}
 	}
 
-	padW := max(col-lipgloss.Width(treePrefix)-lipgloss.Width(name), 0)
-	prefix := cursor + glyphStr + " " + fleetDimStyle.Render(treePrefix) + renderAgentNameHover(name, weight, hovered) + strings.Repeat(" ", padW) + "  "
+	head := cursor + glyphStr + " " + fleetDimStyle.Render(treePrefix)
+	var marker string
+	if l.hasKids {
+		start := lipgloss.Width(head)
+		lay.marker = [2]int{start, start + 1}
+		marker = collapseMarker(l.collapsed, hover == fleetHoverCollapse) + " "
+	}
+	padW := max(col-lipgloss.Width(treePrefix)-markerW-lipgloss.Width(name), 0)
+	prefix := head + marker + renderAgentNameHover(name, weight, hovered) + strings.Repeat(" ", padW) + "  "
 	available := inner - lipgloss.Width(prefix) - closeW
+
+	// A role row's agent name sits on the right, left of the model column.
+	var agent string
+	if r.ShortRole != "" {
+		agent = fleet.BaseName(r)
+	}
+	var cols fleetRightCols
+	if !r.Shell {
+		cols = fitRightCols(available, m.except, ctxWarn, m.except.rowModel(r) != "", lipgloss.Width(agent))
+	}
+	if r.ShortRole != "" {
+		lay.nameShown = cols.agent
+	} else {
+		lay.nameShown = name == label
+	}
 
 	closeStyle := fleetDimStyle
 	showClose := selected || hovered
@@ -2959,7 +3098,6 @@ func (m FleetModel) treeRowLayout(r fleet.Row, treePrefix string, nameCol int, s
 		// The columns sit at fixed positions, but the recap may run into a
 		// slot this row leaves blank: only what is drawn is reserved.
 		if !r.Shell {
-			cols := fitRightCols(available, m.except, ctxWarn, m.except.rowModel(r) != "")
 			right = rowRight(r, cols, m.except, m.display)
 		}
 		if rw := lipgloss.Width(right); rw > 0 {
@@ -2973,29 +3111,38 @@ func (m FleetModel) treeRowLayout(r fleet.Row, treePrefix string, nameCol int, s
 				rs = fleetActivityHoverStyle
 			}
 		}
+		// A collapsed parent's summary goes first: it takes the tail of the
+		// title rather than ever being dropped, so a blocked child stays
+		// visible.
+		var summary string
+		if l.collapsed && !m.renamingRow(r) {
+			if summary = subtreeSummary(l.kids, max(available, 0)); summary != "" {
+				available -= lipgloss.Width(summary) + 1
+			}
+		}
 		var tag string
 		if t := scheduledTag(r); t != "" && available > 0 {
 			tag = truncateToWidth(t, min(available, fleetScheduledTagMaxW))
 			available -= lipgloss.Width(tag) + 1
 			tag = fleetDimStyle.Render(tag) + " "
 		}
-		// The role tag of a sub-agent row goes before the title, and is
-		// dropped before the title would shrink below fleetMinTitleAfterRole.
-		if r.ShortRole != "" && r.ShortTitle != "" && available >= lipgloss.Width(r.ShortRole)+2+fleetMinTitleAfterRole {
-			tag += fleetDimStyle.Render(r.ShortRole) + "  "
-			available -= lipgloss.Width(r.ShortRole) + 2
-		}
 		start := lipgloss.Width(prefix) + lipgloss.Width(tag)
 		if m.renamingRow(r) {
 			editor := m.renameView(max(available, 0))
 			text = tag + editor
-			titleSpan = [2]int{start, start + max(available, lipgloss.Width(editor))}
+			lay.title = [2]int{start, start + max(available, lipgloss.Width(editor))}
 		} else {
 			title := fleet.TruncateWords(recap.Short(), max(available, 0))
 			text = tag + renderRecapTitle(title, rs)
 			if w := lipgloss.Width(title); w > 0 {
-				titleSpan = [2]int{start, start + w}
+				lay.title = [2]int{start, start + w}
 			}
+		}
+		if summary != "" {
+			if lipgloss.Width(text) > 0 {
+				text += " "
+			}
+			text += summary
 		}
 	}
 
@@ -3013,12 +3160,13 @@ func (m FleetModel) treeRowLayout(r fleet.Row, treePrefix string, nameCol int, s
 	case hovered:
 		hl = &fleetHoverStyle
 	}
-	return fleetFitLineStyled(line, hl, cw), titleSpan
+	lay.line = fleetFitLineStyled(line, hl, cw)
+	return lay
 }
 
-// fleetMinTitleAfterRole is the title width a row must keep for its role tag
-// to be drawn.
-const fleetMinTitleAfterRole = 12
+// fleetMinTitleBesideAgent is the title width a role row must keep for its
+// agent name to be drawn on the right.
+const fleetMinTitleBesideAgent = 16
 
 // leadingIssue matches a title's leading issue number ("#21 Crotch…").
 var leadingIssue = regexp.MustCompile(`^#\d+\b`)
@@ -3142,6 +3290,9 @@ func fleetRowNameCap(cw int) int {
 // rowNameFits reports whether the row's name column shows its whole base
 // name (see renderTreeRowHover) for a kept tree prefix of width prefixW.
 func rowNameFits(r fleet.Row, prefixW, cw int) bool {
+	if r.ShortRole != "" {
+		return false // the name column shows the role, not the name
+	}
 	return lipgloss.Width(fleet.BaseName(r)) <= fleetRowNameCap(cw)-prefixW
 }
 
@@ -3199,12 +3350,18 @@ type fleetDetailLine struct {
 // this. prefixW is the width of the row's kept tree prefix
 // (fleetKeptPrefix).
 func rowDetail(r fleet.Row, prefixW, cw int, d fleetDisplay, viewed bool) []fleetDetailLine {
+	return rowDetailFor(r, prefixW, cw, d, viewed, rowNameFits(r, prefixW, cw))
+}
+
+// rowDetailFor is rowDetail when the caller knows from the row's layout
+// whether it shows the agent's whole name (fleetRowLayout.nameShown).
+func rowDetailFor(r fleet.Row, prefixW, cw int, d fleetDisplay, viewed, nameShown bool) []fleetDetailLine {
 	w := cw - fleetSidebarRightGutter - fleetDetailIndent - prefixW
 	if w < fleetMinRecapWidth {
 		return nil
 	}
 	out := rowDetailText(r, w, viewed)
-	if chips := rowChips(r, rowNameFits(r, prefixW, cw), d); len(chips) > 0 {
+	if chips := rowChips(r, nameShown, d); len(chips) > 0 {
 		styled := renderChips(chips, w)
 		out = append(out, fleetDetailLine{text: ansi.Strip(styled), styled: styled})
 	}
@@ -3263,10 +3420,10 @@ func activityMarker(r fleet.Row, text string) (marker, shown string) {
 
 // rowDetailStyled renders rowDetail's lines with the bar, indent and the
 // tree continuation for the row's (already clamped) prefix.
-func rowDetailStyled(r fleet.Row, treePrefix string, cw int, disp fleetDisplay, viewed bool) []string {
+func rowDetailStyled(r fleet.Row, treePrefix string, cw int, disp fleetDisplay, viewed, nameShown bool) []string {
 	indent := fleetProjectBar(r.Project) + strings.Repeat(" ", fleetDetailIndent-1) + fleetDimStyle.Render(fleetContinuation(treePrefix))
 	var out []string
-	for _, d := range rowDetail(r, lipgloss.Width(treePrefix), cw, disp, viewed) {
+	for _, d := range rowDetailFor(r, lipgloss.Width(treePrefix), cw, disp, viewed, nameShown) {
 		if d.styled != "" {
 			out = append(out, indent+d.styled)
 			continue
@@ -3309,7 +3466,8 @@ func (m FleetModel) lineHeight(i, cw int) int {
 		return 0
 	}
 	if l := m.lines[i]; l.kind == fleetLineRow && i == m.splitPane.Cursor() {
-		return 1 + len(rowDetail(l.row, lipgloss.Width(fleetKeptPrefix(l.treePrefix, cw)), cw, m.display, m.viewerShows(l.row)))
+		shown := m.rowLayout(l, true, fleetHoverNone, cw).nameShown
+		return 1 + len(rowDetailFor(l.row, lipgloss.Width(fleetKeptPrefix(l.treePrefix, cw)), cw, m.display, m.viewerShows(l.row), shown))
 	}
 	return 1
 }
