@@ -359,3 +359,31 @@ func TestCollapseViewState(t *testing.T) {
 		}
 	})
 }
+
+func TestRightClickTogglesCollapse(t *testing.T) {
+	m := collapseModel(t)
+	p := lineIndex(t, m, "R:p")
+	y := lineY(m, p)
+	closeX := m.listColWidth() - fleetSidebarRightGutter - 1
+
+	if _, act := m.buttonDecision(5, y, tea.MouseRight); act != fleetClickCollapse {
+		t.Fatalf("right click on a parent = %v, want collapse", act)
+	}
+	if _, act := m.buttonDecision(closeX, y, tea.MouseRight); act != fleetClickMenu {
+		t.Errorf("right click on the parent's close button = %v, want menu", act)
+	}
+	next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseRight, X: 5, Y: y})
+	m = next.(FleetModel)
+	if !m.isCollapsed("s1", "@1") || m.menuOpen {
+		t.Fatalf("collapsed=%v menu=%v", m.isCollapsed("s1", "@1"), m.menuOpen)
+	}
+	next, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseRight, X: 5, Y: lineY(m, lineIndex(t, m, "R:p"))})
+	if next.(FleetModel).isCollapsed("s1", "@1") {
+		t.Error("second right click should expand")
+	}
+	// A childless row still opens the menu.
+	x := lineIndex(t, m, "R:x")
+	if _, act := m.buttonDecision(5, lineY(m, x), tea.MouseRight); act != fleetClickMenu {
+		t.Errorf("right click on a childless row = %v, want menu", act)
+	}
+}

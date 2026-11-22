@@ -142,7 +142,7 @@ func (m FleetModel) footerBody(cw int) string {
 	hints := fleetFooterHints
 	switch {
 	case m.newSessionOpen():
-		hints = fleetNewSessionHints
+		hints = m.newSessionHints()
 	case m.renameOpen():
 		hints = fleetRenameHints
 	case m.newArmed():
@@ -193,6 +193,8 @@ func fleetHelpItems() []fleetHelpItem {
 		{fleetNewSessionKey, "new session", fleetNewSessionKey},
 		{"x", "close", "x"},
 		{fleetRenameKey, "rename", fleetRenameKey},
+		{"dbl-click", "rename title", ""},
+		{"r-click", "fold parent / menu", ""},
 		{fleetSweepKey, "sweep project", fleetSweepKey},
 		{"J", "home", "J"},
 		{"p", "open PR", "p"},

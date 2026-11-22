@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -128,9 +129,29 @@ func (f *renameFixture) typeText(t *testing.T, s string) {
 	}
 }
 
-func (f *renameFixture) rightClick(t *testing.T, x, y int) {
+func (f *renameFixture) leftClick(t *testing.T, x, y int) tea.Cmd {
 	t.Helper()
-	f.send(t, tea.MouseClickMsg{Button: tea.MouseRight, X: x, Y: y})
+	return f.send(t, tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+}
+
+// doubleClick sends two left clicks 100ms apart on a fake clock.
+func (f *renameFixture) doubleClick(t *testing.T, x, y int) {
+	t.Helper()
+	f.withClock(t, func(advance func(time.Duration)) {
+		f.leftClick(t, x, y)
+		advance(100 * time.Millisecond)
+		f.leftClick(t, x, y)
+	})
+}
+
+// withClock runs fn with fleetNow replaced by a clock fn advances.
+func (f *renameFixture) withClock(t *testing.T, fn func(advance func(time.Duration))) {
+	t.Helper()
+	orig := fleetNow
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	fleetNow = func() time.Time { return now }
+	defer func() { fleetNow = orig }()
+	fn(func(d time.Duration) { now = now.Add(d) })
 }
 
 func (f *renameFixture) rowLine(t *testing.T, id string) string {
@@ -165,7 +186,7 @@ func TestRowTitleSpanMatchesRender(t *testing.T) {
 	}
 }
 
-func TestRightClickRenameDecision(t *testing.T) {
+func TestRightClickNeverRenames(t *testing.T) {
 	f := newRenameFixture(t, 120)
 	a := f.lineOf(t, "@1")
 	sh := f.lineOf(t, "@9")
@@ -176,8 +197,8 @@ func TestRightClickRenameDecision(t *testing.T) {
 		button tea.MouseButton
 		want   fleetClickAction
 	}{
-		{"title start", sp[0], f.yOf(a), tea.MouseRight, fleetClickRename},
-		{"title end", sp[1] - 1, f.yOf(a), tea.MouseRight, fleetClickRename},
+		{"title start", sp[0], f.yOf(a), tea.MouseRight, fleetClickMenu},
+		{"title end", sp[1] - 1, f.yOf(a), tea.MouseRight, fleetClickMenu},
 		{"agent name", 5, f.yOf(a), tea.MouseRight, fleetClickMenu},
 		{"after title", sp[1] + 1, f.yOf(a), tea.MouseRight, fleetClickMenu},
 		{"header", 5, f.yOf(0), tea.MouseRight, fleetClickMenu},
@@ -209,9 +230,9 @@ func TestRenameEditorSaves(t *testing.T) {
 	f := newRenameFixture(t, 120)
 	a := f.lineOf(t, "@1")
 	sp := f.span(a)
-	f.rightClick(t, sp[0]+1, f.yOf(a))
+	f.doubleClick(t, sp[0]+1, f.yOf(a))
 	if !f.m.renameOpen() || f.m.menuOpen {
-		t.Fatalf("right click on title: rename=%v menu=%v", f.m.renameOpen(), f.m.menuOpen)
+		t.Fatalf("double click on title: rename=%v menu=%v", f.m.renameOpen(), f.m.menuOpen)
 	}
 	if got := f.m.rename.input.Value(); got != renameTitled {
 		t.Fatalf("prefill = %q, want %q", got, renameTitled)
@@ -328,7 +349,7 @@ func TestRenameUntitledAndClear(t *testing.T) {
 	f := newRenameFixture(t, 120)
 	b := f.lineOf(t, "@2")
 	sp := f.span(b)
-	f.rightClick(t, sp[0], f.yOf(b))
+	f.doubleClick(t, sp[0], f.yOf(b))
 	if !f.m.renameOpen() || f.m.rename.input.Value() != "" {
 		t.Fatalf("untitled row: rename=%v prefill=%q", f.m.renameOpen(), f.m.rename.input.Value())
 	}
@@ -466,5 +487,84 @@ func TestRenameDefersHotReload(t *testing.T) {
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Error("want tea.Quit")
+	}
+}
+
+func TestDoubleClickRenameWindow(t *testing.T) {
+	f := newRenameFixture(t, 120)
+	a, b := f.lineOf(t, "@1"), f.lineOf(t, "@2")
+	spA, spB := f.span(a), f.span(b)
+	closeX := f.m.listColWidth() - fleetSidebarRightGutter - 1
+
+	t.Run("single click only selects", func(t *testing.T) {
+		g := newRenameFixture(t, 120)
+		g.leftClick(t, spA[0], g.yOf(a))
+		if g.m.renameOpen() || g.m.splitPane.Cursor() != a {
+			t.Errorf("rename=%v cursor=%d", g.m.renameOpen(), g.m.splitPane.Cursor())
+		}
+	})
+	t.Run("two clicks too far apart", func(t *testing.T) {
+		g := newRenameFixture(t, 120)
+		g.withClock(t, func(advance func(time.Duration)) {
+			g.leftClick(t, spA[0], g.yOf(a))
+			advance(fleetDoubleClickWindow + time.Millisecond)
+			g.leftClick(t, spA[0], g.yOf(a))
+		})
+		if g.m.renameOpen() {
+			t.Error("slow second click opened the editor")
+		}
+	})
+	t.Run("different rows", func(t *testing.T) {
+		g := newRenameFixture(t, 120)
+		g.withClock(t, func(advance func(time.Duration)) {
+			g.leftClick(t, spA[0], g.yOf(a))
+			advance(50 * time.Millisecond)
+			g.leftClick(t, spB[0], g.yOf(b))
+		})
+		if g.m.renameOpen() {
+			t.Error("clicks on two rows opened the editor")
+		}
+	})
+	t.Run("third click does not reopen", func(t *testing.T) {
+		g := newRenameFixture(t, 120)
+		g.doubleClick(t, spA[0], g.yOf(a))
+		if !g.m.renameOpen() || g.m.lastClick != nil {
+			t.Fatalf("rename=%v lastClick=%v", g.m.renameOpen(), g.m.lastClick)
+		}
+	})
+	t.Run("close button", func(t *testing.T) {
+		g := newRenameFixture(t, 120)
+		g.doubleClick(t, closeX, g.yOf(a))
+		if g.m.renameOpen() {
+			t.Error("double click on the close button opened the editor")
+		}
+	})
+	t.Run("off the title", func(t *testing.T) {
+		g := newRenameFixture(t, 120)
+		g.doubleClick(t, 5, g.yOf(a))
+		if g.m.renameOpen() {
+			t.Error("double click off the title opened the editor")
+		}
+	})
+}
+
+func TestRenameBlinks(t *testing.T) {
+	f := newRenameFixture(t, 120)
+	cmd := f.m.openRename(f.lineOf(t, "@1"))
+	if cmd == nil {
+		t.Fatal("openRename returned no blink command")
+	}
+	if !f.m.rename.input.Styles().Cursor.Blink {
+		t.Error("cursor blink disabled")
+	}
+	// The blink command's message reaches the input and keeps the loop going.
+	next := f.send(t, cmd())
+	if next == nil {
+		t.Error("blink message was not routed to the editor")
+	}
+	// Once closed, blink messages go nowhere: no tick loop.
+	f.m.cancelRename()
+	if got := f.send(t, cmd()); got != nil {
+		t.Error("blink continued after the editor closed")
 	}
 }

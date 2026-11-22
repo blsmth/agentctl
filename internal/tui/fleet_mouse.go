@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -22,7 +23,7 @@ const (
 	fleetClickNewAgent                         // armed selector's "agent": launch an agent
 	fleetClickClose                            // row's "✕" button: arm / confirm close
 	fleetClickMenu                             // right click: open the context menu
-	fleetClickRename                           // right click on a row's title: open the rename editor
+	fleetClickRename                           // double click on a row's title: open the rename editor
 	fleetClickFold                             // header's project name: fold / unfold the group
 	fleetClickSweep                            // header's "sweep" button: preview a sweep of the group
 	fleetClickCollapse                         // a parent row's ▾/▸ marker: collapse / expand its sub-agents
@@ -126,9 +127,9 @@ func (m FleetModel) clickDecision(x, y int) (idx int, action fleetClickAction) {
 	return m.buttonDecision(x, y, tea.MouseLeft)
 }
 
-// buttonDecision resolves a click with the given button. Right click on a
-// renamable row's title text opens the rename editor, anywhere else on a row
-// or header the context menu; left click on a header's "+ new" or a
+// buttonDecision resolves a click with the given button. Right click on a row
+// that has sub-agents (anywhere but its ✕) toggles its collapse, anywhere else
+// on a row or header it opens the context menu; left click on a header's "+ new" or a
 // row's "✕" triggers that button, anything else on a line just selects it.
 func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, action fleetClickAction) {
 	idx, sub, ok := m.lineAtSub(x, y)
@@ -138,8 +139,8 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 	l := m.lines[idx]
 	switch button {
 	case tea.MouseRight:
-		if l.kind == fleetLineRow && sub == 0 && m.rowCanRenameAt(idx) && m.onRowTitle(idx, x) {
-			return idx, fleetClickRename
+		if l.kind == fleetLineRow && m.lineCollapsible(idx) && !(sub == 0 && m.onCloseButton(x)) {
+			return idx, fleetClickCollapse
 		}
 		if l.kind == fleetLineRow || l.kind == fleetLineHeader || l.kind == fleetLineClosed || l.kind == fleetLineSchedule {
 			return idx, fleetClickMenu
@@ -203,7 +204,7 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m.clickMenu(msg.X)
 	}
 	if m.newSessionOpen() {
-		if msg.Y == m.footerMessageY() {
+		if y := m.footerMessageY(); msg.Y >= y && msg.Y < y+m.newSessionLines() {
 			return m, nil // a click on the prompt itself keeps it open
 		}
 		m.cancelNewSession() // any other click dismisses the prompt
@@ -230,6 +231,11 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m, m.toggleSort()
 	}
 	idx, action := m.buttonDecision(msg.X, msg.Y, msg.Button)
+	if msg.Button == tea.MouseLeft {
+		if m.doubleClickTitle(msg.X, msg.Y, idx, action) {
+			action = fleetClickRename
+		}
+	}
 	if action != fleetClickNewShell && action != fleetClickNewAgent {
 		m.cancelNew() // any other click dismisses the selector
 	}
@@ -280,9 +286,8 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		m.selectLine(idx)
 		return m, m.toggleCollapseAt(idx)
 	case fleetClickRename:
-		m.openRename(idx)
-		show := m.maybeShowCmd()
-		return m, show
+		blink := m.openRename(idx)
+		return m, tea.Batch(blink, m.maybeShowCmd())
 	case fleetClickMenu:
 		m.openMenu(idx)
 		show := m.maybeShowCmd()
@@ -290,6 +295,46 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	}
 	m.closeMenu()
 	return m, nil
+}
+
+// fleetDoubleClickWindow is the longest gap between two left clicks on a row's
+// title that counts as a double click.
+const fleetDoubleClickWindow = 400 * time.Millisecond
+
+// fleetLastClick is the previous left click on a renamable row's title, keyed
+// by window rather than line index so a reorder between clicks does not matter.
+type fleetLastClick struct {
+	session, windowID string
+	at                time.Time
+}
+
+// doubleClickTitle records a left click and reports whether it completes a
+// double click on a renamable row's title. Only a plain select on the title
+// text counts, so the ✕, the collapse marker and headers never start or finish
+// one. A completed double click consumes the record.
+func (m *FleetModel) doubleClickTitle(x, y, idx int, action fleetClickAction) bool {
+	prev := m.lastClick
+	m.lastClick = nil
+	if action != fleetClickSelect {
+		return false
+	}
+	_, sub, ok := m.lineAtSub(x, y)
+	if !ok || !m.rowCanRenameAt(idx) {
+		return false
+	}
+	r := m.lines[idx].row
+	now := fleetNow()
+	// The first click selects the row, which can move it up the list by the
+	// previous selection's detail lines, so the second click may land on one of
+	// the row's own detail lines instead of the title.
+	if prev != nil && prev.session == r.Session && prev.windowID == r.WindowID && now.Sub(prev.at) <= fleetDoubleClickWindow {
+		return true
+	}
+	if sub != 0 || !m.onRowTitle(idx, x) {
+		return false
+	}
+	m.lastClick = &fleetLastClick{session: r.Session, windowID: r.WindowID, at: now}
+	return false
 }
 
 // clickMenu handles a left click on the footer's context-menu line.

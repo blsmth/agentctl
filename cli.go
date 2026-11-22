@@ -565,9 +565,22 @@ func (c *HubViewCmd) Run() error { cmd.RunHubView(); return nil }
 // launches an agent there in the background, printing the window ID.
 type HubNewSessionCmd struct {
 	Dir string `arg:"" help:"Absolute project directory"`
+	// Template launches a prompt template instead of a bare agent. Agent,
+	// Model override its values; Prompt is appended as extra instructions.
+	Template string `help:"Launch this prompt template"`
+	Agent    string `help:"Agent for the template launch"`
+	Model    string `help:"Model for the template launch"`
+	Prompt   string `help:"Extra instructions appended to the template prompt"`
 }
 
-func (c *HubNewSessionCmd) Run() error { return cmd.RunHubNewSession(c.Dir) }
+func (c *HubNewSessionCmd) Run() error {
+	if c.Template == "" {
+		return cmd.RunHubNewSession(c.Dir)
+	}
+	return cmd.RunHubNewSessionTemplate(c.Dir, cmd.HubTemplateLaunch{
+		Template: c.Template, Agent: c.Agent, Model: c.Model, Prompt: c.Prompt,
+	})
+}
 
 // HubResumeCmd is the hub's Resume for a closed row: run with cwd = Dir, it
 // starts the project's tmux session if needed and relaunches the agent
