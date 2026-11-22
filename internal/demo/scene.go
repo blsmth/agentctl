@@ -21,6 +21,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/theme"
 )
 
@@ -36,7 +37,10 @@ type Scene struct {
 	Config      Config    `yaml:"config"`
 	Projects    []Project `yaml:"projects"`
 	Windows     []Window  `yaml:"windows"`
-	Steps       []Step    `yaml:"steps"`
+	// Schedules are `agentctl cron` jobs written to schedules.json, with
+	// their run history, for the hub's Schedules section.
+	Schedules []Schedule `yaml:"schedules"`
+	Steps     []Step     `yaml:"steps"`
 	// Phone, when set, drives the phone web app over the same fleet.
 	Phone *Phone `yaml:"phone"`
 	// Output is "png" (default: one file per screenshot step) or "gif" (the
@@ -65,7 +69,34 @@ type Config struct {
 	// Serve fakes a running agentctl serve (a stub listening on the control
 	// socket in the demo's own state dir), so the hub shows "📱 serve".
 	Serve bool `yaml:"serve"`
+	// Cron sets cron.enabled (default false). Nothing installs the ticker
+	// and claude is stubbed, so no job fires on its own either way; true
+	// only drops the hub's "cron is off" warning.
+	Cron bool `yaml:"cron"`
 }
+
+// Schedule is one cron job of the scene.
+type Schedule struct {
+	Name     string `yaml:"name"`
+	Project  string `yaml:"project"`
+	Agent    string `yaml:"agent"`
+	Schedule string `yaml:"schedule"`
+	Prompt   string `yaml:"prompt"`
+	Paused   bool   `yaml:"paused"`
+	Worktree *bool  `yaml:"worktree"` // default true
+	Timeout  string `yaml:"timeout"`
+	Runs     []Run  `yaml:"runs"` // oldest first
+}
+
+// Run is one runs.ndjson entry of a schedule.
+type Run struct {
+	Ago    string `yaml:"ago"`    // how long before now, e.g. 3h
+	Result string `yaml:"result"` // fired, failed:<reason>, skipped:<kind>, timeout
+	Note   string `yaml:"note"`
+}
+
+// validRunResults are the run results a scene may use (failed:<reason> too).
+var validRunResults = []string{"fired", "skipped:overlap", "skipped:usage", "skipped:catchup", "skipped:concurrency", "timeout"}
 
 // Project is one fake git repository and its agentctl session.
 type Project struct {
@@ -116,6 +147,9 @@ type Window struct {
 	// command when Enter is pressed in it, which opens agentctl's dispatch
 	// approval popup the way Claude Code's PreToolUse hook would.
 	Approval string `yaml:"approval"`
+	// ScheduledBy names the scene schedule that launched the window (it
+	// then shows ⏲ <job> and counts as that job's running window).
+	ScheduledBy string `yaml:"scheduled_by"`
 	// Select makes this window the session's current window.
 	Select bool `yaml:"select"`
 }
@@ -528,7 +562,62 @@ func (s *Scene) Validate() error {
 			errs = append(errs, err)
 		}
 	}
+	errs = append(errs, s.validateSchedules(projects)...)
 	return errors.Join(errs...)
+}
+
+// validateSchedules checks the schedules and the windows' scheduled_by.
+func (s *Scene) validateSchedules(projects map[string]bool) []error {
+	var errs []error
+	add := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
+	names := map[string]bool{}
+	for i, sc := range s.Schedules {
+		f := fmt.Sprintf("schedules[%d]", i)
+		if sc.Name != "" {
+			f = fmt.Sprintf("schedules[%d] (%s)", i, sc.Name)
+		}
+		job := sc.Job("/demo/" + sc.Project)
+		for _, e := range job.FieldErrors() {
+			add("%s.%s: %s", f, e.Field, e.Message)
+		}
+		if names[sc.Name] {
+			add("%s.name: duplicate schedule %q", f, sc.Name)
+		}
+		names[sc.Name] = true
+		if !projects[sc.Project] {
+			add("%s.project: unknown project %q", f, sc.Project)
+		}
+		if !nameRE.MatchString(sc.Agent) {
+			add("%s.agent: %q must be lowercase letters, digits and dashes", f, sc.Agent)
+		}
+		for j, r := range sc.Runs {
+			rf := fmt.Sprintf("%s.runs[%d]", f, j)
+			if d, err := time.ParseDuration(r.Ago); err != nil || d < 0 {
+				add("%s.ago: %q is not a duration like 3h", rf, r.Ago)
+			}
+			if !slices.Contains(validRunResults, r.Result) && !strings.HasPrefix(r.Result, "failed:") {
+				add("%s.result: %q is not fired, failed:<reason>, skipped:<kind> or timeout", rf, r.Result)
+			}
+		}
+	}
+	for i, w := range s.Windows {
+		if w.ScheduledBy != "" && !names[w.ScheduledBy] {
+			add("windows[%d] (%s).scheduled_by: no schedule named %q", i, w.Key, w.ScheduledBy)
+		}
+	}
+	return errs
+}
+
+// Job is the cron job of a schedule whose project lives in dir.
+func (sc Schedule) Job(dir string) cron.Job {
+	en := !sc.Paused
+	wt := sc.Worktree == nil || *sc.Worktree
+	j := cron.Job{
+		Name: sc.Name, Schedule: sc.Schedule, Dir: dir, Agent: sc.Agent, Prompt: sc.Prompt,
+		Timeout: sc.Timeout, Worktree: &wt, Enabled: &en,
+	}
+	j.Normalize()
+	return j
 }
 
 func (st Step) validate(keys map[string]int) error {
@@ -613,6 +702,11 @@ func (s *Scene) Agents() []string {
 	for _, w := range s.Windows {
 		if !slices.Contains(out, w.Agent) {
 			out = append(out, w.Agent)
+		}
+	}
+	for _, sc := range s.Schedules {
+		if !slices.Contains(out, sc.Agent) {
+			out = append(out, sc.Agent)
 		}
 	}
 	slices.Sort(out)

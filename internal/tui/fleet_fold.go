@@ -337,6 +337,8 @@ type hubViewState struct {
 	Shells bool `json:"shells,omitempty"`
 	// Closed shows the Closed section (hidden by default).
 	Closed bool `json:"closed,omitempty"`
+	// Schedules shows the Schedules section (hidden by default).
+	Schedules bool `json:"schedules,omitempty"`
 	// ActivityPane is the open activity pane's tmux pane ID ("" = closed),
 	// so a hot reload reattaches to it; ActivityWidth is the width the user
 	// dragged it to (0 = the default).
@@ -379,7 +381,7 @@ func (m FleetModel) viewState() hubViewState {
 	}
 	slices.Sort(folded)
 	return hubViewState{
-		Folded: folded, Focus: m.focusMode, Filter: m.filter.key(), Sort: sortKey(m.sortRecent), Shells: m.showShells, Closed: m.showClosed,
+		Folded: folded, Focus: m.focusMode, Filter: m.filter.key(), Sort: sortKey(m.sortRecent), Shells: m.showShells, Closed: m.showClosed, Schedules: m.showSchedules,
 		ActivityPane: m.activity.pane, ActivityWidth: m.activity.userWidth,
 	}
 }
@@ -399,6 +401,11 @@ func (m *FleetModel) applyViewState(s hubViewState) {
 	m.showClosed = s.Closed
 	if !m.showClosed {
 		m.closed = nil
+	}
+	m.showSchedules = s.Schedules
+	if !m.showSchedules {
+		m.sched = fleetSchedState{}
+		m.schedForm, m.schedConfirm = nil, nil
 	}
 	// The recorded pane is confirmed or dropped by the first pane poll.
 	m.activity = fleetActivity{pane: s.ActivityPane, userWidth: max(s.ActivityWidth, 0)}

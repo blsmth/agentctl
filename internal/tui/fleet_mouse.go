@@ -140,7 +140,7 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 		if l.kind == fleetLineRow && sub == 0 && m.rowCanRenameAt(idx) && m.onRowTitle(idx, x) {
 			return idx, fleetClickRename
 		}
-		if l.kind == fleetLineRow || l.kind == fleetLineHeader || l.kind == fleetLineClosed {
+		if l.kind == fleetLineRow || l.kind == fleetLineHeader || l.kind == fleetLineClosed || l.kind == fleetLineSchedule {
 			return idx, fleetClickMenu
 		}
 		return idx, fleetClickIgnore
@@ -174,7 +174,7 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 			return idx, fleetClickClose
 		}
 		return idx, fleetClickSelect
-	case fleetLinePlaceholder, fleetLineClosed:
+	case fleetLinePlaceholder, fleetLineClosed, fleetLineSchedule:
 		return idx, fleetClickSelect
 	}
 	return idx, fleetClickIgnore

@@ -216,11 +216,17 @@ func (s Store) schedulerInstalled() bool {
 	return s.SchedulerInstalled()
 }
 
-// Detail is the job card: the status, the last DetailRuns runs (newest
-// first) and, for a prompt_key job, the key's current text (read-only).
+// Detail is the job card: the status, the next PreviewFires fires, the last
+// DetailRuns runs (newest first) and, for a prompt_key job, the key's
+// current text (read-only).
 type Detail struct {
 	Status
-	Runs []cron.Entry `json:"runs"`
+	// NextFires are the next PreviewFires fires (jitter included) and
+	// NextFiresText the same in cron.NextFireFormat, local time; empty for a
+	// paused or invalid job.
+	NextFires     []time.Time  `json:"next_fires"`
+	NextFiresText []string     `json:"next_fires_text"`
+	Runs          []cron.Entry `json:"runs"`
 	// PromptResolved is the prompt_key's text now; PromptKeyError says why
 	// it could not be read (fires fail until it can).
 	PromptResolved string `json:"prompt_resolved,omitempty"`
@@ -237,9 +243,18 @@ func (s Store) Detail(name string) (Detail, error) {
 	if dir, err := s.StateDir(); err == nil {
 		runs, _ = cron.ReadRuns(dir, name)
 	}
+	now := s.now()
 	d := Detail{
-		Status: buildStatus(job, s.now(), runs, s.windows([]cron.Job{job})),
-		Runs:   newest(runs, DetailRuns),
+		Status:        buildStatus(job, now, runs, s.windows([]cron.Job{job})),
+		Runs:          newest(runs, DetailRuns),
+		NextFires:     []time.Time{},
+		NextFiresText: []string{},
+	}
+	if job.IsEnabled() {
+		d.NextFires = NextFires(job.Schedule, job.Name, now, PreviewFires)
+		for _, t := range d.NextFires {
+			d.NextFiresText = append(d.NextFiresText, t.In(time.Local).Format(cron.NextFireFormat))
+		}
 	}
 	if job.PromptKey != "" {
 		d.PromptResolved, err = s.PromptKeyText(job.PromptKey)

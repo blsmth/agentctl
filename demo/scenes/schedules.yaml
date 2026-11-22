@@ -1,0 +1,100 @@
+# The hub's Schedules section (T): a failed, a running, an upcoming and a
+# paused cron job, the failed job's card beside the list, then its edit form.
+# `just demo-shot schedules` writes schedules.png (section and card) and
+# schedules-form.png. cron: true only drops the "cron is off" warning:
+# nothing installs the ticker and claude is stubbed, so nothing fires.
+description: Hub Schedules section, job card and edit form
+config:
+  cron: true
+terminal:
+  cols: 200
+  rows: 50
+  hub_left: 62
+projects:
+  - name: acme-api
+    commits: [Initial commit, Add orders endpoint, Add webhook delivery]
+  - name: billing-svc
+    commits: [Initial commit, Invoice line items]
+schedules:
+  - name: nightly-deps
+    project: billing-svc
+    agent: go-engineer
+    schedule: "30 2 * * *"
+    timeout: 45m
+    prompt: |
+      Bump the Go module dependencies to their latest minor versions, run
+      the tests, and open a PR if anything changed. Skip major versions.
+    runs:
+      - {ago: 48h, result: fired}
+      - {ago: 24h, result: fired}
+      - {ago: 4h, result: "failed:launch", note: "worktree: branch agent/go-engineer/adhoc-deps already exists"}
+  - name: pr-babysit
+    project: acme-api
+    agent: code-reviewer
+    schedule: "0 * * * *"
+    prompt: Check open PRs for failed CI or unanswered review comments and fix or reply.
+    runs:
+      - {ago: 2h, result: fired}
+      - {ago: 1h, result: "skipped:overlap", note: pr-babysit is still running}
+      - {ago: 25m, result: fired}
+  - name: issue-triage
+    project: acme-api
+    agent: orchestrator
+    schedule: "30 7 * * 1-5"
+    prompt: Label new issues, close duplicates and dispatch anything marked ready.
+    runs:
+      - {ago: 48h, result: fired}
+      - {ago: 24h, result: "skipped:usage", note: "5h 84% ≥ 80%"}
+  - name: weekly-docs
+    project: acme-api
+    agent: docs-writer
+    schedule: "0 9 * * 1"
+    paused: true
+    prompt: Update the changelog and the API reference from last week's merged PRs.
+windows:
+  - key: orch
+    project: acme-api
+    agent: orchestrator
+    state: idle
+    title: Planning Webhook Retries
+    transcript: orchestrator
+    since: 12m
+    select: true
+  - key: babysit
+    project: acme-api
+    agent: code-reviewer
+    mode: adhoc
+    state: working
+    scheduled_by: pr-babysit
+    title: Babysitting Open PRs
+    kind: review
+    task: Check open PRs for failed CI or unanswered review comments
+    transcript: review-webhooks
+    spinner: "Reading CI logs… (3m 2s · ↓ 2.2k tokens · esc to interrupt)"
+    since: 25m
+  - key: invoices
+    project: billing-svc
+    agent: go-engineer
+    state: idle
+    title: Invoice Line Items
+    transcript: csv-rounding
+    since: 1h
+    select: true
+steps:
+  - attach: orch
+  - prefix: g
+  - wait: agentctl hub
+  - type: T
+  - wait: Schedules \(4\)
+  - key: Down
+    repeat: 30
+  - key: Up
+    repeat: 3
+  - wait: Last runs
+  - sleep: 1s
+  - screenshot
+  - type: e
+  - wait: Edit nightly-deps
+  - sleep: 1s
+  - screenshot: form
+  - key: Escape

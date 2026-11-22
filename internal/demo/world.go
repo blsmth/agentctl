@@ -15,6 +15,8 @@ import (
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/claude"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/cron"
+	"github.com/blsmth/agentctl/internal/launchd"
 )
 
 // stubbed are programs the demo PATH shadows with a script that fails at
@@ -55,7 +57,38 @@ func WriteWorld(l Layout, s *Scene, fixtures string, now time.Time) error {
 			return fmt.Errorf("window %s: %w", w.Key, err)
 		}
 	}
-	return nil
+	return writeSchedules(l, s, now)
+}
+
+// writeSchedules writes the scene's cron jobs to the global schedules.json,
+// their runs to <stateDir>/cron/runs.ndjson and, so the hub shows no
+// "scheduler not installed" warning, a placeholder ticker plist in the fake
+// HOME (never loaded: nothing in the demo talks to launchd).
+func writeSchedules(l Layout, s *Scene, now time.Time) error {
+	if len(s.Schedules) == 0 {
+		return nil
+	}
+	jobs := &cron.Jobs{}
+	runsDir := filepath.Join(l.StateHome(), "agentctl", "cron")
+	for _, sc := range s.Schedules {
+		jobs.Jobs = append(jobs.Jobs, sc.Job(l.Repo(sc.Project)))
+		for _, r := range sc.Runs {
+			ago, _ := time.ParseDuration(r.Ago)
+			e := cron.Entry{Time: now.Add(-ago), Job: sc.Name, Scheduled: now.Add(-ago), Result: r.Result, Note: r.Note}
+			if err := cron.AppendRun(runsDir, e); err != nil {
+				return fmt.Errorf("schedule %s: writing runs: %w", sc.Name, err)
+			}
+		}
+	}
+	dir := filepath.Join(l.ConfigHome(), "agentctl")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if err := cron.SaveJobs(filepath.Join(dir, cron.SchedulesFile), jobs); err != nil {
+		return err
+	}
+	plist := launchd.PlistPath(l.Home(), cron.LaunchdLabel)
+	return writeFile(plist, []byte("<!-- agentctl demo placeholder: never loaded -->\n"), 0o600)
 }
 
 // tmuxConf is the demo server's whole config (the user's ~/.tmux.conf is
@@ -89,7 +122,7 @@ func writeStubs(l Layout) error {
 // demoConfig is the global config: everything that could reach the network,
 // the desktop or a real agent is off, whatever the scene says.
 func demoConfig(s *Scene) config.Config {
-	off, empty := false, ""
+	off, empty, cronOn := false, "", s.Config.Cron
 	cfg := config.Config{
 		NotifyCmd:        &empty,
 		Agents:           map[string]config.AgentConfig{},
@@ -101,7 +134,7 @@ func demoConfig(s *Scene) config.Config {
 		StatuslineFormat: s.Config.StatuslineFormat,
 		Metrics:          config.MetricsConfig{Enabled: false},
 		Titles:           config.TitlesConfig{Enabled: &off},
-		Cron:             config.CronConfig{Enabled: &off},
+		Cron:             config.CronConfig{Enabled: &cronOn},
 	}
 	for _, a := range s.Agents() {
 		cfg.Agents[a] = config.AgentConfig{Alerts: false, AlertConfig: config.AlertConfig{}}

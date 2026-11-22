@@ -90,6 +90,12 @@ func TestParseSceneErrors(t *testing.T) {
 		{"bad agentctl theme", "config:\n  theme: no-such-theme\n" + minimalScene, `config.theme: unknown agentctl theme "no-such-theme"`},
 		{"bad dispatch_approval", "config:\n  dispatch_approval: sometimes\n" + minimalScene, "config.dispatch_approval"},
 		{"inline transcript unknown key", strings.Replace(minimalScene, "state: working", "state: working\n    transcript:\n      entries:\n        - usr: hi", 1), "field usr not found"},
+		{"bad schedule", "schedules:\n  - {name: n1, project: acme-api, agent: go-engineer, schedule: \"61 * * * *\", prompt: x}\n" + minimalScene, "schedules[0] (n1).schedule"},
+		{"schedule unknown project", "schedules:\n  - {name: n1, project: nope, agent: go-engineer, schedule: \"0 9 * * *\", prompt: x}\n" + minimalScene, `schedules[0] (n1).project: unknown project "nope"`},
+		{"schedule without prompt", "schedules:\n  - {name: n1, project: acme-api, agent: go-engineer, schedule: \"0 9 * * *\"}\n" + minimalScene, "schedules[0] (n1).prompt"},
+		{"schedule bad run", "schedules:\n  - {name: n1, project: acme-api, agent: go-engineer, schedule: \"0 9 * * *\", prompt: x, runs: [{ago: 1h, result: ok}]}\n" + minimalScene, `runs[0].result: "ok"`},
+		{"duplicate schedule", "schedules:\n  - {name: n1, project: acme-api, agent: go-engineer, schedule: \"0 9 * * *\", prompt: x}\n  - {name: n1, project: acme-api, agent: go-engineer, schedule: \"0 9 * * *\", prompt: x}\n" + minimalScene, `duplicate schedule "n1"`},
+		{"dangling scheduled_by", strings.Replace(minimalScene, "state: working", "state: working\n    scheduled_by: ghost", 1), `scheduled_by: no schedule named "ghost"`},
 		{"inline transcript two kinds", strings.Replace(minimalScene, "state: working", "state: working\n    transcript:\n      entries:\n        - user: hi\n          say: there", 1), "exactly one of user, say or tool"},
 	}
 	for _, tt := range tests {
