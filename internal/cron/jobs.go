@@ -171,7 +171,9 @@ func (j Job) FieldErrors() []FieldError {
 	add := func(field, format string, args ...any) {
 		errs = append(errs, FieldError{Field: field, Message: fmt.Sprintf(format, args...)})
 	}
-	if !jobNameRE.MatchString(j.Name) {
+	if strings.TrimSpace(j.Name) == "" {
+		add(FieldName, "give the job a name")
+	} else if !jobNameRE.MatchString(j.Name) {
 		add(FieldName, "invalid job name %q: use letters, digits, - and _ (max 48, starting with a letter or digit)", j.Name)
 	}
 	if _, err := ParseSchedule(j.Schedule); err != nil {

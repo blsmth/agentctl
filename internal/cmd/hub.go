@@ -37,7 +37,7 @@ func RunHub(client string) {
 func RunHubView() {
 	// The Schedules section validates agents the way dispatch does
 	// (internal/tui cannot import internal/dispatch).
-	model := tui.NewFleetModel().WithScheduleAgentCheck(dispatch.ValidateAgentName)
+	model := tui.NewFleetModel().WithScheduleAgentCheck(dispatch.ValidateAgentName).WithScheduleAgents(dispatch.AgentNames)
 	for {
 		final, err := tea.NewProgram(model).Run()
 		if err != nil {

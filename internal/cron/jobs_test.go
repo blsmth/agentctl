@@ -26,6 +26,8 @@ func TestJobValidate(t *testing.T) {
 		{name: "bad name", mut: func(j *Job) { j.Name = "../x" }, wantErr: "invalid job name"},
 		{name: "bad schedule", mut: func(j *Job) { j.Schedule = "nope" }, wantErr: "needs 5 fields, has 1"},
 		{name: "relative dir", mut: func(j *Job) { j.Dir = "proj" }, wantErr: "absolute"},
+		{name: "no name", mut: func(j *Job) { j.Name = "" }, wantErr: "give the job a name"},
+		{name: "no agent", mut: func(j *Job) { j.Agent = "" }, wantErr: "pick an agent"},
 		{name: "no prompt", mut: func(j *Job) { j.Prompt = "" }, wantErr: "write a prompt"},
 		{name: "both prompts", mut: func(j *Job) { j.PromptKey = "k" }, wantErr: "not both"},
 		{name: "other harness", mut: func(j *Job) { j.Harness = "codex" }, wantErr: "harness"},

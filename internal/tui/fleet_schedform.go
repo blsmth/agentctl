@@ -84,12 +84,15 @@ const (
 	stopCatchup
 	stopUsage5h
 	stopUsage7d
+	stopTimeoutCustom
 )
 
 // fleetSchedFormHints are the footer hints while the form is open.
 var (
+	// ^s review comes first: the footer drops hints from the middle, so the
+	// way forward and the way out always stay.
 	fleetSchedFormHints = []fleetHint{
-		{"tab", "next"}, {"←/→", "choose"}, {"space", "toggle"}, {"^e", "editor"}, {"^s", "review"}, {"esc", "cancel"},
+		{"^s", "review"}, {"tab", "next"}, {"←/→", "choose"}, {"esc", "cancel"},
 	}
 	fleetSchedReviewHints = []fleetHint{{"y", "save"}, {"n", "back"}}
 	fleetSchedYesNoHints  = []fleetHint{{"y", "yes"}, {"n", "no"}}
@@ -104,13 +107,21 @@ type fleetSchedForm struct {
 	original string // stored name (edit) or the duplicated job's name
 	base     cron.Job
 
-	name, agent, clock, custom             textinput.Model
-	model, effort, backend, account, tmout textinput.Model
-	u5, u7                                 textinput.Model
-	prompt                                 textarea.Model
+	name, clock, custom, tmout textinput.Model
+	// The cyclers: agent, the launch pins, the timeout presets (tmout is the
+	// custom text) and the two usage thresholds.
+	agent, model, effort, backend, account, tmoutSel, u5, u7 schedCycler
+	prompt                                                   textarea.Model
 	// init holds each text field's value as opened: an untouched field
 	// saves the stored value verbatim.
 	init map[schedStop]string
+	env  schedEnv
+	// touched is the fields the user changed; their errors show at once, all
+	// of them after ctrl+s (or from the start on an edit).
+	touched    map[schedStop]bool
+	showErrs   bool
+	agentNames func(dir string) []string
+	groups     map[string]string
 	// promptKey is the stored prompt_key, kept while the prompt is empty.
 	promptKey string
 
@@ -184,7 +195,11 @@ func (m *FleetModel) openSchedForm(mode schedFormMode, st *cronedit.Status, dir 
 		m.relayout()
 		save = tea.Batch(m.saveViewCmd(), m.schedLoadCmd())
 	}
-	f := &fleetSchedForm{mode: mode, init: map[schedStop]string{}}
+	f := &fleetSchedForm{
+		mode: mode, init: map[schedStop]string{}, touched: map[schedStop]bool{},
+		env: fleetSchedEnvLoad(), agentNames: m.schedAgentNames, showErrs: mode == schedFormEdit,
+	}
+	f.groups = m.schedGroupAgents()
 	var job cron.Job
 	switch {
 	case st != nil:
@@ -194,7 +209,11 @@ func (m *FleetModel) openSchedForm(mode schedFormMode, st *cronedit.Status, dir 
 			dir = job.Dir
 		}
 	default:
-		job = cron.Job{Agent: m.schedDefaultAgent(dir)}
+		job = cron.Job{}
+	}
+	f.dirs = m.schedProjectDirs(dir)
+	if st == nil {
+		job.Agent = f.defaultAgent(f.dirs, 0)
 	}
 	if mode == schedFormDup {
 		job.Name = dupName(job.Name)
@@ -205,39 +224,24 @@ func (m *FleetModel) openSchedForm(mode schedFormMode, st *cronedit.Status, dir 
 	f.base = job
 
 	f.name = newSchedInput(job.Name, "nightly-triage")
-	f.agent = newSchedInput(job.Agent, "agent name")
 	f.prompt = newSchedPrompt(job.Prompt)
 	f.promptKey = job.PromptKey
-	if f.promptKey != "" {
-		f.prompt.Placeholder = "context key " + f.promptKey + " (type or ^e to replace it with an inline prompt)"
-	}
-	f.model = newSchedInput(job.Model, "agent default")
-	f.effort = newSchedInput(job.Effort, "default")
-	f.backend = newSchedInput(job.Backend, "none")
-	f.account = newSchedInput(job.Account, "default")
-	f.tmout = newSchedInput(job.Timeout, "none (e.g. 45m)")
-	var u5, u7 string
-	if t := job.SkipIfUsageAbove; t != nil {
-		u5, u7 = fmtPct(t.FiveHour), fmtPct(t.SevenDay)
-	}
-	f.u5 = newSchedInput(u5, "global")
-	f.u7 = newSchedInput(u7, "global")
+	f.setupCyclers(job)
 	f.worktree = job.UseWorktree()
 	f.overlap = max(slices.Index(schedOverlaps, job.Overlap), 0)
 	f.catchup = max(slices.Index(schedCatchups, job.Catchup), 0)
 	f.overlapInit, f.catchupInit = f.overlap, f.catchup
 
-	f.dirs = m.schedProjectDirs(dir)
 	f.clock = newSchedInput("", "07:30")
 	f.custom = newSchedInput(job.Schedule, "*/30 9-17 * * 1-5")
 	f.origSchedule = job.Schedule
 	f.setSchedule(job.Schedule, mode == schedFormNew)
 
-	for stop, in := range map[schedStop]*textinput.Model{
-		stopName: &f.name, stopAgent: &f.agent, stopModel: &f.model, stopEffort: &f.effort,
-		stopBackend: &f.backend, stopAccount: &f.account, stopTimeout: &f.tmout, stopUsage5h: &f.u5, stopUsage7d: &f.u7,
-	} {
+	for stop, in := range map[schedStop]*textinput.Model{stopName: &f.name, stopTimeoutCustom: &f.tmout} {
 		f.init[stop] = in.Value()
+	}
+	for _, stop := range schedCyclerStops {
+		f.init[stop] = f.cyclerFor(stop).value()
 	}
 	f.init[stopPrompt] = f.prompt.Value()
 	f.advOpen = advancedSummary(job) != ""
@@ -247,6 +251,148 @@ func (m *FleetModel) openSchedForm(mode schedFormMode, st *cronedit.Status, dir 
 	m.schedForm = f
 	m.jumpErr = ""
 	return tea.Batch(save, m.schedPreviewCmd())
+}
+
+// schedCyclerStops are the fields drawn as cyclers.
+var schedCyclerStops = []schedStop{stopAgent, stopModel, stopEffort, stopBackend, stopAccount, stopTimeout, stopUsage5h, stopUsage7d}
+
+func (f *fleetSchedForm) cyclerFor(stop schedStop) *schedCycler {
+	switch stop {
+	case stopAgent:
+		return &f.agent
+	case stopModel:
+		return &f.model
+	case stopEffort:
+		return &f.effort
+	case stopBackend:
+		return &f.backend
+	case stopAccount:
+		return &f.account
+	case stopTimeout:
+		return &f.tmoutSel
+	case stopUsage5h:
+		return &f.u5
+	case stopUsage7d:
+		return &f.u7
+	}
+	return nil
+}
+
+func plainModel(v string) bool { return strings.HasPrefix(baseModelName(v), "claude-") }
+
+// baseModelName drops a context-size suffix such as "opus[1m]".
+func baseModelName(m string) string {
+	if i := strings.Index(m, "["); i > 0 && strings.HasSuffix(m, "]") {
+		return m[:i]
+	}
+	return m
+}
+
+func schedAgentOpts(names []string) []schedOpt {
+	out := make([]schedOpt, len(names))
+	for i, n := range names {
+		out[i] = schedOpt{value: n, label: n}
+	}
+	return out
+}
+
+// setupCyclers builds every cycler on the job as stored.
+func (f *fleetSchedForm) setupCyclers(job cron.Job) {
+	dir := f.curDir()
+	f.agent = newCycler(schedAgentOpts(f.agentList(dir)), job.Agent, true, plainAgent)
+	f.model = newCycler(f.env.modelOpts(job.Agent, job.Backend), job.Model, true, plainModel)
+	f.effort = newCycler(f.env.effortOpts(job.Agent), job.Effort, false, nil)
+	f.backend = newCycler(f.env.backendOpts(job.Agent), job.Backend, false, nil)
+	f.account = newCycler(f.env.accountOpts(job.Agent, dir), job.Account, false, nil)
+	cur := job.Timeout
+	f.tmout = newSchedInput("", "45m")
+	if cur != "" && !slices.Contains(schedTimeoutPresets, cur) {
+		f.tmout.SetValue(cur)
+		cur = schedTimeoutCustom
+	}
+	f.tmoutSel = newCycler(timeoutOpts(), cur, false, nil)
+	var v5, v7 string
+	if t := job.SkipIfUsageAbove; t != nil {
+		v5, v7 = usageValue(t.FiveHour), usageValue(t.SevenDay)
+	}
+	f.u5 = newCycler(usageOpts(f.env.usage.FiveHour, v5), v5, false, nil)
+	f.u7 = newCycler(usageOpts(f.env.usage.SevenDay, v7), v7, false, nil)
+}
+
+// curDir is the project the form is set to ("" without one).
+func (f *fleetSchedForm) curDir() string {
+	if len(f.dirs) == 0 {
+		return ""
+	}
+	return f.dirs[f.dirIdx]
+}
+
+func (f *fleetSchedForm) agentList(dir string) []string {
+	if f.agentNames == nil {
+		return nil
+	}
+	return f.agentNames(dir)
+}
+
+// defaultAgent is a new job's agent: the first agent running in the project
+// at dirs[i], else the configured default_agent, else the first listed one.
+func (f *fleetSchedForm) defaultAgent(dirs []string, i int) string {
+	if i < len(dirs) {
+		if a := f.groups[schedDirKey(dirs[i])]; a != "" {
+			return a
+		}
+	}
+	if f.env.defaultAgent != "" {
+		return f.env.defaultAgent
+	}
+	if i < len(dirs) {
+		if names := f.agentList(dirs[i]); len(names) > 0 {
+			return names[0]
+		}
+	}
+	return ""
+}
+
+// refreshOptions rebuilds the option lists that depend on the project, agent
+// and backend, keeping each selection (an unavailable one becomes unknown).
+func (f *fleetSchedForm) refreshOptions() {
+	dir := f.curDir()
+	if f.mode != schedFormEdit && !f.touched[stopAgent] {
+		if a := f.defaultAgent(f.dirs, f.dirIdx); a != "" {
+			f.agent.setOpts(schedAgentOpts(f.agentList(dir)), a, plainAgent)
+		}
+	} else {
+		f.agent.setOpts(schedAgentOpts(f.agentList(dir)), f.agent.value(), plainAgent)
+	}
+	agent := f.agent.value()
+	f.model.setOpts(f.env.modelOpts(agent, f.backend.value()), f.model.value(), plainModel)
+	f.effort.setOpts(f.env.effortOpts(agent), f.effort.value(), nil)
+	f.backend.setOpts(f.env.backendOpts(agent), f.backend.value(), nil)
+	f.account.setOpts(f.env.accountOpts(agent, dir), f.account.value(), nil)
+}
+
+// schedDirKey is a project dir with symlinks resolved, so a group's dir and
+// a job's dir match whichever spelling each uses.
+func schedDirKey(d string) string {
+	d = filepath.Clean(d)
+	if r, err := filepath.EvalSymlinks(d); err == nil {
+		return r
+	}
+	return d
+}
+
+// schedGroupAgents maps each project dir to the first agent running in it.
+func (m FleetModel) schedGroupAgents() map[string]string {
+	out := map[string]string{}
+	for _, g := range m.groups {
+		for _, r := range g.Rows {
+			if !r.Shell {
+				out[schedDirKey(g.ProjectDir)] = fleet.BaseName(r)
+				break
+			}
+		}
+	}
+	return out
 }
 
 func newSchedPrompt(value string) textarea.Model {
@@ -260,25 +406,6 @@ func newSchedPrompt(value string) textarea.Model {
 	ta.SetHeight(4)
 	ta.SetValue(value)
 	return ta
-}
-
-// schedDefaultAgent prefills a new job's agent: the selected row's agent,
-// else the first agent of dir's group, else the configured default.
-func (m *FleetModel) schedDefaultAgent(dir string) string {
-	if r := m.selectedRow(); r != nil && !r.Shell {
-		return fleet.BaseName(*r)
-	}
-	for _, g := range m.groups {
-		if dir == "" || g.ProjectDir != dir {
-			continue
-		}
-		for _, r := range g.Rows {
-			if !r.Shell {
-				return fleet.BaseName(r)
-			}
-		}
-	}
-	return config.Load().DefaultAgent
 }
 
 // dupName is a duplicate's default name, kept within the 48-character rule.
@@ -355,11 +482,34 @@ func (f *fleetSchedForm) stops() []schedStop {
 	}
 	out = append(out, stopAdvanced)
 	if f.advOpen {
-		out = append(out, stopWorktree, stopModel, stopEffort, stopBackend, stopAccount, stopTimeout,
-			stopOverlap, stopCatchup, stopUsage5h, stopUsage7d)
+		out = append(out, stopWorktree, stopModel, stopEffort)
+		if f.showBackend() {
+			out = append(out, stopBackend)
+		}
+		if f.showAccount() {
+			out = append(out, stopAccount)
+		}
+		out = append(out, stopTimeout)
+		if f.timeoutCustom() {
+			out = append(out, stopTimeoutCustom)
+		}
+		out = append(out, stopOverlap, stopCatchup, stopUsage5h, stopUsage7d)
 	}
 	return out
 }
+
+// showBackend: the row is hidden when no backend is configured (and the job
+// pins none).
+func (f *fleetSchedForm) showBackend() bool {
+	return len(f.env.opts.Backends) > 0 || f.backend.value() != ""
+}
+
+// showAccount: hidden when no account is configured (and the job pins none).
+func (f *fleetSchedForm) showAccount() bool {
+	return len(f.env.opts.Accounts) > 0 || f.account.value() != ""
+}
+
+func (f *fleetSchedForm) timeoutCustom() bool { return f.tmoutSel.value() == schedTimeoutCustom }
 
 // move focuses the next (delta 1) or previous field, wrapping.
 func (f *fleetSchedForm) move(delta int) {
@@ -388,32 +538,17 @@ func (f *fleetSchedForm) inputFor(stop schedStop) *textinput.Model {
 	switch stop {
 	case stopName:
 		return &f.name
-	case stopAgent:
-		return &f.agent
 	case stopClock:
 		return &f.clock
 	case stopCustom:
 		return &f.custom
-	case stopModel:
-		return &f.model
-	case stopEffort:
-		return &f.effort
-	case stopBackend:
-		return &f.backend
-	case stopAccount:
-		return &f.account
-	case stopTimeout:
+	case stopTimeoutCustom:
 		return &f.tmout
-	case stopUsage5h:
-		return &f.u5
-	case stopUsage7d:
-		return &f.u7
 	}
 	return nil
 }
 
-var schedTextStops = []schedStop{stopName, stopAgent, stopClock, stopCustom, stopModel, stopEffort,
-	stopBackend, stopAccount, stopTimeout, stopUsage5h, stopUsage7d}
+var schedTextStops = []schedStop{stopName, stopClock, stopCustom, stopTimeoutCustom}
 
 func (f *fleetSchedForm) applyFocus() {
 	for _, s := range schedTextStops {
@@ -437,6 +572,9 @@ func (f *fleetSchedForm) state() string {
 		strconv.FormatBool(f.worktree), strconv.Itoa(f.overlap), strconv.Itoa(f.catchup)}
 	for _, s := range schedTextStops {
 		parts = append(parts, f.inputFor(s).Value())
+	}
+	for _, s := range schedCyclerStops {
+		parts = append(parts, f.cyclerFor(s).value())
 	}
 	return strings.Join(parts, "\x00")
 }
@@ -499,7 +637,7 @@ func (f *fleetSchedForm) job() (cron.Job, []cron.FieldError) {
 			j.Dir = f.base.Dir // the stored spelling ("…/x/" stays): not a change
 		}
 	}
-	j.Agent = f.text(stopAgent, f.base.Agent)
+	j.Agent = strings.TrimSpace(f.agent.value())
 	switch p := f.prompt.Value(); {
 	case p == f.init[stopPrompt] && f.base.PromptKey == "":
 		j.Prompt = f.base.Prompt
@@ -521,41 +659,36 @@ func (f *fleetSchedForm) job() (cron.Job, []cron.FieldError) {
 		v := f.worktree
 		j.Worktree = &v
 	}
-	j.Model = f.text(stopModel, f.base.Model)
-	j.Effort = f.text(stopEffort, f.base.Effort)
-	j.Backend = f.text(stopBackend, f.base.Backend)
-	j.Account = f.text(stopAccount, f.base.Account)
-	j.Timeout = f.text(stopTimeout, f.base.Timeout)
+	j.Model = f.model.value()
+	j.Effort = f.effort.value()
+	j.Backend = f.backend.value()
+	j.Account = f.account.value()
+	j.Timeout = f.timeoutValue()
 	if f.overlap != f.overlapInit {
 		j.Overlap = schedOverlaps[f.overlap]
 	}
 	if f.catchup != f.catchupInit {
 		j.Catchup = schedCatchups[f.catchup]
 	}
-	if f.u5.Value() != f.init[stopUsage5h] || f.u7.Value() != f.init[stopUsage7d] {
+	if f.u5.value() != f.init[stopUsage5h] || f.u7.value() != f.init[stopUsage7d] {
 		var t config.CronUsageThresholds
-		for _, p := range []struct {
-			in  *textinput.Model
-			out *float64
-			lbl string
-		}{{&f.u5, &t.FiveHour, "5h"}, {&f.u7, &t.SevenDay, "7d"}} {
-			v := strings.TrimSuffix(strings.TrimSpace(p.in.Value()), "%")
-			if v == "" {
-				continue
-			}
-			n, err := strconv.ParseFloat(v, 64)
-			if err != nil {
-				add(cron.FieldSkipIfUsageAbove, fmt.Sprintf("usage gate %s: want a percentage, got %q", p.lbl, p.in.Value()))
-				continue
-			}
-			*p.out = n
-		}
+		t.FiveHour, _ = strconv.ParseFloat(f.u5.value(), 64)
+		t.SevenDay, _ = strconv.ParseFloat(f.u7.value(), 64)
 		j.SkipIfUsageAbove = nil
 		if t.FiveHour != 0 || t.SevenDay != 0 {
 			j.SkipIfUsageAbove = &t
 		}
 	}
 	return j, errs
+}
+
+// timeoutValue is the timeout the cycler (and its custom text) selects; an
+// untouched custom text saves the stored value verbatim.
+func (f *fleetSchedForm) timeoutValue() string {
+	if !f.timeoutCustom() {
+		return f.tmoutSel.value()
+	}
+	return f.text(stopTimeoutCustom, f.base.Timeout)
 }
 
 // errors is every field problem: the form's own, then the preview's
@@ -604,6 +737,9 @@ func (f *fleetSchedForm) stopForField(field string) (schedStop, bool) {
 	case cron.FieldAccount:
 		return stopAccount, true
 	case cron.FieldTimeout:
+		if f.timeoutCustom() {
+			return stopTimeoutCustom, true
+		}
 		return stopTimeout, true
 	case cron.FieldOverlap:
 		return stopOverlap, true
@@ -781,6 +917,10 @@ func (m *FleetModel) handleSchedFormKey(msg tea.KeyPressMsg) tea.Cmd {
 	f.err = ""
 	switch key {
 	case "esc":
+		if c := f.cyclerFor(f.focus); c != nil && c.filter != "" {
+			c.clearFilter()
+			return nil
+		}
 		if f.dirty() {
 			f.discard = true
 		} else {
@@ -788,6 +928,7 @@ func (m *FleetModel) handleSchedFormKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	case "ctrl+s":
+		f.showErrs = true
 		m.schedReview()
 		return nil
 	case "ctrl+e":
@@ -801,11 +942,12 @@ func (m *FleetModel) handleSchedFormKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	if f.focus != stopPrompt {
 		switch key {
-		case "down":
-			f.move(1)
-			return nil
-		case "up":
-			f.move(-1)
+		case "down", "up":
+			if f.focus == stopClock && f.kind != schedKindCustom {
+				f.stepClock(map[string]int{"up": 15, "down": -15}[key])
+				return m.schedPreviewCmd()
+			}
+			f.move(map[string]int{"down": 1, "up": -1}[key])
 			return nil
 		}
 	}
@@ -872,6 +1014,10 @@ func (m *FleetModel) handleSchedFormKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 	case stopPrompt:
 		f.prompt, cmd = f.prompt.Update(msg)
+	case stopAgent, stopModel, stopEffort, stopBackend, stopAccount, stopTimeout, stopUsage5h, stopUsage7d:
+		if !f.cyclerKey(msg, key) {
+			return nil
+		}
 	default:
 		if key == "enter" {
 			f.move(1)
@@ -886,7 +1032,63 @@ func (m *FleetModel) handleSchedFormKey(msg tea.KeyPressMsg) tea.Cmd {
 	if f.state() == before {
 		return cmd
 	}
+	f.touched[f.focus] = true
+	if f.focus == stopDir {
+		f.refreshOptions()
+	}
+	if f.focus == stopAgent || f.focus == stopBackend {
+		f.refreshOptions()
+	}
 	return tea.Batch(cmd, m.schedPreviewCmd())
+}
+
+// cyclerKey runs key on the focused cycler; false when it consumed the key
+// without a change worth a preview (enter moved on).
+func (f *fleetSchedForm) cyclerKey(msg tea.KeyPressMsg, key string) bool {
+	c := f.cyclerFor(f.focus)
+	switch key {
+	case "left":
+		c.step(-1)
+	case "right", "space":
+		c.step(1)
+	case "enter":
+		f.move(1)
+		return false
+	case "backspace":
+		c.backspace()
+	case "esc", "ctrl+u":
+		c.clearFilter()
+	default:
+		if t := msg.Key().Text; t != "" && key != "ctrl+h" {
+			c.typeText(t)
+		}
+	}
+	return true
+}
+
+// stepClock moves the time by delta minutes (15-minute steps), wrapping; the
+// hourly kind steps the minute past the hour.
+func (f *fleetSchedForm) stepClock(delta int) {
+	clock := strings.TrimSpace(f.clock.Value())
+	if f.kind == schedKindHourly {
+		n, err := strconv.Atoi(strings.TrimPrefix(clock, ":"))
+		if err != nil {
+			n = 0
+		}
+		f.clock.SetValue(strconv.Itoa(((n+delta)%60 + 60) % 60))
+	} else {
+		hs, ms, ok := strings.Cut(clock, ":")
+		h, herr := strconv.Atoi(hs)
+		mn, merr := strconv.Atoi(ms)
+		total := 9 * 60
+		if ok && herr == nil && merr == nil {
+			total = h*60 + mn
+		}
+		total = ((total+delta)%(24*60) + 24*60) % (24 * 60)
+		f.clock.SetValue(fmt.Sprintf("%02d:%02d", total/60, total%60))
+	}
+	f.schedTouched = true
+	f.touched[stopClock] = true
 }
 
 // initialSchedText is the clock or custom field as opened.
@@ -1017,6 +1219,10 @@ func (m *FleetModel) pasteSchedForm(msg tea.PasteMsg) tea.Cmd {
 	switch {
 	case f.focus == stopPrompt:
 		f.prompt, cmd = f.prompt.Update(msg)
+	case f.cyclerFor(f.focus) != nil:
+		f.cyclerFor(f.focus).typeText(strings.TrimSpace(msg.Content))
+		f.touched[f.focus] = true
+		cmd = nil
 	case f.inputFor(f.focus) != nil:
 		in := f.inputFor(f.focus)
 		*in, cmd = in.Update(msg)
@@ -1031,7 +1237,7 @@ func (m *FleetModel) pasteSchedForm(msg tea.PasteMsg) tea.Cmd {
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
-const schedLabelW = 12
+const schedLabelW = 14
 
 // The worktree phrases of the cron approval popup and the phone.
 const (
@@ -1039,8 +1245,30 @@ const (
 	schedWorktreeOff = "runs in the project checkout"
 )
 
+// fieldErrorsShown is the errors the form shows now: all of them after
+// ctrl+s (and on an edit), else only those of fields the user changed.
+func (f *fleetSchedForm) fieldErrorsShown() (byStop map[schedStop][]string, general []string) {
+	byStop = map[schedStop][]string{}
+	for _, e := range f.errors() {
+		stop, ok := f.stopForField(e.Field)
+		switch {
+		case ok && (f.showErrs || f.touched[stop] || (stop == stopClock && f.schedTouched)):
+			msg := e.Message
+			if stop == stopAgent {
+				// The cycler lists the agents: drop the validator's list.
+				msg, _, _ = strings.Cut(msg, "; available agents")
+			}
+			byStop[stop] = append(byStop[stop], msg)
+		case !ok && f.showErrs:
+			general = append(general, e.Message)
+		}
+	}
+	return byStop, general
+}
+
 // schedFormLines renders the form (or its review) in w columns, scrolled so
-// the focused field is inside h lines.
+// the focused field is inside h lines. Fields are grouped What / When /
+// Advanced.
 func (m FleetModel) schedFormLines(w, h int) []string {
 	f := m.schedForm
 	if f == nil {
@@ -1051,16 +1279,7 @@ func (m FleetModel) schedFormLines(w, h int) []string {
 	}
 	var out []string
 	focusLine := 0
-	errs := f.errors()
-	fieldErrs := map[schedStop][]string{}
-	var general []string
-	for _, e := range errs {
-		if stop, ok := f.stopForField(e.Field); ok {
-			fieldErrs[stop] = append(fieldErrs[stop], e.Message)
-		} else {
-			general = append(general, e.Message)
-		}
-	}
+	fieldErrs, general := f.fieldErrorsShown()
 	title := "New schedule"
 	switch f.mode {
 	case schedFormEdit:
@@ -1082,7 +1301,7 @@ func (m FleetModel) schedFormLines(w, h int) []string {
 			focusLine = len(out)
 		}
 		lines := strings.Split(value, "\n")
-		out = append(out, marker+lst.Render(padRight(label, schedLabelW-2))+" "+lines[0])
+		out = append(out, marker+lst.Render(padRight(label, schedLabelW-2))+" "+truncateToWidth(lines[0], vw))
 		for _, l := range lines[1:] {
 			out = append(out, strings.Repeat(" ", schedLabelW+1)+l)
 		}
@@ -1095,6 +1314,10 @@ func (m FleetModel) schedFormLines(w, h int) []string {
 		in.SetWidth(max(vw-1, 1))
 		return in.View()
 	}
+	cyc := func(stop schedStop) string { return f.cyclerFor(stop).view(f.focus == stop) }
+	header := func(name string) { out = append(out, "", "  "+fleetDimStyle.Render(name)) }
+
+	header("What")
 	if f.mode == schedFormEdit {
 		out = append(out, "  "+fleetCountStyle.Render(padRight("Name", schedLabelW-2))+" "+f.original+fleetDimStyle.Render("  (cannot change)"))
 	} else {
@@ -1106,11 +1329,19 @@ func (m FleetModel) schedFormLines(w, h int) []string {
 		dir = "‹ " + fleetGroupNameStyle.Render(projectOf(d)) + " › " + fleetDimStyle.Render(truncateToWidth(tildify(d), max(vw-lipgloss.Width(projectOf(d))-5, 4)))
 	}
 	row(stopDir, "Project", dir)
-	row(stopAgent, "Agent", input(stopAgent))
+	row(stopAgent, "Agent", cyc(stopAgent))
 	pr := f.prompt
 	pr.SetWidth(max(vw, 8))
 	row(stopPrompt, "Prompt", pr.View())
-	row(stopKind, "Schedule", segmented(schedKindLabels, f.kind, f.focus == stopKind))
+	switch {
+	case f.promptKey != "" && strings.TrimSpace(f.prompt.Value()) == "":
+		out = append(out, strings.Repeat(" ", schedLabelW+1)+fleetDimStyle.Render(truncateToWidth("from context key "+f.promptKey, vw)))
+	case f.focus == stopPrompt:
+		out = append(out, strings.Repeat(" ", schedLabelW+1)+fleetDimStyle.Render("^e editor"))
+	}
+
+	header("When")
+	row(stopKind, "Schedule", segmented(schedKindLabels, f.kind, f.focus == stopKind, vw))
 	switch f.kind {
 	case schedKindCustom:
 		row(stopCustom, "  Cron", input(stopCustom))
@@ -1122,7 +1353,12 @@ func (m FleetModel) schedFormLines(w, h int) []string {
 	default:
 		row(stopClock, "  Time", input(stopClock))
 	}
+	if f.focus == stopClock && f.kind != schedKindCustom {
+		out = append(out, strings.Repeat(" ", schedLabelW+1)+fleetDimStyle.Render("↑/↓ ±15 min"))
+	}
 	out = append(out, strings.Repeat(" ", schedLabelW+1)+fleetDimStyle.Render(truncateToWidth(f.previewLine(), vw)))
+
+	out = append(out, "")
 	job, _ := f.job()
 	adv := "▸ Advanced"
 	if f.advOpen {
@@ -1138,16 +1374,23 @@ func (m FleetModel) schedFormLines(w, h int) []string {
 		if !f.worktree {
 			wt = "[ ] " + schedWorktreeOff
 		}
-		row(stopWorktree, "Worktree", wt)
-		row(stopModel, "Model", input(stopModel))
-		row(stopEffort, "Effort", input(stopEffort))
-		row(stopBackend, "Backend", input(stopBackend))
-		row(stopAccount, "Account", input(stopAccount))
-		row(stopTimeout, "Timeout", input(stopTimeout))
-		row(stopOverlap, "Overlap", segmented(schedOverlaps, f.overlap, f.focus == stopOverlap)+fleetDimStyle.Render("  while a run is live"))
-		row(stopCatchup, "Catch-up", segmented(schedCatchups, f.catchup, f.focus == stopCatchup)+fleetDimStyle.Render("  after missed fires"))
-		row(stopUsage5h, "Usage 5h", input(stopUsage5h))
-		row(stopUsage7d, "Usage 7d", input(stopUsage7d))
+		row(stopWorktree, "  Worktree", wt)
+		row(stopModel, "  Model", cyc(stopModel))
+		row(stopEffort, "  Effort", cyc(stopEffort))
+		if f.showBackend() {
+			row(stopBackend, "  Backend", cyc(stopBackend))
+		}
+		if f.showAccount() {
+			row(stopAccount, "  Account", cyc(stopAccount))
+		}
+		row(stopTimeout, "  Timeout", cyc(stopTimeout))
+		if f.timeoutCustom() {
+			row(stopTimeoutCustom, "    Custom", input(stopTimeoutCustom)+fleetDimStyle.Render(" e.g. 90m"))
+		}
+		row(stopOverlap, "  Overlap", segmented(schedOverlaps, f.overlap, f.focus == stopOverlap, vw)+fleetDimStyle.Render("  while a run is live"))
+		row(stopCatchup, "  Catch-up", segmented(schedCatchups, f.catchup, f.focus == stopCatchup, vw)+fleetDimStyle.Render("  after missed fires"))
+		row(stopUsage5h, "  Skip above", fleetDimStyle.Render("5h ")+cyc(stopUsage5h))
+		row(stopUsage7d, "", fleetDimStyle.Render("7d ")+cyc(stopUsage7d))
 	}
 	out = append(out, "")
 	switch {
@@ -1155,8 +1398,6 @@ func (m FleetModel) schedFormLines(w, h int) []string {
 		out = append(out, fleetBlockedStyle.Render("discard changes? y/n"))
 	case f.err != "":
 		out = append(out, fleetErrStyle.Render(truncateToWidth(f.err, w)))
-	default:
-		out = append(out, fleetDimStyle.Render(truncateToWidth("^s review · esc cancel", w)))
 	}
 	return scrollTo(out, focusLine, h)
 }
@@ -1207,20 +1448,30 @@ func (m FleetModel) dayChips() string {
 	return strings.Join(parts, "")
 }
 
-// segmented renders choices with the chosen one highlighted.
-func segmented(labels []string, cur int, focused bool) string {
-	parts := make([]string, len(labels))
+// segmented renders choices with the chosen one marked: a ● prefix and bold
+// (filled while focused), so it reads without colour. Segments that do not
+// fit in w columns continue on the next line.
+func segmented(labels []string, cur int, focused bool, w int) string {
+	var lines []string
+	var line string
+	lw := 0
 	for i, l := range labels {
+		var seg string
 		switch {
 		case i == cur && focused:
-			parts[i] = cursorActiveStyle.Reverse(true).Render(" " + l + " ")
+			seg = cursorActiveStyle.Reverse(true).Render(" ●" + l + " ")
 		case i == cur:
-			parts[i] = fleetGroupNameStyle.Underline(true).Render(" " + l + " ")
+			seg = fleetGroupNameStyle.Bold(true).Render(" ●" + l + " ")
 		default:
-			parts[i] = fleetDimStyle.Render(" " + l + " ")
+			seg = fleetDimStyle.Render("  " + l + " ")
 		}
+		if sw := lipgloss.Width(seg); lw > 0 && w > 0 && lw+sw > w {
+			lines, line, lw = append(lines, line), "", 0
+		}
+		line += seg
+		lw += lipgloss.Width(seg)
 	}
-	return strings.Join(parts, "")
+	return strings.Join(append(lines, line), "\n")
 }
 
 func padRight(s string, w int) string {
@@ -1242,8 +1493,8 @@ func scrollTo(lines []string, focus, h int) []string {
 	return lines[start : start+h]
 }
 
-// schedReviewLines is the review: what runs, where, when, unattended, the
-// next fires, and the prompt (on an edit, only the changed fields).
+// schedReviewLines is the review: what runs, where, when and how, the next
+// fires, and the prompt (on an edit, only the changed fields as old → new).
 func (m FleetModel) schedReviewLines(w int) []string {
 	f := m.schedForm
 	p := f.preview
@@ -1275,25 +1526,34 @@ func (m FleetModel) schedReviewLines(w int) []string {
 		words += " " + p.TimeZone
 	}
 	b := fleetGroupNameStyle.Bold(true)
-	sentence := fmt.Sprintf("Runs %s in %s (%s), %s, unattended, permission mode %s, %s",
-		b.Render(job.Agent), b.Render(tildify(job.Dir)), wt, b.Render(words), perm, until)
-	add(wrapText(sentence, w), "")
+	const lw = 6
+	rw := max(w-lw-1, 10)
+	kv := func(k, v string) {
+		lines := strings.Split(wrapText(v, rw), "\n")
+		add(fleetCountStyle.Render(padRight(k, lw)) + " " + lines[0])
+		for _, l := range lines[1:] {
+			add(strings.Repeat(" ", lw+1) + l)
+		}
+	}
+	kv("Runs", b.Render(job.Agent)+" in "+b.Render(tildify(job.Dir))+" ("+wt+")")
+	kv("When", b.Render(words))
+	kv("Mode", fmt.Sprintf("unattended, permission mode %s, %s", perm, until))
 	tz := p.TimeZone
 	if tz == "" {
 		tz = "local time"
 	}
-	add(fleetCountStyle.Render("Next fires ("+tz+")"), wrapText(strings.Join(p.NextFiresText, " · "), w), "")
+	add("", fleetCountStyle.Render("Next fires ("+tz+")"), wrapText(strings.Join(p.NextFiresText, " · "), w), "")
 	prompt := job.Prompt
 	if job.PromptKey != "" {
 		prompt = "(context key " + job.PromptKey + ", read at every fire)"
 	}
 	if f.mode == schedFormEdit {
 		add(fleetCountStyle.Render("Changes"))
-		for _, c := range p.Changed {
-			if c == cron.FieldPrompt || c == "prompt_key" {
+		for _, c := range p.Diff {
+			if c.Field == cron.FieldPrompt || c.Field == "prompt_key" {
 				continue
 			}
-			add(truncateToWidth("  "+c+": "+fieldValue(job, c), w))
+			add(truncateToWidth("  "+padRight(c.Field, 10)+" "+f.reviewValue(c.Field, c.Old)+fleetDimStyle.Render(" → ")+f.reviewValue(c.Field, c.New), w))
 		}
 		if slices.Contains(p.Changed, cron.FieldPrompt) || slices.Contains(p.Changed, "prompt_key") {
 			add("", fleetCountStyle.Render("Prompt (changed)"), wrapText(prompt, w))
@@ -1303,6 +1563,12 @@ func (m FleetModel) schedReviewLines(w int) []string {
 			add(fleetCountStyle.Render("Advanced"), wrapText(adv, w), "")
 		}
 		add(fleetCountStyle.Render("Prompt"), wrapText(prompt, w))
+	}
+	if len(p.Warnings) > 0 {
+		add("")
+		for _, wn := range p.Warnings {
+			add(fleetBlockedStyle.Render(truncateToWidth("⚠ "+wn.Field+": "+wn.Message, w)))
+		}
 	}
 	add("")
 	switch {
@@ -1314,6 +1580,32 @@ func (m FleetModel) schedReviewLines(w int) []string {
 		add(renderHint(fleetHint{"y", "schedule it"}) + fleetDimStyle.Render(" · ") + renderHint(fleetHint{"n", "back"}))
 	}
 	return out
+}
+
+// reviewValue is one side of a change as the review shows it: the name of
+// the resolved default for an unset pin, words for a schedule.
+func (f *fleetSchedForm) reviewValue(field, v string) string {
+	if c := f.cyclerFor(map[string]schedStop{
+		cron.FieldAgent: stopAgent, cron.FieldModel: stopModel, cron.FieldEffort: stopEffort,
+		cron.FieldBackend: stopBackend, cron.FieldAccount: stopAccount,
+	}[field]); c != nil && field != cron.FieldAgent {
+		return c.labelOf(v)
+	}
+	switch field {
+	case cron.FieldSchedule:
+		if w := cron.Describe(v); w != "" {
+			return w
+		}
+	case cron.FieldDir:
+		return tildify(v)
+	case cron.FieldTimeout:
+		return orNoneText(v)
+	case cron.FieldSkipIfUsageAbove:
+		if v == "" {
+			return "global"
+		}
+	}
+	return v
 }
 
 // fieldValue is a job field as the review shows it.

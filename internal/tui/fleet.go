@@ -557,6 +557,8 @@ type FleetModel struct {
 	schedPaneOn     bool
 	schedPrevLive   string
 	schedAgentCheck func(name, dir string) error
+	// schedAgentNames lists the agents the form offers for a project dir.
+	schedAgentNames func(dir string) []string
 	filter          fleetFilter
 	viewPath        string
 	// orderPath is the saved group order (see fleet_order.go); "" persists
@@ -773,6 +775,9 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		fm.publishSelection()
 		if pane := fm.syncSchedPane(); pane != nil {
 			cmd = tea.Batch(cmd, pane)
+		}
+		if detail := fm.syncSchedDetail(); detail != nil {
+			cmd = tea.Batch(cmd, detail)
 		}
 		return fm, cmd
 	}
@@ -2180,7 +2185,9 @@ func (m FleetModel) renderList() string {
 			b.WriteString(l)
 			b.WriteString("\n")
 		}
-		b.WriteString(strings.Repeat("\n", max(visible-len(lines), 0)))
+		// Blank rows are padded too, so no cell of the previous frame survives.
+		blank := strings.Repeat(" ", cw-1) + "\n"
+		b.WriteString(strings.Repeat(blank, max(visible-len(lines), 0)))
 	} else {
 		visible := m.visibleLines()
 		used := 0
