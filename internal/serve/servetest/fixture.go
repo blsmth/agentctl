@@ -10,6 +10,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
+	"github.com/blsmth/agentctl/internal/shorttitle"
 	"github.com/blsmth/agentctl/internal/state"
 )
 
@@ -71,7 +72,8 @@ type Window struct {
 	RecapSource string `json:"recap_source,omitempty"`
 	// ShortTitle is the recap's generated short title (served as "title").
 	ShortTitle string `json:"short_title,omitempty"`
-	// ShortKind is the title's work-kind tag (served as "kind").
+	// ShortKind is the title's work-kind tag; the served "role" derives from it
+	// (and Mode) for windows with a Parent.
 	ShortKind   string `json:"short_kind,omitempty"`
 	ContextPct  int    `json:"context_pct,omitempty"`
 	PendingTool string `json:"pending_tool,omitempty"`
@@ -256,6 +258,15 @@ func build(groups []Group, root string, now time.Time) []fleetwatch.Group {
 	return out
 }
 
+// fixtureRole is the role of a window with a parent (shorttitle.Role of its
+// mode and short_kind), "" for the rest.
+func fixtureRole(w Window) string {
+	if w.Parent == "" {
+		return ""
+	}
+	return shorttitle.Role(w.Mode, w.ShortKind)
+}
+
 func rowFor(g Group, w Window, now time.Time) (fleet.Row, fleet.Meta) {
 	row := fleet.Row{Session: g.Session, Project: g.Project, AgentState: state.AgentState{
 		Name: w.Agent, WindowID: w.ID, WindowIndex: w.Index, State: w.State, Done: w.Done,
@@ -263,7 +274,7 @@ func rowFor(g Group, w Window, now time.Time) (fleet.Row, fleet.Meta) {
 		ModelName: w.Model, Ticket: w.Issue, TurnDone: w.TurnDone,
 	}}
 	if w.Recap != "" {
-		row.Recap = fleet.RecapLine{Text: w.Recap, Source: recapSources[w.RecapSource], Title: w.ShortTitle, Kind: w.ShortKind}
+		row.Recap = fleet.RecapLine{Text: w.Recap, Source: recapSources[w.RecapSource], Title: w.ShortTitle, Role: fixtureRole(w)}
 	}
 	mode := w.Mode
 	if mode == "" {

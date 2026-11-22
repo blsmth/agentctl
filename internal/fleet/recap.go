@@ -42,9 +42,9 @@ type RecapLine struct {
 	Text   string
 	Source RecapSource
 	Title  string
-	// Kind is the work-kind tag of Title ("go", "review", ...), empty when
-	// there is none. Only set together with Title.
-	Kind string
+	// Role is the sub-agent role label ("build", "review", ...), empty for
+	// windows no agent dispatched. Only set together with Title.
+	Role string
 }
 
 // Short is what a list row shows: Title when there is one, else the first
@@ -197,24 +197,24 @@ func tagRecap(r *Row, info LogInfo) {
 // or any recap when the title is a human one, gets it as its Title.
 func applyTitle(r *Row) {
 	if r.Recap.Source == RecapNone && r.ShortTitle != "" {
-		r.Recap = RecapLine{Text: r.ShortTitle, Source: RecapTitle, Kind: r.ShortKind}
+		r.Recap = RecapLine{Text: r.ShortTitle, Source: RecapTitle, Role: r.ShortRole}
 	}
 	if r.ShortTitle != "" && (titleSource(*r, r.Recap) || r.ShortManual) {
 		r.Recap.Title = r.ShortTitle
-		r.Recap.Kind = r.ShortKind
+		r.Recap.Role = r.ShortRole
 	}
 }
 
 // Retitle sets r's short title to a human title or clears it (title "") and
 // updates its recap line as TagLogs would, so a caller that just wrote the
 // title shows it without a reload. No I/O: the recap text already on r is
-// kept. Kind is kept.
+// kept. Role is kept.
 func Retitle(r *Row, title string) {
 	if r.ShortTitle != "" && r.Recap.Source == RecapTitle && r.Recap.Text == r.ShortTitle {
 		r.Recap = RecapLine{} // the old title stood in for a missing recap
 	}
 	r.ShortTitle, r.ShortManual = title, title != ""
-	r.Recap.Title, r.Recap.Kind = "", ""
+	r.Recap.Title, r.Recap.Role = "", ""
 	applyTitle(r)
 }
 

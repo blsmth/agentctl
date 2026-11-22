@@ -356,23 +356,23 @@ export function rowHeadline(win) {
   return rowTitle(win);
 }
 
-/** rowKind is the work-kind tag of the row's generated title ("go", "review"), or "" when there is none. */
-export function rowKind(win) {
-  const k = typeof win.kind === "string" ? win.kind.trim() : "";
+/** rowRole is the role label of a sub-agent row ("build", "review", ...; derived server-side), or "" for rows no agent dispatched. */
+export function rowRole(win) {
+  const k = typeof win.role === "string" ? win.role.trim() : "";
   return /^[a-z]{1,16}$/.test(k) ? k : "";
 }
 
 /**
  * detailTitle is the h1 of the window detail and terminal screens: the
  * generated short title when there is one (with the agent name for the where
- * line, and the kind tag for a pill), else the agent name, else the window ID.
+ * line, and the role label for a pill), else the agent name, else the window ID.
  * Recap sentences are never used here; the recap has its own line.
  */
 export function detailTitle(win, windowId = "") {
   const agent = (win?.agent ?? "").trim();
   const title = typeof win?.title === "string" ? win.title.trim() : "";
-  if (title) return { text: title, agent: agent.replace(/[:~]\d+$/, ""), kind: rowKind(win) };
-  return { text: agent || windowId, agent: "", kind: "" };
+  if (title) return { text: title, agent: agent.replace(/[:~]\d+$/, ""), role: rowRole(win) };
+  return { text: agent || windowId, agent: "", role: "" };
 }
 
 /** agentChip is the agent name (no :N suffix) shown as a muted chip, or "" when it is the headline already. */

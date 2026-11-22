@@ -757,3 +757,35 @@ func TestResetTitleOnClearPrompt(t *testing.T) {
 		t.Errorf("dispatched prompt lost: %+v", disp)
 	}
 }
+
+func TestTitleInputParentTitle(t *testing.T) {
+	setupTitle(t)
+	seedWindow(t, "@1", windowstate.WindowState{SessionID: "s1", ShortTitle: windowstate.ShortTitle{Title: "Adding Phone Shell Rows"}})
+	seedWindow(t, "@2", windowstate.WindowState{SessionID: "s1", ShortTitle: windowstate.ShortTitle{Title: "Human Name", Manual: true}})
+	seedWindow(t, "@3", windowstate.WindowState{SessionID: "s1"})
+	tests := []struct {
+		name string
+		ws   windowstate.WindowState
+		want string
+	}{
+		{"both fields", windowstate.WindowState{Task: "x", SpawnedBy: "@1", SpawnedBySession: "s1"}, "Adding Phone Shell Rows"},
+		{"manual parent title counts", windowstate.WindowState{Task: "x", SpawnedBy: "@2", SpawnedBySession: "s1"}, "Human Name"},
+		{"recycled window ID, other session", windowstate.WindowState{Task: "x", SpawnedBy: "@1", SpawnedBySession: "s2"}, ""},
+		{"spawned_by alone", windowstate.WindowState{Task: "x", SpawnedBy: "@1"}, ""},
+		{"session alone", windowstate.WindowState{Task: "x", SpawnedBySession: "s1"}, ""},
+		{"parent untitled", windowstate.WindowState{Task: "x", SpawnedBy: "@3", SpawnedBySession: "s1"}, ""},
+		{"parent missing", windowstate.WindowState{Task: "x", SpawnedBy: "@99", SpawnedBySession: "s1"}, ""},
+		{"no parent", windowstate.WindowState{Task: "x"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := titleInput(tt.ws, "").ParentTitle; got != tt.want {
+				t.Errorf("ParentTitle = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	// Backfill builds its input through the same path.
+	if got := backfillInput(windowstate.WindowState{Task: "x", SpawnedBy: "@1", SpawnedBySession: "s1"}).ParentTitle; got != "Adding Phone Shell Rows" {
+		t.Errorf("backfillInput ParentTitle = %q", got)
+	}
+}

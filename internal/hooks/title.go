@@ -274,8 +274,31 @@ func generateTitle(ctx context.Context, s config.TitleSettings, in shorttitle.In
 // titleInput gathers what the title is made from: the ad-hoc task (or the
 // ticket title; for a bare window, its first prompt) and the Stop payload's
 // last assistant message, which is empty on every other event.
+//
+// A sub-agent window (spawned_by and spawned_by_session both set) also gets
+// its parent's row title as a hint, so its own title names its piece of the
+// work instead of echoing the orchestrator's.
 func titleInput(ws windowstate.WindowState, lastMessage string) shorttitle.Input {
-	return shorttitle.Input{Task: ws.Task, FirstPrompt: ws.FirstPrompt, Ticket: ws.TicketTitle, LastText: lastMessage, Agent: ws.AgentName, Mode: ws.Mode}
+	return shorttitle.Input{
+		Task: ws.Task, FirstPrompt: ws.FirstPrompt, Ticket: ws.TicketTitle, LastText: lastMessage,
+		Agent: ws.AgentName, Mode: ws.Mode, ParentTitle: parentTitle(ws),
+	}
+}
+
+// parentTitle is the short title of ws's dispatching window, "" when ws is not
+// a sub-agent (spawned_by alone is untrusted), the parent has no record in
+// this runtime dir (another project, or closed) or has no title yet. A manual
+// title counts. Only a single file read in the window's own runtime dir.
+func parentTitle(ws windowstate.WindowState) string {
+	if ws.SpawnedBy == "" || ws.SpawnedBySession == "" {
+		return ""
+	}
+	p, err := windowstate.Read(ws.SpawnedBy)
+	// tmux reuses @N IDs: the pair must match, as in reconcile.IsChild.
+	if err != nil || p.SessionID != ws.SpawnedBySession {
+		return ""
+	}
+	return p.ShortTitle.Title
 }
 
 // resetTitleOnClear forgets a window's title and first prompt so the next

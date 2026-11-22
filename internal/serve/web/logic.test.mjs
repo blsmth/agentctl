@@ -7,7 +7,7 @@ import {
   approvalProject, approvalRows, approvalRowText, promptFold, PROMPT_FOLD_LINES,
   DISPATCH_UPLOAD_PATH, buildDispatchRequest, buildShellRequest, canShell, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
-  bucketLabel, kindLabel, rowTags, rowChips, rowTitle, rowHeadline, rowKind, detailTitle, truncateWords, agentChip, rowDetailLine, treeRows,
+  bucketLabel, kindLabel, rowTags, rowChips, rowTitle, rowHeadline, rowRole, detailTitle, truncateWords, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
   actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
@@ -263,18 +263,19 @@ console.log("ok: resolved text");
 }
 
 {
-  assert.equal(rowKind({ kind: "go" }), "go");
-  assert.equal(rowKind({}), "");
-  assert.equal(rowKind({ kind: "<b>x</b>" }), "");
-  console.log("ok: rowKind");
+  assert.equal(rowRole({ role: "build" }), "build");
+  assert.equal(rowRole({}), "");
+  assert.equal(rowRole({ role: "<b>x</b>" }), "");
+  assert.equal(rowRole({ kind: "go" }), "");
+  console.log("ok: rowRole");
 }
 
 {
-  assert.deepEqual(detailTitle({ agent: "go-engineer:3", title: " Fix retry ", kind: "go" }, "@5"), { text: "Fix retry", agent: "go-engineer", kind: "go" });
-  assert.deepEqual(detailTitle({ agent: "brandon:2", title: "Wire titles" }, "@5"), { text: "Wire titles", agent: "brandon", kind: "" });
-  assert.deepEqual(detailTitle({ agent: "brandon:2", kind: "go", recap: "Some recap sentence." }, "@5"), { text: "brandon:2", agent: "", kind: "" });
-  assert.deepEqual(detailTitle({}, "@5"), { text: "@5", agent: "", kind: "" });
-  assert.deepEqual(detailTitle(undefined, "@5"), { text: "@5", agent: "", kind: "" });
+  assert.deepEqual(detailTitle({ agent: "go-engineer:3", title: " Fix retry ", role: "build" }, "@5"), { text: "Fix retry", agent: "go-engineer", role: "build" });
+  assert.deepEqual(detailTitle({ agent: "brandon:2", title: "Wire titles" }, "@5"), { text: "Wire titles", agent: "brandon", role: "" });
+  assert.deepEqual(detailTitle({ agent: "brandon:2", role: "build", recap: "Some recap sentence." }, "@5"), { text: "brandon:2", agent: "", role: "" });
+  assert.deepEqual(detailTitle({}, "@5"), { text: "@5", agent: "", role: "" });
+  assert.deepEqual(detailTitle(undefined, "@5"), { text: "@5", agent: "", role: "" });
   console.log("ok: detailTitle");
 }
 

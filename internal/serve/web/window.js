@@ -394,11 +394,11 @@ export function mountWindow(root, ctx, { session, windowId }) {
 
   function renderHeader() {
     if (!win) return;
-    // The fetched detail can lag the fleet feed; a newer title or kind from the feed wins.
+    // The fetched detail can lag the fleet feed; a newer title or role from the feed wins.
     const live = ctx.store.fleet?.groups?.find((g) => g.session === session)?.windows?.find((x) => x.window_id === windowId);
-    const dt = detailTitle(live ? { ...win, title: live.title, kind: live.kind } : win, windowId);
+    const dt = detailTitle(live ? { ...win, title: live.title, role: live.role } : win, windowId);
     clear(title);
-    if (dt.kind) title.append(h("span", { class: "tag kind-chip", title: "Kind of work" }, dt.kind));
+    if (dt.role) title.append(h("span", { class: "tag kind-chip", title: "Role of this sub-agent" }, dt.role));
     title.append(h("span", { class: "h1-text" }, dt.text));
     waiting = waitingIndex(ctx.store.fleet?.groups);
     const st = displayState(win, waiting);
