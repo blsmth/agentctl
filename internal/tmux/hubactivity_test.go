@@ -7,10 +7,11 @@ import (
 )
 
 func TestParseHubPanes(t *testing.T) {
-	out := "%1 56 v a\n%2 72 v1 a\n%7 70 v a1\ngarbage\n%3 notanumber v a\n"
+	out := "%1 56 v a s\n%9 72 v a s1\n%2 72 v1 a s\n%7 70 v a1 s\ngarbage\n%3 notanumber v a s\n%4 10 v a\n"
 	got := parseHubPanes(out)
 	want := []HubPane{
 		{ID: "%1", Width: 56},
+		{ID: "%9", Width: 72, Status: true},
 		{ID: "%2", Width: 72, Viewer: true},
 		{ID: "%7", Width: 70, Activity: true},
 	}
@@ -59,7 +60,7 @@ func TestViewerSplitTarget(t *testing.T) {
 func TestParseListPaneSkipsActivity(t *testing.T) {
 	// The activity pane (rightmost) is flagged too, so it is never taken for
 	// the list.
-	if got := parseListPane("%7 1\n%1 \n%2 1\n"); got != "%1" {
+	if got := parseListPane("%7 1\n%9 1\n%1 \n%2 1\n"); got != "%1" {
 		t.Errorf("got %q, want %%1", got)
 	}
 }

@@ -92,6 +92,15 @@ func CmdHudFollowHub() {
 	})
 }
 
+// CmdHubStatus runs the hub's status pane (above the live viewer): the
+// selected row's detail, following the hub selection file. Like the
+// follow-hub HUD it keeps no state across a hot reload re-exec.
+func CmdHubStatus() {
+	runWithReload("hub-status", tui.NewHubStatusModel(), runProgram, func(m tea.Model) reloadable {
+		return m.(tui.HubStatusModel).WithoutReload()
+	})
+}
+
 // CmdChromeBar runs the 3-row bottom chrome bar as a Bubble Tea program.
 // It composes the context-metrics line, keybind-hints line, and agent-tabs line
 // into a single pane, eliminating the two tmux pane-border lines that would
