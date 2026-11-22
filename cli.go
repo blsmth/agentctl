@@ -375,13 +375,16 @@ type CostCmd struct {
 type CostReportCmd struct {
 	Session string `arg:"" optional:"" help:"Session ID (prefix) for a per-model breakdown of one session"`
 	Since   string `default:"7d" help:"How far back to look (e.g. 36h, 7d, 2w)"`
-	By      string `enum:",agent,model,day,project" default:"" help:"Group totals by agent, model, day or project"`
+	By      string `enum:",agent,model,day,project,account" default:"" help:"Group totals by agent, model, day, project or account"`
 	Metered bool   `help:"Only metered sessions (real spend, e.g. Nous)"`
+	Account string `help:"Only sessions found under this account"`
+	Sort    string `enum:",date,cost,turns,tokens" default:"date" help:"Order sessions (or --by groups) by date, cost, turns or tokens"`
+	Top     int    `help:"List only the first N sessions after sorting (totals still cover all)"`
 	JSON    bool   `help:"Output as JSON"`
 }
 
 func (c *CostReportCmd) Run() error {
-	return cmd.RunCost(cmd.CostOptions{Session: c.Session, Since: c.Since, By: c.By, Metered: c.Metered, JSON: c.JSON})
+	return cmd.RunCost(cmd.CostOptions{Session: c.Session, Since: c.Since, By: c.By, Metered: c.Metered, Account: c.Account, Sort: c.Sort, Top: c.Top, JSON: c.JSON})
 }
 
 // CostPricesCmd implements `agentctl cost prices [filter]`.

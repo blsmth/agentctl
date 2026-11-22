@@ -390,14 +390,16 @@ One row per matching model: id, input and output $ per 1M tokens, cache read and
 ```sh
 agentctl cost                      # sessions from the last 7 days
 agentctl cost --since 36h --metered
-agentctl cost --by model           # or agent | day | project
+agentctl cost --by model           # or agent | day | project | account
+agentctl cost --since 5h --sort cost --top 10   # the 10 most expensive recent sessions
+agentctl cost --account personal   # only transcripts found under that account
 agentctl cost <session-id>         # per-model breakdown for one session
 agentctl cost --json
 ```
 
 `agentctl cost` is the default subcommand (`agentctl cost report` is the same), so existing invocations are unchanged.
 
-Columns: DATE, PROJECT, AGENT, MODEL, BILLING, TURNS, CACHE READ, OUTPUT, COST. The totals row has `metered` (the number that matters) and `sub` subtotals; sessions with unknown pricing show `?` and are excluded, with a count. `agentctl usage` stays token-only and the sessions browser (`agentctl sessions --tui`) uses the same pricing (they show `?` for unpriced models). With `--json`, an unknown cost is `null`.
+Columns: DATE, PROJECT, ACCOUNT, AGENT, TITLE, MODEL, BILLING, TURNS, CACHE READ, OUTPUT, COST (plus `%` with `--sort cost`). ACCOUNT is the account whose config dir holds the transcript (`-` when none). TITLE is the window's short title (manual or generated), else its first prompt, cut to about 30 characters; it is looked up read-only (no network, no LLM) by session ID in windowstate and `restore.json` of this project and every live session's project, and in the closed-window ledger, so closed windows keep their title. Sessions with no window record (plain `claude` runs) have a blank title. `--sort` orders sessions (default `date`, oldest first); `cost`, `turns` and `tokens` rank biggest first. `--top N` lists only the first N after sorting (the newest N for `date`) and prints `showing N of M`; the totals always cover every matching session. With `--sort cost` the `%` column is each row's share of the total cost, since relative weight is what matters for a plan limit; with `--by`, groups are ordered by cost. `sub` costs are API-equivalent dollars, not plan usage; the footnote under the table says so, and they are the best available proxy for how much of the plan limit a session used. `--json` rows carry `title`, `account` and (with `--sort cost`) `share_pct`; the report carries `matched` and `shown`. The totals row has `metered` (the number that matters) and `sub` subtotals; sessions with unknown pricing show `?` and are excluded, with a count. `agentctl usage` stays token-only and the sessions browser (`agentctl sessions --tui`) uses the same pricing (they show `?` for unpriced models). With `--json`, an unknown cost is `null`.
 
 **Background LLM calls.** agentctl's own LLM requests (short titles today) are invisible in a Claude Code transcript, so every call made through the Nous client is appended to a ledger: `<stateDir>/llm-usage/usage-<YYYY-MM>.ndjson` (UTC month, file `0600`, one `O_APPEND` write per line under a flock so concurrent hooks never interleave). A line has `ts`, `feature` (`titles`), `backend`, `model`, `prompt_tokens`, `completion_tokens`, `cached_tokens` (when reported; `prompt_tokens` includes them), `cost_usd`, `window`, `project`, `ok` and, on failure, `error` (`no_key`, `no_credits`, `timeout`, `network`, `http_<status>`, `decode`, `no_choices`, `invalid_completion`). Failed calls are logged too. `cost_usd` is priced through `internal/tokens` when the line is written, and is `null` when the response had no usage block or the model has no known price: never a guessed default. Housekeeping deletes ledger files not modified for 90 days. `agentctl cost` prints these under a separate **Background LLM calls** heading (calls, failed, prompt/cached/output tokens, cost; `+?` marks calls with no price) over the same `--since`, grouped by `--by model`, `day` or `project` (`--by agent` shows the total only); `--json` carries it as `background_llm` and never folds it into the session totals.
 
@@ -637,7 +639,7 @@ Commands:
 
 ```
 agentctl account add personal --config-dir ~/.claude-personal [--label "Personal (Max)"]
-agentctl account list      # name, dir, label, login identity, 5h/7d usage
+agentctl account list      # name, dir, label, login identity, 5h/7d usage (`reset` = the window's reset time has passed, `0%` = fresh push with no window open, `~` = older than 15 minutes, `-` = unknown)
 agentctl account doctor    # shared links intact, logged in, stray credential env vars
 agentctl account rm personal   # unregister only; never deletes the dir
 agentctl dispatch --issue 12 --account personal

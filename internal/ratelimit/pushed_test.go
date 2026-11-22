@@ -205,3 +205,16 @@ func TestLoadPushedForLegacyFallback(t *testing.T) {
 		t.Errorf("non-default account read the legacy file: %+v", got)
 	}
 }
+
+func TestRecent(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	if (*PushedRateLimits)(nil).Recent(now) {
+		t.Error("nil must not be recent")
+	}
+	if !(&PushedRateLimits{UpdatedAt: now.Add(-time.Minute).Unix()}).Recent(now) {
+		t.Error("1m old without windows should be recent")
+	}
+	if (&PushedRateLimits{UpdatedAt: now.Add(-time.Hour).Unix()}).Recent(now) {
+		t.Error("1h old should not be recent")
+	}
+}

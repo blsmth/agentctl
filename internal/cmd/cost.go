@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
 
+	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/llmusage"
@@ -25,9 +26,12 @@ var costNow = time.Now
 type CostOptions struct {
 	Session string // optional session ID (prefix): per-model breakdown for one session
 	Since   string // "7d", "36h", "2w"; default 7d
-	By      string // "", agent, model, day, project
+	By      string // "", agent, model, day, project, account
 	Metered bool   // metered sessions only
 	JSON    bool
+	Account string // only sessions found under this account's config dir
+	Sort    string // "", date, cost, turns, tokens
+	Top     int    // 0 = all rows
 }
 
 // costRow is one priced session.
@@ -38,6 +42,8 @@ type costRow struct {
 	Agent     string
 	Model     string // display label of the session's last model
 	Turns     int
+	Title     string // window title for the session, "" when no window record
+	Account   string // account whose config dir holds the transcript
 	Cost      sessions.SessionCost
 }
 
@@ -125,6 +131,12 @@ func groupCosts(rows []costRow, by string) ([]costGroup, error) {
 			get(r.Agent).addRow(r)
 		case "project":
 			get(r.Project).addRow(r)
+		case "account":
+			k := r.Account
+			if k == "" {
+				k = "(none)"
+			}
+			get(k).addRow(r)
 		case "day":
 			get(r.Start.In(time.Local).Format("2006-01-02")).addRow(r)
 		case "model":
@@ -145,15 +157,22 @@ func groupCosts(rows []costRow, by string) ([]costGroup, error) {
 				grp.addCost(r.Cost.Billing, mc.USD, mc.Known)
 			}
 		default:
-			return nil, fmt.Errorf("invalid --by %q (want agent, model, day or project)", by)
+			return nil, fmt.Errorf("invalid --by %q (want agent, model, day, project or account)", by)
 		}
 	}
 	out := make([]costGroup, 0, len(idx))
 	for _, g := range idx {
 		out = append(out, *g)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if by == "day" {
+	sortGroups(out, by, false)
+	return out, nil
+}
+
+// sortGroups orders groups by total cost, biggest first; "day" groups stay
+// chronological unless byCost (an explicit --sort cost) asks for cost order.
+func sortGroups(out []costGroup, by string, byCost bool) {
+	sort.SliceStable(out, func(i, j int) bool {
+		if by == "day" && !byCost {
 			return out[i].Key < out[j].Key
 		}
 		if out[i].Total() != out[j].Total() {
@@ -161,7 +180,6 @@ func groupCosts(rows []costRow, by string) ([]costGroup, error) {
 		}
 		return out[i].Key < out[j].Key
 	})
-	return out, nil
 }
 
 func sumCosts(rows []costRow) costTotals {
@@ -174,6 +192,10 @@ func sumCosts(rows []costRow) costTotals {
 
 // pricedRow turns a parsed session into a costRow.
 func pricedRow(s sessions.Session, sum *sessions.Summary, backends map[string]config.BackendConfig) costRow {
+	return pricedRowFor(s, sum, backends, "", "")
+}
+
+func pricedRowFor(s sessions.Session, sum *sessions.Summary, backends map[string]config.BackendConfig, title, account string) costRow {
 	billing := sessions.BillingFor(s, sum.ModelName, backends)
 	return costRow{
 		Start:     s.StartTime,
@@ -182,32 +204,51 @@ func pricedRow(s sessions.Session, sum *sessions.Summary, backends map[string]co
 		Agent:     s.Agent,
 		Model:     cliAbbreviateModel(sum.ModelName),
 		Turns:     sum.TurnCount,
+		Title:     title,
+		Account:   account,
 		Cost:      sessions.CostOfSummary(sum, billing),
 	}
 }
 
-func loadCostRows(since time.Duration, meteredOnly bool) ([]costRow, error) {
+func loadCostRows(since time.Duration, meteredOnly bool, account string) ([]costRow, error) {
 	recent, err := sessions.FindRecentSessions(0, since)
 	if err != nil {
 		return nil, fmt.Errorf("loading sessions: %w", err)
 	}
 	backends := config.Load().Backends
+	accts := claudehome.All()
+	if account != "" {
+		known := false
+		for _, a := range accts {
+			known = known || a.Name == account
+		}
+		if !known {
+			return nil, fmt.Errorf("unknown account %q (see: agentctl account list)", account)
+		}
+	}
+	titleOf := costTitles(since)
 	type parsed struct {
-		s   sessions.Session
-		sum *sessions.Summary
+		s     sessions.Session
+		sum   *sessions.Summary
+		title string
+		acct  string
 	}
 	var all []parsed
 	for _, s := range recent {
+		acct := accountOfLog(s.LogFile, accts)
+		if account != "" && acct != account {
+			continue
+		}
 		sum, err := sessions.ParseSummary(s)
 		if err != nil || sum.TurnCount == 0 {
 			continue
 		}
-		all = append(all, parsed{s, sum})
+		all = append(all, parsed{s, sum, titleOf(s.ID), acct})
 	}
 	build := func() []costRow {
 		var rows []costRow
 		for _, p := range all {
-			r := pricedRow(p.s, p.sum, backends)
+			r := pricedRowFor(p.s, p.sum, backends, p.title, p.acct)
 			if meteredOnly && r.Cost.Billing != sessions.BillingMetered {
 				continue
 			}
@@ -227,6 +268,66 @@ func loadCostRows(since time.Duration, meteredOnly bool) ([]costRow, error) {
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Start.Before(rows[j].Start) })
 	return rows, nil
+}
+
+func validCostSort(s string) bool {
+	switch s {
+	case "", "date", "cost", "turns", "tokens":
+		return true
+	}
+	return false
+}
+
+func rowTokens(r costRow) int {
+	u := r.Cost.Usage
+	return u.Input + u.Output + u.CacheRead + u.CacheCreate
+}
+
+// sortRows orders rows in place: date is chronological (the load order);
+// cost, turns and tokens are biggest first, unknown costs last, ties by date.
+func sortRows(rows []costRow, by string) {
+	less := func(a, b costRow) bool { return false }
+	switch by {
+	case "cost":
+		less = func(a, b costRow) bool {
+			if a.Cost.Known != b.Cost.Known {
+				return a.Cost.Known
+			}
+			return a.Cost.USD > b.Cost.USD
+		}
+	case "turns":
+		less = func(a, b costRow) bool { return a.Turns > b.Turns }
+	case "tokens":
+		less = func(a, b costRow) bool { return rowTokens(a) > rowTokens(b) }
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if less(rows[i], rows[j]) {
+			return true
+		}
+		if less(rows[j], rows[i]) {
+			return false
+		}
+		return rows[i].Start.Before(rows[j].Start)
+	})
+}
+
+// topRows keeps the first n rows of a ranked list; for the chronological
+// default it keeps the n newest, still oldest first.
+func topRows(rows []costRow, n int, by string) []costRow {
+	if n <= 0 || len(rows) <= n {
+		return rows
+	}
+	if by == "" || by == "date" {
+		return rows[len(rows)-n:]
+	}
+	return rows[:n]
+}
+
+func topN[T any](xs []T, n int) []T {
+	if n <= 0 || len(xs) <= n {
+		return xs
+	}
+	return xs[:n]
 }
 
 func anyUnknown(rows []costRow) bool {
@@ -252,7 +353,13 @@ func RunCost(o CostOptions) error {
 			return err
 		}
 	}
-	rows, err := loadCostRows(since, o.Metered)
+	if !validCostSort(o.Sort) {
+		return fmt.Errorf("invalid --sort %q (want cost, date, turns or tokens)", o.Sort)
+	}
+	if o.Top < 0 {
+		return fmt.Errorf("invalid --top %d (want a positive count)", o.Top)
+	}
+	rows, err := loadCostRows(since, o.Metered, o.Account)
 	if err != nil {
 		return err
 	}
@@ -261,11 +368,28 @@ func RunCost(o CostOptions) error {
 	var groups []costGroup
 	if o.By != "" {
 		groups, _ = groupCosts(rows, o.By)
+		if o.Sort == "cost" {
+			sortGroups(groups, o.By, true)
+		}
+	}
+	// Totals above cover every matching session; sorting and --top only
+	// shape what is listed.
+	matched := len(rows)
+	if o.By != "" {
+		matched = len(groups)
+		groups = topN(groups, o.Top)
+	} else {
+		sortRows(rows, o.Sort)
+		rows = topRows(rows, o.Top, o.Sort)
+	}
+	shown := len(rows)
+	if o.By != "" {
+		shown = len(groups)
 	}
 	if o.JSON {
-		return printCostJSON(rows, groups, totals, llmRecs, o)
+		return printCostJSON(rows, groups, totals, llmRecs, o, matched, shown)
 	}
-	printCostTable(rows, groups, totals, o)
+	printCostTable(rows, groups, totals, o, matched, shown)
 	printLLMSection(llmRecs, o.By)
 	return nil
 }
@@ -302,10 +426,17 @@ func costTable(headers ...string) *table.Table {
 		})
 }
 
-func printCostTable(rows []costRow, groups []costGroup, totals costTotals, o CostOptions) {
-	if len(rows) == 0 {
+const subNote = "sub = API-equivalent cost; the best available proxy for plan-limit usage"
+
+func printCostTable(rows []costRow, groups []costGroup, totals costTotals, o CostOptions, matched, shown int) {
+	if matched == 0 {
 		fmt.Println(cliMuted().Render("No sessions in range."))
 		return
+	}
+	showing := func(noun string) {
+		if shown < matched {
+			fmt.Println(cliMuted().Render(fmt.Sprintf("showing %d of %d %s", shown, matched, noun)))
+		}
 	}
 	if o.By != "" {
 		t := costTable(strings.ToUpper(o.By), "SESSIONS", "TURNS", "CACHE READ", "OUTPUT", "METERED", "SUB", "EXCLUDED")
@@ -316,18 +447,57 @@ func printCostTable(rows []costRow, groups []costGroup, totals costTotals, o Cos
 		t.Row("TOTAL", strconv.Itoa(totals.Sessions), strconv.Itoa(totals.Turns), fmtCount(totals.CacheRead), fmtCount(totals.Output),
 			fmt.Sprintf("$%.2f", totals.Metered), fmt.Sprintf("$%.2f", totals.Sub), excludedCell(totals.Excluded))
 		fmt.Println(t.Render())
+		showing("groups")
 		printCostFooter(totals)
+		if totals.Sub > 0 {
+			fmt.Println(cliMuted().Render(subNote))
+		}
 		return
 	}
-	t := costTable("DATE", "PROJECT", "AGENT", "MODEL", "BILLING", "TURNS", "CACHE READ", "OUTPUT", "COST")
-	for _, r := range rows {
-		t.Row(r.Start.In(time.Local).Format("01-02 15:04"), r.Project, r.Agent, r.Model, r.Cost.Billing.String(),
-			strconv.Itoa(r.Turns), fmtCount(r.Cost.Usage.CacheRead), fmtCount(r.Cost.Usage.Output), costCell(r.Cost.USD, r.Cost.Known))
+	headers := []string{"DATE", "PROJECT", "ACCOUNT", "AGENT", "TITLE", "MODEL", "BILLING", "TURNS", "CACHE READ", "OUTPUT", "COST"}
+	share := o.Sort == "cost"
+	if share {
+		headers = append(headers, "%")
 	}
-	t.Row("TOTAL", "", "", "", "", strconv.Itoa(totals.Turns), fmtCount(totals.CacheRead), fmtCount(totals.Output),
-		costCell(totals.Total(), true))
+	t := costTable(headers...)
+	anySub := false
+	for _, r := range rows {
+		anySub = anySub || r.Cost.Billing == sessions.BillingSub
+		cells := []string{r.Start.In(time.Local).Format("01-02 15:04"), r.Project, orDash(r.Account), r.Agent, r.Title, r.Model, r.Cost.Billing.String(),
+			strconv.Itoa(r.Turns), fmtCount(r.Cost.Usage.CacheRead), fmtCount(r.Cost.Usage.Output), costCell(r.Cost.USD, r.Cost.Known)}
+		if share {
+			cells = append(cells, sharePctCell(r, totals))
+		}
+		t.Row(cells...)
+	}
+	total := []string{"TOTAL", "", "", "", "", "", "", strconv.Itoa(totals.Turns), fmtCount(totals.CacheRead), fmtCount(totals.Output),
+		costCell(totals.Total(), true)}
+	if share {
+		total = append(total, "")
+	}
+	t.Row(total...)
 	fmt.Println(t.Render())
+	showing("sessions")
 	printCostFooter(totals)
+	if anySub {
+		fmt.Println(cliMuted().Render(subNote))
+	}
+}
+
+// sharePct is a row's share of the report total in percent; false when the
+// cost is unknown or the total is zero.
+func sharePct(r costRow, totals costTotals) (float64, bool) {
+	if !r.Cost.Known || totals.Total() <= 0 {
+		return 0, false
+	}
+	return r.Cost.USD / totals.Total() * 100, true
+}
+
+func sharePctCell(r costRow, totals costTotals) string {
+	if p, ok := sharePct(r, totals); ok {
+		return fmt.Sprintf("%.0f%%", p)
+	}
+	return "-"
 }
 
 func excludedCell(n int) string {
@@ -449,6 +619,10 @@ type costRowJSON struct {
 	CacheRead int      `json:"cache_read_tokens"`
 	Output    int      `json:"output_tokens"`
 	CostUSD   *float64 `json:"cost_usd"` // null = unknown
+	Title     string   `json:"title"`
+	Account   string   `json:"account"`
+	// SharePct is the row's share of the total cost; only with --sort cost.
+	SharePct *float64 `json:"share_pct,omitempty"`
 }
 
 type costGroupJSON struct {
@@ -470,24 +644,34 @@ type costTotalsJSON struct {
 	Excluded int     `json:"excluded_sessions"`
 }
 
-func printCostJSON(rows []costRow, groups []costGroup, totals costTotals, llmRecs []llmusage.Record, o CostOptions) error {
+func printCostJSON(rows []costRow, groups []costGroup, totals costTotals, llmRecs []llmusage.Record, o CostOptions, matched, shown int) error {
 	out := struct {
 		Since    string          `json:"since"`
 		By       string          `json:"by,omitempty"`
 		Sessions []costRowJSON   `json:"sessions,omitempty"`
 		Groups   []costGroupJSON `json:"groups,omitempty"`
 		Totals   costTotalsJSON  `json:"totals"`
+		// Matched/Shown: sessions (or groups) matching the filters vs. listed
+		// after --top.
+		Matched int `json:"matched"`
+		Shown   int `json:"shown"`
 		// BackgroundLLM is agentctl's own LLM calls (titles); kept apart from
 		// the session totals above.
 		BackgroundLLM llmSectionJSON `json:"background_llm"`
-	}{Since: o.Since, By: o.By, BackgroundLLM: llmSection(llmRecs, o.By)}
+	}{Since: o.Since, By: o.By, BackgroundLLM: llmSection(llmRecs, o.By), Matched: matched, Shown: shown}
 	if out.Since == "" {
 		out.Since = "7d"
 	}
 	if o.By == "" {
 		out.Sessions = []costRowJSON{}
 		for _, r := range rows {
-			out.Sessions = append(out.Sessions, costRowJSON{
+			var sp *float64
+			if o.Sort == "cost" {
+				if p, ok := sharePct(r, totals); ok {
+					sp = &p
+				}
+			}
+			out.Sessions = append(out.Sessions, costRowJSON{Title: r.Title, Account: r.Account, SharePct: sp,
 				Date: r.Start.Format(time.RFC3339), ID: r.SessionID, Project: r.Project, Agent: r.Agent,
 				Model: r.Model, Billing: r.Cost.Billing.String(), Turns: r.Turns,
 				CacheRead: r.Cost.Usage.CacheRead, Output: r.Cost.Usage.Output,
