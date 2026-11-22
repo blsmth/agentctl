@@ -12,6 +12,7 @@ import (
 	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/remoteapproval"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
@@ -90,20 +91,25 @@ const accountDirUnknown = "unknown (command changes dir first)"
 // run, for the approval popup and the phone. Best effort: it never fails or
 // panics (a panic would make the hook exit non-blocking and let the dispatch
 // run unapproved), and anything it cannot resolve is left empty.
-func resolveDispatchDetails(cfg *config.Config, command, cwd string) (d remoteapproval.Details) {
+// tmpl is the resolved `--template`, or nil; its agent, model and dir fill
+// the flags left unset.
+func resolveDispatchDetails(cfg *config.Config, command, cwd string, tmpl *prompttemplate.Template) (d remoteapproval.Details) {
 	defer func() {
 		if r := recover(); r != nil {
 			logging.Log("hook-validate-bash: resolving dispatch details panicked: %v", r)
 			d = remoteapproval.Details{}
 		}
 	}()
-	return dispatchDetails(cfg, command, cwd)
+	return dispatchDetails(cfg, command, cwd, tmpl)
 }
 
 // dispatchDetails is resolveDispatchDetails without the panic guard.
-func dispatchDetails(cfg *config.Config, command, cwd string) remoteapproval.Details {
+func dispatchDetails(cfg *config.Config, command, cwd string, tmpl *prompttemplate.Template) remoteapproval.Details {
 	f := parseDispatchPlanFlags(command)
 	f.plan.Cwd = cwd
+	if tmpl != nil {
+		f.plan.TemplateAgent, f.plan.TemplateModel, f.plan.TemplateDir = tmpl.Agent, tmpl.Model, tmpl.ExpandedDir()
+	}
 	p := dispatchplan.Resolve(cfg, f.plan)
 
 	d := remoteapproval.Details{
@@ -134,8 +140,13 @@ func dispatchDetails(cfg *config.Config, command, cwd string) remoteapproval.Det
 	// Something before the dispatch (cd, pushd, a subshell, ...) may change
 	// the cwd, so a dir that depends on it is not known: say so rather than
 	// name the asking project with confidence.
+	dirGiven := f.plan.Dir
+	if p.DirSource == dispatchplan.SourceTemplate {
+		dirGiven = f.plan.TemplateDir
+	}
 	cwdDependent := p.DirSource == dispatchplan.SourceCwd ||
-		(p.DirSource == dispatchplan.SourceFlag && !filepath.IsAbs(paths.ExpandHome(f.plan.Dir)))
+		((p.DirSource == dispatchplan.SourceFlag || p.DirSource == dispatchplan.SourceTemplate) &&
+			!filepath.IsAbs(paths.ExpandHome(dirGiven)))
 	dirUnknown := cwdDependent && lineChangesContext(command)
 	if dirUnknown {
 		d.DirSource = dirChangedFirst

@@ -200,7 +200,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"c", "chrome", "c"},
 		{fleetActivityKey, "activity pane", fleetActivityKey},
 		{"⇧↑/⇧↓", "move project", "shift+up"},
-		{"z", "fold", "z"},
+		{"z", "fold / collapse", "z"},
 		{"Z", "focus mode", "Z"},
 		{"f", "filter", "f"},
 		{"o", "sort recent", "o"},

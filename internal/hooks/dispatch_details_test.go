@@ -192,7 +192,7 @@ func TestResolveDispatchDetails(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveDispatchDetails(config.Load(), tt.command, f.asking)
+			got := resolveDispatchDetails(config.Load(), tt.command, f.asking, nil)
 			if got != tt.want {
 				t.Errorf("details =\n %+v\nwant\n %+v", got, tt.want)
 			}
@@ -246,7 +246,7 @@ func TestDispatchGateSurvivesPanickingDetails(t *testing.T) {
 	orig := dispatchplan.Discover
 	dispatchplan.Discover = func(*config.Config, []string) ([]agent.Agent, error) { panic("boom") }
 	t.Cleanup(func() { dispatchplan.Discover = orig })
-	if got := resolveDispatchDetails(config.Load(), "agentctl dispatch --agent x --prompt hi", f.asking); got != (remoteapproval.Details{}) {
+	if got := resolveDispatchDetails(config.Load(), "agentctl dispatch --agent x --prompt hi", f.asking, nil); got != (remoteapproval.Details{}) {
 		t.Errorf("details after a panic = %+v, want zero", got)
 	}
 

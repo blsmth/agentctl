@@ -12,6 +12,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/remoteapproval"
 	"github.com/blsmth/agentctl/internal/shellquote"
 	"github.com/blsmth/agentctl/internal/textutil"
@@ -34,6 +35,10 @@ const (
 	PreviewKindDispatch PreviewKind = "dispatch"
 	PreviewKindBash     PreviewKind = "bash"
 	PreviewKindCron     PreviewKind = "cron"
+	// PreviewKindTemplate is an `agentctl template add/edit/rm` preview
+	// (see template_preview.go): the template name and file in the rows,
+	// its new content (or the content being removed) in the viewport.
+	PreviewKindTemplate PreviewKind = "template"
 )
 
 // DispatchPreviewArgs is the JSON structure written to the temp file passed to
@@ -46,7 +51,10 @@ type DispatchPreviewArgs struct {
 	ReviewPR  int    `json:"review_pr,omitempty"`
 	Prompt    string `json:"prompt"`
 	PromptKey string `json:"prompt_key"`
-	Command   string `json:"command"`
+	// Template is the `dispatch --template` name; Prompt is then the
+	// template's resolved prompt (plus any --prompt instructions).
+	Template string `json:"template,omitempty"`
+	Command  string `json:"command"`
 	// Account is the Claude account the dispatched agent resolves to, as
 	// "name (label)"; empty when no accounts are configured.
 	Account string `json:"account,omitempty"`
@@ -57,6 +65,12 @@ type DispatchPreviewArgs struct {
 	// (the zero value) is treated as PreviewKindDispatch for backward
 	// compatibility with args files written before this field existed.
 	Kind PreviewKind `json:"kind,omitempty"`
+
+	// TemplateAction, TemplateName and TemplatePath fill a
+	// PreviewKindTemplate popup's title and rows (see tui.TemplatePreview).
+	TemplateAction string `json:"template_action,omitempty"`
+	TemplateName   string `json:"template_name,omitempty"`
+	TemplatePath   string `json:"template_path,omitempty"`
 
 	// CronAction, CronJob and CronSchedule fill a PreviewKindCron popup's
 	// title and rows (see tui.CronPreview).
@@ -312,7 +326,7 @@ func segmentHasHelp(seg []cmdToken) bool {
 func isDispatchValueFlag(tok string) bool {
 	switch tok {
 	case "--agent", "-a", "--issue", "-i", "--prompt", "-p", "--prompt-key", "-k", "--review-pr", "--author",
-		"--dir", "--model", "-m", "--backend", "--account", "--harness", "--repo", "--timeout":
+		"--dir", "--model", "-m", "--backend", "--account", "--harness", "--repo", "--timeout", "--template":
 		return true
 	}
 	return false
@@ -386,8 +400,21 @@ func dispatchPreviewGate(agentName, command, cwd string) (approved, decided bool
 
 	target := resolvePopupTarget()
 
+	// A --template is the prompt: resolve it the way the CLI will, or deny.
+	bashCwd := askingCwd(cwd)
+	tmpl, deny := resolveDispatchTemplate(command, bashCwd)
+	if deny != "" {
+		return false, false, deny
+	}
+	if tmpl != nil {
+		prompt = prompttemplate.Compose(tmpl.Prompt, prompt)
+		if targetAgent == "" {
+			targetAgent = tmpl.Agent
+		}
+	}
+
 	// Where and how the agent will run. Best effort: it never fails the gate.
-	details := resolveDispatchDetails(config.Load(), command, askingCwd(cwd))
+	details := resolveDispatchDetails(config.Load(), command, bashCwd, tmpl)
 
 	// Build the args struct.
 	args := DispatchPreviewArgs{
@@ -399,6 +426,7 @@ func dispatchPreviewGate(agentName, command, cwd string) (approved, decided bool
 		PromptKey:    promptKey,
 		Command:      command,
 		Kind:         PreviewKindDispatch,
+		Template:     templateName(tmpl),
 		ContentWidth: contentWidth,
 		VPHeight:     vpHeight,
 		Account:      details.Account,
@@ -617,6 +645,17 @@ func parseDispatchFlags(command string) (targetAgent string, issue int, prompt s
 // dispatchTokens returns the words of the gated dispatch invocation in
 // command: the first segment that is not a help lookup, else the first.
 func dispatchTokens(command string) []string {
+	seg := gatedDispatchSegment(command)
+	tokens := make([]string, len(seg))
+	for i, t := range seg {
+		tokens[i] = t.text
+	}
+	return tokens
+}
+
+// gatedDispatchSegment is the segment dispatchTokens reads, with quoting
+// and expansion kept.
+func gatedDispatchSegment(command string) []cmdToken {
 	segs := dispatchSegments(command)
 	var seg []cmdToken
 	for _, c := range segs {
@@ -628,11 +667,7 @@ func dispatchTokens(command string) []string {
 	if seg == nil && len(segs) > 0 {
 		seg = segs[0]
 	}
-	tokens := make([]string, len(seg))
-	for i, t := range seg {
-		tokens[i] = t.text
-	}
-	return tokens
+	return seg
 }
 
 // parseDispatchReviewPR returns the --review-pr number of the dispatch in

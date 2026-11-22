@@ -257,7 +257,7 @@ func (m FleetModel) onRowTitle(idx, x int) bool {
 	l := m.lines[idx]
 	cw := m.listColWidth()
 	selected := idx == m.splitPane.Cursor()
-	_, span := m.treeRowLayout(l.row, l.treePrefix, l.nameCol, selected, fleetHoverBody, cw)
+	span := m.rowLayout(l, selected, fleetHoverBody, cw).title
 	end := min(span[1], cw-fleetSidebarRightGutter)
 	return x >= span[0] && x < end
 }

@@ -372,3 +372,36 @@ body.term-open nav { display: none; }
 .sched-row .win-title { flex-wrap: wrap; row-gap: 0; }
 .sched-row .win-chips .tag.sched-exc { height: auto; min-height: 0; line-height: 1.4; align-self: flex-start; }
 .sched-row { flex: 1; }
+
+/* Schedules pass 2 (phone). */
+/* Native selects as tall as the text inputs: WebKit ignores min-height on a styled-less select. */
+.sched-form select { -webkit-appearance: none; appearance: none; height: 44px; box-sizing: border-box; padding-right: 2rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23888' stroke-width='2'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right .8rem center; }
+.sched-form option.unknown { color: var(--blocked); }
+/* Five kinds on one row. */
+.sched-seg { flex-wrap: nowrap; gap: .25rem; }
+.sched-seg .btn { flex: 1 1 0; min-width: 0; padding: 0 .1rem; font-size: .78rem; white-space: nowrap; }
+.sched-seg2 { display: flex; gap: .25rem; }
+.sched-seg2 .btn { flex: 1 1 0; min-width: 0; padding: 0 .3rem; font-size: .85rem; }
+.sched-seg2 .btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sched-time-sel, .sched-gate { display: flex; align-items: center; gap: .5rem; }
+.sched-time-sel select, .sched-gate select { flex: 1; min-width: 0; }
+.sched-time { display: flex; flex-direction: column; gap: .3rem; font-size: .85rem; }
+.sched-field { display: flex; flex-direction: column; gap: .3rem; font-size: .85rem; }
+.sched-keyline { margin: 0; padding: .6rem; border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); }
+/* Advanced fold: a disclosure arrow and a one-line summary of what is not default. */
+.sched-advanced summary { list-style: none; gap: .5rem; }
+.sched-advanced summary::-webkit-details-marker { display: none; }
+.sched-advanced summary::before { content: "\25B8"; color: var(--muted); }
+.sched-advanced[open] summary::before { content: "\25BE"; }
+.sched-adv-title { font-weight: 600; color: var(--fg); }
+.sched-adv-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Card: status line first, then the failure reason. */
+.sched-status { display: flex; align-items: center; gap: .4rem; margin: 0 0 .3rem; font-weight: 600; }
+.sched-status.failed { color: var(--blocked); }
+.sched-status.running { color: var(--working); }
+.sched-fail { margin: 0 0 .75rem; color: var(--blocked); font-size: .9rem; }
+.sched-more { margin: 0 0 .75rem; }
+.sched-more summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--muted); }
+.sched-more .btn { width: 100%; }

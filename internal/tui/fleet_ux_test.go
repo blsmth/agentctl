@@ -156,7 +156,7 @@ func TestFitRightColsDegradesWithoutExceptions(t *testing.T) {
 		{0, false, false},
 	}
 	for _, tt := range tests {
-		c := fitRightCols(tt.available, fleetExceptions{}, false, false)
+		c := fitRightCols(tt.available, fleetExceptions{}, false, false, 0)
 		if c.pr != tt.pr || c.age != tt.age || c.modelW != 0 || c.ctx {
 			t.Errorf("fitRightCols(%d) = %+v, want pr=%v age=%v", tt.available, c, tt.pr, tt.age)
 		}

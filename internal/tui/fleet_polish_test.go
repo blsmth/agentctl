@@ -19,7 +19,7 @@ func TestRowRight_DoneBadgeAndAge(t *testing.T) {
 	fixedFleetNow(t)
 	since := sidebarNow.Add(-4 * time.Hour)
 	ex := fleetExceptions{common: "opus"}
-	full := fitRightCols(200, ex, false, false)
+	full := fitRightCols(200, ex, false, false, 0)
 	done := fleet.Row{StateSince: since, PRNumber: 105, AgentState: state.AgentState{Done: true}}
 	got := rowRight(done, full, ex, fleetDisplay{})
 	if plain := ansi.Strip(got); plain != "#105  4h" {

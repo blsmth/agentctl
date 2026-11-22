@@ -18,6 +18,7 @@ import (
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/dispatchplan"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/textutil"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -33,9 +34,13 @@ type DispatchOptions struct {
 	ReviewPR int
 	// Author is `--author @N`, the --review-pr author's window, overriding
 	// detection from the PR branch.
-	Author     string
-	Prompt     string
-	PromptKey  string
+	Author    string
+	Prompt    string
+	PromptKey string
+	// Template is `--template`: a prompt template (internal/prompttemplate)
+	// whose body is the prompt and whose agent/model/dir/effort fill unset
+	// flags. Prompt, when also set, is added as additional instructions.
+	Template   string
 	Agent      string
 	Dir        string
 	Model      string
@@ -61,13 +66,23 @@ type DispatchOptions struct {
 // Flag parsing is handled by Kong via DispatchCmd in cli.go; this function
 // contains the business logic (validation + dispatch).
 func RunDispatch(opts DispatchOptions) {
-	issueNumber, promptText, promptKey, agentName := opts.Issue, opts.Prompt, opts.PromptKey, opts.Agent
-	workDir, model, backend, account, harnessName := opts.Dir, opts.Model, opts.Backend, opts.Account, opts.Harness
-	noWorktree, wait, timeoutDur, repo := opts.NoWorktree, opts.Wait, opts.Timeout, opts.Repo
 	if err := validateDispatchOptions(opts); err != nil {
 		fmt.Fprintln(os.Stderr, "Error: "+err.Error()+"\n"+dispatchUsage)
 		cliout.Exit(1)
 	}
+	// A template fills the prompt and any unset agent/model/dir/effort
+	// before anything else reads them.
+	if opts.Template != "" {
+		cwd, _ := os.Getwd()
+		var err error
+		if opts, err = applyDispatchTemplate(opts, cwd); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			cliout.Exit(1)
+		}
+	}
+	issueNumber, promptText, promptKey, agentName := opts.Issue, opts.Prompt, opts.PromptKey, opts.Agent
+	workDir, model, backend, account, harnessName := opts.Dir, opts.Model, opts.Backend, opts.Account, opts.Harness
+	noWorktree, wait, timeoutDur, repo := opts.NoWorktree, opts.Wait, opts.Timeout, opts.Repo
 
 	// An explicit --agent must name a discovered agent. Besides catching
 	// typos before a worktree is created, this keeps arbitrary strings out of
@@ -124,7 +139,9 @@ func RunDispatch(opts DispatchOptions) {
 		}
 		fmt.Printf("Dispatched #%d → %s (window %s)\n", issueNumber, resolvedAgent, linkWindow(wid, wid))
 	default:
-		wid, resolvedAgent, err = dispatchPrompt(promptText, promptKey, agentName, workDir, model, backend, account, harnessName, !noWorktree)
+		popts := opts
+		popts.Prompt = promptText
+		wid, resolvedAgent, err = dispatchPromptOptions(popts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			cliout.Exit(1)
@@ -191,7 +208,7 @@ func RunDispatch(opts DispatchOptions) {
 }
 
 // dispatchUsage is the dispatch command's one-line usage.
-const dispatchUsage = "Usage: agentctl dispatch (--issue <N> | --review-pr <N> | --prompt <text> | --prompt-key <key>) [--agent <name>] [--author @N] [--dir <path>] [--model <name>] [--backend <name>|none] [--account <name>] [--harness <name>] [--repo <owner/name>] [--no-worktree] [--wait] [--timeout <duration>]"
+const dispatchUsage = "Usage: agentctl dispatch (--issue <N> | --review-pr <N> | --prompt <text> | --prompt-key <key> | --template <name> [--prompt <extra>]) [--agent <name>] [--author @N] [--dir <path>] [--model <name>] [--backend <name>|none] [--account <name>] [--harness <name>] [--repo <owner/name>] [--no-worktree] [--wait] [--timeout <duration>]"
 
 // authorFlagRE matches an --author window ID.
 var authorFlagRE = regexp.MustCompile(`^@[0-9]+$`)
@@ -208,6 +225,17 @@ func validateDispatchOptions(opts DispatchOptions) error {
 	if opts.ReviewPR != 0 && opts.Issue != 0 {
 		return errors.New("--issue and --review-pr are mutually exclusive")
 	}
+	if opts.Template != "" {
+		switch {
+		case opts.Issue != 0, opts.PromptKey != "", opts.ReviewPR != 0:
+			return errors.New("--template is mutually exclusive with --issue, --review-pr and --prompt-key")
+		case !prompttemplate.ValidName(opts.Template):
+			return fmt.Errorf("invalid --template %q", opts.Template)
+		}
+		// --prompt adds instructions; the agent may come from the template
+		// (checked once it is loaded).
+		return validateAuthor(opts)
+	}
 	supplied := 0
 	for _, v := range []bool{opts.Issue != 0, opts.Prompt != "", opts.PromptKey != ""} {
 		if v {
@@ -218,13 +246,18 @@ func validateDispatchOptions(opts DispatchOptions) error {
 		return errors.New("--issue, --prompt, and --prompt-key are mutually exclusive")
 	}
 	if supplied == 0 && opts.ReviewPR == 0 {
-		return errors.New("one of --issue, --review-pr, --prompt, or --prompt-key is required")
+		return errors.New("one of --issue, --review-pr, --prompt, --prompt-key, or --template is required")
 	}
 	// No label-based agent inference without an issue; --review-pr defaults
 	// to code-reviewer.
 	if (opts.Prompt != "" || opts.PromptKey != "") && opts.ReviewPR == 0 && opts.Agent == "" {
 		return errors.New("--agent is required when using --prompt or --prompt-key")
 	}
+	return validateAuthor(opts)
+}
+
+// validateAuthor checks --author: only with --review-pr, and a window ID.
+func validateAuthor(opts DispatchOptions) error {
 	if opts.Author != "" {
 		if opts.ReviewPR == 0 {
 			return errors.New("--author requires --review-pr")
@@ -234,6 +267,39 @@ func validateDispatchOptions(opts DispatchOptions) error {
 		}
 	}
 	return nil
+}
+
+// loadPromptTemplate loads a --template. Seam for tests.
+var loadPromptTemplate = prompttemplate.Load
+
+// applyDispatchTemplate resolves opts.Template from cwd's project (shadowing
+// the global templates) and returns opts with the template applied: the
+// prompt is the template body, with any --prompt appended as additional
+// instructions, and the template's agent, model, dir and effort fill only
+// the flags left unset. It errors when neither the template nor --agent
+// names an agent.
+func applyDispatchTemplate(opts DispatchOptions, cwd string) (DispatchOptions, error) {
+	t, err := loadPromptTemplate(opts.Template, cwd)
+	if err != nil {
+		return opts, fmt.Errorf("--template %s: %w", opts.Template, err)
+	}
+	if opts.Agent == "" {
+		opts.Agent = t.Agent
+	}
+	if opts.Agent == "" {
+		return opts, fmt.Errorf("template %q sets no agent; pass --agent", t.Name)
+	}
+	if opts.Model == "" {
+		opts.Model = t.Model
+	}
+	if opts.Dir == "" {
+		opts.Dir = t.ExpandedDir()
+	}
+	if opts.Effort == "" {
+		opts.Effort = t.Effort
+	}
+	opts.Prompt = prompttemplate.Compose(t.Prompt, opts.Prompt)
+	return opts, nil
 }
 
 // Seams for tests.
@@ -267,6 +333,7 @@ func dispatchPromptOptions(opts DispatchOptions) (string, string, error) {
 	res, err := launchAdhoc(dispatch.AdhocRequest{
 		Prompt:      opts.Prompt,
 		PromptKey:   opts.PromptKey,
+		Template:    opts.Template,
 		AgentName:   opts.Agent,
 		WorkDir:     workDir,
 		Model:       opts.Model,

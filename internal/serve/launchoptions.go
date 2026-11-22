@@ -3,9 +3,11 @@ package serve
 import (
 	"context"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/launchopts"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -29,6 +31,13 @@ type LaunchConfig struct {
 	AgentModel   string
 	AgentEffort  string
 	NousModels   []string
+	// Accounts are the configured account names, sorted. Empty when none.
+	Accounts []string
+	// AgentAccount is agents.<name>.account, AccountRules and DefaultAccount
+	// the rest of the resolution chain an unpinned launch follows.
+	AgentAccount   string
+	AccountRules   []config.AccountRule
+	DefaultAccount string
 }
 
 // LaunchConfigSource reads the effective launch configuration of agent in a
@@ -54,7 +63,15 @@ func (configLaunchSource) LaunchConfig(session, runtimeDir, agent string) (Launc
 			AgentModel:   ac.Model,
 			AgentEffort:  ac.EffortLevel,
 			NousModels:   tokens.CatalogModelIDs(),
+
+			AgentAccount:   ac.Account,
+			AccountRules:   cfg.AccountRules,
+			DefaultAccount: cfg.DefaultAccount,
 		}
+		for name := range cfg.Accounts {
+			out.Accounts = append(out.Accounts, name)
+		}
+		sort.Strings(out.Accounts)
 		return nil
 	})
 	return out, err
@@ -139,12 +156,16 @@ func (c *ollamaCache) models(name string, b config.BackendConfig) ([]string, str
 // offers, used by GET /v1/launch-options and to validate POST /v1/dispatch.
 type launchChoices struct {
 	in launchopts.Inputs
+	// accounts and defaultAccount are the configured account names and the
+	// one an unpinned launch in the requested project would use.
+	accounts       []string
+	defaultAccount string
 	// listErrors maps an Ollama backend whose list could not be fetched to
 	// the reason.
 	listErrors map[string]string
 }
 
-func (s *Server) launchChoices(session, runtimeDir, agent string) (launchChoices, error) {
+func (s *Server) launchChoices(session, runtimeDir, agent, projectDir string) (launchChoices, error) {
 	lc, err := s.launchCfg.LaunchConfig(session, runtimeDir, agent)
 	if err != nil {
 		return launchChoices{}, err
@@ -158,7 +179,7 @@ func (s *Server) launchChoices(session, runtimeDir, agent string) (launchChoices
 		NousModels:   lc.NousModels,
 		OllamaModels: map[string][]string{},
 	}
-	out := launchChoices{in: in, listErrors: map[string]string{}}
+	out := launchChoices{in: in, listErrors: map[string]string{}, accounts: lc.Accounts, defaultAccount: resolveDefaultAccount(lc, projectDir)}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	for name, b := range lc.Backends {
@@ -182,6 +203,22 @@ func (s *Server) launchChoices(session, runtimeDir, agent string) (launchChoices
 	return out, nil
 }
 
+// resolveDefaultAccount is the account a launch with no pin runs under:
+// the agent's own, then the account_rules match for the project, then
+// default_account. "" when no accounts are configured or none applies.
+func resolveDefaultAccount(lc LaunchConfig, projectDir string) string {
+	if len(lc.Accounts) == 0 {
+		return ""
+	}
+	if lc.AgentAccount != "" {
+		return lc.AgentAccount
+	}
+	if r := claudehome.MatchRule(lc.AccountRules, projectDir); r != "" {
+		return r
+	}
+	return lc.DefaultAccount
+}
+
 type launchBackend struct {
 	Name    string `json:"name"`
 	Kind    string `json:"kind"`
@@ -197,6 +234,8 @@ type launchDefaults struct {
 	Backend string `json:"backend"`
 	Model   string `json:"model"`
 	Effort  string `json:"effort"`
+	// Account is the resolved default account, omitted with no accounts.
+	Account string `json:"account,omitempty"`
 }
 
 type launchOptionsBody struct {
@@ -204,6 +243,9 @@ type launchOptionsBody struct {
 	Models   map[string]launchModels `json:"models"`
 	Efforts  []string                `json:"efforts"`
 	Defaults launchDefaults          `json:"defaults"`
+	// Accounts are the configured account names; omitted when none, so a
+	// client hides its Account field.
+	Accounts []string `json:"accounts,omitempty"`
 }
 
 func (c launchChoices) body() launchOptionsBody {
@@ -213,7 +255,9 @@ func (c launchChoices) body() launchOptionsBody {
 		Efforts: c.in.EffortOptions(),
 		Defaults: launchDefaults{
 			Backend: def, Model: c.in.DefaultModel(def), Effort: c.in.DefaultEffort(),
+			Account: c.defaultAccount,
 		},
+		Accounts: c.accounts,
 	}
 	for _, n := range names {
 		kind := "anthropic"
@@ -239,7 +283,7 @@ func (s *Server) handleLaunchOptions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, out.status, out.code, out.msg)
 		return
 	}
-	c, err := s.launchChoices(g.Session, g.RuntimeDir, q.Get("agent"))
+	c, err := s.launchChoices(g.Session, g.RuntimeDir, q.Get("agent"), g.Dir)
 	if err != nil {
 		logging.Warn("serve: launch options: %v", err)
 		writeError(w, http.StatusInternalServerError, codeInternal, "reading launch options")

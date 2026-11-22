@@ -147,7 +147,7 @@ export function mountDispatch(root, ctx, { dir } = {}) {
  * for the fields it sets. onChange(choice, opts) fires on every user change.
  * A stale response (a newer load, or stop()) is dropped.
  */
-export function launchPicker(box, { onError = () => {}, onChange = () => {} } = {}) {
+export function launchPicker(box, { onError = () => {}, onChange = () => {}, schedule = false } = {}) {
   let opts = null;
   let choice = {};
   let loadSeq = 0;
@@ -155,10 +155,27 @@ export function launchPicker(box, { onError = () => {}, onChange = () => {} } = 
     choice = c;
     onChange(choice, opts);
   };
+  const UNKNOWN = " (unknown)";
+
+  // The schedule form names the resolved defaults and keeps a stored value
+  // the lists no longer offer (marked unknown) instead of dropping it.
+  const modelLabel = (c) => {
+    if (!schedule) return choiceLabel(c);
+    if (c.value === "inherit") return "agent default";
+    return c.default ? `agent default (${c.value})` : choiceLabel(c);
+  };
+  const effortLabel = (e) => {
+    if (!schedule) return e;
+    const d = opts?.defaults?.effort;
+    if (e === "inherit") return d && d !== "inherit" ? "inherit" : "default";
+    return e === d ? `default (${e})` : e;
+  };
 
   function render() {
     clear(box);
     if (!opts) return;
+    const names = (opts.backends ?? []).map((b) => b.name);
+    const unknownBackend = schedule && choice.backend && !names.includes(choice.backend);
     const backends = h("div", { class: "seg", role: "group", "aria-label": "Backend" });
     for (const b of opts.backends ?? []) {
       backends.append(
@@ -177,24 +194,44 @@ export function launchPicker(box, { onError = () => {}, onChange = () => {} } = 
         ),
       );
     }
+    if (unknownBackend) backends.append(h("button", { type: "button", class: "btn", "aria-pressed": "true" }, `${choice.backend}${UNKNOWN}`));
     const mp = modelPicker(opts, choice.backend);
     let model;
     if (mp.freeText) {
       model = h("input", { type: "text", value: choice.model ?? "", autocapitalize: "off", autocorrect: "off", spellcheck: "false" });
       model.addEventListener("input", () => changed({ ...choice, model: model.value.trim() }));
     } else {
-      model = h("select", { "aria-label": "Model" }, ...mp.choices.map((c) => h("option", { value: c.value }, choiceLabel(c))));
-      model.value = choice.model ?? mp.def;
+      const cur = choice.model ?? mp.def;
+      const known = mp.choices.some((c) => c.value === cur);
+      model = h("select", { "aria-label": "Model" }, ...mp.choices.map((c) => h("option", { value: c.value }, modelLabel(c))),
+        schedule && cur && !known ? h("option", { value: cur, class: "unknown" }, `${cur}${UNKNOWN}`) : null);
+      model.value = cur;
       model.addEventListener("change", () => changed({ ...choice, model: model.value }));
     }
-    const effort = h("select", { "aria-label": "Effort" }, ...(opts.efforts ?? []).map((e) => h("option", { value: e }, e)));
+    const efforts = opts.efforts ?? [];
+    const effort = h("select", { "aria-label": "Effort" }, ...efforts.map((e) => h("option", { value: e }, effortLabel(e))),
+      schedule && choice.effort && !efforts.includes(choice.effort) ? h("option", { value: choice.effort, class: "unknown" }, `${choice.effort}${UNKNOWN}`) : null);
     effort.value = choice.effort;
     effort.addEventListener("change", () => changed({ ...choice, effort: effort.value }));
-    box.append(
-      h("div", {}, h("div", { class: "muted" }, "Backend"), backends),
+    const rows = [];
+    // One backend: nothing to choose (a stored unknown one still shows).
+    if (!schedule || names.length > 1 || unknownBackend) rows.push(h("div", {}, h("div", { class: "muted" }, "Backend"), backends));
+    rows.push(
       h("label", {}, "Model", model, mp.freeText ? h("span", { class: "muted" }, `${mp.error}; type a model name`) : null),
       h("label", {}, "Effort", effort),
     );
+    const accounts = opts.accounts ?? [];
+    if (schedule && accounts.length) {
+      const cur = choice.account ?? "";
+      const account = h("select", { "aria-label": "Account" },
+        h("option", { value: "" }, `default (${opts.defaults?.account || "none"})`),
+        ...accounts.map((a) => h("option", { value: a }, a)),
+        cur && !accounts.includes(cur) ? h("option", { value: cur, class: "unknown" }, `${cur}${UNKNOWN}`) : null);
+      account.value = cur;
+      account.addEventListener("change", () => changed({ ...choice, account: account.value }));
+      rows.push(h("label", {}, "Account", account));
+    }
+    box.append(...rows);
   }
 
   return {
@@ -207,8 +244,8 @@ export function launchPicker(box, { onError = () => {}, onChange = () => {} } = 
         const o = await get(launchOptionsPath(agent, project));
         if (seq !== loadSeq) return;
         opts = o;
-        choice = { backend: o.defaults.backend, model: o.defaults.model, effort: o.defaults.effort };
-        for (const k of ["backend", "model", "effort"]) if (preset[k]) choice[k] = preset[k];
+        choice = { backend: o.defaults.backend, model: o.defaults.model, effort: o.defaults.effort, account: "" };
+        for (const k of ["backend", "model", "effort", "account"]) if (preset[k]) choice[k] = preset[k];
         render();
       } catch (e) {
         if (seq === loadSeq) onError(e);

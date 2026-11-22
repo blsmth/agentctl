@@ -57,6 +57,10 @@ type Request struct {
 	// already been resolved into CustomPrompt before Launch runs. Nothing in
 	// Launch re-reads the store using this field.
 	PromptKey string
+	// Template is the prompt template (`dispatch --template`) the ad-hoc
+	// prompt was composed from, if any. Display-only like PromptKey: it is
+	// recorded in windowstate and named in the first user message.
+	Template string
 	// ExtraInstructions is user-supplied standing guidance appended at the very
 	// end of the system prompt (ad-hoc dispatch from the phone). Empty = none.
 	ExtraInstructions string
@@ -449,6 +453,9 @@ func Launch(req Request) (Result, error) {
 				ws.Prompt = windowstate.CapPrompt(PromptFor(req))
 			}
 			ws.Mode = string(req.Mode)
+			if req.Template != "" {
+				ws.Template = req.Template
+			}
 			if req.ScheduledBy != "" {
 				ws.ScheduledBy = req.ScheduledBy
 				ws.ScheduledAt = time.Now()

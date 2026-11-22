@@ -17,6 +17,7 @@ terminal:                             # all optional
   font_size: 14                       # px, default 14
   hub_left: 95                        # hub list width in columns (the live hub caps it at 56 otherwise); default: unset
   padding: 20                         # px, default 20
+  framerate: 15                       # gif framerate, 5-60 (vhs default 50); lower makes smaller gifs
 
 config:                               # optional; network, notifications, monitor, titles and metrics are always off
   theme: catppuccin-mocha             # agentctl theme (see `agentctl` theme picker); default: agentctl's default
@@ -24,6 +25,7 @@ config:                               # optional; network, notifications, monito
   serve: true                         # fake a running `agentctl serve` so the hub shows "📱 serve" (a stub on a socket in the demo's state dir); default false
   statusline_format: rich             # rich | complementary | full | mobile | minimal; default: agentctl's default
   default_agent: go-engineer          # default_agent: what a hub launch (`n` then `a`) uses; a fake ~/.claude/agents/<agent>.md is written for it. Launched windows run a live fake `claude` (start screen, idle row) that never reaches the network; see hub-launch.yaml
+  new_window_position: right          # left (agentctl's default) | right; see hub-orchestrate.yaml
   cron: true                          # set cron.enabled (default false). No ticker is installed and claude is stubbed, so nothing fires either way; true only drops the hub's "cron is off" warning
 
 projects:                             # at least one; each becomes ~/code/<name> and session agentctl-<name>
@@ -72,6 +74,11 @@ windows:                              # in tmux order per project
     spinner: "Testing… (41s · ↓ 1.2k tokens · esc to interrupt)"   # working only
     transcript: rate-limiter          # fixture demo/transcripts/<name>.yaml, or an inline transcript (below)
     approval: agentctl dispatch ...   # Enter in this pane runs the real hook-validate-bash with this command
+    reply:                            # idle only, not with approval: a scripted turn (see Scripted turns)
+      - say: I'll split this in two.
+        delay: 1500ms                 # pause before the entry, up to 10s
+      - tool: Bash
+        input: {command: 'agentctl dispatch --agent go-engineer --prompt "..."'}
     scheduled_by: nightly-deps        # a schedule's name: the window was launched by that cron job (⏲ tag, the job's running window)
 
 schedules:                            # optional `agentctl cron` jobs for the hub's Schedules section (T)
@@ -90,6 +97,7 @@ steps:                                # one action per step
   - attach: orch                      # attach the vhs client to a window (later attaches switch-client)
   - prefix: g                         # tmux prefix (C-b) then this key
   - type: some text                   # typed as-is (no quotes or backticks)
+    speed: 45ms                       # only with type: per-character delay, up to 1s (default 30ms)
   - key: Enter                        # Enter Escape Tab Space Backspace Up Down Left Right PageUp PageDown
     repeat: 3                         # only with key
   - ctrl: c                           # Ctrl+<letter>
@@ -100,6 +108,14 @@ steps:                                # one action per step
   - hide                              # stop recording (gif)
   - show
 ```
+
+## Scripted turns
+
+A window with `reply:` behaves like an idle Claude Code session waiting for a prompt. Keys sent to its pane echo into the `❯` input box (Backspace deletes, arrows are ignored); Enter submits: the prompt moves into the transcript as a `❯` line and the reply plays. Each entry appears after its `delay` (defaults: 1.5s before the first, 1s before a say, 0.8s before a tool), under a `✻ Thinking… (Ns · esc to interrupt)` spinner that counts up; the turn ends with `✻ Brewed for Ns`. Only one turn plays.
+
+The pane fires the real hooks the way Claude Code does, so the window's row changes live: `hook-user-prompt` on Enter (working), `hook-pre-tool` and, for Bash, `hook-validate-bash` before each tool, `hook-post-tool` (or `hook-post-tool-failure`) after it, and `hook-check-done` at the end (idle). A Bash entry whose command is `agentctl dispatch ...` really runs, from the window's checkout with the demo PATH, once hook-validate-bash allows it: the real dispatch opens a real worker window (the fake `claude`, which shows the prompt and stays working) with `spawned_by` set, and the call's result line is the command's `Dispatched ...` line. A deny shows `Denied: <reason>` and nothing runs. Every other tool only shows its `result`. Agents named by `--agent`/`-a` in those commands get agent files. Use `--prompt` dispatches: `gh` is stubbed, so `--issue` and `--review-pr` fail. With `dispatch_approval` at its default (`all`) the dispatch waits for the approval popup; set `off` to skip it.
+
+Reach the pane through the hub's live viewer: open the hub (`prefix: g`), and `key: Enter` on the selected row focuses the viewer, so typed keys go to the agent. Set `new_window_position: right` in such a scene: with the default (`left`) every dispatched window is inserted before the others, and tmux re-syncs the viewer's grouped session by window index, so the viewer (and the hub selection) jumps to another window.
 
 ## Phone
 

@@ -47,6 +47,7 @@ const (
 	PreviewKindDispatch = "dispatch"
 	PreviewKindBash     = "bash"
 	PreviewKindCron     = "cron"
+	PreviewKindTemplate = "template"
 )
 
 // dispatchPreviewOpts holds the resolved, optional sizing inputs for a
@@ -59,6 +60,7 @@ type dispatchPreviewOpts struct {
 	now          func() time.Time
 	account      string
 	cron         CronPreview
+	template     TemplatePreview
 	reviewPR     int
 	project      string
 }
@@ -72,6 +74,23 @@ type CronPreview struct {
 	// Schedule is the one-line schedule summary (expression, words, next
 	// fire) or the parse error.
 	Schedule string
+}
+
+// TemplatePreview is the template-specific part of a PreviewKindTemplate
+// popup, or (Name only) the template a PreviewKindDispatch prompt came from.
+type TemplatePreview struct {
+	// Action is "add", "edit" or "rm" (template popups only).
+	Action string
+	// Name is the template name.
+	Name string
+	// Path is the template file (template popups only).
+	Path string
+}
+
+// WithTemplate fills the template rows: the file of a PreviewKindTemplate
+// popup, or the template a dispatch prompt was resolved from.
+func WithTemplate(t TemplatePreview) DispatchPreviewOption {
+	return func(o *dispatchPreviewOpts) { o.template = t }
 }
 
 // DispatchPreviewOption configures optional sizing inputs to NewDispatchPreview
@@ -270,6 +289,9 @@ type DispatchPreviewModel struct {
 	kind string
 	// cron holds the job rows for PreviewKindCron.
 	cron CronPreview
+	// template holds the rows for PreviewKindTemplate, or the template
+	// name of a dispatch.
+	template TemplatePreview
 
 	// now is the clock for the click arming delay (nil = time.Now);
 	// openedAt is when the popup was created; pressed is the target of the
@@ -322,6 +344,12 @@ func (m DispatchPreviewModel) isBash() bool {
 // job name and schedule in the metadata rows.
 func (m DispatchPreviewModel) isCron() bool {
 	return m.kind == PreviewKindCron
+}
+
+// isTemplate reports whether this model previews an `agentctl template
+// add|edit|rm` (PreviewKindTemplate).
+func (m DispatchPreviewModel) isTemplate() bool {
+	return m.kind == PreviewKindTemplate
 }
 
 // NewDispatchPreview creates a DispatchPreviewModel.
@@ -406,7 +434,7 @@ func NewDispatchPreview(agentName, targetAgent string, issue int, prompt, prompt
 	// PopupSize already budgets for the expanded layout.
 	// Dispatch popups open expanded too, so the full prompt is visible
 	// without a keypress.
-	expanded := o.kind == PreviewKindCron || o.kind == PreviewKindDispatch
+	expanded := o.kind == PreviewKindCron || o.kind == PreviewKindDispatch || o.kind == PreviewKindTemplate
 
 	return DispatchPreviewModel{
 		agentName:       agentName,
@@ -425,6 +453,7 @@ func NewDispatchPreview(agentName, targetAgent string, issue int, prompt, prompt
 		renderedContent: renderedContent,
 		kind:            o.kind,
 		cron:            o.cron,
+		template:        o.template,
 		expanded:        expanded,
 		autoExpand:      expanded,
 		now:             o.now,
@@ -644,6 +673,8 @@ func (m DispatchPreviewModel) preToggle() string {
 		title = fmt.Sprintf("%s wants to run a command", m.agentName)
 	case m.isCron():
 		title = m.cronTitle()
+	case m.isTemplate():
+		title = m.templateTitle()
 	case m.project != "":
 		// One line (inside the title's 2-column padding), so PopupSize's
 		// line budget holds.
@@ -673,6 +704,8 @@ func (m DispatchPreviewModel) toggleText() string {
 		toggleLabel = "View command"
 	case m.isCron():
 		toggleLabel = "View job"
+	case m.isTemplate():
+		toggleLabel = "View template"
 	}
 	lineCount := strings.Count(m.rawContent, "\n") + 1
 	return dpToggleStyle.Render(toggleIcon+" "+toggleLabel) + " " +
@@ -758,6 +791,20 @@ func (m DispatchPreviewModel) metadataLines() []string {
 		}
 	}
 
+	if m.isTemplate() {
+		// Three rows, like the dispatch layout (PopupSize's line budget).
+		agent := m.targetAgent
+		if agent == "" {
+			agent = "(none)"
+		}
+		return []string{
+			dpLabelStyle.Render("Requested by") + dpSubtleStyle.Render(m.agentName),
+			dpLabelStyle.Render("Template") + dpSkyStyle.Render(m.template.Name) + dpDimStyle.Render(" · agent ") +
+				dpTargetStyle.Render(agent),
+			dpLabelStyle.Render("File") + dpBodyStyle.Render(textutil.Truncate(m.template.Path, m.effectiveContentWidth()-dpLabelWidth-2, "…")),
+		}
+	}
+
 	lines := []string{
 		dpLabelStyle.Render("Requested by") + dpSubtleStyle.Render(m.agentName),
 		dpLabelStyle.Render("Dispatching") + dpTargetStyle.Render(m.targetAgent) + m.accountSuffix(),
@@ -768,6 +815,8 @@ func (m DispatchPreviewModel) metadataLines() []string {
 		lines = append(lines, dpLabelStyle.Render("Review PR")+dpSkyStyle.Render(m.summaryLine()))
 	case m.issue > 0:
 		lines = append(lines, dpLabelStyle.Render("Issue")+dpSkyStyle.Render(m.summaryLine()))
+	case m.template.Name != "":
+		lines = append(lines, dpLabelStyle.Render("Template")+dpSkyStyle.Render(m.template.Name))
 	case m.promptKey != "":
 		// The key name is an identifier, like the issue number — style it the
 		// same way rather than as free-form body text.
@@ -778,6 +827,17 @@ func (m DispatchPreviewModel) metadataLines() []string {
 		lines = append(lines, dpLabelStyle.Render("Prompt")+dpDimStyle.Render(m.summaryLine()))
 	}
 	return lines
+}
+
+// templateTitle is the title line of a template popup.
+func (m DispatchPreviewModel) templateTitle() string {
+	switch m.template.Action {
+	case "edit":
+		return fmt.Sprintf("%s wants to edit prompt template %s", m.agentName, m.template.Name)
+	case "rm":
+		return fmt.Sprintf("%s wants to remove prompt template %s", m.agentName, m.template.Name)
+	}
+	return fmt.Sprintf("%s wants to add prompt template %s", m.agentName, m.template.Name)
 }
 
 // cronTitle is the title line of a cron popup.

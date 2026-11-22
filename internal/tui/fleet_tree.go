@@ -170,3 +170,46 @@ func treeRows(rows []fleet.Row) []treeRow {
 	bucket("scheduled", func(i, pass int) bool { return pass == 0 && schedRoot(i) })
 	return out
 }
+
+// subtreeEnd is the index just past the last descendant of tree[i]: walk
+// emits a subtree contiguously, so its descendants are the rows right after
+// it that sit deeper. A bucket label ends every subtree.
+func subtreeEnd(tree []treeRow, i int) int {
+	j := i + 1
+	for j < len(tree) && tree[j].Label == "" && tree[j].Depth > tree[i].Depth {
+		j++
+	}
+	return j
+}
+
+// fleetSubtreeCounts tallies the rows a collapsed parent hides, by state, so
+// its summary still says that a child needs the human.
+type fleetSubtreeCounts struct {
+	total, blocked, working, done, idle int
+}
+
+// tallySubtree counts the rows of tr (a collapsed parent's descendants).
+// Shell rows count toward the total only.
+func tallySubtree(tr []treeRow) fleetSubtreeCounts {
+	var c fleetSubtreeCounts
+	for _, t := range tr {
+		if t.Label != "" {
+			continue
+		}
+		c.total++
+		if t.Row.Shell {
+			continue
+		}
+		switch rowWeight(t.Row) {
+		case fleetWeightBlocked:
+			c.blocked++
+		case fleetWeightWorking:
+			c.working++
+		case fleetWeightDone:
+			c.done++
+		default:
+			c.idle++
+		}
+	}
+	return c
+}

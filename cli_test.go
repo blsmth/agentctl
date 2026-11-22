@@ -79,7 +79,7 @@ var cliTests = []cliCase{
 
 	// Dispatch validation: our own errors use exit code 1
 	{"dispatch --issue and --prompt mutually exclusive", []string{"dispatch", "--issue", "1", "--prompt", "x", "--agent", "go-engineer"}, 1, "", "mutually exclusive"},
-	{"dispatch no issue or prompt", []string{"dispatch"}, 1, "", "--review-pr, --prompt, or --prompt-key is required"},
+	{"dispatch no issue or prompt", []string{"dispatch"}, 1, "", "--review-pr, --prompt, --prompt-key, or --template is required"},
 	{"dispatch --issue and --review-pr mutually exclusive", []string{"dispatch", "--issue", "1", "--review-pr", "2"}, 1, "", "--issue and --review-pr are mutually exclusive"},
 	{"dispatch --author without --review-pr", []string{"dispatch", "--prompt", "x", "--agent", "go-engineer", "--author", "@3"}, 1, "", "--author requires --review-pr"},
 	{"dispatch --help lists --review-pr", []string{"dispatch", "--help"}, 0, "review-pr", ""},
@@ -205,7 +205,7 @@ func TestDispatchFlagParsing(t *testing.T) {
 		{
 			name:    "no flags — validation error",
 			args:    []string{"dispatch"},
-			wantErr: "--review-pr, --prompt, or --prompt-key is required",
+			wantErr: "--review-pr, --prompt, --prompt-key, or --template is required",
 		},
 		{
 			name:    "both --issue and --prompt — mutual exclusion",
