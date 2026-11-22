@@ -22,3 +22,9 @@ func TestLogToolHookDoesNotPanic(t *testing.T) {
 	logToolHook("pre-tool", "Bash", "@1", "go-engineer", "", time.Millisecond)
 	logToolHook("post-tool", "Bash", "@1", "go-engineer", "idle->working", time.Millisecond)
 }
+
+func TestLogNotifyHookDoesNotPanic(t *testing.T) {
+	logNotifyHook("idle_prompt", "@1", "go-engineer", "", false, time.Millisecond)
+	logNotifyHook("permission_prompt", "@1", "go-engineer", "idle->blocked", true, time.Millisecond)
+	logNotifyHook("idle_prompt", "@1", "go-engineer", "kept", true, time.Millisecond)
+}

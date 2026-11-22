@@ -56,6 +56,14 @@ func recordExeIdentity(runtimeDir string) (id exeIdentity, ok bool) {
 	return id, true
 }
 
+// reexecEnv is the environment for the re-exec'd monitor: the current one plus
+// logging.ReexecEnv, so the new image's startup banner is logged at DEBUG
+// (matching selfexec.ReexecEnv). logging consumes the variable at package init,
+// so monitor children do not inherit it.
+func reexecEnv() []string {
+	return append(os.Environ(), logging.ReexecEnv+"=1")
+}
+
 // maybeReexec re-executes the monitor when its binary was replaced. It returns
 // only when no exec happened (or exec failed). Failed attempts are retried at
 // most once per reexecRetryEvery.
@@ -79,7 +87,7 @@ func (m *monitorModel) maybeReexec(now time.Time) {
 	if exec == nil {
 		exec = syscall.Exec
 	}
-	if err := exec(cur.Path, os.Args, os.Environ()); err != nil {
+	if err := exec(cur.Path, os.Args, reexecEnv()); err != nil {
 		logging.Warn("monitor: re-exec %s failed, keeping old image: %v", cur.Path, err)
 	}
 }
