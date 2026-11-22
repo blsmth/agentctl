@@ -56,6 +56,14 @@ func TestIsAgentctlCronGated(t *testing.T) {
 		// Like dispatch: unquoted words match even as echo arguments (fail safe).
 		{"unquoted echo args", `echo agentctl cron add x`, true},
 		{"not agentctl", `crontab -l && cron add`, false},
+		// A go run of the agentctl root package is agentctl.
+		{"go run dot cron add", `go run . cron add x --schedule @daily --agent a --dir . -p hi`, true},
+		{"go run flags cron resume", `go run -race ./ -- cron resume x`, true},
+		{"go run module cron run --force", `go run github.com/blsmth/agentctl@latest cron run x --force`, true},
+		{"go run cron list", `go run . cron list`, false},
+		{"go run subpackage cron add", `go run ./internal/foo cron add x --schedule @daily`, false},
+		{"go run other module cron add", `go run example.com/tool cron add x`, false},
+		{"quoted go run cron add", `git commit -m "go run . cron add x"`, false},
 		{"empty", ``, false},
 	}
 	for _, tt := range tests {

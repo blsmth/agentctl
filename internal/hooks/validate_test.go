@@ -1,6 +1,9 @@
 package hooks
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -421,6 +424,9 @@ func TestCheckServeTamper(t *testing.T) {
 		{"quoted serve", `agentctl "serve" stop`, true},
 		{"go run serve stop", "go run . serve stop", true},
 		{"go run serve pair", "go run ./ serve pair --name x", true},
+		{"go run flags serve stop", "go run -race -tags dev . serve stop", true},
+		{"go run module serve pair", "go run github.com/blsmth/agentctl@latest serve pair", true},
+		{"go run -- serve stop", "go run . -- serve stop", true},
 		{"launchctl bootstrap", "launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.blsmth.agentctl.serve.plist", true},
 		{"launchctl kickstart plain", "launchctl kickstart gui/501/com.blsmth.agentctl.serve", true},
 		{"launchctl kill", "launchctl kill SIGTERM gui/501/com.blsmth.agentctl.serve", true},
@@ -433,6 +439,10 @@ func TestCheckServeTamper(t *testing.T) {
 		{"serve status", "agentctl serve status", false},
 		{"serve help", "agentctl serve --help", false},
 		{"go run serve status", "go run . serve status", false},
+		{"go run subpackage serve stop", "go run ./internal/serve/servetest/devserver serve stop", false},
+		{"go run other dir serve stop", "cd /tmp && go run . serve stop", false},
+		{"go run other module serve stop", "go run example.com/tool serve stop", false},
+		{"echo go run serve stop", "echo go run . serve stop", false},
 		{"go test servectl", "go test ./internal/servectl/...", false},
 		{"grep for toggle", "grep -rn 'serve toggle' docs", false},
 		{"serve logs", "agentctl serve logs", false},
@@ -462,5 +472,211 @@ func TestCheckServeTamper(t *testing.T) {
 				t.Fatalf("reason %q does not explain the block", reason)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// checkGoRunAgentctl
+// ---------------------------------------------------------------------------
+
+// goRunFixture is a fake HOME holding an agentctl checkout at
+// ~/code/personal/agentctl and another Go module at ~/src/myapp.
+type goRunFixture struct {
+	home, root, other string
+}
+
+func newGoRunFixture(t *testing.T) goRunFixture {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	f := goRunFixture{
+		home:  home,
+		root:  filepath.Join(home, "code", "personal", "agentctl"),
+		other: filepath.Join(home, "src", "myapp"),
+	}
+	writeGoMod(t, f.root, "module github.com/blsmth/agentctl // the CLI\n\ngo 1.26\n")
+	writeGoMod(t, f.other, "module example.com/myapp\n\ngo 1.26\n")
+	for _, d := range []string{"internal/foo", "internal/serve/servetest/devserver", "cmd/tool"} {
+		if err := os.MkdirAll(filepath.Join(f.root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return f
+}
+
+func writeGoMod(t *testing.T, dir, content string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckGoRunAgentctl(t *testing.T) {
+	f := newGoRunFixture(t)
+	foo := filepath.Join(f.root, "internal", "foo")
+	tests := []struct {
+		name     string
+		cwd      string
+		command  string
+		wantDeny bool
+	}{
+		// Denied: the root main package.
+		{"dot", f.root, "go run .", true},
+		{"dot slash", f.root, "go run ./", true},
+		{"dot with args", f.root, "go run . status", true},
+		{"root files", f.root, "go run main.go cli.go", true},
+		{"root glob", f.root, "go run ./*.go dispatch --issue 1", true},
+		{"race flag", f.root, "go run -race .", true},
+		{"tags flag", f.root, "go run -tags dev,debug . status", true},
+		{"tags inline", f.root, "go run -tags=dev .", true},
+		{"exec flag", f.root, "go run -exec echo .", true},
+		{"double dash flag", f.root, "go run --race .", true},
+		{"-C root", f.other, "go run -C " + f.root + " .", true},
+		{"-C relative", f.home, "go run -C code/personal/agentctl .", true},
+		{"-C tilde", "", "go run -C ~/code/personal/agentctl . status", true},
+		{"module path", f.other, "go run github.com/blsmth/agentctl status", true},
+		{"module at version", f.other, "go run github.com/blsmth/agentctl@latest status", true},
+		{"module no cwd", "", "go run github.com/blsmth/agentctl@v1.2.3", true},
+		{"tilde path", f.other, "go run ~/code/personal/agentctl status", true},
+		{"HOME path", f.other, "go run $HOME/code/personal/agentctl", true},
+		{"braced HOME path", f.other, "go run ${HOME}/code/personal/agentctl/", true},
+		{"absolute path", "", "go run " + f.root + " status", true},
+		{"relative path", f.home, "go run ./code/personal/agentctl", true},
+		{"parent dir", foo, "go run ../..", true},
+		{"parent files", foo, "go run ../../main.go", true},
+		{"cd tilde chain", f.other, "cd ~/code/personal/agentctl && go run .", true},
+		{"cd absolute chain", "", "cd " + f.root + " && go run . dispatch --agent x --prompt y", true},
+		{"cd relative chain", f.home, "cd code/personal && cd agentctl; go run .", true},
+		{"cd up from subdir", foo, "cd ../.. && go run .", true},
+		{"subshell cd", f.other, "(cd ~/code/personal/agentctl && go run .)", true},
+		{"env prefix", f.root, "FOO=1 GOFLAGS=-mod=mod go run .", true},
+		{"env command", f.root, "env -u GOFLAGS GOOS=darwin go run .", true},
+		{"after &&", f.root, "go build ./... && go run . status", true},
+		{"after ;", f.root, "go vet ./... ; go run .", true},
+		{"after ||", f.root, "false || go run .", true},
+		{"after pipe", f.root, "echo hi | go run .", true},
+		{"attached operator", f.root, "go build ./...&&go run .", true},
+		{"newline", f.root, "go build ./...\ngo run .", true},
+		{"redirect", f.root, "go run . status 2>&1 > /tmp/out", true},
+		{"bash -c", f.root, "bash -c 'go run . status'", true},
+		{"command substitution", f.root, "x=$(go run . status)", true},
+		{"go binary path", f.root, "/usr/local/go/bin/go run .", true},
+		{"time prefix", f.root, "time go run .", true},
+		// Denied, fail closed: unresolvable dir and the line mentions agentctl.
+		{"unknown cwd mentions agentctl", "", "go run . dispatch --agent agentctl-dev", true},
+		{"cd variable mentions agentctl", f.other, "cd $AGENTCTL_SRC && go run .", true},
+		{"cd dash mentions agentctl", f.other, "cd - && go run . # agentctl", true},
+		{"variable package mentions agentctl", f.other, "go run $AGENTCTL_PKG", true},
+
+		// Allowed: subpackages of this repo.
+		{"devserver", f.root, "go run ./internal/serve/servetest/devserver -scene hub", false},
+		{"cd then subpackage", f.other, "cd ~/code/personal/agentctl && go run ./internal/foo", false},
+		{"cmd subpackage", f.root, "go run ./cmd/tool", false},
+		{"subpackage file", f.root, "go run ./internal/foo/main.go", false},
+		{"subpackage module path", "", "go run github.com/blsmth/agentctl/internal/serve/servetest/devserver", false},
+		{"pattern", f.root, "go run ./...", false},
+		{"-C subpackage", f.other, "go run -C ~/code/personal/agentctl ./internal/foo", false},
+		{"chained tests then subpackage", f.root, "go test ./... && go run ./internal/foo", false},
+		// Allowed: go run outside this repo.
+		{"other repo dot", f.other, "go run .", false},
+		{"other repo files", f.other, "go run main.go", false},
+		{"other repo cd", f.root, "cd ~/src/myapp && go run . --repo ~/code/personal/agentctl", false},
+		{"scratch program", f.root, "go run /tmp/scratch/main.go -- --repo ~/code/personal/agentctl", false},
+		{"dir named agentctl", "", "go run ~/src/agentctl status", false},
+		{"other module", f.root, "go run golang.org/x/tools/cmd/stringer@latest -type=Foo", false},
+		{"unknown cwd no mention", "", "go run .", false},
+		{"cd variable no mention", "", "cd $DIR && go run .", false},
+		// Allowed: the words are not in command position.
+		{"context set text", f.root, `agentctl context set k 'never go run . from ~/code/personal/agentctl'`, false},
+		{"context set double quoted", f.root, `agentctl context set k "cd ~/code/personal/agentctl && go run ."`, false},
+		{"echo", f.root, "echo go run .", false},
+		{"commit message", f.root, `git commit -m "Stop agentctl workers using go run ."`, false},
+		{"grep", f.root, `grep -rn "go run ." docs`, false},
+		{"data heredoc", f.root, "cat > /tmp/x.md <<'EOF'\ngo run .\nEOF", false},
+		{"go test", f.root, "go test ./... -run TestGoRun", false},
+		{"go run alone", f.root, "go run", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reason := checkGlobalDenyListIn(tt.command, tt.cwd)
+			if got := reason == goRunAgentctlReason; got != tt.wantDeny {
+				t.Fatalf("checkGlobalDenyListIn(%q, %q) = %q, wantDeny %v", tt.command, tt.cwd, reason, tt.wantDeny)
+			}
+		})
+	}
+}
+
+func TestGoModModule(t *testing.T) {
+	tests := []struct {
+		data, want string
+	}{
+		{"module github.com/blsmth/agentctl\n", "github.com/blsmth/agentctl"},
+		{"// comment\nmodule \"github.com/blsmth/agentctl\" // x\ngo 1.26\n", "github.com/blsmth/agentctl"},
+		{"module github.com/blsmth/agentctl/v2\n", "github.com/blsmth/agentctl/v2"},
+		{"modules x\n", ""},
+		{"go 1.26\n", ""},
+	}
+	for _, tt := range tests {
+		if got := goModModule([]byte(tt.data)); got != tt.want {
+			t.Errorf("goModModule(%q) = %q, want %q", tt.data, got, tt.want)
+		}
+	}
+}
+
+// TestGoRunScan_PanicRecovery pins the recover paths: the convenience rule
+// fails open, the gate rewrite fails closed (every go run counts).
+func TestGoRunScan_PanicRecovery(t *testing.T) {
+	orig := goRunScan
+	goRunScan = func([]cmdToken, string) []goRunCall { panic("boom") }
+	t.Cleanup(func() { goRunScan = orig })
+	if got := checkGoRunAgentctl("go run github.com/blsmth/agentctl", ""); got != "" {
+		t.Fatalf("checkGoRunAgentctl after panic = %q, want allow", got)
+	}
+	if !isAgentctlDispatch("go run ./internal/foo dispatch --agent x --prompt y") {
+		t.Fatal("dispatch gate after panic: want gated")
+	}
+}
+
+// TestValidateBash_GoRunAgentctlUsesPayloadCwd checks the hook resolves
+// `go run .` against the payload cwd.
+func TestValidateBash_GoRunAgentctlUsesPayloadCwd(t *testing.T) {
+	f := newGoRunFixture(t)
+	d := DefaultDeps()
+	d.LoadConfig = func() *config.Config { return &config.Config{} }
+	SetDepsForTest(d)
+	t.Cleanup(func() { SetDepsForTest(DefaultDeps()) })
+	failIfDispatchPopupRunnerCalled(t)
+	envVars := map[string]string{"AGENTCTL": "1", "AGENTCTL_AGENT_NAME": "go-engineer", "AGENTCTL_WINDOW_ID": "w99", "TMUX_PANE": ""}
+
+	for _, tt := range []struct {
+		cwd      string
+		wantDeny bool
+	}{{f.root, true}, {f.other, false}} {
+		payload, err := json.Marshal(map[string]any{
+			"tool_name":  "Bash",
+			"tool_input": map[string]string{"command": "go run . status"},
+			"cwd":        tt.cwd,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, _ := runHookCaptured(t, envVars, string(payload), ValidateBash)
+		if got := strings.Contains(out, "never invoke agentctl via 'go run'"); got != tt.wantDeny {
+			t.Errorf("cwd %s: denied %v, want %v (output %q)", tt.cwd, got, tt.wantDeny, out)
+		}
+	}
+}
+
+// TestMaskAgentctlArgs_UnterminatedDoubleQuote is the regression test for
+// the slice-out-of-range panic: an unterminated double quote stepped the
+// scanner past the end of the command, which panicked when that word was a
+// command word (sliced for the assignment check).
+func TestMaskAgentctlArgs_UnterminatedDoubleQuote(t *testing.T) {
+	cmd := `python3 - <<'PY'` + "\nprint('x')\nPY\n" + `agentctl context set k v; "it's unterminated`
+	if got := maskAgentctlArgs(cmd); got != cmd {
+		t.Fatalf("maskAgentctlArgs = %q, want the command unchanged (unsure)", got)
 	}
 }

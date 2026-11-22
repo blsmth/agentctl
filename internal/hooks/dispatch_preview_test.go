@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blsmth/agentctl/internal/config"
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 )
 
@@ -236,6 +237,72 @@ func TestIsAgentctlDispatch_Segments(t *testing.T) {
 				t.Errorf("isAgentctlDispatch(%q) = %v, want %v", tt.command, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestIsAgentctlDispatch_GoRun pins that a go run of the agentctl root
+// package followed by dispatch is a dispatch for the gate, as the binary is.
+func TestIsAgentctlDispatch_GoRun(t *testing.T) {
+	f := newGoRunFixture(t)
+	tests := []struct {
+		name    string
+		command string
+		want    bool
+		args    []string // the dispatch segment, when want
+	}{
+		{"dot", "go run . dispatch --agent x --prompt y", true, []string{"--agent", "x", "--prompt", "y"}},
+		{"dot in repo root", "cd " + f.root + " && go run . dispatch --agent x --prompt y", true, []string{"--agent", "x", "--prompt", "y"}},
+		{"double dash", "go run . -- dispatch --agent x --prompt y", true, []string{"--agent", "x", "--prompt", "y"}},
+		{"flags", "go run -race -tags dev ./ dispatch --issue 4", true, []string{"--issue", "4"}},
+		{"root files", "go run main.go cli.go dispatch --issue 4", true, []string{"--issue", "4"}},
+		{"module", "go run github.com/blsmth/agentctl dispatch --issue 4", true, []string{"--issue", "4"}},
+		{"module at version", "go run github.com/blsmth/agentctl@latest dispatch --issue 4", true, []string{"--issue", "4"}},
+		{"tilde path", "go run ~/code/personal/agentctl dispatch --issue 4", true, []string{"--issue", "4"}},
+		{"env prefix after cd", "cd /tmp && GOFLAGS=-mod=mod go run -C " + f.root + " . dispatch --issue 4", true, []string{"--issue", "4"}},
+		{"attached operator", "go build ./...&&go run . dispatch --issue 4", true, []string{"--issue", "4"}},
+		{"help", "go run . dispatch --help", false, nil},
+		{"subpackage", "go run ./internal/foo dispatch --issue 4", false, nil},
+		{"other module", "go run example.com/tool dispatch --issue 4", false, nil},
+		{"other repo", "cd " + f.other + " && go run . dispatch --issue 4", false, nil},
+		// Not the root package, but a word ending in agentctl before
+		// dispatch is a dispatch anyway (the binary-path match, fail safe).
+		{"dir named agentctl elsewhere", "go run ~/src/agentctl dispatch --issue 4", true, []string{"--issue", "4"}},
+		{"other dir elsewhere", "go run ~/src/myapp dispatch --issue 4", false, nil},
+		{"quoted", `echo "go run . dispatch --issue 4"`, false, nil},
+		{"not dispatch", "go run . status", false, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isAgentctlDispatch(tt.command); got != tt.want {
+				t.Fatalf("isAgentctlDispatch(%q) = %v, want %v", tt.command, got, tt.want)
+			}
+			if !tt.want {
+				return
+			}
+			segs := dispatchSegments(tt.command)
+			if len(segs) != 1 {
+				t.Fatalf("dispatchSegments(%q) = %v, want one segment", tt.command, segs)
+			}
+			got, ok := segmentArgs(segs[0])
+			if !ok || strings.Join(got, " ") != strings.Join(tt.args, " ") {
+				t.Fatalf("segment args = %q (%v), want %q", got, ok, tt.args)
+			}
+		})
+	}
+}
+
+// TestReviewExemption_GoRunIsNeverTrusted: a review dispatch through go run
+// is built from whatever source is on disk, so it keeps the popup.
+func TestReviewExemption_GoRunIsNeverTrusted(t *testing.T) {
+	orig := reviewerGlobalFrom
+	reviewerGlobalFrom = func(*config.Config, string) bool { return true }
+	t.Cleanup(func() { reviewerGlobalFrom = orig })
+	cfg := &config.Config{}
+	if !reviewExemptionTrusted(cfg, "agentctl dispatch --review-pr 5", "/tmp") {
+		t.Fatal("binary review dispatch: want trusted")
+	}
+	if reviewExemptionTrusted(cfg, "go run . dispatch --review-pr 5", "/tmp") {
+		t.Fatal("go run review dispatch: want untrusted")
 	}
 }
 

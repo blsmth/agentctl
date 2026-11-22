@@ -145,7 +145,10 @@ func (m *argMasker) scanWord(i int, text *strings.Builder) int {
 				i++
 			}
 			if i >= len(s) {
+				// Unterminated: stop at the end, never past it (the
+				// caller slices s[start:i]).
 				m.unsure = true
+				return len(s)
 			}
 			i++ // closing quote
 			continue

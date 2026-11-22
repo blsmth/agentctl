@@ -208,10 +208,14 @@ type cmdToken struct {
 	// double quotes, or a trailing backslash. An unquoted backslash escape
 	// (\x) is literal and marks the word quoted instead.
 	expands bool
+	// fromSource marks the `agentctl` token that stands for a go run of
+	// the agentctl root package (rewriteGoRunAgentctl).
+	fromSource bool
 }
 
 // dispatchSegments returns, for every "agentctl dispatch" occurrence in the
-// command, the tokens belonging to that invocation: everything after the
+// command (a go run of the agentctl root package counts, see
+// rewriteGoRunAgentctl), the tokens belonging to that invocation: everything after the
 // "dispatch" token up to the first unquoted shell control operator.
 // Redirection tokens (e.g. 2>&1) are dropped. This is deliberately not a
 // full shell parser. Data heredoc bodies are removed first (see
@@ -235,8 +239,14 @@ func dispatchSegments(command string) [][]cmdToken {
 // otherwise be one word. Every gate that looks for dispatch or cron
 // invocations uses it, so the popup, the plan, the account lookup and the
 // approval marker all see the same view. Anything that does not parse is
-// tokenized raw.
+// tokenized raw. A go run of the agentctl root package becomes one
+// `agentctl` token (rewriteGoRunAgentctl), so it is gated like the binary.
 func invocationTokens(command string) []cmdToken {
+	return rewriteGoRunAgentctl(rawInvocationTokens(command))
+}
+
+// rawInvocationTokens is invocationTokens without the go run rewrite.
+func rawInvocationTokens(command string) []cmdToken {
 	return tokenizeQuoted(strings.TrimSpace(invocationText(command)))
 }
 

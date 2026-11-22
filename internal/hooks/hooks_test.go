@@ -479,19 +479,27 @@ func TestCheckGlobalDenyList(t *testing.T) {
 		},
 
 		// --- agentctl via go run (use 'agentctl' from PATH instead) ---
+		// A directory merely named agentctl is not the agentctl module
+		// (HOME is the test's empty temp home), so these run some other
+		// program. The real root cases are in TestCheckGoRunAgentctl.
 		{
 			name:     "go_run_dot_agentctl_dir",
 			command:  "cd ~/src/agentctl && go run . status",
-			wantDeny: true,
+			wantDeny: false,
 		},
 		{
 			name:     "go_run_main_agentctl_dir",
 			command:  "cd ~/src/agentctl && go run main.go dispatch --issue 42",
-			wantDeny: false, // pattern matches path containing "agentctl", not main.go
+			wantDeny: false,
 		},
 		{
 			name:     "go_run_agentctl_explicit",
 			command:  "go run ~/src/agentctl status",
+			wantDeny: false,
+		},
+		{
+			name:     "go_run_agentctl_module",
+			command:  "go run github.com/blsmth/agentctl status",
 			wantDeny: true,
 		},
 		// Safe: go run for non-agentctl code
