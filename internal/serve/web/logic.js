@@ -1632,6 +1632,15 @@ function approvalConfirmTitle(kind) {
   return "Approve this command?";
 }
 
+/**
+ * approvalNeedsConfirm says whether answering needs the confirm sheet. A
+ * dispatch approval's card already shows everything, so allowing it sends
+ * straight away; Deny and every other kind keep the sheet.
+ */
+export function approvalNeedsConfirm(a, decision) {
+  return !(a.kind === "dispatch" && decision === "allow");
+}
+
 /** approvalConfirm is the confirm sheet for answering an approval: everything that runs, in full. */
 export function approvalConfirm(a, decision) {
   const allow = decision === "allow";

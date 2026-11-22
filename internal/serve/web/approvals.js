@@ -1,10 +1,12 @@
 // Approvals screen: dispatch and command approvals waiting on the laptop's
 // popup, answerable from the phone. Prompt and command are shown in full, as
-// text only, and every answer goes through a confirm sheet and carries the
-// payload hash of what was shown.
+// text only. Deny and every non-dispatch answer go through a confirm sheet;
+// approving a dispatch sends at once, since the card shows all of it. Every
+// answer carries the payload hash of what was shown.
 import { ApiError, get, send } from "./api.js";
 import {
   approvalConfirm,
+  approvalNeedsConfirm,
   approvalApiPath,
   approvalHash,
   approvalRows,
@@ -19,10 +21,10 @@ import {
 import { clear, confirmSheet, h, toast } from "./ui.js";
 
 /**
- * answerApproval confirms and sends one answer. On 409 (already answered, or
+ * answerApproval confirms (when needed) and sends one answer. On 409 (already answered, or
  * changed) or 404 it toasts and asks the store to refetch.
  */
-async function answerApproval(ctx, a, decision) {
+async function answerApproval(ctx, a, decision, buttons = []) {
   let req;
   try {
     req = buildApprovalRequest(a, decision);
@@ -30,11 +32,13 @@ async function answerApproval(ctx, a, decision) {
     toast(e.message, "error");
     return;
   }
-  if (!(await confirmSheet(approvalConfirm(a, decision)))) return;
+  if (approvalNeedsConfirm(a, decision) && !(await confirmSheet(approvalConfirm(a, decision)))) return;
+  for (const b of buttons) b.disabled = true;
   try {
     await send(req);
     toast(decision === "allow" ? "Approved" : "Denied");
   } catch (e) {
+    for (const b of buttons) b.disabled = false;
     if (e instanceof ApiError && (e.status === 409 || e.status === 404)) toast("Already answered or changed", "error");
     else toast(e instanceof ApiError ? e.message : String(e), "error");
   }
@@ -111,14 +115,18 @@ export function approvalCard(ctx, a, countdowns, { compact = false } = {}) {
   body.push(...textBlock("Command", a.command));
 
   const canWrite = ctx.hasFeature("write");
-  const buttons = canWrite
-    ? h(
-        "div",
-        { class: "row" },
-        h("button", { class: "btn danger", onclick: () => answerApproval(ctx, a, "deny") }, "Deny"),
-        h("button", { class: "btn primary", onclick: () => answerApproval(ctx, a, "allow") }, "Approve…"),
-      )
-    : h("p", { class: "muted" }, "Read-only: answering needs serve.allow_write.");
+  let buttons;
+  if (canWrite) {
+    const pair = [];
+    const deny = h("button", { class: "btn danger", onclick: () => answerApproval(ctx, a, "deny", pair) }, "Deny");
+    const allow = h(
+      "button",
+      { class: "btn primary", onclick: () => answerApproval(ctx, a, "allow", pair) },
+      approvalNeedsConfirm(a, "allow") ? "Approve…" : "Approve",
+    );
+    pair.push(deny, allow);
+    buttons = h("div", { class: "row" }, deny, allow);
+  } else buttons = h("p", { class: "muted" }, "Read-only: answering needs serve.allow_write.");
 
   return h(
     "section",
