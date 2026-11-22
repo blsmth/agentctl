@@ -25,6 +25,7 @@ const (
 	fleetClickRename                           // right click on a row's title: open the rename editor
 	fleetClickFold                             // header's project name: fold / unfold the group
 	fleetClickSweep                            // header's "sweep" button: preview a sweep of the group
+	fleetClickCollapse                         // a parent row's ▾/▸ marker: collapse / expand its sub-agents
 )
 
 // fleetListTop returns the screen row where the list (or sidebar) begins: the
@@ -173,6 +174,9 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 		if sub == 0 && m.onCloseButton(x) { // detail lines have no ✕
 			return idx, fleetClickClose
 		}
+		if sub == 0 && m.onCollapseMarker(idx, x) {
+			return idx, fleetClickCollapse
+		}
 		return idx, fleetClickSelect
 	case fleetLinePlaceholder, fleetLineClosed, fleetLineSchedule:
 		return idx, fleetClickSelect
@@ -266,6 +270,10 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		m.closeMenu()
 		m.selectLine(idx)
 		return m, m.toggleFoldAt(idx)
+	case fleetClickCollapse:
+		m.closeMenu()
+		m.selectLine(idx)
+		return m, m.toggleCollapseAt(idx)
 	case fleetClickRename:
 		m.openRename(idx)
 		show := m.maybeShowCmd()
@@ -305,6 +313,7 @@ const (
 	fleetHoverFold                      // a group header's fold marker and project name
 	fleetHoverSweep                     // a group header's "sweep" button
 	fleetHoverHeader                    // a group header outside its buttons
+	fleetHoverCollapse                  // a parent row's ▾/▸ collapse marker
 )
 
 // fleetHover is the hover target: a line index plus the region on it. The zero
@@ -356,6 +365,9 @@ func (m FleetModel) hoverAt(x, y int) fleetHover {
 		}
 		if m.onCloseButton(x) {
 			return fleetHover{line: idx, reg: fleetHoverClose}
+		}
+		if m.onCollapseMarker(idx, x) {
+			return fleetHover{line: idx, reg: fleetHoverCollapse}
 		}
 		return fleetHover{line: idx, reg: fleetHoverBody}
 	}

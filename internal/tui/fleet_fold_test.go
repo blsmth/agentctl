@@ -112,7 +112,8 @@ func TestFoldToggle(t *testing.T) {
 		session string // group expected to fold
 	}{
 		{"on header", "H:s1", "s1"},
-		{"on root row", "R:p", "s1"},
+		// A root with children collapses instead (TestCollapseToggle).
+		{"on childless root row", "R:x", "s1"},
 		{"on child row", "R:k", "s1"},
 		{"on other group's row", "R:g", "s3"},
 		{"on empty group's placeholder", "P:s4", "s4"},
@@ -670,7 +671,7 @@ func TestDimmedContextRow(t *testing.T) {
 	m.selectLine(lineIndex(t, m, "R:g"))
 	i := lineIndex(t, m, "R:p~")
 	got := m.renderLine(i, 120)
-	if ansi.Strip(got) != ansi.Strip(m.renderTreeRowHover(m.lines[i].row, m.lines[i].treePrefix, m.lines[i].nameCol, false, fleetHoverNone, 120)) {
+	if ansi.Strip(got) != ansi.Strip(m.renderRowLine(m.lines[i], false, fleetHoverNone, 120)) {
 		t.Errorf("dimming changed the text: %q", ansi.Strip(got))
 	}
 	if !strings.HasPrefix(got, fleetProjectBar("alpha")) || !strings.Contains(got, fleetDimStyle.Render(strings.TrimPrefix(ansi.Strip(got), "▎"))) {

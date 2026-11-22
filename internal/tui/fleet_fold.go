@@ -282,8 +282,8 @@ func (m *FleetModel) rowExists(session, windowID string) bool {
 }
 
 // revealRow makes the row (session, windowID) visible when it exists but is
-// hidden: its group is unfolded and, if the filter would still hide it, the
-// filter is cleared. It reports whether anything changed (the line list was
+// hidden: its group is unfolded, its collapsed ancestors are expanded and,
+// if the filter would still hide it, the filter is cleared. It reports whether anything changed (the line list was
 // then rebuilt, but the selection was not moved).
 func (m *FleetModel) revealRow(session, windowID string) bool {
 	g := m.groupForSession(session)
@@ -303,6 +303,9 @@ func (m *FleetModel) revealRow(session, windowID string) bool {
 	changed := false
 	if m.isFolded(session) {
 		m.setFolded(session, false)
+		changed = true
+	}
+	if m.expandAncestors(session, windowID, g.Rows) {
 		changed = true
 	}
 	if row.Shell && !m.showShells {
@@ -329,8 +332,10 @@ func (m *FleetModel) revealRow(session, windowID string) bool {
 // state dir (hubViewFile) and carried across a hot reload in HubViewEnv.
 type hubViewState struct {
 	Folded []string `json:"folded,omitempty"`
-	Focus  bool     `json:"focus,omitempty"`
-	Filter string   `json:"filter,omitempty"`
+	// Collapsed is the collapsed parent rows, as "session|windowID".
+	Collapsed []string `json:"collapsed,omitempty"`
+	Focus     bool     `json:"focus,omitempty"`
+	Filter    string   `json:"filter,omitempty"`
 	// Sort is the in-group row order: "recent" or "" for window order.
 	Sort string `json:"sort,omitempty"`
 	// Shells shows the plain shell rows (hidden by default).
@@ -381,9 +386,30 @@ func (m FleetModel) viewState() hubViewState {
 	}
 	slices.Sort(folded)
 	return hubViewState{
-		Folded: folded, Focus: m.focusMode, Filter: m.filter.key(), Sort: sortKey(m.sortRecent), Shells: m.showShells, Closed: m.showClosed, Schedules: m.showSchedules,
+		Folded: folded, Collapsed: m.liveCollapsed(prune), Focus: m.focusMode, Filter: m.filter.key(), Sort: sortKey(m.sortRecent), Shells: m.showShells, Closed: m.showClosed, Schedules: m.showSchedules,
 		ActivityPane: m.activity.pane, ActivityWidth: m.activity.userWidth,
 	}
+}
+
+// liveCollapsed is the sorted collapsed set; with prune, entries whose
+// window is no longer a row of its group are dropped (see viewState).
+func (m FleetModel) liveCollapsed(prune bool) []string {
+	live := make(map[string]bool)
+	if prune {
+		for _, g := range m.groups {
+			for _, r := range g.Rows {
+				live[collapseKey(g.Session, r.WindowID)] = true
+			}
+		}
+	}
+	var out []string
+	for key, ok := range m.collapsed {
+		if ok && (!prune || live[key]) {
+			out = append(out, key)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // applyViewState replaces the model's fold set, focus mode and filter.
@@ -392,6 +418,12 @@ func (m *FleetModel) applyViewState(s hubViewState) {
 	for _, sess := range s.Folded {
 		if sess != "" {
 			m.setFolded(sess, true)
+		}
+	}
+	m.collapsed = nil
+	for _, key := range s.Collapsed {
+		if session, win, ok := strings.Cut(key, "|"); ok && session != "" && win != "" {
+			m.setCollapsed(session, win, true)
 		}
 	}
 	m.focusMode = s.Focus

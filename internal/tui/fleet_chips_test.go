@@ -324,14 +324,14 @@ func TestRowRightExceptions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			d := fleetDisplay{}
-			cols := fitRightCols(wide, tt.ex, rowCtxWarn(tt.row, d), tt.ex.rowModel(tt.row) != "")
+			cols := fitRightCols(wide, tt.ex, rowCtxWarn(tt.row, d), tt.ex.rowModel(tt.row) != "", 0)
 			if got := ansi.Strip(rowRight(tt.row, cols, tt.ex, d)); got != tt.want {
 				t.Errorf("rowRight = %q, want %q", got, tt.want)
 			}
 		})
 	}
 	r := base("claude-opus-4-7", 92, 0)
-	cols := fitRightCols(wide, fleetExceptions{ctx: true}, true, false)
+	cols := fitRightCols(wide, fleetExceptions{ctx: true}, true, false, 0)
 	if got := rowRight(r, cols, fleetExceptions{ctx: true}, fleetDisplay{}); !strings.Contains(got, fleetErrStyle.Render("92%")) {
 		t.Errorf("critical ctx should use the error style: %q", got)
 	}
@@ -360,7 +360,7 @@ func TestFitRightColsDropOrder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprint(tt.available), func(t *testing.T) {
-			c := fitRightCols(tt.available, ex, true, true)
+			c := fitRightCols(tt.available, ex, true, true, 0)
 			got := want{c.modelW > 0, c.pr, c.age}
 			if got != tt.want {
 				t.Errorf("fitRightCols(%d) = %+v, want %+v", tt.available, got, tt.want)
@@ -372,16 +372,16 @@ func TestFitRightColsDropOrder(t *testing.T) {
 	}
 	// Another row's context warning or model costs this row nothing to the
 	// left of its PR: at a 40-column sidebar's 17 columns the PR stays.
-	calm := fitRightCols(17, ex, false, false)
+	calm := fitRightCols(17, ex, false, false, 0)
 	if !calm.pr || calm.age || calm.modelW != 0 {
 		t.Errorf("calm row at 17 columns: %+v", calm)
 	}
-	if warned := fitRightCols(17, ex, true, false); warned.pr {
+	if warned := fitRightCols(17, ex, true, false, 0); warned.pr {
 		t.Errorf("a warned row at 17 columns keeps its ctx and drops the PR: %+v", warned)
 	}
 	// With no exceptions in the list the model and ctx columns take no
 	// width, so the PR and age survive to narrower rows.
-	plain := fitRightCols(joinedWidth(fleetPRSlotW, fleetAgeSlotW)+1+fleetMinRecapWidth, fleetExceptions{}, false, false)
+	plain := fitRightCols(joinedWidth(fleetPRSlotW, fleetAgeSlotW)+1+fleetMinRecapWidth, fleetExceptions{}, false, false, 0)
 	if plain.modelW != 0 || plain.ctx || !plain.pr || !plain.age {
 		t.Errorf("no exceptions: %+v", plain)
 	}

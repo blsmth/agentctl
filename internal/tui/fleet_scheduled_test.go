@@ -98,9 +98,10 @@ func TestCardShowsSchedule(t *testing.T) {
 	}
 }
 
-// TestRoleTagRender: a sub-agent row shows its dim role tag before the title,
-// a row without a role shows the bare title, the tag is dropped before the
-// title is squeezed, and width budgets hold.
+// TestRoleTagRender: a sub-agent row shows its role in the name column (no
+// separate tag before the title) and its agent name on the right when there
+// is room, a row without a role shows its agent name on the left, and width
+// budgets hold.
 func TestRoleTagRender(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
@@ -130,12 +131,22 @@ func TestRoleTagRender(t *testing.T) {
 				if !strings.Contains(first, "Fixing Hub") {
 					t.Errorf("row %s lost its title: %q", l.row.WindowID, first)
 				}
-				hasTag := strings.Contains(first, "review  Fixing")
-				if l.row.WindowID == "@2" && strings.Contains(first, "review") {
-					t.Errorf("bare row shows a role: %q", first)
+				title := strings.Index(first, "Fixing Hub")
+				left, rest := first[:title], first[title:]
+				if l.row.WindowID == "@2" {
+					if strings.Contains(first, "review") || !strings.Contains(left, "lead") {
+						t.Errorf("bare row should show its name, no role: %q", first)
+					}
+					continue
 				}
-				if l.row.WindowID == "@1" && width == 120 && !hasTag {
-					t.Errorf("child row at %d cols should show the role tag: %q", width, first)
+				if !strings.Contains(left, "review") || strings.Contains(left, "lead") {
+					t.Errorf("role row should show the role, not the name, before the title: %q", first)
+				}
+				if strings.Count(first, "review") != 1 {
+					t.Errorf("role drawn twice: %q", first)
+				}
+				if width == 120 && !strings.Contains(rest, "lead") {
+					t.Errorf("role row at %d cols should show its agent name on the right: %q", width, first)
 				}
 			}
 		})
