@@ -196,6 +196,8 @@ type Sender struct {
 	devices *DeviceStore
 	subs    *SubscriptionStore
 	pusher  Pusher
+	// presence, when set, makes Broadcast skip devices with the app open.
+	presence *Presence
 
 	mu   sync.Mutex
 	last *LastPush
@@ -244,7 +246,12 @@ func NewSender(devices *DeviceStore, subs *SubscriptionStore, pusher Pusher) *Se
 	return &Sender{devices: devices, subs: subs, pusher: pusher}
 }
 
-// Broadcast sends msg to every paired device with a subscription.
+// SetPresence makes Broadcast skip devices that have the app in the
+// foreground. SendTo is never suppressed.
+func (s *Sender) SetPresence(p *Presence) { s.presence = p }
+
+// Broadcast sends msg to every paired device with a subscription, except
+// devices with the app open in the foreground.
 func (s *Sender) Broadcast(ctx context.Context, msg Message) {
 	live, err := s.liveDevices()
 	if err != nil {
@@ -261,22 +268,42 @@ func (s *Sender) Broadcast(ctx context.Context, msg Message) {
 	for id, sub := range all {
 		if !live[id] {
 			stale = append(stale, id)
+			if s.presence != nil {
+				s.presence.Forget(id)
+			}
 			continue
 		}
 		targets[id] = sub
 	}
-	if len(targets) == 0 {
+	inApp := 0
+	if s.presence != nil {
+		for id := range targets {
+			if s.presence.Foreground(id) {
+				delete(targets, id)
+				inApp++
+			}
+		}
+	}
+	switch {
+	case len(targets) == 0 && inApp > 0:
+		pushLogf("push: kind=%s tag=%s suppressed, %d device(s) in app", msg.Kind, msg.Tag, inApp)
+		s.record(msg.Kind, fmt.Sprintf("sent to 0/0, %d in app", inApp))
+	case len(targets) == 0:
 		pushLogf("push: no subscribed devices, nothing sent (kind %s)", msg.Kind)
 		s.record(msg.Kind, "no subscribed devices")
-	} else {
-		pushLogf("push: kind=%s tag=%s subscriptions=%d", msg.Kind, msg.Tag, len(targets))
+	default:
+		pushLogf("push: kind=%s tag=%s subscriptions=%d in_app=%d", msg.Kind, msg.Tag, len(targets), inApp)
 		sent := 0
 		for id, sub := range targets {
 			if s.deliver(ctx, id, sub, msg) == nil { // failures are logged in deliver
 				sent++
 			}
 		}
-		s.record(msg.Kind, fmt.Sprintf("sent to %d/%d", sent, len(targets)))
+		result := fmt.Sprintf("sent to %d/%d", sent, len(targets))
+		if inApp > 0 {
+			result += fmt.Sprintf(", %d in app", inApp)
+		}
+		s.record(msg.Kind, result)
 	}
 	if len(stale) > 0 {
 		if err := s.subs.Delete(stale...); err != nil {

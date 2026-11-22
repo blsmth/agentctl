@@ -26,7 +26,11 @@ func (s *Server) initPush(opts Options) error {
 	if pusher == nil {
 		pusher = newWebPusher(keys, opts.Config.Push.VAPIDSubscriber)
 	}
+	s.presence = NewPresence(s.now)
 	s.sender = NewSender(s.devices, subs, pusher)
+	if opts.Config.Push.SuppressWhileOpenEnabled() {
+		s.sender.SetPresence(s.presence)
+	}
 	if topic := opts.Config.NtfyTopic; topic != "" {
 		s.ntfy = &Ntfy{
 			Base:    opts.NtfyBase,

@@ -5,6 +5,61 @@ import { backoffDelay } from "./logic.js";
 
 const POLL_MS = 5000;
 
+const PRESENCE_MS = 20000;
+
+/**
+ * startPresence tells the server whether this device has the app in the
+ * foreground, so it can skip web push while the user is looking at the app.
+ * Visible: report on start, on becoming visible, and every 20s. Hidden or
+ * pagehide: report once with keepalive. The server expires a visible report
+ * after ~45s, which covers a frozen page that never sends the hidden one.
+ * Returns a stop function. Best effort: failures are ignored.
+ */
+export function startPresence() {
+  let timer = null;
+  const report = (visible) => {
+    fetch("/v1/presence", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Agentctl-CSRF": "1" },
+      body: JSON.stringify({ visible }),
+      credentials: "same-origin",
+      cache: "no-store",
+      keepalive: true,
+    }).catch(() => {});
+  };
+  const beat = () => {
+    clearInterval(timer);
+    timer = null;
+    if (document.visibilityState === "visible") {
+      report(true);
+      timer = setInterval(() => report(true), PRESENCE_MS);
+    }
+  };
+  const onVis = () => {
+    if (document.visibilityState === "visible") beat();
+    else {
+      clearInterval(timer);
+      timer = null;
+      report(false);
+    }
+  };
+  const onHide = () => {
+    clearInterval(timer);
+    timer = null;
+    report(false);
+  };
+  document.addEventListener("visibilitychange", onVis);
+  window.addEventListener("pagehide", onHide);
+  window.addEventListener("pageshow", beat);
+  beat();
+  return () => {
+    clearInterval(timer);
+    document.removeEventListener("visibilitychange", onVis);
+    window.removeEventListener("pagehide", onHide);
+    window.removeEventListener("pageshow", beat);
+  };
+}
+
 /**
  * startLive connects the feed and returns a stop function. Handlers:
  * onFleet(body), onWindow(win), onGone({session, window_id}),

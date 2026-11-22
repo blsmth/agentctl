@@ -276,6 +276,7 @@ Settings for `agentctl serve`, the per-machine HTTPS server the mobile web app t
 | `serve.push.blocked` / `serve.push.done` | `true` | Push on an agent becoming blocked / finishing. |
 | `serve.push.blocked_reminder_minutes` | `10` | One reminder per blocked episode; `0` disables. |
 | `serve.push.approvals` | `true` | Push when a dispatch, cron or Bash approval popup is waiting and can be answered from the phone (see [Remote approvals](design/mobile-web-app.md#remote-approvals)). Ignores quiet hours, since an unanswered approval blocks work; respects `muted_projects`. |
+| `serve.push.suppress_while_open` | `true` | Skip web push to a device that has the app open in the foreground (the app reports presence every ~20s; a report older than 45s counts as background). Test push is never suppressed; ntfy is unaffected. `false` pushes regardless. |
 | `serve.push.quiet_hours` | none | Local `HH:MM-HH:MM` range with no pushes. |
 | `serve.push.muted_projects` | none | Project names that never push. |
 | `serve.push.vapid_subscriber` | `https://github.com/blsmth/agentctl` | VAPID contact (the JWT `sub`) sent to push services: an `https:` URL or an email address, with or without `mailto:`. |
