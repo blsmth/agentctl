@@ -31,9 +31,12 @@ func TestDispatchAlert(t *testing.T) {
 		for _, typ := range types {
 			t.Run(tt.name+"/"+typ, func(t *testing.T) {
 				sent := false
-				dispatchAlert(tt.ac, typ, "a", notify.Options{}, func(notify.Options) { sent = true })
+				got := dispatchAlert(tt.ac, typ, "a", notify.Options{}, func(notify.Options) { sent = true })
 				if sent != tt.want[typ] {
 					t.Errorf("sent=%v want %v", sent, tt.want[typ])
+				}
+				if got != sent {
+					t.Errorf("dispatchAlert returned %v, sent=%v", got, sent)
 				}
 			})
 		}
