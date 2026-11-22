@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // RecapSource says which signal a RecapLine came from, strongest first.
@@ -258,4 +260,22 @@ func CompactAge(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dd", int(d/(24*time.Hour)))
 	}
+}
+
+// DisplayName is the identifier humans see for a window: its instance name
+// ("code-reviewer:3", "brandon~2") without any state glyph, else the agent
+// name, else the raw window ID. Pass what is recorded (windowstate Instance,
+// not a live tmux lookup) so a window that is already gone still reads right.
+func DisplayName(instance, agent, windowID string) string {
+	for _, s := range []string{instance, agent} {
+		if s = strings.TrimSpace(tmux.StripAgentPrefix(s)); s != "" {
+			return s
+		}
+	}
+	return windowID
+}
+
+// RowDisplayName is DisplayName for a row.
+func RowDisplayName(r Row) string {
+	return DisplayName(r.Name, r.AgentName, r.WindowID)
 }

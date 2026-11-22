@@ -157,6 +157,7 @@ assert.deepEqual(approvalsForWindow(list, "agentctl-p", "@5").map((x) => x.id), 
 assert.deepEqual(removeApproval(list, "a1").map((x) => x.id), ["b2"]);
 const conf = approvalConfirm(ap, "allow");
 assert.equal(conf.confirmLabel, "Approve");
+assert.ok(!conf.lines.some((l) => /window: @/.test(l)), "approval confirm must not show the raw window id");
 assert.equal(conf.danger, false);
 assert.ok(conf.lines.includes("do it") && conf.lines.includes("agentctl dispatch -k k"));
 assert.equal(approvalConfirm({ ...ap, kind: "bash", prompt: "" }, "deny").danger, true);

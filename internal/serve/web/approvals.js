@@ -95,7 +95,7 @@ export function approvalCard(ctx, a, countdowns, { compact = false } = {}) {
   const left = h("span", { class: "countdown" }, formatCountdown(secondsLeft(a, Date.now())));
   countdowns.push({ el: left, approval: a });
   const facts = [
-    h("div", {}, h("span", { class: "meta" }, "from "), h("a", { href: windowHash(a.session, a.window_id) }, `${a.asking_agent || "agent"} ${a.window_id}`), a.project ? h("span", { class: "meta" }, ` · ${a.project}`) : null),
+    h("div", {}, h("span", { class: "meta" }, "from "), h("a", { href: windowHash(a.session, a.window_id) }, a.asking_agent || "agent"), a.project ? h("span", { class: "meta" }, ` · ${a.project}`) : null),
   ];
   const rows = detailRows(a);
   if (rows) {
@@ -139,7 +139,7 @@ export function tickCountdowns(countdowns) {
 function resolvedCard(r, { withBack = false } = {}) {
   const links = [];
   if (withBack) links.push(h("a", { class: "btn", href: approvalHash("") }, "Approvals"));
-  if (r.session && r.window_id) links.push(h("a", { class: "btn", href: windowHash(r.session, r.window_id) }, `${r.asking_agent || "agent"} ${r.window_id}`));
+  if (r.session && r.window_id) links.push(h("a", { class: "btn", href: windowHash(r.session, r.window_id) }, r.asking_agent || "agent"));
   return h(
     "section",
     { class: "approval-resolved" },

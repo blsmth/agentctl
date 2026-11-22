@@ -336,7 +336,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
       hidden: !canWrite,
       onclick: () =>
         run(
-          { title: "Close window?", lines: [`${win?.agent ?? ""} ${windowId}`], confirmLabel: "Close", danger: true },
+          { title: "Close window?", lines: [win?.label || win?.agent || windowId], confirmLabel: "Close", danger: true },
           { method: "POST", path: `${base}/close`, body: {} },
           () => {
             // Leave for Fleet; the hashchange tears this view down. Until then

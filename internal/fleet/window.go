@@ -9,9 +9,12 @@ import (
 // `agentctl serve`, so the two cannot drift. Existing field names are a
 // compatibility contract; add new fields at the end, with omitempty.
 type Window struct {
-	Session      string `json:"session"`
-	Project      string `json:"project"`
-	WindowID     string `json:"window_id"`
+	Session  string `json:"session"`
+	Project  string `json:"project"`
+	WindowID string `json:"window_id"`
+	// Label is the human-facing identifier (see DisplayName); window_id stays
+	// the machine key.
+	Label        string `json:"label"`
 	WindowIndex  int    `json:"window_index"`
 	Agent        string `json:"agent"`
 	State        string `json:"state"`
@@ -74,6 +77,7 @@ func ToWindow(r Row, m Meta) Window {
 		Session:      r.Session,
 		Project:      r.Project,
 		WindowID:     r.WindowID,
+		Label:        RowDisplayName(r),
 		WindowIndex:  r.WindowIndex,
 		Agent:        r.Name,
 		State:        r.State,

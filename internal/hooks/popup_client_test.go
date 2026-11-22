@@ -53,8 +53,13 @@ func TestPopupTargetArgsAndLabel(t *testing.T) {
 	if got := (popupTarget{Viewing: true, WindowID: "@5"}).label("a"); got != "a" {
 		t.Fatalf("got %q", got)
 	}
-	if got := (popupTarget{WindowID: "@5"}).label("a"); got != "a (@5)" {
+	t.Setenv("AGENTCTL_INSTANCE_NAME", "")
+	if got := (popupTarget{WindowID: "@5"}).label("a"); got != "a" {
 		t.Fatalf("got %q", got)
+	}
+	t.Setenv("AGENTCTL_INSTANCE_NAME", "a:3")
+	if got := (popupTarget{WindowID: "@5"}).label("a"); got != "a:3" {
+		t.Fatalf("got %q, want the instance name, never the window ID", got)
 	}
 }
 

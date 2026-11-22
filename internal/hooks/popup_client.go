@@ -1,6 +1,8 @@
 package hooks
 
 import (
+	"os"
+
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
@@ -80,14 +82,18 @@ func (t popupTarget) clientArgs() []string {
 }
 
 // label names the asking agent for a popup title. When the popup landed on a
-// client that is not viewing the issuing window, the window ID is added so the
-// human can tell who is asking.
+// client that is not viewing the issuing window, the instance name
+// ("code-reviewer:3") is used so the human can tell who is asking; the raw
+// window ID is never shown.
 func (t popupTarget) label(agentName string) string {
 	if t.Viewing || t.WindowID == "" {
 		return agentName
 	}
-	if agentName == "" {
-		agentName = "agent"
+	if inst := os.Getenv("AGENTCTL_INSTANCE_NAME"); inst != "" {
+		return inst
 	}
-	return agentName + " (" + t.WindowID + ")"
+	if agentName == "" {
+		return "agent"
+	}
+	return agentName
 }

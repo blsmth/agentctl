@@ -593,6 +593,7 @@ func Notify() {
 			"AGENTCTL_TICKET":            ws.Ticket,
 			"AGENTCTL_PROJECT":           paths.DirName(),
 			"AGENTCTL_SESSION_NAME":      sessionName,
+			"AGENTCTL_SWITCH_TARGET":     tmuxSwitchTarget(sessionName, windowID),
 		},
 	})
 
@@ -667,9 +668,9 @@ func buildAlertContent(notificationType, agentName, sessionName, windowID, fallb
 	case ws.Mode != "":
 		parts = append(parts, ws.Mode)
 	}
-	if target := tmuxSwitchTarget(sessionName, windowID); target != "" {
-		parts = append(parts, target)
-	}
+	// The switch target ("agentctl-x:@N") is machine-facing: it is exported to
+	// notify_cmd as AGENTCTL_SWITCH_TARGET, not shown in the message. The
+	// title already names the instance.
 	if notificationType == "permission_prompt" && !ws.BlockedSince.IsZero() {
 		if elapsed := now.Sub(ws.BlockedSince); elapsed >= minBlockedDurationForDisplay {
 			parts = append(parts, "blocked "+compactDuration(elapsed))
