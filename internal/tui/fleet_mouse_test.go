@@ -318,10 +318,10 @@ func armedHeaderModel(t *testing.T) FleetModel {
 
 func TestSelectorHitColumns(t *testing.T) {
 	m := armedHeaderModel(t)
-	shell, agent := m.selectorSpans()
+	shell, agent, cron := m.selectorSpans(m.groups[0])
 	end := m.listColWidth() - fleetSidebarRightGutter
-	if agent[1] != end || agent[1]-agent[0] != len(fleetAgentLabel) || shell[1]-shell[0] != len(fleetShellLabel) {
-		t.Fatalf("spans shell=%v agent=%v end=%d", shell, agent, end)
+	if cron[1] != end || cron[1]-cron[0] != len(fleetCronLabel) || agent[1]-agent[0] != len(fleetAgentLabel) || shell[1]-shell[0] != len(fleetShellLabel) {
+		t.Fatalf("spans shell=%v agent=%v cron=%v end=%d", shell, agent, cron, end)
 	}
 	tests := []struct {
 		name string
@@ -337,8 +337,13 @@ func TestSelectorHitColumns(t *testing.T) {
 		{"space before agent", agent[0] - 1, fleetClickNewAgent},
 		{"agent first col", agent[0], fleetClickNewAgent},
 		{"agent last col", agent[1] - 1, fleetClickNewAgent},
-		{"slack right of agent", agent[1], fleetClickNewAgent},
-		{"past slack", agent[1] + 1, fleetClickSelect},
+		{"space after agent", agent[1], fleetClickNewAgent},
+		{"second pipe", agent[1] + 1, fleetClickSelect},
+		{"space before cron", cron[0] - 1, fleetClickNewCron},
+		{"cron first col", cron[0], fleetClickNewCron},
+		{"cron last col", cron[1] - 1, fleetClickNewCron},
+		{"slack right of cron", cron[1], fleetClickNewCron},
+		{"past slack", cron[1] + 1, fleetClickSelect},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -351,7 +356,7 @@ func TestSelectorHitColumns(t *testing.T) {
 
 func TestSelectorClicks(t *testing.T) {
 	m := armedHeaderModel(t)
-	shell, agent := m.selectorSpans()
+	shell, agent, cron := m.selectorSpans(m.groups[0])
 	click := func(m FleetModel, x, y int) (FleetModel, bool) {
 		next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 		return next.(FleetModel), cmd != nil
@@ -368,6 +373,18 @@ func TestSelectorClicks(t *testing.T) {
 			t.Errorf("cmd=%v armed=%v info=%q", cmd, got.newArmed(), got.infoMsg)
 		}
 	})
+	t.Run("cron", func(t *testing.T) {
+		got, cmd := click(m, cron[0], 2)
+		if got.newArmed() || !got.schedFormOpen() || got.schedForm.mode != schedFormNew {
+			t.Fatalf("armed=%v formOpen=%v", got.newArmed(), got.schedFormOpen())
+		}
+		if got.schedForm.dirs[got.schedForm.dirIdx] != "/p/one" {
+			t.Errorf("form dir = %v / %d, want /p/one", got.schedForm.dirs, got.schedForm.dirIdx)
+		}
+		if !cmd {
+			t.Error("opening the form with Schedules hidden must load them")
+		}
+	})
 	t.Run("elsewhere cancels", func(t *testing.T) {
 		got, _ := click(m, 5, 5)
 		if got.newArmed() {
@@ -380,6 +397,9 @@ func TestSelectorClicks(t *testing.T) {
 		}
 		if h := m.hoverAt(agent[0], 2); h.reg != fleetHoverNewAgent {
 			t.Errorf("agent hover = %v", h.reg)
+		}
+		if h := m.hoverAt(cron[0], 2); h.reg != fleetHoverNewCron {
+			t.Errorf("cron hover = %v", h.reg)
 		}
 	})
 }
@@ -478,10 +498,10 @@ func TestSelectorRenderingAndHints(t *testing.T) {
 			t.Errorf("width %d: header %d wide > %d", width, w, cw)
 		}
 		plain := strings.TrimRight(ansi.Strip(out), " ")
-		if !strings.HasSuffix(plain, fleetShellLabel+fleetSelSep+fleetAgentLabel) {
+		if !strings.HasSuffix(plain, fleetShellLabel+fleetSelSep+fleetAgentLabel+fleetSelSep+fleetCronLabel) {
 			t.Errorf("width %d: selector truncated: %q", width, plain)
 		}
-		shell, _ := m.selectorSpans()
+		shell, _, _ := m.selectorSpans(m.groups[0])
 		if shell[0] >= 0 && !strings.HasPrefix(string([]rune(ansi.Strip(out))[shell[0]:]), fleetShellLabel) {
 			t.Errorf("width %d: shell label not at span col %d: %q", width, shell[0], ansi.Strip(out))
 		}
@@ -536,4 +556,102 @@ func TestSelectorTargetsArmedSessionAfterReload(t *testing.T) {
 			t.Error("must cancel without launching")
 		}
 	})
+}
+
+// formDir is the project directory the open schedule form targets.
+func formDir(t *testing.T, m FleetModel) string {
+	t.Helper()
+	if !m.schedFormOpen() || m.schedForm.mode != schedFormNew {
+		t.Fatalf("schedule form open=%v, want create mode", m.schedFormOpen())
+	}
+	return m.schedForm.dirs[m.schedForm.dirIdx]
+}
+
+func TestNewCronKeyAndMenu(t *testing.T) {
+	press := func(m FleetModel, key string) FleetModel {
+		next, _ := m.Update(tea.KeyPressMsg{Code: rune(key[0]), Text: key})
+		return next.(FleetModel)
+	}
+	t.Run("key on header", func(t *testing.T) {
+		m := buttonTestModel(t)
+		m.selectLine(0)
+		if got := formDir(t, press(m, fleetCronKey)); got != "/p/one" {
+			t.Errorf("dir = %q", got)
+		}
+	})
+	t.Run("key from armed selector", func(t *testing.T) {
+		for _, k := range []string{fleetCronKey, "c"} {
+			got := press(armedHeaderModel(t), k)
+			if got.newArmed() || formDir(t, got) != "/p/one" {
+				t.Errorf("key %q: armed=%v", k, got.newArmed())
+			}
+		}
+	})
+	t.Run("menu item", func(t *testing.T) {
+		m := buttonTestModel(t)
+		m.selectLine(2)
+		found := false
+		for _, it := range m.fleetMenuItems(2) {
+			found = found || (it.label == "new cron" && it.key == fleetCronKey)
+		}
+		if !found {
+			t.Fatalf("no new cron item: %v", m.fleetMenuItems(2))
+		}
+		m.openMenu(2)
+		_ = m.runMenuKey(fleetCronKey)
+		if got := formDir(t, m); got != "/p/one" {
+			t.Errorf("dir = %q", got)
+		}
+	})
+	t.Run("not offered without a project dir", func(t *testing.T) {
+		m := buttonTestModel(t)
+		for i, l := range m.lines {
+			if l.kind == fleetLineHeader && l.group.Session == m.groups[1].Session {
+				for _, it := range m.fleetMenuItems(i) {
+					if it.key == fleetCronKey {
+						t.Errorf("menu offers cron for a group that cannot launch")
+					}
+				}
+				m.selectLine(i)
+				if got := press(m, fleetCronKey); got.schedFormOpen() {
+					t.Error("key opened a form for a group that cannot launch")
+				}
+			}
+		}
+	})
+}
+
+func TestSelectorCronNarrow(t *testing.T) {
+	for w := 20; w <= 120; w += 2 {
+		m := armedHeaderModel(t)
+		m.termWidth = w
+		m.configureSplitPane()
+		cw := m.listColWidth()
+		out := ansi.Strip(m.renderLine(0, cw))
+		shell, agent, cron := m.selectorSpans(m.groups[0])
+		rs := []rune(out)
+		at := func(sp [2]int) string {
+			if sp[0] < 0 || sp[1] > len(rs) {
+				return "<out of range>"
+			}
+			return string(rs[sp[0]:sp[1]])
+		}
+		if got := at(shell); got != fleetShellLabel {
+			t.Errorf("w=%d shell span %v = %q in %q", w, shell, got, out)
+		}
+		if got := at(agent); got != fleetAgentLabel {
+			t.Errorf("w=%d agent span %v = %q", w, agent, got)
+		}
+		hasCron := strings.Contains(strings.TrimRight(out, " "), fleetCronLabel)
+		if hasCron != (cron[1] > 0) {
+			t.Errorf("w=%d cron drawn=%v span=%v: %q", w, hasCron, cron, out)
+		}
+		if cron[1] > 0 && at(cron) != fleetCronLabel {
+			t.Errorf("w=%d cron span %v = %q", w, cron, at(cron))
+		}
+	}
+	wide := armedHeaderModel(t)
+	if _, _, cron := wide.selectorSpans(wide.groups[0]); cron[1] == 0 {
+		t.Error("cron missing at the default width")
+	}
 }

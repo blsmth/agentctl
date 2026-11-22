@@ -118,7 +118,7 @@ The hub window has no chrome bar or per-window HUD of its own (prefix+`h` acts o
 | `j`/`k` | Move the selection; the live pane follows. |
 | `enter`/`tab` | Focus the live pane. |
 | `J` | Jump to the selected agent's home session. |
-| `n` / `x` | Launch a new agent / close the selected one. A group header's `+ new` button appears on the selected or hovered header only. `n` arms `s` shell, `a` agent, or `t` schedule (a new cron job in that project, see below). |
+| `n` / `x` | Launch a new agent / close the selected one. A group header's `+ new` button appears on the selected or hovered header only. `n` arms `s` shell, `a` agent, or `t`/`c` cron (the schedule form for a new cron job in that project, see below); the armed selector draws `shell | agent | cron` (dropping the counts, then `cron`, on a very narrow list). `t` outside the selector does the same for the selected project, and the right-click menu has `[new cron]`. |
 | `N` | **New session** — open an agent in another directory as its own agentctl project. See below. |
 | `b` | Select the next blocked agent. |
 | `w` | **Sweep** the project group under the cursor. See below. |

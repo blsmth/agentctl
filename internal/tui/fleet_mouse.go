@@ -21,6 +21,7 @@ const (
 	fleetClickNew                              // header's "+ new" button: arm the shell | agent selector
 	fleetClickNewShell                         // armed selector's "shell": open a shell window
 	fleetClickNewAgent                         // armed selector's "agent": launch an agent
+	fleetClickNewCron                          // armed selector's "cron": new schedule in the project
 	fleetClickClose                            // row's "✕" button: arm / confirm close
 	fleetClickMenu                             // right click: open the context menu
 	fleetClickRename                           // double click on a row's title: open the rename editor
@@ -89,27 +90,34 @@ func (m FleetModel) onNewButton(g fleet.Group, x int) bool {
 	return span[1] > 0 && x >= span[0]-1 && x < span[1]+1
 }
 
-// selectorSpans returns the [start,end) columns of the armed selector's
-// "shell" and "agent" labels. The "|" separator belongs to neither.
-func (m FleetModel) selectorSpans() (shell, agent [2]int) {
+// selectorSpans returns the [start,end) columns of group g's armed selector
+// labels as drawn. The "|" separators belong to none; cron is the zero span
+// when the header was too narrow to show it.
+func (m FleetModel) selectorSpans(g fleet.Group) (shell, agent, cron [2]int) {
+	spans := m.pointerHeaderSpans(g, m.listColWidth())
 	end := m.listColWidth() - fleetSidebarRightGutter
-	aw := lipgloss.Width(fleetAgentLabel)
-	sw := lipgloss.Width(fleetShellLabel)
-	agent = [2]int{end - aw, end}
-	shell = [2]int{agent[0] - lipgloss.Width(fleetSelSep) - sw, agent[0] - lipgloss.Width(fleetSelSep)}
-	return shell, agent
+	sep := lipgloss.Width(fleetSelSep)
+	if spans.cron {
+		cron = [2]int{end - lipgloss.Width(fleetCronLabel), end}
+		end = cron[0] - sep
+	}
+	agent = [2]int{end - lipgloss.Width(fleetAgentLabel), end}
+	shell = [2]int{agent[0] - sep - lipgloss.Width(fleetShellLabel), agent[0] - sep}
+	return shell, agent, cron
 }
 
-// onSelector reports which side of the armed selector column x hits: the
+// onSelector reports which choice of g's armed selector column x hits: the
 // outer edges get one column of slack, the inner separator's spaces go to the
 // adjacent label and the "|" itself hits nothing.
-func (m FleetModel) onSelector(x int) fleetHoverRegion {
-	shell, agent := m.selectorSpans()
+func (m FleetModel) onSelector(g fleet.Group, x int) fleetHoverRegion {
+	shell, agent, cron := m.selectorSpans(g)
 	switch {
 	case x >= shell[0]-1 && x < shell[1]+1:
 		return fleetHoverNewShell
 	case x >= agent[0]-1 && x < agent[1]+1:
 		return fleetHoverNewAgent
+	case cron[1] > 0 && x >= cron[0]-1 && x < cron[1]+1:
+		return fleetHoverNewCron
 	}
 	return fleetHoverNone
 }
@@ -154,11 +162,13 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 	case fleetLineHeader:
 		if groupCanLaunch(l.group) {
 			if m.newArmedFor(l.group) {
-				switch m.onSelector(x) {
+				switch m.onSelector(l.group, x) {
 				case fleetHoverNewShell:
 					return idx, fleetClickNewShell
 				case fleetHoverNewAgent:
 					return idx, fleetClickNewAgent
+				case fleetHoverNewCron:
+					return idx, fleetClickNewCron
 				}
 			} else if m.onNewButton(l.group, x) {
 				return idx, fleetClickNew
@@ -236,7 +246,7 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			action = fleetClickRename
 		}
 	}
-	if action != fleetClickNewShell && action != fleetClickNewAgent {
+	if action != fleetClickNewShell && action != fleetClickNewAgent && action != fleetClickNewCron {
 		m.cancelNew() // any other click dismisses the selector
 	}
 	if action != fleetClickSweep {
@@ -261,6 +271,9 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		m.closeMenu()
 		m.cancelNew()
 		return m, m.launchForGroup(m.groupForSession(m.lines[idx].group.Session))
+	case fleetClickNewCron:
+		m.closeMenu()
+		return m, m.cronForGroup(m.groupForSession(m.lines[idx].group.Session))
 	case fleetClickClose:
 		m.closeMenu()
 		if m.confirmingRow(m.lines[idx].row) {
@@ -360,6 +373,7 @@ const (
 	fleetHoverNew                       // a group header's "+ new" button
 	fleetHoverNewShell                  // armed selector's "shell"
 	fleetHoverNewAgent                  // armed selector's "agent"
+	fleetHoverNewCron                   // armed selector's "cron"
 	fleetHoverFold                      // a group header's fold marker and project name
 	fleetHoverSweep                     // a group header's "sweep" button
 	fleetHoverHeader                    // a group header outside its buttons
@@ -393,7 +407,7 @@ func (m FleetModel) hoverAt(x, y int) fleetHover {
 	case fleetLineHeader:
 		if groupCanLaunch(l.group) {
 			if m.newArmedFor(l.group) {
-				if r := m.onSelector(x); r != fleetHoverNone {
+				if r := m.onSelector(l.group, x); r != fleetHoverNone {
 					return fleetHover{line: idx, reg: r}
 				}
 			} else if m.onNewButton(l.group, x) {

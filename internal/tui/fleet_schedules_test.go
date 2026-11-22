@@ -502,8 +502,8 @@ func TestScheduleKeysLeaveAgentRowsAlone(t *testing.T) {
 	if !m.newArmed() {
 		t.Error("n on an agent row should still arm new")
 	}
-	if !strings.Contains(ansi.Strip(m.renderFooter(m.contentWidth())), "t schedule") {
-		t.Error("the new menu lacks the schedule entry")
+	if !strings.Contains(ansi.Strip(m.renderFooter(m.contentWidth())), "t cron") {
+		t.Error("the new menu lacks the cron entry")
 	}
 	m = schedPress(t, m, "esc")
 	if got := f.job(t, "upcoming"); got.IsEnabled() != before.IsEnabled() {
