@@ -55,6 +55,10 @@ func TestMain(m *testing.M) {
 	activityPanes = func() ([]tmux.HubPane, error) { return nil, errors.New("activity poll disabled in tests") }
 	activityListPane = func() string { return "" }
 	activityHideViewer = func() error { return nil }
+	// Never create, resize or kill the real status pane (which would spawn
+	// `agentctl hub-status`); status tests install their own stubs.
+	hubStatusSync = func(bool, int) (bool, error) { return false, nil }
+	hubStatusPin = func(int) error { return nil }
 	// Never spawn gh or tmux from the tickets browser; tests that need a
 	// result install their own stub.
 	tkExec = func(string, ...string) ([]byte, error) { return nil, errExecDisabled }

@@ -311,6 +311,9 @@ func ShowLiveViewer(homeSession, windowID string, rightWidth int) error {
 	if pane != "" {
 		_ = exec.Command("tmux", "kill-pane", "-t", pane).Run()
 	}
+	// A status pane left above the dead viewer would sit in the wrong
+	// column; the caller makes a fresh one above the new viewer.
+	_ = KillHubStatus()
 	killViewerSessions(name)
 	list := viewerSplitTarget(hubListPaneID())
 	id, err := tmuxRun(viewerSplitArgs(list, rightWidth, viewerAttachCommand(outerSocketPath(), name))...)
@@ -325,9 +328,11 @@ func viewerSessionExists() bool {
 	return len(viewerSessions()) > 0
 }
 
-// HideLiveViewer kills the viewer pane and all viewer sessions. Agent windows
-// are shared, not owned, by the viewer, so they survive.
+// HideLiveViewer kills the viewer pane, the status pane above it and all
+// viewer sessions. Agent windows are shared, not owned, by the viewer, so
+// they survive.
 func HideLiveViewer() error {
+	_ = KillHubStatus()
 	if pane := viewerPaneID(); pane != "" {
 		_ = exec.Command("tmux", "kill-pane", "-t", pane).Run()
 	}
@@ -336,11 +341,33 @@ func HideLiveViewer() error {
 	return nil
 }
 
-// FocusLivePane toggles focus between the hub list pane and the live pane
-// (same as the outer-prefix `o`, but without needing the prefix).
+// FocusLivePane toggles focus between the hub list pane and the live pane.
+// The panes are picked by their markers, not by index: the status pane sits
+// between the list and the viewer in pane order, so "next pane" would land
+// on it. Falls back to the next pane when there is no marked viewer.
 func FocusLivePane() error {
-	_, err := tmuxRun("select-pane", "-t", sessionWindowTarget(HubSessionName, FleetListWindowName)+".+")
+	target := sessionWindowTarget(HubSessionName, FleetListWindowName)
+	active, _ := tmuxRun("display-message", "-p", "-t", target, "#{pane_id}")
+	list := hubListPaneID()
+	if pane := focusToggleTarget(active, list, viewerPaneID()); pane != "" {
+		_, err := tmuxRun("select-pane", "-t", pane)
+		return err
+	}
+	_, err := tmuxRun("select-pane", "-t", target+".+")
 	return err
+}
+
+// focusToggleTarget picks the pane FocusLivePane selects: the viewer when
+// the list (or nothing known) is active, the list otherwise. "" means no
+// marked viewer, so the caller falls back to the next pane.
+func focusToggleTarget(active, list, viewer string) string {
+	if viewer == "" || list == "" {
+		return ""
+	}
+	if active == list {
+		return viewer
+	}
+	return list
 }
 
 // FocusViewerPane selects the live viewer pane by ID. Unlike FocusLivePane it
@@ -355,20 +382,21 @@ func FocusViewerPane() error {
 }
 
 // hubListPaneID returns the hub list pane's ID: the pane in the fleet-list
-// window that is neither the live viewer nor the activity pane. Empty when
-// it cannot be resolved.
+// window that is none of the live viewer, activity and status panes. Empty
+// when it cannot be resolved.
 func hubListPaneID() string {
 	out, err := tmuxRun("list-panes", "-t", sessionWindowTarget(HubSessionName, FleetListWindowName),
-		"-F", "#{pane_id} #{"+viewerPaneOption+"}#{"+activityPaneOption+"}")
+		"-F", "#{pane_id} #{"+viewerPaneOption+"}#{"+activityPaneOption+"}#{"+statusPaneOption+"}")
 	if err != nil {
 		return ""
 	}
 	return parseListPane(out)
 }
 
-// parseListPane picks the first pane flagged as neither the viewer nor the
-// activity pane from `#{pane_id} #{@agentctl_viewer}#{@agentctl_activity}`
-// lines (a flagged pane has a second field).
+// parseListPane picks the first pane flagged as none of the viewer, activity
+// and status panes from `#{pane_id}
+// #{@agentctl_viewer}#{@agentctl_activity}#{@agentctl_status}` lines (a
+// flagged pane has a second field).
 func parseListPane(out string) string {
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)

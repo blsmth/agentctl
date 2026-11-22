@@ -478,6 +478,9 @@ type FleetModel struct {
 	// liveFailed is the liveShown key whose hand-off to the viewer failed, so
 	// the viewer is not showing it.
 	liveFailed string
+	// statusPane is whether the status pane above the viewer was last
+	// reported open (see statusPaneOpen, fleet_status.go).
+	statusPane bool
 	// viewerSeen is the "session|window" the viewer last reported on a poll;
 	// a change relative to it that the hub did not cause drives the selection
 	// (see viewerSyncDecide).
@@ -805,10 +808,19 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		heightChanged := msg.Height != m.termHeight
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
 		m.configureSplitPane()
-		return m, fleetProbeCmd(msg.Width)
+		var status tea.Cmd
+		if heightChanged {
+			status = m.statusResizeCmd()
+		}
+		return m, tea.Batch(fleetProbeCmd(msg.Width), status)
+
+	case fleetStatusMsg:
+		m.applyStatus(msg.open)
+		return m, nil
 
 	case fleetProbeMsg:
 		if m.schedPaneOn {
@@ -944,6 +956,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.liveFailed == msg.key {
 			m.liveFailed = ""
 		}
+		m.applyStatus(msg.status)
 		m.liveLeft, m.liveRight = msg.left, msg.right
 		if msg.win > 0 {
 			m.liveWinWidth = msg.win
@@ -1331,6 +1344,9 @@ type fleetLiveMsg struct {
 	// hidden reports that nothing was shown: the activity pane takes the
 	// viewer's place at this window width.
 	hidden bool
+	// status reports whether the status pane above the viewer is open after
+	// the show.
+	status bool
 }
 
 // fleetLiveSizedMsg reports the outcome of re-applying the live split sizes.
@@ -1493,9 +1509,11 @@ func (m *FleetModel) liveShowFor(session, window string) tea.Cmd {
 	fallback, userLeft := m.termWidth, m.userLeft
 	shown := m.hubChrome
 	activity, userAct := m.activity.open(), m.activity.userWidth
+	wantStatus := statusWanted(m.termHeight)
 	return func() tea.Msg {
 		win := liveWindowWidth(fallback)
 		left, right, err := fleetLiveSplitFor(win, userLeft)
+		status := false
 		if err == nil && activity {
 			lay := decideHubLayout(win, left, userAct)
 			if lay.hideViewer {
@@ -1511,12 +1529,17 @@ func (m *FleetModel) liveShowFor(session, window string) tea.Cmd {
 				fleetViewerApplied = showGen
 			}
 			err = showLiveViewer(session, window, right)
+			if err == nil {
+				// The status pane sits above the viewer, so it follows the
+				// show (and a viewer recreated from scratch gets a fresh one).
+				status = syncStatusPane(wantStatus)
+			}
 			fleetViewerMu.Unlock()
 			if err == nil {
 				hubZoomSync(!shown)
 			}
 		}
-		return fleetLiveMsg{key: key, left: left, right: right, win: win, err: err}
+		return fleetLiveMsg{key: key, left: left, right: right, win: win, err: err, status: status}
 	}
 }
 
@@ -2979,7 +3002,7 @@ func recapStyle(w fleetWeight, src fleet.RecapSource) lipgloss.Style {
 // agent name, recap, then the right-aligned PR and age columns and the close
 // button. The prefix is clamped so deep nesting cannot starve the name. A
 // selected row also renders its detail lines (see rowDetail) beneath it,
-// joined by newlines; every line measures at most cw (exactly cw when
+// joined by newlines, unless the status pane shows them (inlineDetail); every line measures at most cw (exactly cw when
 // selected).
 func (m FleetModel) renderTreeRow(r fleet.Row, treePrefix string, selected bool, cw int) string {
 	return m.renderTreeRowHover(r, treePrefix, selected, fleetHoverNone, cw)
@@ -2998,7 +3021,7 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, selected 
 func (m FleetModel) renderRowLine(l fleetLine, selected bool, hover fleetHoverRegion, cw int) string {
 	lay := m.rowLayout(l, selected, hover, cw)
 	out := lay.line
-	if !selected {
+	if !selected || !m.inlineDetail() {
 		return out
 	}
 	for _, d := range rowDetailStyled(l.row, l.treePrefix, cw, m.display, m.viewerShows(l.row)) {
@@ -3356,8 +3379,9 @@ type fleetDetailLine struct {
 // marked, truncated line and never wraps. viewed drops the activity line:
 // the live viewer is showing that window, so it would only repeat it. Hit
 // testing and scrolling count these lines, so rendering must use exactly
-// this. prefixW is the width of the row's kept tree prefix
-// (fleetKeptPrefix).
+// this, and both skip them while the status pane above the viewer shows
+// them instead (inlineDetail). prefixW is the width of the row's kept tree
+// prefix (fleetKeptPrefix).
 func rowDetail(r fleet.Row, prefixW, cw int, d fleetDisplay, viewed bool) []fleetDetailLine {
 	w := cw - fleetSidebarRightGutter - fleetDetailIndent - prefixW
 	if w < fleetMinRecapWidth {
@@ -3373,32 +3397,68 @@ func rowDetail(r fleet.Row, prefixW, cw int, d fleetDisplay, viewed bool) []flee
 
 // rowDetailText is rowDetail's recap and activity lines at text width w.
 func rowDetailText(r fleet.Row, w int, viewed bool) []fleetDetailLine {
-	activity := fleet.ActivityLine(r)
+	return detailPartsFor(r, viewed).textLines(w, fleetDetailMaxLines)
+}
+
+// rowDetailParts is the width-independent content of a row's detail: what
+// rowDetail wraps beneath a selected row and what the hub's status pane
+// wraps to its own width. It is published in the hub selection file, so the
+// status pane renders exactly what the list would.
+type rowDetailParts struct {
+	// Recap is the recap text; "" when there is no detail (no recap, or an
+	// activity recap the viewer already shows).
+	Recap string `json:"recap,omitempty"`
+	// RecapIsActivity marks a recap that is itself the activity (the last
+	// tool command or text): one marked, truncated line that never wraps.
+	RecapIsActivity bool `json:"recap_is_activity,omitempty"`
+	// Activity is the separate last-activity line ("" when none, when it
+	// repeats the recap, or when the viewer shows it).
+	Activity string `json:"activity,omitempty"`
+	// Marker leads the activity line (or the activity recap).
+	Marker string `json:"marker,omitempty"`
+}
+
+// detailPartsFor builds r's detail parts. viewed drops the activity: the
+// live viewer is showing that window, so it would only repeat it.
+func detailPartsFor(r fleet.Row, viewed bool) rowDetailParts {
 	rc := rowRecap(r)
 	if rc.Source == fleet.RecapNone {
-		return nil // the fallback sentence is already the whole story
+		return rowDetailParts{} // the fallback sentence is already the whole story
 	}
 	if rc.Source == fleet.RecapActivity {
 		if viewed {
-			return nil
+			return rowDetailParts{}
 		}
 		marker, text := activityMarker(r, rc.Text)
-		return []fleetDetailLine{{text: truncateToWidth(text, w-lipgloss.Width(marker)), marker: marker}}
+		return rowDetailParts{Recap: text, RecapIsActivity: true, Marker: marker}
 	}
-	recap := rc.Text
-	showActivity := !viewed && activity != "" && activity != recap
+	p := rowDetailParts{Recap: rc.Text}
+	if activity := fleet.ActivityLine(r); !viewed && activity != "" && activity != rc.Text {
+		p.Marker, p.Activity = activityMarker(r, activity)
+	}
+	return p
+}
 
-	recapMax := fleetDetailMaxLines
-	if showActivity {
+// textLines lays the parts out at text width w in at most maxLines lines:
+// the recap wrapped (its last kept line ending in "…" when cut), then the
+// activity line, truncated.
+func (p rowDetailParts) textLines(w, maxLines int) []fleetDetailLine {
+	if p.Recap == "" || w <= 0 || maxLines <= 0 {
+		return nil
+	}
+	if p.RecapIsActivity {
+		return []fleetDetailLine{{text: truncateToWidth(p.Recap, w-lipgloss.Width(p.Marker)), marker: p.Marker}}
+	}
+	recapMax := maxLines
+	if p.Activity != "" {
 		recapMax--
 	}
 	var out []fleetDetailLine
-	for _, l := range wrapLines(recap, w, recapMax) {
+	for _, l := range wrapLines(p.Recap, w, recapMax) {
 		out = append(out, fleetDetailLine{text: l})
 	}
-	if showActivity {
-		marker, text := activityMarker(r, activity)
-		out = append(out, fleetDetailLine{text: truncateToWidth(text, w-lipgloss.Width(marker)), marker: marker})
+	if p.Activity != "" {
+		out = append(out, fleetDetailLine{text: truncateToWidth(p.Activity, w-lipgloss.Width(p.Marker)), marker: p.Marker})
 	}
 	return out
 }
@@ -3463,12 +3523,13 @@ func wrapLines(s string, w, n int) []string {
 }
 
 // lineHeight is how many screen rows line i renders as at width cw: a
-// selected agent row adds its detail lines, everything else is one row.
+// selected agent row adds its detail lines (unless the status pane shows
+// them instead), everything else is one row.
 func (m FleetModel) lineHeight(i, cw int) int {
 	if i < 0 || i >= len(m.lines) {
 		return 0
 	}
-	if l := m.lines[i]; l.kind == fleetLineRow && i == m.splitPane.Cursor() {
+	if l := m.lines[i]; l.kind == fleetLineRow && i == m.splitPane.Cursor() && m.inlineDetail() {
 		return 1 + len(rowDetail(l.row, lipgloss.Width(fleetKeptPrefix(l.treePrefix, cw)), cw, m.display, m.viewerShows(l.row)))
 	}
 	return 1

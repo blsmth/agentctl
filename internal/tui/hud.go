@@ -1649,10 +1649,17 @@ func (m HudModel) followIdle() bool { return m.follow.enabled && m.windowID == "
 
 // followPlaceholder is the muted line a follow-hub HUD shows with no target.
 func (m HudModel) followPlaceholder() string {
+	return followPlaceholderText(m.follow.readErr, m.follow.gone)
+}
+
+// followPlaceholderText is the muted line a hub follower (the follow-hub HUD,
+// the status pane) shows with no target: readErr when the selection file is
+// unreadable, gone when the followed window closed.
+func followPlaceholderText(readErr, gone bool) string {
 	switch {
-	case m.follow.readErr:
+	case readErr:
 		return "Hub selection unavailable — select an agent in the hub"
-	case m.follow.gone:
+	case gone:
 		return "Window closed — select an agent in the hub"
 	}
 	return "Select an agent in the hub"

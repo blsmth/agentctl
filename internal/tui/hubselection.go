@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/fleet"
@@ -28,6 +29,49 @@ type HubSelection struct {
 	// instance name and short title as the hub list shows them.
 	Name  string `json:"name,omitempty"`
 	Title string `json:"title,omitempty"`
+	// Status is the selected row's detail for the hub's status pane (see
+	// hubStatusFor); nil with the zero selection.
+	Status *hubStatus `json:"status,omitempty"`
+}
+
+// hubStatus is what the hub's status pane shows for the selected row, built
+// by the hub list from the same helpers that draw the row (rowGlyph,
+// rowRecap, detailPartsFor, rowChips) so both always agree. Layout to the
+// pane width happens in the status pane.
+type hubStatus struct {
+	Glyph   string `json:"glyph,omitempty"`
+	Role    string `json:"role,omitempty"`
+	Title   string `json:"title,omitempty"`
+	Project string `json:"project,omitempty"`
+	// Note is the fallback sentence of a row with no recap ("no prompt yet
+	// · 4m"), drawn muted under the title.
+	Note   string         `json:"note,omitempty"`
+	Detail rowDetailParts `json:"detail"`
+	Chips  []string       `json:"chips,omitempty"`
+}
+
+// hubStatusFor builds the status pane content for row r. The activity line
+// is always included: the status pane sits above the viewer, but the
+// activity line names the last tool call, which the viewer may have
+// scrolled past.
+func hubStatusFor(r fleet.Row, d fleetDisplay) *hubStatus {
+	glyph, _ := rowGlyph(r)
+	recap := rowRecap(r)
+	st := &hubStatus{
+		Glyph:   glyph,
+		Role:    r.ShortRole,
+		Title:   recap.Short(),
+		Project: r.Project,
+		Detail:  detailPartsFor(r, false),
+		Chips:   rowChips(r, d),
+	}
+	if rowNeedsNameFallback(r, recap) {
+		st.Title = fleet.BaseName(r)
+	}
+	if recap.Source == fleet.RecapNone && recap.Text != st.Title {
+		st.Note = recap.Text
+	}
+	return st
 }
 
 // valid reports whether s names a followable agent window.
@@ -121,7 +165,11 @@ func (m FleetModel) hubSelection() HubSelection {
 			if r.WindowID != m.selWindowID {
 				continue
 			}
-			return selectionForRow(g, r)
+			sel := selectionForRow(g, r)
+			if sel.valid() {
+				sel.Status = hubStatusFor(r, m.display)
+			}
+			return sel
 		}
 	}
 	return HubSelection{}
@@ -142,18 +190,18 @@ func selectionForRow(g fleet.Group, r fleet.Row) HubSelection {
 }
 
 // publishSelection writes the current selection to the selection file when
-// it differs from the last one written. It runs only while the activity pane
-// (the follower) is open, and does nothing until the list has loaded, so a
-// hot-reloaded hub does not blank the follower before its pending focus is
-// re-applied. Opening the pane forces a fresh write (selPublished is reset).
-// A failed write is logged once per distinct selection and retried on the
-// next change.
+// it differs from the last one written. It runs only while a follower is
+// open (the activity pane, or the status pane above the live viewer), and
+// does nothing until the list has loaded, so a hot-reloaded hub does not
+// blank a follower before its pending focus is re-applied. Opening either
+// pane forces a fresh write (selPublished is reset). A failed write is
+// logged once per distinct selection and retried on the next change.
 func (m *FleetModel) publishSelection() {
-	if !m.loaded || !m.activity.open() {
+	if !m.loaded || !m.selectionFollowed() {
 		return
 	}
 	sel := m.hubSelection()
-	if m.selPublished && sel == m.lastSelection {
+	if m.selPublished && reflect.DeepEqual(sel, m.lastSelection) {
 		return
 	}
 	m.lastSelection, m.selPublished = sel, true
@@ -164,4 +212,10 @@ func (m *FleetModel) publishSelection() {
 	if err != nil {
 		logging.Log("hub: publishing selection: %v", err)
 	}
+}
+
+// selectionFollowed reports whether a pane is following the selection file:
+// the activity pane, or the status pane above the live viewer.
+func (m FleetModel) selectionFollowed() bool {
+	return m.activity.open() || m.statusPaneOpen()
 }

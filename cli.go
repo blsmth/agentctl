@@ -81,6 +81,7 @@ type CLI struct {
 	HubView         HubViewCmd         `cmd:"" name:"hub-view" hidden:""`
 	HubNewSession   HubNewSessionCmd   `cmd:"" name:"hub-new-session" hidden:""`
 	HubResume       HubResumeCmd       `cmd:"" name:"hub-resume" hidden:""`
+	HubStatus       HubStatusCmd       `cmd:"" name:"hub-status" hidden:""`
 	JumpNextBlocked JumpNextBlockedCmd `cmd:"" name:"jump-next-blocked" hidden:""`
 
 	// Tickets
@@ -559,6 +560,12 @@ func (c *HubCmd) Run() error { cmd.RunHub(c.Client); return nil }
 type HubViewCmd struct{}
 
 func (c *HubViewCmd) Run() error { cmd.RunHubView(); return nil }
+
+// HubStatusCmd runs in the hub's status pane, above the live viewer: the
+// selected row's title, recap, activity line and chips.
+type HubStatusCmd struct{}
+
+func (c *HubStatusCmd) Run() error { cmd.CmdHubStatus(); return nil }
 
 // HubNewSessionCmd is the hub's "+ new session" helper: run with cwd = Dir,
 // it initializes the project if needed, starts its tmux session detached and
