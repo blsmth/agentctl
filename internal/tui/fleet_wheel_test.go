@@ -169,7 +169,7 @@ func TestWheelViewerSelectionFollows(t *testing.T) {
 	m := wheelTestModel(t, 40, 20)
 	m = wheel(m, tea.MouseWheelDown, 5)
 	m = wheel(m, tea.MouseWheelDown, 5)
-	m = m.syncFromViewer(fleetViewerMsg{home: "s1", window: "@40"})
+	m, _ = m.syncFromViewer(fleetViewerMsg{home: "s1", window: "@40"})
 	cw := m.contentWidth()
 	c := m.splitPane.Cursor()
 	if c < m.scrollOffset || c >= m.shownEnd(cw) {
