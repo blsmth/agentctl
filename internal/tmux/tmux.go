@@ -1641,10 +1641,10 @@ func applyConfig() {
 	EnsureSessionEnv()
 	done()
 
-	// Both tmux status rows are now replaced by Bubble Tea panes, so we disable
-	// the native tmux status bar entirely.
-	done = logging.Timing("applyConfig: status bar off")
-	set("status", "off")
+	// The native status line is off when the chrome bar (config chrome_bar)
+	// replaces it, and shows a plain window list otherwise.
+	done = logging.Timing("applyConfig: status line")
+	applyStatusLine(chromeBarEnabled())
 	done()
 
 	// Kill any existing monitor for this instance before launching a
@@ -1665,7 +1665,8 @@ func applyConfig() {
 
 	installSessionHooks(exe, pidDir, projectRoot)
 
-	// Launch the chrome bar in the initial shell window.
+	// Launch the chrome bar in the initial shell window (LaunchChromeBar only
+	// records its main pane when chrome_bar is off).
 	done = logging.Timing("applyConfig: LaunchChromeBar shell window")
 	if shellID := windowIDByName("shell"); shellID != "" {
 		_ = LaunchChromeBar(shellID) // best-effort at startup; failure is non-fatal
@@ -1678,22 +1679,26 @@ func applyConfig() {
 // ApplyConfigLive re-applies the session hooks, options and keybindings to the
 // running session so it picks up changes from a newer binary without a
 // relaunch. Unlike applyConfig it never touches the monitor, restores nothing
-// and launches no windows.
+// and launches no windows. It also applies the chrome_bar switch to the
+// windows already open: off kills their chrome bars and turns the native
+// status line on, on turns it off and launches bars where one is missing.
 func ApplyConfigLive() {
 	exe := selfpath.SpawnableOrFallback()
 	EnsureSessionEnv()
-	set("status", "off")
+	chromeBar := chromeBarEnabled()
+	applyStatusLine(chromeBar)
 	pidDir := paths.RuntimeDir()
 	installSessionHooks(exe, pidDir, filepath.Dir(pidDir))
 	applyStylingAndKeybindings(exe)
+	syncChromeBars(chromeBar, chromeSyncDeps())
 }
 
 // installSessionHooks sets every session-scoped hook agentctl relies on.
 func installSessionHooks(exe, pidDir, projectRoot string) {
-	// The ChromeBarRows-row chrome bar replaces the separate status-bar and
-	// tab-bar panes, eliminating a tmux pane-border line. Set the
-	// after-new-window hook so every new window gets the chrome bar
-	// automatically.
+	// The after-new-window hook runs chrome-bar-pane in every new window. It
+	// is installed whatever chrome_bar says: LaunchChromeBar reads the switch
+	// when it runs (so apply-config is not needed for new windows) and, with
+	// the bar off, still records the window's main pane.
 	done := logging.Timing("applyConfig: session hooks")
 
 	// Remove stale global hooks from older agentctl versions that used -g.
@@ -1865,7 +1870,7 @@ func windowIDByName(name string) string {
 }
 
 // ChromeBarRows is the fixed height of the chrome bar pane docked at the
-// bottom of every agentctl window: keybind hints + agent tabs. Rate limits and
+// bottom of every agentctl window when config chrome_bar is on: keybind hints + agent tabs. Rate limits and
 // per-window metrics live in the "rich" Claude Code status line instead. LaunchChromeBar (pane creation) and
 // EnforceMainPaneSize (main pane sizing) both derive from this single
 // constant so they can never disagree about the chrome bar's height.
@@ -1909,6 +1914,9 @@ func chromeBarSplitArgs(lastPane, chromeBarCmd string) []string {
 //
 // Utility windows (tickets, sessions, agents) are skipped because they run
 // full-screen TUI applications that must fill the entire window.
+//
+// With config chrome_bar off (the default) no bar is created; the window's
+// main pane is still recorded, since main_pane was written here.
 func LaunchChromeBar(windowID string) error {
 	// The hub window gets no chrome: the agent's own chrome bar, inside the
 	// live pane, is the only tab bar.
@@ -1925,17 +1933,22 @@ func LaunchChromeBar(windowID string) error {
 	if ws.ChromeBarPane != "" {
 		return nil
 	}
+	if !chromeBarEnabled() {
+		recordMainPane(windowID, ws)
+		ensureStatusLine()
+		return nil
+	}
 
 	exe := selfpath.SpawnableOrFallback()
 	chromeBarCmd := shellquote.Quote(exe) + " chrome-bar " + windowID
 
 	// Find the last pane so the bar appears at the absolute bottom.
 	target := sessionWindowTarget(SessionName, windowID)
-	out, err := exec.Command("tmux", "list-panes", "-t", target, "-F", "#{pane_id}").Output()
+	out, err := chromeBarRun("list-panes", "-t", target, "-F", "#{pane_id}")
 	if err != nil {
 		return fmt.Errorf("list-panes for chrome bar: %w", err)
 	}
-	panes := strings.Fields(strings.TrimSpace(string(out)))
+	panes := strings.Fields(out)
 	if len(panes) == 0 {
 		return fmt.Errorf("no panes found in window %s", windowID)
 	}
@@ -1944,11 +1957,10 @@ func LaunchChromeBar(windowID string) error {
 	// Use -f (full-window split) with an absolute row count so the bar steals
 	// from the whole layout, not just the adjacent pane.
 	args := chromeBarSplitArgs(lastPane, chromeBarCmd)
-	rawOut, err := exec.Command("tmux", args...).CombinedOutput()
+	paneID, err := chromeBarRun(args...)
 	if err != nil {
-		return fmt.Errorf("chrome bar split: %s: %w", string(rawOut), err)
+		return fmt.Errorf("chrome bar split: %w", err)
 	}
-	paneID := strings.TrimSpace(string(rawOut))
 	// Input stays enabled: tmux drops mouse events for input-off panes, and the
 	// chrome bar handles tab clicks (see tui.ChromeBarModel).
 	mainPane := findMainPane(windowID)

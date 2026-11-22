@@ -99,6 +99,7 @@ func TestPickZoomPane(t *testing.T) {
 		{"chrome first", "%2\t'/bin/agentctl' chrome-bar @3\n%1\tzsh", "%1"},
 		{"skips hud", "%4\t'/bin/agentctl' hud @3\n%1\tclaude\n%2\t/bin/agentctl chrome-bar @3", "%1"},
 		{"only chrome", "%2\t/bin/agentctl chrome-bar @3", ""},
+		{"no chrome bar: nothing to hide", "%1\tclaude\n%4\t'/bin/agentctl' hud @3", ""},
 		{"empty", "", ""},
 	}
 	for _, tt := range tests {

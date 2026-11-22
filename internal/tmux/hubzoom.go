@@ -127,19 +127,26 @@ func planHubZoom(wins []zoomWindow, viewed string, hide bool) zoomPlan {
 }
 
 // pickZoomPane returns the main pane from hubZoomPanesArgs output: the first
-// pane that is neither the chrome bar nor the HUD.
+// pane that is neither the chrome bar nor the HUD. It returns "" for a
+// window with no chrome bar (config chrome_bar off): there is nothing to
+// hide, and zooming would only hide the HUD.
 func pickZoomPane(out string) string {
+	main, hasBar := "", false
 	for _, line := range strings.Split(out, "\n") {
 		id, cmd, _ := strings.Cut(strings.TrimSpace(line), "\t")
-		if id == "" {
-			continue
+		switch {
+		case id == "":
+		case isChromeBarCommand(cmd):
+			hasBar = true
+		case strings.Contains(cmd, " hud "):
+		case main == "":
+			main = id
 		}
-		if strings.Contains(cmd, " chrome-bar ") || strings.Contains(cmd, " hud ") {
-			continue
-		}
-		return id
 	}
-	return ""
+	if !hasBar {
+		return ""
+	}
+	return main
 }
 
 // Seams so tests never touch a live tmux server.
