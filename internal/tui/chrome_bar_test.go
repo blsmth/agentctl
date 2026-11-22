@@ -13,7 +13,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
-	"github.com/fsnotify/fsnotify"
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -272,14 +271,24 @@ func (f *chromeFixture) writeRecord(t *testing.T, id, body string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, id+".json"), []byte(body), 0o644); err != nil {
+	// Temp file plus rename, like windowstate's writer: the watcher relies
+	// on it (a directory-level change).
+	tmp := filepath.Join(dir, "."+id+".json.tmp")
+	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, filepath.Join(dir, id+".json")); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func (f *chromeFixture) setActive(t *testing.T, id string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(f.dir, "active-window"), []byte(id+"\n"), 0o644); err != nil {
+	tmp := filepath.Join(f.dir, ".active-window.tmp")
+	if err := os.WriteFile(tmp, []byte(id+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, filepath.Join(f.dir, "active-window")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -454,113 +463,18 @@ func TestChromeBarActiveWindowChangedMsg(t *testing.T) {
 	}
 }
 
-// recvWatch reads one message from ch with a timeout.
-func recvWatch(t *testing.T, ch chan tea.Msg, d time.Duration) (tea.Msg, bool) {
-	t.Helper()
-	select {
-	case msg := <-ch:
-		return msg, true
-	case <-time.After(d):
-		return nil, false
-	}
-}
-
-// startTestWatcher starts watchLoop with an explicit debounce. The fsnotify
-// watches are registered before it returns, so writes made afterwards are
-// never missed and tests need no startup sleep. The watcher closes on cleanup.
-func startTestWatcher(t *testing.T, runtimeDir string, debounce time.Duration) chan tea.Msg {
-	t.Helper()
-	w, err := fsnotify.NewWatcher()
-	if err != nil {
-		t.Skipf("fsnotify unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = w.Close() })
-	if err := watchDirs(w, runtimeDir); err != nil {
-		t.Fatal(err)
-	}
-	ch := make(chan tea.Msg, 1)
-	go watchLoop(w, runtimeDir, ch, debounce)
-	return ch
-}
-
-// watchWait is how long to wait for a message that should arrive after one
-// debounce window, with generous slack for slow runners.
-func watchWait(debounce time.Duration) time.Duration {
-	return 5*debounce + 2*time.Second
-}
-
-// TestChromeBarWatcherActiveWindow: the persistent watcher delivers an
-// activeWindowChangedMsg when the active-window file is written.
-func TestChromeBarWatcherActiveWindow(t *testing.T) {
-	f := newChromeFixture(t, nil)
-	if err := os.MkdirAll(filepath.Join(f.dir, "windows"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	const debounce = chromeBarDebounce
-	ch := startTestWatcher(t, f.dir, debounce)
-	f.setActive(t, "@3")
-
-	msg, ok := recvWatch(t, ch, watchWait(debounce))
-	if !ok {
-		t.Fatal("no message for active-window write")
-	}
-	if _, isActive := msg.(activeWindowChangedMsg); !isActive {
-		t.Errorf("got %T, want activeWindowChangedMsg", msg)
-	}
-}
-
-// TestChromeBarWatcherDebouncesBurst: N rapid windowstate writes yield one
-// windowsChangedMsg (and so one rebuild), not N. Existing records do not
-// trigger a relist; a brand new record does.
-func TestChromeBarWatcherDebouncesBurst(t *testing.T) {
-	f := newChromeFixture(t, nil)
-	f.writeRecord(t, "@1", `{"state":"idle"}`)
-	// The debounce dwarfs any realistic burst duration, so even a starved CI
-	// runner finishes all writes inside one window.
-	const debounce = time.Second
-	ch := startTestWatcher(t, f.dir, debounce)
-
-	const n = 25
-	for i := 0; i < n; i++ {
-		f.writeRecord(t, "@1", fmt.Sprintf(`{"state":"working","turn_count":%d}`, i))
-	}
-	msg, ok := recvWatch(t, ch, watchWait(debounce))
-	if !ok {
-		t.Fatal("no message after burst")
-	}
-	wc, isWC := msg.(windowsChangedMsg)
-	if !isWC {
-		t.Fatalf("got %T, want windowsChangedMsg", msg)
-	}
-	if wc.relist {
-		t.Error("writes to an existing record must not request a relist")
-	}
-	if extra, got := recvWatch(t, ch, 2*debounce); got {
-		t.Errorf("burst of %d writes produced a second message: %#v", n, extra)
-	}
-
-	// A new record file is a window being created: relist.
-	f.writeRecord(t, "@2", `{"state":"idle"}`)
-	msg, ok = recvWatch(t, ch, watchWait(debounce))
-	if !ok {
-		t.Fatal("no message after new record")
-	}
-	if wc, _ := msg.(windowsChangedMsg); !wc.relist {
-		t.Errorf("new record: got %#v, want relist", msg)
-	}
-}
-
 func TestChromeBarPrefixPoll(t *testing.T) {
 	f := newChromeFixture(t, nil)
 	polls := 0
 	m := newChromeBarModel("@1", f.dir, func() ([]tmux.WindowInfo, error) { return nil, nil },
 		func() bool { polls++; return true })
 
-	// Inactive window: tick must not poll tmux.
+	// Inactive window: tick must not poll tmux, and ends the chain (see
+	// TestChromeBarIdleTickChainsStop).
 	m.activeWindowID = "@2"
 	_, cmd := m.Update(prefixTickMsg{})
-	if cmd == nil {
-		t.Fatal("tick must reschedule")
+	if cmd != nil {
+		t.Fatal("inactive tick must not reschedule")
 	}
 	if polls != 0 {
 		t.Errorf("polled %d times for an inactive window", polls)
@@ -948,22 +862,81 @@ func TestChromeBarRebuildShellTab(t *testing.T) {
 	}
 }
 
-// TestChromeBarPersistentWatcherTwoEvents: two separate writes produce two
-// messages on the same channel (the watcher is not recreated).
-func TestChromeBarPersistentWatcherTwoEvents(t *testing.T) {
-	f := newChromeFixture(t, nil)
-	f.writeRecord(t, "@1", `{"state":"idle"}`)
-	const debounce = chromeBarDebounce
-	ch := startTestWatcher(t, f.dir, debounce)
+// TestChromeBarIdleTickChainsStop is the regression test for idle bars
+// burning CPU: Bubble Tea re-renders on every message, and the spinner
+// (12/s) and prefix poll (4/s) used to tick in every bar forever. In an idle,
+// inactive bar both chains must end on their first tick, and restart once
+// there is something to show.
+func TestChromeBarIdleTickChainsStop(t *testing.T) {
+	f := newChromeFixture(t, []tmux.WindowInfo{{ID: "@1", Name: "alpha"}, {ID: "@2", Name: "beta"}})
+	f.writeRecord(t, "@1", `{"state":"idle","instance":"alpha"}`)
+	f.writeRecord(t, "@2", `{"state":"idle","instance":"beta"}`)
+	f.setActive(t, "@2")
+	m := f.model("@1")
+	m.rebuild(true)
 
-	for i, body := range []string{`{"state":"working"}`, `{"state":"idle"}`} {
-		f.writeRecord(t, "@1", body)
-		msg, ok := recvWatch(t, ch, watchWait(debounce))
-		if !ok {
-			t.Fatalf("write %d: no message", i+1)
-		}
-		if _, isWC := msg.(windowsChangedMsg); !isWC {
-			t.Errorf("write %d: got %T, want windowsChangedMsg", i+1, msg)
-		}
+	next, cmd := m.Update(m.spinner.Tick())
+	if cmd != nil {
+		t.Error("spinner tick with no working tab must not reschedule")
+	}
+	next, cmd = next.Update(prefixTickMsg{})
+	if cmd != nil {
+		t.Error("prefix tick in an inactive bar must not reschedule")
+	}
+	idle := next.(ChromeBarModel)
+	if idle.spinning || idle.prefixPolling {
+		t.Fatalf("spinning=%v prefixPolling=%v, want both stopped", idle.spinning, idle.prefixPolling)
+	}
+
+	// Other events while idle do not restart them.
+	next, _ = idle.Update(chromeBarClockTickMsg{})
+	if c := next.(ChromeBarModel); c.spinning || c.prefixPolling {
+		t.Fatal("clock tick restarted an idle chain")
+	}
+
+	// A tab starts working: the spinner restarts, once.
+	f.writeRecord(t, "@2", `{"state":"working","instance":"beta"}`)
+	next, _ = next.Update(windowsChangedMsg{})
+	if c := next.(ChromeBarModel); !c.spinning || c.prefixPolling {
+		t.Fatalf("after working: spinning=%v prefixPolling=%v, want true/false", c.spinning, c.prefixPolling)
+	}
+	if got := next.(ChromeBarModel).ensureTicksCmd(); got != nil {
+		t.Error("a running spinner must not get a second chain")
+	}
+
+	// This window becomes active: the prefix poll restarts.
+	f.setActive(t, "@1")
+	next, _ = next.Update(activeWindowChangedMsg{})
+	if c := next.(ChromeBarModel); !c.prefixPolling {
+		t.Fatal("prefix poll did not restart in the active bar")
+	}
+	if _, cmd = next.Update(prefixTickMsg{}); cmd == nil {
+		t.Error("active bar's prefix tick must reschedule")
+	}
+
+	// The spinner keeps ticking while a tab works.
+	next, _ = next.Update(windowsChangedMsg{})
+	if _, cmd = next.Update(next.(ChromeBarModel).spinner.Tick()); cmd == nil {
+		t.Error("spinner must keep ticking while a tab is working")
+	}
+}
+
+// ensureTicksCmd is ensureTicks on a copy, for asserting it starts nothing.
+func (m ChromeBarModel) ensureTicksCmd() tea.Cmd { return m.ensureTicks() }
+
+// TestChromeBarThemeFollowsConfigEdit: View no longer reads config on every
+// frame, but a theme change in the config file still shows on the next one.
+func TestChromeBarThemeFollowsConfigEdit(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	config.SetConfigPathForTest(cfg)
+	t.Cleanup(func() { config.SetConfigPathForTest("") })
+	m := newTestChromeBar(testTabs())
+
+	renameWrite(t, cfg, `{"theme":"catppuccin-mocha"}`)
+	before := m.View().Content
+	renameWrite(t, cfg, `{"theme":"bitchx"}`)
+	if after := m.View().Content; after == before {
+		t.Error("theme change in config did not change the rendered bar")
 	}
 }

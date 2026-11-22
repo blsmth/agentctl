@@ -109,3 +109,73 @@ func TestPRFieldsRoundTrip(t *testing.T) {
 		t.Errorf("got %d %q", ws.PRNumber, ws.PRURL)
 	}
 }
+
+func TestDirCacheRecords(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		tmp := filepath.Join(dir, "."+name+".tmp")
+		if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("@1.json", `{"state":"working"}`)
+	write("@2.json", `{"state":"idle"}`)
+	write("@3.json", `not json`)
+	write("@9.json", `{"state":"blocked"}`) // not asked for
+	if err := os.Symlink(filepath.Join(dir, "@1.json"), filepath.Join(dir, "@4.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewDirCache(dir)
+	got := c.Records([]string{"@1", "@2", "@3", "@4", "@5", "../x"})
+	if len(got) != 2 || got["@1"].State != "working" || got["@2"].State != "idle" {
+		t.Fatalf("Records = %+v, want @1 working and @2 idle only (no corrupt, symlink, missing or unasked)", got)
+	}
+
+	// A rewritten record is re-read; an unchanged one comes from the cache.
+	write("@1.json", `{"state":"blocked"}`)
+	if got := c.Records([]string{"@1", "@2"}); got["@1"].State != "blocked" || got["@2"].State != "idle" {
+		t.Fatalf("after rewrite: %+v", got)
+	}
+
+	// A removed record disappears.
+	if err := os.Remove(filepath.Join(dir, "@2.json")); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Records([]string{"@1", "@2"}); len(got) != 1 {
+		t.Fatalf("after remove: %+v", got)
+	}
+
+	// A missing dir yields nothing.
+	if got := NewDirCache(filepath.Join(dir, "nope")).Records([]string{"@1"}); len(got) != 0 {
+		t.Fatalf("missing dir: %+v", got)
+	}
+}
+
+// TestDirCacheSkipsUnchangedFiles: an unchanged file is not read again (an
+// unreadable but unchanged file still returns the cached record).
+func TestDirCacheSkipsUnchangedFiles(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads mode 000 files")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "@1.json")
+	if err := os.WriteFile(p, []byte(`{"state":"working"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := NewDirCache(dir)
+	if got := c.Records([]string{"@1"}); got["@1"].State != "working" {
+		t.Fatalf("first read: %+v", got)
+	}
+	if err := os.Chmod(p, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(p, 0o600) })
+	if got := c.Records([]string{"@1"}); got["@1"].State != "working" {
+		t.Errorf("unchanged file was re-read: %+v", got)
+	}
+}

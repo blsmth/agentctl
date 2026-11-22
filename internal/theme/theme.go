@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 
 	"github.com/blsmth/agentctl/internal/config"
 )
@@ -102,6 +105,9 @@ var builtinFS embed.FS
 var (
 	loadOnce sync.Once
 	builtins map[string]Theme
+	// generation counts theme set loads, so Current's cache never outlives
+	// the set it was resolved from.
+	generation atomic.Uint64
 )
 
 // defaultTheme is the fallback when no theme is configured or matched.
@@ -111,6 +117,7 @@ const defaultTheme = "catppuccin-mocha"
 // overlays any user-defined themes found in ~/.config/agentctl/themes/*.json.
 // User themes take precedence on name collision.
 func loadThemes() {
+	generation.Add(1)
 	builtins = make(map[string]Theme)
 
 	entries, err := builtinFS.ReadDir("builtin")
@@ -168,12 +175,40 @@ func themes() map[string]Theme {
 	return builtins
 }
 
+// current caches Current's answer. Current runs on every chrome bar frame and
+// every hub render, and config.Load reads and parses both config files, so
+// the theme is resolved again only when a config layer's identity (size,
+// mtime, inode) or the loaded theme set changes.
+var current struct {
+	mu    sync.Mutex
+	key   string
+	theme Theme
+}
+
 // Current returns the active theme based on the global config.
 // Falls back to catppuccin-mocha if the configured theme is unknown or unset.
+// A config edit takes effect on the next call.
 func Current() Theme {
-	cfg := config.Load()
 	all := themes()
-	if t, ok := all[cfg.Theme]; ok {
+	key := configKey()
+	current.mu.Lock()
+	if current.key == key {
+		t := current.theme
+		current.mu.Unlock()
+		return t
+	}
+	current.mu.Unlock()
+
+	t := pick(all, config.Load().Theme)
+	current.mu.Lock()
+	current.key, current.theme = key, t
+	current.mu.Unlock()
+	return t
+}
+
+// pick returns the named theme, else the default, else any theme.
+func pick(all map[string]Theme, name string) Theme {
+	if t, ok := all[name]; ok {
 		return t
 	}
 	if t, ok := all[defaultTheme]; ok {
@@ -184,6 +219,31 @@ func Current() Theme {
 		return t
 	}
 	return Theme{Name: defaultTheme}
+}
+
+// configKey fingerprints the config layers and the loaded theme set. A
+// missing file is part of the key too, so creating it is noticed.
+func configKey() string {
+	var sb strings.Builder
+	sb.WriteString(strconv.FormatUint(generation.Load(), 10))
+	for _, p := range config.LayerPaths() {
+		sb.WriteByte('|')
+		sb.WriteString(p)
+		fi, err := os.Stat(p)
+		if err != nil {
+			sb.WriteString(":-")
+			continue
+		}
+		sb.WriteByte(':')
+		sb.WriteString(strconv.FormatInt(fi.Size(), 10))
+		sb.WriteByte(':')
+		sb.WriteString(strconv.FormatInt(fi.ModTime().UnixNano(), 10))
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+			sb.WriteByte(':')
+			sb.WriteString(strconv.FormatUint(uint64(st.Ino), 10)) //nolint:unconvert // differs per OS
+		}
+	}
+	return sb.String()
 }
 
 // ByName returns the theme with the given name and whether it was found.

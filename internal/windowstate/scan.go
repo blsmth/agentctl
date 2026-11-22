@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // AllFrom is the directory-scoped counterpart to All: it scans an arbitrary
@@ -70,4 +71,78 @@ func WindowsDirFor(runtimeDir string) string {
 		return ""
 	}
 	return filepath.Join(runtimeDir, "windows")
+}
+
+// DirCache reads records from one windows directory for a set of window IDs,
+// re-parsing a file only when its size, mtime or inode changed. It serves
+// long-lived readers that rebuild on every windowstate write in the project
+// (the chrome bar): they need only their session's live windows, while the
+// directory also holds the records of every other session. Like AllFrom it
+// skips a symlinked dir or entry and a corrupt file, and applies no log-path
+// guard. Not safe for concurrent use.
+type DirCache struct {
+	dir     string
+	entries map[string]dirCacheEntry
+}
+
+type dirCacheEntry struct {
+	size  int64
+	mtime int64
+	ino   uint64
+	ws    WindowState
+}
+
+// NewDirCache returns a cache over dir (a WindowsDirFor path).
+func NewDirCache(dir string) *DirCache {
+	return &DirCache{dir: dir, entries: map[string]dirCacheEntry{}}
+}
+
+// Records returns the records of ids that exist, keyed by window ID. Entries
+// for IDs not asked for are dropped.
+func (c *DirCache) Records(ids []string) map[string]WindowState {
+	out := make(map[string]WindowState, len(ids))
+	if c.dir == "" {
+		return out
+	}
+	if fi, err := os.Lstat(c.dir); err != nil || !fi.IsDir() {
+		clear(c.entries)
+		return out
+	}
+	next := make(map[string]dirCacheEntry, len(ids))
+	for _, id := range ids {
+		if id == "" || strings.ContainsRune(id, filepath.Separator) {
+			continue
+		}
+		e, ok := c.load(id)
+		if !ok {
+			continue
+		}
+		next[id] = e
+		out[id] = e.ws
+	}
+	c.entries = next
+	return out
+}
+
+func (c *DirCache) load(id string) (dirCacheEntry, bool) {
+	path := filepath.Join(c.dir, id+".json")
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return dirCacheEntry{}, false
+	}
+	e := dirCacheEntry{size: fi.Size(), mtime: fi.ModTime().UnixNano()}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		e.ino = uint64(st.Ino) //nolint:unconvert // differs per OS
+	}
+	if old, ok := c.entries[id]; ok && old.size == e.size && old.mtime == e.mtime && old.ino == e.ino {
+		return old, true
+	}
+	data, err := readNoFollow(path)
+	if err != nil {
+		return dirCacheEntry{}, false
+	}
+	if err := json.Unmarshal(data, &e.ws); err != nil {
+		return dirCacheEntry{}, false
+	}
+	return e, true
 }
