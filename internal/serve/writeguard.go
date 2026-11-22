@@ -179,6 +179,10 @@ func writeActionFor(path string) (action, session, window string, ok bool) {
 	if len(p) == 6 && p[0] == "v1" && p[1] == "sessions" && p[3] == "windows" && writeActions[p[5]] {
 		return p[5], p[2], p[4], true
 	}
+	// /v1/sessions/{s}/shells/{w}/close
+	if len(p) == 6 && p[0] == "v1" && p[1] == "sessions" && p[3] == "shells" && p[5] == "close" {
+		return "close-shell", p[2], p[4], true
+	}
 	return "", "", "", false
 }
 

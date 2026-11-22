@@ -30,6 +30,8 @@ import {
   rowKind,
   rowTitle,
   sameOrder,
+  shellApiPath,
+  shellRows,
   sortGroups,
   treeLines,
   treeRows,
@@ -148,6 +150,17 @@ function windowRow(entry, toggle, expanded, swipe) {
     onBusy: swipe.busy,
     onClose: () => swipe.close(win),
   });
+  return wrap;
+}
+
+/** shellRow is a compact, muted "$ shell" row: no state, never counted. Tapping opens its terminal; swiping closes it after a confirm. */
+function shellRow(sh, swipe) {
+  const link = h("a", { class: "win shell-row", href: terminalHash(sh.session, sh.window_id) }, h("span", { class: "shell-label" }, sh.label));
+  const node = h("div", { class: "node" }, link);
+  if (!swipe) return node;
+  const action = h("button", { class: "swipe-action", type: "button", "aria-label": `Close ${sh.label}` }, "Close");
+  const wrap = h("div", { class: `swipe${swipe.gone(sh) ? " swipe-gone" : ""}` }, action, node);
+  attachSwipe(wrap, node, link, action, { onBusy: swipe.busy, onClose: () => swipe.closeShell(sh) });
   return wrap;
 }
 
@@ -354,6 +367,17 @@ export function mountFleet(root, ctx) {
   const closed = new Map(); // windowKey -> ms; rows closed, awaiting the fleet event
   const swipe = {
     can: (win) => canSwipeClose(win, win.session, ctx.features),
+    closeShell: async (sh) => {
+      if (!(await confirmSheet({ title: "Close shell?", lines: [sh.label], confirmLabel: "Close", danger: true }))) return false;
+      try {
+        await send({ method: "POST", path: shellApiPath(sh.session, sh.window_id), body: {} });
+      } catch (err) {
+        toast(closeError(err), "error");
+        return false;
+      }
+      closed.set(windowKey(sh), Date.now());
+      return true;
+    },
     gone: (win) => closed.has(windowKey(win)),
     busy: (on) => {
       busyCount = Math.max(0, busyCount + (on ? 1 : -1));
@@ -475,6 +499,7 @@ export function mountFleet(root, ctx) {
       const expanded = kids.length > 0 && !collapsed.has(key);
       return e.bucket ? bucketRow(e, toggle, expanded) : windowRow(e, toggle, expanded, swipe);
     });
+    for (const sh of shellRows(g, ctx.features)) nodes.push(shellRow(sh, ctx.hasFeature("write") ? swipe : null));
     return { nodes, live };
   }
 
@@ -542,7 +567,7 @@ export function mountFleet(root, ctx) {
     }
     // Rendering rebuilds the list; keep keyboard focus on the same header.
     if (focusKey) [...list.querySelectorAll(".group-toggle")].find((b) => b.dataset.key === focusKey)?.focus();
-    const present = new Set(groups.flatMap((g) => g.windows.map(windowKey)));
+    const present = new Set(groups.flatMap((g) => [...g.windows.map(windowKey), ...(g.shells ?? []).map((s) => windowKey({ session: g.session, window_id: s.window_id }))]));
     for (const [k, t] of closed) if (!present.has(k) || Date.now() - t > 15000) closed.delete(k);
     // Forget collapsed keys whose window or bucket is gone.
     const stale = [...collapsed].filter((k) => !live.has(k));

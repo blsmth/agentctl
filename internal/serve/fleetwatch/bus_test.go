@@ -289,3 +289,29 @@ func TestBusPublishesFleetOnGroupReorder(t *testing.T) {
 		break
 	}
 }
+
+func TestShellsChangePushesFleet(t *testing.T) {
+	src := &fakeSource{}
+	src.set(grp(win("@1", "idle", false)))
+	b := NewBus(src, Options{})
+	b.Refresh()
+	_, sub := b.Subscribe()
+	defer sub.Close()
+
+	g := grp(win("@1", "idle", false))
+	g.Shells = []Shell{{WindowID: "@9", Index: 2, Dir: "/x"}}
+	src.set(g)
+	b.Refresh()
+	ev := next(t, sub)
+	if ev.Kind != KindFleet || len(ev.Fleet[0].Shells) != 1 {
+		t.Fatalf("event %+v", ev)
+	}
+	b.Refresh()
+	none(t, sub)
+
+	src.set(grp(win("@1", "idle", false)))
+	b.Refresh()
+	if ev := next(t, sub); ev.Kind != KindFleet || len(ev.Fleet[0].Shells) != 0 {
+		t.Fatalf("event %+v", ev)
+	}
+}

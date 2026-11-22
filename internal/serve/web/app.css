@@ -225,6 +225,8 @@ body.term-open nav { display: none; }
 .tl.own.last::before { bottom: 50%; }
 .tl.own::after { content: ""; position: absolute; left: 0; top: calc(50% - var(--tree-w) / 2); height: var(--tree-w); width: calc(var(--indent) - var(--glyph-w) / 2 - .15rem); background: var(--tree-line); }
 .win.child .win-title { font-size: .95rem; }
+.win.shell-row { min-height: 36px; padding-top: .3rem; padding-bottom: .3rem; border-left-color: transparent; color: var(--muted); font: .85rem ui-monospace, Menlo, monospace; }
+.win.shell-row .shell-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .win.child .glyph { font-size: 1rem; }
 .win .glyph { flex: none; width: var(--glyph-w); }
 .node.bucket { align-items: center; min-height: 44px; padding-left: 1rem; border-bottom: 1px solid var(--line); border-left: 4px solid var(--line); }

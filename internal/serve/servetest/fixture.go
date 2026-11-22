@@ -119,6 +119,16 @@ type Group struct {
 	Project string   `json:"project"`
 	Dir     string   `json:"dir"`
 	Windows []Window `json:"windows"`
+	// Shells are plain "shell" windows: listed in the group's shells array,
+	// never among Windows.
+	Shells []Shell `json:"shells,omitempty"`
+}
+
+// Shell is one fixture shell window.
+type Shell struct {
+	ID    string `json:"id"`
+	Index int    `json:"index"`
+	Dir   string `json:"dir"`
 }
 
 // paneText is the screen a window shows.
@@ -194,6 +204,12 @@ func validate(groups []Group) error {
 		if g.Session == "" || strings.ContainsAny(g.Session, ":.") {
 			return fmt.Errorf("invalid session %q", g.Session)
 		}
+		for _, sh := range g.Shells {
+			if !strings.HasPrefix(sh.ID, "@") || len(sh.ID) < 2 || seen[sh.ID] {
+				return fmt.Errorf("invalid or duplicate shell id %q", sh.ID)
+			}
+			seen[sh.ID] = true
+		}
 		for _, w := range g.Windows {
 			if !strings.HasPrefix(w.ID, "@") || len(w.ID) < 2 {
 				return fmt.Errorf("invalid window id %q", w.ID)
@@ -229,6 +245,10 @@ func build(groups []Group, root string, now time.Time) []fleetwatch.Group {
 			fg.Rows = append(fg.Rows, row)
 			fg.Meta[w.ID] = meta
 			fg.Windows = append(fg.Windows, fleet.ToWindow(row, meta))
+		}
+		fg.Shells = []fleetwatch.Shell{}
+		for _, sh := range g.Shells {
+			fg.Shells = append(fg.Shells, fleetwatch.Shell{WindowID: sh.ID, Index: sh.Index, Dir: sh.Dir})
 		}
 		fg.Rollup = rollup(fg.Windows)
 		out = append(out, fg)
