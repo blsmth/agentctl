@@ -1607,11 +1607,12 @@ type CronCmd struct {
 type CronAddCmd struct {
 	Name       string `arg:"" help:"Job name (letters, digits, - and _)"`
 	Schedule   string `required:"" help:"5-field cron expression in local time, or @hourly/@daily/@weekly"`
-	Agent      string `required:"" short:"a" help:"Agent to run"`
-	Dir        string `required:"" help:"Project directory"`
+	Agent      string `short:"a" help:"Agent to run (required unless --template names one)"`
+	Dir        string `required:"" help:"Project directory (also where --template is looked up)"`
 	Prompt     string `short:"p" help:"Prompt text"`
 	PromptKey  string `name:"prompt-key" short:"k" help:"Context store key holding the prompt (read at each fire)"`
 	PromptFile string `name:"prompt-file" type:"path" help:"File holding the prompt (copied into the job now)"`
+	Template   string `help:"Prompt template (agentctl template list), read at each fire; its agent/model/effort fill unset flags"`
 	NoWorktree bool   `name:"no-worktree" help:"Run in the project checkout instead of a worktree per fire"`
 	Model      string `short:"m" help:"Model override"`
 	Effort     string `help:"Effort override (low, medium, high, xhigh, max, auto)"`
@@ -1625,7 +1626,7 @@ type CronAddCmd struct {
 func (c *CronAddCmd) Run() error {
 	return cmd.RunCronAdd(os.Stdout, cmd.CronAddOptions{
 		Name: c.Name, Schedule: c.Schedule, Agent: c.Agent, Dir: c.Dir,
-		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile, NoWorktree: c.NoWorktree,
+		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile, Template: c.Template, NoWorktree: c.NoWorktree,
 		Model: c.Model, Effort: c.Effort, Backend: c.Backend, Account: c.Account,
 		Timeout: c.Timeout, Overlap: c.Overlap, Catchup: c.Catchup,
 	})
@@ -1639,6 +1640,7 @@ type CronEditCmd struct {
 	Prompt     *string `short:"p" help:"Prompt text (replaces a prompt key)"`
 	PromptKey  *string `name:"prompt-key" short:"k" help:"Context store key holding the prompt (read at each fire)"`
 	PromptFile *string `name:"prompt-file" type:"path" help:"File holding the prompt (copied into the job now)"`
+	Template   *string `help:"Prompt template, read at each fire (replaces the prompt or prompt key)"`
 	Worktree   bool    `help:"Run each fire in its own worktree" xor:"worktree"`
 	NoWorktree bool    `name:"no-worktree" help:"Run in the project checkout instead of a worktree per fire" xor:"worktree"`
 	Model      *string `short:"m" help:"Model override (empty clears it)"`
@@ -1653,7 +1655,7 @@ type CronEditCmd struct {
 func (c *CronEditCmd) Run() error {
 	return cmd.RunCronEdit(os.Stdout, cmd.CronEditOptions{
 		Name: c.Name, Schedule: c.Schedule, Agent: c.Agent, Dir: c.Dir,
-		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile,
+		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile, Template: c.Template,
 		Worktree: c.Worktree, NoWorktree: c.NoWorktree,
 		Model: c.Model, Effort: c.Effort, Backend: c.Backend, Account: c.Account,
 		Timeout: c.Timeout, Overlap: c.Overlap, Catchup: c.Catchup,

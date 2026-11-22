@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/launchd"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/ratelimit"
 )
 
@@ -266,6 +268,173 @@ func TestCronInstall(t *testing.T) {
 			t.Errorf("launchctl called on linux: %q", calls)
 		}
 	})
+}
+
+// stubCronTemplates makes loadPromptTemplate resolve only tmpls.
+func stubCronTemplates(t *testing.T, tmpls ...prompttemplate.Template) {
+	t.Helper()
+	prev := loadPromptTemplate
+	t.Cleanup(func() { loadPromptTemplate = prev })
+	loadPromptTemplate = func(name, _ string) (prompttemplate.Template, error) {
+		for _, tm := range tmpls {
+			if tm.Name == name {
+				return tm, nil
+			}
+		}
+		return prompttemplate.Template{}, fmt.Errorf("%w: %q", prompttemplate.ErrNotFound, name)
+	}
+}
+
+func TestCronTemplateAddEdit(t *testing.T) {
+	ptr := func(s string) *string { return &s }
+	stubCronTemplates(t, prompttemplate.Template{Name: "triage", Agent: "brandon", Prompt: "triage it"})
+	var launches []cron.LaunchRequest
+	e := testCronEnv(t, &launches)
+	projDir := t.TempDir()
+	var out bytes.Buffer
+	base := CronAddOptions{Name: "j", Schedule: "@hourly", Dir: projDir, Template: "triage"}
+
+	for name, mut := range map[string]func(o *CronAddOptions){
+		"template and prompt":   func(o *CronAddOptions) { o.Prompt = "x" },
+		"template and key":      func(o *CronAddOptions) { o.PromptKey = "k" },
+		"missing template":      func(o *CronAddOptions) { o.Template = "gone" },
+		"no agent, no template": func(o *CronAddOptions) { o.Template, o.Prompt = "", "p" },
+	} {
+		o := base
+		mut(&o)
+		if err := e.add(&out, o); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+	if err := e.add(&out, base); err != nil {
+		t.Fatal(err)
+	}
+	get := func() cron.Job {
+		t.Helper()
+		path, _ := e.jobsPath()
+		jobs, err := cron.LoadJobs(path)
+		if err != nil || len(jobs.Jobs) != 1 {
+			t.Fatalf("jobs = %+v, %v", jobs, err)
+		}
+		return jobs.Jobs[0]
+	}
+	if j := get(); j.Template != "triage" || j.Agent != "" || j.Prompt != "" {
+		t.Fatalf("added job = %+v", j)
+	}
+
+	// Template → prompt → template.
+	if err := e.edit(&out, CronEditOptions{Name: "j", Prompt: ptr("inline"), Agent: ptr("brandon")}); err != nil {
+		t.Fatal(err)
+	}
+	if j := get(); j.Template != "" || j.Prompt != "inline" {
+		t.Errorf("to prompt: %+v", j)
+	}
+	if err := e.edit(&out, CronEditOptions{Name: "j", Template: ptr("triage")}); err != nil {
+		t.Fatal(err)
+	}
+	if j := get(); j.Template != "triage" || j.Prompt != "" || j.PromptKey != "" {
+		t.Errorf("back to template: %+v", j)
+	}
+	for name, opts := range map[string]CronEditOptions{
+		"missing template":    {Name: "j", Template: ptr("gone")},
+		"empty template":      {Name: "j", Template: ptr("")},
+		"template and prompt": {Name: "j", Template: ptr("triage"), Prompt: ptr("x")},
+	} {
+		if err := e.edit(&out, opts); err == nil {
+			t.Errorf("edit %s: no error", name)
+		}
+	}
+}
+
+func TestCronDispatchOptionsTemplate(t *testing.T) {
+	stubCronTemplates(t, prompttemplate.Template{Name: "triage", Agent: "go-engineer", Model: "sonnet", Effort: "low",
+		Dir: "/elsewhere", Prompt: "triage it"})
+	job := cron.Job{Name: "j", Dir: "/p", Template: "triage"}
+	opts, err := cronDispatchOptions(cron.LaunchRequest{Job: job})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := DispatchOptions{Prompt: "triage it", Template: "triage", Agent: "go-engineer", Dir: "/p", Model: "sonnet",
+		Effort: "low", ScheduledBy: "j", Detached: true}
+	if opts != want {
+		t.Errorf("template defaults: opts = %+v\nwant %+v", opts, want)
+	}
+	job.Agent, job.Model, job.Effort = "brandon", "opus", "high"
+	opts, err = cronDispatchOptions(cron.LaunchRequest{Job: job})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Agent != "brandon" || opts.Model != "opus" || opts.Effort != "high" || opts.Dir != "/p" {
+		t.Errorf("job fields win: opts = %+v", opts)
+	}
+	job.Template = "gone"
+	_, err = cronDispatchOptions(cron.LaunchRequest{Job: job})
+	if !errors.Is(err, cron.ErrTemplateNotFound) || !strings.Contains(err.Error(), `template "gone" not found`) {
+		t.Errorf("missing template err = %v", err)
+	}
+}
+
+// TestCronRunMissingTemplate: a fire (here cron run --force) of a job whose
+// template was deleted is recorded as failed:template with the reason, not
+// skipped.
+func TestCronRunMissingTemplate(t *testing.T) {
+	stubCronTemplates(t, prompttemplate.Template{Name: "triage", Agent: "brandon", Prompt: "triage it"})
+	var launches []cron.LaunchRequest
+	e := testCronEnv(t, &launches)
+	deps := e.deps
+	e.deps = func(dir string, cfg config.CronConfig, jobs []cron.Job) cron.Deps {
+		d := deps(dir, cfg, jobs)
+		launch := d.Launch
+		d.Launch = func(r cron.LaunchRequest) (cron.LaunchResult, error) {
+			if _, err := cronDispatchOptions(r); err != nil {
+				return cron.LaunchResult{}, err
+			}
+			return launch(r)
+		}
+		return d
+	}
+	var out bytes.Buffer
+	if err := e.add(&out, CronAddOptions{Name: "j", Schedule: "@hourly", Dir: t.TempDir(), Template: "triage"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.run(&out, "j", true, false); err != nil || len(launches) != 1 {
+		t.Fatalf("run with template: %v, launches %d", err, len(launches))
+	}
+	stubCronTemplates(t) // deleted
+	err := e.run(&out, "j", true, false)
+	if err == nil || !strings.Contains(err.Error(), `template "triage" not found`) || !strings.HasPrefix(err.Error(), "failed:template") {
+		t.Errorf("run err = %v", err)
+	}
+	dir, _ := e.stateDir()
+	runs, _ := cron.ReadRuns(dir, "j")
+	last := runs[len(runs)-1]
+	if last.Result != cron.Failed("template") || !strings.Contains(last.Note, `template "triage" not found`) {
+		t.Errorf("last run = %+v", last)
+	}
+	out.Reset()
+	if err := e.list(&out); err != nil {
+		t.Fatal(err)
+	}
+	if s := out.String(); !strings.Contains(s, `invalid: template "triage" not found`) || !strings.Contains(s, "template triage") ||
+		!strings.Contains(s, "(template)") {
+		t.Errorf("list:\n%s", s)
+	}
+}
+
+func TestPromptColumn(t *testing.T) {
+	for _, tt := range []struct {
+		j    cron.Job
+		want string
+	}{
+		{cron.Job{Template: "triage"}, "template triage"},
+		{cron.Job{PromptKey: "spec"}, "key spec"},
+		{cron.Job{Prompt: "short\nprompt"}, "short prompt"},
+		{cron.Job{Prompt: strings.Repeat("x", 40)}, strings.Repeat("x", 31) + "…"},
+	} {
+		if got := promptColumn(tt.j); got != tt.want {
+			t.Errorf("promptColumn(%+v) = %q, want %q", tt.j, got, tt.want)
+		}
+	}
 }
 
 func TestRenderCronList(t *testing.T) {

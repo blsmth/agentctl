@@ -29,6 +29,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 )
 
 // ErrNotFound matches the error returned for a job name that does not exist.
@@ -87,6 +88,10 @@ type Store struct {
 	// ResolvePromptKey reads a prompt_key's text from the context store
 	// (for display only). nil means the real store.
 	ResolvePromptKey func(key string) (string, error)
+	// LoadTemplate reads a template job's prompt template as a fire would,
+	// from the job dir's project (shadowing the global templates). nil
+	// means prompttemplate.Load.
+	LoadTemplate func(name, dir string) (prompttemplate.Template, error)
 	// Windows lists the live windows the jobs launched, for the running
 	// flag. nil means none are running.
 	Windows func(jobs []cron.Job) ([]cron.Window, error)
@@ -191,17 +196,91 @@ func (s Store) Validate(job cron.Job, original string) (cron.Job, []cron.FieldEr
 			dirOK = true
 		}
 	}
-	if dirOK && !has(cron.FieldAgent) && s.ValidateAgent != nil {
-		if err := s.ValidateAgent(job.Agent, job.Dir); err != nil {
+	agent := job.Agent
+	if dirOK && job.Template != "" && !has(cron.FieldTemplate) {
+		t, ferr := s.resolveTemplate(job)
+		switch {
+		case ferr != nil:
+			errs = append(errs, *ferr)
+		case agent == "" && t.Agent == "":
+			add(cron.FieldAgent, fmt.Sprintf("template %q sets no agent; pick an agent", job.Template))
+		case agent == "":
+			agent = t.Agent
+		}
+	}
+	if dirOK && agent != "" && !has(cron.FieldAgent) && s.ValidateAgent != nil {
+		if err := s.ValidateAgent(agent, job.Dir); err != nil {
 			add(cron.FieldAgent, err.Error())
 		}
 	}
 	return job, sortFields(errs)
 }
 
+// Template reads job's prompt template the way a fire does: from the job
+// dir's project, shadowing the global templates.
+func (s Store) Template(job cron.Job) (prompttemplate.Template, error) {
+	load := s.LoadTemplate
+	if load == nil {
+		load = prompttemplate.Load
+	}
+	return load(job.Template, job.Dir)
+}
+
+// EffectiveAgent is the agent job runs: its own, else its template's (""
+// when the template cannot be read).
+func (s Store) EffectiveAgent(job cron.Job) string {
+	if job.Agent != "" || job.Template == "" {
+		return job.Agent
+	}
+	t, err := s.Template(job)
+	if err != nil {
+		return ""
+	}
+	return t.Agent
+}
+
+// resolveTemplate is Template with the error as a template field error
+// ("template X not found" for a missing file).
+func (s Store) resolveTemplate(job cron.Job) (prompttemplate.Template, *cron.FieldError) {
+	t, err := s.Template(job)
+	if err == nil {
+		return t, nil
+	}
+	return t, &cron.FieldError{Field: cron.FieldTemplate, Message: TemplateErrorText(job.Template, err)}
+}
+
+// TemplateErrorText is the reason a template job cannot run: "template X
+// not found" when no file has the name, else the load error.
+func TemplateErrorText(name string, err error) string {
+	if errors.Is(err, prompttemplate.ErrNotFound) {
+		return fmt.Sprintf("template %q not found", name)
+	}
+	return fmt.Sprintf("template %q: %v", name, err)
+}
+
+// templateErrors is the template check of a valid job for the list views:
+// a template job whose template no longer resolves (deleted, or broken) is
+// shown as invalid. A tick still tries it and records failed:template.
+func (s Store) templateErrors(j cron.Job) []cron.FieldError {
+	if j.Template == "" {
+		return nil
+	}
+	if _, ferr := s.resolveTemplate(j); ferr != nil {
+		return []cron.FieldError{*ferr}
+	}
+	return nil
+}
+
+// Check returns the problems of a valid job that need the outside world:
+// the pinned model, backend and account against the option sets, and a
+// template that no longer resolves. It is OverviewInput.Check.
+func (s Store) Check(j cron.Job) []cron.FieldError {
+	return append(s.optionErrors(j), s.templateErrors(j)...)
+}
+
 // fieldOrder is the order field errors are reported in (the form order).
 var fieldOrder = []string{
-	cron.FieldName, cron.FieldDir, cron.FieldAgent, cron.FieldPrompt, cron.FieldSchedule,
+	cron.FieldName, cron.FieldDir, cron.FieldAgent, cron.FieldPrompt, cron.FieldTemplate, cron.FieldSchedule,
 	cron.FieldHarness, cron.FieldMode, cron.FieldModel, cron.FieldEffort, cron.FieldBackend, cron.FieldAccount,
 	cron.FieldTimeout, cron.FieldOverlap, cron.FieldCatchup, cron.FieldSkipIfUsageAbove,
 }

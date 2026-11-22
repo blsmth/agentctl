@@ -197,6 +197,8 @@ func (m *FleetModel) schedFormClick(ht schedHit) tea.Cmd {
 			f.overlap = ht.arg
 		case stopCatchup:
 			f.catchup = ht.arg
+		case stopSource:
+			f.source = ht.arg
 		}
 	case schedHitDay:
 		f.dayCur = ht.arg

@@ -164,6 +164,8 @@ func TestTickDecisions(t *testing.T) {
 		{name: "usage fresh under", job: job, lastFire: at(9, 0), now: onTime, usage: fresh(50, 50), wantResult: ResultFired, wantLaunch: true},
 		{name: "tmux unavailable", job: job, lastFire: at(9, 0), now: onTime, launchErr: fmt.Errorf("x: %w", ErrTmuxUnavailable),
 			wantResult: Failed("tmux-unavailable"), wantLaunch: true, wantNotify: true},
+		{name: "template missing", job: job, lastFire: at(9, 0), now: onTime, launchErr: TemplateError(`template "x" not found`),
+			wantResult: Failed("template"), wantLaunch: true, wantNotify: true},
 		{name: "launch error", job: job, lastFire: at(9, 0), now: onTime, launchErr: errors.New("boom"),
 			wantResult: Failed("launch"), wantLaunch: true, wantNotify: true},
 	}

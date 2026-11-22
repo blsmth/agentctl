@@ -829,7 +829,14 @@ func (m FleetModel) schedCardLines(w int) []string {
 	if !st.Job.UseWorktree() {
 		wt = schedWorktreeOff
 	}
-	add(wrapText(fmt.Sprintf("%s in %s · %s", fleetGroupNameStyle.Render(st.Job.Agent), tildify(st.Job.Dir), wt), w))
+	agent := st.Job.Agent
+	if agent == "" && st.Job.Template != "" {
+		agent = "template's agent"
+		if detail != nil && detail.TemplateResolved != nil && detail.TemplateResolved.Agent != "" {
+			agent = detail.TemplateResolved.Agent + " (from template)"
+		}
+	}
+	add(wrapText(fmt.Sprintf("%s in %s · %s", fleetGroupNameStyle.Render(agent), tildify(st.Job.Dir), wt), w))
 	if st.Invalid != "" {
 		add(fleetErrStyle.Render(wrapText("invalid: "+st.Invalid, w)))
 	}
@@ -859,6 +866,18 @@ func (m FleetModel) schedCardLines(w int) []string {
 	prompt, maxLines := st.Job.Prompt, 4
 	if detail != nil {
 		maxLines = 12
+	}
+	if st.Job.Template != "" {
+		add(fleetDimStyle.Render(truncateToWidth("template "+st.Job.Template+" (read at every fire)", w)))
+		prompt = ""
+		if detail != nil {
+			if t := detail.TemplateResolved; t != nil {
+				prompt = t.Prompt
+			}
+			if detail.TemplateError != "" {
+				add(fleetErrStyle.Render(truncateToWidth(detail.TemplateError, w)))
+			}
+		}
 	}
 	if st.Job.PromptKey != "" {
 		add(fleetDimStyle.Render(truncateToWidth("context key "+st.Job.PromptKey+" (read at every fire)", w)))

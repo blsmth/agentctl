@@ -5,9 +5,9 @@ import { ApiError, api, get } from "./api.js";
 import { launchPicker } from "./dispatch.js";
 import {
   advancedSummary, cardLastFailure, cardStatus, defaultAgentFor, dirName, fieldErrors, formClientErrors, formatAgo, formatClock, formatNextFire,
-  newScheduleForm, previewBody, runResultCard, runResultLabel, scheduleBanners, scheduleBody, scheduleException, scheduleGlyph, scheduleHash,
-  scheduleLastText, scheduleReview, scheduleScheduleText, scheduleWhen, TIMEOUT_PRESETS, tildePath, timeoutIsPreset, usageOptions, windowHash,
-  worktreeFact,
+  newScheduleForm, previewBody, runResultCard, runResultLabel, scheduleAgentText, scheduleBanners, scheduleBody, scheduleException, scheduleGlyph,
+  scheduleHash, scheduleLastText, scheduleReview, scheduleRowActivity, scheduleScheduleText, scheduleWhen, templateLabel, templatesPath,
+  TIMEOUT_PRESETS, tildePath, timeoutIsPreset, usageOptions, windowHash, worktreeFact,
 } from "./logic.js";
 import { attachSwipe } from "./swipe.js";
 import { clear, confirmSheet, h, toast } from "./ui.js";
@@ -52,7 +52,7 @@ async function runNow(st, after) {
   const name = st.name;
   const ok = await confirmSheet({
     title: `Run ${name} now?`,
-    lines: [`Runs ${st.job.agent} in ${tildePath(st.job.dir)} unattended.\nOverlap, the concurrency limit and the usage gate still apply; nothing is forced.`],
+    lines: [`Runs ${scheduleAgentText(st.job)} in ${tildePath(st.job.dir)} unattended.\nOverlap, the concurrency limit and the usage gate still apply; nothing is forced.`],
     confirmLabel: "Run now",
   });
   if (!ok) return;
@@ -130,7 +130,7 @@ function mountList(root, ctx, write) {
         "span",
         { class: "win-main" },
         h("span", { class: "win-title" }, h("span", { class: "agent" }, st.name), h("span", { class: "sched-words" }, scheduleScheduleText(st))),
-        h("span", { class: "activity" }, `${st.job.agent} · ${dirName(st.job.dir)}`),
+        h("span", { class: "activity" }, scheduleRowActivity(st.job, dirName(st.job.dir))),
         exc ? h("span", { class: "win-chips" }, h("span", { class: "tag sched-exc" }, exc)) : null,
         last ? h("span", { class: "activity" }, last) : null,
       ),
@@ -229,9 +229,10 @@ function mountCard(root, ctx, name, write) {
     const facts = [
       ["Schedule", `${scheduleScheduleText(st)}${tz ? ` · ${tz}` : ""}`],
       ["Project", tildePath(st.job.dir)],
-      ["Agent", st.job.agent],
+      ["Agent", scheduleAgentText(st.job, st.template_resolved?.agent ?? "")],
       ["Worktree", worktreeFact(st.job)],
     ];
+    if (st.job.template) facts.splice(3, 0, ["Template", `${st.job.template}${st.template_resolved ? ` (${st.template_resolved.scope})` : ""}`]);
     if (fires.length > 1 && st.enabled) facts.push(["Next fires", fires.join(", ")]);
     if (adv) facts.push(["Advanced", adv]);
     // Native append stringifies null: build the list, then drop the empty slots.
@@ -240,7 +241,10 @@ function mountCard(root, ctx, name, write) {
       failure ? h("p", { class: "sched-fail", role: "status" }, failure) : null,
       st.invalid ? h("p", { class: "sched-fail" }, `Problem: ${st.invalid}`) : null,
       h("div", { class: "sched-facts" }, ...facts.map(([k, v]) => h("div", {}, h("span", { class: "meta" }, `${k} `), v))),
-      h("pre", { class: "sheet-body sched-prompt" }, st.job.prompt || st.prompt_resolved || (st.job.prompt_key ? `(context key ${st.job.prompt_key})` : "")),
+      st.job.template && st.template_error ? h("p", { class: "sched-fail" }, `Template: ${st.template_error}`) : null,
+      h("pre", { class: "sheet-body sched-prompt" }, st.job.template
+        ? (st.template_resolved?.prompt ?? `(template ${st.job.template}, read at every run)`)
+        : st.job.prompt || st.prompt_resolved || (st.job.prompt_key ? `(context key ${st.job.prompt_key})` : "")),
       write
         ? h("div", { class: "row sched-actions" },
             h("a", { class: "btn", href: scheduleHash(name, "edit") }, "Edit"),
@@ -283,8 +287,14 @@ const CATCHUP = [["latest", "Run latest missed"], ["none", "Skip missed"]];
 // Server field names that have their own slot under another name.
 const SLOT_ALIAS = { skip_if_usage_above: "usage" };
 
+const SOURCES = [["prompt", "Prompt"], ["template", "Template"]];
+
 function mountForm(root, ctx, { job, copy }) {
   const withOptions = ctx.hasFeature("launch-options");
+  // Prompt templates (GET /v1/templates) as the prompt source.
+  const withTemplates = ctx.hasFeature("dispatch-templates");
+  let templates = [];
+  let templatesSeq = 0;
   const editing = Boolean(job) && !copy;
   let f = newScheduleForm();
   let gone = false;
@@ -308,6 +318,10 @@ function mountForm(root, ctx, { job, copy }) {
   const project = h("select", { "aria-label": "Project" });
   const agent = h("select", { "aria-label": "Agent" });
   const prompt = h("textarea", { rows: "8", "aria-label": "Prompt", placeholder: "What should the agent do on every run?" });
+  const promptBox = h("div", { class: "sched-prompt-src" });
+  const templateSel = h("select", { "aria-label": "Template" });
+  // The agent select's "from the template" choice (value ""), shown only for a template job.
+  const templateAgentOpt = h("option", { value: "" }, "From the template");
   const schedBox = h("div", { class: "sched-picker" });
   const previewLine = h("p", { class: "sched-preview muted", "aria-live": "polite" });
   const advBox = h("div", { class: "sched-adv" });
@@ -517,6 +531,69 @@ function mountForm(root, ctx, { job, copy }) {
     );
   }
 
+  /** loadTemplates lists the templates the job's project sees, keeping the choice. */
+  async function loadTemplates() {
+    if (!withTemplates) return;
+    const seq = ++templatesSeq;
+    try {
+      const res = await get(templatesPath(f.dir));
+      if (seq !== templatesSeq || gone) return;
+      templates = res.templates ?? [];
+    } catch (e) {
+      if (seq !== templatesSeq || gone) return;
+      templates = [];
+      toast(`Could not load templates: ${errText(e)}`, "error");
+    }
+    syncTemplate();
+    renderPromptBlock();
+  }
+
+  /** syncTemplate copies the chosen template's prompt and agent into the form for display. */
+  function syncTemplate() {
+    const t = templates.find((x) => x.name === f.template);
+    f.templateText = t?.prompt ?? (f.template ? f.templateText : "");
+    f.templateAgent = t?.agent ?? "";
+    templateAgentOpt.textContent = f.templateAgent ? `From the template (${f.templateAgent})` : "From the template";
+  }
+
+  function renderTemplateOptions() {
+    clear(templateSel);
+    templateSel.append(h("option", { value: "" }, templates.length ? "Pick a template…" : "No templates in this project"));
+    for (const t of templates) templateSel.append(h("option", { value: t.name }, templateLabel(t)));
+    if (f.template && !templates.some((t) => t.name === f.template)) templateSel.append(h("option", { value: f.template }, `${f.template} (not found)`));
+    templateSel.value = f.template;
+  }
+
+  function setSource(src) {
+    f.source = src;
+    templateAgentOpt.hidden = src !== "template";
+    if (src !== "template" && !f.agent) {
+      // A prompt job needs an agent of its own.
+      const first = [...agent.options].find((o) => o.value);
+      if (first) { agent.value = first.value; f.agent = first.value; }
+    }
+    touched.add("prompt");
+    renderPromptBlock();
+    changed();
+  }
+
+  function renderPromptBlock() {
+    clear(promptBox);
+    if (withTemplates) {
+      const btns = SOURCES.map(([v, l]) => h("button", { type: "button", class: "btn", "aria-pressed": String(f.source === v), onclick: () => setSource(v) }, l));
+      promptBox.append(h("div", { class: "sched-field" }, h("div", { class: "muted" }, "Prompt source"),
+        h("div", { class: "sched-seg2", role: "group", "aria-label": "Prompt source" }, ...btns)));
+    }
+    if (f.source === "template") {
+      renderTemplateOptions();
+      promptBox.append(h("label", {}, "Template", templateSel, slot("template")),
+        f.templateText ? h("pre", { class: "sheet-body sched-prompt", "aria-label": "Template prompt" }, f.templateText) : null,
+        h("p", { class: "muted" }, "Read from the project at every run; the agent, model and effort you set here win over the template's."));
+      return;
+    }
+    promptBox.append(promptBlock());
+  }
+
   function promptBlock() {
     if (f.promptKey) {
       return h("div", { class: "sched-field" }, h("div", { class: "muted" }, "Prompt"),
@@ -530,6 +607,8 @@ function mountForm(root, ctx, { job, copy }) {
     clear(form);
     for (const x of projects) project.append(h("option", { value: x.dir }, x.name));
     if (f.dir && !projects.some((x) => x.dir === f.dir)) project.append(h("option", { value: f.dir }, `${tildePath(f.dir)} (unknown)`));
+    templateAgentOpt.hidden = f.source !== "template";
+    agent.append(templateAgentOpt);
     for (const x of agents) agent.append(h("option", { value: x.name }, x.name));
     if (f.agent && !agents.some((x) => x.name === f.agent)) agent.append(h("option", { value: f.agent }, `${f.agent} (unknown)`));
     name.value = f.name;
@@ -539,13 +618,21 @@ function mountForm(root, ctx, { job, copy }) {
     agent.value = f.agent;
     bind(name, "name");
     bind(prompt, "prompt");
+    templateSel.addEventListener("change", () => {
+      f.template = templateSel.value;
+      touched.add("template");
+      syncTemplate();
+      renderPromptBlock();
+      changed();
+    });
     let userAgent = Boolean(f.agent);
     project.addEventListener("change", () => {
       f.dir = project.value;
       touched.add("dir");
       const def = defaultAgentFor(projects, f.dir, [...agent.options].map((o) => o.value), userAgent);
-      if (def) { agent.value = def; f.agent = def; }
+      if (def && !(f.source === "template" && !userAgent)) { agent.value = def; f.agent = def; }
       picker?.load(f.agent, f.dir, launchPreset());
+      loadTemplates();
       changed();
     });
     agent.addEventListener("change", () => {
@@ -561,7 +648,7 @@ function mountForm(root, ctx, { job, copy }) {
       h("label", {}, "Name", name, editing ? h("span", { class: "muted" }, "The name cannot change after creation.") : null, slot("name")),
       h("label", {}, "Project", project, slot("dir")),
       h("label", {}, "Agent", agent, slot("agent")),
-      promptBlock(),
+      promptBox,
       h("div", { class: "sched-field" }, h("div", { class: "muted" }, "Schedule"), schedBox, previewLine),
       h("details", { class: "instructions sched-advanced" }, h("summary", {}, h("span", { class: "sched-adv-title" }, "Advanced"), summary), advBox),
       ctx.hasFeature("write") ? null : h("p", { class: "muted" }, "Write actions are not enabled on this server."),
@@ -570,6 +657,7 @@ function mountForm(root, ctx, { job, copy }) {
       submit,
     ].filter(Boolean));
     summary.textContent = advancedSummary(f);
+    renderPromptBlock();
     renderErrors();
   }
 
@@ -588,7 +676,8 @@ function mountForm(root, ctx, { job, copy }) {
         .catch(() => {});
       if (job) {
         const st = await get(`/v1/schedules/${enc(job)}`);
-        f = newScheduleForm({ job: st.job, simple: st.simple ?? null, promptText: st.prompt_resolved ?? "", copy, words: st.words ?? "" });
+        f = newScheduleForm({ job: st.job, simple: st.simple ?? null, promptText: st.prompt_resolved ?? "", copy, words: st.words ?? "",
+          templateText: st.template_resolved?.prompt ?? "" });
       } else {
         const dir = projects[0]?.dir ?? "";
         f = newScheduleForm();
@@ -598,6 +687,7 @@ function mountForm(root, ctx, { job, copy }) {
       if (gone) return;
       build(projects, agents);
       picker?.load(f.agent, f.dir, launchPreset());
+      loadTemplates();
       runPreview();
     } catch (e) {
       clear(form);

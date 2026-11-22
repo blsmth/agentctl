@@ -19,6 +19,7 @@ import (
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/launchopts"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 )
 
 // The Schedules form: create, edit or duplicate a cron job in the right
@@ -69,7 +70,9 @@ const (
 	stopName schedStop = iota
 	stopDir
 	stopAgent
+	stopSource
 	stopPrompt
+	stopTemplate
 	stopKind
 	stopClock
 	stopDays
@@ -99,8 +102,26 @@ var (
 	fleetSchedYesNoHints  = []fleetHint{{"y", "yes"}, {"n", "no"}}
 )
 
-// Seams: the editor runs through tea.ExecProcess (tests replace it).
-var fleetSchedExec = tea.ExecProcess
+// Seams: the editor runs through tea.ExecProcess (tests replace it), and
+// the templates a project sees come from prompttemplate.List.
+var (
+	fleetSchedExec      = tea.ExecProcess
+	fleetSchedTemplates = func(dir string) []prompttemplate.Template {
+		list, _, err := prompttemplate.List(dir)
+		if err != nil {
+			return nil
+		}
+		return list
+	}
+)
+
+// Prompt sources, in segment order.
+const (
+	schedSourcePrompt = iota
+	schedSourceTemplate
+)
+
+var schedSourceLabels = []string{"Own prompt", "Template"}
 
 // fleetSchedForm is the open form.
 type fleetSchedForm struct {
@@ -113,6 +134,11 @@ type fleetSchedForm struct {
 	// custom text) and the two usage thresholds.
 	agent, model, effort, backend, account, tmoutSel, u5, u7 schedCycler
 	prompt                                                   textarea.Model
+	// source is the prompt source (schedSourcePrompt or schedSourceTemplate);
+	// tmpl picks the template among templates, the ones the project sees.
+	source    int
+	tmpl      schedCycler
+	templates []prompttemplate.Template
 	// init holds each text field's value as opened: an untouched field
 	// saves the stored value verbatim.
 	init map[schedStop]string
@@ -227,6 +253,10 @@ func (m *FleetModel) openSchedForm(mode schedFormMode, st *cronedit.Status, dir 
 	f.name = newSchedInput(job.Name, "nightly-triage")
 	f.prompt = newSchedPrompt(job.Prompt)
 	f.promptKey = job.PromptKey
+	if job.Template != "" {
+		f.source = schedSourceTemplate
+	}
+	f.templates = fleetSchedTemplates(f.curDir())
 	f.setupCyclers(job)
 	f.worktree = job.UseWorktree()
 	f.overlap = max(slices.Index(schedOverlaps, job.Overlap), 0)
@@ -255,12 +285,14 @@ func (m *FleetModel) openSchedForm(mode schedFormMode, st *cronedit.Status, dir 
 }
 
 // schedCyclerStops are the fields drawn as cyclers.
-var schedCyclerStops = []schedStop{stopAgent, stopModel, stopEffort, stopBackend, stopAccount, stopTimeout, stopUsage5h, stopUsage7d}
+var schedCyclerStops = []schedStop{stopAgent, stopTemplate, stopModel, stopEffort, stopBackend, stopAccount, stopTimeout, stopUsage5h, stopUsage7d}
 
 func (f *fleetSchedForm) cyclerFor(stop schedStop) *schedCycler {
 	switch stop {
 	case stopAgent:
 		return &f.agent
+	case stopTemplate:
+		return &f.tmpl
 	case stopModel:
 		return &f.model
 	case stopEffort:
@@ -300,10 +332,45 @@ func schedAgentOpts(names []string) []schedOpt {
 	return out
 }
 
+// agentOpts are the agent cycler's options: the project's agents, led by
+// "from template" (value "", the template's agent) for a template job.
+func (f *fleetSchedForm) agentOpts(dir string) []schedOpt {
+	opts := schedAgentOpts(f.agentList(dir))
+	if f.source != schedSourceTemplate {
+		return opts
+	}
+	label := "from template"
+	if t := f.template(); t != nil && t.Agent != "" {
+		label += " (" + t.Agent + ")"
+	}
+	return append([]schedOpt{{value: "", label: label}}, opts...)
+}
+
+// templateOpts are the template cycler's options.
+func (f *fleetSchedForm) templateOpts() []schedOpt {
+	out := make([]schedOpt, len(f.templates))
+	for i, t := range f.templates {
+		out[i] = schedOpt{value: t.Name, label: t.Name}
+	}
+	return out
+}
+
+// template is the selected template, nil when none (or not found).
+func (f *fleetSchedForm) template() *prompttemplate.Template {
+	name := f.tmpl.value()
+	for i := range f.templates {
+		if f.templates[i].Name == name {
+			return &f.templates[i]
+		}
+	}
+	return nil
+}
+
 // setupCyclers builds every cycler on the job as stored.
 func (f *fleetSchedForm) setupCyclers(job cron.Job) {
 	dir := f.curDir()
-	f.agent = newCycler(schedAgentOpts(f.agentList(dir)), job.Agent, true, plainAgent)
+	f.tmpl = newCycler(f.templateOpts(), job.Template, false, nil)
+	f.agent = newCycler(f.agentOpts(dir), job.Agent, true, plainAgent)
 	f.model = newCycler(f.env.modelOpts(job.Agent, job.Backend), job.Model, true, plainModel)
 	f.effort = newCycler(f.env.effortOpts(job.Agent), job.Effort, false, nil)
 	f.backend = newCycler(f.env.backendOpts(job.Agent), job.Backend, false, nil)
@@ -361,12 +428,16 @@ func (f *fleetSchedForm) defaultAgent(dirs []string, i int) string {
 // and backend, keeping each selection (an unavailable one becomes unknown).
 func (f *fleetSchedForm) refreshOptions() {
 	dir := f.curDir()
-	if f.mode != schedFormEdit && !f.touched[stopAgent] {
+	f.tmpl.setOpts(f.templateOpts(), f.tmpl.value(), nil)
+	switch {
+	case f.source == schedSourceTemplate && f.agent.value() == "":
+		f.agent.setOpts(f.agentOpts(dir), "", plainAgent)
+	case f.mode != schedFormEdit && !f.touched[stopAgent]:
 		if a := f.defaultAgent(f.dirs, f.dirIdx); a != "" {
-			f.agent.setOpts(schedAgentOpts(f.agentList(dir)), a, plainAgent)
+			f.agent.setOpts(f.agentOpts(dir), a, plainAgent)
 		}
-	} else {
-		f.agent.setOpts(schedAgentOpts(f.agentList(dir)), f.agent.value(), plainAgent)
+	default:
+		f.agent.setOpts(f.agentOpts(dir), f.agent.value(), plainAgent)
 	}
 	agent := f.agent.value()
 	// The backend first: the model list is the one of the backend as it is
@@ -496,7 +567,13 @@ func (f *fleetSchedForm) stops() []schedStop {
 	if f.mode != schedFormEdit {
 		out = append(out, stopName)
 	}
-	out = append(out, stopDir, stopAgent, stopPrompt, stopKind)
+	out = append(out, stopDir, stopAgent, stopSource)
+	if f.source == schedSourceTemplate {
+		out = append(out, stopTemplate)
+	} else {
+		out = append(out, stopPrompt)
+	}
+	out = append(out, stopKind)
 	switch f.kind {
 	case schedKindCustom:
 		out = append(out, stopCustom)
@@ -594,7 +671,7 @@ func (f *fleetSchedForm) applyFocus() {
 
 // state is a fingerprint of everything the user can change, for "dirty".
 func (f *fleetSchedForm) state() string {
-	parts := []string{f.prompt.Value(), strconv.Itoa(f.dirIdx), strconv.Itoa(f.kind), fmt.Sprint(f.days),
+	parts := []string{f.prompt.Value(), strconv.Itoa(f.source), strconv.Itoa(f.dirIdx), strconv.Itoa(f.kind), fmt.Sprint(f.days),
 		strconv.FormatBool(f.worktree), strconv.Itoa(f.overlap), strconv.Itoa(f.catchup)}
 	for _, s := range schedTextStops {
 		parts = append(parts, f.inputFor(s).Value())
@@ -664,7 +741,10 @@ func (f *fleetSchedForm) job() (cron.Job, []cron.FieldError) {
 		}
 	}
 	j.Agent = strings.TrimSpace(f.agent.value())
+	j.Template = ""
 	switch p := f.prompt.Value(); {
+	case f.source == schedSourceTemplate:
+		j.Prompt, j.PromptKey, j.Template = "", "", f.tmpl.value()
 	case p == f.init[stopPrompt] && f.base.PromptKey == "":
 		j.Prompt = f.base.Prompt
 	case strings.TrimSpace(p) == "" && f.promptKey != "":
@@ -747,7 +827,10 @@ func (f *fleetSchedForm) stopForField(field string) (schedStop, bool) {
 		return stopDir, true
 	case cron.FieldAgent:
 		return stopAgent, true
-	case cron.FieldPrompt:
+	case cron.FieldPrompt, cron.FieldTemplate:
+		if f.source == schedSourceTemplate {
+			return stopTemplate, true
+		}
 		return stopPrompt, true
 	case cron.FieldSchedule:
 		if f.kind == schedKindCustom {
@@ -991,6 +1074,17 @@ func (m *FleetModel) handleSchedFormKey(msg tea.KeyPressMsg) tea.Cmd {
 				f.move(1)
 			}
 		}
+	case stopSource:
+		switch key {
+		case "left":
+			f.source = schedSourcePrompt
+		case "right":
+			f.source = schedSourceTemplate
+		case "space":
+			f.source = 1 - f.source
+		case "enter":
+			f.move(1)
+		}
 	case stopKind:
 		switch key {
 		case "left":
@@ -1040,7 +1134,7 @@ func (m *FleetModel) handleSchedFormKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 	case stopPrompt:
 		f.prompt, cmd = f.prompt.Update(msg)
-	case stopAgent, stopModel, stopEffort, stopBackend, stopAccount, stopTimeout, stopUsage5h, stopUsage7d:
+	case stopAgent, stopTemplate, stopModel, stopEffort, stopBackend, stopAccount, stopTimeout, stopUsage5h, stopUsage7d:
 		if !f.cyclerKey(msg, key) {
 			return nil
 		}
@@ -1067,8 +1161,16 @@ func (m *FleetModel) schedFormChanged(before string, cmd tea.Cmd) tea.Cmd {
 		return cmd
 	}
 	f.touched[f.focus] = true
+	if f.focus == stopSource && f.source == schedSourceTemplate && f.mode != schedFormEdit && !f.touched[stopAgent] {
+		// A new job switched to a template runs its agent unless one was
+		// picked (an edit keeps the stored agent).
+		f.agent.setOpts(f.agentOpts(f.curDir()), "", plainAgent)
+	}
 	switch f.focus {
-	case stopDir, stopAgent:
+	case stopDir:
+		f.templates = fleetSchedTemplates(f.curDir())
+		f.refreshOptions()
+	case stopAgent, stopSource, stopTemplate:
 		f.refreshOptions()
 	case stopBackend:
 		f.refreshOptions()
@@ -1398,15 +1500,36 @@ func (m FleetModel) schedFormLayout(w, h int) schedLayout {
 	row(stopDir, "Project", dir, dirHits...)
 	v, hs := cyc(stopAgent, 0)
 	row(stopAgent, "Agent", v, hs...)
-	pr := f.prompt
-	pr.SetWidth(max(vw, 8))
-	row(stopPrompt, "Prompt", pr.View())
-	switch {
-	case f.promptKey != "" && strings.TrimSpace(f.prompt.Value()) == "":
-		out.add(indent + fleetDimStyle.Render(truncateToWidth("from context key "+f.promptKey, vw)))
-	case f.focus == stopPrompt:
-		out.hits = append(out.hits, schedHit{line: len(out.lines), x0: schedLabelW + 1, x1: schedLabelW + 1 + lipgloss.Width(schedEditorHint), stop: stopPrompt, kind: schedHitEditor})
-		out.add(indent + fleetDimStyle.Render(schedEditorHint))
+	v, hs = segmentedLayout(schedSourceLabels, f.source, f.focus == stopSource, vw)
+	row(stopSource, "Source", v, hs...)
+	if f.source == schedSourceTemplate {
+		v, hs = cyc(stopTemplate, 0)
+		row(stopTemplate, "Template", v, hs...)
+		switch t := f.template(); {
+		case len(f.templates) == 0:
+			out.add(indent + fleetDimStyle.Render(truncateToWidth("no templates for this project (agentctl template add)", vw)))
+		case t == nil:
+			out.add(indent + fleetDimStyle.Render(truncateToWidth("pick a template (←/→ or type to filter)", vw)))
+		default:
+			if t.Description != "" {
+				out.add(indent + fleetDimStyle.Render(truncateToWidth(t.Description, vw)))
+			}
+			for _, l := range clampLines(wrapText(t.Prompt, vw), 4) {
+				out.add(indent + fleetDimStyle.Render(l))
+			}
+			out.add(indent + fleetDimStyle.Render(truncateToWidth("read at every fire; the agent, model and effort set here win", vw)))
+		}
+	} else {
+		pr := f.prompt
+		pr.SetWidth(max(vw, 8))
+		row(stopPrompt, "Prompt", pr.View())
+		switch {
+		case f.promptKey != "" && strings.TrimSpace(f.prompt.Value()) == "":
+			out.add(indent + fleetDimStyle.Render(truncateToWidth("from context key "+f.promptKey, vw)))
+		case f.focus == stopPrompt:
+			out.hits = append(out.hits, schedHit{line: len(out.lines), x0: schedLabelW + 1, x1: schedLabelW + 1 + lipgloss.Width(schedEditorHint), stop: stopPrompt, kind: schedHitEditor})
+			out.add(indent + fleetDimStyle.Render(schedEditorHint))
+		}
 	}
 
 	header("When")
@@ -1650,7 +1773,15 @@ func (m FleetModel) schedReviewLayout(w int) schedLayout {
 			add(strings.Repeat(" ", lw+1) + l)
 		}
 	}
-	kv("Runs", b.Render(job.Agent)+" in "+b.Render(tildify(job.Dir))+" ("+wt+")")
+	agent := job.Agent
+	tmpl := f.template()
+	if agent == "" && job.Template != "" {
+		agent = "the template's agent"
+		if tmpl != nil && tmpl.Agent != "" {
+			agent = tmpl.Agent + " (from template " + job.Template + ")"
+		}
+	}
+	kv("Runs", b.Render(agent)+" in "+b.Render(tildify(job.Dir))+" ("+wt+")")
 	kv("When", b.Render(words))
 	kv("Mode", fmt.Sprintf("unattended, permission mode %s, %s", perm, until))
 	tz := p.TimeZone
@@ -1659,18 +1790,26 @@ func (m FleetModel) schedReviewLayout(w int) schedLayout {
 	}
 	add("", fleetCountStyle.Render("Next fires ("+tz+")"), wrapText(strings.Join(p.NextFiresText, " · "), w), "")
 	prompt := job.Prompt
-	if job.PromptKey != "" {
+	switch {
+	case job.Template != "":
+		prompt = "(template " + job.Template + ", read from the project at every fire)"
+		if tmpl != nil {
+			prompt += "\n\n" + tmpl.Prompt
+		}
+	case job.PromptKey != "":
 		prompt = "(context key " + job.PromptKey + ", read at every fire)"
 	}
+	promptChanged := slices.Contains(p.Changed, cron.FieldPrompt) || slices.Contains(p.Changed, "prompt_key") ||
+		slices.Contains(p.Changed, cron.FieldTemplate)
 	if f.mode == schedFormEdit {
 		add(fleetCountStyle.Render("Changes"))
 		for _, c := range p.Diff {
-			if c.Field == cron.FieldPrompt || c.Field == "prompt_key" {
+			if c.Field == cron.FieldPrompt || c.Field == "prompt_key" || c.Field == cron.FieldTemplate {
 				continue
 			}
 			add(truncateToWidth("  "+padRight(c.Field, 10)+" "+f.reviewValue(c.Field, c.Old)+fleetDimStyle.Render(" → ")+f.reviewValue(c.Field, c.New), w))
 		}
-		if slices.Contains(p.Changed, cron.FieldPrompt) || slices.Contains(p.Changed, "prompt_key") {
+		if promptChanged {
 			add("", fleetCountStyle.Render("Prompt (changed)"), wrapText(prompt, w))
 		}
 	} else {
@@ -1715,6 +1854,10 @@ func (f *fleetSchedForm) reviewValue(field, v string) string {
 		return c.labelOf(v)
 	}
 	switch field {
+	case cron.FieldAgent:
+		if v == "" {
+			return "from template"
+		}
 	case cron.FieldSchedule:
 		if w := cron.Describe(v); w != "" {
 			return w
@@ -1730,51 +1873,6 @@ func (f *fleetSchedForm) reviewValue(field, v string) string {
 		return strings.NewReplacer("5h 100%", "5h off", "7d 100%", "7d off").Replace(v)
 	}
 	return v
-}
-
-// fieldValue is a job field as the review shows it.
-func fieldValue(j cron.Job, field string) string {
-	switch field {
-	case cron.FieldSchedule:
-		if w := cron.Describe(j.Schedule); w != "" {
-			return w + " (" + j.Schedule + ")"
-		}
-		return j.Schedule
-	case cron.FieldDir:
-		return tildify(j.Dir)
-	case cron.FieldAgent:
-		return j.Agent
-	case cron.FieldModel:
-		return orNoneText(j.Model)
-	case cron.FieldEffort:
-		return orNoneText(j.Effort)
-	case cron.FieldBackend:
-		return orNoneText(j.Backend)
-	case cron.FieldAccount:
-		return orNoneText(j.Account)
-	case cron.FieldTimeout:
-		return orNoneText(j.Timeout)
-	case cron.FieldOverlap:
-		return j.Overlap
-	case cron.FieldCatchup:
-		return j.Catchup
-	case cron.FieldSkipIfUsageAbove:
-		if j.SkipIfUsageAbove == nil {
-			return "global"
-		}
-		return usageText(*j.SkipIfUsageAbove)
-	case "worktree":
-		if j.UseWorktree() {
-			return "on (" + schedWorktreeOn + ")"
-		}
-		return "off (" + schedWorktreeOff + ")"
-	case "enabled":
-		if j.IsEnabled() {
-			return "enabled"
-		}
-		return "paused"
-	}
-	return ""
 }
 
 func orNoneText(s string) string {

@@ -11,6 +11,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 )
 
 // schedules is the harness's cron world: a jobs file and run history in the
@@ -90,6 +91,10 @@ type SchedulesSpec struct {
 	CronDisabled bool `json:"cron_disabled"`
 	// Run is what run-now returns (default: fired in @99).
 	Run *cron.Entry `json:"run"`
+	// Templates are written as the project's prompt templates (replacing
+	// any from an earlier seed), so GET /v1/templates?dir=<project> and a
+	// template job's checks see them.
+	Templates []prompttemplate.Template `json:"templates"`
 }
 
 func (s *schedules) set(spec SchedulesSpec) error {
@@ -110,6 +115,12 @@ func (s *schedules) set(spec SchedulesSpec) error {
 	}
 	for _, e := range spec.Runs {
 		if err := cron.AppendRun(s.stateDir(), e); err != nil {
+			return err
+		}
+	}
+	_ = os.RemoveAll(prompttemplate.ProjectDir(s.projectDir()))
+	for _, t := range spec.Templates {
+		if _, err := prompttemplate.Save(t, prompttemplate.ScopeProject, s.projectDir()); err != nil {
 			return err
 		}
 	}

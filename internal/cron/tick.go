@@ -15,6 +15,20 @@ import (
 // fire is recorded as failed:tmux-unavailable and a notification is sent.
 var ErrTmuxUnavailable = errors.New("tmux is not available")
 
+// ErrTemplateNotFound is returned (wrapped) by a Launcher when a job's
+// prompt template no longer resolves; the fire is recorded as
+// failed:template, with the reason in the note, and notified.
+var ErrTemplateNotFound = errors.New("template not found")
+
+// TemplateError is a Launcher error for a template that cannot be read,
+// with msg as its whole text; errors.Is matches ErrTemplateNotFound.
+func TemplateError(msg string) error { return &templateError{msg: msg} }
+
+type templateError struct{ msg string }
+
+func (e *templateError) Error() string        { return e.msg }
+func (e *templateError) Is(target error) bool { return target == ErrTemplateNotFound }
+
 // onTimeGrace is how late a fire may start and still count as on time for
 // catchup: none. A 60s StartInterval plus up to 90s of jitter and launchd
 // scheduling slop fit comfortably inside it.
@@ -331,8 +345,11 @@ func (t *ticker) launch(job Job, scheduled time.Time, e Entry) {
 	res, err := t.d.Launch(LaunchRequest{Job: job, Scheduled: scheduled, Branch: BranchFor(job, scheduled)})
 	if err != nil {
 		reason := "launch"
-		if errors.Is(err, ErrTmuxUnavailable) {
+		switch {
+		case errors.Is(err, ErrTmuxUnavailable):
 			reason = "tmux-unavailable"
+		case errors.Is(err, ErrTemplateNotFound):
+			reason = "template"
 		}
 		e.Result = Failed(reason)
 		e.Note = joinNote(e.Note, err.Error())
