@@ -59,8 +59,22 @@ func statusLineOptions(chromeBar bool, th theme.Theme) [][2]string {
 // applyStatusLine sets statusLineOptions on this project's session.
 func applyStatusLine(chromeBar bool) {
 	for _, o := range statusLineOptions(chromeBar, theme.Current()) {
-		set(o[0], o[1])
+		_, _ = chromeBarRun("set-option", "-t", ExactSessionTarget(SessionName), o[0], o[1])
 	}
+}
+
+// ensureStatusLine turns the native status line on when a window gets no
+// chrome bar but the session still has it off. That is a live session
+// started by an older binary (or with chrome_bar on) whose new windows now
+// get no bar: without this they would show no window list until the next
+// apply-config. One show-options call per new window; options are only set
+// when the status line is off.
+func ensureStatusLine() {
+	out, err := chromeBarRun("show-options", "-v", "-t", ExactSessionTarget(SessionName), "status")
+	if err != nil || strings.TrimSpace(out) != "off" {
+		return
+	}
+	applyStatusLine(false)
 }
 
 // recordMainPane records a window's main pane when it has none yet. The

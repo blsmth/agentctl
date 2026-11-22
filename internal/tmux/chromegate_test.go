@@ -226,8 +226,10 @@ func TestLaunchChromeBarGate(t *testing.T) {
 			}
 			ws, _ := windowstate.Read("@5")
 			if !on {
-				if len(calls) != 0 || ws.ChromeBarPane != "" {
-					t.Errorf("off: tmux calls %v, chrome_bar_pane %q; want none", calls, ws.ChromeBarPane)
+				// Only the status-line check: show-options answered "%5",
+				// not "off", so nothing is set.
+				if !slices.Equal(calls, []string{"show-options"}) || ws.ChromeBarPane != "" {
+					t.Errorf("off: tmux calls %v, chrome_bar_pane %q; want [show-options] and none", calls, ws.ChromeBarPane)
 				}
 				return
 			}
@@ -262,5 +264,49 @@ func TestStatusLineOnRealTmux(t *testing.T) {
 		if !strings.Contains(got, sub) {
 			t.Errorf("expanded status %q lacks %q", got, sub)
 		}
+	}
+}
+
+// TestEnsureStatusLine checks a bar-less window turns the native status line
+// on when the session still has it off (a session started by an older
+// binary), and leaves it alone otherwise.
+func TestEnsureStatusLine(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  string
+		err     error
+		wantSet bool
+	}{
+		{"status off: turned on", "off", nil, true},
+		{"status on: untouched", "on", nil, false},
+		{"unset at session level: untouched", "", nil, false},
+		{"no session: untouched", "", errors.New("no server"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sets [][]string
+			old := chromeBarRun
+			t.Cleanup(func() { chromeBarRun = old })
+			chromeBarRun = func(args ...string) (string, error) {
+				if args[0] == "show-options" {
+					return tt.status, tt.err
+				}
+				sets = append(sets, args)
+				return "", nil
+			}
+			ensureStatusLine()
+			if !tt.wantSet {
+				if len(sets) != 0 {
+					t.Errorf("set %q, want nothing", sets)
+				}
+				return
+			}
+			if len(sets) == 0 || sets[0][len(sets[0])-2] != "status" || sets[0][len(sets[0])-1] != "on" {
+				t.Errorf("set %q, want status on first", sets)
+			}
+			if want := len(statusLineOptions(false, theme.Theme{})); len(sets) != want {
+				t.Errorf("set %d options, want %d", len(sets), want)
+			}
+		})
 	}
 }

@@ -1935,6 +1935,7 @@ func LaunchChromeBar(windowID string) error {
 	}
 	if !chromeBarEnabled() {
 		recordMainPane(windowID, ws)
+		ensureStatusLine()
 		return nil
 	}
 
