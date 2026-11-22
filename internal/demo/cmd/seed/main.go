@@ -11,8 +11,9 @@
 //	agentctl-demo down  --root R
 //	agentctl-demo pane-check --target T
 //
-// "project" and "pane" are internal: up runs one project seeder per project,
-// and every fake window runs a pane.
+// "project", "pane" and "claude-stub" are internal: up runs one project
+// seeder per project, every fake window runs a pane, and the demo's `claude`
+// shim runs claude-stub.
 package main
 
 import (
@@ -52,6 +53,8 @@ func main() {
 		err = runPane(args)
 	case "pane-check":
 		err = runPaneCheck(args)
+	case "claude-stub":
+		err = demo.RunClaudeStub(args, "agentctl")
 	case "serve-stub":
 		err = runServeStub(args)
 	default:

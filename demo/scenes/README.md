@@ -23,6 +23,7 @@ config:                               # optional; network, notifications, monito
   dispatch_approval: all              # all (default) | non-review | off
   serve: true                         # fake a running `agentctl serve` so the hub shows "📱 serve" (a stub on a socket in the demo's state dir); default false
   statusline_format: rich             # rich | complementary | full | mobile | minimal; default: agentctl's default
+  default_agent: go-engineer          # default_agent: what a hub launch (`n` then `a`) uses; a fake ~/.claude/agents/<agent>.md is written for it. Launched windows run a live fake `claude` (start screen, idle row) that never reaches the network; see hub-launch.yaml
   cron: true                          # set cron.enabled (default false). No ticker is installed and claude is stubbed, so nothing fires either way; true only drops the hub's "cron is off" warning
 
 projects:                             # at least one; each becomes ~/code/<name> and session agentctl-<name>

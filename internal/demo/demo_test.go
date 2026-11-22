@@ -317,7 +317,8 @@ func TestWriteWorld(t *testing.T) {
 	}
 	s.Windows[1].Dirty = []string{"internal/x.go"}
 	s.Windows[1].Transcript = TranscriptRef{Inline: sampleTranscript()}
-	if err := WriteWorld(l, s, t.TempDir(), time.Now()); err != nil {
+	s.Config.DefaultAgent = "rust-engineer"
+	if err := WriteWorld(l, s, t.TempDir(), time.Now(), "/x/agentctl-demo"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -339,7 +340,15 @@ func TestWriteWorld(t *testing.T) {
 		t.Errorf("config = %s", data)
 	}
 
+	if cfg.DefaultAgent != "rust-engineer" {
+		t.Errorf("default_agent = %q", cfg.DefaultAgent)
+	}
+	shim, err := os.ReadFile(filepath.Join(l.Bin(), "claude"))
+	if err != nil || !strings.Contains(string(shim), "exec '/x/agentctl-demo' claude-stub") {
+		t.Errorf("claude shim = %q, %v", shim, err)
+	}
 	for _, p := range []string{
+		filepath.Join(l.ClaudeDir(), "agents", "rust-engineer.md"),
 		filepath.Join(l.Bin(), "claude"),
 		filepath.Join(l.Bin(), "gh"),
 		filepath.Join(l.ClaudeDir(), "agents", "go-engineer.md"),
@@ -388,7 +397,7 @@ func TestWriteWorldSchedules(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	if err := WriteWorld(l, s, t.TempDir(), now); err != nil {
+	if err := WriteWorld(l, s, t.TempDir(), now, "/x/agentctl-demo"); err != nil {
 		t.Fatal(err)
 	}
 	jobs, err := cron.LoadJobs(filepath.Join(l.ConfigHome(), "agentctl", cron.SchedulesFile))

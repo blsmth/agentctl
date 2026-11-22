@@ -20,15 +20,16 @@ import (
 )
 
 // stubbed are programs the demo PATH shadows with a script that fails at
-// once, so nothing in the demo can spend tokens (claude), reach GitHub (gh)
-// or raise a desktop notification.
-var stubbed = []string{"claude", "gh", "alerter", "notify-send", "terminal-notifier"}
+// once, so nothing in the demo can reach GitHub (gh) or raise a desktop
+// notification. claude is shadowed too, by a fake that stays alive instead
+// (claudeShim), so it can never spend tokens.
+var stubbed = []string{"gh", "alerter", "notify-send", "terminal-notifier"}
 
 // WriteWorld creates everything under the root that does not need tmux:
 // the fake HOME, global config, agents, program stubs, repos with commits
 // and worktrees, and the session transcripts. fixtures is the transcript
 // fixture dir; now anchors every timestamp.
-func WriteWorld(l Layout, s *Scene, fixtures string, now time.Time) error {
+func WriteWorld(l Layout, s *Scene, fixtures string, now time.Time, self string) error {
 	for _, d := range []string{l.Bin(), l.Tmp(), l.PaneDir(), l.ClaudeDir(), l.ConfigHome(),
 		l.StateHome(), l.DataHome(), l.CacheHome(), filepath.Join(l.Home(), "code")} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -37,7 +38,7 @@ func WriteWorld(l Layout, s *Scene, fixtures string, now time.Time) error {
 	}
 	steps := []func() error{
 		func() error { return writeHome(l) },
-		func() error { return writeStubs(l) },
+		func() error { return writeStubs(l, self) },
 		func() error { return writeConfig(l, s) },
 		func() error { return writeAgents(l, s) },
 		func() error { return writeFile(l.TmuxConf(), []byte(tmuxConf), 0o600) },
@@ -109,7 +110,10 @@ func writeHome(l Layout) error {
 	return writeFile(filepath.Join(l.ClaudeDir(), "settings.json"), []byte("{}\n"), 0o600)
 }
 
-func writeStubs(l Layout) error {
+func writeStubs(l Layout, self string) error {
+	if err := writeFile(filepath.Join(l.Bin(), "claude"), []byte(claudeShim(self)), 0o755); err != nil {
+		return err
+	}
 	for _, name := range stubbed {
 		body := fmt.Sprintf("#!/bin/sh\necho '%s: disabled in the agentctl demo' >&2\nexit 1\n", name)
 		if err := writeFile(filepath.Join(l.Bin(), name), []byte(body), 0o755); err != nil {
@@ -130,6 +134,7 @@ func demoConfig(s *Scene) config.Config {
 		OpenPRInBrowser:  &off,
 		BashPreview:      &off,
 		Theme:            s.Config.Theme,
+		DefaultAgent:     s.Config.DefaultAgent,
 		DispatchApproval: s.Config.DispatchApproval,
 		StatuslineFormat: s.Config.StatuslineFormat,
 		Metrics:          config.MetricsConfig{Enabled: false},
