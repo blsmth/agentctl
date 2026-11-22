@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/blsmth/agentctl/internal/agent"
@@ -179,6 +180,12 @@ func TestBuildTemplatePreview(t *testing.T) {
 	if err := os.WriteFile(promptFile, []byte("From a file.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(project, "empty.md"), []byte(" \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(project, "fifo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	gdir, _ := prompttemplate.GlobalDir()
 	tests := []struct {
 		name     string
@@ -195,6 +202,11 @@ func TestBuildTemplatePreview(t *testing.T) {
 		{name: "add with no prompt opens the editor", command: "agentctl template add n --agent a", wantDeny: "$EDITOR"},
 		{name: "add expanding prompt", command: `agentctl template add n --prompt "$(cat spec.md)"`, wantDeny: "shell expansion"},
 		{name: "add unreadable file", command: "agentctl template add n --prompt-file nope.md", wantDeny: "cannot read"},
+		{name: "add from stdin redirect", command: "agentctl template add x --prompt-file /dev/stdin < p.md", wantDeny: "not a regular file"},
+		{name: "add from fd here-string", command: "agentctl template add x --prompt-file /dev/fd/0 <<< 'evil'", wantDeny: "not a regular file"},
+		{name: "edit from stdin heredoc", command: "agentctl template edit glob --prompt-file /dev/stdin <<EOF\nEVIL\nEOF", wantDeny: "not a regular file"},
+		{name: "add from a fifo", command: "agentctl template add x --prompt-file fifo", wantDeny: "not a regular file"},
+		{name: "add empty file", command: "agentctl template add x --prompt-file empty.md", wantDeny: "is empty"},
 		{name: "add short flag", command: "agentctl template add n -p hi", wantDeny: `"-p"`},
 		{name: "add no name", command: "agentctl template add --prompt hi", wantDeny: "exactly one template name"},
 		{name: "add bad name", command: "agentctl template add ../x --prompt hi", wantDeny: "invalid template name"},

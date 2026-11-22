@@ -278,9 +278,24 @@ func templatePromptFrom(a templateArgs, sub, cwd string) (prompt string, ok bool
 		if !filepath.IsAbs(path) && cwd != "" {
 			path = filepath.Join(cwd, path)
 		}
+		// Only a regular file reads the same in the hook and in the CLI
+		// later: /dev/stdin, /dev/fd/N or a FIFO would show the hook's
+		// (drained) stdin, or hang, while the CLI saves the redirected
+		// content. os.Stat follows symlinks (/dev/stdin is one).
+		st, err := os.Stat(path)
+		if err != nil {
+			return "", false, fmt.Sprintf("agentctl template %s: cannot read --prompt-file %s (%v), so there is no prompt to show for approval.", sub, v.text, err)
+		}
+		if !st.Mode().IsRegular() {
+			return "", false, fmt.Sprintf("agentctl template %s: --prompt-file %s is not a regular file (stdin, a pipe or a device), "+
+				"so the approval popup cannot show what would be saved. Write the prompt to a file first.", sub, v.text)
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return "", false, fmt.Sprintf("agentctl template %s: cannot read --prompt-file %s (%v), so there is no prompt to show for approval.", sub, v.text, err)
+		}
+		if strings.TrimSpace(string(data)) == "" {
+			return "", false, fmt.Sprintf("agentctl template %s: --prompt-file %s is empty.", sub, v.text)
 		}
 		return string(data), true, ""
 	}
