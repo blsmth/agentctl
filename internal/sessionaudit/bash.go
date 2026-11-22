@@ -27,6 +27,8 @@ type simpleCmd struct {
 	heredoc  bool     // has a heredoc on stdin
 	pipedIn  bool     // reads a pipe (right side of |)
 	inLoop   bool     // inside a for/while/until body
+	afterCd  bool     // a cd/pushd ran earlier in the same command line
+	dir      string   // where an earlier literal cd went ("" = no cd, or not known)
 }
 
 // pipe is one | of a pipeline: every command on its left and on its right.
@@ -74,6 +76,7 @@ func (p *parsedBash) add(src string, depth int) bool {
 
 	byCall := map[*syntax.CallExpr]int{}
 	var nested []string
+	seenCd, curDir := false, ""
 	syntax.Walk(f, func(n syntax.Node) bool {
 		st, ok := n.(*syntax.Stmt)
 		if !ok {
@@ -108,6 +111,11 @@ func (p *parsedBash) add(src string, depth int) bool {
 			return true
 		}
 		c.name = path.Base(c.args[0])
+		c.afterCd, c.dir = seenCd, curDir
+		if c.name == "cd" || c.name == "pushd" {
+			seenCd = true
+			curDir = cdTarget(c.args, curDir)
+		}
 		byCall[call] = len(p.cmds)
 		p.cmds = append(p.cmds, c)
 		if shellNames[c.name] && depth < maxShellDepth {
@@ -119,6 +127,32 @@ func (p *parsedBash) add(src string, depth int) bool {
 		}
 		return true
 	})
+
+	// A shell running fetched code: sh -c "$(curl ...)", bash <(curl ...),
+	// eval "$(curl ...)", source <(curl ...).
+	for call, i := range byCall {
+		if !shellNames[p.cmds[i].name] && !evalNames[p.cmds[i].name] {
+			continue
+		}
+		var fetched []string
+		for _, w := range call.Args[1:] {
+			syntax.Walk(w, func(n syntax.Node) bool {
+				switch n.(type) {
+				case *syntax.CmdSubst, *syntax.ProcSubst:
+					for _, c := range callsIn(n) {
+						if j, ok := byCall[c]; ok && fetchNames[p.cmds[j].name] {
+							fetched = append(fetched, p.cmds[j].name)
+						}
+					}
+					return false
+				}
+				return true
+			})
+		}
+		if len(fetched) > 0 {
+			p.pipes = append(p.pipes, pipe{left: fetched, right: []string{"sh"}, src: p.cmds[i].src})
+		}
+	}
 
 	syntax.Walk(f, func(n syntax.Node) bool {
 		switch x := n.(type) {
@@ -211,14 +245,30 @@ var shellNames = map[string]bool{
 	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true,
 }
 
-// shellScript returns the -c script of a shell invocation, or "".
+// evalNames run their argument as shell code; fetchNames download.
+var (
+	evalNames  = map[string]bool{"eval": true, "source": true, ".": true}
+	fetchNames = map[string]bool{"curl": true, "wget": true}
+)
+
+// shellValued are shell options that take the next argument as a value.
+var shellValued = map[string]bool{
+	"-o": true, "+o": true, "-O": true, "+O": true, "--rcfile": true, "--init-file": true,
+}
+
+// shellScript returns the -c script of a shell invocation, or "". Options
+// before the -c cluster (-e, -o pipefail, --norc, ...) are skipped; the
+// first operand (a script file) or "--" ends the search.
 func shellScript(args []string) string {
 	for i := 1; i < len(args)-1; i++ {
 		a := args[i]
-		if !strings.HasPrefix(a, "-") || strings.HasPrefix(a, "--") {
+		switch {
+		case shellValued[a]:
+			i++
+		case a == "--" || (!strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "+")):
 			return ""
-		}
-		if strings.Contains(a[1:], "c") {
+		case strings.HasPrefix(a, "--"):
+		case a[0] == '-' && strings.Contains(a[1:], "c"):
 			if strings.Contains(args[i+1], dynamic) {
 				return ""
 			}
@@ -226,6 +276,29 @@ func shellScript(args []string) string {
 		}
 	}
 	return ""
+}
+
+// cdTarget is where `cd <dir>` leaves the shell, given the dir an earlier
+// cd left it in (prev, "" = the session cwd). A relative result is
+// relative to the session cwd; dynamic marks a target that is not known.
+func cdTarget(args []string, prev string) string {
+	if prev == dynamic {
+		return dynamic
+	}
+	_, ops := flagsAndOperands(args)
+	if len(ops) != 1 {
+		return dynamic // bare cd (home), cd -, or something odd
+	}
+	t := ops[0]
+	switch {
+	case t == "-" || strings.Contains(t, dynamic):
+		return dynamic
+	case strings.HasPrefix(t, "/"), t == "~", strings.HasPrefix(t, "~/"), strings.HasPrefix(t, "$"):
+		return t
+	case prev == "":
+		return t
+	}
+	return path.Join(prev, t)
 }
 
 // hasScriptArg reports whether a shell invocation names a script file, in

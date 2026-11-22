@@ -33,6 +33,8 @@ var rules = []Rule{
 	// Safety, high.
 	{ID: "rm-recursive", Title: "rm -r outside the repo", Category: Safety, Severity: High,
 		Why: "recursive delete of /, home, a parent dir or a path outside the working tree", check: bashRule(rmOutside)},
+	{ID: "rm-cwd", Title: "rm -r of the working dir", Category: Safety, Severity: Med,
+		Why: "recursive delete of the whole working dir", check: bashRule(rmCwd)},
 	{ID: "git-force-push", Title: "git push --force", Category: Safety, Severity: High,
 		Why: "force push can overwrite others' commits; use --force-with-lease", check: bashRule(gitForcePush)},
 	{ID: "git-push-main", Title: "push to main/master", Category: Safety, Severity: High,
@@ -145,16 +147,55 @@ func pipeRule(match func(p pipe) bool) func(*analysis) []hit {
 
 // ─── Safety ──────────────────────────────────────────────────────────────────
 
-func rmOutside(c simpleCmd, s *step, a *analysis) bool {
+// rmRecursive returns the operands of a recursive rm, or ok false.
+func rmRecursive(c simpleCmd) (ops []string, ok bool) {
 	if c.name != "rm" {
-		return false
+		return nil, false
 	}
 	flags, ops := flagsAndOperands(c.args)
 	if !hasArg(flags, "--recursive") && !shortFlag(flags, 'r') && !shortFlag(flags, 'R') {
+		return nil, false
+	}
+	return ops, true
+}
+
+func rmOutside(c simpleCmd, s *step, a *analysis) bool {
+	ops, ok := rmRecursive(c)
+	if !ok {
+		return false
+	}
+	dir := s.Cwd
+	if c.afterCd {
+		// Relative paths resolve against where a literal cd went; after a cd
+		// to somewhere unknown they are not judged.
+		dir = ""
+		if c.dir != "" && c.dir != dynamic {
+			if d, ok := resolvePath(c.dir, s.Cwd, a.p.Home); ok {
+				dir = d
+			}
+		}
+	}
+	for _, op := range ops {
+		if dangerousTarget(op, dir, s.Cwd, a.p) {
+			return true
+		}
+	}
+	return false
+}
+
+// cwdTargets delete everything in the current dir.
+var cwdTargets = map[string]bool{".": true, "./": true, "*": true, "./*": true}
+
+// rmCwd fires on rm -r of . or * when no cd earlier in the command line
+// moved the shell: the transcript's cwd is then the shell's, the working
+// tree. A temp-dir cwd is exempt.
+func rmCwd(c simpleCmd, s *step, a *analysis) bool {
+	ops, ok := rmRecursive(c)
+	if !ok || c.afterCd || s.Cwd == "" || inTemp(s.Cwd, a.p.TempDirs) {
 		return false
 	}
 	for _, op := range ops {
-		if dangerousTarget(op, s.Cwd, a.p) {
+		if cwdTargets[op] {
 			return true
 		}
 	}
@@ -162,9 +203,10 @@ func rmOutside(c simpleCmd, s *step, a *analysis) bool {
 }
 
 // dangerousTarget reports whether removing p recursively reaches /, home, a
-// parent dir, or anything outside cwd (temp dirs excepted). Paths relative
-// to an unknown cwd, and paths built from other variables, are not judged.
-func dangerousTarget(p, cwd string, prm Params) bool {
+// parent dir, or anything outside root (temp dirs excepted). p is resolved
+// against dir; with dir unknown, relative paths are not judged, and neither
+// are paths built from other variables.
+func dangerousTarget(p, dir, root string, prm Params) bool {
 	if strings.Contains(p, dynamic) {
 		return false
 	}
@@ -176,14 +218,11 @@ func dangerousTarget(p, cwd string, prm Params) bool {
 	case "~", "$HOME", "${HOME}", "..":
 		return true
 	}
-	abs, ok := resolvePath(p, cwd, prm.Home)
-	if !ok || inTemp(abs, prm.TempDirs) {
+	abs, ok := resolvePath(p, dir, prm.Home)
+	if !ok || inTemp(abs, prm.TempDirs) || root == "" {
 		return false
 	}
-	if cwd == "" {
-		return false
-	}
-	return !within(cwd, abs)
+	return !within(root, abs)
 }
 
 // resolvePath expands ~ and $HOME and makes p absolute against cwd. ok is
@@ -459,6 +498,9 @@ var secretReaders = map[string]bool{
 	"open": true, "vim": true, "vi": true, "nano": true, "pbcopy": true, "tac": true,
 }
 
+// copiers take sources then one destination.
+var copiers = map[string]bool{"cp": true, "scp": true, "rsync": true}
+
 // isSecretPath reports whether p looks like a credentials file.
 func isSecretPath(p string) bool {
 	if strings.Contains(p, dynamic) {
@@ -520,6 +562,9 @@ func bashSecret(b *parsedBash) (evidence, why string) {
 			continue
 		}
 		_, ops := flagsAndOperands(c.args)
+		if copiers[c.name] && len(ops) > 0 {
+			ops = ops[:len(ops)-1] // the destination is written, not read
+		}
 		for _, op := range ops {
 			if isSecretPath(op) {
 				return c.src, ""
