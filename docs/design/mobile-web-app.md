@@ -107,6 +107,12 @@ All JSON. Errors: `{"error": "message", "code": "snake_case"}` with an appropria
 `Group` = `{"session","project","dir","rollup":"blocked|working|done|idle","windows":[Window]}`, ordered with `fleet.OrderGroups`.
 `Window` = the same field names as `agentctl status --json` rows (`session, project, window_id, window_index, agent, state, done, mode, context_pct, branch, worktree_path, parent, activity`) plus `pr_url`, `issue`, `blocked_since`, `state_since`, `pending_tool` where available. Implement one shared conversion from `fleet.Row` so `status --json` and `serve` cannot drift (refactor `status --json` to use it).
 
+### Host status
+
+`GET /v1/host` (Device auth, feature `host`) backs the phone's Host screen (Settings → Host status). It returns `server_time` (RFC 3339, for client-side clock skew; the client measures round trip itself), `host` (hostname, os/arch, uptime, cores, load 1/5/15, `cpu_percent`, memory total/used/available, swap total/used, and on macOS `memory_pressure` of normal/warn/critical via sysctl), `agentctl` (serve version and uptime, `tmux_windows`) and `processes`: `groups` (count, summed CPU% of one core and RSS for `claude` and `agentctl chrome-bar|serve|hub-view|hud|metrics|other`) plus the top 5 processes by CPU. Fields a platform cannot provide are omitted, never errors; Linux builds and reports what gopsutil gives it.
+
+Stats come from gopsutil (no cgo, no `ps`/`top`). A snapshot is cached for 3 seconds and shared by all callers, so several open phones cost one collection per interval; CPU percentages (system and per process) are deltas between consecutive collections, so the first request after an idle period omits `cpu_percent` and reports 0 per process. The tmux window count is cached on the same interval. The screen polls every 4 seconds and stops when it is left or the page is hidden.
+
 ### Events (PR2)
 
 `GET /v1/events` — SSE. On connect, one `event: fleet` with the full `/v1/fleet` body. Then:

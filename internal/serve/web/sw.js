@@ -2,7 +2,7 @@
 const CACHE = "agentctl-shell-v19";
 const SHELL = [
   "/", "/app.css", "/app.js", "/api.js", "/live.js", "/logic.js", "/ui.js",
-  "/fleet.js", "/swipe.js", "/window.js", "/terminal.js", "/dispatch.js", "/attach.js", "/settings.js", "/approvals.js",
+  "/fleet.js", "/swipe.js", "/window.js", "/terminal.js", "/dispatch.js", "/attach.js", "/settings.js", "/host.js", "/approvals.js",
   "/vendor/xterm.js", "/vendor/xterm.css", "/vendor/addon-fit.js",
   "/icons/icon-192.png", "/icons/icon-512.png",
 ];

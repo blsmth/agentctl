@@ -14,6 +14,7 @@ import {
   defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines, fullPrompt,
   waitingIndex, displayState, waitingLabel, actionsFor, effectiveState,
   applyGone, shellRows, shellDirName, shellApiPath,
+  formatBytes, formatUptime, hostLevels, hostConnection, pushSample, formatSkew,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
 } from "./logic.js";
 
@@ -722,4 +723,24 @@ console.log("ok: shell request");
   // Waiting keeps the reply composer.
   assert.equal(actionsFor(sorted[0].windows[1], null), "reply");
   console.log("ok: waiting on sub-agents");
+}
+
+{
+  assert.deepEqual(parseRoute("#/host"), { name: "host" });
+  assert.equal(formatBytes(1536 * 1024 * 1024), "1.5 GB");
+  assert.equal(formatBytes(512), "512 B");
+  assert.equal(formatUptime(3 * 86400 + 4 * 3600), "3d 4h");
+  assert.equal(formatUptime(7500), "2h 05m");
+  assert.equal(formatUptime(30), "30s");
+  const body = { host: { cores: 8, load: { l1: 9 }, cpu_percent: 50, memory: { total: 100, available: 5 }, swap: { total: 100, used: 80 }, memory_pressure: "warn" } };
+  assert.deepEqual(hostLevels(body), { load: "bad", cpu: "", memory: "bad", swap: "bad", pressure: "warn" });
+  assert.deepEqual(hostLevels({ host: { cores: 8, load: { l1: 1 } } }), { load: "", cpu: "", memory: "", swap: "", pressure: "" });
+  assert.deepEqual(hostLevels(null), { load: "", cpu: "", memory: "", swap: "", pressure: "" });
+  const c = hostConnection("2026-01-01T00:00:01.000Z", Date.parse("2026-01-01T00:00:00.000Z"), Date.parse("2026-01-01T00:00:00.200Z"));
+  assert.deepEqual(c, { rtt: 200, skew: 900 });
+  assert.equal(hostConnection("nope", 0, 10).skew, null);
+  assert.deepEqual(pushSample([1, 2, 3], 4, 3), [2, 3, 4]);
+  assert.equal(formatSkew(120), "in sync");
+  assert.equal(formatSkew(-2500), "-2.5s");
+  console.log("ok: host view logic");
 }
