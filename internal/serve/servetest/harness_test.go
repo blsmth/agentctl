@@ -227,3 +227,19 @@ func TestHarnessApprovalRoundTrip(t *testing.T) {
 	}
 	t.Fatal("decision never reached the hook side")
 }
+
+func TestOptionsFleetSurvivesReset(t *testing.T) {
+	dir := t.TempDir()
+	h, err := New(Options{Dir: dir, Fleet: []Group{{Session: "agentctl-x", Project: "x", Dir: "/x",
+		Windows: []Window{{ID: "@1", Index: 1, Agent: "a", State: "working"}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	_ = h.world.update("agentctl-x", "@1", func(w *Window) { w.State = "idle" })
+	h.Reset()
+	g, _ := h.world.Fleet()
+	if len(g) != 1 || g[0].Session != "agentctl-x" || g[0].Windows[0].State != "working" {
+		t.Errorf("after reset: %+v", g)
+	}
+}

@@ -141,6 +141,18 @@ demo-stop:
 demo-shot scene out="": demo-build
     "{{_demo_bin}}" shot {{_demo_flags}} --scene "{{scene}}" --out "{{out}}"
 
+# Render a scene's phone: block (the phone web app over the scene's fleet) to demo/out/<scene>-phone.png
+# (numbered PNGs for several screenshots, or out + -phone). Needs node; installs the Playwright WebKit
+# build like web-test does.
+demo-phone-shot scene out="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{justfile_directory()}}"
+    mkdir -p "{{_demo_root}}/bin"
+    go build -o "{{_demo_bin}}" ./internal/demo/cmd/seed
+    (cd "$root/internal/serve/e2e" && { [ -d node_modules/@playwright/test ] || npm ci; } && npx playwright install webkit)
+    "{{_demo_bin}}" phone-shot --scenes demo/scenes --fixtures demo/transcripts --scene "{{scene}}" --out "{{out}}"
+
 # Render every scene in demo/scenes
 demo-shots: demo-build
     #!/usr/bin/env bash

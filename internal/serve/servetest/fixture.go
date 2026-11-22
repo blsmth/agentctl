@@ -94,6 +94,16 @@ type Window struct {
 	// ScheduledBy marks a window launched by `agentctl cron` job of that
 	// name; it fired 15 minutes before the fixture's now.
 	ScheduledBy string `json:"scheduled_by,omitempty"`
+	// PendingDetail is a blocked window's pending tool detail (the command
+	// or path); empty falls back to Activity.
+	PendingDetail string `json:"pending_detail,omitempty"`
+	// PRNumber is the PR number recorded with PRURL.
+	PRNumber int `json:"pr_number,omitempty"`
+	// SinceSec is how long ago the window entered its state; 0 means the
+	// fixture default (3 minutes, 90 seconds when blocked).
+	SinceSec int `json:"since_sec,omitempty"`
+	// TurnDone marks a bare window that finished a turn and is unseen.
+	TurnDone bool `json:"turn_done,omitempty"`
 }
 
 var recapSources = map[string]fleet.RecapSource{
@@ -230,7 +240,7 @@ func rowFor(g Group, w Window, now time.Time) (fleet.Row, fleet.Meta) {
 	row := fleet.Row{Session: g.Session, Project: g.Project, AgentState: state.AgentState{
 		Name: w.Agent, WindowID: w.ID, WindowIndex: w.Index, State: w.State, Done: w.Done,
 		ContextPct: w.ContextPct, LastText: w.Activity, MainPane: paneID(w.ID),
-		ModelName: w.Model, Ticket: w.Issue,
+		ModelName: w.Model, Ticket: w.Issue, TurnDone: w.TurnDone,
 	}}
 	if w.Recap != "" {
 		row.Recap = fleet.RecapLine{Text: w.Recap, Source: recapSources[w.RecapSource], Title: w.ShortTitle, Kind: w.ShortKind}
@@ -239,10 +249,14 @@ func rowFor(g Group, w Window, now time.Time) (fleet.Row, fleet.Meta) {
 	if mode == "" {
 		mode = "bare"
 	}
+	since := 3 * time.Minute
+	if w.SinceSec > 0 {
+		since = time.Duration(w.SinceSec) * time.Second
+	}
 	meta := fleet.Meta{
 		WindowID: w.ID, Mode: mode, Branch: w.Branch, MainPane: paneID(w.ID),
-		UpdatedAt: now.Add(-2 * time.Minute), StateSince: now.Add(-3 * time.Minute),
-		TicketTitle: w.Title, Prompt: w.Prompt, Task: w.Task, CostUSD: w.CostUSD, PRURL: w.PRURL,
+		UpdatedAt: now.Add(-2 * time.Minute), StateSince: now.Add(-since),
+		TicketTitle: w.Title, Prompt: w.Prompt, Task: w.Task, CostUSD: w.CostUSD, PRURL: w.PRURL, PRNumber: w.PRNumber,
 	}
 	if w.Issue > 0 {
 		meta.Ticket = fmt.Sprint(w.Issue)
@@ -255,8 +269,11 @@ func rowFor(g Group, w Window, now time.Time) (fleet.Row, fleet.Meta) {
 		meta.SpawnedBy, meta.SpawnedBySession = w.Parent, g.Session
 	}
 	if w.State == "blocked" {
-		meta.PendingTool, meta.PendingToolDetail = w.PendingTool, w.Activity
+		meta.PendingTool, meta.PendingToolDetail = w.PendingTool, cmp.Or(w.PendingDetail, w.Activity)
 		meta.BlockedSince = now.Add(-90 * time.Second)
+		if w.SinceSec > 0 {
+			meta.BlockedSince = now.Add(-since)
+		}
 	}
 	return row, meta
 }

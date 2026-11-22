@@ -37,6 +37,8 @@ type Scene struct {
 	Projects    []Project `yaml:"projects"`
 	Windows     []Window  `yaml:"windows"`
 	Steps       []Step    `yaml:"steps"`
+	// Phone, when set, drives the phone web app over the same fleet.
+	Phone *Phone `yaml:"phone"`
 	// Output is "png" (default: one file per screenshot step) or "gif" (the
 	// whole visible tape is recorded; screenshot steps still write PNGs).
 	Output string `yaml:"output"`
@@ -274,6 +276,9 @@ func (s *Scene) applyDefaults() {
 	}
 	if s.Config.DispatchApproval == "" {
 		s.Config.DispatchApproval = "all"
+	}
+	if s.Phone != nil {
+		s.Phone.applyDefaults()
 	}
 	for i := range s.Projects {
 		if s.Projects[i].Branch == "" {
@@ -517,6 +522,11 @@ func (s *Scene) Validate() error {
 	}
 	if s.Output == "png" && shots == 0 && len(s.Steps) > 0 {
 		add("steps: output png needs at least one screenshot step")
+	}
+	if s.Phone != nil {
+		if err := s.Phone.validate(s); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	return errors.Join(errs...)
 }

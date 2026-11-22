@@ -188,10 +188,7 @@ func (p *pane) startApproval() {
 	}
 	p.busy = true
 	cmdline := p.spec.Window.Approval
-	p.extra = []string{
-		cDim + "⏺" + cReset + " " + cBold + "Bash" + cReset + "(" + cmdline + ")",
-		"  " + cDim + "⎿  Waiting for approval in the agentctl popup…" + cReset,
-	}
+	p.extra = ApprovalWaitingLines(cmdline)
 	p.mu.Unlock()
 	p.draw()
 	go func() {
@@ -209,6 +206,16 @@ func (p *pane) startApproval() {
 		p.mu.Unlock()
 		p.draw()
 	}()
+}
+
+// ApprovalWaitingLines is what the pane shows while agentctl's PreToolUse hook
+// holds the command for approval: Claude Code has not drawn its own
+// permission dialog yet. The phone fixture draws the same lines.
+func ApprovalWaitingLines(cmdline string) []string {
+	return []string{
+		cDim + "⏺" + cReset + " " + cBold + "Bash" + cReset + "(" + cmdline + ")",
+		"  " + cDim + "⎿  Waiting for approval in the agentctl popup…" + cReset,
+	}
 }
 
 // runHook feeds a PreToolUse payload to `agentctl hook-validate-bash` and
