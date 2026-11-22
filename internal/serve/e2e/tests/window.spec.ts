@@ -484,8 +484,10 @@ test("a screenshot can be removed before sending", async ({ page }) => {
 
 test("header: tapping the task line shows the full prompt, again collapses, and a poll keeps it open", async ({ page, control }) => {
   const prompt = "Cover the cart service\n\nWrite table tests for totals.\n  Keep <b>markup</b> literal.\n" + "more detail line\n".repeat(60);
-  await control.patchWindow(SHOP, "@13", { prompt });
+  // An ad-hoc window: no ticket title or issue, a summary recap in place.
+  await control.patchWindow(SHOP, "@13", { title: "", issue: 0, mode: "adhoc", task: "Cover the cart service", prompt, recap: "Writing table tests.", recap_source: "summary" });
   await openWindow(page, "@13");
+  await expect(page.locator(".win-recap")).toHaveText("Writing table tests.");
   const task = page.locator(".win-task");
   await expect(task).toHaveClass(/\bexpandable\b/);
   const short = (await task.textContent()) ?? "";

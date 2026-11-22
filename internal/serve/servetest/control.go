@@ -101,6 +101,10 @@ type windowPatch struct {
 	ShortTitle  *string `json:"short_title"`
 	ShortKind   *string `json:"short_kind"`
 	Prompt      *string `json:"prompt"`
+	Task        *string `json:"task"`
+	Title       *string `json:"title"`
+	Issue       *int    `json:"issue"`
+	Mode        *string `json:"mode"`
 }
 
 func (h *Harness) handlePatchWindow(w http.ResponseWriter, r *http.Request) {
@@ -126,6 +130,10 @@ func (h *Harness) handlePatchWindow(w http.ResponseWriter, r *http.Request) {
 		set(&x.ShortTitle, p.ShortTitle)
 		set(&x.ShortKind, p.ShortKind)
 		set(&x.Prompt, p.Prompt)
+		set(&x.Task, p.Task)
+		set(&x.Title, p.Title)
+		set(&x.Issue, p.Issue)
+		set(&x.Mode, p.Mode)
 	})
 	if errors.Is(err, errNoWindow) {
 		writeErr(w, http.StatusNotFound, err)

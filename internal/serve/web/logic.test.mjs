@@ -434,6 +434,9 @@ console.log("ok: resolved text");
   assert.deepEqual(hl({ recap: "#7 Add a retry", recap_source: "task", issue: 7, activity: "Edit" }), { task: "Issue #7", recap: "" });
   assert.deepEqual(hl({ recap: "#7 Add a retry", recap_source: "task", activity: "Edit" }), { task: "Add a retry", recap: "" });
   assert.deepEqual(hl({}), { task: "", recap: "" });
+  // Ad-hoc: recorded task survives a summary recap; bare: first prompt line beats the activity fallback.
+  assert.deepEqual(hl({ detail: { task: "Fix cart", prompt: "Fix cart\nmore" }, recap: "Working.", recap_source: "summary", activity: "Bash" }), { task: "Fix cart", recap: "Working." });
+  assert.deepEqual(hl({ detail: { prompt: "\n Do the thing\nmore" }, activity: "go test" }), { task: "Do the thing", recap: "" });
 
   assert.equal(fullPrompt({ detail: { prompt: " Fix the bug\n\nin detail " } }, "Fix the bug"), "Fix the bug\n\nin detail");
   assert.equal(fullPrompt({ detail: { prompt: "Fix  the\nbug" } }, "Fix the bug"), "");

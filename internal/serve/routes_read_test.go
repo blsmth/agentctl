@@ -539,17 +539,22 @@ func TestWindowEndpointPromptOnDetailOnly(t *testing.T) {
 	g := testGroup()
 	m := g.Meta["@523"]
 	m.Prompt = "line one\n\nline two"
+	m.Task = "line one"
 	g.Meta["@523"] = m
 	e.fleet.set(g)
 
 	var detail struct {
 		Detail struct {
 			Prompt string `json:"prompt"`
+			Task   string `json:"task"`
 		} `json:"detail"`
 	}
 	w := e.get("/v1/sessions/agentctl-proj/windows/@523")
 	if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
 		t.Fatal(err)
+	}
+	if detail.Detail.Task != "line one" {
+		t.Errorf("detail task = %q", detail.Detail.Task)
 	}
 	if detail.Detail.Prompt != "line one\n\nline two" {
 		t.Errorf("detail prompt = %q", detail.Detail.Prompt)

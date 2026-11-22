@@ -80,7 +80,9 @@ type Window struct {
 	// the window's PR: the header fields of the window view.
 	Title string `json:"title,omitempty"`
 	// Prompt is the full initial prompt (windowstate prompt, served as detail.prompt).
-	Prompt  string  `json:"prompt,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	// Task is the dispatch-time task line (windowstate task, served as detail.task).
+	Task    string  `json:"task,omitempty"`
 	Issue   int     `json:"issue,omitempty"`
 	Model   string  `json:"model,omitempty"`
 	CostUSD float64 `json:"cost_usd,omitempty"`
@@ -240,7 +242,7 @@ func rowFor(g Group, w Window, now time.Time) (fleet.Row, fleet.Meta) {
 	meta := fleet.Meta{
 		WindowID: w.ID, Mode: mode, Branch: w.Branch, MainPane: paneID(w.ID),
 		UpdatedAt: now.Add(-2 * time.Minute), StateSince: now.Add(-3 * time.Minute),
-		TicketTitle: w.Title, Prompt: w.Prompt, CostUSD: w.CostUSD, PRURL: w.PRURL,
+		TicketTitle: w.Title, Prompt: w.Prompt, Task: w.Task, CostUSD: w.CostUSD, PRURL: w.PRURL,
 	}
 	if w.Issue > 0 {
 		meta.Ticket = fmt.Sprint(w.Issue)

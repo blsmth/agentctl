@@ -922,6 +922,17 @@ export function taskLine(win) {
 }
 
 /**
+ * recordedTask is the task line of a window with no ticket: the one-line task
+ * recorded at dispatch (detail.task), else the first line of its prompt.
+ */
+function recordedTask(win) {
+  const t = win?.detail?.task?.trim();
+  if (t) return t;
+  const first = (win?.detail?.prompt ?? "").split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  return first.length > 120 ? `${first.slice(0, 119)}…` : first;
+}
+
+/**
  * headerLines are the window header's two text lines. task is the task the
  * window was given; recap is what it is doing (away summary or session title),
  * shown in place of the last tool call. A task recap repeats the task line, so
@@ -929,7 +940,7 @@ export function taskLine(win) {
  * line falls back to the last tool call, keeping the header to one line.
  */
 export function headerLines(win) {
-  let task = taskLine(win);
+  let task = taskLine(win) || recordedTask(win);
   let recap = "";
   if (win && hasRecap(win)) {
     if (win.recap_source !== "task") recap = win.recap;

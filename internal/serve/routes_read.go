@@ -144,6 +144,8 @@ type windowDetail struct {
 	Title             string  `json:"title,omitempty"`
 	// Prompt is the full initial prompt (detail route only, never the list).
 	Prompt string `json:"prompt,omitempty"`
+	// Task is the one-line task recorded at dispatch (ad-hoc and review windows).
+	Task string `json:"task,omitempty"`
 }
 
 type windowBody struct {
@@ -161,6 +163,7 @@ func detailFor(row fleet.Row, m fleet.Meta) windowDetail {
 		CostUSD:           m.CostUSD,
 		Title:             m.TicketTitle,
 		Prompt:            m.Prompt,
+		Task:              m.Task,
 	}
 	if row.Recap.Text != "" {
 		d.Summary = row.Recap.Text
