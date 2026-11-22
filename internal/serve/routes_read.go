@@ -90,6 +90,8 @@ func (s *Server) registerRead(rt *Router) {
 	rt.Device("GET /v1/projects", s.handleProjects)
 	rt.Feature("launch-options")
 	rt.Device("GET /v1/launch-options", s.handleLaunchOptions)
+	rt.Feature("host")
+	rt.Device("GET /v1/host", s.handleHost)
 	rt.Feature("events")
 	rt.Device("GET /v1/events", s.handleEvents)
 }

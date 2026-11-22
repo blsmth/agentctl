@@ -16,6 +16,7 @@ export function mountSettings(root, ctx) {
       { class: "form" },
       h("p", {}, "Server version: ", version),
       h("p", {}, "Write actions: ", ctx.hasFeature("write") ? "enabled" : "disabled (read-only)"),
+      ctx.hasFeature("host") ? h("a", { class: "btn", href: "#/host" }, "Host status ›") : null,
       h("h2", {}, "Notifications"),
       pushBox,
     ),

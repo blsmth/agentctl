@@ -714,6 +714,7 @@ export function parseRoute(hash) {
     return { name: "dispatch" };
   }
   if (parts[0] === "settings") return { name: "settings" };
+  if (parts[0] === "host") return { name: "host" };
   return { name: "fleet" };
 }
 
@@ -1741,4 +1742,79 @@ export function defaultAgentFor(projects, projectDir, agentNames, userPicked) {
   const p = (projects ?? []).find((x) => x.dir === projectDir);
   const def = p?.default_agent ?? "";
   return def && (agentNames ?? []).includes(def) ? def : "";
+}
+
+/** formatBytes renders a byte count as "1.5 GB". */
+export function formatBytes(n) {
+  if (!Number.isFinite(n) || n < 0) return "";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${i === 0 ? v : v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
+}
+
+/** formatUptime renders seconds as "3d 4h", "2h 05m" or "5m". */
+export function formatUptime(sec) {
+  if (!Number.isFinite(sec) || sec < 0) return "";
+  const m = Math.floor(sec / 60);
+  const h = Math.floor(m / 60);
+  const d = Math.floor(h / 24);
+  if (d > 0) return `${d}d ${h % 24}h`;
+  if (h > 0) return `${h}h ${String(m % 60).padStart(2, "0")}m`;
+  if (m > 0) return `${m}m`;
+  return `${Math.floor(sec)}s`;
+}
+
+/**
+ * hostLevels grades the values of a GET /v1/host body: "bad" for load above
+ * the core count, swap over 75% used, memory pressure warn/critical (critical
+ * and a near-full swap are "bad", warn is "warn"), CPU over 90%.
+ */
+export function hostLevels(body) {
+  const host = body?.host ?? {};
+  const out = { load: "", cpu: "", memory: "", swap: "", pressure: "" };
+  if (host.load && host.cores) {
+    if (host.load.l1 > host.cores) out.load = "bad";
+    else if (host.load.l1 > host.cores * 0.7) out.load = "warn";
+  }
+  if (typeof host.cpu_percent === "number") out.cpu = host.cpu_percent > 90 ? "bad" : host.cpu_percent > 70 ? "warn" : "";
+  if (host.memory?.total) {
+    const used = 1 - host.memory.available / host.memory.total;
+    out.memory = used > 0.9 ? "bad" : used > 0.8 ? "warn" : "";
+  }
+  if (host.swap?.total) {
+    const used = host.swap.used / host.swap.total;
+    out.swap = used > 0.75 ? "bad" : used > 0.5 ? "warn" : "";
+  }
+  if (host.memory_pressure === "critical") out.pressure = "bad";
+  else if (host.memory_pressure === "warn") out.pressure = "warn";
+  return out;
+}
+
+/**
+ * hostConnection summarises client-side connection numbers from a probe: the
+ * round-trip of the request (ms), and the clock skew as the server time minus
+ * the midpoint of the request, in ms (positive: the server is ahead).
+ */
+export function hostConnection(serverTime, sentMs, receivedMs) {
+  const rtt = Math.max(0, Math.round(receivedMs - sentMs));
+  const t = Date.parse(serverTime);
+  const skew = Number.isNaN(t) ? null : Math.round(t - (sentMs + receivedMs) / 2);
+  return { rtt, skew };
+}
+
+/** pushSample appends a sample, keeping the last n. */
+export function pushSample(samples, v, n = 8) {
+  return [...samples, v].slice(-n);
+}
+
+/** formatSkew renders clock skew in ms as "+0.3s" / "in sync". */
+export function formatSkew(ms) {
+  if (ms === null || ms === undefined) return "unknown";
+  if (Math.abs(ms) < 500) return "in sync";
+  return `${ms > 0 ? "+" : "-"}${(Math.abs(ms) / 1000).toFixed(1)}s`;
 }

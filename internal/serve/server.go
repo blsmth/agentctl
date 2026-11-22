@@ -27,6 +27,7 @@ import (
 	"github.com/blsmth/agentctl/internal/phoneview"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/sweeprun"
+	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // Options configures a Server.
@@ -56,6 +57,10 @@ type Options struct {
 	Panes  PaneSource
 	Agents AgentLister
 	Awake  Holder
+	// Host collects machine stats for GET /v1/host; nil means gopsutil.
+	// TmuxWindows counts tmux windows; nil means tmux.ListWindowsErr.
+	Host        HostSource
+	TmuxWindows func() (int, error)
 	// Write API dependencies; nil means tmux and in-process dispatch.
 	Keys       KeySender
 	Injector   Injector
@@ -118,6 +123,12 @@ type Server struct {
 	agents    AgentLister
 	bus       *fleetwatch.Bus
 	holder    Holder
+	host      HostSource
+	hostWin   func() (int, error)
+	hostWinMu sync.Mutex
+	hostWinAt time.Time
+	hostWinN  int
+	hostWinOK bool
 	pingEvery time.Duration
 	// groupOrderPath is the saved group order's path (Options.GroupOrderPath).
 	groupOrderPath func() (string, error)
@@ -215,6 +226,13 @@ func New(opts Options) (*Server, error) {
 	s.sweep = opts.Sweep
 	if s.sweep == nil {
 		s.sweep = sweeprun.Run
+	}
+	s.host, s.hostWin = opts.Host, opts.TmuxWindows
+	if s.host == nil {
+		s.host = newLiveHost(now)
+	}
+	if s.hostWin == nil {
+		s.hostWin = tmux.CountAllWindows
 	}
 	s.launchCfg = opts.LaunchConfig
 	if s.launchCfg == nil {

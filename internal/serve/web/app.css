@@ -309,3 +309,24 @@ body.term-open nav { display: none; }
   color: var(--fg); background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--working); }
 .waiting-child.blocked { border-left-color: var(--blocked); } .waiting-child.waiting { border-left-color: var(--waiting); }
 .waiting-child .glyph { width: 1.2rem; color: var(--working); } .waiting-child.blocked .glyph { color: var(--blocked); } .waiting-child.waiting .glyph { color: var(--waiting); }
+
+/* Host screen */
+.host { gap: 0; padding-bottom: 1rem; }
+.hsec { display: flex; flex-direction: column; gap: .35rem; margin-bottom: 1rem; }
+.hsec h2 { margin: .5rem 0 0; }
+.hkv { display: flex; justify-content: space-between; gap: .75rem; font-size: .9rem; flex-wrap: wrap; }
+.hval { text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.hval.warn, td.warn { color: #b26a00; font-weight: 600; }
+.hval.bad, td.bad { color: #d70015; font-weight: 600; }
+.hbar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.hbar-fill { height: 100%; background: var(--accent); }
+.hbar-fill.warn { background: #ff9f0a; }
+.hbar-fill.bad { background: #ff3b30; }
+.htable { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.htable th { text-align: left; color: var(--muted); font-weight: 500; padding: .2rem 0; }
+.htable td { padding: .25rem 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.htable .num { text-align: right; font-variant-numeric: tabular-nums; padding-left: .5rem; white-space: nowrap; }
+@media (prefers-color-scheme: dark) {
+  .hval.warn, td.warn { color: #ffb340; }
+  .hval.bad, td.bad { color: #ff6961; }
+}

@@ -3,6 +3,7 @@ import { get } from "./api.js";
 import { mountApprovals } from "./approvals.js";
 import { mountDispatch } from "./dispatch.js";
 import { mountFleet } from "./fleet.js";
+import { mountHost } from "./host.js";
 import { startLive } from "./live.js";
 import {
   applyGone,
@@ -22,6 +23,7 @@ import { mountWindow } from "./window.js";
 const store = {
   fleet: null,
   downSince: null,
+  fleetAt: null,
   approvals: [],
   recentApprovals: [],
   listeners: new Set(),
@@ -82,6 +84,7 @@ function route() {
   else if (r.name === "terminal" && ctx.hasFeature("terminal")) cleanup = mountTerminal(root, ctx, r);
   else if (r.name === "approvals" && ctx.hasFeature("approvals")) cleanup = mountApprovals(root, ctx, r);
   else if (r.name === "dispatch") cleanup = mountDispatch(root, ctx, { dir: r.dir });
+  else if (r.name === "host") cleanup = mountHost(root, ctx);
   else if (r.name === "settings") cleanup = mountSettings(root, ctx);
   else cleanup = mountFleet(root, ctx);
   document.querySelectorAll("nav a").forEach((a) => {
@@ -94,6 +97,7 @@ function startFeed() {
     events: ctx.hasFeature("events"),
     onFleet(body) {
       store.fleet = body;
+      store.fleetAt = Date.now();
       store.emit({ type: "fleet" });
       // A fleet event starts every (re)connected stream: events may have
       // been missed while it was down.
