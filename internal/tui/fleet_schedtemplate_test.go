@@ -63,7 +63,7 @@ func TestScheduleFormTemplateSource(t *testing.T) {
 		t.Fatalf("source %d agent %q", fm.source, fm.agent.value())
 	}
 	out := ansi.Strip(m.render())
-	for _, want := range []string{"Prompt from", "Template", "triage", "Weekly triage", "Triage the backlog.", "from template (go-engineer)"} {
+	for _, want := range []string{"Source", "Template", "triage", "Weekly triage", "Triage the backlog.", "from template (go-engineer)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("form missing %q:\n%s", want, out)
 		}
@@ -143,5 +143,23 @@ func TestScheduleFormSwitchTemplateAndPrompt(t *testing.T) {
 	ov, err := fleetSchedStore(nil).Overview()
 	if err != nil || len(ov.Jobs) != 1 || ov.Jobs[0].Invalid != `template "triage" not found` {
 		t.Errorf("overview after delete = %+v, %v", ov.Jobs, err)
+	}
+}
+
+func TestScheduleFormClickTemplateSource(t *testing.T) {
+	f := newSchedFixture(t)
+	withSchedTemplates(t, schedTriage)
+	m := openNewForm(t, f)
+	m = schedClick(t, m, "Source", "Template")
+	fm := formOf(t, m)
+	if fm.focus != stopSource || fm.source != schedSourceTemplate || fm.agent.value() != "" {
+		t.Fatalf("click on Template: focus %d source %d agent %q", fm.focus, fm.source, fm.agent.value())
+	}
+	if !strings.Contains(ansi.Strip(m.render()), "Triage the backlog.") {
+		t.Errorf("template prompt not shown:\n%s", ansi.Strip(m.render()))
+	}
+	m = schedClick(t, m, "Source", "Own prompt")
+	if formOf(t, m).source != schedSourcePrompt {
+		t.Error("click on Prompt did not switch back")
 	}
 }

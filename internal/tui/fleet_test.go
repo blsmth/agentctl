@@ -41,8 +41,11 @@ func TestRenderRow_TruncatesAtNarrowWidth(t *testing.T) {
 		if lipgloss.Width(out) > 100 {
 			t.Errorf("rendered width %d exceeds cw=100", lipgloss.Width(out))
 		}
-		if !strings.Contains(out, "go-engineer") {
-			t.Errorf("expected full name in wide render, got %q", out)
+		if strings.Contains(out, "go-engineer") {
+			t.Errorf("row must not show the agent name, got %q", out)
+		}
+		if !strings.Contains(out, "Editing monitor.go") {
+			t.Errorf("expected the title in wide render, got %q", out)
 		}
 	})
 

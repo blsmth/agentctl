@@ -139,6 +139,12 @@ func (m FleetModel) footerBody(cw int) string {
 		b.WriteString(fleetErrStyle.Render("  " + truncateToWidth(m.jumpErr, cw-2)))
 		return b.String()
 	}
+	b.WriteString(fitHints(m.footerHints(), cw))
+	return b.String()
+}
+
+// footerHints are the hints the hint bar offers in the current state.
+func (m FleetModel) footerHints() []fleetHint {
 	hints := fleetFooterHints
 	switch {
 	case m.newSessionOpen():
@@ -161,8 +167,7 @@ func (m FleetModel) footerBody(cw int) string {
 	case m.selectedSchedLineValue() != nil:
 		hints = m.schedHints()
 	}
-	b.WriteString(fitHints(hints, cw))
-	return b.String()
+	return hints
 }
 
 // liveHintRows is how many rows the footer occupies beyond the rows the
