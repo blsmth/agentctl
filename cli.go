@@ -1187,12 +1187,17 @@ type RaceCmd struct {
 	Speed    float64       `help:"Replay at N times real time (overrides --duration)"`
 	Duration time.Duration `default:"45s" help:"Fit the agent's whole timeline into this long a replay"`
 	JSON     bool          `help:"Print totals as JSON and exit (no TUI)"`
+
+	RealLife    bool    `name:"real-life" help:"Also show the human's time as calendar time: breaks, lunch, nights and weekends"`
+	FocusHours  float64 `name:"focus-hours" default:"6" help:"With --real-life: hours of real keyboard work per day"`
+	DaysPerWeek int     `name:"days-per-week" default:"5" help:"With --real-life: working days per week"`
 }
 
 func (c *RaceCmd) Run() error {
 	return cmd.RunRace(os.Stdout, cmd.RaceOptions{
-		Target:   c.Target,
-		Params:   race.Params{WPM: c.WPM, ReadWPM: c.ReadWPM, Think: c.Think, MaxGap: c.MaxGap},
+		Target: c.Target,
+		Params: race.Params{WPM: c.WPM, ReadWPM: c.ReadWPM, Think: c.Think, MaxGap: c.MaxGap,
+			RealLife: c.RealLife, Schedule: race.Schedule{FocusHours: c.FocusHours, DaysPerWeek: c.DaysPerWeek}},
 		Speed:    c.Speed,
 		Duration: c.Duration,
 		JSON:     c.JSON,

@@ -112,6 +112,39 @@ func TestRunRaceJSON(t *testing.T) {
 	}
 }
 
+func TestRunRaceJSONRealLife(t *testing.T) {
+	stubRace(t, "", "", nil, nil)
+	run := func(realLife bool) map[string]any {
+		opts := raceOpts(raceFixturePath)
+		opts.JSON = true
+		opts.Params.RealLife = realLife
+		var out bytes.Buffer
+		if err := RunRace(&out, opts); err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(out.Bytes(), &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	if _, ok := run(false)["real_life"]; ok {
+		t.Error("real_life present without --real-life")
+	}
+	rl, ok := run(true)["real_life"].(map[string]any)
+	if !ok {
+		t.Fatal("real_life missing with --real-life")
+	}
+	for _, k := range []string{"calendar_seconds", "calendar", "finish", "nights", "weekend_days", "break_seconds", "speedup_calendar", "focus_hours", "days_per_week"} {
+		if _, ok := rl[k]; !ok {
+			t.Errorf("real_life lacks %s", k)
+		}
+	}
+	if rl["focus_hours"] != 6.0 || rl["days_per_week"] != 5.0 {
+		t.Errorf("schedule = %v", rl)
+	}
+}
+
 func TestRunRaceEmptyTranscript(t *testing.T) {
 	stubRace(t, "", "", nil, nil)
 	path := filepath.Join(t.TempDir(), "empty.jsonl")
@@ -155,6 +188,10 @@ func TestRunRaceValidates(t *testing.T) {
 		{"max-gap", func(o *RaceOptions) { o.Params.MaxGap = 0 }, "--max-gap"},
 		{"speed", func(o *RaceOptions) { o.Speed = -2 }, "--speed"},
 		{"duration", func(o *RaceOptions) { o.Duration = 0 }, "--duration"},
+		{"focus zero", func(o *RaceOptions) { o.Params.RealLife = true; o.Params.Schedule.FocusHours = 0 }, "--focus-hours"},
+		{"focus high", func(o *RaceOptions) { o.Params.RealLife = true; o.Params.Schedule.FocusHours = 17 }, "--focus-hours"},
+		{"days zero", func(o *RaceOptions) { o.Params.RealLife = true; o.Params.Schedule.DaysPerWeek = 0 }, "--days-per-week"},
+		{"days eight", func(o *RaceOptions) { o.Params.RealLife = true; o.Params.Schedule.DaysPerWeek = 8 }, "--days-per-week"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

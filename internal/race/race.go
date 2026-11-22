@@ -41,11 +41,16 @@ type Params struct {
 	ReadWPM float64       // reading speed, words per minute
 	Think   time.Duration // pause added to every step
 	MaxGap  time.Duration // longest gap between entries charged to the agent
+
+	// RealLife converts the human's nonstop effort into calendar time on
+	// Schedule (see CalendarFor).
+	RealLife bool
+	Schedule Schedule
 }
 
 // DefaultParams are the defaults of `agentctl race`.
 func DefaultParams() Params {
-	return Params{WPM: 60, ReadWPM: 250, Think: 0, MaxGap: 60 * time.Second}
+	return Params{WPM: 60, ReadWPM: 250, Think: 0, MaxGap: 60 * time.Second, Schedule: DefaultSchedule()}
 }
 
 // Step is one unit of work: a tool call with its result, or a text block.
@@ -90,6 +95,18 @@ func (r *Race) Speedup() float64 {
 		return 0
 	}
 	return float64(r.HumanTotal) / float64(r.AgentTotal)
+}
+
+// Calendar lays the human's total effort onto the params' schedule.
+func (r *Race) Calendar() Calendar { return CalendarFor(r.HumanTotal, r.Params.Schedule) }
+
+// CalendarSpeedup is calendar time over the agent's active time, or 0 when the
+// agent took no time.
+func (r *Race) CalendarSpeedup() float64 {
+	if r.AgentTotal <= 0 {
+		return 0
+	}
+	return float64(r.Calendar().Elapsed) / float64(r.AgentTotal)
 }
 
 // Build extracts the steps from entries and prices them with p.

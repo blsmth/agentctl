@@ -22,6 +22,21 @@ type Summary struct {
 	Speedup       float64        `json:"speedup"`
 	Assumptions   Assumptions    `json:"assumptions"`
 	AssumptionTxt string         `json:"assumptions_text"`
+	RealLife      *RealLife      `json:"real_life,omitempty"`
+}
+
+// RealLife is the calendar view of the human's time, present only with
+// --real-life.
+type RealLife struct {
+	CalendarSeconds float64 `json:"calendar_seconds"`
+	Calendar        string  `json:"calendar"`
+	Finish          string  `json:"finish"`
+	Nights          int     `json:"nights"`
+	WeekendDays     int     `json:"weekend_days"`
+	BreakSeconds    float64 `json:"break_seconds"`
+	SpeedupCalendar float64 `json:"speedup_calendar"`
+	FocusHours      float64 `json:"focus_hours"`
+	DaysPerWeek     int     `json:"days_per_week"`
 }
 
 // Assumptions are the parameters the human time rests on.
@@ -40,7 +55,7 @@ func (r *Race) Summarize(source string) Summary {
 		by[k] = v
 		calls += v
 	}
-	return Summary{
+	sum := Summary{
 		Source:       source,
 		Steps:        len(r.Steps),
 		ToolCalls:    calls,
@@ -61,6 +76,21 @@ func (r *Race) Summarize(source string) Summary {
 		},
 		AssumptionTxt: r.Assumptions(),
 	}
+	if r.Params.RealLife {
+		c := r.Calendar()
+		sum.RealLife = &RealLife{
+			CalendarSeconds: round1(c.Elapsed.Seconds()),
+			Calendar:        FormatCalendar(c.Elapsed),
+			Finish:          c.Finish,
+			Nights:          c.Nights,
+			WeekendDays:     c.WeekendDays,
+			BreakSeconds:    round1(c.Breaks.Seconds()),
+			SpeedupCalendar: round1(r.CalendarSpeedup()),
+			FocusHours:      r.Params.Schedule.FocusHours,
+			DaysPerWeek:     r.Params.Schedule.DaysPerWeek,
+		}
+	}
+	return sum
 }
 
 // Assumptions is the one-line statement of what the numbers assume.
@@ -73,9 +103,14 @@ func (r *Race) HumanAssumptions() string {
 	p := r.Params
 	s := fmt.Sprintf("human: %g WPM typing, %g WPM reading", p.WPM, p.ReadWPM)
 	if p.Think > 0 {
-		return s + fmt.Sprintf(", thinks %s per step", shortDur(p.Think))
+		s += fmt.Sprintf(", thinks %s per step", shortDur(p.Think))
+	} else {
+		s += " · nonstop: never pauses, never typos, reads every result in full"
 	}
-	return s + " · nonstop: never pauses, never typos, reads every result in full"
+	if p.RealLife {
+		s += fmt.Sprintf(" · real life: %g focus hours a day, %d days a week, starts Mon 09:00", p.Schedule.FocusHours, p.Schedule.DaysPerWeek)
+	}
+	return s
 }
 
 // AgentAssumptions is how the agent's time is measured.
