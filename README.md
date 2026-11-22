@@ -85,6 +85,16 @@ agentctl status                  # every agent in every live session
 agentctl status --blocked        # only the ones waiting on you
 ```
 
+Replay a session as a race against a person doing the same typing and reading by hand:
+
+```bash
+agentctl race                    # this window's session (or: @N, a session ID, a .jsonl path)
+agentctl race @12 --wpm 80 --think 5s
+agentctl race <session-id> --json   # totals only: steps, tool calls, chars typed/read, agent vs human time
+```
+
+The agent's time comes from the transcript's timestamps, with any gap over `--max-gap` (default 60s) capped and time spent waiting on your next prompt not counted. The human's time is the characters they would type (commands, new code, prompts, messages; only the pattern or path for Read/Grep/Glob) at `--wpm` (60) plus the tool output they would read at `--read-wpm` (250), plus `--think` per step (0s, so the default is a lower bound). The replay is compressed to `--duration` (45s), or runs at `--speed N` times real time; both racers share the clock. Keys: space pause, `+`/`-` speed, `r` restart, `e` end card, `q` quit.
+
 ## How it works
 
 Each agent is a tmux window. Claude Code hooks write per-window state (`working`, `blocked`, `idle`) and a background monitor reads it every 500ms, renames windows with state glyphs, fires notifications, and writes a snapshot the chrome bar renders. State comes from hooks; session JSONL logs are read only for metrics. Token, context, and rate-limit figures are shown by the Claude Code status line (`agentctl statusline`).

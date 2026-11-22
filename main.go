@@ -576,6 +576,8 @@ var readOnlyCommands = map[string]bool{
 	// log under <StateDir>/cron (launchd runs the tick from there); a fire
 	// binds its own project's runtime dir.
 	"cron": true,
+	// race only reads a transcript (and windowstate to find it).
+	"race": true,
 }
 
 // isReadOnlyInvocation reports whether args name a read-only invocation:
