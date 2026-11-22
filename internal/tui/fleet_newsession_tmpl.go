@@ -152,18 +152,12 @@ func (s *fleetNewSessionState) choose(i int) {
 	s.agent.CursorEnd()
 	s.model.SetValue(t.Model)
 	s.model.CursorEnd()
-	s.promptEdited = false
-	s.prompt.SetValue(flatten(t.Prompt))
+	s.prompt.SetValue("") // extra instructions only; the body is never copied here
 	s.prompt.CursorEnd()
 	if d := t.ExpandedDir(); d != "" {
 		s.input.SetValue(d)
 		s.input.CursorEnd()
 	}
-}
-
-// flatten shows a multi-line prompt on one line.
-func flatten(s string) string {
-	return strings.Join(strings.Fields(s), " ")
 }
 
 // setFocus moves focus to field f.
@@ -234,16 +228,12 @@ func (m *FleetModel) handleNewSessionFormKey(key string) bool {
 	return false
 }
 
-// updateNewSessionInput feeds msg to the focused input and notes prompt edits.
+// updateNewSessionInput feeds msg to the focused input.
 func (m *FleetModel) updateNewSessionInput(msg tea.Msg) tea.Cmd {
 	s := m.dirPrompt
 	in := s.inputOf(s.focus)
-	before := in.Value()
 	var cmd tea.Cmd
 	*in, cmd = in.Update(msg)
-	if s.focus == nsFieldPrompt && in.Value() != before {
-		s.promptEdited = true
-	}
 	return cmd
 }
 
@@ -266,8 +256,8 @@ func (m *FleetModel) submitNewSessionTemplate(dir string) tea.Cmd {
 	if v := strings.TrimSpace(s.model.Value()); v != "" {
 		args = append(args, "--model", v)
 	}
-	if s.promptEdited {
-		args = append(args, "--prompt="+s.prompt.Value())
+	if extra := strings.TrimSpace(s.prompt.Value()); extra != "" {
+		args = append(args, "--prompt="+extra)
 	}
 	m.cancelNewSession()
 	m.jumpErr = ""
@@ -315,7 +305,7 @@ var nsLabels = map[int]string{
 	nsFieldDir:      "  dir:      ",
 	nsFieldAgent:    "  agent:    ",
 	nsFieldModel:    "  model:    ",
-	nsFieldPrompt:   "  prompt:   ",
+	nsFieldPrompt:   "  extra:    ",
 }
 
 // newSessionFormView renders the form lines for content width cw.

@@ -74,7 +74,7 @@ func TestNewSessionTemplatePrefillAndLaunch(t *testing.T) {
 	m = pressNS(t, m, tea.KeyPressMsg{Code: tea.KeyUp}) // dir -> template
 	m = pressNS(t, m, keyRight)                         // none -> audit
 	s := m.dirPrompt
-	if s.agent.Value() != "writer" || s.model.Value() != "opus" || s.prompt.Value() != "Audit the logs." {
+	if s.agent.Value() != "writer" || s.model.Value() != "opus" || s.prompt.Value() != "" {
 		t.Fatalf("prefill agent=%q model=%q prompt=%q", s.agent.Value(), s.model.Value(), s.prompt.Value())
 	}
 	if m.newSessionLines() != 5 {
@@ -92,14 +92,14 @@ func TestNewSessionTemplatePrefillAndLaunch(t *testing.T) {
 	msg := cmd()
 	want := []string{"--template", "audit", "--agent", "writer", "--model", "opusx"}
 	if !slices.Equal(run.args, want) {
-		t.Errorf("args = %v, want %v (prompt untouched is not sent)", run.args, want)
+		t.Errorf("args = %v, want %v (an untouched extra field sends nothing)", run.args, want)
 	}
 	if lm, ok := msg.(fleetLaunchedMsg); !ok || lm.windowID != "@55" || lm.err != nil {
 		t.Errorf("msg = %+v", msg)
 	}
 }
 
-func TestNewSessionTemplateEditedPromptIsSent(t *testing.T) {
+func TestNewSessionTemplateExtraInstructionsAreSent(t *testing.T) {
 	run := stubTemplates(t, testTemplates, nil)
 	m, _ := hubKey(t, foldModel(t), fleetNewSessionKey)
 	m = pressNS(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
@@ -111,7 +111,7 @@ func TestNewSessionTemplateEditedPromptIsSent(t *testing.T) {
 	m, _ = hubKey(t, m, "!")
 	_, cmd := hubKey(t, m, "enter")
 	cmd()
-	if !slices.Contains(run.args, "--prompt=Audit the logs.!") {
+	if !slices.Contains(run.args, "--prompt=!") {
 		t.Errorf("args = %v", run.args)
 	}
 }
@@ -187,5 +187,24 @@ func TestNewSessionTemplateNarrow(t *testing.T) {
 				t.Errorf("cw=%d: line is %d wide: %q", cw, w, ansi.Strip(line))
 			}
 		}
+	}
+}
+
+func TestNewSessionTemplateReloadsOnSubmit(t *testing.T) {
+	run := stubTemplates(t, testTemplates, []string{"writer"})
+	m, _ := hubKey(t, foldModel(t), fleetNewSessionKey)
+	m = pressNS(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
+	m = pressNS(t, m, keyRight) // audit
+	m = pressNS(t, m, keyTab)   // dir
+	other := t.TempDir()
+	// The new dir lists a project-local agent and no "audit" template.
+	fleetNewSessionTemplates = func(string) []prompttemplate.Template { return nil }
+	m = typeDir(t, m, other)
+	m, cmd := hubKey(t, m, "enter")
+	if cmd != nil || !strings.Contains(m.jumpErr, "audit not found") || !m.newSessionOpen() {
+		t.Fatalf("cmd=%v err=%q open=%v", cmd != nil, m.jumpErr, m.newSessionOpen())
+	}
+	if run.dir != "" {
+		t.Error("launched")
 	}
 }

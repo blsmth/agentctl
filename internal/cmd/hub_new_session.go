@@ -40,8 +40,8 @@ var hubNewSessionLive = hubNewSessionDeps{
 }
 
 // HubTemplateLaunch is a template launch from the hub's new-session form.
-// Prompt, when set, replaces the template body (the user edited it); the
-// template name is still recorded on the session.
+// Prompt is extra instructions appended to the template body, as with
+// `dispatch --template X --prompt`.
 type HubTemplateLaunch struct {
 	Template, Agent, Model, Prompt string
 }
@@ -61,13 +61,10 @@ func launchHubTemplate(dir string, t HubTemplateLaunch) (string, error) {
 // replaces its body.
 func hubTemplateOptions(dir string, t HubTemplateLaunch) (DispatchOptions, error) {
 	opts, err := applyDispatchTemplate(DispatchOptions{
-		Template: t.Template, Agent: t.Agent, Model: t.Model, Dir: dir,
+		Template: t.Template, Agent: t.Agent, Model: t.Model, Dir: dir, Prompt: t.Prompt,
 	}, dir)
 	if err != nil {
 		return opts, err
-	}
-	if t.Prompt != "" {
-		opts.Prompt = t.Prompt
 	}
 	if err := validateAgentName(opts.Agent, dir); err != nil {
 		return opts, err

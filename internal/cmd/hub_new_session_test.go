@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/prompttemplate"
 )
 
@@ -200,13 +201,16 @@ func TestHubTemplateOptions(t *testing.T) {
 			t.Errorf("opts = %+v", got)
 		}
 	})
-	t.Run("form values and an edited prompt override, name still recorded", func(t *testing.T) {
-		got, err := hubTemplateOptions(dir, HubTemplateLaunch{Template: "t", Agent: "other", Model: "haiku", Prompt: "Edited."})
+	t.Run("form values override, extra instructions append to a multi-line body", func(t *testing.T) {
+		body := "Steps:\n1. a\n2. b\n```sh\nx\n```"
+		stubTemplate(t, prompttemplate.Template{Agent: "writer", Prompt: body}, nil)
+		got, err := hubTemplateOptions(dir, HubTemplateLaunch{Template: "t", Agent: "other", Model: "haiku", Prompt: "word"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Template != "t" || got.Agent != "other" || got.Model != "haiku" || got.Prompt != "Edited." {
-			t.Errorf("opts = %+v", got)
+		want := body + "\n\n" + dispatch.AdditionalInstructionsHeading + "\n\nword"
+		if got.Template != "t" || got.Agent != "other" || got.Model != "haiku" || got.Prompt != want {
+			t.Errorf("opts = %+v\nwant prompt %q", got, want)
 		}
 	})
 	t.Run("missing agent is an error", func(t *testing.T) {

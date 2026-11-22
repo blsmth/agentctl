@@ -177,7 +177,6 @@ type fleetNewSessionState struct {
 	sel                  int      // 0 = none, i = tmpls[i-1]
 	focus                int
 	agent, model, prompt textinput.Model
-	promptEdited         bool
 	loadedFor            string // dir the templates were listed for
 }
 
@@ -247,7 +246,14 @@ func (m *FleetModel) submitNewSession() tea.Cmd {
 		m.jumpErr = err.Error()
 		return nil
 	}
-	if m.dirPrompt.chosen() != nil {
+	if t := m.dirPrompt.chosen(); t != nil {
+		// Templates and agents come from the typed dir, not the last one listed.
+		name := t.Name
+		m.newSessionReload()
+		if m.dirPrompt.chosen() == nil {
+			m.jumpErr = fmt.Sprintf("template %s not found in %s", name, dir)
+			return nil
+		}
 		return m.submitNewSessionTemplate(dir)
 	}
 	m.cancelNewSession()
