@@ -120,14 +120,26 @@ func (o Options) check(j cron.Job) (errs, warns []cron.FieldError) {
 	case backend == launchopts.BackendAnthropic:
 		// `claude --model` takes any full model id, so a claude-* id outside
 		// the built-in registry is allowed; anything else must be an alias.
-		if !strings.HasPrefix(base, "claude-") {
+		switch {
+		case ExtraAnthropicAliases[base] || strings.HasPrefix(base, "claude-"):
+		case strings.Contains(base, "claude"):
+			// Bedrock/Vertex ids and ARNs: valid for those providers.
+			add(&warns, cron.FieldModel, "%q is not a known Anthropic model id; check the name", j.Model)
+		default:
 			add(&errs, cron.FieldModel, "unknown model %q: use %s, or a claude-… id", j.Model, strings.Join(launchopts.AnthropicModels[1:], ", "))
 		}
+	case len(o.Models[backend]) == 0:
+		// No list was loaded for this backend (live Ollama list, empty Nous
+		// catalog): nothing to compare against.
 	default:
 		add(&warns, cron.FieldModel, "%q is not in the model list of backend %s; check the name", j.Model, backend)
 	}
 	return errs, warns
 }
+
+// ExtraAnthropicAliases are Claude Code model aliases outside
+// launchopts.AnthropicModels that `claude --model` accepts.
+var ExtraAnthropicAliases = map[string]bool{"default": true, "opusplan": true, "best": true}
 
 // baseModel drops a context-size suffix such as "opus[1m]".
 func baseModel(m string) string {

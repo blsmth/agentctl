@@ -278,7 +278,10 @@ func (f *fleetSchedForm) cyclerFor(stop schedStop) *schedCycler {
 	return nil
 }
 
-func plainModel(v string) bool { return strings.HasPrefix(baseModelName(v), "claude-") }
+func plainModel(v string) bool {
+	b := baseModelName(v)
+	return strings.HasPrefix(b, "claude-") || cronedit.ExtraAnthropicAliases[b] || v == "inherit"
+}
 
 // baseModelName drops a context-size suffix such as "opus[1m]".
 func baseModelName(m string) string {
@@ -1604,6 +1607,7 @@ func (f *fleetSchedForm) reviewValue(field, v string) string {
 		if v == "" {
 			return "global"
 		}
+		return strings.NewReplacer("5h 100%", "5h off", "7d 100%", "7d off").Replace(v)
 	}
 	return v
 }

@@ -42,6 +42,9 @@ type schedCycler struct {
 	free bool
 	// customIdx is the index of the typed option, -1 for none.
 	customIdx int
+	// prevIdx is the selection from before the filter started, restored when
+	// the filter empties.
+	prevIdx int
 }
 
 // newCycler builds a cycler on cur. A cur missing from opts is appended as an
@@ -155,6 +158,9 @@ func (c *schedCycler) dropCustom() {
 
 // typeText appends typed text to the filter.
 func (c *schedCycler) typeText(s string) {
+	if c.filter == "" {
+		c.prevIdx = c.idx
+	}
 	c.filter += s
 	c.sync()
 }
@@ -182,14 +188,11 @@ func (c *schedCycler) clearFilter() bool {
 // sync selects the first match of the filter, or the typed option when a
 // free cycler has no match.
 func (c *schedCycler) sync() {
-	wasCustom := c.customIdx >= 0 && c.idx == c.customIdx
 	c.dropCustom()
 	vis := c.visible()
 	switch {
 	case c.filter == "":
-		if wasCustom {
-			c.idx = 0
-		}
+		c.idx = min(max(c.prevIdx, 0), len(c.opts)-1)
 	case len(vis) > 0:
 		if !slices.Contains(vis, c.idx) {
 			c.idx = vis[0]

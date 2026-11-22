@@ -70,6 +70,21 @@ func TestCyclerStepFilterAndUnknown(t *testing.T) {
 	}
 }
 
+func TestCyclerFilterEraseRestoresSelection(t *testing.T) {
+	opts := []schedOpt{{value: "architect", label: "architect"}, {value: "go-engineer", label: "go-engineer"}}
+	for _, erase := range []func(*schedCycler){
+		func(c *schedCycler) { c.backspace() },
+		func(c *schedCycler) { c.clearFilter() },
+	} {
+		c := newCycler(opts, "go-engineer", true, nil)
+		c.typeText("z")
+		erase(&c)
+		if c.value() != "go-engineer" || len(c.opts) != 2 {
+			t.Errorf("after erase: %q, %d opts", c.value(), len(c.opts))
+		}
+	}
+}
+
 func richSchedEnv() schedEnv {
 	e := testSchedEnv()
 	e.opts.Backends = []string{"ollama"}
