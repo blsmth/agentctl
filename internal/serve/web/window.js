@@ -17,6 +17,7 @@ import {
   windowHash,
   rowHeadline,
   detailTitle,
+  fullPrompt,
   exactRows,
   focusedOption,
   hangingIndent,
@@ -269,7 +270,21 @@ export function mountWindow(root, ctx, { session, windowId }) {
   const title = h("h1", { class: "win-h1" }, windowId);
   const statePill = h("span", { class: "state-pill" }, h("span", { class: "dot" }), h("span", { class: "state-text" }));
   const where = h("span", { class: "win-where" });
-  const task = h("div", { class: "win-task", hidden: true });
+  // Tap the task line to show the full initial prompt (only when it has more).
+  const task = h("div", { class: "win-task", hidden: true, onclick: () => {
+      if (!taskFull) return;
+      task.classList.toggle("open");
+      paintTask();
+    } });
+  let taskCollapsed = "";
+  let taskFull = "";
+  // paintTask shows the full prompt while open, else the short line. The open
+  // class survives polls, and the text is only rewritten when it changed so the
+  // scroll position of a long prompt is kept.
+  function paintTask() {
+    const shown = task.classList.contains("open") && taskFull ? taskFull : taskCollapsed;
+    if (task.textContent !== shown) task.textContent = shown;
+  }
   const scheduled = h("div", { class: "win-scheduled", hidden: true });
   // Tap the recap to show it in full; it is clamped to two lines.
   const recap = h("div", { class: "win-recap", hidden: true, onclick: () => recap.classList.toggle("open") });
@@ -399,7 +414,11 @@ export function mountWindow(root, ctx, { session, windowId }) {
     waitingKids.hidden = waitingKids.childElementCount === 0;
     where.textContent = [dt.agent, win.project, win.branch].filter(Boolean).join(" · ");
     const { task: line, recap: summary } = headerLines(win);
-    task.textContent = line;
+    taskCollapsed = line;
+    taskFull = fullPrompt(win, line);
+    task.classList.toggle("expandable", !!taskFull);
+    if (!taskFull) task.classList.remove("open");
+    paintTask();
     task.hidden = !line;
     recap.textContent = summary;
     recap.hidden = !summary;

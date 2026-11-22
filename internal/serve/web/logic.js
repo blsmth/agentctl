@@ -939,6 +939,18 @@ export function headerLines(win) {
   return { task, recap };
 }
 
+/**
+ * fullPrompt is the text the task line expands to: the window's full initial
+ * prompt (detail.prompt), or "" when there is none or it adds nothing over the
+ * collapsed line (same words ignoring whitespace), so the line stays inert.
+ */
+export function fullPrompt(win, line) {
+  const p = (win?.detail?.prompt ?? "").trim();
+  if (!p) return "";
+  const norm = (s) => s.replace(/\s+/g, " ").trim();
+  return norm(p) === norm(line ?? "") ? "" : p;
+}
+
 /** stateLabel is the header pill text: "working for 3m", "idle". */
 export function stateLabel(win, nowMs, index) {
   const s = displayState(win, index);

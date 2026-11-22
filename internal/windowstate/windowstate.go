@@ -26,6 +26,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
@@ -52,7 +53,11 @@ type WindowState struct {
 	// TicketTitle. It is a short-title input only; it never drives the recap
 	// row, which is what Task is for.
 	FirstPrompt string `json:"first_prompt,omitempty"`
-	Mode        string `json:"mode,omitempty"`
+	// Prompt is the full initial prompt of an ad-hoc or review dispatch, capped
+	// at MaxPromptBytes at launch. The phone's window detail shows it when the
+	// task line is tapped; ticket dispatches leave it empty (TicketTitle only).
+	Prompt string `json:"prompt,omitempty"`
+	Mode   string `json:"mode,omitempty"`
 	// Backend is the name of the config backend this window's claude was
 	// launched against ("" = Anthropic). Restore re-resolves it from config.
 	Backend string `json:"backend,omitempty"`
@@ -963,4 +968,19 @@ func HasBusyChild(parentID, parentSessionID string, all map[string]WindowState) 
 		}
 	}
 	return false
+}
+
+// MaxPromptBytes caps WindowState.Prompt.
+const MaxPromptBytes = 16 * 1024
+
+// CapPrompt trims s to MaxPromptBytes on a rune boundary.
+func CapPrompt(s string) string {
+	if len(s) <= MaxPromptBytes {
+		return s
+	}
+	cut := MaxPromptBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }

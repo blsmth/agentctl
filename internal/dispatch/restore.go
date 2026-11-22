@@ -61,6 +61,7 @@ type RestoreRequest struct {
 	TicketTitle string
 	Task        string
 	FirstPrompt string
+	Prompt      string
 	Branch      string
 	WorktreeDir string
 	PRNumber    int
@@ -159,6 +160,7 @@ func applyRestoreMeta(ws *windowstate.WindowState, req RestoreRequest) {
 	ws.TicketTitle = req.TicketTitle
 	ws.Task = req.Task
 	ws.FirstPrompt = req.FirstPrompt
+	ws.Prompt = req.Prompt
 	ws.Branch = req.Branch
 	ws.WorktreeDir = req.WorktreeDir
 	ws.PRNumber = req.PRNumber

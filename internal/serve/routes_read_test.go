@@ -533,3 +533,28 @@ func TestPaneEndpointMarksPhoneView(t *testing.T) {
 		t.Fatal("stale marker still active")
 	}
 }
+
+func TestWindowEndpointPromptOnDetailOnly(t *testing.T) {
+	e := newReadEnv(t)
+	g := testGroup()
+	m := g.Meta["@523"]
+	m.Prompt = "line one\n\nline two"
+	g.Meta["@523"] = m
+	e.fleet.set(g)
+
+	var detail struct {
+		Detail struct {
+			Prompt string `json:"prompt"`
+		} `json:"detail"`
+	}
+	w := e.get("/v1/sessions/agentctl-proj/windows/@523")
+	if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.Detail.Prompt != "line one\n\nline two" {
+		t.Errorf("detail prompt = %q", detail.Detail.Prompt)
+	}
+	if strings.Contains(e.get("/v1/fleet").Body.String(), "line two") {
+		t.Error("fleet list must not carry the prompt")
+	}
+}

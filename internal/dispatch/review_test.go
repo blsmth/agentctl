@@ -288,3 +288,12 @@ func TestLaunchVerifyAgent(t *testing.T) {
 		})
 	}
 }
+
+func TestPromptFor(t *testing.T) {
+	if got := PromptFor(Request{CustomPrompt: "  full\nprompt  "}); got != "full\nprompt" {
+		t.Errorf("got %q", got)
+	}
+	if got := PromptFor(Request{Ticket: 3, CustomPrompt: "x"}); got != "" {
+		t.Errorf("ticket dispatch got %q", got)
+	}
+}

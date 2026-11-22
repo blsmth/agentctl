@@ -95,6 +95,8 @@ button.group-add { padding: 0; border: 0; background: none; cursor: pointer; }
 .state-pill.waiting { --c: var(--waiting); } .state-pill.working { --c: var(--working); } .state-pill.blocked { --c: var(--blocked); } .state-pill.done { --c: var(--done); }
 .win-task { font-size: .95rem; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .win-scheduled { font-size: .85rem; color: var(--muted); }
+.win-task.expandable { cursor: pointer; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+.win-task.expandable.open { display: block; white-space: pre-wrap; overflow: auto; max-height: 50vh; overflow-wrap: anywhere; text-decoration: none; }
 .win-recap { font-size: .9rem; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; cursor: pointer; }
 .win-recap.open { display: block; }
 .chips { display: flex; flex-wrap: wrap; gap: .35rem; }

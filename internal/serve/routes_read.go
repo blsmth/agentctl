@@ -142,6 +142,8 @@ type windowDetail struct {
 	Model             string  `json:"model,omitempty"`
 	CostUSD           float64 `json:"cost_usd,omitempty"`
 	Title             string  `json:"title,omitempty"`
+	// Prompt is the full initial prompt (detail route only, never the list).
+	Prompt string `json:"prompt,omitempty"`
 }
 
 type windowBody struct {
@@ -158,6 +160,7 @@ func detailFor(row fleet.Row, m fleet.Meta) windowDetail {
 		Model:             row.ModelName,
 		CostUSD:           m.CostUSD,
 		Title:             m.TicketTitle,
+		Prompt:            m.Prompt,
 	}
 	if row.Recap.Text != "" {
 		d.Summary = row.Recap.Text

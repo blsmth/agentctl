@@ -56,15 +56,15 @@ var paneKinds = map[string]string{
 // deliberately flat: the harness derives the fleet row, windowstate metadata
 // and served window from it, so they can never disagree.
 type Window struct {
-	ID          string `json:"id"`
-	Index       int    `json:"index"`
-	Agent       string `json:"agent"`
-	State       string `json:"state"` // idle | working | blocked
-	Done        bool   `json:"done,omitempty"`
-	Mode        string `json:"mode,omitempty"` // "" or bare = interactive; dispatch, adhoc = dispatched
-	Branch      string `json:"branch,omitempty"`
-	Parent      string `json:"parent,omitempty"` // dispatching window ID in the same session
-	Activity    string `json:"activity,omitempty"`
+	ID       string `json:"id"`
+	Index    int    `json:"index"`
+	Agent    string `json:"agent"`
+	State    string `json:"state"` // idle | working | blocked
+	Done     bool   `json:"done,omitempty"`
+	Mode     string `json:"mode,omitempty"` // "" or bare = interactive; dispatch, adhoc = dispatched
+	Branch   string `json:"branch,omitempty"`
+	Parent   string `json:"parent,omitempty"` // dispatching window ID in the same session
+	Activity string `json:"activity,omitempty"`
 	// Recap and RecapSource (summary, task, title, activity) fill the row's
 	// recap line as fleet.TagLogs would.
 	Recap       string `json:"recap,omitempty"`
@@ -72,13 +72,15 @@ type Window struct {
 	// ShortTitle is the recap's generated short title (served as "title").
 	ShortTitle string `json:"short_title,omitempty"`
 	// ShortKind is the title's work-kind tag (served as "kind").
-	ShortKind string `json:"short_kind,omitempty"`
+	ShortKind   string `json:"short_kind,omitempty"`
 	ContextPct  int    `json:"context_pct,omitempty"`
 	PendingTool string `json:"pending_tool,omitempty"`
 	// Title is the task title (windowstate ticket_title), Issue the GitHub
 	// issue number, Model the model name, CostUSD the session cost and PRURL
 	// the window's PR: the header fields of the window view.
-	Title   string  `json:"title,omitempty"`
+	Title string `json:"title,omitempty"`
+	// Prompt is the full initial prompt (windowstate prompt, served as detail.prompt).
+	Prompt  string  `json:"prompt,omitempty"`
 	Issue   int     `json:"issue,omitempty"`
 	Model   string  `json:"model,omitempty"`
 	CostUSD float64 `json:"cost_usd,omitempty"`
@@ -238,7 +240,7 @@ func rowFor(g Group, w Window, now time.Time) (fleet.Row, fleet.Meta) {
 	meta := fleet.Meta{
 		WindowID: w.ID, Mode: mode, Branch: w.Branch, MainPane: paneID(w.ID),
 		UpdatedAt: now.Add(-2 * time.Minute), StateSince: now.Add(-3 * time.Minute),
-		TicketTitle: w.Title, CostUSD: w.CostUSD, PRURL: w.PRURL,
+		TicketTitle: w.Title, Prompt: w.Prompt, CostUSD: w.CostUSD, PRURL: w.PRURL,
 	}
 	if w.Issue > 0 {
 		meta.Ticket = fmt.Sprint(w.Issue)

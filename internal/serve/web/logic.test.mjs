@@ -11,7 +11,7 @@ import {
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
   actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
-  defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines,
+  defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines, fullPrompt,
   waitingIndex, displayState, waitingLabel, actionsFor, effectiveState,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
 } from "./logic.js";
@@ -434,6 +434,12 @@ console.log("ok: resolved text");
   assert.deepEqual(hl({ recap: "#7 Add a retry", recap_source: "task", issue: 7, activity: "Edit" }), { task: "Issue #7", recap: "" });
   assert.deepEqual(hl({ recap: "#7 Add a retry", recap_source: "task", activity: "Edit" }), { task: "Add a retry", recap: "" });
   assert.deepEqual(hl({}), { task: "", recap: "" });
+
+  assert.equal(fullPrompt({ detail: { prompt: " Fix the bug\n\nin detail " } }, "Fix the bug"), "Fix the bug\n\nin detail");
+  assert.equal(fullPrompt({ detail: { prompt: "Fix  the\nbug" } }, "Fix the bug"), "");
+  assert.equal(fullPrompt({ detail: {} }, "x"), "");
+  assert.equal(fullPrompt({}, "x"), "");
+  assert.equal(fullPrompt({ detail: { prompt: "p" } }, ""), "p");
 
   const now = Date.parse("2026-11-17T10:03:00Z");
   assert.equal(stateLabel({ state: "working", state_since: "2026-11-17T10:00:00Z" }, now), "working for 3m");
