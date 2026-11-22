@@ -88,6 +88,7 @@ func TestParseSceneErrors(t *testing.T) {
 		{"bad duration", strings.Replace(minimalScene, "state: working", "state: working\n    since: soon", 1), `since: "soon"`},
 		{"png without screenshot", strings.Replace(minimalScene, "  - screenshot", "  - sleep: 1s", 1), "needs at least one screenshot"},
 		{"bad agentctl theme", "config:\n  theme: no-such-theme\n" + minimalScene, `config.theme: unknown agentctl theme "no-such-theme"`},
+		{"bad default_agent", "config:\n  default_agent: Go Engineer\n" + minimalScene, "config.default_agent"},
 		{"bad dispatch_approval", "config:\n  dispatch_approval: sometimes\n" + minimalScene, "config.dispatch_approval"},
 		{"inline transcript unknown key", strings.Replace(minimalScene, "state: working", "state: working\n    transcript:\n      entries:\n        - usr: hi", 1), "field usr not found"},
 		{"bad schedule", "schedules:\n  - {name: n1, project: acme-api, agent: go-engineer, schedule: \"61 * * * *\", prompt: x}\n" + minimalScene, "schedules[0] (n1).schedule"},

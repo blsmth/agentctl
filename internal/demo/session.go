@@ -71,7 +71,7 @@ func Up(l Layout, s *Scene, opts UpOptions) (*Manifest, error) {
 	if _, err := os.Stat(l.Agentctl()); err != nil {
 		return nil, fmt.Errorf("agentctl binary missing (build it with `go build -o %s .`): %w", l.Agentctl(), err)
 	}
-	if err := WriteWorld(l, s, opts.Fixtures, time.Now()); err != nil {
+	if err := WriteWorld(l, s, opts.Fixtures, time.Now(), opts.Self); err != nil {
 		return nil, err
 	}
 	if _, err := t.Run("-f", l.TmuxConf(), "new-session", "-d", "-s", bootSession, "-c", l.Home()); err != nil {

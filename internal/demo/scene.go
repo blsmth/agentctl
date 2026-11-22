@@ -66,6 +66,9 @@ type Config struct {
 	Theme            string `yaml:"theme"`             // agentctl theme
 	DispatchApproval string `yaml:"dispatch_approval"` // all, non-review, off
 	StatuslineFormat string `yaml:"statusline_format"` // rich, complementary, full, mobile, minimal
+	// DefaultAgent is default_agent: what a launch from the hub uses. A
+	// stub agent file is written for it.
+	DefaultAgent string `yaml:"default_agent"`
 	// Serve fakes a running agentctl serve (a stub listening on the control
 	// socket in the demo's own state dir), so the hub shows "📱 serve".
 	Serve bool `yaml:"serve"`
@@ -418,6 +421,10 @@ func (s *Scene) Validate() error {
 		add("config.statusline_format: unknown format %q", s.Config.StatuslineFormat)
 	}
 
+	if d := s.Config.DefaultAgent; d != "" && !nameRE.MatchString(d) {
+		add("config.default_agent: %q must be lowercase letters, digits and dashes", d)
+	}
+
 	if len(s.Projects) == 0 {
 		add("projects: at least one project is required")
 	}
@@ -708,6 +715,9 @@ func (s *Scene) Agents() []string {
 		if !slices.Contains(out, sc.Agent) {
 			out = append(out, sc.Agent)
 		}
+	}
+	if d := s.Config.DefaultAgent; d != "" && !slices.Contains(out, d) {
+		out = append(out, d)
 	}
 	slices.Sort(out)
 	return out
