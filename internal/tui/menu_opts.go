@@ -15,7 +15,6 @@ import (
 // plain Claude Code against Anthropic.
 const backendAnthropic = launchopts.BackendAnthropic
 
-
 // modelOpt is one entry of the model selector.
 type modelOpt = launchopts.ModelChoice
 
