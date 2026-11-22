@@ -2,7 +2,7 @@
 
 - Install for development: `just install` (builds to `~/.local/bin/agentctl`; override with `BINDIR`)
 - Build only: `just build` (local `./agentctl`)
-- Full restart: `just restart` (install + kill tmux session + relaunch)
+- Full restart: `just restart` (install + kill tmux session + relaunch). Usually unnecessary: the monitor, hub, chrome bars and HUD hot-reload a new binary, and `agentctl apply-config` re-applies hooks and keybindings to a live session
 - Debug logs: `just logs` (tails `.agentctl/logs/agentctl.log` for the current project)
 - Go 1.26+, tmux 3.4+, Bubble Tea for TUI popups
 
@@ -19,7 +19,7 @@
 - Log significant actions with `logging.Log(...)` for debug traceability
 - Return errors from library code, wrapped with context (`fmt.Errorf("doing X: %w", err)`); command `Run()` methods return the error to Kong
 - Tmux interactions go in `internal/tmux/`, never in root-level files
-- There is no plugin registry. Reactive logic is a plain function called from `detectAndFireTransitions()` in `monitor.go`
+- There is no plugin registry. Monitor-side reactive logic is a plain function called from `detectAndFireTransitions()` in `monitor.go`. It does not run under `monitor: false`, so anything that must always happen lives in the state writers (hooks, `signal`, `internal/reconcile` for Gone)
 
 ### Bubble Tea TUI Pattern
 
@@ -49,7 +49,7 @@ The implementation is `dispatchIssue()` in `internal/cmd/dispatch.go`, reusable 
 
 ### State is hook-driven
 
-Claude Code hooks write each window's state to `.agentctl/windows/<windowID>.json` (`internal/windowstate`). The monitor reads it every tick. JSONL logs are parsed only for metrics. Config reference: `docs/configuration.md`.
+Claude Code hooks write each window's state to `.agentctl/windows/<windowID>.json` (`internal/windowstate`), and the same writers rename the window (`internal/winname`). Readers (chrome bar, hub, `agentctl status`, serve) build their view from `tmux list-windows` plus those records (`fleet.LoadAgents`); the monitor is optional. JSONL logs are parsed only for tokens, cost and summaries. Config reference: [configuration.md](configuration.md).
 
 ### tmux patterns
 

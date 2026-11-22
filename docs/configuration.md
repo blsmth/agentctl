@@ -31,6 +31,9 @@ The project-local file is overlaid on the global one field by field: a non-empty
 - `models.overrides` merges per model key.
 - `hooks` replaces the global map entirely when the project sets any hooks.
 - Booleans that default to `true` (`open_pr_in_browser`, `auto_reclaim_worktree`, `monitor`) are tri-state: an explicit `false` in the project file survives the merge.
+- Guards a project may only tighten: `bash_preview` (on, never off), `dispatch_approval` (stricter only), `monitor` (off, never on), and per-agent `auto_improve`/`cross_context` (off only) and `blocked_commands`/`blocked_patterns` (add entries only).
+
+The **Scope** column below says which layer a key is read from: `project` keys may be overridden by `.agentctl/config.json`; `global` keys are read only from the global file, and a project value is ignored (most with a log warning).
 
 ### Command keys are global-only
 
@@ -46,42 +49,42 @@ Rationale: a project-local file can arrive with a cloned repository. Executing c
 
 ## Top-level keys
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `notify_cmd` | string | platform default | Desktop-notification command template. See [Notifications](#notifications). |
-| `open_pr_in_browser` | bool | `true` | Open a dispatched agent's PR in the browser (`gh pr view --web`) when it finishes. Each PR opens once per monitor process. |
-| `monitor` | bool | `true` | Kill switch for the per-project monitor. When `false`, session start and the hook watchdog do not start or replace a monitor and `agentctl health` says "monitor disabled". A running monitor is not killed; the next relaunch just does not start one. Everything except the macapp's `state.json` feed works without it. Global-only in the enabling direction: a project-local `"monitor": false` switches it off for that project, but a project can never switch it back on. |
-| `close_children` | bool | `true` | When an agent window closes (any way: kill popup, `agentctl kill`, the hub or phone close, `/exit`, sweep, closing the tmux window by hand), also close the live windows it dispatched, and theirs recursively, in any project session. Children are matched on both `spawned_by` and `spawned_by_session`; cron, phone-launched and other detached windows are never closed this way. Nothing cascades when the whole session goes away (session kill, relaunch, restart, tmux server death) or the window was saved for a restore. Closing a window never deletes its worktree. `false` leaves dispatched windows running. Global config only. |
-| `chrome_bar` | bool | `false` | Dock the two-row chrome bar (keybind hints and agent tabs) at the bottom of every project window. When `false` (the default) no window gets one and the native tmux status line is on instead, showing the session name and one tab per window (window names carry the state glyphs; click a tab to switch). Read whenever a bar would be created, so new windows follow a change at once; run `agentctl apply-config` to switch existing windows (off kills their chrome bar panes, on launches bars where one is missing). In a live session started before this key existed, the first new window without a bar also turns the status line on; existing windows keep their bars until `apply-config`. The hub, mobile view and hub viewer sessions keep their status line off either way. Global config only. |
-| `hub_chrome` | bool | `false` | Show each agent's chrome bar (with `chrome_bar` on) inside the hub's live pane. When `false` the hub zooms the viewed window's main pane, which hides the bar there (the hub list already shows every agent); the zoom is undone when the hub moves to another row, closes, or you switch to the project session. Project sessions attached directly always show the bar. The hub key `c` toggles it for the running hub. Global config only. |
-| `bash_preview` | bool | `false` | Show the human approval popup before **every** Bash tool call, not just `agentctl dispatch` and `agentctl cron add/resume/run --force`. See [bash_preview](#bash_preview). |
-| `dispatch_approval` | string | `non-review` | Which `agentctl dispatch` commands need the approval popup: `all`, `non-review` (all except PR review dispatches), or `off`. Global-only in the loosening direction. See [dispatch_approval](#dispatch_approval). |
-| `pr_review` | string | `always` | Whether orchestrators send every PR to a dispatched reviewer: `always`, `optional` (their call, by size and risk) or `off`. Project config may override it. See [pr_review](#pr_review). |
-| `statusline_mobile_format` | string | `mobile` | Statusline format used while the phone web app has a live terminal or the window detail screen open on the window and no laptop tmux client is looking at it. Same values as `statusline_format`; unknown values fall back to `mobile`. Set it equal to `statusline_format` to disable the switch. See [statusline_format and statusline_align](#statusline_format-and-statusline_align). |
-| `statusline_format` | string | `rich` | What `agentctl statusline` prints: `rich`, `complementary`, `full`, `mobile`, or `minimal`. Unknown values fall back to `rich`. |
-| `statusline_align` | string | `left` | `left` or `right`. Right-aligns the `rich` format's lines. Unknown values fall back to `left`. |
-| `work_journal` | bool | `false` | Journal a session summary on session end for all agents (needs `llm.provider`). Per-agent values can also enable it. |
-| `llm` | object | disabled | Local model provider. See [llm](#llm). |
-| `titles` | object | on with a `nous` backend | Short AI row titles in the hub and the phone app, generated through a Nous Portal backend. Global-only. See [titles](#titles). |
-| `default_agent` | string | first discovered agent | Agent launched by the quick-launch keybinding. A project-local value overrides the global one only when it passes the safety checks in [permissions.md](permissions.md) (otherwise the global value is used, with a warning); ignored with a warning if it is not a discovered agent. |
-| `theme` | string | `catppuccin-mocha` | Color theme name. |
-| `auto_poll` | bool | `false` | Ticket-browser autopilot mode: every `auto_poll_interval` the open ticket browser dispatches open issues labelled `ready` (skipping `in-progress`). Global config only. Toggle it with `P` or the header pill in the browser, which asks before turning it on. |
-| `auto_poll_interval` | string | `5m` | Autopilot poll interval (Go duration). |
-| `restore_max_age` | string | `168h` | Oldest saved `state.json` that `agentctl restore` will restore agents from after a relaunch (Go duration). `0` or negative disables the gate. Global config only. Skipped agents are named in the log. |
-| `new_window_position` | string | `left` | Where new agent windows open in the tmux window list: `left` (first position) or `right` (appended). Unknown values fall back to `left`. Global config only. Utility windows (tickets, sessions, agents, shell) are unaffected. |
-| `session_retention_days` | int | `30` | Days to keep session metadata before purging. |
-| `dispatch.on_complete` | string | empty | Deprecated; use `hooks.dispatch_complete`. Still honored as a fallback. Global-only. |
-| `hooks` | object | none | Event name to list of shell commands. Global-only. See [hooks](#hooks). |
-| `rate_limit.token_cap` | int | `88000` | **Deprecated, unused.** Formerly estimated usage when no rate-limit percentage had been pushed; the monitor no longer derives rate limits. Still accepted so existing config files keep loading. |
-| `metrics` | object | disabled | Prometheus endpoint and remote write. See [metrics](#metrics). |
-| `models` | object | built-in registry | Model registry overrides and context thresholds. See [models](#models). |
-| `backends` | object | none | Named self-hosted endpoints. Global-only. See [Backends](#backends-ollama-and-nous-portal). |
-| `accounts` | object | none | Named Claude logins, one config dir each. Global-only. See [Accounts](#accounts-multiple-claude-logins). |
-| `default_account` | string | none | Account used when nothing else picks one. Global-only. |
-| `account_rules` | array | none | Route launches to an account by repo root. Global-only. |
-| `serve` | object | defaults | `agentctl serve` (mobile web app server). Global-only. See [serve](#serve). |
-| `cron` | object | defaults | `agentctl cron` (scheduled agent runs): kill switch and throttles. Global-only. See [cron](#cron). |
-| `agents` | object | none | Per-agent settings. See [Per-agent settings](#per-agent-settings). |
+| Key | Type | Default | Scope | Description |
+|---|---|---|---|---|
+| `notify_cmd` | string | platform default | global | Desktop-notification command template. See [Notifications](#notifications). |
+| `open_pr_in_browser` | bool | `true` | project | Open a dispatched agent's PR in the browser (`gh pr view --web`) when it finishes. Runs from the Stop hook's detached `dispatch-complete`, not the monitor; each PR opens once, deduped across processes by marker files in `<runtimeDir>/opened-prs/`. |
+| `monitor` | bool | `true` | project (off only) | Kill switch for the per-project monitor. When `false`, session start and the hook watchdog do not start or replace a monitor and `agentctl health` says "monitor disabled". A running monitor is not killed; the next relaunch just does not start one. Everything works without it; only the optional token enrichment from `state.json` stops. Global-only in the enabling direction: a project-local `"monitor": false` switches it off for that project, but a project can never switch it back on. |
+| `close_children` | bool | `true` | global | When an agent window closes (any way: kill popup, `agentctl kill`, the hub or phone close, `/exit`, sweep, closing the tmux window by hand), also close the live windows it dispatched, and theirs recursively, in any project session. Children are matched on both `spawned_by` and `spawned_by_session`; cron, phone-launched and other detached windows are never closed this way. Nothing cascades when the whole session goes away (session kill, relaunch, restart, tmux server death) or the window was saved for a restore. Closing a window never deletes its worktree. `false` leaves dispatched windows running. Global config only. |
+| `chrome_bar` | bool | `false` | global | Dock the two-row chrome bar (keybind hints and agent tabs) at the bottom of every project window. When `false` (the default) no window gets one and the native tmux status line is on instead, showing the session name and one tab per window (window names carry the state glyphs; click a tab to switch). Read whenever a bar would be created, so new windows follow a change at once; run `agentctl apply-config` to switch existing windows (off kills their chrome bar panes, on launches bars where one is missing). In a live session started before this key existed, the first new window without a bar also turns the status line on; existing windows keep their bars until `apply-config`. The hub, mobile view and hub viewer sessions keep their status line off either way. Global config only. |
+| `hub_chrome` | bool | `false` | global | Show each agent's chrome bar (with `chrome_bar` on) inside the hub's live pane. When `false` the hub zooms the viewed window's main pane, which hides the bar there (the hub list already shows every agent); the zoom is undone when the hub moves to another row, closes, or you switch to the project session. Project sessions attached directly always show the bar. The hub key `c` toggles it for the running hub. Global config only. |
+| `bash_preview` | bool | `false` | project (tighten only) | Show the human approval popup before **every** Bash tool call, not just `agentctl dispatch` and `agentctl cron add/resume/run --force`. See [bash_preview](#bash_preview). |
+| `dispatch_approval` | string | `non-review` | project (tighten only) | Which `agentctl dispatch` commands need the approval popup: `all`, `non-review` (all except PR review dispatches), or `off`. Global-only in the loosening direction. See [dispatch_approval](#dispatch_approval). |
+| `pr_review` | string | `always` | project | Whether orchestrators send every PR to a dispatched reviewer: `always`, `optional` (their call, by size and risk) or `off`. Project config may override it. See [pr_review](#pr_review). |
+| `statusline_mobile_format` | string | `mobile` | project | Statusline format used while the phone web app has a live terminal or the window detail screen open on the window and no laptop tmux client is looking at it. Same values as `statusline_format`; unknown values fall back to `mobile`. Set it equal to `statusline_format` to disable the switch. See [statusline_format and statusline_align](#statusline_format-and-statusline_align). |
+| `statusline_format` | string | `rich` | project | What `agentctl statusline` prints: `rich`, `complementary`, `full`, `mobile`, or `minimal`. Unknown values fall back to `rich`. |
+| `statusline_align` | string | `left` | project | `left` or `right`. Right-aligns the `rich` format's lines. Unknown values fall back to `left`. |
+| `work_journal` | bool | `false` | project | Journal a session summary on session end for all agents (needs `llm.provider`). Per-agent values can also enable it. |
+| `llm` | object | disabled | global | Local model provider for the work journal. See [llm](#llm). |
+| `titles` | object | on with a `nous` backend | global | Short AI row titles in the hub and the phone app, generated through a Nous Portal backend. Global-only. See [titles](#titles). |
+| `default_agent` | string | none | project (checked) | Agent launched by the quick-launch keybinding (prefix+`A`, `agentctl launch` with no name), and the agent the phone's Dispatch sheet preselects; `agentctl init` offers to set it. Unset, quick-launch reports that no default is configured. A project-local value overrides the global one only when it passes the safety checks in [permissions.md](permissions.md) (otherwise the global value is used, with a warning); ignored with a warning if it is not a discovered agent. |
+| `theme` | string | `catppuccin-mocha` | project | Color theme name. |
+| `auto_poll` | bool | `false` | global | Ticket-browser autopilot mode: every `auto_poll_interval` the open ticket browser dispatches open issues labelled `ready` (skipping `in-progress`). Global config only. Toggle it with `P` or the header pill in the browser, which asks before turning it on. |
+| `auto_poll_interval` | string | `5m` | project | Autopilot poll interval (Go duration). |
+| `restore_max_age` | string | `168h` | global | Oldest saved restore file (`restore.json`, or the one-release `state.json` fallback) that `agentctl restore` will restore agents from after a relaunch (Go duration). `0` or negative disables the gate. Global config only. Skipped agents are named in the log. |
+| `new_window_position` | string | `left` | global | Where new agent windows open in the tmux window list: `left` (first position) or `right` (appended). Unknown values fall back to `left`. Global config only. Utility windows (tickets, sessions, agents, shell) are unaffected. |
+| `session_retention_days` | int | `30` | project | Days to keep session metadata before purging. |
+| `dispatch.on_complete` | string | empty | global | Deprecated; use `hooks.dispatch_complete`. Still honored as a fallback. Global-only. |
+| `hooks` | object | none | global | Event name to list of shell commands. Global-only. See [hooks](#hooks). |
+| `rate_limit.token_cap` | int | `88000` | project | **Deprecated, unused.** Formerly estimated usage when no rate-limit percentage had been pushed; the monitor no longer derives rate limits. Still accepted so existing config files keep loading. |
+| `metrics` | object | disabled | global | Prometheus endpoint and remote write. See [metrics](#metrics). |
+| `models` | object | built-in registry | project | Model registry overrides and context thresholds. See [models](#models). |
+| `backends` | object | none | global | Named self-hosted endpoints. Global-only. See [Backends](#backends-ollama-and-nous-portal). |
+| `accounts` | object | none | global | Named Claude logins, one config dir each. Global-only. See [Accounts](#accounts-multiple-claude-logins). |
+| `default_account` | string | none | global | Account used when nothing else picks one. Global-only. |
+| `account_rules` | array | none | global | Route launches to an account by repo root. Global-only. |
+| `serve` | object | defaults | global | `agentctl serve` (mobile web app server). Global-only. See [serve](#serve). |
+| `cron` | object | defaults | global | `agentctl cron` (scheduled agent runs): kill switch and throttles. Global-only. See [cron](#cron). |
+| `agents` | object | none | per key | Per-agent settings. See [Per-agent settings](#per-agent-settings). |
 
 ### Notifications
 
@@ -186,7 +189,7 @@ When accounts are configured (see [Accounts](#accounts-multiple-claude-logins)),
 
 #### Phone format
 
-A window has one statusline, so the laptop and the phone see the same output. While `agentctl serve` has a live terminal open on a window, or the phone's window detail screen is open on it (that screen polls the pane; its marker expires 10 seconds after the last poll, so a phone that drops without closing stops counting on its own), **and** no laptop tmux client (any session, including the hub; not the phone's own viewer) is actively showing that window, the statusline renders `statusline_mobile_format` (default `mobile`: two short lines with cost, rate limits and branch) instead of `statusline_format`. A client counts as active when it had input within the last 2 minutes (the hub's nested viewer is judged by its own input; the hub's own window switching does not refresh it), so a laptop that is asleep or locked with tmux still attached does not block the phone format. It switches back within about a second of the phone disconnecting or the laptop looking at the window again (Claude Code refreshes the statusline every second). Set `statusline_mobile_format` to the same value as `statusline_format` to turn this off. If tmux cannot be queried, the normal format is used.
+A window has one statusline, so the laptop and the phone see the same output. While `agentctl serve` has a live terminal open on a window, or the phone's window detail screen is open on it (that screen polls the pane; its marker expires 10 seconds after the last poll, so a phone that drops without closing stops counting on its own), **and** no laptop tmux client (any session, including the hub; not the phone's own viewer) is actively showing that window, the statusline renders `statusline_mobile_format` (default `mobile`: two short lines with model, context, session length, rate limits, cost and account) instead of `statusline_format`. A client counts as active when it had input within the last 2 minutes (the hub's nested viewer is judged by its own input; the hub's own window switching does not refresh it), so a laptop that is asleep or locked with tmux still attached does not block the phone format. It switches back within about a second of the phone disconnecting or the laptop looking at the window again (Claude Code refreshes the statusline every second). Set `statusline_mobile_format` to the same value as `statusline_format` to turn this off. If tmux cannot be queried, the normal format is used.
 
 Serve records open terminals as marker files under `<state dir>/phone-viewed/<window id>/`, one per connection; the statusline only runs `tmux list-clients` when such a marker exists.
 
@@ -206,7 +209,7 @@ Lifecycle hooks run shell commands (via `sh -c`) after agentctl's built-in handl
 
 ### llm
 
-A small single-turn completion provider. Its only consumer today is the work journal. Every failure (host down, timeout, invalid response) is non-fatal: the caller logs and moves on.
+A small single-turn completion provider. Its only consumer today is the work journal (short titles use a Nous backend instead; see [titles](#titles)). Global-only: an `llm` block in a project-local config is ignored with a warning. Every failure (host down, timeout, invalid response) is non-fatal: the caller logs and moves on.
 
 | Key | Default | Description |
 |---|---|---|
@@ -280,7 +283,7 @@ Metrics are produced by one per-machine process, `agentctl metrics serve`, not b
 
 ### serve
 
-Settings for `agentctl serve`, the per-machine HTTPS server the mobile web app talks to (design: [design/mobile-web-app.md](design/mobile-web-app.md)). **Every key is global-only**: a `serve` block in a project-local config is ignored with a warning. The server reads it at start; restart it (`agentctl serve install` again, or `launchctl kickstart -k gui/$(id -u)/com.blsmth.agentctl.serve`) after editing; both are human-only (agents are blocked from running them).
+Settings for `agentctl serve`, the per-machine HTTPS server the mobile web app talks to (design: [design/mobile-web-app.md](design/mobile-web-app.md)). **Every key is global-only**: a `serve` block in a project-local config is ignored with a warning. The server reads it at start; restart it after editing (`agentctl serve stop` then `agentctl serve start`, prefix+`W` twice, `agentctl serve install` again, or `launchctl kickstart -k gui/$(id -u)/com.blsmth.agentctl.serve`); all of these are human-only (agents are blocked from running them).
 
 | Key | Default | Description |
 |---|---|---|
@@ -299,7 +302,7 @@ Settings for `agentctl serve`, the per-machine HTTPS server the mobile web app t
 | `serve.ntfy_topic` | none | Also post notifications to `https://ntfy.sh/<topic>`. **ntfy.sh topics are public**: anyone who knows or guesses the name can read every post, so use a long random topic (for example `openssl rand -hex 16`). |
 | `serve.ntfy_details` | `false` | Put agent and project names in ntfy posts, plus a `Click` link to the window (which publishes the server's LAN address). Off by default, a post says only what kind of event happened ("an agent is blocked"). |
 
-State lives in `$XDG_STATE_HOME/agentctl/serve/` (0700): the local CA and server certificate, `devices.json` (token hashes only), `vapid.json` (Web Push keypair, 0600), `subscriptions.json` (per-device push subscriptions; dropped when a device is revoked), `serve.pid`, `serve.log`, and the 0600 control socket `control.sock`. Commands: `agentctl serve` (foreground), `serve install` / `uninstall` (launchd LaunchAgent; prints a systemd user unit on Linux), `serve status`, `serve pair [--name N]`, `serve devices [rm <id|name>]`, `serve logs [-n N] [--audit] [--follow]` (read-only tail of `serve.log` or `audit.jsonl`). Agents cannot touch the serve state dir, restart or reinstall serve, or pair devices (the Bash validator blocks it, since remote approvals depend on serve); `serve logs` is how they read its logs. The CA is name-constrained to local names (`.local`, `.lan`, `.home`, `.home.arpa`, `.internal`, the `serve.hostnames` present when it was created) and private/loopback/ULA IPs; after adding a hostname outside those, run `agentctl serve ca rotate` (every device must reinstall the profile and pair again).
+State lives in `$XDG_STATE_HOME/agentctl/serve/` (0700): the local CA and server certificate, `devices.json` (token hashes only), `vapid.json` (Web Push keypair, 0600), `subscriptions.json` (per-device push subscriptions; dropped when a device is revoked), `serve.pid`, `serve.log`, and the 0600 control socket `control.sock`. Commands: `agentctl serve` (foreground), `serve install` / `uninstall` (launchd LaunchAgent; prints a systemd user unit on Linux), `serve start` / `stop` / `toggle` (start or stop the installed LaunchAgent; stop lasts until the next login; prefix+`W` and the hub's `S` toggle), `serve status`, `serve pair [--name N]`, `serve devices [rm <id|name>]`, `serve logs [-n N] [--audit] [--follow]` (read-only tail of `serve.log` or `audit.jsonl`). Agents cannot touch the serve state dir, restart or reinstall serve, or pair devices (the Bash validator blocks it, since remote approvals depend on serve); `serve logs` is how they read its logs. The CA is name-constrained to local names (`.local`, `.lan`, `.home`, `.home.arpa`, `.internal`, the `serve.hostnames` present when it was created) and private/loopback/ULA IPs; after adding a hostname outside those, run `agentctl serve ca rotate` (every device must reinstall the profile and pair again).
 
 Web Push subscriptions are accepted only for known push services (Apple, Firebase Cloud Messaging, Mozilla, Windows Notification Service), and push requests never connect to private, loopback or link-local addresses or follow redirects.
 
@@ -394,7 +397,7 @@ agentctl cost --json
 
 `agentctl cost` is the default subcommand (`agentctl cost report` is the same), so existing invocations are unchanged.
 
-Columns: DATE, PROJECT, AGENT, MODEL, BILLING, TURNS, CACHE READ, OUTPUT, COST. The totals row has `metered` (the number that matters) and `sub` subtotals; sessions with unknown pricing show `?` and are excluded, with a count. `agentctl usage` stays token-only and `agentctl tables sessions` / the sessions browser now use the same pricing (they show `?` for unpriced models). With `--json`, an unknown cost is `null`.
+Columns: DATE, PROJECT, AGENT, MODEL, BILLING, TURNS, CACHE READ, OUTPUT, COST. The totals row has `metered` (the number that matters) and `sub` subtotals; sessions with unknown pricing show `?` and are excluded, with a count. `agentctl usage` stays token-only and the sessions browser (`agentctl sessions --tui`) uses the same pricing (they show `?` for unpriced models). With `--json`, an unknown cost is `null`.
 
 **Background LLM calls.** agentctl's own LLM requests (short titles today) are invisible in a Claude Code transcript, so every call made through the Nous client is appended to a ledger: `<stateDir>/llm-usage/usage-<YYYY-MM>.ndjson` (UTC month, file `0600`, one `O_APPEND` write per line under a flock so concurrent hooks never interleave). A line has `ts`, `feature` (`titles`), `backend`, `model`, `prompt_tokens`, `completion_tokens`, `cached_tokens` (when reported; `prompt_tokens` includes them), `cost_usd`, `window`, `project`, `ok` and, on failure, `error` (`no_key`, `no_credits`, `timeout`, `network`, `http_<status>`, `decode`, `no_choices`, `invalid_completion`). Failed calls are logged too. `cost_usd` is priced through `internal/tokens` when the line is written, and is `null` when the response had no usage block or the model has no known price: never a guessed default. Housekeeping deletes ledger files not modified for 90 days. `agentctl cost` prints these under a separate **Background LLM calls** heading (calls, failed, prompt/cached/output tokens, cost; `+?` marks calls with no price) over the same `--since`, grouped by `--by model`, `day` or `project` (`--by agent` shows the total only); `--json` carries it as `background_llm` and never folds it into the session totals.
 
@@ -423,7 +426,7 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
 | `context_keys` | string[] | none | Context-store keys always injected at launch for this agent. Global-only. |
 | `dir` | string | empty (portable) | Fixed working directory. Global-only. |
 | `model` | string | inherit | `sonnet`, `opus`, `haiku`, or a full model name. |
-| `effort_level` | string | unset | `low`, `medium`, `high`, `max`, or `auto`. |
+| `effort_level` | string | unset | `low`, `medium`, `high`, `xhigh`, `max`, or `auto`. |
 | `permission_mode` | string | `auto` for worker dispatches; unset otherwise | Value passed to `claude --permission-mode`. Worker dispatches (`--issue`, `--prompt`, `--prompt-key`, `--review-pr`) default to `auto`; interactive modes (bare, discuss, triage, review) get no flag unless set. One of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`; an unknown value logs a warning and falls back to the default. `agentctl launch --permission-mode <mode>` overrides it for a single launch (unknown values are rejected); the hub's "new" action launches with `--permission-mode auto`. |
 | `max_thinking_tokens` | int | `0` (default) | Thinking budget. |
 | `blocked_commands` | string[] | none | Substrings that deny matching Bash commands. |

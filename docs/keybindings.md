@@ -1,6 +1,6 @@
 # Keybindings
 
-All keybindings use the tmux prefix (`ctrl+b`), then the key. The bottom row of the status bar shows available keybinds as a reminder.
+All keybindings use the tmux prefix (`ctrl+b`), then the key. Re-apply them to a running session with `agentctl apply-config` (no restart). With [`chrome_bar`](configuration.md#top-level-keys) on, the bar at the bottom of each window shows the main keys as a reminder; with it off (the default) the native tmux status line shows the window list.
 
 ## Agent management
 
@@ -66,7 +66,7 @@ With the mouse: click a row to select it and double-click to open it. Label chip
 |-----|--------|
 | `s` | **Agent settings** — per-agent config for the focused window |
 | `P` | **Permissions** — manage project-level permission allow lists |
-| `p` | **Theme picker** — choose a chrome-bar theme |
+| `p` | **Theme picker** — choose the color theme (`theme` in config), used by the hub, popups, browsers and the chrome bar |
 
 ## Self-improvement & context
 
@@ -96,16 +96,11 @@ With the mouse: click a row to select it and double-click to open it. Label chip
 | `g` | **Summon hub** — open the fleet hub (`agentctl hub`), a cross-session dashboard of every agentctl session on the machine. Creates the `agentctl-hub` tmux session if it doesn't exist yet. |
 | `b` | **Jump to next blocked** — switch straight to the first blocked agent across every session (`agentctl jump-next-blocked`), from anywhere. Inside the hub it stays in the hub: the blocked row is selected and focus moves to the live pane. |
 
-These two keys are bound server-globally (tmux `bind-key` has no session
-scope), so they work identically from inside the hub itself and from every
-per-project session.
+These two keys are bound server-globally (tmux `bind-key` has no session scope), so they work identically from inside the hub itself and from every per-project session.
 
 ### Prefix keys inside the hub
 
-Bindings are server-global, so a key pressed in the hub would resolve to the
-hub window itself. Instead, every agentctl binding passes the window it was
-pressed in (`AGENTCTL_KEY_WINDOW`), and `agentctl` (see `internal/hubtarget`)
-redirects hub keypresses to the agent shown in the live pane:
+Bindings are server-global, so a key pressed in the hub would resolve to the hub window itself. Instead, every agentctl binding passes the window it was pressed in (`AGENTCTL_KEY_WINDOW`), and `agentctl` (see `internal/hubtarget`) redirects hub keypresses to the agent shown in the live pane:
 
 - **Window-scoped** (`x` kill, `o` logs, `s` settings, `i` improve, `h`/`H` HUD, `C` context push) act on the viewed agent's window.
 - **Project-scoped** (`a` menu, `A` launch, `c` create, `T`/`Q` tickets, `P` permissions, `m`/`t`/`S`/`X` windows) run as if pressed in the viewed agent's project session; new windows land there.
@@ -114,7 +109,7 @@ redirects hub keypresses to the agent shown in the live pane:
 - Popups may open over the hub window; only their target changes.
 - `prefix+Left` / `prefix+Right` (tmux defaults) move focus between the list and the live pane.
 
-The hub window has no chrome bar or per-window HUD of its own (prefix+`h` acts on the viewed agent; the hub's `v` activity pane is a separate, hub-wide HUD). By default the agent's chrome bar is hidden in the live pane too, since the hub list already shows every agent: the hub zooms the viewed window's main pane while it shows it and unzooms it when it moves on, closes, or you switch to that project session (a zoom you made yourself is never undone). Attaching to a project session directly always shows its chrome bar.
+The hub window has no chrome bar or per-window HUD of its own (prefix+`h` acts on the viewed agent; the hub's `v` activity pane is a separate, hub-wide HUD). With `chrome_bar` on, the agent's chrome bar is hidden in the live pane by default, since the hub list already shows every agent: the hub zooms the viewed window's main pane while it shows it and unzooms it when it moves on, closes, or you switch to that project session (a zoom you made yourself is never undone). Attaching to a project session directly always shows its chrome bar (when `chrome_bar` is on).
 
 ### Hub list keys
 
@@ -132,6 +127,7 @@ The hub window has no chrome bar or per-window HUD of its own (prefix+`h` acts o
 | `Z` | **Focus mode** — fold every project with no blocked (⏸) and no working (●) agent; press again to unfold everything. |
 | `f` | **Filter** — cycle `all` → `active` (working + blocked) → `needs you` (blocked + done-unseen). The title shows the active filter. Parents of a matching agent stay visible, dimmed, so the tree still reads; a project with nothing matching shows its header only. |
 | `p` | Open the selected agent's PR. |
+| `o` | **Sort** — toggle the rows within each group between window order (default) and most recent activity first. |
 | `R` | **Rename** the selected agent's title. See below. |
 | `$` | **Shells** — show or hide plain `shell` windows (hidden by default; opening a shell from the hub shows them so it can be selected). |
 | `C` | **Closed agents** — show or hide a Closed section after the live projects: agent windows closed in the last 7 days (from the closed ledger, read only while shown and re-read when it changes), grouped by project, newest first, dimmed with `✗` and "closed 2h ago". A closed row never drives the live pane. `⏎` (or the row menu's **resume**) relaunches its agent in the project's session, resuming (forked) the recorded session in the directory it ran in; when no session ID was recorded or its transcript is gone, the hub says so instead. `p` opens its PR. |
@@ -140,6 +136,7 @@ The hub window has no chrome bar or per-window HUD of its own (prefix+`h` acts o
 | `c` | **Toggle chrome** — show or hide the agent's chrome bar in the live pane for this hub (starts from the `hub_chrome` config value, default hidden). With chrome shown, clicking a tab in the live pane switches the live viewer and the hub list follows. |
 | `r` | Refresh. |
 | `S` | **Toggle `agentctl serve`**, like prefix+`W`; the outcome flashes in the footer. |
+| `?` | Show every key and gesture. |
 | `q`/`esc` | Leave the hub. |
 
 The title row shows `agentctl serve`'s state after "agentctl hub": `📱 serve` (green) when it runs, `📱 off` (dim) when it does not, and `📱 stuck` (yellow) when its process is alive but its control socket refuses connections (phone approvals are not offered). It is refreshed on the hub's poll tick and does not need the monitor. Clicking it toggles serve, like `S`.
@@ -152,7 +149,7 @@ The form (new, edit, duplicate) takes the card's place, or the list's on a termi
 
 `N` opens a directory prompt in the footer, prefilled with the directory `agentctl hub` was last run from (recorded in `hub-origin` in the agentctl state dir on every `agentctl hub`; `$HOME` when there is none). `~`, `~/...` and paths relative to the prefill are accepted; `enter` confirms and `esc` cancels. When a project in the list already has that directory (symlinks resolved), the hub launches an agent there, like its `+ new`. Otherwise it starts the directory's own session (`agentctl-<dir>`, detached, as if `agentctl` were run there) and launches an agent in it with `agentctl launch --background --permission-mode auto`; a directory without `.claude/agents/` is initialized first, without starter templates and without the hooks or default-agent prompts of `agentctl init`. The hub refuses `$HOME` (it would create the global `~/.claude/agents`), `/`, files and missing directories; the error shows in the footer and the prompt stays open. A git repository is not required. Two directories with the same name map to the same session name; when that name is already taken by another directory's session, the hub reports it rather than launching there.
 
-Project order is saved globally in `group-order.json` in the same state dir (keyed by project directory); projects not in it follow alphabetically, and `agentctl status` and `jump-next-blocked` use the same order; the phone list uses the same order (and reorders it by long-press and drag). Fold state, the filter, the sort, the shell, closed and schedules toggles and the activity pane's dragged width are kept per hub across reloads, hot reloads and restarts, in `hub-view.json` in the agentctl state dir (`$XDG_STATE_HOME/agentctl`, default `~/.local/state/agentctl`). Jumps that target a hidden agent (`b`, a just-launched agent, a tab click in the live pane) unfold its group first, and clear the filter if it would still hide it. The one-line footer has no room for `N`, `R`, `v`, `z`, `Z`, `f`, `$`, `C`, `T` and `S`; they are listed under `?`.
+Project order is saved globally in `group-order.json` in the same state dir (keyed by project directory); projects not in it follow alphabetically, and `agentctl status` and `jump-next-blocked` use the same order; the phone list uses the same order (and reorders it by long-press and drag). Fold state, the filter, the sort, the shell, closed and schedules toggles and the activity pane's dragged width are kept per hub across reloads, hot reloads and restarts, in `hub-view.json` in the agentctl state dir (`$XDG_STATE_HOME/agentctl`, default `~/.local/state/agentctl`). Jumps that target a hidden agent (`b`, a just-launched agent, a tab click in the live pane) unfold its group first, and clear the filter if it would still hide it. The one-line footer has no room for `N`, `R`, `v`, `o`, `z`, `Z`, `f`, `$`, `C`, `T` and `S`; they are listed under `?`.
 
 `w`, the `sweep N` button on a group header (shown only when N > 0 of the group's agents are done, left of `+ new`; dropped on headers too narrow to keep four columns of project name, and hidden while the `shell | agent` selector is armed; N counts done rows, so sweep's worktree and PR checks may close fewer), or `[sweep]` in a header's right-click menu previews [`agentctl sweep`](dispatch.md) for that project's tmux session. The hub runs `agentctl sweep --session <name> --dry-run --json` as a subprocess, pinned to the project's runtime dir, and shows the plan in the footer: `sweep <project>: close 3 (a, b, c), 2 need attention, 1 in progress  y/n`. `y` applies it (`agentctl sweep --session <name> --json`) and then reports `swept N` from what actually closed, since sweep re-checks every window at apply time; any other key, a click elsewhere, or moving the cursor off the line cancels. With nothing to close the footer says `nothing to sweep` and nothing is armed. While a sweep runs the footer shows `sweeping <project>…` and further sweeps are ignored. A failed sweep (session gone, non-zero exit) shows its error. Sweep's own rules decide what closes (`shell`, `improve~*`, untracked and bare windows never do; the hub does not pass `--include-bare`), and the hub's own window is the sweep's self, so it is never closed. Groups that are not agentctl project sessions have no button.
 
@@ -168,4 +165,4 @@ A row is the state glyph, the agent name, the title, then right-aligned columns:
 
 The keybinding layout is inspired by [BitchX](https://en.wikipedia.org/wiki/BitchX)'s layered key maps — direct keys for the most common actions, a prefix mode for window management, and muscle-memory-friendly mnemonics (a=agent, t=ticket, s=settings, etc.).
 
-The bottom chrome bar lights up keybind hints when you press the tmux prefix, so you don't need to memorize the full table.
+With `chrome_bar` on, the bottom bar lights up keybind hints when you press the tmux prefix, so you don't need to memorize the full table.

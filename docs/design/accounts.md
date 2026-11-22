@@ -1,6 +1,6 @@
 # Multiple Claude accounts
 
-Status: proposal, 2026-11-17. Nothing here is approved yet. Related: [cron.md](cron.md), [multi-harness.md](multi-harness.md) (PR #88).
+Status: implemented (PR #97, 2026-11). This is the design record; where it differs from what shipped, [configuration.md](../configuration.md#accounts-multiple-claude-logins) is the reference. Related: [cron.md](cron.md), [multi-harness.md](multi-harness.md) (PR #88).
 
 ## Goal
 
