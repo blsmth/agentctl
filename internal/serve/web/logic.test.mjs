@@ -13,7 +13,7 @@ import {
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
   defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines, fullPrompt,
   waitingIndex, displayState, waitingLabel, actionsFor, effectiveState,
-  shellRows, shellDirName, shellApiPath,
+  applyGone, shellRows, shellDirName, shellApiPath,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
 } from "./logic.js";
 
@@ -638,6 +638,10 @@ assert.equal(canShell(["write"]), false);
   assert.deepEqual(shellRows({ ...g, shells: undefined }, F), []);
   assert.deepEqual(shellRows({ ...g, session: "agentctl-hub" }, F), []);
   assert.equal(shellDirName("/a/b/"), "b");
+  const fl = { groups: [{ session: "s", windows: [{ window_id: "@5" }], shells: [{ window_id: "@9" }] }, { session: "t", windows: [{ window_id: "@6" }], shells: [] }] };
+  const after = applyGone(fl, "s", "@5");
+  assert.equal(after.groups.length, 2, "group with only a shell survives its last agent");
+  assert.equal(applyGone(fl, "t", "@6").groups.length, 1, "group with nothing left goes");
   assert.equal(shellApiPath("agentctl-p", "@7"), "/v1/sessions/agentctl-p/shells/%407/close");
 }
 assert.equal(canShell(["shell"]), false);

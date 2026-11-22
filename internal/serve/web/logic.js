@@ -1064,13 +1064,13 @@ export function applyWindow(fleet, win) {
   return { ...fleet, groups };
 }
 
-/** applyGone removes a window, and its group if that leaves it empty. */
+/** applyGone removes a window, and its group if that leaves it with no windows and no shells. */
 export function applyGone(fleet, session, windowId) {
   const groups = (fleet.groups ?? [])
     .map((g) =>
       g.session === session ? { ...g, windows: (g.windows ?? []).filter((w) => w.window_id !== windowId) } : g,
     )
-    .filter((g) => g.windows.length > 0);
+    .filter((g) => g.windows.length > 0 || (g.shells ?? []).length > 0);
   return { ...fleet, groups };
 }
 
