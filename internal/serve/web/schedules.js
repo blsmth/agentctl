@@ -323,6 +323,7 @@ function mountForm(root, ctx, { job, copy }) {
   }
 
   async function runPreview() {
+    timer = 0;
     const seq = ++previewSeq;
     try {
       const p = await post("/v1/schedules/preview", previewBody(f));

@@ -167,6 +167,7 @@ func (h *Harness) Reset() {
 	_ = os.Remove(h.world.orderPath) // forget a reorder made by the last test
 	h.world.setGroups(cloneGroups(h.initial))
 	h.world.clearActions()
+	h.Server.ResetWriteLimits()
 	_ = h.scheds.set(SchedulesSpec{})
 	time.Sleep(3*h.rediscover + 50*time.Millisecond)
 }

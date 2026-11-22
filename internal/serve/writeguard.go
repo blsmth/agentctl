@@ -43,6 +43,13 @@ type writeLimiter struct {
 	m  map[string]*rate.Limiter
 }
 
+// reset forgets every device's bucket (they start full again).
+func (l *writeLimiter) reset() {
+	l.mu.Lock()
+	l.m = nil
+	l.mu.Unlock()
+}
+
 // reserve takes a token for device at now. It returns 0 when the write may
 // proceed, else how long until a token is available (nothing is consumed).
 func (l *writeLimiter) reserve(device string, now time.Time) time.Duration {

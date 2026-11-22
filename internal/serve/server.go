@@ -320,6 +320,10 @@ func New(opts Options) (*Server, error) {
 // Handler returns the full HTTPS request pipeline.
 func (s *Server) Handler() http.Handler { return s.handler }
 
+// ResetWriteLimits refills every device's write budget. For the browser-test
+// harness, whose tests share one device token; never called in production.
+func (s *Server) ResetWriteLimits() { s.limiter.reset() }
+
 // chain wraps h in the middleware every HTTPS request passes, outermost
 // first: CIDR filter, security headers, CSRF.
 func (s *Server) chain(h http.Handler) http.Handler {

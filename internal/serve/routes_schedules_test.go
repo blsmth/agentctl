@@ -394,3 +394,19 @@ func TestSchedulePreviewPermissionMode(t *testing.T) {
 		t.Errorf("invalid configured mode = %q, want auto", got)
 	}
 }
+
+func TestResetWriteLimitsRefillsBudget(t *testing.T) {
+	se := newScheduleEnv(t, true)
+	for i := 0; i < writesPerMinute; i++ {
+		if w := se.post("/v1/schedules/preview", se.jobBody("triage")); w.Code != http.StatusOK {
+			t.Fatalf("preview %d: %d %s", i, w.Code, w.Body)
+		}
+	}
+	if w := se.post("/v1/schedules/preview", se.jobBody("triage")); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("over budget: %d", w.Code)
+	}
+	se.Server.ResetWriteLimits()
+	if w := se.post("/v1/schedules/preview", se.jobBody("triage")); w.Code != http.StatusOK {
+		t.Fatalf("after reset: %d %s", w.Code, w.Body)
+	}
+}
