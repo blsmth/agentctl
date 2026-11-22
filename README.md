@@ -10,9 +10,9 @@
   <a href="https://github.com/blsmth/agentctl/releases"><img src="https://img.shields.io/github/v/release/blsmth/agentctl?include_prereleases" alt="Release"/></a>
 </p>
 
-agentctl is a tmux-native command center for running many [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents at once. Every agent gets its own tmux window. Claude Code hooks report whether each agent is working, blocked, or idle, and agentctl surfaces that in the window names on the tmux status line (or, with `chrome_bar` on, a two-row bar at the bottom of every window), in desktop notifications, and in a cross-session hub. It can also turn a GitHub issue into an isolated worktree, a running agent, and a pull request.
+agentctl is a tmux-native command center for running many coding agents at once: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) by default, and [pi](https://github.com/earendil-works/pi). Every agent gets its own tmux window. Hooks report whether each agent is working, blocked, or idle, and agentctl surfaces that in the window names on the tmux status line, in desktop notifications, in a cross-session hub, and on your phone. It can also turn a GitHub issue into an isolated worktree, a running agent, and a pull request.
 
-There is no daemon, orchestrator, or web app. tmux already provides process isolation, persistence, `capture-pane`, and `send-keys`.
+tmux is the runtime: it already provides process isolation, persistence, `capture-pane`, and `send-keys`. There is no daemon to keep alive; the per-machine pieces (a phone web app server, a cron ticker, a metrics exporter) are opt-in.
 
 ## Requirements
 
@@ -20,6 +20,7 @@ There is no daemon, orchestrator, or web app. tmux already provides process isol
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 - git
 - [`gh`](https://cli.github.com/), authenticated, for `dispatch` and ticket commands
+- Optional: [pi](https://github.com/earendil-works/pi) 1.0+, to run agents on pi
 - Optional: [`alerter`](https://github.com/vjeantet/alerter) (macOS) or `notify-send` (Linux) for desktop notifications
 - Go 1.26+, only to build from source
 
@@ -52,7 +53,7 @@ agentctl statusline install      # use agentctl as Claude Code's status line
 agentctl install-templates       # starter agents: architect, devops-engineer, go-engineer, python-engineer, terraform-engineer
 ```
 
-Hooks are what drive agent state, so `hooks-install` is the important one. Run `agentctl <command> --help` for flags.
+Hooks are what drive agent state, so `hooks-install` is the important one. Run `agentctl <command> --help` for flags. The phone app and scheduled runs have their own one-time setup: `agentctl serve install` then `agentctl serve pair` ([details](docs/design/mobile-web-app.md)), and `agentctl cron install`.
 
 Slash commands (`/agentctl:dispatch`, `context`, `status`, `sweep`, `logs`, `restart`) install as a Claude Code plugin, from inside Claude Code:
 
@@ -83,23 +84,25 @@ Check on everything from a shell:
 ```bash
 agentctl status                  # every agent in every live session
 agentctl status --blocked        # only the ones waiting on you
+agentctl hub                     # cross-session dashboard (ctrl+b g)
 ```
-
-Replay a session as a race against a person doing the same typing and reading by hand:
-
-```bash
-agentctl race                    # this window's session (or: @N, a session ID, a .jsonl path)
-agentctl race @12 --wpm 80 --think 5s
-agentctl race <session-id> --json   # totals only: steps, tool calls, chars typed/read, agent vs human time
-```
-
-The agent's time comes from the transcript's timestamps, with any gap over `--max-gap` (default 60s) capped and time spent waiting on your next prompt not counted. The human's time is the characters they would type (commands, new code, prompts, messages; only the pattern or path for Read/Grep/Glob) at `--wpm` (60) plus the tool output they would read at `--read-wpm` (250), plus `--think` per step (0s by default). It is not a bound either way: the person never pauses or makes a typo, but they also read every tool result in full and type the agent's own messages. The gap cap also clips long tool runs and Task sub-agents, which makes the agent look faster. The replay is compressed to `--duration` (45s), or runs at `--speed N` times real time; both racers share the clock. Keys: space pause, `+`/`-` speed, `r` restart, `e` end card, `q` quit.
 
 ## How it works
 
-Each agent is a tmux window. Claude Code hooks write per-window state (`working`, `blocked`, `idle`) and a background monitor reads it every 500ms, renames windows with state glyphs, fires notifications, and writes a snapshot the chrome bar renders. State comes from hooks; session JSONL logs are read only for metrics. Token, context, and rate-limit figures are shown by the Claude Code status line (`agentctl statusline`).
+Each agent is a tmux window. Claude Code hooks write per-window state (`working`, `blocked`, `idle`) to a small JSON file, rename the window with a state glyph (`●` working, `⏸` blocked, `✓` done), and fire notifications. Everything else (the hub, `agentctl status`, the phone app) reads those files plus `tmux list-windows`. Session JSONL logs are read only for tokens, cost and summaries, and the Claude Code status line (`agentctl statusline`) shows model, context, rate limits and cost. See [docs/architecture.md](docs/architecture.md).
 
-You also get TUI browsers for agents, skills, memory files, issues, and session history; per-agent permissions; a cross-agent context store (`context`) alongside Claude Code's native cross-session messaging; optional Prometheus metrics; and self-improvement sessions. Every action is a keybinding off `ctrl+b`; see [docs/keybindings.md](docs/keybindings.md).
+## Features
+
+- **Dispatch**: an issue, ad-hoc prompt or PR review becomes a worktree, an agent and a PR; orchestrator agents coordinate workers, and dispatches by agents need your approval in a popup. [Dispatch](docs/dispatch.md)
+- **Fleet hub**: every agent in every project in one tmux window, as a parent/child tree with a live agent pane, short AI titles, sweep, closed agents with resume, and a Schedules section. [Keybindings](docs/keybindings.md#fleet-hub)
+- **Phone web app**: `agentctl serve` shows the fleet on your phone over your LAN, with a live terminal, replies, approvals, AskUserQuestion answers, dispatch and push notifications. [Mobile web app](docs/design/mobile-web-app.md)
+- **Scheduled runs**: `agentctl cron` launches agents on a schedule with usage gates and run history. [cron](docs/configuration.md#cron)
+- **Accounts, backends, harnesses**: run agents under several Claude logins, against Ollama or Nous Portal, or on pi. [Configuration](docs/configuration.md#accounts-multiple-claude-logins)
+- **Cost**: `agentctl cost` prices every session from one table, including agentctl's own background LLM calls. [Pricing and cost](docs/configuration.md#pricing-and-cost)
+- **Safety**: per-agent deny lists, approval popups, tamper rules and an audit trail of every tool call. [Permissions](docs/permissions.md)
+- **Also**: cleanup and sweep of finished worktrees and windows, TUI browsers for agents, sessions, issues and the context store, session restore after a relaunch, `agentctl race` ([replay a session against a human](docs/commands.md#race)), optional Prometheus metrics, and self-improvement sessions.
+
+Every action is a keybinding off `ctrl+b` ([docs/keybindings.md](docs/keybindings.md)), and every command is listed in [docs/commands.md](docs/commands.md).
 
 ## Supported platforms
 
@@ -109,7 +112,8 @@ macOS and Linux. Windows is not supported (WSL may work but is untested).
 
 | | |
 |---|---|
-| [Configuration](docs/configuration.md) | Every config key, layering, and the global-only command keys |
+| [Commands](docs/commands.md) | Every subcommand, grouped by job |
+| [Configuration](docs/configuration.md) | Every config key, its default and scope, layering |
 | [Dispatch](docs/dispatch.md) | Ticket-to-PR orchestration |
 | [Permissions](docs/permissions.md) | Per-agent command safety |
 | [Keybindings](docs/keybindings.md) | Keybinding reference |

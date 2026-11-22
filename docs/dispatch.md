@@ -12,7 +12,16 @@ agentctl dispatch --issue 42 --no-worktree          # skip worktree, use shared 
 agentctl dispatch --issue 42 --repo owner/name      # explicit GitHub repo (else resolved from the working dir)
 agentctl dispatch --agent go-engineer --prompt '...' # ad-hoc prompt (or --prompt-key <key>)
 agentctl dispatch --review-pr 57                    # review an open PR (code-reviewer by default)
+agentctl dispatch --issue 42 --model opus           # model override (sonnet, opus, haiku, or a full id)
+agentctl dispatch --issue 42 --backend fenrir       # run against a configured backend ('none' forces Anthropic)
+agentctl dispatch --issue 42 --account personal     # launch under a configured Claude account
+agentctl dispatch --issue 42 --harness pi           # run the agent on pi instead of Claude Code
+agentctl dispatch --issue 42 --wait --timeout 1h    # block until the agent completes
 ```
+
+`--issue`, `--prompt` and `--prompt-key` are mutually exclusive, and `--agent` is required with `--prompt`/`--prompt-key`. Write a long prompt to the context store first (`agentctl context set <key> ...` in its own Bash call) and pass `--prompt-key <key>`, so the approval popup can show it. See [Backends](configuration.md#backends-ollama-and-nous-portal), [Accounts](configuration.md#accounts-multiple-claude-logins) and [Harnesses](configuration.md#harnesses-claude-code-and-pi).
+
+When an agent runs `agentctl dispatch` through Bash, the approval popup (and the phone, with `agentctl serve` running) asks a human first, per [`dispatch_approval`](configuration.md#dispatch_approval) (default: everything except `code-reviewer` PR reviews).
 
 Or use the TUI: `ctrl+b T` opens the ticket launcher, where you can browse issues and dispatch interactively.
 
@@ -22,9 +31,9 @@ Or use the TUI: `ctrl+b T` opens the ticket launcher, where you can browse issue
 2. **Infer agent** — Matches issue labels to agents (`go` → `go-engineer`, `python` → `python-engineer`, etc.) or defaults to `go-engineer`. Override with `--agent`.
 3. **Create worktree** — Creates a git worktree at `.worktrees/agent-<name>-issue-<N>/` on branch `agent/<name>/issue-<N>`. The agent gets a clean, isolated copy of the repo.
 4. **Build prompt** — Assembles the agent's system prompt with the issue body, worktree path, branch name, and autonomous execution instructions.
-5. **Launch** — Opens a new tmux window running `claude --agent <name>` with the assembled prompt. The agent starts working immediately.
+5. **Launch** — Opens a new tmux window running `claude --agent <name>` (or the agent's [harness](configuration.md#harnesses-claude-code-and-pi)) with the assembled prompt, under the resolved account and backend. Worker dispatches use `--permission-mode auto` unless the agent's `permission_mode` says otherwise. The agent starts working immediately.
 6. **Autonomous execution** — The agent reads the codebase, implements the change, writes tests, commits with `Closes #N`, pushes, and opens a PR.
-7. **Completion** — Done is derived automatically by the Stop hook: once the agent's turn ends cleanly (git clean, build passes) in an autonomous mode, the hook marks the window done. The monitor updates the tab bar state from that fact. `agentctl signal done` still exists as an optional *early* signal an agent can call if it wants to flag completion before its final turn ends.
+7. **Completion** — Done is derived automatically by the Stop hook: once the agent's turn ends cleanly (git clean, build passes) in an autonomous mode, the hook marks the window done (the window name gets a ✓) and spawns a detached `agentctl dispatch-complete`, which finds the PR, swaps labels, opens it in the browser ([`open_pr_in_browser`](configuration.md#top-level-keys)) and runs `dispatch_complete` hooks. The dispatching window gets an `agentctl notice:` line. `agentctl signal done` still exists as an optional *early* signal an agent can call if it wants to flag completion before its final turn ends.
 
 ## Git worktrees
 
@@ -106,6 +115,7 @@ agentctl dispatch --review-pr 57 --model sonnet --prompt 'Focus on the tmux call
 - Fetches the PR with `gh pr view` (title, URL, base/head branch, head sha, changed files, body). A closed or merged PR is an error. Exclusive with `--issue`; `--prompt` / `--prompt-key` add text under "Additional review instructions".
 - The worktree is `.worktrees/agent-<agent>-review-pr-<N>-<id>/` on `agent/<agent>/review-pr-<N>-<id>` (a fresh id per review, so two reviews never share a worktree), cut from the default branch. The reviewer checks out the PR head detached and returns to that branch when done, so SessionEnd can reclaim it. It is never pushed.
 - **Author**: the live window whose worktree branch equals the PR's head branch, across every agentctl session (`--author @N` overrides). When it runs under the same Claude account, the prompt names it by `@N.%P` and agentctl queues an `agentctl notice:` in the author's window introducing the reviewer. Otherwise the reviewer reports to its orchestrator only.
+- Under [`pr_review`](configuration.md#pr_review) `optional` or `off`, orchestrators are told they may skip, or should not dispatch, reviewers; `--review-pr` itself works under every mode.
 - With the default `dispatch_approval` (`non-review`) a review dispatch run by `code-reviewer` (no `--agent`, or `--agent code-reviewer`) does not need approval in the popup; a review by any other agent is gated. Set `dispatch_approval: "all"` to gate every review too (see [configuration](configuration.md#dispatch_approval)).
 - The deliverable is one `REVIEW PR #<N> — VERDICT: MERGE | MERGE-WITH-FOLLOWUPS | BLOCKED | NEEDS-BRENDAN` message to the orchestrator, after at most 3 fix rounds with the author.
 
@@ -122,9 +132,9 @@ And nothing else. No conversation history about unrelated issues. No stale file 
 
 ## Agent inference from labels
 
-Dispatch maps GitHub issue labels to agent names:
+Dispatch maps GitHub issue labels to agent names. A label that is itself one of the agent names below (`python-engineer`) wins; otherwise the short label applies. Labels match exactly, not as substrings:
 
-| Label contains | Agent |
+| Label | Agent |
 |----------------|-------|
 | `go` | `go-engineer` |
 | `python` | `python-engineer` |

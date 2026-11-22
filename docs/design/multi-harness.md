@@ -1,6 +1,6 @@
 # Multi-harness support: running agents other than Claude Code
 
-Status: research / proposal, 2026-11-17. Nothing here is approved yet.
+Status: research, 2026-11-17. pi shipped as the second harness (PRs #104 and #106); the other harnesses here are not implemented. For what pi supports today see [configuration.md](../configuration.md#harnesses-claude-code-and-pi).
 
 ## Question
 
