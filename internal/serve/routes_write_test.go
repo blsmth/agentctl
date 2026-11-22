@@ -292,7 +292,7 @@ func newWriteEnvWith(t *testing.T, allowWrite bool, mutate func(*Options)) *writ
 		Fleet: fleet, Panes: e.panes, Awake: &fakeHolder{},
 		Agents: fakeAgents{list: []AgentInfo{{Name: "go-engineer", Scope: "global"}}},
 		Keys:   e.keys, Injector: e.inj, Closer: e.closer, Dispatcher: e.disp, Shells: e.shells,
-		Children: noChildren{},
+		Children:       noChildren{},
 		MainPanes:      e.panes,
 		Sweep:          e.sweep.run,
 		GroupOrderPath: func() (string, error) { return filepath.Join(dir, "group-order.json"), nil },
@@ -381,6 +381,7 @@ func writeRoutes(t *testing.T) []struct{ name, path, body string } {
 		{"queue", winPath + "/queue", `{"text":"hi"}`},
 		{"interrupt", winPath + "/interrupt", `{}`},
 		{"close", winPath + "/close", `{}`},
+		{"close-shell", "/v1/sessions/agentctl-proj/shells/@77/close", `{}`},
 		{"group-order", "/v1/group-order", `{"keys":["/code/proj"]}`},
 		{"dispatch", "/v1/dispatch", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"p"}`},
 		{"shell", "/v1/shell", `{"project_dir":"/code/proj"}`},
@@ -531,7 +532,7 @@ func TestAnswerMultiSelect(t *testing.T) {
 		{"toggle", `{"key":"2","dialog_hash":%q}`, d.Hash, 200, []string{"2"}},
 		{"toggle unknown option", `{"key":"9","dialog_hash":%q}`, d.Hash, 409, nil},
 		{"toggle free text refused", `{"key":"3","dialog_hash":%q}`, d.Hash, 409, nil},
-		{"chat option refused", `{"key":"4","dialog_hash":%q}`, d.Hash, 409, nil},		{"esc", `{"key":"esc","dialog_hash":%q}`, d.Hash, 200, []string{"Escape"}},
+		{"chat option refused", `{"key":"4","dialog_hash":%q}`, d.Hash, 409, nil}, {"esc", `{"key":"esc","dialog_hash":%q}`, d.Hash, 200, []string{"Escape"}},
 		{"stale hash", `{"key":"1","dialog_hash":%q}`, strings.Repeat("0", 64), 409, nil},
 		{"submit", `{"key":"submit","select":["1","2"],"dialog_hash":%q}`, d.Hash, 200,
 			[]string{"1", "2", "Down", "Down", "Down", "Enter"}},
@@ -989,6 +990,41 @@ func TestClose(t *testing.T) {
 			}
 			if errCode(t, w) != codeNotClosable || len(e.closer.closed) != 0 {
 				t.Errorf("code %s closed %+v", errCode(t, w), e.closer.closed)
+			}
+		})
+	}
+}
+
+func TestCloseShell(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		session string
+		status  int
+		closed  []string
+	}{
+		{"shell", "/v1/sessions/agentctl-proj/shells/@77/close", "agentctl-proj", 200, []string{"@77"}},
+		{"agent window id", "/v1/sessions/agentctl-proj/shells/@523/close", "agentctl-proj", 409, nil},
+		{"unknown session", "/v1/sessions/agentctl-nope/shells/@77/close", "agentctl-proj", 404, nil},
+		{"hub", "/v1/sessions/" + tmux.HubSessionName + "/shells/@77/close", tmux.HubSessionName, 409, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWriteEnv(t, true)
+			g := writeGroup("idle", false, "go-engineer", "bare")
+			g.Session = tt.session
+			e.fleet.set(g)
+			e.panes.set(idlePane)
+			w := e.post(tt.path, `{}`)
+			if w.Code != tt.status {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			var got []string
+			for _, c := range e.closer.closed {
+				got = append(got, c.WindowID)
+			}
+			if !slices.Equal(got, tt.closed) {
+				t.Errorf("closed %v, want %v", got, tt.closed)
 			}
 		})
 	}

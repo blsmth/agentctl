@@ -142,7 +142,7 @@ func (b *Bus) Refresh() {
 
 	b.mu.Lock()
 	events, next, snapshot := b.diffLocked(groups)
-	if b.loaded && groupOrderChanged(b.cur, snapshot) {
+	if b.loaded && (groupOrderChanged(b.cur, snapshot) || shellsChanged(b.cur, snapshot)) {
 		events = append(events, Event{Kind: KindFleet, Fleet: snapshot})
 	}
 	b.cur = snapshot
@@ -152,6 +152,27 @@ func (b *Bus) Refresh() {
 		b.publishLocked(ev)
 	}
 	b.mu.Unlock()
+}
+
+// shellsChanged reports whether any group's shell windows differ between prev
+// and next. Shells are not windows, so no window event carries a change.
+func shellsChanged(prev, next []Group) bool {
+	old := make(map[string][]Shell, len(prev))
+	for _, g := range prev {
+		old[g.Session] = g.Shells
+	}
+	for _, g := range next {
+		if !slices.Equal(old[g.Session], g.Shells) {
+			return true
+		}
+		delete(old, g.Session)
+	}
+	for _, sh := range old {
+		if len(sh) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // groupOrderChanged reports whether the groups present in both prev and next

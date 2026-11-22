@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -101,6 +102,17 @@ type fleetBody struct {
 func (s *Server) fleetBody(groups []fleetwatch.Group) fleetBody {
 	if groups == nil {
 		groups = []fleetwatch.Group{}
+	}
+	for i := range groups {
+		if groups[i].Shells == nil {
+			groups = slices.Clone(groups)
+			for j := i; j < len(groups); j++ {
+				if groups[j].Shells == nil {
+					groups[j].Shells = []fleetwatch.Shell{}
+				}
+			}
+			break
+		}
 	}
 	return fleetBody{Generated: s.now().UTC().Format(time.RFC3339), Groups: groups}
 }

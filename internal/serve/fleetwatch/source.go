@@ -7,6 +7,7 @@ package fleetwatch
 
 import (
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // Group is one session's worth of windows as served by /v1/fleet.
@@ -18,6 +19,10 @@ type Group struct {
 	Dir     string         `json:"dir"`
 	Rollup  string         `json:"rollup"`
 	Windows []fleet.Window `json:"windows"`
+	// Shells are the session's plain "shell" windows. They are not agents and
+	// stay out of Windows, so nothing that walks windows (counts, rollup,
+	// diffing, push, sweep) sees them. Always present, [] when none.
+	Shells []Shell `json:"shells"`
 
 	// RuntimeDir is the session's .agentctl dir, watched by the bus.
 	RuntimeDir string `json:"-"`
@@ -26,17 +31,26 @@ type Group struct {
 	Meta map[string]fleet.Meta `json:"-"`
 }
 
+// Shell is one plain shell window of a session.
+type Shell struct {
+	WindowID string `json:"window_id"`
+	Index    int    `json:"index"`
+	// Dir is the window's working directory.
+	Dir string `json:"dir"`
+}
+
 // Source produces the current fleet.
 type Source interface {
 	Fleet() ([]Group, error)
 }
 
-// LiveSource is the production Source: fleet.Load over tmux and windowstate.
+// LiveSource is the production Source: fleet.LoadWithShells over tmux and
+// windowstate.
 type LiveSource struct{}
 
 // Fleet implements Source.
 func (LiveSource) Fleet() ([]Group, error) {
-	groups, err := fleet.Load()
+	groups, err := fleet.LoadWithShells()
 	if err != nil {
 		return nil, err
 	}
@@ -48,6 +62,17 @@ func FromFleet(groups []fleet.Group) []Group {
 	out := make([]Group, 0, len(groups))
 	for _, g := range groups {
 		meta := fleet.LoadMeta(g)
+		agents := g
+		agents.Rows = nil
+		shells := []Shell{}
+		for _, r := range g.Rows {
+			if !r.Shell {
+				agents.Rows = append(agents.Rows, r)
+			} else if g.Session != tmux.HubSessionName {
+				shells = append(shells, Shell{WindowID: r.WindowID, Index: r.WindowIndex, Dir: r.WorkDir})
+			}
+		}
+		g = agents
 		out = append(out, Group{
 			Session:    g.Session,
 			Key:        fleet.GroupKey(g),
@@ -55,6 +80,7 @@ func FromFleet(groups []fleet.Group) []Group {
 			Dir:        g.ProjectDir,
 			Rollup:     g.Rollup.String(),
 			Windows:    g.Windows(meta),
+			Shells:     shells,
 			RuntimeDir: g.RuntimeDir,
 			Rows:       g.Rows,
 			Meta:       meta,

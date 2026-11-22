@@ -63,6 +63,7 @@ func (w *world) snapshot() []Group {
 	for i, g := range w.groups {
 		out[i] = g
 		out[i].Windows = slices.Clone(g.Windows)
+		out[i].Shells = slices.Clone(g.Shells)
 	}
 	return out
 }
@@ -113,6 +114,7 @@ func (w *world) remove(session, id string) {
 	for gi := range w.groups {
 		if w.groups[gi].Session == session {
 			w.groups[gi].Windows = slices.DeleteFunc(w.groups[gi].Windows, func(x Window) bool { return x.ID == id })
+			w.groups[gi].Shells = slices.DeleteFunc(w.groups[gi].Shells, func(x Shell) bool { return x.ID == id })
 		}
 	}
 }
@@ -284,11 +286,21 @@ func (d dispatcher) Dispatch(req serve.DispatchRequest) (serve.DispatchResult, e
 }
 
 // shells records the shell windows the server opens; no tmux is involved.
-// Its session is always running and no window counts as a shell.
+// Its session is always running; a window is a shell when the fixture lists it
+// under its group's shells.
 type shells struct{ w *world }
 
-func (shells) SessionRunning(string) bool  { return true }
-func (shells) IsShell(string, string) bool { return false }
+func (shells) SessionRunning(string) bool { return true }
+func (s shells) IsShell(session, id string) bool {
+	s.w.mu.Lock()
+	defer s.w.mu.Unlock()
+	for _, g := range s.w.groups {
+		if g.Session == session && slices.ContainsFunc(g.Shells, func(x Shell) bool { return x.ID == id }) {
+			return true
+		}
+	}
+	return false
+}
 func (s shells) NewShell(session, dir string) (string, error) {
 	s.w.record(Action{Kind: "shell", Session: session, Dir: dir})
 	return "@901", nil

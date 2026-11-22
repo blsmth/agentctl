@@ -80,6 +80,7 @@ func (s *Server) registerWrite(rt *Router) {
 	rt.Write("POST "+win+"/upload", s.handleUpload)
 	rt.Write("POST "+win+"/interrupt", writeRoute(s, "interrupt", s.handleInterrupt))
 	rt.Write("POST "+win+"/close", writeRoute(s, "close", s.handleClose))
+	rt.Write("POST /v1/sessions/{session}/shells/{window}/close", writeRoute(s, "close-shell", s.handleCloseShell))
 	rt.Write("POST /v1/group-order", writeRoute(s, "group-order", s.handleGroupOrder))
 	if rt.allowWrite {
 		rt.Feature("dispatch-upload")
@@ -687,6 +688,43 @@ func (s *Server) handleClose(r *http.Request, _ emptyIn, a *auditEntry) outcome 
 		closedKids = []WindowKey{}
 	}
 	return success(closeBody{OK: true, Closed: closedKids})
+}
+
+// handleCloseShell kills one plain shell window. It accepts a window only when
+// the session's tmux reports it as a shell (a renamed window is not one), takes
+// no pane check and cascades to no children: a shell is not an agent.
+func (s *Server) handleCloseShell(r *http.Request, _ emptyIn, a *auditEntry) outcome {
+	groups, err := s.fleet.Fleet()
+	if err != nil {
+		logging.Warn("serve: loading fleet: %v", err)
+		return failure(http.StatusInternalServerError, codeInternal, "loading fleet")
+	}
+	session, id := r.PathValue("session"), normalizeWindowID(r.PathValue("window"))
+	var g fleetwatch.Group
+	for _, c := range groups {
+		if c.Session == session {
+			g = c
+			break
+		}
+	}
+	if g.Session == "" {
+		return failure(http.StatusNotFound, codeNotFound, fmt.Sprintf("no session %s", session))
+	}
+	if g.Session == tmux.HubSessionName {
+		return failure(http.StatusConflict, codeNotClosable, "hub windows cannot be closed")
+	}
+	a.Session, a.Window = g.Session, id
+	unlock := s.winLocks.lock(g.Session, id)
+	defer unlock()
+	if !s.shells.IsShell(g.Session, id) {
+		return failure(http.StatusConflict, codeNotClosable, "window is not a shell")
+	}
+	s.auditAttempt(*a)
+	if err := s.closer.CloseWindow(WindowTarget{Session: g.Session, RuntimeDir: g.RuntimeDir, WindowID: id}); err != nil {
+		logging.Warn("serve: close shell %s:%s: %v", g.Session, id, err)
+		return failure(http.StatusBadGateway, codeActionFailed, "closing the shell failed")
+	}
+	return success(okBody)
 }
 
 // closeBody is the close response: the ok flag every window action returns,

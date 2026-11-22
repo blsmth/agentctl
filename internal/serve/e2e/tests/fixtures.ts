@@ -44,7 +44,13 @@ export type FixtureWindow = {
   short_kind?: string;
 };
 
-export type FixtureGroup = { session: string; project: string; dir: string; windows: FixtureWindow[] };
+export type FixtureGroup = {
+  session: string;
+  project: string;
+  dir: string;
+  windows: FixtureWindow[];
+  shells?: { id: string; index: number; dir: string }[];
+};
 
 /** Control wraps the dev server's /__test/ API. */
 export class Control {

@@ -806,6 +806,33 @@ export function buildShellRequest(projectDir) {
   return { method: "POST", path: "/v1/shell", body: { project_dir: projectDir } };
 }
 
+/**
+ * shellRows lists a group's plain shell windows for the fleet list, in server
+ * order, each with the label to show: "$ shell", plus the work dir's basename
+ * when it differs from the project's. Empty unless the server can open shells
+ * (the feature flag) and never for the hub session.
+ */
+export function shellRows(group, features) {
+  if (!group || !canShell(features) || group.session === HUB_SESSION) return [];
+  return (group.shells ?? [])
+    .filter((s) => s && s.window_id)
+    .map((s) => {
+      const base = shellDirName(s.dir);
+      const same = !s.dir || s.dir === group.dir || base === "" || base === shellDirName(group.dir);
+      return { session: group.session, window_id: s.window_id, label: same ? "$ shell" : `$ shell · ${base}` };
+    });
+}
+
+/** shellDirName is the last path segment of dir ("" for an empty or root path). */
+export function shellDirName(dir) {
+  return String(dir ?? "").replace(/\/+$/, "").split("/").pop() ?? "";
+}
+
+/** shellApiPath is the close route of a shell window. */
+export function shellApiPath(session, windowId) {
+  return `/v1/sessions/${encodeURIComponent(session)}/shells/${encodeURIComponent(windowId)}/close`;
+}
+
 /** canShell reports whether the "+" sheet may offer Shell (the server advertises it). */
 export function canShell(features) {
   return hasFeature(features, "write") && hasFeature(features, "shell");
@@ -1037,13 +1064,13 @@ export function applyWindow(fleet, win) {
   return { ...fleet, groups };
 }
 
-/** applyGone removes a window, and its group if that leaves it empty. */
+/** applyGone removes a window, and its group if that leaves it with no windows and no shells. */
 export function applyGone(fleet, session, windowId) {
   const groups = (fleet.groups ?? [])
     .map((g) =>
       g.session === session ? { ...g, windows: (g.windows ?? []).filter((w) => w.window_id !== windowId) } : g,
     )
-    .filter((g) => g.windows.length > 0);
+    .filter((g) => g.windows.length > 0 || (g.shells ?? []).length > 0);
   return { ...fleet, groups };
 }
 

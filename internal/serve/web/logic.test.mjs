@@ -13,6 +13,7 @@ import {
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
   defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines, fullPrompt,
   waitingIndex, displayState, waitingLabel, actionsFor, effectiveState,
+  applyGone, shellRows, shellDirName, shellApiPath,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
 } from "./logic.js";
 
@@ -629,6 +630,20 @@ console.log("ok: dispatch default agent");
 assert.deepEqual(buildShellRequest("/code/p"), { method: "POST", path: "/v1/shell", body: { project_dir: "/code/p" } });
 assert.equal(canShell(["write", "shell"]), true);
 assert.equal(canShell(["write"]), false);
+{
+  const F = ["write", "shell"];
+  const g = { session: "agentctl-p", dir: "/code/p", shells: [{ window_id: "@7", dir: "/code/p" }, { window_id: "@8", dir: "/code/p/sub/" }, { window_id: "@9", dir: "" }] };
+  assert.deepEqual(shellRows(g, F).map((r) => [r.window_id, r.label]), [["@7", "$ shell"], ["@8", "$ shell · sub"], ["@9", "$ shell"]]);
+  assert.deepEqual(shellRows(g, ["write"]), [], "feature off: no shell rows");
+  assert.deepEqual(shellRows({ ...g, shells: undefined }, F), []);
+  assert.deepEqual(shellRows({ ...g, session: "agentctl-hub" }, F), []);
+  assert.equal(shellDirName("/a/b/"), "b");
+  const fl = { groups: [{ session: "s", windows: [{ window_id: "@5" }], shells: [{ window_id: "@9" }] }, { session: "t", windows: [{ window_id: "@6" }], shells: [] }] };
+  const after = applyGone(fl, "s", "@5");
+  assert.equal(after.groups.length, 2, "group with only a shell survives its last agent");
+  assert.equal(applyGone(fl, "t", "@6").groups.length, 1, "group with nothing left goes");
+  assert.equal(shellApiPath("agentctl-p", "@7"), "/v1/sessions/agentctl-p/shells/%407/close");
+}
 assert.equal(canShell(["shell"]), false);
 assert.equal(canShell([]), false);
 console.log("ok: shell request");

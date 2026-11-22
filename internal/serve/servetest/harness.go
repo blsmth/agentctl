@@ -266,6 +266,7 @@ func cloneGroups(groups []Group) []Group {
 	for i, g := range groups {
 		out[i] = g
 		out[i].Windows = slices.Clone(g.Windows)
+		out[i].Shells = slices.Clone(g.Shells)
 	}
 	return out
 }
