@@ -111,7 +111,7 @@ export function approvalCard(ctx, a, countdowns, { compact = false } = {}) {
     facts.push(h("div", {}, h("span", { class: "meta" }, "scheduled agent "), a.target_agent || "(unknown)"));
   }
   const body = [];
-  if (a.prompt) body.push(...textBlock(a.kind === "cron" ? "Job" : "Prompt", a.prompt));
+  if (a.prompt) body.push(...textBlock(a.kind === "cron" ? "Job" : a.kind === "template" ? "Template" : "Prompt", a.prompt));
   body.push(...textBlock("Command", a.command));
 
   const canWrite = ctx.hasFeature("write");

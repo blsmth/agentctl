@@ -43,6 +43,9 @@ const (
 	// KindCron approves creating, editing, resuming or force-running a scheduled job;
 	// TargetAgent is the job's agent and Prompt the job summary plus prompt.
 	KindCron = "cron"
+	// KindTemplate approves `agentctl template add|edit|rm`; Prompt holds the
+	// template file, Details.Template its name and Details.Mode the action.
+	KindTemplate = "template"
 )
 
 // Decisions.
@@ -128,6 +131,9 @@ type Details struct {
 	Mode           string `json:"mode"`
 	Worktree       string `json:"worktree"`
 	PermissionMode string `json:"permission_mode"`
+	// Template is the prompt template a dispatch runs (`dispatch --template`)
+	// or a template command changes; "" otherwise.
+	Template string `json:"template"`
 }
 
 // Cancel withdraws a remote approval (the laptop answered, or the hook gave
@@ -186,7 +192,7 @@ func (r Request) Validate() error {
 	switch {
 	case !ValidID(r.ID):
 		return errors.New("invalid approval id")
-	case r.Kind != KindDispatch && r.Kind != KindBash && r.Kind != KindCron:
+	case r.Kind != KindDispatch && r.Kind != KindBash && r.Kind != KindCron && r.Kind != KindTemplate:
 		return fmt.Errorf("invalid approval kind %q", r.Kind)
 	case r.Command == "":
 		return errors.New("empty command")

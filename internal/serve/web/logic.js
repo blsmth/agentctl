@@ -796,14 +796,41 @@ export function checkAttachment(file, count) {
  * skipReview adds skip_review only when true (orchestrator launches run as if
  * pr_review were off).
  */
-export function buildDispatchRequest(agent, projectDir, prompt, choice = {}, images = [], instructions = "", skipReview = false) {
+export function buildDispatchRequest(agent, projectDir, prompt, choice = {}, images = [], instructions = "", skipReview = false, template = "") {
   const body = { agent, project_dir: projectDir, prompt };
   const extra = (instructions ?? "").trim();
   if (extra) body.instructions = extra;
   if (skipReview === true) body.skip_review = true;
+  if (template) body.template = template;
   if (images.length) body.images = images;
   for (const k of ["backend", "model", "effort"]) if (choice[k]) body[k] = choice[k];
   return { method: "POST", path: "/v1/dispatch", body };
+}
+
+/** templatesPath is GET /v1/templates for a project dir ("" = global only). */
+export function templatesPath(dir) {
+  return dir ? `/v1/templates?dir=${encodeURIComponent(dir)}` : "/v1/templates";
+}
+
+/** templateLabel is a template picker row: its name, then its description. */
+export function templateLabel(t) {
+  return t.description ? `${t.name} · ${t.description}` : t.name;
+}
+
+/**
+ * templateFill is what choosing template t sets on the dispatch sheet: the
+ * prompt always, the agent only when it is one of agentNames, the project
+ * only when t.dir is one of projects (by dir), and the model and effort
+ * (preset for the launch picker) when set. Nothing else is touched, and
+ * every value stays editable.
+ */
+export function templateFill(t, projects, agentNames) {
+  const out = { prompt: t.prompt ?? "", preset: {} };
+  if (t.agent && agentNames.includes(t.agent)) out.agent = t.agent;
+  if (t.dir && projects.some((p) => p.dir === t.dir)) out.project = t.dir;
+  if (t.model) out.preset.model = t.model;
+  if (t.effort) out.preset.effort = t.effort;
+  return out;
 }
 
 /** buildShellRequest builds POST /v1/shell: a plain shell in the project's session. */
@@ -881,6 +908,7 @@ export function confirmLines(body, imageCount = 0) {
   if (body.model) rows.push(`model: ${body.model}`);
   if (body.effort) rows.push(`effort: ${body.effort}`);
   if (body.skip_review) rows.push("code review: skipped");
+  if (body.template) rows.push(`template: ${body.template}`);
   const lines = [rows.join("\n"), body.prompt];
   if (body.instructions) lines.push(`additional instructions (system prompt):\n${body.instructions}`);
   return lines;
@@ -1568,6 +1596,10 @@ export function approvalSummary(a) {
     return `${who} wants to dispatch ${agent}${project ? ` to ${project}` : ""}`;
   }
   if (a.kind === "cron") return `${who} wants to schedule ${a.target_agent || "an agent"}`;
+  if (a.kind === "template") {
+    const act = (a.details?.mode || "change template").replace(/ template$/, "");
+    return `${who} wants to ${act} template${a.details?.template ? ` ${a.details.template}` : ""}`;
+  }
   return `${who} wants to run a command`;
 }
 
@@ -1579,12 +1611,19 @@ export function approvalSummary(a) {
  * (older hook, bash and cron kinds) gives [].
  */
 export function approvalRows(a) {
-  const d = a?.kind === "dispatch" ? a.details : null;
+  const d = a?.kind === "dispatch" || a?.kind === "template" ? a.details : null;
   if (!d) return [];
   const rows = [];
   const add = (label, value, detail = "", flag = "") => {
     if (value) rows.push({ label, value, detail, flag });
   };
+  add("Template", d.template);
+  // A template change has no launch to describe: its name, action and agent.
+  if (a.kind === "template") {
+    add("Action", d.mode);
+    add("Agent", d.agent);
+    return rows;
+  }
   if (d.project) add("Project", d.project, d.dir, d.other_project ? `not ${d.asking_project || "the asking project"}` : "");
   // A cwd the command changes before dispatching: the project is not known.
   else if (d.dir_source) add("Project", "unknown", "", d.dir_source);
@@ -1629,6 +1668,7 @@ export function approvalBannerText(n) {
 function approvalConfirmTitle(kind) {
   if (kind === "dispatch") return "Approve this dispatch?";
   if (kind === "cron") return "Approve this schedule?";
+  if (kind === "template") return "Approve this template change?";
   return "Approve this command?";
 }
 

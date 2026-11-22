@@ -20,6 +20,7 @@ import (
 	"github.com/blsmth/agentctl/internal/launchopts"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/panestate"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/uploads"
@@ -86,6 +87,7 @@ func (s *Server) registerWrite(rt *Router) {
 		rt.Feature("dispatch-upload")
 		rt.Feature("dispatch-instructions")
 		rt.Feature("dispatch-skip-review")
+		rt.Feature("dispatch-templates")
 	}
 	rt.Write("POST /v1/dispatch/upload", s.handleDispatchUpload)
 	rt.Write("POST /v1/dispatch", writeRoute(s, "dispatch", s.handleDispatch))
@@ -746,6 +748,9 @@ type dispatchIn struct {
 	Model      string `json:"model,omitempty"`
 	Backend    string `json:"backend,omitempty"`
 	Effort     string `json:"effort,omitempty"`
+	// Template names the prompt template the sheet was filled from. It is
+	// display-only metadata: the prompt sent is the edited text.
+	Template string `json:"template,omitempty"`
 	// Images are IDs from POST /v1/dispatch/upload for the same project.
 	Images []string `json:"images,omitempty"`
 }
@@ -817,6 +822,9 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 			return failure(http.StatusBadRequest, codeBadRequest, err.Error())
 		}
 	}
+	if in.Template != "" && !prompttemplate.ValidName(in.Template) {
+		return failure(http.StatusBadRequest, codeBadRequest, "invalid template name")
+	}
 	g, out, ok := s.dispatchTarget(in.Agent, in.ProjectDir, a)
 	if !ok {
 		return out
@@ -848,7 +856,7 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	s.auditAttempt(*a)
 
 	res, err := s.dispatcher.Dispatch(DispatchRequest{
-		Agent: in.Agent, Prompt: prompt, Instructions: instructions, SkipReview: in.SkipReview, Model: model, Backend: backend, Effort: effort,
+		Agent: in.Agent, Prompt: prompt, Instructions: instructions, SkipReview: in.SkipReview, Template: in.Template, Model: model, Backend: backend, Effort: effort,
 		Dir: g.Dir, Session: g.Session, RuntimeDir: g.RuntimeDir,
 	})
 	if err != nil {

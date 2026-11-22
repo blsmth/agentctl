@@ -439,7 +439,7 @@ func templatePreviewGate(agentName, command, cwd string) (approved, decided bool
 }
 
 // templatePopupNotice builds the pending-approval description. The phone
-// gets it as a command approval with the template content as its prompt.
+// gets it as a template approval with the template content as its prompt.
 func templatePopupNotice(agentName, command string, p templatePreview) popupNotice {
 	verb := map[string]string{"add": "add", "edit": "edit", "rm": "remove"}[p.action]
 	return popupNotice{
@@ -448,11 +448,12 @@ func templatePopupNotice(agentName, command string, p templatePreview) popupNoti
 		Detail: textutil.Truncate(verb+" prompt template "+p.name, 120, "..."),
 		Action: verb + " prompt template " + p.name,
 		Remote: &remoteDetails{
-			Kind:        remoteapproval.KindBash,
+			Kind:        remoteapproval.KindTemplate,
 			AskingAgent: agentName,
 			TargetAgent: p.agent,
 			Prompt:      p.body,
 			Command:     command,
+			Details:     remoteapproval.Details{Template: p.name, Mode: verb + " template", Agent: p.agent},
 		},
 	}
 }
