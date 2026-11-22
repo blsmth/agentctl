@@ -6,6 +6,7 @@
 //	agentctl-demo up    --root R --scene S [--scenes D] [--fixtures F]
 //	agentctl-demo shot  --root R --scene S [--out BASE] [--vhs PATH]
 //	agentctl-demo tape  --root R --scene S [--out BASE]
+//	agentctl-demo phone-shot --scene S [--out BASE]
 //	agentctl-demo check --scene S
 //	agentctl-demo down  --root R
 //	agentctl-demo pane-check --target T
@@ -39,6 +40,8 @@ func main() {
 		err = runDown(args)
 	case "shot":
 		err = runShot(args)
+	case "phone-shot":
+		err = runPhoneShot(args)
 	case "tape":
 		err = runTape(args)
 	case "check":
@@ -61,7 +64,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: agentctl-demo up|shot|tape|check|down [flags]")
+	fmt.Fprintln(os.Stderr, "usage: agentctl-demo up|shot|phone-shot|tape|check|down [flags]")
 	os.Exit(2)
 }
 

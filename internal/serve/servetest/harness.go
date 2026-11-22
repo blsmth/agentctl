@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,9 @@ type Options struct {
 	// Rediscover is how often the fleet bus re-reads the fixture, which is
 	// how fixture edits become SSE events; 0 means 50ms.
 	Rediscover time.Duration
+	// Fleet is the initial fixture, and what Reset returns to; nil means
+	// DefaultFixture.
+	Fleet []Group
 }
 
 // Harness is a running serve.Server over fakes plus its control API.
@@ -58,6 +62,7 @@ type Harness struct {
 	Token string
 
 	world      *world
+	initial    []Group
 	handler    http.Handler
 	rediscover time.Duration
 	cancel     context.CancelFunc
@@ -88,7 +93,13 @@ func New(opts Options) (*Harness, error) {
 	}
 
 	w := &world{root: opts.Dir, now: time.Now, orderPath: filepath.Join(opts.Dir, "group-order.json")}
-	w.setGroups(DefaultFixture())
+	initial := opts.Fleet
+	if initial == nil {
+		initial = DefaultFixture()
+	} else if err := validate(initial); err != nil {
+		return nil, fmt.Errorf("servetest: invalid Options.Fleet: %w", err)
+	}
+	w.setGroups(cloneGroups(initial))
 	off := false
 	p := panes{w}
 	s, err := serve.New(serve.Options{
@@ -112,7 +123,7 @@ func New(opts Options) (*Harness, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.Start(ctx)
-	h := &Harness{Server: s, Token: token, world: w, cancel: cancel, rediscover: opts.Rediscover, approvals: map[string]net.Conn{}}
+	h := &Harness{Server: s, Token: token, world: w, initial: initial, cancel: cancel, rediscover: opts.Rediscover, approvals: map[string]net.Conn{}}
 	mux := http.NewServeMux()
 	h.registerControl(mux)
 	mux.Handle("/", s.Handler())
@@ -150,7 +161,7 @@ func (h *Harness) SetFleet(groups []Group) error {
 func (h *Harness) Reset() {
 	h.closeApprovals()
 	_ = os.Remove(h.world.orderPath) // forget a reorder made by the last test
-	h.world.setGroups(DefaultFixture())
+	h.world.setGroups(cloneGroups(h.initial))
 	h.world.clearActions()
 	time.Sleep(3*h.rediscover + 50*time.Millisecond)
 }
@@ -246,4 +257,15 @@ func loopbackOnly(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// cloneGroups copies groups deeply enough that the world's in-place window
+// updates never reach the original (the initial fixture Reset returns to).
+func cloneGroups(groups []Group) []Group {
+	out := make([]Group, len(groups))
+	for i, g := range groups {
+		out[i] = g
+		out[i].Windows = slices.Clone(g.Windows)
+	}
+	return out
 }

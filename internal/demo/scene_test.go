@@ -155,3 +155,58 @@ func TestLoadSceneSetsName(t *testing.T) {
 		t.Errorf("Name = %q, want bug-123", s.Name)
 	}
 }
+
+func TestPhoneBlock(t *testing.T) {
+	withPhone := func(phone string) string { return minimalScene + phone }
+	s, err := ParseScene([]byte(withPhone(`
+phone:
+  steps:
+    - open: fleet
+    - open: window:orch
+    - tap: Send
+    - wait: css:.pane
+    - screenshot
+    - screenshot: detail
+`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := s.Phone.Viewport; v.Width != 393 || v.Height != 852 || v.DPR != 3 || s.Phone.Theme != "light" {
+		t.Errorf("defaults = %+v %q", v, s.Phone.Theme)
+	}
+	plan, outs, err := BuildPhonePlan(s, "/out/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outs) != 2 || outs[0] != "/out/x-phone-1.png" || outs[1] != "/out/x-phone-detail.png" {
+		t.Errorf("outs = %v", outs)
+	}
+	if len(plan.Steps) != 6 || plan.Steps[0].Kind != "open" || plan.Steps[0].Arg != "fleet" {
+		t.Errorf("plan = %+v", plan.Steps)
+	}
+
+	s, _ = ParseScene([]byte(withPhone("phone:\n  steps:\n    - screenshot\n")))
+	if _, outs, _ := BuildPhonePlan(s, "/out/x"); len(outs) != 1 || outs[0] != "/out/x-phone.png" {
+		t.Errorf("single outs = %v", outs)
+	}
+
+	bad := map[string]string{
+		"unknown key":      "phone:\n  bogus: 1\n  steps: [screenshot]\n",
+		"bad theme":        "phone:\n  theme: sepia\n  steps: [screenshot]\n",
+		"no steps":         "phone:\n  theme: dark\n",
+		"no screenshot":    "phone:\n  steps:\n    - open: fleet\n",
+		"bad open":         "phone:\n  steps:\n    - open: nowhere\n    - screenshot\n",
+		"unknown window":   "phone:\n  steps:\n    - open: window:nope\n    - screenshot\n",
+		"approval on idle": "phone:\n  steps:\n    - open: approval:orch\n    - screenshot\n",
+		"two actions":      "phone:\n  steps:\n    - {open: fleet, tap: x}\n    - screenshot\n",
+		"bad scalar":       "phone:\n  steps:\n    - tap\n",
+		"bad dpr":          "phone:\n  viewport: {dpr: 9}\n  steps: [screenshot]\n",
+	}
+	for name, p := range bad {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseScene([]byte(withPhone(p))); err == nil {
+				t.Error("want an error")
+			}
+		})
+	}
+}

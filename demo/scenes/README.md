@@ -1,6 +1,6 @@
 # Demo scenes
 
-Each `*.yaml` file here describes one demo world and the keys a generated vhs tape sends to it. `just demo <scene>` seeds it for poking around; `just demo-shot <scene> [out]` seeds it and renders it to `demo/out/<scene>.png` (or `.gif`). A scene can be a bare name (resolved here, with or without `.yaml`) or a path to any file; anything containing a `/` is a path, e.g. `just demo-shot /tmp/bug-123.yaml` or `./hub.yaml`. Relative paths are resolved from the repo root. `just demo` prints the exact `tmux -L <label> attach` command; the label is `agentctl-demo` for the default root and `agentctl-demo-<hash>` for a custom `AGENTCTL_DEMO_ROOT`. `just demo-check <scene>` validates a file without starting anything.
+Each `*.yaml` file here describes one demo world and the keys a generated vhs tape sends to it. `just demo <scene>` seeds it for poking around; `just demo-shot <scene> [out]` seeds it and renders it to `demo/out/<scene>.png` (or `.gif`). A scene can be a bare name (resolved here, with or without `.yaml`) or a path to any file; anything containing a `/` is a path, e.g. `just demo-shot /tmp/bug-123.yaml` or `./hub.yaml`. Relative paths are resolved from the repo root. `just demo` prints the exact `tmux -L <label> attach` command; the label is `agentctl-demo` for the default root and `agentctl-demo-<hash>` for a custom `AGENTCTL_DEMO_ROOT`. `just demo-phone-shot <scene> [out]` renders the phone side (see Phone). `just demo-check <scene>` validates a file without starting anything.
 
 Decoding is strict: an unknown key, a bad state or mode, a `spawned_by` that names no window, or a step with two actions fails with an error naming the field.
 
@@ -85,6 +85,27 @@ steps:                                # one action per step
   - hide                              # stop recording (gif)
   - show
 ```
+
+## Phone
+
+An optional `phone:` block drives the phone web app over the same fleet. `just demo-phone-shot <scene-or-path> [out]` serves the scene on the dev server (`devserver -scene`: loopback, free port, no tmux or real state), plays the steps with Playwright (WebKit, the `just web-test` install) and writes `demo/out/<scene>-phone.png`. A lone unnamed screenshot is `<scene>-phone.png`; several are `<scene>-phone-<suffix>.png`, or `<scene>-phone-<n>.png` when unnamed. Strict like the rest of the schema.
+
+```yaml
+phone:
+  viewport: {width: 393, height: 852, dpr: 3}   # default iPhone 15; width 200-1200, height 300-2400, dpr 1-4
+  theme: light                                   # light (default) | dark
+  steps:                                         # at least one, and at least one screenshot
+    - open: fleet                                # fleet | window:<key> | terminal:<key> | approval:<key>
+    - tap: Approve                               # visible text, or css:<selector>
+    - wait: Do you want to proceed?              # visible text, or css:<selector> (10s)
+    - screenshot                                 # or screenshot: <suffix>
+```
+
+`approval:<key>` needs a blocked window; every blocked window has one open approval. A window's pane text is drawn by the same renderer as the terminal demo (`internal/demo/pane.go`, from its transcript), so `just demo-pane-check` covers both. `terminal:<key>` opens the live terminal route, which the dev server cannot serve (no tmux), so it shows the app's unavailable state.
+
+Mapped to the phone: `agent`, `mode` (dispatched shows as `dispatch`), `state` (done is idle plus done, or the unseen turn-done mark for a bare window), `title` and `kind` (review-pr defaults to `review`), `ticket`/`ticket_title`, `task`/`review_pr`, `pr`, `branch` (not bare), `spawned_by` (the parent/child tree), `model`, `cost_usd`, `ctx_pct`, `since`, `last_tool` (else the transcript's last tool, then its last text), `pending_tool`/`pending_detail`/`permission` (the approval and the pane dialog), and from the transcript the recap (away summary, else ticket or task, else title), the prompt and the pane.
+
+No phone equivalent: `seen`, `turns`, `instance` (rows show the agent), `worktree`/`dirty`, `spinner` (drawn in the pane only), `approval` (a terminal pane keystroke), `select`, `projects[].commits/dirty/branch`, `config.*`, `terminal.*`, the per-project `shell` window (the phone fleet has no shell rows) and the pane statusline (it needs the real `agentctl statusline` process).
 
 ## Transcripts
 

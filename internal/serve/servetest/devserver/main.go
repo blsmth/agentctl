@@ -5,6 +5,10 @@
 //
 //	go run ./internal/serve/servetest/devserver -addr 127.0.0.1:8787
 //
+// With -scene it serves a demo scene's fleet instead of the default fixture
+// (internal/demo/phonefix): `just demo-phone-shot` drives it with Playwright.
+// It then also serves GET /__scene, the scene's windows and their approvals.
+//
 // It prints the app URL (with a one-time login link that sets the device
 // cookie) and serves until interrupted. Not part of the agentctl binary.
 package main
@@ -37,7 +41,18 @@ func main() {
 func run() error {
 	addr := flag.String("addr", "127.0.0.1:8787", "loopback address to listen on")
 	readOnly := flag.Bool("read-only", false, "turn serve.allow_write off")
+	sceneArg := flag.String("scene", "", "demo scene (name in -scenes, or a path containing a /) to serve instead of the default fixture")
+	scenes := flag.String("scenes", "demo/scenes", "scene directory for -scene")
+	fixtures := flag.String("fixtures", "demo/transcripts", "transcript fixture directory for -scene")
 	flag.Parse()
+
+	var sc *scene
+	if *sceneArg != "" {
+		var err error
+		if sc, err = loadScene(*scenes, *sceneArg, *fixtures); err != nil {
+			return err
+		}
+	}
 
 	ln, err := listenLoopback(*addr)
 	if err != nil {
@@ -51,11 +66,20 @@ func run() error {
 	// Before anything logs: keep serve's log out of the real state dirs.
 	logging.InitFile(filepath.Join(dir, "serve.log"))
 
-	h, err := servetest.New(servetest.Options{Dir: dir, ReadOnly: *readOnly})
+	opts := servetest.Options{Dir: dir, ReadOnly: *readOnly}
+	if sc != nil {
+		opts.Fleet = sc.groups
+	}
+	h, err := servetest.New(opts)
 	if err != nil {
 		return err
 	}
 	defer h.Close()
+	if sc != nil {
+		if err := sc.openApprovals(h); err != nil {
+			return err
+		}
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /__login", func(w http.ResponseWriter, r *http.Request) {
@@ -67,6 +91,9 @@ func run() error {
 		})
 		http.Redirect(w, r, "/", http.StatusFound)
 	})
+	if sc != nil {
+		mux.HandleFunc("GET /__scene", sc.serve)
+	}
 	mux.Handle("/", h.Handler())
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 

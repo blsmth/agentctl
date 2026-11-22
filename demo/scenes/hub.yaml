@@ -119,3 +119,15 @@ steps:
   - type: "$"
   - sleep: 2s
   - screenshot
+# The same fleet on the phone: the fleet list, then the blocked billing-svc
+# window with its approval. `just demo-phone-shot hub`.
+phone:
+  steps:
+    - open: fleet
+    - screenshot: fleet
+    - open: window:backfill
+    - wait: Do you want to proceed?
+    - screenshot: backfill
+    - open: window:limiter
+    - wait: Claude Code
+    - screenshot: limiter
