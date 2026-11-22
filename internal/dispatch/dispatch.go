@@ -111,6 +111,10 @@ type Request struct {
 	// approval check uses it to see the reviewer the launch will really run.
 	VerifyAgent func(dirs ...string) error
 
+	// PRReviewOverride, when non-empty, replaces config pr_review for this
+	// launch only (serve's per-dispatch "skip code review" sets it to off).
+	PRReviewOverride string
+
 	// Set by Launch from the resolved harness, for buildSystemPrompt.
 	persona          string // full agent body, for harnesses without --agent
 	noMessaging      bool   // harness has no SendMessage/ListAgents
@@ -334,7 +338,7 @@ func Launch(req Request) (Result, error) {
 	}
 
 	// 7. Build system prompt.
-	req.prReview = cfg.EffectivePRReview()
+	req.prReview = effectivePRReview(cfg.EffectivePRReview(), req.PRReviewOverride)
 	req.Orchestrator = launchOrchestrator(req, spec)
 	if req.Orchestrator.Known() && cfg.HasAccounts() && caps.Accounts {
 		dropCrossAccountOrchestrator(&req, acct.Dir, claudehome.ParentDir(acct.parent))
@@ -1214,4 +1218,13 @@ func TaskFor(req Request) string {
 		return textutil.TaskLine(fmt.Sprintf("Review PR #%d: %s", pr.Number, pr.Title), taskLineMax)
 	}
 	return textutil.TaskLine(req.CustomPrompt, taskLineMax)
+}
+
+// effectivePRReview returns the per-launch override when set, else the
+// configured mode.
+func effectivePRReview(configured, override string) string {
+	if override != "" {
+		return override
+	}
+	return configured
 }

@@ -73,3 +73,19 @@ test("no instructions typed: the sheet has no instructions block", async ({ page
   await page.getByRole("button", { name: "Review & send" }).tap();
   await expect(sheet(page)).not.toContainText("additional instructions");
 });
+
+test("skip code review is offered for orchestrators only and is sent", async ({ page, control, guard }) => {
+  guard.allow(/HTTP 404|status of 404/);
+  await openDispatch(page);
+  const skip = page.getByLabel("Skip code review");
+  await expect(skip).toBeHidden();
+  await page.locator("select[aria-label=Agent]").selectOption("lead");
+  await expect(skip).toBeVisible();
+  await skip.check();
+  await page.getByPlaceholder("What should the agent do?").fill("small task");
+  await page.getByRole("button", { name: "Review & send" }).tap();
+  await expect(sheet(page)).toContainText("code review: skipped");
+  await sheet(page).getByRole("button", { name: "Dispatch" }).tap();
+  const actions = await control.waitForActions((a) => a.some((x) => x.kind === "dispatch"));
+  expect(actions.find((x) => x.kind === "dispatch")!.skip_review).toBe(true);
+});

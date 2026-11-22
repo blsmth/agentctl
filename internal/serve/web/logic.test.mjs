@@ -105,6 +105,9 @@ assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, []).body, { agent: "a"
 assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, [], "  be terse \n").body, { agent: "a", project_dir: "/d", prompt: "p", instructions: "be terse" });
 assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, [], "  \n").body, { agent: "a", project_dir: "/d", prompt: "p" });
 assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, [], undefined).body, { agent: "a", project_dir: "/d", prompt: "p" });
+assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, [], "", true).body, { agent: "a", project_dir: "/d", prompt: "p", skip_review: true });
+assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, [], "", false).body, { agent: "a", project_dir: "/d", prompt: "p" });
+assert.ok(confirmLines({ agent: "a", project_dir: "/d", prompt: "p", skip_review: true })[0].includes("code review: skipped"));
 assert.deepEqual(confirmLines({ agent: "a", project_dir: "/d", prompt: "p", instructions: "be terse" }), [
   "agent: a\nproject: /d", "p", "additional instructions (system prompt):\nbe terse",
 ]);

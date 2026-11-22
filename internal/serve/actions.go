@@ -111,7 +111,9 @@ type DispatchRequest struct {
 	Prompt string
 	// Instructions is optional standing guidance for the agent's system prompt.
 	Instructions string
-	Model        string
+	// SkipReview launches as if config pr_review were off.
+	SkipReview bool
+	Model      string
 	// Backend and Effort are the launch overrides, already resolved the way
 	// the launch popup does ("" = agent config).
 	Backend    string
@@ -325,7 +327,12 @@ func (d launchDispatcher) Dispatch(req DispatchRequest) (DispatchResult, error) 
 		if err := d.validateAgent(req.Agent, req.Dir); err != nil {
 			return err
 		}
+		prReview := ""
+		if req.SkipReview {
+			prReview = config.PRReviewOff
+		}
 		res, err := d.launch(dispatch.AdhocRequest{
+			PRReview:          prReview,
 			Prompt:            req.Prompt,
 			ExtraInstructions: req.Instructions,
 			AgentName:         req.Agent,

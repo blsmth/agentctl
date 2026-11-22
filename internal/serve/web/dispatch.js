@@ -18,6 +18,17 @@ export function mountDispatch(root, ctx, { dir } = {}) {
     placeholder: "Extra guidance for this agent (added to its system prompt)",
     "aria-label": "Additional instructions",
   });
+  // Per-dispatch opt-out of the orchestrator's code review; only offered for
+  // orchestrator agents (workers have nobody to review) and never remembered.
+  const withSkipReview = ctx.hasFeature("dispatch-skip-review");
+  const skipReview = h("input", { type: "checkbox", "aria-label": "Skip code review" });
+  const skipReviewRow = h("label", { class: "skip-review", hidden: true }, skipReview, " Skip code review");
+  const orchestrators = new Set();
+  const syncSkipReview = () => {
+    const show = withSkipReview && orchestrators.has(agent.value);
+    skipReviewRow.hidden = !show;
+    if (!show) skipReview.checked = false;
+  };
   const submit = h("button", { class: "btn primary", disabled: true }, "Review & send");
   const launchBox = h("div", { class: "launch-opts" });
   const withOptions = ctx.hasFeature("launch-options");
@@ -35,6 +46,7 @@ export function mountDispatch(root, ctx, { dir } = {}) {
       withInstructions
         ? h("details", { class: "instructions" }, h("summary", {}, "Additional instructions"), instructions)
         : null,
+      withSkipReview ? skipReviewRow : null,
       ...(att ? att.controls : []),
       ctx.hasFeature("write") ? null : h("p", { class: "muted" }, "Write actions are not enabled on this server."),
       submit,
@@ -122,6 +134,7 @@ export function mountDispatch(root, ctx, { dir } = {}) {
   }
   agent.addEventListener("change", () => {
     userPickedAgent = true;
+    syncSkipReview();
     loadOptions();
   });
   project.addEventListener("change", () => {
@@ -131,11 +144,15 @@ export function mountDispatch(root, ctx, { dir } = {}) {
 
   Promise.all([get("/v1/agents"), get("/v1/projects")])
     .then(([a, p]) => {
-      for (const x of a.agents ?? []) agent.append(h("option", { value: x.name }, x.name));
+      for (const x of a.agents ?? []) {
+        agent.append(h("option", { value: x.name }, x.name));
+        if (x.orchestrator) orchestrators.add(x.name);
+      }
       for (const x of p.projects ?? []) project.append(h("option", { value: x.dir }, x.name));
       projects = p.projects ?? [];
       if (dir && projects.some((x) => x.dir === dir)) project.value = dir;
       applyDefaultAgent();
+      syncSkipReview();
       submit.disabled = !ctx.hasFeature("write");
       return loadOptions();
     })
@@ -148,11 +165,12 @@ export function mountDispatch(root, ctx, { dir } = {}) {
       return;
     }
     const extra = withInstructions ? instructions.value.trim() : "";
+    const skip = withSkipReview && orchestrators.has(agent.value) && skipReview.checked;
     const n = att ? att.count() : 0;
     const [agentName, dir, picked] = [agent.value, project.value, opts ? choice : {}];
     const confirmed = await confirmSheet({
       title: "Dispatch?",
-      lines: confirmLines(buildDispatchRequest(agentName, dir, text, picked, [], extra).body, n),
+      lines: confirmLines(buildDispatchRequest(agentName, dir, text, picked, [], extra, skip).body, n),
       confirmLabel: "Dispatch",
     });
     if (!confirmed) return;
@@ -170,7 +188,7 @@ export function mountDispatch(root, ctx, { dir } = {}) {
       }
     }
     try {
-      const res = await send(buildDispatchRequest(agentName, dir, text, picked, images, extra));
+      const res = await send(buildDispatchRequest(agentName, dir, text, picked, images, extra, skip));
       toast("Dispatched");
       location.hash = res?.window_id ? windowHash(res.session, res.window_id) : "#/";
     } catch (e) {

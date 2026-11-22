@@ -35,6 +35,8 @@ type Action struct {
 	Device   string `json:"device,omitempty"`
 	// Instructions is a dispatch's additional system-prompt text.
 	Instructions string `json:"instructions,omitempty"`
+	// SkipReview is a dispatch's per-launch skip-code-review flag.
+	SkipReview bool `json:"skip_review,omitempty"`
 }
 
 // world is the fake machine: the fixture fleet, its panes and the recorded
@@ -281,7 +283,7 @@ func (s sweeper) run(_ context.Context, t sweeprun.Target, dryRun bool) (sweepru
 type dispatcher struct{ w *world }
 
 func (d dispatcher) Dispatch(req serve.DispatchRequest) (serve.DispatchResult, error) {
-	d.w.record(Action{Kind: "dispatch", Session: req.Session, Agent: req.Agent, Text: req.Prompt, Dir: req.Dir, Instructions: req.Instructions})
+	d.w.record(Action{Kind: "dispatch", Session: req.Session, Agent: req.Agent, Text: req.Prompt, Dir: req.Dir, Instructions: req.Instructions, SkipReview: req.SkipReview})
 	return serve.DispatchResult{WindowID: "@900", Session: req.Session, Branch: "agent/" + req.Agent + "/adhoc"}, nil
 }
 
@@ -311,6 +313,7 @@ type agents struct{}
 func (agents) Agents([]string) ([]serve.AgentInfo, error) {
 	return []serve.AgentInfo{
 		{Name: "go-engineer", Description: "Writes Go", Scope: "global"},
+		{Name: "lead", Description: "Orchestrates", Scope: "global", Orchestrator: true},
 		{Name: "reviewer", Description: "Reviews PRs", Scope: "project"},
 	}, nil
 }

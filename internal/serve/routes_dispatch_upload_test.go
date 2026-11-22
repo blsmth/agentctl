@@ -199,7 +199,7 @@ func TestDispatchWithImages(t *testing.T) {
 	p1, _ := uploads.Path(rt, uploads.DispatchKey, ids[1])
 	want := "the bug\nis here\n\n[Screenshot: " + p0 + "]\n[Screenshot: " + p1 + "]"
 	if len(e.disp.got) != 1 || e.disp.got[0].Prompt != want {
-		t.Fatalf("prompt = %q, want %q", e.disp.got, want)
+		t.Fatalf("dispatches = %+v, want one with prompt %q", e.disp.got, want)
 	}
 }
 

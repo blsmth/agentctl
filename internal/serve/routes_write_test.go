@@ -1130,6 +1130,34 @@ func TestDispatchInstructionsFeature(t *testing.T) {
 	}
 }
 
+func TestDispatchSkipReview(t *testing.T) {
+	for _, tt := range []struct {
+		name, json string
+		want       bool
+	}{
+		{"omitted", "", false},
+		{"false", `,"skip_review":false`, false},
+		{"true", `,"skip_review":true`, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWriteEnv(t, true)
+			w := e.post("/v1/dispatch", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"p"`+tt.json+`}`)
+			if w.Code != 200 {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			if len(e.disp.got) != 1 || e.disp.got[0].SkipReview != tt.want {
+				t.Errorf("dispatch = %+v, want skip_review %v", e.disp.got, tt.want)
+			}
+		})
+	}
+	if !slices.Contains(newWriteEnv(t, true).Server.router.Features(), "dispatch-skip-review") {
+		t.Error("dispatch-skip-review not advertised")
+	}
+	if slices.Contains(newWriteEnv(t, false).Server.router.Features(), "dispatch-skip-review") {
+		t.Error("dispatch-skip-review advertised with writes disabled")
+	}
+}
+
 func TestWriteRateLimit(t *testing.T) {
 	e := newWriteEnv(t, true)
 	for i := range writesPerMinute {
