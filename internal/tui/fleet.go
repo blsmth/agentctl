@@ -1065,7 +1065,9 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		m.hideCard()
 		if m.schedFormOpen() {
-			return m, nil // the form owns input until it closes
+			// The form owns input until it closes: a click acts only on the
+			// form's own controls and the footer hints.
+			return m, m.handleSchedFormClick(msg)
 		}
 		return m.pressHeader(msg)
 
@@ -1074,6 +1076,11 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseWheelMsg:
 		m.hideCard()
+		if m.schedFormOpen() {
+			if cmd, ok := m.handleSchedFormWheel(msg); ok {
+				return m, cmd
+			}
+		}
 		m.handleWheel(msg)
 		return m, nil
 

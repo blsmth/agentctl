@@ -18,6 +18,7 @@ import (
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/launchopts"
 )
 
 // The Schedules form: create, edit or duplicate a cron job in the right
@@ -368,10 +369,31 @@ func (f *fleetSchedForm) refreshOptions() {
 		f.agent.setOpts(schedAgentOpts(f.agentList(dir)), f.agent.value(), plainAgent)
 	}
 	agent := f.agent.value()
+	// The backend first: the model list is the one of the backend as it is
+	// after the refresh.
+	f.backend.setOpts(f.env.backendOpts(agent), f.backend.value(), nil)
 	f.model.setOpts(f.env.modelOpts(agent, f.backend.value()), f.model.value(), plainModel)
 	f.effort.setOpts(f.env.effortOpts(agent), f.effort.value(), nil)
-	f.backend.setOpts(f.env.backendOpts(agent), f.backend.value(), nil)
 	f.account.setOpts(f.env.accountOpts(agent, dir), f.account.value(), nil)
+}
+
+// fitModelToBackend runs after the user changes the backend: a model the new
+// backend does not offer goes back to the agent default, one it offers stays.
+// Never called when the form opens, so an edit shows its stored model as is.
+func (f *fleetSchedForm) fitModelToBackend() {
+	cur := f.model.value()
+	if cur == "" {
+		return
+	}
+	agent := f.agent.value()
+	opts := f.env.modelOpts(agent, f.backend.value())
+	if slices.ContainsFunc(opts, func(o schedOpt) bool { return o.value == cur }) {
+		return
+	}
+	if f.env.effectiveBackend(agent, f.backend.value()) == launchopts.BackendAnthropic && plainModel(cur) {
+		return // a full Anthropic model id the list does not spell out
+	}
+	f.model.setOpts(opts, "", plainModel)
 }
 
 // schedDirKey is a project dir with symlinks resolved, so a group's dir and
@@ -485,10 +507,11 @@ func (f *fleetSchedForm) stops() []schedStop {
 	}
 	out = append(out, stopAdvanced)
 	if f.advOpen {
-		out = append(out, stopWorktree, stopModel, stopEffort)
+		out = append(out, stopWorktree)
 		if f.showBackend() {
 			out = append(out, stopBackend)
 		}
+		out = append(out, stopModel, stopEffort)
 		if f.showAccount() {
 			out = append(out, stopAccount)
 		}
@@ -1032,15 +1055,24 @@ func (m *FleetModel) handleSchedFormKey(msg tea.KeyPressMsg) tea.Cmd {
 			f.schedTouched = f.schedTouched || in.Value() != f.initialSchedText(f.focus)
 		}
 	}
+	return m.schedFormChanged(before, cmd)
+}
+
+// schedFormChanged is the tail of every change to the focused field, from a
+// key or the mouse: when the form state moved off before, the field counts as
+// touched, the options that depend on it are rebuilt and a preview runs.
+func (m *FleetModel) schedFormChanged(before string, cmd tea.Cmd) tea.Cmd {
+	f := m.schedForm
 	if f.state() == before {
 		return cmd
 	}
 	f.touched[f.focus] = true
-	if f.focus == stopDir {
+	switch f.focus {
+	case stopDir, stopAgent:
 		f.refreshOptions()
-	}
-	if f.focus == stopAgent || f.focus == stopBackend {
+	case stopBackend:
 		f.refreshOptions()
+		f.fitModelToBackend()
 	}
 	return tea.Batch(cmd, m.schedPreviewCmd())
 }
@@ -1273,14 +1305,20 @@ func (f *fleetSchedForm) fieldErrorsShown() (byStop map[schedStop][]string, gene
 // the focused field is inside h lines. Fields are grouped What / When /
 // Advanced.
 func (m FleetModel) schedFormLines(w, h int) []string {
+	return m.schedFormLayout(w, h).lines
+}
+
+// schedFormLayout is schedFormLines with the click targets on its lines: the
+// one rendering both the screen and the mouse hit testing read.
+func (m FleetModel) schedFormLayout(w, h int) schedLayout {
 	f := m.schedForm
 	if f == nil {
-		return nil
+		return schedLayout{}
 	}
 	if f.review || f.saving {
-		return m.schedReviewLines(w)
+		return m.schedReviewLayout(w)
 	}
-	var out []string
+	var out schedLayout
 	focusLine := 0
 	fieldErrs, general := f.fieldErrorsShown()
 	title := "New schedule"
@@ -1290,26 +1328,45 @@ func (m FleetModel) schedFormLines(w, h int) []string {
 	case schedFormDup:
 		title = "Duplicate of " + f.original + " (saved paused)"
 	}
-	out = append(out, fleetTitleStyle.Render(truncateToWidth(title, w)), "")
+	out.add(fleetTitleStyle.Render(truncateToWidth(title, w)), "")
 	for _, g := range general {
-		out = append(out, fleetErrStyle.Render(wrapText(g, w)))
+		out.add(fleetErrStyle.Render(wrapText(g, w)))
 	}
 	vw := max(w-schedLabelW-1, 8)
-	row := func(stop schedStop, label, value string) {
+	indent := strings.Repeat(" ", schedLabelW+1)
+	// row draws a field: its label, then value (one screen line per value
+	// line). hits are value targets, their lines and columns relative to the
+	// value; the rest of the row focuses the field (Advanced: folds it).
+	row := func(stop schedStop, label, value string, hits ...schedHit) {
 		marker := "  "
 		lst := fleetCountStyle
 		if stop == f.focus {
 			marker = cursorActiveStyle.Render("▸") + " "
 			lst = fleetGroupNameStyle
-			focusLine = len(out)
+			focusLine = len(out.lines)
 		}
+		base := len(out.lines)
 		lines := strings.Split(value, "\n")
-		out = append(out, marker+lst.Render(padRight(label, schedLabelW-2))+" "+truncateToWidth(lines[0], vw))
+		out.add(marker + lst.Render(padRight(label, schedLabelW-2)) + " " + truncateToWidth(lines[0], vw))
 		for _, l := range lines[1:] {
-			out = append(out, strings.Repeat(" ", schedLabelW+1)+l)
+			out.add(indent + l)
+		}
+		for _, ht := range hits {
+			ht.stop = stop
+			ht.line += base
+			ht.x0 += schedLabelW + 1
+			ht.x1 = min(ht.x1, vw) + schedLabelW + 1
+			out.hits = append(out.hits, ht)
+		}
+		kind := schedHitFocus
+		if stop == stopAdvanced {
+			kind = schedHitToggle
+		}
+		for i := range lines {
+			out.hits = append(out.hits, schedHit{line: base + i, x0: 0, x1: schedHitEnd, stop: stop, kind: kind})
 		}
 		for _, e := range fieldErrs[stop] {
-			out = append(out, strings.Repeat(" ", schedLabelW+1)+fleetErrStyle.Render(truncateToWidth(e, vw)))
+			out.add(indent + fleetErrStyle.Render(truncateToWidth(e, vw)))
 		}
 	}
 	input := func(stop schedStop) string {
@@ -1317,39 +1374,50 @@ func (m FleetModel) schedFormLines(w, h int) []string {
 		in.SetWidth(max(vw-1, 1))
 		return in.View()
 	}
-	cyc := func(stop schedStop) string { return f.cyclerFor(stop).view(f.focus == stop) }
-	header := func(name string) { out = append(out, "", "  "+fleetDimStyle.Render(name)) }
+	// cyc draws a cycler after a prefix of pre columns: ‹ steps back, the
+	// rest of it forward.
+	cyc := func(stop schedStop, pre int) (string, []schedHit) {
+		v := f.cyclerFor(stop).view(f.focus == stop)
+		return v, arrowHits(pre, lipgloss.Width(v))
+	}
+	header := func(name string) { out.add("", "  "+fleetDimStyle.Render(name)) }
 
 	header("What")
 	if f.mode == schedFormEdit {
-		out = append(out, "  "+fleetCountStyle.Render(padRight("Name", schedLabelW-2))+" "+f.original+fleetDimStyle.Render("  (cannot change)"))
+		out.add("  " + fleetCountStyle.Render(padRight("Name", schedLabelW-2)) + " " + f.original + fleetDimStyle.Render("  (cannot change)"))
 	} else {
 		row(stopName, "Name", input(stopName))
 	}
 	dir := fleetErrStyle.Render(errSchedNoProject.Error())
+	var dirHits []schedHit
 	if len(f.dirs) > 0 {
 		d := f.dirs[f.dirIdx]
 		dir = "‹ " + fleetGroupNameStyle.Render(projectOf(d)) + " › " + fleetDimStyle.Render(truncateToWidth(tildify(d), max(vw-lipgloss.Width(projectOf(d))-5, 4)))
+		dirHits = arrowHits(0, lipgloss.Width(dir))
 	}
-	row(stopDir, "Project", dir)
-	row(stopAgent, "Agent", cyc(stopAgent))
+	row(stopDir, "Project", dir, dirHits...)
+	v, hs := cyc(stopAgent, 0)
+	row(stopAgent, "Agent", v, hs...)
 	pr := f.prompt
 	pr.SetWidth(max(vw, 8))
 	row(stopPrompt, "Prompt", pr.View())
 	switch {
 	case f.promptKey != "" && strings.TrimSpace(f.prompt.Value()) == "":
-		out = append(out, strings.Repeat(" ", schedLabelW+1)+fleetDimStyle.Render(truncateToWidth("from context key "+f.promptKey, vw)))
+		out.add(indent + fleetDimStyle.Render(truncateToWidth("from context key "+f.promptKey, vw)))
 	case f.focus == stopPrompt:
-		out = append(out, strings.Repeat(" ", schedLabelW+1)+fleetDimStyle.Render("^e editor"))
+		out.hits = append(out.hits, schedHit{line: len(out.lines), x0: schedLabelW + 1, x1: schedLabelW + 1 + lipgloss.Width(schedEditorHint), stop: stopPrompt, kind: schedHitEditor})
+		out.add(indent + fleetDimStyle.Render(schedEditorHint))
 	}
 
 	header("When")
-	row(stopKind, "Schedule", segmented(schedKindLabels, f.kind, f.focus == stopKind, vw))
+	v, hs = segmentedLayout(schedKindLabels, f.kind, f.focus == stopKind, vw)
+	row(stopKind, "Schedule", v, hs...)
 	switch f.kind {
 	case schedKindCustom:
 		row(stopCustom, "  Cron", input(stopCustom))
 	case schedKindDays:
-		row(stopDays, "  Days", m.dayChips())
+		v, hs = m.dayChipsLayout()
+		row(stopDays, "  Days", v, hs...)
 		row(stopClock, "  Time", input(stopClock))
 	case schedKindHourly:
 		row(stopClock, "  Minute", input(stopClock)+fleetDimStyle.Render(" past each hour"))
@@ -1357,11 +1425,11 @@ func (m FleetModel) schedFormLines(w, h int) []string {
 		row(stopClock, "  Time", input(stopClock))
 	}
 	if f.focus == stopClock && f.kind != schedKindCustom {
-		out = append(out, strings.Repeat(" ", schedLabelW+1)+fleetDimStyle.Render("↑/↓ ±15 min"))
+		out.add(indent + fleetDimStyle.Render("↑/↓ ±15 min"))
 	}
-	out = append(out, strings.Repeat(" ", schedLabelW+1)+fleetDimStyle.Render(truncateToWidth(f.previewLine(), vw)))
+	out.add(indent + fleetDimStyle.Render(truncateToWidth(f.previewLine(), vw)))
 
-	out = append(out, "")
+	out.add("")
 	job, _ := f.job()
 	adv := "▸ Advanced"
 	if f.advOpen {
@@ -1377,32 +1445,58 @@ func (m FleetModel) schedFormLines(w, h int) []string {
 		if !f.worktree {
 			wt = "[ ] " + schedWorktreeOff
 		}
-		row(stopWorktree, "  Worktree", wt)
-		row(stopModel, "  Model", cyc(stopModel))
-		row(stopEffort, "  Effort", cyc(stopEffort))
+		row(stopWorktree, "  Worktree", wt, schedHit{x1: lipgloss.Width(wt), kind: schedHitToggle})
 		if f.showBackend() {
-			row(stopBackend, "  Backend", cyc(stopBackend))
+			v, hs = cyc(stopBackend, 0)
+			row(stopBackend, "  Backend", v, hs...)
 		}
+		v, hs = cyc(stopModel, 0)
+		row(stopModel, "  Model", v, hs...)
+		v, hs = cyc(stopEffort, 0)
+		row(stopEffort, "  Effort", v, hs...)
 		if f.showAccount() {
-			row(stopAccount, "  Account", cyc(stopAccount))
+			v, hs = cyc(stopAccount, 0)
+			row(stopAccount, "  Account", v, hs...)
 		}
-		row(stopTimeout, "  Timeout", cyc(stopTimeout))
+		v, hs = cyc(stopTimeout, 0)
+		row(stopTimeout, "  Timeout", v, hs...)
 		if f.timeoutCustom() {
 			row(stopTimeoutCustom, "    Custom", input(stopTimeoutCustom)+fleetDimStyle.Render(" e.g. 90m"))
 		}
-		row(stopOverlap, "  Overlap", segmented(schedOverlaps, f.overlap, f.focus == stopOverlap, vw)+fleetDimStyle.Render("  while a run is live"))
-		row(stopCatchup, "  Catch-up", segmented(schedCatchups, f.catchup, f.focus == stopCatchup, vw)+fleetDimStyle.Render("  after missed fires"))
-		row(stopUsage5h, "  Skip above", fleetDimStyle.Render("5h ")+cyc(stopUsage5h))
-		row(stopUsage7d, "", fleetDimStyle.Render("7d ")+cyc(stopUsage7d))
+		v, hs = segmentedLayout(schedOverlaps, f.overlap, f.focus == stopOverlap, vw)
+		row(stopOverlap, "  Overlap", v+fleetDimStyle.Render("  while a run is live"), hs...)
+		v, hs = segmentedLayout(schedCatchups, f.catchup, f.focus == stopCatchup, vw)
+		row(stopCatchup, "  Catch-up", v+fleetDimStyle.Render("  after missed fires"), hs...)
+		const usagePre = "5h "
+		v, hs = cyc(stopUsage5h, lipgloss.Width(usagePre))
+		row(stopUsage5h, "  Skip above", fleetDimStyle.Render(usagePre)+v, hs...)
+		v, hs = cyc(stopUsage7d, lipgloss.Width(usagePre))
+		row(stopUsage7d, "", fleetDimStyle.Render("7d ")+v, hs...)
 	}
-	out = append(out, "")
+	out.add("")
 	switch {
 	case f.discard:
-		out = append(out, fleetBlockedStyle.Render("discard changes? y/n"))
+		out.add(fleetBlockedStyle.Render("discard changes? y/n"))
 	case f.err != "":
-		out = append(out, fleetErrStyle.Render(truncateToWidth(f.err, w)))
+		out.add(fleetErrStyle.Render(truncateToWidth(f.err, w)))
 	}
-	return scrollTo(out, focusLine, h)
+	out.scroll(focusLine, h)
+	return out
+}
+
+// schedEditorHint is the clickable line under the focused prompt.
+const schedEditorHint = "^e editor"
+
+// arrowHits are a cycler's targets drawn at column pre, w columns wide: its
+// ‹ (and the space after it) steps back, anything right of it forward.
+func arrowHits(pre, w int) []schedHit {
+	if w <= 0 {
+		return nil
+	}
+	return []schedHit{
+		{x0: pre, x1: pre + 2, kind: schedHitPrev},
+		{x0: pre + 2, x1: pre + w, kind: schedHitNext},
+	}
 }
 
 // previewLine is the live line under the schedule: words · time zone ·
@@ -1431,10 +1525,13 @@ func (f *fleetSchedForm) previewLine() string {
 	return strings.Join(parts, " · ")
 }
 
-// dayChips renders M T W T F S S with the chip cursor.
-func (m FleetModel) dayChips() string {
+// dayChipsLayout renders M T W T F S S with the chip cursor, plus one
+// toggle target per chip.
+func (m FleetModel) dayChipsLayout() (string, []schedHit) {
 	f := m.schedForm
 	parts := make([]string, 7)
+	hits := make([]schedHit, 7)
+	col := 0
 	for i, l := range schedDayLetters {
 		st := fleetDimStyle
 		if f.days[i] {
@@ -1447,15 +1544,26 @@ func (m FleetModel) dayChips() string {
 			cell = " " + cell + " "
 		}
 		parts[i] = cell
+		cw := lipgloss.Width(cell)
+		hits[i] = schedHit{x0: col, x1: col + cw, kind: schedHitDay, arg: i}
+		col += cw
 	}
-	return strings.Join(parts, "")
+	return strings.Join(parts, ""), hits
 }
 
 // segmented renders choices with the chosen one marked: a ● prefix and bold
 // (filled while focused), so it reads without colour. Segments that do not
 // fit in w columns continue on the next line.
 func segmented(labels []string, cur int, focused bool, w int) string {
+	s, _ := segmentedLayout(labels, cur, focused, w)
+	return s
+}
+
+// segmentedLayout is segmented plus one target per segment (its line and
+// columns within the rendered text).
+func segmentedLayout(labels []string, cur int, focused bool, w int) (string, []schedHit) {
 	var lines []string
+	var hits []schedHit
 	var line string
 	lw := 0
 	for i, l := range labels {
@@ -1468,13 +1576,15 @@ func segmented(labels []string, cur int, focused bool, w int) string {
 		default:
 			seg = fleetDimStyle.Render("  " + l + " ")
 		}
-		if sw := lipgloss.Width(seg); lw > 0 && w > 0 && lw+sw > w {
+		sw := lipgloss.Width(seg)
+		if lw > 0 && w > 0 && lw+sw > w {
 			lines, line, lw = append(lines, line), "", 0
 		}
+		hits = append(hits, schedHit{line: len(lines), x0: lw, x1: lw + sw, kind: schedHitSegment, arg: i})
 		line += seg
-		lw += lipgloss.Width(seg)
+		lw += sw
 	}
-	return strings.Join(append(lines, line), "\n")
+	return strings.Join(append(lines, line), "\n"), hits
 }
 
 func padRight(s string, w int) string {
@@ -1484,26 +1594,28 @@ func padRight(s string, w int) string {
 	return s
 }
 
-// scrollTo keeps line focus inside a window of h lines.
-func scrollTo(lines []string, focus, h int) []string {
-	if h <= 0 || len(lines) <= h {
-		return lines
+// scrollStart is the first of n lines a window of h lines keeping line focus
+// inside it starts at, -1 when all fit.
+func scrollStart(n, focus, h int) int {
+	if h <= 0 || n <= h {
+		return -1
 	}
 	start := 0
 	if focus >= h-2 {
-		start = min(focus-h+3, len(lines)-h)
+		start = min(focus-h+3, n-h)
 	}
-	return lines[start : start+h]
+	return start
 }
 
-// schedReviewLines is the review: what runs, where, when and how, the next
-// fires, and the prompt (on an edit, only the changed fields as old → new).
-func (m FleetModel) schedReviewLines(w int) []string {
+// schedReviewLayout is the review: what runs, where, when and how, the next
+// fires, and the prompt (on an edit, only the changed fields as old → new),
+// with its y/n buttons as targets.
+func (m FleetModel) schedReviewLayout(w int) schedLayout {
 	f := m.schedForm
 	p := f.preview
 	job := p.Job
-	var out []string
-	add := func(s ...string) { out = append(out, s...) }
+	var out schedLayout
+	add := out.add
 	title := "Review new schedule " + job.Name
 	if f.mode == schedFormEdit {
 		title = "Review changes to " + f.original
@@ -1574,14 +1686,22 @@ func (m FleetModel) schedReviewLines(w int) []string {
 		}
 	}
 	add("")
-	switch {
-	case f.saving:
+	if f.saving {
 		add(fleetDimStyle.Render("saving…"))
-	case f.mode == schedFormEdit:
-		add(renderHint(fleetHint{"y", "save changes"}) + fleetDimStyle.Render(" · ") + renderHint(fleetHint{"n", "back"}))
-	default:
-		add(renderHint(fleetHint{"y", "schedule it"}) + fleetDimStyle.Render(" · ") + renderHint(fleetHint{"n", "back"}))
+		return out
 	}
+	yes := fleetHint{"y", "schedule it"}
+	if f.mode == schedFormEdit {
+		yes = fleetHint{"y", "save changes"}
+	}
+	no := fleetHint{"n", "back"}
+	sep := fleetDimStyle.Render(" · ")
+	yw, sw := lipgloss.Width(renderHint(yes)), lipgloss.Width(sep)
+	line := len(out.lines)
+	out.hits = append(out.hits,
+		schedHit{line: line, x0: 0, x1: yw, kind: schedHitKey, key: "y"},
+		schedHit{line: line, x0: yw + sw, x1: yw + sw + lipgloss.Width(renderHint(no)), kind: schedHitKey, key: "n"})
+	add(renderHint(yes) + sep + renderHint(no))
 	return out
 }
 
