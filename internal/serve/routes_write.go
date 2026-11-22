@@ -85,6 +85,7 @@ func (s *Server) registerWrite(rt *Router) {
 	if rt.allowWrite {
 		rt.Feature("dispatch-upload")
 		rt.Feature("dispatch-instructions")
+		rt.Feature("dispatch-skip-review")
 	}
 	rt.Write("POST /v1/dispatch/upload", s.handleDispatchUpload)
 	rt.Write("POST /v1/dispatch", writeRoute(s, "dispatch", s.handleDispatch))
@@ -740,9 +741,11 @@ type dispatchIn struct {
 	Prompt     string `json:"prompt"`
 	// Instructions is optional text for the agent's system prompt.
 	Instructions string `json:"instructions,omitempty"`
-	Model        string `json:"model,omitempty"`
-	Backend      string `json:"backend,omitempty"`
-	Effort       string `json:"effort,omitempty"`
+	// SkipReview launches with pr_review off for this dispatch only.
+	SkipReview bool   `json:"skip_review,omitempty"`
+	Model      string `json:"model,omitempty"`
+	Backend    string `json:"backend,omitempty"`
+	Effort     string `json:"effort,omitempty"`
 	// Images are IDs from POST /v1/dispatch/upload for the same project.
 	Images []string `json:"images,omitempty"`
 }
@@ -845,7 +848,7 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	s.auditAttempt(*a)
 
 	res, err := s.dispatcher.Dispatch(DispatchRequest{
-		Agent: in.Agent, Prompt: prompt, Instructions: instructions, Model: model, Backend: backend, Effort: effort,
+		Agent: in.Agent, Prompt: prompt, Instructions: instructions, SkipReview: in.SkipReview, Model: model, Backend: backend, Effort: effort,
 		Dir: g.Dir, Session: g.Session, RuntimeDir: g.RuntimeDir,
 	})
 	if err != nil {

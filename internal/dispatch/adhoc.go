@@ -20,6 +20,8 @@ type AdhocRequest struct {
 	// ExtraInstructions is appended to the agent's system prompt (see
 	// Request.ExtraInstructions); empty leaves the prompt unchanged.
 	ExtraInstructions string
+	// PRReview overrides config pr_review for this launch ("" = use config).
+	PRReview string
 	// PromptKey is the context store key the prompt was resolved from, or ""
 	// (display-only; see Request.PromptKey).
 	PromptKey string
@@ -76,6 +78,7 @@ func LaunchAdhoc(req AdhocRequest) (Result, error) {
 		Mode:              ModeAdhoc,
 		CustomPrompt:      req.Prompt,
 		ExtraInstructions: req.ExtraInstructions,
+		PRReviewOverride:  req.PRReview,
 		PromptKey:         req.PromptKey,
 		WorkDir:           req.WorkDir,
 		UseWorktree:       &useWorktree,

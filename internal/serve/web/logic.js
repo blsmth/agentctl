@@ -793,11 +793,14 @@ export function checkAttachment(file, count) {
  * out so the server keeps the agent's own configuration. images are IDs from
  * POST /v1/dispatch/upload for the same project. instructions is optional
  * text for the agent's system prompt; it is trimmed and omitted when empty.
+ * skipReview adds skip_review only when true (orchestrator launches run as if
+ * pr_review were off).
  */
-export function buildDispatchRequest(agent, projectDir, prompt, choice = {}, images = [], instructions = "") {
+export function buildDispatchRequest(agent, projectDir, prompt, choice = {}, images = [], instructions = "", skipReview = false) {
   const body = { agent, project_dir: projectDir, prompt };
   const extra = (instructions ?? "").trim();
   if (extra) body.instructions = extra;
+  if (skipReview === true) body.skip_review = true;
   if (images.length) body.images = images;
   for (const k of ["backend", "model", "effort"]) if (choice[k]) body[k] = choice[k];
   return { method: "POST", path: "/v1/dispatch", body };
@@ -877,6 +880,7 @@ export function confirmLines(body, imageCount = 0) {
   if (body.backend) rows.push(`backend: ${body.backend}`);
   if (body.model) rows.push(`model: ${body.model}`);
   if (body.effort) rows.push(`effort: ${body.effort}`);
+  if (body.skip_review) rows.push("code review: skipped");
   const lines = [rows.join("\n"), body.prompt];
   if (body.instructions) lines.push(`additional instructions (system prompt):\n${body.instructions}`);
   return lines;

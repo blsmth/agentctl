@@ -44,6 +44,8 @@ type AgentInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Scope       string `json:"scope"` // "global" | "project"
+	// Orchestrator is true when the resolved role is orchestrator.
+	Orchestrator bool `json:"orchestrator,omitempty"`
 }
 
 type tmuxPanes struct{}
@@ -75,7 +77,7 @@ func (discoveredAgents) Agents(projectDirs []string) ([]AgentInfo, error) {
 		case agent.ScopeLocal:
 			scope = "project"
 		}
-		out = append(out, AgentInfo{Name: a.Name, Description: a.Description, Scope: scope})
+		out = append(out, AgentInfo{Name: a.Name, Description: a.Description, Scope: scope, Orchestrator: a.Role == agent.RoleOrchestrator})
 	}
 	return out, nil
 }
