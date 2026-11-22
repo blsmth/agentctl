@@ -311,7 +311,7 @@ type globalDenyEntry struct {
 // pipeToShell matches the command after a pipe when it is a shell: optional
 // sudo (with flags) and env, an optional path, a shell name, then a boundary
 // that is not part of a longer name (shasum, shellcheck, sh-foo).
-const pipeToShell = `(?:sudo\s+(?:-\S+\s+)*)?(?:(?:\S*/)?env\s+(?:\S+=\S*\s+)*)?(?:\S*/)?(?:sh|bash|zsh|dash|ksh)(?:[\s;&|)]|$)`
+const pipeToShell = `(?:(?:\S*/)?sudo\s+(?:-\S+\s+)*)?(?:(?:\S*/)?env\s+(?:-\S+\s+|\S+=\S*\s+)*)?(?:\S*/)?(?:sh|bash|zsh|dash|ksh)(?:[\s;&|)<>]|$)`
 
 // globalDenyPatterns are blocked for ALL agents regardless of config.
 // Regexes are compiled once at package init to avoid per-call allocation.
@@ -321,7 +321,7 @@ var globalDenyPatterns = []globalDenyEntry{
 	{regexp.MustCompile(`git\s+push\s+.*origin\s+main\b`), "\U0001F6D1 BLOCKED: direct push to main -- open a PR instead"},
 	// The piped-into word must be a shell itself (optionally behind sudo/env
 	// and a path), so shasum, shellcheck and shfmt pass.
-	{regexp.MustCompile(`\b(?:curl|wget)\s.*\|\s*` + pipeToShell), "\U0001F6D1 BLOCKED: piping curl/wget to shell -- download first, inspect, then run"},
+	{regexp.MustCompile(`\b(?:curl|wget)\s.*\|&?\s*` + pipeToShell), "\U0001F6D1 BLOCKED: piping curl/wget to shell -- download first, inspect, then run"},
 	// Running agentctl from source is checkGoRunAgentctl (tokenized, needs
 	// the Bash cwd), not a pattern here.
 }
