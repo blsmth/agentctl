@@ -119,7 +119,7 @@ phone:
 
 Mapped to the phone: `agent`, `mode` (dispatched shows as `dispatch`), `state` (done is idle plus done, or the unseen turn-done mark for a bare window), `title` and `kind` (review-pr defaults to `review`), `ticket`/`ticket_title`, `task`/`review_pr`, `pr`, `branch` (not bare), `spawned_by` (the parent/child tree), `model`, `cost_usd`, `ctx_pct`, `since`, `last_tool` (else the transcript's last tool, then its last text), `pending_tool`/`pending_detail`/`permission` (the pane dialog), `approval` (the remote approval and its pane), and from the transcript the recap (away summary, else ticket or task, else title), the prompt and the pane.
 
-No phone equivalent: `seen`, `turns`, `instance` (rows show the agent), `worktree`/`dirty`, `spinner` (drawn in the pane only), `select`, `projects[].commits/dirty/branch`, `config.*`, `terminal.*`, the per-project `shell` window (the phone fleet has no shell rows) and the pane statusline (it needs the real `agentctl statusline` process).
+No phone equivalent: `schedules` and `scheduled_by` (the phone's `open: schedules` shows the dev server's own demo jobs), `seen`, `turns`, `instance` (rows show the agent), `worktree`/`dirty`, `spinner` (drawn in the pane only), `select`, `projects[].commits/dirty/branch`, `config.*`, `terminal.*`, the per-project `shell` window (the phone fleet has no shell rows) and the pane statusline (it needs the real `agentctl statusline` process).
 
 ## Transcripts
 

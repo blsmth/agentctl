@@ -200,7 +200,6 @@ func (m *FleetModel) openSchedForm(mode schedFormMode, st *cronedit.Status, dir 
 	}
 	job.Normalize()
 	f.base = job
-	f.permMode = fleetSchedPermMode(job.Agent)
 
 	f.name = newSchedInput(job.Name, "nightly-triage")
 	f.agent = newSchedInput(job.Agent, "agent name")
@@ -670,6 +669,7 @@ func (m *FleetModel) schedReview() {
 		return
 	}
 	f.err = ""
+	f.permMode = fleetSchedPermMode(f.preview.Job.Agent)
 	f.review = true
 }
 
@@ -876,9 +876,6 @@ func (m *FleetModel) handleSchedFormKey(msg tea.KeyPressMsg) tea.Cmd {
 		if f.focus == stopClock || f.focus == stopCustom {
 			f.schedTouched = f.schedTouched || in.Value() != f.initialSchedText(f.focus)
 		}
-		if f.focus == stopAgent {
-			f.permMode = fleetSchedPermMode(strings.TrimSpace(f.agent.Value()))
-		}
 	}
 	if f.state() == before {
 		return cmd
@@ -1030,6 +1027,12 @@ func (m *FleetModel) pasteSchedForm(msg tea.PasteMsg) tea.Cmd {
 
 const schedLabelW = 12
 
+// The worktree phrases of the cron approval popup and the phone.
+const (
+	schedWorktreeOn  = "a worktree per fire"
+	schedWorktreeOff = "runs in the project checkout"
+)
+
 // schedFormLines renders the form (or its review) in w columns, scrolled so
 // the focused field is inside h lines.
 func (m FleetModel) schedFormLines(w, h int) []string {
@@ -1125,9 +1128,9 @@ func (m FleetModel) schedFormLines(w, h int) []string {
 	}
 	row(stopAdvanced, adv, fleetDimStyle.Render(truncateToWidth(summary, vw-2)))
 	if f.advOpen {
-		wt := "[x] new worktree each run"
+		wt := "[x] " + schedWorktreeOn
 		if !f.worktree {
-			wt = "[ ] in the project checkout"
+			wt = "[ ] " + schedWorktreeOff
 		}
 		row(stopWorktree, "Worktree", wt)
 		row(stopModel, "Model", input(stopModel))
@@ -1246,9 +1249,9 @@ func (m FleetModel) schedReviewLines(w int) []string {
 		title = "Review changes to " + f.original
 	}
 	add(fleetTitleStyle.Render(truncateToWidth(title, w)), "")
-	wt := "new worktree each run"
+	wt := schedWorktreeOn
 	if !job.UseWorktree() {
-		wt = "in the project checkout"
+		wt = schedWorktreeOff
 	}
 	words := p.Words
 	if words == "" {
@@ -1261,6 +1264,9 @@ func (m FleetModel) schedReviewLines(w int) []string {
 	until := "until paused."
 	if !job.IsEnabled() {
 		until = "once resumed (it is saved paused)."
+	}
+	if p.TimeZone != "" {
+		words += " " + p.TimeZone
 	}
 	b := fleetGroupNameStyle.Bold(true)
 	sentence := fmt.Sprintf("Runs %s in %s (%s), %s, unattended, permission mode %s, %s",
@@ -1337,9 +1343,9 @@ func fieldValue(j cron.Job, field string) string {
 		return usageText(*j.SkipIfUsageAbove)
 	case "worktree":
 		if j.UseWorktree() {
-			return "on (a worktree per fire)"
+			return "on (" + schedWorktreeOn + ")"
 		}
-		return "off (runs in the project checkout)"
+		return "off (" + schedWorktreeOff + ")"
 	case "enabled":
 		if j.IsEnabled() {
 			return "enabled"

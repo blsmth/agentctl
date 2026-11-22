@@ -767,7 +767,7 @@ func TestScheduleCreateViaPickerFromProjectHeader(t *testing.T) {
 		t.Fatalf("ctrl+s did not open the review: err=%q errors=%v", formOf(t, m).err, formOf(t, m).errors())
 	}
 	out = ansi.Strip(m.render())
-	for _, s := range []string{"Review new schedule triage", "Runs go-engineer in", "new worktree each run", "weekdays 07:30", "unattended", "permission mode auto", "until", "Next fires", "Triage new issues", "y schedule it"} {
+	for _, s := range []string{"Review new schedule triage", "Runs go-engineer in", "a worktree per fire", "weekdays 07:30", "unattended", "permission mode auto", "until", "Next fires", "Triage new issues", "y schedule it"} {
 		if !strings.Contains(out, s) {
 			t.Errorf("review missing %q:\n%s", s, out)
 		}
@@ -917,7 +917,7 @@ func TestScheduleDuplicateSavesPaused(t *testing.T) {
 	if !strings.Contains(ansi.Strip(m.render()), "once resumed") {
 		t.Errorf("dup review should say it is saved paused:\n%s", ansi.Strip(m.render()))
 	}
-	m = schedPress(t, m, "y")
+	schedPress(t, m, "y")
 	j := f.job(t, "upcoming-copy")
 	if j.IsEnabled() || j.Schedule != "0 9 * * 1-5" || j.Prompt != "Triage new issues." {
 		t.Errorf("duplicate = %+v", j)

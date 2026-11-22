@@ -17,7 +17,6 @@ import (
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/dispatchplan"
-	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
@@ -253,37 +252,6 @@ func (m *FleetModel) selectedSchedLine() *fleetLine {
 	}
 	l := m.lines[idx]
 	return &l
-}
-
-// selectedSchedule is the selected job's status, or nil (also for "+ new").
-func (m *FleetModel) selectedSchedule() *cronedit.Status {
-	l := m.selectedSchedLine()
-	if l == nil || l.schedNew {
-		return nil
-	}
-	st := l.sched
-	return &st
-}
-
-// findSchedule is the loaded status of name.
-func (m FleetModel) findSchedule(name string) *cronedit.Status {
-	for i := range m.sched.ov.Jobs {
-		if m.sched.ov.Jobs[i].Name == name {
-			st := m.sched.ov.Jobs[i]
-			return &st
-		}
-	}
-	return nil
-}
-
-// selectSchedule moves the cursor to name's row when it is listed.
-func (m *FleetModel) selectSchedule(name string) {
-	for i, l := range m.lines {
-		if l.kind == fleetLineSchedule && schedLineKey(l) == name {
-			m.selectLine(i)
-			return
-		}
-	}
 }
 
 // ── Viewer hand-off ──────────────────────────────────────────────────────────
@@ -836,9 +804,9 @@ func (m FleetModel) schedCardLines(w int) []string {
 		words += fleetDimStyle.Render("  (" + st.Job.Schedule + ")")
 	}
 	add(wrapText(words, w))
-	wt := "new worktree each run"
+	wt := schedWorktreeOn
 	if !st.Job.UseWorktree() {
-		wt = "in the project checkout"
+		wt = schedWorktreeOff
 	}
 	add(wrapText(fmt.Sprintf("%s in %s · %s", fleetGroupNameStyle.Render(st.Job.Agent), tildify(st.Job.Dir), wt), w))
 	if st.Invalid != "" {
@@ -1117,14 +1085,6 @@ func sortDirs(dirs []string, first string) {
 			dirs[j], dirs[j-1] = dirs[j-1], dirs[j]
 		}
 	}
-}
-
-// groupProjectDir is the project dir of the group owning line idx.
-func (m *FleetModel) groupProjectDir(g *fleet.Group) string {
-	if g == nil {
-		return ""
-	}
-	return g.ProjectDir
 }
 
 // tildify shows a path under the home directory as ~/...
