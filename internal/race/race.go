@@ -61,6 +61,13 @@ type Step struct {
 	ResultTail string // last non-empty result line, for display
 	IsError    bool
 
+	// Call context, for analyzers that look at what was run (sessionaudit).
+	ID     string         // tool_use id; "" for text
+	Input  map[string]any // tool input; nil for text
+	At     time.Time      // timestamp of the entry that made the call
+	Cwd    string         // working directory recorded on that entry
+	RawGap time.Duration  // longest uncapped gap charged to this step
+
 	AgentStart time.Duration // offset on the agent timeline
 	AgentDur   time.Duration
 	HumanStart time.Duration // offset on the human timeline
@@ -139,7 +146,7 @@ func extract(entries []logstream.Entry, maxGap time.Duration) []Step {
 	var steps []Step
 	byID := map[string]int{}
 	var last time.Time
-	var pending time.Duration
+	var pending, pendingRaw time.Duration
 	cwd := ""
 
 	for _, e := range entries {
@@ -162,6 +169,8 @@ func extract(entries []logstream.Entry, maxGap time.Duration) []Step {
 				if !ok {
 					continue
 				}
+				s.At = e.Timestamp
+				s.Cwd = strings.TrimSuffix(cwd, "/")
 				if first < 0 {
 					first = len(steps)
 				}
@@ -198,6 +207,7 @@ func extract(entries []logstream.Entry, maxGap time.Duration) []Step {
 		if gap < 0 {
 			gap = 0
 		}
+		raw := gap
 		if maxGap > 0 && gap > maxGap {
 			gap = maxGap
 		}
@@ -206,15 +216,36 @@ func extract(entries []logstream.Entry, maxGap time.Duration) []Step {
 			// Waiting on a person, not working.
 		case first >= 0:
 			steps[first].AgentDur += gap + pending
-			pending = 0
+			steps[first].RawGap = max(steps[first].RawGap, raw, pendingRaw)
+			pending, pendingRaw = 0, 0
 		default:
 			pending += gap
+			pendingRaw = max(pendingRaw, raw)
 		}
 	}
 	if pending > 0 && len(steps) > 0 {
 		steps[len(steps)-1].AgentDur += pending
+		steps[len(steps)-1].RawGap = max(steps[len(steps)-1].RawGap, pendingRaw)
 	}
 	return steps
+}
+
+// IsPrompt reports whether e is a person's prompt in the main conversation:
+// user text that is not a tool result, outside any sub-agent sidechain.
+func IsPrompt(e logstream.Entry) bool {
+	if e.Raw == nil || e.Type != "user" {
+		return false
+	}
+	if side, _ := e.Raw["isSidechain"].(bool); side {
+		return false
+	}
+	blocks, prompt := contentBlocks(e.Raw)
+	for _, b := range blocks {
+		if t, _ := b["type"].(string); t == "tool_result" {
+			return false
+		}
+	}
+	return prompt
 }
 
 // contentBlocks returns the message's content blocks, and whether the entry
@@ -282,6 +313,8 @@ func stepFromBlock(b map[string]any, cwd string) (s Step, id string, ok bool) {
 			Label:      label,
 			Typed:      typed,
 			TypedRunes: utf8.RuneCountInString(typed),
+			ID:         id,
+			Input:      input,
 		}, id, true
 	}
 	return Step{}, "", false

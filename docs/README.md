@@ -6,7 +6,7 @@
 |---|---|
 | [configuration.md](configuration.md) | Every config key, global vs project-local layering, command-key restriction |
 | [dispatch.md](dispatch.md) | Ticket-to-PR orchestration, worktrees, agent inference |
-| [permissions.md](permissions.md) | Per-agent command safety |
+| [permissions.md](permissions.md) | Per-agent command safety, the audit trail, and session audit reports (`agentctl audit report`) |
 | [keybindings.md](keybindings.md) | Keybinding reference |
 | [architecture.md](architecture.md) | System overview and source layout |
 | [monitor-architecture.md](monitor-architecture.md) | Monitor loop, hook-driven state, TUI internals |

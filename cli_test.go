@@ -58,6 +58,11 @@ var cliTests = []cliCase{
 	{"status rejects an unknown --state", []string{"status", "--state", "nonsense"}, -1, "", ""},
 	{"ticket create --help", []string{"ticket", "create", "--help"}, 0, "title", ""},
 	{"audit --help", []string{"audit", "--help"}, 0, "session", ""},
+	{"audit --help lists report", []string{"audit", "--help"}, 0, "report", ""},
+	{"audit log --help", []string{"audit", "log", "--help"}, 0, "--denied", ""},
+	{"audit report --help", []string{"audit", "report", "--help"}, 0, "--severity", ""},
+	{"audit report on a missing file", []string{"audit", "report", "/nonexistent/x.jsonl"}, 1, "", "no transcript at"},
+	{"audit report rejects an unknown --severity", []string{"audit", "report", "--severity", "urgent"}, -1, "", ""},
 
 	// `tickets` is a Kong alias of `ticket`: same default browse flags and
 	// the same create subcommand.
@@ -272,6 +277,38 @@ func TestIsReadOnlyInvocation(t *testing.T) {
 	for _, tt := range tests {
 		if got := isReadOnlyInvocation(tt.args); got != tt.want {
 			t.Errorf("isReadOnlyInvocation(%v) = %v, want %v", tt.args, got, tt.want)
+		}
+	}
+}
+
+// TestAuditDefaultsToLog: `audit` became a command group, and bare
+// `agentctl audit <flags>` must still run the trail query (`audit log`).
+func TestAuditDefaultsToLog(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"audit", "--tool", "Bash", "--denied"}, "audit log"},
+		{[]string{"audit"}, "audit log"},
+		{[]string{"audit", "log", "--tool", "Bash"}, "audit log"},
+		{[]string{"audit", "report", "@3", "--json"}, "audit report <target>"},
+		{[]string{"audit", "report", "--all", "--since", "2d"}, "audit report"},
+	}
+	for _, tt := range tests {
+		var cli CLI
+		k, err := kong.New(&cli, kong.Name("agentctl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, err := k.Parse(tt.args)
+		if err != nil {
+			t.Fatalf("Parse(%v): %v", tt.args, err)
+		}
+		if got := ctx.Command(); got != tt.want {
+			t.Errorf("Parse(%v) command = %q, want %q", tt.args, got, tt.want)
+		}
+		if tt.args[len(tt.args)-1] == "--denied" && (cli.Audit.Log.Tool != "Bash" || !cli.Audit.Log.Denied) {
+			t.Errorf("flags not on audit log: %+v", cli.Audit.Log)
 		}
 	}
 }
