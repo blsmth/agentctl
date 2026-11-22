@@ -111,7 +111,7 @@ func (f *renameFixture) yOf(idx int) int {
 
 func (f *renameFixture) span(idx int) [2]int {
 	l := f.m.lines[idx]
-	_, sp := f.m.treeRowLayout(l.row, l.treePrefix, l.nameCol, idx == f.m.splitPane.Cursor(), fleetHoverBody, f.m.listColWidth())
+	_, sp := f.m.treeRowLayout(l.row, l.treePrefix, idx == f.m.splitPane.Cursor(), fleetHoverBody, f.m.listColWidth())
 	return sp
 }
 

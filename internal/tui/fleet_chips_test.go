@@ -80,23 +80,22 @@ func TestRowChips(t *testing.T) {
 		r.ScheduledBy = "nightly"
 	}
 	tests := []struct {
-		name     string
-		mod      func(*fleet.Row)
-		nameFits bool
-		d        fleetDisplay
-		want     []string
+		name string
+		mod  func(*fleet.Row)
+		d    fleetDisplay
+		want []string
 	}{
-		{"nothing", nil, true, fleetDisplay{}, []string{}},
+		// Rows no longer draw the agent name, so the chip line always has it.
+		{"agent always shown", nil, fleetDisplay{}, []string{"go-engineer"}},
 		// Model, context, PR and the cron job are on the row itself: no chips.
-		{"row facts are not chips", full, false, fleetDisplay{}, []string{"#42", "go-engineer", "nous", "acct work"}},
-		{"agent hidden when the name fits", full, true, fleetDisplay{}, []string{"#42", "nous", "acct work"}},
-		{"default account hidden", full, true, fleetDisplay{defaultAccount: "work"}, []string{"#42", "nous"}},
-		{"pr url only has no chip", func(r *fleet.Row) { r.PRURL = "https://x/pull/x" }, true, fleetDisplay{}, []string{}},
-		{"model only has no chip", func(r *fleet.Row) { r.ModelName = "claude-haiku-4-5"; r.ContextPct = 99 }, true, fleetDisplay{}, []string{}},
-		{"scheduled only has no chip", func(r *fleet.Row) { r.ScheduledBy = "nightly" }, true, fleetDisplay{}, []string{}},
-		{"default backends hidden", func(r *fleet.Row) { r.Backend = "Anthropic" }, true, fleetDisplay{}, []string{}},
-		{"claude backend hidden", func(r *fleet.Row) { r.Backend = "claude" }, true, fleetDisplay{}, []string{}},
-		{"shell has none", func(r *fleet.Row) { full(r); r.Shell = true }, false, fleetDisplay{}, []string{}},
+		{"row facts are not chips", full, fleetDisplay{}, []string{"#42", "go-engineer", "nous", "acct work"}},
+		{"default account hidden", full, fleetDisplay{defaultAccount: "work"}, []string{"#42", "go-engineer", "nous"}},
+		{"pr url only has no chip", func(r *fleet.Row) { r.PRURL = "https://x/pull/x" }, fleetDisplay{}, []string{"go-engineer"}},
+		{"model only has no chip", func(r *fleet.Row) { r.ModelName = "claude-haiku-4-5"; r.ContextPct = 99 }, fleetDisplay{}, []string{"go-engineer"}},
+		{"scheduled only has no chip", func(r *fleet.Row) { r.ScheduledBy = "nightly" }, fleetDisplay{}, []string{"go-engineer"}},
+		{"default backends hidden", func(r *fleet.Row) { r.Backend = "Anthropic" }, fleetDisplay{}, []string{"go-engineer"}},
+		{"claude backend hidden", func(r *fleet.Row) { r.Backend = "claude" }, fleetDisplay{}, []string{"go-engineer"}},
+		{"shell has none", func(r *fleet.Row) { full(r); r.Shell = true }, fleetDisplay{}, []string{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -105,7 +104,7 @@ func TestRowChips(t *testing.T) {
 			if tt.mod != nil {
 				tt.mod(&r)
 			}
-			got := rowChips(r, tt.nameFits, tt.d)
+			got := rowChips(r, tt.d)
 			if strings.Join(got, "|") != strings.Join(tt.want, "|") {
 				t.Errorf("chips = %q, want %q", got, tt.want)
 			}
@@ -149,7 +148,7 @@ func TestSelectedRowChipLine(t *testing.T) {
 					continue
 				}
 				m.splitPane.SetCursor(i)
-				out := m.renderTreeRow(l.row, l.treePrefix, l.nameCol, true, cw)
+				out := m.renderTreeRow(l.row, l.treePrefix, true, cw)
 				lines := strings.Split(out, "\n")
 				if got := m.lineHeight(i, cw); got != len(lines) {
 					t.Errorf("row %d: lineHeight %d, rendered %d lines", i, got, len(lines))
@@ -172,11 +171,7 @@ func TestSelectedRowChipLine(t *testing.T) {
 					}
 				}
 				if width >= 120 {
-					want := "[#42] "
-					if l.row.AgentName != "dev" {
-						want += "[" + l.row.AgentName + "] "
-					}
-					want += "[nous]"
+					want := "[#42] [" + l.row.AgentName + "] [nous]"
 					if !strings.Contains(chips, want) {
 						t.Errorf("row %d chips = %q, want %q", i, chips, want)
 					}
@@ -186,7 +181,7 @@ func TestSelectedRowChipLine(t *testing.T) {
 	}
 }
 
-func TestSelectedRowWithoutChipsHasNoChipLine(t *testing.T) {
+func TestSelectedRowChipLineIsJustTheAgent(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
 	m := newFleetModel()
@@ -205,12 +200,14 @@ func TestSelectedRowWithoutChipsHasNoChipLine(t *testing.T) {
 			continue
 		}
 		m.splitPane.SetCursor(i)
-		lines := strings.Split(m.renderTreeRow(l.row, l.treePrefix, l.nameCol, true, cw), "\n")
-		if len(lines) != 2 || m.lineHeight(i, cw) != 2 {
-			t.Fatalf("want the row and its recap only, got %d lines (lineHeight %d): %q", len(lines), m.lineHeight(i, cw), ansi.Strip(strings.Join(lines, "\n")))
+		lines := strings.Split(m.renderTreeRow(l.row, l.treePrefix, true, cw), "\n")
+		// Rows never draw the agent name, so even a row with nothing else to
+		// say has a chip line naming it, and no other chip.
+		if len(lines) != 3 || m.lineHeight(i, cw) != 3 {
+			t.Fatalf("want the row, its recap and the agent chip, got %d lines (lineHeight %d): %q", len(lines), m.lineHeight(i, cw), ansi.Strip(strings.Join(lines, "\n")))
 		}
-		if strings.Contains(ansi.Strip(lines[1]), "[") {
-			t.Errorf("unexpected chip line: %q", ansi.Strip(lines[1]))
+		if got := strings.TrimSpace(strings.TrimLeft(ansi.Strip(lines[2]), "▎")); got != "[dev]" {
+			t.Errorf("chip line = %q, want [dev]", got)
 		}
 	}
 }
@@ -324,14 +321,14 @@ func TestRowRightExceptions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			d := fleetDisplay{}
-			cols := fitRightCols(wide, tt.ex, rowCtxWarn(tt.row, d), tt.ex.rowModel(tt.row) != "", 0)
+			cols := fitRightCols(wide, tt.ex, rowCtxWarn(tt.row, d), tt.ex.rowModel(tt.row) != "")
 			if got := ansi.Strip(rowRight(tt.row, cols, tt.ex, d)); got != tt.want {
 				t.Errorf("rowRight = %q, want %q", got, tt.want)
 			}
 		})
 	}
 	r := base("claude-opus-4-7", 92, 0)
-	cols := fitRightCols(wide, fleetExceptions{ctx: true}, true, false, 0)
+	cols := fitRightCols(wide, fleetExceptions{ctx: true}, true, false)
 	if got := rowRight(r, cols, fleetExceptions{ctx: true}, fleetDisplay{}); !strings.Contains(got, fleetErrStyle.Render("92%")) {
 		t.Errorf("critical ctx should use the error style: %q", got)
 	}
@@ -360,7 +357,7 @@ func TestFitRightColsDropOrder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprint(tt.available), func(t *testing.T) {
-			c := fitRightCols(tt.available, ex, true, true, 0)
+			c := fitRightCols(tt.available, ex, true, true)
 			got := want{c.modelW > 0, c.pr, c.age}
 			if got != tt.want {
 				t.Errorf("fitRightCols(%d) = %+v, want %+v", tt.available, got, tt.want)
@@ -372,16 +369,16 @@ func TestFitRightColsDropOrder(t *testing.T) {
 	}
 	// Another row's context warning or model costs this row nothing to the
 	// left of its PR: at a 40-column sidebar's 17 columns the PR stays.
-	calm := fitRightCols(17, ex, false, false, 0)
+	calm := fitRightCols(17, ex, false, false)
 	if !calm.pr || calm.age || calm.modelW != 0 {
 		t.Errorf("calm row at 17 columns: %+v", calm)
 	}
-	if warned := fitRightCols(17, ex, true, false, 0); warned.pr {
+	if warned := fitRightCols(17, ex, true, false); warned.pr {
 		t.Errorf("a warned row at 17 columns keeps its ctx and drops the PR: %+v", warned)
 	}
 	// With no exceptions in the list the model and ctx columns take no
 	// width, so the PR and age survive to narrower rows.
-	plain := fitRightCols(joinedWidth(fleetPRSlotW, fleetAgeSlotW)+1+fleetMinRecapWidth, fleetExceptions{}, false, false, 0)
+	plain := fitRightCols(joinedWidth(fleetPRSlotW, fleetAgeSlotW)+1+fleetMinRecapWidth, fleetExceptions{}, false, false)
 	if plain.modelW != 0 || plain.ctx || !plain.pr || !plain.age {
 		t.Errorf("no exceptions: %+v", plain)
 	}
@@ -391,13 +388,13 @@ func TestNarrowRowKeepsRecap(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
 	ex := fleetExceptions{common: "opus", modelW: 6, ctx: true}
-	for cw := 30; cw <= 40; cw++ {
+	for cw := 20; cw <= 28; cw++ {
 		r := chipRow("go-engineer")
 		r.ModelName = "claude-sonnet-4-5"
 		r.StateSince = sidebarNow
 		m := newFleetModel()
 		m.except = ex
-		plain := firstLine(m.renderTreeRowHover(r, "", 11, false, fleetHoverNone, cw))
+		plain := firstLine(m.renderTreeRowHover(r, "", false, fleetHoverNone, cw))
 		if strings.Contains(plain, "sonnet") {
 			t.Errorf("cw %d: model slot must drop before starving the recap: %q", cw, plain)
 		}
@@ -415,7 +412,7 @@ func TestNarrowRowKeepsRecap(t *testing.T) {
 	m := newFleetModel()
 	m.except = ex
 	for cw := 40; cw < 120; cw++ {
-		plain := firstLine(m.renderTreeRowHover(r, "", 11, false, fleetHoverNone, cw))
+		plain := firstLine(m.renderTreeRowHover(r, "", false, fleetHoverNone, cw))
 		hasModel, hasAge, hasPR := strings.Contains(plain, "sonnet"), strings.Contains(plain, " 4m"), strings.Contains(plain, "#186")
 		if hasAge && !hasModel {
 			t.Fatalf("cw %d: age shown without the model: %q", cw, plain)
@@ -439,9 +436,9 @@ func TestBlankExceptionWidthGoesToRecap(t *testing.T) {
 		})
 	m := newFleetModel()
 	m.except = fleetExceptions{common: "opus", modelW: 6, ctx: true}
-	withEx := firstLine(m.renderTreeRowHover(r, "", 3, false, fleetHoverNone, 100))
+	withEx := firstLine(m.renderTreeRowHover(r, "", false, fleetHoverNone, 100))
 	m.except = fleetExceptions{common: "opus"}
-	without := firstLine(m.renderTreeRowHover(r, "", 3, false, fleetHoverNone, 100))
+	without := firstLine(m.renderTreeRowHover(r, "", false, fleetHoverNone, 100))
 	if withEx != without {
 		t.Errorf("a row with no exceptions must not reserve their columns:\n%q\n%q", withEx, without)
 	}

@@ -55,14 +55,20 @@ func TestRecapColumnAligned(t *testing.T) {
 					if idx < 0 {
 						continue
 					}
-					// column of the recap word's first letter
-					word := strings.LastIndex(plain[:idx], "  ") + 2
-					c := lipgloss.Width(plain[:word])
-					if col == -1 {
-						col = c
-					} else if c != col {
-						t.Errorf("line %d sel=%v recap at col %d, want %d: %q", i, sel, c, col, plain)
+					// With no name column the recap follows the tree prefix and the
+					// collapse marker directly, and the agent name is not drawn.
+					want := 5 + lipgloss.Width(fleetKeptPrefix(l.treePrefix, cw))
+					if l.hasKids {
+						want += fleetCollapseMarkerW
 					}
+					c := lipgloss.Width(plain[:strings.LastIndex(plain[:idx], " ")+1])
+					if c != want {
+						t.Errorf("line %d sel=%v recap at col %d, want %d: %q", i, sel, c, want, plain)
+					}
+					if strings.Contains(plain, l.row.AgentName) {
+						t.Errorf("line %d: row shows the agent name: %q", i, plain)
+					}
+					col = c
 				}
 			}
 			if col == -1 {
@@ -72,11 +78,9 @@ func TestRecapColumnAligned(t *testing.T) {
 	}
 }
 
-// TestRoleRowColumns: a role row draws its role in the name column and its
-// agent name dim on the right, left of the model/PR columns; the agent name
-// is the first thing a narrow row drops (the role stays, and the selected
-// row's chips then name the agent); the PR and age columns and the titles
-// line up across role and non-role rows at every width.
+// TestRoleRowColumns: a role row draws its role before the title, and no row
+// draws the agent name (the selected row's chips name it); the PR and age
+// columns still line up down the list at every width.
 func TestRoleRowColumns(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
@@ -110,7 +114,7 @@ func TestRoleRowColumns(t *testing.T) {
 			m.groups = []fleet.Group{{Session: "s", Project: "proj", Rows: rows}}
 			m.rebuildLines()
 			cw := m.contentWidth()
-			titleCol, ageCol, prCol := -1, -1, -1
+			ageCol, prCol := -1, -1
 			same := func(what string, col *int, c int, line string) {
 				if *col == -1 {
 					*col = c
@@ -133,32 +137,27 @@ func TestRoleRowColumns(t *testing.T) {
 					t.Fatalf("%s lost its title: %q", spec.win, plain)
 				}
 				left, right := plain[:ti], plain[ti:]
-				same("title", &titleCol, lipgloss.Width(left), plain)
-				if spec.role == "" {
-					if !strings.Contains(left, truncateToWidth(spec.agent, 10)[:5]) {
-						t.Errorf("%s: non-role row should keep its name on the left: %q", spec.win, plain)
-					}
-				} else {
-					if !strings.Contains(left, spec.role) || strings.Contains(left, spec.agent) {
-						t.Errorf("%s: role row should show the role, not the name, on the left: %q", spec.win, plain)
-					}
-					hasAgent := strings.Contains(right, spec.agent)
-					if width == 120 && !hasAgent {
-						t.Errorf("%s at %d: agent name missing on the right: %q", spec.win, width, plain)
-					}
-					if width == 44 && hasAgent {
-						t.Errorf("%s at %d: agent name should be dropped: %q", spec.win, width, plain)
-					}
-					if width == 120 && spec.pr > 0 {
-						if a, p := strings.Index(right, spec.agent), strings.Index(right, fmt.Sprintf("#%d", spec.pr)); a > p {
-							t.Errorf("agent name should sit left of the PR: %q", plain)
-						}
-					}
-					// The chips name the agent only when the row does not.
-					chips := strings.Join(rowDetailStyled(l.row, l.treePrefix, cw, m.display, false, m.rowLayout(l, true, fleetHoverNone, cw).nameShown), "\n")
-					if got := strings.Contains(ansi.Strip(chips), "["+spec.agent+"]"); got == hasAgent {
-						t.Errorf("%s at %d: agent chip shown=%v with agent on row=%v", spec.win, width, got, hasAgent)
-					}
+				wantTitle := 5 + lipgloss.Width(fleetKeptPrefix(l.treePrefix, cw))
+				if l.hasKids {
+					wantTitle += fleetCollapseMarkerW
+				}
+				if spec.role != "" {
+					wantTitle += lipgloss.Width(spec.role) + 2
+				}
+				if got := lipgloss.Width(left); got != wantTitle {
+					t.Errorf("%s title at col %d, want %d: %q", spec.win, got, wantTitle, plain)
+				}
+				// The agent name is on no row: a role row shows its role, the
+				// others just their title. The chip line has the name.
+				if strings.Contains(plain, spec.agent) {
+					t.Errorf("%s at %d: row should not show the agent name: %q", spec.win, width, plain)
+				}
+				if spec.role != "" && !strings.Contains(left, spec.role) {
+					t.Errorf("%s: role row should show the role on the left: %q", spec.win, plain)
+				}
+				chips := strings.Join(rowDetailStyled(l.row, l.treePrefix, cw, m.display, false), "\n")
+				if !strings.Contains(ansi.Strip(chips), "["+spec.agent+"]") {
+					t.Errorf("%s at %d: agent chip missing", spec.win, width)
 				}
 				if age := strings.LastIndex(plain, "1m"); age >= 0 {
 					same("age", &ageCol, lipgloss.Width(plain[:age]), plain)

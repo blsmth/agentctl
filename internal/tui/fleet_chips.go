@@ -197,11 +197,11 @@ func rowCtxWarn(r fleet.Row, d fleetDisplay) bool {
 var defaultBackends = map[string]bool{"": true, "anthropic": true, "claude": true, "default": true}
 
 // rowChips are the identifiers a selected row's chip line shows that the row
-// itself does not: #issue, the agent name when the name column truncated it,
+// itself does not: #issue, the agent name (rows show their title, not the name),
 // a non-default backend and a non-default account. The model, context, PR
 // and cron job are already on the row (or its hover card) and get no chip.
-// Shell rows have none; most rows have none, and then there is no chip line.
-func rowChips(r fleet.Row, nameFits bool, d fleetDisplay) []string {
+// Shell rows have none; every other row has at least the agent name.
+func rowChips(r fleet.Row, d fleetDisplay) []string {
 	if r.Shell {
 		return nil
 	}
@@ -214,9 +214,7 @@ func rowChips(r fleet.Row, nameFits bool, d fleetDisplay) []string {
 	if r.Ticket > 0 {
 		add(fmt.Sprintf("#%d", r.Ticket))
 	}
-	if !nameFits {
-		add(fleet.BaseName(r))
-	}
+	add(fleet.BaseName(r))
 	if b := strings.TrimSpace(r.Backend); !defaultBackends[strings.ToLower(b)] {
 		add(b)
 	}

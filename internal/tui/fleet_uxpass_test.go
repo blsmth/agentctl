@@ -54,10 +54,10 @@ func TestStaleDoneRowRendersIdleButKeepsCheck(t *testing.T) {
 	if !strings.Contains(out, fleetDoneStyle.Render("✓")) {
 		t.Errorf("stale done row lost its green ✓: %q", out)
 	}
-	if !strings.Contains(out, fleetNameStyle(fleetWeightIdle).Render("worker")) || !strings.Contains(out, fleetRecapIdleStyle.Render("Shipped the thing")) {
+	if !strings.Contains(out, fleetRecapIdleStyle.Render("Shipped the thing")) {
 		t.Errorf("stale done row should render at idle weight: %q", out)
 	}
-	if out := m.renderRow(fresh, false, 80); !strings.Contains(out, fleetNameStyle(fleetWeightDone).Render("worker")) {
+	if out := m.renderRow(fresh, false, 80); !strings.Contains(out, fleetRecapStyle.Render("Shipped the thing")) {
 		t.Errorf("fresh done row should keep done weight: %q", out)
 	}
 	// Both still count as done.
@@ -86,12 +86,12 @@ func TestSelectedRowDropsActivityLineWhenViewed(t *testing.T) {
 		wantLines int
 		wantCmd   bool
 	}{
-		{"no viewer keeps the activity", recap, "", false, 3, true},
-		{"viewer on another window keeps it", recap, "s|@9", false, 3, true},
-		{"viewer on this window drops it", recap, "s|@1", false, 2, false},
-		{"failed viewer keeps it", recap, "s|@1", true, 3, true},
-		{"activity recap, no viewer", activity, "", false, 2, true},
-		{"activity recap, viewed", activity, "s|@2", false, 1, false},
+		{"no viewer keeps the activity", recap, "", false, 4, true},
+		{"viewer on another window keeps it", recap, "s|@9", false, 4, true},
+		{"viewer on this window drops it", recap, "s|@1", false, 3, false},
+		{"failed viewer keeps it", recap, "s|@1", true, 4, true},
+		{"activity recap, no viewer", activity, "", false, 3, true},
+		{"activity recap, viewed", activity, "s|@2", false, 2, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -111,7 +111,7 @@ func TestSelectedRowDropsActivityLineWhenViewed(t *testing.T) {
 					continue
 				}
 				m.splitPane.SetCursor(i)
-				out := m.renderTreeRow(l.row, l.treePrefix, l.nameCol, true, cw)
+				out := m.renderTreeRow(l.row, l.treePrefix, true, cw)
 				lines := strings.Split(out, "\n")
 				if len(lines) != tt.wantLines || m.lineHeight(i, cw) != tt.wantLines {
 					t.Fatalf("lines = %d (lineHeight %d), want %d: %q", len(lines), m.lineHeight(i, cw), tt.wantLines, ansi.Strip(out))
