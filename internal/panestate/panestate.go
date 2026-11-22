@@ -39,14 +39,29 @@ func (v Verdict) String() string {
 	return "unknown"
 }
 
-// dialogMarkers are strings Claude Code renders only when a permission or
-// confirmation dialog is up and waiting on a human.
-var dialogMarkers = []string{
+// dialogQuestions are the question lines Claude Code renders only when a
+// permission or confirmation dialog is up and waiting on a human. Each counts
+// only as the start of a line (after borders and indentation): the same words
+// quoted mid-line in an answer ("the \"Do you want to proceed?\" dialog") are
+// prose, not a dialog.
+var dialogQuestions = []string{
 	"Do you want to proceed?",
 	"Do you want to create",
 	"Do you want to make this edit",
-	"Esc to cancel",
 }
+
+// dialogFooterSegment is the dialog footer hint. Footers are hint segments
+// joined by " · " ("Esc to cancel · Tab to amend", "Enter to select · ↑/↓ to
+// navigate · Esc to cancel"), so the hint counts only as a whole segment of
+// such a line.
+const dialogFooterSegment = "Esc to cancel"
+
+// yesOption and noOption are the first and decline rows of a numbered-choice
+// dialog, matched against a whole cleaned line.
+var (
+	yesOption = regexp.MustCompile(`^❯\s*1\.\s+Yes\b`)
+	noOption  = regexp.MustCompile(`^(❯\s*)?\d+\.\s+No\b`)
+)
 
 // busyMarkers are strings the footer renders only while a turn is in flight.
 var busyMarkers = []string{
@@ -101,18 +116,56 @@ func Classify(text string) Verdict {
 }
 
 // DialogShowing reports whether a permission/confirmation dialog is visible.
+//
+// Matching is structural, line by line: a marker counts only where Claude
+// Code draws it (a question starting its line, the footer hint as a whole
+// " · " segment, numbered options starting their lines), never as a
+// substring of prose. It still scans the whole pane, not a bottom-N tail, so
+// a tall dialog whose question is far above the footer is not missed.
 func DialogShowing(text string) bool {
-	for _, m := range dialogMarkers {
-		if strings.Contains(text, m) {
+	lines := strings.Split(StripANSI(text), "\n")
+	yes, no := false, false
+	for _, raw := range lines {
+		line := dialogLine(raw)
+		if line == "" {
+			continue
+		}
+		if dialogQuestionLine(line) || dialogFooterLine(line) {
+			return true
+		}
+		// A numbered-choice dialog that phrases its question some other way
+		// still renders a selected first option and a decline option.
+		yes = yes || yesOption.MatchString(line)
+		no = no || noOption.MatchString(line)
+	}
+	if yes && no {
+		return true
+	}
+	return reviewPageShowing(text)
+}
+
+// dialogLine trims box borders and surrounding whitespace from a pane line,
+// keeping the ❯ cursor (the option checks need it).
+func dialogLine(line string) string {
+	return strings.Trim(line, "│┃ \t\r")
+}
+
+func dialogQuestionLine(line string) bool {
+	for _, q := range dialogQuestions {
+		if strings.HasPrefix(line, q) {
 			return true
 		}
 	}
-	if reviewPageShowing(text) {
-		return true
+	return false
+}
+
+func dialogFooterLine(line string) bool {
+	for _, seg := range strings.Split(line, "·") {
+		if strings.TrimSpace(seg) == dialogFooterSegment {
+			return true
+		}
 	}
-	// A numbered-choice dialog that phrases its question some other way still
-	// renders a selected first option and a decline option.
-	return strings.Contains(text, "❯ 1. Yes") && strings.Contains(text, ". No")
+	return false
 }
 
 // PromptCount returns the number of "❯" prompt lines in the pane, tolerating

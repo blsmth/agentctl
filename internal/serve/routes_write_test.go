@@ -791,6 +791,13 @@ func TestConcurrentAnswersSerialized(t *testing.T) {
 	}
 }
 
+// quotingDialogPane is an idle pane whose last answer quotes the dialog
+// question and footer in prose. Regression: it was refused as not idle.
+const quotingDialogPane = "" +
+	"  - Two prompts at once: the popup and the Claude Code \"Do you want to proceed?\" dialog.\n" +
+	"  - Its footer reads `Esc to cancel · Tab to amend`.\n" +
+	"──── a ──\n❯ \n──────\n  ⏵⏵ auto mode on\n"
+
 func TestReply(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -810,6 +817,7 @@ func TestReply(t *testing.T) {
 		{"record idle but pane dialog", "idle", dialogPane, "hi", nil, 409, codeNotIdle, false},
 		{"dialog appears during inject", "idle", idlePane, "hi", fmt.Errorf("x: %w", tmux.ErrDialogBlocking), 409, codeNotIdle, false},
 		{"too long", "idle", idlePane, strings.Repeat("é", maxReplyRunes+1), nil, 413, codeTooLarge, false},
+		{"idle pane quoting a dialog", "idle", quotingDialogPane, "hi", nil, 200, "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
