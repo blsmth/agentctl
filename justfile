@@ -152,3 +152,7 @@ demo-shots: demo-build
 # Validate a scene file without starting anything
 demo-check scene: demo-build
     "{{_demo_bin}}" check {{_demo_flags}} --scene "{{scene}}"
+
+# Compare a REAL Claude Code pane's structure (tmux target, default server) with the fake pane; exits non-zero on drift
+demo-pane-check target: demo-build
+    "{{_demo_bin}}" pane-check --target "{{target}}"

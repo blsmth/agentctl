@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -51,8 +52,16 @@ const (
 	cInverse = "\x1b[7m"
 )
 
-// Render draws the pane as Claude Code would at width columns. statusline is
-// what `agentctl statusline` printed for this window ("" when it was not
+// ccVersion and ccPlan are what the banner claims. They track the Claude
+// Code release the screenshots were last compared against (just
+// demo-pane-check).
+const (
+	ccVersion = "2.1.328"
+	ccPlan    = "Claude Max"
+)
+
+// Render draws the pane as Claude Code v2.1 would at width columns. statusline
+// is what `agentctl statusline` printed for this window ("" when it was not
 // run); extra holds lines appended by the approval round-trip.
 func Render(spec PaneSpec, width int, statusline string, extra []string) string {
 	if width < 40 {
@@ -61,12 +70,9 @@ func Render(spec PaneSpec, width int, statusline string, extra []string) string 
 	boxW := min(width-2, 110)
 	w := spec.Window
 	var out []string
-	out = append(out, welcomeBox(spec, boxW)...)
+	out = append(out, banner(spec)...)
 	out = append(out, "")
-	for _, e := range spec.Transcript.Entries {
-		out = append(out, renderEntry(e, width)...)
-		out = append(out, "")
-	}
+	out = append(out, renderEntries(spec.Transcript.Entries, width)...)
 	out = append(out, extra...)
 	if len(extra) > 0 {
 		out = append(out, "")
@@ -81,37 +87,149 @@ func Render(spec PaneSpec, width int, statusline string, extra []string) string 
 			spin = "Working… (esc to interrupt)"
 		}
 		out = append(out, cClaude+"✻ "+spin+cReset, "")
+	default:
+		if len(spec.Transcript.Entries) > 0 {
+			out = append(out, turnFooter(w), "")
+		}
 	}
-	out = append(out, promptBox(boxW)...)
+	out = append(out, inputArea(w, width)...)
 	if statusline != "" {
 		for _, l := range strings.Split(strings.TrimRight(statusline, "\n"), "\n") {
 			out = append(out, "  "+l+cReset)
 		}
 	}
-	if w.Mode == "bare" {
-		out = append(out, cDim+"  ? for shortcuts"+cReset)
-	} else {
-		out = append(out, cAuto+"  ⏵⏵ auto mode on"+cDim+" (shift+tab to cycle)"+cReset)
-	}
 	return strings.Join(out, "\r\n")
 }
 
-func welcomeBox(spec PaneSpec, w int) []string {
+// turnFooter is the line Claude Code leaves after a finished turn.
+func turnFooter(w Window) string {
+	done := time.Now().Add(-w.SinceDuration()).Format("3:04 PM")
+	return cClaude + "✻ " + cDim + "Brewed for 49s · done " + done + cReset
+}
+
+// inputArea is the prompt between two full-width rules, then the mode line.
+func inputArea(w Window, width int) []string {
+	rule := cBorder + strings.Repeat("─", width) + cReset
+	out := []string{rule, cText + "❯ " + cInverse + " " + cReset, rule}
+	if w.Mode == "bare" {
+		return append(out, cDim+"  ? for shortcuts"+cReset)
+	}
+	return append(out, cAuto+"  ⏵⏵ auto mode on"+cDim+" (shift+tab to cycle) · esc to interrupt"+cReset)
+}
+
+// ModelLabel is the model name the banner shows: "claude-opus-5-5" →
+// "Opus 5.5".
+func ModelLabel(id string) string {
+	parts := strings.Split(strings.TrimPrefix(id, "claude-"), "-")
+	if len(parts) == 0 || parts[0] == "" {
+		return "Opus 5.5"
+	}
+	name := strings.ToUpper(parts[0][:1]) + parts[0][1:]
+	var ver []string
+	for _, p := range parts[1:] {
+		if len(p) > 2 || strings.Trim(p, "0123456789") != "" {
+			break
+		}
+		ver = append(ver, p)
+	}
+	if len(ver) == 0 {
+		return name
+	}
+	return name + " " + strings.Join(ver, ".")
+}
+
+func banner(spec PaneSpec) []string {
 	cwd := spec.WorkDir
 	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(cwd, home) {
 		cwd = "~" + strings.TrimPrefix(cwd, home)
 	}
-	return box(cClaude, w, []string{
-		cClaude + "✻" + cReset + " Welcome to " + cBold + "Claude Code" + cReset + "!",
-		"",
-		cDim + "  /help for help, /status for your current setup" + cReset,
-		"",
-		cDim + "  cwd: " + cwd + cReset,
-	})
+	return []string{
+		cClaude + " ▐▛███▜▌" + cReset + "   " + cBold + "Claude Code" + cReset + cDim + " v" + ccVersion + cReset,
+		cClaude + "▝▜█████▛▘" + cReset + "  " + cDim + ModelLabel(spec.Window.Model) + " · " + ccPlan + cReset,
+		cClaude + "  ▘▘ ▝▝" + cReset + "    " + cDim + cwd + cReset,
+	}
 }
 
-func promptBox(w int) []string {
-	return box(cBorder, w, []string{cText + "> " + cInverse + " " + cReset})
+// renderEntries draws the transcript, one blank line between items, with runs
+// of read-only tool calls collapsed to one summary line the way Claude Code
+// does.
+func renderEntries(entries []Entry, width int) []string {
+	var out []string
+	for i := 0; i < len(entries); {
+		if n := collapsibleRun(entries[i:]); n >= 2 {
+			out = append(out, collapsedSummary(entries[i:i+n]), "")
+			i += n
+			continue
+		}
+		out = append(out, renderEntry(entries[i], width)...)
+		out = append(out, "")
+		i++
+	}
+	return out
+}
+
+// readOnlyBash are command prefixes that count as inspection, so a run of
+// them collapses with reads.
+var readOnlyBash = []string{"ls", "cat ", "git log", "git diff", "git status", "gh pr diff", "gh pr view", "grep ", "rg "}
+
+func collapsible(e Entry) bool {
+	if e.Tool == "" || e.Error || e.Running || e.Diff != "" {
+		return false
+	}
+	switch e.Tool {
+	case "Read", "Grep", "Glob", "LS":
+		return true
+	case "Bash":
+		cmd := toolDetail(e)
+		for _, p := range readOnlyBash {
+			if strings.HasPrefix(cmd, p) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// collapsibleRun is how many entries from the start of es collapse together.
+func collapsibleRun(es []Entry) int {
+	n := 0
+	for n < len(es) && collapsible(es[n]) {
+		n++
+	}
+	return n
+}
+
+func collapsedSummary(es []Entry) string {
+	var read, search, list, ran int
+	for _, e := range es {
+		switch e.Tool {
+		case "Read":
+			read++
+		case "Grep", "Glob":
+			search++
+		case "LS":
+			list++
+		default:
+			ran++
+		}
+	}
+	var parts []string
+	add := func(n int, verb, one, many string) {
+		if n == 0 {
+			return
+		}
+		noun := many
+		if n == 1 {
+			noun = one
+		}
+		parts = append(parts, fmt.Sprintf("%s %d %s", verb, n, noun))
+	}
+	add(read, "read", "file", "files")
+	add(search, "searched for", "pattern", "patterns")
+	add(list, "listed", "directory", "directories")
+	add(ran, "ran", "shell command", "shell commands")
+	text := strings.Join(parts, ", ")
+	return "  " + cDim + strings.ToUpper(text[:1]) + text[1:] + cReset
 }
 
 func permissionBox(w Window, width int) []string {
@@ -157,8 +275,14 @@ func renderEntry(e Entry, width int) []string {
 	switch {
 	case e.User != "":
 		var out []string
-		for _, l := range wrap(e.User, width-4) {
-			out = append(out, cDim+"> "+l+cReset)
+		for i, l := range wrap(e.User, width-4) {
+			lead := "  "
+			if i == 0 {
+				lead = "❯ "
+			}
+			text := lead + l
+			pad := strings.Repeat(" ", max(width-ansi.StringWidth(text), 0))
+			out = append(out, bgPrompt+cText+text+pad+cReset)
 		}
 		return out
 	case e.Say != "":
