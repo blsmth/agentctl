@@ -464,6 +464,36 @@ role: orchestrator
 
 An orchestrator gets the orchestrator preamble in every mode and never gets worker finishing steps (commit, push, open a PR). The phone's new-session button, or `dispatch --prompt` from a shell with no tracked Claude session, launches it as an interactive `bare` session with the prompt as its first message (no autonomous instructions, but the worker permission mode: `auto` unless overridden); cron jobs, `--prompt` dispatches from another agent session and `dispatch --issue` keep autonomous execution. See [dispatch.md](dispatch.md#orchestrator-agents).
 
+## Prompt templates
+
+Named, reusable dispatch prompts for tasks you run often. One Markdown file per template: YAML frontmatter (all keys optional) plus a body, which is the prompt.
+
+```markdown
+---
+description: Review every open PR and post verdicts
+agent: code-reviewer
+model: opus
+dir: ~/code/agentctl
+effort: high
+---
+
+Review each open pull request in this repo ...
+```
+
+Global templates live in `~/.config/agentctl/templates/<name>.md` (`$XDG_CONFIG_HOME/agentctl/templates/`); a project's live in `<project>/.agentctl/templates/<name>.md` and shadow a global one of the same name, like agents. The project is the checkout a `.worktrees/<slug>` worktree belongs to, else the nearest directory with `.git`. Names follow the agent-name rule (letters, digits, `.`, `_`, `-`; no leading `.` or `-`). Unknown frontmatter keys, an invalid `effort` or an empty body make a template unreadable (`template list` warns about it), and a broken project template never falls back to the global one.
+
+| Command | |
+|---|---|
+| `agentctl template list [--json]` | Templates visible from the current directory, with scope and description. |
+| `agentctl template show <name>` | Where a template lives and its file content. |
+| `agentctl template add <name> [--description D] [--agent A] [--model M] [--dir D] [--effort E] (--prompt T \| --prompt-file F) [--project]` | Create one (global unless `--project`). With neither prompt flag it opens `$VISUAL`/`$EDITOR` when stdin is a terminal. |
+| `agentctl template edit <name> [flags] [--project]` | The given flags patch fields (an empty value clears one; `--prompt`/`--prompt-file` replace the body); with none, opens the editor. |
+| `agentctl template rm <name> [--project]` | Remove one. |
+
+**Dispatching.** `agentctl dispatch --template <name>` runs the template's prompt. It is mutually exclusive with `--issue`, `--review-pr` and `--prompt-key`. The template's `agent`, `model`, `dir` and `effort` apply only when the matching flag is unset, so `--agent`, `--model` and `--dir` always win; a template with no `agent` needs `--agent`. `--prompt` with `--template` does not replace the prompt: it is appended under `## Additional instructions from the user`, the phone dispatch sheet's wording. The template is loaded from the current directory's project and the global dir, and its name is recorded in the window's record (`template`) and the first user message.
+
+**Approval.** The dispatch approval popup and the phone card show the template's full prompt (plus any `--prompt` instructions), the template name, and the agent, model and dir it resolves to (sources shown as `template`). The gate fails closed: a template that does not exist or does not parse, a template name using shell expansion, or a command line that changes directory or environment before the dispatch (`cd x && ...`, `VAR=x agentctl ...`) is denied with the reason. A template is a dispatch payload, so agents cannot change one silently: `agentctl template add`, `edit` and `rm` from an agent session always open an approval popup (whatever the dispatch approval mode) showing the file as it will be written, the fields an edit changes, or the content being removed; `list` and `show` are not gated, and a human in a plain shell is never asked. An agent's `add`/`edit` must pass `--prompt` or `--prompt-file` (the editor cannot be shown for approval), and template, dispatch and cron changes must go in separate Bash calls. On the phone a template change appears as a command approval with the file content as its prompt. Direct writes to either templates dir are denied: Bash redirects, write commands and interpreters that name them, and `Write`/`Edit`/`MultiEdit`/`NotebookEdit` on them (`hook-pre-tool`). As with the cron rules, the arguments of `agentctl` commands are not inspected, and this is a speed bump, not a sandbox.
+
 ## Backends (Ollama and Nous Portal)
 
 A backend points Claude Code at an Anthropic-compatible endpoint instead of Anthropic. Two kinds exist, chosen by `kind`: `"ollama"` (the default when `kind` is empty; a self-hosted server) and `"nous"` (the [Nous Research Portal](#nous-portal-kind-nous)). Everything up to the Nous section describes the Ollama kind.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -471,6 +472,7 @@ func runCmdDispatchPreview(argsFile, resultFile string) {
 		tui.WithProject(args.Project),
 		tui.WithReviewPR(args.ReviewPR),
 		tui.WithCron(tui.CronPreview{Action: args.CronAction, Job: args.CronJob, Schedule: args.CronSchedule}),
+		tui.WithTemplate(tui.TemplatePreview{Action: args.TemplateAction, Name: cmp.Or(args.TemplateName, args.Template), Path: args.TemplatePath}),
 	)
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
@@ -578,6 +580,9 @@ var readOnlyCommands = map[string]bool{
 	"cron": true,
 	// race only reads a transcript (and windowstate to find it).
 	"race": true,
+	// template files live in the global config dir or
+	// <project>/.agentctl/templates, never in the runtime state.
+	"template": true,
 }
 
 // isReadOnlyInvocation reports whether args name a read-only invocation:
