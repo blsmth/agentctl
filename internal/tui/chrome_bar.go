@@ -112,7 +112,7 @@ type ChromeBarModel struct {
 	wins     []tmux.WindowInfo // last successful tmux list-windows result
 	haveWins bool
 	records  *windowstate.DirCache // live windows' records, re-read when a file changes
-	rebuilds int // number of view rebuilds (diagnostic and test hook)
+	rebuilds int                   // number of view rebuilds (diagnostic and test hook)
 
 	// ── Toast notifications ──────────────────────────────────────────────────
 	toast ToastModel

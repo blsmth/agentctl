@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"errors"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -107,9 +109,10 @@ func (d *dirWatch) classify(p string) (windows, active bool) {
 	switch {
 	case p == d.windowsDir:
 		windows = true
-		if _, err := os.Lstat(d.windowsDir); err != nil {
-			d.windowsWatched = false
-		}
+		// The kqueue backend drops a watch whose dir was deleted or renamed;
+		// re-adding is a no-op while the watch is live and revives it if the
+		// dir was recreated.
+		d.windowsWatched = d.w.Add(d.windowsDir) == nil
 	case filepath.Dir(p) == d.windowsDir:
 		windows = windows || strings.HasSuffix(p, ".json")
 	case p == d.runtimeDir || p == d.activePath:
@@ -155,8 +158,11 @@ func (d *dirWatch) run(ch chan<- tea.Msg, debounce time.Duration) {
 			if !ok {
 				return
 			}
+			// A watcher error (fsnotify's kqueue backend reports one when a
+			// temp file is renamed away before it can open it) may have hidden
+			// a change: rebuild. It does not force a tmux relist; a changed
+			// record set still relists, and the 30s clock tick relists anyway.
 			pending = true
-			d.known = nil // force a relist
 			arm()
 		case <-fire:
 			fire = nil
@@ -231,6 +237,7 @@ func fileStamp(p string) string {
 type fsnotifyWatcher struct {
 	w      *fsnotify.Watcher
 	events chan string
+	errs   chan error
 }
 
 func newFsnotifyWatcher() (dirWatcher, error) {
@@ -238,7 +245,19 @@ func newFsnotifyWatcher() (dirWatcher, error) {
 	if err != nil {
 		return nil, err
 	}
-	fw := &fsnotifyWatcher{w: w, events: make(chan string)}
+	fw := &fsnotifyWatcher{w: w, events: make(chan string), errs: make(chan error)}
+	go func() {
+		defer close(fw.errs)
+		for err := range w.Errors {
+			// The kqueue backend opens each new file it sees; a temp file
+			// already renamed away fails with ENOENT. The rename itself is
+			// reported as an event, so nothing was missed.
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			fw.errs <- err
+		}
+	}()
 	go func() {
 		defer close(fw.events)
 		for ev := range w.Events {
@@ -251,7 +270,7 @@ func newFsnotifyWatcher() (dirWatcher, error) {
 	return fw, nil
 }
 
-func (f *fsnotifyWatcher) Add(path string) error  { return f.w.Add(path) }
-func (f *fsnotifyWatcher) Events() <-chan string  { return f.events }
-func (f *fsnotifyWatcher) Errors() <-chan error   { return f.w.Errors }
-func (f *fsnotifyWatcher) Close() error           { return f.w.Close() }
+func (f *fsnotifyWatcher) Add(path string) error { return f.w.Add(path) }
+func (f *fsnotifyWatcher) Events() <-chan string { return f.events }
+func (f *fsnotifyWatcher) Errors() <-chan error  { return f.errs }
+func (f *fsnotifyWatcher) Close() error          { return f.w.Close() }

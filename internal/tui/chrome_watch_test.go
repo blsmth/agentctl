@@ -222,3 +222,39 @@ func TestChromeBarWatcherWindowsDirCreatedLater(t *testing.T) {
 		}
 	})
 }
+
+// fakeWatcher is a dirWatcher driven by the test.
+type fakeWatcher struct {
+	events chan string
+	errs   chan error
+}
+
+func (f *fakeWatcher) Add(string) error      { return nil }
+func (f *fakeWatcher) Events() <-chan string { return f.events }
+func (f *fakeWatcher) Errors() <-chan error  { return f.errs }
+func (f *fakeWatcher) Close() error          { return nil }
+
+// TestChromeBarWatcherErrorRebuildsWithoutRelist: a watcher error triggers a
+// rebuild, but not a tmux relist while the record set is unchanged (fsnotify's
+// kqueue backend errors on every temp file renamed away too fast).
+func TestChromeBarWatcherErrorRebuildsWithoutRelist(t *testing.T) {
+	f := newChromeFixture(t, nil)
+	f.writeRecord(t, "@1", `{"state":"idle"}`)
+	fw := &fakeWatcher{events: make(chan string), errs: make(chan error)}
+	dw, err := newDirWatch(fw, f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan tea.Msg, 1)
+	go dw.run(ch, 10*time.Millisecond)
+	t.Cleanup(func() { close(fw.events) })
+
+	fw.errs <- os.ErrNotExist
+	msg, ok := recvWatch(t, ch, watchWait(10*time.Millisecond))
+	if !ok {
+		t.Fatal("no message after a watcher error")
+	}
+	if wc, isWC := msg.(windowsChangedMsg); !isWC || wc.relist {
+		t.Errorf("after error: got %#v, want windowsChangedMsg without relist", msg)
+	}
+}

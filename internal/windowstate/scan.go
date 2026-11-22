@@ -85,6 +85,10 @@ type DirCache struct {
 	entries map[string]dirCacheEntry
 }
 
+// dirCacheEntry is keyed on size, mtime and inode. Writers replace a record
+// by rename, so a rewrite gets a new inode. A stale hit needs a rename of the
+// same size onto a reused inode within one mtime tick (possible on Linux,
+// whose mtime clock is coarse); the next write corrects it.
 type dirCacheEntry struct {
 	size  int64
 	mtime int64
