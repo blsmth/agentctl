@@ -203,7 +203,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"z", "fold / collapse", "z"},
 		{"Z", "focus mode", "Z"},
 		{"f", "filter", "f"},
-		{"o", "sort recent", "o"},
+		{"o", "sort: recent / window", "o"},
 		{fleetShellsKey, "shells", fleetShellsKey},
 		{fleetClosedKey, "closed agents", fleetClosedKey},
 		{fleetSchedulesKey, "schedules", fleetSchedulesKey},
