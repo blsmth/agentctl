@@ -18,6 +18,7 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/metricsserve"
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/race"
 	"github.com/blsmth/agentctl/internal/safefs"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/statusline"
@@ -131,6 +132,7 @@ type CLI struct {
 	Dashboards DashboardsCmd `cmd:"" help:"View dashboards"`
 	Ctl        CtlCmd        `cmd:"" help:"Send operator control command"`
 	Models     ModelsCmd     `cmd:"" help:"Inspect the model registry (context window, pricing, resolution)"`
+	Race       RaceCmd       `cmd:"" help:"Replay a session as a race against a human typing and reading the same work"`
 
 	// Setup
 	Init             InitCmd             `cmd:"" help:"Initialize agentctl in current project"`
@@ -1159,6 +1161,28 @@ type ModelsCmd struct {
 }
 
 func (c *ModelsCmd) Run() error { return cmd.RunModels(c.Resolve) }
+
+// RaceCmd implements `agentctl race [<target>]`.
+type RaceCmd struct {
+	Target   string        `arg:"" optional:"" help:"Window (@N), session ID, or transcript path (default: this window)"`
+	WPM      float64       `name:"wpm" default:"60" help:"Human typing speed, words per minute"`
+	ReadWPM  float64       `name:"read-wpm" default:"250" help:"Human reading speed, words per minute"`
+	Think    time.Duration `default:"0s" help:"Human pause per step (0 = no pauses)"`
+	MaxGap   time.Duration `name:"max-gap" default:"60s" help:"Longest gap between entries charged to the agent"`
+	Speed    float64       `help:"Replay at N times real time (overrides --duration)"`
+	Duration time.Duration `default:"45s" help:"Fit the agent's whole timeline into this long a replay"`
+	JSON     bool          `help:"Print totals as JSON and exit (no TUI)"`
+}
+
+func (c *RaceCmd) Run() error {
+	return cmd.RunRace(os.Stdout, cmd.RaceOptions{
+		Target:   c.Target,
+		Params:   race.Params{WPM: c.WPM, ReadWPM: c.ReadWPM, Think: c.Think, MaxGap: c.MaxGap},
+		Speed:    c.Speed,
+		Duration: c.Duration,
+		JSON:     c.JSON,
+	})
+}
 
 // DashboardsCmd uses passthrough to preserve os.Args for cmd.RunDashboards's own routing.
 type DashboardsCmd struct {

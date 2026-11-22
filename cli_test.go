@@ -37,6 +37,9 @@ var cliTests = []cliCase{
 	// Subcommand help exits cleanly and includes expected flag/arg names
 	{"dispatch --help", []string{"dispatch", "--help"}, 0, "issue", ""},
 	{"launch --help", []string{"launch", "--help"}, 0, "name", ""},
+	{"race --help shows wpm", []string{"race", "--help"}, 0, "--read-wpm", ""},
+	{"race --help shows max-gap", []string{"race", "--help"}, 0, "--max-gap", ""},
+	{"race --json on a missing file", []string{"race", "/nonexistent/x.jsonl", "--json"}, 1, "", "no transcript at"},
 	{"launch --help shows no-worktree", []string{"launch", "--help"}, 0, "no-worktree", ""},
 	{"cleanup --help", []string{"cleanup", "--help"}, 0, "dry-run", ""},
 	{"sync --help", []string{"sync", "--help"}, 0, "dry-run", ""},
@@ -264,6 +267,7 @@ func TestIsReadOnlyInvocation(t *testing.T) {
 		{[]string{"agentctl", "cron", "add", "x", "--schedule", "@daily"}, true},
 		{[]string{"agentctl", "cron", "tick"}, true},
 		{[]string{"agentctl", "cron", "run", "x"}, true},
+		{[]string{"agentctl", "race", "@3"}, true},
 	}
 	for _, tt := range tests {
 		if got := isReadOnlyInvocation(tt.args); got != tt.want {

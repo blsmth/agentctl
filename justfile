@@ -161,6 +161,40 @@ demo-shots: demo-build
         "{{_demo_bin}}" shot {{_demo_flags}} --scene "$f"
     done
 
+# Uses a temp HOME so the default theme applies and no real config is read. duration is whole seconds (e.g. 30s).
+# Record `agentctl race` over the canned transcript to a GIF at 120x35 (needs vhs)
+demo-race out="demo/out/race.gif" duration="30s":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v vhs >/dev/null 2>&1; then
+        echo "vhs is not installed: brew install vhs (https://github.com/charmbracelet/vhs)" >&2
+        exit 1
+    fi
+    root="{{_demo_root}}/race"
+    mkdir -p "$root/bin" "$root/home" "$(dirname "{{out}}")"
+    go build -o "$root/bin/agentctl" .
+    # Agent replay + the beat before the end card + a few seconds of card.
+    secs=$(( $(echo "{{duration}}" | tr -dc '0-9') + 9 ))
+    cat > "$root/race.tape" <<EOF
+    Output "{{out}}"
+    Set Shell "bash"
+    Set FontSize 14
+    Set Width 1149
+    Set Height 623
+    Set Padding 20
+    Set Theme "Catppuccin Mocha"
+    Set CursorBlink false
+    Hide
+    Type "exec env -u TMUX -u TMUX_PANE HOME='$root/home' XDG_CONFIG_HOME='$root/home/.config' LANG=en_US.UTF-8 '$root/bin/agentctl' race internal/race/testdata/demo.jsonl --duration {{duration}}"
+    Enter
+    Sleep 500ms
+    Show
+    Sleep ${secs}s
+    Type "q"
+    EOF
+    vhs "$root/race.tape"
+    echo "wrote {{out}}"
+
 # Validate a scene file without starting anything
 demo-check scene: demo-build
     "{{_demo_bin}}" check {{_demo_flags}} --scene "{{scene}}"
