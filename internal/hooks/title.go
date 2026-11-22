@@ -124,7 +124,7 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 		return
 	}
 	if fp, ok := firstPromptFor(ws, prompt); ok {
-		ws.FirstPrompt = recordFirstPrompt(windowID, fp)
+		ws.FirstPrompt = recordFirstPrompt(windowID, fp, fullPromptFor(prompt))
 	}
 	in := titleInput(ws, lastMessage)
 	now := titleNow()
@@ -287,6 +287,13 @@ func resetTitleOnClear(ws *windowstate.WindowState) {
 		ws.ShortTitle = windowstate.ShortTitle{}
 	}
 	ws.FirstPrompt = ""
+	// A dispatched window keeps its dispatch prompt; a bare one's full
+	// prompt (and the transcript scan marker) belongs to the old work.
+	if ws.Task == "" && ws.TicketTitle == "" {
+		ws.Prompt = ""
+		ws.PromptScanKey = ""
+		ws.PromptScanAt = time.Time{}
+	}
 }
 
 // maxFirstPromptRunes caps the stored first prompt.
@@ -307,6 +314,25 @@ var slashCommandRe = regexp.MustCompile(`^/[\w:-]+(\s|$)`)
 // is none: empty text, a slash command, or only injected content (task
 // notifications, system reminders, `agentctl notice:` lines).
 func realPrompt(prompt string) (string, bool) {
+	text, ok := realPromptFull(prompt)
+	if !ok {
+		return "", false
+	}
+	if r := []rune(text); len(r) > maxFirstPromptRunes {
+		text = string(r[:maxFirstPromptRunes])
+	}
+	return text, true
+}
+
+// fullPromptFor is the user-typed part of prompt, capped at
+// windowstate.MaxPromptBytes ("" when there is none).
+func fullPromptFor(prompt string) string {
+	text, _ := realPromptFull(prompt)
+	return windowstate.CapPrompt(text)
+}
+
+// realPromptFull is realPrompt without the first-prompt rune cap.
+func realPromptFull(prompt string) (string, bool) {
 	for _, re := range injectedBlockRes {
 		prompt = re.ReplaceAllString(prompt, "")
 	}
@@ -320,9 +346,6 @@ func realPrompt(prompt string) (string, bool) {
 	text := strings.TrimSpace(strings.Join(kept, "\n"))
 	if text == "" || slashCommandRe.MatchString(text) {
 		return "", false
-	}
-	if r := []rune(text); len(r) > maxFirstPromptRunes {
-		text = string(r[:maxFirstPromptRunes])
 	}
 	return text, true
 }
@@ -340,11 +363,14 @@ func firstPromptFor(ws windowstate.WindowState, prompt string) (string, bool) {
 // recordFirstPrompt stores fp when the window still has none and returns what
 // the record holds afterwards (a concurrent run may have won). A failed write
 // still returns fp so this run can title from it.
-func recordFirstPrompt(windowID, fp string) string {
+func recordFirstPrompt(windowID, fp, full string) string {
 	held := fp
 	err := windowstate.Update(windowID, func(w *windowstate.WindowState) {
 		if w.FirstPrompt == "" {
 			w.FirstPrompt = fp
+			if w.Prompt == "" {
+				w.Prompt = full
+			}
 		}
 		held = w.FirstPrompt
 	})

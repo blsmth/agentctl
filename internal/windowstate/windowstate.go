@@ -57,7 +57,12 @@ type WindowState struct {
 	// at MaxPromptBytes at launch. The phone's window detail shows it when the
 	// task line is tapped; ticket dispatches leave it empty (TicketTitle only).
 	Prompt string `json:"prompt,omitempty"`
-	Mode   string `json:"mode,omitempty"`
+	// PromptScanKey and PromptScanAt record a transcript scan for Prompt that
+	// found nothing (key = session ID + log path), so the phone detail route
+	// does not re-read the log on every poll.
+	PromptScanKey string    `json:"prompt_scan_key,omitempty"`
+	PromptScanAt  time.Time `json:"prompt_scan_at,omitempty"`
+	Mode          string    `json:"mode,omitempty"`
 	// Backend is the name of the config backend this window's claude was
 	// launched against ("" = Anthropic). Restore re-resolves it from config.
 	Backend string `json:"backend,omitempty"`
