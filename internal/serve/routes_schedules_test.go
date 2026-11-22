@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/state"
 )
 
@@ -408,5 +410,64 @@ func TestResetWriteLimitsRefillsBudget(t *testing.T) {
 	se.Server.ResetWriteLimits()
 	if w := se.post("/v1/schedules/preview", se.jobBody("triage")); w.Code != http.StatusOK {
 		t.Fatalf("after reset: %d %s", w.Code, w.Body)
+	}
+}
+
+// TestSchedulesTemplateJobs: a job can name a prompt template instead of a
+// prompt; it is checked against the templates the job dir sees, returned
+// as `template`, resolved on the card, and shown broken once deleted.
+func TestSchedulesTemplateJobs(t *testing.T) {
+	se := newScheduleEnv(t, true)
+	tmpls := map[string]prompttemplate.Template{
+		"triage": {Name: "triage", Agent: "go-engineer", Prompt: "Triage the backlog.", Scope: prompttemplate.ScopeProject},
+	}
+	se.Server.schedules.LoadTemplate = func(name, dir string) (prompttemplate.Template, error) {
+		if t, ok := tmpls[name]; ok && dir == se.projDir {
+			return t, nil
+		}
+		return prompttemplate.Template{}, fmt.Errorf("%w: %q", prompttemplate.ErrNotFound, name)
+	}
+	body := func(extra string) string {
+		return `{"job":{"name":"nightly","schedule":"30 7 * * 1-5","dir":"` + se.projDir + `"` + extra + `}}`
+	}
+	w := se.send("POST", "/v1/schedules", body(`,"template":"nope"`))
+	if w.Code != 422 || !strings.Contains(w.Body.String(), `template \"nope\" not found`) {
+		t.Fatalf("missing template: %d %s", w.Code, w.Body)
+	}
+	if w := se.send("POST", "/v1/schedules", body(`,"template":"triage","prompt":"x"`)); w.Code != 422 || !strings.Contains(w.Body.String(), `"field":"template"`) {
+		t.Errorf("template and prompt: %d %s", w.Code, w.Body)
+	}
+	w = se.send("POST", "/v1/schedules", body(`,"template":"triage"`))
+	if w.Code != 200 {
+		t.Fatalf("create: %d %s", w.Code, w.Body)
+	}
+	out := decode[scheduleOut](t, w)
+	if out.Job.Template != "triage" || out.Job.Agent != "" || out.TemplateResolved == nil || out.TemplateResolved.Prompt != "Triage the backlog." {
+		t.Errorf("created = %+v", out)
+	}
+	w = do(se.Handler(), "GET", "/v1/schedules", withCookie(se.tok))
+	if !strings.Contains(w.Body.String(), `"template":"triage"`) {
+		t.Errorf("list does not return template: %s", w.Body)
+	}
+
+	// Switch to a prompt and back.
+	w = se.send("PUT", "/v1/schedules/nightly", body(`,"agent":"go-engineer","prompt":"Inline."`))
+	if out := decode[scheduleOut](t, w); w.Code != 200 || out.Job.Template != "" || out.Job.Prompt != "Inline." {
+		t.Fatalf("to prompt: %d %s", w.Code, w.Body)
+	}
+	w = se.send("PUT", "/v1/schedules/nightly", body(`,"template":"triage"`))
+	if out := decode[scheduleOut](t, w); w.Code != 200 || out.Job.Template != "triage" || out.Job.Prompt != "" {
+		t.Fatalf("back to template: %d %s", w.Code, w.Body)
+	}
+
+	delete(tmpls, "triage")
+	w = do(se.Handler(), "GET", "/v1/schedules", withCookie(se.tok))
+	ov := decode[schedulesBody](t, w)
+	if len(ov.Jobs) != 1 || ov.Jobs[0].Invalid != `template "triage" not found` {
+		t.Errorf("deleted template: %+v", ov.Jobs)
+	}
+	w = do(se.Handler(), "GET", "/v1/schedules/nightly", withCookie(se.tok))
+	if d := decode[cronedit.Detail](t, w); d.TemplateError == "" || d.TemplateResolved != nil {
+		t.Errorf("card after delete = %+v", d)
 	}
 }

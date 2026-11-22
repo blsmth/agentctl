@@ -13,6 +13,7 @@ import (
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/servectl"
 	"github.com/blsmth/agentctl/internal/sweeprun"
 	"github.com/blsmth/agentctl/internal/testenv"
@@ -78,6 +79,7 @@ func TestMain(m *testing.M) {
 	}
 	fleetSchedHideViewer = func() error { return nil }
 	fleetSchedPermMode = func(string) string { return "auto" }
+	fleetSchedTemplates = func(string) []prompttemplate.Template { return nil }
 	fleetSchedEnvLoad = testSchedEnv
 	fleetSchedExec = func(*exec.Cmd, tea.ExecCallback) tea.Cmd { return nil }
 	code := m.Run()

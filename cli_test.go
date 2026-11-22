@@ -276,6 +276,31 @@ func TestIsReadOnlyInvocation(t *testing.T) {
 	}
 }
 
+// TestCronTemplateFlagsParse: `cron add --template` needs no --agent (the
+// template may name it) and `cron edit --template` is a pointer like the
+// other edit flags.
+func TestCronTemplateFlagsParse(t *testing.T) {
+	var cli CLI
+	k, err := kong.New(&cli, kong.Name("agentctl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.Parse([]string{"cron", "add", "nightly", "--schedule", "@daily", "--dir", "/tmp", "--template", "triage"}); err != nil {
+		t.Fatal(err)
+	}
+	if a := cli.Cron.Add; a.Template != "triage" || a.Agent != "" {
+		t.Errorf("cron add parsed = %+v", a)
+	}
+	var cli2 CLI
+	k2, _ := kong.New(&cli2, kong.Name("agentctl"))
+	if _, err := k2.Parse([]string{"cron", "edit", "nightly", "--template", "triage"}); err != nil {
+		t.Fatal(err)
+	}
+	if e := cli2.Cron.Edit; e.Template == nil || *e.Template != "triage" || e.Prompt != nil {
+		t.Errorf("cron edit parsed = %+v", e)
+	}
+}
+
 // TestCronEditFlagsParse: `cron edit` tells an absent flag (nil, unchanged)
 // from an empty one (clears the field), and --worktree/--no-worktree are
 // exclusive.

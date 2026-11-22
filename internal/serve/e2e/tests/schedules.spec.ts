@@ -314,3 +314,42 @@ test("typing in the prompt does not spend the write budget on previews", async (
   expect(previews).toBeLessThanOrEqual(2);
   await expect(page.getByRole("button", { name: "Review & schedule" })).toBeEnabled();
 });
+
+test("a template as the prompt source: pick it, review it, save, and see it on the card and the list", async ({ page, control }) => {
+  await control.seedSchedules({
+    templates: [{ name: "triage", description: "Weekly triage", agent: "go-engineer", prompt: "Triage the backlog." }],
+  });
+  await page.goto("/#/schedules/new");
+  await expect(page.locator("select[aria-label=Project] option")).not.toHaveCount(0);
+  await page.getByLabel("Name", { exact: true }).fill("triage-job");
+  await page.getByRole("group", { name: "Prompt source" }).getByRole("button", { name: "Template" }).tap();
+  const pick = page.locator("select[aria-label=Template]");
+  await expect(pick.locator("option", { hasText: "triage · Weekly triage" })).toHaveCount(1);
+  await pick.selectOption("triage");
+  await expect(page.locator("pre[aria-label='Template prompt']")).toHaveText("Triage the backlog.");
+  await page.locator("select[aria-label=Agent]").selectOption("");
+  await expect(page.locator(".sched-preview")).toContainText("next");
+  await page.getByRole("button", { name: "Review & schedule" }).tap();
+  await expect(sheet(page)).toContainText("go-engineer (from template triage)");
+  await expect(sheet(page)).toContainText("Prompt: template triage");
+  await expect(sheet(page)).toContainText("Triage the backlog.");
+  await sheet(page).getByRole("button", { name: "Schedule it" }).tap();
+
+  await expect(page).toHaveURL(/#\/schedules\/triage-job$/);
+  const saved = await jobFromApi(page, "triage-job");
+  expect(saved.job.template).toBe("triage");
+  expect(saved.job.prompt ?? "").toBe("");
+  expect(saved.job.agent ?? "").toBe("");
+  await expect(page.locator(".sched-prompt")).toHaveText("Triage the backlog.");
+  await expect(page.locator(".sched-facts")).toContainText("Template triage");
+
+  await page.goto("/#/schedules");
+  await expect(page.locator(".sched-row", { hasText: "triage-job" })).toContainText("template triage");
+});
+
+test("a job whose template was deleted shows as broken", async ({ page, control }) => {
+  await control.seedSchedules({ jobs: [job("orphan", { prompt: undefined, template: "gone" })] });
+  await page.goto("/#/schedules/orphan");
+  await expect(page.locator(".sched-status")).toContainText("invalid");
+  await expect(page.locator(".sched-fail").first()).toContainText('template "gone" not found');
+});

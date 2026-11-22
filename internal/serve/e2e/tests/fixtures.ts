@@ -58,6 +58,8 @@ export type SchedulesSpec = {
   not_installed?: boolean;
   cron_disabled?: boolean;
   run?: Record<string, unknown>;
+  /** templates are written as the project's prompt templates. */
+  templates?: { name: string; prompt: string; agent?: string; description?: string; model?: string; effort?: string }[];
 };
 
 /** Control wraps the dev server's /__test/ API. */

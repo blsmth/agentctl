@@ -17,6 +17,7 @@ import (
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/launchd"
 	"github.com/blsmth/agentctl/internal/ratelimit"
+	"github.com/blsmth/agentctl/internal/textutil"
 )
 
 // relTime renders t relative to now: "3 minutes ago", "2 hours from now".
@@ -50,7 +51,7 @@ func (e cronEnv) list(w io.Writer) error {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 	runs, _ := cron.ReadRuns(dir, "")
-	in := cronedit.OverviewInput{Now: e.now(), Config: cfg, Jobs: jobs.Jobs, Runs: runs, SchedulerInstalled: true}
+	in := cronedit.OverviewInput{Now: e.now(), Config: cfg, Jobs: jobs.Jobs, Runs: runs, SchedulerInstalled: true, Check: e.store().Check}
 	if e.schedulerInstalled != nil {
 		in.SchedulerInstalled = e.schedulerInstalled()
 	}
@@ -100,16 +101,16 @@ func renderCronList(w io.Writer, v cronListView) {
 	}
 	fmt.Fprintln(w)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSCHEDULE\tNEXT\tLAST\tENABLED\tAGENT\tACCOUNT\tTHROTTLE")
+	fmt.Fprintln(tw, "NAME\tSCHEDULE\tNEXT\tLAST\tENABLED\tAGENT\tACCOUNT\tPROMPT\tTHROTTLE")
 	for _, st := range v.ov.Jobs {
 		j := st.Job
 		acct := v.accounts[j.Name]
 		if acct == "" {
 			acct = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			j.Name, j.Schedule, nextColumn(st, v.now), lastColumn(st.Last, v.now),
-			enabledColumn(st), j.Agent, acct, throttleColumn(j, th))
+			enabledColumn(st), agentColumn(j), acct, promptColumn(j), throttleColumn(j, th))
 	}
 	_ = tw.Flush()
 }
@@ -124,6 +125,30 @@ func nextColumn(st cronedit.Status, now time.Time) string {
 		return "never"
 	}
 	return fmt.Sprintf("%s (%s)", relTime(*st.NextFire, now), st.NextFire.Format("Mon 2 Jan 15:04"))
+}
+
+// agentColumn is the job's agent, or "(template)" when its template names
+// it.
+func agentColumn(j cron.Job) string {
+	if j.Agent == "" && j.Template != "" {
+		return "(template)"
+	}
+	return j.Agent
+}
+
+// promptPreviewWidth is how much of an inline prompt `cron list` shows.
+const promptPreviewWidth = 32
+
+// promptColumn says what a fire runs: the template or context key by name
+// (both read at every fire), else the start of the inline prompt.
+func promptColumn(j cron.Job) string {
+	switch {
+	case j.Template != "":
+		return "template " + j.Template
+	case j.PromptKey != "":
+		return "key " + j.PromptKey
+	}
+	return textutil.Truncate(strings.Join(strings.Fields(j.Prompt), " "), promptPreviewWidth, "…")
 }
 
 func lastColumn(e *cron.Entry, now time.Time) string {

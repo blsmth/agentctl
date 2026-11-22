@@ -184,7 +184,7 @@ func ValidateBash() {
 		switch {
 		case isCron:
 			gate = PreviewKindCron
-			approved, decided, denyReason = cronPreviewGate(agentName, command)
+			approved, decided, denyReason = cronPreviewGate(agentName, command, input.Cwd)
 		case isTemplate:
 			gate = PreviewKindTemplate
 			approved, decided, denyReason = templateGate(agentName, command, input.Cwd)

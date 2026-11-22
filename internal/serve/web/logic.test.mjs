@@ -17,6 +17,7 @@ import {
   formatBytes, formatUptime, hostLevels, hostConnection, pushSample, formatSkew,
   advancedSummary, cardLastFailure, cardStatus, changeLines, fieldErrors, runResultCard, timeoutIsPreset, usageOptions, formClientErrors, formatAgo, formatNextFire, newScheduleForm, previewBody, runResultLabel, scheduleBanners, scheduleBody,
   scheduleException, scheduleGlyph, scheduleHash, scheduleLastText, scheduleReview, scheduleWhen, worktreeFact,
+  scheduleAgentText, schedulePromptLabel, scheduleRowActivity,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
 } from "./logic.js";
 
@@ -868,6 +869,54 @@ console.log("ok: shell request");
   assert.equal(cardLastFailure({ last: { result: "fired" } }), "");
   assert.match(cardLastFailure({ last: { result: "failed:launch", note: "boom", ts: new Date().toISOString() } }), /^Last run failed \u00B7 launch: boom/);
   console.log("ok: schedules logic");
+}
+
+// Schedules: a template as the prompt source.
+{
+  const stored = { name: "j", schedule: "0 9 * * *", dir: "/x", agent: "", template: "triage", harness: "claude", mode: "window" };
+  const f = newScheduleForm({ job: stored, simple: { kind: "daily", minute: 0, hour: 9 }, templateText: "Triage it." });
+  assert.equal(f.source, "template");
+  assert.equal(f.template, "triage");
+  let body = scheduleBody(f);
+  assert.equal(body.job.template, "triage");
+  assert.equal(body.job.agent, "");
+  assert.equal(body.job.prompt, undefined);
+  assert.equal(body.job.prompt_key, undefined);
+  // Template -> prompt drops the template; and back again drops the prompt.
+  f.source = "prompt";
+  f.prompt = "Inline.";
+  f.agent = "go";
+  body = scheduleBody(f);
+  assert.equal(body.job.template, undefined);
+  assert.equal(body.job.prompt, "Inline.");
+  f.source = "template";
+  body = scheduleBody(f);
+  assert.equal(body.job.template, "triage");
+  assert.equal(body.job.prompt, undefined);
+  // A prompt-key job switched to a template loses the key.
+  const pk = newScheduleForm({ job: { ...stored, template: undefined, agent: "go", prompt_key: "k" }, simple: null, promptText: "t" });
+  assert.equal(pk.source, "prompt");
+  pk.source = "template";
+  pk.template = "triage";
+  assert.equal(scheduleBody(pk).job.prompt_key, undefined);
+  // No template picked is a client error.
+  assert.equal(formClientErrors({ ...newScheduleForm(), source: "template" }).template, "Pick a template");
+  assert.equal(formClientErrors(newScheduleForm()).template, undefined);
+  // Labels.
+  assert.equal(schedulePromptLabel({ template: "triage", prompt: "x" }), "template triage");
+  assert.equal(schedulePromptLabel({ prompt_key: "k" }), "context key k");
+  assert.equal(scheduleAgentText({ template: "triage" }, "go-engineer"), "go-engineer (from template triage)");
+  assert.equal(scheduleAgentText({ template: "triage" }), "the agent of template triage");
+  assert.equal(scheduleAgentText({ agent: "a", template: "triage" }, "go-engineer"), "a");
+  assert.equal(scheduleRowActivity({ template: "triage" }, "proj"), "template triage \u00B7 proj");
+  assert.equal(scheduleRowActivity({ agent: "a", template: "triage" }, "proj"), "a \u00B7 template triage \u00B7 proj");
+  assert.equal(scheduleRowActivity({ agent: "a", prompt: "p" }, "proj"), "a \u00B7 proj");
+  // Review and changes name the template.
+  const rv = scheduleReview({ job: { agent: "", template: "triage", dir: "/d", worktree: true }, schedule: "x" }, { ...f, templateAgent: "go-engineer" });
+  assert.match(rv[0], /Runs {3}go-engineer \(from template triage\) in \/d/);
+  assert.match(rv.at(-1), /^Prompt: template triage \(read from the project at every run\)\nTriage it\.$/);
+  assert.deepEqual(changeLines({ agent: "a", prompt: "p" }, { agent: "a", template: "triage" }), ["prompt  p \u2192 template triage"]);
+  console.log("ok: schedule templates");
 }
 
 // Prompt templates on the dispatch sheet.

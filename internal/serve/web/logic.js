@@ -1996,7 +1996,7 @@ const DEFAULT_SIMPLE = { kind: "weekdays", minute: 0, hour: 9, days: [] };
  * simple is the server's picker model for the stored schedule, or null: then
  * the form opens in Custom with the raw expression.
  */
-export function newScheduleForm({ job = null, simple = null, promptText = "", copy = false, words = "" } = {}) {
+export function newScheduleForm({ job = null, simple = null, promptText = "", copy = false, words = "", templateText = "" } = {}) {
   const base = job ? structuredClone(job) : {};
   const custom = job ? !simple : false;
   const sim = simple ?? DEFAULT_SIMPLE;
@@ -2010,6 +2010,11 @@ export function newScheduleForm({ job = null, simple = null, promptText = "", co
     prompt: job ? (job.prompt || promptText || "") : "",
     promptKey: job?.prompt_key && !job.prompt ? job.prompt_key : "",
     promptKeyText: job?.prompt_key && !job.prompt ? promptText : "",
+    // The prompt source: "prompt" (inline or a context key) or "template"
+    // (a prompt template read from the project at every fire).
+    source: job?.template ? "template" : "prompt",
+    template: job?.template ?? "",
+    templateText,
     mode: custom ? "custom" : sim.kind,
     minute: sim.minute,
     hour: sim.hour,
@@ -2040,13 +2045,19 @@ export function scheduleBody(f) {
   job.dir = f.dir;
   job.agent = f.agent;
   const promptChanged = f.promptKey && f.prompt !== f.promptKeyText;
-  if (f.promptKey && !promptChanged) {
+  if (f.source === "template") {
+    // The template is the prompt; an empty agent means the template's.
+    job.template = f.template;
+    delete job.prompt;
+    delete job.prompt_key;
+  } else if (f.promptKey && !promptChanged) {
     job.prompt_key = f.promptKey;
     delete job.prompt;
   } else {
     job.prompt = f.prompt;
     delete job.prompt_key;
   }
+  if (f.source !== "template") delete job.template;
   job.worktree = f.worktree;
   for (const k of ["model", "effort", "backend", "account", "timeout"]) {
     if (f[k]) job[k] = f[k];
@@ -2092,6 +2103,7 @@ export function formClientErrors(f) {
   if (!f.original && RESERVED_JOB_NAMES.includes(f.name.trim())) out.name = `"${f.name.trim()}" is reserved; pick another name`;
   if (f.mode === "days" && f.days.length === 0) out.schedule = "Pick at least one day";
   if (f.mode === "custom" && !f.raw.trim()) out.schedule = "Enter a cron expression";
+  if (f.source === "template" && !f.template) out.template = "Pick a template";
   return out;
 }
 
@@ -2146,7 +2158,7 @@ export function timeoutIsPreset(v) {
 }
 
 const FIELD_LABELS = {
-  dir: "project", agent: "agent", prompt: "prompt", schedule: "when", worktree: "worktree", model: "model", effort: "effort",
+  dir: "project", agent: "agent", prompt: "prompt", template: "prompt", schedule: "when", worktree: "worktree", model: "model", effort: "effort",
   backend: "backend", account: "account", timeout: "timeout", overlap: "overlap", catchup: "catch-up", usage: "skip above",
 };
 const FIELD_DEFAULTS = { model: "agent default", effort: "default", backend: "default", account: "default", timeout: "none", overlap: "skip", catchup: "latest" };
@@ -2169,9 +2181,9 @@ export function changeLines(oldJob, newJob, oldWhen = "", newWhen = "") {
   const row = (k, a, b) => out.push(`${FIELD_LABELS[k]}  ${a || FIELD_DEFAULTS[k] || "none"} \u2192 ${b || FIELD_DEFAULTS[k] || "none"}`);
   const clip = (t) => (t.length > 40 ? `${t.slice(0, 40).trim()}\u2026` : t);
   if (o.dir !== n.dir) row("dir", tildePath(o.dir), tildePath(n.dir));
-  if (o.agent !== n.agent) row("agent", o.agent, n.agent);
-  const op = o.prompt || (o.prompt_key ? `context key ${o.prompt_key}` : "");
-  const np = n.prompt || (n.prompt_key ? `context key ${n.prompt_key}` : "");
+  if ((o.agent ?? "") !== (n.agent ?? "")) row("agent", o.agent || (o.template ? "template's" : ""), n.agent || (n.template ? "template's" : ""));
+  const op = schedulePromptLabel(o);
+  const np = schedulePromptLabel(n);
   if (op !== np) row("prompt", clip(op.replace(/\s+/g, " ")), clip(np.replace(/\s+/g, " ")));
   if (o.schedule !== n.schedule) row("schedule", oldWhen || o.schedule, newWhen || n.schedule);
   if ((o.worktree !== false) !== (n.worktree !== false)) row("worktree", o.worktree === false ? "off" : "on", n.worktree === false ? "off" : "on");
@@ -2180,6 +2192,28 @@ export function changeLines(oldJob, newJob, oldWhen = "", newWhen = "") {
   if ((o.catchup || "latest") !== (n.catchup || "latest")) row("catchup", o.catchup || "latest", n.catchup || "latest");
   if (gateText(o.skip_if_usage_above) !== gateText(n.skip_if_usage_above)) row("usage", gateText(o.skip_if_usage_above), gateText(n.skip_if_usage_above));
   return out;
+}
+
+/**
+ * schedulePromptLabel names what a job runs in one line: "template triage",
+ * "context key spec", or the inline prompt.
+ */
+export function schedulePromptLabel(job) {
+  if (job?.template) return `template ${job.template}`;
+  return job?.prompt || (job?.prompt_key ? `context key ${job.prompt_key}` : "");
+}
+
+/** scheduleAgentText is the agent a job runs, naming a template's default. */
+export function scheduleAgentText(job, templateAgent = "") {
+  if (job?.agent) return job.agent;
+  if (job?.template) return templateAgent ? `${templateAgent} (from template ${job.template})` : `the agent of template ${job.template}`;
+  return "";
+}
+
+/** scheduleRowActivity is a list row's "agent · project" line; a template job names its template. */
+export function scheduleRowActivity(job, project) {
+  const who = job?.template ? `${job.agent ? `${job.agent} · ` : ""}template ${job.template}` : job?.agent ?? "";
+  return `${who} \u00B7 ${project}`;
 }
 
 /**
@@ -2195,7 +2229,7 @@ export function scheduleReview(p, f) {
   const lines = [];
   lines.push(
     [
-      `Runs   ${job.agent} in ${where}`,
+      `Runs   ${scheduleAgentText(job, f?.templateAgent ?? "")} in ${where}`,
       `When   ${when}${tz}`,
       `Mode   unattended${p.permission_mode ? `, permission mode ${p.permission_mode}` : ""}, until paused`,
     ].join("\n"),
@@ -2207,7 +2241,11 @@ export function scheduleReview(p, f) {
   }
   const adv = f ? advancedSummary(f) : "";
   if (adv) lines.push(`Advanced: ${adv}`);
-  lines.push(`Prompt:\n${job.prompt || (job.prompt_key ? `(context key ${job.prompt_key}, read at every run)` : "")}`);
+  if (job.template) {
+    lines.push(`Prompt: template ${job.template} (read from the project at every run)${f?.templateText ? `\n${f.templateText}` : ""}`);
+  } else {
+    lines.push(`Prompt:\n${job.prompt || (job.prompt_key ? `(context key ${job.prompt_key}, read at every run)` : "")}`);
+  }
   return lines;
 }
 

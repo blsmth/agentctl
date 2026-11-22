@@ -12,6 +12,7 @@ import (
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/remoteapproval"
 	"github.com/blsmth/agentctl/internal/textutil"
 	"github.com/blsmth/agentctl/internal/tui"
@@ -28,6 +29,12 @@ import (
 //   - cron resume <name>: gated; re-enabling a paused job restarts its fires.
 //   - cron run <name> --force: gated; --force skips overlap, max_concurrent
 //     and the usage gate.
+//
+// A job with a prompt template (--template, or a stored template job) shows
+// the template's prompt as a fire would read it: from the job dir's project
+// (a relative --dir resolved against the payload cwd), shadowing the global
+// templates. A --template that does not resolve denies the add or edit, as
+// an unresolvable `dispatch --template` does.
 //
 // Plain `cron run <name>` is not gated: the job was approved when it was
 // added (or resumed), and without --force the run honors every throttle a
@@ -49,7 +56,7 @@ const (
 var cronValueFlags = map[string]bool{
 	"schedule": true, "agent": true, "dir": true, "prompt": true, "prompt-key": true,
 	"prompt-file": true, "model": true, "effort": true, "backend": true, "account": true,
-	"timeout": true, "overlap": true, "catchup": true, "limit": true,
+	"timeout": true, "overlap": true, "catchup": true, "limit": true, "template": true,
 }
 
 var cronShortFlags = map[string]string{"-a": "agent", "-p": "prompt", "-k": "prompt-key", "-m": "model", "-n": "limit"}
@@ -223,10 +230,17 @@ var cronJobsLoader = func() (*cron.Jobs, error) {
 // cronNow is the clock for the next-fire line. Seam for tests.
 var cronNow = time.Now
 
-// buildCronPreview resolves the single gated cron invocation in command into
-// what the popup shows. A non-empty deny reason means it cannot be shown
-// faithfully and the command must be denied (fail closed).
+// buildCronPreview is buildCronPreviewIn from the hook's own directory.
 func buildCronPreview(command string) (cronPreview, string) {
+	return buildCronPreviewIn(command, "")
+}
+
+// buildCronPreviewIn resolves the single gated cron invocation in command
+// into what the popup shows; cwd is the payload cwd (the Bash tool's
+// directory, see askingCwd). A non-empty deny reason means it cannot be
+// shown faithfully and the command must be denied (fail closed).
+func buildCronPreviewIn(command, cwd string) (cronPreview, string) {
+	cwd = askingCwd(cwd)
 	segs := gatedCronSegments(command)
 	switch len(segs) {
 	case 0:
@@ -245,11 +259,89 @@ func buildCronPreview(command string) (cronPreview, string) {
 	}
 	switch seg.sub {
 	case "add":
-		return buildCronAddPreview(args, command)
+		return buildCronAddPreview(args, command, cwd)
 	case "edit":
-		return buildCronEditPreview(args, command)
+		return buildCronEditPreview(args, command, cwd)
 	}
 	return buildStoredCronPreview(seg.sub, seg.action(), args, command)
+}
+
+// cronAbsDir is a --dir value as `cron add`/`edit` store it: ~ expanded and
+// a relative path joined to cwd. "" stays "".
+func cronAbsDir(dir, cwd string) string {
+	if dir == "" {
+		return ""
+	}
+	abs := paths.ExpandHome(dir)
+	if !filepath.IsAbs(abs) && cwd != "" {
+		abs = filepath.Join(cwd, abs)
+	}
+	return filepath.Clean(abs)
+}
+
+// cronFlagTemplate resolves a --template flag of a cron add or edit from
+// dir (the job dir a fire reads it from), or returns a deny reason: a name
+// the shell would expand, a line that changes directory or environment
+// first, or a template that does not load.
+func cronFlagTemplate(sub string, tok cmdToken, command, dir string) (*prompttemplate.Template, string) {
+	if tok.expands {
+		return nil, cronExpansionReason(sub, "template")
+	}
+	if lineChangesContextFor(command, "cron") {
+		return nil, fmt.Sprintf("agentctl cron %s --template %s: the command changes directory or environment "+
+			"first, so the approval popup cannot tell which template would run. Run cron %s as its own Bash call.",
+			sub, tok.text, sub)
+	}
+	t, err := templateLoad(tok.text, dir)
+	if err != nil {
+		logging.Log("hook-validate-bash: cron %s --template %q from %s: %v", sub, tok.text, dir, err)
+		return nil, fmt.Sprintf("agentctl cron %s: %s. Check `agentctl template list` from the job dir; "+
+			"the approval popup must be able to show the template's prompt.", sub, cronedit.TemplateErrorText(tok.text, err))
+	}
+	return &t, ""
+}
+
+// cronTemplateSource is the "Prompt from" row of a template job.
+func cronTemplateSource(t *prompttemplate.Template, note string) string {
+	return fmt.Sprintf("template %s (%s, %s; read at every fire%s)", t.Name, t.Scope, t.Path, note)
+}
+
+// cronStoredTemplate resolves a stored template job's template for display.
+// A template that no longer resolves is shown, not denied: the action does
+// not change it, and fires fail (recorded as failed:template) until it
+// exists again.
+func cronStoredTemplate(job cron.Job, note string) (prompt, source string, t *prompttemplate.Template) {
+	tm, err := templateLoad(job.Template, job.Dir)
+	if err != nil {
+		msg := cronedit.TemplateErrorText(job.Template, err)
+		return fmt.Sprintf("(%s; fires will fail until it exists)", msg), fmt.Sprintf("template %s (%s)", job.Template, msg), nil
+	}
+	return tm.Prompt, cronTemplateSource(&tm, note), &tm
+}
+
+// withTemplateDefaults is job as it will run with template t: the unset
+// agent, model and effort show the template's value, marked as such.
+func withTemplateDefaults(job cron.Job, t *prompttemplate.Template) cron.Job {
+	if t == nil {
+		return job
+	}
+	fill := func(dst *string, v string) {
+		if *dst == "" && v != "" {
+			*dst = v + " (from template)"
+		}
+	}
+	fill(&job.Agent, t.Agent)
+	fill(&job.Model, t.Model)
+	fill(&job.Effort, t.Effort)
+	return job
+}
+
+// effectiveAgent is the agent a job runs (its own, else its template's).
+func effectiveAgent(job cron.Job, t *prompttemplate.Template) string {
+	if job.Agent == "" && t != nil {
+		return t.Agent
+	}
+	return job.Agent
 }
 
 // cronExpansionReason is the deny reason for a value the shell would expand.
@@ -271,12 +363,12 @@ func cronPromptKeyDenyReason(key string) string {
 }
 
 // buildCronAddPreview previews `cron add`.
-func buildCronAddPreview(a cronArgs, command string) (cronPreview, string) {
+func buildCronAddPreview(a cronArgs, command, cwd string) (cronPreview, string) {
 	if len(a.positional) > 0 && a.positional[0].expands {
 		return cronPreview{}, cronExpansionReason("add", "")
 	}
 	for _, f := range []string{"schedule", "agent", "dir", "prompt", "prompt-key", "prompt-file", "account",
-		"model", "effort", "backend", "timeout"} {
+		"model", "effort", "backend", "timeout", "template"} {
 		if a.values[f].expands {
 			return cronPreview{}, cronExpansionReason("add", f)
 		}
@@ -294,20 +386,32 @@ func buildCronAddPreview(a cronArgs, command string) (cronPreview, string) {
 	if deny != "" {
 		return cronPreview{}, deny
 	}
+	var tmpl *prompttemplate.Template
+	if tok, ok := a.values["template"]; ok {
+		if source != "" {
+			return cronPreview{}, "agentctl cron add: --template is the prompt; do not combine it with " +
+				"--prompt, --prompt-key or --prompt-file."
+		}
+		if tmpl, deny = cronFlagTemplate("add", tok, command, cronAbsDir(a.value("dir"), cwd)); deny != "" {
+			return cronPreview{}, deny
+		}
+		prompt, source = tmpl.Prompt, cronTemplateSource(tmpl, "; it changes only through an approved template edit")
+	}
 	wt := !a.noWorktree
 	job := cron.Job{
 		Name: name, Schedule: a.value("schedule"), Agent: a.value("agent"), Dir: displayDir(a.value("dir")),
 		Account: a.value("account"), Model: a.value("model"), Effort: a.value("effort"), Backend: a.value("backend"),
 		Timeout: a.value("timeout"), Overlap: a.value("overlap"), Catchup: a.value("catchup"), Worktree: &wt,
+		Template: a.value("template"),
 	}
 	job.Normalize()
 	return cronPreview{
 		action:   cronActionAdd,
 		job:      name,
-		agent:    job.Agent,
+		agent:    effectiveAgent(job, tmpl),
 		account:  job.Account,
 		schedule: schedule,
-		body:     cronJobBody(job, schedule, "", source, prompt),
+		body:     cronJobBody(withTemplateDefaults(job, tmpl), schedule, "", source, prompt),
 	}, ""
 }
 
@@ -344,16 +448,21 @@ func cronAddPrompt(a cronArgs, command string) (prompt, source, deny string) {
 // cronEditFlags are the value flags `cron edit` can change, checked for
 // shell expansion like cron add's.
 var cronEditFlags = []string{"schedule", "agent", "dir", "prompt", "prompt-key", "prompt-file", "account",
-	"model", "effort", "backend", "timeout", "overlap", "catchup"}
+	"model", "effort", "backend", "timeout", "overlap", "catchup", "template"}
 
 // buildCronEditPreview previews `cron edit`: the stored job with the given
 // flags applied, the fields that change, and the prompt it will run.
-func buildCronEditPreview(a cronArgs, command string) (cronPreview, string) {
+func buildCronEditPreview(a cronArgs, command, cwd string) (cronPreview, string) {
 	if len(a.positional) == 0 {
 		return cronPreview{}, "agentctl cron edit: no job name given."
 	}
 	if a.positional[0].expands {
 		return cronPreview{}, cronExpansionReason("edit", "")
+	}
+	if _, ok := a.values["template"]; ok && (a.values["prompt"].text != "" || a.values["prompt"].quoted ||
+		a.value("prompt-key") != "" || a.value("prompt-file") != "") {
+		return cronPreview{}, "agentctl cron edit: --template replaces the prompt; do not combine it with " +
+			"--prompt, --prompt-key or --prompt-file."
 	}
 	for _, f := range cronEditFlags {
 		if a.values[f].expands {
@@ -381,10 +490,14 @@ func buildCronEditPreview(a cronArgs, command string) (cronPreview, string) {
 			return cronPreview{}, strings.Replace(deny, "cron add", "cron edit", 1)
 		}
 		if a.value("prompt-key") != "" {
-			job.Prompt, job.PromptKey = "", a.value("prompt-key")
+			job.Prompt, job.PromptKey, job.Template = "", a.value("prompt-key"), ""
 		} else {
-			job.Prompt, job.PromptKey = prompt, ""
+			job.Prompt, job.PromptKey, job.Template = prompt, "", ""
 		}
+	}
+	_, templateSet := a.values["template"]
+	if templateSet {
+		job.Prompt, job.PromptKey, job.Template = "", "", a.value("template")
 	}
 	for flag, dst := range map[string]*string{
 		"schedule": &job.Schedule, "agent": &job.Agent, "account": &job.Account, "model": &job.Model,
@@ -395,8 +508,24 @@ func buildCronEditPreview(a cronArgs, command string) (cronPreview, string) {
 			*dst = t.text
 		}
 	}
+	// The template is read from the dir the job will have.
+	templateDir := old.Dir
 	if t, ok := a.values["dir"]; ok {
 		job.Dir = displayDir(t.text)
+		templateDir = cronAbsDir(t.text, cwd)
+	}
+	var tmpl *prompttemplate.Template
+	switch {
+	case templateSet:
+		var deny string
+		if tmpl, deny = cronFlagTemplate("edit", a.values["template"], command, templateDir); deny != "" {
+			return cronPreview{}, deny
+		}
+		prompt, source = tmpl.Prompt, cronTemplateSource(tmpl, "; it changes only through an approved template edit")
+	case !promptSet && old.Template != "":
+		lookup := old
+		lookup.Dir = templateDir
+		prompt, source, tmpl = cronStoredTemplate(lookup, "; unchanged")
 	}
 	if a.worktree || a.noWorktree {
 		wt := a.worktree && !a.noWorktree
@@ -407,7 +536,7 @@ func buildCronEditPreview(a cronArgs, command string) (cronPreview, string) {
 	if err != nil {
 		return cronPreview{}, fmt.Sprintf("agentctl cron edit: %v. Fix the schedule and retry.", err)
 	}
-	if !promptSet {
+	if !promptSet && job.Template == "" {
 		prompt, source = old.Prompt, "stored prompt (unchanged)"
 		if old.PromptKey != "" {
 			source = fmt.Sprintf("context key %s (unchanged; read at every fire)", old.PromptKey)
@@ -428,10 +557,10 @@ func buildCronEditPreview(a cronArgs, command string) (cronPreview, string) {
 	return cronPreview{
 		action:   cronActionEdit,
 		job:      job.Name,
-		agent:    job.Agent,
+		agent:    effectiveAgent(job, tmpl),
 		account:  job.Account,
 		schedule: schedule,
-		body:     cronJobBody(job, schedule, note, source, prompt),
+		body:     cronJobBody(withTemplateDefaults(job, tmpl), schedule, note, source, prompt),
 	}, ""
 }
 
@@ -480,6 +609,10 @@ func buildStoredCronPreview(sub, action string, a cronArgs, command string) (cro
 		note = "Force run: fires now, ignoring overlap, max_concurrent and the usage gate."
 	}
 	prompt, source := job.Prompt, "stored prompt"
+	var tmpl *prompttemplate.Template
+	if job.Template != "" {
+		prompt, source, tmpl = cronStoredTemplate(job, "")
+	}
 	if job.PromptKey != "" {
 		source = fmt.Sprintf("context key %s (read at every fire)", job.PromptKey)
 		if content, ok := resolvePromptKey(job.PromptKey, command); ok {
@@ -491,10 +624,10 @@ func buildStoredCronPreview(sub, action string, a cronArgs, command string) (cro
 	return cronPreview{
 		action:   action,
 		job:      job.Name,
-		agent:    job.Agent,
+		agent:    effectiveAgent(job, tmpl),
 		account:  job.Account,
 		schedule: schedule,
-		body:     cronJobBody(job, schedule, note, source, prompt),
+		body:     cronJobBody(withTemplateDefaults(job, tmpl), schedule, note, source, prompt),
 	}, ""
 }
 
@@ -514,6 +647,7 @@ func cronJobBody(job cron.Job, schedule, note, source, prompt string) string {
 	row("Job", orDash(job.Name))
 	row("Schedule", schedule)
 	row("Agent", orDash(job.Agent))
+	row("Template", job.Template)
 	row("Dir", orDash(job.Dir))
 	row("Account", job.Account)
 	row("Harness", job.Harness)
@@ -557,7 +691,7 @@ func orNone(s string) string {
 // denyReason), decided=false (stay silent) when no popup was shown, and a
 // non-empty denyReason when the job cannot be shown faithfully or the popup
 // went unanswered.
-func cronPreviewGate(agentName, command string) (approved, decided bool, denyReason string) {
+func cronPreviewGate(agentName, command, cwd string) (approved, decided bool, denyReason string) {
 	if os.Getenv("TMUX") == "" {
 		logging.Log("hook-validate-bash: not in tmux session, passing through cron")
 		return false, false, ""
@@ -569,7 +703,7 @@ func cronPreviewGate(agentName, command string) (approved, decided bool, denyRea
 	}
 	defer release()
 
-	p, deny := buildCronPreview(command)
+	p, deny := buildCronPreviewIn(command, cwd)
 	if deny != "" {
 		return false, false, deny
 	}

@@ -77,7 +77,7 @@ See [Accounts](configuration.md#accounts-multiple-claude-logins), [Backends](con
 
 | Command | What it does |
 |---|---|
-| `agentctl cron add <name>` | Add a job: `--schedule`, `--agent`, `--dir`, one of `--prompt`/`--prompt-key`/`--prompt-file`, plus `--no-worktree`, `--model`, `--effort`, `--backend`, `--account`, `--timeout`, `--overlap`, `--catchup`. |
+| `agentctl cron add <name>` | Add a job: `--schedule`, `--agent`, `--dir`, one of `--prompt`/`--prompt-key`/`--prompt-file`/`--template` (`--agent` optional with a template), plus `--no-worktree`, `--model`, `--effort`, `--backend`, `--account`, `--timeout`, `--overlap`, `--catchup`. |
 | `agentctl cron edit <name>` | Change only the given fields. |
 | `agentctl cron list` | Jobs with next fire, last result and throttles. |
 | `agentctl cron runs [<name>]` | Run history (`-n`). |
