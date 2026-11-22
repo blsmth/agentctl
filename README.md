@@ -10,7 +10,7 @@
   <a href="https://github.com/blsmth/agentctl/releases"><img src="https://img.shields.io/github/v/release/blsmth/agentctl?include_prereleases" alt="Release"/></a>
 </p>
 
-agentctl is a tmux-native command center for running many [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents at once. Every agent gets its own tmux window. Claude Code hooks report whether each agent is working, blocked, or idle, and agentctl surfaces that in a two-row bar at the bottom of every window, in desktop notifications, and in a cross-session hub. It can also turn a GitHub issue into an isolated worktree, a running agent, and a pull request.
+agentctl is a tmux-native command center for running many [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents at once. Every agent gets its own tmux window. Claude Code hooks report whether each agent is working, blocked, or idle, and agentctl surfaces that in the window names on the tmux status line (or, with `chrome_bar` on, a two-row bar at the bottom of every window), in desktop notifications, and in a cross-session hub. It can also turn a GitHub issue into an isolated worktree, a running agent, and a pull request.
 
 There is no daemon, orchestrator, or web app. tmux already provides process isolation, persistence, `capture-pane`, and `send-keys`.
 

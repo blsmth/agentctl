@@ -621,6 +621,14 @@ type Config struct {
 	// key `c` toggles it for the running hub. Global config only: the hub
 	// belongs to no project.
 	HubChrome bool `json:"hub_chrome,omitempty"`
+	// ChromeBar docks the two-row Bubble Tea chrome bar (keybind hints and
+	// agent tabs) at the bottom of every project window. nil (unset) and
+	// false mean no chrome bar: the native tmux status line shows the window
+	// list instead. true restores the per-window chrome bar. Read when a bar
+	// would be spawned, so flipping it applies to new windows at once;
+	// `agentctl apply-config` switches existing windows. Global config only.
+	// Use ChromeBarEnabled() to read the effective value.
+	ChromeBar *bool `json:"chrome_bar,omitempty"`
 	// StatuslineFormat controls what `agentctl statusline` renders
 	// (internal/statusline): "rich" (default -- a colored 2-line
 	// status line covering account rate limits on line 1 and
@@ -759,6 +767,12 @@ func (c Config) MonitorEnabled() bool {
 // windows it dispatched, defaulting to true when unset.
 func (c Config) CloseChildrenEnabled() bool {
 	return c.CloseChildren == nil || *c.CloseChildren
+}
+
+// ChromeBarEnabled reports whether project windows get the per-window chrome
+// bar, defaulting to false when unset.
+func (c Config) ChromeBarEnabled() bool {
+	return c.ChromeBar != nil && *c.ChromeBar
 }
 
 // EffectiveWorkJournal returns true if journaling is enabled for the given agent.
@@ -1371,6 +1385,7 @@ func containsAll(have, want []string) bool {
 //   - monitor set to true (a project may switch the monitor off, never back on)
 //   - auto_poll (autopilot dispatches every "ready" issue unattended)
 //   - hub_chrome (the hub belongs to no project)
+//   - chrome_bar (the bar is per session layout, not per repo)
 //   - close_children (closing a window may close windows in other projects)
 //   - bash_preview / agents.*.bash_preview set to false when the global layer
 //     enables it (a project may tighten the guard, never loosen it)
@@ -1410,6 +1425,10 @@ func sanitizeProjectConfig(project, global *Config) {
 	if project.HubChrome {
 		warn("hub_chrome", globalOnly)
 		project.HubChrome = false
+	}
+	if project.ChromeBar != nil {
+		warn("chrome_bar", globalOnly)
+		project.ChromeBar = nil
 	}
 	if project.AutoPoll && !global.AutoPoll {
 		warn("auto_poll", globalOnly)

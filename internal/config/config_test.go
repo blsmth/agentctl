@@ -2610,6 +2610,35 @@ func TestCloseChildrenEnabled(t *testing.T) {
 	}
 }
 
+// TestChromeBarEnabled covers the chrome bar switch: absent means false,
+// only the global layer can change it, and a project value is warned about.
+func TestChromeBarEnabled(t *testing.T) {
+	tests := []struct {
+		name     string
+		global   string
+		project  string
+		want     bool
+		wantWarn bool
+	}{
+		{"absent everywhere defaults to false", `{}`, `{}`, false, false},
+		{"global true", `{"chrome_bar": true}`, `{}`, true, false},
+		{"global false", `{"chrome_bar": false}`, `{}`, false, false},
+		{"project true is ignored", `{}`, `{"chrome_bar": true}`, false, true},
+		{"project false cannot switch off a global true", `{"chrome_bar": true}`, `{"chrome_bar": false}`, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := loadWith(t, tt.global, tt.project)
+			if got := cfg.ChromeBarEnabled(); got != tt.want {
+				t.Errorf("ChromeBarEnabled() = %v, want %v", got, tt.want)
+			}
+			if got := warnedContaining(`"chrome_bar"`); got != tt.wantWarn {
+				t.Errorf("chrome_bar warning = %v, want %v", got, tt.wantWarn)
+			}
+		})
+	}
+}
+
 func TestEffectiveStatuslineMobileFormat(t *testing.T) {
 	tests := []struct{ name, val, want string }{
 		{"unset defaults to mobile", "", "mobile"},
