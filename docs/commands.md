@@ -57,7 +57,7 @@ Every user-facing `agentctl` subcommand, grouped by job. Run `agentctl <command>
 
 | Command | What it does |
 |---|---|
-| `agentctl cost` | Per-session cost (`--since`, `--by agent\|model\|day\|project`, `--metered`, `--json`), plus agentctl's own background LLM calls. Same as `cost report`. See [Pricing and cost](configuration.md#pricing-and-cost). |
+| `agentctl cost` | Per-session cost (`--since`, `--by agent\|model\|day\|project\|account`, `--account <name>`, `--sort cost\|date\|turns\|tokens`, `--top N`, `--metered`, `--json`), plus agentctl's own background LLM calls. Same as `cost report`. See [Pricing and cost](configuration.md#pricing-and-cost). |
 | `agentctl cost prices [<filter>]` | Model prices and where each comes from (`--refresh`, `--json`). |
 | `agentctl usage` | Token usage stats. |
 | `agentctl models` | The model registry (context window, pricing); `--resolve <name>` shows which step matched. |

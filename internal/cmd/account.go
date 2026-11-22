@@ -330,20 +330,41 @@ func RunAccountList(out io.Writer) error {
 	return nil
 }
 
-// usageCells renders an account's latest pushed 5h and 7d usage ("-" when
-// none has been pushed; "~" marks data older than the freshness window).
+// usageNow is the clock for usageCells; tests replace it.
+var usageNow = time.Now
+
+// usageCells renders an account's latest pushed 5h and 7d usage. "~" marks
+// data older than the freshness window.
+//
+// Claude Code omits a rate-limit window from the statusLine payload once it
+// has expired, so a missing five_hour (or one whose resets_at has passed) means
+// no window is open, not "unknown". Showing "-" for that read as a bug. So:
+//   - a window whose resets_at is in the past renders "reset" (its stored
+//     percentage belongs to the previous window and would be a stale number);
+//   - a missing window in a fresh push renders "0%" (Claude only reports a
+//     window once one is open; nothing has been used in a new window);
+//   - a missing window in stale data, or no data at all, renders "-" (we
+//     cannot tell whether a window opened since).
 func usageCells(account string) (string, string) {
 	pr, err := ratelimit.LoadPushedFor(account, account == claudehome.HomeAccount())
 	if err != nil || pr == nil {
 		return "-", "-"
 	}
+	now := usageNow()
+	fresh := pr.Recent(now)
 	stale := ""
-	if !pr.Fresh(time.Now()) {
+	if !fresh {
 		stale = "~"
 	}
 	cell := func(w *ratelimit.PushedWindow) string {
 		if w == nil {
+			if fresh {
+				return "0%"
+			}
 			return "-"
+		}
+		if w.ResetsAt > 0 && w.ResetsAt <= now.Unix() {
+			return "reset"
 		}
 		return fmt.Sprintf("%s%.0f%%", stale, w.UsedPercentage)
 	}

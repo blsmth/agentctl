@@ -59,6 +59,12 @@ func (pr *PushedRateLimits) Fresh(now time.Time) bool {
 	return age <= pushedFreshness
 }
 
+// Recent reports whether pr was written within the freshness window,
+// whatever windows it carries (Fresh additionally requires five_hour).
+func (pr *PushedRateLimits) Recent(now time.Time) bool {
+	return pr != nil && now.Sub(time.Unix(pr.UpdatedAt, 0)) <= pushedFreshness
+}
+
 // pushedRateLimitsPath returns ~/.local/state/agentctl/ratelimits.json.
 func pushedRateLimitsPath() (string, error) {
 	dir, err := config.StateDir()
