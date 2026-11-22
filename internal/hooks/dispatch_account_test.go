@@ -22,7 +22,7 @@ func TestDispatchPreviewAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	account := func(command string) string {
-		return resolveDispatchDetails(config.Load(), command, "/srv/cwd").Account
+		return resolveDispatchDetails(config.Load(), command, "/srv/cwd", nil).Account
 	}
 	if got := account("agentctl dispatch --issue 1"); got != "" {
 		t.Errorf("no accounts = %q, want empty", got)
@@ -87,7 +87,7 @@ func TestDispatchDetailsAccountUnknownAfterCd(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			calls = 0
-			got := resolveDispatchDetails(config.Load(), tt.command, "/srv/cwd").Account
+			got := resolveDispatchDetails(config.Load(), tt.command, "/srv/cwd", nil).Account
 			if got != tt.want || (calls > 0) != tt.resolved {
 				t.Errorf("account = %q (resolved %v), want %q (resolved %v)", got, calls > 0, tt.want, tt.resolved)
 			}
@@ -148,7 +148,7 @@ func TestDispatchPreviewAccountIgnoresInheritedWindowID(t *testing.T) {
 		gotParent = parent
 		return claudehome.Resolve(cfg, claudehome.Request{Flag: flag, Parent: parent})
 	}
-	resolveDispatchDetails(config.Load(), "agentctl dispatch --issue 1 --dir /srv/x", "/srv/cwd")
+	resolveDispatchDetails(config.Load(), "agentctl dispatch --issue 1 --dir /srv/x", "/srv/cwd", nil)
 	if gotParent != "personal" {
 		t.Errorf("parent account = %q, want personal (this window's, not @943's)", gotParent)
 	}

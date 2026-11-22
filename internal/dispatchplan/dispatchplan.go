@@ -123,6 +123,12 @@ type Input struct {
 	NoWorktree bool
 	// Cwd is the directory the dispatch command runs in.
 	Cwd string
+	// TemplateAgent, TemplateModel and TemplateDir are the defaults of a
+	// `dispatch --template` prompt template (internal/prompttemplate). Each
+	// applies only when the matching flag is unset, as in the CLI.
+	TemplateAgent string
+	TemplateModel string
+	TemplateDir   string
 }
 
 // Mode names.
@@ -147,6 +153,7 @@ const (
 	SourceBuiltin   = "built-in"
 	SourcePlugin    = "plugin"
 	SourceNotFound  = "not found"
+	SourceTemplate  = "template"
 )
 
 // Plan is what a dispatch will run. Empty fields are unknown.
@@ -190,6 +197,17 @@ func Resolve(cfg *config.Config, in Input) Plan {
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
 	}
+	// Template defaults fill unset flags; dir and model keep their source.
+	dirFromTemplate, modelFromTemplate := false, false
+	if p.Agent == "" {
+		p.Agent = in.TemplateAgent
+	}
+	if in.Dir == "" && in.TemplateDir != "" {
+		in.Dir, dirFromTemplate = in.TemplateDir, true
+	}
+	if in.Model == "" && in.TemplateModel != "" {
+		in.Model, modelFromTemplate = in.TemplateModel, true
+	}
 	switch {
 	case in.ReviewPR > 0:
 		p.Mode = ModeReviewPR
@@ -204,6 +222,9 @@ func Resolve(cfg *config.Config, in Input) Plan {
 	}
 
 	p.WorkDir, p.DirSource = resolveDir(cfg, in, p.Agent)
+	if dirFromTemplate {
+		p.DirSource = SourceTemplate
+	}
 
 	agents, _ := Discover(cfg, agent.ProjectDirs(cfg, p.WorkDir, in.Cwd))
 	def, found := findAgent(agents, p.Agent)
@@ -236,6 +257,8 @@ func Resolve(cfg *config.Config, in Input) Plan {
 	}
 	p.Model = Model(in.Model, ac.Model, modeDefault)
 	switch {
+	case modelFromTemplate && in.Model != launchopts.Inherit:
+		p.ModelSource = SourceTemplate
 	case in.Model != "" && in.Model != launchopts.Inherit:
 		p.ModelSource = SourceFlag
 	case in.Model == launchopts.Inherit:

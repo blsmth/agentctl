@@ -25,6 +25,9 @@ type AdhocRequest struct {
 	// PromptKey is the context store key the prompt was resolved from, or ""
 	// (display-only; see Request.PromptKey).
 	PromptKey string
+	// Template is the prompt template the prompt came from, or ""
+	// (display-only; see Request.Template).
+	Template  string
 	AgentName string
 	WorkDir   string // required; the CLI resolves its default before calling
 	Model     string
@@ -80,6 +83,7 @@ func LaunchAdhoc(req AdhocRequest) (Result, error) {
 		ExtraInstructions: req.ExtraInstructions,
 		PRReviewOverride:  req.PRReview,
 		PromptKey:         req.PromptKey,
+		Template:          req.Template,
 		WorkDir:           req.WorkDir,
 		UseWorktree:       &useWorktree,
 		RepoSlug:          repoSlug,

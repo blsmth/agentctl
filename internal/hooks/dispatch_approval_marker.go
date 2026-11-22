@@ -107,6 +107,12 @@ func reviewExemptionTrusted(cfg *config.Config, command, cwd string) bool {
 // trailing `&& echo` are fine. It is a scanner, not a shell parser; anything
 // it does not model counts as a change (fail toward the popup).
 func lineChangesContext(command string) bool {
+	return lineChangesContextFor(command, "dispatch")
+}
+
+// lineChangesContextFor is lineChangesContext for `agentctl <sub>` (the
+// template gate uses "template").
+func lineChangesContextFor(command, sub string) bool {
 	words := commandWords(command)
 	foreign := false
 	for i, w := range words {
@@ -116,7 +122,7 @@ func lineChangesContext(command string) bool {
 		}
 		// Every word dispatchSegments takes for a dispatch must be the
 		// command word, reached with nothing foreign before it.
-		if strings.HasSuffix(w.text, "agentctl") && i+1 < len(words) && !words[i+1].atCmd && words[i+1].text == "dispatch" {
+		if strings.HasSuffix(w.text, "agentctl") && i+1 < len(words) && !words[i+1].atCmd && words[i+1].text == sub {
 			if foreign || !w.atCmd || !isAgentctlWord(w) {
 				return true
 			}

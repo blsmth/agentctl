@@ -42,6 +42,12 @@ func PreTool() {
 		denyFileEdit(input.ToolName, p, "cron schedule or state", cronEditDenyReason(p), input.ToolInput)
 		return
 	}
+	// And for rewriting a prompt template (checkTemplateTamper is the Bash
+	// side).
+	if p := templateEditTarget(input.ToolName, input.ToolInput); p != "" {
+		denyFileEdit(input.ToolName, p, "prompt template", templateEditDenyReason(p), input.ToolInput)
+		return
+	}
 	// And for forging a dispatch approval marker (checkApprovalTamper is the
 	// Bash side).
 	if p := approvalEditTarget(input.ToolName, input.ToolInput); p != "" {

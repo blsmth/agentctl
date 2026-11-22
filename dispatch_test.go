@@ -66,8 +66,8 @@ func TestDispatchNeitherIssueNorPrompt(t *testing.T) {
 	if exitErr.ExitCode() != 1 {
 		t.Errorf("exit code = %d, want 1", exitErr.ExitCode())
 	}
-	if !strings.Contains(stderr.String(), "--issue, --review-pr, --prompt, or --prompt-key is required") {
-		t.Errorf("stderr %q does not contain '--issue, --review-pr, --prompt, or --prompt-key is required'", stderr.String())
+	if !strings.Contains(stderr.String(), "--issue, --review-pr, --prompt, --prompt-key, or --template is required") {
+		t.Errorf("stderr %q does not contain '--issue, --review-pr, --prompt, --prompt-key, or --template is required'", stderr.String())
 	}
 }
 

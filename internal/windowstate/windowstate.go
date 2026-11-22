@@ -121,6 +121,10 @@ type WindowState struct {
 	ScheduledBy string    `json:"scheduled_by,omitempty"`
 	ScheduledAt time.Time `json:"scheduled_at,omitzero"`
 
+	// Template is the prompt template a `dispatch --template` launch used
+	// (display-only). Empty for every other launch.
+	Template string `json:"template,omitempty"`
+
 	// Pane layout metadata (replaces @agentctl_chrome_bar, @agentctl_hud_pane,
 	// @agentctl_hud_collapsed tmux window options).
 	ChromeBarPane string `json:"chrome_bar_pane,omitempty"`

@@ -102,7 +102,7 @@ var modes = map[Mode]modeSpec{
 		SystemInstructions: adhocInstructions,
 		DefaultUserMessage: func(req Request) string {
 			synopsis := taskSynopsis(req.CustomPrompt)
-			if synopsis == "" && req.PromptKey == "" {
+			if synopsis == "" && req.PromptKey == "" && req.Template == "" {
 				return "Your task is in the system prompt. Read it, execute it."
 			}
 
@@ -112,6 +112,9 @@ var modes = map[Mode]modeSpec{
 			}
 			if req.PromptKey != "" {
 				lines = append(lines, fmt.Sprintf("Source: context key `%s`", req.PromptKey))
+			}
+			if req.Template != "" {
+				lines = append(lines, fmt.Sprintf("Source: template `%s`", req.Template))
 			}
 			lines = append(lines, `Full instructions are in your system prompt under "## Task". Read it and execute.`)
 			return strings.Join(lines, "\n")

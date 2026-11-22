@@ -13,6 +13,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/textutil"
 )
 
@@ -26,6 +27,21 @@ var exitFunc = os.Exit
 // dispatchGate is the seam ValidateBash uses to show the dispatch approval
 // popup; tests swap it to assert whether a dispatch was gated.
 var dispatchGate = dispatchPreviewGate
+
+// templateGate is the same seam for the prompt template popup.
+var templateGate = templatePreviewGate
+
+// mixedGates reports whether more than one always-shown gate applies to one
+// command line.
+func mixedGates(gates ...bool) bool {
+	n := 0
+	for _, g := range gates {
+		if g {
+			n++
+		}
+	}
+	return n > 1
+}
 
 // ValidateBash is called by Claude Code's PreToolUse hook (matcher: Bash).
 // It checks the command against per-agent blocked commands/patterns and a global
@@ -143,11 +159,15 @@ func ValidateBash() {
 	// one approval authorizes unattended runs.
 	isDispatch := isAgentctlDispatch(command)
 	isCron := isAgentctlCronGated(command)
-	if isDispatch && isCron {
+	// `agentctl template add|edit|rm` changes a dispatch payload; always
+	// gated, like cron (template_preview.go).
+	isTemplate := isAgentctlTemplateGated(command)
+	if mixedGates(isDispatch, isCron, isTemplate) {
 		// Each popup previews one invocation; mixing them would leave one
-		// unseen. Denied regardless of dispatch_approval.
-		denyCommand(agentName, command, "Run agentctl dispatch and agentctl cron in separate Bash calls, "+
-			"so each can be shown for approval.", actx)
+		// unseen (a template written and dispatched in one line would be
+		// shown before the write). Denied regardless of dispatch_approval.
+		denyCommand(agentName, command, "Run agentctl dispatch, agentctl cron and agentctl template add/edit/rm "+
+			"in separate Bash calls, so each can be shown for approval.", actx)
 		return
 	}
 	approvalMode := cfg.EffectiveDispatchApproval()
@@ -157,7 +177,7 @@ func ValidateBash() {
 		// global reviewer; see reviewExemptionTrusted.
 		gateDispatch = !reviewExemptionTrusted(cfg, command, bashCwd)
 	}
-	if gateDispatch || isCron || cfg.EffectiveBashPreview(agentName) {
+	if gateDispatch || isCron || isTemplate || cfg.EffectiveBashPreview(agentName) {
 		var approved, decided bool
 		var denyReason string
 		gate := PreviewKindBash
@@ -165,6 +185,9 @@ func ValidateBash() {
 		case isCron:
 			gate = PreviewKindCron
 			approved, decided, denyReason = cronPreviewGate(agentName, command)
+		case isTemplate:
+			gate = PreviewKindTemplate
+			approved, decided, denyReason = templateGate(agentName, command, input.Cwd)
 		case gateDispatch:
 			gate = PreviewKindDispatch
 			approved, decided, denyReason = dispatchGate(agentName, command, input.Cwd)
@@ -453,6 +476,51 @@ func checkCronTamper(command string) string {
 	return ""
 }
 
+// templateTamperReason is the deny reason for commands that write prompt
+// template files directly.
+const templateTamperReason = "\U0001F6D1 BLOCKED: this writes agentctl prompt templates directly. " +
+	"A template is a dispatch prompt, so changes need human approval: use `agentctl template add|edit|rm` " +
+	"(shown for approval), and `agentctl template list|show` to read them."
+
+// templateTargetPattern matches a reference to a templates dir: the global
+// one (~/.config/agentctl/templates, $XDG_CONFIG_HOME/agentctl/templates)
+// or any project's .agentctl/templates. The resolved global dir is matched
+// literally on top, see templateGlobalDir.
+const templateTargetPattern = `(?:(?:\.agentctl|\.config/agentctl|XDG_CONFIG_HOME\}?/agentctl)/templates\b)`
+
+// templateGlobalDir is the resolved global templates dir. A var so tests can
+// pin it.
+var templateGlobalDir = func() string {
+	dir, err := prompttemplate.GlobalDir()
+	if err != nil {
+		return ""
+	}
+	return dir
+}
+
+// checkTemplateTamper reports whether command writes a prompt template file:
+// a redirect, write verb, in-place edit or interpreter naming a templates
+// dir (the cron tamper templates). Like the cron rule it is a speed bump,
+// not a sandbox. The arguments of agentctl commands are masked first, so a
+// `template add --prompt '... > .agentctl/templates/x.md ...'` body is text.
+func checkTemplateTamper(command string) string {
+	if !strings.Contains(command, "templates") {
+		return ""
+	}
+	targets := []string{templateTargetPattern}
+	if dir := templateGlobalDir(); dir != "" {
+		targets = append(targets, regexp.QuoteMeta(dir)+`\b`)
+		if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(dir, home+"/") {
+			rel := regexp.QuoteMeta(strings.TrimPrefix(dir, home+"/"))
+			targets = append(targets, `(?:~|\$HOME|\$\{HOME\})/`+rel+`\b`)
+		}
+	}
+	if matchesWriteTemplates(maskAgentctlArgs(command), targets) {
+		return templateTamperReason
+	}
+	return ""
+}
+
 // matchesWriteTemplates reports whether command matches any of
 // cronTamperTemplates with %[1]s replaced by the alternation of targets
 // (regular expressions).
@@ -496,6 +564,9 @@ func checkGlobalDenyListIn(command, cwd string) string {
 		return reason
 	}
 	if reason := checkApprovalTamper(command); reason != "" {
+		return reason
+	}
+	if reason := checkTemplateTamper(command); reason != "" {
 		return reason
 	}
 	if reason := checkConfigTamper(command); reason != "" {
@@ -604,6 +675,8 @@ func denyBashPopup(agentName, command string, gate PreviewKind, actx denyAuditCo
 		reason = "Dispatch denied in preview popup"
 	case PreviewKindCron:
 		reason = "Cron job denied in preview popup"
+	case PreviewKindTemplate:
+		reason = "Prompt template change denied in preview popup"
 	}
 	logging.Log("hook-validate-bash: DENIED via popup agent=%s gate=%s cmd=%q", agentName, gate, textutil.Truncate(command, 100, "..."))
 	emitDecision(harness.Decision{Kind: harness.Deny, HookEvent: "PreToolUse", Reason: reason})

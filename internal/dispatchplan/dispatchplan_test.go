@@ -157,6 +157,25 @@ func TestResolve(t *testing.T) {
 			want(t, "ModelSource", p.ModelSource, SourceAgentFile)
 			want(t, "AgentSource", p.AgentSource, SourceGlobal)
 		}},
+		{"template defaults", Input{TemplateAgent: "writer", TemplateModel: "sonnet", TemplateDir: "/code/t", Cwd: "/c"}, func(t *testing.T, p Plan) {
+			want(t, "Agent", p.Agent, "writer")
+			want(t, "AgentSource", p.AgentSource, SourceGlobal)
+			want(t, "WorkDir", p.WorkDir, "/code/t")
+			want(t, "DirSource", p.DirSource, SourceTemplate)
+			want(t, "Model", p.Model, "sonnet")
+			want(t, "ModelSource", p.ModelSource, SourceTemplate)
+		}},
+		{"flags beat template defaults", Input{Agent: "blogger", Model: "opus", Dir: "/x", TemplateAgent: "writer", TemplateModel: "sonnet", TemplateDir: "/code/t", Cwd: "/c"}, func(t *testing.T, p Plan) {
+			want(t, "Agent", p.Agent, "blogger")
+			want(t, "WorkDir", p.WorkDir, "/x")
+			want(t, "DirSource", p.DirSource, SourceFlag)
+			want(t, "Model", p.Model, "opus")
+			want(t, "ModelSource", p.ModelSource, SourceFlag)
+		}},
+		{"template model beats backend model", Input{Agent: "local-model", TemplateModel: "sonnet", Cwd: "/c"}, func(t *testing.T, p Plan) {
+			want(t, "Model", p.Model, "sonnet")
+			want(t, "ModelSource", p.ModelSource, SourceTemplate)
+		}},
 		{"model flag wins", Input{Agent: "writer", Model: "haiku", Cwd: "/c"}, func(t *testing.T, p Plan) {
 			want(t, "Model", p.Model, "haiku")
 			want(t, "ModelSource", p.ModelSource, SourceFlag)

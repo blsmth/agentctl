@@ -1015,6 +1015,14 @@ func TestAdhocMode_DefaultUserMessage(t *testing.T) {
 		}
 	})
 
+	t.Run("template set: message names the template", func(t *testing.T) {
+		req := Request{Mode: ModeAdhoc, CustomPrompt: "Review PRs.", Template: "review-prs"}
+		msg := spec.DefaultUserMessage(req)
+		if !strings.Contains(msg, "Source: template `review-prs`") {
+			t.Errorf("message missing template, got: %q", msg)
+		}
+	})
+
 	t.Run("empty custom prompt falls back to non-empty message", func(t *testing.T) {
 		req := Request{Mode: ModeAdhoc}
 		msg := spec.DefaultUserMessage(req)
