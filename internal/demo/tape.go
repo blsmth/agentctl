@@ -52,6 +52,9 @@ func Tape(s *Scene, m *Manifest, base, scratchGIF string) (string, TapeOutputs, 
 	line("Set Padding %d", s.Terminal.Padding)
 	line("Set Theme %s", quoteTape(s.Terminal.Theme))
 	line("Set TypingSpeed 30ms")
+	if s.Terminal.Framerate > 0 {
+		line("Set Framerate %d", s.Terminal.Framerate)
+	}
 	line("Set WaitTimeout 20s")
 	line("Set CursorBlink false")
 
@@ -82,6 +85,9 @@ func Tape(s *Scene, m *Manifest, base, scratchGIF string) (string, TapeOutputs, 
 			line("Ctrl+B")
 			line("Type %s", quoteTape(st.Prefix))
 			line("Sleep 500ms")
+		case st.Type != "" && st.Speed != "":
+			d, _ := time.ParseDuration(st.Speed)
+			line("Type@%dms %s", d.Milliseconds(), quoteTape(st.Type))
 		case st.Type != "":
 			line("Type %s", quoteTape(st.Type))
 		case st.Key != "":

@@ -144,7 +144,7 @@ func TestRender(t *testing.T) {
 }
 
 func TestTape(t *testing.T) {
-	s, err := ParseScene([]byte(minimalScene + "  - attach: worker\n  - screenshot: after\n  - key: Down\n    repeat: 3\n"))
+	s, err := ParseScene([]byte("terminal:\n  framerate: 15\n" + minimalScene + "  - attach: worker\n  - screenshot: after\n  - key: Down\n    repeat: 3\n  - type: Add rate limiting\n    speed: 45ms\n  - type: plain\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,6 +166,9 @@ func TestTape(t *testing.T) {
 		`Screenshot "/out/hub.png"`,
 		`Screenshot "/out/hub-after.png"`,
 		"Down 3",
+		"Set Framerate 15",
+		"Type@45ms \"Add rate limiting\"",
+		"Type \"plain\"",
 	} {
 		if !strings.Contains(tape, want) {
 			t.Errorf("tape missing %q:\n%s", want, tape)

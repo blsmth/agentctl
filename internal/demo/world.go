@@ -128,18 +128,19 @@ func writeStubs(l Layout, self string) error {
 func demoConfig(s *Scene) config.Config {
 	off, empty, cronOn := false, "", s.Config.Cron
 	cfg := config.Config{
-		NotifyCmd:        &empty,
-		Agents:           map[string]config.AgentConfig{},
-		Monitor:          &off,
-		OpenPRInBrowser:  &off,
-		BashPreview:      &off,
-		Theme:            s.Config.Theme,
-		DefaultAgent:     s.Config.DefaultAgent,
-		DispatchApproval: s.Config.DispatchApproval,
-		StatuslineFormat: s.Config.StatuslineFormat,
-		Metrics:          config.MetricsConfig{Enabled: false},
-		Titles:           config.TitlesConfig{Enabled: &off},
-		Cron:             config.CronConfig{Enabled: &cronOn},
+		NotifyCmd:         &empty,
+		Agents:            map[string]config.AgentConfig{},
+		Monitor:           &off,
+		OpenPRInBrowser:   &off,
+		BashPreview:       &off,
+		Theme:             s.Config.Theme,
+		DefaultAgent:      s.Config.DefaultAgent,
+		DispatchApproval:  s.Config.DispatchApproval,
+		StatuslineFormat:  s.Config.StatuslineFormat,
+		NewWindowPosition: s.Config.NewWindowPosition,
+		Metrics:           config.MetricsConfig{Enabled: false},
+		Titles:            config.TitlesConfig{Enabled: &off},
+		Cron:              config.CronConfig{Enabled: &cronOn},
 	}
 	for _, a := range s.Agents() {
 		cfg.Agents[a] = config.AgentConfig{Alerts: false, AlertConfig: config.AlertConfig{}}
