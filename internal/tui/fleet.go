@@ -495,8 +495,8 @@ type FleetModel struct {
 	// show and repoint), so a repoint decided before a later show never
 	// lands after it (see fleetViewerApplied).
 	viewerGen uint64
-	liveLeft     int
-	liveRight    int
+	liveLeft  int
+	liveRight int
 
 	// liveWinWidth is the hub window width the split was last applied for;
 	// a list-pane resize at the same window width is a divider drag, not a
