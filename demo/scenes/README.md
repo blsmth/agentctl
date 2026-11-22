@@ -15,11 +15,13 @@ terminal:                             # all optional
   rows: 45                            # 8-200, default 45
   theme: Catppuccin Mocha             # any `vhs themes` name
   font_size: 14                       # px, default 14
+  hub_left: 95                        # hub list width in columns (the live hub caps it at 56 otherwise); default: unset
   padding: 20                         # px, default 20
 
 config:                               # optional; network, notifications, monitor, titles, metrics and cron are always off
   theme: catppuccin-mocha             # agentctl theme (see `agentctl` theme picker); default: agentctl's default
   dispatch_approval: all              # all (default) | non-review | off
+  serve: true                         # fake a running `agentctl serve` so the hub shows "📱 serve" (a stub on a socket in the demo's state dir); default false
   statusline_format: rich             # rich | complementary | full | mobile | minimal; default: agentctl's default
 
 projects:                             # at least one; each becomes ~/code/<name> and session agentctl-<name>

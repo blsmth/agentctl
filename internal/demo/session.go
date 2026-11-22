@@ -80,9 +80,21 @@ func Up(l Layout, s *Scene, opts UpOptions) (*Manifest, error) {
 	if err := t.Claim(); err != nil {
 		return nil, fmt.Errorf("recording demo root on tmux server: %w", err)
 	}
+	if s.Terminal.HubLeft > 0 {
+		// The hub session inherits this, exactly as it does the width a user
+		// dragged the list to before a hot reload.
+		if _, err := t.Run("set-environment", "-g", "AGENTCTL_HUB_LEFT", strconv.Itoa(s.Terminal.HubLeft)); err != nil {
+			return nil, fmt.Errorf("setting hub list width: %w", err)
+		}
+	}
 	sock, err := t.SocketEnv()
 	if err != nil {
 		return nil, err
+	}
+	if s.Config.Serve {
+		if err := startServeStub(l, opts.Self); err != nil {
+			return nil, err
+		}
 	}
 	m := &Manifest{Label: l.Label(), Scene: opts.ScenePath, Sessions: map[string]string{}, Windows: map[string]WindowPlace{}, Selected: map[string]string{}}
 	for _, p := range s.Projects {

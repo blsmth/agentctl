@@ -98,8 +98,8 @@ func TestRender(t *testing.T) {
 			name:    "working",
 			window:  Window{State: "working", Mode: "dispatched", Spinner: "Testing… (41s)"},
 			status:  "STATUSLINE",
-			want:    []string{"Welcome to", "Bash", "Update", "Running…", "✻ Testing… (41s)", "STATUSLINE", "auto mode on"},
-			notWant: []string{"Do you want to proceed?"},
+			want:    []string{"▐▛███▜▌", "Claude Code v2.1", "Opus 5.5 · Claude Max", "❯ ", "⏺ Bash", "⎿", "────", "Bash", "Update", "Running…", "✻ Testing… (41s)", "STATUSLINE", "⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt"},
+			notWant: []string{"Do you want to proceed?", "Welcome to", "╭"},
 		},
 		{
 			name:    "blocked",
@@ -111,7 +111,7 @@ func TestRender(t *testing.T) {
 		{
 			name:   "idle bare",
 			window: Window{State: "idle", Mode: "bare"},
-			want:   []string{"? for shortcuts", "Updated router.go with 2 additions and 1 removals"},
+			want:   []string{"? for shortcuts", "Updated router.go with 2 additions and 1 removals", "✻ Brewed for 49s · done "},
 		},
 	}
 	for _, tt := range tests {
@@ -466,5 +466,42 @@ func TestLabelPinnedAcrossTMPDIROverride(t *testing.T) {
 	}
 	if got := (Layout{Root: l.Root}).WithLabel(label).Label(); got != DefaultLabel {
 		t.Errorf("pinned label = %q, want %q", got, DefaultLabel)
+	}
+}
+
+func TestModelLabel(t *testing.T) {
+	for in, want := range map[string]string{
+		"claude-opus-5-5":           "Opus 5.5",
+		"claude-sonnet-5-5":         "Sonnet 5.5",
+		"claude-haiku-4-5-20251001": "Haiku 4.5",
+		"":                          "Opus 5.5",
+	} {
+		if got := ModelLabel(in); got != want {
+			t.Errorf("ModelLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestCollapsedTools(t *testing.T) {
+	es := []Entry{
+		{Tool: "Read", Input: map[string]any{"file_path": "a.go"}},
+		{Tool: "LS", Input: map[string]any{"path": "."}},
+		{Tool: "Bash", Input: map[string]any{"command": "git status"}},
+		{Tool: "Bash", Input: map[string]any{"command": "git diff"}},
+	}
+	out := ansi.Strip(strings.Join(renderEntries(es, 100), "\n"))
+	if !strings.Contains(out, "Read 1 file, listed 1 directory, ran 2 shell commands") {
+		t.Errorf("summary missing:\n%s", out)
+	}
+}
+
+func TestPaneMarkersOfFakePane(t *testing.T) {
+	got := PaneMarkers(referencePane())
+	if len(got) != len(paneMarkers) {
+		t.Errorf("fake pane has %d of %d markers: %v", len(got), len(paneMarkers), got)
+	}
+	onlyReal, onlyFake := MarkerDiff([]string{"a", "b"}, []string{"b", "c"})
+	if len(onlyReal) != 1 || onlyReal[0] != "a" || len(onlyFake) != 1 || onlyFake[0] != "c" {
+		t.Errorf("MarkerDiff = %v, %v", onlyReal, onlyFake)
 	}
 }

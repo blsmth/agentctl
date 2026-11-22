@@ -8,6 +8,7 @@
 //	agentctl-demo tape  --root R --scene S [--out BASE]
 //	agentctl-demo check --scene S
 //	agentctl-demo down  --root R
+//	agentctl-demo pane-check --target T
 //
 // "project" and "pane" are internal: up runs one project seeder per project,
 // and every fake window runs a pane.
@@ -46,6 +47,10 @@ func main() {
 		err = runProject(args)
 	case "pane":
 		err = runPane(args)
+	case "pane-check":
+		err = runPaneCheck(args)
+	case "serve-stub":
+		err = runServeStub(args)
 	default:
 		usage()
 	}
@@ -331,4 +336,42 @@ func runPane(args []string) error {
 		return err
 	}
 	return demo.RunPane(*spec)
+}
+
+// runPaneCheck compares a real Claude Code pane's structure with the fake's
+// and exits non-zero on a mismatch. It prints marker names only.
+func runPaneCheck(args []string) error {
+	fs := flag.NewFlagSet("pane-check", flag.ExitOnError)
+	target := fs.String("target", "", "tmux target of a real Claude Code pane (default tmux server)")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if *target == "" {
+		return fmt.Errorf("--target is required")
+	}
+	onlyReal, onlyFake, err := demo.CheckPane(*target)
+	if err != nil {
+		return err
+	}
+	for _, m := range onlyReal {
+		fmt.Printf("real pane has, fake lacks: %s\n", m)
+	}
+	for _, m := range onlyFake {
+		fmt.Printf("fake pane has, real lacks: %s\n", m)
+	}
+	if len(onlyReal)+len(onlyFake) > 0 {
+		return fmt.Errorf("fake pane drifted from the real one (update internal/demo/pane.go)")
+	}
+	fmt.Println("pane structure matches")
+	return nil
+}
+
+// runServeStub is the fake agentctl serve behind the hub's serve badge.
+func runServeStub(args []string) error {
+	fs := flag.NewFlagSet("serve-stub", flag.ExitOnError)
+	dir := fs.String("dir", "", "serve dir to listen in")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	return demo.RunServeStub(*dir)
 }

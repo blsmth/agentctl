@@ -97,7 +97,7 @@ func (l Layout) Agentctl() string   { return filepath.Join(l.Bin(), "agentctl") 
 func (l Layout) Home() string       { return filepath.Join(l.Root, "home") }
 func (l Layout) ClaudeDir() string  { return filepath.Join(l.Home(), ".claude") }
 func (l Layout) ConfigHome() string { return filepath.Join(l.Home(), ".config") }
-func (l Layout) StateHome() string  { return filepath.Join(l.Home(), ".local", "state") }
+func (l Layout) StateHome() string  { return filepath.Join(l.Root, "state") }
 func (l Layout) DataHome() string   { return filepath.Join(l.Home(), ".local", "share") }
 func (l Layout) CacheHome() string  { return filepath.Join(l.Home(), ".cache") }
 func (l Layout) Tmp() string        { return filepath.Join(l.Root, "tmp") }

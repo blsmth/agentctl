@@ -49,6 +49,9 @@ type Terminal struct {
 	Theme    string `yaml:"theme"`     // vhs theme name
 	FontSize int    `yaml:"font_size"` // vhs font size in px
 	Padding  int    `yaml:"padding"`   // vhs padding in px
+	// HubLeft is the hub list's width in columns, as if dragged there (the
+	// live hub otherwise caps the list at 56). 0 keeps the default.
+	HubLeft int `yaml:"hub_left"`
 }
 
 // Config is the subset of agentctl config a scene may set. Everything that
@@ -57,6 +60,9 @@ type Config struct {
 	Theme            string `yaml:"theme"`             // agentctl theme
 	DispatchApproval string `yaml:"dispatch_approval"` // all, non-review, off
 	StatuslineFormat string `yaml:"statusline_format"` // rich, complementary, full, mobile, minimal
+	// Serve fakes a running agentctl serve (a stub listening on the control
+	// socket in the demo's own state dir), so the hub shows "📱 serve".
+	Serve bool `yaml:"serve"`
 }
 
 // Project is one fake git repository and its agentctl session.
@@ -350,6 +356,9 @@ func (s *Scene) Validate() error {
 	t := s.Terminal
 	if t.Cols < 40 || t.Cols > 400 {
 		add("terminal.cols: %d out of range 40-400", t.Cols)
+	}
+	if t.HubLeft != 0 && (t.HubLeft < 30 || t.HubLeft > t.Cols-21) {
+		add("terminal.hub_left: %d out of range 30-%d", t.HubLeft, t.Cols-21)
 	}
 	if t.Rows < 8 || t.Rows > 200 {
 		add("terminal.rows: %d out of range 8-200", t.Rows)

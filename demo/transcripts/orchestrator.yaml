@@ -1,4 +1,5 @@
-title: Rate limiter rollout
+title: Coordinate orders rate limiter and webhook retry review
+recap: Dispatched a worker on the orders rate limiter (#142) and a reviewer on the webhook retry PR (#138); waiting on both before merging.
 entries:
   - user: "We need rate limiting on orders before Friday's launch, and someone should review the webhook retry PR. Coordinate it."
   - say: "Plan: dispatch go-engineer on #142 (orders rate limiter) and a reviewer on PR #138 (webhook retries). I'll track both and merge once CI and review are green."

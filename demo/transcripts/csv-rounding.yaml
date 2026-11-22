@@ -1,4 +1,5 @@
 title: Fix CSV export rounding
+recap: "Switched CSV amount formatting to banker's rounding and added regression tests; PR opened."
 pr: 64
 entries:
   - user: "Issue #61: CSV exports round half-cent amounts down; finance expects banker's rounding."

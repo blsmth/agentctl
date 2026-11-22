@@ -1,4 +1,5 @@
 title: Backfill invoice totals
+recap: "Wrote an idempotent migration that recomputes invoice totals from line items; waiting on approval to run it against the dev database."
 entries:
   - user: "Issue #57: backfill invoice totals for legacy accounts created before the 2024 billing migration."
   - say: "The totals column is null for 18,412 legacy invoices. I wrote an idempotent migration that recomputes them from line items in batches of 1,000."
