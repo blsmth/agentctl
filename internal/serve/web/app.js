@@ -4,7 +4,7 @@ import { mountApprovals } from "./approvals.js";
 import { mountDispatch } from "./dispatch.js";
 import { mountFleet } from "./fleet.js";
 import { mountHost } from "./host.js";
-import { startLive } from "./live.js";
+import { startLive, startPresence } from "./live.js";
 import {
   applyGone,
   applyWindow,
@@ -93,6 +93,7 @@ function route() {
 }
 
 function startFeed() {
+  if (ctx.hasFeature("push")) startPresence();
   startLive({
     events: ctx.hasFeature("events"),
     onFleet(body) {

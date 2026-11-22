@@ -135,6 +135,7 @@ type Server struct {
 	subs           *SubscriptionStore
 	vapid          VAPIDKeys
 	sender         *Sender
+	presence       *Presence
 	ntfy           *Ntfy
 	notifier       *Notifier
 	pushQ          *pushDispatcher
@@ -301,6 +302,7 @@ func (s *Server) routes(rt *Router) {
 	s.registerStatic(rt)
 	s.registerRead(rt)
 	s.registerPush(rt)
+	s.registerPresence(rt)
 	s.registerWrite(rt)
 	s.registerTerminal(rt)
 	s.registerApprovals(rt)

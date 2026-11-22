@@ -1,5 +1,5 @@
 // Service worker: web push + a small app-shell cache. It never touches /v1/.
-const CACHE = "agentctl-shell-v19";
+const CACHE = "agentctl-shell-v20";
 const SHELL = [
   "/", "/app.css", "/app.js", "/api.js", "/live.js", "/logic.js", "/ui.js",
   "/fleet.js", "/swipe.js", "/window.js", "/terminal.js", "/dispatch.js", "/attach.js", "/settings.js", "/host.js", "/approvals.js",

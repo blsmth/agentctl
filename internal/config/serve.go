@@ -72,6 +72,9 @@ type ServePushConfig struct {
 	// services as the VAPID subject. Empty means
 	// https://github.com/blsmth/agentctl.
 	VAPIDSubscriber string `json:"vapid_subscriber,omitempty"`
+	// SuppressWhileOpen skips web push to a device that has the app open in
+	// the foreground. nil means enabled; ntfy is unaffected.
+	SuppressWhileOpen *bool `json:"suppress_while_open,omitempty"`
 	// MutedProjects are project names that never push.
 	MutedProjects []string `json:"muted_projects,omitempty"`
 }
@@ -110,6 +113,12 @@ func (p ServePushConfig) DoneEnabled() bool {
 // ApprovalsEnabled reports whether approval pushes are on (default true).
 func (p ServePushConfig) ApprovalsEnabled() bool {
 	return p.Approvals == nil || *p.Approvals
+}
+
+// SuppressWhileOpenEnabled reports whether pushes skip devices with the app
+// in the foreground (default true).
+func (p ServePushConfig) SuppressWhileOpenEnabled() bool {
+	return p.SuppressWhileOpen == nil || *p.SuppressWhileOpen
 }
 
 // EffectiveBlockedReminderMinutes returns the reminder delay in minutes
