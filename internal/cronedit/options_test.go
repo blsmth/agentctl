@@ -41,6 +41,7 @@ func TestOptionsCheck(t *testing.T) {
 		{name: "default alias", mut: func(j *cron.Job) { j.Model = "default" }, wantClean: true},
 		{name: "bedrock id warns", mut: func(j *cron.Job) { j.Model = "us.anthropic.claude-x-v1:0" }, wantWarn: "not a known Anthropic"},
 		{name: "backend without a list does not warn", mut: func(j *cron.Job) { j.Backend = "nous"; j.Model = "whatever" }, wantClean: true},
+		{name: "nous slug", mut: func(j *cron.Job) { j.Backend = "nous"; j.Model = "deepseek/deepseek-v4.1-flash-1017:batch" }, wantClean: true},
 		{name: "typo", mut: func(j *cron.Job) { j.Model = "opsu" }, wantErr: map[string]string{"model": `unknown model "opsu"`}},
 		{name: "unknown backend", mut: func(j *cron.Job) { j.Backend = "nope" }, wantErr: map[string]string{"backend": "use nous, ollama"}},
 		{name: "backend none", mut: func(j *cron.Job) { j.Backend = "none" }, wantClean: true},
@@ -140,5 +141,14 @@ func TestPreviewDiff(t *testing.T) {
 	d := Diff(ts.job("d"), j)
 	if i := slices.IndexFunc(d, func(c FieldChange) bool { return c.Field == "worktree" }); i < 0 || d[i].Old != "on" || d[i].New != "off" {
 		t.Fatalf("Diff = %+v", d)
+	}
+}
+
+func TestNousModelHasNoFieldError(t *testing.T) {
+	j := cron.Job{Name: "j", Schedule: "0 9 * * *", Dir: "/x", Agent: "brandon", Prompt: "p",
+		Backend: "nous", Model: "deepseek/deepseek-v4.1-flash-1017:batch"}
+	j = normalize(j)
+	if err := j.Validate(); err != nil {
+		t.Fatalf("Validate = %v", err)
 	}
 }

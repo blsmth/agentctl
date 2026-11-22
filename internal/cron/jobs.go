@@ -120,7 +120,6 @@ func (j *Job) Normalize() {
 
 var (
 	jobNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$`)
-	modelRE   = regexp.MustCompile(`^[A-Za-z0-9._:\[\]-]+$`)
 	// backendRE and accountRE match config map keys; both end up in env
 	// and log lines, never a shell.
 	backendRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -209,7 +208,7 @@ func (j Job) FieldErrors() []FieldError {
 	if !slices.Contains([]string{CatchupLatest, CatchupNone}, j.Catchup) {
 		add(FieldCatchup, "catchup %q: want latest or none", j.Catchup)
 	}
-	if j.Model != "" && !modelRE.MatchString(j.Model) {
+	if j.Model != "" && !launchopts.ValidModel(j.Model) {
 		add(FieldModel, "invalid model %q", j.Model)
 	}
 	if j.Effort != "" {

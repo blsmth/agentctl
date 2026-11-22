@@ -57,8 +57,6 @@ var (
 	answerKeyRE = regexp.MustCompile(`^[0-9]{1,2}$`)
 	// dialogHashRE matches panestate.HashDialogText output.
 	dialogHashRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	// modelRE bounds a dispatch model override to model-name characters.
-	modelRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,99}$`)
 )
 
 // registerWrite registers the write API. Every route is registered whether
@@ -814,7 +812,7 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	if len(in.Images) > maxImages {
 		return failure(http.StatusBadRequest, codeBadRequest, fmt.Sprintf("at most %d images per dispatch", maxImages))
 	}
-	if in.Model != "" && !modelRE.MatchString(in.Model) {
+	if in.Model != "" && !launchopts.ValidModel(in.Model) {
 		return failure(http.StatusBadRequest, codeBadRequest, "invalid model")
 	}
 	if in.Effort != "" {

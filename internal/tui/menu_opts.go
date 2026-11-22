@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/blsmth/agentctl/internal/launchopts"
@@ -16,9 +15,6 @@ import (
 // plain Claude Code against Anthropic.
 const backendAnthropic = launchopts.BackendAnthropic
 
-// safeModelRe is the charset allowed for a typed model name (the launch path
-// shell-quotes it regardless).
-var safeModelRe = regexp.MustCompile(`^[A-Za-z0-9._:/~\[\]-]+$`)
 
 // modelOpt is one entry of the model selector.
 type modelOpt = launchopts.ModelChoice
@@ -130,7 +126,7 @@ func (m MenuModel) validateModel(backend, value string) error {
 	if value == "" || value == launchopts.Inherit {
 		return nil
 	}
-	if !safeModelRe.MatchString(value) {
+	if !launchopts.ValidModel(value) {
 		return fmt.Errorf("model %q has invalid characters", value)
 	}
 	if m.isNous(backend) && !strings.Contains(value, "/") {
