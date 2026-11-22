@@ -98,6 +98,9 @@ func TestReviewPhrasesInScrollbackStayIdle(t *testing.T) {
 		"prose": "⏺ The \"Review your answers\" page asks \"Ready to submit your answers?\" with 1. Submit answers / 2. Cancel.\n\n" +
 			"  1. Fix the parser\n  2. Add tests\n\n✻ Worked for 3s\n\n────\n❯ \n────\n  ⏵⏵ auto mode on\n",
 		"question line, other options": "Review your answers\nReady to submit your answers?\n\n  1. Fix the parser\n────\n❯ \n────\n",
+		"prose new layout": "⏺ The page headed\nReview your answers\nlists choices: 1. Submit answers and 2. Cancel, then I carry on.\n\n" +
+			"────\n❯ \n────\n",
+		"scrollback new layout": "Review your answers\n\n❯ 1. Submit answers\n  2. Cancel\n\n⏺ Submitted.\n\nMore output\nMore output\nMore output\n────\n❯ \n────\n",
 		"quoted line":                  "  > Ready to submit your answers?\n  > 1. Submit answers\n────\n❯ \n────\n",
 	}
 	for name, pane := range panes {

@@ -162,6 +162,36 @@ func TestParseDialogReviewPage(t *testing.T) {
 	}
 }
 
+// askUserReviewNoQuestion is the current review page, which no longer prints
+// the "Ready to submit your answers?" line.
+const askUserReviewNoQuestion = "" +
+	"←  ☒ Surfaces  ☒ Shape  ☒ Storage  ✔ Submit  →\n" +
+	"\n" +
+	"Review your answers\n" +
+	"\n" +
+	" │ ● Where should saved template prompts be usable? (Templates = named, reusable prompts like ...)\n" +
+	"   → Phone dispatch sheet, CLI, Hub, Cron jobs\n" +
+	" ● What should a template hold beyond the prompt text?\n" +
+	"   → Prompt + defaults (Recommended)\n" +
+	" ● Where should templates live?\n" +
+	"   → Markdown files (Recommended)\n" +
+	"\n" +
+	"❯ 1. Submit answers\n" +
+	"  2. Cancel\n"
+
+func TestParseDialogReviewPageNoQuestion(t *testing.T) {
+	if !DialogShowing(askUserReviewNoQuestion) {
+		t.Fatal("DialogShowing = false")
+	}
+	d, ok := ParseDialog(askUserReviewNoQuestion)
+	if !ok {
+		t.Fatal("not parsed")
+	}
+	if !reflect.DeepEqual(keys(d), []string{"1", "2"}) || d.Options[0].Label != "Submit answers" || d.Options[1].Label != "Cancel" {
+		t.Errorf("options = %+v", d.Options)
+	}
+}
+
 // askUserMultiNext is a live multi-select tab of a two-question flow with B
 // ticked ("[✔]") and the cursor moved down onto the Next row.
 const askUserMultiNext = "" +

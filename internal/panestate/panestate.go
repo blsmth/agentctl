@@ -222,6 +222,45 @@ var reviewSubmit = regexp.MustCompile(`^(❯\s*)?1\.\s+Submit answers$`)
 // page, and a pane misread as a dialog offers its numbered prose as answers.
 func reviewPageShowing(text string) bool {
 	lines := strings.Split(StripANSI(text), "\n")
+	return reviewPageWithQuestion(lines) || reviewPageBottom(lines)
+}
+
+const (
+	reviewHeading = "Review your answers"
+	reviewCancel  = "2. Cancel"
+	// reviewTailLines is how many non-blank lines may follow "2. Cancel"
+	// (a footer hint) on the live page.
+	reviewTailLines = 2
+)
+
+// reviewPageBottom matches the layout without the "Ready to submit" line: the
+// heading alone on its line, then "1. Submit answers" and "2. Cancel" as the
+// last choices of the pane. Anchoring at the bottom keeps scrollback and prose
+// that quote these phrases from matching.
+func reviewPageBottom(lines []string) bool {
+	var tail []int // indexes of non-blank lines, in order
+	for i, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			tail = append(tail, i)
+		}
+	}
+	for k := len(tail) - 2; k >= 0 && k >= len(tail)-2-reviewTailLines; k-- {
+		if !reviewSubmit.MatchString(strings.TrimSpace(lines[tail[k]])) ||
+			strings.TrimSpace(lines[tail[k+1]]) != reviewCancel {
+			continue
+		}
+		for j := k - 1; j >= 0; j-- {
+			if strings.TrimSpace(lines[tail[j]]) == reviewHeading {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// reviewPageWithQuestion matches the older layout with the question line.
+func reviewPageWithQuestion(lines []string) bool {
 	for i, l := range lines {
 		if strings.TrimSpace(l) != reviewQuestion {
 			continue

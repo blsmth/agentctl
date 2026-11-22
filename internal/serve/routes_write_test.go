@@ -665,19 +665,25 @@ func TestAnswerMultiSelectToggleTwice(t *testing.T) {
 // The review page ends a multi-question flow; its Submit answers choice is an
 // ordinary single-select answer (key 1).
 func TestAnswerReviewPage(t *testing.T) {
-	const review = "────────────────────────────────────────────────────────────────────────────────\n" +
-		"←  ☒ Pick  ☒ Mode  ✔ Submit  →\nReview your answers\n ● Pick\n   → B\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel\n"
-	d, ok := panestate.ParseDialog(review)
-	if !ok {
-		t.Fatal("not parsed")
-	}
-	e := newWriteEnv(t, true)
-	e.panes.set(review)
-	if w := e.post(winPath+"/answer", fmt.Sprintf(`{"key":"1","dialog_hash":%q}`, d.Hash)); w.Code != 200 {
-		t.Fatalf("%d %s", w.Code, w.Body)
-	}
-	if ks := e.keys.all(); len(ks) != 1 || ks[0].key != "1" {
-		t.Errorf("sent %v", ks)
+	const rule = "────────────────────────────────────────────────────────────────────────────────\n"
+	for name, review := range map[string]string{
+		"with question": rule + "←  ☒ Pick  ☒ Mode  ✔ Submit  →\nReview your answers\n ● Pick\n   → B\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel\n",
+		"no question":   rule + "←  ☒ Pick  ☒ Mode  ✔ Submit  →\n\nReview your answers\n\n ● Pick\n   → B\n\n❯ 1. Submit answers\n  2. Cancel\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, ok := panestate.ParseDialog(review)
+			if !ok {
+				t.Fatal("not parsed")
+			}
+			e := newWriteEnv(t, true)
+			e.panes.set(review)
+			if w := e.post(winPath+"/answer", fmt.Sprintf(`{"key":"1","dialog_hash":%q}`, d.Hash)); w.Code != 200 {
+				t.Fatalf("%d %s", w.Code, w.Body)
+			}
+			if ks := e.keys.all(); len(ks) != 1 || ks[0].key != "1" {
+				t.Errorf("sent %v", ks)
+			}
+		})
 	}
 }
 
