@@ -85,13 +85,21 @@ func viewerTestModel(t *testing.T) (FleetModel, *[]string) {
 	m.resolveSelection()
 	m.liveShown, m.viewerSeen, m.viewerPolled = "s1|@1", "s1|@1", true
 	var calls []string
-	oldRepoint, oldZoom := repointViewer, hubZoomSync
+	oldRepoint, oldZoom, oldShow, oldWidth, oldApplied := repointViewer, hubZoomSync, showLiveViewer, hubWindowWidth, fleetViewerApplied
 	repointViewer = func(viewer, window string) error {
 		calls = append(calls, viewer+" "+window)
 		return nil
 	}
+	showLiveViewer = func(sess, win string, _ int) error {
+		calls = append(calls, "show "+sess+"|"+win)
+		return nil
+	}
+	hubWindowWidth = func() (int, error) { return 200, nil }
 	hubZoomSync = func(bool) {}
-	t.Cleanup(func() { repointViewer, hubZoomSync = oldRepoint, oldZoom })
+	fleetViewerApplied = 0
+	t.Cleanup(func() {
+		repointViewer, hubZoomSync, showLiveViewer, hubWindowWidth, fleetViewerApplied = oldRepoint, oldZoom, oldShow, oldWidth, oldApplied
+	})
 	return m, &calls
 }
 
@@ -186,5 +194,38 @@ func TestSyncFromViewerWatchedWindowClosed(t *testing.T) {
 	}
 	if len(*calls) != 0 {
 		t.Errorf("repoint calls = %v, want none", *calls)
+	}
+}
+
+// A repoint decided on a poll must not land after a show the hub decided
+// later (fast j/k during a dispatch): the viewer would sit on the old window
+// with the hub on the new one, and nothing would correct it.
+func TestSyncFromViewerStaleRepointAfterShow(t *testing.T) {
+	m, calls := viewerTestModel(t)
+	m, repoint := m.syncFromViewer(fleetViewerMsg{viewer: "agentctl-hubview", home: "s1", window: "@2"})
+	if repoint == nil {
+		t.Fatal("drift should repoint")
+	}
+	show := m.liveShowFor("s1", "@3") // the user moves on before the repoint runs
+	if show == nil {
+		t.Fatal("selection change should show")
+	}
+	show()
+	repoint() // reaches the lock last
+	if !slices.Equal(*calls, []string{"show s1|@3"}) {
+		t.Errorf("viewer calls = %v, want only the newer show", *calls)
+	}
+	// The viewer is on @3 now: the next poll leaves everything alone.
+	m, cmd := m.syncFromViewer(fleetViewerMsg{viewer: "agentctl-hubview", home: "s1", window: "@3"})
+	if cmd != nil || m.liveShown != "s1|@3" {
+		t.Errorf("after the show: cmd=%v liveShown=%q, want no repoint on s1|@3", cmd != nil, m.liveShown)
+	}
+
+	// In decision order the repoint still runs.
+	*calls = nil
+	m, repoint = m.syncFromViewer(fleetViewerMsg{viewer: "agentctl-hubview", home: "s1", window: "@1"})
+	runViewerCmd(repoint)
+	if !slices.Equal(*calls, []string{"agentctl-hubview @3"}) {
+		t.Errorf("viewer calls = %v, want the repoint to @3", *calls)
 	}
 }

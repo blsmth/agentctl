@@ -484,13 +484,17 @@ type FleetModel struct {
 	liveFailed string
 	// viewerSeen is the "session|window" the viewer last reported on a poll;
 	// a change relative to it that the hub did not cause drives the selection
-	// (see viewerSyncTarget).
+	// (see viewerSyncDecide).
 	viewerSeen string
 	// viewerIntent is the viewer's tab-click token last seen on a poll, so
 	// each click is acted on once; viewerPolled marks the first poll, whose
 	// token predates this hub and is never followed.
 	viewerIntent string
 	viewerPolled bool
+	// viewerGen numbers the hub's decisions about the viewer's window (every
+	// show and repoint), so a repoint decided before a later show never
+	// lands after it (see fleetViewerApplied).
+	viewerGen uint64
 	liveLeft     int
 	liveRight    int
 
@@ -1471,6 +1475,8 @@ func (m *FleetModel) liveShowFor(session, window string) tea.Cmd {
 		return nil
 	}
 	m.liveShown = key
+	m.viewerGen++
+	showGen := m.viewerGen
 	fallback, userLeft := m.termWidth, m.userLeft
 	shown := m.hubChrome
 	activity, userAct := m.activity.open(), m.activity.userWidth
@@ -1488,6 +1494,9 @@ func (m *FleetModel) liveShowFor(session, window string) tea.Cmd {
 		}
 		if err == nil {
 			fleetViewerMu.Lock()
+			if showGen > fleetViewerApplied {
+				fleetViewerApplied = showGen
+			}
 			err = showLiveViewer(session, window, right)
 			fleetViewerMu.Unlock()
 			if err == nil {
@@ -3614,7 +3623,8 @@ type viewerSyncState struct {
 // index, so inserting, moving or closing a window in the home session moves
 // the viewer to whatever window now sits at its old index. Only a change
 // attributable to a chrome-bar tab click (the viewer's intent, set by
-// tmux.SelectViewerWindow, acted on once per click token) is followed; any other drift away from the window the hub shows (liveShown)
+// tmux.SelectViewerWindow, acted on once per click token) is followed; any
+// other drift away from the window the hub shows (liveShown)
 // re-points the viewer at it by window ID. When the shown window is no longer
 // a row (it closed), or the hub has nothing shown, the old rule applies: a
 // change the hub did not cause is followed when it is a row of the list.
@@ -3685,7 +3695,8 @@ func (m FleetModel) syncFromViewer(msg fleetViewerMsg) (FleetModel, tea.Cmd) {
 	m.viewerSeen, m.viewerIntent = d.seen, msg.token
 	var cmd tea.Cmd
 	if d.repoint {
-		cmd = fleetRepointCmd(msg.viewer, d.target, m.hubChrome)
+		m.viewerGen++
+		cmd = fleetRepointCmd(msg.viewer, d.target, m.viewerGen, m.hubChrome)
 	}
 	if d.action != viewerSyncFollow {
 		return m, cmd
@@ -3698,14 +3709,28 @@ func (m FleetModel) syncFromViewer(msg fleetViewerMsg) (FleetModel, tea.Cmd) {
 	return m, cmd
 }
 
-// fleetRepointCmd selects key's window (by ID) in the viewer session.
-func fleetRepointCmd(viewer, key string, chromeShown bool) tea.Cmd {
+// fleetViewerApplied is the newest viewerGen whose show or repoint has run,
+// guarded by fleetViewerMu. Bubble Tea runs commands concurrently and the
+// mutex is not FIFO, so a repoint decided before a later show can reach the
+// lock after it; it is then stale and skipped, or it would leave the viewer
+// on a window the hub no longer selects (and the next poll, seeing the
+// viewer where it last expected it, would not correct it).
+var fleetViewerApplied uint64
+
+// fleetRepointCmd selects key's window (by ID) in the viewer session, unless
+// a newer hand-off (gen) has already run.
+func fleetRepointCmd(viewer, key string, gen uint64, chromeShown bool) tea.Cmd {
 	_, window, _ := strings.Cut(key, "|")
 	if viewer == "" || window == "" {
 		return nil
 	}
 	return func() tea.Msg {
 		fleetViewerMu.Lock()
+		if gen < fleetViewerApplied {
+			fleetViewerMu.Unlock()
+			return nil
+		}
+		fleetViewerApplied = gen
 		err := repointViewer(viewer, window)
 		fleetViewerMu.Unlock()
 		if err == nil {
