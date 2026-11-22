@@ -356,3 +356,14 @@ func TestSchedFormEditKeepsUnknownModelOnOtherBackend(t *testing.T) {
 		t.Errorf("refresh dropped the stored model: %q", fm.model.value())
 	}
 }
+
+func TestSchedFormClickEditorHint(t *testing.T) {
+	f := newSchedFixture(t)
+	withSchedEnv(t, testSchedEnv())
+	m := openNewForm(t, f)
+	m = schedClick(t, m, "Prompt", "Prompt")
+	_ = schedClick(t, m, schedEditorHint, schedEditorHint)
+	if f.editorPath == "" {
+		t.Fatal("a click on ^e editor should open the prompt in $EDITOR")
+	}
+}

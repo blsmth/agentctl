@@ -1525,13 +1525,8 @@ func (f *fleetSchedForm) previewLine() string {
 	return strings.Join(parts, " · ")
 }
 
-// dayChips renders M T W T F S S with the chip cursor.
-func (m FleetModel) dayChips() string {
-	s, _ := m.dayChipsLayout()
-	return s
-}
-
-// dayChipsLayout is dayChips plus one toggle target per chip.
+// dayChipsLayout renders M T W T F S S with the chip cursor, plus one
+// toggle target per chip.
 func (m FleetModel) dayChipsLayout() (string, []schedHit) {
 	f := m.schedForm
 	parts := make([]string, 7)
@@ -1599,16 +1594,8 @@ func padRight(s string, w int) string {
 	return s
 }
 
-// scrollTo keeps line focus inside a window of h lines.
-func scrollTo(lines []string, focus, h int) []string {
-	start := scrollStart(len(lines), focus, h)
-	if start < 0 {
-		return lines
-	}
-	return lines[start : start+h]
-}
-
-// scrollStart is the first of n lines scrollTo keeps, -1 when all fit.
+// scrollStart is the first of n lines a window of h lines keeping line focus
+// inside it starts at, -1 when all fit.
 func scrollStart(n, focus, h int) int {
 	if h <= 0 || n <= h {
 		return -1
@@ -1620,13 +1607,9 @@ func scrollStart(n, focus, h int) int {
 	return start
 }
 
-// schedReviewLines is the review: what runs, where, when and how, the next
-// fires, and the prompt (on an edit, only the changed fields as old → new).
-func (m FleetModel) schedReviewLines(w int) []string {
-	return m.schedReviewLayout(w).lines
-}
-
-// schedReviewLayout is schedReviewLines with its y/n buttons as targets.
+// schedReviewLayout is the review: what runs, where, when and how, the next
+// fires, and the prompt (on an edit, only the changed fields as old → new),
+// with its y/n buttons as targets.
 func (m FleetModel) schedReviewLayout(w int) schedLayout {
 	f := m.schedForm
 	p := f.preview

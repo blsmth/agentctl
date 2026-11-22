@@ -55,7 +55,7 @@ func (l *schedLayout) add(s ...string) {
 	}
 }
 
-// scroll keeps line focus inside h lines, as scrollTo does, moving the
+// scroll keeps line focus inside h lines (scrollStart), moving the
 // targets with their lines and dropping the ones scrolled out.
 func (l *schedLayout) scroll(focus, h int) {
 	start := scrollStart(len(l.lines), focus, h)
