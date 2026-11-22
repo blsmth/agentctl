@@ -28,7 +28,9 @@ func (s *Server) promptFor(runtimeDir string, m fleet.Meta) string {
 	if m.Prompt != "" {
 		return m.Prompt
 	}
-	if m.WindowID == "" || runtimeDir == "" {
+	// A dispatched window's first user message is kickoff boilerplate (the
+	// task itself is in the system prompt), so it is never derived.
+	if m.Dispatched() || m.WindowID == "" || runtimeDir == "" {
 		return m.FirstPrompt
 	}
 	logPath := m.LogPath

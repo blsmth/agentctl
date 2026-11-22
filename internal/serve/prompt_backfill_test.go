@@ -112,3 +112,18 @@ func TestPromptForStoredWins(t *testing.T) {
 		t.Fatalf("got %q scans=%d", got, *scans)
 	}
 }
+
+func TestPromptForSkipsDispatchedWindows(t *testing.T) {
+	for _, mode := range []string{"review-pr", "dispatch", "adhoc"} {
+		t.Run(mode, func(t *testing.T) {
+			s, dir, scans, text := backfillEnv(t, windowstate.WindowState{SessionID: "sid", Mode: mode, FirstPrompt: "short"})
+			*text = "kickoff boilerplate"
+			if got := s.promptFor(dir, metaOf(t, dir)); got != "short" || *scans != 0 {
+				t.Fatalf("got %q scans=%d", got, *scans)
+			}
+			if ws, _ := windowstate.ReadIn(dir, "@77"); ws.Prompt != "" || ws.PromptScanKey != "" {
+				t.Fatalf("persisted: %+v", ws)
+			}
+		})
+	}
+}
