@@ -432,6 +432,18 @@ func networkUpload(c simpleCmd, _ *step, _ *analysis) bool {
 	case "curl":
 		flags, _ := flagsAndOperands(c.args)
 		for _, f := range flags {
+			if f == "--form" || strings.HasPrefix(f, "--form-") || f == "--upload-file" {
+				return true
+			}
+		}
+		if shortFlag(flags, 'F') || shortFlag(flags, 'T') {
+			return true
+		}
+		// With -G/--get, -d/--data* become query parameters of a GET.
+		if hasArg(flags, "--get") || shortFlag(flags, 'G') {
+			return false
+		}
+		for _, f := range flags {
 			if strings.HasPrefix(f, "--data") || f == "--form" || strings.HasPrefix(f, "--form-") ||
 				f == "--upload-file" || f == "--json" {
 				return true
@@ -503,8 +515,8 @@ var copiers = map[string]bool{"cp": true, "scp": true, "rsync": true}
 
 // isSecretPath reports whether p looks like a credentials file.
 func isSecretPath(p string) bool {
-	if strings.Contains(p, dynamic) {
-		return false
+	if strings.Contains(p, dynamic) || strings.HasSuffix(p, "/") {
+		return false // a dir operand (cp -r .env.d/ x) is not a credentials file
 	}
 	base := filepath.Base(p)
 	switch {
@@ -512,7 +524,7 @@ func isSecretPath(p string) bool {
 		return true
 	case strings.HasPrefix(base, ".env."):
 		switch strings.TrimPrefix(base, ".env.") {
-		case "example", "sample", "template", "dist", "defaults":
+		case "example", "sample", "template", "dist", "defaults", "d":
 			return false
 		}
 		return true
@@ -614,7 +626,11 @@ func deniedCalls(a *analysis) []hit {
 		out = append(out, hit{step: s, evidence: s.Tool + " " + s.Label, why: deniedWhy(s.deniedBy, s.inferred)})
 	}
 	for _, rec := range a.orphans {
-		h := hit{evidence: rec.Tool + " " + rec.Summary, why: deniedWhy(rec.DeniedBy, false)}
+		ev := rec.Summary
+		if !strings.HasPrefix(ev, rec.Tool+" ") {
+			ev = rec.Tool + " " + ev
+		}
+		h := hit{evidence: ev, why: deniedWhy(rec.DeniedBy, false)}
 		if t, err := time.Parse(time.RFC3339Nano, rec.Timestamp); err == nil {
 			h.at = t
 		}

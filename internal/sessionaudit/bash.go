@@ -76,8 +76,31 @@ func (p *parsedBash) add(src string, depth int) bool {
 
 	byCall := map[*syntax.CallExpr]int{}
 	var nested []string
+	// A cd inside a subshell or substitution does not move the outer shell:
+	// the cd state is saved on entering one and restored on leaving it
+	// (Walk calls f(nil) when it leaves a node).
+	type cdState struct {
+		seen bool
+		dir  string
+	}
 	seenCd, curDir := false, ""
+	var open []syntax.Node
+	var saved []cdState
 	syntax.Walk(f, func(n syntax.Node) bool {
+		if n == nil {
+			last := open[len(open)-1]
+			open = open[:len(open)-1]
+			if isSubshell(last) {
+				st := saved[len(saved)-1]
+				saved = saved[:len(saved)-1]
+				seenCd, curDir = st.seen, st.dir
+			}
+			return true
+		}
+		open = append(open, n)
+		if isSubshell(n) {
+			saved = append(saved, cdState{seenCd, curDir})
+		}
 		st, ok := n.(*syntax.Stmt)
 		if !ok {
 			return true
@@ -195,6 +218,15 @@ func (p *parsedBash) add(src string, depth int) bool {
 		p.add(s, depth+1) // a body that does not parse adds nothing
 	}
 	return true
+}
+
+// isSubshell reports whether n runs in a child shell.
+func isSubshell(n syntax.Node) bool {
+	switch n.(type) {
+	case *syntax.Subshell, *syntax.CmdSubst, *syntax.ProcSubst:
+		return true
+	}
+	return false
 }
 
 // callsIn returns every call expression under n, leftmost first.

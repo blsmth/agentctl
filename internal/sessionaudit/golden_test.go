@@ -98,6 +98,17 @@ func TestFixtureWithAndWithoutAudit(t *testing.T) {
 		}
 		return ""
 	}
+	// The fixture's tool_denied record has no tool_use_id (as the real
+	// PreToolUse writers produce): it is matched by command, once.
+	var denials []Finding
+	for _, f := range with.Findings {
+		if f.Rule == "denied" {
+			denials = append(denials, f)
+		}
+	}
+	if len(denials) != 1 || denials[0].Step != 16 || with.Metrics.Denied != 1 {
+		t.Errorf("denials = %+v (metric %d), want one at step 16", denials, with.Metrics.Denied)
+	}
 	if w := why(with); w != "refused by a person (audit trail)" {
 		t.Errorf("with audit: %q", w)
 	}

@@ -468,6 +468,9 @@ func (a *analysis) merge(recs []audit.Record) AuditTrail {
 	}
 	for _, rec := range recs {
 		s := byID[rec.ToolUseID]
+		if s == nil || s.matched {
+			s = a.matchByInput(rec)
+		}
 		if s == nil {
 			if rec.Event == audit.EventToolDenied {
 				a.orphans = append(a.orphans, rec)
@@ -491,6 +494,42 @@ func (a *analysis) merge(recs []audit.Record) AuditTrail {
 		s.matched = true
 	}
 	return t
+}
+
+// matchWindow is how far apart a record and its call may be when they are
+// matched by input rather than tool_use_id.
+const matchWindow = 5 * time.Second
+
+// matchByInput finds the step a record with no (or an unknown) tool_use_id
+// belongs to: the first unmatched step of the same tool with the same
+// command (Bash) or file path, called within matchWindow of the record. The
+// PreToolUse deny writers record no tool_use_id.
+func (a *analysis) matchByInput(rec audit.Record) *step {
+	ts, err := time.Parse(time.RFC3339Nano, rec.Timestamp)
+	if err != nil || len(rec.Input) == 0 {
+		return nil
+	}
+	var in map[string]any
+	if json.Unmarshal(rec.Input, &in) != nil {
+		return nil
+	}
+	key := "file_path"
+	if rec.Tool == "Bash" {
+		key = "command"
+	}
+	want, _ := in[key].(string)
+	if want == "" {
+		return nil
+	}
+	for _, s := range a.steps {
+		if s.matched || s.Tool != rec.Tool || s.str(key) != want || s.At.IsZero() {
+			continue
+		}
+		if d := ts.Sub(s.At); d <= matchWindow && d >= -matchWindow {
+			return s
+		}
+	}
+	return nil
 }
 
 // inferDenials reads denials and failures from the result text of every
