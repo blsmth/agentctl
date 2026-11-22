@@ -71,7 +71,7 @@ var fleetFooterHints = []fleetHint{
 var fleetNewHints = []fleetHint{
 	{"s", "shell"},
 	{"a", "agent"},
-	{"t", "schedule"},
+	{fleetCronKey, "cron"},
 	{"esc", "cancel"},
 }
 
@@ -195,6 +195,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"^b o", "back to list", ""},
 		{"b", "next blocked", "b"},
 		{"n", "new", "n"},
+		{fleetCronKey, "new cron (project)", fleetCronKey},
 		{fleetNewSessionKey, "new session", fleetNewSessionKey},
 		{"x", "close", "x"},
 		{fleetRenameKey, "rename", fleetRenameKey},

@@ -1250,6 +1250,9 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 		m.armNew(m.splitPane.Cursor())
 		return *m, nil
 
+	case fleetCronKey:
+		return *m, m.cronForGroup(m.groupOfLine(m.splitPane.Cursor()))
+
 	case fleetNewSessionKey:
 		m.openNewSession()
 		return *m, nil
@@ -2600,6 +2603,7 @@ type fleetHeaderSpans struct {
 	name  [2]int // fold marker and project name
 	sweep [2]int // sweep button; zero when not shown
 	add   [2]int // "+ new" button or armed selector; zero when not shown
+	cron  bool   // the armed selector shows its "cron" choice
 }
 
 // fleetSweepSep is the blank columns between the sweep button and "+ new".
@@ -2655,18 +2659,21 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 	}
 	limit := cw - fleetSidebarRightGutter
 
-	var add string
+	var add, addCron string
 	armed := m.newArmedFor(g)
 	if groupCanLaunch(g) && (armed || selected || hover != fleetHoverNone) {
 		if armed {
-			shell, agent := fleetDimStyle, fleetDimStyle
+			shell, agent, cron := fleetDimStyle, fleetDimStyle, fleetDimStyle
 			switch hover {
 			case fleetHoverNewShell:
 				shell = fleetNewHoverStyle
 			case fleetHoverNewAgent:
 				agent = fleetNewHoverStyle
+			case fleetHoverNewCron:
+				cron = fleetNewHoverStyle
 			}
 			add = shell.Render(fleetShellLabel) + fleetDimStyle.Render(fleetSelSep) + agent.Render(fleetAgentLabel)
+			addCron = add + fleetDimStyle.Render(fleetSelSep) + cron.Render(fleetCronLabel)
 		} else {
 			style := fleetDimStyle
 			if hover == fleetHoverNew {
@@ -2681,9 +2688,13 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 	}
 
 	var spans fleetHeaderSpans
+	showCounts := true
 	headW := fleetHeaderNameCol + 2 // marker, flag, fold marker and its space
 	build := func(sweep, add string) string {
 		right := counts.text
+		if !showCounts {
+			right = ""
+		}
 		btns := sweep
 		if add != "" {
 			if btns != "" {
@@ -2691,10 +2702,10 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 			}
 			btns += add
 		}
-		if btns != "" {
-			right += strings.Repeat(" ", fleetNewGap) + btns
+		if btns != "" && right != "" {
+			right += strings.Repeat(" ", fleetNewGap)
 		}
-		return right
+		return right + btns
 	}
 	fits := func(right string) bool { return limit-lipgloss.Width(right)-1 >= headW+fleetMinSweepName }
 	if sweep != "" && !fits(build(sweep, add)) {
@@ -2705,6 +2716,22 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 			add = ""
 		} else {
 			sweep = ""
+		}
+	}
+	if armed && add != "" {
+		// Three choices when they fit beside the counts and a minimal name;
+		// failing that the counts give way to the selector while it is
+		// armed; failing that cron does (its key still works).
+		switch {
+		case fits(build("", addCron)):
+			add, spans.cron = addCron, true
+		default:
+			showCounts = false
+			if fits(build("", addCron)) {
+				add, spans.cron = addCron, true
+			} else {
+				showCounts = true
+			}
 		}
 	}
 	right := build(sweep, add)

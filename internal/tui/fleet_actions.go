@@ -15,11 +15,16 @@ import (
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
+// fleetCronKey opens a new cron job for the selected group's project, also
+// while the "+ new" selector is armed.
+const fleetCronKey = "t"
+
 // Labels for the clickable affordances drawn on hub lines.
 const (
 	fleetNewLabel   = "+ new"
 	fleetShellLabel = "shell"
 	fleetAgentLabel = "agent"
+	fleetCronLabel  = "cron"
 	fleetSelSep     = " | "
 	fleetCloseLabel = "✕"
 )
@@ -238,6 +243,20 @@ func (m *FleetModel) shellForGroup(g *fleet.Group) tea.Cmd {
 	return fleetShellCmd(*g)
 }
 
+// cronForGroup opens the schedule form in create mode for g's project
+// (openSchedForm disarms the selector and loads the Schedules section).
+func (m *FleetModel) cronForGroup(g *fleet.Group) tea.Cmd {
+	if g == nil {
+		return nil
+	}
+	if !groupCanLaunch(*g) {
+		m.jumpErr = "cannot create a cron job for " + g.Session + ": unknown project directory"
+		return nil
+	}
+	m.jumpErr = ""
+	return m.openSchedForm(schedFormNew, nil, g.ProjectDir)
+}
+
 // armNew turns the header's "+ new" button of the group owning line idx into
 // the shell | agent selector. Groups that cannot launch never arm.
 func (m *FleetModel) armNew(idx int) {
@@ -283,15 +302,15 @@ func (m *FleetModel) handleNewKey(key string) (cmd tea.Cmd, handled bool) {
 	g := m.groupForSession(m.newSession)
 	if g == nil || !groupCanLaunch(*g) {
 		m.cancelNew()
-		return nil, key == "s" || key == "a" || key == "t" || key == "enter" || key == "esc" || key == "n"
+		return nil, key == "s" || key == "a" || key == fleetCronKey || key == "c" || key == "enter" || key == "esc" || key == "n"
 	}
 	switch key {
 	case "s":
 		m.cancelNew()
 		return m.shellForGroup(g), true
-	case "t":
+	case fleetCronKey, "c":
 		m.cancelNew()
-		return m.openSchedForm(schedFormNew, nil, g.ProjectDir), true
+		return m.cronForGroup(g), true
 	case "a", "enter":
 		m.cancelNew()
 		return m.launchForGroup(g), true
@@ -375,7 +394,7 @@ func (m *FleetModel) fleetMenuItems(idx int) []fleetMenuItem {
 		}
 	}
 	if g != nil && groupCanLaunch(*g) {
-		items = append(items, fleetMenuItem{"new", "n"})
+		items = append(items, fleetMenuItem{"new", "n"}, fleetMenuItem{"new cron", fleetCronKey})
 	}
 	if g != nil && m.lines[idx].kind == fleetLineHeader && groupCanSweep(*g) {
 		items = append(items, fleetMenuItem{"sweep", fleetSweepKey})
@@ -445,6 +464,8 @@ func (m *FleetModel) runMenuKey(key string) tea.Cmd {
 		return cmd
 	case "n":
 		m.armNew(line)
+	case fleetCronKey:
+		return m.cronForGroup(m.groupOfLine(line))
 	case fleetRenameKey:
 		return m.openRename(line)
 	case fleetSweepKey:
