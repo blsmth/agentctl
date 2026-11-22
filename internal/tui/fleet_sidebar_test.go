@@ -115,7 +115,7 @@ func TestSidebarSample_Render(t *testing.T) {
 	t.Logf("sample sidebar (cw=%d):\n%s", m.contentWidth(), got)
 
 	for _, want := range []string{
-		"go-engineer-opus ",                     // base name, no ":2"
+		"[go-engineer-opus]",                    // the chip names the agent: base name, no ":2"
 		"We are building",                       // recap wins
 		"#61 Redesign",                          // ticket task
 		"#60 25m",                               // done PR badge keeps the age
@@ -149,7 +149,7 @@ func TestSidebarRows_NeverExceedWidth(t *testing.T) {
 			for _, sel := range []bool{false, true} {
 				var out string
 				if l.kind == fleetLineRow {
-					out = m.renderTreeRow(l.row, l.treePrefix, l.nameCol, sel, cw)
+					out = m.renderTreeRow(l.row, l.treePrefix, sel, cw)
 				} else {
 					out = m.renderLine(i, cw)
 				}
@@ -171,7 +171,7 @@ func TestSidebarSelectedHighlightStopsBeforeGutter(t *testing.T) {
 	m := sampleSidebar(t, 56)
 	cw := m.contentWidth()
 	r := m.lines[m.splitPane.Cursor()]
-	out := m.renderTreeRow(r.row, r.treePrefix, r.nameCol, true, cw)
+	out := m.renderTreeRow(r.row, r.treePrefix, true, cw)
 	for _, line := range strings.Split(out, "\n") {
 		if !strings.HasSuffix(line, strings.Repeat(" ", fleetSidebarRightGutter)) {
 			t.Fatalf("selected line must end in %d plain gutter columns: %q", fleetSidebarRightGutter, line)
@@ -286,7 +286,7 @@ func TestRowRight(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cols := fitRightCols(200, ex, rowCtxWarn(tt.row, fleetDisplay{}), ex.rowModel(tt.row) != "", 0)
+			cols := fitRightCols(200, ex, rowCtxWarn(tt.row, fleetDisplay{}), ex.rowModel(tt.row) != "")
 			if got := ansi.Strip(rowRight(tt.row, cols, ex, fleetDisplay{})); got != tt.want {
 				t.Errorf("rowRight = %q, want %q", got, tt.want)
 			}
@@ -298,7 +298,7 @@ func TestRowRight_BlockedUsesBlockedStyle(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
 	r := fleet.Row{StateSince: sidebarNow.Add(-2 * time.Minute), AgentState: state.AgentState{State: "blocked"}}
-	cols := fitRightCols(200, fleetExceptions{}, false, false, 0)
+	cols := fitRightCols(200, fleetExceptions{}, false, false)
 	if got, want := rowRight(r, cols, fleetExceptions{}, fleetDisplay{}), fleetBlockedStyle.Render("2m"); !strings.HasSuffix(got, want) {
 		t.Errorf("blocked age = %q, want %q", got, want)
 	}
@@ -352,7 +352,7 @@ func TestRenderTreeRow_ConfirmKeepsInstanceName(t *testing.T) {
 	m := sampleSidebar(t, 120)
 	l := m.lines[m.splitPane.Cursor()]
 	m.confirmSession, m.confirmWindow = l.row.Session, l.row.WindowID
-	out := ansi.Strip(m.renderTreeRow(l.row, "", 0, false, m.contentWidth()))
+	out := ansi.Strip(m.renderTreeRow(l.row, "", false, m.contentWidth()))
 	if !strings.Contains(out, "close go-engineer-opus:2? y/n") {
 		t.Errorf("close prompt must name the full instance: %q", out)
 	}
@@ -400,7 +400,7 @@ func TestSidebarCloseButtonOneColumnFromPaneEdge(t *testing.T) {
 			}
 			found = true
 			// The ✕ shows on a hovered (or selected) row only.
-			line := ansi.Strip(m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, false, fleetHoverBody, n))
+			line := ansi.Strip(m.renderTreeRowHover(l.row, l.treePrefix, false, fleetHoverBody, n))
 			cols := []rune(line)
 			if len(cols) != n {
 				t.Fatalf("width %d: line is %d cols, want %d", n, len(cols), n)
@@ -454,14 +454,14 @@ func TestFleetHover_CloseAndNew(t *testing.T) {
 		t.Fatalf("region = %v, want close", got)
 	}
 	l := m.lines[rowIdx]
-	want := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, false, fleetHoverClose, cw)
+	want := m.renderTreeRowHover(l.row, l.treePrefix, false, fleetHoverClose, cw)
 	if got := m.renderLine(rowIdx, cw); got != want {
 		t.Error("hovered row not rendered with the close-hover style")
 	}
 	if !strings.Contains(want, fleetCloseHoverStyle.Render(fleetCloseLabel)) {
 		t.Error("rendered row lacks the styled ✕")
 	}
-	if plain := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, false, fleetHoverNone, cw); plain == want {
+	if plain := m.renderTreeRowHover(l.row, l.treePrefix, false, fleetHoverNone, cw); plain == want {
 		t.Error("hover must change the rendering")
 	}
 
@@ -518,7 +518,7 @@ func TestFleetHover_WidthInvariants(t *testing.T) {
 			}
 			for _, reg := range []fleetHoverRegion{fleetHoverBody, fleetHoverClose} {
 				for _, sel := range []bool{false, true} {
-					out := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, sel, reg, cw)
+					out := m.renderTreeRowHover(l.row, l.treePrefix, sel, reg, cw)
 					for _, line := range strings.Split(out, "\n") {
 						w := lipgloss.Width(line)
 						if w != cw { // every case here is highlighted (selected or hover tint)
@@ -552,16 +552,21 @@ func TestFleetHover_NameBoldRecapBright(t *testing.T) {
 			rs = fleetActivityHoverStyle
 		}
 		for _, sel := range []bool{false, true} {
-			hov := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, sel, fleetHoverBody, cw)
-			plain := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, sel, fleetHoverNone, cw)
-			if !strings.Contains(hov, renderAgentNameHover(base, w, true)) {
-				t.Errorf("row %d sel=%v: hovered name not bold", i, sel)
-			}
-			if !strings.Contains(plain, renderAgentName(base, w)) {
-				t.Errorf("row %d sel=%v: unhovered name changed", i, sel)
-			}
-			if w != fleetWeightBlocked && w != fleetWeightWorking && strings.Contains(plain, renderAgentNameHover(base, w, true)) {
-				t.Errorf("row %d sel=%v: unhovered name is bold", i, sel)
+			hov := m.renderTreeRowHover(l.row, l.treePrefix, sel, fleetHoverBody, cw)
+			plain := m.renderTreeRowHover(l.row, l.treePrefix, sel, fleetHoverNone, cw)
+			first := ansi.Strip(strings.Split(plain, "\n")[0])
+			if !rowNeedsNameFallback(l.row, rowRecap(l.row)) {
+				// Rows draw their title, never the agent name.
+				if strings.Contains(first, base) {
+					t.Errorf("row %d sel=%v: row line shows the agent name: %q", i, sel, first)
+				}
+			} else {
+				if !strings.Contains(hov, renderAgentNameHover(base, w, true)) {
+					t.Errorf("row %d sel=%v: hovered fallback name not bold", i, sel)
+				}
+				if !strings.Contains(plain, renderAgentName(base, w)) {
+					t.Errorf("row %d sel=%v: unhovered fallback name changed", i, sel)
+				}
 			}
 			if !strings.Contains(hov, fg(rs)) {
 				t.Errorf("row %d sel=%v: bright recap foreground missing", i, sel)
@@ -587,7 +592,7 @@ func TestFleetHover_BackgroundContinuous(t *testing.T) {
 			if l.kind != fleetLineRow {
 				continue
 			}
-			first := strings.Split(m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, tc.sel, tc.reg, cw), "\n")[0]
+			first := strings.Split(m.renderTreeRowHover(l.row, l.treePrefix, tc.sel, tc.reg, cw), "\n")[0]
 			body := strings.TrimSuffix(first, strings.Repeat(" ", fleetSidebarRightGutter))
 			// Every reset must be immediately followed by the background
 			// again, except the final one that closes the highlight.
@@ -618,11 +623,11 @@ func TestRenderTreeRow_ShortTitle(t *testing.T) {
 	r.Recap = fleet.RecapLine{Text: full, Source: fleet.RecapSummary, Title: "Organizing your Photos"}
 	cw := m.contentWidth()
 
-	row := ansi.Strip(m.renderTreeRow(r, l.treePrefix, l.nameCol, false, cw))
+	row := ansi.Strip(m.renderTreeRow(r, l.treePrefix, false, cw))
 	if !strings.Contains(row, "Organizing your Photos") || strings.Contains(row, "photo library") {
 		t.Errorf("list row should show the short title only: %q", row)
 	}
-	lines := strings.Split(ansi.Strip(m.renderTreeRow(r, l.treePrefix, l.nameCol, true, cw)), "\n")
+	lines := strings.Split(ansi.Strip(m.renderTreeRow(r, l.treePrefix, true, cw)), "\n")
 	if !strings.Contains(lines[0], "Organizing your Photos") {
 		t.Errorf("selected row line = %q", lines[0])
 	}
@@ -631,7 +636,7 @@ func TestRenderTreeRow_ShortTitle(t *testing.T) {
 	}
 
 	r.Recap.Title = ""
-	if row := ansi.Strip(m.renderTreeRow(r, l.treePrefix, l.nameCol, false, cw)); !strings.Contains(row, "Moved the photo") {
+	if row := ansi.Strip(m.renderTreeRow(r, l.treePrefix, false, cw)); !strings.Contains(row, "Moved the photo") {
 		t.Errorf("without a title the row shows the recap text: %q", row)
 	}
 }

@@ -124,9 +124,11 @@ func TestCollapseMarkerAlignment(t *testing.T) {
 	if col(p, fleetUnfoldedGlyph) != col(x, "x ") {
 		t.Errorf("marker at %d, childless name at %d", col(p, fleetUnfoldedGlyph), col(x, "x "))
 	}
-	// Titles still line up.
-	if col(p, "no prompt") != col(x, "no prompt") || col(p, "no prompt") != col(b, "no prompt") {
-		t.Errorf("titles misaligned:\n%q\n%q\n%q", p, x, b)
+	// There is no name column: a row's text starts right after its marker
+	// (or where the marker would be), so the text of a parent sits two
+	// columns right of a childless root's.
+	if col(p, "no prompt") != col(x, "no prompt")+fleetCollapseMarkerW {
+		t.Errorf("parent text at %d, childless root text at %d", col(p, "no prompt"), col(x, "no prompt"))
 	}
 
 	m.selectLine(lineIndex(t, m, "R:p"))

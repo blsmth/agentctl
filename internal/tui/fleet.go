@@ -331,10 +331,6 @@ type fleetLine struct {
 	groupHead  bool        // true for the first row of a group (blank line above)
 	label      string      // set for fleetLineSubheader, e.g. "dispatched (2)"
 	treePrefix string      // connector prefix for fleetLineRow ("" for roots)
-	// nameCol is the group's uncapped name-column width (tree prefix plus
-	// base name, max over its rows) for fleetLineRow; renderTreeRow caps it
-	// at render time so recaps line up within a group.
-	nameCol int
 	// dimmed marks a fleetLineRow the attention filter keeps only as the
 	// ancestor of a matching row; it renders muted.
 	dimmed bool
@@ -1939,7 +1935,6 @@ func (m *FleetModel) rebuildLines() {
 			continue
 		}
 		first := true
-		start := len(lines)
 		tree := treeRows(rows)
 		for j := 0; j < len(tree); j++ {
 			t := tree[j]
@@ -1963,17 +1958,6 @@ func (m *FleetModel) rebuildLines() {
 			}
 			lines = append(lines, l)
 			first = false
-		}
-		// The name column fits every drawn row: tree prefix, collapse marker
-		// and name (the role, on a role row).
-		nameCol := 0
-		for _, l := range lines[start:] {
-			if l.kind == fleetLineRow {
-				nameCol = max(nameCol, rowNameColW(l))
-			}
-		}
-		for k := start; k < len(lines); k++ {
-			lines[k].nameCol = nameCol
 		}
 	}
 	if closed := m.closedLines(); len(closed) > 0 {
@@ -2744,7 +2728,7 @@ func groupStateCounts(g fleet.Group, digits, gap int) fleetGroupCounts {
 
 // renderRow renders one agent row.
 func (m FleetModel) renderRow(r fleet.Row, selected bool, cw int) string {
-	return m.renderTreeRow(r, "", 0, selected, cw)
+	return m.renderTreeRow(r, "", selected, cw)
 }
 
 // fleetNow is the clock row ages are measured against; tests replace it.
@@ -2822,7 +2806,6 @@ const (
 // work; the age goes first because the glyph already says the state and the
 // hover card the time.
 type fleetRightCols struct {
-	agent        bool // a role row's agent name drawn (left of the model)
 	modelW       int  // model column width; 0 = not drawn
 	ctx          bool // context column drawn (blank on rows below the warn threshold)
 	pr, age      bool
@@ -2850,11 +2833,8 @@ func joinedWidth(ws ...int) int {
 // only on the rows that draw them (ownModel, ownCtx), and a blank leading
 // column is trimmed at render time, so its width goes back to the recap.
 // Order as the row narrows: age, then the model, then the PR; the context
-// warning is never dropped. A role row's agent name (ownAgentW columns, 0 =
-// none) is leftmost and goes before all of them: it is drawn only when it
-// fits beside everything else the row draws and fleetMinTitleBesideAgent
-// columns of title, and like the model it counts on its own row only.
-func fitRightCols(available int, ex fleetExceptions, ownCtx, ownModel bool, ownAgentW int) fleetRightCols {
+// warning is never dropped.
+func fitRightCols(available int, ex fleetExceptions, ownCtx, ownModel bool) fleetRightCols {
 	fits := func(w int) bool { return available-w-1 >= fleetMinRecapWidth }
 	ctxAll, ctxRow := 0, 0
 	if ex.ctx || ownCtx {
@@ -2869,17 +2849,6 @@ func fitRightCols(available int, ex fleetExceptions, ownCtx, ownModel bool, ownA
 		c.modelW = ex.modelW
 	}
 	c.age = c.pr && fits(joinedWidth(ex.modelW, ctxAll, fleetPRSlotW, fleetAgeSlotW))
-	if ownAgentW > 0 {
-		prW, ageW := 0, 0
-		if c.pr {
-			prW = fleetPRSlotW
-		}
-		if c.age {
-			ageW = fleetAgeSlotW
-		}
-		w := joinedWidth(ownAgentW, c.modelW, ctxAll, prW, ageW)
-		c.agent = available-w-1 >= fleetMinTitleBesideAgent
-	}
 	return c
 }
 
@@ -2915,16 +2884,13 @@ func rowAge(r fleet.Row) string {
 const fleetNoAge = "–"
 
 // rowRight renders the right-aligned status columns before the close button:
-// a role row's dim agent name (fitRightCols' agent), the model exception (ex.rowModel), the context warning in its threshold
+// the model exception (ex.rowModel), the context warning in its threshold
 // colour, the PR badge ("#60", in the done style on a done row) and the age
 // (rowAge), each right-aligned in its slot one space apart. Blank leading
 // columns are trimmed so the recap may use them; inner blanks stay so the
 // columns line up down the list.
 func rowRight(r fleet.Row, c fleetRightCols, ex fleetExceptions, d fleetDisplay) string {
 	var parts []string
-	if c.agent && r.ShortRole != "" {
-		parts = append(parts, fleetDimStyle.Render(fleet.BaseName(r)))
-	}
 	if c.modelW > 0 {
 		var model string
 		if mn := ex.rowModel(r); mn != "" {
@@ -2988,16 +2954,16 @@ func recapStyle(w fleetWeight, src fleet.RecapSource) lipgloss.Style {
 // selected row also renders its detail lines (see rowDetail) beneath it,
 // joined by newlines; every line measures at most cw (exactly cw when
 // selected).
-func (m FleetModel) renderTreeRow(r fleet.Row, treePrefix string, nameCol int, selected bool, cw int) string {
-	return m.renderTreeRowHover(r, treePrefix, nameCol, selected, fleetHoverNone, cw)
+func (m FleetModel) renderTreeRow(r fleet.Row, treePrefix string, selected bool, cw int) string {
+	return m.renderTreeRowHover(r, treePrefix, selected, fleetHoverNone, cw)
 }
 
 // renderTreeRowHover is renderTreeRow with the hover region of this row: a
 // body hover tints an unselected row, a close hover recolours the ✕. The ✕
 // is drawn only on the selected and the hovered row; every other row keeps
 // its one-cell slot blank so alignment and hit regions never change.
-func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol int, selected bool, hover fleetHoverRegion, cw int) string {
-	return m.renderRowLine(fleetLine{kind: fleetLineRow, row: r, treePrefix: treePrefix, nameCol: nameCol}, selected, hover, cw)
+func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, selected bool, hover fleetHoverRegion, cw int) string {
+	return m.renderRowLine(fleetLine{kind: fleetLineRow, row: r, treePrefix: treePrefix}, selected, hover, cw)
 }
 
 // renderRowLine renders the agent row line l (see renderTreeRowHover), with
@@ -3008,7 +2974,7 @@ func (m FleetModel) renderRowLine(l fleetLine, selected bool, hover fleetHoverRe
 	if !selected {
 		return out
 	}
-	for _, d := range rowDetailStyled(l.row, l.treePrefix, cw, m.display, m.viewerShows(l.row), lay.nameShown) {
+	for _, d := range rowDetailStyled(l.row, l.treePrefix, cw, m.display, m.viewerShows(l.row)) {
 		out += "\n" + fleetFitLine(d, true, cw)
 	}
 	return out
@@ -3020,8 +2986,8 @@ func (m FleetModel) renderRowLine(l fleetLine, selected bool, hover fleetHoverRe
 // The span is zero when no title text is drawn (a shell row, a close
 // confirmation, a column too narrow). While the row is being renamed the
 // editor is drawn there and the span covers the editor.
-func (m FleetModel) treeRowLayout(r fleet.Row, treePrefix string, nameCol int, selected bool, hover fleetHoverRegion, cw int) (string, [2]int) {
-	lay := m.rowLayout(fleetLine{kind: fleetLineRow, row: r, treePrefix: treePrefix, nameCol: nameCol}, selected, hover, cw)
+func (m FleetModel) treeRowLayout(r fleet.Row, treePrefix string, selected bool, hover fleetHoverRegion, cw int) (string, [2]int) {
+	lay := m.rowLayout(fleetLine{kind: fleetLineRow, row: r, treePrefix: treePrefix}, selected, hover, cw)
 	return lay.line, lay.title
 }
 
@@ -3031,39 +2997,16 @@ type fleetRowLayout struct {
 	// title is the [start, end) columns of the title text (see
 	// treeRowLayout); marker is the collapse marker's, zero when none.
 	title, marker [2]int
-	// nameShown reports whether the row shows the agent's whole base name:
-	// in the name column, or for a role row on the right (rowRight). The
-	// detail chips add it when not.
-	nameShown bool
-}
-
-// rowLabel is what a row's name column shows: the role of a sub-agent row
-// (Row.ShortRole), whose agent name moves to the right-hand columns, else
-// the base agent name.
-func rowLabel(r fleet.Row) string {
-	if r.ShortRole != "" {
-		return r.ShortRole
-	}
-	return fleet.BaseName(r)
-}
-
-// rowNameColW is the uncapped name-column width row line l needs: its tree
-// prefix, its collapse marker and its label.
-func rowNameColW(l fleetLine) int {
-	w := lipgloss.Width(l.treePrefix) + lipgloss.Width(rowLabel(l.row))
-	if l.hasKids {
-		w += fleetCollapseMarkerW
-	}
-	return w
 }
 
 // rowLayout lays out the row line l: cursor, glyph, tree prefix (dim), the
-// collapse marker of a parent row, the label (rowLabel), the recap title (a
+// collapse marker of a parent row, a sub-agent row's role label
+// (Row.ShortRole; normal rows have none), the recap title (a
 // collapsed parent's subtree summary after it), then the right-aligned
 // columns and the close button.
 func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion, cw int) fleetRowLayout {
 	var lay fleetRowLayout
-	r, treePrefix, nameCol := l.row, l.treePrefix, l.nameCol
+	r, treePrefix := l.row, l.treePrefix
 	glyph, style := rowGlyph(r)
 	weight := rowStyleWeight(r, fleetNow())
 	cursor := fleetRowCursor(r, selected)
@@ -3073,26 +3016,23 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 	closeW := 1 + lipgloss.Width(fleetCloseLabel)
 	inner := cw - fleetSidebarRightGutter
 	nameBudget := fleetRowNameCap(cw)
-	col := min(nameCol, nameBudget)
 	treePrefix = fleetKeptPrefix(treePrefix, cw)
 	markerW := 0
 	if l.hasKids {
 		markerW = fleetCollapseMarkerW
 	}
 	nameBudget -= lipgloss.Width(treePrefix) + markerW
-	label := rowLabel(r)
-	name := truncateToWidth(label, nameBudget)
+	name := truncateToWidth(r.ShortRole, nameBudget)
 
 	ctxWarn := rowCtxWarn(r, m.display)
 	// A context warning is never dropped: on a sidebar too narrow for it and
-	// the minimum recap, the name gives way instead (contentWidth keeps the
+	// the minimum recap, the role label gives way instead (contentWidth keeps the
 	// hub wider than this, so it only bites below 40 columns).
 	if ctxWarn && !m.confirmingRow(r) {
-		used := lipgloss.Width(cursor) + 2 + max(col, lipgloss.Width(treePrefix)+markerW+lipgloss.Width(name)) + 2 + closeW
-		if short := fleetMinRecapWidth + fleetCtxSlotW + 1 - (inner - used); short > 0 {
+		used := lipgloss.Width(cursor) + 2 + lipgloss.Width(treePrefix) + markerW + lipgloss.Width(name) + 2 + closeW
+		if short := fleetMinRecapWidth + fleetCtxSlotW + 1 - (inner - used); short > 0 && name != "" {
 			nameBudget = max(nameBudget-short, 1)
-			name = truncateToWidth(label, nameBudget)
-			col = min(col, lipgloss.Width(treePrefix)+markerW+nameBudget)
+			name = truncateToWidth(r.ShortRole, nameBudget)
 		}
 	}
 
@@ -3103,23 +3043,15 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 		lay.marker = [2]int{start, start + 1}
 		marker = collapseMarker(l.collapsed, hover == fleetHoverCollapse) + " "
 	}
-	padW := max(col-lipgloss.Width(treePrefix)-markerW-lipgloss.Width(name), 0)
-	prefix := head + marker + renderAgentNameHover(name, weight, hovered) + strings.Repeat(" ", padW) + "  "
+	prefix := head + marker
+	if name != "" {
+		prefix += renderAgentNameHover(name, weight, hovered) + "  "
+	}
 	available := inner - lipgloss.Width(prefix) - closeW
 
-	// A role row's agent name sits on the right, left of the model column.
-	var agent string
-	if r.ShortRole != "" {
-		agent = fleet.BaseName(r)
-	}
 	var cols fleetRightCols
 	if !r.Shell {
-		cols = fitRightCols(available, m.except, ctxWarn, m.except.rowModel(r) != "", lipgloss.Width(agent))
-	}
-	if r.ShortRole != "" {
-		lay.nameShown = cols.agent
-	} else {
-		lay.nameShown = name == label
+		cols = fitRightCols(available, m.except, ctxWarn, m.except.rowModel(r) != "")
 	}
 
 	closeStyle := fleetDimStyle
@@ -3172,7 +3104,21 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 			lay.title = [2]int{start, start + max(available, lipgloss.Width(editor))}
 		} else {
 			title := fleet.TruncateWords(recap.Short(), max(available, 0))
-			text = tag + renderRecapTitle(title, rs)
+			if rowNeedsNameFallback(r, recap) {
+				// No title and no recap text: the agent name keeps the row from
+				// being blank (a shell row's recap is empty by design).
+				title = truncateToWidth(fleet.BaseName(r), max(available, 0))
+				text = tag + renderAgentNameHover(title, weight, hovered)
+				if rest := max(available-lipgloss.Width(title)-2, 0); !r.Shell && rest > 0 && recap.Text != "" {
+					extra := fleet.TruncateWords(recap.Text, rest)
+					if extra != "" {
+						text += "  " + fleetEmptyStyle.Render(extra)
+						title += "  " + extra
+					}
+				}
+			} else {
+				text = tag + renderRecapTitle(title, rs)
+			}
 			if w := lipgloss.Width(title); w > 0 {
 				lay.title = [2]int{start, start + w}
 			}
@@ -3203,9 +3149,15 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 	return lay
 }
 
-// fleetMinTitleBesideAgent is the title width a role row must keep for its
-// agent name to be drawn on the right.
-const fleetMinTitleBesideAgent = 16
+// rowNeedsNameFallback reports whether row r has nothing to show as its title
+// and falls back to the agent's base name: a shell row, or a normal row whose
+// recap is the empty-state sentence. A role row keeps its role label instead.
+func rowNeedsNameFallback(r fleet.Row, recap fleet.RecapLine) bool {
+	if r.ShortRole != "" {
+		return false
+	}
+	return r.Shell || recap.Source == fleet.RecapNone
+}
 
 // leadingIssue matches a title's leading issue number ("#21 Crotch…").
 var leadingIssue = regexp.MustCompile(`^#\d+\b`)
@@ -3326,15 +3278,6 @@ func fleetRowNameCap(cw int) int {
 	return min(fleetNameBudget(cw), max(maxCol, 0))
 }
 
-// rowNameFits reports whether the row's name column shows its whole base
-// name (see renderTreeRowHover) for a kept tree prefix of width prefixW.
-func rowNameFits(r fleet.Row, prefixW, cw int) bool {
-	if r.ShortRole != "" {
-		return false // the name column shows the role, not the name
-	}
-	return lipgloss.Width(fleet.BaseName(r)) <= fleetRowNameCap(cw)-prefixW
-}
-
 // fleetContinuation turns a (kept) tree prefix into the continuation drawn
 // beside detail lines: "│  " where siblings follow at that depth, spaces
 // otherwise. The result has the same display width as the prefix.
@@ -3389,18 +3332,12 @@ type fleetDetailLine struct {
 // this. prefixW is the width of the row's kept tree prefix
 // (fleetKeptPrefix).
 func rowDetail(r fleet.Row, prefixW, cw int, d fleetDisplay, viewed bool) []fleetDetailLine {
-	return rowDetailFor(r, prefixW, cw, d, viewed, rowNameFits(r, prefixW, cw))
-}
-
-// rowDetailFor is rowDetail when the caller knows from the row's layout
-// whether it shows the agent's whole name (fleetRowLayout.nameShown).
-func rowDetailFor(r fleet.Row, prefixW, cw int, d fleetDisplay, viewed, nameShown bool) []fleetDetailLine {
 	w := cw - fleetSidebarRightGutter - fleetDetailIndent - prefixW
 	if w < fleetMinRecapWidth {
 		return nil
 	}
 	out := rowDetailText(r, w, viewed)
-	if chips := rowChips(r, nameShown, d); len(chips) > 0 {
+	if chips := rowChips(r, d); len(chips) > 0 {
 		styled := renderChips(chips, w)
 		out = append(out, fleetDetailLine{text: ansi.Strip(styled), styled: styled})
 	}
@@ -3459,10 +3396,10 @@ func activityMarker(r fleet.Row, text string) (marker, shown string) {
 
 // rowDetailStyled renders rowDetail's lines with the bar, indent and the
 // tree continuation for the row's (already clamped) prefix.
-func rowDetailStyled(r fleet.Row, treePrefix string, cw int, disp fleetDisplay, viewed, nameShown bool) []string {
+func rowDetailStyled(r fleet.Row, treePrefix string, cw int, disp fleetDisplay, viewed bool) []string {
 	indent := fleetProjectBar(r.Project) + strings.Repeat(" ", fleetDetailIndent-1) + fleetDimStyle.Render(fleetContinuation(treePrefix))
 	var out []string
-	for _, d := range rowDetailFor(r, lipgloss.Width(treePrefix), cw, disp, viewed, nameShown) {
+	for _, d := range rowDetail(r, lipgloss.Width(treePrefix), cw, disp, viewed) {
 		if d.styled != "" {
 			out = append(out, indent+d.styled)
 			continue
@@ -3505,8 +3442,7 @@ func (m FleetModel) lineHeight(i, cw int) int {
 		return 0
 	}
 	if l := m.lines[i]; l.kind == fleetLineRow && i == m.splitPane.Cursor() {
-		shown := m.rowLayout(l, true, fleetHoverNone, cw).nameShown
-		return 1 + len(rowDetailFor(l.row, lipgloss.Width(fleetKeptPrefix(l.treePrefix, cw)), cw, m.display, m.viewerShows(l.row), shown))
+		return 1 + len(rowDetail(l.row, lipgloss.Width(fleetKeptPrefix(l.treePrefix, cw)), cw, m.display, m.viewerShows(l.row)))
 	}
 	return 1
 }

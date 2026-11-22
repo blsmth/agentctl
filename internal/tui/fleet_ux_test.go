@@ -45,7 +45,7 @@ func TestCloseGlyphOnlySelectedOrHovered(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			l := m.lines[tt.line]
-			out := m.renderTreeRowHover(l.row, l.treePrefix, l.nameCol, tt.line == sel, tt.hover, cw)
+			out := m.renderTreeRowHover(l.row, l.treePrefix, tt.line == sel, tt.hover, cw)
 			first := firstLine(out)
 			if got := strings.Contains(first, fleetCloseLabel); got != tt.wantShow {
 				t.Errorf("✕ shown = %v, want %v: %q", got, tt.wantShow, first)
@@ -93,7 +93,7 @@ func TestRowRightColumnsAlign(t *testing.T) {
 			if tt.age > 0 {
 				r.StateSince = ago(tt.age)
 			}
-			line := []rune(firstLine(m.renderTreeRowHover(r, "", 8, false, fleetHoverNone, cw)))
+			line := []rune(firstLine(m.renderTreeRowHover(r, "", false, fleetHoverNone, cw)))
 			// Right edge: gutter, ✕ slot, space, then the age slot.
 			ageCol := cw - fleetSidebarRightGutter - 1 - 1 - 1
 			prCol := ageCol - fleetAgeSlotW - 1
@@ -156,7 +156,7 @@ func TestFitRightColsDegradesWithoutExceptions(t *testing.T) {
 		{0, false, false},
 	}
 	for _, tt := range tests {
-		c := fitRightCols(tt.available, fleetExceptions{}, false, false, 0)
+		c := fitRightCols(tt.available, fleetExceptions{}, false, false)
 		if c.pr != tt.pr || c.age != tt.age || c.modelW != 0 || c.ctx {
 			t.Errorf("fitRightCols(%d) = %+v, want pr=%v age=%v", tt.available, c, tt.pr, tt.age)
 		}
@@ -302,6 +302,16 @@ func TestGroupHeaderDottedProjectSession(t *testing.T) {
 	}
 }
 
+// withoutChipLine drops the trailing chip line (rows never draw the agent
+// name, so a selected row always has one) after checking it is there.
+func withoutChipLine(t *testing.T, d []fleetDetailLine) []fleetDetailLine {
+	t.Helper()
+	if len(d) == 0 || !strings.HasPrefix(d[len(d)-1].text, "[") {
+		t.Fatalf("detail has no trailing chip line: %+v", d)
+	}
+	return d[:len(d)-1]
+}
+
 func TestRowDetailActivityIsOneLine(t *testing.T) {
 	long := strings.Repeat("arg ", 40)
 	tests := []struct {
@@ -322,7 +332,7 @@ func TestRowDetailActivityIsOneLine(t *testing.T) {
 			if r.Recap.Source != fleet.RecapActivity {
 				t.Fatalf("fixture: source = %v", r.Recap.Source)
 			}
-			d := rowDetail(r, 0, 56, fleetDisplay{}, false)
+			d := withoutChipLine(t, rowDetail(r, 0, 56, fleetDisplay{}, false))
 			if len(d) != 1 {
 				t.Fatalf("activity expansion = %d lines, want 1: %+v", len(d), d)
 			}
@@ -334,7 +344,7 @@ func TestRowDetailActivityIsOneLine(t *testing.T) {
 	// Summary text still wraps.
 	r := testRow("w", "s", "working", "")
 	r.Recap = fleet.RecapLine{Text: long, Source: fleet.RecapSummary}
-	if n := len(rowDetail(r, 0, 56, fleetDisplay{}, false)); n != fleetDetailMaxLines {
+	if n := len(withoutChipLine(t, rowDetail(r, 0, 56, fleetDisplay{}, false))); n != fleetDetailMaxLines {
 		t.Errorf("summary expansion = %d lines, want %d", n, fleetDetailMaxLines)
 	}
 }
@@ -373,11 +383,11 @@ func TestEmptyRowFallback(t *testing.T) {
 		t.Error("fleet.Recap must stay pure")
 	}
 	m := newFleetModel()
-	out := m.renderTreeRowHover(r, "", 1, false, fleetHoverNone, 80)
+	out := m.renderTreeRowHover(r, "", false, fleetHoverNone, 80)
 	if !strings.Contains(out, fleetEmptyStyle.Render("no prompt yet · 4m")) {
 		t.Errorf("fallback not rendered muted italic: %q", ansi.Strip(out))
 	}
-	if d := rowDetail(r, 0, 80, fleetDisplay{}, false); len(d) != 0 {
+	if d := withoutChipLine(t, rowDetail(r, 0, 80, fleetDisplay{}, false)); len(d) != 0 {
 		t.Errorf("fallback must not expand: %+v", d)
 	}
 }

@@ -47,13 +47,13 @@ func TestLineAt(t *testing.T) {
 	}{
 		{"subheader", 40, -1, 5, 3, 1, true},
 		{"first row", 40, -1, 5, 4, 2, true},
-		{"row b", 40, -1, 5, 5, 3, true},
-		{"divider", 40, -1, 5, 6, 4, true},
-		{"header", 40, -1, 5, 7, 5, true},
-		{"row c", 40, -1, 5, 9, 7, true},
+		{"row b", 40, -1, 5, 6, 3, true}, // the selected row a has a chip line
+		{"divider", 40, -1, 5, 7, 4, true},
+		{"header", 40, -1, 5, 8, 5, true},
+		{"row c", 40, -1, 5, 10, 7, true},
 		{"title", 40, -1, 5, 0, -1, false},
 		{"blank row above list", 40, -1, 5, 1, -1, false},
-		{"below last line", 40, -1, 5, 10, -1, false},
+		{"below last line", 40, -1, 5, 11, -1, false},
 		{"scrolled", 10, 5, 5, 3, 3, true},
 	}
 	for _, tt := range tests {
@@ -88,9 +88,9 @@ func TestClickDecision(t *testing.T) {
 		wantIdx int
 	}{
 		{"row selects", 5, 4, 0, fleetClickSelect, 2},
-		{"header selects", 1, 7, 2, fleetClickSelect, 5},
-		{"header name folds", 5, 7, 2, fleetClickFold, 5},
-		{"divider ignored", 5, 6, 2, fleetClickIgnore, 4},
+		{"header selects", 1, 8, 2, fleetClickSelect, 5},
+		{"header name folds", 5, 8, 2, fleetClickFold, 5},
+		{"divider ignored", 5, 7, 2, fleetClickIgnore, 4},
 		{"subheader ignored", 5, 3, 2, fleetClickIgnore, 1},
 		{"chrome ignored", 5, 0, 1, fleetClickIgnore, -1},
 	}
@@ -108,7 +108,7 @@ func TestClickDecision(t *testing.T) {
 
 func TestClickHeaderSelectsWithoutJump(t *testing.T) {
 	m := mouseTestModel(t, 120, 40)
-	next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: 7})
+	next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: 8})
 	got := next.(FleetModel)
 	if !got.selIsHeader || got.selSession != "s2" || got.selWindowID != "" {
 		t.Errorf("selection = %q/%q/%v, want header of s2", got.selSession, got.selWindowID, got.selIsHeader)
@@ -171,7 +171,7 @@ func TestButtonDecision(t *testing.T) {
 	w := m.listColWidth()
 	newX := w - fleetSidebarRightGutter - 2 // inside "+ new"
 	closeX := w - fleetSidebarRightGutter - 1
-	// y: 2 header(s1), 3 dispatched label, 4 row a, 5 row b, 6 divider, 7 header(s2), 8 dispatched label, 9 row c
+	// y: 2 header(s1), 3 dispatched label, 4 row a (selected: 5 is its agent chip), 6 row b, 7 divider, 8 header(s2), 9 dispatched label, 10 row c
 	tests := []struct {
 		name       string
 		x, y       int
@@ -184,17 +184,17 @@ func TestButtonDecision(t *testing.T) {
 		{"header gap before counts selects", newX - 30, 2, tea.MouseLeft, 0, fleetClickSelect},
 		{"header fold marker folds", fleetHeaderNameCol, 2, tea.MouseLeft, 0, fleetClickFold},
 		{"header space before name folds", fleetHeaderNameCol + 1, 2, tea.MouseLeft, 0, fleetClickFold},
-		{"stale header has no button", newX, 7, tea.MouseLeft, 5, fleetClickSelect},
+		{"stale header has no button", newX, 8, tea.MouseLeft, 5, fleetClickSelect},
 		{"row close button", closeX, 4, tea.MouseLeft, 2, fleetClickClose},
 		{"row elsewhere selects", 5, 4, tea.MouseLeft, 2, fleetClickSelect},
-		{"stale row still closable", closeX, 9, tea.MouseLeft, 7, fleetClickClose},
+		{"stale row still closable", closeX, 10, tea.MouseLeft, 7, fleetClickClose},
 		{"row new column is not a button", newX - 4, 4, tea.MouseLeft, 2, fleetClickSelect},
 		{"right click row", 5, 4, tea.MouseRight, 2, fleetClickMenu},
 		{"right click row on close col", closeX, 4, tea.MouseRight, 2, fleetClickMenu},
 		{"left click subheader", closeX, 3, tea.MouseLeft, 1, fleetClickIgnore},
 		{"right click subheader", 5, 3, tea.MouseRight, 1, fleetClickIgnore},
 		{"right click header", 5, 2, tea.MouseRight, 0, fleetClickMenu},
-		{"right click divider", 5, 6, tea.MouseRight, 4, fleetClickIgnore},
+		{"right click divider", 5, 7, tea.MouseRight, 4, fleetClickIgnore},
 		{"middle click", 5, 4, tea.MouseMiddle, -1, fleetClickIgnore},
 	}
 	for _, tt := range tests {
@@ -267,7 +267,7 @@ func TestHandleClickActions(t *testing.T) {
 	})
 	t.Run("clicking another row cancels", func(t *testing.T) {
 		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: closeX, Y: 4})
-		next, _ = next.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 5})
+		next, _ = next.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 6})
 		if next.(FleetModel).closeArmed() {
 			t.Error("selection moving away should cancel")
 		}
