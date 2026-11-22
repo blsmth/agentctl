@@ -204,7 +204,7 @@ func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m.clickMenu(msg.X)
 	}
 	if m.newSessionOpen() {
-		if msg.Y == m.footerMessageY() {
+		if y := m.footerMessageY(); msg.Y >= y && msg.Y < y+m.newSessionLines() {
 			return m, nil // a click on the prompt itself keeps it open
 		}
 		m.cancelNewSession() // any other click dismisses the prompt

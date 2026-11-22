@@ -1091,9 +1091,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.pasteSchedForm(msg)
 		}
 		if m.newSessionOpen() {
-			var cmd tea.Cmd
-			m.dirPrompt.input, cmd = m.dirPrompt.input.Update(msg)
-			return m, cmd
+			return m, m.updateNewSessionInput(msg)
 		}
 		if m.renameOpen() {
 			var cmd tea.Cmd

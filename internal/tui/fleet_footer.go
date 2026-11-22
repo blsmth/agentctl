@@ -142,7 +142,7 @@ func (m FleetModel) footerBody(cw int) string {
 	hints := fleetFooterHints
 	switch {
 	case m.newSessionOpen():
-		hints = fleetNewSessionHints
+		hints = m.newSessionHints()
 	case m.renameOpen():
 		hints = fleetRenameHints
 	case m.newArmed():
