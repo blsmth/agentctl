@@ -44,6 +44,9 @@ type goRunCall struct {
 	// operator is attached to it ("x&&go").
 	prefix  string
 	verdict rootVerdict
+	// substAt is the token index where a command substitution package
+	// word opens (`go run $(pwd)`), else -1.
+	substAt int
 }
 
 // shellDir is the directory a simple command runs in, as far as the scanner
@@ -66,7 +69,18 @@ func checkGoRunAgentctl(command, cwd string) (reason string) {
 			reason = ""
 		}
 	}()
-	for _, c := range goRunScan(rawInvocationTokens(command), cwd) {
+	// The main line is scanned with its cd chain. A nested command line (a
+	// bash -c or "$(...)" body, appended after the main line) is scanned
+	// from cwd and from an unknown dir, since where it runs relative to the
+	// main line's cds is not modeled.
+	main, nested := invocationParts(command)
+	calls := goRunScan(tokenizeQuoted(strings.TrimSpace(main)), cwd, scanDeny)
+	for _, line := range nested {
+		toks := tokenizeQuoted(strings.TrimSpace(line))
+		calls = append(calls, goRunScan(toks, cwd, scanDeny)...)
+		calls = append(calls, goRunScan(toks, "", scanDeny)...)
+	}
+	for _, c := range calls {
 		switch c.verdict {
 		case isRoot:
 			return goRunAgentctlReason
@@ -82,9 +96,14 @@ func checkGoRunAgentctl(command, cwd string) (reason string) {
 // rewriteGoRunAgentctl replaces every `go run <pkg> [--]` that runs, or may
 // run, the agentctl root package with one `agentctl` token marked
 // fromSource, so the dispatch and cron gates see `go run . dispatch` as
-// `agentctl dispatch`. The hook does not thread the Bash cwd this far, so a
-// `.` with no absolute `cd` before it counts as agentctl (fail toward the
-// gate). On a scanner panic every `go run` counts (fail closed).
+// `agentctl dispatch`. It scans in scanGate mode: the Bash cwd is not
+// threaded this far and cd is ignored (a cd in a subshell, a pipeline or a
+// failed && chain does not move the outer shell), so a `.` always counts as
+// agentctl (fail toward the gate); only go's own -C and absolute paths can
+// show it is another package. A `go run` anywhere in a simple command
+// counts, behind a wrapper (timeout, xargs, sudo) too, like the binary-path
+// match in dispatchSegments. On a scanner panic every `go run` counts (fail
+// closed).
 func rewriteGoRunAgentctl(tokens []cmdToken) (out []cmdToken) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -92,13 +111,13 @@ func rewriteGoRunAgentctl(tokens []cmdToken) (out []cmdToken) {
 			out = rewriteGoRunCrude(tokens)
 		}
 	}()
-	calls := goRunScan(tokens, "")
+	calls := goRunScan(tokens, "", scanGate)
 	if len(calls) == 0 {
 		return tokens
 	}
 	last := 0
 	for _, c := range calls {
-		if c.verdict == notRoot {
+		if c.verdict == notRoot || c.start < last || c.end < c.start {
 			continue
 		}
 		out = append(out, tokens[last:c.start]...)
@@ -115,12 +134,13 @@ func rewriteGoRunAgentctl(tokens []cmdToken) (out []cmdToken) {
 }
 
 // rewriteGoRunCrude is the panic fallback of rewriteGoRunAgentctl: each
-// `go run` and the words up to its first non-flag word become `agentctl`.
+// `go [-C dir] run`, its flags and its first non-flag word become
+// `agentctl`.
 func rewriteGoRunCrude(tokens []cmdToken) []cmdToken {
 	var out []cmdToken
 	for i := 0; i < len(tokens); i++ {
-		if i+1 < len(tokens) && tokens[i].text == "go" && tokens[i+1].text == "run" {
-			j := i + 2
+		if j, ok := crudeRunIndex(tokens, i); ok {
+			j++
 			for j < len(tokens) && strings.HasPrefix(tokens[j].text, "-") {
 				j++
 			}
@@ -131,6 +151,22 @@ func rewriteGoRunCrude(tokens []cmdToken) []cmdToken {
 		out = append(out, tokens[i])
 	}
 	return out
+}
+
+// crudeRunIndex returns the index of the `run` word when tokens[i] starts
+// `go [-C dir | -C=dir] run`.
+func crudeRunIndex(tokens []cmdToken, i int) (int, bool) {
+	if filepath.Base(tokens[i].text) != "go" {
+		return 0, false
+	}
+	j := i + 1
+	switch {
+	case j < len(tokens) && (tokens[j].text == "-C" || tokens[j].text == "--C"):
+		j += 2
+	case j < len(tokens) && (strings.HasPrefix(tokens[j].text, "-C=") || strings.HasPrefix(tokens[j].text, "--C=")):
+		j++
+	}
+	return j, j < len(tokens) && tokens[j].text == "run"
 }
 
 // lineRunsAgentctlFromSource reports whether command invokes agentctl
@@ -148,34 +184,173 @@ func lineRunsAgentctlFromSource(command string) bool {
 // goRunScan is goRunCalls; a var so tests can force a panic.
 var goRunScan = goRunCalls
 
+// scanMode picks how goRunCalls reads a line.
+type scanMode int
+
+const (
+	// scanDeny (the deny rule): `go run` counts as the command word or
+	// behind a known wrapper (goWrappers), and cd moves the directory when
+	// it surely runs before the go run (cdCertain; a subshell's cd is undone
+	// at its closing paren).
+	scanDeny scanMode = iota
+	// scanGate (the dispatch, cron and serve rules): any `go run` word pair
+	// in a simple command counts and cd is ignored; see
+	// rewriteGoRunAgentctl.
+	scanGate
+)
+
+// goWrappers run their arguments as a command, so in scanDeny mode a
+// `go run` after one counts.
+var goWrappers = map[string]bool{
+	"timeout": true, "gtimeout": true, "nice": true, "sudo": true, "doas": true,
+	"xargs": true, "caffeinate": true, "stdbuf": true, "ionice": true, "chrt": true,
+	"taskset": true, "watch": true, "unbuffer": true, "chronic": true, "flock": true,
+	"setsid": true, "script": true,
+}
+
 // goRunCalls finds the `go run` commands among tokens (tokenizeQuoted
-// output) and classifies the package each one runs. Only a word in command
-// position counts: a quoted argument (`git commit -m "go run ."`, an echo)
-// is one token and never a command. cwd seeds the directory `cd` and `-C`
-// resolve against; "" is unknown.
-func goRunCalls(tokens []cmdToken, cwd string) []goRunCall {
-	dir := shellDir{path: cwd, known: cwd != ""}
-	var calls []goRunCall
-	for _, cmd := range simpleCommands(tokens) {
-		words := cmd.words
-		k := commandWordIndex(words)
-		if k < 0 {
+// output) and classifies the package each one runs. A quoted argument
+// (`git commit -m "go run ."`) is one token and never a command. cwd seeds
+// the directory `cd` and `-C` resolve against; "" is unknown.
+func goRunCalls(tokens []cmdToken, cwd string, mode scanMode) []goRunCall {
+	s := goRunScanner{tokens: tokens, mode: mode, dir: shellDir{path: cwd, known: cwd != ""}}
+	var cur []cmdWord
+	before := ""
+	for _, it := range shellItems(tokens) {
+		if it.op == "" {
+			cur = append(cur, it.word)
 			continue
 		}
-		name := words[k]
-		switch {
-		case name.tok.expands:
-			continue
-		case name.tok.text == "cd" || name.tok.text == "pushd":
-			dir = cdTarget(dir, words[k+1:])
-		case filepath.Base(name.tok.text) == "go" && k+1 < len(words) && words[k+1].tok.text == "run":
-			if c, ok := classifyGoRun(words[k+2:], dir); ok {
-				c.start, c.prefix = name.idx, name.prefix
-				calls = append(calls, c)
+		s.command(cur, before, it.op)
+		cur = nil
+		switch it.op {
+		case "(":
+			s.stack = append(s.stack, s.dir)
+		case ")":
+			if n := len(s.stack); n > 0 {
+				s.dir, s.stack = s.stack[n-1], s.stack[:n-1]
 			}
 		}
+		before = it.op
 	}
-	return calls
+	s.command(cur, before, "")
+	return s.calls
+}
+
+// goRunScanner is goRunCalls' state.
+type goRunScanner struct {
+	tokens []cmdToken
+	mode   scanMode
+	dir    shellDir
+	stack  []shellDir // directories saved at each open paren
+	calls  []goRunCall
+}
+
+// command handles one simple command between the operators before and
+// after it.
+func (s *goRunScanner) command(words []cmdWord, before, after string) {
+	k := commandWordIndex(words)
+	if k < 0 {
+		return
+	}
+	name := words[k].tok
+	if s.mode == scanDeny && !name.expands {
+		switch name.text {
+		case "cd", "pushd":
+			// A cd that may not run (or not in this shell) moves the
+			// directory only toward the agentctl root: the deny side.
+			if target := cdTarget(s.dir, words[k+1:]); cdCertain(before, after) || (target.known && isAgentctlRoot(target.path)) {
+				s.dir = target
+			}
+			return
+		case "popd":
+			s.dir = shellDir{}
+			return
+		}
+	}
+	from, to := k, k+1
+	switch {
+	case s.mode == scanGate:
+		from, to = 0, len(words)
+	case goWrappers[filepath.Base(name.text)]:
+		from, to = k+1, len(words)
+	}
+	for j := from; j < to; j++ {
+		c, ok := goRunAt(words, j, s.dir)
+		if !ok {
+			continue
+		}
+		c.start, c.prefix = words[j].idx, words[j].prefix
+		if c.substAt >= 0 {
+			c.end = substEnd(s.tokens, c.substAt)
+			if c.end < len(s.tokens) && s.tokens[c.end].text == "--" {
+				c.end++
+			}
+		}
+		s.calls = append(s.calls, c)
+		return
+	}
+}
+
+// cdCertain reports whether a cd between the operators before and after
+// surely runs, and in the shell that runs what follows: not after || or in
+// a pipeline or background job, and either followed by && or not itself
+// behind a && (`false && cd x; go run .` may skip the cd).
+func cdCertain(before, after string) bool {
+	switch before {
+	case "||", "|", "|&":
+		return false
+	}
+	switch after {
+	case "&&":
+		return true
+	case "", ";", ";;", ")":
+		return before != "&&"
+	}
+	return false
+}
+
+// goRunAt matches `go [-C dir] run <args>` starting at words[j] and
+// classifies it.
+func goRunAt(words []cmdWord, j int, dir shellDir) (goRunCall, bool) {
+	if w := words[j].tok; w.expands || filepath.Base(w.text) != "go" {
+		return goRunCall{}, false
+	}
+	m := j + 1
+	for m < len(words) && strings.HasPrefix(words[m].tok.text, "-") {
+		t := words[m].tok
+		switch name, value, hasValue := strings.Cut(strings.TrimLeft(t.text, "-"), "="); {
+		case name != "C":
+			return goRunCall{}, false // go takes only -C before the subcommand
+		case hasValue:
+			dir = resolveWordDir(dir, cmdToken{text: value, quoted: t.quoted, expands: t.expands})
+			m++
+		case m+1 < len(words):
+			dir = resolveWordDir(dir, words[m+1].tok)
+			m += 2
+		default:
+			return goRunCall{}, false
+		}
+	}
+	if m >= len(words) || words[m].tok.text != "run" {
+		return goRunCall{}, false
+	}
+	return classifyGoRun(words[m+1:], dir)
+}
+
+// substEnd returns the token index after the command substitution that
+// opens in tokens[i] ("$(pwd)", or "$(cat" ... "f)"), by paren balance.
+func substEnd(tokens []cmdToken, i int) int {
+	depth := 0
+	for j := i; j < len(tokens); j++ {
+		if !tokens[j].quoted {
+			depth += strings.Count(tokens[j].text, "(") - strings.Count(tokens[j].text, ")")
+		}
+		if depth <= 0 {
+			return j + 1
+		}
+	}
+	return len(tokens)
 }
 
 // cmdWord is one word of a simple command and its index in the token slice.
@@ -188,25 +363,22 @@ type cmdWord struct {
 	// endIdx is the token index after the word: idx+1, or idx when the
 	// token carries more words (an attached operator such as "x&&go").
 	endIdx int
+	// substOpen marks a word ending in $ right before a ( in the same
+	// token: the start of a command substitution ("$(pwd)").
+	substOpen bool
 }
 
-// simpleCommand is the words of one simple command, redirections dropped.
-type simpleCommand struct {
-	words []cmdWord
+// shellItem is a word or a control operator (op: ; && || | & |& ;; ( )).
+type shellItem struct {
+	word cmdWord
+	op   string
 }
 
-// simpleCommands splits tokens at unquoted control operators (also attached
-// ones such as "x;" or "a&&b", via splitControl) and parentheses, dropping
-// redirections and their targets.
-func simpleCommands(tokens []cmdToken) []simpleCommand {
-	var cmds []simpleCommand
-	var cur simpleCommand
-	end := func() {
-		if len(cur.words) > 0 {
-			cmds = append(cmds, cur)
-		}
-		cur = simpleCommand{}
-	}
+// shellItems splits tokens into words and control operators, including
+// operators attached to words ("x;", "a&&b", "(cd") and parentheses,
+// dropping redirections and their targets.
+func shellItems(tokens []cmdToken) []shellItem {
+	var items []shellItem
 	skipTarget := false
 	for i, t := range tokens {
 		if skipTarget {
@@ -214,35 +386,83 @@ func simpleCommands(tokens []cmdToken) []simpleCommand {
 			continue
 		}
 		if t.quoted {
-			cur.words = append(cur.words, cmdWord{tok: t, idx: i, endIdx: i + 1})
+			items = append(items, quotedTokenItems(t, i)...)
 			continue
 		}
 		if isRedirection(t.text) {
 			skipTarget = redirectionNeedsTarget(t.text)
 			continue
 		}
-		pieces := splitControl(strings.NewReplacer("(", ";", ")", ";").Replace(t.text))
-		for p, piece := range pieces {
-			if piece == "" {
-				end()
-				continue
-			}
-			endIdx := i
-			if p == len(pieces)-1 {
-				endIdx = i + 1
-			}
-			var prefix string
-			if p > 0 {
-				prefix = t.text[:strings.LastIndex(t.text, piece)]
-			}
-			// Only a piece that itself has a $ or backtick expands: in
-			// "x=$(go" the "go" is a plain command word.
-			expands := t.expands && strings.ContainsAny(piece, "$`\\")
-			cur.words = append(cur.words, cmdWord{tok: cmdToken{text: piece, expands: expands}, idx: i, endIdx: endIdx, prefix: prefix})
+		items = append(items, splitWordOps(t, i)...)
+	}
+	return items
+}
+
+// quotedTokenItems is a quoted token as one word, except that control
+// operators in its unquoted tail end it: in `bash -c 'cd /tmp'; go run .`
+// the ";" is the shell's, not part of the word.
+func quotedTokenItems(t cmdToken, i int) []shellItem {
+	tail := t.text[min(t.unquotedTail, len(t.text)):]
+	cut := strings.IndexAny(tail, ";&|()")
+	if cut < 0 {
+		return []shellItem{{word: cmdWord{tok: t, idx: i, endIdx: i + 1}}}
+	}
+	at := len(t.text) - len(tail) + cut
+	w := t
+	w.text = t.text[:at]
+	items := []shellItem{{word: cmdWord{tok: w, idx: i, endIdx: i}}}
+	rest := splitWordOps(cmdToken{text: t.text[at:], expands: t.expands}, i)
+	for k := range rest {
+		if rest[k].op == "" {
+			rest[k].word.prefix = t.text[:at] + rest[k].word.prefix
 		}
 	}
-	end()
-	return cmds
+	return append(items, rest...)
+}
+
+// splitWordOps splits one unquoted token at its control operator bytes.
+func splitWordOps(t cmdToken, i int) []shellItem {
+	var items []shellItem
+	text := t.text
+	start := 0
+	word := func(end int) {
+		if end <= start {
+			return
+		}
+		piece := text[start:end]
+		// Only a piece that itself has a $ or backtick expands: in
+		// "x=$(go" the "go" is a plain command word.
+		w := cmdWord{
+			tok:       cmdToken{text: piece, expands: t.expands && strings.ContainsAny(piece, "$`\\")},
+			idx:       i,
+			prefix:    text[:start],
+			endIdx:    i,
+			substOpen: strings.HasSuffix(piece, "$") && end < len(text) && text[end] == '(',
+		}
+		if end == len(text) {
+			w.endIdx = i + 1
+		}
+		items = append(items, shellItem{word: w})
+	}
+	for j := 0; j < len(text); j++ {
+		c := text[j]
+		switch {
+		case c == '(' || c == ')':
+			word(j)
+			items = append(items, shellItem{op: string(c)})
+			start = j + 1
+		case strings.IndexByte(";&|", c) >= 0:
+			word(j)
+			k := j
+			for k+1 < len(text) && strings.IndexByte(";&|", text[k+1]) >= 0 {
+				k++
+			}
+			items = append(items, shellItem{op: text[j : k+1]})
+			start, j = k+1, k
+		}
+	}
+	word(len(text))
+	return items
 }
 
 // commandPrefixWords may precede the command word without being it:
@@ -396,6 +616,10 @@ func classifyGoRun(args []cmdWord, dir shellDir) (goRunCall, bool) {
 			verdict = maxVerdict(verdict, classifyGoFile(args[last].tok, dir))
 			last++
 		}
+	} else if args[i].substOpen {
+		// `go run $(pwd) ...`: the package is the substitution's output,
+		// which ends where its parens balance (goRunScanner sets end).
+		return goRunCall{verdict: rootUnknown, substAt: args[i].idx}, true
 	} else {
 		verdict = classifyPackage(args[i].tok, dir)
 		last = i + 1
@@ -403,7 +627,7 @@ func classifyGoRun(args []cmdWord, dir shellDir) (goRunCall, bool) {
 	if last < len(args) && args[last].tok.text == "--" {
 		last++
 	}
-	return goRunCall{end: args[last-1].endIdx, verdict: verdict}, true
+	return goRunCall{end: args[last-1].endIdx, verdict: verdict, substAt: -1}, true
 }
 
 func maxVerdict(a, b rootVerdict) rootVerdict {

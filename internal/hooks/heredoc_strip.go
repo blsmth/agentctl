@@ -470,18 +470,23 @@ func shellCArg(args []*syntax.Word) (string, bool) {
 // since the scanners tokenize a quoted word whole. It fails closed: on a
 // parse error the raw command is returned.
 func invocationText(command string) string {
+	main, nested := invocationParts(command)
+	if len(nested) == 0 {
+		return main
+	}
+	return main + "\n" + strings.Join(nested, "\n")
+}
+
+// invocationParts is invocationText before the join: the command with data
+// heredoc bodies stripped, and the nested command lines. On a parse error
+// it returns the raw command and no nested lines.
+func invocationParts(command string) (main string, nested []string) {
 	if !strings.ContainsAny(command, "<$`'\"") && !strings.Contains(command, "eval") {
-		return command
+		return command, nil
 	}
 	f, err := syntax.NewParser().Parse(strings.NewReader(command), "")
 	if err != nil {
-		return command
+		return command, nil
 	}
-	var b strings.Builder
-	b.WriteString(cutSpans(command, span{0, uint(len(command))}, dataHeredocSpans(f, command)))
-	for _, line := range nestedCommandLines(f, command) {
-		b.WriteString("\n")
-		b.WriteString(line)
-	}
-	return b.String()
+	return cutSpans(command, span{0, uint(len(command))}, dataHeredocSpans(f, command)), nestedCommandLines(f, command)
 }

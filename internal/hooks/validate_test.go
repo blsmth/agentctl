@@ -427,6 +427,15 @@ func TestCheckServeTamper(t *testing.T) {
 		{"go run flags serve stop", "go run -race -tags dev . serve stop", true},
 		{"go run module serve pair", "go run github.com/blsmth/agentctl@latest serve pair", true},
 		{"go run -- serve stop", "go run . -- serve stop", true},
+		// The gate rules ignore cd (it may not move the outer shell), so
+		// even a real one leaves `.` counting as agentctl.
+		{"go run after cd serve stop", "cd /tmp && go run . serve stop", true},
+		{"go run wrapper serve stop", "timeout 9 go run . serve stop", true},
+		{"go -C serve stop", "go -C ../x run . serve stop", true},
+		{"go run subshell cd serve stop", "(cd /tmp) && go run . serve stop", true},
+		{"go run pipeline cd serve stop", "cd /tmp | true; go run . serve stop", true},
+		{"go run bash -c cd serve stop", "bash -c 'cd /tmp'; go run . serve stop", true},
+		{"go run substitution serve stop", "go run $(pwd) serve stop", true},
 		{"launchctl bootstrap", "launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.blsmth.agentctl.serve.plist", true},
 		{"launchctl kickstart plain", "launchctl kickstart gui/501/com.blsmth.agentctl.serve", true},
 		{"launchctl kill", "launchctl kill SIGTERM gui/501/com.blsmth.agentctl.serve", true},
@@ -440,9 +449,11 @@ func TestCheckServeTamper(t *testing.T) {
 		{"serve help", "agentctl serve --help", false},
 		{"go run serve status", "go run . serve status", false},
 		{"go run subpackage serve stop", "go run ./internal/serve/servetest/devserver serve stop", false},
-		{"go run other dir serve stop", "cd /tmp && go run . serve stop", false},
+		{"go run -C other dir serve stop", "go run -C /tmp . serve stop", false},
 		{"go run other module serve stop", "go run example.com/tool serve stop", false},
-		{"echo go run serve stop", "echo go run . serve stop", false},
+		// Like the other gates, unquoted words count even as echo arguments.
+		{"echo go run serve stop", "echo go run . serve stop", true},
+		{"quoted go run serve stop", `echo "go run . serve stop"`, false},
 		{"go test servectl", "go test ./internal/servectl/...", false},
 		{"grep for toggle", "grep -rn 'serve toggle' docs", false},
 		{"serve logs", "agentctl serve logs", false},
@@ -565,6 +576,23 @@ func TestCheckGoRunAgentctl(t *testing.T) {
 		{"command substitution", f.root, "x=$(go run . status)", true},
 		{"go binary path", f.root, "/usr/local/go/bin/go run .", true},
 		{"time prefix", f.root, "time go run .", true},
+		{"timeout wrapper", f.root, "timeout 60 go run . dispatch --issue 4", true},
+		{"timeout wrapper after cd", f.other, "cd ~/code/personal/agentctl && timeout 60 go run . dispatch --issue 4", true},
+		{"nice wrapper", f.root, "nice -n 5 go run . status", true},
+		{"sudo wrapper", f.root, "sudo go run . status", true},
+		{"xargs wrapper", f.root, "echo status | xargs go run .", true},
+		{"caffeinate wrapper", f.root, "caffeinate -i go run . status", true},
+		{"go -C", f.other, "go -C " + f.root + " run . dispatch --issue 4", true},
+		{"go -C=", f.other, "go -C=" + f.root + " run .", true},
+		{"subshell cd does not leak", f.other, "cd ~/code/personal/agentctl && (cd /tmp) && go run .", true},
+		{"pipeline cd does not move", f.root, "cd /tmp | true; go run .", true},
+		{"skipped cd does not move", f.root, "false && cd /tmp; go run .", true},
+		{"or cd does not move", f.root, "cd /tmp || go run .", true},
+		{"background cd does not move", f.root, "cd /tmp & go run .", true},
+		{"popd: unknown, mentions agentctl", f.other, "pushd /tmp && popd && go run . # agentctl", true},
+		{"uncertain cd toward root counts", f.other, "false && cd ~/code/personal/agentctl; go run .", true},
+		{"bash -c cd does not leak", f.root, "bash -c 'cd /tmp'; go run . dispatch --issue 4", true},
+		{"nested from cwd", f.root, "cd /tmp && bash -c 'go run .'", true},
 		// Denied, fail closed: unresolvable dir and the line mentions agentctl.
 		{"unknown cwd mentions agentctl", "", "go run . dispatch --agent agentctl-dev", true},
 		{"cd variable mentions agentctl", f.other, "cd $AGENTCTL_SRC && go run .", true},
@@ -598,6 +626,12 @@ func TestCheckGoRunAgentctl(t *testing.T) {
 		{"data heredoc", f.root, "cat > /tmp/x.md <<'EOF'\ngo run .\nEOF", false},
 		{"go test", f.root, "go test ./... -run TestGoRun", false},
 		{"go run alone", f.root, "go run", false},
+		{"wrapper subpackage", f.root, "timeout 60 go run ./internal/foo", false},
+		{"go -C other", f.root, "go -C " + f.other + " run .", false},
+		{"go version", f.root, "go -C . version", false},
+		// Unknown, no mention: left to the gates (see TestIsAgentctlDispatch_GoRun).
+		{"substitution package no mention", f.root, "go run $(pwd) status", false},
+		{"certain cd away", f.root, "cd /tmp && go run .", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -630,7 +664,7 @@ func TestGoModModule(t *testing.T) {
 // fails open, the gate rewrite fails closed (every go run counts).
 func TestGoRunScan_PanicRecovery(t *testing.T) {
 	orig := goRunScan
-	goRunScan = func([]cmdToken, string) []goRunCall { panic("boom") }
+	goRunScan = func([]cmdToken, string, scanMode) []goRunCall { panic("boom") }
 	t.Cleanup(func() { goRunScan = orig })
 	if got := checkGoRunAgentctl("go run github.com/blsmth/agentctl", ""); got != "" {
 		t.Fatalf("checkGoRunAgentctl after panic = %q, want allow", got)

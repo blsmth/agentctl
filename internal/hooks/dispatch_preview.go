@@ -211,6 +211,9 @@ type cmdToken struct {
 	// fromSource marks the `agentctl` token that stands for a go run of
 	// the agentctl root package (rewriteGoRunAgentctl).
 	fromSource bool
+	// unquotedTail is, for a quoted token, the offset in text where the
+	// bytes after its last quoted part start ("'cd /tmp';" -> the ";").
+	unquotedTail int
 }
 
 // dispatchSegments returns, for every "agentctl dispatch" occurrence in the
@@ -678,13 +681,19 @@ func tokenizeQuoted(s string) []cmdToken {
 	// but to the shell they end a word, so a '#' right after one starts a
 	// comment ("x;# ...") even though cur is not empty.
 	afterMeta := false
+	// tail is where the bytes after the last quoted part start in cur.
+	tail := 0
 
 	flush := func() {
 		if cur.Len() > 0 || hadQuote {
-			tokens = append(tokens, cmdToken{text: cur.String(), quoted: hadQuote, expands: expands})
+			t := cmdToken{text: cur.String(), quoted: hadQuote, expands: expands}
+			if hadQuote {
+				t.unquotedTail = tail
+			}
+			tokens = append(tokens, t)
 		}
 		cur.Reset()
-		hadQuote, expands, afterMeta = false, false, false
+		hadQuote, expands, afterMeta, tail = false, false, false, 0
 	}
 
 	for i := 0; i < len(s); i++ {
@@ -692,6 +701,7 @@ func tokenizeQuoted(s string) []cmdToken {
 		if inQuote {
 			if c == quoteChar {
 				inQuote = false
+				tail = cur.Len()
 			} else {
 				if quoteChar == '"' && (c == '$' || c == '`' || c == '\\') {
 					expands = true
@@ -737,6 +747,7 @@ func tokenizeQuoted(s string) []cmdToken {
 					cur.WriteByte(s[i])
 					hadQuote = true
 					afterMeta = false
+					tail = cur.Len()
 				}
 				continue
 			}
