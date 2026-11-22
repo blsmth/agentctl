@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -20,5 +21,22 @@ func TestLoadSceneByName(t *testing.T) {
 	}
 	if _, err := loadScene(filepath.Join(root, "scenes"), "nope", ""); err == nil {
 		t.Error("want an error for a missing scene")
+	}
+}
+
+func TestRealizeDirsCreatesProjectDirs(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "..", "demo")
+	sc, err := loadScene(filepath.Join(root, "scenes"), "hub", filepath.Join(root, "transcripts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(t.TempDir(), "code")
+	if err := sc.realizeDirs(base); err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range sc.groups {
+		if fi, err := os.Stat(g.Dir); err != nil || !fi.IsDir() || filepath.Dir(g.Dir) != base {
+			t.Errorf("%s: dir %s not created under %s (%v)", g.Project, g.Dir, base, err)
+		}
 	}
 }

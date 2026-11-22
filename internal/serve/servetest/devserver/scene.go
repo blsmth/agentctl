@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/blsmth/agentctl/internal/demo"
 	"github.com/blsmth/agentctl/internal/demo/phonefix"
@@ -36,6 +38,21 @@ func loadScene(scenesDir, name, fixtures string) (*scene, error) {
 		return nil, fmt.Errorf("scene %s: %w", s.Name, err)
 	}
 	return &scene{name: s.Name, groups: groups, refs: refs, approvals: map[string]string{}}, nil
+}
+
+// realizeDirs moves every project of the scene to a real directory under
+// root (named like the project) so features that check the dir exists, such
+// as saving a schedule, accept it. The scene's own dirs (/home/demo/...) do
+// not exist on the machine running the dev server.
+func (sc *scene) realizeDirs(root string) error {
+	for i := range sc.groups {
+		d := filepath.Join(root, filepath.Base(sc.groups[i].Dir))
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return fmt.Errorf("creating project dir %s: %w", d, err)
+		}
+		sc.groups[i].Dir = d
+	}
+	return nil
 }
 
 // openApprovals opens a remote approval for every window whose scene sets
