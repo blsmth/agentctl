@@ -19,6 +19,7 @@ import (
 //	PUT  /__test/fleet     {groups: [...]} or {fixture: "<name>"}: swap fixtures
 //	POST /__test/window    {session, id, ...fields}: patch one window
 //	POST /__test/approvals ApprovalSpec -> {id}: open a remote approval
+//	PUT  /__test/artifacts {artifacts: [ArtifactSpec]} -> {ids}: replace the artifact store
 //	PUT  /__test/schedules SchedulesSpec -> {dir}: replace the cron jobs/runs; dir is a real project dir
 //	GET  /__test/schedules {runs, dir}: the jobs run-now fired
 //
@@ -53,6 +54,7 @@ func (h *Harness) registerControl(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"id": id})
 	})
+	mux.HandleFunc("PUT "+p+"artifacts", h.handleSetArtifacts)
 	mux.HandleFunc("PUT "+p+"schedules", func(w http.ResponseWriter, r *http.Request) { h.scheds.handleSet(h, w, r) })
 	mux.HandleFunc("GET "+p+"schedules", func(w http.ResponseWriter, r *http.Request) { h.scheds.handleRuns(w, r) })
 	mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) {

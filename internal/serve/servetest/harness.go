@@ -70,7 +70,8 @@ type Harness struct {
 	apMu      sync.Mutex
 	approvals map[string]net.Conn
 
-	scheds *schedules
+	scheds    *schedules
+	artifacts *artifactWorld
 }
 
 // New builds and starts a Harness on the default fixture.
@@ -105,6 +106,7 @@ func New(opts Options) (*Harness, error) {
 	off := false
 	p := panes{w}
 	scheds := newSchedules(opts.Dir)
+	arts := newArtifactWorld(opts.Dir)
 	s, err := serve.New(serve.Options{
 		Config: config.ServeConfig{
 			AllowCIDRs: []string{"127.0.0.0/8", "::1/128"},
@@ -120,14 +122,15 @@ func New(opts Options) (*Harness, error) {
 		Pusher: pusher{}, NtfyBase: "http://127.0.0.1:1",
 		BusOptions: fleetwatch.Options{Debounce: 10 * time.Millisecond, Rediscover: opts.Rediscover},
 		PingEvery:  5 * time.Second,
-		Schedules:  scheds.store(), RunSchedule: scheds.run, AgentPermissionMode: func(string) string { return "" },
+		Artifacts:  arts.store, ArtifactDebounce: 10 * time.Millisecond, ArtifactPoll: time.Second,
+		Schedules: scheds.store(), RunSchedule: scheds.run, AgentPermissionMode: func(string) string { return "" },
 	})
 	if err != nil {
 		return nil, fmt.Errorf("building server: %w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.Start(ctx)
-	h := &Harness{Server: s, Token: token, world: w, initial: initial, cancel: cancel, rediscover: opts.Rediscover, approvals: map[string]net.Conn{}, scheds: scheds}
+	h := &Harness{Server: s, Token: token, world: w, initial: initial, cancel: cancel, rediscover: opts.Rediscover, approvals: map[string]net.Conn{}, scheds: scheds, artifacts: arts}
 	mux := http.NewServeMux()
 	h.registerControl(mux)
 	mux.Handle("/", s.Handler())
@@ -169,6 +172,7 @@ func (h *Harness) Reset() {
 	h.world.clearActions()
 	h.Server.ResetWriteLimits()
 	_ = h.scheds.set(SchedulesSpec{})
+	_ = h.artifacts.clear()
 	time.Sleep(3*h.rediscover + 50*time.Millisecond)
 }
 

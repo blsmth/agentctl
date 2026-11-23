@@ -3,6 +3,9 @@ import { ApiError, get, send, uploadImages } from "./api.js";
 import { approvalCard, tickCountdowns } from "./approvals.js";
 import { imagePicker, svgIcon } from "./attach.js";
 import {
+  artifactChipText,
+  artifactsForWindow,
+  artifactsHash,
   INTERRUPT_FOLLOWUP_MS,
   actionsWithQueue,
   approvalsForWindow,
@@ -293,9 +296,11 @@ export function mountWindow(root, ctx, { session, windowId }) {
   // Tap the recap to show it in full; it is clamped to two lines.
   const recap = h("div", { class: "win-recap", hidden: true, onclick: () => recap.classList.toggle("open") });
   const chips = h("div", { class: "chips", hidden: true });
+  // "◆ N artifacts" when agents published from this window; opens the list filtered to it.
+  const artifactChip = h("a", { class: "chip artifact-chip", href: artifactsHash({ session, windowId }), hidden: true });
   let childrenOpen = false;
   const waitingKids = h("div", { class: "win-waiting", hidden: true });
-  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, recap, scheduled, chips, waitingKids);
+  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, recap, scheduled, chips, artifactChip, waitingKids);
 
   const liveChip = h("span", { class: "live-chip", role: "status" });
   const modeBtns = {
@@ -817,7 +822,21 @@ export function mountWindow(root, ctx, { session, windowId }) {
   }, PANE_REFRESH_MS);
   const onVisible = () => !document.hidden && refresh();
   document.addEventListener("visibilitychange", onVisible);
+  async function loadArtifactChip() {
+    if (!ctx.hasFeature("artifacts")) return;
+    try {
+      const n = artifactsForWindow((await get("/v1/artifacts")).artifacts, session, windowId).length;
+      if (disposed) return;
+      artifactChip.textContent = artifactChipText(n);
+      artifactChip.hidden = n === 0;
+    } catch {
+      // the chip is a convenience; the next artifact event retries
+    }
+  }
+  loadArtifactChip();
+
   const unsub = ctx.store.subscribe((ev) => {
+    if (ev?.type === "artifact") loadArtifactChip();
     if (ev?.type === "window" && ev.win.session === session && ev.win.window_id === windowId) refresh();
     if (ev?.type === "gone") refresh();
     if (ev?.type === "fleet" || ev?.type === "window" || ev?.type === "gone") renderHeader();

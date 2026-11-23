@@ -19,6 +19,8 @@ import {
   scheduleException, scheduleGlyph, scheduleHash, scheduleLastText, scheduleReview, scheduleWhen, worktreeFact,
   scheduleAgentText, schedulePromptLabel, scheduleRowActivity,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
+  ARTIFACT_TOKEN_MAX_AGE_MS, artifactChipText, artifactHash, artifactIcon, artifactRevLabel, artifactRowMeta, artifactTokenStale,
+  artifactWindowLive, artifactsForWindow, artifactsHash, groupArtifacts,
 } from "./logic.js";
 
 const fixtures = JSON.parse(readFileSync(new URL("./logic.fixtures.json", import.meta.url), "utf8"));
@@ -976,3 +978,47 @@ console.log("ok: templates");
 }
 assert.equal(approvalConfirm({ kind: "template", command: "c", details: {} }, "allow").title, "Approve this template change?");
 console.log("ok: template approvals");
+
+// Artifacts: routes, grouping, filter and token age.
+{
+  assert.deepEqual(parseRoute("#/artifacts"), { name: "artifacts", view: "list", filter: null });
+  assert.deepEqual(parseRoute("#/artifacts?window=%40523&session=agentctl-x"), { name: "artifacts", view: "list", filter: { session: "agentctl-x", windowId: "@523" } });
+  assert.deepEqual(parseRoute("#/artifacts?window=%40523"), { name: "artifacts", view: "list", filter: null });
+  assert.deepEqual(parseRoute("#/artifacts/abc"), { name: "artifacts", view: "viewer", id: "abc", rev: null });
+  assert.deepEqual(parseRoute("#/artifacts/abc/3"), { name: "artifacts", view: "viewer", id: "abc", rev: 3 });
+  assert.deepEqual(parseRoute("#/artifacts/abc/latest"), { name: "artifacts", view: "viewer", id: "abc", rev: null });
+  assert.equal(artifactHash("abc"), "#/artifacts/abc");
+  assert.equal(artifactHash("abc", 2), "#/artifacts/abc/2");
+  const f = { session: "agentctl-x", windowId: "@523" };
+  assert.deepEqual(parseRoute(artifactsHash(f)).filter, f);
+  assert.equal(artifactsHash(), "#/artifacts");
+
+  const A = (id, dir, project, extra = {}) => ({ id, project_dir: dir, project, updated: "2026-01-01T00:00:00Z", rev_count: 1, ...extra });
+  const list = [A("1", "/z", "zed"), A("2", "/b", "beta"), A("3", "/a", "alpha"), A("4", "/b", "beta"), A("5", "", "")];
+  const fleet = [{ key: "/b", dir: "/b" }, { key: "k2", dir: "/z" }];
+  const g = groupArtifacts(list, fleet);
+  assert.deepEqual(g.map((x) => x.name), ["beta", "zed", "alpha", "No project"]);
+  assert.deepEqual(g[0].items.map((x) => x.id), ["2", "4"]); // list order kept inside a group
+  assert.deepEqual(groupArtifacts(list, []).map((x) => x.name), ["alpha", "beta", "zed", "No project"]);
+  assert.deepEqual(groupArtifacts([], fleet), []);
+
+  const w = { session: "s", window_id: "@1" };
+  assert.deepEqual(artifactsForWindow([{ id: "a", ...w }, { id: "b", session: "t", window_id: "@1" }, { id: "c", session: "s", window_id: "@2" }], "s", "@1").map((x) => x.id), ["a"]);
+  assert.equal(artifactChipText(1), "\u25C6 1 artifact");
+  assert.equal(artifactChipText(3), "\u25C6 3 artifacts");
+  assert.equal(artifactWindowLive({ ...w }, [{ session: "s", windows: [{ window_id: "@1" }] }])?.window_id, "@1");
+  assert.equal(artifactWindowLive({ ...w }, [{ session: "s", windows: [] }]), null);
+  assert.equal(artifactWindowLive({ session: "s" }, []), null);
+
+  const now = Date.parse("2026-01-01T12:00:00Z");
+  assert.equal(artifactTokenStale(now - 59 * 60000, now), false);
+  assert.equal(artifactTokenStale(now - ARTIFACT_TOKEN_MAX_AGE_MS, now), true);
+  assert.equal(artifactTokenStale(undefined, now), true);
+  assert.equal(artifactIcon("html") !== artifactIcon("image"), true);
+  assert.equal(artifactIcon("weird"), "\u25C6");
+  assert.equal(artifactRowMeta({ rev_count: 3, updated: "2026-01-01T11:55:00Z" }, now), "3 revs \u00B7 5m ago");
+  assert.equal(artifactRowMeta({ rev_count: 1, updated: "2026-01-01T11:55:00Z" }, now), "5m ago");
+  assert.equal(artifactRevLabel({ n: 2, created: "2026-01-01T11:55:00Z", note: "fix" }, 2, now), "Rev 2 (latest) \u00B7 5m ago \u00B7 fix");
+  assert.equal(artifactRevLabel({ n: 1, created: "2026-01-01T09:00:00Z" }, 2, now), "Rev 1 \u00B7 3h ago");
+  console.log("ok: artifacts logic");
+}

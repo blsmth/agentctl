@@ -411,3 +411,28 @@ body.term-open nav { display: none; }
 .sched-more { margin: 0 0 .75rem; }
 .sched-more summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--muted); }
 .sched-more .btn { width: 100%; }
+
+/* Artifacts: list rows reuse .win; the viewer is a full-height column. */
+.artifact-filter { display: flex; align-items: center; gap: .75rem; padding: 0 1rem .5rem; }
+.artifact-icon { font-size: 1.25rem; text-align: center; color: var(--accent); }
+.artifact-row .win-side { align-items: flex-end; gap: .15rem; }
+.artifact-empty { padding: 1rem; display: flex; flex-direction: column; gap: .25rem; }
+.artifact-empty p { margin: 0; }
+.artifact-chip { text-decoration: none; }
+.artifact-view { display: flex; flex-direction: column;
+  height: calc(100vh - 56px - env(safe-area-inset-bottom) - env(safe-area-inset-top));
+  height: calc(100dvh - 56px - env(safe-area-inset-bottom) - env(safe-area-inset-top)); }
+.artifact-view .bar { flex: none; padding-top: .5rem; padding-bottom: .5rem; }
+.artifact-tools { flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem .75rem; padding: 0 1rem .5rem; }
+.artifact-actions { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.artifact-actions .btn.small { min-height: 36px; font-size: .85rem; padding: 0 .7rem; }
+.artifact-revs { max-width: 14rem; }
+.artifact-frame { flex: 1; min-height: 0; width: 100%; border: 0; border-top: 1px solid var(--line); background: var(--card); }
+.artifact-message { padding: 1.5rem 1rem; display: flex; flex-direction: column; align-items: flex-start; gap: .75rem; }
+.artifact-message p { margin: 0; }
+@media (orientation: landscape) and (max-height: 500px) {
+  .artifact-view .bar { padding-top: .25rem; padding-bottom: .25rem; }
+  .artifact-tools { flex-wrap: nowrap; overflow-x: auto; padding-bottom: .25rem; }
+  .artifact-tools .chips { flex-wrap: nowrap; }
+}
+nav a { font-size: .85rem; }

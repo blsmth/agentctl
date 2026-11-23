@@ -63,10 +63,10 @@ export function startPresence() {
 /**
  * startLive connects the feed and returns a stop function. Handlers:
  * onFleet(body), onWindow(win), onGone({session, window_id}),
- * onApproval(approval), onApprovalResolved({id, outcome, ...}),
+ * onApproval(approval), onApprovalResolved({id, outcome, ...}), onArtifact({id, action}),
  * onStatus(up: boolean).
  */
-export function startLive({ events, onFleet, onWindow, onGone, onApproval, onApprovalResolved, onStatus }) {
+export function startLive({ events, onFleet, onWindow, onGone, onApproval, onApprovalResolved, onArtifact, onStatus }) {
   let stopped = false;
   let timer = null;
   let source = null;
@@ -105,6 +105,7 @@ export function startLive({ events, onFleet, onWindow, onGone, onApproval, onApp
     });
     source.addEventListener("window", parse(onWindow));
     source.addEventListener("gone", parse(onGone));
+    if (onArtifact) source.addEventListener("artifact", parse(onArtifact));
     if (onApproval) source.addEventListener("approval", parse(onApproval));
     if (onApprovalResolved) source.addEventListener("approval_resolved", parse(onApprovalResolved));
     source.onerror = () => {

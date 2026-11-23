@@ -1,5 +1,6 @@
 // App entry: feature detection, live store, hash router, service worker.
 import { get } from "./api.js";
+import { mountArtifacts } from "./artifacts.js";
 import { mountApprovals } from "./approvals.js";
 import { mountDispatch } from "./dispatch.js";
 import { mountFleet } from "./fleet.js";
@@ -86,6 +87,7 @@ function route() {
   else if (r.name === "approvals" && ctx.hasFeature("approvals")) cleanup = mountApprovals(root, ctx, r);
   else if (r.name === "dispatch") cleanup = mountDispatch(root, ctx, { dir: r.dir });
   else if (r.name === "schedules" && ctx.hasFeature("schedules")) cleanup = mountSchedules(root, ctx, r);
+  else if (r.name === "artifacts" && ctx.hasFeature("artifacts")) cleanup = mountArtifacts(root, ctx, r);
   else if (r.name === "host") cleanup = mountHost(root, ctx);
   else if (r.name === "settings") cleanup = mountSettings(root, ctx);
   else cleanup = mountFleet(root, ctx);
@@ -112,6 +114,9 @@ function startFeed() {
     onApprovalResolved(r) {
       setApprovals(removeApproval(store.approvals, r.id));
       refreshApprovals(); // pick up the new history entry
+    },
+    onArtifact(change) {
+      store.emit({ type: "artifact", change });
     },
     onWindow(win) {
       if (store.fleet) store.fleet = applyWindow(store.fleet, win);
@@ -147,6 +152,7 @@ async function main() {
   }
   document.getElementById("nav-dispatch").hidden = !ctx.hasFeature("write");
   document.getElementById("nav-schedules").hidden = !ctx.hasFeature("schedules");
+  document.getElementById("nav-artifacts").hidden = !ctx.hasFeature("artifacts");
   document.getElementById("nav-approvals").hidden = !ctx.hasFeature("approvals");
   startFeed();
   if (ctx.hasFeature("approvals")) {
