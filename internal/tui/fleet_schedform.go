@@ -226,10 +226,8 @@ func (m *FleetModel) openSchedForm(mode schedFormMode, st *cronedit.Status, dir 
 	m.closeMenu()
 	m.schedConfirm = nil
 	var save tea.Cmd
-	if !m.showSchedules {
-		m.showSchedules = true
-		m.relayout()
-		save = tea.Batch(m.saveViewCmd(), m.schedLoadCmd())
+	if !m.sched.loaded {
+		save = m.schedLoadCmd()
 	}
 	f := &fleetSchedForm{
 		mode: mode, init: map[schedStop]string{}, touched: map[schedStop]bool{}, fromTmpl: map[schedStop]bool{},

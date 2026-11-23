@@ -110,8 +110,7 @@ func withSchedEnv(t *testing.T, e schedEnv) {
 func openNewForm(t *testing.T, f *schedFixture) FleetModel {
 	t.Helper()
 	m := showSchedules(t, f.model(t))
-	m = selectSched(t, m, fleetSchedNewSel)
-	return schedPress(t, m, "n")
+	return schedPress(t, m, fleetCronKey) // t on the project's rows: new schedule
 }
 
 func TestFormNamesResolvedDefaultsAndHidesEmptyRows(t *testing.T) {
@@ -150,8 +149,7 @@ func TestFormNewDefaultAgentFallsBackToDefaultAgent(t *testing.T) {
 	m := showSchedules(t, f.model(t))
 	m.groups = nil // no agent in any project
 	m.rebuildLines()
-	m = selectSched(t, m, fleetSchedNewSel)
-	m = schedPress(t, m, "n")
+	m.openSchedForm(schedFormNew, nil, "")
 	if got := formOf(t, m).agent.value(); got != "reviewer" {
 		t.Errorf("agent = %q, want default_agent", got)
 	}

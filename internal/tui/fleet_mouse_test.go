@@ -382,7 +382,7 @@ func TestSelectorClicks(t *testing.T) {
 			t.Errorf("form dir = %v / %d, want /p/one", got.schedForm.dirs, got.schedForm.dirIdx)
 		}
 		if !cmd {
-			t.Error("opening the form with Schedules hidden must load them")
+			t.Error("opening the form before the jobs loaded must load them")
 		}
 	})
 	t.Run("elsewhere cancels", func(t *testing.T) {

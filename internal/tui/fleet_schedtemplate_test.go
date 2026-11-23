@@ -297,6 +297,7 @@ func TestScheduleStartFromTemplateDirChangeKeepsPrompt(t *testing.T) {
 
 func TestScheduleNewLineClickOpensFormDirectly(t *testing.T) {
 	f := newSchedFixture(t)
+	f.seedFour(t)
 	m := showSchedules(t, f.model(t))
 	idx := -1
 	for i, l := range m.lines {

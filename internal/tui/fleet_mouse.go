@@ -16,19 +16,21 @@ import (
 type fleetClickAction int
 
 const (
-	fleetClickIgnore   fleetClickAction = iota // nothing happens
-	fleetClickSelect                           // move the cursor only, like j/k
-	fleetClickNew                              // header's "+ new" button: arm the shell | cron | agent selector
-	fleetClickNewShell                         // armed selector's "shell": open a shell window
-	fleetClickNewAgent                         // armed selector's "agent": launch an agent
-	fleetClickNewCron                          // armed selector's "cron": new schedule in the project
-	fleetClickClose                            // row's "✕" button: arm / confirm close
-	fleetClickMenu                             // right click: open the context menu
-	fleetClickRename                           // double click on a row's title: open the rename editor
-	fleetClickFold                             // header's project name: fold / unfold the group
-	fleetClickSweep                            // header's "sweep" button: preview a sweep of the group
-	fleetClickCollapse                         // a parent row's ▾/▸ marker: collapse / expand its sub-agents
-	fleetClickNewSched                         // a "+ new schedule" line: open the new-schedule form
+	fleetClickIgnore      fleetClickAction = iota // nothing happens
+	fleetClickSelect                              // move the cursor only, like j/k
+	fleetClickNew                                 // header's "+ new" button: arm the shell | cron | agent selector
+	fleetClickNewShell                            // armed selector's "shell": open a shell window
+	fleetClickNewAgent                            // armed selector's "agent": launch an agent
+	fleetClickNewCron                             // armed selector's "cron": new schedule in the project
+	fleetClickClose                               // row's "✕" button: arm / confirm close
+	fleetClickMenu                                // right click: open the context menu
+	fleetClickRename                              // double click on a row's title: open the rename editor
+	fleetClickFold                                // header's project name: fold / unfold the group
+	fleetClickSweep                               // header's "sweep" button: preview a sweep of the group
+	fleetClickCollapse                            // a parent row's ▾/▸ marker: collapse / expand its sub-agents
+	fleetClickNewSched                            // a "+ new schedule" line: open the new-schedule form
+	fleetClickTabSessions                         // header's Sessions tab
+	fleetClickTabSched                            // header's Schedules tab
 )
 
 // fleetListTop returns the screen row where the list (or sidebar) begins: the
@@ -179,6 +181,12 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 		if m.onSweepButton(l.group, x) {
 			return idx, fleetClickSweep
 		}
+		switch m.onHeaderTab(l.group, x) {
+		case fleetHoverTabSessions:
+			return idx, fleetClickTabSessions
+		case fleetHoverTabSched:
+			return idx, fleetClickTabSched
+		}
 		if m.onHeaderName(l.group, x) {
 			return idx, fleetClickFold
 		}
@@ -319,6 +327,14 @@ func (m FleetModel) handleClickBody(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) 
 		}
 		m.selectLine(idx)
 		return m, m.startSweep(idx)
+	case fleetClickTabSessions, fleetClickTabSched:
+		m.closeMenu()
+		m.selectLine(idx)
+		g, t, ok := m.tabGroupOfLine(idx)
+		if !ok {
+			return m, nil
+		}
+		return m, m.switchTab(g, t, action == fleetClickTabSched, false)
 	case fleetClickFold:
 		m.closeMenu()
 		m.selectLine(idx)
@@ -396,17 +412,19 @@ func (m FleetModel) clickMenu(x int) (tea.Model, tea.Cmd) {
 type fleetHoverRegion int
 
 const (
-	fleetHoverNone     fleetHoverRegion = iota
-	fleetHoverBody                      // a row's body (not its ✕)
-	fleetHoverClose                     // a row's ✕ button
-	fleetHoverNew                       // a group header's "+ new" button
-	fleetHoverNewShell                  // armed selector's "shell"
-	fleetHoverNewAgent                  // armed selector's "agent"
-	fleetHoverNewCron                   // armed selector's "cron"
-	fleetHoverFold                      // a group header's fold marker and project name
-	fleetHoverSweep                     // a group header's "sweep" button
-	fleetHoverHeader                    // a group header outside its buttons
-	fleetHoverCollapse                  // a parent row's ▾/▸ collapse marker
+	fleetHoverNone        fleetHoverRegion = iota
+	fleetHoverBody                         // a row's body (not its ✕)
+	fleetHoverClose                        // a row's ✕ button
+	fleetHoverNew                          // a group header's "+ new" button
+	fleetHoverNewShell                     // armed selector's "shell"
+	fleetHoverNewAgent                     // armed selector's "agent"
+	fleetHoverNewCron                      // armed selector's "cron"
+	fleetHoverFold                         // a group header's fold marker and project name
+	fleetHoverSweep                        // a group header's "sweep" button
+	fleetHoverHeader                       // a group header outside its buttons
+	fleetHoverCollapse                     // a parent row's ▾/▸ collapse marker
+	fleetHoverTabSessions                  // a group header's Sessions tab
+	fleetHoverTabSched                     // a group header's Schedules tab
 )
 
 // fleetHover is the hover target: a line index plus the region on it. The zero
@@ -445,6 +463,9 @@ func (m FleetModel) hoverAt(x, y int) fleetHover {
 		}
 		if m.onSweepButton(l.group, x) {
 			return fleetHover{line: idx, reg: fleetHoverSweep}
+		}
+		if r := m.onHeaderTab(l.group, x); r != fleetHoverNone {
+			return fleetHover{line: idx, reg: r}
 		}
 		if m.onHeaderName(l.group, x) {
 			return fleetHover{line: idx, reg: fleetHoverFold}
@@ -503,4 +524,17 @@ func (m *FleetModel) refreshHover() {
 func (m FleetModel) onHeaderName(g fleet.Group, x int) bool {
 	span := m.headerNameSpan(g, m.listColWidth())
 	return x >= span[0] && x < span[1]
+}
+
+// onHeaderTab reports which of group g's header tabs column x hits (one
+// column of slack either side of each label).
+func (m FleetModel) onHeaderTab(g fleet.Group, x int) fleetHoverRegion {
+	spans := m.pointerHeaderSpans(g, m.listColWidth())
+	switch {
+	case spans.tabSessions[1] > 0 && x >= spans.tabSessions[0]-1 && x < spans.tabSessions[1]+1:
+		return fleetHoverTabSessions
+	case spans.tabSched[1] > 0 && x >= spans.tabSched[0]-1 && x < spans.tabSched[1]+1:
+		return fleetHoverTabSched
+	}
+	return fleetHoverNone
 }

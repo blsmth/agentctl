@@ -90,7 +90,7 @@ func (l schedLayout) at(x, y int) (schedHit, bool) {
 // fitPane's blank line and indent. ok is false while the drawer is still
 // sliding in, so a click cannot land on a control that is moving.
 func (m FleetModel) schedFormArea() (x0, y0, w, h, rows int, ok bool) {
-	if m.schedForm == nil || !m.showSchedules || !m.schedPaneActive() || m.schedAnimOn {
+	if m.schedForm == nil || !m.schedPaneActive() || m.schedAnimOn {
 		return 0, 0, 0, 0, 0, false
 	}
 	total := len(strings.Split(m.renderList(), "\n"))
