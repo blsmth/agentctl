@@ -63,8 +63,9 @@ var creditStateDir = config.StateDir
 // creditNotify announces the clear-to-set transition; tests replace it.
 var creditNotify = func(name string) {
 	notify.NotifyWithOptions(notify.Options{
-		Title:   "agentctl",
-		Message: "Nous Portal out of credits: short titles paused, nous dispatches will be refused",
+		Title:    "Nous Portal out of credits",
+		Subtitle: "Backend " + name + " · agentctl",
+		Message:  "Short titles paused, nous dispatches will be refused",
 		Env: map[string]string{
 			"AGENTCTL_AGENT_NAME":        "agentctl",
 			"AGENTCTL_NOTIFICATION_TYPE": "no_credits",

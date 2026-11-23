@@ -35,7 +35,10 @@ type Window struct {
 	BlockedSince string `json:"blocked_since,omitempty"`
 	StateSince   string `json:"state_since,omitempty"`
 	PendingTool  string `json:"pending_tool,omitempty"`
-	PRNumber     int    `json:"pr_number,omitempty"`
+	// PendingToolDetail is what the pending tool is asked to do (the Bash
+	// command, the file path), set with PendingTool; push bodies use it.
+	PendingToolDetail string `json:"pending_tool_detail,omitempty"`
+	PRNumber          int    `json:"pr_number,omitempty"`
 
 	// Recap is the row's one-line "what is this agent working on" (see Recap)
 	// and RecapSource names where it came from: summary, task, title or activity.
@@ -118,6 +121,7 @@ func ToWindow(r Row, m Meta) Window {
 	}
 	if r.State == "blocked" {
 		w.PendingTool = m.PendingTool
+		w.PendingToolDetail = m.PendingToolDetail
 		if !m.BlockedSince.IsZero() {
 			w.BlockedSince = m.BlockedSince.UTC().Format(time.RFC3339)
 			w.StateSince = w.BlockedSince

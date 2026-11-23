@@ -111,20 +111,16 @@ func beginApproval(n popupNotice) (end func()) {
 		}
 	}
 
-	message := fmt.Sprintf("%s wants to %s, approve in %s", n.Agent, n.Action, sessionName)
 	if stateSet && ws.SpawnedBy != "" && prevState != "blocked" {
 		emitBlockedMessage(windowID, ws, n.Agent)
 	}
-	title := n.Agent
-	if d := strings.TrimPrefix(sessionName, "agentctl-"); d != "" {
-		title = n.Agent + " \u00b7 " + d
-	}
+	title, titled := alertTitle(ws, n.Agent, windowID)
 	// notify.NotifyWithOptions is fire-and-forget, so this does not delay
 	// the popup.
 	sendAlert(n.Agent, approvalNotificationType, notify.Options{
 		Title:    title,
-		Subtitle: "Approval needed",
-		Message:  message,
+		Subtitle: alertSubtitle("Approval needed", titled, n.Agent, strings.TrimPrefix(sessionName, "agentctl-")),
+		Message:  approvalMessage(n),
 		Env: map[string]string{
 			"AGENTCTL_AGENT_NAME":        n.Agent,
 			"AGENTCTL_NOTIFICATION_TYPE": approvalNotificationType,

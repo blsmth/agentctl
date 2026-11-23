@@ -3,8 +3,10 @@ package cron
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
@@ -88,8 +90,10 @@ type Deps struct {
 	Launch func(LaunchRequest) (LaunchResult, error)
 	// Interrupt sends C-c to a timed-out window and marks it blocked.
 	Interrupt func(w Window, job Job, timeout time.Duration) error
-	// Notify sends a desktop notification.
-	Notify func(title, message string)
+	// Notify sends a desktop notification: the job name as the title, the
+	// event ("Cron run failed · project") as the subtitle, the cause as the
+	// message.
+	Notify func(title, subtitle, message string)
 	// Logf records diagnostics.
 	Logf func(format string, args ...any)
 }
@@ -100,10 +104,24 @@ func (d *Deps) logf(format string, args ...any) {
 	}
 }
 
-func (d *Deps) notify(title, msg string) {
+func (d *Deps) notify(title, subtitle, msg string) {
 	if d.Notify != nil {
-		d.Notify(title, msg)
+		d.Notify(title, subtitle, msg)
 	}
+}
+
+// notifyFailed announces a job that did not run: titled by the job, with the
+// project (the job directory's name) after the event.
+func (d *Deps) notifyFailed(job Job, event string, err error) {
+	subtitle := event
+	if job.Dir != "" {
+		subtitle += " · " + filepath.Base(job.Dir)
+	}
+	msg := strings.Join(strings.Fields(err.Error()), " ")
+	if msg == "" {
+		msg = event
+	}
+	d.notify(job.Name, subtitle, msg)
 }
 
 // BranchFor returns the worktree branch for a fire of job at t.
@@ -354,7 +372,7 @@ func (t *ticker) launch(job Job, scheduled time.Time, e Entry) {
 		e.Result = Failed(reason)
 		e.Note = joinNote(e.Note, err.Error())
 		t.record(e)
-		t.d.notify("agentctl cron: "+job.Name+" failed", err.Error())
+		t.d.notifyFailed(job, "Cron run failed", err)
 		return
 	}
 	t.running++
@@ -469,7 +487,7 @@ func (t *ticker) resolveAccount(job Job, e *Entry) (string, bool) {
 	if err != nil {
 		e.Result, e.Note = Failed("account"), err.Error()
 		t.record(*e)
-		t.d.notify("agentctl cron: "+job.Name+" failed", err.Error())
+		t.d.notifyFailed(job, "Cron run failed", err)
 		return "", false
 	}
 	e.Account = account

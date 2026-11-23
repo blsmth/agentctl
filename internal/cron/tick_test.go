@@ -66,10 +66,10 @@ func (f *fakeEnv) deps(dir string, now time.Time, cfg config.CronConfig, jobs ..
 			f.interrupts = append(f.interrupts, w.ID)
 			return nil
 		},
-		Notify: func(title, msg string) {
+		Notify: func(title, subtitle, msg string) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
-			f.notes = append(f.notes, title+": "+msg)
+			f.notes = append(f.notes, title+" | "+subtitle+" | "+msg)
 		},
 	}
 }
@@ -522,4 +522,30 @@ func TestTickUsageGatePerAccount(t *testing.T) {
 func withAccount(j Job, account string) Job {
 	j.Account = account
 	return j
+}
+
+func TestNotifyFailedContent(t *testing.T) {
+	tests := []struct {
+		name string
+		job  Job
+		err  error
+		want string
+	}{
+		{"job dir names the project", Job{Name: "nightly", Dir: "/code/acme"}, errors.New("tmux is not available"),
+			"nightly | Cron run failed · acme | tmux is not available"},
+		{"no dir, multi-line error is one line", Job{Name: "nightly"}, errors.New("boom\n  second line"),
+			"nightly | Cron run failed | boom second line"},
+		{"empty error still has a message", Job{Name: "nightly"}, errors.New(""),
+			"nightly | Cron run failed | Cron run failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			d := Deps{Notify: func(title, subtitle, msg string) { got = title + " | " + subtitle + " | " + msg }}
+			d.notifyFailed(tt.job, "Cron run failed", tt.err)
+			if got != tt.want {
+				t.Errorf("notification = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }

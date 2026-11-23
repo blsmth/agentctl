@@ -66,3 +66,35 @@ func TestTaskLine(t *testing.T) {
 		})
 	}
 }
+
+func TestOneLine(t *testing.T) {
+	tests := map[string]string{
+		"":                     "",
+		"  a \n\n b\t c  ":     "a b c",
+		"git commit -m 'a\nb'": "git commit -m 'a b'",
+	}
+	for in, want := range tests {
+		if got := OneLine(in); got != want {
+			t.Errorf("OneLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestFirstSentence(t *testing.T) {
+	tests := []struct{ name, in, want string }{
+		{"empty", "", ""},
+		{"first sentence of a line", "Fixed the jump. Tests pass.", "Fixed the jump"},
+		{"stops at the first line", "Fixed the jump\nSecond line", "Fixed the jump"},
+		{"skips heading and fence", "# Done\n```\ncode. Here\n```\nShipped v1.2 today!", "Shipped v1.2 today"},
+		{"abbreviation is not an end", "Use e.g. the flag. Done", "Use e.g. the flag"},
+		{"no stop", "all good", "all good"},
+		{"question", "Want me to continue? Say so.", "Want me to continue"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FirstSentence(tt.in); got != tt.want {
+				t.Errorf("FirstSentence(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

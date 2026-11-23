@@ -272,3 +272,20 @@ func TestNotifyWithOptions_DetachedStillGetsSubstitutionsAndEnv(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// TestNotifyWithOptions_ExportsTitle verifies AGENTCTL_TITLE carries the
+// title for notify_cmd scripts that group by it.
+func TestNotifyWithOptions_ExportsTitle(t *testing.T) {
+	outFile := filepath.Join(t.TempDir(), "out.txt")
+	tmp := outFile + ".tmp"
+	setNotifyCmd(t, "printf '%s|%s' \"$AGENTCTL_TITLE\" \"$AGENTCTL_NOTIFICATION_TYPE\" > "+tmp+" && mv "+tmp+" "+outFile)
+	NotifyWithOptions(Options{
+		Title:    "Fix hub viewer jump",
+		Subtitle: "Needs permission · go-engineer · agentctl",
+		Message:  "m",
+		Env:      map[string]string{"AGENTCTL_NOTIFICATION_TYPE": "permission_prompt"},
+	})
+	if got := string(waitForFile(t, outFile)); got != "Fix hub viewer jump|permission_prompt" {
+		t.Errorf("got %q", got)
+	}
+}
