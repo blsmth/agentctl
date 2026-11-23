@@ -74,7 +74,7 @@ func (f fleetFilter) next() fleetFilter {
 // matches reports whether row r passes the filter on its own (ancestor
 // retention is filterRows' job).
 func (f fleetFilter) matches(r fleet.Row) bool {
-	w := rowWeight(r)
+	w := glyphWeight(r)
 	switch f {
 	case fleetFilterActive:
 		return w == fleetWeightWorking || w == fleetWeightBlocked
