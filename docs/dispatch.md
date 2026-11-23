@@ -104,6 +104,17 @@ An agent with `role: orchestrator` in its frontmatter (see [configuration.md](co
 - **Human-initiated `--prompt`** (the phone's new-session button, or the CLI from a shell with no tracked Claude session): launched as a `bare` interactive session. The prompt is the first user message, there are no autonomous instructions, and the permission mode resolves like a worker dispatch (per-launch override, then the agent's `permission_mode`, then `auto`).
 - **Unattended** (a cron job, or `--prompt` dispatched from another agent session, so done notices and `--wait` work) **and `--issue`**: the mode is kept, with its autonomous instructions and the task in the system prompt.
 
+## Choosing a model
+
+Every orchestrator agentctl launches gets a "Models" section in its preamble with this guidance:
+
+- Pick the cheapest model that can do the job. Plan usage is shared across every session on an account, and long Opus sessions use it up fastest.
+- Sonnet is the default for implementation, tests, docs, refactors and reviews.
+- Opus (`--model opus`) only for genuinely hard work (concurrency, hooks, auth, security-relevant code, design) and reviews of those areas.
+- `agentctl account list` shows 5H/7D plan usage; `agentctl cost report --since 5h --sort cost --top 10` shows what used the most.
+
+When the global config defines [backends](configuration.md#backends-ollama-and-nous-portal), the section also gets one line per backend, built from config at launch (no network calls, no credential checks). A Nous Portal backend is billed per token outside the Claude plan limit, so the orchestrator is told to prefer it for docs audits, test backfills, bulk mechanical changes, first drafts, research, second-opinion reviews and any non-critical work when plan usage is high. An Ollama backend is described as free and local, for small mechanical tasks. With no backends there are no backend lines, and harnesses that cannot use backends never get them. Workers do not get this section.
+
 ## PR review (`--review-pr`)
 
 ```bash

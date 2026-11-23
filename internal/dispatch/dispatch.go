@@ -123,6 +123,7 @@ type Request struct {
 	persona          string // full agent body, for harnesses without --agent
 	noMessaging      bool   // harness has no SendMessage/ListAgents
 	prReview         string // config pr_review mode; empty means always
+	backendLines     string // orchestrator Models-section backend lines, built from config at launch
 	reportViaMailbox bool   // a dispatcher exists but cannot be messaged
 	// reviewSharedCheckout is set for a ModeReviewPR launch that runs in the
 	// shared checkout (no worktree, or worktree creation failed).
@@ -343,6 +344,9 @@ func Launch(req Request) (Result, error) {
 
 	// 7. Build system prompt.
 	req.prReview = effectivePRReview(cfg.EffectivePRReview(), req.PRReviewOverride)
+	if spec.Role == RoleOrchestrator && caps.Backends {
+		req.backendLines = backendGuidance(cfg.Backends)
+	}
 	req.Orchestrator = launchOrchestrator(req, spec)
 	if req.Orchestrator.Known() && cfg.HasAccounts() && caps.Accounts {
 		dropCrossAccountOrchestrator(&req, acct.Dir, claudehome.ParentDir(acct.parent))
