@@ -89,7 +89,7 @@ See [cron](configuration.md#cron) for the config keys, approval rules and the hu
 
 ## Artifacts
 
-`agentctl artifact` publishes a report, table, chart or mockup an agent wants to show the human, and prints a URL to open it (`https://<host>:<port>/#/artifacts/<id>`, built from `serve.listen` and the first `serve.hostnames` entry, else `<hostname>.local`). The store is `<state dir>/artifacts/` (0700/0600); this command is its only writer, and direct Bash, Write and Edit access to it is denied to agents. Serve being down never fails a command: it says so on stderr and prints the URL it will have.
+`agentctl artifact` publishes a report, table, chart or mockup an agent wants to show the human, and prints a direct link to open it, `https://<host>:<port>/a/<id>/latest/` (built from `serve.listen` and the first `serve.hostnames` entry, else `<hostname>.local`), then the phone app's viewer link `app: https://<host>:<port>/#/artifacts/<id>`. The direct link needs no pairing: the 26-character random id is the credential, so it opens in any browser that can reach serve (the `allow_cidrs` networks, e.g. the LAN or VPN), and anyone who has the link can view the artifact until it is removed with `artifact rm`. Artifacts published before this change have 10-character ids; their direct link still needs a paired browser. `--json` has both, as `url` and `app_url`. The store is `<state dir>/artifacts/` (0700/0600); this command is its only writer, and direct Bash, Write and Edit access to it is denied to agents. Serve being down never fails a command: it says so on stderr and prints the URL it will have.
 
 | Command | What it does |
 |---|---|
@@ -98,12 +98,12 @@ See [cron](configuration.md#cron) for the config keys, approval rules and the hu
 | `agentctl artifact list` | The current project's artifacts (`--all` for every project, `--project`, `--agent`, `--since 7d`, `--json`). |
 | `agentctl artifact show <id>` | Metadata, revisions and URLs (`--json`). |
 | `agentctl artifact comments <id>` | Feedback sent from the viewer (`--json`): revision, time, device, delivery status and text. `show` lists them too. |
-| `agentctl artifact url <id>` / `open <id>` | Print the URL, or open it in the laptop browser (`--rev N`). The laptop browser must be paired once with `serve pair`. |
+| `agentctl artifact url <id>` / `open <id>` | Print the direct link, or open it in the laptop browser (`--rev N` for `/a/<id>/<N>/`). No pairing needed, except for a legacy 10-character id. |
 | `agentctl artifact pin` / `unpin <id>` | Pinned artifacts are never pruned. |
 | `agentctl artifact rm <id>` | Delete it (`--yes` to skip the prompt; required when not on a terminal). |
 | `agentctl artifact prune` | Delete unpinned artifacts not updated for `--older-than` (default 30d; `--dry-run` lists them). `reconcile --housekeeping` runs the same 30-day prune. |
 
-Limits: 25 MB per revision, 500 files per directory, 1 GB for the store (`add` then fails, naming `artifact rm` and `prune`). Content is copied, never symlinked; a symlink inside a directory, a `..` entry, or a non-UTF-8 file with an unknown extension is refused. Use relative paths inside an HTML artifact (it is served under `/a/<id>/<rev>/`). Origin (agent, window, session, branch) comes from the calling window through `TMUX_PANE`; a plain shell records only the project, from the cwd's worktree-aware root. `agentctl serve` serves them under `/a/<id>/<rev>/` in a sandbox and pushes a notification for a new one (not for updates; `--no-notify` skips it); the phone viewer comes in a later PR. See [design/artifacts.md](design/artifacts.md).
+Limits: 25 MB per revision, 500 files per directory, 1 GB for the store (`add` then fails, naming `artifact rm` and `prune`). Content is copied, never symlinked; a symlink inside a directory, a `..` entry, or a non-UTF-8 file with an unknown extension is refused. Use relative paths inside an HTML artifact (it is served under `/a/<id>/<rev>/`). Origin (agent, window, session, branch) comes from the calling window through `TMUX_PANE`; a plain shell records only the project, from the cwd's worktree-aware root. `agentctl serve` serves them under `/a/<id>/<rev>/` in a sandbox and pushes a notification for a new one (not for updates; `--no-notify` skips it), which opens the phone app's viewer. See [design/artifacts.md](design/artifacts.md).
 
 ## Phone web app and metrics
 

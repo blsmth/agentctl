@@ -62,11 +62,36 @@ const (
 // ErrNotFound is returned (wrapped) when an artifact id does not exist.
 var ErrNotFound = errors.New("artifact not found")
 
-var idRe = regexp.MustCompile(`^[a-z2-7]{10}$`)
+// ID lengths. NewID makes IDLen-character ids (130 random bits), which are
+// capability ids: knowing one is enough to view the artifact (serve's public
+// /a/<id>/ route). Artifacts published before that have LegacyIDLen-character
+// ids (35 bits), which stay valid but are viewable only by a paired device.
+const (
+	IDLen       = 26
+	LegacyIDLen = 10
+)
 
-// ValidID reports whether id has the shape NewID produces. Every method that
-// takes an id checks it first, so an id can never be a path.
+var idRe = regexp.MustCompile(`^(?:[a-z2-7]{26}|[a-z2-7]{10})$`)
+
+// ValidID reports whether id has the shape NewID produces now or produced
+// before (the legacy 10-character form). Every method that takes an id
+// checks it first, so an id can never be a path.
 func ValidID(id string) bool { return idRe.MatchString(id) }
+
+// CapabilityID reports whether id is a valid id of the current, unguessable
+// form, whose holder may view the artifact without pairing. A legacy id is
+// not one.
+func CapabilityID(id string) bool { return len(id) == IDLen && ValidID(id) }
+
+// ShortID is the prefix of an id that is safe to log: an id is a viewing
+// capability, so logs carry only enough of it to tell artifacts apart.
+func ShortID(id string) string {
+	const n = 6
+	if len(id) <= n {
+		return id
+	}
+	return id[:n] + "…"
+}
 
 // Revision is one stored version of an artifact.
 type Revision struct {
@@ -187,14 +212,15 @@ func (s *Store) lock(root string) (func(), error) {
 	}, nil
 }
 
-// NewID returns a random 10-character base32 (lowercase) id.
+// NewID returns a random IDLen-character id: lowercase base32 (a-z2-7),
+// unpadded, 130 bits from crypto/rand.
 func NewID() string {
-	var b [7]byte
+	var b [17]byte // 136 bits; the first 26 characters carry 130 of them
 	if _, err := rand.Read(b[:]); err != nil {
 		panic(fmt.Sprintf("artifacts: crypto/rand: %v", err))
 	}
 	enc := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])
-	return strings.ToLower(enc)[:10]
+	return strings.ToLower(enc)[:IDLen]
 }
 
 // Get returns one artifact's metadata.

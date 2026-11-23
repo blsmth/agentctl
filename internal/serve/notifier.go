@@ -423,7 +423,7 @@ func (d *pushDispatcher) enqueue(m Message) {
 	select {
 	case d.q <- m:
 	default:
-		logging.Warn("serve: push queue full, dropping %s notification for %s", m.Kind, m.Tag)
+		logging.Warn("serve: push queue full, dropping %s notification for %s", m.Kind, redactArtifactIDs(m.Tag))
 	}
 }
 

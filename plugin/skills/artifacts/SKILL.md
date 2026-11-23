@@ -5,7 +5,7 @@ description: Publish a report, summary, table, chart, dashboard, comparison, moc
 
 # Artifacts
 
-`agentctl artifact add` publishes a file and prints a URL. The human opens it in the agentctl phone app (PWA) or a laptop browser. It is served by `agentctl serve` at `/a/<id>/<rev>/` inside a sandbox: scripts run, but there are no cookies and no access to any API. `https:` CDNs work (Chart.js, Mermaid, Tailwind CDN); the phone then needs internet.
+`agentctl artifact add` publishes a file and prints a direct link (`https://<host>:<port>/a/<id>/latest/`) plus the phone app link. The direct link opens in any browser on the LAN or VPN with no pairing: the id is the credential, so anyone with the link can view it. It is served by `agentctl serve` at `/a/<id>/<rev>/` inside a sandbox: scripts run, but there are no cookies and no access to any API. `https:` CDNs work (Chart.js, Mermaid, Tailwind CDN); the phone then needs internet.
 
 ## Artifact or text?
 
@@ -38,7 +38,7 @@ Use `--kind` only to override the extension.
    - `comparison.html`: side-by-side options, pros/cons, recommendation
    - `report.md`: markdown report (fenced `mermaid` blocks allowed)
 2. Publish: `agentctl artifact add /tmp/<slug>/report.html --title "Short title" --description "One line"`. It prints the id and URL. If serve is not running it says so; the URL is still valid once it starts.
-3. Send the human the URL (and the one-line conclusion) in your message. Keep the id.
+3. Send the human the direct link (and the one-line conclusion) in your message. Keep the id. Treat the link like a password: do not post it anywhere public (issues, PRs, commits).
 4. To change it, run `agentctl artifact update <id> <file> --note "what changed"`. This adds a revision at the same URL. Never `add` a second artifact for the same thing.
 5. Other commands: `artifact list`, `show <id>`, `url <id>`, `open <id>` (laptop browser), `pin <id>` (exempt from the 30-day cleanup), `rm <id>`. `add` takes `--pin`, `--no-notify` (skip the push), `--json`. With stdin (`-`) pass `--entry report.html` so the kind is known.
 
@@ -47,7 +47,7 @@ Limits: 25 MB and 500 files per revision, 20 revisions per artifact.
 ## Hard rules
 
 - Prefer one self-contained file: inline CSS and JS, no build step. If you need several files, use a directory with `index.html` and **relative paths only** (`./app.js`, never `/app.js`; the page lives under `/a/<id>/<rev>/`).
-- **No secrets**: no tokens, API keys, env values, credentials, private URLs or personal data in the content, the data, or comments. Check before publishing; the store is readable by every paired device.
+- **No secrets**: no tokens, API keys, env values, credentials, private URLs or personal data in the content, the data, or comments. Check before publishing; anyone with the link, and every paired device, can read it.
 - **Mobile first**: design for 390 px wide, include `<meta name="viewport" content="width=device-width, initial-scale=1">`, and make it work at desktop widths too (cap content width, wrap grids). Wide tables scroll inside their own container; nothing may scroll the whole page sideways. Tap targets at least 40 px.
 - Respect `prefers-color-scheme` (light and dark). Use the template's CSS variables, not hard-coded colours.
 - No external fonts. Use the system font stack.

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,7 +27,8 @@ type artifactRevView struct {
 
 // artifactView is an artifact as /v1/artifacts serves it: its metadata, the
 // viewer route (url) and the capability URL of the latest revision's entry
-// (raw_url), minted for the requesting device; each revision has its own.
+// (raw_url): the direct URL for a capability id, else minted for the
+// requesting device; each revision has its own.
 type artifactView struct {
 	artifacts.Meta
 	Revs     []artifactRevView `json:"revs"`
@@ -41,6 +43,16 @@ type artifactView struct {
 // artifactViewerURL is the web app route of an artifact.
 func artifactViewerURL(id string) string { return "/#/artifacts/" + url.PathEscape(id) }
 
+// artifactRawURL is the URL of revision rev's entry the viewer frames: the
+// direct /a/<id>/<n>/ for a capability id (no token needed, it never
+// expires), the device's token URL for a legacy id.
+func (s *Server) artifactRawURL(id string, rev int, device string) string {
+	if artifacts.CapabilityID(id) {
+		return artifactDirectURL(id, strconv.Itoa(rev), "")
+	}
+	return artifactTokenURL(s.mintArtifactToken(id, rev, device), id, rev, "")
+}
+
 // viewOfArtifact builds the view with capability URLs for device.
 func (s *Server) viewOfArtifact(m artifacts.Meta, device string) artifactView {
 	v := artifactView{
@@ -49,7 +61,7 @@ func (s *Server) viewOfArtifact(m artifacts.Meta, device string) artifactView {
 		Revs: make([]artifactRevView, 0, len(m.Revs)),
 	}
 	for _, r := range m.Revs {
-		u := artifactTokenURL(s.mintArtifactToken(m.ID, r.N, device), m.ID, r.N, "")
+		u := s.artifactRawURL(m.ID, r.N, device)
 		v.Revs = append(v.Revs, artifactRevView{Revision: r, RawURL: u})
 		if r.N == v.Latest {
 			v.RawURL = u
@@ -68,10 +80,15 @@ func (s *Server) registerArtifacts(rt *Router) {
 		rt.Feature("artifact-comments")
 	}
 	rt.Write("POST /v1/artifacts/{id}/comments", writeRoute(s, "artifact-comment", s.handleArtifactComment))
-	// The cookie authenticates only the entry request, which redirects to the
-	// capability URL; subresources of the sandboxed document carry no cookie.
-	rt.Device("GET /a/{id}/{rev}/{path...}", s.handleArtifactEntry)
-	rt.Device("GET /a/{id}/{rev}", s.handleArtifactRevRoot)
+	// Public: a capability id is its own credential and is served here with
+	// no cookie; a legacy id checks the device cookie itself (artifactAccess)
+	// and redirects to the token URL, because subresources of the sandboxed
+	// document carry no cookie.
+	rt.Public("GET /a/{id}/{rev}/{path...}", s.handleArtifactEntry)
+	rt.Public("GET /a/{id}/{rev}", s.handleArtifactRevRoot)
+	rt.Public("GET /a/{id}", s.handleArtifactRoot)
+	rt.Public("GET /a/{$}", s.handleArtifactNotFound)
+	rt.Public("GET /a", s.handleArtifactNotFound)
 	rt.Public("GET /a/t/{token}/{id}/{rev}/{path...}", s.handleArtifactContent)
 	rt.Public("GET /a/t/{token}/{id}/{rev}", s.handleArtifactTokenRoot)
 }
@@ -123,7 +140,7 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := s.artifacts.List(artifacts.Filter{Project: q.Get("project"), Since: since})
 	if err != nil {
-		logging.Warn("serve: listing artifacts: %v", err)
+		logging.Warn("serve: listing artifacts: %s", redactArtifactIDs(err.Error()))
 		writeError(w, http.StatusInternalServerError, codeInternal, "listing artifacts failed")
 		return
 	}
@@ -159,7 +176,7 @@ func artifactErr(err error) (int, string, string) {
 	case errors.Is(err, artifacts.ErrBadPath):
 		return http.StatusBadRequest, codeBadRequest, "invalid artifact path"
 	}
-	logging.Warn("serve: artifact: %v", err)
+	logging.Warn("serve: artifact: %s", redactArtifactIDs(err.Error()))
 	return http.StatusInternalServerError, codeInternal, "reading the artifact failed"
 }
 

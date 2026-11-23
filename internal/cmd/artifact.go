@@ -119,19 +119,38 @@ func RunArtifactPrune(w io.Writer, olderThan string, dryRun bool) error {
 }
 
 // artifactView is the JSON shape of an artifact: its metadata plus where to
-// view it.
+// view it. URL is the direct link (any browser that reaches serve, no
+// pairing, for an artifact with a capability id); AppURL is the phone app's
+// viewer, which needs a paired device.
 type artifactView struct {
 	artifacts.Meta
 	URL          string `json:"url"`
+	AppURL       string `json:"app_url"`
 	ServeRunning bool   `json:"serve_running"`
 }
 
 func (e artifactEnv) view(m artifacts.Meta) artifactView {
 	base, running := e.serveURL()
-	return artifactView{Meta: m, URL: artifactURL(base, m.ID, 0), ServeRunning: running}
+	return viewAt(m, base, running)
 }
 
-// artifactURL is the viewer URL: <base>/#/artifacts/<id>[/<rev>].
+func viewAt(m artifacts.Meta, base string, running bool) artifactView {
+	return artifactView{Meta: m, URL: artifactDirectURL(base, m.ID, 0), AppURL: artifactURL(base, m.ID, 0), ServeRunning: running}
+}
+
+// artifactDirectURL is the content URL: <base>/a/<id>/latest/, or
+// <base>/a/<id>/<rev>/ for a numbered revision. The id is the credential,
+// so it opens in any browser on an allowed network without pairing (a
+// legacy 10-character id still needs a paired browser).
+func artifactDirectURL(base, id string, rev int) string {
+	r := "latest"
+	if rev > 0 {
+		r = strconv.Itoa(rev)
+	}
+	return strings.TrimRight(base, "/") + "/a/" + id + "/" + r + "/"
+}
+
+// artifactURL is the phone app's viewer URL: <base>/#/artifacts/<id>[/<rev>].
 func artifactURL(base, id string, rev int) string {
 	u := strings.TrimRight(base, "/") + "/#/artifacts/" + id
 	if rev > 0 {
@@ -181,7 +200,7 @@ func (e artifactEnv) report(w io.Writer, m artifacts.Meta, verb string, jsonOut 
 	if jsonOut {
 		return writeJSON(w, v)
 	}
-	fmt.Fprintf(w, "%s %q as %s (rev %d)\n%s\n", verb, m.Title, m.ID, m.Latest(), v.URL)
+	fmt.Fprintf(w, "%s %q as %s (rev %d)\n%s\napp: %s\n", verb, m.Title, m.ID, m.Latest(), v.URL, v.AppURL)
 	return nil
 }
 
@@ -218,7 +237,7 @@ func (e artifactEnv) list(w io.Writer, o ArtifactListOptions) error {
 	if o.JSON {
 		out := make([]artifactView, 0, len(list))
 		for _, m := range list {
-			out = append(out, artifactView{Meta: m, URL: artifactURL(base, m.ID, 0), ServeRunning: running})
+			out = append(out, viewAt(m, base, running))
 		}
 		return writeJSON(w, out)
 	}
@@ -304,6 +323,7 @@ func (e artifactEnv) show(w io.Writer, id string, jsonOut bool) error {
 		row("pinned", "yes")
 	}
 	row("url", v.URL)
+	row("app", v.AppURL)
 	fmt.Fprintln(w, "  revisions:")
 	for i := len(m.Revs) - 1; i >= 0; i-- {
 		r := m.Revs[i]
@@ -312,7 +332,7 @@ func (e artifactEnv) show(w io.Writer, id string, jsonOut bool) error {
 			note = "  " + r.Note
 		}
 		fmt.Fprintf(w, "    #%d  %s  %s%s\n      %s\n", r.N, r.Created.Local().Format("2006-01-02 15:04"),
-			humanize.Bytes(uint64(r.Size)), note, artifactURL(base, m.ID, r.N))
+			humanize.Bytes(uint64(r.Size)), note, artifactDirectURL(base, m.ID, r.N))
 	}
 	if len(m.Comments) > 0 {
 		fmt.Fprintf(w, "  comments (%d, rev  time  from  status):\n", len(m.Comments))
@@ -355,7 +375,7 @@ func printComments(w io.Writer, cs []artifacts.Comment, indent string) {
 	}
 }
 
-// revURL validates rev against the artifact and returns the URL to show.
+// revURL validates rev against the artifact and returns its direct URL.
 func (e artifactEnv) revURL(id string, rev int) (string, error) {
 	m, err := e.store().Get(id)
 	if err != nil {
@@ -368,7 +388,7 @@ func (e artifactEnv) revURL(id string, rev int) (string, error) {
 		return "", fmt.Errorf("artifact %s has no revision %d (have %d..%d)", id, rev, m.Revs[0].N, m.Latest())
 	}
 	base, running := e.serveURL()
-	u := artifactURL(base, id, rev)
+	u := artifactDirectURL(base, id, rev)
 	if !running {
 		e.notRunningNote(u)
 	}

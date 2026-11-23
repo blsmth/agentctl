@@ -1,7 +1,9 @@
 // Artifacts tab: the list of agent-published artifacts and the viewer. The
 // content is untrusted: it only ever loads inside a sandboxed iframe without
-// allow-same-origin (an opaque origin, no cookie, no reach into /v1), from a
-// capability URL the server mints per device (raw_url, valid ~24h).
+// allow-same-origin (an opaque origin, no cookie, no reach into /v1), from the
+// raw_url the server gives: the direct /a/<id>/<n>/ for an artifact whose id
+// is itself the capability, or a token URL minted per device (valid ~24h) for
+// a legacy 10-character id.
 import { ApiError, api, get } from "./api.js";
 import {
   ARTIFACT_FEEDBACK_MAX,

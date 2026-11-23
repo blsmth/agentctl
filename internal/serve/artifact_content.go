@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"encoding/csv"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
@@ -24,18 +27,31 @@ import (
 // Artifact content is served under /a/ on the app's own origin, in a
 // sandbox: artifactCSP has no allow-same-origin, so the document runs in an
 // opaque origin and its script cannot read any /v1 response or send the CSRF
-// header. The device cookie only authenticates the entry request at
-// /a/<id>/<rev>/<path>, which redirects to the capability URL
-// /a/t/<token>/<id>/<n>/<path> (artifact_token.go); everything the document
-// then loads by relative URL carries the token. The source list is
-// deliberately open (CDN scripts, styles, fonts): the protection is the
-// opaque origin.
+// header. Two ways in:
+//
+//   - An artifact with a capability id (artifacts.CapabilityID, 130 random
+//     bits) is served straight from /a/<id>/<rev>/<path> with no cookie: the
+//     id is the credential, so anyone on an allowed source address who has
+//     the link can view it, in any browser, unpaired. Relative URLs keep the
+//     id in the base path, so the document's own assets load too.
+//   - A legacy 10-character id is guessable, so it still needs the device
+//     cookie, which only authenticates the entry request: it redirects to the
+//     capability URL /a/t/<token>/<id>/<n>/<path> (artifact_token.go), and
+//     everything the document then loads by relative URL carries the token.
+//     Without a cookie it is the same 404 as an unknown id.
+//
+// The source list is deliberately open (CDN scripts, styles, fonts): the
+// protection is the opaque origin.
 const artifactCSP = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; " +
 	"default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https:"
 
 // cacheArtifactRev is the Cache-Control of content at a capability URL: a
 // numbered revision never changes. The cookie redirects are no-store.
 const cacheArtifactRev = "private, max-age=31536000, immutable"
+
+// cacheArtifactLatest is the Cache-Control of /a/<id>/latest/ content, which
+// changes with every update: revalidate each time (by ETag).
+const cacheArtifactLatest = "private, no-cache"
 
 // maxCSVRows bounds the rendered CSV table.
 const maxCSVRows = 5000
@@ -56,7 +72,7 @@ func sandboxArtifacts(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		sw := &sandboxWriter{ResponseWriter: w, cors: isArtifactTokenPath(r.URL.Path)}
+		sw := &sandboxWriter{ResponseWriter: w, cors: isArtifactCapabilityPath(r.URL.Path)}
 		if badArtifactPath(r.URL) {
 			writeArtifactError(sw, http.StatusBadRequest, "Invalid artifact path.")
 			return
@@ -162,11 +178,43 @@ func parseArtifactRev(s string) (int, bool) {
 	return n, true
 }
 
+// artifactAccess decides who may read /a/<id>/...: a capability id is open
+// to anyone (ok, no device); a legacy id needs a paired device's cookie.
+// Anything else, a legacy id without the cookie included, gets the same 404
+// page as an id that does not exist, so a miss tells nothing.
+func (s *Server) artifactAccess(w http.ResponseWriter, r *http.Request, id string) (Device, bool) {
+	if artifacts.CapabilityID(id) {
+		return Device{}, true
+	}
+	if artifacts.ValidID(id) {
+		if d, ok := deviceFromCookie(s.router.auth, s.now, r); ok {
+			return d, true
+		}
+	}
+	writeArtifactError(w, http.StatusNotFound, errorText(http.StatusNotFound))
+	return Device{}, false
+}
+
+// handleArtifactRoot redirects /a/<id> to /a/<id>/latest/ when the caller
+// may read it (artifactAccess).
+func (s *Server) handleArtifactRoot(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.artifactAccess(w, r, id); !ok {
+		return
+	}
+	http.Redirect(w, r, "/a/"+id+"/latest/", http.StatusFound)
+}
+
+// handleArtifactNotFound is /a and /a/: the same 404 page as an unknown id,
+// cookie or not.
+func (s *Server) handleArtifactNotFound(w http.ResponseWriter, _ *http.Request) {
+	writeArtifactError(w, http.StatusNotFound, errorText(http.StatusNotFound))
+}
+
 // handleArtifactRevRoot redirects /a/<id>/<rev> to /a/<id>/<rev>/.
 func (s *Server) handleArtifactRevRoot(w http.ResponseWriter, r *http.Request) {
 	id, rev := r.PathValue("id"), r.PathValue("rev")
-	if !artifacts.ValidID(id) {
-		writeArtifactError(w, http.StatusNotFound, "No such artifact.")
+	if _, ok := s.artifactAccess(w, r, id); !ok {
 		return
 	}
 	if _, ok := parseArtifactRev(rev); !ok {
@@ -176,15 +224,31 @@ func (s *Server) handleArtifactRevRoot(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/a/"+id+"/"+rev+"/", http.StatusFound)
 }
 
-// handleArtifactEntry is GET /a/{id}/{rev}/{path...} with the device cookie:
-// it resolves rev ("latest" or a number) and redirects to the capability URL
-// of the same file for this device, keeping the query. The file itself is
-// checked when the capability URL is read.
+// handleArtifactEntry is GET /a/{id}/{rev}/{path...}, a Public route. A
+// capability id is served right here, rev "latest" or a number, no cookie
+// (subresources authenticate by the id in their path). A legacy id needs the
+// device cookie: rev is resolved and the request redirected to the token URL
+// of the same file for this device, keeping the query; the file itself is
+// checked when the token URL is read.
 func (s *Server) handleArtifactEntry(w http.ResponseWriter, r *http.Request) {
-	id, rel := r.PathValue("id"), r.PathValue("path")
-	rev, ok := parseArtifactRev(r.PathValue("rev"))
+	id, rel, revSeg := r.PathValue("id"), r.PathValue("path"), r.PathValue("rev")
+	d, ok := s.artifactAccess(w, r, id)
+	if !ok {
+		return
+	}
+	rev, ok := parseArtifactRev(revSeg)
 	if !ok {
 		writeArtifactError(w, http.StatusBadRequest, "Invalid revision.")
+		return
+	}
+	if artifacts.CapabilityID(id) {
+		cache := cacheArtifactRev
+		if rev == 0 {
+			cache = cacheArtifactLatest
+		}
+		s.serveArtifactFile(w, r, id, rev, rel, cache, func(rel string) string {
+			return artifactDirectURL(id, revSeg, rel)
+		})
 		return
 	}
 	m, err := s.artifacts.Get(id)
@@ -200,7 +264,6 @@ func (s *Server) handleArtifactEntry(w http.ResponseWriter, r *http.Request) {
 		writeArtifactError(w, http.StatusNotFound, errorText(http.StatusNotFound))
 		return
 	}
-	d, _ := DeviceFrom(r.Context())
 	target := artifactTokenURL(s.mintArtifactToken(id, rev, d.ID), id, rev, rel)
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
@@ -231,11 +294,27 @@ func (s *Server) handleArtifactContent(w http.ResponseWriter, r *http.Request) {
 		writeArtifactError(w, http.StatusForbidden, errorText(http.StatusForbidden))
 		return
 	}
+	s.serveArtifactFile(w, r, id, rev, rel, cacheArtifactRev, func(rel string) string {
+		return artifactTokenURL(tok, id, rev, rel)
+	})
+}
+
+// serveArtifactFile writes file rel of revision rev (0 = latest) of id, once
+// the caller has decided the request may read it. urlOf is the URL of a file
+// of the same revision under the route that was used, for the redirect to an
+// entry in a subdirectory. A markdown or text entry is rendered to an HTML
+// page unless ?raw=1; everything else is served byte for byte with a
+// Content-Type from its extension (never sniffed).
+func (s *Server) serveArtifactFile(w http.ResponseWriter, r *http.Request, id string, rev int, rel, cache string, urlOf func(rel string) string) {
 	if rel == "" {
 		// An entry in a subdirectory is redirected to, so its relative URLs
 		// resolve against its own directory.
 		if m, err := s.artifacts.Get(id); err == nil && strings.Contains(m.Entry, "/") {
-			http.Redirect(w, r, artifactTokenURL(tok, id, rev, m.Entry), http.StatusFound)
+			target := urlOf(m.Entry)
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, http.StatusFound)
 			return
 		}
 	}
@@ -247,17 +326,24 @@ func (s *Server) handleArtifactContent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close() //nolint:errcheck
 
+	modTime := c.Info.ModTime()
+	if rev == 0 {
+		// latest changes under the same URL, and a new revision's file may
+		// carry an older mtime: validate by revision, not by time.
+		w.Header().Set("ETag", fmt.Sprintf(`"r%d-%d-%d"`, c.Rev, c.Info.Size(), modTime.UnixNano()))
+		modTime = time.Time{}
+	}
 	if c.Rel == c.Meta.Entry && r.URL.Query().Get("raw") != "1" {
 		switch c.Meta.Kind {
 		case artifacts.KindMarkdown, artifacts.KindText:
-			s.renderArtifact(w, c, cacheArtifactRev)
+			s.renderArtifact(w, c, cache)
 			return
 		}
 	}
 	h := w.Header()
 	h.Set("Content-Type", artifactContentType(c.Rel))
-	h.Set("Cache-Control", cacheArtifactRev)
-	http.ServeContent(w, r, "", c.Info.ModTime(), c.File)
+	h.Set("Cache-Control", cache)
+	http.ServeContent(w, r, "", modTime, c.File)
 }
 
 // errorText is the message of an /a/ error page.
@@ -382,7 +468,7 @@ var markdown = goldmark.New(
 func (s *Server) renderArtifact(w http.ResponseWriter, c *artifacts.Content, cache string) {
 	src, err := io.ReadAll(io.LimitReader(c.File, artifacts.MaxRevBytes+1))
 	if err != nil {
-		logging.Warn("serve: reading artifact %s: %v", c.Meta.ID, err)
+		logging.Warn("serve: reading artifact %s: %s", artifacts.ShortID(c.Meta.ID), redactArtifactIDs(err.Error()))
 		writeArtifactError(w, http.StatusInternalServerError, "Reading the artifact failed.")
 		return
 	}
@@ -391,7 +477,7 @@ func (s *Server) renderArtifact(w http.ResponseWriter, c *artifacts.Content, cac
 	case c.Meta.Kind == artifacts.KindMarkdown:
 		var buf bytes.Buffer
 		if err := markdown.Convert(src, &buf); err != nil {
-			logging.Warn("serve: rendering artifact %s: %v", c.Meta.ID, err)
+			logging.Warn("serve: rendering artifact %s: %v", artifacts.ShortID(c.Meta.ID), err)
 			writeArtifactError(w, http.StatusInternalServerError, "Rendering the artifact failed.")
 			return
 		}
@@ -407,7 +493,7 @@ func (s *Server) renderArtifact(w http.ResponseWriter, c *artifacts.Content, cac
 	}
 	var out bytes.Buffer
 	if err := artifactPageTmpl.Execute(&out, page); err != nil {
-		logging.Warn("serve: rendering artifact page %s: %v", c.Meta.ID, err)
+		logging.Warn("serve: rendering artifact page %s: %v", artifacts.ShortID(c.Meta.ID), err)
 		writeArtifactError(w, http.StatusInternalServerError, "Rendering the artifact failed.")
 		return
 	}
@@ -486,4 +572,30 @@ func writeArtifactError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = w.Write(out.Bytes())
+}
+
+// artifactDirectURL is the no-cookie URL of a file of a capability-id
+// artifact: /a/<id>/<rev>/<path>, rev "latest" or a number.
+func artifactDirectURL(id, rev, rel string) string {
+	return "/a/" + id + "/" + rev + "/" + escapeRel(rel)
+}
+
+// isArtifactCapabilityPath reports a path whose credential is in the path, a
+// token URL or a capability id's direct URL (CORS-readable, see
+// setArtifactHeaders). A legacy id's path only redirects, so it is not one.
+func isArtifactCapabilityPath(p string) bool {
+	if isArtifactTokenPath(p) {
+		return true
+	}
+	seg, _, _ := strings.Cut(strings.TrimPrefix(p, "/a/"), "/")
+	return strings.HasPrefix(p, "/a/") && artifacts.CapabilityID(seg)
+}
+
+// capabilityIDRe finds capability ids in text bound for the log.
+var capabilityIDRe = regexp.MustCompile(`\b[a-z2-7]{26}\b`)
+
+// redactArtifactIDs shortens every capability id in s to its ShortID: an id
+// is a viewing credential and must not reach the server log.
+func redactArtifactIDs(s string) string {
+	return capabilityIDRe.ReplaceAllStringFunc(s, artifacts.ShortID)
 }
