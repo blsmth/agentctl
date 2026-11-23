@@ -228,7 +228,17 @@ func schedDrive(t *testing.T, m FleetModel, cmd tea.Cmd) FleetModel {
 	select {
 	case msg = <-ch:
 	case <-time.After(40 * time.Millisecond):
-		return m
+		// A cursor blink or slide tick never answers in time and is dropped.
+		// A write in flight does, just later on a loaded machine (-race):
+		// wait for it, or the test sees the form still saving.
+		if m.schedForm == nil || !m.schedForm.saving && m.sched.busy == "" {
+			return m
+		}
+		select {
+		case msg = <-ch:
+		case <-time.After(10 * time.Second):
+			t.Fatal("a schedule write never answered")
+		}
 	}
 	switch msg := msg.(type) {
 	case nil:
