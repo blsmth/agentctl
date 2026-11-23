@@ -563,6 +563,9 @@ func checkGlobalDenyListIn(command, cwd string) string {
 	if reason := checkCronTamper(command); reason != "" {
 		return reason
 	}
+	if reason := checkArtifactsTamper(command); reason != "" {
+		return reason
+	}
 	if reason := checkApprovalTamper(command); reason != "" {
 		return reason
 	}

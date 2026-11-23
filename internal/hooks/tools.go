@@ -42,6 +42,12 @@ func PreTool() {
 		denyFileEdit(input.ToolName, p, "cron schedule or state", cronEditDenyReason(p), input.ToolInput)
 		return
 	}
+	// And for writing the artifact store (checkArtifactsTamper is the Bash
+	// side): `agentctl artifact` is its only writer.
+	if p := artifactsEditTarget(input.ToolName, input.ToolInput); p != "" {
+		denyFileEdit(input.ToolName, p, "artifact store", artifactsEditDenyReason(p), input.ToolInput)
+		return
+	}
 	// And for rewriting a prompt template (checkTemplateTamper is the Bash
 	// side).
 	if p := templateEditTarget(input.ToolName, input.ToolInput); p != "" {
