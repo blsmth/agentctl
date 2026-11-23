@@ -127,7 +127,7 @@ The hub window has no chrome bar or per-window HUD of its own (prefix+`h` acts o
 | `Z` | **Focus mode** — fold every project with no blocked (⏸) and no working (●) agent; press again to unfold everything. |
 | `f` | **Filter** — cycle `all` → `active` (working + blocked) → `needs you` (blocked + done-unseen). The title shows the active filter. Parents of a matching agent stay visible, dimmed, so the tree still reads; a project with nothing matching shows its header only. |
 | `p` | Open the selected agent's PR. |
-| `o` | **Sort** — toggle the rows within each group between window order (default) and most recent activity first. |
+| `o` | On a row with a dim `◆N` chip (the window has published N [artifacts](design/artifacts.md)): **open the newest** in the browser (`agentctl artifact open`; also in the row menu). On any other row: **sort** — toggle the rows within each group between window order (default) and most recent activity first. |
 | `R` | **Rename** the selected agent's title. See below. |
 | `$` | **Shells** — show or hide plain `shell` windows (hidden by default; opening a shell from the hub shows them so it can be selected). |
 | `C` | **Closed agents** — show or hide a Closed section after the live projects: agent windows closed in the last 7 days (from the closed ledger, read only while shown and re-read when it changes), grouped by project, newest first, dimmed with `✗` and "closed 2h ago". A closed row never drives the live pane. `⏎` (or the row menu's **resume**) relaunches its agent in the project's session, resuming (forked) the recorded session in the directory it ran in; when no session ID was recorded or its transcript is gone, the hub says so instead. `p` opens its PR. |

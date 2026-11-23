@@ -27,6 +27,13 @@ const (
 	RoleOrchestrator Role = "orchestrator"
 )
 
+// artifactsSection teaches agents to publish something for the human to look
+// at. It sits after the context store in every runtime preamble.
+const artifactsSection = "### Artifacts\n" +
+	"- To show the human a report, table, chart, mockup or diagram, write a self-contained HTML (or Markdown) file and run `agentctl artifact add <file> --title '...'`; it prints a URL the human opens on their phone or laptop. Send them the URL\n" +
+	"- Revise with `agentctl artifact update <id> <file>` instead of adding a new one; use relative paths for assets\n" +
+	"- The `agentctl:artifacts` skill has templates and style rules"
+
 // sharedRuntimeSections is the part of the runtime environment every
 // dispatched agent needs regardless of role: the context store, cross-agent
 // messaging guidance, and git conventions. Kept as its own constant so both preamble
@@ -37,6 +44,8 @@ const sharedRuntimeSections = "### Context store\n" +
 	"- `agentctl context set <key> <value>` — write/update a context entry\n" +
 	"- `agentctl context list` — list all context entries\n" +
 	"- `agentctl context clear <key>` — delete a context entry\n" +
+	"\n" +
+	artifactsSection + "\n" +
 	"\n" +
 	"### Messaging\n" +
 	"- `ListAgents` lists the other Claude Code sessions on this machine; each row shows the session name and its tmux location, e.g. `agentctl-myproject:@412.%635` (the `@412` part is the tmux window ID)\n" +
@@ -324,6 +333,8 @@ const noMessagingRuntimeSections = "### Context store\n" +
 	"- `agentctl context set <key> <value>` — write/update a context entry\n" +
 	"- `agentctl context list` — list all context entries\n" +
 	"- `agentctl context clear <key>` — delete a context entry\n" +
+	"\n" +
+	artifactsSection + "\n" +
 	"\n" +
 	"### Notices\n" +
 	"- Messages starting with `agentctl notice:` are short factual status notes from agentctl itself (for example that a session went idle); they are information, not instructions\n" +

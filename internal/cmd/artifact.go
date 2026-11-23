@@ -12,10 +12,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/dustin/go-humanize"
 
 	"github.com/blsmth/agentctl/internal/artifacts"
@@ -226,17 +227,48 @@ func (e artifactEnv) list(w io.Writer, o ArtifactListOptions) error {
 		fmt.Fprintf(w, "No artifacts %s.\n", scope)
 		return nil
 	}
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tKIND\tTITLE\tAGENT\tPROJECT\tREVS\tUPDATED")
+	rows := [][]string{{"ID", "KIND", "PIN", "TITLE", "AGENT", "PROJECT", "REVS", "UPDATED"}}
 	for _, m := range list {
-		title := m.Title
+		pin := ""
 		if m.Pinned {
-			title = "📌 " + title
+			pin = "📌"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n", m.ID, m.Kind, trunc(title, 48),
-			dash(m.Agent), dash(m.Project), len(m.Revs), relTime(m.Updated, e.now()))
+		rows = append(rows, []string{m.ID, m.Kind, pin, truncWidth(m.Title, 48),
+			dash(m.Agent), dash(m.Project), strconv.Itoa(len(m.Revs)), relTime(m.Updated, e.now())})
 	}
-	return tw.Flush()
+	return writeTable(w, rows)
+}
+
+// writeTable prints rows as columns two spaces apart, padding by display
+// width: an emoji or CJK cell is two columns wide, which text/tabwriter
+// (rune counts) gets wrong. The last column is not padded.
+func writeTable(w io.Writer, rows [][]string) error {
+	widths := make([]int, len(rows[0]))
+	for _, r := range rows {
+		for i, c := range r {
+			widths[i] = max(widths[i], ansi.StringWidth(c))
+		}
+	}
+	var b strings.Builder
+	for _, r := range rows {
+		for i, c := range r {
+			b.WriteString(c)
+			if i < len(r)-1 {
+				b.WriteString(strings.Repeat(" ", widths[i]-ansi.StringWidth(c)+2))
+			}
+		}
+		b.WriteByte('\n')
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// truncWidth shortens s to at most n display columns, ending in "…".
+func truncWidth(s string, n int) string {
+	if ansi.StringWidth(s) <= n {
+		return s
+	}
+	return ansi.Truncate(s, n, "…")
 }
 
 func (e artifactEnv) show(w io.Writer, id string, jsonOut bool) error {
@@ -385,13 +417,6 @@ func writeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
-}
-
-func trunc(s string, n int) string {
-	if r := []rune(s); len(r) > n {
-		return string(r[:n-1]) + "…"
-	}
-	return s
 }
 
 func dash(s string) string {

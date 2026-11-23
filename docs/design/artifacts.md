@@ -100,3 +100,10 @@ Order: 1 → 2 → (3 ∥ 4) → 5.
 - An HTML artifact with absolute paths (`/style.css`) will break under `/a/<id>/<rev>/`; document "use relative paths". Consider a `<base href>` injection for single-file HTML? No: leave content byte-for-byte.
 - Deleting an artifact while the phone views it: 404 page in the iframe, list updates via SSE.
 - Tests never touch the real state dir, never bind fixed ports, `artifact open` browser launch is stubbed.
+
+## Agent adoption and the hub (PR 4)
+
+- Every runtime preamble (worker and orchestrator, with and without native messaging) carries a short `### Artifacts` section after the context store: publish with `agentctl artifact add <file> --title '...'`, send the human the URL, revise with `artifact update <id> <file>`, use relative paths, and see the `agentctl:artifacts` skill for templates and style rules (`artifactsSection` in `internal/dispatch/preamble.go`).
+- The hub shows a dim `◆N` chip before the title of a row whose window (artifact `window_id` + `session`) has N artifacts (`internal/tui/fleet_artifacts.go`). The listing is read on the poll tick, off the UI goroutine, and skipped while the store directory's mtime is unchanged, so rendering never touches disk. An in-place `update` does not change that mtime; the count is unaffected and `o` re-resolves the newest artifact when pressed.
+- `o` on such a row (also in the row menu and the `?` reference) runs `agentctl artifact open` on the newest one. On a row without artifacts `o` keeps its sort-toggle meaning.
+- `agentctl artifact list` pads columns by display width, with the pin in its own `PIN` column, so wide characters no longer shift a row.

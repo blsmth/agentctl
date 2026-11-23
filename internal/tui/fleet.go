@@ -575,6 +575,12 @@ type FleetModel struct {
 	showClosed  bool
 	closed      []closedlog.Record
 	closedCache *closedlog.Cache
+	// artifacts is the per-window artifact count behind the ◆N chip
+	// (fleet_artifacts.go), refreshed on the poll tick when the store
+	// directory's mtime (artifactsStamp) changes.
+	artifacts        map[string]fleetArtifactInfo
+	artifactsStamp   time.Time
+	artifactsLoading bool
 	// showSchedules shows the Schedules section (fleetSchedulesKey,
 	// fleet_schedules.go); sched is its data, schedForm the open form,
 	// schedConfirm an armed run/delete y/n. schedPaneOn records that the
@@ -884,10 +890,18 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		refreshThemeIfChanged()
 		show := m.maybeShowCmd()
 		probe := m.serveProbeCmd()
-		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome), probe, m.activityPollCmd(), m.closedLoadCmd(), m.schedTickCmd())
+		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome), probe, m.activityPollCmd(), m.closedLoadCmd(), m.schedTickCmd(), m.artifactsLoadCmd())
 
 	case fleetClosedLoadedMsg:
 		m.applyClosedLoaded(msg)
+		return m, nil
+
+	case fleetArtifactsMsg:
+		m.applyArtifacts(msg)
+		return m, nil
+
+	case fleetArtifactOpenedMsg:
+		m.applyArtifactOpened(msg)
 		return m, nil
 
 	case fleetSchedLoadedMsg:
@@ -1335,7 +1349,10 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 	case "f":
 		return *m, m.cycleFilter()
 
-	case "o":
+	case fleetArtifactKey:
+		if m.selectedArtifactRow() {
+			return *m, m.openSelectedArtifact()
+		}
 		return *m, m.toggleSort()
 
 	case fleetShellsKey:
@@ -3216,6 +3233,10 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 			tag = truncateToWidth(t, min(available, fleetScheduledTagMaxW))
 			available -= lipgloss.Width(tag) + 1
 			tag = fleetDimStyle.Render(tag) + " "
+		}
+		if c := m.artifactChip(r); c != "" && available > lipgloss.Width(c)+1 {
+			tag += fleetDimStyle.Render(c) + " "
+			available -= lipgloss.Width(c) + 1
 		}
 		start := lipgloss.Width(prefix) + lipgloss.Width(tag)
 		if m.renamingRow(r) {
