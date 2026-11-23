@@ -180,13 +180,11 @@ func TestFleetStatusPaneDropsInlineDetail(t *testing.T) {
 		t.Errorf("lineAt(5,5) = (%d,%v), want (%d,true)", idx, ok, i+1)
 	}
 
-	// No viewer (hidden for the Schedules section, the activity pane in its
-	// place, a failed show): the inline expansion is back.
+	// No viewer (the activity pane in its place, a failed show): the inline expansion is back.
 	for name, mod := range map[string]func(*FleetModel){
 		"viewer hidden":     func(m *FleetModel) { m.liveShown = "" },
 		"show failed":       func(m *FleetModel) { m.liveFailed = m.liveShown },
 		"activity in place": func(m *FleetModel) { m.activity.hidesViewer = true },
-		"schedules":         func(m *FleetModel) { m.schedPaneOn = true },
 		"no status pane":    func(m *FleetModel) { m.statusPane = false },
 	} {
 		t.Run(name, func(t *testing.T) {

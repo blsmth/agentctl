@@ -41,7 +41,6 @@ type schedFixture struct {
 	runEntry   cron.Entry
 	runErr     error
 	ran        []string
-	hidden     int
 	shown      []string
 	editorPath string
 	editorDone tea.ExecCallback
@@ -64,18 +63,17 @@ func newSchedFixture(t *testing.T) *schedFixture {
 			t.Fatal(err)
 		}
 	}
-	saved := []any{fleetSchedStore, fleetSchedRun, fleetSchedHideViewer, fleetSchedExec, fleetNow, showLiveViewer, hubWindowWidth, hubZoomSync, tkEditorCmd, fleetSchedPermMode}
+	saved := []any{fleetSchedStore, fleetSchedRun, fleetSchedExec, fleetNow, showLiveViewer, hubWindowWidth, hubZoomSync, tkEditorCmd, fleetSchedPermMode}
 	t.Cleanup(func() {
 		fleetSchedStore = saved[0].(func(func(string, string) error) cronedit.Store)
 		fleetSchedRun = saved[1].(cronedit.RunFunc)
-		fleetSchedHideViewer = saved[2].(func() error)
-		fleetSchedExec = saved[3].(func(*exec.Cmd, tea.ExecCallback) tea.Cmd)
-		fleetNow = saved[4].(func() time.Time)
-		showLiveViewer = saved[5].(func(string, string, int) error)
-		hubWindowWidth = saved[6].(func() (int, error))
-		hubZoomSync = saved[7].(func(bool))
-		tkEditorCmd = saved[8].(func(string) *exec.Cmd)
-		fleetSchedPermMode = saved[9].(func(string) string)
+		fleetSchedExec = saved[2].(func(*exec.Cmd, tea.ExecCallback) tea.Cmd)
+		fleetNow = saved[3].(func() time.Time)
+		showLiveViewer = saved[4].(func(string, string, int) error)
+		hubWindowWidth = saved[5].(func() (int, error))
+		hubZoomSync = saved[6].(func(bool))
+		tkEditorCmd = saved[7].(func(string) *exec.Cmd)
+		fleetSchedPermMode = saved[8].(func(string) string)
 	})
 	fleetNow = func() time.Time { return schedNow }
 	fleetSchedStore = func(validate func(string, string) error) cronedit.Store {
@@ -100,12 +98,6 @@ func newSchedFixture(t *testing.T) *schedFixture {
 		e := f.runEntry
 		e.Job = name
 		return e, f.runErr
-	}
-	fleetSchedHideViewer = func() error {
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		f.hidden++
-		return nil
 	}
 	fleetSchedExec = func(c *exec.Cmd, cb tea.ExecCallback) tea.Cmd {
 		f.editorPath, f.editorDone = c.Args[len(c.Args)-1], cb
@@ -210,6 +202,7 @@ func (f *schedFixture) model(t *testing.T) FleetModel {
 	t.Helper()
 	m := newFleetModel()
 	m.termWidth, m.termHeight = 150, 45
+	m.liveLeft, m.liveRight = 150, 0 // a roomy list pane: the drawer is 80% of it
 	m.configureSplitPane()
 	m.loaded = true
 	a := testRow("go-engineer", "agentctl-acme-api", "idle", "")
@@ -235,7 +228,17 @@ func schedDrive(t *testing.T, m FleetModel, cmd tea.Cmd) FleetModel {
 	select {
 	case msg = <-ch:
 	case <-time.After(40 * time.Millisecond):
-		return m
+		// A cursor blink or slide tick never answers in time and is dropped.
+		// A write in flight does, just later on a loaded machine (-race):
+		// wait for it, or the test sees the form still saving.
+		if m.schedForm == nil || !m.schedForm.saving && m.sched.busy == "" {
+			return m
+		}
+		select {
+		case msg = <-ch:
+		case <-time.After(10 * time.Second):
+			t.Fatal("a schedule write never answered")
+		}
 	}
 	switch msg := msg.(type) {
 	case nil:
@@ -245,8 +248,12 @@ func schedDrive(t *testing.T, m FleetModel, cmd tea.Cmd) FleetModel {
 			m = schedDrive(t, m, c)
 		}
 		return m
+	case schedDrawerTickMsg:
+		// Frames are not run on the wall clock in tests: settle the slide.
+		m.schedAnimOn, m.schedAnimP = false, 1
+		return m
 	case fleetSchedLoadedMsg, fleetSchedDetailMsg, fleetSchedWroteMsg, fleetSchedRanMsg,
-		fleetSchedPreviewMsg, fleetSchedSavedMsg, fleetSchedEditorMsg, fleetSchedViewerHiddenMsg, fleetLiveMsg:
+		fleetSchedPreviewMsg, fleetSchedSavedMsg, fleetSchedEditorMsg, fleetLiveMsg:
 		next, c := m.Update(msg)
 		return schedDrive(t, next.(FleetModel), c)
 	}
@@ -345,7 +352,7 @@ func selectSched(t *testing.T, m FleetModel, name string) FleetModel {
 		key := schedLineKey(l)
 		if l.kind == fleetLineSchedule && (key == name || (name == fleetSchedNewSel && l.schedNew)) {
 			m.selectLine(i)
-			next, cmd := m.Update(fleetSchedViewerHiddenMsg{}) // runs the post-update pane sync
+			next, cmd := m.Update(nil) // runs the post-update drawer sync
 			return schedDrive(t, next.(FleetModel), cmd)
 		}
 	}
@@ -358,7 +365,7 @@ func selectAgent(t *testing.T, m FleetModel, windowID string) FleetModel {
 	for i, l := range m.lines {
 		if l.kind == fleetLineRow && l.row.WindowID == windowID {
 			m.selectLine(i)
-			next, cmd := m.Update(fleetSchedViewerHiddenMsg{})
+			next, cmd := m.Update(nil)
 			return schedDrive(t, next.(FleetModel), cmd)
 		}
 	}
@@ -676,15 +683,15 @@ func TestScheduleDelete(t *testing.T) {
 	}
 }
 
-func TestScheduleCardInRightPaneAndViewerHandoff(t *testing.T) {
+func TestScheduleCardDrawerLeavesViewerAlone(t *testing.T) {
 	f := newSchedFixture(t)
 	f.seedFour(t)
 	m := showSchedules(t, f.model(t))
 	m = selectAgent(t, m, "@1")
 	m.liveShown = "agentctl-acme-api|@1"
 	m = selectSched(t, m, "nightly")
-	if f.hidden != 1 || m.liveShown != "" {
-		t.Fatalf("viewer hidden %d times, liveShown %q", f.hidden, m.liveShown)
+	if m.liveShown != "agentctl-acme-api|@1" {
+		t.Fatalf("the card changed the viewer: liveShown %q", m.liveShown)
 	}
 	out := ansi.Strip(m.render())
 	for _, s := range []string{"last run failed", "daily 02:30", "python-engineer in", "Next", "Last runs", "failed · launch", "tmux: no server", "Prompt", "Triage new issues."} {
@@ -715,27 +722,29 @@ func TestScheduleCardInRightPaneAndViewerHandoff(t *testing.T) {
 		t.Fatal("selecting a job did not load the full card")
 	}
 
-	// Back on an agent row the viewer returns.
-	f.shown = nil
+	// Back on an agent row the drawer closes; the viewer was never hidden.
 	m = selectAgent(t, m, "@1")
-	if m.schedPaneOn || !slices.Contains(f.shown, "agentctl-acme-api|@1") {
-		t.Errorf("viewer not restored: paneOn=%v shown=%v", m.schedPaneOn, f.shown)
+	if m.schedPaneOn || m.liveShown != "agentctl-acme-api|@1" {
+		t.Errorf("paneOn=%v liveShown=%q", m.schedPaneOn, m.liveShown)
 	}
 	if m.sched.detail != nil {
 		t.Error("the full card outlived its selection")
 	}
 }
 
-func TestScheduleCardSkippedOnNarrowTerminal(t *testing.T) {
+func TestScheduleDrawerFullWidthOnNarrowPane(t *testing.T) {
 	f := newSchedFixture(t)
 	f.seedFour(t)
 	m := showSchedules(t, f.model(t))
-	m.termWidth = m.contentWidth() + 10
+	m.liveLeft, m.termWidth = 40, 40
+	m.relayout()
 	m = selectSched(t, m, "nightly")
-	if strings.Contains(ansi.Strip(m.render()), "Last runs") {
-		t.Error("no room: the card should not be drawn")
+	if m.schedDrawerWidth() != m.contentWidth() {
+		t.Fatalf("drawer %d wide in a %d pane, want all of it", m.schedDrawerWidth(), m.contentWidth())
 	}
-	// The form takes the list's place instead.
+	if !strings.Contains(ansi.Strip(m.render()), "Last runs") {
+		t.Error("narrow pane: the card should still be drawn")
+	}
 	m = schedPress(t, m, "e")
 	out := ansi.Strip(m.render())
 	if !strings.Contains(out, "Edit nightly") {
@@ -779,7 +788,7 @@ func TestScheduleCreateViaPickerFromProjectHeader(t *testing.T) {
 		t.Fatalf("form mode %d dir %v", fm.mode, fm.dirs)
 	}
 	if !m.schedPaneOn {
-		t.Error("the form should take the viewer's place")
+		t.Error("the form should open the drawer")
 	}
 	m = schedType(t, m, "triage")
 	m = focusStopT(t, m, stopPrompt)
@@ -1130,23 +1139,21 @@ func TestSchedulesWithNoSessions(t *testing.T) {
 	}
 }
 
-func TestScheduleIgnoresViewerRacesWhilePaneIsUp(t *testing.T) {
+func TestScheduleDrawerNeverHidesViewer(t *testing.T) {
 	f := newSchedFixture(t)
 	f.seedFour(t)
 	m := showSchedules(t, f.model(t))
 	m.liveLeft, m.liveWinWidth = 62, 150
+	m.liveShown = "agentctl-acme-api|@1"
 	m = selectSched(t, m, "nightly")
-	hidden := f.hidden
-	// A show started before the selection moved lands late.
-	next, cmd := m.Update(fleetLiveMsg{key: "agentctl-acme-api|@1", left: 40, right: 109, win: 150})
-	m = schedDrive(t, next.(FleetModel), cmd)
-	if f.hidden != hidden+1 || m.liveShown != "" || m.liveLeft != 62 {
-		t.Errorf("late show: hidden %d->%d liveShown %q liveLeft %d", hidden, f.hidden, m.liveShown, m.liveLeft)
+	m = schedPress(t, m, "e")
+	if m.liveShown != "agentctl-acme-api|@1" || m.liveLeft != 62 {
+		t.Errorf("drawer touched the viewer: liveShown %q liveLeft %d", m.liveShown, m.liveLeft)
 	}
-	// The hub pane widening is not a divider drag.
-	next, _ = m.Update(fleetProbeMsg{pane: 120, win: 150})
-	if m = next.(FleetModel); m.userLeft != 0 || m.liveLeft != 62 {
-		t.Errorf("probe while the pane is up: userLeft %d liveLeft %d", m.userLeft, m.liveLeft)
+	// A divider drag while the drawer is up is still a divider drag.
+	next, _ := m.Update(fleetProbeMsg{pane: 120, win: 150})
+	if m = next.(FleetModel); m.liveLeft == 0 {
+		t.Errorf("probe ignored: liveLeft %d", m.liveLeft)
 	}
 }
 

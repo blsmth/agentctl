@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,12 +14,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/dispatchplan"
-	"github.com/blsmth/agentctl/internal/tmux"
 )
 
 // The hub's Schedules section (fleetSchedulesKey): the `agentctl cron` jobs,
@@ -26,10 +27,9 @@ import (
 // bottom for projects with no session; see fleet_schedgroup.go), read
 // through the shared editing core (internal/cronedit) in process, only while
 // the section is shown. Selecting
-// a job shows its card to the right of the list; the editing form (see
-// fleet_schedform.go) takes the same place, so the list stays visible. While
-// either is showing, the live viewer pane is closed so the hub's own pane
-// has the room; moving back to an agent row brings the viewer back.
+// a job shows its card as a drawer sliding in from the right edge of the
+// list pane; the editing form (see fleet_schedform.go) is the same drawer, so
+// the list stays visible to its left. The live viewer pane is never touched.
 //
 // Keys on a schedule row are context-sensitive (scheduleKey): ⏎ card, e
 // edit, space pause/resume, g run now, d duplicate, x delete, n new. Every
@@ -46,9 +46,7 @@ const fleetSchedNewSel = "\x00new"
 // history on the poll tick (runs.ndjson can be large).
 const fleetSchedReload = 5 * time.Second
 
-// fleetSchedPaneMin is the narrowest right pane the card or form is drawn
-// in beside the list. Below it, the form replaces the list and the card is
-// not drawn.
+// fleetSchedPaneMin is the narrowest the card/form drawer is drawn.
 const fleetSchedPaneMin = 34
 
 // Row glyphs: the same as the phone.
@@ -60,7 +58,7 @@ const (
 )
 
 // Seams so tests never touch the real jobs file, spawn `agentctl cron run`,
-// kill the real viewer pane or open an editor.
+// or open an editor.
 var (
 	// fleetSchedStore is the editing core; validate is the injected agent
 	// check (dispatch.ValidateAgentName in the hub).
@@ -69,8 +67,6 @@ var (
 	}
 	// fleetSchedRun fires a job now (plain `cron run`, never --force).
 	fleetSchedRun cronedit.RunFunc = cronedit.RunSubprocess
-	// fleetSchedHideViewer closes the live viewer pane.
-	fleetSchedHideViewer = tmux.HideLiveViewer
 	// fleetSchedPermMode is the permission mode a fire of agent launches
 	// with, for the review step.
 	fleetSchedPermMode = func(agent string) string {
@@ -135,7 +131,6 @@ type (
 		entry cron.Entry
 		err   error
 	}
-	fleetSchedViewerHiddenMsg struct{}
 )
 
 // schedStore is the core with the hub's seams: the injected agent check
@@ -240,34 +235,17 @@ func (m *FleetModel) selectedSchedLine() *fleetLine {
 	return &l
 }
 
-// ── Viewer hand-off ──────────────────────────────────────────────────────────
+// ── Drawer ───────────────────────────────────────────────────────────────────
 
-// schedPaneActive reports whether the card or the form wants the right side.
+// schedPaneActive reports whether the card or the form is showing.
 func (m FleetModel) schedPaneActive() bool {
 	return m.showSchedules && ((m.selSchedule != "" && !strings.HasPrefix(m.selSchedule, fleetSchedHeadSel)) || m.schedForm != nil)
 }
 
-// syncSchedPane closes the live viewer when the card or form becomes active
-// and brings it back when it goes away. Called after every Update.
-func (m *FleetModel) syncSchedPane() tea.Cmd {
-	active := m.schedPaneActive()
-	switch {
-	case active && !m.schedPaneOn:
-		m.schedPaneOn = true
-		m.schedPrevLive = m.liveShown
-		m.liveShown = ""
-		return fleetSchedHideCmd()
-	case !active && m.schedPaneOn:
-		m.schedPaneOn = false
-		return m.restoreViewerCmd()
-	}
-	return nil
-}
-
 // fleetViewerMu serializes the hub's viewer pane changes (every show in
 // liveShowFor and every hide, through hideViewerLocked): two shows racing
-// to create a missing viewer pane (as after the schedules pane closed it)
-// would each kill the other's viewer session.
+// to create a missing viewer pane would each kill the other's viewer
+// session.
 var fleetViewerMu sync.Mutex
 
 // hideViewerLocked runs a viewer hide under fleetViewerMu.
@@ -275,38 +253,6 @@ func hideViewerLocked(hide func() error) {
 	fleetViewerMu.Lock()
 	defer fleetViewerMu.Unlock()
 	_ = hide()
-}
-
-// fleetSchedHideCmd closes the live viewer pane.
-func fleetSchedHideCmd() tea.Cmd {
-	return func() tea.Msg {
-		hideViewerLocked(fleetSchedHideViewer)
-		return fleetSchedViewerHiddenMsg{}
-	}
-}
-
-// restoreViewerCmd shows the selected agent again, or the one that was
-// showing before the card took its place.
-func (m *FleetModel) restoreViewerCmd() tea.Cmd {
-	if cmd := m.maybeShowCmd(); cmd != nil {
-		return cmd
-	}
-	if m.selIsHeader || m.selSession == "" || m.selWindowID == "" {
-		if session, win, ok := parseHubSelect(m.schedPrevLive); ok && m.rowExists(session, win) {
-			return m.liveShowFor(session, win)
-		}
-	}
-	return nil
-}
-
-// applySchedViewerHidden re-shows the viewer when the selection left the
-// schedules while the pane was being closed.
-func (m *FleetModel) applySchedViewerHidden() tea.Cmd {
-	if m.schedPaneActive() {
-		return nil
-	}
-	m.liveShown = ""
-	return m.restoreViewerCmd()
 }
 
 // ── Keys ─────────────────────────────────────────────────────────────────────
@@ -1009,53 +955,149 @@ func clampLines(s string, n int) []string {
 
 // ── Layout ───────────────────────────────────────────────────────────────────
 
-// schedPaneWidth is the width the right pane gets beside the list (0 when
-// it does not fit).
-func (m FleetModel) schedPaneWidth() int {
-	w := m.termWidth - m.contentWidth() - 3
-	if w < fleetSchedPaneMin {
-		return 0
+// The card and the form are a drawer: a right-anchored block drawn over the
+// hub list pane (contentWidth), under the header and above the footer, with
+// a left border. The live viewer pane is never touched. It slides in from the
+// right edge when it opens (schedDrawerTick); closing is instant.
+
+const (
+	// fleetSchedDrawerPct is the drawer's share of the pane width.
+	fleetSchedDrawerPct = 80
+	// fleetSchedDrawerSliver is the least list the drawer leaves visible;
+	// with less than that the drawer takes the full width.
+	fleetSchedDrawerSliver = 8
+	// fleetSchedSlideDur is the slide-in duration; fleetSchedSlideEvery the
+	// frame interval.
+	fleetSchedSlideDur   = 180 * time.Millisecond
+	fleetSchedSlideEvery = 16 * time.Millisecond
+)
+
+// schedDrawerTickMsg is one frame of the slide-in. gen guards against ticks
+// of an earlier open.
+type schedDrawerTickMsg struct{ gen int }
+
+// schedDrawerWidth is the drawer's width including its border: 80% of the
+// pane, at least fleetSchedPaneMin, all of it when the list would be left
+// with less than a sliver.
+func (m FleetModel) schedDrawerWidth() int {
+	cw := m.contentWidth()
+	w := max(cw*fleetSchedDrawerPct/100, fleetSchedPaneMin)
+	if w > cw-fleetSchedDrawerSliver {
+		w = cw
 	}
 	return w
 }
 
-// schedFormReplacesList reports whether the open form is drawn in place of
-// the list (no room beside it).
-func (m FleetModel) schedFormReplacesList() bool {
-	return m.showSchedules && m.schedForm != nil && m.schedPaneWidth() == 0
+// schedPaneWidth is the width the card or form lines are formatted at: the
+// drawer less its border, left indent and right margin.
+func (m FleetModel) schedPaneWidth() int {
+	return max(m.schedDrawerWidth()-3, 1)
 }
 
-// withSchedPane draws the card or form to the right of the rendered list.
-// Without room for it the card is not drawn (the form replaces the list
-// instead, see renderList).
+// schedDrawerOffset is how many columns the drawer is still off the right
+// edge (0 once settled).
+func (m FleetModel) schedDrawerOffset() int {
+	if !m.schedAnimOn {
+		return 0
+	}
+	return int(math.Round(float64(m.schedDrawerWidth()) * (1 - m.schedAnimP)))
+}
+
+// syncSchedDrawer starts the slide-in when the card or form becomes active
+// and drops the animation when it goes away. Only open and close count:
+// moving between schedule rows leaves the drawer as it is. Called after
+// every Update.
+func (m *FleetModel) syncSchedDrawer() tea.Cmd {
+	active := m.schedPaneActive()
+	switch {
+	case active && !m.schedPaneOn:
+		m.schedPaneOn = true
+		m.schedAnimGen++
+		m.schedAnimOn = true
+		m.schedAnimP = 0
+		m.schedAnimStart = fleetNow()
+		return schedDrawerTick(m.schedAnimGen)
+	case !active && m.schedPaneOn:
+		m.schedPaneOn = false
+		m.schedAnimGen++ // late ticks of the open are stale
+		m.schedAnimOn = false
+	}
+	return nil
+}
+
+func schedDrawerTick(gen int) tea.Cmd {
+	return tea.Tick(fleetSchedSlideEvery, func(time.Time) tea.Msg { return schedDrawerTickMsg{gen: gen} })
+}
+
+// applySchedDrawerTick advances the slide-in (ease-out) and schedules the
+// next frame, or stops ticking once it has settled.
+func (m *FleetModel) applySchedDrawerTick(msg schedDrawerTickMsg) tea.Cmd {
+	if msg.gen != m.schedAnimGen || !m.schedAnimOn {
+		return nil
+	}
+	t := float64(fleetNow().Sub(m.schedAnimStart)) / float64(fleetSchedSlideDur)
+	if t >= 1 {
+		m.schedAnimOn = false
+		m.schedAnimP = 1
+		return nil
+	}
+	t = math.Max(t, 0)
+	m.schedAnimP = 1 - math.Pow(1-t, 3)
+	return schedDrawerTick(msg.gen)
+}
+
+// schedDrawerRows is the screen row where the drawer starts and how many
+// rows it spans (the list body, between the header and the footer line).
+func (m FleetModel) schedDrawerRows(total int) (top, h int) {
+	top = m.fleetListTop()
+	return top, total - 1 - top
+}
+
+// schedDrawerX is the screen column of the settled drawer's left border.
+func (m FleetModel) schedDrawerX() int {
+	return m.contentWidth() - m.schedDrawerWidth()
+}
+
+// schedDrawerCovers reports whether screen cell (x, y) is under the settled
+// or sliding drawer, so a click there is not a click on the list below it.
+func (m FleetModel) schedDrawerCovers(x, y int) bool {
+	if !m.schedPaneActive() {
+		return false
+	}
+	total := len(strings.Split(m.renderList(), "\n"))
+	top, h := m.schedDrawerRows(total)
+	return y >= top && y < top+h && x >= m.schedDrawerX()+m.schedDrawerOffset()
+}
+
+// withSchedPane draws the card or form as a drawer over the rendered list.
 func (m FleetModel) withSchedPane(list string) string {
-	pw := m.schedPaneWidth()
-	if !m.schedPaneActive() || pw == 0 {
+	if !m.schedPaneActive() {
 		return list
 	}
-	left := strings.Split(list, "\n")
-	h := len(left)
+	total := len(strings.Split(list, "\n"))
+	top, h := m.schedDrawerRows(total)
+	if h < 3 {
+		return list
+	}
+	dw, pw := m.schedDrawerWidth(), m.schedPaneWidth()
 	var pane []string
 	if m.schedForm != nil {
 		pane = m.schedFormLines(pw, h-2)
 	} else {
 		pane = m.schedCardLines(pw)
 	}
-	pane = fitPane(pane, pw+2, h, 1)
-	cw := m.contentWidth()
-	sep := fleetDimStyle.Render("│")
-	out := make([]string, h)
-	for i, l := range left {
-		if pad := cw - lipgloss.Width(l); pad > 0 {
-			l += strings.Repeat(" ", pad)
-		}
-		p := strings.Repeat(" ", pw+2)
-		if i < len(pane) {
-			p = pane[i]
-		}
-		out[i] = l + sep + p
+	pane = fitPane(pane, dw-1, h, 1)
+	vis := dw - m.schedDrawerOffset()
+	if vis <= 0 {
+		return list
 	}
-	return strings.Join(out, "\n")
+	border := fleetDimStyle.Render("│")
+	rows := make([]string, len(pane))
+	for i, l := range pane {
+		rows[i] = ansi.Truncate(border+l, vis, "")
+	}
+	cw := m.contentWidth()
+	return compositeOverlayAt(list, strings.Join(rows, "\n"), cw-vis, top, cw, total)
 }
 
 // padToWidth pads s with spaces to w columns, so a shorter line erases the

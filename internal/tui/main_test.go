@@ -87,7 +87,6 @@ func TestMain(m *testing.M) {
 	fleetSchedRun = func(context.Context, string) (cron.Entry, error) {
 		return cron.Entry{}, errors.New("cron run disabled in tests")
 	}
-	fleetSchedHideViewer = func() error { return nil }
 	fleetSchedPermMode = func(string) string { return "auto" }
 	fleetSchedTemplates = func(string) []prompttemplate.Template { return nil }
 	fleetSchedEnvLoad = testSchedEnv
