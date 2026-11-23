@@ -182,6 +182,7 @@ func (m *FleetModel) applySchedLoaded(msg fleetSchedLoadedMsg) {
 	} else {
 		m.sched.err = ""
 		m.sched.ov = msg.ov
+		m.searchReset()
 		m.sched.loaded = true
 		m.sched.detailName = "" // re-read the card with the list
 	}

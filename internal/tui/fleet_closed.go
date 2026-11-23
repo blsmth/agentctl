@@ -70,6 +70,7 @@ func (m *FleetModel) applyClosedLoaded(msg fleetClosedLoadedMsg) {
 		return
 	}
 	m.closed = msg.recs
+	m.searchReset()
 	m.relayout()
 }
 
@@ -94,14 +95,26 @@ func (m FleetModel) closedLines() []fleetLine {
 	if !m.showClosed {
 		return nil
 	}
-	label := fmt.Sprintf("Closed (%d) · last 7 days", len(m.closed))
-	if len(m.closed) == 0 {
+	recs := m.closed
+	if m.searching() {
+		recs = nil
+		for _, r := range m.closed {
+			if m.searchClosed(r) {
+				recs = append(recs, r)
+			}
+		}
+		if len(recs) == 0 {
+			return nil
+		}
+	}
+	label := fmt.Sprintf("Closed (%d) · last 7 days", len(recs))
+	if len(recs) == 0 {
 		label = "Closed · none in the last 7 days"
 	}
 	lines := []fleetLine{{kind: fleetLineClosedLabel, label: label}}
 	var order []string
 	byProject := map[string][]closedlog.Record{}
-	for _, r := range m.closed {
+	for _, r := range recs {
 		p := r.Project()
 		if _, ok := byProject[p]; !ok {
 			order = append(order, p)

@@ -353,6 +353,7 @@ without the hub causing it (`viewerSyncTarget`).
 | `z` / `Z` | Collapse the sub-agents of the row under the cursor (or fold its group, on a header or a row without sub-agents) / toggle focus mode (fold every group with nothing blocked or working) |
 | `o` | Toggle row order inside each group between window order (default) and most recent activity first |
 | `f` | Cycle the attention filter: all, active, needs you |
+| `/` | Search: type to narrow the list (case-insensitive substring terms, AND; `#278` matches a ticket or PR number exactly). Metadata only, no transcript reads. While typing: `enter` keeps the filter, `esc` (or backspace on an empty query) cancels and restores the previous selection, `up`/`down` move, `j`/`k` are text. With a kept filter `esc` clears it (selection stays) and the next `esc`/`q` leaves. Folds are ignored while searching; groups with no match are hidden; Closed and Schedules rows are filtered too (Closed only with `C`) |
 | `r` | Refresh |
 | `q` / `esc` | Back to the previous tmux session (`switch-client -l`) |
 

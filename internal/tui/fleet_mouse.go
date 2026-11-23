@@ -211,6 +211,21 @@ func (m *FleetModel) selectLine(idx int) {
 }
 
 func (m FleetModel) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	var searchCmd tea.Cmd
+	if m.searchEditing() {
+		if msg.Y == m.footerMessageY() {
+			return m, nil // a click on the input itself keeps it open
+		}
+		// Any other click commits the query, then acts as usual.
+		searchCmd = m.commitSearch()
+	} else if msg.Button == tea.MouseLeft && m.onSearchLine(msg.Y) && !m.menuOpen {
+		return m, m.openSearch()
+	}
+	next, cmd := m.handleClickBody(msg)
+	return next, tea.Batch(searchCmd, cmd)
+}
+
+func (m FleetModel) handleClickBody(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	if line, ok := m.helpLineAt(msg.Y); ok && msg.Button == tea.MouseLeft {
 		return m.clickHelp(msg.X, line)
 	}

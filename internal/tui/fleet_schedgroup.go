@@ -266,13 +266,14 @@ func (m *FleetModel) schedGroupLines(g fleet.Group, key string, jobs []cronedit.
 	if !m.showSchedules || !m.sched.loaded || key == "" {
 		return nil
 	}
+	searching := m.searching()
 	newLine := fleetLine{kind: fleetLineSchedule, group: g, schedBlock: key, schedDir: g.ProjectDir, schedNew: true}
 	if len(jobs) == 0 {
 		return []fleetLine{newLine}
 	}
 	head := fleetLine{
 		kind: fleetLineSchedHead, group: g, schedBlock: key,
-		label: fmt.Sprintf("schedules (%d)", len(jobs)), collapsed: m.isSchedCollapsed(key), schedSum: tallySched(jobs),
+		label: fmt.Sprintf("schedules (%d)", len(jobs)), collapsed: m.isSchedCollapsed(key) && !searching, schedSum: tallySched(jobs),
 	}
 	if head.collapsed {
 		m.hideSched(key, jobs, fleetSchedHider{head: schedLineKey(head)})
@@ -281,6 +282,9 @@ func (m *FleetModel) schedGroupLines(g fleet.Group, key string, jobs []cronedit.
 	lines := []fleetLine{head}
 	for _, st := range jobs {
 		lines = append(lines, fleetLine{kind: fleetLineSchedule, group: g, schedBlock: key, sched: st})
+	}
+	if searching {
+		return lines // "+ new schedule" is not a match
 	}
 	return append(lines, newLine)
 }
@@ -294,6 +298,17 @@ func (m *FleetModel) schedBottomLines(p fleetSchedPlacement) []fleetLine {
 	if !m.showSchedules {
 		return nil
 	}
+	searching := m.searching()
+	if searching {
+		// Only matching jobs; no warnings or "+ new" while searching.
+		if !m.sched.loaded {
+			return nil
+		}
+		p.other = m.searchJobs(p.other)
+		if len(p.other) == 0 {
+			return nil
+		}
+	}
 	label := func(text string, warn bool) fleetLine {
 		return fleetLine{kind: fleetLineSchedLabel, label: text, schedWarn: warn}
 	}
@@ -305,14 +320,16 @@ func (m *FleetModel) schedBottomLines(p fleetSchedPlacement) []fleetLine {
 	}
 	ov := m.sched.ov
 	var warns []fleetLine
-	if m.sched.err != "" {
-		warns = append(warns, label(m.sched.err, true))
-	}
-	if !ov.SchedulerInstalled {
-		warns = append(warns, label("scheduler not installed: run agentctl cron install", true))
-	}
-	if !ov.Enabled {
-		warns = append(warns, label("cron is off (cron.enabled: false): nothing fires", true))
+	if !searching {
+		if m.sched.err != "" {
+			warns = append(warns, label(m.sched.err, true))
+		}
+		if !ov.SchedulerInstalled {
+			warns = append(warns, label("scheduler not installed: run agentctl cron install", true))
+		}
+		if !ov.Enabled {
+			warns = append(warns, label("cron is off (cron.enabled: false): nothing fires", true))
+		}
 	}
 	hosts := len(p.keys) > 0
 	switch {
@@ -323,7 +340,7 @@ func (m *FleetModel) schedBottomLines(p fleetSchedPlacement) []fleetLine {
 		}
 		head := fleetLine{
 			kind: fleetLineSchedHead, schedBlock: fleetSchedOtherKey, label: text,
-			collapsed: m.isSchedCollapsed(fleetSchedOtherKey), schedSum: tallySched(p.other),
+			collapsed: m.isSchedCollapsed(fleetSchedOtherKey) && !searching, schedSum: tallySched(p.other),
 		}
 		lines := append([]fleetLine{head}, warns...)
 		if head.collapsed {
