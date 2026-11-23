@@ -1,7 +1,7 @@
-# The hub's Schedules section (T): a failed, a running, an upcoming and a
+# The hub's Schedules tabs (T on a project's group): a failed, a running, an upcoming and a
 # paused cron job, the failed job's card beside the list, then its edit form.
-# `just demo-shot schedules` writes schedules.png (section and card) and
-# schedules-form.png. cron: true only drops the "cron is off" warning:
+# `just demo-shot schedules` writes schedules-tabs.png (the tabbed headers),
+# schedules.png (Schedules tab and card) and schedules-form.png. cron: true only drops the "cron is off" warning:
 # nothing installs the ticker and claude is stubbed, so nothing fires.
 description: Hub Schedules section, job card and edit form
 config:
@@ -84,12 +84,13 @@ steps:
   - attach: orch
   - prefix: g
   - wait: agentctl hub
+  - sleep: 1s
+  - screenshot: tabs
   - type: T
-  - wait: Schedules \(4\)
+  - wait: issue-triage
   - key: Down
     repeat: 30
-  - key: Up
-    repeat: 3
+  - type: T
   - wait: Last runs
   - sleep: 1s
   - screenshot

@@ -359,11 +359,12 @@ type hubViewState struct {
 	Shells bool `json:"shells,omitempty"`
 	// Closed shows the Closed section (hidden by default).
 	Closed bool `json:"closed,omitempty"`
-	// Schedules shows the Schedules section (hidden by default).
-	Schedules bool `json:"schedules,omitempty"`
-	// SchedCollapsed is the collapsed schedules blocks by block key: a
-	// project's resolved dir, or ":other" for the bottom block.
-	SchedCollapsed []string `json:"sched_collapsed,omitempty"`
+	// SchedTabs is the projects (resolved project dirs) whose group shows
+	// its Schedules tab; any other group shows Sessions. SchedOtherOpen
+	// expands the bottom "other projects" schedules block. The old
+	// "schedules" and "sched_collapsed" keys are ignored when decoding.
+	SchedTabs      []string `json:"sched_tabs,omitempty"`
+	SchedOtherOpen bool     `json:"sched_other_open,omitempty"`
 	// ActivityPane is the open activity pane's tmux pane ID ("" = closed),
 	// so a hot reload reattaches to it; ActivityWidth is the width the user
 	// dragged it to (0 = the default).
@@ -406,8 +407,8 @@ func (m FleetModel) viewState() hubViewState {
 	}
 	slices.Sort(folded)
 	return hubViewState{
-		Folded: folded, Collapsed: m.liveCollapsed(prune), Focus: m.focusMode, Filter: m.filter.key(), Query: m.committedQuery(), Sort: sortKey(m.sortRecent), Shells: m.showShells, Closed: m.showClosed, Schedules: m.showSchedules,
-		SchedCollapsed: m.liveSchedCollapsed(prune), ActivityPane: m.activity.pane, ActivityWidth: m.activity.userWidth,
+		Folded: folded, Collapsed: m.liveCollapsed(prune), Focus: m.focusMode, Filter: m.filter.key(), Query: m.committedQuery(), Sort: sortKey(m.sortRecent), Shells: m.showShells, Closed: m.showClosed,
+		SchedTabs: m.liveSchedTabs(prune), SchedOtherOpen: m.schedOtherOpen, ActivityPane: m.activity.pane, ActivityWidth: m.activity.userWidth,
 	}
 }
 
@@ -458,15 +459,11 @@ func (m *FleetModel) applyViewState(s hubViewState) {
 	if !m.showClosed {
 		m.closed = nil
 	}
-	m.showSchedules = s.Schedules
-	m.schedCollapsed = nil
-	for _, key := range s.SchedCollapsed {
-		m.setSchedCollapsed(key, true)
+	m.schedTabs = nil
+	for _, key := range s.SchedTabs {
+		m.setSchedTab(key, true)
 	}
-	if !m.showSchedules {
-		m.sched = fleetSchedState{}
-		m.schedForm, m.schedConfirm = nil, nil
-	}
+	m.schedOtherOpen = s.SchedOtherOpen
 	// The recorded pane is confirmed or dropped by the first pane poll.
 	m.activity = fleetActivity{pane: s.ActivityPane, userWidth: max(s.ActivityWidth, 0)}
 }

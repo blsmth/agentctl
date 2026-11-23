@@ -22,11 +22,11 @@ import (
 	"github.com/blsmth/agentctl/internal/dispatchplan"
 )
 
-// The hub's Schedules section (fleetSchedulesKey): the `agentctl cron` jobs,
-// each listed under the project group it runs in (or in a block at the
-// bottom for projects with no session; see fleet_schedgroup.go), read
-// through the shared editing core (internal/cronedit) in process, only while
-// the section is shown. Selecting
+// The hub's schedules: the `agentctl cron` jobs, each listed on the
+// Schedules tab of the project group it runs in (or in a collapsed block at
+// the bottom for projects with no session; see fleet_schedgroup.go), read
+// through the shared editing core (internal/cronedit) on hub start and on
+// the poll tick. Selecting
 // a job shows its card as a drawer sliding in from the right edge of the
 // list pane; the editing form (see fleet_schedform.go) is the same drawer, so
 // the list stays visible to its left. The live viewer pane is never touched.
@@ -36,7 +36,7 @@ import (
 // other line keeps its usual bindings. Writes and run-now run as tea.Cmds,
 // so a save waiting on the tick lock never freezes the hub.
 
-// fleetSchedulesKey shows or hides the Schedules section.
+// fleetSchedulesKey flips the Sessions / Schedules tab of the cursor's group.
 const fleetSchedulesKey = "T"
 
 // fleetSchedNewSel is selSchedule for the "+ new schedule" line.
@@ -145,10 +145,10 @@ func (m FleetModel) schedStore() cronedit.Store {
 	return st
 }
 
-// schedLoadCmd reads the jobs in the background; nil while the section is
-// hidden or a read is in flight.
+// schedLoadCmd reads the jobs in the background; nil while a read is in
+// flight.
 func (m *FleetModel) schedLoadCmd() tea.Cmd {
-	if !m.showSchedules || m.sched.loading {
+	if m.sched.loading {
 		return nil
 	}
 	m.sched.loading = true
@@ -165,7 +165,7 @@ func (m *FleetModel) schedLoadCmd() tea.Cmd {
 
 // schedTickCmd is the poll tick's reload, at most every fleetSchedReload.
 func (m *FleetModel) schedTickCmd() tea.Cmd {
-	if !m.showSchedules || fleetNow().Sub(m.sched.lastLoad) < fleetSchedReload {
+	if fleetNow().Sub(m.sched.lastLoad) < fleetSchedReload {
 		return nil
 	}
 	return m.schedLoadCmd()
@@ -173,9 +173,6 @@ func (m *FleetModel) schedTickCmd() tea.Cmd {
 
 func (m *FleetModel) applySchedLoaded(msg fleetSchedLoadedMsg) {
 	m.sched.loading = false
-	if !m.showSchedules {
-		return
-	}
 	if msg.err != nil {
 		// A failed read keeps the last good list (if any) under the error.
 		m.sched.err = msg.err.Error()
@@ -187,21 +184,6 @@ func (m *FleetModel) applySchedLoaded(msg fleetSchedLoadedMsg) {
 		m.sched.detailName = "" // re-read the card with the list
 	}
 	m.relayout()
-}
-
-// toggleSchedules is fleetSchedulesKey.
-func (m *FleetModel) toggleSchedules() tea.Cmd {
-	m.showSchedules = !m.showSchedules
-	m.jumpErr = ""
-	if m.showSchedules {
-		m.setSuccess("schedules shown")
-	} else {
-		m.setSuccess("schedules hidden")
-		m.sched = fleetSchedState{}
-		m.schedForm, m.schedConfirm = nil, nil
-	}
-	m.relayout()
-	return tea.Batch(m.saveViewCmd(), m.schedLoadCmd())
 }
 
 // schedLineKey is the selSchedule value of a schedule line.
@@ -242,7 +224,7 @@ func (m *FleetModel) selectedSchedLine() *fleetLine {
 // header or a "+ new schedule" line selected on its own shows no drawer: the
 // new line opens the form straight from Enter/n or a click.
 func (m FleetModel) schedPaneActive() bool {
-	return m.showSchedules && (isSchedJobSel(m.selSchedule) || m.schedForm != nil)
+	return isSchedJobSel(m.selSchedule) || m.schedForm != nil
 }
 
 // fleetViewerMu serializes the hub's viewer pane changes (every show in
@@ -476,7 +458,7 @@ func runResultText(e cron.Entry) string {
 // previous detail of the same job stays up while a refresh loads.
 func (m *FleetModel) syncSchedDetail() tea.Cmd {
 	name := m.selSchedule
-	if !m.showSchedules || !isSchedJobSel(name) || m.schedForm != nil || m.sched.detailName == name {
+	if !isSchedJobSel(name) || m.schedForm != nil || m.sched.detailName == name {
 		return nil
 	}
 	m.sched.detailName = name
@@ -524,7 +506,7 @@ func (m FleetModel) schedHints() []fleetHint {
 		return nil
 	}
 	if l.schedNew {
-		return []fleetHint{{"j/k", "move"}, {"⏎", "new schedule"}, {fleetSchedulesKey, "hide"}, {"?", "more"}}
+		return []fleetHint{{"j/k", "move"}, {"⏎", "new schedule"}, {fleetSchedulesKey, "sessions"}, {"?", "more"}}
 	}
 	toggle := "pause"
 	if !l.sched.Enabled {
@@ -532,7 +514,7 @@ func (m FleetModel) schedHints() []fleetHint {
 	}
 	return []fleetHint{
 		{"j/k", "move"}, {"⏎", "edit"}, {"space", toggle}, {"g", "run now"},
-		{"d", "duplicate"}, {"x", "delete"}, {"n", "new"}, {"?", "more"},
+		{"d", "duplicate"}, {"x", "delete"}, {"n", "new"}, {fleetSchedulesKey, "sessions"}, {"?", "more"},
 	}
 }
 

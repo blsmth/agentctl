@@ -81,7 +81,7 @@ windows:                              # in tmux order per project
         input: {command: 'agentctl dispatch --agent go-engineer --prompt "..."'}
     scheduled_by: nightly-deps        # a schedule's name: the window was launched by that cron job (⏲ tag, the job's running window)
 
-schedules:                            # optional `agentctl cron` jobs for the hub's Schedules section (T)
+schedules:                            # optional `agentctl cron` jobs for the hub's Schedules tabs (T)
   - name: nightly-deps                # cron job name rules
     project: billing-svc              # must be in projects; the job's dir is its checkout
     agent: go-engineer                # a fake agent file is written for it

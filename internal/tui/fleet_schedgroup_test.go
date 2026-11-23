@@ -90,9 +90,12 @@ func TestSchedulePlacement(t *testing.T) {
 		fleet.Group{Session: "agentctl-acme-api-2", Project: "acme-api", ProjectDir: link, Rows: []fleet.Row{row("agentctl-acme-api-2", "@30")}},
 		fleet.Group{Session: "agentctl-web", Project: "web", ProjectDir: nested, Rows: []fleet.Row{row("agentctl-web", "@40")}},
 	)
-	m.showSchedules = true
 	m.sched.loaded = true
 	m.sched.ov = cronedit.Overview{SchedulerInstalled: true, Enabled: true}
+	for _, key := range m.schedGroupKeys() {
+		m.setSchedTab(key, true) // list each project's jobs
+	}
+	m.schedOtherOpen = true
 	for _, c := range cases {
 		m.sched.ov.Jobs = append(m.sched.ov.Jobs, cronedit.Status{Name: c.name, Enabled: true, Job: cron.Job{Name: c.name, Dir: c.dir, Schedule: "0 9 * * *"}})
 	}
@@ -118,8 +121,8 @@ func TestScheduleBlockLayout(t *testing.T) {
 	f.seedFour(t)
 	f.create(t, cron.Job{Name: "invoices", Schedule: "0 6 * * *", Dir: f.project2})
 	m := showSchedules(t, f.twoGroups(t))
-	// Each block follows its group's agent rows (after the scheduled bucket);
-	// nothing is left for the bottom block.
+	// On the Schedules tab a group lists its jobs and no agent rows; nothing
+	// is left for the bottom block.
 	var seq []string
 	for _, l := range m.lines {
 		switch l.kind {
@@ -138,15 +141,15 @@ func TestScheduleBlockLayout(t *testing.T) {
 		}
 	}
 	want := []string{
-		"H:acme-api", "R:@1", "B:scheduled (1)", "R:@9", "SH:schedules (3)", "S:babysit", "S:upcoming", "S:weekly", "S:new:" + resolveDir(f.project),
-		"H:billing", "R:@20", "SH:schedules (2)", "S:nightly", "S:invoices", "S:new:" + resolveDir(f.project2),
+		"H:acme-api", "S:babysit", "S:upcoming", "S:weekly", "S:new:" + resolveDir(f.project),
+		"H:billing", "S:nightly", "S:invoices", "S:new:" + resolveDir(f.project2),
 	}
 	if !slices.Equal(seq, want) {
 		t.Errorf("lines =\n%v\nwant\n%v", seq, want)
 	}
-	// Headers and rows hang off their group's bar.
+	// Job rows hang off their group's bar.
 	for i, l := range m.lines {
-		if l.kind == fleetLineSchedHead || l.kind == fleetLineSchedule {
+		if l.kind == fleetLineSchedule {
 			if out := ansi.Strip(m.renderLine(i, m.contentWidth())); !strings.HasPrefix(out, "▎") {
 				t.Errorf("line %q has no project bar: %q", schedLineKey(l), out)
 			}
@@ -172,43 +175,67 @@ func TestScheduleWarningsRenderOnce(t *testing.T) {
 			t.Errorf("%q drawn %d times:\n%s", w, n, out)
 		}
 	}
-	// With no bottom block the warnings are the last lines.
-	if last := m.lines[len(m.lines)-1]; last.kind != fleetLineSchedLabel || !last.schedWarn {
+	// With no other-project jobs the warnings are one dim line at the bottom.
+	if last := m.lines[len(m.lines)-1]; last.kind != fleetLineSchedLabel || last.schedWarn || strings.Count(last.label, "scheduler not installed") != 1 {
 		t.Errorf("last line = %+v", last)
 	}
 
-	// With a bottom block they go under its label.
+	// With a bottom block it is collapsed (⚠ marks the warnings) and they go
+	// under its header once expanded.
 	m.groups = m.groups[:1]
+	m.schedOtherOpen = false
 	m.relayout()
-	want := []string{"SH:schedules (1)", "S:a", "S:+new", "SH:Schedules · other projects (1)",
+	if got, want := schedKeys(m), []string{"S:a", "S:+new", "SH:Schedules · other projects (1) ⚠"}; !slices.Equal(got, want) {
+		t.Errorf("collapsed lines = %v, want %v", got, want)
+	}
+	m.schedOtherOpen = true
+	m.relayout()
+	want := []string{"S:a", "S:+new", "SH:Schedules · other projects (1)",
 		"SL:scheduler not installed: run agentctl cron install", "SL:cron is off (cron.enabled: false): nothing fires", "S:b"}
 	if got := schedKeys(m); !slices.Equal(got, want) {
 		t.Errorf("lines = %v, want %v", got, want)
 	}
 }
 
-func TestScheduleLoadingLabelAtBottom(t *testing.T) {
+func TestSchedulesLoadOnStartNotOnToggle(t *testing.T) {
 	f := newSchedFixture(t)
+	f.seedFour(t)
 	m := f.twoGroups(t)
-	next, _ := m.Update(schedKeyMsg(fleetSchedulesKey)) // the load is not driven
-	m = next.(FleetModel)
-	if got := schedKeys(m); !slices.Equal(got, []string{"SL:Schedules · loading…"}) {
-		t.Errorf("lines while loading = %v", got)
+	if got := schedKeys(m); len(got) != 0 {
+		t.Errorf("lines before the load = %v", got)
+	}
+	if m.schedLoadCmd() == nil {
+		t.Fatal("the hub does not read the jobs without a toggle")
+	}
+	m.sched.loading = false
+	m = schedDrive(t, m, m.schedLoadCmd())
+	if !m.sched.loaded {
+		t.Fatal("jobs not loaded")
+	}
+	// The poll tick reloads on the cadence.
+	if m.schedTickCmd() != nil {
+		t.Error("tick reloaded inside the cadence")
 	}
 }
 
-func TestScheduleBlockCollapse(t *testing.T) {
+func TestScheduleOtherBlockCollapse(t *testing.T) {
 	f := newSchedFixture(t)
 	f.seedFour(t)
 	m := showSchedules(t, f.model(t))
+	m.schedOtherOpen = false // the default
+	m.relayout()
 	m.viewPath = filepath.Join(t.TempDir(), "hub-view.json")
-	headKey := fleetSchedHeadSel + resolveDir(f.project)
+	headKey := fleetSchedHeadSel + fleetSchedOtherKey
+	collapsed := []string{"S:babysit", "S:upcoming", "S:weekly", "S:+new", "SH:Schedules · other projects (1)"}
+	if got := schedKeys(m); !slices.Equal(got, collapsed) {
+		t.Fatalf("default lines = %v, want the bottom block collapsed %v", got, collapsed)
+	}
 	m = selectSched(t, m, "upcoming")
 
-	// z on a job row does not collapse anything.
+	// z on a job row does not expand anything.
 	m = schedPress(t, m, "z")
-	if len(m.schedCollapsed) != 0 {
-		t.Fatalf("z on a job row collapsed %v", m.schedCollapsed)
+	if m.schedOtherOpen {
+		t.Fatal("z on a job row expanded the bottom block")
 	}
 
 	// The header is selectable and has no drawer.
@@ -216,7 +243,7 @@ func TestScheduleBlockCollapse(t *testing.T) {
 	if m.schedPaneActive() {
 		t.Error("a block header should not open the drawer")
 	}
-	if foot := ansi.Strip(fitHints(m.footerHints(), 200)); !strings.Contains(foot, "z collapse") {
+	if foot := ansi.Strip(fitHints(m.footerHints(), 200)); !strings.Contains(foot, "z expand") {
 		t.Errorf("header footer = %q", foot)
 	}
 	next, cmd := m.Update(schedKeyMsg("z"))
@@ -224,59 +251,49 @@ func TestScheduleBlockCollapse(t *testing.T) {
 	if cmd != nil {
 		cmd()
 	}
-	want := []string{"SH:schedules (3)", "SH:Schedules · other projects (1)", "S:nightly"}
+	want := append(append([]string(nil), collapsed...), "S:nightly")
 	if got := schedKeys(m); !slices.Equal(got, want) {
-		t.Fatalf("collapsed lines = %v, want %v", got, want)
+		t.Fatalf("expanded lines = %v, want %v", got, want)
 	}
 	if m.selSchedule != headKey {
-		t.Errorf("selection after collapse = %q", m.selSchedule)
+		t.Errorf("selection after expanding = %q", m.selSchedule)
 	}
-	head := ansi.Strip(m.renderLine(m.splitPane.Cursor(), m.contentWidth()))
-	for _, s := range []string{fleetFoldedGlyph + " schedules (3)", "+3", fleetSchedGlyphRunning + "1", fleetSchedGlyphPaused + "1"} {
-		if !strings.Contains(head, s) {
-			t.Errorf("collapsed header %q lacks %q", head, s)
-		}
-	}
-	if !slices.Equal(readHubView(m.viewPath).SchedCollapsed, []string{resolveDir(f.project)}) {
-		t.Errorf("persisted = %v", readHubView(m.viewPath).SchedCollapsed)
+	if !readHubView(m.viewPath).SchedOtherOpen {
+		t.Error("expansion not persisted")
 	}
 
-	// The collapse survives a rebuild and a jobs reload.
+	// It survives a rebuild and a jobs reload, a restart and a hot reload.
 	m.relayout()
 	m = schedDrive(t, m, m.schedLoadCmd())
 	if got := schedKeys(m); !slices.Equal(got, want) {
 		t.Errorf("after reload = %v", got)
 	}
-
-	// ... and a restart, from the file and from the hot-reload env.
 	orig := hubViewPath
 	hubViewPath = func() (string, error) { return m.viewPath, nil }
 	t.Cleanup(func() { hubViewPath = orig })
 	m2 := f.model(t)
 	m2.loadViewState()
 	m2 = schedDrive(t, m2, m2.schedLoadCmd())
+	setAllTabs(&m2, true)
 	if got := schedKeys(m2); !slices.Equal(got, want) {
 		t.Errorf("after restart = %v", got)
 	}
 	env := strings.TrimPrefix(m.viewEnv(), HubViewEnv+"=")
-	if !strings.Contains(env, `"sched_collapsed"`) {
-		t.Fatalf("hot reload env drops the collapse: %s", env)
+	if !strings.Contains(env, `"sched_other_open"`) {
+		t.Fatalf("hot reload env drops the expansion: %s", env)
 	}
 	m3 := f.model(t)
 	hubViewPath = func() (string, error) { return filepath.Join(t.TempDir(), "none.json"), nil }
 	t.Setenv(HubViewEnv, env)
 	m3.loadViewState()
 	m3 = schedDrive(t, m3, m3.schedLoadCmd())
+	setAllTabs(&m3, true)
 	if got := schedKeys(m3); !slices.Equal(got, want) {
 		t.Errorf("after hot reload = %v", got)
 	}
 
-	// A click on the header expands it again; so does the bottom block's.
+	// A click on the header collapses it again.
 	m = schedClickLine(t, m, schedLineIdx(t, m, headKey))
-	if m.isSchedCollapsed(resolveDir(f.project)) || !slices.Contains(schedKeys(m), "S:upcoming") {
-		t.Errorf("click did not expand: %v", schedKeys(m))
-	}
-	m = schedClickLine(t, m, schedLineIdx(t, m, fleetSchedHeadSel+fleetSchedOtherKey))
 	if !m.isSchedCollapsed(fleetSchedOtherKey) || slices.Contains(schedKeys(m), "S:nightly") {
 		t.Errorf("click did not collapse the bottom block: %v", schedKeys(m))
 	}
@@ -295,41 +312,38 @@ func schedClickLine(t *testing.T, m FleetModel, idx int) FleetModel {
 	return m
 }
 
-func TestScheduleCollapsedPrunedWithItsProject(t *testing.T) {
+func TestScheduleTabsPrunedWithItsProject(t *testing.T) {
 	f := newSchedFixture(t)
 	m := f.twoGroups(t)
-	m.setSchedCollapsed(resolveDir(f.project), true)
-	m.setSchedCollapsed(resolveDir(f.project2), true)
-	m.setSchedCollapsed(fleetSchedOtherKey, true)
+	m.setSchedTab(resolveDir(f.project), true)
+	m.setSchedTab(resolveDir(f.project2), true)
 	m.groups = m.groups[:1]
-	got := m.viewState().SchedCollapsed
-	want := []string{":other", resolveDir(f.project)}
-	slices.Sort(want)
-	if !slices.Equal(got, want) {
+	got := m.viewState().SchedTabs
+	if want := []string{resolveDir(f.project)}; !slices.Equal(got, want) {
 		t.Errorf("pruned = %v, want %v", got, want)
 	}
 	// An empty load prunes nothing.
 	m.groups = nil
-	if got := m.viewState().SchedCollapsed; len(got) != 3 {
+	if got := m.viewState().SchedTabs; len(got) != 2 {
 		t.Errorf("empty load pruned: %v", got)
 	}
 }
 
-func TestScheduleSelectionHiddenByCollapseOrFold(t *testing.T) {
+func TestScheduleSelectionHiddenByTabOrFold(t *testing.T) {
 	f := newSchedFixture(t)
 	f.seedFour(t)
 	m := showSchedules(t, f.model(t))
 	m = selectSched(t, m, "upcoming")
-	// Collapsing the block from elsewhere puts the cursor on its header.
-	m.setSchedCollapsed(resolveDir(f.project), true)
+	// Flipping the tab from elsewhere puts the cursor on the group header.
+	m.setSchedTab(resolveDir(f.project), false)
 	m.relayout()
-	if m.selSchedule != fleetSchedHeadSel+resolveDir(f.project) {
-		t.Errorf("selection = %q, want the block header", m.selSchedule)
+	if !m.selIsHeader || m.selSession != "agentctl-acme-api" || m.selSchedule != "" {
+		t.Errorf("selection = %q/%q header=%v, want the group header", m.selSession, m.selSchedule, m.selIsHeader)
 	}
-	m.setSchedCollapsed(resolveDir(f.project), false)
+	m.setSchedTab(resolveDir(f.project), true)
 	m.relayout()
 
-	// Folding the group hides its block; the cursor goes to the header.
+	// Folding the group hides its jobs; the cursor goes to the header.
 	m = selectSched(t, m, "upcoming")
 	m.setFolded("agentctl-acme-api", true)
 	m.relayout()
@@ -381,15 +395,18 @@ func TestScheduleSelectionFollowsJobAcrossGroups(t *testing.T) {
 	}
 }
 
-func TestSchedulesHiddenDrawNoBlocks(t *testing.T) {
+func TestSessionsTabDrawsNoJobs(t *testing.T) {
 	f := newSchedFixture(t)
 	f.seedFour(t)
 	m := showSchedules(t, f.twoGroups(t))
-	m = schedPress(t, m, fleetSchedulesKey)
+	m = schedPress(t, m, fleetSchedulesKey) // the cursor's group back to Sessions
 	for _, l := range m.lines {
-		if l.kind == fleetLineSchedHead || l.kind == fleetLineSchedule || l.kind == fleetLineSchedLabel {
-			t.Errorf("hidden section drew %q", schedLineKey(l))
+		if l.kind == fleetLineSchedule && l.group.Session == "agentctl-acme-api" {
+			t.Errorf("Sessions tab drew job %q", schedLineKey(l))
 		}
+	}
+	if !slices.ContainsFunc(m.lines, func(l fleetLine) bool { return l.kind == fleetLineRow && l.row.WindowID == "@1" }) {
+		t.Error("Sessions tab lost the agent rows")
 	}
 }
 

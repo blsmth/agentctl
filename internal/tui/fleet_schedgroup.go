@@ -13,19 +13,16 @@ import (
 	"github.com/blsmth/agentctl/internal/fleet"
 )
 
-// Schedules blocks: while the Schedules section is shown (fleetSchedulesKey)
-// each cron job is listed under the project group it runs in, after the
-// group's agent rows, as a "schedules (N)" block. A job belongs to the first
-// group whose project dir is the job's dir or contains it (a subdir, or a
-// worktree under <project>/.worktrees/), longest project dir first, with
-// both sides cleaned and symlink-resolved. Jobs no live group claims go in a
-// trailing "Schedules · other projects (N)" block at the bottom of the list,
-// which also carries the section's global warnings.
-//
-// Each block header can be collapsed (`z` or ⏎ on it, or a click): the
-// header then shows the job count and a summary of the hidden rows. The
-// collapsed set is keyed by block key (the resolved project dir, or
-// fleetSchedOtherKey) and persisted in hubViewState.SchedCollapsed.
+// Schedules tabs: each cron job belongs to the project group it runs in, and
+// a group with at least one job gets "Sessions N · Schedules M" tabs on its
+// header. The selected tab (Sessions by default, per project, persisted in
+// hubViewState.SchedTabs by block key) decides what the group body lists:
+// the agent rows or the jobs, never both. A job belongs to the first group
+// whose project dir is the job's dir or contains it (a subdir, or a worktree
+// under <project>/.worktrees/), longest project dir first, with both sides
+// cleaned and symlink-resolved. Jobs no live group claims go in a trailing
+// "Schedules · other projects (N)" block at the bottom of the list, collapsed
+// by default, which also carries the global warnings.
 
 // fleetSchedOtherKey is the block key of the bottom "other projects" block.
 // Project block keys are absolute paths, so it cannot collide with one.
@@ -107,13 +104,10 @@ type fleetSchedPlacement struct {
 	other []cronedit.Status
 }
 
-// placeSchedules assigns the loaded jobs to groups (nothing while the
-// section is hidden or not loaded yet).
+// placeSchedules assigns the loaded jobs to groups (nothing before the
+// first load).
 func (m *FleetModel) placeSchedules() fleetSchedPlacement {
 	var p fleetSchedPlacement
-	if !m.showSchedules {
-		return p
-	}
 	if m.schedDirs == nil {
 		m.schedDirs = newFleetDirCache()
 	}
@@ -183,24 +177,137 @@ func tallySched(jobs []cronedit.Status) fleetSchedCounts {
 	return c
 }
 
-// isSchedCollapsed reports whether the block key is collapsed.
+// isSchedCollapsed reports whether the block key is collapsed: only the
+// bottom block collapses, and it does by default.
 func (m FleetModel) isSchedCollapsed(key string) bool {
-	return key != "" && m.schedCollapsed[key]
+	return key == fleetSchedOtherKey && !m.schedOtherOpen
 }
 
-// setSchedCollapsed collapses or expands the block key.
-func (m *FleetModel) setSchedCollapsed(key string, collapse bool) {
+// fleetGroupTab is the tab state of a group header with jobs.
+type fleetGroupTab struct {
+	key      string // the project's block key
+	sessions int    // agent rows (shells excluded)
+	jobs     int
+	sched    bool // the Schedules tab is selected
+}
+
+// buildGroupTab records g's tab info for the header renderer (tabbed is false
+// for a group with no jobs or no block key: no tabs, header unchanged).
+func (m *FleetModel) buildGroupTab(g fleet.Group, key string, jobs int) (fleetGroupTab, bool) {
+	if key == "" || jobs == 0 {
+		return fleetGroupTab{}, false
+	}
+	sessions := 0
+	for _, r := range g.Rows {
+		if !r.Shell {
+			sessions++
+		}
+	}
+	t := fleetGroupTab{key: key, sessions: sessions, jobs: jobs, sched: m.schedTabs[key]}
+	if m.groupTabs == nil {
+		m.groupTabs = make(map[string]fleetGroupTab)
+	}
+	m.groupTabs[g.Session] = t
+	return t, true
+}
+
+// groupTab is g's header tabs, when it has any.
+func (m FleetModel) groupTab(g fleet.Group) (fleetGroupTab, bool) {
+	t, ok := m.groupTabs[g.Session]
+	return t, ok
+}
+
+// setSchedTab selects the Schedules (true) or Sessions tab of the block key.
+func (m *FleetModel) setSchedTab(key string, sched bool) {
 	if key == "" {
 		return
 	}
-	if collapse {
-		if m.schedCollapsed == nil {
-			m.schedCollapsed = make(map[string]bool)
+	if sched {
+		if m.schedTabs == nil {
+			m.schedTabs = make(map[string]bool)
 		}
-		m.schedCollapsed[key] = true
+		m.schedTabs[key] = true
 		return
 	}
-	delete(m.schedCollapsed, key)
+	delete(m.schedTabs, key)
+}
+
+// tabGroupOfLine is the tabbed group owning line idx (its header, an agent
+// row or a job row), or "" and false.
+func (m FleetModel) tabGroupOfLine(idx int) (fleet.Group, fleetGroupTab, bool) {
+	if idx < 0 || idx >= len(m.lines) {
+		return fleet.Group{}, fleetGroupTab{}, false
+	}
+	l := m.lines[idx]
+	session := ""
+	switch l.kind {
+	case fleetLineHeader, fleetLinePlaceholder, fleetLineSchedule, fleetLineSubheader:
+		session = l.group.Session
+	case fleetLineRow:
+		session = l.row.Session
+	}
+	if session == "" {
+		return fleet.Group{}, fleetGroupTab{}, false
+	}
+	for _, g := range m.groups {
+		if g.Session == session {
+			t, ok := m.groupTab(g)
+			return g, t, ok
+		}
+	}
+	return fleet.Group{}, fleetGroupTab{}, false
+}
+
+// toggleGroupTab is fleetSchedulesKey: flip the Sessions / Schedules tab of
+// the group the cursor is in.
+func (m *FleetModel) toggleGroupTab() tea.Cmd {
+	idx := m.splitPane.Cursor()
+	g, t, ok := m.tabGroupOfLine(idx)
+	if !ok {
+		if idx >= 0 && idx < len(m.lines) && m.lines[idx].kind == fleetLineSchedHead {
+			return nil
+		}
+		m.jumpErr = ""
+		m.setSuccess("no schedules in this project · " + fleetCronKey + " adds one")
+		return nil
+	}
+	return m.switchTab(g, t, !t.sched, m.lines[idx].kind != fleetLineHeader)
+}
+
+// switchTab selects a tab of g. The cursor lands on the header, or with
+// firstRow on the first line of the new tab.
+func (m *FleetModel) switchTab(g fleet.Group, t fleetGroupTab, sched, firstRow bool) tea.Cmd {
+	if sched == t.sched {
+		return nil
+	}
+	m.jumpErr = ""
+	m.pendingFocus = nil
+	m.schedConfirm = nil
+	m.setSchedTab(t.key, sched)
+	// Park the selection on the header so the rebuild never leaves it on a
+	// line the old tab hid, then pick the final line.
+	m.selSession, m.selWindowID, m.selIsHeader, m.selSchedule = g.Session, "", true, ""
+	m.relayout()
+	if firstRow {
+		start := -1
+		for i, l := range m.lines {
+			if l.kind == fleetLineHeader && l.group.Session == g.Session {
+				start = i
+				break
+			}
+		}
+		for i := start + 1; start >= 0 && i < len(m.lines); i++ {
+			l := m.lines[i]
+			if l.kind == fleetLineHeader || l.kind == fleetLineDivider {
+				break
+			}
+			if (l.kind == fleetLineRow || l.kind == fleetLineSchedule) && !l.schedNew {
+				m.selectLine(i)
+				break
+			}
+		}
+	}
+	return tea.Batch(m.saveViewCmd(), m.maybeShowCmd())
 }
 
 // fleetSchedHider is what hides a schedule line: a collapsed block's header
@@ -227,9 +334,10 @@ func (m *FleetModel) hideSched(blockKey string, jobs []cronedit.Status, h fleetS
 	}
 }
 
-// noteFoldedSched records the schedule lines a folded group hides.
-func (m *FleetModel) noteFoldedSched(g fleet.Group, key string, jobs []cronedit.Status) {
-	if !m.showSchedules || key == "" {
+// noteHiddenSched records the schedule lines a folded group, or its
+// Sessions tab, hides: the cursor falls back to the group header.
+func (m *FleetModel) noteHiddenSched(g fleet.Group, key string, jobs []cronedit.Status) {
+	if key == "" {
 		return
 	}
 	m.hideSched(key, jobs, fleetSchedHider{session: g.Session})
@@ -258,49 +366,33 @@ func schedNewSel(blockKey string) string {
 	return fleetSchedNewSel + ":" + blockKey
 }
 
-// schedGroupLines is group g's schedules block (key is its block key, ""
-// when g hosts none): the "schedules (N)" header, then unless it is
-// collapsed one row per job and a "+ new schedule" line. A project with no
-// jobs shows only the "+ new schedule" line.
+// schedGroupLines is group g's Schedules tab body (key is its block key, ""
+// when g hosts none): one row per job and a "+ new schedule" line (not while
+// searching, when it is no match).
 func (m *FleetModel) schedGroupLines(g fleet.Group, key string, jobs []cronedit.Status) []fleetLine {
-	if !m.showSchedules || !m.sched.loaded || key == "" {
+	if !m.sched.loaded || key == "" || len(jobs) == 0 {
 		return nil
 	}
-	searching := m.searching()
-	newLine := fleetLine{kind: fleetLineSchedule, group: g, schedBlock: key, schedDir: g.ProjectDir, schedNew: true}
-	if len(jobs) == 0 {
-		return []fleetLine{newLine}
-	}
-	head := fleetLine{
-		kind: fleetLineSchedHead, group: g, schedBlock: key,
-		label: fmt.Sprintf("schedules (%d)", len(jobs)), collapsed: m.isSchedCollapsed(key) && !searching, schedSum: tallySched(jobs),
-	}
-	if head.collapsed {
-		m.hideSched(key, jobs, fleetSchedHider{head: schedLineKey(head)})
-		return []fleetLine{head}
-	}
-	lines := []fleetLine{head}
+	var lines []fleetLine
 	for _, st := range jobs {
 		lines = append(lines, fleetLine{kind: fleetLineSchedule, group: g, schedBlock: key, sched: st})
 	}
-	if searching {
-		return lines // "+ new schedule" is not a match
+	if m.searching() {
+		return lines
 	}
-	return append(lines, newLine)
+	return append(lines, fleetLine{kind: fleetLineSchedule, group: g, schedBlock: key, schedDir: g.ProjectDir, schedNew: true})
 }
 
 // schedBottomLines is the block at the bottom of the list: the jobs no group
-// claims under their own header, and the section's global warnings (loading,
-// a load error, scheduler not installed, cron off), each drawn once. With no
-// jobs and no project to put a block under, it keeps the "none yet" label
-// and a "+ new schedule" line.
+// claims under a "Schedules · other projects (N)" header (collapsed by
+// default, one line), with the global warnings (a load error, scheduler not
+// installed, cron off) under it when expanded and a ⚠ on the header when
+// collapsed. With no other-project jobs the warnings are one dim line, only
+// if any job exists anywhere. With no jobs at all nothing is drawn.
 func (m *FleetModel) schedBottomLines(p fleetSchedPlacement) []fleetLine {
-	if !m.showSchedules {
-		return nil
-	}
 	searching := m.searching()
 	if searching {
-		// Only matching jobs; no warnings or "+ new" while searching.
+		// Only matching jobs; no warnings while searching.
 		if !m.sched.loaded {
 			return nil
 		}
@@ -312,50 +404,51 @@ func (m *FleetModel) schedBottomLines(p fleetSchedPlacement) []fleetLine {
 	label := func(text string, warn bool) fleetLine {
 		return fleetLine{kind: fleetLineSchedLabel, label: text, schedWarn: warn}
 	}
-	switch {
-	case !m.sched.loaded && m.sched.err == "":
-		return []fleetLine{label("Schedules · loading…", false)}
-	case m.sched.err != "" && !m.sched.loaded:
-		return []fleetLine{label("Schedules · "+m.sched.err, true)}
+	if !m.sched.loaded {
+		if m.sched.err != "" {
+			return []fleetLine{label("Schedules · "+m.sched.err, true)}
+		}
+		return nil
 	}
 	ov := m.sched.ov
-	var warns []fleetLine
+	var warns []string
 	if !searching {
 		if m.sched.err != "" {
-			warns = append(warns, label(m.sched.err, true))
+			warns = append(warns, m.sched.err)
 		}
 		if !ov.SchedulerInstalled {
-			warns = append(warns, label("scheduler not installed: run agentctl cron install", true))
+			warns = append(warns, "scheduler not installed: run agentctl cron install")
 		}
 		if !ov.Enabled {
-			warns = append(warns, label("cron is off (cron.enabled: false): nothing fires", true))
+			warns = append(warns, "cron is off (cron.enabled: false): nothing fires")
 		}
 	}
-	hosts := len(p.keys) > 0
-	switch {
-	case len(p.other) > 0:
-		text := fmt.Sprintf("Schedules · other projects (%d)", len(p.other))
-		if !hosts {
-			text = fmt.Sprintf("Schedules (%d)", len(p.other))
+	if len(p.other) == 0 {
+		if len(ov.Jobs) == 0 || len(warns) == 0 {
+			return nil
 		}
-		head := fleetLine{
-			kind: fleetLineSchedHead, schedBlock: fleetSchedOtherKey, label: text,
-			collapsed: m.isSchedCollapsed(fleetSchedOtherKey) && !searching, schedSum: tallySched(p.other),
-		}
-		lines := append([]fleetLine{head}, warns...)
-		if head.collapsed {
-			m.hideSched(fleetSchedOtherKey, p.other, fleetSchedHider{head: schedLineKey(head)})
-			return lines
-		}
-		for _, st := range p.other {
-			lines = append(lines, fleetLine{kind: fleetLineSchedule, schedBlock: fleetSchedOtherKey, sched: st})
-		}
-		return lines
-	case len(ov.Jobs) == 0 && !hosts:
-		lines := append([]fleetLine{label("Schedules · none yet", false)}, warns...)
-		return append(lines, fleetLine{kind: fleetLineSchedule, schedNew: true})
+		return []fleetLine{label("Schedules · "+strings.Join(warns, " · "), false)}
 	}
-	return warns
+	text := fmt.Sprintf("Schedules · other projects (%d)", len(p.other))
+	head := fleetLine{
+		kind: fleetLineSchedHead, schedBlock: fleetSchedOtherKey, label: text,
+		collapsed: m.isSchedCollapsed(fleetSchedOtherKey) && !searching, schedSum: tallySched(p.other),
+	}
+	if head.collapsed {
+		if len(warns) > 0 {
+			head.label += " ⚠"
+		}
+		m.hideSched(fleetSchedOtherKey, p.other, fleetSchedHider{head: schedLineKey(head)})
+		return []fleetLine{head}
+	}
+	lines := []fleetLine{head}
+	for _, w := range warns {
+		lines = append(lines, label(w, true))
+	}
+	for _, st := range p.other {
+		lines = append(lines, fleetLine{kind: fleetLineSchedule, schedBlock: fleetSchedOtherKey, sched: st})
+	}
+	return lines
 }
 
 // selectedSchedHead is the selected block header line, or nil.
@@ -374,8 +467,7 @@ func (m *FleetModel) toggleSchedCollapseAt(idx int) tea.Cmd {
 	if idx < 0 || idx >= len(m.lines) || m.lines[idx].kind != fleetLineSchedHead {
 		return nil
 	}
-	key := m.lines[idx].schedBlock
-	m.setSchedCollapsed(key, !m.isSchedCollapsed(key))
+	m.schedOtherOpen = !m.schedOtherOpen
 	m.relayout()
 	return m.saveViewCmd()
 }
@@ -404,24 +496,17 @@ func (m FleetModel) schedHeadHints(l fleetLine) []fleetHint {
 	if l.collapsed {
 		act = "expand"
 	}
-	return []fleetHint{{"j/k", "move"}, {"z", act}, {"n", "new schedule"}, {fleetSchedulesKey, "hide"}, {"?", "more"}}
+	return []fleetHint{{"j/k", "move"}, {"z", act}, {"n", "new schedule"}, {"?", "more"}}
 }
 
-// renderSchedHead draws a block header: in a group, the project bar, the
-// ▾/▸ marker and "schedules (N)" aligned under the agent names; at the
-// bottom, the section label. A collapsed header adds the summary of what it
-// hides.
+// renderSchedHead draws the bottom block's header: the ▾/▸ marker and the
+// section label. A collapsed header adds the summary of what it hides.
 func (m FleetModel) renderSchedHead(l fleetLine, selected bool, cw int) string {
 	cursor := "  "
 	if selected {
 		cursor = cursorActiveStyle.Render("▸") + " "
 	}
-	var left string
-	if l.group.Session != "" {
-		left = fleetProjectBar(l.group.Project) + cursor + collapseMarker(l.collapsed, false) + " " + fleetDimStyle.Render(l.label)
-	} else {
-		left = cursor + collapseMarker(l.collapsed, false) + " " + fleetDimStyle.Render(fleetSchedGlyphOn+" "+l.label)
-	}
+	left := cursor + collapseMarker(l.collapsed, false) + " " + fleetDimStyle.Render(fleetSchedGlyphOn+" "+l.label)
 	if l.collapsed {
 		room := cw - fleetSidebarRightGutter - lipgloss.Width(left) - 2
 		if sum := schedSummary(l.schedSum, room); sum != "" {
@@ -483,18 +568,17 @@ func schedSummary(c fleetSchedCounts, w int) string {
 	return truncateToWidth(s, w)
 }
 
-// liveSchedCollapsed is the sorted collapsed block set; with prune, keys of
-// projects no group hosts any more are dropped (the bottom block's key is
-// always kept).
-func (m FleetModel) liveSchedCollapsed(prune bool) []string {
-	live := map[string]bool{fleetSchedOtherKey: true}
+// liveSchedTabs is the sorted set of projects on their Schedules tab; with
+// prune, keys of projects no group hosts any more are dropped.
+func (m FleetModel) liveSchedTabs(prune bool) []string {
+	live := map[string]bool{}
 	if prune {
 		for _, key := range m.schedGroupKeys() {
 			live[key] = true
 		}
 	}
 	var out []string
-	for key, ok := range m.schedCollapsed {
+	for key, ok := range m.schedTabs {
 		if ok && (!prune || live[key]) {
 			out = append(out, key)
 		}

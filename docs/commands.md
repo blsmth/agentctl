@@ -85,7 +85,7 @@ See [Accounts](configuration.md#accounts-multiple-claude-logins), [Backends](con
 | `agentctl cron pause` / `resume` / `rm <name>` | Pause, resume (missed fires are not caught up) or remove a job (history kept). |
 | `agentctl cron install` / `uninstall` | Install or remove the launchd ticker (prints a crontab line on Linux). |
 
-See [cron](configuration.md#cron) for the config keys, approval rules and the hub's Schedules section, and [design/cron.md](design/cron.md) for the design.
+See [cron](configuration.md#cron) for the config keys, approval rules and the hub's Schedules tabs, and [design/cron.md](design/cron.md) for the design.
 
 ## Artifacts
 

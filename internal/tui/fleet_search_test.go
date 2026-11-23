@@ -360,7 +360,6 @@ func TestSearchClosedSectionOnlyWithC(t *testing.T) {
 
 func TestSearchSchedulesFiltered(t *testing.T) {
 	m := searchModel(t)
-	m.showSchedules = true
 	m.sched.loaded = true
 	m.sched.ov = cronedit.Overview{SchedulerInstalled: true, Enabled: true, Jobs: []cronedit.Status{
 		{Name: "nightly-flaky", Enabled: true, Job: cron.Job{Name: "nightly-flaky", Dir: "/src/alpha", Schedule: "0 9 * * *"}},

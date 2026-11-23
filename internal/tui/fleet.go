@@ -582,13 +582,12 @@ type FleetModel struct {
 	artifacts        map[string]fleetArtifactInfo
 	artifactsStamp   time.Time
 	artifactsLoading bool
-	// showSchedules shows the Schedules section (fleetSchedulesKey,
-	// fleet_schedules.go); sched is its data, schedForm the open form,
+	// sched is the cron jobs' data (fleet_schedules.go, always loaded),
+	// schedForm the open form,
 	// schedConfirm an armed run/delete y/n. schedPaneOn records that the
 	// card/form drawer is open; schedAnim* is its slide-in (gen guards stale
 	// ticks, P the eased progress 0..1). schedAgentCheck is the injected
 	// agent validation.
-	showSchedules   bool
 	sched           fleetSchedState
 	schedForm       *fleetSchedForm
 	schedConfirm    *fleetSchedConfirm
@@ -600,13 +599,18 @@ type FleetModel struct {
 	schedAgentCheck func(name, dir string) error
 	// schedAgentNames lists the agents the form offers for a project dir.
 	schedAgentNames func(dir string) []string
-	// schedCollapsed is the set of collapsed schedules blocks by block key
-	// (fleet_schedgroup.go), persisted like collapsed; schedHidden maps the
-	// selection key of each schedule line a collapse or fold hides to what
-	// hides it, rebuilt by rebuildLines. schedDirs caches resolved project
-	// and job dirs (shared by the model's copies).
-	schedCollapsed map[string]bool
+	// schedTabs is the set of project block keys (resolved project dirs)
+	// whose group shows its Schedules tab instead of Sessions, persisted in
+	// hubViewState; schedOtherOpen expands the bottom "other projects"
+	// block (collapsed by default). schedHidden maps the selection key of
+	// each schedule line a collapse, a fold or the Sessions tab hides to what
+	// hides it, and groupTabs the header tab info of each tabbed group
+	// (by session), both rebuilt by rebuildLines. schedDirs caches resolved
+	// project and job dirs (shared by the model's copies).
+	schedTabs      map[string]bool
+	schedOtherOpen bool
 	schedHidden    map[string]fleetSchedHider
+	groupTabs      map[string]fleetGroupTab
 	schedDirs      *fleetDirCache
 	filter         fleetFilter
 	viewPath       string
@@ -1395,7 +1399,7 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 		return *m, m.toggleClosed()
 
 	case fleetSchedulesKey:
-		return *m, m.toggleSchedules()
+		return *m, m.toggleGroupTab()
 
 	case fleetServeKey:
 		return *m, m.toggleServe()
@@ -2056,6 +2060,7 @@ func (m *FleetModel) rebuildLines() {
 	m.hiddenUnder = nil
 	place := m.placeSchedules()
 	m.schedHidden = nil
+	m.groupTabs = nil
 	// While a query is active, folds and collapses are ignored for display
 	// (the saved state is untouched) so every match is visible.
 	searching := m.searching()
@@ -2064,8 +2069,13 @@ func (m *FleetModel) rebuildLines() {
 		all := m.shownRows(g.Rows)
 		folded := m.isFolded(g.Session) && !searching
 		headerHit := m.searchHeader(g)
+		// A group with jobs has Sessions and Schedules tabs: its body is one
+		// or the other, never both. A search shows both, so every match is.
+		tab, tabbed := m.buildGroupTab(g, place.keys[i], len(place.byGroup[i]))
+		onSched := tabbed && tab.sched && !searching
+		showJobs := tabbed && (tab.sched || searching)
 		rows, context := all, map[string]bool(nil)
-		if !folded {
+		if !folded && !onSched {
 			src := all
 			if m.sortRecent {
 				src = fleet.SortRowsRecent(all)
@@ -2076,11 +2086,11 @@ func (m *FleetModel) rebuildLines() {
 				rows, context = filterRows(src, m.filter)
 			}
 		}
-		body := !folded && (len(rows) > 0 || (len(all) == 0 && m.filter == fleetFilterAll && (!searching || headerHit)))
+		body := !folded && !onSched && (len(rows) > 0 || (len(all) == 0 && m.filter == fleetFilterAll && (!searching || headerHit)))
 		// The attention filter never hides an unfolded group's schedules.
 		var sched []fleetLine
-		if folded {
-			m.noteFoldedSched(g, place.keys[i], place.byGroup[i])
+		if folded || !showJobs {
+			m.noteHiddenSched(g, place.keys[i], place.byGroup[i])
 		} else {
 			jobs := place.byGroup[i]
 			if searching && !headerHit {
@@ -2400,7 +2410,7 @@ func (m FleetModel) renderStatusOrEmpty() (string, bool) {
 		return fleetDimStyle.Render("  loading…") + "\n", true
 	case m.loadErr != nil:
 		return fleetErrStyle.Render(fmt.Sprintf("  error loading sessions: %v", m.loadErr)) + "\n", true
-	case len(m.groups) == 0 && !m.showSchedules && !m.searching():
+	case len(m.groups) == 0 && len(m.sched.ov.Jobs) == 0 && !m.searching():
 		return fleetDimStyle.Render("  no agentctl sessions running") + "\n", true
 	}
 	return "", false
@@ -2546,12 +2556,6 @@ func (m FleetModel) renderLine(i int, cw int) string {
 		// The group's bar keeps the spine unbroken; the label aligns under
 		// agent names: bar + cursor slot + glyph + space.
 		label := fleetProjectBar(l.group.Project) + strings.Repeat(" ", fleetDetailIndent-1) + fleetDimStyle.Render(l.label)
-		if strings.HasPrefix(l.label, "scheduled") && !m.showSchedules {
-			hint := fleetDimStyle.Render(" · ") + menuHintKeyStyle.Render(fleetSchedulesKey) + fleetDimStyle.Render(" schedules")
-			if lipgloss.Width(label)+lipgloss.Width(hint) <= cw-fleetSidebarRightGutter {
-				label += hint
-			}
-		}
 		return label
 	default: // fleetLineRow
 		out := m.renderRowLine(l, selected, m.hover.region(i), cw)
@@ -2686,6 +2690,62 @@ type fleetHeaderSpans struct {
 	sweep [2]int // sweep button; zero when not shown
 	add   [2]int // "+ new" button or armed selector; zero when not shown
 	cron  bool   // the armed selector shows its "cron" choice
+	// tabSessions and tabSched are the Sessions / Schedules tab labels
+	// (zero when not drawn).
+	tabSessions, tabSched [2]int
+}
+
+// fleetTabGap is the blank columns between a header's project name and its
+// tabs.
+const fleetTabGap = 3
+
+// renderGroupTabs renders "Sessions N · Schedules M" in at most room columns
+// starting at column start, cutting from the right, and reports the columns
+// of each label (zero when cut off entirely).
+func renderGroupTabs(t fleetGroupTab, hover fleetHoverRegion, start, room int) (string, [2]int, [2]int) {
+	if room < 4 {
+		return "", [2]int{}, [2]int{}
+	}
+	style := func(active bool, hovered bool) lipgloss.Style {
+		st := fleetCountStyle
+		if active {
+			st = fleetNewHoverStyle
+		}
+		if hovered {
+			st = st.Underline(true)
+		}
+		return st
+	}
+	type piece struct {
+		text string
+		st   lipgloss.Style
+		tab  int // 1 sessions, 2 schedules, 0 separator
+	}
+	pieces := []piece{
+		{fmt.Sprintf("Sessions %d", t.sessions), style(!t.sched, hover == fleetHoverTabSessions), 1},
+		{" · ", fleetDimStyle, 0},
+		{fmt.Sprintf("Schedules %d", t.jobs), style(t.sched, hover == fleetHoverTabSched), 2},
+	}
+	var out strings.Builder
+	var sess, sched [2]int
+	col := start
+	for _, p := range pieces {
+		left := start + room - col
+		if left <= 0 {
+			break
+		}
+		text := truncateToWidth(p.text, left)
+		w := lipgloss.Width(text)
+		out.WriteString(p.st.Render(text))
+		switch p.tab {
+		case 1:
+			sess = [2]int{col, col + w}
+		case 2:
+			sched = [2]int{col, col + w}
+		}
+		col += w
+	}
+	return out.String(), sess, sched
 }
 
 // fleetSweepSep is the blank columns between the sweep button and "+ new".
@@ -2843,6 +2903,14 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 	span := &spans.name
 	*span = [2]int{fleetHeaderNameCol, lipgloss.Width(head) + lipgloss.Width(name)}
 	line := head + projStyle.Render(name)
+	if t, ok := m.groupTab(g); ok && lipgloss.Width(name) == lipgloss.Width(g.Project) {
+		// Tabs take what the project name leaves, so they truncate first.
+		start := lipgloss.Width(line) + fleetTabGap
+		if text, sess, sched := renderGroupTabs(t, hover, start, leftW-start); text != "" {
+			line += strings.Repeat(" ", fleetTabGap) + text
+			spans.tabSessions, spans.tabSched = sess, sched
+		}
+	}
 	if groupCustomSession(g) {
 		if room := leftW - lipgloss.Width(line) - 2; room >= fleetMinSessionLabel {
 			line += "  " + fleetCountStyle.Render(truncateToWidth(g.Session, room))
