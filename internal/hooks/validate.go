@@ -340,10 +340,8 @@ const serveTamperReason = "\U0001F6D1 BLOCKED: this touches agentctl serve's sta
 // ./internal/serve/..., agentctl serve status|logs, npm run serve) pass;
 // `agentctl serve logs` is the read-only way to read serve.log and
 // audit.jsonl.
+// The file references (socket, pidfile, state dir) are serveFilePatterns.
 var serveTamperPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`control\.sock\b`),
-	regexp.MustCompile(`\bserve\.pid\b`),
-	regexp.MustCompile(`(?:state/agentctl|XDG_STATE_HOME\}?/agentctl)/serve\b`),
 	regexp.MustCompile(`(?s)\blaunchctl\b.*agentctl\.serve\b`),
 	regexp.MustCompile(`(?s)agentctl\.serve\b.*\blaunchctl\b`),
 	regexp.MustCompile(`\bsystemctl\b[^\n]*agentctl`),
@@ -381,27 +379,84 @@ var serveStateDir = func() string {
 }
 
 // checkServeTamper reports whether command could subvert remote approvals.
+//
+// The patterns match the line with the arguments of agentctl commands
+// masked (maskAgentctlArgs), so a context set value or dispatch prompt that
+// mentions `agentctl serve pair` is text. Real agentctl invocations are
+// checked by their words instead (agentctlServeTamper), including one in an
+// unquoted $(...); an agentctl command with a substitution in it is not
+// masked at all. A masked argument that is itself one path naming serve's
+// files (`agentctl artifact add <state dir>/serve/devices.json`) still
+// counts, and so does a write view (writeViews) that reaches them through a
+// cd or a variable.
 func checkServeTamper(command string) string {
+	sc := scanShell(command)
+	masked := sc.masked()
 	for _, re := range serveTamperPatterns {
-		if re.MatchString(command) {
+		if re.MatchString(masked) {
 			return serveTamperReason
 		}
 	}
-	if goRunServeTamper(command) {
+	if goRunServeTamper(command) || agentctlServeTamper(sc) || serveFileRef(masked) {
 		return serveTamperReason
 	}
-	if dir := serveStateDir(); dir != "" {
-		if strings.Contains(command, dir) {
-			return serveTamperReason
-		}
-		if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(dir, home+"/") {
-			if strings.Contains(command, "~/"+strings.TrimPrefix(dir, home+"/")) ||
-				strings.Contains(command, "$HOME/"+strings.TrimPrefix(dir, home+"/")) {
+	for _, c := range sc.agentctlCommands() {
+		for _, w := range c.args() {
+			if !strings.ContainsAny(w.text, " \t\n") && serveFileRef(w.text) {
 				return serveTamperReason
 			}
 		}
 	}
+	for _, v := range writeViews(sc) {
+		if serveFileRef(v) {
+			return serveTamperReason
+		}
+	}
 	return ""
+}
+
+// serveFilePatterns match a reference to serve's files: its control socket,
+// pidfile or state dir (the resolved dir is serveStateDir).
+var serveFilePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`control\.sock\b`),
+	regexp.MustCompile(`\bserve\.pid\b`),
+	regexp.MustCompile(`(?:state/agentctl|XDG_STATE_HOME\}?/agentctl)/serve\b`),
+}
+
+// serveFileRef reports whether s names serve's socket, pidfile or state dir.
+func serveFileRef(s string) bool {
+	for _, re := range serveFilePatterns {
+		if re.MatchString(s) {
+			return true
+		}
+	}
+	dir := serveStateDir()
+	if dir == "" {
+		return false
+	}
+	if strings.Contains(s, dir) {
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(dir, home+"/") {
+		rel := strings.TrimPrefix(dir, home+"/")
+		return strings.Contains(s, "~/"+rel) || strings.Contains(s, "$HOME/"+rel) || strings.Contains(s, "${HOME}/"+rel)
+	}
+	return false
+}
+
+// agentctlServeTamper reports whether a real agentctl invocation in sc runs
+// one of serveTamperSubcommands (leading options skipped).
+func agentctlServeTamper(sc shellScript) bool {
+	for _, c := range sc.agentctlCommands() {
+		args := c.args()
+		for len(args) > 0 && strings.HasPrefix(args[0].text, "-") {
+			args = args[1:]
+		}
+		if len(args) >= 2 && args[0].text == "serve" && serveTamperSubcommands[args[1].text] {
+			return true
+		}
+	}
+	return false
 }
 
 // cronTamperReason is the deny reason for commands that write the cron jobs
@@ -441,6 +496,10 @@ var cronTamperTemplates = []string{
 	`\b(?:` + cronWriteVerbs + `)\b[^\n|;&]*%[1]s`,
 	`\b(?:sed|gsed|perl)\b[^\n|;&]*\s(?:-[A-Za-z]*i|--in-place)[^\n|;&]*%[1]s`,
 	`\b(?:python[0-9.]*|node|ruby|deno|bun|osascript)\b[^\n]*%[1]s`,
+	// find <dir> -delete, -exec rm {} \;, -fprint file, ...
+	`\bfind\b[^\n|;&]*%[1]s[^\n|;&]*\s-(?:delete|exec|execdir|ok|okdir|fprint0?|fprintf|fls)\b`,
+	// find <dir> | xargs rm (and any write verb behind xargs).
+	`%[1]s[^\n;&]*\|\s*xargs\b[^\n|;&]*\b(?:` + cronWriteVerbs + `)\b`,
 }
 
 // cronStateDir is the resolved <StateDir>/cron, matched literally (absolute,
@@ -470,7 +529,7 @@ func checkCronTamper(command string) string {
 	}
 	// Arguments to agentctl (a context set value, a dispatch prompt) are
 	// text, not shell write targets.
-	if matchesWriteTemplates(maskAgentctlArgs(command), targets) {
+	if matchesWriteTemplates(command, targets) {
 		return cronTamperReason
 	}
 	return ""
@@ -515,7 +574,7 @@ func checkTemplateTamper(command string) string {
 			targets = append(targets, `(?:~|\$HOME|\$\{HOME\})/`+rel+`\b`)
 		}
 	}
-	if matchesWriteTemplates(maskAgentctlArgs(command), targets) {
+	if matchesWriteTemplates(command, targets) {
 		return templateTamperReason
 	}
 	return ""
@@ -523,8 +582,13 @@ func checkTemplateTamper(command string) string {
 
 // matchesWriteTemplates reports whether command matches any of
 // cronTamperTemplates with %[1]s replaced by the alternation of targets
-// (regular expressions).
+// (regular expressions). It matches the line with the arguments of agentctl
+// commands masked (maskAgentctlArgs), and the same line restated with cd and
+// shell variables resolved (writeViews), so `cd <dir> && rm -rf x` and
+// `D=<dir>; echo x > $D/a` match like the spelled-out paths.
 func matchesWriteTemplates(command string, targets []string) bool {
+	sc := scanShell(command)
+	texts := append([]string{sc.masked()}, writeViews(sc)...)
 	alt := "(?:" + strings.Join(targets, "|") + ")"
 	for _, tmpl := range cronTamperTemplates {
 		re, err := regexp.Compile(fmt.Sprintf(tmpl, alt))
@@ -532,8 +596,10 @@ func matchesWriteTemplates(command string, targets []string) bool {
 			logging.Log("hook-validate-bash: bad tamper pattern: %v", err)
 			continue
 		}
-		if re.MatchString(command) {
-			return true
+		for _, t := range texts {
+			if re.MatchString(t) {
+				return true
+			}
 		}
 	}
 	return false

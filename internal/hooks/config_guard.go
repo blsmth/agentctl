@@ -3,7 +3,6 @@ package hooks
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -61,31 +60,23 @@ func checkConfigTamper(command string) string {
 	if !strings.Contains(command, "config.json") && !strings.Contains(command, "dispatch_approval") {
 		return ""
 	}
-	command = maskAgentctlArgs(command)
+	masked := maskAgentctlArgs(command)
 	files, dirs := []string{configTargetPattern}, []string{configDirPattern}
 	if p, err := globalConfigFile(); err == nil && p != "" {
 		files = append(files, homeRelativeAlternatives(p)...)
 		dirs = append(dirs, homeRelativeAlternatives(filepath.Dir(p))...)
 	}
 	dirRE, err := regexp.Compile("(?:" + strings.Join(dirs, "|") + ")")
-	if err == nil && dirRE.MatchString(command) {
+	if err == nil && dirRE.MatchString(masked) {
 		// cd ~/.config/agentctl && printf x > config.json
 		files = append(files, `config\.json\b`)
 	}
-	file := "(?:" + strings.Join(files, "|") + ")"
-	for _, tmpl := range cronTamperTemplates {
-		re, err := regexp.Compile(fmt.Sprintf(tmpl, file))
-		if err != nil {
-			logging.Log("hook-validate-bash: bad config tamper pattern: %v", err)
-			continue
-		}
-		if re.MatchString(command) {
-			return configTamperReason
-		}
+	if matchesWriteTemplates(command, files) {
+		return configTamperReason
 	}
-	if strings.Contains(command, "dispatch_approval") {
+	if strings.Contains(masked, "dispatch_approval") {
 		re, err := regexp.Compile("(?:" + strings.Join(append(files, dirs...), "|") + ")")
-		if err == nil && re.MatchString(command) {
+		if err == nil && re.MatchString(masked) {
 			return configTamperReason
 		}
 	}
