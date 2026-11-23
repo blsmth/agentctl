@@ -73,10 +73,38 @@ func (ae *artifactEnv) send(method, path, body string, opts ...reqOpt) *httptest
 	return w
 }
 
+// fetch GETs an /a/ path with the device cookie and, when it redirects to a
+// capability URL, follows it (and an entry redirect) without any cookie,
+// checking the sandbox headers on every hop. It returns the last response.
+func (ae *artifactEnv) fetch(t *testing.T, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := ae.get(path)
+	assertSandboxed(t, w)
+	for i := 0; i < 3 && w.Code == http.StatusFound; i++ {
+		loc := w.Header().Get("Location")
+		if !strings.HasPrefix(loc, "/a/t/") {
+			return w
+		}
+		w = do(ae.Handler(), "GET", loc)
+		assertSandboxedAt(t, w, true)
+	}
+	return w
+}
+
 // assertSandboxed checks the headers every /a/ response must carry.
 func assertSandboxed(t *testing.T, w *httptest.ResponseRecorder) {
 	t.Helper()
+	assertSandboxedAt(t, w, false)
+}
+
+// assertSandboxedAt also checks CORS: only capability (/a/t/) responses are
+// readable cross-origin.
+func assertSandboxedAt(t *testing.T, w *httptest.ResponseRecorder, tokenPath bool) {
+	t.Helper()
 	h := w.Header()
+	if got := h.Get("Access-Control-Allow-Origin"); (got == "*") != tokenPath || h.Get("Access-Control-Allow-Credentials") != "" {
+		t.Errorf("ACAO = %q on token path %v", got, tokenPath)
+	}
 	csp := h.Get("Content-Security-Policy")
 	if csp != artifactCSP {
 		t.Errorf("CSP = %q, want the artifact sandbox", csp)
@@ -93,7 +121,7 @@ func assertSandboxed(t *testing.T, w *httptest.ResponseRecorder) {
 	for k, want := range map[string]string{
 		"X-Content-Type-Options":       "nosniff",
 		"Referrer-Policy":              "no-referrer",
-		"Cross-Origin-Resource-Policy": "same-origin",
+		"Cross-Origin-Resource-Policy": "cross-origin",
 		"X-Frame-Options":              "SAMEORIGIN",
 	} {
 		if got := h.Get(k); got != want {
@@ -171,11 +199,11 @@ func TestArtifactListAndDetail(t *testing.T) {
 		t.Fatalf("order = %+v, want updated newest first", all)
 	}
 	a := all[0]
-	if a.URL != "/#/artifacts/"+old.ID || a.RawURL != "/a/"+old.ID+"/latest/" || a.Latest != 2 || a.RevCount != 2 ||
+	if a.URL != "/#/artifacts/"+old.ID || !strings.HasPrefix(a.RawURL, "/a/t/") || !strings.HasSuffix(a.RawURL, "/"+old.ID+"/2/") || a.Latest != 2 || a.RevCount != 2 ||
 		a.Title != "Old" || a.Agent != "go-engineer" || a.Project != "proj" || a.Kind != "markdown" {
 		t.Errorf("view = %+v", a)
 	}
-	if len(a.Revs) != 2 || a.Revs[0].RawURL != "/a/"+old.ID+"/1/" || a.Revs[1].N != 2 {
+	if len(a.Revs) != 2 || !strings.HasSuffix(a.Revs[0].RawURL, "/"+old.ID+"/1/") || a.Revs[1].RawURL != a.RawURL || a.Revs[1].N != 2 {
 		t.Errorf("revs = %+v", a.Revs)
 	}
 	if got := list("?project=other"); len(got) != 1 || got[0].ID != other.ID {
@@ -255,24 +283,25 @@ func TestArtifactContent(t *testing.T) {
 		contains   []string
 		absent     []string
 	}{
-		{"html entry", "/a/" + site.ID + "/latest/", 200, "text/html; charset=utf-8", cacheArtifactLatest, []string{"<title>Site</title>"}, nil},
+		{"html entry", "/a/" + site.ID + "/latest/", 200, "text/html; charset=utf-8", cacheArtifactRev, []string{"<title>Site</title>"}, nil},
 		{"html numbered", "/a/" + site.ID + "/1/index.html", 200, "text/html; charset=utf-8", cacheArtifactRev, nil, nil},
 		{"css", "/a/" + site.ID + "/1/css/app.css", 200, "text/css; charset=utf-8", cacheArtifactRev, nil, nil},
-		{"js", "/a/" + site.ID + "/latest/js/app.js", 200, "text/javascript; charset=utf-8", cacheArtifactLatest, nil, nil},
+		{"js", "/a/" + site.ID + "/latest/js/app.js", 200, "text/javascript; charset=utf-8", cacheArtifactRev, nil, nil},
 		{"json", "/a/" + site.ID + "/latest/data.json", 200, "application/json; charset=utf-8", "", nil, nil},
 		{"non-entry md is raw text", "/a/" + site.ID + "/latest/notes.md", 200, "text/plain; charset=utf-8", "", []string{"# not rendered"}, []string{"<h1"}},
 		{"unknown ext never html", "/a/" + site.ID + "/latest/blob.weird", 200, "application/octet-stream", "", nil, nil},
 		{"svg in html artifact", "/a/" + site.ID + "/latest/img/logo.svg", 200, "image/svg+xml", "", nil, nil},
 		{"png", "/a/" + site.ID + "/latest/img/dot.png", 200, "image/png", "", nil, nil},
 		{"dir index", "/a/" + site.ID + "/latest/sub/", 200, "text/html; charset=utf-8", "", []string{"sub"}, nil},
-		{"markdown render", "/a/" + md.ID + "/latest/", 200, "text/html; charset=utf-8", cacheArtifactLatest,
+		{"markdown render", "/a/" + md.ID + "/latest/", 200, "text/html; charset=utf-8", cacheArtifactRev,
 			[]string{"<title>Report</title>", "<h1 id=\"report\">Report</h1>", "<table>", `<div id="raw">raw html</div>`, "prefers-color-scheme: dark", "language-mermaid", "mermaid.esm"}, nil},
 		{"markdown render numbered", "/a/" + md.ID + "/1/report.md", 200, "text/html; charset=utf-8", cacheArtifactRev, []string{"<h1"}, nil},
 		{"markdown raw", "/a/" + md.ID + "/1/report.md?raw=1", 200, "text/plain; charset=utf-8", cacheArtifactRev, []string{"# Report"}, []string{"<h1"}},
 		{"text render", "/a/" + txt.ID + "/latest/", 200, "text/html; charset=utf-8", "", []string{"<pre>line &lt;b&gt;1&lt;/b&gt;\n&amp;amp;</pre>"}, []string{"<b>1</b>"}},
 		{"csv table", "/a/" + csvA.ID + "/latest/", 200, "text/html; charset=utf-8", "", []string{"<th>name</th>", "<td>&lt;x&gt;</td>", "<td>q,uoted</td>"}, []string{"<x>"}},
-		{"image entry", "/a/" + img.ID + "/latest/", 200, "image/svg+xml", cacheArtifactLatest, nil, nil},
+		{"image entry", "/a/" + img.ID + "/latest/", 200, "image/svg+xml", cacheArtifactRev, nil, nil},
 		{"missing file", "/a/" + site.ID + "/latest/nope.html", 404, "text/html; charset=utf-8", "no-store", nil, nil},
+		{"latest resolves to the newest rev", "/a/" + site.ID + "/latest/css/app.css", 200, "text/css; charset=utf-8", cacheArtifactRev, []string{"body{}"}, nil},
 		{"missing rev", "/a/" + site.ID + "/9/", 404, "text/html; charset=utf-8", "no-store", nil, nil},
 		{"unknown id", "/a/aaaaaaaaaa/latest/", 404, "text/html; charset=utf-8", "", nil, nil},
 		{"bad id", "/a/NOT_AN_ID/latest/", 404, "text/html; charset=utf-8", "", nil, nil},
@@ -296,11 +325,10 @@ func TestArtifactContent(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			w := ae.get(tc.path)
+			w := ae.fetch(t, tc.path)
 			if w.Code != tc.status {
 				t.Fatalf("status = %d, want %d: %s", w.Code, tc.status, w.Body)
 			}
-			assertSandboxed(t, w)
 			if tc.ctype != "" && w.Header().Get("Content-Type") != tc.ctype {
 				t.Errorf("Content-Type = %q, want %q", w.Header().Get("Content-Type"), tc.ctype)
 			}
@@ -325,16 +353,32 @@ func TestArtifactContent(t *testing.T) {
 func TestArtifactContentRedirects(t *testing.T) {
 	ae := newArtifactEnv(t, false)
 	m := ae.add(t, map[string]string{"docs/page.html": "<p>x</p>", "docs/a.css": "x"}, artifacts.AddOptions{Entry: "docs/page.html"})
-	w := ae.get("/a/" + m.ID + "/latest/")
-	if w.Code != http.StatusFound || w.Header().Get("Location") != "/a/"+m.ID+"/latest/docs/page.html" {
-		t.Errorf("entry redirect = %d %q", w.Code, w.Header().Get("Location"))
+	w := ae.get("/a/" + m.ID + "/latest/?raw=1")
+	loc := w.Header().Get("Location")
+	if w.Code != http.StatusFound || !strings.HasPrefix(loc, "/a/t/") || !strings.HasSuffix(loc, "/"+m.ID+"/1/?raw=1") ||
+		w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("cookie redirect = %d %q %q", w.Code, loc, w.Header().Get("Cache-Control"))
 	}
 	assertSandboxed(t, w)
+	tokenRoot := strings.TrimSuffix(loc, "?raw=1")
+	w = do(ae.Handler(), "GET", tokenRoot)
+	if w.Code != http.StatusFound || w.Header().Get("Location") != tokenRoot+"docs/page.html" {
+		t.Errorf("entry redirect = %d %q", w.Code, w.Header().Get("Location"))
+	}
+	assertSandboxedAt(t, w, true)
+	w = do(ae.Handler(), "GET", strings.TrimSuffix(tokenRoot, "/"))
+	if w.Code != http.StatusFound || w.Header().Get("Location") != tokenRoot {
+		t.Errorf("token rev root redirect = %d %q", w.Code, w.Header().Get("Location"))
+	}
 	w = ae.get("/a/" + m.ID + "/1")
 	if w.Code != http.StatusFound || w.Header().Get("Location") != "/a/"+m.ID+"/1/" {
 		t.Errorf("rev root redirect = %d %q", w.Code, w.Header().Get("Location"))
 	}
 	assertSandboxed(t, w)
+	// Relative assets of the entry resolve under the token and need no cookie.
+	if w := do(ae.Handler(), "GET", tokenRoot+"docs/a.css"); w.Code != http.StatusOK || w.Body.String() != "x" {
+		t.Errorf("relative asset = %d %q", w.Code, w.Body)
+	}
 }
 
 // Non-GET requests under /a/ are refused (CSRF, or no route: the catch-all
@@ -443,7 +487,7 @@ func TestArtifactPinAndDelete(t *testing.T) {
 	if w := ae.send("DELETE", "/v1/artifacts/"+m.ID, `{}`); w.Code != http.StatusNotFound {
 		t.Errorf("delete again = %d", w.Code)
 	}
-	if w := ae.get("/a/" + m.ID + "/latest/"); w.Code != http.StatusNotFound {
+	if w := ae.fetch(t, "/a/"+m.ID+"/latest/"); w.Code != http.StatusNotFound {
 		t.Errorf("content after delete = %d", w.Code)
 	}
 

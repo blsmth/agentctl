@@ -155,9 +155,10 @@ func (aw *artifactWatcher) run(ctx context.Context) {
 		logging.Warn("serve: artifact watcher: fsnotify unavailable, polling only: %v", err)
 	}
 	var events <-chan fsnotify.Event
+	var errs <-chan error
 	if watcher != nil {
 		defer func() { _ = watcher.Close() }()
-		events = watcher.Events
+		events, errs = watcher.Events, watcher.Errors
 	}
 	watching := aw.addWatch(watcher)
 
@@ -179,6 +180,9 @@ func (aw *artifactWatcher) run(ctx context.Context) {
 				debounce = time.NewTimer(aw.debounce)
 				fire = debounce.C
 			}
+		case err := <-errs:
+			// Drained so fsnotify never blocks; the poll covers what was lost.
+			logging.Debug("serve: artifact watcher: %v", err)
 		case <-aw.kick:
 			if fire == nil {
 				debounce = time.NewTimer(aw.debounce)

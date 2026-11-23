@@ -21,23 +21,21 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 )
 
-// Artifact content is served under /a/<id>/<rev>/<path> on the app's own
-// origin, so the device cookie (Path=/, SameSite=Strict) authenticates the
-// PWA's iframe load and the document's relative subrequests. What makes that
-// safe is artifactCSP's sandbox without allow-same-origin: the document runs
-// in an opaque origin, so its script cannot read any /v1 response (CORS), and
-// cannot send the CSRF header without a preflight that fails, so it cannot
-// write. The source list is deliberately open (CDN scripts, styles, fonts):
-// the protection is the opaque origin.
+// Artifact content is served under /a/ on the app's own origin, in a
+// sandbox: artifactCSP has no allow-same-origin, so the document runs in an
+// opaque origin and its script cannot read any /v1 response or send the CSRF
+// header. The device cookie only authenticates the entry request at
+// /a/<id>/<rev>/<path>, which redirects to the capability URL
+// /a/t/<token>/<id>/<n>/<path> (artifact_token.go); everything the document
+// then loads by relative URL carries the token. The source list is
+// deliberately open (CDN scripts, styles, fonts): the protection is the
+// opaque origin.
 const artifactCSP = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; " +
 	"default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https:"
 
-// Cache-Control of artifact content: "latest" revalidates, a numbered
-// revision never changes.
-const (
-	cacheArtifactLatest = "private, no-cache"
-	cacheArtifactRev    = "private, max-age=31536000, immutable"
-)
+// cacheArtifactRev is the Cache-Control of content at a capability URL: a
+// numbered revision never changes. The cookie redirects are no-store.
+const cacheArtifactRev = "private, max-age=31536000, immutable"
 
 // maxCSVRows bounds the rendered CSV table.
 const maxCSVRows = 5000
@@ -58,7 +56,7 @@ func sandboxArtifacts(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		sw := &sandboxWriter{ResponseWriter: w}
+		sw := &sandboxWriter{ResponseWriter: w, cors: isArtifactTokenPath(r.URL.Path)}
 		if badArtifactPath(r.URL) {
 			writeArtifactError(sw, http.StatusBadRequest, "Invalid artifact path.")
 			return
@@ -70,13 +68,14 @@ func sandboxArtifacts(next http.Handler) http.Handler {
 // sandboxWriter forces the artifact headers onto the response.
 type sandboxWriter struct {
 	http.ResponseWriter
+	cors  bool
 	wrote bool
 }
 
 func (w *sandboxWriter) WriteHeader(code int) {
 	if !w.wrote {
 		w.wrote = true
-		setArtifactHeaders(w.Header())
+		setArtifactHeaders(w.Header(), w.cors)
 	}
 	w.ResponseWriter.WriteHeader(code)
 }
@@ -92,15 +91,28 @@ func (w *sandboxWriter) Write(b []byte) (int, error) {
 func (w *sandboxWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // setArtifactHeaders sets the security headers of every /a/ response.
+//
+// Cross-Origin-Resource-Policy is cross-origin: the artifact document's
+// opaque origin is cross-origin to everything, so same-origin would make the
+// browser drop its own stylesheets and images. On capability paths (cors)
+// Access-Control-Allow-Origin is * without credentials, so ES modules and
+// fetch() of the artifact's own files work from the opaque origin; the token
+// is the credential and grants one revision of one artifact.
+//
 // X-Frame-Options is SAMEORIGIN (not the app's DENY) so the PWA can frame
-// the artifact; the opaque-origin document still cannot frame /v1 pages
-// (they send frame-ancestors 'none').
-func setArtifactHeaders(h http.Header) {
+// the artifact; /v1 pages keep frame-ancestors 'none'. Referrer-Policy
+// no-referrer keeps the token out of Referer headers to CDNs.
+func setArtifactHeaders(h http.Header, cors bool) {
 	h.Set("Content-Security-Policy", artifactCSP)
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
-	h.Set("Cross-Origin-Resource-Policy", "same-origin")
+	h.Set("Cross-Origin-Resource-Policy", "cross-origin")
 	h.Set("X-Frame-Options", "SAMEORIGIN")
+	if cors {
+		h.Set("Access-Control-Allow-Origin", "*")
+	} else {
+		h.Del("Access-Control-Allow-Origin")
+	}
 }
 
 // badArtifactPath reports a /a/ URL that tries to escape: a "." or ".."
@@ -150,8 +162,7 @@ func parseArtifactRev(s string) (int, bool) {
 	return n, true
 }
 
-// handleArtifactRevRoot redirects /a/<id>/<rev> to /a/<id>/<rev>/ so the
-// entry's relative URLs resolve inside the revision.
+// handleArtifactRevRoot redirects /a/<id>/<rev> to /a/<id>/<rev>/.
 func (s *Server) handleArtifactRevRoot(w http.ResponseWriter, r *http.Request) {
 	id, rev := r.PathValue("id"), r.PathValue("rev")
 	if !artifacts.ValidID(id) {
@@ -165,55 +176,101 @@ func (s *Server) handleArtifactRevRoot(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/a/"+id+"/"+rev+"/", http.StatusFound)
 }
 
-// handleArtifactContent is GET /a/{id}/{rev}/{path...}: a file of the
-// revision, or (empty path) its entry. A markdown or text entry is rendered
-// to an HTML page unless ?raw=1; everything else is served byte for byte with
-// a Content-Type from its extension (never sniffed).
-func (s *Server) handleArtifactContent(w http.ResponseWriter, r *http.Request) {
-	id, revSeg, rel := r.PathValue("id"), r.PathValue("rev"), r.PathValue("path")
-	rev, ok := parseArtifactRev(revSeg)
+// handleArtifactEntry is GET /a/{id}/{rev}/{path...} with the device cookie:
+// it resolves rev ("latest" or a number) and redirects to the capability URL
+// of the same file for this device, keeping the query. The file itself is
+// checked when the capability URL is read.
+func (s *Server) handleArtifactEntry(w http.ResponseWriter, r *http.Request) {
+	id, rel := r.PathValue("id"), r.PathValue("path")
+	rev, ok := parseArtifactRev(r.PathValue("rev"))
 	if !ok {
 		writeArtifactError(w, http.StatusBadRequest, "Invalid revision.")
+		return
+	}
+	m, err := s.artifacts.Get(id)
+	if err != nil {
+		status, _, _ := artifactErr(err)
+		writeArtifactError(w, status, errorText(status))
+		return
+	}
+	if rev == 0 {
+		rev = m.Latest()
+	}
+	if !m.HasRev(rev) {
+		writeArtifactError(w, http.StatusNotFound, errorText(http.StatusNotFound))
+		return
+	}
+	d, _ := DeviceFrom(r.Context())
+	target := artifactTokenURL(s.mintArtifactToken(id, rev, d.ID), id, rev, rel)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, target, http.StatusFound)
+}
+
+// handleArtifactTokenRoot redirects /a/t/<token>/<id>/<rev> to its "/" form.
+func (s *Server) handleArtifactTokenRoot(w http.ResponseWriter, r *http.Request) {
+	tok, id, revSeg := r.PathValue("token"), r.PathValue("id"), r.PathValue("rev")
+	rev, ok := parseArtifactRev(revSeg)
+	if !ok || rev == 0 || !s.checkArtifactToken(tok, id, rev) {
+		writeArtifactError(w, http.StatusForbidden, errorText(http.StatusForbidden))
+		return
+	}
+	http.Redirect(w, r, artifactTokenURL(tok, id, rev, ""), http.StatusFound)
+}
+
+// handleArtifactContent is GET /a/t/{token}/{id}/{rev}/{path...}: a file of
+// the revision the token grants, or (empty path) its entry. No cookie is
+// needed or read. A markdown or text entry is rendered to an HTML page unless
+// ?raw=1; everything else is served byte for byte with a Content-Type from its
+// extension (never sniffed).
+func (s *Server) handleArtifactContent(w http.ResponseWriter, r *http.Request) {
+	tok, id, rel := r.PathValue("token"), r.PathValue("id"), r.PathValue("path")
+	rev, ok := parseArtifactRev(r.PathValue("rev"))
+	if !ok || rev == 0 || !s.checkArtifactToken(tok, id, rev) {
+		writeArtifactError(w, http.StatusForbidden, errorText(http.StatusForbidden))
 		return
 	}
 	if rel == "" {
 		// An entry in a subdirectory is redirected to, so its relative URLs
 		// resolve against its own directory.
 		if m, err := s.artifacts.Get(id); err == nil && strings.Contains(m.Entry, "/") {
-			http.Redirect(w, r, "/a/"+id+"/"+revSeg+"/"+escapeRel(m.Entry), http.StatusFound)
+			http.Redirect(w, r, artifactTokenURL(tok, id, rev, m.Entry), http.StatusFound)
 			return
 		}
 	}
 	c, err := s.artifacts.Open(id, rev, rel)
 	if err != nil {
 		status, _, _ := artifactErr(err)
-		msg := "No such artifact or file."
-		switch status {
-		case http.StatusBadRequest:
-			msg = "Invalid artifact path."
-		case http.StatusInternalServerError:
-			msg = "Reading the artifact failed."
-		}
-		writeArtifactError(w, status, msg)
+		writeArtifactError(w, status, errorText(status))
 		return
 	}
 	defer c.Close() //nolint:errcheck
 
-	cache := cacheArtifactRev
-	if rev == 0 {
-		cache = cacheArtifactLatest
-	}
 	if c.Rel == c.Meta.Entry && r.URL.Query().Get("raw") != "1" {
 		switch c.Meta.Kind {
 		case artifacts.KindMarkdown, artifacts.KindText:
-			s.renderArtifact(w, c, cache)
+			s.renderArtifact(w, c, cacheArtifactRev)
 			return
 		}
 	}
 	h := w.Header()
 	h.Set("Content-Type", artifactContentType(c.Rel))
-	h.Set("Cache-Control", cache)
+	h.Set("Cache-Control", cacheArtifactRev)
 	http.ServeContent(w, r, "", c.Info.ModTime(), c.File)
+}
+
+// errorText is the message of an /a/ error page.
+func errorText(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "Invalid artifact path."
+	case http.StatusForbidden:
+		return "This artifact link is invalid or has expired. Open the artifact again from agentctl."
+	case http.StatusInternalServerError:
+		return "Reading the artifact failed."
+	}
+	return "No such artifact or file."
 }
 
 // escapeRel path-escapes each segment of a slash path.

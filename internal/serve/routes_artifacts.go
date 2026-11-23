@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -26,7 +25,8 @@ type artifactRevView struct {
 }
 
 // artifactView is an artifact as /v1/artifacts serves it: its metadata, the
-// viewer route (url) and the content URL of the latest revision (raw_url).
+// viewer route (url) and the capability URL of the latest revision's entry
+// (raw_url), minted for the requesting device; each revision has its own.
 type artifactView struct {
 	artifacts.Meta
 	Revs     []artifactRevView `json:"revs"`
@@ -39,23 +39,19 @@ type artifactView struct {
 // artifactViewerURL is the web app route of an artifact.
 func artifactViewerURL(id string) string { return "/#/artifacts/" + url.PathEscape(id) }
 
-// artifactRawURL is the content URL of a revision ("latest" when rev <= 0).
-func artifactRawURL(id string, rev int) string {
-	r := "latest"
-	if rev > 0 {
-		r = strconv.Itoa(rev)
-	}
-	return "/a/" + url.PathEscape(id) + "/" + r + "/"
-}
-
-func viewOfArtifact(m artifacts.Meta) artifactView {
+// viewOfArtifact builds the view with capability URLs for device.
+func (s *Server) viewOfArtifact(m artifacts.Meta, device string) artifactView {
 	v := artifactView{
 		Meta: m, Latest: m.Latest(), RevCount: len(m.Revs),
-		URL: artifactViewerURL(m.ID), RawURL: artifactRawURL(m.ID, 0),
+		URL:  artifactViewerURL(m.ID),
 		Revs: make([]artifactRevView, 0, len(m.Revs)),
 	}
 	for _, r := range m.Revs {
-		v.Revs = append(v.Revs, artifactRevView{Revision: r, RawURL: artifactRawURL(m.ID, r.N)})
+		u := artifactTokenURL(s.mintArtifactToken(m.ID, r.N, device), m.ID, r.N, "")
+		v.Revs = append(v.Revs, artifactRevView{Revision: r, RawURL: u})
+		if r.N == v.Latest {
+			v.RawURL = u
+		}
 	}
 	return v
 }
@@ -66,8 +62,12 @@ func (s *Server) registerArtifacts(rt *Router) {
 	rt.Device("GET /v1/artifacts/{id}", s.handleArtifact)
 	rt.Write("DELETE /v1/artifacts/{id}", writeRoute(s, "artifact-delete", s.handleArtifactDelete))
 	rt.Write("POST /v1/artifacts/{id}/pin", writeRoute(s, "artifact-pin", s.handleArtifactPin))
-	rt.Device("GET /a/{id}/{rev}/{path...}", s.handleArtifactContent)
+	// The cookie authenticates only the entry request, which redirects to the
+	// capability URL; subresources of the sandboxed document carry no cookie.
+	rt.Device("GET /a/{id}/{rev}/{path...}", s.handleArtifactEntry)
 	rt.Device("GET /a/{id}/{rev}", s.handleArtifactRevRoot)
+	rt.Public("GET /a/t/{token}/{id}/{rev}/{path...}", s.handleArtifactContent)
+	rt.Public("GET /a/t/{token}/{id}/{rev}", s.handleArtifactTokenRoot)
 }
 
 // artifactActionFor names an artifact write route by path, for auditing
@@ -119,9 +119,10 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, codeInternal, "listing artifacts failed")
 		return
 	}
+	d, _ := DeviceFrom(r.Context())
 	out := make([]artifactView, 0, len(list))
 	for _, m := range list {
-		out = append(out, viewOfArtifact(m))
+		out = append(out, s.viewOfArtifact(m, d.ID))
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Artifacts []artifactView `json:"artifacts"`
@@ -136,7 +137,8 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, code, msg)
 		return
 	}
-	writeJSON(w, http.StatusOK, viewOfArtifact(m))
+	d, _ := DeviceFrom(r.Context())
+	writeJSON(w, http.StatusOK, s.viewOfArtifact(m, d.ID))
 }
 
 // artifactErr maps a store error to a status, code and client message.
@@ -176,7 +178,8 @@ func (s *Server) handleArtifactPin(r *http.Request, in artifactPinIn, a *auditEn
 		return failure(status, code, msg)
 	}
 	s.artifactWatch.Kick()
-	return success(viewOfArtifact(m))
+	d, _ := DeviceFrom(r.Context())
+	return success(s.viewOfArtifact(m, d.ID))
 }
 
 func (s *Server) handleArtifactDelete(r *http.Request, _ emptyIn, a *auditEntry) outcome {

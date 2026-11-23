@@ -163,6 +163,7 @@ type Server struct {
 
 	artifacts     *artifacts.Store
 	artifactWatch *artifactWatcher
+	artifactKey   []byte
 
 	keys       KeySender
 	injector   Injector
@@ -322,6 +323,9 @@ func New(opts Options) (*Server, error) {
 	}
 	s.done = make(chan struct{})
 	s.bus = fleetwatch.NewBus(s.fleet, opts.BusOptions)
+	if s.artifactKey, err = loadOrCreateArtifactKey(opts.Dir); err != nil {
+		return nil, err
+	}
 	s.artifacts = opts.Artifacts
 	if s.artifacts == nil {
 		s.artifacts = artifacts.New()
