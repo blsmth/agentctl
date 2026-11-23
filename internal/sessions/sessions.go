@@ -138,6 +138,38 @@ func FindSessionsForAgent(agentName string, limit int) ([]Session, error) {
 	return sessions, nil
 }
 
+// ImprovePromptHeader is the first line of every `agentctl improve` prompt.
+// Improve sessions run under the agent's own name, and no mode marker reaches
+// their transcript, so the opening prompt is the only reliable tell.
+const ImprovePromptHeader = "You are running a self-improvement review of your own agent definition."
+
+// IsImproveSession reports whether the transcript at logPath is an
+// `agentctl improve` session, by its first user message.
+func IsImproveSession(logPath string) bool {
+	return strings.HasPrefix(FirstHumanText(logPath), ImprovePromptHeader)
+}
+
+// FindWorkSessionsForAgent is FindSessionsForAgent without the agent's own
+// improve sessions (see IsImproveSession), which would otherwise count as the
+// agent's recent work. Returns most recent first.
+func FindWorkSessionsForAgent(agentName string, limit int) ([]Session, error) {
+	all, err := FindSessionsForAgent(agentName, 0)
+	if err != nil {
+		return nil, err
+	}
+	var out []Session
+	for _, s := range all {
+		if IsImproveSession(s.LogFile) {
+			continue
+		}
+		out = append(out, s)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 // FindSessionsByAgent scans all JSONL files once and returns sessions grouped
 // by agent name. Each agent's sessions are sorted most-recent-first.
 func FindSessionsByAgent() (map[string][]Session, error) {

@@ -58,7 +58,7 @@ type SettingsResult struct {
 }
 
 type settingItem struct {
-	key   string // config key: "alerts", "auto_improve", "cross_context"
+	key   string // config key: "alerts", "cross_context"
 	label string // display label
 	desc  string // short description shown dimly
 	on    bool
@@ -74,7 +74,7 @@ type SettingsModel struct {
 }
 
 // NewSettingsModel creates the settings popup for the given agent with current values.
-func NewSettingsModel(agentName string, alerts, autoImprove, crossContext, alertBlocked, alertIdle, alertGone, autoAccept, workJournal bool) SettingsModel {
+func NewSettingsModel(agentName string, alerts, crossContext, alertBlocked, alertIdle, alertGone, autoAccept, workJournal bool) SettingsModel {
 	return SettingsModel{
 		agent: agentName,
 		items: []settingItem{
@@ -82,7 +82,6 @@ func NewSettingsModel(agentName string, alerts, autoImprove, crossContext, alert
 			{key: "alert_blocked", label: "  Blocked", desc: "needs approval", on: alertBlocked},
 			{key: "alert_idle", label: "  Idle", desc: "done, waiting for input", on: alertIdle},
 			{key: "alert_gone", label: "  Gone", desc: "session ended", on: alertGone},
-			{key: "auto_improve", label: "Auto-improve", desc: "self-review after sessions", on: autoImprove},
 			{key: "cross_context", label: "Cross-context", desc: "share context across agents", on: crossContext},
 			{key: "auto_accept", label: "Auto-accept", desc: "approve all permission prompts", on: autoAccept},
 			{key: "work_journal", label: "Work journal", desc: "summarize sessions on exit (needs llm config)", on: workJournal},
