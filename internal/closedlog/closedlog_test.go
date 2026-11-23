@@ -213,3 +213,37 @@ func TestAgo(t *testing.T) {
 		}
 	}
 }
+
+func TestResumeCheck(t *testing.T) {
+	dir := t.TempDir()
+	ok := Record{SessionID: "s", ProjectDir: dir, WorkDir: dir, Agent: "a"}
+	tests := []struct {
+		name string
+		mut  func(*Record)
+		want string
+	}{
+		{"ok", func(*Record) {}, ""},
+		{"no session", func(r *Record) { r.SessionID = "" }, "no session id"},
+		{"no project", func(r *Record) { r.ProjectDir = "" }, "project directory unknown"},
+		{"no agent", func(r *Record) { r.Agent = "" }, "no agent"},
+		{"log missing", func(r *Record) { r.LogPath = filepath.Join(dir, "nope.jsonl") }, "is missing"},
+		{"worktree reclaimed", func(r *Record) { r.WorkDir = filepath.Join(dir, ".worktrees", "w") }, "was reclaimed"},
+		{"dir gone", func(r *Record) { r.WorkDir = filepath.Join(dir, "gone") }, "is gone"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := ok
+			tt.mut(&r)
+			err := r.ResumeCheck(os.Stat)
+			if tt.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}

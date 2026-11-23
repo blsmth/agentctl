@@ -12,6 +12,7 @@ package closedlog
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -352,4 +353,34 @@ func Ago(at, t time.Time) string {
 		return strconv.Itoa(int(d/time.Hour)) + "h ago"
 	}
 	return strconv.Itoa(int(d/(24*time.Hour))) + "d ago"
+}
+
+// ResumeCheck reports why r cannot be resumed, or nil. stat is os.Stat or a
+// test stand-in.
+func (r Record) ResumeCheck(stat func(string) (os.FileInfo, error)) error {
+	if r.SessionID == "" {
+		return errors.New("no session id was recorded for " + r.Title())
+	}
+	if r.ProjectDir == "" {
+		return errors.New("project directory unknown for " + r.Title())
+	}
+	if r.LogPath != "" {
+		if _, err := stat(r.LogPath); err != nil {
+			return fmt.Errorf("transcript %s is missing", r.LogPath)
+		}
+	}
+	if r.Agent == "" {
+		return errors.New("no agent recorded for " + r.Title())
+	}
+	work := r.WorkDir
+	if work == "" {
+		work = r.ProjectDir
+	}
+	if fi, err := stat(work); err != nil || !fi.IsDir() {
+		if rel, err := filepath.Rel(filepath.Join(r.ProjectDir, ".worktrees"), work); err == nil && !strings.HasPrefix(rel, "..") && rel != "." {
+			return fmt.Errorf("worktree %s was reclaimed", rel)
+		}
+		return fmt.Errorf("directory %s is gone", work)
+	}
+	return nil
 }

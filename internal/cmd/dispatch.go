@@ -326,6 +326,16 @@ func dispatchPrompt(prompt, promptKey, agentName, workDir, model, backend, accou
 // the cron-only Effort, Branch, ScheduledBy and Detached. opts.Prompt must
 // already be resolved.
 func dispatchPromptOptions(opts DispatchOptions) (string, string, error) {
+	res, err := dispatchPromptResult(opts)
+	if err != nil {
+		return "", "", err
+	}
+	return res.WindowID, res.AgentName, nil
+}
+
+// dispatchPromptResult is dispatchPromptOptions returning the whole launch
+// result (session ID included).
+func dispatchPromptResult(opts DispatchOptions) (dispatch.Result, error) {
 	workDir := opts.Dir
 	if workDir == "" {
 		workDir = resolveAgentDir(opts.Agent)
@@ -346,10 +356,7 @@ func dispatchPromptOptions(opts DispatchOptions) (string, string, error) {
 		Branch:      opts.Branch,
 		ScheduledBy: opts.ScheduledBy,
 	})
-	if err != nil {
-		return "", "", err
-	}
-	return res.WindowID, res.AgentName, nil
+	return res, err
 }
 
 // dispatchIssue fetches a GitHub issue and launches an agent via dispatch.Launch().

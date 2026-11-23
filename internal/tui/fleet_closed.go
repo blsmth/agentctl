@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -170,33 +169,7 @@ func closedMenuItems(r closedlog.Record) []fleetMenuItem {
 }
 
 // resumeCheck reports why r cannot be resumed, or nil.
-func resumeCheck(r closedlog.Record) error {
-	if r.SessionID == "" {
-		return errors.New("no session id was recorded for " + r.Title())
-	}
-	if r.ProjectDir == "" {
-		return errors.New("project directory unknown for " + r.Title())
-	}
-	if r.LogPath != "" {
-		if _, err := fleetStat(r.LogPath); err != nil {
-			return fmt.Errorf("transcript %s is missing", r.LogPath)
-		}
-	}
-	if r.Agent == "" {
-		return errors.New("no agent recorded for " + r.Title())
-	}
-	work := r.WorkDir
-	if work == "" {
-		work = r.ProjectDir
-	}
-	if fi, err := fleetStat(work); err != nil || !fi.IsDir() {
-		if rel, err := filepath.Rel(filepath.Join(r.ProjectDir, ".worktrees"), work); err == nil && !strings.HasPrefix(rel, "..") && rel != "." {
-			return fmt.Errorf("worktree %s was reclaimed", rel)
-		}
-		return fmt.Errorf("directory %s is gone", work)
-	}
-	return nil
-}
+func resumeCheck(r closedlog.Record) error { return r.ResumeCheck(fleetStat) }
 
 // resumeClosed is Enter on a closed row: relaunch its agent resuming the
 // recorded session in the project's tmux session, or say why it cannot.
