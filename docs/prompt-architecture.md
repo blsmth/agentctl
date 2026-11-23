@@ -30,7 +30,9 @@ How we structure system prompts vs user messages when launching agents, based on
 3. "---" separator
 4. Preamble (agentctl runtime: context store, messaging, identity, waiting;
    worker or orchestrator flavour, naming the orchestrator by @N.%P; the
-   review lines follow `pr_review`). Harnesses without native messaging (pi)
+   review lines follow `pr_review`; orchestrators also get a "Models"
+   section, with backend lines built from the global config at launch, see
+   [dispatch.md](dispatch.md#choosing-a-model)). Harnesses without native messaging (pi)
    get a mailbox-reporting section instead, and a worker on a different
    Claude account than its dispatcher gets a cross-account section with no
    orchestrator

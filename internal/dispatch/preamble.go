@@ -1,6 +1,8 @@
 package dispatch
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/blsmth/agentctl/internal/config"
@@ -100,9 +102,41 @@ const workerWaitSection = "### Wait\n" +
 // --review-pr). Messaging harnesses only: the reviewer reports its verdict
 // with SendMessage.
 const orchReviewSection = "### Review\n" +
-	"- Every PR gets a review: `agentctl dispatch --review-pr <N> --agent code-reviewer` (author auto-detected from the PR branch, `--author @N` to override, `--model sonnet` for small PRs)\n" +
+	"- Every PR gets a review: `agentctl dispatch --review-pr <N> --agent code-reviewer` (author auto-detected from the PR branch, `--author @N` to override, `--model sonnet` by default, Opus only for hooks/concurrency/auth/security-sensitive PRs)\n" +
 	"- The reviewer works fixes out directly with the author and sends you a `REVIEW PR #<N> — VERDICT: ...` line. You do not review diffs yourself\n" +
 	"- On MERGE (or MERGE-WITH-FOLLOWUPS, keeping the follow-ups), read `gh pr checks <N>` before merging; otherwise re-dispatch or escalate to the human\n"
+
+// orchModelsSection is the model-choice guidance. backendLines (one line per
+// configured backend, from backendGuidance) is appended when non-empty.
+func orchModelsSection(backendLines string) string {
+	return "### Models\n" +
+		"- Pick the cheapest model that can do the job. Plan usage is shared across every session on an account, and long Opus sessions use it up fastest\n" +
+		"- Sonnet: default for implementation, tests, docs, refactors and reviews\n" +
+		"- Opus (`--model opus`): only genuinely hard work (concurrency, hooks, auth, security-relevant code, design) and reviews of those areas. Keep it tightly scoped\n" +
+		"- `agentctl account list` shows 5H/7D plan usage; `agentctl cost report --since 5h --sort cost --top 10` shows what used the most\n" +
+		backendLines
+}
+
+// backendGuidance renders one Models line per configured backend, sorted by
+// name. It reads config only: no network, no credential checks. Empty when
+// there are no backends.
+func backendGuidance(backends map[string]config.BackendConfig) string {
+	names := make([]string, 0, len(backends))
+	for n := range backends {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	for _, n := range names {
+		bc := backends[n]
+		if bc.IsNous() {
+			fmt.Fprintf(&b, "- `--backend %s` (Nous Portal, default model %s): always fine to use; it is billed per token outside the Claude plan limit. Prefer it for docs audits, test backfills, bulk mechanical changes, first drafts, research and second-opinion reviews, and for any non-critical work when plan usage is high. Do not rely only on Anthropic models.\n", n, bc.Model)
+		} else {
+			fmt.Fprintf(&b, "- `--backend %s` (Ollama, local, model %s): free and local; fine for small and mechanical tasks.\n", n, bc.Model)
+		}
+	}
+	return b.String()
+}
 
 const orchCleanupSection = "### Clean up\n" +
 	"- `agentctl sweep --dry-run`, then `agentctl sweep` — close finished windows in the current tmux session (`--session <name>` outside tmux, `--include-bare` for idle bare windows)\n" +
@@ -120,7 +154,7 @@ const orchOtherSection = "### Other\n" +
 // orchReviewOptionalSection leaves the review to the orchestrator
 // (pr_review: optional).
 const orchReviewOptionalSection = "### Review\n" +
-	"- A review via `agentctl dispatch --review-pr <N> --agent code-reviewer` is recommended for large or risky PRs (concurrency, auth, hooks, anything security-relevant) and may be skipped for small or mechanical ones (author auto-detected from the PR branch, `--author @N` to override, `--model sonnet` for small PRs)\n" +
+	"- A review via `agentctl dispatch --review-pr <N> --agent code-reviewer` is recommended for large or risky PRs (concurrency, auth, hooks, anything security-relevant) and may be skipped for small or mechanical ones (author auto-detected from the PR branch, `--author @N` to override, `--model sonnet` by default, Opus only for hooks/concurrency/auth/security-sensitive PRs)\n" +
 	"- When you skip it, check that the PR title and body match the ask and that `gh pr checks <N>` is green before merging\n" +
 	"- When a reviewer is used, it works fixes out directly with the author and sends you a `REVIEW PR #<N> — VERDICT: ...` line; you do not review diffs yourself. On MERGE (or MERGE-WITH-FOLLOWUPS, keeping the follow-ups), read `gh pr checks <N>` before merging; otherwise re-dispatch or escalate to the human\n"
 
@@ -143,17 +177,17 @@ func orchReviewFor(mode string) string {
 // orchestratorSections joins the quick-reference groups, with the Wait group
 // matching the harness's messaging support.
 func orchestratorSections(messaging bool) string {
-	return orchestratorSectionsFor(messaging, config.PRReviewAlways)
+	return orchestratorSectionsFor(messaging, config.PRReviewAlways, "")
 }
 
 // orchestratorSectionsFor is orchestratorSections for a pr_review mode. The
 // Review group exists only for messaging harnesses, in every mode.
-func orchestratorSectionsFor(messaging bool, prReview string) string {
+func orchestratorSectionsFor(messaging bool, prReview, backendLines string) string {
 	wait, match, review := orchWaitNoMessagingSection, orchDelegateMatchNoMessaging, ""
 	if messaging {
 		wait, match, review = orchWaitMessagingSection, orchDelegateMatchMessaging, orchReviewFor(prReview)+"\n"
 	}
-	return strings.TrimRight(orchDelegateSection+match+"\n"+review+orchWatchSection+"\n"+wait+"\n"+
+	return strings.TrimRight(orchDelegateSection+match+"\n"+orchModelsSection(backendLines)+"\n"+review+orchWatchSection+"\n"+wait+"\n"+
 		orchCleanupSection+"\n"+orchContextSection+"\n"+orchOtherSection, "\n")
 }
 
@@ -188,9 +222,15 @@ func preambleFor(role Role) string {
 // preambleForMode is preambleFor for a pr_review mode. Only the orchestrator
 // preamble differs by mode.
 func preambleForMode(role Role, prReview string) string {
+	return preambleForModeBackends(role, prReview, "")
+}
+
+// preambleForModeBackends is preambleForMode with the launch's backend lines
+// for the Models section ("" = none).
+func preambleForModeBackends(role Role, prReview, backendLines string) string {
 	if role == RoleOrchestrator {
-		if prReview == config.PRReviewOptional || prReview == config.PRReviewOff {
-			return runtimeHeader + sharedRuntimeSections + "\n\n" + orchestratorSectionsFor(true, prReview)
+		if prReview == config.PRReviewOptional || prReview == config.PRReviewOff || backendLines != "" {
+			return runtimeHeader + sharedRuntimeSections + "\n\n" + orchestratorSectionsFor(true, prReview, backendLines)
 		}
 		return OrchestratorPreamble
 	}
@@ -256,7 +296,13 @@ func preambleWithOrchestrator(role Role, o Orchestrator) string {
 
 // preambleWithOrchestratorFor is preambleWithOrchestrator for a pr_review mode.
 func preambleWithOrchestratorFor(role Role, o Orchestrator, prReview string) string {
-	p := preambleForMode(role, prReview)
+	return preambleWithOrchestratorBackends(role, o, prReview, "")
+}
+
+// preambleWithOrchestratorBackends is preambleWithOrchestratorFor with
+// backend lines for an orchestrator-role launch (workers ignore them).
+func preambleWithOrchestratorBackends(role Role, o Orchestrator, prReview, backendLines string) string {
+	p := preambleForModeBackends(role, prReview, backendLines)
 	if role == RoleOrchestrator || !o.Known() {
 		return p
 	}
@@ -305,14 +351,19 @@ func preambleForHarness(role Role, messaging bool) string {
 
 // preambleForHarnessFor is preambleForHarness for a pr_review mode.
 func preambleForHarnessFor(role Role, messaging bool, prReview string) string {
+	return preambleForHarnessBackends(role, messaging, prReview, "")
+}
+
+// preambleForHarnessBackends is preambleForHarnessFor with backend lines.
+func preambleForHarnessBackends(role Role, messaging bool, prReview, backendLines string) string {
 	if messaging {
-		return preambleForMode(role, prReview)
+		return preambleForModeBackends(role, prReview, backendLines)
 	}
 	p := "## agentctl Runtime Environment\n\n" +
 		"You are running inside an agentctl-managed tmux session. The following tools are available:\n\n" +
 		noMessagingRuntimeSections
 	if role == RoleOrchestrator {
-		p += "\n\n" + orchestratorSections(false)
+		p += "\n\n" + orchestratorSectionsFor(false, config.PRReviewAlways, backendLines)
 	}
 	return p
 }

@@ -61,12 +61,12 @@ func buildSystemPrompt(req Request, spec modeSpec, workDir, branch string, useWo
 
 	// 4. Preamble
 	if req.noMessaging {
-		parts = append(parts, preambleForHarnessFor(spec.Role, false, req.prReview))
+		parts = append(parts, preambleForHarnessBackends(spec.Role, false, req.prReview, req.backendLines))
 		if req.reportViaMailbox && spec.Role != RoleOrchestrator {
 			parts = append(parts, mailboxReportingSection)
 		}
 	} else {
-		parts = append(parts, preambleWithOrchestratorFor(spec.Role, req.Orchestrator, req.prReview))
+		parts = append(parts, preambleWithOrchestratorBackends(spec.Role, req.Orchestrator, req.prReview, req.backendLines))
 	}
 	if req.CrossAccount && spec.Role != RoleOrchestrator {
 		parts = append(parts, crossAccountSection)
