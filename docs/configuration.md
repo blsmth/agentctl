@@ -102,10 +102,13 @@ Notifications are hook-driven. agentctl runs `notify_cmd` with `{{title}}` and `
 }
 ```
 
+Each notification leads with the window's row title (the [short title](#titles), generated or set by hand), falling back to the window's display name before it has one. The subtitle (`{{subtitle}}`) carries the event, agent and project, for example title "Fix hub viewer jump", subtitle "Needs permission · go-engineer · agentctl". The message says what it wants or did: the pending tool and its command for a permission prompt, what is being approved for an approval popup, "PR #273 ready" or the first sentence of the last reply for an idle window, and the error for a failed turn. Messages are one line cut at a word boundary (about 120 characters); the ticket and how long it has been blocked stay at the end. The title never carries a duration or tool name and changes at most once per window, so `--group {{title}}` keeps replacing earlier alerts for the same window. Cron alerts are titled by the job name and `agentctl serve` pushes follow the same scheme, with the event, agent and project in the body.
+
 The command runs with these environment variables (set for notification alerts; some may be empty):
 
 | Variable | Value |
 |---|---|
+| `AGENTCTL_TITLE` | The notification title, the same as `{{title}}` (the window's row title; see below) |
 | `AGENTCTL_AGENT_NAME` | The agent's name |
 | `AGENTCTL_NOTIFICATION_TYPE` | `permission_prompt`, `idle_prompt` or the approval type |
 | `AGENTCTL_WINDOW_ID` | tmux window ID, e.g. `@61` |

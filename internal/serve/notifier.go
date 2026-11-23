@@ -12,6 +12,7 @@ import (
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
+	"github.com/blsmth/agentctl/internal/textutil"
 )
 
 const (
@@ -167,13 +168,9 @@ func (n *Notifier) fireBlockedLocked(ep *episode, w fleet.Window, now time.Time)
 		return
 	}
 	ep.lastBlocked = now
-	body := windowLabel(w)
-	if w.PendingTool != "" {
-		body += " · " + w.PendingTool
-	}
 	n.deliver(Message{
-		Title:  fmt.Sprintf("agentctl: %s blocked", pushName(w)),
-		Body:   body,
+		Title:  pushName(w),
+		Body:   pushBody("Needs permission", w, pendingToolText(w)),
 		URL:    windowURL(w.Session, w.WindowID),
 		Tag:    w.Session + ":" + w.WindowID,
 		Urgent: true,
@@ -186,8 +183,8 @@ func (n *Notifier) fireReminderLocked(w fleet.Window, blockedFor time.Duration) 
 		return
 	}
 	n.deliver(Message{
-		Title:  fmt.Sprintf("agentctl: %s still blocked", pushName(w)),
-		Body:   fmt.Sprintf("%s · waiting %d min", windowLabel(w), int(blockedFor.Minutes())),
+		Title:  pushName(w),
+		Body:   pushBody(fmt.Sprintf("Still blocked %d min", int(blockedFor.Minutes())), w, pendingToolText(w)),
 		URL:    windowURL(w.Session, w.WindowID),
 		Tag:    w.Session + ":" + w.WindowID,
 		Urgent: true,
@@ -214,7 +211,7 @@ func (n *Notifier) sendDoneLocked(ep *episode, w fleet.Window, now time.Time) {
 		return
 	}
 	ep.lastDone = now
-	what := "finished"
+	what, detail := "Finished", doneText(w)
 	switch {
 	case w.PRNumber > 0:
 		what = fmt.Sprintf("PR #%d ready", w.PRNumber)
@@ -222,8 +219,8 @@ func (n *Notifier) sendDoneLocked(ep *episode, w fleet.Window, now time.Time) {
 		what = "PR ready"
 	}
 	n.deliver(Message{
-		Title: fmt.Sprintf("agentctl: %s done", pushName(w)),
-		Body:  windowLabel(w) + " · " + what,
+		Title: pushName(w),
+		Body:  pushBody(what, w, detail),
 		URL:   windowURL(w.Session, w.WindowID),
 		Tag:   w.Session + ":" + w.WindowID,
 		Kind:  "done",
@@ -238,15 +235,80 @@ func (n *Notifier) allowedLocked(w fleet.Window, now time.Time) bool {
 	return !InQuietHours(n.cfg.QuietHours, now)
 }
 
-// windowLabel is the project the push body leads with; the instance name is
-// already in the title (see pushName). The raw window ID is machine-only.
-func windowLabel(w fleet.Window) string {
-	return w.Project
+// pushName is a push's title: the window's row title (short title, manual or
+// generated) when set, else its display name. It never carries the event, a
+// duration or a tool, so repeat pushes for a window share it (the Tag already
+// replaces them).
+func pushName(w fleet.Window) string {
+	if t := textutil.OneLine(w.Title); t != "" {
+		return t
+	}
+	return fleet.DisplayName(w.Label, w.Agent, w.WindowID)
 }
 
-// pushName is the window's human identifier for a push title.
-func pushName(w fleet.Window) string {
-	return fleet.DisplayName(w.Label, w.Agent, w.WindowID)
+// pushAgent is the agent the push names after the event: the bare agent name
+// (instance suffix dropped), or "" when the title already is the display name.
+func pushAgent(w fleet.Window) string {
+	if textutil.OneLine(w.Title) == "" {
+		return ""
+	}
+	name := fleet.DisplayName("", w.Agent, "")
+	if name == "" {
+		return ""
+	}
+	name, _, _ = strings.Cut(name, ":")
+	name, _, _ = strings.Cut(name, "~")
+	return name
+}
+
+// pushBodyBudget is the body's length cap in runes.
+const pushBodyBudget = 120
+
+// pushBody is the one-line body: "<event> · <agent> · <project>", then the
+// specific text (the tool and its command, the last message's first
+// sentence) cut at a word boundary to fit what is left of the budget. The
+// body is never empty.
+func pushBody(event string, w fleet.Window, detail string) string {
+	parts := []string{event}
+	if a := pushAgent(w); a != "" {
+		parts = append(parts, a)
+	}
+	if w.Project != "" {
+		parts = append(parts, w.Project)
+	}
+	head := strings.Join(parts, " · ")
+	detail = textutil.OneLine(detail)
+	if detail == "" {
+		return fleet.TruncateWords(head, pushBodyBudget)
+	}
+	room := pushBodyBudget - len([]rune(head)) - len(" · ")
+	if room < 30 {
+		room = 30
+	}
+	return head + " · " + fleet.TruncateWords(detail, room)
+}
+
+// pendingToolText is what a blocked window asks for: "Bash: git push".
+func pendingToolText(w fleet.Window) string {
+	text := w.PendingTool
+	if d := textutil.OneLine(w.PendingToolDetail); d != "" {
+		if text != "" {
+			text += ": "
+		}
+		text += d
+	}
+	return text
+}
+
+// doneText is the one-liner of what a finished window did: the first sentence
+// of its recap when that is a real summary or its last message, never the
+// task it was given (the title already says that).
+func doneText(w fleet.Window) string {
+	switch w.RecapSource {
+	case "summary", "activity":
+		return textutil.FirstSentence(w.Recap)
+	}
+	return ""
 }
 
 // InQuietHours reports whether t falls in spec, a local-time "HH:MM-HH:MM"

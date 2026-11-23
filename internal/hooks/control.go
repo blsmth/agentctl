@@ -9,6 +9,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/backendauth"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/mailbox"
 	"github.com/blsmth/agentctl/internal/notify"
@@ -321,11 +322,13 @@ func StopFailure() {
 	agentName := resolveAgentName()
 
 	windowID := resolveHookWindowID()
+	var snap windowstate.WindowState
 	if windowID != "" {
 		errType := input.ErrorType
 		if err := winname.Update(windowID, func(ws *windowstate.WindowState) {
 			ws.State = "idle"
 			ws.Error = errType
+			snap = *ws
 		}); err != nil {
 			logUpdateErr("hook-stop-failure", err)
 		} else {
@@ -363,9 +366,11 @@ func StopFailure() {
 	}
 
 	logging.Log("hook-stop-failure: firing alert agent=%s error=%s", agentName, input.ErrorType)
+	title, titled := alertTitle(snap, agentName, windowID)
 	sendAlert(agentName, "stop_failure", notify.Options{
-		Title:   agentName,
-		Message: message,
+		Title:    title,
+		Subtitle: alertSubtitle("Turn failed", titled, agentName, paths.DirName()),
+		Message:  alertMessage(message),
 		Env: map[string]string{
 			"AGENTCTL_AGENT_NAME":        agentName,
 			"AGENTCTL_NOTIFICATION_TYPE": "stop_failure",
@@ -631,60 +636,75 @@ type alertContent struct {
 // argument, see the design doc for this feature). Pure and unit-testable:
 // all I/O (resolving sessionName, reading ws) is the caller's job.
 //
+// The title is the window's row title (see alertTitle); the subtitle is the
+// event plus agent and project; the message is what the window wants (the
+// pending tool and its detail) or what it did (the PR, else the first
+// sentence of its last message).
+//
 // sessionName is the full tmux session name (e.g. "agentctl-acme"), resolved
 // by the caller via resolveInstanceSessionName.
 func buildAlertContent(notificationType, agentName, sessionName, windowID, fallbackMessage string, ws windowstate.WindowState, now time.Time) alertContent {
-	// Title deliberately does NOT vary with fresh vs. stale pending-tool
-	// state or with elapsed blocked time -- only with agent+instance -- so a
-	// configured notify_cmd using `--group {{title}}` for notification
-	// replacement keeps grouping correctly across repeat firings of the same
-	// prompt, while still distinguishing this agentctl instance from others.
-	displaySession := strings.TrimPrefix(sessionName, "agentctl-")
-	title := agentName
-	if displaySession != "" {
-		title = agentName + " · " + displaySession
-	}
+	title, titled := alertTitle(ws, agentName, windowID)
+	project := strings.TrimPrefix(sessionName, "agentctl-")
 
 	toolFresh := ws.PendingTool != "" && !ws.PendingToolAt.IsZero() && now.Sub(ws.PendingToolAt) <= pendingToolFreshWindow
 
-	var subtitle string
+	var event, lead string
 	switch notificationType {
 	case "permission_prompt":
-		subtitle = "Needs permission"
+		event = "Needs permission"
 		if toolFresh {
-			subtitle += " — " + ws.PendingTool
+			lead = ws.PendingTool
+			if d := textutil.OneLine(ws.PendingToolDetail); d != "" {
+				lead += ": " + d
+			}
 		}
 	case "idle_prompt":
-		subtitle = "Idle — waiting for input"
-	}
-
-	var parts []string
-	if toolFresh && ws.PendingToolDetail != "" {
-		parts = append(parts, ws.PendingToolDetail)
-	}
-	switch {
-	case ws.Ticket != "":
-		parts = append(parts, "#"+ws.Ticket)
-	case ws.Mode != "":
-		parts = append(parts, ws.Mode)
-	}
-	// The switch target ("agentctl-x:@N") is machine-facing: it is exported to
-	// notify_cmd as AGENTCTL_SWITCH_TARGET, not shown in the message. The
-	// title already names the instance.
-	if notificationType == "permission_prompt" && !ws.BlockedSince.IsZero() {
-		if elapsed := now.Sub(ws.BlockedSince); elapsed >= minBlockedDurationForDisplay {
-			parts = append(parts, "blocked "+compactDuration(elapsed))
+		event = "Waiting for input"
+		if pr := prReady(ws); pr != "" {
+			event = pr
+		}
+		lead = textutil.FirstSentence(ws.LastText)
+		if lead == "" {
+			lead = prReady(ws)
 		}
 	}
+	subtitle := alertSubtitle(event, titled, agentName, project)
 
-	message := strings.Join(parts, " · ")
-	if message == "" {
-		message = fallbackMessage
+	// Ticket (or mode) and blocked duration stay after the lead, which is
+	// cut to leave them room.
+	var extras []string
+	switch {
+	case ws.Ticket != "":
+		extras = append(extras, "#"+ws.Ticket)
+	case ws.Mode != "":
+		extras = append(extras, ws.Mode)
+	}
+	// The switch target ("agentctl-x:@N") is machine-facing: it is exported to
+	// notify_cmd as AGENTCTL_SWITCH_TARGET, not shown in the message.
+	if notificationType == "permission_prompt" && !ws.BlockedSince.IsZero() {
+		if elapsed := now.Sub(ws.BlockedSince); elapsed >= minBlockedDurationForDisplay {
+			extras = append(extras, "blocked "+compactDuration(elapsed))
+		}
+	}
+	tail := strings.Join(extras, " · ")
+
+	var message string
+	switch {
+	case lead != "" && tail != "":
+		budget := max(maxAlertMessageRunes-len([]rune(tail))-len(" · "), 40)
+		message = fleet.TruncateWords(textutil.OneLine(lead), budget) + " · " + tail
+	case lead != "":
+		message = alertMessage(lead)
+	case tail != "":
+		message = tail
+	default:
+		message = alertMessage(fallbackMessage)
 	}
 	if message == "" {
 		// Message must never be empty -- an empty message means an empty
 		// macOS banner body.
-		message = subtitle
+		message = event
 	}
 
 	return alertContent{Title: title, Subtitle: subtitle, Message: message}

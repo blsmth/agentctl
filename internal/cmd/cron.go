@@ -444,8 +444,8 @@ func realCronDeps(dir string, cfg config.CronConfig, jobs []cron.Job) cron.Deps 
 		Usage:     cronUsage,
 		Launch:    cronLaunch,
 		Interrupt: cronInterrupt,
-		Notify: func(title, msg string) {
-			notify.NotifyWithOptions(notify.Options{Title: title, Message: msg, Env: map[string]string{"AGENTCTL_NOTIFICATION_TYPE": "cron"}})
+		Notify: func(title, subtitle, msg string) {
+			notify.NotifyWithOptions(notify.Options{Title: title, Subtitle: subtitle, Message: msg, Env: map[string]string{"AGENTCTL_NOTIFICATION_TYPE": "cron"}})
 		},
 		Logf: logging.Log,
 	}
@@ -630,7 +630,11 @@ func cronInterrupt(w cron.Window, job cron.Job, timeout time.Duration) error {
 		}
 		detail := fmt.Sprintf("cron job %s exceeded its %s timeout", job.Name, timeout)
 		now := time.Now()
+		title := job.Name
 		if uerr := winname.Update(w.ID, func(ws *windowstate.WindowState) {
+			if t := strings.Join(strings.Fields(ws.ShortTitle.Title), " "); t != "" {
+				title = t
+			}
 			ws.State = "blocked"
 			ws.PendingTool = "cron-timeout"
 			ws.PendingToolDetail = detail
@@ -647,8 +651,10 @@ func cronInterrupt(w cron.Window, job cron.Job, timeout time.Duration) error {
 			logging.Warn("cron: mailbox notice for %s: %v", w.ID, merr)
 		}
 		notify.NotifyWithOptions(notify.Options{
-			Title: "agentctl cron: " + job.Name, Message: detail + "; interrupted in " + w.Session,
-			Env: map[string]string{"AGENTCTL_NOTIFICATION_TYPE": "cron"},
+			Title:    title,
+			Subtitle: "Cron run timed out · " + job.Name,
+			Message:  fmt.Sprintf("Exceeded its %s timeout; interrupted with C-c in %s", timeout, w.Session),
+			Env:      map[string]string{"AGENTCTL_NOTIFICATION_TYPE": "cron"},
 		})
 		return nil
 	})
