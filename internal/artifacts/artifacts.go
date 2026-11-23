@@ -97,6 +97,11 @@ type Meta struct {
 	Session    string `json:"session,omitempty"`
 	SessionID  string `json:"session_id,omitempty"`
 	Branch     string `json:"branch,omitempty"`
+	// Account is the author window's account, so feedback is never typed into
+	// a window of another account that reused its window ID.
+	Account string `json:"account,omitempty"`
+	// Comments is feedback sent from the viewer (see comments.go).
+	Comments []Comment `json:"comments,omitempty"`
 }
 
 // Latest returns the newest revision number (0 when there are none).
@@ -120,7 +125,7 @@ func (m Meta) HasRev(n int) bool {
 // Origin is where an artifact came from, filled by the caller from the
 // calling window.
 type Origin struct {
-	ProjectDir, Project, Agent, WindowID, Session, SessionID, Branch string
+	ProjectDir, Project, Agent, WindowID, Session, SessionID, Branch, Account string
 }
 
 // Store is the artifact store. Use New; tests build one with Dir pointing at

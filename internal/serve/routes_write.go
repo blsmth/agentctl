@@ -147,12 +147,16 @@ func (rw resolved) target() WindowTarget {
 // window the fleet knows can be targeted; its IDs, not the request's, are
 // what later reach tmux.
 func (s *Server) resolveWindow(r *http.Request) (resolved, outcome, bool) {
+	return s.resolveWindowAt(r.PathValue("session"), normalizeWindowID(r.PathValue("window")))
+}
+
+// resolveWindowAt is resolveWindow for an explicit session and window ID.
+func (s *Server) resolveWindowAt(session, id string) (resolved, outcome, bool) {
 	groups, err := s.fleet.Fleet()
 	if err != nil {
 		logging.Warn("serve: loading fleet: %v", err)
 		return resolved{}, failure(http.StatusInternalServerError, codeInternal, "loading fleet"), false
 	}
-	session, id := r.PathValue("session"), normalizeWindowID(r.PathValue("window"))
 	g, i, found := fleetwatch.Find(groups, session, id)
 	if !found {
 		return resolved{}, failure(http.StatusNotFound, codeNotFound, fmt.Sprintf("no window %s in session %s", id, session)), false
@@ -165,13 +169,18 @@ func (s *Server) resolveWindow(r *http.Request) (resolved, outcome, bool) {
 // resolves the window's main pane: every check and keystroke after it
 // targets that one pane.
 func (s *Server) lockWindow(r *http.Request, a *auditEntry) (resolved, func(), outcome, bool) {
-	rw, out, ok := s.resolveWindow(r)
+	return s.lockWindowAt(r.PathValue("session"), normalizeWindowID(r.PathValue("window")), a)
+}
+
+// lockWindowAt is lockWindow for an explicit session and window ID.
+func (s *Server) lockWindowAt(session, window string, a *auditEntry) (resolved, func(), outcome, bool) {
+	rw, out, ok := s.resolveWindowAt(session, window)
 	if !ok {
 		return resolved{}, nil, out, false
 	}
 	a.Session, a.Window = rw.group.Session, rw.window.WindowID
 	unlock := s.winLocks.lock(rw.group.Session, rw.window.WindowID)
-	rw, out, ok = s.resolveWindow(r)
+	rw, out, ok = s.resolveWindowAt(session, window)
 	if !ok {
 		unlock()
 		return resolved{}, nil, out, false
@@ -529,7 +538,13 @@ func (s *Server) typeText(r *http.Request, in replyIn, a *auditEntry, allowWorki
 			return out
 		}
 	}
-	rw, unlock, out, ok := s.lockWindow(r, a)
+	return s.deliverText(r.PathValue("session"), normalizeWindowID(r.PathValue("window")), in, a, allowWorking)
+}
+
+// deliverText is the part of typeText after the text checks: lock the window,
+// guard on its state and pane, then inject.
+func (s *Server) deliverText(session, window string, in replyIn, a *auditEntry, allowWorking bool) outcome {
+	rw, unlock, out, ok := s.lockWindowAt(session, window, a)
 	if !ok {
 		return out
 	}

@@ -57,6 +57,12 @@ Limits: 25 MB and 500 files per revision, 20 revisions per artifact.
 - Pin CDN libraries to an exact version (the templates do, with SRI). Show a sensible fallback when the CDN is unreachable.
 - Write plain facts and label assumptions. A chart needs a title, axis labels or units.
 
+## Feedback from the human
+
+The viewer has a comment button. What Brendan writes there arrives in your session as a message: `Feedback on artifact "<title>" (<id>, rev N) from Brendan: <text>`, followed by `Update it with: agentctl artifact update <id> <file>`. Treat it as his instruction: change the artifact and `update` it (do not `add` a new one). If your window was busy the message is queued; if it was closed, the comment is only stored and `agentctl artifact comments <id>` lists it (`artifact show <id>` lists them too).
+
+An interactive mockup can offer "send my choice" buttons. Call `parent.postMessage({type: "agentctl:feedback", text: "Option B, blue header"}, "*")` from the page's script (the `mockup.html` template has a `sendChoice(text)` helper). The viewer does not send it: it opens the feedback sheet prefilled with that text and Brendan taps Send. Only `type` and a plain-text `text` (up to 4000 characters) are read; put the whole choice in the text, in words you can act on. Nothing happens when the page is opened outside the viewer.
+
 ## Check that it renders
 
 If the `playwright-cli` skill is available, open the file with it and look at it at 390x844 and 1280x800, in light and dark (`--color-scheme` emulation). Look for sideways page scroll, clipped text, unreadable contrast and console errors. If playwright is not available, skip this step; do not install anything for it.

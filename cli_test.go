@@ -360,6 +360,11 @@ func TestArtifactFlagsParse(t *testing.T) {
 	if _, err := k3.Parse([]string{"artifact", "prune", "--dry-run"}); err != nil || cli3.Artifact.Prune.OlderThan != "30d" || !cli3.Artifact.Prune.DryRun {
 		t.Errorf("prune parsed = %+v err=%v", cli3.Artifact.Prune, err)
 	}
+	var cli5 CLI
+	k5, _ := kong.New(&cli5, kong.Name("agentctl"))
+	if _, err := k5.Parse([]string{"artifact", "comments", "abcdefghij", "--json"}); err != nil || cli5.Artifact.Comments.ID != "abcdefghij" || !cli5.Artifact.Comments.JSON {
+		t.Errorf("comments parsed = %+v err=%v", cli5.Artifact.Comments, err)
+	}
 	var cli4 CLI
 	k4, _ := kong.New(&cli4, kong.Name("agentctl"))
 	if _, err := k4.Parse([]string{"artifact", "add", "x.html", "--kind", "pdf"}); err == nil {

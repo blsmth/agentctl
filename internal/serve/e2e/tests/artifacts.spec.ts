@@ -175,3 +175,50 @@ test("the service worker precaches artifacts.js and opens same-origin push urls"
   expect(sw).toContain('event.notification.data?.url');
   expect(sw).toContain('postMessage({ type: "navigate", url })');
 });
+
+test("feedback: the comment button opens the composer and the outcome toast follows", async ({ page, control }) => {
+  const [id] = await control.seedArtifacts(seed());
+  await page.goto(`/#/artifacts/${id}`);
+  await expect(frame(page).locator("#h")).toHaveText("Rev two");
+  await page.getByRole("button", { name: "Send feedback to the agent" }).click();
+  const sheet = page.locator(".overlay .sheet");
+  await expect(sheet).toContainText("Applies to v2");
+  await expect(sheet.getByRole("button", { name: "Send" })).toBeVisible();
+  await sheet.getByLabel("Feedback").fill("make the button bigger");
+  await sheet.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator(".toast")).toContainText(/Sent to the agent|Queued|Saved, not delivered/);
+  await expect(page.locator(".overlay")).toHaveCount(0);
+  await page.getByRole("button", { name: "More actions" }).click();
+  await expect(page.locator(".artifact-comments")).toContainText("make the button bigger");
+});
+
+test("feedback bridge: a message from the artifact prefills the composer and never sends", async ({ page, control }) => {
+  const files = {
+    "index.html":
+      `<!doctype html><title>Pick</title><button id="b">Choose B</button>` +
+      `<script>document.getElementById("b").onclick = () => parent.postMessage({type: "agentctl:feedback", text: "Use option B"}, "*");</script>`,
+  };
+  const [id] = await control.seedArtifacts([
+    { title: "Pick one", agent: "designer", ...shop, window_id: "@17", revisions: [{ files, entry: "index.html" }] },
+  ]);
+  const posts: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "POST" && r.url().includes("/comments")) posts.push(r.url());
+  });
+  await page.goto(`/#/artifacts/${id}`);
+  // A page of ours cannot spoof the bridge: only the iframe's window counts.
+  await page.evaluate(() => window.postMessage({ type: "agentctl:feedback", text: "spoof" }, "*"));
+  await page.waitForTimeout(200);
+  await expect(page.locator(".overlay")).toHaveCount(0);
+
+  await frame(page).locator("#b").click();
+  const sheet = page.locator(".overlay .sheet");
+  await expect(sheet.getByLabel("Feedback")).toHaveValue("Use option B");
+  const box = (await sheet.boundingBox())!;
+  expect(box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  await page.waitForTimeout(300);
+  expect(posts).toEqual([]);
+  await sheet.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator(".toast")).toBeVisible();
+  expect(posts).toHaveLength(1);
+});

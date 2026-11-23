@@ -4,6 +4,10 @@
 // capability URL the server mints per device (raw_url, valid ~24h).
 import { ApiError, api, get } from "./api.js";
 import {
+  ARTIFACT_FEEDBACK_MAX,
+  artifactCommentStatus,
+  artifactCommentToast,
+  artifactFeedbackFrom,
   artifactHash,
   artifactIcon,
   artifactOrigin,
@@ -15,6 +19,7 @@ import {
   artifactsForWindow,
   artifactsHash,
   groupArtifacts,
+  formatAgo,
   windowHash,
 } from "./logic.js";
 import { clear, confirmSheet, h, toast } from "./ui.js";
@@ -144,6 +149,7 @@ function mountList(root, ctx, filter) {
 
 function mountViewer(root, ctx, route) {
   const write = ctx.hasFeature("write");
+  const canComment = write && ctx.hasFeature("artifact-comments");
   const id = route.id;
   let detail = null;
   let fetchedAt = 0;
@@ -153,6 +159,7 @@ function mountViewer(root, ctx, route) {
   const title = h("h1", {}, "");
   const revSlot = h("span", { class: "artifact-revslot" });
   const more = h("button", { class: "btn icon", type: "button", "aria-label": "More actions", hidden: true, onclick: () => moreSheet() }, "⋯");
+  const commentBtn = h("button", { class: "btn icon", type: "button", "aria-label": "Send feedback to the agent", hidden: true, onclick: () => composer("") }, "\u{1F4AC}");
   const frame = h("iframe", {
     class: "artifact-frame",
     sandbox: SANDBOX,
@@ -164,7 +171,7 @@ function mountViewer(root, ctx, route) {
   const view = h(
     "div",
     { class: "artifact-view" },
-    h("header", { class: "bar artifact-bar" }, h("a", { class: "btn icon", href: "#/artifacts", "aria-label": "Back to artifacts" }, "‹"), title, revSlot, more),
+    h("header", { class: "bar artifact-bar" }, h("a", { class: "btn icon", href: "#/artifacts", "aria-label": "Back to artifacts" }, "‹"), title, revSlot, commentBtn, more),
     message,
     frame,
   );
@@ -181,6 +188,7 @@ function mountViewer(root, ctx, route) {
 
   function showMessage(text, backLabel = "Back to artifacts") {
     more.hidden = true;
+    commentBtn.hidden = true;
     clear(revSlot);
     frame.hidden = true;
     frameSrc = "";
@@ -254,7 +262,83 @@ function mountViewer(root, ctx, route) {
       revSlot.append(h("span", { class: `artifact-pill${n === detail.latest ? "" : " old"}` }, artifactRevPill(n, detail.latest, detail.revs.length)), sel);
     }
     more.hidden = false;
+    commentBtn.hidden = !canComment;
   }
+
+  let composerEl = null;
+
+  /**
+   * composer is the feedback bottom sheet: the revision it applies to, a text
+   * box and Send. prefill comes from the postMessage bridge: it only fills the
+   * box; nothing is sent until Brendan taps Send. An open composer keeps what
+   * he typed and gets the new text on a new line.
+   */
+  function composer(prefill) {
+    if (!detail || !canComment) return;
+    if (composerEl) {
+      const ta = composerEl.querySelector("textarea");
+      if (prefill) ta.value = ta.value.trim() ? `${ta.value}\n${prefill}` : prefill;
+      ta.focus();
+      return;
+    }
+    const rev = revNumber();
+    let sending = false;
+    const close = () => {
+      removeEventListener("hashchange", close);
+      composerEl = null;
+      overlay.remove();
+    };
+    addEventListener("hashchange", close, { once: true });
+    const ta = h("textarea", { rows: 5, maxlength: String(ARTIFACT_FEEDBACK_MAX), placeholder: "What should change?", "aria-label": "Feedback" });
+    ta.value = prefill;
+    const err = h("p", { class: "sheet-error", hidden: true });
+    const send = h("button", { class: "btn primary", type: "button", onclick: submit }, "Send");
+    async function submit() {
+      const text = ta.value.trim();
+      if (!text || sending) return;
+      sending = true;
+      send.disabled = true;
+      err.hidden = true;
+      try {
+        const res = await api("POST", `/v1/artifacts/${enc(id)}/comments`, { text, rev });
+        close();
+        const [msg, kind] = artifactCommentToast(res);
+        toast(msg, kind);
+        load();
+      } catch (e) {
+        sending = false;
+        send.disabled = false;
+        err.textContent = `Could not send: ${errText(e)}`;
+        err.hidden = false;
+      }
+    }
+    const overlay = h(
+      "div",
+      { class: "overlay", onclick: (e) => e.target === overlay && close() },
+      h(
+        "div",
+        { class: "sheet artifact-sheet", role: "dialog", "aria-modal": "true", "aria-label": "Send feedback" },
+        h("h2", {}, "Feedback for the agent"),
+        h("p", { class: "artifact-origin" }, `Applies to v${rev}${rev === detail.latest ? "" : " (not the latest)"}`),
+        ta,
+        err,
+        h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: close }, "Cancel"), send),
+      ),
+    );
+    composerEl = overlay;
+    document.body.append(overlay);
+    ta.focus();
+  }
+
+  // The bridge: an artifact may propose feedback with
+  // parent.postMessage({type: "agentctl:feedback", text}, "*"). Only the
+  // iframe's own window counts, and it never sends: it opens the composer
+  // prefilled so a person reviews the text and taps Send.
+  const onMessage = (e) => {
+    const text = artifactFeedbackFrom(e, frame.contentWindow);
+    if (text) composer(text);
+  };
+  addEventListener("message", onMessage);
 
   /** moreSheet is the ⋯ bottom sheet: origin, open in a new tab, pin and delete. */
   function moreSheet() {
@@ -275,6 +359,21 @@ function mountViewer(root, ctx, route) {
         origin ? h("p", { class: "artifact-origin" }, origin) : null,
         live ? h("a", { class: "btn", href: windowHash(detail.session, detail.window_id), onclick: close }, "Go to window ›") : null,
         h("a", { class: "btn", href: currentUrl(), target: "_blank", rel: "noopener noreferrer", onclick: close }, "Open in new tab ↗"),
+        detail.comments?.length
+          ? h(
+              "div",
+              { class: "artifact-comments" },
+              h("h3", {}, `Feedback sent (${detail.comments.length})`),
+              ...[...detail.comments].reverse().map((c) =>
+                h(
+                  "div",
+                  { class: "artifact-comment" },
+                  h("span", { class: "muted" }, `v${c.rev} \u00B7 ${formatAgo(c.at) || "now"} \u00B7 ${artifactCommentStatus(c)}`),
+                  h("p", {}, c.text),
+                ),
+              ),
+            )
+          : null,
         write
           ? h("button", { class: "btn", type: "button", onclick: () => { close(); togglePin(); } }, detail.pinned ? "Unpin" : "Pin")
           : null,
@@ -324,6 +423,8 @@ function mountViewer(root, ctx, route) {
     disposed = true;
     refresh.cancel();
     unsub();
+    removeEventListener("message", onMessage);
+    if (composerEl) composerEl.remove();
     document.removeEventListener("visibilitychange", onBack);
     removeEventListener("focus", onBack);
   };

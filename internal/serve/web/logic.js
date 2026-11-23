@@ -2428,3 +2428,52 @@ export function artifactRevPill(n, latest, total) {
 export function artifactOrigin(a) {
   return [a.agent, a.project, a.window_id].filter(Boolean).join(" · ");
 }
+
+// ---- artifact feedback ----
+
+/** ARTIFACT_FEEDBACK_TYPE is the postMessage type an artifact sends to propose feedback. */
+export const ARTIFACT_FEEDBACK_TYPE = "agentctl:feedback";
+/** ARTIFACT_FEEDBACK_MAX caps a comment (server: 4000 characters). */
+export const ARTIFACT_FEEDBACK_MAX = 4000;
+
+/**
+ * artifactFeedbackFrom filters a window "message" event from the artifact's
+ * iframe. It returns the proposed text (trimmed, capped at
+ * ARTIFACT_FEEDBACK_MAX characters) only when the event came from frameWindow
+ * itself and carries {type: "agentctl:feedback", text: <non-empty string>};
+ * otherwise null. The caller must only prefill the composer with it: agent-
+ * authored content never sends a comment on its own.
+ */
+export function artifactFeedbackFrom(event, frameWindow) {
+  if (!event || !frameWindow || event.source !== frameWindow) return null;
+  const d = event.data;
+  if (!d || typeof d !== "object" || d.type !== ARTIFACT_FEEDBACK_TYPE || typeof d.text !== "string") return null;
+  const text = [...d.text.trim()].slice(0, ARTIFACT_FEEDBACK_MAX).join("").trim();
+  return text || null;
+}
+
+/** artifactCommentToast is the toast for a POST …/comments response: [message, kind]. */
+export function artifactCommentToast(res) {
+  switch (res?.delivery) {
+    case "delivered":
+      return ["Sent to the agent", "info"];
+    case "queued":
+      return ["Queued: the agent is working and will see it next", "info"];
+    default: {
+      const why = res?.reason ? `: ${res.reason}` : "";
+      return [`Saved, not delivered${why}`, "info"];
+    }
+  }
+}
+
+/** artifactCommentStatus labels a stored comment's status for the list. */
+export function artifactCommentStatus(c) {
+  switch (c?.status) {
+    case "delivered":
+      return "sent";
+    case "queued":
+      return "queued";
+    default:
+      return "not delivered";
+  }
+}

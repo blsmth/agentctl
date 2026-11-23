@@ -57,7 +57,7 @@ export function confirmSheet({ title, lines = [], confirmLabel = "Confirm", dang
         "div",
         { class: "sheet", role: "dialog", "aria-modal": "true" },
         h("h2", {}, title),
-        ...lines.map((l) => h("pre", { class: "sheet-body" }, l)),
+        ...lines.map((l) => h("pre", { class: "sheet-body sheet-prose" }, l)),
         toggle &&
           h(
             "label",

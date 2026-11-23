@@ -447,3 +447,44 @@ func TestTruncWidth(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestArtifactCommentsShowAndList(t *testing.T) {
+	h := newArtifactHarness(t)
+	v := addOne(t, h)
+	var out bytes.Buffer
+	if err := h.env.comments(&out, v.ID, false); err != nil || strings.TrimSpace(out.String()) != "no comments" {
+		t.Fatalf("empty = %q %v", out.String(), err)
+	}
+	out.Reset()
+	if err := h.env.comments(&out, v.ID, true); err != nil || strings.TrimSpace(out.String()) != "[]" {
+		t.Fatalf("empty json = %q %v", out.String(), err)
+	}
+	c, err := h.env.store().AddComment(v.ID, 1, "phone", "make it blue\nand bigger")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.env.store().MarkComment(v.ID, c.ID, artifacts.CommentDelivered); err != nil {
+		t.Fatal(err)
+	}
+	for _, show := range []bool{false, true} {
+		out.Reset()
+		var err error
+		if show {
+			err = h.env.show(&out, v.ID, false)
+		} else {
+			err = h.env.comments(&out, v.ID, false)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"#1", "phone", "[delivered]", "make it blue", "and bigger"} {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("show=%v output lacks %q: %q", show, want, out.String())
+			}
+		}
+	}
+	out.Reset()
+	if err := h.env.comments(&out, v.ID, true); err != nil || !strings.Contains(out.String(), `"status": "delivered"`) {
+		t.Errorf("json = %q %v", out.String(), err)
+	}
+}

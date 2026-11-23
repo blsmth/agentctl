@@ -97,6 +97,7 @@ See [cron](configuration.md#cron) for the config keys, approval rules and the hu
 | `agentctl artifact update <id> <path\|dir\|->` | Add revision n+1 (`--note`, `--title`, `--json`). The latest is the default view; at most 20 revisions are kept, oldest dropped. |
 | `agentctl artifact list` | The current project's artifacts (`--all` for every project, `--project`, `--agent`, `--since 7d`, `--json`). |
 | `agentctl artifact show <id>` | Metadata, revisions and URLs (`--json`). |
+| `agentctl artifact comments <id>` | Feedback sent from the viewer (`--json`): revision, time, device, delivery status and text. `show` lists them too. |
 | `agentctl artifact url <id>` / `open <id>` | Print the URL, or open it in the laptop browser (`--rev N`). The laptop browser must be paired once with `serve pair`. |
 | `agentctl artifact pin` / `unpin <id>` | Pinned artifacts are never pruned. |
 | `agentctl artifact rm <id>` | Delete it (`--yes` to skip the prompt; required when not on a terminal). |

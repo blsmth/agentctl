@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -29,20 +30,12 @@ const fleetArtifactGlyph = "◆"
 
 // Seams so tests never read the real store or spawn agentctl/a browser.
 var (
-	// fleetArtifactStamp returns the store directory's mtime (zero, false
-	// when the store does not exist yet).
-	fleetArtifactStamp = func() (time.Time, bool) {
-		dir, err := artifacts.New().Dir()
-		if err != nil {
-			return time.Time{}, false
-		}
-		fi, err := os.Stat(dir)
-		if err != nil {
-			return time.Time{}, false
-		}
-		return fi.ModTime(), true
-	}
-	fleetArtifactList = func() ([]artifacts.Meta, error) {
+	// fleetArtifactStamp returns the newest of the store directory's mtime
+	// and every artifact's meta.json mtime (a new revision rewrites only
+	// meta.json and a rev subdir, which leaves the store dir's mtime alone);
+	// zero, false when the store does not exist yet.
+	fleetArtifactStamp = artifactStoreStamp
+	fleetArtifactList  = func() ([]artifacts.Meta, error) {
 		return artifacts.New().List(artifacts.Filter{})
 	}
 	// fleetArtifactOpen runs `agentctl artifact open <id>`.
@@ -51,6 +44,34 @@ var (
 		return err
 	}
 )
+
+// artifactStoreStamp is the default fleetArtifactStamp.
+func artifactStoreStamp() (time.Time, bool) {
+	dir, err := artifacts.New().Dir()
+	if err != nil {
+		return time.Time{}, false
+	}
+	return storeStampOf(dir)
+}
+
+// storeStampOf is artifactStoreStamp for the store at dir.
+func storeStampOf(dir string) (time.Time, bool) {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return time.Time{}, false
+	}
+	newest := fi.ModTime()
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		if !e.IsDir() || !artifacts.ValidID(e.Name()) {
+			continue
+		}
+		if mi, err := os.Stat(filepath.Join(dir, e.Name(), "meta.json")); err == nil && mi.ModTime().After(newest) {
+			newest = mi.ModTime()
+		}
+	}
+	return newest, true
+}
 
 // fleetArtifactInfo is what a row's chip needs.
 type fleetArtifactInfo struct {

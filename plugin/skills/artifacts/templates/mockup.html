@@ -67,6 +67,8 @@ input,select,textarea{width:100%;padding:10px;border-radius:8px;border:1px solid
     <label for="kind">Kind</label><select id="kind"><option>A</option><option>B</option></select>
     <p><button class="btn" type="submit">Save</button> <a class="btn ghost" href="#detail">Cancel</a></p>
   </form>
+  <!-- "Send my choice": opens the viewer's feedback sheet prefilled; the human reviews it and taps Send. -->
+  <p><button class="btn ghost" type="button" onclick="sendChoice('Name: ' + name.value + ', kind: ' + kind.value)">Send my choice</button></p>
 </section>
 
 <section class="screen" id="settings">
@@ -83,6 +85,13 @@ input,select,textarea{width:100%;padding:10px;border-radius:8px;border:1px solid
 </nav>
 
 <script>
+// Propose feedback to the agent that made this mockup. The viewer opens its
+// feedback sheet prefilled with the text; nothing is sent until the human
+// taps Send. Outside the viewer (opened directly) this does nothing.
+function sendChoice(text) {
+  parent.postMessage({ type: "agentctl:feedback", text }, "*");
+}
+
 // Hash router: show the screen named by location.hash (default: first screen).
 const screens = [...document.querySelectorAll(".screen")];
 function route() {
