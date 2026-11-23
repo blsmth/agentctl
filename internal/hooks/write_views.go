@@ -4,6 +4,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // The write tamper templates (cronTamperTemplates) match text: a redirect,
@@ -37,6 +38,16 @@ const maxViewDirs = 8
 // maxViewDepth caps nested `bash -c` / eval scripts.
 const maxViewDepth = 3
 
+// maxViewValue caps a variable value or directory, and maxViewBytes the
+// total size of a line's views. Values grow by substitution (D=x$D$D
+// doubles each time), so an uncapped line could keep the hook past its
+// timeout, and a timed-out hook does not deny. Past either cap writeViews
+// reports overflow and callers fail closed.
+const (
+	maxViewValue = 4 << 10
+	maxViewBytes = 256 << 10
+)
+
 // viewShells run a -c script argument.
 var viewShells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true}
 
@@ -53,13 +64,27 @@ type viewState struct {
 	dirs  []string // candidate directories; "" is the unknown starting dir
 	vars  map[string]string
 	stack [][]string
+	// budget is shared with nested scripts.
+	budget *viewBudget
+}
+
+// viewBudget tracks the bytes of view lines produced for one command line.
+type viewBudget struct {
+	bytes    int
+	overflow bool
 }
 
 // writeViews returns sc's simple commands restated with cd and variables
 // resolved (see above), only those where something was resolved.
-func writeViews(sc shellScript) []string {
-	st := &viewState{dirs: []string{""}, vars: map[string]string{}}
-	return st.views(sc, 0)
+// overflow reports that a cap was hit: the views are incomplete, and the
+// caller must fail closed.
+func writeViews(sc shellScript) (views []string, overflow bool) {
+	st := &viewState{dirs: []string{""}, vars: map[string]string{}, budget: &viewBudget{}}
+	views = st.views(sc, 0)
+	if st.budget.overflow {
+		return nil, true
+	}
+	return views, false
 }
 
 func (st *viewState) views(sc shellScript, depth int) []string {
@@ -78,19 +103,34 @@ func (st *viewState) views(sc shellScript, depth int) []string {
 		default:
 			continue
 		}
-		out = append(out, st.command(sc, it.cmd, depth)...)
+		for _, line := range st.command(sc, it.cmd, depth) {
+			st.budget.bytes += len(line)
+			out = append(out, line)
+		}
+		if st.budget.bytes > maxViewBytes {
+			st.budget.overflow = true
+		}
+		if st.budget.overflow {
+			return nil
+		}
 	}
 	return out
 }
 
 // command records c's assignments and cd, and returns its view lines.
 func (st *viewState) command(sc shellScript, c *shCommand, depth int) []string {
+	// Words are expanded and assignments recorded left to right, so
+	// `D=x E=$D/y` sees D.
+	ni := c.nameIndex()
 	words := make([]string, len(c.words))
 	expanded := false
 	for i, w := range c.words {
 		var changed bool
 		words[i], changed = st.expand(w.text)
 		expanded = expanded || changed
+		if i < ni || ni < 0 || (i > ni && declWords[words[ni]] && isAssignment(w.raw)) {
+			st.assign(sc, w, words[i])
+		}
 	}
 	redirs := make([]string, len(c.redirs))
 	for i, r := range c.redirs {
@@ -98,9 +138,7 @@ func (st *viewState) command(sc shellScript, c *shCommand, depth int) []string {
 		redirs[i], changed = st.expand(r.target.text)
 		expanded = expanded || changed
 	}
-	ni := c.nameIndex()
-	st.assign(sc, c, words, ni)
-	if ni < 0 {
+	if ni < 0 || st.budget.overflow {
 		return nil
 	}
 	name := filepath.Base(words[ni])
@@ -117,7 +155,7 @@ func (st *viewState) command(sc shellScript, c *shCommand, depth int) []string {
 	var out []string
 	if depth < maxViewDepth {
 		if script, ok := nestedScript(name, args); ok {
-			nested := &viewState{dirs: append([]string(nil), st.dirs...), vars: copyVars(st.vars)}
+			nested := &viewState{dirs: append([]string(nil), st.dirs...), vars: copyVars(st.vars), budget: st.budget}
 			nsc := scanShell(script)
 			out = append(out, nested.views(nsc, depth+1)...)
 			// The nested script's own text, cd-free, is matched as is.
@@ -147,40 +185,29 @@ func (st *viewState) command(sc shellScript, c *shCommand, depth int) []string {
 	return out
 }
 
-// assign records the variable assignments of c: leading NAME=value words
-// and the arguments of export, local, declare, typeset and readonly.
-func (st *viewState) assign(sc shellScript, c *shCommand, words []string, ni int) {
-	end := ni
-	if end < 0 {
-		end = len(c.words)
+// declWords take NAME=value arguments that assign variables.
+var declWords = map[string]bool{"export": true, "local": true, "declare": true, "typeset": true, "readonly": true}
+
+// assign records the assignment word w, whose expanded text is expanded: a
+// leading NAME=value word or an argument of one of declWords.
+func (st *viewState) assign(sc shellScript, w shWord, expanded string) {
+	name, value, ok := strings.Cut(expanded, "=")
+	if !ok || !isAssignment(w.raw) {
+		return
 	}
-	idx := make([]int, 0, end)
-	for i := 0; i < end; i++ {
-		idx = append(idx, i)
+	raw := w.raw[strings.IndexByte(w.raw, '=')+1:]
+	if strings.HasSuffix(raw, "$") && w.end < len(sc.src) && sc.src[w.end] == '(' {
+		// NAME=$(...): the scanner split the substitution off.
+		raw = "$" + sc.src[w.end:matchParen(sc.src, w.end)]
 	}
-	if ni >= 0 {
-		switch words[ni] {
-		case "export", "local", "declare", "typeset", "readonly":
-			for i := ni + 1; i < len(c.words); i++ {
-				if isAssignment(c.words[i].raw) {
-					idx = append(idx, i)
-				}
-			}
-		}
+	if strings.Contains(raw, "$(") || strings.Contains(raw, "`") {
+		value = substPath(raw)
 	}
-	for _, i := range idx {
-		w := c.words[i]
-		name, value, _ := strings.Cut(words[i], "=")
-		raw := w.raw[strings.IndexByte(w.raw, '=')+1:]
-		if strings.HasSuffix(raw, "$") && w.end < len(sc.src) && sc.src[w.end] == '(' {
-			// NAME=$(...): the scanner split the substitution off.
-			raw = "$" + sc.src[w.end:matchParen(sc.src, w.end)]
-		}
-		if strings.Contains(raw, "$(") || strings.Contains(raw, "`") {
-			value = substPath(raw)
-		}
-		st.vars[name] = value
+	if len(value) > maxViewValue {
+		st.budget.overflow = true
+		return
 	}
+	st.vars[name] = value
 }
 
 // cd moves the candidate directories to the target of `cd args`.
@@ -199,6 +226,12 @@ func (st *viewState) cd(args []string, certain bool) {
 			continue
 		}
 		next = append(next, joinViewPath(d, target, false))
+	}
+	for _, d := range next {
+		if len(d) > maxViewValue {
+			st.budget.overflow = true
+			return
+		}
 	}
 	if certain {
 		st.dirs = dedupe(next)
@@ -247,6 +280,12 @@ func (st *viewState) expand(s string) (string, bool) {
 		b.WriteString(v)
 		changed = true
 		i = k - 1
+		if b.Len() > maxViewValue {
+			break
+		}
+	}
+	if b.Len() > maxViewValue {
+		st.budget.overflow = true
 	}
 	return b.String(), changed
 }
@@ -362,4 +401,34 @@ func copyVars(m map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// lineAnalysis is a command line scanned once for every tamper rule.
+type lineAnalysis struct {
+	sc       shellScript
+	views    []string
+	overflow bool
+}
+
+// lastLine memoizes analyzeLine: checkGlobalDenyListIn runs every rule on
+// the same line.
+var lastLine struct {
+	sync.Mutex
+	command string
+	a       *lineAnalysis
+}
+
+// analyzeLine returns command's scan and write views, reusing the previous
+// result for the same line.
+func analyzeLine(command string) *lineAnalysis {
+	lastLine.Lock()
+	defer lastLine.Unlock()
+	if lastLine.a != nil && lastLine.command == command {
+		return lastLine.a
+	}
+	sc := scanShell(command)
+	views, overflow := writeViews(sc)
+	a := &lineAnalysis{sc: sc, views: views, overflow: overflow}
+	lastLine.command, lastLine.a = command, a
+	return a
 }

@@ -3,6 +3,7 @@ package hooks
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // fpPrompt is a realistic multi-line single-quoted context set value, the
@@ -205,6 +206,51 @@ func TestCleanViewPath(t *testing.T) {
 	for _, tt := range tests {
 		if got := cleanViewPath(tt.in); got != tt.want {
 			t.Errorf("cleanViewPath(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestWriteViews_Bounded: variable values that double per assignment, and
+// long cd chains, must not keep the hook past its timeout (which would fail
+// open). Past the caps the rules fail closed.
+func TestWriteViews_Bounded(t *testing.T) {
+	pinAllTamperDirs(t)
+	tests := []struct {
+		name, command string
+		wantDeny      bool
+	}{
+		{"doubling variable", strings.Repeat("D=x$D$D; ", 40) + "echo x > $D; rm -rf ~/.local/state/agentctl/cron", true},
+		{"doubling variable, target only mentioned", strings.Repeat("D=x$D$D; ", 40) + "echo ~/.local/state/agentctl/cron", true},
+		{"doubling variable, no target", strings.Repeat("D=x$D$D; ", 40) + "echo x > $D", false},
+		{"long certain cd chain", strings.Repeat("cd a && echo x > b; ", 1000) + "cron", false},
+		{"long uncertain cd chain", strings.Repeat("cd a || cd b; echo x > c; ", 1000) + "cron", false},
+		{"long chain then a write", strings.Repeat("cd a || cd b; echo x > c; ", 1000) + "rm -rf ~/.local/state/agentctl/cron", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start := time.Now()
+			reason := checkGlobalDenyList(tt.command)
+			if d := time.Since(start); d > 2*time.Second {
+				t.Errorf("took %v", d)
+			}
+			if got := reason != ""; got != tt.wantDeny {
+				t.Errorf("denied %v (%q), want %v", got, reason, tt.wantDeny)
+			}
+		})
+	}
+}
+
+func TestTamperRules_ReviewFollowups(t *testing.T) {
+	pinAllTamperDirs(t)
+	for _, command := range []string{
+		"D=~/.local/state/agentctl E=$D/cron; rm -rf $E",
+		"S=stop; agentctl serve $S",
+		`S=stop; agentctl serve "$S"`,
+		"agentctl serve {stop,}",
+		"go run . serve $S",
+	} {
+		if checkGlobalDenyList(command) == "" {
+			t.Errorf("checkGlobalDenyList(%q) allowed it, want a deny", command)
 		}
 	}
 }

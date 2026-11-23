@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/audit"
@@ -361,7 +362,11 @@ var serveTamperSubcommands = map[string]bool{
 // (goRunAgentctlArgs), e.g. `go run . serve stop`.
 func goRunServeTamper(command string) bool {
 	for _, args := range goRunAgentctlArgs(command) {
-		if len(args) >= 2 && args[0].text == "serve" && serveTamperSubcommands[args[1].text] {
+		if len(args) < 2 || args[0].text != "serve" {
+			continue
+		}
+		// An expansion (serve $S, serve {stop,}) could be any subcommand.
+		if serveTamperSubcommands[args[1].text] || args[1].expands || strings.ContainsAny(args[1].text, "{*?[") {
 			return true
 		}
 	}
@@ -390,8 +395,8 @@ var serveStateDir = func() string {
 // counts, and so does a write view (writeViews) that reaches them through a
 // cd or a variable.
 func checkServeTamper(command string) string {
-	sc := scanShell(command)
-	masked := sc.masked()
+	a := analyzeLine(command)
+	sc, masked := a.sc, a.sc.masked()
 	for _, re := range serveTamperPatterns {
 		if re.MatchString(masked) {
 			return serveTamperReason
@@ -407,7 +412,10 @@ func checkServeTamper(command string) string {
 			}
 		}
 	}
-	for _, v := range writeViews(sc) {
+	if a.overflow && serveFileRef(command) {
+		return serveTamperReason // fail closed: the views are incomplete
+	}
+	for _, v := range a.views {
 		if serveFileRef(v) {
 			return serveTamperReason
 		}
@@ -452,7 +460,11 @@ func agentctlServeTamper(sc shellScript) bool {
 		for len(args) > 0 && strings.HasPrefix(args[0].text, "-") {
 			args = args[1:]
 		}
-		if len(args) >= 2 && args[0].text == "serve" && serveTamperSubcommands[args[1].text] {
+		if len(args) < 2 || args[0].text != "serve" {
+			continue
+		}
+		// An expansion (serve $S, serve {stop,}) could be any subcommand.
+		if serveTamperSubcommands[args[1].text] || strings.ContainsAny(args[1].raw, "$`{*?[") {
 			return true
 		}
 	}
@@ -586,16 +598,20 @@ func checkTemplateTamper(command string) string {
 // commands masked (maskAgentctlArgs), and the same line restated with cd and
 // shell variables resolved (writeViews), so `cd <dir> && rm -rf x` and
 // `D=<dir>; echo x > $D/a` match like the spelled-out paths.
+//
+// When the views overflow their caps (writeViews) it fails closed: the raw
+// line is matched, and any mention of a target anywhere in it counts.
 func matchesWriteTemplates(command string, targets []string) bool {
-	sc := scanShell(command)
-	texts := append([]string{sc.masked()}, writeViews(sc)...)
-	alt := "(?:" + strings.Join(targets, "|") + ")"
-	for _, tmpl := range cronTamperTemplates {
-		re, err := regexp.Compile(fmt.Sprintf(tmpl, alt))
-		if err != nil {
-			logging.Log("hook-validate-bash: bad tamper pattern: %v", err)
-			continue
+	a := analyzeLine(command)
+	res, any := writeTemplateRegexps(targets)
+	texts := append([]string{a.sc.masked()}, a.views...)
+	if a.overflow {
+		if any != nil && any.MatchString(command) {
+			return true
 		}
+		texts = []string{command}
+	}
+	for _, re := range res {
 		for _, t := range texts {
 			if re.MatchString(t) {
 				return true
@@ -603,6 +619,48 @@ func matchesWriteTemplates(command string, targets []string) bool {
 		}
 	}
 	return false
+}
+
+// templateCache holds cronTamperTemplates compiled per target alternation.
+var templateCache struct {
+	sync.Mutex
+	m map[string]compiledTemplates
+}
+
+type compiledTemplates struct {
+	res []*regexp.Regexp
+	any *regexp.Regexp // the target alternation alone
+}
+
+// writeTemplateRegexps returns cronTamperTemplates compiled for targets, and
+// the target alternation itself.
+func writeTemplateRegexps(targets []string) ([]*regexp.Regexp, *regexp.Regexp) {
+	alt := "(?:" + strings.Join(targets, "|") + ")"
+	templateCache.Lock()
+	defer templateCache.Unlock()
+	if c, ok := templateCache.m[alt]; ok {
+		return c.res, c.any
+	}
+	var c compiledTemplates
+	for _, tmpl := range cronTamperTemplates {
+		re, err := regexp.Compile(fmt.Sprintf(tmpl, alt))
+		if err != nil {
+			logging.Log("hook-validate-bash: bad tamper pattern: %v", err)
+			continue
+		}
+		c.res = append(c.res, re)
+	}
+	if re, err := regexp.Compile(alt); err == nil {
+		c.any = re
+	}
+	if templateCache.m == nil {
+		templateCache.m = map[string]compiledTemplates{}
+	}
+	if len(templateCache.m) > 64 {
+		clear(templateCache.m) // targets come from config paths; bound it anyway
+	}
+	templateCache.m[alt] = c
+	return c.res, c.any
 }
 
 // checkGlobalDenyList matches globalDenyPatterns and the serve-, cron-,
