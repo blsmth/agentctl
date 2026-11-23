@@ -137,7 +137,7 @@ func Finish(c Claimed, d Deps) {
 	if base != "" && !untracked(instance) {
 		recordClosed(c, d, instance, base)
 	}
-	// Before the handlers: they can be slow (auto-improve), and the children
+	// Before the handlers: handlers can be slow, and the children
 	// should close promptly.
 	closeChildren(c, d.Cascade)
 	if base != "" && !untracked(instance) && d.Handle != nil {
@@ -188,7 +188,7 @@ func Run(d Deps) []string {
 		return nil
 	}
 	claimed := claimGone(d)
-	unlock() // handlers can be slow (auto-improve launches a session)
+	unlock() // handlers can be slow
 	var ids []string
 	for _, c := range claimed {
 		Finish(c, d)

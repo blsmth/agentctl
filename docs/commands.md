@@ -21,7 +21,7 @@ Every user-facing `agentctl` subcommand, grouped by job. Run `agentctl <command>
 | `agentctl dispatch` | Launch an agent on a GitHub issue (`--issue N`), an ad-hoc prompt (`--prompt`, `--prompt-key`) or a PR review (`--review-pr N`). See [dispatch.md](dispatch.md). |
 | `agentctl kill <name>` | Kill an agent window (and, with `close_children`, the windows it dispatched). |
 | `agentctl logs <name>` | Formatted session log for an agent, in `less` (prefix+`o`). |
-| `agentctl improve` | Launch a self-improvement session that rewrites an agent's instructions from its logs. |
+| `agentctl improve` | Launch a self-improvement session (no editor step) that rewrites an agent's instructions from short summaries of its recent sessions. Runs in the agent's configured dir, else the directory you launched it from. Only runs when you start it. |
 | `agentctl cleanup` | Reclaim finished worktrees under `.worktrees/` (`--dry-run`, `--yes`, `--include-open-prs`, `--json`). See [dispatch.md](dispatch.md#cleanup). |
 | `agentctl sweep` | Close finished windows in the current tmux session and list the rest (`--dry-run`, `--include-bare`, `--session`, `--json`). See [dispatch.md](dispatch.md#cleanup). |
 | `agentctl agents` | List agents (`--tui` browser, `--json`). |

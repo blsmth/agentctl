@@ -844,3 +844,42 @@ func TestTruncateBytes(t *testing.T) {
 		}
 	}
 }
+
+func TestFindWorkSessionsForAgent_SkipsImproveSessions(t *testing.T) {
+	root := t.TempDir()
+	old := claudeDir
+	claudeDir = root
+	t.Cleanup(func() { claudeDir = old })
+
+	projects := filepath.Join(root, "projects")
+	now := time.Now()
+	line := func(agent, prompt string) string {
+		return fmt.Sprintf(`{"agentSetting":%q}`, agent) + "\n" +
+			fmt.Sprintf(`{"type":"user","message":{"content":%q}}`, prompt) + "\n"
+	}
+	write := func(hash, name, body string, age time.Duration) {
+		t.Helper()
+		dir := filepath.Join(projects, hash)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		fp := filepath.Join(dir, name)
+		if err := os.WriteFile(fp, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		ts := now.Add(-age)
+		if err := os.Chtimes(fp, ts, ts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("h1", "work.jsonl", line("go-engineer", "fix the bug"), time.Hour)
+	write("h2", "improve.jsonl", line("go-engineer", ImprovePromptHeader+" Be better."), time.Minute)
+
+	got, err := FindWorkSessionsForAgent("go-engineer", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "work" {
+		t.Fatalf("got %+v, want only the work session", got)
+	}
+}

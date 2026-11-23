@@ -20,7 +20,6 @@ import (
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/hooks"
-	"github.com/blsmth/agentctl/internal/improve"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/logstream"
 	"github.com/blsmth/agentctl/internal/mailbox"
@@ -50,14 +49,19 @@ func safeHandle(name string, t state.Transition, fn func()) {
 	fn()
 }
 
-// improveHandleFn is improve.HandleTransition, indirected for testing.
-var improveHandleFn = improve.HandleTransition
+// transitionHandlerFn is the monitor's transition handler. It is nil in
+// production: no handler is registered today (dispatch completion is fired by
+// the Stop hook / `agentctl signal done`, not here). It is a seam so tests can
+// observe edges and the panic isolation in fireHandlers.
+var transitionHandlerFn func(t state.Transition, agentCfg config.AgentConfig)
 
-// fireHandlers invokes each transition handler individually under safeHandle
-// so a panic in one does not skip the others. Dispatch completion is not fired
-// here: the Stop hook (and `agentctl signal done`) spawn it directly.
+// fireHandlers invokes the transition handler, if any, under safeHandle so a
+// panic cannot kill the monitor loop.
 func (m *monitorModel) fireHandlers(t state.Transition, agentCfg config.AgentConfig) {
-	safeHandle("improve.HandleTransition", t, func() { improveHandleFn(t, agentCfg) })
+	if transitionHandlerFn == nil {
+		return
+	}
+	safeHandle("transition handler", t, func() { transitionHandlerFn(t, agentCfg) })
 }
 
 // instanceState holds all per-instance monitoring state for a single agent window.
@@ -843,7 +847,7 @@ func (m *monitorModel) resolveState(inst *instanceState, ws windowstate.WindowSt
 }
 
 // detectAndFireTransitions compares the previous state to curState, constructs
-// a Transition, records metrics, and fires dispatch/improve handlers on change.
+// a Transition, records metrics, and fires transition handlers on change.
 // It also updates inst.prevState, inst.hasPrev, inst.done, inst.ticket, and
 // inst.mainPane.
 func (m *monitorModel) detectAndFireTransitions(inst *instanceState, windowID string, curState state.AgentStatus, ws windowstate.WindowState, cfg *config.Config, activeWindowID string) {

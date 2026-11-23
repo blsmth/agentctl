@@ -72,7 +72,7 @@ With the mouse: click a row to select it and double-click to open it. Label chip
 
 | Key | Action |
 |-----|--------|
-| `i` | **Self-improve** — agent analyzes its session logs and rewrites its own instructions |
+| `i` | **Self-improve** — launches a session in which the agent reviews short summaries of its recent sessions and rewrites its own instructions |
 | `C` | **Context push** — pick a context-store entry to push to the focused agent |
 | `X` | **Context viewer** — open the context window (`agentctl context --tui`): browse entries with a scrollable preview, `/` filter, `d` delete (y/n), `r` reload, `q`/`esc` back to the previous window |
 

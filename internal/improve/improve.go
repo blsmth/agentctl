@@ -54,7 +54,6 @@ func buildConfigContext(agentName string, ac config.AgentConfig, workDir string)
 	}
 	b.WriteString(fmt.Sprintf("    effort_level:    %s\n", effortLevel))
 
-	b.WriteString(fmt.Sprintf("    auto_improve:    %v\n", ac.AutoImprove))
 	b.WriteString(fmt.Sprintf("    cross_context:   %v\n", ac.CrossContext))
 	b.WriteString(fmt.Sprintf("    auto_accept:     %v\n", ac.AutoAccept))
 
@@ -108,13 +107,13 @@ func buildConfigContext(agentName string, ac config.AgentConfig, workDir string)
 	}
 
 	// --- Global Claude permissions ---
-	if home, err := os.UserHomeDir(); err == nil {
-		globalSettingsPath := filepath.Join(home, ".claude", "settings.json")
+	if home := claudehome.HomeDir(); home != "" {
+		globalSettingsPath := filepath.Join(home, "settings.json")
 		if data, err := os.ReadFile(globalSettingsPath); err == nil {
 			var gs claudePermissions
 			if json.Unmarshal(data, &gs) == nil {
 				if len(gs.Permissions.Allow) > 0 || len(gs.Permissions.Deny) > 0 {
-					b.WriteString("\n  global permissions (~/.claude/settings.json):\n")
+					b.WriteString(fmt.Sprintf("\n  global permissions (%s):\n", globalSettingsPath))
 					if len(gs.Permissions.Allow) > 0 {
 						b.WriteString("    allow:\n")
 						for _, p := range gs.Permissions.Allow {
@@ -135,32 +134,26 @@ func buildConfigContext(agentName string, ac config.AgentConfig, workDir string)
 	return b.String()
 }
 
-// buildImprovePrompt composes the self-improvement prompt. It used to be
-// duplicated near-verbatim across the skipEditor and interactive launch
-// paths -- once as an "auto-improve" flavor and once as a "full review"
-// flavor -- which is exactly how a stale claim about agentctl's own
-// architecture (that a background monitor detects state by watching JSONL
-// session logs, and that "plugins" react to transitions) had to be fixed in
-// two places and drifted back out of sync. State is hook-driven: Claude Code
-// hooks write per-window state to .agentctl/windows/<windowID>.json, and the
-// monitor reads that every tick; JSONL logs are parsed only for metrics.
-// There is no plugin registry -- transition handlers are called directly
-// from detectAndFireTransitions() in monitor.go. See CLAUDE.md's "Key data
-// flow" section.
+// buildImprovePrompt composes the self-improvement prompt. State is
+// hook-driven: the agent's harness hooks write per-window state to
+// .agentctl/windows/<windowID>.json; an optional background monitor may read
+// it, but nothing depends on it, and no transition handler launches improve
+// sessions: they only start when a human asks (agentctl improve, prefix+i,
+// the hub). See CLAUDE.md's "Key data flow" section.
 //
 // The only genuinely conditional content is the focus block, which depends
 // on whether a theme was supplied -- see buildFocusBlock.
-func buildImprovePrompt(agentPath, agentName, configContext, theme, sessionContext string) string {
+func buildImprovePrompt(agentPath, agentName, harnessName, configContext, theme, sessionContext string) string {
 	return fmt.Sprintf(
-		"You are running a self-improvement review of your own agent definition. Be better than you were yesterday.\n\n"+
+		sessions.ImprovePromptHeader+" Be better than you were yesterday.\n\n"+
 			"YOUR AGENT FILE: %s\n"+
 			"Read it first — this is the file you will be updating.\n\n"+
 			"%s\n"+
-			"HOW THIS WORKS: your .md file IS your identity — agentctl launches you via `claude --agent %s`. "+
-			"agentctl is a tmux-native command center: each agent runs in a tmux window; Claude Code hooks write "+
-			"per-window state (working/idle/blocked) to disk, and a background monitor reads it every tick and "+
-			"reacts to transitions directly (no plugin system). Improvement sessions like this one are triggered "+
-			"manually or auto-triggered when a session ends, via the `auto_improve` config flag.\n\n"+
+			"HOW THIS WORKS: your .md file IS your identity — agentctl launches the %s harness with `--agent %s`. "+
+			"agentctl is a tmux-native command center: each agent runs in a tmux window, and the harness's hooks "+
+			"write per-window state (working/idle/blocked) to disk. An optional background monitor (off by default) "+
+			"may also read that state; there is no plugin system. This improvement session was started manually "+
+			"(`agentctl improve`, prefix+i or the hub); nothing triggers it automatically.\n\n"+
 			"%s"+
 			"RECENT SESSIONS:\n%s\n"+
 			"INSTRUCTIONS:\n"+
@@ -169,7 +162,7 @@ func buildImprovePrompt(agentPath, agentName, configContext, theme, sessionConte
 			"3. Every edit should make you measurably better at your job — clearer instructions, fewer mistakes, better defaults\n"+
 			"4. Don't rewrite the whole file. Surgical, high-value changes only.\n\n"+
 			"You exist to get better. Ship the improvement.",
-		agentPath, configContext, agentName, buildFocusBlock(theme), sessionContext,
+		agentPath, configContext, harnessName, agentName, buildFocusBlock(theme), sessionContext,
 	)
 }
 
@@ -191,11 +184,12 @@ func buildFocusBlock(theme string) string {
 		"- Knowledge gaps that came up during sessions\n\n"
 }
 
-// LaunchSession launches an improvement session for the named agent. theme
-// sets an optional improvement focus area; skipEditor bypasses the $EDITOR
-// review step for fully-automated (auto-improve) invocations.
-func LaunchSession(agentName string, theme string, skipEditor bool) error {
-	logging.Log("launchImprovement: start agent=%q theme=%q skipEditor=%v", agentName, theme, skipEditor)
+// LaunchSession launches an improvement session for the named agent and sends
+// the prompt straight away. theme sets an optional improvement focus area.
+// callerDir is the directory of the window the request came from; it is the
+// working directory unless the agent has its own configured dir.
+func LaunchSession(agentName string, theme string, callerDir string) error {
+	logging.Log("launchImprovement: start agent=%q theme=%q callerDir=%q", agentName, theme, callerDir)
 
 	done := logging.Timing("launchImprovement: agent.DiscoverAll")
 	cfg := config.Load()
@@ -217,19 +211,19 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 		return fmt.Errorf("unknown agent: %s", agentName)
 	}
 
-	workDir := target.Dir
-	if workDir == "" {
-		workDir = filepath.Dir(target.FilePath)
+	ac := cfg.ForAgent(agentName)
+	workDir, err := resolveWorkDir(target.Dir, ac.Dir, callerDir, paths.ProjectDir())
+	if err != nil {
+		return err
 	}
 	logging.Log("launchImprovement: workDir=%q filePath=%q", workDir, target.FilePath)
 
 	// Build the configuration context block.
-	ac := cfg.ForAgent(agentName)
 	configContext := buildConfigContext(agentName, ac, workDir)
 
 	// Build context from recent sessions
 	done = logging.Timing("launchImprovement: FindSessionsForAgent")
-	recentSessions, _ := sessions.FindSessionsForAgent(agentName, 3)
+	recentSessions, _ := sessions.FindWorkSessionsForAgent(agentName, 3)
 	done()
 	logging.Log("launchImprovement: found %d recent sessions", len(recentSessions))
 	logging.Debug("improve: building context from %d sessions", len(recentSessions))
@@ -262,12 +256,14 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 		}
 	}
 
-	// skipEditor only changes how the prompt is delivered below (direct
-	// launch vs. an $EDITOR review step) -- the prompt content itself is
-	// identical either way, so it lives in exactly one place. See
-	// buildImprovePrompt's doc comment for why this used to be two
-	// near-duplicate prompts.
-	prompt := buildImprovePrompt(target.FilePath, agentName, configContext, theme, sessionContext.String())
+	// Same harness as the agent itself.
+	h, err := dispatch.ResolveHarness(cfg, agentName, "", workDir)
+	if err != nil {
+		return err
+	}
+	caps := h.Caps()
+
+	prompt := buildImprovePrompt(target.FilePath, agentName, h.Name(), configContext, theme, sessionContext.String())
 
 	// Write prompt to a temp file to avoid shell escaping nightmares.
 	promptFile, err := writePromptFile(agentName, prompt)
@@ -278,13 +274,6 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 	logging.Debug("improve: wrote prompt %s (%d bytes)", promptFile, len(prompt))
 
 	sessionID := ids.NewUUID()
-
-	// Same harness as the agent itself.
-	h, err := dispatch.ResolveHarness(cfg, agentName, "", workDir)
-	if err != nil {
-		return err
-	}
-	caps := h.Caps()
 
 	// Same backend as the agent itself: a local-model agent's improvement
 	// session must not quietly run on Anthropic (or vice versa).
@@ -322,7 +311,7 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 	if err != nil {
 		return fmt.Errorf("building %s command: %w", h.Name(), err)
 	}
-	shellCmd := buildImproveShellCmd(baseFlags, promptFile, skipEditor)
+	shellCmd := buildImproveShellCmd(baseFlags, promptFile)
 
 	// Improvement sessions run in the agent's work dir; compute the log path so
 	// the monitor can track this window without scanning.
@@ -351,22 +340,23 @@ func LaunchSession(agentName string, theme string, skipEditor bool) error {
 
 // buildImproveShellCmd returns the shell command line for an improvement
 // session. baseFlags must already be shell-quoted (harness.Harness.Command);
-// promptFile is quoted here. With skipEditor the prompt is sent straight to
-// claude; otherwise $EDITOR opens it first so the user can review or tweak
-// it, and an emptied file aborts the launch (like `git commit`).
-func buildImproveShellCmd(baseFlags, promptFile string, skipEditor bool) string {
+// promptFile is quoted here. The prompt is sent straight to the harness.
+func buildImproveShellCmd(baseFlags, promptFile string) string {
 	pf := shellquote.Quote(promptFile)
-	if skipEditor {
-		return fmt.Sprintf(`%s "$(cat %s)"; rm -f %s`, baseFlags, pf, pf)
+	return fmt.Sprintf(`%s "$(cat %s)"; rm -f %s`, baseFlags, pf, pf)
+}
+
+// resolveWorkDir picks the improvement session's working directory: the
+// agent's configured dir, then the caller's project root. It never falls back
+// to the agent file's folder (e.g. ~/.claude/agents): account_rules would
+// match the wrong repo and .agentctl runtime dirs would be created there.
+func resolveWorkDir(agentDir, configuredDir, callerDir, projectDir string) (string, error) {
+	for _, d := range []string{agentDir, paths.ExpandHome(configuredDir), callerDir, projectDir} {
+		if d != "" {
+			return d, nil
+		}
 	}
-	return fmt.Sprintf(
-		`${EDITOR:-vi} %s && `+
-			`if [ ! -s %s ]; then echo "Empty prompt — aborting."; rm -f %s; exit 0; fi && `+
-			`%s "$(cat %s)"; rm -f %s`,
-		pf,
-		pf, pf,
-		baseFlags, pf, pf,
-	)
+	return "", fmt.Errorf("cannot determine a working directory: agent has no dir configured and the caller's directory is unknown")
 }
 
 // writePromptFile writes the prompt to a 0600 file in the per-user launch
@@ -390,8 +380,8 @@ func writePromptFile(agentName string, prompt string) (string, error) {
 }
 
 // improveSessionName names an improvement session <agent>-improve-<project>.
-// The project is the project root's basename; workDir is the agent's .claude
-// directory, so it is only a fallback when the project root is unknown.
+// The project is the project root's basename; workDir is only a fallback when
+// the project root is unknown.
 func improveSessionName(agentName, projectDir, workDir string) string {
 	if projectDir == "" {
 		projectDir = workDir

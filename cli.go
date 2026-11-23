@@ -1043,7 +1043,7 @@ func (c *ApplyConfigCmd) Run() error { return cmd.RunApplyConfig() }
 
 type ToggleCmd struct {
 	AgentName string `arg:"" help:"Agent name"`
-	Setting   string `arg:"" help:"Setting name (alerts, auto_improve, cross_context, auto_accept)"`
+	Setting   string `arg:"" help:"Setting name (alerts, cross_context, auto_accept)"`
 }
 
 func (c *ToggleCmd) Run() error { cmd.CmdToggle(c.AgentName, c.Setting); return nil }

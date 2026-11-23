@@ -31,7 +31,7 @@ The project-local file is overlaid on the global one field by field: a non-empty
 - `models.overrides` merges per model key.
 - `hooks` replaces the global map entirely when the project sets any hooks.
 - Booleans that default to `true` (`open_pr_in_browser`, `auto_reclaim_worktree`, `monitor`) are tri-state: an explicit `false` in the project file survives the merge.
-- Guards a project may only tighten: `bash_preview` (on, never off), `dispatch_approval` (stricter only), `monitor` (off, never on), and per-agent `auto_improve`/`cross_context` (off only) and `blocked_commands`/`blocked_patterns` (add entries only).
+- Guards a project may only tighten: `bash_preview` (on, never off), `dispatch_approval` (stricter only), `monitor` (off, never on), and per-agent `cross_context` (off only) and `blocked_commands`/`blocked_patterns` (add entries only).
 
 The **Scope** column below says which layer a key is read from: `project` keys may be overridden by `.agentctl/config.json`; `global` keys are read only from the global file, and a project value is ignored (most with a log warning).
 
@@ -431,7 +431,6 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
 | `alert_config.blocked` | bool | `true` | Notify on Working to Blocked (needs approval, including a pending dispatch/cron/bash approval popup). |
 | `alert_config.idle` | bool | `true` | Notify on Working to Idle (done). |
 | `alert_config.gone` | bool | `false` | Reserved; no notification uses it yet. |
-| `auto_improve` | bool | `false` | Launch a self-improvement session when a session ends. Global-only (a project may only switch it off). |
 | `cross_context` | bool | `true` | Inject a cross-agent summary at launch. Global-only (a project may only switch it off). |
 | `context_keys` | string[] | none | Context-store keys always injected at launch for this agent. Global-only. |
 | `dir` | string | empty (portable) | Fixed working directory. Global-only. |

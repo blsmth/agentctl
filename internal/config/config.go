@@ -51,7 +51,6 @@ type DispatchConfig struct {
 type AgentConfig struct {
 	Alerts             bool        `json:"alerts"`
 	AlertConfig        AlertConfig `json:"alert_config"`
-	AutoImprove        bool        `json:"auto_improve"`                  // trigger improvement session on session end
 	CrossContext       bool        `json:"cross_context"`                 // inject cross-agent summary at launch
 	Dir                string      `json:"dir,omitempty"`                 // fixed working directory, empty = portable
 	Model              string      `json:"model,omitempty"`               // "sonnet", "opus", "haiku", "" = inherit
@@ -606,7 +605,7 @@ type Config struct {
 	// start, applyConfig, the hook watchdog). Only optional token
 	// enrichment from state.json depends on the monitor. A running monitor is never killed
 	// by flipping the flag; the next relaunch just does not start one. Like
-	// auto_improve, a project-local config may switch it off but can never
+	// cross_context, a project-local config may switch it off but can never
 	// switch it back on. Use MonitorEnabled() to read the effective value.
 	Monitor *bool `json:"monitor,omitempty"`
 	// CloseChildren makes closing an agent window also close the windows it
@@ -1021,7 +1020,6 @@ func DefaultAgentConfig() AgentConfig {
 			Idle:    true,
 			Gone:    false,
 		},
-		AutoImprove:  false,
 		CrossContext: true,
 	}
 }
@@ -1152,6 +1150,7 @@ func loadFromPath(path string) *Config {
 		logging.Error("config: failed to parse %s: %v", path, err)
 		return cfg
 	}
+	warnDeprecatedAutoImprove(path, data)
 	if cfg.Agents == nil {
 		cfg.Agents = make(map[string]AgentConfig)
 	}
@@ -1273,6 +1272,51 @@ var warnedKeys sync.Map
 // warnLog is logging.Log, swappable in tests.
 var warnLog = logging.Log
 
+// warnDeprecatedAutoImprove logs one warning per file when it still carries
+// auto_improve (top level or agents.*), a removed key that is otherwise
+// silently ignored.
+func warnDeprecatedAutoImprove(path string, data []byte) {
+	if !bytes.Contains(data, []byte(`"auto_improve"`)) {
+		return
+	}
+	var doc struct {
+		AutoImprove json.RawMessage `json:"auto_improve"`
+		Agents      map[string]struct {
+			AutoImprove json.RawMessage `json:"auto_improve"`
+		} `json:"agents"`
+	}
+	if json.Unmarshal(data, &doc) != nil {
+		return
+	}
+	found := doc.AutoImprove != nil
+	for _, a := range doc.Agents {
+		if a.AutoImprove != nil {
+			found = true
+		}
+	}
+	if !found {
+		return
+	}
+	msg := fmt.Sprintf("config: auto_improve in %s is deprecated and ignored (auto-improve was removed; use `agentctl improve`)", path)
+	if _, dup := warnedKeys.LoadOrStore(msg, true); dup {
+		return
+	}
+	// Short-lived processes (hooks, CLI) re-load the same file: an on-disk
+	// marker keyed on the file's hash keeps it to one line per edit.
+	sum := sha256.Sum256(data)
+	hash := hex.EncodeToString(sum[:])
+	marker := filepath.Join(filepath.Dir(path), deprecatedMarkerName)
+	if prev, err := os.ReadFile(marker); err == nil && string(bytes.TrimSpace(prev)) == hash {
+		return
+	}
+	warnLog("%s", msg)
+	_ = writeMarker(marker, []byte(hash+"\n")) // best effort: worst case it logs again
+}
+
+// deprecatedMarkerName is the dedupe marker for warnDeprecatedAutoImprove,
+// stored beside the config file it describes.
+const deprecatedMarkerName = "config-deprecated-warned"
+
 // warnMarkerName is the dedupe marker, stored beside the project config (the
 // project runtime dir in production).
 const warnMarkerName = "config-warned"
@@ -1380,10 +1424,9 @@ func containsAll(have, want []string) bool {
 //   - agents.*.dir (would point an auto-mode worker at any directory, e.g. ~),
 //     agents.*.cross_context and agents.*.context_keys (would pull the user's
 //     global context store into the prompt of an agent processing attacker
-//     input), and agents.*.auto_improve (starts an unattended improvement
-//     session); the global agent's value is used instead, or the default
+//     input); the global agent's value is used instead, or the default
 //     (DefaultAgentConfig) for an agent the global config does not define.
-//     A project may still switch cross_context / auto_improve off.
+//     A project may still switch cross_context off.
 //   - backends and agents.*.backend (a project-chosen base_url would send
 //     every prompt and file the agent reads to an arbitrary host); the global
 //     agent's backend is used instead
@@ -1527,9 +1570,6 @@ func sanitizeProjectConfig(project, global *Config) {
 		if len(ac.ContextKeys) > 0 && !reflect.DeepEqual(ac.ContextKeys, gb.ContextKeys) {
 			warn(pre+"context_keys", globalOnly)
 		}
-		if ac.AutoImprove && !gb.AutoImprove {
-			warn(pre+"auto_improve", globalOnly)
-		}
 		if ac.Backend != "" && ac.Backend != g.Backend {
 			warn(pre+"backend", globalOnly)
 		}
@@ -1571,11 +1611,10 @@ func sanitizeProjectConfig(project, global *Config) {
 		ac.AutoAccept = g.AutoAccept
 		ac.AllowedPermissions = g.AllowedPermissions
 		ac.PermissionMode = g.PermissionMode
-		// cross_context and auto_improve may be switched off by the project
-		// (that only narrows what the agent does), never on.
+		// cross_context may be switched off by the project (that only
+		// narrows what the agent does), never on.
 		ac.Dir, ac.ContextKeys = gb.Dir, gb.ContextKeys
 		ac.CrossContext = ac.CrossContext && gb.CrossContext
-		ac.AutoImprove = ac.AutoImprove && gb.AutoImprove
 		ac.BlockedCommands = unionStrings(g.BlockedCommands, ac.BlockedCommands)
 		ac.BlockedPatterns = unionStrings(g.BlockedPatterns, ac.BlockedPatterns)
 		project.Agents[name] = ac
@@ -1837,7 +1876,7 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 // Changes to global-only keys (see sanitizeProjectConfig) are not written to
 // the project layer, where they would be ignored; use the dedicated setters
 // (SetAgent, ToggleAutoAccept, ToggleAutoPoll, ToggleCrossContext,
-// ToggleAutoImprove, SetDefaultAgent) for those.
+// SetDefaultAgent) for those.
 //
 // When the project and global paths coincide (a single trusted layer), cfg is
 // written as-is.
@@ -1992,10 +2031,10 @@ func SetDefaultAgent(name string) error {
 // layer for an agent going from prev to next, or nil when there is none.
 //
 // auto_accept, dir and context_keys are global-only in both directions.
-// cross_context and auto_improve are global-only only when switched ON: a
-// project may switch them off (sanitizeProjectConfig ANDs the layers), so
-// switching off is a project-layer change and must not leak to every other
-// project via the global file.
+// cross_context is global-only only when switched ON: a project may switch it
+// off (sanitizeProjectConfig ANDs the layers), so switching off is a
+// project-layer change and must not leak to every other project via the
+// global file.
 func globalAgentUpdate(prev, next AgentConfig) func(*AgentConfig) {
 	var fns []func(*AgentConfig)
 	if prev.AutoAccept != next.AutoAccept {
@@ -2009,9 +2048,6 @@ func globalAgentUpdate(prev, next AgentConfig) func(*AgentConfig) {
 	}
 	if next.CrossContext && !prev.CrossContext {
 		fns = append(fns, func(g *AgentConfig) { g.CrossContext = true })
-	}
-	if next.AutoImprove && !prev.AutoImprove {
-		fns = append(fns, func(g *AgentConfig) { g.AutoImprove = true })
 	}
 	if len(fns) == 0 {
 		return nil
@@ -2047,7 +2083,7 @@ func (c *Config) AgentNames() []string {
 // SetAgent updates the config for a specific agent and saves to disk.
 // Changes the project layer cannot express (see globalAgentUpdate) are
 // written to the global layer; everything goes to the project layer via
-// Save, which also records an enabled cross_context / auto_improve there so
+// Save, which also records an enabled cross_context there so
 // that an earlier project-level false no longer masks it.
 func (c *Config) SetAgent(name string, ac AgentConfig) error {
 	prev := c.ForAgent(name)
@@ -2068,15 +2104,6 @@ func (c *Config) ToggleAlert(name string) (bool, error) {
 	err := Save(c)
 	logging.Log("config: %s.alerts → %v", name, ac.Alerts)
 	return ac.Alerts, err
-}
-
-// ToggleAutoImprove flips the auto_improve setting for an agent and saves.
-func (c *Config) ToggleAutoImprove(name string) (bool, error) {
-	ac := c.ForAgent(name)
-	ac.AutoImprove = !ac.AutoImprove
-	err := c.SetAgent(name, ac)
-	logging.Log("config: %s.auto_improve → %v", name, ac.AutoImprove)
-	return ac.AutoImprove, err
 }
 
 // ToggleAutoAccept flips the auto_accept setting for an agent and saves it to
