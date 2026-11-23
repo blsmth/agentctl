@@ -24,6 +24,7 @@ const (
 	schedHitDay                         // focus, then toggle day chip arg
 	schedHitToggle                      // focus, then flip it (Advanced, Worktree)
 	schedHitEditor                      // open the prompt in $EDITOR
+	schedHitApply                       // copy the chosen start-from template into the prompt
 	schedHitKey                         // press key (the review's y / n)
 )
 
@@ -133,7 +134,7 @@ func (m *FleetModel) handleSchedFormClick(msg tea.MouseClickMsg) tea.Cmd {
 // pointer; false when the wheel is not over one, so the list scrolls.
 func (m *FleetModel) handleSchedFormWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 	f := m.schedForm
-	if f.review || f.saving || f.discard {
+	if f.review || f.saving || f.discard || f.startAsk != "" {
 		return nil, false
 	}
 	ht, ok := m.schedFormHitAt(msg.X, msg.Y)
@@ -158,7 +159,7 @@ func (m *FleetModel) schedFormClick(ht schedHit) tea.Cmd {
 	if ht.kind == schedHitKey {
 		return m.handleSchedFormKey(schedSynthKey(ht.key))
 	}
-	if f.saving || f.review || f.discard {
+	if f.saving || f.review || f.discard || f.startAsk != "" {
 		return nil
 	}
 	f.err = ""
@@ -170,6 +171,8 @@ func (m *FleetModel) schedFormClick(ht schedHit) tea.Cmd {
 	switch ht.kind {
 	case schedHitEditor:
 		return m.schedOpenEditor()
+	case schedHitApply:
+		return m.schedStartTemplate()
 	case schedHitNext, schedHitPrev:
 		d := 1
 		if ht.kind == schedHitPrev {
