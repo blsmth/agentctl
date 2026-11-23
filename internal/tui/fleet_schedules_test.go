@@ -436,8 +436,8 @@ func TestSchedulesZeroJobsMissingFileAndHints(t *testing.T) {
 		t.Errorf("lines = %v, want %v", got, want)
 	}
 	m = selectSched(t, m, schedNewSel(resolveDir(f.project)))
-	if out := ansi.Strip(m.render()); !strings.Contains(out, "New schedule in acme-api") {
-		t.Errorf("right pane missing the project's new card:\n%s", out)
+	if m.schedPaneActive() || strings.Contains(ansi.Strip(m.render()), "New schedule in") {
+		t.Error("selecting + new schedule should only highlight it, no drawer")
 	}
 	m = schedPress(t, m, "enter")
 	if m.schedForm == nil || m.schedForm.mode != schedFormNew {
@@ -457,8 +457,8 @@ func TestSchedulesZeroJobsMissingFileAndHints(t *testing.T) {
 		t.Errorf("no sessions: lines = %v, want %v", got, want)
 	}
 	m = selectSched(t, m, fleetSchedNewSel)
-	if out := ansi.Strip(m.render()); !strings.Contains(out, "No cron jobs yet") {
-		t.Errorf("right pane missing the empty card:\n%s", out)
+	if m.schedPaneActive() {
+		t.Error("the bottom + new schedule line should show no drawer either")
 	}
 }
 

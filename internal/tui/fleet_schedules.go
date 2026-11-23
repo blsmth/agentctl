@@ -238,9 +238,11 @@ func (m *FleetModel) selectedSchedLine() *fleetLine {
 
 // ── Drawer ───────────────────────────────────────────────────────────────────
 
-// schedPaneActive reports whether the card or the form is showing.
+// schedPaneActive reports whether the card or the form is showing. A block
+// header or a "+ new schedule" line selected on its own shows no drawer: the
+// new line opens the form straight from Enter/n or a click.
 func (m FleetModel) schedPaneActive() bool {
-	return m.showSchedules && ((m.selSchedule != "" && !strings.HasPrefix(m.selSchedule, fleetSchedHeadSel)) || m.schedForm != nil)
+	return m.showSchedules && (isSchedJobSel(m.selSchedule) || m.schedForm != nil)
 }
 
 // fleetViewerMu serializes the hub's viewer pane changes (every show in
@@ -729,23 +731,8 @@ func (m FleetModel) schedCardLines(w int) []string {
 	if l == nil {
 		return nil
 	}
-	if l.schedNew && l.group.Session != "" {
-		return []string{
-			fleetTitleStyle.Render("New schedule in " + l.group.Project),
-			"",
-			wrapText("A schedule runs an agent unattended at set times, each run in its own window. The form starts in "+tildify(l.schedDir)+".", w),
-			"",
-			fleetDimStyle.Render("n new schedule"),
-		}
-	}
 	if l.schedNew {
-		return []string{
-			fleetTitleStyle.Render("Schedules"),
-			"",
-			wrapText("No cron jobs yet. A schedule runs an agent unattended at set times, each run in its own window.", w),
-			"",
-			fleetDimStyle.Render("n new schedule"),
-		}
+		return nil // the new line has no card; it opens the form
 	}
 	st := l.sched
 	var detail *cronedit.Detail

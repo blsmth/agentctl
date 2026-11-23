@@ -28,6 +28,7 @@ const (
 	fleetClickFold                             // header's project name: fold / unfold the group
 	fleetClickSweep                            // header's "sweep" button: preview a sweep of the group
 	fleetClickCollapse                         // a parent row's ▾/▸ marker: collapse / expand its sub-agents
+	fleetClickNewSched                         // a "+ new schedule" line: open the new-schedule form
 )
 
 // fleetListTop returns the screen row where the list (or sidebar) begins: the
@@ -190,7 +191,12 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 			return idx, fleetClickCollapse
 		}
 		return idx, fleetClickSelect
-	case fleetLinePlaceholder, fleetLineClosed, fleetLineSchedule:
+	case fleetLineSchedule:
+		if l.schedNew {
+			return idx, fleetClickNewSched
+		}
+		return idx, fleetClickSelect
+	case fleetLinePlaceholder, fleetLineClosed:
 		return idx, fleetClickSelect
 	case fleetLineSchedHead:
 		// The whole header is the collapse toggle.
@@ -277,6 +283,10 @@ func (m FleetModel) handleClickBody(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) 
 		m.selectLine(idx)
 		show := m.maybeShowCmd()
 		return m, show
+	case fleetClickNewSched:
+		m.closeMenu()
+		m.selectLine(idx)
+		return m, m.openSchedForm(schedFormNew, nil, m.lines[idx].schedDir)
 	case fleetClickNew:
 		m.closeMenu()
 		m.selectLine(idx)

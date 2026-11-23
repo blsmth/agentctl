@@ -73,6 +73,7 @@ const (
 	stopSource
 	stopPrompt
 	stopTemplate
+	stopStartTmpl
 	stopKind
 	stopClock
 	stopDays
@@ -121,7 +122,7 @@ const (
 	schedSourceTemplate
 )
 
-var schedSourceLabels = []string{"Own prompt", "Template"}
+var schedSourceLabels = []string{"Own prompt", "Template (linked, not editable)"}
 
 // fleetSchedForm is the open form.
 type fleetSchedForm struct {
@@ -139,6 +140,14 @@ type fleetSchedForm struct {
 	source    int
 	tmpl      schedCycler
 	templates []prompttemplate.Template
+	// start picks the template copied into an own prompt (Enter applies it);
+	// startAsk is the template waiting on a y/n because the prompt already has
+	// text; startFrom is the last one applied; fromTmpl the fields it filled,
+	// which a project change must not reset to the default.
+	start     schedCycler
+	startAsk  string
+	startFrom string
+	fromTmpl  map[schedStop]bool
 	// init holds each text field's value as opened: an untouched field
 	// saves the stored value verbatim.
 	init map[schedStop]string
@@ -223,7 +232,7 @@ func (m *FleetModel) openSchedForm(mode schedFormMode, st *cronedit.Status, dir 
 		save = tea.Batch(m.saveViewCmd(), m.schedLoadCmd())
 	}
 	f := &fleetSchedForm{
-		mode: mode, init: map[schedStop]string{}, touched: map[schedStop]bool{},
+		mode: mode, init: map[schedStop]string{}, touched: map[schedStop]bool{}, fromTmpl: map[schedStop]bool{},
 		env: fleetSchedEnvLoad(), agentNames: m.schedAgentNames, showErrs: mode == schedFormEdit,
 	}
 	f.groups = m.schedGroupAgents()
@@ -293,6 +302,8 @@ func (f *fleetSchedForm) cyclerFor(stop schedStop) *schedCycler {
 		return &f.agent
 	case stopTemplate:
 		return &f.tmpl
+	case stopStartTmpl:
+		return &f.start
 	case stopModel:
 		return &f.model
 	case stopEffort:
@@ -355,6 +366,22 @@ func (f *fleetSchedForm) templateOpts() []schedOpt {
 	return out
 }
 
+// startOpts are the "start from template" cycler's options: nothing chosen,
+// then the templates.
+func (f *fleetSchedForm) startOpts() []schedOpt {
+	return append([]schedOpt{{value: "", label: "choose a template"}}, f.templateOpts()...)
+}
+
+// templateNamed is the listed template called name, nil when none.
+func (f *fleetSchedForm) templateNamed(name string) *prompttemplate.Template {
+	for i := range f.templates {
+		if f.templates[i].Name == name {
+			return &f.templates[i]
+		}
+	}
+	return nil
+}
+
 // template is the selected template, nil when none (or not found).
 func (f *fleetSchedForm) template() *prompttemplate.Template {
 	name := f.tmpl.value()
@@ -370,6 +397,7 @@ func (f *fleetSchedForm) template() *prompttemplate.Template {
 func (f *fleetSchedForm) setupCyclers(job cron.Job) {
 	dir := f.curDir()
 	f.tmpl = newCycler(f.templateOpts(), job.Template, false, nil)
+	f.start = newCycler(f.startOpts(), "", false, nil)
 	f.agent = newCycler(f.agentOpts(dir), job.Agent, true, plainAgent)
 	f.model = newCycler(f.env.modelOpts(job.Agent, job.Backend), job.Model, true, plainModel)
 	f.effort = newCycler(f.env.effortOpts(job.Agent), job.Effort, false, nil)
@@ -429,10 +457,15 @@ func (f *fleetSchedForm) defaultAgent(dirs []string, i int) string {
 func (f *fleetSchedForm) refreshOptions() {
 	dir := f.curDir()
 	f.tmpl.setOpts(f.templateOpts(), f.tmpl.value(), nil)
+	startCur := f.start.value()
+	if f.templateNamed(startCur) == nil {
+		startCur = ""
+	}
+	f.start.setOpts(f.startOpts(), startCur, nil)
 	switch {
 	case f.source == schedSourceTemplate && f.agent.value() == "":
 		f.agent.setOpts(f.agentOpts(dir), "", plainAgent)
-	case f.mode != schedFormEdit && !f.touched[stopAgent]:
+	case f.mode != schedFormEdit && !f.touched[stopAgent] && !f.fromTmpl[stopAgent]:
 		if a := f.defaultAgent(f.dirs, f.dirIdx); a != "" {
 			f.agent.setOpts(f.agentOpts(dir), a, plainAgent)
 		}
@@ -571,6 +604,9 @@ func (f *fleetSchedForm) stops() []schedStop {
 	if f.source == schedSourceTemplate {
 		out = append(out, stopTemplate)
 	} else {
+		if len(f.templates) > 0 {
+			out = append(out, stopStartTmpl)
+		}
 		out = append(out, stopPrompt)
 	}
 	out = append(out, stopKind)
@@ -1014,6 +1050,14 @@ func (m *FleetModel) handleSchedFormKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if f.startAsk != "" {
+		name := f.startAsk
+		f.startAsk = ""
+		if t := f.templateNamed(name); t != nil && (key == "y" || key == "Y") {
+			return m.applyStartTemplate(t)
+		}
+		return nil
+	}
 	if f.review {
 		switch key {
 		case "y", "Y":
@@ -1134,6 +1178,13 @@ func (m *FleetModel) handleSchedFormKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 	case stopPrompt:
 		f.prompt, cmd = f.prompt.Update(msg)
+	case stopStartTmpl:
+		if key == "enter" {
+			return m.schedStartTemplate()
+		}
+		if !f.cyclerKey(msg, key) {
+			return nil
+		}
 	case stopAgent, stopTemplate, stopModel, stopEffort, stopBackend, stopAccount, stopTimeout, stopUsage5h, stopUsage7d:
 		if !f.cyclerKey(msg, key) {
 			return nil
@@ -1168,7 +1219,7 @@ func (m *FleetModel) schedFormChanged(before string, cmd tea.Cmd) tea.Cmd {
 	}
 	switch f.focus {
 	case stopDir:
-		f.templates = fleetSchedTemplates(f.curDir())
+		f.templates = fleetSchedTemplates(f.curDir()) // the prompt text stays
 		f.refreshOptions()
 	case stopAgent, stopSource, stopTemplate:
 		f.refreshOptions()
@@ -1349,7 +1400,7 @@ func (m *FleetModel) applySchedEditor(msg fleetSchedEditorMsg) tea.Cmd {
 // pasteSchedForm routes a paste to the focused text field.
 func (m *FleetModel) pasteSchedForm(msg tea.PasteMsg) tea.Cmd {
 	f := m.schedForm
-	if f.review || f.saving || f.discard {
+	if f.review || f.saving || f.discard || f.startAsk != "" {
 		return nil
 	}
 	var cmd tea.Cmd
@@ -1520,6 +1571,20 @@ func (m FleetModel) schedFormLayout(w, h int) schedLayout {
 			out.add(indent + fleetDimStyle.Render(truncateToWidth("read at every fire; the agent, model and effort set here win", vw)))
 		}
 	} else {
+		if len(f.templates) > 0 {
+			v, hs = cyc(stopStartTmpl, 0)
+			row(stopStartTmpl, "Start from", v, hs...)
+			switch {
+			case f.startAsk != "":
+				out.add(indent + fleetBlockedStyle.Render(truncateToWidth("replace the prompt with "+f.startAsk+"? y/n", vw)))
+			case f.focus == stopStartTmpl && f.start.value() != "":
+				hint := "⏎ copy it into the prompt (you can edit it)"
+				out.hits = append(out.hits, schedHit{line: len(out.lines), x0: schedLabelW + 1, x1: schedLabelW + 1 + lipgloss.Width(hint), stop: stopStartTmpl, kind: schedHitApply})
+				out.add(indent + fleetDimStyle.Render(truncateToWidth(hint, vw)))
+			case f.startFrom != "":
+				out.add(indent + fleetDimStyle.Render(truncateToWidth("copied from template "+f.startFrom+"; saved as your own prompt", vw)))
+			}
+		}
 		pr := f.prompt
 		pr.SetWidth(max(vw, 8))
 		row(stopPrompt, "Prompt", pr.View())
@@ -1880,4 +1945,52 @@ func orNoneText(s string) string {
 		return "none"
 	}
 	return s
+}
+
+// schedStartTemplate is Enter on the "start from" picker: copy the chosen
+// template into the prompt, after a y/n when the prompt already has text.
+func (m *FleetModel) schedStartTemplate() tea.Cmd {
+	f := m.schedForm
+	t := f.templateNamed(f.start.value())
+	if t == nil {
+		f.err = "choose a template first (←/→ or type to filter)"
+		return nil
+	}
+	cur := f.prompt.Value()
+	if (strings.TrimSpace(cur) != "" && cur != t.Prompt) || (strings.TrimSpace(cur) == "" && f.promptKey != "") {
+		f.startAsk = t.Name
+		return nil
+	}
+	return m.applyStartTemplate(t)
+}
+
+// applyStartTemplate copies t's body into the prompt editor and fills the
+// agent, model and effort from its frontmatter, but only fields the user has
+// not touched (and, on an edit or duplicate, only ones that are still
+// empty). The job saves as an ordinary own-prompt job.
+func (m *FleetModel) applyStartTemplate(t *prompttemplate.Template) tea.Cmd {
+	f := m.schedForm
+	f.prompt.SetValue(t.Prompt)
+	f.promptKey = ""
+	f.startFrom = t.Name
+	f.touched[stopPrompt] = true
+	// free: the field may be overwritten by the template.
+	free := func(stop schedStop, cur string) bool {
+		return !f.touched[stop] && (f.mode == schedFormNew || cur == "")
+	}
+	if t.Agent != "" && free(stopAgent, f.agent.value()) {
+		f.agent.setOpts(f.agentOpts(f.curDir()), t.Agent, plainAgent)
+		f.fromTmpl[stopAgent] = true
+	}
+	f.refreshOptions()
+	if t.Model != "" && free(stopModel, f.model.value()) {
+		f.model.setOpts(f.env.modelOpts(f.agent.value(), f.backend.value()), t.Model, plainModel)
+		f.advOpen = true
+	}
+	if t.Effort != "" && free(stopEffort, f.effort.value()) {
+		f.effort.setOpts(f.env.effortOpts(f.agent.value()), t.Effort, nil)
+		f.advOpen = true
+	}
+	f.focusStop(stopPrompt)
+	return m.schedPreviewCmd()
 }
