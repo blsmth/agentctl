@@ -39,7 +39,11 @@ type Entry struct {
 	Manual   bool   `json:"manual,omitempty"`
 	WindowID string `json:"window,omitempty"`
 	Session  string `json:"session,omitempty"`
-	Account  string `json:"account,omitempty"`
+	// SessionID is the agent session the run started; it outlives the
+	// window and identifies a closed run's transcript. Absent on entries
+	// recorded before it was tracked.
+	SessionID string `json:"session_id,omitempty"`
+	Account   string `json:"account,omitempty"`
 	// Missed counts older fires a catch-up superseded.
 	Missed int    `json:"missed,omitempty"`
 	Note   string `json:"note,omitempty"`

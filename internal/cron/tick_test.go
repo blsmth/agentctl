@@ -58,7 +58,7 @@ func (f *fakeEnv) deps(dir string, now time.Time, cfg config.CronConfig, jobs ..
 				return LaunchResult{}, f.launchErr
 			}
 			f.nextWindow++
-			return LaunchResult{WindowID: fmt.Sprintf("@%d", f.nextWindow), Session: "agentctl-proj"}, nil
+			return LaunchResult{WindowID: fmt.Sprintf("@%d", f.nextWindow), Session: "agentctl-proj", SessionID: fmt.Sprintf("sess-%d", f.nextWindow)}, nil
 		},
 		Interrupt: func(w Window, _ Job, _ time.Duration) error {
 			f.mu.Lock()
@@ -547,5 +547,20 @@ func TestNotifyFailedContent(t *testing.T) {
 				t.Errorf("notification = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTickRecordsSessionID(t *testing.T) {
+	dir := t.TempDir()
+	job := hourlyJob("j")
+	seedState(t, dir, map[string]time.Time{"j": at(9, 0)})
+	f := &fakeEnv{}
+	now := at(10, 0).Add(Jitter("j") + 30*time.Second)
+	if _, err := Tick(f.deps(dir, now, config.CronConfig{}, job)); err != nil {
+		t.Fatal(err)
+	}
+	runs, _ := ReadRuns(dir, "j")
+	if len(runs) != 1 || runs[0].SessionID != "sess-1" {
+		t.Fatalf("runs = %+v, want one entry with session_id sess-1", runs)
 	}
 }

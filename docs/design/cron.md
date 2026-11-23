@@ -154,6 +154,18 @@ agentctl cron tick                 # hidden; what launchd runs
 
 The phone web app and the hub get a Schedules view to list, create, edit, pause/resume, run now, duplicate and delete jobs (#237).
 
+### 7. Opening a run's session
+
+A `fired` entry in `runs.ndjson` records `session_id`, the agent session the launch pre-assigned (`dispatch.Result.SessionID`, plumbed through `cron.LaunchResult`). Window IDs are reused after a tmux restart, so the window ID alone never identifies a run. Entries recorded before this have no `session_id` and stay valid.
+
+`cronedit.Resolver.ResolveRun` maps an entry to a `RunTarget` (`live`, `closed` or `missing`), behind injectable seams for live windows, the closed ledger and the transcript finder:
+
+- **live**: a live window whose windowstate `session_id` equals the entry's. A legacy entry (no session ID) needs the same tmux session and window ID, `scheduled_by` equal to the job, and `scheduled_at` within two minutes of the entry; a window with no session yet (still launching) matches on the same terms.
+- **closed**: a `closedlog` record with the same session ID (legacy: same session and window, `scheduled_by` equal to the job, closed after the entry, closest wins). The transcript comes from the record's `log_path`, else a search of every account's projects dir. `Resumable` reuses `closedlog.Record.ResumeCheck`, the same check the hub's Closed section uses.
+- **missing**: nothing matched or the transcript is gone (closed-ledger pruning at 90 days, `runs.ndjson` truncation, another machine). `Reason` says why; this is a normal state.
+
+Only `fired` entries resolve; skipped, timeout and failed entries never do. Viewing a transcript never starts an agent.
+
 ## Rollout
 
 1. **`cron` core, Claude only, `window` mode:** schedules.json, `robfig/cron/v3`, tick with flock and state, catch-up, overlap, `max_concurrent`, usage gate, launchd install (extract `internal/launchd`), `RunDispatch` options struct, `scheduled_by` in windowstate, the CLI above, `health` lines. Can ship before the Harness refactor.

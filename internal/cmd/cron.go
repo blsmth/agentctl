@@ -556,11 +556,11 @@ func cronLaunch(req cron.LaunchRequest) (cron.LaunchResult, error) {
 				return fmt.Errorf("%w: starting session %s: %v", cron.ErrTmuxUnavailable, p.session, err)
 			}
 		}
-		wid, _, err := dispatchPromptOptions(opts)
+		dres, err := dispatchPromptResult(opts)
 		if err != nil {
 			return err
 		}
-		res = cron.LaunchResult{WindowID: wid, Session: p.session}
+		res = cron.LaunchResult{WindowID: dres.WindowID, Session: p.session, SessionID: dres.SessionID}
 		return nil
 	})
 	return res, err

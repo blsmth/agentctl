@@ -67,6 +67,10 @@ type LaunchRequest struct {
 type LaunchResult struct {
 	WindowID string
 	Session  string
+	// SessionID is the agent session the launch pre-assigned ("" when the
+	// harness assigns it later). Window IDs are reused, so this is what
+	// identifies the run once its window is gone.
+	SessionID string
 }
 
 // Deps are a tick's inputs and side effects. Every exec, tmux call and
@@ -376,8 +380,8 @@ func (t *ticker) launch(job Job, scheduled time.Time, e Entry) {
 		return
 	}
 	t.running++
-	t.windows = append(t.windows, Window{ID: res.WindowID, Job: job.Name, Session: res.Session, ScheduledAt: t.now})
-	e.Result, e.WindowID, e.Session = ResultFired, res.WindowID, res.Session
+	t.windows = append(t.windows, Window{ID: res.WindowID, Job: job.Name, Session: res.Session, SessionID: res.SessionID, ScheduledAt: t.now})
+	e.Result, e.WindowID, e.Session, e.SessionID = ResultFired, res.WindowID, res.Session, res.SessionID
 	t.record(e)
 }
 
