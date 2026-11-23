@@ -64,7 +64,16 @@ func TestArtifactAddPrintsURLAndNotesServeDown(t *testing.T) {
 	if err := h.env.add(&out, ArtifactAddOptions{Path: src}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "https://box.local:8443/#/artifacts/") || !strings.Contains(out.String(), `"Report"`) {
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 3 || !strings.Contains(lines[0], `"Report"`) {
+		t.Fatalf("stdout = %q", out.String())
+	}
+	id := strings.Fields(lines[0])[3]
+	if !artifacts.CapabilityID(id) {
+		t.Errorf("id %q is not a capability id", id)
+	}
+	// The direct link first (any browser, no pairing), then the phone app.
+	if lines[1] != "https://box.local:8443/a/"+id+"/latest/" || lines[2] != "app: https://box.local:8443/#/artifacts/"+id {
 		t.Errorf("stdout = %q", out.String())
 	}
 	if !strings.Contains(h.errBuf.String(), "serve is not running") {
@@ -90,7 +99,8 @@ func TestArtifactAddJSONAndOrigin(t *testing.T) {
 		t.Fatalf("bad json %q: %v", out.String(), err)
 	}
 	if v.Title != "Page" || v.Kind != "html" || !v.Pinned || v.Agent != "go-engineer" || v.WindowID != "@7" ||
-		v.Project != "proj" || v.ServeRunning || !strings.HasSuffix(v.URL, "/#/artifacts/"+v.ID) {
+		v.Project != "proj" || v.ServeRunning || v.URL != "https://box.local:8443/a/"+v.ID+"/latest/" ||
+		v.AppURL != "https://box.local:8443/#/artifacts/"+v.ID {
 		t.Errorf("view = %+v", v)
 	}
 }
@@ -196,21 +206,24 @@ func TestArtifactUpdateShowURLOpen(t *testing.T) {
 		t.Errorf("update out = %q", out.String())
 	}
 	out.Reset()
-	if err := h.env.show(&out, v.ID, false); err != nil || !strings.Contains(out.String(), "second") || !strings.Contains(out.String(), "/"+v.ID+"/1") {
+	if err := h.env.show(&out, v.ID, false); err != nil || !strings.Contains(out.String(), "second") ||
+		!strings.Contains(out.String(), "https://box.local:8443/a/"+v.ID+"/1/") ||
+		!strings.Contains(out.String(), "url:         https://box.local:8443/a/"+v.ID+"/latest/") ||
+		!strings.Contains(out.String(), "app:         https://box.local:8443/#/artifacts/"+v.ID) {
 		t.Errorf("show = %q %v", out.String(), err)
 	}
 	out.Reset()
-	if err := h.env.url(&out, v.ID, 0); err != nil || strings.TrimSpace(out.String()) != "https://box.local:8443/#/artifacts/"+v.ID {
+	if err := h.env.url(&out, v.ID, 0); err != nil || strings.TrimSpace(out.String()) != "https://box.local:8443/a/"+v.ID+"/latest/" {
 		t.Errorf("url = %q %v", out.String(), err)
 	}
 	out.Reset()
-	if err := h.env.url(&out, v.ID, 1); err != nil || !strings.HasSuffix(strings.TrimSpace(out.String()), "/"+v.ID+"/1") {
+	if err := h.env.url(&out, v.ID, 1); err != nil || strings.TrimSpace(out.String()) != "https://box.local:8443/a/"+v.ID+"/1/" {
 		t.Errorf("url rev = %q %v", out.String(), err)
 	}
 	if err := h.env.url(&out, v.ID, 9); err == nil || !strings.Contains(err.Error(), "no revision 9") {
 		t.Errorf("url bad rev: %v", err)
 	}
-	if err := h.env.open(&out, v.ID, 2); err != nil || len(h.opened) != 1 || !strings.HasSuffix(h.opened[0], "/"+v.ID+"/2") {
+	if err := h.env.open(&out, v.ID, 2); err != nil || len(h.opened) != 1 || h.opened[0] != "https://box.local:8443/a/"+v.ID+"/2/" {
 		t.Errorf("open: %v %v", err, h.opened)
 	}
 	h.env.openBrowser = func(string) error { return errors.New("no display") }

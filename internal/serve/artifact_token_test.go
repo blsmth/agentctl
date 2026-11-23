@@ -24,8 +24,8 @@ func (ae *artifactEnv) tokenFor(t *testing.T, id string, rev string) (root, tok 
 
 func TestArtifactTokenScope(t *testing.T) {
 	ae := newArtifactEnv(t, false)
-	a := ae.add(t, map[string]string{"index.html": "<p>A1</p>", "s.css": "a"}, artifacts.AddOptions{})
-	b := ae.add(t, map[string]string{"index.html": "<p>B</p>"}, artifacts.AddOptions{})
+	a := ae.addLegacy(t, map[string]string{"index.html": "<p>A1</p>", "s.css": "a"}, artifacts.AddOptions{})
+	b := ae.addLegacy(t, map[string]string{"index.html": "<p>B</p>"}, artifacts.AddOptions{})
 	if _, err := ae.store.Update(a.ID, artifacts.UpdateOptions{Source: artifacts.Source{Path: writeTemp(t, "index.html", "<p>A2</p>")}}); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestArtifactTokenScope(t *testing.T) {
 
 func TestArtifactTokenRevokedDevice(t *testing.T) {
 	ae := newArtifactEnv(t, false)
-	a := ae.add(t, map[string]string{"a.txt": "x"}, artifacts.AddOptions{})
+	a := ae.addLegacy(t, map[string]string{"a.txt": "x"}, artifacts.AddOptions{})
 	root, _ := ae.tokenFor(t, a.ID, "latest")
 	if w := do(ae.Handler(), "GET", root); w.Code != http.StatusOK {
 		t.Fatalf("before revoke = %d", w.Code)
@@ -112,7 +112,7 @@ func TestArtifactTokenRevokedDevice(t *testing.T) {
 // every list refresh) and per device.
 func TestArtifactTokenStableAndPerDevice(t *testing.T) {
 	ae := newArtifactEnv(t, false)
-	a := ae.add(t, map[string]string{"a.txt": "x"}, artifacts.AddOptions{})
+	a := ae.addLegacy(t, map[string]string{"a.txt": "x"}, artifacts.AddOptions{})
 	t1 := ae.mintArtifactToken(a.ID, 1, ae.dev.ID)
 	ae.clock.Advance(time.Second)
 	if t2 := ae.mintArtifactToken(a.ID, 1, ae.dev.ID); t2 != t1 && ae.clock.Now().Minute() != 0 {

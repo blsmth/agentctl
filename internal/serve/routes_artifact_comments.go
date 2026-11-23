@@ -88,7 +88,7 @@ func (s *Server) handleArtifactComment(r *http.Request, in artifactCommentIn, a 
 	}
 	if status != artifacts.CommentUndelivered {
 		if err := s.artifacts.MarkComment(id, c.ID, status); err != nil {
-			logging.Warn("serve: marking comment %s of %s: %v", c.ID, id, err)
+			logging.Warn("serve: marking comment %s of %s: %s", artifacts.ShortID(c.ID), artifacts.ShortID(id), redactArtifactIDs(err.Error()))
 		}
 		res.Comment.Status = status
 		s.artifactWatch.Kick()

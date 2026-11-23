@@ -65,7 +65,8 @@ test("the viewer sandboxes a directory artifact and loads its relative assets", 
   await expect(page.locator(".artifact-sheet .artifact-origin")).toHaveText("shop › designer · @17");
   await expect(page.getByRole("link", { name: "Go to window ›" })).toHaveAttribute("href", "#/w/agentctl-shop/%4017");
   const open = page.getByRole("link", { name: /Open in new tab/ });
-  await expect(open).toHaveAttribute("href", /^\/a\/t\//);
+  // The id is the capability: the direct numbered URL, no token.
+  await expect(open).toHaveAttribute("href", new RegExp(`^/a/${id}/2/$`));
   await expect(open).toHaveAttribute("target", "_blank");
   await page.getByRole("button", { name: "Close" }).click();
   const bar = (await page.locator("header.artifact-bar").boundingBox())!;
@@ -73,6 +74,23 @@ test("the viewer sandboxes a directory artifact and loads its relative assets", 
   const fr = (await page.locator("iframe.artifact-frame").boundingBox())!;
   const vh = page.viewportSize()!.height;
   expect(vh - (fr.y + fr.height)).toBeLessThan(2);
+});
+
+test("an unpaired browser opens the direct link and loads the relative assets", async ({ browser, baseURL, control }) => {
+  const [id] = await control.seedArtifacts(seed());
+  expect(id).toMatch(/^[a-z2-7]{26}$/);
+  const ctx = await browser.newContext({ baseURL });
+  const page = await ctx.newPage();
+  const res = await page.goto(`/a/${id}/latest/`);
+  expect(res?.status()).toBe(200);
+  expect(res?.headers()["content-security-policy"]).toMatch(/^sandbox allow-scripts/);
+  await expect(page.locator("#h")).toHaveText("Rev two");
+  await expect(page.locator("#js")).toHaveText("js ran");
+  await expect(page.locator("#h")).toHaveCSS("color", "rgb(1, 2, 3)");
+  await expect(page.locator("#pic")).toHaveJSProperty("naturalWidth", 1);
+  // The API still needs pairing.
+  expect((await page.request.get("/v1/artifacts")).status()).toBe(401);
+  await ctx.close();
 });
 
 test("the revision picker switches content", async ({ page, control }) => {

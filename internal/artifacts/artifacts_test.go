@@ -538,14 +538,83 @@ func TestLazyDir(t *testing.T) {
 }
 
 func TestNewIDAndSlug(t *testing.T) {
-	for i := 0; i < 50; i++ {
-		if id := NewID(); !ValidID(id) {
-			t.Fatalf("bad id %q", id)
+	seen := map[string]bool{}
+	for i := 0; i < 2000; i++ {
+		id := NewID()
+		if len(id) != IDLen || strings.Trim(id, "abcdefghijklmnopqrstuvwxyz234567") != "" {
+			t.Fatalf("id %q: want %d characters of a-z2-7", id, IDLen)
 		}
+		if !ValidID(id) || !CapabilityID(id) {
+			t.Fatalf("NewID %q not valid", id)
+		}
+		if seen[id] {
+			t.Fatalf("duplicate id %q", id)
+		}
+		seen[id] = true
 	}
 	for in, want := range map[string]string{"Q4 Report: Sales!": "q4-report-sales", "  ": "", "ünï": "n"} {
 		if got := slugify(in); got != want {
 			t.Errorf("slugify(%q) = %q want %q", in, got, want)
 		}
 	}
+}
+
+func TestValidID(t *testing.T) {
+	cases := []struct {
+		id         string
+		valid, cap bool
+	}{
+		{"abcdefghij", true, false},                   // legacy 10
+		{"abcdefghijklmnopqrstuvwxyz", true, true},    // 26
+		{"a234567bcdefghijklmnopqrst", true, true},    // 26 with digits
+		{"abcdefghi", false, false},                   // 9
+		{"abcdefghijk", false, false},                 // 11
+		{"abcdefghijklmnopqrstuvwxy", false, false},   // 25
+		{"abcdefghijklmnopqrstuvwxyza", false, false}, // 27
+		{"ABCDEFGHIJ", false, false},
+		{"abcdefghi1", false, false}, // 1 is not base32
+		{"abcdefghij/", false, false},
+		{"../etc/pas", false, false},
+		{"", false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.id, func(t *testing.T) {
+			if got := ValidID(c.id); got != c.valid {
+				t.Errorf("ValidID = %v want %v", got, c.valid)
+			}
+			if got := CapabilityID(c.id); got != c.cap {
+				t.Errorf("CapabilityID = %v want %v", got, c.cap)
+			}
+		})
+	}
+	if got := ShortID("abcdefghijklmnopqrstuvwxyz"); got != "abcdef…" {
+		t.Errorf("ShortID = %q", got)
+	}
+}
+
+func TestLegacyIDStillReadable(t *testing.T) {
+	s := newStore(t)
+	m := addOne(t, s)
+	root, _ := s.Dir()
+	legacy := "abcdefghij"
+	if err := os.Rename(filepath.Join(root, m.ID), filepath.Join(root, legacy)); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(root, legacy, "meta.json"))
+	data = []byte(strings.ReplaceAll(string(data), m.ID, legacy))
+	if err := os.WriteFile(filepath.Join(root, legacy, "meta.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get(legacy); err != nil {
+		t.Fatalf("Get legacy: %v", err)
+	}
+	list, err := s.List(Filter{})
+	if err != nil || len(list) != 1 || list[0].ID != legacy {
+		t.Fatalf("List = %v %v", list, err)
+	}
+	c, err := s.Open(legacy, 0, "")
+	if err != nil {
+		t.Fatalf("Open legacy: %v", err)
+	}
+	_ = c.Close()
 }

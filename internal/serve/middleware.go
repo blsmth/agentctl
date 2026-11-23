@@ -120,16 +120,23 @@ func DeviceFrom(ctx context.Context) (Device, bool) {
 	return d, ok
 }
 
+// deviceFromCookie authenticates the request's device cookie, if any. A
+// Public handler that serves more to a paired device calls it directly.
+func deviceFromCookie(auth deviceAuthenticator, now func() time.Time, r *http.Request) (Device, bool) {
+	c, err := r.Cookie(DeviceCookie)
+	if err != nil || c.Value == "" {
+		return Device{}, false
+	}
+	return auth.Authenticate(c.Value, now())
+}
+
 // requireDevice rejects requests without a valid device cookie: JSON 401 for
 // API clients, the "not paired" page for browsers.
 func requireDevice(auth deviceAuthenticator, now func() time.Time, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie(DeviceCookie)
-		if err == nil && c.Value != "" {
-			if d, ok := auth.Authenticate(c.Value, now()); ok {
-				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), deviceKey{}, d)))
-				return
-			}
+		if d, ok := deviceFromCookie(auth, now, r); ok {
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), deviceKey{}, d)))
+			return
 		}
 		if wantsHTML(r) {
 			writeHTML(w, http.StatusUnauthorized, pageNotPaired)

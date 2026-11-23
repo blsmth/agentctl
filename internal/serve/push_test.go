@@ -291,6 +291,15 @@ func TestNtfyRequestShape(t *testing.T) {
 	if got := gotReq.Header.Get("Priority"); got != "high" {
 		t.Errorf("Priority = %q", got)
 	}
+
+	// An artifact's id is a viewing credential: the ntfy link opens the list.
+	id := "abcdefghijklmnopqrstuvwxyz"
+	if err := n.Send(context.Background(), Message{Title: "t", Body: "b", URL: artifactViewerURL(id), Kind: "artifact", Tag: "artifact:" + id}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := gotReq.Header.Get("Click"), "https://192.168.1.10:8443/#/artifacts"; got != want {
+		t.Errorf("artifact Click = %q, want %q", got, want)
+	}
 }
 
 func TestNtfyErrorStatus(t *testing.T) {
