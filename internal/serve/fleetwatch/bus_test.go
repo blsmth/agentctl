@@ -315,3 +315,18 @@ func TestShellsChangePushesFleet(t *testing.T) {
 		t.Fatalf("event %+v", ev)
 	}
 }
+
+func TestPublishReachesSubscribers(t *testing.T) {
+	b := NewBus(&fakeSource{}, Options{})
+	_, sub := b.Subscribe()
+	defer sub.Close()
+	b.Publish(Event{Kind: KindArtifact, Artifact: ArtifactChange{ID: "abcdefghij", Action: ArtifactAdd}})
+	select {
+	case ev := <-sub.C:
+		if ev.Kind != KindArtifact || ev.Artifact.ID != "abcdefghij" || ev.Artifact.Action != ArtifactAdd {
+			t.Errorf("event = %+v", ev)
+		}
+	default:
+		t.Fatal("no event published")
+	}
+}

@@ -154,7 +154,7 @@ type Message struct {
 
 	// Urgent, Kind and TTL are not part of the payload.
 	Urgent bool   `json:"-"`
-	Kind   string `json:"-"` // "blocked", "reminder", "done", "approval", "test"
+	Kind   string `json:"-"` // "blocked", "reminder", "done", "approval", "artifact", "test"
 	TTL    int    `json:"-"` // seconds; 0 means pushTTL
 }
 
@@ -441,6 +441,8 @@ func redactForNtfy(m Message) Message {
 		m.Title = "agentctl: an agent finished"
 	case "approval":
 		m.Title = "agentctl: approval needed"
+	case "artifact":
+		m.Title = "agentctl: new artifact"
 	default:
 		m.Title = "agentctl: notification"
 	}
@@ -459,6 +461,8 @@ func ntfyTags(kind string) string {
 		return "white_check_mark,agentctl"
 	case "approval":
 		return "raising_hand,agentctl"
+	case "artifact":
+		return "page_facing_up,agentctl"
 	default:
 		return "bell,agentctl"
 	}

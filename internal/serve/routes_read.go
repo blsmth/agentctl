@@ -441,6 +441,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 					Session  string `json:"session"`
 					WindowID string `json:"window_id"`
 				}{ev.Session, ev.WindowID})
+			case fleetwatch.KindArtifact:
+				ok = send("artifact", struct {
+					ID     string `json:"id"`
+					Action string `json:"action"`
+				}{ev.Artifact.ID, ev.Artifact.Action})
 			}
 			if !ok {
 				return

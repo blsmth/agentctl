@@ -88,13 +88,15 @@ type Meta struct {
 	Updated     time.Time  `json:"updated"`
 	Revs        []Revision `json:"revs"`
 	Pinned      bool       `json:"pinned,omitempty"`
-	ProjectDir  string     `json:"project_dir,omitempty"`
-	Project     string     `json:"project,omitempty"`
-	Agent       string     `json:"agent,omitempty"`
-	WindowID    string     `json:"window_id,omitempty"`
-	Session     string     `json:"session,omitempty"`
-	SessionID   string     `json:"session_id,omitempty"`
-	Branch      string     `json:"branch,omitempty"`
+	// NoNotify is `artifact add --no-notify`: serve sends no push for it.
+	NoNotify   bool   `json:"no_notify,omitempty"`
+	ProjectDir string `json:"project_dir,omitempty"`
+	Project    string `json:"project,omitempty"`
+	Agent      string `json:"agent,omitempty"`
+	WindowID   string `json:"window_id,omitempty"`
+	Session    string `json:"session,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+	Branch     string `json:"branch,omitempty"`
 }
 
 // Latest returns the newest revision number (0 when there are none).
@@ -321,8 +323,10 @@ func storeBytes(root string) int64 {
 	return n
 }
 
-func checkCapacity(root string, add int64) error {
-	if used := storeBytes(root); used+add > MaxStoreBytes {
+// checkCapacity refuses a write of add bytes that would take the store over
+// MaxStoreBytes once freed bytes (revisions the write drops) are released.
+func checkCapacity(root string, add, freed int64) error {
+	if used := storeBytes(root); used-freed+add > MaxStoreBytes {
 		return fmt.Errorf("artifact store is full (%s used of %s): free space with `agentctl artifact rm <id>` or `agentctl artifact prune`",
 			humanBytes(used), humanBytes(MaxStoreBytes))
 	}
@@ -383,6 +387,7 @@ func (s *Store) Pin(id string, pinned bool) (Meta, error) {
 	if err := writeMeta(filepath.Join(root, id), m); err != nil {
 		return Meta{}, err
 	}
+	touchChanged(root)
 	return m, nil
 }
 
@@ -404,7 +409,11 @@ func (s *Store) Remove(id string) (Meta, error) {
 	if err != nil {
 		return Meta{}, err
 	}
-	return m, removeDir(root, id)
+	if err := removeDir(root, id); err != nil {
+		return m, err
+	}
+	touchChanged(root)
+	return m, nil
 }
 
 // removeDir moves <root>/<id> out of the namespace first (an atomic rename),
@@ -455,11 +464,15 @@ func (s *Store) Prune(olderThan time.Duration, dryRun bool) ([]Meta, error) {
 			continue
 		}
 		if err := removeDir(root, m.ID); err != nil {
+			touchChanged(root)
 			return gone, err
 		}
 	}
 	if !dryRun {
 		s.sweepTmp(root)
+		if len(gone) > 0 {
+			touchChanged(root)
+		}
 	}
 	return gone, nil
 }
@@ -479,4 +492,33 @@ func (s *Store) sweepTmp(root string) {
 		}
 		_ = os.RemoveAll(filepath.Join(tmp, e.Name()))
 	}
+}
+
+// changesDirName is the directory every writer touches after a change, so a
+// watcher (serve) needs one fsnotify watch however many artifacts there are.
+const changesDirName = ".changes"
+
+// ChangesDir returns <store root>/.changes, creating it (and the root) 0700.
+// Every successful Add, Update, Pin, Remove and Prune rewrites a file in it;
+// watch it and rescan with List to see what changed.
+func (s *Store) ChangesDir() (string, error) {
+	root, err := s.root(true)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, changesDirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("creating artifact change dir: %w", err)
+	}
+	return dir, nil
+}
+
+// touchChanged records that the store changed. Best effort: a watcher also
+// polls.
+func touchChanged(root string) {
+	dir := filepath.Join(root, changesDirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, "stamp"), []byte(time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o600)
 }

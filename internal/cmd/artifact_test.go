@@ -371,6 +371,50 @@ func TestPruneArtifactsHookIsNonFatal(t *testing.T) {
 	pruneArtifacts()
 }
 
+func TestArtifactAddNoNotifyPersisted(t *testing.T) {
+	h := newArtifactHarness(t)
+	var out bytes.Buffer
+	if err := h.env.add(&out, ArtifactAddOptions{Path: writeTmp(t, "a.txt", "x"), JSON: true, NoNotify: true}); err != nil {
+		t.Fatal(err)
+	}
+	var v artifactView
+	if err := json.Unmarshal(out.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	m, err := h.env.store().Get(v.ID)
+	if err != nil || !m.NoNotify {
+		t.Errorf("no_notify not stored: %+v %v", m, err)
+	}
+}
+
+// Regression: a meta.json with no revisions must be an error, not an index
+// panic.
+func TestArtifactURLNoRevisions(t *testing.T) {
+	h := newArtifactHarness(t)
+	v := addOne(t, h)
+	dir, _ := h.env.store().Dir()
+	metaPath := filepath.Join(dir, v.ID, "meta.json")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["revs"] = []any{}
+	data, _ = json.Marshal(m)
+	if err := os.WriteFile(metaPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	for _, rev := range []int{0, 3} {
+		if err := h.env.url(&out, v.ID, rev); err == nil || !strings.Contains(err.Error(), "no revisions") {
+			t.Errorf("rev %d: err = %v", rev, err)
+		}
+	}
+}
+
 func TestWriteTableAlignsWideCells(t *testing.T) {
 	rows := [][]string{
 		{"ID", "PIN", "TITLE", "AGENT"},

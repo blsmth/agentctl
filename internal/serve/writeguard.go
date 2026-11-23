@@ -91,6 +91,8 @@ type auditEntry struct {
 	Project string `json:"project,omitempty"`
 	// Schedule names the cron job a /v1/schedules write acts on.
 	Schedule string `json:"schedule,omitempty"`
+	// Artifact is the id a /v1/artifacts write acts on.
+	Artifact string `json:"artifact,omitempty"`
 	// Backend, Model and Effort are the requested launch choices (not secret).
 	Backend string `json:"backend,omitempty"`
 	Model   string `json:"model,omitempty"`
@@ -186,6 +188,9 @@ func writeActionFor(path string) (action, session, window string, ok bool) {
 	if action, ok := scheduleActionFor(path); ok {
 		return action, "", "", true
 	}
+	if action, ok := artifactActionFor(path); ok {
+		return action, "", "", true
+	}
 	// /v1/sessions/{s}/windows/{w}/{action}
 	p := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	if len(p) == 6 && p[0] == "v1" && p[1] == "sessions" && p[3] == "windows" && writeActions[p[5]] {
@@ -201,7 +206,7 @@ func writeActionFor(path string) (action, session, window string, ok bool) {
 // auditFor starts an audit entry for a write request by device d.
 func (s *Server) auditFor(r *http.Request, d Device, action string) auditEntry {
 	_, session, window, _ := writeActionFor(r.URL.Path)
-	return auditEntry{
+	e := auditEntry{
 		Time:       s.now().UTC().Format(time.RFC3339Nano),
 		DeviceID:   d.ID,
 		DeviceName: d.Name,
@@ -210,6 +215,10 @@ func (s *Server) auditFor(r *http.Request, d Device, action string) auditEntry {
 		Session:    clip(session),
 		Window:     clip(window),
 	}
+	if _, ok := artifactActionFor(r.URL.Path); ok {
+		e.Artifact = clip(strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")[2])
+	}
+	return e
 }
 
 func (s *Server) recordAudit(e auditEntry) {

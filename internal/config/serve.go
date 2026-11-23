@@ -77,6 +77,9 @@ type ServePushConfig struct {
 	SuppressWhileOpen *bool `json:"suppress_while_open,omitempty"`
 	// MutedProjects are project names that never push.
 	MutedProjects []string `json:"muted_projects,omitempty"`
+	// Artifacts pushes when an agent publishes a new artifact (`agentctl
+	// artifact add`, not updates). nil means enabled.
+	Artifacts *bool `json:"artifacts,omitempty"`
 }
 
 // EffectiveListen returns Listen or DefaultServeListen.
@@ -108,6 +111,11 @@ func (p ServePushConfig) BlockedEnabled() bool {
 // DoneEnabled reports whether done pushes are on (default true).
 func (p ServePushConfig) DoneEnabled() bool {
 	return p.Done == nil || *p.Done
+}
+
+// ArtifactsEnabled reports whether new-artifact pushes are on (default true).
+func (p ServePushConfig) ArtifactsEnabled() bool {
+	return p.Artifacts == nil || *p.Artifacts
 }
 
 // ApprovalsEnabled reports whether approval pushes are on (default true).

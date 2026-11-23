@@ -102,7 +102,7 @@ See [cron](configuration.md#cron) for the config keys, approval rules and the hu
 | `agentctl artifact rm <id>` | Delete it (`--yes` to skip the prompt; required when not on a terminal). |
 | `agentctl artifact prune` | Delete unpinned artifacts not updated for `--older-than` (default 30d; `--dry-run` lists them). `reconcile --housekeeping` runs the same 30-day prune. |
 
-Limits: 25 MB per revision, 500 files per directory, 1 GB for the store (`add` then fails, naming `artifact rm` and `prune`). Content is copied, never symlinked; a symlink inside a directory, a `..` entry, or a non-UTF-8 file with an unknown extension is refused. Use relative paths inside an HTML artifact (it is served under `/a/<id>/<rev>/`). Origin (agent, window, session, branch) comes from the calling window through `TMUX_PANE`; a plain shell records only the project, from the cwd's worktree-aware root. Serving and the phone viewer come in later PRs; see [design/artifacts.md](design/artifacts.md).
+Limits: 25 MB per revision, 500 files per directory, 1 GB for the store (`add` then fails, naming `artifact rm` and `prune`). Content is copied, never symlinked; a symlink inside a directory, a `..` entry, or a non-UTF-8 file with an unknown extension is refused. Use relative paths inside an HTML artifact (it is served under `/a/<id>/<rev>/`). Origin (agent, window, session, branch) comes from the calling window through `TMUX_PANE`; a plain shell records only the project, from the cwd's worktree-aware root. `agentctl serve` serves them under `/a/<id>/<rev>/` in a sandbox and pushes a notification for a new one (not for updates; `--no-notify` skips it); the phone viewer comes in a later PR. See [design/artifacts.md](design/artifacts.md).
 
 ## Phone web app and metrics
 

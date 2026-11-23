@@ -102,6 +102,48 @@ func (n *Notifier) Handle(ev fleetwatch.Event) {
 		}
 	case fleetwatch.KindGone:
 		delete(n.episodes, ev.Session+"\x00"+ev.WindowID)
+	case fleetwatch.KindArtifact:
+		if ev.Artifact.Action == fleetwatch.ArtifactAdd {
+			n.fireArtifactLocked(ev.Artifact, n.now())
+		}
+	}
+}
+
+// fireArtifactLocked pushes a newly published artifact: its title, "agent ·
+// project", and the viewer route. Never its content. Updates do not push;
+// --no-notify, serve.push.artifacts, muted projects and quiet hours apply.
+func (n *Notifier) fireArtifactLocked(a fleetwatch.ArtifactChange, now time.Time) {
+	if !n.cfg.ArtifactsEnabled() || a.NoNotify {
+		return
+	}
+	if slices.Contains(n.cfg.MutedProjects, a.Project) || InQuietHours(n.cfg.QuietHours, now) {
+		return
+	}
+	n.deliver(artifactMessage(a))
+}
+
+// artifactMessage is the push for a new artifact.
+func artifactMessage(a fleetwatch.ArtifactChange) Message {
+	var parts []string
+	for _, p := range []string{textutil.OneLine(a.Agent), textutil.OneLine(a.Project)} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	body := "New artifact"
+	if len(parts) > 0 {
+		body = fleet.TruncateWords(strings.Join(parts, " · "), pushBodyBudget)
+	}
+	title := textutil.OneLine(a.Title)
+	if title == "" {
+		title = "New artifact"
+	}
+	return Message{
+		Title: fleet.TruncateWords(title, pushBodyBudget),
+		Body:  body,
+		URL:   artifactViewerURL(a.ID),
+		Tag:   "artifact:" + a.ID,
+		Kind:  "artifact",
 	}
 }
 
