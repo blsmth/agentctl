@@ -114,6 +114,8 @@ func (m FleetModel) footerBody(cw int) string {
 	var b strings.Builder
 	b.WriteString("\n")
 	switch {
+	case m.searchEditing():
+		b.WriteString(m.searchView(cw))
 	case m.newSessionOpen():
 		b.WriteString(m.newSessionView(cw))
 	case m.menuOpen && m.menuHelp:
@@ -132,6 +134,8 @@ func (m FleetModel) footerBody(cw int) string {
 		b.WriteString(fleetSuccessStyle.Render("  " + truncateToWidth(fleetInfoGlyph+m.infoMsg, cw-2)))
 	case m.infoMsg != "":
 		b.WriteString(fleetDimStyle.Render("  " + truncateToWidth(m.infoMsg, cw-2)))
+	case m.search != nil:
+		b.WriteString(m.searchCommittedLine(cw))
 	}
 	b.WriteString("\n")
 	if m.newSessionOpen() && m.jumpErr != "" {
@@ -150,7 +154,10 @@ func (m FleetModel) footerHints() []fleetHint {
 		// After "x close", before "q leave".
 		hints = append(append(append([]fleetHint(nil), hints[:len(hints)-2]...), fleetHint{fleetArtifactKey, "artifact"}), hints[len(hints)-2:]...)
 	}
+	hints = m.searchHints(hints)
 	switch {
+	case m.searchEditing():
+		hints = fleetSearchHints
 	case m.newSessionOpen():
 		hints = m.newSessionHints()
 	case m.renameOpen():
@@ -216,6 +223,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"Z", "focus mode", "Z"},
 		{"f", "filter", "f"},
 		{"o", "sort: recent / window", "o"},
+		{fleetSearchKey, "search (⏎ keep, esc clear)", fleetSearchKey},
 		{fleetArtifactKey, "open newest ◆ artifact", fleetArtifactKey},
 		{fleetShellsKey, "shells", fleetShellsKey},
 		{fleetClosedKey, "closed agents", fleetClosedKey},
@@ -271,6 +279,9 @@ func (m *FleetModel) openHelp() {
 	m.cancelClose()
 	m.cancelNew()
 	m.cancelSweep()
+	if m.searchEditing() {
+		m.search.editing = false
+	}
 	m.menuOpen, m.menuHelp, m.menuLine = true, true, m.splitPane.Cursor()
 	m.ensureCursorVisible() // the footer grew; keep the cursor on screen
 }

@@ -321,6 +321,7 @@ const (
 	fleetLineSchedLabel                       // a non-selectable Schedules label or warning; see fleet_schedules.go
 	fleetLineSchedule                         // a selectable cron job row (or "+ new schedule")
 	fleetLineSchedHead                        // a selectable, collapsible schedules block header; see fleet_schedgroup.go
+	fleetLineSearchEmpty                      // a non-selectable "no matches" line while a search matches nothing
 )
 
 // fleetLine is one renderable line. Every kind except fleetLineDivider is also
@@ -361,7 +362,7 @@ type fleetLine struct {
 // selectable reports whether the cursor may rest on this line. Dividers and
 // sub-section labels are decoration only.
 func (l fleetLine) selectable() bool {
-	return l.kind != fleetLineDivider && l.kind != fleetLineSubheader && l.kind != fleetLineClosedLabel && l.kind != fleetLineSchedLabel
+	return l.kind != fleetLineDivider && l.kind != fleetLineSubheader && l.kind != fleetLineClosedLabel && l.kind != fleetLineSchedLabel && l.kind != fleetLineSearchEmpty
 }
 
 // ── FleetModel ────────────────────────────────────────────────────────────────
@@ -632,7 +633,13 @@ type FleetModel struct {
 	// rename is the open title editor (see fleet_rename.go); nil when closed.
 	// titleHolds are just-saved titles shown until a load reflects them, by
 	// "session|windowID".
-	rename     *fleetRenameState
+	rename *fleetRenameState
+	// search is the hub search (see fleet_search.go); nil = Off. searchIdx
+	// caches row haystacks (shared by the model's copies, cleared on reload);
+	// searchSeq numbers the debounced viewer follow.
+	search     *fleetSearch
+	searchIdx  *searchIndex
+	searchSeq  int
 	lastClick  *fleetLastClick // previous left click on a title, for double-click detection
 	titleHolds map[string]fleetTitleHold
 
@@ -774,6 +781,7 @@ func newFleetModel() FleetModel {
 		liveLeft:    left,
 		liveRight:   right,
 		closedCache: &closedlog.Cache{},
+		searchIdx:   &searchIndex{},
 		schedDirs:   newFleetDirCache(),
 		splitPane: SplitPane{
 			Orientation:   OrientHorizontal,
@@ -811,6 +819,14 @@ func fleetLoadCmd() tea.Cmd {
 // nothing selectable is an agent row (a header, placeholder, or empty hub is
 // selected): the live pane then keeps showing the last viewed agent.
 func (m *FleetModel) maybeShowCmd() tea.Cmd {
+	if m.searchEditing() {
+		return nil // the debounced search tick follows the selection
+	}
+	return m.showSelectedCmd()
+}
+
+// showSelectedCmd is maybeShowCmd without the search-input guard.
+func (m *FleetModel) showSelectedCmd() tea.Cmd {
 	if m.selIsHeader || m.selSession == "" || m.selWindowID == "" {
 		return nil
 	}
@@ -882,7 +898,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.expireInfo(fleetNow())
 		// A hot reload waits for an open rename editor or schedule form: it
 		// would lose the typed text.
-		if m.exeChanged != nil && !m.renameOpen() && !m.schedFormOpen() && m.exeChanged() {
+		if m.exeChanged != nil && !m.renameOpen() && !m.schedFormOpen() && !m.searchEditing() && m.exeChanged() {
 			m.reexec = true
 			return m, tea.Quit
 		}
@@ -894,6 +910,9 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case fleetClosedLoadedMsg:
 		m.applyClosedLoaded(msg)
 		return m, nil
+
+	case fleetSearchShowMsg:
+		return m, m.applySearchShow(msg)
 
 	case fleetArtifactsMsg:
 		m.applyArtifacts(msg)
@@ -1072,6 +1091,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.groups = msg.groups
 			m.display = msg.display
+			m.searchReset()
 			m.applyTitleHolds()
 			m.rebuildLines()
 			m.validateNew()
@@ -1153,6 +1173,9 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rename.input, cmd = m.rename.input.Update(msg)
 			return m, cmd
 		}
+		if m.searchEditing() {
+			return m, m.pasteSearch(msg)
+		}
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -1165,6 +1188,11 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ends when it closes.
 		var cmd tea.Cmd
 		m.rename.input, cmd = m.rename.input.Update(msg)
+		return m, cmd
+	}
+	if m.searchEditing() {
+		var cmd tea.Cmd
+		m.search.input, cmd = m.search.input.Update(msg)
 		return m, cmd
 	}
 	return m, nil
@@ -1185,6 +1213,9 @@ func (m *FleetModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.renameOpen() {
 		return *m, m.handleRenameKey(msg)
+	}
+	if m.searchEditing() {
+		return *m, m.handleSearchKey(msg)
 	}
 	if m.schedFormOpen() {
 		return *m, m.handleSchedFormKey(msg)
@@ -1270,6 +1301,9 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 	case fleetRenameKey:
 		return *m, m.openRename(m.splitPane.Cursor())
 
+	case fleetSearchKey:
+		return *m, m.openSearch()
+
 	case "x":
 		m.startClose(m.splitPane.Cursor())
 		return *m, nil
@@ -1285,6 +1319,9 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 		return *m, tea.Quit
 
 	case "q", "esc":
+		if key == "esc" && m.search != nil {
+			return *m, m.clearSearch() // the next esc leaves
+		}
 		home, _ := tmux.ViewerActiveWindow()
 		hubtarget.LeaveHub(fleetLeaver{m: m, home: home}, "")
 		return *m, nil
@@ -1662,7 +1699,7 @@ func (m *FleetModel) syncSelectionFromCursor() {
 	case fleetLineSchedule, fleetLineSchedHead:
 		m.selSession, m.selWindowID, m.selIsHeader = "", "", false
 		m.selSchedule = schedLineKey(l)
-	case fleetLineDivider, fleetLineSubheader, fleetLineClosedLabel, fleetLineSchedLabel:
+	case fleetLineDivider, fleetLineSubheader, fleetLineClosedLabel, fleetLineSchedLabel, fleetLineSearchEmpty:
 		// Unreachable in practice — moveCursor/resolveSelection never park
 		// the cursor on a divider or subheader — but defend against adopting a
 		// divider's zero-value Group as the selection rather than leaving
@@ -1806,8 +1843,9 @@ func (m *FleetModel) resolveSelection() {
 			}
 		}
 		// The row still exists but is hidden (folded or filtered out): stay
-		// on its group's header.
-		if !m.selIsHeader && m.rowExists(m.selSession, m.selWindowID) {
+		// on its group's header. Not while searching: a non-matching group's
+		// header is hidden too.
+		if !m.selIsHeader && !m.searching() && m.rowExists(m.selSession, m.selWindowID) {
 			for i, l := range m.lines {
 				if l.kind == fleetLineHeader && l.group.Session == m.selSession {
 					m.splitPane.SetCursor(i)
@@ -1817,6 +1855,19 @@ func (m *FleetModel) resolveSelection() {
 				}
 			}
 		}
+	}
+
+	if m.searching() {
+		// Hand the cursor to the first real match; with nothing to select
+		// the selection (and the viewer) stays as it was.
+		i := m.firstSearchLine()
+		if i < 0 {
+			return
+		}
+		m.splitPane.SetCursor(i)
+		m.syncSelectionFromCursor()
+		m.ensureCursorVisible()
+		return
 	}
 
 	for i, l := range m.lines {
@@ -2005,27 +2056,45 @@ func (m *FleetModel) rebuildLines() {
 	m.hiddenUnder = nil
 	place := m.placeSchedules()
 	m.schedHidden = nil
+	// While a query is active, folds and collapses are ignored for display
+	// (the saved state is untouched) so every match is visible.
+	searching := m.searching()
 	prevBody := false
 	for i, g := range m.groups {
 		all := m.shownRows(g.Rows)
+		folded := m.isFolded(g.Session) && !searching
+		headerHit := m.searchHeader(g)
 		rows, context := all, map[string]bool(nil)
-		if !m.isFolded(g.Session) {
+		if !folded {
 			src := all
 			if m.sortRecent {
 				src = fleet.SortRowsRecent(all)
 			}
-			rows, context = filterRows(src, m.filter)
+			if searching && !headerHit {
+				rows, context = filterRowsBy(src, func(r fleet.Row) bool { return m.filter.matches(r) && m.searchRow(r) })
+			} else {
+				rows, context = filterRows(src, m.filter)
+			}
 		}
-		body := !m.isFolded(g.Session) && (len(rows) > 0 || (len(all) == 0 && m.filter == fleetFilterAll))
+		body := !folded && (len(rows) > 0 || (len(all) == 0 && m.filter == fleetFilterAll && (!searching || headerHit)))
 		// The attention filter never hides an unfolded group's schedules.
 		var sched []fleetLine
-		if m.isFolded(g.Session) {
+		if folded {
 			m.noteFoldedSched(g, place.keys[i], place.byGroup[i])
 		} else {
-			sched = m.schedGroupLines(g, place.keys[i], place.byGroup[i])
+			jobs := place.byGroup[i]
+			if searching && !headerHit {
+				jobs = m.searchJobs(jobs)
+			}
+			if !searching || len(jobs) > 0 {
+				sched = m.schedGroupLines(g, place.keys[i], jobs)
+			}
 		}
 		shown := body || len(sched) > 0
-		if i > 0 && (shown || prevBody) {
+		if searching && !shown && !headerHit {
+			continue // no match in this group: hide it, header and divider too
+		}
+		if len(lines) > 0 && (shown || prevBody) {
 			lines = append(lines, fleetLine{kind: fleetLineDivider})
 		}
 		prevBody = shown
@@ -2050,7 +2119,7 @@ func (m *FleetModel) rebuildLines() {
 			l := fleetLine{kind: fleetLineRow, row: t.Row, groupHead: first, treePrefix: t.Prefix, dimmed: context[t.Row.WindowID]}
 			end := subtreeEnd(tree, j)
 			l.hasKids = end > j+1
-			if l.hasKids && m.isCollapsed(g.Session, t.Row.WindowID) {
+			if l.hasKids && m.isCollapsed(g.Session, t.Row.WindowID) && !searching {
 				l.collapsed = true
 				l.kids = tallySubtree(tree[j+1 : end])
 				for _, h := range tree[j+1 : end] {
@@ -2077,6 +2146,9 @@ func (m *FleetModel) rebuildLines() {
 			lines = append(lines, fleetLine{kind: fleetLineDivider})
 		}
 		lines = append(lines, sched...)
+	}
+	if searching && len(lines) == 0 {
+		lines = []fleetLine{{kind: fleetLineSearchEmpty}}
 	}
 	m.lines = lines
 	// The usual model is fleet-wide; column widths come from drawn rows only,
@@ -2191,9 +2263,15 @@ type fleetTitleLayout struct {
 // disagree.
 func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 	tags := []string{""}
+	search := m.searchTag()
 	if m.filter != fleetFilterAll {
 		short, _, _ := strings.Cut(m.filter.label(), " ")
 		tags = []string{m.filter.label(), short}
+		if search != "" {
+			tags = []string{tags[0] + " · " + search, tags[1] + " · " + search}
+		}
+	} else if search != "" {
+		tags = []string{search, search}
 	}
 	fit := func(l fleetTitleLayout, left, right string) fleetTitleLayout {
 		line := left
@@ -2239,7 +2317,7 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 
 	type candidate struct{ tag, right string }
 	candidates := []candidate{{tags[0], counts + suffix}, {tags[0], counts}}
-	if m.filter != fleetFilterAll {
+	if m.filter != fleetFilterAll || search != "" {
 		tight := strings.Join(cells, " ")
 		candidates = append(candidates, candidate{tags[0], tight}, candidate{tags[1], tight})
 	}
@@ -2322,7 +2400,7 @@ func (m FleetModel) renderStatusOrEmpty() (string, bool) {
 		return fleetDimStyle.Render("  loading…") + "\n", true
 	case m.loadErr != nil:
 		return fleetErrStyle.Render(fmt.Sprintf("  error loading sessions: %v", m.loadErr)) + "\n", true
-	case len(m.groups) == 0 && !m.showSchedules:
+	case len(m.groups) == 0 && !m.showSchedules && !m.searching():
 		return fleetDimStyle.Render("  no agentctl sessions running") + "\n", true
 	}
 	return "", false
@@ -2462,6 +2540,8 @@ func (m FleetModel) renderLine(i int, cw int) string {
 		return m.renderSchedRow(l, selected, cw)
 	case fleetLineSchedHead:
 		return m.renderSchedHead(l, selected, cw)
+	case fleetLineSearchEmpty:
+		return fleetDimStyle.Render(truncateToWidth(m.searchEmptyText(), cw-fleetSidebarRightGutter))
 	case fleetLineSubheader:
 		// The group's bar keeps the spine unbroken; the label aligns under
 		// agent names: bar + cursor slot + glyph + space.
