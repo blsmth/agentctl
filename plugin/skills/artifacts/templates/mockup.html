@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>App mockup</title>
+<style>
+/* ---- shared design tokens (keep identical across templates) ---- */
+:root{--bg:#fff;--fg:#1a1d21;--muted:#5f6b7a;--card:#f5f7fa;--line:#dde2e8;--accent:#2563eb;--good:#15803d;--warn:#b45309;--bad:#b91c1c;--r:12px;color-scheme:light dark}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1216;--fg:#e8ebef;--muted:#9aa5b4;--card:#181d24;--line:#2a313a;--accent:#6ea8ff;--good:#4ade80;--warn:#fbbf24;--bad:#f87171}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-wrap:anywhere}
+main{max-width:960px;margin:0 auto;padding:16px}
+h1{font-size:1.6rem;line-height:1.2;margin:.2em 0}
+h2{font-size:1.2rem;margin:1.6em 0 .5em}
+a{color:var(--accent)}
+.muted{color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px}
+.badge{display:inline-block;font-size:.75rem;padding:1px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+/* ---- end shared tokens ---- */
+body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
+.topbar{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:2}
+.topbar .brand{font-weight:650;flex:1}
+.mockbadge{border-color:var(--warn);color:var(--warn);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+main{flex:1;width:100%}
+.screen{display:none}.screen.on{display:block}
+.tabs{display:flex;position:sticky;bottom:0;background:var(--bg);border-top:1px solid var(--line)}
+.tabs a{flex:1;text-align:center;padding:12px 4px;text-decoration:none;color:var(--muted)}
+.tabs a[aria-current=page]{color:var(--accent);font-weight:650}
+.list{display:grid;gap:10px;padding:0;list-style:none}
+.list a{display:block;text-decoration:none;color:inherit}
+.btn{display:inline-block;padding:10px 16px;border-radius:var(--r);background:var(--accent);color:var(--bg);border:0;font:inherit;font-weight:600;text-decoration:none;cursor:pointer}
+.btn.ghost{background:none;color:var(--accent);border:1px solid var(--line)}
+label{display:block;margin:12px 0 4px}
+input,select,textarea{width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:inherit}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">App name</span>
+  <span class="badge mockbadge">mock</span>
+</header>
+
+<main>
+<!-- ===== CONTENT: one <section class="screen" id="..."> per screen; link with href="#id" ===== -->
+<section class="screen" id="home">
+  <h1>Home</h1>
+  <ul class="list">
+    <li><a class="card" href="#detail"><b>Item one</b><div class="muted">Tap to open the detail screen</div></a></li>
+    <li><a class="card" href="#detail"><b>Item two</b><div class="muted">Secondary line</div></a></li>
+  </ul>
+</section>
+
+<section class="screen" id="detail">
+  <p><a href="#home">&larr; Back</a></p>
+  <h1>Item detail</h1>
+  <p>Describe the content here.</p>
+  <a class="btn" href="#form">Edit</a>
+</section>
+
+<section class="screen" id="form">
+  <p><a href="#detail">&larr; Cancel</a></p>
+  <h1>Edit</h1>
+  <form onsubmit="event.preventDefault();location.hash='#detail'">
+    <label for="name">Name</label><input id="name" value="Item one">
+    <label for="kind">Kind</label><select id="kind"><option>A</option><option>B</option></select>
+    <p><button class="btn" type="submit">Save</button> <a class="btn ghost" href="#detail">Cancel</a></p>
+  </form>
+</section>
+
+<section class="screen" id="settings">
+  <h1>Settings</h1>
+  <p class="muted">Placeholder screen.</p>
+</section>
+<!-- ===== CONTENT: end ===== -->
+</main>
+
+<!-- Bottom tabs: edit hrefs to match the top-level screens above -->
+<nav class="tabs" id="tabs">
+  <a href="#home">Home</a>
+  <a href="#settings">Settings</a>
+</nav>
+
+<script>
+// Hash router: show the screen named by location.hash (default: first screen).
+const screens = [...document.querySelectorAll(".screen")];
+function route() {
+  const id = location.hash.slice(1) || screens[0].id;
+  const target = screens.find(s => s.id === id) || screens[0];
+  screens.forEach(s => s.classList.toggle("on", s === target));
+  document.querySelectorAll("#tabs a").forEach(a => {
+    if (a.getAttribute("href") === "#" + target.id) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
+  });
+  scrollTo(0, 0);
+}
+addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>

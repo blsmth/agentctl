@@ -55,7 +55,7 @@ agentctl install-templates       # starter agents: architect, devops-engineer, g
 
 Hooks are what drive agent state, so `hooks-install` is the important one. Run `agentctl <command> --help` for flags. The phone app and scheduled runs have their own one-time setup: `agentctl serve install` then `agentctl serve pair` ([details](docs/design/mobile-web-app.md)), and `agentctl cron install`.
 
-Slash commands (`/agentctl:dispatch`, `context`, `status`, `sweep`, `logs`, `restart`) install as a Claude Code plugin, from inside Claude Code:
+Slash commands (`/agentctl:dispatch`, `context`, `status`, `sweep`, `logs`, `restart`, `artifact`) and the `artifacts` skill (teaches agents to publish reports, charts and mockups with `agentctl artifact`, with HTML templates) install as a Claude Code plugin, from inside Claude Code:
 
 ```
 /plugin marketplace add blsmth/agentctl
