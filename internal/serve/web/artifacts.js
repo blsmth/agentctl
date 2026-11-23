@@ -6,7 +6,9 @@ import { ApiError, api, get } from "./api.js";
 import {
   artifactHash,
   artifactIcon,
+  artifactOrigin,
   artifactRevLabel,
+  artifactRevPill,
   artifactRowMeta,
   artifactTokenStale,
   artifactWindowLive,
@@ -72,7 +74,6 @@ function mountList(root, ctx, filter) {
         "span",
         { class: "win-side" },
         h("span", {}, artifactRowMeta(a)),
-        a.pinned ? h("span", { class: "artifact-pin", title: "Pinned", "aria-label": "Pinned" }, "📌") : null,
       ),
     );
   }
@@ -150,7 +151,8 @@ function mountViewer(root, ctx, route) {
   let frameSrc = "";
 
   const title = h("h1", {}, "");
-  const tools = h("div", { class: "artifact-tools", hidden: true });
+  const revSlot = h("span", { class: "artifact-revslot" });
+  const more = h("button", { class: "btn icon", type: "button", "aria-label": "More actions", hidden: true, onclick: () => moreSheet() }, "⋯");
   const frame = h("iframe", {
     class: "artifact-frame",
     sandbox: SANDBOX,
@@ -162,8 +164,7 @@ function mountViewer(root, ctx, route) {
   const view = h(
     "div",
     { class: "artifact-view" },
-    h("header", { class: "bar" }, h("a", { class: "btn", href: "#/artifacts" }, "‹ Artifacts"), title),
-    tools,
+    h("header", { class: "bar artifact-bar" }, h("a", { class: "btn icon", href: "#/artifacts", "aria-label": "Back to artifacts" }, "‹"), title, revSlot, more),
     message,
     frame,
   );
@@ -179,7 +180,8 @@ function mountViewer(root, ctx, route) {
   };
 
   function showMessage(text, backLabel = "Back to artifacts") {
-    tools.hidden = true;
+    more.hidden = true;
+    clear(revSlot);
     frame.hidden = true;
     frameSrc = "";
     frame.removeAttribute("src");
@@ -234,38 +236,53 @@ function mountViewer(root, ctx, route) {
 
   function renderTools() {
     title.textContent = detail.title;
-    clear(tools);
-    const chips = h("div", { class: "chips" });
-    if (detail.agent) chips.append(h("span", { class: "chip" }, detail.agent));
-    if (detail.project) chips.append(h("span", { class: "chip" }, detail.project));
-    const live = artifactWindowLive(detail, ctx.store.fleet?.groups);
-    if (live) chips.append(h("a", { class: "chip", href: windowHash(detail.session, detail.window_id) }, "Window ›"));
-    const actions = h("div", { class: "artifact-actions" });
+    clear(revSlot);
     if (detail.revs.length > 1) {
+      const n = revNumber();
       const sel = h(
         "select",
         {
-          class: "btn small artifact-revs",
+          class: "artifact-revs",
           "aria-label": "Revision",
           onchange: () => {
-            const n = Number(sel.value);
-            location.hash = artifactHash(id, n === detail.latest ? null : n);
+            const v = Number(sel.value);
+            location.hash = artifactHash(id, v === detail.latest ? null : v);
           },
         },
-        ...[...detail.revs].reverse().map((r) => h("option", { value: r.n, selected: r.n === revNumber() }, artifactRevLabel(r, detail.latest))),
+        ...[...detail.revs].reverse().map((r) => h("option", { value: r.n, selected: r.n === n }, artifactRevLabel(r))),
       );
-      actions.append(sel);
+      revSlot.append(h("span", { class: `artifact-pill${n === detail.latest ? "" : " old"}` }, artifactRevPill(n, detail.latest, detail.revs.length)), sel);
     }
-    const open = h("a", { class: "btn small", href: currentUrl(), target: "_blank", rel: "noopener noreferrer" }, "Open in new tab ↗");
-    actions.append(open);
-    if (write) {
-      actions.append(
-        h("button", { class: "btn small", type: "button", "aria-pressed": String(!!detail.pinned), onclick: togglePin }, detail.pinned ? "Unpin" : "Pin"),
-        h("button", { class: "btn small danger", type: "button", onclick: remove }, "Delete"),
-      );
-    }
-    tools.append(chips, actions);
-    tools.hidden = false;
+    more.hidden = false;
+  }
+
+  /** moreSheet is the ⋯ bottom sheet: origin, open in a new tab, pin and delete. */
+  function moreSheet() {
+    const close = () => {
+      removeEventListener("hashchange", close);
+      overlay.remove();
+    };
+    addEventListener("hashchange", close, { once: true });
+    const live = artifactWindowLive(detail, ctx.store.fleet?.groups);
+    const origin = artifactOrigin(detail);
+    const overlay = h(
+      "div",
+      { class: "overlay", onclick: (e) => e.target === overlay && close() },
+      h(
+        "div",
+        { class: "sheet artifact-sheet", role: "dialog", "aria-modal": "true", "aria-label": "Artifact actions" },
+        h("h2", {}, detail.title),
+        origin ? h("p", { class: "artifact-origin" }, origin) : null,
+        live ? h("a", { class: "btn", href: windowHash(detail.session, detail.window_id), onclick: close }, "Go to window ›") : null,
+        h("a", { class: "btn", href: currentUrl(), target: "_blank", rel: "noopener noreferrer", onclick: close }, "Open in new tab ↗"),
+        write
+          ? h("button", { class: "btn", type: "button", onclick: () => { close(); togglePin(); } }, detail.pinned ? "Unpin" : "Pin")
+          : null,
+        write ? h("button", { class: "btn danger", type: "button", onclick: () => { close(); remove(); } }, "Delete") : null,
+        h("button", { class: "btn", type: "button", onclick: close }, "Close"),
+      ),
+    );
+    document.body.append(overlay);
   }
 
   async function load() {

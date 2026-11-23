@@ -40,7 +40,9 @@ test("the tab is hidden until the server offers artifacts, then lists by project
   const mock = page.locator(".artifact-row", { hasText: "Checkout mockup" });
   await expect(mock).toContainText("designer");
   await expect(mock).toContainText("2 revs");
-  await expect(mock.locator(".artifact-pin")).toBeVisible();
+  await expect(mock).toContainText("pin · 2 revs");
+  // Pinned rows lead their project group.
+  await expect(page.locator(".artifact-list section.group").first().locator(".artifact-row").first()).toContainText("Checkout mockup");
   await expect(page.locator("nav a.active")).toHaveText("Artifacts");
 });
 
@@ -57,19 +59,30 @@ test("the viewer sandboxes a directory artifact and loads its relative assets", 
   await expect(f.locator("#js")).toHaveText("js ran");
   await expect(f.locator("#h")).toHaveCSS("color", "rgb(1, 2, 3)");
   await expect(f.locator("#pic")).toHaveJSProperty("naturalWidth", 1);
-  await expect(page.getByRole("link", { name: /Open in new tab/ })).toHaveAttribute("href", /^\/a\/t\//);
-  await expect(page.getByRole("link", { name: /Open in new tab/ })).toHaveAttribute("target", "_blank");
-  // Origin chips; the window is live in the fixture.
-  await expect(page.locator(".artifact-tools .chip", { hasText: "designer" })).toBeVisible();
-  await expect(page.locator(".artifact-tools a.chip")).toHaveAttribute("href", "#/w/agentctl-shop/%4017");
+    // Origin chips; the window is live in the fixture.
+  await expect(page.locator("nav")).toBeHidden();
+  await page.getByRole("button", { name: "More actions" }).click();
+  await expect(page.locator(".artifact-sheet .artifact-origin")).toHaveText("designer · shop · @17");
+  await expect(page.getByRole("link", { name: "Go to window ›" })).toHaveAttribute("href", "#/w/agentctl-shop/%4017");
+  const open = page.getByRole("link", { name: /Open in new tab/ });
+  await expect(open).toHaveAttribute("href", /^\/a\/t\//);
+  await expect(open).toHaveAttribute("target", "_blank");
+  await page.getByRole("button", { name: "Close" }).click();
+  const bar = (await page.locator("header.artifact-bar").boundingBox())!;
+  expect(bar.height).toBeLessThanOrEqual(56);
+  const fr = (await page.locator("iframe.artifact-frame").boundingBox())!;
+  const vh = page.viewportSize()!.height;
+  expect(vh - (fr.y + fr.height)).toBeLessThan(2);
 });
 
 test("the revision picker switches content", async ({ page, control }) => {
   const [id] = await control.seedArtifacts(seed());
   await page.goto(`/#/artifacts/${id}`);
   await expect(frame(page).locator("#h")).toHaveText("Rev two");
+  await expect(page.locator(".artifact-pill")).toHaveText("v2 ▾");
   await page.getByLabel("Revision").selectOption("1");
   await expect(page).toHaveURL(new RegExp(`#/artifacts/${id}/1$`));
+  await expect(page.locator(".artifact-pill")).toHaveText("v1 of 2 ▾");
   await expect(frame(page).locator("#h")).toHaveText("Rev one");
   await page.getByLabel("Revision").selectOption("2");
   await expect(frame(page).locator("#h")).toHaveText("Rev two");
@@ -90,12 +103,16 @@ test("pin toggles and delete confirms, then returns to the list", async ({ page,
   const ids = await control.seedArtifacts(seed());
   await page.goto(`/#/artifacts/${ids[1]}`);
   await expect(frame(page).locator("body")).toContainText("Some numbers");
+  const more = page.getByRole("button", { name: "More actions" });
+  await more.click();
   await page.getByRole("button", { name: "Pin", exact: true }).click();
+  await more.click();
   await expect(page.getByRole("button", { name: "Unpin" })).toBeVisible();
   await page.getByRole("button", { name: "Delete" }).click();
   await expect(page.locator(".overlay .sheet")).toContainText("Delete Cart numbers?");
   await page.locator(".overlay .sheet").getByRole("button", { name: "Cancel" }).click();
   expect((await page.request.get(`/v1/artifacts/${ids[1]}`)).status()).toBe(200);
+  await more.click();
   await page.getByRole("button", { name: "Delete" }).click();
   await page.locator(".overlay .sheet").getByRole("button", { name: "Delete" }).click();
   await expect(page).toHaveURL(/#\/artifacts$/);
@@ -113,7 +130,7 @@ test("deleted while viewing shows a way back", async ({ page, control, guard }) 
   );
   expect(status).toBe(200);
   await expect(page.locator(".artifact-message")).toContainText("This artifact was deleted");
-  await page.getByRole("link", { name: "Back to artifacts" }).click();
+  await page.locator(".artifact-message").getByRole("link", { name: "Back to artifacts" }).click();
   await expect(page).toHaveURL(/#\/artifacts$/);
   await page.goto("/#/artifacts/zzzzzzzzzz");
   await expect(page.locator(".artifact-message")).toContainText("This artifact was deleted");
@@ -129,6 +146,8 @@ test("read-only devices get no pin or delete", async ({ page, control }) => {
   });
   await page.goto(`/#/artifacts/${ids[0]}`);
   await expect(page.locator("iframe.artifact-frame")).toBeVisible();
+  await page.getByRole("button", { name: "More actions" }).click();
+  await expect(page.getByRole("link", { name: /Open in new tab/ })).toBeVisible();
   await expect(page.getByRole("button", { name: "Delete" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Pin/ })).toHaveCount(0);
 });

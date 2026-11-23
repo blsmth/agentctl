@@ -91,6 +91,7 @@ function route() {
   else if (r.name === "host") cleanup = mountHost(root, ctx);
   else if (r.name === "settings") cleanup = mountSettings(root, ctx);
   else cleanup = mountFleet(root, ctx);
+  document.body.classList.toggle("nav-hidden", r.name === "artifacts" && r.view === "viewer");
   document.querySelectorAll("nav a").forEach((a) => {
     a.classList.toggle("active", a.getAttribute("href") === (r.name === "fleet" ? "#/" : `#/${r.name}`));
   });

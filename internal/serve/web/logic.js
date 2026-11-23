@@ -2385,6 +2385,7 @@ export function groupArtifacts(list, fleetGroups = []) {
     byKey.get(key).items.push(a);
   }
   const groups = [...byKey.values()];
+  for (const g of groups) g.items = [...g.items.filter((a) => a.pinned), ...g.items.filter((a) => !a.pinned)];
   const rank = new Map();
   (fleetGroups ?? []).forEach((g, i) => {
     for (const k of [g.key, g.dir]) if (k && !rank.has(k)) rank.set(k, i);
@@ -2403,17 +2404,27 @@ export function artifactWindowLive(a, fleetGroups = []) {
   return g?.windows?.find((w) => w.window_id === a.window_id) ?? null;
 }
 
-/** artifactRowMeta is the muted line under a title: "3 revs · 5m ago". */
+/** artifactRowMeta is the muted line under a title: "pin · 3 revs · 5m ago". */
 export function artifactRowMeta(a, now = Date.now()) {
   const parts = [];
+  if (a.pinned) parts.push("pin");
   if (a.rev_count > 1) parts.push(`${a.rev_count} revs`);
   const ago = formatAgo(a.updated, now);
   if (ago) parts.push(ago);
   return parts.join(" · ");
 }
 
-/** artifactRevLabel labels a revision picker entry: "Rev 2 · 5m ago · note". */
-export function artifactRevLabel(r, latest, now = Date.now()) {
-  const ago = formatAgo(r.created, now);
-  return [`Rev ${r.n}${r.n === latest ? " (latest)" : ""}`, ago, r.note].filter(Boolean).join(" · ");
+/** artifactRevLabel labels a revision picker entry: "v2 · 5m ago · note". */
+export function artifactRevLabel(r, now = Date.now()) {
+  return [`v${r.n}`, formatAgo(r.created, now), r.note].filter(Boolean).join(" · ");
+}
+
+/** artifactRevPill is the closed picker: "v2 ▾", or "v1 of 2 ▾" when off the latest. */
+export function artifactRevPill(n, latest, total) {
+  return n === latest ? `v${n} ▾` : `v${n} of ${total} ▾`;
+}
+
+/** artifactOrigin is the sheet's origin line: "designer · shop · @17". */
+export function artifactOrigin(a) {
+  return [a.agent, a.project, a.window_id].filter(Boolean).join(" · ");
 }

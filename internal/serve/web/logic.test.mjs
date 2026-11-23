@@ -19,7 +19,7 @@ import {
   scheduleException, scheduleGlyph, scheduleHash, scheduleLastText, scheduleReview, scheduleWhen, worktreeFact,
   scheduleAgentText, schedulePromptLabel, scheduleRowActivity,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
-  ARTIFACT_TOKEN_MAX_AGE_MS, artifactChipText, artifactHash, artifactIcon, artifactRevLabel, artifactRowMeta, artifactTokenStale,
+  ARTIFACT_TOKEN_MAX_AGE_MS, artifactChipText, artifactHash, artifactIcon, artifactOrigin, artifactRevLabel, artifactRevPill, artifactRowMeta, artifactTokenStale,
   artifactWindowLive, artifactsForWindow, artifactsHash, groupArtifacts,
 } from "./logic.js";
 
@@ -1018,7 +1018,15 @@ console.log("ok: template approvals");
   assert.equal(artifactIcon("weird"), "\u25C6");
   assert.equal(artifactRowMeta({ rev_count: 3, updated: "2026-01-01T11:55:00Z" }, now), "3 revs \u00B7 5m ago");
   assert.equal(artifactRowMeta({ rev_count: 1, updated: "2026-01-01T11:55:00Z" }, now), "5m ago");
-  assert.equal(artifactRevLabel({ n: 2, created: "2026-01-01T11:55:00Z", note: "fix" }, 2, now), "Rev 2 (latest) \u00B7 5m ago \u00B7 fix");
-  assert.equal(artifactRevLabel({ n: 1, created: "2026-01-01T09:00:00Z" }, 2, now), "Rev 1 \u00B7 3h ago");
+  assert.equal(artifactRowMeta({ pinned: true, rev_count: 2, updated: "2026-01-01T11:55:00Z" }, now), "pin \u00B7 2 revs \u00B7 5m ago");
+  assert.equal(artifactRevLabel({ n: 2, created: "2026-01-01T11:55:00Z", note: "fix" }, now), "v2 \u00B7 5m ago \u00B7 fix");
+  assert.equal(artifactRevLabel({ n: 1, created: "2026-01-01T09:00:00Z" }, now), "v1 \u00B7 3h ago");
+  assert.equal(artifactRevPill(2, 2, 2), "v2 \u25BE");
+  assert.equal(artifactRevPill(1, 2, 2), "v1 of 2 \u25BE");
+  assert.equal(artifactOrigin({ agent: "designer", project: "shop", window_id: "@17" }), "designer \u00B7 shop \u00B7 @17");
+  assert.equal(artifactOrigin({ project: "shop" }), "shop");
+  // Pinned rows lead within a project group, keeping list order otherwise.
+  const pg = groupArtifacts([A("p1", "/b", "beta"), A("p2", "/b", "beta", { pinned: true }), A("p3", "/b", "beta"), A("p4", "/b", "beta", { pinned: true })], []);
+  assert.deepEqual(pg[0].items.map((x) => x.id), ["p2", "p4", "p1", "p3"]);
   console.log("ok: artifacts logic");
 }
