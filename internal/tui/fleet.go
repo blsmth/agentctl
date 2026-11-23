@@ -575,17 +575,27 @@ type FleetModel struct {
 	showClosed  bool
 	closed      []closedlog.Record
 	closedCache *closedlog.Cache
+	// artifacts is the per-window artifact count behind the ◆N chip
+	// (fleet_artifacts.go), refreshed on the poll tick when the store
+	// directory's mtime (artifactsStamp) changes.
+	artifacts        map[string]fleetArtifactInfo
+	artifactsStamp   time.Time
+	artifactsLoading bool
 	// showSchedules shows the Schedules section (fleetSchedulesKey,
 	// fleet_schedules.go); sched is its data, schedForm the open form,
 	// schedConfirm an armed run/delete y/n. schedPaneOn records that the
-	// card or form took the viewer's place (schedPrevLive is what the viewer
-	// showed). schedAgentCheck is the injected agent validation.
+	// card/form drawer is open; schedAnim* is its slide-in (gen guards stale
+	// ticks, P the eased progress 0..1). schedAgentCheck is the injected
+	// agent validation.
 	showSchedules   bool
 	sched           fleetSchedState
 	schedForm       *fleetSchedForm
 	schedConfirm    *fleetSchedConfirm
 	schedPaneOn     bool
-	schedPrevLive   string
+	schedAnimOn     bool
+	schedAnimGen    int
+	schedAnimP      float64
+	schedAnimStart  time.Time
 	schedAgentCheck func(name, dir string) error
 	// schedAgentNames lists the agents the form offers for a project dir.
 	schedAgentNames func(dir string) []string
@@ -813,7 +823,7 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
 	if fm, ok := next.(FleetModel); ok {
 		fm.publishSelection()
-		if pane := fm.syncSchedPane(); pane != nil {
+		if pane := fm.syncSchedDrawer(); pane != nil {
 			cmd = tea.Batch(cmd, pane)
 		}
 		if detail := fm.syncSchedDetail(); detail != nil {
@@ -842,11 +852,6 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case fleetProbeMsg:
-		if m.schedPaneOn {
-			// The hub pane spans the window while the schedules pane is up;
-			// its resizes are the viewer closing, not a divider drag.
-			return m, nil
-		}
 		if msg.win == m.liveWinWidth && fleetNow().Before(m.paneQuietUntil) {
 			return m, nil // the activity pane reflowed the split
 		}
@@ -884,10 +889,18 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		refreshThemeIfChanged()
 		show := m.maybeShowCmd()
 		probe := m.serveProbeCmd()
-		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome), probe, m.activityPollCmd(), m.closedLoadCmd(), m.schedTickCmd())
+		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome), probe, m.activityPollCmd(), m.closedLoadCmd(), m.schedTickCmd(), m.artifactsLoadCmd())
 
 	case fleetClosedLoadedMsg:
 		m.applyClosedLoaded(msg)
+		return m, nil
+
+	case fleetArtifactsMsg:
+		m.applyArtifacts(msg)
+		return m, nil
+
+	case fleetArtifactOpenedMsg:
+		m.applyArtifactOpened(msg)
 		return m, nil
 
 	case fleetSchedLoadedMsg:
@@ -914,8 +927,8 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case fleetSchedEditorMsg:
 		return m, m.applySchedEditor(msg)
 
-	case fleetSchedViewerHiddenMsg:
-		return m, m.applySchedViewerHidden()
+	case schedDrawerTickMsg:
+		return m, m.applySchedDrawerTick(msg)
 
 	case fleetActivityOpenedMsg:
 		return m, m.applyActivityOpened(msg)
@@ -946,12 +959,6 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.jumpErr = msg.err.Error()
 		return m, nil
 	case fleetLiveMsg:
-		if m.schedPaneOn {
-			// A show that was in flight when the schedules pane took over:
-			// close the viewer it opened again and keep the old split.
-			m.liveShown = ""
-			return m, fleetSchedHideCmd()
-		}
 		if msg.hidden {
 			// The activity pane replaces the viewer at this window width.
 			m.liveShown = ""
@@ -1100,6 +1107,9 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// The form owns input until it closes: a click acts only on the
 			// form's own controls and the footer hints.
 			return m, m.handleSchedFormClick(msg)
+		}
+		if m.schedDrawerCovers(msg.X, msg.Y) {
+			return m, nil // the card drawer hides the list under it
 		}
 		return m.pressHeader(msg)
 
@@ -1337,6 +1347,9 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 
 	case "o":
 		return *m, m.toggleSort()
+
+	case fleetArtifactKey:
+		return *m, m.openSelectedArtifact()
 
 	case fleetShellsKey:
 		return *m, m.toggleShells()
@@ -2331,17 +2344,6 @@ func (m FleetModel) renderList() string {
 
 	if status, isStatus := m.renderStatusOrEmpty(); isStatus {
 		b.WriteString(status)
-	} else if m.schedFormReplacesList() {
-		// No room beside the list: the form takes the list's rows.
-		visible := m.visibleLines()
-		lines := fitPane(m.schedFormLines(cw-4, visible-1), cw-1, visible, 2)
-		for _, l := range lines {
-			b.WriteString(l)
-			b.WriteString("\n")
-		}
-		// Blank rows are padded too, so no cell of the previous frame survives.
-		blank := strings.Repeat(" ", cw-1) + "\n"
-		b.WriteString(strings.Repeat(blank, max(visible-len(lines), 0)))
 	} else {
 		visible := m.visibleLines()
 		used := 0
@@ -2356,7 +2358,7 @@ func (m FleetModel) renderList() string {
 			}
 		}
 		if pad := visible - used; pad > 0 {
-			if m.liveShown == "" && !m.activity.hidesViewer && !m.schedPaneActive() {
+			if m.liveShown == "" && !m.activity.hidesViewer {
 				b.WriteString(fleetDimStyle.Render("  " + truncateToWidth(fleetNoViewHint, cw-2)))
 				b.WriteString("\n")
 				pad--
@@ -3216,6 +3218,10 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 			tag = truncateToWidth(t, min(available, fleetScheduledTagMaxW))
 			available -= lipgloss.Width(tag) + 1
 			tag = fleetDimStyle.Render(tag) + " "
+		}
+		if c := m.artifactChip(r); c != "" && available > lipgloss.Width(c)+1 {
+			tag += fleetDimStyle.Render(c) + " "
+			available -= lipgloss.Width(c) + 1
 		}
 		start := lipgloss.Width(prefix) + lipgloss.Width(tag)
 		if m.renamingRow(r) {

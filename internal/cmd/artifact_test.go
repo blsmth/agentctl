@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/blsmth/agentctl/internal/artifacts"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -410,5 +412,38 @@ func TestArtifactURLNoRevisions(t *testing.T) {
 		if err := h.env.url(&out, v.ID, rev); err == nil || !strings.Contains(err.Error(), "no revisions") {
 			t.Errorf("rev %d: err = %v", rev, err)
 		}
+	}
+}
+
+func TestWriteTableAlignsWideCells(t *testing.T) {
+	rows := [][]string{
+		{"ID", "PIN", "TITLE", "AGENT"},
+		{"a1", "📌", "pinned", "x"},
+		{"a2", "", "plain", "y"},
+		{"a3", "", "日本語", "z"},
+	}
+	var out bytes.Buffer
+	if err := writeTable(&out, rows); err != nil {
+		t.Fatal(err)
+	}
+	// Every row's AGENT cell must start at the same display column.
+	var col int
+	for i, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
+		prefix := line[:strings.LastIndex(line, " ")+1]
+		w := ansi.StringWidth(prefix)
+		if i == 0 {
+			col = w
+		} else if w != col {
+			t.Errorf("row %d agent column at %d, want %d: %q", i, w, col, line)
+		}
+	}
+}
+
+func TestTruncWidth(t *testing.T) {
+	if got := truncWidth("short", 10); got != "short" {
+		t.Errorf("got %q", got)
+	}
+	if got := truncWidth("日本語日本語", 6); ansi.StringWidth(got) > 6 || !strings.HasSuffix(got, "…") {
+		t.Errorf("got %q", got)
 	}
 }

@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/blsmth/agentctl/internal/artifacts"
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/fleet"
@@ -60,6 +61,11 @@ func TestMain(m *testing.M) {
 	// `agentctl hub-status`); status tests install their own stubs.
 	hubStatusSync = func(bool, int) (bool, error) { return false, nil }
 	hubStatusPin = func(int) error { return nil }
+	// Never read the real artifact store or spawn agentctl/a browser; artifact
+	// tests install their own stubs.
+	fleetArtifactStamp = func() (time.Time, bool) { return time.Time{}, false }
+	fleetArtifactList = func() ([]artifacts.Meta, error) { return nil, nil }
+	fleetArtifactOpen = func(string) error { return errors.New("artifact open disabled in tests") }
 	// Never spawn gh or tmux from the tickets browser; tests that need a
 	// result install their own stub.
 	tkExec = func(string, ...string) ([]byte, error) { return nil, errExecDisabled }
@@ -81,7 +87,6 @@ func TestMain(m *testing.M) {
 	fleetSchedRun = func(context.Context, string) (cron.Entry, error) {
 		return cron.Entry{}, errors.New("cron run disabled in tests")
 	}
-	fleetSchedHideViewer = func() error { return nil }
 	fleetSchedPermMode = func(string) string { return "auto" }
 	fleetSchedTemplates = func(string) []prompttemplate.Template { return nil }
 	fleetSchedEnvLoad = testSchedEnv

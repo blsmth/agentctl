@@ -18,10 +18,7 @@ import (
 // what is actually drawn.
 func schedFind(t *testing.T, m FleetModel, within, text string) (x, y int) {
 	t.Helper()
-	minX := 0
-	if !m.schedFormReplacesList() {
-		minX = m.contentWidth() + 1
-	}
+	minX := m.schedDrawerX() + 1
 	for row, l := range strings.Split(ansi.Strip(m.render()), "\n") {
 		from := 0
 		for {
@@ -176,7 +173,7 @@ func TestSchedFormClickWhenScrolled(t *testing.T) {
 	f := newSchedFixture(t)
 	withSchedEnv(t, richSchedEnv())
 	m := openNewForm(t, f)
-	m.termHeight = 24
+	m.termHeight = 28
 	m.relayout()
 	m = schedOpenAdvanced(t, m)
 	formOf(t, m).focusStop(stopUsage7d)
@@ -193,18 +190,31 @@ func TestSchedFormClickWhenScrolled(t *testing.T) {
 	}
 }
 
-func TestSchedFormClickWhenFormReplacesList(t *testing.T) {
+func TestSchedFormClickWhenDrawerIsFullWidth(t *testing.T) {
 	f := newSchedFixture(t)
 	withSchedEnv(t, testSchedEnv())
 	m := openNewForm(t, f)
-	m.termWidth = m.contentWidth() + fleetSchedPaneMin // no room for the pane
+	m.termWidth = 40 // narrower than the minimum: the drawer takes the pane
 	m.relayout()
-	if !m.schedFormReplacesList() {
-		t.Fatal("layout still has room for the pane")
+	if m.schedDrawerWidth() != m.contentWidth() || m.schedDrawerX() != 0 {
+		t.Fatalf("drawer %d at %d in a %d wide pane", m.schedDrawerWidth(), m.schedDrawerX(), m.contentWidth())
 	}
 	m = schedClick(t, m, "Schedule", "Hourly")
 	if fm := formOf(t, m); fm.kind != schedKindHourly {
-		t.Errorf("click on Hourly in the list's place: kind %d", fm.kind)
+		t.Errorf("click on Hourly in the full-width drawer: kind %d", fm.kind)
+	}
+}
+
+func TestSchedFormClickIgnoredWhileSliding(t *testing.T) {
+	f := newSchedFixture(t)
+	withSchedEnv(t, testSchedEnv())
+	m := openNewForm(t, f)
+	x, y := schedFind(t, m, "Schedule", "Hourly")
+	m.schedAnimOn, m.schedAnimP = true, 0.5
+	before := formOf(t, m).kind
+	m = schedClickAt(t, m, x, y)
+	if formOf(t, m).kind != before {
+		t.Error("a click landed on a control while the drawer was sliding")
 	}
 }
 

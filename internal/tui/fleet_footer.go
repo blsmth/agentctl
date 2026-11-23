@@ -146,6 +146,10 @@ func (m FleetModel) footerBody(cw int) string {
 // footerHints are the hints the hint bar offers in the current state.
 func (m FleetModel) footerHints() []fleetHint {
 	hints := fleetFooterHints
+	if m.selectedArtifactRow() {
+		// After "x close", before "q leave".
+		hints = append(append(append([]fleetHint(nil), hints[:len(hints)-2]...), fleetHint{fleetArtifactKey, "artifact"}), hints[len(hints)-2:]...)
+	}
 	switch {
 	case m.newSessionOpen():
 		hints = m.newSessionHints()
@@ -212,6 +216,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"Z", "focus mode", "Z"},
 		{"f", "filter", "f"},
 		{"o", "sort: recent / window", "o"},
+		{fleetArtifactKey, "open newest ◆ artifact", fleetArtifactKey},
 		{fleetShellsKey, "shells", fleetShellsKey},
 		{fleetClosedKey, "closed agents", fleetClosedKey},
 		{fleetSchedulesKey, "schedules", fleetSchedulesKey},

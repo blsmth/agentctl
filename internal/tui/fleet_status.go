@@ -46,7 +46,7 @@ func statusWanted(height int) bool { return height >= fleetStatusMinWindowRows }
 // it was last reported open and the viewer it sits above is up.
 func (m FleetModel) statusPaneOpen() bool {
 	return m.statusPane && m.liveShown != "" && m.liveShown != m.liveFailed &&
-		!m.activity.hidesViewer && !m.schedPaneOn
+		!m.activity.hidesViewer
 }
 
 // inlineDetail reports whether the selected row expands its detail lines
@@ -69,7 +69,7 @@ func syncStatusPane(want bool) bool {
 // it back to fleetStatusRows (tmux spreads a height change over the viewer
 // column's panes).
 func (m *FleetModel) statusResizeCmd() tea.Cmd {
-	if m.liveShown == "" || m.schedPaneOn || m.activity.hidesViewer {
+	if m.liveShown == "" || m.activity.hidesViewer {
 		return nil
 	}
 	want := statusWanted(m.termHeight)
