@@ -156,12 +156,25 @@ func (w *world) Fleet() ([]fleetwatch.Group, error) {
 // panes is serve.PaneSource, serve.PaneSizer and serve.MainPanes.
 type panes struct{ w *world }
 
-func (p panes) Capture(_, windowID string, _ int) (string, error) {
+// tailLines keeps the last n lines of text, as tmux capture-pane -S -n does.
+func tailLines(text string, n int) string {
+	if n <= 0 {
+		return text
+	}
+	trimmed := strings.TrimSuffix(text, "\n")
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) <= n {
+		return text
+	}
+	return strings.Join(lines[len(lines)-n:], "\n") + "\n"
+}
+
+func (p panes) Capture(_, windowID string, lines int) (string, error) {
 	win, ok := p.w.find(func(x Window) bool { return x.ID == windowID })
 	if !ok {
 		return "", errNoWindow
 	}
-	return win.paneText(), nil
+	return tailLines(win.paneText(), lines), nil
 }
 
 func (p panes) Size(string) (int, int, error) { return 80, 24, nil }

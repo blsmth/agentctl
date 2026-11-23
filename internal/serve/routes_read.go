@@ -227,6 +227,10 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 const (
 	defaultPaneLines = 200
 	maxPaneLines     = 2000
+	// historyPaneLines is what lines=all captures: the explicit "load earlier"
+	// request. 20000 lines of ANSI text is a few MB at most; the live poll
+	// never asks for it.
+	historyPaneLines = 20000
 )
 
 type paneBody struct {
@@ -275,7 +279,9 @@ func (s *Server) handlePane(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lines := defaultPaneLines
-	if v := r.URL.Query().Get("lines"); v != "" {
+	if v := r.URL.Query().Get("lines"); v == "all" {
+		lines = historyPaneLines
+	} else if v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
 			writeError(w, http.StatusBadRequest, codeBadRequest, "lines must be a positive integer")

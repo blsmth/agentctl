@@ -18,6 +18,7 @@ import {
   advancedSummary, cardLastFailure, cardStatus, changeLines, fieldErrors, runResultCard, timeoutIsPreset, usageOptions, formClientErrors, formatAgo, formatNextFire, newScheduleForm, previewBody, runResultLabel, scheduleBanners, scheduleBody,
   scheduleException, scheduleGlyph, scheduleHash, scheduleLastText, scheduleReview, scheduleWhen, worktreeFact,
   scheduleAgentText, schedulePromptLabel, scheduleRowActivity,
+  isTap, isDoubleTap,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
 } from "./logic.js";
 
@@ -976,3 +977,15 @@ console.log("ok: templates");
 }
 assert.equal(approvalConfirm({ kind: "template", command: "c", details: {} }, "allow").title, "Approve this template change?");
 console.log("ok: template approvals");
+
+// Double tap on the reflow pane.
+assert.equal(isTap({ t: 0, x: 5, y: 5 }, { t: 120, x: 8, y: 7 }), true);
+assert.equal(isTap({ t: 0, x: 5, y: 5 }, { t: 450, x: 5, y: 5 }), false, "long press");
+assert.equal(isTap({ t: 0, x: 5, y: 5 }, { t: 100, x: 5, y: 40 }), false, "scroll");
+assert.equal(isDoubleTap(null, { t: 100, x: 0, y: 0 }), false);
+assert.equal(isDoubleTap({ t: 0, x: 10, y: 10 }, { t: 200, x: 15, y: 12 }), true);
+assert.equal(isDoubleTap({ t: 0, x: 10, y: 10 }, { t: 300, x: 10, y: 10 }), true);
+assert.equal(isDoubleTap({ t: 0, x: 10, y: 10 }, { t: 301, x: 10, y: 10 }), false, "too slow");
+assert.equal(isDoubleTap({ t: 0, x: 10, y: 10 }, { t: 100, x: 80, y: 10 }), false, "too far");
+assert.equal(isDoubleTap({ t: 100, x: 10, y: 10 }, { t: 50, x: 10, y: 10 }), false, "out of order");
+console.log("ok: double tap");

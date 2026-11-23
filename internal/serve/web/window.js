@@ -4,6 +4,8 @@ import { approvalCard, tickCountdowns } from "./approvals.js";
 import { imagePicker, svgIcon } from "./attach.js";
 import {
   INTERRUPT_FOLLOWUP_MS,
+  isDoubleTap,
+  isTap,
   actionsWithQueue,
   approvalsForWindow,
   buildAnswerRequest,
@@ -125,18 +127,125 @@ function paneLine(runs) {
  * reflowView renders the pane as wrapping HTML. When output changes while
  * the reader is scrolled up, a "New output" pill offers the way back down.
  */
-function reflowView() {
+function reflowView({ loadHistory } = {}) {
   const scroller = h("div", { class: "pane-reflow" });
   const pill = h("button", { type: "button", class: "new-output", hidden: true }, "New output ↓");
   const el = h("div", { class: "pane-reflow-wrap" }, scroller, pill);
   const atBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 24;
+
+  // Double tap (touch) or dblclick (desktop) toggles a full-screen pane: the
+  // same elements get a class, so polling, scroll and the pill keep working.
+  let expanded = false;
+  const closeBtn = h(
+    "button",
+    { type: "button", class: "icon-btn pane-expand-close", "aria-label": "Close full screen", hidden: true, onclick: () => setExpanded(false) },
+    svgIcon(CLOSE_SVG),
+  );
+  el.append(closeBtn);
+  function setExpanded(on) {
+    if (on === expanded) return;
+    const follow = atBottom();
+    const top = scroller.scrollTop;
+    expanded = on;
+    el.classList.toggle("expanded", on);
+    closeBtn.hidden = !on;
+    document.body.classList.toggle("pane-expanded", on);
+    if (on) document.addEventListener("keydown", onKey);
+    else document.removeEventListener("keydown", onKey);
+    if (follow) scroller.scrollTop = scroller.scrollHeight;
+    else scroller.scrollTop = top;
+  }
+  function onKey(e) {
+    if (e.key === "Escape") setExpanded(false);
+  }
+  const isControl = (t) => t instanceof Element && !!t.closest("button, a, input, textarea");
+  let touchStart = null;
+  let prevTap = null;
+  let lastTouchToggle = 0;
+  scroller.addEventListener(
+    "touchstart",
+    (e) => {
+      const t = e.touches[0];
+      touchStart = e.touches.length === 1 && t ? { t: e.timeStamp, x: t.clientX, y: t.clientY } : null;
+      if (!touchStart) prevTap = null;
+    },
+    { passive: true },
+  );
+  scroller.addEventListener("touchend", (e) => {
+    const t = e.changedTouches[0];
+    const start = touchStart;
+    touchStart = null;
+    if (!start || !t || isControl(e.target)) {
+      prevTap = null;
+      return;
+    }
+    const end = { t: e.timeStamp, x: t.clientX, y: t.clientY };
+    if (!isTap(start, end) || !(window.getSelection()?.isCollapsed ?? true)) {
+      prevTap = null;
+      return;
+    }
+    if (isDoubleTap(prevTap, end)) {
+      prevTap = null;
+      lastTouchToggle = Date.now();
+      e.preventDefault();
+      setExpanded(!expanded);
+    } else {
+      prevTap = end;
+    }
+  });
+  scroller.addEventListener("dblclick", (e) => {
+    // A touch double tap may also synthesize dblclick: it already toggled.
+    if (Date.now() - lastTouchToggle < 600 || isControl(e.target)) return;
+    setExpanded(!expanded);
+  });
+  // History: "Load earlier" at the top fetches the whole scrollback once.
+  // While it is shown and the reader is scrolled up, polls do not replace it;
+  // reaching the bottom again drops it for the live tail.
+  let history = false;
+  let loading = false;
+  let lastPane = null;
+  const earlier = h("button", { type: "button", class: "load-earlier", hidden: true }, "Load earlier");
+  const syncEarlier = () => {
+    earlier.hidden = history || loading || scroller.scrollTop > 24;
+  };
+  function leaveHistory() {
+    history = false;
+    if (lastPane) render(lastPane, true);
+    syncEarlier();
+  }
   scroller.addEventListener("scroll", () => {
-    if (atBottom()) pill.hidden = true;
+    if (atBottom()) {
+      pill.hidden = true;
+      if (history) leaveHistory();
+    }
+    syncEarlier();
   });
   pill.addEventListener("click", () => {
+    if (history) leaveHistory();
     scroller.scrollTop = scroller.scrollHeight;
     pill.hidden = true;
   });
+  earlier.addEventListener("click", async () => {
+    if (!loadHistory || loading) return;
+    loading = true;
+    earlier.textContent = "Loading…";
+    try {
+      const full = await loadHistory();
+      const before = scroller.scrollHeight - scroller.scrollTop;
+      history = true;
+      render(full, false);
+      // Keep the line that was at the top where it was: the tail is unchanged
+      // at the bottom, so hold the distance from the bottom.
+      scroller.scrollTop = scroller.scrollHeight - before;
+    } catch {
+      toast("Could not load earlier output", "error");
+    } finally {
+      loading = false;
+      earlier.textContent = "Load earlier";
+      syncEarlier();
+    }
+  });
+  el.append(earlier);
 
   let statusOpen = loadFlag(STATUS_KEY);
   let statusLines = null;
@@ -168,35 +277,47 @@ function reflowView() {
   return {
     el,
     update(pane) {
-      const follow = atBottom();
-      const frag = document.createDocumentFragment();
-      const split = splitPane(pane.text);
-      statusLines = split.status ? split.status.lines : null;
-      for (const b of split.body) {
-        if (b.rule !== undefined) {
-          const rule = document.createElement("div");
-          rule.className = "pane-rule";
-          if (b.rule) {
-            const label = document.createElement("span");
-            label.textContent = b.rule;
-            rule.append(label);
-          }
-          frag.append(rule);
-        } else {
-          frag.append(paneLine(b.runs));
-        }
+      lastPane = pane;
+      if (history && !atBottom()) {
+        pill.hidden = false;
+        return;
       }
-      if (split.body.length === 0 && split.prompt?.empty) {
-        frag.append(h("div", { class: "pane-empty" }, "At an empty prompt."));
-      }
-      if (statusLines) frag.append(statusBar());
-      scroller.replaceChildren(frag);
-      if (follow) scroller.scrollTop = scroller.scrollHeight;
-      else if (rendered) pill.hidden = false;
-      rendered = true;
+      if (history) history = false;
+      render(pane, true);
     },
-    destroy() {},
+    destroy() {
+      setExpanded(false);
+    },
   };
+  function render(pane, live) {
+    const follow = live ? atBottom() : false;
+    const frag = document.createDocumentFragment();
+    const split = splitPane(pane.text);
+    statusLines = split.status ? split.status.lines : null;
+    for (const b of split.body) {
+      if (b.rule !== undefined) {
+        const rule = document.createElement("div");
+        rule.className = "pane-rule";
+        if (b.rule) {
+          const label = document.createElement("span");
+          label.textContent = b.rule;
+          rule.append(label);
+        }
+        frag.append(rule);
+      } else {
+        frag.append(paneLine(b.runs));
+      }
+    }
+    if (split.body.length === 0 && split.prompt?.empty) {
+      frag.append(h("div", { class: "pane-empty" }, "At an empty prompt."));
+    }
+    if (statusLines) frag.append(statusBar());
+    scroller.replaceChildren(frag);
+    if (follow) scroller.scrollTop = scroller.scrollHeight;
+    else if (live && rendered) pill.hidden = false;
+    rendered = true;
+    syncEarlier();
+  }
 }
 
 /**
@@ -381,7 +502,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
   function mountView() {
     view?.destroy();
     clear(paneHost);
-    view = mode === "exact" ? exactView() : reflowView();
+    view = mode === "exact" ? exactView() : reflowView({ loadHistory: () => get(`${base}/pane?lines=all`) });
     paneHost.append(view.el);
     view.setBackground?.(getComputedStyle(paneHost).backgroundColor);
     for (const [m, btn] of Object.entries(modeBtns)) btn.setAttribute("aria-pressed", String(m === mode));

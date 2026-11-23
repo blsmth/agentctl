@@ -355,6 +355,54 @@ test("new output while scrolled up shows a pill that scrolls to the bottom", asy
   expect(atBottom).toBe(true);
 });
 
+test("double tap expands the reflow pane full screen; again, close or Escape returns", async ({ page }) => {
+  await openWindow(page, "@13");
+  const wrap = page.locator(".pane-reflow-wrap");
+  const scroller = page.locator(".pane-reflow");
+  await expect(scroller).toContainText("");
+  await scroller.dblclick();
+  await expect(wrap).toHaveClass(/\bexpanded\b/);
+  const vp = page.viewportSize()!;
+  expect((await wrap.boundingBox())!.height).toBeGreaterThanOrEqual(vp.height - 1);
+  await expect(page.locator("body")).toHaveClass(/pane-expanded/);
+  await page.locator(".pane-expand-close").click();
+  await expect(wrap).not.toHaveClass(/\bexpanded\b/);
+  await expect(page.locator("body")).not.toHaveClass(/pane-expanded/);
+  await scroller.dblclick();
+  await expect(wrap).toHaveClass(/\bexpanded\b/);
+  await page.keyboard.press("Escape");
+  await expect(wrap).not.toHaveClass(/\bexpanded\b/);
+  await scroller.dblclick();
+  await page.goto("#/");
+  await expect(page.locator("body")).not.toHaveClass(/pane-expanded/);
+});
+
+test("Load earlier fetches the full scrollback, keeps position, and the live tail returns at the bottom", async ({ page, control }) => {
+  const big = Array.from({ length: 6000 }, (_, i) => `row ${i}`).join("\n") + "\n";
+  await control.patchWindow(SHOP, "@13", { pane_text: big });
+  await openWindow(page, "@13");
+  const scroller = page.locator(".pane-reflow");
+  await expect(scroller).toContainText("row 5999");
+  await expect(scroller).not.toContainText("row 10\n");
+  expect(await scroller.locator(".pane-line").count()).toBeLessThan(400);
+  await scroller.evaluate((el) => (el.scrollTop = 0));
+  const more = page.locator(".load-earlier");
+  await expect(more).toBeVisible();
+  const t0 = Date.now();
+  await more.tap();
+  await expect(scroller.locator(".pane-line").first()).toHaveText("row 0");
+  console.log(`full history render: ${Date.now() - t0}ms`);
+  // The line that was at the top (first of the tail) is still at the top.
+  const topIdx = await scroller.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const line = [...el.querySelectorAll(".pane-line")].find((l) => l.getBoundingClientRect().bottom > r.top + 2);
+    return line?.textContent;
+  });
+  expect(topIdx).toMatch(/^row (5799|58\d\d)$/);
+  await scroller.evaluate((el) => (el.scrollTop = el.scrollHeight));
+  await expect(scroller.locator(".pane-line").first()).not.toHaveText("row 0");
+});
+
 test("Exact shows a one-time hint", async ({ page }) => {
   await openWindow(page, "@13");
   await page.locator(".segmented").getByText("Exact", { exact: true }).tap();

@@ -324,6 +324,29 @@ export const LONG_PRESS_MS = 400;
 /** LONG_PRESS_SLOP is the movement in px that turns a pending press into a scroll. */
 export const LONG_PRESS_SLOP = 10;
 
+/** DOUBLE_TAP_MS is the longest gap between two taps that count as a double tap. */
+export const DOUBLE_TAP_MS = 300;
+/** DOUBLE_TAP_SLOP is the most the second tap may land from the first, in px. */
+export const DOUBLE_TAP_SLOP = 30;
+/** TAP_MAX_MS is the longest a touch may last and still be a tap (not a long press). */
+export const TAP_MAX_MS = 300;
+/** TAP_SLOP is the most a finger may move during a tap, in px (more is a scroll). */
+export const TAP_SLOP = 10;
+
+/** isTap reports whether a touch from start {t,x,y} to end is a tap, not a press or scroll. */
+export function isTap(start, end) {
+  if (end.t - start.t > TAP_MAX_MS) return false;
+  return Math.hypot(end.x - start.x, end.y - start.y) <= TAP_SLOP;
+}
+
+/** isDoubleTap reports whether tap {t,x,y} follows prev (or null) closely enough to pair with it. */
+export function isDoubleTap(prev, tap) {
+  if (!prev) return false;
+  const dt = tap.t - prev.t;
+  if (dt < 0 || dt > DOUBLE_TAP_MS) return false;
+  return Math.hypot(tap.x - prev.x, tap.y - prev.y) <= DOUBLE_TAP_SLOP;
+}
+
 /** isDispatched mirrors fleet.Meta.Dispatched: launched by another agent. */
 export function isDispatched(win) {
   return Boolean(win.mode) && win.mode !== "bare";
