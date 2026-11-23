@@ -277,7 +277,7 @@ function mountViewer(root, ctx, route) {
     if (!detail || !canComment) return;
     if (composerEl) {
       const ta = composerEl.querySelector("textarea");
-      if (prefill) ta.value = ta.value.trim() ? `${ta.value}\n${prefill}` : prefill;
+      if (prefill) ta.value = (ta.value.trim() ? `${ta.value}\n${prefill}` : prefill).slice(0, ARTIFACT_FEEDBACK_MAX);
       ta.focus();
       return;
     }

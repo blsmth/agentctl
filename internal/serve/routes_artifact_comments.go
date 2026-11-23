@@ -110,6 +110,14 @@ func (s *Server) deliverComment(m artifacts.Meta, rev int, text string, a *audit
 	if m.Account != "" && rw.group.Rows != nil && rw.index < len(rw.group.Rows) && rw.group.Rows[rw.index].Account != m.Account {
 		return artifacts.CommentUndelivered, "the window now belongs to another account"
 	}
+	// Window IDs restart after a tmux restart, so the same ID can now hold a
+	// different agent of the same project and account: the session must match
+	// too. (A /clear in the author window also refuses; the comment is kept.)
+	if m.SessionID != "" && rw.index < len(rw.group.Rows) {
+		if cur := rw.group.Rows[rw.index].SessionID; cur != "" && cur != m.SessionID {
+			return artifacts.CommentUndelivered, "the window now runs a different session"
+		}
+	}
 	queue := rw.window.State == "working"
 	da := *a
 	out := s.deliverText(m.Session, m.WindowID, replyIn{Text: commentMessage(m, rev, text)}, &da, queue)

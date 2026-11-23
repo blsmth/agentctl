@@ -42,12 +42,16 @@ func TestArtifactCommentDelivery(t *testing.T) {
 		{"gone window saves", "idle", idlePane, func(o artifacts.Origin) artifacts.Origin { o.WindowID = "@999"; return o }, deliverySaved, artifacts.CommentUndelivered, false, "closed"},
 		{"other session saves", "idle", idlePane, func(o artifacts.Origin) artifacts.Origin { o.Session = "agentctl-other"; return o }, deliverySaved, artifacts.CommentUndelivered, false, "closed"},
 		{"other account saves", "idle", idlePane, func(o artifacts.Origin) artifacts.Origin { o.Account = "work"; return o }, deliverySaved, artifacts.CommentUndelivered, false, "account"},
+		{"recycled window id saves", "idle", idlePane, func(o artifacts.Origin) artifacts.Origin { o.SessionID = "old-session"; return o }, deliverySaved, artifacts.CommentUndelivered, false, "different session"},
+		{"same session id delivers", "idle", idlePane, func(o artifacts.Origin) artifacts.Origin { o.SessionID = "cur-session"; return o }, deliveryDelivered, artifacts.CommentDelivered, true, ""},
 		{"no window recorded saves", "idle", idlePane, func(o artifacts.Origin) artifacts.Origin { o.WindowID, o.Session = "", ""; return o }, deliverySaved, artifacts.CommentUndelivered, false, "no agent window"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ae := newArtifactEnv(t, true)
-			ae.fleet.set(writeGroup(tt.state, false, "go-engineer", "dispatch"))
+			g := writeGroup(tt.state, false, "go-engineer", "dispatch")
+			g.Rows[0].SessionID = "cur-session"
+			ae.fleet.set(g)
 			ae.panes.set(tt.pane)
 			o := authorOrigin
 			if tt.origin != nil {
