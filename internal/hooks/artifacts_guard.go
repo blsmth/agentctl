@@ -49,7 +49,7 @@ func checkArtifactsTamper(command string) string {
 			targets = append(targets, `(?:~|\$HOME|\$\{HOME\})/`+rel+`\b`)
 		}
 	}
-	if matchesWriteTemplates(maskAgentctlArgs(command), targets) {
+	if matchesWriteTemplates(command, targets) {
 		return artifactsTamperReason
 	}
 	return ""
