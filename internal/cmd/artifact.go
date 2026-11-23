@@ -92,6 +92,11 @@ func RunArtifactShow(w io.Writer, id string, jsonOut bool) error {
 	return defaultArtifactEnv.show(w, id, jsonOut)
 }
 
+// RunArtifactComments prints the feedback sent on an artifact from the viewer.
+func RunArtifactComments(w io.Writer, id string, jsonOut bool) error {
+	return defaultArtifactEnv.comments(w, id, jsonOut)
+}
+
 // RunArtifactURL prints an artifact's URL.
 func RunArtifactURL(w io.Writer, id string, rev int) error { return defaultArtifactEnv.url(w, id, rev) }
 
@@ -309,7 +314,45 @@ func (e artifactEnv) show(w io.Writer, id string, jsonOut bool) error {
 		fmt.Fprintf(w, "    #%d  %s  %s%s\n      %s\n", r.N, r.Created.Local().Format("2006-01-02 15:04"),
 			humanize.Bytes(uint64(r.Size)), note, artifactURL(base, m.ID, r.N))
 	}
+	if len(m.Comments) > 0 {
+		fmt.Fprintf(w, "  comments (%d, rev  time  from  status):\n", len(m.Comments))
+		printComments(w, m.Comments, "    ")
+	}
 	return nil
+}
+
+func (e artifactEnv) comments(w io.Writer, id string, jsonOut bool) error {
+	m, err := e.store().Get(id)
+	if err != nil {
+		return err
+	}
+	cs := m.Comments
+	if cs == nil {
+		cs = []artifacts.Comment{}
+	}
+	if jsonOut {
+		return writeJSON(w, cs)
+	}
+	if len(cs) == 0 {
+		fmt.Fprintln(w, "no comments")
+		return nil
+	}
+	printComments(w, cs, "")
+	return nil
+}
+
+// printComments writes one block per comment, oldest first.
+func printComments(w io.Writer, cs []artifacts.Comment, indent string) {
+	for _, c := range cs {
+		who := c.Device
+		if who == "" {
+			who = "viewer"
+		}
+		fmt.Fprintf(w, "%s#%d  %s  %s  [%s]\n", indent, c.Rev, c.At.Local().Format("2006-01-02 15:04"), who, c.Status)
+		for _, line := range strings.Split(c.Text, "\n") {
+			fmt.Fprintf(w, "%s    %s\n", indent, line)
+		}
+	}
 }
 
 // revURL validates rev against the artifact and returns the URL to show.
@@ -450,7 +493,7 @@ func artifactOrigin() artifacts.Origin {
 			o.WindowID = wid
 			o.Session = artifactSessionOf(wid)
 			if ws, err := artifactReadWin(wid); err == nil {
-				o.Agent, o.SessionID, o.Branch = ws.AgentName, ws.SessionID, ws.Branch
+				o.Agent, o.SessionID, o.Branch, o.Account = ws.AgentName, ws.SessionID, ws.Branch, ws.Account
 				if ws.WorkDir != "" {
 					dir = ws.WorkDir
 				}

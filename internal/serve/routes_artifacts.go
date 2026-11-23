@@ -34,6 +34,8 @@ type artifactView struct {
 	RevCount int               `json:"rev_count"`
 	URL      string            `json:"url"`
 	RawURL   string            `json:"raw_url"`
+	// CommentCount is len(Comments); the list omits the comments themselves.
+	CommentCount int `json:"comment_count"`
 }
 
 // artifactViewerURL is the web app route of an artifact.
@@ -43,7 +45,7 @@ func artifactViewerURL(id string) string { return "/#/artifacts/" + url.PathEsca
 func (s *Server) viewOfArtifact(m artifacts.Meta, device string) artifactView {
 	v := artifactView{
 		Meta: m, Latest: m.Latest(), RevCount: len(m.Revs),
-		URL:  artifactViewerURL(m.ID),
+		URL: artifactViewerURL(m.ID), CommentCount: len(m.Comments),
 		Revs: make([]artifactRevView, 0, len(m.Revs)),
 	}
 	for _, r := range m.Revs {
@@ -62,6 +64,10 @@ func (s *Server) registerArtifacts(rt *Router) {
 	rt.Device("GET /v1/artifacts/{id}", s.handleArtifact)
 	rt.Write("DELETE /v1/artifacts/{id}", writeRoute(s, "artifact-delete", s.handleArtifactDelete))
 	rt.Write("POST /v1/artifacts/{id}/pin", writeRoute(s, "artifact-pin", s.handleArtifactPin))
+	if rt.allowWrite {
+		rt.Feature("artifact-comments")
+	}
+	rt.Write("POST /v1/artifacts/{id}/comments", writeRoute(s, "artifact-comment", s.handleArtifactComment))
 	// The cookie authenticates only the entry request, which redirects to the
 	// capability URL; subresources of the sandboxed document carry no cookie.
 	rt.Device("GET /a/{id}/{rev}/{path...}", s.handleArtifactEntry)
@@ -82,6 +88,8 @@ func artifactActionFor(path string) (string, bool) {
 		return "artifact-delete", true
 	case len(p) == 4 && p[3] == "pin":
 		return "artifact-pin", true
+	case len(p) == 4 && p[3] == "comments":
+		return "artifact-comment", true
 	}
 	return "", false
 }
@@ -122,7 +130,9 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	d, _ := DeviceFrom(r.Context())
 	out := make([]artifactView, 0, len(list))
 	for _, m := range list {
-		out = append(out, s.viewOfArtifact(m, d.ID))
+		v := s.viewOfArtifact(m, d.ID)
+		v.Comments = nil // up to 200 x 4000 characters each; GET one for them
+		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Artifacts []artifactView `json:"artifacts"`

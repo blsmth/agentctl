@@ -65,7 +65,7 @@ func (s *Store) Add(o AddOptions) (Meta, error) {
 		Pinned: o.Pin, NoNotify: o.NoNotify,
 		ProjectDir: o.Origin.ProjectDir, Project: o.Origin.Project, Agent: o.Origin.Agent,
 		WindowID: o.Origin.WindowID, Session: o.Origin.Session, SessionID: o.Origin.SessionID,
-		Branch: o.Origin.Branch,
+		Branch: o.Origin.Branch, Account: o.Origin.Account,
 	}
 	revDir := filepath.Join(st.dir, "rev")
 	if err := os.MkdirAll(revDir, 0o700); err != nil {

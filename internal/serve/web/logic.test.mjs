@@ -21,6 +21,7 @@ import {
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
   ARTIFACT_TOKEN_MAX_AGE_MS, artifactChipText, artifactHash, artifactIcon, artifactOrigin, artifactRevLabel, artifactRevPill, artifactRowMeta, artifactTokenStale,
   artifactWindowLive, artifactsForWindow, artifactsHash, groupArtifacts,
+  ARTIFACT_FEEDBACK_MAX, artifactCommentStatus, artifactCommentToast, artifactFeedbackFrom,
 } from "./logic.js";
 
 const fixtures = JSON.parse(readFileSync(new URL("./logic.fixtures.json", import.meta.url), "utf8"));
@@ -1030,4 +1031,32 @@ console.log("ok: template approvals");
   const pg = groupArtifacts([A("p1", "/b", "beta"), A("p2", "/b", "beta", { pinned: true }), A("p3", "/b", "beta"), A("p4", "/b", "beta", { pinned: true })], []);
   assert.deepEqual(pg[0].items.map((x) => x.id), ["p2", "p4", "p1", "p3"]);
   console.log("ok: artifacts logic");
+}
+
+{
+  // The postMessage bridge: only the iframe's own window, only the exact type.
+  const frame = { id: "frame" };
+  const ev = (over = {}) => ({ source: frame, data: { type: "agentctl:feedback", text: "pick B" }, ...over });
+  assert.equal(artifactFeedbackFrom(ev(), frame), "pick B");
+  assert.equal(artifactFeedbackFrom(ev({ source: {} }), frame), null, "other window");
+  assert.equal(artifactFeedbackFrom(ev({ source: null }), frame), null);
+  assert.equal(artifactFeedbackFrom(ev(), null), null, "no frame window");
+  assert.equal(artifactFeedbackFrom(ev(), undefined), null);
+  assert.equal(artifactFeedbackFrom(ev({ data: { type: "other", text: "x" } }), frame), null, "wrong type");
+  assert.equal(artifactFeedbackFrom(ev({ data: { type: "agentctl:feedback", text: 5 } }), frame), null, "non-string");
+  assert.equal(artifactFeedbackFrom(ev({ data: { type: "agentctl:feedback" } }), frame), null);
+  assert.equal(artifactFeedbackFrom(ev({ data: { type: "agentctl:feedback", text: "  \n " } }), frame), null, "blank");
+  assert.equal(artifactFeedbackFrom(ev({ data: "agentctl:feedback" }), frame), null, "string payload");
+  assert.equal(artifactFeedbackFrom(ev({ data: null }), frame), null);
+  assert.equal(artifactFeedbackFrom(ev({ data: { type: "agentctl:feedback", text: "  hi  " } }), frame), "hi");
+  const long = artifactFeedbackFrom(ev({ data: { type: "agentctl:feedback", text: "\u00e9".repeat(ARTIFACT_FEEDBACK_MAX + 50) } }), frame);
+  assert.equal([...long].length, ARTIFACT_FEEDBACK_MAX);
+  assert.equal(artifactCommentToast({ delivery: "delivered" })[0], "Sent to the agent");
+  assert.match(artifactCommentToast({ delivery: "queued" })[0], /^Queued/);
+  assert.equal(artifactCommentToast({ delivery: "saved", reason: "the agent's window is closed" })[0], "Saved, not delivered: the agent's window is closed");
+  assert.equal(artifactCommentToast({ delivery: "saved" })[0], "Saved, not delivered");
+  assert.equal(artifactCommentStatus({ status: "delivered" }), "sent");
+  assert.equal(artifactCommentStatus({ status: "queued" }), "queued");
+  assert.equal(artifactCommentStatus({ status: "undelivered" }), "not delivered");
+  console.log("ok: artifact feedback bridge");
 }

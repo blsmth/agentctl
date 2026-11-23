@@ -1604,16 +1604,17 @@ func (c *TemplateRmCmd) Run() error { return cmd.RunTemplateRm(os.Stdout, c.Name
 // ArtifactCmd groups `agentctl artifact`: the one writer of the artifact
 // store (<state dir>/artifacts), which `agentctl serve` shows on the phone.
 type ArtifactCmd struct {
-	Add    ArtifactAddCmd    `cmd:"" help:"Publish a file, a directory (with index.html) or stdin (-) as an artifact"`
-	Update ArtifactUpdateCmd `cmd:"" help:"Add a revision to an artifact (the latest is the default view)"`
-	List   ArtifactListCmd   `cmd:"" help:"List artifacts (this project; --all for every project)"`
-	Show   ArtifactShowCmd   `cmd:"" help:"Show an artifact's metadata, revisions and URL"`
-	URL    ArtifactURLCmd    `cmd:"" name:"url" help:"Print an artifact's URL"`
-	Open   ArtifactOpenCmd   `cmd:"" help:"Open an artifact in the laptop browser"`
-	Pin    ArtifactPinCmd    `cmd:"" help:"Pin an artifact so retention never prunes it"`
-	Unpin  ArtifactUnpinCmd  `cmd:"" help:"Unpin an artifact"`
-	Rm     ArtifactRmCmd     `cmd:"" help:"Delete an artifact and all its revisions"`
-	Prune  ArtifactPruneCmd  `cmd:"" help:"Delete unpinned artifacts not updated recently"`
+	Add      ArtifactAddCmd      `cmd:"" help:"Publish a file, a directory (with index.html) or stdin (-) as an artifact"`
+	Update   ArtifactUpdateCmd   `cmd:"" help:"Add a revision to an artifact (the latest is the default view)"`
+	List     ArtifactListCmd     `cmd:"" help:"List artifacts (this project; --all for every project)"`
+	Show     ArtifactShowCmd     `cmd:"" help:"Show an artifact's metadata, revisions and URL"`
+	Comments ArtifactCommentsCmd `cmd:"" help:"List the feedback sent on an artifact from the viewer"`
+	URL      ArtifactURLCmd      `cmd:"" name:"url" help:"Print an artifact's URL"`
+	Open     ArtifactOpenCmd     `cmd:"" help:"Open an artifact in the laptop browser"`
+	Pin      ArtifactPinCmd      `cmd:"" help:"Pin an artifact so retention never prunes it"`
+	Unpin    ArtifactUnpinCmd    `cmd:"" help:"Unpin an artifact"`
+	Rm       ArtifactRmCmd       `cmd:"" help:"Delete an artifact and all its revisions"`
+	Prune    ArtifactPruneCmd    `cmd:"" help:"Delete unpinned artifacts not updated recently"`
 }
 
 type ArtifactAddCmd struct {
@@ -1664,6 +1665,13 @@ type ArtifactShowCmd struct {
 }
 
 func (c *ArtifactShowCmd) Run() error { return cmd.RunArtifactShow(os.Stdout, c.ID, c.JSON) }
+
+type ArtifactCommentsCmd struct {
+	ID   string `arg:"" help:"Artifact id"`
+	JSON bool   `help:"Print as JSON"`
+}
+
+func (c *ArtifactCommentsCmd) Run() error { return cmd.RunArtifactComments(os.Stdout, c.ID, c.JSON) }
 
 type ArtifactURLCmd struct {
 	ID  string `arg:"" help:"Artifact id"`

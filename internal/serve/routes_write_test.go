@@ -387,6 +387,7 @@ func writeRoutes(t *testing.T) []struct{ name, path, body string } {
 		{"shell", "/v1/shell", `{"project_dir":"/code/proj"}`},
 		{"sweep-preview", "/v1/sweep/preview", `{"session":"agentctl-proj"}`},
 		{"sweep", "/v1/sweep", `{"session":"agentctl-proj"}`},
+		{"artifact-comment", "/v1/artifacts/" + strings.Repeat("a", 10) + "/comments", `{"text":"hi","rev":1}`},
 		{"approval", "/v1/approvals/" + strings.Repeat("a", 32), `{"decision":"allow","payload_sha256":"x"}`},
 	}
 }

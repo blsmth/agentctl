@@ -118,6 +118,7 @@ Feature `artifacts`. See [artifacts.md](artifacts.md) for the store and the sand
 | `GET /v1/artifacts/{id}` | Device | `Artifact`; 404 `not_found` for an unknown or malformed id. |
 | `DELETE /v1/artifacts/{id}` | Write | Body `{}`. Deletes it and all revisions; `{"ok":true}`. Audited as `artifact-delete`. |
 | `POST /v1/artifacts/{id}/pin` | Write | `{"pinned":bool}` (required). Returns the `Artifact`. Audited as `artifact-pin`. |
+| `POST /v1/artifacts/{id}/comments` | Write | `{"text":string,"rev":int}` (`rev` 0 = latest; text at most 4000 characters). Stores the comment and types it into the author window like reply (idle) or queue (working). Returns `{"comment":…,"delivery":"delivered"\|"queued"\|"saved","reason"?}`; `saved` means stored only (window closed, another account, busy). Feature `artifact-comments`. Audited as `artifact-comment`. |
 | `GET /a/{id}/{rev}/{path...}` | Device | Resolves `rev` (a number or `latest`) and redirects (302, `no-store`) to the capability URL of the same file for this device, query kept. |
 | `GET /a/t/{token}/{id}/{rev}/{path...}` | Public (token) | Content of revision `rev` (a number; the token must grant exactly this artifact and revision, be unexpired and belong to a still-paired device, else 403). An empty path is the entry. Markdown and text entries are rendered pages (`?raw=1` for the bytes). `immutable`. `Access-Control-Allow-Origin: *` without credentials. |
 

@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -121,5 +123,31 @@ func TestFleetArtifactKeyNoopWithoutArtifacts(t *testing.T) {
 		if it.key == fleetArtifactKey {
 			t.Error("menu offers artifact on a row without any")
 		}
+	}
+}
+
+func TestArtifactStoreStampSeesNewRevision(t *testing.T) {
+	root := t.TempDir()
+	st := &artifacts.Store{Dir: func() (string, error) { return root, nil }}
+	src := filepath.Join(t.TempDir(), "a.md")
+	if err := os.WriteFile(src, []byte("# A\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := st.Add(artifacts.AddOptions{Source: artifacts.Source{Path: src}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pretend the store dir and meta.json are old, then add a revision: only
+	// meta.json moves.
+	old := time.Now().Add(-time.Hour)
+	_ = os.Chtimes(root, old, old)
+	_ = os.Chtimes(filepath.Join(root, m.ID, "meta.json"), old, old)
+	before, _ := storeStampOf(root)
+	if _, err := st.Update(m.ID, artifacts.UpdateOptions{Source: artifacts.Source{Path: src}}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := storeStampOf(root)
+	if !after.After(before) {
+		t.Errorf("stamp did not advance: %v -> %v", before, after)
 	}
 }
