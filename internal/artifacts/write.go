@@ -14,7 +14,9 @@ type AddOptions struct {
 	Title, Description string
 	Kind, Entry        string
 	Pin                bool
-	Origin             Origin
+	// NoNotify asks serve not to push a notification for this artifact.
+	NoNotify bool
+	Origin   Origin
 }
 
 // UpdateOptions are the inputs of Update. The kind and entry are re-inferred
@@ -40,7 +42,7 @@ func (s *Store) Add(o AddOptions) (Meta, error) {
 		return Meta{}, err
 	}
 	defer unlock()
-	if err := checkCapacity(root, st.size); err != nil {
+	if err := checkCapacity(root, st.size, 0); err != nil {
 		return Meta{}, err
 	}
 
@@ -59,8 +61,8 @@ func (s *Store) Add(o AddOptions) (Meta, error) {
 	m := Meta{
 		ID: id, Slug: slugify(title), Title: title, Description: o.Description,
 		Kind: st.kind, Entry: st.entry, Created: now, Updated: now,
-		Revs:       []Revision{{N: 1, Created: now, Size: st.size}},
-		Pinned:     o.Pin,
+		Revs:   []Revision{{N: 1, Created: now, Size: st.size}},
+		Pinned: o.Pin, NoNotify: o.NoNotify,
 		ProjectDir: o.Origin.ProjectDir, Project: o.Origin.Project, Agent: o.Origin.Agent,
 		WindowID: o.Origin.WindowID, Session: o.Origin.Session, SessionID: o.Origin.SessionID,
 		Branch: o.Origin.Branch,
@@ -79,6 +81,7 @@ func (s *Store) Add(o AddOptions) (Meta, error) {
 	if err := os.Rename(st.dir, filepath.Join(root, id)); err != nil {
 		return Meta{}, fmt.Errorf("storing artifact: %w", err)
 	}
+	touchChanged(root)
 	return m, nil
 }
 
@@ -107,7 +110,7 @@ func (s *Store) Update(id string, o UpdateOptions) (Meta, error) {
 	if err != nil {
 		return Meta{}, err
 	}
-	if err := checkCapacity(root, st.size); err != nil {
+	if err := checkCapacity(root, st.size, droppedBytes(m.Revs)); err != nil {
 		return Meta{}, err
 	}
 
@@ -136,7 +139,18 @@ func (s *Store) Update(id string, o UpdateOptions) (Meta, error) {
 		return Meta{}, err
 	}
 	dropUnreferenced(adir, m)
+	touchChanged(root)
 	return m, nil
+}
+
+// droppedBytes is the content size of the revisions an update drops: adding
+// one more to revs keeps only the newest MaxRevs.
+func droppedBytes(revs []Revision) int64 {
+	var n int64
+	for i := 0; i < len(revs)+1-MaxRevs && i < len(revs); i++ {
+		n += revs[i].Size
+	}
+	return n
 }
 
 // maxRevDir is the highest numeric dir under <adir>/rev (0 when none).

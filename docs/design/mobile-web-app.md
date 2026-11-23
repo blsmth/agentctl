@@ -108,6 +108,20 @@ All JSON. Errors: `{"error": "message", "code": "snake_case"}` with an appropria
 `Group` = `{"session","project","dir","rollup":"blocked|working|done|idle","windows":[Window]}`, ordered with `fleet.OrderGroups`.
 `Window` = the same field names as `agentctl status --json` rows (`session, project, window_id, window_index, agent, state, done, mode, context_pct, branch, worktree_path, parent, activity`) plus `pr_url`, `issue`, `blocked_since`, `state_since`, `pending_tool` where available. Implement one shared conversion from `fleet.Row` so `status --json` and `serve` cannot drift (refactor `status --json` to use it).
 
+### Artifacts
+
+Feature `artifacts`. See [artifacts.md](artifacts.md) for the store and the sandbox.
+
+| Method + path | Access | Response |
+|---|---|---|
+| `GET /v1/artifacts?project=&since=` | Device | `{"artifacts":[Artifact]}`, most recently updated first. `project` matches the display name or the project dir; `since` is RFC 3339 or a duration back from now (`24h`, `7d`; anything else is 400). |
+| `GET /v1/artifacts/{id}` | Device | `Artifact`; 404 `not_found` for an unknown or malformed id. |
+| `DELETE /v1/artifacts/{id}` | Write | Body `{}`. Deletes it and all revisions; `{"ok":true}`. Audited as `artifact-delete`. |
+| `POST /v1/artifacts/{id}/pin` | Write | `{"pinned":bool}` (required). Returns the `Artifact`. Audited as `artifact-pin`. |
+| `GET /a/{id}/{rev}/{path...}` | Device | Content of revision `rev` (a number or `latest`); an empty path is the entry. Markdown and text entries are rendered pages (`?raw=1` for the bytes). Every response under `/a/`, errors included, carries `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https:` (never `allow-same-origin`), `nosniff`, `Referrer-Policy: no-referrer`, `Cross-Origin-Resource-Policy: same-origin` and `X-Frame-Options: SAMEORIGIN`. Traversal (`..`, encoded or not, `%2f`, `//`, symlinks) is 400. `latest` is `no-cache`, numbered revisions `immutable`. |
+
+`Artifact` = the `meta.json` fields (`id, slug, title, description, kind, entry, created, updated, pinned, no_notify, project_dir, project, agent, window_id, session, session_id, branch`) plus `latest`, `rev_count`, `url` (the app route `/#/artifacts/<id>`), `raw_url` (`/a/<id>/latest/`) and `revs` `[{n, created, size, note, raw_url}]`.
+
 ### Host status
 
 `GET /v1/host` (Device auth, feature `host`) backs the phone's Host screen (Settings → Host status). It returns `server_time` (RFC 3339, for client-side clock skew; the client measures round trip itself), `host` (hostname, os/arch, uptime, cores, load 1/5/15, `cpu_percent`, memory total/used/available, swap total/used, and on macOS `memory_pressure` of normal/warn/critical via sysctl), `agentctl` (serve version and uptime, `tmux_windows`) and `processes`: `groups` (count, summed CPU% of one core and RSS for `claude` and `agentctl chrome-bar|serve|hub-view|hud|metrics|other`) plus the top 5 processes by CPU. Fields a platform cannot provide are omitted, never errors; Linux builds and reports what gopsutil gives it.
@@ -119,6 +133,7 @@ Stats come from gopsutil (no cgo, no `ps`/`top`). A snapshot is cached for 3 sec
 `GET /v1/events` — SSE. On connect, one `event: fleet` with the full `/v1/fleet` body. Then:
 - `event: window` `data: Window` — a window appeared or a **rendered** field changed (state, done, activity, context_pct, pr_url…). Hooks rewrite windowstate on every tool call, so diff the rendered `Window`, never raw file events.
 - `event: gone` `data: {"session","window_id"}`.
+- `event: artifact` `data: {"id","action":"add|update|rm"}` — the artifact store changed (pin and title changes are `update`). Refetch `/v1/artifacts` on it, and on any `fleet` event (sent when a client fell behind and dropped events).
 - `: ping` comment every 20s.
 Source: an internal event bus (`internal/serve/fleetwatch`) that fsnotify-watches every live session runtime dir `windows/` (and re-discovers sessions every 5s, since sessions come and go), debounces 200ms, rebuilds rows with `fleet`, and diffs. PR3 (push) and keep-awake subscribe to the same bus, receiving typed transitions `{window, from, to}`.
 
@@ -154,7 +169,7 @@ The window actions check and type into the window's main pane (the pane that is 
 | `POST /v1/push/test` | send a test push to this device (never suppressed) |
 | `POST /v1/presence` | `{"visible": bool}`: the app reports it is in the foreground (CSRF; a Device route, so it works with `allow_write` off) |
 
-Triggers (from the fleetwatch bus): transition into `blocked`; transition to done with a PR (`pr_url` non-empty) or done without one; still blocked after `blocked_reminder_minutes` (once per blocked episode). De-dupe per window per episode; respect quiet hours and muted projects. Payload JSON: `{"title":"Fix hub viewer jump","body":"Needs permission · go-engineer · agentctl · Bash: go test ./...","url":"/#/w/agentctl-agentctl/@523","tag":"<session>:<window>"}`. Library: `github.com/SherClockHolmes/webpush-go`. Expired subscriptions (404/410) are deleted. ntfy fallback: by default a post carries only the kind of event (no agent, project or window, no `Click:` header, since ntfy.sh topics are public and the app URL is a LAN address); with `ntfy_details` it posts the same title/body with `Click:` set to the app URL.
+Triggers (from the fleetwatch bus): transition into `blocked`; transition to done with a PR (`pr_url` non-empty) or done without one; still blocked after `blocked_reminder_minutes` (once per blocked episode); a newly published artifact (`serve.push.artifacts`, not updates, not `--no-notify`; `{"title":"<artifact title>","body":"<agent> · <project>","url":"/#/artifacts/<id>","tag":"artifact:<id>"}`). De-dupe per window per episode; respect quiet hours and muted projects. Payload JSON: `{"title":"Fix hub viewer jump","body":"Needs permission · go-engineer · agentctl · Bash: go test ./...","url":"/#/w/agentctl-agentctl/@523","tag":"<session>:<window>"}`. Library: `github.com/SherClockHolmes/webpush-go`. Expired subscriptions (404/410) are deleted. ntfy fallback: by default a post carries only the kind of event (no agent, project or window, no `Click:` header, since ntfy.sh topics are public and the app URL is a LAN address); with `ntfy_details` it posts the same title/body with `Click:` set to the app URL.
 
 Foreground suppression (`serve.push.suppress_while_open`, default true): `Sender.Broadcast` skips a device whose app is open, for every kind. The web app posts `/v1/presence` `visible:true` on load and when it becomes visible, every 20s while visible, and `visible:false` on hidden and `pagehide` (`keepalive`). The server keeps an in-memory device → last-visible map; a report older than 45s counts as background (iOS freezes a backgrounded page, so the hidden report may never arrive), and a restart means everyone is background. Suppression is server-side because iOS revokes a subscription whose push does not show a notification, so `sw.js` always calls `showNotification`. The result is logged and recorded ("sent to 1/2, 1 in app"). The notifier's episode logic is unchanged: a suppressed first blocked push still marks the episode, so the reminder fires if the user has backgrounded the app and the window is still blocked. ntfy is a topic, not a device, and is not suppressed.
 

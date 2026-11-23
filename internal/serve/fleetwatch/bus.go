@@ -28,16 +28,38 @@ const (
 	// KindTransition: a window's status (blocked/working/done/idle) changed.
 	// From is "" for a window seen for the first time.
 	KindTransition
+	// KindArtifact: the artifact store changed (see Event.Artifact). Not
+	// derived from the fleet: the artifact watcher publishes it.
+	KindArtifact
 )
+
+// Artifact actions.
+const (
+	ArtifactAdd    = "add"
+	ArtifactUpdate = "update"
+	ArtifactRemove = "rm"
+)
+
+// ArtifactChange is one change to the artifact store. Only ID and Action go
+// to SSE clients; the rest is for the push notifier (never content).
+type ArtifactChange struct {
+	ID       string
+	Action   string // ArtifactAdd, ArtifactUpdate or ArtifactRemove
+	Title    string
+	Agent    string
+	Project  string
+	NoNotify bool
+}
 
 // Event is one bus message. Only the fields for its Kind are set.
 type Event struct {
 	Kind     Kind
-	Fleet    []Group      // KindFleet
-	Window   fleet.Window // KindWindow, KindTransition
-	Session  string       // KindGone
-	WindowID string       // KindGone
-	From, To string       // KindTransition
+	Fleet    []Group        // KindFleet
+	Window   fleet.Window   // KindWindow, KindTransition
+	Session  string         // KindGone
+	WindowID string         // KindGone
+	From, To string         // KindTransition
+	Artifact ArtifactChange // KindArtifact
 }
 
 // Timing defaults; tests override them through Options.
@@ -152,6 +174,14 @@ func (b *Bus) Refresh() {
 		b.publishLocked(ev)
 	}
 	b.mu.Unlock()
+}
+
+// Publish fans an event that does not come from the fleet (KindArtifact) out
+// to every subscriber, with the same never-block rule as fleet events.
+func (b *Bus) Publish(ev Event) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.publishLocked(ev)
 }
 
 // shellsChanged reports whether any group's shell windows differ between prev

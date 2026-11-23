@@ -146,13 +146,11 @@ func (e artifactEnv) add(w io.Writer, o ArtifactAddOptions) error {
 	}
 	m, err := e.store().Add(artifacts.AddOptions{
 		Source: src, Title: o.Title, Description: o.Description, Kind: o.Kind, Entry: o.Entry,
-		Pin: o.Pin, Origin: e.origin(),
+		Pin: o.Pin, NoNotify: o.NoNotify, Origin: e.origin(),
 	})
 	if err != nil {
 		return err
 	}
-	// --no-notify is accepted now so scripts can pass it; the push trigger
-	// arrives with the serve routes.
 	return e.report(w, m, "Published", o.JSON)
 }
 
@@ -287,6 +285,9 @@ func (e artifactEnv) revURL(id string, rev int) (string, error) {
 	m, err := e.store().Get(id)
 	if err != nil {
 		return "", err
+	}
+	if len(m.Revs) == 0 {
+		return "", fmt.Errorf("artifact %s has no revisions (its metadata is damaged; remove it with `agentctl artifact rm %s`)", id, id)
 	}
 	if rev > 0 && !m.HasRev(rev) {
 		return "", fmt.Errorf("artifact %s has no revision %d (have %d..%d)", id, rev, m.Revs[0].N, m.Latest())
