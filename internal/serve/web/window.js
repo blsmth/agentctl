@@ -4,6 +4,7 @@ import { approvalCard, tickCountdowns } from "./approvals.js";
 import { imagePicker, svgIcon } from "./attach.js";
 import {
   artifactChipText,
+  projectAgent,
   artifactsForWindow,
   artifactsHash,
   INTERRUPT_FOLLOWUP_MS,
@@ -453,7 +454,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
       }
     }
     waitingKids.hidden = waitingKids.childElementCount === 0;
-    where.textContent = [dt.agent, win.project, win.branch].filter(Boolean).join(" · ");
+    where.textContent = [projectAgent(win.project, dt.agent), win.branch].filter(Boolean).join(" · ");
     const { task: line, recap: summary } = headerLines(win);
     taskCollapsed = line;
     taskFull = fullPrompt(win, line);

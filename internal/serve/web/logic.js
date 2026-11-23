@@ -2242,10 +2242,16 @@ export function scheduleAgentText(job, templateAgent = "") {
   return "";
 }
 
-/** scheduleRowActivity is a list row's "agent · project" line; a template job names its template. */
+/** projectAgent joins a project and an agent as "project \u203A agent"; a missing half shows alone. */
+export function projectAgent(project, agent) {
+  return [project, agent].filter(Boolean).join(" \u203A ");
+}
+
+/** scheduleRowActivity is a list row's "project \u203A agent" line; a template job names its template ("project \u203A agent \u00B7 template X"). */
 export function scheduleRowActivity(job, project) {
-  const who = job?.template ? `${job.agent ? `${job.agent} · ` : ""}template ${job.template}` : job?.agent ?? "";
-  return `${who} \u00B7 ${project}`;
+  if (!job?.template) return projectAgent(project, job?.agent);
+  const tpl = `template ${job.template}`;
+  return projectAgent(project, job.agent ? `${job.agent} \u00B7 ${tpl}` : tpl);
 }
 
 /**
@@ -2424,7 +2430,7 @@ export function artifactRevPill(n, latest, total) {
   return n === latest ? `v${n} ▾` : `v${n} of ${total} ▾`;
 }
 
-/** artifactOrigin is the sheet's origin line: "designer · shop · @17". */
+/** artifactOrigin is the sheet's origin line: "shop \u203A designer \u00B7 @17". */
 export function artifactOrigin(a) {
-  return [a.agent, a.project, a.window_id].filter(Boolean).join(" · ");
+  return [projectAgent(a.project, a.agent), a.window_id].filter(Boolean).join(" \u00B7 ");
 }
