@@ -13,11 +13,11 @@ Mapping:
 - `url <id>` → `agentctl artifact url <id>`
 - `open <id>` → `agentctl artifact open <id>` (opens the laptop browser)
 - `pin <id>` / `unpin <id>` → `agentctl artifact pin|unpin <id>`
-- `rm <id>` → `agentctl artifact rm <id>` (confirm with the user first; it deletes every revision)
+- `rm <id>` → confirm with the user first (it deletes every revision), then `agentctl artifact rm <id> --yes` (the prompt cannot be answered from Bash)
 - `prune` → `agentctl artifact prune --dry-run` first, then without `--dry-run` only if the user confirms
 - A bare id → `agentctl artifact show <id>`
 
-Flags the user typed (`--title`, `--description`, `--kind`, `--entry`, `--pin`, `--no-notify`, `--note`, `--all`, `--json`, `--dry-run`) pass through unchanged. Do not invent other flags.
+Flags the user typed (`--title`, `--description`, `--kind`, `--entry`, `--pin`, `--no-notify`, `--note`, `--all`, `--json`, `--dry-run`, `--yes`) pass through unchanged. Do not invent other flags.
 
 Notes:
 - `add` and `update` print the artifact id and URL; send the URL to the user. Update an existing artifact rather than adding a duplicate.
