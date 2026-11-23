@@ -12,7 +12,7 @@ import {
   actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
   defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines, fullPrompt,
-  waitingIndex, displayState, waitingLabel, actionsFor, effectiveState,
+  waitingIndex, parentOf, childrenOf, displayState, waitingLabel, actionsFor, effectiveState,
   applyGone, shellRows, shellDirName, shellApiPath,
   formatBytes, formatUptime, hostLevels, hostConnection, pushSample, formatSkew,
   advancedSummary, cardLastFailure, cardStatus, changeLines, fieldErrors, runResultCard, timeoutIsPreset, usageOptions, formClientErrors, formatAgo, formatNextFire, newScheduleForm, previewBody, runResultLabel, scheduleBanners, scheduleBody,
@@ -374,6 +374,36 @@ console.log("ok: resolved text");
     assert.deepEqual(got, c.want, c.name);
   }
   console.log(`ok: ${tree.cases.length} shared tree cases`);
+}
+
+// parentOf / childrenOf: fleet-feed parent and child links.
+{
+  const groups = [
+    { session: "a", windows: [
+      { window_id: "@1", session: "a", state: "idle" },
+      { window_id: "@2", session: "a", parent: "@1", state: "idle", window_index: 2 },
+      { window_id: "@3", session: "a", parent: "@1", state: "working", window_index: 3 },
+      { window_id: "@4", session: "a", parent: "@4", state: "idle" },
+      { window_id: "@5", session: "a", parent: "@9", state: "idle" },
+      { window_id: "@6", session: "a", parent: "@7", state: "idle" },
+      { window_id: "@7", session: "a", parent: "@6", state: "idle" },
+    ] },
+    { session: "b", windows: [{ window_id: "@8", session: "b", parent: "@1", state: "idle", window_index: 1 }] },
+  ];
+  const win = (id) => groups.flatMap((g) => g.windows).find((w) => w.window_id === id);
+  assert.equal(parentOf(groups, win("@1")), null);
+  assert.equal(parentOf(groups, win("@2")).window_id, "@1");
+  assert.equal(parentOf(groups, win("@8")).window_id, "@1"); // other group
+  assert.equal(parentOf(groups, win("@4")), null); // self
+  assert.equal(parentOf(groups, win("@5")), null); // gone
+  assert.equal(parentOf(groups, win("@6")).window_id, "@7"); // cycle: terminates
+  assert.deepEqual(childrenOf(groups, win("@1")).map((w) => w.window_id), ["@3", "@8", "@2"]);
+  assert.deepEqual(childrenOf(groups, win("@4")), []);
+  assert.deepEqual(childrenOf(groups, win("@7")).map((w) => w.window_id), ["@6"]);
+  assert.equal(parentOf(undefined, win("@2")), null);
+  assert.deepEqual(childrenOf(null, win("@1")), []);
+  assert.deepEqual(childrenOf(groups, { parent: "@1" }), []);
+  console.log("ok: parentOf/childrenOf");
 }
 
 // Scheduled (cron) windows.
