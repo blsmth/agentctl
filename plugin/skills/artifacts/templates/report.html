@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Report title</title>
+<style>
+/* ---- shared design tokens (keep identical across templates) ---- */
+:root{--bg:#fff;--fg:#1a1d21;--muted:#5f6b7a;--card:#f5f7fa;--line:#dde2e8;--accent:#2563eb;--good:#15803d;--warn:#b45309;--bad:#b91c1c;--r:12px;color-scheme:light dark}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1216;--fg:#e8ebef;--muted:#9aa5b4;--card:#181d24;--line:#2a313a;--accent:#6ea8ff;--good:#4ade80;--warn:#fbbf24;--bad:#f87171}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-wrap:anywhere}
+main{max-width:960px;margin:0 auto;padding:16px}
+h1{font-size:1.6rem;line-height:1.2;margin:.2em 0}
+h2{font-size:1.2rem;margin:1.6em 0 .5em}
+a{color:var(--accent)}
+.muted{color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px}
+.badge{display:inline-block;font-size:.75rem;padding:1px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+/* ---- end shared tokens ---- */
+.callouts{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin:16px 0}
+.callout{border-left:4px solid var(--accent)}
+.callout.good{border-left-color:var(--good)}.callout.warn{border-left-color:var(--warn)}.callout.bad{border-left-color:var(--bad)}
+.callout b{display:block}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r)}
+table{border-collapse:collapse;width:100%;min-width:480px}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--line)}
+th{cursor:pointer;user-select:none;background:var(--card);white-space:nowrap}
+th[aria-sort=ascending]::after{content:" \25B2"}th[aria-sort=descending]::after{content:" \25BC"}
+tr:last-child td{border-bottom:0}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<main>
+<!-- ===== CONTENT: edit from here ===== -->
+<header>
+  <h1>Report title</h1>
+  <p class="muted">One-line context: what was analysed, when, scope.</p>
+</header>
+
+<section class="callouts" aria-label="Summary">
+  <div class="card callout good"><b>Headline</b>The one thing to know, in a sentence.</div>
+  <div class="card callout warn"><b>Watch out</b>A risk or caveat.</div>
+  <div class="card callout bad"><b>Blocker</b>Something that needs a decision.</div>
+</section>
+
+<h2>Findings</h2>
+<p>Short prose. Lead with the conclusion, then the evidence.</p>
+
+<h2>Data</h2>
+<div class="tablewrap">
+<table id="sortable">
+  <thead><tr><th>Item</th><th>Status</th><th>Count</th></tr></thead>
+  <tbody>
+    <tr><td>Alpha</td><td>ok</td><td class="num">42</td></tr>
+    <tr><td>Beta</td><td>degraded</td><td class="num">7</td></tr>
+    <tr><td>Gamma</td><td>ok</td><td class="num">130</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Next steps</h2>
+<ol><li>First action</li><li>Second action</li></ol>
+<!-- ===== CONTENT: end ===== -->
+</main>
+<script>
+// Click a column header to sort (numeric when both cells parse as numbers).
+document.querySelectorAll("table#sortable th").forEach((th, i) => {
+  th.tabIndex = 0;
+  const sort = () => {
+    const tb = th.closest("table").tBodies[0];
+    const dir = th.getAttribute("aria-sort") === "ascending" ? -1 : 1;
+    th.closest("tr").querySelectorAll("th").forEach(h => h.removeAttribute("aria-sort"));
+    th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+    const val = r => r.cells[i].textContent.trim();
+    [...tb.rows].sort((a, b) => {
+      const x = val(a), y = val(b), nx = parseFloat(x), ny = parseFloat(y);
+      return (isNaN(nx) || isNaN(ny) ? x.localeCompare(y) : nx - ny) * dir;
+    }).forEach(r => tb.appendChild(r));
+  };
+  th.addEventListener("click", sort);
+  th.addEventListener("keydown", e => { if (e.key === "Enter") sort(); });
+});
+</script>
+</body>
+</html>

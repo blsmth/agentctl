@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Diagram title</title>
+<style>
+/* ---- shared design tokens (keep identical across templates) ---- */
+:root{--bg:#fff;--fg:#1a1d21;--muted:#5f6b7a;--card:#f5f7fa;--line:#dde2e8;--accent:#2563eb;--good:#15803d;--warn:#b45309;--bad:#b91c1c;--r:12px;color-scheme:light dark}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1216;--fg:#e8ebef;--muted:#9aa5b4;--card:#181d24;--line:#2a313a;--accent:#6ea8ff;--good:#4ade80;--warn:#fbbf24;--bad:#f87171}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-wrap:anywhere}
+main{max-width:960px;margin:0 auto;padding:16px}
+h1{font-size:1.6rem;line-height:1.2;margin:.2em 0}
+h2{font-size:1.2rem;margin:1.6em 0 .5em}
+a{color:var(--accent)}
+.muted{color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px}
+.badge{display:inline-block;font-size:.75rem;padding:1px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+/* ---- end shared tokens ---- */
+.diagram{overflow-x:auto;text-align:center}
+.diagram svg{max-width:none;height:auto}
+pre.mermaid{margin:0;visibility:hidden}
+pre.mermaid[data-processed]{visibility:visible}
+details pre{overflow-x:auto;font-size:.85rem}
+</style>
+</head>
+<body>
+<main>
+<h1>Diagram title</h1>
+<p class="muted">What this diagram shows. Scroll sideways if it is wide.</p>
+
+<!-- ===== CONTENT: one or more Mermaid diagrams ===== -->
+<h2>Request flow</h2>
+<div class="card diagram">
+<pre class="mermaid">
+flowchart LR
+  U[Client] --> G[Gateway]
+  G --> A[Auth]
+  G --> S[Service]
+  S --> D[(Database)]
+  A -. token .-> S
+</pre>
+</div>
+
+<h2>Sequence</h2>
+<div class="card diagram">
+<pre class="mermaid">
+sequenceDiagram
+  participant C as Client
+  participant S as Server
+  C->>S: request
+  S-->>C: response
+</pre>
+</div>
+<!-- ===== CONTENT: end ===== -->
+
+<p id="err" class="card muted" hidden>Mermaid needs internet access to load; the diagram source is shown instead.</p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"
+        integrity="sha384-rbtjAdnIQE/aQJGEgXrVUlMibdfTSa4PQju4HDhN3sR2PmaKFzhEafuePsl9H/9I"
+        crossorigin="anonymous"></script>
+<script>
+const nodes = [...document.querySelectorAll("pre.mermaid")];
+const sources = nodes.map(n => n.textContent);
+async function render() {
+  nodes.forEach((n, i) => { n.textContent = sources[i]; n.removeAttribute("data-processed"); });
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "default", securityLevel: "strict" });
+  await mermaid.run({ nodes });
+}
+if (typeof mermaid === "undefined") {
+  document.getElementById("err").hidden = false;
+  nodes.forEach(n => { n.style.visibility = "visible"; });
+} else {
+  render();
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+}
+</script>
+</body>
+</html>

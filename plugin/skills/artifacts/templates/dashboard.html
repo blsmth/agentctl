@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Dashboard title</title>
+<style>
+/* ---- shared design tokens (keep identical across templates) ---- */
+:root{--bg:#fff;--fg:#1a1d21;--muted:#5f6b7a;--card:#f5f7fa;--line:#dde2e8;--accent:#2563eb;--good:#15803d;--warn:#b45309;--bad:#b91c1c;--r:12px;color-scheme:light dark}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1216;--fg:#e8ebef;--muted:#9aa5b4;--card:#181d24;--line:#2a313a;--accent:#6ea8ff;--good:#4ade80;--warn:#fbbf24;--bad:#f87171}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-wrap:anywhere}
+main{max-width:960px;margin:0 auto;padding:16px}
+h1{font-size:1.6rem;line-height:1.2;margin:.2em 0}
+h2{font-size:1.2rem;margin:1.6em 0 .5em}
+a{color:var(--accent)}
+.muted{color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px}
+.badge{display:inline-block;font-size:.75rem;padding:1px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+/* ---- end shared tokens ---- */
+.kpis{display:grid;gap:10px;grid-template-columns:repeat(2,1fr);margin:16px 0}
+@media(min-width:700px){.kpis{grid-template-columns:repeat(4,1fr)}}
+.kpi .v{font-size:1.7rem;font-weight:650;font-variant-numeric:tabular-nums}
+.kpi .d.up{color:var(--good)}.kpi .d.down{color:var(--bad)}
+.charts{display:grid;gap:12px;grid-template-columns:1fr}
+@media(min-width:900px){.charts{grid-template-columns:1fr 1fr}}
+.chartbox{position:relative;height:260px}
+#err{display:none}
+</style>
+</head>
+<body>
+<main>
+<h1 id="title"></h1>
+<p class="muted" id="subtitle"></p>
+<section class="kpis" id="kpis"></section>
+<section class="charts" id="charts"></section>
+<p id="err" class="card muted">Charts need internet access to load Chart.js; the numbers above still work.</p>
+</main>
+
+<!-- ===== DATA: edit only this block ===== -->
+<script type="application/json" id="data">
+{
+  "title": "Dashboard title",
+  "subtitle": "Period or scope",
+  "kpis": [
+    {"label": "Requests", "value": "12.4k", "delta": "+8%", "trend": "up"},
+    {"label": "Errors", "value": "0.4%", "delta": "+0.1pt", "trend": "down"},
+    {"label": "p95 latency", "value": "210 ms", "delta": "-12 ms", "trend": "up"},
+    {"label": "Cost", "value": "$48", "delta": "", "trend": ""}
+  ],
+  "charts": [
+    {"title": "Requests per day", "type": "line",
+     "labels": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+     "series": [{"name": "Requests", "values": [120, 190, 150, 220, 260]}]},
+    {"title": "By service", "type": "bar",
+     "labels": ["api", "web", "worker"],
+     "series": [{"name": "Errors", "values": [12, 5, 9]}, {"name": "Retries", "values": [4, 2, 11]}]}
+  ]
+}
+</script>
+<!-- ===== DATA: end ===== -->
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
+        integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC"
+        crossorigin="anonymous"></script>
+<script>
+const D = JSON.parse(document.getElementById("data").textContent);
+const $ = (t, c, h) => { const e = document.createElement(t); if (c) e.className = c; if (h != null) e.textContent = h; return e; };
+document.getElementById("title").textContent = D.title;
+document.title = D.title;
+document.getElementById("subtitle").textContent = D.subtitle || "";
+const kp = document.getElementById("kpis");
+D.kpis.forEach(k => {
+  const c = $("div", "card kpi");
+  c.append($("div", "muted", k.label), $("div", "v", k.value), $("div", "d " + (k.trend || ""), k.delta || ""));
+  kp.append(c);
+});
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const charts = [];
+function draw() {
+  if (typeof Chart === "undefined") { document.getElementById("err").style.display = "block"; return; }
+  charts.splice(0).forEach(c => c.destroy());
+  const host = document.getElementById("charts");
+  host.replaceChildren();
+  const palette = [css("--accent"), css("--good"), css("--warn"), css("--bad")];
+  Chart.defaults.color = css("--muted");
+  Chart.defaults.borderColor = css("--line");
+  D.charts.forEach(ch => {
+    const box = $("div", "card");
+    box.append($("b", "", ch.title));
+    const wrap = $("div", "chartbox"), cv = $("canvas");
+    wrap.append(cv); box.append(wrap); host.append(box);
+    charts.push(new Chart(cv, {
+      type: ch.type,
+      data: { labels: ch.labels, datasets: ch.series.map((s, i) => ({
+        label: s.name, data: s.values, borderColor: palette[i % 4], backgroundColor: palette[i % 4], tension: .3 })) },
+      options: { responsive: true, maintainAspectRatio: false }
+    }));
+  });
+}
+draw();
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+</script>
+</body>
+</html>
