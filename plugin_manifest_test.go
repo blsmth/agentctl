@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // These tests guard the Claude Code plugin layout, since CI has no `claude`
@@ -63,7 +65,16 @@ func TestPluginManifest(t *testing.T) {
 	if m["name"] != "agentctl" {
 		t.Errorf("name = %v, want agentctl", m["name"])
 	}
-	for _, banned := range []string{"agents", "skills", "hooks"} {
+	var mp struct {
+		Plugins []struct {
+			Version string `json:"version"`
+		} `json:"plugins"`
+	}
+	readJSON(t, ".claude-plugin/marketplace.json", &mp)
+	if len(mp.Plugins) == 1 && m["version"] != mp.Plugins[0].Version {
+		t.Errorf("plugin.json version %v != marketplace.json version %q", m["version"], mp.Plugins[0].Version)
+	}
+	for _, banned := range []string{"agents", "hooks"} {
 		if _, ok := m[banned]; ok {
 			t.Errorf("plugin.json must not declare %q: agentctl owns its hooks and agents", banned)
 		}
@@ -80,7 +91,7 @@ func TestPluginManifest(t *testing.T) {
 			}
 		}
 	}
-	for _, dir := range []string{"hooks", "agents", "skills"} {
+	for _, dir := range []string{"hooks", "agents"} {
 		if _, err := os.Stat(filepath.Join("plugin", dir)); err == nil {
 			t.Errorf("plugin/%s must not exist", dir)
 		}
@@ -121,4 +132,41 @@ func commandDescription(text string) string {
 		}
 	}
 	return ""
+}
+
+func TestPluginSkillsHaveFrontmatter(t *testing.T) {
+	files, err := filepath.Glob("plugin/skills/*/SKILL.md")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no plugin skills found (err=%v)", err)
+	}
+	for _, f := range files {
+		dir := filepath.Base(filepath.Dir(f))
+		t.Run(dir, func(t *testing.T) {
+			data, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rest, ok := strings.CutPrefix(string(data), "---\n")
+			if !ok {
+				t.Fatalf("%s: missing frontmatter", f)
+			}
+			fm, _, ok := strings.Cut(rest, "\n---")
+			if !ok {
+				t.Fatalf("%s: unterminated frontmatter", f)
+			}
+			var meta struct {
+				Name        string `yaml:"name"`
+				Description string `yaml:"description"`
+			}
+			if err := yaml.Unmarshal([]byte(fm), &meta); err != nil {
+				t.Fatalf("%s: invalid frontmatter: %v", f, err)
+			}
+			if meta.Name != dir {
+				t.Errorf("%s: name = %q, want %q", f, meta.Name, dir)
+			}
+			if strings.TrimSpace(meta.Description) == "" {
+				t.Errorf("%s: empty description", f)
+			}
+		})
+	}
 }
