@@ -403,6 +403,24 @@ test("Load earlier fetches the full scrollback, keeps position, and the live tai
   await expect(scroller.locator(".pane-line").first()).not.toHaveText("row 0");
 });
 
+test("Load earlier is hidden when there is nothing earlier", async ({ page, control }) => {
+  const rows = (n: number) => Array.from({ length: n }, (_, i) => `row ${i}`).join("\n") + "\n";
+  await control.patchWindow(SHOP, "@13", { pane_text: rows(50) });
+  await openWindow(page, "@13");
+  const scroller = page.locator(".pane-reflow");
+  await expect(scroller).toContainText("row 49");
+  await scroller.evaluate((el) => (el.scrollTop = 0));
+  await expect(page.locator(".load-earlier")).toBeHidden();
+  // Exactly the tail size: the button shows, one load finds nothing more and hides it.
+  await control.patchWindow(SHOP, "@13", { pane_text: rows(200) });
+  await expect(scroller).toContainText("row 199", { timeout: 8000 });
+  await scroller.evaluate((el) => (el.scrollTop = 0));
+  const more = page.locator(".load-earlier");
+  await expect(more).toBeVisible();
+  await more.tap();
+  await expect(more).toBeHidden();
+});
+
 test("Exact shows a one-time hint", async ({ page }) => {
   await openWindow(page, "@13");
   await page.locator(".segmented").getByText("Exact", { exact: true }).tap();

@@ -3,7 +3,13 @@ import { ApiError, get, send, uploadImages } from "./api.js";
 import { approvalCard, tickCountdowns } from "./approvals.js";
 import { imagePicker, svgIcon } from "./attach.js";
 import {
+  artifactChipText,
+  artifactsForWindow,
+  artifactsHash,
   INTERRUPT_FOLLOWUP_MS,
+  PANE_TAIL_LINES,
+  canLoadEarlier,
+  historyAddsLines,
   isDoubleTap,
   isTap,
   actionsWithQueue,
@@ -204,9 +210,10 @@ function reflowView({ loadHistory } = {}) {
   let history = false;
   let loading = false;
   let lastPane = null;
+  let exhausted = false;
   const earlier = h("button", { type: "button", class: "load-earlier", hidden: true }, "Load earlier");
   const syncEarlier = () => {
-    earlier.hidden = history || loading || scroller.scrollTop > 24;
+    earlier.hidden = history || loading || exhausted || scroller.scrollTop > 24 || !canLoadEarlier(lastPane?.text);
   };
   function leaveHistory() {
     history = false;
@@ -231,6 +238,10 @@ function reflowView({ loadHistory } = {}) {
     earlier.textContent = "Loading…";
     try {
       const full = await loadHistory();
+      if (!historyAddsLines(lastPane?.text, full.text)) {
+        exhausted = true;
+        return;
+      }
       const before = scroller.scrollHeight - scroller.scrollTop;
       history = true;
       render(full, false);
@@ -414,9 +425,11 @@ export function mountWindow(root, ctx, { session, windowId }) {
   // Tap the recap to show it in full; it is clamped to two lines.
   const recap = h("div", { class: "win-recap", hidden: true, onclick: () => recap.classList.toggle("open") });
   const chips = h("div", { class: "chips", hidden: true });
+  // "◆ N artifacts" when agents published from this window; opens the list filtered to it.
+  const artifactChip = h("a", { class: "chip artifact-chip", href: artifactsHash({ session, windowId }), hidden: true });
   let childrenOpen = false;
   const waitingKids = h("div", { class: "win-waiting", hidden: true });
-  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, recap, scheduled, chips, waitingKids);
+  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, recap, scheduled, chips, artifactChip, waitingKids);
 
   const liveChip = h("span", { class: "live-chip", role: "status" });
   const modeBtns = {
@@ -871,7 +884,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
 
   async function refreshPane() {
     try {
-      pane = await get(`${base}/pane?lines=200`);
+      pane = await get(`${base}/pane?lines=${PANE_TAIL_LINES}`);
     } catch (e) {
       fetchFailed(e);
       return false;
@@ -938,7 +951,21 @@ export function mountWindow(root, ctx, { session, windowId }) {
   }, PANE_REFRESH_MS);
   const onVisible = () => !document.hidden && refresh();
   document.addEventListener("visibilitychange", onVisible);
+  async function loadArtifactChip() {
+    if (!ctx.hasFeature("artifacts")) return;
+    try {
+      const n = artifactsForWindow((await get("/v1/artifacts")).artifacts, session, windowId).length;
+      if (disposed) return;
+      artifactChip.textContent = artifactChipText(n);
+      artifactChip.hidden = n === 0;
+    } catch {
+      // the chip is a convenience; the next artifact event retries
+    }
+  }
+  loadArtifactChip();
+
   const unsub = ctx.store.subscribe((ev) => {
+    if (ev?.type === "artifact") loadArtifactChip();
     if (ev?.type === "window" && ev.win.session === session && ev.win.window_id === windowId) refresh();
     if (ev?.type === "gone") refresh();
     if (ev?.type === "fleet" || ev?.type === "window" || ev?.type === "gone") renderHeader();

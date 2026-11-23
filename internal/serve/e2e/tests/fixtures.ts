@@ -62,6 +62,20 @@ export type SchedulesSpec = {
   templates?: { name: string; prompt: string; agent?: string; description?: string; model?: string; effort?: string }[];
 };
 
+export type ArtifactSpec = {
+  title: string;
+  description?: string;
+  kind?: string;
+  pin?: boolean;
+  project?: string;
+  project_dir?: string;
+  agent?: string;
+  window_id?: string;
+  session?: string;
+  /** revisions are published in order; files are by relative path ("base64:" values are decoded). */
+  revisions: { files: Record<string, string>; entry: string; note?: string }[];
+};
+
 /** Control wraps the dev server's /__test/ API. */
 export class Control {
   constructor(private readonly request: APIRequestContext) {}
@@ -119,6 +133,11 @@ export class Control {
   /** scheduleRuns are the job names run-now fired since the last seed. */
   async scheduleRuns(): Promise<string[]> {
     return (await this.call<{ runs: string[] }>("GET", "schedules")).runs;
+  }
+
+  /** seedArtifacts replaces the artifact store; returns the new ids in order. */
+  async seedArtifacts(artifacts: ArtifactSpec[]): Promise<string[]> {
+    return (await this.call<{ ids: string[] }>("PUT", "artifacts", { artifacts })).ids;
   }
 
   async openApproval(spec: Record<string, unknown>): Promise<string> {

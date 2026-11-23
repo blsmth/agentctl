@@ -347,6 +347,25 @@ export function isDoubleTap(prev, tap) {
   return Math.hypot(tap.x - prev.x, tap.y - prev.y) <= DOUBLE_TAP_SLOP;
 }
 
+/** PANE_TAIL_LINES is the live poll's capture size; fewer lines means no scrollback. */
+export const PANE_TAIL_LINES = 200;
+
+/** paneLineCount counts the lines of captured pane text (a trailing newline adds none). */
+export function paneLineCount(text) {
+  if (!text) return 0;
+  return text.replace(/\n$/, "").split("\n").length;
+}
+
+/** canLoadEarlier reports whether more scrollback may exist beyond the live tail. */
+export function canLoadEarlier(tailText) {
+  return paneLineCount(tailText) >= PANE_TAIL_LINES;
+}
+
+/** historyAddsLines reports whether a full-history capture holds more lines than the tail. */
+export function historyAddsLines(tailText, fullText) {
+  return paneLineCount(fullText) > paneLineCount(tailText);
+}
+
 /** isDispatched mirrors fleet.Meta.Dispatched: launched by another agent. */
 export function isDispatched(win) {
   return Boolean(win.mode) && win.mode !== "bare";
@@ -736,7 +755,9 @@ export function terminalSocketUrl(loc, session, windowId) {
 
 /** parseRoute turns location.hash into {name, ...params}. */
 export function parseRoute(hash) {
-  const parts = (hash || "").replace(/^#\/?/, "").split("/").filter(Boolean);
+  const [path, query = ""] = (hash || "").split("?", 2);
+  const parts = path.replace(/^#\/?/, "").split("/").filter(Boolean);
+  if (parts[0] === "artifacts") return parseArtifactsRoute(parts.slice(1), query);
   try {
     if (parts[0] === "w" && parts.length >= 3) {
       return { name: "window", session: decodeURIComponent(parts[1]), windowId: decodeURIComponent(parts[2]) };
@@ -2327,4 +2348,125 @@ export function cardLastFailure(st, now = Date.now()) {
   if (!st.last?.result?.startsWith("failed:")) return "";
   const ago = formatAgo(st.last.ts, now);
   return `Last run ${runResultCard(st.last)}${ago ? ` \u00B7 ${ago}` : ""}`;
+}
+
+
+// ---- artifacts ----
+
+/** ARTIFACT_TOKEN_MAX_AGE_MS is how old a raw_url token may get before the viewer refetches it (tokens last ~24h). */
+export const ARTIFACT_TOKEN_MAX_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * parseArtifactsRoute reads #/artifacts[?window=<id>&session=<s>] (the list,
+ * optionally filtered to one window) and #/artifacts/<id>[/<rev>] (the viewer).
+ */
+export function parseArtifactsRoute(parts, query = "") {
+  const dec = (v) => {
+    try {
+      return decodeURIComponent(v);
+    } catch {
+      return "";
+    }
+  };
+  if (parts.length === 0) {
+    const q = new URLSearchParams(query);
+    const windowId = q.get("window") ?? "";
+    const session = q.get("session") ?? "";
+    return windowId && session ? { name: "artifacts", view: "list", filter: { session, windowId } } : { name: "artifacts", view: "list", filter: null };
+  }
+  const id = dec(parts[0]);
+  if (!id) return { name: "artifacts", view: "list", filter: null };
+  const rev = parts[1] && /^\d+$/.test(parts[1]) ? Number(parts[1]) : null;
+  return { name: "artifacts", view: "viewer", id, rev };
+}
+
+/** artifactHash is the viewer route; rev null means the latest. */
+export function artifactHash(id, rev = null) {
+  return `#/artifacts/${encodeURIComponent(id)}${rev ? `/${rev}` : ""}`;
+}
+
+/** artifactsHash is the list route, optionally filtered to one window. */
+export function artifactsHash(filter = null) {
+  if (!filter) return "#/artifacts";
+  return `#/artifacts?window=${encodeURIComponent(filter.windowId)}&session=${encodeURIComponent(filter.session)}`;
+}
+
+/** artifactsForWindow keeps the artifacts published from one window. */
+export function artifactsForWindow(list, session, windowId) {
+  return (list ?? []).filter((a) => a.window_id === windowId && a.session === session);
+}
+
+/** artifactChipText is the window detail chip: "◆ 2 artifacts". */
+export function artifactChipText(n) {
+  return `◆ ${n} artifact${n === 1 ? "" : "s"}`;
+}
+
+/** artifactTokenStale reports whether a detail fetched at fetchedAt is old enough that its token URLs should be refreshed. */
+export function artifactTokenStale(fetchedAt, now = Date.now(), maxAge = ARTIFACT_TOKEN_MAX_AGE_MS) {
+  if (!Number.isFinite(fetchedAt)) return true;
+  return now - fetchedAt >= maxAge;
+}
+
+const ARTIFACT_ICONS = { html: "◧", markdown: "¶", image: "▣", text: "≡" };
+
+/** artifactIcon is the row glyph of a kind. */
+export function artifactIcon(kind) {
+  return ARTIFACT_ICONS[kind] ?? "◆";
+}
+
+/**
+ * groupArtifacts groups a list (already newest first) by project in the saved
+ * group order of the fleet (fleetGroups, as served). Projects the fleet does
+ * not know follow, by name. Each group is {key, name, items}.
+ */
+export function groupArtifacts(list, fleetGroups = []) {
+  const byKey = new Map();
+  for (const a of list ?? []) {
+    const key = a.project_dir || a.project || "";
+    if (!byKey.has(key)) byKey.set(key, { key, name: a.project || (a.project_dir ? a.project_dir.split("/").filter(Boolean).pop() : "") || "No project", items: [] });
+    byKey.get(key).items.push(a);
+  }
+  const groups = [...byKey.values()];
+  for (const g of groups) g.items = [...g.items.filter((a) => a.pinned), ...g.items.filter((a) => !a.pinned)];
+  const rank = new Map();
+  (fleetGroups ?? []).forEach((g, i) => {
+    for (const k of [g.key, g.dir]) if (k && !rank.has(k)) rank.set(k, i);
+  });
+  const pos = (g) => rank.get(g.key) ?? Number.MAX_SAFE_INTEGER;
+  return groups
+    .map((g, i) => ({ g, i }))
+    .sort((a, b) => pos(a.g) - pos(b.g) || (a.g.key === "") - (b.g.key === "") || a.g.name.localeCompare(b.g.name) || a.i - b.i)
+    .map((d) => d.g);
+}
+
+/** artifactWindowLive finds the live fleet window an artifact came from, or null. */
+export function artifactWindowLive(a, fleetGroups = []) {
+  if (!a?.window_id || !a?.session) return null;
+  const g = (fleetGroups ?? []).find((x) => x.session === a.session);
+  return g?.windows?.find((w) => w.window_id === a.window_id) ?? null;
+}
+
+/** artifactRowMeta is the muted line under a title: "pin · 3 revs · 5m ago". */
+export function artifactRowMeta(a, now = Date.now()) {
+  const parts = [];
+  if (a.pinned) parts.push("pin");
+  if (a.rev_count > 1) parts.push(`${a.rev_count} revs`);
+  const ago = formatAgo(a.updated, now);
+  if (ago) parts.push(ago);
+  return parts.join(" · ");
+}
+
+/** artifactRevLabel labels a revision picker entry: "v2 · 5m ago · note". */
+export function artifactRevLabel(r, now = Date.now()) {
+  return [`v${r.n}`, formatAgo(r.created, now), r.note].filter(Boolean).join(" · ");
+}
+
+/** artifactRevPill is the closed picker: "v2 ▾", or "v1 of 2 ▾" when off the latest. */
+export function artifactRevPill(n, latest, total) {
+  return n === latest ? `v${n} ▾` : `v${n} of ${total} ▾`;
+}
+
+/** artifactOrigin is the sheet's origin line: "designer · shop · @17". */
+export function artifactOrigin(a) {
+  return [a.agent, a.project, a.window_id].filter(Boolean).join(" · ");
 }

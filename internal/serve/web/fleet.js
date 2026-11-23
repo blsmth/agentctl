@@ -340,7 +340,7 @@ export function mountFleet(root, ctx) {
   const approvalBanner = h("a", { class: "banner approval-banner", hidden: true, href: approvalHash("") });
   const list = h("div", { class: "fleet" });
   root.append(
-    h("header", { class: "bar" }, h("h1", {}, "Fleet"), ctx.hasFeature("write") ? h("a", { class: "btn", href: "#/dispatch" }, "Dispatch") : null),
+    h("header", { class: "bar" }, h("h1", {}, "Fleet"), ctx.hasFeature("write") ? h("a", { class: "btn", href: "#/dispatch" }, "Dispatch") : null, h("a", { class: "btn icon", href: "#/settings", "aria-label": "Settings", title: "Settings" }, "⚙︎")),
     approvalBanner,
     banner,
     list,
