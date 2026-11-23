@@ -297,7 +297,7 @@ ensures it (`tmux.EnsureHubStatusPane`, under the viewer mutex): an
 existing marked pane is reused, so a hot-reloaded hub never opens a second
 one, and a viewer recreated from scratch gets a fresh one (the stale pane is
 killed with the old viewer). `HideLiveViewer` kills it, so it closes
-whenever the viewer does (Schedules section, the activity pane taking the
+whenever the viewer does (the activity pane taking the
 viewer's place, a failed show). Windows under 24 rows get none, and a
 window height change re-pins it to 6 rows (tmux spreads height changes over
 the column). The content comes through the same `hub-selection.json` the

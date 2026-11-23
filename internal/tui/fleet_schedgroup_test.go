@@ -211,10 +211,10 @@ func TestScheduleBlockCollapse(t *testing.T) {
 		t.Fatalf("z on a job row collapsed %v", m.schedCollapsed)
 	}
 
-	// The header is selectable, and selecting it gives the viewer back.
+	// The header is selectable and has no drawer.
 	m.selectLine(schedLineIdx(t, m, headKey))
 	if m.schedPaneActive() {
-		t.Error("a block header should not take the viewer's place")
+		t.Error("a block header should not open the drawer")
 	}
 	if foot := ansi.Strip(fitHints(m.footerHints(), 200)); !strings.Contains(foot, "z collapse") {
 		t.Errorf("header footer = %q", foot)

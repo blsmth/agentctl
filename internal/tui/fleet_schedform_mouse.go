@@ -85,26 +85,19 @@ func (l schedLayout) at(x, y int) (schedHit, bool) {
 
 // schedFormArea is where the open form is drawn: the screen cell of its first
 // line (x0, y0), the width and height it is rendered at, and how many of its
-// lines fit. It mirrors withSchedPane (form beside the list) and renderList
-// (form in place of the list), both of which draw it through fitPane: one
-// blank line, then the form, indented.
+// lines fit. It mirrors withSchedPane: the drawer's origin, its border, then
+// fitPane's blank line and indent. ok is false while the drawer is still
+// sliding in, so a click cannot land on a control that is moving.
 func (m FleetModel) schedFormArea() (x0, y0, w, h, rows int, ok bool) {
-	if m.schedForm == nil || !m.showSchedules {
-		return 0, 0, 0, 0, 0, false
-	}
-	if m.schedFormReplacesList() {
-		if _, isStatus := m.renderStatusOrEmpty(); isStatus {
-			return 0, 0, 0, 0, 0, false
-		}
-		visible := m.visibleLines()
-		return 2, m.fleetListTop() + 1, m.contentWidth() - 4, visible - 1, visible - 1, true
-	}
-	pw := m.schedPaneWidth()
-	if pw == 0 || !m.schedPaneActive() {
+	if m.schedForm == nil || !m.showSchedules || !m.schedPaneActive() || m.schedAnimOn {
 		return 0, 0, 0, 0, 0, false
 	}
 	total := len(strings.Split(m.renderList(), "\n"))
-	return m.contentWidth() + 2, 1, pw, total - 2, total - 1, true
+	top, dh := m.schedDrawerRows(total)
+	if dh < 3 {
+		return 0, 0, 0, 0, 0, false
+	}
+	return m.schedDrawerX() + 2, top + 1, m.schedPaneWidth(), dh - 2, dh - 1, true
 }
 
 // schedFormHitAt is the form target under screen cell (x, y).
