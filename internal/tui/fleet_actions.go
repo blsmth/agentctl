@@ -392,6 +392,9 @@ func (m *FleetModel) fleetMenuItems(idx int) []fleetMenuItem {
 		if m.lines[idx].row.PRURL != "" {
 			items = append(items, fleetMenuItem{"open PR", "p"})
 		}
+		if m.rowArtifacts(m.lines[idx].row).n > 0 {
+			items = append(items, fleetMenuItem{"artifact", fleetArtifactKey})
+		}
 	}
 	if g != nil && groupCanLaunch(*g) {
 		items = append(items, fleetMenuItem{"new", "n"}, fleetMenuItem{"new cron", fleetCronKey})
@@ -472,6 +475,8 @@ func (m *FleetModel) runMenuKey(key string) tea.Cmd {
 		return m.startSweep(line)
 	case "p":
 		return m.openSelectedPR()
+	case fleetArtifactKey:
+		return m.openSelectedArtifact()
 	}
 	return nil
 }
