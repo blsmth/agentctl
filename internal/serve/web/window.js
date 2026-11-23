@@ -417,13 +417,14 @@ export function mountWindow(root, ctx, { session, windowId }) {
       return h(
         "a",
         { class: `waiting-child ${cls} ${ks}`, href: windowHash(k.session, k.window_id) },
+        cls === "parent-link" ? h("span", { class: "rel-up", title: "Parent", "aria-label": "Parent" }, "↑") : null,
         h("span", { class: "glyph", "aria-label": ks }, CHILD_GLYPH[ks]),
         role ? h("span", { class: "tag kind-chip", title: "Role of this sub-agent" }, role) : null,
         h("span", { class: "link-text" }, rowHeadline(k)),
       );
     };
     const par = parentOf(groups, win);
-    if (par) waitingKids.append(h("div", { class: "rel-label" }, "Parent"), link(par, "parent-link"));
+    if (par) waitingKids.append(link(par, "parent-link"));
     const kids = childrenOf(groups, win);
     if (kids.length > 0) {
       const shown = childrenOpen ? kids : kids.slice(0, CHILD_CAP);
