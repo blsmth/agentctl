@@ -256,6 +256,18 @@ func rowWeight(r fleet.Row) fleetWeight {
 	}
 }
 
+// glyphWeight is rowWeight as the row glyph shows it: a TurnDone row that is
+// not working or blocked reads as done (✓). Every hub count and the attention
+// filter use it so they agree with the glyph. rowWeight itself stays Done-only
+// because sweep and name styling must not treat TurnDone as done.
+func glyphWeight(r fleet.Row) fleetWeight {
+	w := rowWeight(r)
+	if w == fleetWeightIdle && r.TurnDone {
+		return fleetWeightDone
+	}
+	return w
+}
+
 // fleetNameStyle is the agent name's style for a row of weight w: working is
 // bold bright, done normal text, idle subtle and blocked bold warning. The
 // state colour lives on the glyph; names never use the project palette.
@@ -2231,7 +2243,7 @@ func (m FleetModel) fleetCounts() (blocked, working, done, idle int) {
 			if r.Shell {
 				continue // not an agent
 			}
-			switch rowWeight(r) {
+			switch glyphWeight(r) {
 			case fleetWeightBlocked:
 				blocked++
 			case fleetWeightWorking:
@@ -2963,7 +2975,7 @@ func groupStateCounts(g fleet.Group, digits, gap int) fleetGroupCounts {
 		if r.Shell {
 			continue
 		}
-		switch rowWeight(r) {
+		switch glyphWeight(r) {
 		case fleetWeightBlocked:
 			c.blocked++
 		case fleetWeightWorking:
