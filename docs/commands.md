@@ -87,6 +87,23 @@ See [Accounts](configuration.md#accounts-multiple-claude-logins), [Backends](con
 
 See [cron](configuration.md#cron) for the config keys, approval rules and the hub's Schedules section, and [design/cron.md](design/cron.md) for the design.
 
+## Artifacts
+
+`agentctl artifact` publishes a report, table, chart or mockup an agent wants to show the human, and prints a URL to open it (`https://<host>:<port>/#/artifacts/<id>`, built from `serve.listen` and the first `serve.hostnames` entry, else `<hostname>.local`). The store is `<state dir>/artifacts/` (0700/0600); this command is its only writer, and direct Bash, Write and Edit access to it is denied to agents. Serve being down never fails a command: it says so on stderr and prints the URL it will have.
+
+| Command | What it does |
+|---|---|
+| `agentctl artifact add <path\|dir\|->` | Publish a file, a directory (opens `index.html`, or `--entry`) or stdin (`-`, needs `--entry name.ext` or `--kind`). `--title`, `--description`, `--kind html\|markdown\|image\|text`, `--pin`, `--no-notify`, `--json`. Kind comes from the entry's extension; an unknown extension is text only if it is valid UTF-8. The title defaults to the HTML `<title>`, the first markdown `# heading`, else the file name. |
+| `agentctl artifact update <id> <path\|dir\|->` | Add revision n+1 (`--note`, `--title`, `--json`). The latest is the default view; at most 20 revisions are kept, oldest dropped. |
+| `agentctl artifact list` | The current project's artifacts (`--all` for every project, `--project`, `--agent`, `--since 7d`, `--json`). |
+| `agentctl artifact show <id>` | Metadata, revisions and URLs (`--json`). |
+| `agentctl artifact url <id>` / `open <id>` | Print the URL, or open it in the laptop browser (`--rev N`). The laptop browser must be paired once with `serve pair`. |
+| `agentctl artifact pin` / `unpin <id>` | Pinned artifacts are never pruned. |
+| `agentctl artifact rm <id>` | Delete it (`--yes` to skip the prompt; required when not on a terminal). |
+| `agentctl artifact prune` | Delete unpinned artifacts not updated for `--older-than` (default 30d; `--dry-run` lists them). `reconcile --housekeeping` runs the same 30-day prune. |
+
+Limits: 25 MB per revision, 500 files per directory, 1 GB for the store (`add` then fails, naming `artifact rm` and `prune`). Content is copied, never symlinked; a symlink inside a directory, a `..` entry, or a non-UTF-8 file with an unknown extension is refused. Use relative paths inside an HTML artifact (it is served under `/a/<id>/<rev>/`). Origin (agent, window, session, branch) comes from the calling window through `TMUX_PANE`; a plain shell records only the project, from the cwd's worktree-aware root. Serving and the phone viewer come in later PRs; see [design/artifacts.md](design/artifacts.md).
+
 ## Phone web app and metrics
 
 | Command | What it does |

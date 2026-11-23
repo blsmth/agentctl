@@ -331,3 +331,38 @@ func TestCronEditFlagsParse(t *testing.T) {
 		t.Errorf("cron run --json: %v %+v", err, cli3.Cron.Run)
 	}
 }
+
+// TestArtifactFlagsParse: `artifact add -` reads stdin (a lone dash is a
+// positional, not a flag), and the flag set matches the documented one.
+func TestArtifactFlagsParse(t *testing.T) {
+	var cli CLI
+	k, err := kong.New(&cli, kong.Name("agentctl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.Parse([]string{"artifact", "add", "-", "--entry", "report.html", "--title", "T", "--pin", "--no-notify", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	a := cli.Artifact.Add
+	if a.Path != "-" || a.Entry != "report.html" || a.Title != "T" || !a.Pin || !a.NoNotify || !a.JSON || a.Kind != "" {
+		t.Errorf("add parsed = %+v", a)
+	}
+	var cli2 CLI
+	k2, _ := kong.New(&cli2, kong.Name("agentctl"))
+	if _, err := k2.Parse([]string{"artifact", "update", "abcdefghij", "-", "--note", "v2"}); err != nil {
+		t.Fatal(err)
+	}
+	if u := cli2.Artifact.Update; u.ID != "abcdefghij" || u.Path != "-" || u.Note != "v2" {
+		t.Errorf("update parsed = %+v", u)
+	}
+	var cli3 CLI
+	k3, _ := kong.New(&cli3, kong.Name("agentctl"))
+	if _, err := k3.Parse([]string{"artifact", "prune", "--dry-run"}); err != nil || cli3.Artifact.Prune.OlderThan != "30d" || !cli3.Artifact.Prune.DryRun {
+		t.Errorf("prune parsed = %+v err=%v", cli3.Artifact.Prune, err)
+	}
+	var cli4 CLI
+	k4, _ := kong.New(&cli4, kong.Name("agentctl"))
+	if _, err := k4.Parse([]string{"artifact", "add", "x.html", "--kind", "pdf"}); err == nil {
+		t.Error("unknown --kind accepted")
+	}
+}

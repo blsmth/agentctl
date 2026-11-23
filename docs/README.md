@@ -25,6 +25,7 @@ Written before or while each feature was built; the guides above describe curren
 | [design/fleet-view-design.md](design/fleet-view-design.md) | The cross-session fleet hub (original design) |
 | [design/mobile-web-app.md](design/mobile-web-app.md) | `agentctl serve` and the phone web app: API, push, live terminal, remote approvals |
 | [design/cron.md](design/cron.md) | Scheduled agent runs (`agentctl cron`) |
+| [design/artifacts.md](design/artifacts.md) | Artifacts: agent-published reports and mockups (`agentctl artifact`), served by `agentctl serve` (spec; store and CLI shipped first) |
 | [design/accounts.md](design/accounts.md) | Multiple Claude accounts (one `CLAUDE_CONFIG_DIR` per login) |
 | [design/multi-harness.md](design/multi-harness.md) | Research: running harnesses other than Claude Code (pi shipped; Codex CLI, opencode) |
 | [design/agent-messaging-design.md](design/agent-messaging-design.md) | Agent-to-agent mailboxes (superseded by native cross-session messaging) |

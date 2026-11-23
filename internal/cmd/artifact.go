@@ -1,0 +1,508 @@
+package cmd
+
+import (
+	"bufio"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	"github.com/dustin/go-humanize"
+
+	"github.com/blsmth/agentctl/internal/artifacts"
+	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
+	"github.com/blsmth/agentctl/internal/serve"
+	"github.com/blsmth/agentctl/internal/servectl"
+	"github.com/blsmth/agentctl/internal/sessions"
+	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
+)
+
+// ArtifactAddOptions are the flags of `agentctl artifact add`.
+type ArtifactAddOptions struct {
+	Path, Title, Description, Kind, Entry string
+	Pin, NoNotify, JSON                   bool
+}
+
+// ArtifactUpdateOptions are the flags of `agentctl artifact update`.
+type ArtifactUpdateOptions struct {
+	ID, Path, Note, Title string
+	JSON                  bool
+}
+
+// ArtifactListOptions are the flags of `agentctl artifact list`.
+type ArtifactListOptions struct {
+	Project, Agent, Since string
+	All, JSON             bool
+}
+
+// artifactEnv holds the seams of the artifact commands: everything that
+// touches tmux, the network config, the browser, or the terminal.
+type artifactEnv struct {
+	store func() *artifacts.Store
+	// origin describes the calling window (or plain shell).
+	origin func() artifacts.Origin
+	// serveURL returns the base URL of the artifact UI and whether serve is
+	// running.
+	serveURL func() (base string, running bool)
+	// openBrowser opens url in the laptop browser.
+	openBrowser func(url string) error
+	stdin       io.Reader
+	interactive func() bool
+	errw        io.Writer
+	now         func() time.Time
+}
+
+var defaultArtifactEnv = artifactEnv{
+	store:       artifacts.New,
+	origin:      artifactOrigin,
+	serveURL:    artifactServeURL,
+	openBrowser: openInBrowser,
+	stdin:       os.Stdin,
+	interactive: func() bool { return stdinIsTerminal() },
+	errw:        os.Stderr,
+	now:         time.Now,
+}
+
+// RunArtifactAdd publishes a new artifact.
+func RunArtifactAdd(w io.Writer, o ArtifactAddOptions) error { return defaultArtifactEnv.add(w, o) }
+
+// RunArtifactUpdate adds a revision to an artifact.
+func RunArtifactUpdate(w io.Writer, o ArtifactUpdateOptions) error {
+	return defaultArtifactEnv.update(w, o)
+}
+
+// RunArtifactList lists artifacts.
+func RunArtifactList(w io.Writer, o ArtifactListOptions) error { return defaultArtifactEnv.list(w, o) }
+
+// RunArtifactShow prints one artifact.
+func RunArtifactShow(w io.Writer, id string, jsonOut bool) error {
+	return defaultArtifactEnv.show(w, id, jsonOut)
+}
+
+// RunArtifactURL prints an artifact's URL.
+func RunArtifactURL(w io.Writer, id string, rev int) error { return defaultArtifactEnv.url(w, id, rev) }
+
+// RunArtifactOpen opens an artifact in the laptop browser.
+func RunArtifactOpen(w io.Writer, id string, rev int) error {
+	return defaultArtifactEnv.open(w, id, rev)
+}
+
+// RunArtifactPin pins or unpins an artifact.
+func RunArtifactPin(w io.Writer, id string, pin bool) error {
+	return defaultArtifactEnv.pin(w, id, pin)
+}
+
+// RunArtifactRm deletes an artifact.
+func RunArtifactRm(w io.Writer, id string, yes bool) error { return defaultArtifactEnv.rm(w, id, yes) }
+
+// RunArtifactPrune deletes old unpinned artifacts.
+func RunArtifactPrune(w io.Writer, olderThan string, dryRun bool) error {
+	return defaultArtifactEnv.prune(w, olderThan, dryRun)
+}
+
+// artifactView is the JSON shape of an artifact: its metadata plus where to
+// view it.
+type artifactView struct {
+	artifacts.Meta
+	URL          string `json:"url"`
+	ServeRunning bool   `json:"serve_running"`
+}
+
+func (e artifactEnv) view(m artifacts.Meta) artifactView {
+	base, running := e.serveURL()
+	return artifactView{Meta: m, URL: artifactURL(base, m.ID, 0), ServeRunning: running}
+}
+
+// artifactURL is the viewer URL: <base>/#/artifacts/<id>[/<rev>].
+func artifactURL(base, id string, rev int) string {
+	u := strings.TrimRight(base, "/") + "/#/artifacts/" + id
+	if rev > 0 {
+		u += fmt.Sprintf("/%d", rev)
+	}
+	return u
+}
+
+// notRunningNote tells the caller serve is down; the command still succeeds.
+func (e artifactEnv) notRunningNote(u string) {
+	fmt.Fprintf(e.errw, "serve is not running; the artifact will be at %s once it starts (agentctl serve install / serve start)\n", u)
+}
+
+func (e artifactEnv) add(w io.Writer, o ArtifactAddOptions) error {
+	src, err := e.source(o.Path)
+	if err != nil {
+		return err
+	}
+	m, err := e.store().Add(artifacts.AddOptions{
+		Source: src, Title: o.Title, Description: o.Description, Kind: o.Kind, Entry: o.Entry,
+		Pin: o.Pin, Origin: e.origin(),
+	})
+	if err != nil {
+		return err
+	}
+	// --no-notify is accepted now so scripts can pass it; the push trigger
+	// arrives with the serve routes.
+	return e.report(w, m, "Published", o.JSON)
+}
+
+func (e artifactEnv) update(w io.Writer, o ArtifactUpdateOptions) error {
+	src, err := e.source(o.Path)
+	if err != nil {
+		return err
+	}
+	m, err := e.store().Update(o.ID, artifacts.UpdateOptions{Source: src, Note: o.Note, Title: o.Title})
+	if err != nil {
+		return err
+	}
+	return e.report(w, m, "Updated", o.JSON)
+}
+
+// report prints the result of add/update.
+func (e artifactEnv) report(w io.Writer, m artifacts.Meta, verb string, jsonOut bool) error {
+	v := e.view(m)
+	if !v.ServeRunning {
+		e.notRunningNote(v.URL)
+	}
+	if jsonOut {
+		return writeJSON(w, v)
+	}
+	fmt.Fprintf(w, "%s %q as %s (rev %d)\n%s\n", verb, m.Title, m.ID, m.Latest(), v.URL)
+	return nil
+}
+
+// source turns the path argument into a Source; "-" reads stdin.
+func (e artifactEnv) source(p string) (artifacts.Source, error) {
+	switch p {
+	case "":
+		return artifacts.Source{}, errors.New("a path, a directory, or - (stdin) is required")
+	case "-":
+		return artifacts.Source{Stdin: e.stdin}, nil
+	}
+	return artifacts.Source{Path: p}, nil
+}
+
+func (e artifactEnv) list(w io.Writer, o ArtifactListOptions) error {
+	f := artifacts.Filter{Project: o.Project, Agent: o.Agent}
+	if o.Since != "" {
+		d, err := sessions.ParseSince(o.Since)
+		if err != nil {
+			return err
+		}
+		if d > 0 {
+			f.Since = e.now().Add(-d)
+		}
+	}
+	if !o.All && o.Project == "" {
+		f.Project = e.origin().ProjectDir
+	}
+	list, err := e.store().List(f)
+	if err != nil {
+		return err
+	}
+	base, running := e.serveURL()
+	if o.JSON {
+		out := make([]artifactView, 0, len(list))
+		for _, m := range list {
+			out = append(out, artifactView{Meta: m, URL: artifactURL(base, m.ID, 0), ServeRunning: running})
+		}
+		return writeJSON(w, out)
+	}
+	if len(list) == 0 {
+		scope := "in this project (use --all for every project)"
+		if o.All || o.Project != "" {
+			scope = "matching"
+		}
+		fmt.Fprintf(w, "No artifacts %s.\n", scope)
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tKIND\tTITLE\tAGENT\tPROJECT\tREVS\tUPDATED")
+	for _, m := range list {
+		title := m.Title
+		if m.Pinned {
+			title = "📌 " + title
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n", m.ID, m.Kind, trunc(title, 48),
+			dash(m.Agent), dash(m.Project), len(m.Revs), relTime(m.Updated, e.now()))
+	}
+	return tw.Flush()
+}
+
+func (e artifactEnv) show(w io.Writer, id string, jsonOut bool) error {
+	m, err := e.store().Get(id)
+	if err != nil {
+		return err
+	}
+	v := e.view(m)
+	if jsonOut {
+		return writeJSON(w, v)
+	}
+	base, _ := e.serveURL()
+	fmt.Fprintf(w, "%s  %s\n", m.ID, m.Title)
+	row := func(k, val string) {
+		if val != "" {
+			fmt.Fprintf(w, "  %-12s %s\n", k+":", val)
+		}
+	}
+	row("kind", m.Kind)
+	row("entry", m.Entry)
+	row("description", m.Description)
+	row("project", m.Project)
+	row("agent", m.Agent)
+	row("window", m.WindowID)
+	row("session", m.Session)
+	row("branch", m.Branch)
+	row("created", m.Created.Local().Format(time.RFC3339))
+	row("updated", m.Updated.Local().Format(time.RFC3339))
+	if m.Pinned {
+		row("pinned", "yes")
+	}
+	row("url", v.URL)
+	fmt.Fprintln(w, "  revisions:")
+	for i := len(m.Revs) - 1; i >= 0; i-- {
+		r := m.Revs[i]
+		note := ""
+		if r.Note != "" {
+			note = "  " + r.Note
+		}
+		fmt.Fprintf(w, "    #%d  %s  %s%s\n      %s\n", r.N, r.Created.Local().Format("2006-01-02 15:04"),
+			humanize.Bytes(uint64(r.Size)), note, artifactURL(base, m.ID, r.N))
+	}
+	return nil
+}
+
+// revURL validates rev against the artifact and returns the URL to show.
+func (e artifactEnv) revURL(id string, rev int) (string, error) {
+	m, err := e.store().Get(id)
+	if err != nil {
+		return "", err
+	}
+	if rev > 0 && !m.HasRev(rev) {
+		return "", fmt.Errorf("artifact %s has no revision %d (have %d..%d)", id, rev, m.Revs[0].N, m.Latest())
+	}
+	base, running := e.serveURL()
+	u := artifactURL(base, id, rev)
+	if !running {
+		e.notRunningNote(u)
+	}
+	return u, nil
+}
+
+func (e artifactEnv) url(w io.Writer, id string, rev int) error {
+	u, err := e.revURL(id, rev)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(w, u)
+	return nil
+}
+
+func (e artifactEnv) open(w io.Writer, id string, rev int) error {
+	u, err := e.revURL(id, rev)
+	if err != nil {
+		return err
+	}
+	if err := e.openBrowser(u); err != nil {
+		return fmt.Errorf("opening browser (the URL is %s): %w", u, err)
+	}
+	fmt.Fprintf(w, "Opened %s\n", u)
+	return nil
+}
+
+func (e artifactEnv) pin(w io.Writer, id string, pin bool) error {
+	m, err := e.store().Pin(id, pin)
+	if err != nil {
+		return err
+	}
+	verb := "Pinned"
+	if !pin {
+		verb = "Unpinned"
+	}
+	fmt.Fprintf(w, "%s %s (%s)\n", verb, m.ID, m.Title)
+	return nil
+}
+
+func (e artifactEnv) rm(w io.Writer, id string, yes bool) error {
+	m, err := e.store().Get(id)
+	if err != nil {
+		return err
+	}
+	if !yes {
+		if !e.interactive() {
+			return fmt.Errorf("refusing to remove %s (%q) without --yes: not a terminal", id, m.Title)
+		}
+		fmt.Fprintf(e.errw, "Remove artifact %s (%q, %d revisions)? [y/N] ", id, m.Title, len(m.Revs))
+		line, _ := bufio.NewReader(e.stdin).ReadString('\n')
+		if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
+			return errors.New("aborted")
+		}
+	}
+	if _, err := e.store().Remove(id); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "Removed %s (%s)\n", id, m.Title)
+	return nil
+}
+
+func (e artifactEnv) prune(w io.Writer, olderThan string, dryRun bool) error {
+	d := artifacts.DefaultRetention
+	if olderThan != "" {
+		p, err := sessions.ParseSince(olderThan)
+		if err != nil {
+			return fmt.Errorf("--older-than: %w", err)
+		}
+		d = p
+	}
+	gone, err := e.store().Prune(d, dryRun)
+	if err != nil {
+		return err
+	}
+	verb := "Pruned"
+	if dryRun {
+		verb = "Would prune"
+	}
+	for _, m := range gone {
+		fmt.Fprintf(w, "%s %s  %s  (updated %s)\n", verb, m.ID, m.Title, relTime(m.Updated, e.now()))
+	}
+	if len(gone) == 0 {
+		fmt.Fprintln(w, "Nothing to prune.")
+	}
+	return nil
+}
+
+func writeJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
+}
+
+func trunc(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
+}
+
+func dash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// Seams for artifactOrigin, replaced in tests.
+var (
+	artifactPane      = func() string { return os.Getenv("TMUX_PANE") }
+	artifactWindowFor = tmux.WindowIDForPane
+	artifactSessionOf = tmux.SessionOfWindow
+	artifactReadWin   = windowstate.Read
+	artifactCwd       = os.Getwd
+)
+
+// artifactOrigin describes the caller. Inside tmux it follows TMUX_PANE to
+// the window and its windowstate, the trusted source `status whoami` uses
+// (never the inherited AGENTCTL_WINDOW_ID). A plain shell gets only the
+// project, from the cwd, with the agent and window left blank. The project is
+// the worktree-aware root, so a worktree's artifacts group under the main
+// project.
+func artifactOrigin() artifacts.Origin {
+	var o artifacts.Origin
+	dir, _ := artifactCwd()
+	if pane := artifactPane(); pane != "" {
+		if wid := artifactWindowFor(pane); wid != "" {
+			o.WindowID = wid
+			o.Session = artifactSessionOf(wid)
+			if ws, err := artifactReadWin(wid); err == nil {
+				o.Agent, o.SessionID, o.Branch = ws.AgentName, ws.SessionID, ws.Branch
+				if ws.WorkDir != "" {
+					dir = ws.WorkDir
+				}
+			}
+		}
+	}
+	if dir != "" {
+		o.ProjectDir = prompttemplate.ProjectRoot(dir)
+		o.Project = filepath.Base(o.ProjectDir)
+	}
+	return o
+}
+
+// artifactServeURL builds the base URL of the PWA from the serve config and
+// reports whether serve is running (a control-socket probe, no network).
+func artifactServeURL() (string, bool) {
+	cfg := config.Load().Serve
+	running := false
+	if dir, err := serve.Dir(); err == nil {
+		running = servectl.Probe(dir) == servectl.StateRunning
+	}
+	host, _ := os.Hostname()
+	return serveBaseURL(cfg, host), running
+}
+
+// serveBaseURL is https://<host>[:<port>] from serve.listen and the first
+// serve.hostnames entry, else <hostname>.local.
+func serveBaseURL(cfg config.ServeConfig, osHostname string) string {
+	lh, port, err := net.SplitHostPort(cfg.EffectiveListen())
+	if err != nil {
+		lh, port = "", strings.TrimPrefix(cfg.EffectiveListen(), ":")
+	}
+	host := ""
+	switch {
+	case len(cfg.Hostnames) > 0:
+		host = cfg.Hostnames[0]
+	case lh != "" && !net.ParseIP(lh).IsUnspecified():
+		host = lh
+	default:
+		h := strings.TrimSuffix(osHostname, ".local")
+		if h == "" {
+			h = "localhost"
+		}
+		host = h + ".local"
+	}
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		host = "[" + host + "]"
+	}
+	u := url.URL{Scheme: "https", Host: host}
+	if port != "" && port != "443" {
+		u.Host = host + ":" + port
+	}
+	return u.String()
+}
+
+// openInBrowser opens u with the platform opener without waiting for it.
+func openInBrowser(u string) error {
+	name := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		name = "open"
+	}
+	c := exec.Command(name, u)
+	if err := c.Start(); err != nil {
+		return err
+	}
+	go func() { _ = c.Wait() }()
+	return nil
+}
+
+// pruneArtifacts is the housekeeping hook: it removes unpinned artifacts not
+// updated within DefaultRetention. Never fatal.
+var pruneArtifacts = func() {
+	gone, err := artifacts.New().Prune(artifacts.DefaultRetention, false)
+	if err != nil {
+		logging.Log("artifacts prune: %v", err)
+		return
+	}
+	if len(gone) > 0 {
+		logging.Log("artifacts prune: removed %d", len(gone))
+	}
+}

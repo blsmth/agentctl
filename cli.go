@@ -134,6 +134,7 @@ type CLI struct {
 	Ctl        CtlCmd        `cmd:"" help:"Send operator control command"`
 	Models     ModelsCmd     `cmd:"" help:"Inspect the model registry (context window, pricing, resolution)"`
 	Race       RaceCmd       `cmd:"" help:"Replay a session as a race against a human typing and reading the same work"`
+	Artifact   ArtifactCmd   `cmd:"" help:"Publish reports, mockups and charts as artifacts and get a URL to open them (add, update, list, show, url, open, pin, rm, prune)"`
 
 	// Setup
 	Init             InitCmd             `cmd:"" help:"Initialize agentctl in current project"`
@@ -1595,6 +1596,114 @@ type TemplateRmCmd struct {
 }
 
 func (c *TemplateRmCmd) Run() error { return cmd.RunTemplateRm(os.Stdout, c.Name, c.Project) }
+
+// ---------------------------------------------------------------------------
+// Artifacts
+// ---------------------------------------------------------------------------
+
+// ArtifactCmd groups `agentctl artifact`: the one writer of the artifact
+// store (<state dir>/artifacts), which `agentctl serve` shows on the phone.
+type ArtifactCmd struct {
+	Add    ArtifactAddCmd    `cmd:"" help:"Publish a file, a directory (with index.html) or stdin (-) as an artifact"`
+	Update ArtifactUpdateCmd `cmd:"" help:"Add a revision to an artifact (the latest is the default view)"`
+	List   ArtifactListCmd   `cmd:"" help:"List artifacts (this project; --all for every project)"`
+	Show   ArtifactShowCmd   `cmd:"" help:"Show an artifact's metadata, revisions and URL"`
+	URL    ArtifactURLCmd    `cmd:"" name:"url" help:"Print an artifact's URL"`
+	Open   ArtifactOpenCmd   `cmd:"" help:"Open an artifact in the laptop browser"`
+	Pin    ArtifactPinCmd    `cmd:"" help:"Pin an artifact so retention never prunes it"`
+	Unpin  ArtifactUnpinCmd  `cmd:"" help:"Unpin an artifact"`
+	Rm     ArtifactRmCmd     `cmd:"" help:"Delete an artifact and all its revisions"`
+	Prune  ArtifactPruneCmd  `cmd:"" help:"Delete unpinned artifacts not updated recently"`
+}
+
+type ArtifactAddCmd struct {
+	Path        string `arg:"" help:"File, directory, or - to read stdin"`
+	Title       string `help:"Title (default: HTML <title>, first markdown # heading, else the file name)"`
+	Description string `help:"One-line description"`
+	Kind        string `enum:",html,markdown,image,text" default:"" help:"Override the kind inferred from the entry's extension (html, markdown, image, text)"`
+	Entry       string `help:"File to open, relative to the directory (default: index.html); with stdin, the name to store it under (e.g. report.html)"`
+	Pin         bool   `help:"Pin so retention never prunes it"`
+	NoNotify    bool   `name:"no-notify" help:"Do not send a push notification for this artifact"`
+	JSON        bool   `help:"Print the result as JSON"`
+}
+
+func (c *ArtifactAddCmd) Run() error {
+	return cmd.RunArtifactAdd(os.Stdout, cmd.ArtifactAddOptions{
+		Path: c.Path, Title: c.Title, Description: c.Description, Kind: c.Kind, Entry: c.Entry,
+		Pin: c.Pin, NoNotify: c.NoNotify, JSON: c.JSON,
+	})
+}
+
+type ArtifactUpdateCmd struct {
+	ID    string `arg:"" help:"Artifact id"`
+	Path  string `arg:"" help:"File, directory, or - to read stdin"`
+	Note  string `help:"What changed in this revision"`
+	Title string `help:"New title (default: keep the current one)"`
+	JSON  bool   `help:"Print the result as JSON"`
+}
+
+func (c *ArtifactUpdateCmd) Run() error {
+	return cmd.RunArtifactUpdate(os.Stdout, cmd.ArtifactUpdateOptions{ID: c.ID, Path: c.Path, Note: c.Note, Title: c.Title, JSON: c.JSON})
+}
+
+type ArtifactListCmd struct {
+	Project string `help:"Project name or directory (default: the current project)"`
+	All     bool   `help:"Every project"`
+	Agent   string `help:"Only artifacts from this agent"`
+	Since   string `help:"Only artifacts updated within this long (e.g. 7d, 12h)"`
+	JSON    bool   `help:"Print as JSON"`
+}
+
+func (c *ArtifactListCmd) Run() error {
+	return cmd.RunArtifactList(os.Stdout, cmd.ArtifactListOptions{Project: c.Project, All: c.All, Agent: c.Agent, Since: c.Since, JSON: c.JSON})
+}
+
+type ArtifactShowCmd struct {
+	ID   string `arg:"" help:"Artifact id"`
+	JSON bool   `help:"Print as JSON"`
+}
+
+func (c *ArtifactShowCmd) Run() error { return cmd.RunArtifactShow(os.Stdout, c.ID, c.JSON) }
+
+type ArtifactURLCmd struct {
+	ID  string `arg:"" help:"Artifact id"`
+	Rev int    `help:"Revision (default: the latest)"`
+}
+
+func (c *ArtifactURLCmd) Run() error { return cmd.RunArtifactURL(os.Stdout, c.ID, c.Rev) }
+
+type ArtifactOpenCmd struct {
+	ID  string `arg:"" help:"Artifact id"`
+	Rev int    `help:"Revision (default: the latest)"`
+}
+
+func (c *ArtifactOpenCmd) Run() error { return cmd.RunArtifactOpen(os.Stdout, c.ID, c.Rev) }
+
+type ArtifactPinCmd struct {
+	ID string `arg:"" help:"Artifact id"`
+}
+
+func (c *ArtifactPinCmd) Run() error { return cmd.RunArtifactPin(os.Stdout, c.ID, true) }
+
+type ArtifactUnpinCmd struct {
+	ID string `arg:"" help:"Artifact id"`
+}
+
+func (c *ArtifactUnpinCmd) Run() error { return cmd.RunArtifactPin(os.Stdout, c.ID, false) }
+
+type ArtifactRmCmd struct {
+	ID  string `arg:"" help:"Artifact id"`
+	Yes bool   `short:"y" help:"Do not ask for confirmation"`
+}
+
+func (c *ArtifactRmCmd) Run() error { return cmd.RunArtifactRm(os.Stdout, c.ID, c.Yes) }
+
+type ArtifactPruneCmd struct {
+	OlderThan string `name:"older-than" default:"30d" help:"Prune unpinned artifacts not updated for this long (e.g. 30d, 12h)"`
+	DryRun    bool   `name:"dry-run" help:"List what would be pruned without deleting"`
+}
+
+func (c *ArtifactPruneCmd) Run() error { return cmd.RunArtifactPrune(os.Stdout, c.OlderThan, c.DryRun) }
 
 // ---------------------------------------------------------------------------
 // Cron (scheduled agent runs)

@@ -33,6 +33,7 @@ func RunReconcile(housekeeping bool) {
 		d := reconcile.DefaultHousekeepingDeps(rd)
 		d.BackfillTitles = backfillTitles
 		reconcile.Housekeep(d)
+		pruneArtifacts()
 	}
 }
 
