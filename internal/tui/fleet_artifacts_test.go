@@ -93,28 +93,33 @@ func TestFleetArtifactChipAndOpen(t *testing.T) {
 		t.Error("menu lacks artifact")
 	}
 
-	_, cmd := m.handleKey(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	before := m.sortRecent
+	m.handleKey(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	if m.sortRecent == before || len(*opened) != 0 {
+		t.Fatalf("o must only toggle the sort: sort %v->%v opened %v", before, m.sortRecent, *opened)
+	}
+	m.handleKey(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	_, cmd := m.handleKey(tea.KeyPressMsg{Code: 'A', Text: "A"})
 	if cmd == nil {
-		t.Fatal("o returned no command")
+		t.Fatal("A returned no command")
 	}
 	run(cmd)
 	if len(*opened) != 1 || (*opened)[0] != "bbbbbbbbbb" {
 		t.Errorf("opened = %v", *opened)
 	}
-	if m.sortRecent {
-		t.Error("o on an artifact row must not toggle the sort")
-	}
 }
 
-func TestFleetArtifactKeyFallsBackToSort(t *testing.T) {
+func TestFleetArtifactKeyNoopWithoutArtifacts(t *testing.T) {
 	m := sampleSidebar(t, 120)
 	_, opened := stubArtifacts(t, nil, time.Unix(1, 0))
 	before := m.sortRecent
-	m.handleKey(tea.KeyPressMsg{Code: 'o', Text: "o"})
-	if m.sortRecent == before {
-		t.Error("o on a row without artifacts should toggle the sort")
+	_, cmd := m.handleKey(tea.KeyPressMsg{Code: 'A', Text: "A"})
+	if cmd != nil || len(*opened) != 0 || m.sortRecent != before {
+		t.Errorf("A on a row without artifacts must do nothing: cmd=%v opened=%v", cmd != nil, *opened)
 	}
-	if len(*opened) != 0 {
-		t.Errorf("opened = %v", *opened)
+	for _, it := range m.fleetMenuItems(m.splitPane.Cursor()) {
+		if it.key == fleetArtifactKey {
+			t.Error("menu offers artifact on a row without any")
+		}
 	}
 }

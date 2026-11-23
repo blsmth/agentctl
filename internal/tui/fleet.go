@@ -1349,11 +1349,11 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 	case "f":
 		return *m, m.cycleFilter()
 
-	case fleetArtifactKey:
-		if m.selectedArtifactRow() {
-			return *m, m.openSelectedArtifact()
-		}
+	case "o":
 		return *m, m.toggleSort()
+
+	case fleetArtifactKey:
+		return *m, m.openSelectedArtifact()
 
 	case fleetShellsKey:
 		return *m, m.toggleShells()

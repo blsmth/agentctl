@@ -15,14 +15,14 @@ import (
 
 // The hub's artifact chip: a dim "◆N" before the title of a row whose window
 // has published N artifacts (internal/artifacts, matched on the artifact's
-// window_id + session). `o` on such a row opens the newest one in the browser
+// window_id + session). `A` on such a row opens the newest one in the browser
 // through `agentctl artifact open`. The listing is read on the poll tick, off
 // the UI goroutine, and only when the store directory's mtime changed; render
 // reads the cached counts and never touches disk.
 
-// fleetArtifactKey opens the selected row's newest artifact. On a row with no
-// artifacts the key keeps its older meaning (toggle the sort).
-const fleetArtifactKey = "o"
+// fleetArtifactKey opens the selected row's newest artifact; a no-op on a row
+// without artifacts.
+const fleetArtifactKey = "A"
 
 // fleetArtifactGlyph leads the chip.
 const fleetArtifactGlyph = "◆"
