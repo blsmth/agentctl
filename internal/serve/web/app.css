@@ -118,6 +118,12 @@ a.chip { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45
 .pane-reflow-wrap, .pane-exact { position: absolute; inset: 0; }
 .pane-reflow { height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; box-sizing: border-box; padding: 6px 8px;
   font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #e5e5e5; }
+.pane-reflow { touch-action: manipulation; }
+body.pane-expanded { overflow: hidden; }
+.pane-reflow-wrap.expanded { position: fixed; inset: 0; z-index: 200; background: #000; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+.pane-reflow-wrap.expanded .pane-reflow { font-size: 14px; padding: 8px 10px; }
+.pane-expand-close { position: absolute; z-index: 3; color: #e5e5e5; background: rgba(40,40,40,.85); top: calc(env(safe-area-inset-top) + 6px); right: calc(env(safe-area-inset-right) + 6px); }
+.pane-expand-close[hidden] { display: none; }
 .pane-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.4em; padding-left: 2ch; text-indent: -2ch; }
 .new-output { position: absolute; left: 50%; bottom: .75rem; transform: translateX(-50%); z-index: 2; min-height: 36px; padding: 0 1rem;
   border: 0; border-radius: 999px; background: var(--accent); color: #fff; font: 600 .8rem -apple-system, BlinkMacSystemFont, sans-serif;
@@ -412,6 +418,9 @@ body.term-open nav { display: none; }
 .sched-more { margin: 0 0 .75rem; }
 .sched-more summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--muted); }
 .sched-more .btn { width: 100%; }
+.load-earlier { position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + .5rem); transform: translateX(-50%); z-index: 2; min-height: 36px; padding: 0 1rem;
+  border: 0; border-radius: 999px; background: rgba(60,60,60,.92); color: #fff; font: 600 .8rem -apple-system, BlinkMacSystemFont, sans-serif; cursor: pointer; }
+.load-earlier[hidden] { display: none; }
 
 /* Artifacts: list rows reuse .win; the viewer is a full-height column. */
 .artifact-filter { display: flex; align-items: center; gap: .75rem; padding: 0 1rem .5rem; }

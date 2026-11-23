@@ -324,6 +324,48 @@ export const LONG_PRESS_MS = 400;
 /** LONG_PRESS_SLOP is the movement in px that turns a pending press into a scroll. */
 export const LONG_PRESS_SLOP = 10;
 
+/** DOUBLE_TAP_MS is the longest gap between two taps that count as a double tap. */
+export const DOUBLE_TAP_MS = 300;
+/** DOUBLE_TAP_SLOP is the most the second tap may land from the first, in px. */
+export const DOUBLE_TAP_SLOP = 30;
+/** TAP_MAX_MS is the longest a touch may last and still be a tap (not a long press). */
+export const TAP_MAX_MS = 300;
+/** TAP_SLOP is the most a finger may move during a tap, in px (more is a scroll). */
+export const TAP_SLOP = 10;
+
+/** isTap reports whether a touch from start {t,x,y} to end is a tap, not a press or scroll. */
+export function isTap(start, end) {
+  if (end.t - start.t > TAP_MAX_MS) return false;
+  return Math.hypot(end.x - start.x, end.y - start.y) <= TAP_SLOP;
+}
+
+/** isDoubleTap reports whether tap {t,x,y} follows prev (or null) closely enough to pair with it. */
+export function isDoubleTap(prev, tap) {
+  if (!prev) return false;
+  const dt = tap.t - prev.t;
+  if (dt < 0 || dt > DOUBLE_TAP_MS) return false;
+  return Math.hypot(tap.x - prev.x, tap.y - prev.y) <= DOUBLE_TAP_SLOP;
+}
+
+/** PANE_TAIL_LINES is the live poll's capture size; fewer lines means no scrollback. */
+export const PANE_TAIL_LINES = 200;
+
+/** paneLineCount counts the lines of captured pane text (a trailing newline adds none). */
+export function paneLineCount(text) {
+  if (!text) return 0;
+  return text.replace(/\n$/, "").split("\n").length;
+}
+
+/** canLoadEarlier reports whether more scrollback may exist beyond the live tail. */
+export function canLoadEarlier(tailText) {
+  return paneLineCount(tailText) >= PANE_TAIL_LINES;
+}
+
+/** historyAddsLines reports whether a full-history capture holds more lines than the tail. */
+export function historyAddsLines(tailText, fullText) {
+  return paneLineCount(fullText) > paneLineCount(tailText);
+}
+
 /** isDispatched mirrors fleet.Meta.Dispatched: launched by another agent. */
 export function isDispatched(win) {
   return Boolean(win.mode) && win.mode !== "bare";
