@@ -14,6 +14,9 @@ import {
   dialogQuestion,
   displayState,
   waitingIndex,
+  parentOf,
+  childrenOf,
+  rowRole,
   windowHash,
   rowHeadline,
   detailTitle,
@@ -35,7 +38,8 @@ import {
 } from "./logic.js";
 import { clear, confirmSheet, fitTermFont, h, toast } from "./ui.js";
 
-const CHILD_GLYPH = { blocked: "⏸", working: "●", waiting: "◷" };
+const CHILD_GLYPH = { blocked: "⏸", working: "●", waiting: "◷", done: "✓", idle: "○" };
+const CHILD_CAP = 5;
 const PANE_REFRESH_MS = 2000;
 const MODE_KEY = "agentctl.paneMode";
 const STATUS_KEY = "agentctl.statusBarOpen";
@@ -289,6 +293,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
   // Tap the recap to show it in full; it is clamped to two lines.
   const recap = h("div", { class: "win-recap", hidden: true, onclick: () => recap.classList.toggle("open") });
   const chips = h("div", { class: "chips", hidden: true });
+  let childrenOpen = false;
   const waitingKids = h("div", { class: "win-waiting", hidden: true });
   const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, recap, scheduled, chips, waitingKids);
 
@@ -405,11 +410,41 @@ export function mountWindow(root, ctx, { session, windowId }) {
     statePill.className = `state-pill ${st}`;
     statePill.querySelector(".state-text").textContent = stateLabel(win, Date.now(), waiting);
     clear(waitingKids);
-    for (const k of st === "waiting" ? (waiting.get(win.window_id) ?? []) : []) {
+    const groups = ctx.store.fleet?.groups;
+    const link = (k, cls) => {
       const ks = displayState(k, waiting);
-      waitingKids.append(
-        h("a", { class: `waiting-child ${ks}`, href: windowHash(k.session, k.window_id) }, h("span", { class: "glyph", "aria-label": ks }, CHILD_GLYPH[ks]), h("span", {}, rowHeadline(k))),
+      const role = rowRole(k);
+      return h(
+        "a",
+        { class: `waiting-child ${cls} ${ks}`, href: windowHash(k.session, k.window_id) },
+        h("span", { class: "glyph", "aria-label": ks }, CHILD_GLYPH[ks]),
+        role ? h("span", { class: "tag kind-chip", title: "Role of this sub-agent" }, role) : null,
+        h("span", { class: "link-text" }, rowHeadline(k)),
       );
+    };
+    const par = parentOf(groups, win);
+    if (par) waitingKids.append(h("div", { class: "rel-label" }, "Parent"), link(par, "parent-link"));
+    const kids = childrenOf(groups, win);
+    if (kids.length > 0) {
+      const shown = childrenOpen ? kids : kids.slice(0, CHILD_CAP);
+      waitingKids.append(h("div", { class: "rel-label" }, st === "waiting" ? "Waiting on" : "Sub-agents"));
+      for (const k of shown) waitingKids.append(link(k, "child-link"));
+      if (kids.length > CHILD_CAP) {
+        waitingKids.append(
+          h(
+            "button",
+            {
+              type: "button",
+              class: "rel-more",
+              onclick: () => {
+                childrenOpen = !childrenOpen;
+                renderHeader();
+              },
+            },
+            childrenOpen ? "Show fewer" : `${kids.length - CHILD_CAP} more`,
+          ),
+        );
+      }
     }
     waitingKids.hidden = waitingKids.childElementCount === 0;
     where.textContent = [dt.agent, win.project, win.branch].filter(Boolean).join(" · ");

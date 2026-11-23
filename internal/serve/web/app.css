@@ -308,6 +308,10 @@ body.term-open nav { display: none; }
 .waiting-child { display: flex; align-items: center; gap: .5rem; min-height: 44px; padding: 0 .75rem; border-radius: 10px; text-decoration: none;
   color: var(--fg); background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--working); }
 .waiting-child.blocked { border-left-color: var(--blocked); } .waiting-child.waiting { border-left-color: var(--waiting); }
+.waiting-child.idle .glyph, .waiting-child.done .glyph { color: var(--muted, var(--fg)); }
+.waiting-child .link-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rel-label { font-size: .75rem; opacity: .7; margin-top: .25rem; }
+.rel-more { min-height: 44px; border: 0; background: none; color: var(--accent); text-align: left; padding: 0 .75rem; font: inherit; }
 .waiting-child .glyph { width: 1.2rem; color: var(--working); } .waiting-child.blocked .glyph { color: var(--blocked); } .waiting-child.waiting .glyph { color: var(--waiting); }
 
 /* Host screen */

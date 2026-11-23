@@ -65,6 +65,36 @@ export function waitingIndex(groups) {
 }
 
 /**
+ * parentOf resolves win's dispatcher in the fleet feed (across every group,
+ * as waitingIndex matches). It returns null for no parent, a self-parent or a
+ * parent that is not a live window in the feed, so callers never draw a dead
+ * link. Window ids are unique, so cycles cannot make this loop.
+ */
+export function parentOf(groups, win) {
+  if (!win || !win.parent || win.parent === win.window_id) return null;
+  for (const g of groups ?? []) {
+    for (const w of g.windows ?? []) if (w.window_id === win.parent) return w;
+  }
+  return null;
+}
+
+/**
+ * childrenOf lists win's direct live children (win.parent === win.window_id,
+ * the same definition as waitingIndex and treeRows, across every group) in
+ * attention order. A window is never its own child.
+ */
+export function childrenOf(groups, win) {
+  if (!win || !win.window_id) return [];
+  const kids = [];
+  for (const g of groups ?? []) {
+    for (const w of g.windows ?? []) {
+      if (w.parent === win.window_id && w.window_id && w.window_id !== win.window_id) kids.push(w);
+    }
+  }
+  return sortWindows(kids);
+}
+
+/**
  * displayState is effectiveState plus "waiting". index is a waitingIndex;
  * without one, a window annotated by sortGroups (win.waiting_on) is used.
  */
