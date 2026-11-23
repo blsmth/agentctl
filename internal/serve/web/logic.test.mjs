@@ -940,9 +940,10 @@ console.log("ok: shell request");
   assert.equal(scheduleAgentText({ template: "triage" }, "go-engineer"), "go-engineer (from template triage)");
   assert.equal(scheduleAgentText({ template: "triage" }), "the agent of template triage");
   assert.equal(scheduleAgentText({ agent: "a", template: "triage" }, "go-engineer"), "a");
-  assert.equal(scheduleRowActivity({ template: "triage" }, "proj"), "template triage \u00B7 proj");
-  assert.equal(scheduleRowActivity({ agent: "a", template: "triage" }, "proj"), "a \u00B7 template triage \u00B7 proj");
-  assert.equal(scheduleRowActivity({ agent: "a", prompt: "p" }, "proj"), "a \u00B7 proj");
+  assert.equal(scheduleRowActivity({ template: "triage" }, "proj"), "proj \u203A template triage");
+  assert.equal(scheduleRowActivity({ agent: "a", template: "triage" }, "proj"), "proj \u203A a \u00B7 template triage");
+  assert.equal(scheduleRowActivity({ agent: "a", prompt: "p" }, "proj"), "proj \u203A a");
+  assert.equal(scheduleRowActivity({ agent: "a" }, ""), "a");
   // Review and changes name the template.
   const rv = scheduleReview({ job: { agent: "", template: "triage", dir: "/d", worktree: true }, schedule: "x" }, { ...f, templateAgent: "go-engineer" });
   assert.match(rv[0], /Runs {3}go-engineer \(from template triage\) in \/d/);
@@ -1023,7 +1024,7 @@ console.log("ok: template approvals");
   assert.equal(artifactRevLabel({ n: 1, created: "2026-01-01T09:00:00Z" }, now), "v1 \u00B7 3h ago");
   assert.equal(artifactRevPill(2, 2, 2), "v2 \u25BE");
   assert.equal(artifactRevPill(1, 2, 2), "v1 of 2 \u25BE");
-  assert.equal(artifactOrigin({ agent: "designer", project: "shop", window_id: "@17" }), "designer \u00B7 shop \u00B7 @17");
+  assert.equal(artifactOrigin({ agent: "designer", project: "shop", window_id: "@17" }), "shop \u203A designer \u00B7 @17");
   assert.equal(artifactOrigin({ project: "shop" }), "shop");
   // Pinned rows lead within a project group, keeping list order otherwise.
   const pg = groupArtifacts([A("p1", "/b", "beta"), A("p2", "/b", "beta", { pinned: true }), A("p3", "/b", "beta"), A("p4", "/b", "beta", { pinned: true })], []);

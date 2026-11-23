@@ -47,7 +47,7 @@ test("the list sorts failed first, paused last, and shows skips and banners", as
   const broken = page.locator(".sched-row", { hasText: "broken" });
   await expect(broken).toContainText("failed: no such agent");
   await expect(broken.locator(".sched-glyph")).toHaveText("!");
-  await expect(broken).toContainText("go-engineer · ");
+  await expect(broken).toContainText("› go-engineer");
   await expect(page.locator(".sched-row", { hasText: "skipper" }).locator(".sched-exc")).toHaveText("skipped: usage 5h 82%");
   const paused = page.locator(".sched-row", { hasText: "paused-one" });
   await expect(paused).toContainText("paused");
