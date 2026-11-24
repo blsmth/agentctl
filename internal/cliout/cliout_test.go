@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/blsmth/agentctl/internal/testenv"
 )
@@ -77,5 +78,18 @@ func TestExitFlushesOutput(t *testing.T) {
 	}
 	if out.String() != "before exit\n" {
 		t.Fatalf("output lost or unstripped: %q", out.String())
+	}
+}
+
+// Regression: a read boundary inside an escape sequence used to corrupt the
+// strip writer and drop the rest of the output (a status table printed only
+// its header when piped).
+func TestCopyLinesSurvivesSplitReads(t *testing.T) {
+	in := "\x1b[1;38;2;88;91;112mSESSION\x1b[m  WIN\n\x1b[38;2;88;91;112m────\x1b[m\n\x1b]8;;agentctl://window/@1\x1b\\row\x1b]8;;\x1b\\ tail-no-newline"
+	var out bytes.Buffer
+	copyLines(StripWriter(&out), iotest.OneByteReader(strings.NewReader(in)))
+	want := "SESSION  WIN\n────\nrow tail-no-newline"
+	if out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
 	}
 }

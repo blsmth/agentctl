@@ -11,6 +11,7 @@
 package cliout
 
 import (
+	"bufio"
 	"io"
 	"os"
 	"sync"
@@ -56,7 +57,7 @@ func Plain() (restore func()) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = io.Copy(StripWriter(real), r)
+		copyLines(StripWriter(real), r)
 	}()
 	var once sync.Once
 	restore = func() {
@@ -74,6 +75,28 @@ func Plain() (restore func()) {
 	flush = restore
 	mu.Unlock()
 	return restore
+}
+
+// copyLines copies src to dst one complete line at a time. The strip writer
+// parses escape sequences per Write call and does not carry state across
+// calls, so an arbitrary read boundary (a pipe read can end mid-sequence)
+// would corrupt it and swallow the output that follows. Escape sequences never
+// span a newline in CLI output, so whole lines are safe units. A final line
+// with no newline is flushed at EOF.
+func copyLines(dst io.Writer, src io.Reader) {
+	br := bufio.NewReader(src)
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(line) > 0 {
+			if _, werr := dst.Write(line); werr != nil {
+				_, _ = io.Copy(io.Discard, br)
+				return
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
 }
 
 // Exit flushes any output buffered by Plain and then exits. Use it instead of
