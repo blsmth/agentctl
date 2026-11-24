@@ -994,9 +994,6 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case fleetSchedSavedMsg:
 		return m, m.applySchedSaved(msg)
 
-	case fleetSchedEditorMsg:
-		return m, m.applySchedEditor(msg)
-
 	case schedDrawerTickMsg:
 		return m, m.applySchedDrawerTick(msg)
 
