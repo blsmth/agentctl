@@ -51,6 +51,10 @@ func TestHubStatusLayout(t *testing.T) {
 	untitled := &hubStatus{Version: hubStatusVersion, Glyph: "●", Title: "Fixed the build", TitleFromRecap: true, State: "working",
 		Detail: rowDetailParts{Recap: "Fixed the build. Then added tests."}}
 
+	untitledLong := &hubStatus{Version: hubStatusVersion, Glyph: "●", TitleFromRecap: true, State: "working",
+		Title:  "Refactoring the authentication middleware to use the new session store",
+		Detail: rowDetailParts{Recap: "Refactoring the authentication middleware to use the new session store."}}
+
 	tests := []struct {
 		name    string
 		st      *hubStatus
@@ -78,6 +82,7 @@ func TestHubStatusLayout(t *testing.T) {
 		{"h=2 recap wins", layoutStatus(), 90, 2, []string{"Moving the detail"}, []string{"PR #7"}, ""},
 		{"h=1 title only", layoutStatus(), 90, 1, []string{"working"}, []string{"Moving"}, ""},
 		{"h=3 recap before needs", blocked, 90, 3, []string{"Moving the detail", "PR #7"}, []string{"needs you"}, "PR #7"},
+		{"untitled narrow keeps full recap", untitledLong, 40, 6, []string{"middleware to use the new session", "store."}, nil, ""},
 		{"untitled recap not repeated", untitled, 90, 6, []string{"Fixed the build", "Then added tests"}, nil, ""},
 	}
 	for _, tt := range tests {

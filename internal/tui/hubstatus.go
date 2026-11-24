@@ -154,7 +154,8 @@ func hubStatusLines(st *hubStatus, w, h int, now time.Time) []string {
 	}
 	tw := w - hubStatusIndent - 1 // one column of right margin
 	indent := strings.Repeat(" ", hubStatusIndent)
-	lines := []string{hubStatusTitleAt(st, w, now)}
+	titleLine, titleCut := hubStatusTitleAt(st, w, now)
+	lines := []string{titleLine}
 	free := h - 1
 	var footer string
 	if free >= 2 && tw > 0 {
@@ -175,7 +176,7 @@ func hubStatusLines(st *hubStatus, w, h int, now time.Time) []string {
 			text = "" // never the activity line, even from an older hub's file
 		}
 		titleOnly := false
-		if st.TitleFromRecap && text != "" {
+		if st.TitleFromRecap && !titleCut && text != "" {
 			// The title is the recap's first sentence: don't print it twice.
 			text = afterFirstSentence(text)
 			titleOnly = text == ""
@@ -229,8 +230,9 @@ func hubStatusNeeds(st *hubStatus, tw int) string {
 // "<state word> <age> · <project>" right-aligned, the state word in the glyph
 // colour, the rest dim. A row whose footer holds nothing else also carries its
 // agent name there, dim, before the state word. A narrow pane drops the agent
-// name first, then the project, then the age, and keeps the state word.
-func hubStatusTitleAt(st *hubStatus, w int, now time.Time) string {
+// name first, then the project, then the age, and keeps the state word. The
+// bool reports that the title had to be cut to fit.
+func hubStatusTitleAt(st *hubStatus, w int, now time.Time) (string, bool) {
 	gs := hubStatusGlyphStyle(st.Glyph)
 	left := gs.Render(st.Glyph) + " "
 	if st.Role != "" {
@@ -285,13 +287,14 @@ func hubStatusTitleAt(st *hubStatus, w int, now time.Time) string {
 	if right.w > 0 {
 		room -= right.w + 2
 	}
+	cut := lipgloss.Width(st.Title) > max(room, 0)
 	title := renderRecapTitle(truncateToWidth(st.Title, max(room, 0)), fleetRecapWorkingStyle.Bold(true))
 	line := left + title
 	if right.w > 0 && room >= 0 {
 		pad := w - 1 - lipgloss.Width(line) - right.w
 		line += strings.Repeat(" ", max(pad, 2)) + right.text
 	}
-	return line
+	return line, cut
 }
 
 // hubStatusLinesLegacy lays out a status block from an older hub (no facts,
