@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/closedlog"
+	"github.com/blsmth/agentctl/internal/registry"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
@@ -13,6 +14,26 @@ import (
 // closed ledger. Failures degrade to what could be read.
 func LoadIndex() *Index {
 	groups, _ := Load()
+	recs, _ := closedlog.Load(time.Now().Add(-closedlog.MaxAge))
+	return NewIndex(groups, recs)
+}
+
+// LoadHandleIndex is LoadIndex without tmux: it reads the window records of
+// every registered project's runtime dir plus the closed ledger. It is for
+// hooks, which only need session IDs (handles) and labels from records; it
+// spawns nothing, prunes nothing and reads no transcripts.
+func LoadHandleIndex() *Index {
+	var groups []Group
+	entries, _ := registry.List()
+	for _, e := range entries {
+		g := Group{Session: e.SessionName, RuntimeDir: e.RuntimeDir}
+		for id, ws := range windowstate.AllFrom(windowstate.WindowsDirFor(e.RuntimeDir)) {
+			r := RowFromRecord(id, ws)
+			r.Session = e.SessionName
+			g.Rows = append(g.Rows, r)
+		}
+		groups = append(groups, g)
+	}
 	recs, _ := closedlog.Load(time.Now().Add(-closedlog.MaxAge))
 	return NewIndex(groups, recs)
 }

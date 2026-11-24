@@ -294,10 +294,10 @@ func pushAgent(w fleet.Window) string {
 	if textutil.OneLine(w.Title) == "" {
 		return ""
 	}
-	name := fleet.DisplayName("", w.Agent, "")
-	if name == "" {
+	if strings.TrimSpace(w.Agent) == "" {
 		return ""
 	}
+	name := fleet.DisplayName("", w.Agent, "")
 	name, _, _ = strings.Cut(name, ":")
 	name, _, _ = strings.Cut(name, "~")
 	return name

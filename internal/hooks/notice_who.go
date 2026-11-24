@@ -1,13 +1,16 @@
 package hooks
 
 import (
+	"sync"
+
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // sessionIndexFn loads the machine-wide session index that handles are
-// unique within. A seam so tests never read tmux or the ledger.
-var sessionIndexFn = fleet.LoadIndex
+// unique within, at most once per hook process. It reads window records and
+// the ledger only (no tmux). A seam so tests never read the real ones.
+var sessionIndexFn = sync.OnceValue(fleet.LoadHandleIndex)
 
 // noticeWho names the window's session for a person or an orchestrator:
 // `go-engineer "esc fix in hub" (a3f9)`. agent is the fallback agent name when

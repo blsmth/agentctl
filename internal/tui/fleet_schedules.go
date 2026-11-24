@@ -826,7 +826,7 @@ func (m FleetModel) schedCardLines(w int) []string {
 		add(fleetDimStyle.Render("never ran"))
 	}
 	for _, e := range runs {
-		add(renderRunLine(e, w))
+		add(renderRunLine(e, w, m.runIsLive))
 	}
 	return out
 }
@@ -849,8 +849,20 @@ func (m FleetModel) windowLabel(session, windowID string) string {
 	return "a session in " + strings.TrimPrefix(session, "agentctl-")
 }
 
-// renderRunLine is one run: time, result, window or note.
-func renderRunLine(e cron.Entry, w int) string {
+// runIsLive reports whether the window a run launched is still in the hub.
+func (m FleetModel) runIsLive(e cron.Entry) bool {
+	for _, g := range m.groups {
+		for _, r := range g.Rows {
+			if r.WindowID == e.WindowID && (e.Session == "" || r.Session == e.Session) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// renderRunLine is one run: time, result, live/closed state or note.
+func renderRunLine(e cron.Entry, w int, live func(cron.Entry) bool) string {
 	ts := e.Time.In(time.Local).Format("Mon 2 Jan 15:04")
 	st := fleetDimStyle
 	switch {
@@ -861,7 +873,13 @@ func renderRunLine(e cron.Entry, w int) string {
 	case strings.HasPrefix(e.Result, "skipped"):
 		st = fleetBlockedStyle
 	}
-	extra := e.WindowID
+	extra := ""
+	if e.WindowID != "" {
+		extra = "closed"
+		if live != nil && live(e) {
+			extra = "live"
+		}
+	}
 	if e.Note != "" {
 		extra = e.Note
 	}

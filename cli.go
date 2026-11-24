@@ -889,6 +889,9 @@ func (c *AuditCmd) buildFilter() (audit.Filter, error) {
 	if id, ok, err := cmd.ResolveSessionFilter(c.Window); err != nil {
 		return audit.Filter{}, err
 	} else if ok {
+		if c.Session != "" {
+			return audit.Filter{}, fmt.Errorf("--session and --window <handle> both name a session; use one")
+		}
 		session, window = id, ""
 	}
 

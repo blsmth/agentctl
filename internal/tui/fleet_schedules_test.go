@@ -1223,3 +1223,16 @@ func testSchedEnv() schedEnv {
 		efforts: []string{"low", "medium", "high", "xhigh", "max", "auto"},
 	}
 }
+
+func TestRenderRunLineLiveClosed(t *testing.T) {
+	e := cron.Entry{Time: schedNow, Job: "j", Result: cron.ResultFired, WindowID: "@1764"}
+	for _, tc := range []struct {
+		live bool
+		want string
+	}{{true, "live"}, {false, "closed"}} {
+		got := ansi.Strip(renderRunLine(e, 80, func(cron.Entry) bool { return tc.live }))
+		if !strings.Contains(got, tc.want) || strings.Contains(got, "@1764") {
+			t.Errorf("live=%v: %q", tc.live, got)
+		}
+	}
+}
