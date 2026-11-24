@@ -202,3 +202,38 @@ func TestLoadRestoreWithoutHarnessMeansClaude(t *testing.T) {
 		t.Errorf("agents = %+v", s.Agents)
 	}
 }
+
+func TestRestoreCarriesTitleAndStart(t *testing.T) {
+	manual := windowstate.ShortTitle{Title: "my name", Manual: true, Final: true, InputHash: "h1", Kind: "go"}
+	final := windowstate.ShortTitle{Title: "hub fix", Final: true, InputHash: "h2", At: time.Unix(1700000000, 0).UTC()}
+	recs := map[string]windowstate.WindowState{
+		"@1": {Instance: "a:1", AgentName: "a", WorkDir: "/w", ShortTitle: manual, StartedAt: 1700000100},
+		"@2": {Instance: "a:2", AgentName: "a", WorkDir: "/w", ShortTitle: final, StartedAt: 1700000200},
+		"@3": {Instance: "a:3", AgentName: "a", WorkDir: "/w"},
+	}
+	dir := t.TempDir()
+	if err := SaveRestoreAgents(dir, BuildRestoreAgents(recs, nil)); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadFrom(filepath.Join(dir, RestoreFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]AgentState{}
+	for _, a := range s.Agents {
+		byID[a.WindowID] = a
+	}
+	for id, want := range map[string]windowstate.ShortTitle{"@1": manual, "@2": final} {
+		got := byID[id].ShortTitleRec
+		if got == nil || !got.At.Equal(want.At) || got.Title != want.Title || got.Manual != want.Manual ||
+			got.Final != want.Final || got.InputHash != want.InputHash || got.Kind != want.Kind {
+			t.Errorf("%s: short title %+v, want %+v", id, got, want)
+		}
+	}
+	if byID["@1"].StartedAt != 1700000100 || byID["@2"].StartedAt != 1700000200 {
+		t.Errorf("started_at lost: %d %d", byID["@1"].StartedAt, byID["@2"].StartedAt)
+	}
+	if byID["@3"].ShortTitleRec != nil {
+		t.Errorf("untitled window must carry no short title")
+	}
+}

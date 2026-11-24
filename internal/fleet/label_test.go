@@ -8,6 +8,8 @@ import (
 
 	"github.com/blsmth/agentctl/internal/closedlog"
 	"github.com/blsmth/agentctl/internal/state"
+	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 func TestLabel(t *testing.T) {
@@ -72,5 +74,15 @@ func TestLabelWidthIsCallerConcern(t *testing.T) {
 	got := Label(Row{AgentState: state.AgentState{ShortTitle: strings.Repeat("word ", 20)}}, Scope{})
 	if !strings.HasPrefix(got, "word word") {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestLabelBareWindowFromRecord(t *testing.T) {
+	recs := map[string]windowstate.WindowState{
+		"@3": {Instance: "x", FirstPrompt: "Please look at the flaky hub test\nand work out why it fails on CI every second run", StartedAt: 1},
+	}
+	a := agentFromWindow(1, tmux.WindowInfo{ID: "@3"}, "x", recs)
+	if got, want := Label(Row{AgentState: a}, Scope{}), "Please look at the flaky hub test and…"; got != want {
+		t.Errorf("Label = %q, want %q", got, want)
 	}
 }

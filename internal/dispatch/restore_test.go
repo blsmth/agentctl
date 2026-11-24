@@ -66,3 +66,16 @@ func TestApplyRestoreMeta(t *testing.T) {
 		t.Errorf("empty mode must stay empty, got %q", ws.Mode)
 	}
 }
+
+func TestApplyRestoreMetaTitleAndStart(t *testing.T) {
+	st := windowstate.ShortTitle{Title: "my name", Manual: true, Final: true, InputHash: "h"}
+	ws := windowstate.WindowState{StartedAt: 500}
+	applyRestoreMeta(&ws, RestoreRequest{ShortTitle: st, StartedAt: 100})
+	if ws.ShortTitle != st || ws.StartedAt != 100 {
+		t.Errorf("got %+v started=%d", ws.ShortTitle, ws.StartedAt)
+	}
+	applyRestoreMeta(&ws, RestoreRequest{})
+	if ws.ShortTitle != st || ws.StartedAt != 100 {
+		t.Errorf("empty request must keep title and start, got %+v started=%d", ws.ShortTitle, ws.StartedAt)
+	}
+}

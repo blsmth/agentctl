@@ -176,6 +176,7 @@ func agentFromWindow(idx int, w tmux.WindowInfo, name string, records map[string
 		TicketRef:        ws.Ticket,
 		TicketTitle:      ws.TicketTitle,
 		Task:             ws.Task,
+		FirstPrompt:      ws.FirstPrompt,
 		ShortTitle:       ws.ShortTitle.Title,
 		ShortRole:        shortRole(ws),
 		ShortManual:      ws.ShortTitle.Manual && ws.ShortTitle.Title != "",
