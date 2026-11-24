@@ -763,6 +763,9 @@ func (m FleetModel) schedCardLines(w int) []string {
 			agent = detail.TemplateResolved.Agent + " (from template)"
 		}
 	}
+	if st.Job.IsImprove() {
+		agent = st.Job.ImproveAgentName()
+	}
 	add(wrapText(fmt.Sprintf("%s in %s · %s", fleetGroupNameStyle.Render(agent), tildify(st.Job.Dir), wt), w))
 	if st.Invalid != "" {
 		add(fleetErrStyle.Render(wrapText("invalid: "+st.Invalid, w)))
@@ -789,8 +792,17 @@ func (m FleetModel) schedCardLines(w int) []string {
 	for _, rw := range st.Windows {
 		add(fleetWorkingStyle.Render(truncateToWidth("● running: "+m.windowLabel(rw.Session, rw.WindowID), w)))
 	}
-	add("", fleetCountStyle.Render("Prompt"))
+	if st.Job.IsImprove() {
+		add("", fleetCountStyle.Render("Fleet improve"), wrapText(st.Job.ImproveSummary(fleetNow()), w))
+	}
+	noPrompt := st.Job.IsImprove() && st.Job.Prompt == "" && st.Job.PromptKey == "" && st.Job.Template == ""
+	if !noPrompt {
+		add("", fleetCountStyle.Render("Prompt"))
+	}
 	prompt, maxLines := st.Job.Prompt, 4
+	if st.Job.IsImprove() && st.Job.Prompt != "" {
+		prompt = "theme: " + prompt
+	}
 	if detail != nil {
 		maxLines = 12
 	}
@@ -816,7 +828,9 @@ func (m FleetModel) schedCardLines(w int) []string {
 			}
 		}
 	}
-	add(clampLines(wrapText(prompt, w), maxLines)...)
+	if !noPrompt {
+		add(clampLines(wrapText(prompt, w), maxLines)...)
+	}
 	runs := st.Recent
 	if detail != nil {
 		runs = detail.Runs

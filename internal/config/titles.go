@@ -15,6 +15,21 @@ type TitlesConfig struct {
 	// Model is the model id sent to the backend. Empty means the backend's
 	// models.haiku, else its model.
 	Model string `json:"model,omitempty"`
+	// HourlyCap is the machine-wide cap on title requests per rolling hour.
+	// Zero or negative means DefaultTitlesHourlyCap.
+	HourlyCap int `json:"hourly_cap,omitempty"`
+}
+
+// DefaultTitlesHourlyCap is the title request cap per hour when
+// titles.hourly_cap is unset.
+const DefaultTitlesHourlyCap = 120
+
+// EffectiveHourlyCap is HourlyCap, with values <= 0 meaning the default.
+func (t TitlesConfig) EffectiveHourlyCap() int {
+	if t.HourlyCap <= 0 {
+		return DefaultTitlesHourlyCap
+	}
+	return t.HourlyCap
 }
 
 // TitleSettings is the effective titles configuration (see EffectiveTitles).

@@ -73,10 +73,9 @@ type hubStatus struct {
 	// fleet.AttentionLine); empty otherwise.
 	Attention string `json:"attention,omitempty"`
 
-	// Footer facts, left zone.
+	// Footer facts.
 	Ticket      int       `json:"ticket,omitempty"`
 	Agent       string    `json:"agent,omitempty"`
-	Branch      string    `json:"branch,omitempty"`
 	PRNumber    int       `json:"pr_number,omitempty"`
 	PRURL       string    `json:"pr_url,omitempty"`
 	ParentTitle string    `json:"parent_title,omitempty"`
@@ -86,14 +85,9 @@ type hubStatus struct {
 	KidsBlocked int       `json:"kids_blocked,omitempty"`
 	KidsWorking int       `json:"kids_working,omitempty"`
 	Extra       []string  `json:"extra,omitempty"` // non-default backend, "acct <name>"
-
-	// Footer facts, right zone.
-	Model     string  `json:"model,omitempty"`
-	CtxPct    int     `json:"ctx_pct,omitempty"`
-	CtxWarn   int     `json:"ctx_warn,omitempty"`
-	CtxCrit   int     `json:"ctx_crit,omitempty"`
-	CostUSD   float64 `json:"cost_usd,omitempty"`
-	StartTime int64   `json:"start_time,omitempty"` // unix seconds; monitor snapshot only
+	// TitleFromRecap is set when Title is the recap's first sentence (no short
+	// title): the pane leaves that sentence out of the recap body.
+	TitleFromRecap bool `json:"title_from_recap,omitempty"`
 }
 
 // hubStatusFor builds the status pane content for row r; groups resolve the
@@ -103,7 +97,6 @@ type hubStatus struct {
 func hubStatusFor(r fleet.Row, d fleetDisplay, groups []fleet.Group) *hubStatus {
 	glyph, _ := rowGlyph(r)
 	recap := rowRecap(r)
-	warn, crit := d.thresholds()
 	st := &hubStatus{
 		Glyph:      glyph,
 		Role:       r.ShortRole,
@@ -120,26 +113,18 @@ func hubStatusFor(r fleet.Row, d fleetDisplay, groups []fleet.Group) *hubStatus 
 		PRURL:      r.PRURL,
 		SchedBy:    r.ScheduledBy,
 		SchedAt:    r.ScheduledAt,
-		Model:      shortModel(r.ModelName),
-		CtxPct:     r.ContextPct,
-		CtxWarn:    warn,
-		CtxCrit:    crit,
-		CostUSD:    r.CostUSD,
-		StartTime:  r.StartTime,
 	}
 	if r.State == "blocked" {
 		st.PendingTool, st.PendingToolDetail = r.PendingTool, r.PendingToolDetail
 	}
 	st.Attention = fleet.AttentionLine(r.AgentState)
-	if r.Dispatched || r.Detached {
-		st.Branch = r.Branch
-	}
 	if b := strings.TrimSpace(r.Backend); !defaultBackends[strings.ToLower(b)] {
 		st.Extra = append(st.Extra, b)
 	}
 	if a := strings.TrimSpace(r.Account); a != "" && a != d.defaultAccount {
 		st.Extra = append(st.Extra, "acct "+a)
 	}
+	st.TitleFromRecap = recap.Title == "" && recap.Source != fleet.RecapNone && !r.Shell && !rowNeedsNameFallback(r, recap)
 	if rowNeedsNameFallback(r, recap) {
 		st.Title = fleet.BaseName(r)
 	}

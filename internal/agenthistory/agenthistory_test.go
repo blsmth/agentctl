@@ -2,9 +2,11 @@ package agenthistory
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -491,5 +493,53 @@ func TestLogNoSnapshotsYet(t *testing.T) {
 	}
 	if _, err := s.Log("", 0); !errors.Is(err, ErrNoSnapshots) {
 		t.Fatalf("err = %v, want ErrNoSnapshots", err)
+	}
+}
+
+func TestSkippedNestedReposLoggedOncePerDay(t *testing.T) {
+	home, s := setup(t)
+	write(t, filepath.Join(home, ".claude", "agents", "a.md"), "a")
+	nested := filepath.Join(home, ".claude", "agents", "launcher")
+	write(t, filepath.Join(nested, "README.md"), "x")
+	gitInit(t, nested)
+
+	var lines []string
+	orig := logf
+	logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+	t.Cleanup(func() { logf = orig })
+
+	if got := s.SkippedRepos(); !slices.Equal(got, []string{"agents/launcher"}) {
+		t.Fatalf("SkippedRepos = %q", got)
+	}
+	for i := 0; i < 3; i++ {
+		write(t, filepath.Join(home, ".claude", "agents", "a.md"), fmt.Sprint("v", i))
+		if _, err := s.Snapshot("test", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], "launcher") {
+		t.Fatalf("log lines = %q, want one about launcher", lines)
+	}
+}
+
+func TestSnapshotSkipsTrackedRootThatIsRepo(t *testing.T) {
+	home, s := setup(t)
+	write(t, filepath.Join(home, ".claude", "CLAUDE.md"), "c")
+	agents := filepath.Join(home, ".claude", "agents")
+	write(t, filepath.Join(agents, "a.md"), "a")
+	gitInit(t, agents)
+	rev, err := s.Snapshot("test", "")
+	if err != nil || rev == "" {
+		t.Fatalf("snapshot with repo root: %q %v", rev, err)
+	}
+	files, err := s.git(nil, "", "ls-files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(files)); got != "CLAUDE.md" {
+		t.Fatalf("tracked = %q, want only CLAUDE.md", got)
+	}
+	if got := s.SkippedRepos(); !slices.Equal(got, []string{"agents"}) {
+		t.Fatalf("SkippedRepos = %q", got)
 	}
 }

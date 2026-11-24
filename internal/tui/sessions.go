@@ -13,7 +13,6 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/render"
 	"github.com/blsmth/agentctl/internal/sessions"
-	"github.com/blsmth/agentctl/internal/textutil"
 	"github.com/blsmth/agentctl/internal/theme"
 	"github.com/blsmth/agentctl/internal/tokens"
 )
@@ -36,35 +35,17 @@ const (
 	sessColTurns      = 7
 )
 
-// sessElasticCols computes the elastic Agent and Project column widths.
-// Surplus width (contentWidth minus all fixed columns minus cursor) is split
-// evenly between them, with any remainder going to Project.
-func sessElasticCols(contentWidth int) (agentW, projectW int) {
-	fixedTotal := sessColAge + sessColAgentMin + sessColProjectMin + sessColModel +
-		sessColTicket + sessColDur + sessColCost + sessColIn + sessColOut +
-		sessColTpm + sessColCtx + sessColTurns + 3 // 3 = cursor prefix
-	surplus := contentWidth - fixedTotal
-	if surplus <= 0 {
-		return sessColAgentMin, sessColProjectMin
-	}
-	half := surplus / 2
-	return sessColAgentMin + half, sessColProjectMin + surplus - half
-}
-
 // Session list/detail popup styles.
 var (
 	sessTitleStyle         lipgloss.Style
 	sessRuleStyle          lipgloss.Style
 	sessSectionStyle       lipgloss.Style
 	sessColHeaderStyle     lipgloss.Style
-	sessRowStyle           lipgloss.Style
-	sessRowSelectedStyle   lipgloss.Style
 	sessAgeStyle           lipgloss.Style
 	sessAgentStyle         lipgloss.Style
 	sessAgentSelectedStyle lipgloss.Style
 	sessDimStyle           lipgloss.Style
 	sessCostStyle          lipgloss.Style
-	sessHintBarStyle       lipgloss.Style
 	sessDetailLabelStyle   lipgloss.Style
 	sessDetailValueStyle   lipgloss.Style
 	sessBulletStyle        lipgloss.Style
@@ -75,7 +56,6 @@ var (
 	sessTpmStyle           lipgloss.Style
 	sessTokenInStyle       lipgloss.Style
 	sessTokenOutStyle      lipgloss.Style
-	sessRowSeparatorStyle  lipgloss.Style
 	sessDetailSectionStyle lipgloss.Style
 )
 
@@ -98,8 +78,6 @@ func initSessionStyles() {
 	// Use the shared HintBar style but without the built-in MarginTop — the
 	// viewList() layout writes an explicit blank line before the hint bar,
 	// matching the tickets viewer pattern (one blank line, not two).
-	sessHintBarStyle = tableStyles.HintBar.MarginTop(0)
-	sessRowSeparatorStyle = tableStyles.RowSeparator
 
 	// ── Session-specific styles ───────────────────────────────────────────────
 	sessTitleStyle = lipgloss.NewStyle().
@@ -113,11 +91,7 @@ func initSessionStyles() {
 		Bold(true).
 		Foreground(lipgloss.Color(t.Text))
 
-	sessRowStyle = lipgloss.NewStyle()
-
 	sessHighlightBg = t.Surface
-	sessRowSelectedStyle = lipgloss.NewStyle().
-		Background(lipgloss.Color(sessHighlightBg))
 
 	sessAgeStyle = lipgloss.NewStyle().
 		Foreground(lipgloss.Color(t.Muted)).
@@ -260,7 +234,12 @@ func sessFetchCmd(currentAgent string) tea.Cmd {
 	}
 }
 
-// SessionsModel is the Bubble Tea model for the sessions browser popup.
+// SessionsModel is the Bubble Tea model for the sessions browser.
+//
+// It lays out at whatever size it is given (the hub viewer pane, a full
+// window, a popup): see sessions_view.go. Every clickable span is recorded as
+// a zone when the frame renders (zones.go) and sessions_mouse.go maps a click
+// back to the key it stands for.
 type SessionsModel struct {
 	// Terminal dimensions — updated via WindowSizeMsg.
 	termWidth  int
@@ -300,15 +279,26 @@ type SessionsModel struct {
 	result   SessionsResult
 	quitting bool
 
-	// splitPane manages list/detail layout, height allocation, and scroll.
-	splitPane SplitPane
+	// Scrolling: first visible line of the list, and of the preview / detail
+	// body.
+	listTop       int
+	previewScroll int
+
+	// helpOpen shows the ? keys-and-gestures overlay.
+	helpOpen bool
+
+	// Mouse state. zones is shared with copies of the model so View (a value
+	// receiver) can record the zones of the frame it drew.
+	zones     *zoneList
+	hover     string // innermost target under the pointer
+	hoverRow  string // row zone under the pointer, for the row tint
+	press     tkPress
+	lastClick tkPress
 }
 
-// sessChromRows is the number of lines reserved for chrome outside the SplitPane
-// in viewList: title(1) + search-indicator(1) + blank(1) + subtitle(1) + blank(1)
-// + col-headers(1) + rule(1) above the pane; blank(1) + hint-bar(1) below = 9 total.
-// Mirrors the tickets viewer's "7 header + 2 hint bar = 9" formula.
-const sessChromRows = 9
+// sessChromRows is the number of lines the list view spends outside the list
+// body: title, chip row, column header, rule, totals line and hint bar.
+const sessChromRows = 6
 
 // NewSessionsModel creates the sessions browser with optional agent filter.
 // Data is loaded asynchronously via Init().
@@ -319,7 +309,7 @@ func NewSessionsModel(currentAgent string) SessionsModel {
 	siS.Focused.Text = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current().Text))
 	si.SetStyles(siS)
 
-	m := SessionsModel{
+	return SessionsModel{
 		termWidth:   120,
 		termHeight:  40,
 		loading:     true,
@@ -328,21 +318,16 @@ func NewSessionsModel(currentAgent string) SessionsModel {
 		agentIdx:    -1,
 		projectIdx:  -1,
 		searchInput: si,
-		splitPane: SplitPane{
-			ListRatio:     0.45,
-			MinListRows:   8,
-			MinDetailRows: 5,
-		},
+		zones:       &zoneList{},
 	}
-	m.splitPane.SetSize(m.termWidth, m.termHeight-sessChromRows)
-	return m
 }
 
-// contentWidth returns the usable content width based on terminal size.
+// contentWidth returns the usable content width: the terminal minus the
+// margins, never below a small floor so the layout math stays positive.
 func (m SessionsModel) contentWidth() int {
 	w := m.termWidth - 4
-	if w < 40 {
-		w = 40
+	if w < 20 {
+		w = 20
 	}
 	return w
 }
@@ -355,11 +340,19 @@ func (m SessionsModel) Init() tea.Cmd {
 }
 
 func (m SessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if sm, ok := next.(SessionsModel); ok {
+		sm.syncScroll()
+		next = sm
+	}
+	return next, cmd
+}
+
+func (m SessionsModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
-		m.splitPane.SetSize(msg.Width, msg.Height-sessChromRows)
 		return m, nil
 
 	case sessLoadedMsg:
@@ -405,15 +398,41 @@ func (m SessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		if m.searchMode {
-			return m.updateSearch(msg)
-		}
-		if m.viewMode == 1 {
-			return m.updateDetail(msg)
-		}
-		return m.updateList(msg)
+		return m.handleKey(msg)
+
+	case tea.MouseClickMsg:
+		return m.handleMousePress(msg)
+	case tea.MouseReleaseMsg:
+		return m.handleMouseRelease(msg)
+	case tea.MouseMotionMsg:
+		return m.handleMouseMotion(msg)
+	case tea.MouseWheelMsg:
+		return m.handleMouseWheel(msg)
 	}
 	return m, nil
+}
+
+// handleKey routes a key press (typed, or synthesized by a click) to the
+// overlay, the search box or the current view.
+func (m SessionsModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.helpOpen {
+		switch msg.String() {
+		case "esc", "?", "q", "enter":
+			m.helpOpen = false
+		case "ctrl+c":
+			m.result.Cancelled = true
+			m.quitting = true
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+	if m.searchMode {
+		return m.updateSearch(msg)
+	}
+	if m.viewMode == 1 {
+		return m.updateDetail(msg)
+	}
+	return m.updateList(msg)
 }
 
 // applyFilters rebuilds m.entries from m.allEntries applying agent, project and
@@ -451,38 +470,98 @@ func (m *SessionsModel) applyFilters() {
 			m.cursor = 0
 		}
 	}
+	m.previewScroll = 0
+}
+
+// clearAgentFilter shows every agent again.
+func (m *SessionsModel) clearAgentFilter() {
+	m.agentIdx = -1
+	m.filterAgent = ""
+	m.showAll = true
+	m.cursor = 0
+	m.applyFilters()
+}
+
+// clearProjectFilter shows every project again.
+func (m *SessionsModel) clearProjectFilter() {
+	m.projectIdx = -1
+	m.filterProject = ""
+	m.cursor = 0
+	m.applyFilters()
+}
+
+// clearSearch drops the search query.
+func (m *SessionsModel) clearSearch() {
+	m.searchQuery = ""
+	m.searchInput.SetValue("")
+	m.applyFilters()
+}
+
+// moveCursor moves the selection to i (clamped), resetting the preview scroll.
+func (m *SessionsModel) moveCursor(i int) {
+	if i >= len(m.entries) {
+		i = len(m.entries) - 1
+	}
+	if i < 0 {
+		i = 0
+	}
+	if i != m.cursor {
+		m.previewScroll = 0
+	}
+	m.cursor = i
+}
+
+// resumeResult and logResult build the result of the r and l actions.
+func (m SessionsModel) quitWith(action string) (tea.Model, tea.Cmd) {
+	if len(m.entries) == 0 || m.cursor >= len(m.entries) {
+		return m, nil
+	}
+	s := m.entries[m.cursor].Session
+	m.result = SessionsResult{
+		Action:    action,
+		SessionID: s.ID,
+		Agent:     s.Agent,
+		Project:   s.Project,
+	}
+	if action == "log" {
+		m.result.LogFile = s.LogFile
+	}
+	m.quitting = true
+	return m, tea.Quit
+}
+
+func (m SessionsModel) quit() (tea.Model, tea.Cmd) {
+	m.result.Cancelled = true
+	m.quitting = true
+	return m, tea.Quit
 }
 
 func (m SessionsModel) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
-		m.result.Cancelled = true
-		m.quitting = true
-		return m, tea.Quit
+		return m.quit()
+
+	case "?":
+		m.helpOpen = true
 
 	case "esc":
 		if m.searchQuery != "" {
-			m.searchQuery = ""
-			m.searchInput.SetValue("")
-			m.applyFilters()
+			m.clearSearch()
 			return m, nil
 		}
-		if m.viewMode == 1 {
-			m.viewMode = 0
-			return m, nil
-		}
-		m.result.Cancelled = true
-		m.quitting = true
-		return m, tea.Quit
+		return m.quit()
 
 	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-		}
+		m.moveCursor(m.cursor - 1)
 
 	case "down", "j":
-		if m.cursor < len(m.entries)-1 {
-			m.cursor++
+		m.moveCursor(m.cursor + 1)
+
+	case "J":
+		m.previewScroll++
+	case "K":
+		if m.previewScroll > 0 {
+			m.previewScroll--
 		}
 
 	case "a":
@@ -532,56 +611,24 @@ func (m SessionsModel) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if len(m.entries) == 0 {
 			break
 		}
-		if m.viewMode != 1 {
-			m.viewMode = 1
-			m.detailTab = 1
-		} else {
-			if m.detailTab == 1 {
-				m.detailTab = 0
-			} else {
-				m.detailTab = 1
-			}
-		}
-		return m, nil
+		m.viewMode = 1
+		m.detailTab = 1
+		m.previewScroll = 0
 
 	case "enter":
-		// Open the full-screen detail view for the selected session.
+		// Open the full detail view for the selected session.
 		if len(m.entries) == 0 {
 			break
 		}
 		m.viewMode = 1
 		m.detailTab = 0
-		return m, nil
+		m.previewScroll = 0
 
 	case "r":
-		// Resume selected session.
-		if len(m.entries) == 0 {
-			break
-		}
-		entry := m.entries[m.cursor]
-		m.result = SessionsResult{
-			Action:    "resume",
-			SessionID: entry.Session.ID,
-			Agent:     entry.Session.Agent,
-			Project:   entry.Session.Project,
-		}
-		m.quitting = true
-		return m, tea.Quit
+		return m.quitWith("resume")
 
 	case "l":
-		if len(m.entries) == 0 {
-			break
-		}
-		entry := m.entries[m.cursor]
-		m.result = SessionsResult{
-			Action:    "log",
-			SessionID: entry.Session.ID,
-			Agent:     entry.Session.Agent,
-			Project:   entry.Session.Project,
-			LogFile:   entry.Session.LogFile,
-		}
-		m.quitting = true
-		return m, tea.Quit
+		return m.quitWith("log")
 	}
 	return m, nil
 }
@@ -590,10 +637,8 @@ func (m SessionsModel) updateSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.searchMode = false
-		m.searchQuery = ""
-		m.searchInput.SetValue("")
 		m.searchInput.Blur()
-		m.applyFilters()
+		m.clearSearch()
 		return m, nil
 
 	case "enter":
@@ -610,816 +655,39 @@ func (m SessionsModel) updateSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m SessionsModel) View() tea.View {
-	var s string
-	if m.viewMode == 1 {
-		s = m.viewDetail()
-	} else {
-		s = m.viewList()
-	}
-	v := tea.NewView(s)
-	v.AltScreen = true
-	return v
-}
-
-// dateGroup returns the period group label for a given time.
-func dateGroup(t time.Time) string {
-	now := time.Now()
-	y1, mo1, d1 := now.Date()
-	y2, mo2, d2 := t.In(time.Local).Date()
-	if y1 == y2 && mo1 == mo2 && d1 == d2 {
-		return "Today"
-	}
-	yesterday := now.AddDate(0, 0, -1)
-	y3, mo3, d3 := yesterday.Date()
-	if y2 == y3 && mo2 == mo3 && d2 == d3 {
-		return "Yesterday"
-	}
-	weekAgo := now.AddDate(0, 0, -7)
-	if t.After(weekAgo) {
-		return "This Week"
-	}
-	return "Older"
-}
-
-// buildListContent renders all session entries into a pre-rendered string for
-// the SplitPane list pane. It returns the rendered content and the line index
-// (0-based) of the currently selected entry, so SplitPane.clampListScroll can
-// keep the cursor visible.
-//
-// The aggregate stats footer (rule + summary line) is appended at the end so
-// it scrolls with the content.
-func (m SessionsModel) buildListContent() (content string, cursorLine int) {
-	var b strings.Builder
-	cw := m.contentWidth()
-
-	if len(m.entries) == 0 {
-		b.WriteString(sessRowStyle.Width(cw).Render(sessDimStyle.Render("   No sessions found")))
-		b.WriteString("\n")
-		// Append empty footer so layout stays consistent.
-		b.WriteString(sessRuleStyle.Render("   " + strings.Repeat("╌", cw-6)))
-		b.WriteString("\n")
-		b.WriteString(sessDimStyle.Render("   0 sessions"))
-		b.WriteString("\n")
-		return b.String(), 0
-	}
-
-	t := theme.Current()
-	lastGroup := ""
-	lineNum := 0
-	cursorLine = 0
-
-	for i, entry := range m.entries {
-		selected := i == m.cursor
-
-		// Period group header — emitted once per new group.
-		grp := dateGroup(entry.Session.StartTime)
-		if grp != lastGroup {
-			lastGroup = grp
-			b.WriteString(sessSectionStyle.Render("  " + grp))
-			b.WriteString("\n")
-			lineNum++
-		}
-
-		// Record the line where the selected entry starts.
-		if selected {
-			cursorLine = lineNum
-		}
-
-		cursor := "   "
-		if selected {
-			cursor = " " + cursorActiveStyle.Render("▸") + " "
-		}
-
-		// Build each cell; when selected, add highlight background.
-		bg := sessHighlightBg
-		agentW, projectW := sessElasticCols(cw)
-		ageCell := buildCell(sessAgeStyle, sessColAge, entry.Age, selected, bg)
-		agentCell := buildCell(sessAgentStyle, agentW, textutil.Truncate(entry.Agent, agentW-1, "…"), selected, bg)
-		if selected {
-			agentCell = buildCell(sessAgentSelectedStyle, agentW, textutil.Truncate(entry.Agent, agentW-1, "…"), selected, bg)
-		}
-		projectCell := buildCell(sessProjectStyle, projectW, textutil.Truncate(entry.Project, projectW-1, "…"), selected, bg)
-		modelCell := buildCell(sessModelStyle, sessColModel, textutil.Truncate(entry.ModelShort, sessColModel-1, "…"), selected, bg)
-
-		ticketStr := "—"
-		if entry.TicketNumber > 0 {
-			ticketStr = fmt.Sprintf("#%d", entry.TicketNumber)
-		}
-		ticketCell := buildCell(sessTicketStyle, sessColTicket, ticketStr, selected, bg)
-
-		durCell := buildCell(sessDimStyle.Width(sessColDur), sessColDur, fmtDuration(entry.Duration), selected, bg)
-		costCell := buildCell(sessCostStyle, sessColCost, entry.costStr(), selected, bg)
-		inCell := buildCell(sessTokenInStyle, sessColIn, fmtTokensShort(entry.InputTokens), selected, bg)
-		outCell := buildCell(sessTokenOutStyle, sessColOut, fmtTokensShort(entry.OutputTokens), selected, bg)
-		tpmCell := buildCell(sessTpmStyle, sessColTpm, fmtTokensShort(entry.TokPerMin), selected, bg)
-		ctxCell := renderCtxBarCell(entry.CtxPct, &t, sessColCtx, selected, bg)
-		turnsCell := buildCell(lipgloss.NewStyle().Foreground(lipgloss.Color(turnsColor(entry.Turns, &t))).Width(sessColTurns), sessColTurns, fmt.Sprintf("%d", entry.Turns), selected, bg)
-
-		inner := cursor + ageCell + agentCell + projectCell + modelCell +
-			ticketCell + durCell + costCell + inCell + outCell + tpmCell + ctxCell + turnsCell
-
-		if selected {
-			b.WriteString(sessRowSelectedStyle.Width(cw).Render(inner))
-		} else {
-			b.WriteString(sessRowStyle.Width(cw).Render(inner))
-		}
-		b.WriteString("\n")
-		lineNum++
-
-		// Row separator between entries (not after the last one).
-		if i < len(m.entries)-1 {
-			sepWidth := cw - 6
-			if sepWidth < 0 {
-				sepWidth = 0
-			}
-			b.WriteString("   " + sessRowSeparatorStyle.Render(strings.Repeat("╌", sepWidth)))
-			b.WriteString("\n")
-			lineNum++
-		}
-	}
-
-	// ── Aggregate footer ────────────────────────────────────────────────────
-	var totalDuration time.Duration
-	var totalCost float64
-	var unpriced int
-	var totalIn, totalOut, totalCacheRead, totalCacheCreate int
-	for _, e := range m.entries {
-		totalDuration += e.Duration
-		if e.CostUnknown {
-			unpriced++
-		} else {
-			totalCost += e.CostUSD
-		}
-		totalIn += e.InputTokens
-		totalOut += e.OutputTokens
-		totalCacheRead += e.CacheReadTokens
-		totalCacheCreate += e.CacheCreateTokens
-	}
-	totalCached := totalCacheRead + totalCacheCreate
-	cachedAnnotation := ""
-	if totalCached > 0 {
-		cachedAnnotation = fmt.Sprintf(" (+%s cached)", fmtTokensShort(totalCached))
-	}
-	costTotal := sessions.FormatCost(totalCost)
-	if unpriced > 0 {
-		costTotal += fmt.Sprintf(" (%d unpriced)", unpriced)
-	}
-	footer := fmt.Sprintf("%d sessions · %s · %s · %s in%s / %s out",
-		len(m.entries), fmtDuration(totalDuration), costTotal,
-		fmtTokensShort(totalIn), cachedAnnotation, fmtTokensShort(totalOut))
-
-	b.WriteString(sessRuleStyle.Render("   " + strings.Repeat("╌", cw-6)))
-	b.WriteString("\n")
-	b.WriteString(sessDimStyle.Render("   " + footer))
-	b.WriteString("\n")
-
-	return b.String(), cursorLine
-}
-
-// costStr renders the entry's cost: "?" when its model has no known price.
-func (e SessionEntry) costStr() string {
-	return sessions.FormatCostOK(e.CostUSD, !e.CostUnknown)
-}
-
-// turnModel is the model a turn ran on: its own when recorded, else the
-// session's last-seen model.
-func turnModel(tm sessions.TurnMetric, sum *sessions.Summary) string {
-	if tm.Model != "" {
-		return tm.Model
-	}
-	return sum.ModelName
-}
-
-// buildDetailContent renders the detail pane content suitable for passing to
-// SplitPane.SetDetailContent. SplitPane.View() wraps this in tableStyles.DetailBox.
-func (m SessionsModel) buildDetailContent() string {
-	// Inner width: subtract box border (1 per side) + padding (2 per side) = 6 total.
-	innerWidth := m.contentWidth() - 6
-	if innerWidth < 20 {
-		innerWidth = 20
-	}
-	height := m.splitPane.DetailHeight()
-	content := m.renderDetailPane(innerWidth, height)
-	return strings.TrimRight(content, "\n")
-}
-
-func (m SessionsModel) viewList() string {
-	var b strings.Builder
-	cw := m.contentWidth()
-
-	// ── 1. Title bar ────────────────────────────────────────────────────────
-	// Build pagination indicator right-aligned.
-	pageInfo := ""
-	if !m.loading && m.err == nil && len(m.entries) > 0 {
-		end := m.cursor + 1
-		if end > len(m.entries) {
-			end = len(m.entries)
-		}
-		pageInfo = fmt.Sprintf("%d of %d", end, len(m.entries))
-	}
-	titleText := "Sessions"
-	titleStyle := sessTitleStyle.Width(cw)
-	if pageInfo != "" {
-		// Right-align pageInfo within the title bar.
-		inner := titleText + strings.Repeat(" ", max(0, cw-len(titleText)-len(pageInfo)-4)) + pageInfo
-		b.WriteString(titleStyle.Render(inner))
-	} else {
-		b.WriteString(titleStyle.Render(titleText))
-	}
-	b.WriteString("\n")
-
-	// ── 2. Search query indicator — always exactly 1 line ───────────────────
-	// Keeps chrome height stable regardless of search state. Mirrors the
-	// autopilot status line in tickets.go: one line always written here.
-	if m.searchQuery != "" {
-		b.WriteString(sessDimStyle.Render(fmt.Sprintf("  🔍 %s", m.searchQuery)))
-	}
-	b.WriteString("\n")
-
-	// ── 3. Blank line ────────────────────────────────────────────────────────
-	b.WriteString("\n")
-
-	// ── 4. Subtitle / filter indicator ──────────────────────────────────────
-	var subtitleParts []string
-	if m.agentIdx >= 0 && m.filterAgent != "" {
-		subtitleParts = append(subtitleParts, fmt.Sprintf("agent: %s", m.filterAgent))
-	} else {
-		subtitleParts = append(subtitleParts, "All agents")
-	}
-	if m.filterProject != "" {
-		subtitleParts = append(subtitleParts, fmt.Sprintf("project: %s", m.filterProject))
-	}
-	subtitle := strings.Join(subtitleParts, "  ·  ")
-	subtitle += "  (a agent · p project)"
-
-	if m.loading {
-		b.WriteString(sessSubtitleStyle.Render("  Loading sessions…"))
-	} else if m.err != nil {
-		b.WriteString(sessSubtitleStyle.Render(fmt.Sprintf("  Error: %v", m.err)))
-	} else {
-		b.WriteString(sessSubtitleStyle.Render("  " + subtitle))
-	}
-	b.WriteString("\n\n")
-
-	if !m.loading && m.err == nil {
-		// ── 5. Column headers + rule ─────────────────────────────────────────
-		hAgentW, hProjectW := sessElasticCols(cw)
-		b.WriteString(fmt.Sprintf("   %s%s%s%s%s%s%s%s%s%s%s%s",
-			sessColHeaderStyle.Render(fmt.Sprintf("%-*s", sessColAge, "AGE")),
-			sessColHeaderStyle.Render(fmt.Sprintf("%-*s", hAgentW, "AGENT")),
-			sessColHeaderStyle.Render(fmt.Sprintf("%-*s", hProjectW, "PROJECT")),
-			sessColHeaderStyle.Render(fmt.Sprintf("%-*s", sessColModel, "MODEL")),
-			sessColHeaderStyle.Render(fmt.Sprintf("%-*s", sessColTicket, "#")),
-			sessColHeaderStyle.Render(fmt.Sprintf("%-*s", sessColDur, "DUR")),
-			sessColHeaderStyle.Render(fmt.Sprintf("%-*s", sessColCost, "COST")),
-			sessColHeaderStyle.Render(fmt.Sprintf("%-*s", sessColIn, "IN")),
-			sessColHeaderStyle.Render(fmt.Sprintf("%-*s", sessColOut, "OUT")),
-			sessColHeaderStyle.Render(fmt.Sprintf("%-*s", sessColTpm, "T/M")),
-			sessColHeaderStyle.Render(fmt.Sprintf("%-*s", sessColCtx, "CTX")),
-			sessColHeaderStyle.Render(fmt.Sprintf("%-*s", sessColTurns, "TURNS")),
-		))
-		b.WriteString("\n")
-		b.WriteString("   " + sessRuleStyle.Render(strings.Repeat("╌", cw-3)))
-		b.WriteString("\n")
-
-		// ── 6. SplitPane: list rows + separator + detail box ─────────────────
-		sp := m.splitPane
-		listContent, cursorLine := m.buildListContent()
-		lineCount := strings.Count(listContent, "\n")
-		sp.SetCursor(cursorLine)
-		sp.SetListContent(listContent, lineCount)
-		sp.SetDetailContent(m.buildDetailContent())
-		b.WriteString(sp.View())
-	} else if !m.loading {
-		// Error state: emit blank lines to keep chrome height stable.
-		for i := 0; i < 3; i++ {
-			b.WriteString("\n")
-		}
-	}
-
-	// ── 7. Hint bar ─────────────────────────────────────────────────────────
-	// Rendered below the split pane. When search mode is active, the search
-	// input replaces the hint bar (same pattern as tickets.go).
-	b.WriteString("\n")
-	if m.searchMode {
-		dot := "  " + menuHintDotStyle.Render("·") + "  "
-		searchLine := menuHintKeyStyle.Render("/") + " " + m.searchInput.View()
-		b.WriteString(searchLine + dot +
-			menuHintKeyStyle.Render("enter") + " " + menuHintLabelStyle.Render("confirm") + dot +
-			menuHintKeyStyle.Render("esc") + " " + menuHintLabelStyle.Render("clear"))
-	} else {
-		hintParts := []string{
-			menuHintKeyStyle.Render("j/k") + " " + menuHintLabelStyle.Render("navigate"),
-			menuHintKeyStyle.Render("enter") + " " + menuHintLabelStyle.Render("detail"),
-			menuHintKeyStyle.Render("t") + " " + menuHintLabelStyle.Render("turns"),
-			menuHintKeyStyle.Render("r") + " " + menuHintLabelStyle.Render("resume"),
-			menuHintKeyStyle.Render("l") + " " + menuHintLabelStyle.Render("log"),
-			menuHintKeyStyle.Render("a") + " " + menuHintLabelStyle.Render("agent"),
-			menuHintKeyStyle.Render("p") + " " + menuHintLabelStyle.Render("project"),
-			menuHintKeyStyle.Render("/") + " " + menuHintLabelStyle.Render("search"),
-			menuHintKeyStyle.Render("q") + " " + menuHintLabelStyle.Render("quit"),
-		}
-		sep := "  " + menuHintDotStyle.Render("·") + "  "
-		b.WriteString(sessHintBarStyle.Width(cw).Render(strings.Join(hintParts, sep)))
-	}
-
-	return b.String()
-}
-
-// updateDetail handles key presses when viewMode == 1 (full-screen detail view).
+// updateDetail handles key presses in the full-size detail view.
 func (m SessionsModel) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
-		m.result.Cancelled = true
-		m.quitting = true
-		return m, tea.Quit
+		return m.quit()
+
+	case "?":
+		m.helpOpen = true
 
 	case "esc":
 		m.viewMode = 0
 		m.detailTab = 0
-		return m, nil
+		m.previewScroll = 0
 
 	case "t":
 		// Toggle between summary and turn metrics.
-		if m.detailTab == 1 {
-			m.detailTab = 0
-		} else {
-			m.detailTab = 1
+		m.detailTab = 1 - m.detailTab
+		m.previewScroll = 0
+
+	case "j", "down", "J", "pgdown":
+		m.previewScroll++
+	case "k", "up", "K", "pgup":
+		if m.previewScroll > 0 {
+			m.previewScroll--
 		}
-		return m, nil
 
 	case "r":
-		if len(m.entries) == 0 {
-			break
-		}
-		entry := m.entries[m.cursor]
-		m.result = SessionsResult{
-			Action:    "resume",
-			SessionID: entry.Session.ID,
-			Agent:     entry.Session.Agent,
-			Project:   entry.Session.Project,
-		}
-		m.quitting = true
-		return m, tea.Quit
+		return m.quitWith("resume")
 
 	case "l":
-		if len(m.entries) == 0 {
-			break
-		}
-		entry := m.entries[m.cursor]
-		m.result = SessionsResult{
-			Action:    "log",
-			SessionID: entry.Session.ID,
-			Agent:     entry.Session.Agent,
-			Project:   entry.Session.Project,
-			LogFile:   entry.Session.LogFile,
-		}
-		m.quitting = true
-		return m, tea.Quit
+		return m.quitWith("log")
 	}
 	return m, nil
-}
-
-// viewDetail renders a full-screen detail view for the selected session.
-// Esc returns to the list; r resumes; l opens the log; t toggles turn metrics.
-func (m SessionsModel) viewDetail() string {
-	if m.detailTab == 1 {
-		return m.viewTurnMetrics()
-	}
-
-	var b strings.Builder
-	cw := m.contentWidth()
-
-	if len(m.entries) == 0 || m.cursor >= len(m.entries) {
-		b.WriteString(sessDimStyle.Render("  No session selected"))
-		return b.String()
-	}
-
-	entry := m.entries[m.cursor]
-	sum := entry.Summary
-	s := entry.Session
-	loc := time.Now().Location()
-	t := theme.Current()
-
-	// ── Title ────────────────────────────────────────────────────────────────
-	titleText := fmt.Sprintf("Session Detail  ·  %s › %s", entry.Project, entry.Agent)
-	b.WriteString(sessTitleStyle.Width(cw).Render(titleText))
-	b.WriteString("\n")
-
-	// ── Subtitle ─────────────────────────────────────────────────────────────
-	b.WriteString(sessSubtitleStyle.Render(fmt.Sprintf("  %s  ·  %s",
-		s.StartTime.In(loc).Format("Mon Jan 2, 2006 3:04 PM"),
-		fmtDuration(entry.Duration),
-	)))
-	b.WriteString("\n")
-	b.WriteString("   " + sessRuleStyle.Render(strings.Repeat("╌", cw-3)))
-	b.WriteString("\n\n")
-
-	if sum != nil {
-		labelStyle := sessDetailLabelStyle
-		valueStyle := sessDetailValueStyle
-		dimStyle := sessDimStyle
-
-		// ── Session Details ───────────────────────────────────────────────────
-		b.WriteString(sessDetailSectionStyle.Render("── Session Details ──"))
-		b.WriteString("\n\n")
-
-		b.WriteString(labelStyle.Render("Agent:") + valueStyle.Render(s.Agent) + "\n")
-		b.WriteString(labelStyle.Render("Project:") + valueStyle.Render(shortenDir(s.Project)) + "\n")
-		if sum.GitBranch != "" {
-			b.WriteString(labelStyle.Render("Branch:") + dimStyle.Render(sum.GitBranch) + "\n")
-		}
-		if entry.TicketNumber > 0 {
-			b.WriteString(labelStyle.Render("Ticket:") + lipgloss.NewStyle().Foreground(lipgloss.Color(t.Yellow)).Render(fmt.Sprintf("#%d", entry.TicketNumber)) + "\n")
-		}
-		b.WriteString(labelStyle.Render("Started:") + valueStyle.Render(s.StartTime.In(loc).Format("Mon Jan 2 3:04 PM")) + "\n")
-		b.WriteString(labelStyle.Render("Duration:") + valueStyle.Render(fmtDuration(entry.Duration)) + "\n")
-		if sum.ModelName != "" {
-			b.WriteString(labelStyle.Render("Model:") + dimStyle.Render(sum.ModelName) + "\n")
-		}
-
-		// ── Token Usage ───────────────────────────────────────────────────────
-		b.WriteString("\n")
-		b.WriteString(sessDetailSectionStyle.Render("── Token Usage ──"))
-		b.WriteString("\n\n")
-
-		b.WriteString(labelStyle.Render("Input:") + lipgloss.NewStyle().Foreground(lipgloss.Color(t.TokenInput)).Render(fmtTokens(sum.TotalInputTokens)+" tokens") + "\n")
-		b.WriteString(labelStyle.Render("Output:") + lipgloss.NewStyle().Foreground(lipgloss.Color(t.TokenOutput)).Render(fmtTokens(sum.TotalOutputTokens)+" tokens") + "\n")
-		b.WriteString(labelStyle.Render("Cache write:") + dimStyle.Render(fmtTokens(sum.CacheCreateTokens)+" tokens") + "\n")
-		b.WriteString(labelStyle.Render("Cache read:") + dimStyle.Render(fmtTokens(sum.CacheReadTokens)+" tokens") + "\n")
-		b.WriteString(labelStyle.Render("Turns:") + valueStyle.Render(fmt.Sprintf("%d", sum.TurnCount)) + "\n")
-		b.WriteString(labelStyle.Render("Cost:") + lipgloss.NewStyle().Foreground(lipgloss.Color(t.Green)).Render(entry.costStr()) + "\n")
-		if entry.TokPerMin > 0 {
-			b.WriteString(labelStyle.Render("Tok/min:") + lipgloss.NewStyle().Foreground(lipgloss.Color(t.Orange)).Render(fmtTokensShort(entry.TokPerMin)) + "\n")
-		}
-		if entry.CtxPct > 0 {
-			b.WriteString(labelStyle.Render("Context:") + renderCtxBar(entry.CtxPct, &t) + "\n")
-		}
-
-		// ── User Messages ─────────────────────────────────────────────────────
-		if len(sum.UserMsgs) > 0 {
-			b.WriteString("\n")
-			b.WriteString(sessDetailSectionStyle.Render("── User Messages ──"))
-			b.WriteString("\n\n")
-			maxMsgWidth := cw - 6
-			if maxMsgWidth < 10 {
-				maxMsgWidth = 10
-			}
-			for _, msg := range sum.UserMsgs {
-				if len([]rune(msg)) > maxMsgWidth {
-					msg = string([]rune(msg)[:maxMsgWidth-1]) + "…"
-				}
-				b.WriteString("  " + sessBulletStyle.Render("›") + " " + valueStyle.Render(msg) + "\n")
-			}
-		}
-
-		// ── Tool Calls ────────────────────────────────────────────────────────
-		if len(sum.ToolCalls) > 0 {
-			b.WriteString("\n")
-			b.WriteString(sessDetailSectionStyle.Render("── Tool Calls ──"))
-			b.WriteString("\n\n")
-
-			breakdown := sum.ToolBreakdown()
-			type toolCount struct {
-				name  string
-				count int
-			}
-			var sorted []toolCount
-			for name, count := range breakdown {
-				sorted = append(sorted, toolCount{name, count})
-			}
-			// Sort by count descending, name ascending as tiebreak.
-			for i := 1; i < len(sorted); i++ {
-				for j := i; j > 0; j-- {
-					a, bb := sorted[j-1], sorted[j]
-					if a.count < bb.count || (a.count == bb.count && a.name > bb.name) {
-						sorted[j-1], sorted[j] = sorted[j], sorted[j-1]
-					} else {
-						break
-					}
-				}
-			}
-			for _, tc := range sorted {
-				b.WriteString("  " +
-					lipgloss.NewStyle().Foreground(lipgloss.Color(t.Blue)).Render(fmt.Sprintf("%-14s", tc.name)) +
-					sessDimStyle.Render(fmt.Sprintf("%4d", tc.count)) + "\n")
-			}
-		}
-	}
-
-	// ── Hint bar ─────────────────────────────────────────────────────────────
-	hintParts := []string{
-		menuHintKeyStyle.Render("esc") + " " + menuHintLabelStyle.Render("back"),
-		menuHintKeyStyle.Render("t") + " " + menuHintLabelStyle.Render("turns"),
-		menuHintKeyStyle.Render("r") + " " + menuHintLabelStyle.Render("resume"),
-		menuHintKeyStyle.Render("l") + " " + menuHintLabelStyle.Render("log"),
-		menuHintKeyStyle.Render("q") + " " + menuHintLabelStyle.Render("quit"),
-	}
-	sep := "  " + menuHintDotStyle.Render("·") + "  "
-	b.WriteString("\n")
-	b.WriteString(sessHintBarStyle.Width(cw).Render(strings.Join(hintParts, sep)))
-
-	return b.String()
-}
-
-// viewTurnMetrics renders the full-screen turn metrics view for the selected session.
-func (m SessionsModel) viewTurnMetrics() string {
-	var b strings.Builder
-	cw := m.contentWidth()
-	t := theme.Current()
-
-	if len(m.entries) == 0 || m.cursor >= len(m.entries) {
-		b.WriteString(sessDimStyle.Render("  No session selected"))
-		return b.String()
-	}
-
-	entry := m.entries[m.cursor]
-	sum := entry.Summary
-
-	// ── Title ────────────────────────────────────────────────────────────────
-	titleText := fmt.Sprintf("Turn Metrics  ·  %s › %s", entry.Project, entry.Agent)
-	b.WriteString(sessTitleStyle.Width(cw).Render(titleText))
-	b.WriteString("\n")
-
-	// ── Subtitle ─────────────────────────────────────────────────────────────
-	b.WriteString(sessSubtitleStyle.Render(fmt.Sprintf("  %d turns  ·  %s total",
-		entry.Turns, entry.costStr(),
-	)))
-	b.WriteString("\n")
-	b.WriteString("   " + sessRuleStyle.Render(strings.Repeat("╌", cw-3)))
-	b.WriteString("\n\n")
-
-	if sum == nil || len(sum.TurnMetrics) == 0 {
-		b.WriteString(sessDimStyle.Render("  No turn metrics available"))
-	} else {
-		// Sample up to 15 rows.
-		sampled := sessions.SampleTurnMetrics(sum.TurnMetrics, 15)
-
-		// Compute session average cost/turn for the "sweet spot" detection.
-		totalCost := entry.CostUSD
-		avgCostPerTurn := 0.0
-		if sum.TurnCount > 0 {
-			avgCostPerTurn = totalCost / float64(sum.TurnCount)
-		}
-
-		// Find sweet spot: last turn before cost/turn exceeded 2x average.
-		sweetSpotTurn := -1
-		for _, tm := range sum.TurnMetrics {
-			c, _ := sessions.TurnCost(tm, turnModel(tm, sum))
-			if c > 2*avgCostPerTurn {
-				break
-			}
-			sweetSpotTurn = tm.Turn
-		}
-
-		// Column headers.
-		hdrTurn := sessColHeaderStyle.Render(fmt.Sprintf("%-6s", "TURN"))
-		hdrInput := sessColHeaderStyle.Render(fmt.Sprintf("%-9s", "INPUT"))
-		hdrOutput := sessColHeaderStyle.Render(fmt.Sprintf("%-9s", "OUTPUT"))
-		hdrCost := sessColHeaderStyle.Render(fmt.Sprintf("%-9s", "COST"))
-		hdrCtx := sessColHeaderStyle.Render(fmt.Sprintf("%-8s", "CTX%"))
-		b.WriteString("   " + hdrTurn + hdrInput + hdrOutput + hdrCost + hdrCtx)
-		b.WriteString("\n")
-		b.WriteString("   " + sessRuleStyle.Render(strings.Repeat("╌", cw-3)))
-		b.WriteString("\n")
-
-		for _, tm := range sampled {
-			cost, costOK := sessions.TurnCost(tm, turnModel(tm, sum))
-			ctxPct := tokens.CtxPct(sum.ModelName, tm.InputTokens+tm.CacheRead+tm.CacheCreate)
-
-			// Annotate turns where cost/turn > 2x session average.
-			annotation := ""
-			if avgCostPerTurn > 0 && cost > 2*avgCostPerTurn {
-				annotation = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Red)).Render("  ← cost/turn 2x avg")
-			}
-
-			turnStr := fmt.Sprintf("%-6d", tm.Turn)
-			inputStr := fmt.Sprintf("%-9s", fmtTokensShort(tm.InputTokens))
-			outputStr := fmt.Sprintf("%-9s", fmtTokensShort(tm.OutputTokens))
-			costStr := fmt.Sprintf("%-9s", sessions.FormatCostOK(cost, costOK))
-			ctxStr := fmt.Sprintf("%-8s", fmt.Sprintf("%d%%", ctxPct))
-
-			turnCell := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted)).Render(turnStr)
-			inputCell := lipgloss.NewStyle().Foreground(lipgloss.Color(t.TokenInput)).Render(inputStr)
-			outputCell := lipgloss.NewStyle().Foreground(lipgloss.Color(t.TokenOutput)).Render(outputStr)
-			costCell := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Green)).Render(costStr)
-			ctxColor := t.Green
-			if ctxPct >= 80 {
-				ctxColor = t.Red
-			} else if ctxPct >= 60 {
-				ctxColor = t.Yellow
-			}
-			ctxCell := lipgloss.NewStyle().Foreground(lipgloss.Color(ctxColor)).Render(ctxStr)
-
-			b.WriteString("   " + turnCell + inputCell + outputCell + costCell + ctxCell + annotation)
-			b.WriteString("\n")
-		}
-
-		b.WriteString("   " + sessRuleStyle.Render(strings.Repeat("╌", cw-3)))
-		b.WriteString("\n")
-
-		// Sweet spot line.
-		if sweetSpotTurn > 0 {
-			b.WriteString(sessDimStyle.Render(fmt.Sprintf("  Sweet spot: ~turn %d (cost/turn doubled after)", sweetSpotTurn)))
-			b.WriteString("\n")
-		}
-	}
-
-	// ── Hint bar ─────────────────────────────────────────────────────────────
-	hintParts := []string{
-		menuHintKeyStyle.Render("esc") + " " + menuHintLabelStyle.Render("back"),
-		menuHintKeyStyle.Render("t") + " " + menuHintLabelStyle.Render("summary"),
-		menuHintKeyStyle.Render("r") + " " + menuHintLabelStyle.Render("resume"),
-		menuHintKeyStyle.Render("l") + " " + menuHintLabelStyle.Render("log"),
-		menuHintKeyStyle.Render("q") + " " + menuHintLabelStyle.Render("quit"),
-	}
-	sep := "  " + menuHintDotStyle.Render("·") + "  "
-	b.WriteString("\n")
-	b.WriteString(sessHintBarStyle.Width(cw).Render(strings.Join(hintParts, sep)))
-
-	return b.String()
-}
-
-// renderDetailPane renders the two-column detail pane for the selected entry.
-// It fits within at most `height` lines.
-func (m SessionsModel) renderDetailPane(cw, height int) string {
-	if len(m.entries) == 0 || m.cursor >= len(m.entries) || m.entries[m.cursor].Summary == nil {
-		return sessDimStyle.Render("  No session selected") + "\n"
-	}
-
-	entry := m.entries[m.cursor]
-	sum := entry.Summary
-	s := entry.Session
-	loc := time.Now().Location()
-	t := theme.Current()
-
-	leftW := cw * 45 / 100
-	if leftW < 20 {
-		leftW = 20
-	}
-
-	labelStyle := sessDetailLabelStyle
-	valueStyle := sessDetailValueStyle
-	sectionStyle := sessDetailSectionStyle
-	dimStyle := sessDimStyle
-
-	// ── Left column: metadata ──
-	var left []string
-	left = append(left, sectionStyle.Render("── Session Details ──"))
-	left = append(left, "")
-	left = append(left, labelStyle.Render("Agent:")+valueStyle.Render(s.Agent))
-	left = append(left, labelStyle.Render("Project:")+valueStyle.Render(shortenDir(s.Project)))
-	if sum.GitBranch != "" {
-		left = append(left, labelStyle.Render("Branch:")+dimStyle.Render(sum.GitBranch))
-	}
-	if entry.TicketNumber > 0 {
-		left = append(left, labelStyle.Render("Ticket:")+lipgloss.NewStyle().Foreground(lipgloss.Color(t.Yellow)).Render(fmt.Sprintf("#%d", entry.TicketNumber)))
-	}
-	left = append(left, labelStyle.Render("Started:")+valueStyle.Render(s.StartTime.In(loc).Format("Mon Jan 2 3:04 PM")))
-	left = append(left, labelStyle.Render("Duration:")+valueStyle.Render(fmtDuration(entry.Duration)))
-	if sum.ModelName != "" {
-		left = append(left, labelStyle.Render("Model:")+dimStyle.Render(sum.ModelName))
-	}
-
-	// ── Right column: metrics ──
-	var right []string
-	right = append(right, sectionStyle.Render("── Token Usage ──"))
-	right = append(right, "")
-	right = append(right, labelStyle.Render("Input:")+lipgloss.NewStyle().Foreground(lipgloss.Color(t.TokenInput)).Render(fmtTokens(sum.TotalInputTokens)+" tokens"))
-	right = append(right, labelStyle.Render("Output:")+lipgloss.NewStyle().Foreground(lipgloss.Color(t.TokenOutput)).Render(fmtTokens(sum.TotalOutputTokens)+" tokens"))
-	right = append(right, labelStyle.Render("Cache write:")+dimStyle.Render(fmtTokens(sum.CacheCreateTokens)+" tokens"))
-	right = append(right, labelStyle.Render("Cache read:")+dimStyle.Render(fmtTokens(sum.CacheReadTokens)+" tokens"))
-	right = append(right, labelStyle.Render("Turns:")+valueStyle.Render(fmt.Sprintf("%d", sum.TurnCount)))
-	right = append(right, labelStyle.Render("Cost:")+lipgloss.NewStyle().Foreground(lipgloss.Color(t.Green)).Render(entry.costStr()))
-	if entry.TokPerMin > 0 {
-		right = append(right, labelStyle.Render("Tok/min:")+lipgloss.NewStyle().Foreground(lipgloss.Color(t.Orange)).Render(fmtTokensShort(entry.TokPerMin)))
-	}
-	if entry.CtxPct > 0 {
-		right = append(right, labelStyle.Render("Context:")+renderCtxBar(entry.CtxPct, &t))
-	}
-
-	// Merge left and right into two-column lines.
-	maxMeta := max(len(left), len(right))
-	var lines []string
-	for i := 0; i < maxMeta; i++ {
-		lLine := ""
-		if i < len(left) {
-			lLine = left[i]
-		}
-		rLine := ""
-		if i < len(right) {
-			rLine = right[i]
-		}
-		// Pad left column to leftW using a fixed-width container.
-		lPadded := lipgloss.NewStyle().Width(leftW).MaxWidth(leftW).Render(lLine)
-		lines = append(lines, lPadded+rLine)
-	}
-
-	// Below metadata: User Messages + Tool Calls.
-	remainingLines := height - maxMeta - 1 // -1 for the blank separator line
-	if remainingLines > 2 {
-		lines = append(lines, "")
-		remainingLines--
-
-		// User Messages (left) + Tool Calls (right).
-		var userLeft []string
-		var toolRight []string
-
-		if len(sum.UserMsgs) > 0 {
-			userLeft = append(userLeft, sectionStyle.Render("── User Messages ──"))
-			maxMsg := leftW - 4
-			if maxMsg < 10 {
-				maxMsg = 10
-			}
-			for _, msg := range sum.UserMsgs {
-				if len(msg) > maxMsg {
-					msg = msg[:maxMsg-1] + "…"
-				}
-				userLeft = append(userLeft, "  "+sessBulletStyle.Render("›")+" "+valueStyle.Render(msg))
-			}
-		}
-
-		if len(sum.ToolCalls) > 0 {
-			toolRight = append(toolRight, sectionStyle.Render("── Tool Calls ──"))
-			breakdown := sum.ToolBreakdown()
-			type toolCount struct {
-				name  string
-				count int
-			}
-			var sorted []toolCount
-			for name, count := range breakdown {
-				sorted = append(sorted, toolCount{name, count})
-			}
-			for i := 1; i < len(sorted); i++ {
-				for j := i; j > 0; j-- {
-					a, bb := sorted[j-1], sorted[j]
-					if a.count < bb.count || (a.count == bb.count && a.name > bb.name) {
-						sorted[j-1], sorted[j] = sorted[j], sorted[j-1]
-					} else {
-						break
-					}
-				}
-			}
-			for i := 0; i < len(sorted); i += 2 {
-				left := sorted[i]
-				leftStr := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Blue)).Render(fmt.Sprintf("%-10s", left.name)) +
-					dimStyle.Render(fmt.Sprintf("%4d", left.count))
-				if i+1 < len(sorted) {
-					right := sorted[i+1]
-					rightStr := "    " + lipgloss.NewStyle().Foreground(lipgloss.Color(t.Blue)).Render(fmt.Sprintf("%-10s", right.name)) +
-						dimStyle.Render(fmt.Sprintf("%4d", right.count))
-					toolRight = append(toolRight, leftStr+rightStr)
-				} else {
-					toolRight = append(toolRight, leftStr)
-				}
-			}
-		}
-
-		maxBottom := max(len(userLeft), len(toolRight))
-		cap := remainingLines
-		if maxBottom < cap {
-			cap = maxBottom
-		}
-		for i := 0; i < cap; i++ {
-			lLine := ""
-			if i < len(userLeft) {
-				lLine = userLeft[i]
-			}
-			rLine := ""
-			if i < len(toolRight) {
-				rLine = toolRight[i]
-			}
-			lPadded := lipgloss.NewStyle().Width(leftW).MaxWidth(leftW).Render(lLine)
-			lines = append(lines, lPadded+rLine)
-		}
-	}
-
-	// Truncate to height.
-	if len(lines) > height {
-		lines = lines[:height]
-	}
-
-	// Pad to height.
-	for len(lines) < height {
-		lines = append(lines, "")
-	}
-
-	var b strings.Builder
-	for _, line := range lines {
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	return b.String()
-}
-
-// buildCell renders a single list cell with optional selected-row background.
-func buildCell(style lipgloss.Style, width int, content string, selected bool, bgColor string) string {
-	s := style.Width(width)
-	if selected {
-		s = s.Background(lipgloss.Color(bgColor))
-	}
-	return s.Render(content)
 }
 
 // renderCtxBarCell renders the context bar cell with optional row highlight background.

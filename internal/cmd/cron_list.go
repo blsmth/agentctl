@@ -110,7 +110,7 @@ func renderCronList(w io.Writer, v cronListView) {
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			j.Name, j.Schedule, nextColumn(st, v.now), lastColumn(st.Last, v.now),
-			enabledColumn(st), agentColumn(j), acct, promptColumn(j), throttleColumn(j, th))
+			enabledColumn(st), agentColumn(j), acct, promptColumn(j, v.now), throttleColumn(j, th))
 	}
 	_ = tw.Flush()
 }
@@ -130,6 +130,9 @@ func nextColumn(st cronedit.Status, now time.Time) string {
 // agentColumn is the job's agent, or "(template)" when its template names
 // it.
 func agentColumn(j cron.Job) string {
+	if j.IsImprove() {
+		return j.ImproveAgentName()
+	}
 	if j.Agent == "" && j.Template != "" {
 		return "(template)"
 	}
@@ -141,7 +144,14 @@ const promptPreviewWidth = 32
 
 // promptColumn says what a fire runs: the template or context key by name
 // (both read at every fire), else the start of the inline prompt.
-func promptColumn(j cron.Job) string {
+func promptColumn(j cron.Job, now time.Time) string {
+	if j.IsImprove() {
+		s := "fleet improve, last " + cron.ShortDuration(j.ImproveSince(now))
+		if j.Template != "" {
+			s += " + template " + j.Template
+		}
+		return s
+	}
 	switch {
 	case j.Template != "":
 		return "template " + j.Template
@@ -176,7 +186,7 @@ func throttleColumn(j cron.Job, global config.CronUsageThresholds) string {
 	if j.Timeout != "" {
 		parts = append(parts, "timeout:"+j.Timeout)
 	}
-	if !j.UseWorktree() {
+	if !j.UseWorktree() && !j.IsImprove() {
 		parts = append(parts, "no-worktree")
 	}
 	return strings.Join(parts, " ")

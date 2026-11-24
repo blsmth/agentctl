@@ -56,7 +56,7 @@ const (
 var cronValueFlags = map[string]bool{
 	"schedule": true, "agent": true, "dir": true, "prompt": true, "prompt-key": true,
 	"prompt-file": true, "model": true, "effort": true, "backend": true, "account": true,
-	"timeout": true, "overlap": true, "catchup": true, "limit": true, "template": true,
+	"timeout": true, "overlap": true, "catchup": true, "limit": true, "template": true, "mode": true,
 }
 
 var cronShortFlags = map[string]string{"-a": "agent", "-p": "prompt", "-k": "prompt-key", "-m": "model", "-n": "limit"}
@@ -153,6 +153,8 @@ type cronArgs struct {
 	noWorktree bool
 	worktree   bool
 	force      bool
+	// improve is --improve-fleet (mode improve).
+	improve bool
 	// unknown lists dash words parse does not model; a gated segment with
 	// any is denied (see buildCronPreview).
 	unknown []string
@@ -176,6 +178,8 @@ func (s cronSegment) parse() cronArgs {
 		case tok == "--force" || strings.HasPrefix(tok, "--force="):
 			// Any spelling of --force is treated as forcing (fail safe).
 			a.force = true
+		case tok == "--improve-fleet":
+			a.improve = true
 		case tok == "--no-worktree":
 			a.noWorktree = true
 		case tok == "--worktree":
@@ -338,6 +342,9 @@ func withTemplateDefaults(job cron.Job, t *prompttemplate.Template) cron.Job {
 
 // effectiveAgent is the agent a job runs (its own, else its template's).
 func effectiveAgent(job cron.Job, t *prompttemplate.Template) string {
+	if job.IsImprove() {
+		return job.ImproveAgentName()
+	}
 	if job.Agent == "" && t != nil {
 		return t.Agent
 	}
@@ -368,7 +375,7 @@ func buildCronAddPreview(a cronArgs, command, cwd string) (cronPreview, string) 
 		return cronPreview{}, cronExpansionReason("add", "")
 	}
 	for _, f := range []string{"schedule", "agent", "dir", "prompt", "prompt-key", "prompt-file", "account",
-		"model", "effort", "backend", "timeout", "template"} {
+		"model", "effort", "backend", "timeout", "template", "mode"} {
 		if a.values[f].expands {
 			return cronPreview{}, cronExpansionReason("add", f)
 		}
@@ -402,7 +409,10 @@ func buildCronAddPreview(a cronArgs, command, cwd string) (cronPreview, string) 
 		Name: name, Schedule: a.value("schedule"), Agent: a.value("agent"), Dir: displayDir(a.value("dir")),
 		Account: a.value("account"), Model: a.value("model"), Effort: a.value("effort"), Backend: a.value("backend"),
 		Timeout: a.value("timeout"), Overlap: a.value("overlap"), Catchup: a.value("catchup"), Worktree: &wt,
-		Template: a.value("template"),
+		Template: a.value("template"), Mode: a.value("mode"),
+	}
+	if a.improve {
+		job.Mode = cron.ModeImprove
 	}
 	job.Normalize()
 	return cronPreview{
@@ -448,7 +458,7 @@ func cronAddPrompt(a cronArgs, command string) (prompt, source, deny string) {
 // cronEditFlags are the value flags `cron edit` can change, checked for
 // shell expansion like cron add's.
 var cronEditFlags = []string{"schedule", "agent", "dir", "prompt", "prompt-key", "prompt-file", "account",
-	"model", "effort", "backend", "timeout", "overlap", "catchup", "template"}
+	"model", "effort", "backend", "timeout", "overlap", "catchup", "template", "mode"}
 
 // buildCronEditPreview previews `cron edit`: the stored job with the given
 // flags applied, the fields that change, and the prompt it will run.
@@ -502,7 +512,7 @@ func buildCronEditPreview(a cronArgs, command, cwd string) (cronPreview, string)
 	for flag, dst := range map[string]*string{
 		"schedule": &job.Schedule, "agent": &job.Agent, "account": &job.Account, "model": &job.Model,
 		"effort": &job.Effort, "backend": &job.Backend, "timeout": &job.Timeout, "overlap": &job.Overlap,
-		"catchup": &job.Catchup,
+		"catchup": &job.Catchup, "mode": &job.Mode,
 	} {
 		if t, ok := a.values[flag]; ok {
 			*dst = t.text
@@ -538,6 +548,9 @@ func buildCronEditPreview(a cronArgs, command, cwd string) (cronPreview, string)
 	if a.worktree || a.noWorktree {
 		wt := a.worktree && !a.noWorktree
 		job.Worktree = &wt
+	}
+	if a.improve {
+		job.Mode = cron.ModeImprove
 	}
 	job.Normalize()
 	schedule, err := cron.Summary(job.Schedule, job.Name, cronNow())
@@ -660,6 +673,9 @@ func cronJobBody(job cron.Job, schedule, note, source, prompt string) string {
 	row("Account", job.Account)
 	row("Harness", job.Harness)
 	row("Mode", job.Mode)
+	if job.IsImprove() {
+		return improveJobBody(&b, job, source, prompt)
+	}
 	worktree := "on (a worktree per fire)"
 	if !job.UseWorktree() {
 		worktree = "off (runs in the project checkout)"
@@ -677,6 +693,31 @@ func cronJobBody(job cron.Job, schedule, note, source, prompt string) string {
 		prompt = "(no prompt)"
 	}
 	b.WriteString(prompt)
+	return b.String()
+}
+
+// improveJobBody finishes the popup body of an improve job: the rows that
+// apply, then what a fire does in place of a prompt. A theme or template
+// body the job carries is shown after it.
+func improveJobBody(b *strings.Builder, job cron.Job, source, prompt string) string {
+	row := func(label, value string) {
+		if value != "" {
+			fmt.Fprintf(b, "- **%s:** %s\n", label, value)
+		}
+	}
+	row("Timeout", orNone(job.Timeout))
+	row("Model", job.Model)
+	row("Effort", job.Effort)
+	row("Backend", job.Backend)
+	row("Overlap", job.Overlap)
+	row("Catch-up", job.Catchup)
+	row("Theme from", source)
+	b.WriteString("\n---\n\n")
+	b.WriteString(job.ImproveSummary(cronNow()))
+	b.WriteString("\n\nUnattended: the agent reads the fleet evidence, edits agent definitions and settings through the history store, and dispatches engineers for repo changes.")
+	if strings.TrimSpace(prompt) != "" {
+		b.WriteString("\n\nAdded to the prompt:\n\n" + prompt)
+	}
 	return b.String()
 }
 

@@ -120,6 +120,7 @@ func New(opts Options) (*Harness, error) {
 		LaunchConfig: launchConfig{}, OllamaModels: noOllama,
 		Terminal: terminal{}, PTY: ptys{},
 		Pusher: pusher{}, NtfyBase: "http://127.0.0.1:1",
+		LaptopIdle: func(context.Context) (time.Duration, error) { return 0, errors.New("no laptop in servetest") },
 		BusOptions: fleetwatch.Options{Debounce: 10 * time.Millisecond, Rediscover: opts.Rediscover},
 		PingEvery:  5 * time.Second,
 		Artifacts:  arts.store, ArtifactDebounce: 10 * time.Millisecond, ArtifactPoll: time.Second,

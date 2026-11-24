@@ -191,24 +191,45 @@ func TestCleanupKillsSandboxTmux(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { removeAll(root) })
-	sock := sandboxSocket(root)
-	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
+	tmpdir := filepath.Join(root, "t")
+	if err := os.MkdirAll(tmpdir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	start := exec.Command("tmux", "-S", sock, "-f", "/dev/null", "new-session", "-d", "-s", "leak", "sleep 300")
-	start.Env = append(os.Environ(), "TMUX=")
-	if out, err := start.CombinedOutput(); err != nil {
-		t.Fatalf("starting sandbox tmux: %v: %s", err, out)
+	// "default" is the bare-tmux socket; "named" is what `tmux -L named` uses.
+	var socks []string
+	for _, name := range []string{"default", "named"} {
+		args := []string{"-f", "/dev/null"}
+		if name != "default" {
+			args = append(args, "-L", name)
+		}
+		args = append(args, "new-session", "-d", "-s", "leak", "sleep 300")
+		start := exec.Command("tmux", args...)
+		start.Env = append(os.Environ(), "TMUX=", "TMUX_TMPDIR="+tmpdir)
+		if out, err := start.CombinedOutput(); err != nil {
+			t.Fatalf("starting %s tmux: %v: %s", name, err, out)
+		}
 	}
-	t.Cleanup(func() { _ = exec.Command("tmux", "-S", sock, "kill-server").Run() })
-	if err := exec.Command("tmux", "-S", sock, "list-sessions").Run(); err != nil {
-		t.Fatalf("server not running before cleanup: %v", err)
+	socks = sandboxSockets(root)
+	if len(socks) != 2 {
+		t.Fatalf("sockets = %v, want default and named", socks)
+	}
+	t.Cleanup(func() {
+		for _, s := range socks {
+			_ = exec.Command("tmux", "-S", s, "kill-server").Run()
+		}
+	})
+	for _, s := range socks {
+		if err := exec.Command("tmux", "-S", s, "list-sessions").Run(); err != nil {
+			t.Fatalf("server %s not running before cleanup: %v", s, err)
+		}
 	}
 
 	killSandboxTmux(root)
 
-	if err := exec.Command("tmux", "-S", sock, "list-sessions").Run(); err == nil {
-		t.Fatal("tmux server still running after killSandboxTmux")
+	for _, s := range socks {
+		if err := exec.Command("tmux", "-S", s, "list-sessions").Run(); err == nil {
+			t.Errorf("tmux server %s still running after killSandboxTmux", s)
+		}
 	}
 }
 

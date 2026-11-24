@@ -480,7 +480,7 @@ func (s *Server) projectOf(session string) string {
 // kind of action, never the prompt or command. Muted projects are respected;
 // quiet hours are not, since an unanswered approval blocks work.
 func (s *Server) pushApproval(p *pendingApproval) {
-	if s.pushQ == nil || !s.opts.Config.Push.ApprovalsEnabled() {
+	if s.pushQ == nil || s.notifier == nil || !s.opts.Config.Push.ApprovalsEnabled() {
 		return
 	}
 	if slices.Contains(s.opts.Config.Push.MutedProjects, p.project) {
@@ -510,7 +510,7 @@ func (s *Server) pushApproval(p *pendingApproval) {
 	if ttl < 1 {
 		ttl = 1
 	}
-	s.pushQ.enqueue(Message{
+	s.notifier.Approval(p.req.ID, Message{
 		Title:  "Approval needed",
 		Body:   body,
 		URL:    approvalURL(p.req.ID),
@@ -518,7 +518,13 @@ func (s *Server) pushApproval(p *pendingApproval) {
 		Urgent: true,
 		Kind:   "approval",
 		TTL:    ttl,
-	})
+	}, p.deadline)
+}
+
+// approvalPending reports whether approval id still waits for an answer.
+func (s *Server) approvalPending(id string) bool {
+	p, _ := s.approvals.lookup(id, s.now())
+	return p != nil
 }
 
 // approvalURL is the app route for an approval.

@@ -283,41 +283,55 @@ func removeAll(root string) {
 	_ = os.RemoveAll(root)
 }
 
-// killSandboxTmux stops any tmux server a test started on the sandbox's
-// default socket (<root>/t/tmux-<uid>/default), so it cannot outlive the
-// test binary as an orphan. It only ever addresses a socket under root, never
-// the developer's real TMUX_TMPDIR; errors are ignored.
+// killSandboxTmux stops any tmux server a test started on a socket in the
+// sandbox (<root>/t/tmux-<uid>/*: the default one and any -L <name> ones), so
+// it cannot outlive the test binary as an orphan. It only ever addresses
+// sockets under root, never the developer's real TMUX_TMPDIR; errors are
+// ignored.
 func killSandboxTmux(root string) {
-	sock := sandboxSocket(root)
-	if _, err := os.Lstat(sock); err != nil {
-		return
+	for _, sock := range sandboxSockets(root) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cmd := exec.CommandContext(ctx, "tmux", "-S", sock, "kill-server")
+		cmd.Env = append(os.Environ(), "TMUX_TMPDIR="+filepath.Join(root, "t"))
+		_ = cmd.Run()
+		cancel()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "-S", sock, "kill-server")
-	cmd.Env = append(os.Environ(), "TMUX_TMPDIR="+filepath.Join(root, "t"))
-	_ = cmd.Run()
 }
 
-func sandboxSocket(root string) string {
-	return filepath.Join(root, "t", fmt.Sprintf("tmux-%d", os.Getuid()), "default")
+// sandboxSockets lists the tmux sockets under the sandbox's TMUX_TMPDIR.
+func sandboxSockets(root string) []string {
+	dir := filepath.Join(root, "t", fmt.Sprintf("tmux-%d", os.Getuid()))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.Type()&os.ModeSocket != 0 {
+			out = append(out, filepath.Join(dir, e.Name()))
+		}
+	}
+	return out
 }
 
-// LeakedTmux reports whether a tmux server is still running on this test
-// binary's sandbox socket. Call it from TestMain after m.Run and before the
+// LeakedTmux reports whether a tmux server is still running on any socket in
+// this test binary's sandbox. Call it from TestMain after m.Run and before the
 // cleanup: a unit test that reaches the real tmux exec path leaves one behind.
-// It is false in a subprocess of an isolated binary (the parent owns the root)
-// and when the sandbox has no socket.
+// A child of an isolated binary inherits EnvRoot and TMUX_TMPDIR, so it checks
+// the same sockets as its parent. It is false outside an isolated environment
+// and when the sandbox has no live server.
 func LeakedTmux() bool {
 	root := os.Getenv(EnvRoot)
 	if !inherited(root) || os.Getenv("TMUX_TMPDIR") != filepath.Join(root, "t") {
 		return false
 	}
-	sock := sandboxSocket(root)
-	if _, err := os.Lstat(sock); err != nil {
-		return false
+	for _, sock := range sandboxSockets(root) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := exec.CommandContext(ctx, "tmux", "-S", sock, "list-sessions").Run()
+		cancel()
+		if err == nil {
+			return true
+		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return exec.CommandContext(ctx, "tmux", "-S", sock, "list-sessions").Run() == nil
+	return false
 }

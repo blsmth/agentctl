@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +22,9 @@ func TestMain(m *testing.M) {
 	cleanup := testenv.Setup()
 	// Dispatch routes must never spawn a real launch watcher.
 	launchwatch.SetSpawnForTest(func(string) error { return nil })
+	// Push decisions must never run ioreg or tmux: the laptop has no signal
+	// (not active) unless a test injects Options.LaptopIdle.
+	laptopIdleProbe = func(context.Context) (time.Duration, error) { return 0, errNoLaptopSignal }
 	dir, err := os.MkdirTemp("", "serve-test-log")
 	if err != nil {
 		panic(err)

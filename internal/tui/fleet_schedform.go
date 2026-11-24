@@ -1845,6 +1845,9 @@ func (m FleetModel) schedReviewLayout(w int) schedLayout {
 			agent = tmpl.Agent + " (from template " + job.Template + ")"
 		}
 	}
+	if job.IsImprove() {
+		agent = job.ImproveAgentName()
+	}
 	kv("Runs", b.Render(agent)+" in "+b.Render(tildify(job.Dir))+" ("+wt+")")
 	kv("When", b.Render(words))
 	kv("Mode", fmt.Sprintf("unattended, permission mode %s, %s", perm, until))
@@ -1863,7 +1866,14 @@ func (m FleetModel) schedReviewLayout(w int) schedLayout {
 	case job.PromptKey != "":
 		prompt = "(context key " + job.PromptKey + ", read at every fire)"
 	}
-	promptChanged := slices.Contains(p.Changed, cron.FieldPrompt) || slices.Contains(p.Changed, "prompt_key") ||
+	if job.IsImprove() {
+		theme := ""
+		if job.Prompt != "" {
+			theme = "\n\nTheme: " + job.Prompt
+		}
+		prompt = job.ImproveSummary(fleetNow()) + theme
+	}
+	promptChanged := slices.Contains(p.Changed, cron.FieldPrompt) || slices.Contains(p.Changed, cron.FieldMode) || slices.Contains(p.Changed, "prompt_key") ||
 		slices.Contains(p.Changed, cron.FieldTemplate)
 	if f.mode == schedFormEdit {
 		add(fleetCountStyle.Render("Changes"))
