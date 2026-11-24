@@ -930,7 +930,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		left, right := d.left, d.right
 		return m, func() tea.Msg {
-			return fleetLiveSizedMsg{left: left, right: right, err: tmux.ResizeLiveViewer(right)}
+			return fleetLiveSizedMsg{left: left, right: right, err: resizeLiveViewer(right)}
 		}
 
 	case fleetTickMsg:
@@ -1032,7 +1032,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ensureCursorVisible() // the selected row regains its activity line
 			m.jumpErr = msg.err.Error()
 			return m, func() tea.Msg {
-				hideViewerLocked(tmux.HideLiveViewer) // drop any half-built viewer
+				hideViewerLocked(hideLiveViewer) // drop any half-built viewer
 				return nil
 			}
 		}
@@ -1361,7 +1361,7 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 		if key == "esc" && m.search != nil {
 			return *m, m.clearSearch() // the next esc leaves
 		}
-		home, _ := tmux.ViewerActiveWindow()
+		home, _ := viewerActiveWindow()
 		hubtarget.LeaveHub(fleetLeaver{m: m, home: home}, "")
 		return *m, nil
 
@@ -1589,7 +1589,7 @@ type fleetProbeMsg struct {
 // fleetProbeCmd asks tmux for the hub window width after a pane resize.
 func fleetProbeCmd(paneWidth int) tea.Cmd {
 	return func() tea.Msg {
-		w, _ := tmux.HubWindowWidth()
+		w, _ := hubWindowWidth()
 		return fleetProbeMsg{pane: paneWidth, win: w}
 	}
 }
@@ -1990,6 +1990,12 @@ var (
 	focusViewerPane       = tmux.FocusViewerPane
 	hubWindowWidth        = tmux.HubWindowWidth
 	showLiveViewer        = tmux.ShowLiveViewer
+	resizeLiveViewer      = tmux.ResizeLiveViewer
+	hideLiveViewer        = tmux.HideLiveViewer
+	viewerActiveWindow    = tmux.ViewerActiveWindow
+	switchClientToLast    = tmux.SwitchClientToLast
+	switchClientToSession = tmux.SwitchClientToSession
+	listSessionActivity   = tmux.ListSessionActivity
 )
 
 // focusLive is Enter's and tab's action: move tmux focus to the live pane so
@@ -4098,12 +4104,12 @@ type fleetLeaver struct {
 	home string
 }
 
-func (fleetLeaver) SwitchLast() error { return tmux.SwitchClientToLast("") }
+func (fleetLeaver) SwitchLast() error { return switchClientToLast("") }
 func (fleetLeaver) SwitchSession(n string) error {
-	return tmux.SwitchClientToSession("", n)
+	return switchClientToSession("", n)
 }
 func (l fleetLeaver) ViewedHome() string             { return l.home }
-func (fleetLeaver) Sessions() []tmux.SessionActivity { return tmux.ListSessionActivity() }
+func (fleetLeaver) Sessions() []tmux.SessionActivity { return listSessionActivity() }
 func (l fleetLeaver) Message(msg string)             { l.m.jumpErr = msg }
 
 // Chrome-zoom seams, overridden in tests so they never touch tmux.

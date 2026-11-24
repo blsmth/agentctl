@@ -170,20 +170,26 @@ type fleetShellOpenedMsg struct {
 	err      error
 }
 
+// tmux seams for row actions, overridden in tests.
+var (
+	newShellWindow    = tmux.NewShellWindow
+	killSessionWindow = tmux.KillSessionWindow
+)
+
 // fleetShellCmd opens a plain shell window in g's project. The window's env
 // comes from the target tmux session, not the hub process, so no hub identity
 // (AGENTCTL_WINDOW_ID, TMUX_PANE, ...) leaks in. Shell windows are not agents:
 // fleet.LoadAgents skips them, so the hub never lists them.
 func fleetShellCmd(g fleet.Group) tea.Cmd {
 	return func() tea.Msg {
-		id, err := tmux.NewShellWindow(g.Session, g.ProjectDir)
+		id, err := newShellWindow(g.Session, g.ProjectDir)
 		return fleetShellOpenedMsg{session: g.Session, windowID: id, err: err}
 	}
 }
 
 func fleetCloseCmd(r fleet.Row) tea.Cmd {
 	return func() tea.Msg {
-		return fleetClosedMsg{name: r.Name, err: tmux.KillSessionWindow(r.Session, r.WindowID)}
+		return fleetClosedMsg{name: r.Name, err: killSessionWindow(r.Session, r.WindowID)}
 	}
 }
 

@@ -2,6 +2,7 @@ package testenv
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -178,5 +179,41 @@ func TestGoDefaults(t *testing.T) {
 		if d[k] == "" {
 			t.Errorf("%s default is empty", k)
 		}
+	}
+}
+
+func TestCleanupKillsSandboxTmux(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	root, err := os.MkdirTemp("", "actmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { removeAll(root) })
+	sock := sandboxSocket(root)
+	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	start := exec.Command("tmux", "-S", sock, "-f", "/dev/null", "new-session", "-d", "-s", "leak", "sleep 300")
+	start.Env = append(os.Environ(), "TMUX=")
+	if out, err := start.CombinedOutput(); err != nil {
+		t.Fatalf("starting sandbox tmux: %v: %s", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("tmux", "-S", sock, "kill-server").Run() })
+	if err := exec.Command("tmux", "-S", sock, "list-sessions").Run(); err != nil {
+		t.Fatalf("server not running before cleanup: %v", err)
+	}
+
+	killSandboxTmux(root)
+
+	if err := exec.Command("tmux", "-S", sock, "list-sessions").Run(); err == nil {
+		t.Fatal("tmux server still running after killSandboxTmux")
+	}
+}
+
+func TestLeakedTmuxFalseWithoutSocket(t *testing.T) {
+	if LeakedTmux() {
+		t.Fatal("LeakedTmux true in a clean sandbox")
 	}
 }
