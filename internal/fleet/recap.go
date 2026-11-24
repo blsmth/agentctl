@@ -282,16 +282,15 @@ func CompactDuration(d time.Duration) string {
 
 // DisplayName is the identifier humans see for a window: its instance name
 // ("code-reviewer:3", "brandon~2") without any state glyph, else the agent
-// name, else "session": never the raw window ID, which people should not see.
-// Pass what is recorded (windowstate Instance, not a live tmux lookup) so a
-// window that is already gone still reads right. windowID is kept for callers.
-func DisplayName(instance, agent, _ string) string {
+// name, else the raw window ID. Pass what is recorded (windowstate Instance,
+// not a live tmux lookup) so a window that is already gone still reads right.
+func DisplayName(instance, agent, windowID string) string {
 	for _, s := range []string{instance, agent} {
 		if s = strings.TrimSpace(tmux.StripAgentPrefix(s)); s != "" {
 			return s
 		}
 	}
-	return "session"
+	return windowID
 }
 
 // RowDisplayName is DisplayName for a row.

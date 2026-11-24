@@ -23,7 +23,11 @@ func alertTitle(ws windowstate.WindowState, agentName, windowID string) (title s
 	if t := textutil.OneLine(ws.ShortTitle.Title); t != "" {
 		return t, true
 	}
-	return fleet.DisplayName(ws.Instance, agentName, windowID), false
+	name := fleet.DisplayName(ws.Instance, agentName, windowID)
+	if name == windowID {
+		name = "session" // never show a raw window ID to a person
+	}
+	return name, false
 }
 
 // alertSubtitle joins the event with the agent (only when the title is the

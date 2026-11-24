@@ -55,6 +55,9 @@ func Who(ix *Index, r Row) string {
 	if agent == "" {
 		agent = RowDisplayName(r)
 	}
+	if agent == r.WindowID { // nothing better than a window ID
+		agent = "session"
+	}
 	label := Label(r, Scope{})
 	who := agent
 	switch {

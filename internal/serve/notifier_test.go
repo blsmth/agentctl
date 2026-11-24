@@ -402,8 +402,8 @@ func TestPushContent(t *testing.T) {
 			"Fix hub viewer jump", "Finished · go-engineer · proj"},
 		{"done, bare window without anything", done("", "", 0),
 			"go-engineer:3", "Finished · proj"},
-		{"no label, no agent: never the window id", fleet.Window{WindowID: "@9", State: "blocked", Project: "proj"},
-			"session", "Needs permission · proj"},
+		{"no label, no agent: window id", fleet.Window{WindowID: "@9", State: "blocked", Project: "proj"},
+			"@9", "Needs permission · proj"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
