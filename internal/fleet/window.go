@@ -78,8 +78,10 @@ type Window struct {
 	Attention       string `json:"attention,omitempty"`
 	AttentionDetail string `json:"attention_detail,omitempty"`
 
-	// Label is the human-facing identifier (see DisplayName); window_id stays
-	// the machine key. Serve fills it for the phone; `status --json` blanks it.
+	// Label is the human-facing name (fleet.Label; serve makes it unique within
+	// a group); window_id stays the machine key. Set by `status --json` (and
+	// serve). Row handles come from the fleet's own index, the handle route
+	// from LoadHandleIndex, so a short handle can rarely be ambiguous there.
 	Label string `json:"label,omitempty"`
 
 	// Harness is the agent program the window runs ("pi"); omitted for
@@ -87,8 +89,8 @@ type Window struct {
 	Harness string `json:"harness,omitempty"`
 
 	// Handle is the session's short ID (shortest unique prefix of its session
-	// ID, at least 4 characters), set by `status --json`; omitted until the
-	// window has a session ID.
+	// ID, at least 4 characters). Set by `status --json` (and serve); omitted
+	// until the window has a session ID.
 	Handle string `json:"handle,omitempty"`
 }
 

@@ -6,6 +6,9 @@
 package fleetwatch
 
 import (
+	"time"
+
+	"github.com/blsmth/agentctl/internal/closedlog"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
@@ -60,6 +63,7 @@ func (LiveSource) Fleet() ([]Group, error) {
 // FromFleet converts fleet groups, loading each group's windowstate metadata.
 func FromFleet(groups []fleet.Group) []Group {
 	out := make([]Group, 0, len(groups))
+	ix := fleet.NewIndex(groups, closedSessions())
 	for _, g := range groups {
 		meta := fleet.LoadMeta(g)
 		agents := g
@@ -73,13 +77,15 @@ func FromFleet(groups []fleet.Group) []Group {
 			}
 		}
 		g = agents
+		wins := g.Windows(meta)
+		labelWindows(ix, g.Rows, wins)
 		out = append(out, Group{
 			Session:    g.Session,
 			Key:        fleet.GroupKey(g),
 			Project:    g.Project,
 			Dir:        g.ProjectDir,
 			Rollup:     g.Rollup.String(),
-			Windows:    g.Windows(meta),
+			Windows:    wins,
 			Shells:     shells,
 			RuntimeDir: g.RuntimeDir,
 			Rows:       g.Rows,
@@ -87,6 +93,32 @@ func FromFleet(groups []fleet.Group) []Group {
 		})
 	}
 	return out
+}
+
+// closedSessions is the closed ledger the handle index is built from (a seam
+// for tests; reads are cached while the ledger files are unchanged).
+var closedSessions = func() []closedlog.Record {
+	recs, _ := closedCache.Load(time.Now().Add(-closedlog.MaxAge))
+	return recs
+}
+
+var closedCache closedlog.Cache
+
+// labelWindows sets the person-facing Label (unique within the group) and
+// Handle of each window; rows and wins are aligned.
+func labelWindows(ix *fleet.Index, rows []fleet.Row, wins []fleet.Window) {
+	labels := make([]string, len(rows))
+	for i, r := range rows {
+		labels[i] = fleet.Label(r, fleet.Scope{})
+	}
+	labels = fleet.UniqueLabels(labels)
+	for i := range rows {
+		if i >= len(wins) {
+			break
+		}
+		wins[i].Label = labels[i]
+		wins[i].Handle = ix.HandleFor(rows[i].SessionID)
+	}
 }
 
 // Find returns the group, row-aligned window and meta for a window ID.

@@ -15,6 +15,7 @@ import (
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/dispatchplan"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 )
@@ -67,7 +68,7 @@ type invalidBody struct {
 // scheduleOut is the response of a write that leaves a job behind: its card,
 // plus what an update changed.
 type scheduleOut struct {
-	cronedit.Detail
+	scheduleCardOut
 	Changed  []string `json:"changed,omitempty"`
 	Reseeded bool     `json:"reseeded,omitempty"`
 }
@@ -178,7 +179,44 @@ func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, out.status, out.code, out.msg)
 		return
 	}
-	writeJSON(w, http.StatusOK, d)
+	writeJSON(w, http.StatusOK, s.scheduleCard(d))
+}
+
+// scheduleRunOut is a run entry plus the handle of the session it started
+// (and its label; empty for a job's own runs, whose line shows the time).
+type scheduleRunOut struct {
+	cron.Entry
+	Handle string `json:"handle,omitempty"`
+	Label  string `json:"label,omitempty"`
+}
+
+// scheduleCardOut is a Detail whose runs carry handles.
+type scheduleCardOut struct {
+	cronedit.Detail
+	Runs []scheduleRunOut `json:"runs"`
+}
+
+func (s *Server) scheduleCard(d cronedit.Detail) scheduleCardOut {
+	return scheduleCardOut{Detail: d, Runs: s.runsWithHandles(d.Runs, d.Name)}
+}
+
+func (s *Server) runsWithHandles(runs []cron.Entry, job string) []scheduleRunOut {
+	out := make([]scheduleRunOut, len(runs))
+	var ix *fleet.Index
+	for i, e := range runs {
+		out[i] = scheduleRunOut{Entry: e}
+		if e.SessionID == "" {
+			continue
+		}
+		if ix == nil {
+			ix = s.handles()
+		}
+		out[i].Handle = ix.HandleFor(e.SessionID)
+		if sess, err := ix.Resolve(e.SessionID); err == nil {
+			out[i].Label = fleet.Label(sess.Row, fleet.Scope{Job: job})
+		}
+	}
+	return out
 }
 
 // scheduleChecks are serve's extra rules on top of the core's: the prompt
@@ -425,5 +463,5 @@ func (s *Server) scheduleResult(name string, changed []string, reseeded bool) ou
 	if err != nil {
 		return scheduleError(err)
 	}
-	return success(scheduleOut{Detail: d, Changed: changed, Reseeded: reseeded})
+	return success(scheduleOut{scheduleCardOut: s.scheduleCard(d), Changed: changed, Reseeded: reseeded})
 }

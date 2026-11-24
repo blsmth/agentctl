@@ -415,7 +415,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
   // Set by a successful interrupt; the reply box that follows gets focus.
   let interruptedAt = 0;
 
-  const title = h("h1", { class: "win-h1" }, windowId);
+  const title = h("h1", { class: "win-h1" }, "Session");
   const statePill = h("span", { class: "state-pill" }, h("span", { class: "dot" }), h("span", { class: "state-text" }));
   const where = h("span", { class: "win-where" });
   // Tap the task line to show the full initial prompt (only when it has more).
@@ -489,7 +489,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
       hidden: !canWrite,
       onclick: () =>
         run(
-          { title: "Close window?", lines: [win?.label || win?.agent || windowId], confirmLabel: "Close", danger: true },
+          { title: "Close window?", lines: [win?.label || win?.agent || "this window"], confirmLabel: "Close", danger: true },
           { method: "POST", path: `${base}/close`, body: {} },
           () => {
             // Leave for Fleet; the hashchange tears this view down. Until then

@@ -72,6 +72,7 @@ var staticAssets = []staticAsset{
 	{"/schedules.js", "schedules.js", ctJS, cacheRevalidate, false},
 	{"/settings.js", "settings.js", ctJS, cacheRevalidate, false},
 	{"/host.js", "host.js", ctJS, cacheRevalidate, false},
+	{"/handle.js", "handle.js", ctJS, cacheRevalidate, false},
 	{"/approvals.js", "approvals.js", ctJS, cacheRevalidate, false},
 	{"/trust.js", "trust.js", ctJS, cacheRevalidate, false},
 	{"/vendor/xterm.js", "vendor/xterm.js", ctJS, cacheDay, false},

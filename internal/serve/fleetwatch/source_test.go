@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blsmth/agentctl/internal/closedlog"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -41,5 +42,25 @@ func TestFromFleetShells(t *testing.T) {
 	b, _ := json.Marshal(r)
 	if !strings.Contains(string(b), `"shells":[]`) {
 		t.Errorf("json %s", b)
+	}
+}
+
+func TestFromFleetLabelsAndHandles(t *testing.T) {
+	old := closedSessions
+	closedSessions = func() []closedlog.Record { return nil }
+	t.Cleanup(func() { closedSessions = old })
+	r1 := row("agentctl-p", "@1", "a", "/p", false)
+	r1.SessionID, r1.ShortTitle = "abcd1111", "fix hub"
+	r2 := row("agentctl-p", "@2", "a", "/p", false)
+	r2.SessionID, r2.ShortTitle = "abcd2222", "fix hub"
+	r3 := row("agentctl-p", "@3", "a", "/p", false)
+	r3.StartTime = 0
+	groups := FromFleet([]fleet.Group{{Session: "agentctl-p", Project: "p", Rows: []fleet.Row{r1, r2, r3}}})
+	w := groups[0].Windows
+	if w[0].Label != "fix hub" || w[1].Label != "fix hub ·2" {
+		t.Errorf("labels %q %q", w[0].Label, w[1].Label)
+	}
+	if w[0].Handle != "abcd1" || w[1].Handle != "abcd2" || w[2].Handle != "" {
+		t.Errorf("handles %q %q %q", w[0].Handle, w[1].Handle, w[2].Handle)
 	}
 }

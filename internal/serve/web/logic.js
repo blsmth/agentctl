@@ -442,7 +442,7 @@ export function rowHeadline(win) {
     const line = firstClause(text, HEADLINE_MAX);
     if (line) return line;
   }
-  return rowTitle(win);
+  return (win.label ?? "").trim() || rowTitle(win);
 }
 
 /** rowRole is the role label of a sub-agent row ("build", "review", ...; derived server-side), or "" for rows no agent dispatched. */
@@ -461,13 +461,14 @@ export function detailTitle(win, windowId = "") {
   const agent = (win?.agent ?? "").trim();
   const title = typeof win?.title === "string" ? win.title.trim() : "";
   if (title) return { text: title, agent: agent.replace(/[:~]\d+$/, ""), role: rowRole(win) };
-  return { text: agent || windowId, agent: "", role: "" };
+  const label = typeof win?.label === "string" ? win.label.trim() : "";
+  return { text: label || agent || windowId, agent: "", role: "" };
 }
 
 /** agentChip is the agent name (no :N suffix) shown as a muted chip, or "" when it is the headline already. */
 export function agentChip(win) {
   const name = (win.agent ?? "").replace(/[:~]\d+$/, "");
-  if (!name || rowHeadline(win) === rowTitle(win)) return "";
+  if (!name || rowHeadline(win) === rowTitle(win) || rowHeadline(win) === (win.label ?? "").trim()) return "";
   return name;
 }
 
@@ -525,6 +526,8 @@ export function rowChips(win) {
   if (!DEFAULT_BACKENDS.has(backend.toLowerCase())) chips.push({ kind: "backend-chip", text: backend });
   const sched = scheduledChip(win);
   if (sched) chips.push({ kind: "sched-chip", text: sched });
+  const handle = (win.handle ?? "").trim();
+  if (handle) chips.push({ kind: "handle-chip", text: handle });
   return chips;
 }
 
@@ -746,6 +749,42 @@ export function windowKey(win) {
   return `${win.session}\u0000${win.window_id}`;
 }
 
+/** handleHash is the app route of a session handle; the server resolves it. */
+export function handleHash(handle) {
+  return `#/s/${encodeURIComponent(handle)}`;
+}
+
+/** handleApiPath is the API path that resolves a handle (or a full session ID). */
+export function handleApiPath(handle) {
+  return `/v1/handles/${encodeURIComponent(handle)}`;
+}
+
+/** windowWho is "label (handle)" for a fleet window, or whichever part it has. */
+export function windowWho(win) {
+  const label = (win?.label ?? "").trim();
+  const handle = (win?.handle ?? "").trim();
+  if (label && handle) return `${label} (${handle})`;
+  return label || handle;
+}
+
+/**
+ * handleOutcome says what to show for a resolved handle: { go } is the hash
+ * to open (a live window), { message } is text for a closed or unknown
+ * session. res is the parsed body, err the thrown ApiError ({status, body}).
+ */
+export function handleOutcome(handle, res, err) {
+  if (res) {
+    if (res.live && res.session && res.window_id) return { go: windowHash(res.session, res.window_id) };
+    const name = windowWho({ label: res.label, handle: res.handle });
+    if (!res.closed) return { message: `${name || handle} is not running in any window right now.` };
+    const when = res.closed_at ? ` (closed ${res.closed_at.slice(0, 16).replace("T", " ")} UTC)` : "";
+    return { message: `${name || handle} is closed${when}. Resume it with: agentctl resume ${res.handle || handle}` };
+  }
+  if (err?.status === 409) return { message: err.message };
+  if (err?.status === 404) return { message: `No session ${handle}. It may be older than 90 days.` };
+  return { message: `Could not look up ${handle}.` };
+}
+
 /** windowApiPath is the API path for a window; tmux ids like "@523" are escaped. */
 export function windowApiPath(session, windowId) {
   return `/v1/sessions/${encodeURIComponent(session)}/windows/${encodeURIComponent(windowId)}`;
@@ -780,6 +819,9 @@ export function parseRoute(hash) {
   try {
     if (parts[0] === "w" && parts.length >= 3) {
       return { name: "window", session: decodeURIComponent(parts[1]), windowId: decodeURIComponent(parts[2]) };
+    }
+    if (parts[0] === "s" && parts.length >= 2) {
+      return { name: "handle", handle: decodeURIComponent(parts[1]) };
     }
     if (parts[0] === "t" && parts.length >= 3) {
       return { name: "terminal", session: decodeURIComponent(parts[1]), windowId: decodeURIComponent(parts[2]) };
@@ -1278,7 +1320,7 @@ export function headerChips(win, safeUrl) {
   if (cost) chips.push({ kind: "cost", text: cost });
   const model = shortModel(win.detail?.model);
   if (model) chips.push({ kind: "model", text: model });
-  const id = [win.window_id, win.mode].filter(Boolean).join(" · ");
+  const id = [win.handle, win.mode].filter(Boolean).join(" · ");
   if (id) chips.push({ kind: "id", text: id });
   return chips;
 }
@@ -1911,7 +1953,7 @@ export function approvalNeedsConfirm(a, decision) {
 /** approvalConfirm is the confirm sheet for answering an approval: everything that runs, in full. */
 export function approvalConfirm(a, decision) {
   const allow = decision === "allow";
-  const head = [approvalSummary(a), `window: ${a.asking_agent || a.window_id}${a.project ? ` (${a.project})` : ""}`];
+  const head = [approvalSummary(a), `from: ${a.asking_agent || "an agent"}${a.project ? ` (${a.project})` : ""}`];
   const rows = approvalRows(a);
   if (rows.length) {
     head.push(...rows.map(approvalRowText));
@@ -2784,9 +2826,9 @@ export function artifactRevPill(n, latest, total) {
   return n === latest ? `v${n} ▾` : `v${n} of ${total} ▾`;
 }
 
-/** artifactOrigin is the sheet's origin line: "shop \u203A designer \u00B7 @17". */
-export function artifactOrigin(a) {
-  return [projectAgent(a.project, a.agent), a.window_id].filter(Boolean).join(" \u00B7 ");
+/** artifactOrigin is the sheet's origin line: "shop \u203A designer \u00B7 a3f9" (the handle of its live window, when it has one). */
+export function artifactOrigin(a, live = null) {
+  return [projectAgent(a.project, a.agent), live?.handle].filter(Boolean).join(" \u00B7 ");
 }
 
 // ---- artifact feedback ----

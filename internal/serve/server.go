@@ -58,7 +58,10 @@ type Options struct {
 	Fleet  FleetSource
 	Panes  PaneSource
 	Agents AgentLister
-	Awake  Holder
+	// HandleIndex is the session index behind /v1/handles/{handle} and the
+	// schedule run handles; nil means fleet.LoadHandleIndex (no tmux).
+	HandleIndex func() *fleet.Index
+	Awake       Holder
 	// Host collects machine stats for GET /v1/host; nil means gopsutil.
 	// TmuxWindows counts tmux windows; nil means tmux.ListWindowsErr.
 	Host        HostSource
@@ -146,6 +149,7 @@ type Server struct {
 	fleet     FleetSource
 	panes     PaneSource
 	agents    AgentLister
+	handles   func() *fleet.Index
 	bus       *fleetwatch.Bus
 	holder    Holder
 	host      HostSource
@@ -314,6 +318,9 @@ func New(opts Options) (*Server, error) {
 	if s.agents == nil {
 		s.agents = discoveredAgents{}
 	}
+	if s.handles = s.opts.HandleIndex; s.handles == nil {
+		s.handles = fleet.LoadHandleIndex
+	}
 	if s.holder == nil {
 		s.holder = newHolder()
 	}
@@ -369,6 +376,7 @@ func (s *Server) routes(rt *Router) {
 	s.registerCore(rt)
 	s.registerStatic(rt)
 	s.registerRead(rt)
+	s.registerHandles(rt)
 	s.registerPush(rt)
 	s.registerPresence(rt)
 	s.registerWrite(rt)

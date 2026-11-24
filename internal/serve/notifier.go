@@ -444,7 +444,7 @@ func pushName(w fleet.Window) string {
 	if t := textutil.OneLine(w.Title); t != "" {
 		return t
 	}
-	return fleet.DisplayName(w.Label, w.Agent, w.WindowID)
+	return fleet.DisplayName(w.Agent, "", w.WindowID)
 }
 
 // pushAgent is the agent the push names after the event: the bare agent name
