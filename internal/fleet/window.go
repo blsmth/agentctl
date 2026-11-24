@@ -72,8 +72,10 @@ type Window struct {
 	// when false.
 	TurnDone bool `json:"turn_done,omitempty"`
 
-	// Label is the human-facing identifier (see DisplayName); window_id stays
-	// the machine key. Serve fills it for the phone; `status --json` blanks it.
+	// Label is the human-facing name (fleet.Label; serve makes it unique within
+	// a group); window_id stays the machine key. `status --json` sets it too.
+	// Row handles come from the fleet's own index, the handle route from
+	// LoadHandleIndex, so a short handle can rarely be ambiguous there.
 	Label string `json:"label,omitempty"`
 
 	// Harness is the agent program the window runs ("pi"); omitted for

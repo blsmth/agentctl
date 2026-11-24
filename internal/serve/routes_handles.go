@@ -3,6 +3,8 @@ package serve
 import (
 	"errors"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/fleet"
@@ -25,7 +27,9 @@ type handleBody struct {
 	Live      bool   `json:"live"`
 	Session   string `json:"session,omitempty"`
 	WindowID  string `json:"window_id,omitempty"`
-	ClosedAt  string `json:"closed_at,omitempty"`
+	// Closed is true for a session in the closed ledger.
+	Closed   bool   `json:"closed"`
+	ClosedAt string `json:"closed_at,omitempty"`
 }
 
 type handleCandidate struct {
@@ -41,8 +45,16 @@ type ambiguousBody struct {
 
 const codeAmbiguous = "ambiguous"
 
+// handleRef is what a handle or full session ID looks like: a hex prefix or a
+// UUID-style ID, bounded, so nothing else is scanned against the index.
+var handleRef = regexp.MustCompile(`^[0-9a-f][0-9a-f-]{3,63}$`)
+
 func (s *Server) handleHandle(w http.ResponseWriter, r *http.Request) {
-	ref := r.PathValue("handle")
+	ref := strings.ToLower(strings.TrimSpace(r.PathValue("handle")))
+	if !handleRef.MatchString(ref) {
+		writeError(w, http.StatusNotFound, codeNotFound, "unknown session")
+		return
+	}
 	sess, err := s.handles().Resolve(ref)
 	var amb *fleet.AmbiguousError
 	switch {
@@ -75,8 +87,11 @@ func (s *Server) handleHandle(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if !body.Live && sess.Closed != nil && !sess.Closed.ClosedAt.IsZero() {
-		body.ClosedAt = sess.Closed.ClosedAt.UTC().Format(time.RFC3339)
+	if !body.Live && sess.Closed != nil {
+		body.Closed = true
+		if !sess.Closed.ClosedAt.IsZero() {
+			body.ClosedAt = sess.Closed.ClosedAt.UTC().Format(time.RFC3339)
+		}
 	}
 	writeJSON(w, http.StatusOK, body)
 }

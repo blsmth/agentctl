@@ -48,11 +48,26 @@ func TestHandleRoute(t *testing.T) {
 	if code, m := get("a3f9c"); code != http.StatusOK || m["live"] != true || m["window_id"] != "@7" || m["session"] != "agentctl-p" || m["label"] != "esc fix in hub" {
 		t.Errorf("live: %d %v", code, m)
 	}
+	stale := handleRow("@9", "cccc1111-3333", "stale")
+	ix2 := fleet.NewIndex([]fleet.Group{{Session: "agentctl-p", Rows: []fleet.Row{stale}}}, nil)
+	ts.handles = func() *fleet.Index { return ix2 }
+	if code, m := get("cccc"); code != http.StatusOK || m["live"] != false || m["closed"] != false {
+		t.Errorf("stale: %d %v", code, m)
+	}
+	ts.handles = func() *fleet.Index { return ix }
 	if code, m := get("bbbb"); code != http.StatusOK || m["live"] != false || m["closed_at"] != "2026-11-20T09:00:00Z" || m["label"] != "old work" {
 		t.Errorf("closed: %d %v", code, m)
 	}
 	if code, m := get("a3f9"); code != http.StatusConflict || m["code"] != "ambiguous" || len(m["candidates"].([]any)) != 2 || !strings.Contains(m["error"].(string), "esc fix in hub") {
 		t.Errorf("ambiguous: %d %v", code, m)
+	}
+	for _, bad := range []string{"zzzz", "a3f9%2Fx", strings.Repeat("a", 5000), "a3f9_c"} {
+		if code, m := get(bad); code != http.StatusNotFound || m["error"] != "unknown session" {
+			t.Errorf("invalid %.10q: %d %v", bad, code, m)
+		}
+	}
+	if code, m := get("bbbb"); code != http.StatusOK || m["closed"] != true {
+		t.Errorf("closed flag: %d %v", code, m)
 	}
 	if code, m := get("dead"); code != http.StatusNotFound || m["error"] != "unknown session" {
 		t.Errorf("unknown: %d %v", code, m)

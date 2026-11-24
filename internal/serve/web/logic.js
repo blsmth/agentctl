@@ -757,6 +757,7 @@ export function handleOutcome(handle, res, err) {
   if (res) {
     if (res.live && res.session && res.window_id) return { go: windowHash(res.session, res.window_id) };
     const name = windowWho({ label: res.label, handle: res.handle });
+    if (!res.closed) return { message: `${name || handle} is not running in any window right now.` };
     const when = res.closed_at ? ` (closed ${res.closed_at.slice(0, 16).replace("T", " ")} UTC)` : "";
     return { message: `${name || handle} is closed${when}. Resume it with: agentctl resume ${res.handle || handle}` };
   }
