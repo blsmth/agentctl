@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logstream"
 	"github.com/blsmth/agentctl/internal/race"
 	"github.com/blsmth/agentctl/internal/sessions"
@@ -131,6 +132,20 @@ func resolveRaceLog(target string) (string, error) {
 	}
 	if p := raceFindSession(target); p != "" {
 		return p, nil
+	}
+	if handleLike(target) {
+		ix := fleet.NewIndex(liveGroups(), allClosed())
+		s, err := ix.Resolve(target)
+		var amb *fleet.AmbiguousError
+		if errors.As(err, &amb) {
+			return "", err
+		}
+		if err == nil {
+			if p := raceFindSession(s.SessionID); p != "" {
+				return p, nil
+			}
+			return "", fmt.Errorf("no transcript found for session %s %q", s.Handle, s.Label)
+		}
 	}
 	return "", fmt.Errorf("no transcript found for session %q", target)
 }
