@@ -2273,7 +2273,7 @@ func (m *FleetModel) rebuildLines() {
 			shown = append(shown, l.row)
 		}
 	}
-	m.except = computeExceptions(m.groups, []fleet.Group{{Rows: shown}}, m.display)
+	m.except = computeExceptions([]fleet.Group{{Rows: shown}}, m.display)
 }
 
 // padGroupBody appends fleetLineGroupPad spacers to lines until the group
@@ -3383,21 +3383,19 @@ func fleetNameBudget(cw int) int {
 }
 
 // Fixed right-hand columns of a row: the PR badge slot ("#1025" is the widest
-// seen) and the age slot, both right-aligned. The exception columns (model,
-// context; see fleetExceptions) sit left of the PR.
+// seen) and the age slot, both right-aligned. The context exception column
+// (see fleetExceptions) sits left of the PR.
 const (
 	fleetPRSlotW  = 5
 	fleetAgeSlotW = 3
 )
 
-// fleetRightCols is which right-hand columns a row draws and how wide the
-// model column is. Narrow rows drop the age first, then the model, then the
-// PR; a context warning is never dropped (it is fleetCtxSlotW columns). The
-// PR goes after the model because it is the one link to the outcome of the
-// work; the age goes first because the glyph already says the state and the
-// hover card the time.
+// fleetRightCols is which right-hand columns a row draws. Narrow rows drop
+// the age first, then the PR; a context warning is never dropped (it is
+// fleetCtxSlotW columns). The PR goes last because it is the one link to the
+// outcome of the work; the age goes first because the glyph already says the
+// state and the hover card the time.
 type fleetRightCols struct {
-	modelW       int  // model column width; 0 = not drawn
 	ctx          bool // context column drawn (blank on rows below the warn threshold)
 	pr, age      bool
 	ownCtxWarned bool // this row shows a context warning
@@ -3419,13 +3417,12 @@ func joinedWidth(ws ...int) int {
 // fitRightCols picks the right-hand columns for a row with available columns
 // between its name and its close button. The age is the rightmost column,
 // so whether it shows depends only on the width and the list-wide
-// exceptions (the PR and age then line up down the list). The model and
-// context sit left of the PR, so they move nothing when absent: they count
-// only on the rows that draw them (ownModel, ownCtx), and a blank leading
-// column is trimmed at render time, so its width goes back to the recap.
-// Order as the row narrows: age, then the model, then the PR; the context
-// warning is never dropped.
-func fitRightCols(available int, ex fleetExceptions, ownCtx, ownModel bool) fleetRightCols {
+// exceptions (the PR and age then line up down the list). The context sits
+// left of the PR, so it moves nothing when absent: it counts only on the rows
+// that draw it (ownCtx), and a blank leading column is trimmed at render
+// time, so its width goes back to the recap. Order as the row narrows: age,
+// then the PR; the context warning is never dropped.
+func fitRightCols(available int, ex fleetExceptions, ownCtx bool) fleetRightCols {
 	fits := func(w int) bool { return available-w-1 >= fleetMinRecapWidth }
 	ctxAll, ctxRow := 0, 0
 	if ex.ctx || ownCtx {
@@ -3436,10 +3433,7 @@ func fitRightCols(available int, ex fleetExceptions, ownCtx, ownModel bool) flee
 	}
 	c := fleetRightCols{ctx: ctxAll > 0, ownCtxWarned: ownCtx}
 	c.pr = fits(joinedWidth(ctxRow, fleetPRSlotW))
-	if ownModel && ex.modelW > 0 && fits(joinedWidth(ex.modelW, ctxAll, fleetPRSlotW)) {
-		c.modelW = ex.modelW
-	}
-	c.age = c.pr && fits(joinedWidth(ex.modelW, ctxAll, fleetPRSlotW, fleetAgeSlotW))
+	c.age = c.pr && fits(joinedWidth(ctxAll, fleetPRSlotW, fleetAgeSlotW))
 	return c
 }
 
@@ -3475,20 +3469,12 @@ func rowAge(r fleet.Row) string {
 const fleetNoAge = "–"
 
 // rowRight renders the right-aligned status columns before the close button:
-// the model exception (ex.rowModel), the context warning in its threshold
-// colour, the PR badge ("#60", in the done style on a done row) and the age
-// (rowAge), each right-aligned in its slot one space apart. Blank leading
+// the context warning in its threshold colour, the PR badge ("#60", in the
+// done style on a done row) and the age (rowAge), each right-aligned in its slot one space apart. Blank leading
 // columns are trimmed so the recap may use them; inner blanks stay so the
 // columns line up down the list.
-func rowRight(r fleet.Row, c fleetRightCols, ex fleetExceptions, d fleetDisplay) string {
+func rowRight(r fleet.Row, c fleetRightCols, d fleetDisplay) string {
 	var parts []string
-	if c.modelW > 0 {
-		var model string
-		if mn := ex.rowModel(r); mn != "" {
-			model = fleetDimStyle.Render(mn)
-		}
-		parts = append(parts, padLeft(model, c.modelW))
-	}
 	if c.ctx {
 		var ctx string
 		if c.ownCtxWarned {
@@ -3649,7 +3635,7 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 
 	var cols fleetRightCols
 	if !r.Shell {
-		cols = fitRightCols(available, m.except, ctxWarn, m.except.rowModel(r) != "")
+		cols = fitRightCols(available, m.except, ctxWarn)
 	}
 
 	closeStyle := fleetDimStyle
@@ -3667,7 +3653,7 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 		// The columns sit at fixed positions, but the recap may run into a
 		// slot this row leaves blank: only what is drawn is reserved.
 		if !r.Shell {
-			right = rowRight(r, cols, m.except, m.display)
+			right = rowRight(r, cols, m.display)
 		}
 		if rw := lipgloss.Width(right); rw > 0 {
 			available -= rw + 1
@@ -3789,12 +3775,6 @@ func rowStyleWeight(r fleet.Row, now time.Time) fleetWeight {
 		return fleetWeightIdle
 	}
 	return w
-}
-
-// rowNoPrompt reports whether r is an agent still waiting for its first
-// prompt: no turn yet and nothing to recap.
-func rowNoPrompt(r fleet.Row) bool {
-	return !r.Shell && r.TurnCount == 0 && rowRecap(r).Source == fleet.RecapNone
 }
 
 // viewerShows reports whether the live viewer is showing r's window, so its

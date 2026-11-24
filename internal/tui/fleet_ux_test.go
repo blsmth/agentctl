@@ -80,9 +80,9 @@ func TestRowRightColumnsAlign(t *testing.T) {
 	}
 	m := newFleetModel()
 	m.termWidth, m.liveLeft = 56, 56
-	// A list where some row shows a model and some a context warning, so
-	// every column is drawn; opus is the usual model.
-	m.except = fleetExceptions{common: "opus", modelW: fleetModelSlotW, ctx: true}
+	// A list where some row shows a context warning, so every column is
+	// drawn.
+	m.except = fleetExceptions{ctx: true}
 	cw := m.contentWidth()
 	prEnd, ageEnd := -1, -1
 	for _, tt := range rows {
@@ -98,7 +98,6 @@ func TestRowRightColumnsAlign(t *testing.T) {
 			ageCol := cw - fleetSidebarRightGutter - 1 - 1 - 1
 			prCol := ageCol - fleetAgeSlotW - 1
 			ctxCol := prCol - fleetPRSlotW - 1
-			modelCol := ctxCol - fleetCtxSlotW - 1
 			warned := rowCtxWarn(r, fleetDisplay{})
 			if warned && string(line[ctxCol]) != "%" {
 				t.Errorf("ctx must end at col %d: %q", ctxCol, string(line))
@@ -106,12 +105,10 @@ func TestRowRightColumnsAlign(t *testing.T) {
 			if !warned && strings.Contains(string(line), "%") {
 				t.Errorf("a calm context must not show: %q", string(line))
 			}
-			shown := slotModel(tt.model) != "" && slotModel(tt.model) != "opus"
-			if shown && (line[modelCol] == ' ' || line[modelCol+1] != ' ') {
-				t.Errorf("model must end at col %d: %q", modelCol, string(line))
-			}
-			if !shown && tt.model != "" && strings.Contains(string(line), "opus") {
-				t.Errorf("the usual model must not show: %q", string(line))
+			for _, name := range []string{"opus", "sonnet", "haiku"} {
+				if strings.Contains(string(line), name) {
+					t.Errorf("the model must not show on the row: %q", string(line))
+				}
 			}
 			if tt.age > 0 && line[ageCol] == ' ' {
 				t.Errorf("age must end at col %d: %q", ageCol, string(line))
@@ -136,7 +133,7 @@ func TestRowRightColumnsAlign(t *testing.T) {
 }
 
 func TestFitRightColsDegradesWithoutExceptions(t *testing.T) {
-	// No row shows a model or a context warning: those columns take no
+	// No row shows a context warning: that column takes no
 	// width, so the PR and age need only their own.
 	full := joinedWidth(fleetPRSlotW, fleetAgeSlotW) + 1 + fleetMinRecapWidth
 	pr := fleetPRSlotW + 1 + fleetMinRecapWidth
@@ -156,8 +153,8 @@ func TestFitRightColsDegradesWithoutExceptions(t *testing.T) {
 		{0, false, false},
 	}
 	for _, tt := range tests {
-		c := fitRightCols(tt.available, fleetExceptions{}, false, false)
-		if c.pr != tt.pr || c.age != tt.age || c.modelW != 0 || c.ctx {
+		c := fitRightCols(tt.available, fleetExceptions{}, false)
+		if c.pr != tt.pr || c.age != tt.age || c.ctx {
 			t.Errorf("fitRightCols(%d) = %+v, want pr=%v age=%v", tt.available, c, tt.pr, tt.age)
 		}
 	}

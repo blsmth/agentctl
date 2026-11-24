@@ -13,38 +13,6 @@ import (
 	"github.com/blsmth/agentctl/internal/state"
 )
 
-func TestShortModel(t *testing.T) {
-	tests := []struct {
-		in, short, slot string
-	}{
-		{"", "", ""},
-		{"claude-opus-4-7", "opus-4-7", "opus"},
-		{"claude-opus-4-7[1m]", "opus-4-7", "opus"},
-		{"claude-sonnet-4-5-20250929", "sonnet-4-5", "sonnet"},
-		{"claude-haiku-4-5", "haiku-4-5", "haiku"},
-		{"claude-3-5-sonnet-20241022", "3-5-sonnet", "sonnet"},
-		{"claude-fable-1", "fable-1", "fable"},
-		{"gpt-4o", "gpt-4o", "gpt-4o"},
-		{"qwen3-coder:30b", "qwen3-coder:30b", "qwen3…"},
-		{"hermes-4-405b", "hermes-4-405b", "herme…"},
-		{"4.5", "4.5", "4.5"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.in, func(t *testing.T) {
-			if got := shortModel(tt.in); got != tt.short {
-				t.Errorf("shortModel(%q) = %q, want %q", tt.in, got, tt.short)
-			}
-			got := slotModel(tt.in)
-			if got != tt.slot {
-				t.Errorf("slotModel(%q) = %q, want %q", tt.in, got, tt.slot)
-			}
-			if w := lipgloss.Width(got); w > fleetModelSlotW {
-				t.Errorf("slotModel(%q) is %d cols, slot is %d", tt.in, w, fleetModelSlotW)
-			}
-		})
-	}
-}
-
 func TestCtxStyleThresholds(t *testing.T) {
 	InitStyles()
 	tests := []struct {
@@ -212,62 +180,6 @@ func TestSelectedRowChipLineIsJustTheAgent(t *testing.T) {
 	}
 }
 
-func TestMostCommonModel(t *testing.T) {
-	row := func(model string) fleet.Row {
-		return fleet.Row{AgentState: state.AgentState{ModelName: model}}
-	}
-	shell := fleet.Row{Shell: true, AgentState: state.AgentState{ModelName: "claude-sonnet-4-5"}}
-	tests := []struct {
-		name string
-		rows [][]fleet.Row
-		want string
-	}{
-		{"none", nil, ""},
-		{"no models", [][]fleet.Row{{row(""), row("")}}, ""},
-		{"single", [][]fleet.Row{{row("claude-opus-4-7")}}, "opus"},
-		{"majority across groups", [][]fleet.Row{{row("claude-opus-4-7"), row("claude-sonnet-4-5")}, {row("claude-opus-4-5")}}, "opus"},
-		{"tie shows both", [][]fleet.Row{{row("claude-opus-4-7"), row("claude-sonnet-4-5")}}, ""},
-		{"shells do not count", [][]fleet.Row{{row("claude-opus-4-7"), shell, shell}}, "opus"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var groups []fleet.Group
-			for _, rs := range tt.rows {
-				groups = append(groups, fleet.Group{Rows: rs})
-			}
-			if got := mostCommonModel(groups); got != tt.want {
-				t.Errorf("mostCommonModel = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestRowModelException(t *testing.T) {
-	ex := fleetExceptions{common: "opus"}
-	tests := []struct {
-		name string
-		row  fleet.Row
-		want string
-	}{
-		{"usual model hidden", fleet.Row{AgentState: state.AgentState{ModelName: "claude-opus-4-7", TurnCount: 1}}, ""},
-		{"other model shown", fleet.Row{AgentState: state.AgentState{ModelName: "claude-sonnet-4-5", TurnCount: 1}}, "sonnet"},
-		{"no prompt yet hides it", fleet.Row{AgentState: state.AgentState{ModelName: "claude-sonnet-4-5"}}, ""},
-		{"shell hides it", fleet.Row{Shell: true, AgentState: state.AgentState{ModelName: "claude-sonnet-4-5", TurnCount: 1}}, ""},
-		{"unknown model", fleet.Row{AgentState: state.AgentState{TurnCount: 1}}, ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ex.rowModel(tt.row); got != tt.want {
-				t.Errorf("rowModel = %q, want %q", got, tt.want)
-			}
-		})
-	}
-	tie := fleetExceptions{}
-	if got := tie.rowModel(fleet.Row{AgentState: state.AgentState{ModelName: "claude-opus-4-7", TurnCount: 1}}); got != "opus" {
-		t.Errorf("with no usual model every model shows, got %q", got)
-	}
-}
-
 func TestRowCtxWarn(t *testing.T) {
 	tests := []struct {
 		name string
@@ -309,56 +221,55 @@ func TestRowRightExceptions(t *testing.T) {
 		ex   fleetExceptions
 		want string
 	}{
-		{"usual model, low ctx: PR and age only", base("claude-opus-4-7", 42, 108), fleetExceptions{common: "opus"}, "#108  4m"},
-		{"no PR keeps the age column", base("claude-opus-4-7", 42, 0), fleetExceptions{common: "opus"}, "4m"},
-		{"model exception", base("claude-sonnet-4-5", 42, 108), fleetExceptions{common: "opus", modelW: 6}, "sonnet  #108  4m"},
-		{"usual model in a list with exceptions", base("claude-opus-4-7", 42, 108), fleetExceptions{common: "opus", modelW: 6}, "#108  4m"},
-		{"ctx warning", base("claude-opus-4-7", 82, 108), fleetExceptions{common: "opus", ctx: true}, "82%  #108  4m"},
-		{"ctx column blank on calm rows", base("claude-opus-4-7", 42, 108), fleetExceptions{common: "opus", ctx: true}, "#108  4m"},
-		{"model and ctx", base("claude-sonnet-4-5", 96, 0), fleetExceptions{common: "opus", modelW: 6, ctx: true}, "sonnet  96%        4m"},
-		{"model with calm ctx keeps the ctx slot", base("claude-sonnet-4-5", 10, 7), fleetExceptions{common: "opus", modelW: 6, ctx: true}, "sonnet         #7  4m"},
+		{"low ctx: PR and age only", base("claude-opus-4-7", 42, 108), fleetExceptions{}, "#108  4m"},
+		{"no PR keeps the age column", base("claude-opus-4-7", 42, 0), fleetExceptions{}, "4m"},
+		{"another model is not drawn", base("claude-sonnet-4-5", 42, 108), fleetExceptions{}, "#108  4m"},
+		{"ctx warning", base("claude-opus-4-7", 82, 108), fleetExceptions{ctx: true}, "82%  #108  4m"},
+		{"ctx column blank on calm rows", base("claude-opus-4-7", 42, 108), fleetExceptions{ctx: true}, "#108  4m"},
+		{"other model with ctx shows only the ctx", base("claude-sonnet-4-5", 96, 0), fleetExceptions{ctx: true}, "96%        4m"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			d := fleetDisplay{}
-			cols := fitRightCols(wide, tt.ex, rowCtxWarn(tt.row, d), tt.ex.rowModel(tt.row) != "")
-			if got := ansi.Strip(rowRight(tt.row, cols, tt.ex, d)); got != tt.want {
+			cols := fitRightCols(wide, tt.ex, rowCtxWarn(tt.row, d))
+			got := ansi.Strip(rowRight(tt.row, cols, d))
+			if got != tt.want {
 				t.Errorf("rowRight = %q, want %q", got, tt.want)
+			}
+			if strings.Contains(got, "sonnet") || strings.Contains(got, "opus") {
+				t.Errorf("the model must not be on the row: %q", got)
 			}
 		})
 	}
 	r := base("claude-opus-4-7", 92, 0)
-	cols := fitRightCols(wide, fleetExceptions{ctx: true}, true, false)
-	if got := rowRight(r, cols, fleetExceptions{ctx: true}, fleetDisplay{}); !strings.Contains(got, fleetErrStyle.Render("92%")) {
+	cols := fitRightCols(wide, fleetExceptions{ctx: true}, true)
+	if got := rowRight(r, cols, fleetDisplay{}); !strings.Contains(got, fleetErrStyle.Render("92%")) {
 		t.Errorf("critical ctx should use the error style: %q", got)
 	}
 }
 
 func TestFitRightColsDropOrder(t *testing.T) {
-	ex := fleetExceptions{common: "opus", modelW: 6, ctx: true}
-	full := joinedWidth(6, fleetCtxSlotW, fleetPRSlotW, fleetAgeSlotW) + 1 + fleetMinRecapWidth
-	noAge := joinedWidth(6, fleetCtxSlotW, fleetPRSlotW) + 1 + fleetMinRecapWidth
-	noModel := joinedWidth(fleetCtxSlotW, fleetPRSlotW) + 1 + fleetMinRecapWidth
+	ex := fleetExceptions{ctx: true}
+	full := joinedWidth(fleetCtxSlotW, fleetPRSlotW, fleetAgeSlotW) + 1 + fleetMinRecapWidth
+	noAge := joinedWidth(fleetCtxSlotW, fleetPRSlotW) + 1 + fleetMinRecapWidth
 	type want struct {
-		model, pr, age bool
+		pr, age bool
 	}
 	tests := []struct {
 		available int
 		want      want
 	}{
-		{full + 10, want{true, true, true}},
-		{full, want{true, true, true}},
-		{full - 1, want{true, true, false}},   // age goes first
-		{noAge, want{true, true, false}},      //
-		{noAge - 1, want{false, true, false}}, // then the model
-		{noModel, want{false, true, false}},   //
-		{noModel - 1, want{false, false, false}},
-		{0, want{false, false, false}},
+		{full + 10, want{true, true}},
+		{full, want{true, true}},
+		{full - 1, want{true, false}}, // age goes first
+		{noAge, want{true, false}},    //
+		{noAge - 1, want{false, false}},
+		{0, want{false, false}},
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprint(tt.available), func(t *testing.T) {
-			c := fitRightCols(tt.available, ex, true, true)
-			got := want{c.modelW > 0, c.pr, c.age}
+			c := fitRightCols(tt.available, ex, true)
+			got := want{c.pr, c.age}
 			if got != tt.want {
 				t.Errorf("fitRightCols(%d) = %+v, want %+v", tt.available, got, tt.want)
 			}
@@ -367,19 +278,19 @@ func TestFitRightColsDropOrder(t *testing.T) {
 			}
 		})
 	}
-	// Another row's context warning or model costs this row nothing to the
-	// left of its PR: at a 40-column sidebar's 17 columns the PR stays.
-	calm := fitRightCols(17, ex, false, false)
-	if !calm.pr || calm.age || calm.modelW != 0 {
+	// Another row's context warning costs this row nothing to the left of
+	// its PR: at a 40-column sidebar's 17 columns the PR stays.
+	calm := fitRightCols(17, ex, false)
+	if !calm.pr || calm.age {
 		t.Errorf("calm row at 17 columns: %+v", calm)
 	}
-	if warned := fitRightCols(17, ex, true, false); warned.pr {
+	if warned := fitRightCols(17, ex, true); warned.pr {
 		t.Errorf("a warned row at 17 columns keeps its ctx and drops the PR: %+v", warned)
 	}
-	// With no exceptions in the list the model and ctx columns take no
-	// width, so the PR and age survive to narrower rows.
-	plain := fitRightCols(joinedWidth(fleetPRSlotW, fleetAgeSlotW)+1+fleetMinRecapWidth, fleetExceptions{}, false, false)
-	if plain.modelW != 0 || plain.ctx || !plain.pr || !plain.age {
+	// With no exceptions in the list the ctx column takes no width, so the
+	// PR and age survive to narrower rows.
+	plain := fitRightCols(joinedWidth(fleetPRSlotW, fleetAgeSlotW)+1+fleetMinRecapWidth, fleetExceptions{}, false)
+	if plain.ctx || !plain.pr || !plain.age {
 		t.Errorf("no exceptions: %+v", plain)
 	}
 }
@@ -387,7 +298,7 @@ func TestFitRightColsDropOrder(t *testing.T) {
 func TestNarrowRowKeepsRecap(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
-	ex := fleetExceptions{common: "opus", modelW: 6, ctx: true}
+	ex := fleetExceptions{ctx: true}
 	for cw := 20; cw <= 28; cw++ {
 		r := chipRow("go-engineer")
 		r.ModelName = "claude-sonnet-4-5"
@@ -396,7 +307,7 @@ func TestNarrowRowKeepsRecap(t *testing.T) {
 		m.except = ex
 		plain := firstLine(m.renderTreeRowHover(r, "", false, fleetHoverNone, cw))
 		if strings.Contains(plain, "sonnet") {
-			t.Errorf("cw %d: model slot must drop before starving the recap: %q", cw, plain)
+			t.Errorf("cw %d: the model must not be on the row: %q", cw, plain)
 		}
 		if !strings.Contains(plain, "81%") {
 			t.Errorf("cw %d: the ctx warning is never dropped: %q", cw, plain)
@@ -405,7 +316,7 @@ func TestNarrowRowKeepsRecap(t *testing.T) {
 			t.Errorf("cw %d: recap missing: %q", cw, plain)
 		}
 	}
-	// Age, then model, then PR.
+	// Age, then PR.
 	r := chipRow("go-engineer")
 	r.ModelName = "claude-sonnet-4-5"
 	r.StateSince = sidebarNow.Add(-4 * 60e9)
@@ -413,12 +324,12 @@ func TestNarrowRowKeepsRecap(t *testing.T) {
 	m.except = ex
 	for cw := 40; cw < 120; cw++ {
 		plain := firstLine(m.renderTreeRowHover(r, "", false, fleetHoverNone, cw))
-		hasModel, hasAge, hasPR := strings.Contains(plain, "sonnet"), strings.Contains(plain, " 4m"), strings.Contains(plain, "#186")
-		if hasAge && !hasModel {
-			t.Fatalf("cw %d: age shown without the model: %q", cw, plain)
+		hasAge, hasPR := strings.Contains(plain, " 4m"), strings.Contains(plain, "#186")
+		if strings.Contains(plain, "sonnet") {
+			t.Fatalf("cw %d: the model must not be on the row: %q", cw, plain)
 		}
-		if hasModel && !hasPR {
-			t.Fatalf("cw %d: model shown without the PR: %q", cw, plain)
+		if hasAge && !hasPR {
+			t.Fatalf("cw %d: age shown without the PR: %q", cw, plain)
 		}
 		if !strings.Contains(plain, "81%") {
 			t.Fatalf("cw %d: ctx warning dropped: %q", cw, plain)
@@ -435,15 +346,15 @@ func TestBlankExceptionWidthGoesToRecap(t *testing.T) {
 			r.StateSince = sidebarNow.Add(-time.Minute)
 		})
 	m := newFleetModel()
-	m.except = fleetExceptions{common: "opus", modelW: 6, ctx: true}
+	m.except = fleetExceptions{ctx: true}
 	withEx := firstLine(m.renderTreeRowHover(r, "", false, fleetHoverNone, 100))
-	m.except = fleetExceptions{common: "opus"}
+	m.except = fleetExceptions{}
 	without := firstLine(m.renderTreeRowHover(r, "", false, fleetHoverNone, 100))
 	if withEx != without {
 		t.Errorf("a row with no exceptions must not reserve their columns:\n%q\n%q", withEx, without)
 	}
 	if strings.Contains(without, "opus") || strings.Contains(without, "10%") {
-		t.Errorf("usual model and calm ctx must not show: %q", without)
+		t.Errorf("the model and a calm ctx must not show: %q", without)
 	}
 }
 
@@ -452,19 +363,11 @@ func TestComputeExceptions(t *testing.T) {
 		return fleet.Row{AgentState: state.AgentState{ModelName: model, ContextPct: ctx, TurnCount: 1}}
 	}
 	groups := []fleet.Group{{Rows: []fleet.Row{mk("claude-opus-4-7", 10), mk("claude-opus-4-7", 20)}}, {Rows: []fleet.Row{mk("claude-haiku-4-5", 80)}}}
-	ex := computeExceptions(groups, groups, fleetDisplay{})
-	if ex.common != "opus" || ex.modelW != len("haiku") || !ex.ctx {
+	if ex := computeExceptions(groups, fleetDisplay{}); !ex.ctx {
 		t.Errorf("exceptions = %+v", ex)
 	}
-	ex = computeExceptions(groups[:1], groups[:1], fleetDisplay{})
-	if ex.modelW != 0 || ex.ctx {
-		t.Errorf("all-usual list = %+v", ex)
-	}
-	// A hidden (folded or filtered-out) haiku row still shapes the usual
-	// model but reserves no column width.
-	ex = computeExceptions(groups, groups[:1], fleetDisplay{})
-	if ex.common != "opus" || ex.modelW != 0 || ex.ctx {
-		t.Errorf("hidden exception reserved width: %+v", ex)
+	if ex := computeExceptions(groups[:1], fleetDisplay{}); ex.ctx {
+		t.Errorf("all-calm list = %+v", ex)
 	}
 }
 

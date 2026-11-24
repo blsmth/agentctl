@@ -18,10 +18,10 @@ func TestRowRight_DoneBadgeAndAge(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
 	since := sidebarNow.Add(-4 * time.Hour)
-	ex := fleetExceptions{common: "opus"}
-	full := fitRightCols(200, ex, false, false)
+	ex := fleetExceptions{}
+	full := fitRightCols(200, ex, false)
 	done := fleet.Row{StateSince: since, PRNumber: 105, AgentState: state.AgentState{Done: true}}
-	got := rowRight(done, full, ex, fleetDisplay{})
+	got := rowRight(done, full, fleetDisplay{})
 	if plain := ansi.Strip(got); plain != "#105  4h" {
 		t.Errorf("done right = %q, want %q", plain, "#105  4h")
 	}
@@ -29,19 +29,19 @@ func TestRowRight_DoneBadgeAndAge(t *testing.T) {
 		t.Errorf("a finished PR number should render muted: %q", got)
 	}
 	working := fleet.Row{StateSince: sidebarNow.Add(-time.Second), PRNumber: 108, AgentState: state.AgentState{State: "working"}}
-	if plain := ansi.Strip(rowRight(working, full, ex, fleetDisplay{})); plain != "#108  1s" {
+	if plain := ansi.Strip(rowRight(working, full, fleetDisplay{})); plain != "#108  1s" {
 		t.Errorf("working right = %q", plain)
 	}
-	if plain := ansi.Strip(rowRight(working, fleetRightCols{pr: true}, ex, fleetDisplay{})); plain != "#108" {
+	if plain := ansi.Strip(rowRight(working, fleetRightCols{pr: true}, fleetDisplay{})); plain != "#108" {
 		t.Errorf("PR-only right = %q", plain)
 	}
-	// The usual model and a calm context are not shown at all: the slot is
-	// blank and its width goes back to the recap.
+	// The model and a calm context are not shown at all: the slot is blank
+	// and its width goes back to the recap.
 	working.ModelName, working.ContextPct = "claude-opus-4-7", 42
-	if plain := ansi.Strip(rowRight(working, full, ex, fleetDisplay{})); plain != "#108  1s" {
+	if plain := ansi.Strip(rowRight(working, full, fleetDisplay{})); plain != "#108  1s" {
 		t.Errorf("usual model right = %q", plain)
 	}
-	if got := rowRight(working, fleetRightCols{}, ex, fleetDisplay{}); got != "" {
+	if got := rowRight(working, fleetRightCols{}, fleetDisplay{}); got != "" {
 		t.Errorf("no slots = %q", got)
 	}
 }
