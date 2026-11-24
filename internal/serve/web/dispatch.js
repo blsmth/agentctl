@@ -45,10 +45,10 @@ export function mountDispatch(root, ctx, { dir } = {}) {
     h(
       "form",
       { class: "form", onsubmit: (e) => e.preventDefault() },
-      withTemplates ? templateRow : null,
       h("label", {}, "Agent", agent),
       h("label", {}, "Project", project),
       withOptions ? launchBox : null,
+      withTemplates ? templateRow : null,
       h("label", {}, "Prompt", prompt),
       withInstructions
         ? h("details", { class: "instructions" }, h("summary", {}, "Additional instructions"), instructions)
