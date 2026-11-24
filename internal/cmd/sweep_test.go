@@ -257,3 +257,39 @@ func TestRunSweepIncludeBare(t *testing.T) {
 		t.Errorf("attention details = %v", details)
 	}
 }
+
+// An idle improve window closes, unless it has dispatched live children:
+// closing it would cascade-kill them.
+func TestRunSweepImproveWithLiveChild(t *testing.T) {
+	states := map[string]windowstate.WindowState{
+		"@1": {State: "idle", Mode: "improve", TurnCount: 2, SessionID: "S1"},
+		"@2": {State: "idle", Mode: "improve", TurnCount: 2, SessionID: "S2"},
+	}
+	windows := []tmux.WindowInfo{{ID: "@1", Name: "improve~a"}, {ID: "@2", Name: "improve~b"}}
+	var closed []string
+	d := sweepDeps{
+		Windows:   func() []tmux.WindowInfo { return windows },
+		States:    func() map[string]windowstate.WindowState { return states },
+		ReadState: func(id string) (windowstate.WindowState, bool) { ws, ok := states[id]; return ws, ok },
+		Capture:   func(string) string { return "" },
+		Mail:      func(string) int { return 0 },
+		Agent:     func(string) (string, string) { return "", "" },
+		DirExists: func(string) bool { return false },
+		LiveChildren: func(id, sess string) int {
+			if id == "@2" && sess == "S2" {
+				return 1
+			}
+			return 0
+		},
+		CloseWindow: func(id string) error { closed = append(closed, id); return nil },
+		Reclaim:     func(*cleanup.Candidate) { t.Fatal("no worktrees here") },
+		RemoveMail:  func(string) error { return nil },
+	}
+	rep := runSweep(d, "sess", "@9", SweepOptions{})
+	if len(closed) != 1 || closed[0] != "@1" {
+		t.Fatalf("closed = %v, want only @1", closed)
+	}
+	if len(rep.Attention) != 1 || rep.Attention[0].WindowID != "@2" || !strings.Contains(rep.Attention[0].Detail, "1 live child session(s)") {
+		t.Errorf("attention = %+v", rep.Attention)
+	}
+}

@@ -116,7 +116,7 @@ func (d sweepDeps) refresh(f *cleanup.SweepFacts, id string) bool {
 	d.applyDynamic(f, ws)
 	f.Pane = paneVerdict(d.Capture(id))
 	f.PendingMail = d.Mail(id)
-	if f.IncludeBare && ws.Mode == "bare" && d.LiveChildren != nil {
+	if d.LiveChildren != nil && ((f.IncludeBare && ws.Mode == "bare") || ws.Mode == "improve") {
 		f.LiveChildren = d.LiveChildren(id, ws.SessionID)
 	}
 	return true
