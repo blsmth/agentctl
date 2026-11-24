@@ -265,6 +265,26 @@ func InjectUnclassifiedToPane(paneID, content string) error {
 	return nil
 }
 
+// InjectCommandToPane types a slash command into an idle pane and presses
+// Enter exactly once. Unlike InjectPromptToPane it never verifies or retries:
+// an interactive command (/model, /resume, /memory) answers with a picker
+// whose cursor row is drawn with the prompt glyph, which the staged-input
+// check would read as unsubmitted text and answer with more Enters, selecting
+// an option nobody chose. Both sends are still guarded by checkInjectable.
+func InjectCommandToPane(paneID, content string) error {
+	if !IsPaneID(paneID) {
+		return fmt.Errorf("inject: invalid pane id %q", paneID)
+	}
+	if err := guardedLiteral(paneID, content); err != nil {
+		return fmt.Errorf("pane %s: send content: %w", paneID, err)
+	}
+	time.Sleep(pasteSettleDelay)
+	if err := guardedEnter(paneID); err != nil {
+		return fmt.Errorf("pane %s: send enter: %w", paneID, err)
+	}
+	return nil
+}
+
 // sendAndVerifySubmission does the actual literal-send, settle-delay,
 // Enter, and verify-or-retry work for InjectPromptToWindow, addressed at an
 // already-resolved paneID. Split out from InjectPromptToWindow so tests can

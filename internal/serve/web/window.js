@@ -18,6 +18,12 @@ import {
   buildAnswerRequest,
   checkboxChoices,
   buildQueueRequest,
+  buildCommandRequest,
+  commandConfirm,
+  commandError,
+  commandSuggestions,
+  isClaudeWindow,
+  isSlashCommand,
   buildReplyRequest,
   buildUploadPath,
   dialogQuestion,
@@ -391,6 +397,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
   const base = windowApiPath(session, windowId);
   const canWrite = ctx.hasFeature("write");
   const canQueue = canWrite && ctx.hasFeature("queue");
+  const canCommand = canWrite && ctx.hasFeature("command");
   const canUpload = canWrite && ctx.hasFeature("upload");
   let win = null;
   let waiting = new Map();
@@ -768,16 +775,52 @@ export function mountWindow(root, ctx, { session, windowId }) {
   // ignored and the button is disabled. buildRequest turns the trimmed text
   // and uploaded image IDs into the request. On success the text and images
   // are cleared; on failure they are kept so nothing typed is lost.
-  function composer({ placeholder, sendLabel, buildRequest }) {
+  // With commands set (Claude windows, reply box), a text starting with "/"
+  // turns the send button into "Run command", lists matching built-ins to
+  // tap, and sends through the command action instead of reply.
+  function composer({ placeholder, sendLabel, buildRequest, commands = false }) {
     const att = attachments({ icon: true });
     const text = h("textarea", {
       rows: "1",
       class: "composer-text",
       placeholder,
       maxlength: "4000",
-      oninput: () => grow(text),
+      oninput: () => {
+        grow(text);
+        refreshCommandMode();
+      },
     });
     let sending = false;
+    const suggest = h("div", { class: "cmd-suggest", hidden: "" });
+    function refreshCommandMode() {
+      if (!commands) return;
+      const cmd = isSlashCommand(text.value);
+      send.classList.toggle("command", cmd);
+      send.setAttribute("aria-label", cmd ? "Run command" : sendLabel);
+      send.title = cmd ? "Run command" : "";
+      clear(suggest);
+      const list = commandSuggestions(text.value);
+      suggest.hidden = list.length === 0;
+      for (const c of list) {
+        suggest.append(
+          h(
+            "button",
+            {
+              type: "button",
+              class: "cmd-suggest-item",
+              onclick: () => {
+                text.value = `${c.name} `;
+                grow(text);
+                text.focus();
+                refreshCommandMode();
+              },
+            },
+            h("b", {}, c.name),
+            h("span", { class: "muted" }, ` ${c.hint}`),
+          ),
+        );
+      }
+    }
     const send = h(
       "button",
       {
@@ -789,14 +832,27 @@ export function mountWindow(root, ctx, { session, windowId }) {
           const value = text.value.trim();
           const n = att ? att.count() : 0;
           if (!value && !n) return;
+          const cmd = commands && isSlashCommand(value);
+          if (cmd) {
+            const bad = n ? "Commands cannot have images." : commandError(value);
+            if (bad) {
+              toast(bad, "error");
+              return;
+            }
+          }
           sending = true;
           send.disabled = true;
           try {
-            await run(null, async () => buildRequest(value, att ? await att.upload() : []), () => {
-              text.value = "";
-              text.style.height = "";
-              att?.clear();
-            });
+            await run(
+              cmd ? commandConfirm(value) : null,
+              cmd ? buildCommandRequest(session, windowId, value) : async () => buildRequest(value, att ? await att.upload() : []),
+              () => {
+                text.value = "";
+                text.style.height = "";
+                att?.clear();
+                refreshCommandMode();
+              },
+            );
           } finally {
             sending = false;
             send.disabled = false;
@@ -806,7 +862,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
       svgIcon(SEND_SVG),
     );
     const row = h("div", { class: "composer" }, ...(att ? att.trigger : []), text, send);
-    return { text, nodes: [...(att ? att.controls : []), row] };
+    return { text, nodes: [...(att ? att.controls : []), suggest, row] };
   }
 
   function replyBox() {
@@ -814,6 +870,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
       placeholder: "Reply to the agent…",
       sendLabel: "Send reply",
       buildRequest: (value, ids) => buildReplyRequest(session, windowId, value, ids),
+      commands: canCommand && isClaudeWindow(win),
     });
   }
 

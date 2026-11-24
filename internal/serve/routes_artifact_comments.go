@@ -120,7 +120,7 @@ func (s *Server) deliverComment(m artifacts.Meta, rev int, text string, a *audit
 	}
 	queue := rw.window.State == "working"
 	da := *a
-	out := s.deliverText(m.Session, m.WindowID, replyIn{Text: commentMessage(m, rev, text)}, &da, queue)
+	out := s.deliverText(m.Session, m.WindowID, replyIn{Text: commentMessage(m, rev, text)}, &da, queue, false)
 	if out.status >= 400 {
 		switch out.code {
 		case codeNotFound:

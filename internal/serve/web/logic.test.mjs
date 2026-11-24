@@ -9,6 +9,7 @@ import {
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowChips, rowTitle, rowHeadline, rowRole, detailTitle, truncateWords, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
+  buildCommandRequest, commandConfirm, commandError, commandSuggestions, commandWord, isClaudeWindow, isSlashCommand, SLASH_COMMANDS,
   actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
   defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines, fullPrompt,
@@ -24,6 +25,35 @@ import {
   artifactWindowLive, artifactsForWindow, artifactsHash, groupArtifacts,
   ARTIFACT_FEEDBACK_MAX, artifactCommentStatus, artifactCommentToast, artifactFeedbackFrom,
 } from "./logic.js";
+
+// Slash commands (phone "Run command").
+assert.equal(commandWord("/compact focus"), "/compact");
+assert.equal(commandWord("  /clear"), "/clear");
+assert.equal(commandWord("/Users/me/file.go is broken"), null);
+assert.equal(commandWord("hello /x"), null);
+assert.equal(commandWord("!ls"), null);
+assert.equal(commandWord("#note"), null);
+assert.equal(isSlashCommand("/"), true);
+assert.equal(isSlashCommand("/plugin:skill a b"), true);
+assert.deepEqual(commandSuggestions("/co").map((c) => c.name), ["/compact", "/context", "/cost"]);
+assert.deepEqual(commandSuggestions("/CLE").map((c) => c.name), ["/clear"]);
+assert.equal(commandSuggestions("/").length, SLASH_COMMANDS.length);
+assert.deepEqual(commandSuggestions("/compact"), []);
+assert.deepEqual(commandSuggestions("/compact x"), []);
+assert.deepEqual(commandSuggestions("/Users/x"), []);
+assert.deepEqual(commandSuggestions("hello"), []);
+assert.equal(commandError("/compact x"), "");
+assert.equal(commandError("  /plugin:skill-x "), "");
+for (const bad of ["/", "/ x", "/-x", "/a\nb", "hello", "!x", "#x", "/a b".padEnd(2001, "x")]) assert.notEqual(commandError(bad), "", bad);
+assert.equal(commandConfirm("/clear").title, "Clear this conversation?");
+assert.equal(commandConfirm(" /clear ").danger, true);
+assert.equal(commandConfirm("/compact"), null);
+assert.equal(commandConfirm("/clearx"), null);
+assert.equal(isClaudeWindow({}), true);
+assert.equal(isClaudeWindow({ harness: "claude" }), true);
+assert.equal(isClaudeWindow({ harness: "pi" }), false);
+assert.deepEqual(buildCommandRequest("s", "@1", "/compact").body, { text: "/compact" });
+assert.match(buildCommandRequest("s", "@1", "/compact").path, /\/command$/);
 
 const fixtures = JSON.parse(readFileSync(new URL("./logic.fixtures.json", import.meta.url), "utf8"));
 

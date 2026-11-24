@@ -74,6 +74,10 @@ func (s *Server) registerWrite(rt *Router) {
 	}
 	rt.Write("POST "+win+"/queue", writeRoute(s, "queue", s.handleQueue))
 	if rt.allowWrite {
+		rt.Feature("command")
+	}
+	rt.Write("POST "+win+"/command", writeRoute(s, "command", s.handleCommand))
+	if rt.allowWrite {
 		rt.Feature("upload")
 	}
 	rt.Write("POST "+win+"/upload", s.handleUpload)
@@ -538,17 +542,22 @@ func (s *Server) typeText(r *http.Request, in replyIn, a *auditEntry, allowWorki
 			return out
 		}
 	}
-	return s.deliverText(r.PathValue("session"), normalizeWindowID(r.PathValue("window")), in, a, allowWorking)
+	return s.deliverText(r.PathValue("session"), normalizeWindowID(r.PathValue("window")), in, a, allowWorking, false)
 }
 
 // deliverText is the part of typeText after the text checks: lock the window,
-// guard on its state and pane, then inject.
-func (s *Server) deliverText(session, window string, in replyIn, a *auditEntry, allowWorking bool) outcome {
+// guard on its state and pane, then inject. claudeOnly refuses a harness
+// whose pane cannot be classified (slash commands are typed blind there), and
+// delivers once, without the staged-input retry (see Commander).
+func (s *Server) deliverText(session, window string, in replyIn, a *auditEntry, allowWorking, command bool) outcome {
 	rw, unlock, out, ok := s.lockWindowAt(session, window, a)
 	if !ok {
 		return out
 	}
 	defer unlock()
+	if command && !harness.For(rw.harness()).Caps().PaneClassifier {
+		return failure(http.StatusConflict, codeUnsupportedHarness, "slash commands are only supported for Claude Code windows")
+	}
 	text, out, ok := withImages(rw, in)
 	if !ok {
 		return out
@@ -582,7 +591,7 @@ func (s *Server) deliverText(session, window string, in replyIn, a *auditEntry, 
 	s.auditAttempt(*a)
 	// The inject path re-checks the pane before every keystroke and refuses
 	// a dialog (tmux.ErrDialogBlocking).
-	if err := s.inject(target, text, allowWorking); err != nil {
+	if err := s.deliver(target, text, allowWorking, command); err != nil {
 		logging.Warn("serve: %s %s:%s: %v", a.Action, rw.group.Session, rw.window.WindowID, err)
 		if errors.Is(err, tmux.ErrDialogBlocking) {
 			return failure(http.StatusConflict, codeNotIdle, "a dialog appeared; refresh and try again")
@@ -605,6 +614,14 @@ func recordedAccepts(state string, allowWorking bool) bool {
 	return state == "idle" || state == "" || (allowWorking && state == "working")
 }
 
+// deliver is inject, or the send-once Commander path for a slash command.
+func (s *Server) deliver(t WindowTarget, text string, queued, command bool) error {
+	if c, ok := s.injector.(Commander); ok && command {
+		return c.Command(t, text)
+	}
+	return s.inject(t, text, queued)
+}
+
 // inject delivers text through the Injector, or its Queue method for a
 // queued message when the Injector distinguishes the two.
 func (s *Server) inject(t WindowTarget, text string, queued bool) error {
@@ -612,6 +629,51 @@ func (s *Server) inject(t WindowTarget, text string, queued bool) error {
 		return q.Queue(t, text)
 	}
 	return s.injector.Inject(t, text)
+}
+
+// commandNameRE matches the word after "/" in a slash command; plugin
+// commands look like /plugin:skill.
+var commandNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:_-]*$`)
+
+// maxCommandRunes bounds a slash command line.
+const maxCommandRunes = 2000
+
+type commandIn struct {
+	Text string `json:"text"`
+}
+
+// checkCommand validates a slash command and returns it trimmed. "!" and "#"
+// stay refused: only "/" is accepted, as one line with a well-formed name.
+func checkCommand(text string) (string, outcome, bool) {
+	if out, ok := checkText("text", text); !ok {
+		return "", out, false
+	}
+	t := strings.TrimSpace(text)
+	if utf8.RuneCountInString(t) > maxCommandRunes {
+		return "", failure(http.StatusRequestEntityTooLarge, codeTooLarge, fmt.Sprintf("command exceeds %d characters", maxCommandRunes)), false
+	}
+	if !strings.HasPrefix(t, "/") {
+		return "", failure(http.StatusBadRequest, codeBadRequest, "a command must start with /"), false
+	}
+	if strings.ContainsAny(t, "\n\r") {
+		return "", failure(http.StatusBadRequest, codeBadRequest, "a command must be a single line"), false
+	}
+	name, _, _ := strings.Cut(t[1:], " ")
+	if !commandNameRE.MatchString(name) {
+		return "", failure(http.StatusBadRequest, codeBadRequest, "invalid command name"), false
+	}
+	return t, outcome{}, true
+}
+
+// handleCommand runs a Claude Code slash command in an idle agent: an
+// explicitly requested action, separate from reply (which refuses a leading
+// "/"). Interactive commands open a menu in the pane; the phone shows it.
+func (s *Server) handleCommand(r *http.Request, in commandIn, a *auditEntry) outcome {
+	text, out, ok := checkCommand(in.Text)
+	if !ok {
+		return out
+	}
+	return s.deliverText(r.PathValue("session"), normalizeWindowID(r.PathValue("window")), replyIn{Text: text}, a, false, true)
 }
 
 type emptyIn struct{}
@@ -798,7 +860,7 @@ func checkReplyMode(text string) (outcome, bool) {
 	trimmed := strings.TrimLeftFunc(text, unicode.IsSpace)
 	if r, _ := utf8.DecodeRuneInString(trimmed); strings.ContainsRune(replyModePrefixes, r) {
 		return failure(http.StatusBadRequest, codeReplyIsCommand,
-			fmt.Sprintf("a reply cannot start with %q: Claude Code would run it as a command, not send it to the agent", r)), false
+			fmt.Sprintf("a reply cannot start with %q: Claude Code would run it as a command, not send it to the agent; use the command action to run a slash command", r)), false
 	}
 	return outcome{}, true
 }

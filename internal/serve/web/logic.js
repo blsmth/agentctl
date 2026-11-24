@@ -1007,6 +1007,82 @@ export function actionsWithQueue(win, pane, hasQueue) {
   return kind === "interrupt" && hasQueue ? "queue" : kind;
 }
 
+/** buildCommandRequest builds POST …/command (a Claude Code slash command). */
+export function buildCommandRequest(session, windowId, text) {
+  return { method: "POST", path: `${windowApiPath(session, windowId)}/command`, body: { text } };
+}
+
+/** COMMAND_MAX is the longest slash command the server accepts (characters). */
+export const COMMAND_MAX = 2000;
+
+/** SLASH_COMMANDS are common Claude Code built-ins offered while typing "/". */
+export const SLASH_COMMANDS = [
+  { name: "/compact", hint: "Summarise the conversation" },
+  { name: "/clear", hint: "Start a fresh conversation" },
+  { name: "/context", hint: "Show context usage" },
+  { name: "/cost", hint: "Show token cost" },
+  { name: "/model", hint: "Switch model (opens a menu)" },
+  { name: "/status", hint: "Show status" },
+  { name: "/review", hint: "Review a pull request" },
+  { name: "/memory", hint: "Edit memory (opens a menu)" },
+  { name: "/resume", hint: "Resume a conversation (opens a menu)" },
+];
+
+/** isClaudeWindow: the window row's harness is Claude Code ("" = claude). */
+export function isClaudeWindow(win) {
+  const h = (win?.harness ?? "").trim().toLowerCase();
+  return h === "" || h === "claude";
+}
+
+/**
+ * commandWord is the first word of text after trimming leading space when it
+ * is a slash command, else null. A first word with a second "/" (a path such
+ * as /Users/me/file.go) is not a command.
+ */
+export function commandWord(text) {
+  const t = (text ?? "").trimStart();
+  if (!t.startsWith("/")) return null;
+  const word = t.split(/\s/, 1)[0];
+  return word.indexOf("/", 1) >= 0 ? null : word;
+}
+
+/** isSlashCommand: text should be sent with the command action. */
+export function isSlashCommand(text) {
+  return commandWord(text) !== null;
+}
+
+const COMMAND_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9:_-]*$/;
+
+/** commandError mirrors the server's checks; "" when text is a valid command. */
+export function commandError(text) {
+  const t = (text ?? "").trim();
+  if (!t.startsWith("/")) return "A command must start with /";
+  if (/[\r\n]/.test(t)) return "A command must be a single line";
+  if ([...t].length > COMMAND_MAX) return `A command is at most ${COMMAND_MAX} characters`;
+  const name = t.slice(1).split(" ", 1)[0];
+  if (!COMMAND_NAME_RE.test(name)) return "Invalid command name";
+  return "";
+}
+
+/**
+ * commandSuggestions filters SLASH_COMMANDS by the typed first word (prefix,
+ * case-insensitive). Only while that word is still being typed (no space yet
+ * and a single "/"); empty otherwise.
+ */
+export function commandSuggestions(text) {
+  const t = (text ?? "").trimStart();
+  if (!t.startsWith("/") || /\s/.test(t) || t.indexOf("/", 1) >= 0) return [];
+  const p = t.toLowerCase();
+  return SLASH_COMMANDS.filter((c) => c.name.startsWith(p) && c.name !== p);
+}
+
+/** commandConfirm is the confirm sheet for a destructive command, else null. */
+export function commandConfirm(text) {
+  return commandWord(text) === "/clear"
+    ? { title: "Clear this conversation?", lines: ["Runs /clear: the agent forgets the conversation so far."], confirmLabel: "Clear", danger: true }
+    : null;
+}
+
 export function buildQueueRequest(session, windowId, text, images) {
   return { method: "POST", path: `${windowApiPath(session, windowId)}/queue`, body: messageBody(text, images) };
 }

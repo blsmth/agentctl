@@ -73,6 +73,10 @@ type Window struct {
 	// Label is the human-facing identifier (see DisplayName); window_id stays
 	// the machine key. Serve fills it for the phone; `status --json` blanks it.
 	Label string `json:"label,omitempty"`
+
+	// Harness is the agent program the window runs ("pi"); omitted for
+	// Claude Code. The phone offers slash commands only on Claude windows.
+	Harness string `json:"harness,omitempty"`
 }
 
 // ToWindow converts a row and its windowstate metadata to a Window.
@@ -101,6 +105,7 @@ func ToWindow(r Row, m Meta) Window {
 		Model:        r.ModelName,
 		TurnDone:     r.TurnDone,
 		Label:        RowDisplayName(r),
+		Harness:      r.Harness,
 	}
 	if r.Recap.Text != "" {
 		w.Recap, w.RecapSource = r.Recap.Text, r.Recap.Source.String()

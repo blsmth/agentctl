@@ -379,6 +379,7 @@ func writeRoutes(t *testing.T) []struct{ name, path, body string } {
 		{"answer", winPath + "/answer", fmt.Sprintf(`{"key":"1","dialog_hash":%q}`, dialogHash(t))},
 		{"reply", winPath + "/reply", `{"text":"hi"}`},
 		{"queue", winPath + "/queue", `{"text":"hi"}`},
+		{"command", winPath + "/command", `{"text":"/compact"}`},
 		{"interrupt", winPath + "/interrupt", `{}`},
 		{"close", winPath + "/close", `{}`},
 		{"close-shell", "/v1/sessions/agentctl-proj/shells/@77/close", `{}`},
@@ -1610,5 +1611,108 @@ func TestCloseChildrenOrderAndResponse(t *testing.T) {
 				t.Errorf("ok=%v response %v killed %v, want %v", body.OK, got, killed, tt.want)
 			}
 		})
+	}
+}
+
+func TestCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    string
+		pane     string
+		text     string
+		status   int
+		code     string
+		injected string
+	}{
+		{"idle", "idle", idlePane, "/compact focus on the tests", 200, "", "/compact focus on the tests"},
+		{"surrounding space trimmed", "idle", idlePane, "  /clear \n", 200, "", "/clear"},
+		{"plugin command", "idle", idlePane, "/plugin:skill-x arg", 200, "", "/plugin:skill-x arg"},
+		{"working window", "working", idlePane, "/compact", 409, codeNotIdle, ""},
+		{"blocked window", "blocked", dialogPane, "/compact", 409, codeNotIdle, ""},
+		{"pane dialog", "idle", dialogPane, "/compact", 409, codeNotIdle, ""},
+		{"pane busy", "idle", workingPane, "/compact", 409, codeNotIdle, ""},
+		{"bash mode", "idle", idlePane, "!ls", 400, codeBadRequest, ""},
+		{"memory", "idle", idlePane, "#x", 400, codeBadRequest, ""},
+		{"plain text", "idle", idlePane, "hello", 400, codeBadRequest, ""},
+		{"bare slash", "idle", idlePane, "/", 400, codeBadRequest, ""},
+		{"slash space", "idle", idlePane, "/ compact", 400, codeBadRequest, ""},
+		{"multi-line", "idle", idlePane, "/foo\nbar", 400, codeBadRequest, ""},
+		{"path", "idle", idlePane, "/Users/me/file.go is broken", 400, codeBadRequest, ""},
+		{"bad name", "idle", idlePane, "/-x", 400, codeBadRequest, ""},
+		{"control char", "idle", idlePane, "/a\x1b[A", 400, codeBadRequest, ""},
+		{"too long", "idle", idlePane, "/compact " + strings.Repeat("a", maxCommandRunes), 413, codeTooLarge, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWriteEnv(t, true)
+			e.fleet.set(writeGroup(tt.state, false, "go-engineer", "dispatch"))
+			e.panes.set(tt.pane)
+			body, _ := json.Marshal(commandIn{Text: tt.text})
+			w := e.post(winPath+"/command", string(body))
+			if w.Code != tt.status {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			if tt.code != "" && errCode(t, w) != tt.code {
+				t.Fatalf("code %q: %s", errCode(t, w), w.Body)
+			}
+			if tt.injected == "" {
+				e.assertNothingSent(t)
+				return
+			}
+			if len(e.inj.got) != 1 || e.inj.got[0] != tt.injected {
+				t.Fatalf("injected %q", e.inj.got)
+			}
+			if lines := e.auditLines(t); len(lines) == 0 || lines[len(lines)-1].Action != "command" {
+				t.Errorf("audit = %+v", lines)
+			}
+		})
+	}
+}
+
+func TestCommandRefusedForUnclassifiedHarness(t *testing.T) {
+	e := newWriteEnv(t, true)
+	e.fleet.set(piGroup("idle"))
+	e.panes.set("")
+	if w := e.post(winPath+"/command", `{"text":"/compact"}`); w.Code != http.StatusConflict || errCode(t, w) != codeUnsupportedHarness {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	e.assertNothingSent(t)
+}
+
+func TestReplyRefusalPointsAtCommand(t *testing.T) {
+	e := newWriteEnv(t, true)
+	e.fleet.set(writeGroup("idle", false, "go-engineer", "dispatch"))
+	e.panes.set(idlePane)
+	w := e.post(winPath+"/reply", `{"text":"/compact"}`)
+	if w.Code != 400 || errCode(t, w) != codeReplyIsCommand || !strings.Contains(w.Body.String(), "command action") {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+}
+
+// commandInjector records Command calls, to prove the send-once path is used.
+type commandInjector struct {
+	fakeInjector
+	commands []string
+}
+
+func (c *commandInjector) Command(_ WindowTarget, text string) error {
+	c.commands = append(c.commands, text)
+	return nil
+}
+
+func TestCommandUsesCommander(t *testing.T) {
+	c := &commandInjector{}
+	e := newWriteEnvWith(t, true, func(o *Options) { o.Injector = c })
+	e.fleet.set(writeGroup("idle", false, "go-engineer", "dispatch"))
+	e.panes.set(idlePane)
+	if w := e.post(winPath+"/command", `{"text":"/model"}`); w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if !slices.Equal(c.commands, []string{"/model"}) || len(c.got) != 0 {
+		t.Errorf("commands %q injected %q", c.commands, c.got)
+	}
+	// reply keeps the verified path.
+	if w := e.post(winPath+"/reply", `{"text":"hi"}`); w.Code != 200 || !slices.Equal(c.got, []string{"hi"}) {
+		t.Errorf("reply: %d %q", w.Code, c.got)
 	}
 }
