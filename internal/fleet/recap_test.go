@@ -509,3 +509,17 @@ func TestWindowLabelField(t *testing.T) {
 		t.Errorf("Label = %q", w.Label)
 	}
 }
+
+func TestCompactDuration(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		45 * time.Second:             "45s",
+		47 * time.Minute:             "47m",
+		2*time.Hour + 14*time.Minute: "2h14m",
+		3 * time.Hour:                "3h",
+		72 * time.Hour:               "3d",
+	} {
+		if got := CompactDuration(d); got != want {
+			t.Errorf("CompactDuration(%v) = %q, want %q", d, got, want)
+		}
+	}
+}

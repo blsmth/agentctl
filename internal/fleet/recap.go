@@ -266,6 +266,20 @@ func CompactAge(d time.Duration) string {
 	}
 }
 
+// CompactDuration is CompactAge with the minutes kept between one and 48
+// hours: "45s", "47m", "2h14m", "3d". It is for lengths (a session's
+// duration), where "2h" for 2h14m would hide too much.
+func CompactDuration(d time.Duration) string {
+	if d < time.Hour || d >= 48*time.Hour {
+		return CompactAge(d)
+	}
+	h, m := int(d/time.Hour), int(d%time.Hour/time.Minute)
+	if m == 0 {
+		return fmt.Sprintf("%dh", h)
+	}
+	return fmt.Sprintf("%dh%dm", h, m)
+}
+
 // DisplayName is the identifier humans see for a window: its instance name
 // ("code-reviewer:3", "brandon~2") without any state glyph, else the agent
 // name, else the raw window ID. Pass what is recorded (windowstate Instance,

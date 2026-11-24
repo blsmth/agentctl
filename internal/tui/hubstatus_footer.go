@@ -9,7 +9,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/fleet"
-	"github.com/blsmth/agentctl/internal/render"
 )
 
 // hubStatusMinCostUSD is the floor below which the footer hides the cost (a
@@ -164,7 +163,7 @@ func footerSegs(st *hubStatus, plan footPlan, now time.Time) (left, right []foot
 	}
 	if st.StartTime > 0 && !plan.dropLen {
 		if d := now.Sub(time.Unix(st.StartTime, 0)); d > 0 {
-			right = append(right, footText(render.Duration(d), dim))
+			right = append(right, footText(fleet.CompactDuration(d), dim))
 		}
 	}
 	return left, right

@@ -236,3 +236,20 @@ func TestHubStatusForPublishes(t *testing.T) {
 		t.Errorf("done state = %q", st.State)
 	}
 }
+
+func TestHubStatusFooterSessionLength(t *testing.T) {
+	InitStyles()
+	for _, tt := range []struct {
+		ago  time.Duration
+		want string
+	}{
+		{47 * time.Minute, "47m"},
+		{2*time.Hour + 14*time.Minute, "2h14m"},
+		{3 * time.Hour, "3h"},
+	} {
+		st := &hubStatus{Version: hubStatusVersion, StartTime: statusNow.Add(-tt.ago).Unix()}
+		if got := ansi.Strip(hubStatusFooter(st, 40, statusNow)); strings.TrimSpace(got) != tt.want {
+			t.Errorf("%v: got %q, want %q", tt.ago, got, tt.want)
+		}
+	}
+}
