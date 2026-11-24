@@ -33,6 +33,16 @@ func TestRedact(t *testing.T) {
 		{"url userinfo", "git clone https://user:pw123@github.com/o/r", "git clone https://[REDACTED]@github.com/o/r", []string{"pw123", "user:"}},
 		{"home", "cat /Users/bob/code/x.go", "cat ~/code/x.go", []string{"/Users/bob"}},
 		{"other user kept", "cat /Users/bobby/x", "cat /Users/bobby/x", nil},
+		{"short pass key", "DB_PASS=zzz9 run", "DB_PASS=[REDACTED] run", []string{"zzz9"}},
+		{"mysql -p space", "mysql -u root -p hunter2 db", "mysql -u root -p [REDACTED] db", []string{"hunter2"}},
+		{"mysql -p attached", "mysql -u root -phunter2 db", "mysql -u root -p[REDACTED] db", []string{"hunter2"}},
+		{"mkdir -p untouched", "mkdir -p build/out", "mkdir -p build/out", nil},
+		{"curl -u", "curl -u bob:pw12 https://x", "curl -u bob:[REDACTED] https://x", []string{"pw12"}},
+		{"curl --user", "curl --user bob:pw12 https://x", "curl --user bob:[REDACTED] https://x", []string{"pw12"}},
+		{"-u without creds untouched", "tool -u origin main", "tool -u origin main", nil},
+		{"stripe key", "echo sk_live_abcdef123456", "echo [REDACTED]", []string{"abcdef"}},
+		{"escaped space env", `PASSWORD=a\ bsecret run`, "PASSWORD=[REDACTED] run", []string{"bsecret"}},
+		{"escaped space flag", `tool --password a\ bsecret x`, "tool --password [REDACTED] x", []string{"bsecret"}},
 		{"clean", "git status --short", "git status --short", nil},
 		{"keyboard not secret", "monkey=banana", "monkey=[REDACTED]", nil}, // "key" substring: over-redaction is acceptable
 	}

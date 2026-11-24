@@ -21,15 +21,21 @@ var redactors = []struct {
 	{regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)(bearer\s+|basic\s+|token\s+)?[^\s"']+`), "${1}" + redacted},
 	{regexp.MustCompile(`(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}`), "${1}" + redacted},
 	// Well-known key shapes.
-	{regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}`), redacted},
+	{regexp.MustCompile(`\bsk[-_][A-Za-z0-9_-]{8,}`), redacted},
 	{regexp.MustCompile(`\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{8,}`), redacted},
 	{regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{8,}`), redacted},
 	{regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{8,}`), redacted},
 	{regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{12,}`), redacted},
 	// KEY=value (also --flag=value, "key": "value") where the key looks secret.
-	{regexp.MustCompile(`(?i)(\b[\w.-]*(?:token|secret|passw(?:or)?d|passwd|key|auth|credential)[\w.-]*["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"';&|]+)`), "${1}" + redacted},
+	// An unquoted value may contain backslash-escaped characters (a\ b).
+	{regexp.MustCompile(`(?i)(\b[\w.-]*(?:token|secret|pass|key|auth|credential)[\w.-]*["']?\s*[=:]\s*)("[^"]*"|'[^']*'|(?:\\.|[^\s"';&|\\])+)`), "${1}" + redacted},
 	// Secret flags with a separate value: --password hunter2.
-	{regexp.MustCompile(`(?i)(--?[\w-]*(?:token|secret|passw(?:or)?d|api-?key)[\w-]*\s+)("[^"]*"|'[^']*'|[^\s"';&|-][^\s"';&|]*)`), "${1}" + redacted},
+	{regexp.MustCompile(`(?i)(--?[\w-]*(?:token|secret|pass|api-?key)[\w-]*\s+)("[^"]*"|'[^']*'|[^\s"';&|-](?:\\.|[^\s"';&|\\])*)`), "${1}" + redacted},
+	// Database and ssh clients: -phunter2, -p hunter2 (only on these commands,
+	// since -p is a harmless flag elsewhere, e.g. mkdir -p).
+	{regexp.MustCompile(`(\b(?:mysql\w*|mariadb\w*|sshpass)\b[^|;&\n]*?\s-p\s*)("[^"]*"|'[^']*'|[^\s"';&|-][^\s"';&|]*)`), "${1}" + redacted},
+	// Basic-auth credentials: curl -u bob:pw, --user bob:pw, --proxy-user.
+	{regexp.MustCompile(`((?:\s-u\s*|--user[=\s]\s*|--proxy-user[=\s]\s*)["']?[^\s:"']+:)[^\s"']+`), "${1}" + redacted},
 }
 
 // homeDir is a seam for tests.
