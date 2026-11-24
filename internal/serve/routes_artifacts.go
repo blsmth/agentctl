@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/blsmth/agentctl/internal/artifacts"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -75,6 +76,7 @@ func (s *Server) registerArtifacts(rt *Router) {
 	rt.Device("GET /v1/artifacts", s.handleArtifacts)
 	rt.Device("GET /v1/artifacts/{id}", s.handleArtifact)
 	rt.Write("DELETE /v1/artifacts/{id}", writeRoute(s, "artifact-delete", s.handleArtifactDelete))
+	rt.Write("POST /v1/artifacts/order", writeRoute(s, "artifact-order", s.handleArtifactOrder))
 	rt.Write("POST /v1/artifacts/{id}/pin", writeRoute(s, "artifact-pin", s.handleArtifactPin))
 	if rt.allowWrite {
 		rt.Feature("artifact-comments")
@@ -101,6 +103,8 @@ func artifactActionFor(path string) (string, bool) {
 		return "", false
 	}
 	switch {
+	case len(p) == 3 && p[2] == "order":
+		return "artifact-order", true
 	case len(p) == 3:
 		return "artifact-delete", true
 	case len(p) == 4 && p[3] == "pin":
@@ -226,4 +230,44 @@ func (s *Server) handleArtifactDelete(r *http.Request, _ emptyIn, a *auditEntry)
 	}
 	s.artifactWatch.Kick()
 	return success(okBody)
+}
+
+const (
+	// maxArtifactOrderIDs caps the ids in one order request.
+	maxArtifactOrderIDs = 500
+	// maxArtifactProjectBytes caps the project key (a directory or name).
+	maxArtifactProjectBytes = 4096
+)
+
+// artifactOrderIn is the body of POST /v1/artifacts/order: one project's
+// artifact ids in their new order. project is the group key the list uses
+// (the project dir, else its name; "" for artifacts with no project).
+type artifactOrderIn struct {
+	Project string   `json:"project"`
+	IDs     []string `json:"ids"`
+}
+
+func (s *Server) handleArtifactOrder(_ *http.Request, in artifactOrderIn, a *auditEntry) outcome {
+	if len(in.IDs) > maxArtifactOrderIDs {
+		return failure(http.StatusBadRequest, codeBadRequest, "too many ids")
+	}
+	if len(in.Project) > maxArtifactProjectBytes || !utf8.ValidString(in.Project) || hasControl(in.Project) {
+		return failure(http.StatusBadRequest, codeBadRequest, "invalid project")
+	}
+	for _, id := range in.IDs {
+		if !artifacts.ValidID(id) {
+			return failure(http.StatusBadRequest, codeBadRequest, "invalid artifact id")
+		}
+	}
+	a.Project = clip(in.Project)
+	s.auditAttempt(*a)
+	stored, err := s.artifacts.SetOrder(in.Project, in.IDs)
+	if err != nil {
+		logging.Warn("serve: saving artifact order: %s", redactArtifactIDs(err.Error()))
+		return failure(http.StatusInternalServerError, codeInternal, "saving the order")
+	}
+	s.artifactWatch.Kick()
+	return success(struct {
+		IDs []string `json:"ids"`
+	}{stored})
 }

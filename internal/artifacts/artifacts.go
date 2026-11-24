@@ -299,8 +299,9 @@ func (f Filter) match(m Meta) bool {
 	return f.Since.IsZero() || !m.Updated.Before(f.Since)
 }
 
-// List returns the matching artifacts, most recently updated first. Entries
-// with unreadable metadata are skipped.
+// List returns the matching artifacts, most recently updated first, then
+// arranged by the saved per-project order (see ApplyOrder). Entries with
+// unreadable metadata are skipped.
 func (s *Store) List(f Filter) ([]Meta, error) {
 	root, err := s.root(false)
 	if err != nil {
@@ -316,7 +317,7 @@ func (s *Store) List(f Filter) ([]Meta, error) {
 			out = append(out, m)
 		}
 	}
-	return out, nil
+	return ApplyOrder(out, orderOf(root)), nil
 }
 
 func listAll(root string) ([]Meta, error) {

@@ -22,6 +22,8 @@ import {
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
   ARTIFACT_TOKEN_MAX_AGE_MS, artifactChipText, artifactHash, artifactIcon, artifactOrigin, artifactRevLabel, artifactRevPill, artifactRowMeta, artifactTokenStale,
   artifactWindowLive, artifactsForWindow, artifactsHash, groupArtifacts,
+  ARTIFACT_COLLAPSE_KEY, ARTIFACT_OTHER, UNDO_MS, artifactGroupKey, artifactGroupMove, artifactRevBadge, artifactSubline, buildArtifactOrderRequest,
+  createDeleteQueue, loadCollapsedSet, mergeArtifactOrder, saveCollapsedSet,
   ARTIFACT_FEEDBACK_MAX, artifactCommentStatus, artifactCommentToast, artifactFeedbackFrom,
 } from "./logic.js";
 
@@ -1021,9 +1023,9 @@ console.log("ok: load earlier gate");
   const list = [A("1", "/z", "zed"), A("2", "/b", "beta"), A("3", "/a", "alpha"), A("4", "/b", "beta"), A("5", "", "")];
   const fleet = [{ key: "/b", dir: "/b" }, { key: "k2", dir: "/z" }];
   const g = groupArtifacts(list, fleet);
-  assert.deepEqual(g.map((x) => x.name), ["beta", "zed", "alpha", "No project"]);
+  assert.deepEqual(g.map((x) => x.name), ["beta", "zed", "alpha", "Other"]);
   assert.deepEqual(g[0].items.map((x) => x.id), ["2", "4"]); // list order kept inside a group
-  assert.deepEqual(groupArtifacts(list, []).map((x) => x.name), ["alpha", "beta", "zed", "No project"]);
+  assert.deepEqual(groupArtifacts(list, []).map((x) => x.name), ["alpha", "beta", "zed", "Other"]);
   assert.deepEqual(groupArtifacts([], fleet), []);
 
   const w = { session: "s", window_id: "@1" };
@@ -1049,10 +1051,117 @@ console.log("ok: load earlier gate");
   assert.equal(artifactRevPill(1, 2, 2), "v1 of 2 \u25BE");
   assert.equal(artifactOrigin({ agent: "designer", project: "shop", window_id: "@17" }), "shop \u203A designer \u00B7 @17");
   assert.equal(artifactOrigin({ project: "shop" }), "shop");
-  // Pinned rows lead within a project group, keeping list order otherwise.
-  const pg = groupArtifacts([A("p1", "/b", "beta"), A("p2", "/b", "beta", { pinned: true }), A("p3", "/b", "beta"), A("p4", "/b", "beta", { pinned: true })], []);
-  assert.deepEqual(pg[0].items.map((x) => x.id), ["p2", "p4", "p1", "p3"]);
+  // Group items keep the served (saved) order: pinned rows no longer float.
+  const pg = groupArtifacts([A("p1", "/b", "beta"), A("p2", "/b", "beta", { pinned: true }), A("p3", "/b", "beta")], []);
+  assert.deepEqual(pg[0].items.map((x) => x.id), ["p1", "p2", "p3"]);
+  // Other is always last, even when the fleet knows no project and unknown projects follow by name.
+  assert.deepEqual(groupArtifacts([A("o", "", ""), A("a", "/a", "alpha")], []).map((x) => x.name), ["alpha", ARTIFACT_OTHER]);
+  assert.equal(artifactGroupKey(A("x", "/d", "n")), "/d");
+  assert.equal(artifactGroupKey(A("x", "", "n")), "n");
+  assert.equal(artifactGroupKey(A("x", "", "")), "");
+  // fleetKey is the fleet's key for a listed project, empty otherwise.
+  assert.deepEqual(g.map((x) => x.fleetKey), ["/b", "k2", "", ""]);
+  assert.equal(groupArtifacts([A("a", "/b", "b")], [{ key: "k9", dir: "/b" }])[0].fleetKey, "k9");
+  // A project with no dir is named by its name; a dir with no name by its basename.
+  assert.equal(groupArtifacts([A("a", "/x/y", "")], [])[0].name, "y");
+
+  // The optimistic order matches the server's merge: new ones first, saved after, unknown ids dropped.
+  const items = ["n1", "a", "b", "c"].map((id) => ({ id }));
+  assert.deepEqual(mergeArtifactOrder(items, ["c", "gone", "a", "b"]).map((x) => x.id), ["n1", "c", "a", "b"]);
+  assert.deepEqual(mergeArtifactOrder(items, []).map((x) => x.id), ["n1", "a", "b", "c"]);
+  assert.deepEqual(mergeArtifactOrder(items, ["a", "a"]).map((x) => x.id), ["n1", "b", "c", "a"]);
+  assert.deepEqual(buildArtifactOrderRequest("/p", ["a", "b"]), { method: "POST", path: "/v1/artifacts/order", body: { project: "/p", ids: ["a", "b"] } });
+
+  // Dragging a project group saves the fleet keys of the listed groups; Other stays last and unlisted groups cannot move.
+  const gs = [
+    { key: "/a", fleetKey: "ka" }, { key: "/b", fleetKey: "kb" }, { key: "/u", fleetKey: "" }, { key: "", fleetKey: "" },
+  ];
+  assert.deepEqual(artifactGroupMove(gs, "/a", 1), ["kb", "ka"]);
+  assert.equal(artifactGroupMove(gs, "/a", 0), null, "no move");
+  assert.deepEqual(artifactGroupMove(gs, "/b", 0), ["kb", "ka"]);
+  assert.deepEqual(artifactGroupMove(gs, "/a", 9), ["kb", "ka"], "past Other clamps before it");
+  assert.equal(artifactGroupMove(gs, "/u", 0), null, "unlisted group");
+  assert.equal(artifactGroupMove(gs, "", 0), null, "Other");
+
+  assert.equal(artifactSubline({ description: " Weekly numbers ", entry: "r.html" }), "Weekly numbers");
+  assert.equal(artifactSubline({ entry: "r.html" }), "r.html");
+  assert.equal(artifactSubline({}), "");
+  assert.equal(artifactRevBadge({ latest: 3 }), "rev 3");
+  assert.equal(artifactRevBadge({ rev_count: 1 }), "");
+  assert.equal(artifactRevBadge({ latest: 4, rev_count: 4 }), "rev 4");
+
+  // Folded groups persist under their own key and survive junk.
+  const mem = () => { const m = new Map(); return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, v) }; };
+  const st = mem();
+  saveCollapsedSet(ARTIFACT_COLLAPSE_KEY, new Set(["/a", "~other"]), st);
+  assert.deepEqual([...loadCollapsedSet(ARTIFACT_COLLAPSE_KEY, st)], ["/a", "~other"]);
+  assert.equal(ARTIFACT_COLLAPSE_KEY, "agentctl.artifacts.collapsed");
+  st.setItem("k", "{nope");
+  assert.equal(loadCollapsedSet("k", st).size, 0);
+  st.setItem("k", JSON.stringify(["a", 3, null]));
+  assert.deepEqual([...loadCollapsedSet("k", st)], ["a"]);
+  assert.equal(loadCollapsedSet("k", { getItem() { throw new Error("denied"); } }).size, 0);
+  assert.doesNotThrow(() => saveCollapsedSet("k", new Set(["a"]), { setItem() { throw new Error("full"); } }));
   console.log("ok: artifacts logic");
+}
+
+{
+  // The delete queue: the DELETE goes out only when the undo window ends.
+  const timers = new Map();
+  let nextTimer = 1;
+  const setTimer = (fn, ms) => { timers.set(nextTimer, { fn, ms }); return nextTimer++; };
+  const clearTimer = (t) => timers.delete(t);
+  const fire = () => { const [id, t] = [...timers][0]; timers.delete(id); t.fn(); };
+  const sent = [];
+  const settled = [];
+  let fail = false;
+  const q = createDeleteQueue({
+    commit: async (item) => { sent.push(item.id); if (fail) throw new Error("boom"); },
+    onSettle: (id, item, err) => settled.push([id, err ? err.message : null]),
+    setTimer, clearTimer,
+  });
+  assert.equal(UNDO_MS, 5000);
+  q.add("a", { id: "a" });
+  assert.equal(timers.get(1).ms, UNDO_MS);
+  assert.equal(q.has("a"), true);
+  assert.deepEqual(sent, [], "nothing sent while the toast is up");
+  q.add("a", { id: "a" }); // a second swipe on the same row is ignored
+  assert.equal(timers.size, 1);
+
+  // Undo cancels: nothing is ever sent, the row is back.
+  q.add("b", { id: "b" });
+  assert.equal(q.undo("b"), true);
+  assert.equal(q.has("b"), false);
+  assert.equal(q.undo("b"), false, "already undone");
+  assert.equal(timers.size, 1);
+
+  // Expiry sends; the id stays hidden until the request settles.
+  fire();
+  assert.deepEqual(sent, ["a"]);
+  assert.equal(q.has("a"), true, "in flight: an SSE refetch must not resurrect it");
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(q.has("a"), false);
+  assert.deepEqual(settled, [["a", null]]);
+  assert.equal(q.undo("a"), false, "too late to undo");
+
+  // A failed delete settles with the error so the row can be restored.
+  fail = true;
+  q.add("c", { id: "c" });
+  fire();
+  await Promise.resolve(); await Promise.resolve();
+  assert.deepEqual(settled.at(-1), ["c", "boom"]);
+  assert.equal(q.has("c"), false);
+
+  // Leaving the page flushes everything waiting.
+  fail = false;
+  q.add("d", { id: "d" });
+  q.add("e", { id: "e" });
+  assert.deepEqual(q.waiting(), ["d", "e"]);
+  await q.flush();
+  assert.deepEqual(sent.slice(-2), ["d", "e"]);
+  assert.equal(timers.size, 0);
+  assert.deepEqual(q.waiting(), []);
+  console.log("ok: delete queue");
 }
 
 {

@@ -2420,29 +2420,171 @@ export function artifactIcon(kind) {
   return ARTIFACT_ICONS[kind] ?? "◆";
 }
 
+/** artifactGroupKey is the key an artifact's project group is saved and listed under: its project dir, else its name, else "". */
+export function artifactGroupKey(a) {
+  return a.project_dir || a.project || "";
+}
+
+/** ARTIFACT_OTHER is the name of the last group, for artifacts with no project. */
+export const ARTIFACT_OTHER = "Other";
+
 /**
- * groupArtifacts groups a list (already newest first) by project in the saved
- * group order of the fleet (fleetGroups, as served). Projects the fleet does
- * not know follow, by name. Each group is {key, name, items}.
+ * groupArtifacts groups a list by project, keeping list order inside a group
+ * (the server's saved order). Groups follow the saved group order of the fleet
+ * (fleetGroups, as served, already ordered); projects the fleet does not know
+ * follow, by name, and artifacts with no project are the last group, "Other".
+ * Each group is {key, name, items, fleetKey}: fleetKey is the fleet group's
+ * key when the project is one the fleet lists (the only ones whose position
+ * can be saved), else "".
  */
 export function groupArtifacts(list, fleetGroups = []) {
   const byKey = new Map();
   for (const a of list ?? []) {
-    const key = a.project_dir || a.project || "";
-    if (!byKey.has(key)) byKey.set(key, { key, name: a.project || (a.project_dir ? a.project_dir.split("/").filter(Boolean).pop() : "") || "No project", items: [] });
+    const key = artifactGroupKey(a);
+    if (!byKey.has(key)) {
+      const name = key === "" ? ARTIFACT_OTHER : a.project || a.project_dir.split("/").filter(Boolean).pop() || ARTIFACT_OTHER;
+      byKey.set(key, { key, name, items: [], fleetKey: "" });
+    }
     byKey.get(key).items.push(a);
   }
   const groups = [...byKey.values()];
-  for (const g of groups) g.items = [...g.items.filter((a) => a.pinned), ...g.items.filter((a) => !a.pinned)];
   const rank = new Map();
   (fleetGroups ?? []).forEach((g, i) => {
-    for (const k of [g.key, g.dir]) if (k && !rank.has(k)) rank.set(k, i);
+    for (const k of [g.key, g.dir]) if (k && !rank.has(k)) rank.set(k, { i, fleetKey: g.key ?? "" });
   });
-  const pos = (g) => rank.get(g.key) ?? Number.MAX_SAFE_INTEGER;
+  for (const g of groups) g.fleetKey = g.key === "" ? "" : (rank.get(g.key)?.fleetKey ?? "");
+  const pos = (g) => rank.get(g.key)?.i ?? Number.MAX_SAFE_INTEGER;
   return groups
     .map((g, i) => ({ g, i }))
-    .sort((a, b) => pos(a.g) - pos(b.g) || (a.g.key === "") - (b.g.key === "") || a.g.name.localeCompare(b.g.name) || a.i - b.i)
+    .sort((a, b) => (a.g.key === "") - (b.g.key === "") || pos(a.g) - pos(b.g) || a.g.name.localeCompare(b.g.name) || a.i - b.i)
     .map((d) => d.g);
+}
+
+/**
+ * mergeArtifactOrder arranges items (a group's artifacts as served) by ids,
+ * the order just dropped: artifacts not in ids come first in their incoming
+ * order, then ids' order; ids that are not in items are dropped. It is the
+ * server's merge (artifacts.ApplyOrder), so the optimistic view matches.
+ */
+export function mergeArtifactOrder(items, ids) {
+  const byId = new Map(items.map((a) => [a.id, a]));
+  const saved = new Set(ids);
+  const out = items.filter((a) => !saved.has(a.id));
+  for (const id of ids) {
+    if (byId.has(id)) {
+      out.push(byId.get(id));
+      byId.delete(id);
+    }
+  }
+  return out;
+}
+
+/** ARTIFACT_ORDER_PATH is the write route that saves one project's artifact order. */
+export const ARTIFACT_ORDER_PATH = "/v1/artifacts/order";
+
+/** buildArtifactOrderRequest saves ids as the order of project (a group key). */
+export function buildArtifactOrderRequest(project, ids) {
+  return { method: "POST", path: ARTIFACT_ORDER_PATH, body: { project, ids } };
+}
+
+/**
+ * artifactGroupMove moves the group with key to slot (an index among the
+ * other groups, "Other" always staying last) and returns the keys to save:
+ * the fleet keys of the groups the fleet lists, in the new order. null when
+ * nothing moves or the group cannot be placed (no fleet key).
+ */
+export function artifactGroupMove(groups, key, slot) {
+  const g = groups.find((x) => x.key === key);
+  if (!g || !g.fleetKey) return null;
+  const movable = groups.filter((x) => x.key !== "").map((x) => x.key);
+  const to = Math.min(slot, movable.length - 1);
+  const next = moveKey(movable, key, to);
+  if (next.every((k, i) => k === movable[i])) return null;
+  return next.map((k) => groups.find((x) => x.key === k).fleetKey).filter(Boolean);
+}
+
+/** artifactSubline is the muted line under a title: the description, else the entry file name. */
+export function artifactSubline(a) {
+  return (a.description || "").trim() || a.entry || "";
+}
+
+/** artifactRevBadge is the "rev 3" badge text; a first revision carries no news. */
+export function artifactRevBadge(a) {
+  const n = a.latest || a.rev_count || 0;
+  return n > 1 ? `rev ${n}` : "";
+}
+
+/** ARTIFACT_COLLAPSE_KEY is the localStorage key of the folded project groups. */
+export const ARTIFACT_COLLAPSE_KEY = "agentctl.artifacts.collapsed";
+
+/** loadCollapsedSet reads a persisted Set of strings; anything unusable is an empty set. */
+export function loadCollapsedSet(key, storage = globalThis.localStorage) {
+  try {
+    const v = JSON.parse(storage.getItem(key) ?? "[]");
+    return new Set(Array.isArray(v) ? v.filter((k) => typeof k === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** saveCollapsedSet persists set; storage may be unavailable (private mode), then folds last until reload. */
+export function saveCollapsedSet(key, set, storage = globalThis.localStorage) {
+  try {
+    storage.setItem(key, JSON.stringify([...set]));
+  } catch {
+    // nothing to do
+  }
+}
+
+/** UNDO_MS is how long a swiped-away artifact can be brought back before its DELETE is sent. */
+export const UNDO_MS = 5000;
+
+/**
+ * createDeleteQueue holds deletes back for an undo window. add(id, item)
+ * starts the countdown; when it expires commit(item) is called (a promise;
+ * the id stays in has() until it settles, so a refetch cannot resurrect the
+ * row). undo(id) cancels one that has not expired; flush() commits every
+ * waiting one now (leaving the page). onSettle(id, item, err) reports each
+ * commit's outcome (err null on success).
+ */
+export function createDeleteQueue({ commit, onSettle = () => {}, ms = UNDO_MS, setTimer = setTimeout, clearTimer = clearTimeout }) {
+  const waiting = new Map(); // id -> { item, timer }
+  const inflight = new Set();
+  const run = async (id, item) => {
+    inflight.add(id);
+    let err = null;
+    try {
+      await commit(item);
+    } catch (e) {
+      err = e ?? new Error("delete failed");
+    }
+    inflight.delete(id);
+    onSettle(id, item, err);
+  };
+  const fire = (id) => {
+    const w = waiting.get(id);
+    if (!w) return Promise.resolve();
+    clearTimer(w.timer);
+    waiting.delete(id);
+    return run(id, w.item);
+  };
+  return {
+    add(id, item) {
+      if (waiting.has(id) || inflight.has(id)) return;
+      waiting.set(id, { item, timer: setTimer(() => fire(id), ms) });
+    },
+    undo(id) {
+      const w = waiting.get(id);
+      if (!w) return false;
+      clearTimer(w.timer);
+      waiting.delete(id);
+      return true;
+    },
+    /** has: id is waiting out its undo window or its DELETE is in flight, so its row stays hidden. */
+    has: (id) => waiting.has(id) || inflight.has(id),
+    flush: () => Promise.all([...waiting.keys()].map(fire)),
+    waiting: () => [...waiting.keys()],
+  };
 }
 
 /** artifactWindowLive finds the live fleet window an artifact came from, or null. */

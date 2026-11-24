@@ -10,7 +10,7 @@ import {
   TIMEOUT_PRESETS, tildePath, timeoutIsPreset, usageOptions, windowHash, worktreeFact,
 } from "./logic.js";
 import { attachSwipe } from "./swipe.js";
-import { clear, confirmSheet, h, toast } from "./ui.js";
+import { actionToast, clear, confirmSheet, h, toast } from "./ui.js";
 
 const POLL_MS = 20000;
 const SLOW_SAVE_MS = 4000;
@@ -33,16 +33,6 @@ const post = (path, body) => api("POST", path, body ?? {});
 
 function header(title, back) {
   return h("header", { class: "bar" }, h("a", { class: "btn", href: back.href }, back.label), h("h1", {}, title));
-}
-
-/** actionToast is a toast with one button (Undo), alive for ms. */
-function actionToast(message, label, onClick, ms = 7000) {
-  const host = document.getElementById("toasts");
-  const t = h("div", { class: "toast info action", role: "status" }, message, " ");
-  const btn = h("button", { class: "btn-text", type: "button", onclick: () => { t.remove(); onClick(); } }, label);
-  t.append(btn);
-  host.append(t);
-  setTimeout(() => t.remove(), ms);
 }
 
 const errText = (e) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
