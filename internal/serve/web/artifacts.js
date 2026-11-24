@@ -18,6 +18,7 @@ import {
   buildArtifactOrderRequest,
   buildGroupOrderRequest,
   createDeleteQueue,
+  dropSettled,
   loadCollapsedSet,
   mergeArtifactOrder,
   moveKey,
@@ -104,9 +105,9 @@ function animateFold(nodes, fold) {
   nodes._fold = setTimeout(reset, 220);
 }
 
-const deleteArtifact = async (id) => {
+const deleteArtifact = async (id, opts) => {
   try {
-    await api("DELETE", `/v1/artifacts/${enc(id)}`, {});
+    await api("DELETE", `/v1/artifacts/${enc(id)}`, {}, opts);
   } catch (e) {
     // Already gone (deleted elsewhere): that is what was asked for.
     if (!(e instanceof ApiError && e.status === 404)) throw e;
@@ -165,14 +166,20 @@ function mountList(root, ctx, filter) {
   let pendingGroups = null; // { keys, at }: the group order just dropped
   const removing = new Set(); // ids of confirmed (pinned) deletes in flight
   const undoToasts = new Map(); // id -> dismiss
+  const settled = new Map(); // id -> ms: deletes that just succeeded
 
   const queue = createDeleteQueue({
-    commit: (a) => deleteArtifact(a.id),
+    // keepalive: a delete flushed as the page unloads must not be cancelled.
+    commit: (a) => deleteArtifact(a.id, { keepalive: true }),
     onSettle: (id, a, err) => {
       undoToasts.get(id)?.();
       undoToasts.delete(id);
       if (err) toast(`Could not delete ${clip(a.title)}: ${errText(err)}`, "error");
-      else if (data) data = data.filter((x) => x.id !== id);
+      else {
+        // A refetch that started before this DELETE finished may still return the row.
+        settled.set(id, Date.now());
+        if (data) data = data.filter((x) => x.id !== id);
+      }
       if (!disposed) render();
     },
   });
@@ -436,7 +443,7 @@ function mountList(root, ctx, filter) {
   async function load() {
     const startedAt = Date.now();
     try {
-      const next = (await get("/v1/artifacts")).artifacts ?? [];
+      const next = dropSettled((await get("/v1/artifacts")).artifacts ?? [], settled);
       if (disposed) return;
       if (data) for (const a of next) if (!seen.has(a.id) && !hidden(a)) fresh.add(a.id);
       data = next;

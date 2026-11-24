@@ -24,7 +24,7 @@ import {
   ARTIFACT_TOKEN_MAX_AGE_MS, artifactChipText, artifactHash, artifactIcon, artifactOrigin, artifactRevLabel, artifactRevPill, artifactRowMeta, artifactTokenStale,
   artifactWindowLive, artifactsForWindow, artifactsHash, groupArtifacts,
   ARTIFACT_COLLAPSE_KEY, ARTIFACT_OTHER, UNDO_MS, artifactGroupKey, artifactGroupMove, artifactRevBadge, artifactSubline, buildArtifactOrderRequest,
-  createDeleteQueue, loadCollapsedSet, mergeArtifactOrder, saveCollapsedSet,
+  createDeleteQueue, dropSettled, SETTLED_TTL_MS, loadCollapsedSet, mergeArtifactOrder, saveCollapsedSet,
   ARTIFACT_FEEDBACK_MAX, artifactCommentStatus, artifactCommentToast, artifactFeedbackFrom,
 } from "./logic.js";
 
@@ -1191,6 +1191,12 @@ console.log("ok: load earlier gate");
   assert.deepEqual(sent.slice(-2), ["d", "e"]);
   assert.equal(timers.size, 0);
   assert.deepEqual(q.waiting(), []);
+  // A refetch racing the DELETE must not resurrect the row; old entries expire.
+  const settledIds = new Map([["x", 15000], ["old", 0]]);
+  const rows = [{ id: "x" }, { id: "y" }, { id: "old" }];
+  assert.deepEqual(dropSettled(rows, settledIds, 16000).map((r) => r.id), ["y", "old"]);
+  assert.deepEqual(dropSettled(rows, settledIds, 15000 + SETTLED_TTL_MS + 1).map((r) => r.id), ["x", "y", "old"]);
+  assert.equal(settledIds.size, 0);
   console.log("ok: delete queue");
 }
 

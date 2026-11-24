@@ -2612,6 +2612,19 @@ export function saveCollapsedSet(key, set, storage = globalThis.localStorage) {
   }
 }
 
+/** SETTLED_TTL_MS is how long a deleted id is filtered out of fetched lists. */
+export const SETTLED_TTL_MS = 10000;
+
+/**
+ * dropSettled removes from list the artifacts whose delete just succeeded
+ * (settled: id -> ms), so a refetch that started before the DELETE finished
+ * cannot bring the row back. Entries older than ttl are forgotten.
+ */
+export function dropSettled(list, settled, now = Date.now(), ttl = SETTLED_TTL_MS) {
+  for (const [id, at] of settled) if (now - at > ttl) settled.delete(id);
+  return settled.size === 0 ? list : list.filter((a) => !settled.has(a.id));
+}
+
 /** UNDO_MS is how long a swiped-away artifact can be brought back before its DELETE is sent. */
 export const UNDO_MS = 5000;
 
