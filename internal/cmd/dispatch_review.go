@@ -84,6 +84,7 @@ func dispatchReviewPR(opts DispatchOptions) (string, string, error) {
 		return "", "", err
 	}
 	pr.Author = author.PRAuthor
+	pr.Author.SessionID, pr.Author.RuntimeDir = author.SessionID, author.RuntimeDir
 	if author.Known() {
 		logging.Log("dispatch: PR #%d author is window %s (pane %s)", pr.Number, author.WindowID, author.Pane)
 	} else {
@@ -141,7 +142,7 @@ func findPRAuthor(groups []fleet.Group, headRef, override string) (prAuthorWindo
 				continue
 			}
 			w := prAuthorWindow{
-				PRAuthor:   dispatch.PRAuthor{WindowID: r.WindowID, Pane: r.MainPane, Account: r.Account},
+				PRAuthor:   dispatch.PRAuthor{WindowID: r.WindowID, Pane: r.MainPane, Account: r.Account, Agent: rowAgent(r)},
 				RuntimeDir: g.RuntimeDir,
 				SessionID:  r.SessionID,
 			}
@@ -274,4 +275,12 @@ func dispatchArgsFrom(argv []string) []string {
 		}
 	}
 	return nil
+}
+
+// rowAgent is the base agent name of a fleet row.
+func rowAgent(r fleet.Row) string {
+	if r.AgentName != "" {
+		return r.AgentName
+	}
+	return r.Name
 }

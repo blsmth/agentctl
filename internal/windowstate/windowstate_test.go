@@ -716,3 +716,20 @@ func TestClearPendingTrust(t *testing.T) {
 		})
 	}
 }
+
+func TestReviewTargetRoundTrip(t *testing.T) {
+	defer initTemp(t)()
+
+	want := &windowstate.ReviewTarget{PR: 12, Branch: "feat/x", Repo: "acme/widgets",
+		AuthorWindow: "@3", AuthorAgent: "go-engineer", AuthorSession: "s", AuthorRuntime: "/tmp/rt"}
+	if err := windowstate.Write("@50", windowstate.WindowState{Mode: "review-pr", Review: want}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got, err := windowstate.Read("@50")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got.Review == nil || *got.Review != *want {
+		t.Fatalf("Review = %+v, want %+v", got.Review, want)
+	}
+}
