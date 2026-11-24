@@ -58,6 +58,15 @@ func authorRow(window, pane, branch, session, account string) fleet.Row {
 	return fleet.Row{AgentState: state.AgentState{WindowID: window, MainPane: pane, Branch: branch, SessionID: session, Account: account}}
 }
 
+func TestRowAgent(t *testing.T) {
+	if got := rowAgent(fleet.Row{AgentState: state.AgentState{Name: "go-engineer~2", AgentName: "go-engineer"}}); got != "go-engineer" {
+		t.Errorf("rowAgent = %q", got)
+	}
+	if got := rowAgent(fleet.Row{AgentState: state.AgentState{Name: "go-engineer"}}); got != "go-engineer" {
+		t.Errorf("rowAgent fallback = %q", got)
+	}
+}
+
 func TestFindPRAuthor(t *testing.T) {
 	groups := []fleet.Group{
 		{Session: "agentctl-a", RuntimeDir: "/a/.agentctl", Rows: []fleet.Row{

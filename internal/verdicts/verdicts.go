@@ -208,9 +208,10 @@ type AgentStat struct {
 const Unknown = "(unknown)"
 
 // ByAuthor tallies recs per author agent, most verdicts first.
+// A reviewer session's repeated verdicts on one PR count once: the latest.
 func ByAuthor(recs []Record) []AgentStat {
 	m := map[string]*AgentStat{}
-	for _, r := range recs {
+	for _, r := range dedupe(recs) {
 		a := r.AuthAgent
 		if a == "" {
 			a = Unknown
@@ -236,5 +237,32 @@ func ByAuthor(recs []Record) []AgentStat {
 		}
 		return out[i].Agent < out[j].Agent
 	})
+	return out
+}
+
+// dedupe keeps the latest record per (PR, reviewer session). Records
+// without a reviewer session ID cannot be matched and are all kept.
+func dedupe(recs []Record) []Record {
+	type key struct {
+		pr   int
+		sess string
+	}
+	latest := map[key]int{}
+	for i, r := range recs {
+		if r.RevSess == "" {
+			continue
+		}
+		k := key{r.PR, r.RevSess}
+		if j, ok := latest[k]; !ok || !r.TS.Before(recs[j].TS) {
+			latest[k] = i
+		}
+	}
+	out := make([]Record, 0, len(recs))
+	for i, r := range recs {
+		if r.RevSess != "" && latest[key{r.PR, r.RevSess}] != i {
+			continue
+		}
+		out = append(out, r)
+	}
 	return out
 }

@@ -61,6 +61,35 @@ func TestRecordVerdict(t *testing.T) {
 			}
 		}
 	})
+	t.Run("recorded review target wins", func(t *testing.T) {
+		got = nil
+		allWindowRecords = func() map[string]windowstate.WindowState {
+			return map[string]windowstate.WindowState{
+				"@2": {Mode: "review-pr", Review: &windowstate.ReviewTarget{PR: 7, Branch: "feat/x", Repo: "acme/widgets",
+					AuthorWindow: "@8", AuthorAgent: "go-engineer", AuthorSession: "s8"}},
+				"@3": {AgentName: "other", PRNumber: 7},
+			}
+		}
+		recordVerdict(msg("REVIEW PR #7 — VERDICT: MERGE"), "@2", "rs", "code-reviewer")
+		r := got[0]
+		if r.Author != "@8" || r.AuthAgent != "go-engineer" || r.AuthSess != "s8" || r.Branch != "feat/x" || r.Repo != "acme/widgets" {
+			t.Fatalf("record = %+v", r)
+		}
+	})
+	t.Run("recorded target without author falls back", func(t *testing.T) {
+		got = nil
+		allWindowRecords = func() map[string]windowstate.WindowState {
+			return map[string]windowstate.WindowState{
+				"@2": {Review: &windowstate.ReviewTarget{PR: 7, Branch: "feat/x", Repo: "acme/widgets"}},
+				"@3": {AgentName: "other", PRNumber: 7},
+			}
+		}
+		recordVerdict(msg("REVIEW PR #7 — VERDICT: MERGE"), "@2", "rs", "code-reviewer")
+		r := got[0]
+		if r.Author != "@3" || r.Branch != "feat/x" || r.Repo != "acme/widgets" {
+			t.Fatalf("record = %+v", r)
+		}
+	})
 	t.Run("other messages ignored", func(t *testing.T) {
 		got = nil
 		recordVerdict(msg("hello"), "@2", "s", "a")
