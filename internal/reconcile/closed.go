@@ -42,8 +42,11 @@ func closedRecord(c Claimed, d Deps, instance, base string) closedlog.Record {
 		pr, prURL = ws.LogPR.PRNumber, ws.LogPR.PRURL
 	}
 	reason := closedlog.ReasonClosed
-	if ws.ClosedBy != "" {
+	switch {
+	case ws.ClosedBy != "":
 		reason = closedlog.ReasonCascade
+	case ws.Mode == "improve":
+		reason = closedlog.ReasonImprove
 	}
 	return closedlog.Record{
 		WindowID:         c.WindowID,

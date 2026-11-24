@@ -197,11 +197,15 @@ func pricedRow(s sessions.Session, sum *sessions.Summary, backends map[string]co
 
 func pricedRowFor(s sessions.Session, sum *sessions.Summary, backends map[string]config.BackendConfig, title, account string) costRow {
 	billing := sessions.BillingFor(s, sum.ModelName, backends)
+	agentLabel := s.Agent
+	if sessions.IsImproveSession(s.LogFile) {
+		agentLabel = sessions.ImproveCostPrefix + s.Agent
+	}
 	return costRow{
 		Start:     s.StartTime,
 		SessionID: s.ID,
 		Project:   sessions.NormalizeProjectName(s.Project),
-		Agent:     s.Agent,
+		Agent:     agentLabel,
 		Model:     cliAbbreviateModel(sum.ModelName),
 		Turns:     sum.TurnCount,
 		Title:     title,

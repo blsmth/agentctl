@@ -323,18 +323,18 @@ func cmdLogsMenu() {
 	cmd.RunLogs(result.Agent)
 }
 
-// cmdImprove launches an improvement session for the current window's agent.
-func cmdImprove() {
-	agentName := resolveCurrentAgent()
-	if agentName == "" {
-		tmux.DisplayMessage("Switch to an agent window first")
-		return
+// cmdImprove launches an improvement session (or prints the dry run). With no
+// agent named, it improves the current window's agent. It is not started from
+// the popup or hub, so the window opens unfocused unless --focus asks.
+func cmdImprove(opts improve.Options) error {
+	if opts.Agent == "" && !opts.Fleet {
+		opts.Agent = tmux.BaseAgentName(resolveCurrentAgent())
+		if opts.Agent == "" {
+			return fmt.Errorf("no agent given and the current window is not an agent window")
+		}
 	}
-	agentName = tmux.BaseAgentName(agentName)
-
-	if err := improve.LaunchSession(agentName, "", callerDir("")); err != nil {
-		tmux.DisplayMessage(fmt.Sprintf("Error: %v", err))
-	}
+	opts.CallerDir = callerDir("")
+	return improve.Run(opts)
 }
 
 // callerDir is the directory of the window an improve request came from: the
@@ -383,7 +383,7 @@ func cmdImproveMenu(windowID string) {
 	}
 
 	result := finalModel.(tui.ImproveModel).Result()
-	logging.Log("improve-menu: result cancelled=%v mode=%q theme=%q", result.Cancelled, result.Mode, result.Theme)
+	logging.Log("improve-menu: result cancelled=%v theme=%q", result.Cancelled, result.Theme)
 	if result.Cancelled {
 		return
 	}

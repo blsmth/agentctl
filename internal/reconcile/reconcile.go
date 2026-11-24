@@ -108,8 +108,10 @@ func identity(ws windowstate.WindowState) (instance, base string) {
 // untracked reports shell and improvement windows, which are cleaned up but
 // never fire handlers.
 func untracked(instance string) bool {
-	return instance == "shell" || strings.HasPrefix(instance, "improve~")
+	return instance == "shell" || isImprove(instance)
 }
+
+func isImprove(instance string) bool { return strings.HasPrefix(instance, "improve~") }
 
 func parseStatus(s string) state.AgentStatus {
 	switch s {
@@ -134,7 +136,8 @@ func Finish(c Claimed, d Deps) {
 	// The metrics serve reads Gone from the event log; the in-process monitor
 	// tracker is gone. No-op unless metrics are enabled.
 	events.RecordGone(d.RuntimeDir, c.WindowID, c.Record)
-	if base != "" && !untracked(instance) {
+	// Improve windows are ledgered (reason "improve"); only shell is not.
+	if base != "" && instance != "shell" {
 		recordClosed(c, d, instance, base)
 	}
 	// Before the handlers: handlers can be slow, and the children

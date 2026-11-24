@@ -3,9 +3,11 @@ package improve
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/claudehome"
@@ -17,6 +19,7 @@ import (
 	"github.com/blsmth/agentctl/internal/launchwatch"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/shellquote"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -156,7 +159,7 @@ func buildImprovePrompt(agentPath, agentName, harnessName, configContext, theme,
 			"may also read that state; there is no plugin system. This improvement session was started manually "+
 			"(`agentctl improve`, prefix+i or the hub); nothing triggers it automatically.\n\n"+
 			"%s"+
-			"RECENT SESSIONS:\n%s\n"+
+			"%s\n"+
 			"INSTRUCTIONS:\n"+
 			"1. Read your agent file\n"+
 			"2. Make targeted improvements related to the focus area above\n"+
@@ -173,7 +176,7 @@ func buildFocusBlock(theme string) string {
 	if theme != "" {
 		return fmt.Sprintf(
 			"IMPROVEMENT FOCUS: %s\n"+
-				"Focus specifically on this area. Review recent sessions for examples "+
+				"Focus specifically on this area. Review the evidence for examples "+
 				"related to this theme and update the agent definition to address it.\n\n",
 			theme,
 		)
@@ -185,14 +188,62 @@ func buildFocusBlock(theme string) string {
 		"- Knowledge gaps that came up during sessions\n\n"
 }
 
-// LaunchSession launches an improvement session for the named agent and sends
-// the prompt straight away. theme sets an optional improvement focus area.
-// callerDir is the directory of the window the request came from; it is the
-// working directory unless the agent has its own configured dir.
-func LaunchSession(agentName string, theme string, callerDir string) error {
-	logging.Log("launchImprovement: start agent=%q theme=%q callerDir=%q", agentName, theme, callerDir)
+// DefaultFleetAgent runs a fleet review when no agent is named.
+const DefaultFleetAgent = "brandon"
 
-	done := logging.Timing("launchImprovement: agent.DiscoverAll")
+// DefaultSince is the evidence window when none is given.
+const DefaultSince = 7 * 24 * time.Hour
+
+// Options configures one improve run.
+type Options struct {
+	// Agent is the agent whose definition is improved (single mode) or that
+	// runs the review (fleet mode; DefaultFleetAgent when empty).
+	Agent string
+	Fleet bool
+	// SessionIDs (full IDs or prefixes) restrict the evidence to those sessions.
+	SessionIDs []string
+	// Since is the evidence window (DefaultSince when zero).
+	Since time.Duration
+	Theme string
+	// Template names a prompt template whose body is added to the prompt; its
+	// model fills Model when that is unset.
+	Template string
+	// Model overrides the agent's frontmatter and configured model.
+	Model   string
+	Backend string
+	Account string
+	// DryRun prints the evidence and prompt to Out and launches nothing.
+	DryRun bool
+	// Focus selects the new window. Only a human at the popup or hub wants it.
+	Focus bool
+	// CallerDir is the directory of the window the request came from.
+	CallerDir string
+	// Out receives the dry-run output (os.Stdout when nil).
+	Out io.Writer
+}
+
+// LaunchSession launches a focused improvement session for the named agent
+// from the popup or hub, where a human is waiting for the window. theme sets
+// an optional improvement focus area. callerDir is the directory of the window
+// the request came from; it is the working directory unless the agent has its
+// own configured dir.
+func LaunchSession(agentName string, theme string, callerDir string) error {
+	return Run(Options{Agent: agentName, Theme: theme, CallerDir: callerDir, Focus: true})
+}
+
+// Run builds the evidence and prompt and launches the improvement session (or
+// prints them for DryRun).
+func Run(opts Options) error {
+	agentName := opts.Agent
+	if agentName == "" && opts.Fleet {
+		agentName = DefaultFleetAgent
+	}
+	logging.Log("improve: start agent=%q fleet=%v theme=%q callerDir=%q focus=%v dry=%v", agentName, opts.Fleet, opts.Theme, opts.CallerDir, opts.Focus, opts.DryRun)
+	if agentName == "" {
+		return fmt.Errorf("no agent given")
+	}
+
+	done := logging.Timing("improve: agent.DiscoverAll")
 	cfg := config.Load()
 	agents, err := agent.DiscoverFromCwd(cfg)
 	done()
@@ -208,54 +259,43 @@ func LaunchSession(agentName string, theme string, callerDir string) error {
 		}
 	}
 	if target == nil {
-		logging.Log("launchImprovement: agent %q not found in discover results", agentName)
+		logging.Log("improve: agent %q not found in discover results", agentName)
 		return fmt.Errorf("unknown agent: %s", agentName)
 	}
 
 	ac := cfg.ForAgent(agentName)
-	workDir, err := resolveWorkDir(target.Dir, ac.Dir, callerDir, paths.ProjectDir())
+	workDir, err := resolveWorkDir(target.Dir, ac.Dir, opts.CallerDir, paths.ProjectDir())
 	if err != nil {
 		return err
 	}
-	logging.Log("launchImprovement: workDir=%q filePath=%q", workDir, target.FilePath)
+	logging.Log("improve: workDir=%q filePath=%q", workDir, target.FilePath)
 
-	// Build the configuration context block.
-	configContext := buildConfigContext(agentName, ac, workDir)
-
-	// Build context from recent sessions
-	done = logging.Timing("launchImprovement: FindSessionsForAgent")
-	recentSessions, _ := sessions.FindWorkSessionsForAgent(agentName, 3)
-	done()
-	logging.Log("launchImprovement: found %d recent sessions", len(recentSessions))
-	logging.Debug("improve: building context from %d sessions", len(recentSessions))
-
-	var sessionContext strings.Builder
-	for _, s := range recentSessions {
-		sum, err := sessions.ParseSummary(s)
+	var tmplBody string
+	if opts.Template != "" {
+		t, err := prompttemplate.Load(opts.Template, workDir)
 		if err != nil {
-			continue
+			return fmt.Errorf("loading template %q: %w", opts.Template, err)
 		}
-
-		sessionContext.WriteString(fmt.Sprintf("\nSession %s (%s):\n", s.ID[:8], s.Duration()))
-
-		if len(sum.UserMsgs) > 0 {
-			sessionContext.WriteString("  User asked: " + sum.UserMsgs[0] + "\n")
-		}
-		if len(sum.FilesEdited) > 0 {
-			sessionContext.WriteString("  Files edited: " + strings.Join(sum.FilesEdited, ", ") + "\n")
-		}
-		if len(sum.ToolCalls) > 0 {
-			tools := make(map[string]int)
-			for _, tc := range sum.ToolCalls {
-				tools[tc.Name]++
-			}
-			var toolSummary []string
-			for name, count := range tools {
-				toolSummary = append(toolSummary, fmt.Sprintf("%s(%d)", name, count))
-			}
-			sessionContext.WriteString("  Tools: " + strings.Join(toolSummary, ", ") + "\n")
+		tmplBody = t.Prompt
+		if opts.Model == "" {
+			opts.Model = t.Model
 		}
 	}
+	if opts.Model != "" {
+		// An explicit model beats the agent's frontmatter: the launch passes
+		// it as `--model`, which Claude Code applies over `--agent`.
+		ac.Model = opts.Model
+	}
+
+	since := opts.Since
+	if since <= 0 {
+		since = DefaultSince
+	}
+	pack, err := Evidence(opts.Agent, opts.Fleet, since, opts.SessionIDs)
+	if err != nil {
+		return err
+	}
+	evidence := pack.Render(0)
 
 	// Same harness as the agent itself.
 	h, err := dispatch.ResolveHarness(cfg, agentName, "", workDir)
@@ -264,33 +304,49 @@ func LaunchSession(agentName string, theme string, callerDir string) error {
 	}
 	caps := h.Caps()
 
-	prompt := buildImprovePrompt(target.FilePath, agentName, h.Name(), configContext, theme, sessionContext.String())
+	var prompt string
+	if opts.Fleet {
+		prompt = buildFleetPrompt(agents, agentName, opts.Theme, evidence)
+	} else {
+		prompt = buildImprovePrompt(target.FilePath, agentName, h.Name(), buildConfigContext(agentName, ac, workDir), opts.Theme, evidence)
+	}
+	if tmplBody != "" {
+		prompt += "\n\nTEMPLATE INSTRUCTIONS (" + opts.Template + "):\n" + strings.TrimRight(tmplBody, "\n")
+	}
+
+	if opts.DryRun {
+		out := opts.Out
+		if out == nil {
+			out = os.Stdout
+		}
+		_, err := fmt.Fprintf(out, "%s\n\n--- PROMPT ---\n%s\n", evidence, prompt)
+		return err
+	}
 
 	// Write prompt to a temp file to avoid shell escaping nightmares.
 	promptFile, err := writePromptFile(agentName, prompt)
 	if err != nil {
 		return fmt.Errorf("writing prompt file: %w", err)
 	}
-	logging.Log("launchImprovement: prompt written to %s (%d bytes)", promptFile, len(prompt))
-	logging.Debug("improve: wrote prompt %s (%d bytes)", promptFile, len(prompt))
+	logging.Log("improve: prompt written to %s (%d bytes)", promptFile, len(prompt))
 
 	sessionID := ids.NewUUID()
 
-	// Same backend as the agent itself: a local-model agent's improvement
-	// session must not quietly run on Anthropic (or vice versa).
+	// Same backend as the agent itself unless overridden: a local-model
+	// agent's improvement session must not quietly run on Anthropic.
 	extraEnv := dispatch.AgentEnvOverrides(ac)
-	// Same account resolution as a launch of the agent itself (agent
+	// Same account resolution as a launch of the agent itself (flag, agent
 	// setting, rules on the repo, default); never another account on error.
 	acctDir := ""
 	if caps.Accounts {
-		acct, err := claudehome.ForLaunch(cfg, "", agentName, workDir, "")
+		acct, err := claudehome.ForLaunch(cfg, opts.Account, agentName, workDir, "")
 		if err != nil {
 			return fmt.Errorf("resolving account: %w", err)
 		}
 		dispatch.ApplyAccountEnv(extraEnv, acct)
 		acctDir = acct.Dir
 	}
-	hb, err := dispatch.PrepareBackendFor(cfg, h, &ac, "", "", workDir, extraEnv)
+	hb, err := dispatch.PrepareBackendFor(cfg, h, &ac, opts.Backend, opts.Model, workDir, extraEnv)
 	if err != nil {
 		return err
 	}
@@ -320,23 +376,48 @@ func LaunchSession(agentName string, theme string, callerDir string) error {
 
 	// Ensure shell-prefix.sh is on disk so audit logging works from the first command.
 	if err := hooks.EnsureShellPrefixScript(); err != nil {
-		logging.Log("launchImprovement: EnsureShellPrefixScript: %v", err)
+		logging.Log("improve: EnsureShellPrefixScript: %v", err)
 		// Non-fatal — continue launch without shell-prefix if the write failed.
 	}
 
 	extraEnv["AGENTCTL_MODE"] = "improve"
+	// Record who asked, so the window shows as a child row and closes with it.
+	dispatch.ApplySpawnedBy(extraEnv)
 	dispatch.ApplyHarnessEnv(extraEnv, h, "", prep)
 
 	windowName := "improve~" + agentName
-	logging.Log("launchImprovement: launching window %q cmd=%q session=%s", windowName, shellCmd, sessionID)
-	wid, launchErr := tmux.LaunchAgent(windowName, workDir, shellCmd, logPath, agentName, sessionID, extraEnv, true)
+	logging.Log("improve: launching window %q focus=%v session=%s", windowName, opts.Focus, sessionID)
+	wid, launchErr := tmux.LaunchAgent(windowName, workDir, shellCmd, logPath, agentName, sessionID, extraEnv, opts.Focus)
 	if launchErr != nil {
-		logging.Log("launchImprovement: LaunchAgent error: %v", launchErr)
+		logging.Log("improve: LaunchAgent error: %v", launchErr)
 	} else {
-		logging.Log("launchImprovement: success")
+		logging.Log("improve: success")
 		launchwatch.Start(wid, caps)
 	}
 	return launchErr
+}
+
+// buildFleetPrompt composes the prompt of a fleet-wide review: the evidence of
+// every agent and the list of definitions the session may change.
+func buildFleetPrompt(agents []agent.Agent, runner, theme, evidence string) string {
+	var list strings.Builder
+	for _, a := range agents {
+		fmt.Fprintf(&list, "  - %s: %s\n", a.Name, a.FilePath)
+	}
+	return fmt.Sprintf(
+		sessions.FleetImprovePromptHeader+" Be better than you were yesterday.\n\n"+
+			"AGENT DEFINITIONS:\n%s\n"+
+			"This review was started manually (`agentctl improve --fleet`); nothing triggers it automatically. "+
+			"You run as the %s agent.\n\n"+
+			"%s"+
+			"%s\n"+
+			"INSTRUCTIONS:\n"+
+			"1. Read the evidence above and find problems that recur (two or more sessions) or that are a security issue\n"+
+			"2. Read the definitions of the agents involved before changing them\n"+
+			"3. Make targeted, high-value edits; don't rewrite whole files\n"+
+			"4. Report what you changed and what you chose to leave alone",
+		list.String(), runner, buildFocusBlock(theme), evidence,
+	)
 }
 
 // buildImproveShellCmd returns the shell command line for an improvement

@@ -13,8 +13,8 @@ func TestShellRows(t *testing.T) {
 	e := registry.Entry{SessionName: "agentctl-p", ProjectDir: dir, RuntimeDir: dir + "/.agentctl"}
 
 	g := loadGroup(e, true)
-	if len(g.Rows) != 2 {
-		t.Fatalf("rows = %d, want agent + shell", len(g.Rows))
+	if len(g.Rows) != 3 {
+		t.Fatalf("rows = %d, want agent + shell + improve window", len(g.Rows))
 	}
 	if g.Rows[0].Shell || !g.Rows[1].Shell || g.Rows[1].WindowID != "@2" || g.Rows[1].WindowIndex != 1 {
 		t.Fatalf("unexpected rows: %+v", g.Rows)
@@ -24,12 +24,12 @@ func TestShellRows(t *testing.T) {
 	}
 
 	// Default loads (status, fleet watch, ...) never see shells.
-	if g := LoadGroup(e); len(g.Rows) != 1 || g.Rows[0].Shell {
-		t.Fatalf("LoadGroup rows = %+v, want only the agent", g.Rows)
+	if g := LoadGroup(e); len(g.Rows) != 2 || g.Rows[0].Shell {
+		t.Fatalf("LoadGroup rows = %+v, want agent + improve window, no shell", g.Rows)
 	}
 	agents, err := LoadAgents(e.SessionName, e.RuntimeDir)
-	if err != nil || len(agents) != 1 {
-		t.Fatalf("LoadAgents = %v, %v; want only the agent", agents, err)
+	if err != nil || len(agents) != 2 {
+		t.Fatalf("LoadAgents = %v, %v; want agent + improve window", agents, err)
 	}
 }
 

@@ -39,7 +39,7 @@ func TestFinishRecordsTrackedWindowsOnly(t *testing.T) {
 	}{
 		{"tracked", windowstate.WindowState{State: "idle", Instance: "go-engineer-2", AgentName: "go-engineer"}, true},
 		{"shell", windowstate.WindowState{State: "idle", Instance: "shell"}, false},
-		{"improve", windowstate.WindowState{State: "idle", Instance: "improve~go-engineer"}, false},
+		{"improve", windowstate.WindowState{State: "idle", Instance: "improve~go-engineer", AgentName: "go-engineer", Mode: "improve"}, true},
 		{"unidentifiable", windowstate.WindowState{State: "idle"}, false},
 	}
 	for _, tt := range tests {
@@ -169,5 +169,17 @@ func TestCascadeFailedKillClearsMark(t *testing.T) {
 	}
 	if ws.ClosedBy != "" {
 		t.Errorf("ClosedBy = %q after a failed kill, want cleared", ws.ClosedBy)
+	}
+}
+
+func TestClosedRecordImproveReason(t *testing.T) {
+	d := newEnv(t).deps()
+	ws := windowstate.WindowState{Instance: "improve~go-engineer", AgentName: "go-engineer", Mode: "improve"}
+	if got := closedRecord(Claimed{WindowID: "@7", Record: ws}, d, "improve~go-engineer", "go-engineer").Reason; got != closedlog.ReasonImprove {
+		t.Errorf("reason = %q, want %q", got, closedlog.ReasonImprove)
+	}
+	ws.ClosedBy = "@1"
+	if got := closedRecord(Claimed{WindowID: "@7", Record: ws}, d, "improve~go-engineer", "go-engineer").Reason; got != closedlog.ReasonCascade {
+		t.Errorf("cascade reason = %q, want %q", got, closedlog.ReasonCascade)
 	}
 }

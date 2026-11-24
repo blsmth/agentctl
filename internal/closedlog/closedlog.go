@@ -45,6 +45,8 @@ const (
 	// ReasonCascade is a child closed because its dispatcher closed
 	// (close_children).
 	ReasonCascade = "cascade"
+	// ReasonImprove is an `agentctl improve` window closed on its own.
+	ReasonImprove = "improve"
 )
 
 // Seams; tests replace them. Resolved per call, never at package init.
@@ -93,7 +95,7 @@ type Record struct {
 	// SpawnedBySession is the dispatcher's session UUID.
 	SpawnedBySession string `json:"spawned_by_session,omitempty"`
 	ScheduledBy      string `json:"scheduled_by,omitempty"`
-	// Reason is ReasonClosed or ReasonCascade; ClosedBy is the dispatcher
+	// Reason is ReasonClosed, ReasonCascade or ReasonImprove; ClosedBy is the dispatcher
 	// window whose close cascaded to this one.
 	Reason   string `json:"reason,omitempty"`
 	ClosedBy string `json:"closed_by,omitempty"`

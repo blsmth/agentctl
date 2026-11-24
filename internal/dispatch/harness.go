@@ -302,3 +302,8 @@ func BaseInvocation(agentName, sessionName string, ac config.AgentConfig, prep h
 // LaunchDir is the private directory harness files (the pi bridge
 // extension) are written to; "" when it cannot be created.
 func LaunchDir() string { return launchDirFn() }
+
+// ApplySpawnedBy records the calling window and session as the launched
+// window's dispatcher (AGENTCTL_SPAWNED_BY and AGENTCTL_SPAWNED_BY_SESSION),
+// for launch paths outside this package.
+func ApplySpawnedBy(extraEnv map[string]string) { applySpawnedByEnv(extraEnv) }

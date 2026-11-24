@@ -335,8 +335,8 @@ func TestChromeBarRebuildWithoutStateJSON(t *testing.T) {
 	for _, tb := range m.tabs {
 		names = append(names, tb.Name)
 	}
-	if got, want := strings.Join(names, ","), "shell,go-engineer,python-eng,finished"; got != want {
-		t.Fatalf("tabs = %s, want %s (shell first, tmux order, no ghost, no improve~)", got, want)
+	if got, want := strings.Join(names, ","), "shell,go-engineer,python-eng,finished,improve~go-engineer"; got != want {
+		t.Fatalf("tabs = %s, want %s (shell first, tmux order, no ghost, improve~ listed)", got, want)
 	}
 	if tb, _ := tabByID(m.tabs, "@5"); tb.State != "idle" {
 		t.Errorf("shell state = %q", tb.State)

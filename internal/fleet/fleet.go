@@ -285,14 +285,12 @@ func TagAgents(session, project string, agents []state.AgentState) []Row {
 	return SortRows(rows)
 }
 
-// IsNonAgentWindow reports whether a window name is one the monitor never
-// tracks as an agent ("shell", "improve~*"), for commands
-// (e.g. `agentctl sweep`) that must never touch these windows.
+// IsNonAgentWindow reports whether a window name is the persistent "shell"
+// window, which is never an agent and which commands (e.g. `agentctl sweep`)
+// must never touch. Improve windows ("improve~*") are agents: they show in the
+// hub and sweep may close an idle one (see cleanup.ClassifyWindow).
 func IsNonAgentWindow(name string) bool {
-	if name == "shell" {
-		return true
-	}
-	return len(name) >= len("improve~") && name[:len("improve~")] == "improve~"
+	return name == "shell"
 }
 
 // SortRows orders rows within a group by WindowIndex (tmux's window order)
