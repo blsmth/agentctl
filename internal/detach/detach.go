@@ -135,10 +135,12 @@ func StartDaemon(args []string, runtimeDir string) error {
 }
 
 // DaemonEnv returns env with the spawning window's account removed
-// (StripAccountEnv) and, when runtimeDir is not empty, AGENTCTL_RUNTIME_DIR
-// set to it.
+// (StripAccountEnv), the spawning session's AGENTCTL_SESSION_ID removed (it
+// would send the daemon's log lines to that session's own, later pruned log
+// instead of the shared agentctl.log) and, when runtimeDir is not empty,
+// AGENTCTL_RUNTIME_DIR set to it.
 func DaemonEnv(env []string, runtimeDir string) []string {
-	env = StripAccountEnv(env)
+	env = removeVars(StripAccountEnv(env), EnvSessionID)
 	if runtimeDir == "" {
 		return env
 	}
@@ -147,6 +149,11 @@ func DaemonEnv(env []string, runtimeDir string) []string {
 }
 
 const envRuntimeDir = "AGENTCTL_RUNTIME_DIR"
+
+// EnvSessionID is the per-session logging switch (logging.LogPath). Spelled
+// out here because detach cannot import it without a cycle risk; a test pins
+// the name to logging's behavior.
+const EnvSessionID = "AGENTCTL_SESSION_ID"
 
 // The per-window Claude account variables (claudehome.EnvConfigDir,
 // claudehome.EnvAccount, and the subprocess env scrub switch set by the
