@@ -373,6 +373,8 @@ func hubStatusGlyphStyle(glyph string) lipgloss.Style {
 		return fleetWorkingStyle
 	case "✓":
 		return fleetDoneStyle
+	case fleet.WaitingGlyph:
+		return fleetWaitingStyle()
 	case fleet.AttentionGlyph:
 		return fleetAttentionStyle
 	case "○":

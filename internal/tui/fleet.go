@@ -1142,6 +1142,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loadErr = msg.err
 		if msg.err == nil {
 			m.groups = msg.groups
+			fleet.TagWaiting(m.groups)
 			m.display = msg.display
 			m.searchReset()
 			m.applyTitleHolds()
@@ -2758,7 +2759,9 @@ func fleetProjectBar(project string) string {
 
 // rowGlyph returns the glyph and style for a single agent row, matching the
 // window-rename convention in internal/winname: ● working,
-// ⏸ blocked, ! needs attention, ✓ done (unseen), bare/○ otherwise.
+// ⏸ blocked, ! needs attention, ✓ done (unseen), bare/○ otherwise. The hub
+// adds ◐ for an idle row waiting on busy child windows (fleet.TagWaiting).
+// Precedence: ⏸ > ● > ! > ◐ > ✓ > ○.
 func rowGlyph(r fleet.Row) (string, lipgloss.Style) {
 	if r.Shell {
 		return "$", fleetDimStyle
@@ -2772,6 +2775,10 @@ func rowGlyph(r fleet.Row) (string, lipgloss.Style) {
 	if fleet.NeedsAttention(r.AgentState) {
 		// Display only, like TurnDone: not Done, so sweep is unchanged.
 		return fleet.AttentionGlyph, fleetAttentionStyle
+	}
+	if len(r.WaitingOn) > 0 {
+		// Display only, like TurnDone: not Done, counts and sweep unchanged.
+		return fleet.WaitingGlyph, fleetWaitingStyle()
 	}
 	switch rowWeight(r) {
 	case fleetWeightDone:
@@ -3911,7 +3918,24 @@ func detailPartsFor(r fleet.Row, viewed bool) rowDetailParts {
 		}
 		p.Marker = fleetAttentionMarker
 	}
+	if line := fleet.WaitingLine(r); line != "" && r.State != "working" && r.State != "blocked" &&
+		!fleet.NeedsAttention(r.AgentState) {
+		if p.Recap == "" {
+			p.Recap, p.RecapIsActivity = line, true
+		} else if p.RecapIsActivity {
+			p.Recap = line
+		} else {
+			p.Activity = line
+		}
+		p.Marker = fleet.WaitingGlyph + " "
+	}
 	return p
+}
+
+// fleetWaitingStyle styles ◐: a muted take on the working accent.
+func fleetWaitingStyle() lipgloss.Style {
+	t := theme.Current()
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(midColor(t.Base, t.Accent)))
 }
 
 // fleetAttentionMarker leads a row's attention detail line.
