@@ -44,6 +44,12 @@ type PRAuthor struct {
 	Name     string // session name, set only when known to be accurate
 	Account  string // configured Claude account the window runs under
 
+	// Agent, SessionID and RuntimeDir identify the author for the verdict
+	// ledger; recorded on the reviewer's windowstate, not shown to it.
+	Agent      string
+	SessionID  string
+	RuntimeDir string // the author session's .agentctl dir
+
 	// crossAccount is set by Launch when the author runs under a different
 	// Claude account than the reviewer: accounts do not message each other.
 	crossAccount bool

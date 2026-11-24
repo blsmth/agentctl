@@ -88,3 +88,26 @@ func TestLoadSkipsCorruptAndMissing(t *testing.T) {
 		t.Fatalf("got %+v", recs)
 	}
 }
+
+func TestByAuthorDedupesReviewerSession(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	recs := []Record{
+		{TS: t0.Add(time.Hour), PR: 1, Verdict: Merge, RevSess: "a", AuthAgent: "x"},
+		{TS: t0, PR: 1, Verdict: Blocked, RevSess: "a", AuthAgent: "x"}, // older, dropped
+		{TS: t0, PR: 2, Verdict: Blocked, RevSess: "a", AuthAgent: "x"}, // other PR
+		{TS: t0, PR: 1, Verdict: Blocked, RevSess: "b", AuthAgent: "x"}, // other session
+		{TS: t0, PR: 3, Verdict: Blocked},                               // no session: kept
+		{TS: t0, PR: 3, Verdict: Blocked},
+	}
+	stats := ByAuthor(recs)
+	got := map[string]AgentStat{}
+	for _, s := range stats {
+		got[s.Agent] = s
+	}
+	if s := got["x"]; s.Total != 3 || s.Blocked != 2 {
+		t.Fatalf("x = %+v", s)
+	}
+	if s := got[Unknown]; s.Total != 2 {
+		t.Fatalf("unknown = %+v", s)
+	}
+}

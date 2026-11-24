@@ -459,6 +459,13 @@ func Launch(req Request) (Result, error) {
 				ws.Prompt = windowstate.CapPrompt(PromptFor(req))
 			}
 			ws.Mode = string(req.Mode)
+			if pr := req.ReviewPR; pr != nil {
+				ws.Review = &windowstate.ReviewTarget{
+					PR: pr.Number, Branch: pr.HeadRef, Repo: req.RepoSlug,
+					AuthorWindow: pr.Author.WindowID, AuthorAgent: pr.Author.Agent,
+					AuthorSession: pr.Author.SessionID, AuthorRuntime: pr.Author.RuntimeDir,
+				}
+			}
 			if req.Template != "" {
 				ws.Template = req.Template
 			}

@@ -483,6 +483,7 @@ func runCmdDispatchPreview(argsFile, resultFile string) {
 		tui.WithKind(string(args.Kind)),
 		tui.WithAccount(args.Account),
 		tui.WithProject(args.Project),
+		tui.WithDetails(args.Details),
 		tui.WithReviewPR(args.ReviewPR),
 		tui.WithCron(tui.CronPreview{Action: args.CronAction, Job: args.CronJob, Schedule: args.CronSchedule}),
 		tui.WithTemplate(tui.TemplatePreview{Action: args.TemplateAction, Name: cmp.Or(args.TemplateName, args.Template), Path: args.TemplatePath}),
@@ -630,6 +631,9 @@ func wireCompletion() {
 		return detach.StartSelf([]string{"dispatch-complete", windowID}, nil)
 	}
 	hooks.SetSpawnCompleteFn(spawn)
+	hooks.SetSpawnImproveFinishFn(func(runID string) error {
+		return detach.StartSelf([]string{"improve-finish", runID}, nil)
+	})
 	signal.SetSpawnCompleteFn(spawn)
 	signal.SetAutonomousModeFn(dispatch.IsAutonomous)
 	hooks.SetDetachUserHooks(func(event string, env []string) error {

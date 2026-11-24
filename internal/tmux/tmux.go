@@ -499,6 +499,7 @@ var launchIdentityEnv = []string{
 	"AGENTCTL_TICKET",
 	"AGENTCTL_TICKET_TITLE",
 	"AGENTCTL_MODE",
+	"AGENTCTL_IMPROVE_RUN",
 	"AGENTCTL_REPO",
 	"AGENTCTL_SPAWNED_BY",
 	"AGENTCTL_SPAWNED_BY_SESSION",
@@ -725,6 +726,7 @@ func applyLaunchBootstrap(ws *windowstate.WindowState, windowName, agentName, lo
 	ws.Ticket = extraEnv["AGENTCTL_TICKET"]
 	ws.TicketTitle = extraEnv["AGENTCTL_TICKET_TITLE"]
 	ws.Mode = extraEnv["AGENTCTL_MODE"]
+	ws.ImproveRun = extraEnv["AGENTCTL_IMPROVE_RUN"]
 	ws.Backend = extraEnv["AGENTCTL_BACKEND"]
 	ws.Account = extraEnv[claudehome.EnvAccount]
 	ws.Harness = extraEnv[harness.EnvHarness]

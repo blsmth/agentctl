@@ -15,6 +15,7 @@ env:
   AGENTCTL_AGENT_NAME=golden
   AGENTCTL_BIN=<BIN>
   AGENTCTL_CLAUDE_NAME=golden-improve-002
+  AGENTCTL_IMPROVE_RUN=testrun
   AGENTCTL_INSTANCE=launchtest
   AGENTCTL_INSTANCE_NAME=improve~golden
   AGENTCTL_MODE=improve

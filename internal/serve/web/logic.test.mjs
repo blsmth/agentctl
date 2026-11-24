@@ -27,6 +27,7 @@ import {
   ARTIFACT_COLLAPSE_KEY, ARTIFACT_OTHER, UNDO_MS, artifactGroupKey, artifactGroupMove, artifactRevBadge, artifactSubline, buildArtifactOrderRequest,
   createDeleteQueue, dropSettled, SETTLED_TTL_MS, loadCollapsedSet, mergeArtifactOrder, saveCollapsedSet,
   ARTIFACT_FEEDBACK_MAX, artifactCommentStatus, artifactCommentToast, artifactFeedbackFrom,
+  isTrustBlocked, isTrustDialog, trustDialogOf, trustExitConfirm, trustFolder, TRUST_EXPLAIN, TRUST_TITLE,
 } from "./logic.js";
 
 // Slash commands (phone "Run command").
@@ -1252,3 +1253,41 @@ assert.equal(rowHeadline({ agent: "go-engineer:2", label: "go-engineer · starte
 assert.equal(agentChip({ agent: "go-engineer:2", label: "go-engineer · started 09:05" }), "");
 assert.ok(rowChips({ agent: "a:1", handle: "a3f9" }).some((c) => c.kind === "handle-chip" && c.text === "a3f9"));
 console.log("ok: handles");
+// Folder-trust dialog: answered with trust/exit only, never Esc or a number.
+{
+  const trust = {
+    kind: "trust", folder: "/repo/.worktrees/x", hash: "h".repeat(64),
+    options: [{ key: "exit", label: "No, exit" }, { key: "trust", label: "Yes, I trust this folder" }],
+  };
+  assert.equal(isTrustDialog(trust), true);
+  assert.equal(isTrustDialog({ hash: "x", options: [] }), false);
+  assert.deepEqual(buildAnswerRequest("s", "@1", trust, "trust").body, { key: "trust", dialog_hash: trust.hash });
+  assert.equal(buildAnswerRequest("s", "@1", trust, "exit").body.key, "exit");
+  assert.throws(() => buildAnswerRequest("s", "@1", trust, "esc"), /folder-trust/);
+  assert.throws(() => buildAnswerRequest("s", "@1", trust, "1"), /folder-trust/);
+  assert.throws(() => buildAnswerRequest("s", "@1", { ...trust, options: [trust.options[0]] }, "trust"), /folder-trust/);
+  // Trust keys are not options of an ordinary dialog.
+  assert.throws(() => buildAnswerRequest("s", "@1", { hash: "x", options: [{ key: "1", label: "Yes" }] }, "trust"), /not an option/);
+
+  assert.equal(isTrustBlocked({ state: "blocked", pending_tool: "trust" }), true);
+  assert.equal(isTrustBlocked({ state: "blocked", pending_tool: "Bash" }), false);
+  assert.equal(isTrustBlocked({ state: "idle", pending_tool: "trust" }), false);
+  assert.equal(trustFolder(trust), "/repo/.worktrees/x");
+  assert.equal(trustFolder({ pending_tool_detail: " /a/b " }), "/a/b");
+  assert.equal(trustFolder(null), "");
+
+  const pane = { verdict: "awaiting_input", dialog: trust };
+  assert.equal(trustDialogOf(pane, "/repo/.worktrees/x"), trust);
+  assert.equal(trustDialogOf(pane), trust);
+  assert.throws(() => trustDialogOf(pane, "/other"), /different folder/);
+  assert.throws(() => trustDialogOf({ verdict: "idle", dialog: null }), /no longer showing/);
+  assert.throws(() => trustDialogOf({ verdict: "awaiting_input", dialog: { hash: "x", options: [] } }), /no longer showing/);
+
+  const c = trustExitConfirm("/repo/.worktrees/x");
+  assert.equal(c.danger, true);
+  assert.equal(c.confirmLabel, "Exit session");
+  assert.match(c.lines[0], /\/repo\/\.worktrees\/x/);
+  assert.equal(TRUST_TITLE, "Trust this folder?");
+  assert.match(TRUST_EXPLAIN, /read, edit and run files here/);
+}
+console.log("ok: folder trust");

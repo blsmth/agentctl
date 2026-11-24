@@ -302,7 +302,7 @@ func TestDescendants(t *testing.T) {
 		lw("@4", child("@1", "X", "Z")),  // session mismatch
 		lw("@5", child("@3", "G", "GG")), // great-grandchild
 		lw("@6", cron),
-		lw("@2", child("@1", "P", "C")), // duplicate listing
+		lw("@2", child("@1", "P", "C")),  // duplicate listing
 		lw("@7", child("@5", "GG", "P")), // cycle back to the parent's session
 		lw("@1", child("@7", "P", "P")),  // the parent itself is never a descendant
 	}

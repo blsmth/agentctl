@@ -25,8 +25,8 @@ func TestRowRight_DoneBadgeAndAge(t *testing.T) {
 	if plain := ansi.Strip(got); plain != "#105  4h" {
 		t.Errorf("done right = %q, want %q", plain, "#105  4h")
 	}
-	if !strings.Contains(got, fleetDoneStyle.Render("#105")) {
-		t.Errorf("done badge should use the done style: %q", got)
+	if !strings.Contains(got, fleetCountStyle.Render("#105")) {
+		t.Errorf("a finished PR number should render muted: %q", got)
 	}
 	working := fleet.Row{StateSince: sidebarNow.Add(-time.Second), PRNumber: 108, AgentState: state.AgentState{State: "working"}}
 	if plain := ansi.Strip(rowRight(working, full, ex, fleetDisplay{})); plain != "#108  1s" {
@@ -90,7 +90,7 @@ func TestGroupHeaderCountsAndSession(t *testing.T) {
 	if !strings.Contains(out, "⏸ 1  ● 2  ✓ 1  ○ 1") {
 		t.Errorf("counts missing: %q", out)
 	}
-	if !strings.HasPrefix(out, "  ⏸ "+fleetUnfoldedGlyph+" proj") {
+	if !strings.HasPrefix(out, "▎ ⏸ "+fleetUnfoldedGlyph+"  proj") {
 		t.Errorf("blocked group should carry the ⏸ flag: %q", out)
 	}
 	if strings.Contains(out, "agentctl-proj") || strings.Contains(out, "agent") {
@@ -104,7 +104,7 @@ func TestGroupHeaderCountsAndSession(t *testing.T) {
 	if !strings.Contains(out, "custom") || strings.Contains(out, "⏸") || strings.Contains(out, "✓") || strings.Contains(out, "○") {
 		t.Errorf("custom session shown and zero buckets blank: %q", out)
 	}
-	if !strings.HasPrefix(out, "    "+fleetUnfoldedGlyph+" proj") {
+	if !strings.HasPrefix(out, "▎   "+fleetUnfoldedGlyph+"  proj") {
 		t.Errorf("no rollup glyph without a blocked agent: %q", out)
 	}
 }

@@ -13,13 +13,29 @@ import (
 // in projectDirs that has a .claude/agents directory (worktrees are skipped:
 // they are copies of a repo that is itself tracked). Every failure is logged,
 // never returned; a missing git is warned about once per machine.
-func SnapshotAll(reason string, projectDirs []string) {
+func SnapshotAll(reason string, projectDirs []string) bool {
 	var stores []*Store
+	ok := true
 	if s, err := HomeStore(); err != nil {
+		ok = false
 		logging.Log("agent-history: %v", err)
 	} else {
 		stores = append(stores, s)
 	}
+	if s, err := ConfigStore(); err != nil {
+		ok = false
+		logging.Log("agent-history: %v", err)
+	} else {
+		stores = append(stores, s)
+	}
+	stores = append(stores, ProjectStores(projectDirs)...)
+	return SnapshotStores(reason, stores) && ok
+}
+
+// ProjectStores returns the project stores of the dirs in projectDirs that
+// have a .claude/agents directory (worktrees skipped).
+func ProjectStores(projectDirs []string) []*Store {
+	var stores []*Store
 	seen := map[string]bool{}
 	for _, d := range projectDirs {
 		d = filepath.Clean(d)
@@ -34,18 +50,28 @@ func SnapshotAll(reason string, projectDirs []string) {
 			stores = append(stores, s)
 		}
 	}
+	return stores
+}
+
+// SnapshotStores snapshots each store, logging failures; a missing git is
+// warned about once and ends the loop. It reports whether every store
+// succeeded.
+func SnapshotStores(reason string, stores []*Store) bool {
+	ok := true
 	for _, s := range stores {
 		rev, err := s.Snapshot(reason, DefaultAuthor)
 		switch {
 		case errors.Is(err, ErrGitMissing):
 			warnGitMissing()
-			return
+			return false
 		case err != nil:
+			ok = false
 			logging.Log("agent-history: snapshot %s: %v", s.WorkTree, err)
 		case rev != "":
 			logging.Log("agent-history: %s: %s (%s)", s.WorkTree, reason, rev[:min(8, len(rev))])
 		}
 	}
+	return ok
 }
 
 // warnGitMissing logs the missing-git warning once, recorded by a marker in

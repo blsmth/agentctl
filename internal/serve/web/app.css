@@ -151,6 +151,12 @@ body.pane-expanded { overflow: hidden; }
 .answer .question { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
 .answer .choices { flex-direction: column; flex-wrap: nowrap; }
 .answer .choices .btn { flex: none; width: 100%; min-height: 48px; padding: .55rem 1rem; justify-content: flex-start; text-align: left; }
+/* Folder-trust card: the path wraps anywhere and is never cut. */
+.trust-card .trust-folder { margin: 0; font: .85rem ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; word-break: break-all; white-space: normal; }
+.trust-card .trust-explain { margin: 0; font-size: .85rem; color: var(--muted); }
+.trust-card .trust-choices .btn { justify-content: center; text-align: center; }
+.trust-row { background: var(--card); border-bottom: 1px solid var(--line); }
+.trust-row > .row-trust { margin: 0 .5rem .6rem; min-width: 0; }
 .gone { padding: 1rem; display: flex; flex-direction: column; align-items: flex-start; gap: .5rem; }
 .gone p { margin: 0; }
 .actions { padding: .75rem 1rem; display: flex; flex-direction: column; gap: .6rem; }

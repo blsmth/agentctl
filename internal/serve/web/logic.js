@@ -847,6 +847,13 @@ export function hasFeature(features, name) {
 export function buildAnswerRequest(session, windowId, dialog, key, selected) {
   if (!dialog || !dialog.hash) throw new Error("no dialog to answer");
   const path = `${windowApiPath(session, windowId)}/answer`;
+  if (isTrustDialog(dialog)) {
+    // Esc on the trust dialog exits Claude Code: only its two rows answer it.
+    if ((key !== TRUST_KEY_TRUST && key !== TRUST_KEY_EXIT) || !(dialog.options ?? []).some((o) => o.key === key)) {
+      throw new Error("the folder-trust dialog is answered with Trust folder or Exit session");
+    }
+    return { method: "POST", path, body: { key, dialog_hash: dialog.hash } };
+  }
   if (key === "submit") {
     if (!dialog.multi || !dialog.submit) throw new Error("this question cannot be submitted from here");
     return { method: "POST", path, body: { key, dialog_hash: dialog.hash, select: [...(selected ?? [])] } };
@@ -855,6 +862,55 @@ export function buildAnswerRequest(session, windowId, dialog, key, selected) {
   const valid = key === "esc" || (dialog.options ?? []).some((o) => o.key === key);
   if (!valid) throw new Error(`key ${key} is not an option of this dialog`);
   return { method: "POST", path, body: { key, dialog_hash: dialog.hash } };
+}
+
+/** TRUST_KEY_TRUST and TRUST_KEY_EXIT are the folder-trust dialog's answer keys (panestate.TrustKey*). */
+export const TRUST_KEY_TRUST = "trust";
+export const TRUST_KEY_EXIT = "exit";
+/** TRUST_TITLE and TRUST_EXPLAIN head and explain the folder-trust card. */
+export const TRUST_TITLE = "Trust this folder?";
+export const TRUST_EXPLAIN = "Claude Code can read, edit and run files here, and loads its .claude settings";
+
+/** isTrustDialog reports whether a pane's dialog is Claude Code's folder-trust dialog. */
+export function isTrustDialog(dialog) {
+  return dialog?.kind === "trust";
+}
+
+/**
+ * isTrustBlocked reports whether a fleet row is a window stopped on the
+ * folder-trust dialog (windowstate PendingTrust); its pending detail is the folder.
+ */
+export function isTrustBlocked(win) {
+  return win?.state === "blocked" && win?.pending_tool === "trust";
+}
+
+/** trustFolder is the folder a trust dialog (or a trust-blocked row) names, "" when unknown. */
+export function trustFolder(dialogOrWin) {
+  return (dialogOrWin?.folder ?? dialogOrWin?.pending_tool_detail ?? "").trim();
+}
+
+/** trustExitConfirm is the confirm sheet before answering "No, exit". */
+export function trustExitConfirm(folder) {
+  return {
+    title: "Exit this session?",
+    lines: [folder ? `Claude Code exits without trusting ${folder}. The session ends.` : "Claude Code exits without trusting the folder. The session ends."],
+    confirmLabel: "Exit session",
+    danger: true,
+  };
+}
+
+/**
+ * trustDialogOf returns pane's folder-trust dialog, or throws when the pane
+ * no longer shows one (answered on the laptop, or Claude Code exited). A row
+ * answers from the fleet list by fetching the pane first, so the hash it
+ * sends is one the server can verify; when folder is given the dialog must
+ * name it.
+ */
+export function trustDialogOf(pane, folder = "") {
+  const d = pane?.dialog;
+  if (!pane || pane.verdict !== "awaiting_input" || !isTrustDialog(d)) throw new Error("the folder-trust prompt is no longer showing");
+  if (folder && d.folder && d.folder !== folder) throw new Error("the window asks about a different folder now; open it to check");
+  return d;
 }
 
 /**

@@ -41,21 +41,41 @@ func TestAgentsHistoryCommands(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := RunAgentsHistory(&out, "a", 10); err != nil || !strings.Contains(out.String(), "second") {
+	if err := RunAgentsHistory(&out, "", "a", 10); err != nil || !strings.Contains(out.String(), "second") {
 		t.Fatalf("history: %q %v", out.String(), err)
 	}
 	out.Reset()
-	if err := RunAgentsDiff(&out, "a", "HEAD~1"); err != nil || !strings.Contains(out.String(), "-v1") {
+	if err := RunAgentsDiff(&out, "", "a", "HEAD~1"); err != nil || !strings.Contains(out.String(), "-v1") {
 		t.Fatalf("diff: %q %v", out.String(), err)
 	}
 	out.Reset()
-	if err := RunAgentsRevert(&out, "a", ""); err != nil || !strings.Contains(out.String(), "Reverted") {
+	if err := RunAgentsRevert(&out, "", "a", ""); err != nil || !strings.Contains(out.String(), "Reverted") {
 		t.Fatalf("revert: %q %v", out.String(), err)
 	}
 	if got, _ := os.ReadFile(p); string(got) != "v1\n" {
 		t.Fatalf("file = %q", got)
 	}
-	if err := RunAgentsRevert(&out, "../settings.json", ""); err == nil {
+	if err := RunAgentsRevert(&out, "", "../settings.json", ""); err == nil {
 		t.Fatal("path outside the tracked tree accepted")
+	}
+}
+
+func TestAgentsHistoryNoSnapshots(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	s, err := agenthistory.HomeStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "init", "-q", "--bare", "--initial-branch=main", s.GitDir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	var out bytes.Buffer
+	if err := RunAgentsHistory(&out, "", "", 10); err != nil || !strings.Contains(out.String(), "No snapshots yet") {
+		t.Fatalf("history: %q %v", out.String(), err)
 	}
 }

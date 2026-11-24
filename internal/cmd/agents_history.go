@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -8,12 +9,19 @@ import (
 	"github.com/blsmth/agentctl/internal/agenthistory"
 )
 
-// agentsHistoryStore is the seam for the store the history commands act on.
-var agentsHistoryStore = agenthistory.HomeStore
+// agentsHistoryStore is the seam for the store the history commands act on:
+// which is "agents", "config" or "" (routed by name: an absolute path under
+// the agentctl config dir is the config store).
+var agentsHistoryStore = func(which, name string) (*agenthistory.Store, error) {
+	if which == "" {
+		which = agenthistory.StoreForPath(name)
+	}
+	return agenthistory.StoreByName(which)
+}
 
 // RunAgentsHistory prints the change history of name (all tracked files when empty).
-func RunAgentsHistory(w io.Writer, name string, limit int) error {
-	s, err := agentsHistoryStore()
+func RunAgentsHistory(w io.Writer, which, name string, limit int) error {
+	s, err := agentsHistoryStore(which, name)
 	if err != nil {
 		return err
 	}
@@ -24,6 +32,10 @@ func RunAgentsHistory(w io.Writer, name string, limit int) error {
 		}
 	}
 	entries, err := s.Log(path, limit)
+	if errors.Is(err, agenthistory.ErrNoSnapshots) {
+		fmt.Fprintln(w, "No snapshots yet.")
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -38,8 +50,8 @@ func RunAgentsHistory(w io.Writer, name string, limit int) error {
 }
 
 // RunAgentsDiff prints rev (default: last snapshot) against the current files.
-func RunAgentsDiff(w io.Writer, name, rev string) error {
-	s, err := agentsHistoryStore()
+func RunAgentsDiff(w io.Writer, which, name, rev string) error {
+	s, err := agentsHistoryStore(which, name)
 	if err != nil {
 		return err
 	}
@@ -63,8 +75,8 @@ func RunAgentsDiff(w io.Writer, name, rev string) error {
 
 // RunAgentsRevert restores name from rev (default: undo the latest change),
 // recorded as a new snapshot authored by the caller's agent, if any.
-func RunAgentsRevert(w io.Writer, name, rev string) error {
-	s, err := agentsHistoryStore()
+func RunAgentsRevert(w io.Writer, which, name, rev string) error {
+	s, err := agentsHistoryStore(which, name)
 	if err != nil {
 		return err
 	}

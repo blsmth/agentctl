@@ -35,8 +35,15 @@ type Dialog struct {
 	// Cursor is the ❯ cursor's row among a multi-select question's
 	// navigable rows (the numbered options, then the confirm row), -1 when
 	// none shows. The server checks it after each arrow press of a submit.
-	// Zero for any other dialog.
+	// Zero for any other dialog except a trust dialog, where it is the
+	// index in Options of the ❯ row (-1 when none shows).
 	Cursor int `json:"-"`
+	// Kind is "" for a numbered permission or question dialog and KindTrust
+	// for the folder-trust dialog (ParseTrustDialog), whose Options are keyed
+	// "trust"/"exit" and answered by moving the cursor, never by Esc.
+	Kind string `json:"kind,omitempty"`
+	// Folder is the path a trust dialog asks about.
+	Folder string `json:"folder,omitempty"`
 }
 
 // SubmitRow is the confirm row of a multi-select question.

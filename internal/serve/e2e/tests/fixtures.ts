@@ -27,7 +27,7 @@ export type FixtureWindow = {
   mode?: string;
   parent?: string;
   activity?: string;
-  pane?: "idle" | "working" | "dialog";
+  pane?: "idle" | "working" | "dialog" | "trust";
   branch?: string;
   context_pct?: number;
   title?: string;
@@ -42,6 +42,8 @@ export type FixtureWindow = {
   prompt?: string;
   task?: string;
   short_kind?: string;
+  pending_tool?: string;
+  pending_detail?: string;
 };
 
 export type FixtureGroup = {

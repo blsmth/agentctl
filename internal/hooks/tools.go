@@ -60,6 +60,11 @@ func PreTool() {
 		denyFileEdit(input.ToolName, p, "dispatch approval record", approvalEditDenyReason(p), input.ToolInput)
 		return
 	}
+	// And for the agent history stores (checkHistoryTamper is the Bash side).
+	if p := historyEditTarget(input.ToolName, input.ToolInput); p != "" {
+		denyFileEdit(input.ToolName, p, "agent history store", historyEditDenyReason(p), input.ToolInput)
+		return
+	}
 	// The same for loosening dispatch_approval in the global config (see
 	// checkConfigTamper for the Bash side).
 	if p := globalConfigEditTarget(input.ToolName, input.ToolInput); p != "" {

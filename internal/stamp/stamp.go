@@ -43,3 +43,9 @@ func Try(path string, interval time.Duration, now time.Time) bool {
 	}
 	return true
 }
+
+// Clear removes the stamp at path so the next Try succeeds at once. Callers
+// use it when the work a stamp guarded failed and should be retried.
+func Clear(path string) {
+	os.Remove(path) //nolint:errcheck
+}

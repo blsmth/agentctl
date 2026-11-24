@@ -11,6 +11,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/panestate"
 	"github.com/blsmth/agentctl/internal/panestate/panesim"
 	"github.com/blsmth/agentctl/internal/serve"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
@@ -200,7 +201,9 @@ func (p panes) CapturePane(pane string, _ int) (string, error) {
 // single-select tab picks and moves to the multi-select tab, which redraws
 // per key (panesim.Press: digits toggle, arrows move the cursor) until Enter
 // on its Submit row moves to the review page. Any answer there, or Escape on
-// any of them, ends the dialog.
+// any of them, ends the dialog. The folder-trust screen steps as
+// panesim.PressTrust: arrows move its cursor, Enter on "Yes" goes idle and on
+// "No, exit" leaves the exit message.
 type keys struct{ w *world }
 
 func (k keys) SendKey(t serve.WindowTarget, key string) error {
@@ -221,6 +224,16 @@ func stepPane(x *Window, key string) {
 		x.PaneText = next
 	case x.Pane == "askuser" && key != "Escape":
 		x.Pane, x.PaneText = "askuser-multi", ""
+	case x.Pane == "trust":
+		next, answered := panesim.PressTrust(x.paneText(), key)
+		switch answered {
+		case panestate.TrustKeyTrust:
+			x.Pane, x.PaneText = "idle", ""
+		case panestate.TrustKeyExit:
+			x.Pane, x.PaneText = "trust-exited", next+"\n"+TrustExitedPane
+		default:
+			x.PaneText = next
+		}
 	case x.paneText() == DialogPane || strings.HasPrefix(x.Pane, "askuser"):
 		x.Pane, x.PaneText = "idle", ""
 	}

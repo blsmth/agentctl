@@ -320,13 +320,20 @@ type globalDenyEntry struct {
 	reason string
 }
 
+// pipeToShell matches the command after a pipe when it is a shell: optional
+// sudo (with flags) and env, an optional path, a shell name, then a boundary
+// that is not part of a longer name (shasum, shellcheck, sh-foo).
+const pipeToShell = `(?:(?:\S*/)?sudo\s+(?:-\S+\s+)*)?(?:(?:\S*/)?env\s+(?:-\S+\s+|\S+=\S*\s+)*)?(?:\S*/)?(?:sh|bash|zsh|dash|ksh)(?:[\s;&|)<>]|$)`
+
 // globalDenyPatterns are blocked for ALL agents regardless of config.
 // Regexes are compiled once at package init to avoid per-call allocation.
 var globalDenyPatterns = []globalDenyEntry{
 	{regexp.MustCompile(`rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?/\s*$`), "\U0001F6D1 BLOCKED: recursive delete of root -- are you trying to nuke the machine?"},
 	{regexp.MustCompile(`rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?~/?\s*$`), "\U0001F6D1 BLOCKED: recursive delete of home directory -- absolutely not"},
 	{regexp.MustCompile(`git\s+push\s+.*origin\s+main\b`), "\U0001F6D1 BLOCKED: direct push to main -- open a PR instead"},
-	{regexp.MustCompile(`curl\s.*\|\s*(ba)?sh`), "\U0001F6D1 BLOCKED: piping curl to shell -- download first, inspect, then run"},
+	// The piped-into word must be a shell itself (optionally behind sudo/env
+	// and a path), so shasum, shellcheck and shfmt pass.
+	{regexp.MustCompile(`\b(?:curl|wget)\s.*\|&?\s*` + pipeToShell), "\U0001F6D1 BLOCKED: piping curl/wget to shell -- download first, inspect, then run"},
 	// Running agentctl from source is checkGoRunAgentctl (tokenized, needs
 	// the Bash cwd), not a pattern here.
 }
@@ -687,8 +694,11 @@ func checkGlobalDenyList(command string) string {
 // checkGoRunAgentctl resolves `go run .` against ("" is unknown).
 func checkGlobalDenyListIn(command, cwd string) string {
 	command = stripDataHeredocs(command)
+	// agentctl never hands its arguments to a shell, so the text of an
+	// agentctl prompt or message must not trip the patterns.
+	masked := maskAgentctlArgs(command)
 	for _, deny := range globalDenyPatterns {
-		if deny.re.MatchString(command) {
+		if deny.re.MatchString(masked) {
 			return deny.reason
 		}
 	}
@@ -702,6 +712,9 @@ func checkGlobalDenyListIn(command, cwd string) string {
 		return reason
 	}
 	if reason := checkApprovalTamper(command); reason != "" {
+		return reason
+	}
+	if reason := checkHistoryTamper(command, cwd); reason != "" {
 		return reason
 	}
 	if reason := checkTemplateTamper(command); reason != "" {

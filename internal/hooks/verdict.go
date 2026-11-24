@@ -54,15 +54,38 @@ func recordVerdict(toolInput json.RawMessage, windowID, sessionID, agentName str
 		RevAgent: agentName,
 		RevSess:  sessionID,
 	}
-	if id, ws, ok := findAuthor(allWindowRecords(), windowID, pr); ok {
-		rec.Author, rec.AuthAgent, rec.AuthSess, rec.Branch = id, ws.AgentName, ws.SessionID, ws.Branch
-		if repo := repoFromPRURL(prURL(ws)); repo != "" {
-			rec.Repo = repo
+	all := allWindowRecords()
+	// Recorded at dispatch: no scan, no gh. Otherwise look the PR up.
+	if !fromReview(&rec, all[windowID].Review) {
+		if id, ws, ok := findAuthor(all, windowID, pr); ok {
+			rec.Author, rec.AuthAgent, rec.AuthSess = id, ws.AgentName, ws.SessionID
+			if rec.Branch == "" {
+				rec.Branch = ws.Branch
+			}
+			if repo := repoFromPRURL(prURL(ws)); repo != "" {
+				rec.Repo = repo
+			}
 		}
 	}
 	if err := appendVerdict(rec); err != nil {
 		logging.Log("hook-post-tool: verdict ledger: %v", err)
 	}
+}
+
+// fromReview fills rec from the target dispatch recorded on the reviewer's
+// windowstate. It reports false (nothing applied) when the record is missing,
+// is for another PR, or names no author, so the lookup fallback runs (the
+// recorded branch and repo are still applied when the PR matches).
+func fromReview(rec *verdicts.Record, rt *windowstate.ReviewTarget) bool {
+	if rt == nil || rt.PR != rec.PR {
+		return false
+	}
+	rec.Branch, rec.Repo = rt.Branch, rt.Repo
+	if rt.AuthorWindow == "" {
+		return false
+	}
+	rec.Author, rec.AuthAgent, rec.AuthSess = rt.AuthorWindow, rt.AuthorAgent, rt.AuthorSession
+	return true
 }
 
 func recordsPR(ws windowstate.WindowState, pr int) bool {

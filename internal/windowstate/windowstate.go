@@ -70,6 +70,9 @@ type WindowState struct {
 	PromptScanKey string    `json:"prompt_scan_key,omitempty"`
 	PromptScanAt  time.Time `json:"prompt_scan_at,omitempty"`
 	Mode          string    `json:"mode,omitempty"`
+	// ImproveRun is the improve run ID of a Mode "improve" window
+	// (internal/improverun); the end snapshot and summary key off it.
+	ImproveRun string `json:"improve_run,omitempty"`
 	// Backend is the name of the config backend this window's claude was
 	// launched against ("" = Anthropic). Restore re-resolves it from config.
 	Backend string `json:"backend,omitempty"`
@@ -265,6 +268,10 @@ type WindowState struct {
 	// LogPR is the statusline's incremental pr-link scan cache; see LogPRScan.
 	LogPR LogPRScan `json:"log_pr,omitempty"`
 
+	// Review records what a `dispatch --review-pr` window reviews and who
+	// wrote it. Set once at launch; the verdict hook reads it.
+	Review *ReviewTarget `json:"review,omitempty"`
+
 	// ShortTitle is the window's generated 2-5 word title and its throttle
 	// state, written by hook-title (internal/shorttitle), or a human title
 	// set from the hub (ShortTitle.Manual).
@@ -328,6 +335,19 @@ var knownKeys = func() map[string]struct{} {
 	}
 	return m
 }()
+
+// ReviewTarget is the pull request a review-pr window reviews, with the
+// author's window when dispatch found one. The Author* fields are empty when
+// no live window owned the PR's branch.
+type ReviewTarget struct {
+	PR            int    `json:"pr"`
+	Branch        string `json:"branch,omitempty"` // PR head branch
+	Repo          string `json:"repo,omitempty"`   // owner/repo
+	AuthorWindow  string `json:"author_window,omitempty"`
+	AuthorAgent   string `json:"author_agent,omitempty"`
+	AuthorSession string `json:"author_session_id,omitempty"`
+	AuthorRuntime string `json:"author_runtime_dir,omitempty"`
+}
 
 // LogPRScan caches the statusline's scan of a session log for its newest
 // pr-link record, so each push scans only the bytes appended since the last.

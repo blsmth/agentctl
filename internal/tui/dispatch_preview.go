@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -11,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/highlight"
+	"github.com/blsmth/agentctl/internal/remoteapproval"
 	"github.com/blsmth/agentctl/internal/textutil"
 	"github.com/blsmth/agentctl/internal/theme"
 )
@@ -63,6 +65,7 @@ type dispatchPreviewOpts struct {
 	template     TemplatePreview
 	reviewPR     int
 	project      string
+	details      remoteapproval.Details
 }
 
 // CronPreview is the job-specific part of a PreviewKindCron popup.
@@ -149,6 +152,14 @@ func WithProject(project string) DispatchPreviewOption {
 	return func(o *dispatchPreviewOpts) { o.project = project }
 }
 
+// WithDetails supplies the resolved dispatch plan (project and dir, model,
+// backend, harness, worktree, permission mode) shown as extra rows under
+// "Dispatching". Rows whose values are all empty are skipped, so an older or
+// partial Details degrades cleanly. Dispatch popups only.
+func WithDetails(d remoteapproval.Details) DispatchPreviewOption {
+	return func(o *dispatchPreviewOpts) { o.details = d }
+}
+
 // WithReviewPR marks a `dispatch --review-pr` preview: the third metadata
 // row shows the PR number instead of an issue or prompt.
 func WithReviewPR(n int) DispatchPreviewOption {
@@ -198,6 +209,7 @@ var (
 	dpSkyStyle      lipgloss.Style
 	dpKeyAllowStyle lipgloss.Style
 	dpKeyDenyStyle  lipgloss.Style
+	dpWarnStyle     lipgloss.Style
 )
 
 func initDispatchPreviewStyles() {
@@ -253,6 +265,10 @@ func initDispatchPreviewStyles() {
 	dpKeyDenyStyle = lipgloss.NewStyle().
 		Foreground(lipgloss.Color(t.Red)).
 		Bold(true)
+
+	dpWarnStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color(t.Yellow)).
+		Bold(true)
 }
 
 // DispatchPreviewModel is a standalone Bubble Tea model for the dispatch-preview
@@ -262,14 +278,15 @@ func initDispatchPreviewStyles() {
 type DispatchPreviewModel struct {
 	agentName   string
 	targetAgent string
-	issue       int    // 0 for ad-hoc prompt dispatches
-	reviewPR    int    // --review-pr number; 0 otherwise
-	prompt      string // --prompt flag value, or the RESOLVED content of --prompt-key
-	promptKey   string // --prompt-key flag value (empty unless dispatching via a context key)
-	command     string // full original bash command (shown in collapsible section)
-	account     string // resolved Claude account of the dispatched agent; "" = none configured
-	project     string // target project of the dispatch; "" = unknown
-	expanded    bool   // whether the prompt viewport is visible
+	issue       int                    // 0 for ad-hoc prompt dispatches
+	reviewPR    int                    // --review-pr number; 0 otherwise
+	prompt      string                 // --prompt flag value, or the RESOLVED content of --prompt-key
+	promptKey   string                 // --prompt-key flag value (empty unless dispatching via a context key)
+	command     string                 // full original bash command (shown in collapsible section)
+	account     string                 // resolved Claude account of the dispatched agent; "" = none configured
+	project     string                 // target project of the dispatch; "" = unknown
+	details     remoteapproval.Details // resolved plan; zero = none (older hook)
+	expanded    bool                   // whether the prompt viewport is visible
 	viewport    viewport.Model
 	decision    string // "allow" or "deny"
 	vpHeight    int
@@ -446,6 +463,7 @@ func NewDispatchPreview(agentName, targetAgent string, issue int, prompt, prompt
 		command:         command,
 		account:         o.account,
 		project:         o.project,
+		details:         o.details,
 		viewport:        vp,
 		vpHeight:        vpHeight,
 		contentWidth:    o.contentWidth,
@@ -478,17 +496,20 @@ func (m DispatchPreviewModel) effectiveContentWidth() int {
 // Chrome line-count arithmetic (keep this in sync with View() — if the
 // layout there changes, update both):
 //
-//	collapsed content lines = title(1) + blank(1) + metadata(3) + blank(1) + toggle(1) = 7
+//	collapsed content lines = title(1) + blank(1) + metadata(3 + detail rows) + blank(1) + toggle(1) = 7 + detail rows
 //	expanded adds           = blank(1) + viewport(vpHeight)                          = vpHeight+1
 //	(one spare row of headroom remains below the box)
 //	box border(2) + box padding(2)                                                   = 4
 //	tmux border(2)                                                                   = 2
 //	hint bar row (rendered outside the box)                                         = 1
 //	total = 7 + (vpHeight+1) + 4 + 2 + 1 = vpHeight + 15, budgeted as vpHeight + 16
+//
+// A dispatch popup adds one row per DispatchDetailRows (0-3: Project, Model,
+// Runs) on top of that; the other kinds have none.
 func (m DispatchPreviewModel) PopupSize() PopupSize {
 	// Width: content + border(2) + padding(4) + tmux border(2) = content + 8.
 	w := m.effectiveContentWidth() + 8
-	h := m.vpHeight + 16
+	h := m.vpHeight + 16 + m.detailRowCount()
 	return PopupSize{Width: w, Height: h}
 }
 
@@ -509,7 +530,7 @@ func (m DispatchPreviewModel) PopupSize() PopupSize {
 // ever supplies INPUTS to this formula, never a competing size computation.
 func DispatchPreviewMaxPopupSize(opts ...DispatchPreviewOption) PopupSize {
 	o := resolveDispatchPreviewOpts(opts)
-	return DispatchPreviewModel{vpHeight: o.maxVPHeight, contentWidth: o.contentWidth}.PopupSize()
+	return DispatchPreviewModel{vpHeight: o.maxVPHeight, contentWidth: o.contentWidth, kind: o.kind, details: o.details}.PopupSize()
 }
 
 // Decision returns the user's decision: "allow" or "deny".
@@ -809,24 +830,151 @@ func (m DispatchPreviewModel) metadataLines() []string {
 		dpLabelStyle.Render("Requested by") + dpSubtleStyle.Render(m.agentName),
 		dpLabelStyle.Render("Dispatching") + dpTargetStyle.Render(m.targetAgent) + m.accountSuffix(),
 	}
+	lines = append(lines, m.detailLines()...)
 
 	switch {
 	case m.reviewPR > 0:
-		lines = append(lines, dpLabelStyle.Render("Review PR")+dpSkyStyle.Render(m.summaryLine()))
+		lines = append(lines, dpLabelStyle.Render("Review PR")+dpSkyStyle.Render(m.rowSummary()))
 	case m.issue > 0:
-		lines = append(lines, dpLabelStyle.Render("Issue")+dpSkyStyle.Render(m.summaryLine()))
+		lines = append(lines, dpLabelStyle.Render("Issue")+dpSkyStyle.Render(m.rowSummary()))
 	case m.template.Name != "":
 		lines = append(lines, dpLabelStyle.Render("Template")+dpSkyStyle.Render(m.template.Name))
 	case m.promptKey != "":
 		// The key name is an identifier, like the issue number — style it the
 		// same way rather than as free-form body text.
-		lines = append(lines, dpLabelStyle.Render("Prompt key")+dpSkyStyle.Render(m.summaryLine()))
+		lines = append(lines, dpLabelStyle.Render("Prompt key")+dpSkyStyle.Render(m.rowSummary()))
 	case m.prompt != "":
-		lines = append(lines, dpLabelStyle.Render("Prompt")+dpBodyStyle.Render(m.summaryLine()))
+		lines = append(lines, dpLabelStyle.Render("Prompt")+dpBodyStyle.Render(m.rowSummary()))
 	default:
-		lines = append(lines, dpLabelStyle.Render("Prompt")+dpDimStyle.Render(m.summaryLine()))
+		lines = append(lines, dpLabelStyle.Render("Prompt")+dpDimStyle.Render(m.rowSummary()))
 	}
 	return lines
+}
+
+// dpSeg is one styled run of a detail row.
+type dpSeg struct {
+	text  string
+	style lipgloss.Style
+}
+
+// detailRows builds the Project / Model / Runs rows of a dispatch popup from
+// the resolved plan, mirroring the phone's wording (approvalRows in
+// internal/serve/web/logic.js). A row whose values are all empty is skipped.
+// Segments are listed most important first: fitSegs cuts from the end.
+func (m DispatchPreviewModel) detailRows() []struct {
+	label string
+	segs  []dpSeg
+} {
+	if m.isBash() || m.isCron() || m.isTemplate() {
+		return nil
+	}
+	d := m.details
+	var rows []struct {
+		label string
+		segs  []dpSeg
+	}
+	add := func(label string, segs ...dpSeg) {
+		rows = append(rows, struct {
+			label string
+			segs  []dpSeg
+		}{label, segs})
+	}
+
+	switch {
+	case d.Project != "":
+		segs := []dpSeg{{d.Project, dpBodyStyle}}
+		if d.OtherProject {
+			asking := d.AskingProject
+			if asking == "" {
+				asking = "the asking project"
+			}
+			segs = append(segs, dpSeg{"  ⚠ not " + asking, dpWarnStyle})
+		}
+		if d.Dir != "" {
+			segs = append(segs, dpSeg{"  " + d.Dir, dpDimStyle})
+		}
+		add("Project", segs...)
+	case d.DirSource != "":
+		// A cwd the command changes first: the project cannot be known.
+		add("Project", dpSeg{"unknown", dpWarnStyle}, dpSeg{"  " + d.DirSource, dpDimStyle})
+	}
+
+	if d.Model != "" || d.Backend != "" || d.Harness != "" {
+		var segs []dpSeg
+		if d.Model != "" {
+			segs = append(segs, dpSeg{d.Model, dpBodyStyle})
+			if d.ModelSource != "" {
+				segs = append(segs, dpSeg{" · " + d.ModelSource, dpDimStyle})
+			}
+		}
+		if d.Backend != "" {
+			segs = append(segs, dpSeg{" · backend " + d.Backend, dpDimStyle})
+		}
+		if d.Harness != "" {
+			segs = append(segs, dpSeg{" · harness " + d.Harness, dpDimStyle})
+		}
+		add("Model", segs...)
+	}
+
+	if d.Worktree != "" || d.PermissionMode != "" {
+		var segs []dpSeg
+		if d.Worktree != "" {
+			segs = append(segs, dpSeg{d.Worktree, dpBodyStyle})
+		}
+		if d.PermissionMode != "" {
+			sep := ""
+			if d.Worktree != "" {
+				sep = " · "
+			}
+			segs = append(segs, dpSeg{sep + d.PermissionMode + " permissions", dpDimStyle})
+		}
+		add("Runs", segs...)
+	}
+	return rows
+}
+
+// detailRowCount is how many detail rows the popup renders.
+func (m DispatchPreviewModel) detailRowCount() int { return len(m.detailRows()) }
+
+// DispatchDetailRows reports how many extra rows (Project, Model, Runs) a
+// dispatch popup shows for d. The hook subtracts it from the viewport budget
+// so the popup still fits a short client.
+func DispatchDetailRows(d remoteapproval.Details) int {
+	initDispatchPreviewStyles()
+	return DispatchPreviewModel{details: d}.detailRowCount()
+}
+
+// detailLines renders the detail rows, each on exactly one line: segments are
+// cut to the content width left after the label.
+func (m DispatchPreviewModel) detailLines() []string {
+	avail := m.effectiveContentWidth() - dpLabelWidth
+	var lines []string
+	for _, r := range m.detailRows() {
+		lines = append(lines, dpLabelStyle.Render(r.label)+fitSegs(r.segs, avail))
+	}
+	return lines
+}
+
+// fitSegs renders segs on one line of at most width cells, truncating (with an
+// ellipsis) the first segment that runs out of room and dropping the rest.
+func fitSegs(segs []dpSeg, width int) string {
+	var b strings.Builder
+	left := width
+	for _, s := range segs {
+		if left <= 0 {
+			break
+		}
+		t := textutil.Truncate(s.text, left, "…")
+		b.WriteString(s.style.Render(t))
+		left -= utf8.RuneCountInString(t)
+	}
+	return b.String()
+}
+
+// rowSummary is summaryLine cut to the room left after the label, so the
+// row stays on one line at any width (PopupSize's line budget).
+func (m DispatchPreviewModel) rowSummary() string {
+	return textutil.Truncate(m.summaryLine(), m.effectiveContentWidth()-dpLabelWidth, "…")
 }
 
 // templateTitle is the title line of a template popup.

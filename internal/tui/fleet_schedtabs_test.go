@@ -52,7 +52,7 @@ func TestGroupTabsDefaultToSessionsAndNeverMix(t *testing.T) {
 	m := tabbedModel(t, f)
 	// acme-api has 3 jobs and 2 agent rows; billing's only job (nightly) is
 	// in its own dir too, so both are tabbed.
-	if got := headerText(t, m, "agentctl-acme-api", 100); !strings.Contains(got, "Sessions 2 · Schedules 3") {
+	if got := headerText(t, m, "agentctl-acme-api", 100); !strings.Contains(got, "Sessions · Schedules 3") {
 		t.Errorf("header = %q", got)
 	}
 	rows, jobs := lineKinds(m, "agentctl-acme-api")
@@ -64,7 +64,7 @@ func TestGroupTabsDefaultToSessionsAndNeverMix(t *testing.T) {
 	if rows != 0 || jobs != 4 { // three jobs and "+ new schedule"
 		t.Errorf("Schedules tab: rows=%d jobs=%d", rows, jobs)
 	}
-	if got := headerText(t, m, "agentctl-acme-api", 100); !strings.Contains(got, "Sessions 2 · Schedules 3") {
+	if got := headerText(t, m, "agentctl-acme-api", 100); !strings.Contains(got, "Sessions · Schedules 3") {
 		t.Errorf("header on the Schedules tab = %q", got)
 	}
 }
@@ -201,7 +201,7 @@ func TestTabsTruncateBeforeProjectName(t *testing.T) {
 	m.termWidth, m.liveLeft = 40, 40
 	full := headerText(t, m, "agentctl-acme-api", 100)
 	cut := headerText(t, m, "agentctl-acme-api", 40)
-	if strings.Contains(full, "Sessions 2 · Schedules 3") && strings.Contains(cut, "Schedules 3") {
+	if strings.Contains(full, "Sessions · Schedules 3") && strings.Contains(cut, "Schedules 3") {
 		t.Errorf("tabs not truncated at 40: %q", cut)
 	}
 }
