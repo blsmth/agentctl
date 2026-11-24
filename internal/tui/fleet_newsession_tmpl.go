@@ -281,10 +281,15 @@ func fleetNewSessionTemplateCmd(dir string, args []string) tea.Cmd {
 // newSessionHints are the footer hints while the prompt is open.
 func (m FleetModel) newSessionHints() []fleetHint {
 	s := m.dirPrompt
+	var recent []fleetHint
+	if len(m.recentEntries()) > 0 {
+		recent = []fleetHint{{"↑/↓", "recent"}}
+	}
 	if !s.hasTemplates() {
-		return fleetNewSessionHints
+		return append(append([]fleetHint(nil), recent...), fleetNewSessionHints...)
 	}
 	hs := []fleetHint{{"tab", "field"}}
+	hs = append(hs, recent...)
 	if s.focus == nsFieldTemplate {
 		hs = append(hs, fleetHint{"←/→", "template"})
 	}
@@ -296,7 +301,7 @@ func (m FleetModel) newSessionLines() int {
 	if !m.newSessionOpen() {
 		return 0
 	}
-	return len(m.dirPrompt.fields())
+	return len(m.dirPrompt.fields()) + len(m.recentEntries())
 }
 
 // Labels of the form lines, all the same width.
@@ -335,6 +340,9 @@ func (m FleetModel) newSessionFormView(cw int) string {
 			}
 		}
 		lines = append(lines, truncateToWidth(style.Render(label)+body, cw))
+		if f == nsFieldDir {
+			lines = append(lines, m.recentLines(cw)...)
+		}
 	}
 	return strings.Join(lines, "\n")
 }

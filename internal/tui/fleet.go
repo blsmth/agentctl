@@ -1005,6 +1005,10 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyServeProbe(msg)
 		return m, nil
 
+	case fleetRecentDirsMsg:
+		m.applyRecentDirs(msg)
+		return m, nil
+
 	case fleetServeToggledMsg:
 		return m, m.applyServeToggled(msg)
 
@@ -1334,8 +1338,7 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 		return *m, m.cronForGroup(m.groupOfLine(m.splitPane.Cursor()))
 
 	case fleetNewSessionKey:
-		m.openNewSession()
-		return *m, nil
+		return *m, m.openNewSession()
 
 	case fleetRenameKey:
 		return *m, m.openRename(m.splitPane.Cursor())
@@ -2295,8 +2298,9 @@ func (m FleetModel) fleetCounts() (blocked, working, done, idle int) {
 // blocked, and the only filled cell), then ● ✓ ○ counts and a dim agent and
 // session total. An active attention filter adds a muted tag after the title
 // ("· needs you"), then come the serve indicator and the clickable
-// "· sort: recent" / "· sort: window" tag (click = o; dropped first when narrow). There is no new-session button: N (in the ? reference) opens it, and
-// the footer's "n new" launches into a group. See titleLayout for how narrow
+// "· sort: recent" / "· sort: window" tag (click = o; dropped first when narrow).
+// The "+ open" button after the serve indicator does what N does (it is added
+// last, only when nothing else is cut); the footer's "n new" launches into a group. See titleLayout for how narrow
 // widths degrade.
 func (m FleetModel) renderTitle(cw int) string {
 	return m.titleLayout(cw).line
@@ -2309,6 +2313,7 @@ type fleetTitleLayout struct {
 	badge    [2]int
 	activity [2]int // the [activity] button
 	sort     [2]int // the "sort: recent|window" tag
+	open     [2]int // the "+ open" button (same as N)
 	// counts are the state count cells (glyph and number), indexed by
 	// fleetStateFilters order (blocked, working, done, idle); zero when not
 	// shown (blocked is absent at 0, any cell when the counts are dropped).
@@ -2362,6 +2367,9 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 		if l.sort[1] > cw-fleetSidebarRightGutter {
 			l.sort = [2]int{}
 		}
+		if l.open[1] > cw-fleetSidebarRightGutter {
+			l.open = [2]int{}
+		}
 		for i, sp := range l.counts {
 			if sp[1] > cw-fleetSidebarRightGutter {
 				l.counts[i] = [2]int{}
@@ -2371,9 +2379,16 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 	}
 	// bare is the title without counts.
 	bare := func() fleetTitleLayout {
-		left, l := m.titleLeft(tags[0], true, true)
+		left, l := m.titleLeft(tags[0], true, true, false)
+		open := true
 		if lipgloss.Width(left) > cw-fleetSidebarRightGutter {
-			left, l = m.titleLeft(tags[0], true, false)
+			left, l = m.titleLeft(tags[0], true, false, false)
+			open = false
+		}
+		if open {
+			if lo, ll := m.titleLeft(tags[0], true, true, true); lipgloss.Width(lo) <= cw-fleetSidebarRightGutter {
+				left, l = lo, ll
+			}
 		}
 		return fit(l, left, "", [4][2]int{})
 	}
@@ -2426,9 +2441,13 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 	for _, button := range []bool{true, false} {
 		for _, c := range candidates {
 			for _, sortTag := range []bool{true, false} {
-				left, l := m.titleLeft(c.tag, button, sortTag)
+				left, l := m.titleLeft(c.tag, button, sortTag, false)
 				room := cw - fleetSidebarRightGutter - lipgloss.Width(left) - 1
 				if lipgloss.Width(c.right) <= room {
+					// "+ open" is added last, only when it costs nothing else.
+					if lo, ll := m.titleLeft(c.tag, button, sortTag, true); lipgloss.Width(c.right) <= cw-fleetSidebarRightGutter-lipgloss.Width(lo)-1 {
+						left, l = lo, ll
+					}
 					return fit(l, left, c.right, c.spans)
 				}
 			}
@@ -2441,7 +2460,7 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 // (when tag is not empty), the serve indicator with its columns, the
 // [activity] button with its columns (when button is set), and the sort tag
 // with its columns (when sortTag is set).
-func (m FleetModel) titleLeft(tag string, button, sortTag bool) (string, fleetTitleLayout) {
+func (m FleetModel) titleLeft(tag string, button, sortTag, open bool) (string, fleetTitleLayout) {
 	var l fleetTitleLayout
 	left := strings.Repeat(" ", fleetSidebarLeftInset) + fleetTitleStyle.Render("agentctl hub")
 	if tag != "" {
@@ -2452,6 +2471,12 @@ func (m FleetModel) titleLeft(tag string, button, sortTag bool) (string, fleetTi
 		start := lipgloss.Width(left)
 		left += badge
 		l.badge = [2]int{start, lipgloss.Width(left)}
+	}
+	if open {
+		left += fleetServeGap
+		start := lipgloss.Width(left)
+		left += fleetCountStyle.Render(fleetOpenButton)
+		l.open = [2]int{start, lipgloss.Width(left)}
 	}
 	if button {
 		left += fleetActivityGap
@@ -2479,6 +2504,18 @@ const (
 	fleetSortRecent = "sort: recent"
 	fleetSortWindow = "sort: window"
 )
+
+// fleetOpenButton is the title row's button that opens the new-session prompt.
+const fleetOpenButton = "+ open"
+
+// onOpenButton reports whether (x, y) hits the title row's "+ open" button.
+func (m FleetModel) onOpenButton(x, y int) bool {
+	if y != 0 {
+		return false
+	}
+	span := m.titleLayout(m.contentWidth()).open
+	return span[1] > 0 && x >= span[0] && x < span[1]
+}
 
 // titleCountAt reports which state filter the title row's count cell under
 // (x, y) selects, if any.
