@@ -36,15 +36,16 @@ func agentsRevertSegments(command string) []cronSegment {
 		if g := tokens[i+1].text; g != "agents" && g != "agent-manager" {
 			continue
 		}
-		sub := strings.TrimRight(tokens[i+2].text, ";|&")
-		if sub != "revert" {
-			continue
+		// Kong accepts the default child's flags before a subcommand
+		// (`agents --json revert x`), so fail closed: any unquoted word
+		// `revert` in the invocation gates it.
+		seg := takeSegment(tokens[i+2:])
+		for _, t := range seg {
+			if t.text == "revert" && !t.quoted {
+				segs = append(segs, cronSegment{sub: "revert", tokens: seg})
+				break
+			}
 		}
-		if sub != tokens[i+2].text {
-			segs = append(segs, cronSegment{sub: sub})
-			continue
-		}
-		segs = append(segs, cronSegment{sub: sub, tokens: takeSegment(tokens[i+3:])})
 	}
 	return segs
 }

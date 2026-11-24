@@ -410,6 +410,9 @@ func (s *Store) Revert(path, rev, author string) (from, snap string, err error) 
 			return "", "", err
 		}
 	}
+	if fi, err := os.Lstat(filepath.Join(s.WorkTree, path)); err == nil && fi.IsDir() {
+		return "", "", fmt.Errorf("%s is a directory; revert one file at a time", path)
+	}
 	unlock, err := s.lock()
 	if err != nil {
 		return "", "", fmt.Errorf("locking history store: %w", err)
@@ -420,22 +423,25 @@ func (s *Store) Revert(path, rev, author string) (from, snap string, err error) 
 	}
 	if rev == "" {
 		out, err := s.git(nil, "", "log", "-n1", "--format=%H", "--", path)
-		if err != nil || strings.TrimSpace(string(out)) == "" {
+		latest := strings.TrimSpace(string(out))
+		if err != nil || latest == "" {
 			return "", "", fmt.Errorf("no history for %s", path)
 		}
-		rev = strings.TrimSpace(string(out)) + "~1"
+		// The baseline records existing state, not a change to undo.
+		parents, err := s.git(nil, "", "rev-list", "--parents", "-n1", latest)
+		if err != nil {
+			return "", "", err
+		}
+		if len(strings.Fields(string(parents))) < 2 {
+			return "", "", fmt.Errorf("no change to undo for %s (only the baseline)", path)
+		}
+		rev = latest + "~1"
 	}
 	out, err := s.git(nil, "", "rev-parse", "--verify", "-q", rev+"^{commit}")
 	if err != nil {
-		// A file created in the root commit has no parent: restore to nothing.
-		if strings.HasSuffix(rev, "~1") {
-			from = ""
-		} else {
-			return "", "", fmt.Errorf("unknown revision %q", rev)
-		}
-	} else {
-		from = strings.TrimSpace(string(out))
+		return "", "", fmt.Errorf("unknown revision %q", rev)
 	}
+	from = strings.TrimSpace(string(out))
 	if from != "" && s.existsAt(from, path) {
 		if _, err := s.git(nil, "", "checkout", from, "--", path); err != nil {
 			return "", "", err

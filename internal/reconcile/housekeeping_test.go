@@ -66,6 +66,7 @@ func TestHousekeepPrunesEventFiles(t *testing.T) {
 	d := DefaultHousekeepingDeps(rt)
 	d.Now = func() time.Time { return now }
 	d.ReapOrphans = nil
+	d.SnapshotAgents = nil
 	d.PruneMailbox = nil
 	d.PruneSessionLogs = nil
 	Housekeep(d)

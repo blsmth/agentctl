@@ -284,3 +284,38 @@ func TestConcurrentSnapshots(t *testing.T) {
 		t.Fatalf("want exactly one baseline commit, got %d", len(l))
 	}
 }
+
+func TestRevertBaselineOnlyIsNotAChange(t *testing.T) {
+	home, s := setup(t)
+	p := filepath.Join(home, ".claude", "agents", "rev.md")
+	write(t, p, "x")
+	if _, err := s.Snapshot("t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Revert("agents/rev.md", "", ""); err == nil || !strings.Contains(err.Error(), "baseline") {
+		t.Fatalf("err = %v, want a baseline error", err)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("file removed: %v", err)
+	}
+}
+
+func TestRevertUnknownRevDoesNotDelete(t *testing.T) {
+	home, s := setup(t)
+	p := filepath.Join(home, ".claude", "agents", "rev.md")
+	write(t, p, "x")
+	if _, err := s.Snapshot("t", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, rev := range []string{"deadbeef~1", "deadbeef", "HEAD~5"} {
+		if _, _, err := s.Revert("agents/rev.md", rev, ""); err == nil || !strings.Contains(err.Error(), "unknown revision") {
+			t.Errorf("rev %q: err = %v, want unknown revision", rev, err)
+		}
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("file removed: %v", err)
+	}
+	if _, _, err := s.Revert("agents", "", ""); err == nil {
+		t.Error("directory revert accepted")
+	}
+}
