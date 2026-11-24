@@ -15,6 +15,8 @@ func TestProjectName(t *testing.T) {
 		{"dot worktree slug", "", "-Users-b-code-personal-agentctl-.worktrees-x", "agentctl"},
 		{"main slug", "", "-Users-b-code-personal-agentctl", "agentctl"},
 		{"non-repo slug", "", "-Users-b-code-personal", "personal"},
+		{"decoded main slug", "", decodeDirName("-Users-b-code-personal-agentctl"), "agentctl"},
+		{"decoded worktree slug", "", decodeDirName("-Users-b-code-personal-agentctl--worktrees-x"), "agentctl"},
 		{"real path as project", "", "/tmp/project", "project"},
 	}
 	for _, tt := range tests {

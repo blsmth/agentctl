@@ -355,7 +355,9 @@ func StripWorktree(project string) string {
 
 // ProjectName returns the short parent-project name for display: worktrees
 // fold into their parent and only the base name is kept. cwd (the real path
-// from the transcript) is preferred; slug is the fallback.
+// from the transcript) is preferred; slug (Session.Project, as produced by
+// decodeDirName) is the fallback, handled by NormalizeProjectName, which the
+// cost and search views use too.
 //
 // Limitation of the slug fallback: the slug encodes path separators and
 // hyphens identically, so a hyphenated repo name ("local-infra") cannot be
@@ -365,12 +367,9 @@ func ProjectName(cwd, slug string) string {
 	if cwd != "" {
 		return filepath.Base(StripWorktree(filepath.Clean(cwd)))
 	}
-	p := strings.TrimRight(StripWorktree(slug), "-/")
-	if strings.Contains(p, "/") {
-		return filepath.Base(p)
+	if strings.HasPrefix(slug, "/") && !strings.HasPrefix(slug, "/-") {
+		// A genuine absolute path rather than a decoded slug.
+		return filepath.Base(StripWorktree(filepath.Clean(slug)))
 	}
-	if i := strings.LastIndex(p, "-"); i >= 0 {
-		return p[i+1:]
-	}
-	return p
+	return NormalizeProjectName(slug)
 }
