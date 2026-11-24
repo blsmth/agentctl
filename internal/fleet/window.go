@@ -79,6 +79,11 @@ type Window struct {
 	// Harness is the agent program the window runs ("pi"); omitted for
 	// Claude Code. The phone offers slash commands only on Claude windows.
 	Harness string `json:"harness,omitempty"`
+
+	// Handle is the session's short ID (shortest unique prefix of its session
+	// ID, at least 4 characters), set by `status --json`; omitted until the
+	// window has a session ID.
+	Handle string `json:"handle,omitempty"`
 }
 
 // ToWindow converts a row and its windowstate metadata to a Window.

@@ -7,7 +7,7 @@
 | [commands.md](commands.md) | Every user-facing subcommand, grouped by job, with links to the details |
 | [configuration.md](configuration.md) | Every config key with its default and scope, layering, accounts, backends, harnesses, cron, serve, titles, pricing |
 | [dispatch.md](dispatch.md) | Ticket-to-PR orchestration: modes, worktrees, PR review, orchestrator agents, cleanup and sweep |
-| [permissions.md](permissions.md) | Per-agent command safety, what a project config may not set, built-in guards, audit trail |
+| [permissions.md](permissions.md) | Per-agent command safety, what a project config may not set, built-in guards, audit trail, session audit reports (`agentctl audit report`) |
 | [keybindings.md](keybindings.md) | Prefix keybindings, ticket browser keys, and the fleet hub's keys, rows and sections |
 | [architecture.md](architecture.md) | System overview, data flow and source layout |
 | [monitor-architecture.md](monitor-architecture.md) | The optional monitor, hook-driven state, window names, reconcile and housekeeping, metrics, restore, TUI internals |

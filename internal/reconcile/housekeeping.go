@@ -6,7 +6,6 @@ import (
 
 	"github.com/blsmth/agentctl/internal/approval"
 	"github.com/blsmth/agentctl/internal/closedlog"
-	"github.com/blsmth/agentctl/internal/verdicts"
 	"github.com/blsmth/agentctl/internal/llmusage"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/mailbox"
@@ -16,6 +15,7 @@ import (
 	"github.com/blsmth/agentctl/internal/stamp"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/uploads"
+	"github.com/blsmth/agentctl/internal/verdicts"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 

@@ -19,7 +19,10 @@ func TestRecordVerdict(t *testing.T) {
 			"@2": {AgentName: "code-reviewer", SessionID: "rev-sess"},
 		}
 	}
-	msg := func(s string) json.RawMessage { b, _ := json.Marshal(map[string]string{"to": "x", "message": s}); return b }
+	msg := func(s string) json.RawMessage {
+		b, _ := json.Marshal(map[string]string{"to": "x", "message": s})
+		return b
+	}
 
 	t.Run("resolved author", func(t *testing.T) {
 		got = nil
@@ -38,6 +41,24 @@ func TestRecordVerdict(t *testing.T) {
 		recordVerdict(msg("REVIEW PR #99 — VERDICT: MERGE"), "@2", "rev-sess", "code-reviewer")
 		if len(got) != 1 || got[0].Author != "" || got[0].PR != 99 || got[0].RevSess != "rev-sess" {
 			t.Fatalf("records = %+v", got)
+		}
+	})
+	t.Run("two candidates", func(t *testing.T) {
+		got = nil
+		allWindowRecords = func() map[string]windowstate.WindowState {
+			return map[string]windowstate.WindowState{
+				"@1": {AgentName: "code-reviewer", Mode: "review-pr", Branch: "agent/code-reviewer/review-pr-5-x", LogPR: windowstate.LogPRScan{PRNumber: 5}},
+				"@3": {AgentName: "other", LogPR: windowstate.LogPRScan{PRNumber: 5}},
+				"@4": {AgentName: "go-engineer", Branch: "agent/go-engineer/issue-2", PRNumber: 5},
+				"@5": {AgentName: "go-engineer-2", Branch: "b", PRNumber: 5},
+			}
+		}
+		for i := 0; i < 20; i++ { // map order must not matter
+			got = nil
+			recordVerdict(msg("REVIEW PR #5 — VERDICT: MERGE"), "@9", "s", "code-reviewer")
+			if len(got) != 1 || got[0].Author != "@4" || got[0].AuthAgent != "go-engineer" {
+				t.Fatalf("record = %+v", got)
+			}
 		}
 	})
 	t.Run("other messages ignored", func(t *testing.T) {

@@ -82,6 +82,7 @@ type CLI struct {
 	HubView         HubViewCmd         `cmd:"" name:"hub-view" hidden:""`
 	HubNewSession   HubNewSessionCmd   `cmd:"" name:"hub-new-session" hidden:""`
 	HubResume       HubResumeCmd       `cmd:"" name:"hub-resume" hidden:""`
+	Resume          ResumeCmd          `cmd:"" help:"Resume a closed session by its handle (see the ID column of 'status list --closed')"`
 	HubStatus       HubStatusCmd       `cmd:"" name:"hub-status" hidden:""`
 	JumpNextBlocked JumpNextBlockedCmd `cmd:"" name:"jump-next-blocked" hidden:""`
 
@@ -98,7 +99,7 @@ type CLI struct {
 	OpenContextWindow  OpenContextWindowCmd  `cmd:"" name:"open-context-window" hidden:""`
 
 	// Audit trail (hook-sourced -- every tool call, not just Bash)
-	Audit AuditCmd `cmd:"" help:"Query the hook-sourced audit trail (--json for machine-readable)"`
+	Audit AuditCmd `cmd:"" help:"Query the hook-sourced audit trail (default), or grade past sessions with 'audit report'"`
 
 	// File preview popup (used by hook-permission-request for Write)
 	FilePreview FilePreviewCmd `cmd:"" name:"file-preview" hidden:""`
@@ -608,6 +609,14 @@ func (c *HubResumeCmd) Run() error {
 	return cmd.RunHubResume(os.Stdout, cmd.HubResumeOptions{ProjectDir: c.Dir, WorkDir: c.WorkDir, Agent: c.Agent, SessionID: c.SessionID})
 }
 
+// ResumeCmd implements `agentctl resume <handle>`: it relaunches a closed
+// session through the same path as the hub's Resume (hub-resume).
+type ResumeCmd struct {
+	Handle string `arg:"" help:"Session handle (or full session ID) of a closed session"`
+}
+
+func (c *ResumeCmd) Run() error { return cmd.RunResume(os.Stdout, c.Handle) }
+
 // JumpNextBlockedCmd finds the first blocked agent across every live
 // agentctl session and switches to it. Works from any session.
 type JumpNextBlockedCmd struct {
@@ -837,7 +846,40 @@ func (c *OpenContextWindowCmd) Run() error {
 // Audit trail
 // ---------------------------------------------------------------------------
 
-// AuditCmd implements `agentctl audit`, a reader over the hook-sourced audit
+// AuditCmd groups `agentctl audit`: the trail query (`audit log`, the
+// default, so bare `agentctl audit --tool Bash` keeps working) and the
+// per-session grades (`audit report`).
+type AuditCmd struct {
+	Log      AuditLogCmd      `cmd:"" default:"withargs" help:"Query the hook-sourced audit trail (default; --json for machine-readable)"`
+	Report   AuditReportCmd   `cmd:"" help:"Grade a past session (or --all) for safety and efficiency"`
+	Verdicts AuditVerdictsCmd `cmd:"" help:"List PR review verdicts with the BLOCKED rate per author agent"`
+}
+
+// AuditReportCmd implements `agentctl audit report [<target>]`.
+type AuditReportCmd struct {
+	Target   string `arg:"" optional:"" help:"Window (@N), session ID, or transcript path (default: this window)"`
+	All      bool   `help:"Grade many sessions: a leaderboard plus the most frequent findings"`
+	Since    string `default:"7d" help:"With --all: how far back to look (e.g. 36h, 7d)"`
+	Agent    string `help:"With --all: only sessions of this agent"`
+	Project  string `help:"With --all: only sessions in this project (directory basename)"`
+	Limit    int    `default:"20" help:"With --all: at most this many sessions, newest first"`
+	Severity string `default:"low" enum:"high,med,medium,low" help:"Hide findings below this severity (high, med, low); scores still count them"`
+	JSON     bool   `help:"Output as JSON (schema 1)"`
+}
+
+func (c *AuditReportCmd) Run() error {
+	err := cmd.RunAuditReport(os.Stdout, cmd.AuditReportOptions{
+		Target: c.Target, All: c.All, Since: c.Since, Agent: c.Agent, Project: c.Project,
+		Limit: c.Limit, Severity: c.Severity, JSON: c.JSON,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		cliout.Exit(1)
+	}
+	return nil
+}
+
+// AuditLogCmd implements `agentctl audit [log]`, a reader over the hook-sourced audit
 // trail written by the PostTool/PostToolFailure hook handlers into
 // <runtimeDir>/audit/<session-id>.jsonl (see internal/audit). Without --json
 // it prints a text table; --json emits the matching raw records and IS the
@@ -850,7 +892,7 @@ func (c *OpenContextWindowCmd) Run() error {
 // about -- registered sessions only, see AllProjects's help text and
 // audit.AllProjectAuditDirs's doc comment for why that is an accepted,
 // documented gap rather than a bug.
-type AuditQueryCmd struct {
+type AuditLogCmd struct {
 	Session     string `help:"Filter to a session ID"`
 	Agent       string `help:"Filter to an agent name"`
 	Window      string `help:"Filter to a tmux window ID (e.g. @5)"`
@@ -865,13 +907,6 @@ type AuditQueryCmd struct {
 	Limit       int    `help:"Max number of records to show, most recent first. 0 means unlimited." default:"100"`
 	Full        bool   `help:"Print the DETAIL column untruncated instead of capping it to the terminal width"`
 	JSON        bool   `help:"Output matching raw records as JSON instead of a table"`
-}
-
-// AuditCmd is `agentctl audit`: the record query (the default, so every
-// existing `audit --flag` invocation is unchanged) and `audit verdicts`.
-type AuditCmd struct {
-	Query    AuditQueryCmd    `cmd:"" default:"withargs" help:"Query the hook-sourced audit trail (the default; --json for machine-readable)"`
-	Verdicts AuditVerdictsCmd `cmd:"" help:"List PR review verdicts with the BLOCKED rate per author agent"`
 }
 
 // AuditVerdictsCmd implements `agentctl audit verdicts`, a reader over the
@@ -892,7 +927,7 @@ func (c *AuditVerdictsCmd) Run() error {
 // buildFilter parses c.Since and assembles the audit.Filter that Run passes
 // to cmd.PrintAuditTable. Split out from Run so the flag-to-filter wiring can
 // be tested directly, without going through Run's os.Exit-on-error path.
-func (c *AuditQueryCmd) buildFilter() (audit.Filter, error) {
+func (c *AuditLogCmd) buildFilter() (audit.Filter, error) {
 	since, err := cmd.ParseAuditSince(c.Since)
 	if err != nil {
 		return audit.Filter{}, err
@@ -912,7 +947,7 @@ func (c *AuditQueryCmd) buildFilter() (audit.Filter, error) {
 	}, nil
 }
 
-func (c *AuditQueryCmd) Run() error {
+func (c *AuditLogCmd) Run() error {
 	filter, err := c.buildFilter()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -1151,7 +1186,7 @@ type StatusCmd struct {
 // StatusListCmd is the default subcommand for `agentctl status`. With no
 // argument it lists every agent; with a window reference it prints detail.
 type StatusListCmd struct {
-	Window  string `arg:"" optional:"" help:"Window ID (@275), index (275), or agent name for detail view"`
+	Window  string `arg:"" optional:"" help:"Session handle, window ID (@275), index (275), or agent name for detail view"`
 	JSON    bool   `help:"Output as JSON"`
 	Session string `help:"Only show agents in sessions matching this name or project"`
 	State   string `help:"Only show agents in this state: blocked, working, idle, done" enum:"blocked,working,idle,done," default:""`
@@ -1184,7 +1219,7 @@ func (c *StatusListCmd) Run() error {
 }
 
 type StatusPeekCmd struct {
-	Window string `arg:"" help:"Window ID (@275), index (275), or agent name"`
+	Window string `arg:"" help:"Session handle, window ID (@275), index (275), or agent name"`
 	Lines  int    `help:"How many trailing pane lines to show" default:"40"`
 	JSON   bool   `help:"Output as JSON"`
 }
@@ -1213,7 +1248,7 @@ func (c *ModelsCmd) Run() error { return cmd.RunModels(c.Resolve) }
 
 // RaceCmd implements `agentctl race [<target>]`.
 type RaceCmd struct {
-	Target   string        `arg:"" optional:"" help:"Window (@N), session ID, or transcript path (default: this window)"`
+	Target   string        `arg:"" optional:"" help:"Window (@N), session handle or ID, or transcript path (default: this window)"`
 	WPM      float64       `name:"wpm" default:"60" help:"Human typing speed, words per minute"`
 	ReadWPM  float64       `name:"read-wpm" default:"250" help:"Human reading speed, words per minute"`
 	Think    time.Duration `default:"0s" help:"Human pause per step (0 = no pauses)"`

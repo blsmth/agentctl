@@ -62,15 +62,16 @@ type Record struct {
 }
 
 var (
-	verdictRe = regexp.MustCompile(`REVIEW PR #(\d+)\s*[—–-]+\s*VERDICT:\s*(MERGE-WITH-FOLLOWUPS|MERGE|BLOCKED|NEEDS-BRENDAN)`)
-	roundsRe  = regexp.MustCompile(`(?i)\bround\s+(\d+)\b|\b(\d+)(?:st|nd|rd|th)\s+round\b`)
+	verdictRe = regexp.MustCompile(`^\s*REVIEW PR #(\d+)\s*[—–-]+\s*VERDICT:\s*(MERGE-WITH-FOLLOWUPS|MERGE|BLOCKED|NEEDS-BRENDAN)`)
+	roundsRe  = regexp.MustCompile(`(?i)\brounds?:\s*(\d+)|\bround\s+(\d+)\b|\b(\d+)(?:st|nd|rd|th)\s+round\b`)
 )
 
 // Parse extracts the PR number, verdict and stated review round from a
-// message body. ok is false for any other message. The cheap substring check
-// comes first: this runs on every SendMessage.
+// message body. ok is false for any other message, including one that merely
+// quotes a verdict: the template starts the message with the verdict line.
+// The cheap prefix check comes first: this runs on every SendMessage.
 func Parse(body string) (pr int, verdict string, rounds int, ok bool) {
-	if !strings.Contains(body, "REVIEW PR #") {
+	if !strings.HasPrefix(strings.TrimSpace(body), "REVIEW PR #") {
 		return 0, "", 0, false
 	}
 	m := verdictRe.FindStringSubmatch(body)
@@ -82,7 +83,7 @@ func Parse(body string) (pr int, verdict string, rounds int, ok bool) {
 		return 0, "", 0, false
 	}
 	if r := roundsRe.FindStringSubmatch(body); r != nil {
-		rounds, _ = strconv.Atoi(r[1] + r[2])
+		rounds, _ = strconv.Atoi(r[1] + r[2] + r[3])
 	}
 	return pr, m[2], rounds, true
 }

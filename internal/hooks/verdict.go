@@ -3,9 +3,9 @@ package hooks
 import (
 	"encoding/json"
 	"regexp"
+	"sort"
 
 	"github.com/blsmth/agentctl/internal/logging"
-	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/verdicts"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
@@ -50,20 +50,11 @@ func recordVerdict(toolInput json.RawMessage, windowID, sessionID, agentName str
 		PR:       pr,
 		Verdict:  verdict,
 		Rounds:   rounds,
-		Repo:     paths.DirName(),
 		Reviewer: windowID,
 		RevAgent: agentName,
 		RevSess:  sessionID,
 	}
-	for id, ws := range allWindowRecords() {
-		if id == windowID || !recordsPR(ws, pr) {
-			continue
-		}
-		// Prefer a window with a branch (the dispatched author) over a
-		// bare one that merely linked the PR.
-		if rec.Author != "" && ws.Branch == "" {
-			continue
-		}
+	if id, ws, ok := findAuthor(allWindowRecords(), windowID, pr); ok {
 		rec.Author, rec.AuthAgent, rec.AuthSess, rec.Branch = id, ws.AgentName, ws.SessionID, ws.Branch
 		if repo := repoFromPRURL(prURL(ws)); repo != "" {
 			rec.Repo = repo
@@ -93,4 +84,31 @@ func repoFromPRURL(u string) string {
 		return m[1]
 	}
 	return ""
+}
+
+// findAuthor picks the window that authored PR pr: never the reviewer itself
+// or another review-pr window, a window whose dispatch completion recorded
+// the PR (PRNumber) over one that only saw it in its transcript (LogPR), and
+// the lowest window ID among equals so the result is deterministic.
+func findAuthor(all map[string]windowstate.WindowState, reviewer string, pr int) (string, windowstate.WindowState, bool) {
+	ids := make([]string, 0, len(all))
+	for id := range all {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	bestID, best, bestRank := "", windowstate.WindowState{}, 0
+	for _, id := range ids {
+		ws := all[id]
+		if id == reviewer || ws.Mode == "review-pr" || !recordsPR(ws, pr) {
+			continue
+		}
+		rank := 1
+		if ws.PRNumber == pr {
+			rank = 2
+		}
+		if rank > bestRank {
+			bestID, best, bestRank = id, ws, rank
+		}
+	}
+	return bestID, best, bestRank > 0
 }

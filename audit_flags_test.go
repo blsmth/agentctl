@@ -8,11 +8,11 @@ import (
 	"github.com/blsmth/agentctl/internal/audit"
 )
 
-// TestAuditCmd_LimitDefault pins two properties of `agentctl audit --limit`:
+// TestAuditLogCmd_LimitDefault pins two properties of `agentctl audit [log] --limit`:
 // no --limit flag at all falls back to the documented default of 100 records,
 // and an explicit `--limit 0` means "unlimited" rather than "show nothing" --
-// see AuditCmd.Limit's help text and audit.Filter.Limit's doc comment.
-func TestAuditCmd_LimitDefault(t *testing.T) {
+// see AuditLogCmd.Limit's help text and audit.Filter.Limit's doc comment.
+func TestAuditLogCmd_LimitDefault(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
@@ -25,7 +25,7 @@ func TestAuditCmd_LimitDefault(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var cmd AuditCmd
+			var cmd AuditLogCmd
 			parser, err := kong.New(&cmd)
 			if err != nil {
 				t.Fatalf("kong.New: %v", err)
@@ -33,19 +33,19 @@ func TestAuditCmd_LimitDefault(t *testing.T) {
 			if _, err := parser.Parse(tt.args); err != nil {
 				t.Fatalf("Parse(%v): %v", tt.args, err)
 			}
-			if cmd.Query.Limit != tt.want {
-				t.Errorf("Limit = %d, want %d", cmd.Query.Limit, tt.want)
+			if cmd.Limit != tt.want {
+				t.Errorf("Limit = %d, want %d", cmd.Limit, tt.want)
 			}
 		})
 	}
 }
 
-// TestAuditCmd_DeniedAndEventFlags pins that --denied and --event each reach
+// TestAuditLogCmd_DeniedAndEventFlags pins that --denied and --event each reach
 // audit.Filter.DeniedOnly / audit.Filter.Event (the fields existed but
 // the flags were never wired the flags -- this is the regression guard for that gap), and
 // that both compose with the pre-existing --failed, --tool, and --agent
 // flags rather than clobbering them.
-func TestAuditCmd_DeniedAndEventFlags(t *testing.T) {
+func TestAuditLogCmd_DeniedAndEventFlags(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
@@ -92,7 +92,7 @@ func TestAuditCmd_DeniedAndEventFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var cmd AuditCmd
+			var cmd AuditLogCmd
 			parser, err := kong.New(&cmd)
 			if err != nil {
 				t.Fatalf("kong.New: %v", err)
@@ -100,7 +100,7 @@ func TestAuditCmd_DeniedAndEventFlags(t *testing.T) {
 			if _, err := parser.Parse(tt.args); err != nil {
 				t.Fatalf("Parse(%v): %v", tt.args, err)
 			}
-			got, err := cmd.Query.buildFilter()
+			got, err := cmd.buildFilter()
 			if err != nil {
 				t.Fatalf("buildFilter: %v", err)
 			}
