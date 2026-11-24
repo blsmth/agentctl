@@ -4,6 +4,7 @@ import { mountArtifacts } from "./artifacts.js";
 import { mountApprovals } from "./approvals.js";
 import { mountDispatch } from "./dispatch.js";
 import { mountFleet } from "./fleet.js";
+import { mountHandle } from "./handle.js";
 import { mountHost } from "./host.js";
 import { startLive, startPresence } from "./live.js";
 import {
@@ -83,6 +84,7 @@ function route() {
   document.querySelectorAll(".overlay").forEach((o) => o.remove());
   const r = parseRoute(location.hash);
   if (r.name === "window") cleanup = mountWindow(root, ctx, r);
+  else if (r.name === "handle") cleanup = mountHandle(root, ctx, r);
   else if (r.name === "terminal" && ctx.hasFeature("terminal")) cleanup = mountTerminal(root, ctx, r);
   else if (r.name === "approvals" && ctx.hasFeature("approvals")) cleanup = mountApprovals(root, ctx, r);
   else if (r.name === "dispatch") cleanup = mountDispatch(root, ctx, { dir: r.dir });

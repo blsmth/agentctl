@@ -49,7 +49,7 @@ async function runNow(st, after) {
   toast(`Running ${name}…`);
   try {
     const r = await post(`/v1/schedules/${enc(name)}/run`);
-    if (r.fired) toast(`${name} started${r.window_id ? ` in ${r.window_id}` : ""}`);
+    if (r.fired) toast(`${name} started`);
     else toast(`${name} did not run: ${runResultLabel(r.entry) || r.reason || r.result}`, "error");
   } catch (e) {
     toast(`Run failed: ${errText(e)}`, "error");
@@ -252,7 +252,7 @@ function mountCard(root, ctx, name, write) {
         ? h("ul", { class: "sched-runs" }, ...st.runs.map((e) => {
             const w = e.window ? live.get(e.window) : null;
             const when = `${formatAgo(e.ts)} · ${formatClock(new Date(e.ts).getTime())}`;
-            return h("li", {}, h("span", { class: "meta" }, `${when} `), runResultCard(e), e.manual ? " (manual)" : "",
+            return h("li", {}, h("span", { class: "meta" }, `${when} `), e.label ? `${e.label} ` : null, e.handle ? h("span", { class: "tag handle-chip" }, e.handle) : null, e.handle ? " " : null, runResultCard(e), e.manual ? " (manual)" : "",
               w ? [" ", h("a", { href: windowHash(w.session, w.window_id) }, "open window")] : null);
           }))
         : h("p", { class: "muted" }, "No runs yet."),

@@ -69,6 +69,7 @@ button.group-add { padding: 0; border: 0; background: none; cursor: pointer; }
 .win-chips .tag:last-child { flex: 0 1 auto; min-width: 0; }
 .activity.recap { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
 .win-chips .tag.agent-chip { opacity: .8; }
+.win-chips .tag.handle-chip, .handle-chip { font-family: ui-monospace, monospace; opacity: .7; }
 .win-chips .tag.sched-chip { white-space: nowrap; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; }
 .bar h1.win-h1 { display: flex; align-items: baseline; gap: .4rem; min-width: 0; }
 .win-h1 .h1-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

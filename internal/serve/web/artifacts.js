@@ -30,6 +30,7 @@ import {
   artifactHash,
   artifactIcon,
   artifactOrigin,
+  windowWho,
   artifactRevLabel,
   artifactRevPill,
   artifactTokenStale,
@@ -406,7 +407,7 @@ function mountList(root, ctx, filter) {
     clear(filterBar);
     if (filter) {
       filterBar.append(
-        h("span", { class: "muted" }, `From window ${filter.windowId}`),
+        h("span", { class: "muted" }, `From ${windowWho(artifactWindowLive({ session: filter.session, window_id: filter.windowId }, ctx.store.fleet?.groups)) || "a closed window"}`),
         h("a", { class: "btn small", href: artifactsHash() }, "Show all"),
       );
     }
@@ -689,7 +690,7 @@ function mountViewer(root, ctx, route) {
     };
     addEventListener("hashchange", close, { once: true });
     const live = artifactWindowLive(detail, ctx.store.fleet?.groups);
-    const origin = artifactOrigin(detail);
+    const origin = artifactOrigin(detail, live);
     const overlay = h(
       "div",
       { class: "overlay", onclick: (e) => e.target === overlay && close() },

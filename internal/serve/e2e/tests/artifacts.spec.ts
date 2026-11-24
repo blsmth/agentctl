@@ -63,7 +63,7 @@ test("the viewer sandboxes a directory artifact and loads its relative assets", 
     // Origin chips; the window is live in the fixture.
   await expect(page.locator("nav")).toBeHidden();
   await page.getByRole("button", { name: "More actions" }).click();
-  await expect(page.locator(".artifact-sheet .artifact-origin")).toHaveText("shop › designer · @17");
+  await expect(page.locator(".artifact-sheet .artifact-origin")).toHaveText("shop › designer");
   await expect(page.getByRole("link", { name: "Go to window ›" })).toHaveAttribute("href", "#/w/agentctl-shop/%4017");
   const open = page.getByRole("link", { name: /Open in new tab/ });
   // The id is the capability: the direct numbered URL, no token.

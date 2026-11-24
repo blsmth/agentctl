@@ -30,13 +30,13 @@ export function mountTerminal(root, ctx, { session, windowId }) {
 
   const status = h("span", { class: "term-status" }, "Connecting…");
   const badge = h("span", { class: "badge", hidden: true }, "read-only");
-  const title = h("h1", {}, windowId);
+  const title = h("h1", {}, "Terminal");
   const win = ctx.store.fleet?.groups
     ?.find((g) => g.session === session)
     ?.windows?.find((w) => w.window_id === windowId);
   const setTitle = () => {
     const w = ctx.store.fleet?.groups?.find((g) => g.session === session)?.windows?.find((x) => x.window_id === windowId);
-    title.textContent = detailTitle(w, windowId).text;
+    title.textContent = detailTitle(w, "Terminal").text;
   };
   setTitle();
   const host = h("div", { class: "term-host" });

@@ -233,7 +233,7 @@ test("header: state pill, project and branch, task line and chips", async ({ pag
   await expect(page.locator(".win-task")).toHaveText("Cover the cart service");
   // No recap: no second line (the pane already shows the last tool call).
   await expect(page.locator(".win-recap")).toBeHidden();
-  await expect(page.locator(".chips .chip")).toHaveText(["9% ctx", "$0.98", "sonnet-4-5", "@13 · dispatch"]);
+  await expect(page.locator(".chips .chip")).toHaveText(["9% ctx", "$0.98", "sonnet-4-5", "dispatch"]);
   // No header Live terminal button: Live is the third pane segment.
   await expect(page.locator("header.bar .btn")).toHaveCount(0);
   await expect(page.locator(".segmented .seg")).toHaveText(["Reflow", "Exact", "Live"]);

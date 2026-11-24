@@ -7,6 +7,7 @@ import {
   approvalProject, approvalRows, approvalRowText, promptFold, PROMPT_FOLD_LINES,
   DISPATCH_UPLOAD_PATH, buildDispatchRequest, buildShellRequest, canShell, templateFill, templateLabel, templatesPath, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
+  handleHash, handleApiPath, handleOutcome, windowWho,
   bucketLabel, kindLabel, rowTags, rowChips, rowTitle, rowHeadline, rowRole, detailTitle, truncateWords, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
   buildCommandRequest, commandConfirm, commandError, commandSuggestions, commandWord, isClaudeWindow, isSlashCommand, SLASH_COMMANDS,
@@ -325,6 +326,7 @@ console.log("ok: resolved text");
   assert.deepEqual(detailTitle({ agent: "brandon:2", role: "build", recap: "Some recap sentence." }, "@5"), { text: "brandon:2", agent: "", role: "" });
   assert.deepEqual(detailTitle({}, "@5"), { text: "@5", agent: "", role: "" });
   assert.deepEqual(detailTitle(undefined, "@5"), { text: "@5", agent: "", role: "" });
+  assert.deepEqual(detailTitle({ agent: "go-engineer:3", label: "#306 · names" }, "@5"), { text: "#306 · names", agent: "", role: "" });
   console.log("ok: detailTitle");
 }
 
@@ -541,9 +543,10 @@ console.log("ok: resolved text");
     pr_url: "https://github.com/o/r/pull/8", context_pct: 41.6, window_id: "@12", mode: "dispatch",
     detail: { cost_usd: 1.84, model: "claude-opus-4-1" },
   }, safeHttpsUrl);
-  assert.deepEqual(chips.map((c) => c.text), ["PR #8", "42% ctx", "$1.84", "opus-4-1", "@12 · dispatch"]);
+  assert.deepEqual(chips.map((c) => c.text), ["PR #8", "42% ctx", "$1.84", "opus-4-1", "dispatch"]);
   assert.equal(chips[0].href, "https://github.com/o/r/pull/8");
-  assert.deepEqual(headerChips({ pr_url: "javascript:alert(1)", pr_number: 3, window_id: "@1" }, safeHttpsUrl).map((c) => c.text), ["@1"]);
+  assert.deepEqual(headerChips({ pr_url: "javascript:alert(1)", pr_number: 3, window_id: "@1", handle: "a3f9" }, safeHttpsUrl).map((c) => c.text), ["a3f9"]);
+  assert.deepEqual(headerChips({ window_id: "@1" }, safeHttpsUrl), []);
   assert.deepEqual(headerChips({ pr_url: "https://x.test/p", pr_number: 3 }, safeHttpsUrl).map((c) => c.text), ["PR #3"]);
 
   const t0 = Date.parse("2026-11-17T10:00:00Z");
@@ -1079,7 +1082,8 @@ console.log("ok: load earlier gate");
   assert.equal(artifactRevLabel({ n: 1, created: "2026-01-01T09:00:00Z" }, now), "v1 \u00B7 3h ago");
   assert.equal(artifactRevPill(2, 2, 2), "v2 \u25BE");
   assert.equal(artifactRevPill(1, 2, 2), "v1 of 2 \u25BE");
-  assert.equal(artifactOrigin({ agent: "designer", project: "shop", window_id: "@17" }), "shop \u203A designer \u00B7 @17");
+  assert.equal(artifactOrigin({ agent: "designer", project: "shop", window_id: "@17" }), "shop \u203A designer");
+  assert.equal(artifactOrigin({ agent: "designer", project: "shop", window_id: "@17" }, { handle: "a3f9" }), "shop \u203A designer \u00B7 a3f9");
   assert.equal(artifactOrigin({ project: "shop" }), "shop");
   // Group items keep the served (saved) order: pinned rows no longer float.
   const pg = groupArtifacts([A("p1", "/b", "beta"), A("p2", "/b", "beta", { pinned: true }), A("p3", "/b", "beta")], []);
@@ -1227,3 +1231,22 @@ console.log("ok: load earlier gate");
   assert.equal(artifactCommentStatus({ status: "undelivered" }), "not delivered");
   console.log("ok: artifact feedback bridge");
 }
+
+// ---- handles ----
+assert.equal(handleHash("a3f9"), "#/s/a3f9");
+assert.equal(handleApiPath("a3f9"), "/v1/handles/a3f9");
+assert.deepEqual(parseRoute("#/s/a3f9"), { name: "handle", handle: "a3f9" });
+assert.deepEqual(parseRoute("#/w/agentctl-p/%4012"), { name: "window", session: "agentctl-p", windowId: "@12" });
+assert.equal(windowWho({ label: "esc fix", handle: "a3f9" }), "esc fix (a3f9)");
+assert.equal(windowWho({ handle: "a3f9" }), "a3f9");
+assert.equal(windowWho(null), "");
+assert.deepEqual(handleOutcome("a3f9", { live: true, session: "agentctl-p", window_id: "@7", handle: "a3f9" }), { go: "#/w/agentctl-p/%407" });
+assert.match(handleOutcome("bbbb", { live: false, handle: "bbbb", label: "old work", closed_at: "2026-11-20T09:00:00Z" }).message, /old work \(bbbb\) is closed .*agentctl resume bbbb/);
+assert.match(handleOutcome("a3f9", null, { status: 409, message: "ambiguous: a3f9ab, a3f9cd" }).message, /ambiguous/);
+assert.match(handleOutcome("dead", null, { status: 404 }).message, /No session dead/);
+assert.match(handleOutcome("dead", null, new Error("x")).message, /Could not look up/);
+assert.equal(artifactOrigin({ project: "shop", agent: "designer", window_id: "@17" }, { handle: "a3f9" }).includes("@17"), false);
+assert.equal(rowHeadline({ agent: "go-engineer:2", label: "go-engineer · started 09:05" }), "go-engineer · started 09:05");
+assert.equal(agentChip({ agent: "go-engineer:2", label: "go-engineer · started 09:05" }), "");
+assert.ok(rowChips({ agent: "a:1", handle: "a3f9" }).some((c) => c.kind === "handle-chip" && c.text === "a3f9"));
+console.log("ok: handles");

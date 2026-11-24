@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/sweeprun"
 )
@@ -92,6 +93,7 @@ func (s *Server) runSweep(in sweepIn, a *auditEntry, dryRun bool) outcome {
 		return failure(http.StatusConflict, codeBusy, "a sweep is already running for this project")
 	}
 	defer release()
+	names := s.sweepNames(t.Session)
 	// Not the request context: an apply cut short by a dropped connection
 	// would leave the sweep half done. sweeprun bounds the run.
 	rep, err := s.sweep(context.Background(), t, dryRun)
@@ -102,7 +104,52 @@ func (s *Server) runSweep(in sweepIn, a *auditEntry, dryRun bool) outcome {
 	if !dryRun {
 		s.bus.Refresh()
 	}
+	nameSweepRows(&rep, names)
 	return success(sweepOut{Project: project, Report: rep})
+}
+
+// sweepNames maps the session's window IDs to what a person reads: the
+// window's label and handle. Taken before the sweep, since closed windows
+// leave the fleet.
+func (s *Server) sweepNames(session string) map[string]string {
+	groups, err := s.fleet.Fleet()
+	if err != nil {
+		return nil
+	}
+	names := map[string]string{}
+	for _, g := range groups {
+		if g.Session != session {
+			continue
+		}
+		for _, w := range g.Windows {
+			if n := windowWho(w); n != "" {
+				names[w.WindowID] = n
+			}
+		}
+	}
+	return names
+}
+
+// windowWho is "label (handle)", or whichever part exists.
+func windowWho(w fleet.Window) string {
+	switch {
+	case w.Label != "" && w.Handle != "":
+		return w.Label + " (" + w.Handle + ")"
+	case w.Label != "":
+		return w.Label
+	}
+	return w.Handle
+}
+
+// nameSweepRows swaps the tmux window names in a report for names.
+func nameSweepRows(rep *sweeprun.Report, names map[string]string) {
+	for _, rows := range [][]sweeprun.Row{rep.Closed, rep.Attention, rep.InProgress, rep.Skipped} {
+		for i := range rows {
+			if n := names[rows[i].WindowID]; n != "" {
+				rows[i].Name = n
+			}
+		}
+	}
 }
 
 // sweepTarget resolves a session name from the client to a fleet group's
