@@ -594,3 +594,35 @@ func TestNotifierArtifactHeldUntilLaptopIdle(t *testing.T) {
 		t.Errorf("repeat push: %+v", got)
 	}
 }
+
+// A held artifact is dropped, not pushed, when its project got muted or quiet
+// hours began while it waited for the laptop to go idle.
+func TestNotifierHeldArtifactRechecksMuteAndQuietHours(t *testing.T) {
+	tests := []struct {
+		name  string
+		apply func(n *Notifier, now time.Time)
+	}{
+		{"muted meanwhile", func(n *Notifier, _ time.Time) { n.cfg.MutedProjects = []string{"proj"} }},
+		{"quiet hours began", func(n *Notifier, now time.Time) {
+			l := now // InQuietHours reads the clock's own zone
+			n.cfg.QuietHours = l.Add(-time.Hour).Format("15:04") + "-" + l.Add(time.Hour).Format("15:04")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
+			e.artifact()
+			e.n.mu.Lock()
+			tt.apply(e.n, e.clock.Now())
+			e.n.mu.Unlock()
+			e.setActive(false)
+			e.n.Tick()
+			if got := e.take(); len(got) != 0 {
+				t.Errorf("pushed a stale held artifact: %+v", got)
+			}
+			if len(e.n.held) != 0 {
+				t.Errorf("held = %v, want empty", e.n.held)
+			}
+		})
+	}
+}

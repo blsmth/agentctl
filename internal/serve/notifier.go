@@ -54,6 +54,7 @@ type heldApproval struct {
 	// artifact marks a held new-artifact push: it has no pending answer to
 	// check, so only its deadline drops it.
 	artifact bool
+	project  string // of a held artifact, re-checked against mutes and quiet hours on release
 }
 
 // artifactHoldFor is how long a new-artifact push waits for the laptop to go
@@ -88,9 +89,10 @@ func NewNotifier(cfg config.ServePushConfig, now func() time.Time, deliver func(
 }
 
 // SetLaptop makes the notifier hold pushes while l reports the laptop in use:
-// a done push is dropped; a blocked agent, an approval and a new
-// artifact are pushed once when the laptop goes idle if still blocked or pending (pending
-// reports that; nil means always). Call before Run.
+// a done push is dropped; a blocked agent, an approval and a new artifact are
+// pushed once when the laptop goes idle if still blocked or pending (pending
+// reports that; nil means always). A held artifact is dropped instead if its
+// project was muted or quiet hours began meanwhile. Call before Run.
 func (n *Notifier) SetLaptop(l *laptopActivity, pending func(id string) bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -190,7 +192,7 @@ func (n *Notifier) fireArtifactLocked(a fleetwatch.ArtifactChange, now time.Time
 	}
 	msg := artifactMessage(a)
 	if n.laptopQuietLocked(msg.Kind, msg.Tag, " (held until idle)", false) {
-		n.held[msg.Tag] = heldApproval{msg: msg, deadline: now.Add(artifactHoldFor), artifact: true}
+		n.held[msg.Tag] = heldApproval{msg: msg, deadline: now.Add(artifactHoldFor), artifact: true, project: a.Project}
 		return
 	}
 	n.deliver(msg)
@@ -284,7 +286,8 @@ func (n *Notifier) Tick() {
 // probed only while something is held.
 func (n *Notifier) flushHeldLocked(now time.Time) {
 	for id, h := range n.held {
-		if !now.Before(h.deadline) || (!h.artifact && n.approvalPending != nil && !n.approvalPending(id)) {
+		stale := h.artifact && (slices.Contains(n.cfg.MutedProjects, h.project) || InQuietHours(n.cfg.QuietHours, now))
+		if stale || !now.Before(h.deadline) || (!h.artifact && n.approvalPending != nil && !n.approvalPending(id)) {
 			delete(n.held, id)
 		}
 	}
