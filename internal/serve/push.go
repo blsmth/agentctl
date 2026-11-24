@@ -156,6 +156,10 @@ type Message struct {
 	Urgent bool   `json:"-"`
 	Kind   string `json:"-"` // "blocked", "reminder", "done", "approval", "artifact", "test"
 	TTL    int    `json:"-"` // seconds; 0 means pushTTL
+
+	// LaptopChecked marks a message the Notifier already weighed against the
+	// laptop (and held or released), so Broadcast does not decide again.
+	LaptopChecked bool `json:"-"`
 }
 
 func (m Message) payload() []byte {
@@ -297,7 +301,7 @@ func (s *Sender) Broadcast(ctx context.Context, msg Message) {
 		}
 		targets[id] = sub
 	}
-	laptopActive := len(targets) > 0 && s.laptop.Active()
+	laptopActive := len(targets) > 0 && !msg.LaptopChecked && s.laptop.Active()
 	inApp := 0
 	if s.presence != nil && !laptopActive {
 		for id := range targets {
