@@ -1934,10 +1934,18 @@ type CronAddCmd struct {
 	Timeout    string `help:"Interrupt a run after this long (e.g. 45m); default none"`
 	Overlap    string `enum:"skip,allow" default:"skip" help:"When the previous run is still active: skip or allow"`
 	Catchup    string `enum:"latest,none" default:"latest" help:"After missed fires: run the latest within catchup_window, or none"`
+	// Mode window (default) dispatches the prompt; improve runs a fleet improve run.
+	Mode         string `enum:"window,improve" default:"window" help:"What a fire does: window (dispatch the prompt) or improve (a fleet improve run; no prompt needed)"`
+	ImproveFleet bool   `name:"improve-fleet" help:"Shorthand for --mode improve: run 'agentctl improve --fleet' over the schedule interval (24h for a daily job); --prompt or --template adds a theme"`
 }
 
 func (c *CronAddCmd) Run() error {
+	mode := c.Mode
+	if c.ImproveFleet {
+		mode = "improve"
+	}
 	return cmd.RunCronAdd(os.Stdout, cmd.CronAddOptions{
+		Mode: mode,
 		Name: c.Name, Schedule: c.Schedule, Agent: c.Agent, Dir: c.Dir,
 		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile, Template: c.Template, NoWorktree: c.NoWorktree,
 		Model: c.Model, Effort: c.Effort, Backend: c.Backend, Account: c.Account,
@@ -1946,27 +1954,35 @@ func (c *CronAddCmd) Run() error {
 }
 
 type CronEditCmd struct {
-	Name       string  `arg:"" help:"Job to edit (the name cannot change)"`
-	Schedule   *string `help:"5-field cron expression in local time, or @hourly/@daily/@weekly (re-seeds the schedule: earlier fires are not caught up)"`
-	Agent      *string `short:"a" help:"Agent to run"`
-	Dir        *string `help:"Project directory"`
-	Prompt     *string `short:"p" help:"Prompt text (replaces a prompt key)"`
-	PromptKey  *string `name:"prompt-key" short:"k" help:"Context store key holding the prompt (read at each fire)"`
-	PromptFile *string `name:"prompt-file" type:"path" help:"File holding the prompt (copied into the job now)"`
-	Template   *string `help:"Prompt template, read at each fire (replaces the prompt or prompt key)"`
-	Worktree   bool    `help:"Run each fire in its own worktree" xor:"worktree"`
-	NoWorktree bool    `name:"no-worktree" help:"Run in the project checkout instead of a worktree per fire" xor:"worktree"`
-	Model      *string `short:"m" help:"Model override (empty clears it)"`
-	Effort     *string `help:"Effort override (low, medium, high, xhigh, max, auto; empty clears it)"`
-	Backend    *string `help:"Named backend from config; 'none' forces Anthropic (empty clears it)"`
-	Account    *string `help:"Claude account to run under (empty clears it)"`
-	Timeout    *string `help:"Interrupt a run after this long (e.g. 45m; empty for none)"`
-	Overlap    *string `help:"When the previous run is still active: skip or allow"`
-	Catchup    *string `help:"After missed fires: latest or none"`
+	Name         string  `arg:"" help:"Job to edit (the name cannot change)"`
+	Schedule     *string `help:"5-field cron expression in local time, or @hourly/@daily/@weekly (re-seeds the schedule: earlier fires are not caught up)"`
+	Agent        *string `short:"a" help:"Agent to run"`
+	Dir          *string `help:"Project directory"`
+	Prompt       *string `short:"p" help:"Prompt text (replaces a prompt key)"`
+	PromptKey    *string `name:"prompt-key" short:"k" help:"Context store key holding the prompt (read at each fire)"`
+	PromptFile   *string `name:"prompt-file" type:"path" help:"File holding the prompt (copied into the job now)"`
+	Template     *string `help:"Prompt template, read at each fire (replaces the prompt or prompt key)"`
+	Worktree     bool    `help:"Run each fire in its own worktree" xor:"worktree"`
+	NoWorktree   bool    `name:"no-worktree" help:"Run in the project checkout instead of a worktree per fire" xor:"worktree"`
+	Model        *string `short:"m" help:"Model override (empty clears it)"`
+	Effort       *string `help:"Effort override (low, medium, high, xhigh, max, auto; empty clears it)"`
+	Backend      *string `help:"Named backend from config; 'none' forces Anthropic (empty clears it)"`
+	Account      *string `help:"Claude account to run under (empty clears it)"`
+	Timeout      *string `help:"Interrupt a run after this long (e.g. 45m; empty for none)"`
+	Overlap      *string `help:"When the previous run is still active: skip or allow"`
+	Catchup      *string `help:"After missed fires: latest or none"`
+	Mode         *string `enum:"window,improve" help:"What a fire does: window (dispatch the prompt) or improve (a fleet improve run)"`
+	ImproveFleet bool    `name:"improve-fleet" help:"Shorthand for --mode improve"`
 }
 
 func (c *CronEditCmd) Run() error {
+	mode := c.Mode
+	if c.ImproveFleet {
+		m := "improve"
+		mode = &m
+	}
 	return cmd.RunCronEdit(os.Stdout, cmd.CronEditOptions{
+		Mode: mode,
 		Name: c.Name, Schedule: c.Schedule, Agent: c.Agent, Dir: c.Dir,
 		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile, Template: c.Template,
 		Worktree: c.Worktree, NoWorktree: c.NoWorktree,

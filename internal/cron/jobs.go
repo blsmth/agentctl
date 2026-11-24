@@ -30,6 +30,9 @@ import (
 const (
 	HarnessClaude = "claude"
 	ModeWindow    = "window"
+	// ModeImprove runs a fleet improve run (internal/improve) instead of
+	// dispatching a prompt: same launch path as `agentctl improve --fleet`.
+	ModeImprove   = "improve"
 	OverlapSkip   = "skip"
 	OverlapAllow  = "allow"
 	CatchupLatest = "latest"
@@ -41,6 +44,17 @@ const SchedulesFile = "schedules.json"
 
 // LaunchdLabel is the LaunchAgent label of the cron ticker.
 const LaunchdLabel = "com.blsmth.agentctl.cron"
+
+// ImproveAgent is the agent an improve job runs when it names none. It must
+// equal improve.DefaultFleetAgent (a test in internal/cmd pins that).
+const ImproveAgent = "fleet-improver"
+
+// DefaultImproveSince is the evidence window of an improve job when its
+// schedule gives no interval to derive one from.
+const DefaultImproveSince = 24 * time.Hour
+
+// maxImproveSince caps a derived evidence window.
+const maxImproveSince = 30 * 24 * time.Hour
 
 // Job is one scheduled run. Optional enum fields are normalized by
 // Normalize; read Worktree and Enabled through UseWorktree and IsEnabled.
@@ -55,6 +69,10 @@ type Job struct {
 	// fire, Template from Dir's project (shadowing the global templates).
 	// With a Template, Agent, Model and Effort may be empty: the
 	// template's defaults fill them, and a job field always wins.
+	//
+	// In ModeImprove no prompt is needed: at most one of the three adds a
+	// theme (prompt, prompt_key) or a template body to the improve prompt,
+	// and Agent defaults to the fleet-improver agent.
 	Prompt    string `json:"prompt,omitempty"`
 	PromptKey string `json:"prompt_key,omitempty"`
 	Template  string `json:"template,omitempty"`
@@ -72,6 +90,68 @@ type Job struct {
 	Timeout          string                      `json:"timeout,omitempty"`
 	SkipIfUsageAbove *config.CronUsageThresholds `json:"skip_if_usage_above,omitempty"`
 	Enabled          *bool                       `json:"enabled,omitempty"`
+}
+
+// IsImprove reports whether the job runs a fleet improve run.
+func (j Job) IsImprove() bool { return j.Mode == ModeImprove }
+
+// ImproveSince is the evidence window of an improve fire at t: the gap between
+// the next two scheduled fires (a daily job reviews 24h, a weekly one 7d),
+// DefaultImproveSince when the schedule has fewer than two.
+func (j Job) ImproveSince(t time.Time) time.Duration {
+	sched, err := ParseSchedule(j.Schedule)
+	if err != nil {
+		return DefaultImproveSince
+	}
+	first := sched.Next(t)
+	if first.IsZero() {
+		return DefaultImproveSince
+	}
+	second := sched.Next(first)
+	if second.IsZero() {
+		return DefaultImproveSince
+	}
+	d := second.Sub(first)
+	switch {
+	case d < time.Hour:
+		return time.Hour
+	case d > maxImproveSince:
+		return maxImproveSince
+	}
+	return d
+}
+
+// ImproveAgentName is the agent an improve job runs: its own, else ImproveAgent.
+func (j Job) ImproveAgentName() string {
+	if strings.TrimSpace(j.Agent) != "" {
+		return j.Agent
+	}
+	return ImproveAgent
+}
+
+// ImproveSummary describes what an improve job does at t, the way the
+// approval popup, `cron list` and the cards show it instead of a prompt:
+// "Fleet improve, last 24h, agent fleet-improver, model opus".
+func (j Job) ImproveSummary(t time.Time) string {
+	model := j.Model
+	if model == "" {
+		model = "default"
+	}
+	return fmt.Sprintf("Fleet improve, last %s, agent %s, model %s", ShortDuration(j.ImproveSince(t)), j.ImproveAgentName(), model)
+}
+
+// ShortDuration renders d as days when it is a whole number of days, else as
+// hours and minutes ("7d", "24h" is shown as "24h", "90m").
+func ShortDuration(d time.Duration) string {
+	switch {
+	case d >= 48*time.Hour && d%(24*time.Hour) == 0:
+		return fmt.Sprintf("%dd", d/(24*time.Hour))
+	case d%time.Hour == 0:
+		return fmt.Sprintf("%dh", d/time.Hour)
+	case d%time.Minute == 0:
+		return fmt.Sprintf("%dm", d/time.Minute)
+	}
+	return d.String()
 }
 
 // UseWorktree reports whether fires get their own worktree (default true).
@@ -190,7 +270,12 @@ func (j Job) FieldErrors() []FieldError {
 	case !filepath.IsAbs(j.Dir):
 		add(FieldDir, "dir %q must be an absolute path", j.Dir)
 	}
+	improve := j.IsImprove()
 	switch {
+	case improve && strings.TrimSpace(j.Agent) == "":
+		// The fleet-improver agent runs it (checked at fire time).
+	case improve && !agentname.ValidLaunch(j.Agent):
+		add(FieldAgent, "invalid agent name %q", j.Agent)
 	case strings.TrimSpace(j.Agent) == "" && j.Template != "":
 		// The template names the agent (checked against the file by
 		// cronedit, and again at fire time).
@@ -200,6 +285,8 @@ func (j Job) FieldErrors() []FieldError {
 		add(FieldAgent, "invalid agent name %q", j.Agent)
 	}
 	switch n := countNonEmpty(j.Prompt, j.PromptKey, j.Template); {
+	case n == 0 && improve:
+		// An improve run needs no prompt.
 	case n == 0:
 		add(FieldPrompt, "write a prompt or pick a template")
 	case n > 1 && j.Template != "":
@@ -212,11 +299,13 @@ func (j Job) FieldErrors() []FieldError {
 	if j.Harness != HarnessClaude {
 		add(FieldHarness, "harness %q is not supported yet (only %q)", j.Harness, HarnessClaude)
 	}
-	if j.Mode != ModeWindow {
-		add(FieldMode, "mode %q is not supported yet (only %q)", j.Mode, ModeWindow)
+	if !slices.Contains([]string{ModeWindow, ModeImprove}, j.Mode) {
+		add(FieldMode, "mode %q: want %s or %s", j.Mode, ModeWindow, ModeImprove)
 	}
 	if !slices.Contains([]string{OverlapSkip, OverlapAllow}, j.Overlap) {
 		add(FieldOverlap, "overlap %q: want skip or allow", j.Overlap)
+	} else if improve && j.Overlap == OverlapAllow {
+		add(FieldOverlap, "an improve job cannot overlap itself: runs share the history stores, so the first end snapshot would take in the other run's edits")
 	}
 	if !slices.Contains([]string{CatchupLatest, CatchupNone}, j.Catchup) {
 		add(FieldCatchup, "catchup %q: want latest or none", j.Catchup)

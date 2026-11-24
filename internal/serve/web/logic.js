@@ -2412,6 +2412,7 @@ export function schedulePromptLabel(job) {
 /** scheduleAgentText is the agent a job runs, naming a template's default. */
 export function scheduleAgentText(job, templateAgent = "") {
   if (job?.agent) return job.agent;
+  if (job?.mode === "improve") return "fleet-improver";
   if (job?.template) return templateAgent ? `${templateAgent} (from template ${job.template})` : `the agent of template ${job.template}`;
   return "";
 }
@@ -2423,6 +2424,7 @@ export function projectAgent(project, agent) {
 
 /** scheduleRowActivity is a list row's "project \u203A agent" line; a template job names its template ("project \u203A agent \u00B7 template X"). */
 export function scheduleRowActivity(job, project) {
+  if (job?.mode === "improve") return projectAgent(project, `${scheduleAgentText(job)} \u00B7 fleet improve`);
   if (!job?.template) return projectAgent(project, job?.agent);
   const tpl = `template ${job.template}`;
   return projectAgent(project, job.agent ? `${job.agent} \u00B7 ${tpl}` : tpl);
@@ -2453,7 +2455,9 @@ export function scheduleReview(p, f) {
   }
   const adv = f ? advancedSummary(f) : "";
   if (adv) lines.push(`Advanced: ${adv}`);
-  if (job.template) {
+  if (job.mode === "improve") {
+    lines.push(`Fleet improve: ${p.improve_summary || "reviews the fleet's recent sessions and applies fixes"}${job.prompt ? `\nTheme: ${job.prompt}` : ""}`);
+  } else if (job.template) {
     lines.push(`Prompt: template ${job.template} (read from the project at every run)${f?.templateText ? `\n${f.templateText}` : ""}`);
   } else {
     lines.push(`Prompt:\n${job.prompt || (job.prompt_key ? `(context key ${job.prompt_key}, read at every run)` : "")}`);

@@ -244,6 +244,9 @@ type Detail struct {
 	// says why it cannot be read (fires fail until it can).
 	TemplateResolved *prompttemplate.Template `json:"template_resolved,omitempty"`
 	TemplateError    string                   `json:"template_error,omitempty"`
+	// ImproveSummary describes an improve-mode job ("Fleet improve, last
+	// 24h, agent fleet-improver, model opus"); empty for other jobs.
+	ImproveSummary string `json:"improve_summary,omitempty"`
 }
 
 // Detail returns one job's card.
@@ -268,6 +271,9 @@ func (s Store) Detail(name string) (Detail, error) {
 		for _, t := range d.NextFires {
 			d.NextFiresText = append(d.NextFiresText, t.In(time.Local).Format(cron.NextFireFormat))
 		}
+	}
+	if job.IsImprove() {
+		d.ImproveSummary = job.ImproveSummary(now)
 	}
 	if job.PromptKey != "" {
 		d.PromptResolved, err = s.PromptKeyText(job.PromptKey)

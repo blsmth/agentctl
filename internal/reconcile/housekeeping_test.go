@@ -194,3 +194,24 @@ func TestHousekeepSnapshotsAgentsRateLimited(t *testing.T) {
 		t.Fatalf("snapshots after the interval = %d, want 2", snaps)
 	}
 }
+
+func TestHousekeepPrunesImproveRunsDaily(t *testing.T) {
+	calls := 0
+	now := time.Now()
+	d := HousekeepingDeps{
+		RuntimeDir:   t.TempDir(),
+		Now:          func() time.Time { return now },
+		PruneImprove: func(time.Time) (int, error) { calls++; return 1, nil },
+	}
+	Housekeep(d)
+	now = now.Add(time.Hour)
+	Housekeep(d)
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1 within a day", calls)
+	}
+	now = now.Add(LLMUsagePruneInterval)
+	Housekeep(d)
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2 after a day", calls)
+	}
+}
