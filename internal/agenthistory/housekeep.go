@@ -35,25 +35,36 @@ func SnapshotAll(reason string, projectDirs []string) bool {
 // have a .claude/agents directory (worktrees skipped).
 func ProjectStores(projectDirs []string) []*Store {
 	var stores []*Store
-	seen := map[string]bool{}
+	byRoot := map[string]int{}
 	for _, d := range projectDirs {
 		d = filepath.Clean(d)
 		if d == "." || !filepath.IsAbs(d) {
 			continue
 		}
 		// A worktree is a copy of a tracked repo: it maps to the main
-		// checkout, as does every symlinked spelling of a project.
-		d = CanonicalRoot(d)
-		if seen[d] {
+		// checkout, as does every symlinked spelling of a project. The home
+		// dir's .claude/agents belongs to the home store.
+		root := CanonicalRoot(d)
+		if isHomeRoot(root) {
 			continue
 		}
-		seen[d] = true
-		if fi, err := os.Stat(filepath.Join(d, ".claude", "agents")); err != nil || !fi.IsDir() {
+		if fi, err := os.Stat(filepath.Join(root, ".claude", "agents")); err != nil || !fi.IsDir() {
 			continue
 		}
-		if s, err := ProjectStore(d); err == nil {
-			stores = append(stores, s)
+		s, err := ProjectStore(d)
+		if err != nil {
+			continue
 		}
+		if i, ok := byRoot[root]; ok {
+			// Another spelling of the same project: prefer one whose store
+			// already exists (a legacy-keyed one).
+			if !gitDirExists(stores[i].GitDir) && gitDirExists(s.GitDir) {
+				stores[i] = s
+			}
+			continue
+		}
+		byRoot[root] = len(stores)
+		stores = append(stores, s)
 	}
 	return stores
 }

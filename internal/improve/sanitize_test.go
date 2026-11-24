@@ -6,7 +6,7 @@ func TestStripInvisible(t *testing.T) {
 	r := func(cps ...rune) string { return string(cps) }
 	tests := []struct{ name, in, want string }{
 		{"plain", "hello\n\tworld", "hello\n\tworld"},
-		{"zero width", "a" + r(0x200B) + "b" + r(0x200C) + "c" + r(0x200D) + "d" + r(0x2060) + "e" + r(0xFEFF), "abcde"},
+		{"zero width", "a" + r(0x200B) + "b" + r(0x2060) + "c" + r(0xFEFF), "abc"},
 		{"braille padding", r(0x2800, 0x2800) + "status" + r(0x2800), "status"},
 		{"soft hyphen and bidi", "co" + r(0xAD) + "op " + r(0x202E) + "end" + r(0x202C), "coop end"},
 		{"hangul filler", "x" + r(0x3164) + "y", "xy"},
@@ -18,5 +18,12 @@ func TestStripInvisible(t *testing.T) {
 				t.Errorf("stripInvisible(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestStripInvisibleKeepsJoiners(t *testing.T) {
+	in := "a" + string(rune(0x200D)) + "b" + string(rune(0x200C)) + "c"
+	if got := stripInvisible(in); got != in {
+		t.Errorf("joiners stripped: %q", got)
 	}
 }

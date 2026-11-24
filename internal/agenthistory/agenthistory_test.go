@@ -23,6 +23,10 @@ func setup(t *testing.T) (home string, s *Store) {
 		t.Skip("git not installed")
 	}
 	root := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	home = filepath.Join(root, "home")
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
@@ -34,7 +38,7 @@ func setup(t *testing.T) (home string, s *Store) {
 		var gd, wt bool
 		for _, a := range args {
 			gd = gd || (strings.HasPrefix(a, "--git-dir="+root))
-			wt = wt || (strings.HasPrefix(a, "--work-tree="+root))
+			wt = wt || (strings.HasPrefix(a, "--work-tree="+root)) || (strings.HasPrefix(a, "--work-tree="+resolved))
 		}
 		if !gd || !wt {
 			t.Fatalf("git call not confined to the temp dirs: %v", args)
@@ -42,7 +46,7 @@ func setup(t *testing.T) (home string, s *Store) {
 		return orig(env, stdin, args...)
 	}
 	t.Cleanup(func() { runGit = orig })
-	s, err := HomeStore()
+	s, err = HomeStore()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -584,5 +588,42 @@ func TestProjectStoreKeyResolvesSymlinksAndWorktrees(t *testing.T) {
 	}
 	if got := StoreForPath(filepath.Join(home, ".claude", "agents", "a.md")); got != NameHome {
 		t.Errorf("home path routed to %q", got)
+	}
+}
+
+func TestProjectStoreKeepsLegacyKeyedStore(t *testing.T) {
+	home, _ := setup(t)
+	root := filepath.Dir(home) // inside the confined temp root
+	repo := filepath.Join(root, "proj")
+	write(t, filepath.Join(repo, ".claude", "agents", "p.md"), "p")
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatal(err)
+	}
+	// A store made before keys were canonical: keyed by the spelling.
+	sd, _ := stateDir()
+	legacy := &Store{GitDir: projectGitDir(sd, link), WorkTree: link, Paths: []string{".claude/agents"}}
+	if _, err := legacy.Snapshot("old", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, via := range []string{link, StoreForPath(filepath.Join(link, ".claude", "agents", "p.md"))} {
+		s, err := ProjectStore(via)
+		if err != nil || s.GitDir != legacy.GitDir {
+			t.Fatalf("ProjectStore(%s) = %+v, %v; want legacy gitdir %s", via, s, err, legacy.GitDir)
+		}
+		if l, err := s.Log("", 0); err != nil || len(l) != 1 {
+			t.Fatalf("log via %s = %v, %v", via, l, err)
+		}
+	}
+	ps := ProjectStores([]string{repo, link})
+	if len(ps) != 1 || ps[0].GitDir != legacy.GitDir {
+		t.Fatalf("ProjectStores = %+v", ps)
+	}
+}
+
+func TestProjectStoresSkipsHome(t *testing.T) {
+	home, _ := setup(t)
+	if ps := ProjectStores([]string{home}); len(ps) != 0 {
+		t.Fatalf("home dir got a project store: %+v", ps)
 	}
 }

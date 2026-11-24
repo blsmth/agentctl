@@ -150,11 +150,13 @@ func StoreForPath(arg string) string {
 				}
 			}
 		}
+		// The root keeps the spelling given: ProjectStore canonicalizes it
+		// and falls back to a store keyed by that spelling.
 		if root, ok := projectRootOf(arg); ok && !isHomeRoot(root) {
-			return CanonicalRoot(root)
+			return root
 		}
 		if root, ok := projectRootOf(canonicalPath(arg)); ok && !isHomeRoot(root) {
-			return CanonicalRoot(root)
+			return root
 		}
 	}
 	return NameHome
@@ -169,14 +171,31 @@ func ProjectStore(repo string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving state dir: %w", err)
 	}
+	literal := filepath.Clean(repo)
 	repo = CanonicalRoot(repo)
-	sum := sha256.Sum256([]byte(repo))
-	name := fmt.Sprintf("%x-%s.git", sum[:4], filepath.Base(repo))
+	gitDir := projectGitDir(sd, repo)
+	if literal != repo && !gitDirExists(gitDir) {
+		// Stores made before keys were canonical used the path as spelled.
+		// Keep using one, so its history is not orphaned.
+		if legacy := projectGitDir(sd, literal); gitDirExists(legacy) {
+			gitDir = legacy
+		}
+	}
 	return &Store{
-		GitDir:   filepath.Join(sd, "agent-history", name),
+		GitDir:   gitDir,
 		WorkTree: repo,
 		Paths:    []string{filepath.Join(".claude", "agents")},
 	}, nil
+}
+
+func projectGitDir(sd, root string) string {
+	sum := sha256.Sum256([]byte(root))
+	return filepath.Join(sd, "agent-history", fmt.Sprintf("%x-%s.git", sum[:4], filepath.Base(root)))
+}
+
+func gitDirExists(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "HEAD"))
+	return err == nil
 }
 
 func defaultRunGit(env []string, stdin string, args ...string) ([]byte, error) {
