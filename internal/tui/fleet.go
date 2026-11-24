@@ -438,6 +438,9 @@ type FleetModel struct {
 	// fleetSchedNewSel / fleetSchedHeadSel key, see schedLineKey); like
 	// selClosed, selSession is then empty.
 	selSchedule string
+	// schedCardHidden is the job whose card esc dismissed; the cursor stays
+	// on its row until the selection moves or the form closes.
+	schedCardHidden string
 
 	// lastSelection is the selection last written to the hub selection file
 	// for the follow-hub HUD (selPublished: one has been written). See
@@ -1690,6 +1693,9 @@ func (m *FleetModel) syncSelectionFromCursor() {
 		}
 		if m.schedConfirm != nil && (m.selSchedule != m.schedConfirm.name) {
 			m.schedConfirm = nil
+		}
+		if m.selSchedule != m.schedCardHidden {
+			m.schedCardHidden = "" // moving off the job brings its card back
 		}
 		if m.sched.detailName != "" && m.selSchedule != m.sched.detailName {
 			m.sched.detail, m.sched.detailName = nil, ""
