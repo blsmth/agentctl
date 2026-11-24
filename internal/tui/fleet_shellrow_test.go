@@ -81,9 +81,9 @@ func TestShellRowsToggle(t *testing.T) {
 		shown bool
 		want  []string
 	}{
-		{"hidden by default", false, []string{"H:s1", "R:a", "-", "H:s2", "P:s2"}},
-		{"shown", true, []string{"H:s1", "R:a", "R:shell", "-", "H:s2", "R:shell"}},
-		{"hidden again", false, []string{"H:s1", "R:a", "-", "H:s2", "P:s2"}},
+		{"hidden by default", false, []string{"H:s1", "R:a", "_", "_", "-", "H:s2", "P:s2"}},
+		{"shown", true, []string{"H:s1", "R:a", "R:shell", "_", "-", "H:s2", "R:shell"}},
+		{"hidden again", false, []string{"H:s1", "R:a", "_", "_", "-", "H:s2", "P:s2"}},
 	}
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

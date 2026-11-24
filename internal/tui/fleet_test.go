@@ -135,10 +135,11 @@ func TestRebuildLines_HeadersRowsAndPlaceholders(t *testing.T) {
 	}
 	m.rebuildLines()
 
-	// group a: header + 2 rows (3 lines); a divider between the two groups;
-	// group b: header + placeholder (2 lines) = 6 total.
-	if len(m.lines) != 6 {
-		t.Fatalf("len(lines) = %d, want 6 (header, 2 rows, divider, header+placeholder)", len(m.lines))
+	// group a: header + 2 rows + 1 pad line (4 lines, body padded to
+	// fleetGroupMinBody); a divider; group b (last, unpadded): header +
+	// placeholder (2 lines) = 7 total.
+	if len(m.lines) != 7 {
+		t.Fatalf("len(lines) = %d, want 7 (header, 2 rows, pad, divider, header+placeholder)", len(m.lines))
 	}
 	if m.lines[0].kind != fleetLineHeader || m.lines[0].group.Session != "agentctl-a" {
 		t.Errorf("lines[0] = %+v, want header for agentctl-a", m.lines[0])
@@ -149,14 +150,17 @@ func TestRebuildLines_HeadersRowsAndPlaceholders(t *testing.T) {
 	if m.lines[2].kind != fleetLineRow || m.lines[2].row.Name != "agent-2" {
 		t.Errorf("lines[2] = %+v, want row agent-2", m.lines[2])
 	}
-	if m.lines[3].kind != fleetLineDivider {
-		t.Errorf("lines[3] = %+v, want divider between agentctl-a and agentctl-b", m.lines[3])
+	if m.lines[3].kind != fleetLineGroupPad {
+		t.Errorf("lines[3] = %+v, want the group pad", m.lines[3])
 	}
-	if m.lines[4].kind != fleetLineHeader || m.lines[4].group.Session != "agentctl-b" {
-		t.Errorf("lines[4] = %+v, want header for agentctl-b", m.lines[4])
+	if m.lines[4].kind != fleetLineDivider {
+		t.Errorf("lines[4] = %+v, want divider between agentctl-a and agentctl-b", m.lines[4])
 	}
-	if m.lines[5].kind != fleetLinePlaceholder {
-		t.Errorf("lines[5] = %+v, want placeholder for agentctl-b (zero agents)", m.lines[5])
+	if m.lines[5].kind != fleetLineHeader || m.lines[5].group.Session != "agentctl-b" {
+		t.Errorf("lines[5] = %+v, want header for agentctl-b", m.lines[5])
+	}
+	if m.lines[6].kind != fleetLinePlaceholder {
+		t.Errorf("lines[6] = %+v, want placeholder for agentctl-b (zero agents)", m.lines[6])
 	}
 }
 
@@ -355,8 +359,8 @@ func TestResolveSelection_SkipsDividerWhenMatchingByWindowID(t *testing.T) {
 // ── Cursor movement skips dividers ───────────────────────────────────────────
 
 // TestMoveCursor_SkipsDividers builds a two-group, one-row-each layout
-// (header-a, dispatched-a, row-a1, divider, header-b, dispatched-b, row-b1 — indices
-// 0..6) and drives the cursor across the divider and sub-section labels in
+// (header-a, dispatched-a, row-a1, pad, divider, header-b, dispatched-b, row-b1
+// — indices 0..7) and drives the cursor across the divider and sub-section labels in
 // both directions, including from the boundary positions at either end.
 func TestMoveCursor_SkipsDividers(t *testing.T) {
 	// Rows are parentless dispatched rows so each group has a label to skip.
@@ -371,22 +375,22 @@ func TestMoveCursor_SkipsDividers(t *testing.T) {
 		},
 	}
 	m.rebuildLines()
-	if len(m.lines) != 7 {
-		t.Fatalf("setup: len(lines) = %d, want 7", len(m.lines))
+	if len(m.lines) != 8 {
+		t.Fatalf("setup: len(lines) = %d, want 8", len(m.lines))
 	}
-	if m.lines[3].kind != fleetLineDivider {
-		t.Fatalf("setup: lines[3] = %+v, want the divider", m.lines[3])
+	if m.lines[3].kind != fleetLineGroupPad || m.lines[4].kind != fleetLineDivider {
+		t.Fatalf("setup: lines[3:5] = %+v, want the pad and the divider", m.lines[3:5])
 	}
 
 	m.splitPane.SetListContent("", len(m.lines))
 	m.splitPane.SetCursor(2) // row-a1
 
 	for _, step := range []struct{ delta, want int }{
-		{1, 4},  // header-b, skipping the divider
-		{1, 6},  // row-b1, skipping the label
-		{1, 6},  // boundary: unchanged
-		{-1, 4}, // header-b, skipping the label
-		{-1, 2}, // row-a1, skipping the divider
+		{1, 5},  // header-b, skipping the pad and divider
+		{1, 7},  // row-b1, skipping the label
+		{1, 7},  // boundary: unchanged
+		{-1, 5}, // header-b, skipping the label
+		{-1, 2}, // row-a1, skipping the divider and pad
 		{-1, 0}, // header-a, skipping the label
 		{-1, 0}, // boundary: unchanged
 	} {
