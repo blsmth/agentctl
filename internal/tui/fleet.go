@@ -201,7 +201,21 @@ func midColor(a, b string) string {
 // (Accent is working, Green is done), so a project bar or chip never reads as
 // a row state.
 func paletteFor(t theme.Theme) []string {
-	return []string{t.Sky, t.Blue, t.Info, t.Orange}
+	all := []string{t.Sky, t.Blue, t.Info, t.Orange}
+	var out []string
+	seen := map[string]bool{}
+	for _, c := range all {
+		k := strings.ToLower(c)
+		if k == "" || seen[k] || k == strings.ToLower(t.Accent) || k == strings.ToLower(t.Green) {
+			continue
+		}
+		seen[k] = true
+		out = append(out, c)
+	}
+	if len(out) == 0 {
+		return all
+	}
+	return out
 }
 
 // fleetPalette returns the accent palette, falling back to the active theme
@@ -2622,7 +2636,7 @@ func rowGlyph(r fleet.Row) (string, lipgloss.Style) {
 		if rowStyleWeight(r, fleetNow()) == fleetWeightIdle {
 			// Done a day ago: the check fades so fresh results stand out.
 			t := theme.Current()
-			return "✓", lipgloss.NewStyle().Foreground(lipgloss.Color(midColor(t.Green, t.Base)))
+			return "✓", lipgloss.NewStyle().Foreground(lipgloss.Color(midColor(t.Base, t.Green)))
 		}
 		return "✓", fleetDoneStyle
 	default:
@@ -2843,7 +2857,7 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 		marker = fleetProjectBar(g.Project) + cursorActiveStyle.Render("▸")
 	}
 	chipPad := 0
-	if cw >= fleetChipMinWidth {
+	if cw >= fleetChipMinWidth && cw > fleetHeaderNameCol+2+2+4 {
 		chipPad = 1
 	}
 	counts := groupStateCounts(g, m.countDigits(), fleetCountGap(cw))
@@ -3354,7 +3368,7 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 	// the minimum recap, the role label gives way instead (contentWidth keeps the
 	// hub wider than this, so it only bites below 40 columns).
 	if ctxWarn && !m.confirmingRow(r) {
-		used := lipgloss.Width(cursor) + 2 + lipgloss.Width(treePrefix) + markerW + lipgloss.Width(name) + 2 + closeW
+		used := lipgloss.Width(cursor) + 2 + lipgloss.Width(treePrefix) + markerW + max(lipgloss.Width(name), min(fleetRoleSlotW, nameBudget)) + 2 + closeW
 		if short := fleetMinRecapWidth + fleetCtxSlotW + 1 - (inner - used); short > 0 && name != "" {
 			nameBudget = max(nameBudget-short, 1)
 			name = truncateToWidth(r.ShortRole, nameBudget)

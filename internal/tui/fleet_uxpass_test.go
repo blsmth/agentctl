@@ -51,7 +51,7 @@ func TestStaleDoneRowRendersIdleButKeepsCheck(t *testing.T) {
 	m.rebuildLines()
 
 	out := m.renderRow(stale, false, 80)
-	faded := lipgloss.NewStyle().Foreground(lipgloss.Color(midColor(theme.Current().Green, theme.Current().Base)))
+	faded := lipgloss.NewStyle().Foreground(lipgloss.Color(midColor(theme.Current().Base, theme.Current().Green)))
 	if !strings.Contains(out, faded.Render("✓")) {
 		t.Errorf("stale done row should keep a faded green ✓: %q", out)
 	}

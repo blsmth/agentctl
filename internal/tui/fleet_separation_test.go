@@ -13,10 +13,15 @@ import (
 
 func TestPaletteExcludesStateColours(t *testing.T) {
 	InitStyles()
-	th := theme.Current()
-	for _, c := range fleetPalette() {
-		if c == th.Accent || c == th.Green {
-			t.Errorf("palette contains state colour %s", c)
+	for _, name := range theme.Names() {
+		th, ok := theme.ByName(name)
+		if !ok {
+			continue
+		}
+		for _, c := range paletteFor(th) {
+			if strings.EqualFold(c, th.Accent) || strings.EqualFold(c, th.Green) {
+				t.Errorf("%s: palette contains state colour %s", name, c)
+			}
 		}
 	}
 }
