@@ -182,12 +182,17 @@ func (m SessionsModel) cursorLine() int {
 func (m *SessionsModel) syncScroll() {
 	h := m.listHeight()
 	total := len(m.listLines())
-	cl := m.cursorLine()
+	cl := m.cursorLine() // the row's group header when it starts a group
 	if cl < m.listTop {
 		m.listTop = cl
 	}
-	if cl >= m.listTop+h {
-		m.listTop = cl - h + 1
+	// The row itself (one below its header) must fit at the bottom.
+	row := cl
+	if lines := m.listLines(); row < len(lines) && lines[row].entry < 0 {
+		row++
+	}
+	if row >= m.listTop+h {
+		m.listTop = row - h + 1
 	}
 	if maxTop := total - h; m.listTop > maxTop {
 		m.listTop = maxTop

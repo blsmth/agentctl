@@ -350,6 +350,14 @@ func TestSessionsListScrollsToCursor(t *testing.T) {
 	if !m.renderZones().has("row:30") {
 		t.Error("the selected row must be on screen")
 	}
+	// Every cursor position keeps its row visible, wherever date groups fall.
+	for c := 0; c < 40; c++ {
+		m.cursor = c
+		m.syncScroll()
+		if !m.renderZones().has(fmt.Sprintf("row:%d", c)) {
+			t.Fatalf("cursor %d: row not on screen (listTop %d)", c, m.listTop)
+		}
+	}
 }
 
 func TestSessionsHelpOverlayOwnsMouse(t *testing.T) {
