@@ -66,6 +66,35 @@ func TestServeDefaults(t *testing.T) {
 	}
 }
 
+func TestServeLaptopQuiet(t *testing.T) {
+	tests := []struct {
+		name      string
+		push      ServePushConfig
+		wantQuiet bool
+		wantIdle  int
+	}{
+		{"defaults", ServePushConfig{}, true, 120},
+		{"off", ServePushConfig{QuietWhenLaptopActive: new(false)}, false, 120},
+		{"custom idle", ServePushConfig{LaptopIdleSeconds: new(300)}, true, 300},
+		{"zero idle is default", ServePushConfig{LaptopIdleSeconds: new(0)}, true, 120},
+		{"negative idle is default", ServePushConfig{LaptopIdleSeconds: new(-1)}, true, 120},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.push.QuietWhenLaptopActiveEnabled(); got != tt.wantQuiet {
+				t.Errorf("QuietWhenLaptopActiveEnabled = %v, want %v", got, tt.wantQuiet)
+			}
+			if got := tt.push.EffectiveLaptopIdleSeconds(); got != tt.wantIdle {
+				t.Errorf("EffectiveLaptopIdleSeconds = %d, want %d", got, tt.wantIdle)
+			}
+		})
+	}
+	cfg := loadWith(t, `{"serve":{"push":{"quiet_when_laptop_active":false,"laptop_idle_seconds":45}}}`, `{}`)
+	if cfg.Serve.Push.QuietWhenLaptopActiveEnabled() || cfg.Serve.Push.EffectiveLaptopIdleSeconds() != 45 {
+		t.Errorf("parsed push = %+v", cfg.Serve.Push)
+	}
+}
+
 func TestProjectServeIgnored(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -90,6 +119,12 @@ func TestProjectServeIgnored(t *testing.T) {
 			global:  `{}`,
 			project: `{"serve":{"push":{"quiet_hours":"00:00-23:59"}}}`,
 			want:    ServeConfig{},
+		},
+		{
+			name:    "project cannot switch laptop quiet",
+			global:  `{"serve":{"push":{"quiet_when_laptop_active":false}}}`,
+			project: `{"serve":{"push":{"quiet_when_laptop_active":true,"laptop_idle_seconds":1}}}`,
+			want:    ServeConfig{Push: ServePushConfig{QuietWhenLaptopActive: new(false)}},
 		},
 		{
 			name:    "project cannot switch artifact pushes",

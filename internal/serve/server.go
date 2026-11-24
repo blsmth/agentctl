@@ -122,6 +122,10 @@ type Options struct {
 	// Push dependencies; nil means production (webpush-go, ntfy.sh).
 	Pusher   Pusher
 	NtfyBase string
+	// LaptopIdle reports time since the last laptop input, for
+	// serve.push.quiet_when_laptop_active; nil means ioreg HIDIdleTime on
+	// macOS, else agentctl tmux client activity.
+	LaptopIdle LaptopIdleFunc
 
 	// Build is the server binary's identity, reported to the control-socket
 	// ping so approval hooks can check they talk to the same agentctl build.

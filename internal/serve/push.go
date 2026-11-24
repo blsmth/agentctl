@@ -198,6 +198,9 @@ type Sender struct {
 	pusher  Pusher
 	// presence, when set, makes Broadcast skip devices with the app open.
 	presence *Presence
+	// laptop, when set, makes Broadcast skip every device while someone is
+	// using the laptop (serve.push.quiet_when_laptop_active).
+	laptop *laptopActivity
 
 	mu   sync.Mutex
 	last *LastPush
@@ -250,8 +253,13 @@ func NewSender(devices *DeviceStore, subs *SubscriptionStore, pusher Pusher) *Se
 // foreground. SendTo is never suppressed.
 func (s *Sender) SetPresence(p *Presence) { s.presence = p }
 
+// SetLaptop makes Broadcast skip every device while l reports the laptop in
+// use. SendTo is never suppressed.
+func (s *Sender) SetLaptop(l *laptopActivity) { s.laptop = l }
+
 // Broadcast sends msg to every paired device with a subscription, except
-// devices with the app open in the foreground.
+// devices with the app open in the foreground, and to none while the laptop
+// is in use.
 func (s *Sender) Broadcast(ctx context.Context, msg Message) {
 	live, err := s.liveDevices()
 	if err != nil {
@@ -275,8 +283,9 @@ func (s *Sender) Broadcast(ctx context.Context, msg Message) {
 		}
 		targets[id] = sub
 	}
+	laptopActive := len(targets) > 0 && s.laptop.Active()
 	inApp := 0
-	if s.presence != nil {
+	if s.presence != nil && !laptopActive {
 		for id := range targets {
 			if s.presence.Foreground(id) {
 				delete(targets, id)
@@ -285,6 +294,9 @@ func (s *Sender) Broadcast(ctx context.Context, msg Message) {
 		}
 	}
 	switch {
+	case laptopActive:
+		pushLogf("push: kind=%s tag=%s suppressed, laptop active", msg.Kind, redactArtifactIDs(msg.Tag))
+		s.record(msg.Kind, "sent to 0, laptop active")
 	case len(targets) == 0 && inApp > 0:
 		pushLogf("push: kind=%s tag=%s suppressed, %d device(s) in app", msg.Kind, redactArtifactIDs(msg.Tag), inApp)
 		s.record(msg.Kind, fmt.Sprintf("sent to 0/0, %d in app", inApp))
