@@ -162,6 +162,8 @@ func statusStateWord(r fleet.Row) string {
 		return "working"
 	case fleet.NeedsAttention(r.AgentState):
 		return "needs you"
+	case len(r.WaitingOn) > 0:
+		return "waiting"
 	case r.Done:
 		return "done"
 	case r.TurnDone:

@@ -62,6 +62,10 @@ type Row struct {
 	Recap    RecapLine
 	PRNumber int
 	PRURL    string
+
+	// WaitingOn lists the working or blocked child windows an otherwise idle
+	// orchestrator is waiting on. Set by TagWaiting; display only.
+	WaitingOn []WaitChild
 }
 
 // RollupStatus is a rolled-up status across a set of rows, in the group-level
