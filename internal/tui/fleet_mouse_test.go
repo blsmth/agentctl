@@ -184,7 +184,7 @@ func TestButtonDecision(t *testing.T) {
 		{"header gap before counts selects", newX - 30, 2, tea.MouseLeft, 0, fleetClickSelect},
 		{"header fold marker folds", fleetHeaderNameCol, 2, tea.MouseLeft, 0, fleetClickFold},
 		{"header space before name folds", fleetHeaderNameCol + 1, 2, tea.MouseLeft, 0, fleetClickFold},
-		{"stale header has no button", newX, 8, tea.MouseLeft, 5, fleetClickSelect},
+		{"stale header has no new button (count slot instead)", newX, 8, tea.MouseLeft, 5, fleetClickCount},
 		{"row close button", closeX, 4, tea.MouseLeft, 2, fleetClickClose},
 		{"row elsewhere selects", 5, 4, tea.MouseLeft, 2, fleetClickSelect},
 		{"stale row still closable", closeX, 10, tea.MouseLeft, 7, fleetClickClose},

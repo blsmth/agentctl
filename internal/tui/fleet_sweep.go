@@ -78,6 +78,17 @@ func (m FleetModel) onSweepButton(g fleet.Group, x int) bool {
 	return span[1] > 0 && x >= span[0]-1 && x < span[1]
 }
 
+// headerCountAt reports which state filter the count slot of g's header under
+// column x selects; blank slots are not targets.
+func (m FleetModel) headerCountAt(g fleet.Group, x int) (fleetFilter, bool) {
+	for i, sp := range m.pointerHeaderSpans(g, m.listColWidth()).counts {
+		if sp[1] > 0 && x >= sp[0] && x < sp[1] {
+			return fleetStateFilters[i], true
+		}
+	}
+	return fleetFilterAll, false
+}
+
 func (m FleetModel) sweepArmed() bool { return m.sweepSession != "" }
 
 // sweepArmedFor reports whether g's sweep confirmation is showing.
