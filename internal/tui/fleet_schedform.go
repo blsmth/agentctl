@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -103,10 +102,8 @@ var (
 	fleetSchedYesNoHints  = []fleetHint{{"y", "yes"}, {"n", "no"}}
 )
 
-// Seams: the editor runs through tea.ExecProcess (tests replace it), and
-// the templates a project sees come from prompttemplate.List.
+// Seam: the templates a project sees come from prompttemplate.List.
 var (
-	fleetSchedExec      = tea.ExecProcess
 	fleetSchedTemplates = func(dir string) []prompttemplate.Template {
 		list, _, err := prompttemplate.List(dir)
 		if err != nil {
@@ -183,6 +180,9 @@ type fleetSchedForm struct {
 	err                      string
 	fingerprint              string
 	permMode                 string
+	// editor is the full-pane prompt editor (ctrl+e) while it is open; it
+	// takes the form's place and every key.
+	editor *promptEditor
 }
 
 // Messages.
@@ -197,10 +197,6 @@ type (
 		job     cron.Job
 		updated cronedit.Updated
 		err     error
-	}
-	fleetSchedEditorMsg struct {
-		path string
-		err  error
 	}
 )
 
@@ -1042,6 +1038,9 @@ func (m *FleetModel) handleSchedFormKey(msg tea.KeyPressMsg) tea.Cmd {
 	if f.saving {
 		return nil
 	}
+	if f.editor != nil {
+		return m.schedEditorDone(f.editor.HandleKey(msg))
+	}
 	if f.discard {
 		f.discard = false
 		if key == "y" || key == "Y" {
@@ -1338,67 +1337,71 @@ func (f *fleetSchedForm) specFor(kind int) (string, error) {
 	return f.spec()
 }
 
-// schedOpenEditor is ctrl+e: edit the prompt in $EDITOR (a prompt_key job
-// starts from the key's text and becomes an inline prompt).
+// schedOpenEditor is ctrl+e: open the prompt in the full-pane editor, in
+// the form's place (a prompt_key job starts from the key's text). A
+// template-source job has no prompt to edit.
 func (m *FleetModel) schedOpenEditor() tea.Cmd {
 	f := m.schedForm
+	if f.source == schedSourceTemplate {
+		return nil
+	}
 	text := f.prompt.Value()
 	if strings.TrimSpace(text) == "" && f.promptKey != "" {
 		if t, err := m.schedStore().PromptKeyText(f.promptKey); err == nil {
 			text = t
 		}
 	}
-	tmp, err := os.CreateTemp("", "agentctl-schedule-*.md")
-	if err != nil {
-		f.err = "$EDITOR: " + err.Error()
-		return nil
+	name := f.original
+	if f.mode != schedFormEdit {
+		name = strings.TrimSpace(f.name.Value())
 	}
-	path := tmp.Name()
-	_, werr := tmp.WriteString(text)
-	cerr := tmp.Close()
-	cmd := tkEditorCmd(path)
-	if werr != nil || cerr != nil || cmd == nil {
-		_ = os.Remove(path)
-		if cmd == nil {
-			f.err = "set $EDITOR to edit the prompt in your editor"
-		} else {
-			f.err = "$EDITOR: could not write the draft"
-		}
-		return nil
+	if name == "" {
+		name = "new schedule"
 	}
-	return fleetSchedExec(cmd, func(err error) tea.Msg { return fleetSchedEditorMsg{path: path, err: err} })
+	f.editor = newPromptEditor("Prompt — "+name, text)
+	m.sizeSchedEditor()
+	return nil
 }
 
-func (m *FleetModel) applySchedEditor(msg fleetSchedEditorMsg) tea.Cmd {
-	data, rerr := os.ReadFile(msg.path)
-	_ = os.Remove(msg.path)
+// sizeSchedEditor lays the open editor out in the form's area (the render
+// path does the same on every frame, so a resize reflows it).
+func (m *FleetModel) sizeSchedEditor() {
+	if m.schedForm == nil || m.schedForm.editor == nil {
+		return
+	}
+	total := len(strings.Split(m.renderList(), "\n"))
+	_, dh := m.schedDrawerRows(total)
+	m.schedForm.editor.SetSize(m.schedPaneWidth(), dh-2)
+}
+
+// schedEditorDone acts on what the editor asked: a save applies the text
+// to the prompt (a prompt_key job becomes an inline prompt when the text is
+// not empty); any close returns to the form on the prompt with a preview.
+func (m *FleetModel) schedEditorDone(act editorAction) tea.Cmd {
 	f := m.schedForm
-	if f == nil {
+	if act == editorKeep || f == nil || f.editor == nil {
 		return nil
 	}
-	switch {
-	case msg.err != nil:
-		f.err = "$EDITOR: " + msg.err.Error()
-		return nil
-	case rerr != nil:
-		f.err = "$EDITOR: " + rerr.Error()
-		return nil
-	}
-	text := strings.TrimSuffix(string(data), "\n")
-	if text == f.prompt.Value() {
-		return nil
-	}
-	f.prompt.SetValue(text)
-	if strings.TrimSpace(text) != "" {
-		f.promptKey = "" // converted to an inline prompt
-	}
+	text := f.editor.Value()
+	f.editor = nil
+	f.err = ""
 	f.focusStop(stopPrompt)
+	if act == editorSave && text != f.prompt.Value() {
+		f.prompt.SetValue(text)
+		if strings.TrimSpace(text) != "" {
+			f.promptKey = "" // converted to an inline prompt
+		}
+	}
 	return m.schedPreviewCmd()
 }
 
 // pasteSchedForm routes a paste to the focused text field.
 func (m *FleetModel) pasteSchedForm(msg tea.PasteMsg) tea.Cmd {
 	f := m.schedForm
+	if f.editor != nil {
+		f.editor.Paste(msg.Content)
+		return nil
+	}
 	if f.review || f.saving || f.discard || f.startAsk != "" {
 		return nil
 	}
@@ -1466,6 +1469,13 @@ func (m FleetModel) schedFormLayout(w, h int) schedLayout {
 	f := m.schedForm
 	if f == nil {
 		return schedLayout{}
+	}
+	if f.editor != nil {
+		// The editor fills the form's area; its own Click hit-tests it.
+		f.editor.SetSize(w, h)
+		var out schedLayout
+		out.add(f.editor.View()...)
+		return out
 	}
 	if f.review || f.saving {
 		return m.schedReviewLayout(w)
@@ -1672,7 +1682,7 @@ func (m FleetModel) schedFormLayout(w, h int) schedLayout {
 }
 
 // schedEditorHint is the clickable line under the focused prompt.
-const schedEditorHint = "^e editor"
+const schedEditorHint = "^e open editor"
 
 // arrowHits are a cycler's targets drawn at column pre, w columns wide: its
 // ‹ (and the space after it) steps back, anything right of it forward.

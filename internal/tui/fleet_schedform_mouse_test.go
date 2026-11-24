@@ -372,8 +372,8 @@ func TestSchedFormClickEditorHint(t *testing.T) {
 	withSchedEnv(t, testSchedEnv())
 	m := openNewForm(t, f)
 	m = schedClick(t, m, "Prompt", "Prompt")
-	_ = schedClick(t, m, schedEditorHint, schedEditorHint)
-	if f.editorPath == "" {
-		t.Fatal("a click on ^e editor should open the prompt in $EDITOR")
+	m = schedClick(t, m, schedEditorHint, schedEditorHint)
+	if formOf(t, m).editor == nil {
+		t.Fatal("a click on the editor hint should open the prompt editor")
 	}
 }

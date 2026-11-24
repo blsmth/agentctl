@@ -23,7 +23,7 @@ const (
 	schedHitSegment                     // focus, then choose segment arg
 	schedHitDay                         // focus, then toggle day chip arg
 	schedHitToggle                      // focus, then flip it (Advanced, Worktree)
-	schedHitEditor                      // open the prompt in $EDITOR
+	schedHitEditor                      // open the prompt in the full-pane editor
 	schedHitApply                       // copy the chosen start-from template into the prompt
 	schedHitKey                         // press key (the review's y / n)
 )
@@ -114,6 +114,21 @@ func (m FleetModel) schedFormHitAt(x, y int) (schedHit, bool) {
 	return m.schedFormLayout(w, h).at(col, row)
 }
 
+// schedEditorCell is screen cell (x, y) relative to the open editor, which
+// is laid out in the form's area first so the cell matches the frame.
+func (m FleetModel) schedEditorCell(x, y int) (col, row int, ok bool) {
+	x0, y0, w, h, _, ok := m.schedFormArea()
+	if !ok || m.schedForm.editor == nil {
+		return 0, 0, false
+	}
+	col, row = x-x0, y-y0
+	if row < 0 || row >= h || col < 0 || col >= w {
+		return 0, 0, false
+	}
+	m.schedForm.editor.SetSize(w, h)
+	return col, row, true
+}
+
 // handleSchedFormClick is a mouse click while the form is open: a form
 // target or a footer hint acts, anything else is ignored as before.
 func (m *FleetModel) handleSchedFormClick(msg tea.MouseClickMsg) tea.Cmd {
@@ -122,6 +137,13 @@ func (m *FleetModel) handleSchedFormClick(msg tea.MouseClickMsg) tea.Cmd {
 	}
 	if key, ok := m.schedFooterHintAt(msg.X, msg.Y); ok {
 		return m.handleSchedFormKey(schedSynthKey(key))
+	}
+	if e := m.schedForm.editor; e != nil {
+		col, row, ok := m.schedEditorCell(msg.X, msg.Y)
+		if !ok {
+			return nil
+		}
+		return m.schedEditorDone(e.Click(col, row))
 	}
 	ht, ok := m.schedFormHitAt(msg.X, msg.Y)
 	if !ok {
@@ -134,6 +156,18 @@ func (m *FleetModel) handleSchedFormClick(msg tea.MouseClickMsg) tea.Cmd {
 // pointer; false when the wheel is not over one, so the list scrolls.
 func (m *FleetModel) handleSchedFormWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 	f := m.schedForm
+	if f.editor != nil {
+		if _, _, ok := m.schedEditorCell(msg.X, msg.Y); !ok {
+			return nil, true // the list under the form does not scroll either
+		}
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			f.editor.Wheel(-3)
+		case tea.MouseWheelDown:
+			f.editor.Wheel(3)
+		}
+		return nil, true
+	}
 	if f.review || f.saving || f.discard || f.startAsk != "" {
 		return nil, false
 	}
@@ -213,7 +247,7 @@ func (m *FleetModel) schedFormClick(ht schedHit) tea.Cmd {
 
 // schedFooterKeys maps the form's footer hints to the key each one presses.
 var schedFooterKeys = map[string]string{
-	"^s": "ctrl+s", "tab": "tab", "esc": "esc", "y": "y", "n": "n",
+	"^s": "ctrl+s", "tab": "tab", "esc": "esc", "y": "y", "n": "n", "^z": "ctrl+z", "^y": "ctrl+y",
 }
 
 // schedFooterHintAt is the key of the footer hint under (x, y) while the form
@@ -247,6 +281,10 @@ func schedSynthKey(k string) tea.KeyPressMsg {
 	switch k {
 	case "ctrl+s":
 		return tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}
+	case "ctrl+z":
+		return tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl}
+	case "ctrl+y":
+		return tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl}
 	case "tab":
 		return tea.KeyPressMsg{Code: tea.KeyTab}
 	case "esc":

@@ -173,6 +173,8 @@ func (m FleetModel) footerHints() []fleetHint {
 		hints = fleetNewHints
 	case m.sweepArmed():
 		hints = fleetSweepHints
+	case m.schedFormOpen() && m.schedForm.editor != nil:
+		hints = m.schedForm.editor.Hints()
 	case m.schedFormOpen() && (m.schedForm.review || m.schedForm.discard || m.schedForm.startAsk != ""):
 		hints = fleetSchedYesNoHints
 		if m.schedForm.review {

@@ -91,7 +91,6 @@ func TestMain(m *testing.M) {
 	fleetSchedPermMode = func(string) string { return "auto" }
 	fleetSchedTemplates = func(string) []prompttemplate.Template { return nil }
 	fleetSchedEnvLoad = testSchedEnv
-	fleetSchedExec = func(*exec.Cmd, tea.ExecCallback) tea.Cmd { return nil }
 	// Never exec tmux from the hub: the viewer, zoom, focus, switch and
 	// row-action paths all reach real (sandboxed, but leaked) servers.
 	// Tests that exercise them install their own stubs.
