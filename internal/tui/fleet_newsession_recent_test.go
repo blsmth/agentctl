@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/closedlog"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 )
 
 func stubRecent(t *testing.T, dirs ...string) {
@@ -241,5 +242,29 @@ func TestRecentIncludesHubOrigin(t *testing.T) {
 	m, _ := openWithRecent(t, foldModel(t))
 	if got := m.recentEntries(); !slices.Equal(got, ds) {
 		t.Errorf("entries = %v, want %v", got, ds)
+	}
+}
+
+func TestRecentEnterFromOtherFieldSubmitsForm(t *testing.T) {
+	home := t.TempDir()
+	ds := mkdirs(t, "alpha", "beta")
+	typed := mkdirs(t, "typed")[0]
+	calls := stubNewSession(t, "", home)
+	stubRecent(t, ds...)
+	m, _ := openWithRecent(t, foldModel(t))
+	m = typeDir(t, m, typed)
+	m.dirPrompt.hl = 0
+	m.dirPrompt.tmpls = []prompttemplate.Template{{Name: "t"}} // a form, so focus can leave the dir
+	m.dirPrompt.setFocus(nsFieldTemplate)
+	if _, ok := m.highlightedRecent(); ok {
+		t.Fatal("highlight honoured with focus off the dir field")
+	}
+	m, cmd := hubKey(t, m, "enter")
+	if cmd == nil {
+		t.Fatal("no command")
+	}
+	cmd()
+	if !slices.Equal(calls.dirs, []string{typed}) {
+		t.Errorf("helper dirs = %v, want typed %s", calls.dirs, typed)
 	}
 }

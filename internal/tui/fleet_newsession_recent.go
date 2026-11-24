@@ -188,7 +188,7 @@ func (m *FleetModel) recentKey(key string) bool {
 // highlightedRecent is the highlighted entry, if any.
 func (m FleetModel) highlightedRecent() (string, bool) {
 	es := m.recentEntries()
-	if m.dirPrompt.hl < 0 || m.dirPrompt.hl >= len(es) {
+	if m.dirPrompt.focus != nsFieldDir || m.dirPrompt.hl < 0 || m.dirPrompt.hl >= len(es) {
 		return "", false
 	}
 	return es[m.dirPrompt.hl], true
