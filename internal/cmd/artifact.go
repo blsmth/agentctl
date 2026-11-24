@@ -49,9 +49,13 @@ type artifactEnv struct {
 	store func() *artifacts.Store
 	// origin describes the calling window (or plain shell).
 	origin func() artifacts.Origin
-	// serveURL returns the base URL of the artifact UI and whether serve is
-	// running.
+	// serveURL returns the base URL of artifact content links (the public
+	// hostname once its certificate is held) and whether serve is running.
 	serveURL func() (base string, running bool)
+	// appBase is the base URL of the phone app's links (#/artifacts/...),
+	// which need the device cookie and so stay on the paired, local host.
+	// nil means the serveURL base.
+	appBase func() string
 	// openBrowser opens url in the laptop browser.
 	openBrowser func(url string) error
 	stdin       io.Reader
@@ -64,6 +68,7 @@ var defaultArtifactEnv = artifactEnv{
 	store:       artifacts.New,
 	origin:      artifactOrigin,
 	serveURL:    artifactServeURL,
+	appBase:     artifacturl.AppBase,
 	openBrowser: openInBrowser,
 	stdin:       os.Stdin,
 	interactive: func() bool { return stdinIsTerminal() },
@@ -126,11 +131,19 @@ type artifactView struct {
 
 func (e artifactEnv) view(m artifacts.Meta) artifactView {
 	base, running := e.serveURL()
-	return viewAt(m, base, running)
+	return viewAt(m, base, e.appBaseFor(base), running)
 }
 
-func viewAt(m artifacts.Meta, base string, running bool) artifactView {
-	return artifactView{Meta: m, URL: artifactDirectURL(base, m.ID, 0), AppURL: artifactURL(base, m.ID, 0), ServeRunning: running}
+// appBaseFor is the app link base: e.appBase, or base when unset.
+func (e artifactEnv) appBaseFor(base string) string {
+	if e.appBase == nil {
+		return base
+	}
+	return e.appBase()
+}
+
+func viewAt(m artifacts.Meta, base, appBase string, running bool) artifactView {
+	return artifactView{Meta: m, URL: artifactDirectURL(base, m.ID, 0), AppURL: artifactURL(appBase, m.ID, 0), ServeRunning: running}
 }
 
 // artifactDirectURL is the content URL: <base>/a/<id>/latest/, or
@@ -226,9 +239,10 @@ func (e artifactEnv) list(w io.Writer, o ArtifactListOptions) error {
 	}
 	base, running := e.serveURL()
 	if o.JSON {
+		app := e.appBaseFor(base)
 		out := make([]artifactView, 0, len(list))
 		for _, m := range list {
-			out = append(out, viewAt(m, base, running))
+			out = append(out, viewAt(m, base, app, running))
 		}
 		return writeJSON(w, out)
 	}

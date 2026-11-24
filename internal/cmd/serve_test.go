@@ -160,3 +160,54 @@ func TestPrintPushStatus(t *testing.T) {
 		t.Errorf("empty status:\n%s", b.String())
 	}
 }
+
+func TestPrintPublicCertStatus(t *testing.T) {
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		pc     *serve.PublicCertStatus
+		url    string
+		want   []string
+		absent []string
+	}{
+		{name: "unset prints nothing", pc: nil, absent: []string{"public"}},
+		{
+			name:   "obtaining",
+			pc:     &serve.PublicCertStatus{Hostname: "mac.agentctl.example.com", Subject: "*.agentctl.example.com", State: serve.PublicCertObtaining},
+			want:   []string{"public host:\tmac.agentctl.example.com", "public cert name:\t*.agentctl.example.com", "public cert:\tobtaining"},
+			absent: []string{"public url"},
+		},
+		{
+			name: "valid",
+			pc:   &serve.PublicCertStatus{Hostname: "mac.example.com", State: serve.PublicCertValid, Expires: now.Add(60 * 24 * time.Hour)},
+			url:  "https://mac.example.com:8443/",
+			want: []string{"public url:\thttps://mac.example.com:8443/", "public cert:\tvalid, expires", "(60 days)"}, absent: []string{"staging", "error"},
+		},
+		{
+			name: "staging",
+			pc:   &serve.PublicCertStatus{Hostname: "mac.example.com", State: serve.PublicCertValid, Expires: now.Add(24 * time.Hour), Staging: true},
+			want: []string{"staging: untrusted, not advertised"},
+		},
+		{
+			name: "error",
+			pc:   &serve.PublicCertStatus{Hostname: "mac.example.com", State: serve.PublicCertError, Error: "no Cloudflare API token"},
+			want: []string{"public cert:\terror", "public cert error:\tno Cloudflare API token"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var b bytes.Buffer
+			printPublicCertStatus(&b, tt.pc, tt.url, now)
+			for _, w := range tt.want {
+				if !strings.Contains(b.String(), w) {
+					t.Errorf("missing %q:\n%s", w, b.String())
+				}
+			}
+			for _, a := range tt.absent {
+				if strings.Contains(b.String(), a) {
+					t.Errorf("unexpected %q:\n%s", a, b.String())
+				}
+			}
+		})
+	}
+}

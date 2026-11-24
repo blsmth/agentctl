@@ -1,5 +1,12 @@
 package config
 
+import (
+	"errors"
+	"fmt"
+	"net"
+	"strings"
+)
+
 // DefaultServeListen is the address `agentctl serve` binds when serve.listen
 // is unset. Binding every interface survives DHCP and network changes;
 // serve.allow_cidrs and device auth are the gate.
@@ -53,6 +60,73 @@ type ServeConfig struct {
 	// NtfyDetails puts agent and project names, and a Click link with the
 	// server's address, into ntfy posts. Off by default: the topic is public.
 	NtfyDetails bool `json:"ntfy_details,omitempty"`
+	// PublicHostname, when set, makes serve obtain a publicly trusted
+	// wildcard certificate for its parent (*.<name minus first label>) from
+	// Let's Encrypt (Cloudflare DNS-01) and advertise this name once held.
+	// Empty disables it. Read it through EffectivePublicHostname, which
+	// lowercases and validates it.
+	PublicHostname string `json:"public_hostname,omitempty"`
+	// ACME configures the certificate request for PublicHostname.
+	ACME ServeACMEConfig `json:"acme,omitzero"`
+}
+
+// ServeACMEConfig is the `serve.acme` block.
+type ServeACMEConfig struct {
+	// Email is the ACME account contact (expiry warnings). Optional.
+	Email string `json:"email,omitempty"`
+	// Staging uses the Let's Encrypt staging CA, whose certificates no
+	// browser trusts. For testing the setup without production rate limits.
+	Staging bool `json:"staging,omitempty"`
+}
+
+// EffectivePublicHostname returns serve.public_hostname lowercased, without
+// surrounding space or a trailing dot. Empty means unset. A value that is
+// not a plain DNS name (an IP, a wildcard, a single label, bad characters)
+// is an error.
+func (s ServeConfig) EffectivePublicHostname() (string, error) {
+	h := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(s.PublicHostname)), ".")
+	if h == "" {
+		return "", nil
+	}
+	if err := validateDNSName(h); err != nil {
+		return "", fmt.Errorf("serve.public_hostname %q: %w", s.PublicHostname, err)
+	}
+	return h, nil
+}
+
+// validateDNSName checks h (already lowercased) is a fully qualified host
+// name: at least three labels of letters, digits and inner hyphens, each at
+// most 63 bytes, at most 253 bytes in all, and not an IP address.
+func validateDNSName(h string) error {
+	if len(h) > 253 {
+		return errors.New("longer than 253 characters")
+	}
+	if net.ParseIP(h) != nil {
+		return errors.New("is an IP address, not a DNS name")
+	}
+	labels := strings.Split(h, ".")
+	if len(labels) < 3 {
+		// The certificate is a wildcard for the parent name; with fewer
+		// labels it would be *.com or *.example.com, far too broad.
+		return errors.New("needs at least three labels, such as mac.agentctl.example.com (the certificate is a wildcard for its parent)")
+	}
+	for _, l := range labels {
+		if l == "" || len(l) > 63 {
+			return errors.New("has an empty or over-long label")
+		}
+		if l[0] == '-' || l[len(l)-1] == '-' {
+			return fmt.Errorf("label %q starts or ends with a hyphen", l)
+		}
+		for _, r := range l {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+				return fmt.Errorf("label %q has invalid character %q", l, r)
+			}
+		}
+	}
+	if tld := labels[len(labels)-1]; strings.Trim(tld, "0123456789") == "" {
+		return errors.New("top-level label is numeric")
+	}
+	return nil
 }
 
 // ServePushConfig is the `serve.push` block.

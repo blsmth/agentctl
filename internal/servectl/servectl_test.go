@@ -522,7 +522,7 @@ func TestDialControlAndQueryURL(t *testing.T) {
 			buf := make([]byte, 512)
 			n, _ := c.Read(buf)
 			if strings.Contains(string(buf[:n]), `"status"`) {
-				_, _ = c.Write([]byte(`{"status":{"url":"https://h:1/"}}` + "\n"))
+				_, _ = c.Write([]byte(`{"status":{"url":"https://h:1/","public_url":"https://p.example.com:1/"}}` + "\n"))
 			}
 			_ = c.Close()
 		}
@@ -533,6 +533,16 @@ func TestDialControlAndQueryURL(t *testing.T) {
 	url, err := QueryURL(dir)
 	if err != nil || url != "https://h:1/" {
 		t.Errorf("QueryURL = %q, %v", url, err)
+	}
+	pub, err := QueryPublicURL(dir)
+	if err != nil || pub != "https://p.example.com:1/" {
+		t.Errorf("QueryPublicURL = %q, %v", pub, err)
+	}
+}
+
+func TestQueryPublicURLNotRunning(t *testing.T) {
+	if _, err := QueryPublicURL(shortDir(t)); err == nil {
+		t.Error("QueryPublicURL succeeded with no socket")
 	}
 }
 

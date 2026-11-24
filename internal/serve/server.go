@@ -50,6 +50,11 @@ type Options struct {
 	// BootstrapAddr is where the plain-HTTP pairing listener binds while a
 	// pairing window is open. Empty disables it.
 	BootstrapAddr string
+	// Public is the optional publicly trusted certificate for
+	// serve.public_hostname; nil means the feature is off. While it holds a
+	// valid certificate, advertised URLs (status, artifact links, ntfy
+	// Click) use its hostname; pairing URLs always use AdvertiseHost.
+	Public *PublicCert
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 
@@ -643,17 +648,29 @@ type StatusInfo struct {
 	// the most recent notification outcome (nil before the first).
 	PushDevices []string  `json:"push_devices,omitempty"`
 	LastPush    *LastPush `json:"last_push,omitempty"`
+	// PublicURL is https://<public_hostname>:<port>/ while a valid, publicly
+	// trusted certificate is held; empty otherwise. Artifact links (/a/<id>,
+	// public routes) use it when set. URL stays on AdvertiseHost: the app
+	// needs the device cookie, which is host-only and set at pairing there.
+	PublicURL string `json:"public_url,omitempty"`
+	// PublicCert is the serve.public_hostname certificate state; nil when
+	// the key is unset.
+	PublicCert *PublicCertStatus `json:"public_cert,omitempty"`
 }
 
 // Status reports the running server's state.
 func (s *Server) Status() StatusInfo {
 	st := StatusInfo{
-		PID:      os.Getpid(),
-		Version:  s.opts.Version,
-		Started:  s.started,
-		URL:      "https://" + net.JoinHostPort(s.opts.AdvertiseHost, strconv.Itoa(s.opts.HTTPSPort)) + "/",
-		Pairing:  s.pairing.active(s.now()),
-		Features: s.router.Features(),
+		PID:        os.Getpid(),
+		Version:    s.opts.Version,
+		Started:    s.started,
+		URL:        "https://" + net.JoinHostPort(s.opts.AdvertiseHost, strconv.Itoa(s.opts.HTTPSPort)) + "/",
+		Pairing:    s.pairing.active(s.now()),
+		Features:   s.router.Features(),
+		PublicCert: s.opts.Public.Status(),
+	}
+	if h := s.opts.Public.AdvertiseHost(); h != "" {
+		st.PublicURL = "https://" + net.JoinHostPort(h, strconv.Itoa(s.opts.HTTPSPort)) + "/"
 	}
 	if s.subs != nil && s.devices != nil {
 		st.PushDevices = s.pushDeviceNames()

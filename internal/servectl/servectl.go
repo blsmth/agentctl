@@ -169,33 +169,51 @@ func dialControl(dir string) error {
 
 // QueryURL asks the running server for its URL over the control socket.
 func QueryURL(dir string) (string, error) {
+	st, err := queryURLs(dir)
+	return st.URL, err
+}
+
+// QueryPublicURL asks the running server for its public URL
+// (https://<serve.public_hostname>:<port>/), which is set only while it
+// holds a valid, publicly trusted certificate. "" means use the local host.
+func QueryPublicURL(dir string) (string, error) {
+	st, err := queryURLs(dir)
+	return st.PublicURL, err
+}
+
+// statusURLs is the part of the server's status reply servectl reads.
+type statusURLs struct {
+	URL       string `json:"url"`
+	PublicURL string `json:"public_url"`
+}
+
+// queryURLs sends a status request on the control socket.
+func queryURLs(dir string) (statusURLs, error) {
 	conn, err := net.DialTimeout("unix", filepath.Join(dir, ControlSocket), controlTimeout)
 	if err != nil {
-		return "", errors.New("agentctl serve is not answering on its control socket")
+		return statusURLs{}, errors.New("agentctl serve is not answering on its control socket")
 	}
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(controlTimeout))
 	if err := json.NewEncoder(conn).Encode(struct {
 		Op string `json:"op"`
 	}{"status"}); err != nil {
-		return "", fmt.Errorf("control socket: %w", err)
+		return statusURLs{}, fmt.Errorf("control socket: %w", err)
 	}
 	var resp struct {
-		Error  string `json:"error"`
-		Status *struct {
-			URL string `json:"url"`
-		} `json:"status"`
+		Error  string      `json:"error"`
+		Status *statusURLs `json:"status"`
 	}
 	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
-		return "", fmt.Errorf("control socket: %w", err)
+		return statusURLs{}, fmt.Errorf("control socket: %w", err)
 	}
 	if resp.Error != "" {
-		return "", errors.New(resp.Error)
+		return statusURLs{}, errors.New(resp.Error)
 	}
 	if resp.Status == nil {
-		return "", errors.New("control socket: empty status response")
+		return statusURLs{}, errors.New("control socket: empty status response")
 	}
-	return resp.Status.URL, nil
+	return *resp.Status, nil
 }
 
 // ErrNotInstalled is returned by Start on macOS when the LaunchAgent plist

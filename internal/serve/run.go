@@ -113,6 +113,11 @@ func Run(ctx context.Context, opts RunOptions) error {
 		logging.Log("serve: hot reload disabled: %v", reloadErr)
 	}
 
+	// Never fails or waits on the network: serve comes up on the local leaf
+	// and the public certificate follows in the background.
+	public := newPublicCertFromConfig(dir, cfg, nil, nil)
+	defer public.stop()
+
 	srv, err := New(Options{
 		Build:         exe,
 		Config:        cfg,
@@ -122,6 +127,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 		AdvertiseHost: advertiseHost(sans),
 		HTTPSPort:     port,
 		BootstrapAddr: net.JoinHostPort(listenHost, strconv.Itoa(port+1)),
+		Public:        public,
 	})
 	if err != nil {
 		_ = ln.Close()
@@ -131,8 +137,9 @@ func Run(ctx context.Context, opts RunOptions) error {
 	// Viewer sessions of a previous run that died without cleaning up.
 	srv.SweepTerminals()
 	srv.Start(ctx)
+	public.start(ctx)
 
-	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{leaf}}
+	tlsCfg := serverTLSConfig(leaf, public)
 	httpSrv := newHTTPServer(srv.Handler())
 	httpSrv.TLSConfig = tlsCfg
 	// TLS handshake failures (a phone that does not trust the CA yet) are
@@ -226,6 +233,16 @@ func shutdown(srv *http.Server) {
 	if err := srv.Shutdown(ctx); err != nil {
 		_ = srv.Close()
 	}
+}
+
+// serverTLSConfig is the HTTPS listener's TLS config. Without a public
+// certificate it serves only the local-CA leaf; with one, GetCertificate
+// picks by SNI (see getCertificateFunc).
+func serverTLSConfig(leaf tls.Certificate, public *PublicCert) *tls.Config {
+	if public == nil {
+		return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{leaf}}
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: getCertificateFunc(&leaf, public)}
 }
 
 // advertiseHost picks the host for pairing URLs: the address of the
