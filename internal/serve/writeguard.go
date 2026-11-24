@@ -159,7 +159,7 @@ func remoteIP(r *http.Request) string {
 
 // writeActions maps the last path segment of a window write route to its
 // audit action.
-var writeActions = map[string]bool{"answer": true, "reply": true, "queue": true, "upload": true, "interrupt": true, "close": true}
+var writeActions = map[string]bool{"answer": true, "reply": true, "queue": true, "command": true, "upload": true, "interrupt": true, "close": true}
 
 // writeActionFor names the write route a path targets, for auditing requests
 // that are rejected before routing (CSRF) or by the allow_write gate.
