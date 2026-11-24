@@ -257,15 +257,13 @@ func (m FleetModel) handleClickBody(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) 
 		return m.clickMenu(msg.X)
 	}
 	if m.newSessionOpen() {
-		if y := m.footerMessageY(); msg.Y >= y && msg.Y < y+m.newSessionLines() {
-			if msg.Button == tea.MouseLeft {
-				if cmd, ok := m.clickRecent(msg.Y - y); ok {
-					return m, cmd
-				}
-			}
-			return m, nil // a click on the prompt itself keeps it open
+		if cmd, in := m.clickNewSession(msg.X, msg.Y, msg.Button == tea.MouseLeft); in {
+			return m, cmd
 		}
-		m.cancelNewSession() // any other click dismisses the prompt
+		m.cancelNewSession() // any other click dismisses the dropdown
+		if msg.Button == tea.MouseLeft && m.onOpenButton(msg.X, msg.Y) {
+			return m, nil // the button toggles it
+		}
 	}
 	if m.renameOpen() {
 		if idx, sub, ok := m.lineAtSub(msg.X, msg.Y); ok && sub == 0 && m.renamingRow(m.lines[idx].row) && m.onRowTitle(idx, msg.X) {

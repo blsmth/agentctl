@@ -11,7 +11,7 @@ import (
 	"github.com/blsmth/agentctl/internal/closedlog"
 )
 
-// Recent projects in the new-session prompt: up to fleetRecentMax directories
+// Recent projects in the new-session dropdown: up to fleetRecentMax directories
 // listed below the input, from the closed-window ledger (newest first, last
 // fleetRecentWindow) and the hub's origin dir. Dirs that already have a live
 // group, worktree paths and dirs that no longer exist are left out. The
@@ -22,8 +22,6 @@ const (
 	fleetRecentWindow = 30 * 24 * time.Hour
 	// fleetRecentScan bounds how many ledger dirs are examined (stat'ed).
 	fleetRecentScan = 60
-	// fleetRecentMargin is the margin of a list entry.
-	fleetRecentMargin = "    "
 )
 
 // Seams so tests never read the real ledger or touch the real filesystem.
@@ -167,7 +165,7 @@ func (m FleetModel) recentEntries() []string {
 // list to move in or the dir field is not focused.
 func (m *FleetModel) recentKey(key string) bool {
 	s := m.dirPrompt
-	if s.focus != nsFieldDir || (key != "up" && key != "down") {
+	if key != "up" && key != "down" {
 		return false
 	}
 	n := len(m.recentEntries())
@@ -188,7 +186,7 @@ func (m *FleetModel) recentKey(key string) bool {
 // highlightedRecent is the highlighted entry, if any.
 func (m FleetModel) highlightedRecent() (string, bool) {
 	es := m.recentEntries()
-	if m.dirPrompt.focus != nsFieldDir || m.dirPrompt.hl < 0 || m.dirPrompt.hl >= len(es) {
+	if m.dirPrompt.hl < 0 || m.dirPrompt.hl >= len(es) {
 		return "", false
 	}
 	return es[m.dirPrompt.hl], true
@@ -202,45 +200,20 @@ func (m *FleetModel) openRecent(dir string) tea.Cmd {
 	return m.submitNewSession()
 }
 
-// recentLines renders the list lines for content width cw.
-func (m FleetModel) recentLines(cw int) []string {
+// recentLines renders the list lines, each padded to width w (the panel's
+// inner width) so the highlight spans the row.
+func (m FleetModel) recentLines(w int) []string {
 	s := m.dirPrompt
 	home, _ := fleetUserHome()
 	es := s.visibleRecent(home)
 	lines := make([]string, 0, len(es))
 	for i, d := range es {
-		text := fleetRecentMargin + tildePath(d, home)
+		text := truncateToWidth(tildePath(d, home), w)
 		st := fleetDimStyle
 		if i == s.hl {
 			st = fleetBlockedStyle.Reverse(true)
 		}
-		lines = append(lines, st.Render(truncateToWidth(text, cw)))
+		lines = append(lines, st.Render(padToWidth(text, w)))
 	}
 	return lines
-}
-
-// newSessionRowAt maps a footer row (0 = the prompt's first line) to the
-// recent entry drawn there, or -1.
-func (m FleetModel) newSessionRowAt(row int) int {
-	di := 0
-	for i, f := range m.dirPrompt.fields() {
-		if f == nsFieldDir {
-			di = i
-		}
-	}
-	i := row - di - 1
-	if i < 0 || i >= len(m.recentEntries()) {
-		return -1
-	}
-	return i
-}
-
-// clickRecent handles a left click on footer row row of the prompt; ok is
-// false when it hit no entry.
-func (m *FleetModel) clickRecent(row int) (tea.Cmd, bool) {
-	i := m.newSessionRowAt(row)
-	if i < 0 {
-		return nil, false
-	}
-	return m.openRecent(m.recentEntries()[i]), true
 }

@@ -7,12 +7,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/fleet"
-	"github.com/blsmth/agentctl/internal/prompttemplate"
 )
 
 // stubNewSession points the prompt's default dir at origin (missing when
@@ -36,10 +36,6 @@ func stubNewSession(t *testing.T, origin, home string) *newSessionCalls {
 		return home, nil
 	}
 	t.Setenv("HOME", home) // tmux.CheckNewSessionDir reads it
-	origT, origA := fleetNewSessionTemplates, fleetNewSessionAgents
-	t.Cleanup(func() { fleetNewSessionTemplates, fleetNewSessionAgents = origT, origA })
-	fleetNewSessionTemplates = func(string) []prompttemplate.Template { return nil }
-	fleetNewSessionAgents = func(string) []string { return nil }
 	fleetNewSessionRun = func(dir string, env []string) (string, error) {
 		calls.dirs = append(calls.dirs, dir)
 		calls.envs = append(calls.envs, env)
@@ -100,8 +96,8 @@ func TestNewSessionPrefill(t *testing.T) {
 		if v := m.dirPrompt.input.Value(); v != origin {
 			t.Errorf("prefill = %q, want origin %q", v, origin)
 		}
-		if !strings.Contains(ansi.Strip(m.footerBody(m.contentWidth())), strings.TrimSpace(fleetNewSessionPrompt)) {
-			t.Error("footer does not show the prompt")
+		if !strings.Contains(ansi.Strip(nsSettled(m).render()), filepath.Base(origin)) {
+			t.Error("dropdown does not show the directory")
 		}
 	})
 	t.Run("missing origin falls back to home", func(t *testing.T) {
@@ -170,22 +166,28 @@ func TestNewSessionRejects(t *testing.T) {
 			if cmd != nil {
 				t.Error("an invalid dir returned a command")
 			}
-			if !strings.Contains(m.jumpErr, tt.wantErr) {
-				t.Errorf("jumpErr = %q, want %q", m.jumpErr, tt.wantErr)
+			if !strings.Contains(m.dirPrompt.err, tt.wantErr) {
+				t.Errorf("err = %q, want %q", m.dirPrompt.err, tt.wantErr)
+			}
+			if m.jumpErr != "" {
+				t.Errorf("error leaked to the footer: %q", m.jumpErr)
 			}
 			if !m.newSessionOpen() {
 				t.Error("prompt closed on an invalid dir")
 			}
-			if got := ansi.Strip(m.footerBody(m.contentWidth())); !strings.Contains(got, m.jumpErr[:min(len(m.jumpErr), 12)]) {
-				t.Errorf("footer lacks the error: %q", got)
+			if got := ansi.Strip(nsSettled(m).render()); !strings.Contains(got, m.dirPrompt.err[:min(len(m.dirPrompt.err), 12)]) {
+				t.Errorf("dropdown lacks the error: %q", got)
+			}
+			if strings.Contains(ansi.Strip(m.footerBody(m.contentWidth())), m.dirPrompt.err) {
+				t.Error("footer shows the error")
 			}
 			if len(calls.dirs)+len(calls.launched) != 0 {
 				t.Error("an invalid dir launched something")
 			}
 			// Typing clears the error and keeps the input.
 			m, _ = hubKey(t, m, "x")
-			if m.jumpErr != "" || !m.newSessionOpen() {
-				t.Errorf("after typing: err=%q open=%v", m.jumpErr, m.newSessionOpen())
+			if m.dirPrompt.err != "" || !m.newSessionOpen() {
+				t.Errorf("after typing: err=%q open=%v", m.dirPrompt.err, m.newSessionOpen())
 			}
 		})
 	}
@@ -427,13 +429,196 @@ func TestNewSessionTitleKeepsCounts(t *testing.T) {
 	}
 }
 
-func TestNewSessionPromptFitsWidth(t *testing.T) {
+func TestNewSessionPanelFitsWidth(t *testing.T) {
 	stubNewSession(t, "/a/rather/long/default/directory/for/the/prompt/line", t.TempDir())
-	m, _ := hubKey(t, foldModel(t), fleetNewSessionKey)
-	for _, cw := range []int{40, 44, 56, 120} {
-		if w := ansi.StringWidth(ansi.Strip(m.newSessionView(cw))); w > cw {
-			t.Errorf("cw=%d: prompt line is %d wide", cw, w)
+	for _, w := range []int{24, 29, 30, 44, 56, 80, 120} {
+		m := foldModel(t)
+		m.termWidth = w
+		m.liveLeft = 0
+		m, _ = hubKey(t, m, fleetNewSessionKey)
+		m = nsSettled(m)
+		cw := m.contentWidth()
+		for i, l := range m.nsPanelLines() {
+			if lw := ansi.StringWidth(ansi.Strip(l)); lw > cw {
+				t.Errorf("w=%d row %d is %d wide, content %d", w, i, lw, cw)
+			}
 		}
+		if x := m.nsPanelX(); x < 0 || x+nsPanelWidth(cw) > cw {
+			t.Errorf("w=%d: panel at %d overflows %d", w, x, cw)
+		}
+		if cw < fleetNsNarrow && nsPanelWidth(cw) != cw {
+			t.Errorf("w=%d: narrow panel is %d, want full width %d", w, nsPanelWidth(cw), cw)
+		}
+	}
+}
+
+// nsSettled finishes the slide-in so the panel is at full height.
+func nsSettled(m FleetModel) FleetModel {
+	if m.dirPrompt != nil {
+		m.dirPrompt.animOn, m.dirPrompt.animP = false, 1
+	}
+	return m
+}
+
+func TestDropdownAnchoredUnderButton(t *testing.T) {
+	stubNewSession(t, "/start", t.TempDir())
+	m := foldModel(t)
+	m.liveLeft = 0
+	btn := m.titleLayout(m.contentWidth()).open
+	if btn[1] == 0 {
+		t.Fatal("no button")
+	}
+	m, _ = hubKey(t, m, fleetNewSessionKey)
+	m = nsSettled(m)
+	if x := m.nsPanelX(); x != btn[0] {
+		t.Errorf("panel x = %d, button at %d", x, btn[0])
+	}
+	lines := strings.Split(ansi.Strip(m.render()), "\n")
+	if !strings.HasPrefix(ansi.Cut(lines[1], btn[0], btn[0]+1), "╭") {
+		t.Errorf("row 1 lacks the panel's corner under the button: %q", lines[1])
+	}
+	if !strings.Contains(lines[2], "/start") {
+		t.Errorf("row 2 lacks the input: %q", lines[2])
+	}
+	if !strings.Contains(lines[0], "agentctl hub") {
+		t.Errorf("title overdrawn: %q", lines[0])
+	}
+}
+
+func TestDropdownClampsAndHiddenButton(t *testing.T) {
+	stubNewSession(t, "/start", t.TempDir())
+	m := foldModel(t)
+	m.liveLeft = 0
+	m.termWidth = 60
+	cw := m.contentWidth()
+	m, _ = hubKey(t, m, fleetNewSessionKey)
+	if x, w := m.nsPanelX(), nsPanelWidth(cw); x+w > cw {
+		t.Errorf("panel [%d,%d) overflows %d", x, x+w, cw)
+	}
+	// A hidden button anchors at the left edge.
+	n := foldModel(t)
+	n.termWidth = 40 // the narrowest content width
+	n.serveKnown = true
+	n, _ = hubKey(t, n, fleetNewSessionKey)
+	if n.titleLayout(n.contentWidth()).open[1] != 0 {
+		return // the button fits here; nothing hidden to test
+	}
+	if x := n.nsPanelX(); x != 0 {
+		t.Errorf("hidden button: panel x = %d, want 0", x)
+	}
+}
+
+func TestDropdownClickOutsideCloses(t *testing.T) {
+	stubNewSession(t, "/start", t.TempDir())
+	m := foldModel(t)
+	m.liveLeft = 0
+	m, _ = hubKey(t, m, fleetNewSessionKey)
+	m = nsSettled(m)
+	x, y, w, h := m.nsPanelRect()
+	next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x + 2, Y: y + 1})
+	if !next.(FleetModel).newSessionOpen() {
+		t.Error("click on the input closed the dropdown")
+	}
+	next, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x + w - 1, Y: y + h - 1})
+	if !next.(FleetModel).newSessionOpen() {
+		t.Error("click on the panel's corner closed the dropdown")
+	}
+	next, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y + h + 2})
+	if next.(FleetModel).newSessionOpen() {
+		t.Error("click below the panel kept it open")
+	}
+	// The button toggles it shut instead of reopening.
+	btn := m.titleLayout(m.contentWidth()).open
+	next, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: btn[0], Y: 0})
+	if next.(FleetModel).newSessionOpen() {
+		t.Error("clicking + open while open left it open")
+	}
+}
+
+func TestDropdownSlideTicks(t *testing.T) {
+	stubNewSession(t, "/start", t.TempDir())
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	orig := fleetNow
+	t.Cleanup(func() { fleetNow = orig })
+	fleetNow = func() time.Time { return now }
+
+	m, _ := hubKey(t, foldModel(t), fleetNewSessionKey)
+	gen := m.nsAnimGen
+	if !m.dirPrompt.animOn || m.dirPrompt.animP != 0 {
+		t.Fatalf("not sliding on open: %+v", m.dirPrompt)
+	}
+	full := len(m.nsPanelLines())
+	if h := m.nsVisibleRows(full); h != 0 {
+		t.Errorf("visible rows at p=0: %d", h)
+	}
+	// Keys typed mid-slide land in the input.
+	m, _ = hubKey(t, m, "x")
+	if v := m.dirPrompt.input.Value(); v != "/startx" {
+		t.Errorf("input = %q", v)
+	}
+	// A stale tick is ignored.
+	now = now.Add(fleetNsSlideDur / 10)
+	next, cmd := m.Update(nsDropTickMsg{gen: gen - 1})
+	m = next.(FleetModel)
+	if cmd != nil || m.dirPrompt.animP != 0 {
+		t.Errorf("stale tick advanced the slide: p=%v", m.dirPrompt.animP)
+	}
+	// A current one advances it, partway.
+	next, _ = m.Update(nsDropTickMsg{gen: gen})
+	m = next.(FleetModel)
+	if p := m.dirPrompt.animP; p <= 0 || p >= 1 || !m.dirPrompt.animOn {
+		t.Errorf("mid tick: p=%v on=%v", p, m.dirPrompt.animOn)
+	}
+	if h := m.nsVisibleRows(full); h <= 0 || h >= full {
+		t.Errorf("visible rows mid-slide = %d of %d", h, full)
+	}
+	// Past the duration it settles.
+	now = now.Add(fleetNsSlideDur)
+	next, cmd = m.Update(nsDropTickMsg{gen: gen})
+	m = next.(FleetModel)
+	if cmd != nil || m.dirPrompt.animOn || m.dirPrompt.animP != 1 || m.nsVisibleRows(full) != full {
+		t.Errorf("not settled: %+v", m.dirPrompt)
+	}
+	// Closing and reopening makes the first open's ticks stale.
+	m, _ = hubKey(t, m, "esc")
+	m, _ = hubKey(t, m, fleetNewSessionKey)
+	next, _ = m.Update(nsDropTickMsg{gen: gen})
+	if next.(FleetModel).dirPrompt.animP != 0 {
+		t.Error("a tick of the earlier open moved the new slide")
+	}
+}
+
+func TestDropdownKeyAndButtonParity(t *testing.T) {
+	stubNewSession(t, "/start", t.TempDir())
+	m := foldModel(t)
+	m.liveLeft = 0
+	byKey, _ := hubKey(t, m, fleetNewSessionKey)
+	btn := m.titleLayout(m.contentWidth()).open
+	next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: btn[0], Y: 0})
+	byBtn := next.(FleetModel)
+	if !byBtn.newSessionOpen() {
+		t.Fatal("button did not open")
+	}
+	if byKey.dirPrompt.input.Value() != byBtn.dirPrompt.input.Value() || byKey.nsAnimGen != byBtn.nsAnimGen ||
+		byKey.dirPrompt.animOn != byBtn.dirPrompt.animOn {
+		t.Errorf("key and button differ: %+v vs %+v", byKey.dirPrompt, byBtn.dirPrompt)
+	}
+	if ansi.Strip(nsSettled(byKey).render()) != ansi.Strip(nsSettled(byBtn).render()) {
+		t.Error("renders differ")
+	}
+}
+
+func TestDropdownFooterHints(t *testing.T) {
+	stubNewSession(t, "/start", t.TempDir())
+	m, _ := hubKey(t, foldModel(t), fleetNewSessionKey)
+	foot := ansi.Strip(m.footerBody(m.contentWidth()))
+	for _, want := range []string{"open", "cancel"} {
+		if !strings.Contains(foot, want) {
+			t.Errorf("footer lacks %q: %q", want, foot)
+		}
+	}
+	if strings.Contains(foot, "/start") {
+		t.Errorf("footer still holds the prompt: %q", foot)
 	}
 }
 

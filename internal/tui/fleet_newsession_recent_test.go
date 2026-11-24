@@ -12,7 +12,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/closedlog"
-	"github.com/blsmth/agentctl/internal/prompttemplate"
 )
 
 func stubRecent(t *testing.T, dirs ...string) {
@@ -50,7 +49,7 @@ func openWithRecent(t *testing.T, m FleetModel) (FleetModel, *newSessionCalls) {
 		t.Fatal("opening the prompt returned no load command")
 	}
 	next, _ := m.Update(cmd())
-	return next.(FleetModel), nil
+	return nsSettled(next.(FleetModel)), nil
 }
 
 func TestLoadRecentDirsFilters(t *testing.T) {
@@ -108,12 +107,12 @@ func TestRecentShowsTildeAndCapsAtEight(t *testing.T) {
 	if n := len(m.recentEntries()); n != fleetRecentMax {
 		t.Fatalf("%d entries, want %d", n, fleetRecentMax)
 	}
-	out := ansi.Strip(m.footerBody(m.contentWidth()))
+	out := ansi.Strip(m.render())
 	if !strings.Contains(out, "~/p/a") || strings.Contains(out, home) {
 		t.Errorf("entries not ~-shortened:\n%s", out)
 	}
-	if m.newSessionLines() != 1+fleetRecentMax {
-		t.Errorf("lines = %d", m.newSessionLines())
+	if n := len(m.nsPanelLines()); n != 2+1+fleetRecentMax {
+		t.Errorf("panel rows = %d", n)
 	}
 }
 
@@ -122,11 +121,11 @@ func TestRecentNoEntriesLooksLikeToday(t *testing.T) {
 	stubNewSession(t, "", home)
 	stubRecent(t)
 	m, _ := hubKey(t, foldModel(t), fleetNewSessionKey)
-	if m.newSessionLines() != 1 || strings.Contains(m.newSessionView(80), "\n") {
-		t.Error("prompt grew with no recent dirs")
+	if n := len(m.nsPanelLines()); n != 3 {
+		t.Errorf("panel has %d rows with no recent dirs, want border+input+border", n)
 	}
 	for _, h := range m.newSessionHints() {
-		if h.key == "↑/↓" {
+		if h.key == "↑↓" {
 			t.Error("recent hint shown with no entries")
 		}
 	}
@@ -205,13 +204,15 @@ func TestRecentClickOpens(t *testing.T) {
 	calls := stubNewSession(t, "", home)
 	stubRecent(t, ds...)
 	m, _ := openWithRecent(t, foldModel(t))
-	y := m.footerMessageY()
-	// The prompt line itself keeps the prompt open and opens nothing.
-	next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 10, Y: y})
+	x, y, _, _ := m.nsPanelRect()
+	x += 3
+	y++ // the input row
+	// The input itself keeps the dropdown open and opens nothing.
+	next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 	if cmd != nil || !next.(FleetModel).newSessionOpen() {
 		t.Fatal("click on the input changed the prompt")
 	}
-	next, cmd = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 10, Y: y + 2})
+	next, cmd = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y + 2})
 	if cmd == nil {
 		t.Fatal("click on an entry returned no command")
 	}
@@ -242,29 +243,5 @@ func TestRecentIncludesHubOrigin(t *testing.T) {
 	m, _ := openWithRecent(t, foldModel(t))
 	if got := m.recentEntries(); !slices.Equal(got, ds) {
 		t.Errorf("entries = %v, want %v", got, ds)
-	}
-}
-
-func TestRecentEnterFromOtherFieldSubmitsForm(t *testing.T) {
-	home := t.TempDir()
-	ds := mkdirs(t, "alpha", "beta")
-	typed := mkdirs(t, "typed")[0]
-	calls := stubNewSession(t, "", home)
-	stubRecent(t, ds...)
-	m, _ := openWithRecent(t, foldModel(t))
-	m = typeDir(t, m, typed)
-	m.dirPrompt.hl = 0
-	m.dirPrompt.tmpls = []prompttemplate.Template{{Name: "t"}} // a form, so focus can leave the dir
-	m.dirPrompt.setFocus(nsFieldTemplate)
-	if _, ok := m.highlightedRecent(); ok {
-		t.Fatal("highlight honoured with focus off the dir field")
-	}
-	m, cmd := hubKey(t, m, "enter")
-	if cmd == nil {
-		t.Fatal("no command")
-	}
-	cmd()
-	if !slices.Equal(calls.dirs, []string{typed}) {
-		t.Errorf("helper dirs = %v, want typed %s", calls.dirs, typed)
 	}
 }

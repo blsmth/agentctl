@@ -689,6 +689,8 @@ type FleetModel struct {
 	// dirPrompt is the open new-session (N) directory prompt (see
 	// fleet_newsession.go); nil when closed.
 	dirPrompt *fleetNewSessionState
+	// nsAnimGen guards its slide-in ticks against an earlier open.
+	nsAnimGen int
 
 	// rename is the open title editor (see fleet_rename.go); nil when closed.
 	// titleHolds are just-saved titles shown until a load reflects them, by
@@ -1013,6 +1015,9 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case schedDrawerTickMsg:
 		return m, m.applySchedDrawerTick(msg)
+
+	case nsDropTickMsg:
+		return m, m.applyNewSessionTick(msg)
 
 	case fleetActivityOpenedMsg:
 		return m, m.applyActivityOpened(msg)
@@ -2296,7 +2301,7 @@ func (m FleetModel) render() string {
 	if m.card != nil {
 		out = m.withCard(out)
 	}
-	return m.withSchedPane(out)
+	return m.withNewSessionDropdown(m.withSchedPane(out))
 }
 
 // renderHeader renders the title line and the row below it, which is blank

@@ -441,6 +441,7 @@ func (m *FleetModel) openMenu(idx int) {
 	m.cancelRename()
 	m.cancelClose()
 	m.cancelNew()
+	m.cancelNewSession()
 	m.cancelSweep()
 	m.selectLine(idx)
 	if len(m.fleetMenuItems(idx)) == 0 {
