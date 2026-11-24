@@ -206,7 +206,7 @@ func (t *Transcript) JSONL(m TranscriptMeta) ([]byte, error) {
 	if t.Recap != "" {
 		r := base("system")
 		r["subtype"] = "away_summary"
-		r["content"] = t.Recap + " (disable recaps in /config)"
+		r["content"] = t.Recap + " (turn off recaps in /config)"
 		lines = append(lines, r)
 	}
 	if t.PR > 0 {

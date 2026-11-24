@@ -161,6 +161,10 @@ func TagMeta(rows []Row, meta map[string]Meta) {
 		rows[i].Detached = m.Detached()
 		rows[i].Parent = m.Parent()
 		rows[i].StateSince = m.stateSince(rows[i].State)
+		rows[i].PendingTool, rows[i].PendingToolDetail = "", ""
+		if rows[i].State == "blocked" {
+			rows[i].PendingTool, rows[i].PendingToolDetail = m.PendingTool, m.PendingToolDetail
+		}
 	}
 }
 

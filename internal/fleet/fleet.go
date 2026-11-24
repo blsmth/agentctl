@@ -49,6 +49,13 @@ type Row struct {
 	// for a blocked row); zero when unknown. Set by TagMeta.
 	StateSince time.Time
 
+	// PendingTool and PendingToolDetail name the tool a blocked window's
+	// dialog asks about and what it is asked to do. Set by TagMeta only
+	// while the row is blocked: hook-pre-tool records PendingTool on every
+	// tool call, so it means nothing otherwise.
+	PendingTool       string
+	PendingToolDetail string
+
 	// Recap is the row's "what is it working on" line, and PRNumber/PRURL the
 	// newest PR link from its session log. Set by TagLogs.
 	Recap    RecapLine

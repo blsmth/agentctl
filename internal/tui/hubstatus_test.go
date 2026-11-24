@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -12,6 +13,8 @@ import (
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/state"
 )
+
+var statusNow = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 
 func statusTestRow() fleet.Row {
 	r := testRow("go-engineer~2", "agentctl-p", "working", "Bash: go test ./internal/tui/")
@@ -28,7 +31,7 @@ func statusTestRow() fleet.Row {
 
 func TestHubStatusFor(t *testing.T) {
 	InitStyles()
-	st := hubStatusFor(statusTestRow(), fleetDisplay{})
+	st := hubStatusFor(statusTestRow(), fleetDisplay{}, nil)
 	if st.Glyph != "●" || st.Title != "Status pane" || st.Project != "agentctl" || st.Note != "" {
 		t.Errorf("status = %+v", st)
 	}
@@ -37,7 +40,7 @@ func TestHubStatusFor(t *testing.T) {
 	}
 	act := statusTestRow()
 	act.Recap = fleet.RecapLine{Source: fleet.RecapActivity, Text: "Bash: ls"}
-	if d := hubStatusFor(act, fleetDisplay{}).Detail; d != (rowDetailParts{}) {
+	if d := hubStatusFor(act, fleetDisplay{}, nil).Detail; d != (rowDetailParts{}) {
 		t.Errorf("activity recap leaked into the status: %+v", d)
 	}
 	if len(st.Chips) == 0 || st.Chips[0] != "#42" {
@@ -45,7 +48,7 @@ func TestHubStatusFor(t *testing.T) {
 	}
 
 	empty := testRow("go-engineer", "agentctl-p", "idle", "")
-	st = hubStatusFor(empty, fleetDisplay{})
+	st = hubStatusFor(empty, fleetDisplay{}, nil)
 	if st.Title != "go-engineer" || !strings.HasPrefix(st.Note, "no prompt yet") || st.Detail.Recap != "" {
 		t.Errorf("empty row status = %+v", st)
 	}
@@ -54,9 +57,9 @@ func TestHubStatusFor(t *testing.T) {
 func TestRenderHubStatus(t *testing.T) {
 	InitStyles()
 	sel := HubSelection{Session: "agentctl-p", WindowID: "@1", RuntimeDir: "/p/.agentctl"}
-	sel.Status = hubStatusFor(statusTestRow(), fleetDisplay{})
+	sel.Status = hubStatusFor(statusTestRow(), fleetDisplay{}, nil)
 	const w, h = 44, fleetStatusRows
-	out := renderHubStatus(sel, false, w, h)
+	out := renderHubStatus(sel, false, w, h, statusNow)
 	lines := strings.Split(out, "\n")
 	if len(lines) != h {
 		t.Fatalf("%d lines, want %d:\n%s", len(lines), h, out)
@@ -67,7 +70,7 @@ func TestRenderHubStatus(t *testing.T) {
 		}
 	}
 	plain := ansi.Strip(out)
-	for _, want := range []string{"● Status pane", "agentctl", "Moving the selected row", "[#42]"} {
+	for _, want := range []string{"● Status pane", "agentctl", "Moving the selected row", "#42 · go-engineer"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("missing %q in:\n%s", want, plain)
 		}
@@ -80,12 +83,12 @@ func TestRenderHubStatus(t *testing.T) {
 	if got := strings.TrimSpace(ansi.Strip(lines[4])); !strings.HasSuffix(got, "…") {
 		t.Errorf("last recap line %q, want an ellipsis", got)
 	}
-	if got := ansi.Strip(lines[h-1]); !strings.Contains(got, "[#42]") {
-		t.Errorf("last line %q, want the chips", got)
+	if got := ansi.Strip(lines[h-1]); !strings.Contains(got, "#42 · go-engineer") || strings.Contains(got, "[") {
+		t.Errorf("last line %q, want the facts footer", got)
 	}
 
 	// A taller pane fits the whole recap.
-	if plain := ansi.Strip(renderHubStatus(sel, false, w, 12)); strings.Contains(plain, "…") {
+	if plain := ansi.Strip(renderHubStatus(sel, false, w, 12, statusNow)); strings.Contains(plain, "…") {
 		t.Errorf("tall pane still cut the recap:\n%s", plain)
 	}
 }
@@ -93,7 +96,7 @@ func TestRenderHubStatus(t *testing.T) {
 func TestRenderHubStatusIgnoresActivityFromOlderFile(t *testing.T) {
 	InitStyles()
 	st := &hubStatus{Glyph: "●", Title: "T", Detail: rowDetailParts{Recap: "ls", RecapIsActivity: true, Marker: "$ "}}
-	plain := ansi.Strip(renderHubStatus(HubSelection{Session: "s", WindowID: "@1", RuntimeDir: "/p", Status: st}, false, 60, 6))
+	plain := ansi.Strip(renderHubStatus(HubSelection{Session: "s", WindowID: "@1", RuntimeDir: "/p", Status: st}, false, 60, 6, statusNow))
 	if strings.Contains(plain, "$ ") || strings.Contains(plain, "ls") || !strings.Contains(plain, "nothing to summarise") {
 		t.Errorf("want a placeholder, got:\n%s", plain)
 	}
@@ -113,7 +116,7 @@ func TestRenderHubStatusPlaceholder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out := renderHubStatus(tt.sel, tt.readErr, 60, 5)
+			out := renderHubStatus(tt.sel, tt.readErr, 60, 5, statusNow)
 			lines := strings.Split(ansi.Strip(out), "\n")
 			if len(lines) != 5 || !strings.Contains(lines[0], tt.want) {
 				t.Errorf("got %q, want %q on the first of 5 lines", lines, tt.want)
