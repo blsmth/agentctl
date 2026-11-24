@@ -1026,6 +1026,7 @@ func (m *FleetModel) applySchedSaved(msg fleetSchedSavedMsg) tea.Cmd {
 // closeSchedForm closes the form without saving.
 func (m *FleetModel) closeSchedForm() {
 	m.schedForm = nil
+	m.schedCardHidden = "" // back to the card
 	m.resolveSelection()
 }
 

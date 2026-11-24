@@ -224,7 +224,12 @@ func (m *FleetModel) selectedSchedLine() *fleetLine {
 // header or a "+ new schedule" line selected on its own shows no drawer: the
 // new line opens the form straight from Enter/n or a click.
 func (m FleetModel) schedPaneActive() bool {
-	return isSchedJobSel(m.selSchedule) || m.schedForm != nil
+	return m.schedCardShowing() || m.schedForm != nil
+}
+
+// schedCardShowing reports whether the selected job's card is the open drawer.
+func (m FleetModel) schedCardShowing() bool {
+	return isSchedJobSel(m.selSchedule) && m.selSchedule != m.schedCardHidden
 }
 
 // fleetViewerMu serializes the hub's viewer pane changes (every show in
@@ -263,6 +268,14 @@ func (m *FleetModel) scheduleKey(key string) (cmd tea.Cmd, handled bool) {
 	}
 	st := l.sched
 	switch key {
+	case "esc":
+		// The card is the innermost layer here: esc closes it back to the
+		// list instead of falling through to the hub's leave binding.
+		if m.schedCardShowing() {
+			m.schedCardHidden = m.selSchedule
+			return nil, true
+		}
+		return nil, false
 	case "enter", "e":
 		return m.openSchedForm(schedFormEdit, &st, ""), true
 	case "d":
