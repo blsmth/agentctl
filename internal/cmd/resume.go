@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/blsmth/agentctl/internal/closedlog"
@@ -41,22 +40,14 @@ func RunResume(out io.Writer, ref string) error {
 	return nil
 }
 
-// resumeEnvStrip are the inherited vars that would point the helper at the
-// caller's own window instead of the project being resumed.
-var resumeEnvStrip = []string{"AGENTCTL_RUNTIME_DIR", "PWD", "AGENTCTL_INSTANCE", "AGENTCTL_SESSION_ID", "AGENTCTL_WINDOW_ID", "TMUX_PANE"}
-
 func spawnHubResume(r closedlog.Record) (string, error) {
 	exe, err := selfpath.Spawnable()
 	if err != nil {
 		return "", fmt.Errorf("locating agentctl: %w", err)
 	}
-	work := r.WorkDir
-	if work == "" {
-		work = r.ProjectDir
-	}
-	c := exec.Command(exe, "hub-resume", r.ProjectDir, "--work-dir", filepath.Clean(work), "--agent", r.Agent, "--session-id", r.SessionID)
+	c := exec.Command(exe, closedlog.ResumeArgs(r)...)
 	c.Dir = r.ProjectDir
-	c.Env = resumeEnv(r.ProjectDir, os.Environ())
+	c.Env = closedlog.ResumeEnv(r.ProjectDir, os.Environ())
 	var stdout, stderr bytes.Buffer
 	c.Stdout, c.Stderr = &stdout, &stderr
 	if err := c.Run(); err != nil {
@@ -70,21 +61,4 @@ func spawnHubResume(r closedlog.Record) (string, error) {
 		return "", err
 	}
 	return stdout.String(), nil
-}
-
-// resumeEnv pins the helper to dir's project: identity vars dropped, runtime
-// dir and PWD set. Pure: parent is passed in.
-func resumeEnv(dir string, parent []string) []string {
-	out := make([]string, 0, len(parent)+2)
-	for _, kv := range parent {
-		name, _, _ := strings.Cut(kv, "=")
-		skip := false
-		for _, s := range resumeEnvStrip {
-			skip = skip || s == name
-		}
-		if !skip {
-			out = append(out, kv)
-		}
-	}
-	return append(out, "PWD="+dir, "AGENTCTL_RUNTIME_DIR="+filepath.Join(dir, ".agentctl"))
 }

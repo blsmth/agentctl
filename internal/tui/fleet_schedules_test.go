@@ -678,7 +678,7 @@ func TestScheduleRunNowConfirmsAndShowsSkip(t *testing.T) {
 	}
 	f.runEntry = cron.Entry{Result: cron.ResultFired, WindowID: "@12", Session: "agentctl-acme-api"}
 	m = schedPress(t, m, "g", "y")
-	if !strings.Contains(m.infoMsg, "upcoming fired: window @12") {
+	if !strings.Contains(m.infoMsg, "upcoming fired in acme-api") {
 		t.Errorf("info = %q", m.infoMsg)
 	}
 }
@@ -734,7 +734,7 @@ func TestScheduleCardDrawerLeavesViewerAlone(t *testing.T) {
 
 	// The running job's card names its live window.
 	m = selectSched(t, m, "babysit")
-	if !strings.Contains(ansi.Strip(m.render()), "running: go-engineer:2 in acme-api") {
+	if !strings.Contains(ansi.Strip(m.render()), `running: go-engineer:2 "babysit" in acme-api`) {
 		t.Errorf("running window not shown:\n%s", ansi.Strip(m.render()))
 	}
 

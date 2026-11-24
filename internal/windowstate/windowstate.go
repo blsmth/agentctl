@@ -127,6 +127,10 @@ type WindowState struct {
 	// max_concurrent and timeout decisions. Empty for every other launch.
 	ScheduledBy string    `json:"scheduled_by,omitempty"`
 	ScheduledAt time.Time `json:"scheduled_at,omitzero"`
+	// StartedAt is when the window's agent was launched (unix seconds). Set
+	// once by the launch bootstrap and never touched by state transitions; it
+	// names a bare session "<agent> · started HH:MM" without the monitor.
+	StartedAt int64 `json:"started_at,omitempty"`
 
 	// Template is the prompt template a `dispatch --template` launch used
 	// (display-only). Empty for every other launch.

@@ -99,7 +99,9 @@ func BuildAgents(wins []tmux.WindowInfo, records map[string]windowstate.WindowSt
 				a.LastTurnOutput = m.LastTurnOutput
 				a.LastTurnCacheRead = m.LastTurnCacheRead
 				a.LastTurnCacheCreate = m.LastTurnCacheCreate
-				a.StartTime = m.StartTime
+				if a.StartTime == 0 {
+					a.StartTime = m.StartTime
+				}
 				a.MailboxPending = m.MailboxPending
 			}
 		}
@@ -184,6 +186,7 @@ func agentFromWindow(idx int, w tmux.WindowInfo, name string, records map[string
 		SessionName:      ws.SessionName,
 		ScheduledBy:      ws.ScheduledBy,
 		ScheduledAt:      ws.ScheduledAt,
+		StartTime:        ws.StartedAt,
 	}
 }
 

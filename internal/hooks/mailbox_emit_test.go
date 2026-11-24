@@ -240,7 +240,7 @@ func TestCheckDone_EmitsDoneWhenSpawnedAndAutonomous(t *testing.T) {
 	if strings.Contains(msg.Body, "Opened PR #948") {
 		t.Errorf("Body %q must not quote the last assistant message", msg.Body)
 	}
-	if want := "agentctl notice: go-engineer (window @41) finished its turn and is idle."; msg.Body != want {
+	if want := "agentctl notice: go-engineer at @41 finished its turn and is idle."; msg.Body != want {
 		t.Errorf("Body = %q, want %q", msg.Body, want)
 	}
 	if msg.Hops != 0 {
@@ -449,7 +449,7 @@ func TestNotify_EmitsBlockedWhenSpawned(t *testing.T) {
 	if msg.ToSession != parentSession {
 		t.Errorf("ToSession = %q, want %q (SpawnedBySession)", msg.ToSession, parentSession)
 	}
-	if want := "agentctl notice: go-engineer (window @60) is waiting on a permission prompt: an unspecified tool call."; msg.Body != want {
+	if want := "agentctl notice: go-engineer at @60 is waiting on a permission prompt: an unspecified tool call."; msg.Body != want {
 		t.Errorf("Body = %q, want %q", msg.Body, want)
 	}
 }

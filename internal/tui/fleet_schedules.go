@@ -20,6 +20,7 @@ import (
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/dispatchplan"
+	"github.com/blsmth/agentctl/internal/fleet"
 )
 
 // The hub's schedules: the `agentctl cron` jobs, each listed on the
@@ -439,11 +440,8 @@ func (m *FleetModel) applySchedRan(msg fleetSchedRanMsg) tea.Cmd {
 		m.jumpErr = "run " + msg.name + ": " + msg.err.Error()
 	case msg.entry.Result == cron.ResultFired:
 		text := msg.name + " fired"
-		if msg.entry.WindowID != "" {
-			text += ": window " + msg.entry.WindowID
-			if msg.entry.Session != "" {
-				text += " in " + msg.entry.Session
-			}
+		if msg.entry.WindowID != "" && msg.entry.Session != "" {
+			text += " in " + strings.TrimPrefix(msg.entry.Session, "agentctl-")
 		}
 		m.setSuccess(text)
 	default:
@@ -838,16 +836,17 @@ func (m FleetModel) selectedSchedLineValue() *fleetLine {
 	return m.selectedSchedLine()
 }
 
-// windowLabel names a live window by its row ("go-engineer-2 in acme-api").
+// windowLabel names a live window by its session: agent, label and handle
+// (`go-engineer "esc fix in hub" (a3f9) in acme-api`), never its window ID.
 func (m FleetModel) windowLabel(session, windowID string) string {
 	for _, g := range m.groups {
 		for _, r := range g.Rows {
 			if r.Session == session && r.WindowID == windowID {
-				return r.Name + " in " + g.Project
+				return fleet.Who(fleet.NewIndex(m.groups, m.closed), r) + " in " + g.Project
 			}
 		}
 	}
-	return windowID + " in " + session
+	return "a session in " + strings.TrimPrefix(session, "agentctl-")
 }
 
 // renderRunLine is one run: time, result, window or note.

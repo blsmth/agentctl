@@ -141,7 +141,7 @@ func reportTrustPrompt(windowID, pane, folder string) {
 	title, titled := alertTitle(ws, agent, windowID)
 	sendAlert(agent, trustNotificationType, notify.Options{
 		Title:    title,
-		Subtitle: alertSubtitle("Trust this folder?", titled, agent, strings.TrimPrefix(sessionName, "agentctl-")),
+		Subtitle: alertSubtitle("Trust this folder?", titled, agent, strings.TrimPrefix(sessionName, "agentctl-"), alertHandle(ws)),
 		Message:  alertMessage("Claude Code is asking whether to trust " + folder + ". Answer it in the window."),
 		Env: map[string]string{
 			"AGENTCTL_AGENT_NAME":        agent,
@@ -164,7 +164,7 @@ func emitTrustMessage(windowID string, ws windowstate.WindowState, folder string
 	if agent == "" {
 		agent = "the agent"
 	}
-	body := fmt.Sprintf("agentctl notice: %s (window %s) has not started: it is waiting on Claude Code's folder trust prompt for %s. A human must answer it in that window.", agent, windowID, folder)
+	body := fmt.Sprintf("agentctl notice: %s at %s has not started: it is waiting on Claude Code's folder trust prompt for %s. A human must answer it in that window.", noticeWho(windowID, ws, agent), noticeLocation(windowID, ws), folder)
 	if _, err := deps.EnqueueMailboxMessage(mailbox.Message{
 		From:      windowID,
 		To:        ws.SpawnedBy,

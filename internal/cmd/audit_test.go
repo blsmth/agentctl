@@ -12,6 +12,8 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/blsmth/agentctl/internal/audit"
+	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/registry"
 	"github.com/blsmth/agentctl/internal/theme"
@@ -694,5 +696,36 @@ func writeAuditRecordToDir(t *testing.T, dir string, rec audit.Record) {
 	path := filepath.Join(dir, rec.Session+".jsonl")
 	if err := os.WriteFile(path, append(line, '\n'), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func TestResolveSessionFilter(t *testing.T) {
+	old := auditIndex
+	t.Cleanup(func() { auditIndex = old })
+	auditIndex = func() *fleet.Index {
+		return fleet.NewIndex([]fleet.Group{{Rows: []fleet.Row{{AgentState: state.AgentState{WindowID: "@3", SessionID: "a3f9c0de-0001"}}}}}, nil)
+	}
+	for _, tc := range []struct {
+		ref    string
+		want   string
+		ok     bool
+		errors bool
+	}{
+		{"", "", false, false},
+		{"@5", "", false, false},
+		{"go-engineer", "", false, false},
+		{"a3f9", "a3f9c0de-0001", true, false},
+		{"ffff", "", false, true},
+	} {
+		got, ok, err := ResolveSessionFilter(tc.ref)
+		if got != tc.want || ok != tc.ok || (err != nil) != tc.errors {
+			t.Errorf("ResolveSessionFilter(%q) = %q, %v, %v", tc.ref, got, ok, err)
+		}
+	}
+	if got := auditHandleOf(auditIndex(), audit.Record{Session: "a3f9c0de-0001"}); got != "a3f9" {
+		t.Errorf("handle = %q", got)
+	}
+	if got := auditHandleOf(auditIndex(), audit.Record{}); got != "-" {
+		t.Errorf("handle = %q", got)
 	}
 }

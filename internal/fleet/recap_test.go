@@ -491,8 +491,8 @@ func TestDisplayName(t *testing.T) {
 		{"done glyph", "✓ brandon:2", "", "@9", "brandon:2"},
 		{"no suffix kept", "my-renamed", "x", "@9", "my-renamed"},
 		{"agent fallback", "", "go-engineer", "@9", "go-engineer"},
-		{"id fallback", "", "", "@9", "@9"},
-		{"glyph only", "● ", "", "@9", "@9"},
+		{"id fallback", "", "", "@9", "session"},
+		{"glyph only", "● ", "", "@9", "session"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

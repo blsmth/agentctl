@@ -119,7 +119,7 @@ func beginApproval(n popupNotice) (end func()) {
 	// the popup.
 	sendAlert(n.Agent, approvalNotificationType, notify.Options{
 		Title:    title,
-		Subtitle: alertSubtitle("Approval needed", titled, n.Agent, strings.TrimPrefix(sessionName, "agentctl-")),
+		Subtitle: alertSubtitle("Approval needed", titled, n.Agent, strings.TrimPrefix(sessionName, "agentctl-"), alertHandle(ws)),
 		Message:  approvalMessage(n),
 		Env: map[string]string{
 			"AGENTCTL_AGENT_NAME":        n.Agent,

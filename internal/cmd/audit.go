@@ -14,6 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/blsmth/agentctl/internal/audit"
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/theme"
 	"github.com/blsmth/agentctl/internal/toolinput"
 )
@@ -57,7 +58,7 @@ const (
 	// reason. Agent names are user-defined and technically unbounded; a name
 	// longer than this still truncates (fixedWidth), --json is unaffected.
 	auditColAgent  = 18
-	auditColWindow = 6
+	auditColWindow = 8 // the session handle (ID column)
 	// auditColTool is sized to fit Claude Code's longest common built-in tool
 	// name ("NotebookEdit", 12 chars). Custom MCP tool names
 	// ("mcp__server__tool") can still exceed this and truncate -- there is no
@@ -378,6 +379,7 @@ func PrintAuditTable(filter audit.Filter, jsonOut, allProjects, full bool, mode 
 		return nil
 	}
 
+	ix := auditIndex()
 	hdr := cliHeaderStyle()
 	muted := cliMuted()
 	green := cliGreen()
@@ -409,7 +411,7 @@ func PrintAuditTable(filter audit.Filter, jsonOut, allProjects, full bool, mode 
 			hdr.Render(fixedWidth("TS", auditColTS)),
 			hdr.Render(fixedWidth("PROJECT", auditColProject)),
 			hdr.Render(fixedWidth("AGENT", auditColAgent)),
-			hdr.Render(fixedWidth("WINDOW", auditColWindow)),
+			hdr.Render(fixedWidth("ID", auditColWindow)),
 			hdr.Render(fixedWidth("TOOL", auditColTool)),
 			hdr.Render(fixedWidth("DUR", auditColDur)),
 			hdr.Render(fixedWidth("MODE", auditColMode)),
@@ -439,7 +441,7 @@ func PrintAuditTable(filter audit.Filter, jsonOut, allProjects, full bool, mode 
 				muted.Render(fixedWidth(formatAuditTS(r.Timestamp), auditColTS)),
 				fixedWidth(r.Project, auditColProject),
 				fixedWidth(r.Agent, auditColAgent),
-				muted.Render(fixedWidth(r.Window, auditColWindow)),
+				muted.Render(fixedWidth(auditHandleOf(ix, r), auditColWindow)),
 				fixedWidth(r.Tool, auditColTool),
 				muted.Render(fixedWidth(fmtAuditDuration(time.Duration(r.DurationMS)*time.Millisecond), auditColDur)),
 				muted.Render(fixedWidth(auditModeCell(r.PermissionMode), auditColMode)),
@@ -453,7 +455,7 @@ func PrintAuditTable(filter audit.Filter, jsonOut, allProjects, full bool, mode 
 	writeAuditRow(os.Stdout,
 		hdr.Render(fixedWidth("TS", auditColTS)),
 		hdr.Render(fixedWidth("AGENT", auditColAgent)),
-		hdr.Render(fixedWidth("WINDOW", auditColWindow)),
+		hdr.Render(fixedWidth("ID", auditColWindow)),
 		hdr.Render(fixedWidth("TOOL", auditColTool)),
 		hdr.Render(fixedWidth("DUR", auditColDur)),
 		hdr.Render(fixedWidth("MODE", auditColMode)),
@@ -481,7 +483,7 @@ func PrintAuditTable(filter audit.Filter, jsonOut, allProjects, full bool, mode 
 		writeAuditRow(os.Stdout,
 			muted.Render(fixedWidth(formatAuditTS(r.Timestamp), auditColTS)),
 			fixedWidth(r.Agent, auditColAgent),
-			muted.Render(fixedWidth(r.Window, auditColWindow)),
+			muted.Render(fixedWidth(auditHandleOf(ix, r), auditColWindow)),
 			fixedWidth(r.Tool, auditColTool),
 			muted.Render(fixedWidth(fmtAuditDuration(time.Duration(r.DurationMS)*time.Millisecond), auditColDur)),
 			muted.Render(fixedWidth(auditModeCell(r.PermissionMode), auditColMode)),
@@ -490,4 +492,31 @@ func PrintAuditTable(filter audit.Filter, jsonOut, allProjects, full bool, mode 
 		)
 	}
 	return nil
+}
+
+// auditIndex loads the session index the ID column's handles come from. A
+// seam so tests never read tmux or the ledger.
+var auditIndex = fleet.LoadIndex
+
+// auditHandleOf is the handle of the record's session; "-" for a record with
+// no session ID.
+func auditHandleOf(ix *fleet.Index, r audit.Record) string {
+	if h := ix.HandleFor(r.Session); h != "" {
+		return h
+	}
+	return "-"
+}
+
+// ResolveSessionFilter turns a handle or full session ID given where a window
+// is expected (`audit --window a3f9`) into the full session ID. "@N" and
+// anything that is not handle-like are returned unchanged with ok false.
+func ResolveSessionFilter(ref string) (sessionID string, ok bool, err error) {
+	if ref == "" || strings.HasPrefix(ref, "@") || !handleLike(ref) {
+		return "", false, nil
+	}
+	s, err := auditIndex().Resolve(ref)
+	if err != nil {
+		return "", false, err
+	}
+	return s.SessionID, true, nil
 }

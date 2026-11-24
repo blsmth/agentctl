@@ -186,11 +186,3 @@ func TestRunResume(t *testing.T) {
 		}
 	})
 }
-
-func TestResumeEnv(t *testing.T) {
-	got := resumeEnv("/x/p", []string{"A=1", "AGENTCTL_RUNTIME_DIR=/hub", "TMUX_PANE=%3", "PWD=/hub"})
-	want := []string{"A=1", "PWD=/x/p", "AGENTCTL_RUNTIME_DIR=/x/p/.agentctl"}
-	if strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Errorf("env = %v", got)
-	}
-}
