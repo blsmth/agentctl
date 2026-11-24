@@ -979,6 +979,10 @@ console.log("ok: shell request");
   assert.equal(scheduleRowActivity({ agent: "a", template: "triage" }, "proj"), "proj \u203A a \u00B7 template triage");
   assert.equal(scheduleRowActivity({ agent: "a", prompt: "p" }, "proj"), "proj \u203A a");
   assert.equal(scheduleRowActivity({ agent: "a" }, ""), "a");
+  // An improve job needs no prompt or agent of its own.
+  assert.equal(scheduleAgentText({ mode: "improve" }), "fleet-improver");
+  assert.equal(scheduleRowActivity({ mode: "improve" }, "proj"), "proj \u203A fleet-improver \u00B7 fleet improve");
+  assert.deepEqual(scheduleBody(newScheduleForm({ job: { name: "j", dir: "/d", mode: "improve", schedule: "0 22 * * *", overlap: "skip" } })).job.mode, "improve");
   // Review and changes name the template.
   const rv = scheduleReview({ job: { agent: "", template: "triage", dir: "/d", worktree: true }, schedule: "x" }, { ...f, templateAgent: "go-engineer" });
   assert.match(rv[0], /Runs {3}go-engineer \(from template triage\) in \/d/);

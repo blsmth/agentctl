@@ -431,7 +431,7 @@ func TestPromptColumn(t *testing.T) {
 		{cron.Job{Prompt: "short\nprompt"}, "short prompt"},
 		{cron.Job{Prompt: strings.Repeat("x", 40)}, strings.Repeat("x", 31) + "…"},
 	} {
-		if got := promptColumn(tt.j); got != tt.want {
+		if got := promptColumn(tt.j, time.Now()); got != tt.want {
 			t.Errorf("promptColumn(%+v) = %q, want %q", tt.j, got, tt.want)
 		}
 	}

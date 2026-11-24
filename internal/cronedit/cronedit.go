@@ -197,6 +197,10 @@ func (s Store) Validate(job cron.Job, original string) (cron.Job, []cron.FieldEr
 		}
 	}
 	agent := job.Agent
+	if job.IsImprove() {
+		// An improve job runs the fleet-improver unless it names an agent.
+		agent = job.ImproveAgentName()
+	}
 	if dirOK && job.Template != "" && !has(cron.FieldTemplate) {
 		t, ferr := s.resolveTemplate(job)
 		switch {
@@ -229,6 +233,9 @@ func (s Store) Template(job cron.Job) (prompttemplate.Template, error) {
 // EffectiveAgent is the agent job runs: its own, else its template's (""
 // when the template cannot be read).
 func (s Store) EffectiveAgent(job cron.Job) string {
+	if job.IsImprove() {
+		return job.ImproveAgentName()
+	}
 	if job.Agent != "" || job.Template == "" {
 		return job.Agent
 	}

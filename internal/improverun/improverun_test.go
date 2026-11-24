@@ -1,6 +1,7 @@
 package improverun
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -214,5 +215,114 @@ func TestFinishIgnoresStoredStore(t *testing.T) {
 	}
 	if r, _ := Load("r5"); len(r.Files) != 1 {
 		t.Fatalf("run = %+v", r)
+	}
+}
+
+// stubLive replaces the window check and the clock for one test.
+func stubLive(t *testing.T, live bool, age time.Duration) {
+	t.Helper()
+	oldL, oldN := windowLive, now
+	windowLive = func(Run) bool { return live }
+	now = func() time.Time { return time.Now().Add(age) }
+	t.Cleanup(func() { windowLive, now = oldL, oldN })
+}
+
+func TestFinishStaleSkipsLiveWindow(t *testing.T) {
+	e := setup(t)
+	if err := Start(StartOptions{ID: "live1", Agent: "x", Fleet: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordWindow("live1", "@9", "sess", "/rt"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(e.home, ".claude", "CLAUDE.md"), "rules\n")
+
+	stubLive(t, true, 5*time.Hour) // past StaleAfter, window alive
+	FinishStale()
+	if r, _ := Load("live1"); !r.Finished.IsZero() {
+		t.Fatal("run with a live window was closed after 5h")
+	}
+	if !Active() {
+		t.Error("live run not active")
+	}
+
+	stubLive(t, true, MaxLive+time.Minute) // past the cap
+	FinishStale()
+	if r, _ := Load("live1"); r.Finished.IsZero() {
+		t.Fatal("run past MaxLive was not closed")
+	}
+}
+
+func TestFinishStaleClosesRunWhoseWindowIsGone(t *testing.T) {
+	setup(t)
+	if err := Start(StartOptions{ID: "gone1", Agent: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordWindow("gone1", "@9", "sess", "/rt"); err != nil {
+		t.Fatal(err)
+	}
+	stubLive(t, false, StaleAfter+time.Minute)
+	FinishStale()
+	if r, _ := Load("gone1"); r.Finished.IsZero() {
+		t.Fatal("run with a dead window was not closed")
+	}
+}
+
+func TestCheckNoLiveRun(t *testing.T) {
+	setup(t)
+	stubLive(t, true, 0)
+	if err := CheckNoLiveRun(); err != nil {
+		t.Fatalf("no runs: %v", err)
+	}
+	if err := Start(StartOptions{ID: "a1", Agent: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	// Window not recorded yet: young run counts.
+	if err := CheckNoLiveRun(); !errors.Is(err, ErrRunActive) {
+		t.Fatalf("err = %v, want ErrRunActive", err)
+	}
+	if err := Finish("a1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckNoLiveRun(); err != nil {
+		t.Fatalf("after finish: %v", err)
+	}
+}
+
+func TestPruneRemovesOldFinishedRuns(t *testing.T) {
+	setup(t)
+	for _, id := range []string{"old", "new", "oldlive"} {
+		if err := Start(StartOptions{ID: id, Agent: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"old", "new"} {
+		if err := Finish(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir, _ := Dir("old")
+	r, _ := load(dir)
+	r.Started = time.Now().Add(-MaxAge - 24*time.Hour)
+	if err := save(dir, r); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ = Dir("oldlive")
+	r, _ = load(dir)
+	r.Started = time.Now().Add(-MaxAge - 24*time.Hour)
+	if err := save(dir, r); err != nil {
+		t.Fatal(err)
+	}
+	n, err := Prune(time.Now(), MaxAge)
+	if err != nil || n != 1 {
+		t.Fatalf("Prune = %d, %v; want 1", n, err)
+	}
+	if _, err := Load("old"); err == nil {
+		t.Error("old run kept")
+	}
+	for _, id := range []string{"new", "oldlive"} {
+		if _, err := Load(id); err != nil {
+			t.Errorf("run %s removed: %v", id, err)
+		}
 	}
 }
