@@ -85,7 +85,12 @@ func BuildRestoreAgents(records map[string]windowstate.WindowState, live map[str
 			SessionName:      ws.SessionName,
 			PRNumber:         ws.PRNumber,
 			PRURL:            ws.PRURL,
+			StartedAt:        ws.StartedAt,
 		})
+		if ws.ShortTitle != (windowstate.ShortTitle{}) {
+			st := ws.ShortTitle
+			out[len(out)-1].ShortTitleRec = &st
+		}
 	}
 	slices.SortFunc(out, func(a, b AgentState) int {
 		if c := cmp.Compare(a.WindowIndex, b.WindowIndex); c != 0 {

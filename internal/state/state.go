@@ -11,6 +11,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/safefs"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // AgentState tracks a running agent's resumable session.
@@ -64,8 +65,15 @@ type AgentState struct {
 	SpawnedBySession string `json:"spawned_by_session,omitempty"`
 	PRNumber         int    `json:"pr_number,omitempty"`
 	PRURL            string `json:"pr_url,omitempty"`
-	SessionName      string `json:"session_name,omitempty"`    // claude -n name; reused on restore
-	MailboxPending   int    `json:"mailbox_pending,omitempty"` // count-only mailbox.PendingCount, refreshed on a throttled monitor tick; delivered by the hook path
+	SessionName      string `json:"session_name,omitempty"` // claude -n name; reused on restore
+	// ShortTitleRec is the window's whole windowstate short_title (title,
+	// kind, final, manual, input hash), carried through restore.json so a
+	// restored window keeps its title and a human rename. Nil when untitled.
+	ShortTitleRec *windowstate.ShortTitle `json:"short_title,omitempty"`
+	// StartedAt is the windowstate started_at (unix seconds) of the original
+	// launch, carried through restore.json so the restored window keeps it.
+	StartedAt      int64 `json:"started_at,omitempty"`
+	MailboxPending int   `json:"mailbox_pending,omitempty"` // count-only mailbox.PendingCount, refreshed on a throttled monitor tick; delivered by the hook path
 
 	// ScheduledBy is the cron job that launched the window and ScheduledAt
 	// when it fired (windowstate scheduled_by/scheduled_at); empty otherwise.
