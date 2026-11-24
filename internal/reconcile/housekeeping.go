@@ -6,6 +6,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/approval"
 	"github.com/blsmth/agentctl/internal/closedlog"
+	"github.com/blsmth/agentctl/internal/verdicts"
 	"github.com/blsmth/agentctl/internal/llmusage"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/mailbox"
@@ -39,6 +40,9 @@ type HousekeepingDeps struct {
 	// PruneClosed removes closed-window ledger files older than
 	// closedlog.MaxAge.
 	PruneClosed func(now time.Time) (int, error)
+	// PruneVerdicts removes review-verdict ledger files older than
+	// verdicts.MaxAge.
+	PruneVerdicts func(now time.Time) (int, error)
 	// PruneLaunch removes old prompt and launch-script files from
 	// <runtime dir>/launch (see tmux.PruneLaunchDir).
 	PruneLaunch   func(now time.Time) (int, error)
@@ -80,6 +84,9 @@ func DefaultHousekeepingDeps(runtimeDir string) HousekeepingDeps {
 		},
 		PruneClosed: func(now time.Time) (int, error) {
 			return closedlog.Prune(now, closedlog.MaxAge)
+		},
+		PruneVerdicts: func(now time.Time) (int, error) {
+			return verdicts.Prune(now, verdicts.MaxAge)
 		},
 		PruneLaunch: func(now time.Time) (int, error) {
 			return tmux.PruneLaunchDir(filepath.Join(runtimeDir, "launch"), now, tmux.LaunchFileMaxAge, tmux.RunningProcessArgs)
@@ -143,6 +150,15 @@ func Housekeep(d HousekeepingDeps) {
 			logging.Log("janitor: closedlog.Prune: %v", err)
 		case n > 0:
 			logging.Log("janitor: pruned %d closed-window ledger file(s) older than %s", n, closedlog.MaxAge)
+		}
+	}
+	if d.PruneVerdicts != nil && stamp.Try(filepath.Join(d.RuntimeDir, "prune-verdicts.stamp"), LLMUsagePruneInterval, now) {
+		n, err := d.PruneVerdicts(now)
+		switch {
+		case err != nil:
+			logging.Log("janitor: verdicts.Prune: %v", err)
+		case n > 0:
+			logging.Log("janitor: pruned %d verdict ledger file(s) older than %s", n, verdicts.MaxAge)
 		}
 	}
 	if d.PruneLaunch != nil && stamp.Try(filepath.Join(d.RuntimeDir, "prune-launch.stamp"), LLMUsagePruneInterval, now) {

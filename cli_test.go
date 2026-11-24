@@ -57,7 +57,9 @@ var cliTests = []cliCase{
 	// silently matching nothing and printing an empty, reassuring table.
 	{"status rejects an unknown --state", []string{"status", "--state", "nonsense"}, -1, "", ""},
 	{"ticket create --help", []string{"ticket", "create", "--help"}, 0, "title", ""},
-	{"audit --help", []string{"audit", "--help"}, 0, "session", ""},
+	{"audit --help", []string{"audit", "--help"}, 0, "verdicts", ""},
+	{"audit query --help", []string{"audit", "query", "--help"}, 0, "session", ""},
+	{"audit verdicts --help", []string{"audit", "verdicts", "--help"}, 0, "since", ""},
 
 	// `tickets` is a Kong alias of `ticket`: same default browse flags and
 	// the same create subcommand.

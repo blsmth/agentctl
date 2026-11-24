@@ -61,6 +61,10 @@ const (
 	EventTool        = "tool"
 	EventToolFailure = "tool_failure"
 	EventToolDenied  = "tool_denied"
+	// EventToolApproved records a human allowing a gated command in the
+	// approval popup: Source says where ("laptop"|"phone") and DurationMS how
+	// long the human took. Written by hook-validate-bash.
+	EventToolApproved = "tool_approved"
 )
 
 // Size limits. Now that the log stores tool output (not just command
@@ -124,7 +128,13 @@ type Record struct {
 	// popup refusal (denyBashPopup). Empty for every other event -- a
 	// reviewer must be able to tell a policy block from a human refusal
 	// apart, since they mean very different things.
+	// "timeout" marks a popup nobody answered before its deadline (fail-closed
+	// deny); older records label those "rule".
 	DeniedBy string `json:"denied_by,omitempty"`
+
+	// Source is where an EventToolApproved answer came from: "laptop" or
+	// "phone". Empty for every other event and when unknown.
+	Source string `json:"source,omitempty"`
 
 	Input  json.RawMessage `json:"input,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`

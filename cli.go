@@ -850,7 +850,7 @@ func (c *OpenContextWindowCmd) Run() error {
 // about -- registered sessions only, see AllProjects's help text and
 // audit.AllProjectAuditDirs's doc comment for why that is an accepted,
 // documented gap rather than a bug.
-type AuditCmd struct {
+type AuditQueryCmd struct {
 	Session     string `help:"Filter to a session ID"`
 	Agent       string `help:"Filter to an agent name"`
 	Window      string `help:"Filter to a tmux window ID (e.g. @5)"`
@@ -860,17 +860,39 @@ type AuditCmd struct {
 	AllProjects bool   `help:"Scan every project's audit trail, not just the current one, via the session registry (<global config dir>/registry). Covers registered sessions only -- a project that was never registered, or whose session has since ended, will not appear." name:"all-projects"`
 	Failed      bool   `help:"Only show failed tool calls"`
 	Denied      bool   `help:"Only show tool calls that were denied before running"`
-	Event       string `help:"Filter to an event type (tool, tool_failure, tool_denied)"`
+	Event       string `help:"Filter to an event type (tool, tool_failure, tool_denied, tool_approved)"`
 	Since       string `help:"Only show records at or after this time (RFC3339 timestamp or a duration like 1h, 30m)"`
 	Limit       int    `help:"Max number of records to show, most recent first. 0 means unlimited." default:"100"`
 	Full        bool   `help:"Print the DETAIL column untruncated instead of capping it to the terminal width"`
 	JSON        bool   `help:"Output matching raw records as JSON instead of a table"`
 }
 
+// AuditCmd is `agentctl audit`: the record query (the default, so every
+// existing `audit --flag` invocation is unchanged) and `audit verdicts`.
+type AuditCmd struct {
+	Query    AuditQueryCmd    `cmd:"" default:"withargs" help:"Query the hook-sourced audit trail (the default; --json for machine-readable)"`
+	Verdicts AuditVerdictsCmd `cmd:"" help:"List PR review verdicts with the BLOCKED rate per author agent"`
+}
+
+// AuditVerdictsCmd implements `agentctl audit verdicts`, a reader over the
+// review-verdict ledger (internal/verdicts) the PostToolUse hook appends to.
+type AuditVerdictsCmd struct {
+	Since string `help:"Only show verdicts from this far back (e.g. 7d, 36h)" default:"30d"`
+	JSON  bool   `help:"Output as JSON instead of a table"`
+}
+
+func (c *AuditVerdictsCmd) Run() error {
+	if err := cmd.RunAuditVerdicts(os.Stdout, c.Since, c.JSON); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		cliout.Exit(1)
+	}
+	return nil
+}
+
 // buildFilter parses c.Since and assembles the audit.Filter that Run passes
 // to cmd.PrintAuditTable. Split out from Run so the flag-to-filter wiring can
 // be tested directly, without going through Run's os.Exit-on-error path.
-func (c *AuditCmd) buildFilter() (audit.Filter, error) {
+func (c *AuditQueryCmd) buildFilter() (audit.Filter, error) {
 	since, err := cmd.ParseAuditSince(c.Since)
 	if err != nil {
 		return audit.Filter{}, err
@@ -890,7 +912,7 @@ func (c *AuditCmd) buildFilter() (audit.Filter, error) {
 	}, nil
 }
 
-func (c *AuditCmd) Run() error {
+func (c *AuditQueryCmd) Run() error {
 	filter, err := c.buildFilter()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

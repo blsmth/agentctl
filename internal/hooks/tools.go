@@ -181,6 +181,10 @@ func PostTool() {
 		Result:         input.ToolResponse,
 	})
 
+	if input.ToolName == "SendMessage" {
+		recordVerdict(input.ToolInput, windowID, input.SessionID, agentName)
+	}
+
 	// Fire user lifecycle hooks (async, non-blocking).
 	runUserHooks("post_tool", map[string]string{
 		"AGENTCTL_AGENT_NAME": agentName,

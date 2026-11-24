@@ -33,8 +33,8 @@ func TestAuditCmd_LimitDefault(t *testing.T) {
 			if _, err := parser.Parse(tt.args); err != nil {
 				t.Fatalf("Parse(%v): %v", tt.args, err)
 			}
-			if cmd.Limit != tt.want {
-				t.Errorf("Limit = %d, want %d", cmd.Limit, tt.want)
+			if cmd.Query.Limit != tt.want {
+				t.Errorf("Limit = %d, want %d", cmd.Query.Limit, tt.want)
 			}
 		})
 	}
@@ -100,7 +100,7 @@ func TestAuditCmd_DeniedAndEventFlags(t *testing.T) {
 			if _, err := parser.Parse(tt.args); err != nil {
 				t.Fatalf("Parse(%v): %v", tt.args, err)
 			}
-			got, err := cmd.buildFilter()
+			got, err := cmd.Query.buildFilter()
 			if err != nil {
 				t.Fatalf("buildFilter: %v", err)
 			}

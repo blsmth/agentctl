@@ -165,3 +165,24 @@ func TestPopupExitOneWithoutResultDeniesWithoutRetry(t *testing.T) {
 		t.Fatalf("approved=%v decided=%v reason=%q calls=%d", approved, decided, reason, calls)
 	}
 }
+
+func TestPopupOutcomeRecorded(t *testing.T) {
+	t.Run("timeout", func(t *testing.T) {
+		stubPopupSeams(t, 40*time.Millisecond)
+		dispatchPopupRunner = func(context.Context, string, int, int, string) error { return nil }
+		runTestPopup(t)
+		if !lastApproval.TimedOut || lastApproval.Elapsed <= 0 {
+			t.Fatalf("lastApproval = %+v", lastApproval)
+		}
+	})
+	t.Run("laptop approval", func(t *testing.T) {
+		stubPopupSeams(t, 5*time.Second)
+		dispatchPopupRunner = func(_ context.Context, _ string, _, _ int, args string) error {
+			return WritePopupResult(popupResultPath(args), "allow")
+		}
+		approved, _, _ := runTestPopup(t)
+		if !approved || lastApproval.TimedOut || lastApproval.Source != approvalSourceLaptop || lastApproval.Elapsed <= 0 {
+			t.Fatalf("approved=%v lastApproval = %+v", approved, lastApproval)
+		}
+	})
+}
