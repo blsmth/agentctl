@@ -9,6 +9,7 @@ import (
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
+	"github.com/blsmth/agentctl/internal/winname"
 )
 
 // RestoreRequest describes a previously-saved agent window to re-launch.
@@ -78,6 +79,13 @@ type RestoreRequest struct {
 	// time (unix seconds); 0 keeps the new launch's.
 	ShortTitle windowstate.ShortTitle
 	StartedAt  int64
+	// TurnDone, TurnCount, Attention and PendingVerdict are the saved
+	// turn-end facts, re-stamped so a restored window keeps its ✓ or ! and
+	// its turn count (it resumes idle at the same prompt).
+	TurnDone       bool
+	TurnCount      int
+	Attention      *windowstate.Attention
+	PendingVerdict *windowstate.PendingVerdict
 }
 
 // Restore re-launches a saved agent window using the shared settings helpers
@@ -151,7 +159,8 @@ func Restore(req RestoreRequest) (string, error) {
 	launchwatch.Start(wid, h.Caps())
 
 	if wid != "" {
-		windowstate.Update(wid, func(ws *windowstate.WindowState) { //nolint:errcheck
+		// winname, so a restored ✓ or ! is in the window name at once.
+		winname.Update(wid, func(ws *windowstate.WindowState) { //nolint:errcheck
 			applyRestoreMeta(ws, req)
 		})
 	}
@@ -177,6 +186,17 @@ func applyRestoreMeta(ws *windowstate.WindowState, req RestoreRequest) {
 	}
 	if req.StartedAt > 0 {
 		ws.StartedAt = req.StartedAt
+	}
+	if ws.State == "" || ws.State == "idle" {
+		// A hook that already ran (the session is working) owns these.
+		ws.TurnDone = req.TurnDone
+		ws.Attention = req.Attention
+	}
+	if req.TurnCount > ws.TurnCount {
+		ws.TurnCount = req.TurnCount
+	}
+	if req.PendingVerdict != nil && ws.PendingVerdict == nil {
+		ws.PendingVerdict = req.PendingVerdict
 	}
 }
 

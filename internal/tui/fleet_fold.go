@@ -24,13 +24,16 @@ type fleetFilter int
 const (
 	fleetFilterAll    fleetFilter = iota // every row
 	fleetFilterActive                    // working and blocked
-	fleetFilterNeeds                     // blocked and done-unseen
+	fleetFilterNeeds                     // blocked, needs attention and done-unseen
 	// Single-state filters, set by clicking a count in the title or a group
 	// header; `f` leaves them for all.
 	fleetFilterBlocked // blocked rows only
 	fleetFilterWorking // working rows only
 	fleetFilterDone    // done-unseen rows only
 	fleetFilterIdle    // idle rows only
+	// fleetFilterAttention keeps the ! rows only. Last so the persisted
+	// order of the others does not move.
+	fleetFilterAttention
 )
 
 // label is the filter's name as shown in the title tag and notices.
@@ -48,6 +51,8 @@ func (f fleetFilter) label() string {
 		return "done"
 	case fleetFilterIdle:
 		return "idle"
+	case fleetFilterAttention:
+		return "attention"
 	}
 	return "all"
 }
@@ -67,6 +72,8 @@ func (f fleetFilter) key() string {
 		return "done"
 	case fleetFilterIdle:
 		return "idle"
+	case fleetFilterAttention:
+		return "attention"
 	}
 	return ""
 }
@@ -86,6 +93,8 @@ func parseFleetFilter(s string) fleetFilter {
 		return fleetFilterDone
 	case "idle":
 		return fleetFilterIdle
+	case "attention":
+		return fleetFilterAttention
 	}
 	return fleetFilterAll
 }
@@ -115,12 +124,14 @@ func (f fleetFilter) matches(r fleet.Row) bool {
 		return w == fleetWeightWorking
 	case fleetFilterDone:
 		return w == fleetWeightDone
+	case fleetFilterAttention:
+		return w == fleetWeightAttention
 	case fleetFilterIdle:
-		return w != fleetWeightBlocked && w != fleetWeightWorking && w != fleetWeightDone
+		return w == fleetWeightIdle
 	case fleetFilterActive:
 		return w == fleetWeightWorking || w == fleetWeightBlocked
 	case fleetFilterNeeds:
-		return w == fleetWeightBlocked || w == fleetWeightDone
+		return w == fleetWeightBlocked || w == fleetWeightAttention || w == fleetWeightDone
 	}
 	return true
 }

@@ -76,10 +76,11 @@ var (
 	fleetCloseHoverStyle lipgloss.Style // ✕ under the pointer
 	fleetNewHoverStyle   lipgloss.Style // "+ new" under the pointer
 
-	fleetWorkingStyle lipgloss.Style
-	fleetBlockedStyle lipgloss.Style
-	fleetDoneStyle    lipgloss.Style
-	fleetIdleStyle    lipgloss.Style
+	fleetWorkingStyle   lipgloss.Style
+	fleetBlockedStyle   lipgloss.Style
+	fleetDoneStyle      lipgloss.Style
+	fleetAttentionStyle lipgloss.Style
+	fleetIdleStyle      lipgloss.Style
 
 	fleetProjectStyle lipgloss.Style
 	// fleetGroupNameStyle is a group header's project name: neutral bold, so
@@ -140,6 +141,10 @@ func initFleetStyles() {
 	fleetWorkingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Accent))
 	fleetBlockedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Yellow))
 	fleetDoneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Green))
+	// Needs attention: the warm warning colour, distinct from blocked's
+	// yellow (themes without an orange fall back to yellow, but the glyph
+	// still differs).
+	fleetAttentionStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Orange))
 	fleetIdleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Subtle))
 
 	fleetProjectStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Sky))
@@ -260,6 +265,9 @@ const (
 	fleetWeightDone
 	fleetWeightWorking
 	fleetWeightBlocked
+	// fleetWeightAttention is only ever a glyphWeight: rowWeight (name and
+	// recap styling, sweep) does not know about attention.
+	fleetWeightAttention
 )
 
 // rowWeight classifies r for name and recap styling.
@@ -276,12 +284,16 @@ func rowWeight(r fleet.Row) fleetWeight {
 	}
 }
 
-// glyphWeight is rowWeight as the row glyph shows it: a TurnDone row that is
-// not working or blocked reads as done (✓). Every hub count and the attention
-// filter use it so they agree with the glyph. rowWeight itself stays Done-only
-// because sweep and name styling must not treat TurnDone as done.
+// glyphWeight is rowWeight as the row glyph shows it: a row with an
+// attention flag that is not working or blocked reads as attention (!), and
+// a TurnDone row as done (✓). Every hub count and the attention filter use it
+// so they agree with the glyph. rowWeight itself stays Done-only because
+// sweep and name styling must not treat TurnDone or attention as done.
 func glyphWeight(r fleet.Row) fleetWeight {
 	w := rowWeight(r)
+	if w != fleetWeightBlocked && w != fleetWeightWorking && fleet.NeedsAttention(r.AgentState) {
+		return fleetWeightAttention
+	}
 	if w == fleetWeightIdle && r.TurnDone {
 		return fleetWeightDone
 	}
@@ -2269,7 +2281,7 @@ func (m FleetModel) renderHeader(cw int) string {
 }
 
 // fleetCounts tallies every row by its glyph.
-func (m FleetModel) fleetCounts() (blocked, working, done, idle int) {
+func (m FleetModel) fleetCounts() (blocked, working, attention, done, idle int) {
 	for _, g := range m.groups {
 		for _, r := range g.Rows {
 			if r.Shell {
@@ -2280,6 +2292,8 @@ func (m FleetModel) fleetCounts() (blocked, working, done, idle int) {
 				blocked++
 			case fleetWeightWorking:
 				working++
+			case fleetWeightAttention:
+				attention++
 			case fleetWeightDone:
 				done++
 			default:
@@ -2287,7 +2301,20 @@ func (m FleetModel) fleetCounts() (blocked, working, done, idle int) {
 			}
 		}
 	}
-	return blocked, working, done, idle
+	return blocked, working, attention, done, idle
+}
+
+// anyAttention reports whether any row in the hub shows !, which is when the
+// group headers make room for a ! count slot.
+func (m FleetModel) anyAttention() bool {
+	for _, g := range m.groups {
+		for _, r := range g.Rows {
+			if !r.Shell && glyphWeight(r) == fleetWeightAttention {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // renderTitle renders "agentctl hub" in bold accent on the left and the fleet
@@ -2310,17 +2337,28 @@ type fleetTitleLayout struct {
 	activity [2]int // the [activity] button
 	sort     [2]int // the "sort: recent|window" tag
 	// counts are the state count cells (glyph and number), indexed by
-	// fleetStateFilters order (blocked, working, done, idle); zero when not
-	// shown (blocked is absent at 0, any cell when the counts are dropped).
-	counts [4][2]int
+	// fleetStateFilters order (blocked, working, attention, done, idle);
+	// zero when not shown (blocked and attention are absent at 0, any cell
+	// when the counts are dropped).
+	counts [fleetStateCount][2]int
 }
 
+// fleetStateCount is the number of row states the counts show.
+const fleetStateCount = 5
+
+// Indexes into the fleetState* arrays of the two states shown only when
+// some row is in them.
+const (
+	fleetStateBlockedIdx   = 0
+	fleetStateAttentionIdx = 2
+)
+
 // fleetStateGlyphs are the state glyphs in the same order.
-var fleetStateGlyphs = [4]string{"⏸", "●", "✓", "○"}
+var fleetStateGlyphs = [fleetStateCount]string{"⏸", "●", fleet.AttentionGlyph, "✓", "○"}
 
 // fleetStateFilters are the single-state filters in count order: the title's
 // cells and a group header's slots.
-var fleetStateFilters = [4]fleetFilter{fleetFilterBlocked, fleetFilterWorking, fleetFilterDone, fleetFilterIdle}
+var fleetStateFilters = [fleetStateCount]fleetFilter{fleetFilterBlocked, fleetFilterWorking, fleetFilterAttention, fleetFilterDone, fleetFilterIdle}
 
 // titleLayout lays out the title row. Narrow widths drop the totals, then
 // tighten the counts and shorten the filter tag, then drop the counts, then
@@ -2338,7 +2376,7 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 	} else if search != "" {
 		tags = []string{search, search}
 	}
-	fit := func(l fleetTitleLayout, left, right string, cellSpans [4][2]int) fleetTitleLayout {
+	fit := func(l fleetTitleLayout, left, right string, cellSpans [fleetStateCount][2]int) fleetTitleLayout {
 		line := left
 		if right != "" {
 			pad := cw - fleetSidebarRightGutter - lipgloss.Width(left) - lipgloss.Width(right)
@@ -2375,20 +2413,20 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 		if lipgloss.Width(left) > cw-fleetSidebarRightGutter {
 			left, l = m.titleLeft(tags[0], true, false)
 		}
-		return fit(l, left, "", [4][2]int{})
+		return fit(l, left, "", [fleetStateCount][2]int{})
 	}
 	if !m.loaded || m.loadErr != nil {
 		return bare()
 	}
-	blocked, working, done, idle := m.fleetCounts()
-	nums := [4]int{blocked, working, done, idle}
+	blocked, working, attention, done, idle := m.fleetCounts()
+	nums := [fleetStateCount]int{blocked, working, attention, done, idle}
 	// build renders the count cells joined by sep, with each cell's columns
 	// within the result. The active state filter's cell is underlined.
-	build := func(sep string) (string, [4][2]int) {
-		var spans [4][2]int
+	build := func(sep string) (string, [fleetStateCount][2]int) {
+		var spans [fleetStateCount][2]int
 		var b strings.Builder
 		for i, f := range fleetStateFilters {
-			if i == 0 && blocked == 0 {
+			if (i == fleetStateBlockedIdx || i == fleetStateAttentionIdx) && nums[i] == 0 {
 				continue
 			}
 			if b.Len() > 0 {
@@ -2399,7 +2437,7 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 			if i == 0 {
 				b.WriteString(fleetBlockedStyle.Bold(true).Reverse(true).Underline(ul).Render(fmt.Sprintf(" ⏸ %d ", blocked)))
 			} else {
-				st := [4]lipgloss.Style{{}, fleetWorkingStyle, fleetDoneStyle, fleetIdleStyle}[i]
+				st := [fleetStateCount]lipgloss.Style{{}, fleetWorkingStyle, fleetAttentionStyle, fleetDoneStyle, fleetIdleStyle}[i]
 				b.WriteString(st.Underline(ul).Render(fleetStateGlyphs[i]) + fleetRecapWorkingStyle.Underline(ul).Render(" "+fmt.Sprint(nums[i])))
 			}
 			spans[i] = [2]int{start, lipgloss.Width(b.String())}
@@ -2407,12 +2445,12 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 		return b.String(), spans
 	}
 	counts, countSpans := build("  ")
-	total := working + blocked + done + idle
+	total := working + blocked + attention + done + idle
 	suffix := fleetDimStyle.Render(fmt.Sprintf(" · %d agent%s, %d session%s", total, plural(total), len(m.groups), plural(len(m.groups))))
 
 	type candidate struct {
 		tag, right string
-		spans      [4][2]int
+		spans      [fleetStateCount][2]int
 	}
 	candidates := []candidate{{tags[0], counts + suffix, countSpans}, {tags[0], counts, countSpans}}
 	if m.filter != fleetFilterAll || search != "" {
@@ -2686,7 +2724,7 @@ func fleetProjectBar(project string) string {
 
 // rowGlyph returns the glyph and style for a single agent row, matching the
 // window-rename convention in internal/winname: ● working,
-// ⏸ blocked, ✓ done (unseen), bare/○ otherwise.
+// ⏸ blocked, ! needs attention, ✓ done (unseen), bare/○ otherwise.
 func rowGlyph(r fleet.Row) (string, lipgloss.Style) {
 	if r.Shell {
 		return "$", fleetDimStyle
@@ -2696,6 +2734,12 @@ func rowGlyph(r fleet.Row) (string, lipgloss.Style) {
 		return "⏸", fleetBlockedStyle
 	case fleetWeightWorking:
 		return "●", fleetWorkingStyle
+	}
+	if fleet.NeedsAttention(r.AgentState) {
+		// Display only, like TurnDone: not Done, so sweep is unchanged.
+		return fleet.AttentionGlyph, fleetAttentionStyle
+	}
+	switch rowWeight(r) {
 	case fleetWeightDone:
 		if rowStyleWeight(r, fleetNow()) == fleetWeightIdle {
 			// Done a day ago: the check fades so fresh results stand out.
@@ -2814,9 +2858,10 @@ type fleetHeaderSpans struct {
 	sweep [2]int // sweep button; zero when not shown
 	add   [2]int // "+ new" button or armed selector; zero when not shown
 	cron  bool   // the armed selector shows its "cron" choice
-	// counts are the per-state count slots (blocked, working, done, idle);
-	// blank slots and a hidden counts block are zero.
-	counts [4][2]int
+	// counts are the per-state count slots, indexed like fleetStateFilters
+	// (blocked, working, attention, done, idle); blank slots, the attention
+	// slot when no row needs attention, and a hidden counts block are zero.
+	counts [fleetStateCount][2]int
 	// tabSessions and tabSched are the Sessions / Schedules tab labels
 	// (zero when not drawn).
 	tabSessions, tabSched [2]int
@@ -2927,7 +2972,8 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 	if cw >= fleetChipMinWidth && cw > fleetHeaderNameCol+2+2+4 {
 		chipPad = 1
 	}
-	counts := groupStateCounts(g, m.countDigits(), fleetCountGap(cw))
+	withAttn := m.anyAttention()
+	counts := groupStateCountsWith(g, m.countDigits(), fleetCountGap(cw), withAttn)
 	flag := " "
 	if counts.blocked > 0 {
 		flag = fleetBlockedStyle.Render("⏸")
@@ -3025,11 +3071,16 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 	if showCounts {
 		slotW := 2 + m.countDigits()
 		start := limit - lipgloss.Width(right)
-		for i, n := range [4]int{counts.blocked, counts.working, counts.done, counts.idle} {
+		slot := 0
+		for i, n := range [fleetStateCount]int{counts.blocked, counts.working, counts.attention, counts.done, counts.idle} {
+			if i == fleetStateAttentionIdx && !withAttn {
+				continue // no slot drawn
+			}
 			if n > 0 && start >= 0 {
-				x := start + i*(slotW+fleetCountGap(cw))
+				x := start + slot*(slotW+fleetCountGap(cw))
 				spans.counts[i] = [2]int{x, x + slotW}
 			}
+			slot++
 		}
 	}
 
@@ -3075,8 +3126,8 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 func (m FleetModel) countDigits() int {
 	d := 1
 	for _, g := range m.groups {
-		c := groupStateCounts(g, 1, 1)
-		for _, n := range []int{c.blocked, c.working, c.done, c.idle} {
+		c := groupStateCountsWith(g, 1, 1, true)
+		for _, n := range []int{c.blocked, c.working, c.attention, c.done, c.idle} {
 			d = max(d, len(fmt.Sprint(n)))
 		}
 	}
@@ -3094,15 +3145,22 @@ func fleetCountGap(cw int) int {
 
 // fleetGroupCounts is a group's per-state tally and its rendered slots.
 type fleetGroupCounts struct {
-	blocked, working, done, idle int
-	text                         string
+	blocked, working, attention, done, idle int
+	text                                    string
 }
 
-// groupStateCounts tallies a group's rows by state and renders them in fixed
-// slots, in the title's order ⏸ ● ✓ ○: each slot is the glyph, a space and
-// the count right-aligned to digits columns; an empty bucket is a blank slot
-// of the same width, so the counts form columns across groups.
+// groupStateCounts is groupStateCountsWith without the ! slot.
 func groupStateCounts(g fleet.Group, digits, gap int) fleetGroupCounts {
+	return groupStateCountsWith(g, digits, gap, false)
+}
+
+// groupStateCountsWith tallies a group's rows by state and renders them in
+// fixed slots, in the title's order ⏸ ● ! ✓ ○: each slot is the glyph, a
+// space and the count right-aligned to digits columns; an empty bucket is a
+// blank slot of the same width, so the counts form columns across groups.
+// The ! slot is drawn only with attn (some row in the hub needs attention),
+// so headers keep their width when nothing does; the tally always has it.
+func groupStateCountsWith(g fleet.Group, digits, gap int, attn bool) fleetGroupCounts {
 	var c fleetGroupCounts
 	for _, r := range g.Rows {
 		if r.Shell {
@@ -3113,22 +3171,30 @@ func groupStateCounts(g fleet.Group, digits, gap int) fleetGroupCounts {
 			c.blocked++
 		case fleetWeightWorking:
 			c.working++
+		case fleetWeightAttention:
+			c.attention++
 		case fleetWeightDone:
 			c.done++
 		default:
 			c.idle++
 		}
 	}
-	slots := []struct {
+	type slotT struct {
 		glyph string
 		st    lipgloss.Style
 		n     int
-	}{
+	}
+	slots := []slotT{
 		{"⏸", fleetBlockedStyle, c.blocked},
 		{"●", fleetWorkingStyle, c.working},
-		{"✓", fleetDoneStyle, c.done},
-		{"○", fleetIdleStyle, c.idle},
 	}
+	if attn {
+		slots = append(slots, slotT{fleet.AttentionGlyph, fleetAttentionStyle, c.attention})
+	}
+	slots = append(slots,
+		slotT{"✓", fleetDoneStyle, c.done},
+		slotT{"○", fleetIdleStyle, c.idle},
+	)
 	parts := make([]string, len(slots))
 	for i, s := range slots {
 		if s.n == 0 {
@@ -3800,6 +3866,25 @@ type rowDetailParts struct {
 // detailPartsFor builds r's detail parts. viewed drops the activity: the
 // live viewer is showing that window, so it would only repeat it.
 func detailPartsFor(r fleet.Row, viewed bool) rowDetailParts {
+	p := detailPartsBase(r, viewed)
+	// A row showing ! says why on its activity line, even when the viewer
+	// shows the window: the reason is not on screen there.
+	if line := fleet.AttentionLine(r.AgentState); line != "" && p.Recap != "" {
+		if p.RecapIsActivity {
+			p.Recap = line
+		} else {
+			p.Activity = line
+		}
+		p.Marker = fleetAttentionMarker
+	}
+	return p
+}
+
+// fleetAttentionMarker leads a row's attention detail line.
+const fleetAttentionMarker = fleet.AttentionGlyph + " "
+
+// detailPartsBase is detailPartsFor without the attention line.
+func detailPartsBase(r fleet.Row, viewed bool) rowDetailParts {
 	rc := rowRecap(r)
 	if rc.Source == fleet.RecapNone {
 		return rowDetailParts{} // the fallback sentence is already the whole story
@@ -3871,7 +3956,11 @@ func rowDetailStyled(r fleet.Row, treePrefix string, cw int, disp fleetDisplay, 
 			continue
 		}
 		text := fleetActivityStyle.Render(d.text)
-		if d.marker != "" {
+		switch d.marker {
+		case "":
+		case fleetAttentionMarker:
+			text = fleetAttentionStyle.Render(d.marker) + text
+		default:
 			text = fleetDimStyle.Render(d.marker) + text
 		}
 		out = append(out, indent+text)

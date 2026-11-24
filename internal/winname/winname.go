@@ -1,7 +1,7 @@
 // Package winname keeps a tmux window's name in sync with its windowstate.
 //
-// Window glyphs (● working, ⏸ blocked, ✓ done and unseen, bare name
-// otherwise) are written by whichever hook or command changes State or Done,
+// Window glyphs (● working, ⏸ blocked, ! needs attention, ✓ done and
+// unseen, bare name otherwise) are written by whichever hook or command changes State or Done,
 // inside the same windowstate transaction, so two racing writers cannot leave
 // a glyph that disagrees with the persisted state. The monitor does not
 // rename windows.
@@ -25,6 +25,9 @@ const (
 	glyphWorking = "● "
 	glyphBlocked = "⏸ "
 	glyphDone    = "✓ "
+	// glyphAttention marks a window that needs the human (windowstate
+	// Attention). Precedence: ⏸ > ● > ! > ✓ > bare.
+	glyphAttention = "! "
 )
 
 // Seams, replaced in tests via SetSeamsForTest.
@@ -68,7 +71,7 @@ func tmuxCurrentName(windowID string) string {
 
 // stripGlyph removes a leading status glyph prefix.
 func stripGlyph(name string) string {
-	for _, p := range []string{glyphWorking, glyphBlocked, glyphDone} {
+	for _, p := range []string{glyphWorking, glyphBlocked, glyphAttention, glyphDone} {
 		if s, ok := strings.CutPrefix(name, p); ok {
 			return s
 		}
@@ -92,6 +95,9 @@ func Compute(ws windowstate.WindowState) string {
 		return glyphWorking + base
 	case ws.State == "blocked":
 		return glyphBlocked + base
+	case ws.Attention != nil:
+		// Not gated by Seen: looking at the window does not answer it.
+		return glyphAttention + base
 	case (ws.Done || ws.TurnDone) && !ws.Seen:
 		return glyphDone + base
 	}
@@ -124,10 +130,14 @@ func SyncName(windowID string, ws *windowstate.WindowState) {
 // Seen is cleared whenever State changes or Done (or a bare window's
 // TurnDone) goes true; if Done went true
 // on the window the user is looking at, Seen is set at once so a focused
-// window never shows ✓. Done itself is never cleared here.
+// window never shows ✓. Done itself is never cleared here. A window that
+// goes working loses its Attention: whatever it needed is being dealt with.
 func Apply(windowID string, ws *windowstate.WindowState, fn func(*windowstate.WindowState)) {
 	prevState, prevDone := ws.State, ws.Done || ws.TurnDone
 	fn(ws)
+	if ws.State == "working" && prevState != "working" {
+		ws.Attention = nil
+	}
 	doneEdge := (ws.Done || ws.TurnDone) && !prevDone
 	if ws.State != prevState || doneEdge {
 		ws.Seen = false
@@ -170,4 +180,34 @@ func MarkSeen(windowID string) error {
 		return nil
 	}
 	return err
+}
+
+// ReleaseTurnDone sets the held-back TurnDone of parentID (see
+// windowstate.TurnDoneHeld) once none of its child windows is working or
+// blocked any more. Call it after a child window went idle or away. It is a
+// no-op unless the parent is idle, still holds a TurnDone, and is the same
+// session that dispatched the child (parentSession).
+func ReleaseTurnDone(parentID, parentSession string) {
+	if parentID == "" || parentSession == "" || !windowstate.Exists(parentID) {
+		return
+	}
+	all := windowstate.All()
+	if p, ok := all[parentID]; !ok || !p.TurnDoneHeld || p.SessionID != parentSession {
+		return
+	}
+	if windowstate.HasBusyChild(parentID, parentSession, all) {
+		return
+	}
+	err := Update(parentID, func(w *windowstate.WindowState) {
+		if !w.TurnDoneHeld || w.SessionID != parentSession {
+			return
+		}
+		w.TurnDoneHeld = false
+		if w.State == "idle" {
+			w.TurnDone = true
+		}
+	})
+	if err != nil && err != windowstate.ErrGone {
+		logging.Debug("winname: releasing turn done of %s: %v", parentID, err)
+	}
 }

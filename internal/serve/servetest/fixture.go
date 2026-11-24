@@ -12,6 +12,7 @@ import (
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/shorttitle"
 	"github.com/blsmth/agentctl/internal/state"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // Pane texts the fakes serve. They are real Claude Code screens as far as
@@ -116,6 +117,10 @@ type Window struct {
 	SinceSec int `json:"since_sec,omitempty"`
 	// TurnDone marks a bare window that finished a turn and is unseen.
 	TurnDone bool `json:"turn_done,omitempty"`
+	// Attention is a needs-you reason ("question", "errors", "message") and
+	// AttentionDetail its one-line explanation.
+	Attention       string `json:"attention,omitempty"`
+	AttentionDetail string `json:"attention_detail,omitempty"`
 }
 
 var recapSources = map[string]fleet.RecapSource{
@@ -283,6 +288,9 @@ func rowFor(g Group, w Window, now time.Time) (fleet.Row, fleet.Meta) {
 		ContextPct: w.ContextPct, LastText: w.Activity, MainPane: paneID(w.ID),
 		ModelName: w.Model, Ticket: w.Issue, TurnDone: w.TurnDone,
 	}}
+	if w.Attention != "" {
+		row.Attention = &windowstate.Attention{Reason: w.Attention, Detail: w.AttentionDetail}
+	}
 	if w.Recap != "" {
 		row.Recap = fleet.RecapLine{Text: w.Recap, Source: recapSources[w.RecapSource], Title: w.ShortTitle, Role: fixtureRole(w)}
 	}

@@ -221,6 +221,10 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 		wid, err := restore(dispatch.RestoreRequest{
 			ShortTitle:       savedTitle,
 			StartedAt:        as.StartedAt,
+			TurnDone:         as.TurnDone,
+			TurnCount:        as.TurnCount,
+			Attention:        as.Attention,
+			PendingVerdict:   as.PendingVerdict,
 			AgentName:        baseName,
 			InstanceName:     as.Name,
 			SessionID:        sessionID,

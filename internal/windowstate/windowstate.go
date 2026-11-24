@@ -248,12 +248,39 @@ type WindowState struct {
 	// set-active-window (see internal/winname). With Done it decides the ✓.
 	Seen bool `json:"seen,omitempty"`
 
-	// TurnDone is the display-only "finished a turn" fact for bare
-	// (interactive) windows, which never get Done: set by hook-check-done at
-	// a bare window's turn end (unless it still waits on working or blocked
-	// child windows), cleared when the next prompt starts. With !Seen it
-	// shows ✓ like Done does. Nothing else keys on it.
+	// TurnDone is the display-only "finished a turn" fact for windows that
+	// never get Done (bare and the other non-autonomous modes: discuss,
+	// review, custom, improve, and records with no mode): set by
+	// hook-check-done at the turn end (unless it still waits on working or
+	// blocked child windows, see TurnDoneHeld), cleared when the next prompt
+	// starts, carried through session restore. With !Seen it shows ✓ like
+	// Done does. Nothing else keys on it.
 	TurnDone bool `json:"turn_done,omitempty"`
+
+	// TurnDoneHeld records that hook-check-done held back TurnDone because a
+	// child window was still working or blocked. When the last such child
+	// goes idle or away, winname.ReleaseTurnDone sets TurnDone after all, so
+	// the parent does not stay ○ until its next turn. Cleared with TurnDone.
+	TurnDoneHeld bool `json:"turn_done_held,omitempty"`
+
+	// Attention is the display-only "needs you" flag (the ! glyph), set at a
+	// turn end and cleared when the window goes working again (next prompt,
+	// tool call) or on /clear; viewing the window does not clear it. Like
+	// TurnDone it never sets Done, so sweep and completion ignore it. Nil
+	// when the window does not need the human.
+	Attention *Attention `json:"attention,omitempty"`
+
+	// ToolFailures counts consecutive failed tool calls (PostToolUseFailure,
+	// not interrupts). A successful tool call or a new prompt resets it. At a
+	// turn end, AttentionToolFailures or more raises an "errors" attention.
+	ToolFailures int `json:"tool_failures,omitempty"`
+
+	// PendingVerdict is the latest BLOCKED or NEEDS-BRENDAN review verdict a
+	// reviewer this window dispatched sent it, kept until the human next
+	// types into the window (a peer message does not count) or a later
+	// MERGE verdict for the same PR arrives. While set, every turn end raises
+	// a "message" attention.
+	PendingVerdict *PendingVerdict `json:"pending_verdict,omitempty"`
 
 	// RenderedName is the tmux window name last written by internal/winname.
 	// It lets the writers skip the rename when nothing changed.
@@ -312,6 +339,48 @@ type ShortTitle struct {
 	// pipeline never replaces it: hook-title, the housekeeping backfill and
 	// the /clear reset all leave it alone. Manual titles are also Final.
 	Manual bool `json:"manual,omitempty"`
+}
+
+// Attention reasons (Attention.Reason).
+const (
+	// AttentionQuestion: the turn ended asking the human something.
+	AttentionQuestion = "question"
+	// AttentionErrors: the agent looks stuck (an API failure ended the
+	// turn, or AttentionToolFailures tool calls in a row failed).
+	AttentionErrors = "errors"
+	// AttentionMessage: a BLOCKED or NEEDS-BRENDAN review verdict reached
+	// this window and the human has not replied since.
+	AttentionMessage = "message"
+)
+
+// AttentionToolFailures is how many consecutive failed tool calls make a turn
+// end an "errors" attention. Three: one or two failures are routine (a test
+// run, a missing file), three in a row with the turn then ending is an agent
+// that gave up.
+const AttentionToolFailures = 3
+
+// Attention is why a window needs the human. Detail is a short one-line
+// explanation (the question, the error, the verdict) for the hub row detail,
+// `status` and the phone.
+type Attention struct {
+	Reason string    `json:"reason"`
+	Detail string    `json:"detail,omitempty"`
+	At     time.Time `json:"at,omitzero"`
+}
+
+// PendingVerdict is a review verdict waiting on the human (see
+// WindowState.PendingVerdict).
+type PendingVerdict struct {
+	PR      int       `json:"pr"`
+	Verdict string    `json:"verdict"`
+	At      time.Time `json:"at,omitzero"`
+}
+
+// ClearAttention clears the attention flag and the failure streak behind it.
+// PendingVerdict is not touched: only a human prompt answers it.
+func ClearAttention(w *WindowState) {
+	w.Attention = nil
+	w.ToolFailures = 0
 }
 
 // ErrGone is returned by Transact/Update for a window that was removed

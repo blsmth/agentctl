@@ -16,7 +16,7 @@ Monitors that predate this mechanism never wrote `monitor.build`. The hook watch
 
 Known consequences of a re-exec, since in-memory state resets:
 
-- The done-unseen ✓ is unaffected: `Done`, `TurnDone` (bare windows' display-only turn-end ✓) and `Seen` are persisted in windowstate and window names are written by the state writers, not the monitor.
+- The done-unseen ✓ and the needs-attention ! are unaffected: `Done`, `TurnDone` (the display-only turn-end ✓), `attention` and `Seen` are persisted in windowstate and window names are written by the state writers, not the monitor.
 - Prometheus counters restart from zero.
 - Dispatch completion is not affected by a re-exec: it is hook-driven (see below), not detected by the monitor.
 
@@ -123,9 +123,25 @@ Metrics come from a per-machine `agentctl metrics serve` process (`internal/metr
 - **Lifecycle.** Started detached by `StartSession` and the 60s hook janitor; one per machine via `<state dir>/metrics-serve.lock`; hot-reloads on binary change; exits after 10 idle minutes.
 - **`.meta.json` sidecars** are no longer written by the monitor: the Stop and SessionEnd hooks spawn a detached `agentctl sessions sync --session <id>` (`sessions.SyncOne`).
 
+### Needs attention
+
+`!` marks a window that is waiting on the human, as opposed to one that just finished (`✓`) or never started a turn (`○`). It is windowstate `attention` (`reason`, `detail`, `at`), display and triage only like `TurnDone`: it never sets `Done`, so sweep, dispatch completion and done counts are unchanged, and viewing the window does not clear it. Precedence everywhere (tmux window names, hub rows and counts, chrome bar, HUD, `agentctl status`, the phone): `⏸` blocked > `●` working > `!` attention > `✓` done > `○` idle.
+
+Set at a turn end by `hook-check-done` (`turnEndAttention`), first match wins:
+
+- `message`: the window has a `pending_verdict`. `hooks.recordVerdict` (the reviewer's PostToolUse on its `SendMessage`) records a `BLOCKED` or `NEEDS-BRENDAN` verdict on the reviewer's dispatcher (its `spawned_by`, only when that window's `SessionID` equals `spawned_by_session`); a later `MERGE`/`MERGE-WITH-FOLLOWUPS` for the same PR lifts it. A dispatcher that is already idle gets the attention at once. It stays pending across turns until the human types into the window: UserPromptSubmit clears it only for a prompt that is not a peer message (`Another Claude session sent a message`, `<cross-session-message`, `<task-notification`), because the verdict itself arrives as one.
+- `question`: the final assistant text asks the human something (`internal/attention.Question`, a pure heuristic: a NEEDS-BRENDAN or BLOCKED verdict line, a last paragraph whose last sentence ends in `?`, or a direct ask such as "should I", "do you want", "which ...", "let me know"; code fences ignored). The text is the Stop payload's `last_assistant_message`, else the last assistant entry of the transcript (read through `logstream`, so pi transcripts work too; with neither, no question is raised). Only for windows a human talks to: autonomous dispatched workers (dispatch, adhoc, review-pr, triage) report to their orchestrator, so their questions do not count. A window with working children still raises it: the question is its own text to the human, and an orchestrator only waiting on a child ends with a statement.
+- `errors`: `windowstate.AttentionToolFailures` (3) PostToolUseFailures in a row (not interrupts; any successful tool call or a new prompt resets `tool_failures`) when the turn ends. Three because one or two failures are routine (a failing test run, a missing file). A StopFailure (rate limit, auth, billing, server error, max output tokens) raises `errors` too, with the error as the detail; its existing `stop_failure` alert covers the notification.
+
+Cleared whenever the window goes working again (`winname.Apply`: any state writer moving it into `working`), on UserPromptSubmit, and on `/clear` (SessionStart `source: clear`); compaction and resume keep it. A newly raised attention sends one `attention` desktop notification (`AGENTCTL_ATTENTION_REASON` in its env), gated by `alert_config.blocked` like a blocked window, and skipped while a tmux client is looking at the window. Restore carries it through `restore.json`.
+
+Edge cases: with the monitor off nothing changes (hooks write and rename). With no tmux client attached, the alert still fires. Bare, dispatched and cron windows all get `errors`; cron windows are autonomous, so no `question`. Sub-agent windows: as above, a worker's question goes to its orchestrator and is ignored.
+
+The turn-end ✓ (`TurnDone`) is held as `turn_done_held` while a child window (same `spawned_by` + `spawned_by_session`, not cron) is working or blocked, and set by `winname.ReleaseTurnDone` when the last such child stops (its Stop or StopFailure hook) or is reconciled away, so a parent no longer stays at ○ after its children finish.
+
 ### Session restore (`restore.json`)
 
-Restore does not depend on the monitor. `agentctl restore` reads `<runtimeDir>/restore.json`, which is built from the per-window hook state (`windowstate`: instance, agent name, session ID, log path, work dir, backend) by `state.BuildRestoreAgents` and written (0600, same safefs discipline as `state.json`) at every point that is about to destroy windows: `tmux.KillSession` (quit, restart), relaunch-prep, the hidden `save-state` command, and `StartSession` immediately before `windowstate.RemoveAll()`. The `StartSession` write covers a tmux server crash or reboot, where the windows are gone but the records survive. A write that finds no agent entries is skipped, so a clean start never clobbers a good file. Tombstoned (removed) windows have no record and so never appear; shell, hub, utility and `improve~*` windows are skipped.
+Restore does not depend on the monitor. `agentctl restore` reads `<runtimeDir>/restore.json`, which is built from the per-window hook state (`windowstate`: instance, agent name, session ID, log path, work dir, backend) by `state.BuildRestoreAgents` (with the turn-end display facts: `TurnDone`, also for a window that was `Done`, `attention`, `pending_verdict` and `turn_count`, re-stamped after relaunch so a restored window comes back `✓` or `!` rather than `○`) and written (0600, same safefs discipline as `state.json`) at every point that is about to destroy windows: `tmux.KillSession` (quit, restart), relaunch-prep, the hidden `save-state` command, and `StartSession` immediately before `windowstate.RemoveAll()`. The `StartSession` write covers a tmux server crash or reboot, where the windows are gone but the records survive. A write that finds no agent entries is skipped, so a clean start never clobbers a good file. Tombstoned (removed) windows have no record and so never appear; shell, hub, utility and `improve~*` windows are skipped.
 
 Entry order is the tab order: the live `tmux list-windows` position when the window still exists, otherwise the `WindowIndex` that `hook-session-start` recorded (it can be slightly stale after left-insertion; ties fall back to window ID order). `restore_max_age` is applied to the `restore.json` timestamp, and the file is cleared after a restore attempt along with `state.json`.
 
@@ -150,8 +166,8 @@ Hooks are **not** part of the monitor — they're separate `agentctl` subcommand
 | `hook-pre-tool` / `hook-post-tool` | PreToolUse / PostToolUse | Sets state `working` |
 | `hook-notify` | Notification | Sets `blocked` (permission) or `idle`, fires alerts |
 | `hook-validate-bash` | PreToolUse (Bash) | Checks deny lists, can block commands |
-| `hook-check-done` | Stop | Verifies clean git status / passing build, sets done (or `TurnDone` for bare windows), spawns `dispatch-complete` |
-| `hook-stop-failure` / `hook-post-tool-failure` | Stop / tool failure | Sets state `idle` |
+| `hook-check-done` | Stop | Verifies clean git status / passing build, sets done (or `TurnDone` for non-autonomous windows), sets `attention`, spawns `dispatch-complete` |
+| `hook-stop-failure` / `hook-post-tool-failure` | Stop / tool failure | Sets state `idle`; StopFailure raises an `errors` attention, a tool failure counts toward one |
 | `hook-session-end` | SessionEnd | Clears to idle; on a terminal reason kills the window and reclaims an `empty`/`landed` worktree |
 | `hook-title` | SessionStart, UserPromptSubmit, Stop (async) | Short row titles ([titles](configuration.md#titles)) |
 

@@ -65,10 +65,19 @@ func CheckDone() {
 	var ws windowstate.WindowState
 	activeSubagents := 0
 	if windowID != "" {
+		// The question heuristic reads the turn's final text: the payload's,
+		// else the transcript's last assistant entry (read outside the lock).
+		finalText := input.LastAssistantMessage
+		if strings.TrimSpace(finalText) == "" {
+			finalText = lastAssistantText(input.TranscriptPath)
+		}
+		now := time.Now()
+		var prevAttention *windowstate.Attention
 		if err := winname.Update(windowID, func(w *windowstate.WindowState) {
+			prevAttention = w.Attention
 			// Background subagents keep the turn's work going: the parent's
 			// Stop fires while they run, so stay working until the next Stop.
-			activeSubagents = w.ActiveSubagentCount(time.Now())
+			activeSubagents = w.ActiveSubagentCount(now)
 			if activeSubagents > 0 {
 				w.State = "working"
 			} else {
@@ -76,16 +85,20 @@ func CheckDone() {
 			}
 			w.LastText = textutil.Truncate(input.LastAssistantMessage, maxLastTextRunes, "")
 			w.TurnCount++
-			// A bare window that ends its turn shows ✓ until focused, unless
-			// it still waits on working/blocked children. Done stays
-			// untouched: it drives sweep and dispatch completion.
-			if w.Mode == "bare" {
-				w.TurnDone = activeSubagents == 0 &&
-					!windowstate.HasBusyChild(windowID, w.SessionID, windowstate.All())
-			}
+			applyTurnEnd(windowID, w, activeSubagents, finalText, now)
 			ws = *w
 		}); err != nil {
 			logUpdateErr("hook-check-done", err)
+		}
+		if ws.Attention != nil && !sameAttention(prevAttention, ws.Attention) && !hasAttachedClient() {
+			// No alert while the human is looking at the window: they can
+			// see the question.
+			alertAttention(windowID, hookAgentName(), ws, ws.Attention)
+		}
+		if ws.State == "idle" {
+			// This window going idle may be the last busy child its
+			// dispatcher's ✓ was waiting on.
+			winname.ReleaseTurnDone(ws.SpawnedBy, ws.SpawnedBySession)
 		}
 		if activeSubagents > 0 {
 			logging.Log("hook-check-done: %d subagents still running, keeping state=working window=%s", activeSubagents, windowID)
@@ -97,6 +110,10 @@ func CheckDone() {
 	// Avoid infinite loops: if a stop hook already ran this turn, allow stop.
 	if input.StopHookActive {
 		logging.Log("hook-check-done: stop_hook_active=true, allowing stop to prevent loop")
+		// The turn did end, but Done is never set on this path (a blocked
+		// stop's retry): show the display-only ✓ so the window does not sit
+		// at ○ while it waits for whoever reads its report.
+		markRetryTurnDone(windowID, ws)
 		return
 	}
 
@@ -167,6 +184,54 @@ func CheckDone() {
 		"AGENTCTL_MODE":       os.Getenv("AGENTCTL_MODE"),
 	})
 }
+
+// applyTurnEnd sets the display-only turn-end facts on w at a Stop: TurnDone
+// (or TurnDoneHeld while a child window is busy) for modes that never get
+// Done, and the window's Attention. A turn kept open by running background
+// subagents is not over, so it clears both.
+func applyTurnEnd(windowID string, w *windowstate.WindowState, activeSubagents int, finalText string, now time.Time) {
+	autonomous := autonomousModeFn(w.Mode)
+	if activeSubagents > 0 {
+		if !autonomous {
+			w.TurnDone, w.TurnDoneHeld = false, false
+		}
+		w.Attention = nil
+		return
+	}
+	if !autonomous {
+		// The window shows ✓ until focused, unless it still waits on
+		// working/blocked children (then ReleaseTurnDone sets it when the
+		// last one settles). Done stays untouched: it drives sweep and
+		// dispatch completion.
+		busy := windowstate.HasBusyChild(windowID, w.SessionID, windowstate.All())
+		w.TurnDone, w.TurnDoneHeld = !busy, busy
+	}
+	w.Attention = turnEndAttention(turnEnd{
+		Autonomous:   autonomous,
+		Text:         finalText,
+		ToolFailures: w.ToolFailures,
+		LastError:    w.LastError,
+		Verdict:      w.PendingVerdict,
+	}, now)
+}
+
+// markRetryTurnDone sets TurnDone on an autonomous window whose Stop is the
+// retry after a blocked stop: shouldMarkDone refuses Done there, which used to
+// leave the window at ○ for good.
+func markRetryTurnDone(windowID string, ws windowstate.WindowState) {
+	if windowID == "" || !autonomousModeFn(ws.Mode) || ws.State != "idle" || ws.Done {
+		return
+	}
+	err := winname.Update(windowID, func(w *windowstate.WindowState) {
+		if w.State == "idle" && !w.Done {
+			w.TurnDone = true
+		}
+	})
+	logUpdateErr("hook-check-done", err)
+}
+
+// hookAgentName is the AGENTCTL_AGENT_NAME of the hook's window.
+func hookAgentName() string { return os.Getenv("AGENTCTL_AGENT_NAME") }
 
 // improveSummaryWritten is a seam for improverun.HasSummary.
 var improveSummaryWritten = improverun.HasSummary
@@ -360,46 +425,23 @@ func StopFailure() {
 	agentName := resolveAgentName()
 
 	windowID := resolveHookWindowID()
+	message := stopFailureMessage(input.ErrorType, windowID)
 	var snap windowstate.WindowState
 	if windowID != "" {
 		errType := input.ErrorType
+		now := time.Now()
 		if err := winname.Update(windowID, func(ws *windowstate.WindowState) {
 			ws.State = "idle"
 			ws.Error = errType
+			// An API failure ended the turn: the agent is stuck until
+			// someone looks. The stop_failure alert below already notifies.
+			ws.Attention = &windowstate.Attention{Reason: windowstate.AttentionErrors, Detail: message, At: now}
 			snap = *ws
 		}); err != nil {
 			logUpdateErr("hook-stop-failure", err)
 		} else {
 			logging.Log("hook-stop-failure: set state=idle error=%s window=%s agent=%s", errType, windowID, agentName)
-		}
-	}
-
-	// Map error type to human-friendly message.
-	var message string
-	switch input.ErrorType {
-	case "rate_limit":
-		message = "Rate limited"
-	case "authentication_failed":
-		message = "Authentication failed"
-	case "billing_error":
-		message = "Billing error"
-		if be := nousBackendOf(windowID); be != "" {
-			// A 402 inside a session on a Nous backend: remember it so titles
-			// and dispatches stop spending requests, and say what it is.
-			backendauth.MarkNoCredits(be)
-			message = "Nous Portal out of credits"
-		}
-	case "server_error":
-		message = "Server error"
-	case "max_output_tokens":
-		message = "Hit max output tokens"
-	case "invalid_request":
-		message = "Invalid request"
-	default:
-		if input.ErrorType != "" {
-			message = fmt.Sprintf("API error: %s", input.ErrorType)
-		} else {
-			message = "API error"
+			winname.ReleaseTurnDone(snap.SpawnedBy, snap.SpawnedBySession)
 		}
 	}
 
@@ -423,6 +465,40 @@ func StopFailure() {
 		"AGENTCTL_ERROR_TYPE":    input.ErrorType,
 		"AGENTCTL_ERROR_MESSAGE": input.ErrorMessage,
 	})
+}
+
+// stopFailureMessage maps a StopFailure error type to a human-friendly
+// message. A billing error on a Nous backend also records the no-credits
+// marker.
+func stopFailureMessage(errorType, windowID string) string {
+	var message string
+	switch errorType {
+	case "rate_limit":
+		message = "Rate limited"
+	case "authentication_failed":
+		message = "Authentication failed"
+	case "billing_error":
+		message = "Billing error"
+		if be := nousBackendOf(windowID); be != "" {
+			// A 402 inside a session on a Nous backend: remember it so titles
+			// and dispatches stop spending requests, and say what it is.
+			backendauth.MarkNoCredits(be)
+			message = "Nous Portal out of credits"
+		}
+	case "server_error":
+		message = "Server error"
+	case "max_output_tokens":
+		message = "Hit max output tokens"
+	case "invalid_request":
+		message = "Invalid request"
+	default:
+		if errorType != "" {
+			message = fmt.Sprintf("API error: %s", errorType)
+		} else {
+			message = "API error"
+		}
+	}
+	return message
 }
 
 // nousBackendOf returns the name of the nous-kind backend the window runs on,
@@ -457,8 +533,12 @@ func UserPrompt() {
 		return
 	}
 
-	// Consume stdin -- we don't need the prompt text.
-	decodeInput(&struct{}{}) // non-fatal: ignore return value
+	// The prompt only tells a human prompt from a peer message.
+	var input struct {
+		Prompt string `json:"prompt"`
+	}
+	decodeInput(&input) // non-fatal: ignore return value
+	human := isHumanPrompt(input.Prompt)
 
 	monitorWatchdog()
 	janitor()
@@ -482,7 +562,13 @@ func UserPrompt() {
 		w.State = "working"
 		w.LastToolTime = nowUnix
 		windowstate.ClearDone(w)
-		w.TurnDone = false
+		w.TurnDone, w.TurnDoneHeld = false, false
+		windowstate.ClearAttention(w)
+		if human {
+			// The human replied: a pending review verdict is answered. A
+			// SendMessage delivery (often the verdict itself) is not.
+			w.PendingVerdict = nil
+		}
 		ws = *w
 	}); err != nil {
 		logUpdateErr("hook-user-prompt", err)

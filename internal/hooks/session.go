@@ -142,7 +142,7 @@ func SessionStart() {
 		windowstate.Revive(windowID)
 		winIdx := tmux.WindowIndex(windowID)
 		var launchName, backend string
-		trustBlocked := false
+		trustBlocked, clearedAttention := false, false
 		if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
 			launchName = ws.SessionName
 			trustBlocked = ws.PendingTool == windowstate.PendingTrust
@@ -159,6 +159,11 @@ func SessionStart() {
 			// prompt belong to the old work. Resume and compact keep both.
 			if input.Source == sessionSourceClear {
 				resetTitleOnClear(ws)
+				// The old work's needs-you state goes with it.
+				clearedAttention = ws.Attention != nil || ws.PendingVerdict != nil || ws.TurnDone
+				windowstate.ClearAttention(ws)
+				ws.PendingVerdict = nil
+				ws.TurnDone, ws.TurnDoneHeld = false, false
 			}
 			if input.Cwd != "" {
 				ws.WorkDir = input.Cwd
@@ -181,6 +186,10 @@ func SessionStart() {
 		}
 		if trustBlocked {
 			clearTrustBlock(windowID)
+		}
+		if clearedAttention {
+			// Drop the ! or ✓ from the window name.
+			logUpdateErr("hook-session-start", winname.Update(windowID, func(*windowstate.WindowState) {}))
 		}
 	}
 

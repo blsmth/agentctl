@@ -69,6 +69,9 @@ type hubStatus struct {
 	// PendingTool/PendingToolDetail are set only for a blocked row.
 	PendingTool       string `json:"pending_tool,omitempty"`
 	PendingToolDetail string `json:"pending_tool_detail,omitempty"`
+	// Attention is the "<label>: <detail>" of a row showing ! (see
+	// fleet.AttentionLine); empty otherwise.
+	Attention string `json:"attention,omitempty"`
 
 	// Footer facts, left zone.
 	Ticket      int       `json:"ticket,omitempty"`
@@ -127,6 +130,7 @@ func hubStatusFor(r fleet.Row, d fleetDisplay, groups []fleet.Group) *hubStatus 
 	if r.State == "blocked" {
 		st.PendingTool, st.PendingToolDetail = r.PendingTool, r.PendingToolDetail
 	}
+	st.Attention = fleet.AttentionLine(r.AgentState)
 	if r.Dispatched || r.Detached {
 		st.Branch = r.Branch
 	}
@@ -162,14 +166,17 @@ func hubStatusFor(r fleet.Row, d fleetDisplay, groups []fleet.Group) *hubStatus 
 }
 
 // statusStateWord is the state as the pane's title line words it, from the
-// same fields as the glyph: blocked and working win, then done, then a bare
-// window at a turn end ("your turn"), else idle.
+// same fields as the glyph: blocked and working win, then needs attention
+// ("needs you"), then done, then a window at a turn end ("your turn"), else
+// idle.
 func statusStateWord(r fleet.Row) string {
 	switch {
 	case r.State == "blocked":
 		return "blocked"
 	case r.State == "working":
 		return "working"
+	case fleet.NeedsAttention(r.AgentState):
+		return "needs you"
 	case r.Done:
 		return "done"
 	case r.TurnDone:

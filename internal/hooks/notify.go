@@ -30,7 +30,7 @@ func shouldAlert(ac config.AgentConfig, notificationType string) bool {
 		return false
 	}
 	switch notificationType {
-	case "permission_prompt", approvalNotificationType, trustNotificationType:
+	case "permission_prompt", approvalNotificationType, trustNotificationType, attentionNotificationType:
 		return ac.AlertConfig.Blocked
 	case "idle_prompt":
 		return ac.AlertConfig.Idle

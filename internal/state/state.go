@@ -29,7 +29,11 @@ type AgentState struct {
 	ContextWindow       int     `json:"context_window,omitempty"`         // usable window (model-aware, reserve-aware) for the active model
 	WorktreePath        string  `json:"worktree_path,omitempty"`          // if launched in a worktree
 	Done                bool    `json:"done,omitempty"`                   // true when agent signaled done
-	TurnDone            bool    `json:"turn_done,omitempty"`              // bare window finished a turn and is unseen (display ✓ only; not Done)
+	TurnDone            bool    `json:"turn_done,omitempty"`              // window finished a turn and is unseen (display ✓ only; not Done)
+	// Attention is the window's needs-you flag (the ! glyph; windowstate
+	// attention), display-only like TurnDone. Also carried through
+	// restore.json.
+	Attention *windowstate.Attention `json:"attention,omitempty"`
 	InputTokens         int     `json:"input_tokens,omitempty"`           // cumulative input tokens
 	OutputTokens        int     `json:"output_tokens,omitempty"`          // cumulative output tokens
 	CacheReadTokens     int     `json:"cache_read_tokens,omitempty"`      // cumulative cache read tokens
@@ -73,6 +77,9 @@ type AgentState struct {
 	// StartedAt is the windowstate started_at (unix seconds) of the original
 	// launch, carried through restore.json so the restored window keeps it.
 	StartedAt      int64 `json:"started_at,omitempty"`
+	// PendingVerdict is the windowstate pending_verdict, carried through
+	// restore.json only.
+	PendingVerdict *windowstate.PendingVerdict `json:"pending_verdict,omitempty"`
 	MailboxPending int   `json:"mailbox_pending,omitempty"` // count-only mailbox.PendingCount, refreshed on a throttled monitor tick; delivered by the hook path
 
 	// ScheduledBy is the cron job that launched the window and ScheduledAt

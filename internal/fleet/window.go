@@ -72,6 +72,12 @@ type Window struct {
 	// when false.
 	TurnDone bool `json:"turn_done,omitempty"`
 
+	// Attention is why the window needs the human (the ! glyph): "question",
+	// "errors" or "message"; AttentionDetail the one-line explanation. Both
+	// omitted unless the row shows ! (it is not working or blocked).
+	Attention       string `json:"attention,omitempty"`
+	AttentionDetail string `json:"attention_detail,omitempty"`
+
 	// Label is the human-facing identifier (see DisplayName); window_id stays
 	// the machine key. Serve fills it for the phone; `status --json` blanks it.
 	Label string `json:"label,omitempty"`
@@ -113,6 +119,9 @@ func ToWindow(r Row, m Meta) Window {
 		TurnDone:     r.TurnDone,
 		Label:        RowDisplayName(r),
 		Harness:      r.Harness,
+	}
+	if NeedsAttention(r.AgentState) {
+		w.Attention, w.AttentionDetail = r.Attention.Reason, r.Attention.Detail
 	}
 	if r.Recap.Text != "" {
 		w.Recap, w.RecapSource = r.Recap.Text, r.Recap.Source.String()

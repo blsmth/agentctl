@@ -58,7 +58,7 @@ function closeError(err) {
   return err instanceof ApiError || err instanceof Error ? err.message : "Close failed";
 }
 
-const GLYPH = { blocked: "⏸", working: "●", waiting: "◷", done: "✓", idle: "○" };
+const GLYPH = { blocked: "⏸", working: "●", waiting: "◷", attention: "!", done: "✓", idle: "○" };
 
 const STORE_KEY = "agentctl.fleet.collapsed";
 
@@ -117,7 +117,7 @@ function windowRow(entry, toggle, expanded, swipe, trust) {
       "span",
       { class: "win-main" },
       h("span", { class: "win-title" }, role ? h("span", { class: "tag kind-chip", title: "Role of this sub-agent" }, role) : null, h("span", { class: "agent" }, rowHeadline(win))),
-      detail ? h("span", { class: detail === win.recap ? "activity recap" : "activity" }, detail) : null,
+      detail ? h("span", { class: state === "attention" ? "activity attention-line" : detail === win.recap ? "activity recap" : "activity" }, detail) : null,
       chips.length
         ? h(
             "span",

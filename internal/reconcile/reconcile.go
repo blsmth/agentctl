@@ -24,6 +24,7 @@ import (
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/transcript"
 	"github.com/blsmth/agentctl/internal/windowstate"
+	"github.com/blsmth/agentctl/internal/winname"
 )
 
 // DefaultSettle is how long Run waits between its two window listings. A
@@ -147,6 +148,9 @@ func Finish(c Claimed, d Deps) {
 	// Before the handlers: handlers can be slow, and the children
 	// should close promptly.
 	closeChildren(c, d.Cascade)
+	// A child that vanished while busy may be the last one its dispatcher's
+	// held-back ✓ waited on.
+	winname.ReleaseTurnDone(c.Record.SpawnedBy, c.Record.SpawnedBySession)
 	// An improve window that died before its hooks closed the run out: take
 	// the end snapshot and send the summary now (idempotent).
 	if c.Record.Mode == "improve" && c.Record.ImproveRun != "" {

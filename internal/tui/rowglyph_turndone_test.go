@@ -36,7 +36,7 @@ func TestTurnDoneCountsAgreeWithGlyph(t *testing.T) {
 		mk("c", "idle", false),   // ○
 	}
 	m := FleetModel{groups: []fleet.Group{{Session: "s", Rows: rows}}}
-	b, w, d, i := m.fleetCounts()
+	b, w, _, d, i := m.fleetCounts()
 	if b != 0 || w != 1 || d != 1 || i != 1 {
 		t.Errorf("fleetCounts = %d %d %d %d, want 0 1 1 1", b, w, d, i)
 	}

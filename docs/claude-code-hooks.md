@@ -148,7 +148,8 @@ Blocking hooks can return JSON on stdout:
 - **agentctl status**: ✅ IMPLEMENTED (`hook-check-done`)
   - In autonomous modes, checks the worktree for uncommitted changes and build errors; exit 2 with a reason forces Claude to keep working
   - Once the turn ends cleanly, marks the window `done` (see `shouldMarkDone` in `internal/hooks/control.go`) and, for a dispatched window, spawns the detached `agentctl dispatch-complete` (PR lookup, labels, `open_pr_in_browser`, `dispatch_complete` hooks)
-  - A bare (interactive) window gets the display-only `TurnDone` ✓ instead of `done`
+  - A window in a mode that never gets `done` (bare, discuss, review, custom, improve) gets the display-only `TurnDone` ✓ instead (held while a child window is busy, released when the child stops), and so does an autonomous window on its `stop_hook_active` retry
+  - Decides the window's `attention` (the `!` state): a pending review verdict, a question to the human in the final text (`last_assistant_message`, else the transcript's last assistant entry), or 3 tool failures in a row
   - `hook-title` (async) runs next to it
 
 #### StopFailure
@@ -158,7 +159,7 @@ Blocking hooks can return JSON on stdout:
 - **Async**: No
 - **Extra payload**: Error type, error message
 - **agentctl status**: ✅ IMPLEMENTED (`hook-stop-failure`)
-  - Sets windowstate `state` to `idle`, records the error, and alerts the user
+  - Sets windowstate `state` to `idle`, records the error, raises an `errors` attention, and alerts the user
 
 #### UserPromptSubmit
 - **When**: User submits a prompt (before any processing)
@@ -166,7 +167,7 @@ Blocking hooks can return JSON on stdout:
 - **Async**: No
 - **Extra payload**: User prompt text
 - **agentctl status**: ✅ IMPLEMENTED (`hook-user-prompt`)
-  - Sets windowstate `state` to `working` immediately, before the first tool fires, and clears `done`/`TurnDone`
+  - Sets windowstate `state` to `working` immediately, before the first tool fires, and clears `done`/`TurnDone`/`attention` and the tool-failure streak; a prompt the human typed (not a `<cross-session-message>` or task notification) also answers a `pending_verdict`
   - Delivers pending agentctl notices as `additionalContext`
   - Runs the watchdog and janitor, like SessionStart
   - `hook-title` (async) runs next to it and titles a bare window from its first prompt
