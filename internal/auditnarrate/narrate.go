@@ -1,6 +1,6 @@
 // Package auditnarrate turns an audit report (internal/sessionaudit) into a
 // short written verdict through the configured Nous backend. Only findings
-// and metrics are sent, never raw tool output or file contents, and the
+// (their evidence snippets, with secrets redacted) and metrics are sent, never raw tool output or file contents, and the
 // prompt is capped at about 6KB. Verdicts are cached per session under
 // <stateDir>/audit/narratives/, keyed by a hash of what was sent, so a
 // changed report is narrated again and an unchanged one costs nothing.
@@ -170,7 +170,7 @@ func sessionPayload(r *sessionaudit.Report) []byte {
 	sort.SliceStable(fs, func(i, j int) bool { return fs[i].Severity.Rank() > fs[j].Severity.Rank() })
 	all := make([]findingOut, len(fs))
 	for i, f := range fs {
-		all[i] = findingOut{Rule: f.Rule, Severity: string(f.Severity), Step: f.Step, Tool: f.Tool, Evidence: f.Evidence, Why: f.Why}
+		all[i] = findingOut{Rule: f.Rule, Severity: string(f.Severity), Step: f.Step, Tool: f.Tool, Evidence: Redact(f.Evidence), Why: Redact(f.Why)}
 	}
 	return fit(len(all), func(k int) []byte {
 		doc := sessionDoc{
@@ -232,6 +232,37 @@ func fit(n int, render func(k int) []byte) []byte {
 		b = b[:maxPayloadBytes]
 	}
 	return b
+}
+
+// MaxAge is how long a cached narrative is kept.
+const MaxAge = 90 * 24 * time.Hour
+
+// Prune removes cached narratives not written for maxAge. It returns the
+// number removed; a missing dir is not an error.
+func Prune(now time.Time, maxAge time.Duration) (int, error) {
+	root, err := config.StateDir()
+	if err != nil {
+		return 0, err
+	}
+	dir := filepath.Join(root, "audit", "narratives")
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	n := 0
+	for _, e := range ents {
+		info, err := e.Info()
+		if err != nil || e.IsDir() || now.Sub(info.ModTime()) < maxAge {
+			continue
+		}
+		if os.Remove(filepath.Join(dir, e.Name())) == nil {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // ─── Cache ───────────────────────────────────────────────────────────────────
