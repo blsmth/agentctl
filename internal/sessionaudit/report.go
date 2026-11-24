@@ -153,6 +153,8 @@ type Report struct {
 	Findings   []Finding  `json:"findings"`
 	Metrics    Metrics    `json:"metrics"`
 	Audit      AuditTrail `json:"audit"`
+	// Narrative is the LLM verdict of `audit report --narrate`; absent otherwise.
+	Narrative string `json:"narrative,omitempty"`
 }
 
 // Session identifies what was audited. Title, Source and Account are filled

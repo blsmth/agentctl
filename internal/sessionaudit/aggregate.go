@@ -17,6 +17,8 @@ type Aggregate struct {
 	Sessions int         `json:"sessions"`
 	Skipped  int         `json:"skipped"` // transcripts that could not be read
 	Rules    []RuleCount `json:"rules"`   // most frequent first
+	// Narrative is the LLM verdict over the run (`--narrate`); absent otherwise.
+	Narrative string `json:"narrative,omitempty"`
 }
 
 // Multi is the payload of `audit report --all --json`.

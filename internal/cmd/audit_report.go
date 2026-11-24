@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -15,8 +16,10 @@ import (
 	"golang.org/x/term"
 
 	"github.com/blsmth/agentctl/internal/audit"
+	"github.com/blsmth/agentctl/internal/auditnarrate"
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/logstream"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/race"
@@ -36,6 +39,7 @@ type AuditReportOptions struct {
 	Limit    int    // with All: max sessions
 	Severity string // hide findings below this
 	JSON     bool
+	Narrate  bool // add an LLM verdict (nous backend); failures are a one-line note
 }
 
 // Seams for tests.
@@ -48,8 +52,10 @@ var (
 		f, ok := w.(*os.File)
 		return ok && term.IsTerminal(int(f.Fd()))
 	}
-	reportLoc         = func() *time.Location { return time.Local }
-	reportAllowedDirs = claudeManagedDirs
+	reportLoc                   = func() *time.Location { return time.Local }
+	reportAllowedDirs           = claudeManagedDirs
+	reportNarrator              = auditnarrate.New
+	reportNoteErr     io.Writer = os.Stderr
 )
 
 // claudeManagedDirs are the dirs in every Claude account that Claude Code
@@ -86,12 +92,93 @@ func RunAuditReport(w io.Writer, opts AuditReportOptions) error {
 	if err != nil && !errors.Is(err, errNoEntries) {
 		return err
 	}
+	// Narrate before filtering: the verdict covers every finding.
+	var note string
+	if opts.Narrate {
+		note = narrateOne(rep)
+	}
 	filterFindings(rep, sev)
 	if opts.JSON {
+		writeNote(reportNoteErr, note)
 		return writeReportJSON(w, rep)
 	}
 	renderAuditReport(w, rep, sev, newReportPalette(reportColor(w)))
+	renderNarrative(w, rep.Narrative, note)
 	return nil
+}
+
+// maxNarrated caps how many sessions one --all run narrates.
+const maxNarrated = 20
+
+// narrateOne sets r.Narrative when r has findings and returns a one-line note
+// when it could not (or "" when it did or had nothing to say).
+func narrateOne(r *sessionaudit.Report) string {
+	if !auditnarrate.HasFindings(r) {
+		return ""
+	}
+	text, err := reportNarrator().Session(context.Background(), r)
+	if err != nil {
+		return narrateNote(err)
+	}
+	r.Narrative = text
+	return ""
+}
+
+func narrateNote(err error) string {
+	return "Narrative unavailable: " + strings.ReplaceAll(err.Error(), "\n", " ")
+}
+
+func writeNote(w io.Writer, note string) {
+	if note != "" {
+		fmt.Fprintln(w, note)
+	}
+}
+
+func renderNarrative(w io.Writer, text, note string) {
+	if text != "" {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Verdict")
+		fmt.Fprintln(w, "  "+text)
+	}
+	if note != "" {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, note)
+	}
+}
+
+// narrateAll narrates each report with findings (at most maxNarrated, the
+// rest are logged as skipped) and then the aggregate. It stops at the first
+// failure: the remaining calls would fail the same way (no credits, no key).
+// The returned note is "" when everything went through.
+func narrateAll(reports []*sessionaudit.Report, agg *sessionaudit.Aggregate) string {
+	nar := reportNarrator()
+	ctx := context.Background()
+	done, skipped := 0, 0
+	for _, r := range reports {
+		if !auditnarrate.HasFindings(r) {
+			continue
+		}
+		if done >= maxNarrated {
+			skipped++
+			continue
+		}
+		text, err := nar.Session(ctx, r)
+		if err != nil {
+			return narrateNote(err)
+		}
+		r.Narrative = text
+		done++
+	}
+	text, err := nar.Aggregate(ctx, reports, *agg)
+	if err != nil {
+		return narrateNote(err)
+	}
+	agg.Narrative = text
+	if skipped > 0 {
+		logging.Log("audit report --narrate: narrated %d sessions, skipped %d over the cap of %d", done, skipped, maxNarrated)
+		return fmt.Sprintf("Narrated %d sessions; skipped %d over the per-run cap of %d.", done, skipped, maxNarrated)
+	}
+	return ""
 }
 
 // auditTranscript reads path (a session still being written is
@@ -321,16 +408,28 @@ func runAuditReportAll(w io.Writer, opts AuditReportOptions, sev sessionaudit.Se
 		reports = append(reports, rep)
 	}
 	agg := sessionaudit.Summarize(reports, skipped)
+	var note string
+	if opts.Narrate && len(reports) > 0 {
+		note = narrateAll(reports, &agg)
+	}
 	for _, r := range reports {
 		filterFindings(r, sev)
 	}
 	if opts.JSON {
+		writeNote(reportNoteErr, note)
 		if reports == nil {
 			reports = []*sessionaudit.Report{}
 		}
 		return writeReportJSON(w, sessionaudit.Multi{Schema: sessionaudit.SchemaVersion, Reports: reports, Aggregate: agg})
 	}
 	renderLeaderboard(w, reports, agg, sev, newReportPalette(reportColor(w)))
+	for _, r := range reports {
+		if r.Narrative != "" {
+			fmt.Fprintln(w)
+			fmt.Fprintf(w, "%s (%s)\n  %s\n", "Verdict "+shortID(r.Session.ID), r.Session.Agent, r.Narrative)
+		}
+	}
+	renderNarrative(w, agg.Narrative, note)
 	return nil
 }
 
@@ -630,4 +729,11 @@ func skippedFooter(w io.Writer, n int, pal reportPalette) {
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, pal.muted(fmt.Sprintf("Skipped %s that could not be read.", countNoun(n, "transcript"))))
+}
+
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }

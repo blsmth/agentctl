@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/approval"
+	"github.com/blsmth/agentctl/internal/auditnarrate"
 	"github.com/blsmth/agentctl/internal/closedlog"
 	"github.com/blsmth/agentctl/internal/llmusage"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -80,7 +81,10 @@ func DefaultHousekeepingDeps(runtimeDir string) HousekeepingDeps {
 			return uploads.Prune(runtimeDir, now, uploads.MaxAge)
 		},
 		PruneLLMUsage: func(now time.Time) (int, error) {
-			return llmusage.Prune(now, llmusage.MaxAge)
+			n, err := llmusage.Prune(now, llmusage.MaxAge)
+			// Cached audit narratives age out with the usage ledger.
+			m, _ := auditnarrate.Prune(now, auditnarrate.MaxAge)
+			return n + m, err
 		},
 		PruneClosed: func(now time.Time) (int, error) {
 			return closedlog.Prune(now, closedlog.MaxAge)
