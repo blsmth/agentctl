@@ -38,3 +38,31 @@ func TestRenderSessionsTableAligned(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionsTableDividerMatchesColumnWidths(t *testing.T) {
+	rows := []sessionsCells{
+		{"2h", "a-very-long-agent-name-here", "proj", "opus", "12345678", "1m", "$1.000"},
+		{"4d", "x", "p", "haiku", "1", "10s", "-"},
+	}
+	var buf bytes.Buffer
+	if err := renderSessionsTable(&buf, rows); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(ansi.Strip(buf.String()), "\n"), "\n")
+	div := strings.Fields(lines[1])
+	if len(div) != 7 {
+		t.Fatalf("divider cells = %d: %q", len(div), lines[1])
+	}
+	for i, d := range div {
+		want := 0
+		for _, l := range append([]string{lines[0]}, lines[2:]...) {
+			f := strings.Fields(l)
+			if len(f) == 7 {
+				want = max(want, len([]rune(f[i])))
+			}
+		}
+		if got := len([]rune(d)); got != want {
+			t.Errorf("col %d divider width %d, want %d", i, got, want)
+		}
+	}
+}

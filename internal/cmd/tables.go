@@ -404,10 +404,7 @@ func renderSessionsTable(w io.Writer, rows []sessionsCells) error {
 	out := [][]string{
 		{hdr.Render("AGE"), hdr.Render("AGENT"), hdr.Render("PROJECT"), hdr.Render("MODEL"),
 			hdr.Render("TURNS"), hdr.Render("DUR"), hdr.Render("COST")},
-		{muted.Render(strings.Repeat("─", 8)), muted.Render(strings.Repeat("─", 18)),
-			muted.Render(strings.Repeat("─", 12)), muted.Render(strings.Repeat("─", 8)),
-			muted.Render(strings.Repeat("─", 5)), muted.Render(strings.Repeat("─", 6)),
-			muted.Render(strings.Repeat("─", 8))},
+		nil, // divider, filled in below once the column widths are known
 	}
 	for _, r := range rows {
 		out = append(out, []string{
@@ -415,7 +412,19 @@ func renderSessionsTable(w io.Writer, rows []sessionsCells) error {
 			muted.Render(r.model), r.turns, muted.Render(r.dur), green.Render(r.cost),
 		})
 	}
+	out[1] = dividerRow(out, muted)
 	return writeTable(w, out)
+}
+
+// dividerRow returns a rule row whose cells are exactly as wide as the
+// widest cell of each column in rows (the divider slot itself, nil, is skipped).
+func dividerRow(rows [][]string, style lipgloss.Style) []string {
+	widths := columnWidths(rows)
+	div := make([]string, len(widths))
+	for i, n := range widths {
+		div[i] = style.Render(strings.Repeat("─", n))
+	}
+	return div
 }
 
 // PrintSessionDetail prints details for a single session by ID prefix.

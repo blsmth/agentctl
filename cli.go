@@ -498,9 +498,13 @@ type AgentsListCmd struct {
 
 func (c *AgentsListCmd) Run() error {
 	if c.TUI {
-		cmd.CmdAgentManager()
-		return nil
+		return cliout.RunTUI(cmd.CmdAgentManager, c.table)
 	}
+	return c.table()
+}
+
+// table prints the non-TUI output.
+func (c *AgentsListCmd) table() error {
 	if c.Name != "" {
 		if err := cmd.PrintAgentDetail(c.Name, c.JSON); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -566,9 +570,12 @@ type SkillsCmd struct {
 
 func (c *SkillsCmd) Run() error {
 	if c.TUI {
-		cmd.CmdSkillsManager()
-		return nil
+		return cliout.RunTUI(cmd.CmdSkillsManager, c.table)
 	}
+	return c.table()
+}
+
+func (c *SkillsCmd) table() error {
 	if err := cmd.PrintSkillsTable(c.JSON); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		cliout.Exit(1)
@@ -585,9 +592,12 @@ type MemoryCmd struct {
 
 func (c *MemoryCmd) Run() error {
 	if c.TUI {
-		cmd.CmdMemory()
-		return nil
+		return cliout.RunTUI(cmd.CmdMemory, c.table)
 	}
+	return c.table()
+}
+
+func (c *MemoryCmd) table() error {
 	if err := cmd.PrintMemoryTable(c.JSON); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		cliout.Exit(1)
@@ -753,9 +763,12 @@ type TicketBrowseCmd struct {
 
 func (c *TicketBrowseCmd) Run() error {
 	if c.TUI {
-		cmd.RunTickets()
-		return nil
+		return cliout.RunTUI(cmd.RunTickets, c.table)
 	}
+	return c.table()
+}
+
+func (c *TicketBrowseCmd) table() error {
 	if c.Number > 0 {
 		if err := cmd.PrintTicketDetail(c.Number, c.JSON); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -823,9 +836,12 @@ type SessionsBrowseCmd struct {
 
 func (c *SessionsBrowseCmd) Run() error {
 	if c.TUI {
-		cmd.CmdSessions(dispatch.WriteAgentSettings)
-		return nil
+		return cliout.RunTUI(func() { cmd.CmdSessions(dispatch.WriteAgentSettings) }, c.table)
 	}
+	return c.table()
+}
+
+func (c *SessionsBrowseCmd) table() error {
 	if c.ID != "" {
 		if err := cmd.PrintSessionDetail(c.ID, c.JSON); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
