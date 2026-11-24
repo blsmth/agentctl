@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 func clickAt(t *testing.T, m FleetModel, x, y int) FleetModel {
@@ -90,8 +91,15 @@ func TestFKeyLeavesStateFilter(t *testing.T) {
 	}
 }
 
+// withAttention marks s2's idle row "e" (@5) as needing attention.
+func withAttention(m FleetModel) FleetModel {
+	m.groups[1].Rows[1].Attention = &windowstate.Attention{Reason: windowstate.AttentionQuestion, Detail: "Merge it?"}
+	m.rebuildLines()
+	return m
+}
+
 func TestTitleCountClicks(t *testing.T) {
-	m := foldModel(t)
+	m := withAttention(foldModel(t))
 	m.liveLeft = 0
 	for i, want := range fleetStateFilters {
 		l := m.titleLayout(m.contentWidth())
@@ -121,9 +129,20 @@ func TestTitleCountSpansCoverCells(t *testing.T) {
 	m := foldModel(t)
 	l := m.titleLayout(m.contentWidth())
 	plain := ansi.Strip(l.line)
-	for i, want := range []string{" ⏸ 1 ", "● 1", "✓ 1", "○ 3"} {
+	for i, want := range []string{" ⏸ 1 ", "● 1", "", "✓ 1", "○ 3"} {
 		if got := ansi.Cut(plain, l.counts[i][0], l.counts[i][1]); got != want {
 			t.Errorf("cell %d covers %q, want %q", i, got, want)
+		}
+	}
+	if l.counts[fleetStateAttentionIdx] != [2]int{} {
+		t.Errorf("attention span %v with nothing needing attention", l.counts[fleetStateAttentionIdx])
+	}
+	m = withAttention(m)
+	l = m.titleLayout(m.contentWidth())
+	plain = ansi.Strip(l.line)
+	for i, want := range []string{" ⏸ 1 ", "● 1", "! 1", "✓ 1", "○ 2"} {
+		if got := ansi.Cut(plain, l.counts[i][0], l.counts[i][1]); got != want {
+			t.Errorf("with attention: cell %d covers %q, want %q", i, got, want)
 		}
 	}
 }
@@ -159,7 +178,7 @@ func TestTitleCountsNarrowNoTargets(t *testing.T) {
 		}
 	}
 	// Narrow enough that the counts are dropped entirely.
-	if l := m.titleLayout(20); l.counts != [4][2]int{} {
+	if l := m.titleLayout(20); l.counts != [fleetStateCount][2]int{} {
 		t.Errorf("counts at 20 cols: %v", l.counts)
 	}
 }
@@ -172,7 +191,7 @@ func TestGroupHeaderCountClicks(t *testing.T) {
 	// blocked and done are blank.
 	g := m.groups[0]
 	spans := m.pointerHeaderSpans(g, w).counts
-	if spans[0] != [2]int{} || spans[2] != [2]int{} {
+	if spans[0] != [2]int{} || spans[2] != [2]int{} || spans[3] != [2]int{} {
 		t.Fatalf("blank slots have spans: %v", spans)
 	}
 	y := m.fleetListTop()
@@ -180,7 +199,7 @@ func TestGroupHeaderCountClicks(t *testing.T) {
 	if got := ansi.Cut(plain, spans[1][0], spans[1][1]); !strings.HasPrefix(got, "●") {
 		t.Errorf("working slot covers %q", got)
 	}
-	if got := ansi.Cut(plain, spans[3][0], spans[3][1]); !strings.HasPrefix(got, "○") {
+	if got := ansi.Cut(plain, spans[4][0], spans[4][1]); !strings.HasPrefix(got, "○") {
 		t.Errorf("idle slot covers %q", got)
 	}
 	m2 := clickAt(t, m, spans[1][0], y)

@@ -161,6 +161,7 @@ func agentFromWindow(idx int, w tmux.WindowInfo, name string, records map[string
 		WorktreePath:     worktree,
 		Done:             done,
 		TurnDone:         turnDone,
+		Attention:        ws.Attention,
 		ModelName:        ws.Model,
 		CostUSD:          ws.CostUSD,
 		TurnCount:        ws.TurnCount,

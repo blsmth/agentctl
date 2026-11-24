@@ -13,7 +13,7 @@ import {
   actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
   defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines, fullPrompt,
-  waitingIndex, parentOf, childrenOf, displayState, waitingLabel, actionsFor, effectiveState,
+  waitingIndex, parentOf, childrenOf, displayState, waitingLabel, actionsFor, effectiveState, attentionLabel, attentionLine,
   applyGone, shellRows, shellDirName, shellApiPath,
   formatBytes, formatUptime, hostLevels, hostConnection, pushSample, formatSkew,
   advancedSummary, cardLastFailure, cardStatus, changeLines, fieldErrors, runResultCard, timeoutIsPreset, usageOptions, formClientErrors, formatAgo, formatNextFire, newScheduleForm, previewBody, runResultLabel, scheduleBanners, scheduleBody,
@@ -759,6 +759,42 @@ console.log("ok: shell request");
   ] }];
   assert.equal(displayState(fl[0].windows[0], waitingIndex(fl)), "waiting");
   assert.deepEqual(groupCounts([{ state: "idle", turn_done: true }, { state: "idle" }]), [{ state: "done", n: 1 }, { state: "idle", n: 1 }]);
+}
+
+{
+  // attention (the ! state): ⏸ > ● > ! > ✓ > ○, display only.
+  const q = { state: "idle", attention: "question", attention_detail: "Merge it?" };
+  assert.equal(effectiveState(q), "attention");
+  assert.equal(effectiveState({ ...q, done: true }), "attention");
+  assert.equal(effectiveState({ ...q, turn_done: true }), "attention");
+  assert.equal(effectiveState({ ...q, state: "working" }), "working");
+  assert.equal(effectiveState({ ...q, state: "blocked" }), "blocked");
+  assert.equal(attentionLabel("question"), "asks you");
+  assert.equal(attentionLabel("errors"), "stuck");
+  assert.equal(attentionLabel("message"), "review verdict");
+  assert.equal(attentionLabel("other"), "needs you");
+  assert.equal(attentionLine(q), "asks you: Merge it?");
+  assert.equal(attentionLine({ state: "idle", attention: "errors" }), "stuck");
+  assert.equal(attentionLine({ ...q, state: "working" }), "");
+  assert.equal(rowDetailLine({ ...q, recap: "Reworking the hub", recap_source: "summary" }), "asks you: Merge it?");
+  assert.equal(stateLabel(q, 0), "asks you");
+  assert.equal(actionsFor(q), "reply");
+  assert.equal(canSwipeClose(q, "s", ["write"]), false); // never swiped away unanswered
+  // An attention parent with a working child shows !, not waiting.
+  const fl = [{ windows: [
+    { window_id: "@1", session: "s", ...q },
+    { window_id: "@2", session: "s", state: "working", parent: "@1" },
+  ] }];
+  assert.equal(displayState(fl[0].windows[0], waitingIndex(fl)), "attention");
+  assert.deepEqual(groupCounts([q, { state: "idle", done: true }, { state: "blocked" }, { state: "idle" }]),
+    [{ state: "blocked", n: 1 }, { state: "attention", n: 1 }, { state: "done", n: 1 }, { state: "idle", n: 1 }]);
+  // Sorts after working, before done.
+  const sorted = sortGroups([{ session: "s", windows: [
+    { window_id: "@3", state: "idle", done: true }, { window_id: "@4", ...q }, { window_id: "@5", state: "working" },
+  ] }]);
+  assert.deepEqual(sorted[0].windows.map((w) => w.window_id), ["@5", "@4", "@3"]);
+  assert.equal(sorted[0].rollup, "working");
+  console.log("ok: attention");
 }
 
 {

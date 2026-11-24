@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"sort"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/verdicts"
@@ -70,6 +71,7 @@ func recordVerdict(toolInput json.RawMessage, windowID, sessionID, agentName str
 	if err := appendVerdict(rec); err != nil {
 		logging.Log("hook-post-tool: verdict ledger: %v", err)
 	}
+	notePendingVerdict(all, windowID, pr, verdict, time.Now())
 }
 
 // fromReview fills rec from the target dispatch recorded on the reviewer's

@@ -55,6 +55,11 @@ func cliRed() lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current().Red))
 }
 
+// cliOrange is the needs-attention colour (the ! state).
+func cliOrange() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current().Orange))
+}
+
 // cliAbbreviateModel shortens a model name to a display label.
 // Thin wrapper over tokens.Abbreviate so call sites don't churn.
 func cliAbbreviateModel(model string) string {

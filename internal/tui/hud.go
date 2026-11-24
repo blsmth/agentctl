@@ -12,8 +12,10 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/sessions"
+	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/theme"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -66,6 +68,9 @@ type HudModel struct {
 	height     int
 	startTime  time.Time
 	done       bool
+	// attention is the window's needs-you detail line (fleet.AttentionLine);
+	// "" when it does not need the human.
+	attention string
 
 	// Stream interactivity state.
 	terminalMode    bool         // Stream tab renders as a terminal feed (tool results)
@@ -573,7 +578,7 @@ func (m *HudModel) retarget(session, runtimeDir, windowID string) {
 		m.sysLogScroll, m.sysLogAtBottom = 0, true
 	}
 	m.session, m.runtimeDir, m.windowID = session, runtimeDir, windowID
-	m.agentName, m.title, m.state, m.done = "", "", "", false
+	m.agentName, m.title, m.state, m.done, m.attention = "", "", "", false, ""
 	m.resetTranscript()
 	m.follow.aliveIn = 0 // check the new target (and resolve its name) now
 	m.follow.misses = 0
@@ -681,6 +686,7 @@ func (m *HudModel) poll() {
 		if ws.Done {
 			m.done = true
 		}
+		m.attention = fleet.AttentionLine(state.AgentState{State: m.state, Attention: ws.Attention})
 		if m.follow.enabled {
 			if m.transcriptChanged(ws) {
 				m.resetTranscript()
@@ -1316,6 +1322,11 @@ func (m HudModel) stateLabel() string {
 		return hudStateWorkingStyle.Render(" ● Working ")
 	case "blocked":
 		return hudStateBlockedStyle.Render(" ⏸ Blocked ")
+	}
+	if m.attention != "" {
+		return hudStateAttentionStyle.Render(" ! Needs you ")
+	}
+	switch s {
 	case "done":
 		return hudStateDoneStyle.Render(" ✓ Done ")
 	default: // idle, empty
@@ -1721,24 +1732,25 @@ func (m HudModel) emptySysLogsHint() string {
 // ── HUD-specific styles ──────────────────────────────────────────────────────
 
 var (
-	hudHeaderNameStyle   lipgloss.Style
-	hudHeaderSepStyle    lipgloss.Style
-	hudHeaderFillStyle   lipgloss.Style
-	hudStateWorkingStyle lipgloss.Style
-	hudStateIdleStyle    lipgloss.Style
-	hudStateBlockedStyle lipgloss.Style
-	hudStateDoneStyle    lipgloss.Style
-	hudFooterFillStyle   lipgloss.Style
-	hudFooterHintStyle   lipgloss.Style
-	hudTabActiveStyle    lipgloss.Style
-	hudTabInactiveStyle  lipgloss.Style
-	hudEmptyStateStyle   lipgloss.Style
-	hudSelectedStyle     lipgloss.Style
-	hudDetailBorderStyle lipgloss.Style
-	hudDetailKeyStyle    lipgloss.Style
-	hudDetailValueStyle  lipgloss.Style
-	hudSelectionStyle    lipgloss.Style
-	hudFlashStyle        lipgloss.Style
+	hudHeaderNameStyle     lipgloss.Style
+	hudHeaderSepStyle      lipgloss.Style
+	hudHeaderFillStyle     lipgloss.Style
+	hudStateWorkingStyle   lipgloss.Style
+	hudStateIdleStyle      lipgloss.Style
+	hudStateBlockedStyle   lipgloss.Style
+	hudStateDoneStyle      lipgloss.Style
+	hudStateAttentionStyle lipgloss.Style
+	hudFooterFillStyle     lipgloss.Style
+	hudFooterHintStyle     lipgloss.Style
+	hudTabActiveStyle      lipgloss.Style
+	hudTabInactiveStyle    lipgloss.Style
+	hudEmptyStateStyle     lipgloss.Style
+	hudSelectedStyle       lipgloss.Style
+	hudDetailBorderStyle   lipgloss.Style
+	hudDetailKeyStyle      lipgloss.Style
+	hudDetailValueStyle    lipgloss.Style
+	hudSelectionStyle      lipgloss.Style
+	hudFlashStyle          lipgloss.Style
 )
 
 // initHudStyles initialises HUD-specific styles from the active theme.
@@ -1761,6 +1773,10 @@ func initHudStyles() {
 	hudStateBlockedStyle = lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color(t.Yellow))
+
+	hudStateAttentionStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(t.Orange))
 
 	hudStateDoneStyle = lipgloss.NewStyle().
 		Bold(true).

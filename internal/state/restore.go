@@ -86,6 +86,14 @@ func BuildRestoreAgents(records map[string]windowstate.WindowState, live map[str
 			PRNumber:         ws.PRNumber,
 			PRURL:            ws.PRURL,
 			StartedAt:        ws.StartedAt,
+			// The turn-end display facts: a restored window is resumed at
+			// the prompt it was idle at, so it should come back ✓ or !
+			// rather than ○. Done itself is not restored (it drives
+			// completion); a done window comes back as TurnDone.
+			TurnDone:       (ws.TurnDone || ws.Done) && !ws.Seen,
+			TurnCount:      ws.TurnCount,
+			Attention:      ws.Attention,
+			PendingVerdict: ws.PendingVerdict,
 		})
 		if ws.ShortTitle != (windowstate.ShortTitle{}) {
 			st := ws.ShortTitle

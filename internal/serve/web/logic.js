@@ -2,18 +2,35 @@
 // a function of its arguments so it can be read and reasoned about on its own.
 
 /** Attention order: lower sorts first. */
-const RANK = { blocked: 0, working: 1, waiting: 1, done: 2, idle: 3 };
+const RANK = { blocked: 0, working: 1, waiting: 1, attention: 2, done: 3, idle: 4 };
 
 /**
- * effectiveState folds the done flag into a single display state. turn_done
- * (a bare window at a turn end) is display only: it shows "done" but is not
- * the dispatched win.done, which behavior-bearing code reads directly.
+ * effectiveState folds the done and attention flags into a single display
+ * state (⏸ > ● > ! > ✓ > ○). turn_done (a window at a turn end) and
+ * attention (it needs the human: win.attention is the reason) are display
+ * only: neither is the dispatched win.done, which behavior-bearing code reads
+ * directly.
  */
 export function effectiveState(win) {
   if (win.state === "blocked") return "blocked";
   if (win.state === "working") return "working";
+  if (win.attention) return "attention";
   if (win.done || win.turn_done) return "done";
   return "idle";
+}
+
+const ATTENTION_LABELS = { question: "asks you", errors: "stuck", message: "review verdict" };
+
+/** attentionLabel is the short label of an attention reason ("asks you"); "needs you" when unknown. */
+export function attentionLabel(reason) {
+  return ATTENTION_LABELS[reason] ?? "needs you";
+}
+
+/** attentionLine is "asks you: Merge it?" for a window showing !, "" otherwise. */
+export function attentionLine(win) {
+  if (effectiveState(win) !== "attention") return "";
+  const label = attentionLabel(win.attention);
+  return win.attention_detail ? `${label}: ${win.attention_detail}` : label;
 }
 
 export function stateRank(state) {
@@ -455,12 +472,14 @@ export function agentChip(win) {
 }
 
 /**
- * rowDetailLine is the second line: the full recap, else the activity line,
- * else "". A recap that is the headline itself (a generated title standing in
+ * rowDetailLine is the second line: why the window needs the human (a !
+ * row), else the full recap, else the activity line, else "". A recap that is the headline itself (a generated title standing in
  * for a missing recap) is not repeated. A task recap is already the headline and #issue chip, so it falls
  * through to the activity line.
  */
 export function rowDetailLine(win) {
+  const attn = attentionLine(win);
+  if (attn) return attn;
   if (hasRecap(win) && win.recap_source !== "task" && win.recap !== rowHeadline(win)) return win.recap;
   return win.activity ?? "";
 }
@@ -678,7 +697,7 @@ export function groupKey(session) {
  * omitting empty states: what a folded project header shows (as on the hub).
  */
 export function groupCounts(windows) {
-  const n = { blocked: 0, working: 0, waiting: 0, done: 0, idle: 0 };
+  const n = Object.fromEntries(Object.keys(RANK).map((k) => [k, 0]));
   for (const w of windows) n[displayState(w)]++;
   return Object.keys(RANK)
     .filter((s) => n[s] > 0)
@@ -1049,7 +1068,7 @@ export function actionsFor(win, pane) {
   if (pane && pane.verdict === "awaiting_input" && pane.dialog) return "answer";
   const s = effectiveState(win);
   if (s === "working") return "interrupt";
-  if (s === "idle" || s === "done") return "reply"; // a waiting window is idle at the prompt
+  if (s === "idle" || s === "done" || s === "attention") return "reply"; // a waiting window is idle at the prompt
   return "none";
 }
 
@@ -1238,7 +1257,9 @@ export function fullPrompt(win, line) {
 /** stateLabel is the header pill text: "working for 3m", "idle". */
 export function stateLabel(win, nowMs, index) {
   const s = displayState(win, index);
-  const text = s === "waiting" ? waitingLabel((index ? index.get(win.window_id) : win.waiting_on).length) : s;
+  let text = s;
+  if (s === "waiting") text = waitingLabel((index ? index.get(win.window_id) : win.waiting_on).length);
+  else if (s === "attention") text = attentionLabel(win.attention);
   const since = formatSince(win.blocked_since || win.state_since, nowMs);
   return since ? `${text} for ${since}` : text;
 }

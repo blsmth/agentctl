@@ -1314,7 +1314,7 @@ type StatusListCmd struct {
 	Window  string `arg:"" optional:"" help:"Session handle, window ID (@275), index (275), or agent name for detail view"`
 	JSON    bool   `help:"Output as JSON"`
 	Session string `help:"Only show agents in sessions matching this name or project"`
-	State   string `help:"Only show agents in this state: blocked, working, idle, done" enum:"blocked,working,idle,done," default:""`
+	State   string `help:"Only show agents in this state: blocked, working, attention, idle, done" enum:"blocked,working,attention,idle,done," default:""`
 	Blocked bool   `help:"Only show blocked agents (shorthand for --state blocked)"`
 	Verify  bool   `help:"Capture each pane and flag any that contradict the recorded state"`
 	Closed  bool   `help:"List agent windows closed recently (newest first) instead of live ones"`

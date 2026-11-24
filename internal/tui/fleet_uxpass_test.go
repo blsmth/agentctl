@@ -62,7 +62,7 @@ func TestStaleDoneRowRendersIdleButKeepsCheck(t *testing.T) {
 		t.Errorf("fresh done row should keep done weight: %q", out)
 	}
 	// Both still count as done.
-	if _, _, done, _ := m.fleetCounts(); done != 2 {
+	if _, _, _, done, _ := m.fleetCounts(); done != 2 {
 		t.Errorf("title done count = %d, want 2", done)
 	}
 	if c := groupStateCounts(m.groups[0], 1, 2); c.done != 2 {

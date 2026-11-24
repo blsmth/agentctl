@@ -122,9 +122,10 @@ func collapseMarker(collapsed, hovered bool) string {
 const fleetCollapseMarkerW = 2
 
 // subtreeSummary renders a collapsed parent's summary in at most w columns:
-// a dim "+N" (rows hidden) and the ⏸ ● ✓ counts in the header chips' styles.
-// As w shrinks it drops the done count, then the "+N", keeping the blocked
-// and working counts longest: a blocked child must stay visible.
+// a dim "+N" (rows hidden) and the ⏸ ● ! ✓ counts in the header chips'
+// styles. As w shrinks it drops the done count, then the "+N", keeping the
+// blocked, working and attention counts longest: a blocked child must stay
+// visible.
 func subtreeSummary(c fleetSubtreeCounts, w int) string {
 	if c.total == 0 || w <= 0 {
 		return ""
@@ -134,12 +135,15 @@ func subtreeSummary(c fleetSubtreeCounts, w int) string {
 		st   lipgloss.Style
 	}
 	total := part{fmt.Sprintf("+%d", c.total), fleetDimStyle}
-	var blocked, working, done []part
+	var blocked, working, attn, done []part
 	if c.blocked > 0 {
 		blocked = []part{{fmt.Sprintf("⏸%d", c.blocked), fleetBlockedStyle}}
 	}
 	if c.working > 0 {
 		working = []part{{fmt.Sprintf("●%d", c.working), fleetWorkingStyle}}
+	}
+	if c.attention > 0 {
+		attn = []part{{fmt.Sprintf("%s%d", fleet.AttentionGlyph, c.attention), fleetAttentionStyle}}
 	}
 	if c.done > 0 {
 		done = []part{{fmt.Sprintf("✓%d", c.done), fleetDoneStyle}}
@@ -151,7 +155,7 @@ func subtreeSummary(c fleetSubtreeCounts, w int) string {
 		}
 		return out
 	}
-	urgent := join(blocked, working)
+	urgent := join(blocked, working, attn)
 	variants := [][]part{
 		join([]part{total}, urgent, done),
 		join([]part{total}, urgent),

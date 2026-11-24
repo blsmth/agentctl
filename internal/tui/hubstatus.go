@@ -167,6 +167,9 @@ func hubStatusLines(st *hubStatus, w, h int, now time.Time) []string {
 	if st.State == "blocked" && st.PendingTool != "" && free >= 2 && tw > 0 {
 		lines = append(lines, indent+hubStatusNeeds(st, tw))
 		free--
+	} else if st.Attention != "" && free >= 2 && tw > 0 {
+		lines = append(lines, indent+fleetAttentionStyle.Render(truncateToWidth("needs you: "+st.Attention, tw)))
+		free--
 	}
 	rw := min(tw, hubStatusRecapMeasure)
 	hasText := false
@@ -370,6 +373,8 @@ func hubStatusGlyphStyle(glyph string) lipgloss.Style {
 		return fleetWorkingStyle
 	case "✓":
 		return fleetDoneStyle
+	case fleet.AttentionGlyph:
+		return fleetAttentionStyle
 	case "○":
 		return fleetIdleStyle
 	}

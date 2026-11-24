@@ -79,3 +79,20 @@ func TestApplyRestoreMetaTitleAndStart(t *testing.T) {
 		t.Errorf("empty request must keep title and start, got %+v started=%d", ws.ShortTitle, ws.StartedAt)
 	}
 }
+
+func TestApplyRestoreMetaTurnEndFacts(t *testing.T) {
+	attn := &windowstate.Attention{Reason: windowstate.AttentionQuestion}
+	pv := &windowstate.PendingVerdict{PR: 3, Verdict: "BLOCKED"}
+	req := RestoreRequest{TurnDone: true, TurnCount: 5, Attention: attn, PendingVerdict: pv}
+	var ws windowstate.WindowState
+	applyRestoreMeta(&ws, req)
+	if !ws.TurnDone || ws.TurnCount != 5 || ws.Attention != attn || ws.PendingVerdict != pv {
+		t.Fatalf("restored record %+v", ws)
+	}
+	// A session that already started working owns its turn-end facts.
+	busy := windowstate.WindowState{State: "working", TurnCount: 7}
+	applyRestoreMeta(&busy, req)
+	if busy.TurnDone || busy.Attention != nil || busy.TurnCount != 7 {
+		t.Fatalf("working record overwritten: %+v", busy)
+	}
+}

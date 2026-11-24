@@ -30,6 +30,7 @@ import {
   buildUploadPath,
   dialogQuestion,
   displayState,
+  attentionLine,
   waitingIndex,
   parentOf,
   childrenOf,
@@ -56,7 +57,7 @@ import {
 import { trustCard } from "./trust.js";
 import { clear, confirmSheet, fitTermFont, h, toast } from "./ui.js";
 
-const CHILD_GLYPH = { blocked: "⏸", working: "●", waiting: "◷", done: "✓", idle: "○" };
+const CHILD_GLYPH = { blocked: "⏸", working: "●", waiting: "◷", attention: "!", done: "✓", idle: "○" };
 const CHILD_CAP = 5;
 const PANE_REFRESH_MS = 2000;
 const MODE_KEY = "agentctl.paneMode";
@@ -440,7 +441,9 @@ export function mountWindow(root, ctx, { session, windowId }) {
   const artifactChip = h("a", { class: "chip artifact-chip", href: artifactsHash({ session, windowId }), hidden: true });
   let childrenOpen = false;
   const waitingKids = h("div", { class: "win-waiting", hidden: true });
-  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, recap, scheduled, chips, artifactChip, waitingKids);
+  // Why a ! window needs the human ("asks you: Merge it?").
+  const attnLine = h("div", { class: "win-attention", hidden: true });
+  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), attnLine, task, recap, scheduled, chips, artifactChip, waitingKids);
 
   const liveChip = h("span", { class: "live-chip", role: "status" });
   const modeBtns = {
@@ -554,6 +557,9 @@ export function mountWindow(root, ctx, { session, windowId }) {
     const st = displayState(win, waiting);
     statePill.className = `state-pill ${st}`;
     statePill.querySelector(".state-text").textContent = stateLabel(win, Date.now(), waiting);
+    const attn = attentionLine(win);
+    attnLine.textContent = attn;
+    attnLine.hidden = attn === "";
     clear(waitingKids);
     const groups = ctx.store.fleet?.groups;
     const link = (k, cls) => {
