@@ -24,6 +24,8 @@ import {
   commandSuggestions,
   isClaudeWindow,
   isSlashCommand,
+  isTrustDialog,
+  trustFolder,
   buildReplyRequest,
   buildUploadPath,
   dialogQuestion,
@@ -51,6 +53,7 @@ import {
   terminalHash,
   windowApiPath,
 } from "./logic.js";
+import { trustCard } from "./trust.js";
 import { clear, confirmSheet, fitTermFont, h, toast } from "./ui.js";
 
 const CHILD_GLYPH = { blocked: "⏸", working: "●", waiting: "◷", done: "✓", idle: "○" };
@@ -731,6 +734,19 @@ export function mountWindow(root, ctx, { session, windowId }) {
         req,
       );
     };
+    if (isTrustDialog(dialog)) {
+      // The card asks for its own confirm before exit; Esc is never offered.
+      return trustCard(trustFolder(dialog), async (key) => {
+        let req;
+        try {
+          req = buildAnswerRequest(session, windowId, dialog, key);
+        } catch (e) {
+          toast(e.message, "error");
+          return;
+        }
+        await sendAnswer(null, req);
+      });
+    }
     if (dialog.multi) {
       return h("section", { class: "answer" }, h("p", { class: "question" }, dialogQuestion(dialog)), ...multiAnswer(dialog, answer));
     }

@@ -41,7 +41,15 @@ var (
 	AskUserMultiPane string
 	//go:embed panes/askuser-review.txt
 	AskUserReviewPane string
+	// TrustPane is Claude Code's folder-trust dialog (v2.1.328, 100
+	// columns, cursor on "No, exit"), captured in a scratch tmux server.
+	//go:embed panes/trust.txt
+	TrustPane string
 )
+
+// TrustExitedPane is what the window shows after "No, exit": Claude Code's
+// exit message under the dialog it left behind.
+const TrustExitedPane = "Claude Code didn't start because this folder isn't trusted.\n$ \n"
 
 // paneKinds maps Window.Pane names to pane text.
 var paneKinds = map[string]string{
@@ -51,6 +59,7 @@ var paneKinds = map[string]string{
 	"askuser":        AskUserPane,
 	"askuser-multi":  AskUserMultiPane,
 	"askuser-review": AskUserReviewPane,
+	"trust":          TrustPane,
 }
 
 // Window is one fixture window. It is the JSON the control API accepts, and
@@ -89,7 +98,8 @@ type Window struct {
 	Model   string  `json:"model,omitempty"`
 	CostUSD float64 `json:"cost_usd,omitempty"`
 	PRURL   string  `json:"pr_url,omitempty"`
-	// Pane names the captured screen: idle, working or dialog. Empty picks
+	// Pane names the captured screen: idle, working, dialog, askuser*, or
+	// trust (the folder-trust dialog). Empty picks
 	// one from State. PaneText, when set, is used verbatim instead.
 	Pane     string `json:"pane,omitempty"`
 	PaneText string `json:"pane_text,omitempty"`

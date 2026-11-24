@@ -73,6 +73,7 @@ var staticAssets = []staticAsset{
 	{"/settings.js", "settings.js", ctJS, cacheRevalidate, false},
 	{"/host.js", "host.js", ctJS, cacheRevalidate, false},
 	{"/approvals.js", "approvals.js", ctJS, cacheRevalidate, false},
+	{"/trust.js", "trust.js", ctJS, cacheRevalidate, false},
 	{"/vendor/xterm.js", "vendor/xterm.js", ctJS, cacheDay, false},
 	{"/vendor/xterm.css", "vendor/xterm.css", ctCSS, cacheDay, false},
 	{"/vendor/addon-fit.js", "vendor/addon-fit.js", ctJS, cacheDay, false},
