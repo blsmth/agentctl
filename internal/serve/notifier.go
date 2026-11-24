@@ -184,10 +184,22 @@ func (n *Notifier) Handle(ev fleetwatch.Event) {
 // project", and the viewer route. Never its content. Updates do not push;
 // --no-notify, serve.push.artifacts, muted projects and quiet hours apply.
 func (n *Notifier) fireArtifactLocked(a fleetwatch.ArtifactChange, now time.Time) {
-	if !n.cfg.ArtifactsEnabled() || a.NoNotify {
-		return
+	tag := redactArtifactIDs("artifact:" + a.ID)
+	skip := func(reason string) {
+		pushLogf("push: kind=artifact tag=%s skipped, %s", tag, reason)
 	}
-	if slices.Contains(n.cfg.MutedProjects, a.Project) || InQuietHours(n.cfg.QuietHours, now) {
+	switch {
+	case !n.cfg.ArtifactsEnabled():
+		skip("serve.push.artifacts is off")
+		return
+	case a.NoNotify:
+		skip("published with --no-notify")
+		return
+	case slices.Contains(n.cfg.MutedProjects, a.Project):
+		skip(fmt.Sprintf("project %q is muted", a.Project))
+		return
+	case InQuietHours(n.cfg.QuietHours, now):
+		skip("quiet hours")
 		return
 	}
 	msg := artifactMessage(a)
@@ -195,6 +207,7 @@ func (n *Notifier) fireArtifactLocked(a fleetwatch.ArtifactChange, now time.Time
 		n.held[msg.Tag] = heldApproval{msg: msg, deadline: now.Add(artifactHoldFor), artifact: true, project: a.Project}
 		return
 	}
+	pushLogf("push: kind=artifact tag=%s queued", tag)
 	n.deliver(msg)
 }
 

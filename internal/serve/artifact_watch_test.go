@@ -271,3 +271,75 @@ func TestArtifactSSEEvent(t *testing.T) {
 		}
 	}
 }
+
+// An artifact published the way `agentctl improve notify` does (artifacts.New
+// in another process, default state dir) reaches the notifier through the
+// running watcher and ends in exactly one logged push decision.
+func TestArtifactPublishedViaDefaultStoreLogsPushDecision(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	logs := capturePushLog(t)
+	var mu sync.Mutex
+	var delivered []Message
+	n := NewNotifier(config.ServePushConfig{}, time.Now, func(m Message) {
+		mu.Lock()
+		delivered = append(delivered, m)
+		mu.Unlock()
+	})
+	handled := make(chan struct{}, 4)
+	aw := newArtifactWatcher(artifacts.New(), func(c fleetwatch.ArtifactChange) {
+		n.Handle(artifactEvent(c))
+		handled <- struct{}{}
+	}, 5*time.Millisecond, 50*time.Millisecond)
+	aw.seed()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { aw.run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	m, err := artifacts.New().Add(artifacts.AddOptions{
+		Source: artifacts.Source{Path: writeTemp(t, "r.md", "# Report")},
+		Title:  "Fleet improve: 2 changes",
+		Kind:   artifacts.KindMarkdown,
+		Origin: artifacts.Origin{Agent: "fleet-improver", Project: "improve"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-handled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("watcher never published the new artifact")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(delivered) != 1 || delivered[0].Tag != "artifact:"+m.ID {
+		t.Fatalf("delivered = %+v", delivered)
+	}
+	if got := logs(); !strings.Contains(got, "kind=artifact") || !strings.Contains(got, "queued") {
+		t.Errorf("no artifact push decision logged: %q", got)
+	}
+}
+
+func TestNotifierArtifactLogsSkipReason(t *testing.T) {
+	no := false
+	ch := fleetwatch.ArtifactChange{ID: "abcdefghij", Action: fleetwatch.ArtifactAdd, Title: "T", Project: "proj"}
+	for _, tc := range []struct {
+		name string
+		cfg  config.ServePushConfig
+		ch   fleetwatch.ArtifactChange
+		want string
+	}{
+		{"disabled", config.ServePushConfig{Artifacts: &no}, ch, "serve.push.artifacts is off"},
+		{"muted", config.ServePushConfig{MutedProjects: []string{"proj"}}, ch, "muted"},
+		{"no-notify", config.ServePushConfig{}, fleetwatch.ArtifactChange{ID: "abcdefghij", Action: "add", NoNotify: true}, "--no-notify"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := capturePushLog(t)
+			n := NewNotifier(tc.cfg, time.Now, func(Message) { t.Error("delivered") })
+			n.Handle(artifactEvent(tc.ch))
+			if got := logs(); !strings.Contains(got, "kind=artifact") || !strings.Contains(got, "skipped") || !strings.Contains(got, tc.want) {
+				t.Errorf("log = %q", got)
+			}
+		})
+	}
+}
