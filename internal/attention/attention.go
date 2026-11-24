@@ -29,7 +29,7 @@ var askPrefixes = []string{
 
 // askPhrases ask the human anywhere in a sentence.
 var askPhrases = []string{
-	"let me know", "do you want me to", "would you like me to",
+	"do you want me to", "would you like me to",
 	"want me to go ahead", "your call", "waiting on you", "waiting for you",
 	"waiting for your", "need your input", "need your decision",
 	"need you to", "needs your", "up to you",
@@ -74,8 +74,13 @@ func Question(text string) (string, bool) {
 }
 
 // isAsk reports whether sentence s directly asks the human for something.
+// "Let me know which ..." asks; the courtesy "Let me know if you want any
+// changes" that ends many finished turns does not.
 func isAsk(s string) bool {
 	l := strings.ToLower(strings.TrimLeft(trimDecoration(s), "-*>#0123456789. ("))
+	if i := strings.Index(l, "let me know"); i >= 0 && !strings.HasPrefix(l[i+len("let me know"):], " if") {
+		return true
+	}
 	for _, p := range askPrefixes {
 		if strings.HasPrefix(l, p) {
 			return true

@@ -73,6 +73,7 @@ func CheckDone() {
 		}
 		now := time.Now()
 		var prevAttention *windowstate.Attention
+		verdictAlerted := false
 		if err := winname.Update(windowID, func(w *windowstate.WindowState) {
 			prevAttention = w.Attention
 			// Background subagents keep the turn's work going: the parent's
@@ -86,11 +87,18 @@ func CheckDone() {
 			w.LastText = textutil.Truncate(input.LastAssistantMessage, maxLastTextRunes, "")
 			w.TurnCount++
 			applyTurnEnd(windowID, w, activeSubagents, finalText, now)
+			if w.Attention != nil && w.Attention.Reason == windowstate.AttentionMessage && w.PendingVerdict != nil {
+				// One alert per pending verdict: it is raised again at every
+				// turn end (peer messages clear it in between) until the
+				// human replies.
+				verdictAlerted = w.PendingVerdict.Alerted
+				w.PendingVerdict.Alerted = true
+			}
 			ws = *w
 		}); err != nil {
 			logUpdateErr("hook-check-done", err)
 		}
-		if ws.Attention != nil && !sameAttention(prevAttention, ws.Attention) && !hasAttachedClient() {
+		if ws.Attention != nil && !verdictAlerted && !sameAttention(prevAttention, ws.Attention) && !hasAttachedClient() {
 			// No alert while the human is looking at the window: they can
 			// see the question.
 			alertAttention(windowID, hookAgentName(), ws, ws.Attention)

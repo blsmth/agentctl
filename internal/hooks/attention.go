@@ -236,14 +236,15 @@ func notePendingVerdict(all map[string]windowstate.WindowState, reviewer string,
 			return
 		}
 		v := windowstate.PendingVerdict{PR: pr, Verdict: verdict, At: now}
-		w.PendingVerdict = &v
 		if w.State == "idle" || w.State == "" {
 			a := verdictAttention(v, now)
 			if !sameAttention(w.Attention, a) {
 				raised = a
+				v.Alerted = true // the turn-end raise of this verdict stays quiet
 			}
 			w.Attention = a
 		}
+		w.PendingVerdict = &v
 		snap = *w
 	})
 	if err != nil {

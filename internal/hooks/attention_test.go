@@ -49,11 +49,11 @@ func TestTurnEndAttention(t *testing.T) {
 
 func TestIsHumanPrompt(t *testing.T) {
 	for p, want := range map[string]bool{
-		"merge it":                                     true,
-		"":                                             true,
+		"merge it": true,
+		"":         true,
 		"Another Claude session sent a message:\n<x>": false,
 		"<cross-session-message from=\"x\">":          false,
-		"  <task-notification>done":                    false,
+		"  <task-notification>done":                   false,
 	} {
 		if got := isHumanPrompt(p); got != want {
 			t.Errorf("isHumanPrompt(%q) = %v, want %v", p, got, want)
@@ -186,6 +186,7 @@ func TestPendingVerdictAttention(t *testing.T) {
 	const orch, rev = "@74", "@75"
 	stopEnv(t, orch, "bare")
 	setSpawner(t, func(string) error { return nil })
+	sent := alerts(t)
 	if err := windowstate.Update(orch, func(ws *windowstate.WindowState) { ws.SessionID, ws.State = "sess-o", "working" }); err != nil {
 		t.Fatal(err)
 	}
@@ -211,6 +212,18 @@ func TestPendingVerdictAttention(t *testing.T) {
 	if ws.Attention == nil || ws.Attention.Reason != windowstate.AttentionMessage || ws.Attention.Detail != "PR #12 review: NEEDS-BRENDAN" {
 		t.Fatalf("attention = %+v", ws.Attention)
 	}
+	if len(*sent) != 1 {
+		t.Fatalf("alerts after the delivery turn = %v, want one", *sent)
+	}
+	// Another peer turn raises it again, silently.
+	runHookCaptured(t, nil, `{"prompt":"Another Claude session sent a message:\nworker reply"}`, UserPrompt)
+	runHookCaptured(t, nil, `{"last_assistant_message":"Noted."}`, CheckDone)
+	if ws, _ := windowstate.Read(orch); ws.Attention == nil || ws.Attention.Reason != windowstate.AttentionMessage {
+		t.Fatalf("attention after a second peer turn = %+v", ws.Attention)
+	}
+	if len(*sent) != 1 {
+		t.Fatalf("alerts after a second peer turn = %v, want still one", *sent)
+	}
 
 	// A later MERGE for the same PR lifts it.
 	notePendingVerdict(windowstate.All(), rev, 12, verdicts.Merge, now)
@@ -222,6 +235,14 @@ func TestPendingVerdictAttention(t *testing.T) {
 	notePendingVerdict(windowstate.All(), rev, 13, verdicts.Blocked, now)
 	if ws, _ := windowstate.Read(orch); ws.Attention == nil {
 		t.Fatal("an idle orchestrator gets the attention at once")
+	}
+	if len(*sent) != 2 {
+		t.Fatalf("alerts after a new verdict on an idle orchestrator = %v, want two", *sent)
+	}
+	runHookCaptured(t, nil, `{"prompt":"Another Claude session sent a message:\nREVIEW PR #13"}`, UserPrompt)
+	runHookCaptured(t, nil, `{"last_assistant_message":"Relayed."}`, CheckDone)
+	if len(*sent) != 2 {
+		t.Fatalf("the delivery turn of an already alerted verdict alerted again: %v", *sent)
 	}
 	runHookCaptured(t, nil, `{"prompt":"ok, I will look"}`, UserPrompt)
 	if ws, _ := windowstate.Read(orch); ws.PendingVerdict != nil || ws.Attention != nil {

@@ -374,6 +374,10 @@ type PendingVerdict struct {
 	PR      int       `json:"pr"`
 	Verdict string    `json:"verdict"`
 	At      time.Time `json:"at,omitzero"`
+	// Alerted records that this verdict's desktop alert went out, so the
+	// "message" attention it raises again at every turn end until the human
+	// replies notifies once.
+	Alerted bool `json:"alerted,omitempty"`
 }
 
 // ClearAttention clears the attention flag and the failure streak behind it.

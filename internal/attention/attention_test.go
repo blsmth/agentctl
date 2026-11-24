@@ -55,6 +55,7 @@ func TestQuestion(t *testing.T) {
 			name: "blocked line", want: true, detail: "BLOCKED: no AWS credentials in this shell.",
 			text: "Tried three times.\n\n**BLOCKED**: no AWS credentials in this shell.",
 		},
+		{name: "let me know if is a courtesy", text: "Fixed and pushed. Let me know if you want any changes.", want: false},
 		{name: "lowercase blocked is not a verdict", text: "Blocked: none.\n\nAll good.", want: false},
 		{name: "horizontal rule after the ask", text: "Ship it?\n\n---", want: true, detail: "Ship it?"},
 		{name: "url with query string", text: "See https://x.test/a?b=1", want: false},
