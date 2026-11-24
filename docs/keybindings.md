@@ -80,7 +80,7 @@ With the mouse: click a row to select it and double-click to open it. Label chip
 
 | Key | Action |
 |-----|--------|
-| `W` | **Toggle `agentctl serve`** — stop the phone web app server if it runs, else start it (`agentctl serve toggle`); the result shows as a tmux message, e.g. "serve started at https://…". Stop leaves the LaunchAgent installed, so serve comes back at the next login. Not installed: the message says to run `agentctl serve install`. See [the mobile web app design](design/mobile-web-app.md#start-stop-and-the-toggle-internalservectl). |
+| `W` | **Toggle phone access** — turn the phone off (no notifications, no phone approvals, the phone app paused) or back on (`agentctl serve toggle`); serve keeps running, so artifact links keep working. With serve down it starts it. The result shows as a tmux message, e.g. "phone access off: …" or "serve started at https://…". Not installed: the message says to run `agentctl serve install`. `agentctl serve stop --all` stops the server itself. See [the mobile web app design](design/mobile-web-app.md#start-stop-and-the-toggle-internalservectl). |
 
 ## HUD
 
@@ -136,11 +136,11 @@ The hub window has no chrome bar or per-window HUD of its own (prefix+`h` acts o
 | `v` | **Activity pane** — open or close a pane at the right of the hub window showing the selected agent's tool activity as a terminal feed (`agentctl hud --follow-hub`): each Bash command as `$ cmd` with its last output lines, other tools as one dim line. It follows the hub selection, slides in, takes about 35% of the window (at least 40 columns) and leaves the live pane at least 60; on a window too narrow for all three it takes the live pane's place until it closes. A width you drag it to is kept. The title row's `[activity]` button does the same (it is dropped when the title has no room). Inside it the HUD keys apply (`t` switches the render mode, `j`/`k`/`enter` move and expand, the wheel scrolls); `q` in it closes it. |
 | `c` | **Toggle chrome** — show or hide the agent's chrome bar in the live pane for this hub (starts from the `hub_chrome` config value, default hidden). With chrome shown, clicking a tab in the live pane switches the live viewer and the hub list follows. |
 | `r` | Refresh. |
-| `S` | **Toggle `agentctl serve`**, like prefix+`W`; the outcome flashes in the footer. |
+| `S` | **Toggle phone access**, like prefix+`W`; the outcome flashes in the footer. |
 | `?` | Show every key and gesture. |
 | `q`/`esc` | Leave the hub. |
 
-The title row shows `agentctl serve`'s state after "agentctl hub": `📱 serve` (green) when it runs, `📱 off` (dim) when it does not, and `📱 stuck` (yellow) when its process is alive but its control socket refuses connections (phone approvals are not offered). It is refreshed on the hub's poll tick and does not need the monitor. Clicking it toggles serve, like `S`.
+The title row shows phone access after "agentctl hub": `📱 on` (green) when serve runs with phone access on, `📱 off` (dim) when phone access is off (serve still serves artifact links), `📱 down` (dim, struck through) when no serve process runs, and `📱 stuck` (yellow) when its process is alive but its control socket refuses connections (phone approvals are not offered). It is refreshed on the hub's poll tick and does not need the monitor. Clicking it toggles phone access, like `S`.
 
 Selecting a schedule row closes the live viewer pane and shows the job's card in its place, so the list stays visible: status, the schedule in words and as cron, agent, directory and worktree mode, non-default settings, the next 3 fires, any running window, the prompt and the last 5 runs. Moving back to an agent row brings the viewer back. On a schedule row (and only there) the keys are: `⏎` full card (20 runs, a `prompt_key`'s current text), `e` edit, `space` pause or resume (no confirmation; space again undoes it), `g` run now (asks `y/n`; plain `cron run` semantics, never `--force`: overlap, `max_concurrent` and the usage gate apply, and a skip shows its reason), `d` duplicate (`<name>-copy`, saved paused), `x` delete (asks `y/n`; run history is kept and a running window is left alone), `n` new. The row's right-click menu has the same actions. Every other row keeps its usual keys; the footer shows the schedule keys only on a schedule row.
 

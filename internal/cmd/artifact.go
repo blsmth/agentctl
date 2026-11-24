@@ -539,7 +539,8 @@ func artifactServeURL() (string, bool) {
 	cfg := config.Load().Serve
 	running := false
 	if dir, err := serve.Dir(); err == nil {
-		running = servectl.Probe(dir) == servectl.StateRunning
+		// Phone access off still serves artifact links.
+		running = servectl.Probe(dir).Serving()
 	}
 	host, _ := os.Hostname()
 	return serveBaseURL(cfg, host), running

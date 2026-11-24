@@ -81,6 +81,10 @@ func (p *pairing) active(now time.Time) bool {
 // sent on a redirect within that same navigation, which would land the
 // freshly paired phone on the "not paired" page.
 func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
+	if s.phone.Off() {
+		writePhoneOff(w, r)
+		return
+	}
 	now := s.now()
 	name, ok := s.pairing.consume(r.URL.Query().Get("code"), now)
 	if !ok {

@@ -237,7 +237,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{fleetClosedKey, "closed agents", fleetClosedKey},
 		{fleetSchedulesKey, "Sessions / Schedules tab (project)", fleetSchedulesKey},
 		{"e/space/g/d/x", "schedule row: edit/pause/run/dup/delete", ""},
-		{fleetServeKey, "serve on/off", fleetServeKey},
+		{fleetServeKey, "phone on/off", fleetServeKey},
 		{"q", "leave", "q"},
 		{"esc", "close help", "?"},
 	}

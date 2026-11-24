@@ -52,6 +52,9 @@ const (
 	outcomeExpired  = "expired"
 	outcomeGone     = "gone"
 	outcomeStopping = "server_stopping"
+	// outcomePhoneOff: phone access was switched off while it was open; the
+	// hook is told to fall back to the laptop popup.
+	outcomePhoneOff = "phone_off"
 )
 
 // approvalView is one pending approval as GET /v1/approvals and the SSE
@@ -378,6 +381,12 @@ func (s *Server) ServeApproval(conn net.Conn, br *bufio.Reader, req remoteapprov
 		refuse(err.Error())
 		return
 	}
+	// The hook's Guard checks the switch before it dials; this is the
+	// backstop for one that raced a toggle.
+	if s.phone.Off() {
+		refuse("phone access is off")
+		return
+	}
 	now := s.now()
 	deadline := req.Deadline
 	if !deadline.After(now) {
@@ -431,6 +440,11 @@ func (s *Server) ServeApproval(conn net.Conn, br *bufio.Reader, req remoteapprov
 		outcome = reason
 	case <-timer.C:
 		outcome = outcomeExpired
+	case <-s.phone.turnedOff():
+		// An error, not a decision: the hook drops the phone and the
+		// laptop popup alone answers (shown now if it was not).
+		outcome = outcomePhoneOff
+		refuse("phone access was turned off")
 	case <-s.done:
 		outcome = outcomeStopping
 	}

@@ -1638,9 +1638,9 @@ type ServeCmd struct {
 	Run       ServeRunCmd       `cmd:"" default:"1" hidden:"" help:"Run the server in the foreground"`
 	Install   ServeInstallCmd   `cmd:"" help:"Install the launchd LaunchAgent (prints a systemd unit on Linux)"`
 	Uninstall ServeUninstallCmd `cmd:"" help:"Remove the launchd LaunchAgent"`
-	Start     ServeStartCmd     `cmd:"" help:"Start the installed LaunchAgent (prints the systemctl command on Linux)"`
-	Stop      ServeStopCmd      `cmd:"" help:"Stop the server until next login; the LaunchAgent stays installed"`
-	Toggle    ServeToggleCmd    `cmd:"" help:"Stop the server if it runs, else start it"`
+	Start     ServeStartCmd     `cmd:"" help:"Turn phone access on, starting the installed LaunchAgent if serve is down (prints the systemctl command on Linux)"`
+	Stop      ServeStopCmd      `cmd:"" help:"Turn phone access off (no notifications or app; artifact links keep working); --all stops the server until next login"`
+	Toggle    ServeToggleCmd    `cmd:"" help:"Turn phone access off if it is on, else on (starting serve if it is down)"`
 	Status    ServeStatusCmd    `cmd:"" help:"Show whether the server runs, its URL, devices, cert expiry and CA fingerprint"`
 	Logs      ServeLogsCmd      `cmd:"" help:"Print the tail of serve.log (or audit.jsonl with --audit); read-only"`
 	Pair      ServePairCmd      `cmd:"" help:"Open a 5-minute pairing window and print QR codes for a phone"`
@@ -1666,9 +1666,14 @@ type ServeStartCmd struct{}
 
 func (c *ServeStartCmd) Run() error { return cmd.RunServeStart(os.Stdout) }
 
-type ServeStopCmd struct{}
+// ServeStopCmd implements `agentctl serve stop`: phone access off, or with
+// --all the old full stop (launchctl bootout; the LaunchAgent stays
+// installed and starts again at login).
+type ServeStopCmd struct {
+	All bool `help:"Stop the server process itself (artifact links too) until next login; the LaunchAgent stays installed"`
+}
 
-func (c *ServeStopCmd) Run() error { return cmd.RunServeStop(os.Stdout) }
+func (c *ServeStopCmd) Run() error { return cmd.RunServeStop(os.Stdout, c.All) }
 
 // ServeToggleCmd implements `agentctl serve toggle`. The prefix-key binding
 // passes --message-client so the result shows as a tmux message.

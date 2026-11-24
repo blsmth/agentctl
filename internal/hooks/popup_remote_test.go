@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"path/filepath"
 	"strings"
@@ -438,6 +439,46 @@ func TestFakeSocketGuardRejectsPIDMismatch(t *testing.T) {
 	}
 	if sawRequest.Load() {
 		t.Fatal("approval request sent to an unverified socket")
+	}
+}
+
+// With phone access switched off the real opener never dials serve, and the
+// laptop popup alone answers, without waiting on the phone.
+func TestPhoneOffLaptopPopupOnly(t *testing.T) {
+	stubPopupSeams(t, 5*time.Second)
+	origOpen, origGuard := openRemote, remoteGuard
+	t.Cleanup(func() { openRemote, remoteGuard = origOpen, origGuard })
+	openRemote = openRemoteApproval
+
+	dir := t.TempDir()
+	if err := WritePopupResult(filepath.Join(dir, remoteapproval.PIDFile), "4242\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := WritePopupResult(filepath.Join(dir, remoteapproval.PhoneOffFile), "x\n"); err != nil {
+		t.Fatal(err)
+	}
+	var dialed atomic.Bool
+	remoteGuard = func() (remoteapproval.Guard, error) {
+		return remoteapproval.Guard{
+			Dir: dir,
+			Dial: func(string, time.Duration) (net.Conn, error) {
+				dialed.Store(true)
+				return nil, errors.New("must not dial")
+			},
+			Self: func() (buildid.Identity, error) { return buildid.Identity{}, nil },
+		}, nil
+	}
+	calls := 0
+	dispatchPopupRunner = func(_ context.Context, _ string, _, _ int, argsFile string) error {
+		calls++
+		return WritePopupResult(popupResultPath(argsFile), "allow")
+	}
+	g := waitGate(t, runRemoteGate(t, laptop))
+	if !g.approved || !g.decided || calls != 1 {
+		t.Fatalf("got %+v calls=%d; want the laptop popup alone", g, calls)
+	}
+	if dialed.Load() {
+		t.Fatal("dialed serve with phone access off")
 	}
 }
 

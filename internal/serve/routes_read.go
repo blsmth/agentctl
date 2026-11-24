@@ -439,11 +439,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	ping := time.NewTicker(s.pingEvery)
 	defer ping.Stop()
+	phoneOff := s.phone.turnedOff()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
 		case <-s.done:
+			return
+		case <-phoneOff:
+			// The app's reconnect then sees 503 phone_off.
 			return
 		case <-ping.C:
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil || rc.Flush() != nil {

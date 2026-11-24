@@ -40,7 +40,9 @@ func (s *Server) initPush(opts Options) error {
 			AppURL:  "https://" + net.JoinHostPort(opts.AdvertiseHost, strconv.Itoa(opts.HTTPSPort)),
 		}
 	}
+	s.sender.SetMuted(s.phone.Off)
 	s.pushQ = newPushDispatcher(s.sender, s.ntfy)
+	s.pushQ.muted = s.phone.Off
 	s.notifier = NewNotifier(opts.Config.Push, s.now, s.pushQ.enqueue)
 	if opts.Config.Push.QuietWhenLaptopActiveEnabled() {
 		probe := opts.LaptopIdle

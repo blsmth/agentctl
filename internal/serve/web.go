@@ -15,6 +15,7 @@ var webFS embed.FS
 var (
 	pageIndex      = page("index.html")
 	pageNotPaired  = page("notpaired.html")
+	pagePhoneOff   = page("phoneoff.html")
 	pagePaired     = page("paired.html")
 	pagePairFailed = page("pair_failed.html")
 	bootstrapTmpl  = template.Must(template.New("bootstrap").Parse(string(page("bootstrap.html"))))

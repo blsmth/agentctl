@@ -667,3 +667,23 @@ func TestSweepTerminalsClearsStaleMarkers(t *testing.T) {
 		t.Fatal("stale marker survived startup sweep")
 	}
 }
+
+func TestTerminalEndsOnPhoneOff(t *testing.T) {
+	e := newTermEnv(t, true)
+	c, p := e.open(t)
+	readSize(t, c)
+	go func() {
+		for {
+			if _, _, err := c.Read(context.Background()); err != nil {
+				return
+			}
+		}
+	}()
+	setPhone(t, e.dir, false)
+	e.phone.Off()
+	waitFor(t, "cleanup", func() bool { return p.isClosed() && len(e.tmux.killedNames()) == 1 })
+	_, resp, err := e.dial(t, e.http.URL, true)
+	if err == nil || resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("with phone off: err %v resp %v, want 503", err, resp)
+	}
+}
