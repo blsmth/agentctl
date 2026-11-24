@@ -16,6 +16,7 @@ import (
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/improve"
+	"github.com/blsmth/agentctl/internal/improverun"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/metricsserve"
 	"github.com/blsmth/agentctl/internal/paths"
@@ -72,6 +73,7 @@ type CLI struct {
 
 	// Dispatch completion (spawned detached by the Stop hook / signal done)
 	DispatchComplete DispatchCompleteCmd `cmd:"" name:"dispatch-complete" hidden:"" help:"Run dispatch completion for a window (PR lookup, labels, hooks)"`
+	ImproveFinish    ImproveFinishCmd    `cmd:"" name:"improve-finish" hidden:"" help:"Close out an improve run (spawned detached by hooks)"`
 	LaunchWatch      LaunchWatchCmd      `cmd:"" name:"launch-watch" hidden:"" help:"Watch a freshly launched window for the folder-trust prompt"`
 	RunUserHooks     RunUserHooksCmd     `cmd:"" name:"run-user-hooks" hidden:"" help:"Run user lifecycle hooks for an event (spawned detached by hooks)"`
 
@@ -335,7 +337,7 @@ func (c *LogsCmd) Run() error { cmd.RunLogs(c.Name); return nil }
 // ImproveCmd groups `agentctl improve [<agent>]` (start a session, the
 // default) and `agentctl improve runs`.
 type ImproveCmd struct {
-	Start ImproveStartCmd `cmd:"" default:"withargs" help:"Launch a self-improvement session (default)"`
+	Start ImproveStartCmd `cmd:"" default:"withargs" help:"Launch a self-improvement session (default; an agent named runs or start needs: improve start <agent>)"`
 	Runs  ImproveRunsCmd  `cmd:"" help:"List past improve runs with their changes and history revisions"`
 }
 
@@ -527,8 +529,8 @@ func (c *AgentsHistoryCmd) Run() error {
 // AgentsDiffCmd implements `agentctl agents diff [name] [rev]`.
 type AgentsDiffCmd struct {
 	Store string `default:"" help:"History store: agents (~/.claude: agents, shared, CLAUDE.md, settings.json), config (agentctl config.json and templates) or a project dir; default: by path"`
-	Name string `arg:"" optional:"" help:"Agent name or path under ~/.claude (default: everything tracked)"`
-	Rev  string `arg:"" optional:"" help:"Revision to compare with the current files (default: the last snapshot)"`
+	Name  string `arg:"" optional:"" help:"Agent name or path under ~/.claude (default: everything tracked)"`
+	Rev   string `arg:"" optional:"" help:"Revision to compare with the current files (default: the last snapshot)"`
 }
 
 func (c *AgentsDiffCmd) Run() error {
@@ -539,8 +541,8 @@ func (c *AgentsDiffCmd) Run() error {
 // From an agent session it goes through the approval popup (hooks).
 type AgentsRevertCmd struct {
 	Store string `default:"" help:"History store: agents (~/.claude: agents, shared, CLAUDE.md, settings.json), config (agentctl config.json and templates) or a project dir; default: by path"`
-	Name string `arg:"" help:"Agent name or path under ~/.claude"`
-	Rev  string `arg:"" optional:"" help:"Revision to restore (default: undo the latest change)"`
+	Name  string `arg:"" help:"Agent name or path under ~/.claude"`
+	Rev   string `arg:"" optional:"" help:"Revision to restore (default: undo the latest change)"`
 }
 
 func (c *AgentsRevertCmd) Run() error {
@@ -1554,6 +1556,14 @@ type DispatchCompleteCmd struct {
 }
 
 func (c *DispatchCompleteCmd) Run() error { cmd.RunDispatchComplete(c.WindowID); return nil }
+
+// ImproveFinishCmd takes the end snapshot of an improve run and sends its
+// summary (improverun.Finish). Spawned detached by the Stop/SessionEnd hooks.
+type ImproveFinishCmd struct {
+	RunID string `arg:"" help:"improve run ID"`
+}
+
+func (c *ImproveFinishCmd) Run() error { return improverun.Finish(c.RunID) }
 
 // LaunchWatchCmd watches a freshly launched agent window for Claude Code's
 // folder-trust dialog and reports it (hooks.LaunchWatch). Spawned detached by

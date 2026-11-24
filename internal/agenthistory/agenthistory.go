@@ -228,14 +228,19 @@ func (s *Store) hasHead() bool {
 // ensureInit creates the git dir on first use. It reports whether it did.
 func (s *Store) ensureInit() (bool, error) {
 	if _, err := os.Stat(filepath.Join(s.GitDir, "HEAD")); err == nil {
+		os.Chmod(s.GitDir, 0o700) //nolint:errcheck // harden stores made before this
 		return false, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(s.GitDir), 0o700); err != nil {
 		return false, err
 	}
 	if _, err := runGit(nil, "", "--no-optional-locks", "--git-dir="+s.GitDir, "--work-tree="+s.WorkTree,
-		"init", "-q", "--initial-branch=main"); err != nil {
+		"init", "-q", "--initial-branch=main", "--shared=0600"); err != nil {
 		return false, fmt.Errorf("initialising history store: %w", err)
+	}
+	// The stores hold config and settings: owner only, whatever the umask.
+	if err := os.Chmod(s.GitDir, 0o700); err != nil {
+		return false, err
 	}
 	return true, nil
 }

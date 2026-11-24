@@ -52,8 +52,10 @@ var (
 
 // StoreRec is one history store's part of a run.
 type StoreRec struct {
-	Name     string             `json:"name"` // "agents", "config" or a project dir
-	Store    agenthistory.Store `json:"store"`
+	Name string `json:"name"` // "agents", "config" or a project dir
+	// Store is rebuilt from Name on every load, never read from run.json: the
+	// file sits in an agent-writable dir and must not choose a git dir.
+	Store    agenthistory.Store `json:"-"`
 	StartRev string             `json:"start_rev,omitempty"`
 	EndRev   string             `json:"end_rev,omitempty"`
 }
@@ -242,7 +244,12 @@ func Finish(id string) error {
 	rationale := readRationale(dir)
 	for i := range r.Stores {
 		rec := &r.Stores[i]
-		st := rec.Store
+		st, err := agenthistory.StoreByName(rec.Name)
+		if err != nil {
+			logging.Log("improve: store %q: %v", rec.Name, err)
+			continue
+		}
+		rec.Store = *st
 		if _, err := st.SnapshotBody("improve "+id, rationale, agenthistory.DefaultAuthor); err != nil {
 			logging.Log("improve: end snapshot %s: %v", rec.Name, err)
 		}
@@ -301,6 +308,17 @@ func shellWord(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// HasSummary reports whether the session has written its rationale: the
+// signal that it considers the run done.
+func HasSummary(id string) bool {
+	p, err := SummaryPath(id)
+	if err != nil {
+		return false
+	}
+	fi, err := os.Stat(p)
+	return err == nil && fi.Size() > 0
 }
 
 // Title is the notification title.

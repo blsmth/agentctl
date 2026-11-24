@@ -144,6 +144,9 @@ func Finish(c Claimed, d Deps) {
 	if base != "" && instance != "shell" {
 		recordClosed(c, d, instance, base)
 	}
+	// Before the handlers: handlers can be slow, and the children
+	// should close promptly.
+	closeChildren(c, d.Cascade)
 	// An improve window that died before its hooks closed the run out: take
 	// the end snapshot and send the summary now (idempotent).
 	if c.Record.Mode == "improve" && c.Record.ImproveRun != "" {
@@ -151,9 +154,6 @@ func Finish(c Claimed, d Deps) {
 			logging.Log("reconcile: finishing improve run %s: %v", c.Record.ImproveRun, err)
 		}
 	}
-	// Before the handlers: handlers can be slow, and the children
-	// should close promptly.
-	closeChildren(c, d.Cascade)
 	if base != "" && !untracked(instance) && d.Handle != nil {
 		t := state.Transition{
 			Agent:    base,

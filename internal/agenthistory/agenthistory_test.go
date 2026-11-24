@@ -408,3 +408,35 @@ func TestSnapshotBodyHeadAndChangedFiles(t *testing.T) {
 		t.Fatal("option-like revision accepted")
 	}
 }
+
+func TestStoreDirsAreOwnerOnly(t *testing.T) {
+	home, _ := setup(t)
+	write(t, filepath.Join(home, ".config", "agentctl", "config.json"), "{}\n")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	s, err := ConfigStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Snapshot("t", ""); err != nil {
+		t.Fatal(err)
+	}
+	// An older, looser store is tightened on the next use.
+	if err := os.Chmod(s.GitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(home, ".config", "agentctl", "config.json"), "{\"a\":1}\n")
+	if _, err := s.Snapshot("t2", ""); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(s.GitDir); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("git dir mode = %v, %v", fi.Mode(), err)
+	}
+	filepath.WalkDir(filepath.Join(s.GitDir, "objects"), func(p string, d os.DirEntry, err error) error { //nolint:errcheck
+		if err == nil && !d.IsDir() {
+			if fi, _ := d.Info(); fi.Mode().Perm()&0o077 != 0 {
+				t.Errorf("%s mode %v has group/other bits", p, fi.Mode())
+			}
+		}
+		return nil
+	})
+}

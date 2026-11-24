@@ -190,7 +190,7 @@ func scopeBlock(summaryPath string) string {
 		"so propose such changes in your report instead of working around the guard.\n")
 	if summaryPath != "" {
 		b.WriteString("\nRATIONALE: before you finish, write one line per change to " + summaryPath + ": what changed, why, and the evidence " +
-			"session IDs. It becomes the commit message of the change and the body of the summary notification sent to the human.\n")
+			"session IDs. Never quote config values, tokens or other secrets in it. It becomes the commit message of the change and the body of the summary notification sent to the human.\n")
 	}
 	return b.String()
 }

@@ -190,3 +190,29 @@ func TestTitle(t *testing.T) {
 		}
 	}
 }
+
+// A run.json edited to point at another repo must not steer Finish.
+func TestFinishIgnoresStoredStore(t *testing.T) {
+	e := setup(t)
+	if err := Start(StartOptions{ID: "r5", Agent: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := Dir("r5")
+	p := filepath.Join(dir, "run.json")
+	data, _ := os.ReadFile(p)
+	evil := t.TempDir()
+	forged := strings.Replace(string(data), `"name": "agents"`, `"name": "agents", "store": {"git_dir": "`+evil+`", "work_tree": "`+evil+`", "paths": ["."]}`, 1)
+	if err := os.WriteFile(p, []byte(forged), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(e.home, ".claude", "agents", "a.md"), "v2\n")
+	if err := Finish("r5"); err != nil {
+		t.Fatal(err)
+	}
+	if ents, _ := os.ReadDir(evil); len(ents) != 0 {
+		t.Fatalf("forged store was used: %v", ents)
+	}
+	if r, _ := Load("r5"); len(r.Files) != 1 {
+		t.Fatalf("run = %+v", r)
+	}
+}

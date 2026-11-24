@@ -630,6 +630,9 @@ func wireCompletion() {
 		return detach.StartSelf([]string{"dispatch-complete", windowID}, nil)
 	}
 	hooks.SetSpawnCompleteFn(spawn)
+	hooks.SetSpawnImproveFinishFn(func(runID string) error {
+		return detach.StartSelf([]string{"improve-finish", runID}, nil)
+	})
 	signal.SetSpawnCompleteFn(spawn)
 	signal.SetAutonomousModeFn(dispatch.IsAutonomous)
 	hooks.SetDetachUserHooks(func(event string, env []string) error {

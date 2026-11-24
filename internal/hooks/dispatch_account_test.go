@@ -76,7 +76,7 @@ func TestDispatchDetailsAccountUnknownAfterCd(t *testing.T) {
 	}
 	tests := []struct {
 		name, command, want string
-		resolved          bool
+		resolved            bool
 	}{
 		{"cd first", "cd ~/code/x && agentctl dispatch --issue 1", accountDirUnknown, false},
 		{"cd first with --account", "cd ~/code/x && agentctl dispatch --issue 1 --account personal", "personal", true},

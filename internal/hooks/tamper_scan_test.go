@@ -8,7 +8,7 @@ import (
 
 // fpPrompt is a realistic multi-line single-quoted context set value, the
 // shape that was denied as serve tampering: backticked commands (including
-// `agentctl serve pair`), a PWA route with #, serve.log, the '\'' apostrophe
+// `agentctl serve pair`), a PWA route with #, serve.log, the '\” apostrophe
 // idiom, $(...) and `...` inside the quotes, and many newlines.
 const fpPrompt = `# Task
 
