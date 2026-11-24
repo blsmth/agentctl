@@ -191,6 +191,10 @@ type Finding struct {
 	Tool     string     `json:"tool,omitempty"`
 	Evidence string     `json:"evidence"`
 	Why      string     `json:"why"`
+	// RequestedByPrompt is an excerpt (80 characters at most) of the human
+	// prompt that explicitly asked for the action; the severity is then
+	// downgraded from high to med. Absent otherwise.
+	RequestedByPrompt string `json:"requested_by_prompt,omitempty"`
 }
 
 // Tokens are the session's token totals, deduplicated by message.
@@ -241,6 +245,7 @@ type step struct {
 	inferred bool   // denial inferred from the result text, not the audit trail
 	failed   bool   // the tool errored (not a denial)
 	matched  bool   // an audit record covers this step
+	prompt   string // the most recent human prompt before the step
 }
 
 func (s *step) str(key string) string { v, _ := s.Input[key].(string); return v }
@@ -292,11 +297,12 @@ func Analyze(entries []logstream.Entry, recs []audit.Record, p Params) *Report {
 	a.pi = r.Session.Harness == "pi"
 	a.modes = modeChanges(entries)
 
+	prompts := humanPrompts(entries)
 	for i, s := range rc.Steps {
 		if s.Kind != race.KindTool {
 			continue
 		}
-		st := &step{n: i + 1, Step: s}
+		st := &step{n: i + 1, Step: s, prompt: promptBefore(prompts, s.At)}
 		if st.Cwd == "" {
 			st.Cwd = a.cwd
 		}
@@ -317,6 +323,10 @@ func Analyze(entries []logstream.Entry, recs []audit.Record, p Params) *Report {
 			}
 			if f.Why == "" {
 				f.Why = rule.Why
+			}
+			if h.severity != "" && h.severity.Rank() < f.Severity.Rank() {
+				f.Severity = h.severity
+				f.RequestedByPrompt = h.requestedBy
 			}
 			if h.step != nil {
 				f.Step = h.step.n

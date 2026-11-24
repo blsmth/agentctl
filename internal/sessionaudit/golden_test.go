@@ -116,7 +116,8 @@ func TestFixtureWithAndWithoutAudit(t *testing.T) {
 		t.Errorf("without audit: %q", w)
 	}
 	for _, f := range with.Findings {
-		if f.Rule == "git-force-push" || f.Rule == "rm-recursive" {
+		// Steps 20+ are the deliberate rm -rf cases at the end of the fixture.
+		if f.Rule == "git-force-push" || f.Rule == "rm-recursive" && f.Step < 20 {
 			t.Errorf("false positive %s at step %d: %s", f.Rule, f.Step, f.Evidence)
 		}
 	}

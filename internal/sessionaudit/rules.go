@@ -26,13 +26,16 @@ type hit struct {
 	at       time.Time // overrides the step's time when set
 	evidence string
 	why      string // overrides Rule.Why when set
+
+	severity    Severity // overrides Rule.Severity when set (downgrades only)
+	requestedBy string   // excerpt of the human prompt that asked for the action
 }
 
 // rules is the rule table, evaluated in order.
 var rules = []Rule{
 	// Safety, high.
 	{ID: "rm-recursive", Title: "rm -r outside the repo", Category: Safety, Severity: High,
-		Why: "recursive delete of /, home, a parent dir or a path outside the working tree", check: bashRule(rmOutside)},
+		Why: "recursive delete of /, home, a parent dir or a path outside the working tree", check: rmRecursiveHits},
 	{ID: "rm-cwd", Title: "rm -r of the working dir", Category: Safety, Severity: Med,
 		Why: "recursive delete of the whole working dir", check: bashRule(rmCwd)},
 	{ID: "git-force-push", Title: "git push --force", Category: Safety, Severity: High,
@@ -181,6 +184,31 @@ func rmOutside(c simpleCmd, s *step, a *analysis) bool {
 		}
 	}
 	return false
+}
+
+// rmRecursiveHits is the rm-recursive rule. When the most recent human prompt
+// explicitly asks for the removal of every path the step deletes, the finding
+// drops from high to med and carries the prompt excerpt. A denied step is
+// never downgraded, and neither is one with an unrequested dangerous rm.
+func rmRecursiveHits(a *analysis) []hit {
+	hits := bashRule(rmOutside)(a)
+	for i, h := range hits {
+		if h.step.denied || h.step.prompt == "" {
+			continue
+		}
+		var ops []string
+		for _, c := range h.step.bash.cmds {
+			if rmOutside(c, h.step, a) {
+				ro, _ := rmRecursive(c)
+				ops = append(ops, ro...)
+			}
+		}
+		if ex, ok := requestedRemoval(h.step.prompt, ops); ok {
+			hits[i].severity = Med
+			hits[i].requestedBy = ex
+		}
+	}
+	return hits
 }
 
 // cwdTargets delete everything in the current dir.
@@ -896,11 +924,11 @@ func idleGaps(a *analysis) []hit {
 	}
 	var out []hit
 	for _, s := range a.steps {
-		if s.RawGap >= a.p.IdleGap {
+		if s.ModelGap >= a.p.IdleGap {
 			out = append(out, hit{
 				step:     s,
 				evidence: s.Tool + " " + s.Label,
-				why:      race.Friendly(s.RawGap.Round(time.Second)) + " with no activity inside a turn",
+				why:      race.Friendly(s.ModelGap.Round(time.Second)) + " with no activity inside a turn",
 			})
 		}
 	}
