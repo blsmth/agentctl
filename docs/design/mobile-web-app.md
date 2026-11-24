@@ -59,7 +59,9 @@ New `serve` block in `~/.config/agentctl/config.json`. Every key is **global-onl
     "muted_projects": []
   },
   "ntfy_topic": "",                  // optional; posts to https://ntfy.sh/<topic>. ntfy.sh topics are public: use a long random name
-  "ntfy_details": false              // off: ntfy posts name only the kind of event (no agent, project, window or Click URL)
+  "ntfy_details": false,             // off: ntfy posts name only the kind of event (no agent, project, window or Click URL)
+  "public_hostname": "",             // optional; e.g. "mac.agentctl.example.com": Let's Encrypt wildcard via Cloudflare DNS-01 (see Public certificate)
+  "acme": {"email": "", "staging": false}
 }
 ```
 
@@ -74,6 +76,37 @@ All under `config.StateDir()` (`~/.local/state/agentctl`) in `serve/`, dirs 0700
 - `vapid.json` — VAPID keypair (PR3). `subscriptions.json` — Web Push subscriptions keyed by device id (PR3).
 - `audit.jsonl` — one line per write action (PR4).
 - `serve.pid`, `serve.log` (log via lumberjack like the monitor).
+- With `serve.public_hostname` only: `cloudflare.token` (0600, created by the human) and `acme/` (0700, certmagic storage). See [Public certificate](#public-certificate-cloudflare-dns-01).
+
+## Public certificate (Cloudflare DNS-01)
+
+Optional. With `serve.public_hostname` set, serve also holds a Let's Encrypt certificate so artifact links open in any browser on the LAN or VPN without installing the local CA profile. Nothing is exposed to the internet: the name resolves to a LAN address, the challenge is DNS-01 (no inbound connection from Let's Encrypt), and `allow_cidrs`, device auth, CSRF and the artifact sandbox are unchanged.
+
+How it works (`internal/serve/publiccert.go`, `acme.go`; [certmagic](https://github.com/caddyserver/certmagic) with [libdns/cloudflare](https://github.com/libdns/cloudflare)):
+
+- **Wildcard.** The certificate is for the parent of the hostname: `macbookpro.agentctl.blsmth.com` gets `*.agentctl.blsmth.com`. The exact name is not on it, so the machine name never appears in the public Certificate Transparency logs. `public_hostname` therefore needs at least three labels (never `*.com` or `*.blsmth.com`).
+- **SNI routing.** `GetCertificate` gives the public certificate only to a TLS SNI equal to `public_hostname`. Every other name under the wildcard, IPs, `.local`, `serve.hostnames` and no SNI get the local-CA leaf, so paired phones keep working with no re-pair. With the key unset the listener's TLS config is exactly the old one.
+- **Never blocks startup.** serve listens on the local leaf at once; certmagic obtains the certificate in the background, stores it in `acme/`, retries failures with backoff and renews before expiry. Failures (no token, a loose token, a Cloudflare API error, a rate limit) are logged to `serve.log` and shown by `serve status`. The token is read from disk on every DNS call, so fixing it needs no restart; it is never logged or put in config.
+- **Advertising.** While a valid, publicly trusted certificate is held (by the Mac's clock), `serve status` shows `https://<public_hostname>:<port>/` as the URL, `agentctl artifact add|update|show|url|open` and the hub print links on that name (the CLI asks the running server over the control socket, only when the key is set), and ntfy `Click` links use it. Before that, and with the key unset, everything uses the old host. Pairing URLs and the CA bootstrap listener always use the LAN address. A staging certificate (`serve.acme.staging`) is served for the name but never advertised.
+- **Device cookies are per origin.** A phone paired on the LAN address has no cookie on the public name, so the PWA stays on the address it was installed from. Artifact links need no cookie (the id is the credential), which is the point of the public name.
+- **`serve status`** shows `public host`, `public cert name` (the wildcard), and `public cert`: `none`, `obtaining`, `valid, expires <date>` or `error`, plus `public cert error` with the last failure (a valid certificate with an error means a renewal attempt failed; certmagic keeps retrying).
+
+Setup (human only: agents cannot touch the serve state dir or restart serve):
+
+1. **DHCP reservation.** Reserve the Mac's LAN IP on the router (UDM: Settings → Client Devices → the Mac → Fixed IP), so the DNS record stays right.
+2. **DNS record.** In Cloudflare, add an `A` record for `macbookpro.agentctl` on `blsmth.com` pointing at that LAN IP, **DNS only (grey cloud), not proxied**. Only that one name needs a record; the wildcard certificate needs none.
+3. **API token.** Cloudflare → My Profile → API Tokens → Create Token → "Edit zone DNS" template: permission Zone · DNS · Edit, zone resources Include · Specific zone · `blsmth.com` only.
+4. **Token file.** Put the token alone on one line in `~/.local/state/agentctl/serve/cloudflare.token` and `chmod 600` it. A group- or world-readable file is refused.
+5. **Config.** In the global `~/.config/agentctl/config.json`: `"serve": {"public_hostname": "macbookpro.agentctl.blsmth.com", "acme": {"email": "you@example.com"}}`. Try `"staging": true` first if you are iterating on the setup.
+6. **Restart serve:** `launchctl kickstart -k gui/$(id -u)/com.blsmth.agentctl.serve` (or stop and rerun `agentctl serve` in the foreground). Then `agentctl serve status` until `public cert: valid`, and `agentctl serve logs` for progress.
+7. **DNS rebinding on the UDM.** Some resolvers drop public answers that point at private addresses. If `macbookpro.agentctl.blsmth.com` does not resolve on the LAN or VPN, add a local DNS record on the UDM (Settings → Routing → DNS → Create Entry: `macbookpro.agentctl.blsmth.com` → the LAN IP), or allow the domain in whatever rebind protection is on.
+
+Edge cases:
+
+- **Hostname changed in config.** Takes effect on restart: the new wildcard is obtained and the old one is no longer loaded, served or advertised (its files stay in `acme/`, harmless).
+- **Mac IP changed.** A DNS-only problem: the certificate does not name the IP. Update the A record (and the UDM override), or keep the DHCP reservation.
+- **Clock skew.** A certificate outside its validity window by the Mac's clock is reported as `error` ("check the clock") and not advertised.
+- **Rate limits.** Let's Encrypt limits duplicate certificates per week; use `acme.staging` while testing. certmagic backs off on failure.
 
 ## Pairing and auth
 

@@ -179,3 +179,60 @@ func TestServeOmittedWhenZero(t *testing.T) {
 		t.Errorf("zero serve block serialized: %s", data)
 	}
 }
+
+func TestServePublicHostnameParses(t *testing.T) {
+	cfg := loadWith(t, `{"serve":{"public_hostname":"Mac.Example.COM.","acme":{"email":"me@example.com","staging":true}}}`, `{}`)
+	h, err := cfg.Serve.EffectivePublicHostname()
+	if err != nil || h != "mac.example.com" {
+		t.Fatalf("EffectivePublicHostname = %q, %v", h, err)
+	}
+	if cfg.Serve.ACME.Email != "me@example.com" || !cfg.Serve.ACME.Staging {
+		t.Errorf("acme = %+v", cfg.Serve.ACME)
+	}
+}
+
+func TestProjectCannotSetPublicHostname(t *testing.T) {
+	cfg := loadWith(t, `{}`, `{"serve":{"public_hostname":"evil.example.com","acme":{"staging":true}}}`)
+	if !reflect.DeepEqual(cfg.Serve, ServeConfig{}) {
+		t.Errorf("Serve = %+v, want zero", cfg.Serve)
+	}
+}
+
+func TestEffectivePublicHostname(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{in: "", want: ""},
+		{in: "   ", want: ""},
+		{in: "macbookpro.agentctl.blsmth.com", want: "macbookpro.agentctl.blsmth.com"},
+		{in: " MacBookPro.Agentctl.Blsmth.com. ", want: "macbookpro.agentctl.blsmth.com"},
+		{in: "a-b.example.io", want: "a-b.example.io"},
+		{in: "localhost", wantErr: true},
+		{in: "blsmth.com", wantErr: true},
+		{in: "agentctl.blsmth.com.", want: "agentctl.blsmth.com"},
+		{in: "192.168.1.10", wantErr: true},
+		{in: "::1", wantErr: true},
+		{in: "*.example.com", wantErr: true},
+		{in: "-bad.example.com", wantErr: true},
+		{in: "bad-.example.com", wantErr: true},
+		{in: "a..example.com", wantErr: true},
+		{in: "under_score.example.com", wantErr: true},
+		{in: "host.example.com:8443", wantErr: true},
+		{in: "https://host.example.com", wantErr: true},
+		{in: "1.2.3.4.5", wantErr: true},
+		{in: strings.Repeat("a", 64) + ".example.com", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := ServeConfig{PublicHostname: tt.in}.EffectivePublicHostname()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

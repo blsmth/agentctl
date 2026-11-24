@@ -103,6 +103,7 @@ func printServeStatus(w io.Writer, dir string, now time.Time) error {
 		if st.Pairing {
 			fmt.Fprintf(tw, "pairing:\topen\n")
 		}
+		printPublicCertStatus(tw, st.PublicCert, now)
 		printPushStatus(tw, st)
 	case errors.Is(err, serve.ErrNotRunning):
 		if pid, ok := pidfile.Running(dir, serve.PIDFile, "serve"); ok {
@@ -276,6 +277,33 @@ func waitForCA(dir string, timeout time.Duration) *serve.CA {
 }
 
 // printPushStatus writes the push subscription and last-push lines.
+// printPublicCertStatus prints the serve.public_hostname rows; nothing when
+// the key is unset.
+func printPublicCertStatus(w io.Writer, pc *serve.PublicCertStatus, now time.Time) {
+	if pc == nil {
+		return
+	}
+	fmt.Fprintf(w, "public host:\t%s\n", pc.Hostname)
+	if pc.Subject != "" {
+		fmt.Fprintf(w, "public cert name:\t%s\n", pc.Subject)
+	}
+	state := pc.State
+	switch pc.State {
+	case serve.PublicCertValid:
+		days := int(pc.Expires.Sub(now).Hours() / 24)
+		state = fmt.Sprintf("valid, expires %s (%d days)", pc.Expires.Local().Format("2006-01-02"), days)
+		if pc.Staging {
+			state += ", Let's Encrypt staging: untrusted, not advertised"
+		}
+	case serve.PublicCertError:
+		state = "error"
+	}
+	fmt.Fprintf(w, "public cert:\t%s\n", state)
+	if pc.Error != "" {
+		fmt.Fprintf(w, "public cert error:\t%s\n", pc.Error)
+	}
+}
+
 func printPushStatus(w io.Writer, st serve.StatusInfo) {
 	if len(st.PushDevices) == 0 {
 		fmt.Fprintf(w, "push subscriptions:\t0\n")
