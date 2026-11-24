@@ -632,7 +632,9 @@ func wireCompletion() {
 	}
 	hooks.SetSpawnCompleteFn(spawn)
 	hooks.SetSpawnImproveFinishFn(func(runID string) error {
-		return detach.StartSelf([]string{"improve-finish", runID}, nil)
+		// Not the spawning window's environment: its AGENTCTL_SESSION_ID would
+		// send this process's log lines to a session log that is later pruned.
+		return detach.StartSelf([]string{"improve-finish", runID}, detach.DaemonEnv(os.Environ(), ""))
 	})
 	signal.SetSpawnCompleteFn(spawn)
 	signal.SetAutonomousModeFn(dispatch.IsAutonomous)

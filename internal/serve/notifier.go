@@ -51,7 +51,15 @@ type episode struct {
 type heldApproval struct {
 	msg      Message
 	deadline time.Time
+	// artifact marks a held new-artifact push: it has no pending answer to
+	// check, so only its deadline drops it.
+	artifact bool
+	project  string // of a held artifact, re-checked against mutes and quiet hours on release
 }
+
+// artifactHoldFor is how long a new-artifact push waits for the laptop to go
+// idle before it is dropped as stale.
+const artifactHoldFor = 12 * time.Hour
 
 // Notifier turns fleet bus events into push messages. The decision logic
 // (handle, tick) is synchronous and clock-driven so tests run it with a fake
@@ -81,19 +89,32 @@ func NewNotifier(cfg config.ServePushConfig, now func() time.Time, deliver func(
 }
 
 // SetLaptop makes the notifier hold pushes while l reports the laptop in use:
-// done and artifact pushes are dropped, a blocked agent and an approval are
+// a done push is dropped; a blocked agent, an approval and a new artifact are
 // pushed once when the laptop goes idle if still blocked or pending (pending
-// reports that; nil means always). Call before Run.
+// reports that; nil means always). A held artifact is dropped instead if its
+// project was muted or quiet hours began meanwhile. Call before Run.
 func (n *Notifier) SetLaptop(l *laptopActivity, pending func(id string) bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.laptop, n.approvalPending = l, pending
 }
 
-// laptopQuietLocked reports whether the laptop is in use, logging the
-// suppressed push when it is.
-func (n *Notifier) laptopQuietLocked(kind, tag, note string) bool {
-	if !n.laptop.Active() {
+// laptopQuietLocked reports whether a push should be held back for the laptop,
+// logging the suppressed push when so. It only reads the cached answer (Peek),
+// so no probe ever runs under n.mu. When the answer is unknown (no probe yet,
+// or a stale one), holdUnknown decides: pushes that are held and replayed on
+// idle (blocked, reminder, approval) wait for the refresh; pushes that would be
+// lost (done, artifact) go out, and Sender.Broadcast makes the final call.
+func (n *Notifier) laptopQuietLocked(kind, tag, note string, holdUnknown bool) bool {
+	active, known := n.laptop.Peek()
+	if !known {
+		if !holdUnknown {
+			return false
+		}
+		pushLogf("push: kind=%s tag=%s suppressed, laptop state unknown%s", kind, redactArtifactIDs(tag), note)
+		return true
+	}
+	if !active {
 		return false
 	}
 	pushLogf("push: kind=%s tag=%s suppressed, laptop active%s", kind, redactArtifactIDs(tag), note)
@@ -106,7 +127,7 @@ func (n *Notifier) laptopQuietLocked(kind, tag, note string) bool {
 func (n *Notifier) Approval(id string, msg Message, deadline time.Time) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if n.laptopQuietLocked(msg.Kind, msg.Tag, " (held until idle)") {
+	if n.laptopQuietLocked(msg.Kind, msg.Tag, " (held until idle)", true) {
 		n.held[id] = heldApproval{msg: msg, deadline: deadline}
 		return
 	}
@@ -170,7 +191,8 @@ func (n *Notifier) fireArtifactLocked(a fleetwatch.ArtifactChange, now time.Time
 		return
 	}
 	msg := artifactMessage(a)
-	if n.laptopQuietLocked(msg.Kind, msg.Tag, "") {
+	if n.laptopQuietLocked(msg.Kind, msg.Tag, " (held until idle)", false) {
+		n.held[msg.Tag] = heldApproval{msg: msg, deadline: now.Add(artifactHoldFor), artifact: true, project: a.Project}
 		return
 	}
 	n.deliver(msg)
@@ -264,7 +286,8 @@ func (n *Notifier) Tick() {
 // probed only while something is held.
 func (n *Notifier) flushHeldLocked(now time.Time) {
 	for id, h := range n.held {
-		if !now.Before(h.deadline) || (n.approvalPending != nil && !n.approvalPending(id)) {
+		stale := h.artifact && (slices.Contains(n.cfg.MutedProjects, h.project) || InQuietHours(n.cfg.QuietHours, now))
+		if stale || !now.Before(h.deadline) || (!h.artifact && n.approvalPending != nil && !n.approvalPending(id)) {
 			delete(n.held, id)
 		}
 	}
@@ -275,8 +298,11 @@ func (n *Notifier) flushHeldLocked(now time.Time) {
 		}
 		owed = owed || ep.owed
 	}
-	if (len(n.held) == 0 && !owed) || n.laptop.Active() {
+	if len(n.held) == 0 && !owed {
 		return
+	}
+	if active, known := n.laptop.Peek(); active || !known {
+		return // in use, or wait for the refresh
 	}
 	for id, h := range n.held {
 		delete(n.held, id)
@@ -289,7 +315,8 @@ func (n *Notifier) flushHeldLocked(now time.Time) {
 		if !ep.owed {
 			continue
 		}
-		ep.owed = false
+		// The owed push stands in for the reminder: one push per episode.
+		ep.owed, ep.reminded = false, true
 		if !n.cfg.BlockedEnabled() || !n.allowedLocked(ep.win, now) {
 			continue
 		}
@@ -311,7 +338,7 @@ func (n *Notifier) fireBlockedLocked(ep *episode, w fleet.Window, now time.Time)
 		return
 	}
 	msg := blockedMessage(w, "Needs permission")
-	if n.laptopQuietLocked(msg.Kind, msg.Tag, " (held until idle)") {
+	if n.laptopQuietLocked(msg.Kind, msg.Tag, " (held until idle)", true) {
 		ep.owed = true
 		return
 	}
@@ -336,7 +363,7 @@ func (n *Notifier) fireReminderLocked(ep *episode, blockedFor time.Duration) {
 	if !n.cfg.BlockedEnabled() || !n.allowedLocked(w, n.now()) {
 		return
 	}
-	if n.laptopQuietLocked("reminder", w.Session+":"+w.WindowID, " (held until idle)") {
+	if n.laptopQuietLocked("reminder", w.Session+":"+w.WindowID, " (held until idle)", true) {
 		ep.owed = true
 		return
 	}
@@ -368,7 +395,7 @@ func (n *Notifier) sendDoneLocked(ep *episode, w fleet.Window, now time.Time) {
 	if !ep.lastDone.IsZero() && now.Sub(ep.lastDone) < flapWindow {
 		return
 	}
-	if n.laptopQuietLocked("done", w.Session+":"+w.WindowID, "") {
+	if n.laptopQuietLocked("done", w.Session+":"+w.WindowID, "", false) {
 		return
 	}
 	ep.lastDone = now

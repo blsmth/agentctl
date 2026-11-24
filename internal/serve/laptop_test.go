@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,17 +15,28 @@ import (
 
 // fakeLaptop is a LaptopIdleFunc whose answer tests set.
 type fakeLaptop struct {
+	mu    sync.Mutex
 	idle  time.Duration
 	err   error
 	calls int
 }
 
 func (f *fakeLaptop) probe(context.Context) (time.Duration, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls++
 	return f.idle, f.err
 }
 
+func (f *fakeLaptop) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
 func (f *fakeLaptop) setActive(active bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.err = nil
 	f.idle = time.Second
 	if !active {
@@ -195,20 +207,25 @@ func TestLaptopActivity(t *testing.T) {
 type laptopNotifyEnv struct {
 	*notifyEnv
 	laptop  *fakeLaptop
+	act     *laptopActivity
 	pending map[string]bool
 }
 
 func newLaptopNotifyEnv(cfg config.ServePushConfig, active bool) *laptopNotifyEnv {
 	e := &laptopNotifyEnv{notifyEnv: newNotifyEnv(cfg), laptop: &fakeLaptop{}, pending: map[string]bool{}}
 	e.laptop.setActive(active)
-	e.n.SetLaptop(newLaptopActivity(e.laptop.probe, 2*time.Minute, e.clock.Now), func(id string) bool { return e.pending[id] })
+	e.act = newLaptopActivity(e.laptop.probe, 2*time.Minute, e.clock.Now)
+	e.act.Active() // prime the cache, as a running server has one
+	e.n.SetLaptop(e.act, func(id string) bool { return e.pending[id] })
 	return e
 }
 
 // setActive changes the laptop state and moves past the probe cache.
 func (e *laptopNotifyEnv) setActive(active bool) {
+	e.act.wait()
 	e.laptop.setActive(active)
 	e.clock.Advance(laptopCacheTTL)
+	e.act.Active() // Notifier only reads the cache; refresh it here
 }
 
 func approvalMsg(id string) Message {
@@ -229,7 +246,7 @@ func TestNotifierLaptopDecision(t *testing.T) {
 		{"blocked, laptop idle", false, true, func(e *laptopNotifyEnv) { e.transition(blocked) }, 1},
 		{"done, laptop active", true, true, func(e *laptopNotifyEnv) { e.transition(win("idle", true)) }, 0},
 		{"done, laptop idle", false, true, func(e *laptopNotifyEnv) { e.transition(win("idle", true)) }, 1},
-		{"artifact, laptop active", true, true, func(e *laptopNotifyEnv) { e.artifact() }, 0},
+		{"artifact, laptop active (held)", true, true, func(e *laptopNotifyEnv) { e.artifact() }, 0},
 		{"artifact, laptop idle", false, true, func(e *laptopNotifyEnv) { e.artifact() }, 1},
 		{"approval, laptop active", true, true, func(e *laptopNotifyEnv) { e.n.Approval("a1", approvalMsg("a1"), e.clock.Now().Add(time.Minute)) }, 0},
 		{"approval, laptop idle", false, true, func(e *laptopNotifyEnv) { e.n.Approval("a1", approvalMsg("a1"), e.clock.Now().Add(time.Minute)) }, 1},
@@ -381,12 +398,14 @@ func TestNotifierLaptopHeldApproval(t *testing.T) {
 
 func TestNotifierLaptopProbesOnlyWhenHeld(t *testing.T) {
 	e := newLaptopNotifyEnv(config.ServePushConfig{}, false)
+	base := e.laptop.callCount()
 	for range 60 {
 		e.clock.Advance(time.Second)
 		e.n.Tick()
 	}
-	if e.laptop.calls != 0 {
-		t.Errorf("idle ticks probed the laptop %d times", e.laptop.calls)
+	e.act.wait()
+	if got := e.laptop.callCount() - base; got != 0 {
+		t.Errorf("idle ticks probed the laptop %d times", got)
 	}
 	// Many events inside one cache window: one probe.
 	for i := range 20 {
@@ -394,8 +413,72 @@ func TestNotifierLaptopProbesOnlyWhenHeld(t *testing.T) {
 		w.WindowID = "@" + string(rune('a'+i))
 		e.transition(w)
 	}
-	if e.laptop.calls != 1 {
-		t.Errorf("20 events probed %d times, want 1", e.laptop.calls)
+	e.act.wait()
+	if got := e.laptop.callCount() - base; got != 1 {
+		t.Errorf("20 events probed %d times, want 1", got)
+	}
+}
+
+// blockingProbe blocks until release is closed.
+type blockingProbe struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *blockingProbe) probe(ctx context.Context) (time.Duration, error) {
+	b.once.Do(func() { close(b.started) })
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+	}
+	return time.Second, nil
+}
+
+func TestNotifierNeverProbesUnderLock(t *testing.T) {
+	b := &blockingProbe{started: make(chan struct{}), release: make(chan struct{})}
+	clock := newClock()
+	act := newLaptopActivity(b.probe, 2*time.Minute, clock.Now)
+	t.Cleanup(func() { close(b.release); act.wait() })
+	e := newNotifyEnv(config.ServePushConfig{})
+	e.n.SetLaptop(act, nil)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		blocked := win("blocked", false)
+		e.transition(blocked) // Handle: no value yet
+		e.n.Approval("a1", approvalMsg("a1"), e.clock.Now().Add(time.Minute))
+		e.n.Tick()
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Notifier calls blocked on a stuck laptop probe")
+	}
+	<-b.started
+	if got := e.take(); len(got) != 0 {
+		t.Errorf("messages = %+v, want blocked and approval held while the laptop state is unknown", got)
+	}
+}
+
+func TestNotifierIdleFlushSuppressesReminder(t *testing.T) {
+	e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
+	blocked := win("blocked", false)
+	e.transition(blocked)
+	e.clock.Advance(2 * time.Minute)
+	e.setActive(false)
+	e.n.Tick()
+	if got := e.take(); len(got) != 1 || got[0].Kind != "blocked" {
+		t.Fatalf("on idle got %+v, want one blocked push", got)
+	}
+	// Past the 10 minute mark the normal reminder must not add a second push.
+	for range 12 {
+		e.clock.Advance(time.Minute)
+		e.n.Tick()
+	}
+	if got := e.take(); len(got) != 0 {
+		t.Errorf("reminder after flushed push: %+v", got)
 	}
 }
 
@@ -458,5 +541,88 @@ func TestQuietWhenLaptopActiveWiring(t *testing.T) {
 	ts = newTestServer(t, config.ServeConfig{Push: config.ServePushConfig{LaptopIdleSeconds: new(30)}})
 	if ts.sender.laptop.threshold != 30*time.Second {
 		t.Errorf("threshold = %v, want 30s", ts.sender.laptop.threshold)
+	}
+}
+
+func TestNotifierStaleCacheDoesNotDropDoneOrArtifact(t *testing.T) {
+	for name, fire := range map[string]func(e *laptopNotifyEnv){
+		"done":     func(e *laptopNotifyEnv) { e.transition(win("idle", true)) },
+		"artifact": func(e *laptopNotifyEnv) { e.artifact() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
+			e.laptop.setActive(false) // walked away; the cache still says active
+			e.clock.Advance(30 * time.Minute)
+			fire(e)
+			e.act.wait()
+			if got := e.take(); len(got) != 1 {
+				t.Errorf("messages = %+v, want 1 (stale answer must not drop the push)", got)
+			}
+		})
+	}
+}
+
+func TestNotifierStaleCacheHoldsBlockedUntilRefresh(t *testing.T) {
+	e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
+	e.laptop.setActive(false)
+	e.clock.Advance(30 * time.Minute)
+	e.transition(win("blocked", false))
+	e.act.wait()
+	e.n.Tick()
+	if got := e.take(); len(got) != 1 || got[0].Kind != "blocked" {
+		t.Errorf("messages = %+v, want one blocked push after the refresh", got)
+	}
+}
+
+// A new artifact published while the laptop is in use is held and pushed once
+// when the laptop goes idle, not dropped.
+func TestNotifierArtifactHeldUntilLaptopIdle(t *testing.T) {
+	e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
+	e.artifact()
+	e.n.Tick()
+	if got := e.take(); len(got) != 0 {
+		t.Fatalf("pushed while laptop active: %+v", got)
+	}
+	e.setActive(false)
+	e.n.Tick()
+	got := e.take()
+	if len(got) != 1 || got[0].Kind != "artifact" {
+		t.Fatalf("on idle got %+v, want one artifact push", got)
+	}
+	e.n.Tick()
+	if got := e.take(); len(got) != 0 {
+		t.Errorf("repeat push: %+v", got)
+	}
+}
+
+// A held artifact is dropped, not pushed, when its project got muted or quiet
+// hours began while it waited for the laptop to go idle.
+func TestNotifierHeldArtifactRechecksMuteAndQuietHours(t *testing.T) {
+	tests := []struct {
+		name  string
+		apply func(n *Notifier, now time.Time)
+	}{
+		{"muted meanwhile", func(n *Notifier, _ time.Time) { n.cfg.MutedProjects = []string{"proj"} }},
+		{"quiet hours began", func(n *Notifier, now time.Time) {
+			l := now // InQuietHours reads the clock's own zone
+			n.cfg.QuietHours = l.Add(-time.Hour).Format("15:04") + "-" + l.Add(time.Hour).Format("15:04")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
+			e.artifact()
+			e.n.mu.Lock()
+			tt.apply(e.n, e.clock.Now())
+			e.n.mu.Unlock()
+			e.setActive(false)
+			e.n.Tick()
+			if got := e.take(); len(got) != 0 {
+				t.Errorf("pushed a stale held artifact: %+v", got)
+			}
+			if len(e.n.held) != 0 {
+				t.Errorf("held = %v, want empty", e.n.held)
+			}
+		})
 	}
 }

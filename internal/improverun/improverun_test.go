@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/agenthistory"
+	"github.com/blsmth/agentctl/internal/artifacts"
 	"github.com/blsmth/agentctl/internal/notify"
 	"github.com/blsmth/agentctl/internal/testenv"
 )
@@ -374,5 +375,49 @@ func TestRunSnapshotsKnownProjectStores(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(proj, ".claude", "agents", "brandon.md")); string(b) != "v1\n" {
 		t.Fatalf("after revert = %q", b)
+	}
+}
+
+// The real artifacts store accepts the report from the run dir (0600, under the
+// state dir) and the artifact is listed under the improve project.
+func TestDefaultPublishAddsReportToRealStore(t *testing.T) {
+	setup(t)
+	dir := filepath.Join(t.TempDir(), "improve", "r9")
+	write(t, filepath.Join(dir, "report.md"), "# Report\n")
+	if err := os.Chmod(filepath.Join(dir, "report.md"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := defaultPublish(filepath.Join(dir, "report.md"), Run{ID: "r9", Agent: "brandon", Fleet: true, Files: []string{"x"}}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := artifacts.New().List(artifacts.Filter{})
+	if err != nil || len(list) != 1 {
+		t.Fatalf("List = %v, %v", list, err)
+	}
+	if m := list[0]; m.Agent != "brandon" || m.Project != "improve" || m.Kind != artifacts.KindMarkdown {
+		t.Errorf("meta = %+v", m)
+	}
+}
+
+func TestResend(t *testing.T) {
+	e := setup(t)
+	if err := Start(StartOptions{ID: "r2", Agent: "brandon"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Resend("r2"); err == nil {
+		t.Error("Resend of an unfinished run succeeded")
+	}
+	write(t, filepath.Join(e.home, ".claude", "agents", "a.md"), "v2\n")
+	if err := Finish("r2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Resend("r2"); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.notified) != 2 || len(e.published) != 2 {
+		t.Fatalf("notified %d, published %d; want 2 each", len(e.notified), len(e.published))
+	}
+	if err := Resend("nope"); err == nil {
+		t.Error("Resend of an unknown run succeeded")
 	}
 }
