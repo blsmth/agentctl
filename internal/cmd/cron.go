@@ -461,6 +461,13 @@ func realCronDeps(dir string, cfg config.CronConfig, jobs []cron.Job) cron.Deps 
 	}
 }
 
+// Seams for tests: project resolution (shells out to git) and the tmux
+// window list.
+var (
+	cronProjectFor  = projectFor
+	cronListWindows = tmux.ListWindowsInErr
+)
+
 // cronWindows lists every live window a cron job launched, across the jobs'
 // projects: windowstate records with scheduled_by, joined with the
 // project session's live tmux windows. A missing session means none.
@@ -468,7 +475,7 @@ func cronWindows(jobs []cron.Job) ([]cron.Window, error) {
 	seen := map[string]bool{}
 	var out []cron.Window
 	for _, j := range jobs {
-		p := projectFor(j)
+		p := cronProjectFor(j)
 		if seen[p.runtimeDir] {
 			continue
 		}
@@ -477,7 +484,7 @@ func cronWindows(jobs []cron.Job) ([]cron.Window, error) {
 		if !hasScheduled(records) {
 			continue
 		}
-		live, err := tmux.ListWindowsInErr(p.session)
+		live, err := cronListWindows(p.session)
 		if err != nil {
 			continue // session not running: no live windows
 		}
@@ -491,7 +498,7 @@ func cronWindows(jobs []cron.Job) ([]cron.Window, error) {
 			}
 			out = append(out, cron.Window{
 				ID: id, Job: ws.ScheduledBy, RuntimeDir: p.runtimeDir, Session: p.session,
-				MainPane: ws.MainPane, SessionID: ws.SessionID, Done: ws.Done, ScheduledAt: ws.ScheduledAt,
+				MainPane: ws.MainPane, SessionID: ws.SessionID, Done: ws.Done || improveRunDone(ws), ScheduledAt: ws.ScheduledAt,
 			})
 		}
 	}

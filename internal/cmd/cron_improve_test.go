@@ -3,6 +3,9 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,6 +14,7 @@ import (
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/improve"
 	"github.com/blsmth/agentctl/internal/improverun"
+	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
@@ -167,5 +171,41 @@ func TestCronLaunchImprove(t *testing.T) {
 	improveLaunch = func(improve.Options) (improve.Result, error) { return improve.Result{}, improverun.ErrRunActive }
 	if err := cronLaunchImprove(req, cronProject{session: "agentctl-p"}, &res); !errors.Is(err, improverun.ErrRunActive) {
 		t.Errorf("err = %v, want ErrRunActive", err)
+	}
+}
+
+// cronWindows must report an improve window whose run is finished as Done
+// (so the next fire is not skipped as overlap), and an unfinished one as not.
+func TestCronWindowsImproveDone(t *testing.T) {
+	rt := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(rt, "windows"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for id, run := range map[string]string{"@1": "fin", "@2": "open"} {
+		rec := fmt.Sprintf(`{"scheduled_by":"fleet-improve","mode":"improve","improve_run":%q}`, run)
+		if err := os.WriteFile(filepath.Join(rt, "windows", id+".json"), []byte(rec), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldP, oldL, oldF := cronProjectFor, cronListWindows, improveRunFinished
+	t.Cleanup(func() { cronProjectFor, cronListWindows, improveRunFinished = oldP, oldL, oldF })
+	cronProjectFor = func(cron.Job) cronProject {
+		return cronProject{root: filepath.Dir(rt), runtimeDir: rt, session: "agentctl-p"}
+	}
+	cronListWindows = func(string) ([]tmux.WindowInfo, error) {
+		return []tmux.WindowInfo{{ID: "@1"}, {ID: "@2"}}, nil
+	}
+	improveRunFinished = func(id string) bool { return id == "fin" }
+
+	ws, err := cronWindows([]cron.Job{{Name: "fleet-improve"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := map[string]bool{}
+	for _, w := range ws {
+		done[w.ID] = w.Done
+	}
+	if len(done) != 2 || !done["@1"] || done["@2"] {
+		t.Errorf("done = %v, want @1 done and @2 not", done)
 	}
 }
