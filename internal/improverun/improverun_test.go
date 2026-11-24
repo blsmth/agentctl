@@ -328,6 +328,56 @@ func TestPruneRemovesOldFinishedRuns(t *testing.T) {
 	}
 }
 
+// A project's own .claude/agents is a store of the run, whether or not the
+// run's own dirs name it: an edit there is recorded with its revert command.
+func TestRunSnapshotsKnownProjectStores(t *testing.T) {
+	e := setup(t)
+	proj := filepath.Join(t.TempDir(), "proj")
+	write(t, filepath.Join(proj, ".claude", "agents", "brandon.md"), "v1\n")
+	old := knownDirs
+	knownDirs = func(extra []string) []string { return append(extra, proj) }
+	t.Cleanup(func() { knownDirs = old })
+
+	if err := Start(StartOptions{ID: "rp", Agent: "fleet-improver", Fleet: true}); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := Load("rp")
+	if len(r.Stores) != 3 {
+		t.Fatalf("stores = %+v", r.Stores)
+	}
+	write(t, filepath.Join(proj, ".claude", "agents", "brandon.md"), "v2\n")
+	if err := Finish("rp"); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = Load("rp")
+	canon := agenthistory.CanonicalRoot(proj)
+	wantFile := filepath.Join(canon, ".claude", "agents", "brandon.md")
+	if len(r.Files) != 1 || r.Files[0] != wantFile {
+		t.Fatalf("files = %v, want [%s]", r.Files, wantFile)
+	}
+	if len(r.Reverts) != 1 || !strings.Contains(r.Reverts[0], "--store "+canon) || !strings.Contains(r.Reverts[0], ".claude/agents/brandon.md") {
+		t.Fatalf("reverts = %v", r.Reverts)
+	}
+	if len(e.notified) != 1 || !strings.Contains(e.published[0], "brandon.md") {
+		t.Fatalf("summary lacks the project file: %v", e.published)
+	}
+	// The recorded revert command works against the project store.
+	st, err := agenthistory.StoreByName(canon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := st.Resolve(".claude/agents/brandon.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.Revert(path, r.Stores[2].StartRev, ""); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(proj, ".claude", "agents", "brandon.md")); string(b) != "v1\n" {
+		t.Fatalf("after revert = %q", b)
+	}
+}
+
 // The real artifacts store accepts the report from the run dir (0600, under the
 // state dir) and the artifact is listed under the improve project.
 func TestDefaultPublishAddsReportToRealStore(t *testing.T) {

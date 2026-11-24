@@ -136,13 +136,27 @@ func StoreByName(name string) (*Store, error) {
 }
 
 // StoreForPath picks the store an absolute path belongs to: the config store
-// for a path under the agentctl config dir, the home store otherwise.
+// for a path under the agentctl config dir, a project's store (named by its
+// canonical project dir) for a path under some <project>/.claude/agents, the
+// home store otherwise.
 func StoreForPath(arg string) string {
 	if filepath.IsAbs(arg) {
 		if dir, err := config.GlobalDir(); err == nil {
-			if rel, err := filepath.Rel(dir, arg); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
-				return NameConfig
+			for _, d := range []string{dir, CanonicalRoot(dir)} {
+				for _, a := range []string{arg, canonicalPath(arg)} {
+					if rel, err := filepath.Rel(d, a); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+						return NameConfig
+					}
+				}
 			}
+		}
+		// The root keeps the spelling given: ProjectStore canonicalizes it
+		// and falls back to a store keyed by that spelling.
+		if root, ok := projectRootOf(arg); ok && !isHomeRoot(root) {
+			return root
+		}
+		if root, ok := projectRootOf(canonicalPath(arg)); ok && !isHomeRoot(root) {
+			return root
 		}
 	}
 	return NameHome
@@ -157,13 +171,31 @@ func ProjectStore(repo string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving state dir: %w", err)
 	}
-	sum := sha256.Sum256([]byte(filepath.Clean(repo)))
-	name := fmt.Sprintf("%x-%s.git", sum[:4], filepath.Base(repo))
+	literal := filepath.Clean(repo)
+	repo = CanonicalRoot(repo)
+	gitDir := projectGitDir(sd, repo)
+	if literal != repo && !gitDirExists(gitDir) {
+		// Stores made before keys were canonical used the path as spelled.
+		// Keep using one, so its history is not orphaned.
+		if legacy := projectGitDir(sd, literal); gitDirExists(legacy) {
+			gitDir = legacy
+		}
+	}
 	return &Store{
-		GitDir:   filepath.Join(sd, "agent-history", name),
-		WorkTree: filepath.Clean(repo),
+		GitDir:   gitDir,
+		WorkTree: repo,
 		Paths:    []string{filepath.Join(".claude", "agents")},
 	}, nil
+}
+
+func projectGitDir(sd, root string) string {
+	sum := sha256.Sum256([]byte(root))
+	return filepath.Join(sd, "agent-history", fmt.Sprintf("%x-%s.git", sum[:4], filepath.Base(root)))
+}
+
+func gitDirExists(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "HEAD"))
+	return err == nil
 }
 
 func defaultRunGit(env []string, stdin string, args ...string) ([]byte, error) {
@@ -452,6 +484,11 @@ func (s *Store) Resolve(arg string) (string, error) {
 	switch {
 	case filepath.IsAbs(arg):
 		r, err := filepath.Rel(s.WorkTree, arg)
+		if err != nil || !s.underTracked(r) {
+			// Another spelling of the same file: symlinked dirs, or a
+			// linked worktree's copy of a project path.
+			r, err = filepath.Rel(s.WorkTree, canonicalPath(arg))
+		}
 		if err != nil {
 			return "", fmt.Errorf("%w: %s", ErrNotTracked, arg)
 		}
@@ -472,6 +509,19 @@ func (s *Store) Resolve(arg string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%w: %s", ErrNotTracked, arg)
+}
+
+// underTracked reports whether rel (relative to the work tree) is one of the
+// tracked paths or under one.
+func (s *Store) underTracked(rel string) bool {
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	for _, p := range s.Paths {
+		p = filepath.ToSlash(p)
+		if rel == p || strings.HasPrefix(rel, p+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) ready() error {

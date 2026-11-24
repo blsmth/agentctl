@@ -119,11 +119,7 @@ func DefaultHousekeepingDeps(runtimeDir string) HousekeepingDeps {
 			if improverun.Active() {
 				return true
 			}
-			var dirs []string
-			for _, r := range windowstate.All() {
-				dirs = append(dirs, r.WorkDir)
-			}
-			return agenthistory.SnapshotAll("housekeeping: edit", dirs)
+			return agenthistory.SnapshotAll("housekeeping: edit", improverun.KnownProjectDirs())
 		},
 	}
 }
