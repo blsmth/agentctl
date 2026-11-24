@@ -70,6 +70,7 @@ func (s Session) Duration() time.Duration {
 // Summary holds a parsed session summary for display.
 type Summary struct {
 	Session               Session
+	Cwd                   string   // working directory from the first record carrying one
 	UserMsgs              []string // user message previews
 	TextBlocks            []string // assistant text blocks
 	ToolCalls             []ToolCall
@@ -412,6 +413,10 @@ func ParseSummary(s Session) (*Summary, error) {
 			continue
 		}
 		entry = transcript.Normalize(entry)
+
+		if sum.Cwd == "" {
+			sum.Cwd, _ = entry["cwd"].(string)
+		}
 
 		entryType, _ := entry["type"].(string)
 
