@@ -23,10 +23,11 @@ let openRow = null; // { snapBack() }
  * a real button; tapping it calls `onClose()`, which resolves true when the row
  * should go away (collapsed) or false to snap back. Tapping the row, swiping it
  * back, scrolling, tapping elsewhere, opening another row or navigating all
- * snap it back. `onBusy(true|false)` is held for as long as the row is open or
+ * snap it back. `dragging()` says a long-press drag owns the pointer (drag.js)
+ * so the swipe stands down. `onBusy(true|false)` is held for as long as the row is open or
  * being dragged, and released exactly once on every exit path.
  */
-export function attachSwipe(wrap, node, handle, action, { onClose, onBusy }) {
+export function attachSwipe(wrap, node, handle, action, { onClose, onBusy, dragging = () => false }) {
   let start = null; // { id, x, y, t, axis, width, samples, base }
   let isOpen = false;
   let busy = false;
@@ -184,6 +185,11 @@ export function attachSwipe(wrap, node, handle, action, { onClose, onBusy }) {
 
   handle.addEventListener("pointermove", (e) => {
     if (!start || e.pointerId !== start.id) return;
+    if (dragging()) {
+      start = null;
+      releaseGesture();
+      return;
+    }
     const dx = e.clientX - start.x;
     const dy = e.clientY - start.y;
     if (!start.axis) {

@@ -39,10 +39,11 @@ test("the tab is hidden until the server offers artifacts, then lists by project
   await expect(page.locator(".artifact-list section.group h2")).toHaveText(["shop", "blog"]);
   const mock = page.locator(".artifact-row", { hasText: "Checkout mockup" });
   await expect(mock).toContainText("designer");
-  await expect(mock).toContainText("2 revs");
-  await expect(mock).toContainText("pin · 2 revs");
-  // Pinned rows lead their project group.
-  await expect(page.locator(".artifact-list section.group").first().locator(".artifact-row").first()).toContainText("Checkout mockup");
+  await expect(mock).toContainText("rev 2");
+  await expect(mock.locator(".artifact-pin")).toBeVisible();
+  await expect(mock.locator(".artifact-tile")).toHaveClass(/kind-html/);
+  // The header carries the project's artifact count.
+  await expect(page.locator(".artifact-list section.group").first().locator(".artifact-count")).toHaveText("2");
   await expect(page.locator("nav a.active")).toHaveText("Artifacts");
 });
 
@@ -239,4 +240,55 @@ test("feedback bridge: a message from the artifact prefills the composer and nev
   await sheet.getByRole("button", { name: "Send" }).click();
   await expect(page.locator(".toast")).toBeVisible();
   expect(posts).toHaveLength(1);
+});
+
+test("project groups fold, remember it, and keep their count", async ({ page, control }) => {
+  await control.seedArtifacts(seed());
+  await page.goto("/#/artifacts");
+  const shopGroup = page.locator(".artifact-list section.group", { hasText: "shop" });
+  await expect(shopGroup.locator(".artifact-row")).toHaveCount(2);
+  await shopGroup.locator(".group-toggle").click();
+  await expect(shopGroup.locator(".nodes")).toBeHidden();
+  await expect(shopGroup.locator(".artifact-count")).toHaveText("2");
+  expect(await page.evaluate(() => localStorage.getItem("agentctl.artifacts.collapsed"))).toContain("/fixture/shop");
+  await page.reload();
+  await expect(page.locator(".artifact-list section.group", { hasText: "shop" }).locator(".nodes")).toBeHidden();
+  await page.locator(".artifact-list section.group", { hasText: "shop" }).locator(".group-toggle").click();
+  await expect(page.locator(".artifact-list section.group", { hasText: "shop" }).locator(".nodes")).toBeVisible();
+});
+
+test("Alt+Arrow reorders rows inside a project and the order sticks", async ({ page, control }) => {
+  await control.seedArtifacts(seed());
+  await page.goto("/#/artifacts");
+  const titles = () => page.locator(".artifact-list section.group").first().locator(".artifact-row .win-title .agent").allTextContents();
+  const before = await titles();
+  expect(before).toHaveLength(2);
+  await page.locator(".artifact-list section.group").first().locator(".artifact-row").first().focus();
+  await page.keyboard.press("Alt+ArrowDown");
+  await expect.poll(titles).toEqual([...before].reverse());
+  await page.reload();
+  await expect.poll(titles).toEqual([...before].reverse());
+});
+
+test("swipe-delete hides the row at once, Undo brings it back, and nothing is sent until the toast ends", async ({ page, control }) => {
+  await control.seedArtifacts(seed());
+  await page.goto("/#/artifacts");
+  const row = page.locator(".artifact-row", { hasText: "Cart numbers" });
+  await expect(row).toBeVisible();
+  const deletes: string[] = [];
+  page.on("request", (r) => r.method() === "DELETE" && deletes.push(r.url()));
+  const box = (await row.boundingBox())!;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + box.width - 20, y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, y, { steps: 6 });
+  await page.mouse.move(box.x + 20, y, { steps: 6 });
+  await page.mouse.up();
+  await page.getByRole("button", { name: "Delete Cart numbers" }).click();
+  await expect(page.locator(".toast")).toContainText("Deleted Cart numbers");
+  await expect(page.locator(".artifact-row", { hasText: "Cart numbers" })).toHaveCount(0);
+  expect(deletes).toEqual([]);
+  await page.locator(".toast .btn-text", { hasText: "Undo" }).click();
+  await expect(page.locator(".artifact-row", { hasText: "Cart numbers" })).toHaveCount(1);
+  expect(deletes).toEqual([]);
 });

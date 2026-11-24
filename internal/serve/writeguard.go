@@ -215,7 +215,7 @@ func (s *Server) auditFor(r *http.Request, d Device, action string) auditEntry {
 		Session:    clip(session),
 		Window:     clip(window),
 	}
-	if _, ok := artifactActionFor(r.URL.Path); ok {
+	if action, ok := artifactActionFor(r.URL.Path); ok && action != "artifact-order" {
 		e.Artifact = clip(strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")[2])
 	}
 	return e
