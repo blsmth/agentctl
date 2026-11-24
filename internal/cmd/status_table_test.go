@@ -1,0 +1,30 @@
+package cmd
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+
+	"github.com/blsmth/agentctl/internal/cliout"
+	"github.com/blsmth/agentctl/internal/fleet"
+)
+
+func TestPrintStatusTableRowsReachPlainOutput(t *testing.T) {
+	var rows []statusRow
+	for _, id := range []string{"@1", "@2", "@3"} {
+		var r fleet.Row
+		r.WindowID, r.Name, r.State, r.Done = id, "go-engineer", "idle", true
+		rows = append(rows, statusRow{row: r, group: fleet.Group{Project: "proj"}})
+	}
+	var buf bytes.Buffer
+	printStatusTable(cliout.StripWriter(&buf), rows, StatusOptions{})
+	out := buf.String()
+	if strings.ContainsRune(out, 0x1b) {
+		t.Fatalf("escapes leaked: %q", out)
+	}
+	for _, want := range []string{"SESSION", "──", "@1", "@2", "@3", "go-engineer", "done"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}

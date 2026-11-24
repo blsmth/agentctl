@@ -163,6 +163,13 @@ func RunStatus(opts StatusOptions) error {
 		return nil
 	}
 
+	printStatusTable(os.Stdout, rows, opts)
+	printAttentionSummary(rows)
+	return nil
+}
+
+// printStatusTable renders the agent table for rows to out.
+func printStatusTable(out io.Writer, rows []statusRow, opts StatusOptions) {
 	cols := []string{"SESSION", "WIN", "AGENT", "STATE"}
 	if opts.Verify {
 		cols = append(cols, "PANE")
@@ -189,9 +196,7 @@ func RunStatus(opts StatusOptions) error {
 		grid = append(grid, c)
 	}
 
-	printGrid(os.Stdout, cols, grid)
-	printAttentionSummary(rows)
-	return nil
+	printGrid(out, cols, grid)
 }
 
 // cell is one table cell: the plain text plus the style to render it with.
