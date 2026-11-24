@@ -16,6 +16,7 @@ import (
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/improve"
+	"github.com/blsmth/agentctl/internal/improverun"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/mailbox"
 	"github.com/blsmth/agentctl/internal/notify"
@@ -497,6 +498,21 @@ func cronWindows(jobs []cron.Job) ([]cron.Window, error) {
 	return out, nil
 }
 
+// improveRunFinished reports whether an improve run has been closed out (a
+// seam for tests).
+var improveRunFinished = func(id string) bool {
+	r, err := improverun.Load(id)
+	return err == nil && !r.Finished.IsZero()
+}
+
+// improveRunDone is the Done of an improve window: the Stop hook never sets
+// it for mode "improve", so the window counts as done once its run has been
+// finished. Until then (the session has not written its rationale) it still
+// blocks overlap and holds its max_concurrent slot.
+func improveRunDone(ws windowstate.WindowState) bool {
+	return ws.Mode == "improve" && ws.ImproveRun != "" && improveRunFinished(ws.ImproveRun)
+}
+
 func hasScheduled(records map[string]windowstate.WindowState) bool {
 	for _, ws := range records {
 		if ws.ScheduledBy != "" {
@@ -578,6 +594,21 @@ func cronLaunch(req cron.LaunchRequest) (cron.LaunchResult, error) {
 	return res, err
 }
 
+// Seams for tests: the agent check and the detached session start.
+var (
+	validateCronAgent = validateAgentName
+	ensureCronSession = func(job string, p cronProject) error {
+		if tmux.SessionExists() {
+			return nil
+		}
+		logging.Log("cron: %s: starting session %s detached", job, p.session)
+		if err := tmux.StartSessionDetached(config.Load().DefaultAgent); err != nil {
+			return fmt.Errorf("%w: starting session %s: %v", cron.ErrTmuxUnavailable, p.session, err)
+		}
+		return nil
+	}
+)
+
 // improveLaunch is improve.Launch, a seam so tests start no session.
 var improveLaunch = improve.Launch
 
@@ -591,14 +622,11 @@ func cronLaunchImprove(req cron.LaunchRequest, p cronProject, res *cron.LaunchRe
 	if err != nil {
 		return err
 	}
-	if err := validateAgentName(opts.Agent, req.Job.Dir); err != nil {
+	if err := validateCronAgent(opts.Agent, req.Job.Dir); err != nil {
 		return err
 	}
-	if !tmux.SessionExists() {
-		logging.Log("cron: %s: starting session %s detached", req.Job.Name, p.session)
-		if err := tmux.StartSessionDetached(config.Load().DefaultAgent); err != nil {
-			return fmt.Errorf("%w: starting session %s: %v", cron.ErrTmuxUnavailable, p.session, err)
-		}
+	if err := ensureCronSession(req.Job.Name, p); err != nil {
+		return err
 	}
 	r, err := improveLaunch(opts)
 	if err != nil {

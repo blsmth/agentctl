@@ -125,4 +125,16 @@ func TestTickFiresImproveJob(t *testing.T) {
 			t.Errorf("runs = %+v, want skipped:overlap", runs)
 		}
 	})
+
+	t.Run("previous run finished (window done) fires", func(t *testing.T) {
+		dir := t.TempDir()
+		seedState(t, dir, map[string]time.Time{job.Name: at(21, 0)})
+		f := &fakeEnv{windows: []Window{{ID: "@3", Job: job.Name, Done: true}}}
+		if _, err := Tick(f.deps(dir, now, config.CronConfig{}, job)); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.launches) != 1 {
+			t.Fatalf("launches = %d, want 1 after a finished run", len(f.launches))
+		}
+	})
 }

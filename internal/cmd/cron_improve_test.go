@@ -10,6 +10,8 @@ import (
 
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/improve"
+	"github.com/blsmth/agentctl/internal/improverun"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 func TestImproveAgentConstantsAgree(t *testing.T) {
@@ -107,5 +109,63 @@ func TestRenderCronListImprove(t *testing.T) {
 	}
 	if got := agentColumn(j); got != "fleet-improver" {
 		t.Errorf("agentColumn = %q", got)
+	}
+}
+
+func TestImproveRunDone(t *testing.T) {
+	old := improveRunFinished
+	finished := map[string]bool{"done": true, "open": false}
+	improveRunFinished = func(id string) bool { return finished[id] }
+	t.Cleanup(func() { improveRunFinished = old })
+	for _, tc := range []struct {
+		name string
+		ws   windowstate.WindowState
+		want bool
+	}{
+		{"finished improve run", windowstate.WindowState{Mode: "improve", ImproveRun: "done"}, true},
+		{"unfinished improve run still blocks", windowstate.WindowState{Mode: "improve", ImproveRun: "open"}, false},
+		{"improve window without a run", windowstate.WindowState{Mode: "improve"}, false},
+		{"other modes are untouched", windowstate.WindowState{Mode: "adhoc", ImproveRun: "done"}, false},
+	} {
+		if got := improveRunDone(tc.ws); got != tc.want {
+			t.Errorf("%s: improveRunDone = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// cronLaunchImprove maps the improve result onto the launch result and
+// surfaces a refused second run.
+func TestCronLaunchImprove(t *testing.T) {
+	old, oldV, oldE := improveLaunch, validateCronAgent, ensureCronSession
+	t.Cleanup(func() { improveLaunch, validateCronAgent, ensureCronSession = old, oldV, oldE })
+	validateCronAgent = func(string, string) error { return nil }
+	started := 0
+	ensureCronSession = func(string, cronProject) error { started++; return nil }
+	job := cron.Job{Name: "fleet-improve", Schedule: "0 22 * * *", Dir: "/p", Mode: cron.ModeImprove}
+	job.Normalize()
+	req := cron.LaunchRequest{Job: job, Scheduled: time.Now()}
+
+	var got improve.Options
+	improveLaunch = func(o improve.Options) (improve.Result, error) {
+		got = o
+		return improve.Result{RunID: "r1", WindowID: "@7", SessionID: "sess-1"}, nil
+	}
+	var res cron.LaunchResult
+	if err := cronLaunchImprove(req, cronProject{session: "agentctl-p"}, &res); err != nil {
+		t.Fatal(err)
+	}
+	if res != (cron.LaunchResult{WindowID: "@7", Session: "agentctl-p", SessionID: "sess-1"}) {
+		t.Errorf("res = %+v", res)
+	}
+	if started != 1 {
+		t.Errorf("session ensured %d times", started)
+	}
+	if !got.Unattended || got.ScheduledBy != "fleet-improve" || !got.Fleet {
+		t.Errorf("opts = %+v", got)
+	}
+
+	improveLaunch = func(improve.Options) (improve.Result, error) { return improve.Result{}, improverun.ErrRunActive }
+	if err := cronLaunchImprove(req, cronProject{session: "agentctl-p"}, &res); !errors.Is(err, improverun.ErrRunActive) {
+		t.Errorf("err = %v, want ErrRunActive", err)
 	}
 }
