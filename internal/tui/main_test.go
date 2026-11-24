@@ -46,6 +46,8 @@ func TestMain(m *testing.M) {
 		return "", errors.New("hub-new-session disabled in tests")
 	}
 	fleetHubOrigin = func() (string, bool) { return "", false }
+	// No real timers: tests send the dropdown's slide ticks themselves.
+	nsDropTick = func(int) tea.Cmd { return nil }
 	// Never spawn `agentctl sweep`; sweep tests install their own stub.
 	fleetSweep = func(context.Context, sweeprun.Target, bool) (sweeprun.Report, error) {
 		return sweeprun.Report{}, errors.New("sweep disabled in tests")

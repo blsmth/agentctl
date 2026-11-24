@@ -117,7 +117,7 @@ func (m FleetModel) footerBody(cw int) string {
 	case m.searchEditing():
 		b.WriteString(m.searchView(cw))
 	case m.newSessionOpen():
-		b.WriteString(m.newSessionView(cw))
+		// The dropdown holds the prompt and its errors; the hints are below.
 	case m.menuOpen && m.menuHelp:
 		lines, _ := fleetHelpLayout(fleetHelpItems(), cw)
 		b.WriteString(strings.Join(lines, "\n"))
@@ -138,11 +138,6 @@ func (m FleetModel) footerBody(cw int) string {
 		b.WriteString(m.searchCommittedLine(cw))
 	}
 	b.WriteString("\n")
-	if m.newSessionOpen() && m.jumpErr != "" {
-		// The message line holds the prompt: its error takes the hint bar.
-		b.WriteString(fleetErrStyle.Render("  " + truncateToWidth(m.jumpErr, cw-2)))
-		return b.String()
-	}
 	b.WriteString(fitHints(m.footerHints(), cw))
 	return b.String()
 }

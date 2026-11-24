@@ -7,19 +7,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/blsmth/agentctl/internal/fleet"
-	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
-// The hub's "new session" action: N (listed under ?) opens
-// an inline directory prompt in the footer. Enter opens an agent in that
+// The hub's "new session" action: N (listed under ?) and the title row's
+// "+ open" button open a directory dropdown below the button (see
+// fleet_newsession_dropdown.go). Enter opens an agent in that
 // directory as its own agentctl project: a live group with the same project
 // dir just gets a new agent (launchForGroup); anything else goes to the
 // hidden `agentctl hub-new-session <dir>` helper, run as a subprocess with
@@ -28,15 +28,6 @@ import (
 
 // fleetNewSessionKey opens the directory prompt.
 const fleetNewSessionKey = "N"
-
-// fleetNewSessionPrompt leads the directory prompt in the footer.
-const fleetNewSessionPrompt = "  new session in: "
-
-// fleetNewSessionHints replace the footer hints while the prompt is open.
-var fleetNewSessionHints = []fleetHint{
-	{"⏎", "open"},
-	{"esc", "cancel"},
-}
 
 // Seams so tests never read the real origin file or spawn agentctl.
 var (
@@ -162,23 +153,14 @@ func (m *FleetModel) groupForDir(dir string) *fleet.Group {
 
 // ── Prompt state ─────────────────────────────────────────────────────────────
 
-// newSessionOpen reports whether the directory prompt is showing.
+// newSessionOpen reports whether the directory dropdown is showing.
 func (m FleetModel) newSessionOpen() bool { return m.dirPrompt != nil }
 
-// fleetNewSessionState is the open directory prompt: the input and the
+// fleetNewSessionState is the open directory dropdown: the input and the
 // directory relative paths resolve against (the prefill).
 type fleetNewSessionState struct {
 	input textinput.Model
 	base  string
-
-	// Template choice (fleet_newsession_tmpl.go); tmpls is empty, and the
-	// rest unused, when no templates exist.
-	tmpls                []prompttemplate.Template
-	agents               []string // known agent names; empty = unchecked
-	sel                  int      // 0 = none, i = tmpls[i-1]
-	focus                int
-	agent, model, prompt textinput.Model
-	loadedFor            string // dir the templates were listed for
 
 	// Recent projects (fleet_newsession_recent.go): candidates after the
 	// live-group filter, the highlighted visible entry (-1 = none) and
@@ -186,10 +168,19 @@ type fleetNewSessionState struct {
 	recent []string
 	hl     int
 	edited bool
+
+	// err is the invalid-directory message shown under the input.
+	err string
+
+	// Slide-in (fleet_newsession_dropdown.go): while animOn the panel is
+	// animP (0..1) of its full height.
+	animOn    bool
+	animP     float64
+	animStart time.Time
 }
 
-// openNewSession opens the directory prompt, prefilled with the default dir.
-// Every other inline state (selector, close confirmation, menu) closes.
+// openNewSession opens the dropdown, prefilled with the default dir. Every
+// other inline state (selector, close confirmation, menu) closes.
 func (m *FleetModel) openNewSession() tea.Cmd {
 	if m.newSessionOpen() {
 		return nil // keep what was typed
@@ -210,25 +201,24 @@ func (m *FleetModel) openNewSession() tea.Cmd {
 	ti.SetValue(base)
 	ti.CursorEnd()
 	ti.Focus()
-	st := &fleetNewSessionState{
-		input: ti, base: base, focus: nsFieldDir,
-		agent: newSessionInput(""), model: newSessionInput(""), prompt: newSessionInput(""),
-		hl: -1,
-	}
-	st.loadTemplates(base)
-	st.setFocus(nsFieldDir)
-	m.dirPrompt = st
+	m.dirPrompt = &fleetNewSessionState{input: ti, base: base, hl: -1}
 	m.ensureCursorVisible()
 	origin, _ := fleetHubOrigin()
-	return recentDirsCmd(origin)
+	return tea.Batch(recentDirsCmd(origin), m.startNewSessionSlide())
 }
 
-// cancelNewSession closes the prompt.
-func (m *FleetModel) cancelNewSession() { m.dirPrompt = nil }
+// cancelNewSession closes the dropdown (instantly); late slide ticks go stale.
+func (m *FleetModel) cancelNewSession() {
+	if m.dirPrompt != nil {
+		m.nsAnimGen++
+	}
+	m.dirPrompt = nil
+}
 
-// handleNewSessionKey owns every key while the prompt is open, so typed text
+// handleNewSessionKey owns every key while the dropdown is open, so typed text
 // never triggers a hub binding.
 func (m *FleetModel) handleNewSessionKey(msg tea.KeyPressMsg) tea.Cmd {
+	m.dirPrompt.err = ""
 	switch msg.String() {
 	case "esc":
 		m.cancelNewSession()
@@ -245,20 +235,24 @@ func (m *FleetModel) handleNewSessionKey(msg tea.KeyPressMsg) tea.Cmd {
 	if m.recentKey(msg.String()) {
 		return nil
 	}
-	if m.handleNewSessionFormKey(msg.String()) {
-		return nil
-	}
 	before := m.dirPrompt.input.Value()
 	cmd := m.updateNewSessionInput(msg)
-	if m.dirPrompt.focus == nsFieldDir && m.dirPrompt.input.Value() != before {
+	if m.dirPrompt.input.Value() != before {
 		m.dirPrompt.edited = true
 		m.dirPrompt.hl = -1
 	}
 	return cmd
 }
 
+// updateNewSessionInput feeds msg to the input.
+func (m *FleetModel) updateNewSessionInput(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	m.dirPrompt.input, cmd = m.dirPrompt.input.Update(msg)
+	return cmd
+}
+
 // submitNewSession validates the typed directory and starts the action. An
-// invalid directory keeps the prompt open with the error in the footer.
+// invalid directory keeps the dropdown open with the error under the input.
 func (m *FleetModel) submitNewSession() tea.Cmd {
 	home, _ := fleetUserHome()
 	dir, err := resolveNewSessionDir(m.dirPrompt.input.Value(), m.dirPrompt.base, home)
@@ -266,18 +260,8 @@ func (m *FleetModel) submitNewSession() tea.Cmd {
 		err = checkNewSessionDir(dir)
 	}
 	if err != nil {
-		m.jumpErr = err.Error()
+		m.dirPrompt.err = err.Error()
 		return nil
-	}
-	if t := m.dirPrompt.chosen(); t != nil {
-		// Templates and agents come from the typed dir, not the last one listed.
-		name := t.Name
-		m.newSessionReload()
-		if m.dirPrompt.chosen() == nil {
-			m.jumpErr = fmt.Sprintf("template %s not found in %s", name, dir)
-			return nil
-		}
-		return m.submitNewSessionTemplate(dir)
 	}
 	m.cancelNewSession()
 	if g := m.groupForDir(dir); g != nil {
@@ -286,22 +270,4 @@ func (m *FleetModel) submitNewSession() tea.Cmd {
 	m.jumpErr = ""
 	m.setProgress("starting a session in " + dir + "…")
 	return fleetNewSessionCmd(dir)
-}
-
-// fleetNewSessionInputWidth is the input's width on a cw-wide footer line
-// (one column stays free for the cursor).
-func fleetNewSessionInputWidth(cw int) int {
-	return max(cw-lipgloss.Width(fleetNewSessionPrompt)-fleetSidebarRightGutter-1, 4)
-}
-
-// newSessionView renders the prompt line for content width cw. The input is
-// sized here, not when the prompt opens, so a resize never overflows it.
-func (m FleetModel) newSessionView(cw int) string {
-	if m.dirPrompt.hasTemplates() {
-		return m.newSessionFormView(cw)
-	}
-	in := m.dirPrompt.input
-	in.SetWidth(fleetNewSessionInputWidth(cw))
-	in.SetCursor(in.Position()) // re-run the scroll for this width
-	return strings.Join(append([]string{fleetBlockedStyle.Render(fleetNewSessionPrompt) + in.View()}, m.recentLines(cw)...), "\n")
 }

@@ -19,8 +19,6 @@ type hubNewSessionDeps struct {
 	sessionPath   func(name string) string
 	startSession  func() error
 	launch        func()
-	// launchTemplate dispatches a prompt template and returns the window ID.
-	launchTemplate func(dir string, t HubTemplateLaunch) (string, error)
 }
 
 var hubNewSessionLive = hubNewSessionDeps{
@@ -36,59 +34,6 @@ var hubNewSessionLive = hubNewSessionDeps{
 		// --background --permission-mode auto`, which prints the window ID.
 		RunLaunch("", LaunchOptions{Background: true, PermissionMode: "auto"})
 	},
-	launchTemplate: launchHubTemplate,
-}
-
-// HubTemplateLaunch is a template launch from the hub's new-session form.
-// Prompt is extra instructions appended to the template body, as with
-// `dispatch --template X --prompt`.
-type HubTemplateLaunch struct {
-	Template, Agent, Model, Prompt string
-}
-
-// launchHubTemplate dispatches t in dir and returns the new window ID.
-func launchHubTemplate(dir string, t HubTemplateLaunch) (string, error) {
-	opts, err := hubTemplateOptions(dir, t)
-	if err != nil {
-		return "", err
-	}
-	wid, _, err := dispatchPromptOptions(opts)
-	return wid, err
-}
-
-// hubTemplateOptions resolves the template against dir and applies the form's
-// overrides: the form values win over the template's, an edited prompt
-// replaces its body.
-func hubTemplateOptions(dir string, t HubTemplateLaunch) (DispatchOptions, error) {
-	opts, err := applyDispatchTemplate(DispatchOptions{
-		Template: t.Template, Agent: t.Agent, Model: t.Model, Dir: dir, Prompt: t.Prompt,
-	}, dir)
-	if err != nil {
-		return opts, err
-	}
-	if err := validateAgentName(opts.Agent, dir); err != nil {
-		return opts, err
-	}
-	return opts, nil
-}
-
-// RunHubNewSessionTemplate is `agentctl hub-new-session <dir> --template T`:
-// like RunHubNewSession, but the agent is dispatched with the template. The
-// window ID is the last stdout line.
-func RunHubNewSessionTemplate(dir string, t HubTemplateLaunch) error {
-	wid, err := runHubNewSessionTemplate(dir, t, hubNewSessionLive)
-	if err != nil {
-		return err
-	}
-	fmt.Println(wid)
-	return nil
-}
-
-func runHubNewSessionTemplate(dir string, t HubTemplateLaunch, d hubNewSessionDeps) (string, error) {
-	if err := ensureHubSession(dir, d); err != nil {
-		return "", err
-	}
-	return d.launchTemplate(dir, t)
 }
 
 // tmuxSessionPath is a live session's #{session_path}, or "".
