@@ -13,6 +13,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/blsmth/agentctl/internal/artifacts"
 	"github.com/blsmth/agentctl/internal/closedlog"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/cronedit"
@@ -366,6 +367,7 @@ const (
 	fleetLineSchedule                         // a selectable cron job row (or "+ new schedule")
 	fleetLineSchedHead                        // a selectable, collapsible schedules block header; see fleet_schedgroup.go
 	fleetLineSearchEmpty                      // a non-selectable "no matches" line while a search matches nothing
+	fleetLineArtifact                         // a selectable artifact row on a group's Artifacts tab; see fleet_arttab.go
 )
 
 // fleetLine is one renderable line. Every kind except fleetLineDivider is also
@@ -401,6 +403,8 @@ type fleetLine struct {
 	schedBlock string
 	schedDir   string
 	schedSum   fleetSchedCounts
+	// art is the artifact of a fleetLineArtifact row.
+	art artifacts.Meta
 }
 
 // selectable reports whether the cursor may rest on this line. Dividers and
@@ -629,6 +633,11 @@ type FleetModel struct {
 	artifacts        map[string]fleetArtifactInfo
 	artifactsStamp   time.Time
 	artifactsLoading bool
+	// artList is the cached listing behind the Artifacts tab, newest first,
+	// refreshed with artifacts; artTabs the projects (block keys) on their
+	// Artifacts tab, persisted in hubViewState.
+	artList []artifacts.Meta
+	artTabs map[string]bool
 	// sched is the cron jobs' data (fleet_schedules.go, always loaded),
 	// schedForm the open form,
 	// schedConfirm an armed run/delete y/n. schedPaneOn records that the
@@ -971,6 +980,14 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case fleetArtifactOpenedMsg:
 		m.applyArtifactOpened(msg)
+		return m, nil
+
+	case fleetArtOpenedMsg:
+		m.applyArtOpened(msg)
+		return m, nil
+
+	case fleetArtPinnedMsg:
+		m.applyArtPinned(msg)
 		return m, nil
 
 	case fleetSchedLoadedMsg:
@@ -1331,6 +1348,9 @@ func (m *FleetModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // runKey runs the hub binding for key (as tea.KeyPressMsg.String() spells
 // it). Shared by the keyboard and the clickable "?" key reference.
 func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
+	if cmd, handled := m.artifactLineKey(key); handled {
+		return *m, cmd
+	}
 	if cmd, handled := m.scheduleKey(key); handled {
 		return *m, cmd
 	}
@@ -1750,7 +1770,7 @@ func (m *FleetModel) syncSelectionFromCursor() {
 	case fleetLineClosed:
 		m.selSession, m.selWindowID, m.selIsHeader = "", "", false
 		m.selClosed = l.closed.Key()
-	case fleetLineSchedule, fleetLineSchedHead:
+	case fleetLineSchedule, fleetLineSchedHead, fleetLineArtifact:
 		m.selSession, m.selWindowID, m.selIsHeader = "", "", false
 		m.selSchedule = schedLineKey(l)
 	case fleetLineDivider, fleetLineSubheader, fleetLineClosedLabel, fleetLineSchedLabel, fleetLineSearchEmpty:
@@ -1839,7 +1859,7 @@ func (m *FleetModel) resolveSelection() {
 
 	if m.selSchedule != "" {
 		for i, l := range m.lines {
-			if (l.kind == fleetLineSchedule || l.kind == fleetLineSchedHead) && schedLineKey(l) == m.selSchedule {
+			if (l.kind == fleetLineSchedule || l.kind == fleetLineSchedHead || l.kind == fleetLineArtifact) && schedLineKey(l) == m.selSchedule {
 				m.splitPane.SetCursor(i)
 				m.syncSelectionFromCursor()
 				m.ensureCursorVisible()
@@ -1857,7 +1877,7 @@ func (m *FleetModel) resolveSelection() {
 		// The job is gone (deleted, or the list is still loading): stay in
 		// the section on its first row.
 		for i, l := range m.lines {
-			if l.kind == fleetLineSchedule {
+			if l.kind == fleetLineSchedule && !isArtSel(m.selSchedule) {
 				m.splitPane.SetCursor(i)
 				m.syncSelectionFromCursor()
 				m.ensureCursorVisible()
@@ -2115,6 +2135,7 @@ func (m *FleetModel) rebuildLines() {
 	var lines []fleetLine
 	m.hiddenUnder = nil
 	place := m.placeSchedules()
+	artsBy := m.placeArtifacts(place.keys)
 	m.schedHidden = nil
 	m.groupTabs = nil
 	// While a query is active, folds and collapses are ignored for display
@@ -2127,11 +2148,12 @@ func (m *FleetModel) rebuildLines() {
 		headerHit := m.searchHeader(g)
 		// A group with jobs has Sessions and Schedules tabs: its body is one
 		// or the other, never both. A search shows both, so every match is.
-		tab, tabbed := m.buildGroupTab(g, place.keys[i], len(place.byGroup[i]))
-		onSched := tabbed && tab.sched && !searching
-		showJobs := tabbed && (tab.sched || searching)
+		tab, tabbed := m.buildGroupTab(g, place.keys[i], len(place.byGroup[i]), len(artsBy[i]))
+		onSched := tabbed && tab.tab == tabKindSched && !searching
+		onArts := tabbed && tab.tab == tabKindArtifacts && !searching
+		showJobs := tabbed && (tab.tab == tabKindSched || (searching && tab.jobs > 0))
 		rows, context := all, map[string]bool(nil)
-		if !folded && !onSched {
+		if !folded && !onSched && !onArts {
 			src := all
 			if m.sortRecent {
 				src = fleet.SortRowsRecent(all)
@@ -2142,9 +2164,13 @@ func (m *FleetModel) rebuildLines() {
 				rows, context = filterRows(src, m.filter)
 			}
 		}
-		body := !folded && !onSched && (len(rows) > 0 || (len(all) == 0 && m.filter == fleetFilterAll && (!searching || headerHit)))
+		body := !folded && !onSched && !onArts && (len(rows) > 0 || (len(all) == 0 && m.filter == fleetFilterAll && (!searching || headerHit)))
 		// The attention filter never hides an unfolded group's schedules.
 		var sched []fleetLine
+		if onArts && !folded {
+			sched = m.artGroupLines(g, place.keys[i], artsBy[i])
+		}
+		m.noteHiddenArts(g, artsBy[i], onArts && !folded)
 		if folded || !showJobs {
 			m.noteHiddenSched(g, place.keys[i], place.byGroup[i])
 		} else {
@@ -2649,7 +2675,7 @@ func (m FleetModel) shownEnd(cw int) int {
 func (m FleetModel) hiddenRows(from, to int) (rows, other int) {
 	for i := max(from, 0); i < min(to, len(m.lines)); i++ {
 		switch m.lines[i].kind {
-		case fleetLineRow, fleetLineClosed, fleetLineSchedule:
+		case fleetLineRow, fleetLineClosed, fleetLineSchedule, fleetLineArtifact:
 			rows++
 		case fleetLineHeader, fleetLinePlaceholder, fleetLineSchedHead:
 			other++
@@ -2724,6 +2750,8 @@ func (m FleetModel) renderLine(i int, cw int) string {
 		return m.renderSchedRow(l, selected, cw)
 	case fleetLineSchedHead:
 		return m.renderSchedHead(l, selected, cw)
+	case fleetLineArtifact:
+		return m.renderArtRow(l, selected, m.hover.region(i), cw)
 	case fleetLineSearchEmpty:
 		return fleetDimStyle.Render(truncateToWidth(m.searchEmptyText(), cw-fleetSidebarRightGutter))
 	case fleetLineSubheader:
@@ -2896,21 +2924,23 @@ type fleetHeaderSpans struct {
 	// (blocked, working, attention, done, idle); blank slots, the attention
 	// slot when no row needs attention, and a hidden counts block are zero.
 	counts [fleetStateCount][2]int
-	// tabSessions and tabSched are the Sessions / Schedules tab labels
-	// (zero when not drawn).
-	tabSessions, tabSched [2]int
+	// tabSessions, tabSched and tabArts are the Sessions / Schedules /
+	// Artifacts tab labels (zero when not drawn).
+	tabSessions, tabSched, tabArts [2]int
 }
 
 // fleetTabGap is the blank columns between a header's project name and its
 // tabs.
 const fleetTabGap = 3
 
-// renderGroupTabs renders "Sessions · Schedules M" in at most room columns
-// starting at column start, cutting from the right, and reports the columns
-// of each label (zero when cut off entirely).
-func renderGroupTabs(t fleetGroupTab, hover fleetHoverRegion, start, room int) (string, [2]int, [2]int) {
+// renderGroupTabs renders "Sessions · Schedules M · Artifacts N" (the tabs
+// the group offers) in at most room columns starting at column start,
+// cutting from the right, and reports the columns of each label indexed by
+// fleetTab (zero when absent or cut off entirely).
+func renderGroupTabs(t fleetGroupTab, hover fleetHoverRegion, start, room int) (string, [3][2]int) {
+	var spans [3][2]int
 	if room < 4 {
-		return "", [2]int{}, [2]int{}
+		return "", spans
 	}
 	style := func(active bool, hovered bool) lipgloss.Style {
 		st := fleetCountStyle
@@ -2925,15 +2955,21 @@ func renderGroupTabs(t fleetGroupTab, hover fleetHoverRegion, start, room int) (
 	type piece struct {
 		text string
 		st   lipgloss.Style
-		tab  int // 1 sessions, 2 schedules, 0 separator
+		tab  fleetTab
+		sep  bool
 	}
-	pieces := []piece{
-		{"Sessions", style(!t.sched, hover == fleetHoverTabSessions), 1},
-		{" · ", fleetDimStyle, 0},
-		{fmt.Sprintf("Schedules %d", t.jobs), style(t.sched, hover == fleetHoverTabSched), 2},
+	pieces := []piece{{text: "Sessions", st: style(t.tab == tabKindSessions, hover == fleetHoverTabSessions), tab: tabKindSessions}}
+	if t.jobs > 0 {
+		pieces = append(pieces,
+			piece{text: " · ", st: fleetDimStyle, sep: true},
+			piece{text: fmt.Sprintf("Schedules %d", t.jobs), st: style(t.tab == tabKindSched, hover == fleetHoverTabSched), tab: tabKindSched})
+	}
+	if t.arts > 0 {
+		pieces = append(pieces,
+			piece{text: " · ", st: fleetDimStyle, sep: true},
+			piece{text: fmt.Sprintf("Artifacts %d", t.arts), st: style(t.tab == tabKindArtifacts, hover == fleetHoverTabArts), tab: tabKindArtifacts})
 	}
 	var out strings.Builder
-	var sess, sched [2]int
 	col := start
 	for _, p := range pieces {
 		left := start + room - col
@@ -2943,15 +2979,12 @@ func renderGroupTabs(t fleetGroupTab, hover fleetHoverRegion, start, room int) (
 		text := truncateToWidth(p.text, left)
 		w := lipgloss.Width(text)
 		out.WriteString(p.st.Render(text))
-		switch p.tab {
-		case 1:
-			sess = [2]int{col, col + w}
-		case 2:
-			sched = [2]int{col, col + w}
+		if !p.sep && w > 0 {
+			spans[p.tab] = [2]int{col, col + w}
 		}
 		col += w
 	}
-	return out.String(), sess, sched
+	return out.String(), spans
 }
 
 // fleetSweepSep is the blank columns between the sweep button and "+ new".
@@ -3136,9 +3169,9 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 	if t, ok := m.groupTab(g); ok && lipgloss.Width(name) == lipgloss.Width(g.Project) {
 		// Tabs take what the project name leaves, so they truncate first.
 		start := lipgloss.Width(line) + fleetTabGap
-		if text, sess, sched := renderGroupTabs(t, hover, start, leftW-start); text != "" {
+		if text, ts := renderGroupTabs(t, hover, start, leftW-start); text != "" {
 			line += strings.Repeat(" ", fleetTabGap) + text
-			spans.tabSessions, spans.tabSched = sess, sched
+			spans.tabSessions, spans.tabSched, spans.tabArts = ts[tabKindSessions], ts[tabKindSched], ts[tabKindArtifacts]
 		}
 	}
 	if groupCustomSession(g) {

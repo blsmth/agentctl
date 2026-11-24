@@ -67,6 +67,12 @@ func TestMain(m *testing.M) {
 	fleetArtifactStamp = func() (time.Time, bool) { return time.Time{}, false }
 	fleetArtifactList = func() ([]artifacts.Meta, error) { return nil, nil }
 	fleetArtifactOpen = func(string) error { return errors.New("artifact open disabled in tests") }
+	// Never probe serve, spawn `open` or write the real store's pins.
+	fleetArtifactServe = func() (string, bool) { return "https://test.invalid", false }
+	fleetArtOpenURL = func(string) error { return errors.New("browser open disabled in tests") }
+	fleetArtifactPin = func(string, bool) (artifacts.Meta, error) {
+		return artifacts.Meta{}, errors.New("artifact pin disabled in tests")
+	}
 	// Never spawn gh or tmux from the tickets browser; tests that need a
 	// result install their own stub.
 	tkExec = func(string, ...string) ([]byte, error) { return nil, errExecDisabled }

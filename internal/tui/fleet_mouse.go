@@ -31,6 +31,8 @@ const (
 	fleetClickNewSched                            // a "+ new schedule" line: open the new-schedule form
 	fleetClickTabSessions                         // header's Sessions tab
 	fleetClickTabSched                            // header's Schedules tab
+	fleetClickTabArts                             // header's Artifacts tab
+	fleetClickOpenArt                             // an artifact row: open it in the browser
 	fleetClickCount                               // a header's count slot: toggle that state filter
 )
 
@@ -190,6 +192,8 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 			return idx, fleetClickTabSessions
 		case fleetHoverTabSched:
 			return idx, fleetClickTabSched
+		case fleetHoverTabArts:
+			return idx, fleetClickTabArts
 		}
 		if m.onHeaderName(l.group, x) {
 			return idx, fleetClickFold
@@ -210,6 +214,8 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 		return idx, fleetClickSelect
 	case fleetLinePlaceholder, fleetLineClosed:
 		return idx, fleetClickSelect
+	case fleetLineArtifact:
+		return idx, fleetClickOpenArt
 	case fleetLineSchedHead:
 		// The whole header is the collapse toggle.
 		return idx, fleetClickCollapse
@@ -349,14 +355,25 @@ func (m FleetModel) handleClickBody(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) 
 		}
 		m.selectLine(idx)
 		return m, m.startSweep(idx)
-	case fleetClickTabSessions, fleetClickTabSched:
+	case fleetClickTabSessions, fleetClickTabSched, fleetClickTabArts:
 		m.closeMenu()
 		m.selectLine(idx)
 		g, t, ok := m.tabGroupOfLine(idx)
 		if !ok {
 			return m, nil
 		}
-		return m, m.switchTab(g, t, action == fleetClickTabSched, false)
+		k := tabKindSessions
+		switch action {
+		case fleetClickTabSched:
+			k = tabKindSched
+		case fleetClickTabArts:
+			k = tabKindArtifacts
+		}
+		return m, m.switchTab(g, t, k, false)
+	case fleetClickOpenArt:
+		m.closeMenu()
+		m.selectLine(idx)
+		return m, m.openArtifactTab(m.lines[idx].art)
 	case fleetClickCount:
 		m.closeMenu()
 		f, _ := m.headerCountAt(m.lines[idx].group, msg.X)
@@ -451,6 +468,8 @@ const (
 	fleetHoverCollapse                     // a parent row's ▾/▸ collapse marker
 	fleetHoverTabSessions                  // a group header's Sessions tab
 	fleetHoverTabSched                     // a group header's Schedules tab
+	fleetHoverTabArts                      // a group header's Artifacts tab
+	fleetHoverArt                          // an artifact row
 )
 
 // fleetHover is the hover target: a line index plus the region on it. The zero
@@ -510,6 +529,8 @@ func (m FleetModel) hoverAt(x, y int) fleetHover {
 			return fleetHover{line: idx, reg: fleetHoverCollapse}
 		}
 		return fleetHover{line: idx, reg: fleetHoverBody}
+	case fleetLineArtifact:
+		return fleetHover{line: idx, reg: fleetHoverArt}
 	}
 	return fleetHover{}
 }
@@ -561,6 +582,8 @@ func (m FleetModel) onHeaderTab(g fleet.Group, x int) fleetHoverRegion {
 		return fleetHoverTabSessions
 	case spans.tabSched[1] > 0 && x >= spans.tabSched[0]-1 && x < spans.tabSched[1]+1:
 		return fleetHoverTabSched
+	case spans.tabArts[1] > 0 && x >= spans.tabArts[0]-1 && x < spans.tabArts[1]+1:
+		return fleetHoverTabArts
 	}
 	return fleetHoverNone
 }

@@ -155,10 +155,7 @@ func (m FleetModel) footerHints() []fleetHint {
 		hints = append(append(append([]fleetHint(nil), hints[:len(hints)-2]...), fleetHint{fleetArtifactKey, "artifact"}), hints[len(hints)-2:]...)
 	}
 	if _, t, ok := m.tabGroupOfLine(m.splitPane.Cursor()); ok {
-		label := "schedules"
-		if t.sched {
-			label = "sessions"
-		}
+		label := [...]string{"sessions", "schedules", "artifacts"}[t.next()]
 		hints = append(append(append([]fleetHint(nil), hints[:len(hints)-2]...), fleetHint{fleetSchedulesKey, label}), hints[len(hints)-2:]...)
 	}
 	hints = m.searchHints(hints)
@@ -186,6 +183,8 @@ func (m FleetModel) footerHints() []fleetHint {
 		hints = fleetSchedYesNoHints
 	case m.selectedSchedLineValue() != nil || m.selectedSchedHead() != nil:
 		hints = m.schedHints()
+	case m.selectedArtLine() != nil:
+		hints = m.artifactHints(*m.selectedArtLine())
 	}
 	return hints
 }
@@ -237,7 +236,8 @@ func fleetHelpItems() []fleetHelpItem {
 		{fleetArtifactKey, "open newest ◆ artifact", fleetArtifactKey},
 		{fleetShellsKey, "shells", fleetShellsKey},
 		{fleetClosedKey, "closed agents", fleetClosedKey},
-		{fleetSchedulesKey, "Sessions / Schedules tab (project)", fleetSchedulesKey},
+		{fleetSchedulesKey, "Sessions / Schedules / Artifacts tab (project)", fleetSchedulesKey},
+		{"⏎/p", "artifact row: open in browser / pin", ""},
 		{"e/space/g/d/x", "schedule row: edit/pause/run/dup/delete", ""},
 		{fleetServeKey, "phone on/off", fleetServeKey},
 		{"q", "leave", "q"},

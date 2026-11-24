@@ -6,12 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -20,11 +16,10 @@ import (
 	"github.com/dustin/go-humanize"
 
 	"github.com/blsmth/agentctl/internal/artifacts"
+	"github.com/blsmth/agentctl/internal/artifacturl"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/prompttemplate"
-	"github.com/blsmth/agentctl/internal/serve"
-	"github.com/blsmth/agentctl/internal/servectl"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -143,11 +138,7 @@ func viewAt(m artifacts.Meta, base string, running bool) artifactView {
 // so it opens in any browser on an allowed network without pairing (a
 // legacy 10-character id still needs a paired browser).
 func artifactDirectURL(base, id string, rev int) string {
-	r := "latest"
-	if rev > 0 {
-		r = strconv.Itoa(rev)
-	}
-	return strings.TrimRight(base, "/") + "/a/" + id + "/" + r + "/"
+	return artifacturl.Direct(base, id, rev)
 }
 
 // artifactURL is the phone app's viewer URL: <base>/#/artifacts/<id>[/<rev>].
@@ -535,60 +526,15 @@ func artifactOrigin() artifacts.Origin {
 
 // artifactServeURL builds the base URL of the PWA from the serve config and
 // reports whether serve is running (a control-socket probe, no network).
-func artifactServeURL() (string, bool) {
-	cfg := config.Load().Serve
-	running := false
-	if dir, err := serve.Dir(); err == nil {
-		// Phone access off still serves artifact links.
-		running = servectl.Probe(dir).Serving()
-	}
-	host, _ := os.Hostname()
-	return serveBaseURL(cfg, host), running
-}
+func artifactServeURL() (string, bool) { return artifacturl.Serve() }
 
-// serveBaseURL is https://<host>[:<port>] from serve.listen and the first
-// serve.hostnames entry, else <hostname>.local.
+// serveBaseURL is artifacturl.BaseURL.
 func serveBaseURL(cfg config.ServeConfig, osHostname string) string {
-	lh, port, err := net.SplitHostPort(cfg.EffectiveListen())
-	if err != nil {
-		lh, port = "", strings.TrimPrefix(cfg.EffectiveListen(), ":")
-	}
-	host := ""
-	switch {
-	case len(cfg.Hostnames) > 0:
-		host = cfg.Hostnames[0]
-	case lh != "" && !net.ParseIP(lh).IsUnspecified():
-		host = lh
-	default:
-		h := strings.TrimSuffix(osHostname, ".local")
-		if h == "" {
-			h = "localhost"
-		}
-		host = h + ".local"
-	}
-	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
-		host = "[" + host + "]"
-	}
-	u := url.URL{Scheme: "https", Host: host}
-	if port != "" && port != "443" {
-		u.Host = host + ":" + port
-	}
-	return u.String()
+	return artifacturl.BaseURL(cfg, osHostname)
 }
 
 // openInBrowser opens u with the platform opener without waiting for it.
-func openInBrowser(u string) error {
-	name := "xdg-open"
-	if runtime.GOOS == "darwin" {
-		name = "open"
-	}
-	c := exec.Command(name, u)
-	if err := c.Start(); err != nil {
-		return err
-	}
-	go func() { _ = c.Wait() }()
-	return nil
-}
+func openInBrowser(u string) error { return artifacturl.OpenInBrowser(u) }
 
 // pruneArtifacts is the housekeeping hook: it removes unpinned artifacts not
 // updated within DefaultRetention. Never fatal.

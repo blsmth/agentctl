@@ -183,18 +183,67 @@ func (m FleetModel) isSchedCollapsed(key string) bool {
 	return key == fleetSchedOtherKey && !m.schedOtherOpen
 }
 
-// fleetGroupTab is the tab state of a group header with jobs.
+// fleetTab is one of a project group's header tabs.
+type fleetTab int
+
+const (
+	tabKindSessions fleetTab = iota // the agent rows (the default)
+	tabKindSched                    // the project's cron jobs
+	tabKindArtifacts                // the project's artifacts
+)
+
+// fleetGroupTab is the tab state of a group header with jobs or artifacts.
 type fleetGroupTab struct {
 	key      string // the project's block key
 	sessions int    // agent rows (shells excluded)
 	jobs     int
-	sched    bool // the Schedules tab is selected
+	arts     int
+	tab      fleetTab // the selected tab
+}
+
+// tabs are the tabs the header offers in order: Sessions always, the others
+// only when they have items.
+func (t fleetGroupTab) tabs() []fleetTab {
+	out := []fleetTab{tabKindSessions}
+	if t.jobs > 0 {
+		out = append(out, tabKindSched)
+	}
+	if t.arts > 0 {
+		out = append(out, tabKindArtifacts)
+	}
+	return out
+}
+
+// next is the tab after the selected one, wrapping around.
+func (t fleetGroupTab) next() fleetTab {
+	ts := t.tabs()
+	for i, k := range ts {
+		if k == t.tab {
+			return ts[(i+1)%len(ts)]
+		}
+	}
+	return tabKindSessions
+}
+
+// has reports whether tab k is offered.
+func (t fleetGroupTab) has(k fleetTab) bool { return slices.Contains(t.tabs(), k) }
+
+// tabOf is the tab selected for the block key (Sessions by default).
+func (m FleetModel) tabOf(key string) fleetTab {
+	switch {
+	case m.schedTabs[key]:
+		return tabKindSched
+	case m.artTabs[key]:
+		return tabKindArtifacts
+	}
+	return tabKindSessions
 }
 
 // buildGroupTab records g's tab info for the header renderer (tabbed is false
-// for a group with no jobs or no block key: no tabs, header unchanged).
-func (m *FleetModel) buildGroupTab(g fleet.Group, key string, jobs int) (fleetGroupTab, bool) {
-	if key == "" || jobs == 0 {
+// for a group with no jobs and no artifacts, or no block key: no tabs, header
+// unchanged). A selected tab that has no items falls back to Sessions.
+func (m *FleetModel) buildGroupTab(g fleet.Group, key string, jobs, arts int) (fleetGroupTab, bool) {
+	if key == "" || (jobs == 0 && arts == 0) {
 		return fleetGroupTab{}, false
 	}
 	sessions := 0
@@ -203,7 +252,10 @@ func (m *FleetModel) buildGroupTab(g fleet.Group, key string, jobs int) (fleetGr
 			sessions++
 		}
 	}
-	t := fleetGroupTab{key: key, sessions: sessions, jobs: jobs, sched: m.schedTabs[key]}
+	t := fleetGroupTab{key: key, sessions: sessions, jobs: jobs, arts: arts, tab: m.tabOf(key)}
+	if !t.has(t.tab) {
+		t.tab = tabKindSessions
+	}
 	if m.groupTabs == nil {
 		m.groupTabs = make(map[string]fleetGroupTab)
 	}
@@ -219,17 +271,32 @@ func (m FleetModel) groupTab(g fleet.Group) (fleetGroupTab, bool) {
 
 // setSchedTab selects the Schedules (true) or Sessions tab of the block key.
 func (m *FleetModel) setSchedTab(key string, sched bool) {
+	if sched {
+		m.setTab(key, tabKindSched)
+		return
+	}
+	m.setTab(key, tabKindSessions)
+}
+
+// setTab selects tab k of the block key.
+func (m *FleetModel) setTab(key string, k fleetTab) {
 	if key == "" {
 		return
 	}
-	if sched {
+	delete(m.schedTabs, key)
+	delete(m.artTabs, key)
+	switch k {
+	case tabKindSched:
 		if m.schedTabs == nil {
 			m.schedTabs = make(map[string]bool)
 		}
 		m.schedTabs[key] = true
-		return
+	case tabKindArtifacts:
+		if m.artTabs == nil {
+			m.artTabs = make(map[string]bool)
+		}
+		m.artTabs[key] = true
 	}
-	delete(m.schedTabs, key)
 }
 
 // tabGroupOfLine is the tabbed group owning line idx (its header, an agent
@@ -241,7 +308,7 @@ func (m FleetModel) tabGroupOfLine(idx int) (fleet.Group, fleetGroupTab, bool) {
 	l := m.lines[idx]
 	session := ""
 	switch l.kind {
-	case fleetLineHeader, fleetLinePlaceholder, fleetLineSchedule, fleetLineSubheader:
+	case fleetLineHeader, fleetLinePlaceholder, fleetLineSchedule, fleetLineSubheader, fleetLineArtifact:
 		session = l.group.Session
 	case fleetLineRow:
 		session = l.row.Session
@@ -258,8 +325,8 @@ func (m FleetModel) tabGroupOfLine(idx int) (fleet.Group, fleetGroupTab, bool) {
 	return fleet.Group{}, fleetGroupTab{}, false
 }
 
-// toggleGroupTab is fleetSchedulesKey: flip the Sessions / Schedules tab of
-// the group the cursor is in.
+// toggleGroupTab is fleetSchedulesKey: cycle the tabs (Sessions, Schedules,
+// Artifacts; only those with items) of the group the cursor is in.
 func (m *FleetModel) toggleGroupTab() tea.Cmd {
 	idx := m.splitPane.Cursor()
 	g, t, ok := m.tabGroupOfLine(idx)
@@ -268,22 +335,22 @@ func (m *FleetModel) toggleGroupTab() tea.Cmd {
 			return nil
 		}
 		m.jumpErr = ""
-		m.setSuccess("no schedules in this project · " + fleetCronKey + " adds one")
+		m.setSuccess("no schedules or artifacts in this project · " + fleetCronKey + " adds a schedule")
 		return nil
 	}
-	return m.switchTab(g, t, !t.sched, m.lines[idx].kind != fleetLineHeader)
+	return m.switchTab(g, t, t.next(), m.lines[idx].kind != fleetLineHeader)
 }
 
-// switchTab selects a tab of g. The cursor lands on the header, or with
+// switchTab selects tab k of g. The cursor lands on the header, or with
 // firstRow on the first line of the new tab.
-func (m *FleetModel) switchTab(g fleet.Group, t fleetGroupTab, sched, firstRow bool) tea.Cmd {
-	if sched == t.sched {
+func (m *FleetModel) switchTab(g fleet.Group, t fleetGroupTab, k fleetTab, firstRow bool) tea.Cmd {
+	if k == t.tab || !t.has(k) {
 		return nil
 	}
 	m.jumpErr = ""
 	m.pendingFocus = nil
 	m.schedConfirm = nil
-	m.setSchedTab(t.key, sched)
+	m.setTab(t.key, k)
 	// Park the selection on the header so the rebuild never leaves it on a
 	// line the old tab hid, then pick the final line.
 	m.selSession, m.selWindowID, m.selIsHeader, m.selSchedule = g.Session, "", true, ""
@@ -301,7 +368,7 @@ func (m *FleetModel) switchTab(g fleet.Group, t fleetGroupTab, sched, firstRow b
 			if l.kind == fleetLineHeader || l.kind == fleetLineDivider {
 				break
 			}
-			if (l.kind == fleetLineRow || l.kind == fleetLineSchedule) && !l.schedNew {
+			if (l.kind == fleetLineRow || l.kind == fleetLineSchedule || l.kind == fleetLineArtifact) && !l.schedNew {
 				m.selectLine(i)
 				break
 			}
@@ -571,6 +638,15 @@ func schedSummary(c fleetSchedCounts, w int) string {
 // liveSchedTabs is the sorted set of projects on their Schedules tab; with
 // prune, keys of projects no group hosts any more are dropped.
 func (m FleetModel) liveSchedTabs(prune bool) []string {
+	return m.liveTabKeys(m.schedTabs, prune)
+}
+
+// liveArtTabs is liveSchedTabs for the Artifacts tab.
+func (m FleetModel) liveArtTabs(prune bool) []string {
+	return m.liveTabKeys(m.artTabs, prune)
+}
+
+func (m FleetModel) liveTabKeys(tabs map[string]bool, prune bool) []string {
 	live := map[string]bool{}
 	if prune {
 		for _, key := range m.schedGroupKeys() {
@@ -578,7 +654,7 @@ func (m FleetModel) liveSchedTabs(prune bool) []string {
 		}
 	}
 	var out []string
-	for key, ok := range m.schedTabs {
+	for key, ok := range tabs {
 		if ok && (!prune || live[key]) {
 			out = append(out, key)
 		}
