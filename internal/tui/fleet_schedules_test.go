@@ -49,6 +49,13 @@ type schedFixture struct {
 func newSchedFixture(t *testing.T) *schedFixture {
 	t.Helper()
 	InitStyles()
+	// Slide frames answer at once: schedDrive settles them, so no test
+	// depends on a real timer beating its drive timeout.
+	savedTick := schedDrawerTick
+	schedDrawerTick = func(gen int) tea.Cmd {
+		return func() tea.Msg { return schedDrawerTickMsg{gen: gen} }
+	}
+	t.Cleanup(func() { schedDrawerTick = savedTick })
 	dir := t.TempDir()
 	f := &schedFixture{
 		jobsPath:  filepath.Join(dir, "schedules.json"),

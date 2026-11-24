@@ -1025,7 +1025,9 @@ func (m *FleetModel) syncSchedDrawer() tea.Cmd {
 	return nil
 }
 
-func schedDrawerTick(gen int) tea.Cmd {
+// schedDrawerTick schedules the next slide frame. A variable so tests can
+// answer at once instead of racing a real timer.
+var schedDrawerTick = func(gen int) tea.Cmd {
 	return tea.Tick(fleetSchedSlideEvery, func(time.Time) tea.Msg { return schedDrawerTickMsg{gen: gen} })
 }
 
