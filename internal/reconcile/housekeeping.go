@@ -60,7 +60,7 @@ type HousekeepingDeps struct {
 	BackfillTitles func(now time.Time)
 	// SnapshotAgents commits drift in the agent definition history
 	// (agenthistory.SnapshotAll). Nil skips it.
-	SnapshotAgents func(now time.Time)
+	SnapshotAgents func(now time.Time) bool
 }
 
 // AgentHistoryInterval is how often housekeeping snapshots agent definitions.
@@ -111,19 +111,19 @@ func DefaultHousekeepingDeps(runtimeDir string) HousekeepingDeps {
 		},
 		Records:       windowstate.All,
 		SessionLogDir: paths.SessionLogDir,
-		SnapshotAgents: func(time.Time) {
+		SnapshotAgents: func(time.Time) bool {
 			// Runs whose window died without a hook closing them out are
 			// finished first; while one is still live its end snapshot owns
 			// the edits (and carries the rationale), so skip the plain one.
 			improverun.FinishStale()
 			if improverun.Active() {
-				return
+				return true
 			}
 			var dirs []string
 			for _, r := range windowstate.All() {
 				dirs = append(dirs, r.WorkDir)
 			}
-			agenthistory.SnapshotAll("housekeeping: edit", dirs)
+			return agenthistory.SnapshotAll("housekeeping: edit", dirs)
 		},
 	}
 }
@@ -221,8 +221,12 @@ func Housekeep(d HousekeepingDeps) {
 			logging.Log("janitor: pruned %d stale session log file(s) older than %s", n, logging.MaxSessionLogAge)
 		}
 	}
-	if d.SnapshotAgents != nil && stamp.Try(filepath.Join(d.RuntimeDir, "agent-history.stamp"), AgentHistoryInterval, now) {
-		d.SnapshotAgents(now)
+	stampPath := filepath.Join(d.RuntimeDir, "agent-history.stamp")
+	if d.SnapshotAgents != nil && stamp.Try(stampPath, AgentHistoryInterval, now) {
+		if !d.SnapshotAgents(now) {
+			// Retry on the next run rather than waiting out the interval.
+			stamp.Clear(stampPath)
+		}
 	}
 	// Last: it is the only sweep that can wait on the network.
 	if d.BackfillTitles != nil && stamp.Try(filepath.Join(d.RuntimeDir, "backfill-titles.stamp"), TitleBackfillInterval, now) {

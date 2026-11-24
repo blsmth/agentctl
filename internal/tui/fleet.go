@@ -930,7 +930,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		left, right := d.left, d.right
 		return m, func() tea.Msg {
-			return fleetLiveSizedMsg{left: left, right: right, err: tmux.ResizeLiveViewer(right)}
+			return fleetLiveSizedMsg{left: left, right: right, err: resizeLiveViewer(right)}
 		}
 
 	case fleetTickMsg:
@@ -1032,7 +1032,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ensureCursorVisible() // the selected row regains its activity line
 			m.jumpErr = msg.err.Error()
 			return m, func() tea.Msg {
-				hideViewerLocked(tmux.HideLiveViewer) // drop any half-built viewer
+				hideViewerLocked(hideLiveViewer) // drop any half-built viewer
 				return nil
 			}
 		}
@@ -1361,7 +1361,7 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 		if key == "esc" && m.search != nil {
 			return *m, m.clearSearch() // the next esc leaves
 		}
-		home, _ := tmux.ViewerActiveWindow()
+		home, _ := viewerActiveWindow()
 		hubtarget.LeaveHub(fleetLeaver{m: m, home: home}, "")
 		return *m, nil
 
@@ -1589,7 +1589,7 @@ type fleetProbeMsg struct {
 // fleetProbeCmd asks tmux for the hub window width after a pane resize.
 func fleetProbeCmd(paneWidth int) tea.Cmd {
 	return func() tea.Msg {
-		w, _ := tmux.HubWindowWidth()
+		w, _ := hubWindowWidth()
 		return fleetProbeMsg{pane: paneWidth, win: w}
 	}
 }
@@ -1990,6 +1990,12 @@ var (
 	focusViewerPane       = tmux.FocusViewerPane
 	hubWindowWidth        = tmux.HubWindowWidth
 	showLiveViewer        = tmux.ShowLiveViewer
+	resizeLiveViewer      = tmux.ResizeLiveViewer
+	hideLiveViewer        = tmux.HideLiveViewer
+	viewerActiveWindow    = tmux.ViewerActiveWindow
+	switchClientToLast    = tmux.SwitchClientToLast
+	switchClientToSession = tmux.SwitchClientToSession
+	listSessionActivity   = tmux.ListSessionActivity
 )
 
 // focusLive is Enter's and tab's action: move tmux focus to the live pane so
@@ -2303,7 +2309,18 @@ type fleetTitleLayout struct {
 	badge    [2]int
 	activity [2]int // the [activity] button
 	sort     [2]int // the "sort: recent|window" tag
+	// counts are the state count cells (glyph and number), indexed by
+	// fleetStateFilters order (blocked, working, done, idle); zero when not
+	// shown (blocked is absent at 0, any cell when the counts are dropped).
+	counts [4][2]int
 }
+
+// fleetStateGlyphs are the state glyphs in the same order.
+var fleetStateGlyphs = [4]string{"⏸", "●", "✓", "○"}
+
+// fleetStateFilters are the single-state filters in count order: the title's
+// cells and a group header's slots.
+var fleetStateFilters = [4]fleetFilter{fleetFilterBlocked, fleetFilterWorking, fleetFilterDone, fleetFilterIdle}
 
 // titleLayout lays out the title row. Narrow widths drop the totals, then
 // tighten the counts and shorten the filter tag, then drop the counts, then
@@ -2321,11 +2338,19 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 	} else if search != "" {
 		tags = []string{search, search}
 	}
-	fit := func(l fleetTitleLayout, left, right string) fleetTitleLayout {
+	fit := func(l fleetTitleLayout, left, right string, cellSpans [4][2]int) fleetTitleLayout {
 		line := left
 		if right != "" {
 			pad := cw - fleetSidebarRightGutter - lipgloss.Width(left) - lipgloss.Width(right)
 			line += strings.Repeat(" ", pad) + right
+		}
+		if right != "" {
+			off := lipgloss.Width(line) - lipgloss.Width(right)
+			for i, sp := range cellSpans {
+				if sp[1] > 0 {
+					l.counts[i] = [2]int{sp[0] + off, sp[1] + off}
+				}
+			}
 		}
 		l.line = fleetFitLine(line, false, cw)
 		if l.badge[1] > cw-fleetSidebarRightGutter {
@@ -2337,6 +2362,11 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 		if l.sort[1] > cw-fleetSidebarRightGutter {
 			l.sort = [2]int{}
 		}
+		for i, sp := range l.counts {
+			if sp[1] > cw-fleetSidebarRightGutter {
+				l.counts[i] = [2]int{}
+			}
+		}
 		return l
 	}
 	// bare is the title without counts.
@@ -2345,29 +2375,49 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 		if lipgloss.Width(left) > cw-fleetSidebarRightGutter {
 			left, l = m.titleLeft(tags[0], true, false)
 		}
-		return fit(l, left, "")
+		return fit(l, left, "", [4][2]int{})
 	}
 	if !m.loaded || m.loadErr != nil {
 		return bare()
 	}
 	blocked, working, done, idle := m.fleetCounts()
-	count := func(glyph string, st lipgloss.Style, n int) string {
-		return st.Render(glyph) + " " + fleetRecapWorkingStyle.Render(fmt.Sprint(n))
+	nums := [4]int{blocked, working, done, idle}
+	// build renders the count cells joined by sep, with each cell's columns
+	// within the result. The active state filter's cell is underlined.
+	build := func(sep string) (string, [4][2]int) {
+		var spans [4][2]int
+		var b strings.Builder
+		for i, f := range fleetStateFilters {
+			if i == 0 && blocked == 0 {
+				continue
+			}
+			if b.Len() > 0 {
+				b.WriteString(sep)
+			}
+			ul := m.filter == f
+			start := lipgloss.Width(b.String())
+			if i == 0 {
+				b.WriteString(fleetBlockedStyle.Bold(true).Reverse(true).Underline(ul).Render(fmt.Sprintf(" ⏸ %d ", blocked)))
+			} else {
+				st := [4]lipgloss.Style{{}, fleetWorkingStyle, fleetDoneStyle, fleetIdleStyle}[i]
+				b.WriteString(st.Underline(ul).Render(fleetStateGlyphs[i]) + fleetRecapWorkingStyle.Underline(ul).Render(" "+fmt.Sprint(nums[i])))
+			}
+			spans[i] = [2]int{start, lipgloss.Width(b.String())}
+		}
+		return b.String(), spans
 	}
-	var cells []string
-	if blocked > 0 {
-		cells = append(cells, fleetBlockedStyle.Bold(true).Reverse(true).Render(fmt.Sprintf(" ⏸ %d ", blocked)))
-	}
-	cells = append(cells, count("●", fleetWorkingStyle, working), count("✓", fleetDoneStyle, done), count("○", fleetIdleStyle, idle))
-	counts := strings.Join(cells, "  ")
+	counts, countSpans := build("  ")
 	total := working + blocked + done + idle
 	suffix := fleetDimStyle.Render(fmt.Sprintf(" · %d agent%s, %d session%s", total, plural(total), len(m.groups), plural(len(m.groups))))
 
-	type candidate struct{ tag, right string }
-	candidates := []candidate{{tags[0], counts + suffix}, {tags[0], counts}}
+	type candidate struct {
+		tag, right string
+		spans      [4][2]int
+	}
+	candidates := []candidate{{tags[0], counts + suffix, countSpans}, {tags[0], counts, countSpans}}
 	if m.filter != fleetFilterAll || search != "" {
-		tight := strings.Join(cells, " ")
-		candidates = append(candidates, candidate{tags[0], tight}, candidate{tags[1], tight})
+		tight, tightSpans := build(" ")
+		candidates = append(candidates, candidate{tags[0], tight, tightSpans}, candidate{tags[1], tight, tightSpans})
 	}
 	// The [activity] button outranks the counts' suffix but not the counts:
 	// without room for both, the button is dropped (v still toggles the
@@ -2379,7 +2429,7 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 				left, l := m.titleLeft(c.tag, button, sortTag)
 				room := cw - fleetSidebarRightGutter - lipgloss.Width(left) - 1
 				if lipgloss.Width(c.right) <= room {
-					return fit(l, left, c.right)
+					return fit(l, left, c.right, c.spans)
 				}
 			}
 		}
@@ -2429,6 +2479,20 @@ const (
 	fleetSortRecent = "sort: recent"
 	fleetSortWindow = "sort: window"
 )
+
+// titleCountAt reports which state filter the title row's count cell under
+// (x, y) selects, if any.
+func (m FleetModel) titleCountAt(x, y int) (fleetFilter, bool) {
+	if y != 0 {
+		return fleetFilterAll, false
+	}
+	for i, sp := range m.titleLayout(m.contentWidth()).counts {
+		if sp[1] > 0 && x >= sp[0] && x < sp[1] {
+			return fleetStateFilters[i], true
+		}
+	}
+	return fleetFilterAll, false
+}
 
 // onSortTag reports whether (x, y) hits the title row's sort tag.
 func (m FleetModel) onSortTag(x, y int) bool {
@@ -2750,6 +2814,9 @@ type fleetHeaderSpans struct {
 	sweep [2]int // sweep button; zero when not shown
 	add   [2]int // "+ new" button or armed selector; zero when not shown
 	cron  bool   // the armed selector shows its "cron" choice
+	// counts are the per-state count slots (blocked, working, done, idle);
+	// blank slots and a hidden counts block are zero.
+	counts [4][2]int
 	// tabSessions and tabSched are the Sessions / Schedules tab labels
 	// (zero when not drawn).
 	tabSessions, tabSched [2]int
@@ -2955,6 +3022,16 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 		spans.sweep = [2]int{end - lipgloss.Width(sweep), end}
 	}
 	leftW := limit - lipgloss.Width(right) - 1
+	if showCounts {
+		slotW := 2 + m.countDigits()
+		start := limit - lipgloss.Width(right)
+		for i, n := range [4]int{counts.blocked, counts.working, counts.done, counts.idle} {
+			if n > 0 && start >= 0 {
+				x := start + i*(slotW+fleetCountGap(cw))
+				spans.counts[i] = [2]int{x, x + slotW}
+			}
+		}
+	}
 
 	projStyle := fleetProjectChipStyle(g.Project, chipPad > 0)
 	if hover == fleetHoverFold {
@@ -4098,12 +4175,12 @@ type fleetLeaver struct {
 	home string
 }
 
-func (fleetLeaver) SwitchLast() error { return tmux.SwitchClientToLast("") }
+func (fleetLeaver) SwitchLast() error { return switchClientToLast("") }
 func (fleetLeaver) SwitchSession(n string) error {
-	return tmux.SwitchClientToSession("", n)
+	return switchClientToSession("", n)
 }
 func (l fleetLeaver) ViewedHome() string             { return l.home }
-func (fleetLeaver) Sessions() []tmux.SessionActivity { return tmux.ListSessionActivity() }
+func (fleetLeaver) Sessions() []tmux.SessionActivity { return listSessionActivity() }
 func (l fleetLeaver) Message(msg string)             { l.m.jumpErr = msg }
 
 // Chrome-zoom seams, overridden in tests so they never touch tmux.

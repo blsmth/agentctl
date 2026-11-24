@@ -214,7 +214,13 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 		}
 
 		// Restore using the saved instance name (e.g. "go-engineer:2").
+		var savedTitle windowstate.ShortTitle
+		if as.ShortTitleRec != nil {
+			savedTitle = *as.ShortTitleRec
+		}
 		wid, err := restore(dispatch.RestoreRequest{
+			ShortTitle:       savedTitle,
+			StartedAt:        as.StartedAt,
 			AgentName:        baseName,
 			InstanceName:     as.Name,
 			SessionID:        sessionID,

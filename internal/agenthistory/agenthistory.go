@@ -24,9 +24,12 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/logging"
+	"github.com/blsmth/agentctl/internal/stamp"
 )
 
 // MaxFileSize is the largest file the store tracks; bigger ones are skipped.
@@ -37,6 +40,9 @@ const DefaultAuthor = "agentctl"
 
 // ErrGitMissing is returned when no git binary is on PATH.
 var ErrGitMissing = errors.New("git not found on PATH")
+
+// ErrNoSnapshots is returned when the store exists but holds no commit yet.
+var ErrNoSnapshots = errors.New("no snapshots yet")
 
 // ErrNotTracked is returned for a path outside the store's tracked paths.
 var ErrNotTracked = errors.New("path is not tracked by the agent history")
@@ -49,6 +55,8 @@ var (
 	runGit = defaultRunGit
 	// stateDir resolves the agentctl state dir lazily.
 	stateDir = config.StateDir
+	// logf writes a log line.
+	logf = logging.Log
 )
 
 // Store is one tracked root.
@@ -246,9 +254,10 @@ func (s *Store) ensureInit() (bool, error) {
 }
 
 // skipList walks the tracked paths without following symlinks and returns
-// the files over MaxFileSize as exclude pathspecs.
-func (s *Store) skipList() []string {
-	var skip []string
+// the files over MaxFileSize and the nested git repos as exclude pathspecs,
+// plus the repos' paths relative to the work tree. A tracked path that is
+// itself a git repo is reported as a nested repo too.
+func (s *Store) skipList() (excludes, repos []string) {
 	for _, p := range s.Paths {
 		root := filepath.Join(s.WorkTree, p)
 		fi, err := os.Lstat(root)
@@ -257,32 +266,79 @@ func (s *Store) skipList() []string {
 		}
 		if !fi.IsDir() {
 			if fi.Mode().IsRegular() && fi.Size() > MaxFileSize {
-				skip = append(skip, ":(exclude,literal)"+filepath.ToSlash(p))
+				excludes = append(excludes, ":(exclude,literal)"+filepath.ToSlash(p))
 			}
 			continue
 		}
 		filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error { //nolint:errcheck
-			if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
+			if err != nil || d.Type()&fs.ModeSymlink != 0 {
+				return nil
+			}
+			if d.IsDir() {
+				// A nested git repo (a checked-out project under agents/) makes
+				// "git add" fail outright, so it is left out of the history.
+				if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
+					if rel, err := filepath.Rel(s.WorkTree, path); err == nil {
+						rel = filepath.ToSlash(rel)
+						repos = append(repos, rel)
+						excludes = append(excludes, ":(exclude,literal)"+rel)
+					}
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			if fi, err := d.Info(); err == nil && fi.Size() > MaxFileSize {
 				if rel, err := filepath.Rel(s.WorkTree, path); err == nil {
-					skip = append(skip, ":(exclude,literal)"+filepath.ToSlash(rel))
+					excludes = append(excludes, ":(exclude,literal)"+filepath.ToSlash(rel))
 				}
 			}
 			return nil
 		})
 	}
-	return skip
+	return excludes, repos
+}
+
+// SkippedRepos lists the nested git repos (paths relative to the work tree)
+// the store leaves out of its history.
+func (s *Store) SkippedRepos() []string {
+	_, repos := s.skipList()
+	return repos
+}
+
+// logSkippedRepos logs each skipped repo once per path per day, deduped by a
+// stamp in the state dir (housekeeping runs in a fresh process every few
+// minutes).
+func (s *Store) logSkippedRepos(repos []string) {
+	if len(repos) == 0 {
+		return
+	}
+	sd, err := stateDir()
+	if err != nil {
+		return
+	}
+	dir := filepath.Join(sd, "agent-history-skips")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	for _, r := range repos {
+		sum := sha256.Sum256([]byte(s.GitDir + "\x00" + r))
+		if stamp.Try(filepath.Join(dir, fmt.Sprintf("%x.stamp", sum[:8])), 24*time.Hour, time.Now()) {
+			logf("agent-history: skipping nested git repo %s", filepath.Join(s.WorkTree, filepath.FromSlash(r)))
+		}
+	}
 }
 
 // stage stages every change under the tracked paths: additions and edits
 // (forced, since project agent dirs are gitignored in their repo) and
 // deletions of paths that no longer exist.
 func (s *Store) stage() error {
-	skip := s.skipList()
+	skip, repos := s.skipList()
+	s.logSkippedRepos(repos)
 	for _, p := range s.Paths {
 		slash := filepath.ToSlash(p)
+		if slices.Contains(repos, slash) {
+			continue // the tracked path is itself a git repo
+		}
 		if _, err := os.Lstat(filepath.Join(s.WorkTree, p)); err != nil {
 			if _, err := s.git(nil, "", "rm", "-r", "--cached", "-q", "--ignore-unmatch", "--", slash); err != nil {
 				return err
@@ -424,6 +480,9 @@ func (s *Store) ready() error {
 	}
 	if _, err := os.Stat(filepath.Join(s.GitDir, "HEAD")); err != nil {
 		return errors.New("no agent history yet (it is created by the first housekeeping snapshot)")
+	}
+	if !s.hasHead() {
+		return ErrNoSnapshots
 	}
 	return nil
 }

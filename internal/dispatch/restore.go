@@ -73,6 +73,11 @@ type RestoreRequest struct {
 	// Harness is the recorded harness ("" = claude). An unknown name fails
 	// the restore rather than relaunching the window on another harness.
 	Harness string
+	// ShortTitle is the saved row title state (title, kind, final, manual,
+	// input hash); zero when none was saved. StartedAt is the original launch
+	// time (unix seconds); 0 keeps the new launch's.
+	ShortTitle windowstate.ShortTitle
+	StartedAt  int64
 }
 
 // Restore re-launches a saved agent window using the shared settings helpers
@@ -167,6 +172,12 @@ func applyRestoreMeta(ws *windowstate.WindowState, req RestoreRequest) {
 	ws.WorktreeDir = req.WorktreeDir
 	ws.PRNumber = req.PRNumber
 	ws.PRURL = req.PRURL
+	if req.ShortTitle != (windowstate.ShortTitle{}) {
+		ws.ShortTitle = req.ShortTitle
+	}
+	if req.StartedAt > 0 {
+		ws.StartedAt = req.StartedAt
+	}
 }
 
 // buildRestoreCmd returns the shell command that re-launches a restored

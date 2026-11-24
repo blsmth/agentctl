@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -279,14 +280,17 @@ func PrintTicketDetail(number int, jsonOut bool) error {
 
 // sessionsJSONRow is the flattened structure emitted for --json output.
 type sessionsJSONRow struct {
-	ID       string   `json:"id"`
-	Agent    string   `json:"agent"`
-	Project  string   `json:"project"`
-	Model    string   `json:"model"`
-	Duration string   `json:"duration"`
-	Turns    int      `json:"turns"`
-	CostUSD  *float64 `json:"cost_usd"` // null = unknown model price
-	Age      string   `json:"age"`
+	ID      string `json:"id"`
+	Agent   string `json:"agent"`
+	Project string `json:"project"` // short parent project name
+	// ProjectDir is the full real working directory, or the decoded slug
+	// when the transcript carried none.
+	ProjectDir string   `json:"project_dir"`
+	Model      string   `json:"model"`
+	Duration   string   `json:"duration"`
+	Turns      int      `json:"turns"`
+	CostUSD    *float64 `json:"cost_usd"` // null = unknown model price
+	Age        string   `json:"age"`
 }
 
 // PrintSessionsTable fetches recent sessions and prints them as a table or JSON.
@@ -300,6 +304,7 @@ func PrintSessionsTable(jsonOut bool) error {
 		id       string
 		agent    string
 		project  string
+		projDir  string
 		model    string
 		duration time.Duration
 		turns    int
@@ -316,7 +321,11 @@ func PrintSessionsTable(jsonOut bool) error {
 			continue
 		}
 		dur := s.Duration()
-		project := filepath.Base(s.Project)
+		project := sessions.ProjectName(sum.Cwd, s.Project)
+		projDir := sum.Cwd
+		if projDir == "" {
+			projDir = s.Project
+		}
 		modelShort := cliAbbreviateModel(sum.ModelName)
 		age := fmtAge(time.Since(s.StartTime))
 		sc := sessions.CostOfSummary(sum, sessions.BillingFor(s, sum.ModelName, backends))
@@ -325,6 +334,7 @@ func PrintSessionsTable(jsonOut bool) error {
 			id:       s.ID,
 			agent:    s.Agent,
 			project:  project,
+			projDir:  projDir,
 			model:    modelShort,
 			duration: dur,
 			turns:    sum.TurnCount,
@@ -338,14 +348,15 @@ func PrintSessionsTable(jsonOut bool) error {
 		jrows := make([]sessionsJSONRow, 0, len(rows))
 		for _, r := range rows {
 			jrows = append(jrows, sessionsJSONRow{
-				ID:       r.id,
-				Agent:    r.agent,
-				Project:  r.project,
-				Model:    r.model,
-				Duration: fmtDuration(r.duration),
-				Turns:    r.turns,
-				CostUSD:  ptrIf(r.costUSD, r.costOK),
-				Age:      r.age,
+				ID:         r.id,
+				Agent:      r.agent,
+				Project:    r.project,
+				ProjectDir: r.projDir,
+				Model:      r.model,
+				Duration:   fmtDuration(r.duration),
+				Turns:      r.turns,
+				CostUSD:    ptrIf(r.costUSD, r.costOK),
+				Age:        r.age,
 			})
 		}
 		enc := json.NewEncoder(os.Stdout)
@@ -353,30 +364,7 @@ func PrintSessionsTable(jsonOut bool) error {
 		return enc.Encode(jrows)
 	}
 
-	hdr := cliHeaderStyle()
-	muted := cliMuted()
-	accent := cliAccent()
-	green := cliGreen()
-
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-		hdr.Render("AGE"),
-		hdr.Render("AGENT"),
-		hdr.Render("PROJECT"),
-		hdr.Render("MODEL"),
-		hdr.Render("TURNS"),
-		hdr.Render("DUR"),
-		hdr.Render("COST"),
-	)
-	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-		muted.Render(strings.Repeat("─", 8)),
-		muted.Render(strings.Repeat("─", 18)),
-		muted.Render(strings.Repeat("─", 12)),
-		muted.Render(strings.Repeat("─", 8)),
-		muted.Render(strings.Repeat("─", 5)),
-		muted.Render(strings.Repeat("─", 6)),
-		muted.Render(strings.Repeat("─", 8)),
-	)
+	cells := make([]sessionsCells, 0, len(rows))
 	for _, r := range rows {
 		costStr := "-"
 		if !r.costOK {
@@ -384,17 +372,50 @@ func PrintSessionsTable(jsonOut bool) error {
 		} else if r.costUSD > 0 {
 			costStr = fmt.Sprintf("$%.3f", r.costUSD)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			muted.Render(r.age),
-			accent.Render(r.agent),
-			muted.Render(r.project),
-			muted.Render(r.model),
-			fmt.Sprintf("%d", r.turns),
-			muted.Render(fmtDuration(r.duration)),
-			green.Render(costStr),
-		)
+		cells = append(cells, sessionsCells{
+			age: r.age, agent: r.agent, project: r.project, model: r.model,
+			turns: fmt.Sprintf("%d", r.turns), dur: fmtDuration(r.duration), cost: costStr,
+		})
 	}
-	return w.Flush()
+	// lipgloss.Fprint downsamples colors for the destination, so piped
+	// output carries no escape codes.
+	var b strings.Builder
+	if err := renderSessionsTable(&b, cells); err != nil {
+		return err
+	}
+	_, err = lipgloss.Fprint(os.Stdout, b.String())
+	return err
+}
+
+// sessionsCells is one table row: plain text for each column.
+type sessionsCells struct {
+	age, agent, project, model, turns, dur, cost string
+}
+
+// renderSessionsTable writes the styled sessions table to w. Cells are
+// styled first and padded by their visible width (writeTable), so styled
+// and unstyled columns line up.
+func renderSessionsTable(w io.Writer, rows []sessionsCells) error {
+	hdr := cliHeaderStyle()
+	muted := cliMuted()
+	accent := cliAccent()
+	green := cliGreen()
+
+	out := [][]string{
+		{hdr.Render("AGE"), hdr.Render("AGENT"), hdr.Render("PROJECT"), hdr.Render("MODEL"),
+			hdr.Render("TURNS"), hdr.Render("DUR"), hdr.Render("COST")},
+		{muted.Render(strings.Repeat("─", 8)), muted.Render(strings.Repeat("─", 18)),
+			muted.Render(strings.Repeat("─", 12)), muted.Render(strings.Repeat("─", 8)),
+			muted.Render(strings.Repeat("─", 5)), muted.Render(strings.Repeat("─", 6)),
+			muted.Render(strings.Repeat("─", 8))},
+	}
+	for _, r := range rows {
+		out = append(out, []string{
+			muted.Render(r.age), accent.Render(r.agent), muted.Render(truncWidth(r.project, 24)),
+			muted.Render(r.model), r.turns, muted.Render(r.dur), green.Render(r.cost),
+		})
+	}
+	return writeTable(w, out)
 }
 
 // PrintSessionDetail prints details for a single session by ID prefix.

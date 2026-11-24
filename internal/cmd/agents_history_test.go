@@ -59,3 +59,57 @@ func TestAgentsHistoryCommands(t *testing.T) {
 		t.Fatal("path outside the tracked tree accepted")
 	}
 }
+
+func TestAgentsHistoryNoSnapshots(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	s, err := agenthistory.HomeStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "init", "-q", "--bare", "--initial-branch=main", s.GitDir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	var out bytes.Buffer
+	if err := RunAgentsHistory(&out, "", "", 10); err != nil || !strings.Contains(out.String(), "No snapshots yet") {
+		t.Fatalf("history: %q %v", out.String(), err)
+	}
+}
+
+func TestAgentsHistoryShowsSkippedRepos(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	agents := filepath.Join(root, "home", ".claude", "agents")
+	nested := filepath.Join(agents, "launcher")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agents, "a.md"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "init", "-q", nested).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	s, err := agenthistory.HomeStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Snapshot("first", ""); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := RunAgentsHistory(&out, "", "", 10); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "skipped nested repos: agents/launcher") {
+		t.Fatalf("output = %q", out.String())
+	}
+}

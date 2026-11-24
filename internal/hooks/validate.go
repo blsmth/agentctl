@@ -714,6 +714,9 @@ func checkGlobalDenyListIn(command, cwd string) string {
 	if reason := checkApprovalTamper(command); reason != "" {
 		return reason
 	}
+	if reason := checkHistoryTamper(command, cwd); reason != "" {
+		return reason
+	}
 	if reason := checkTemplateTamper(command); reason != "" {
 		return reason
 	}
