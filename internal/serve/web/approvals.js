@@ -72,19 +72,28 @@ function detailRows(a) {
   );
 }
 
+/** unfolded holds the keys of text blocks the user expanded; survives re-renders. */
+const unfolded = new Set();
+
 /**
  * textBlock is a labelled pre block. A long one is folded to a few lines
  * behind a "Show all" toggle, so a clipped prompt is never mistaken for the
  * whole prompt.
  */
-function textBlock(label, text) {
+function textBlock(key, label, text) {
   const pre = h("pre", { class: "approval-text" }, text);
   const { fold, label: more } = promptFold(text);
   if (!fold) return [h("div", { class: "meta" }, label), pre];
-  pre.classList.add("foldable", "folded");
-  const toggle = h("button", { class: "btn approval-more", type: "button", "aria-expanded": "false" }, more);
+  // The approvals list re-renders on every store event, so the open state
+  // lives in unfolded (keyed by approval and block), not only in the DOM.
+  const startOpen = unfolded.has(key);
+  pre.classList.add("foldable");
+  if (!startOpen) pre.classList.add("folded");
+  const toggle = h("button", { class: "btn approval-more", type: "button", "aria-expanded": String(startOpen) }, startOpen ? "Show less" : more);
   toggle.addEventListener("click", () => {
     const open = pre.classList.toggle("folded") === false;
+    if (open) unfolded.add(key);
+    else unfolded.delete(key);
     toggle.setAttribute("aria-expanded", String(open));
     toggle.textContent = open ? "Show less" : more;
   });
@@ -111,8 +120,8 @@ export function approvalCard(ctx, a, countdowns, { compact = false } = {}) {
     facts.push(h("div", {}, h("span", { class: "meta" }, "scheduled agent "), a.target_agent || "(unknown)"));
   }
   const body = [];
-  if (a.prompt) body.push(...textBlock(a.kind === "cron" ? "Job" : a.kind === "template" ? "Template" : "Prompt", a.prompt));
-  body.push(...textBlock("Command", a.command));
+  if (a.prompt) body.push(...textBlock(`${a.id}:prompt`, a.kind === "cron" ? "Job" : a.kind === "template" ? "Template" : "Prompt", a.prompt));
+  body.push(...textBlock(`${a.id}:command`, "Command", a.command));
 
   const canWrite = ctx.hasFeature("write");
   let buttons;
