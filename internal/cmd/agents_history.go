@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/blsmth/agentctl/internal/agenthistory"
 )
@@ -32,19 +33,20 @@ func RunAgentsHistory(w io.Writer, which, name string, limit int) error {
 		}
 	}
 	entries, err := s.Log(path, limit)
-	if errors.Is(err, agenthistory.ErrNoSnapshots) {
+	switch {
+	case errors.Is(err, agenthistory.ErrNoSnapshots):
 		fmt.Fprintln(w, "No snapshots yet.")
-		return nil
-	}
-	if err != nil {
+	case err != nil:
 		return err
-	}
-	if len(entries) == 0 {
+	case len(entries) == 0:
 		fmt.Fprintln(w, "No history.")
-		return nil
+	default:
+		for _, e := range entries {
+			fmt.Fprintf(w, "%s  %.19s  %-10s %s\n", e.Short, e.Date, e.Author, e.Subject)
+		}
 	}
-	for _, e := range entries {
-		fmt.Fprintf(w, "%s  %.19s  %-10s %s\n", e.Short, e.Date, e.Author, e.Subject)
+	if repos := s.SkippedRepos(); len(repos) > 0 {
+		fmt.Fprintf(w, "skipped nested repos: %s\n", strings.Join(repos, ", "))
 	}
 	return nil
 }
