@@ -190,6 +190,12 @@ type popupResult struct {
 // first answer wins; see raceRemote. Otherwise behavior is exactly the popup
 // alone.
 func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, popupH int, argsFile string, notice popupNotice) (approved, decided bool, denyReason string) {
+	started := time.Now()
+	lastApproval = approvalOutcome{}
+	defer func() {
+		lastApproval.Elapsed = time.Since(started)
+		lastApproval.TimedOut = denyReason != ""
+	}()
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer stop()
 	ctx, cancel := context.WithTimeout(sigCtx, popupDeadline)
@@ -229,6 +235,7 @@ func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, po
 	switch pr.end {
 	case popupVerdict:
 		logging.Log("%s: approval source=laptop approved=%v", logPrefix, pr.approved)
+		lastApproval.Source = approvalSourceLaptop
 		return pr.approved, pr.decided, ""
 	case popupPassThrough:
 		return false, false, ""
@@ -284,3 +291,21 @@ func runPopupLoop(ctx context.Context, target popupTarget, logPrefix string, pop
 		}
 	}
 }
+
+// Values for audit.Record.Source on an EventToolApproved record.
+const (
+	approvalSourceLaptop = "laptop"
+	approvalSourcePhone  = "phone"
+)
+
+// approvalOutcome is how the last approval popup in this process ended. The
+// hook is a one-shot process, so a package variable carries it from the popup
+// (runPopupWithDeadline) to the audit writer in ValidateBash without changing
+// every gate's signature. It is zero when no popup ran (stubbed gates).
+type approvalOutcome struct {
+	Source   string // approvalSourceLaptop or approvalSourcePhone; "" unknown
+	Elapsed  time.Duration
+	TimedOut bool // the popup went unanswered (or the hook was cancelled)
+}
+
+var lastApproval approvalOutcome

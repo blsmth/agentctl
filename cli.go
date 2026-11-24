@@ -874,8 +874,9 @@ func (c *OpenContextWindowCmd) Run() error {
 // default, so bare `agentctl audit --tool Bash` keeps working) and the
 // per-session grades (`audit report`).
 type AuditCmd struct {
-	Log    AuditLogCmd    `cmd:"" default:"withargs" help:"Query the hook-sourced audit trail (default; --json for machine-readable)"`
-	Report AuditReportCmd `cmd:"" help:"Grade a past session (or --all) for safety and efficiency"`
+	Log      AuditLogCmd      `cmd:"" default:"withargs" help:"Query the hook-sourced audit trail (default; --json for machine-readable)"`
+	Report   AuditReportCmd   `cmd:"" help:"Grade a past session (or --all) for safety and efficiency"`
+	Verdicts AuditVerdictsCmd `cmd:"" help:"List PR review verdicts with the BLOCKED rate per author agent"`
 }
 
 // AuditReportCmd implements `agentctl audit report [<target>]`.
@@ -925,11 +926,26 @@ type AuditLogCmd struct {
 	AllProjects bool   `help:"Scan every project's audit trail, not just the current one, via the session registry (<global config dir>/registry). Covers registered sessions only -- a project that was never registered, or whose session has since ended, will not appear." name:"all-projects"`
 	Failed      bool   `help:"Only show failed tool calls"`
 	Denied      bool   `help:"Only show tool calls that were denied before running"`
-	Event       string `help:"Filter to an event type (tool, tool_failure, tool_denied)"`
+	Event       string `help:"Filter to an event type (tool, tool_failure, tool_denied, tool_approved)"`
 	Since       string `help:"Only show records at or after this time (RFC3339 timestamp or a duration like 1h, 30m)"`
 	Limit       int    `help:"Max number of records to show, most recent first. 0 means unlimited." default:"100"`
 	Full        bool   `help:"Print the DETAIL column untruncated instead of capping it to the terminal width"`
 	JSON        bool   `help:"Output matching raw records as JSON instead of a table"`
+}
+
+// AuditVerdictsCmd implements `agentctl audit verdicts`, a reader over the
+// review-verdict ledger (internal/verdicts) the PostToolUse hook appends to.
+type AuditVerdictsCmd struct {
+	Since string `help:"Only show verdicts from this far back (e.g. 7d, 36h)" default:"30d"`
+	JSON  bool   `help:"Output as JSON instead of a table"`
+}
+
+func (c *AuditVerdictsCmd) Run() error {
+	if err := cmd.RunAuditVerdicts(os.Stdout, c.Since, c.JSON); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		cliout.Exit(1)
+	}
+	return nil
 }
 
 // buildFilter parses c.Since and assembles the audit.Filter that Run passes

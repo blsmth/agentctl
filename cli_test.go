@@ -61,6 +61,8 @@ var cliTests = []cliCase{
 	{"audit --help", []string{"audit", "--help"}, 0, "session", ""},
 	{"audit --help lists report", []string{"audit", "--help"}, 0, "report", ""},
 	{"audit log --help", []string{"audit", "log", "--help"}, 0, "--denied", ""},
+	{"audit --help lists verdicts", []string{"audit", "--help"}, 0, "verdicts", ""},
+	{"audit verdicts --help", []string{"audit", "verdicts", "--help"}, 0, "since", ""},
 	{"audit report --help", []string{"audit", "report", "--help"}, 0, "--severity", ""},
 	{"audit report on a missing file", []string{"audit", "report", "/nonexistent/x.jsonl"}, 1, "", "no transcript at"},
 	{"audit report rejects an unknown --severity", []string{"audit", "report", "--severity", "urgent"}, -1, "", ""},

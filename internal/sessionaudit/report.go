@@ -467,6 +467,12 @@ func (a *analysis) merge(recs []audit.Record) AuditTrail {
 		}
 	}
 	for _, rec := range recs {
+		// An approval has no tool_use_id and says nothing about the outcome;
+		// matching it by input would mark the step matched and drop the
+		// PostToolUse record that follows.
+		if rec.Event == audit.EventToolApproved {
+			continue
+		}
 		s := byID[rec.ToolUseID]
 		if s == nil || s.matched {
 			s = a.matchByInput(rec)

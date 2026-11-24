@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -197,6 +198,9 @@ func ValidateBash() {
 		}
 		if denyReason != "" {
 			// The prompt cannot be shown or went unanswered: fail closed.
+			if lastApproval.TimedOut {
+				actx.DeniedBy = deniedByTimeout
+			}
 			denyCommand(agentName, command, denyReason, actx)
 			return
 		}
@@ -212,6 +216,7 @@ func ValidateBash() {
 					// proof of a human's approval (dispatchapproval).
 					recordDispatchApprovals(windowID, command)
 				}
+				recordApproved(agentName, actx)
 				allowCommand(agentName, command)
 			} else {
 				// See the comment on the global-deny-list `return` above --
@@ -713,12 +718,16 @@ type denyAuditContext struct {
 	Session        string
 	PermissionMode string
 	RawInput       json.RawMessage // the tool_input JSON exactly as received, for Record.Input
+	DeniedBy       string          // overrides deniedByRule in denyCommand (the popup timeout)
 }
 
 // Values for audit.Record.DeniedBy -- see its doc comment.
 const (
 	deniedByRule  = "rule"
 	deniedByHuman = "human"
+	// deniedByTimeout: an approval popup went unanswered until its deadline
+	// (or the hook was cancelled) and the command was denied fail-closed.
+	deniedByTimeout = "timeout"
 )
 
 // denyCommand denies a Bash command. The exit(2) below -- not the JSON -- is
@@ -765,7 +774,7 @@ func denyCommand(agentName, command, reason string, actx denyAuditContext) {
 		OK:             false,
 		Error:          reason,
 		Summary:        truncateSummary(fmt.Sprintf("Bash denied by rule: %s", reason)),
-		DeniedBy:       deniedByRule,
+		DeniedBy:       cmp.Or(actx.DeniedBy, deniedByRule),
 		Input:          actx.RawInput,
 		// No DurationMS, no Result: PreToolUse never ran the tool.
 	})
@@ -858,4 +867,24 @@ func allowCommand(agentName, command string) {
 	// write reads os.Stdout at call time rather than caching it at package
 	// init, so no extra indirection is introduced here.
 	emitDecision(decision)
+}
+
+// recordApproved appends an EventToolApproved record for a command a human
+// allowed in a popup, with where they answered and how long it took. Best
+// effort, like every audit write.
+func recordApproved(agentName string, actx denyAuditContext) {
+	appendAuditRecord(audit.Record{
+		Event:          audit.EventToolApproved,
+		Tool:           "Bash",
+		Session:        actx.Session,
+		Agent:          agentName,
+		Instance:       os.Getenv("AGENTCTL_INSTANCE_NAME"),
+		Window:         actx.WindowID,
+		PermissionMode: actx.PermissionMode,
+		OK:             true,
+		Summary:        "Bash approved in preview popup",
+		Source:         lastApproval.Source,
+		DurationMS:     lastApproval.Elapsed.Milliseconds(),
+		Input:          actx.RawInput,
+	})
 }

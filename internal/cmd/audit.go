@@ -259,6 +259,9 @@ func auditDetail(rec audit.Record, maxLen int) string {
 	if rec.Event == audit.EventToolDenied && rec.DeniedBy != "" {
 		detail = fmt.Sprintf("denied by %s: %s", rec.DeniedBy, detail)
 	}
+	if rec.Event == audit.EventToolApproved && rec.Source != "" {
+		detail = fmt.Sprintf("approved on %s: %s", rec.Source, detail)
+	}
 	return detail
 }
 

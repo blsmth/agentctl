@@ -341,6 +341,33 @@ func TestAuditMergeByInput(t *testing.T) {
 	}
 }
 
+func TestDeniedWhyTimeout(t *testing.T) {
+	if got := deniedWhy("timeout", false); got != "approval popup went unanswered (audit trail)" {
+		t.Fatalf("deniedWhy(timeout) = %q", got)
+	}
+}
+
+// A tool_approved record (no tool_use_id) must not claim the step, or the
+// failure record that follows for the same call would be dropped.
+func TestAuditMergeApprovedDoesNotMaskFailure(t *testing.T) {
+	cmd := "go vet ./..."
+	c := bash(cmd)
+	c.id = "toolu_ok"
+	in := []byte(`{"command":"` + cmd + `"}`)
+	recs := []audit.Record{
+		{SchemaVersion: 3, Event: audit.EventToolApproved, Tool: "Bash", OK: true, Source: "laptop",
+			Timestamp: t0.Add(4 * time.Second).Format(time.RFC3339Nano), Input: in},
+		{SchemaVersion: 3, Event: audit.EventToolFailure, Tool: "Bash", ToolUseID: "toolu_ok"},
+	}
+	r := Analyze(toEntries(t, lines(t, c)), recs, testParams())
+	if r.Audit.Matched != 1 {
+		t.Fatalf("Matched = %d, want 1 (the failure record)", r.Audit.Matched)
+	}
+	if r.Metrics.ToolErrors != 1 {
+		t.Errorf("ToolErrors = %d, want 1", r.Metrics.ToolErrors)
+	}
+}
+
 func TestErrorRate(t *testing.T) {
 	var calls []call
 	for i := 0; i < 10; i++ {

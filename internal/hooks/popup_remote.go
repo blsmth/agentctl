@@ -167,6 +167,7 @@ func raceRemote(ctx context.Context, target popupTarget, logPrefix string, remot
 				}
 				remote.Cancel(remoteapproval.ReasonLaptop)
 				logging.Log("%s: approval source=laptop approved=%v", logPrefix, pr.approved)
+				lastApproval.Source = approvalSourceLaptop
 				return pr.approved, pr.decided, ""
 			case popupPassThrough:
 				if remoteCh != nil {
@@ -208,6 +209,7 @@ func raceRemote(ctx context.Context, target popupTarget, logPrefix string, remot
 			}
 			approved := rr.d.Decision == remoteapproval.Allow
 			logging.Log("%s: approval source=phone device=%s approved=%v", logPrefix, rr.d.Device, approved)
+			lastApproval.Source = approvalSourcePhone
 			return approved, true, ""
 
 		case <-ctx.Done():
@@ -219,6 +221,7 @@ func raceRemote(ctx context.Context, target popupTarget, logPrefix string, remot
 				return conflictVerdict(logPrefix, pr, d)
 			case pr.end == popupVerdict:
 				logging.Log("%s: approval source=laptop approved=%v (at the deadline)", logPrefix, pr.approved)
+				lastApproval.Source = approvalSourceLaptop
 				return pr.approved, pr.decided, ""
 			}
 			return deny(pr.popupOpen)
@@ -246,5 +249,6 @@ func conflictVerdict(logPrefix string, pr popupResult, d remoteapproval.Decision
 	approved := pr.approved && d.Decision == remoteapproval.Allow
 	logging.Log("%s: approval source=laptop+phone laptop_approved=%v phone=%s device=%s approved=%v",
 		logPrefix, pr.approved, d.Decision, d.Device, approved)
+	lastApproval.Source = approvalSourceLaptop // both answered allow
 	return approved, true, ""
 }

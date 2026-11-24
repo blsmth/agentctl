@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/audit"
 	"github.com/blsmth/agentctl/internal/config"
@@ -270,5 +271,59 @@ func TestValidateBash_PopupDeny_WritesDenialRecord(t *testing.T) {
 	}
 	if !strings.Contains(string(r.Input), command) {
 		t.Errorf("Input %s does not preserve the denied command", r.Input)
+	}
+}
+
+// stubGateOutcome runs ValidateBash for a gated dispatch whose gate returns
+// the given verdict after leaving out as the popup outcome, and returns the
+// audit records of the session.
+func stubGateOutcome(t *testing.T, sess string, out approvalOutcome, approved, decided bool, reason string) []audit.Record {
+	t.Helper()
+	setupAuditRecordTest(t)
+	d := DefaultDeps()
+	d.LoadConfig = func() *config.Config { return &config.Config{DispatchApproval: config.DispatchApprovalAll} }
+	d.LoadProjectConfig = func(string) *config.ProjectConfig { return nil }
+	SetDepsForTest(d)
+	t.Cleanup(func() { SetDepsForTest(DefaultDeps()) })
+	orig := dispatchGate
+	dispatchGate = func(_, _, _ string) (bool, bool, string) {
+		lastApproval = out
+		return approved, decided, reason
+	}
+	t.Cleanup(func() { dispatchGate = orig; lastApproval = approvalOutcome{} })
+	stdin := `{"tool_name":"Bash","tool_input":{"command":"agentctl dispatch --issue 5"},"session_id":"` + sess + `"}`
+	runHookCaptured(t, map[string]string{
+		"AGENTCTL": "1", "AGENTCTL_AGENT_NAME": "lead", "AGENTCTL_WINDOW_ID": "@30",
+		"AGENTCTL_SESSION_ID": sess, "TMUX_PANE": "",
+	}, stdin, ValidateBash)
+	recs, err := audit.Query(audit.Filter{Session: sess})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return recs
+}
+
+func TestValidateBash_PopupTimeoutDeniedByTimeout(t *testing.T) {
+	recs := stubGateOutcome(t, "sess-timeout", approvalOutcome{TimedOut: true}, false, false, "timed out")
+	if len(recs) != 1 || recs[0].Event != audit.EventToolDenied || recs[0].DeniedBy != deniedByTimeout {
+		t.Fatalf("records = %+v", recs)
+	}
+}
+
+func TestValidateBash_UnshowablePromptStillDeniedByRule(t *testing.T) {
+	recs := stubGateOutcome(t, "sess-rule", approvalOutcome{}, false, false, "cannot show prompt")
+	if len(recs) != 1 || recs[0].DeniedBy != deniedByRule {
+		t.Fatalf("records = %+v", recs)
+	}
+}
+
+func TestValidateBash_ApprovalWritesApprovedRecord(t *testing.T) {
+	recs := stubGateOutcome(t, "sess-approved", approvalOutcome{Source: approvalSourcePhone, Elapsed: 2500 * time.Millisecond}, true, true, "")
+	if len(recs) != 1 {
+		t.Fatalf("records = %+v", recs)
+	}
+	r := recs[0]
+	if r.Event != audit.EventToolApproved || r.Source != "phone" || r.DurationMS != 2500 || !r.OK {
+		t.Fatalf("record = %+v", r)
 	}
 }

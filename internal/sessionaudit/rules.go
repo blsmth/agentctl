@@ -649,6 +649,8 @@ func deniedWhy(by string, inferred bool) string {
 		return "refused by a person (" + src + ")"
 	case "rule":
 		return "blocked by a rule (" + src + ")"
+	case "timeout":
+		return "approval popup went unanswered (" + src + ")"
 	}
 	return "refused; by whom is not recorded (" + src + ")"
 }
