@@ -41,6 +41,7 @@ var fleetNewSessionHints = []fleetHint{
 // Seams so tests never read the real origin file or spawn agentctl.
 var (
 	fleetHubOrigin     = tmux.HubOrigin
+	checkNewSessionDir = tmux.CheckNewSessionDir
 	fleetUserHome      = os.UserHomeDir
 	fleetNewSessionRun = runHubNewSessionHelper
 )
@@ -240,7 +241,7 @@ func (m *FleetModel) submitNewSession() tea.Cmd {
 	home, _ := fleetUserHome()
 	dir, err := resolveNewSessionDir(m.dirPrompt.input.Value(), m.dirPrompt.base, home)
 	if err == nil {
-		err = tmux.CheckNewSessionDir(dir)
+		err = checkNewSessionDir(dir)
 	}
 	if err != nil {
 		m.jumpErr = err.Error()

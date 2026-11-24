@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"testing"
@@ -91,7 +92,33 @@ func TestMain(m *testing.M) {
 	fleetSchedTemplates = func(string) []prompttemplate.Template { return nil }
 	fleetSchedEnvLoad = testSchedEnv
 	fleetSchedExec = func(*exec.Cmd, tea.ExecCallback) tea.Cmd { return nil }
+	// Never exec tmux from the hub: the viewer, zoom, focus, switch and
+	// row-action paths all reach real (sandboxed, but leaked) servers.
+	// Tests that exercise them install their own stubs.
+	errTmux := errors.New("tmux disabled in tests")
+	showLiveViewer = func(string, string, int) error { return errTmux }
+	resizeLiveViewer = func(int) error { return errTmux }
+	hideLiveViewer = func() error { return nil }
+	viewerActiveWindow = func() (string, string) { return "", "" }
+	switchClientToLast = func(string) error { return errTmux }
+	switchClientToSession = func(string, string) error { return errTmux }
+	listSessionActivity = func() []tmux.SessionActivity { return nil }
+	switchToSessionWindow = func(string, string) error { return errTmux }
+	focusLivePane = func() error { return errTmux }
+	focusViewerPane = func() error { return errTmux }
+	hubWindowWidth = func() (int, error) { return 0, errTmux }
+	hubViewerState = func() tmux.ViewerState { return tmux.ViewerState{} }
+	repointViewer = func(string, string) error { return errTmux }
+	hubZoomSync = func(bool) {}
+	newShellWindow = func(string, string) (string, error) { return "", errTmux }
+	killSessionWindow = func(string, string) error { return errTmux }
 	code := m.Run()
+	// Guard: a unit test must never start a tmux server, even a sandboxed
+	// one (cleanup would kill it, but the exec path is the bug).
+	if testenv.LeakedTmux() {
+		fmt.Fprintln(os.Stderr, "FAIL: a tui test left a tmux server running in the sandbox; stub the tmux seam it reached")
+		code = 1
+	}
 	cleanup()
 	os.Exit(code)
 }

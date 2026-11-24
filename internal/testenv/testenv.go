@@ -13,6 +13,7 @@
 package testenv
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -21,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // EnvRoot names the variable that marks an already-isolated environment. It
@@ -86,7 +88,10 @@ func Setup() (cleanup func()) {
 		_ = os.RemoveAll(root)
 		panic(fmt.Sprintf("testenv: %v", err))
 	}
-	return func() { removeAll(root) }
+	return func() {
+		killSandboxTmux(root)
+		removeAll(root)
+	}
 }
 
 // Original returns a variable's value from before Setup scrubbed it. Only
@@ -276,4 +281,43 @@ func removeAll(root string) {
 		return nil
 	})
 	_ = os.RemoveAll(root)
+}
+
+// killSandboxTmux stops any tmux server a test started on the sandbox's
+// default socket (<root>/t/tmux-<uid>/default), so it cannot outlive the
+// test binary as an orphan. It only ever addresses a socket under root, never
+// the developer's real TMUX_TMPDIR; errors are ignored.
+func killSandboxTmux(root string) {
+	sock := sandboxSocket(root)
+	if _, err := os.Lstat(sock); err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "-S", sock, "kill-server")
+	cmd.Env = append(os.Environ(), "TMUX_TMPDIR="+filepath.Join(root, "t"))
+	_ = cmd.Run()
+}
+
+func sandboxSocket(root string) string {
+	return filepath.Join(root, "t", fmt.Sprintf("tmux-%d", os.Getuid()), "default")
+}
+
+// LeakedTmux reports whether a tmux server is still running on this test
+// binary's sandbox socket. Call it from TestMain after m.Run and before the
+// cleanup: a unit test that reaches the real tmux exec path leaves one behind.
+// It is false in a subprocess of an isolated binary (the parent owns the root)
+// and when the sandbox has no socket.
+func LeakedTmux() bool {
+	root := os.Getenv(EnvRoot)
+	if !inherited(root) || os.Getenv("TMUX_TMPDIR") != filepath.Join(root, "t") {
+		return false
+	}
+	sock := sandboxSocket(root)
+	if _, err := os.Lstat(sock); err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "tmux", "-S", sock, "list-sessions").Run() == nil
 }
