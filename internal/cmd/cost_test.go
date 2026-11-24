@@ -327,3 +327,27 @@ func TestRunCostRejectsBadFlags(t *testing.T) {
 		t.Error("unknown --account should error")
 	}
 }
+
+func TestPricedRowSplitsImproveSessions(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, first string) string {
+		p := filepath.Join(dir, name)
+		line := `{"type":"user","message":{"role":"user","content":` + strconv.Quote(first) + `}}` + "\n"
+		if err := os.WriteFile(p, []byte(line), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	sum := &sessions.Summary{}
+	work := sessions.Session{ID: "w", Agent: "go-engineer", LogFile: write("w.jsonl", "fix the bug")}
+	imp := sessions.Session{ID: "i", Agent: "go-engineer", LogFile: write("i.jsonl", sessions.ImprovePromptHeader+" Be better.")}
+	fleet := sessions.Session{ID: "f", Agent: "brandon", LogFile: write("f.jsonl", sessions.FleetImprovePromptHeader+" Be better.")}
+	for _, tt := range []struct {
+		s    sessions.Session
+		want string
+	}{{work, "go-engineer"}, {imp, "improve:go-engineer"}, {fleet, "improve:brandon"}} {
+		if got := pricedRow(tt.s, sum, nil).Agent; got != tt.want {
+			t.Errorf("agent for %s = %q, want %q", tt.s.ID, got, tt.want)
+		}
+	}
+}

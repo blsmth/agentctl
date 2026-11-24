@@ -27,6 +27,7 @@ First public release.
 - Optional Prometheus metrics and dashboards.
 - agentctl slash commands (`/agentctl:dispatch`, `context`, `status`, `logs`, `restart`) install via the Claude Code plugin marketplace (`/plugin marketplace add blsmth/agentctl`, then `/plugin install agentctl@agentctl`); `agentctl install-plugin` no longer copies files and just prints those commands. `agentctl version` prints a semver.
 - Hooks and popups invoke the running binary (`os.Executable()`), so `go install github.com/blsmth/agentctl@latest` and release tarballs both work.
+- `agentctl audit report [target]` grades a past session for safety and efficiency (findings with step, time, evidence and reason, plus metrics), merging the hook audit trail when present; `--all` prints a leaderboard and the most frequent findings, and `--json` emits schema 1. `agentctl audit` is now a command group whose default subcommand, `audit log`, is the existing trail query.
 - Release builds for darwin and linux on amd64 and arm64 (goreleaser).
 - Experimental macOS companion app (`macapp/`).
 

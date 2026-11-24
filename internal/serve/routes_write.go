@@ -707,7 +707,7 @@ func sweepPane(verdict string) string {
 }
 
 // closable applies sweep's window rules (cleanup.ClassifyWindow) to a close
-// the user asked for. Sweep's exclusions all hold: shell, improve~* and
+// the user asked for. Sweep's exclusions all hold: shell and
 // untracked windows are skipped, working and blocked windows are left alone.
 // Unlike an unattended sweep, an idle or done window the user chose to close
 // may be closed even when sweep would only list it for attention.

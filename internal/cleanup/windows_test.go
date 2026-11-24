@@ -89,3 +89,33 @@ func TestClassifyWindow(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifyImprove(t *testing.T) {
+	imp := func(mut func(*SweepFacts)) SweepFacts {
+		f := SweepFacts{Tracked: true, State: "idle", Mode: "improve", TurnCount: 1}
+		if mut != nil {
+			mut(&f)
+		}
+		return f
+	}
+	tests := []struct {
+		name string
+		f    SweepFacts
+		want SweepKind
+	}{
+		{"idle after a turn closes", imp(nil), SweepClose},
+		{"working is never closed", imp(func(f *SweepFacts) { f.State = "working" }), SweepWorking},
+		{"pane busy beats an idle record", imp(func(f *SweepFacts) { f.Pane = "busy" }), SweepWorking},
+		{"blocked needs the user", imp(func(f *SweepFacts) { f.State = "blocked" }), SweepAction},
+		{"no turn yet is left alone", imp(func(f *SweepFacts) { f.TurnCount = 0 }), SweepAction},
+		{"unread mail is left alone", imp(func(f *SweepFacts) { f.PendingMail = 1 }), SweepAction},
+		{"live children are left alone", imp(func(f *SweepFacts) { f.LiveChildren = 2 }), SweepAction},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ClassifyWindow(tt.f).Kind; got != tt.want {
+				t.Errorf("kind = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

@@ -71,7 +71,7 @@ func ShellWindows(wins []tmux.WindowInfo) []state.AgentState {
 // BuildAgents is the pure core of LoadAgents. wins is tmux's window list for
 // the session in tmux order; records maps window ID to windowstate. tmux is
 // the source of truth for which windows exist: records without a window are
-// ignored. The persistent "shell" and "improve~*" windows are skipped.
+// ignored. The persistent "shell" window is skipped; improve windows are listed.
 // Windows without a record are listed as untracked (idle, named from tmux).
 //
 // snap is optional enrichment: when non-nil and younger than

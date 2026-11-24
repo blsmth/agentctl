@@ -53,11 +53,19 @@ var cliTests = []cliCase{
 	{"status list --help shows closed", []string{"status", "list", "--help"}, 0, "--closed", ""},
 	{"status peek --help", []string{"status", "peek", "--help"}, 0, "lines", ""},
 	{"status whoami --help", []string{"status", "whoami", "--help"}, 0, "json", ""},
+	{"resume --help", []string{"resume", "--help"}, 0, "handle", ""},
 	// --state is an enum; an unknown value must be a usage error rather than
 	// silently matching nothing and printing an empty, reassuring table.
 	{"status rejects an unknown --state", []string{"status", "--state", "nonsense"}, -1, "", ""},
 	{"ticket create --help", []string{"ticket", "create", "--help"}, 0, "title", ""},
 	{"audit --help", []string{"audit", "--help"}, 0, "session", ""},
+	{"audit --help lists report", []string{"audit", "--help"}, 0, "report", ""},
+	{"audit log --help", []string{"audit", "log", "--help"}, 0, "--denied", ""},
+	{"audit --help lists verdicts", []string{"audit", "--help"}, 0, "verdicts", ""},
+	{"audit verdicts --help", []string{"audit", "verdicts", "--help"}, 0, "since", ""},
+	{"audit report --help", []string{"audit", "report", "--help"}, 0, "--severity", ""},
+	{"audit report on a missing file", []string{"audit", "report", "/nonexistent/x.jsonl"}, 1, "", "no transcript at"},
+	{"audit report rejects an unknown --severity", []string{"audit", "report", "--severity", "urgent"}, -1, "", ""},
 
 	// `tickets` is a Kong alias of `ticket`: same default browse flags and
 	// the same create subcommand.
@@ -276,6 +284,38 @@ func TestIsReadOnlyInvocation(t *testing.T) {
 	}
 }
 
+// TestAuditDefaultsToLog: `audit` became a command group, and bare
+// `agentctl audit <flags>` must still run the trail query (`audit log`).
+func TestAuditDefaultsToLog(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"audit", "--tool", "Bash", "--denied"}, "audit log"},
+		{[]string{"audit"}, "audit log"},
+		{[]string{"audit", "log", "--tool", "Bash"}, "audit log"},
+		{[]string{"audit", "report", "@3", "--json"}, "audit report <target>"},
+		{[]string{"audit", "report", "--all", "--since", "2d"}, "audit report"},
+	}
+	for _, tt := range tests {
+		var cli CLI
+		k, err := kong.New(&cli, kong.Name("agentctl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, err := k.Parse(tt.args)
+		if err != nil {
+			t.Fatalf("Parse(%v): %v", tt.args, err)
+		}
+		if got := ctx.Command(); got != tt.want {
+			t.Errorf("Parse(%v) command = %q, want %q", tt.args, got, tt.want)
+		}
+		if tt.args[len(tt.args)-1] == "--denied" && (cli.Audit.Log.Tool != "Bash" || !cli.Audit.Log.Denied) {
+			t.Errorf("flags not on audit log: %+v", cli.Audit.Log)
+		}
+	}
+}
+
 // TestCronTemplateFlagsParse: `cron add --template` needs no --agent (the
 // template may name it) and `cron edit --template` is a pointer like the
 // other edit flags.
@@ -424,5 +464,28 @@ func TestAgentsGroupRouting(t *testing.T) {
 	}
 	if cli, got := parse("agents", "revert", "x", "abc"); got != "agents revert <name> <rev>" || cli.Agents.Revert.Name != "x" || cli.Agents.Revert.Rev != "abc" {
 		t.Errorf("revert: %q %+v", got, cli.Agents.Revert)
+	}
+}
+
+func TestImproveFlagsParse(t *testing.T) {
+	var cli CLI
+	k, err := kong.New(&cli, kong.Name("agentctl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.Parse([]string{"improve", "go-engineer", "--since", "24h", "--theme", "t", "--model", "sonnet", "--session", "abc", "--session", "def", "--dry-run"}); err != nil {
+		t.Fatal(err)
+	}
+	c := cli.Improve
+	if c.Agent != "go-engineer" || c.Since != "24h" || c.Theme != "t" || c.Model != "sonnet" || !c.DryRun || c.Fleet || len(c.Session) != 2 {
+		t.Errorf("improve = %+v", c)
+	}
+	var cli2 CLI
+	k2, _ := kong.New(&cli2, kong.Name("agentctl"))
+	if _, err := k2.Parse([]string{"improve", "--fleet"}); err != nil {
+		t.Fatal(err)
+	}
+	if !cli2.Improve.Fleet || cli2.Improve.Agent != "" || cli2.Improve.Since != "7d" || cli2.Improve.Focus {
+		t.Errorf("improve --fleet = %+v", cli2.Improve)
 	}
 }

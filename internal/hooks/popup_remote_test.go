@@ -187,6 +187,9 @@ func TestRemoteApproveClosesOpenPopup(t *testing.T) {
 	if !g.approved || !g.decided || g.reason != "" {
 		t.Fatalf("got %+v, want phone approval", g)
 	}
+	if lastApproval.Source != approvalSourcePhone || lastApproval.TimedOut {
+		t.Fatalf("lastApproval = %+v, want phone source", lastApproval)
+	}
 	if br.cancelled.Load() != 1 {
 		t.Fatal("popup runner was not cancelled")
 	}

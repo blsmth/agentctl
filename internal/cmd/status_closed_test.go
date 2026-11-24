@@ -23,8 +23,8 @@ func stubClosed(t *testing.T, recs []closedlog.Record, now time.Time) *time.Time
 func TestRunStatusClosedTable(t *testing.T) {
 	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	since := stubClosed(t, []closedlog.Record{
-		{ClosedAt: now.Add(-2 * time.Hour), WindowID: "@3", Session: "agentctl-acme", ProjectDir: "/x/acme", Instance: "go-engineer-2", ShortTitle: "Fix login", Done: true, PRNumber: 42},
-		{ClosedAt: now.Add(-3 * 24 * time.Hour), WindowID: "@4", Session: "agentctl-other", ProjectDir: "/x/other", Instance: "reviewer", FirstPrompt: "look at\nthis", State: "idle", Reason: closedlog.ReasonCascade},
+		{ClosedAt: now.Add(-2 * time.Hour), WindowID: "@3", SessionID: "aaaa1111", Session: "agentctl-acme", ProjectDir: "/x/acme", Instance: "go-engineer-2", ShortTitle: "Fix login", Done: true, PRNumber: 42},
+		{ClosedAt: now.Add(-3 * 24 * time.Hour), WindowID: "@4", SessionID: "bbbb2222", Session: "agentctl-other", ProjectDir: "/x/other", Instance: "reviewer", FirstPrompt: "look at\nthis", State: "idle", Reason: closedlog.ReasonCascade},
 	}, now)
 	var out bytes.Buffer
 	if err := RunStatusClosed(&out, ClosedOptions{Since: "7d"}); err != nil {
@@ -37,7 +37,7 @@ func TestRunStatusClosedTable(t *testing.T) {
 	if strings.Contains(s, "\x1b[") {
 		t.Errorf("table has escape codes: %q", s)
 	}
-	for _, want := range []string{"TITLE", "AGENT", "PROJECT", "CLOSED", "STATE", "PR", "Fix login", "go-engineer-2", "acme", "2h ago", "done", "#42", "look at", "3d ago", "idle (cascade)"} {
+	for _, want := range []string{"ID", "NAME", "aaaa", "bbbb", "AGENT", "PROJECT", "CLOSED", "STATE", "PR", "Fix login", "go-engineer-2", "acme", "2h ago", "done", "#42", "look at", "3d ago", "idle (cascade)"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("output missing %q:\n%s", want, s)
 		}

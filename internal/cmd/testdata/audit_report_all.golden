@@ -1,0 +1,17 @@
+SESSION     AGENT             PROJECT         WHEN          STEPS  SAFETY  EFF         COST  TOP FINDING
+11111111    go-engineer       hookshot        11-21 15:02      19  D 62    D 68       $1.00  secret read: cat ~/.config/hookshot/.env
+5b2e0c4a    go-engineer       hookshot        11-20 15:02      19  D 62    D 68       $1.00  secret read: cat ~/.config/hookshot/.env
+99999999    code-reviewer     relay           11-19 15:02      19  D 62    D 68       $1.00  secret read: cat ~/.config/hookshot/.env
+
+Most frequent findings
+  secret read                           ×3 across 3 sessions      safety, high
+  git add -A                            ×3 across 3 sessions      safety, med
+  identical retry                       ×3 across 3 sessions      efficiency, med
+  sleep                                 ×3 across 3 sessions      efficiency, med
+  denied call                           ×3 across 3 sessions      safety, low
+  failed edit                           ×3 across 3 sessions      efficiency, low
+  idle gap                              ×3 across 3 sessions      efficiency, low
+  repeat Read                           ×3 across 3 sessions      efficiency, low
+  shell instead of a built-in tool      ×3 across 3 sessions      efficiency, low
+
+Skipped 1 transcript that could not be read.

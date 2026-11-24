@@ -143,11 +143,23 @@ func FindSessionsForAgent(agentName string, limit int) ([]Session, error) {
 // their transcript, so the opening prompt is the only reliable tell.
 const ImprovePromptHeader = "You are running a self-improvement review of your own agent definition."
 
+// FleetImprovePromptHeader is the first line of an `agentctl improve --fleet`
+// prompt (a review across every agent, run under the chosen agent's name).
+const FleetImprovePromptHeader = "You are running a fleet-wide self-improvement review of every agent definition."
+
 // IsImproveSession reports whether the transcript at logPath is an
 // `agentctl improve` session, by its first user message.
 func IsImproveSession(logPath string) bool {
-	return strings.HasPrefix(FirstHumanText(logPath), ImprovePromptHeader)
+	if logPath == "" {
+		return false
+	}
+	first := FirstHumanText(logPath)
+	return strings.HasPrefix(first, ImprovePromptHeader) || strings.HasPrefix(first, FleetImprovePromptHeader)
 }
+
+// ImproveCostPrefix labels an improve session's agent in cost reports, so
+// its spend is not counted under the agent it improved.
+const ImproveCostPrefix = "improve:"
 
 // FindWorkSessionsForAgent is FindSessionsForAgent without the agent's own
 // improve sessions (see IsImproveSession), which would otherwise count as the

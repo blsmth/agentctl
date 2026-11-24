@@ -73,6 +73,9 @@ func Role(mode, kind string) string {
 	if mode == ReviewPRMode {
 		return "review"
 	}
+	if mode == "improve" {
+		return "improve"
+	}
 	switch kind {
 	case "review":
 		return "review"

@@ -12,7 +12,7 @@ const (
 	SweepAction SweepKind = "action"
 	// SweepWorking means the window is mid-turn; leave it alone.
 	SweepWorking SweepKind = "working"
-	// SweepSkip means the window is never swept (self, shell, improve~*,
+	// SweepSkip means the window is never swept (self, shell,
 	// untracked).
 	SweepSkip SweepKind = "skip"
 )
@@ -22,7 +22,7 @@ const (
 type SweepFacts struct {
 	// Window identity and exclusions.
 	IsSelf      bool // resolved from TMUX_PANE, never from env session IDs
-	NonAgent    bool // shell window or improve~*
+	NonAgent    bool // the shell window
 	Tracked     bool // a windowstate record exists
 	IncludeBare bool
 
@@ -129,6 +129,9 @@ func ClassifyWindow(f SweepFacts) SweepVerdict {
 	if f.Mode == "bare" {
 		return classifyBare(f)
 	}
+	if f.Mode == "improve" {
+		return classifyImprove(f)
+	}
 
 	if !f.Done {
 		action := "waiting for input"
@@ -156,6 +159,19 @@ func classifyBare(f SweepFacts) SweepVerdict {
 		return SweepVerdict{Kind: SweepAction, Reason: "idle", Action: fmt.Sprintf("%d live child session(s)", f.LiveChildren)}
 	}
 	return classifyDone(f)
+}
+
+// classifyImprove handles an idle improve window. It has no worktree, branch
+// or PR, so once it has completed a turn it is finished and closes; a working
+// one never reaches here (ClassifyWindow returns SweepWorking first).
+func classifyImprove(f SweepFacts) SweepVerdict {
+	if f.TurnCount == 0 {
+		return SweepVerdict{Kind: SweepAction, Reason: "idle", Action: "improve session has not started a turn yet"}
+	}
+	if f.LiveChildren > 0 {
+		return SweepVerdict{Kind: SweepAction, Reason: "idle", Action: fmt.Sprintf("%d live child session(s)", f.LiveChildren)}
+	}
+	return SweepVerdict{Kind: SweepClose, Reason: "improve session finished"}
 }
 
 func classifyDone(f SweepFacts) SweepVerdict {
