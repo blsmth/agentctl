@@ -99,7 +99,7 @@ type CLI struct {
 	OpenContextWindow  OpenContextWindowCmd  `cmd:"" name:"open-context-window" hidden:""`
 
 	// Audit trail (hook-sourced -- every tool call, not just Bash)
-	Audit AuditCmd `cmd:"" help:"Query the hook-sourced audit trail (--json for machine-readable)"`
+	Audit AuditCmd `cmd:"" help:"Query the hook-sourced audit trail (default), or grade past sessions with 'audit report'"`
 
 	// File preview popup (used by hook-permission-request for Write)
 	FilePreview FilePreviewCmd `cmd:"" name:"file-preview" hidden:""`
@@ -846,7 +846,39 @@ func (c *OpenContextWindowCmd) Run() error {
 // Audit trail
 // ---------------------------------------------------------------------------
 
-// AuditCmd implements `agentctl audit`, a reader over the hook-sourced audit
+// AuditCmd groups `agentctl audit`: the trail query (`audit log`, the
+// default, so bare `agentctl audit --tool Bash` keeps working) and the
+// per-session grades (`audit report`).
+type AuditCmd struct {
+	Log    AuditLogCmd    `cmd:"" default:"withargs" help:"Query the hook-sourced audit trail (default; --json for machine-readable)"`
+	Report AuditReportCmd `cmd:"" help:"Grade a past session (or --all) for safety and efficiency"`
+}
+
+// AuditReportCmd implements `agentctl audit report [<target>]`.
+type AuditReportCmd struct {
+	Target   string `arg:"" optional:"" help:"Window (@N), session ID, or transcript path (default: this window)"`
+	All      bool   `help:"Grade many sessions: a leaderboard plus the most frequent findings"`
+	Since    string `default:"7d" help:"With --all: how far back to look (e.g. 36h, 7d)"`
+	Agent    string `help:"With --all: only sessions of this agent"`
+	Project  string `help:"With --all: only sessions in this project (directory basename)"`
+	Limit    int    `default:"20" help:"With --all: at most this many sessions, newest first"`
+	Severity string `default:"low" enum:"high,med,medium,low" help:"Hide findings below this severity (high, med, low); scores still count them"`
+	JSON     bool   `help:"Output as JSON (schema 1)"`
+}
+
+func (c *AuditReportCmd) Run() error {
+	err := cmd.RunAuditReport(os.Stdout, cmd.AuditReportOptions{
+		Target: c.Target, All: c.All, Since: c.Since, Agent: c.Agent, Project: c.Project,
+		Limit: c.Limit, Severity: c.Severity, JSON: c.JSON,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		cliout.Exit(1)
+	}
+	return nil
+}
+
+// AuditLogCmd implements `agentctl audit [log]`, a reader over the hook-sourced audit
 // trail written by the PostTool/PostToolFailure hook handlers into
 // <runtimeDir>/audit/<session-id>.jsonl (see internal/audit). Without --json
 // it prints a text table; --json emits the matching raw records and IS the
@@ -859,7 +891,7 @@ func (c *OpenContextWindowCmd) Run() error {
 // about -- registered sessions only, see AllProjects's help text and
 // audit.AllProjectAuditDirs's doc comment for why that is an accepted,
 // documented gap rather than a bug.
-type AuditCmd struct {
+type AuditLogCmd struct {
 	Session     string `help:"Filter to a session ID"`
 	Agent       string `help:"Filter to an agent name"`
 	Window      string `help:"Filter to a tmux window ID (e.g. @5)"`
@@ -879,7 +911,7 @@ type AuditCmd struct {
 // buildFilter parses c.Since and assembles the audit.Filter that Run passes
 // to cmd.PrintAuditTable. Split out from Run so the flag-to-filter wiring can
 // be tested directly, without going through Run's os.Exit-on-error path.
-func (c *AuditCmd) buildFilter() (audit.Filter, error) {
+func (c *AuditLogCmd) buildFilter() (audit.Filter, error) {
 	since, err := cmd.ParseAuditSince(c.Since)
 	if err != nil {
 		return audit.Filter{}, err
@@ -899,7 +931,7 @@ func (c *AuditCmd) buildFilter() (audit.Filter, error) {
 	}, nil
 }
 
-func (c *AuditCmd) Run() error {
+func (c *AuditLogCmd) Run() error {
 	filter, err := c.buildFilter()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

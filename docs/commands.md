@@ -38,7 +38,8 @@ Every user-facing `agentctl` subcommand, grouped by job. Run `agentctl <command>
 | `agentctl status [<window>]` | Agents across every live session, or one window's detail (`--json`, `--session`, `--state`, `--blocked`, `--verify`). `--closed [--since 7d]` lists recently closed windows instead. |
 | `agentctl status peek <window>` | A window's pane contents and what they imply (`--lines`, `--json`). |
 | `agentctl status whoami` | Which tmux window this process is in (`--json`). |
-| `agentctl audit` | Query the hook-sourced audit trail of every tool call (filters by session, agent, window, tool, project, event; `--json`). See [permissions.md](permissions.md#automatic-tool-call-audit-logging). |
+| `agentctl audit` (`audit log`) | Query the hook-sourced audit trail of every tool call (filters by session, agent, window, tool, project, event; `--json`). See [permissions.md](permissions.md#automatic-tool-call-audit-logging). |
+| `agentctl audit report [target]` | Grade a past session (or `--all`) for safety and efficiency: scores, the findings behind them, metrics; `--json`. See [permissions.md](permissions.md#session-audit-reports). |
 | `agentctl race [<target>]` | Replay a session as a race against a human typing and reading the same work. See [Race](#race). |
 
 ## Tickets and sessions
