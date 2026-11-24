@@ -46,8 +46,8 @@ type schedFixture struct {
 	editorDone tea.ExecCallback
 }
 
-// schedPreviews counts form previews in flight (see schedPreviewTrack).
-var schedPreviews = newPreviewGate()
+// schedWork counts form previews in flight (see schedWorkTrack).
+var schedWork = newPreviewGate()
 
 // previewGate is a counter with a Wait that, unlike sync.WaitGroup, may be
 // called while the count is rising from zero.
@@ -78,6 +78,14 @@ func (g *previewGate) Wait() {
 	g.mu.Unlock()
 }
 
+// Store-backed commands outlive a test that drops them (a drive timeout),
+// so the tracker is installed once and never swapped, which would race with
+// their goroutines. schedDrive waits on it instead of guessing how long a
+// loaded machine needs.
+func init() {
+	schedWorkTrack = func() func() { schedWork.Add(); return schedWork.Done }
+}
+
 func newSchedFixture(t *testing.T) *schedFixture {
 	t.Helper()
 	InitStyles()
@@ -88,11 +96,6 @@ func newSchedFixture(t *testing.T) *schedFixture {
 		return func() tea.Msg { return schedDrawerTickMsg{gen: gen} }
 	}
 	t.Cleanup(func() { schedDrawerTick = savedTick })
-	// Previews are real work: schedDrive waits for one in flight rather than
-	// guessing how long a loaded machine needs.
-	savedTrack := schedPreviewTrack
-	schedPreviewTrack = func() func() { schedPreviews.Add(); return schedPreviews.Done }
-	t.Cleanup(func() { schedPreviewTrack = savedTrack })
 	dir := t.TempDir()
 	f := &schedFixture{
 		jobsPath:  filepath.Join(dir, "schedules.json"),
@@ -277,7 +280,7 @@ func schedDrive(t *testing.T, m FleetModel, cmd tea.Cmd) FleetModel {
 		// wait for it, or the test sees the form still saving.
 		// A preview in flight is waited for (it ends in a message); anything
 		// still silent after that is a blink and is dropped.
-		schedPreviews.Wait()
+		schedWork.Wait()
 		select {
 		case msg = <-ch:
 		default:

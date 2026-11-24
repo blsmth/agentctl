@@ -896,9 +896,9 @@ func (f *fleetSchedForm) stopForField(field string) (schedStop, bool) {
 
 // schedPreviewCmd re-validates the form in the background. Each change
 // bumps the generation; an older result is dropped.
-// schedPreviewTrack brackets a preview computation; it returns the function
-// to call when done. Tests replace it to wait for a preview in flight.
-var schedPreviewTrack = func() func() { return func() {} }
+// schedWorkTrack brackets a store-backed command (load, preview, write, run); it returns the function
+// to call when done. Tests replace it to wait for work in flight.
+var schedWorkTrack = func() func() { return func() {} }
 
 func (m *FleetModel) schedPreviewCmd() tea.Cmd {
 	f := m.schedForm
@@ -915,7 +915,7 @@ func (m *FleetModel) schedPreviewCmd() tea.Cmd {
 	}
 	store := m.schedStore()
 	return func() tea.Msg {
-		defer schedPreviewTrack()()
+		defer schedWorkTrack()()
 		return fleetSchedPreviewMsg{gen: gen, p: store.Preview(job, original, nil)}
 	}
 }
@@ -972,6 +972,7 @@ func (m *FleetModel) schedSaveCmd() tea.Cmd {
 	f.err = ""
 	store, mode, original := m.schedStore(), f.mode, f.original
 	return func() tea.Msg {
+		defer schedWorkTrack()()
 		if mode == schedFormEdit {
 			job.Enabled = nil
 			res, err := store.Update(original, job)
