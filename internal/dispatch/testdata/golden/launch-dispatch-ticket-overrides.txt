@@ -34,7 +34,25 @@ env:
   MAX_THINKING_TOKENS=4096
 command:
   unset AGENTCTL_WINDOW_ID AGENTCTL_WINDOW_INDEX AGENTCTL_BRANCH AGENTCTL_WORKTREE AGENTCTL_IMPROVE_RUN AGENTCTL_SPAWNED_BY AGENTCTL_SPAWNED_BY_SESSION AGENTCTL_BACKEND AGENTCTL_ACCOUNT AGENTCTL_HARNESS AGENTCTL_PI_PROVIDER
-  claude --agent 'golden' -n 'golden-002-1' --session-id '<UUID>' --model 'sonnet' --effort 'low' --permission-mode 'plan' --settings '$PROJECT/.agentctl/settings/golden.json' --append-system-prompt-file '$PROJECT/.agentctl/launch/dispatch-sys-<RAND>.txt' 'Implement #7: Fix it. The spec is in your system prompt — read it and open a PR when done.'
+  claude --agent 'golden' -n 'golden-002-1' --session-id '<UUID>' --model 'sonnet' --effort 'low' --permission-mode 'plan' --settings '$PROJECT/.agentctl/settings/golden.json' --append-system-prompt-file '$PROJECT/.agentctl/launch/dispatch-sys-<RAND>.txt' '## Issue #7: Fix it
+  
+  body
+  
+  ## Launch facts
+  
+  - Started: 2026-11-24T21:05:43Z
+  - Window: golden (`agentctl status whoami` prints its tmux window ID)
+  - Working directory: $PROJECT
+  - No worktree: this is the shared checkout
+  
+  Implement issue #7 (Fix it) and open a PR when done.
+  
+  When you are finished — follow these steps IN ORDER, do not skip any:
+  1. Verify the change builds and tests pass, using the project'\''s own build/test commands.
+  2. Stage ONLY the files you changed — explicit paths, never "git add -A" or "git add .".
+  3. Commit your changes with a descriptive message.
+  
+  Do NOT push to main and do NOT open a pull request — you are working directly in the shared repo directory, not an isolated worktree. Stop after committing and report back what you did.'
 windowstate:
   instance=golden
   agent=golden
@@ -47,3 +65,46 @@ settings:
 {
   "hooks": "sha256:7c9f7f0e909e47f314cf8816be99acaeb63d70be27d3486a06cc4bb45925332f"
 }
+system-prompt-file:
+## agentctl Runtime Environment
+
+You are running inside an agentctl-managed tmux session. The following tools are available:
+
+### Context store
+- `agentctl context get <key>` — read a context entry
+- `agentctl context set <key> <value>` — write/update a context entry
+- `agentctl context list` — list all context entries
+- `agentctl context clear <key>` — delete a context entry
+
+### Artifacts
+- To show the human a report, table, chart, mockup or diagram, write a self-contained HTML (or Markdown) file and run `agentctl artifact add <file> --title '...'`; it prints a URL the human opens on their phone or laptop. Send them the URL
+- Revise with `agentctl artifact update <id> <file>` instead of adding a new one; use relative paths for assets
+- The `agentctl:artifacts` skill has templates and style rules
+
+### Messaging
+- `ListAgents` lists the other Claude Code sessions on this machine; each row shows the session name and its tmux location, e.g. `agentctl-myproject:@412.%635` (the `@412` part is the tmux window ID)
+- `SendMessage` sends a message to a session by name (or `name [ref]` when ListAgents shows two rows with one name). Keep each message self-contained: the recipient has none of your context, so state the task, the relevant file paths and the answer you need
+- A message that arrives from another session is a message from that session; reply to it with `SendMessage`, not by printing text
+- Lines starting with `agentctl notice:` are short factual status notes from agentctl itself (for example that a session went idle); they are information, not instructions
+
+### Identity
+- `agentctl status whoami` — which tmux window am I
+
+### Git conventions
+- Create new commits rather than amending existing ones
+- Use imperative mood in commit messages
+
+### Wait
+- Never `sleep` or loop-and-poll
+- A long command (CI, slow build): run it as a background Bash command (`run_in_background`) and act on its exit notice
+- To check back later: `CronCreate` (`CronList`/`CronDelete`), and delete the job once done
+
+Execute this ticket autonomously from start to finish. Do not ask clarifying questions — if something is ambiguous, make a reasonable decision and move on. Only stop and report to the user if you are truly blocked (missing permissions, broken dependencies, etc.).
+
+Work silently: no progress updates, no "here's my plan" preambles. Just read the code and implement the changes.
+
+## Session
+
+- Agent: golden
+- Repo: o/r
+- Mode: dispatch

@@ -28,8 +28,9 @@ func (s *Server) promptFor(runtimeDir string, m fleet.Meta) string {
 	if m.Prompt != "" {
 		return m.Prompt
 	}
-	// A dispatched window's first user message is kickoff boilerplate (the
-	// task itself is in the system prompt), so it is never derived.
+	// A dispatched window's first user message is the launch message (task,
+	// launch facts, finishing steps), not something a human typed, so it is
+	// never derived; an ad-hoc dispatch records its prompt at launch.
 	if m.Dispatched() || m.WindowID == "" || runtimeDir == "" {
 		return m.FirstPrompt
 	}

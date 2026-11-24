@@ -86,7 +86,7 @@ func TestPRReviewWorkerSection(t *testing.T) {
 	if !strings.Contains(got, responsive) {
 		t.Error("off: worker lost the stay-responsive sentence")
 	}
-	if !strings.Contains(got, "Your orchestrator is the session in") {
+	if !strings.Contains(got, "Your orchestrator is the session that dispatched you") {
 		t.Error("off: worker lost the orchestrator section")
 	}
 }

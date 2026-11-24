@@ -20,8 +20,8 @@ const (
 	taskHeading     = "## Task"
 )
 
-// longPrompt is over longPromptThreshold, so a worker adhoc launch puts it in
-// the system prompt under "## Task".
+// longPrompt is a multi-line ad-hoc prompt; every launch now delivers it in
+// the first message, never the system prompt file.
 var longPrompt = "Audit the repo.\n\n" + strings.Repeat("Check every package carefully. ", 30)
 
 func TestApplyAgentRole(t *testing.T) {
@@ -97,7 +97,7 @@ func TestOrchestratorSystemPrompt(t *testing.T) {
 			if spec.Role == RoleOrchestrator {
 				req.Orchestrator = Orchestrator{} // launchOrchestrator drops it
 			}
-			got := buildSystemPrompt(req, spec, "/repo/.worktrees/x", "agent/lead/adhoc-1", true, nil, "")
+			got := buildBoth(req, spec, "/repo/.worktrees/x", "agent/lead/adhoc-1", true, nil, "")
 			for _, c := range []struct {
 				what   string
 				marker string
@@ -150,20 +150,16 @@ func TestLaunchGoldenOrchestrator(t *testing.T) {
 		permission bool // --permission-mode auto
 	}{
 		{"orchestrator-human-adhoc", Request{Mode: ModeAdhoc, CustomPrompt: longPrompt, Detached: true}, true, false, false, true},
-		{"orchestrator-scheduled-adhoc", Request{Mode: ModeAdhoc, CustomPrompt: longPrompt, Detached: true, ScheduledBy: "nightly-triage"}, false, true, true, true},
+		{"orchestrator-scheduled-adhoc", Request{Mode: ModeAdhoc, CustomPrompt: longPrompt, Detached: true, ScheduledBy: "nightly-triage"}, true, false, true, true},
 		// Dispatched by another agent session (the stub resolves a tracked
 		// dispatcher, Detached is false): unattended, so done and --wait work.
-		{"orchestrator-agent-dispatched-adhoc", Request{Mode: ModeAdhoc, CustomPrompt: longPrompt}, false, true, true, true},
+		{"orchestrator-agent-dispatched-adhoc", Request{Mode: ModeAdhoc, CustomPrompt: longPrompt}, true, false, true, true},
 		{"orchestrator-dispatch", Request{Mode: ModeDispatch, Ticket: 7, TicketTitle: "Fix it", TicketBody: "body"}, false, false, true, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			env := launchtest.Setup(t, goldenConfig, map[string]string{"lead": leadAgentMD})
-			prevOrch, prevParent, prevExec := resolveOrchestratorFn, parentAccountFn, execPath
-			resolveOrchestratorFn = func() Orchestrator { return Orchestrator{WindowID: "@5", Pane: "%6"} }
-			parentAccountFn = func() string { return "" }
-			execPath = func() (string, error) { return "/opt/bin/agentctl", nil }
-			t.Cleanup(func() { resolveOrchestratorFn, parentAccountFn, execPath = prevOrch, prevParent, prevExec })
+			stubGoldenSeams(t, Orchestrator{WindowID: "@5", Pane: "%6"})
 
 			rec := launchtest.Capture(t)
 			req := tt.req
@@ -194,25 +190,10 @@ func TestLaunchGoldenOrchestrator(t *testing.T) {
 			if got := strings.Contains(l.Command, "--permission-mode 'auto'"); got != tt.permission {
 				t.Errorf("--permission-mode auto = %v, want %v", got, tt.permission)
 			}
-			got := l.Render() + launchtest.WindowRecord("@9001")
+			got := l.Render() + launchtest.WindowRecord("@9001") + goldenSystemFile(l)
 			got = env.Normalize(got, launchtest.BinPair(l)...)
 			launchtest.CheckGolden(t, filepath.Join("testdata", "golden", "launch-"+tt.name+".txt"), got)
 		})
-	}
-}
-
-func TestBareOversizedPromptGoesToSystemPrompt(t *testing.T) {
-	huge := "Huge task.\n" + strings.Repeat("x", maxInlineMessage)
-	req := Request{AgentName: "lead", Mode: ModeBare, CustomPrompt: huge}
-	if msg := bareUserMessage(req); strings.Contains(msg, "xxxx") {
-		t.Error("oversized prompt passed inline")
-	}
-	if got := buildSystemPrompt(req, modes[ModeBare], "/w", "", false, nil, ""); !strings.Contains(got, taskHeading+"\n\nHuge task.") {
-		t.Error("oversized prompt missing from the system prompt")
-	}
-	small := Request{Mode: ModeBare, CustomPrompt: "hi"}
-	if bareUserMessage(small) != "hi" || strings.Contains(buildSystemPrompt(small, modes[ModeBare], "/w", "", false, nil, ""), taskHeading) {
-		t.Error("short bare prompt not delivered as the message")
 	}
 }
 

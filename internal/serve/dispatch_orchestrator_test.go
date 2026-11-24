@@ -26,7 +26,7 @@ func TestPhoneDispatchOrchestratorIsInteractive(t *testing.T) {
 		wantMessage string
 	}{
 		{"orchestrator", "---\nname: lead\nrole: orchestrator\n---\nYou coordinate.\n", "bare", false, "'audit the docs'"},
-		{"worker", "---\nname: lead\n---\nYou implement.\n", "adhoc", true, "'audit the docs'"},
+		{"worker", "---\nname: lead\n---\nYou implement.\n", "adhoc", true, "'## Task\n\naudit the docs\n\n## Launch facts"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -49,7 +49,7 @@ func TestPhoneDispatchOrchestratorIsInteractive(t *testing.T) {
 			if got := strings.Contains(l.Command, "--permission-mode 'auto'"); !got {
 				t.Errorf("--permission-mode auto missing (both roles run in auto)\n%s", l.Command)
 			}
-			if !strings.HasSuffix(strings.TrimSpace(l.Command), tt.wantMessage) {
+			if !strings.Contains(l.Command, tt.wantMessage) {
 				t.Errorf("first message is not the prompt: %s", l.Command)
 			}
 			if l.Env["AGENTCTL_MODE"] != tt.wantMode {
@@ -65,7 +65,7 @@ func TestPhoneDispatchOrchestratorIsInteractive(t *testing.T) {
 			}
 			// The project is not a git repo, so the worktree falls back to
 			// the shared dir and the worker gets the commit-only steps.
-			if got := strings.Contains(string(sys), "When you are finished"); got != tt.wantAuto {
+			if got := strings.Contains(string(sys)+l.Command, "When you are finished"); got != tt.wantAuto {
 				t.Errorf("finishing steps present = %v, want %v", got, tt.wantAuto)
 			}
 			ws, err := windowstate.Read(res.WindowID)
@@ -100,7 +100,13 @@ func TestPhoneDispatchKeepsScreenshotLines(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("Dispatch: %v", err)
 			}
-			if cmd := rec.Only().Command; !strings.HasSuffix(strings.TrimSpace(cmd), "'"+prompt+"'") {
+			// The orchestrator's first message is the prompt itself; the
+			// worker's carries it under "## Task", before the launch facts.
+			want := "'" + prompt + "'"
+			if name == "worker" {
+				want = "'## Task\n\n" + prompt + "\n\n## Launch facts"
+			}
+			if cmd := rec.Only().Command; !strings.Contains(cmd, want) {
 				t.Errorf("prompt not passed intact:\n%s", cmd)
 			}
 		})

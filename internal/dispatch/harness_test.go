@@ -59,11 +59,17 @@ func TestLaunch_PiHarness(t *testing.T) {
 	if argv[0] != "pi" || !slices.Contains(argv, "--session-id") || argv[slices.Index(argv, "-e")+1] != ext {
 		t.Fatalf("command = %q", argv)
 	}
-	for _, want := range [][]string{{"--model", "ollama/gemma4"}, {"--thinking", "high"}, {"--", "say hi"}} {
+	for _, want := range [][]string{{"--model", "ollama/gemma4"}, {"--thinking", "high"}} {
 		i := slices.Index(argv, want[0])
 		if i < 0 || i+1 >= len(argv) || argv[i+1] != want[1] {
 			t.Errorf("command lacks %q: %q", want, argv)
 		}
+	}
+	// The first message is the last word after "--": the task, then the
+	// launch facts and finishing steps, as on Claude.
+	if i := slices.Index(argv, "--"); i < 0 || i != len(argv)-2 ||
+		!strings.HasPrefix(argv[i+1], "## Task\n\nsay hi\n\n## Launch facts") || !strings.Contains(argv[i+1], "When you are finished") {
+		t.Errorf("pi first message is not the structured task message: %q", argv)
 	}
 	for _, unwanted := range []string{"--agent", "--permission-mode", "--settings", "--append-system-prompt-file"} {
 		if slices.Contains(argv, unwanted) {

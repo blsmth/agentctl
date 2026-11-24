@@ -30,7 +30,7 @@ Or use the TUI: `ctrl+b T` opens the ticket launcher, where you can browse issue
 1. **Fetch** — Fetches the issue title, body, and labels via `gh issue view`
 2. **Infer agent** — Matches issue labels to agents (`go` → `go-engineer`, `python` → `python-engineer`, etc.) or defaults to `go-engineer`. Override with `--agent`.
 3. **Create worktree** — Creates a git worktree at `.worktrees/agent-<name>-issue-<N>/` on branch `agent/<name>/issue-<N>`. The agent gets a clean, isolated copy of the repo.
-4. **Build prompt** — Assembles the agent's system prompt with the issue body, worktree path, branch name, and autonomous execution instructions.
+4. **Build prompt** — Builds the stable system prompt file (preamble, shared conventions, mode rules, the agent's context entries) and the first user message (the issue body, worktree path, branch, orchestrator location and finishing steps); see [prompt-architecture.md](prompt-architecture.md).
 5. **Launch** — Opens a new tmux window running `claude --agent <name>` (or the agent's [harness](configuration.md#harnesses-claude-code-and-pi)) with the assembled prompt, under the resolved account and backend. Worker dispatches use `--permission-mode auto` unless the agent's `permission_mode` says otherwise. The agent starts working immediately.
 6. **Autonomous execution** — The agent reads the codebase, implements the change, writes tests, commits with `Closes #N`, pushes, and opens a PR.
 7. **Completion** — Done is derived automatically by the Stop hook: once the agent's turn ends cleanly (git clean, build passes) in an autonomous mode, the hook marks the window done (the window name gets a ✓) and spawns a detached `agentctl dispatch-complete`, which finds the PR, swaps labels, opens it in the browser ([`open_pr_in_browser`](configuration.md#top-level-keys)) and runs `dispatch_complete` hooks. The dispatching window gets an `agentctl notice:` line. `agentctl signal done` still exists as an optional *early* signal an agent can call if it wants to flag completion before its final turn ends.
@@ -102,7 +102,7 @@ A dispatch is launched in one of several modes (`internal/dispatch/modes.go`). E
 An agent with `role: orchestrator` in its frontmatter (see [configuration.md](configuration.md#agent-frontmatter-role)) coordinates others, so it never gets the worker tail: no finishing steps (commit, push, open a PR) and no "do not merge to main" worktree line, and its preamble is the orchestrator one.
 
 - **Human-initiated `--prompt`** (the phone's new-session button, or the CLI from a shell with no tracked Claude session): launched as a `bare` interactive session. The prompt is the first user message, there are no autonomous instructions, and the permission mode resolves like a worker dispatch (per-launch override, then the agent's `permission_mode`, then `auto`).
-- **Unattended** (a cron job, or `--prompt` dispatched from another agent session, so done notices and `--wait` work) **and `--issue`**: the mode is kept, with its autonomous instructions and the task in the system prompt.
+- **Unattended** (a cron job, or `--prompt` dispatched from another agent session, so done notices and `--wait` work) **and `--issue`**: the mode is kept, with its autonomous instructions, and the task is in the first message.
 
 ## Choosing a model
 

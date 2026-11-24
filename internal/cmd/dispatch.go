@@ -95,8 +95,8 @@ func RunDispatch(opts DispatchOptions) {
 	}
 
 	// Resolve --prompt-key into promptText before any dispatch work begins, so
-	// everything downstream (dispatchPrompt, dispatch.Launch, the
-	// longPromptThreshold system-prompt vs. user-message split) is unchanged.
+	// everything downstream (dispatchPrompt, dispatch.Launch and the task
+	// block of the first message) sees the resolved prompt.
 	if promptKey != "" {
 		resolved, err := resolvePromptKey(promptKey)
 		if err != nil {

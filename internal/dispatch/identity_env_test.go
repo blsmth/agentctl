@@ -136,16 +136,21 @@ func TestLaunchWorktreeFallbackPromptIsSharedDir(t *testing.T) {
 	if m == nil {
 		t.Fatalf("no system prompt file: %s", rec.Only().Command)
 	}
-	sys, err := os.ReadFile(m[1])
+	sysData, err := os.ReadFile(m[1])
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{"git push -u origin", "git worktree on branch", "gh pr create"} {
-		if strings.Contains(string(sys), bad) {
+	// System file and first message (in the command) together.
+	all := string(sysData) + rec.Only().Command
+	for _, bad := range []string{"git push -u origin", "git worktree", "gh pr create", "- Branch:"} {
+		if strings.Contains(all, bad) {
 			t.Errorf("fallback prompt contains %q", bad)
 		}
 	}
-	if !strings.Contains(string(sys), "working directly in the shared repo directory") {
+	if !strings.Contains(rec.Only().Command, "No worktree: this is the shared checkout") {
+		t.Error("fallback launch facts do not say there is no worktree")
+	}
+	if !strings.Contains(rec.Only().Command, "working directly in the shared repo directory") {
 		t.Error("fallback prompt lacks the shared-dir finishing steps")
 	}
 }

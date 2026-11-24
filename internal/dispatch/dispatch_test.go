@@ -662,9 +662,9 @@ func TestModeBare_Spec(t *testing.T) {
 			t.Error("ModeBare should not include ticket body")
 		}
 	})
-	t.Run("empty default user message", func(t *testing.T) {
+	t.Run("no first message without a prompt", func(t *testing.T) {
 		req := Request{AgentName: "go-engineer", Mode: ModeBare}
-		if msg := spec.DefaultUserMessage(req); msg != "" {
+		if msg := buildFirstMessage(req, spec, "/w", "", false, nil, ""); msg != "" {
 			t.Errorf("ModeBare default user message should be empty, got %q", msg)
 		}
 	})
@@ -1049,8 +1049,8 @@ func TestModes_AllRegistered(t *testing.T) {
 			if spec.SystemInstructions == nil {
 				t.Error("SystemInstructions is nil")
 			}
-			if spec.DefaultUserMessage == nil {
-				t.Error("DefaultUserMessage is nil")
+			if spec.Directive == nil {
+				t.Error("Directive is nil")
 			}
 			if want := wantDefaultModels[mode]; spec.DefaultModel != want {
 				t.Errorf("DefaultModel = %q, want %q", spec.DefaultModel, want)
