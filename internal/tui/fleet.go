@@ -368,7 +368,15 @@ const (
 	fleetLineSchedHead                        // a selectable, collapsible schedules block header; see fleet_schedgroup.go
 	fleetLineSearchEmpty                      // a non-selectable "no matches" line while a search matches nothing
 	fleetLineArtifact                         // a selectable artifact row on a group's Artifacts tab; see fleet_arttab.go
+	fleetLineGroupPad                         // a non-selectable spacer padding a short group body to fleetGroupMinBody
 )
+
+// fleetGroupMinBody is the minimum number of lines between a group's header
+// and the divider below it; shorter bodies are padded with fleetLineGroupPad
+// lines so a one-row group (or tab) is not cramped and switching tabs does
+// not make the group height jump. Folded groups, searches and the last group
+// in the list are never padded.
+const fleetGroupMinBody = 3
 
 // fleetLine is one renderable line. Every kind except fleetLineDivider is also
 // selectable — see the "selection" section below.
@@ -410,7 +418,7 @@ type fleetLine struct {
 // selectable reports whether the cursor may rest on this line. Dividers and
 // sub-section labels are decoration only.
 func (l fleetLine) selectable() bool {
-	return l.kind != fleetLineDivider && l.kind != fleetLineSubheader && l.kind != fleetLineClosedLabel && l.kind != fleetLineSchedLabel && l.kind != fleetLineSearchEmpty
+	return l.kind != fleetLineDivider && l.kind != fleetLineSubheader && l.kind != fleetLineClosedLabel && l.kind != fleetLineSchedLabel && l.kind != fleetLineSearchEmpty && l.kind != fleetLineGroupPad
 }
 
 // ── FleetModel ────────────────────────────────────────────────────────────────
@@ -1779,7 +1787,7 @@ func (m *FleetModel) syncSelectionFromCursor() {
 	case fleetLineSchedule, fleetLineSchedHead, fleetLineArtifact:
 		m.selSession, m.selWindowID, m.selIsHeader = "", "", false
 		m.selSchedule = schedLineKey(l)
-	case fleetLineDivider, fleetLineSubheader, fleetLineClosedLabel, fleetLineSchedLabel, fleetLineSearchEmpty:
+	case fleetLineDivider, fleetLineSubheader, fleetLineClosedLabel, fleetLineSchedLabel, fleetLineSearchEmpty, fleetLineGroupPad:
 		// Unreachable in practice — moveCursor/resolveSelection never park
 		// the cursor on a divider or subheader — but defend against adopting a
 		// divider's zero-value Group as the selection rather than leaving
@@ -2148,7 +2156,12 @@ func (m *FleetModel) rebuildLines() {
 	// (the saved state is untouched) so every match is visible.
 	searching := m.searching()
 	prevBody := false
+	// padFrom/padGroup track the previous group's body so it can be padded
+	// once we know another group follows it (the last group is never padded).
+	padFrom, padGroup := -1, fleet.Group{}
 	for i, g := range m.groups {
+		lines = padGroupBody(lines, padFrom, padGroup)
+		padFrom = -1
 		all := m.shownRows(g.Rows)
 		folded := m.isFolded(g.Session) && !searching
 		headerHit := m.searchHeader(g)
@@ -2197,6 +2210,9 @@ func (m *FleetModel) rebuildLines() {
 		}
 		prevBody = shown
 		lines = append(lines, fleetLine{kind: fleetLineHeader, group: g})
+		if !folded && !searching {
+			padFrom, padGroup = len(lines), g
+		}
 		if !body {
 			lines = append(lines, sched...)
 			continue
@@ -2258,6 +2274,19 @@ func (m *FleetModel) rebuildLines() {
 		}
 	}
 	m.except = computeExceptions(m.groups, []fleet.Group{{Rows: shown}}, m.display)
+}
+
+// padGroupBody appends fleetLineGroupPad spacers to lines until the group
+// body (everything from index from) holds fleetGroupMinBody lines. A negative
+// from, or an empty body (header-only group), leaves lines alone.
+func padGroupBody(lines []fleetLine, from int, g fleet.Group) []fleetLine {
+	if from < 0 || from >= len(lines) {
+		return lines
+	}
+	for n := len(lines) - from; n < fleetGroupMinBody; n++ {
+		lines = append(lines, fleetLine{kind: fleetLineGroupPad, group: g})
+	}
+	return lines
 }
 
 // shownRows is rows without the shell rows while they are hidden.
@@ -2760,6 +2789,8 @@ func (m FleetModel) renderLine(i int, cw int) string {
 		return m.renderArtRow(l, selected, m.hover.region(i), cw)
 	case fleetLineSearchEmpty:
 		return fleetDimStyle.Render(truncateToWidth(m.searchEmptyText(), cw-fleetSidebarRightGutter))
+	case fleetLineGroupPad:
+		return fleetProjectBar(l.group.Project)
 	case fleetLineSubheader:
 		// The group's bar keeps the spine unbroken; the label aligns under
 		// agent names: bar + cursor slot + glyph + space.

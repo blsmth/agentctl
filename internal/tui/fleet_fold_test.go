@@ -65,7 +65,7 @@ func foldModel(t *testing.T) FleetModel {
 }
 
 // lineKeys describes m.lines compactly: "H:s1" header, "R:k" row ("R:p~"
-// when dimmed), "P:s4" placeholder, "S" sub-section label, "-" divider.
+// when dimmed), "P:s4" placeholder, "S" sub-section label, "-" divider, "_" group pad.
 func lineKeys(m FleetModel) []string {
 	var out []string
 	for _, l := range m.lines {
@@ -84,6 +84,8 @@ func lineKeys(m FleetModel) []string {
 			out = append(out, "S")
 		case fleetLineDivider:
 			out = append(out, "-")
+		case fleetLineGroupPad:
+			out = append(out, "_")
 		}
 	}
 	return out
@@ -170,7 +172,7 @@ func TestFocusMode(t *testing.T) {
 	if cursorOf(m) != lineIndex(t, m, "H:s2") {
 		t.Errorf("cursor on a now-hidden row should land on its header, at %d", cursorOf(m))
 	}
-	want := []string{"H:s1", "R:p", "R:k", "R:x", "-", "H:s2", "-", "H:s3", "R:g", "-", "H:s4"}
+	want := []string{"H:s1", "R:p", "R:k", "R:x", "-", "H:s2", "-", "H:s3", "R:g", "_", "_", "-", "H:s4"}
 	if got := lineKeys(m); !slices.Equal(got, want) {
 		t.Errorf("lines = %v, want %v", got, want)
 	}
@@ -402,12 +404,12 @@ func TestFilterModes(t *testing.T) {
 		filter fleetFilter
 		want   []string
 	}{
-		{fleetFilterAll, []string{"H:s1", "R:p", "R:k", "R:x", "-", "H:s2", "R:d", "R:e", "-", "H:s3", "R:g", "-", "H:s4", "P:s4"}},
+		{fleetFilterAll, []string{"H:s1", "R:p", "R:k", "R:x", "-", "H:s2", "R:d", "R:e", "_", "-", "H:s3", "R:g", "_", "_", "-", "H:s4", "P:s4"}},
 		// p is idle but kept, dimmed, as k's parent; s2 has nothing active.
-		{fleetFilterActive, []string{"H:s1", "R:p~", "R:k", "-", "H:s2", "-", "H:s3", "R:g", "-", "H:s4"}},
+		{fleetFilterActive, []string{"H:s1", "R:p~", "R:k", "_", "-", "H:s2", "-", "H:s3", "R:g", "_", "_", "-", "H:s4"}},
 		// Nothing in s1 needs you: header only, and no divider between two
 		// header-only groups.
-		{fleetFilterNeeds, []string{"H:s1", "-", "H:s2", "R:d", "-", "H:s3", "R:g", "-", "H:s4"}},
+		{fleetFilterNeeds, []string{"H:s1", "-", "H:s2", "R:d", "_", "_", "-", "H:s3", "R:g", "_", "_", "-", "H:s4"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.filter.label(), func(t *testing.T) {
@@ -473,7 +475,7 @@ func TestFoldAndFilterCompose(t *testing.T) {
 	}
 	m.filter = fleetFilterNeeds
 	m.relayout()
-	want := []string{"H:s1", "-", "H:s2", "R:d", "-", "H:s3", "H:s4"}
+	want := []string{"H:s1", "-", "H:s2", "R:d", "_", "_", "-", "H:s3", "H:s4"}
 	if got := lineKeys(m); !slices.Equal(got, want) {
 		t.Errorf("needs you + folded s3 = %v, want %v", got, want)
 	}

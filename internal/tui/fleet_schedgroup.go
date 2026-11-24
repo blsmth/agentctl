@@ -308,7 +308,7 @@ func (m FleetModel) tabGroupOfLine(idx int) (fleet.Group, fleetGroupTab, bool) {
 	l := m.lines[idx]
 	session := ""
 	switch l.kind {
-	case fleetLineHeader, fleetLinePlaceholder, fleetLineSchedule, fleetLineSubheader, fleetLineArtifact:
+	case fleetLineHeader, fleetLinePlaceholder, fleetLineSchedule, fleetLineSubheader, fleetLineArtifact, fleetLineGroupPad:
 		session = l.group.Session
 	case fleetLineRow:
 		session = l.row.Session
