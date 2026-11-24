@@ -229,6 +229,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"z", "fold / collapse", "z"},
 		{"Z", "focus mode", "Z"},
 		{"f", "filter", "f"},
+		{"click count", "filter by state (click again clears)", ""},
 		{"o", "sort: recent / window", "o"},
 		{fleetSearchKey, "search (⏎ keep, esc clear)", fleetSearchKey},
 		{fleetArtifactKey, "open newest ◆ artifact", fleetArtifactKey},
