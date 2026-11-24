@@ -124,16 +124,20 @@ func tmuxIdle(clients []tmux.Client, now time.Time) (time.Duration, error) {
 }
 
 // laptopActivity answers "is someone at the laptop?" from a probe, cached for
-// laptopCacheTTL. It is safe for concurrent use; concurrent callers on an
-// expired cache wait for one probe instead of each running their own.
+// laptopCacheTTL. It is safe for concurrent use. Active probes inline (concurrent
+// callers on an expired cache wait for one probe); Peek never waits for a probe.
 type laptopActivity struct {
 	probe     LaptopIdleFunc
 	threshold time.Duration
 	now       func() time.Time
 
-	mu       sync.Mutex
+	probeMu sync.Mutex // serializes probes
+
+	mu       sync.Mutex // guards the fields below; never held across a probe
 	probedAt time.Time
 	active   bool
+	inflight bool // a background refresh from Peek is running
+	bg       sync.WaitGroup
 }
 
 func newLaptopActivity(probe LaptopIdleFunc, threshold time.Duration, now func() time.Time) *laptopActivity {
@@ -143,23 +147,64 @@ func newLaptopActivity(probe LaptopIdleFunc, threshold time.Duration, now func()
 	return &laptopActivity{probe: probe, threshold: threshold, now: now}
 }
 
-// Active reports whether the laptop had input within the threshold. A nil
-// receiver (the feature is off) is never active.
+// freshLocked reports whether the cached answer is still usable at now.
+func (l *laptopActivity) freshLocked(now time.Time) bool {
+	return !l.probedAt.IsZero() && now.Sub(l.probedAt) < laptopCacheTTL && !now.Before(l.probedAt)
+}
+
+// Active reports whether the laptop had input within the threshold, probing
+// inline when the cache is stale. A nil receiver (the feature is off) is never
+// active.
 func (l *laptopActivity) Active() bool {
+	if l == nil {
+		return false
+	}
+	l.probeMu.Lock()
+	defer l.probeMu.Unlock()
+	l.mu.Lock()
+	now := l.now()
+	if l.freshLocked(now) {
+		active := l.active
+		l.mu.Unlock()
+		return active
+	}
+	l.mu.Unlock()
+
+	idle, err := l.probe(context.Background())
+	if err != nil {
+		logging.Debug("serve: laptop idle: %v", err)
+	}
+	active := err == nil && idle < l.threshold
+	l.mu.Lock()
+	l.active, l.probedAt = active, now
+	l.mu.Unlock()
+	return active
+}
+
+// Peek returns the last known answer without ever waiting for a probe: when
+// the cache is stale it starts one background refresh (at most one in flight)
+// and returns the old value. Before the first probe finishes the laptop counts
+// as idle. Use it wherever a lock is held. A nil receiver is never active.
+func (l *laptopActivity) Peek() bool {
 	if l == nil {
 		return false
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	now := l.now()
-	if !l.probedAt.IsZero() && now.Sub(l.probedAt) < laptopCacheTTL && !now.Before(l.probedAt) {
-		return l.active
+	if !l.freshLocked(l.now()) && !l.inflight {
+		l.inflight = true
+		l.bg.Add(1)
+		go func() {
+			defer l.bg.Done()
+			l.Active()
+			l.mu.Lock()
+			l.inflight = false
+			l.mu.Unlock()
+		}()
 	}
-	idle, err := l.probe(context.Background())
-	if err != nil {
-		logging.Debug("serve: laptop idle: %v", err)
-	}
-	l.active = err == nil && idle < l.threshold
-	l.probedAt = now
 	return l.active
 }
+
+// wait blocks until background refreshes started by Peek have finished. Tests
+// use it to make Peek deterministic.
+func (l *laptopActivity) wait() { l.bg.Wait() }

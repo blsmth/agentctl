@@ -91,9 +91,10 @@ func (n *Notifier) SetLaptop(l *laptopActivity, pending func(id string) bool) {
 }
 
 // laptopQuietLocked reports whether the laptop is in use, logging the
-// suppressed push when it is.
+// suppressed push when it is. It only reads the cached answer (Peek), so no
+// probe ever runs under n.mu.
 func (n *Notifier) laptopQuietLocked(kind, tag, note string) bool {
-	if !n.laptop.Active() {
+	if !n.laptop.Peek() {
 		return false
 	}
 	pushLogf("push: kind=%s tag=%s suppressed, laptop active%s", kind, redactArtifactIDs(tag), note)
@@ -275,7 +276,7 @@ func (n *Notifier) flushHeldLocked(now time.Time) {
 		}
 		owed = owed || ep.owed
 	}
-	if (len(n.held) == 0 && !owed) || n.laptop.Active() {
+	if (len(n.held) == 0 && !owed) || n.laptop.Peek() {
 		return
 	}
 	for id, h := range n.held {
@@ -289,7 +290,8 @@ func (n *Notifier) flushHeldLocked(now time.Time) {
 		if !ep.owed {
 			continue
 		}
-		ep.owed = false
+		// The owed push stands in for the reminder: one push per episode.
+		ep.owed, ep.reminded = false, true
 		if !n.cfg.BlockedEnabled() || !n.allowedLocked(ep.win, now) {
 			continue
 		}
