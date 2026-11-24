@@ -25,6 +25,7 @@ import (
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/ids"
 	"github.com/blsmth/agentctl/internal/launchopts"
+	"github.com/blsmth/agentctl/internal/launchwatch"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/safefs"
@@ -441,6 +442,7 @@ func Launch(req Request) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("launching agent: %w", err)
 	}
+	launchwatch.Start(wid, caps)
 
 	// 13. Update window state + dispatch log.
 	logLaunchBanner(req.AgentName, windowName, string(req.Mode), req.Ticket, req.TicketTitle, workDir, sessionID)

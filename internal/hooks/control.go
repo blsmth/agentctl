@@ -438,6 +438,9 @@ func UserPrompt() {
 	nowUnix := time.Now().Unix()
 	var ws windowstate.WindowState
 	if err := winname.Update(windowID, func(w *windowstate.WindowState) {
+		// A prompt reaching the hook means any folder-trust dialog the
+		// launch watcher reported was answered.
+		windowstate.ClearPendingTrust(w)
 		w.State = "working"
 		w.LastToolTime = nowUnix
 		windowstate.ClearDone(w)

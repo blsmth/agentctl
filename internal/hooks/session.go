@@ -142,8 +142,10 @@ func SessionStart() {
 		windowstate.Revive(windowID)
 		winIdx := tmux.WindowIndex(windowID)
 		var launchName, backend string
+		trustBlocked := false
 		if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
 			launchName = ws.SessionName
+			trustBlocked = ws.PendingTool == windowstate.PendingTrust
 			backend = ws.Backend
 			if winIdx > 0 {
 				ws.WindowIndex = winIdx
@@ -177,6 +179,9 @@ func SessionStart() {
 			}
 			logging.Log("hook-session-start: linked session_id=%s log=%s window=%s", input.SessionID, logPath, windowID)
 		}
+		if trustBlocked {
+			clearTrustBlock(windowID)
+		}
 	}
 
 	if envFile != "" && !writeSessionEnvFile(envFile, windowID, windowIndex) {
@@ -193,6 +198,20 @@ func SessionStart() {
 	})
 
 	emitSessionContext(windowID, windowIndex)
+}
+
+// clearTrustBlock returns a window the launch watcher marked blocked on the
+// folder-trust dialog to idle: the session starting means the human trusted
+// the folder. It goes through winname so the ⏸ glyph goes too. An
+// interactive launch with no first prompt gets no UserPromptSubmit to do it.
+func clearTrustBlock(windowID string) {
+	if err := winname.Update(windowID, func(ws *windowstate.WindowState) {
+		windowstate.ClearPendingTrust(ws)
+	}); err != nil {
+		logUpdateErr("hook-session-start", err)
+		return
+	}
+	logging.Log("hook-session-start: cleared folder-trust block window=%s", windowID)
 }
 
 // writeSessionEnvFile writes the window identity and dispatch metadata to

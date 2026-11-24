@@ -2,6 +2,8 @@ package fleet
 
 import (
 	"time"
+
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // Window is the machine-readable shape of one agent window. It is the single
@@ -127,6 +129,9 @@ func ToWindow(r Row, m Meta) Window {
 	if r.State == "blocked" {
 		w.PendingTool = m.PendingTool
 		w.PendingToolDetail = m.PendingToolDetail
+		if m.PendingTool == windowstate.PendingTrust {
+			w.Activity = TrustActivity(m.PendingToolDetail)
+		}
 		if !m.BlockedSince.IsZero() {
 			w.BlockedSince = m.BlockedSince.UTC().Format(time.RFC3339)
 			w.StateSince = w.BlockedSince

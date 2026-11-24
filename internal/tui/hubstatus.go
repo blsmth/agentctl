@@ -197,8 +197,9 @@ func hubStatusLines(st *hubStatus, w, h int, now time.Time) []string {
 // line, the detail end-truncated.
 func hubStatusNeeds(st *hubStatus, tw int) string {
 	label := "needs you: "
-	out := fleetBlockedStyle.Render(truncateToWidth(label+st.PendingTool, tw))
-	if rest := tw - lipgloss.Width(label+st.PendingTool) - 2; rest > 0 && st.PendingToolDetail != "" {
+	tool := fleet.PendingLabel(st.PendingTool)
+	out := fleetBlockedStyle.Render(truncateToWidth(label+tool, tw))
+	if rest := tw - lipgloss.Width(label+tool) - 2; rest > 0 && st.PendingToolDetail != "" {
 		detail := strings.Join(strings.Fields(st.PendingToolDetail), " ")
 		out += "  " + fleetActivityStyle.Render(truncateToWidth(detail, rest))
 	}

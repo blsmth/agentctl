@@ -3,6 +3,7 @@ package dispatch
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/blsmth/agentctl/internal/tmux/launchtest"
@@ -82,6 +83,9 @@ func TestLaunchGolden(t *testing.T) {
 			}
 			got := renderGolden(env, rec.Only(), "golden")
 			launchtest.CheckGolden(t, filepath.Join("testdata", "golden", "launch-"+tt.name+".txt"), got)
+			if w := rec.Watches(); !slices.Equal(w, []string{"@9001"}) {
+				t.Errorf("launch watcher started for %v, want [@9001]", w)
+			}
 		})
 	}
 }
@@ -115,6 +119,9 @@ func TestRestoreGolden(t *testing.T) {
 			}
 			got := renderGolden(env, rec.Only(), "golden")
 			launchtest.CheckGolden(t, filepath.Join("testdata", "golden", "restore-"+tt.name+".txt"), got)
+			if w := rec.Watches(); !slices.Equal(w, []string{"@9001"}) {
+				t.Errorf("launch watcher started for %v, want [@9001]", w)
+			}
 		})
 	}
 }

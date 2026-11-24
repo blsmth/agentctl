@@ -78,6 +78,11 @@ type Caps struct {
 	// PaneClassifier: ClassifyPane can read this harness's pane (dialogs,
 	// busy footer, idle prompt). Without it panes classify as Unknown.
 	PaneClassifier bool
+	// TrustDialog: the harness can stop on a folder-trust dialog before it
+	// loads any hooks (Claude Code asks once per new path, so every fresh
+	// worktree), which no hook can report. Launch paths start a launch
+	// watcher (internal/launchwatch) for these harnesses.
+	TrustDialog bool
 }
 
 // Invocation names the per-launch parts of a harness command line. Empty

@@ -5,6 +5,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/harness"
+	"github.com/blsmth/agentctl/internal/launchwatch"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -142,6 +143,7 @@ func Restore(req RestoreRequest) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("dispatch.Restore: launching %s: %w", instanceName, err)
 	}
+	launchwatch.Start(wid, h.Caps())
 
 	if wid != "" {
 		windowstate.Update(wid, func(ws *windowstate.WindowState) { //nolint:errcheck

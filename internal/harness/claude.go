@@ -35,6 +35,7 @@ func (claudeHarness) Caps() Caps {
 		Backends:           true,
 		EnvFile:            true,
 		PaneClassifier:     true,
+		TrustDialog:        true,
 	}
 }
 

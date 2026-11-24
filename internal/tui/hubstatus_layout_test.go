@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 func layoutStatus() *hubStatus {
@@ -34,6 +35,9 @@ func TestHubStatusLayout(t *testing.T) {
 	blocked := layoutStatus()
 	blocked.State, blocked.Glyph = "blocked", "⏸"
 	blocked.PendingTool, blocked.PendingToolDetail = "Bash", "rm -rf node_modules && npm install --legacy-peer-deps --foreground-scripts"
+	trust := layoutStatus()
+	trust.State, trust.Glyph = "blocked", "⏸"
+	trust.PendingTool, trust.PendingToolDetail = windowstate.PendingTrust, "/repo/.worktrees/agent-x"
 	blockedNoTool := layoutStatus()
 	blockedNoTool.State, blockedNoTool.Glyph = "blocked", "⏸"
 	cron := &hubStatus{Version: hubStatusVersion, Glyph: "○", Title: "nightly", State: "idle",
@@ -52,6 +56,8 @@ func TestHubStatusLayout(t *testing.T) {
 			[]string{"working 4m · agentctl", "#42 · go-engineer · agent/go-engineer/issue-42 · PR #7 · ← Fleet view overhaul work", "opus-4-7 · ctx 42% · $1.23 · 47m"}, nil, "47m"},
 		{"blocked with tool", blocked, 90, 6,
 			[]string{"blocked 4m", "needs you: Bash  rm -rf node_modules"}, nil, "PR #7"},
+		{"blocked on folder trust", trust, 90, 6,
+			[]string{"needs you: folder trust  /repo/.worktrees/agent-x"}, []string{"needs you: trust"}, "PR #7"},
 		{"blocked without tool", blockedNoTool, 90, 6, []string{"blocked 4m"}, []string{"needs you"}, "PR #7"},
 		{"cron no recap", cron, 90, 6, []string{"nightly", "no prompt yet", "⏲ nightly · fired 3h"}, nil, "fired 3h"},
 		{"fresh window", fresh, 60, 6, []string{"idle"}, []string{"ctx", "$", "·  ·"}, ""},
