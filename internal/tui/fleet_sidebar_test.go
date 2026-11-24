@@ -262,9 +262,8 @@ func TestRowRight(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
 	since := sidebarNow.Add(-4 * time.Minute)
-	// A list with a model exception and a context warning somewhere, so
-	// every column is drawn; opus is the usual model.
-	ex := fleetExceptions{common: "opus", modelW: 6, ctx: true}
+	// A list with a context warning somewhere, so every column is drawn.
+	ex := fleetExceptions{ctx: true}
 	sp := strings.Repeat
 	tests := []struct {
 		name string
@@ -278,16 +277,15 @@ func TestRowRight(t *testing.T) {
 		{"done without pr keeps age", fleet.Row{StateSince: since, AgentState: state.AgentState{Done: true}}, "4m"},
 		{"four-digit pr", fleet.Row{StateSince: since, PRNumber: 1025}, "#1025  4m"},
 		{"usual model, calm ctx: nothing", fleet.Row{StateSince: since, PRNumber: 60, AgentState: state.AgentState{ModelName: "claude-opus-4-7", ContextPct: 42, TurnCount: 1}}, "#60  4m"},
-		{"other model", fleet.Row{StateSince: since, AgentState: state.AgentState{ModelName: "claude-sonnet-4-5-20250929", TurnCount: 1}}, "sonnet" + sp(" ", 13) + "4m"},
-		{"other model before the first prompt", fleet.Row{StateSince: since, AgentState: state.AgentState{ModelName: "claude-sonnet-4-5-20250929"}}, "4m"},
-		{"ctx warning", fleet.Row{AgentState: state.AgentState{ModelName: "claude-opus-4-7", ContextPct: 92, TurnCount: 1}}, "92%" + sp(" ", 9) + fleetNoAge},
+		{"model is not drawn", fleet.Row{StateSince: since, AgentState: state.AgentState{ModelName: "claude-sonnet-4-5-20250929", TurnCount: 1}}, "4m"},
+				{"ctx warning", fleet.Row{AgentState: state.AgentState{ModelName: "claude-opus-4-7", ContextPct: 92, TurnCount: 1}}, "92%" + sp(" ", 9) + fleetNoAge},
 		{"full context", fleet.Row{AgentState: state.AgentState{ModelName: "claude-opus-4-7[1m]", ContextPct: 100, TurnCount: 1}}, "100%" + sp(" ", 9) + fleetNoAge},
 		{"shell has nothing", fleet.Row{Shell: true, AgentState: state.AgentState{ModelName: "claude-sonnet-4-5", ContextPct: 95}}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cols := fitRightCols(200, ex, rowCtxWarn(tt.row, fleetDisplay{}), ex.rowModel(tt.row) != "")
-			if got := ansi.Strip(rowRight(tt.row, cols, ex, fleetDisplay{})); got != tt.want {
+			cols := fitRightCols(200, ex, rowCtxWarn(tt.row, fleetDisplay{}))
+			if got := ansi.Strip(rowRight(tt.row, cols, fleetDisplay{})); got != tt.want {
 				t.Errorf("rowRight = %q, want %q", got, tt.want)
 			}
 		})
@@ -298,8 +296,8 @@ func TestRowRight_BlockedUsesBlockedStyle(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
 	r := fleet.Row{StateSince: sidebarNow.Add(-2 * time.Minute), AgentState: state.AgentState{State: "blocked"}}
-	cols := fitRightCols(200, fleetExceptions{}, false, false)
-	if got, want := rowRight(r, cols, fleetExceptions{}, fleetDisplay{}), fleetBlockedStyle.Render("2m"); !strings.HasSuffix(got, want) {
+	cols := fitRightCols(200, fleetExceptions{}, false)
+	if got, want := rowRight(r, cols, fleetDisplay{}), fleetBlockedStyle.Render("2m"); !strings.HasSuffix(got, want) {
 		t.Errorf("blocked age = %q, want %q", got, want)
 	}
 }

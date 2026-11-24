@@ -261,7 +261,7 @@ func TestNoPromptRowShowsNoModel(t *testing.T) {
 		r.ModelName = "claude-sonnet-4-5"
 	})
 	m := newFleetModel()
-	m.except = fleetExceptions{common: "opus", modelW: 6}
+	m.except = fleetExceptions{}
 	line := firstLine(m.renderRow(r, false, 100))
 	if !strings.Contains(line, "no prompt yet") || strings.Contains(line, "sonnet") {
 		t.Errorf("row = %q, want \"no prompt yet\" and no model", line)
