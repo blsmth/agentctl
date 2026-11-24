@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/selfpath"
@@ -107,6 +109,45 @@ func viewerOptionArgs(session string) [][]string {
 // viewerSelectWindowArgs selects an agent window inside a viewer session.
 func viewerSelectWindowArgs(session, windowID string) []string {
 	return []string{"select-window", "-t", sessionWindowTarget(session, windowID)}
+}
+
+// viewerIntentOption is a session user option on a viewer session recording
+// the last chrome-bar tab click inside the live pane, as "<window id>/<token>"
+// (the token makes every click distinct, so the hub acts on each one once).
+// The hub follows a viewer window change only when it comes from such a
+// click: tmux re-syncs grouped sessions by window index, so a window
+// inserted, moved or closed in the home session also moves the viewer, and
+// those changes must not drag the hub selection along.
+const viewerIntentOption = "@agentctl_viewer_intent"
+
+// viewerIntentValue builds the intent option value for a click on windowID.
+func viewerIntentValue(windowID string, token int64) string {
+	return windowID + "/" + strconv.FormatInt(token, 10)
+}
+
+// viewerSetIntentArgs records a tab-click intent on the viewer session.
+func viewerSetIntentArgs(session, value string) []string {
+	return []string{"set-option", "-t", ExactSessionTarget(session), viewerIntentOption, value}
+}
+
+// viewerStateFormat reads a viewer's active window and tab-click intent.
+const viewerStateFormat = "#{window_id} #{" + viewerIntentOption + "}"
+
+// parseViewerState splits viewerStateFormat output into the active window,
+// the intent's window and the whole intent value (its identity).
+func parseViewerState(out string) (window, intentWindow, intent string) {
+	f := strings.Fields(out)
+	if len(f) > 0 {
+		window = f[0]
+	}
+	if len(f) > 1 {
+		intent = f[1]
+		intentWindow, _, _ = strings.Cut(intent, "/")
+		if !strings.HasPrefix(intentWindow, "@") {
+			return window, "", ""
+		}
+	}
+	return window, intentWindow, intent
 }
 
 // viewerAttachCommand is the shell command run in the live pane: a nested
@@ -270,6 +311,9 @@ func ShowLiveViewer(homeSession, windowID string, rightWidth int) error {
 	if pane != "" {
 		_ = exec.Command("tmux", "kill-pane", "-t", pane).Run()
 	}
+	// A status pane left above the dead viewer would sit in the wrong
+	// column; the caller makes a fresh one above the new viewer.
+	_ = KillHubStatus()
 	killViewerSessions(name)
 	list := viewerSplitTarget(hubListPaneID())
 	id, err := tmuxRun(viewerSplitArgs(list, rightWidth, viewerAttachCommand(outerSocketPath(), name))...)
@@ -284,9 +328,11 @@ func viewerSessionExists() bool {
 	return len(viewerSessions()) > 0
 }
 
-// HideLiveViewer kills the viewer pane and all viewer sessions. Agent windows
-// are shared, not owned, by the viewer, so they survive.
+// HideLiveViewer kills the viewer pane, the status pane above it and all
+// viewer sessions. Agent windows are shared, not owned, by the viewer, so
+// they survive.
 func HideLiveViewer() error {
+	_ = KillHubStatus()
 	if pane := viewerPaneID(); pane != "" {
 		_ = exec.Command("tmux", "kill-pane", "-t", pane).Run()
 	}
@@ -295,11 +341,33 @@ func HideLiveViewer() error {
 	return nil
 }
 
-// FocusLivePane toggles focus between the hub list pane and the live pane
-// (same as the outer-prefix `o`, but without needing the prefix).
+// FocusLivePane toggles focus between the hub list pane and the live pane.
+// The panes are picked by their markers, not by index: the status pane sits
+// between the list and the viewer in pane order, so "next pane" would land
+// on it. Falls back to the next pane when there is no marked viewer.
 func FocusLivePane() error {
-	_, err := tmuxRun("select-pane", "-t", sessionWindowTarget(HubSessionName, FleetListWindowName)+".+")
+	target := sessionWindowTarget(HubSessionName, FleetListWindowName)
+	active, _ := tmuxRun("display-message", "-p", "-t", target, "#{pane_id}")
+	list := hubListPaneID()
+	if pane := focusToggleTarget(active, list, viewerPaneID()); pane != "" {
+		_, err := tmuxRun("select-pane", "-t", pane)
+		return err
+	}
+	_, err := tmuxRun("select-pane", "-t", target+".+")
 	return err
+}
+
+// focusToggleTarget picks the pane FocusLivePane selects: the viewer when
+// the list (or nothing known) is active, the list otherwise. "" means no
+// marked viewer, so the caller falls back to the next pane.
+func focusToggleTarget(active, list, viewer string) string {
+	if viewer == "" || list == "" {
+		return ""
+	}
+	if active == list {
+		return viewer
+	}
+	return list
 }
 
 // FocusViewerPane selects the live viewer pane by ID. Unlike FocusLivePane it
@@ -314,20 +382,21 @@ func FocusViewerPane() error {
 }
 
 // hubListPaneID returns the hub list pane's ID: the pane in the fleet-list
-// window that is neither the live viewer nor the activity pane. Empty when
-// it cannot be resolved.
+// window that is none of the live viewer, activity and status panes. Empty
+// when it cannot be resolved.
 func hubListPaneID() string {
 	out, err := tmuxRun("list-panes", "-t", sessionWindowTarget(HubSessionName, FleetListWindowName),
-		"-F", "#{pane_id} #{"+viewerPaneOption+"}#{"+activityPaneOption+"}")
+		"-F", "#{pane_id} #{"+viewerPaneOption+"}#{"+activityPaneOption+"}#{"+statusPaneOption+"}")
 	if err != nil {
 		return ""
 	}
 	return parseListPane(out)
 }
 
-// parseListPane picks the first pane flagged as neither the viewer nor the
-// activity pane from `#{pane_id} #{@agentctl_viewer}#{@agentctl_activity}`
-// lines (a flagged pane has a second field).
+// parseListPane picks the first pane flagged as none of the viewer, activity
+// and status panes from `#{pane_id}
+// #{@agentctl_viewer}#{@agentctl_activity}#{@agentctl_status}` lines (a
+// flagged pane has a second field).
 func parseListPane(out string) string {
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
@@ -493,9 +562,46 @@ func ViewerActiveWindow() (home, windowID string) {
 	return homeOfViewer(viewer), windowID
 }
 
+// ViewerState is what the hub's poll reads from the live viewer.
+type ViewerState struct {
+	Viewer string // viewer session name
+	Home   string // home session of the viewer's group
+	Window string // the viewer's active window id
+	// Intent is the window id of the last chrome-bar tab click and
+	// IntentToken identifies that click (distinct per click).
+	Intent      string
+	IntentToken string
+}
+
+// HubViewerState returns the live viewer's session, home, active window and
+// tab-click intent (zero when there is no viewer).
+func HubViewerState() ViewerState {
+	viewer, _ := currentViewer(viewerSessions())
+	if viewer == "" {
+		return ViewerState{}
+	}
+	out, _ := tmuxRun("display-message", "-p", "-t", ExactSessionTarget(viewer), viewerStateFormat)
+	w, intent, token := parseViewerState(out)
+	return ViewerState{Viewer: viewer, Home: homeOfViewer(viewer), Window: w, Intent: intent, IntentToken: token}
+}
+
+// RepointViewer selects windowID (by ID, never index) in the viewer session.
+// The hub uses it to put the viewer back on the window it shows after an
+// index shift in the home session moved the viewer elsewhere.
+func RepointViewer(viewer, windowID string) error {
+	if !IsViewerSession(viewer) || !strings.HasPrefix(windowID, "@") {
+		return fmt.Errorf("cannot repoint viewer %q to %q", viewer, windowID)
+	}
+	_, err := tmuxRun(viewerSelectWindowArgs(viewer, windowID)...)
+	return err
+}
+
 // SelectViewerWindow switches the live viewer session containing windowID to
-// it. Used by chrome-bar tab clicks made from inside a viewer.
+// it. Used by chrome-bar tab clicks made from inside a viewer. The target is
+// recorded first as the viewer's intent, so the hub can tell this switch from
+// one caused by window indexes shifting in the home session.
 func SelectViewerWindow(viewer, windowID string) error {
+	_, _ = tmuxRun(viewerSetIntentArgs(viewer, viewerIntentValue(windowID, time.Now().UnixNano()))...)
 	_, err := tmuxRun(viewerSelectWindowArgs(viewer, windowID)...)
 	// Give the window the viewer just left its chrome bar back at once; the
 	// hub zooms the new one on its next poll.

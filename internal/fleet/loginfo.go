@@ -28,7 +28,7 @@ const (
 )
 
 // recapSuffix is the hint Claude Code appends to every away_summary.
-const recapSuffix = "(disable recaps in /config)"
+const recapSuffix = "recaps in /config)"
 
 // Substrings that cheaply pre-filter lines before any JSON decoding.
 var (
@@ -261,9 +261,14 @@ func newestAITitle(buf []byte) string {
 	return info.AITitle
 }
 
-// cleanRecap flattens a recap to one line and strips Claude Code's
-// "(disable recaps in /config)" hint.
+// cleanRecap flattens a recap to one line and strips Claude Code's trailing
+// "(disable recaps in /config)" hint, whatever verb it uses ("turn off ...").
 func cleanRecap(s string) string {
-	s = flattenWhitespace(s)
-	return strings.TrimSpace(strings.TrimSuffix(s, recapSuffix))
+	s = strings.TrimSpace(flattenWhitespace(s))
+	if strings.HasSuffix(s, recapSuffix) {
+		if i := strings.LastIndex(s, "("); i >= 0 {
+			s = s[:i]
+		}
+	}
+	return strings.TrimSpace(s)
 }

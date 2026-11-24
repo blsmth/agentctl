@@ -20,10 +20,10 @@ func TestReconcileWindows_GoneUntrackedWindowsCleanedUpWithoutHandlers(t *testin
 			m := &monitorModel{windows: map[string]*instanceState{
 				"@9": {instance: name, base: name, hasPrev: true, prevState: state.StatusWorking},
 			}}
-			orig := improveHandleFn
-			t.Cleanup(func() { improveHandleFn = orig })
+			orig := transitionHandlerFn
+			t.Cleanup(func() { transitionHandlerFn = orig })
 			calls := 0
-			improveHandleFn = func(state.Transition, config.AgentConfig) { calls++ }
+			transitionHandlerFn = func(state.Transition, config.AgentConfig) { calls++ }
 
 			m.reconcileWindows(&config.Config{}, nil, 0)
 			m.reconcileWindows(&config.Config{}, nil, 0)
@@ -105,13 +105,13 @@ func TestProtectedSessionLogs(t *testing.T) {
 }
 
 func TestDetectAndFireTransitions_SteadyTickMakesNoLookups(t *testing.T) {
-	origW, origB, origH := paneWorkDirFn, gitBranchFn, improveHandleFn
-	t.Cleanup(func() { paneWorkDirFn, gitBranchFn, improveHandleFn = origW, origB, origH })
+	origW, origB, origH := paneWorkDirFn, gitBranchFn, transitionHandlerFn
+	t.Cleanup(func() { paneWorkDirFn, gitBranchFn, transitionHandlerFn = origW, origB, origH })
 	lookups := 0
 	paneWorkDirFn = func(string) string { lookups++; return "/w" }
 	gitBranchFn = func(string) string { lookups++; return "b" }
 	var got state.Transition
-	improveHandleFn = func(tr state.Transition, _ config.AgentConfig) { got = tr }
+	transitionHandlerFn = func(tr state.Transition, _ config.AgentConfig) { got = tr }
 
 	m := &monitorModel{windows: map[string]*instanceState{}}
 	inst := &instanceState{instance: "a", base: "a", hasPrev: true, prevState: state.StatusIdle}

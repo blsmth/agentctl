@@ -114,6 +114,9 @@ func cmdContextSet() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		cliout.Exit(1)
 	}
+	if n, ok := ctxstore.TicketSpecNumber(key); ok && agentName != "" {
+		fmt.Fprintf(os.Stderr, "context: %q is injected only into `dispatch --issue %d` launches of %s (or when listed in its context_keys)\n", key, n, agentName)
+	}
 	if agentName == "" {
 		fmt.Fprintf(os.Stderr, "context: %q has no --agent, so it will NOT be auto-injected into any prompt -- use --agent <name> or add it to that agent's context_keys to opt in\n", key)
 	}

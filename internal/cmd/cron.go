@@ -19,6 +19,7 @@ import (
 	"github.com/blsmth/agentctl/internal/mailbox"
 	"github.com/blsmth/agentctl/internal/notify"
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/ratelimit"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -35,6 +36,9 @@ type CronAddOptions struct {
 	Prompt     string
 	PromptKey  string
 	PromptFile string
+	// Template names a prompt template, read from Dir's project at every
+	// fire; the job's agent, model and effort override its defaults.
+	Template   string
 	NoWorktree bool
 	Model      string
 	Effort     string
@@ -84,6 +88,9 @@ func (e cronEnv) store() cronedit.Store {
 		ValidateAgent:      e.validateAgent,
 		SchedulerInstalled: e.schedulerInstalled,
 		Options:            e.options,
+		// The fire-time loader (and its test seam), so a save checks the
+		// template a fire will read.
+		LoadTemplate: func(name, dir string) (prompttemplate.Template, error) { return loadPromptTemplate(name, dir) },
 	}
 }
 
@@ -117,12 +124,15 @@ func (e cronEnv) add(w io.Writer, opts CronAddOptions) error {
 // validates it. --prompt-file is read now, so later edits to the file do
 // not change what runs.
 func jobFromAdd(opts CronAddOptions) (cron.Job, error) {
-	prompt, err := promptFromFlags(opts.Prompt, opts.PromptKey, opts.PromptFile)
+	prompt, err := promptFromFlags(opts.Prompt, opts.PromptKey, opts.PromptFile, opts.Template)
 	if err != nil {
 		return cron.Job{}, err
 	}
-	if n := countSet(opts.Prompt, opts.PromptKey, opts.PromptFile); n != 1 {
-		return cron.Job{}, errors.New("exactly one of --prompt, --prompt-key or --prompt-file is required")
+	if n := countSet(opts.Prompt, opts.PromptKey, opts.PromptFile, opts.Template); n != 1 {
+		return cron.Job{}, errPromptSources
+	}
+	if opts.Agent == "" && opts.Template == "" {
+		return cron.Job{}, errors.New("--agent is required (unless --template names one)")
 	}
 	dir, err := absDir(opts.Dir)
 	if err != nil {
@@ -130,7 +140,7 @@ func jobFromAdd(opts CronAddOptions) (cron.Job, error) {
 	}
 	job := cron.Job{
 		Name: opts.Name, Schedule: opts.Schedule, Dir: dir, Agent: opts.Agent,
-		Prompt: prompt, PromptKey: opts.PromptKey,
+		Prompt: prompt, PromptKey: opts.PromptKey, Template: opts.Template,
 		Model: opts.Model, Effort: opts.Effort, Backend: opts.Backend, Account: opts.Account,
 		Timeout: opts.Timeout, Overlap: opts.Overlap, Catchup: opts.Catchup,
 	}
@@ -149,11 +159,14 @@ func countSet(vals ...string) int {
 	return n
 }
 
+// errPromptSources is the error for zero or several prompt sources.
+var errPromptSources = errors.New("exactly one of --prompt, --prompt-key, --prompt-file or --template is required")
+
 // promptFromFlags returns the inline prompt: --prompt, or --prompt-file's
-// contents. At most one of the three sources may be set.
-func promptFromFlags(prompt, key, file string) (string, error) {
-	if countSet(prompt, key, file) > 1 {
-		return "", errors.New("exactly one of --prompt, --prompt-key or --prompt-file is required")
+// contents. At most one of the four sources may be set.
+func promptFromFlags(prompt, key, file, template string) (string, error) {
+	if countSet(prompt, key, file, template) > 1 {
+		return "", errPromptSources
 	}
 	if file == "" {
 		return prompt, nil
@@ -187,6 +200,7 @@ type CronEditOptions struct {
 	Prompt     *string
 	PromptKey  *string
 	PromptFile *string
+	Template   *string
 	Worktree   bool
 	NoWorktree bool
 	Model      *string
@@ -215,9 +229,12 @@ func (e cronEnv) edit(w io.Writer, opts CronEditOptions) error {
 		}
 		return *p
 	}
-	prompt, err := promptFromFlags(str(opts.Prompt), str(opts.PromptKey), str(opts.PromptFile))
+	prompt, err := promptFromFlags(str(opts.Prompt), str(opts.PromptKey), str(opts.PromptFile), str(opts.Template))
 	if err != nil {
 		return err
+	}
+	if opts.Template != nil && *opts.Template == "" {
+		return errors.New("--template needs a name (switch to --prompt, --prompt-key or --prompt-file instead)")
 	}
 	var dir string
 	if opts.Dir != nil {
@@ -238,9 +255,11 @@ func (e cronEnv) edit(w io.Writer, opts CronEditOptions) error {
 		}
 		switch {
 		case opts.Prompt != nil || opts.PromptFile != nil:
-			j.Prompt, j.PromptKey = prompt, ""
+			j.Prompt, j.PromptKey, j.Template = prompt, "", ""
 		case opts.PromptKey != nil:
-			j.Prompt, j.PromptKey = "", *opts.PromptKey
+			j.Prompt, j.PromptKey, j.Template = "", *opts.PromptKey, ""
+		case opts.Template != nil:
+			j.Prompt, j.PromptKey, j.Template = "", "", *opts.Template
 		}
 		if opts.Worktree || opts.NoWorktree {
 			wt := opts.Worktree
@@ -425,8 +444,8 @@ func realCronDeps(dir string, cfg config.CronConfig, jobs []cron.Job) cron.Deps 
 		Usage:     cronUsage,
 		Launch:    cronLaunch,
 		Interrupt: cronInterrupt,
-		Notify: func(title, msg string) {
-			notify.NotifyWithOptions(notify.Options{Title: title, Message: msg, Env: map[string]string{"AGENTCTL_NOTIFICATION_TYPE": "cron"}})
+		Notify: func(title, subtitle, msg string) {
+			notify.NotifyWithOptions(notify.Options{Title: title, Subtitle: subtitle, Message: msg, Env: map[string]string{"AGENTCTL_NOTIFICATION_TYPE": "cron"}})
 		},
 		Logf: logging.Log,
 	}
@@ -522,31 +541,37 @@ func cronLaunch(req cron.LaunchRequest) (cron.LaunchResult, error) {
 	p := projectFor(job)
 	var res cron.LaunchResult
 	err := bindProject(p, func() error {
+		// Resolve the prompt (and a template's defaults) before starting
+		// anything, so a missing template or key leaves no session behind.
+		opts, err := cronDispatchOptions(req)
+		if err != nil {
+			return err
+		}
+		if err := validateAgentName(opts.Agent, job.Dir); err != nil {
+			return err
+		}
 		if !tmux.SessionExists() {
 			logging.Log("cron: %s: starting session %s detached", job.Name, p.session)
 			if err := tmux.StartSessionDetached(config.Load().DefaultAgent); err != nil {
 				return fmt.Errorf("%w: starting session %s: %v", cron.ErrTmuxUnavailable, p.session, err)
 			}
 		}
-		opts, err := cronDispatchOptions(req)
+		dres, err := dispatchPromptResult(opts)
 		if err != nil {
 			return err
 		}
-		if err := validateAgentName(job.Agent, job.Dir); err != nil {
-			return err
-		}
-		wid, _, err := dispatchPromptOptions(opts)
-		if err != nil {
-			return err
-		}
-		res = cron.LaunchResult{WindowID: wid, Session: p.session}
+		res = cron.LaunchResult{WindowID: dres.WindowID, Session: p.session, SessionID: dres.SessionID}
 		return nil
 	})
 	return res, err
 }
 
 // cronDispatchOptions maps a fire onto the dispatch options, resolving a
-// prompt_key from the context store.
+// prompt_key from the context store, or a template from the job dir's
+// project through the dispatch --template path (applyDispatchTemplate), so
+// the job's agent, model and effort win over the template's defaults. A
+// template that no longer resolves is cron.ErrTemplateNotFound, which the
+// tick records as failed:template.
 func cronDispatchOptions(req cron.LaunchRequest) (DispatchOptions, error) {
 	job := req.Job
 	prompt := job.Prompt
@@ -557,9 +582,10 @@ func cronDispatchOptions(req cron.LaunchRequest) (DispatchOptions, error) {
 		}
 		prompt = resolved
 	}
-	return DispatchOptions{
+	opts := DispatchOptions{
 		Prompt:      prompt,
 		PromptKey:   job.PromptKey,
+		Template:    job.Template,
 		Agent:       job.Agent,
 		Dir:         job.Dir,
 		Model:       job.Model,
@@ -570,7 +596,21 @@ func cronDispatchOptions(req cron.LaunchRequest) (DispatchOptions, error) {
 		Branch:      req.Branch,
 		ScheduledBy: job.Name,
 		Detached:    true,
-	}, nil
+	}
+	if job.Template == "" {
+		return opts, nil
+	}
+	out, err := applyDispatchTemplate(opts, job.Dir)
+	if err != nil {
+		if errors.Is(err, prompttemplate.ErrNotFound) {
+			return DispatchOptions{}, cron.TemplateError(fmt.Sprintf(
+				"template %q not found (looked in %s's project and the global templates)", job.Template, job.Dir))
+		}
+		return DispatchOptions{}, cron.TemplateError(err.Error())
+	}
+	// The job dir is where the template was read from; it always wins.
+	out.Dir = job.Dir
+	return out, nil
 }
 
 // cronInterrupt handles a timed-out window: C-c to its main pane, the window
@@ -590,7 +630,11 @@ func cronInterrupt(w cron.Window, job cron.Job, timeout time.Duration) error {
 		}
 		detail := fmt.Sprintf("cron job %s exceeded its %s timeout", job.Name, timeout)
 		now := time.Now()
+		title := job.Name
 		if uerr := winname.Update(w.ID, func(ws *windowstate.WindowState) {
+			if t := strings.Join(strings.Fields(ws.ShortTitle.Title), " "); t != "" {
+				title = t
+			}
 			ws.State = "blocked"
 			ws.PendingTool = "cron-timeout"
 			ws.PendingToolDetail = detail
@@ -607,8 +651,10 @@ func cronInterrupt(w cron.Window, job cron.Job, timeout time.Duration) error {
 			logging.Warn("cron: mailbox notice for %s: %v", w.ID, merr)
 		}
 		notify.NotifyWithOptions(notify.Options{
-			Title: "agentctl cron: " + job.Name, Message: detail + "; interrupted in " + w.Session,
-			Env: map[string]string{"AGENTCTL_NOTIFICATION_TYPE": "cron"},
+			Title:    title,
+			Subtitle: "Cron run timed out · " + job.Name,
+			Message:  fmt.Sprintf("Exceeded its %s timeout; interrupted with C-c in %s", timeout, w.Session),
+			Env:      map[string]string{"AGENTCTL_NOTIFICATION_TYPE": "cron"},
 		})
 		return nil
 	})
@@ -619,11 +665,24 @@ func cronInterrupt(w cron.Window, job cron.Job, timeout time.Duration) error {
 // account_rules on the repo root, default_account). A cron fire has no
 // parent window. "" means no accounts are configured.
 func cronAccount(job cron.Job) (string, error) {
-	res, err := claudehome.ForLaunch(config.Load(), job.Account, job.Agent, job.Dir, "")
+	res, err := claudehome.ForLaunch(config.Load(), job.Account, cronJobAgent(job), job.Dir, "")
 	if err != nil {
 		return "", err
 	}
 	return res.Name, nil
+}
+
+// cronJobAgent is the agent a job runs: its own, else its template's (""
+// when the template cannot be read; the fire then fails on it).
+func cronJobAgent(job cron.Job) string {
+	if job.Agent != "" || job.Template == "" {
+		return job.Agent
+	}
+	t, err := loadPromptTemplate(job.Template, job.Dir)
+	if err != nil {
+		return ""
+	}
+	return t.Agent
 }
 
 // cronUsage reads account's pushed rate limits (the pre-accounts single

@@ -110,8 +110,7 @@ func withSchedEnv(t *testing.T, e schedEnv) {
 func openNewForm(t *testing.T, f *schedFixture) FleetModel {
 	t.Helper()
 	m := showSchedules(t, f.model(t))
-	m = selectSched(t, m, fleetSchedNewSel)
-	return schedPress(t, m, "n")
+	return schedPress(t, m, fleetCronKey) // t on the project's rows: new schedule
 }
 
 func TestFormNamesResolvedDefaultsAndHidesEmptyRows(t *testing.T) {
@@ -150,8 +149,7 @@ func TestFormNewDefaultAgentFallsBackToDefaultAgent(t *testing.T) {
 	m := showSchedules(t, f.model(t))
 	m.groups = nil // no agent in any project
 	m.rebuildLines()
-	m = selectSched(t, m, fleetSchedNewSel)
-	m = schedPress(t, m, "n")
+	m.openSchedForm(schedFormNew, nil, "")
 	if got := formOf(t, m).agent.value(); got != "reviewer" {
 		t.Errorf("agent = %q, want default_agent", got)
 	}
@@ -242,13 +240,10 @@ func TestPanePadsEveryLineToItsWidth(t *testing.T) {
 	f.seedFour(t)
 	m := showSchedules(t, f.model(t))
 	m = selectSched(t, m, "nightly")
-	pw := m.schedPaneWidth()
-	for i, l := range strings.Split(m.render(), "\n") {
-		if i == 0 {
-			continue
-		}
-		if got := len([]rune(ansi.Strip(l))); got < m.contentWidth()+1+pw+2 {
-			t.Errorf("line %d is %d cells, want it padded to the pane edge (%d): %q", i, got, m.contentWidth()+1+pw+2, ansi.Strip(l))
+	lines := strings.Split(m.render(), "\n")
+	for i := m.fleetListTop(); i < len(lines)-1; i++ {
+		if got := ansi.StringWidth(lines[i]); got < m.contentWidth() {
+			t.Errorf("line %d is %d cells, want it padded to the pane edge (%d): %q", i, got, m.contentWidth(), ansi.Strip(lines[i]))
 			break
 		}
 	}

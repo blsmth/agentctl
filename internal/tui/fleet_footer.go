@@ -67,11 +67,11 @@ var fleetFooterHints = []fleetHint{
 	{"?", "more"},
 }
 
-// fleetNewHints replace the footer while the shell | agent selector is armed.
+// fleetNewHints replace the footer while the shell | cron | agent selector is armed.
 var fleetNewHints = []fleetHint{
 	{"s", "shell"},
 	{"a", "agent"},
-	{"t", "schedule"},
+	{fleetCronKey, "cron"},
 	{"esc", "cancel"},
 }
 
@@ -114,6 +114,8 @@ func (m FleetModel) footerBody(cw int) string {
 	var b strings.Builder
 	b.WriteString("\n")
 	switch {
+	case m.searchEditing():
+		b.WriteString(m.searchView(cw))
 	case m.newSessionOpen():
 		b.WriteString(m.newSessionView(cw))
 	case m.menuOpen && m.menuHelp:
@@ -132,6 +134,8 @@ func (m FleetModel) footerBody(cw int) string {
 		b.WriteString(fleetSuccessStyle.Render("  " + truncateToWidth(fleetInfoGlyph+m.infoMsg, cw-2)))
 	case m.infoMsg != "":
 		b.WriteString(fleetDimStyle.Render("  " + truncateToWidth(m.infoMsg, cw-2)))
+	case m.search != nil:
+		b.WriteString(m.searchCommittedLine(cw))
 	}
 	b.WriteString("\n")
 	if m.newSessionOpen() && m.jumpErr != "" {
@@ -139,8 +143,28 @@ func (m FleetModel) footerBody(cw int) string {
 		b.WriteString(fleetErrStyle.Render("  " + truncateToWidth(m.jumpErr, cw-2)))
 		return b.String()
 	}
+	b.WriteString(fitHints(m.footerHints(), cw))
+	return b.String()
+}
+
+// footerHints are the hints the hint bar offers in the current state.
+func (m FleetModel) footerHints() []fleetHint {
 	hints := fleetFooterHints
+	if m.selectedArtifactRow() {
+		// After "x close", before "q leave".
+		hints = append(append(append([]fleetHint(nil), hints[:len(hints)-2]...), fleetHint{fleetArtifactKey, "artifact"}), hints[len(hints)-2:]...)
+	}
+	if _, t, ok := m.tabGroupOfLine(m.splitPane.Cursor()); ok {
+		label := "schedules"
+		if t.sched {
+			label = "sessions"
+		}
+		hints = append(append(append([]fleetHint(nil), hints[:len(hints)-2]...), fleetHint{fleetSchedulesKey, label}), hints[len(hints)-2:]...)
+	}
+	hints = m.searchHints(hints)
 	switch {
+	case m.searchEditing():
+		hints = fleetSearchHints
 	case m.newSessionOpen():
 		hints = m.newSessionHints()
 	case m.renameOpen():
@@ -149,7 +173,7 @@ func (m FleetModel) footerBody(cw int) string {
 		hints = fleetNewHints
 	case m.sweepArmed():
 		hints = fleetSweepHints
-	case m.schedFormOpen() && (m.schedForm.review || m.schedForm.discard):
+	case m.schedFormOpen() && (m.schedForm.review || m.schedForm.discard || m.schedForm.startAsk != ""):
 		hints = fleetSchedYesNoHints
 		if m.schedForm.review {
 			hints = fleetSchedReviewHints
@@ -158,11 +182,10 @@ func (m FleetModel) footerBody(cw int) string {
 		hints = fleetSchedFormHints
 	case m.schedConfirm != nil:
 		hints = fleetSchedYesNoHints
-	case m.selectedSchedLineValue() != nil:
+	case m.selectedSchedLineValue() != nil || m.selectedSchedHead() != nil:
 		hints = m.schedHints()
 	}
-	b.WriteString(fitHints(hints, cw))
-	return b.String()
+	return hints
 }
 
 // liveHintRows is how many rows the footer occupies beyond the rows the
@@ -190,6 +213,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"^b o", "back to list", ""},
 		{"b", "next blocked", "b"},
 		{"n", "new", "n"},
+		{fleetCronKey, "new cron (project)", fleetCronKey},
 		{fleetNewSessionKey, "new session", fleetNewSessionKey},
 		{"x", "close", "x"},
 		{fleetRenameKey, "rename", fleetRenameKey},
@@ -206,9 +230,11 @@ func fleetHelpItems() []fleetHelpItem {
 		{"Z", "focus mode", "Z"},
 		{"f", "filter", "f"},
 		{"o", "sort: recent / window", "o"},
+		{fleetSearchKey, "search (⏎ keep, esc clear)", fleetSearchKey},
+		{fleetArtifactKey, "open newest ◆ artifact", fleetArtifactKey},
 		{fleetShellsKey, "shells", fleetShellsKey},
 		{fleetClosedKey, "closed agents", fleetClosedKey},
-		{fleetSchedulesKey, "schedules", fleetSchedulesKey},
+		{fleetSchedulesKey, "Sessions / Schedules tab (project)", fleetSchedulesKey},
 		{"e/space/g/d/x", "schedule row: edit/pause/run/dup/delete", ""},
 		{fleetServeKey, "serve on/off", fleetServeKey},
 		{"q", "leave", "q"},
@@ -260,6 +286,9 @@ func (m *FleetModel) openHelp() {
 	m.cancelClose()
 	m.cancelNew()
 	m.cancelSweep()
+	if m.searchEditing() {
+		m.search.editing = false
+	}
 	m.menuOpen, m.menuHelp, m.menuLine = true, true, m.splitPane.Cursor()
 	m.ensureCursorVisible() // the footer grew; keep the cursor on screen
 }

@@ -242,7 +242,7 @@ func checkApprovalTamper(command string) string {
 	if dir != "" {
 		targets = append(targets, regexp.QuoteMeta(dir)+`\b`)
 	}
-	if matchesWriteTemplates(maskAgentctlArgs(command), targets) {
+	if matchesWriteTemplates(command, targets) {
 		return approvalTamperReason
 	}
 	return ""

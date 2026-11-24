@@ -104,6 +104,11 @@ func NotifyWithOptions(opts Options) {
 	for k, v := range opts.Env {
 		procEnv = append(procEnv, fmt.Sprintf("%s=%s", k, v))
 	}
+	// AGENTCTL_TITLE is the title as shown, for notify_cmd scripts that group
+	// or replace notifications by it (it does not vary across repeat firings).
+	if _, ok := opts.Env["AGENTCTL_TITLE"]; !ok {
+		procEnv = append(procEnv, "AGENTCTL_TITLE="+opts.Title)
+	}
 
 	c := exec.Command("sh", "-c", cmdStr)
 	c.Env = procEnv

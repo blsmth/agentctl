@@ -1003,7 +1003,7 @@ func (m SessionsModel) viewDetail() string {
 	t := theme.Current()
 
 	// ── Title ────────────────────────────────────────────────────────────────
-	titleText := fmt.Sprintf("Session Detail  ·  %s  ·  %s", entry.Agent, entry.Project)
+	titleText := fmt.Sprintf("Session Detail  ·  %s › %s", entry.Project, entry.Agent)
 	b.WriteString(sessTitleStyle.Width(cw).Render(titleText))
 	b.WriteString("\n")
 
@@ -1138,7 +1138,7 @@ func (m SessionsModel) viewTurnMetrics() string {
 	sum := entry.Summary
 
 	// ── Title ────────────────────────────────────────────────────────────────
-	titleText := fmt.Sprintf("Turn Metrics  ·  %s  ·  %s", entry.Agent, entry.Project)
+	titleText := fmt.Sprintf("Turn Metrics  ·  %s › %s", entry.Project, entry.Agent)
 	b.WriteString(sessTitleStyle.Width(cw).Render(titleText))
 	b.WriteString("\n")
 

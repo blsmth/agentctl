@@ -19,7 +19,7 @@ func TestRowRight_DoneBadgeAndAge(t *testing.T) {
 	fixedFleetNow(t)
 	since := sidebarNow.Add(-4 * time.Hour)
 	ex := fleetExceptions{common: "opus"}
-	full := fitRightCols(200, ex, false, false, 0)
+	full := fitRightCols(200, ex, false, false)
 	done := fleet.Row{StateSince: since, PRNumber: 105, AgentState: state.AgentState{Done: true}}
 	got := rowRight(done, full, ex, fleetDisplay{})
 	if plain := ansi.Strip(got); plain != "#105  4h" {
@@ -152,7 +152,7 @@ func TestDetailIndentAndContinuation(t *testing.T) {
 			m, i := nestedSelected(t, tt.prefix)
 			cw := m.contentWidth()
 			l := m.lines[i]
-			lines := strings.Split(m.renderTreeRow(l.row, l.treePrefix, l.nameCol, true, cw), "\n")
+			lines := strings.Split(m.renderTreeRow(l.row, l.treePrefix, true, cw), "\n")
 			if len(lines) != m.lineHeight(i, cw) {
 				t.Fatalf("rendered %d lines, lineHeight %d", len(lines), m.lineHeight(i, cw))
 			}

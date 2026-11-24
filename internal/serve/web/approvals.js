@@ -99,7 +99,7 @@ export function approvalCard(ctx, a, countdowns, { compact = false } = {}) {
   const left = h("span", { class: "countdown" }, formatCountdown(secondsLeft(a, Date.now())));
   countdowns.push({ el: left, approval: a });
   const facts = [
-    h("div", {}, h("span", { class: "meta" }, "from "), h("a", { href: windowHash(a.session, a.window_id) }, a.asking_agent || "agent"), a.project ? h("span", { class: "meta" }, ` · ${a.project}`) : null),
+    h("div", {}, h("span", { class: "meta" }, "from "), a.project ? h("span", { class: "meta" }, `${a.project} \u203A `) : null, h("a", { href: windowHash(a.session, a.window_id) }, a.asking_agent || "agent")),
   ];
   const rows = detailRows(a);
   if (rows) {
@@ -111,7 +111,7 @@ export function approvalCard(ctx, a, countdowns, { compact = false } = {}) {
     facts.push(h("div", {}, h("span", { class: "meta" }, "scheduled agent "), a.target_agent || "(unknown)"));
   }
   const body = [];
-  if (a.prompt) body.push(...textBlock(a.kind === "cron" ? "Job" : "Prompt", a.prompt));
+  if (a.prompt) body.push(...textBlock(a.kind === "cron" ? "Job" : a.kind === "template" ? "Template" : "Prompt", a.prompt));
   body.push(...textBlock("Command", a.command));
 
   const canWrite = ctx.hasFeature("write");

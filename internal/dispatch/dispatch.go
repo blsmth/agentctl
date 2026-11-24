@@ -25,6 +25,7 @@ import (
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/ids"
 	"github.com/blsmth/agentctl/internal/launchopts"
+	"github.com/blsmth/agentctl/internal/launchwatch"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/safefs"
@@ -123,6 +124,7 @@ type Request struct {
 	persona          string // full agent body, for harnesses without --agent
 	noMessaging      bool   // harness has no SendMessage/ListAgents
 	prReview         string // config pr_review mode; empty means always
+	backendLines     string // orchestrator Models-section backend lines, built from config at launch
 	reportViaMailbox bool   // a dispatcher exists but cannot be messaged
 	// reviewSharedCheckout is set for a ModeReviewPR launch that runs in the
 	// shared checkout (no worktree, or worktree creation failed).
@@ -314,7 +316,7 @@ func Launch(req Request) (Result, error) {
 	// 5. Gather context store entries.
 	var contextEntries []ctxstore.Entry
 	if ac.CrossContext {
-		entries, err := ctxstore.ForAgent(req.AgentName, ac.ContextKeys)
+		entries, err := ctxstore.ForAgent(req.AgentName, ac.ContextKeys, req.Ticket)
 		if err == nil {
 			contextEntries = entries
 		}
@@ -343,6 +345,9 @@ func Launch(req Request) (Result, error) {
 
 	// 7. Build system prompt.
 	req.prReview = effectivePRReview(cfg.EffectivePRReview(), req.PRReviewOverride)
+	if spec.Role == RoleOrchestrator && caps.Backends {
+		req.backendLines = backendGuidance(cfg.Backends)
+	}
 	req.Orchestrator = launchOrchestrator(req, spec)
 	if req.Orchestrator.Known() && cfg.HasAccounts() && caps.Accounts {
 		dropCrossAccountOrchestrator(&req, acct.Dir, claudehome.ParentDir(acct.parent))
@@ -437,6 +442,7 @@ func Launch(req Request) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("launching agent: %w", err)
 	}
+	launchwatch.Start(wid, caps)
 
 	// 13. Update window state + dispatch log.
 	logLaunchBanner(req.AgentName, windowName, string(req.Mode), req.Ticket, req.TicketTitle, workDir, sessionID)

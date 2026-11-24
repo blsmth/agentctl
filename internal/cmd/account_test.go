@@ -7,8 +7,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/ratelimit"
 )
 
 // accountEnv isolates HOME, the global config and every exec seam. No test
@@ -335,5 +337,43 @@ func TestClaudeEnvDefaultDirUnsetsConfigDir(t *testing.T) {
 		if k == "CLAUDE_CONFIG_DIR" || slices.Contains(credentialEnvVars, k) {
 			t.Errorf("%s passed to the default-dir probe", kv)
 		}
+	}
+}
+
+func TestUsageCells(t *testing.T) {
+	accountEnv(t)
+	now := time.Unix(2_000_000_000, 0)
+	usageNow = func() time.Time { return now }
+	t.Cleanup(func() { usageNow = time.Now })
+	save := func(pr *ratelimit.PushedRateLimits) {
+		t.Helper()
+		if err := ratelimit.SavePushedFor("acct", pr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := func(pct float64, resets time.Duration) *ratelimit.PushedWindow {
+		return &ratelimit.PushedWindow{UsedPercentage: pct, ResetsAt: now.Add(resets).Unix()}
+	}
+	tests := []struct {
+		name         string
+		pr           *ratelimit.PushedRateLimits
+		want5, want7 string
+	}{
+		{"fresh both", &ratelimit.PushedRateLimits{UpdatedAt: now.Unix(), FiveHour: w(30, time.Hour), SevenDay: w(20, 48*time.Hour)}, "30%", "20%"},
+		{"fresh, five_hour omitted", &ratelimit.PushedRateLimits{UpdatedAt: now.Unix(), SevenDay: w(20, 48*time.Hour)}, "0%", "20%"},
+		{"stale, five_hour omitted", &ratelimit.PushedRateLimits{UpdatedAt: now.Add(-time.Hour).Unix(), SevenDay: w(20, 48*time.Hour)}, "-", "~20%"},
+		{"stale, windows expired", &ratelimit.PushedRateLimits{UpdatedAt: now.Add(-time.Hour).Unix(), FiveHour: w(50, -time.Minute), SevenDay: w(33, -time.Hour)}, "reset", "reset"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			save(tt.pr)
+			got5, got7 := usageCells("acct")
+			if got5 != tt.want5 || got7 != tt.want7 {
+				t.Errorf("usageCells = (%q, %q), want (%q, %q)", got5, got7, tt.want5, tt.want7)
+			}
+		})
+	}
+	if a, b := usageCells("nodata"); a != "-" || b != "-" {
+		t.Errorf("no file = (%q, %q), want dashes", a, b)
 	}
 }

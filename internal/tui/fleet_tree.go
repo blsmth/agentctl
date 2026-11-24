@@ -200,7 +200,7 @@ func tallySubtree(tr []treeRow) fleetSubtreeCounts {
 		if t.Row.Shell {
 			continue
 		}
-		switch rowWeight(t.Row) {
+		switch glyphWeight(t.Row) {
 		case fleetWeightBlocked:
 			c.blocked++
 		case fleetWeightWorking:

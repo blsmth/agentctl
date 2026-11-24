@@ -374,3 +374,42 @@ func TestInjectUnclassifiedToPane(t *testing.T) {
 		t.Errorf("sent %v", sent)
 	}
 }
+
+// A command like /model answers with a picker whose cursor row starts with
+// the prompt glyph. The command path must press Enter once and not retry.
+func TestInjectCommandToPaneSendsEnterOnce(t *testing.T) {
+	const picker = "──── a ──\n  Select model\n\n❯ 1. Default (recommended)\n  2. Opus\n\n  Enter to confirm · Esc to exit\n"
+	const idle = "──── a ──\n❯ \n──────\n  ⏵⏵ auto mode on\n"
+	var sent []string
+	captures := 0
+	withInjectSeams(t,
+		func(_, c string) error { sent = append(sent, "lit:"+c); return nil },
+		func(string) error { sent = append(sent, "enter"); return nil },
+		func(string) (string, error) {
+			captures++
+			if len(sent) >= 2 {
+				return picker, nil
+			}
+			return idle, nil
+		})
+	if err := InjectCommandToPane("%5", "/model"); err != nil {
+		t.Fatal(err)
+	}
+	if len(sent) != 2 || sent[0] != "lit:/model" || sent[1] != "enter" {
+		t.Errorf("sent %v", sent)
+	}
+	if err := InjectCommandToPane("bogus", "/model"); err == nil {
+		t.Error("want error for invalid pane id")
+	}
+}
+
+func TestInjectCommandToPaneRefusesDialog(t *testing.T) {
+	var sent []string
+	withInjectSeams(t,
+		func(_, c string) error { sent = append(sent, c); return nil },
+		func(string) error { sent = append(sent, "enter"); return nil },
+		func(string) (string, error) { return "Do you want to proceed?\n❯ 1. Yes\n  2. No\n  Esc to cancel\n", nil })
+	if err := InjectCommandToPane("%5", "/model"); !errors.Is(err, ErrDialogBlocking) || len(sent) != 0 {
+		t.Errorf("err %v sent %v", err, sent)
+	}
+}

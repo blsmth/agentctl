@@ -322,7 +322,12 @@ func TestFleetHubSelection(t *testing.T) {
 			m := newFleetModel()
 			m.groups = tt.groups
 			m.selSession, m.selWindowID, m.selIsHeader = tt.session, tt.windowID, tt.header
-			if got := m.hubSelection(); got != tt.want {
+			got := m.hubSelection()
+			if (got.Status != nil) != tt.want.valid() {
+				t.Errorf("status = %+v, want one only for an agent row", got.Status)
+			}
+			got.Status = nil
+			if got != tt.want {
 				t.Errorf("got %+v, want %+v", got, tt.want)
 			}
 		})

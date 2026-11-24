@@ -338,7 +338,7 @@ func TestBuildCronPreview_JobsUnreadableDenies(t *testing.T) {
 func TestCronPreviewGate_NotInTmux_StaysSilent(t *testing.T) {
 	t.Setenv("TMUX", "")
 	failIfDispatchPopupRunnerCalled(t)
-	approved, decided, deny := cronPreviewGate("orch", cronAddCmd)
+	approved, decided, deny := cronPreviewGate("orch", cronAddCmd, "")
 	if approved || decided || deny != "" {
 		t.Errorf("got (%v, %v, %q), want silent pass-through", approved, decided, deny)
 	}
@@ -350,7 +350,7 @@ func TestCronPreviewGate_DenyReasonShowsNoPopup(t *testing.T) {
 	command := `agentctl cron add j --schedule @daily -a a --dir /x --prompt "$(cat spec.md)"`
 	removeDispatchLockForTest(t, command)
 	failIfDispatchPopupRunnerCalled(t)
-	approved, decided, deny := cronPreviewGate("orch", command)
+	approved, decided, deny := cronPreviewGate("orch", command, "")
 	if approved || decided || !strings.Contains(deny, "shell expansion") {
 		t.Errorf("got (%v, %v, %q), want a shell-expansion deny", approved, decided, deny)
 	}
@@ -384,7 +384,7 @@ func TestCronPreviewGate_PopupArgsAndVerdict(t *testing.T) {
 				return tt.verdict(t)
 			})
 
-			approved, decided, deny := cronPreviewGate("orch", cronAddCmd)
+			approved, decided, deny := cronPreviewGate("orch", cronAddCmd, "")
 			if !*called || !decided || deny != "" || approved != tt.wantApproved {
 				t.Fatalf("called=%v got (%v, %v, %q), want decided approved=%v", *called, approved, decided, deny, tt.wantApproved)
 			}

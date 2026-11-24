@@ -2,6 +2,8 @@ package fleet
 
 import (
 	"time"
+
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // Window is the machine-readable shape of one agent window. It is the single
@@ -35,7 +37,10 @@ type Window struct {
 	BlockedSince string `json:"blocked_since,omitempty"`
 	StateSince   string `json:"state_since,omitempty"`
 	PendingTool  string `json:"pending_tool,omitempty"`
-	PRNumber     int    `json:"pr_number,omitempty"`
+	// PendingToolDetail is what the pending tool is asked to do (the Bash
+	// command, the file path), set with PendingTool; push bodies use it.
+	PendingToolDetail string `json:"pending_tool_detail,omitempty"`
+	PRNumber          int    `json:"pr_number,omitempty"`
 
 	// Recap is the row's one-line "what is this agent working on" (see Recap)
 	// and RecapSource names where it came from: summary, task, title or activity.
@@ -70,6 +75,10 @@ type Window struct {
 	// Label is the human-facing identifier (see DisplayName); window_id stays
 	// the machine key. Serve fills it for the phone; `status --json` blanks it.
 	Label string `json:"label,omitempty"`
+
+	// Harness is the agent program the window runs ("pi"); omitted for
+	// Claude Code. The phone offers slash commands only on Claude windows.
+	Harness string `json:"harness,omitempty"`
 }
 
 // ToWindow converts a row and its windowstate metadata to a Window.
@@ -98,6 +107,7 @@ func ToWindow(r Row, m Meta) Window {
 		Model:        r.ModelName,
 		TurnDone:     r.TurnDone,
 		Label:        RowDisplayName(r),
+		Harness:      r.Harness,
 	}
 	if r.Recap.Text != "" {
 		w.Recap, w.RecapSource = r.Recap.Text, r.Recap.Source.String()
@@ -118,6 +128,10 @@ func ToWindow(r Row, m Meta) Window {
 	}
 	if r.State == "blocked" {
 		w.PendingTool = m.PendingTool
+		w.PendingToolDetail = m.PendingToolDetail
+		if m.PendingTool == windowstate.PendingTrust {
+			w.Activity = TrustActivity(m.PendingToolDetail)
+		}
 		if !m.BlockedSince.IsZero() {
 			w.BlockedSince = m.BlockedSince.UTC().Format(time.RFC3339)
 			w.StateSince = w.BlockedSince

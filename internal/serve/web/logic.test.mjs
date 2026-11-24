@@ -5,20 +5,57 @@ import {
   SWIPE_REVEAL, canSwipeClose, swipeAxis, swipeCommit, swipeOffset,
   ansiColor, approvalBannerText, approvalConfirm, approvalNeedsConfirm, approvalHash, approvalsForWindow, approvalSummary, buildApprovalRequest,
   approvalProject, approvalRows, approvalRowText, promptFold, PROMPT_FOLD_LINES,
-  DISPATCH_UPLOAD_PATH, buildDispatchRequest, buildShellRequest, canShell, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
+  DISPATCH_UPLOAD_PATH, buildDispatchRequest, buildShellRequest, canShell, templateFill, templateLabel, templatesPath, choiceLabel, confirmLines, dispatchHash, formatCountdown, launchOptionsPath, modelPicker, normalizePane,
   parseAnsi, parseRoute, removeApproval, resolvedText, secondsLeft, splitPane, upsertApproval, withReceived,
   bucketLabel, kindLabel, rowTags, rowChips, rowTitle, rowHeadline, rowRole, detailTitle, truncateWords, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
+  buildCommandRequest, commandConfirm, commandError, commandSuggestions, commandWord, isClaudeWindow, isSlashCommand, SLASH_COMMANDS,
   actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
   defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines, fullPrompt,
-  waitingIndex, displayState, waitingLabel, actionsFor, effectiveState,
+  waitingIndex, parentOf, childrenOf, displayState, waitingLabel, actionsFor, effectiveState,
   applyGone, shellRows, shellDirName, shellApiPath,
   formatBytes, formatUptime, hostLevels, hostConnection, pushSample, formatSkew,
   advancedSummary, cardLastFailure, cardStatus, changeLines, fieldErrors, runResultCard, timeoutIsPreset, usageOptions, formClientErrors, formatAgo, formatNextFire, newScheduleForm, previewBody, runResultLabel, scheduleBanners, scheduleBody,
   scheduleException, scheduleGlyph, scheduleHash, scheduleLastText, scheduleReview, scheduleWhen, worktreeFact,
+  scheduleAgentText, schedulePromptLabel, scheduleRowActivity,
+  isTap, isDoubleTap, paneLineCount, canLoadEarlier, historyAddsLines,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
+  ARTIFACT_TOKEN_MAX_AGE_MS, artifactChipText, artifactHash, artifactIcon, artifactOrigin, artifactRevLabel, artifactRevPill, artifactRowMeta, artifactTokenStale,
+  artifactWindowLive, artifactsForWindow, artifactsHash, groupArtifacts,
+  ARTIFACT_COLLAPSE_KEY, ARTIFACT_OTHER, UNDO_MS, artifactGroupKey, artifactGroupMove, artifactRevBadge, artifactSubline, buildArtifactOrderRequest,
+  createDeleteQueue, dropSettled, SETTLED_TTL_MS, loadCollapsedSet, mergeArtifactOrder, saveCollapsedSet,
+  ARTIFACT_FEEDBACK_MAX, artifactCommentStatus, artifactCommentToast, artifactFeedbackFrom,
 } from "./logic.js";
+
+// Slash commands (phone "Run command").
+assert.equal(commandWord("/compact focus"), "/compact");
+assert.equal(commandWord("  /clear"), "/clear");
+assert.equal(commandWord("/Users/me/file.go is broken"), null);
+assert.equal(commandWord("hello /x"), null);
+assert.equal(commandWord("!ls"), null);
+assert.equal(commandWord("#note"), null);
+assert.equal(isSlashCommand("/"), true);
+assert.equal(isSlashCommand("/plugin:skill a b"), true);
+assert.deepEqual(commandSuggestions("/co").map((c) => c.name), ["/compact", "/context", "/cost"]);
+assert.deepEqual(commandSuggestions("/CLE").map((c) => c.name), ["/clear"]);
+assert.equal(commandSuggestions("/").length, SLASH_COMMANDS.length);
+assert.deepEqual(commandSuggestions("/compact"), []);
+assert.deepEqual(commandSuggestions("/compact x"), []);
+assert.deepEqual(commandSuggestions("/Users/x"), []);
+assert.deepEqual(commandSuggestions("hello"), []);
+assert.equal(commandError("/compact x"), "");
+assert.equal(commandError("  /plugin:skill-x "), "");
+for (const bad of ["/", "/ x", "/-x", "/a\nb", "hello", "!x", "#x", "/a b".padEnd(2001, "x")]) assert.notEqual(commandError(bad), "", bad);
+assert.equal(commandConfirm("/clear").title, "Clear this conversation?");
+assert.equal(commandConfirm(" /clear ").danger, true);
+assert.equal(commandConfirm("/compact"), null);
+assert.equal(commandConfirm("/clearx"), null);
+assert.equal(isClaudeWindow({}), true);
+assert.equal(isClaudeWindow({ harness: "claude" }), true);
+assert.equal(isClaudeWindow({ harness: "pi" }), false);
+assert.deepEqual(buildCommandRequest("s", "@1", "/compact").body, { text: "/compact" });
+assert.match(buildCommandRequest("s", "@1", "/compact").path, /\/command$/);
 
 const fixtures = JSON.parse(readFileSync(new URL("./logic.fixtures.json", import.meta.url), "utf8"));
 
@@ -373,6 +410,36 @@ console.log("ok: resolved text");
     assert.deepEqual(got, c.want, c.name);
   }
   console.log(`ok: ${tree.cases.length} shared tree cases`);
+}
+
+// parentOf / childrenOf: fleet-feed parent and child links.
+{
+  const groups = [
+    { session: "a", windows: [
+      { window_id: "@1", session: "a", state: "idle" },
+      { window_id: "@2", session: "a", parent: "@1", state: "idle", window_index: 2 },
+      { window_id: "@3", session: "a", parent: "@1", state: "working", window_index: 3 },
+      { window_id: "@4", session: "a", parent: "@4", state: "idle" },
+      { window_id: "@5", session: "a", parent: "@9", state: "idle" },
+      { window_id: "@6", session: "a", parent: "@7", state: "idle" },
+      { window_id: "@7", session: "a", parent: "@6", state: "idle" },
+    ] },
+    { session: "b", windows: [{ window_id: "@8", session: "b", parent: "@1", state: "idle", window_index: 1 }] },
+  ];
+  const win = (id) => groups.flatMap((g) => g.windows).find((w) => w.window_id === id);
+  assert.equal(parentOf(groups, win("@1")), null);
+  assert.equal(parentOf(groups, win("@2")).window_id, "@1");
+  assert.equal(parentOf(groups, win("@8")).window_id, "@1"); // other group
+  assert.equal(parentOf(groups, win("@4")), null); // self
+  assert.equal(parentOf(groups, win("@5")), null); // gone
+  assert.equal(parentOf(groups, win("@6")).window_id, "@7"); // cycle: terminates
+  assert.deepEqual(childrenOf(groups, win("@1")).map((w) => w.window_id), ["@3", "@8", "@2"]);
+  assert.deepEqual(childrenOf(groups, win("@4")), []);
+  assert.deepEqual(childrenOf(groups, win("@7")).map((w) => w.window_id), ["@6"]);
+  assert.equal(parentOf(undefined, win("@2")), null);
+  assert.deepEqual(childrenOf(null, win("@1")), []);
+  assert.deepEqual(childrenOf(groups, { parent: "@1" }), []);
+  console.log("ok: parentOf/childrenOf");
 }
 
 // Scheduled (cron) windows.
@@ -868,4 +935,295 @@ console.log("ok: shell request");
   assert.equal(cardLastFailure({ last: { result: "fired" } }), "");
   assert.match(cardLastFailure({ last: { result: "failed:launch", note: "boom", ts: new Date().toISOString() } }), /^Last run failed \u00B7 launch: boom/);
   console.log("ok: schedules logic");
+}
+
+// Schedules: a template as the prompt source.
+{
+  const stored = { name: "j", schedule: "0 9 * * *", dir: "/x", agent: "", template: "triage", harness: "claude", mode: "window" };
+  const f = newScheduleForm({ job: stored, simple: { kind: "daily", minute: 0, hour: 9 }, templateText: "Triage it." });
+  assert.equal(f.source, "template");
+  assert.equal(f.template, "triage");
+  let body = scheduleBody(f);
+  assert.equal(body.job.template, "triage");
+  assert.equal(body.job.agent, "");
+  assert.equal(body.job.prompt, undefined);
+  assert.equal(body.job.prompt_key, undefined);
+  // Template -> prompt drops the template; and back again drops the prompt.
+  f.source = "prompt";
+  f.prompt = "Inline.";
+  f.agent = "go";
+  body = scheduleBody(f);
+  assert.equal(body.job.template, undefined);
+  assert.equal(body.job.prompt, "Inline.");
+  f.source = "template";
+  body = scheduleBody(f);
+  assert.equal(body.job.template, "triage");
+  assert.equal(body.job.prompt, undefined);
+  // A prompt-key job switched to a template loses the key.
+  const pk = newScheduleForm({ job: { ...stored, template: undefined, agent: "go", prompt_key: "k" }, simple: null, promptText: "t" });
+  assert.equal(pk.source, "prompt");
+  pk.source = "template";
+  pk.template = "triage";
+  assert.equal(scheduleBody(pk).job.prompt_key, undefined);
+  // No template picked is a client error.
+  assert.equal(formClientErrors({ ...newScheduleForm(), source: "template" }).template, "Pick a template");
+  assert.equal(formClientErrors(newScheduleForm()).template, undefined);
+  // Labels.
+  assert.equal(schedulePromptLabel({ template: "triage", prompt: "x" }), "template triage");
+  assert.equal(schedulePromptLabel({ prompt_key: "k" }), "context key k");
+  assert.equal(scheduleAgentText({ template: "triage" }, "go-engineer"), "go-engineer (from template triage)");
+  assert.equal(scheduleAgentText({ template: "triage" }), "the agent of template triage");
+  assert.equal(scheduleAgentText({ agent: "a", template: "triage" }, "go-engineer"), "a");
+  assert.equal(scheduleRowActivity({ template: "triage" }, "proj"), "proj \u203A template triage");
+  assert.equal(scheduleRowActivity({ agent: "a", template: "triage" }, "proj"), "proj \u203A a \u00B7 template triage");
+  assert.equal(scheduleRowActivity({ agent: "a", prompt: "p" }, "proj"), "proj \u203A a");
+  assert.equal(scheduleRowActivity({ agent: "a" }, ""), "a");
+  // Review and changes name the template.
+  const rv = scheduleReview({ job: { agent: "", template: "triage", dir: "/d", worktree: true }, schedule: "x" }, { ...f, templateAgent: "go-engineer" });
+  assert.match(rv[0], /Runs {3}go-engineer \(from template triage\) in \/d/);
+  assert.match(rv.at(-1), /^Prompt: template triage \(read from the project at every run\)\nTriage it\.$/);
+  assert.deepEqual(changeLines({ agent: "a", prompt: "p" }, { agent: "a", template: "triage" }), ["prompt  p \u2192 template triage"]);
+  console.log("ok: schedule templates");
+}
+
+// Prompt templates on the dispatch sheet.
+assert.deepEqual(buildDispatchRequest("a", "/d", "p", {}, [], "", false, "triage").body, { agent: "a", project_dir: "/d", prompt: "p", template: "triage" });
+assert.ok(confirmLines({ agent: "a", project_dir: "/d", prompt: "p", template: "triage" }).join("\n").includes("template: triage"));
+assert.equal(templatesPath(""), "/v1/templates");
+assert.equal(templatesPath("/a b"), "/v1/templates?dir=%2Fa%20b");
+assert.equal(templateLabel({ name: "t", description: "d" }), "t · d");
+assert.equal(templateLabel({ name: "t" }), "t");
+{
+  const projects = [{ dir: "/p1" }];
+  assert.deepEqual(templateFill({ prompt: "x", agent: "a", dir: "/p1", model: "opus", effort: "high" }, projects, ["a"]), {
+    prompt: "x", agent: "a", project: "/p1", preset: { model: "opus", effort: "high" },
+  });
+  // Unknown agent or project is left alone; the prompt still fills.
+  assert.deepEqual(templateFill({ prompt: "x", agent: "zz", dir: "/nope" }, projects, ["a"]), { prompt: "x", preset: {} });
+}
+console.log("ok: templates");
+
+// Approval cards name the template.
+{
+  const tpl = { kind: "template", asking_agent: "w", details: { template: "triage", mode: "add template", agent: "go-engineer" } };
+  assert.equal(approvalSummary(tpl), "w wants to add template triage");
+  assert.deepEqual(approvalRows(tpl).map((r) => [r.label, r.value]), [["Template", "triage"], ["Action", "add template"], ["Agent", "go-engineer"]]);
+  const disp = { kind: "dispatch", details: { project: "p", agent: "a", template: "triage", mode: "ad-hoc" } };
+  assert.deepEqual(approvalRows(disp)[0], { label: "Template", value: "triage", detail: "", flag: "" });
+}
+assert.equal(approvalConfirm({ kind: "template", command: "c", details: {} }, "allow").title, "Approve this template change?");
+console.log("ok: template approvals");
+
+// Double tap on the reflow pane.
+assert.equal(isTap({ t: 0, x: 5, y: 5 }, { t: 120, x: 8, y: 7 }), true);
+assert.equal(isTap({ t: 0, x: 5, y: 5 }, { t: 450, x: 5, y: 5 }), false, "long press");
+assert.equal(isTap({ t: 0, x: 5, y: 5 }, { t: 100, x: 5, y: 40 }), false, "scroll");
+assert.equal(isDoubleTap(null, { t: 100, x: 0, y: 0 }), false);
+assert.equal(isDoubleTap({ t: 0, x: 10, y: 10 }, { t: 200, x: 15, y: 12 }), true);
+assert.equal(isDoubleTap({ t: 0, x: 10, y: 10 }, { t: 300, x: 10, y: 10 }), true);
+assert.equal(isDoubleTap({ t: 0, x: 10, y: 10 }, { t: 301, x: 10, y: 10 }), false, "too slow");
+assert.equal(isDoubleTap({ t: 0, x: 10, y: 10 }, { t: 100, x: 80, y: 10 }), false, "too far");
+assert.equal(isDoubleTap({ t: 100, x: 10, y: 10 }, { t: 50, x: 10, y: 10 }), false, "out of order");
+console.log("ok: double tap");
+
+// Nothing earlier to load.
+assert.equal(paneLineCount(""), 0);
+assert.equal(paneLineCount("a\nb\n"), 2);
+assert.equal(canLoadEarlier("a\nb\n"), false, "short pane has no scrollback");
+assert.equal(canLoadEarlier(Array(199).fill("x").join("\n")), false);
+assert.equal(canLoadEarlier(Array(200).fill("x").join("\n")), true);
+assert.equal(historyAddsLines("a\nb", "a\nb"), false, "history no longer than the tail");
+assert.equal(historyAddsLines("b\nc", "a\nb\nc"), true);
+console.log("ok: load earlier gate");
+// Artifacts: routes, grouping, filter and token age.
+{
+  assert.deepEqual(parseRoute("#/artifacts"), { name: "artifacts", view: "list", filter: null });
+  assert.deepEqual(parseRoute("#/artifacts?window=%40523&session=agentctl-x"), { name: "artifacts", view: "list", filter: { session: "agentctl-x", windowId: "@523" } });
+  assert.deepEqual(parseRoute("#/artifacts?window=%40523"), { name: "artifacts", view: "list", filter: null });
+  assert.deepEqual(parseRoute("#/artifacts/abc"), { name: "artifacts", view: "viewer", id: "abc", rev: null });
+  assert.deepEqual(parseRoute("#/artifacts/abc/3"), { name: "artifacts", view: "viewer", id: "abc", rev: 3 });
+  assert.deepEqual(parseRoute("#/artifacts/abc/latest"), { name: "artifacts", view: "viewer", id: "abc", rev: null });
+  assert.equal(artifactHash("abc"), "#/artifacts/abc");
+  assert.equal(artifactHash("abc", 2), "#/artifacts/abc/2");
+  const f = { session: "agentctl-x", windowId: "@523" };
+  assert.deepEqual(parseRoute(artifactsHash(f)).filter, f);
+  assert.equal(artifactsHash(), "#/artifacts");
+
+  const A = (id, dir, project, extra = {}) => ({ id, project_dir: dir, project, updated: "2026-01-01T00:00:00Z", rev_count: 1, ...extra });
+  const list = [A("1", "/z", "zed"), A("2", "/b", "beta"), A("3", "/a", "alpha"), A("4", "/b", "beta"), A("5", "", "")];
+  const fleet = [{ key: "/b", dir: "/b" }, { key: "k2", dir: "/z" }];
+  const g = groupArtifacts(list, fleet);
+  assert.deepEqual(g.map((x) => x.name), ["beta", "zed", "alpha", "Other"]);
+  assert.deepEqual(g[0].items.map((x) => x.id), ["2", "4"]); // list order kept inside a group
+  assert.deepEqual(groupArtifacts(list, []).map((x) => x.name), ["alpha", "beta", "zed", "Other"]);
+  assert.deepEqual(groupArtifacts([], fleet), []);
+
+  const w = { session: "s", window_id: "@1" };
+  assert.deepEqual(artifactsForWindow([{ id: "a", ...w }, { id: "b", session: "t", window_id: "@1" }, { id: "c", session: "s", window_id: "@2" }], "s", "@1").map((x) => x.id), ["a"]);
+  assert.equal(artifactChipText(1), "\u25C6 1 artifact");
+  assert.equal(artifactChipText(3), "\u25C6 3 artifacts");
+  assert.equal(artifactWindowLive({ ...w }, [{ session: "s", windows: [{ window_id: "@1" }] }])?.window_id, "@1");
+  assert.equal(artifactWindowLive({ ...w }, [{ session: "s", windows: [] }]), null);
+  assert.equal(artifactWindowLive({ session: "s" }, []), null);
+
+  const now = Date.parse("2026-01-01T12:00:00Z");
+  assert.equal(artifactTokenStale(now - 59 * 60000, now), false);
+  assert.equal(artifactTokenStale(now - ARTIFACT_TOKEN_MAX_AGE_MS, now), true);
+  assert.equal(artifactTokenStale(undefined, now), true);
+  assert.equal(artifactIcon("html") !== artifactIcon("image"), true);
+  assert.equal(artifactIcon("weird"), "\u25C6");
+  assert.equal(artifactRowMeta({ rev_count: 3, updated: "2026-01-01T11:55:00Z" }, now), "3 revs \u00B7 5m ago");
+  assert.equal(artifactRowMeta({ rev_count: 1, updated: "2026-01-01T11:55:00Z" }, now), "5m ago");
+  assert.equal(artifactRowMeta({ pinned: true, rev_count: 2, updated: "2026-01-01T11:55:00Z" }, now), "pin \u00B7 2 revs \u00B7 5m ago");
+  assert.equal(artifactRevLabel({ n: 2, created: "2026-01-01T11:55:00Z", note: "fix" }, now), "v2 \u00B7 5m ago \u00B7 fix");
+  assert.equal(artifactRevLabel({ n: 1, created: "2026-01-01T09:00:00Z" }, now), "v1 \u00B7 3h ago");
+  assert.equal(artifactRevPill(2, 2, 2), "v2 \u25BE");
+  assert.equal(artifactRevPill(1, 2, 2), "v1 of 2 \u25BE");
+  assert.equal(artifactOrigin({ agent: "designer", project: "shop", window_id: "@17" }), "shop \u203A designer \u00B7 @17");
+  assert.equal(artifactOrigin({ project: "shop" }), "shop");
+  // Group items keep the served (saved) order: pinned rows no longer float.
+  const pg = groupArtifacts([A("p1", "/b", "beta"), A("p2", "/b", "beta", { pinned: true }), A("p3", "/b", "beta")], []);
+  assert.deepEqual(pg[0].items.map((x) => x.id), ["p1", "p2", "p3"]);
+  // Other is always last, even when the fleet knows no project and unknown projects follow by name.
+  assert.deepEqual(groupArtifacts([A("o", "", ""), A("a", "/a", "alpha")], []).map((x) => x.name), ["alpha", ARTIFACT_OTHER]);
+  assert.equal(artifactGroupKey(A("x", "/d", "n")), "/d");
+  assert.equal(artifactGroupKey(A("x", "", "n")), "n");
+  assert.equal(artifactGroupKey(A("x", "", "")), "");
+  // fleetKey is the fleet's key for a listed project, empty otherwise.
+  assert.deepEqual(g.map((x) => x.fleetKey), ["/b", "k2", "", ""]);
+  assert.equal(groupArtifacts([A("a", "/b", "b")], [{ key: "k9", dir: "/b" }])[0].fleetKey, "k9");
+  // A project with no dir is named by its name; a dir with no name by its basename.
+  assert.equal(groupArtifacts([A("a", "/x/y", "")], [])[0].name, "y");
+
+  // The optimistic order matches the server's merge: new ones first, saved after, unknown ids dropped.
+  const items = ["n1", "a", "b", "c"].map((id) => ({ id }));
+  assert.deepEqual(mergeArtifactOrder(items, ["c", "gone", "a", "b"]).map((x) => x.id), ["n1", "c", "a", "b"]);
+  assert.deepEqual(mergeArtifactOrder(items, []).map((x) => x.id), ["n1", "a", "b", "c"]);
+  assert.deepEqual(mergeArtifactOrder(items, ["a", "a"]).map((x) => x.id), ["n1", "b", "c", "a"]);
+  assert.deepEqual(buildArtifactOrderRequest("/p", ["a", "b"]), { method: "POST", path: "/v1/artifacts/order", body: { project: "/p", ids: ["a", "b"] } });
+
+  // Dragging a project group saves the fleet keys of the listed groups; Other stays last and unlisted groups cannot move.
+  const gs = [
+    { key: "/a", fleetKey: "ka" }, { key: "/b", fleetKey: "kb" }, { key: "/u", fleetKey: "" }, { key: "", fleetKey: "" },
+  ];
+  assert.deepEqual(artifactGroupMove(gs, "/a", 1), ["kb", "ka"]);
+  assert.equal(artifactGroupMove(gs, "/a", 0), null, "no move");
+  assert.deepEqual(artifactGroupMove(gs, "/b", 0), ["kb", "ka"]);
+  assert.deepEqual(artifactGroupMove(gs, "/a", 9), ["kb", "ka"], "past Other clamps before it");
+  assert.equal(artifactGroupMove(gs, "/u", 0), null, "unlisted group");
+  assert.equal(artifactGroupMove(gs, "", 0), null, "Other");
+
+  assert.equal(artifactSubline({ description: " Weekly numbers ", entry: "r.html" }), "Weekly numbers");
+  assert.equal(artifactSubline({ entry: "r.html" }), "r.html");
+  assert.equal(artifactSubline({}), "");
+  assert.equal(artifactRevBadge({ latest: 3 }), "rev 3");
+  assert.equal(artifactRevBadge({ rev_count: 1 }), "");
+  assert.equal(artifactRevBadge({ latest: 4, rev_count: 4 }), "rev 4");
+
+  // Folded groups persist under their own key and survive junk.
+  const mem = () => { const m = new Map(); return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, v) }; };
+  const st = mem();
+  saveCollapsedSet(ARTIFACT_COLLAPSE_KEY, new Set(["/a", "~other"]), st);
+  assert.deepEqual([...loadCollapsedSet(ARTIFACT_COLLAPSE_KEY, st)], ["/a", "~other"]);
+  assert.equal(ARTIFACT_COLLAPSE_KEY, "agentctl.artifacts.collapsed");
+  st.setItem("k", "{nope");
+  assert.equal(loadCollapsedSet("k", st).size, 0);
+  st.setItem("k", JSON.stringify(["a", 3, null]));
+  assert.deepEqual([...loadCollapsedSet("k", st)], ["a"]);
+  assert.equal(loadCollapsedSet("k", { getItem() { throw new Error("denied"); } }).size, 0);
+  assert.doesNotThrow(() => saveCollapsedSet("k", new Set(["a"]), { setItem() { throw new Error("full"); } }));
+  console.log("ok: artifacts logic");
+}
+
+{
+  // The delete queue: the DELETE goes out only when the undo window ends.
+  const timers = new Map();
+  let nextTimer = 1;
+  const setTimer = (fn, ms) => { timers.set(nextTimer, { fn, ms }); return nextTimer++; };
+  const clearTimer = (t) => timers.delete(t);
+  const fire = () => { const [id, t] = [...timers][0]; timers.delete(id); t.fn(); };
+  const sent = [];
+  const settled = [];
+  let fail = false;
+  const q = createDeleteQueue({
+    commit: async (item) => { sent.push(item.id); if (fail) throw new Error("boom"); },
+    onSettle: (id, item, err) => settled.push([id, err ? err.message : null]),
+    setTimer, clearTimer,
+  });
+  assert.equal(UNDO_MS, 5000);
+  q.add("a", { id: "a" });
+  assert.equal(timers.get(1).ms, UNDO_MS);
+  assert.equal(q.has("a"), true);
+  assert.deepEqual(sent, [], "nothing sent while the toast is up");
+  q.add("a", { id: "a" }); // a second swipe on the same row is ignored
+  assert.equal(timers.size, 1);
+
+  // Undo cancels: nothing is ever sent, the row is back.
+  q.add("b", { id: "b" });
+  assert.equal(q.undo("b"), true);
+  assert.equal(q.has("b"), false);
+  assert.equal(q.undo("b"), false, "already undone");
+  assert.equal(timers.size, 1);
+
+  // Expiry sends; the id stays hidden until the request settles.
+  fire();
+  assert.deepEqual(sent, ["a"]);
+  assert.equal(q.has("a"), true, "in flight: an SSE refetch must not resurrect it");
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(q.has("a"), false);
+  assert.deepEqual(settled, [["a", null]]);
+  assert.equal(q.undo("a"), false, "too late to undo");
+
+  // A failed delete settles with the error so the row can be restored.
+  fail = true;
+  q.add("c", { id: "c" });
+  fire();
+  await Promise.resolve(); await Promise.resolve();
+  assert.deepEqual(settled.at(-1), ["c", "boom"]);
+  assert.equal(q.has("c"), false);
+
+  // Leaving the page flushes everything waiting.
+  fail = false;
+  q.add("d", { id: "d" });
+  q.add("e", { id: "e" });
+  assert.deepEqual(q.waiting(), ["d", "e"]);
+  await q.flush();
+  assert.deepEqual(sent.slice(-2), ["d", "e"]);
+  assert.equal(timers.size, 0);
+  assert.deepEqual(q.waiting(), []);
+  // A refetch racing the DELETE must not resurrect the row; old entries expire.
+  const settledIds = new Map([["x", 15000], ["old", 0]]);
+  const rows = [{ id: "x" }, { id: "y" }, { id: "old" }];
+  assert.deepEqual(dropSettled(rows, settledIds, 16000).map((r) => r.id), ["y", "old"]);
+  assert.deepEqual(dropSettled(rows, settledIds, 15000 + SETTLED_TTL_MS + 1).map((r) => r.id), ["x", "y", "old"]);
+  assert.equal(settledIds.size, 0);
+  console.log("ok: delete queue");
+}
+
+{
+  // The postMessage bridge: only the iframe's own window, only the exact type.
+  const frame = { id: "frame" };
+  const ev = (over = {}) => ({ source: frame, data: { type: "agentctl:feedback", text: "pick B" }, ...over });
+  assert.equal(artifactFeedbackFrom(ev(), frame), "pick B");
+  assert.equal(artifactFeedbackFrom(ev({ source: {} }), frame), null, "other window");
+  assert.equal(artifactFeedbackFrom(ev({ source: null }), frame), null);
+  assert.equal(artifactFeedbackFrom(ev(), null), null, "no frame window");
+  assert.equal(artifactFeedbackFrom(ev(), undefined), null);
+  assert.equal(artifactFeedbackFrom(ev({ data: { type: "other", text: "x" } }), frame), null, "wrong type");
+  assert.equal(artifactFeedbackFrom(ev({ data: { type: "agentctl:feedback", text: 5 } }), frame), null, "non-string");
+  assert.equal(artifactFeedbackFrom(ev({ data: { type: "agentctl:feedback" } }), frame), null);
+  assert.equal(artifactFeedbackFrom(ev({ data: { type: "agentctl:feedback", text: "  \n " } }), frame), null, "blank");
+  assert.equal(artifactFeedbackFrom(ev({ data: "agentctl:feedback" }), frame), null, "string payload");
+  assert.equal(artifactFeedbackFrom(ev({ data: null }), frame), null);
+  assert.equal(artifactFeedbackFrom(ev({ data: { type: "agentctl:feedback", text: "  hi  " } }), frame), "hi");
+  const long = artifactFeedbackFrom(ev({ data: { type: "agentctl:feedback", text: "\u00e9".repeat(ARTIFACT_FEEDBACK_MAX + 50) } }), frame);
+  assert.equal([...long].length, ARTIFACT_FEEDBACK_MAX);
+  assert.equal(artifactCommentToast({ delivery: "delivered" })[0], "Sent to the agent");
+  assert.match(artifactCommentToast({ delivery: "queued" })[0], /^Queued/);
+  assert.equal(artifactCommentToast({ delivery: "saved", reason: "the agent's window is closed" })[0], "Saved, not delivered: the agent's window is closed");
+  assert.equal(artifactCommentToast({ delivery: "saved" })[0], "Saved, not delivered");
+  assert.equal(artifactCommentStatus({ status: "delivered" }), "sent");
+  assert.equal(artifactCommentStatus({ status: "queued" }), "queued");
+  assert.equal(artifactCommentStatus({ status: "undelivered" }), "not delivered");
+  console.log("ok: artifact feedback bridge");
 }

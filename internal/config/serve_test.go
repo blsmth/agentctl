@@ -51,6 +51,12 @@ func TestServeDefaults(t *testing.T) {
 	if s.AllowWrite || !s.KeepAwakeEnabled() || !s.Push.BlockedEnabled() || !s.Push.DoneEnabled() {
 		t.Errorf("unexpected defaults %+v", s)
 	}
+	if !s.Push.ArtifactsEnabled() {
+		t.Error("artifact pushes should default on")
+	}
+	if (ServePushConfig{Artifacts: new(false)}).ArtifactsEnabled() {
+		t.Error("artifacts: false should disable artifact pushes")
+	}
 	if got := s.Push.EffectiveBlockedReminderMinutes(); got != 10 {
 		t.Errorf("reminder = %d, want 10", got)
 	}
@@ -84,6 +90,12 @@ func TestProjectServeIgnored(t *testing.T) {
 			global:  `{}`,
 			project: `{"serve":{"push":{"quiet_hours":"00:00-23:59"}}}`,
 			want:    ServeConfig{},
+		},
+		{
+			name:    "project cannot switch artifact pushes",
+			global:  `{"serve":{"push":{"artifacts":false}}}`,
+			project: `{"serve":{"push":{"artifacts":true}}}`,
+			want:    ServeConfig{Push: ServePushConfig{Artifacts: new(false)}},
 		},
 	}
 	for _, tt := range tests {

@@ -5,6 +5,7 @@ package textutil
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Truncate shortens s to at most max runes. A string that already fits is
@@ -77,4 +78,34 @@ func stripMarkdown(line string) string {
 	line = mdLink.ReplaceAllString(line, "$1")
 	line = mdEmphasis.Replace(line)
 	return strings.Join(strings.Fields(line), " ")
+}
+
+// OneLine collapses every run of whitespace (newlines and tabs included) in s
+// to a single space and trims the ends, so multi-line text such as a Bash
+// command fits a one-line notification.
+func OneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// FirstSentence returns the first sentence of the first meaningful line of
+// markdown text s (see TaskLine: headings, fences and rules are skipped,
+// markup stripped), without its trailing period. It reads at most the first
+// 400 runes and returns "" when there is nothing to show. A stop only ends
+// the sentence at the end of the line or before a space and an upper-case
+// letter, so "v1.2" and "e.g. x" stay whole.
+func FirstSentence(s string) string {
+	line := TaskLine(s, 400)
+	runes := []rune(line)
+	for i, r := range runes {
+		if r != '.' && r != '!' && r != '?' {
+			continue
+		}
+		if i+1 == len(runes) {
+			return strings.TrimSpace(string(runes[:i]))
+		}
+		if runes[i+1] == ' ' && i+2 < len(runes) && unicode.IsUpper(runes[i+2]) {
+			return strings.TrimSpace(string(runes[:i]))
+		}
+	}
+	return line
 }

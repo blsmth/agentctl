@@ -10,6 +10,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/sessions"
 )
 
 // writeSettingsJSON writes a Claude settings JSON file with the given permissions.
@@ -130,15 +131,49 @@ func TestBuildImprovePrompt_NoStaleArchitectureClaims(t *testing.T) {
 		"JSONL session logs",
 		"watches session logs",
 		"plugins react",
+		"launches you via `claude --agent",
+		"reads it every tick",
+		"reacts to transitions",
+		"auto-triggered",
+		"auto_improve",
 	}
 
 	for _, theme := range []string{"", "improve error handling"} {
-		got := buildImprovePrompt("/tmp/agent.md", "go-engineer", "CURRENT CONFIGURATION:\n", theme, "Session abc123\n")
+		got := buildImprovePrompt("/tmp/agent.md", "go-engineer", "pi", "CURRENT CONFIGURATION:\n", theme, "Session abc123\n")
 		for _, stale := range staleStrings {
 			if strings.Contains(got, stale) {
 				t.Errorf("buildImprovePrompt(theme=%q) contains stale claim %q, got:\n%s", theme, stale, got)
 			}
 		}
+		if !strings.Contains(got, "the pi harness") {
+			t.Errorf("prompt does not name the harness:\n%s", got)
+		}
+		if !strings.HasPrefix(got, sessions.ImprovePromptHeader) {
+			t.Errorf("prompt does not start with the improve header")
+		}
+	}
+}
+
+func TestResolveWorkDir(t *testing.T) {
+	tests := []struct {
+		name                     string
+		agent, cfg, caller, proj string
+		want                     string
+		wantErr                  bool
+	}{
+		{"agent dir wins", "/a", "/c", "/w", "/p", "/a", false},
+		{"configured dir next", "", "/c", "/w", "/p", "/c", false},
+		{"caller dir next", "", "", "/w", "/p", "/w", false},
+		{"project root last", "", "", "", "/p", "/p", false},
+		{"never the agents folder", "", "", "", "", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveWorkDir(tt.agent, tt.cfg, tt.caller, tt.proj)
+			if (err != nil) != tt.wantErr || got != tt.want {
+				t.Errorf("resolveWorkDir = %q, %v; want %q (err=%v)", got, err, tt.want, tt.wantErr)
+			}
+		})
 	}
 }
 
@@ -157,7 +192,6 @@ func TestBuildConfigContext(t *testing.T) {
 			ac: config.AgentConfig{
 				Model:              "sonnet",
 				EffortLevel:        "high",
-				AutoImprove:        true,
 				CrossContext:       true,
 				AutoAccept:         true,
 				BlockedCommands:    []string{"rm -rf", "sudo"},
@@ -178,7 +212,6 @@ func TestBuildConfigContext(t *testing.T) {
 				"agentctl config (go-engineer):",
 				"model:           sonnet",
 				"effort_level:    high",
-				"auto_improve:    true",
 				"cross_context:   true",
 				"auto_accept:     true",
 				"blocked_commands: rm -rf, sudo",
@@ -208,7 +241,6 @@ func TestBuildConfigContext(t *testing.T) {
 				"agentctl config (my-agent):",
 				"model:           (default)",
 				"effort_level:    (default)",
-				"auto_improve:    false",
 				"cross_context:   true",
 				"auto_accept:     false",
 				"blocked_commands: (none)",
@@ -226,7 +258,6 @@ func TestBuildConfigContext(t *testing.T) {
 			agentName: "go-engineer",
 			ac: config.AgentConfig{
 				Model:        "opus",
-				AutoImprove:  false,
 				CrossContext: false,
 				AlertConfig:  config.AlertConfig{Blocked: true, Idle: true, Gone: false},
 			},

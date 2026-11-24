@@ -6,6 +6,7 @@ package launchopts
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -52,3 +53,12 @@ func SameModel(a, b string) bool {
 	}
 	return NormalizeModel(a) == NormalizeModel(b)
 }
+
+// modelRE is the one charset rule for a model name: a leading alphanumeric
+// (or "~", for OpenRouter-style "~vendor/name" ids), then name characters
+// including "/" (vendor/name slugs), ":" (tags) and "[...]" (e.g. "[1m]").
+var modelRE = regexp.MustCompile(`^~?[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,99}$`)
+
+// ValidModel reports whether s is a well-formed model name. It checks the
+// charset and length only, not whether the model exists.
+func ValidModel(s string) bool { return modelRE.MatchString(s) }

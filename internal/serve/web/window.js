@@ -3,17 +3,35 @@ import { ApiError, get, send, uploadImages } from "./api.js";
 import { approvalCard, tickCountdowns } from "./approvals.js";
 import { imagePicker, svgIcon } from "./attach.js";
 import {
+  artifactChipText,
+  projectAgent,
+  artifactsForWindow,
+  artifactsHash,
   INTERRUPT_FOLLOWUP_MS,
+  PANE_TAIL_LINES,
+  canLoadEarlier,
+  historyAddsLines,
+  isDoubleTap,
+  isTap,
   actionsWithQueue,
   approvalsForWindow,
   buildAnswerRequest,
   checkboxChoices,
   buildQueueRequest,
+  buildCommandRequest,
+  commandConfirm,
+  commandError,
+  commandSuggestions,
+  isClaudeWindow,
+  isSlashCommand,
   buildReplyRequest,
   buildUploadPath,
   dialogQuestion,
   displayState,
   waitingIndex,
+  parentOf,
+  childrenOf,
+  rowRole,
   windowHash,
   rowHeadline,
   detailTitle,
@@ -35,7 +53,8 @@ import {
 } from "./logic.js";
 import { clear, confirmSheet, fitTermFont, h, toast } from "./ui.js";
 
-const CHILD_GLYPH = { blocked: "⏸", working: "●", waiting: "◷" };
+const CHILD_GLYPH = { blocked: "⏸", working: "●", waiting: "◷", done: "✓", idle: "○" };
+const CHILD_CAP = 5;
 const PANE_REFRESH_MS = 2000;
 const MODE_KEY = "agentctl.paneMode";
 const STATUS_KEY = "agentctl.statusBarOpen";
@@ -121,18 +140,130 @@ function paneLine(runs) {
  * reflowView renders the pane as wrapping HTML. When output changes while
  * the reader is scrolled up, a "New output" pill offers the way back down.
  */
-function reflowView() {
+function reflowView({ loadHistory } = {}) {
   const scroller = h("div", { class: "pane-reflow" });
   const pill = h("button", { type: "button", class: "new-output", hidden: true }, "New output ↓");
   const el = h("div", { class: "pane-reflow-wrap" }, scroller, pill);
   const atBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 24;
+
+  // Double tap (touch) or dblclick (desktop) toggles a full-screen pane: the
+  // same elements get a class, so polling, scroll and the pill keep working.
+  let expanded = false;
+  const closeBtn = h(
+    "button",
+    { type: "button", class: "icon-btn pane-expand-close", "aria-label": "Close full screen", hidden: true, onclick: () => setExpanded(false) },
+    svgIcon(CLOSE_SVG),
+  );
+  el.append(closeBtn);
+  function setExpanded(on) {
+    if (on === expanded) return;
+    const follow = atBottom();
+    const top = scroller.scrollTop;
+    expanded = on;
+    el.classList.toggle("expanded", on);
+    closeBtn.hidden = !on;
+    document.body.classList.toggle("pane-expanded", on);
+    if (on) document.addEventListener("keydown", onKey);
+    else document.removeEventListener("keydown", onKey);
+    if (follow) scroller.scrollTop = scroller.scrollHeight;
+    else scroller.scrollTop = top;
+  }
+  function onKey(e) {
+    if (e.key === "Escape") setExpanded(false);
+  }
+  const isControl = (t) => t instanceof Element && !!t.closest("button, a, input, textarea");
+  let touchStart = null;
+  let prevTap = null;
+  let lastTouchToggle = 0;
+  scroller.addEventListener(
+    "touchstart",
+    (e) => {
+      const t = e.touches[0];
+      touchStart = e.touches.length === 1 && t ? { t: e.timeStamp, x: t.clientX, y: t.clientY } : null;
+      if (!touchStart) prevTap = null;
+    },
+    { passive: true },
+  );
+  scroller.addEventListener("touchend", (e) => {
+    const t = e.changedTouches[0];
+    const start = touchStart;
+    touchStart = null;
+    if (!start || !t || isControl(e.target)) {
+      prevTap = null;
+      return;
+    }
+    const end = { t: e.timeStamp, x: t.clientX, y: t.clientY };
+    if (!isTap(start, end) || !(window.getSelection()?.isCollapsed ?? true)) {
+      prevTap = null;
+      return;
+    }
+    if (isDoubleTap(prevTap, end)) {
+      prevTap = null;
+      lastTouchToggle = Date.now();
+      e.preventDefault();
+      setExpanded(!expanded);
+    } else {
+      prevTap = end;
+    }
+  });
+  scroller.addEventListener("dblclick", (e) => {
+    // A touch double tap may also synthesize dblclick: it already toggled.
+    if (Date.now() - lastTouchToggle < 600 || isControl(e.target)) return;
+    setExpanded(!expanded);
+  });
+  // History: "Load earlier" at the top fetches the whole scrollback once.
+  // While it is shown and the reader is scrolled up, polls do not replace it;
+  // reaching the bottom again drops it for the live tail.
+  let history = false;
+  let loading = false;
+  let lastPane = null;
+  let exhausted = false;
+  const earlier = h("button", { type: "button", class: "load-earlier", hidden: true }, "Load earlier");
+  const syncEarlier = () => {
+    earlier.hidden = history || loading || exhausted || scroller.scrollTop > 24 || !canLoadEarlier(lastPane?.text);
+  };
+  function leaveHistory() {
+    history = false;
+    if (lastPane) render(lastPane, true);
+    syncEarlier();
+  }
   scroller.addEventListener("scroll", () => {
-    if (atBottom()) pill.hidden = true;
+    if (atBottom()) {
+      pill.hidden = true;
+      if (history) leaveHistory();
+    }
+    syncEarlier();
   });
   pill.addEventListener("click", () => {
+    if (history) leaveHistory();
     scroller.scrollTop = scroller.scrollHeight;
     pill.hidden = true;
   });
+  earlier.addEventListener("click", async () => {
+    if (!loadHistory || loading) return;
+    loading = true;
+    earlier.textContent = "Loading…";
+    try {
+      const full = await loadHistory();
+      if (!historyAddsLines(lastPane?.text, full.text)) {
+        exhausted = true;
+        return;
+      }
+      const before = scroller.scrollHeight - scroller.scrollTop;
+      history = true;
+      render(full, false);
+      // Keep the line that was at the top where it was: the tail is unchanged
+      // at the bottom, so hold the distance from the bottom.
+      scroller.scrollTop = scroller.scrollHeight - before;
+    } catch {
+      toast("Could not load earlier output", "error");
+    } finally {
+      loading = false;
+      earlier.textContent = "Load earlier";
+      syncEarlier();
+    }
+  });
+  el.append(earlier);
 
   let statusOpen = loadFlag(STATUS_KEY);
   let statusLines = null;
@@ -164,35 +295,47 @@ function reflowView() {
   return {
     el,
     update(pane) {
-      const follow = atBottom();
-      const frag = document.createDocumentFragment();
-      const split = splitPane(pane.text);
-      statusLines = split.status ? split.status.lines : null;
-      for (const b of split.body) {
-        if (b.rule !== undefined) {
-          const rule = document.createElement("div");
-          rule.className = "pane-rule";
-          if (b.rule) {
-            const label = document.createElement("span");
-            label.textContent = b.rule;
-            rule.append(label);
-          }
-          frag.append(rule);
-        } else {
-          frag.append(paneLine(b.runs));
-        }
+      lastPane = pane;
+      if (history && !atBottom()) {
+        pill.hidden = false;
+        return;
       }
-      if (split.body.length === 0 && split.prompt?.empty) {
-        frag.append(h("div", { class: "pane-empty" }, "At an empty prompt."));
-      }
-      if (statusLines) frag.append(statusBar());
-      scroller.replaceChildren(frag);
-      if (follow) scroller.scrollTop = scroller.scrollHeight;
-      else if (rendered) pill.hidden = false;
-      rendered = true;
+      if (history) history = false;
+      render(pane, true);
     },
-    destroy() {},
+    destroy() {
+      setExpanded(false);
+    },
   };
+  function render(pane, live) {
+    const follow = live ? atBottom() : false;
+    const frag = document.createDocumentFragment();
+    const split = splitPane(pane.text);
+    statusLines = split.status ? split.status.lines : null;
+    for (const b of split.body) {
+      if (b.rule !== undefined) {
+        const rule = document.createElement("div");
+        rule.className = "pane-rule";
+        if (b.rule) {
+          const label = document.createElement("span");
+          label.textContent = b.rule;
+          rule.append(label);
+        }
+        frag.append(rule);
+      } else {
+        frag.append(paneLine(b.runs));
+      }
+    }
+    if (split.body.length === 0 && split.prompt?.empty) {
+      frag.append(h("div", { class: "pane-empty" }, "At an empty prompt."));
+    }
+    if (statusLines) frag.append(statusBar());
+    scroller.replaceChildren(frag);
+    if (follow) scroller.scrollTop = scroller.scrollHeight;
+    else if (live && rendered) pill.hidden = false;
+    rendered = true;
+    syncEarlier();
+  }
 }
 
 /**
@@ -254,6 +397,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
   const base = windowApiPath(session, windowId);
   const canWrite = ctx.hasFeature("write");
   const canQueue = canWrite && ctx.hasFeature("queue");
+  const canCommand = canWrite && ctx.hasFeature("command");
   const canUpload = canWrite && ctx.hasFeature("upload");
   let win = null;
   let waiting = new Map();
@@ -289,8 +433,11 @@ export function mountWindow(root, ctx, { session, windowId }) {
   // Tap the recap to show it in full; it is clamped to two lines.
   const recap = h("div", { class: "win-recap", hidden: true, onclick: () => recap.classList.toggle("open") });
   const chips = h("div", { class: "chips", hidden: true });
+  // "◆ N artifacts" when agents published from this window; opens the list filtered to it.
+  const artifactChip = h("a", { class: "chip artifact-chip", href: artifactsHash({ session, windowId }), hidden: true });
+  let childrenOpen = false;
   const waitingKids = h("div", { class: "win-waiting", hidden: true });
-  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, recap, scheduled, chips, waitingKids);
+  const head = h("div", { class: "win-head" }, h("div", { class: "win-state" }, statePill, where), task, recap, scheduled, chips, artifactChip, waitingKids);
 
   const liveChip = h("span", { class: "live-chip", role: "status" });
   const modeBtns = {
@@ -376,7 +523,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
   function mountView() {
     view?.destroy();
     clear(paneHost);
-    view = mode === "exact" ? exactView() : reflowView();
+    view = mode === "exact" ? exactView() : reflowView({ loadHistory: () => get(`${base}/pane?lines=all`) });
     paneHost.append(view.el);
     view.setBackground?.(getComputedStyle(paneHost).backgroundColor);
     for (const [m, btn] of Object.entries(modeBtns)) btn.setAttribute("aria-pressed", String(m === mode));
@@ -405,14 +552,45 @@ export function mountWindow(root, ctx, { session, windowId }) {
     statePill.className = `state-pill ${st}`;
     statePill.querySelector(".state-text").textContent = stateLabel(win, Date.now(), waiting);
     clear(waitingKids);
-    for (const k of st === "waiting" ? (waiting.get(win.window_id) ?? []) : []) {
+    const groups = ctx.store.fleet?.groups;
+    const link = (k, cls) => {
       const ks = displayState(k, waiting);
-      waitingKids.append(
-        h("a", { class: `waiting-child ${ks}`, href: windowHash(k.session, k.window_id) }, h("span", { class: "glyph", "aria-label": ks }, CHILD_GLYPH[ks]), h("span", {}, rowHeadline(k))),
+      const role = rowRole(k);
+      return h(
+        "a",
+        { class: `waiting-child ${cls} ${ks}`, href: windowHash(k.session, k.window_id) },
+        cls === "parent-link" ? h("span", { class: "rel-up", title: "Parent", "aria-label": "Parent" }, "↑") : null,
+        h("span", { class: "glyph", "aria-label": ks }, CHILD_GLYPH[ks]),
+        role ? h("span", { class: "tag kind-chip", title: "Role of this sub-agent" }, role) : null,
+        h("span", { class: "link-text" }, rowHeadline(k)),
       );
+    };
+    const par = parentOf(groups, win);
+    if (par) waitingKids.append(link(par, "parent-link"));
+    const kids = childrenOf(groups, win);
+    if (kids.length > 0) {
+      const shown = childrenOpen ? kids : kids.slice(0, CHILD_CAP);
+      waitingKids.append(h("div", { class: "rel-label" }, st === "waiting" ? "Waiting on" : "Sub-agents"));
+      for (const k of shown) waitingKids.append(link(k, "child-link"));
+      if (kids.length > CHILD_CAP) {
+        waitingKids.append(
+          h(
+            "button",
+            {
+              type: "button",
+              class: "rel-more",
+              onclick: () => {
+                childrenOpen = !childrenOpen;
+                renderHeader();
+              },
+            },
+            childrenOpen ? "Show fewer" : `${kids.length - CHILD_CAP} more`,
+          ),
+        );
+      }
     }
     waitingKids.hidden = waitingKids.childElementCount === 0;
-    where.textContent = [dt.agent, win.project, win.branch].filter(Boolean).join(" · ");
+    where.textContent = [projectAgent(win.project, dt.agent), win.branch].filter(Boolean).join(" · ");
     const { task: line, recap: summary } = headerLines(win);
     taskCollapsed = line;
     taskFull = fullPrompt(win, line);
@@ -597,16 +775,52 @@ export function mountWindow(root, ctx, { session, windowId }) {
   // ignored and the button is disabled. buildRequest turns the trimmed text
   // and uploaded image IDs into the request. On success the text and images
   // are cleared; on failure they are kept so nothing typed is lost.
-  function composer({ placeholder, sendLabel, buildRequest }) {
+  // With commands set (Claude windows, reply box), a text starting with "/"
+  // turns the send button into "Run command", lists matching built-ins to
+  // tap, and sends through the command action instead of reply.
+  function composer({ placeholder, sendLabel, buildRequest, commands = false }) {
     const att = attachments({ icon: true });
     const text = h("textarea", {
       rows: "1",
       class: "composer-text",
       placeholder,
       maxlength: "4000",
-      oninput: () => grow(text),
+      oninput: () => {
+        grow(text);
+        refreshCommandMode();
+      },
     });
     let sending = false;
+    const suggest = h("div", { class: "cmd-suggest", hidden: "" });
+    function refreshCommandMode() {
+      if (!commands) return;
+      const cmd = isSlashCommand(text.value);
+      send.classList.toggle("command", cmd);
+      send.setAttribute("aria-label", cmd ? "Run command" : sendLabel);
+      send.title = cmd ? "Run command" : "";
+      clear(suggest);
+      const list = commandSuggestions(text.value);
+      suggest.hidden = list.length === 0;
+      for (const c of list) {
+        suggest.append(
+          h(
+            "button",
+            {
+              type: "button",
+              class: "cmd-suggest-item",
+              onclick: () => {
+                text.value = `${c.name} `;
+                grow(text);
+                text.focus();
+                refreshCommandMode();
+              },
+            },
+            h("b", {}, c.name),
+            h("span", { class: "muted" }, ` ${c.hint}`),
+          ),
+        );
+      }
+    }
     const send = h(
       "button",
       {
@@ -618,14 +832,27 @@ export function mountWindow(root, ctx, { session, windowId }) {
           const value = text.value.trim();
           const n = att ? att.count() : 0;
           if (!value && !n) return;
+          const cmd = commands && isSlashCommand(value);
+          if (cmd) {
+            const bad = n ? "Commands cannot have images." : commandError(value);
+            if (bad) {
+              toast(bad, "error");
+              return;
+            }
+          }
           sending = true;
           send.disabled = true;
           try {
-            await run(null, async () => buildRequest(value, att ? await att.upload() : []), () => {
-              text.value = "";
-              text.style.height = "";
-              att?.clear();
-            });
+            await run(
+              cmd ? commandConfirm(value) : null,
+              cmd ? buildCommandRequest(session, windowId, value) : async () => buildRequest(value, att ? await att.upload() : []),
+              () => {
+                text.value = "";
+                text.style.height = "";
+                att?.clear();
+                refreshCommandMode();
+              },
+            );
           } finally {
             sending = false;
             send.disabled = false;
@@ -635,7 +862,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
       svgIcon(SEND_SVG),
     );
     const row = h("div", { class: "composer" }, ...(att ? att.trigger : []), text, send);
-    return { text, nodes: [...(att ? att.controls : []), row] };
+    return { text, nodes: [...(att ? att.controls : []), suggest, row] };
   }
 
   function replyBox() {
@@ -643,6 +870,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
       placeholder: "Reply to the agent…",
       sendLabel: "Send reply",
       buildRequest: (value, ids) => buildReplyRequest(session, windowId, value, ids),
+      commands: canCommand && isClaudeWindow(win),
     });
   }
 
@@ -714,7 +942,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
 
   async function refreshPane() {
     try {
-      pane = await get(`${base}/pane?lines=200`);
+      pane = await get(`${base}/pane?lines=${PANE_TAIL_LINES}`);
     } catch (e) {
       fetchFailed(e);
       return false;
@@ -781,7 +1009,21 @@ export function mountWindow(root, ctx, { session, windowId }) {
   }, PANE_REFRESH_MS);
   const onVisible = () => !document.hidden && refresh();
   document.addEventListener("visibilitychange", onVisible);
+  async function loadArtifactChip() {
+    if (!ctx.hasFeature("artifacts")) return;
+    try {
+      const n = artifactsForWindow((await get("/v1/artifacts")).artifacts, session, windowId).length;
+      if (disposed) return;
+      artifactChip.textContent = artifactChipText(n);
+      artifactChip.hidden = n === 0;
+    } catch {
+      // the chip is a convenience; the next artifact event retries
+    }
+  }
+  loadArtifactChip();
+
   const unsub = ctx.store.subscribe((ev) => {
+    if (ev?.type === "artifact") loadArtifactChip();
     if (ev?.type === "window" && ev.win.session === session && ev.win.window_id === windowId) refresh();
     if (ev?.type === "gone") refresh();
     if (ev?.type === "fleet" || ev?.type === "window" || ev?.type === "gone") renderHeader();

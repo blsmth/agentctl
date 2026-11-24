@@ -207,7 +207,8 @@ sources. No change to the view model — remote is just more rows.
 
 ## Live agent pane
 
-The hub window is two panes (three with the activity pane, see below). The
+The hub window is two panes plus the status pane above the live pane (and
+the activity pane, see below). The
 left pane runs the `FleetModel` list (the
 grouped session/agent list, narrow: roughly 30% of the window, clamped to
 44–56 columns by default). The right pane is a **live, fully interactive view
@@ -253,7 +254,7 @@ right edge of the hub window running `agentctl hud --follow-hub`: the HUD in
 follow mode, a terminal-style feed of the selected agent's tool activity
 (each Bash command as `$ cmd` with its output, other tools as one dim line).
 It is the same HUD model as the per-window HUD, with a second host. While
-the pane is open, and only then, the hub publishes its selection to
+the pane (or the status pane, below) is open, and only then, the hub publishes its selection to
 `<stateDir>/hub-selection.json`; the HUD reads it each tick and retargets,
 and also retargets when the followed window's session changes under it
 (`/clear`). The pane is created 4 columns wide (`split-window -h -f`) and
@@ -279,6 +280,65 @@ its tick while the pane is open: one that died on its own (its HUD quit)
 resets the toggle. Quitting the hub process kills it, and it dies with the
 hub session. In the activity pane the mouse wheel scrolls the feed; a click
 focuses it (tmux), after which the HUD keys work.
+
+**Status pane.** The selected row's detail (title line, a "needs you" line
+when blocked, the recap, a facts footer; never the activity line) shows in a
+pane stacked above the live viewer
+running `agentctl hub-status` (`HubStatusModel`, `internal/tui/hubstatus.go`;
+the hub side is `internal/tui/fleet_status.go`, the tmux side
+`internal/tmux/hubstatus.go`). It is a vertical split of the viewer pane
+(`split-window -v -b -d -l 6` on the viewer, so it stays in the viewer's
+column and the list and activity panes keep their full height), marked with
+the `@agentctl_status` pane option and found by it, never by index; only
+marked panes are resized or killed. Six rows hold the layout below, for
+seven viewer rows (with the divider); the nested
+viewer client simply gets a shorter terminal. Every show of the viewer
+ensures it (`tmux.EnsureHubStatusPane`, under the viewer mutex): an
+existing marked pane is reused, so a hot-reloaded hub never opens a second
+one, and a viewer recreated from scratch gets a fresh one (the stale pane is
+killed with the old viewer). `HideLiveViewer` kills it, so it closes
+whenever the viewer does (the activity pane taking the
+viewer's place, a failed show). Windows under 24 rows get none, and a
+window height change re-pins it to 6 rows (tmux spreads height changes over
+the column). The content comes through the same `hub-selection.json` the
+activity pane follows: while either pane is open the hub publishes the
+selection with a `status` block built from the row's own helpers (`rowGlyph`,
+`rowRecap`, `rowChips`; the recap only, never the last command, which the
+viewer and the activity pane show); the pane re-reads the file every 250ms
+and hot-reloads like the HUD. The block publishes timestamps (`state_since`,
+`start_time`, `sched_at`), never rendered ages: the pane computes them on
+its tick. New fields are additive and omitempty; a block without `v: 2`
+(an older hub) is laid out the old way from its `chips`, which are still
+published for one release.
+
+Layout (exactly the pane's rows, `hubStatusLines`):
+
+1. Title: glyph, role, title; right-aligned `<state word> <age> · <project>`
+   (state word in the glyph colour: `blocked`, `working`, `done`, `your turn`
+   for a bare window at a turn end, `idle`; age from `StateSince`). A narrow
+   pane drops the project, then the age.
+2. Only for a blocked row with a pending tool (`Row.PendingTool`, set only
+   while blocked): `needs you: <tool>  <detail>`, one line.
+3. The recap, top-anchored, wrapped at up to 120 columns. With one row after
+   the title the recap wins over the footer; the "needs you" line also
+   yields to the recap.
+4. The last row, always: facts joined by ` · `. Left: `#ticket`, agent base
+   name, branch (dispatched rows), `PR #N` (an OSC 8 link), `← <parent
+   title>`; or `⏲ <job> · fired <age>` for a cron row; then `↳ N sub-agents
+   ⏸n ●n` (direct children), then a non-default backend / `acct <name>`.
+   Right: `model · ctx N% · $cost · session length` (context in the list's
+   thresholds, with a trailing `!` at critical; cost hidden under half a
+   cent; length only when the monitor snapshot has a start time). Facts drop
+   whole as the pane narrows: session length, branch (shortened to
+   `…/<last>`, then gone), parent (cut to 16 columns, then gone), agent,
+   model, cost, context below warn. The PR, ticket, cron job, sub-agent
+   counts, backend/account and context at warn or above stay; if those
+   overflow, the left zone is end-truncated. While it is open the list draws no inline
+detail lines, and `lineHeight` (scrolling, hit testing, the hover card)
+counts none; without it the inline expansion is back. Focus, keys and
+clicks in it are handed to the viewer pane, and the hub's `enter`/`tab`
+select the viewer by its marker rather than "next pane", which would be
+the status pane.
 
 **Returning to the list.** The fleet-list window is pinned to the stable name
 `FleetListWindowName`; `agentctl hub` (and so the `prefix+g` summon key)
@@ -320,6 +380,7 @@ without the hub causing it (`viewerSyncTarget`).
 | `z` / `Z` | Collapse the sub-agents of the row under the cursor (or fold its group, on a header or a row without sub-agents) / toggle focus mode (fold every group with nothing blocked or working) |
 | `o` | Toggle row order inside each group between window order (default) and most recent activity first |
 | `f` | Cycle the attention filter: all, active, needs you |
+| `/` | Search: type to narrow the list (case-insensitive substring terms, AND; `#278` matches a ticket or PR number exactly). Metadata only, no transcript reads. While typing: `enter` keeps the filter, `esc` (or backspace on an empty query) cancels and restores the previous selection, `up`/`down` move, `j`/`k` are text. With a kept filter `esc` clears it (selection stays) and the next `esc`/`q` leaves. Folds are ignored while searching; groups with no match are hidden; Closed and Schedules rows are filtered too (Closed only with `C`) |
 | `r` | Refresh |
 | `q` / `esc` | Back to the previous tmux session (`switch-client -l`) |
 

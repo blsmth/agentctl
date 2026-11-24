@@ -20,6 +20,7 @@ import (
 	"github.com/blsmth/agentctl/internal/launchopts"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/panestate"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/uploads"
@@ -56,8 +57,6 @@ var (
 	answerKeyRE = regexp.MustCompile(`^[0-9]{1,2}$`)
 	// dialogHashRE matches panestate.HashDialogText output.
 	dialogHashRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	// modelRE bounds a dispatch model override to model-name characters.
-	modelRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,99}$`)
 )
 
 // registerWrite registers the write API. Every route is registered whether
@@ -75,6 +74,10 @@ func (s *Server) registerWrite(rt *Router) {
 	}
 	rt.Write("POST "+win+"/queue", writeRoute(s, "queue", s.handleQueue))
 	if rt.allowWrite {
+		rt.Feature("command")
+	}
+	rt.Write("POST "+win+"/command", writeRoute(s, "command", s.handleCommand))
+	if rt.allowWrite {
 		rt.Feature("upload")
 	}
 	rt.Write("POST "+win+"/upload", s.handleUpload)
@@ -86,6 +89,7 @@ func (s *Server) registerWrite(rt *Router) {
 		rt.Feature("dispatch-upload")
 		rt.Feature("dispatch-instructions")
 		rt.Feature("dispatch-skip-review")
+		rt.Feature("dispatch-templates")
 	}
 	rt.Write("POST /v1/dispatch/upload", s.handleDispatchUpload)
 	rt.Write("POST /v1/dispatch", writeRoute(s, "dispatch", s.handleDispatch))
@@ -147,12 +151,16 @@ func (rw resolved) target() WindowTarget {
 // window the fleet knows can be targeted; its IDs, not the request's, are
 // what later reach tmux.
 func (s *Server) resolveWindow(r *http.Request) (resolved, outcome, bool) {
+	return s.resolveWindowAt(r.PathValue("session"), normalizeWindowID(r.PathValue("window")))
+}
+
+// resolveWindowAt is resolveWindow for an explicit session and window ID.
+func (s *Server) resolveWindowAt(session, id string) (resolved, outcome, bool) {
 	groups, err := s.fleet.Fleet()
 	if err != nil {
 		logging.Warn("serve: loading fleet: %v", err)
 		return resolved{}, failure(http.StatusInternalServerError, codeInternal, "loading fleet"), false
 	}
-	session, id := r.PathValue("session"), normalizeWindowID(r.PathValue("window"))
 	g, i, found := fleetwatch.Find(groups, session, id)
 	if !found {
 		return resolved{}, failure(http.StatusNotFound, codeNotFound, fmt.Sprintf("no window %s in session %s", id, session)), false
@@ -165,13 +173,18 @@ func (s *Server) resolveWindow(r *http.Request) (resolved, outcome, bool) {
 // resolves the window's main pane: every check and keystroke after it
 // targets that one pane.
 func (s *Server) lockWindow(r *http.Request, a *auditEntry) (resolved, func(), outcome, bool) {
-	rw, out, ok := s.resolveWindow(r)
+	return s.lockWindowAt(r.PathValue("session"), normalizeWindowID(r.PathValue("window")), a)
+}
+
+// lockWindowAt is lockWindow for an explicit session and window ID.
+func (s *Server) lockWindowAt(session, window string, a *auditEntry) (resolved, func(), outcome, bool) {
+	rw, out, ok := s.resolveWindowAt(session, window)
 	if !ok {
 		return resolved{}, nil, out, false
 	}
 	a.Session, a.Window = rw.group.Session, rw.window.WindowID
 	unlock := s.winLocks.lock(rw.group.Session, rw.window.WindowID)
-	rw, out, ok = s.resolveWindow(r)
+	rw, out, ok = s.resolveWindowAt(session, window)
 	if !ok {
 		unlock()
 		return resolved{}, nil, out, false
@@ -529,11 +542,22 @@ func (s *Server) typeText(r *http.Request, in replyIn, a *auditEntry, allowWorki
 			return out
 		}
 	}
-	rw, unlock, out, ok := s.lockWindow(r, a)
+	return s.deliverText(r.PathValue("session"), normalizeWindowID(r.PathValue("window")), in, a, allowWorking, false)
+}
+
+// deliverText is the part of typeText after the text checks: lock the window,
+// guard on its state and pane, then inject. claudeOnly refuses a harness
+// whose pane cannot be classified (slash commands are typed blind there), and
+// delivers once, without the staged-input retry (see Commander).
+func (s *Server) deliverText(session, window string, in replyIn, a *auditEntry, allowWorking, command bool) outcome {
+	rw, unlock, out, ok := s.lockWindowAt(session, window, a)
 	if !ok {
 		return out
 	}
 	defer unlock()
+	if command && !harness.For(rw.harness()).Caps().PaneClassifier {
+		return failure(http.StatusConflict, codeUnsupportedHarness, "slash commands are only supported for Claude Code windows")
+	}
 	text, out, ok := withImages(rw, in)
 	if !ok {
 		return out
@@ -567,7 +591,7 @@ func (s *Server) typeText(r *http.Request, in replyIn, a *auditEntry, allowWorki
 	s.auditAttempt(*a)
 	// The inject path re-checks the pane before every keystroke and refuses
 	// a dialog (tmux.ErrDialogBlocking).
-	if err := s.inject(target, text, allowWorking); err != nil {
+	if err := s.deliver(target, text, allowWorking, command); err != nil {
 		logging.Warn("serve: %s %s:%s: %v", a.Action, rw.group.Session, rw.window.WindowID, err)
 		if errors.Is(err, tmux.ErrDialogBlocking) {
 			return failure(http.StatusConflict, codeNotIdle, "a dialog appeared; refresh and try again")
@@ -590,6 +614,14 @@ func recordedAccepts(state string, allowWorking bool) bool {
 	return state == "idle" || state == "" || (allowWorking && state == "working")
 }
 
+// deliver is inject, or the send-once Commander path for a slash command.
+func (s *Server) deliver(t WindowTarget, text string, queued, command bool) error {
+	if c, ok := s.injector.(Commander); ok && command {
+		return c.Command(t, text)
+	}
+	return s.inject(t, text, queued)
+}
+
 // inject delivers text through the Injector, or its Queue method for a
 // queued message when the Injector distinguishes the two.
 func (s *Server) inject(t WindowTarget, text string, queued bool) error {
@@ -597,6 +629,51 @@ func (s *Server) inject(t WindowTarget, text string, queued bool) error {
 		return q.Queue(t, text)
 	}
 	return s.injector.Inject(t, text)
+}
+
+// commandNameRE matches the word after "/" in a slash command; plugin
+// commands look like /plugin:skill.
+var commandNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:_-]*$`)
+
+// maxCommandRunes bounds a slash command line.
+const maxCommandRunes = 2000
+
+type commandIn struct {
+	Text string `json:"text"`
+}
+
+// checkCommand validates a slash command and returns it trimmed. "!" and "#"
+// stay refused: only "/" is accepted, as one line with a well-formed name.
+func checkCommand(text string) (string, outcome, bool) {
+	if out, ok := checkText("text", text); !ok {
+		return "", out, false
+	}
+	t := strings.TrimSpace(text)
+	if utf8.RuneCountInString(t) > maxCommandRunes {
+		return "", failure(http.StatusRequestEntityTooLarge, codeTooLarge, fmt.Sprintf("command exceeds %d characters", maxCommandRunes)), false
+	}
+	if !strings.HasPrefix(t, "/") {
+		return "", failure(http.StatusBadRequest, codeBadRequest, "a command must start with /"), false
+	}
+	if strings.ContainsAny(t, "\n\r") {
+		return "", failure(http.StatusBadRequest, codeBadRequest, "a command must be a single line"), false
+	}
+	name, _, _ := strings.Cut(t[1:], " ")
+	if !commandNameRE.MatchString(name) {
+		return "", failure(http.StatusBadRequest, codeBadRequest, "invalid command name"), false
+	}
+	return t, outcome{}, true
+}
+
+// handleCommand runs a Claude Code slash command in an idle agent: an
+// explicitly requested action, separate from reply (which refuses a leading
+// "/"). Interactive commands open a menu in the pane; the phone shows it.
+func (s *Server) handleCommand(r *http.Request, in commandIn, a *auditEntry) outcome {
+	text, out, ok := checkCommand(in.Text)
+	if !ok {
+		return out
+	}
+	return s.deliverText(r.PathValue("session"), normalizeWindowID(r.PathValue("window")), replyIn{Text: text}, a, false, true)
 }
 
 type emptyIn struct{}
@@ -746,6 +823,9 @@ type dispatchIn struct {
 	Model      string `json:"model,omitempty"`
 	Backend    string `json:"backend,omitempty"`
 	Effort     string `json:"effort,omitempty"`
+	// Template names the prompt template the sheet was filled from. It is
+	// display-only metadata: the prompt sent is the edited text.
+	Template string `json:"template,omitempty"`
 	// Images are IDs from POST /v1/dispatch/upload for the same project.
 	Images []string `json:"images,omitempty"`
 }
@@ -780,7 +860,7 @@ func checkReplyMode(text string) (outcome, bool) {
 	trimmed := strings.TrimLeftFunc(text, unicode.IsSpace)
 	if r, _ := utf8.DecodeRuneInString(trimmed); strings.ContainsRune(replyModePrefixes, r) {
 		return failure(http.StatusBadRequest, codeReplyIsCommand,
-			fmt.Sprintf("a reply cannot start with %q: Claude Code would run it as a command, not send it to the agent", r)), false
+			fmt.Sprintf("a reply cannot start with %q: Claude Code would run it as a command, not send it to the agent; use the command action to run a slash command", r)), false
 	}
 	return outcome{}, true
 }
@@ -809,13 +889,16 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	if len(in.Images) > maxImages {
 		return failure(http.StatusBadRequest, codeBadRequest, fmt.Sprintf("at most %d images per dispatch", maxImages))
 	}
-	if in.Model != "" && !modelRE.MatchString(in.Model) {
+	if in.Model != "" && !launchopts.ValidModel(in.Model) {
 		return failure(http.StatusBadRequest, codeBadRequest, "invalid model")
 	}
 	if in.Effort != "" {
 		if err := launchopts.ValidateEffort(in.Effort); err != nil {
 			return failure(http.StatusBadRequest, codeBadRequest, err.Error())
 		}
+	}
+	if in.Template != "" && !prompttemplate.ValidName(in.Template) {
+		return failure(http.StatusBadRequest, codeBadRequest, "invalid template name")
 	}
 	g, out, ok := s.dispatchTarget(in.Agent, in.ProjectDir, a)
 	if !ok {
@@ -848,7 +931,7 @@ func (s *Server) handleDispatch(_ *http.Request, in dispatchIn, a *auditEntry) o
 	s.auditAttempt(*a)
 
 	res, err := s.dispatcher.Dispatch(DispatchRequest{
-		Agent: in.Agent, Prompt: prompt, Instructions: instructions, SkipReview: in.SkipReview, Model: model, Backend: backend, Effort: effort,
+		Agent: in.Agent, Prompt: prompt, Instructions: instructions, SkipReview: in.SkipReview, Template: in.Template, Model: model, Backend: backend, Effort: effort,
 		Dir: g.Dir, Session: g.Session, RuntimeDir: g.RuntimeDir,
 	})
 	if err != nil {

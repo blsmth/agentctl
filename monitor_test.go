@@ -667,7 +667,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 // Dispatch completion (PR lookup, label swap, open-in-browser,
 // dispatch_complete hooks) is driven by the Stop hook / `signal done`, which
 // spawn `agentctl dispatch-complete`. The monitor must NOT fire anything on a
-// done edge; only state edges reach RecordTransition and improve.
+// done edge; only state edges reach RecordTransition.
 
 // fireTick is one simulated 500ms monitor tick fed into detectAndFireTransitions.
 type fireTick struct {
@@ -738,9 +738,9 @@ func TestDetectAndFireTransitions(t *testing.T) {
 			}
 
 			edges := 0
-			orig := improveHandleFn
-			improveHandleFn = func(state.Transition, config.AgentConfig) { edges++ }
-			t.Cleanup(func() { improveHandleFn = orig })
+			orig := transitionHandlerFn
+			transitionHandlerFn = func(state.Transition, config.AgentConfig) { edges++ }
+			t.Cleanup(func() { transitionHandlerFn = orig })
 
 			cfg := &config.Config{}
 			for _, tick := range tt.ticks {

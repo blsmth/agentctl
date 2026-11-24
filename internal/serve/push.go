@@ -154,7 +154,7 @@ type Message struct {
 
 	// Urgent, Kind and TTL are not part of the payload.
 	Urgent bool   `json:"-"`
-	Kind   string `json:"-"` // "blocked", "reminder", "done", "approval", "test"
+	Kind   string `json:"-"` // "blocked", "reminder", "done", "approval", "artifact", "test"
 	TTL    int    `json:"-"` // seconds; 0 means pushTTL
 }
 
@@ -286,13 +286,13 @@ func (s *Sender) Broadcast(ctx context.Context, msg Message) {
 	}
 	switch {
 	case len(targets) == 0 && inApp > 0:
-		pushLogf("push: kind=%s tag=%s suppressed, %d device(s) in app", msg.Kind, msg.Tag, inApp)
+		pushLogf("push: kind=%s tag=%s suppressed, %d device(s) in app", msg.Kind, redactArtifactIDs(msg.Tag), inApp)
 		s.record(msg.Kind, fmt.Sprintf("sent to 0/0, %d in app", inApp))
 	case len(targets) == 0:
 		pushLogf("push: no subscribed devices, nothing sent (kind %s)", msg.Kind)
 		s.record(msg.Kind, "no subscribed devices")
 	default:
-		pushLogf("push: kind=%s tag=%s subscriptions=%d in_app=%d", msg.Kind, msg.Tag, len(targets), inApp)
+		pushLogf("push: kind=%s tag=%s subscriptions=%d in_app=%d", msg.Kind, redactArtifactIDs(msg.Tag), len(targets), inApp)
 		sent := 0
 		for id, sub := range targets {
 			if s.deliver(ctx, id, sub, msg) == nil { // failures are logged in deliver
@@ -411,7 +411,7 @@ func (n *Ntfy) Send(ctx context.Context, msg Message) error {
 	}
 	req.Header.Set("Title", msg.Title)
 	if n.Details {
-		req.Header.Set("Click", n.AppURL+msg.URL)
+		req.Header.Set("Click", n.AppURL+ntfyClickPath(msg))
 	}
 	req.Header.Set("Tags", ntfyTags(msg.Kind))
 	if msg.Urgent {
@@ -429,6 +429,16 @@ func (n *Ntfy) Send(ctx context.Context, msg Message) error {
 	return nil
 }
 
+// ntfyClickPath is the app route an ntfy post links to. An artifact's id is
+// a viewing credential, so it never goes to the ntfy server: the link opens
+// the artifact list instead.
+func ntfyClickPath(msg Message) string {
+	if msg.Kind == "artifact" {
+		return "/#/artifacts"
+	}
+	return msg.URL
+}
+
 // redactForNtfy replaces a message's title and body with text that names
 // only the kind of event (see Ntfy).
 func redactForNtfy(m Message) Message {
@@ -441,6 +451,8 @@ func redactForNtfy(m Message) Message {
 		m.Title = "agentctl: an agent finished"
 	case "approval":
 		m.Title = "agentctl: approval needed"
+	case "artifact":
+		m.Title = "agentctl: new artifact"
 	default:
 		m.Title = "agentctl: notification"
 	}
@@ -459,6 +471,8 @@ func ntfyTags(kind string) string {
 		return "white_check_mark,agentctl"
 	case "approval":
 		return "raising_hand,agentctl"
+	case "artifact":
+		return "page_facing_up,agentctl"
 	default:
 		return "bell,agentctl"
 	}

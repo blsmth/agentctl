@@ -194,6 +194,7 @@ func (m *FleetModel) submitRename() {
 	name := m.lines[idx].row.Name
 	m.cancelRename()
 	m.holdTitle(st.session, st.windowID, title)
+	m.searchReset()
 	m.applyTitleHolds()
 	m.rebuildLines()
 	m.resolveSelection()

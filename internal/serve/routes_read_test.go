@@ -300,6 +300,14 @@ func TestPaneEndpointErrors(t *testing.T) {
 	if e.panes.got.lines != maxPaneLines {
 		t.Errorf("lines not clamped: %d", e.panes.got.lines)
 	}
+	e.get("/v1/sessions/agentctl-proj/windows/@523/pane?lines=all")
+	if e.panes.got.lines != historyPaneLines {
+		t.Errorf("lines=all captured %d, want %d", e.panes.got.lines, historyPaneLines)
+	}
+	e.get("/v1/sessions/agentctl-proj/windows/@523/pane")
+	if e.panes.got.lines != defaultPaneLines {
+		t.Errorf("default lines = %d", e.panes.got.lines)
+	}
 	e.panes.err = errors.New("gone")
 	if w := e.get("/v1/sessions/agentctl-proj/windows/@523/pane"); w.Code != http.StatusBadGateway {
 		t.Errorf("capture failure = %d", w.Code)

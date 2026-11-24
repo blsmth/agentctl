@@ -13,6 +13,7 @@ import (
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/harness"
+	"github.com/blsmth/agentctl/internal/launchwatch"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/sessionname"
 	"github.com/blsmth/agentctl/internal/sessions"
@@ -248,7 +249,12 @@ func launchResume(name string, sessionID string, workDir string, writeSettings W
 	}
 	extraEnv[dispatch.EnvSessionName] = sessionName
 	dispatch.ApplyHarnessEnv(extraEnv, h, "", prep)
-	return tmux.LaunchAgent(windowName, workDir, shellCmd, "", name, "", extraEnv, focus)
+	wid, err := tmux.LaunchAgent(windowName, workDir, shellCmd, "", name, "", extraEnv, focus)
+	if err != nil {
+		return "", err
+	}
+	launchwatch.Start(wid, caps)
+	return wid, nil
 }
 
 // GetSessionPreview returns a short preview string for the given session.

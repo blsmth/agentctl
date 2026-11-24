@@ -49,10 +49,15 @@ type Job struct {
 	Schedule string `json:"schedule"`
 	Dir      string `json:"dir"`
 	Agent    string `json:"agent"`
-	// Prompt or PromptKey (context store), exactly one. --prompt-file is
-	// copied into Prompt at add time.
+	// Exactly one of Prompt, PromptKey (context store) and Template (a
+	// prompt template, internal/prompttemplate). --prompt-file is copied
+	// into Prompt at add time; PromptKey and Template are read at every
+	// fire, Template from Dir's project (shadowing the global templates).
+	// With a Template, Agent, Model and Effort may be empty: the
+	// template's defaults fill them, and a job field always wins.
 	Prompt    string `json:"prompt,omitempty"`
 	PromptKey string `json:"prompt_key,omitempty"`
+	Template  string `json:"template,omitempty"`
 	Harness   string `json:"harness"`
 	Mode      string `json:"mode"`
 	// Worktree runs each fire in its own worktree (default true).
@@ -120,7 +125,6 @@ func (j *Job) Normalize() {
 
 var (
 	jobNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$`)
-	modelRE   = regexp.MustCompile(`^[A-Za-z0-9._:\[\]-]+$`)
 	// backendRE and accountRE match config map keys; both end up in env
 	// and log lines, never a shell.
 	backendRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -133,6 +137,7 @@ const (
 	FieldDir              = "dir"
 	FieldAgent            = "agent"
 	FieldPrompt           = "prompt"
+	FieldTemplate         = "template"
 	FieldHarness          = "harness"
 	FieldMode             = "mode"
 	FieldOverlap          = "overlap"
@@ -186,16 +191,23 @@ func (j Job) FieldErrors() []FieldError {
 		add(FieldDir, "dir %q must be an absolute path", j.Dir)
 	}
 	switch {
+	case strings.TrimSpace(j.Agent) == "" && j.Template != "":
+		// The template names the agent (checked against the file by
+		// cronedit, and again at fire time).
 	case strings.TrimSpace(j.Agent) == "":
 		add(FieldAgent, "pick an agent")
 	case !agentname.ValidLaunch(j.Agent):
 		add(FieldAgent, "invalid agent name %q", j.Agent)
 	}
-	switch {
-	case j.Prompt == "" && j.PromptKey == "":
-		add(FieldPrompt, "write a prompt")
-	case j.Prompt != "" && j.PromptKey != "":
+	switch n := countNonEmpty(j.Prompt, j.PromptKey, j.Template); {
+	case n == 0:
+		add(FieldPrompt, "write a prompt or pick a template")
+	case n > 1 && j.Template != "":
+		add(FieldTemplate, "use a template or a prompt, not both")
+	case n > 1:
 		add(FieldPrompt, "use a prompt or a prompt key, not both")
+	case j.Template != "" && !agentname.Valid(j.Template):
+		add(FieldTemplate, "invalid template name %q", j.Template)
 	}
 	if j.Harness != HarnessClaude {
 		add(FieldHarness, "harness %q is not supported yet (only %q)", j.Harness, HarnessClaude)
@@ -209,7 +221,7 @@ func (j Job) FieldErrors() []FieldError {
 	if !slices.Contains([]string{CatchupLatest, CatchupNone}, j.Catchup) {
 		add(FieldCatchup, "catchup %q: want latest or none", j.Catchup)
 	}
-	if j.Model != "" && !modelRE.MatchString(j.Model) {
+	if j.Model != "" && !launchopts.ValidModel(j.Model) {
 		add(FieldModel, "invalid model %q", j.Model)
 	}
 	if j.Effort != "" {
@@ -237,6 +249,28 @@ func (j Job) FieldErrors() []FieldError {
 		}
 	}
 	return errs
+}
+
+// PromptSource names where a job's prompt comes from: "template",
+// "prompt_key" or "prompt".
+func (j Job) PromptSource() string {
+	switch {
+	case j.Template != "":
+		return FieldTemplate
+	case j.PromptKey != "":
+		return "prompt_key"
+	}
+	return FieldPrompt
+}
+
+func countNonEmpty(vals ...string) int {
+	n := 0
+	for _, v := range vals {
+		if v != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // Jobs is the on-disk shape of schedules.json.

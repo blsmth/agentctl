@@ -12,17 +12,17 @@ func TestToWindow(t *testing.T) {
 	row := Row{Session: "agentctl-p", Project: "p", AgentState: state.AgentState{
 		Name: "a", WindowID: "@1", State: "blocked", Ticket: 7, LastText: "hello",
 	}}
-	meta := Meta{Mode: "dispatch", SpawnedBy: "@9", SpawnedBySession: "u", PendingTool: "Bash", BlockedSince: since}
+	meta := Meta{Mode: "dispatch", SpawnedBy: "@9", SpawnedBySession: "u", PendingTool: "Bash", PendingToolDetail: "go test ./...", BlockedSince: since}
 
 	w := ToWindow(row, meta)
-	if w.Parent != "@9" || w.PendingTool != "Bash" || w.BlockedSince != "2026-11-16T11:00:00Z" || w.Issue != 7 || w.Activity != "hello" {
+	if w.Parent != "@9" || w.PendingTool != "Bash" || w.BlockedSince != "2026-11-16T11:00:00Z" || w.Issue != 7 || w.Activity != "hello" || w.PendingToolDetail != "go test ./..." {
 		t.Errorf("blocked = %+v", w)
 	}
 
 	row.State = "working"
 	meta.SpawnedBySession = ""
 	w = ToWindow(row, meta)
-	if w.PendingTool != "" || w.BlockedSince != "" {
+	if w.PendingTool != "" || w.PendingToolDetail != "" || w.BlockedSince != "" {
 		t.Errorf("pending tool must only show while blocked: %+v", w)
 	}
 	if w.Parent != "" {
@@ -66,8 +66,10 @@ func TestToWindowRecap(t *testing.T) {
 
 func TestCleanRecapStripsHint(t *testing.T) {
 	for in, want := range map[string]string{
-		"Building it.\n (disable recaps in /config)": "Building it.",
-		"Building it. (disable recaps in /config)":   "Building it.",
+		"Building it.\n (disable recaps in /config)":          "Building it.",
+		"Building it. (disable recaps in /config)":            "Building it.",
+		"Building it. (turn off recaps in /config)":           "Building it.",
+		"Fixed (the thing) now. (turn off recaps in /config)": "Fixed (the thing) now.",
 		"Plain recap": "Plain recap",
 	} {
 		if got := cleanRecap(in); got != want {
@@ -94,5 +96,20 @@ func TestToWindowModel(t *testing.T) {
 	}
 	if w := ToWindow(Row{}, Meta{}); w.Model != "" {
 		t.Errorf("empty row Model = %q", w.Model)
+	}
+}
+
+func TestTagMetaPendingToolOnlyWhenBlocked(t *testing.T) {
+	meta := map[string]Meta{
+		"@1": {PendingTool: "Bash", PendingToolDetail: "ls"},
+		"@2": {PendingTool: "Read", PendingToolDetail: "/x"},
+	}
+	rows := []Row{{AgentState: state.AgentState{WindowID: "@1", State: "blocked"}}, {AgentState: state.AgentState{WindowID: "@2", State: "working"}}}
+	TagMeta(rows, meta)
+	if rows[0].PendingTool != "Bash" || rows[0].PendingToolDetail != "ls" {
+		t.Errorf("blocked row = %+v", rows[0])
+	}
+	if rows[1].PendingTool != "" || rows[1].PendingToolDetail != "" {
+		t.Errorf("working row leaked pending tool: %+v", rows[1])
 	}
 }

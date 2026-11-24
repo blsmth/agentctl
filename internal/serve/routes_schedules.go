@@ -184,7 +184,8 @@ func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 // scheduleChecks are serve's extra rules on top of the core's: the prompt
 // is held to the dispatch prompt rules (no control characters, at most
 // maxPromptRunes), a prompt_key must resolve, and a dir that is new or
-// changed must be a fleet project's dir (the project picker's list).
+// changed must be a fleet project's dir (the project picker's list). A
+// template is checked by the core (it must resolve from the job dir).
 func (s *Server) scheduleChecks(job cron.Job, original string) []cron.FieldError {
 	var errs []cron.FieldError
 	add := func(field, msg string) { errs = append(errs, cron.FieldError{Field: field, Message: msg}) }
@@ -283,7 +284,7 @@ func (s *Server) handleSchedulePreview(_ *http.Request, in schedulePreviewIn, a 
 		p.Valid = false
 	}
 	// A cron fire is a worker launch: the agent's configured mode, else auto.
-	return success(previewOut{Preview: p, PermissionMode: dispatchplan.PermissionMode(true, s.agentPermission(p.Job.Agent), "")})
+	return success(previewOut{Preview: p, PermissionMode: dispatchplan.PermissionMode(true, s.agentPermission(s.scheduleStore().EffectiveAgent(p.Job)), "")})
 }
 
 // checkSchedule runs the core validation plus serve's checks, so a save

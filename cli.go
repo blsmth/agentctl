@@ -71,6 +71,7 @@ type CLI struct {
 
 	// Dispatch completion (spawned detached by the Stop hook / signal done)
 	DispatchComplete DispatchCompleteCmd `cmd:"" name:"dispatch-complete" hidden:"" help:"Run dispatch completion for a window (PR lookup, labels, hooks)"`
+	LaunchWatch      LaunchWatchCmd      `cmd:"" name:"launch-watch" hidden:"" help:"Watch a freshly launched window for the folder-trust prompt"`
 	RunUserHooks     RunUserHooksCmd     `cmd:"" name:"run-user-hooks" hidden:"" help:"Run user lifecycle hooks for an event (spawned detached by hooks)"`
 
 	// Dispatch
@@ -81,6 +82,7 @@ type CLI struct {
 	HubView         HubViewCmd         `cmd:"" name:"hub-view" hidden:""`
 	HubNewSession   HubNewSessionCmd   `cmd:"" name:"hub-new-session" hidden:""`
 	HubResume       HubResumeCmd       `cmd:"" name:"hub-resume" hidden:""`
+	HubStatus       HubStatusCmd       `cmd:"" name:"hub-status" hidden:""`
 	JumpNextBlocked JumpNextBlockedCmd `cmd:"" name:"jump-next-blocked" hidden:""`
 
 	// Tickets
@@ -133,6 +135,7 @@ type CLI struct {
 	Ctl        CtlCmd        `cmd:"" help:"Send operator control command"`
 	Models     ModelsCmd     `cmd:"" help:"Inspect the model registry (context window, pricing, resolution)"`
 	Race       RaceCmd       `cmd:"" help:"Replay a session as a race against a human typing and reading the same work"`
+	Artifact   ArtifactCmd   `cmd:"" help:"Publish reports, mockups and charts as artifacts and get a URL to open them (add, update, list, show, url, open, pin, rm, prune)"`
 
 	// Setup
 	Init             InitCmd             `cmd:"" help:"Initialize agentctl in current project"`
@@ -375,13 +378,16 @@ type CostCmd struct {
 type CostReportCmd struct {
 	Session string `arg:"" optional:"" help:"Session ID (prefix) for a per-model breakdown of one session"`
 	Since   string `default:"7d" help:"How far back to look (e.g. 36h, 7d, 2w)"`
-	By      string `enum:",agent,model,day,project" default:"" help:"Group totals by agent, model, day or project"`
+	By      string `enum:",agent,model,day,project,account" default:"" help:"Group totals by agent, model, day, project or account"`
 	Metered bool   `help:"Only metered sessions (real spend, e.g. Nous)"`
+	Account string `help:"Only sessions found under this account"`
+	Sort    string `enum:",date,cost,turns,tokens" default:"date" help:"Order sessions (or --by groups) by date, cost, turns or tokens"`
+	Top     int    `help:"List only the first N sessions after sorting (totals still cover all)"`
 	JSON    bool   `help:"Output as JSON"`
 }
 
 func (c *CostReportCmd) Run() error {
-	return cmd.RunCost(cmd.CostOptions{Session: c.Session, Since: c.Since, By: c.By, Metered: c.Metered, JSON: c.JSON})
+	return cmd.RunCost(cmd.CostOptions{Session: c.Session, Since: c.Since, By: c.By, Metered: c.Metered, Account: c.Account, Sort: c.Sort, Top: c.Top, JSON: c.JSON})
 }
 
 // CostPricesCmd implements `agentctl cost prices [filter]`.
@@ -559,6 +565,12 @@ func (c *HubCmd) Run() error { cmd.RunHub(c.Client); return nil }
 type HubViewCmd struct{}
 
 func (c *HubViewCmd) Run() error { cmd.RunHubView(); return nil }
+
+// HubStatusCmd runs in the hub's status pane, above the live viewer: the
+// selected row's title, recap, activity line and chips.
+type HubStatusCmd struct{}
+
+func (c *HubStatusCmd) Run() error { cmd.CmdHubStatus(); return nil }
 
 // HubNewSessionCmd is the hub's "+ new session" helper: run with cwd = Dir,
 // it initializes the project if needed, starts its tmux session detached and
@@ -1064,7 +1076,7 @@ func (c *ApplyConfigCmd) Run() error { return cmd.RunApplyConfig() }
 
 type ToggleCmd struct {
 	AgentName string `arg:"" help:"Agent name"`
-	Setting   string `arg:"" help:"Setting name (alerts, auto_improve, cross_context, auto_accept)"`
+	Setting   string `arg:"" help:"Setting name (alerts, cross_context, auto_accept)"`
 }
 
 func (c *ToggleCmd) Run() error { cmd.CmdToggle(c.AgentName, c.Setting); return nil }
@@ -1219,12 +1231,17 @@ type RaceCmd struct {
 	Speed    float64       `help:"Replay at N times real time (overrides --duration)"`
 	Duration time.Duration `default:"45s" help:"Fit the agent's whole timeline into this long a replay"`
 	JSON     bool          `help:"Print totals as JSON and exit (no TUI)"`
+
+	RealLife    bool    `name:"real-life" help:"Also show the human's time as calendar time: breaks, lunch, nights and weekends"`
+	FocusHours  float64 `name:"focus-hours" default:"6" help:"With --real-life: hours of real keyboard work per day"`
+	DaysPerWeek int     `name:"days-per-week" default:"5" help:"With --real-life: working days per week"`
 }
 
 func (c *RaceCmd) Run() error {
 	return cmd.RunRace(os.Stdout, cmd.RaceOptions{
-		Target:   c.Target,
-		Params:   race.Params{WPM: c.WPM, ReadWPM: c.ReadWPM, Think: c.Think, MaxGap: c.MaxGap},
+		Target: c.Target,
+		Params: race.Params{WPM: c.WPM, ReadWPM: c.ReadWPM, Think: c.Think, MaxGap: c.MaxGap,
+			RealLife: c.RealLife, Schedule: race.Schedule{FocusHours: c.FocusHours, DaysPerWeek: c.DaysPerWeek}},
 		Speed:    c.Speed,
 		Duration: c.Duration,
 		JSON:     c.JSON,
@@ -1415,6 +1432,15 @@ type DispatchCompleteCmd struct {
 }
 
 func (c *DispatchCompleteCmd) Run() error { cmd.RunDispatchComplete(c.WindowID); return nil }
+
+// LaunchWatchCmd watches a freshly launched agent window for Claude Code's
+// folder-trust dialog and reports it (hooks.LaunchWatch). Spawned detached by
+// internal/launchwatch after each launch; never run by hand.
+type LaunchWatchCmd struct {
+	WindowID string `arg:"" help:"tmux window ID (e.g. @5)"`
+}
+
+func (c *LaunchWatchCmd) Run() error { hooks.LaunchWatch(c.WindowID); return nil }
 
 // RunUserHooksCmd runs the configured user hooks for one lifecycle event,
 // using the environment inherited from the spawning hook.
@@ -1614,6 +1640,122 @@ type TemplateRmCmd struct {
 func (c *TemplateRmCmd) Run() error { return cmd.RunTemplateRm(os.Stdout, c.Name, c.Project) }
 
 // ---------------------------------------------------------------------------
+// Artifacts
+// ---------------------------------------------------------------------------
+
+// ArtifactCmd groups `agentctl artifact`: the one writer of the artifact
+// store (<state dir>/artifacts), which `agentctl serve` shows on the phone.
+type ArtifactCmd struct {
+	Add      ArtifactAddCmd      `cmd:"" help:"Publish a file, a directory (with index.html) or stdin (-) as an artifact"`
+	Update   ArtifactUpdateCmd   `cmd:"" help:"Add a revision to an artifact (the latest is the default view)"`
+	List     ArtifactListCmd     `cmd:"" help:"List artifacts (this project; --all for every project)"`
+	Show     ArtifactShowCmd     `cmd:"" help:"Show an artifact's metadata, revisions and URL"`
+	Comments ArtifactCommentsCmd `cmd:"" help:"List the feedback sent on an artifact from the viewer"`
+	URL      ArtifactURLCmd      `cmd:"" name:"url" help:"Print an artifact's URL"`
+	Open     ArtifactOpenCmd     `cmd:"" help:"Open an artifact in the laptop browser"`
+	Pin      ArtifactPinCmd      `cmd:"" help:"Pin an artifact so retention never prunes it"`
+	Unpin    ArtifactUnpinCmd    `cmd:"" help:"Unpin an artifact"`
+	Rm       ArtifactRmCmd       `cmd:"" help:"Delete an artifact and all its revisions"`
+	Prune    ArtifactPruneCmd    `cmd:"" help:"Delete unpinned artifacts not updated recently"`
+}
+
+type ArtifactAddCmd struct {
+	Path        string `arg:"" help:"File, directory, or - to read stdin"`
+	Title       string `help:"Title (default: HTML <title>, first markdown # heading, else the file name)"`
+	Description string `help:"One-line description"`
+	Kind        string `enum:",html,markdown,image,text" default:"" help:"Override the kind inferred from the entry's extension (html, markdown, image, text)"`
+	Entry       string `help:"File to open, relative to the directory (default: index.html); with stdin, the name to store it under (e.g. report.html)"`
+	Pin         bool   `help:"Pin so retention never prunes it"`
+	NoNotify    bool   `name:"no-notify" help:"Do not send a push notification for this artifact"`
+	JSON        bool   `help:"Print the result as JSON"`
+}
+
+func (c *ArtifactAddCmd) Run() error {
+	return cmd.RunArtifactAdd(os.Stdout, cmd.ArtifactAddOptions{
+		Path: c.Path, Title: c.Title, Description: c.Description, Kind: c.Kind, Entry: c.Entry,
+		Pin: c.Pin, NoNotify: c.NoNotify, JSON: c.JSON,
+	})
+}
+
+type ArtifactUpdateCmd struct {
+	ID    string `arg:"" help:"Artifact id"`
+	Path  string `arg:"" help:"File, directory, or - to read stdin"`
+	Note  string `help:"What changed in this revision"`
+	Title string `help:"New title (default: keep the current one)"`
+	JSON  bool   `help:"Print the result as JSON"`
+}
+
+func (c *ArtifactUpdateCmd) Run() error {
+	return cmd.RunArtifactUpdate(os.Stdout, cmd.ArtifactUpdateOptions{ID: c.ID, Path: c.Path, Note: c.Note, Title: c.Title, JSON: c.JSON})
+}
+
+type ArtifactListCmd struct {
+	Project string `help:"Project name or directory (default: the current project)"`
+	All     bool   `help:"Every project"`
+	Agent   string `help:"Only artifacts from this agent"`
+	Since   string `help:"Only artifacts updated within this long (e.g. 7d, 12h)"`
+	JSON    bool   `help:"Print as JSON"`
+}
+
+func (c *ArtifactListCmd) Run() error {
+	return cmd.RunArtifactList(os.Stdout, cmd.ArtifactListOptions{Project: c.Project, All: c.All, Agent: c.Agent, Since: c.Since, JSON: c.JSON})
+}
+
+type ArtifactShowCmd struct {
+	ID   string `arg:"" help:"Artifact id"`
+	JSON bool   `help:"Print as JSON"`
+}
+
+func (c *ArtifactShowCmd) Run() error { return cmd.RunArtifactShow(os.Stdout, c.ID, c.JSON) }
+
+type ArtifactCommentsCmd struct {
+	ID   string `arg:"" help:"Artifact id"`
+	JSON bool   `help:"Print as JSON"`
+}
+
+func (c *ArtifactCommentsCmd) Run() error { return cmd.RunArtifactComments(os.Stdout, c.ID, c.JSON) }
+
+type ArtifactURLCmd struct {
+	ID  string `arg:"" help:"Artifact id"`
+	Rev int    `help:"Revision (default: the latest)"`
+}
+
+func (c *ArtifactURLCmd) Run() error { return cmd.RunArtifactURL(os.Stdout, c.ID, c.Rev) }
+
+type ArtifactOpenCmd struct {
+	ID  string `arg:"" help:"Artifact id"`
+	Rev int    `help:"Revision (default: the latest)"`
+}
+
+func (c *ArtifactOpenCmd) Run() error { return cmd.RunArtifactOpen(os.Stdout, c.ID, c.Rev) }
+
+type ArtifactPinCmd struct {
+	ID string `arg:"" help:"Artifact id"`
+}
+
+func (c *ArtifactPinCmd) Run() error { return cmd.RunArtifactPin(os.Stdout, c.ID, true) }
+
+type ArtifactUnpinCmd struct {
+	ID string `arg:"" help:"Artifact id"`
+}
+
+func (c *ArtifactUnpinCmd) Run() error { return cmd.RunArtifactPin(os.Stdout, c.ID, false) }
+
+type ArtifactRmCmd struct {
+	ID  string `arg:"" help:"Artifact id"`
+	Yes bool   `short:"y" help:"Do not ask for confirmation"`
+}
+
+func (c *ArtifactRmCmd) Run() error { return cmd.RunArtifactRm(os.Stdout, c.ID, c.Yes) }
+
+type ArtifactPruneCmd struct {
+	OlderThan string `name:"older-than" default:"30d" help:"Prune unpinned artifacts not updated for this long (e.g. 30d, 12h)"`
+	DryRun    bool   `name:"dry-run" help:"List what would be pruned without deleting"`
+}
+
+func (c *ArtifactPruneCmd) Run() error { return cmd.RunArtifactPrune(os.Stdout, c.OlderThan, c.DryRun) }
+
+// ---------------------------------------------------------------------------
 // Cron (scheduled agent runs)
 // ---------------------------------------------------------------------------
 
@@ -1636,11 +1778,12 @@ type CronCmd struct {
 type CronAddCmd struct {
 	Name       string `arg:"" help:"Job name (letters, digits, - and _)"`
 	Schedule   string `required:"" help:"5-field cron expression in local time, or @hourly/@daily/@weekly"`
-	Agent      string `required:"" short:"a" help:"Agent to run"`
-	Dir        string `required:"" help:"Project directory"`
+	Agent      string `short:"a" help:"Agent to run (required unless --template names one)"`
+	Dir        string `required:"" help:"Project directory (also where --template is looked up)"`
 	Prompt     string `short:"p" help:"Prompt text"`
 	PromptKey  string `name:"prompt-key" short:"k" help:"Context store key holding the prompt (read at each fire)"`
 	PromptFile string `name:"prompt-file" type:"path" help:"File holding the prompt (copied into the job now)"`
+	Template   string `help:"Prompt template (agentctl template list), read at each fire; its agent/model/effort fill unset flags"`
 	NoWorktree bool   `name:"no-worktree" help:"Run in the project checkout instead of a worktree per fire"`
 	Model      string `short:"m" help:"Model override"`
 	Effort     string `help:"Effort override (low, medium, high, xhigh, max, auto)"`
@@ -1654,7 +1797,7 @@ type CronAddCmd struct {
 func (c *CronAddCmd) Run() error {
 	return cmd.RunCronAdd(os.Stdout, cmd.CronAddOptions{
 		Name: c.Name, Schedule: c.Schedule, Agent: c.Agent, Dir: c.Dir,
-		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile, NoWorktree: c.NoWorktree,
+		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile, Template: c.Template, NoWorktree: c.NoWorktree,
 		Model: c.Model, Effort: c.Effort, Backend: c.Backend, Account: c.Account,
 		Timeout: c.Timeout, Overlap: c.Overlap, Catchup: c.Catchup,
 	})
@@ -1668,6 +1811,7 @@ type CronEditCmd struct {
 	Prompt     *string `short:"p" help:"Prompt text (replaces a prompt key)"`
 	PromptKey  *string `name:"prompt-key" short:"k" help:"Context store key holding the prompt (read at each fire)"`
 	PromptFile *string `name:"prompt-file" type:"path" help:"File holding the prompt (copied into the job now)"`
+	Template   *string `help:"Prompt template, read at each fire (replaces the prompt or prompt key)"`
 	Worktree   bool    `help:"Run each fire in its own worktree" xor:"worktree"`
 	NoWorktree bool    `name:"no-worktree" help:"Run in the project checkout instead of a worktree per fire" xor:"worktree"`
 	Model      *string `short:"m" help:"Model override (empty clears it)"`
@@ -1682,7 +1826,7 @@ type CronEditCmd struct {
 func (c *CronEditCmd) Run() error {
 	return cmd.RunCronEdit(os.Stdout, cmd.CronEditOptions{
 		Name: c.Name, Schedule: c.Schedule, Agent: c.Agent, Dir: c.Dir,
-		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile,
+		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile, Template: c.Template,
 		Worktree: c.Worktree, NoWorktree: c.NoWorktree,
 		Model: c.Model, Effort: c.Effort, Backend: c.Backend, Account: c.Account,
 		Timeout: c.Timeout, Overlap: c.Overlap, Catchup: c.Catchup,

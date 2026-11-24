@@ -115,7 +115,8 @@ func TestPopupApprovalState(t *testing.T) {
 				t.Fatalf("alerts = %d, want 1", len(alerts))
 			}
 			if alerts[0].Env["AGENTCTL_NOTIFICATION_TYPE"] != "approval_pending" ||
-				alerts[0].Message != "lead wants to dispatch go-engineer on #3, approve in agentctl-test" {
+				alerts[0].Message != "Dispatch go-engineer on #3" ||
+				alerts[0].Title != "lead" || alerts[0].Subtitle != "Approval needed · test" {
 				t.Errorf("alert = %+v", alerts[0])
 			}
 			if len(mails) != 1 || mails[0].To != "@1" || mails[0].Kind != mailbox.KindBlocked {

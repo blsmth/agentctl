@@ -8,7 +8,6 @@ import (
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/logging"
 
-	"github.com/blsmth/agentctl/internal/improve"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/reconcile"
 	"github.com/blsmth/agentctl/internal/tmux"
@@ -19,8 +18,7 @@ var errNoSession = errors.New("no running agentctl session for this project")
 // RunReconcile is the body of the hidden `agentctl reconcile`: it runs Gone
 // detection for windows that vanished from tmux and, with housekeeping, the
 // janitor's periodic sweeps. It runs inline in the calling process because
-// every spawner (tmux hook, KillWindow, the janitor) already detaches it, and
-// improve.HandleTransitionSync must finish before the process exits. With no
+// every spawner (tmux hook, KillWindow, the janitor) already detaches it. With no
 // runtime dir (a hook outside agentctl) it does nothing.
 func RunReconcile(housekeeping bool) {
 	tmux.EnsureUTF8Locale()
@@ -28,11 +26,12 @@ func RunReconcile(housekeeping bool) {
 	if rd == "" {
 		return
 	}
-	reconcile.Run(reconcile.DefaultDeps(rd, improve.HandleTransitionSync))
+	reconcile.Run(reconcile.DefaultDeps(rd, nil))
 	if housekeeping {
 		d := reconcile.DefaultHousekeepingDeps(rd)
 		d.BackfillTitles = backfillTitles
 		reconcile.Housekeep(d)
+		pruneArtifacts()
 	}
 }
 

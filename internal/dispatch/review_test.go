@@ -1,7 +1,9 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -295,5 +297,114 @@ func TestPromptFor(t *testing.T) {
 	}
 	if got := PromptFor(Request{Ticket: 3, CustomPrompt: "x"}); got != "" {
 		t.Errorf("ticket dispatch got %q", got)
+	}
+}
+
+func TestCIState(t *testing.T) {
+	tests := []struct {
+		name   string
+		rollup string
+		want   string
+	}{
+		{"no checks", `[]`, "none"},
+		{"all passed", `[{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"COMPLETED","conclusion":"SKIPPED"},{"state":"SUCCESS"}]`, "green"},
+		{"one running", `[{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"IN_PROGRESS","conclusion":""}]`, "pending"},
+		{"queued", `[{"status":"QUEUED"}]`, "pending"},
+		{"failure beats pending", `[{"status":"IN_PROGRESS"},{"status":"COMPLETED","conclusion":"FAILURE"}]`, "red"},
+		{"status context error", `[{"state":"ERROR"}]`, "red"},
+		{"status context pending", `[{"state":"PENDING"}]`, "pending"},
+		{"cancelled", `[{"status":"COMPLETED","conclusion":"CANCELLED"}]`, "red"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var raw []json.RawMessage
+			if err := json.Unmarshal([]byte(tt.rollup), &raw); err != nil {
+				t.Fatal(err)
+			}
+			if got := ciState(raw); got != tt.want {
+				t.Errorf("ciState = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParsePRDiffstatAndCI(t *testing.T) {
+	pr, err := parsePR([]byte(`{"number":1,"additions":30,"deletions":4,"changedFiles":3,"files":[{"path":"a"}],"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.Additions != 30 || pr.Deletions != 4 || pr.ChangedFiles != 3 || pr.CI != "green" {
+		t.Errorf("pr = %+v", pr)
+	}
+	none, _ := parsePR([]byte(`{"number":1}`))
+	if none.CI != "none" {
+		t.Errorf("CI without checks = %q", none.CI)
+	}
+}
+
+func TestReviewPRContextDiffstatCICap(t *testing.T) {
+	pr := samplePullRequest()
+	pr.Files = nil
+	for i := 0; i < 20; i++ {
+		pr.Files = append(pr.Files, fmt.Sprintf("f%02d.go", i))
+	}
+	pr.ChangedFiles, pr.Additions, pr.Deletions, pr.CI = 20, 100, 7, "pending"
+	got := reviewPRContext(pr)
+	for _, w := range []string{"- Diffstat: 20 files, +100/-7", "- CI at launch: pending", "- f14.go", "- +5 more"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("missing %q in:\n%s", w, got)
+		}
+	}
+	if strings.Contains(got, "f15.go") {
+		t.Error("list not capped at 15")
+	}
+	small := reviewPRContext(samplePullRequest())
+	if strings.Contains(small, "more") || !strings.Contains(small, "CI at launch: none") {
+		t.Errorf("small PR: %s", small)
+	}
+}
+
+func TestReviewerPreamble(t *testing.T) {
+	pr := samplePullRequest()
+	orch := Orchestrator{WindowID: "@5", Pane: "%6"}
+	req := Request{AgentName: "code-reviewer", Mode: ModeReviewPR, ReviewPR: &pr, Orchestrator: orch}
+	build := func(r Request) string {
+		return buildSystemPrompt(r, modes[ModeReviewPR], "/w", "b", true, nil, "")
+	}
+	got := build(req)
+	for _, w := range []string{"deferred tool", "ToolSearch", "stay responsive: the PR's author may message you", "Report your verdict", "Do not commit, push, open a PR, or write to GitHub"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("missing %q", w)
+		}
+	}
+	for _, w := range []string{"Git conventions", "After you open the PR", "A reviewer may message you", "CronCreate", "PR body"} {
+		if strings.Contains(got, w) {
+			t.Errorf("unexpected %q", w)
+		}
+	}
+	// pr_review off must not change the reviewer text.
+	off := req
+	off.prReview = "off"
+	body := func(s string) string { _, rest, _ := strings.Cut(s, "## agentctl Runtime Environment"); return rest }
+	if body(build(off)) != body(got) {
+		t.Error("reviewer prompt depends on pr_review")
+	}
+	// pi: no SendMessage text at all.
+	pi := req
+	pi.noMessaging = true
+	pi.reportViaMailbox = true
+	gp := build(pi)
+	for _, w := range []string{"ToolSearch", "SendMessage (", "Git conventions", "After you open the PR", "PR body"} {
+		if strings.Contains(gp, w) {
+			t.Errorf("pi prompt has %q", w)
+		}
+	}
+	if !strings.Contains(gp, "Put your verdict in your final message.") {
+		t.Error("pi reviewer lacks reporting section")
+	}
+	// Workers keep their sections.
+	w := buildSystemPrompt(Request{AgentName: "a", Mode: ModeAdhoc, Orchestrator: orch}, modes[ModeAdhoc], "/w", "b", true, nil, "")
+	if !strings.Contains(w, "### Git conventions") || strings.Contains(w, "ToolSearch") {
+		t.Error("worker preamble changed")
 	}
 }

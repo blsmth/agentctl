@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -108,9 +109,6 @@ func TestDefaultAgentConfig(t *testing.T) {
 	if !d.Alerts {
 		t.Error("DefaultAgentConfig().Alerts = false, want true")
 	}
-	if d.AutoImprove {
-		t.Error("DefaultAgentConfig().AutoImprove = true, want false")
-	}
 	if !d.CrossContext {
 		t.Error("DefaultAgentConfig().CrossContext = false, want true")
 	}
@@ -119,14 +117,14 @@ func TestDefaultAgentConfig(t *testing.T) {
 func TestForAgent(t *testing.T) {
 	cfg := &Config{
 		Agents: map[string]AgentConfig{
-			"known": {Alerts: false, AutoImprove: true, CrossContext: false},
+			"known": {Alerts: false, CrossContext: false},
 		},
 	}
 
 	t.Run("known agent", func(t *testing.T) {
 		got := cfg.ForAgent("known")
-		if got.Alerts != false || got.AutoImprove != true || got.CrossContext != false {
-			t.Errorf("ForAgent('known') = %+v, want {false, true, false}", got)
+		if got.Alerts != false || got.CrossContext != false {
+			t.Errorf("ForAgent('known') = %+v, want {false, false}", got)
 		}
 	})
 
@@ -178,7 +176,6 @@ func TestLoadSaveRoundtrip(t *testing.T) {
 	// Save and reload
 	cfg.Agents["test-agent"] = AgentConfig{
 		Alerts:       false,
-		AutoImprove:  true,
 		CrossContext: true,
 	}
 	if err := Save(cfg); err != nil {
@@ -187,7 +184,7 @@ func TestLoadSaveRoundtrip(t *testing.T) {
 
 	cfg2 := Load()
 	got := cfg2.ForAgent("test-agent")
-	if got.Alerts != false || got.AutoImprove != true || got.CrossContext != true {
+	if got.Alerts != false || got.CrossContext != true {
 		t.Errorf("roundtrip ForAgent('test-agent') = %+v", got)
 	}
 }
@@ -210,26 +207,6 @@ func TestToggleAlert(t *testing.T) {
 	cfg2 := Load()
 	if cfg2.ForAgent("test-agent").Alerts != false {
 		t.Error("Alerts not persisted after toggle")
-	}
-}
-
-func TestToggleAutoImprove(t *testing.T) {
-	dir := t.TempDir()
-	SetConfigPathForTest(filepath.Join(dir, "config.json"))
-
-	cfg := Load()
-	// Default is auto_improve=false, toggling should give true
-	val, err := cfg.ToggleAutoImprove("test-agent")
-	if err != nil {
-		t.Fatalf("ToggleAutoImprove error: %v", err)
-	}
-	if val != true {
-		t.Errorf("ToggleAutoImprove returned %v, want true", val)
-	}
-
-	cfg2 := Load()
-	if cfg2.ForAgent("test-agent").AutoImprove != true {
-		t.Error("AutoImprove not persisted after toggle")
 	}
 }
 
@@ -841,21 +818,21 @@ func TestMergeConfig(t *testing.T) {
 	t.Run("project agents override global per-agent", func(t *testing.T) {
 		base := &Config{
 			Agents: map[string]AgentConfig{
-				"go-engineer": {Model: "sonnet", AutoImprove: false},
+				"go-engineer": {Model: "sonnet"},
 				"py-engineer": {Model: "haiku"},
 			},
 		}
 		overlay := &Config{
 			Agents: map[string]AgentConfig{
-				"go-engineer": {Model: "opus", AutoImprove: true},
+				"go-engineer": {Model: "opus", Alerts: true},
 			},
 		}
 		mergeConfig(base, overlay)
 		if base.Agents["go-engineer"].Model != "opus" {
 			t.Errorf("go-engineer.Model = %q, want opus", base.Agents["go-engineer"].Model)
 		}
-		if !base.Agents["go-engineer"].AutoImprove {
-			t.Error("go-engineer.AutoImprove = false, want true")
+		if !base.Agents["go-engineer"].Alerts {
+			t.Error("go-engineer.Alerts = false, want true")
 		}
 		// py-engineer not in overlay — global value preserved.
 		if base.Agents["py-engineer"].Model != "haiku" {
@@ -1936,8 +1913,8 @@ func TestProjectLayerGlobalOnlyKeys(t *testing.T) {
 			check:   wantDefaultAgent("", ""),
 		},
 		{
-			name:   "dir, cross_context, context_keys, auto_improve cannot override global",
-			global: `{"agents":{"x":{"dir":"~/code/x","cross_context":false,"context_keys":["mine"],"auto_improve":false}}}`,
+			name:   "dir, cross_context, context_keys cannot override global; stale auto_improve is ignored",
+			global: `{"agents":{"x":{"dir":"~/code/x","cross_context":false,"context_keys":["mine"]}}}`,
 			project: `{"agents":{"x":{"dir":"~","cross_context":true,"context_keys":["secrets","tokens"],
 				"auto_improve":true,"model":"opus"}}}`,
 			check: func(t *testing.T, cfg *Config) {
@@ -1951,22 +1928,19 @@ func TestProjectLayerGlobalOnlyKeys(t *testing.T) {
 				if len(x.ContextKeys) != 1 || x.ContextKeys[0] != "mine" {
 					t.Errorf("context_keys = %v, want global [mine]", x.ContextKeys)
 				}
-				if x.AutoImprove {
-					t.Error("project enabled auto_improve")
-				}
 				if x.Model != "opus" {
 					t.Errorf("model = %q, project non-protected fields must still apply", x.Model)
 				}
 			},
 		},
 		{
-			name:    "dir, context_keys, auto_improve on project-only agent fall back to defaults",
+			name:    "dir, context_keys on project-only agent fall back to defaults",
 			global:  `{}`,
 			project: `{"agents":{"x":{"dir":"~","cross_context":true,"context_keys":["secrets"],"auto_improve":true}}}`,
 			check: func(t *testing.T, cfg *Config) {
 				x := cfg.Agents["x"]
 				def := DefaultAgentConfig()
-				if x.Dir != def.Dir || len(x.ContextKeys) != 0 || x.AutoImprove != def.AutoImprove {
+				if x.Dir != def.Dir || len(x.ContextKeys) != 0 {
 					t.Errorf("project-only agent kept global-only values: %+v", x)
 				}
 				if x.CrossContext != def.CrossContext {
@@ -1975,12 +1949,12 @@ func TestProjectLayerGlobalOnlyKeys(t *testing.T) {
 			},
 		},
 		{
-			name:    "project may switch cross_context and auto_improve off",
-			global:  `{"agents":{"x":{"cross_context":true,"auto_improve":true}}}`,
-			project: `{"agents":{"x":{"cross_context":false,"auto_improve":false}}}`,
+			name:    "project may switch cross_context off",
+			global:  `{"agents":{"x":{"cross_context":true}}}`,
+			project: `{"agents":{"x":{"cross_context":false}}}`,
 			check: func(t *testing.T, cfg *Config) {
 				x := cfg.Agents["x"]
-				if x.CrossContext || x.AutoImprove {
+				if x.CrossContext {
 					t.Errorf("project could not narrow: %+v", x)
 				}
 			},
@@ -2370,9 +2344,6 @@ func TestGlobalOnlySettersWriteGlobalLayer(t *testing.T) {
 		if on, err := cfg.ToggleCrossContext("x"); err != nil || !on {
 			t.Fatalf("ToggleCrossContext = %v, %v", on, err)
 		}
-		if on, err := Load().ToggleAutoImprove("x"); err != nil || !on {
-			t.Fatalf("ToggleAutoImprove = %v, %v", on, err)
-		}
 		cfg = Load()
 		ac := cfg.ForAgent("x")
 		ac.Dir = "~/code/x"
@@ -2381,19 +2352,19 @@ func TestGlobalOnlySettersWriteGlobalLayer(t *testing.T) {
 			t.Fatal(err)
 		}
 		g := read(t, gp).Agents["x"]
-		if !g.CrossContext || !g.AutoImprove || g.Dir != "~/code/x" || len(g.ContextKeys) != 1 {
+		if !g.CrossContext || g.Dir != "~/code/x" || len(g.ContextKeys) != 1 {
 			t.Errorf("global agent = %+v, want toggled fields persisted", g)
 		}
 		got := Load().ForAgent("x")
-		if !got.CrossContext || !got.AutoImprove || got.Dir != "~/code/x" || got.Model != "opus" {
+		if !got.CrossContext || got.Dir != "~/code/x" || got.Model != "opus" {
 			t.Errorf("merged agent = %+v", got)
 		}
 	})
 }
 
 // TestToggleOffStaysInProject is the regression test for switch-off toggles
-// leaking to the global layer: a project may switch cross_context /
-// auto_improve off for itself, but that must not change what other projects
+// leaking to the global layer: a project may switch cross_context
+// off for itself, but that must not change what other projects
 // see. Switching on is global-only, and must take effect in the toggling
 // project even when its own layer had the key false.
 func TestToggleOffStaysInProject(t *testing.T) {
@@ -2405,7 +2376,6 @@ func TestToggleOffStaysInProject(t *testing.T) {
 		get    getFn
 	}{
 		{"cross_context", (*Config).ToggleCrossContext, func(ac AgentConfig) bool { return ac.CrossContext }},
-		{"auto_improve", (*Config).ToggleAutoImprove, func(ac AgentConfig) bool { return ac.AutoImprove }},
 		{"cross_context via SetAgent", func(c *Config, name string) (bool, error) {
 			ac := c.ForAgent(name)
 			ac.CrossContext = !ac.CrossContext
@@ -2415,9 +2385,6 @@ func TestToggleOffStaysInProject(t *testing.T) {
 	for _, f := range fields {
 		t.Run(f.key, func(t *testing.T) {
 			jsonKey := "cross_context"
-			if f.key == "auto_improve" {
-				jsonKey = "auto_improve"
-			}
 			dir := t.TempDir()
 			gp := filepath.Join(dir, "global.json")
 			pa := filepath.Join(dir, "a.json")
@@ -2667,5 +2634,39 @@ func TestMergeConfig_StatuslineMobileFormat(t *testing.T) {
 	mergeConfig(base, &Config{Agents: map[string]AgentConfig{}})
 	if base.StatuslineMobileFormat != "minimal" {
 		t.Errorf("empty overlay should leave base, got %q", base.StatuslineMobileFormat)
+	}
+}
+
+func TestDeprecatedAutoImproveLoadsAndWarnsOnce(t *testing.T) {
+	var logged []string
+	origLog := warnLog
+	warnLog = func(f string, a ...any) { logged = append(logged, fmt.Sprintf(f, a...)) }
+	t.Cleanup(func() { warnLog = origLog })
+
+	for name, body := range map[string]string{
+		"global":   `{"auto_improve":true,"agents":{"x":{"model":"opus","auto_improve":true}}}`,
+		"agent":    `{"agents":{"x":{"model":"opus","auto_improve":false}}}`,
+		"no-field": `{"agents":{"x":{"model":"opus"}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			logged = nil
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for range 3 {
+				cfg := loadFromPath(path)
+				if cfg.Agents["x"].Model != "opus" {
+					t.Fatalf("config with auto_improve did not load: %+v", cfg.Agents)
+				}
+			}
+			want := 1
+			if name == "no-field" {
+				want = 0
+			}
+			if len(logged) != want {
+				t.Fatalf("logged %d warnings, want %d: %v", len(logged), want, logged)
+			}
+		})
 	}
 }

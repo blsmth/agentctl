@@ -31,11 +31,11 @@ func TestSafeHandleRunsOnce(t *testing.T) {
 	}
 }
 
-func TestFireHandlersSurvivesImprovePanic(t *testing.T) {
-	orig := improveHandleFn
-	defer func() { improveHandleFn = orig }()
+func TestFireHandlersSurvivesHandlerPanic(t *testing.T) {
+	orig := transitionHandlerFn
+	defer func() { transitionHandlerFn = orig }()
 	calls := 0
-	improveHandleFn = func(state.Transition, config.AgentConfig) {
+	transitionHandlerFn = func(state.Transition, config.AgentConfig) {
 		calls++
 		panic("handler panic")
 	}
@@ -43,26 +43,26 @@ func TestFireHandlersSurvivesImprovePanic(t *testing.T) {
 	tr := state.Transition{Agent: "a", WindowID: "@1", To: state.StatusGone}
 	m.fireHandlers(tr, config.AgentConfig{}) // must not panic
 	if calls != 1 {
-		t.Fatalf("improveHandleFn calls = %d, want 1", calls)
+		t.Fatalf("transitionHandlerFn calls = %d, want 1", calls)
 	}
 }
 
 // TestDetectAndFireTransitionsSurvivesHandlerPanic drives the real monitor
-// call path with a panicking improve.HandleTransition and asserts the tick completes,
+// call path with a panicking handler and asserts the tick completes,
 // and prev state advanced.
 func TestDetectAndFireTransitionsSurvivesHandlerPanic(t *testing.T) {
 	m := &monitorModel{windows: map[string]*instanceState{}}
 	inst := &instanceState{instance: "go-engineer", base: "go-engineer", hasPrev: true, prevState: state.StatusWorking}
 
-	orig := improveHandleFn
-	t.Cleanup(func() { improveHandleFn = orig })
+	orig := transitionHandlerFn
+	t.Cleanup(func() { transitionHandlerFn = orig })
 	calls := 0
-	improveHandleFn = func(state.Transition, config.AgentConfig) { calls++; panic("boom") }
+	transitionHandlerFn = func(state.Transition, config.AgentConfig) { calls++; panic("boom") }
 
 	m.detectAndFireTransitions(inst, "@1", state.StatusIdle, windowstate.WindowState{State: "idle"}, &config.Config{}, "")
 
 	if calls != 1 {
-		t.Fatalf("improveHandleFn calls = %d, want 1", calls)
+		t.Fatalf("transitionHandlerFn calls = %d, want 1", calls)
 	}
 	if inst.prevState != state.StatusIdle {
 		t.Errorf("prevState = %v, want idle (tick must finish after panic)", inst.prevState)
@@ -75,16 +75,16 @@ func TestReconcileWindowsGonePathSurvivesHandlerPanic(t *testing.T) {
 	m := &monitorModel{
 		windows: map[string]*instanceState{"@9": {instance: "go-engineer", base: "go-engineer", hasPrev: true, prevState: state.StatusWorking}},
 	}
-	orig := improveHandleFn
-	t.Cleanup(func() { improveHandleFn = orig })
+	orig := transitionHandlerFn
+	t.Cleanup(func() { transitionHandlerFn = orig })
 	calls := 0
-	improveHandleFn = func(state.Transition, config.AgentConfig) { calls++; panic("boom") }
+	transitionHandlerFn = func(state.Transition, config.AgentConfig) { calls++; panic("boom") }
 
 	m.reconcileWindows(&config.Config{}, nil, 0)
 	m.reconcileWindows(&config.Config{}, nil, 0)
 
 	if calls != 1 {
-		t.Fatalf("improveHandleFn calls = %d, want 1", calls)
+		t.Fatalf("transitionHandlerFn calls = %d, want 1", calls)
 	}
 	if _, ok := m.windows["@9"]; ok {
 		t.Error("gone window not cleaned up after handler panic")

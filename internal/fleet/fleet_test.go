@@ -9,6 +9,7 @@ import (
 	"github.com/blsmth/agentctl/internal/registry"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // ── MergeSessions: tmux-primary, registry-enrichment discovery ─────────────
@@ -457,6 +458,22 @@ func TestActivityLine(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "folder trust dialog says so",
+			row: Row{
+				AgentState:  state.AgentState{State: "blocked", LastText: "old text"},
+				PendingTool: windowstate.PendingTrust, PendingToolDetail: "/repo/.worktrees/x",
+			},
+			want: "waiting on folder trust: /repo/.worktrees/x",
+		},
+		{
+			name: "pending trust ignored once not blocked",
+			row: Row{
+				AgentState:  state.AgentState{State: "working", LastText: "now running"},
+				PendingTool: windowstate.PendingTrust,
+			},
+			want: "now running",
+		},
+		{
 			// Regression: state.json snapshots written by older monitors (or
 			// by other projects' binaries this hub reads but doesn't
 			// control) may contain un-flattened multi-line text. ActivityLine
@@ -699,5 +716,32 @@ func TestSortRowsRecent(t *testing.T) {
 	}
 	if in[0].Name != "old" {
 		t.Error("input mutated")
+	}
+}
+
+func TestPendingLabel(t *testing.T) {
+	for tool, want := range map[string]string{
+		windowstate.PendingTrust: "folder trust",
+		"Bash":                   "Bash",
+		"":                       "",
+	} {
+		if got := PendingLabel(tool); got != want {
+			t.Errorf("PendingLabel(%q) = %q, want %q", tool, got, want)
+		}
+	}
+	if got := TrustActivity(""); got != "waiting on folder trust" {
+		t.Errorf("TrustActivity(\"\") = %q", got)
+	}
+}
+
+// The phone row and status --json read Window.Activity: a window on the
+// folder-trust dialog says what it waits on there, whether or not TagMeta
+// ran on the row.
+func TestToWindowTrustActivity(t *testing.T) {
+	r := Row{AgentState: state.AgentState{State: "blocked"}}
+	m := Meta{PendingTool: windowstate.PendingTrust, PendingToolDetail: "/repo"}
+	w := ToWindow(r, m)
+	if w.Activity != "waiting on folder trust: /repo" || w.PendingTool != windowstate.PendingTrust || w.PendingToolDetail != "/repo" {
+		t.Errorf("window = activity %q pending %q/%q", w.Activity, w.PendingTool, w.PendingToolDetail)
 	}
 }

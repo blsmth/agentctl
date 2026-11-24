@@ -87,6 +87,9 @@ func TestLaunch_PiHarness(t *testing.T) {
 	if ws, _ := windowstate.Read("@9001"); ws.Harness != "pi" {
 		t.Errorf("windowstate harness = %q", ws.Harness)
 	}
+	if w := rec.Watches(); len(w) != 0 {
+		t.Errorf("launch watcher started on pi (no trust dialog): %v", w)
+	}
 
 	prompt := argv[slices.Index(argv, "--append-system-prompt")+1]
 	data, err := os.ReadFile(prompt)
@@ -168,6 +171,9 @@ func TestRestore_Pi(t *testing.T) {
 	}
 	if l.Env[harness.EnvHarness] != "pi" {
 		t.Errorf("env harness = %q", l.Env[harness.EnvHarness])
+	}
+	if w := rec.Watches(); len(w) != 0 {
+		t.Errorf("launch watcher started on pi: %v", w)
 	}
 	if _, err := Restore(RestoreRequest{AgentName: "golden", WorkDir: env.Project, Harness: "gone"}); err == nil {
 		t.Error("want error restoring an unknown harness")

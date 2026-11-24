@@ -11,11 +11,13 @@ export class ApiError extends Error {
   }
 }
 
-/** api performs a JSON request and returns the parsed body (null for 204). */
-export async function api(method, path, body) {
+/** api performs a JSON request and returns the parsed body (null for 204). keepalive survives page unload. */
+export async function api(method, path, body, { keepalive = false } = {}) {
   const headers = { Accept: "application/json" };
   if (method !== "GET") headers["X-Agentctl-CSRF"] = "1";
   const init = { method, headers, credentials: "same-origin", cache: "no-store" };
+  // keepalive lets the request outlive the page (a delete flushed on unload).
+  if (keepalive) init.keepalive = true;
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);

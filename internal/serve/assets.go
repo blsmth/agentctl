@@ -31,7 +31,7 @@ const (
 // Styles allow inline because xterm.js injects <style> elements and the
 // pairing pages inline their stylesheet.
 const cspHTML = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-	"img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; " +
+	"img-src 'self' data:; frame-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; " +
 	"base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
 
 // staticAsset is one embedded file the server exposes.
@@ -64,9 +64,11 @@ var staticAssets = []staticAsset{
 	{"/fleet.js", "fleet.js", ctJS, cacheRevalidate, false},
 	{"/attach.js", "attach.js", ctJS, cacheRevalidate, false},
 	{"/swipe.js", "swipe.js", ctJS, cacheRevalidate, false},
+	{"/drag.js", "drag.js", ctJS, cacheRevalidate, false},
 	{"/window.js", "window.js", ctJS, cacheRevalidate, false},
 	{"/terminal.js", "terminal.js", ctJS, cacheRevalidate, false},
 	{"/dispatch.js", "dispatch.js", ctJS, cacheRevalidate, false},
+	{"/artifacts.js", "artifacts.js", ctJS, cacheRevalidate, false},
 	{"/schedules.js", "schedules.js", ctJS, cacheRevalidate, false},
 	{"/settings.js", "settings.js", ctJS, cacheRevalidate, false},
 	{"/host.js", "host.js", ctJS, cacheRevalidate, false},

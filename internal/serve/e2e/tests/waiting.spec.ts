@@ -54,9 +54,11 @@ test("the detail screen lists what it waits on and flips back to idle", async ({
   await expect(pill).toHaveClass(/\bwaiting\b/);
   await expect(pill.locator(".state-text")).toContainText("waiting on 2 agents");
   const links = page.locator(".win-waiting a.waiting-child");
-  await expect(links).toHaveCount(2);
-  await expect(links.nth(0)).toContainText("Add retry");
-  await expect(links.nth(1).locator(".glyph")).toHaveText("⏸");
+  await expect(links).toHaveCount(3); // two live children plus the finished one
+  // Attention order: blocked, working, then the finished one.
+  await expect(links.nth(0).locator(".glyph")).toHaveText("⏸");
+  await expect(links.nth(1)).toContainText("Add retry");
+  await expect(links.nth(2).locator(".glyph")).toHaveText("✓");
   // Still idle at the prompt: the reply composer stays.
   await expect(page.locator(".actions textarea")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 800 });
@@ -68,13 +70,38 @@ test("the detail screen lists what it waits on and flips back to idle", async ({
   await control.patchWindow(SHOP, "@2", { state: "idle", done: true });
   await control.patchWindow(SHOP, "@3", { state: "idle", done: true });
   await expect(pill).toHaveClass(/\bidle\b/);
-  await expect(page.locator(".win-waiting")).toBeHidden();
+  // The children stay linked (finished), just no longer "waiting on".
+  await expect(page.locator(".win-waiting a.child-link")).toHaveCount(3);
+  await expect(page.locator(".win-waiting a.child-link .glyph").first()).toHaveText("✓");
+});
+
+test("a sub-agent links back to its parent, and the link navigates", async ({ page, control }) => {
+  await control.setFleet(fleet());
+  await page.goto(`/#/w/${SHOP}/${encodeURIComponent("@2")}`);
+  const parent = page.locator(".win-waiting a.parent-link");
+  await expect(parent).toHaveCount(1);
+  await parent.tap();
+  await expect(page).toHaveURL(/%401$/);
+  await page.goBack();
+  await expect(page).toHaveURL(/%402$/);
+  // A window without a parent has no parent link.
+  await page.goto(`/#/w/${SHOP}/${encodeURIComponent("@5")}`);
+  await expect(page.locator(".win-waiting a.parent-link")).toHaveCount(0);
+});
+
+test("a gone parent shows no link", async ({ page, control }) => {
+  const groups = fleet();
+  groups[0].windows = groups[0].windows.filter((w) => w.id !== "@1");
+  await control.setFleet(groups);
+  await page.goto(`/#/w/${SHOP}/${encodeURIComponent("@2")}`);
+  await expect(page.locator(".pane")).toBeVisible();
+  await expect(page.locator(".win-waiting a.parent-link")).toHaveCount(0);
 });
 
 test("a child link opens the child's window", async ({ page, control }) => {
   await control.setFleet(fleet());
   await page.goto(`/#/w/${SHOP}/${encodeURIComponent("@1")}`);
-  await page.locator(".win-waiting a.waiting-child").first().tap();
+  await page.locator(".win-waiting a.child-link", { hasText: "Add retry" }).tap();
   await expect(page).toHaveURL(/%402$/);
   // The generated title heads the screen; the agent name moves to the where line.
   await expect(page.locator("header.bar h1 .h1-text")).toHaveText("Add retry");

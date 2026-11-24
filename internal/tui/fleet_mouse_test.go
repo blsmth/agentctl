@@ -47,13 +47,13 @@ func TestLineAt(t *testing.T) {
 	}{
 		{"subheader", 40, -1, 5, 3, 1, true},
 		{"first row", 40, -1, 5, 4, 2, true},
-		{"row b", 40, -1, 5, 5, 3, true},
-		{"divider", 40, -1, 5, 6, 4, true},
-		{"header", 40, -1, 5, 7, 5, true},
-		{"row c", 40, -1, 5, 9, 7, true},
+		{"row b", 40, -1, 5, 6, 3, true}, // the selected row a has a chip line
+		{"divider", 40, -1, 5, 7, 4, true},
+		{"header", 40, -1, 5, 8, 5, true},
+		{"row c", 40, -1, 5, 10, 7, true},
 		{"title", 40, -1, 5, 0, -1, false},
 		{"blank row above list", 40, -1, 5, 1, -1, false},
-		{"below last line", 40, -1, 5, 10, -1, false},
+		{"below last line", 40, -1, 5, 11, -1, false},
 		{"scrolled", 10, 5, 5, 3, 3, true},
 	}
 	for _, tt := range tests {
@@ -88,9 +88,9 @@ func TestClickDecision(t *testing.T) {
 		wantIdx int
 	}{
 		{"row selects", 5, 4, 0, fleetClickSelect, 2},
-		{"header selects", 1, 7, 2, fleetClickSelect, 5},
-		{"header name folds", 5, 7, 2, fleetClickFold, 5},
-		{"divider ignored", 5, 6, 2, fleetClickIgnore, 4},
+		{"header selects", 1, 8, 2, fleetClickSelect, 5},
+		{"header name folds", 5, 8, 2, fleetClickFold, 5},
+		{"divider ignored", 5, 7, 2, fleetClickIgnore, 4},
 		{"subheader ignored", 5, 3, 2, fleetClickIgnore, 1},
 		{"chrome ignored", 5, 0, 1, fleetClickIgnore, -1},
 	}
@@ -108,7 +108,7 @@ func TestClickDecision(t *testing.T) {
 
 func TestClickHeaderSelectsWithoutJump(t *testing.T) {
 	m := mouseTestModel(t, 120, 40)
-	next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: 7})
+	next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: 8})
 	got := next.(FleetModel)
 	if !got.selIsHeader || got.selSession != "s2" || got.selWindowID != "" {
 		t.Errorf("selection = %q/%q/%v, want header of s2", got.selSession, got.selWindowID, got.selIsHeader)
@@ -171,7 +171,7 @@ func TestButtonDecision(t *testing.T) {
 	w := m.listColWidth()
 	newX := w - fleetSidebarRightGutter - 2 // inside "+ new"
 	closeX := w - fleetSidebarRightGutter - 1
-	// y: 2 header(s1), 3 dispatched label, 4 row a, 5 row b, 6 divider, 7 header(s2), 8 dispatched label, 9 row c
+	// y: 2 header(s1), 3 dispatched label, 4 row a (selected: 5 is its agent chip), 6 row b, 7 divider, 8 header(s2), 9 dispatched label, 10 row c
 	tests := []struct {
 		name       string
 		x, y       int
@@ -184,17 +184,17 @@ func TestButtonDecision(t *testing.T) {
 		{"header gap before counts selects", newX - 30, 2, tea.MouseLeft, 0, fleetClickSelect},
 		{"header fold marker folds", fleetHeaderNameCol, 2, tea.MouseLeft, 0, fleetClickFold},
 		{"header space before name folds", fleetHeaderNameCol + 1, 2, tea.MouseLeft, 0, fleetClickFold},
-		{"stale header has no button", newX, 7, tea.MouseLeft, 5, fleetClickSelect},
+		{"stale header has no button", newX, 8, tea.MouseLeft, 5, fleetClickSelect},
 		{"row close button", closeX, 4, tea.MouseLeft, 2, fleetClickClose},
 		{"row elsewhere selects", 5, 4, tea.MouseLeft, 2, fleetClickSelect},
-		{"stale row still closable", closeX, 9, tea.MouseLeft, 7, fleetClickClose},
+		{"stale row still closable", closeX, 10, tea.MouseLeft, 7, fleetClickClose},
 		{"row new column is not a button", newX - 4, 4, tea.MouseLeft, 2, fleetClickSelect},
 		{"right click row", 5, 4, tea.MouseRight, 2, fleetClickMenu},
 		{"right click row on close col", closeX, 4, tea.MouseRight, 2, fleetClickMenu},
 		{"left click subheader", closeX, 3, tea.MouseLeft, 1, fleetClickIgnore},
 		{"right click subheader", 5, 3, tea.MouseRight, 1, fleetClickIgnore},
 		{"right click header", 5, 2, tea.MouseRight, 0, fleetClickMenu},
-		{"right click divider", 5, 6, tea.MouseRight, 4, fleetClickIgnore},
+		{"right click divider", 5, 7, tea.MouseRight, 4, fleetClickIgnore},
 		{"middle click", 5, 4, tea.MouseMiddle, -1, fleetClickIgnore},
 	}
 	for _, tt := range tests {
@@ -267,7 +267,7 @@ func TestHandleClickActions(t *testing.T) {
 	})
 	t.Run("clicking another row cancels", func(t *testing.T) {
 		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: closeX, Y: 4})
-		next, _ = next.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 5})
+		next, _ = next.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 6})
 		if next.(FleetModel).closeArmed() {
 			t.Error("selection moving away should cancel")
 		}
@@ -318,10 +318,10 @@ func armedHeaderModel(t *testing.T) FleetModel {
 
 func TestSelectorHitColumns(t *testing.T) {
 	m := armedHeaderModel(t)
-	shell, agent := m.selectorSpans()
+	shell, agent, cron := m.selectorSpans(m.groups[0])
 	end := m.listColWidth() - fleetSidebarRightGutter
-	if agent[1] != end || agent[1]-agent[0] != len(fleetAgentLabel) || shell[1]-shell[0] != len(fleetShellLabel) {
-		t.Fatalf("spans shell=%v agent=%v end=%d", shell, agent, end)
+	if agent[1] != end || cron[1]-cron[0] != len(fleetCronLabel) || agent[1]-agent[0] != len(fleetAgentLabel) || shell[1]-shell[0] != len(fleetShellLabel) {
+		t.Fatalf("spans shell=%v agent=%v cron=%v end=%d", shell, agent, cron, end)
 	}
 	tests := []struct {
 		name string
@@ -334,6 +334,11 @@ func TestSelectorHitColumns(t *testing.T) {
 		{"shell last col", shell[1] - 1, fleetClickNewShell},
 		{"space after shell", shell[1], fleetClickNewShell},
 		{"pipe", shell[1] + 1, fleetClickSelect},
+		{"space before cron", cron[0] - 1, fleetClickNewCron},
+		{"cron first col", cron[0], fleetClickNewCron},
+		{"cron last col", cron[1] - 1, fleetClickNewCron},
+		{"space after cron", cron[1], fleetClickNewCron},
+		{"second pipe", cron[1] + 1, fleetClickSelect},
 		{"space before agent", agent[0] - 1, fleetClickNewAgent},
 		{"agent first col", agent[0], fleetClickNewAgent},
 		{"agent last col", agent[1] - 1, fleetClickNewAgent},
@@ -351,7 +356,7 @@ func TestSelectorHitColumns(t *testing.T) {
 
 func TestSelectorClicks(t *testing.T) {
 	m := armedHeaderModel(t)
-	shell, agent := m.selectorSpans()
+	shell, agent, cron := m.selectorSpans(m.groups[0])
 	click := func(m FleetModel, x, y int) (FleetModel, bool) {
 		next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 		return next.(FleetModel), cmd != nil
@@ -368,6 +373,18 @@ func TestSelectorClicks(t *testing.T) {
 			t.Errorf("cmd=%v armed=%v info=%q", cmd, got.newArmed(), got.infoMsg)
 		}
 	})
+	t.Run("cron", func(t *testing.T) {
+		got, cmd := click(m, cron[0], 2)
+		if got.newArmed() || !got.schedFormOpen() || got.schedForm.mode != schedFormNew {
+			t.Fatalf("armed=%v formOpen=%v", got.newArmed(), got.schedFormOpen())
+		}
+		if got.schedForm.dirs[got.schedForm.dirIdx] != "/p/one" {
+			t.Errorf("form dir = %v / %d, want /p/one", got.schedForm.dirs, got.schedForm.dirIdx)
+		}
+		if !cmd {
+			t.Error("opening the form before the jobs loaded must load them")
+		}
+	})
 	t.Run("elsewhere cancels", func(t *testing.T) {
 		got, _ := click(m, 5, 5)
 		if got.newArmed() {
@@ -380,6 +397,9 @@ func TestSelectorClicks(t *testing.T) {
 		}
 		if h := m.hoverAt(agent[0], 2); h.reg != fleetHoverNewAgent {
 			t.Errorf("agent hover = %v", h.reg)
+		}
+		if h := m.hoverAt(cron[0], 2); h.reg != fleetHoverNewCron {
+			t.Errorf("cron hover = %v", h.reg)
 		}
 	})
 }
@@ -478,10 +498,10 @@ func TestSelectorRenderingAndHints(t *testing.T) {
 			t.Errorf("width %d: header %d wide > %d", width, w, cw)
 		}
 		plain := strings.TrimRight(ansi.Strip(out), " ")
-		if !strings.HasSuffix(plain, fleetShellLabel+fleetSelSep+fleetAgentLabel) {
+		if !strings.HasSuffix(plain, fleetShellLabel+fleetSelSep+fleetCronLabel+fleetSelSep+fleetAgentLabel) {
 			t.Errorf("width %d: selector truncated: %q", width, plain)
 		}
-		shell, _ := m.selectorSpans()
+		shell, _, _ := m.selectorSpans(m.groups[0])
 		if shell[0] >= 0 && !strings.HasPrefix(string([]rune(ansi.Strip(out))[shell[0]:]), fleetShellLabel) {
 			t.Errorf("width %d: shell label not at span col %d: %q", width, shell[0], ansi.Strip(out))
 		}
@@ -536,4 +556,130 @@ func TestSelectorTargetsArmedSessionAfterReload(t *testing.T) {
 			t.Error("must cancel without launching")
 		}
 	})
+}
+
+// formDir is the project directory the open schedule form targets.
+func formDir(t *testing.T, m FleetModel) string {
+	t.Helper()
+	if !m.schedFormOpen() || m.schedForm.mode != schedFormNew {
+		t.Fatalf("schedule form open=%v, want create mode", m.schedFormOpen())
+	}
+	return m.schedForm.dirs[m.schedForm.dirIdx]
+}
+
+func TestNewCronKeyAndMenu(t *testing.T) {
+	press := func(m FleetModel, key string) FleetModel {
+		next, _ := m.Update(tea.KeyPressMsg{Code: rune(key[0]), Text: key})
+		return next.(FleetModel)
+	}
+	t.Run("key on header", func(t *testing.T) {
+		m := buttonTestModel(t)
+		m.selectLine(0)
+		if got := formDir(t, press(m, fleetCronKey)); got != "/p/one" {
+			t.Errorf("dir = %q", got)
+		}
+	})
+	t.Run("key from armed selector", func(t *testing.T) {
+		for _, k := range []string{fleetCronKey, "c"} {
+			got := press(armedHeaderModel(t), k)
+			if got.newArmed() || formDir(t, got) != "/p/one" {
+				t.Errorf("key %q: armed=%v", k, got.newArmed())
+			}
+		}
+	})
+	t.Run("menu item", func(t *testing.T) {
+		m := buttonTestModel(t)
+		m.selectLine(2)
+		found := false
+		for _, it := range m.fleetMenuItems(2) {
+			found = found || (it.label == "new cron" && it.key == fleetCronKey)
+		}
+		if !found {
+			t.Fatalf("no new cron item: %v", m.fleetMenuItems(2))
+		}
+		m.openMenu(2)
+		_ = m.runMenuKey(fleetCronKey)
+		if got := formDir(t, m); got != "/p/one" {
+			t.Errorf("dir = %q", got)
+		}
+	})
+	t.Run("not offered without a project dir", func(t *testing.T) {
+		m := buttonTestModel(t)
+		for i, l := range m.lines {
+			if l.kind == fleetLineHeader && l.group.Session == m.groups[1].Session {
+				for _, it := range m.fleetMenuItems(i) {
+					if it.key == fleetCronKey {
+						t.Errorf("menu offers cron for a group that cannot launch")
+					}
+				}
+				m.selectLine(i)
+				if got := press(m, fleetCronKey); got.schedFormOpen() {
+					t.Error("key opened a form for a group that cannot launch")
+				}
+			}
+		}
+	})
+}
+
+func TestSelectorCronNarrow(t *testing.T) {
+	for w := 20; w <= 120; w += 2 {
+		m := armedHeaderModel(t)
+		m.termWidth = w
+		m.configureSplitPane()
+		cw := m.listColWidth()
+		out := ansi.Strip(m.renderLine(0, cw))
+		shell, agent, cron := m.selectorSpans(m.groups[0])
+		rs := []rune(out)
+		at := func(sp [2]int) string {
+			if sp[0] < 0 || sp[1] > len(rs) {
+				return "<out of range>"
+			}
+			return string(rs[sp[0]:sp[1]])
+		}
+		if got := at(shell); got != fleetShellLabel {
+			t.Errorf("w=%d shell span %v = %q in %q", w, shell, got, out)
+		}
+		if got := at(agent); got != fleetAgentLabel {
+			t.Errorf("w=%d agent span %v = %q", w, agent, got)
+		}
+		hasCron := strings.Contains(strings.TrimRight(out, " "), fleetCronLabel)
+		if hasCron != (cron[1] > 0) {
+			t.Errorf("w=%d cron drawn=%v span=%v: %q", w, hasCron, cron, out)
+		}
+		if cron[1] > 0 && at(cron) != fleetCronLabel {
+			t.Errorf("w=%d cron span %v = %q", w, cron, at(cron))
+		}
+	}
+	wide := armedHeaderModel(t)
+	if _, _, cron := wide.selectorSpans(wide.groups[0]); cron[1] == 0 {
+		t.Error("cron missing at the default width")
+	}
+}
+
+func TestSelectorAgentIsDefaultStyle(t *testing.T) {
+	m := armedHeaderModel(t)
+	cw := m.listColWidth()
+	g := m.groups[0]
+	tests := []struct {
+		name  string
+		hover fleetHoverRegion
+		want  string // label rendered with the emphasis style
+	}{
+		{"unhovered", fleetHoverNone, fleetAgentLabel},
+		{"header hover", fleetHoverHeader, fleetAgentLabel},
+		{"shell hover", fleetHoverNewShell, fleetShellLabel},
+		{"cron hover", fleetHoverNewCron, fleetCronLabel},
+		{"agent hover", fleetHoverNewAgent, fleetAgentLabel},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := m.renderGroupHeaderHover(g, true, tt.hover, cw)
+			for _, l := range []string{fleetShellLabel, fleetCronLabel, fleetAgentLabel} {
+				emph := fleetNewHoverStyle.Render(l)
+				if got := strings.Contains(out, emph); got != (l == tt.want) {
+					t.Errorf("%q emphasised=%v, want %v", l, got, l == tt.want)
+				}
+			}
+		})
+	}
 }

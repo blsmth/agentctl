@@ -127,3 +127,30 @@ func TestStatusReportsPush(t *testing.T) {
 		t.Errorf("LastPush = %+v", st.LastPush)
 	}
 }
+
+// An artifact id is a viewing credential: push diagnostics log only a prefix.
+func TestBroadcastLogsNoArtifactID(t *testing.T) {
+	logs := capturePushLog(t)
+	ts := newTestServerWith(t, config.ServeConfig{}, func(o *Options) { o.Pusher = &fakePusher{} })
+	a, _ := ts.pairDevice(t, "ok")
+	_ = ts.subs.Set(a.ID, testSub("ok"), ts.clock.Now())
+	id := "abcdefghijklmnopqrstuvwxyz"
+	ts.sender.Broadcast(context.Background(), Message{Kind: "artifact", Tag: "artifact:" + id, URL: artifactViewerURL(id)})
+	got := logs()
+	if strings.Contains(got, id) || !strings.Contains(got, "tag=artifact:abcdef…") {
+		t.Errorf("log = %q, want only the id prefix", got)
+	}
+}
+
+func TestRedactArtifactIDs(t *testing.T) {
+	for in, want := range map[string]string{
+		"artifacts abcdefghijklmnopqrstuvwxyz rev 2: gone":   "artifacts abcdef… rev 2: gone",
+		"/a/abcdefghijklmnopqrstuvwxyz/latest/x":             "/a/abcdef…/latest/x",
+		"legacy abcdefghij stays":                            "legacy abcdefghij stays",
+		"longer abcdefghijklmnopqrstuvwxyzabcd is not an id": "longer abcdefghijklmnopqrstuvwxyzabcd is not an id",
+	} {
+		if got := redactArtifactIDs(in); got != want {
+			t.Errorf("redactArtifactIDs(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

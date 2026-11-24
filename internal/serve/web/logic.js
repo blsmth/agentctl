@@ -65,6 +65,36 @@ export function waitingIndex(groups) {
 }
 
 /**
+ * parentOf resolves win's dispatcher in the fleet feed (across every group,
+ * as waitingIndex matches). It returns null for no parent, a self-parent or a
+ * parent that is not a live window in the feed, so callers never draw a dead
+ * link. Window ids are unique, so cycles cannot make this loop.
+ */
+export function parentOf(groups, win) {
+  if (!win || !win.parent || win.parent === win.window_id) return null;
+  for (const g of groups ?? []) {
+    for (const w of g.windows ?? []) if (w.window_id === win.parent) return w;
+  }
+  return null;
+}
+
+/**
+ * childrenOf lists win's direct live children (win.parent === win.window_id,
+ * the same definition as waitingIndex and treeRows, across every group) in
+ * attention order. A window is never its own child.
+ */
+export function childrenOf(groups, win) {
+  if (!win || !win.window_id) return [];
+  const kids = [];
+  for (const g of groups ?? []) {
+    for (const w of g.windows ?? []) {
+      if (w.parent === win.window_id && w.window_id && w.window_id !== win.window_id) kids.push(w);
+    }
+  }
+  return sortWindows(kids);
+}
+
+/**
  * displayState is effectiveState plus "waiting". index is a waitingIndex;
  * without one, a window annotated by sortGroups (win.waiting_on) is used.
  */
@@ -293,6 +323,48 @@ export async function runSweep(group, { send, confirm, toast, fullSweep = true }
 export const LONG_PRESS_MS = 400;
 /** LONG_PRESS_SLOP is the movement in px that turns a pending press into a scroll. */
 export const LONG_PRESS_SLOP = 10;
+
+/** DOUBLE_TAP_MS is the longest gap between two taps that count as a double tap. */
+export const DOUBLE_TAP_MS = 300;
+/** DOUBLE_TAP_SLOP is the most the second tap may land from the first, in px. */
+export const DOUBLE_TAP_SLOP = 30;
+/** TAP_MAX_MS is the longest a touch may last and still be a tap (not a long press). */
+export const TAP_MAX_MS = 300;
+/** TAP_SLOP is the most a finger may move during a tap, in px (more is a scroll). */
+export const TAP_SLOP = 10;
+
+/** isTap reports whether a touch from start {t,x,y} to end is a tap, not a press or scroll. */
+export function isTap(start, end) {
+  if (end.t - start.t > TAP_MAX_MS) return false;
+  return Math.hypot(end.x - start.x, end.y - start.y) <= TAP_SLOP;
+}
+
+/** isDoubleTap reports whether tap {t,x,y} follows prev (or null) closely enough to pair with it. */
+export function isDoubleTap(prev, tap) {
+  if (!prev) return false;
+  const dt = tap.t - prev.t;
+  if (dt < 0 || dt > DOUBLE_TAP_MS) return false;
+  return Math.hypot(tap.x - prev.x, tap.y - prev.y) <= DOUBLE_TAP_SLOP;
+}
+
+/** PANE_TAIL_LINES is the live poll's capture size; fewer lines means no scrollback. */
+export const PANE_TAIL_LINES = 200;
+
+/** paneLineCount counts the lines of captured pane text (a trailing newline adds none). */
+export function paneLineCount(text) {
+  if (!text) return 0;
+  return text.replace(/\n$/, "").split("\n").length;
+}
+
+/** canLoadEarlier reports whether more scrollback may exist beyond the live tail. */
+export function canLoadEarlier(tailText) {
+  return paneLineCount(tailText) >= PANE_TAIL_LINES;
+}
+
+/** historyAddsLines reports whether a full-history capture holds more lines than the tail. */
+export function historyAddsLines(tailText, fullText) {
+  return paneLineCount(fullText) > paneLineCount(tailText);
+}
 
 /** isDispatched mirrors fleet.Meta.Dispatched: launched by another agent. */
 export function isDispatched(win) {
@@ -683,7 +755,9 @@ export function terminalSocketUrl(loc, session, windowId) {
 
 /** parseRoute turns location.hash into {name, ...params}. */
 export function parseRoute(hash) {
-  const parts = (hash || "").replace(/^#\/?/, "").split("/").filter(Boolean);
+  const [path, query = ""] = (hash || "").split("?", 2);
+  const parts = path.replace(/^#\/?/, "").split("/").filter(Boolean);
+  if (parts[0] === "artifacts") return parseArtifactsRoute(parts.slice(1), query);
   try {
     if (parts[0] === "w" && parts.length >= 3) {
       return { name: "window", session: decodeURIComponent(parts[1]), windowId: decodeURIComponent(parts[2]) };
@@ -796,14 +870,41 @@ export function checkAttachment(file, count) {
  * skipReview adds skip_review only when true (orchestrator launches run as if
  * pr_review were off).
  */
-export function buildDispatchRequest(agent, projectDir, prompt, choice = {}, images = [], instructions = "", skipReview = false) {
+export function buildDispatchRequest(agent, projectDir, prompt, choice = {}, images = [], instructions = "", skipReview = false, template = "") {
   const body = { agent, project_dir: projectDir, prompt };
   const extra = (instructions ?? "").trim();
   if (extra) body.instructions = extra;
   if (skipReview === true) body.skip_review = true;
+  if (template) body.template = template;
   if (images.length) body.images = images;
   for (const k of ["backend", "model", "effort"]) if (choice[k]) body[k] = choice[k];
   return { method: "POST", path: "/v1/dispatch", body };
+}
+
+/** templatesPath is GET /v1/templates for a project dir ("" = global only). */
+export function templatesPath(dir) {
+  return dir ? `/v1/templates?dir=${encodeURIComponent(dir)}` : "/v1/templates";
+}
+
+/** templateLabel is a template picker row: its name, then its description. */
+export function templateLabel(t) {
+  return t.description ? `${t.name} · ${t.description}` : t.name;
+}
+
+/**
+ * templateFill is what choosing template t sets on the dispatch sheet: the
+ * prompt always, the agent only when it is one of agentNames, the project
+ * only when t.dir is one of projects (by dir), and the model and effort
+ * (preset for the launch picker) when set. Nothing else is touched, and
+ * every value stays editable.
+ */
+export function templateFill(t, projects, agentNames) {
+  const out = { prompt: t.prompt ?? "", preset: {} };
+  if (t.agent && agentNames.includes(t.agent)) out.agent = t.agent;
+  if (t.dir && projects.some((p) => p.dir === t.dir)) out.project = t.dir;
+  if (t.model) out.preset.model = t.model;
+  if (t.effort) out.preset.effort = t.effort;
+  return out;
 }
 
 /** buildShellRequest builds POST /v1/shell: a plain shell in the project's session. */
@@ -881,6 +982,7 @@ export function confirmLines(body, imageCount = 0) {
   if (body.model) rows.push(`model: ${body.model}`);
   if (body.effort) rows.push(`effort: ${body.effort}`);
   if (body.skip_review) rows.push("code review: skipped");
+  if (body.template) rows.push(`template: ${body.template}`);
   const lines = [rows.join("\n"), body.prompt];
   if (body.instructions) lines.push(`additional instructions (system prompt):\n${body.instructions}`);
   return lines;
@@ -903,6 +1005,82 @@ export function actionsFor(win, pane) {
 export function actionsWithQueue(win, pane, hasQueue) {
   const kind = actionsFor(win, pane);
   return kind === "interrupt" && hasQueue ? "queue" : kind;
+}
+
+/** buildCommandRequest builds POST …/command (a Claude Code slash command). */
+export function buildCommandRequest(session, windowId, text) {
+  return { method: "POST", path: `${windowApiPath(session, windowId)}/command`, body: { text } };
+}
+
+/** COMMAND_MAX is the longest slash command the server accepts (characters). */
+export const COMMAND_MAX = 2000;
+
+/** SLASH_COMMANDS are common Claude Code built-ins offered while typing "/". */
+export const SLASH_COMMANDS = [
+  { name: "/compact", hint: "Summarise the conversation" },
+  { name: "/clear", hint: "Start a fresh conversation" },
+  { name: "/context", hint: "Show context usage" },
+  { name: "/cost", hint: "Show token cost" },
+  { name: "/model", hint: "Switch model (opens a menu)" },
+  { name: "/status", hint: "Show status" },
+  { name: "/review", hint: "Review a pull request" },
+  { name: "/memory", hint: "Edit memory (opens a menu)" },
+  { name: "/resume", hint: "Resume a conversation (opens a menu)" },
+];
+
+/** isClaudeWindow: the window row's harness is Claude Code ("" = claude). */
+export function isClaudeWindow(win) {
+  const h = (win?.harness ?? "").trim().toLowerCase();
+  return h === "" || h === "claude";
+}
+
+/**
+ * commandWord is the first word of text after trimming leading space when it
+ * is a slash command, else null. A first word with a second "/" (a path such
+ * as /Users/me/file.go) is not a command.
+ */
+export function commandWord(text) {
+  const t = (text ?? "").trimStart();
+  if (!t.startsWith("/")) return null;
+  const word = t.split(/\s/, 1)[0];
+  return word.indexOf("/", 1) >= 0 ? null : word;
+}
+
+/** isSlashCommand: text should be sent with the command action. */
+export function isSlashCommand(text) {
+  return commandWord(text) !== null;
+}
+
+const COMMAND_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9:_-]*$/;
+
+/** commandError mirrors the server's checks; "" when text is a valid command. */
+export function commandError(text) {
+  const t = (text ?? "").trim();
+  if (!t.startsWith("/")) return "A command must start with /";
+  if (/[\r\n]/.test(t)) return "A command must be a single line";
+  if ([...t].length > COMMAND_MAX) return `A command is at most ${COMMAND_MAX} characters`;
+  const name = t.slice(1).split(" ", 1)[0];
+  if (!COMMAND_NAME_RE.test(name)) return "Invalid command name";
+  return "";
+}
+
+/**
+ * commandSuggestions filters SLASH_COMMANDS by the typed first word (prefix,
+ * case-insensitive). Only while that word is still being typed (no space yet
+ * and a single "/"); empty otherwise.
+ */
+export function commandSuggestions(text) {
+  const t = (text ?? "").trimStart();
+  if (!t.startsWith("/") || /\s/.test(t) || t.indexOf("/", 1) >= 0) return [];
+  const p = t.toLowerCase();
+  return SLASH_COMMANDS.filter((c) => c.name.startsWith(p) && c.name !== p);
+}
+
+/** commandConfirm is the confirm sheet for a destructive command, else null. */
+export function commandConfirm(text) {
+  return commandWord(text) === "/clear"
+    ? { title: "Clear this conversation?", lines: ["Runs /clear: the agent forgets the conversation so far."], confirmLabel: "Clear", danger: true }
+    : null;
 }
 
 export function buildQueueRequest(session, windowId, text, images) {
@@ -1568,6 +1746,10 @@ export function approvalSummary(a) {
     return `${who} wants to dispatch ${agent}${project ? ` to ${project}` : ""}`;
   }
   if (a.kind === "cron") return `${who} wants to schedule ${a.target_agent || "an agent"}`;
+  if (a.kind === "template") {
+    const act = (a.details?.mode || "change template").replace(/ template$/, "");
+    return `${who} wants to ${act} template${a.details?.template ? ` ${a.details.template}` : ""}`;
+  }
   return `${who} wants to run a command`;
 }
 
@@ -1579,12 +1761,19 @@ export function approvalSummary(a) {
  * (older hook, bash and cron kinds) gives [].
  */
 export function approvalRows(a) {
-  const d = a?.kind === "dispatch" ? a.details : null;
+  const d = a?.kind === "dispatch" || a?.kind === "template" ? a.details : null;
   if (!d) return [];
   const rows = [];
   const add = (label, value, detail = "", flag = "") => {
     if (value) rows.push({ label, value, detail, flag });
   };
+  add("Template", d.template);
+  // A template change has no launch to describe: its name, action and agent.
+  if (a.kind === "template") {
+    add("Action", d.mode);
+    add("Agent", d.agent);
+    return rows;
+  }
   if (d.project) add("Project", d.project, d.dir, d.other_project ? `not ${d.asking_project || "the asking project"}` : "");
   // A cwd the command changes before dispatching: the project is not known.
   else if (d.dir_source) add("Project", "unknown", "", d.dir_source);
@@ -1629,6 +1818,7 @@ export function approvalBannerText(n) {
 function approvalConfirmTitle(kind) {
   if (kind === "dispatch") return "Approve this dispatch?";
   if (kind === "cron") return "Approve this schedule?";
+  if (kind === "template") return "Approve this template change?";
   return "Approve this command?";
 }
 
@@ -1956,7 +2146,7 @@ const DEFAULT_SIMPLE = { kind: "weekdays", minute: 0, hour: 9, days: [] };
  * simple is the server's picker model for the stored schedule, or null: then
  * the form opens in Custom with the raw expression.
  */
-export function newScheduleForm({ job = null, simple = null, promptText = "", copy = false, words = "" } = {}) {
+export function newScheduleForm({ job = null, simple = null, promptText = "", copy = false, words = "", templateText = "" } = {}) {
   const base = job ? structuredClone(job) : {};
   const custom = job ? !simple : false;
   const sim = simple ?? DEFAULT_SIMPLE;
@@ -1970,6 +2160,11 @@ export function newScheduleForm({ job = null, simple = null, promptText = "", co
     prompt: job ? (job.prompt || promptText || "") : "",
     promptKey: job?.prompt_key && !job.prompt ? job.prompt_key : "",
     promptKeyText: job?.prompt_key && !job.prompt ? promptText : "",
+    // The prompt source: "prompt" (inline or a context key) or "template"
+    // (a prompt template read from the project at every fire).
+    source: job?.template ? "template" : "prompt",
+    template: job?.template ?? "",
+    templateText,
     mode: custom ? "custom" : sim.kind,
     minute: sim.minute,
     hour: sim.hour,
@@ -2000,13 +2195,19 @@ export function scheduleBody(f) {
   job.dir = f.dir;
   job.agent = f.agent;
   const promptChanged = f.promptKey && f.prompt !== f.promptKeyText;
-  if (f.promptKey && !promptChanged) {
+  if (f.source === "template") {
+    // The template is the prompt; an empty agent means the template's.
+    job.template = f.template;
+    delete job.prompt;
+    delete job.prompt_key;
+  } else if (f.promptKey && !promptChanged) {
     job.prompt_key = f.promptKey;
     delete job.prompt;
   } else {
     job.prompt = f.prompt;
     delete job.prompt_key;
   }
+  if (f.source !== "template") delete job.template;
   job.worktree = f.worktree;
   for (const k of ["model", "effort", "backend", "account", "timeout"]) {
     if (f[k]) job[k] = f[k];
@@ -2052,6 +2253,7 @@ export function formClientErrors(f) {
   if (!f.original && RESERVED_JOB_NAMES.includes(f.name.trim())) out.name = `"${f.name.trim()}" is reserved; pick another name`;
   if (f.mode === "days" && f.days.length === 0) out.schedule = "Pick at least one day";
   if (f.mode === "custom" && !f.raw.trim()) out.schedule = "Enter a cron expression";
+  if (f.source === "template" && !f.template) out.template = "Pick a template";
   return out;
 }
 
@@ -2106,7 +2308,7 @@ export function timeoutIsPreset(v) {
 }
 
 const FIELD_LABELS = {
-  dir: "project", agent: "agent", prompt: "prompt", schedule: "when", worktree: "worktree", model: "model", effort: "effort",
+  dir: "project", agent: "agent", prompt: "prompt", template: "prompt", schedule: "when", worktree: "worktree", model: "model", effort: "effort",
   backend: "backend", account: "account", timeout: "timeout", overlap: "overlap", catchup: "catch-up", usage: "skip above",
 };
 const FIELD_DEFAULTS = { model: "agent default", effort: "default", backend: "default", account: "default", timeout: "none", overlap: "skip", catchup: "latest" };
@@ -2129,9 +2331,9 @@ export function changeLines(oldJob, newJob, oldWhen = "", newWhen = "") {
   const row = (k, a, b) => out.push(`${FIELD_LABELS[k]}  ${a || FIELD_DEFAULTS[k] || "none"} \u2192 ${b || FIELD_DEFAULTS[k] || "none"}`);
   const clip = (t) => (t.length > 40 ? `${t.slice(0, 40).trim()}\u2026` : t);
   if (o.dir !== n.dir) row("dir", tildePath(o.dir), tildePath(n.dir));
-  if (o.agent !== n.agent) row("agent", o.agent, n.agent);
-  const op = o.prompt || (o.prompt_key ? `context key ${o.prompt_key}` : "");
-  const np = n.prompt || (n.prompt_key ? `context key ${n.prompt_key}` : "");
+  if ((o.agent ?? "") !== (n.agent ?? "")) row("agent", o.agent || (o.template ? "template's" : ""), n.agent || (n.template ? "template's" : ""));
+  const op = schedulePromptLabel(o);
+  const np = schedulePromptLabel(n);
   if (op !== np) row("prompt", clip(op.replace(/\s+/g, " ")), clip(np.replace(/\s+/g, " ")));
   if (o.schedule !== n.schedule) row("schedule", oldWhen || o.schedule, newWhen || n.schedule);
   if ((o.worktree !== false) !== (n.worktree !== false)) row("worktree", o.worktree === false ? "off" : "on", n.worktree === false ? "off" : "on");
@@ -2140,6 +2342,34 @@ export function changeLines(oldJob, newJob, oldWhen = "", newWhen = "") {
   if ((o.catchup || "latest") !== (n.catchup || "latest")) row("catchup", o.catchup || "latest", n.catchup || "latest");
   if (gateText(o.skip_if_usage_above) !== gateText(n.skip_if_usage_above)) row("usage", gateText(o.skip_if_usage_above), gateText(n.skip_if_usage_above));
   return out;
+}
+
+/**
+ * schedulePromptLabel names what a job runs in one line: "template triage",
+ * "context key spec", or the inline prompt.
+ */
+export function schedulePromptLabel(job) {
+  if (job?.template) return `template ${job.template}`;
+  return job?.prompt || (job?.prompt_key ? `context key ${job.prompt_key}` : "");
+}
+
+/** scheduleAgentText is the agent a job runs, naming a template's default. */
+export function scheduleAgentText(job, templateAgent = "") {
+  if (job?.agent) return job.agent;
+  if (job?.template) return templateAgent ? `${templateAgent} (from template ${job.template})` : `the agent of template ${job.template}`;
+  return "";
+}
+
+/** projectAgent joins a project and an agent as "project \u203A agent"; a missing half shows alone. */
+export function projectAgent(project, agent) {
+  return [project, agent].filter(Boolean).join(" \u203A ");
+}
+
+/** scheduleRowActivity is a list row's "project \u203A agent" line; a template job names its template ("project \u203A agent \u00B7 template X"). */
+export function scheduleRowActivity(job, project) {
+  if (!job?.template) return projectAgent(project, job?.agent);
+  const tpl = `template ${job.template}`;
+  return projectAgent(project, job.agent ? `${job.agent} \u00B7 ${tpl}` : tpl);
 }
 
 /**
@@ -2155,7 +2385,7 @@ export function scheduleReview(p, f) {
   const lines = [];
   lines.push(
     [
-      `Runs   ${job.agent} in ${where}`,
+      `Runs   ${scheduleAgentText(job, f?.templateAgent ?? "")} in ${where}`,
       `When   ${when}${tz}`,
       `Mode   unattended${p.permission_mode ? `, permission mode ${p.permission_mode}` : ""}, until paused`,
     ].join("\n"),
@@ -2167,7 +2397,11 @@ export function scheduleReview(p, f) {
   }
   const adv = f ? advancedSummary(f) : "";
   if (adv) lines.push(`Advanced: ${adv}`);
-  lines.push(`Prompt:\n${job.prompt || (job.prompt_key ? `(context key ${job.prompt_key}, read at every run)` : "")}`);
+  if (job.template) {
+    lines.push(`Prompt: template ${job.template} (read from the project at every run)${f?.templateText ? `\n${f.templateText}` : ""}`);
+  } else {
+    lines.push(`Prompt:\n${job.prompt || (job.prompt_key ? `(context key ${job.prompt_key}, read at every run)` : "")}`);
+  }
   return lines;
 }
 
@@ -2196,4 +2430,329 @@ export function cardLastFailure(st, now = Date.now()) {
   if (!st.last?.result?.startsWith("failed:")) return "";
   const ago = formatAgo(st.last.ts, now);
   return `Last run ${runResultCard(st.last)}${ago ? ` \u00B7 ${ago}` : ""}`;
+}
+
+
+// ---- artifacts ----
+
+/** ARTIFACT_TOKEN_MAX_AGE_MS is how old a raw_url token may get before the viewer refetches it (tokens last ~24h). */
+export const ARTIFACT_TOKEN_MAX_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * parseArtifactsRoute reads #/artifacts[?window=<id>&session=<s>] (the list,
+ * optionally filtered to one window) and #/artifacts/<id>[/<rev>] (the viewer).
+ */
+export function parseArtifactsRoute(parts, query = "") {
+  const dec = (v) => {
+    try {
+      return decodeURIComponent(v);
+    } catch {
+      return "";
+    }
+  };
+  if (parts.length === 0) {
+    const q = new URLSearchParams(query);
+    const windowId = q.get("window") ?? "";
+    const session = q.get("session") ?? "";
+    return windowId && session ? { name: "artifacts", view: "list", filter: { session, windowId } } : { name: "artifacts", view: "list", filter: null };
+  }
+  const id = dec(parts[0]);
+  if (!id) return { name: "artifacts", view: "list", filter: null };
+  const rev = parts[1] && /^\d+$/.test(parts[1]) ? Number(parts[1]) : null;
+  return { name: "artifacts", view: "viewer", id, rev };
+}
+
+/** artifactHash is the viewer route; rev null means the latest. */
+export function artifactHash(id, rev = null) {
+  return `#/artifacts/${encodeURIComponent(id)}${rev ? `/${rev}` : ""}`;
+}
+
+/** artifactsHash is the list route, optionally filtered to one window. */
+export function artifactsHash(filter = null) {
+  if (!filter) return "#/artifacts";
+  return `#/artifacts?window=${encodeURIComponent(filter.windowId)}&session=${encodeURIComponent(filter.session)}`;
+}
+
+/** artifactsForWindow keeps the artifacts published from one window. */
+export function artifactsForWindow(list, session, windowId) {
+  return (list ?? []).filter((a) => a.window_id === windowId && a.session === session);
+}
+
+/** artifactChipText is the window detail chip: "◆ 2 artifacts". */
+export function artifactChipText(n) {
+  return `◆ ${n} artifact${n === 1 ? "" : "s"}`;
+}
+
+/** artifactTokenStale reports whether a detail fetched at fetchedAt is old enough that its token URLs should be refreshed. */
+export function artifactTokenStale(fetchedAt, now = Date.now(), maxAge = ARTIFACT_TOKEN_MAX_AGE_MS) {
+  if (!Number.isFinite(fetchedAt)) return true;
+  return now - fetchedAt >= maxAge;
+}
+
+const ARTIFACT_ICONS = { html: "◧", markdown: "¶", image: "▣", text: "≡" };
+
+/** artifactIcon is the row glyph of a kind. */
+export function artifactIcon(kind) {
+  return ARTIFACT_ICONS[kind] ?? "◆";
+}
+
+/** artifactGroupKey is the key an artifact's project group is saved and listed under: its project dir, else its name, else "". */
+export function artifactGroupKey(a) {
+  return a.project_dir || a.project || "";
+}
+
+/** ARTIFACT_OTHER is the name of the last group, for artifacts with no project. */
+export const ARTIFACT_OTHER = "Other";
+
+/**
+ * groupArtifacts groups a list by project, keeping list order inside a group
+ * (the server's saved order). Groups follow the saved group order of the fleet
+ * (fleetGroups, as served, already ordered); projects the fleet does not know
+ * follow, by name, and artifacts with no project are the last group, "Other".
+ * Each group is {key, name, items, fleetKey}: fleetKey is the fleet group's
+ * key when the project is one the fleet lists (the only ones whose position
+ * can be saved), else "".
+ */
+export function groupArtifacts(list, fleetGroups = []) {
+  const byKey = new Map();
+  for (const a of list ?? []) {
+    const key = artifactGroupKey(a);
+    if (!byKey.has(key)) {
+      const name = key === "" ? ARTIFACT_OTHER : a.project || a.project_dir.split("/").filter(Boolean).pop() || ARTIFACT_OTHER;
+      byKey.set(key, { key, name, items: [], fleetKey: "" });
+    }
+    byKey.get(key).items.push(a);
+  }
+  const groups = [...byKey.values()];
+  const rank = new Map();
+  (fleetGroups ?? []).forEach((g, i) => {
+    for (const k of [g.key, g.dir]) if (k && !rank.has(k)) rank.set(k, { i, fleetKey: g.key ?? "" });
+  });
+  for (const g of groups) g.fleetKey = g.key === "" ? "" : (rank.get(g.key)?.fleetKey ?? "");
+  const pos = (g) => rank.get(g.key)?.i ?? Number.MAX_SAFE_INTEGER;
+  return groups
+    .map((g, i) => ({ g, i }))
+    .sort((a, b) => (a.g.key === "") - (b.g.key === "") || pos(a.g) - pos(b.g) || a.g.name.localeCompare(b.g.name) || a.i - b.i)
+    .map((d) => d.g);
+}
+
+/**
+ * mergeArtifactOrder arranges items (a group's artifacts as served) by ids,
+ * the order just dropped: artifacts not in ids come first in their incoming
+ * order, then ids' order; ids that are not in items are dropped. It is the
+ * server's merge (artifacts.ApplyOrder), so the optimistic view matches.
+ */
+export function mergeArtifactOrder(items, ids) {
+  const byId = new Map(items.map((a) => [a.id, a]));
+  const saved = new Set(ids);
+  const out = items.filter((a) => !saved.has(a.id));
+  for (const id of ids) {
+    if (byId.has(id)) {
+      out.push(byId.get(id));
+      byId.delete(id);
+    }
+  }
+  return out;
+}
+
+/** ARTIFACT_ORDER_PATH is the write route that saves one project's artifact order. */
+export const ARTIFACT_ORDER_PATH = "/v1/artifacts/order";
+
+/** buildArtifactOrderRequest saves ids as the order of project (a group key). */
+export function buildArtifactOrderRequest(project, ids) {
+  return { method: "POST", path: ARTIFACT_ORDER_PATH, body: { project, ids } };
+}
+
+/**
+ * artifactGroupMove moves the group with key to slot (an index among the
+ * other groups, "Other" always staying last) and returns the keys to save:
+ * the fleet keys of the groups the fleet lists, in the new order. null when
+ * nothing moves or the group cannot be placed (no fleet key).
+ */
+export function artifactGroupMove(groups, key, slot) {
+  const g = groups.find((x) => x.key === key);
+  if (!g || !g.fleetKey) return null;
+  const movable = groups.filter((x) => x.key !== "").map((x) => x.key);
+  const to = Math.min(slot, movable.length - 1);
+  const next = moveKey(movable, key, to);
+  if (next.every((k, i) => k === movable[i])) return null;
+  return next.map((k) => groups.find((x) => x.key === k).fleetKey).filter(Boolean);
+}
+
+/** artifactSubline is the muted line under a title: the description, else the entry file name. */
+export function artifactSubline(a) {
+  return (a.description || "").trim() || a.entry || "";
+}
+
+/** artifactRevBadge is the "rev 3" badge text; a first revision carries no news. */
+export function artifactRevBadge(a) {
+  const n = a.latest || a.rev_count || 0;
+  return n > 1 ? `rev ${n}` : "";
+}
+
+/** ARTIFACT_COLLAPSE_KEY is the localStorage key of the folded project groups. */
+export const ARTIFACT_COLLAPSE_KEY = "agentctl.artifacts.collapsed";
+
+/** loadCollapsedSet reads a persisted Set of strings; anything unusable is an empty set. */
+export function loadCollapsedSet(key, storage = globalThis.localStorage) {
+  try {
+    const v = JSON.parse(storage.getItem(key) ?? "[]");
+    return new Set(Array.isArray(v) ? v.filter((k) => typeof k === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** saveCollapsedSet persists set; storage may be unavailable (private mode), then folds last until reload. */
+export function saveCollapsedSet(key, set, storage = globalThis.localStorage) {
+  try {
+    storage.setItem(key, JSON.stringify([...set]));
+  } catch {
+    // nothing to do
+  }
+}
+
+/** SETTLED_TTL_MS is how long a deleted id is filtered out of fetched lists. */
+export const SETTLED_TTL_MS = 10000;
+
+/**
+ * dropSettled removes from list the artifacts whose delete just succeeded
+ * (settled: id -> ms), so a refetch that started before the DELETE finished
+ * cannot bring the row back. Entries older than ttl are forgotten.
+ */
+export function dropSettled(list, settled, now = Date.now(), ttl = SETTLED_TTL_MS) {
+  for (const [id, at] of settled) if (now - at > ttl) settled.delete(id);
+  return settled.size === 0 ? list : list.filter((a) => !settled.has(a.id));
+}
+
+/** UNDO_MS is how long a swiped-away artifact can be brought back before its DELETE is sent. */
+export const UNDO_MS = 5000;
+
+/**
+ * createDeleteQueue holds deletes back for an undo window. add(id, item)
+ * starts the countdown; when it expires commit(item) is called (a promise;
+ * the id stays in has() until it settles, so a refetch cannot resurrect the
+ * row). undo(id) cancels one that has not expired; flush() commits every
+ * waiting one now (leaving the page). onSettle(id, item, err) reports each
+ * commit's outcome (err null on success).
+ */
+export function createDeleteQueue({ commit, onSettle = () => {}, ms = UNDO_MS, setTimer = setTimeout, clearTimer = clearTimeout }) {
+  const waiting = new Map(); // id -> { item, timer }
+  const inflight = new Set();
+  const run = async (id, item) => {
+    inflight.add(id);
+    let err = null;
+    try {
+      await commit(item);
+    } catch (e) {
+      err = e ?? new Error("delete failed");
+    }
+    inflight.delete(id);
+    onSettle(id, item, err);
+  };
+  const fire = (id) => {
+    const w = waiting.get(id);
+    if (!w) return Promise.resolve();
+    clearTimer(w.timer);
+    waiting.delete(id);
+    return run(id, w.item);
+  };
+  return {
+    add(id, item) {
+      if (waiting.has(id) || inflight.has(id)) return;
+      waiting.set(id, { item, timer: setTimer(() => fire(id), ms) });
+    },
+    undo(id) {
+      const w = waiting.get(id);
+      if (!w) return false;
+      clearTimer(w.timer);
+      waiting.delete(id);
+      return true;
+    },
+    /** has: id is waiting out its undo window or its DELETE is in flight, so its row stays hidden. */
+    has: (id) => waiting.has(id) || inflight.has(id),
+    flush: () => Promise.all([...waiting.keys()].map(fire)),
+    waiting: () => [...waiting.keys()],
+  };
+}
+
+/** artifactWindowLive finds the live fleet window an artifact came from, or null. */
+export function artifactWindowLive(a, fleetGroups = []) {
+  if (!a?.window_id || !a?.session) return null;
+  const g = (fleetGroups ?? []).find((x) => x.session === a.session);
+  return g?.windows?.find((w) => w.window_id === a.window_id) ?? null;
+}
+
+/** artifactRowMeta is the muted line under a title: "pin · 3 revs · 5m ago". */
+export function artifactRowMeta(a, now = Date.now()) {
+  const parts = [];
+  if (a.pinned) parts.push("pin");
+  if (a.rev_count > 1) parts.push(`${a.rev_count} revs`);
+  const ago = formatAgo(a.updated, now);
+  if (ago) parts.push(ago);
+  return parts.join(" · ");
+}
+
+/** artifactRevLabel labels a revision picker entry: "v2 · 5m ago · note". */
+export function artifactRevLabel(r, now = Date.now()) {
+  return [`v${r.n}`, formatAgo(r.created, now), r.note].filter(Boolean).join(" · ");
+}
+
+/** artifactRevPill is the closed picker: "v2 ▾", or "v1 of 2 ▾" when off the latest. */
+export function artifactRevPill(n, latest, total) {
+  return n === latest ? `v${n} ▾` : `v${n} of ${total} ▾`;
+}
+
+/** artifactOrigin is the sheet's origin line: "shop \u203A designer \u00B7 @17". */
+export function artifactOrigin(a) {
+  return [projectAgent(a.project, a.agent), a.window_id].filter(Boolean).join(" \u00B7 ");
+}
+
+// ---- artifact feedback ----
+
+/** ARTIFACT_FEEDBACK_TYPE is the postMessage type an artifact sends to propose feedback. */
+export const ARTIFACT_FEEDBACK_TYPE = "agentctl:feedback";
+/** ARTIFACT_FEEDBACK_MAX caps a comment (server: 4000 characters). */
+export const ARTIFACT_FEEDBACK_MAX = 4000;
+
+/**
+ * artifactFeedbackFrom filters a window "message" event from the artifact's
+ * iframe. It returns the proposed text (trimmed, capped at
+ * ARTIFACT_FEEDBACK_MAX characters) only when the event came from frameWindow
+ * itself and carries {type: "agentctl:feedback", text: <non-empty string>};
+ * otherwise null. The caller must only prefill the composer with it: agent-
+ * authored content never sends a comment on its own.
+ */
+export function artifactFeedbackFrom(event, frameWindow) {
+  if (!event || !frameWindow || event.source !== frameWindow) return null;
+  const d = event.data;
+  if (!d || typeof d !== "object" || d.type !== ARTIFACT_FEEDBACK_TYPE || typeof d.text !== "string") return null;
+  const text = [...d.text.trim()].slice(0, ARTIFACT_FEEDBACK_MAX).join("").trim();
+  return text || null;
+}
+
+/** artifactCommentToast is the toast for a POST …/comments response: [message, kind]. */
+export function artifactCommentToast(res) {
+  switch (res?.delivery) {
+    case "delivered":
+      return ["Sent to the agent", "info"];
+    case "queued":
+      return ["Queued: the agent is working and will see it next", "info"];
+    default: {
+      const why = res?.reason ? `: ${res.reason}` : "";
+      return [`Saved, not delivered${why}`, "info"];
+    }
+  }
+}
+
+/** artifactCommentStatus labels a stored comment's status for the list. */
+export function artifactCommentStatus(c) {
+  switch (c?.status) {
+    case "delivered":
+      return "sent";
+    case "queued":
+      return "queued";
+    default:
+      return "not delivered";
+  }
 }

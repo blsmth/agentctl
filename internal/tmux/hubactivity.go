@@ -24,10 +24,11 @@ type HubPane struct {
 	Width    int
 	Viewer   bool // the live viewer pane
 	Activity bool // the activity pane
+	Status   bool // the status pane (above the viewer, same width)
 }
 
 // hubPanesFormat lists a pane's ID, width and role flags.
-const hubPanesFormat = "#{pane_id} #{pane_width} v#{" + viewerPaneOption + "} a#{" + activityPaneOption + "}"
+const hubPanesFormat = "#{pane_id} #{pane_width} v#{" + viewerPaneOption + "} a#{" + activityPaneOption + "} s#{" + statusPaneOption + "}"
 
 // parseHubPanes parses `list-panes -F hubPanesFormat` output. Malformed
 // lines are skipped.
@@ -35,14 +36,14 @@ func parseHubPanes(out string) []HubPane {
 	var panes []HubPane
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
-		if len(f) != 4 || !strings.HasPrefix(f[0], "%") {
+		if len(f) != 5 || !strings.HasPrefix(f[0], "%") {
 			continue
 		}
 		w, err := strconv.Atoi(f[1])
 		if err != nil {
 			continue
 		}
-		panes = append(panes, HubPane{ID: f[0], Width: w, Viewer: f[2] == "v1", Activity: f[3] == "a1"})
+		panes = append(panes, HubPane{ID: f[0], Width: w, Viewer: f[2] == "v1", Activity: f[3] == "a1", Status: f[4] == "s1"})
 	}
 	return panes
 }

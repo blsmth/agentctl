@@ -30,12 +30,18 @@ func TestJobValidate(t *testing.T) {
 		{name: "no agent", mut: func(j *Job) { j.Agent = "" }, wantErr: "pick an agent"},
 		{name: "no prompt", mut: func(j *Job) { j.Prompt = "" }, wantErr: "write a prompt"},
 		{name: "both prompts", mut: func(j *Job) { j.PromptKey = "k" }, wantErr: "not both"},
+		{name: "template instead", mut: func(j *Job) { j.Prompt, j.Template = "", "triage" }},
+		{name: "template supplies the agent", mut: func(j *Job) { j.Prompt, j.Template, j.Agent = "", "triage", "" }},
+		{name: "template and prompt", mut: func(j *Job) { j.Template = "triage" }, wantErr: "template or a prompt"},
+		{name: "template and prompt key", mut: func(j *Job) { j.Prompt, j.PromptKey, j.Template = "", "k", "t" }, wantErr: "template or a prompt"},
+		{name: "bad template name", mut: func(j *Job) { j.Prompt, j.Template = "", "../x" }, wantErr: "invalid template"},
 		{name: "other harness", mut: func(j *Job) { j.Harness = "codex" }, wantErr: "harness"},
 		{name: "headless", mut: func(j *Job) { j.Mode = "headless" }, wantErr: "mode"},
 		{name: "bad overlap", mut: func(j *Job) { j.Overlap = "queue" }, wantErr: "overlap"},
 		{name: "bad catchup", mut: func(j *Job) { j.Catchup = "all" }, wantErr: "catchup"},
 		{name: "bad timeout", mut: func(j *Job) { j.Timeout = "soon" }, wantErr: "timeout"},
 		{name: "bad effort", mut: func(j *Job) { j.Effort = "extreme" }, wantErr: "effort"},
+		{name: "nous model slug", mut: func(j *Job) { j.Backend = "nous"; j.Model = "deepseek/deepseek-v4.1-flash-1017:batch" }},
 		{name: "bad model", mut: func(j *Job) { j.Model = "opus; rm -rf" }, wantErr: "model"},
 		{name: "bad agent", mut: func(j *Job) { j.Agent = "a b" }, wantErr: "agent"},
 		{name: "bad threshold", mut: func(j *Job) { j.SkipIfUsageAbove = &config.CronUsageThresholds{FiveHour: 120} }, wantErr: "between"},
@@ -55,6 +61,30 @@ func TestJobValidate(t *testing.T) {
 				t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestJobFieldErrorsTemplateField(t *testing.T) {
+	j := validJob()
+	j.Template = "t"
+	errs := j.FieldErrors()
+	if len(errs) != 1 || errs[0].Field != FieldTemplate {
+		t.Errorf("errs = %+v, want one %s error", errs, FieldTemplate)
+	}
+}
+
+func TestJobPromptSource(t *testing.T) {
+	for _, tt := range []struct {
+		j    Job
+		want string
+	}{
+		{Job{Prompt: "p"}, "prompt"},
+		{Job{PromptKey: "k"}, "prompt_key"},
+		{Job{Template: "t"}, "template"},
+	} {
+		if got := tt.j.PromptSource(); got != tt.want {
+			t.Errorf("PromptSource(%+v) = %q, want %q", tt.j, got, tt.want)
+		}
 	}
 }
 

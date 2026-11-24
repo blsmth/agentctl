@@ -2,7 +2,7 @@
 import { ApiError, get, send, uploadImages } from "./api.js";
 import { imagePicker } from "./attach.js";
 import {
-  DISPATCH_UPLOAD_PATH, buildDispatchRequest, choiceLabel, confirmLines, defaultAgentFor, launchOptionsPath, modelPicker, windowHash,
+  DISPATCH_UPLOAD_PATH, buildDispatchRequest, choiceLabel, confirmLines, defaultAgentFor, launchOptionsPath, modelPicker, templateFill, templateLabel, templatesPath, windowHash,
 } from "./logic.js";
 import { clear, confirmSheet, h, toast } from "./ui.js";
 
@@ -29,6 +29,12 @@ export function mountDispatch(root, ctx, { dir } = {}) {
     skipReviewRow.hidden = !show;
     if (!show) skipReview.checked = false;
   };
+  // Prompt templates: fills agent, model, project and prompt, all still
+  // editable. The chosen name goes along as display-only metadata.
+  const withTemplates = ctx.hasFeature("dispatch-templates");
+  const template = h("select", { "aria-label": "Template" });
+  const templateRow = h("label", { hidden: true }, "Template", template);
+  let templates = [];
   const submit = h("button", { class: "btn primary", disabled: true }, "Review & send");
   const launchBox = h("div", { class: "launch-opts" });
   const withOptions = ctx.hasFeature("launch-options");
@@ -42,6 +48,7 @@ export function mountDispatch(root, ctx, { dir } = {}) {
       h("label", {}, "Agent", agent),
       h("label", {}, "Project", project),
       withOptions ? launchBox : null,
+      withTemplates ? templateRow : null,
       h("label", {}, "Prompt", prompt),
       withInstructions
         ? h("details", { class: "instructions" }, h("summary", {}, "Additional instructions"), instructions)
@@ -80,6 +87,43 @@ export function mountDispatch(root, ctx, { dir } = {}) {
   project.addEventListener("change", () => {
     applyDefaultAgent();
     loadOptions();
+    loadTemplates();
+  });
+
+  // loadTemplates lists the templates visible from the project; the picker is
+  // hidden when there are none or the list cannot be read.
+  let templateSeq = 0;
+  async function loadTemplates() {
+    if (!withTemplates) return;
+    const seq = ++templateSeq;
+    const keep = template.value;
+    try {
+      const res = await get(templatesPath(project.value));
+      if (seq !== templateSeq) return;
+      templates = res.templates ?? [];
+    } catch {
+      if (seq !== templateSeq) return;
+      templates = [];
+    }
+    clear(template);
+    template.append(h("option", { value: "" }, "None"));
+    for (const t of templates) template.append(h("option", { value: t.name }, templateLabel(t)));
+    template.value = templates.some((t) => t.name === keep) ? keep : "";
+    templateRow.hidden = templates.length === 0;
+  }
+  template.addEventListener("change", () => {
+    const t = templates.find((x) => x.name === template.value);
+    if (!t) return;
+    const fill = templateFill(t, projects, [...agent.options].map((o) => o.value));
+    if (fill.agent) {
+      agent.value = fill.agent;
+      userPickedAgent = true;
+    }
+    if (fill.project) project.value = fill.project;
+    prompt.value = fill.prompt;
+    syncSkipReview();
+    if (withOptions) picker.load(agent.value, project.value, fill.preset);
+    if (fill.project) loadTemplates();
   });
 
   Promise.all([get("/v1/agents"), get("/v1/projects")])
@@ -94,6 +138,7 @@ export function mountDispatch(root, ctx, { dir } = {}) {
       applyDefaultAgent();
       syncSkipReview();
       submit.disabled = !ctx.hasFeature("write");
+      loadTemplates();
       return loadOptions();
     })
     .catch((e) => toast(`Could not load agents/projects: ${e.message}`, "error"));
@@ -107,10 +152,11 @@ export function mountDispatch(root, ctx, { dir } = {}) {
     const extra = withInstructions ? instructions.value.trim() : "";
     const skip = withSkipReview && orchestrators.has(agent.value) && skipReview.checked;
     const n = att ? att.count() : 0;
+    const tplName = withTemplates ? template.value : "";
     const [agentName, dir, picked] = [agent.value, project.value, picker.options() ? picker.choice() : {}];
     const confirmed = await confirmSheet({
       title: "Dispatch?",
-      lines: confirmLines(buildDispatchRequest(agentName, dir, text, picked, [], extra, skip).body, n),
+      lines: confirmLines(buildDispatchRequest(agentName, dir, text, picked, [], extra, skip, tplName).body, n),
       confirmLabel: "Dispatch",
     });
     if (!confirmed) return;
@@ -128,7 +174,7 @@ export function mountDispatch(root, ctx, { dir } = {}) {
       }
     }
     try {
-      const res = await send(buildDispatchRequest(agentName, dir, text, picked, images, extra, skip));
+      const res = await send(buildDispatchRequest(agentName, dir, text, picked, images, extra, skip, tplName));
       toast("Dispatched");
       location.hash = res?.window_id ? windowHash(res.session, res.window_id) : "#/";
     } catch (e) {

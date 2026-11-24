@@ -256,6 +256,18 @@ func rowWeight(r fleet.Row) fleetWeight {
 	}
 }
 
+// glyphWeight is rowWeight as the row glyph shows it: a TurnDone row that is
+// not working or blocked reads as done (✓). Every hub count and the attention
+// filter use it so they agree with the glyph. rowWeight itself stays Done-only
+// because sweep and name styling must not treat TurnDone as done.
+func glyphWeight(r fleet.Row) fleetWeight {
+	w := rowWeight(r)
+	if w == fleetWeightIdle && r.TurnDone {
+		return fleetWeightDone
+	}
+	return w
+}
+
 // fleetNameStyle is the agent name's style for a row of weight w: working is
 // bold bright, done normal text, idle subtle and blocked bold warning. The
 // state colour lives on the glyph; names never use the project palette.
@@ -320,6 +332,8 @@ const (
 	fleetLineClosed                           // a selectable closed (ledger) row; see fleet_closed.go
 	fleetLineSchedLabel                       // a non-selectable Schedules label or warning; see fleet_schedules.go
 	fleetLineSchedule                         // a selectable cron job row (or "+ new schedule")
+	fleetLineSchedHead                        // a selectable, collapsible schedules block header; see fleet_schedgroup.go
+	fleetLineSearchEmpty                      // a non-selectable "no matches" line while a search matches nothing
 )
 
 // fleetLine is one renderable line. Every kind except fleetLineDivider is also
@@ -331,10 +345,6 @@ type fleetLine struct {
 	groupHead  bool        // true for the first row of a group (blank line above)
 	label      string      // set for fleetLineSubheader, e.g. "dispatched (2)"
 	treePrefix string      // connector prefix for fleetLineRow ("" for roots)
-	// nameCol is the group's uncapped name-column width (tree prefix plus
-	// base name, max over its rows) for fleetLineRow; renderTreeRow caps it
-	// at render time so recaps line up within a group.
-	nameCol int
 	// dimmed marks a fleetLineRow the attention filter keeps only as the
 	// ancestor of a matching row; it renders muted.
 	dimmed bool
@@ -351,12 +361,20 @@ type fleetLine struct {
 	sched     cronedit.Status
 	schedNew  bool
 	schedWarn bool
+	// schedBlock is the key of the schedules block a fleetLineSchedHead or
+	// fleetLineSchedule line belongs to (a group's resolved project dir, or
+	// fleetSchedOtherKey; "" for the bottom block's lines when it has no
+	// header); schedDir seeds a "+ new schedule" line's form. A
+	// fleetLineSchedHead uses collapsed and carries its jobs' tally.
+	schedBlock string
+	schedDir   string
+	schedSum   fleetSchedCounts
 }
 
 // selectable reports whether the cursor may rest on this line. Dividers and
 // sub-section labels are decoration only.
 func (l fleetLine) selectable() bool {
-	return l.kind != fleetLineDivider && l.kind != fleetLineSubheader && l.kind != fleetLineClosedLabel && l.kind != fleetLineSchedLabel
+	return l.kind != fleetLineDivider && l.kind != fleetLineSubheader && l.kind != fleetLineClosedLabel && l.kind != fleetLineSchedLabel && l.kind != fleetLineSearchEmpty
 }
 
 // ── FleetModel ────────────────────────────────────────────────────────────────
@@ -416,9 +434,13 @@ type FleetModel struct {
 	// selection is not a closed row; selSession is then empty, so the live
 	// viewer is never handed a window that no longer exists).
 	selClosed string
-	// selSchedule is the selected schedule line's job name (or
-	// fleetSchedNewSel); like selClosed, selSession is then empty.
+	// selSchedule is the selected schedule line's job name (or a
+	// fleetSchedNewSel / fleetSchedHeadSel key, see schedLineKey); like
+	// selClosed, selSession is then empty.
 	selSchedule string
+	// schedCardHidden is the job whose card esc dismissed; the cursor stays
+	// on its row until the selection moves or the form closes.
+	schedCardHidden string
 
 	// lastSelection is the selection last written to the hub selection file
 	// for the follow-hub HUD (selPublished: one has been written). See
@@ -446,7 +468,7 @@ type FleetModel struct {
 	confirmWindow  string
 
 	// newSession/newLine identify the group header whose "+ new" button is
-	// armed as the shell | agent selector (newLine is the cursor line it was
+	// armed as the shell | cron | agent selector (newLine is the cursor line it was
 	// armed from); empty when none. Cleared when the cursor moves off newLine.
 	newSession string
 	newLine    int
@@ -482,12 +504,24 @@ type FleetModel struct {
 	// liveFailed is the liveShown key whose hand-off to the viewer failed, so
 	// the viewer is not showing it.
 	liveFailed string
+	// statusPane is whether the status pane above the viewer was last
+	// reported open (see statusPaneOpen, fleet_status.go).
+	statusPane bool
 	// viewerSeen is the "session|window" the viewer last reported on a poll;
 	// a change relative to it that the hub did not cause drives the selection
-	// (see viewerSyncTarget).
+	// (see viewerSyncDecide).
 	viewerSeen string
-	liveLeft   int
-	liveRight  int
+	// viewerIntent is the viewer's tab-click token last seen on a poll, so
+	// each click is acted on once; viewerPolled marks the first poll, whose
+	// token predates this hub and is never followed.
+	viewerIntent string
+	viewerPolled bool
+	// viewerGen numbers the hub's decisions about the viewer's window (every
+	// show and repoint), so a repoint decided before a later show never
+	// lands after it (see fleetViewerApplied).
+	viewerGen uint64
+	liveLeft  int
+	liveRight int
 
 	// liveWinWidth is the hub window width the split was last applied for;
 	// a list-pane resize at the same window width is a divider drag, not a
@@ -557,22 +591,44 @@ type FleetModel struct {
 	showClosed  bool
 	closed      []closedlog.Record
 	closedCache *closedlog.Cache
-	// showSchedules shows the Schedules section (fleetSchedulesKey,
-	// fleet_schedules.go); sched is its data, schedForm the open form,
+	// artifacts is the per-window artifact count behind the ◆N chip
+	// (fleet_artifacts.go), refreshed on the poll tick when the store
+	// directory's mtime (artifactsStamp) changes.
+	artifacts        map[string]fleetArtifactInfo
+	artifactsStamp   time.Time
+	artifactsLoading bool
+	// sched is the cron jobs' data (fleet_schedules.go, always loaded),
+	// schedForm the open form,
 	// schedConfirm an armed run/delete y/n. schedPaneOn records that the
-	// card or form took the viewer's place (schedPrevLive is what the viewer
-	// showed). schedAgentCheck is the injected agent validation.
-	showSchedules   bool
+	// card/form drawer is open; schedAnim* is its slide-in (gen guards stale
+	// ticks, P the eased progress 0..1). schedAgentCheck is the injected
+	// agent validation.
 	sched           fleetSchedState
 	schedForm       *fleetSchedForm
 	schedConfirm    *fleetSchedConfirm
 	schedPaneOn     bool
-	schedPrevLive   string
+	schedAnimOn     bool
+	schedAnimGen    int
+	schedAnimP      float64
+	schedAnimStart  time.Time
 	schedAgentCheck func(name, dir string) error
 	// schedAgentNames lists the agents the form offers for a project dir.
 	schedAgentNames func(dir string) []string
-	filter          fleetFilter
-	viewPath        string
+	// schedTabs is the set of project block keys (resolved project dirs)
+	// whose group shows its Schedules tab instead of Sessions, persisted in
+	// hubViewState; schedOtherOpen expands the bottom "other projects"
+	// block (collapsed by default). schedHidden maps the selection key of
+	// each schedule line a collapse, a fold or the Sessions tab hides to what
+	// hides it, and groupTabs the header tab info of each tabbed group
+	// (by session), both rebuilt by rebuildLines. schedDirs caches resolved
+	// project and job dirs (shared by the model's copies).
+	schedTabs      map[string]bool
+	schedOtherOpen bool
+	schedHidden    map[string]fleetSchedHider
+	groupTabs      map[string]fleetGroupTab
+	schedDirs      *fleetDirCache
+	filter         fleetFilter
+	viewPath       string
 	// orderPath is the saved group order (see fleet_order.go); "" persists
 	// nothing. drag is a pending or active header drag.
 	orderPath string
@@ -596,7 +652,13 @@ type FleetModel struct {
 	// rename is the open title editor (see fleet_rename.go); nil when closed.
 	// titleHolds are just-saved titles shown until a load reflects them, by
 	// "session|windowID".
-	rename     *fleetRenameState
+	rename *fleetRenameState
+	// search is the hub search (see fleet_search.go); nil = Off. searchIdx
+	// caches row haystacks (shared by the model's copies, cleared on reload);
+	// searchSeq numbers the debounced viewer follow.
+	search     *fleetSearch
+	searchIdx  *searchIndex
+	searchSeq  int
 	lastClick  *fleetLastClick // previous left click on a title, for double-click detection
 	titleHolds map[string]fleetTitleHold
 
@@ -738,6 +800,8 @@ func newFleetModel() FleetModel {
 		liveLeft:    left,
 		liveRight:   right,
 		closedCache: &closedlog.Cache{},
+		searchIdx:   &searchIndex{},
+		schedDirs:   newFleetDirCache(),
 		splitPane: SplitPane{
 			Orientation:   OrientHorizontal,
 			ListRatio:     fleetSidebarRatio,
@@ -774,6 +838,14 @@ func fleetLoadCmd() tea.Cmd {
 // nothing selectable is an agent row (a header, placeholder, or empty hub is
 // selected): the live pane then keeps showing the last viewed agent.
 func (m *FleetModel) maybeShowCmd() tea.Cmd {
+	if m.searchEditing() {
+		return nil // the debounced search tick follows the selection
+	}
+	return m.showSelectedCmd()
+}
+
+// showSelectedCmd is maybeShowCmd without the search-input guard.
+func (m *FleetModel) showSelectedCmd() tea.Cmd {
 	if m.selIsHeader || m.selSession == "" || m.selWindowID == "" {
 		return nil
 	}
@@ -786,7 +858,7 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
 	if fm, ok := next.(FleetModel); ok {
 		fm.publishSelection()
-		if pane := fm.syncSchedPane(); pane != nil {
+		if pane := fm.syncSchedDrawer(); pane != nil {
 			cmd = tea.Batch(cmd, pane)
 		}
 		if detail := fm.syncSchedDetail(); detail != nil {
@@ -800,17 +872,21 @@ func (m FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		heightChanged := msg.Height != m.termHeight
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
 		m.configureSplitPane()
-		return m, fleetProbeCmd(msg.Width)
+		var status tea.Cmd
+		if heightChanged {
+			status = m.statusResizeCmd()
+		}
+		return m, tea.Batch(fleetProbeCmd(msg.Width), status)
+
+	case fleetStatusMsg:
+		m.applyStatus(msg.open)
+		return m, nil
 
 	case fleetProbeMsg:
-		if m.schedPaneOn {
-			// The hub pane spans the window while the schedules pane is up;
-			// its resizes are the viewer closing, not a divider drag.
-			return m, nil
-		}
 		if msg.win == m.liveWinWidth && fleetNow().Before(m.paneQuietUntil) {
 			return m, nil // the activity pane reflowed the split
 		}
@@ -841,17 +917,28 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.expireInfo(fleetNow())
 		// A hot reload waits for an open rename editor or schedule form: it
 		// would lose the typed text.
-		if m.exeChanged != nil && !m.renameOpen() && !m.schedFormOpen() && m.exeChanged() {
+		if m.exeChanged != nil && !m.renameOpen() && !m.schedFormOpen() && !m.searchEditing() && m.exeChanged() {
 			m.reexec = true
 			return m, tea.Quit
 		}
 		refreshThemeIfChanged()
 		show := m.maybeShowCmd()
 		probe := m.serveProbeCmd()
-		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome), probe, m.activityPollCmd(), m.closedLoadCmd(), m.schedTickCmd())
+		return m, tea.Batch(fleetLoadCmd(), fleetTickCmd(), show, fleetViewerPollCmd(), fleetZoomSyncCmd(m.hubChrome), probe, m.activityPollCmd(), m.closedLoadCmd(), m.schedTickCmd(), m.artifactsLoadCmd())
 
 	case fleetClosedLoadedMsg:
 		m.applyClosedLoaded(msg)
+		return m, nil
+
+	case fleetSearchShowMsg:
+		return m, m.applySearchShow(msg)
+
+	case fleetArtifactsMsg:
+		m.applyArtifacts(msg)
+		return m, nil
+
+	case fleetArtifactOpenedMsg:
+		m.applyArtifactOpened(msg)
 		return m, nil
 
 	case fleetSchedLoadedMsg:
@@ -878,8 +965,8 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case fleetSchedEditorMsg:
 		return m, m.applySchedEditor(msg)
 
-	case fleetSchedViewerHiddenMsg:
-		return m, m.applySchedViewerHidden()
+	case schedDrawerTickMsg:
+		return m, m.applySchedDrawerTick(msg)
 
 	case fleetActivityOpenedMsg:
 		return m, m.applyActivityOpened(msg)
@@ -902,19 +989,14 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyServeToggled(msg)
 
 	case fleetViewerMsg:
-		m = m.syncFromViewer(msg)
-		return m, m.flushView()
+		var repoint tea.Cmd
+		m, repoint = m.syncFromViewer(msg)
+		return m, tea.Batch(repoint, m.flushView())
 
 	case fleetFocusErrMsg:
 		m.jumpErr = msg.err.Error()
 		return m, nil
 	case fleetLiveMsg:
-		if m.schedPaneOn {
-			// A show that was in flight when the schedules pane took over:
-			// close the viewer it opened again and keep the old split.
-			m.liveShown = ""
-			return m, fleetSchedHideCmd()
-		}
 		if msg.hidden {
 			// The activity pane replaces the viewer at this window width.
 			m.liveShown = ""
@@ -938,6 +1020,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.liveFailed == msg.key {
 			m.liveFailed = ""
 		}
+		m.applyStatus(msg.status)
 		m.liveLeft, m.liveRight = msg.left, msg.right
 		if msg.win > 0 {
 			m.liveWinWidth = msg.win
@@ -1027,6 +1110,7 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.groups = msg.groups
 			m.display = msg.display
+			m.searchReset()
 			m.applyTitleHolds()
 			m.rebuildLines()
 			m.validateNew()
@@ -1059,7 +1143,12 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		m.hideCard()
 		if m.schedFormOpen() {
-			return m, nil // the form owns input until it closes
+			// The form owns input until it closes: a click acts only on the
+			// form's own controls and the footer hints.
+			return m, m.handleSchedFormClick(msg)
+		}
+		if m.schedDrawerCovers(msg.X, msg.Y) {
+			return m, nil // the card drawer hides the list under it
 		}
 		return m.pressHeader(msg)
 
@@ -1068,6 +1157,11 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseWheelMsg:
 		m.hideCard()
+		if m.schedFormOpen() {
+			if cmd, ok := m.handleSchedFormWheel(msg); ok {
+				return m, cmd
+			}
+		}
 		m.handleWheel(msg)
 		return m, nil
 
@@ -1098,6 +1192,9 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rename.input, cmd = m.rename.input.Update(msg)
 			return m, cmd
 		}
+		if m.searchEditing() {
+			return m, m.pasteSearch(msg)
+		}
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -1110,6 +1207,11 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ends when it closes.
 		var cmd tea.Cmd
 		m.rename.input, cmd = m.rename.input.Update(msg)
+		return m, cmd
+	}
+	if m.searchEditing() {
+		var cmd tea.Cmd
+		m.search.input, cmd = m.search.input.Update(msg)
 		return m, cmd
 	}
 	return m, nil
@@ -1130,6 +1232,9 @@ func (m *FleetModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.renameOpen() {
 		return *m, m.handleRenameKey(msg)
+	}
+	if m.searchEditing() {
+		return *m, m.handleSearchKey(msg)
 	}
 	if m.schedFormOpen() {
 		return *m, m.handleSchedFormKey(msg)
@@ -1205,12 +1310,18 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 		m.armNew(m.splitPane.Cursor())
 		return *m, nil
 
+	case fleetCronKey:
+		return *m, m.cronForGroup(m.groupOfLine(m.splitPane.Cursor()))
+
 	case fleetNewSessionKey:
 		m.openNewSession()
 		return *m, nil
 
 	case fleetRenameKey:
 		return *m, m.openRename(m.splitPane.Cursor())
+
+	case fleetSearchKey:
+		return *m, m.openSearch()
 
 	case "x":
 		m.startClose(m.splitPane.Cursor())
@@ -1227,6 +1338,9 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 		return *m, tea.Quit
 
 	case "q", "esc":
+		if key == "esc" && m.search != nil {
+			return *m, m.clearSearch() // the next esc leaves
+		}
 		home, _ := tmux.ViewerActiveWindow()
 		hubtarget.LeaveHub(fleetLeaver{m: m, home: home}, "")
 		return *m, nil
@@ -1290,6 +1404,9 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 	case "o":
 		return *m, m.toggleSort()
 
+	case fleetArtifactKey:
+		return *m, m.openSelectedArtifact()
+
 	case fleetShellsKey:
 		return *m, m.toggleShells()
 
@@ -1297,7 +1414,7 @@ func (m *FleetModel) runKey(key string) (tea.Model, tea.Cmd) {
 		return *m, m.toggleClosed()
 
 	case fleetSchedulesKey:
-		return *m, m.toggleSchedules()
+		return *m, m.toggleGroupTab()
 
 	case fleetServeKey:
 		return *m, m.toggleServe()
@@ -1318,6 +1435,9 @@ type fleetLiveMsg struct {
 	// hidden reports that nothing was shown: the activity pane takes the
 	// viewer's place at this window width.
 	hidden bool
+	// status reports whether the status pane above the viewer is open after
+	// the show.
+	status bool
 }
 
 // fleetLiveSizedMsg reports the outcome of re-applying the live split sizes.
@@ -1475,12 +1595,16 @@ func (m *FleetModel) liveShowFor(session, window string) tea.Cmd {
 		return nil
 	}
 	m.liveShown = key
+	m.viewerGen++
+	showGen := m.viewerGen
 	fallback, userLeft := m.termWidth, m.userLeft
 	shown := m.hubChrome
 	activity, userAct := m.activity.open(), m.activity.userWidth
+	wantStatus := statusWanted(m.termHeight)
 	return func() tea.Msg {
 		win := liveWindowWidth(fallback)
 		left, right, err := fleetLiveSplitFor(win, userLeft)
+		status := false
 		if err == nil && activity {
 			lay := decideHubLayout(win, left, userAct)
 			if lay.hideViewer {
@@ -1492,13 +1616,21 @@ func (m *FleetModel) liveShowFor(session, window string) tea.Cmd {
 		}
 		if err == nil {
 			fleetViewerMu.Lock()
+			if showGen > fleetViewerApplied {
+				fleetViewerApplied = showGen
+			}
 			err = showLiveViewer(session, window, right)
+			if err == nil {
+				// The status pane sits above the viewer, so it follows the
+				// show (and a viewer recreated from scratch gets a fresh one).
+				status = syncStatusPane(wantStatus)
+			}
 			fleetViewerMu.Unlock()
 			if err == nil {
 				hubZoomSync(!shown)
 			}
 		}
-		return fleetLiveMsg{key: key, left: left, right: right, win: win, err: err}
+		return fleetLiveMsg{key: key, left: left, right: right, win: win, err: err, status: status}
 	}
 }
 
@@ -1562,6 +1694,9 @@ func (m *FleetModel) syncSelectionFromCursor() {
 		if m.schedConfirm != nil && (m.selSchedule != m.schedConfirm.name) {
 			m.schedConfirm = nil
 		}
+		if m.selSchedule != m.schedCardHidden {
+			m.schedCardHidden = "" // moving off the job brings its card back
+		}
 		if m.sched.detailName != "" && m.selSchedule != m.sched.detailName {
 			m.sched.detail, m.sched.detailName = nil, ""
 		}
@@ -1583,10 +1718,10 @@ func (m *FleetModel) syncSelectionFromCursor() {
 	case fleetLineClosed:
 		m.selSession, m.selWindowID, m.selIsHeader = "", "", false
 		m.selClosed = l.closed.Key()
-	case fleetLineSchedule:
+	case fleetLineSchedule, fleetLineSchedHead:
 		m.selSession, m.selWindowID, m.selIsHeader = "", "", false
 		m.selSchedule = schedLineKey(l)
-	case fleetLineDivider, fleetLineSubheader, fleetLineClosedLabel, fleetLineSchedLabel:
+	case fleetLineDivider, fleetLineSubheader, fleetLineClosedLabel, fleetLineSchedLabel, fleetLineSearchEmpty:
 		// Unreachable in practice — moveCursor/resolveSelection never park
 		// the cursor on a divider or subheader — but defend against adopting a
 		// divider's zero-value Group as the selection rather than leaving
@@ -1672,12 +1807,20 @@ func (m *FleetModel) resolveSelection() {
 
 	if m.selSchedule != "" {
 		for i, l := range m.lines {
-			if l.kind == fleetLineSchedule && schedLineKey(l) == m.selSchedule {
+			if (l.kind == fleetLineSchedule || l.kind == fleetLineSchedHead) && schedLineKey(l) == m.selSchedule {
 				m.splitPane.SetCursor(i)
 				m.syncSelectionFromCursor()
 				m.ensureCursorVisible()
 				return
 			}
+		}
+		// The line is hidden in a collapsed block or a folded group: select
+		// what hides it.
+		if i, ok := m.schedHiddenLine(m.selSchedule); ok {
+			m.splitPane.SetCursor(i)
+			m.syncSelectionFromCursor()
+			m.ensureCursorVisible()
+			return
 		}
 		// The job is gone (deleted, or the list is still loading): stay in
 		// the section on its first row.
@@ -1722,8 +1865,9 @@ func (m *FleetModel) resolveSelection() {
 			}
 		}
 		// The row still exists but is hidden (folded or filtered out): stay
-		// on its group's header.
-		if !m.selIsHeader && m.rowExists(m.selSession, m.selWindowID) {
+		// on its group's header. Not while searching: a non-matching group's
+		// header is hidden too.
+		if !m.selIsHeader && !m.searching() && m.rowExists(m.selSession, m.selWindowID) {
 			for i, l := range m.lines {
 				if l.kind == fleetLineHeader && l.group.Session == m.selSession {
 					m.splitPane.SetCursor(i)
@@ -1733,6 +1877,19 @@ func (m *FleetModel) resolveSelection() {
 				}
 			}
 		}
+	}
+
+	if m.searching() {
+		// Hand the cursor to the first real match; with nothing to select
+		// the selection (and the viewer) stays as it was.
+		i := m.firstSearchLine()
+		if i < 0 {
+			return
+		}
+		m.splitPane.SetCursor(i)
+		m.syncSelectionFromCursor()
+		m.ensureCursorVisible()
+		return
 	}
 
 	for i, l := range m.lines {
@@ -1919,32 +2076,67 @@ func (m *FleetModel) rebuildLines() {
 	}()
 	var lines []fleetLine
 	m.hiddenUnder = nil
+	place := m.placeSchedules()
+	m.schedHidden = nil
+	m.groupTabs = nil
+	// While a query is active, folds and collapses are ignored for display
+	// (the saved state is untouched) so every match is visible.
+	searching := m.searching()
 	prevBody := false
 	for i, g := range m.groups {
 		all := m.shownRows(g.Rows)
+		folded := m.isFolded(g.Session) && !searching
+		headerHit := m.searchHeader(g)
+		// A group with jobs has Sessions and Schedules tabs: its body is one
+		// or the other, never both. A search shows both, so every match is.
+		tab, tabbed := m.buildGroupTab(g, place.keys[i], len(place.byGroup[i]))
+		onSched := tabbed && tab.sched && !searching
+		showJobs := tabbed && (tab.sched || searching)
 		rows, context := all, map[string]bool(nil)
-		if !m.isFolded(g.Session) {
+		if !folded && !onSched {
 			src := all
 			if m.sortRecent {
 				src = fleet.SortRowsRecent(all)
 			}
-			rows, context = filterRows(src, m.filter)
+			if searching && !headerHit {
+				rows, context = filterRowsBy(src, func(r fleet.Row) bool { return m.filter.matches(r) && m.searchRow(r) })
+			} else {
+				rows, context = filterRows(src, m.filter)
+			}
 		}
-		body := !m.isFolded(g.Session) && (len(rows) > 0 || (len(all) == 0 && m.filter == fleetFilterAll))
-		if i > 0 && (body || prevBody) {
+		body := !folded && !onSched && (len(rows) > 0 || (len(all) == 0 && m.filter == fleetFilterAll && (!searching || headerHit)))
+		// The attention filter never hides an unfolded group's schedules.
+		var sched []fleetLine
+		if folded || !showJobs {
+			m.noteHiddenSched(g, place.keys[i], place.byGroup[i])
+		} else {
+			jobs := place.byGroup[i]
+			if searching && !headerHit {
+				jobs = m.searchJobs(jobs)
+			}
+			if !searching || len(jobs) > 0 {
+				sched = m.schedGroupLines(g, place.keys[i], jobs)
+			}
+		}
+		shown := body || len(sched) > 0
+		if searching && !shown && !headerHit {
+			continue // no match in this group: hide it, header and divider too
+		}
+		if len(lines) > 0 && (shown || prevBody) {
 			lines = append(lines, fleetLine{kind: fleetLineDivider})
 		}
-		prevBody = body
+		prevBody = shown
 		lines = append(lines, fleetLine{kind: fleetLineHeader, group: g})
 		if !body {
+			lines = append(lines, sched...)
 			continue
 		}
 		if len(all) == 0 {
 			lines = append(lines, fleetLine{kind: fleetLinePlaceholder, group: g})
+			lines = append(lines, sched...)
 			continue
 		}
 		first := true
-		start := len(lines)
 		tree := treeRows(rows)
 		for j := 0; j < len(tree); j++ {
 			t := tree[j]
@@ -1955,7 +2147,7 @@ func (m *FleetModel) rebuildLines() {
 			l := fleetLine{kind: fleetLineRow, row: t.Row, groupHead: first, treePrefix: t.Prefix, dimmed: context[t.Row.WindowID]}
 			end := subtreeEnd(tree, j)
 			l.hasKids = end > j+1
-			if l.hasKids && m.isCollapsed(g.Session, t.Row.WindowID) {
+			if l.hasKids && m.isCollapsed(g.Session, t.Row.WindowID) && !searching {
 				l.collapsed = true
 				l.kids = tallySubtree(tree[j+1 : end])
 				for _, h := range tree[j+1 : end] {
@@ -1969,17 +2161,7 @@ func (m *FleetModel) rebuildLines() {
 			lines = append(lines, l)
 			first = false
 		}
-		// The name column fits every drawn row: tree prefix, collapse marker
-		// and name (the role, on a role row).
-		nameCol := 0
-		for _, l := range lines[start:] {
-			if l.kind == fleetLineRow {
-				nameCol = max(nameCol, rowNameColW(l))
-			}
-		}
-		for k := start; k < len(lines); k++ {
-			lines[k].nameCol = nameCol
-		}
+		lines = append(lines, sched...)
 	}
 	if closed := m.closedLines(); len(closed) > 0 {
 		if len(lines) > 0 {
@@ -1987,11 +2169,14 @@ func (m *FleetModel) rebuildLines() {
 		}
 		lines = append(lines, closed...)
 	}
-	if sched := m.schedLines(); len(sched) > 0 {
+	if sched := m.schedBottomLines(place); len(sched) > 0 {
 		if len(lines) > 0 {
 			lines = append(lines, fleetLine{kind: fleetLineDivider})
 		}
 		lines = append(lines, sched...)
+	}
+	if searching && len(lines) == 0 {
+		lines = []fleetLine{{kind: fleetLineSearchEmpty}}
 	}
 	m.lines = lines
 	// The usual model is fleet-wide; column widths come from drawn rows only,
@@ -2064,7 +2249,7 @@ func (m FleetModel) fleetCounts() (blocked, working, done, idle int) {
 			if r.Shell {
 				continue // not an agent
 			}
-			switch rowWeight(r) {
+			switch glyphWeight(r) {
 			case fleetWeightBlocked:
 				blocked++
 			case fleetWeightWorking:
@@ -2106,9 +2291,15 @@ type fleetTitleLayout struct {
 // disagree.
 func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 	tags := []string{""}
+	search := m.searchTag()
 	if m.filter != fleetFilterAll {
 		short, _, _ := strings.Cut(m.filter.label(), " ")
 		tags = []string{m.filter.label(), short}
+		if search != "" {
+			tags = []string{tags[0] + " · " + search, tags[1] + " · " + search}
+		}
+	} else if search != "" {
+		tags = []string{search, search}
 	}
 	fit := func(l fleetTitleLayout, left, right string) fleetTitleLayout {
 		line := left
@@ -2154,7 +2345,7 @@ func (m FleetModel) titleLayout(cw int) fleetTitleLayout {
 
 	type candidate struct{ tag, right string }
 	candidates := []candidate{{tags[0], counts + suffix}, {tags[0], counts}}
-	if m.filter != fleetFilterAll {
+	if m.filter != fleetFilterAll || search != "" {
 		tight := strings.Join(cells, " ")
 		candidates = append(candidates, candidate{tags[0], tight}, candidate{tags[1], tight})
 	}
@@ -2237,7 +2428,7 @@ func (m FleetModel) renderStatusOrEmpty() (string, bool) {
 		return fleetDimStyle.Render("  loading…") + "\n", true
 	case m.loadErr != nil:
 		return fleetErrStyle.Render(fmt.Sprintf("  error loading sessions: %v", m.loadErr)) + "\n", true
-	case len(m.groups) == 0 && !m.showSchedules:
+	case len(m.groups) == 0 && len(m.sched.ov.Jobs) == 0 && !m.searching():
 		return fleetDimStyle.Render("  no agentctl sessions running") + "\n", true
 	}
 	return "", false
@@ -2259,17 +2450,6 @@ func (m FleetModel) renderList() string {
 
 	if status, isStatus := m.renderStatusOrEmpty(); isStatus {
 		b.WriteString(status)
-	} else if m.schedFormReplacesList() {
-		// No room beside the list: the form takes the list's rows.
-		visible := m.visibleLines()
-		lines := fitPane(m.schedFormLines(cw-4, visible-1), cw-1, visible, 2)
-		for _, l := range lines {
-			b.WriteString(l)
-			b.WriteString("\n")
-		}
-		// Blank rows are padded too, so no cell of the previous frame survives.
-		blank := strings.Repeat(" ", cw-1) + "\n"
-		b.WriteString(strings.Repeat(blank, max(visible-len(lines), 0)))
 	} else {
 		visible := m.visibleLines()
 		used := 0
@@ -2284,7 +2464,7 @@ func (m FleetModel) renderList() string {
 			}
 		}
 		if pad := visible - used; pad > 0 {
-			if m.liveShown == "" && !m.activity.hidesViewer && !m.schedPaneActive() {
+			if m.liveShown == "" && !m.activity.hidesViewer {
 				b.WriteString(fleetDimStyle.Render("  " + truncateToWidth(fleetNoViewHint, cw-2)))
 				b.WriteString("\n")
 				pad--
@@ -2315,7 +2495,7 @@ func (m FleetModel) hiddenRows(from, to int) (rows, other int) {
 		switch m.lines[i].kind {
 		case fleetLineRow, fleetLineClosed, fleetLineSchedule:
 			rows++
-		case fleetLineHeader, fleetLinePlaceholder:
+		case fleetLineHeader, fleetLinePlaceholder, fleetLineSchedHead:
 			other++
 		}
 	}
@@ -2386,16 +2566,14 @@ func (m FleetModel) renderLine(i int, cw int) string {
 		return renderSchedLabel(l, cw)
 	case fleetLineSchedule:
 		return m.renderSchedRow(l, selected, cw)
+	case fleetLineSchedHead:
+		return m.renderSchedHead(l, selected, cw)
+	case fleetLineSearchEmpty:
+		return fleetDimStyle.Render(truncateToWidth(m.searchEmptyText(), cw-fleetSidebarRightGutter))
 	case fleetLineSubheader:
 		// The group's bar keeps the spine unbroken; the label aligns under
 		// agent names: bar + cursor slot + glyph + space.
 		label := fleetProjectBar(l.group.Project) + strings.Repeat(" ", fleetDetailIndent-1) + fleetDimStyle.Render(l.label)
-		if strings.HasPrefix(l.label, "scheduled") && !m.showSchedules {
-			hint := fleetDimStyle.Render(" · ") + menuHintKeyStyle.Render(fleetSchedulesKey) + fleetDimStyle.Render(" schedules")
-			if lipgloss.Width(label)+lipgloss.Width(hint) <= cw-fleetSidebarRightGutter {
-				label += hint
-			}
-		}
 		return label
 	default: // fleetLineRow
 		out := m.renderRowLine(l, selected, m.hover.region(i), cw)
@@ -2467,7 +2645,7 @@ func groupCustomSession(g fleet.Group) bool {
 const fleetMinSessionLabel = 6
 
 // renderGroupHeaderHover is renderGroupHeader with a hovered region: the "+ new"
-// button, or one side of the shell | agent selector when it is armed.
+// button, or one side of the shell | cron | agent selector when it is armed.
 //
 // Layout: marker, a ⏸ flag slot (yellow when the group has a blocked agent),
 // the project name, a custom session name when there is one, then the
@@ -2506,7 +2684,7 @@ func (m FleetModel) headerSweepSpan(g fleet.Group, cw int) [2]int {
 }
 
 // headerNewSpan is the [start, end) columns of group g's "+ new" button (or
-// the armed shell | agent selector), or the zero span when it is not shown.
+// the armed shell | cron | agent selector), or the zero span when it is not shown.
 func (m FleetModel) headerNewSpan(g fleet.Group, cw int) [2]int {
 	return m.pointerHeaderSpans(g, cw).add
 }
@@ -2529,6 +2707,63 @@ type fleetHeaderSpans struct {
 	name  [2]int // fold marker and project name
 	sweep [2]int // sweep button; zero when not shown
 	add   [2]int // "+ new" button or armed selector; zero when not shown
+	cron  bool   // the armed selector shows its "cron" choice
+	// tabSessions and tabSched are the Sessions / Schedules tab labels
+	// (zero when not drawn).
+	tabSessions, tabSched [2]int
+}
+
+// fleetTabGap is the blank columns between a header's project name and its
+// tabs.
+const fleetTabGap = 3
+
+// renderGroupTabs renders "Sessions N · Schedules M" in at most room columns
+// starting at column start, cutting from the right, and reports the columns
+// of each label (zero when cut off entirely).
+func renderGroupTabs(t fleetGroupTab, hover fleetHoverRegion, start, room int) (string, [2]int, [2]int) {
+	if room < 4 {
+		return "", [2]int{}, [2]int{}
+	}
+	style := func(active bool, hovered bool) lipgloss.Style {
+		st := fleetCountStyle
+		if active {
+			st = fleetNewHoverStyle
+		}
+		if hovered {
+			st = st.Underline(true)
+		}
+		return st
+	}
+	type piece struct {
+		text string
+		st   lipgloss.Style
+		tab  int // 1 sessions, 2 schedules, 0 separator
+	}
+	pieces := []piece{
+		{fmt.Sprintf("Sessions %d", t.sessions), style(!t.sched, hover == fleetHoverTabSessions), 1},
+		{" · ", fleetDimStyle, 0},
+		{fmt.Sprintf("Schedules %d", t.jobs), style(t.sched, hover == fleetHoverTabSched), 2},
+	}
+	var out strings.Builder
+	var sess, sched [2]int
+	col := start
+	for _, p := range pieces {
+		left := start + room - col
+		if left <= 0 {
+			break
+		}
+		text := truncateToWidth(p.text, left)
+		w := lipgloss.Width(text)
+		out.WriteString(p.st.Render(text))
+		switch p.tab {
+		case 1:
+			sess = [2]int{col, col + w}
+		case 2:
+			sched = [2]int{col, col + w}
+		}
+		col += w
+	}
+	return out.String(), sess, sched
 }
 
 // fleetSweepSep is the blank columns between the sweep button and "+ new".
@@ -2567,7 +2802,7 @@ func sweepLabel(n int) string {
 // The per-state counts sit flush right; buttons, when shown, follow them:
 // "sweep N" only when the group has N > 0 sweepable rows (or its sweep is
 // running or armed), and "+ new" only on the selected or hovered header (or
-// as the armed shell | agent selector). The sweep button is left out while
+// as the armed shell | cron | agent selector). The sweep button is left out while
 // the selector is armed or when it would squeeze the project name below
 // fleetMinSweepName columns; when sweep fits alone but not beside "+ new",
 // the hovered or selected header drops "+ new" instead, so hovering never
@@ -2584,18 +2819,22 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 	}
 	limit := cw - fleetSidebarRightGutter
 
-	var add string
+	var add, addCron string
 	armed := m.newArmedFor(g)
 	if groupCanLaunch(g) && (armed || selected || hover != fleetHoverNone) {
 		if armed {
-			shell, agent := fleetDimStyle, fleetDimStyle
+			// Agent is the default (Enter): it is emphasised unless the
+			// pointer is on another choice.
+			shell, agent, cron := fleetDimStyle, fleetNewHoverStyle, fleetDimStyle
 			switch hover {
 			case fleetHoverNewShell:
-				shell = fleetNewHoverStyle
-			case fleetHoverNewAgent:
-				agent = fleetNewHoverStyle
+				shell, agent = fleetNewHoverStyle, fleetDimStyle
+			case fleetHoverNewCron:
+				cron, agent = fleetNewHoverStyle, fleetDimStyle
 			}
-			add = shell.Render(fleetShellLabel) + fleetDimStyle.Render(fleetSelSep) + agent.Render(fleetAgentLabel)
+			sep := fleetDimStyle.Render(fleetSelSep)
+			add = shell.Render(fleetShellLabel) + sep + agent.Render(fleetAgentLabel)
+			addCron = shell.Render(fleetShellLabel) + sep + cron.Render(fleetCronLabel) + sep + agent.Render(fleetAgentLabel)
 		} else {
 			style := fleetDimStyle
 			if hover == fleetHoverNew {
@@ -2610,9 +2849,13 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 	}
 
 	var spans fleetHeaderSpans
+	showCounts := true
 	headW := fleetHeaderNameCol + 2 // marker, flag, fold marker and its space
 	build := func(sweep, add string) string {
 		right := counts.text
+		if !showCounts {
+			right = ""
+		}
 		btns := sweep
 		if add != "" {
 			if btns != "" {
@@ -2620,10 +2863,10 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 			}
 			btns += add
 		}
-		if btns != "" {
-			right += strings.Repeat(" ", fleetNewGap) + btns
+		if btns != "" && right != "" {
+			right += strings.Repeat(" ", fleetNewGap)
 		}
-		return right
+		return right + btns
 	}
 	fits := func(right string) bool { return limit-lipgloss.Width(right)-1 >= headW+fleetMinSweepName }
 	if sweep != "" && !fits(build(sweep, add)) {
@@ -2634,6 +2877,22 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 			add = ""
 		} else {
 			sweep = ""
+		}
+	}
+	if armed && add != "" {
+		// Three choices when they fit beside the counts and a minimal name;
+		// failing that the counts give way to the selector while it is
+		// armed; failing that cron does (its key still works).
+		switch {
+		case fits(build("", addCron)):
+			add, spans.cron = addCron, true
+		default:
+			showCounts = false
+			if fits(build("", addCron)) {
+				add, spans.cron = addCron, true
+			} else {
+				showCounts = true
+			}
 		}
 	}
 	right := build(sweep, add)
@@ -2662,6 +2921,14 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 	span := &spans.name
 	*span = [2]int{fleetHeaderNameCol, lipgloss.Width(head) + lipgloss.Width(name)}
 	line := head + projStyle.Render(name)
+	if t, ok := m.groupTab(g); ok && lipgloss.Width(name) == lipgloss.Width(g.Project) {
+		// Tabs take what the project name leaves, so they truncate first.
+		start := lipgloss.Width(line) + fleetTabGap
+		if text, sess, sched := renderGroupTabs(t, hover, start, leftW-start); text != "" {
+			line += strings.Repeat(" ", fleetTabGap) + text
+			spans.tabSessions, spans.tabSched = sess, sched
+		}
+	}
 	if groupCustomSession(g) {
 		if room := leftW - lipgloss.Width(line) - 2; room >= fleetMinSessionLabel {
 			line += "  " + fleetCountStyle.Render(truncateToWidth(g.Session, room))
@@ -2714,7 +2981,7 @@ func groupStateCounts(g fleet.Group, digits, gap int) fleetGroupCounts {
 		if r.Shell {
 			continue
 		}
-		switch rowWeight(r) {
+		switch glyphWeight(r) {
 		case fleetWeightBlocked:
 			c.blocked++
 		case fleetWeightWorking:
@@ -2749,7 +3016,7 @@ func groupStateCounts(g fleet.Group, digits, gap int) fleetGroupCounts {
 
 // renderRow renders one agent row.
 func (m FleetModel) renderRow(r fleet.Row, selected bool, cw int) string {
-	return m.renderTreeRow(r, "", 0, selected, cw)
+	return m.renderTreeRow(r, "", selected, cw)
 }
 
 // fleetNow is the clock row ages are measured against; tests replace it.
@@ -2827,7 +3094,6 @@ const (
 // work; the age goes first because the glyph already says the state and the
 // hover card the time.
 type fleetRightCols struct {
-	agent        bool // a role row's agent name drawn (left of the model)
 	modelW       int  // model column width; 0 = not drawn
 	ctx          bool // context column drawn (blank on rows below the warn threshold)
 	pr, age      bool
@@ -2855,11 +3121,8 @@ func joinedWidth(ws ...int) int {
 // only on the rows that draw them (ownModel, ownCtx), and a blank leading
 // column is trimmed at render time, so its width goes back to the recap.
 // Order as the row narrows: age, then the model, then the PR; the context
-// warning is never dropped. A role row's agent name (ownAgentW columns, 0 =
-// none) is leftmost and goes before all of them: it is drawn only when it
-// fits beside everything else the row draws and fleetMinTitleBesideAgent
-// columns of title, and like the model it counts on its own row only.
-func fitRightCols(available int, ex fleetExceptions, ownCtx, ownModel bool, ownAgentW int) fleetRightCols {
+// warning is never dropped.
+func fitRightCols(available int, ex fleetExceptions, ownCtx, ownModel bool) fleetRightCols {
 	fits := func(w int) bool { return available-w-1 >= fleetMinRecapWidth }
 	ctxAll, ctxRow := 0, 0
 	if ex.ctx || ownCtx {
@@ -2874,17 +3137,6 @@ func fitRightCols(available int, ex fleetExceptions, ownCtx, ownModel bool, ownA
 		c.modelW = ex.modelW
 	}
 	c.age = c.pr && fits(joinedWidth(ex.modelW, ctxAll, fleetPRSlotW, fleetAgeSlotW))
-	if ownAgentW > 0 {
-		prW, ageW := 0, 0
-		if c.pr {
-			prW = fleetPRSlotW
-		}
-		if c.age {
-			ageW = fleetAgeSlotW
-		}
-		w := joinedWidth(ownAgentW, c.modelW, ctxAll, prW, ageW)
-		c.agent = available-w-1 >= fleetMinTitleBesideAgent
-	}
 	return c
 }
 
@@ -2920,16 +3172,13 @@ func rowAge(r fleet.Row) string {
 const fleetNoAge = "–"
 
 // rowRight renders the right-aligned status columns before the close button:
-// a role row's dim agent name (fitRightCols' agent), the model exception (ex.rowModel), the context warning in its threshold
+// the model exception (ex.rowModel), the context warning in its threshold
 // colour, the PR badge ("#60", in the done style on a done row) and the age
 // (rowAge), each right-aligned in its slot one space apart. Blank leading
 // columns are trimmed so the recap may use them; inner blanks stay so the
 // columns line up down the list.
 func rowRight(r fleet.Row, c fleetRightCols, ex fleetExceptions, d fleetDisplay) string {
 	var parts []string
-	if c.agent && r.ShortRole != "" {
-		parts = append(parts, fleetDimStyle.Render(fleet.BaseName(r)))
-	}
 	if c.modelW > 0 {
 		var model string
 		if mn := ex.rowModel(r); mn != "" {
@@ -2991,18 +3240,18 @@ func recapStyle(w fleetWeight, src fleet.RecapSource) lipgloss.Style {
 // agent name, recap, then the right-aligned PR and age columns and the close
 // button. The prefix is clamped so deep nesting cannot starve the name. A
 // selected row also renders its detail lines (see rowDetail) beneath it,
-// joined by newlines; every line measures at most cw (exactly cw when
+// joined by newlines, unless the status pane shows them (inlineDetail); every line measures at most cw (exactly cw when
 // selected).
-func (m FleetModel) renderTreeRow(r fleet.Row, treePrefix string, nameCol int, selected bool, cw int) string {
-	return m.renderTreeRowHover(r, treePrefix, nameCol, selected, fleetHoverNone, cw)
+func (m FleetModel) renderTreeRow(r fleet.Row, treePrefix string, selected bool, cw int) string {
+	return m.renderTreeRowHover(r, treePrefix, selected, fleetHoverNone, cw)
 }
 
 // renderTreeRowHover is renderTreeRow with the hover region of this row: a
 // body hover tints an unselected row, a close hover recolours the ✕. The ✕
 // is drawn only on the selected and the hovered row; every other row keeps
 // its one-cell slot blank so alignment and hit regions never change.
-func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol int, selected bool, hover fleetHoverRegion, cw int) string {
-	return m.renderRowLine(fleetLine{kind: fleetLineRow, row: r, treePrefix: treePrefix, nameCol: nameCol}, selected, hover, cw)
+func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, selected bool, hover fleetHoverRegion, cw int) string {
+	return m.renderRowLine(fleetLine{kind: fleetLineRow, row: r, treePrefix: treePrefix}, selected, hover, cw)
 }
 
 // renderRowLine renders the agent row line l (see renderTreeRowHover), with
@@ -3010,10 +3259,10 @@ func (m FleetModel) renderTreeRowHover(r fleet.Row, treePrefix string, nameCol i
 func (m FleetModel) renderRowLine(l fleetLine, selected bool, hover fleetHoverRegion, cw int) string {
 	lay := m.rowLayout(l, selected, hover, cw)
 	out := lay.line
-	if !selected {
+	if !selected || !m.inlineDetail() {
 		return out
 	}
-	for _, d := range rowDetailStyled(l.row, l.treePrefix, cw, m.display, m.viewerShows(l.row), lay.nameShown) {
+	for _, d := range rowDetailStyled(l.row, l.treePrefix, cw, m.display, m.viewerShows(l.row)) {
 		out += "\n" + fleetFitLine(d, true, cw)
 	}
 	return out
@@ -3025,8 +3274,8 @@ func (m FleetModel) renderRowLine(l fleetLine, selected bool, hover fleetHoverRe
 // The span is zero when no title text is drawn (a shell row, a close
 // confirmation, a column too narrow). While the row is being renamed the
 // editor is drawn there and the span covers the editor.
-func (m FleetModel) treeRowLayout(r fleet.Row, treePrefix string, nameCol int, selected bool, hover fleetHoverRegion, cw int) (string, [2]int) {
-	lay := m.rowLayout(fleetLine{kind: fleetLineRow, row: r, treePrefix: treePrefix, nameCol: nameCol}, selected, hover, cw)
+func (m FleetModel) treeRowLayout(r fleet.Row, treePrefix string, selected bool, hover fleetHoverRegion, cw int) (string, [2]int) {
+	lay := m.rowLayout(fleetLine{kind: fleetLineRow, row: r, treePrefix: treePrefix}, selected, hover, cw)
 	return lay.line, lay.title
 }
 
@@ -3036,39 +3285,16 @@ type fleetRowLayout struct {
 	// title is the [start, end) columns of the title text (see
 	// treeRowLayout); marker is the collapse marker's, zero when none.
 	title, marker [2]int
-	// nameShown reports whether the row shows the agent's whole base name:
-	// in the name column, or for a role row on the right (rowRight). The
-	// detail chips add it when not.
-	nameShown bool
-}
-
-// rowLabel is what a row's name column shows: the role of a sub-agent row
-// (Row.ShortRole), whose agent name moves to the right-hand columns, else
-// the base agent name.
-func rowLabel(r fleet.Row) string {
-	if r.ShortRole != "" {
-		return r.ShortRole
-	}
-	return fleet.BaseName(r)
-}
-
-// rowNameColW is the uncapped name-column width row line l needs: its tree
-// prefix, its collapse marker and its label.
-func rowNameColW(l fleetLine) int {
-	w := lipgloss.Width(l.treePrefix) + lipgloss.Width(rowLabel(l.row))
-	if l.hasKids {
-		w += fleetCollapseMarkerW
-	}
-	return w
 }
 
 // rowLayout lays out the row line l: cursor, glyph, tree prefix (dim), the
-// collapse marker of a parent row, the label (rowLabel), the recap title (a
+// collapse marker of a parent row, a sub-agent row's role label
+// (Row.ShortRole; normal rows have none), the recap title (a
 // collapsed parent's subtree summary after it), then the right-aligned
 // columns and the close button.
 func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion, cw int) fleetRowLayout {
 	var lay fleetRowLayout
-	r, treePrefix, nameCol := l.row, l.treePrefix, l.nameCol
+	r, treePrefix := l.row, l.treePrefix
 	glyph, style := rowGlyph(r)
 	weight := rowStyleWeight(r, fleetNow())
 	cursor := fleetRowCursor(r, selected)
@@ -3078,26 +3304,23 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 	closeW := 1 + lipgloss.Width(fleetCloseLabel)
 	inner := cw - fleetSidebarRightGutter
 	nameBudget := fleetRowNameCap(cw)
-	col := min(nameCol, nameBudget)
 	treePrefix = fleetKeptPrefix(treePrefix, cw)
 	markerW := 0
 	if l.hasKids {
 		markerW = fleetCollapseMarkerW
 	}
 	nameBudget -= lipgloss.Width(treePrefix) + markerW
-	label := rowLabel(r)
-	name := truncateToWidth(label, nameBudget)
+	name := truncateToWidth(r.ShortRole, nameBudget)
 
 	ctxWarn := rowCtxWarn(r, m.display)
 	// A context warning is never dropped: on a sidebar too narrow for it and
-	// the minimum recap, the name gives way instead (contentWidth keeps the
+	// the minimum recap, the role label gives way instead (contentWidth keeps the
 	// hub wider than this, so it only bites below 40 columns).
 	if ctxWarn && !m.confirmingRow(r) {
-		used := lipgloss.Width(cursor) + 2 + max(col, lipgloss.Width(treePrefix)+markerW+lipgloss.Width(name)) + 2 + closeW
-		if short := fleetMinRecapWidth + fleetCtxSlotW + 1 - (inner - used); short > 0 {
+		used := lipgloss.Width(cursor) + 2 + lipgloss.Width(treePrefix) + markerW + lipgloss.Width(name) + 2 + closeW
+		if short := fleetMinRecapWidth + fleetCtxSlotW + 1 - (inner - used); short > 0 && name != "" {
 			nameBudget = max(nameBudget-short, 1)
-			name = truncateToWidth(label, nameBudget)
-			col = min(col, lipgloss.Width(treePrefix)+markerW+nameBudget)
+			name = truncateToWidth(r.ShortRole, nameBudget)
 		}
 	}
 
@@ -3108,23 +3331,15 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 		lay.marker = [2]int{start, start + 1}
 		marker = collapseMarker(l.collapsed, hover == fleetHoverCollapse) + " "
 	}
-	padW := max(col-lipgloss.Width(treePrefix)-markerW-lipgloss.Width(name), 0)
-	prefix := head + marker + renderAgentNameHover(name, weight, hovered) + strings.Repeat(" ", padW) + "  "
+	prefix := head + marker
+	if name != "" {
+		prefix += renderAgentNameHover(name, weight, hovered) + "  "
+	}
 	available := inner - lipgloss.Width(prefix) - closeW
 
-	// A role row's agent name sits on the right, left of the model column.
-	var agent string
-	if r.ShortRole != "" {
-		agent = fleet.BaseName(r)
-	}
 	var cols fleetRightCols
 	if !r.Shell {
-		cols = fitRightCols(available, m.except, ctxWarn, m.except.rowModel(r) != "", lipgloss.Width(agent))
-	}
-	if r.ShortRole != "" {
-		lay.nameShown = cols.agent
-	} else {
-		lay.nameShown = name == label
+		cols = fitRightCols(available, m.except, ctxWarn, m.except.rowModel(r) != "")
 	}
 
 	closeStyle := fleetDimStyle
@@ -3170,6 +3385,10 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 			available -= lipgloss.Width(tag) + 1
 			tag = fleetDimStyle.Render(tag) + " "
 		}
+		if c := m.artifactChip(r); c != "" && available > lipgloss.Width(c)+1 {
+			tag += fleetDimStyle.Render(c) + " "
+			available -= lipgloss.Width(c) + 1
+		}
 		start := lipgloss.Width(prefix) + lipgloss.Width(tag)
 		if m.renamingRow(r) {
 			editor := m.renameView(max(available, 0))
@@ -3177,7 +3396,21 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 			lay.title = [2]int{start, start + max(available, lipgloss.Width(editor))}
 		} else {
 			title := fleet.TruncateWords(recap.Short(), max(available, 0))
-			text = tag + renderRecapTitle(title, rs)
+			if rowNeedsNameFallback(r, recap) {
+				// No title and no recap text: the agent name keeps the row from
+				// being blank (a shell row's recap is empty by design).
+				title = truncateToWidth(fleet.BaseName(r), max(available, 0))
+				text = tag + renderAgentNameHover(title, weight, hovered)
+				if rest := max(available-lipgloss.Width(title)-2, 0); !r.Shell && rest > 0 && recap.Text != "" {
+					extra := fleet.TruncateWords(recap.Text, rest)
+					if extra != "" {
+						text += "  " + fleetEmptyStyle.Render(extra)
+						title += "  " + extra
+					}
+				}
+			} else {
+				text = tag + renderRecapTitle(title, rs)
+			}
 			if w := lipgloss.Width(title); w > 0 {
 				lay.title = [2]int{start, start + w}
 			}
@@ -3208,9 +3441,15 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 	return lay
 }
 
-// fleetMinTitleBesideAgent is the title width a role row must keep for its
-// agent name to be drawn on the right.
-const fleetMinTitleBesideAgent = 16
+// rowNeedsNameFallback reports whether row r has nothing to show as its title
+// and falls back to the agent's base name: a shell row, or a normal row whose
+// recap is the empty-state sentence. A role row keeps its role label instead.
+func rowNeedsNameFallback(r fleet.Row, recap fleet.RecapLine) bool {
+	if r.ShortRole != "" {
+		return false
+	}
+	return r.Shell || recap.Source == fleet.RecapNone
+}
 
 // leadingIssue matches a title's leading issue number ("#21 Crotch…").
 var leadingIssue = regexp.MustCompile(`^#\d+\b`)
@@ -3276,7 +3515,7 @@ func scheduledTag(r fleet.Row) string {
 // renders as a fallback; fleet.Recap itself stays pure.
 func rowRecap(r fleet.Row) fleet.RecapLine {
 	if r.Shell {
-		return fleet.RecapLine{} // the name already says "shell"
+		return fleet.RecapLine{} // the fallback title shows the name
 	}
 	if r.Recap.Source != fleet.RecapNone {
 		return r.Recap
@@ -3331,15 +3570,6 @@ func fleetRowNameCap(cw int) int {
 	return min(fleetNameBudget(cw), max(maxCol, 0))
 }
 
-// rowNameFits reports whether the row's name column shows its whole base
-// name (see renderTreeRowHover) for a kept tree prefix of width prefixW.
-func rowNameFits(r fleet.Row, prefixW, cw int) bool {
-	if r.ShortRole != "" {
-		return false // the name column shows the role, not the name
-	}
-	return lipgloss.Width(fleet.BaseName(r)) <= fleetRowNameCap(cw)-prefixW
-}
-
 // fleetContinuation turns a (kept) tree prefix into the continuation drawn
 // beside detail lines: "│  " where siblings follow at that depth, spaces
 // otherwise. The result has the same display width as the prefix.
@@ -3391,21 +3621,16 @@ type fleetDetailLine struct {
 // marked, truncated line and never wraps. viewed drops the activity line:
 // the live viewer is showing that window, so it would only repeat it. Hit
 // testing and scrolling count these lines, so rendering must use exactly
-// this. prefixW is the width of the row's kept tree prefix
-// (fleetKeptPrefix).
+// this, and both skip them while the status pane above the viewer shows
+// them instead (inlineDetail). prefixW is the width of the row's kept tree
+// prefix (fleetKeptPrefix).
 func rowDetail(r fleet.Row, prefixW, cw int, d fleetDisplay, viewed bool) []fleetDetailLine {
-	return rowDetailFor(r, prefixW, cw, d, viewed, rowNameFits(r, prefixW, cw))
-}
-
-// rowDetailFor is rowDetail when the caller knows from the row's layout
-// whether it shows the agent's whole name (fleetRowLayout.nameShown).
-func rowDetailFor(r fleet.Row, prefixW, cw int, d fleetDisplay, viewed, nameShown bool) []fleetDetailLine {
 	w := cw - fleetSidebarRightGutter - fleetDetailIndent - prefixW
 	if w < fleetMinRecapWidth {
 		return nil
 	}
 	out := rowDetailText(r, w, viewed)
-	if chips := rowChips(r, nameShown, d); len(chips) > 0 {
+	if chips := rowChips(r, d); len(chips) > 0 {
 		styled := renderChips(chips, w)
 		out = append(out, fleetDetailLine{text: ansi.Strip(styled), styled: styled})
 	}
@@ -3414,32 +3639,68 @@ func rowDetailFor(r fleet.Row, prefixW, cw int, d fleetDisplay, viewed, nameShow
 
 // rowDetailText is rowDetail's recap and activity lines at text width w.
 func rowDetailText(r fleet.Row, w int, viewed bool) []fleetDetailLine {
-	activity := fleet.ActivityLine(r)
+	return detailPartsFor(r, viewed).textLines(w, fleetDetailMaxLines)
+}
+
+// rowDetailParts is the width-independent content of a row's detail: what
+// rowDetail wraps beneath a selected row and what the hub's status pane
+// wraps to its own width. It is published in the hub selection file, so the
+// status pane renders exactly what the list would.
+type rowDetailParts struct {
+	// Recap is the recap text; "" when there is no detail (no recap, or an
+	// activity recap the viewer already shows).
+	Recap string `json:"recap,omitempty"`
+	// RecapIsActivity marks a recap that is itself the activity (the last
+	// tool command or text): one marked, truncated line that never wraps.
+	RecapIsActivity bool `json:"recap_is_activity,omitempty"`
+	// Activity is the separate last-activity line ("" when none, when it
+	// repeats the recap, or when the viewer shows it).
+	Activity string `json:"activity,omitempty"`
+	// Marker leads the activity line (or the activity recap).
+	Marker string `json:"marker,omitempty"`
+}
+
+// detailPartsFor builds r's detail parts. viewed drops the activity: the
+// live viewer is showing that window, so it would only repeat it.
+func detailPartsFor(r fleet.Row, viewed bool) rowDetailParts {
 	rc := rowRecap(r)
 	if rc.Source == fleet.RecapNone {
-		return nil // the fallback sentence is already the whole story
+		return rowDetailParts{} // the fallback sentence is already the whole story
 	}
 	if rc.Source == fleet.RecapActivity {
 		if viewed {
-			return nil
+			return rowDetailParts{}
 		}
 		marker, text := activityMarker(r, rc.Text)
-		return []fleetDetailLine{{text: truncateToWidth(text, w-lipgloss.Width(marker)), marker: marker}}
+		return rowDetailParts{Recap: text, RecapIsActivity: true, Marker: marker}
 	}
-	recap := rc.Text
-	showActivity := !viewed && activity != "" && activity != recap
+	p := rowDetailParts{Recap: rc.Text}
+	if activity := fleet.ActivityLine(r); !viewed && activity != "" && activity != rc.Text {
+		p.Marker, p.Activity = activityMarker(r, activity)
+	}
+	return p
+}
 
-	recapMax := fleetDetailMaxLines
-	if showActivity {
+// textLines lays the parts out at text width w in at most maxLines lines:
+// the recap wrapped (its last kept line ending in "…" when cut), then the
+// activity line, truncated.
+func (p rowDetailParts) textLines(w, maxLines int) []fleetDetailLine {
+	if p.Recap == "" || w <= 0 || maxLines <= 0 {
+		return nil
+	}
+	if p.RecapIsActivity {
+		return []fleetDetailLine{{text: truncateToWidth(p.Recap, w-lipgloss.Width(p.Marker)), marker: p.Marker}}
+	}
+	recapMax := maxLines
+	if p.Activity != "" {
 		recapMax--
 	}
 	var out []fleetDetailLine
-	for _, l := range wrapLines(recap, w, recapMax) {
+	for _, l := range wrapLines(p.Recap, w, recapMax) {
 		out = append(out, fleetDetailLine{text: l})
 	}
-	if showActivity {
-		marker, text := activityMarker(r, activity)
-		out = append(out, fleetDetailLine{text: truncateToWidth(text, w-lipgloss.Width(marker)), marker: marker})
+	if p.Activity != "" {
+		out = append(out, fleetDetailLine{text: truncateToWidth(p.Activity, w-lipgloss.Width(p.Marker)), marker: p.Marker})
 	}
 	return out
 }
@@ -3464,10 +3725,10 @@ func activityMarker(r fleet.Row, text string) (marker, shown string) {
 
 // rowDetailStyled renders rowDetail's lines with the bar, indent and the
 // tree continuation for the row's (already clamped) prefix.
-func rowDetailStyled(r fleet.Row, treePrefix string, cw int, disp fleetDisplay, viewed, nameShown bool) []string {
+func rowDetailStyled(r fleet.Row, treePrefix string, cw int, disp fleetDisplay, viewed bool) []string {
 	indent := fleetProjectBar(r.Project) + strings.Repeat(" ", fleetDetailIndent-1) + fleetDimStyle.Render(fleetContinuation(treePrefix))
 	var out []string
-	for _, d := range rowDetailFor(r, lipgloss.Width(treePrefix), cw, disp, viewed, nameShown) {
+	for _, d := range rowDetail(r, lipgloss.Width(treePrefix), cw, disp, viewed) {
 		if d.styled != "" {
 			out = append(out, indent+d.styled)
 			continue
@@ -3504,14 +3765,14 @@ func wrapLines(s string, w, n int) []string {
 }
 
 // lineHeight is how many screen rows line i renders as at width cw: a
-// selected agent row adds its detail lines, everything else is one row.
+// selected agent row adds its detail lines (unless the status pane shows
+// them instead), everything else is one row.
 func (m FleetModel) lineHeight(i, cw int) int {
 	if i < 0 || i >= len(m.lines) {
 		return 0
 	}
-	if l := m.lines[i]; l.kind == fleetLineRow && i == m.splitPane.Cursor() {
-		shown := m.rowLayout(l, true, fleetHoverNone, cw).nameShown
-		return 1 + len(rowDetailFor(l.row, lipgloss.Width(fleetKeptPrefix(l.treePrefix, cw)), cw, m.display, m.viewerShows(l.row), shown))
+	if l := m.lines[i]; l.kind == fleetLineRow && i == m.splitPane.Cursor() && m.inlineDetail() {
+		return 1 + len(rowDetail(l.row, lipgloss.Width(fleetKeptPrefix(l.treePrefix, cw)), cw, m.display, m.viewerShows(l.row)))
 	}
 	return 1
 }
@@ -3601,54 +3862,172 @@ func (m *FleetModel) applyClosePending() {
 	}
 }
 
-// fleetViewerMsg reports the window the live viewer currently shows.
-type fleetViewerMsg struct{ home, window string }
+// fleetViewerMsg reports the window the live viewer currently shows, and the
+// window a chrome-bar tab click inside it last asked for (intent, identified
+// per click by token).
+type fleetViewerMsg struct{ viewer, home, window, intent, token string }
+
+// Viewer poll seams, overridden in tests so they never touch tmux.
+var (
+	hubViewerState = tmux.HubViewerState
+	repointViewer  = tmux.RepointViewer
+)
 
 // fleetViewerPollCmd asks tmux which window the viewer shows.
 func fleetViewerPollCmd() tea.Cmd {
 	return func() tea.Msg {
-		home, win := tmux.ViewerActiveWindow()
-		return fleetViewerMsg{home: home, window: win}
+		st := hubViewerState()
+		return fleetViewerMsg{viewer: st.Viewer, home: st.Home, window: st.Window, intent: st.Intent, token: st.IntentToken}
 	}
 }
 
-// viewerSyncTarget decides whether the hub selection must follow the viewer.
-// The viewer shows home|win; seen is what the previous poll saw and liveShown
-// what the hub itself last handed to the viewer. Only a change the hub did not
-// cause (observed differs from both) is followed, and only when the window is
-// a row of the list. It returns the key to remember as seen.
-func viewerSyncTarget(lines []fleetLine, liveShown, seen, home, win string) (key string, follow bool) {
+// viewerSyncAction is what the hub does about the window its viewer shows.
+type viewerSyncAction int
+
+const (
+	viewerSyncNone    viewerSyncAction = iota
+	viewerSyncFollow                   // move the list selection to target
+	viewerSyncRepoint                  // put the viewer back on target
+)
+
+// viewerSyncDecision is the outcome of viewerSyncDecide. seen is the key to
+// remember as last observed; target is a "session|window" key. A follow may
+// also repoint the viewer (a tab click and an index shift in one poll).
+type viewerSyncDecision struct {
+	seen    string
+	action  viewerSyncAction
+	target  string
+	repoint bool
+}
+
+// viewerSyncState is the hub's memory between viewer polls.
+type viewerSyncState struct {
+	liveShown  string // "session|window" the hub last handed to the viewer
+	liveFailed string // liveShown key whose hand-off failed
+	seen       string // "session|window" the previous poll observed
+	intent     string // tab-click token already acted on (or found at start)
+}
+
+// viewerSyncDecide decides how the hub reacts to the viewer's state. The
+// viewer is a grouped session and tmux re-syncs grouped sessions by window
+// index, so inserting, moving or closing a window in the home session moves
+// the viewer to whatever window now sits at its old index. Only a change
+// attributable to a chrome-bar tab click (the viewer's intent, set by
+// tmux.SelectViewerWindow, acted on once per click token) is followed; any
+// other drift away from the window the hub shows (liveShown)
+// re-points the viewer at it by window ID. When the shown window is no longer
+// a row (it closed), or the hub has nothing shown, the old rule applies: a
+// change the hub did not cause is followed when it is a row of the list.
+//
+// isRow reports whether session|window is a row the list can select (after
+// revealing a folded or filtered one); it is only asked about follow targets.
+func viewerSyncDecide(lines []fleetLine, st viewerSyncState, msg fleetViewerMsg, isRow func(session, window string) bool) viewerSyncDecision {
+	liveShown, seen := st.liveShown, st.seen
+	home, win := msg.home, msg.window
 	if home == "" || win == "" {
-		return seen, false
+		return viewerSyncDecision{seen: seen}
 	}
-	key = home + "|" + win
+	key := home + "|" + win
+	liveHome, liveWin, _ := strings.Cut(liveShown, "|")
+	if msg.intent != "" && msg.token != st.intent && msg.intent != liveWin {
+		// A tab click the hub has not followed yet: the viewer belongs on
+		// the clicked window even if an index shift moved it since.
+		d := viewerSyncDecision{seen: key}
+		target := home + "|" + msg.intent
+		if win != msg.intent {
+			d.action, d.target = viewerSyncRepoint, target
+			d.repoint = true
+		}
+		if isRow(home, msg.intent) {
+			d.action, d.target = viewerSyncFollow, target
+		}
+		return d
+	}
 	if key == seen || key == liveShown {
-		return key, false
+		return viewerSyncDecision{seen: key}
 	}
+	if liveShown != "" && liveShown != st.liveFailed && liveHome == home && fleetLinesHaveRow(lines, liveHome, liveWin) {
+		// Drift: an index shift moved the viewer off the watched window.
+		// Expect the viewer back on it, so a failed repoint retries.
+		return viewerSyncDecision{seen: liveShown, action: viewerSyncRepoint, target: liveShown, repoint: true}
+	}
+	if isRow(home, win) {
+		return viewerSyncDecision{seen: key, action: viewerSyncFollow, target: key}
+	}
+	return viewerSyncDecision{seen: key}
+}
+
+// fleetLinesHaveRow reports whether session's window is a row of lines.
+func fleetLinesHaveRow(lines []fleetLine, session, window string) bool {
 	for _, l := range lines {
-		if l.kind == fleetLineRow && l.row.Session == home && l.row.WindowID == win {
-			return key, true
+		if l.kind == fleetLineRow && l.row.Session == session && l.row.WindowID == window {
+			return true
 		}
 	}
-	return key, false
+	return false
 }
 
-// syncFromViewer moves the list selection to the window the viewer switched
-// to by other means (a chrome-bar tab click inside the live pane).
-func (m FleetModel) syncFromViewer(msg fleetViewerMsg) FleetModel {
-	if key := msg.home + "|" + msg.window; msg.home != "" && msg.window != "" && key != m.viewerSeen && key != m.liveShown {
-		m.revealRow(msg.home, msg.window) // a switch to a hidden row unfolds it
+// syncFromViewer moves the list selection to the window a chrome-bar tab
+// click inside the live pane switched the viewer to, and puts the viewer back
+// on the hub's window when tmux moved it there by index (see viewerSyncDecide).
+func (m FleetModel) syncFromViewer(msg fleetViewerMsg) (FleetModel, tea.Cmd) {
+	isRow := func(session, window string) bool {
+		m.revealRow(session, window) // a switch to a hidden row unfolds it
+		return fleetLinesHaveRow(m.lines, session, window)
 	}
-	key, follow := viewerSyncTarget(m.lines, m.liveShown, m.viewerSeen, msg.home, msg.window)
-	m.viewerSeen = key
-	if !follow {
-		return m
+	if !m.viewerPolled {
+		// A click recorded before this hub started (a previous hub, or a
+		// hot reload) is not one to follow now.
+		m.viewerPolled, m.viewerIntent = true, msg.token
 	}
-	m.selSession, m.selWindowID, m.selIsHeader = msg.home, msg.window, false
-	m.liveShown = key
+	st := viewerSyncState{liveShown: m.liveShown, liveFailed: m.liveFailed, seen: m.viewerSeen, intent: m.viewerIntent}
+	d := viewerSyncDecide(m.lines, st, msg, isRow)
+	m.viewerSeen, m.viewerIntent = d.seen, msg.token
+	var cmd tea.Cmd
+	if d.repoint {
+		m.viewerGen++
+		cmd = fleetRepointCmd(msg.viewer, d.target, m.viewerGen, m.hubChrome)
+	}
+	if d.action != viewerSyncFollow {
+		return m, cmd
+	}
+	session, window, _ := strings.Cut(d.target, "|")
+	m.selSession, m.selWindowID, m.selIsHeader = session, window, false
+	m.liveShown = d.target
 	m.wheelHold = false // the selection changed: follow it
 	m.resolveSelection()
-	return m
+	return m, cmd
+}
+
+// fleetViewerApplied is the newest viewerGen whose show or repoint has run,
+// guarded by fleetViewerMu. Bubble Tea runs commands concurrently and the
+// mutex is not FIFO, so a repoint decided before a later show can reach the
+// lock after it; it is then stale and skipped, or it would leave the viewer
+// on a window the hub no longer selects (and the next poll, seeing the
+// viewer where it last expected it, would not correct it).
+var fleetViewerApplied uint64
+
+// fleetRepointCmd selects key's window (by ID) in the viewer session, unless
+// a newer hand-off (gen) has already run.
+func fleetRepointCmd(viewer, key string, gen uint64, chromeShown bool) tea.Cmd {
+	_, window, _ := strings.Cut(key, "|")
+	if viewer == "" || window == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		fleetViewerMu.Lock()
+		if gen < fleetViewerApplied {
+			fleetViewerMu.Unlock()
+			return nil
+		}
+		fleetViewerApplied = gen
+		err := repointViewer(viewer, window)
+		fleetViewerMu.Unlock()
+		if err == nil {
+			hubZoomSync(!chromeShown)
+		}
+		return nil
+	}
 }
 
 // fleetLeaver adapts the hub list to hubtarget.Leaver. The fleet process runs in

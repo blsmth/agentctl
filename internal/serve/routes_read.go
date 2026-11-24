@@ -92,6 +92,7 @@ func (s *Server) registerRead(rt *Router) {
 	rt.Device("GET /v1/projects", s.handleProjects)
 	rt.Feature("launch-options")
 	rt.Device("GET /v1/launch-options", s.handleLaunchOptions)
+	rt.Device("GET /v1/templates", s.handleTemplates)
 	rt.Feature("host")
 	rt.Device("GET /v1/host", s.handleHost)
 	rt.Feature("events")
@@ -226,6 +227,10 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 const (
 	defaultPaneLines = 200
 	maxPaneLines     = 2000
+	// historyPaneLines is what lines=all captures: the explicit "load earlier"
+	// request. 20000 lines of ANSI text is a few MB at most; the live poll
+	// never asks for it.
+	historyPaneLines = 20000
 )
 
 type paneBody struct {
@@ -274,7 +279,9 @@ func (s *Server) handlePane(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lines := defaultPaneLines
-	if v := r.URL.Query().Get("lines"); v != "" {
+	if v := r.URL.Query().Get("lines"); v == "all" {
+		lines = historyPaneLines
+	} else if v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
 			writeError(w, http.StatusBadRequest, codeBadRequest, "lines must be a positive integer")
@@ -440,6 +447,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 					Session  string `json:"session"`
 					WindowID string `json:"window_id"`
 				}{ev.Session, ev.WindowID})
+			case fleetwatch.KindArtifact:
+				ok = send("artifact", struct {
+					ID     string `json:"id"`
+					Action string `json:"action"`
+				}{ev.Artifact.ID, ev.Artifact.Action})
 			}
 			if !ok {
 				return

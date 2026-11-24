@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/artifacts"
 	"github.com/blsmth/agentctl/internal/buildid"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/cronedit"
@@ -110,6 +111,14 @@ type Options struct {
 	// PingEvery is the SSE keep-alive interval; 0 means 20s.
 	PingEvery time.Duration
 
+	// Artifacts is the artifact store behind /v1/artifacts and /a/; nil
+	// means the machine-wide store (artifacts.New). ArtifactPoll is the
+	// watcher's fallback rescan interval (0 = 30s) and ArtifactDebounce its
+	// fsnotify debounce (0 = 200ms).
+	Artifacts        *artifacts.Store
+	ArtifactPoll     time.Duration
+	ArtifactDebounce time.Duration
+
 	// Push dependencies; nil means production (webpush-go, ntfy.sh).
 	Pusher   Pusher
 	NtfyBase string
@@ -151,6 +160,10 @@ type Server struct {
 	ntfy           *Ntfy
 	notifier       *Notifier
 	pushQ          *pushDispatcher
+
+	artifacts     *artifacts.Store
+	artifactWatch *artifactWatcher
+	artifactKey   []byte
 
 	keys       KeySender
 	injector   Injector
@@ -310,6 +323,16 @@ func New(opts Options) (*Server, error) {
 	}
 	s.done = make(chan struct{})
 	s.bus = fleetwatch.NewBus(s.fleet, opts.BusOptions)
+	if s.artifactKey, err = loadOrCreateArtifactKey(opts.Dir); err != nil {
+		return nil, err
+	}
+	s.artifacts = opts.Artifacts
+	if s.artifacts == nil {
+		s.artifacts = artifacts.New()
+	}
+	s.artifactWatch = newArtifactWatcher(s.artifacts, func(c fleetwatch.ArtifactChange) {
+		s.bus.Publish(fleetwatch.Event{Kind: fleetwatch.KindArtifact, Artifact: c})
+	}, opts.ArtifactDebounce, opts.ArtifactPoll)
 	s.router = newRouter(devices, opts.Config.AllowWrite, now)
 	s.router.onWriteDenied = s.auditRejected
 	s.routes(s.router)
@@ -325,9 +348,10 @@ func (s *Server) Handler() http.Handler { return s.handler }
 func (s *Server) ResetWriteLimits() { s.limiter.reset() }
 
 // chain wraps h in the middleware every HTTPS request passes, outermost
-// first: CIDR filter, security headers, CSRF.
+// first: the /a/ sandbox headers (artifact content, enforced on every
+// response there whoever writes it), CIDR filter, security headers, CSRF.
 func (s *Server) chain(h http.Handler) http.Handler {
-	return s.cidrs.middleware(securityHeaders(requireCSRF(h, s.auditRejected)))
+	return sandboxArtifacts(s.cidrs.middleware(securityHeaders(requireCSRF(h, s.auditRejected))))
 }
 
 // routes registers every endpoint. Later PRs add one line each here
@@ -343,6 +367,7 @@ func (s *Server) routes(rt *Router) {
 	s.registerSchedules(rt)
 	s.registerTerminal(rt)
 	s.registerApprovals(rt)
+	s.registerArtifacts(rt)
 }
 
 // registerCore registers the foundation endpoints.
@@ -498,6 +523,14 @@ func (s *Server) Start(ctx context.Context) {
 	go func() {
 		defer s.bgWG.Done()
 		s.pushQ.run(ctx)
+	}()
+	// Seeded here, before Start returns, so an artifact published right
+	// after start is an add, not part of the baseline.
+	s.artifactWatch.seed()
+	s.bgWG.Add(1)
+	go func() {
+		defer s.bgWG.Done()
+		s.artifactWatch.run(ctx)
 	}()
 	if s.opts.Config.KeepAwakeEnabled() {
 		s.bgWG.Add(1)

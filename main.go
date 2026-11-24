@@ -323,7 +323,7 @@ func cmdLogsMenu() {
 	cmd.RunLogs(result.Agent)
 }
 
-// cmdImprove launches a full improvement session for the current window's agent.
+// cmdImprove launches an improvement session for the current window's agent.
 func cmdImprove() {
 	agentName := resolveCurrentAgent()
 	if agentName == "" {
@@ -332,9 +332,22 @@ func cmdImprove() {
 	}
 	agentName = tmux.BaseAgentName(agentName)
 
-	if err := improve.LaunchSession(agentName, "", false); err != nil {
+	if err := improve.LaunchSession(agentName, "", callerDir("")); err != nil {
 		tmux.DisplayMessage(fmt.Sprintf("Error: %v", err))
 	}
+}
+
+// callerDir is the directory of the window an improve request came from: the
+// pane path of windowID when it is a tmux window ID, else this process's cwd
+// (keybinding-spawned processes are pinned to the project root).
+func callerDir(windowID string) string {
+	if strings.HasPrefix(windowID, "@") {
+		if d := tmux.PaneWorkDir(windowID); d != "" {
+			return d
+		}
+	}
+	d, _ := os.Getwd()
+	return d
 }
 
 // cmdImproveMenu shows the Bubble Tea improve popup. windowID is the optional
@@ -376,7 +389,7 @@ func cmdImproveMenu(windowID string) {
 	}
 
 	logging.Log("improve-menu: launching improvement session for %q", agentName)
-	if err := improve.LaunchSession(agentName, result.Theme, result.Mode == "quick"); err != nil {
+	if err := improve.LaunchSession(agentName, result.Theme, callerDir(windowID)); err != nil {
 		logging.Log("improve-menu: LaunchSession error: %v", err)
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

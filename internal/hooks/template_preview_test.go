@@ -12,6 +12,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatchplan"
 	"github.com/blsmth/agentctl/internal/prompttemplate"
+	"github.com/blsmth/agentctl/internal/remoteapproval"
 	"github.com/blsmth/agentctl/internal/tui"
 )
 
@@ -144,7 +145,7 @@ func TestDispatchDetails_Template(t *testing.T) {
 
 	d := dispatchDetails(&config.Config{}, "agentctl dispatch --template both", project, tmpl)
 	if d.Agent != "writer" || d.Model != "haiku" || d.ModelSource != dispatchplan.SourceTemplate ||
-		d.DirSource != dispatchplan.SourceTemplate || d.Dir != "/code/site" {
+		d.DirSource != dispatchplan.SourceTemplate || d.Dir != "/code/site" || d.Template != "both" {
 		t.Errorf("details = %+v", d)
 	}
 	d = dispatchDetails(&config.Config{}, "agentctl dispatch --template both --agent a --model opus --dir /x", project, tmpl)
@@ -379,5 +380,14 @@ func TestTemplateEditTarget(t *testing.T) {
 		if got := templateEditTarget(tt.tool, in) != ""; got != tt.want {
 			t.Errorf("templateEditTarget(%s, %s) = %v, want %v", tt.tool, tt.path, got, tt.want)
 		}
+	}
+}
+
+// The phone sees add/edit/rm as a template approval naming the template.
+func TestTemplatePopupNotice_PhoneKind(t *testing.T) {
+	n := templatePopupNotice("lead", "agentctl template edit triage", templatePreview{action: "edit", name: "triage", agent: "writer", body: "x"})
+	r := n.Remote
+	if r == nil || r.Kind != remoteapproval.KindTemplate || r.Details.Template != "triage" || r.Details.Mode != "edit template" || r.Details.Agent != "writer" {
+		t.Errorf("remote = %+v", r)
 	}
 }

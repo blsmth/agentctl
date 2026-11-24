@@ -15,6 +15,7 @@ import (
 	"github.com/blsmth/agentctl/internal/registry"
 	"github.com/blsmth/agentctl/internal/state"
 	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // Row is one agent window, tagged with the session and project it belongs
@@ -48,6 +49,13 @@ type Row struct {
 	// StateSince is when the window entered its current state (BlockedSince
 	// for a blocked row); zero when unknown. Set by TagMeta.
 	StateSince time.Time
+
+	// PendingTool and PendingToolDetail name the tool a blocked window's
+	// dialog asks about and what it is asked to do. Set by TagMeta only
+	// while the row is blocked: hook-pre-tool records PendingTool on every
+	// tool call, so it means nothing otherwise.
+	PendingTool       string
+	PendingToolDetail string
 
 	// Recap is the row's "what is it working on" line, and PRNumber/PRURL the
 	// newest PR link from its session log. Set by TagLogs.
@@ -394,10 +402,32 @@ func FirstBlocked(groups []Group) *Row {
 // binaries (see MergeSessions) and by older monitors already on disk before
 // the source-side flatten shipped, so it cannot assume clean input.
 func ActivityLine(r Row) string {
+	if r.State == "blocked" && r.PendingTool == windowstate.PendingTrust {
+		return TrustActivity(r.PendingToolDetail)
+	}
 	if r.LastToolDetail != "" {
 		return flattenWhitespace(r.LastToolDetail)
 	}
 	return flattenWhitespace(r.LastText)
+}
+
+// PendingLabel is the readable name of a blocked row's PendingTool, for the
+// "needs you" line and push text: a tool name is shown as is, agentctl's own
+// markers get words.
+func PendingLabel(tool string) string {
+	if tool == windowstate.PendingTrust {
+		return "folder trust"
+	}
+	return tool
+}
+
+// TrustActivity is the activity line of a window stopped on the folder-trust
+// dialog (see windowstate.PendingTrust); folder is the path it asks about.
+func TrustActivity(folder string) string {
+	if folder = flattenWhitespace(folder); folder != "" {
+		return "waiting on folder trust: " + folder
+	}
+	return "waiting on folder trust"
 }
 
 // flattenWhitespace collapses any run of whitespace into a single space and

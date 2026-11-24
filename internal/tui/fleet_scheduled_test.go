@@ -13,7 +13,7 @@ import (
 )
 
 // TestScheduledRowRender: a cron row shows "⏲ <job>" in the recap column,
-// keeps its state glyph, and its recap column lines up with a plain row's.
+// keeps its state glyph, and neither row shows its agent name.
 func TestScheduledRowRender(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
@@ -43,16 +43,17 @@ func TestScheduledRowRender(t *testing.T) {
 				if l.kind != fleetLineRow {
 					continue
 				}
-				out := m.renderTreeRow(l.row, l.treePrefix, l.nameCol, false, cw)
+				out := m.renderTreeRow(l.row, l.treePrefix, false, cw)
 				first := ansi.Strip(strings.Split(out, "\n")[0])
 				if w := lipgloss.Width(first); w > cw {
 					t.Errorf("%s width %d > cw %d", l.row.WindowID, w, cw)
 				}
-				// The recap column starts after the name column's two-space gap.
-				start := strings.Index(first, l.row.AgentName) + len(l.row.AgentName)
-				rest := first[start:]
-				col := lipgloss.Width(first[:start]) + len(rest) - len(strings.TrimLeft(rest, " "))
-				cols[l.row.WindowID] = col
+				// Rows no longer carry the agent name: the recap (after the cron
+				// marker, on a cron row) follows the glyph directly.
+				if strings.Contains(strings.ReplaceAll(first, "nightly-triage", ""), l.row.AgentName) {
+					t.Errorf("%s shows the agent name: %q", l.row.WindowID, first)
+				}
+				cols[l.row.WindowID] = strings.Index(first, "RECAP") - strings.Index(first, "○")
 				if l.row.ScheduledBy != "" {
 					if !strings.Contains(first, fleetScheduledGlyph+" nightly") {
 						t.Errorf("cron row missing marker: %q", first)
@@ -64,8 +65,8 @@ func TestScheduledRowRender(t *testing.T) {
 					t.Errorf("plain row has marker: %q", first)
 				}
 			}
-			if cols["@1"] != cols["@2"] {
-				t.Errorf("recap column: plain %d, cron %d", cols["@1"], cols["@2"])
+			if cols["@1"] <= 0 || cols["@2"] <= cols["@1"] {
+				t.Errorf("recap positions: plain %d, cron %d (cron has its marker first)", cols["@1"], cols["@2"])
 			}
 			if len(labels) != 1 || labels[0] != "scheduled (1)" {
 				t.Errorf("subheaders = %q, want [scheduled (1)]", labels)
@@ -98,10 +99,9 @@ func TestCardShowsSchedule(t *testing.T) {
 	}
 }
 
-// TestRoleTagRender: a sub-agent row shows its role in the name column (no
-// separate tag before the title) and its agent name on the right when there
-// is room, a row without a role shows its agent name on the left, and width
-// budgets hold.
+// TestRoleTagRender: a sub-agent row shows its role before the title and a
+// row without a role shows only its title; neither shows the agent name, and
+// width budgets hold.
 func TestRoleTagRender(t *testing.T) {
 	InitStyles()
 	fixedFleetNow(t)
@@ -124,7 +124,7 @@ func TestRoleTagRender(t *testing.T) {
 				if l.kind != fleetLineRow {
 					continue
 				}
-				first := ansi.Strip(strings.Split(m.renderTreeRow(l.row, l.treePrefix, l.nameCol, false, cw), "\n")[0])
+				first := ansi.Strip(strings.Split(m.renderTreeRow(l.row, l.treePrefix, false, cw), "\n")[0])
 				if w := lipgloss.Width(first); w > cw {
 					t.Errorf("%s width %d > cw %d", l.row.WindowID, w, cw)
 				}
@@ -134,19 +134,19 @@ func TestRoleTagRender(t *testing.T) {
 				title := strings.Index(first, "Fixing Hub")
 				left, rest := first[:title], first[title:]
 				if l.row.WindowID == "@2" {
-					if strings.Contains(first, "review") || !strings.Contains(left, "lead") {
-						t.Errorf("bare row should show its name, no role: %q", first)
+					if strings.Contains(first, "review") || strings.Contains(first, "lead") {
+						t.Errorf("bare row should show its title only, no role or name: %q", first)
 					}
 					continue
 				}
-				if !strings.Contains(left, "review") || strings.Contains(left, "lead") {
+				if !strings.Contains(left, "review") || strings.Contains(first, "lead") {
 					t.Errorf("role row should show the role, not the name, before the title: %q", first)
 				}
 				if strings.Count(first, "review") != 1 {
 					t.Errorf("role drawn twice: %q", first)
 				}
-				if width == 120 && !strings.Contains(rest, "lead") {
-					t.Errorf("role row at %d cols should show its agent name on the right: %q", width, first)
+				if strings.Contains(rest, "lead") {
+					t.Errorf("role row at %d cols should not show its agent name: %q", width, first)
 				}
 			}
 		})

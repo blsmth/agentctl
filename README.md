@@ -55,7 +55,7 @@ agentctl install-templates       # starter agents: architect, devops-engineer, g
 
 Hooks are what drive agent state, so `hooks-install` is the important one. Run `agentctl <command> --help` for flags. The phone app and scheduled runs have their own one-time setup: `agentctl serve install` then `agentctl serve pair` ([details](docs/design/mobile-web-app.md)), and `agentctl cron install`.
 
-Slash commands (`/agentctl:dispatch`, `context`, `status`, `sweep`, `logs`, `restart`) install as a Claude Code plugin, from inside Claude Code:
+Slash commands (`/agentctl:dispatch`, `context`, `status`, `sweep`, `logs`, `restart`, `artifact`) and the `artifacts` skill (teaches agents to publish reports, charts and mockups with `agentctl artifact`, with HTML templates) install as a Claude Code plugin, from inside Claude Code:
 
 ```
 /plugin marketplace add blsmth/agentctl
@@ -94,7 +94,7 @@ Each agent is a tmux window. Claude Code hooks write per-window state (`working`
 ## Features
 
 - **Dispatch**: an issue, ad-hoc prompt or PR review becomes a worktree, an agent and a PR; orchestrator agents coordinate workers, and dispatches by agents need your approval in a popup. [Dispatch](docs/dispatch.md)
-- **Fleet hub**: every agent in every project in one tmux window, as a parent/child tree with a live agent pane, short AI titles, sweep, closed agents with resume, and a Schedules section. [Keybindings](docs/keybindings.md#fleet-hub)
+- **Fleet hub**: every agent in every project in one tmux window, as a parent/child tree with a live agent pane, short AI titles, sweep, closed agents with resume, and per-project Schedules tabs. [Keybindings](docs/keybindings.md#fleet-hub)
 - **Phone web app**: `agentctl serve` shows the fleet on your phone over your LAN, with a live terminal, replies, approvals, AskUserQuestion answers, dispatch and push notifications. [Mobile web app](docs/design/mobile-web-app.md)
 - **Scheduled runs**: `agentctl cron` launches agents on a schedule with usage gates and run history. [cron](docs/configuration.md#cron)
 - **Accounts, backends, harnesses**: run agents under several Claude logins, against Ollama or Nous Portal, or on pi. [Configuration](docs/configuration.md#accounts-multiple-claude-logins)

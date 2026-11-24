@@ -291,3 +291,34 @@ func TestViewerAttachCommandZshEquals(t *testing.T) {
 		t.Errorf("tmux args = %q, want %q", out, want)
 	}
 }
+
+func TestViewerIntent(t *testing.T) {
+	if got, want := viewerSetIntentArgs("agentctl-hubview", viewerIntentValue("@7", 42)),
+		[]string{"set-option", "-t", "=agentctl-hubview:", "@agentctl_viewer_intent", "@7/42"}; !equalStrings(got, want) {
+		t.Errorf("set intent args = %v, want %v", got, want)
+	}
+	tests := []struct {
+		out                   string
+		win, intentWin, token string
+	}{
+		{"@3 @7/42", "@3", "@7", "@7/42"},
+		{"@3 ", "@3", "", ""},
+		{"@3", "@3", "", ""},
+		{"", "", "", ""},
+		{"@3 junk", "@3", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.out, func(t *testing.T) {
+			w, iw, tok := parseViewerState(tt.out)
+			if w != tt.win || iw != tt.intentWin || tok != tt.token {
+				t.Errorf("parseViewerState(%q) = %q %q %q, want %q %q %q", tt.out, w, iw, tok, tt.win, tt.intentWin, tt.token)
+			}
+		})
+	}
+	if err := RepointViewer("agentctl-proj", "@1"); err == nil {
+		t.Error("RepointViewer must refuse a non-viewer session")
+	}
+	if err := RepointViewer(ViewerSessionName, "1"); err == nil {
+		t.Error("RepointViewer must refuse a window index")
+	}
+}

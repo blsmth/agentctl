@@ -74,7 +74,7 @@ func (f fleetFilter) next() fleetFilter {
 // matches reports whether row r passes the filter on its own (ancestor
 // retention is filterRows' job).
 func (f fleetFilter) matches(r fleet.Row) bool {
-	w := rowWeight(r)
+	w := glyphWeight(r)
 	switch f {
 	case fleetFilterActive:
 		return w == fleetWeightWorking || w == fleetWeightBlocked
@@ -92,6 +92,13 @@ func filterRows(rows []fleet.Row, f fleetFilter) (kept []fleet.Row, context map[
 	if f == fleetFilterAll {
 		return rows, nil
 	}
+	return filterRowsBy(rows, f.matches)
+}
+
+// filterRowsBy is filterRows for any row predicate (the attention filter,
+// hub search, or both): it keeps the matching rows plus their ancestors as
+// context. A matching parent does not pull in its non-matching children.
+func filterRowsBy(rows []fleet.Row, pred func(fleet.Row) bool) (kept []fleet.Row, context map[string]bool) {
 	idx := make(map[string]int, len(rows))
 	for i, r := range rows {
 		if r.WindowID != "" {
@@ -103,7 +110,7 @@ func filterRows(rows []fleet.Row, f fleetFilter) (kept []fleet.Row, context map[
 	match := make([]bool, len(rows))
 	keep := make([]bool, len(rows))
 	for i, r := range rows {
-		match[i] = f.matches(r)
+		match[i] = pred(r)
 		keep[i] = match[i]
 	}
 	for i := range rows {
@@ -301,6 +308,13 @@ func (m *FleetModel) revealRow(session, windowID string) bool {
 		return false
 	}
 	changed := false
+	if m.search != nil && !m.rowKept(g, windowID) {
+		// The query hides the target: drop it rather than leave the user on
+		// an invisible selection.
+		m.search = nil
+		m.setSuccess("search cleared")
+		changed = true
+	}
 	if m.isFolded(session) {
 		m.setFolded(session, false)
 		changed = true
@@ -336,14 +350,21 @@ type hubViewState struct {
 	Collapsed []string `json:"collapsed,omitempty"`
 	Focus     bool     `json:"focus,omitempty"`
 	Filter    string   `json:"filter,omitempty"`
+	// Query is a committed hub search. It rides the hot-reload env only and
+	// is never written to the state file (writeHubView blanks it).
+	Query string `json:"query,omitempty"`
 	// Sort is the in-group row order: "recent" or "" for window order.
 	Sort string `json:"sort,omitempty"`
 	// Shells shows the plain shell rows (hidden by default).
 	Shells bool `json:"shells,omitempty"`
 	// Closed shows the Closed section (hidden by default).
 	Closed bool `json:"closed,omitempty"`
-	// Schedules shows the Schedules section (hidden by default).
-	Schedules bool `json:"schedules,omitempty"`
+	// SchedTabs is the projects (resolved project dirs) whose group shows
+	// its Schedules tab; any other group shows Sessions. SchedOtherOpen
+	// expands the bottom "other projects" schedules block. The old
+	// "schedules" and "sched_collapsed" keys are ignored when decoding.
+	SchedTabs      []string `json:"sched_tabs,omitempty"`
+	SchedOtherOpen bool     `json:"sched_other_open,omitempty"`
 	// ActivityPane is the open activity pane's tmux pane ID ("" = closed),
 	// so a hot reload reattaches to it; ActivityWidth is the width the user
 	// dragged it to (0 = the default).
@@ -386,8 +407,8 @@ func (m FleetModel) viewState() hubViewState {
 	}
 	slices.Sort(folded)
 	return hubViewState{
-		Folded: folded, Collapsed: m.liveCollapsed(prune), Focus: m.focusMode, Filter: m.filter.key(), Sort: sortKey(m.sortRecent), Shells: m.showShells, Closed: m.showClosed, Schedules: m.showSchedules,
-		ActivityPane: m.activity.pane, ActivityWidth: m.activity.userWidth,
+		Folded: folded, Collapsed: m.liveCollapsed(prune), Focus: m.focusMode, Filter: m.filter.key(), Query: m.committedQuery(), Sort: sortKey(m.sortRecent), Shells: m.showShells, Closed: m.showClosed,
+		SchedTabs: m.liveSchedTabs(prune), SchedOtherOpen: m.schedOtherOpen, ActivityPane: m.activity.pane, ActivityWidth: m.activity.userWidth,
 	}
 }
 
@@ -428,17 +449,21 @@ func (m *FleetModel) applyViewState(s hubViewState) {
 	}
 	m.focusMode = s.Focus
 	m.filter = parseFleetFilter(s.Filter)
+	m.search = nil
+	if q := strings.TrimSpace(s.Query); q != "" {
+		m.search = &fleetSearch{query: q, q: parseQuery(q)}
+	}
 	m.sortRecent = s.Sort == sortRecentKey
 	m.showShells = s.Shells
 	m.showClosed = s.Closed
 	if !m.showClosed {
 		m.closed = nil
 	}
-	m.showSchedules = s.Schedules
-	if !m.showSchedules {
-		m.sched = fleetSchedState{}
-		m.schedForm, m.schedConfirm = nil, nil
+	m.schedTabs = nil
+	for _, key := range s.SchedTabs {
+		m.setSchedTab(key, true)
 	}
+	m.schedOtherOpen = s.SchedOtherOpen
 	// The recorded pane is confirmed or dropped by the first pane poll.
 	m.activity = fleetActivity{pane: s.ActivityPane, userWidth: max(s.ActivityWidth, 0)}
 }
@@ -473,6 +498,7 @@ func readHubView(path string) hubViewState {
 // writeHubView writes s to path (0600, via a temp file and rename so a crash
 // never leaves a torn file).
 func writeHubView(path string, s hubViewState) error {
+	s.Query = "" // a search must not greet you on tomorrow's hub
 	data, err := json.Marshal(s)
 	if err != nil {
 		return fmt.Errorf("encoding hub view: %w", err)

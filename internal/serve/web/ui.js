@@ -31,6 +31,26 @@ export function toast(message, kind = "info") {
 }
 
 /**
+ * actionToast is a toast with one button (Undo), alive for ms. It returns a
+ * dismiss function that removes it early (without running the action).
+ */
+export function actionToast(message, label, onClick, ms = 7000) {
+  const host = document.getElementById("toasts");
+  const t = h("div", { class: "toast info action", role: "status" }, message, " ");
+  let timer = 0;
+  const dismiss = () => {
+    clearTimeout(timer);
+    t.remove();
+  };
+  t.append(
+    h("button", { class: "btn-text", type: "button", onclick: () => { dismiss(); onClick(); } }, label),
+  );
+  host.append(t);
+  timer = setTimeout(dismiss, ms);
+  return dismiss;
+}
+
+/**
  * confirmSheet shows a bottom sheet with a title and body lines and resolves
  * true on confirm, false on cancel. Navigating away (hashchange) cancels it:
  * the sheet belongs to the view that opened it, and confirming it from the
@@ -57,7 +77,7 @@ export function confirmSheet({ title, lines = [], confirmLabel = "Confirm", dang
         "div",
         { class: "sheet", role: "dialog", "aria-modal": "true" },
         h("h2", {}, title),
-        ...lines.map((l) => h("pre", { class: "sheet-body" }, l)),
+        ...lines.map((l) => h("pre", { class: "sheet-body sheet-prose" }, l)),
         toggle &&
           h(
             "label",

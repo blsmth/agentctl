@@ -86,11 +86,11 @@ func TestCapsHonest(t *testing.T) {
 	if c.RegistersBackends {
 		t.Error("claude must keep agentctl's env/settings backend routing")
 	}
-	if !c.NativeMessaging || !c.BlockedSignal || !c.Statusline || !c.Accounts || !c.AgentFlag || !c.EnvFile {
+	if !c.NativeMessaging || !c.BlockedSignal || !c.Statusline || !c.Accounts || !c.AgentFlag || !c.EnvFile || !c.TrustDialog {
 		t.Errorf("claude caps = %+v", c)
 	}
 	p := For(Pi).Caps()
-	if p.NativeMessaging || p.BlockedSignal || p.Statusline || p.Accounts || p.AgentFlag || p.PermissionModes || p.EnvFile || p.PaneClassifier {
+	if p.NativeMessaging || p.BlockedSignal || p.Statusline || p.Accounts || p.AgentFlag || p.PermissionModes || p.EnvFile || p.PaneClassifier || p.TrustDialog {
 		t.Errorf("pi declares a capability it lacks: %+v", p)
 	}
 	if !p.PreassignSessionID || !p.BlockingPreTool || !p.ContextInjection || !p.ResumeByID || !p.Backends || !p.RegistersBackends {

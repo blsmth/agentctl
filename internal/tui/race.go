@@ -228,7 +228,12 @@ func (m RaceModel) humanStatus(n raceNow) string {
 	if n.human.Done {
 		return fmt.Sprintf("✓ finished · %d steps", len(m.r.Steps))
 	}
-	return fmt.Sprintf("step %d/%d · %s · %s", n.human.Index+1, len(m.r.Steps), pct(m.humanFrac(n)), n.human.Phase)
+	out := fmt.Sprintf("step %d/%d · %s · %s", n.human.Index+1, len(m.r.Steps), pct(m.humanFrac(n)), n.human.Phase)
+	if m.r.Params.RealLife {
+		// The calendar moment the human reaches with the effort so far.
+		out += " · " + race.CalendarFor(n.humanEl, m.r.Params.Schedule).Finish
+	}
+	return out
 }
 
 // ── layouts ───────────────────────────────────────────────────────────────────
@@ -288,6 +293,9 @@ func (m RaceModel) renderTiny() string {
 	if m.endCard {
 		lines = append(lines, fmt.Sprintf("Agent %s / Human %s", race.Friendly(m.r.AgentTotal), race.Friendly(m.r.HumanTotal)))
 	}
+	if m.r.Params.RealLife {
+		lines = append(lines, m.style(m.st.human, false).Render("Real life: "+race.FormatCalendar(m.r.Calendar().Elapsed)))
+	}
 	lines = append(lines, m.style(m.st.muted, false).Render("(enlarge the terminal)"))
 	return fitBlock(lines, m.width, m.height)
 }
@@ -310,6 +318,12 @@ func (m RaceModel) renderEndCard() string {
 	if r.HumanTotal >= time.Hour {
 		add(center(muted.Render(fmt.Sprintf("(%s of nonstop typing and reading)", race.HM(r.HumanTotal)))))
 	}
+	if r.Params.RealLife {
+		c := r.Calendar()
+		add(center(humanS.Render("Real life: " + race.FormatCalendar(c.Elapsed))))
+		add(center(muted.Render(fmt.Sprintf("finishes %s · %d nights asleep · %d weekends · %s of lunch and coffee",
+			c.Finish, c.Nights, c.Weekends, race.FormatCalendar(c.Breaks)))))
+	}
 	add("")
 	mult := race.Multiplier(r.Speedup())
 	if big := bigText(mult); lipgloss.Width(big[0]) <= iw && h >= 24 {
@@ -319,6 +333,9 @@ func (m RaceModel) renderEndCard() string {
 		add(center(subtle.Render("faster than by hand")))
 	} else {
 		add(center(m.style(m.st.accent, true).Render(mult + " faster than by hand")))
+	}
+	if r.Params.RealLife {
+		add(center(subtle.Render(race.Multiplier(r.CalendarSpeedup()) + " faster in calendar time")))
 	}
 	add("")
 	calls := 0

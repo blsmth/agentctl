@@ -48,6 +48,9 @@ func (m FleetModel) lineCollapsible(idx int) bool {
 // toggleFoldKey is `z`: on a row with children it collapses or expands that
 // row's subtree; anywhere else (a header, a childless row) it folds the group.
 func (m *FleetModel) toggleFoldKey(idx int) tea.Cmd {
+	if idx >= 0 && idx < len(m.lines) && m.lines[idx].kind == fleetLineSchedHead {
+		return m.toggleSchedCollapseAt(idx)
+	}
 	if m.lineCollapsible(idx) {
 		return m.toggleCollapseAt(idx)
 	}
@@ -57,7 +60,11 @@ func (m *FleetModel) toggleFoldKey(idx int) tea.Cmd {
 // toggleCollapseAt collapses or expands the subtree of the row at line idx.
 // A selection inside the subtree that collapsing hides moves to the parent
 // (resolveSelection, via hiddenUnder).
+// A schedules block header collapses its block instead.
 func (m *FleetModel) toggleCollapseAt(idx int) tea.Cmd {
+	if idx >= 0 && idx < len(m.lines) && m.lines[idx].kind == fleetLineSchedHead {
+		return m.toggleSchedCollapseAt(idx)
+	}
 	if !m.lineCollapsible(idx) {
 		return nil
 	}

@@ -154,6 +154,18 @@ agentctl cron tick                 # hidden; what launchd runs
 
 The phone web app and the hub get a Schedules view to list, create, edit, pause/resume, run now, duplicate and delete jobs (#237).
 
+### 7. Opening a run's session
+
+A `fired` entry in `runs.ndjson` records `session_id`, the agent session the launch pre-assigned (`dispatch.Result.SessionID`, plumbed through `cron.LaunchResult`). Window IDs are reused after a tmux restart, so the window ID alone never identifies a run. Entries recorded before this have no `session_id` and stay valid.
+
+`cronedit.Resolver.ResolveRun` maps an entry to a `RunTarget` (`live`, `closed` or `missing`), behind injectable seams for live windows, the closed ledger and the transcript finder:
+
+- **live**: a live window whose windowstate `session_id` equals the entry's. A legacy entry (no session ID) needs the same tmux session and window ID, `scheduled_by` equal to the job, and `scheduled_at` within two minutes of the entry; a window with no session yet (still launching) matches on the same terms.
+- **closed**: a `closedlog` record with the same session ID (legacy: same session and window, `scheduled_by` equal to the job, closed after the entry, closest wins). The transcript comes from the record's `log_path`, else a search of every account's projects dir. `Resumable` reuses `closedlog.Record.ResumeCheck`, the same check the hub's Closed section uses.
+- **missing**: nothing matched or the transcript is gone (closed-ledger pruning at 90 days, `runs.ndjson` truncation, another machine). `Reason` says why; this is a normal state.
+
+Only `fired` entries resolve; skipped, timeout and failed entries never do. Viewing a transcript never starts an agent.
+
 ## Rollout
 
 1. **`cron` core, Claude only, `window` mode:** schedules.json, `robfig/cron/v3`, tick with flock and state, catch-up, overlap, `max_concurrent`, usage gate, launchd install (extract `internal/launchd`), `RunDispatch` options struct, `scheduled_by` in windowstate, the CLI above, `health` lines. Can ship before the Harness refactor.
@@ -161,7 +173,7 @@ The phone web app and the hub get a Schedules view to list, create, edit, pause/
 3. **`headless` mode** for Claude, with run output and push body.
 4. **Harness plumbing** once multi-harness phase 1 lands: route launches through `Harness`, add `Headless`/`HeadlessCommand`, accept `harness: codex|pi`.
 5. Hub ⏲ marker done: cron windows show `⏲ <job>` in the hub recap column and on phone fleet rows, sit under a `scheduled (N)` / "Scheduled jobs (N)" bucket, the phone window view has a "Scheduled run" line, and `agentctl status` shows MODE `cron` (`scheduled_by`/`scheduled_at` on the window JSON). 
-6. **Schedules UI** ([#237](https://github.com/blsmth/agentctl/issues/237)). PR 1 done: the shared editing core `internal/cronedit` (per-field validation, a jobs-file flock around every read-modify-write, fire state kept on edit and re-seeded only when the schedule changes or a job resumes, name immutable, preview with words and next 3 fires, the `SimpleSchedule`/`ParseSimple` picker round trip, list status), `agentctl cron edit` behind the cron approval popup, `cron add/pause/resume/rm` on the shared path, and the `/v1/schedules` serve API (see [configuration.md](../configuration.md#cron)). PR 2 done: the phone Schedules screen (`internal/serve/web/schedules.js`, `#/schedules`). PR 3 done: `T` in the hub lists the jobs (phone glyphs and sort), shows a job card beside the list (closing the live viewer pane while it shows), and creates, edits, duplicates, pauses, resumes, runs and deletes jobs through `internal/cronedit` in process, with the picker, live preview and review step; the job card in `cronedit.Detail` (and `GET /v1/schedules/{name}`) carries the next 3 fires.
+6. **Schedules UI** ([#237](https://github.com/blsmth/agentctl/issues/237)). PR 1 done: the shared editing core `internal/cronedit` (per-field validation, a jobs-file flock around every read-modify-write, fire state kept on edit and re-seeded only when the schedule changes or a job resumes, name immutable, preview with words and next 3 fires, the `SimpleSchedule`/`ParseSimple` picker round trip, list status), `agentctl cron edit` behind the cron approval popup, `cron add/pause/resume/rm` on the shared path, and the `/v1/schedules` serve API (see [configuration.md](../configuration.md#cron)). PR 2 done: the phone Schedules screen (`internal/serve/web/schedules.js`, `#/schedules`). PR 3 done: the hub lists the jobs (first behind a `T` toggle, later on a per-project Schedules tab next to Sessions, flipped with `T` or a click) (phone glyphs and sort), shows a job card as a drawer sliding in over the list pane (the live viewer pane is left alone), and creates, edits, duplicates, pauses, resumes, runs and deletes jobs through `internal/cronedit` in process, with the picker, live preview and review step; the job card in `cronedit.Detail` (and `GET /v1/schedules/{name}`) carries the next 3 fires.
 7. Later: Linux timer install, event triggers (a GitHub webhook via `serve`) if wanted.
 
 ## Tests worth writing

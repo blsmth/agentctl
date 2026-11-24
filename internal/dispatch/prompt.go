@@ -60,16 +60,32 @@ func buildSystemPrompt(req Request, spec modeSpec, workDir, branch string, useWo
 	parts = append(parts, "---")
 
 	// 4. Preamble
-	if req.noMessaging {
-		parts = append(parts, preambleForHarnessFor(spec.Role, false, req.prReview))
+	reviewer := req.Mode == ModeReviewPR
+	switch {
+	case req.noMessaging && reviewer:
+		parts = append(parts, reviewerPreamble(false))
+		if req.reportViaMailbox {
+			parts = append(parts, reviewerMailboxReportingSection)
+		}
+	case req.noMessaging:
+		parts = append(parts, preambleForHarnessBackends(spec.Role, false, req.prReview, req.backendLines))
 		if req.reportViaMailbox && spec.Role != RoleOrchestrator {
 			parts = append(parts, mailboxReportingSection)
 		}
-	} else {
-		parts = append(parts, preambleWithOrchestratorFor(spec.Role, req.Orchestrator, req.prReview))
+	case reviewer:
+		parts = append(parts, reviewerPreamble(true))
+		if req.Orchestrator.Known() {
+			parts = append(parts, reviewerOrchestratorSection(req.Orchestrator))
+		}
+	default:
+		parts = append(parts, preambleWithOrchestratorBackends(spec.Role, req.Orchestrator, req.prReview, req.backendLines))
 	}
 	if req.CrossAccount && spec.Role != RoleOrchestrator {
-		parts = append(parts, crossAccountSection)
+		if reviewer {
+			parts = append(parts, reviewerCrossAccountSection)
+		} else {
+			parts = append(parts, crossAccountSection)
+		}
 	}
 
 	// 4b. Persona -- for harnesses with no --agent flag (pi), the agent's

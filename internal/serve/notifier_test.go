@@ -8,6 +8,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 type notifyEnv struct {
@@ -51,9 +52,9 @@ func TestNotifierTriggers(t *testing.T) {
 		wantBody  string
 		urgent    bool
 	}{
-		{"blocked", config.ServePushConfig{}, blocked, "agentctl: go-engineer:3 blocked", "proj · Bash", true},
-		{"done", config.ServePushConfig{}, win("idle", true), "agentctl: go-engineer:3 done", "proj · finished", false},
-		{"done with PR", config.ServePushConfig{}, prDone, "agentctl: go-engineer:3 done", "proj · PR #61 ready", false},
+		{"blocked", config.ServePushConfig{}, blocked, "go-engineer:3", "Needs permission · proj · Bash", true},
+		{"done", config.ServePushConfig{}, win("idle", true), "go-engineer:3", "Finished · proj", false},
+		{"done with PR", config.ServePushConfig{}, prDone, "go-engineer:3", "PR #61 ready · proj", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -130,7 +131,7 @@ func TestNotifierReminder(t *testing.T) {
 	e.clock.Advance(time.Minute)
 	e.n.Tick()
 	got := e.take()
-	if len(got) != 1 || got[0].Kind != "reminder" || !got[0].Urgent || !strings.Contains(got[0].Title, "still blocked") {
+	if len(got) != 1 || got[0].Kind != "reminder" || !got[0].Urgent || !strings.HasPrefix(got[0].Body, "Still blocked 10 min") {
 		t.Fatalf("reminder = %+v", got)
 	}
 
@@ -223,7 +224,7 @@ func TestNotifierDoneWaitsForPR(t *testing.T) {
 		e.clock.Advance(5 * time.Second)
 		e.n.Handle(fleetwatch.Event{Kind: fleetwatch.KindWindow, Window: dispatched(9)})
 		got := e.take()
-		if len(got) != 1 || got[0].Body != "proj · PR #9 ready" {
+		if len(got) != 1 || got[0].Body != "PR #9 ready · proj" {
 			t.Fatalf("got %+v", got)
 		}
 		e.clock.Advance(time.Minute)
@@ -244,7 +245,7 @@ func TestNotifierDoneWaitsForPR(t *testing.T) {
 		e.clock.Advance(time.Second)
 		e.n.Tick()
 		got := e.take()
-		if len(got) != 1 || got[0].Body != "proj · finished" {
+		if len(got) != 1 || got[0].Body != "Finished · proj" {
 			t.Fatalf("got %+v", got)
 		}
 	})
@@ -357,5 +358,104 @@ func TestNotifierSeedAndGone(t *testing.T) {
 	e.n.Handle(fleetwatch.Event{Kind: fleetwatch.KindGone, Session: "agentctl-proj", WindowID: "@5"})
 	if len(e.n.episodes) != 0 {
 		t.Errorf("episodes not cleared: %v", e.n.episodes)
+	}
+}
+
+func TestPushContent(t *testing.T) {
+	titled := func(w fleet.Window) fleet.Window {
+		w.Title, w.Agent, w.Label = "Fix hub viewer jump", "go-engineer:3", "go-engineer:3"
+		return w
+	}
+	blocked := func(tool, detail string) fleet.Window {
+		w := win("blocked", false)
+		w.PendingTool, w.PendingToolDetail = tool, detail
+		return w
+	}
+	done := func(recap, source string, pr int) fleet.Window {
+		w := win("idle", true)
+		w.Recap, w.RecapSource, w.PRNumber = recap, source, pr
+		return w
+	}
+	long := strings.Repeat("lorem ipsum dolor ", 20)
+
+	tests := []struct {
+		name      string
+		w         fleet.Window
+		wantTitle string
+		wantBody  string
+	}{
+		{"blocked, titled: title leads, agent and project in the body", titled(blocked("Bash", "go test ./...")),
+			"Fix hub viewer jump", "Needs permission · go-engineer · proj · Bash: go test ./..."},
+		{"blocked, no title yet: display name leads, agent not repeated", blocked("Bash", "ls"),
+			"go-engineer:3", "Needs permission · proj · Bash: ls"},
+		{"blocked, tool without detail", titled(blocked("Edit", "")),
+			"Fix hub viewer jump", "Needs permission · go-engineer · proj · Edit"},
+		{"blocked, no tool recorded", titled(blocked("", "")),
+			"Fix hub viewer jump", "Needs permission · go-engineer · proj"},
+		{"blocked, multi-line command is one line", titled(blocked("Bash", "git commit -m 'a\n\nb'")),
+			"Fix hub viewer jump", "Needs permission · go-engineer · proj · Bash: git commit -m 'a b'"},
+		{"done with PR", titled(done("", "", 273)),
+			"Fix hub viewer jump", "PR #273 ready · go-engineer · proj"},
+		{"done with a summary recap", titled(done("Fixed the viewer jump by clamping the offset. More text.", "summary", 0)),
+			"Fix hub viewer jump", "Finished · go-engineer · proj · Fixed the viewer jump by clamping the offset"},
+		{"done, task recap is not repeated", titled(done("Fix hub viewer jump", "task", 0)),
+			"Fix hub viewer jump", "Finished · go-engineer · proj"},
+		{"done, bare window without anything", done("", "", 0),
+			"go-engineer:3", "Finished · proj"},
+		{"no label, no agent: window id", fleet.Window{WindowID: "@9", State: "blocked", Project: "proj"},
+			"@9", "Needs permission · proj"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newNotifyEnv(config.ServePushConfig{})
+			e.transition(tt.w)
+			got := e.take()
+			if len(got) != 1 {
+				t.Fatalf("messages = %+v, want 1", got)
+			}
+			if got[0].Title != tt.wantTitle || got[0].Body != tt.wantBody {
+				t.Errorf("title/body = %q / %q, want %q / %q", got[0].Title, got[0].Body, tt.wantTitle, tt.wantBody)
+			}
+			if strings.Contains(got[0].Title, "agentctl:") || got[0].Body == "" {
+				t.Errorf("message = %+v", got[0])
+			}
+		})
+	}
+
+	t.Run("a long command is cut at a word within about 120 runes", func(t *testing.T) {
+		e := newNotifyEnv(config.ServePushConfig{})
+		e.transition(titled(blocked("Bash", long)))
+		b := e.take()[0].Body
+		if n := len([]rune(b)); n > 125 || !strings.HasSuffix(b, "…") || strings.Contains(b, "\n") {
+			t.Errorf("body = %q (%d runes)", b, n)
+		}
+	})
+
+	t.Run("the reminder keeps the title and names the tool", func(t *testing.T) {
+		e := newNotifyEnv(config.ServePushConfig{})
+		e.transition(titled(blocked("Bash", "go test ./...")))
+		e.take()
+		e.clock.Advance(10 * time.Minute)
+		e.n.Tick()
+		got := e.take()
+		if len(got) != 1 || got[0].Title != "Fix hub viewer jump" ||
+			got[0].Body != "Still blocked 10 min · go-engineer · proj · Bash: go test ./..." {
+			t.Errorf("reminder = %+v", got)
+		}
+	})
+}
+
+func TestPendingToolTextLabelsTrust(t *testing.T) {
+	tests := []struct {
+		w    fleet.Window
+		want string
+	}{
+		{fleet.Window{PendingTool: "Bash", PendingToolDetail: "git push"}, "Bash: git push"},
+		{fleet.Window{PendingTool: windowstate.PendingTrust, PendingToolDetail: "/repo/.worktrees/x"}, "folder trust: /repo/.worktrees/x"},
+	}
+	for _, tt := range tests {
+		if got := pendingToolText(tt.w); got != tt.want {
+			t.Errorf("pendingToolText(%q) = %q, want %q", tt.w.PendingTool, got, tt.want)
+		}
 	}
 }

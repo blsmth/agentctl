@@ -52,6 +52,13 @@ type Queuer interface {
 	Queue(t WindowTarget, text string) error
 }
 
+// Commander is optionally implemented by an Injector that runs a slash
+// command with a send-once path (no staged-input retry: a command's picker
+// must never receive a second Enter).
+type Commander interface {
+	Command(t WindowTarget, text string) error
+}
+
 // WindowCloser kills a window.
 type WindowCloser interface {
 	CloseWindow(t WindowTarget) error
@@ -113,7 +120,9 @@ type DispatchRequest struct {
 	Instructions string
 	// SkipReview launches as if config pr_review were off.
 	SkipReview bool
-	Model      string
+	// Template is the display-only name of the template the prompt came from.
+	Template string
+	Model    string
 	// Backend and Effort are the launch overrides, already resolved the way
 	// the launch popup does ("" = agent config).
 	Backend    string
@@ -216,6 +225,11 @@ func (tmuxInjector) Inject(t WindowTarget, text string) error {
 		return tmux.InjectUnclassifiedToPane(t.Pane, text)
 	}
 	return tmux.InjectPromptToPane(t.Pane, text)
+}
+
+// Command types a slash command and presses Enter once.
+func (tmuxInjector) Command(t WindowTarget, text string) error {
+	return tmux.InjectCommandToPane(t.Pane, text)
 }
 
 // ChildCloser closes the sub-sessions of a window ahead of the window.
@@ -335,6 +349,7 @@ func (d launchDispatcher) Dispatch(req DispatchRequest) (DispatchResult, error) 
 			PRReview:          prReview,
 			Prompt:            req.Prompt,
 			ExtraInstructions: req.Instructions,
+			Template:          req.Template,
 			AgentName:         req.Agent,
 			WorkDir:           req.Dir,
 			Model:             req.Model,

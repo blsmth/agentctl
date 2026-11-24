@@ -11,7 +11,7 @@ agentctl context <subcommand> [args] [flags]
 Available subcommands:
 
 - `list` — print all entries in the context store as a table
-- `set <key> <value> [--agent <name>] [--tag <tag>]...` — write a key/value entry. `--agent <name>` scopes the entry to that agent so it is auto-injected into that agent's prompt; without `--agent` the entry is NOT injected anywhere (it is only readable via `get`/`push`, or if an agent lists the key in its `context_keys`). `--tag` may be repeated.
+- `set <key> <value> [--agent <name>] [--tag <tag>]...` — write a key/value entry. `--agent <name>` scopes the entry to that agent so it is auto-injected into that agent's prompt (cut at 8KB; a `ticket-<N>-spec` key only into the `--issue N` launch); without `--agent` the entry is NOT injected anywhere (it is only readable via `get`/`push`, or if an agent lists the key in its `context_keys`). `--tag` may be repeated.
 - `get <key>` — print the value for a key
 - `push <key> --agent <name>` — inject a context entry into a running agent's prompt via tmux (needs an agentctl tmux session)
 - `clear <key>` — delete the single entry `<key>`. A key is required; there is no way to clear everything at once.

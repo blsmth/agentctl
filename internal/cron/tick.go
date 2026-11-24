@@ -3,8 +3,10 @@ package cron
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
@@ -14,6 +16,20 @@ import (
 // ErrTmuxUnavailable is returned by a Launcher when tmux cannot be run; the
 // fire is recorded as failed:tmux-unavailable and a notification is sent.
 var ErrTmuxUnavailable = errors.New("tmux is not available")
+
+// ErrTemplateNotFound is returned (wrapped) by a Launcher when a job's
+// prompt template no longer resolves; the fire is recorded as
+// failed:template, with the reason in the note, and notified.
+var ErrTemplateNotFound = errors.New("template not found")
+
+// TemplateError is a Launcher error for a template that cannot be read,
+// with msg as its whole text; errors.Is matches ErrTemplateNotFound.
+func TemplateError(msg string) error { return &templateError{msg: msg} }
+
+type templateError struct{ msg string }
+
+func (e *templateError) Error() string        { return e.msg }
+func (e *templateError) Is(target error) bool { return target == ErrTemplateNotFound }
 
 // onTimeGrace is how late a fire may start and still count as on time for
 // catchup: none. A 60s StartInterval plus up to 90s of jitter and launchd
@@ -51,6 +67,10 @@ type LaunchRequest struct {
 type LaunchResult struct {
 	WindowID string
 	Session  string
+	// SessionID is the agent session the launch pre-assigned ("" when the
+	// harness assigns it later). Window IDs are reused, so this is what
+	// identifies the run once its window is gone.
+	SessionID string
 }
 
 // Deps are a tick's inputs and side effects. Every exec, tmux call and
@@ -74,8 +94,10 @@ type Deps struct {
 	Launch func(LaunchRequest) (LaunchResult, error)
 	// Interrupt sends C-c to a timed-out window and marks it blocked.
 	Interrupt func(w Window, job Job, timeout time.Duration) error
-	// Notify sends a desktop notification.
-	Notify func(title, message string)
+	// Notify sends a desktop notification: the job name as the title, the
+	// event ("Cron run failed · project") as the subtitle, the cause as the
+	// message.
+	Notify func(title, subtitle, message string)
 	// Logf records diagnostics.
 	Logf func(format string, args ...any)
 }
@@ -86,10 +108,24 @@ func (d *Deps) logf(format string, args ...any) {
 	}
 }
 
-func (d *Deps) notify(title, msg string) {
+func (d *Deps) notify(title, subtitle, msg string) {
 	if d.Notify != nil {
-		d.Notify(title, msg)
+		d.Notify(title, subtitle, msg)
 	}
+}
+
+// notifyFailed announces a job that did not run: titled by the job, with the
+// project (the job directory's name) after the event.
+func (d *Deps) notifyFailed(job Job, event string, err error) {
+	subtitle := event
+	if job.Dir != "" {
+		subtitle += " · " + filepath.Base(job.Dir)
+	}
+	msg := strings.Join(strings.Fields(err.Error()), " ")
+	if msg == "" {
+		msg = event
+	}
+	d.notify(job.Name, subtitle, msg)
 }
 
 // BranchFor returns the worktree branch for a fire of job at t.
@@ -331,18 +367,21 @@ func (t *ticker) launch(job Job, scheduled time.Time, e Entry) {
 	res, err := t.d.Launch(LaunchRequest{Job: job, Scheduled: scheduled, Branch: BranchFor(job, scheduled)})
 	if err != nil {
 		reason := "launch"
-		if errors.Is(err, ErrTmuxUnavailable) {
+		switch {
+		case errors.Is(err, ErrTmuxUnavailable):
 			reason = "tmux-unavailable"
+		case errors.Is(err, ErrTemplateNotFound):
+			reason = "template"
 		}
 		e.Result = Failed(reason)
 		e.Note = joinNote(e.Note, err.Error())
 		t.record(e)
-		t.d.notify("agentctl cron: "+job.Name+" failed", err.Error())
+		t.d.notifyFailed(job, "Cron run failed", err)
 		return
 	}
 	t.running++
-	t.windows = append(t.windows, Window{ID: res.WindowID, Job: job.Name, Session: res.Session, ScheduledAt: t.now})
-	e.Result, e.WindowID, e.Session = ResultFired, res.WindowID, res.Session
+	t.windows = append(t.windows, Window{ID: res.WindowID, Job: job.Name, Session: res.Session, SessionID: res.SessionID, ScheduledAt: t.now})
+	e.Result, e.WindowID, e.Session, e.SessionID = ResultFired, res.WindowID, res.Session, res.SessionID
 	t.record(e)
 }
 
@@ -452,7 +491,7 @@ func (t *ticker) resolveAccount(job Job, e *Entry) (string, bool) {
 	if err != nil {
 		e.Result, e.Note = Failed("account"), err.Error()
 		t.record(*e)
-		t.d.notify("agentctl cron: "+job.Name+" failed", err.Error())
+		t.d.notifyFailed(job, "Cron run failed", err)
 		return "", false
 	}
 	e.Account = account

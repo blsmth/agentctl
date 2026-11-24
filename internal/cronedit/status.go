@@ -12,6 +12,7 @@ import (
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/launchd"
+	"github.com/blsmth/agentctl/internal/prompttemplate"
 )
 
 // RecentRuns is how many runs a list row carries; DetailRuns how many the
@@ -200,7 +201,7 @@ func (s Store) Overview() (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
-	in := OverviewInput{Now: s.now(), Config: s.config(), Jobs: jobs.Jobs, SchedulerInstalled: s.schedulerInstalled(), Check: s.optionErrors}
+	in := OverviewInput{Now: s.now(), Config: s.config(), Jobs: jobs.Jobs, SchedulerInstalled: s.schedulerInstalled(), Check: s.Check}
 	if dir, err := s.StateDir(); err == nil {
 		in.Runs, _ = cron.ReadRuns(dir, "")
 	}
@@ -238,6 +239,11 @@ type Detail struct {
 	// it could not be read (fires fail until it can).
 	PromptResolved string `json:"prompt_resolved,omitempty"`
 	PromptKeyError string `json:"prompt_key_error,omitempty"`
+	// TemplateResolved is a template job's template as a fire would read
+	// it now (its prompt and agent/model/effort defaults); TemplateError
+	// says why it cannot be read (fires fail until it can).
+	TemplateResolved *prompttemplate.Template `json:"template_resolved,omitempty"`
+	TemplateError    string                   `json:"template_error,omitempty"`
 }
 
 // Detail returns one job's card.
@@ -252,7 +258,7 @@ func (s Store) Detail(name string) (Detail, error) {
 	}
 	now := s.now()
 	d := Detail{
-		Status:        buildStatus(job, now, runs, s.windows([]cron.Job{job}), s.optionErrors),
+		Status:        buildStatus(job, now, runs, s.windows([]cron.Job{job}), s.Check),
 		Runs:          newest(runs, DetailRuns),
 		NextFires:     []time.Time{},
 		NextFiresText: []string{},
@@ -267,6 +273,13 @@ func (s Store) Detail(name string) (Detail, error) {
 		d.PromptResolved, err = s.PromptKeyText(job.PromptKey)
 		if err != nil {
 			d.PromptKeyError = err.Error()
+		}
+	}
+	if job.Template != "" {
+		if t, ferr := s.resolveTemplate(job); ferr != nil {
+			d.TemplateError = ferr.Message
+		} else {
+			d.TemplateResolved = &t
 		}
 	}
 	return d, nil

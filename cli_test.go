@@ -313,6 +313,31 @@ func TestAuditDefaultsToLog(t *testing.T) {
 	}
 }
 
+// TestCronTemplateFlagsParse: `cron add --template` needs no --agent (the
+// template may name it) and `cron edit --template` is a pointer like the
+// other edit flags.
+func TestCronTemplateFlagsParse(t *testing.T) {
+	var cli CLI
+	k, err := kong.New(&cli, kong.Name("agentctl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.Parse([]string{"cron", "add", "nightly", "--schedule", "@daily", "--dir", "/tmp", "--template", "triage"}); err != nil {
+		t.Fatal(err)
+	}
+	if a := cli.Cron.Add; a.Template != "triage" || a.Agent != "" {
+		t.Errorf("cron add parsed = %+v", a)
+	}
+	var cli2 CLI
+	k2, _ := kong.New(&cli2, kong.Name("agentctl"))
+	if _, err := k2.Parse([]string{"cron", "edit", "nightly", "--template", "triage"}); err != nil {
+		t.Fatal(err)
+	}
+	if e := cli2.Cron.Edit; e.Template == nil || *e.Template != "triage" || e.Prompt != nil {
+		t.Errorf("cron edit parsed = %+v", e)
+	}
+}
+
 // TestCronEditFlagsParse: `cron edit` tells an absent flag (nil, unchanged)
 // from an empty one (clears the field), and --worktree/--no-worktree are
 // exclusive.
@@ -341,5 +366,61 @@ func TestCronEditFlagsParse(t *testing.T) {
 	k3, _ := kong.New(&cli3, kong.Name("agentctl"))
 	if _, err := k3.Parse([]string{"cron", "run", "--json", "--", "nightly"}); err != nil || !cli3.Cron.Run.JSON || cli3.Cron.Run.Name != "nightly" || cli3.Cron.Run.Force {
 		t.Errorf("cron run --json: %v %+v", err, cli3.Cron.Run)
+	}
+}
+
+// TestArtifactFlagsParse: `artifact add -` reads stdin (a lone dash is a
+// positional, not a flag), and the flag set matches the documented one.
+func TestArtifactFlagsParse(t *testing.T) {
+	var cli CLI
+	k, err := kong.New(&cli, kong.Name("agentctl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.Parse([]string{"artifact", "add", "-", "--entry", "report.html", "--title", "T", "--pin", "--no-notify", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	a := cli.Artifact.Add
+	if a.Path != "-" || a.Entry != "report.html" || a.Title != "T" || !a.Pin || !a.NoNotify || !a.JSON || a.Kind != "" {
+		t.Errorf("add parsed = %+v", a)
+	}
+	var cli2 CLI
+	k2, _ := kong.New(&cli2, kong.Name("agentctl"))
+	if _, err := k2.Parse([]string{"artifact", "update", "abcdefghij", "-", "--note", "v2"}); err != nil {
+		t.Fatal(err)
+	}
+	if u := cli2.Artifact.Update; u.ID != "abcdefghij" || u.Path != "-" || u.Note != "v2" {
+		t.Errorf("update parsed = %+v", u)
+	}
+	var cli3 CLI
+	k3, _ := kong.New(&cli3, kong.Name("agentctl"))
+	if _, err := k3.Parse([]string{"artifact", "prune", "--dry-run"}); err != nil || cli3.Artifact.Prune.OlderThan != "30d" || !cli3.Artifact.Prune.DryRun {
+		t.Errorf("prune parsed = %+v err=%v", cli3.Artifact.Prune, err)
+	}
+	var cli5 CLI
+	k5, _ := kong.New(&cli5, kong.Name("agentctl"))
+	if _, err := k5.Parse([]string{"artifact", "comments", "abcdefghij", "--json"}); err != nil || cli5.Artifact.Comments.ID != "abcdefghij" || !cli5.Artifact.Comments.JSON {
+		t.Errorf("comments parsed = %+v err=%v", cli5.Artifact.Comments, err)
+	}
+	var cli4 CLI
+	k4, _ := kong.New(&cli4, kong.Name("agentctl"))
+	if _, err := k4.Parse([]string{"artifact", "add", "x.html", "--kind", "pdf"}); err == nil {
+		t.Error("unknown --kind accepted")
+	}
+}
+
+// TestLaunchWatchParses: the hidden launch watcher takes one window ID.
+func TestLaunchWatchParses(t *testing.T) {
+	var cli CLI
+	k, err := kong.New(&cli, kong.Name("agentctl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := k.Parse([]string{"launch-watch", "@1774"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Command() != "launch-watch <window-id>" || cli.LaunchWatch.WindowID != "@1774" {
+		t.Errorf("parsed %q window %q", ctx.Command(), cli.LaunchWatch.WindowID)
 	}
 }

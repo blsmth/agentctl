@@ -50,7 +50,7 @@ func CmdSettingsPopup(windowIDOrName string) {
 	cfg := config.Load()
 	ac := cfg.ForAgent(agentName)
 
-	model := tui.NewSettingsModel(agentName, ac.Alerts, ac.AutoImprove, ac.CrossContext, ac.AlertConfig.Blocked, ac.AlertConfig.Idle, ac.AlertConfig.Gone, ac.AutoAccept, ac.WorkJournal)
+	model := tui.NewSettingsModel(agentName, ac.Alerts, ac.CrossContext, ac.AlertConfig.Blocked, ac.AlertConfig.Idle, ac.AlertConfig.Gone, ac.AutoAccept, ac.WorkJournal)
 	p := tea.NewProgram(model)
 	finalModel, err := p.Run()
 	if err != nil {
@@ -66,9 +66,6 @@ func CmdSettingsPopup(windowIDOrName string) {
 	// Apply all toggled settings.
 	if alerts, ok := result.Toggles["alerts"]; ok {
 		ac.Alerts = alerts
-	}
-	if autoImprove, ok := result.Toggles["auto_improve"]; ok {
-		ac.AutoImprove = autoImprove
 	}
 	if crossContext, ok := result.Toggles["cross_context"]; ok {
 		ac.CrossContext = crossContext
@@ -230,9 +227,6 @@ func CmdToggle(agentName string, setting string) {
 	case "alerts":
 		newVal, err = cfg.ToggleAlert(agentName)
 		label = "alerts"
-	case "auto_improve":
-		newVal, err = cfg.ToggleAutoImprove(agentName)
-		label = "auto-improve"
 	case "cross_context":
 		newVal, err = cfg.ToggleCrossContext(agentName)
 		label = "cross-context"

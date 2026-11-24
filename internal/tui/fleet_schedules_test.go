@@ -41,7 +41,6 @@ type schedFixture struct {
 	runEntry   cron.Entry
 	runErr     error
 	ran        []string
-	hidden     int
 	shown      []string
 	editorPath string
 	editorDone tea.ExecCallback
@@ -64,18 +63,17 @@ func newSchedFixture(t *testing.T) *schedFixture {
 			t.Fatal(err)
 		}
 	}
-	saved := []any{fleetSchedStore, fleetSchedRun, fleetSchedHideViewer, fleetSchedExec, fleetNow, showLiveViewer, hubWindowWidth, hubZoomSync, tkEditorCmd, fleetSchedPermMode}
+	saved := []any{fleetSchedStore, fleetSchedRun, fleetSchedExec, fleetNow, showLiveViewer, hubWindowWidth, hubZoomSync, tkEditorCmd, fleetSchedPermMode}
 	t.Cleanup(func() {
 		fleetSchedStore = saved[0].(func(func(string, string) error) cronedit.Store)
 		fleetSchedRun = saved[1].(cronedit.RunFunc)
-		fleetSchedHideViewer = saved[2].(func() error)
-		fleetSchedExec = saved[3].(func(*exec.Cmd, tea.ExecCallback) tea.Cmd)
-		fleetNow = saved[4].(func() time.Time)
-		showLiveViewer = saved[5].(func(string, string, int) error)
-		hubWindowWidth = saved[6].(func() (int, error))
-		hubZoomSync = saved[7].(func(bool))
-		tkEditorCmd = saved[8].(func(string) *exec.Cmd)
-		fleetSchedPermMode = saved[9].(func(string) string)
+		fleetSchedExec = saved[2].(func(*exec.Cmd, tea.ExecCallback) tea.Cmd)
+		fleetNow = saved[3].(func() time.Time)
+		showLiveViewer = saved[4].(func(string, string, int) error)
+		hubWindowWidth = saved[5].(func() (int, error))
+		hubZoomSync = saved[6].(func(bool))
+		tkEditorCmd = saved[7].(func(string) *exec.Cmd)
+		fleetSchedPermMode = saved[8].(func(string) string)
 	})
 	fleetNow = func() time.Time { return schedNow }
 	fleetSchedStore = func(validate func(string, string) error) cronedit.Store {
@@ -100,12 +98,6 @@ func newSchedFixture(t *testing.T) *schedFixture {
 		e := f.runEntry
 		e.Job = name
 		return e, f.runErr
-	}
-	fleetSchedHideViewer = func() error {
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		f.hidden++
-		return nil
 	}
 	fleetSchedExec = func(c *exec.Cmd, cb tea.ExecCallback) tea.Cmd {
 		f.editorPath, f.editorDone = c.Args[len(c.Args)-1], cb
@@ -210,6 +202,7 @@ func (f *schedFixture) model(t *testing.T) FleetModel {
 	t.Helper()
 	m := newFleetModel()
 	m.termWidth, m.termHeight = 150, 45
+	m.liveLeft, m.liveRight = 150, 0 // a roomy list pane: the drawer is 80% of it
 	m.configureSplitPane()
 	m.loaded = true
 	a := testRow("go-engineer", "agentctl-acme-api", "idle", "")
@@ -235,7 +228,17 @@ func schedDrive(t *testing.T, m FleetModel, cmd tea.Cmd) FleetModel {
 	select {
 	case msg = <-ch:
 	case <-time.After(40 * time.Millisecond):
-		return m
+		// A cursor blink or slide tick never answers in time and is dropped.
+		// A write in flight does, just later on a loaded machine (-race):
+		// wait for it, or the test sees the form still saving.
+		if m.schedForm == nil || !m.schedForm.saving && m.sched.busy == "" {
+			return m
+		}
+		select {
+		case msg = <-ch:
+		case <-time.After(10 * time.Second):
+			t.Fatal("a schedule write never answered")
+		}
 	}
 	switch msg := msg.(type) {
 	case nil:
@@ -245,8 +248,12 @@ func schedDrive(t *testing.T, m FleetModel, cmd tea.Cmd) FleetModel {
 			m = schedDrive(t, m, c)
 		}
 		return m
+	case schedDrawerTickMsg:
+		// Frames are not run on the wall clock in tests: settle the slide.
+		m.schedAnimOn, m.schedAnimP = false, 1
+		return m
 	case fleetSchedLoadedMsg, fleetSchedDetailMsg, fleetSchedWroteMsg, fleetSchedRanMsg,
-		fleetSchedPreviewMsg, fleetSchedSavedMsg, fleetSchedEditorMsg, fleetSchedViewerHiddenMsg, fleetLiveMsg:
+		fleetSchedPreviewMsg, fleetSchedSavedMsg, fleetSchedEditorMsg, fleetLiveMsg:
 		next, c := m.Update(msg)
 		return schedDrive(t, next.(FleetModel), c)
 	}
@@ -309,13 +316,28 @@ func schedClear(t *testing.T, m FleetModel) FleetModel {
 	return schedPress(t, m, "ctrl+u")
 }
 
+// showSchedules loads the jobs (as the hub does on start) and switches every
+// tabbed project to its Schedules tab, the view most schedule tests drive.
 func showSchedules(t *testing.T, m FleetModel) FleetModel {
 	t.Helper()
-	m = schedPress(t, m, fleetSchedulesKey)
-	if !m.showSchedules || !m.sched.loaded {
-		t.Fatalf("section shown=%v loaded=%v err=%q", m.showSchedules, m.sched.loaded, m.sched.err)
+	m = schedDrive(t, m, m.schedLoadCmd())
+	if !m.sched.loaded {
+		t.Fatalf("schedules loaded=%v err=%q", m.sched.loaded, m.sched.err)
 	}
+	for _, key := range m.schedGroupKeys() {
+		m.setSchedTab(key, true)
+	}
+	m.schedOtherOpen = true
+	m.relayout()
 	return m
+}
+
+// setAllTabs puts every tabbed project on its Schedules (or Sessions) tab.
+func setAllTabs(m *FleetModel, sched bool) {
+	for _, key := range m.schedGroupKeys() {
+		m.setSchedTab(key, sched)
+	}
+	m.relayout()
 }
 
 func schedKeys(m FleetModel) []string {
@@ -324,6 +346,8 @@ func schedKeys(m FleetModel) []string {
 		switch l.kind {
 		case fleetLineSchedLabel:
 			out = append(out, "SL:"+l.label)
+		case fleetLineSchedHead:
+			out = append(out, "SH:"+l.label)
 		case fleetLineSchedule:
 			if l.schedNew {
 				out = append(out, "S:+new")
@@ -335,13 +359,21 @@ func schedKeys(m FleetModel) []string {
 	return out
 }
 
+// selectSched selects the schedule line whose key is name; fleetSchedNewSel
+// matches the first "+ new schedule" line of any block.
 func selectSched(t *testing.T, m FleetModel, name string) FleetModel {
 	t.Helper()
-	for i, l := range m.lines {
-		if l.kind == fleetLineSchedule && schedLineKey(l) == name {
-			m.selectLine(i)
-			next, cmd := m.Update(fleetSchedViewerHiddenMsg{}) // runs the post-update pane sync
-			return schedDrive(t, next.(FleetModel), cmd)
+	for pass := 0; pass < 2; pass++ {
+		if pass == 1 {
+			setAllTabs(&m, true) // the job's tab was not showing
+		}
+		for i, l := range m.lines {
+			key := schedLineKey(l)
+			if l.kind == fleetLineSchedule && (key == name || (name == fleetSchedNewSel && l.schedNew)) {
+				m.selectLine(i)
+				next, cmd := m.Update(nil) // runs the post-update drawer sync
+				return schedDrive(t, next.(FleetModel), cmd)
+			}
 		}
 	}
 	t.Fatalf("no schedule line %q in %v", name, schedKeys(m))
@@ -350,44 +382,55 @@ func selectSched(t *testing.T, m FleetModel, name string) FleetModel {
 
 func selectAgent(t *testing.T, m FleetModel, windowID string) FleetModel {
 	t.Helper()
-	for i, l := range m.lines {
-		if l.kind == fleetLineRow && l.row.WindowID == windowID {
-			m.selectLine(i)
-			next, cmd := m.Update(fleetSchedViewerHiddenMsg{})
-			return schedDrive(t, next.(FleetModel), cmd)
+	for pass := 0; pass < 2; pass++ {
+		if pass == 1 {
+			setAllTabs(&m, false) // the row's tab was not showing
+		}
+		for i, l := range m.lines {
+			if l.kind == fleetLineRow && l.row.WindowID == windowID {
+				m.selectLine(i)
+				next, cmd := m.Update(nil)
+				return schedDrive(t, next.(FleetModel), cmd)
+			}
 		}
 	}
 	t.Fatalf("no row %s", windowID)
 	return m
 }
 
-func TestSchedulesToggleLoadsAndSorts(t *testing.T) {
+func TestSchedulesLoadAndSort(t *testing.T) {
 	f := newSchedFixture(t)
 	f.seedFour(t)
 	m := f.model(t)
-	if m.schedLoadCmd() != nil {
-		t.Fatal("schedules read while the section is hidden")
-	}
+	// Jobs load without any toggle (the hub does it on start).
 	m = showSchedules(t, m)
-	want := []string{"SL:Schedules (4)", "S:nightly", "S:babysit", "S:upcoming", "S:weekly"}
+	m.schedOtherOpen = false
+	m.relayout()
+	// acme-api's jobs go on its Schedules tab; nightly runs in billing, which
+	// has no session, so it goes in the bottom block, collapsed.
+	want := []string{"S:babysit", "S:upcoming", "S:weekly", "S:+new", "SH:Schedules · other projects (1)"}
 	if got := schedKeys(m); !slices.Equal(got, want) {
-		t.Errorf("lines = %v, want %v (failed, running, by next fire, paused)", got, want)
+		t.Errorf("lines = %v, want %v (running, by next fire, paused; failed elsewhere)", got, want)
 	}
+	m.schedOtherOpen = true
+	m.relayout()
 	out := ansi.Strip(m.renderList())
 	for _, s := range []string{fleetSchedGlyphFailed + " nightly", fleetSchedGlyphRunning + " babysit", fleetSchedGlyphOn + " upcoming", fleetSchedGlyphPaused + " weekly", "paused", "in 3h"} {
 		if !strings.Contains(out, s) {
 			t.Errorf("list missing %q:\n%s", s, out)
 		}
 	}
-	if !m.viewState().Schedules {
-		t.Error("view state does not record the section")
+	if got := m.viewState().SchedTabs; !slices.Equal(got, []string{resolveDir(f.project)}) {
+		t.Errorf("view state tabs = %v", got)
 	}
-	if !strings.Contains(m.viewEnv(), `"schedules":true`) {
-		t.Errorf("hot reload env drops the section: %s", m.viewEnv())
+	if !strings.Contains(m.viewEnv(), `"sched_tabs"`) || strings.Contains(m.viewEnv(), `"schedules"`) {
+		t.Errorf("hot reload env = %s", m.viewEnv())
 	}
+	// T flips the group back to Sessions: no job line in it.
+	m = selectSched(t, m, "upcoming")
 	m = schedPress(t, m, fleetSchedulesKey)
-	if len(schedKeys(m)) != 0 || m.schedLoadCmd() != nil {
-		t.Errorf("hidden section still listed or read: %v", schedKeys(m))
+	if got := schedKeys(m); !slices.Equal(got, []string{"SH:Schedules · other projects (1)", "S:nightly"}) {
+		t.Errorf("after T = %v", got)
 	}
 }
 
@@ -396,13 +439,14 @@ func TestSchedulesViewStateSurvivesReexec(t *testing.T) {
 	f.seedFour(t)
 	m := showSchedules(t, f.model(t))
 	s, ok := parseHubView([]byte(strings.TrimPrefix(m.viewEnv(), HubViewEnv+"=")))
-	if !ok || !s.Schedules {
+	if !ok || !slices.Equal(s.SchedTabs, []string{resolveDir(f.project)}) {
 		t.Fatalf("view env = %q", m.viewEnv())
 	}
 	m2 := f.model(t)
 	m2.applyViewState(s)
-	if !m2.showSchedules || m2.schedLoadCmd() == nil {
-		t.Error("a restored hub does not show and load the section")
+	m2 = schedDrive(t, m2, m2.schedLoadCmd())
+	if want := []string{"S:babysit", "S:upcoming", "S:weekly", "S:+new", "SH:Schedules · other projects (1)", "S:nightly"}; !slices.Equal(schedKeys(m2), want) {
+		t.Errorf("a restored hub lists %v, want %v", schedKeys(m2), want)
 	}
 }
 
@@ -413,19 +457,31 @@ func TestSchedulesZeroJobsMissingFileAndHints(t *testing.T) {
 	if _, err := os.Stat(f.jobsPath); !os.IsNotExist(err) {
 		t.Fatal("the fixture should have no schedules.json")
 	}
-	got := schedKeys(m)
-	want := []string{"SL:Schedules · none yet", "SL:scheduler not installed: run agentctl cron install",
-		"SL:cron is off (cron.enabled: false): nothing fires", "S:+new"}
-	if !slices.Equal(got, want) {
-		t.Errorf("lines = %v, want %v", got, want)
+	// No job anywhere: nothing schedule-related is drawn, not even the
+	// warnings, and the header shows no tabs.
+	if got := schedKeys(m); len(got) != 0 {
+		t.Errorf("lines = %v, want none", got)
 	}
-	m = selectSched(t, m, fleetSchedNewSel)
-	if out := ansi.Strip(m.render()); !strings.Contains(out, "No cron jobs yet") {
-		t.Errorf("right pane missing the empty card:\n%s", out)
+	if _, ok := m.groupTab(m.groups[0]); ok {
+		t.Error("a project with no jobs shows tabs")
 	}
-	m = schedPress(t, m, "enter")
+	if out := ansi.Strip(m.renderList()); strings.Contains(out, "Schedules") {
+		t.Errorf("list mentions Schedules:\n%s", out)
+	}
+	// t on the project's header still opens the new-schedule form there.
+	m.selectLine(0)
+	m = schedPress(t, m, fleetCronKey)
 	if m.schedForm == nil || m.schedForm.mode != schedFormNew {
-		t.Fatal("enter on + new schedule should open the form")
+		t.Fatal("t on the header should open the form")
+	}
+	if fm := m.schedForm; fm.dirs[fm.dirIdx] != f.project {
+		t.Errorf("form dir = %q, want the group's project %q", fm.dirs[fm.dirIdx], f.project)
+	}
+	// T on a project with no jobs says so and changes nothing.
+	m.schedForm = nil
+	m = schedPress(t, m, fleetSchedulesKey)
+	if !strings.Contains(m.infoMsg, "no schedules") {
+		t.Errorf("info = %q", m.infoMsg)
 	}
 }
 
@@ -434,7 +490,8 @@ func TestSchedulesLoadErrorShown(t *testing.T) {
 	if err := os.WriteFile(f.jobsPath, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m := schedPress(t, f.model(t), fleetSchedulesKey)
+	m := schedDrive(t, f.model(t), nil)
+	m = schedDrive(t, m, m.schedLoadCmd())
 	if got := schedKeys(m); len(got) != 1 || !strings.Contains(got[0], "parsing") || m.selectedSchedLine() != nil {
 		t.Errorf("lines = %v, want the parse error", got)
 	}
@@ -447,10 +504,17 @@ func TestScheduleRowNarrowTruncation(t *testing.T) {
 	m := showSchedules(t, f.model(t))
 	var l fleetLine
 	for _, x := range m.lines {
-		if x.kind == fleetLineSchedule {
+		if x.kind == fleetLineSchedule && !x.schedNew {
 			l = x
 		}
 	}
+	// In its project's block the row hangs off the project bar and does not
+	// repeat the project name.
+	if in := ansi.Strip(m.renderSchedRow(l, false, 150)); !strings.HasPrefix(in, "▎    "+fleetSchedGlyphOn+" nightly") || strings.Contains(in, "acme-api") {
+		t.Errorf("in-group row = %q", in)
+	}
+	// The widths below are the bottom block's row, which names the project.
+	l.group, l.schedBlock = fleet.Group{}, fleetSchedOtherKey
 	type want struct {
 		has, hasNot []string
 	}
@@ -502,8 +566,8 @@ func TestScheduleKeysLeaveAgentRowsAlone(t *testing.T) {
 	if !m.newArmed() {
 		t.Error("n on an agent row should still arm new")
 	}
-	if !strings.Contains(ansi.Strip(m.renderFooter(m.contentWidth())), "t schedule") {
-		t.Error("the new menu lacks the schedule entry")
+	if !strings.Contains(ansi.Strip(m.renderFooter(m.contentWidth())), "t cron") {
+		t.Error("the new menu lacks the cron entry")
 	}
 	m = schedPress(t, m, "esc")
 	if got := f.job(t, "upcoming"); got.IsEnabled() != before.IsEnabled() {
@@ -551,18 +615,15 @@ func TestScheduleFooterAndHelp(t *testing.T) {
 	if !slices.Contains(keys, fleetSchedulesKey) {
 		t.Error("? reference lacks T")
 	}
-	// The scheduled bucket points at the section while it is hidden.
-	m = schedPress(t, m, fleetSchedulesKey)
-	m.rebuildLines()
-	for i, l := range m.lines {
-		if l.kind == fleetLineSubheader && strings.HasPrefix(l.label, "scheduled") {
-			if !strings.Contains(ansi.Strip(m.renderLine(i, 80)), "T schedules") {
-				t.Errorf("bucket header = %q", ansi.Strip(m.renderLine(i, 80)))
-			}
-			return
-		}
+	// A schedule row's footer offers the way back to Sessions.
+	if !strings.Contains(ansi.Strip(fitHints(m.schedHints(), 200)), "T sessions") {
+		t.Error("schedule footer lacks T sessions")
 	}
-	t.Error("no scheduled bucket header")
+	// On the Sessions tab the group's footer offers Schedules.
+	m = schedPress(t, m, fleetSchedulesKey)
+	if !strings.Contains(ansi.Strip(fitHints(m.footerHints(), 300)), "T schedules") {
+		t.Errorf("sessions footer = %q", ansi.Strip(fitHints(m.footerHints(), 300)))
+	}
 }
 
 func TestSchedulePauseResume(t *testing.T) {
@@ -643,15 +704,15 @@ func TestScheduleDelete(t *testing.T) {
 	}
 }
 
-func TestScheduleCardInRightPaneAndViewerHandoff(t *testing.T) {
+func TestScheduleCardDrawerLeavesViewerAlone(t *testing.T) {
 	f := newSchedFixture(t)
 	f.seedFour(t)
 	m := showSchedules(t, f.model(t))
 	m = selectAgent(t, m, "@1")
 	m.liveShown = "agentctl-acme-api|@1"
 	m = selectSched(t, m, "nightly")
-	if f.hidden != 1 || m.liveShown != "" {
-		t.Fatalf("viewer hidden %d times, liveShown %q", f.hidden, m.liveShown)
+	if m.liveShown != "agentctl-acme-api|@1" {
+		t.Fatalf("the card changed the viewer: liveShown %q", m.liveShown)
 	}
 	out := ansi.Strip(m.render())
 	for _, s := range []string{"last run failed", "daily 02:30", "python-engineer in", "Next", "Last runs", "failed · launch", "tmux: no server", "Prompt", "Triage new issues."} {
@@ -682,27 +743,29 @@ func TestScheduleCardInRightPaneAndViewerHandoff(t *testing.T) {
 		t.Fatal("selecting a job did not load the full card")
 	}
 
-	// Back on an agent row the viewer returns.
-	f.shown = nil
+	// Back on an agent row the drawer closes; the viewer was never hidden.
 	m = selectAgent(t, m, "@1")
-	if m.schedPaneOn || !slices.Contains(f.shown, "agentctl-acme-api|@1") {
-		t.Errorf("viewer not restored: paneOn=%v shown=%v", m.schedPaneOn, f.shown)
+	if m.schedPaneOn || m.liveShown != "agentctl-acme-api|@1" {
+		t.Errorf("paneOn=%v liveShown=%q", m.schedPaneOn, m.liveShown)
 	}
 	if m.sched.detail != nil {
 		t.Error("the full card outlived its selection")
 	}
 }
 
-func TestScheduleCardSkippedOnNarrowTerminal(t *testing.T) {
+func TestScheduleDrawerFullWidthOnNarrowPane(t *testing.T) {
 	f := newSchedFixture(t)
 	f.seedFour(t)
 	m := showSchedules(t, f.model(t))
-	m.termWidth = m.contentWidth() + 10
+	m.liveLeft, m.termWidth = 40, 40
+	m.relayout()
 	m = selectSched(t, m, "nightly")
-	if strings.Contains(ansi.Strip(m.render()), "Last runs") {
-		t.Error("no room: the card should not be drawn")
+	if m.schedDrawerWidth() != m.contentWidth() {
+		t.Fatalf("drawer %d wide in a %d pane, want all of it", m.schedDrawerWidth(), m.contentWidth())
 	}
-	// The form takes the list's place instead.
+	if !strings.Contains(ansi.Strip(m.render()), "Last runs") {
+		t.Error("narrow pane: the card should still be drawn")
+	}
 	m = schedPress(t, m, "e")
 	out := ansi.Strip(m.render())
 	if !strings.Contains(out, "Edit nightly") {
@@ -746,7 +809,7 @@ func TestScheduleCreateViaPickerFromProjectHeader(t *testing.T) {
 		t.Fatalf("form mode %d dir %v", fm.mode, fm.dirs)
 	}
 	if !m.schedPaneOn {
-		t.Error("the form should take the viewer's place")
+		t.Error("the form should open the drawer")
 	}
 	m = schedType(t, m, "triage")
 	m = focusStopT(t, m, stopPrompt)
@@ -801,8 +864,7 @@ func TestScheduleCreateViaPickerFromProjectHeader(t *testing.T) {
 func TestScheduleFormDaysAndHourlyPicker(t *testing.T) {
 	f := newSchedFixture(t)
 	m := showSchedules(t, f.model(t))
-	m = selectSched(t, m, fleetSchedNewSel)
-	m = schedPress(t, m, "enter")
+	m = schedPress(t, m, fleetCronKey)
 	m = schedType(t, m, "picks")
 	m = focusStopT(t, m, stopPrompt)
 	m = schedType(t, m, "x")
@@ -861,7 +923,8 @@ func TestScheduleEditRoundTripsHiddenAndUntouchedFields(t *testing.T) {
 	m = schedClear(t, m)
 	m = schedType(t, m, "python-engineer")
 	m = schedPress(t, m, "ctrl+s")
-	out := ansi.Strip(m.render())
+	// The review pane only: the list beside it has a "+ new schedule" line.
+	out := ansi.Strip(strings.Join(m.schedFormLines(m.schedPaneWidth(), m.termHeight), "\n"))
 	flat := strings.Join(strings.Fields(out), " ")
 	if !strings.Contains(out, "Review changes to custom") || !strings.Contains(flat, "agent go-engineer → python-engineer") || strings.Contains(out, "schedule ") {
 		t.Errorf("edit review should list only the agent:\n%s", out)
@@ -994,7 +1057,7 @@ func TestScheduleFormKeysNeverReachTheHub(t *testing.T) {
 	m = schedPress(t, m, "e")
 	m = focusStopT(t, m, stopPrompt)
 	m = schedType(t, m, " qxTCzrJ")
-	if !m.showSchedules || m.quitting || m.closeArmed() || formOf(t, m).prompt.Value() != "Triage new issues. qxTCzrJ" {
+	if m.quitting || m.closeArmed() || formOf(t, m).prompt.Value() != "Triage new issues. qxTCzrJ" {
 		t.Errorf("typed text leaked: prompt=%q", formOf(t, m).prompt.Value())
 	}
 	if m.exeChanged = func() bool { return true }; true {
@@ -1086,7 +1149,7 @@ func TestSchedulesWithNoSessions(t *testing.T) {
 	m.rebuildLines()
 	m = showSchedules(t, m)
 	out := ansi.Strip(m.renderList())
-	if strings.Contains(out, "no agentctl sessions running") || !strings.Contains(out, "Schedules (4)") {
+	if strings.Contains(out, "no agentctl sessions running") || !strings.Contains(out, "Schedules · other projects (4)") {
 		t.Errorf("with no sessions the section should still show:\n%s", out)
 	}
 	m = selectSched(t, m, "upcoming")
@@ -1096,44 +1159,37 @@ func TestSchedulesWithNoSessions(t *testing.T) {
 	}
 }
 
-func TestScheduleIgnoresViewerRacesWhilePaneIsUp(t *testing.T) {
+func TestScheduleDrawerNeverHidesViewer(t *testing.T) {
 	f := newSchedFixture(t)
 	f.seedFour(t)
 	m := showSchedules(t, f.model(t))
 	m.liveLeft, m.liveWinWidth = 62, 150
+	m.liveShown = "agentctl-acme-api|@1"
 	m = selectSched(t, m, "nightly")
-	hidden := f.hidden
-	// A show started before the selection moved lands late.
-	next, cmd := m.Update(fleetLiveMsg{key: "agentctl-acme-api|@1", left: 40, right: 109, win: 150})
-	m = schedDrive(t, next.(FleetModel), cmd)
-	if f.hidden != hidden+1 || m.liveShown != "" || m.liveLeft != 62 {
-		t.Errorf("late show: hidden %d->%d liveShown %q liveLeft %d", hidden, f.hidden, m.liveShown, m.liveLeft)
+	m = schedPress(t, m, "e")
+	if m.liveShown != "agentctl-acme-api|@1" || m.liveLeft != 62 {
+		t.Errorf("drawer touched the viewer: liveShown %q liveLeft %d", m.liveShown, m.liveLeft)
 	}
-	// The hub pane widening is not a divider drag.
-	next, _ = m.Update(fleetProbeMsg{pane: 120, win: 150})
-	if m = next.(FleetModel); m.userLeft != 0 || m.liveLeft != 62 {
-		t.Errorf("probe while the pane is up: userLeft %d liveLeft %d", m.userLeft, m.liveLeft)
+	// A divider drag while the drawer is up is still a divider drag.
+	next, _ := m.Update(fleetProbeMsg{pane: 120, win: 150})
+	if m = next.(FleetModel); m.liveLeft == 0 {
+		t.Errorf("probe ignored: liveLeft %d", m.liveLeft)
 	}
 }
 
-func TestScheduleNewFromHeaderShowsAndPersistsSection(t *testing.T) {
+func TestScheduleNewFromHeaderLoadsJobs(t *testing.T) {
 	f := newSchedFixture(t)
 	m := f.model(t)
-	dir := t.TempDir()
-	m.viewPath = filepath.Join(dir, "hub-view.json")
 	m.selectLine(0)
 	m = schedPress(t, m, "n")
 	next, cmd := m.Update(schedKeyMsg("t"))
 	m = next.(FleetModel)
-	if !m.showSchedules || m.schedForm == nil {
-		t.Fatal("n, t should open the form and show the section")
+	if m.schedForm == nil {
+		t.Fatal("n, t should open the form")
 	}
 	m = schedDrive(t, m, cmd)
-	if !readHubView(m.viewPath).Schedules {
-		t.Error("turning the section on from n, t was not persisted")
-	}
 	if !m.sched.loaded {
-		t.Error("the section was not loaded")
+		t.Error("the jobs were not loaded")
 	}
 }
 
