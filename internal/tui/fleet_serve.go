@@ -6,14 +6,17 @@ import (
 	"github.com/blsmth/agentctl/internal/servectl"
 )
 
-// The hub's agentctl serve indicator: a glyph+label after the title, fed by
-// a probe on the poll tick (pidfile liveness, plus one local socket connect
-// when a process is alive; never launchctl, never per render). Clicking it
-// or pressing S toggles serve and flashes the outcome in the footer. The
-// hub runs outside Claude Code, so the Bash validator's serve-tamper rule,
-// which keeps agents from doing the same, does not apply to it.
+// The hub's phone indicator: a glyph+label after the title, fed by a probe
+// on the poll tick (one local socket connect and a stat of the phone-off
+// switch, plus the pidfile liveness check only when the socket fails; never
+// launchctl, never per render). It shows phone access (on/off), and the
+// serve process being down or stuck distinctly. Clicking it or pressing S
+// toggles phone access (servectl.Controller.Toggle: the process keeps
+// serving artifact links) and flashes the outcome in the footer. The hub
+// runs outside Claude Code, so the Bash validator's serve-tamper rule, which
+// keeps agents from doing the same, does not apply to it.
 
-// fleetServeKey toggles serve from the hub list.
+// fleetServeKey toggles phone access from the hub list.
 const fleetServeKey = "S"
 
 // fleetServeGap separates the indicator from the title.
@@ -68,10 +71,13 @@ func (m *FleetModel) toggleServe() tea.Cmd {
 	}
 	m.serveBusy = true
 	m.jumpErr = ""
-	if m.serveKnown && m.serveState != servectl.StateOff {
-		m.setProgress("stopping agentctl serve…")
-	} else {
+	switch {
+	case !m.serveKnown, m.serveState == servectl.StateOff:
 		m.setProgress("starting agentctl serve…")
+	case m.serveState == servectl.StatePhoneOff:
+		m.setProgress("turning phone access on…")
+	default:
+		m.setProgress("turning phone access off…")
 	}
 	return func() tea.Msg {
 		msg, err := fleetServeToggle()
@@ -91,20 +97,24 @@ func (m *FleetModel) applyServeToggled(msg fleetServeToggledMsg) tea.Cmd {
 	return m.serveProbeCmd()
 }
 
-// serveBadge renders the indicator: green when serve answers, dim when it
-// is off, yellow when its process is alive but the control socket is dead.
-// Empty until the first probe lands, so a running server never flashes off.
+// serveBadge renders the indicator: green "on" when serve answers with
+// phone access on, dim "off" when phone access is off (artifacts still
+// served), dim struck-through "down" when no serve process runs, yellow
+// "stuck" when its process is alive but the control socket is dead. Empty
+// until the first probe lands, so a running server never flashes off.
 func (m FleetModel) serveBadge() string {
 	if !m.serveKnown {
 		return ""
 	}
 	switch m.serveState {
 	case servectl.StateRunning:
-		return fleetSuccessStyle.Render("📱 serve")
+		return fleetSuccessStyle.Render("📱 on")
+	case servectl.StatePhoneOff:
+		return fleetDimStyle.Render("📱 off")
 	case servectl.StateUnresponsive:
 		return fleetBlockedStyle.Bold(true).Render("📱 stuck")
 	}
-	return fleetDimStyle.Render("📱 off")
+	return fleetDimStyle.Strikethrough(true).Render("📱 down")
 }
 
 // serveBadgeSpan is the indicator's [start, end) columns on the title row;

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/serve"
+	"github.com/blsmth/agentctl/internal/servectl"
 )
 
 func TestPrintPairing(t *testing.T) {
@@ -85,10 +86,20 @@ func TestPrintServeStatusNotRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := b.String()
-	for _, want := range []string{"running:", "no", "devices:", "0", "cert expires:", ca.Fingerprint()} {
+	for _, want := range []string{"running:", "no", "phone access:    on", "devices:", "0", "cert expires:", ca.Fingerprint()} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status missing %q:\n%s", want, out)
 		}
+	}
+	if err := servectl.SetPhone(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	b.Reset()
+	if err := printServeStatus(&b, dir, now); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "phone access:    off") {
+		t.Errorf("status with phone off:\n%s", b.String())
 	}
 }
 

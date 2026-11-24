@@ -196,6 +196,8 @@ type Server struct {
 	winLocks     windowLocks
 	term         *terminals
 	approvals    *approvalStore
+	// phone is the phone access switch (phone.go).
+	phone *phoneSwitch
 
 	// done is closed by Close so open SSE streams end before shutdown.
 	done      chan struct{}
@@ -234,6 +236,7 @@ func New(opts Options) (*Server, error) {
 		now = time.Now
 	}
 	s := &Server{opts: opts, now: now, started: now(), cidrs: cidrs, devices: devices, restart: make(chan struct{}, 1)}
+	s.phone = newPhoneSwitch(opts.Dir)
 	s.fleet, s.panes, s.agents, s.holder = opts.Fleet, opts.Panes, opts.Agents, opts.Awake
 	if s.fleet == nil {
 		s.fleet = fleetwatch.LiveSource{}
@@ -339,6 +342,7 @@ func New(opts Options) (*Server, error) {
 	}, opts.ArtifactDebounce, opts.ArtifactPoll)
 	s.router = newRouter(devices, opts.Config.AllowWrite, now)
 	s.router.onWriteDenied = s.auditRejected
+	s.router.phoneOff = s.phone.Off
 	s.routes(s.router)
 	s.handler = s.chain(s.router)
 	return s, nil
@@ -382,12 +386,14 @@ func (s *Server) registerCore(rt *Router) {
 	rt.Device("/", s.handleNotFound)
 }
 
-// healthz is the /healthz body.
+// healthz is the /healthz body. PhoneOff tells the web app, which reaches
+// /healthz without a cookie, that phone access is switched off.
 type healthz struct {
 	OK       bool     `json:"ok"`
 	Version  string   `json:"version"`
 	Started  string   `json:"started"`
 	Features []string `json:"features"`
+	PhoneOff bool     `json:"phone_off,omitempty"`
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
@@ -396,6 +402,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 		Version:  s.opts.Version,
 		Started:  s.started.UTC().Format(time.RFC3339),
 		Features: s.router.Features(),
+		PhoneOff: s.phone.Off(),
 	})
 }
 
@@ -422,6 +429,9 @@ type PairInfo struct {
 func (s *Server) OpenPairing(name string) (PairInfo, error) {
 	if s.opts.CA == nil {
 		return PairInfo{}, errors.New("no CA loaded")
+	}
+	if s.phone.Off() {
+		return PairInfo{}, errors.New("phone access is off: turn it on with `agentctl serve start` first")
 	}
 	s.bootMu.Lock()
 	defer s.bootMu.Unlock()
@@ -527,6 +537,11 @@ func (s *Server) Start(ctx context.Context) {
 	go func() {
 		defer s.bgWG.Done()
 		s.pushQ.run(ctx)
+	}()
+	s.bgWG.Add(1)
+	go func() {
+		defer s.bgWG.Done()
+		s.phone.run(ctx, phonePollEvery)
 	}()
 	// Seeded here, before Start returns, so an artifact published right
 	// after start is an add, not part of the baseline.

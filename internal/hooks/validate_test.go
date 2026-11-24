@@ -412,6 +412,11 @@ func TestCheckServeTamper(t *testing.T) {
 		{"chained", "go build ./... && agentctl serve uninstall", true},
 		// Denied: the human-only start/stop/toggle and their launchctl forms.
 		{"serve stop", "agentctl serve stop", true},
+		{"serve stop --all", "agentctl serve stop --all", true},
+		// The phone-off switch is a file in the state dir.
+		{"phone-off touch", "touch ~/.local/state/agentctl/serve/phone-off", true},
+		{"phone-off rm", "rm /Users/u/.local/state/agentctl/serve/phone-off", true},
+		{"phone-off redirect", "echo > $HOME/.local/state/agentctl/serve/phone-off", true},
 		{"serve start", "agentctl serve start", true},
 		{"serve toggle", "agentctl serve toggle", true},
 		{"serve toggle keybinding form", "agentctl serve toggle --message-client /dev/ttys001", true},
@@ -712,5 +717,45 @@ func TestMaskAgentctlArgs_UnterminatedDoubleQuote(t *testing.T) {
 	cmd := `python3 - <<'PY'` + "\nprint('x')\nPY\n" + `agentctl context set k v; "it's unterminated`
 	if got := maskAgentctlArgs(cmd); got != cmd {
 		t.Fatalf("maskAgentctlArgs = %q, want the command unchanged (unsure)", got)
+	}
+}
+
+func TestServeEditTarget(t *testing.T) {
+	dir := t.TempDir()
+	serve := filepath.Join(dir, "state", "serve")
+	if err := os.MkdirAll(serve, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(serve, link); err != nil {
+		t.Fatal(err)
+	}
+	orig := serveStateDir
+	t.Cleanup(func() { serveStateDir = orig })
+	serveStateDir = func() string { return serve }
+	input := func(field, path string) json.RawMessage {
+		b, _ := json.Marshal(map[string]string{field: path})
+		return b
+	}
+	tests := []struct {
+		name  string
+		tool  string
+		input json.RawMessage
+		want  string
+	}{
+		{"write phone-off", "Write", input("file_path", filepath.Join(serve, "phone-off")), filepath.Join(serve, "phone-off")},
+		{"edit devices", "Edit", input("file_path", filepath.Join(serve, "devices.json")), filepath.Join(serve, "devices.json")},
+		{"through a symlinked parent", "Write", input("file_path", filepath.Join(link, "phone-off")), filepath.Join(link, "phone-off")},
+		{"read", "Read", input("file_path", filepath.Join(serve, "phone-off")), ""},
+		{"sibling dir", "Write", input("file_path", serve+"x/phone-off"), ""},
+		{"source file", "Write", input("file_path", "/src/internal/servectl/servectl.go"), ""},
+		{"bad input", "Write", json.RawMessage(`nope`), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := serveEditTarget(tt.tool, tt.input); got != tt.want {
+				t.Errorf("serveEditTarget = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

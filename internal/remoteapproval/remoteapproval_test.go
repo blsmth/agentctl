@@ -387,6 +387,28 @@ func TestGuardRejects(t *testing.T) {
 	}
 }
 
+// With phone access off the guard never dials: the hook sees "no phone" and
+// the laptop popup alone answers.
+func TestGuardPhoneOff(t *testing.T) {
+	f := newGuardFixture(t)
+	requested := false
+	g := f.guard(t, func(net.Conn, Request) { requested = true })
+	if err := os.WriteFile(filepath.Join(f.dir, PhoneOffFile), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, err := g.Open(testRequest(t))
+	if err == nil {
+		a.Close()
+		t.Fatal("Open succeeded with phone access off")
+	}
+	if !errors.Is(err, ErrPhoneOff) || !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("err = %v, want ErrPhoneOff wrapping ErrNotRunning", err)
+	}
+	if f.dials != 0 || requested {
+		t.Fatalf("dials = %d, requested = %v; want no contact with serve", f.dials, requested)
+	}
+}
+
 func TestGuardNotRunning(t *testing.T) {
 	g := Guard{Dir: t.TempDir(), Self: func() (buildid.Identity, error) { return buildid.Identity{}, nil }}
 	if _, err := g.Open(testRequest(t)); !errors.Is(err, ErrNotRunning) {

@@ -381,7 +381,7 @@ func TestNewSessionTitleKeepsCounts(t *testing.T) {
 		if w >= 50 && !strings.Contains(plain, "⏸ 1") {
 			t.Errorf("w=%d: counts dropped: %q", w, plain)
 		}
-		if s := l.badge; s[1] > 0 && ansi.Cut(plain, s[0], s[1]) != "📱 off" {
+		if s := l.badge; s[1] > 0 && ansi.Cut(plain, s[0], s[1]) != "📱 down" {
 			t.Errorf("w=%d: badge span %v covers %q", w, s, ansi.Cut(plain, s[0], s[1]))
 		}
 	}

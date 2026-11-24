@@ -201,6 +201,9 @@ type Sender struct {
 	// laptop, when set, makes Broadcast skip every device while someone is
 	// using the laptop (serve.push.quiet_when_laptop_active).
 	laptop *laptopActivity
+	// muted, when set and true, makes Broadcast and SendTo send nothing
+	// (phone access off, phone.go).
+	muted func() bool
 
 	mu   sync.Mutex
 	last *LastPush
@@ -249,6 +252,12 @@ func NewSender(devices *DeviceStore, subs *SubscriptionStore, pusher Pusher) *Se
 	return &Sender{devices: devices, subs: subs, pusher: pusher}
 }
 
+// SetMuted makes Broadcast and SendTo send nothing while muted reports
+// true.
+func (s *Sender) SetMuted(muted func() bool) { s.muted = muted }
+
+func (s *Sender) isMuted() bool { return s.muted != nil && s.muted() }
+
 // SetPresence makes Broadcast skip devices that have the app in the
 // foreground. SendTo is never suppressed.
 func (s *Sender) SetPresence(p *Presence) { s.presence = p }
@@ -259,8 +268,13 @@ func (s *Sender) SetLaptop(l *laptopActivity) { s.laptop = l }
 
 // Broadcast sends msg to every paired device with a subscription, except
 // devices with the app open in the foreground, and to none while the laptop
-// is in use.
+// is in use. Muted (phone access off), it sends nothing, checked first.
 func (s *Sender) Broadcast(ctx context.Context, msg Message) {
+	if s.isMuted() {
+		pushLogf("push: kind=%s tag=%s not sent, phone access off", msg.Kind, redactArtifactIDs(msg.Tag))
+		s.record(msg.Kind, "phone access off")
+		return
+	}
 	live, err := s.liveDevices()
 	if err != nil {
 		logging.Warn("serve: push: %v", err)
@@ -327,6 +341,9 @@ func (s *Sender) Broadcast(ctx context.Context, msg Message) {
 // SendTo sends msg to one device. It reports whether the device has a
 // subscription that is still valid.
 func (s *Sender) SendTo(ctx context.Context, deviceID string, msg Message) error {
+	if s.isMuted() {
+		return errPhoneOff
+	}
 	live, err := s.liveDevices()
 	if err != nil {
 		return err
@@ -343,6 +360,8 @@ func (s *Sender) SendTo(ctx context.Context, deviceID string, msg Message) error
 
 var (
 	errNoSubscription = errors.New("this device has no push subscription")
+	// errPhoneOff: phone access is switched off, nothing is sent.
+	errPhoneOff = errors.New("phone access is off")
 	// errSubscriptionExpired: the push service said the subscription is
 	// gone (404/410) and it was deleted.
 	errSubscriptionExpired = errors.New("the push subscription expired and was removed")

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/launchd"
+	"github.com/blsmth/agentctl/internal/remoteapproval"
 )
 
 // fakeServe is the world a Controller sees: a launchd job and a serve
@@ -43,7 +44,7 @@ func (f *fakeServe) controller() Controller {
 		}
 	}
 	return Controller{
-		Dir:  "/serve",
+		Dir:  f.t.TempDir(),
 		GOOS: "darwin",
 		Agent: launchd.Agent{Home: home, UID: 501, Sleep: func(time.Duration) {}, Run: func(name string, args ...string) ([]byte, error) {
 			f.calls = append(f.calls, strings.Join(args, " "))
@@ -165,7 +166,7 @@ func TestControllerStart(t *testing.T) {
 	}
 }
 
-func TestControllerStop(t *testing.T) {
+func TestControllerStopAll(t *testing.T) {
 	tests := []struct {
 		name           string
 		f              fakeServe
@@ -226,7 +227,7 @@ func TestControllerStop(t *testing.T) {
 			if tt.goos != "" {
 				c.GOOS = tt.goos
 			}
-			got, err := c.Stop()
+			got, err := c.StopAll()
 			checkResult(t, got, err, tt.want, tt.wantErr)
 			checkCalls(t, f.calls, tt.wantCalls)
 			if (len(f.terminated) > 0) != tt.wantTerminated {
@@ -242,20 +243,52 @@ func TestControllerStop(t *testing.T) {
 }
 
 func TestControllerToggle(t *testing.T) {
-	t.Run("running stops", func(t *testing.T) {
+	t.Run("running turns the phone off", func(t *testing.T) {
 		f := fakeServe{t: t, installed: true, loaded: true, alive: true, answering: true, managed: true}
-		got, err := f.controller().Toggle()
-		checkResult(t, got, err, "serve stopped (it starts again at login, or with agentctl serve start)", "")
+		c := f.controller()
+		got, err := c.Toggle()
+		checkResult(t, got, err, phoneOffMsg, "")
+		if !PhoneOff(c.Dir) || !f.alive || len(f.calls) != 0 {
+			t.Errorf("phone off=%v alive=%v calls=%q; want phone off, process untouched", PhoneOff(c.Dir), f.alive, f.calls)
+		}
 	})
-	t.Run("unresponsive stops", func(t *testing.T) {
+	t.Run("unresponsive turns the phone off", func(t *testing.T) {
 		f := fakeServe{t: t, installed: true, loaded: true, alive: true, managed: true}
-		got, err := f.controller().Toggle()
-		checkResult(t, got, err, "serve stopped (it starts again at login, or with agentctl serve start)", "")
+		c := f.controller()
+		got, err := c.Toggle()
+		checkResult(t, got, err, phoneOffMsg, "")
+		if len(f.calls) != 0 || len(f.terminated) != 0 {
+			t.Errorf("calls=%q terminated=%v; want none", f.calls, f.terminated)
+		}
+	})
+	t.Run("phone off turns it back on", func(t *testing.T) {
+		f := fakeServe{t: t, installed: true, loaded: true, alive: true, answering: true, managed: true}
+		c := f.controller()
+		if err := SetPhone(c.Dir, false); err != nil {
+			t.Fatal(err)
+		}
+		got, err := c.Toggle()
+		checkResult(t, got, err, "phone access on (serve at https://mac.local:8443/)", "")
+		if PhoneOff(c.Dir) || len(f.calls) != 0 {
+			t.Errorf("phone off=%v calls=%q; want phone on, no launchctl", PhoneOff(c.Dir), f.calls)
+		}
 	})
 	t.Run("off starts", func(t *testing.T) {
 		f := fakeServe{t: t, installed: true, upAfterStart: true}
 		got, err := f.controller().Toggle()
 		checkResult(t, got, err, "serve started at https://mac.local:8443/", "")
+	})
+	t.Run("down with the phone off starts with the phone on", func(t *testing.T) {
+		f := fakeServe{t: t, installed: true, upAfterStart: true}
+		c := f.controller()
+		if err := SetPhone(c.Dir, false); err != nil {
+			t.Fatal(err)
+		}
+		got, err := c.Toggle()
+		checkResult(t, got, err, "serve started at https://mac.local:8443/", "")
+		if PhoneOff(c.Dir) {
+			t.Error("phone still off after start")
+		}
 	})
 	t.Run("off and not installed", func(t *testing.T) {
 		f := fakeServe{t: t}
@@ -264,6 +297,103 @@ func TestControllerToggle(t *testing.T) {
 			t.Errorf("err = %v, want ErrNotInstalled", err)
 		}
 	})
+}
+
+const phoneOffMsg = "phone access off: no phone notifications or app; artifact links still work (agentctl serve start turns it back on)"
+
+func TestControllerStop(t *testing.T) {
+	tests := []struct {
+		name string
+		f    fakeServe
+		goos string
+		want string
+	}{
+		{"launchd job keeps running", fakeServe{installed: true, loaded: true, alive: true, answering: true, managed: true}, "", phoneOffMsg},
+		{"unmanaged process keeps running", fakeServe{alive: true, answering: true}, "", phoneOffMsg},
+		{"linux needs no systemctl", fakeServe{alive: true, answering: true}, "linux", phoneOffMsg},
+		{"nothing running", fakeServe{installed: true}, "", "phone access off (serve is not running; agentctl serve start starts it with phone access on)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := tt.f
+			f.t = t
+			c := f.controller()
+			if tt.goos != "" {
+				c.GOOS = tt.goos
+			}
+			got, err := c.Stop()
+			checkResult(t, got, err, tt.want, "")
+			if len(f.calls) != 0 || len(f.terminated) != 0 {
+				t.Errorf("launchctl calls %q, terminated %v; want none", f.calls, f.terminated)
+			}
+			if f.alive != tt.f.alive {
+				t.Errorf("process alive = %v, want %v", f.alive, tt.f.alive)
+			}
+			if !PhoneOff(c.Dir) {
+				t.Error("phone access still on")
+			}
+			fi, err := os.Stat(filepath.Join(c.Dir, PhoneOffFile))
+			if err != nil || fi.Mode().Perm() != 0o600 {
+				t.Errorf("phone-off file: %v, %v; want mode 0600", fi, err)
+			}
+		})
+	}
+}
+
+func TestControllerStartTurnsPhoneOn(t *testing.T) {
+	f := fakeServe{t: t, installed: true, loaded: true, alive: true, answering: true}
+	c := f.controller()
+	if _, err := c.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.Start()
+	checkResult(t, got, err, "phone access on (serve at https://mac.local:8443/)", "")
+	if PhoneOff(c.Dir) || len(f.calls) != 0 {
+		t.Errorf("phone off=%v calls=%q", PhoneOff(c.Dir), f.calls)
+	}
+	// A second start finds it on already.
+	got, err = c.Start()
+	checkResult(t, got, err, "serve is already running at https://mac.local:8443/", "")
+}
+
+func TestStopAllKeepsPhoneSwitch(t *testing.T) {
+	f := fakeServe{t: t, installed: true, loaded: true, alive: true, answering: true, managed: true}
+	c := f.controller()
+	if _, err := c.StopAll(); err != nil {
+		t.Fatal(err)
+	}
+	if PhoneOff(c.Dir) {
+		t.Error("StopAll switched the phone off")
+	}
+}
+
+func TestSetPhone(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "serve")
+	if PhoneOff(dir) {
+		t.Fatal("missing dir reads as phone off")
+	}
+	if err := SetPhone(dir, true); err != nil {
+		t.Fatalf("on with no file: %v", err)
+	}
+	if err := SetPhone(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(dir)
+	if err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("serve dir: %v, %v; want 0700", fi, err)
+	}
+	if !PhoneOff(dir) {
+		t.Error("phone on after SetPhone(false)")
+	}
+	if err := SetPhone(dir, true); err != nil || PhoneOff(dir) {
+		t.Errorf("SetPhone(true) = %v, off=%v", err, PhoneOff(dir))
+	}
+}
+
+func TestPhoneOffFileMatchesRemoteApproval(t *testing.T) {
+	if remoteapproval.PhoneOffFile != PhoneOffFile {
+		t.Errorf("remoteapproval.PhoneOffFile = %q, servectl.PhoneOffFile = %q", remoteapproval.PhoneOffFile, PhoneOffFile)
+	}
 }
 
 func checkResult(t *testing.T, got string, err error, want, wantErr string) {
@@ -321,6 +451,25 @@ func TestProbe(t *testing.T) {
 				t.Error("ran the pidfile check (a ps fork) although the socket answered")
 			}
 		})
+	}
+}
+
+func TestProbePhoneOff(t *testing.T) {
+	dir := t.TempDir()
+	if err := SetPhone(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	answering := func(string) error { return nil }
+	alive := func(string) (int, bool) { return 1, true }
+	if got := probe(dir, alive, answering); got != StatePhoneOff || !got.Serving() {
+		t.Errorf("probe = %v (serving %v), want phone-off and serving", got, got.Serving())
+	}
+	// A dead socket is unresponsive whatever the switch says.
+	if got := probe(dir, alive, func(string) error { return errors.New("refused") }); got != StateUnresponsive {
+		t.Errorf("probe = %v, want unresponsive", got)
+	}
+	if StateOff.Serving() || StateUnresponsive.Serving() || !StateRunning.Serving() {
+		t.Error("Serving() wrong")
 	}
 }
 

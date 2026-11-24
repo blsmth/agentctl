@@ -115,7 +115,8 @@ Limits: 25 MB per revision, 500 files per directory, 1 GB for the store (`add` t
 |---|---|
 | `agentctl serve` | Run the HTTPS server for the mobile web app in the foreground (what launchd runs). |
 | `agentctl serve install` / `uninstall` | Install or remove the LaunchAgent (prints a systemd unit on Linux). |
-| `agentctl serve start` / `stop` / `toggle` | Start or stop the installed LaunchAgent; stop lasts until the next login. prefix+`W` and the hub's `S` toggle it. |
+| `agentctl serve start` / `stop` / `toggle` | Turn phone access on or off (push notifications, phone approvals and the phone app); serve keeps running for artifact links. `start` also starts the installed LaunchAgent when serve is down. prefix+`W` and the hub's `S` toggle it. |
+| `agentctl serve stop --all` | Stop the server itself (artifact links too) until the next login; the LaunchAgent stays installed. |
 | `agentctl serve status` | Whether it runs, its URL, devices, cert expiry and CA fingerprint. |
 | `agentctl serve pair` | Open a 5-minute pairing window and print QR codes (`--name`). |
 | `agentctl serve devices [rm <device>]` | List or revoke paired devices. |

@@ -113,6 +113,11 @@ func printServeStatus(w io.Writer, dir string, now time.Time) error {
 	default:
 		fmt.Fprintf(tw, "running:\tunknown (%v)\n", err)
 	}
+	if servectl.PhoneOff(dir) {
+		fmt.Fprintf(tw, "phone access:\toff (no notifications or app; artifact links work; agentctl serve start turns it on)\n")
+	} else {
+		fmt.Fprintf(tw, "phone access:\ton\n")
+	}
 	if store, err := serve.OpenDeviceStore(dir); err == nil {
 		if list, err := store.List(); err == nil {
 			fmt.Fprintf(tw, "devices:\t%d\n", len(list))
@@ -292,20 +297,30 @@ var serveController = servectl.New
 // so tests do not talk to tmux.
 var serveDisplay = tmux.DisplayMessageTo
 
-// RunServeStart starts agentctl serve (see servectl.Controller.Start).
+// RunServeStart turns phone access on and starts agentctl serve when it is
+// not running (see servectl.Controller.Start).
 func RunServeStart(w io.Writer) error {
 	return runServeAction(w, "", servectl.Controller.Start)
 }
 
-// RunServeStop stops agentctl serve until the next login (see
-// servectl.Controller.Stop).
-func RunServeStop(w io.Writer) error {
-	return runServeAction(w, "", servectl.Controller.Stop)
+// RunServeStop turns phone access off, leaving serve running for artifact
+// links (servectl.Controller.Stop); with all it stops the process until the
+// next login (servectl.Controller.StopAll).
+func RunServeStop(w io.Writer, all bool) error {
+	return runServeAction(w, "", serveStopAction(all))
 }
 
-// RunServeToggle stops a running agentctl serve or starts a stopped one.
-// With client set (the prefix-key binding) the result is also shown as a
-// tmux message on that client.
+// serveStopAction picks the Controller method for `serve stop [--all]`.
+func serveStopAction(all bool) func(servectl.Controller) (string, error) {
+	if all {
+		return servectl.Controller.StopAll
+	}
+	return servectl.Controller.Stop
+}
+
+// RunServeToggle turns phone access off, or on (starting serve when it is
+// down). With client set (the prefix-key binding) the result is also shown
+// as a tmux message on that client.
 func RunServeToggle(w io.Writer, client string) error {
 	return runServeAction(w, client, servectl.Controller.Toggle)
 }

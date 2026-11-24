@@ -87,6 +87,9 @@ func startRemote(d *remoteDetails, logPrefix string, deadline time.Time) *remote
 	}
 	a, err := openRemote(req)
 	switch {
+	case errors.Is(err, remoteapproval.ErrPhoneOff):
+		logging.Debug("%s: phone access is off; laptop popup only", logPrefix)
+		return nil
 	case errors.Is(err, remoteapproval.ErrNotRunning):
 		logging.Debug("%s: agentctl serve not running; laptop popup only", logPrefix)
 		return nil

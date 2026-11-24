@@ -21,6 +21,9 @@ import (
 const (
 	ControlSocket = "control.sock"
 	PIDFile       = "serve.pid"
+	// PhoneOffFile switches phone access off while it exists (mirrors
+	// servectl.PhoneOffFile).
+	PhoneOffFile = "phone-off"
 )
 
 // DialTimeout is how long the hook waits for serve's control socket to accept
@@ -34,13 +37,20 @@ const pingTimeout = 2 * time.Second
 // server, and the hook behaves exactly as without away mode.
 var ErrNotRunning = errors.New("agentctl serve is not running")
 
+// ErrPhoneOff means phone access is switched off on the laptop (`agentctl
+// serve stop`): serve runs, but approvals are not offered to the phone. It
+// wraps ErrNotRunning, so callers treat it exactly as "no phone".
+var ErrPhoneOff = fmt.Errorf("%w: phone access is off", ErrNotRunning)
+
 // ErrUntrusted means something answered on the control socket but it could
 // not be verified as the real agentctl serve. The hook must not use it.
 var ErrUntrusted = errors.New("control socket failed verification")
 
 // Guard opens remote approvals only on a control socket that belongs to the
-// running agentctl serve. Its checks, in order:
+// running agentctl serve, and only while phone access is on. Its checks, in
+// order:
 //
+//  0. PhoneOffFile is absent from Dir (else ErrPhoneOff, before any dial).
 //  1. The socket accepts within DialTimeout (else ErrNotRunning).
 //  2. serve.pid is a regular 0600 file owned by this user, holding a live
 //     process whose command line is `agentctl ... serve`.
@@ -88,6 +98,9 @@ func (g Guard) Open(req Request) (*Approval, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
+	if g.phoneOff() {
+		return nil, ErrPhoneOff
+	}
 	probe, err := g.dial(DialTimeout)
 	if err != nil {
 		return nil, ErrNotRunning
@@ -106,6 +119,13 @@ func (g Guard) Open(req Request) (*Approval, error) {
 		return nil, err
 	}
 	return Start(conn, req)
+}
+
+// phoneOff reports whether PhoneOffFile exists in Dir. Only "no such file"
+// reads as on, so an unreadable switch keeps the phone out.
+func (g Guard) phoneOff() bool {
+	_, err := os.Lstat(filepath.Join(g.Dir, PhoneOffFile))
+	return !errors.Is(err, os.ErrNotExist)
 }
 
 // verify runs checks 2-4 on probe and returns the verified pid.

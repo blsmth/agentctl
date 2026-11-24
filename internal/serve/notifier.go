@@ -531,6 +531,9 @@ type pushDispatcher struct {
 	sender *Sender
 	ntfy   *Ntfy
 	q      chan Message
+	// muted, when set and true, drops messages for ntfy too (Sender checks
+	// its own switch).
+	muted func() bool
 }
 
 func newPushDispatcher(sender *Sender, ntfy *Ntfy) *pushDispatcher {
@@ -552,12 +555,17 @@ func (d *pushDispatcher) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case m := <-d.q:
-			d.sender.Broadcast(ctx, m)
-			if d.ntfy != nil {
-				if err := d.ntfy.Send(ctx, m); err != nil {
-					logging.Warn("serve: %v", err)
-				}
-			}
+			d.deliver(ctx, m)
+		}
+	}
+}
+
+// deliver sends one message over Web Push and, unless muted, ntfy.
+func (d *pushDispatcher) deliver(ctx context.Context, m Message) {
+	d.sender.Broadcast(ctx, m)
+	if d.ntfy != nil && (d.muted == nil || !d.muted()) {
+		if err := d.ntfy.Send(ctx, m); err != nil {
+			logging.Warn("serve: %v", err)
 		}
 	}
 }
