@@ -301,7 +301,11 @@ func TicketSpecNumber(key string) (int, bool) {
 // asked for it. To get an entry auto-injected for an agent, either set it
 // explicitly with `--agent <name>` at `context set` time, or add its key to
 // that agent's `context_keys` in config.
-func ForAgent(agentName string, pinnedKeys []string, issue int) ([]Entry, error) {
+//
+// excludeKey (the launch's --prompt-key, which is the task itself and is
+// dropped from the prompt) is removed before budget selection so it cannot
+// crowd out standing entries. "" excludes nothing.
+func ForAgent(agentName string, pinnedKeys []string, issue int, excludeKey string) ([]Entry, error) {
 	all, err := List()
 	if err != nil {
 		return nil, err
@@ -314,6 +318,9 @@ func ForAgent(agentName string, pinnedKeys []string, issue int) ([]Entry, error)
 
 	var candidates []Entry
 	for _, e := range all {
+		if excludeKey != "" && e.Key == excludeKey {
+			continue
+		}
 		if pinned[e.Key] {
 			candidates = append(candidates, truncateEntry(e))
 			continue

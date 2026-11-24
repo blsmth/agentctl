@@ -202,3 +202,20 @@ func TestFirstHumanText(t *testing.T) {
 		})
 	}
 }
+
+func TestPreviewText(t *testing.T) {
+	tests := []struct{ name, in, want string }{
+		{"plain", "fix the bug", "fix the bug"},
+		{"bare task heading", "## Task\n\nfix the bug\nmore", "fix the bug\nmore"},
+		{"issue heading", "## Issue #12: Add widget\n\nbody", "Issue #12: Add widget\n\nbody"},
+		{"hash without heading", "#hashtag stuff", "#hashtag stuff"},
+		{"only task heading", "## Task", "## Task"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PreviewText(tc.in); got != tc.want {
+				t.Errorf("PreviewText(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

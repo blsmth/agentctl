@@ -70,7 +70,7 @@ func FormatDailySummary(projectDir string, date time.Time, metas []SessionMeta) 
 
 		// First user message.
 		if meta.FirstUserMessage != "" {
-			msg := meta.FirstUserMessage
+			msg := strings.Join(strings.Fields(PreviewText(meta.FirstUserMessage)), " ")
 			runes := []rune(msg)
 			if len(runes) > 60 {
 				msg = string(runes[:60]) + "…"
