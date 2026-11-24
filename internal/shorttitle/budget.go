@@ -55,7 +55,13 @@ func TakeBudget(now time.Time) bool { return TakeBudgetReserve(now, 0) }
 // TakeBudgetReserve is TakeBudget for a lower-priority request: it only
 // spends while more than reserve slots of the hourly cap remain.
 func TakeBudgetReserve(now time.Time, reserve int) bool {
-	ok, err := takeBudget(now, HourlyCap()-reserve)
+	c := HourlyCap()
+	// A small configured cap must not switch low-priority requests off: the
+	// reserve never exceeds half of it.
+	if reserve > c/2 {
+		reserve = c / 2
+	}
+	ok, err := takeBudget(now, c-reserve)
 	return err == nil && ok
 }
 

@@ -801,7 +801,7 @@ func TestTitleBudgetPriorityBySource(t *testing.T) {
 		source       string
 		wantRestored int32
 	}{
-		{"resume", 1}, {"compact", 1}, {"startup", 0}, {"", 0},
+		{"resume", 1}, {"compact", 1}, {"startup", 0}, {"clear", 0}, {"", 0},
 	} {
 		t.Run("source="+tt.source, func(t *testing.T) {
 			e := setupTitle(t)

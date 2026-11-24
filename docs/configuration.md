@@ -245,7 +245,7 @@ A row's recap (Claude Code's away summary, or an ad-hoc task prompt) is often a 
 | `titles.enabled` | `true` when a `nous`-kind backend exists | `false` turns the feature off entirely (no requests, no writes). |
 | `titles.backend` | first `nous`-kind backend, by name | Backend to call. Must be `kind: "nous"`; anything else disables titles. |
 | `titles.model` | the backend's `models.haiku`, else its `model` | Model id sent to `/v1/chat/completions`. |
-| `titles.hourly_cap` | `120` | Machine-wide cap on title requests per rolling hour. `0` or negative means the default. |
+| `titles.hourly_cap` | `120` | Machine-wide cap on title requests per rolling hour. `0` or negative means the default. The reserves for new sessions (30) and the backfill (40) shrink to at most half the cap, so a small cap still titles resumed windows. |
 
 Titles are made by `agentctl hook-title`, registered as an **async** hook (Claude Code never waits on it) next to the existing handlers on `Stop`, `UserPromptSubmit` and `SessionStart`. It builds its input from what exists at that moment: the ad-hoc task line (or the ticket title), for a bare window with neither, its first prompt (below), and, for the one refinement, the first Stop's last assistant message (the tail, about 1500 characters). The result goes into the window's windowstate record (`short_title`), which the hub, `agentctl status` and `agentctl serve` already read, so readers make no network call and read no extra files.
 
