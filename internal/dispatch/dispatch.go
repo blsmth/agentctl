@@ -119,7 +119,7 @@ type Request struct {
 	// launch only (serve's per-dispatch "skip code review" sets it to off).
 	PRReviewOverride string
 
-	// Set by Launch from the resolved harness, for buildSystemPrompt.
+	// Set by Launch from the resolved harness, for buildSystemFile.
 	persona          string // full agent body, for harnesses without --agent
 	noMessaging      bool   // harness has no SendMessage/ListAgents
 	prReview         string // config pr_review mode; empty means always
@@ -315,7 +315,7 @@ func Launch(req Request) (Result, error) {
 	// 5. Gather context store entries.
 	var contextEntries []ctxstore.Entry
 	if ac.CrossContext {
-		entries, err := ctxstore.ForAgent(req.AgentName, ac.ContextKeys, req.Ticket)
+		entries, err := ctxstore.ForAgent(req.AgentName, ac.ContextKeys, req.Ticket, req.PromptKey)
 		if err == nil {
 			contextEntries = entries
 		}

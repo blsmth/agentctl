@@ -320,7 +320,7 @@ func adhocInstructions(_ Request) string {
 // without asking clarifying questions, work silently, only stop if truly
 // blocked. It intentionally contains no git/build steps or language-specific
 // commands -- those are owned by buildFinishingSteps (worktree-aware) and by
-// the agent's own .md (toolchain-aware). See buildSystemPrompt's doc comment
+// the agent's own .md (toolchain-aware). See buildLaunchPrompt's doc comment
 // for the full composition order.
 func execInstructions() string {
 	return `Execute this ticket autonomously from start to finish. Do not ask clarifying questions — if something is ambiguous, make a reasonable decision and move on. Only stop and report to the user if you are truly blocked (missing permissions, broken dependencies, etc.).

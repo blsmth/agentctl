@@ -128,7 +128,7 @@ func FormatTokenCount(n int) string {
 
 // GetSessionPreview returns a short preview of the first user message in a session.
 func GetSessionPreview(s Session) string {
-	preview := strings.Join(strings.Fields(FirstHumanText(s.LogFile)), " ")
+	preview := strings.Join(strings.Fields(PreviewText(FirstHumanText(s.LogFile))), " ")
 	if preview == "" {
 		return ""
 	}
@@ -152,4 +152,28 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh", h)
 	}
 	return fmt.Sprintf("%dh%dm", h, m)
+}
+
+// PreviewText prepares a first user message for a one-line preview. A
+// dispatched session's first message opens with markdown headings ("## Task",
+// "## Issue #N: title"): a bare heading line is skipped, and the heading
+// markers of the first remaining line are stripped, so the preview shows the
+// task text rather than the scaffolding.
+func PreviewText(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	for i, l := range lines {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		if t := strings.TrimLeft(l, "#"); t != l && strings.HasPrefix(t, " ") {
+			stripped := strings.TrimSpace(t)
+			if strings.EqualFold(stripped, "Task") {
+				continue
+			}
+			l = stripped
+		}
+		return strings.TrimSpace(strings.Join(append([]string{l}, lines[i+1:]...), "\n"))
+	}
+	return strings.TrimSpace(s)
 }

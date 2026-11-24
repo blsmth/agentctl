@@ -202,7 +202,7 @@ func TestForAgent(t *testing.T) {
 		t.Fatalf("Set pinned-unscoped: %v", err)
 	}
 
-	results, err := ctxstore.ForAgent("go-engineer", []string{"pinned-unscoped"}, 0)
+	results, err := ctxstore.ForAgent("go-engineer", []string{"pinned-unscoped"}, 0, "")
 	if err != nil {
 		t.Fatalf("ForAgent: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestForAgent_TicketSpecScoping(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ctxstore.ForAgent("go-engineer", tc.pinned, tc.issue)
+			got, err := ctxstore.ForAgent("go-engineer", tc.pinned, tc.issue, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -265,7 +265,7 @@ func TestForAgent_TicketSpecScoping(t *testing.T) {
 	}
 	t.Run("zero entries", func(t *testing.T) {
 		setup(t)
-		got, err := ctxstore.ForAgent("go-engineer", nil, 1)
+		got, err := ctxstore.ForAgent("go-engineer", nil, 1, "")
 		if err != nil || len(got) != 0 {
 			t.Errorf("got %v, %v", got, err)
 		}
@@ -280,13 +280,40 @@ func TestForAgent_TruncatesLargeEntry(t *testing.T) {
 	if err := ctxstore.Set("big", ctxstore.Entry{Content: strings.Repeat("é", 200), Agent: "go-engineer"}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ctxstore.ForAgent("go-engineer", nil, 0)
+	got, err := ctxstore.ForAgent("go-engineer", nil, 0, "")
 	if err != nil || len(got) != 1 {
 		t.Fatalf("got %v, %v", got, err)
 	}
 	c := got[0].Content
 	if !strings.HasSuffix(c, "[truncated, full text: agentctl context get big]") || !utf8.ValidString(c) || len(c) > 100+60 {
 		t.Errorf("content = %q", c)
+	}
+}
+
+func TestForAgent_ExcludeKeyBeforeBudget(t *testing.T) {
+	setup(t)
+	old := ctxstore.MaxInjectedBytes
+	ctxstore.MaxInjectedBytes = 300
+	t.Cleanup(func() { ctxstore.MaxInjectedBytes = old })
+	if err := ctxstore.Set("standing", ctxstore.Entry{Content: "standing", Agent: "go-engineer"}); err != nil {
+		t.Fatal(err)
+	}
+	// Set last, so it is newest and would be selected first.
+	if err := ctxstore.Set("task", ctxstore.Entry{Content: strings.Repeat("x", 280), Agent: "go-engineer"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ctxstore.ForAgent("go-engineer", nil, 0, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Key != "standing" {
+		t.Errorf("got %v, want only the standing entry", got)
+	}
+	got, _ = ctxstore.ForAgent("go-engineer", nil, 0, "")
+	for _, e := range got {
+		if e.Key == "standing" {
+			t.Errorf("without exclusion the task entry should crowd out standing; got %v", got)
+		}
 	}
 }
 

@@ -382,3 +382,24 @@ func TestSummarize(t *testing.T) {
 		t.Errorf("with think: %q", r.Assumptions())
 	}
 }
+
+// A dispatched session's first user message is a large machine-built block;
+// a person's prompt is never typing the agent replaces, so neither charges
+// the human any typing or reading time.
+func TestBuildDoesNotChargeFirstUserMessage(t *testing.T) {
+	dispatched := "## Task\n\n" + strings.Repeat("build the thing. ", 250) + "\n\n## Launch facts\n\n- Started: now\n"
+	for name, prompt := range map[string]string{"dispatched": dispatched, "bare": "fix the flaky test please"} {
+		t.Run(name, func(t *testing.T) {
+			es := parse(t,
+				line(t, "user", 0, prompt),
+				line(t, "assistant", 5, toolUse("a", "Bash", map[string]any{"command": "ls"})),
+				line(t, "user", 6, toolResult("a", "ok")),
+			)
+			r := Build(es, DefaultParams())
+			want := len("ls")
+			if r.TypedRunes != want {
+				t.Errorf("TypedRunes = %d, want %d (prompt must not be charged)", r.TypedRunes, want)
+			}
+		})
+	}
+}
