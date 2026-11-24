@@ -1,6 +1,6 @@
 {
   "name": "agentctl",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "agentctl slash commands and artifact skill for Claude Code",
   "author": {
     "name": "Brendan Smith"

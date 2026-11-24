@@ -170,3 +170,138 @@ func TestPluginSkillsHaveFrontmatter(t *testing.T) {
 		})
 	}
 }
+
+// ---- artifact kit drift guard ----
+//
+// Every template inlines kit/kit.css and kit/kit.js between marker lines. The
+// inlined copy must be byte-identical to the kit file. Run with
+// UPDATE_ARTIFACT_KIT=1 to rewrite the regions instead of failing.
+
+const artifactsDir = "plugin/skills/artifacts"
+
+// kitBlockTypes is the closed set of block types; keep in sync with kit.js
+// SCHEMA and kit/SPEC.md.
+var kitBlockTypes = map[string]bool{
+	"summary": true, "kpis": true, "chart": true, "table": true, "text": true,
+	"mermaid": true, "comparison": true, "timeline": true, "html": true, "sources": true,
+}
+
+// kitRegion locates the text between begin and end marker lines. start is the
+// offset just after the begin marker line; end is the offset of the end marker.
+func kitRegion(src, begin, end string) (start, stop int, ok bool) {
+	i := strings.Index(src, begin+"\n")
+	if i < 0 {
+		return 0, 0, false
+	}
+	start = i + len(begin) + 1
+	j := strings.Index(src[start:], end)
+	if j < 0 {
+		return 0, 0, false
+	}
+	return start, start + j, true
+}
+
+func TestArtifactKitInlined(t *testing.T) {
+	update := os.Getenv("UPDATE_ARTIFACT_KIT") == "1"
+	css, err := os.ReadFile(filepath.Join(artifactsDir, "kit/kit.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	js, err := os.ReadFile(filepath.Join(artifactsDir, "kit/kit.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string][]byte{"kit.css": css, "kit.js": js} {
+		if !strings.HasSuffix(string(body), "\n") {
+			t.Errorf("%s must end with a newline", name)
+		}
+	}
+	if strings.Contains(string(js), "</script") || strings.Contains(string(css), "</style") {
+		t.Error("kit files must not contain </script or </style (they are inlined into HTML)")
+	}
+	type region struct{ begin, end, want string }
+	cssR := region{"/* kit:css:begin */", "/* kit:css:end */", string(css)}
+	jsR := region{"// kit:js:begin", "// kit:js:end", string(js)}
+	templates := map[string][]region{
+		"report.html":     {cssR, jsR},
+		"dashboard.html":  {cssR, jsR},
+		"comparison.html": {cssR, jsR},
+		"diagram.html":    {cssR, jsR},
+		"mockup.html":     {cssR},
+	}
+	for name, regions := range templates {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(artifactsDir, "templates", name)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			src := string(data)
+			changed := false
+			for _, r := range regions {
+				start, stop, ok := kitRegion(src, r.begin, r.end)
+				if !ok {
+					t.Errorf("%s: missing %q ... %q markers", name, r.begin, r.end)
+					continue
+				}
+				if src[start:stop] == r.want {
+					continue
+				}
+				if update {
+					src = src[:start] + r.want + src[stop:]
+					changed = true
+					continue
+				}
+				t.Errorf("%s: region %s differs from the kit file; run UPDATE_ARTIFACT_KIT=1 go test -run ArtifactKit .", name, r.begin)
+			}
+			if changed {
+				if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestArtifactTemplateSpecs(t *testing.T) {
+	for _, name := range []string{"report.html", "dashboard.html", "comparison.html", "diagram.html"} {
+		t.Run(name, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(artifactsDir, "templates", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			src := string(data)
+			const open = `<script type="application/json" id="spec">`
+			i := strings.Index(src, open)
+			if i < 0 {
+				t.Fatalf("%s: no spec script", name)
+			}
+			body := src[i+len(open):]
+			j := strings.Index(body, "</script>")
+			if j < 0 {
+				t.Fatalf("%s: unterminated spec script", name)
+			}
+			var spec struct {
+				Kind   string           `json:"kind"`
+				Blocks []map[string]any `json:"blocks"`
+			}
+			if err := json.Unmarshal([]byte(body[:j]), &spec); err != nil {
+				t.Fatalf("%s: spec is not valid JSON: %v", name, err)
+			}
+			if len(spec.Blocks) == 0 {
+				t.Errorf("%s: spec has no blocks", name)
+			}
+			hasSources := false
+			for i, b := range spec.Blocks {
+				typ, _ := b["type"].(string)
+				if !kitBlockTypes[typ] {
+					t.Errorf("%s: blocks[%d] has unknown type %q", name, i, typ)
+				}
+				hasSources = hasSources || typ == "sources"
+			}
+			if (spec.Kind == "report" || spec.Kind == "dashboard") && !hasSources {
+				t.Errorf("%s: %s spec needs a sources block", name, spec.Kind)
+			}
+		})
+	}
+}
