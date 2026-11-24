@@ -864,12 +864,13 @@ type AuditReportCmd struct {
 	Limit    int    `default:"20" help:"With --all: at most this many sessions, newest first"`
 	Severity string `default:"low" enum:"high,med,medium,low" help:"Hide findings below this severity (high, med, low); scores still count them"`
 	JSON     bool   `help:"Output as JSON (schema 1)"`
+	Narrate  bool   `help:"Add a short written verdict from the nous backend (cached per session; sessions with no findings are skipped)"`
 }
 
 func (c *AuditReportCmd) Run() error {
 	err := cmd.RunAuditReport(os.Stdout, cmd.AuditReportOptions{
 		Target: c.Target, All: c.All, Since: c.Since, Agent: c.Agent, Project: c.Project,
-		Limit: c.Limit, Severity: c.Severity, JSON: c.JSON,
+		Limit: c.Limit, Severity: c.Severity, JSON: c.JSON, Narrate: c.Narrate,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
