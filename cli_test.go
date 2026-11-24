@@ -429,6 +429,45 @@ func TestLaunchWatchParses(t *testing.T) {
 	}
 }
 
+// TestAgentsGroupRouting pins that the list stays the default child of
+// `agents` and the history subcommands select their own commands.
+func TestAgentsGroupRouting(t *testing.T) {
+	parse := func(args ...string) (CLI, string) {
+		t.Helper()
+		var cli CLI
+		k, err := kong.New(&cli, kong.Name("agentctl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, err := k.Parse(args)
+		if err != nil {
+			t.Fatalf("parse %v: %v", args, err)
+		}
+		return cli, ctx.Command()
+	}
+	for _, tc := range []struct {
+		args []string
+		cmd  string
+		want AgentsListCmd
+	}{
+		{[]string{"agents"}, "agents list", AgentsListCmd{}},
+		{[]string{"agents", "--json"}, "agents list", AgentsListCmd{JSON: true}},
+		{[]string{"agents", "--tui"}, "agents list", AgentsListCmd{TUI: true}},
+		{[]string{"agents", "reviewer"}, "agents list <name>", AgentsListCmd{Name: "reviewer"}},
+	} {
+		cli, got := parse(tc.args...)
+		if got != tc.cmd || cli.Agents.List != tc.want {
+			t.Errorf("%v: command %q list %+v, want %q %+v", tc.args, got, cli.Agents.List, tc.cmd, tc.want)
+		}
+	}
+	if cli, got := parse("agents", "history", "a"); got != "agents history <name>" || cli.Agents.History.Name != "a" {
+		t.Errorf("history: %q %+v", got, cli.Agents.History)
+	}
+	if cli, got := parse("agents", "revert", "x", "abc"); got != "agents revert <name> <rev>" || cli.Agents.Revert.Name != "x" || cli.Agents.Revert.Rev != "abc" {
+		t.Errorf("revert: %q %+v", got, cli.Agents.Revert)
+	}
+}
+
 func TestImproveFlagsParse(t *testing.T) {
 	var cli CLI
 	k, err := kong.New(&cli, kong.Name("agentctl"))

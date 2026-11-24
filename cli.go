@@ -59,7 +59,7 @@ type CLI struct {
 	ImproveMenu ImproveMenuCmd `cmd:"" name:"improve-menu" hidden:""`
 
 	// Agent management
-	Agents           AgentsCmd           `cmd:"" aliases:"agent-manager" help:"List agents (--tui for interactive browser)"`
+	Agents           AgentsCmd           `cmd:"" aliases:"agent-manager" help:"List agents (--tui browser, --json) and their change history"`
 	Skills           SkillsCmd           `cmd:"" help:"List slash-command skills"`
 	Memory           MemoryCmd           `cmd:"" help:"List memory files (CLAUDE.md)"`
 	Create           CreateCmd           `cmd:"" aliases:"create-menu" help:"Create a new agent definition"`
@@ -456,15 +456,25 @@ func (c *ImproveMenuCmd) Run() error { cmdImproveMenu(c.WindowID); return nil }
 // Agent management
 // ---------------------------------------------------------------------------
 
-// AgentsCmd implements `agentctl agents`.
-// Without flags it prints a text table; --tui launches the interactive browser.
+// AgentsCmd implements `agentctl agents`: the agent list (the default
+// subcommand, so `agents`, `agents --tui` and `agents <name>` are unchanged)
+// and the history of the agent definitions.
 type AgentsCmd struct {
+	List    AgentsListCmd    `cmd:"" default:"withargs" help:"List agents (--tui for interactive browser)"`
+	History AgentsHistoryCmd `cmd:"" help:"Show the change history of agent definitions"`
+	Diff    AgentsDiffCmd    `cmd:"" help:"Diff agent definitions against a past revision"`
+	Revert  AgentsRevertCmd  `cmd:"" help:"Restore an agent definition from the history (recorded as a new snapshot)"`
+}
+
+// AgentsListCmd implements `agentctl agents`.
+// Without flags it prints a text table; --tui launches the interactive browser.
+type AgentsListCmd struct {
 	TUI  bool   `help:"Open interactive TUI browser"`
 	JSON bool   `help:"Output as JSON"`
 	Name string `arg:"" optional:"" help:"Agent name for detail view"`
 }
 
-func (c *AgentsCmd) Run() error {
+func (c *AgentsListCmd) Run() error {
 	if c.TUI {
 		cmd.CmdAgentManager()
 		return nil
@@ -477,6 +487,45 @@ func (c *AgentsCmd) Run() error {
 		return nil
 	}
 	if err := cmd.PrintAgentsTable(c.JSON); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		cliout.Exit(1)
+	}
+	return nil
+}
+
+// AgentsHistoryCmd implements `agentctl agents history [name]`.
+type AgentsHistoryCmd struct {
+	Name  string `arg:"" optional:"" help:"Agent name or path under ~/.claude (default: everything tracked)"`
+	Limit int    `short:"n" default:"30" help:"Maximum entries (0 = all)"`
+}
+
+func (c *AgentsHistoryCmd) Run() error {
+	return agentsHistoryExit(cmd.RunAgentsHistory(os.Stdout, c.Name, c.Limit))
+}
+
+// AgentsDiffCmd implements `agentctl agents diff [name] [rev]`.
+type AgentsDiffCmd struct {
+	Name string `arg:"" optional:"" help:"Agent name or path under ~/.claude (default: everything tracked)"`
+	Rev  string `arg:"" optional:"" help:"Revision to compare with the current files (default: the last snapshot)"`
+}
+
+func (c *AgentsDiffCmd) Run() error {
+	return agentsHistoryExit(cmd.RunAgentsDiff(os.Stdout, c.Name, c.Rev))
+}
+
+// AgentsRevertCmd implements `agentctl agents revert <name|path> [rev]`.
+// From an agent session it goes through the approval popup (hooks).
+type AgentsRevertCmd struct {
+	Name string `arg:"" help:"Agent name or path under ~/.claude"`
+	Rev  string `arg:"" optional:"" help:"Revision to restore (default: undo the latest change)"`
+}
+
+func (c *AgentsRevertCmd) Run() error {
+	return agentsHistoryExit(cmd.RunAgentsRevert(os.Stdout, c.Name, c.Rev))
+}
+
+func agentsHistoryExit(err error) error {
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		cliout.Exit(1)
 	}

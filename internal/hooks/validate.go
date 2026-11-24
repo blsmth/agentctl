@@ -164,11 +164,14 @@ func ValidateBash() {
 	// `agentctl template add|edit|rm` changes a dispatch payload; always
 	// gated, like cron (template_preview.go).
 	isTemplate := isAgentctlTemplateGated(command)
-	if mixedGates(isDispatch, isCron, isTemplate) {
+	// `agentctl agents revert` rewrites an agent definition from the history
+	// store; always gated (agents_revert_preview.go).
+	isRevert := isAgentctlAgentsRevert(command)
+	if mixedGates(isDispatch, isCron, isTemplate, isRevert) {
 		// Each popup previews one invocation; mixing them would leave one
 		// unseen (a template written and dispatched in one line would be
 		// shown before the write). Denied regardless of dispatch_approval.
-		denyCommand(agentName, command, "Run agentctl dispatch, agentctl cron and agentctl template add/edit/rm "+
+		denyCommand(agentName, command, "Run agentctl dispatch, agentctl cron, agentctl template add/edit/rm and agentctl agents revert "+
 			"in separate Bash calls, so each can be shown for approval.", actx)
 		return
 	}
@@ -179,7 +182,7 @@ func ValidateBash() {
 		// global reviewer; see reviewExemptionTrusted.
 		gateDispatch = !reviewExemptionTrusted(cfg, command, bashCwd)
 	}
-	if gateDispatch || isCron || isTemplate || cfg.EffectiveBashPreview(agentName) {
+	if gateDispatch || isCron || isTemplate || isRevert || cfg.EffectiveBashPreview(agentName) {
 		var approved, decided bool
 		var denyReason string
 		gate := PreviewKindBash
@@ -190,6 +193,9 @@ func ValidateBash() {
 		case isTemplate:
 			gate = PreviewKindTemplate
 			approved, decided, denyReason = templateGate(agentName, command, input.Cwd)
+		case isRevert:
+			gate = gateAgentsRevert
+			approved, decided, denyReason = agentsRevertGate(agentName, command, input.Cwd)
 		case gateDispatch:
 			gate = PreviewKindDispatch
 			approved, decided, denyReason = dispatchGate(agentName, command, input.Cwd)
@@ -813,6 +819,8 @@ func denyBashPopup(agentName, command string, gate PreviewKind, actx denyAuditCo
 		reason = "Cron job denied in preview popup"
 	case PreviewKindTemplate:
 		reason = "Prompt template change denied in preview popup"
+	case gateAgentsRevert:
+		reason = "Agent revert denied in preview popup"
 	}
 	logging.Log("hook-validate-bash: DENIED via popup agent=%s gate=%s cmd=%q", agentName, gate, textutil.Truncate(command, 100, "..."))
 	emitDecision(harness.Decision{Kind: harness.Deny, HookEvent: "PreToolUse", Reason: reason})

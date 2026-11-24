@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/agenthistory"
 	"github.com/blsmth/agentctl/internal/approval"
 	"github.com/blsmth/agentctl/internal/auditnarrate"
 	"github.com/blsmth/agentctl/internal/closedlog"
@@ -53,7 +54,13 @@ type HousekeepingDeps struct {
 	// short title (hooks.BackfillTitles, wired by internal/cmd so this
 	// package stays clear of the hooks dependency tree). Nil skips it.
 	BackfillTitles func(now time.Time)
+	// SnapshotAgents commits drift in the agent definition history
+	// (agenthistory.SnapshotAll). Nil skips it.
+	SnapshotAgents func(now time.Time)
 }
+
+// AgentHistoryInterval is how often housekeeping snapshots agent definitions.
+const AgentHistoryInterval = 5 * time.Minute
 
 // TitleBackfillInterval is how often housekeeping runs the title backfill.
 const TitleBackfillInterval = 5 * time.Minute
@@ -97,6 +104,13 @@ func DefaultHousekeepingDeps(runtimeDir string) HousekeepingDeps {
 		},
 		Records:       windowstate.All,
 		SessionLogDir: paths.SessionLogDir,
+		SnapshotAgents: func(time.Time) {
+			var dirs []string
+			for _, r := range windowstate.All() {
+				dirs = append(dirs, r.WorkDir)
+			}
+			agenthistory.SnapshotAll("housekeeping: edit", dirs)
+		},
 	}
 }
 
@@ -183,6 +197,9 @@ func Housekeep(d HousekeepingDeps) {
 		case n > 0:
 			logging.Log("janitor: pruned %d stale session log file(s) older than %s", n, logging.MaxSessionLogAge)
 		}
+	}
+	if d.SnapshotAgents != nil && stamp.Try(filepath.Join(d.RuntimeDir, "agent-history.stamp"), AgentHistoryInterval, now) {
+		d.SnapshotAgents(now)
 	}
 	// Last: it is the only sweep that can wait on the network.
 	if d.BackfillTitles != nil && stamp.Try(filepath.Join(d.RuntimeDir, "backfill-titles.stamp"), TitleBackfillInterval, now) {

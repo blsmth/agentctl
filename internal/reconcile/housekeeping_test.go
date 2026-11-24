@@ -66,6 +66,7 @@ func TestHousekeepPrunesEventFiles(t *testing.T) {
 	d := DefaultHousekeepingDeps(rt)
 	d.Now = func() time.Time { return now }
 	d.ReapOrphans = nil
+	d.SnapshotAgents = nil
 	d.PruneMailbox = nil
 	d.PruneSessionLogs = nil
 	Housekeep(d)
@@ -170,5 +171,26 @@ func TestHousekeepPrunesLaunchDirDaily(t *testing.T) {
 	Housekeep(d)
 	if calls != 2 {
 		t.Fatalf("calls = %d, want 2 after a day", calls)
+	}
+}
+
+func TestHousekeepSnapshotsAgentsRateLimited(t *testing.T) {
+	var snaps int
+	now := time.Now()
+	d := HousekeepingDeps{
+		RuntimeDir:     t.TempDir(),
+		Now:            func() time.Time { return now },
+		SnapshotAgents: func(time.Time) { snaps++ },
+	}
+	Housekeep(d)
+	now = now.Add(time.Minute)
+	Housekeep(d)
+	if snaps != 1 {
+		t.Fatalf("snapshots within the interval = %d, want 1", snaps)
+	}
+	now = now.Add(AgentHistoryInterval)
+	Housekeep(d)
+	if snaps != 2 {
+		t.Fatalf("snapshots after the interval = %d, want 2", snaps)
 	}
 }
