@@ -103,8 +103,9 @@ func (n *Notifier) SetLaptop(l *laptopActivity, pending func(id string) bool) {
 // logging the suppressed push when so. It only reads the cached answer (Peek),
 // so no probe ever runs under n.mu. When the answer is unknown (no probe yet,
 // or a stale one), holdUnknown decides: pushes that are held and replayed on
-// idle (blocked, reminder, approval) wait for the refresh; pushes that would be
-// lost (done, artifact) go out, and Sender.Broadcast makes the final call.
+// idle (blocked, reminder, approval, artifact) wait for the refresh; a done push,
+// which would be lost, goes out and Sender.Broadcast makes the final call.
+// Held-capable pushes are marked LaptopChecked so Broadcast does not re-decide.
 func (n *Notifier) laptopQuietLocked(kind, tag, note string, holdUnknown bool) bool {
 	active, known := n.laptop.Peek()
 	if !known {
@@ -131,6 +132,13 @@ func (n *Notifier) Approval(id string, msg Message, deadline time.Time) {
 		n.held[id] = heldApproval{msg: msg, deadline: deadline}
 		return
 	}
+	n.deliverChecked(msg)
+}
+
+// deliverChecked delivers a push the notifier already weighed against the
+// laptop, so the Sender does not apply a second, possibly disagreeing check.
+func (n *Notifier) deliverChecked(msg Message) {
+	msg.LaptopChecked = true
 	n.deliver(msg)
 }
 
@@ -203,12 +211,12 @@ func (n *Notifier) fireArtifactLocked(a fleetwatch.ArtifactChange, now time.Time
 		return
 	}
 	msg := artifactMessage(a)
-	if n.laptopQuietLocked(msg.Kind, msg.Tag, " (held until idle)", false) {
+	if n.laptopQuietLocked(msg.Kind, msg.Tag, " (held until idle)", true) {
 		n.held[msg.Tag] = heldApproval{msg: msg, deadline: now.Add(artifactHoldFor), artifact: true, project: a.Project}
 		return
 	}
 	pushLogf("push: kind=artifact tag=%s queued", tag)
-	n.deliver(msg)
+	n.deliverChecked(msg)
 }
 
 // artifactMessage is the push for a new artifact.
@@ -299,8 +307,19 @@ func (n *Notifier) Tick() {
 // probed only while something is held.
 func (n *Notifier) flushHeldLocked(now time.Time) {
 	for id, h := range n.held {
-		stale := h.artifact && (slices.Contains(n.cfg.MutedProjects, h.project) || InQuietHours(n.cfg.QuietHours, now))
-		if stale || !now.Before(h.deadline) || (!h.artifact && n.approvalPending != nil && !n.approvalPending(id)) {
+		var drop string
+		switch {
+		case !now.Before(h.deadline):
+			drop = "expired"
+		case h.artifact && slices.Contains(n.cfg.MutedProjects, h.project):
+			drop = "project muted"
+		case h.artifact && InQuietHours(n.cfg.QuietHours, now):
+			drop = "quiet hours"
+		case !h.artifact && n.approvalPending != nil && !n.approvalPending(id):
+			drop = "no longer pending"
+		}
+		if drop != "" {
+			pushLogf("push: kind=%s tag=%s held push dropped, %s", h.msg.Kind, redactArtifactIDs(h.msg.Tag), drop)
 			delete(n.held, id)
 		}
 	}
@@ -322,7 +341,7 @@ func (n *Notifier) flushHeldLocked(now time.Time) {
 		msg := h.msg
 		msg.TTL = max(int(h.deadline.Sub(now).Seconds()), 1)
 		pushLogf("push: kind=%s tag=%s laptop idle, sending held push", msg.Kind, redactArtifactIDs(msg.Tag))
-		n.deliver(msg)
+		n.deliverChecked(msg)
 	}
 	for _, ep := range n.episodes {
 		if !ep.owed {
@@ -339,7 +358,7 @@ func (n *Notifier) flushHeldLocked(now time.Time) {
 			msg = blockedMessage(ep.win, fmt.Sprintf("Still blocked %d min", int(d.Minutes())))
 		}
 		pushLogf("push: kind=%s tag=%s laptop idle, sending held push", msg.Kind, msg.Tag)
-		n.deliver(msg)
+		n.deliverChecked(msg)
 	}
 }
 
@@ -356,7 +375,7 @@ func (n *Notifier) fireBlockedLocked(ep *episode, w fleet.Window, now time.Time)
 		return
 	}
 	ep.lastBlocked = now
-	n.deliver(msg)
+	n.deliverChecked(msg)
 }
 
 // blockedMessage is the push for a blocked window; event leads the body.
@@ -380,7 +399,7 @@ func (n *Notifier) fireReminderLocked(ep *episode, blockedFor time.Duration) {
 		ep.owed = true
 		return
 	}
-	n.deliver(Message{
+	n.deliverChecked(Message{
 		Title:  pushName(w),
 		Body:   pushBody(fmt.Sprintf("Still blocked %d min", int(blockedFor.Minutes())), w, pendingToolText(w)),
 		URL:    windowURL(w.Session, w.WindowID),

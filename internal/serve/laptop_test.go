@@ -544,21 +544,73 @@ func TestQuietWhenLaptopActiveWiring(t *testing.T) {
 	}
 }
 
-func TestNotifierStaleCacheDoesNotDropDoneOrArtifact(t *testing.T) {
-	for name, fire := range map[string]func(e *laptopNotifyEnv){
-		"done":     func(e *laptopNotifyEnv) { e.transition(win("idle", true)) },
-		"artifact": func(e *laptopNotifyEnv) { e.artifact() },
-	} {
-		t.Run(name, func(t *testing.T) {
-			e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
-			e.laptop.setActive(false) // walked away; the cache still says active
-			e.clock.Advance(30 * time.Minute)
-			fire(e)
-			e.act.wait()
-			if got := e.take(); len(got) != 1 {
-				t.Errorf("messages = %+v, want 1 (stale answer must not drop the push)", got)
-			}
-		})
+func TestNotifierStaleCacheDoesNotDropDone(t *testing.T) {
+	e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
+	e.laptop.setActive(false) // walked away; the cache still says active
+	e.clock.Advance(30 * time.Minute)
+	e.transition(win("idle", true))
+	e.act.wait()
+	if got := e.take(); len(got) != 1 {
+		t.Errorf("messages = %+v, want 1 (stale answer must not drop the push)", got)
+	}
+}
+
+// A stale cache holds an artifact until the refresh lands, then releases it
+// once, marked as already checked so Broadcast does not drop it again.
+func TestNotifierStaleCacheHoldsArtifactUntilRefresh(t *testing.T) {
+	logs := capturePushLog(t)
+	e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
+	e.laptop.setActive(false)
+	e.clock.Advance(30 * time.Minute)
+	e.artifact()
+	e.act.wait()
+	e.n.Tick()
+	got := e.take()
+	if len(got) != 1 || got[0].Kind != "artifact" || !got[0].LaptopChecked {
+		t.Fatalf("messages = %+v, want one LaptopChecked artifact push", got)
+	}
+	if !strings.Contains(logs(), "laptop idle, sending held push") {
+		t.Errorf("no release log:\n%s", logs())
+	}
+}
+
+// A held artifact past the 12h cap is dropped and logged, never delivered.
+func TestNotifierHeldArtifactExpires(t *testing.T) {
+	logs := capturePushLog(t)
+	e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
+	e.artifact()
+	e.clock.Advance(artifactHoldFor + time.Minute)
+	e.act.Active() // refresh the cache; the laptop is still in use
+	e.n.Tick()
+	e.setActive(false)
+	e.n.Tick()
+	if got := e.take(); len(got) != 0 {
+		t.Errorf("pushed an expired artifact: %+v", got)
+	}
+	if !strings.Contains(logs(), "held push dropped, expired") {
+		t.Errorf("no expiry log:\n%s", logs())
+	}
+}
+
+// Regression: a push the notifier released as idle must not be dropped by
+// Broadcast's own laptop check when the cache refreshed to active meanwhile.
+func TestBroadcastSkipsLaptopCheckForCheckedPush(t *testing.T) {
+	ts := newTestServer(t, config.ServeConfig{})
+	phone, _ := ts.pairDevice(t, "phone")
+	ts.subs.Set(phone.ID, testSub("phone"), ts.clock.Now()) //nolint:errcheck
+	fp := &fakePusher{}
+	s := NewSender(ts.devices, ts.subs, fp)
+	f := &fakeLaptop{}
+	f.setActive(true)
+	s.SetLaptop(newLaptopActivity(f.probe, 2*time.Minute, ts.clock.Now))
+
+	s.Broadcast(context.Background(), Message{Kind: "artifact", Tag: "artifact:x"})
+	if len(fp.calls) != 0 {
+		t.Fatalf("unchecked push sent while active: %d", len(fp.calls))
+	}
+	s.Broadcast(context.Background(), Message{Kind: "artifact", Tag: "artifact:x", LaptopChecked: true})
+	if len(fp.calls) != 1 {
+		t.Errorf("checked push calls = %d, want 1", len(fp.calls))
 	}
 }
 
