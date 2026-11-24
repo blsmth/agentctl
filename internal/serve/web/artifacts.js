@@ -197,6 +197,7 @@ function mountList(root, ctx, filter) {
       removing.add(a.id);
       try {
         await deleteArtifact(a.id);
+        settled.set(a.id, Date.now());
         if (data) data = data.filter((x) => x.id !== a.id);
         return true;
       } catch (e) {
