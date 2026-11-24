@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/state"
@@ -210,21 +211,23 @@ func TestRebuildLines_DividerCounts(t *testing.T) {
 	}
 }
 
-// TestRenderFleetDivider_IsEmptyRow pins the divider between groups as an
-// empty row (rhythm comes from the gap, not a rule) at every width, so it can
-// never overflow or draw a border.
-func TestRenderFleetDivider_IsEmptyRow(t *testing.T) {
+// TestRenderFleetDivider_IsThinRule pins the divider between groups as a
+// single thin rule across the pane (less the right gutter) at every width, so
+// it never overflows or adds rows.
+func TestRenderFleetDivider_IsThinRule(t *testing.T) {
 	InitStyles()
 	for _, cw := range []int{0, 1, 3, 10, 40, 80, 120} {
-		if out := renderFleetDivider(cw); out != "" {
-			t.Errorf("renderFleetDivider(%d) = %q, want an empty row", cw, out)
+		out := renderFleetDivider(cw)
+		if want := strings.Repeat("─", max(cw-fleetSidebarRightGutter, 0)); ansi.Strip(out) != want {
+			t.Errorf("renderFleetDivider(%d) = %q, want a %d-column rule", cw, ansi.Strip(out), len(want)/3)
 		}
 	}
 	m := sampleSidebar(t, 56)
 	for i, l := range m.lines {
 		if l.kind == fleetLineDivider {
-			if out := m.renderLine(i, m.contentWidth()); out != "" {
-				t.Errorf("divider line %d renders %q, want empty", i, out)
+			cw := m.contentWidth()
+			if out := m.renderLine(i, cw); lipgloss.Width(out) != cw-fleetSidebarRightGutter || strings.Trim(ansi.Strip(out), "─") != "" {
+				t.Errorf("divider line %d renders %q, want a rule", i, out)
 			}
 			if l.selectable() {
 				t.Errorf("divider line %d must stay non-selectable", i)

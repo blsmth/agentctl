@@ -10,6 +10,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/sweeprun"
+	"github.com/blsmth/agentctl/internal/theme"
 )
 
 // fleetSweepLabel is the group header's sweep button.
@@ -52,6 +53,9 @@ func fleetSweepCmd(t sweeprun.Target, dryRun bool) tea.Cmd {
 	}
 }
 
+// fleetSweepNudge is the sweepable count at which the button stops being dim.
+const fleetSweepNudge = 5
+
 // sweepButtonStyle styles g's sweep button: highlighted while its preview is
 // running, armed or applying, accented under the pointer, dim otherwise.
 func (m FleetModel) sweepButtonStyle(g fleet.Group, hover fleetHoverRegion) lipgloss.Style {
@@ -60,6 +64,9 @@ func (m FleetModel) sweepButtonStyle(g fleet.Group, hover fleetHoverRegion) lipg
 		return fleetBlockedStyle
 	case hover == fleetHoverSweep:
 		return fleetNewHoverStyle
+	case groupSweepable(g) >= fleetSweepNudge:
+		// A pile of finished sessions is worth noticing.
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current().Text))
 	}
 	return fleetDimStyle
 }

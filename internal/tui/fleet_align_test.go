@@ -142,7 +142,7 @@ func TestRoleRowColumns(t *testing.T) {
 					wantTitle += fleetCollapseMarkerW
 				}
 				if spec.role != "" {
-					wantTitle += lipgloss.Width(spec.role) + 2
+					wantTitle += fleetRoleSlotW + 2 // role label padded to a fixed slot
 				}
 				if got := lipgloss.Width(left); got != wantTitle {
 					t.Errorf("%s title at col %d, want %d: %q", spec.win, got, wantTitle, plain)
