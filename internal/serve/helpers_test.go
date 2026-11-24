@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/launchwatch"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/testenv"
 )
@@ -18,6 +19,8 @@ import (
 // on a resolvable home dir (CI has none) or write into the real one.
 func TestMain(m *testing.M) {
 	cleanup := testenv.Setup()
+	// Dispatch routes must never spawn a real launch watcher.
+	launchwatch.SetSpawnForTest(func(string) error { return nil })
 	dir, err := os.MkdirTemp("", "serve-test-log")
 	if err != nil {
 		panic(err)

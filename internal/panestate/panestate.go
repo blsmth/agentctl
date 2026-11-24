@@ -141,7 +141,9 @@ func DialogShowing(text string) bool {
 	if yes && no {
 		return true
 	}
-	return reviewPageShowing(text)
+	// The folder-trust dialog phrases its options without "1. Yes" (see
+	// IsTrustDialog), so it gets its own structural match.
+	return reviewPageShowing(text) || IsTrustDialog(text)
 }
 
 // dialogLine trims box borders and surrounding whitespace from a pane line,

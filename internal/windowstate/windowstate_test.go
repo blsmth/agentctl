@@ -676,3 +676,43 @@ func TestClaim(t *testing.T) {
 		}
 	})
 }
+
+func TestClearPendingTrust(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name      string
+		in        windowstate.WindowState
+		want      windowstate.WindowState
+		wantClear bool
+	}{
+		{
+			name:      "trust block returns to idle",
+			in:        windowstate.WindowState{State: "blocked", BlockedSince: now, PendingTool: windowstate.PendingTrust, PendingToolDetail: "/r", PendingToolAt: now},
+			want:      windowstate.WindowState{State: "idle"},
+			wantClear: true,
+		},
+		{
+			name:      "stale trust marker on a working window",
+			in:        windowstate.WindowState{State: "working", PendingTool: windowstate.PendingTrust},
+			want:      windowstate.WindowState{State: "working"},
+			wantClear: true,
+		},
+		{
+			name: "other block untouched",
+			in:   windowstate.WindowState{State: "blocked", BlockedSince: now, PendingTool: "Bash"},
+			want: windowstate.WindowState{State: "blocked", BlockedSince: now, PendingTool: "Bash"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ws := tt.in
+			if got := windowstate.ClearPendingTrust(&ws); got != tt.wantClear {
+				t.Errorf("ClearPendingTrust = %v, want %v", got, tt.wantClear)
+			}
+			if ws.State != tt.want.State || ws.PendingTool != tt.want.PendingTool || ws.PendingToolDetail != "" ||
+				!ws.BlockedSince.Equal(tt.want.BlockedSince) {
+				t.Errorf("got %+v", ws)
+			}
+		})
+	}
+}

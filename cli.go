@@ -71,6 +71,7 @@ type CLI struct {
 
 	// Dispatch completion (spawned detached by the Stop hook / signal done)
 	DispatchComplete DispatchCompleteCmd `cmd:"" name:"dispatch-complete" hidden:"" help:"Run dispatch completion for a window (PR lookup, labels, hooks)"`
+	LaunchWatch      LaunchWatchCmd      `cmd:"" name:"launch-watch" hidden:"" help:"Watch a freshly launched window for the folder-trust prompt"`
 	RunUserHooks     RunUserHooksCmd     `cmd:"" name:"run-user-hooks" hidden:"" help:"Run user lifecycle hooks for an event (spawned detached by hooks)"`
 
 	// Dispatch
@@ -1399,6 +1400,15 @@ type DispatchCompleteCmd struct {
 }
 
 func (c *DispatchCompleteCmd) Run() error { cmd.RunDispatchComplete(c.WindowID); return nil }
+
+// LaunchWatchCmd watches a freshly launched agent window for Claude Code's
+// folder-trust dialog and reports it (hooks.LaunchWatch). Spawned detached by
+// internal/launchwatch after each launch; never run by hand.
+type LaunchWatchCmd struct {
+	WindowID string `arg:"" help:"tmux window ID (e.g. @5)"`
+}
+
+func (c *LaunchWatchCmd) Run() error { hooks.LaunchWatch(c.WindowID); return nil }
 
 // RunUserHooksCmd runs the configured user hooks for one lifecycle event,
 // using the environment inherited from the spawning hook.

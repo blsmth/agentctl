@@ -371,3 +371,19 @@ func TestArtifactFlagsParse(t *testing.T) {
 		t.Error("unknown --kind accepted")
 	}
 }
+
+// TestLaunchWatchParses: the hidden launch watcher takes one window ID.
+func TestLaunchWatchParses(t *testing.T) {
+	var cli CLI
+	k, err := kong.New(&cli, kong.Name("agentctl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := k.Parse([]string{"launch-watch", "@1774"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Command() != "launch-watch <window-id>" || cli.LaunchWatch.WindowID != "@1774" {
+		t.Errorf("parsed %q window %q", ctx.Command(), cli.LaunchWatch.WindowID)
+	}
+}

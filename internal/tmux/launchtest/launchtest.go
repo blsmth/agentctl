@@ -20,6 +20,7 @@ import (
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/claude"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/launchwatch"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
@@ -79,12 +80,15 @@ type Recorder struct {
 	mu       sync.Mutex
 	launches []Launch
 	calls    [][]string
+	watches  []string
 	t        *testing.T
 }
 
 // Capture installs a fake tmux runner for tmux.LaunchAgent and points
 // tmux.SessionName at a session that does not exist, so instance numbering
 // never sees a real server. Every new-window returns window ID "@9001".
+// It also stubs the launch watcher spawn (launchwatch), recording the window
+// IDs a launch would watch (Watches).
 func Capture(t *testing.T) *Recorder {
 	t.Helper()
 	r := &Recorder{t: t}
@@ -100,11 +104,25 @@ func Capture(t *testing.T) *Recorder {
 		}
 		return nil, nil
 	})
+	restoreWatch := launchwatch.SetSpawnForTest(func(windowID string) error {
+		r.mu.Lock()
+		r.watches = append(r.watches, windowID)
+		r.mu.Unlock()
+		return nil
+	})
 	t.Cleanup(func() {
 		restore()
+		restoreWatch()
 		tmux.SessionName = prevSession
 	})
 	return r
+}
+
+// Watches returns the window IDs a launch started the launch watcher for.
+func (r *Recorder) Watches() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.watches...)
 }
 
 // Launches returns the launches recorded so far.

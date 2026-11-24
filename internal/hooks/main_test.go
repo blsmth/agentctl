@@ -1,8 +1,10 @@
 package hooks
 
 import (
+	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/notify"
 	"github.com/blsmth/agentctl/internal/remoteapproval"
@@ -26,6 +28,11 @@ func TestMain(m *testing.M) {
 	// os.Executable() is the test binary, which would re-run the suite.
 	spawnMetaSyncFn = func(string, string) error { return nil }
 	ensureMetricsServeFn = func() bool { return false }
+	// Nor read a real pane or sleep in the launch watcher.
+	lwPaneOf = func(string) string { return "" }
+	lwCapture = func(string) (string, error) { return "", errors.New("no tmux in tests") }
+	lwSession = func(string) string { return "" }
+	lwSleep = func(time.Duration) {}
 	// Never rename (or query) real tmux windows from a unit test.
 	winname.SetSeamsForTest(
 		func(string, string) error { return nil },

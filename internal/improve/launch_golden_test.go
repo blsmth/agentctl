@@ -24,6 +24,9 @@ func TestLaunchSessionGolden(t *testing.T) {
 	l := rec.Only()
 	got := env.Normalize(l.Render()+launchtest.WindowRecord("@9001"), launchtest.BinPair(l)...)
 	launchtest.CheckGolden(t, filepath.Join("testdata", "golden", "improve.txt"), got)
+	if w := rec.Watches(); !slices.Equal(w, []string{"@9001"}) {
+		t.Errorf("launch watcher started for %v, want [@9001]", w)
+	}
 }
 
 // TestLaunchSessionWorkDir pins where the session starts when the agent has no

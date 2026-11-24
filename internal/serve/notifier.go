@@ -332,7 +332,7 @@ func pushBody(event string, w fleet.Window, detail string) string {
 
 // pendingToolText is what a blocked window asks for: "Bash: git push".
 func pendingToolText(w fleet.Window) string {
-	text := w.PendingTool
+	text := fleet.PendingLabel(w.PendingTool)
 	if d := textutil.OneLine(w.PendingToolDetail); d != "" {
 		if text != "" {
 			text += ": "

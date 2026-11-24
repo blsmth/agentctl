@@ -8,6 +8,7 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/serve/fleetwatch"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 type notifyEnv struct {
@@ -442,4 +443,19 @@ func TestPushContent(t *testing.T) {
 			t.Errorf("reminder = %+v", got)
 		}
 	})
+}
+
+func TestPendingToolTextLabelsTrust(t *testing.T) {
+	tests := []struct {
+		w    fleet.Window
+		want string
+	}{
+		{fleet.Window{PendingTool: "Bash", PendingToolDetail: "git push"}, "Bash: git push"},
+		{fleet.Window{PendingTool: windowstate.PendingTrust, PendingToolDetail: "/repo/.worktrees/x"}, "folder trust: /repo/.worktrees/x"},
+	}
+	for _, tt := range tests {
+		if got := pendingToolText(tt.w); got != tt.want {
+			t.Errorf("pendingToolText(%q) = %q, want %q", tt.w.PendingTool, got, tt.want)
+		}
+	}
 }

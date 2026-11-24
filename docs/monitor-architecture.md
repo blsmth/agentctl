@@ -35,7 +35,7 @@ State is **not** inferred from JSONL log growth. Claude Code hooks write state i
 | windowstate `State` | Set by | AgentStatus |
 |---------------------|--------|-------------|
 | `working` | `hook-pre-tool` (PreToolUse), `hook-post-tool` (PostToolUse), `hook-user-prompt` | `StatusWorking` |
-| `blocked` | `hook-notify` (permission_prompt) | `StatusBlocked` |
+| `blocked` | `hook-notify` (permission_prompt), approval popups, the launch watcher (folder trust) | `StatusBlocked` |
 | `idle` | `hook-notify` (idle_prompt), `hook-stop-failure`, `hook-post-tool-failure` | `StatusIdle` |
 | _(none)_ | window not hook-configured or just launched | `StatusIdle` (default) |
 
@@ -89,6 +89,14 @@ Every other reader builds its view with the shared builder in `internal/fleet` (
 
 The chrome bar watches `windows/` and the `active-window` file (on macOS with a directory-only kqueue watch, since fsnotify's kqueue backend opens every file in `windows/`, which keeps a `.lock` and `.gone` per window ever opened; fsnotify elsewhere), debounces events (100ms), rebuilds through the builder, and re-renders only when a rendered field changed. Unrelated runtime-dir writes (the monitor's `state.json`) never reach the Bubble Tea program. A rebuild re-reads only the listed windows' records whose file changed (`windowstate.DirCache`). `tmux list-windows` is re-run only when the set of record files changed, or on the 30s slow tick. Because Bubble Tea re-renders on every message, an idle bar runs no fast ticks: the spinner ticks only while a tab is working, the prefix indicator polls `#{client_prefix}` every 250ms in the active window's bar only, and the renderer is capped at 25 fps. `theme.Current` re-reads config only when a config file's size, mtime or inode changed. If no watcher can be created it polls once a second.
 
+### Before the first hook: the launch watcher
+
+Claude Code asks whether to trust a folder the first time it starts in it ("Accessing workspace: <dir> ... Yes, I trust this folder"), and it asks before it loads any settings or hooks. Every new worktree is a new path, so a dispatched or cron window can sit on that dialog with no hook ever running, which windowstate would show as a quiet idle row with no session ID.
+
+Every launch path (`dispatch.Launch`, which cron and the hub's new-session go through, `dispatch.Restore`, `improve.LaunchSession`, `cmd.LaunchWithResume`) calls `launchwatch.Start` after `tmux.LaunchAgent`. For a harness with `Caps.TrustDialog` (Claude Code, not pi) and a real window ID it spawns a detached, hidden `agentctl launch-watch <windowID>` (`detach.StartDaemon`, runtime dir pinned). The watcher (`hooks.LaunchWatch`) captures the window's pane (`main_pane`, else its active pane) about once a second for up to 90 seconds and stops as soon as the record has a `SessionID` (SessionStart ran, so the folder was trusted or never asked about), the record or window is gone, or the deadline passes. When `panestate.IsTrustDialog` matches it marks the window, once, through `winname.Transact`: `blocked`, PendingTool `trust` (`windowstate.PendingTrust`) with the folder as the detail, so the name gets ⏸ and the hub ("needs you: folder trust <dir>"), fleet rows and the phone ("waiting on folder trust: <dir>") show it. It also sends the blocked desktop notification (type `trust_prompt`, gated by `alert_config.blocked`) and queues an `agentctl notice:` for the dispatcher (`spawned_by`/`spawned_by_session`). It never answers the dialog and never writes `~/.claude.json`.
+
+When the human trusts the folder, `hook-session-start` (and `hook-user-prompt`) clear the trust block through `windowstate.ClearPendingTrust`, so an interactive window with no first prompt does not stay ⏸. "No, exit" closes the window and the normal Gone path handles it. The watcher does not need the monitor. Tests never spawn it: the seam is `launchwatch.SetSpawnForTest` (also stubbed by `launchtest.Capture`), and the default refuses inside a test binary.
+
 ### Turning the monitor off (`monitor: false`)
 
 The global config key `monitor` (default `true`) is the kill switch. When `false`, session start / `applyConfig` does not start a monitor, the hook watchdog neither respawns nor replaces one, and `agentctl health` reports "monitor disabled" instead of a missing-monitor problem. Flipping the flag never kills a running monitor; the next relaunch just does not start one. With no monitor, `state.json` stops updating (token counts drop out of the hub and status views) (metrics are unaffected: see below), but the chrome bar, hub, `agentctl status`, popups and statusline keep working from tmux and windowstate. A project-local `"monitor": false` switches it off for that project, but a project can never switch it back on.
@@ -137,7 +145,7 @@ Hooks are **not** part of the monitor — they're separate `agentctl` subcommand
 
 | Hook | Lifecycle Event | Key Action |
 |------|-----------------|------------|
-| `hook-session-start` | SessionStart | Records log path / session id into windowstate |
+| `hook-session-start` | SessionStart | Records log path / session id into windowstate; clears a folder-trust block |
 | `hook-user-prompt` | UserPromptSubmit | Sets state `working` |
 | `hook-pre-tool` / `hook-post-tool` | PreToolUse / PostToolUse | Sets state `working` |
 | `hook-notify` | Notification | Sets `blocked` (permission) or `idle`, fires alerts |

@@ -34,6 +34,13 @@ import (
 	"github.com/blsmth/agentctl/internal/transcript"
 )
 
+// PendingTrust is the PendingTool of a window stopped on the harness's
+// folder-trust dialog, which shows before any hook loads; PendingToolDetail
+// holds the folder. Written by the launch watcher (hooks.LaunchWatch, spawned
+// by internal/launchwatch) and cleared by the first hook that runs in the
+// session (SessionStart, or UserPromptSubmit setting working).
+const PendingTrust = "trust"
+
 // WindowState is the per-window authoritative state written by hooks and read
 // by the monitor. It replaces tmux window options as the IPC mechanism.
 type WindowState struct {
@@ -189,6 +196,7 @@ type WindowState struct {
 	// tool started and has not completed -- which, at the moment the
 	// Notification hook fires, is exactly the tool the permission prompt is
 	// asking about (PreToolUse fires before Claude Code prompts the user).
+	// PendingTrust is the one value no tool call writes: see its doc.
 	PendingTool       string    `json:"pending_tool,omitempty"`
 	PendingToolDetail string    `json:"pending_tool_detail,omitempty"`
 	PendingToolAt     time.Time `json:"pending_tool_at,omitempty"`
@@ -946,6 +954,23 @@ func ClaimComplete(w *WindowState, autonomous bool, now time.Time) bool {
 func ClearDone(w *WindowState) {
 	w.Done = false
 	w.CompleteFiredAt = time.Time{}
+}
+
+// ClearPendingTrust undoes the launch watcher's folder-trust block: it clears
+// the pending fields when they are PendingTrust and, if the window is still
+// blocked on it, returns it to idle. It reports whether it changed w. The
+// first hook of a session calls it, since that hook running means the trust
+// dialog was answered (or never shown).
+func ClearPendingTrust(w *WindowState) bool {
+	if w.PendingTool != PendingTrust {
+		return false
+	}
+	w.PendingTool, w.PendingToolDetail, w.PendingToolAt = "", "", time.Time{}
+	if w.State == "blocked" {
+		w.State = "idle"
+		w.BlockedSince = time.Time{}
+	}
+	return true
 }
 
 // ReleaseComplete undoes a ClaimComplete stamp (spawn failed) so a later Stop

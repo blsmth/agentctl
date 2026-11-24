@@ -14,6 +14,7 @@ import (
 	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/ids"
+	"github.com/blsmth/agentctl/internal/launchwatch"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/sessions"
@@ -328,12 +329,12 @@ func LaunchSession(agentName string, theme string, callerDir string) error {
 
 	windowName := "improve~" + agentName
 	logging.Log("launchImprovement: launching window %q cmd=%q session=%s", windowName, shellCmd, sessionID)
-	var launchErr error
-	_, launchErr = tmux.LaunchAgent(windowName, workDir, shellCmd, logPath, agentName, sessionID, extraEnv, true)
+	wid, launchErr := tmux.LaunchAgent(windowName, workDir, shellCmd, logPath, agentName, sessionID, extraEnv, true)
 	if launchErr != nil {
 		logging.Log("launchImprovement: LaunchAgent error: %v", launchErr)
 	} else {
 		logging.Log("launchImprovement: success")
+		launchwatch.Start(wid, caps)
 	}
 	return launchErr
 }
