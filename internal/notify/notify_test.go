@@ -113,6 +113,9 @@ func TestDefaultCmd_LinuxNotifySend(t *testing.T) {
 	}
 	bin := t.TempDir()
 	t.Setenv("PATH", bin)
+	old := extraBinDirs
+	extraBinDirs = nil
+	t.Cleanup(func() { extraBinDirs = old })
 	if got := DefaultCmd(); got != "" {
 		t.Errorf("DefaultCmd() without notify-send = %q, want empty", got)
 	}
@@ -130,6 +133,9 @@ func TestDefaultCmd_DarwinAlerter(t *testing.T) {
 	}
 	bin := t.TempDir()
 	t.Setenv("PATH", bin)
+	old := extraBinDirs
+	extraBinDirs = nil
+	t.Cleanup(func() { extraBinDirs = old })
 	if got := DefaultCmd(); got != "" {
 		t.Errorf("DefaultCmd() without alerter = %q, want empty", got)
 	}
@@ -287,5 +293,29 @@ func TestNotifyWithOptions_ExportsTitle(t *testing.T) {
 	})
 	if got := string(waitForFile(t, outFile)); got != "Fix hub viewer jump|permission_prompt" {
 		t.Errorf("got %q", got)
+	}
+}
+
+// A detached process has a minimal PATH; the default notifier is still found
+// in the standard bin dirs and named by absolute path.
+func TestDefaultCmd_FindsNotifierOutsidePATH(t *testing.T) {
+	name := map[string]string{"darwin": "alerter", "linux": "notify-send"}[runtime.GOOS]
+	if name == "" {
+		t.Skip("no default notifier on this OS")
+	}
+	t.Setenv("PATH", t.TempDir())
+	dir := t.TempDir()
+	old := extraBinDirs
+	extraBinDirs = []string{dir}
+	t.Cleanup(func() { extraBinDirs = old })
+	if got := DefaultCmd(); got != "" {
+		t.Fatalf("DefaultCmd() with no notifier = %q", got)
+	}
+	bin := filepath.Join(dir, name)
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := DefaultCmd(); !strings.HasPrefix(got, "'"+bin+"'") && !strings.HasPrefix(got, bin+" ") {
+		t.Errorf("DefaultCmd() = %q, want it to start with %s", got, bin)
 	}
 }

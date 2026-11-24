@@ -246,7 +246,7 @@ func TestNotifierLaptopDecision(t *testing.T) {
 		{"blocked, laptop idle", false, true, func(e *laptopNotifyEnv) { e.transition(blocked) }, 1},
 		{"done, laptop active", true, true, func(e *laptopNotifyEnv) { e.transition(win("idle", true)) }, 0},
 		{"done, laptop idle", false, true, func(e *laptopNotifyEnv) { e.transition(win("idle", true)) }, 1},
-		{"artifact, laptop active", true, true, func(e *laptopNotifyEnv) { e.artifact() }, 0},
+		{"artifact, laptop active (held)", true, true, func(e *laptopNotifyEnv) { e.artifact() }, 0},
 		{"artifact, laptop idle", false, true, func(e *laptopNotifyEnv) { e.artifact() }, 1},
 		{"approval, laptop active", true, true, func(e *laptopNotifyEnv) { e.n.Approval("a1", approvalMsg("a1"), e.clock.Now().Add(time.Minute)) }, 0},
 		{"approval, laptop idle", false, true, func(e *laptopNotifyEnv) { e.n.Approval("a1", approvalMsg("a1"), e.clock.Now().Add(time.Minute)) }, 1},
@@ -571,5 +571,26 @@ func TestNotifierStaleCacheHoldsBlockedUntilRefresh(t *testing.T) {
 	e.n.Tick()
 	if got := e.take(); len(got) != 1 || got[0].Kind != "blocked" {
 		t.Errorf("messages = %+v, want one blocked push after the refresh", got)
+	}
+}
+
+// A new artifact published while the laptop is in use is held and pushed once
+// when the laptop goes idle, not dropped.
+func TestNotifierArtifactHeldUntilLaptopIdle(t *testing.T) {
+	e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
+	e.artifact()
+	e.n.Tick()
+	if got := e.take(); len(got) != 0 {
+		t.Fatalf("pushed while laptop active: %+v", got)
+	}
+	e.setActive(false)
+	e.n.Tick()
+	got := e.take()
+	if len(got) != 1 || got[0].Kind != "artifact" {
+		t.Fatalf("on idle got %+v, want one artifact push", got)
+	}
+	e.n.Tick()
+	if got := e.take(); len(got) != 0 {
+		t.Errorf("repeat push: %+v", got)
 	}
 }

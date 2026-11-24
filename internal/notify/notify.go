@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -28,19 +29,48 @@ func invokesDesktopNotifier(cmd string) bool {
 	return desktopNotifierRe.MatchString(cmd)
 }
 
+// extraBinDirs are searched after PATH: a detached process spawned from a
+// hook inherits a minimal PATH that often lacks Homebrew's bin dirs, where
+// alerter lives.
+var extraBinDirs = []string{"/opt/homebrew/bin", "/usr/local/bin"}
+
+// cmdWord quotes p unless it is a bare command name.
+func cmdWord(p string) string {
+	if filepath.Base(p) == p {
+		return p
+	}
+	return shellquote.Quote(p)
+}
+
+// lookBin finds name on PATH, then in extraBinDirs; "" when absent.
+func lookBin(name string) string {
+	if _, err := exec.LookPath(name); err == nil {
+		return name
+	}
+	for _, d := range extraBinDirs {
+		p := filepath.Join(d, name)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() && st.Mode().Perm()&0o111 != 0 {
+			return p
+		}
+	}
+	return ""
+}
+
 // DefaultCmd returns the platform-appropriate default notification command.
 // On macOS it uses alerter, and on Linux notify-send, each only when that
-// binary is on PATH; otherwise it returns an empty string (no-op).
+// binary is on PATH or in a standard bin dir (then by absolute path);
+// otherwise it returns an empty string (no-op).
 func DefaultCmd() string {
 	switch runtime.GOOS {
 	case "darwin":
-		if _, err := exec.LookPath("alerter"); err != nil {
+		p := lookBin("alerter")
+		if p == "" {
 			return ""
 		}
-		return "alerter --title {{title}} --subtitle {{subtitle}} --message {{message}} --sound default --timeout 10"
+		return cmdWord(p) + " --title {{title}} --subtitle {{subtitle}} --message {{message}} --sound default --timeout 10"
 	case "linux":
-		if _, err := exec.LookPath("notify-send"); err == nil {
-			return "notify-send {{title}} {{message}}"
+		if p := lookBin("notify-send"); p != "" {
+			return cmdWord(p) + " {{title}} {{message}}"
 		}
 	}
 	return ""
@@ -82,6 +112,7 @@ func NotifyWithOptions(opts Options) {
 		notifyCmd = DefaultCmd()
 	}
 	if notifyCmd == "" {
+		logging.Log("notify: no notify_cmd (set=%v), %q not shown", set, opts.Title)
 		return
 	}
 

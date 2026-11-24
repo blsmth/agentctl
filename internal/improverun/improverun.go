@@ -409,12 +409,15 @@ func (r Run) Title() string {
 // announce sends one desktop notification and publishes one report for the
 // phone. Failures are logged only.
 func announce(dir string, r Run, rationale string) {
+	logging.Log("improve: announcing run %s (%d changed files)", r.ID, len(r.Files))
 	report := renderReport(r, rationale)
 	path := filepath.Join(dir, "report.md")
 	if err := os.WriteFile(path, []byte(report), 0o600); err != nil {
 		logging.Log("improve: writing report: %v", err)
 	} else if err := publishPhone(path, r); err != nil {
 		logging.Log("improve: publishing report: %v", err)
+	} else {
+		logging.Log("improve: published report for run %s", r.ID)
 	}
 	notifyDesktop(notify.Options{
 		Title:   r.Title(),
@@ -473,9 +476,31 @@ func defaultPublish(path string, r Run) error {
 		Source: artifacts.Source{Path: path},
 		Title:  r.Title(),
 		Kind:   artifacts.KindMarkdown,
-		Origin: artifacts.Origin{Agent: r.Agent},
+		Origin: artifacts.Origin{Agent: r.Agent, Project: "improve"},
 	})
 	return err
+}
+
+// Resend sends the summary of a finished run again (desktop notification and
+// a new artifact), for re-testing the delivery path. A run that has not
+// finished or changed nothing has no summary and is an error.
+func Resend(id string) error {
+	dir, err := Dir(id)
+	if err != nil {
+		return err
+	}
+	r, err := load(dir)
+	if err != nil {
+		return fmt.Errorf("loading run %s: %w", id, err)
+	}
+	if r.Finished.IsZero() {
+		return fmt.Errorf("run %s has not finished", id)
+	}
+	if len(r.Files) == 0 {
+		return fmt.Errorf("run %s changed nothing, so it has no summary", id)
+	}
+	announce(dir, r, readRationale(dir))
+	return nil
 }
 
 // List returns the recorded runs started at or after since, newest first.
