@@ -19,7 +19,65 @@ const historyTamperReason = "\U0001F6D1 BLOCKED: this touches agentctl's history
 
 // historyNamePattern matches a path word naming one of the stores whatever the
 // state dir: agent-history.git, agent-history-config.git, agent-history/...
-var historyNamePattern = regexp.MustCompile(`agent-history(?:[\w.-]*\.git|/|$)`)
+// Anchored to a whole path component so ordinary text (a branch name, a doc
+// path, a commit message) does not match; the resolved-path check covers the
+// real state dir.
+var historyNamePattern = regexp.MustCompile(
+	`(?:^|[/=])agent-history(?:-[\w.-]+)?\.git(?:/|$)|(?:^|[/=])agent-history/[^/]+\.git(?:/|$)|agentctl/agent-history(?:/|$)`)
+
+// historyRiskyCmds are commands that can reach into the state dir root and
+// land inside a store (find -exec, tar -C, rsync, rm -rf, ...).
+var historyRiskyCmds = map[string]bool{
+	"find": true, "tar": true, "rsync": true, "xargs": true,
+	"cp": true, "mv": true, "rm": true, "ln": true,
+}
+
+const globMeta = "*?[{"
+
+// historyRoots returns the state dir and its symlink-resolved form.
+func historyRoots() []string {
+	sd := historyStateDir()
+	if sd == "" {
+		return nil
+	}
+	sd = filepath.Clean(sd)
+	roots := []string{sd}
+	if r := resolveExistingPrefix(sd); r != sd {
+		roots = append(roots, r)
+	}
+	return roots
+}
+
+// isStateRoot reports whether abs p is the state dir itself.
+func isStateRoot(p string) bool {
+	for _, c := range []string{p, resolveExistingPrefix(p)} {
+		for _, r := range historyRoots() {
+			if c == r {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// globReachesStore reports whether the glob pattern (absolute) may match a
+// path inside a store: any real match does; for a brace or a Glob error it
+// is enough that the part before the first metacharacter is the state dir
+// or inside a store.
+func globReachesStore(pat string) bool {
+	if !strings.Contains(pat, "{") {
+		if ms, err := filepath.Glob(pat); err == nil {
+			for _, m := range ms {
+				if inHistoryStore(m) {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	dir := filepath.Dir(pat[:strings.IndexAny(pat, globMeta)] + "x")
+	return isStateRoot(dir) || inHistoryStore(dir)
+}
 
 // historyStateDir is the resolved state dir holding the stores. A var so
 // tests can pin it. Resolved on each call, never at init.
@@ -35,17 +93,8 @@ var historyStateDir = func() string {
 // one: its first component under the state dir (or the symlink-resolved
 // state dir) starts with "agent-history". Symlinks in p are resolved.
 func inHistoryStore(p string) bool {
-	sd := historyStateDir()
-	if sd == "" {
-		return false
-	}
-	sd = filepath.Clean(sd)
-	roots := []string{sd}
-	if r := resolveExistingPrefix(sd); r != sd {
-		roots = append(roots, r)
-	}
 	for _, c := range []string{p, resolveExistingPrefix(p)} {
-		for _, r := range roots {
+		for _, r := range historyRoots() {
 			rel, err := filepath.Rel(r, c)
 			if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				continue
@@ -99,18 +148,22 @@ func historyReferenced(line, cwd string) bool {
 	sc := scanShell(line)
 	var words []string
 	var cds []string
+	risky := strings.Contains(line, "`")
 	for _, it := range sc.items {
 		c := it.cmd
 		if c == nil {
 			continue
 		}
+		risky = risky || c.subst
 		for _, w := range c.words {
 			words = append(words, w.text)
+			risky = risky || w.text == "for"
 		}
 		for _, r := range c.redirs {
 			words = append(words, r.target.text)
 		}
 		if i := c.nameIndex(); i >= 0 {
+			risky = risky || historyRiskyCmds[filepath.Base(c.words[i].text)]
 			switch c.words[i].text {
 			case "cd", "pushd":
 				if a := c.args(); len(a) > 0 {
@@ -140,6 +193,16 @@ func historyReferenced(line, cwd string) bool {
 		}
 	}
 	for _, w := range words {
+		risky = risky || strings.ContainsAny(w, globMeta)
+	}
+	if risky {
+		for _, b := range bases {
+			if isStateRoot(b) {
+				return true
+			}
+		}
+	}
+	for _, w := range words {
 		cands := []string{w}
 		if _, v, ok := strings.Cut(w, "="); ok {
 			cands = append(cands, v) // GIT_DIR=x, --git-dir=x, --work-tree=x
@@ -152,14 +215,22 @@ func historyReferenced(line, cwd string) bool {
 				return true
 			}
 			c = expandWordPath(c)
+			var full []string
 			if filepath.IsAbs(c) {
-				if inHistoryStore(filepath.Clean(c)) {
+				full = []string{filepath.Clean(c)}
+			} else {
+				for _, b := range bases {
+					full = append(full, filepath.Join(b, c))
+				}
+			}
+			for _, f := range full {
+				if inHistoryStore(f) {
 					return true
 				}
-				continue
-			}
-			for _, b := range bases {
-				if inHistoryStore(filepath.Join(b, c)) {
+				if strings.ContainsAny(f, globMeta) && globReachesStore(f) {
+					return true
+				}
+				if risky && isStateRoot(f) {
 					return true
 				}
 			}
