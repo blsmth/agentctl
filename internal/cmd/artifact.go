@@ -265,12 +265,7 @@ func (e artifactEnv) list(w io.Writer, o ArtifactListOptions) error {
 // width: an emoji or CJK cell is two columns wide, which text/tabwriter
 // (rune counts) gets wrong. The last column is not padded.
 func writeTable(w io.Writer, rows [][]string) error {
-	widths := make([]int, len(rows[0]))
-	for _, r := range rows {
-		for i, c := range r {
-			widths[i] = max(widths[i], ansi.StringWidth(c))
-		}
-	}
+	widths := columnWidths(rows)
 	var b strings.Builder
 	for _, r := range rows {
 		for i, c := range r {
@@ -283,6 +278,17 @@ func writeTable(w io.Writer, rows [][]string) error {
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// columnWidths returns the widest display width in each column.
+func columnWidths(rows [][]string) []int {
+	widths := make([]int, len(rows[0]))
+	for _, r := range rows {
+		for i, c := range r {
+			widths[i] = max(widths[i], ansi.StringWidth(c))
+		}
+	}
+	return widths
 }
 
 // truncWidth shortens s to at most n display columns, ending in "…".
@@ -533,7 +539,8 @@ func artifactServeURL() (string, bool) {
 	cfg := config.Load().Serve
 	running := false
 	if dir, err := serve.Dir(); err == nil {
-		running = servectl.Probe(dir) == servectl.StateRunning
+		// Phone access off still serves artifact links.
+		running = servectl.Probe(dir).Serving()
 	}
 	host, _ := os.Hostname()
 	return serveBaseURL(cfg, host), running

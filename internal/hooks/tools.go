@@ -60,6 +60,12 @@ func PreTool() {
 		denyFileEdit(input.ToolName, p, "dispatch approval record", approvalEditDenyReason(p), input.ToolInput)
 		return
 	}
+	// And for serve's state, the phone-off switch among it (checkServeTamper
+	// is the Bash side).
+	if p := serveEditTarget(input.ToolName, input.ToolInput); p != "" {
+		denyFileEdit(input.ToolName, p, "agentctl serve state", serveEditDenyReason(p), input.ToolInput)
+		return
+	}
 	// And for the agent history stores (checkHistoryTamper is the Bash side).
 	if p := historyEditTarget(input.ToolName, input.ToolInput); p != "" {
 		denyFileEdit(input.ToolName, p, "agent history store", historyEditDenyReason(p), input.ToolInput)
@@ -161,6 +167,7 @@ func PostTool() {
 		w.State = "working"
 		w.LastToolTime = nowUnix
 		w.LastToolDetail = lastToolDetail
+		w.ToolFailures = 0
 		clearPendingToolIfMatch(w, input.ToolName)
 		ws = *w
 	}); err != nil {
@@ -247,6 +254,8 @@ func PostToolFailure() {
 		if err := winname.Update(windowID, func(ws *windowstate.WindowState) {
 			ws.LastError = errSummary
 			ws.State = "idle"
+			// The human stopped it: not a failure streak.
+			ws.ToolFailures = 0
 			clearPendingToolIfMatch(ws, input.ToolName)
 		}); err != nil {
 			logUpdateErr("hook-post-tool-failure", err)
@@ -255,6 +264,8 @@ func PostToolFailure() {
 	} else {
 		if err := windowstate.Update(windowID, func(ws *windowstate.WindowState) {
 			ws.LastError = errSummary
+			// Counted toward an "errors" attention at the turn end.
+			ws.ToolFailures++
 			clearPendingToolIfMatch(ws, input.ToolName)
 		}); err != nil {
 			logUpdateErr("hook-post-tool-failure", err)

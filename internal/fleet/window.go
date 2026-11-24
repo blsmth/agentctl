@@ -72,10 +72,16 @@ type Window struct {
 	// when false.
 	TurnDone bool `json:"turn_done,omitempty"`
 
+	// Attention is why the window needs the human (the ! glyph): "question",
+	// "errors" or "message"; AttentionDetail the one-line explanation. Both
+	// omitted unless the row shows ! (it is not working or blocked).
+	Attention       string `json:"attention,omitempty"`
+	AttentionDetail string `json:"attention_detail,omitempty"`
+
 	// Label is the human-facing name (fleet.Label; serve makes it unique within
-	// a group); window_id stays the machine key. `status --json` sets it too.
-	// Row handles come from the fleet's own index, the handle route from
-	// LoadHandleIndex, so a short handle can rarely be ambiguous there.
+	// a group); window_id stays the machine key. Set by `status --json` (and
+	// serve). Row handles come from the fleet's own index, the handle route
+	// from LoadHandleIndex, so a short handle can rarely be ambiguous there.
 	Label string `json:"label,omitempty"`
 
 	// Harness is the agent program the window runs ("pi"); omitted for
@@ -83,8 +89,8 @@ type Window struct {
 	Harness string `json:"harness,omitempty"`
 
 	// Handle is the session's short ID (shortest unique prefix of its session
-	// ID, at least 4 characters), set by `status --json`; omitted until the
-	// window has a session ID.
+	// ID, at least 4 characters). Set by `status --json` (and serve); omitted
+	// until the window has a session ID.
 	Handle string `json:"handle,omitempty"`
 }
 
@@ -115,6 +121,9 @@ func ToWindow(r Row, m Meta) Window {
 		TurnDone:     r.TurnDone,
 		Label:        RowDisplayName(r),
 		Harness:      r.Harness,
+	}
+	if NeedsAttention(r.AgentState) {
+		w.Attention, w.AttentionDetail = r.Attention.Reason, r.Attention.Detail
 	}
 	if r.Recap.Text != "" {
 		w.Recap, w.RecapSource = r.Recap.Text, r.Recap.Source.String()

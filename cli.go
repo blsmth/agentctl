@@ -81,6 +81,7 @@ type CLI struct {
 	Dispatch DispatchCmd `cmd:"" help:"Dispatch an agent to work on a ticket"`
 
 	// Fleet hub — cross-session aggregator view
+	Open            OpenCmd            `cmd:"" help:"Start or switch to the agentctl session for a project directory"`
 	Hub             HubCmd             `cmd:"" help:"Open the fleet hub (cross-session dashboard)"`
 	HubView         HubViewCmd         `cmd:"" name:"hub-view" hidden:""`
 	HubNewSession   HubNewSessionCmd   `cmd:"" name:"hub-new-session" hidden:""`
@@ -337,9 +338,17 @@ func (c *LogsCmd) Run() error { cmd.RunLogs(c.Name); return nil }
 // ImproveCmd groups `agentctl improve [<agent>]` (start a session, the
 // default) and `agentctl improve runs`.
 type ImproveCmd struct {
-	Start ImproveStartCmd `cmd:"" default:"withargs" help:"Launch a self-improvement session (default; an agent named runs or start needs: improve start <agent>)"`
-	Runs  ImproveRunsCmd  `cmd:"" help:"List past improve runs with their changes and history revisions"`
+	Start  ImproveStartCmd  `cmd:"" default:"withargs" help:"Launch a self-improvement session (default; an agent named runs or start needs: improve start <agent>)"`
+	Runs   ImproveRunsCmd   `cmd:"" help:"List past improve runs with their changes and history revisions"`
+	Notify ImproveNotifyCmd `cmd:"" hidden:"" help:"Re-send the summary notification and artifact of a finished improve run"`
 }
+
+// ImproveNotifyCmd implements `agentctl improve notify <run-id>`.
+type ImproveNotifyCmd struct {
+	RunID string `arg:"" help:"improve run ID (see agentctl improve runs)"`
+}
+
+func (c *ImproveNotifyCmd) Run() error { return improverun.Resend(c.RunID) }
 
 // ImproveRunsCmd implements `agentctl improve runs [--since]`.
 type ImproveRunsCmd struct {
@@ -498,9 +507,13 @@ type AgentsListCmd struct {
 
 func (c *AgentsListCmd) Run() error {
 	if c.TUI {
-		cmd.CmdAgentManager()
-		return nil
+		return cliout.RunTUI(cmd.CmdAgentManager, c.table)
 	}
+	return c.table()
+}
+
+// table prints the non-TUI output.
+func (c *AgentsListCmd) table() error {
 	if c.Name != "" {
 		if err := cmd.PrintAgentDetail(c.Name, c.JSON); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -566,9 +579,12 @@ type SkillsCmd struct {
 
 func (c *SkillsCmd) Run() error {
 	if c.TUI {
-		cmd.CmdSkillsManager()
-		return nil
+		return cliout.RunTUI(cmd.CmdSkillsManager, c.table)
 	}
+	return c.table()
+}
+
+func (c *SkillsCmd) table() error {
 	if err := cmd.PrintSkillsTable(c.JSON); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		cliout.Exit(1)
@@ -585,9 +601,12 @@ type MemoryCmd struct {
 
 func (c *MemoryCmd) Run() error {
 	if c.TUI {
-		cmd.CmdMemory()
-		return nil
+		return cliout.RunTUI(cmd.CmdMemory, c.table)
 	}
+	return c.table()
+}
+
+func (c *MemoryCmd) table() error {
 	if err := cmd.PrintMemoryTable(c.JSON); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		cliout.Exit(1)
@@ -671,6 +690,17 @@ type HubStatusCmd struct{}
 
 func (c *HubStatusCmd) Run() error { cmd.CmdHubStatus(); return nil }
 
+// OpenCmd is `agentctl open [dir]`.
+type OpenCmd struct {
+	Dir    string `arg:"" optional:"" help:"Project directory (default: the current directory; a repo subdirectory or worktree opens the main repo)"`
+	Detach bool   `help:"Start the session if needed but do not switch or attach; print its name"`
+	Ensure bool   `hidden:"" help:"Internal: prepare the session from a process pinned to Dir"`
+}
+
+func (c *OpenCmd) Run() error {
+	return cmd.RunOpen(c.Dir, cmd.OpenOptions{Detach: c.Detach, Ensure: c.Ensure})
+}
+
 // HubNewSessionCmd is the hub's "+ new session" helper: run with cwd = Dir,
 // it initializes the project if needed, starts its tmux session detached and
 // launches an agent there in the background, printing the window ID.
@@ -753,9 +783,12 @@ type TicketBrowseCmd struct {
 
 func (c *TicketBrowseCmd) Run() error {
 	if c.TUI {
-		cmd.RunTickets()
-		return nil
+		return cliout.RunTUI(cmd.RunTickets, c.table)
 	}
+	return c.table()
+}
+
+func (c *TicketBrowseCmd) table() error {
 	if c.Number > 0 {
 		if err := cmd.PrintTicketDetail(c.Number, c.JSON); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -823,9 +856,12 @@ type SessionsBrowseCmd struct {
 
 func (c *SessionsBrowseCmd) Run() error {
 	if c.TUI {
-		cmd.CmdSessions(dispatch.WriteAgentSettings)
-		return nil
+		return cliout.RunTUI(func() { cmd.CmdSessions(dispatch.WriteAgentSettings) }, c.table)
 	}
+	return c.table()
+}
+
+func (c *SessionsBrowseCmd) table() error {
 	if c.ID != "" {
 		if err := cmd.PrintSessionDetail(c.ID, c.JSON); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -1298,7 +1334,7 @@ type StatusListCmd struct {
 	Window  string `arg:"" optional:"" help:"Session handle, window ID (@275), index (275), or agent name for detail view"`
 	JSON    bool   `help:"Output as JSON"`
 	Session string `help:"Only show agents in sessions matching this name or project"`
-	State   string `help:"Only show agents in this state: blocked, working, idle, done" enum:"blocked,working,idle,done," default:""`
+	State   string `help:"Only show agents in this state: blocked, working, attention, idle, done" enum:"blocked,working,attention,idle,done," default:""`
 	Blocked bool   `help:"Only show blocked agents (shorthand for --state blocked)"`
 	Verify  bool   `help:"Capture each pane and flag any that contradict the recorded state"`
 	Closed  bool   `help:"List agent windows closed recently (newest first) instead of live ones"`
@@ -1622,9 +1658,9 @@ type ServeCmd struct {
 	Run       ServeRunCmd       `cmd:"" default:"1" hidden:"" help:"Run the server in the foreground"`
 	Install   ServeInstallCmd   `cmd:"" help:"Install the launchd LaunchAgent (prints a systemd unit on Linux)"`
 	Uninstall ServeUninstallCmd `cmd:"" help:"Remove the launchd LaunchAgent"`
-	Start     ServeStartCmd     `cmd:"" help:"Start the installed LaunchAgent (prints the systemctl command on Linux)"`
-	Stop      ServeStopCmd      `cmd:"" help:"Stop the server until next login; the LaunchAgent stays installed"`
-	Toggle    ServeToggleCmd    `cmd:"" help:"Stop the server if it runs, else start it"`
+	Start     ServeStartCmd     `cmd:"" help:"Turn phone access on, starting the installed LaunchAgent if serve is down (prints the systemctl command on Linux)"`
+	Stop      ServeStopCmd      `cmd:"" help:"Turn phone access off (no notifications or app; artifact links keep working); --all stops the server until next login"`
+	Toggle    ServeToggleCmd    `cmd:"" help:"Turn phone access off if it is on, else on (starting serve if it is down)"`
 	Status    ServeStatusCmd    `cmd:"" help:"Show whether the server runs, its URL, devices, cert expiry and CA fingerprint"`
 	Logs      ServeLogsCmd      `cmd:"" help:"Print the tail of serve.log (or audit.jsonl with --audit); read-only"`
 	Pair      ServePairCmd      `cmd:"" help:"Open a 5-minute pairing window and print QR codes for a phone"`
@@ -1650,9 +1686,14 @@ type ServeStartCmd struct{}
 
 func (c *ServeStartCmd) Run() error { return cmd.RunServeStart(os.Stdout) }
 
-type ServeStopCmd struct{}
+// ServeStopCmd implements `agentctl serve stop`: phone access off, or with
+// --all the old full stop (launchctl bootout; the LaunchAgent stays
+// installed and starts again at login).
+type ServeStopCmd struct {
+	All bool `help:"Stop the server process itself (artifact links too) until next login; the LaunchAgent stays installed"`
+}
 
-func (c *ServeStopCmd) Run() error { return cmd.RunServeStop(os.Stdout) }
+func (c *ServeStopCmd) Run() error { return cmd.RunServeStop(os.Stdout, c.All) }
 
 // ServeToggleCmd implements `agentctl serve toggle`. The prefix-key binding
 // passes --message-client so the result shows as a tmux message.
@@ -1934,10 +1975,18 @@ type CronAddCmd struct {
 	Timeout    string `help:"Interrupt a run after this long (e.g. 45m); default none"`
 	Overlap    string `enum:"skip,allow" default:"skip" help:"When the previous run is still active: skip or allow"`
 	Catchup    string `enum:"latest,none" default:"latest" help:"After missed fires: run the latest within catchup_window, or none"`
+	// Mode window (default) dispatches the prompt; improve runs a fleet improve run.
+	Mode         string `enum:"window,improve" default:"window" help:"What a fire does: window (dispatch the prompt) or improve (a fleet improve run; no prompt needed)"`
+	ImproveFleet bool   `name:"improve-fleet" help:"Shorthand for --mode improve: run 'agentctl improve --fleet' over the schedule interval (24h for a daily job); --prompt or --template adds a theme"`
 }
 
 func (c *CronAddCmd) Run() error {
+	mode := c.Mode
+	if c.ImproveFleet {
+		mode = "improve"
+	}
 	return cmd.RunCronAdd(os.Stdout, cmd.CronAddOptions{
+		Mode: mode,
 		Name: c.Name, Schedule: c.Schedule, Agent: c.Agent, Dir: c.Dir,
 		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile, Template: c.Template, NoWorktree: c.NoWorktree,
 		Model: c.Model, Effort: c.Effort, Backend: c.Backend, Account: c.Account,
@@ -1946,27 +1995,35 @@ func (c *CronAddCmd) Run() error {
 }
 
 type CronEditCmd struct {
-	Name       string  `arg:"" help:"Job to edit (the name cannot change)"`
-	Schedule   *string `help:"5-field cron expression in local time, or @hourly/@daily/@weekly (re-seeds the schedule: earlier fires are not caught up)"`
-	Agent      *string `short:"a" help:"Agent to run"`
-	Dir        *string `help:"Project directory"`
-	Prompt     *string `short:"p" help:"Prompt text (replaces a prompt key)"`
-	PromptKey  *string `name:"prompt-key" short:"k" help:"Context store key holding the prompt (read at each fire)"`
-	PromptFile *string `name:"prompt-file" type:"path" help:"File holding the prompt (copied into the job now)"`
-	Template   *string `help:"Prompt template, read at each fire (replaces the prompt or prompt key)"`
-	Worktree   bool    `help:"Run each fire in its own worktree" xor:"worktree"`
-	NoWorktree bool    `name:"no-worktree" help:"Run in the project checkout instead of a worktree per fire" xor:"worktree"`
-	Model      *string `short:"m" help:"Model override (empty clears it)"`
-	Effort     *string `help:"Effort override (low, medium, high, xhigh, max, auto; empty clears it)"`
-	Backend    *string `help:"Named backend from config; 'none' forces Anthropic (empty clears it)"`
-	Account    *string `help:"Claude account to run under (empty clears it)"`
-	Timeout    *string `help:"Interrupt a run after this long (e.g. 45m; empty for none)"`
-	Overlap    *string `help:"When the previous run is still active: skip or allow"`
-	Catchup    *string `help:"After missed fires: latest or none"`
+	Name         string  `arg:"" help:"Job to edit (the name cannot change)"`
+	Schedule     *string `help:"5-field cron expression in local time, or @hourly/@daily/@weekly (re-seeds the schedule: earlier fires are not caught up)"`
+	Agent        *string `short:"a" help:"Agent to run"`
+	Dir          *string `help:"Project directory"`
+	Prompt       *string `short:"p" help:"Prompt text (replaces a prompt key)"`
+	PromptKey    *string `name:"prompt-key" short:"k" help:"Context store key holding the prompt (read at each fire)"`
+	PromptFile   *string `name:"prompt-file" type:"path" help:"File holding the prompt (copied into the job now)"`
+	Template     *string `help:"Prompt template, read at each fire (replaces the prompt or prompt key)"`
+	Worktree     bool    `help:"Run each fire in its own worktree" xor:"worktree"`
+	NoWorktree   bool    `name:"no-worktree" help:"Run in the project checkout instead of a worktree per fire" xor:"worktree"`
+	Model        *string `short:"m" help:"Model override (empty clears it)"`
+	Effort       *string `help:"Effort override (low, medium, high, xhigh, max, auto; empty clears it)"`
+	Backend      *string `help:"Named backend from config; 'none' forces Anthropic (empty clears it)"`
+	Account      *string `help:"Claude account to run under (empty clears it)"`
+	Timeout      *string `help:"Interrupt a run after this long (e.g. 45m; empty for none)"`
+	Overlap      *string `help:"When the previous run is still active: skip or allow"`
+	Catchup      *string `help:"After missed fires: latest or none"`
+	Mode         *string `enum:"window,improve" help:"What a fire does: window (dispatch the prompt) or improve (a fleet improve run)"`
+	ImproveFleet bool    `name:"improve-fleet" help:"Shorthand for --mode improve"`
 }
 
 func (c *CronEditCmd) Run() error {
+	mode := c.Mode
+	if c.ImproveFleet {
+		m := "improve"
+		mode = &m
+	}
 	return cmd.RunCronEdit(os.Stdout, cmd.CronEditOptions{
+		Mode: mode,
 		Name: c.Name, Schedule: c.Schedule, Agent: c.Agent, Dir: c.Dir,
 		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile, Template: c.Template,
 		Worktree: c.Worktree, NoWorktree: c.NoWorktree,

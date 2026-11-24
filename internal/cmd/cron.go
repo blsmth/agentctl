@@ -15,6 +15,8 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
+	"github.com/blsmth/agentctl/internal/improve"
+	"github.com/blsmth/agentctl/internal/improverun"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/mailbox"
 	"github.com/blsmth/agentctl/internal/notify"
@@ -47,6 +49,8 @@ type CronAddOptions struct {
 	Timeout    string
 	Overlap    string
 	Catchup    string
+	// Mode is window (default) or improve; improve needs no prompt or agent.
+	Mode string
 }
 
 // cronEnv is every outside-world touch point of the cron commands, so tests
@@ -128,10 +132,13 @@ func jobFromAdd(opts CronAddOptions) (cron.Job, error) {
 	if err != nil {
 		return cron.Job{}, err
 	}
-	if n := countSet(opts.Prompt, opts.PromptKey, opts.PromptFile, opts.Template); n != 1 {
+	improve := opts.Mode == cron.ModeImprove
+	// An improve job takes no prompt; at most one source adds a theme or
+	// template body to the run.
+	if n := countSet(opts.Prompt, opts.PromptKey, opts.PromptFile, opts.Template); n != 1 && !(improve && n == 0) {
 		return cron.Job{}, errPromptSources
 	}
-	if opts.Agent == "" && opts.Template == "" {
+	if opts.Agent == "" && opts.Template == "" && !improve {
 		return cron.Job{}, errors.New("--agent is required (unless --template names one)")
 	}
 	dir, err := absDir(opts.Dir)
@@ -143,6 +150,7 @@ func jobFromAdd(opts CronAddOptions) (cron.Job, error) {
 		Prompt: prompt, PromptKey: opts.PromptKey, Template: opts.Template,
 		Model: opts.Model, Effort: opts.Effort, Backend: opts.Backend, Account: opts.Account,
 		Timeout: opts.Timeout, Overlap: opts.Overlap, Catchup: opts.Catchup,
+		Mode: opts.Mode,
 	}
 	wt, enabled := !opts.NoWorktree, true
 	job.Worktree, job.Enabled = &wt, &enabled
@@ -210,6 +218,7 @@ type CronEditOptions struct {
 	Timeout    *string
 	Overlap    *string
 	Catchup    *string
+	Mode       *string
 }
 
 // RunCronEdit changes the given fields of a job. The name cannot change.
@@ -272,6 +281,7 @@ func (e cronEnv) edit(w io.Writer, opts CronEditOptions) error {
 		set(&j.Timeout, opts.Timeout)
 		set(&j.Overlap, opts.Overlap)
 		set(&j.Catchup, opts.Catchup)
+		set(&j.Mode, opts.Mode)
 		return nil
 	})
 	if err != nil {
@@ -451,6 +461,13 @@ func realCronDeps(dir string, cfg config.CronConfig, jobs []cron.Job) cron.Deps 
 	}
 }
 
+// Seams for tests: project resolution (shells out to git) and the tmux
+// window list.
+var (
+	cronProjectFor  = projectFor
+	cronListWindows = tmux.ListWindowsInErr
+)
+
 // cronWindows lists every live window a cron job launched, across the jobs'
 // projects: windowstate records with scheduled_by, joined with the
 // project session's live tmux windows. A missing session means none.
@@ -458,7 +475,7 @@ func cronWindows(jobs []cron.Job) ([]cron.Window, error) {
 	seen := map[string]bool{}
 	var out []cron.Window
 	for _, j := range jobs {
-		p := projectFor(j)
+		p := cronProjectFor(j)
 		if seen[p.runtimeDir] {
 			continue
 		}
@@ -467,7 +484,7 @@ func cronWindows(jobs []cron.Job) ([]cron.Window, error) {
 		if !hasScheduled(records) {
 			continue
 		}
-		live, err := tmux.ListWindowsInErr(p.session)
+		live, err := cronListWindows(p.session)
 		if err != nil {
 			continue // session not running: no live windows
 		}
@@ -481,11 +498,26 @@ func cronWindows(jobs []cron.Job) ([]cron.Window, error) {
 			}
 			out = append(out, cron.Window{
 				ID: id, Job: ws.ScheduledBy, RuntimeDir: p.runtimeDir, Session: p.session,
-				MainPane: ws.MainPane, SessionID: ws.SessionID, Done: ws.Done, ScheduledAt: ws.ScheduledAt,
+				MainPane: ws.MainPane, SessionID: ws.SessionID, Done: ws.Done || improveRunDone(ws), ScheduledAt: ws.ScheduledAt,
 			})
 		}
 	}
 	return out, nil
+}
+
+// improveRunFinished reports whether an improve run has been closed out (a
+// seam for tests).
+var improveRunFinished = func(id string) bool {
+	r, err := improverun.Load(id)
+	return err == nil && !r.Finished.IsZero()
+}
+
+// improveRunDone is the Done of an improve window: the Stop hook never sets
+// it for mode "improve", so the window counts as done once its run has been
+// finished. Until then (the session has not written its rationale) it still
+// blocks overlap and holds its max_concurrent slot.
+func improveRunDone(ws windowstate.WindowState) bool {
+	return ws.Mode == "improve" && ws.ImproveRun != "" && improveRunFinished(ws.ImproveRun)
 }
 
 func hasScheduled(records map[string]windowstate.WindowState) bool {
@@ -541,6 +573,9 @@ func cronLaunch(req cron.LaunchRequest) (cron.LaunchResult, error) {
 	p := projectFor(job)
 	var res cron.LaunchResult
 	err := bindProject(p, func() error {
+		if job.IsImprove() {
+			return cronLaunchImprove(req, p, &res)
+		}
 		// Resolve the prompt (and a template's defaults) before starting
 		// anything, so a missing template or key leaves no session behind.
 		opts, err := cronDispatchOptions(req)
@@ -564,6 +599,91 @@ func cronLaunch(req cron.LaunchRequest) (cron.LaunchResult, error) {
 		return nil
 	})
 	return res, err
+}
+
+// Seams for tests: the agent check and the detached session start.
+var (
+	validateCronAgent = validateAgentName
+	ensureCronSession = func(job string, p cronProject) error {
+		if tmux.SessionExists() {
+			return nil
+		}
+		logging.Log("cron: %s: starting session %s detached", job, p.session)
+		if err := tmux.StartSessionDetached(config.Load().DefaultAgent); err != nil {
+			return fmt.Errorf("%w: starting session %s: %v", cron.ErrTmuxUnavailable, p.session, err)
+		}
+		return nil
+	}
+)
+
+// improveLaunch is improve.Launch, a seam so tests start no session.
+var improveLaunch = improve.Launch
+
+// cronLaunchImprove fires an improve job: the same launch path as `agentctl
+// improve --fleet --since <window>` (start snapshot, rationale path, end
+// snapshot and summary through the improve window's hooks), unattended, in
+// the job's project session. The job's prompt, prompt_key or template only
+// adds a theme or template body.
+func cronLaunchImprove(req cron.LaunchRequest, p cronProject, res *cron.LaunchResult) error {
+	opts, err := cronImproveOptions(req)
+	if err != nil {
+		return err
+	}
+	if err := validateCronAgent(opts.Agent, req.Job.Dir); err != nil {
+		return err
+	}
+	if err := ensureCronSession(req.Job.Name, p); err != nil {
+		return err
+	}
+	r, err := improveLaunch(opts)
+	if err != nil {
+		return err
+	}
+	*res = cron.LaunchResult{WindowID: r.WindowID, Session: p.session, SessionID: r.SessionID}
+	return nil
+}
+
+// cronImproveOptions maps an improve fire onto improve.Options: fleet mode,
+// the evidence window derived from the schedule, unattended and unfocused,
+// with the job's model, backend, account and effort.
+func cronImproveOptions(req cron.LaunchRequest) (improve.Options, error) {
+	job := req.Job
+	theme := job.Prompt
+	if job.PromptKey != "" {
+		resolved, err := resolvePromptKey(job.PromptKey)
+		if err != nil {
+			return improve.Options{}, err
+		}
+		theme = resolved
+	}
+	if job.Template != "" {
+		if _, err := loadPromptTemplate(job.Template, job.Dir); err != nil {
+			if errors.Is(err, prompttemplate.ErrNotFound) {
+				return improve.Options{}, cron.TemplateError(fmt.Sprintf(
+					"template %q not found (looked in %s's project and the global templates)", job.Template, job.Dir))
+			}
+			return improve.Options{}, cron.TemplateError(err.Error())
+		}
+	}
+	at := req.Scheduled
+	if at.IsZero() {
+		at = time.Now()
+	}
+	return improve.Options{
+		Agent:       cronJobAgent(job),
+		Fleet:       true,
+		Since:       job.ImproveSince(at),
+		Theme:       theme,
+		Template:    job.Template,
+		Model:       job.Model,
+		Effort:      job.Effort,
+		Backend:     job.Backend,
+		Account:     job.Account,
+		Dir:         job.Dir,
+		CallerDir:   job.Dir,
+		Unattended:  true,
+		ScheduledBy: job.Name,
+	}, nil
 }
 
 // cronDispatchOptions maps a fire onto the dispatch options, resolving a
@@ -675,6 +795,9 @@ func cronAccount(job cron.Job) (string, error) {
 // cronJobAgent is the agent a job runs: its own, else its template's (""
 // when the template cannot be read; the fire then fails on it).
 func cronJobAgent(job cron.Job) string {
+	if job.Agent == "" && job.IsImprove() {
+		return improve.DefaultFleetAgent
+	}
 	if job.Agent != "" || job.Template == "" {
 		return job.Agent
 	}

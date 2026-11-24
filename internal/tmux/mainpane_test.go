@@ -60,3 +60,16 @@ func TestApplyLaunchBootstrapClearsPreviousPR(t *testing.T) {
 		t.Errorf("bootstrap fields = %+v", ws)
 	}
 }
+
+func TestApplyLaunchBootstrapClearsPreviousAttention(t *testing.T) {
+	ws := windowstate.WindowState{
+		Attention:      &windowstate.Attention{Reason: windowstate.AttentionQuestion},
+		PendingVerdict: &windowstate.PendingVerdict{PR: 3, Verdict: "BLOCKED"},
+		ToolFailures:   4,
+		TurnDoneHeld:   true,
+	}
+	applyLaunchBootstrap(&ws, "go-engineer:2", "go-engineer", "/l.jsonl", nil)
+	if ws.Attention != nil || ws.PendingVerdict != nil || ws.ToolFailures != 0 || ws.TurnDoneHeld {
+		t.Errorf("recycled window kept the previous needs-you state: %+v", ws)
+	}
+}

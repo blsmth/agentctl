@@ -28,6 +28,10 @@ type Router struct {
 	// onWriteDenied, when set, is told of every request the allow_write
 	// gate refuses (for the audit log).
 	onWriteDenied func(r *http.Request, code string)
+	// phoneOff, when set, makes every Device and Write route answer 503
+	// phone_off while it reports true (see phone.go). Public routes, the
+	// artifact content among them, never consult it.
+	phoneOff func() bool
 }
 
 func newRouter(auth deviceAuthenticator, allowWrite bool, now func() time.Time) *Router {
@@ -41,17 +45,23 @@ func (rt *Router) Public(pattern string, h http.HandlerFunc) {
 	rt.mux.Handle(pattern, h)
 }
 
-// Device registers a handler that requires a paired device. The device is
-// available to the handler through DeviceFrom.
+// Device registers a handler that requires a paired device and phone access
+// on. The device is available to the handler through DeviceFrom.
 func (rt *Router) Device(pattern string, h http.HandlerFunc) {
-	rt.mux.Handle(pattern, requireDevice(rt.auth, rt.now, h))
+	rt.mux.Handle(pattern, requireDevice(rt.auth, rt.now, rt.phone(h)))
 }
 
 // Write registers a state-changing handler: it requires a paired device and
 // serve.allow_write. Register write routes with a non-GET method so the CSRF
 // check applies.
 func (rt *Router) Write(pattern string, h http.HandlerFunc) {
-	rt.mux.Handle(pattern, requireDevice(rt.auth, rt.now, requireWrite(rt.allowWrite, rt.onWriteDenied, h)))
+	rt.mux.Handle(pattern, requireDevice(rt.auth, rt.now, rt.phone(requireWrite(rt.allowWrite, rt.onWriteDenied, h))))
+}
+
+// phone wraps h in the phone access gate. The switch is read per request
+// (rt.phoneOff may be set after registration).
+func (rt *Router) phone(h http.Handler) http.Handler {
+	return requirePhone(func() bool { return rt.phoneOff != nil && rt.phoneOff() }, h)
 }
 
 // Feature advertises a capability in /healthz "features" so the web app can

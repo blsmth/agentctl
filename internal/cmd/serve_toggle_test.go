@@ -3,10 +3,30 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/blsmth/agentctl/internal/servectl"
 )
+
+// `serve stop` only switches the phone off; `serve stop --all` is the old
+// full stop.
+func TestServeStopAction(t *testing.T) {
+	dir := t.TempDir()
+	c := servectl.Controller{
+		Dir:     dir,
+		GOOS:    "linux",
+		Running: func(string) (int, bool) { return 1, true },
+	}
+	msg, err := serveStopAction(false)(c)
+	if err != nil || !servectl.PhoneOff(dir) || !strings.HasPrefix(msg, "phone access off") {
+		t.Fatalf("stop = %q, %v (phone off %v)", msg, err, servectl.PhoneOff(dir))
+	}
+	msg, err = serveStopAction(true)(c)
+	if err != nil || msg != "Run: systemctl --user stop "+servectl.SystemdUnit {
+		t.Fatalf("stop --all = %q, %v", msg, err)
+	}
+}
 
 func TestRunServeAction(t *testing.T) {
 	tests := []struct {

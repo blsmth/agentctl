@@ -185,7 +185,7 @@ func subtreeEnd(tree []treeRow, i int) int {
 // fleetSubtreeCounts tallies the rows a collapsed parent hides, by state, so
 // its summary still says that a child needs the human.
 type fleetSubtreeCounts struct {
-	total, blocked, working, done, idle int
+	total, blocked, working, attention, done, idle int
 }
 
 // tallySubtree counts the rows of tr (a collapsed parent's descendants).
@@ -205,6 +205,8 @@ func tallySubtree(tr []treeRow) fleetSubtreeCounts {
 			c.blocked++
 		case fleetWeightWorking:
 			c.working++
+		case fleetWeightAttention:
+			c.attention++
 		case fleetWeightDone:
 			c.done++
 		default:

@@ -1,10 +1,13 @@
 package improve
 
 import (
+	"errors"
+	"github.com/blsmth/agentctl/internal/improverun"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/tmux/launchtest"
@@ -98,14 +101,72 @@ func TestRunDryRunLaunchesNothing(t *testing.T) {
 
 func TestRunFleetDryRunUsesFleetHeader(t *testing.T) {
 	env := launchtest.Setup(t, "", map[string]string{
-		"brandon": "---\nname: brandon\ndescription: orchestrator\n---\nYou orchestrate.\n",
+		"fleet-improver": "---\nname: fleet-improver\ndescription: orchestrator\n---\nYou orchestrate.\n",
 	})
-	launchtest.WriteConfig(t, `{"agents": {"brandon": {"dir": "`+env.Project+`"}}}`)
+	launchtest.WriteConfig(t, `{"agents": {"fleet-improver": {"dir": "`+env.Project+`"}}}`)
 	var out strings.Builder
 	if err := Run(Options{Fleet: true, DryRun: true, Out: &out}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if !strings.Contains(out.String(), sessions.FleetImprovePromptHeader) || !strings.Contains(out.String(), "every agent") {
 		t.Errorf("fleet output:\n%s", out.String())
+	}
+}
+
+// TestCronFleetImproveGolden pins the invocation a cron improve job produces:
+// fleet mode on the default fleet-improver agent, unattended (worker permission
+// mode auto), unfocused, in the job's directory, with the job's model.
+func TestCronFleetImproveGolden(t *testing.T) {
+	env := launchtest.Setup(t, "", map[string]string{
+		"fleet-improver": "---\nname: fleet-improver\ndescription: fleet review\nrole: orchestrator\nmodel: opus\n---\nYou review the fleet.\n",
+	})
+	launchtest.WriteConfig(t, `{}`)
+	rec := launchtest.Capture(t)
+	res, err := Launch(Options{
+		Fleet: true, Since: 24 * time.Hour, Model: "opus", Dir: env.Project, CallerDir: env.Project,
+		Unattended: true, ScheduledBy: "fleet-improve",
+	})
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if res.WindowID != "@9001" || res.SessionID == "" || res.Agent != DefaultFleetAgent {
+		t.Errorf("result = %+v", res)
+	}
+	l := rec.Only()
+	got := env.Normalize(l.Render()+launchtest.WindowRecord("@9001"), launchtest.BinPair(l)...)
+	launchtest.CheckGolden(t, filepath.Join("testdata", "golden", "improve_cron_fleet.txt"), got)
+	cmdline := l.AgentCommand()
+	for _, want := range []string{"--agent 'fleet-improver'", "--permission-mode 'auto'", "--model 'opus'"} {
+		if !strings.Contains(cmdline, want) {
+			t.Errorf("command missing %s:\n%s", want, cmdline)
+		}
+	}
+	if !slices.Contains(l.Argv, "-d") {
+		t.Errorf("window not unfocused: %v", l.Argv)
+	}
+	if l.Env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] != "0" {
+		t.Errorf("auto mode needs SUBPROCESS_ENV_SCRUB=0, got %q", l.Env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"])
+	}
+}
+
+func TestLaunchRefusesSecondLiveRun(t *testing.T) {
+	env := launchtest.Setup(t, "", map[string]string{
+		"golden": "---\nname: golden\ndescription: golden test agent\n---\nYou are the golden test agent.\n",
+	})
+	launchtest.WriteConfig(t, `{"agents": {"golden": {"dir": "`+env.Project+`"}}}`)
+	rec := launchtest.Capture(t)
+	old := checkLive
+	checkLive = func() error { return improverun.ErrRunActive }
+	t.Cleanup(func() { checkLive = old })
+	if _, err := Launch(Options{Agent: "golden"}); !errors.Is(err, improverun.ErrRunActive) {
+		t.Fatalf("err = %v, want ErrRunActive", err)
+	}
+	if n := len(rec.Launches()); n != 0 {
+		t.Errorf("launched %d window(s) despite a live run", n)
+	}
+	// A dry run is allowed: it starts nothing.
+	var out strings.Builder
+	if _, err := Launch(Options{Agent: "golden", DryRun: true, Out: &out}); err != nil {
+		t.Errorf("dry run: %v", err)
 	}
 }

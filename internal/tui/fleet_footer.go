@@ -173,6 +173,8 @@ func (m FleetModel) footerHints() []fleetHint {
 		hints = fleetNewHints
 	case m.sweepArmed():
 		hints = fleetSweepHints
+	case m.schedFormOpen() && m.schedForm.editor != nil:
+		hints = m.schedForm.editor.Hints()
 	case m.schedFormOpen() && (m.schedForm.review || m.schedForm.discard || m.schedForm.startAsk != ""):
 		hints = fleetSchedYesNoHints
 		if m.schedForm.review {
@@ -229,6 +231,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{"z", "fold / collapse", "z"},
 		{"Z", "focus mode", "Z"},
 		{"f", "filter", "f"},
+		{"click count", "filter by state (click again clears)", ""},
 		{"o", "sort: recent / window", "o"},
 		{fleetSearchKey, "search (⏎ keep, esc clear)", fleetSearchKey},
 		{fleetArtifactKey, "open newest ◆ artifact", fleetArtifactKey},
@@ -236,7 +239,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{fleetClosedKey, "closed agents", fleetClosedKey},
 		{fleetSchedulesKey, "Sessions / Schedules tab (project)", fleetSchedulesKey},
 		{"e/space/g/d/x", "schedule row: edit/pause/run/dup/delete", ""},
-		{fleetServeKey, "serve on/off", fleetServeKey},
+		{fleetServeKey, "phone on/off", fleetServeKey},
 		{"q", "leave", "q"},
 		{"esc", "close help", "?"},
 	}

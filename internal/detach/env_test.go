@@ -94,3 +94,22 @@ func TestStartDaemonStripsAccount(t *testing.T) {
 		t.Errorf("child env lacks pinned runtime dir: %q", *env)
 	}
 }
+
+func TestDaemonEnvStripsSessionID(t *testing.T) {
+	in := []string{"PATH=/bin", "AGENTCTL_SESSION_ID=abc", "AGENTCTL_SESSION_IDX=keep"}
+	want := []string{"PATH=/bin", "AGENTCTL_SESSION_IDX=keep"}
+	if got := DaemonEnv(in, ""); !slices.Equal(got, want) {
+		t.Fatalf("DaemonEnv = %q, want %q", got, want)
+	}
+}
+
+func TestStartDaemonDropsSessionID(t *testing.T) {
+	t.Setenv(EnvSessionID, "sess-1")
+	_, env := captureStartSelf(t)
+	if err := StartDaemon([]string{"reconcile", "--housekeeping"}, "/rt"); err != nil {
+		t.Fatal(err)
+	}
+	if hasVar(*env, EnvSessionID) {
+		t.Fatalf("child env keeps %s: %q", EnvSessionID, *env)
+	}
+}

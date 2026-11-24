@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -27,14 +28,24 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/notify"
+	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // EnvRun carries the run ID into the improve window.
 const EnvRun = "AGENTCTL_IMPROVE_RUN"
 
-// StaleAfter is how long an unfinished run may go before housekeeping closes
-// it out (its window is presumed dead).
+// StaleAfter is how long an unfinished run whose window was never recorded
+// (or is gone) may go before housekeeping closes it out.
 const StaleAfter = 2 * time.Hour
+
+// MaxLive caps how long a run with a live window is left open. A fleet review
+// that dispatches engineers and waits for their reviews can run for hours;
+// past this the run is closed even if its window is still there.
+const MaxLive = 12 * time.Hour
+
+// MaxAge is how long a run directory is kept before housekeeping removes it.
+const MaxAge = 90 * 24 * time.Hour
 
 // maxRationale caps the summary text copied into a commit body.
 const maxRationale = 8 << 10
@@ -48,6 +59,9 @@ var (
 	// publishPhone publishes the report as an artifact, which serve pushes to
 	// the phone (serve.push.artifacts).
 	publishPhone = defaultPublish
+	// windowLive reports whether the improve window recorded on a run still
+	// exists and still belongs to it (tmux window IDs are reused).
+	windowLive = defaultWindowLive
 )
 
 // StoreRec is one history store's part of a run.
@@ -68,6 +82,11 @@ type Run struct {
 	Started  time.Time  `json:"started"`
 	Finished time.Time  `json:"finished,omitzero"`
 	Stores   []StoreRec `json:"stores,omitempty"`
+	// Window, Session and RuntimeDir locate the improve window once it is
+	// launched (RecordWindow); empty until then.
+	Window     string `json:"window,omitempty"`
+	Session    string `json:"session,omitempty"`
+	RuntimeDir string `json:"runtime_dir,omitempty"`
 	// Files are the changed files (absolute paths), Revs the end revisions of
 	// the stores that changed.
 	Files []string `json:"files,omitempty"`
@@ -118,7 +137,10 @@ func Start(o StartOptions) error {
 		return err
 	}
 	r := Run{ID: o.ID, Agent: o.Agent, Fleet: o.Fleet, Started: now()}
-	for _, ns := range stores(o.ProjectDirs) {
+	// The session may edit any project's agents (a fleet review reaches every
+	// project), so every known project store is snapshotted, not just the
+	// run's own dirs.
+	for _, ns := range stores(knownDirs(o.ProjectDirs)) {
 		_, err := ns.store.Snapshot("improve "+o.ID+" start", agenthistory.DefaultAuthor)
 		switch {
 		case errors.Is(err, agenthistory.ErrGitMissing):
@@ -134,9 +156,23 @@ func Start(o StartOptions) error {
 	return save(dir, r)
 }
 
+// knownDirs is a seam for tests that must not read the real window records.
+var knownDirs = func(extra []string) []string { return KnownProjectDirs(extra...) }
+
 type namedStore struct {
 	name  string
 	store *agenthistory.Store
+}
+
+// KnownProjectDirs is every project dir agentctl knows: the work dirs of all
+// window records, after the extra dirs given. Housekeeping's snapshot and an
+// improve run's snapshots share it, so both cover the same project stores.
+func KnownProjectDirs(extra ...string) []string {
+	dirs := slices.Clone(extra)
+	for _, r := range windowstate.All() {
+		dirs = append(dirs, r.WorkDir)
+	}
+	return dirs
 }
 
 func stores(projectDirs []string) []namedStore {
@@ -155,6 +191,60 @@ func stores(projectDirs []string) []namedStore {
 		out = append(out, namedStore{s.WorkTree, s})
 	}
 	return out
+}
+
+// RecordWindow notes where run id's improve window lives, so housekeeping can
+// tell a long run from an abandoned one.
+func RecordWindow(id, window, session, runtimeDir string) error {
+	dir, err := Dir(id)
+	if err != nil {
+		return err
+	}
+	unlock, err := lockRun(dir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	r, err := load(dir)
+	if err != nil {
+		return err
+	}
+	r.Window, r.Session, r.RuntimeDir = window, session, runtimeDir
+	return save(dir, r)
+}
+
+func defaultWindowLive(r Run) bool {
+	if r.Window == "" || r.Session == "" || r.RuntimeDir == "" {
+		return false
+	}
+	ws, ok := windowstate.AllFrom(windowstate.WindowsDirFor(r.RuntimeDir))[r.Window]
+	if !ok || ws.ImproveRun != r.ID {
+		return false
+	}
+	live, err := tmux.ListWindowsInErr(r.Session)
+	if err != nil {
+		return false
+	}
+	for _, w := range live {
+		if w.ID == r.Window {
+			return true
+		}
+	}
+	return false
+}
+
+// isLive reports whether an unfinished run may still be working: its window
+// is alive and it is younger than MaxLive, or (no window known) it is younger
+// than StaleAfter.
+func isLive(r Run) bool {
+	if !r.Finished.IsZero() {
+		return false
+	}
+	age := now().Sub(r.Started)
+	if r.Window == "" {
+		return age < StaleAfter
+	}
+	return age < MaxLive && windowLive(r)
 }
 
 func save(dir string, r Run) error {
@@ -337,12 +427,15 @@ func (r Run) Title() string {
 // announce sends one desktop notification and publishes one report for the
 // phone. Failures are logged only.
 func announce(dir string, r Run, rationale string) {
+	logging.Log("improve: announcing run %s (%d changed files)", r.ID, len(r.Files))
 	report := renderReport(r, rationale)
 	path := filepath.Join(dir, "report.md")
 	if err := os.WriteFile(path, []byte(report), 0o600); err != nil {
 		logging.Log("improve: writing report: %v", err)
 	} else if err := publishPhone(path, r); err != nil {
 		logging.Log("improve: publishing report: %v", err)
+	} else {
+		logging.Log("improve: published report for run %s", r.ID)
 	}
 	notifyDesktop(notify.Options{
 		Title:   r.Title(),
@@ -401,9 +494,31 @@ func defaultPublish(path string, r Run) error {
 		Source: artifacts.Source{Path: path},
 		Title:  r.Title(),
 		Kind:   artifacts.KindMarkdown,
-		Origin: artifacts.Origin{Agent: r.Agent},
+		Origin: artifacts.Origin{Agent: r.Agent, Project: "improve"},
 	})
 	return err
+}
+
+// Resend sends the summary of a finished run again (desktop notification and
+// a new artifact), for re-testing the delivery path. A run that has not
+// finished or changed nothing has no summary and is an error.
+func Resend(id string) error {
+	dir, err := Dir(id)
+	if err != nil {
+		return err
+	}
+	r, err := load(dir)
+	if err != nil {
+		return fmt.Errorf("loading run %s: %w", id, err)
+	}
+	if r.Finished.IsZero() {
+		return fmt.Errorf("run %s has not finished", id)
+	}
+	if len(r.Files) == 0 {
+		return fmt.Errorf("run %s changed nothing, so it has no summary", id)
+	}
+	announce(dir, r, readRationale(dir))
+	return nil
 }
 
 // List returns the recorded runs started at or after since, newest first.
@@ -434,34 +549,102 @@ func List(since time.Time) ([]Run, error) {
 	return runs, nil
 }
 
-// Active reports whether a run started less than StaleAfter ago has not
-// finished. Housekeeping leaves the history stores alone meanwhile, so the
-// end snapshot (and its rationale) owns the run's edits.
-func Active() bool {
-	runs, err := List(now().Add(-StaleAfter))
+// ErrRunActive is returned by CheckNoLiveRun when another improve run is live.
+var ErrRunActive = errors.New("an improve run is already live")
+
+// Live returns an unfinished run that may still be working.
+func Live() (Run, bool) {
+	runs, err := List(now().Add(-MaxLive))
 	if err != nil {
-		return false
+		return Run{}, false
 	}
 	for _, r := range runs {
-		if r.Finished.IsZero() {
-			return true
+		if isLive(r) {
+			return r, true
 		}
 	}
-	return false
+	return Run{}, false
 }
 
-// FinishStale finishes every run older than StaleAfter that never finished
-// (its window died without a hook reaching Finish and the run ID was lost).
+// CheckNoLiveRun refuses a second concurrent run: runs share the history
+// stores, so the first end snapshot would take in the other run's edits.
+func CheckNoLiveRun() error {
+	if r, ok := Live(); ok {
+		where := ""
+		if r.Window != "" {
+			where = " in window " + r.Window
+		}
+		return fmt.Errorf("%w: run %s (%s) started %s%s; wait for it to finish or close its window",
+			ErrRunActive, r.ID, r.Agent, r.Started.Format("15:04"), where)
+	}
+	return nil
+}
+
+// Active reports whether a run may still be working. Housekeeping leaves the
+// history stores alone meanwhile, so the end snapshot (and its rationale)
+// owns the run's edits.
+func Active() bool {
+	_, ok := Live()
+	return ok
+}
+
+// FinishStale finishes every unfinished run that is no longer live: its window
+// is gone (and it is older than StaleAfter), or it passed MaxLive. A window
+// that is still there keeps its run open until then.
 func FinishStale() {
 	runs, err := List(time.Time{})
 	if err != nil {
 		return
 	}
 	for _, r := range runs {
-		if r.Finished.IsZero() && now().Sub(r.Started) >= StaleAfter {
-			if err := Finish(r.ID); err != nil {
-				logging.Log("improve: finishing stale run %s: %v", r.ID, err)
-			}
+		if !r.Finished.IsZero() || now().Sub(r.Started) < StaleAfter || isLive(r) {
+			continue
+		}
+		if err := Finish(r.ID); err != nil {
+			logging.Log("improve: finishing stale run %s: %v", r.ID, err)
 		}
 	}
+}
+
+// Prune removes run directories started more than maxAge ago and reports how
+// many. An unfinished run is never removed.
+func Prune(at time.Time, maxAge time.Duration) (int, error) {
+	sd, err := stateDir()
+	if err != nil {
+		return 0, err
+	}
+	root := filepath.Join(sd, "improve")
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	n := 0
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, e.Name())
+		r, err := load(dir)
+		started := r.Started
+		if err != nil {
+			// No readable run.json: age by the directory itself.
+			fi, serr := e.Info()
+			if serr != nil {
+				continue
+			}
+			started = fi.ModTime()
+		} else if r.Finished.IsZero() {
+			continue
+		}
+		if at.Sub(started) <= maxAge {
+			continue
+		}
+		if os.RemoveAll(dir) == nil {
+			n++
+		}
+	}
+	return n, nil
 }

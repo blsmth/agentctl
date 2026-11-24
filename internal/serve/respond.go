@@ -18,6 +18,8 @@ const (
 	codeInternal        = "internal"
 	codeBadRequest      = "bad_request"
 	codePaneUnavailable = "pane_unavailable"
+	// codePhoneOff: phone access is switched off on the laptop (phone.go).
+	codePhoneOff = "phone_off"
 
 	// Write API (PR4).
 	codeDialogChanged      = "dialog_changed"

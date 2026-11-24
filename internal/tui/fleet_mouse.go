@@ -31,6 +31,7 @@ const (
 	fleetClickNewSched                            // a "+ new schedule" line: open the new-schedule form
 	fleetClickTabSessions                         // header's Sessions tab
 	fleetClickTabSched                            // header's Schedules tab
+	fleetClickCount                               // a header's count slot: toggle that state filter
 )
 
 // fleetListTop returns the screen row where the list (or sidebar) begins: the
@@ -181,6 +182,9 @@ func (m FleetModel) buttonDecision(x, y int, button tea.MouseButton) (idx int, a
 		if m.onSweepButton(l.group, x) {
 			return idx, fleetClickSweep
 		}
+		if _, ok := m.headerCountAt(l.group, x); ok {
+			return idx, fleetClickCount
+		}
 		switch m.onHeaderTab(l.group, x) {
 		case fleetHoverTabSessions:
 			return idx, fleetClickTabSessions
@@ -248,6 +252,11 @@ func (m FleetModel) handleClickBody(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) 
 	}
 	if m.newSessionOpen() {
 		if y := m.footerMessageY(); msg.Y >= y && msg.Y < y+m.newSessionLines() {
+			if msg.Button == tea.MouseLeft {
+				if cmd, ok := m.clickRecent(msg.Y - y); ok {
+					return m, cmd
+				}
+			}
 			return m, nil // a click on the prompt itself keeps it open
 		}
 		m.cancelNewSession() // any other click dismisses the prompt
@@ -263,10 +272,23 @@ func (m FleetModel) handleClickBody(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) 
 		m.cancelNew()
 		return m, m.toggleServe()
 	}
+	if msg.Button == tea.MouseLeft && m.onOpenButton(msg.X, msg.Y) {
+		m.closeMenu()
+		m.cancelNew()
+		return m, m.openNewSession()
+	}
 	if msg.Button == tea.MouseLeft && m.onActivityButton(msg.X, msg.Y) {
 		m.closeMenu()
 		m.cancelNew()
 		return m, m.toggleActivity()
+	}
+	if msg.Button == tea.MouseLeft {
+		if f, ok := m.titleCountAt(msg.X, msg.Y); ok {
+			m.closeMenu()
+			m.cancelNew()
+			m.cancelSweep()
+			return m, m.toggleStateFilter(f)
+		}
 	}
 	if msg.Button == tea.MouseLeft && m.onSortTag(msg.X, msg.Y) {
 		m.closeMenu()
@@ -335,6 +357,10 @@ func (m FleetModel) handleClickBody(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) 
 			return m, nil
 		}
 		return m, m.switchTab(g, t, action == fleetClickTabSched, false)
+	case fleetClickCount:
+		m.closeMenu()
+		f, _ := m.headerCountAt(m.lines[idx].group, msg.X)
+		return m, m.toggleStateFilter(f)
 	case fleetClickFold:
 		m.closeMenu()
 		m.selectLine(idx)

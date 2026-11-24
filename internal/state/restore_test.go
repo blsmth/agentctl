@@ -202,3 +202,76 @@ func TestLoadRestoreWithoutHarnessMeansClaude(t *testing.T) {
 		t.Errorf("agents = %+v", s.Agents)
 	}
 }
+
+func TestRestoreCarriesTitleAndStart(t *testing.T) {
+	manual := windowstate.ShortTitle{Title: "my name", Manual: true, Final: true, InputHash: "h1", Kind: "go"}
+	final := windowstate.ShortTitle{Title: "hub fix", Final: true, InputHash: "h2", At: time.Unix(1700000000, 0).UTC()}
+	recs := map[string]windowstate.WindowState{
+		"@1": {Instance: "a:1", AgentName: "a", WorkDir: "/w", ShortTitle: manual, StartedAt: 1700000100},
+		"@2": {Instance: "a:2", AgentName: "a", WorkDir: "/w", ShortTitle: final, StartedAt: 1700000200},
+		"@3": {Instance: "a:3", AgentName: "a", WorkDir: "/w"},
+	}
+	dir := t.TempDir()
+	if err := SaveRestoreAgents(dir, BuildRestoreAgents(recs, nil)); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadFrom(filepath.Join(dir, RestoreFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]AgentState{}
+	for _, a := range s.Agents {
+		byID[a.WindowID] = a
+	}
+	for id, want := range map[string]windowstate.ShortTitle{"@1": manual, "@2": final} {
+		got := byID[id].ShortTitleRec
+		if got == nil || !got.At.Equal(want.At) || got.Title != want.Title || got.Manual != want.Manual ||
+			got.Final != want.Final || got.InputHash != want.InputHash || got.Kind != want.Kind {
+			t.Errorf("%s: short title %+v, want %+v", id, got, want)
+		}
+	}
+	if byID["@1"].StartedAt != 1700000100 || byID["@2"].StartedAt != 1700000200 {
+		t.Errorf("started_at lost: %d %d", byID["@1"].StartedAt, byID["@2"].StartedAt)
+	}
+	if byID["@3"].ShortTitleRec != nil {
+		t.Errorf("untitled window must carry no short title")
+	}
+}
+
+// Regression: restore dropped the turn-end display facts, so every restored
+// window (resumed idle at its prompt) came back ○ instead of ✓ or !.
+func TestRestoreCarriesTurnEndFacts(t *testing.T) {
+	attn := &windowstate.Attention{Reason: windowstate.AttentionQuestion, Detail: "Merge it?", At: time.Unix(1700000000, 0).UTC()}
+	pv := &windowstate.PendingVerdict{PR: 9, Verdict: "BLOCKED"}
+	recs := map[string]windowstate.WindowState{
+		"@1": {Instance: "a:1", AgentName: "a", WorkDir: "/w", State: "idle", TurnDone: true, TurnCount: 4, Attention: attn, PendingVerdict: pv},
+		"@2": {Instance: "a:2", AgentName: "a", WorkDir: "/w", State: "idle", Done: true, TurnCount: 1},
+		"@3": {Instance: "a:3", AgentName: "a", WorkDir: "/w", State: "idle", Done: true, Seen: true},
+		"@4": {Instance: "a:4", AgentName: "a", WorkDir: "/w"},
+	}
+	dir := t.TempDir()
+	if err := SaveRestoreAgents(dir, BuildRestoreAgents(recs, nil)); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadFrom(filepath.Join(dir, RestoreFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]AgentState{}
+	for _, a := range s.Agents {
+		byID[a.WindowID] = a
+	}
+	a1 := byID["@1"]
+	if !a1.TurnDone || a1.TurnCount != 4 || a1.Attention == nil || a1.Attention.Detail != "Merge it?" || a1.PendingVerdict == nil || a1.PendingVerdict.PR != 9 {
+		t.Errorf("@1 = %+v", a1)
+	}
+	if a2 := byID["@2"]; !a2.TurnDone || a2.Done {
+		t.Errorf("done window: TurnDone=%v Done=%v, want a display-only ✓", a2.TurnDone, a2.Done)
+	}
+	if byID["@3"].TurnDone {
+		t.Error("a seen done window came back ✓")
+	}
+	if a4 := byID["@4"]; a4.TurnDone || a4.Attention != nil || a4.PendingVerdict != nil {
+		t.Errorf("@4 = %+v", a4)
+	}
+}

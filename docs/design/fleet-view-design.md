@@ -282,7 +282,7 @@ hub session. In the activity pane the mouse wheel scrolls the feed; a click
 focuses it (tmux), after which the HUD keys work.
 
 **Status pane.** The selected row's detail (title line, a "needs you" line
-when blocked, the recap, a facts footer; never the activity line) shows in a
+when blocked, the recap, a facts footer when there are facts; never the activity line) shows in a
 pane stacked above the live viewer
 running `agentctl hub-status` (`HubStatusModel`, `internal/tui/hubstatus.go`;
 the hub side is `internal/tui/fleet_status.go`, the tmux side
@@ -306,7 +306,7 @@ selection with a `status` block built from the row's own helpers (`rowGlyph`,
 `rowRecap`, `rowChips`; the recap only, never the last command, which the
 viewer and the activity pane show); the pane re-reads the file every 250ms
 and hot-reloads like the HUD. The block publishes timestamps (`state_since`,
-`start_time`, `sched_at`), never rendered ages: the pane computes them on
+`sched_at`), never rendered ages: the pane computes them on
 its tick. New fields are additive and omitempty; a block without `v: 2`
 (an older hub) is laid out the old way from its `chips`, which are still
 published for one release.
@@ -322,18 +322,21 @@ Layout (exactly the pane's rows, `hubStatusLines`):
 3. The recap, top-anchored, wrapped at up to 120 columns. With one row after
    the title the recap wins over the footer; the "needs you" line also
    yields to the recap.
-4. The last row, always: facts joined by ` · `. Left: `#ticket`, agent base
-   name, branch (dispatched rows), `PR #N` (an OSC 8 link), `← <parent
-   title>`; or `⏲ <job> · fired <age>` for a cron row; then `↳ N sub-agents
-   ⏸n ●n` (direct children), then a non-default backend / `acct <name>`.
-   Right: `model · ctx N% · $cost · session length` (context in the list's
-   thresholds, with a trailing `!` at critical; cost hidden under half a
-   cent; length only when the monitor snapshot has a start time). Facts drop
-   whole as the pane narrows: session length, branch (shortened to
-   `…/<last>`, then gone), parent (cut to 16 columns, then gone), agent,
-   model, cost, context below warn. The PR, ticket, cron job, sub-agent
-   counts, backend/account and context at warn or above stay; if those
-   overflow, the left zone is end-truncated. While it is open the list draws no inline
+4. The last row, when there is a fact to show beyond the agent name: facts
+   joined by ` · `: `#ticket`, agent base name, `PR #N` (an OSC 8 link),
+   `← <parent title>`; or `⏲ <job> · fired <age>` for a cron row; then
+   `↳ N sub-agents ⏸n ●n` (direct children), then a non-default backend /
+   `acct <name>`. Model, context, cost, session length and branch are not
+   shown: the viewer right below carries Claude Code's statusline with them.
+   Facts drop whole as the pane narrows: parent (cut to 16 columns, then
+   gone), then agent. The PR, ticket, cron job, sub-agent counts and
+   backend/account stay; if those overflow, the footer is end-truncated.
+   When the footer would hold only the agent name, the row is dropped (the
+   recap gets it) and the agent name goes dim on the title line, before the
+   right-aligned state; on a narrow pane it drops before the project.
+   An untitled row (title = the recap's first sentence, published as
+   `title_from_recap`) leaves that sentence out of the recap body, so it is
+   not printed twice. While it is open the list draws no inline
 detail lines, and `lineHeight` (scrolling, hit testing, the hover card)
 counts none; without it the inline expansion is back. Focus, keys and
 clicks in it are handed to the viewer pane, and the hub's `enter`/`tab`
@@ -379,7 +382,7 @@ without the hub causing it (`viewerSyncTarget`).
 | `b` | Select the next blocked agent and focus its live pane (stays in the hub) |
 | `z` / `Z` | Collapse the sub-agents of the row under the cursor (or fold its group, on a header or a row without sub-agents) / toggle focus mode (fold every group with nothing blocked or working) |
 | `o` | Toggle row order inside each group between window order (default) and most recent activity first |
-| `f` | Cycle the attention filter: all, active, needs you |
+| `f` | Cycle the attention filter: all, active, needs you (from a state filter it returns to all). Clicking a state count (⏸ ● ! ✓ ○; the `!` cell and header slot appear only while some row needs attention) in the title row or a project header sets a hub-wide single-state filter (`blocked`, `working`, `attention`, `done`, `idle`; shells never match; ancestors stay as context, children of a match are not pulled in); clicking the active count again clears it. State filters persist through hot reload like the others |
 | `/` | Search: type to narrow the list (case-insensitive substring terms, AND; `#278` matches a ticket or PR number exactly). Metadata only, no transcript reads. While typing: `enter` keeps the filter, `esc` (or backspace on an empty query) cancels and restores the previous selection, `up`/`down` move, `j`/`k` are text. With a kept filter `esc` clears it (selection stays) and the next `esc`/`q` leaves. Folds are ignored while searching; groups with no match are hidden; Closed and Schedules rows are filtered too (Closed only with `C`) |
 | `r` | Refresh |
 | `q` / `esc` | Back to the previous tmux session (`switch-client -l`) |

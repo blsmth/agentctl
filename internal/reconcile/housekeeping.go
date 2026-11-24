@@ -46,6 +46,9 @@ type HousekeepingDeps struct {
 	// PruneVerdicts removes review-verdict ledger files older than
 	// verdicts.MaxAge.
 	PruneVerdicts func(now time.Time) (int, error)
+	// PruneImprove removes finished improve run directories older than
+	// improverun.MaxAge.
+	PruneImprove func(now time.Time) (int, error)
 	// PruneLaunch removes old prompt and launch-script files from
 	// <runtime dir>/launch (see tmux.PruneLaunchDir).
 	PruneLaunch   func(now time.Time) (int, error)
@@ -100,6 +103,9 @@ func DefaultHousekeepingDeps(runtimeDir string) HousekeepingDeps {
 		PruneVerdicts: func(now time.Time) (int, error) {
 			return verdicts.Prune(now, verdicts.MaxAge)
 		},
+		PruneImprove: func(now time.Time) (int, error) {
+			return improverun.Prune(now, improverun.MaxAge)
+		},
 		PruneLaunch: func(now time.Time) (int, error) {
 			return tmux.PruneLaunchDir(filepath.Join(runtimeDir, "launch"), now, tmux.LaunchFileMaxAge, tmux.RunningProcessArgs)
 		},
@@ -113,11 +119,7 @@ func DefaultHousekeepingDeps(runtimeDir string) HousekeepingDeps {
 			if improverun.Active() {
 				return true
 			}
-			var dirs []string
-			for _, r := range windowstate.All() {
-				dirs = append(dirs, r.WorkDir)
-			}
-			return agenthistory.SnapshotAll("housekeeping: edit", dirs)
+			return agenthistory.SnapshotAll("housekeeping: edit", improverun.KnownProjectDirs())
 		},
 	}
 }
@@ -185,6 +187,15 @@ func Housekeep(d HousekeepingDeps) {
 			logging.Log("janitor: verdicts.Prune: %v", err)
 		case n > 0:
 			logging.Log("janitor: pruned %d verdict ledger file(s) older than %s", n, verdicts.MaxAge)
+		}
+	}
+	if d.PruneImprove != nil && stamp.Try(filepath.Join(d.RuntimeDir, "prune-improve.stamp"), LLMUsagePruneInterval, now) {
+		n, err := d.PruneImprove(now)
+		switch {
+		case err != nil:
+			logging.Log("janitor: improverun.Prune: %v", err)
+		case n > 0:
+			logging.Log("janitor: pruned %d improve run dir(s) older than %s", n, improverun.MaxAge)
 		}
 	}
 	if d.PruneLaunch != nil && stamp.Try(filepath.Join(d.RuntimeDir, "prune-launch.stamp"), LLMUsagePruneInterval, now) {

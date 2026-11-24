@@ -1,6 +1,7 @@
 package improverun
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/agenthistory"
+	"github.com/blsmth/agentctl/internal/artifacts"
 	"github.com/blsmth/agentctl/internal/notify"
 	"github.com/blsmth/agentctl/internal/testenv"
 )
@@ -214,5 +216,208 @@ func TestFinishIgnoresStoredStore(t *testing.T) {
 	}
 	if r, _ := Load("r5"); len(r.Files) != 1 {
 		t.Fatalf("run = %+v", r)
+	}
+}
+
+// stubLive replaces the window check and the clock for one test.
+func stubLive(t *testing.T, live bool, age time.Duration) {
+	t.Helper()
+	oldL, oldN := windowLive, now
+	windowLive = func(Run) bool { return live }
+	now = func() time.Time { return time.Now().Add(age) }
+	t.Cleanup(func() { windowLive, now = oldL, oldN })
+}
+
+func TestFinishStaleSkipsLiveWindow(t *testing.T) {
+	e := setup(t)
+	if err := Start(StartOptions{ID: "live1", Agent: "x", Fleet: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordWindow("live1", "@9", "sess", "/rt"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(e.home, ".claude", "CLAUDE.md"), "rules\n")
+
+	stubLive(t, true, 5*time.Hour) // past StaleAfter, window alive
+	FinishStale()
+	if r, _ := Load("live1"); !r.Finished.IsZero() {
+		t.Fatal("run with a live window was closed after 5h")
+	}
+	if !Active() {
+		t.Error("live run not active")
+	}
+
+	stubLive(t, true, MaxLive+time.Minute) // past the cap
+	FinishStale()
+	if r, _ := Load("live1"); r.Finished.IsZero() {
+		t.Fatal("run past MaxLive was not closed")
+	}
+}
+
+func TestFinishStaleClosesRunWhoseWindowIsGone(t *testing.T) {
+	setup(t)
+	if err := Start(StartOptions{ID: "gone1", Agent: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordWindow("gone1", "@9", "sess", "/rt"); err != nil {
+		t.Fatal(err)
+	}
+	stubLive(t, false, StaleAfter+time.Minute)
+	FinishStale()
+	if r, _ := Load("gone1"); r.Finished.IsZero() {
+		t.Fatal("run with a dead window was not closed")
+	}
+}
+
+func TestCheckNoLiveRun(t *testing.T) {
+	setup(t)
+	stubLive(t, true, 0)
+	if err := CheckNoLiveRun(); err != nil {
+		t.Fatalf("no runs: %v", err)
+	}
+	if err := Start(StartOptions{ID: "a1", Agent: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	// Window not recorded yet: young run counts.
+	if err := CheckNoLiveRun(); !errors.Is(err, ErrRunActive) {
+		t.Fatalf("err = %v, want ErrRunActive", err)
+	}
+	if err := Finish("a1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckNoLiveRun(); err != nil {
+		t.Fatalf("after finish: %v", err)
+	}
+}
+
+func TestPruneRemovesOldFinishedRuns(t *testing.T) {
+	setup(t)
+	for _, id := range []string{"old", "new", "oldlive"} {
+		if err := Start(StartOptions{ID: id, Agent: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"old", "new"} {
+		if err := Finish(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir, _ := Dir("old")
+	r, _ := load(dir)
+	r.Started = time.Now().Add(-MaxAge - 24*time.Hour)
+	if err := save(dir, r); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ = Dir("oldlive")
+	r, _ = load(dir)
+	r.Started = time.Now().Add(-MaxAge - 24*time.Hour)
+	if err := save(dir, r); err != nil {
+		t.Fatal(err)
+	}
+	n, err := Prune(time.Now(), MaxAge)
+	if err != nil || n != 1 {
+		t.Fatalf("Prune = %d, %v; want 1", n, err)
+	}
+	if _, err := Load("old"); err == nil {
+		t.Error("old run kept")
+	}
+	for _, id := range []string{"new", "oldlive"} {
+		if _, err := Load(id); err != nil {
+			t.Errorf("run %s removed: %v", id, err)
+		}
+	}
+}
+
+// A project's own .claude/agents is a store of the run, whether or not the
+// run's own dirs name it: an edit there is recorded with its revert command.
+func TestRunSnapshotsKnownProjectStores(t *testing.T) {
+	e := setup(t)
+	proj := filepath.Join(t.TempDir(), "proj")
+	write(t, filepath.Join(proj, ".claude", "agents", "brandon.md"), "v1\n")
+	old := knownDirs
+	knownDirs = func(extra []string) []string { return append(extra, proj) }
+	t.Cleanup(func() { knownDirs = old })
+
+	if err := Start(StartOptions{ID: "rp", Agent: "fleet-improver", Fleet: true}); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := Load("rp")
+	if len(r.Stores) != 3 {
+		t.Fatalf("stores = %+v", r.Stores)
+	}
+	write(t, filepath.Join(proj, ".claude", "agents", "brandon.md"), "v2\n")
+	if err := Finish("rp"); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = Load("rp")
+	canon := agenthistory.CanonicalRoot(proj)
+	wantFile := filepath.Join(canon, ".claude", "agents", "brandon.md")
+	if len(r.Files) != 1 || r.Files[0] != wantFile {
+		t.Fatalf("files = %v, want [%s]", r.Files, wantFile)
+	}
+	if len(r.Reverts) != 1 || !strings.Contains(r.Reverts[0], "--store "+canon) || !strings.Contains(r.Reverts[0], ".claude/agents/brandon.md") {
+		t.Fatalf("reverts = %v", r.Reverts)
+	}
+	if len(e.notified) != 1 || !strings.Contains(e.published[0], "brandon.md") {
+		t.Fatalf("summary lacks the project file: %v", e.published)
+	}
+	// The recorded revert command works against the project store.
+	st, err := agenthistory.StoreByName(canon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := st.Resolve(".claude/agents/brandon.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.Revert(path, r.Stores[2].StartRev, ""); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(proj, ".claude", "agents", "brandon.md")); string(b) != "v1\n" {
+		t.Fatalf("after revert = %q", b)
+	}
+}
+
+// The real artifacts store accepts the report from the run dir (0600, under the
+// state dir) and the artifact is listed under the improve project.
+func TestDefaultPublishAddsReportToRealStore(t *testing.T) {
+	setup(t)
+	dir := filepath.Join(t.TempDir(), "improve", "r9")
+	write(t, filepath.Join(dir, "report.md"), "# Report\n")
+	if err := os.Chmod(filepath.Join(dir, "report.md"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := defaultPublish(filepath.Join(dir, "report.md"), Run{ID: "r9", Agent: "brandon", Fleet: true, Files: []string{"x"}}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := artifacts.New().List(artifacts.Filter{})
+	if err != nil || len(list) != 1 {
+		t.Fatalf("List = %v, %v", list, err)
+	}
+	if m := list[0]; m.Agent != "brandon" || m.Project != "improve" || m.Kind != artifacts.KindMarkdown {
+		t.Errorf("meta = %+v", m)
+	}
+}
+
+func TestResend(t *testing.T) {
+	e := setup(t)
+	if err := Start(StartOptions{ID: "r2", Agent: "brandon"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Resend("r2"); err == nil {
+		t.Error("Resend of an unfinished run succeeded")
+	}
+	write(t, filepath.Join(e.home, ".claude", "agents", "a.md"), "v2\n")
+	if err := Finish("r2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Resend("r2"); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.notified) != 2 || len(e.published) != 2 {
+		t.Fatalf("notified %d, published %d; want 2 each", len(e.notified), len(e.published))
+	}
+	if err := Resend("nope"); err == nil {
+		t.Error("Resend of an unknown run succeeded")
 	}
 }

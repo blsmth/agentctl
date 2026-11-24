@@ -32,7 +32,7 @@ import (
 type StatusOptions struct {
 	JSON    bool
 	Session string // filter to one tmux session (exact, or a project substring)
-	State   string // filter to "blocked" | "working" | "idle" | "done"
+	State   string // filter to "blocked" | "working" | "attention" | "idle" | "done"
 	Blocked bool   // shorthand for State == "blocked"
 	Verify  bool   // capture each pane and flag disagreements with windowstate
 }
@@ -161,12 +161,15 @@ func sessionMatches(g fleet.Group, want string) bool {
 	return strings.Contains(bare, want) || strings.Contains(g.Project, want)
 }
 
-// stateMatches applies the --state filter. "done" is not a State value but a
-// separate boolean, so it is handled explicitly rather than by string compare.
+// stateMatches applies the --state filter. "done" and "attention" are not
+// State values but separate flags, so they are handled explicitly rather than
+// by string compare.
 func stateMatches(r fleet.Row, want string) bool {
 	switch want {
 	case "":
 		return true
+	case "attention":
+		return fleet.NeedsAttention(r.AgentState)
 	case "done":
 		return r.Done
 	default:
@@ -345,24 +348,29 @@ func emitStatusJSON(rows []statusRow) error {
 
 // printAttentionSummary prints a one-line tally of what needs a human.
 func printAttentionSummary(rows []statusRow) {
-	var blocked, done, disagree int
+	var blocked, attention, done, disagree int
 	for _, sr := range rows {
 		if sr.row.State == "blocked" {
 			blocked++
 		}
-		if sr.row.Done {
+		if fleet.NeedsAttention(sr.row.AgentState) {
+			attention++
+		} else if sr.row.Done {
 			done++
 		}
 		if sr.checked && !sr.verdict.AgreesWith(sr.row.State) {
 			disagree++
 		}
 	}
-	if blocked == 0 && done == 0 && disagree == 0 {
+	if blocked == 0 && attention == 0 && done == 0 && disagree == 0 {
 		return
 	}
 	var parts []string
 	if blocked > 0 {
 		parts = append(parts, fmt.Sprintf("%d blocked", blocked))
+	}
+	if attention > 0 {
+		parts = append(parts, fmt.Sprintf("%d need you (!)", attention))
 	}
 	if done > 0 {
 		parts = append(parts, fmt.Sprintf("%d done", done))
@@ -373,12 +381,15 @@ func printAttentionSummary(rows []statusRow) {
 	fmt.Fprintf(os.Stderr, "\nNeeds attention: %s\n", strings.Join(parts, ", "))
 }
 
-// stateCell renders the recorded state. "done" takes precedence over the
-// underlying idle state, matching how the monitor names windows.
+// stateCell renders the recorded state. "attention" and "done" take
+// precedence over the underlying idle state, matching how windows are named
+// (⏸ > ● > ! > ✓ > ○).
 func stateCell(r fleet.Row) cell {
 	switch {
 	case r.State == "blocked":
 		return cell{text: "blocked", style: cliRed()}
+	case fleet.NeedsAttention(r.AgentState):
+		return cell{text: "attention", style: cliOrange()}
 	case r.Done:
 		return cell{text: "done", style: cliGreen()}
 	case r.State == "working":
@@ -508,6 +519,9 @@ func RunStatusDetail(window string, jsonOut bool) error {
 		line("context", fmt.Sprintf("%d%% (%d / %d tokens)", sr.row.ContextPct, sr.row.ContextTokens, sr.row.ContextWindow))
 	}
 	line("turns", fmt.Sprintf("%d", sr.row.TurnCount))
+	if a := fleet.AttentionLine(sr.row.AgentState); a != "" {
+		line("needs you", a)
+	}
 	if sr.row.MailboxPending > 0 {
 		line("mail pending", fmt.Sprintf("%d", sr.row.MailboxPending))
 	}

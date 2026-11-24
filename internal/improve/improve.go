@@ -13,6 +13,7 @@ import (
 	"github.com/blsmth/agentctl/internal/claudehome"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/dispatchplan"
 	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/ids"
@@ -24,6 +25,7 @@ import (
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/shellquote"
 	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // claudePermissions is a minimal struct for parsing Claude settings files.
@@ -218,10 +220,13 @@ var (
 	newRunID  = func() string { return time.Now().Format("20060102-150405") + "-" + ids.NewUUID()[:4] }
 	startRun  = improverun.Start
 	finishRun = improverun.Finish
+	// checkLive refuses a second run while one is live.
+	checkLive = improverun.CheckNoLiveRun
+	recordRun = improverun.RecordWindow
 )
 
 // DefaultFleetAgent runs a fleet review when no agent is named.
-const DefaultFleetAgent = "brandon"
+const DefaultFleetAgent = "fleet-improver"
 
 // DefaultSince is the evidence window when none is given.
 const DefaultSince = 7 * 24 * time.Hour
@@ -252,6 +257,25 @@ type Options struct {
 	CallerDir string
 	// Out receives the dry-run output (os.Stdout when nil).
 	Out io.Writer
+	// Dir pins the work dir (cron: the job's directory); empty resolves it
+	// from the agent, the caller and the project.
+	Dir string
+	// Effort overrides the agent's effort level.
+	Effort string
+	// Unattended marks a launch nobody watches (cron): the window gets the
+	// worker permission mode (auto) instead of an interactive one.
+	Unattended bool
+	// ScheduledBy is the cron job behind the launch, recorded in windowstate
+	// like a dispatched cron window so overlap, timeouts and the hub see it.
+	ScheduledBy string
+}
+
+// Result describes a launched improve window.
+type Result struct {
+	RunID     string
+	WindowID  string
+	SessionID string
+	Agent     string
 }
 
 // LaunchSession launches a focused improvement session for the named agent
@@ -266,13 +290,19 @@ func LaunchSession(agentName string, theme string, callerDir string) error {
 // Run builds the evidence and prompt and launches the improvement session (or
 // prints them for DryRun).
 func Run(opts Options) error {
+	_, err := Launch(opts)
+	return err
+}
+
+// Launch is Run returning where the window landed (zero for a dry run).
+func Launch(opts Options) (Result, error) {
 	agentName := opts.Agent
 	if agentName == "" && opts.Fleet {
 		agentName = DefaultFleetAgent
 	}
 	logging.Log("improve: start agent=%q fleet=%v theme=%q callerDir=%q focus=%v dry=%v", agentName, opts.Fleet, opts.Theme, opts.CallerDir, opts.Focus, opts.DryRun)
 	if agentName == "" {
-		return fmt.Errorf("no agent given")
+		return Result{}, fmt.Errorf("no agent given")
 	}
 
 	done := logging.Timing("improve: agent.DiscoverAll")
@@ -280,7 +310,7 @@ func Run(opts Options) error {
 	agents, err := agent.DiscoverFromCwd(cfg)
 	done()
 	if err != nil {
-		return fmt.Errorf("discovering agents: %w", err)
+		return Result{}, fmt.Errorf("discovering agents: %w", err)
 	}
 
 	var target *agent.Agent
@@ -292,13 +322,19 @@ func Run(opts Options) error {
 	}
 	if target == nil {
 		logging.Log("improve: agent %q not found in discover results", agentName)
-		return fmt.Errorf("unknown agent: %s", agentName)
+		return Result{}, fmt.Errorf("unknown agent: %s", agentName)
 	}
 
 	ac := cfg.ForAgent(agentName)
 	workDir, err := resolveWorkDir(target.Dir, ac.Dir, opts.CallerDir, paths.ProjectDir())
 	if err != nil {
-		return err
+		return Result{}, err
+	}
+	if opts.Dir != "" {
+		workDir = opts.Dir
+	}
+	if opts.Effort != "" {
+		ac.EffortLevel = opts.Effort
 	}
 	logging.Log("improve: workDir=%q filePath=%q", workDir, target.FilePath)
 
@@ -306,7 +342,7 @@ func Run(opts Options) error {
 	if opts.Template != "" {
 		t, err := prompttemplate.Load(opts.Template, workDir)
 		if err != nil {
-			return fmt.Errorf("loading template %q: %w", opts.Template, err)
+			return Result{}, fmt.Errorf("loading template %q: %w", opts.Template, err)
 		}
 		tmplBody = t.Prompt
 		if opts.Model == "" {
@@ -325,21 +361,21 @@ func Run(opts Options) error {
 	}
 	pack, err := Evidence(opts.Agent, opts.Fleet, since, opts.SessionIDs)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	evidence := pack.Render(0)
 
 	// Same harness as the agent itself.
 	h, err := dispatch.ResolveHarness(cfg, agentName, "", workDir)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	caps := h.Caps()
 
 	runID := newRunID()
 	summaryPath, err := improverun.SummaryPath(runID)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	var prompt string
 	if opts.Fleet {
@@ -351,19 +387,24 @@ func Run(opts Options) error {
 		prompt += "\n\nTEMPLATE INSTRUCTIONS (" + opts.Template + "):\n" + strings.TrimRight(tmplBody, "\n")
 	}
 
+	prompt = stripInvisible(prompt)
+
 	if opts.DryRun {
 		out := opts.Out
 		if out == nil {
 			out = os.Stdout
 		}
 		_, err := fmt.Fprintf(out, "%s\n\n--- PROMPT ---\n%s\n", evidence, prompt)
-		return err
+		return Result{}, err
+	}
+	if err := checkLive(); err != nil {
+		return Result{}, err
 	}
 
 	// Write prompt to a temp file to avoid shell escaping nightmares.
 	promptFile, err := writePromptFile(agentName, prompt)
 	if err != nil {
-		return fmt.Errorf("writing prompt file: %w", err)
+		return Result{}, fmt.Errorf("writing prompt file: %w", err)
 	}
 	logging.Log("improve: prompt written to %s (%d bytes)", promptFile, len(prompt))
 
@@ -378,14 +419,14 @@ func Run(opts Options) error {
 	if caps.Accounts {
 		acct, err := claudehome.ForLaunch(cfg, opts.Account, agentName, workDir, "")
 		if err != nil {
-			return fmt.Errorf("resolving account: %w", err)
+			return Result{}, fmt.Errorf("resolving account: %w", err)
 		}
 		dispatch.ApplyAccountEnv(extraEnv, acct)
 		acctDir = acct.Dir
 	}
 	hb, err := dispatch.PrepareBackendFor(cfg, h, &ac, opts.Backend, opts.Model, workDir, extraEnv)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 
 	// Build the command with per-session hook configuration.
@@ -395,15 +436,22 @@ func Run(opts Options) error {
 		Backend:       hb,
 	})
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	sessionName := improveSessionName(agentName, paths.ProjectDir(), workDir)
 	extraEnv[dispatch.EnvSessionName] = sessionName
 	inv := dispatch.BaseInvocation(agentName, sessionName, ac, prep)
 	inv.SessionID = sessionID
+	// An unattended run (cron) gets the worker permission mode, as every
+	// other unattended launch does.
+	permissionMode := ""
+	if opts.Unattended && caps.PermissionModes {
+		permissionMode = dispatchplan.PermissionMode(true, ac.PermissionMode, "")
+		inv.PermissionMode = permissionMode
+	}
 	baseFlags, err := h.Command(inv)
 	if err != nil {
-		return fmt.Errorf("building %s command: %w", h.Name(), err)
+		return Result{}, fmt.Errorf("building %s command: %w", h.Name(), err)
 	}
 	shellCmd := buildImproveShellCmd(baseFlags, promptFile)
 
@@ -421,7 +469,7 @@ func Run(opts Options) error {
 	extraEnv[improverun.EnvRun] = runID
 	// Record who asked, so the window shows as a child row and closes with it.
 	dispatch.ApplySpawnedBy(extraEnv)
-	dispatch.ApplyHarnessEnv(extraEnv, h, "", prep)
+	dispatch.ApplyHarnessEnv(extraEnv, h, permissionMode, prep)
 
 	// Snapshot every history store before the session can edit anything.
 	if err := startRun(improverun.StartOptions{ID: runID, Agent: agentName, Fleet: opts.Fleet, ProjectDirs: []string{workDir, target.Dir}}); err != nil {
@@ -437,11 +485,22 @@ func Run(opts Options) error {
 		if err := finishRun(runID); err != nil {
 			logging.Log("improve: closing run %s: %v", runID, err)
 		}
-	} else {
-		logging.Log("improve: success")
-		launchwatch.Start(wid, caps)
+		return Result{}, launchErr
 	}
-	return launchErr
+	logging.Log("improve: success")
+	launchwatch.Start(wid, caps)
+	if wid != "" {
+		if err := recordRun(runID, wid, tmux.SessionName, paths.RuntimeDir()); err != nil {
+			logging.Log("improve: recording window of run %s: %v", runID, err)
+		}
+		if opts.ScheduledBy != "" {
+			windowstate.Update(wid, func(ws *windowstate.WindowState) { //nolint:errcheck
+				ws.ScheduledBy = opts.ScheduledBy
+				ws.ScheduledAt = time.Now()
+			})
+		}
+	}
+	return Result{RunID: runID, WindowID: wid, SessionID: sessionID, Agent: agentName}, nil
 }
 
 // buildFleetPrompt composes the prompt of a fleet-wide review: the evidence of

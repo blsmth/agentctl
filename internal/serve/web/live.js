@@ -1,6 +1,6 @@
 // Live fleet feed: SSE with reconnect backoff, or 5s polling when the server
 // does not advertise "events".
-import { get } from "./api.js";
+import { checkPhoneOff, get } from "./api.js";
 import { backoffDelay } from "./logic.js";
 
 const POLL_MS = 5000;
@@ -111,6 +111,8 @@ export function startLive({ events, onFleet, onWindow, onGone, onApproval, onApp
     source.onerror = () => {
       source.close();
       onStatus(false);
+      // The stream also ends when phone access is switched off.
+      checkPhoneOff();
       later(connect, backoffDelay(attempt++));
     };
   }

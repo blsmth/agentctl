@@ -4,6 +4,12 @@
 // TUI, which needs this), so it mirrors the few serve constants it needs;
 // internal/serve defines its own in terms of these.
 //
+// Start, stop and toggle switch phone access, not the process: stop writes
+// the phone-off file (PhoneOffFile) in the serve dir, which the running
+// server reads per request, so artifact links keep working while the phone
+// app and push notifications are off. StopAll is the full stop (a launchctl
+// bootout). Start removes the file and starts the process when it is down.
+//
 // Every launchctl call goes through launchd.Agent's Runner, and every signal
 // through Controller.Terminate, so tests never touch the real job.
 package servectl
@@ -12,7 +18,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
+	"os"
 	"path/filepath"
 	"runtime"
 	"syscall"
@@ -33,7 +41,40 @@ const (
 	ControlSocket = "control.sock"
 	// SystemdUnit is the unit name `serve install` suggests on Linux.
 	SystemdUnit = "agentctl-serve"
+	// PhoneOffFile, in the serve dir, switches phone access off while it
+	// exists: no push notifications, no remote approvals, and the phone app
+	// routes answer 503 phone_off. Artifact links keep working. Only
+	// SetPhone writes it (agents' Bash and Write are denied the serve dir).
+	PhoneOffFile = "phone-off"
 )
+
+// PhoneOff reports whether phone access is switched off in dir. Any error
+// other than "no such file" reads as off, so a switch that cannot be read
+// errs toward silence.
+func PhoneOff(dir string) bool {
+	_, err := os.Lstat(filepath.Join(dir, PhoneOffFile))
+	return !errors.Is(err, fs.ErrNotExist)
+}
+
+// SetPhone switches phone access on (removes PhoneOffFile) or off (writes
+// it, creating the 0700 serve dir when needed).
+func SetPhone(dir string, on bool) error {
+	path := filepath.Join(dir, PhoneOffFile)
+	if on {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("turning phone access on: %w", err)
+		}
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("turning phone access off: %w", err)
+	}
+	stamp := time.Now().UTC().Format(time.RFC3339) + "\n"
+	if err := os.WriteFile(path, []byte(stamp), 0o600); err != nil {
+		return fmt.Errorf("turning phone access off: %w", err)
+	}
+	return nil
+}
 
 // probeDialTimeout bounds the control-socket connect in Probe. The socket is
 // local, so a live server accepts at once.
@@ -55,13 +96,18 @@ func Dir() (string, error) {
 type State int
 
 const (
-	// StateOff: no live agentctl serve process.
+	// StateOff: no live agentctl serve process (artifact links are down
+	// too).
 	StateOff State = iota
-	// StateRunning: the process is alive and its control socket accepts.
+	// StateRunning: the process is alive, its control socket accepts and
+	// phone access is on.
 	StateRunning
 	// StateUnresponsive: serve.pid names a live agentctl serve, but its
 	// control socket does not accept (remote approvals are not offered).
 	StateUnresponsive
+	// StatePhoneOff: the process is alive and answering, serving artifact
+	// links, but phone access is switched off (PhoneOffFile).
+	StatePhoneOff
 )
 
 // String names the state for messages and tests.
@@ -71,9 +117,15 @@ func (s State) String() string {
 		return "running"
 	case StateUnresponsive:
 		return "unresponsive"
+	case StatePhoneOff:
+		return "phone-off"
 	}
 	return "off"
 }
+
+// Serving reports whether the process answers (artifact links work),
+// whatever the phone switch says.
+func (s State) Serving() bool { return s == StateRunning || s == StatePhoneOff }
 
 // RunningPID reports the live serve pid named by serve.pid. pidfile.Running
 // checks that the process's command line is `agentctl ... serve`, so a stale
@@ -88,13 +140,17 @@ func RunningPID(dir string) (int, bool) {
 // ps. While serve is up that is a single connect with no fork. The socket
 // lives in the 0700 serve dir, so an accepting one is taken as serve; this
 // is a display hint, not the remote-approval Guard. A missing serve dir
-// reads as off.
+// reads as off. An answering server with PhoneOffFile present is
+// StatePhoneOff (one more stat).
 func Probe(dir string) State {
 	return probe(dir, RunningPID, dialControl)
 }
 
 func probe(dir string, running func(string) (int, bool), dial func(string) error) State {
 	if dial(dir) == nil {
+		if PhoneOff(dir) {
+			return StatePhoneOff
+		}
 		return StateRunning
 	}
 	if _, ok := running(dir); ok {
@@ -217,17 +273,30 @@ func (c Controller) waitFor(cond func() bool) bool {
 	}
 }
 
-// Start starts serve. On macOS it bootstraps the installed LaunchAgent, or
-// kickstarts it when launchd already has it loaded (restarting a process
-// whose control socket is dead). It does not spawn an unmanaged server when
-// the LaunchAgent is not installed: that process would have no supervisor,
-// no log capture and would not come back at login, so Start returns
-// ErrNotInstalled instead. On other systems it returns the systemctl
-// command to run.
+// Start turns phone access on and makes sure serve runs. With the process
+// already answering that is all it does. Otherwise, on macOS, it bootstraps
+// the installed LaunchAgent, or kickstarts it when launchd already has it
+// loaded (restarting a process whose control socket is dead). It does not
+// spawn an unmanaged server when the LaunchAgent is not installed: that
+// process would have no supervisor, no log capture and would not come back
+// at login, so Start returns ErrNotInstalled instead. On other systems it
+// returns the systemctl command to run.
 func (c Controller) Start() (string, error) {
+	wasOff := PhoneOff(c.Dir)
+	if err := SetPhone(c.Dir, true); err != nil {
+		return "", err
+	}
 	if url, err := c.URL(c.Dir); err == nil {
+		if wasOff {
+			return "phone access on (serve at " + url + ")", nil
+		}
 		return "serve is already running at " + url, nil
 	}
+	return c.startProcess()
+}
+
+// startProcess starts the serve process (see Start).
+func (c Controller) startProcess() (string, error) {
 	if c.GOOS != "darwin" {
 		return "Run: systemctl --user start " + SystemdUnit, nil
 	}
@@ -242,7 +311,7 @@ func (c Controller) Start() (string, error) {
 	case alive:
 		// A server launchd does not manage holds the pidfile; a bootstrapped
 		// one would exit "already running" and be respawned forever.
-		return "", fmt.Errorf("agentctl serve (pid %d) runs outside launchd and is not answering; stop it first: agentctl serve stop", pid)
+		return "", fmt.Errorf("agentctl serve (pid %d) runs outside launchd and is not answering; stop it first: agentctl serve stop --all", pid)
 	default:
 		err = c.Agent.Bootstrap(Label)
 	}
@@ -260,14 +329,29 @@ func (c Controller) Start() (string, error) {
 	return "serve started at " + url, nil
 }
 
-// Stop stops serve until the next login (or `agentctl serve start`). On
-// macOS it boots the LaunchAgent out, which leaves the plist installed, and
-// SIGTERMs a serve process launchd does not manage (one run in a terminal).
-// It does not `launchctl disable` the job: a stop that silently outlived a
-// reboot would leave serve installed but never running, and remote
-// approvals quietly off; `agentctl serve uninstall` is the permanent stop.
-// On other systems it returns the systemctl command to run.
+// Stop turns phone access off: no push notifications, no approvals offered
+// to the phone, and the phone app answers "phone access is off". The serve
+// process keeps running, so artifact links keep working. It needs no
+// launchctl and works the same on every OS.
 func (c Controller) Stop() (string, error) {
+	if err := SetPhone(c.Dir, false); err != nil {
+		return "", err
+	}
+	if _, alive := c.Running(c.Dir); !alive {
+		return "phone access off (serve is not running; agentctl serve start starts it with phone access on)", nil
+	}
+	return "phone access off: no phone notifications or app; artifact links still work (agentctl serve start turns it back on)", nil
+}
+
+// StopAll stops the serve process until the next login (or `agentctl serve
+// start`), artifact links included. On macOS it boots the LaunchAgent out,
+// which leaves the plist installed, and SIGTERMs a serve process launchd
+// does not manage (one run in a terminal). It does not `launchctl disable`
+// the job: a stop that silently outlived a reboot would leave serve
+// installed but never running, and remote approvals quietly off; `agentctl
+// serve uninstall` is the permanent stop. It leaves the phone switch as it
+// is. On other systems it returns the systemctl command to run.
+func (c Controller) StopAll() (string, error) {
 	if c.GOOS != "darwin" {
 		return "Run: systemctl --user stop " + SystemdUnit, nil
 	}
@@ -306,10 +390,12 @@ func stoppedMessage(launchAgent bool) string {
 	return "serve stopped"
 }
 
-// Toggle stops serve when a serve process is alive (answering or not) and
-// starts it otherwise.
+// Toggle turns phone access off when serve answers with phone access on,
+// and otherwise starts: phone access on, and the process started when it
+// is down or restarted when it is stuck (alive, control socket dead), so
+// one press on a stuck server fixes it rather than only writing the switch.
 func (c Controller) Toggle() (string, error) {
-	if _, alive := c.Running(c.Dir); alive {
+	if _, err := c.URL(c.Dir); err == nil && !PhoneOff(c.Dir) {
 		return c.Stop()
 	}
 	return c.Start()

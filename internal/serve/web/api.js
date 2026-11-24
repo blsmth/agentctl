@@ -11,6 +11,30 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * onPhoneOff handles a 503 phone_off: phone access was switched off on the
+ * laptop. Reloading lands on the server's "phone access is off" page, which
+ * retries by itself and brings the app back once it is on again.
+ */
+function onPhoneOff(status, data) {
+  if (status === 503 && data?.code === "phone_off" && typeof location !== "undefined") location.reload();
+}
+
+/**
+ * checkPhoneOff asks /healthz (no cookie needed) whether phone access is off
+ * and, if so, reloads into the "phone access is off" page. For callers that
+ * cannot read a status, such as an EventSource error.
+ */
+export async function checkPhoneOff() {
+  try {
+    const res = await fetch("/healthz", { credentials: "same-origin", cache: "no-store" });
+    const data = await res.json();
+    if (data?.phone_off) onPhoneOff(503, { code: "phone_off" });
+  } catch {
+    // offline or not JSON: the normal reconnect handles it
+  }
+}
+
 /** api performs a JSON request and returns the parsed body (null for 204). keepalive survives page unload. */
 export async function api(method, path, body, { keepalive = false } = {}) {
   const headers = { Accept: "application/json" };
@@ -31,6 +55,7 @@ export async function api(method, path, body, { keepalive = false } = {}) {
     // non-JSON body: fall through to the status check
   }
   if (!res.ok) {
+    onPhoneOff(res.status, data);
     throw new ApiError(res.status, data?.code ?? "http_error", data?.error ?? `HTTP ${res.status}`, data?.fields);
   }
   return data;
@@ -62,6 +87,9 @@ export async function uploadImages(path, files, fields = {}) {
   } catch {
     // non-JSON body: fall through to the status check
   }
-  if (!res.ok) throw new ApiError(res.status, data?.code ?? "http_error", data?.error ?? `HTTP ${res.status}`);
+  if (!res.ok) {
+    onPhoneOff(res.status, data);
+    throw new ApiError(res.status, data?.code ?? "http_error", data?.error ?? `HTTP ${res.status}`);
+  }
   return data.images;
 }

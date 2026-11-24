@@ -222,6 +222,7 @@ function mountCard(root, ctx, name, write) {
       ["Agent", scheduleAgentText(st.job, st.template_resolved?.agent ?? "")],
       ["Worktree", worktreeFact(st.job)],
     ];
+    if (st.job.mode === "improve") facts.splice(2, 0, ["Mode", "Fleet improve (unattended)"]);
     if (st.job.template) facts.splice(3, 0, ["Template", `${st.job.template}${st.template_resolved ? ` (${st.template_resolved.scope})` : ""}`]);
     if (fires.length > 1 && st.enabled) facts.push(["Next fires", fires.join(", ")]);
     if (adv) facts.push(["Advanced", adv]);
@@ -232,7 +233,9 @@ function mountCard(root, ctx, name, write) {
       st.invalid ? h("p", { class: "sched-fail" }, `Problem: ${st.invalid}`) : null,
       h("div", { class: "sched-facts" }, ...facts.map(([k, v]) => h("div", {}, h("span", { class: "meta" }, `${k} `), v))),
       st.job.template && st.template_error ? h("p", { class: "sched-fail" }, `Template: ${st.template_error}`) : null,
-      h("pre", { class: "sheet-body sched-prompt" }, st.job.template
+      h("pre", { class: "sheet-body sched-prompt" }, st.job.mode === "improve"
+        ? [st.improve_summary, st.job.prompt ? `Theme: ${st.job.prompt}` : ""].filter(Boolean).join("\n\n")
+        : st.job.template
         ? (st.template_resolved?.prompt ?? `(template ${st.job.template}, read at every run)`)
         : st.job.prompt || st.prompt_resolved || (st.job.prompt_key ? `(context key ${st.job.prompt_key})` : "")),
       write
@@ -557,7 +560,7 @@ function mountForm(root, ctx, { job, copy }) {
   function setSource(src) {
     f.source = src;
     templateAgentOpt.hidden = src !== "template";
-    if (src !== "template" && !f.agent) {
+    if (src !== "template" && !f.agent && f.base?.mode !== "improve") {
       // A prompt job needs an agent of its own.
       const first = [...agent.options].find((o) => o.value);
       if (first) { agent.value = first.value; f.agent = first.value; }

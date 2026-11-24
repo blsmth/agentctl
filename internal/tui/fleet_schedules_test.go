@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -42,8 +41,7 @@ type schedFixture struct {
 	runErr     error
 	ran        []string
 	shown      []string
-	editorPath string
-	editorDone tea.ExecCallback
+	promptKeys map[string]string // context keys the store resolves, when set
 }
 
 func newSchedFixture(t *testing.T) *schedFixture {
@@ -63,17 +61,15 @@ func newSchedFixture(t *testing.T) *schedFixture {
 			t.Fatal(err)
 		}
 	}
-	saved := []any{fleetSchedStore, fleetSchedRun, fleetSchedExec, fleetNow, showLiveViewer, hubWindowWidth, hubZoomSync, tkEditorCmd, fleetSchedPermMode}
+	saved := []any{fleetSchedStore, fleetSchedRun, fleetNow, showLiveViewer, hubWindowWidth, hubZoomSync, fleetSchedPermMode}
 	t.Cleanup(func() {
 		fleetSchedStore = saved[0].(func(func(string, string) error) cronedit.Store)
 		fleetSchedRun = saved[1].(cronedit.RunFunc)
-		fleetSchedExec = saved[2].(func(*exec.Cmd, tea.ExecCallback) tea.Cmd)
-		fleetNow = saved[3].(func() time.Time)
-		showLiveViewer = saved[4].(func(string, string, int) error)
-		hubWindowWidth = saved[5].(func() (int, error))
-		hubZoomSync = saved[6].(func(bool))
-		tkEditorCmd = saved[7].(func(string) *exec.Cmd)
-		fleetSchedPermMode = saved[8].(func(string) string)
+		fleetNow = saved[2].(func() time.Time)
+		showLiveViewer = saved[3].(func(string, string, int) error)
+		hubWindowWidth = saved[4].(func() (int, error))
+		hubZoomSync = saved[5].(func(bool))
+		fleetSchedPermMode = saved[6].(func(string) string)
 	})
 	fleetNow = func() time.Time { return schedNow }
 	fleetSchedStore = func(validate func(string, string) error) cronedit.Store {
@@ -99,14 +95,6 @@ func newSchedFixture(t *testing.T) *schedFixture {
 		e.Job = name
 		return e, f.runErr
 	}
-	fleetSchedExec = func(c *exec.Cmd, cb tea.ExecCallback) tea.Cmd {
-		f.editorPath, f.editorDone = c.Args[len(c.Args)-1], cb
-		return nil
-	}
-	tkEditorCmd = func(path string) *exec.Cmd {
-		// Built, never started.
-		return &exec.Cmd{Path: "/nonexistent/editor", Args: []string{"editor", path}}
-	}
 	fleetSchedPermMode = func(string) string { return "auto" }
 	showLiveViewer = func(session, window string, _ int) error {
 		f.mu.Lock()
@@ -129,6 +117,12 @@ func (f *schedFixture) base() cronedit.Store {
 			return config.CronConfig{Enabled: &en, MinInterval: "15m"}
 		},
 		SchedulerInstalled: func() bool { return f.installed },
+		ResolvePromptKey: func(key string) (string, error) {
+			if v, ok := f.promptKeys[key]; ok {
+				return v, nil
+			}
+			return cronedit.ResolvePromptKey(key)
+		},
 	}
 }
 
@@ -253,7 +247,7 @@ func schedDrive(t *testing.T, m FleetModel, cmd tea.Cmd) FleetModel {
 		m.schedAnimOn, m.schedAnimP = false, 1
 		return m
 	case fleetSchedLoadedMsg, fleetSchedDetailMsg, fleetSchedWroteMsg, fleetSchedRanMsg,
-		fleetSchedPreviewMsg, fleetSchedSavedMsg, fleetSchedEditorMsg, fleetLiveMsg:
+		fleetSchedPreviewMsg, fleetSchedSavedMsg, fleetLiveMsg:
 		next, c := m.Update(msg)
 		return schedDrive(t, next.(FleetModel), c)
 	}
@@ -320,7 +314,12 @@ func schedClear(t *testing.T, m FleetModel) FleetModel {
 // tabbed project to its Schedules tab, the view most schedule tests drive.
 func showSchedules(t *testing.T, m FleetModel) FleetModel {
 	t.Helper()
-	m = schedDrive(t, m, m.schedLoadCmd())
+	// Run the load to the end: on a loaded machine (-race) it can take longer
+	// than schedDrive waits for a command.
+	if cmd := m.schedLoadCmd(); cmd != nil {
+		next, c := m.Update(cmd())
+		m = schedDrive(t, next.(FleetModel), c)
+	}
 	if !m.sched.loaded {
 		t.Fatalf("schedules loaded=%v err=%q", m.sched.loaded, m.sched.err)
 	}
@@ -1065,40 +1064,6 @@ func TestScheduleFormKeysNeverReachTheHub(t *testing.T) {
 		if next.(FleetModel).reexec {
 			t.Error("a hot reload would drop the open form")
 		}
-	}
-}
-
-func TestScheduleFormEditor(t *testing.T) {
-	f := newSchedFixture(t)
-	f.create(t, cron.Job{Name: "keyed", Schedule: "0 7 * * *", PromptKey: "triage-prompt"})
-	m := showSchedules(t, f.model(t))
-	m = selectSched(t, m, "keyed")
-	m = schedPress(t, m, "e", "ctrl+e")
-	if f.editorDone == nil {
-		t.Fatalf("editor not started: %q", formOf(t, m).err)
-	}
-	if err := os.WriteFile(f.editorPath, []byte("Inline now.\nSecond line.\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	m = schedDrive(t, m, func() tea.Msg { return f.editorDone(nil) })
-	if _, err := os.Stat(f.editorPath); !os.IsNotExist(err) {
-		t.Error("the draft file was left behind")
-	}
-	fm := formOf(t, m)
-	if fm.prompt.Value() != "Inline now.\nSecond line." || fm.promptKey != "" {
-		t.Errorf("prompt %q key %q", fm.prompt.Value(), fm.promptKey)
-	}
-	m = schedPress(t, m, "ctrl+s", "y")
-	j := f.job(t, "keyed")
-	if j.Prompt != "Inline now.\nSecond line." || j.PromptKey != "" {
-		t.Errorf("converted job = %+v", j)
-	}
-
-	// No $EDITOR: say so, keep the form.
-	tkEditorCmd = func(string) *exec.Cmd { return nil }
-	m = schedPress(t, m, "e", "ctrl+e")
-	if !strings.Contains(formOf(t, m).err, "set $EDITOR") {
-		t.Errorf("err = %q", formOf(t, m).err)
 	}
 }
 

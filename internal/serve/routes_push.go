@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/logging"
 )
@@ -39,8 +40,20 @@ func (s *Server) initPush(opts Options) error {
 			AppURL:  "https://" + net.JoinHostPort(opts.AdvertiseHost, strconv.Itoa(opts.HTTPSPort)),
 		}
 	}
+	s.sender.SetMuted(s.phone.Off)
 	s.pushQ = newPushDispatcher(s.sender, s.ntfy)
+	s.pushQ.muted = s.phone.Off
 	s.notifier = NewNotifier(opts.Config.Push, s.now, s.pushQ.enqueue)
+	if opts.Config.Push.QuietWhenLaptopActiveEnabled() {
+		probe := opts.LaptopIdle
+		if probe == nil {
+			probe = laptopIdleProbe
+		}
+		idle := time.Duration(opts.Config.Push.EffectiveLaptopIdleSeconds()) * time.Second
+		laptop := newLaptopActivity(probe, idle, s.now)
+		s.sender.SetLaptop(laptop)
+		s.notifier.SetLaptop(laptop, s.approvalPending)
+	}
 	return nil
 }
 

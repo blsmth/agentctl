@@ -18,10 +18,8 @@ func layoutStatus() *hubStatus {
 		Version: hubStatusVersion, Glyph: "●", Title: "Status pane", Project: "agentctl",
 		State: "working", StateSince: statusNow.Add(-4 * time.Minute),
 		Detail: rowDetailParts{Recap: "Moving the detail out of the hub list into a pane."},
-		Ticket: 42, Agent: "go-engineer", Branch: "agent/go-engineer/issue-42",
+		Ticket: 42, Agent: "go-engineer",
 		PRNumber: 7, PRURL: "https://example.test/pull/7", ParentTitle: "Fleet view overhaul work",
-		Model: "opus-4-7", CtxPct: 42, CtxWarn: 70, CtxCrit: 90, CostUSD: 1.234,
-		StartTime: statusNow.Add(-47 * time.Minute).Unix(),
 	}
 }
 
@@ -44,6 +42,19 @@ func TestHubStatusLayout(t *testing.T) {
 		SchedBy: "nightly", SchedAt: statusNow.Add(-3 * time.Hour), Note: "no prompt yet · 3h"}
 	fresh := &hubStatus{Version: hubStatusVersion, Glyph: "○", Title: "go-engineer", State: "idle", Agent: "go-engineer"}
 
+	donePR := layoutStatus()
+	donePR.State, donePR.Glyph, donePR.StateSince, donePR.PRNumber = "done", "✓", statusNow.Add(-time.Hour), 12
+	kids := layoutStatus()
+	kids.Kids, kids.KidsBlocked, kids.KidsWorking, kids.Extra = 3, 1, 2, []string{"acct work"}
+	agentOnly := &hubStatus{Version: hubStatusVersion, Glyph: "●", Title: "Status pane", Project: "agentctl", Agent: "go-engineer",
+		State: "working", StateSince: statusNow.Add(-4 * time.Minute), Detail: rowDetailParts{Recap: "Recap sentence."}}
+	untitled := &hubStatus{Version: hubStatusVersion, Glyph: "●", Title: "Fixed the build", TitleFromRecap: true, State: "working",
+		Detail: rowDetailParts{Recap: "Fixed the build. Then added tests."}}
+
+	untitledLong := &hubStatus{Version: hubStatusVersion, Glyph: "●", TitleFromRecap: true, State: "working",
+		Title:  "Refactoring the authentication middleware to use the new session store",
+		Detail: rowDetailParts{Recap: "Refactoring the authentication middleware to use the new session store."}}
+
 	tests := []struct {
 		name    string
 		st      *hubStatus
@@ -53,19 +64,26 @@ func TestHubStatusLayout(t *testing.T) {
 		lastRow string // substring required on row h (empty: no footer expected)
 	}{
 		{"working wide", layoutStatus(), 166, 6,
-			[]string{"working 4m · agentctl", "#42 · go-engineer · agent/go-engineer/issue-42 · PR #7 · ← Fleet view overhaul work", "opus-4-7 · ctx 42% · $1.23 · 47m"}, nil, "47m"},
+			[]string{"working 4m · agentctl", "#42 · go-engineer · PR #7 · ← Fleet view overhaul work"},
+			[]string{"opus", "ctx", "$1", "47m", "issue-42"}, "← Fleet view"},
+		{"width 90", layoutStatus(), 90, 6, []string{"working 4m · agentctl", "#42 · go-engineer · PR #7"}, nil, "PR #7"},
 		{"blocked with tool", blocked, 90, 6,
 			[]string{"blocked 4m", "needs you: Bash  rm -rf node_modules"}, nil, "PR #7"},
 		{"blocked on folder trust", trust, 90, 6,
 			[]string{"needs you: folder trust  /repo/.worktrees/agent-x"}, []string{"needs you: trust"}, "PR #7"},
 		{"blocked without tool", blockedNoTool, 90, 6, []string{"blocked 4m"}, []string{"needs you"}, "PR #7"},
 		{"cron no recap", cron, 90, 6, []string{"nightly", "no prompt yet", "⏲ nightly · fired 3h"}, nil, "fired 3h"},
-		{"fresh window", fresh, 60, 6, []string{"idle"}, []string{"ctx", "$", "·  ·"}, ""},
-		{"narrow 60 drops length, branch", layoutStatus(), 60, 6, []string{"working 4m", "PR #7", "opus-4-7"}, []string{"47m", "issue-42"}, "PR #7"},
-		{"narrow 40", layoutStatus(), 40, 6, []string{"working", "PR #7"}, []string{"47m"}, "PR #7"},
+		{"done with PR", donePR, 90, 6, []string{"done 1h", "PR #12"}, nil, "PR #12"},
+		{"child tally", kids, 90, 6, []string{"↳ 3 sub-agents ⏸1 ●2 · acct work"}, nil, "acct work"},
+		{"agent only collapses", fresh, 60, 6, []string{"idle"}, []string{"ctx", "$", "·  ·"}, ""},
+		{"agent on title line", agentOnly, 90, 6, []string{"go-engineer  working 4m · agentctl", "Recap sentence"}, nil, ""},
+		{"narrow 60", layoutStatus(), 60, 6, []string{"working 4m", "PR #7"}, nil, "PR #7"},
+		{"narrow 40", layoutStatus(), 40, 6, []string{"working", "PR #7"}, nil, "PR #7"},
 		{"h=2 recap wins", layoutStatus(), 90, 2, []string{"Moving the detail"}, []string{"PR #7"}, ""},
 		{"h=1 title only", layoutStatus(), 90, 1, []string{"working"}, []string{"Moving"}, ""},
 		{"h=3 recap before needs", blocked, 90, 3, []string{"Moving the detail", "PR #7"}, []string{"needs you"}, "PR #7"},
+		{"untitled narrow keeps full recap", untitledLong, 40, 6, []string{"middleware to use the new session", "store."}, nil, ""},
+		{"untitled recap not repeated", untitled, 90, 6, []string{"Fixed the build", "Then added tests"}, nil, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -101,16 +119,13 @@ func TestHubStatusFooterDropOrder(t *testing.T) {
 	st := layoutStatus()
 	st.Kids, st.KidsBlocked, st.KidsWorking = 3, 1, 2
 	st.Extra = []string{"acct work"}
-	st.CtxPct = 95 // at critical: never dropped
 	full := ansi.Strip(hubStatusFooter(st, 400, statusNow))
-	if !strings.Contains(full, "↳ 3 sub-agents ⏸1 ●2 · acct work") || !strings.Contains(full, "ctx 95%!") {
+	if !strings.Contains(full, "↳ 3 sub-agents ⏸1 ●2 · acct work") {
 		t.Fatalf("full footer = %q", full)
 	}
-	// Walk the width down: each droppable fact disappears (for good) in the
-	// documented order, and the never-dropped ones stay while it does.
-	markers := []string{"47m", "issue-42", "←", "go-engineer", "opus", "$1.23"}
+	markers := []string{"←", "go-engineer"}
 	gone := make([]int, len(markers)) // widest width at which each is absent
-	for w := 400; w >= 60; w-- {
+	for w := 400; w >= 50; w-- {
 		got := ansi.Strip(hubStatusFooter(st, w, statusNow))
 		if lipgloss.Width(got) > w {
 			t.Fatalf("w=%d: footer is %d wide: %q", w, lipgloss.Width(got), got)
@@ -123,43 +138,37 @@ func TestHubStatusFooterDropOrder(t *testing.T) {
 				t.Fatalf("w=%d: %q came back after dropping at %d", w, m, gone[i])
 			}
 		}
-		for _, keep := range []string{"PR #7", "#42", "⏸1", "acct work", "ctx 95%!"} {
+		for _, keep := range []string{"PR #7", "#42", "⏸1", "acct work"} {
 			if !strings.Contains(got, keep) {
 				t.Fatalf("w=%d: never-dropped %q missing in %q", w, keep, got)
 			}
 		}
 	}
-	for i := 1; i < len(markers); i++ {
-		if gone[i] == 0 || gone[i] > gone[i-1] {
-			t.Errorf("%q dropped at %d, before %q at %d", markers[i], gone[i], markers[i-1], gone[i-1])
-		}
-	}
-	// Short branch and a 16-column parent before either is dropped.
-	st2 := layoutStatus()
-	st2.Model, st2.CostUSD, st2.StartTime, st2.CtxPct = "", 0, 0, 0
-	got := ansi.Strip(hubStatusFooter(st2, 70, statusNow))
-	if !strings.Contains(got, "…/issue-42") {
-		t.Errorf("branch not shortened: %q", got)
-	}
-	if st2.Branch = "main"; !strings.Contains(ansi.Strip(hubStatusFooter(st2, 200, statusNow)), "main") {
-		t.Error("plain branch lost")
+	if gone[1] == 0 || gone[1] > gone[0] {
+		t.Errorf("agent dropped at %d, before parent at %d", gone[1], gone[0])
 	}
 	// Overflowing never-drop facts are end-truncated.
 	st3 := &hubStatus{Version: hubStatusVersion, PRNumber: 1234, Ticket: 99, Extra: []string{"acct a-very-long-account-name"}}
 	if got := ansi.Strip(hubStatusFooter(st3, 20, statusNow)); lipgloss.Width(got) > 20 || !strings.HasSuffix(got, "…") {
 		t.Errorf("not truncated: %q", got)
 	}
+	// Agent only: no footer at all.
+	if got := hubStatusFooter(&hubStatus{Version: hubStatusVersion, Agent: "go-engineer"}, 80, statusNow); got != "" {
+		t.Errorf("agent-only footer = %q", got)
+	}
 }
 
-func TestHubStatusFooterCtxWarnKept(t *testing.T) {
-	InitStyles()
-	st := &hubStatus{Version: hubStatusVersion, PRNumber: 5, Model: "opus", CtxPct: 75, CtxWarn: 70, CtxCrit: 90, CostUSD: 3}
-	if got := ansi.Strip(hubStatusFooter(st, 16, statusNow)); !strings.Contains(got, "ctx 75%") {
-		t.Errorf("ctx at warn dropped: %q", got)
-	}
-	st.CtxPct = 40
-	if got := ansi.Strip(hubStatusFooter(st, 12, statusNow)); strings.Contains(got, "ctx") {
-		t.Errorf("ctx below warn kept at 12 cols: %q", got)
+func TestAfterFirstSentence(t *testing.T) {
+	for in, want := range map[string]string{
+		"One. Two three.":      "Two three.",
+		"Only one sentence.":   "",
+		"No end":               "",
+		"See a.b.c now. Next!": "Next!",
+		"  A!  B ":             "B",
+	} {
+		if got := afterFirstSentence(in); got != want {
+			t.Errorf("afterFirstSentence(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
@@ -194,6 +203,11 @@ func TestHubStatusJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(data, &back); err != nil || !back.StateSince.Equal(st.StateSince) || back.PRURL != st.PRURL {
 		t.Errorf("round trip: %v %+v", err, back)
 	}
+	// A file from the previous layout (branch, model, cost) still decodes.
+	var prev hubStatus
+	if err := json.Unmarshal([]byte(`{"v":2,"glyph":"●","branch":"b","model":"opus","ctx_pct":5,"cost_usd":1,"start_time":9}`), &prev); err != nil || prev.Version != 2 {
+		t.Fatalf("previous file: %v %+v", err, prev)
+	}
 	// An old file (no new fields) decodes and renders.
 	var old hubStatus
 	if err := json.Unmarshal([]byte(`{"glyph":"●","title":"T","detail":{},"chips":["#1"]}`), &old); err != nil || old.Version != 0 {
@@ -223,39 +237,21 @@ func TestHubStatusForPublishes(t *testing.T) {
 		t.Errorf("parent status = %+v", st)
 	}
 	st := hubStatusFor(b, fleetDisplay{defaultAccount: "personal"}, groups)
-	if st.State != "blocked" || st.PendingTool != "Bash" || st.ParentTitle != "Orchestrating" || st.Branch != "agent/x/1" ||
-		st.Model != "opus-4-7" || st.CostUSD != 2.5 || st.CtxPct != 55 || st.CtxWarn == 0 || st.CtxCrit == 0 ||
+	if st.State != "blocked" || st.PendingTool != "Bash" || st.ParentTitle != "Orchestrating" ||
 		st.PRURL != "https://x/9" || !st.StateSince.Equal(statusNow) || st.Version != hubStatusVersion {
 		t.Errorf("child status = %+v", st)
 	}
 	if len(st.Extra) != 2 || st.Extra[0] != "nous" || st.Extra[1] != "acct work" {
 		t.Errorf("extra = %v", st.Extra)
 	}
-	// Pending tool is meaningless unless blocked; a bare row has no branch.
-	w.PendingTool, w.Branch = "Read", "br"
-	if st := hubStatusFor(w, fleetDisplay{}, groups); st.PendingTool != "" || st.Branch != "" || st.State != "working" {
+	// Pending tool is meaningless unless blocked.
+	w.PendingTool = "Read"
+	if st := hubStatusFor(w, fleetDisplay{}, groups); st.PendingTool != "" || st.State != "working" {
 		t.Errorf("working status = %+v", st)
 	}
 	done := mk("@5", "", "idle")
 	done.Done = true
 	if st := hubStatusFor(done, fleetDisplay{}, nil); st.State != "done" {
 		t.Errorf("done state = %q", st.State)
-	}
-}
-
-func TestHubStatusFooterSessionLength(t *testing.T) {
-	InitStyles()
-	for _, tt := range []struct {
-		ago  time.Duration
-		want string
-	}{
-		{47 * time.Minute, "47m"},
-		{2*time.Hour + 14*time.Minute, "2h14m"},
-		{3 * time.Hour, "3h"},
-	} {
-		st := &hubStatus{Version: hubStatusVersion, StartTime: statusNow.Add(-tt.ago).Unix()}
-		if got := ansi.Strip(hubStatusFooter(st, 40, statusNow)); strings.TrimSpace(got) != tt.want {
-			t.Errorf("%v: got %q, want %q", tt.ago, got, tt.want)
-		}
 	}
 }

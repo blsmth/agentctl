@@ -245,6 +245,14 @@ type tkHint struct {
 // unpinned hints from the end until the bar fits. Every hint is a click
 // zone that sends its key.
 func (m TicketsModel) renderHintBar(hints []tkHint) string {
+	return clickableHintLine(hints, m.hover, m.contentWidth())
+}
+
+// clickableHintLine lays hints out centered in cw columns, dropping unpinned
+// hints from the end until the bar fits; a pinned-only bar that is still too
+// wide is cut. Every hint is a "key:<send>@hint" click zone and underlines
+// while hovered. Shared by the tickets and sessions browsers.
+func clickableHintLine(hints []tkHint, hover string, cw int) string {
 	sep := "  " + menuHintDotStyle.Render("·") + "  "
 	render := func(h tkHint) string {
 		send := h.send
@@ -253,12 +261,11 @@ func (m TicketsModel) renderHintBar(hints []tkHint) string {
 		}
 		id := "key:" + send + "@hint"
 		label := menuHintLabelStyle
-		if m.hover == id {
+		if hover == id {
 			label = label.Underline(true)
 		}
 		return zoneMark(id, menuHintKeyStyle.Render(h.key)+" "+label.Render(h.label))
 	}
-	cw := m.contentWidth()
 	keep := append([]tkHint(nil), hints...)
 	for {
 		var parts []string

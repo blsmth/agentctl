@@ -56,8 +56,9 @@ func TestServeBadgeStates(t *testing.T) {
 		want  string
 	}{
 		{"before the first probe", false, servectl.StateRunning, ""},
-		{"running", true, servectl.StateRunning, "📱 serve"},
-		{"off", true, servectl.StateOff, "📱 off"},
+		{"phone on", true, servectl.StateRunning, "📱 on"},
+		{"phone off", true, servectl.StatePhoneOff, "📱 off"},
+		{"process down", true, servectl.StateOff, "📱 down"},
 		{"pid alive, socket dead", true, servectl.StateUnresponsive, "📱 stuck"},
 	}
 	for _, tt := range tests {
@@ -82,7 +83,7 @@ func TestServeBadgeDistinctStyles(t *testing.T) {
 	m := foldModel(t)
 	m.serveKnown = true
 	seen := map[string]servectl.State{}
-	for _, st := range []servectl.State{servectl.StateRunning, servectl.StateOff, servectl.StateUnresponsive} {
+	for _, st := range []servectl.State{servectl.StateRunning, servectl.StatePhoneOff, servectl.StateOff, servectl.StateUnresponsive} {
 		m.serveState = st
 		b := m.serveBadge()
 		if prev, dup := seen[b]; dup {
@@ -98,7 +99,7 @@ func TestServeBadgeNarrowTitle(t *testing.T) {
 	m.termWidth = 40 // contentWidth's floor
 	m.liveLeft = 40
 	title := ansi.Strip(m.renderTitle(m.contentWidth()))
-	if !strings.Contains(title, "📱 serve") {
+	if !strings.Contains(title, "📱 on") {
 		t.Errorf("narrow title dropped the badge: %q", title)
 	}
 	if w := ansi.StringWidth(title); w > m.contentWidth() {
@@ -134,7 +135,9 @@ func TestServeKeyToggles(t *testing.T) {
 		wantInfo string
 		wantErr  string
 	}{
-		{"stop", servectl.StateRunning, "serve stopped", nil, "stopping", "serve stopped", ""},
+		{"phone off", servectl.StateRunning, "phone access off", nil, "turning phone access off", "phone access off", ""},
+		{"phone on", servectl.StatePhoneOff, "phone access on", nil, "turning phone access on", "phone access on", ""},
+		{"stuck restarts", servectl.StateUnresponsive, "serve started at https://h/", nil, "restarting", "serve started at https://h/", ""},
 		{"start", servectl.StateOff, "serve started at https://h/", nil, "starting", "serve started at https://h/", ""},
 		{"not installed", servectl.StateOff, "", servectl.ErrNotInstalled, "starting", "", "serve install"},
 	}
@@ -180,7 +183,7 @@ func TestServeBadgeClick(t *testing.T) {
 	}
 	// The span matches where the badge renders.
 	title := ansi.Strip(m.renderTitle(m.contentWidth()))
-	if got := ansi.Cut(title, span[0], span[1]); got != "📱 serve" {
+	if got := ansi.Cut(title, span[0], span[1]); got != "📱 on" {
 		t.Errorf("span %v covers %q", span, got)
 	}
 	// Clicks beside it, or on another row, do nothing.

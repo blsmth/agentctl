@@ -296,6 +296,9 @@ func (m *ChromeBarModel) rebuild(relist bool) bool {
 		if a.Done || (a.TurnDone && st != "working" && st != "blocked") {
 			st = "done"
 		}
+		if fleet.NeedsAttention(a) {
+			st = "attention" // ⏸ > ● > ! > ✓ > ○
+		}
 		tabs = append(tabs, TabInfo{
 			Name:     tmux.BaseAgentName(a.Name),
 			State:    st,
@@ -516,7 +519,7 @@ type tabSpan struct {
 
 // tabStyles bundles the line-2 styles so rendering and hit-testing share them.
 type tabStyles struct {
-	session, active, working, blocked, done, idle, sep, fill, clock lipgloss.Style
+	session, active, working, blocked, attention, done, idle, sep, fill, clock lipgloss.Style
 }
 
 func newTabStyles() tabStyles {
@@ -535,13 +538,14 @@ func newTabStyles() tabStyles {
 			Foreground(lipgloss.Color(t.Bright)).
 			Background(lipgloss.Color(t.Surface)).
 			Padding(0, 1),
-		working: base(t.Accent),
-		blocked: base(t.Yellow),
-		done:    base(t.Green),
-		idle:    base(t.Subtle),
-		sep:     base(t.Muted),
-		fill:    base(t.Muted),
-		clock:   base(t.Subtle),
+		working:   base(t.Accent),
+		blocked:   base(t.Yellow),
+		attention: base(t.Orange).Bold(true),
+		done:      base(t.Green),
+		idle:      base(t.Subtle),
+		sep:       base(t.Muted),
+		fill:      base(t.Muted),
+		clock:     base(t.Subtle),
 	}
 }
 
@@ -558,6 +562,8 @@ func renderTabLabel(tab TabInfo, spinnerView string, st tabStyles) string {
 		icon, style = spinnerView, st.working
 	case "blocked":
 		icon, style = "⏸", st.blocked
+	case "attention":
+		icon, style = fleet.AttentionGlyph, st.attention
 	case "done":
 		icon, style = "✓", st.done
 	default:

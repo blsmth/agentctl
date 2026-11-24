@@ -22,7 +22,7 @@ terminal:                             # all optional
 config:                               # optional; network, notifications, monitor, titles and metrics are always off
   theme: catppuccin-mocha             # agentctl theme (see `agentctl` theme picker); default: agentctl's default
   dispatch_approval: all              # all (default) | non-review | off
-  serve: true                         # fake a running `agentctl serve` so the hub shows "📱 serve" (a stub on a socket in the demo's state dir); default false
+  serve: true                         # fake a running `agentctl serve` so the hub shows "📱 on" (a stub on a socket in the demo's state dir); default false
   statusline_format: rich             # rich | complementary | full | mobile | minimal; default: agentctl's default
   default_agent: go-engineer          # default_agent: what a hub launch (`n` then `a`) uses; a fake ~/.claude/agents/<agent>.md is written for it. Launched windows run a live fake `claude` (start screen, idle row) that never reaches the network; see hub-launch.yaml
   new_window_position: right          # left (agentctl's default) | right; see hub-orchestrate.yaml

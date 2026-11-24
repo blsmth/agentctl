@@ -12,10 +12,21 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 )
 
-// HourlyBudget caps title requests per rolling hour across every window and
+// NewSessionReserve is the part of the hourly cap that only first titles for
+// brand-new sessions and the Stop refinement may spend. Requests for restored
+// or resumed windows and the housekeeping backfill cannot take the last
+// NewSessionReserve slots, so a crash restore of dozens of windows never
+// leaves new sessions untitled.
+const NewSessionReserve = 30
+
+// hourlyCapFn resolves the effective cap; tests replace it. Read per call
+// (titles.hourly_cap, global-only), never at package init.
+var hourlyCapFn = func() int { return config.Load().Titles.EffectiveHourlyCap() }
+
+// HourlyCap caps title requests per rolling hour across every window and
 // session on the machine, so a bug that keeps changing the input cannot run
 // up a bill.
-const HourlyBudget = 30
+func HourlyCap() int { return hourlyCapFn() }
 
 // stateDir is the state-dir resolver; tests replace it. Resolved per call,
 // never at package init.
@@ -34,25 +45,42 @@ type budget struct {
 	Calls []int64 `json:"calls"` // unix seconds
 }
 
-// TakeBudget records one request at now and reports true, unless
-// HourlyBudget requests already happened in the hour before now. The
-// read-modify-write runs under an exclusive flock on the budget file, so
-// concurrent hooks cannot overspend. Any error returns false: a cap that
-// cannot record itself must not let every caller through.
-func TakeBudget(now time.Time) bool {
-	ok, err := takeBudget(now, HourlyBudget)
+// TakeBudget records one request at now and reports true, unless the hourly
+// cap was already reached in the hour before now. The read-modify-write runs
+// under an exclusive flock on the budget file, so concurrent hooks cannot
+// overspend. Any error returns false: a cap that cannot record itself must
+// not let every caller through.
+func TakeBudget(now time.Time) bool { return TakeBudgetReserve(now, 0) }
+
+// TakeBudgetReserve is TakeBudget for a lower-priority request: it only
+// spends while more than reserve slots of the hourly cap remain.
+func TakeBudgetReserve(now time.Time, reserve int) bool {
+	c := HourlyCap()
+	// A small configured cap must not switch low-priority requests off: the
+	// reserve never exceeds half of it.
+	if reserve > c/2 {
+		reserve = c / 2
+	}
+	ok, err := takeBudget(now, c-reserve)
 	return err == nil && ok
 }
 
-// BackfillReserve is the part of HourlyBudget the housekeeping backfill
-// leaves to the hooks, so titling old windows never starves new ones.
-const BackfillReserve = 10
+// TakeRestoredBudget is TakeBudgetReserve for a request that is not a new
+// session's first title (resume or compact SessionStart): it leaves
+// NewSessionReserve slots to new sessions.
+func TakeRestoredBudget(now time.Time) bool {
+	return TakeBudgetReserve(now, NewSessionReserve)
+}
+
+// BackfillReserve is the part of the hourly cap the housekeeping backfill
+// leaves to the hooks: the new-session reserve plus 10 more for resumed
+// windows, so titling old windows never starves live ones.
+const BackfillReserve = NewSessionReserve + 10
 
 // TakeBackfillBudget is TakeBudget for the housekeeping backfill: it only
 // spends while more than BackfillReserve requests remain in the hour.
 func TakeBackfillBudget(now time.Time) bool {
-	ok, err := takeBudget(now, HourlyBudget-BackfillReserve)
-	return err == nil && ok
+	return TakeBudgetReserve(now, BackfillReserve)
 }
 
 // takeBudget records one request at now unless limit requests already

@@ -235,9 +235,12 @@ func (s *Server) runTerminal(r *http.Request, conn *websocket.Conn, d Device, t 
 	readOnly := !s.opts.Config.AllowWrite
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	phoneOff := s.phone.turnedOff()
 	go func() {
 		select {
 		case <-s.done:
+			cancel()
+		case <-phoneOff:
 			cancel()
 		case <-ctx.Done():
 		}

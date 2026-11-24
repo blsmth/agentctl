@@ -46,9 +46,9 @@ func TestSessionsModel_ContentWidth(t *testing.T) {
 	}{
 		{"normal", 120, 116},
 		{"wide", 200, 196},
-		{"very narrow", 10, 40}, // clamped to min 40
-		{"exactly 44", 44, 40},  // 44-4=40
-		{"below min", 20, 40},   // clamped
+		{"very narrow", 10, 20}, // floored at 20, never wider than the pane allows
+		{"exactly 24", 24, 20},  // 24-4=20
+		{"below min", 20, 20},   // floored
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,88 +61,45 @@ func TestSessionsModel_ContentWidth(t *testing.T) {
 	}
 }
 
-// TestSplitPaneListHeight verifies that SessionsModel delegates list height to
-// SplitPane with a 0.45 ratio (matching the old listPaneHeight() behaviour).
-func TestSplitPaneListHeight(t *testing.T) {
-	tests := []struct {
-		name       string
-		termHeight int
-		wantMin    int
-		wantMax    int
-	}{
-		{"normal", 40, 10, 16}, // paneH=31 (sessChromRows=9), 31*0.45≈13; min=8
-		{"tall", 60, 20, 26},   // paneH=51, 51*0.45≈22
-		{"small", 13, 8, 8},    // clamped to MinListRows=8
-		{"tiny", 5, 8, 8},      // clamped to MinListRows=8
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			m := NewSessionsModel("")
-			updated, _ := m.Update(tea.WindowSizeMsg{Width: 160, Height: tc.termHeight})
-			sm := updated.(SessionsModel)
-			got := sm.splitPane.ListHeight()
-			if got < tc.wantMin || got > tc.wantMax {
-				t.Errorf("splitPane.ListHeight() = %d, want in [%d, %d] (termHeight=%d)",
-					got, tc.wantMin, tc.wantMax, tc.termHeight)
-			}
-		})
+// TestListHeight: the list body takes every row the chrome leaves, at any
+// window height (inverted from the old SplitPane ratio and minimum rows).
+func TestListHeight(t *testing.T) {
+	for _, h := range []int{40, 60, 24, 13, 5} {
+		m := NewSessionsModel("")
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: 160, Height: h})
+		sm := updated.(SessionsModel)
+		want := h - sessChromRows
+		if want < 1 {
+			want = 1
+		}
+		if got := sm.listHeight(); got != want {
+			t.Errorf("height %d: listHeight() = %d, want %d", h, got, want)
+		}
 	}
 }
 
-// TestSplitPaneDetailHeight verifies the detail pane height is at least
-// MinDetailRows and fits within the pane.
-func TestSplitPaneDetailHeight(t *testing.T) {
-	tests := []struct {
-		name       string
-		termHeight int
-		wantMin    int
-	}{
-		{"normal", 40, 5},
-		{"tall", 60, 5},
-		{"small", 13, 5},
-		{"tiny", 5, 5},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			m := NewSessionsModel("")
-			updated, _ := m.Update(tea.WindowSizeMsg{Width: 160, Height: tc.termHeight})
-			sm := updated.(SessionsModel)
-			got := sm.splitPane.DetailHeight()
-			if got < tc.wantMin {
-				t.Errorf("splitPane.DetailHeight() = %d, want >= %d (termHeight=%d)",
-					got, tc.wantMin, tc.termHeight)
-			}
-		})
-	}
-}
-
-// TestSplitPaneSetSize verifies that WindowSizeMsg propagates to the SplitPane.
-func TestSplitPaneSetSize(t *testing.T) {
+// TestPreviewWidthFollowsTerminal: the preview panel collapses below the
+// width threshold and the list takes the whole content width.
+func TestPreviewWidthFollowsTerminal(t *testing.T) {
 	m := NewSessionsModel("")
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 180, Height: 60})
+	m.termWidth = 80
+	if m.showPreview() || m.listWidth() != m.contentWidth() {
+		t.Errorf("80 cols: preview=%v listWidth=%d, want collapsed full width", m.showPreview(), m.listWidth())
+	}
+	m.termWidth = 120
+	if !m.showPreview() || m.listWidth() >= m.contentWidth() {
+		t.Errorf("120 cols: preview=%v listWidth=%d, want side panel", m.showPreview(), m.listWidth())
+	}
+}
+
+// TestWindowSizeMsgResizesFrame: a resize changes the frame the model draws.
+func TestWindowSizeMsgResizesFrame(t *testing.T) {
+	m := NewSessionsModel("")
+	m.loading = false
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 20})
 	sm := updated.(SessionsModel)
-
-	// SplitPane should be sized to (termWidth, termHeight-sessChromRows).
-	wantPaneH := 60 - sessChromRows
-	gotListH := sm.splitPane.ListHeight()
-	gotDetailH := sm.splitPane.DetailHeight()
-
-	// ListHeight ≈ paneH * 0.45 ≥ MinListRows
-	expectedListH := int(float64(wantPaneH) * 0.45)
-	if expectedListH < 8 {
-		expectedListH = 8
-	}
-	if gotListH != expectedListH {
-		t.Errorf("splitPane.ListHeight() = %d, want %d (paneH=%d)", gotListH, expectedListH, wantPaneH)
-	}
-
-	// DetailHeight = paneH - ListHeight - 1 (separator), clamped to ≥ MinDetailRows
-	expectedDetailH := wantPaneH - expectedListH - 1
-	if expectedDetailH < 5 {
-		expectedDetailH = 5
-	}
-	if gotDetailH != expectedDetailH {
-		t.Errorf("splitPane.DetailHeight() = %d, want %d", gotDetailH, expectedDetailH)
+	if n := len(strings.Split(sm.View().Content, "\n")); n != 20 {
+		t.Errorf("frame has %d lines, want 20", n)
 	}
 }
 
@@ -406,7 +363,6 @@ func TestViewList_GroupHeadersDoNotSkipEntries(t *testing.T) {
 	m := NewSessionsModel("")
 	m.termWidth = 160
 	m.termHeight = 40
-	m.splitPane.SetSize(160, 40-sessChromRows)
 	m.loading = false
 	m.entries = entries
 	m.allEntries = entries
@@ -570,7 +526,6 @@ func TestSplitPaneLayout(t *testing.T) {
 	m := NewSessionsModel("")
 	m.termWidth = 160
 	m.termHeight = 50
-	m.splitPane.SetSize(160, 50-sessChromRows)
 	m.loading = false
 	m.entries = entries
 	m.allEntries = entries
@@ -626,7 +581,6 @@ func TestDetailUpdatesOnCursorMove(t *testing.T) {
 	m := NewSessionsModel("")
 	m.termWidth = 160
 	m.termHeight = 50
-	m.splitPane.SetSize(160, 50-sessChromRows)
 	m.loading = false
 	m.entries = entries
 	m.allEntries = entries
@@ -648,40 +602,31 @@ func TestDetailUpdatesOnCursorMove(t *testing.T) {
 	}
 }
 
-func TestRowSeparators(t *testing.T) {
+// TestNoRowSeparators: rows are dense (no ╌ separator between entries); the
+// only ╌ is the header rule, so a short pane shows more sessions.
+func TestNoRowSeparators(t *testing.T) {
 	now := time.Now()
-	entries := []SessionEntry{
-		{
-			Session: sessions.Session{Agent: "go-engineer", StartTime: now},
+	var entries []SessionEntry
+	for i, p := range []string{"proj-a", "proj-b", "proj-c"} {
+		entries = append(entries, SessionEntry{
+			Session: sessions.Session{Agent: "go-engineer", StartTime: now.Add(-time.Duration(i) * time.Minute)},
 			Agent:   "go-engineer",
-			Project: "proj-a",
-		},
-		{
-			Session: sessions.Session{Agent: "go-engineer", StartTime: now.Add(-5 * time.Minute)},
-			Agent:   "go-engineer",
-			Project: "proj-b",
-		},
-		{
-			Session: sessions.Session{Agent: "go-engineer", StartTime: now.Add(-10 * time.Minute)},
-			Agent:   "go-engineer",
-			Project: "proj-c",
-		},
+			Project: p,
+		})
 	}
-
 	m := NewSessionsModel("")
-	m.termWidth = 160
-	m.termHeight = 60
-	m.splitPane.SetSize(160, 60-sessChromRows)
+	m.termWidth, m.termHeight = 160, 60
 	m.loading = false
-	m.entries = entries
-	m.allEntries = entries
-	m.showAll = true
+	m.entries, m.allEntries, m.showAll = entries, entries, true
 
-	output := stripANSI(m.viewList())
-
-	// There should be at least one ╌ row separator between entries.
-	if !strings.Contains(output, "╌") {
-		t.Error("viewList() with multiple entries should contain ╌ row separators")
+	rows := 0
+	for _, l := range strings.Split(stripANSI(m.viewList()), "\n") {
+		if strings.Contains(l, "╌") {
+			rows++
+		}
+	}
+	if rows != 1 {
+		t.Errorf("%d lines with ╌, want only the header rule", rows)
 	}
 }
 
@@ -846,7 +791,6 @@ func TestListHintBarShowsDetailAndResumeSeparately(t *testing.T) {
 	m := NewSessionsModel("")
 	m.termWidth = 160
 	m.termHeight = 50
-	m.splitPane.SetSize(160, 50-sessChromRows)
 	m.loading = false
 	m.entries = nil
 	m.allEntries = nil
@@ -862,156 +806,81 @@ func TestListHintBarShowsDetailAndResumeSeparately(t *testing.T) {
 	}
 }
 
-// TestBuildListContent_CursorLine verifies that buildListContent returns the
-// correct line index for the selected entry, accounting for date group headers
-// and row separators.
-func TestBuildListContent_CursorLine(t *testing.T) {
+// TestCursorLine: cursorLine accounts for date-group headers and grows with
+// the cursor.
+func TestCursorLine(t *testing.T) {
 	now := time.Now()
-	entries := []SessionEntry{
-		{
-			Session: sessions.Session{Agent: "a1", StartTime: now},
-			Agent:   "a1", Project: "p1",
-		},
-		{
-			Session: sessions.Session{Agent: "a2", StartTime: now.Add(-2 * time.Minute)},
-			Agent:   "a2", Project: "p2",
-		},
-		{
-			Session: sessions.Session{Agent: "a3", StartTime: now.Add(-4 * time.Minute)},
-			Agent:   "a3", Project: "p3",
-		},
+	var entries []SessionEntry
+	for i, a := range []string{"a1", "a2", "a3"} {
+		entries = append(entries, SessionEntry{
+			Session: sessions.Session{Agent: a, StartTime: now.Add(-time.Duration(i) * 2 * time.Minute)},
+			Agent:   a, Project: "p" + a,
+		})
 	}
-
 	m := NewSessionsModel("")
-	m.termWidth = 160
-	m.termHeight = 50
-	m.splitPane.SetSize(160, 50-sessChromRows)
 	m.loading = false
-	m.entries = entries
-	m.allEntries = entries
-	m.showAll = true
+	m.entries, m.allEntries, m.showAll = entries, entries, true
 
-	// Cursor at entry 0 — first line should be the section header "Today"
-	// (line 0), so cursorLine = 1 (entry row after header).
-	m.cursor = 0
-	_, cl0 := m.buildListContent()
-	if cl0 < 0 {
-		t.Errorf("cursor=0: cursorLine = %d, want >= 0", cl0)
+	prev := -1
+	for c := 0; c < 3; c++ {
+		m.cursor = c
+		cl := m.cursorLine()
+		if cl <= prev {
+			t.Errorf("cursor=%d: cursorLine %d should be > %d", c, cl, prev)
+		}
+		prev = cl
 	}
-
-	// Cursor at entry 1 — must come after cursor=0's line.
-	m.cursor = 1
-	_, cl1 := m.buildListContent()
-	if cl1 <= cl0 {
-		t.Errorf("cursor=1: cursorLine %d should be > cursor=0 cursorLine %d", cl1, cl0)
-	}
-
-	// Cursor at entry 2 — must come after entry 1's line.
-	m.cursor = 2
-	_, cl2 := m.buildListContent()
-	if cl2 <= cl1 {
-		t.Errorf("cursor=2: cursorLine %d should be > cursor=1 cursorLine %d", cl2, cl1)
+	if lines := m.listLines(); len(lines) != 4 || lines[0].entry != -1 {
+		t.Errorf("listLines() = %+v, want a group header then 3 rows", lines)
 	}
 }
 
-// TestBuildListContent_FooterPresent ensures the aggregate footer lines are
-// included in the list content produced by buildListContent.
-func TestBuildListContent_FooterPresent(t *testing.T) {
-	now := time.Now()
-	entries := []SessionEntry{
-		{
-			Session:  sessions.Session{Agent: "go-engineer", StartTime: now},
-			Agent:    "go-engineer",
-			Project:  "agentctl",
-			Duration: 5 * time.Minute,
-			CostUSD:  0.10,
-		},
-	}
-
+// TestTotalsLine: the totals line counts the sessions shown.
+func TestTotalsLine(t *testing.T) {
+	entries := []SessionEntry{{
+		Session:  sessions.Session{Agent: "go-engineer", StartTime: time.Now()},
+		Agent:    "go-engineer",
+		Project:  "agentctl",
+		Duration: 5 * time.Minute,
+		CostUSD:  0.10,
+	}}
 	m := NewSessionsModel("")
-	m.termWidth = 160
-	m.termHeight = 50
-	m.splitPane.SetSize(160, 50-sessChromRows)
 	m.loading = false
-	m.entries = entries
-	m.allEntries = entries
-	m.showAll = true
+	m.entries, m.allEntries, m.showAll = entries, entries, true
 
-	content, _ := m.buildListContent()
-	plain := stripANSI(content)
-
-	if !strings.Contains(plain, "sessions") {
-		t.Error("buildListContent() footer missing 'sessions' count")
-	}
-	if !strings.Contains(plain, "╌") {
-		t.Error("buildListContent() footer missing ╌ rule")
+	if plain := stripANSI(m.totalsLine()); !strings.Contains(plain, "1 sessions") {
+		t.Errorf("totalsLine() = %q, want the session count", plain)
 	}
 }
 
-// TestBuildDetailContent_WrapsRenderDetailPane verifies that buildDetailContent
-// calls renderDetailPane and returns non-empty output for a populated entry.
-func TestBuildDetailContent_WrapsRenderDetailPane(t *testing.T) {
-	now := time.Now()
-	sum := &sessions.Summary{
-		TurnCount:         3,
-		TotalInputTokens:  5000,
-		TotalOutputTokens: 500,
-		ModelName:         "claude-3-opus",
-	}
+// TestInfoLines: the preview/detail body names the session.
+func TestInfoLines(t *testing.T) {
+	sum := &sessions.Summary{TurnCount: 3, TotalInputTokens: 5000, TotalOutputTokens: 500, ModelName: "claude-3-opus"}
 	entry := SessionEntry{
-		Session:      sessions.Session{Agent: "go-engineer", StartTime: now, Project: "/Users/test/proj"},
-		Summary:      sum,
-		Agent:        "go-engineer",
-		Project:      "proj",
-		Turns:        3,
-		InputTokens:  5000,
-		OutputTokens: 500,
-		Duration:     3 * time.Minute,
+		Session:  sessions.Session{Agent: "go-engineer", StartTime: time.Now(), Project: "/Users/test/proj"},
+		Summary:  sum,
+		Agent:    "go-engineer",
+		Project:  "proj",
+		Duration: 3 * time.Minute,
 	}
-
 	m := NewSessionsModel("")
-	m.termWidth = 160
-	m.termHeight = 50
-	m.splitPane.SetSize(160, 50-sessChromRows)
 	m.loading = false
-	m.entries = []SessionEntry{entry}
-	m.allEntries = []SessionEntry{entry}
-	m.showAll = true
+	m.entries, m.allEntries, m.showAll = []SessionEntry{entry}, []SessionEntry{entry}, true
 
-	content := m.buildDetailContent()
-	plain := stripANSI(content)
-
-	if !strings.Contains(plain, "Session Details") {
-		t.Error("buildDetailContent() missing 'Session Details'")
-	}
-	if !strings.Contains(plain, "go-engineer") {
-		t.Error("buildDetailContent() missing agent name")
+	plain := stripANSI(strings.Join(m.infoLines(60), "\n"))
+	for _, want := range []string{"Session Details", "go-engineer", "Token Usage"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("infoLines() missing %q", want)
+		}
 	}
 }
 
-// TestNoListPaneHeightMethod ensures the old hand-rolled methods are gone.
-// This test intentionally checks that the SessionsModel type no longer has
-// listPaneHeight, detailPaneHeight, listVisibleRows, or detailVisibleRows
-// by verifying the SplitPane path is used instead.
-func TestSplitPaneUsedForHeightAllocation(t *testing.T) {
+// TestFrameFitsHeight: the model always draws exactly termHeight lines.
+func TestFrameFitsHeight(t *testing.T) {
 	m := NewSessionsModel("")
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
 	sm := updated.(SessionsModel)
-
-	// SplitPane must be sized correctly (paneH = termHeight - sessChromRows).
-	wantPaneH := 40 - sessChromRows
-	gotListH := sm.splitPane.ListHeight()
-	gotDetailH := sm.splitPane.DetailHeight()
-
-	if gotListH <= 0 {
-		t.Errorf("splitPane.ListHeight() = %d, want > 0", gotListH)
-	}
-	if gotDetailH <= 0 {
-		t.Errorf("splitPane.DetailHeight() = %d, want > 0", gotDetailH)
-	}
-	// Sanity: list + separator + detail must not exceed pane height.
-	if gotListH+1+gotDetailH > wantPaneH+5 { // +5 tolerance for clamping
-		t.Errorf("list(%d) + sep(1) + detail(%d) = %d exceeds paneH(%d) by too much",
-			gotListH, gotDetailH, gotListH+1+gotDetailH, wantPaneH)
+	if n := len(strings.Split(sm.View().Content, "\n")); n != 40 {
+		t.Errorf("frame has %d lines, want 40", n)
 	}
 }

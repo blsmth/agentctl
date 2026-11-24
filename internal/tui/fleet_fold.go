@@ -24,7 +24,16 @@ type fleetFilter int
 const (
 	fleetFilterAll    fleetFilter = iota // every row
 	fleetFilterActive                    // working and blocked
-	fleetFilterNeeds                     // blocked and done-unseen
+	fleetFilterNeeds                     // blocked, needs attention and done-unseen
+	// Single-state filters, set by clicking a count in the title or a group
+	// header; `f` leaves them for all.
+	fleetFilterBlocked // blocked rows only
+	fleetFilterWorking // working rows only
+	fleetFilterDone    // done-unseen rows only
+	fleetFilterIdle    // idle rows only
+	// fleetFilterAttention keeps the ! rows only. Last so the persisted
+	// order of the others does not move.
+	fleetFilterAttention
 )
 
 // label is the filter's name as shown in the title tag and notices.
@@ -34,6 +43,16 @@ func (f fleetFilter) label() string {
 		return "active"
 	case fleetFilterNeeds:
 		return "needs you"
+	case fleetFilterBlocked:
+		return "blocked"
+	case fleetFilterWorking:
+		return "working"
+	case fleetFilterDone:
+		return "done"
+	case fleetFilterIdle:
+		return "idle"
+	case fleetFilterAttention:
+		return "attention"
 	}
 	return "all"
 }
@@ -45,6 +64,16 @@ func (f fleetFilter) key() string {
 		return "active"
 	case fleetFilterNeeds:
 		return "needs"
+	case fleetFilterBlocked:
+		return "blocked"
+	case fleetFilterWorking:
+		return "working"
+	case fleetFilterDone:
+		return "done"
+	case fleetFilterIdle:
+		return "idle"
+	case fleetFilterAttention:
+		return "attention"
 	}
 	return ""
 }
@@ -56,11 +85,21 @@ func parseFleetFilter(s string) fleetFilter {
 		return fleetFilterActive
 	case "needs":
 		return fleetFilterNeeds
+	case "blocked":
+		return fleetFilterBlocked
+	case "working":
+		return fleetFilterWorking
+	case "done":
+		return fleetFilterDone
+	case "idle":
+		return fleetFilterIdle
+	case "attention":
+		return fleetFilterAttention
 	}
 	return fleetFilterAll
 }
 
-// next is the filter `f` switches to.
+// next is the filter `f` switches to; a state filter goes back to all.
 func (f fleetFilter) next() fleetFilter {
 	switch f {
 	case fleetFilterAll:
@@ -74,12 +113,25 @@ func (f fleetFilter) next() fleetFilter {
 // matches reports whether row r passes the filter on its own (ancestor
 // retention is filterRows' job).
 func (f fleetFilter) matches(r fleet.Row) bool {
+	if r.Shell && f >= fleetFilterBlocked {
+		return false // shells are not agents and are never counted
+	}
 	w := glyphWeight(r)
 	switch f {
+	case fleetFilterBlocked:
+		return w == fleetWeightBlocked
+	case fleetFilterWorking:
+		return w == fleetWeightWorking
+	case fleetFilterDone:
+		return w == fleetWeightDone
+	case fleetFilterAttention:
+		return w == fleetWeightAttention
+	case fleetFilterIdle:
+		return w == fleetWeightIdle
 	case fleetFilterActive:
 		return w == fleetWeightWorking || w == fleetWeightBlocked
 	case fleetFilterNeeds:
-		return w == fleetWeightBlocked || w == fleetWeightDone
+		return w == fleetWeightBlocked || w == fleetWeightAttention || w == fleetWeightDone
 	}
 	return true
 }
@@ -274,11 +326,27 @@ func (m *FleetModel) setShowShells(show bool) {
 
 // cycleFilter is `f`: all → active → needs you → all.
 func (m *FleetModel) cycleFilter() tea.Cmd {
-	m.filter = m.filter.next()
+	return m.setFilter(m.filter.next())
+}
+
+// setFilter switches the attention filter (the path `f` and the count clicks
+// share): notice, relayout (which keeps the selection or moves it to the
+// nearest visible row) and persistence.
+func (m *FleetModel) setFilter(f fleetFilter) tea.Cmd {
+	m.filter = f
 	m.jumpErr = ""
 	m.setSuccess("filter: " + m.filter.label())
 	m.relayout()
 	return m.saveViewCmd()
+}
+
+// toggleStateFilter is a click on a state count: it sets f, or clears the
+// filter when f is already the active one.
+func (m *FleetModel) toggleStateFilter(f fleetFilter) tea.Cmd {
+	if m.filter == f {
+		f = fleetFilterAll
+	}
+	return m.setFilter(f)
 }
 
 // rowExists reports whether a loaded group has the row (session, windowID),

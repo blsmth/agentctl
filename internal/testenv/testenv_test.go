@@ -2,6 +2,7 @@ package testenv
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -178,5 +179,62 @@ func TestGoDefaults(t *testing.T) {
 		if d[k] == "" {
 			t.Errorf("%s default is empty", k)
 		}
+	}
+}
+
+func TestCleanupKillsSandboxTmux(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	root, err := os.MkdirTemp("", "actmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { removeAll(root) })
+	tmpdir := filepath.Join(root, "t")
+	if err := os.MkdirAll(tmpdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// "default" is the bare-tmux socket; "named" is what `tmux -L named` uses.
+	var socks []string
+	for _, name := range []string{"default", "named"} {
+		args := []string{"-f", "/dev/null"}
+		if name != "default" {
+			args = append(args, "-L", name)
+		}
+		args = append(args, "new-session", "-d", "-s", "leak", "sleep 300")
+		start := exec.Command("tmux", args...)
+		start.Env = append(os.Environ(), "TMUX=", "TMUX_TMPDIR="+tmpdir)
+		if out, err := start.CombinedOutput(); err != nil {
+			t.Fatalf("starting %s tmux: %v: %s", name, err, out)
+		}
+	}
+	socks = sandboxSockets(root)
+	if len(socks) != 2 {
+		t.Fatalf("sockets = %v, want default and named", socks)
+	}
+	t.Cleanup(func() {
+		for _, s := range socks {
+			_ = exec.Command("tmux", "-S", s, "kill-server").Run()
+		}
+	})
+	for _, s := range socks {
+		if err := exec.Command("tmux", "-S", s, "list-sessions").Run(); err != nil {
+			t.Fatalf("server %s not running before cleanup: %v", s, err)
+		}
+	}
+
+	killSandboxTmux(root)
+
+	for _, s := range socks {
+		if err := exec.Command("tmux", "-S", s, "list-sessions").Run(); err == nil {
+			t.Errorf("tmux server %s still running after killSandboxTmux", s)
+		}
+	}
+}
+
+func TestLeakedTmuxFalseWithoutSocket(t *testing.T) {
+	if LeakedTmux() {
+		t.Fatal("LeakedTmux true in a clean sandbox")
 	}
 }
