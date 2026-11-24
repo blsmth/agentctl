@@ -53,6 +53,7 @@ var cliTests = []cliCase{
 	{"status list --help shows closed", []string{"status", "list", "--help"}, 0, "--closed", ""},
 	{"status peek --help", []string{"status", "peek", "--help"}, 0, "lines", ""},
 	{"status whoami --help", []string{"status", "whoami", "--help"}, 0, "json", ""},
+	{"resume --help", []string{"resume", "--help"}, 0, "handle", ""},
 	// --state is an enum; an unknown value must be a usage error rather than
 	// silently matching nothing and printing an empty, reassuring table.
 	{"status rejects an unknown --state", []string{"status", "--state", "nonsense"}, -1, "", ""},

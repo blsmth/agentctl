@@ -22,6 +22,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"github.com/blsmth/agentctl/internal/closedlog"
 	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/winlink"
@@ -47,7 +48,9 @@ type statusJSONRow struct {
 // jsonRow builds the JSON form of a status row.
 func (sr statusRow) jsonRow() statusJSONRow {
 	j := statusJSONRow{Window: fleet.ToWindow(sr.row, sr.meta)}
-	j.Window.Label = "" // machine surface: the golden schema keeps window_id only
+	// Machine surface: window_id stays the key; handle and label are additive.
+	j.Window.Label = sr.label
+	j.Window.Handle = sr.handle
 	if sr.checked {
 		j.PaneVerdict = sr.verdict.String()
 		j.PaneDisagree = !sr.verdict.AgreesWith(sr.row.State)
@@ -63,6 +66,13 @@ type statusRow struct {
 	group   fleet.Group
 	verdict fleet.PaneVerdict
 	checked bool
+	// handle is the session's short ID ("" until it has a session ID) and
+	// label its human-readable name (fleet.Label).
+	handle string
+	label  string
+	// parent names the dispatcher: its handle, else its agent name while it
+	// has no session ID. "" for none or untrusted.
+	parent string
 }
 
 // collectStatusRows loads every live session, enriches each row with its
@@ -83,6 +93,7 @@ func statusRowsFromGroups(groups []fleet.Group, opts StatusOptions) []statusRow 
 		wantState = "blocked"
 	}
 
+	ix := loadSessionIndex(groups)
 	var rows []statusRow
 	for _, g := range groups {
 		if opts.Session != "" && !sessionMatches(g, opts.Session) {
@@ -93,7 +104,10 @@ func statusRowsFromGroups(groups []fleet.Group, opts StatusOptions) []statusRow 
 			if !stateMatches(r, wantState) {
 				continue
 			}
-			sr := statusRow{row: r, meta: meta[r.WindowID], group: g}
+			m := meta[r.WindowID]
+			sr := statusRow{row: r, meta: m, group: g,
+				handle: ix.HandleFor(r.SessionID), label: fleet.Label(r, fleet.Scope{}),
+				parent: parentName(g, ix, m.Parent())}
 			if opts.Verify {
 				sr.verdict, sr.checked = verifyPane(g.Session, r.WindowID, r.Harness)
 			}
@@ -101,6 +115,30 @@ func statusRowsFromGroups(groups []fleet.Group, opts StatusOptions) []statusRow 
 		}
 	}
 	return rows
+}
+
+// parentName is the display form of a dispatcher window of group g.
+func parentName(g fleet.Group, ix *fleet.Index, windowID string) string {
+	if windowID == "" {
+		return ""
+	}
+	for _, r := range g.Rows {
+		if r.WindowID == windowID {
+			return firstNonEmpty(ix.HandleFor(r.SessionID), r.Name)
+		}
+	}
+	return ""
+}
+
+// loadSessionIndex indexes every session known on this machine: the live rows
+// of groups plus the closed ledger. An unreadable ledger only drops closed
+// sessions (and so can only shorten handles, never wrongly resolve one).
+func loadSessionIndex(groups []fleet.Group) *fleet.Index {
+	recs, err := closedLoad(closedNow().Add(-closedlog.MaxAge))
+	if err != nil {
+		recs = nil
+	}
+	return fleet.NewIndex(groups, recs)
 }
 
 // sessionMatches reports whether a group matches a --session filter, accepting
@@ -170,17 +208,24 @@ func RunStatus(opts StatusOptions) error {
 
 // printStatusTable renders the agent table for rows to out.
 func printStatusTable(out io.Writer, rows []statusRow, opts StatusOptions) {
-	cols := []string{"SESSION", "WIN", "AGENT", "STATE"}
+	cols := []string{"SESSION", "ID", "NAME", "AGENT", "STATE"}
 	if opts.Verify {
 		cols = append(cols, "PANE")
 	}
 	cols = append(cols, "CTX", "MODE", "PARENT", "ACTIVITY")
 
+	labels := make([]string, len(rows))
+	for i, sr := range rows {
+		labels[i] = sr.label
+	}
+	labels = fleet.UniqueLabels(labels)
+
 	grid := make([][]cell, 0, len(rows)+1)
-	for _, sr := range rows {
+	for i, sr := range rows {
 		c := []cell{
 			{text: sr.group.Project, style: cliMuted()},
-			{text: sr.row.WindowID, style: lipgloss.NewStyle(), window: sr.row.WindowID},
+			{text: dashIfEmpty(sr.handle), style: lipgloss.NewStyle(), window: sr.row.WindowID},
+			{text: dashIfEmpty(truncateDisplay(labels[i], statusLabelWidth)), style: lipgloss.NewStyle()},
 			{text: sr.row.Name, style: cliAccent()},
 			stateCell(sr.row),
 		}
@@ -190,7 +235,7 @@ func printStatusTable(out io.Writer, rows []statusRow, opts StatusOptions) {
 		c = append(c,
 			ctxCell(sr.row.ContextPct),
 			cell{text: dashIfEmpty(statusMode(sr.meta)), style: cliMuted()},
-			cell{text: dashIfEmpty(sr.meta.Parent()), style: cliMuted()},
+			cell{text: dashIfEmpty(sr.parent), style: cliMuted()},
 			cell{text: truncateDisplay(fleet.ActivityLine(sr.row), 44), style: cliMuted()},
 		)
 		grid = append(grid, c)
@@ -198,6 +243,9 @@ func printStatusTable(out io.Writer, rows []statusRow, opts StatusOptions) {
 
 	printGrid(out, cols, grid)
 }
+
+// statusLabelWidth is the NAME column's widest label.
+const statusLabelWidth = 40
 
 // cell is one table cell: the plain text plus the style to render it with.
 // Keeping the two apart is what makes alignment correct — see printGrid.
@@ -398,14 +446,18 @@ func truncateDisplay(s string, n int) string {
 
 // RunStatusDetail prints everything known about one window.
 func RunStatusDetail(window string, jsonOut bool) error {
-	rows, _, err := collectStatusRows(StatusOptions{})
+	rows, groups, err := collectStatusRows(StatusOptions{})
 	if err != nil {
 		return err
 	}
-	sr, err := findWindow(rows, window)
+	tgt, err := resolveTarget(rows, loadSessionIndex(groups), window)
 	if err != nil {
 		return err
 	}
+	if tgt.closed != nil {
+		return printClosedDetail(os.Stdout, *tgt.closed, jsonOut)
+	}
+	sr := tgt.row
 
 	verdict, checked := verifyPane(sr.group.Session, sr.row.WindowID, sr.row.Harness)
 
@@ -428,8 +480,9 @@ func RunStatusDetail(window string, jsonOut bool) error {
 		fmt.Fprintf(w, "%s\t%s\n", muted.Render(k), v)
 	}
 
-	fmt.Fprintf(w, "%s\t%s\n", hdr.Render("WINDOW"), linkWindow(sr.row.WindowID, cliAccent().Render(sr.row.WindowID))+cliAccent().Render("  "+sr.row.Name))
-	line("session", sr.group.Session)
+	fmt.Fprintf(w, "%s\t%s\n", hdr.Render("SESSION"), linkWindow(sr.row.WindowID, cliAccent().Render(dashIfEmpty(sr.handle)))+cliAccent().Render("  "+firstNonEmpty(sr.label, sr.row.Name)))
+	line("window", sr.row.WindowID)
+	line("tmux session", sr.group.Session)
 	line("project", sr.group.Project)
 	line("state", renderState(sr.row))
 	if checked {
@@ -462,8 +515,7 @@ func RunStatusDetail(window string, jsonOut bool) error {
 	// Parent attribution, with the trust rule made explicit rather than
 	// silently dropping the field.
 	if p := sr.meta.Parent(); p != "" {
-		parentName := lookupWindowName(rows, p)
-		line("dispatched by", strings.TrimSpace(p+"  "+parentName))
+		line("dispatched by", strings.TrimSpace(sr.parent+"  "+lookupWindowName(rows, p)))
 	} else if sr.meta.SpawnedBy != "" {
 		line("dispatched by", muted.Render(fmt.Sprintf(
 			"- (recorded %s, but not trustworthy: bare-mode launch, see fleet.Meta.ParentTrusted)", sr.meta.SpawnedBy)))
@@ -540,14 +592,14 @@ func findWindow(rows []statusRow, want string) (statusRow, error) {
 
 // RunPeek prints a window's pane contents plus the derived verdict.
 func RunPeek(window string, lines int, jsonOut bool) error {
-	rows, _, err := collectStatusRows(StatusOptions{})
+	tgt, err := loadTarget(window)
 	if err != nil {
 		return err
 	}
-	sr, err := findWindow(rows, window)
-	if err != nil {
-		return err
+	if c := tgt.closed; c != nil {
+		return fmt.Errorf("session %s %q is closed, so there is no pane to show; resume it with `agentctl resume %s`", c.Handle, c.Label, c.Handle)
 	}
+	sr := tgt.row
 	if lines <= 0 {
 		lines = 40
 	}
@@ -567,6 +619,8 @@ func RunPeek(window string, lines int, jsonOut bool) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(struct {
 			WindowID     string `json:"window_id"`
+			Handle       string `json:"handle,omitempty"`
+			Label        string `json:"label,omitempty"`
 			Agent        string `json:"agent"`
 			Session      string `json:"session"`
 			Recorded     string `json:"recorded_state"`
@@ -576,7 +630,7 @@ func RunPeek(window string, lines int, jsonOut bool) error {
 			StagedInput  bool   `json:"staged_input"`
 			PaneContents string `json:"pane_contents"`
 		}{
-			WindowID: sr.row.WindowID, Agent: sr.row.Name, Session: sr.group.Session,
+			WindowID: sr.row.WindowID, Handle: sr.handle, Label: sr.label, Agent: sr.row.Name, Session: sr.group.Session,
 			Recorded: sr.row.State, PaneVerdict: verdict.String(),
 			Disagrees:   !verdict.AgreesWith(sr.row.State),
 			PromptCount: prompts, StagedInput: prompts > 1,
@@ -585,7 +639,7 @@ func RunPeek(window string, lines int, jsonOut bool) error {
 	}
 
 	muted := cliMuted()
-	fmt.Printf("%s  %s  (%s)\n", linkWindow(sr.row.WindowID, cliAccent().Render(sr.row.WindowID)), sr.row.Name, sr.group.Project)
+	fmt.Printf("%s  %s  (%s)\n", linkWindow(sr.row.WindowID, cliAccent().Render(dashIfEmpty(sr.handle))), firstNonEmpty(sr.label, sr.row.Name), sr.group.Project)
 	fmt.Printf("%s recorded=%s  pane=%s\n", muted.Render("state:"), dashIfEmpty(sr.row.State), verdict.String())
 	if !verdict.AgreesWith(sr.row.State) {
 		fmt.Println(cliRed().Render(

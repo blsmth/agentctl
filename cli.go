@@ -82,6 +82,7 @@ type CLI struct {
 	HubView         HubViewCmd         `cmd:"" name:"hub-view" hidden:""`
 	HubNewSession   HubNewSessionCmd   `cmd:"" name:"hub-new-session" hidden:""`
 	HubResume       HubResumeCmd       `cmd:"" name:"hub-resume" hidden:""`
+	Resume          ResumeCmd          `cmd:"" help:"Resume a closed session by its handle (see the ID column of 'status list --closed')"`
 	HubStatus       HubStatusCmd       `cmd:"" name:"hub-status" hidden:""`
 	JumpNextBlocked JumpNextBlockedCmd `cmd:"" name:"jump-next-blocked" hidden:""`
 
@@ -608,6 +609,14 @@ func (c *HubResumeCmd) Run() error {
 	return cmd.RunHubResume(os.Stdout, cmd.HubResumeOptions{ProjectDir: c.Dir, WorkDir: c.WorkDir, Agent: c.Agent, SessionID: c.SessionID})
 }
 
+// ResumeCmd implements `agentctl resume <handle>`: it relaunches a closed
+// session through the same path as the hub's Resume (hub-resume).
+type ResumeCmd struct {
+	Handle string `arg:"" help:"Session handle (or full session ID) of a closed session"`
+}
+
+func (c *ResumeCmd) Run() error { return cmd.RunResume(os.Stdout, c.Handle) }
+
 // JumpNextBlockedCmd finds the first blocked agent across every live
 // agentctl session and switches to it. Works from any session.
 type JumpNextBlockedCmd struct {
@@ -1129,7 +1138,7 @@ type StatusCmd struct {
 // StatusListCmd is the default subcommand for `agentctl status`. With no
 // argument it lists every agent; with a window reference it prints detail.
 type StatusListCmd struct {
-	Window  string `arg:"" optional:"" help:"Window ID (@275), index (275), or agent name for detail view"`
+	Window  string `arg:"" optional:"" help:"Session handle, window ID (@275), index (275), or agent name for detail view"`
 	JSON    bool   `help:"Output as JSON"`
 	Session string `help:"Only show agents in sessions matching this name or project"`
 	State   string `help:"Only show agents in this state: blocked, working, idle, done" enum:"blocked,working,idle,done," default:""`
@@ -1162,7 +1171,7 @@ func (c *StatusListCmd) Run() error {
 }
 
 type StatusPeekCmd struct {
-	Window string `arg:"" help:"Window ID (@275), index (275), or agent name"`
+	Window string `arg:"" help:"Session handle, window ID (@275), index (275), or agent name"`
 	Lines  int    `help:"How many trailing pane lines to show" default:"40"`
 	JSON   bool   `help:"Output as JSON"`
 }
@@ -1191,7 +1200,7 @@ func (c *ModelsCmd) Run() error { return cmd.RunModels(c.Resolve) }
 
 // RaceCmd implements `agentctl race [<target>]`.
 type RaceCmd struct {
-	Target   string        `arg:"" optional:"" help:"Window (@N), session ID, or transcript path (default: this window)"`
+	Target   string        `arg:"" optional:"" help:"Window (@N), session handle or ID, or transcript path (default: this window)"`
 	WPM      float64       `name:"wpm" default:"60" help:"Human typing speed, words per minute"`
 	ReadWPM  float64       `name:"read-wpm" default:"250" help:"Human reading speed, words per minute"`
 	Think    time.Duration `default:"0s" help:"Human pause per step (0 = no pauses)"`
