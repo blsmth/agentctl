@@ -17,8 +17,9 @@ import (
 // shows, in the pane's rows: the title line (glyph, role, title, with the
 // state word, its age and the project right-aligned), a "needs you" line for
 // a blocked row with a pending tool, the recap wrapped to a readable measure,
-// and, pinned to the last row, a facts footer (ticket, agent, branch, PR,
-// parent, sub-agents; model, context, cost, session length). Never the last
+// and, pinned to the last row, a facts footer (ticket, agent, PR, parent, cron
+// job, sub-agents, backend/account; model, context, cost and branch are in the
+// viewer's statusline). Never the last
 // command: the viewer and the activity pane show it. It takes no input:
 // focus, a key or a click hands focus to the viewer below, which is where
 // typing belongs. A status block from an older hub (no Version) is laid out
@@ -173,14 +174,20 @@ func hubStatusLines(st *hubStatus, w, h int, now time.Time) []string {
 		if st.Detail.RecapIsActivity {
 			text = "" // never the activity line, even from an older hub's file
 		}
-		if text == "" {
+		titleOnly := false
+		if st.TitleFromRecap && text != "" {
+			// The title is the recap's first sentence: don't print it twice.
+			text = afterFirstSentence(text)
+			titleOnly = text == ""
+		}
+		if text == "" && !titleOnly {
 			text, style = st.Note, fleetEmptyStyle
 		}
 		for _, l := range wrapLines(text, rw, free) {
 			lines = append(lines, indent+style.Render(l))
 			hasText = true
 		}
-		if !hasText {
+		if !hasText && !titleOnly {
 			lines = append(lines, indent+fleetEmptyStyle.Render(truncateToWidth("nothing to summarise yet", rw)))
 		}
 	}
@@ -191,6 +198,18 @@ func hubStatusLines(st *hubStatus, w, h int, now time.Time) []string {
 		lines = append(lines, indent+footer)
 	}
 	return lines
+}
+
+// afterFirstSentence is s without its leading sentence (the one
+// fleet.FirstSentence returns, which becomes an untitled row's title), with
+// whitespace collapsed; "" when that sentence is all there is.
+func afterFirstSentence(s string) string {
+	flat := strings.Join(strings.Fields(s), " ")
+	first := fleet.FirstSentence(flat)
+	if first == "" || !strings.HasPrefix(flat, first) {
+		return flat
+	}
+	return strings.TrimLeft(flat[len(first):], ".!? ")
 }
 
 // hubStatusNeeds is the blocked row's "needs you: <tool>  <detail>" line, one
@@ -208,8 +227,9 @@ func hubStatusNeeds(st *hubStatus, tw int) string {
 
 // hubStatusTitleAt renders the title line: glyph, role and title on the left;
 // "<state word> <age> · <project>" right-aligned, the state word in the glyph
-// colour, the rest dim. A narrow pane drops the project first, then the age,
-// and keeps the state word.
+// colour, the rest dim. A row whose footer holds nothing else also carries its
+// agent name there, dim, before the state word. A narrow pane drops the agent
+// name first, then the project, then the age, and keeps the state word.
 func hubStatusTitleAt(st *hubStatus, w int, now time.Time) string {
 	gs := hubStatusGlyphStyle(st.Glyph)
 	left := gs.Render(st.Glyph) + " "
@@ -224,9 +244,14 @@ func hubStatusTitleAt(st *hubStatus, w int, now time.Time) string {
 		text string
 		w    int
 	}
-	build := func(withAge, withProject bool) part {
+	agent := hubStatusAgentOnTitle(st)
+	build := func(withAge, withProject, withAgent bool) part {
 		var sb strings.Builder
 		pw := 0
+		if withAgent && agent != "" {
+			sb.WriteString(fleetDimStyle.Render(agent + "  "))
+			pw += lipgloss.Width(agent) + 2
+		}
 		if st.State != "" {
 			sb.WriteString(gs.Render(st.State))
 			pw += lipgloss.Width(st.State)
@@ -245,7 +270,7 @@ func hubStatusTitleAt(st *hubStatus, w int, now time.Time) string {
 		}
 		return part{sb.String(), pw}
 	}
-	variants := []part{build(true, true), build(true, false), build(false, false)}
+	variants := []part{build(true, true, true), build(true, true, false), build(true, false, false), build(false, false, false)}
 	room := w - lipgloss.Width(left) - 1
 	right := part{}
 	for i, v := range variants {
