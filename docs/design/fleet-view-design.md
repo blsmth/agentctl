@@ -281,17 +281,17 @@ resets the toggle. Quitting the hub process kills it, and it dies with the
 hub session. In the activity pane the mouse wheel scrolls the feed; a click
 focuses it (tmux), after which the HUD keys work.
 
-**Status pane.** The selected row's detail (title, the full recap wrapped,
-the activity line, the chips) shows in a pane stacked above the live viewer
+**Status pane.** The selected row's detail (title line, a "needs you" line
+when blocked, the recap, a facts footer; never the activity line) shows in a
+pane stacked above the live viewer
 running `agentctl hub-status` (`HubStatusModel`, `internal/tui/hubstatus.go`;
 the hub side is `internal/tui/fleet_status.go`, the tmux side
 `internal/tmux/hubstatus.go`). It is a vertical split of the viewer pane
 (`split-window -v -b -d -l 6` on the viewer, so it stays in the viewer's
 column and the list and activity panes keep their full height), marked with
 the `@agentctl_status` pane option and found by it, never by index; only
-marked panes are resized or killed. Six rows fit the title, up to three
-recap lines, the activity line and the chips, which is the old inline
-detail plus a title, for seven viewer rows (with the divider); the nested
+marked panes are resized or killed. Six rows hold the layout below, for
+seven viewer rows (with the divider); the nested
 viewer client simply gets a shorter terminal. Every show of the viewer
 ensures it (`tmux.EnsureHubStatusPane`, under the viewer mutex): an
 existing marked pane is reused, so a hot-reloaded hub never opens a second
@@ -304,9 +304,36 @@ the column). The content comes through the same `hub-selection.json` the
 activity pane follows: while either pane is open the hub publishes the
 selection with a `status` block built from the row's own helpers (`rowGlyph`,
 `rowRecap`, `rowChips`; the recap only, never the last command, which the
-viewer and the activity pane show); the pane wraps the recap over its free
-lines (a muted placeholder when nothing is left), re-reads the file every 250ms,
-and hot-reloads like the HUD. While it is open the list draws no inline
+viewer and the activity pane show); the pane re-reads the file every 250ms
+and hot-reloads like the HUD. The block publishes timestamps (`state_since`,
+`start_time`, `sched_at`), never rendered ages: the pane computes them on
+its tick. New fields are additive and omitempty; a block without `v: 2`
+(an older hub) is laid out the old way from its `chips`, which are still
+published for one release.
+
+Layout (exactly the pane's rows, `hubStatusLines`):
+
+1. Title: glyph, role, title; right-aligned `<state word> <age> · <project>`
+   (state word in the glyph colour: `blocked`, `working`, `done`, `your turn`
+   for a bare window at a turn end, `idle`; age from `StateSince`). A narrow
+   pane drops the project, then the age.
+2. Only for a blocked row with a pending tool (`Row.PendingTool`, set only
+   while blocked): `needs you: <tool>  <detail>`, one line.
+3. The recap, top-anchored, wrapped at up to 120 columns. With one row after
+   the title the recap wins over the footer; the "needs you" line also
+   yields to the recap.
+4. The last row, always: facts joined by ` · `. Left: `#ticket`, agent base
+   name, branch (dispatched rows), `PR #N` (an OSC 8 link), `← <parent
+   title>`; or `⏲ <job> · fired <age>` for a cron row; then `↳ N sub-agents
+   ⏸n ●n` (direct children), then a non-default backend / `acct <name>`.
+   Right: `model · ctx N% · $cost · session length` (context in the list's
+   thresholds, with a trailing `!` at critical; cost hidden under half a
+   cent; length only when the monitor snapshot has a start time). Facts drop
+   whole as the pane narrows: session length, branch (shortened to
+   `…/<last>`, then gone), parent (cut to 16 columns, then gone), agent,
+   model, cost, context below warn. The PR, ticket, cron job, sub-agent
+   counts, backend/account and context at warn or above stay; if those
+   overflow, the left zone is end-truncated. While it is open the list draws no inline
 detail lines, and `lineHeight` (scrolling, hit testing, the hover card)
 counts none; without it the inline expansion is back. Focus, keys and
 clicks in it are handed to the viewer pane, and the hub's `enter`/`tab`
