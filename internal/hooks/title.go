@@ -37,6 +37,9 @@ var (
 	// (a local file read, no network).
 	titleNoCredits  = backendauth.NoCreditsFresh
 	titleTakeBudget = shorttitle.TakeBudget
+	// titleTakeRestoredBudget is for restored or resumed windows, which may
+	// not take the slots reserved for new sessions.
+	titleTakeRestoredBudget = shorttitle.TakeRestoredBudget
 	// titleTakeBackfillBudget is the housekeeping backfill's budget, which
 	// leaves shorttitle.BackfillReserve requests to the hooks.
 	titleTakeBackfillBudget = shorttitle.TakeBackfillBudget
@@ -93,16 +96,27 @@ func Title() {
 	if windowID == "" {
 		return
 	}
-	runTitle(context.Background(), windowID, input.LastAssistantMessage, input.Prompt)
+	runTitle(context.Background(), windowID, input.LastAssistantMessage, input.Prompt, input.Source)
 }
 
 // sessionSourceClear is the SessionStart source after /clear.
 const sessionSourceClear = "clear"
 
+// titleBudgetFor picks the budget a request draws on. A SessionStart that
+// resumes or compacts an existing session (a restored window) is low
+// priority; everything else (startup, first prompt, Stop refinement) can use
+// the whole cap.
+func titleBudgetFor(source string) func(time.Time) bool {
+	if source == "resume" || source == "compact" {
+		return titleTakeRestoredBudget
+	}
+	return titleTakeBudget
+}
+
 // runTitle is Title after payload decoding. lastMessage is the Stop payload's
 // last assistant message; only Stop carries one, so it also marks the
-// refinement.
-func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
+// refinement. source is SessionStart's source, empty on other events.
+func runTitle(ctx context.Context, windowID, lastMessage, prompt, source string) {
 	s := titleSettings()
 	if !s.Enabled {
 		logging.Debug("hook-title: window=%s skipped: titles disabled", windowID)
@@ -139,7 +153,7 @@ func runTitle(ctx context.Context, windowID, lastMessage, prompt string) {
 	if !titleReady(s, now) {
 		return
 	}
-	titleWindow(ctx, s, windowID, in, now, titleTakeBudget, nil)
+	titleWindow(ctx, s, windowID, in, now, titleBudgetFor(source), nil)
 }
 
 // titleMeta attributes a title request in the usage ledger: the window and its
@@ -262,7 +276,7 @@ func generateTitle(ctx context.Context, s config.TitleSettings, in shorttitle.In
 	take func(time.Time) bool,
 ) (title, kind string, err error) {
 	if !take(now) {
-		return "", "", fmt.Errorf("%w (%d/hour)", errTitleBudget, shorttitle.HourlyBudget)
+		return "", "", fmt.Errorf("%w (%d/hour)", errTitleBudget, shorttitle.HourlyCap())
 	}
 	comp, err := newTitleCompleter(s)
 	if err != nil {

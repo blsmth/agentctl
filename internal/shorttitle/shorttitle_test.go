@@ -169,10 +169,17 @@ func useStateDir(t *testing.T) string {
 	return dir
 }
 
+func useCap(t *testing.T, n int) {
+	t.Helper()
+	old := hourlyCapFn
+	hourlyCapFn = func() int { return n }
+	t.Cleanup(func() { hourlyCapFn = old })
+}
+
 func TestTakeBudget(t *testing.T) {
 	dir := useStateDir(t)
 	now := time.Now()
-	for i := 0; i < HourlyBudget; i++ {
+	for i := 0; i < HourlyCap(); i++ {
 		if !TakeBudget(now) {
 			t.Fatalf("call %d refused", i+1)
 		}
@@ -197,7 +204,7 @@ func TestTakeBudgetConcurrent(t *testing.T) {
 	now := time.Now()
 	var granted atomic.Int32
 	var wg sync.WaitGroup
-	for i := 0; i < HourlyBudget*2; i++ {
+	for i := 0; i < HourlyCap()*2; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -207,8 +214,8 @@ func TestTakeBudgetConcurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if granted.Load() != HourlyBudget {
-		t.Fatalf("granted %d, want %d", granted.Load(), HourlyBudget)
+	if int(granted.Load()) != HourlyCap() {
+		t.Fatalf("granted %d, want %d", granted.Load(), HourlyCap())
 	}
 }
 
@@ -311,11 +318,11 @@ func TestTakeBackfillBudgetLeavesReserve(t *testing.T) {
 	n := 0
 	for TakeBackfillBudget(now) {
 		n++
-		if n > HourlyBudget {
+		if n > HourlyCap() {
 			t.Fatal("backfill budget never ran out")
 		}
 	}
-	if want := HourlyBudget - BackfillReserve; n != want {
+	if want := HourlyCap() - BackfillReserve; n != want {
 		t.Fatalf("backfill took %d, want %d", n, want)
 	}
 	for i := 0; i < BackfillReserve; i++ {
@@ -409,5 +416,56 @@ func TestRole(t *testing.T) {
 		if got := Role(tt.mode, tt.kind); got != tt.want {
 			t.Errorf("Role(%q,%q) = %q, want %q", tt.mode, tt.kind, got, tt.want)
 		}
+	}
+}
+
+func TestTakeBudgetReserve(t *testing.T) {
+	useStateDir(t)
+	useCap(t, 100)
+	now := time.Now()
+	n := 0
+	for TakeRestoredBudget(now) {
+		n++
+		if n > 100 {
+			t.Fatal("restored budget never ran out")
+		}
+	}
+	if want := 100 - NewSessionReserve; n != want {
+		t.Fatalf("restored took %d, want %d", n, want)
+	}
+	if TakeRestoredBudget(now) {
+		t.Fatal("low-priority take succeeded with only the reserve left")
+	}
+	for i := 0; i < NewSessionReserve; i++ {
+		if !TakeBudget(now) {
+			t.Fatalf("high-priority take %d refused", i+1)
+		}
+	}
+	if TakeBudget(now) {
+		t.Fatal("cap exceeded")
+	}
+}
+
+func TestTakeBudgetReserveClampedForSmallCap(t *testing.T) {
+	useStateDir(t)
+	useCap(t, 30)
+	now := time.Now()
+	if !TakeRestoredBudget(now) || !TakeBackfillBudget(now) {
+		t.Fatal("low-priority takes must still work at a small cap")
+	}
+	n := 2
+	for TakeRestoredBudget(now) {
+		n++
+	}
+	if n != 15 {
+		t.Fatalf("low-priority takes = %d, want 15 (half the cap)", n)
+	}
+	for i := n; i < 30; i++ {
+		if !TakeBudget(now) {
+			t.Fatalf("high-priority take refused at %d", i)
+		}
+	}
+	if TakeBudget(now) {
+		t.Fatal("cap exceeded")
 	}
 }

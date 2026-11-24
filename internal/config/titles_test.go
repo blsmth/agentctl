@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -101,5 +102,28 @@ func TestProjectLayerTitlesIgnored(t *testing.T) {
 	}
 	if layer.Titles.Model == "x/y" {
 		t.Error("titles saved into the project-local layer")
+	}
+}
+
+func TestTitlesEffectiveHourlyCap(t *testing.T) {
+	for _, tt := range []struct{ in, want int }{
+		{0, DefaultTitlesHourlyCap}, {-5, DefaultTitlesHourlyCap}, {40, 40}, {500, 500},
+	} {
+		if got := (TitlesConfig{HourlyCap: tt.in}).EffectiveHourlyCap(); got != tt.want {
+			t.Errorf("HourlyCap %d = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+	if DefaultTitlesHourlyCap != 120 {
+		t.Errorf("default = %d", DefaultTitlesHourlyCap)
+	}
+}
+
+func TestTitlesHourlyCapJSON(t *testing.T) {
+	var c Config
+	if err := json.Unmarshal([]byte(`{"titles":{"hourly_cap":60}}`), &c); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Titles.EffectiveHourlyCap(); got != 60 {
+		t.Fatalf("cap = %d", got)
 	}
 }
