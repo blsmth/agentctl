@@ -21,6 +21,9 @@ var DefaultServeAllowCIDRs = []string{
 // unset.
 const defaultBlockedReminderMinutes = 10
 
+// defaultLaptopIdleSeconds is serve.push.laptop_idle_seconds when unset.
+const defaultLaptopIdleSeconds = 120
+
 // ServeConfig is the `serve` block: settings for `agentctl serve`. Every key
 // is global-only (see sanitizeProjectConfig). Read the Effective* helpers
 // rather than the raw fields so defaults stay in one place.
@@ -80,6 +83,15 @@ type ServePushConfig struct {
 	// Artifacts pushes when an agent publishes a new artifact (`agentctl
 	// artifact add`, not updates). nil means enabled.
 	Artifacts *bool `json:"artifacts,omitempty"`
+	// QuietWhenLaptopActive holds every push (web push and ntfy) while
+	// someone is using the laptop: macOS HID idle time, or input on an
+	// agentctl tmux client where ioreg is unavailable, under
+	// LaptopIdleSeconds. Approvals and still-blocked agents are pushed once
+	// when the laptop goes idle. nil means enabled.
+	QuietWhenLaptopActive *bool `json:"quiet_when_laptop_active,omitempty"`
+	// LaptopIdleSeconds is how long without laptop input before pushes
+	// resume. nil or <= 0 means 120.
+	LaptopIdleSeconds *int `json:"laptop_idle_seconds,omitempty"`
 }
 
 // EffectiveListen returns Listen or DefaultServeListen.
@@ -127,6 +139,21 @@ func (p ServePushConfig) ApprovalsEnabled() bool {
 // in the foreground (default true).
 func (p ServePushConfig) SuppressWhileOpenEnabled() bool {
 	return p.SuppressWhileOpen == nil || *p.SuppressWhileOpen
+}
+
+// QuietWhenLaptopActiveEnabled reports whether pushes are held while the
+// laptop is in use (default true).
+func (p ServePushConfig) QuietWhenLaptopActiveEnabled() bool {
+	return p.QuietWhenLaptopActive == nil || *p.QuietWhenLaptopActive
+}
+
+// EffectiveLaptopIdleSeconds returns the laptop idle threshold in seconds
+// (default 120; unset, zero and negative values mean the default).
+func (p ServePushConfig) EffectiveLaptopIdleSeconds() int {
+	if p.LaptopIdleSeconds == nil || *p.LaptopIdleSeconds <= 0 {
+		return defaultLaptopIdleSeconds
+	}
+	return *p.LaptopIdleSeconds
 }
 
 // EffectiveBlockedReminderMinutes returns the reminder delay in minutes
