@@ -142,12 +142,7 @@ func ExtractMeta(s Session) (SessionMeta, error) {
 	// Worktree detection: check for /.worktrees/ in real project path (test cases),
 	// or -.worktrees- in lossy-decoded path (real usage via findAllSessions).
 	project := s.Project
-	parentProject := project
-	if idx := strings.Index(project, "/.worktrees/"); idx >= 0 {
-		parentProject = project[:idx]
-	} else if idx := strings.Index(project, "-.worktrees-"); idx >= 0 {
-		parentProject = project[:idx]
-	}
+	parentProject := StripWorktree(project)
 
 	return SessionMeta{
 		SchemaVersion:     SchemaVersion,
@@ -341,4 +336,41 @@ func Purge(maxAge time.Duration) (int, error) {
 	}
 
 	return removed, nil
+}
+
+// StripWorktree cuts a worktree suffix from a project path ("/.worktrees/")
+// or a lossy-decoded Claude projects slug ("-.worktrees-", or "--worktrees-" when the dot was also encoded), returning the
+// parent project. Paths outside a worktree are returned unchanged.
+func StripWorktree(project string) string {
+	if idx := strings.Index(project, "/.worktrees/"); idx >= 0 {
+		return project[:idx]
+	}
+	for _, m := range []string{"-.worktrees-", "--worktrees-"} {
+		if idx := strings.Index(project, m); idx >= 0 {
+			return project[:idx]
+		}
+	}
+	return project
+}
+
+// ProjectName returns the short parent-project name for display: worktrees
+// fold into their parent and only the base name is kept. cwd (the real path
+// from the transcript) is preferred; slug is the fallback.
+//
+// Limitation of the slug fallback: the slug encodes path separators and
+// hyphens identically, so a hyphenated repo name ("local-infra") cannot be
+// told from nested directories; the last hyphen-separated segment is used
+// ("infra"). That is why cwd comes first.
+func ProjectName(cwd, slug string) string {
+	if cwd != "" {
+		return filepath.Base(StripWorktree(filepath.Clean(cwd)))
+	}
+	p := strings.TrimRight(StripWorktree(slug), "-/")
+	if strings.Contains(p, "/") {
+		return filepath.Base(p)
+	}
+	if i := strings.LastIndex(p, "-"); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }
