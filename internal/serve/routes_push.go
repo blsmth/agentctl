@@ -39,9 +39,6 @@ func (s *Server) initPush(opts Options) error {
 			Details: opts.Config.NtfyDetails,
 			AppURL:  "https://" + net.JoinHostPort(opts.AdvertiseHost, strconv.Itoa(opts.HTTPSPort)),
 		}
-		if opts.Public != nil {
-			s.ntfy.AppURLFunc = s.appBase
-		}
 	}
 	s.sender.SetMuted(s.phone.Off)
 	s.pushQ = newPushDispatcher(s.sender, s.ntfy)

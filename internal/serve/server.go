@@ -649,22 +649,13 @@ type StatusInfo struct {
 	PushDevices []string  `json:"push_devices,omitempty"`
 	LastPush    *LastPush `json:"last_push,omitempty"`
 	// PublicURL is https://<public_hostname>:<port>/ while a valid, publicly
-	// trusted certificate is held (URL is then the same); empty otherwise.
-	// Artifact links use it when set.
+	// trusted certificate is held; empty otherwise. Artifact links (/a/<id>,
+	// public routes) use it when set. URL stays on AdvertiseHost: the app
+	// needs the device cookie, which is host-only and set at pairing there.
 	PublicURL string `json:"public_url,omitempty"`
 	// PublicCert is the serve.public_hostname certificate state; nil when
 	// the key is unset.
 	PublicCert *PublicCertStatus `json:"public_cert,omitempty"`
-}
-
-// appBase is https://<host>:<port> for advertised links: the public
-// hostname while a valid public certificate is held, else AdvertiseHost.
-func (s *Server) appBase() string {
-	host := s.opts.AdvertiseHost
-	if h := s.opts.Public.AdvertiseHost(); h != "" {
-		host = h
-	}
-	return "https://" + net.JoinHostPort(host, strconv.Itoa(s.opts.HTTPSPort))
 }
 
 // Status reports the running server's state.
@@ -673,7 +664,7 @@ func (s *Server) Status() StatusInfo {
 		PID:        os.Getpid(),
 		Version:    s.opts.Version,
 		Started:    s.started,
-		URL:        s.appBase() + "/",
+		URL:        "https://" + net.JoinHostPort(s.opts.AdvertiseHost, strconv.Itoa(s.opts.HTTPSPort)) + "/",
 		Pairing:    s.pairing.active(s.now()),
 		Features:   s.router.Features(),
 		PublicCert: s.opts.Public.Status(),

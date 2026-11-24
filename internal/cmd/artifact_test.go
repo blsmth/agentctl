@@ -501,3 +501,28 @@ func TestArtifactCommentsShowAndList(t *testing.T) {
 		t.Errorf("json = %q %v", out.String(), err)
 	}
 }
+
+// TestArtifactAppLinkStaysLocalWithPublicHost: with a public base (the
+// serve.public_hostname certificate held), content links move but the app
+// link keeps the paired local host, where the device cookie lives.
+func TestArtifactAppLinkStaysLocalWithPublicHost(t *testing.T) {
+	h := newArtifactHarness(t)
+	h.running = true
+	h.env.serveURL = func() (string, bool) { return "https://mac.agentctl.example.com:8443", true }
+	h.env.appBase = func() string { return "https://box.local:8443" }
+	src := writeTmp(t, "p.html", "<title>Page</title>")
+	var out bytes.Buffer
+	if err := h.env.add(&out, ArtifactAddOptions{Path: src, JSON: true}); err != nil {
+		t.Fatal(err)
+	}
+	var v artifactView
+	if err := json.Unmarshal(out.Bytes(), &v); err != nil {
+		t.Fatalf("bad json %q: %v", out.String(), err)
+	}
+	if v.URL != "https://mac.agentctl.example.com:8443/a/"+v.ID+"/latest/" {
+		t.Errorf("url = %q", v.URL)
+	}
+	if v.AppURL != "https://box.local:8443/#/artifacts/"+v.ID {
+		t.Errorf("app_url = %q", v.AppURL)
+	}
+}

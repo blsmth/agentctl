@@ -44,6 +44,14 @@ func Serve() (string, bool) {
 	return chooseBase(cfg, host, running, func() (string, error) { return queryPublicURL(dir) }), running
 }
 
+// AppBase is the base URL of phone-app links (#/artifacts/...): always the
+// local host from config, never the public hostname, because the app needs
+// the device cookie set at pairing on the local host.
+func AppBase() string {
+	host, _ := os.Hostname()
+	return BaseURL(config.Load().Serve, host)
+}
+
 // queryPublicURL is servectl.QueryPublicURL; a var so tests can stub it.
 var queryPublicURL = servectl.QueryPublicURL
 

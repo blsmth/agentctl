@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/logging"
@@ -255,10 +256,19 @@ func sniMatches(sni, host string) bool {
 // anything but a regular file readable by the owner alone, and never puts
 // the token in an error.
 func readCloudflareToken(path string) (string, error) {
-	fi, err := os.Lstat(path)
-	if errors.Is(err, fs.ErrNotExist) {
+	// O_NOFOLLOW refuses a symlink at open time, and the checks below run on
+	// the opened file, so nothing can be swapped in between.
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
 		return "", fmt.Errorf("no Cloudflare API token: create %s (mode 0600) holding a token scoped to Zone:DNS:Edit", path)
+	case errors.Is(err, syscall.ELOOP):
+		return "", fmt.Errorf("%s is not a regular file", path)
+	case err != nil:
+		return "", fmt.Errorf("reading Cloudflare API token: %w", err)
 	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
 	if err != nil {
 		return "", fmt.Errorf("reading Cloudflare API token: %w", err)
 	}
@@ -268,11 +278,6 @@ func readCloudflareToken(path string) (string, error) {
 	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
 		return "", fmt.Errorf("%s has mode %04o, readable by others: run chmod 600 %s", path, perm, path)
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("reading Cloudflare API token: %w", err)
-	}
-	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, maxTokenBytes))
 	if err != nil {
 		return "", fmt.Errorf("reading Cloudflare API token: %w", err)

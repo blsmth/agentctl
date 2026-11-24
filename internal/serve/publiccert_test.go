@@ -377,37 +377,37 @@ func TestReadCloudflareToken(t *testing.T) {
 func TestServerAdvertisesPublicHostOnlyWithValidCert(t *testing.T) {
 	ca := newTestCA(t)
 	src := &fakeSource{}
-	var p *PublicCert
 	ts := newTestServerWith(t, config.ServeConfig{NtfyTopic: "t", NtfyDetails: true}, func(o *Options) {
-		p = newPublicCert(testPublicHost, false, src, o.Now, nil)
-		o.Public = p
+		o.Public = newPublicCert(testPublicHost, false, src, o.Now, nil)
 	})
+	const lan = "https://192.168.1.10:8443"
 	st := ts.Status()
-	if st.URL != "https://192.168.1.10:8443/" || st.PublicURL != "" {
+	if st.URL != lan+"/" || st.PublicURL != "" {
 		t.Errorf("before cert: URL %q PublicURL %q", st.URL, st.PublicURL)
 	}
 	if st.PublicCert == nil || st.PublicCert.State != PublicCertNone {
 		t.Errorf("PublicCert = %+v", st.PublicCert)
 	}
-	if got := ts.ntfy.AppURLFunc(); got != "https://192.168.1.10:8443" {
-		t.Errorf("ntfy app url = %q", got)
-	}
 
 	now := ts.clock.Now()
 	src.set(ca.leafPair(t, []string{testPublicSubject}, now.Add(-time.Hour), now.Add(90*24*time.Hour)))
 	st = ts.Status()
-	want := "https://" + testPublicHost + ":8443/"
-	if st.URL != want || st.PublicURL != want {
-		t.Errorf("with cert: URL %q PublicURL %q, want %q", st.URL, st.PublicURL, want)
+	if want := "https://" + testPublicHost + ":8443/"; st.PublicURL != want {
+		t.Errorf("with cert: PublicURL %q, want %q", st.PublicURL, want)
 	}
-	if got := ts.ntfy.AppURLFunc(); got != "https://"+testPublicHost+":8443" {
-		t.Errorf("ntfy app url = %q", got)
+	// The app needs the host-only device cookie set at pairing on the LAN
+	// address, so the app URL, ntfy Click links and pairing stay there.
+	if st.URL != lan+"/" {
+		t.Errorf("with cert: app URL moved to %q", st.URL)
+	}
+	if ts.ntfy.AppURL != lan {
+		t.Errorf("ntfy app url = %q, want %q", ts.ntfy.AppURL, lan)
 	}
 	info, err := ts.OpenPairing("phone")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(info.PairURL, "https://192.168.1.10:8443/pair") {
+	if !strings.HasPrefix(info.PairURL, lan+"/pair") {
 		t.Errorf("pairing URL moved to the public host: %q", info.PairURL)
 	}
 }
@@ -417,9 +417,6 @@ func TestServerStatusUnchangedWithoutPublicHostname(t *testing.T) {
 	st := ts.Status()
 	if st.URL != "https://192.168.1.10:8443/" || st.PublicURL != "" || st.PublicCert != nil {
 		t.Errorf("status = %+v", st)
-	}
-	if ts.ntfy.AppURLFunc != nil {
-		t.Error("ntfy AppURLFunc set without public_hostname")
 	}
 	if cfg := serverTLSConfig(tls.Certificate{}, nil); cfg.GetCertificate != nil || len(cfg.Certificates) != 1 {
 		t.Error("TLS config changed without public_hostname")

@@ -422,9 +422,6 @@ type Ntfy struct {
 	Base   string // default ntfyBase
 	Topic  string
 	AppURL string // https://<host>:<port>, for the Click header (Details only)
-	// AppURLFunc, when set, replaces AppURL per post (the public hostname
-	// once its certificate is held).
-	AppURLFunc func() string
 	// Details posts the full title and body and a Click link to the window
 	// (serve.ntfy_details).
 	Details bool
@@ -449,11 +446,7 @@ func (n *Ntfy) Send(ctx context.Context, msg Message) error {
 	}
 	req.Header.Set("Title", msg.Title)
 	if n.Details {
-		app := n.AppURL
-		if n.AppURLFunc != nil {
-			app = n.AppURLFunc()
-		}
-		req.Header.Set("Click", app+ntfyClickPath(msg))
+		req.Header.Set("Click", n.AppURL+ntfyClickPath(msg))
 	}
 	req.Header.Set("Tags", ntfyTags(msg.Kind))
 	if msg.Urgent {

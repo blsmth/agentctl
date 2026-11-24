@@ -103,7 +103,7 @@ func printServeStatus(w io.Writer, dir string, now time.Time) error {
 		if st.Pairing {
 			fmt.Fprintf(tw, "pairing:\topen\n")
 		}
-		printPublicCertStatus(tw, st.PublicCert, now)
+		printPublicCertStatus(tw, st.PublicCert, st.PublicURL, now)
 		printPushStatus(tw, st)
 	case errors.Is(err, serve.ErrNotRunning):
 		if pid, ok := pidfile.Running(dir, serve.PIDFile, "serve"); ok {
@@ -276,12 +276,14 @@ func waitForCA(dir string, timeout time.Duration) *serve.CA {
 	return nil
 }
 
-// printPushStatus writes the push subscription and last-push lines.
 // printPublicCertStatus prints the serve.public_hostname rows; nothing when
-// the key is unset.
-func printPublicCertStatus(w io.Writer, pc *serve.PublicCertStatus, now time.Time) {
+// the key is unset. publicURL is set while a valid certificate is held.
+func printPublicCertStatus(w io.Writer, pc *serve.PublicCertStatus, publicURL string, now time.Time) {
 	if pc == nil {
 		return
+	}
+	if publicURL != "" {
+		fmt.Fprintf(w, "public url:\t%s (artifact links)\n", publicURL)
 	}
 	fmt.Fprintf(w, "public host:\t%s\n", pc.Hostname)
 	if pc.Subject != "" {
@@ -304,6 +306,7 @@ func printPublicCertStatus(w io.Writer, pc *serve.PublicCertStatus, now time.Tim
 	}
 }
 
+// printPushStatus writes the push subscription and last-push lines.
 func printPushStatus(w io.Writer, st serve.StatusInfo) {
 	if len(st.PushDevices) == 0 {
 		fmt.Fprintf(w, "push subscriptions:\t0\n")

@@ -166,19 +166,22 @@ func TestPrintPublicCertStatus(t *testing.T) {
 	tests := []struct {
 		name   string
 		pc     *serve.PublicCertStatus
+		url    string
 		want   []string
 		absent []string
 	}{
 		{name: "unset prints nothing", pc: nil, absent: []string{"public"}},
 		{
-			name: "obtaining",
-			pc:   &serve.PublicCertStatus{Hostname: "mac.agentctl.example.com", Subject: "*.agentctl.example.com", State: serve.PublicCertObtaining},
-			want: []string{"public host:\tmac.agentctl.example.com", "public cert name:\t*.agentctl.example.com", "public cert:\tobtaining"},
+			name:   "obtaining",
+			pc:     &serve.PublicCertStatus{Hostname: "mac.agentctl.example.com", Subject: "*.agentctl.example.com", State: serve.PublicCertObtaining},
+			want:   []string{"public host:\tmac.agentctl.example.com", "public cert name:\t*.agentctl.example.com", "public cert:\tobtaining"},
+			absent: []string{"public url"},
 		},
 		{
 			name: "valid",
 			pc:   &serve.PublicCertStatus{Hostname: "mac.example.com", State: serve.PublicCertValid, Expires: now.Add(60 * 24 * time.Hour)},
-			want: []string{"public cert:\tvalid, expires", "(60 days)"}, absent: []string{"staging", "error"},
+			url:  "https://mac.example.com:8443/",
+			want: []string{"public url:\thttps://mac.example.com:8443/", "public cert:\tvalid, expires", "(60 days)"}, absent: []string{"staging", "error"},
 		},
 		{
 			name: "staging",
@@ -194,7 +197,7 @@ func TestPrintPublicCertStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var b bytes.Buffer
-			printPublicCertStatus(&b, tt.pc, now)
+			printPublicCertStatus(&b, tt.pc, tt.url, now)
 			for _, w := range tt.want {
 				if !strings.Contains(b.String(), w) {
 					t.Errorf("missing %q:\n%s", w, b.String())
