@@ -3,9 +3,11 @@ package context_test
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 )
@@ -200,7 +202,7 @@ func TestForAgent(t *testing.T) {
 		t.Fatalf("Set pinned-unscoped: %v", err)
 	}
 
-	results, err := ctxstore.ForAgent("go-engineer", []string{"pinned-unscoped"})
+	results, err := ctxstore.ForAgent("go-engineer", []string{"pinned-unscoped"}, 0)
 	if err != nil {
 		t.Fatalf("ForAgent: %v", err)
 	}
@@ -224,6 +226,67 @@ func TestForAgent(t *testing.T) {
 		if keys[tc.key] != tc.want {
 			t.Errorf("%s: keys[%q] = %v, want %v", tc.desc, tc.key, keys[tc.key], tc.want)
 		}
+	}
+}
+
+func TestForAgent_TicketSpecScoping(t *testing.T) {
+	setup(t)
+	for _, k := range []string{"ticket-1-spec", "ticket-2-spec", "ticket-3-spec", "ticket-x-spec", "notes"} {
+		if err := ctxstore.Set(k, ctxstore.Entry{Content: k, Agent: "go-engineer"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		name   string
+		pinned []string
+		issue  int
+		want   []string
+	}{
+		{"adhoc: no specs", nil, 0, []string{"notes", "ticket-x-spec"}},
+		{"issue 2: only its spec", nil, 2, []string{"notes", "ticket-2-spec", "ticket-x-spec"}},
+		{"issue 9: no spec", nil, 9, []string{"notes", "ticket-x-spec"}},
+		{"pinned spec always", []string{"ticket-3-spec"}, 0, []string{"notes", "ticket-3-spec", "ticket-x-spec"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ctxstore.ForAgent("go-engineer", tc.pinned, tc.issue)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var keys []string
+			for _, e := range got {
+				keys = append(keys, e.Key)
+			}
+			sort.Strings(keys)
+			if strings.Join(keys, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("keys = %v, want %v", keys, tc.want)
+			}
+		})
+	}
+	t.Run("zero entries", func(t *testing.T) {
+		setup(t)
+		got, err := ctxstore.ForAgent("go-engineer", nil, 1)
+		if err != nil || len(got) != 0 {
+			t.Errorf("got %v, %v", got, err)
+		}
+	})
+}
+
+func TestForAgent_TruncatesLargeEntry(t *testing.T) {
+	setup(t)
+	old := ctxstore.MaxEntryBytes
+	ctxstore.MaxEntryBytes = 100
+	t.Cleanup(func() { ctxstore.MaxEntryBytes = old })
+	if err := ctxstore.Set("big", ctxstore.Entry{Content: strings.Repeat("é", 200), Agent: "go-engineer"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ctxstore.ForAgent("go-engineer", nil, 0)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	c := got[0].Content
+	if !strings.HasSuffix(c, "[truncated, full text: agentctl context get big]") || !utf8.ValidString(c) || len(c) > 100+60 {
+		t.Errorf("content = %q", c)
 	}
 }
 

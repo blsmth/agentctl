@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -261,9 +264,35 @@ func Search(tag string) ([]Entry, error) {
 // instead of building 32KB fixtures.
 var MaxInjectedBytes = 32 * 1024
 
+// MaxEntryBytes caps a single injected entry's content. A longer entry is
+// cut and ends with a visible pointer to the full text. Like MaxInjectedBytes
+// it is a var so tests can shrink it.
+var MaxEntryBytes = 8 * 1024
+
+var ticketSpecKey = regexp.MustCompile(`^ticket-(\d+)-spec$`)
+
+// TicketSpecNumber returns N for a key of the form ticket-<N>-spec.
+func TicketSpecNumber(key string) (int, bool) {
+	m := ticketSpecKey.FindStringSubmatch(key)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
 // ForAgent returns entries relevant to a specific agent: those explicitly
 // scoped to it via the agent field, or explicitly pinned via pinnedKeys.
-// Newest first, capped at MaxInjectedBytes of formatted output.
+// Newest first, capped at MaxInjectedBytes of formatted output, and each
+// entry cut at MaxEntryBytes.
+//
+// A ticket spec (key ticket-<N>-spec) scoped to the agent is injected only
+// when the launch is for issue N (issue == N); a stale spec must not ride
+// along on unrelated launches. Pinning its key in context_keys still
+// injects it always.
 //
 // Unscoped entries (Agent == "") are deliberately NOT returned. That is what
 // makes this store a lookup service rather than a broadcast channel: every
@@ -272,7 +301,7 @@ var MaxInjectedBytes = 32 * 1024
 // asked for it. To get an entry auto-injected for an agent, either set it
 // explicitly with `--agent <name>` at `context set` time, or add its key to
 // that agent's `context_keys` in config.
-func ForAgent(agentName string, pinnedKeys []string) ([]Entry, error) {
+func ForAgent(agentName string, pinnedKeys []string, issue int) ([]Entry, error) {
 	all, err := List()
 	if err != nil {
 		return nil, err
@@ -285,12 +314,35 @@ func ForAgent(agentName string, pinnedKeys []string) ([]Entry, error) {
 
 	var candidates []Entry
 	for _, e := range all {
-		if e.Agent == agentName || pinned[e.Key] {
-			candidates = append(candidates, e)
+		if pinned[e.Key] {
+			candidates = append(candidates, truncateEntry(e))
+			continue
 		}
+		if e.Agent != agentName {
+			continue
+		}
+		if n, ok := TicketSpecNumber(e.Key); ok && n != issue {
+			continue
+		}
+		candidates = append(candidates, truncateEntry(e))
 	}
 
 	return selectWithinBudget(candidates, pinnedKeys, MaxInjectedBytes), nil
+}
+
+// truncateEntry cuts e.Content to MaxEntryBytes (on a rune boundary) and
+// appends a pointer to the full text.
+func truncateEntry(e Entry) Entry {
+	if len(e.Content) <= MaxEntryBytes {
+		return e
+	}
+	cut := MaxEntryBytes
+	for cut > 0 && !utf8.RuneStart(e.Content[cut]) {
+		cut--
+	}
+	e.Content = strings.TrimRight(e.Content[:cut], "\n") +
+		fmt.Sprintf("\n\n[truncated, full text: agentctl context get %s]", e.Key)
+	return e
 }
 
 // selectWithinBudget picks entries from candidates to inject without

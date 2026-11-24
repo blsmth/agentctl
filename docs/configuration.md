@@ -432,7 +432,7 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
 | `alert_config.idle` | bool | `true` | Notify on Working to Idle (done). |
 | `alert_config.gone` | bool | `false` | Reserved; no notification uses it yet. |
 | `cross_context` | bool | `true` | Inject a cross-agent summary at launch. Global-only (a project may only switch it off). |
-| `context_keys` | string[] | none | Context-store keys always injected at launch for this agent. Global-only. |
+| `context_keys` | string[] | none | Context-store keys always injected at launch for this agent, including a `ticket-<N>-spec` key whatever the issue. Global-only. |
 | `dir` | string | empty (portable) | Fixed working directory. Global-only. |
 | `model` | string | inherit | `sonnet`, `opus`, `haiku`, or a full model name. |
 | `effort_level` | string | unset | `low`, `medium`, `high`, `xhigh`, `max`, or `auto`. |

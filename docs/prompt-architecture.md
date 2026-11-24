@@ -17,7 +17,7 @@ How we structure system prompts vs user messages when launching agents, based on
 | Layer | Content | Delivery |
 |---|---|---|
 | Agent definition | Role, persona, coding patterns, repo conventions | `--agent <name>` (reads `~/.claude/agents/<name>.md`; on pi, inlined into the system prompt file) |
-| System prompt file | Issue body, worktree note, context store entries, execution boilerplate | `--append-system-prompt-file <path>` (temp file, cleaned up after launch) |
+| System prompt file | Issue body, worktree note, context store entries, execution boilerplate | `--append-system-prompt-file <path>` (temp file under `<project>/.agentctl/launch/`; not deleted after launch, `reconcile --housekeeping` prunes files older than 7 days) |
 | User message | Short directive: "Implement issue #N: \<title\>" | Inline CLI argument |
 
 ### System prompt file ordering
@@ -44,7 +44,7 @@ How we structure system prompts vs user messages when launching agents, based on
 7. Mode instructions (autonomy/behavior boilerplate for dispatch/adhoc; a
    different block per mode for discuss/triage/review/custom; PR context,
    verdict format and author section for review-pr; empty for bare)
-8. Context store entries (entries stored for this agent + pinned context_keys)
+8. Context store entries (entries stored for this agent + pinned context_keys, each cut at 8KB; a `ticket-<N>-spec` only on `--issue N`)
 9. Finishing steps — verify, commit, push, open a PR (worktree-aware; only
    for the fully autonomous dispatch/adhoc modes, since triage/review/review-pr
    forbid committing and discuss/custom/bare leave "done" to the human; never

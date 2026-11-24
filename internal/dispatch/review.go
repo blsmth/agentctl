@@ -20,6 +20,14 @@ type PullRequest struct {
 	Login   string // GitHub login of the PR author
 	Files   []string
 
+	// Additions, Deletions and ChangedFiles are the diffstat as GitHub
+	// reports it; CI is the check state at launch: green, pending, red or
+	// none (see ciState).
+	Additions    int
+	Deletions    int
+	ChangedFiles int
+	CI           string
+
 	// Extra is optional additional review instructions (--prompt or
 	// --prompt-key), rendered under "## Additional review instructions".
 	Extra string
@@ -44,15 +52,16 @@ type PRAuthor struct {
 // Known reports whether an author window was identified.
 func (a PRAuthor) Known() bool { return a.WindowID != "" }
 
-// maxReviewFiles caps the changed-file list injected into the prompt.
-const maxReviewFiles = 200
+// maxReviewFiles caps the changed-file list injected into the prompt; the
+// rest is summarized as "+N more".
+const maxReviewFiles = 15
 
 // FetchPR fetches PR number from repoSlug with `gh pr view` (bounded by the
 // same timeout as RepoSlug). A closed or merged PR is an error: there is
 // nothing left to review.
 func FetchPR(repoSlug string, number int) (PullRequest, error) {
 	args := []string{"pr", "view", fmt.Sprintf("%d", number),
-		"--json", "number,title,url,body,baseRefName,headRefName,headRefOid,files,author,state"}
+		"--json", "number,title,url,body,baseRefName,headRefName,headRefOid,files,author,state,additions,deletions,changedFiles,statusCheckRollup"}
 	if repoSlug != "" {
 		args = append(args, "--repo", repoSlug)
 	}
@@ -87,6 +96,10 @@ func parsePR(data []byte) (PullRequest, error) {
 		Files []struct {
 			Path string `json:"path"`
 		} `json:"files"`
+		Additions    int               `json:"additions"`
+		Deletions    int               `json:"deletions"`
+		ChangedFiles int               `json:"changedFiles"`
+		Rollup       []json.RawMessage `json:"statusCheckRollup"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return PullRequest{}, err
@@ -95,11 +108,51 @@ func parsePR(data []byte) (PullRequest, error) {
 		Number: raw.Number, Title: raw.Title, URL: raw.URL, Body: raw.Body,
 		BaseRef: raw.BaseRefName, HeadRef: raw.HeadRefName, HeadSHA: raw.HeadRefOid,
 		State: raw.State, Login: raw.Author.Login,
+		Additions: raw.Additions, Deletions: raw.Deletions, ChangedFiles: raw.ChangedFiles,
+		CI: ciState(raw.Rollup),
 	}
 	for _, f := range raw.Files {
 		pr.Files = append(pr.Files, f.Path)
 	}
 	return pr, nil
+}
+
+// ciState reduces gh's statusCheckRollup (check runs and commit statuses) to
+// green, pending, red or none. Red wins over pending: a failed check already
+// decides the question, whatever is still running.
+func ciState(rollup []json.RawMessage) string {
+	if len(rollup) == 0 {
+		return "none"
+	}
+	pending := false
+	for _, r := range rollup {
+		var c struct {
+			Status     string `json:"status"`     // CheckRun: QUEUED, IN_PROGRESS, COMPLETED, ...
+			Conclusion string `json:"conclusion"` // CheckRun, once COMPLETED
+			State      string `json:"state"`      // StatusContext: SUCCESS, FAILURE, PENDING, ...
+		}
+		if json.Unmarshal(r, &c) != nil {
+			continue
+		}
+		switch strings.ToUpper(c.State) {
+		case "FAILURE", "ERROR":
+			return "red"
+		case "PENDING", "EXPECTED":
+			pending = true
+		}
+		if c.Status != "" && !strings.EqualFold(c.Status, "COMPLETED") {
+			pending = true
+			continue
+		}
+		switch strings.ToUpper(c.Conclusion) {
+		case "FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE":
+			return "red"
+		}
+	}
+	if pending {
+		return "pending"
+	}
+	return "green"
 }
 
 // reviewPRUserMessage is ModeReviewPR's first user message.
@@ -158,16 +211,27 @@ func reviewPRContext(pr PullRequest) string {
 	if pr.Login != "" {
 		fmt.Fprintf(&b, "- GitHub author: %s\n", pr.Login)
 	}
+	total := max(pr.ChangedFiles, len(pr.Files))
+	if total > 0 {
+		fmt.Fprintf(&b, "- Diffstat: %d files, +%d/-%d\n", total, pr.Additions, pr.Deletions)
+	}
+	ci := pr.CI
+	if ci == "" {
+		ci = "none"
+	}
+	fmt.Fprintf(&b, "- CI at launch: %s\n", ci)
 	b.WriteString("\n### Changed files\n\n")
 	if len(pr.Files) == 0 {
 		b.WriteString("(none listed)\n")
 	}
 	for i, f := range pr.Files {
 		if i == maxReviewFiles {
-			fmt.Fprintf(&b, "- ... and %d more (see `gh pr diff %d --name-only`)\n", len(pr.Files)-maxReviewFiles, pr.Number)
 			break
 		}
 		b.WriteString("- " + f + "\n")
+	}
+	if total > maxReviewFiles {
+		fmt.Fprintf(&b, "- +%d more (`gh pr diff %d --name-only`)\n", total-maxReviewFiles, pr.Number)
 	}
 	b.WriteString("\n### Description\n\n")
 	if body := strings.TrimSpace(pr.Body); body != "" {

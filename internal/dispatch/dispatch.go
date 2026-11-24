@@ -316,7 +316,7 @@ func Launch(req Request) (Result, error) {
 	// 5. Gather context store entries.
 	var contextEntries []ctxstore.Entry
 	if ac.CrossContext {
-		entries, err := ctxstore.ForAgent(req.AgentName, ac.ContextKeys)
+		entries, err := ctxstore.ForAgent(req.AgentName, ac.ContextKeys, req.Ticket)
 		if err == nil {
 			contextEntries = entries
 		}

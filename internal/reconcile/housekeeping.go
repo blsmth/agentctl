@@ -38,7 +38,10 @@ type HousekeepingDeps struct {
 	PruneLLMUsage func(now time.Time) (int, error)
 	// PruneClosed removes closed-window ledger files older than
 	// closedlog.MaxAge.
-	PruneClosed   func(now time.Time) (int, error)
+	PruneClosed func(now time.Time) (int, error)
+	// PruneLaunch removes old prompt and launch-script files from
+	// <runtime dir>/launch (see tmux.PruneLaunchDir).
+	PruneLaunch   func(now time.Time) (int, error)
 	Records       func() map[string]windowstate.WindowState
 	SessionLogDir func() string
 	// BackfillTitles titles this session's live windows that never got a
@@ -77,6 +80,9 @@ func DefaultHousekeepingDeps(runtimeDir string) HousekeepingDeps {
 		},
 		PruneClosed: func(now time.Time) (int, error) {
 			return closedlog.Prune(now, closedlog.MaxAge)
+		},
+		PruneLaunch: func(now time.Time) (int, error) {
+			return tmux.PruneLaunchDir(filepath.Join(runtimeDir, "launch"), now, tmux.LaunchFileMaxAge, tmux.RunningProcessArgs)
 		},
 		Records:       windowstate.All,
 		SessionLogDir: paths.SessionLogDir,
@@ -137,6 +143,15 @@ func Housekeep(d HousekeepingDeps) {
 			logging.Log("janitor: closedlog.Prune: %v", err)
 		case n > 0:
 			logging.Log("janitor: pruned %d closed-window ledger file(s) older than %s", n, closedlog.MaxAge)
+		}
+	}
+	if d.PruneLaunch != nil && stamp.Try(filepath.Join(d.RuntimeDir, "prune-launch.stamp"), LLMUsagePruneInterval, now) {
+		n, err := d.PruneLaunch(now)
+		switch {
+		case err != nil:
+			logging.Log("janitor: pruning launch dir: %v", err)
+		case n > 0:
+			logging.Log("janitor: pruned %d launch file(s) older than %s", n, tmux.LaunchFileMaxAge)
 		}
 	}
 	if stamp.Try(filepath.Join(d.RuntimeDir, "prune-session-logs.stamp"), PruneInterval, now) && d.PruneSessionLogs != nil {
