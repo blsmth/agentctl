@@ -195,6 +195,46 @@ func (m *SessionsModel) syncScroll() {
 	if m.listTop < 0 {
 		m.listTop = 0
 	}
+	// Keep the preview/detail scroll within its content, so one step back
+	// always moves the view.
+	if mx := m.maxPreviewScroll(); m.previewScroll > mx {
+		m.previewScroll = mx
+	}
+	if m.previewScroll < 0 {
+		m.previewScroll = 0
+	}
+}
+
+// maxPreviewScroll is the largest useful scroll of the preview panel (list
+// view) or detail body (detail view): content lines minus visible rows,
+// computed as previewPanel and viewDetail window them.
+func (m SessionsModel) maxPreviewScroll() int {
+	if len(m.entries) == 0 || m.cursor >= len(m.entries) {
+		return 0
+	}
+	if m.viewMode == 1 {
+		cw := m.contentWidth()
+		var lines []string
+		if m.detailTab == 1 {
+			lines = m.turnMetricLines(cw)
+		} else {
+			lines = m.infoLines(cw)
+		}
+		h := m.termHeight - 3 - 2
+		if h < 1 {
+			h = 1
+		}
+		return max(0, len(lines)-h)
+	}
+	if !m.showPreview() {
+		return 0
+	}
+	head := 2 + len(m.actionButtons("preview", sessPreviewWidth))
+	room := m.listHeight() + 2 - head
+	if room < 1 {
+		room = 1
+	}
+	return max(0, len(m.infoLines(sessPreviewWidth))-room)
 }
 
 // ── Cells ────────────────────────────────────────────────────────────────────

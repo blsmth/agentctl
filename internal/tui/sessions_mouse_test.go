@@ -30,7 +30,7 @@ func sessTestModel(t *testing.T, w, h, n int) SessionsModel {
 			Summary: &sessions.Summary{
 				TurnCount: 4, TotalInputTokens: 1000, TotalOutputTokens: 200, ModelName: "claude-sonnet-4",
 				GitBranch: "agent/go-engineer/issue-12-a-rather-long-branch-name-indeed",
-				UserMsgs:  []string{strings.Repeat("a long user message ", 12)},
+				UserMsgs:  []string{strings.Repeat("a long user message ", 12), "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"},
 			},
 			Age: "5m ago", Agent: agent, Project: project, Turns: 4, InputTokens: 1000, OutputTokens: 200,
 			Duration: 125 * time.Minute, CostUSD: 1.5, ModelShort: "sonnet", CtxPct: 62, TokPerMin: 99,
@@ -414,5 +414,46 @@ func TestSessionsKeyboardUnchanged(t *testing.T) {
 	next, _ := m.Update(tkKey("?"))
 	if !next.(SessionsModel).helpOpen {
 		t.Error("? should open the overlay")
+	}
+}
+
+// TestSessionsPreviewScrollClamped: overshooting the end of the preview or
+// detail body must not bank extra scroll; one step back moves the view.
+func TestSessionsPreviewScrollClamped(t *testing.T) {
+	step := func(m SessionsModel, msg tea.Msg) SessionsModel {
+		next, _ := m.Update(msg)
+		return next.(SessionsModel)
+	}
+	m := sessTestModel(t, 110, 30, 5)
+	for i := 0; i < 50; i++ {
+		m = step(m, tkKey("J"))
+	}
+	before := m.View().Content
+	m = step(m, tkKey("K"))
+	if m.View().Content == before {
+		t.Error("list preview: K after overshooting J did not change the frame")
+	}
+
+	m = sessTestModel(t, 100, 12, 5)
+	m.viewMode = 1
+	for i := 0; i < 50; i++ {
+		m = step(m, tkKey("j"))
+	}
+	before = m.View().Content
+	m = step(m, tkKey("k"))
+	if m.View().Content == before {
+		t.Error("detail: k after overshooting j did not change the frame")
+	}
+
+	m = sessTestModel(t, 100, 12, 5)
+	m.viewMode = 1
+	x, y := sessZonePoint(t, m, "pane:body")
+	for i := 0; i < 20; i++ {
+		m = step(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: x, Y: y})
+	}
+	before = m.View().Content
+	m = step(m, tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: x, Y: y})
+	if m.View().Content == before {
+		t.Error("detail: wheel-up after overshooting did not change the frame")
 	}
 }

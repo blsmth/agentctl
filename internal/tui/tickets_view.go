@@ -248,7 +248,7 @@ func (m TicketsModel) renderHintBar(hints []tkHint) string {
 	return clickableHintLine(hints, m.hover, m.contentWidth())
 }
 
-// renderHintLine lays hints out centered in cw columns, dropping unpinned
+// clickableHintLine lays hints out centered in cw columns, dropping unpinned
 // hints from the end until the bar fits; a pinned-only bar that is still too
 // wide is cut. Every hint is a "key:<send>@hint" click zone and underlines
 // while hovered. Shared by the tickets and sessions browsers.
