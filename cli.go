@@ -15,6 +15,7 @@ import (
 	"github.com/blsmth/agentctl/internal/cmd"
 	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/hooks"
+	"github.com/blsmth/agentctl/internal/improve"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/metricsserve"
 	"github.com/blsmth/agentctl/internal/paths"
@@ -330,9 +331,32 @@ type LogsCmd struct {
 
 func (c *LogsCmd) Run() error { cmd.RunLogs(c.Name); return nil }
 
-type ImproveCmd struct{}
+// ImproveCmd implements `agentctl improve`.
+type ImproveCmd struct {
+	Agent    string   `arg:"" optional:"" help:"Agent to improve (default: the current window's agent)"`
+	Fleet    bool     `help:"Review every agent: build the evidence pack across the fleet"`
+	Session  []string `help:"Limit the evidence to these session IDs (or prefixes)"`
+	Since    string   `default:"7d" help:"Evidence window (e.g. 24h, 7d)"`
+	Theme    string   `help:"Improvement focus area"`
+	Template string   `help:"Prompt template whose body is added to the prompt"`
+	Model    string   `help:"Model for the session (overrides the agent's own model)"`
+	Backend  string   `help:"Backend for the session (overrides the agent's own)"`
+	Account  string   `help:"Account for the session (overrides the agent's own)"`
+	DryRun   bool     `name:"dry-run" help:"Print the evidence and the prompt; launch nothing"`
+	Focus    bool     `help:"Switch to the new window (it opens unfocused by default)"`
+}
 
-func (c *ImproveCmd) Run() error { cmdImprove(); return nil }
+func (c *ImproveCmd) Run() error {
+	since, err := sessions.ParseSince(c.Since)
+	if err != nil {
+		return err
+	}
+	return cmdImprove(improve.Options{
+		Agent: c.Agent, Fleet: c.Fleet, SessionIDs: c.Session, Since: since,
+		Theme: c.Theme, Template: c.Template, Model: c.Model, Backend: c.Backend,
+		Account: c.Account, DryRun: c.DryRun, Focus: c.Focus,
+	})
+}
 
 // CleanupCmd implements `agentctl cleanup`.
 type CleanupCmd struct {

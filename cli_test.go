@@ -387,3 +387,26 @@ func TestLaunchWatchParses(t *testing.T) {
 		t.Errorf("parsed %q window %q", ctx.Command(), cli.LaunchWatch.WindowID)
 	}
 }
+
+func TestImproveFlagsParse(t *testing.T) {
+	var cli CLI
+	k, err := kong.New(&cli, kong.Name("agentctl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.Parse([]string{"improve", "go-engineer", "--since", "24h", "--theme", "t", "--model", "sonnet", "--session", "abc", "--session", "def", "--dry-run"}); err != nil {
+		t.Fatal(err)
+	}
+	c := cli.Improve
+	if c.Agent != "go-engineer" || c.Since != "24h" || c.Theme != "t" || c.Model != "sonnet" || !c.DryRun || c.Fleet || len(c.Session) != 2 {
+		t.Errorf("improve = %+v", c)
+	}
+	var cli2 CLI
+	k2, _ := kong.New(&cli2, kong.Name("agentctl"))
+	if _, err := k2.Parse([]string{"improve", "--fleet"}); err != nil {
+		t.Fatal(err)
+	}
+	if !cli2.Improve.Fleet || cli2.Improve.Agent != "" || cli2.Improve.Since != "7d" || cli2.Improve.Focus {
+		t.Errorf("improve --fleet = %+v", cli2.Improve)
+	}
+}

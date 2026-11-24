@@ -46,7 +46,7 @@ func TestBuildAgents(t *testing.T) {
 		check   func(t *testing.T, got []state.AgentState)
 	}{
 		{
-			name: "tracked, untracked, stale record, order", wantIDs: []string{"@5", "@2", "@7"},
+			name: "tracked, untracked, stale record, order", wantIDs: []string{"@5", "@2", "@7", "@8"},
 			check: func(t *testing.T, got []state.AgentState) {
 				if got[1].State != "idle" || got[1].Name != "bare-thing" || got[1].AgentName != "bare-thing" {
 					t.Errorf("untracked = %+v", got[1])
@@ -57,7 +57,7 @@ func TestBuildAgents(t *testing.T) {
 			},
 		},
 		{
-			name: "done+unseen is done and never working", wantIDs: []string{"@5", "@2", "@7"},
+			name: "done+unseen is done and never working", wantIDs: []string{"@5", "@2", "@7", "@8"},
 			check: func(t *testing.T, got []state.AgentState) {
 				if !got[0].Done || got[0].State != "idle" {
 					t.Errorf("@5 done=%v state=%q, want done idle", got[0].Done, got[0].State)
@@ -65,7 +65,7 @@ func TestBuildAgents(t *testing.T) {
 			},
 		},
 		{
-			name: "done+seen is not done", wantIDs: []string{"@5", "@2", "@7"},
+			name: "done+seen is not done", wantIDs: []string{"@5", "@2", "@7", "@8"},
 			check: func(t *testing.T, got []state.AgentState) {
 				if got[2].Done {
 					t.Error("@7 done+seen must not report Done")
@@ -73,7 +73,7 @@ func TestBuildAgents(t *testing.T) {
 			},
 		},
 		{
-			name: "fields from windowstate", wantIDs: []string{"@5", "@2", "@7"},
+			name: "fields from windowstate", wantIDs: []string{"@5", "@2", "@7", "@8"},
 			check: func(t *testing.T, got []state.AgentState) {
 				a := got[0]
 				if a.ContextPct != 61 || a.ContextTokens != 100 || a.ContextWindow != 200 || a.ModelName != "claude-x" || a.CostUSD != 1.5 ||
@@ -86,7 +86,7 @@ func TestBuildAgents(t *testing.T) {
 			},
 		},
 		{
-			name: "no snapshot: enrichment zero", snap: nil, wantIDs: []string{"@5", "@2", "@7"},
+			name: "no snapshot: enrichment zero", snap: nil, wantIDs: []string{"@5", "@2", "@7", "@8"},
 			check: func(t *testing.T, got []state.AgentState) {
 				if got[0].InputTokens != 0 || got[0].StartTime != 0 {
 					t.Errorf("enrichment leaked without state.json: %+v", got[0])
@@ -94,7 +94,7 @@ func TestBuildAgents(t *testing.T) {
 			},
 		},
 		{
-			name: "fresh snapshot enriches by window id", snap: snapOf(time.Second), wantIDs: []string{"@5", "@2", "@7"},
+			name: "fresh snapshot enriches by window id", snap: snapOf(time.Second), wantIDs: []string{"@5", "@2", "@7", "@8"},
 			check: func(t *testing.T, got []state.AgentState) {
 				a := got[0]
 				if a.InputTokens != 10 || a.OutputTokens != 5 || a.LastTurnInput != 7 || a.StartTime != 99 || a.MailboxPending != 2 {
@@ -106,7 +106,7 @@ func TestBuildAgents(t *testing.T) {
 			},
 		},
 		{
-			name: "stale snapshot ignored", snap: snapOf(time.Minute), wantIDs: []string{"@5", "@2", "@7"},
+			name: "stale snapshot ignored", snap: snapOf(time.Minute), wantIDs: []string{"@5", "@2", "@7", "@8"},
 			check: func(t *testing.T, got []state.AgentState) {
 				if got[0].InputTokens != 0 || got[0].StartTime != 0 {
 					t.Errorf("stale snapshot merged: %+v", got[0])

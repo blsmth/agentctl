@@ -974,7 +974,8 @@ func TestClose(t *testing.T) {
 		{"record idle but pane busy", writeGroup("idle", true, "go-engineer", "dispatch"), workingPane, 409},
 		{"blocked", writeGroup("blocked", false, "go-engineer", "dispatch"), dialogPane, 409},
 		{"shell", writeGroup("idle", true, "shell", ""), idlePane, 409},
-		{"improve", writeGroup("idle", true, "improve~1", "dispatch"), idlePane, 409},
+		{"improve idle", writeGroup("idle", false, "improve~1", "improve"), idlePane, 200},
+		{"improve working", writeGroup("working", false, "improve~1", "improve"), workingPane, 409},
 		{"untracked", func() fleetwatch.Group {
 			g := writeGroup("idle", true, "go-engineer", "dispatch")
 			g.Meta = map[string]fleet.Meta{}
