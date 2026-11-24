@@ -85,7 +85,8 @@ func TestHubCaptureFoldedFiltered(t *testing.T) {
 				}
 			}
 		}
-		if !strings.Contains(focus, fleetFoldedGlyph+" spacewalker") && !strings.Contains(focus, fleetFoldedGlyph+" energy") {
+		flat := strings.Join(strings.Fields(focus), " ") // chip padding varies with width
+		if !strings.Contains(flat, fleetFoldedGlyph+" spacewalker") && !strings.Contains(flat, fleetFoldedGlyph+" energy") {
 			t.Errorf("focus mode should fold a quiet project:\n%s", focus)
 		}
 		if !strings.Contains(needs, "· needs") {

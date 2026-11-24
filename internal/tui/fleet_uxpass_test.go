@@ -51,8 +51,9 @@ func TestStaleDoneRowRendersIdleButKeepsCheck(t *testing.T) {
 	m.rebuildLines()
 
 	out := m.renderRow(stale, false, 80)
-	if !strings.Contains(out, fleetDoneStyle.Render("✓")) {
-		t.Errorf("stale done row lost its green ✓: %q", out)
+	faded := lipgloss.NewStyle().Foreground(lipgloss.Color(midColor(theme.Current().Green, theme.Current().Base)))
+	if !strings.Contains(out, faded.Render("✓")) {
+		t.Errorf("stale done row should keep a faded green ✓: %q", out)
 	}
 	if !strings.Contains(out, fleetRecapIdleStyle.Render("Shipped the thing")) {
 		t.Errorf("stale done row should render at idle weight: %q", out)
@@ -173,11 +174,15 @@ func TestGroupNameNeutralBarKeepsColour(t *testing.T) {
 	g := fleet.Group{Session: "agentctl-proj", Project: "proj", Rows: []fleet.Row{testRow("a", "agentctl-proj", "idle", "")}}
 	m.groups = []fleet.Group{g}
 	hdr := m.renderGroupHeader(g, false, 80)
-	if !strings.Contains(hdr, fleetGroupNameStyle.Render("proj")) {
-		t.Errorf("group name should use the neutral bold style: %q", hdr)
+	if !strings.Contains(hdr, fleetProjectChipStyle("proj", true).Render(" proj ")) {
+		t.Errorf("group name should be a padded project-colour chip: %q", hdr)
 	}
-	if fleetGroupNameStyle.GetForeground() != lipgloss.Color(theme.Current().Text) || !fleetGroupNameStyle.GetBold() {
-		t.Errorf("group name style is not neutral bold")
+	if !strings.HasPrefix(hdr, fleetProjectBar("proj")) {
+		t.Errorf("header should start with the project bar: %q", hdr)
+	}
+	narrow := m.renderGroupHeader(g, false, 44)
+	if !strings.Contains(narrow, fleetProjectChipStyle("proj", false).Render("proj")) || !strings.Contains(ansi.Strip(narrow), "▾ proj") {
+		t.Errorf("narrow header should drop the chip padding: %q", narrow)
 	}
 	if !strings.Contains(fleetProjectBar("proj"), lipgloss.NewStyle().Foreground(lipgloss.Color(fleetColorFor("proj"))).Render("▎")) {
 		t.Error("the ▎ bar must keep the project colour")

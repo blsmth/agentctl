@@ -58,8 +58,8 @@ func TestFleetTickPicksUpThemeChange(t *testing.T) {
 	if got := fleetSelectedStyle.GetBackground(); got != lipgloss.Color(b.Surface) {
 		t.Errorf("background after tick = %v; want %s", got, b.Surface)
 	}
-	if got := fleetPalette()[0]; got != b.Accent {
-		t.Errorf("palette[0] = %s; want %s", got, b.Accent)
+	if got := fleetPalette()[0]; got != b.Sky {
+		t.Errorf("palette[0] = %s; want %s", got, b.Sky)
 	}
 }
 

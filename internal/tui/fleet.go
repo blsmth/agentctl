@@ -150,15 +150,15 @@ func initFleetStyles() {
 
 	fleetNameWorkingStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Bright))
 	fleetNameDoneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Text))
-	fleetNameIdleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Subtle))
+	fleetNameIdleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
 	fleetRecapWorkingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Text))
-	fleetRecapIdleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
+	fleetRecapIdleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(midColor(t.Muted, t.Text)))
 
 	fleetRecapHoverStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Text))
 	fleetActivityHoverStyle = fleetRecapHoverStyle.Italic(true)
 	fleetEmptyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted)).Italic(true)
 
-	fleetPaletteColors = []string{t.Accent, t.Sky, t.Blue, t.Info, t.Orange, t.Green}
+	fleetPaletteColors = paletteFor(t)
 }
 
 // refreshThemeIfChanged rebuilds every package-level style when the resolved
@@ -197,12 +197,18 @@ func midColor(a, b string) string {
 	return fmt.Sprintf("#%02x%02x%02x", (ar+br)/2, (ag+bg)/2, (ab+bb)/2)
 }
 
+// paletteFor is the project colour palette: hues that are not state colours
+// (Accent is working, Green is done), so a project bar or chip never reads as
+// a row state.
+func paletteFor(t theme.Theme) []string {
+	return []string{t.Sky, t.Blue, t.Info, t.Orange}
+}
+
 // fleetPalette returns the accent palette, falling back to the active theme
 // if styles have not been initialised.
 func fleetPalette() []string {
 	if len(fleetPaletteColors) == 0 {
-		t := theme.Current()
-		return []string{t.Accent, t.Sky, t.Blue, t.Info, t.Orange, t.Green}
+		return paletteFor(theme.Current())
 	}
 	return fleetPaletteColors
 }
@@ -2585,11 +2591,13 @@ func (m FleetModel) renderLine(i int, cw int) string {
 }
 
 // renderFleetDivider renders the non-selectable gap between two adjacent
-// groups: an empty row. The line kind stays so hit-testing and navigation
+// groups: a thin rule across the pane (less the right gutter). The line kind stays so hit-testing and navigation
 // treat it as before. Never rendered before the first group or after the
 // last; see rebuildLines.
-func renderFleetDivider(int) string {
-	return ""
+func renderFleetDivider(cw int) string {
+	t := theme.Current()
+	rule := strings.Repeat("─", max(cw-fleetSidebarRightGutter, 0))
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(t.Surface)).Render(rule)
 }
 
 // fleetProjectBar is the project-coloured left bar shared by a group's rows,
@@ -2611,6 +2619,11 @@ func rowGlyph(r fleet.Row) (string, lipgloss.Style) {
 	case fleetWeightWorking:
 		return "●", fleetWorkingStyle
 	case fleetWeightDone:
+		if rowStyleWeight(r, fleetNow()) == fleetWeightIdle {
+			// Done a day ago: the check fades so fresh results stand out.
+			t := theme.Current()
+			return "✓", lipgloss.NewStyle().Foreground(lipgloss.Color(midColor(t.Green, t.Base)))
+		}
 		return "✓", fleetDoneStyle
 	default:
 		if r.TurnDone {
@@ -2667,6 +2680,21 @@ const (
 // the cursor marker, the ⏸ flag slot and a space.
 const fleetHeaderNameCol = fleetSidebarLeftInset + 2
 
+// fleetChipMinWidth is the narrowest sidebar that pads the project chip; below
+// it the name is bold in the project colour with no background.
+const fleetChipMinWidth = 48
+
+// fleetProjectChipStyle is a group header's project name: a reverse-video chip
+// in the project colour (reverse keeps it legible with no colour support), or
+// bold project-coloured text when the sidebar is too narrow for padding.
+func fleetProjectChipStyle(project string, chip bool) lipgloss.Style {
+	st := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(fleetColorFor(project)))
+	if chip {
+		st = st.Reverse(true)
+	}
+	return st
+}
+
 // fleetNewGap is the blank columns between a header's counts and its "+ new"
 // button, so the button never reads as part of the counts.
 const fleetNewGap = 2
@@ -2717,7 +2745,7 @@ type fleetHeaderSpans struct {
 // tabs.
 const fleetTabGap = 3
 
-// renderGroupTabs renders "Sessions N · Schedules M" in at most room columns
+// renderGroupTabs renders "Sessions · Schedules M" in at most room columns
 // starting at column start, cutting from the right, and reports the columns
 // of each label (zero when cut off entirely).
 func renderGroupTabs(t fleetGroupTab, hover fleetHoverRegion, start, room int) (string, [2]int, [2]int) {
@@ -2727,7 +2755,7 @@ func renderGroupTabs(t fleetGroupTab, hover fleetHoverRegion, start, room int) (
 	style := func(active bool, hovered bool) lipgloss.Style {
 		st := fleetCountStyle
 		if active {
-			st = fleetNewHoverStyle
+			st = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current().Text)).Underline(true)
 		}
 		if hovered {
 			st = st.Underline(true)
@@ -2740,7 +2768,7 @@ func renderGroupTabs(t fleetGroupTab, hover fleetHoverRegion, start, room int) (
 		tab  int // 1 sessions, 2 schedules, 0 separator
 	}
 	pieces := []piece{
-		{fmt.Sprintf("Sessions %d", t.sessions), style(!t.sched, hover == fleetHoverTabSessions), 1},
+		{"Sessions", style(!t.sched, hover == fleetHoverTabSessions), 1},
 		{" · ", fleetDimStyle, 0},
 		{fmt.Sprintf("Schedules %d", t.jobs), style(t.sched, hover == fleetHoverTabSched), 2},
 	}
@@ -2808,9 +2836,15 @@ func sweepLabel(n int) string {
 // the hovered or selected header drops "+ new" instead, so hovering never
 // hides a button that was showing.
 func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetHoverRegion, cw int) (string, fleetHeaderSpans) {
-	marker := strings.Repeat(" ", fleetSidebarLeftInset)
+	// The project bar runs through the header so it never breaks; the
+	// selection marker takes the slot after it, as on rows.
+	marker := fleetProjectBar(g.Project) + " "
 	if selected {
-		marker = " " + cursorActiveStyle.Render("▸") + " "
+		marker = fleetProjectBar(g.Project) + cursorActiveStyle.Render("▸")
+	}
+	chipPad := 0
+	if cw >= fleetChipMinWidth {
+		chipPad = 1
 	}
 	counts := groupStateCounts(g, m.countDigits(), fleetCountGap(cw))
 	flag := " "
@@ -2850,7 +2884,7 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 
 	var spans fleetHeaderSpans
 	showCounts := true
-	headW := fleetHeaderNameCol + 2 // marker, flag, fold marker and its space
+	headW := fleetHeaderNameCol + 2 + 2*chipPad // marker, flag, fold marker and its space, chip padding
 	build := func(sweep, add string) string {
 		right := counts.text
 		if !showCounts {
@@ -2908,7 +2942,7 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 	}
 	leftW := limit - lipgloss.Width(right) - 1
 
-	projStyle := fleetGroupNameStyle
+	projStyle := fleetProjectChipStyle(g.Project, chipPad > 0)
 	if hover == fleetHoverFold {
 		projStyle = projStyle.Underline(true)
 	}
@@ -2917,10 +2951,12 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 		fold = fleetCountStyle.Render(fleetFoldedGlyph)
 	}
 	head := marker + flag + " " + fold + " "
-	name := truncateToWidth(g.Project, leftW-lipgloss.Width(head))
+	name := truncateToWidth(g.Project, leftW-lipgloss.Width(head)-2*chipPad)
+	pad := strings.Repeat(" ", chipPad)
+	chip := projStyle.Render(pad + name + pad)
 	span := &spans.name
-	*span = [2]int{fleetHeaderNameCol, lipgloss.Width(head) + lipgloss.Width(name)}
-	line := head + projStyle.Render(name)
+	*span = [2]int{fleetHeaderNameCol, lipgloss.Width(head) + lipgloss.Width(name) + 2*chipPad}
+	line := head + chip
 	if t, ok := m.groupTab(g); ok && lipgloss.Width(name) == lipgloss.Width(g.Project) {
 		// Tabs take what the project name leaves, so they truncate first.
 		start := lipgloss.Width(line) + fleetTabGap
@@ -2939,8 +2975,8 @@ func (m FleetModel) groupHeaderLayout(g fleet.Group, selected bool, hover fleetH
 		line = truncateToWidth(line, max(leftW, 0))
 		span[1] = min(span[1], max(leftW, 0))
 	}
-	pad := max(limit-lipgloss.Width(right)-lipgloss.Width(line), 1)
-	return fleetFitLine(line+strings.Repeat(" ", pad)+right, selected, cw), spans
+	gap := max(limit-lipgloss.Width(right)-lipgloss.Width(line), 1)
+	return fleetFitLine(line+strings.Repeat(" ", gap)+right, selected, cw), spans
 }
 
 // countDigits is the widest per-state count across all groups, so the count
@@ -3198,7 +3234,8 @@ func rowRight(r fleet.Row, c fleetRightCols, ex fleetExceptions, d fleetDisplay)
 		if r.PRNumber > 0 {
 			bs := fleetProjectStyle
 			if r.Done {
-				bs = fleetDoneStyle
+				// Finished work: the number recedes; open PRs keep their colour.
+				bs = fleetCountStyle
 			}
 			pr = bs.Render(fmt.Sprintf("#%d", r.PRNumber))
 		}
@@ -3333,7 +3370,13 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 	}
 	prefix := head + marker
 	if name != "" {
-		prefix += renderAgentNameHover(name, weight, hovered) + "  "
+		// The role label is a quiet tag at every weight (the title carries
+		// the weight), padded so child titles line up.
+		role := fleetCountStyle.Render(name)
+		if pad := min(fleetRoleSlotW, nameBudget) - lipgloss.Width(name); pad > 0 {
+			role += strings.Repeat(" ", pad)
+		}
+		prefix += role + "  "
 	}
 	available := inner - lipgloss.Width(prefix) - closeW
 
@@ -3440,6 +3483,9 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 	lay.line = fleetFitLineStyled(line, hl, cw)
 	return lay
 }
+
+// fleetRoleSlotW is the width role labels pad to: "research", the longest.
+const fleetRoleSlotW = 8
 
 // rowNeedsNameFallback reports whether row r has nothing to show as its title
 // and falls back to the agent's base name: a shell row, or a normal row whose
