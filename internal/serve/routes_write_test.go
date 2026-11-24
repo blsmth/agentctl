@@ -379,6 +379,7 @@ func writeRoutes(t *testing.T) []struct{ name, path, body string } {
 		{"answer", winPath + "/answer", fmt.Sprintf(`{"key":"1","dialog_hash":%q}`, dialogHash(t))},
 		{"reply", winPath + "/reply", `{"text":"hi"}`},
 		{"queue", winPath + "/queue", `{"text":"hi"}`},
+		{"command", winPath + "/command", `{"text":"/compact"}`},
 		{"interrupt", winPath + "/interrupt", `{}`},
 		{"close", winPath + "/close", `{}`},
 		{"close-shell", "/v1/sessions/agentctl-proj/shells/@77/close", `{}`},
@@ -1685,5 +1686,33 @@ func TestReplyRefusalPointsAtCommand(t *testing.T) {
 	w := e.post(winPath+"/reply", `{"text":"/compact"}`)
 	if w.Code != 400 || errCode(t, w) != codeReplyIsCommand || !strings.Contains(w.Body.String(), "command action") {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+}
+
+// commandInjector records Command calls, to prove the send-once path is used.
+type commandInjector struct {
+	fakeInjector
+	commands []string
+}
+
+func (c *commandInjector) Command(_ WindowTarget, text string) error {
+	c.commands = append(c.commands, text)
+	return nil
+}
+
+func TestCommandUsesCommander(t *testing.T) {
+	c := &commandInjector{}
+	e := newWriteEnvWith(t, true, func(o *Options) { o.Injector = c })
+	e.fleet.set(writeGroup("idle", false, "go-engineer", "dispatch"))
+	e.panes.set(idlePane)
+	if w := e.post(winPath+"/command", `{"text":"/model"}`); w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if !slices.Equal(c.commands, []string{"/model"}) || len(c.got) != 0 {
+		t.Errorf("commands %q injected %q", c.commands, c.got)
+	}
+	// reply keeps the verified path.
+	if w := e.post(winPath+"/reply", `{"text":"hi"}`); w.Code != 200 || !slices.Equal(c.got, []string{"hi"}) {
+		t.Errorf("reply: %d %q", w.Code, c.got)
 	}
 }

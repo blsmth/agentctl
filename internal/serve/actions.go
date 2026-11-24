@@ -52,6 +52,13 @@ type Queuer interface {
 	Queue(t WindowTarget, text string) error
 }
 
+// Commander is optionally implemented by an Injector that runs a slash
+// command with a send-once path (no staged-input retry: a command's picker
+// must never receive a second Enter).
+type Commander interface {
+	Command(t WindowTarget, text string) error
+}
+
 // WindowCloser kills a window.
 type WindowCloser interface {
 	CloseWindow(t WindowTarget) error
@@ -218,6 +225,11 @@ func (tmuxInjector) Inject(t WindowTarget, text string) error {
 		return tmux.InjectUnclassifiedToPane(t.Pane, text)
 	}
 	return tmux.InjectPromptToPane(t.Pane, text)
+}
+
+// Command types a slash command and presses Enter once.
+func (tmuxInjector) Command(t WindowTarget, text string) error {
+	return tmux.InjectCommandToPane(t.Pane, text)
 }
 
 // ChildCloser closes the sub-sessions of a window ahead of the window.

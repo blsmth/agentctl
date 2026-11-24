@@ -547,14 +547,15 @@ func (s *Server) typeText(r *http.Request, in replyIn, a *auditEntry, allowWorki
 
 // deliverText is the part of typeText after the text checks: lock the window,
 // guard on its state and pane, then inject. claudeOnly refuses a harness
-// whose pane cannot be classified (slash commands are typed blind there).
-func (s *Server) deliverText(session, window string, in replyIn, a *auditEntry, allowWorking, claudeOnly bool) outcome {
+// whose pane cannot be classified (slash commands are typed blind there), and
+// delivers once, without the staged-input retry (see Commander).
+func (s *Server) deliverText(session, window string, in replyIn, a *auditEntry, allowWorking, command bool) outcome {
 	rw, unlock, out, ok := s.lockWindowAt(session, window, a)
 	if !ok {
 		return out
 	}
 	defer unlock()
-	if claudeOnly && !harness.For(rw.harness()).Caps().PaneClassifier {
+	if command && !harness.For(rw.harness()).Caps().PaneClassifier {
 		return failure(http.StatusConflict, codeUnsupportedHarness, "slash commands are only supported for Claude Code windows")
 	}
 	text, out, ok := withImages(rw, in)
@@ -590,7 +591,7 @@ func (s *Server) deliverText(session, window string, in replyIn, a *auditEntry, 
 	s.auditAttempt(*a)
 	// The inject path re-checks the pane before every keystroke and refuses
 	// a dialog (tmux.ErrDialogBlocking).
-	if err := s.inject(target, text, allowWorking); err != nil {
+	if err := s.deliver(target, text, allowWorking, command); err != nil {
 		logging.Warn("serve: %s %s:%s: %v", a.Action, rw.group.Session, rw.window.WindowID, err)
 		if errors.Is(err, tmux.ErrDialogBlocking) {
 			return failure(http.StatusConflict, codeNotIdle, "a dialog appeared; refresh and try again")
@@ -611,6 +612,14 @@ func textAccepted(verdict string, allowWorking bool) bool {
 // the windowstate record decides. "" counts as idle.
 func recordedAccepts(state string, allowWorking bool) bool {
 	return state == "idle" || state == "" || (allowWorking && state == "working")
+}
+
+// deliver is inject, or the send-once Commander path for a slash command.
+func (s *Server) deliver(t WindowTarget, text string, queued, command bool) error {
+	if c, ok := s.injector.(Commander); ok && command {
+		return c.Command(t, text)
+	}
+	return s.inject(t, text, queued)
 }
 
 // inject delivers text through the Injector, or its Queue method for a
