@@ -46,6 +46,38 @@ type schedFixture struct {
 	editorDone tea.ExecCallback
 }
 
+// schedPreviews counts form previews in flight (see schedPreviewTrack).
+var schedPreviews = newPreviewGate()
+
+// previewGate is a counter with a Wait that, unlike sync.WaitGroup, may be
+// called while the count is rising from zero.
+type previewGate struct {
+	mu sync.Mutex
+	c  *sync.Cond
+	n  int
+}
+
+func newPreviewGate() *previewGate {
+	g := &previewGate{}
+	g.c = sync.NewCond(&g.mu)
+	return g
+}
+
+func (g *previewGate) Add() { g.mu.Lock(); g.n++; g.mu.Unlock() }
+func (g *previewGate) Done() {
+	g.mu.Lock()
+	g.n--
+	g.c.Broadcast()
+	g.mu.Unlock()
+}
+func (g *previewGate) Wait() {
+	g.mu.Lock()
+	for g.n > 0 {
+		g.c.Wait()
+	}
+	g.mu.Unlock()
+}
+
 func newSchedFixture(t *testing.T) *schedFixture {
 	t.Helper()
 	InitStyles()
@@ -56,6 +88,11 @@ func newSchedFixture(t *testing.T) *schedFixture {
 		return func() tea.Msg { return schedDrawerTickMsg{gen: gen} }
 	}
 	t.Cleanup(func() { schedDrawerTick = savedTick })
+	// Previews are real work: schedDrive waits for one in flight rather than
+	// guessing how long a loaded machine needs.
+	savedTrack := schedPreviewTrack
+	schedPreviewTrack = func() func() { schedPreviews.Add(); return schedPreviews.Done }
+	t.Cleanup(func() { schedPreviewTrack = savedTrack })
 	dir := t.TempDir()
 	f := &schedFixture{
 		jobsPath:  filepath.Join(dir, "schedules.json"),
@@ -238,13 +275,20 @@ func schedDrive(t *testing.T, m FleetModel, cmd tea.Cmd) FleetModel {
 		// A cursor blink or slide tick never answers in time and is dropped.
 		// A write in flight does, just later on a loaded machine (-race):
 		// wait for it, or the test sees the form still saving.
-		if m.schedForm == nil || !m.schedForm.saving && m.sched.busy == "" {
-			return m
-		}
+		// A preview in flight is waited for (it ends in a message); anything
+		// still silent after that is a blink and is dropped.
+		schedPreviews.Wait()
 		select {
 		case msg = <-ch:
-		case <-time.After(10 * time.Second):
-			t.Fatal("a schedule write never answered")
+		default:
+			if m.schedForm == nil || !m.schedForm.saving && m.sched.busy == "" {
+				return m
+			}
+			select {
+			case msg = <-ch:
+			case <-time.After(10 * time.Second):
+				t.Fatal("a schedule write never answered")
+			}
 		}
 	}
 	switch msg := msg.(type) {

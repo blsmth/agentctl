@@ -896,6 +896,10 @@ func (f *fleetSchedForm) stopForField(field string) (schedStop, bool) {
 
 // schedPreviewCmd re-validates the form in the background. Each change
 // bumps the generation; an older result is dropped.
+// schedPreviewTrack brackets a preview computation; it returns the function
+// to call when done. Tests replace it to wait for a preview in flight.
+var schedPreviewTrack = func() func() { return func() {} }
+
 func (m *FleetModel) schedPreviewCmd() tea.Cmd {
 	f := m.schedForm
 	if f == nil {
@@ -911,6 +915,7 @@ func (m *FleetModel) schedPreviewCmd() tea.Cmd {
 	}
 	store := m.schedStore()
 	return func() tea.Msg {
+		defer schedPreviewTrack()()
 		return fleetSchedPreviewMsg{gen: gen, p: store.Preview(job, original, nil)}
 	}
 }
