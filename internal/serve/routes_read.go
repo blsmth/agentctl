@@ -266,7 +266,15 @@ func buildPaneBodyFor(harnessName, text string) paneBody {
 	verdict := fleet.ClassifyPaneFor(harnessName, plain)
 	body := paneBody{Text: text, Verdict: apiVerdict(verdict)}
 	if verdict == fleet.PaneAwaitingInput {
-		if d, ok := panestate.ParseDialog(plain); ok {
+		// The trust dialog is never read as a numbered dialog, even in the
+		// older numbered layout: it is answered by its own keys (trust,
+		// exit), and a pane where it lingers after Claude Code exited has no
+		// dialog at all.
+		if panestate.IsTrustDialog(plain) {
+			if d, ok := panestate.ParseTrustDialog(plain); ok {
+				body.Dialog = &d
+			}
+		} else if d, ok := panestate.ParseDialog(plain); ok {
 			body.Dialog = &d
 		}
 	}

@@ -4,6 +4,12 @@ import {
   applyGroupOrder,
   approvalHash,
   bucketLabel,
+  buildAnswerRequest,
+  isTrustBlocked,
+  PANE_TAIL_LINES,
+  TRUST_KEY_TRUST,
+  trustDialogOf,
+  trustFolder,
   buildGroupOrderRequest,
   buildShellRequest,
   canShell,
@@ -41,9 +47,10 @@ import {
   windowHash,
   windowKey,
 } from "./logic.js";
-import { send, ApiError } from "./api.js";
+import { get, send, ApiError } from "./api.js";
 import { attachDrag } from "./drag.js";
 import { attachSwipe } from "./swipe.js";
+import { trustCard } from "./trust.js";
 import { clear, confirmSheet, h, newSheet, toast } from "./ui.js";
 
 /** closeError is the message to toast for a failed close. */
@@ -93,7 +100,7 @@ function treeSpans(entry, expanded) {
   return [...spans, ...stub];
 }
 
-function windowRow(entry, toggle, expanded, swipe) {
+function windowRow(entry, toggle, expanded, swipe, trust) {
   const win = entry.win;
   const state = displayState(win);
   const since = formatSince(win.blocked_since || win.state_since, Date.now());
@@ -128,6 +135,13 @@ function windowRow(entry, toggle, expanded, swipe) {
     ),
   );
   const node = h("div", { class: "node" }, link, toggle);
+  const card = trust && isTrustBlocked(win) ? trustCard(trustFolder(win), (key) => trust(win, key), "row-trust") : null;
+  const row = swipeRow(win, node, link, swipe);
+  return card ? h("div", { class: "trust-row" }, row, card) : row;
+}
+
+/** swipeRow wraps a row node in its swipe-to-close shell when the row can be closed. */
+function swipeRow(win, node, link, swipe) {
   if (!swipe || !swipe.can(win)) return node;
   const action = h("button", { class: "swipe-action", type: "button", "aria-label": `Close ${rowTitle(win)}` }, "Close");
   const wrap = h("div", { class: `swipe${swipe.gone(win) ? " swipe-gone" : ""}` }, action, node);
@@ -230,6 +244,28 @@ export function mountFleet(root, ctx) {
     },
   };
 
+  /**
+   * trust answers a trust-blocked row's folder-trust dialog from the list:
+   * it reads the pane for the dialog (and its hash) first, so the server can
+   * verify the answer is for the screen the window shows now. Renders wait
+   * while it runs. Null without write access: the row shows no card.
+   */
+  const trust = ctx.hasFeature("write")
+    ? async (win, key) => {
+        swipe.busy(true);
+        try {
+          const pane = await get(`${windowApiPath(win.session, win.window_id)}/pane?lines=${PANE_TAIL_LINES}`);
+          const dialog = trustDialogOf(pane, trustFolder(win));
+          await send(buildAnswerRequest(win.session, win.window_id, dialog, key));
+          toast(key === TRUST_KEY_TRUST ? "Folder trusted" : "Session exited");
+        } catch (err) {
+          toast(closeError(err), "error");
+        } finally {
+          swipe.busy(false);
+        }
+      }
+    : null;
+
   // Sessions with a sweep preview or apply in flight: their button is
   // disabled, so a double tap never starts a second sweep.
   const sweeping = new Set();
@@ -325,7 +361,7 @@ export function mountFleet(root, ctx) {
       const key = collapseKey(g.session, e);
       const toggle = kids.length > 0 ? disclosure(kids, collapsed.has(key), flip(key)) : null;
       const expanded = kids.length > 0 && !collapsed.has(key);
-      return e.bucket ? bucketRow(e, toggle, expanded) : windowRow(e, toggle, expanded, swipe);
+      return e.bucket ? bucketRow(e, toggle, expanded) : windowRow(e, toggle, expanded, swipe, trust);
     });
     for (const sh of shellRows(g, ctx.features)) nodes.push(shellRow(sh, ctx.hasFeature("write") ? swipe : null));
     return { nodes, live };

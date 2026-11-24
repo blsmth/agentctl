@@ -235,7 +235,7 @@ type answerIn struct {
 // the answer waits (up to answerSettle) for the dialog to leave the pane
 // before releasing the lock.
 func (s *Server) handleAnswer(r *http.Request, in answerIn, a *auditEntry) outcome {
-	if in.Key != escKey && in.Key != submitKey && !answerKeyRE.MatchString(in.Key) {
+	if in.Key != escKey && in.Key != submitKey && !isTrustKey(in.Key) && !answerKeyRE.MatchString(in.Key) {
 		return failure(http.StatusBadRequest, codeBadRequest, `key must be a dialog option key or "esc"`)
 	}
 	if !dialogHashRE.MatchString(in.DialogHash) {
@@ -263,7 +263,11 @@ func (s *Server) handleAnswer(r *http.Request, in answerIn, a *auditEntry) outco
 		return out
 	}
 	s.auditAttempt(*a)
-	if in.Key == submitKey {
+	if pane.Dialog.Kind == panestate.KindTrust {
+		if out, ok := s.sendTrust(rw, *pane.Dialog, in.Key); !ok {
+			return out
+		}
+	} else if in.Key == submitKey {
 		if out, ok := s.sendChecked(rw, *pane.Dialog, keys); !ok {
 			return out
 		}
@@ -336,6 +340,51 @@ func (s *Server) sendChecked(rw resolved, d panestate.Dialog, keys []string) (ou
 			return failure(http.StatusConflict, codeDialogChanged, "the question did not take the answer; refresh and try again"), false
 		}
 		d = *next
+	}
+	return outcome{}, true
+}
+
+// isTrustKey reports whether key is one of the folder-trust dialog's
+// answers.
+func isTrustKey(key string) bool {
+	return key == panestate.TrustKeyTrust || key == panestate.TrustKeyExit
+}
+
+// sendTrust answers the folder-trust dialog d with key: it moves the ❯
+// cursor to the chosen row one arrow at a time, re-capturing after each and
+// going on only when the same dialog (hash) shows the cursor one row further,
+// then presses Enter with the cursor on that row. Number keys are never used
+// (the current layout is unnumbered), and the arrows never rely on wrapping
+// (Claude Code wraps Up from the top row to the bottom one). Anything else
+// stops with a 409 before Enter, so Enter never lands on the other row.
+func (s *Server) sendTrust(rw resolved, d panestate.Dialog, key string) (outcome, bool) {
+	target := panestate.TrustRow(d, key)
+	for d.Cursor != target {
+		if d.Cursor < 0 || target < 0 {
+			logging.Warn("serve: answer %s:%s: no cursor on the trust dialog; nothing sent", rw.group.Session, rw.window.WindowID)
+			return failure(http.StatusConflict, codeDialogChanged, "the trust dialog shows no cursor; answer it on the terminal"), false
+		}
+		move, want := "Down", d.Cursor+1
+		if target < d.Cursor {
+			move, want = "Up", d.Cursor-1
+		}
+		if err := s.keys.SendKey(rw.target(), move); err != nil {
+			logging.Warn("serve: answer %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
+			return failure(http.StatusBadGateway, codeActionFailed, "sending the key failed"), false
+		}
+		hash := d.Hash
+		next, ok := s.awaitDialog(rw, func(n *panestate.Dialog) bool {
+			return n == nil || n.Hash != hash || n.Cursor == want
+		})
+		if !ok || next == nil || next.Kind != panestate.KindTrust || next.Hash != hash || next.Cursor != want {
+			logging.Warn("serve: answer %s:%s: %s did not move the trust cursor; stopped before Enter", rw.group.Session, rw.window.WindowID, move)
+			return failure(http.StatusConflict, codeDialogChanged, "the trust dialog did not take the answer; refresh and try again"), false
+		}
+		d = *next
+	}
+	if err := s.keys.SendKey(rw.target(), "Enter"); err != nil {
+		logging.Warn("serve: answer %s:%s: %v", rw.group.Session, rw.window.WindowID, err)
+		return failure(http.StatusBadGateway, codeActionFailed, "sending the key failed"), false
 	}
 	return outcome{}, true
 }
@@ -433,6 +482,15 @@ func (d *answeredDialogs) remember(key, hash string, now time.Time) {
 // when the answer does not fit it.
 func answerKeys(d *panestate.Dialog, in answerIn) ([]string, outcome, bool) {
 	switch {
+	case d.Kind == panestate.KindTrust:
+		// Esc on the trust dialog exits Claude Code, so it is not an answer
+		// here; the arrow moves are computed by sendTrust from the live pane.
+		if !isTrustKey(in.Key) || panestate.TrustRow(*d, in.Key) < 0 {
+			return nil, failure(http.StatusConflict, codeDialogChanged, `the folder-trust dialog is answered with "trust" or "exit"`), false
+		}
+		return nil, outcome{}, true
+	case isTrustKey(in.Key):
+		return nil, failure(http.StatusConflict, codeDialogChanged, fmt.Sprintf("%q is not an option of this dialog", in.Key)), false
 	case in.Key == escKey:
 		return []string{"Escape"}, outcome{}, true
 	case in.Key == submitKey:
