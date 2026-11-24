@@ -193,6 +193,8 @@ func (m *FleetModel) applySchedLoaded(msg fleetSchedLoadedMsg) {
 // one plain fleetSchedNewSel; a job row is the job's name.
 func schedLineKey(l fleetLine) string {
 	switch {
+	case l.kind == fleetLineArtifact:
+		return artSel(l.art.ID)
 	case l.kind == fleetLineSchedHead:
 		return fleetSchedHeadSel + l.schedBlock
 	case l.schedNew && l.schedBlock != "" && l.schedBlock != fleetSchedOtherKey:
@@ -206,7 +208,7 @@ func schedLineKey(l fleetLine) string {
 // isSchedJobSel reports whether a selSchedule key names a job (not a "+ new"
 // line or a block header).
 func isSchedJobSel(sel string) bool {
-	return sel != "" && !strings.HasPrefix(sel, fleetSchedNewSel) && !strings.HasPrefix(sel, fleetSchedHeadSel)
+	return sel != "" && !strings.HasPrefix(sel, fleetSchedNewSel) && !strings.HasPrefix(sel, fleetSchedHeadSel) && !isArtSel(sel)
 }
 
 // selectedSchedLine is the selected schedule line, or nil.

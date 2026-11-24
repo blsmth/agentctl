@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -85,6 +86,7 @@ type fleetArtifactsMsg struct {
 	stamp     time.Time
 	unchanged bool
 	byWindow  map[string]fleetArtifactInfo
+	list      []artifacts.Meta // the whole listing, for the Artifacts tab
 	err       error
 }
 
@@ -110,7 +112,7 @@ func (m *FleetModel) artifactsLoadCmd() tea.Cmd {
 		if err != nil {
 			return fleetArtifactsMsg{err: err}
 		}
-		return fleetArtifactsMsg{stamp: stamp, byWindow: indexArtifacts(metas)}
+		return fleetArtifactsMsg{stamp: stamp, byWindow: indexArtifacts(metas), list: metas}
 	}
 }
 
@@ -141,6 +143,17 @@ func (m *FleetModel) applyArtifacts(msg fleetArtifactsMsg) {
 	}
 	m.artifactsStamp = msg.stamp
 	m.artifacts = msg.byWindow
+	if !slices.EqualFunc(m.artList, msg.list, artMetaSame) {
+		m.artList = msg.list
+		m.relayout()
+	}
+}
+
+// artMetaSame reports whether two listing entries draw the same row.
+func artMetaSame(a, b artifacts.Meta) bool {
+	return a.ID == b.ID && a.Title == b.Title && a.Pinned == b.Pinned && a.Kind == b.Kind &&
+		a.Updated.Equal(b.Updated) && len(a.Revs) == len(b.Revs) && len(a.Comments) == len(b.Comments) &&
+		a.ProjectDir == b.ProjectDir
 }
 
 // rowArtifacts is r's artifact info (n == 0 when it has none).

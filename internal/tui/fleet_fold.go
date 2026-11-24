@@ -431,7 +431,9 @@ type hubViewState struct {
 	// its Schedules tab; any other group shows Sessions. SchedOtherOpen
 	// expands the bottom "other projects" schedules block. The old
 	// "schedules" and "sched_collapsed" keys are ignored when decoding.
-	SchedTabs      []string `json:"sched_tabs,omitempty"`
+	SchedTabs []string `json:"sched_tabs,omitempty"`
+	// ArtTabs is the same for the Artifacts tab.
+	ArtTabs        []string `json:"art_tabs,omitempty"`
 	SchedOtherOpen bool     `json:"sched_other_open,omitempty"`
 	// ActivityPane is the open activity pane's tmux pane ID ("" = closed),
 	// so a hot reload reattaches to it; ActivityWidth is the width the user
@@ -476,7 +478,7 @@ func (m FleetModel) viewState() hubViewState {
 	slices.Sort(folded)
 	return hubViewState{
 		Folded: folded, Collapsed: m.liveCollapsed(prune), Focus: m.focusMode, Filter: m.filter.key(), Query: m.committedQuery(), Sort: sortKey(m.sortRecent), Shells: m.showShells, Closed: m.showClosed,
-		SchedTabs: m.liveSchedTabs(prune), SchedOtherOpen: m.schedOtherOpen, ActivityPane: m.activity.pane, ActivityWidth: m.activity.userWidth,
+		SchedTabs: m.liveSchedTabs(prune), ArtTabs: m.liveArtTabs(prune), SchedOtherOpen: m.schedOtherOpen, ActivityPane: m.activity.pane, ActivityWidth: m.activity.userWidth,
 	}
 }
 
@@ -530,6 +532,10 @@ func (m *FleetModel) applyViewState(s hubViewState) {
 	m.schedTabs = nil
 	for _, key := range s.SchedTabs {
 		m.setSchedTab(key, true)
+	}
+	m.artTabs = nil
+	for _, key := range s.ArtTabs {
+		m.setTab(key, tabKindArtifacts)
 	}
 	m.schedOtherOpen = s.SchedOtherOpen
 	// The recorded pane is confirmed or dropped by the first pane poll.

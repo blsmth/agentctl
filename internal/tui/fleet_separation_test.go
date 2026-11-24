@@ -57,12 +57,19 @@ func TestHeaderSelectedKeepsBarAndMarker(t *testing.T) {
 
 func TestGroupTabsLabels(t *testing.T) {
 	InitStyles()
-	text, sess, sched := renderGroupTabs(fleetGroupTab{sessions: 17, jobs: 1}, fleetHoverNone, 0, 40)
+	text, spans := renderGroupTabs(fleetGroupTab{sessions: 17, jobs: 1}, fleetHoverNone, 0, 40)
 	if got := ansi.Strip(text); got != "Sessions · Schedules 1" {
 		t.Errorf("tabs = %q", got)
 	}
-	if sess != [2]int{0, 8} || sched[0] != 11 {
-		t.Errorf("spans sess=%v sched=%v", sess, sched)
+	if spans[tabKindSessions] != [2]int{0, 8} || spans[tabKindSched][0] != 11 || spans[tabKindArtifacts] != [2]int{} {
+		t.Errorf("spans = %v", spans)
+	}
+	text, spans = renderGroupTabs(fleetGroupTab{sessions: 2, arts: 3, tab: tabKindArtifacts}, fleetHoverNone, 0, 40)
+	if got := ansi.Strip(text); got != "Sessions · Artifacts 3" {
+		t.Errorf("artifacts-only tabs = %q", got)
+	}
+	if spans[tabKindSched] != [2]int{} || spans[tabKindArtifacts][0] != 11 {
+		t.Errorf("spans = %v", spans)
 	}
 }
 
