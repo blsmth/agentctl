@@ -72,16 +72,13 @@ func applyAgentRole(req Request, spec modeSpec, role string, human bool) (Reques
 	spec.Role = RoleOrchestrator
 	spec.IncludeFinishingSteps = false
 	if req.Mode == ModeDispatch {
-		spec.DefaultUserMessage = orchestratorTicketMessage
+		spec.Directive = orchestratorTicketDirective
 	}
 	return req, spec
 }
 
-// orchestratorTicketMessage replaces ModeDispatch's "open a PR when done"
-// first message for an orchestrator, which delegates rather than implements.
-func orchestratorTicketMessage(req Request) string {
-	if req.TicketTitle != "" {
-		return fmt.Sprintf("Handle #%d: %s. The issue is in your system prompt.", req.Ticket, req.TicketTitle)
-	}
-	return fmt.Sprintf("Handle #%d. The issue is in your system prompt.", req.Ticket)
+// orchestratorTicketDirective replaces ModeDispatch's "open a PR when done"
+// directive for an orchestrator, which delegates rather than implements.
+func orchestratorTicketDirective(req Request) string {
+	return fmt.Sprintf("Handle %s.", issueRef(req))
 }

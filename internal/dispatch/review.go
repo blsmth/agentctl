@@ -161,41 +161,59 @@ func ciState(rollup []json.RawMessage) string {
 	return "green"
 }
 
-// reviewPRUserMessage is ModeReviewPR's first user message.
-func reviewPRUserMessage(req Request) string {
-	pr := req.ReviewPR
-	if pr == nil {
-		return "Review the pull request in your system prompt."
-	}
-	return fmt.Sprintf("Review PR #%d: %s. The PR and your instructions are in your system prompt; the deliverable is your verdict.", pr.Number, pr.Title)
+// verdictLine is the first line of a review verdict for PR n.
+func verdictLine(n int) string {
+	return fmt.Sprintf("REVIEW PR #%d — VERDICT: MERGE | MERGE-WITH-FOLLOWUPS | BLOCKED | NEEDS-BRENDAN", n)
 }
 
-// reviewPRInstructions is ModeReviewPR's system-prompt block: the PR
-// context, what to deliver, and how to reach the author.
+// reviewPRDirective closes ModeReviewPR's first message: which PR, and the
+// exact verdict line to send.
+func reviewPRDirective(req Request) string {
+	pr := req.ReviewPR
+	if pr == nil {
+		return "Review the pull request described above."
+	}
+	return fmt.Sprintf("Review PR #%d: %s. The deliverable is your verdict, starting with this line:\n\n%s", pr.Number, pr.Title, verdictLine(pr.Number))
+}
+
+// reviewPRInstructions is ModeReviewPR's system-prompt block: what to
+// deliver and the rules of the review. It names no PR, so it is identical
+// for every review launch; the PR itself is in the first message
+// (reviewPRTask).
 func reviewPRInstructions(req Request) string {
+	if req.ReviewPR == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Review instructions\n\n")
+	b.WriteString("Your first message describes one pull request (number, branches, head sha, changed files, description) and its author. ")
+	if req.noMessaging {
+		b.WriteString("The deliverable is your verdict, as the first line of your final message, in this form, with the PR's number for N:\n\n")
+	} else {
+		b.WriteString("The deliverable is one verdict message to your orchestrator (SendMessage), starting with this line, with the PR's number for N:\n\n")
+	}
+	b.WriteString("REVIEW PR #N — VERDICT: MERGE | MERGE-WITH-FOLLOWUPS | BLOCKED | NEEDS-BRENDAN\n\n")
+	b.WriteString("- Do not commit, push, open a PR, or write to GitHub (no reviews, comments or approvals).\n")
+	b.WriteString("- Work fixes out with the author (see your first message) for at most 3 rounds, then send the verdict.\n")
+	if !req.noMessaging {
+		b.WriteString("- If you have no orchestrator, put the verdict in your final message.\n")
+	}
+	if req.reviewSharedCheckout {
+		b.WriteString("- You are in the shared checkout, not a worktree: do not check out other branches here. Read the change with `gh pr diff <N>`.\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// reviewPRTask is the task block of ModeReviewPR's first message: the PR
+// context, the author and any additional review instructions.
+func reviewPRTask(req Request) string {
 	pr := req.ReviewPR
 	if pr == nil {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString(reviewPRContext(*pr))
-	b.WriteString("\n\n## Review instructions\n\n")
-	fmt.Fprintf(&b, "This is a review of PR #%d. ", pr.Number)
-	if req.noMessaging {
-		b.WriteString("The deliverable is your verdict, as the first line of your final message, in this form:\n\n")
-	} else {
-		b.WriteString("The deliverable is one verdict message to your orchestrator (SendMessage), starting with this line:\n\n")
-	}
-	fmt.Fprintf(&b, "REVIEW PR #%d — VERDICT: MERGE | MERGE-WITH-FOLLOWUPS | BLOCKED | NEEDS-BRENDAN\n\n", pr.Number)
-	b.WriteString("- Do not commit, push, open a PR, or write to GitHub (no reviews, comments or approvals).\n")
-	b.WriteString("- Work fixes out with the author (see below) for at most 3 rounds, then send the verdict.\n")
-	if !req.noMessaging {
-		b.WriteString("- If you have no orchestrator, put the verdict in your final message.\n")
-	}
-	if req.reviewSharedCheckout {
-		fmt.Fprintf(&b, "- You are in the shared checkout, not a worktree: do not check out other branches here. Read the change with `gh pr diff %d`.\n", pr.Number)
-	}
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 	b.WriteString(reviewAuthorSection(*pr, req.noMessaging))
 	if extra := strings.TrimSpace(pr.Extra); extra != "" {
 		b.WriteString("\n\n## Additional review instructions\n\n")

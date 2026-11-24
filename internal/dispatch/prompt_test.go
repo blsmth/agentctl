@@ -3,230 +3,7 @@ package dispatch
 import (
 	"strings"
 	"testing"
-
-	ctxstore "github.com/blsmth/agentctl/internal/context"
 )
-
-func TestBuildSystemPrompt_IssueDispatch(t *testing.T) {
-	req := Request{
-		AgentName:   "go-engineer",
-		Mode:        ModeDispatch,
-		Ticket:      42,
-		TicketTitle: "Fix the widget",
-		TicketBody:  "The widget is broken.\n\nPlease fix it.",
-		RepoSlug:    "blsmth/agentctl",
-	}
-	spec := modes[ModeDispatch]
-	workDir := "/tmp/test-worktree"
-	branch := "agent/go-engineer/issue-42"
-
-	got := buildSystemPrompt(req, spec, workDir, branch, true, nil, "")
-
-	checks := []struct {
-		desc string
-		want string
-	}{
-		{"has frontmatter start", "---"},
-		{"has ticket in frontmatter", `ticket: "#42"`},
-		{"has title in frontmatter", `title: "Fix the widget"`},
-		{"has agent in frontmatter", "agent: go-engineer"},
-		{"has mode in frontmatter", "mode: dispatch"},
-		{"has preamble", "## agentctl Runtime Environment"},
-		{"has context store capability", "agentctl context"},
-		{"has issue heading", "## Issue #42: Fix the widget"},
-		{"has issue body", "The widget is broken."},
-		{"has exec instructions", "Execute this ticket autonomously"},
-		{"has closes reference", "Closes #42"},
-		{"has worktree note", "git worktree on branch agent/go-engineer/issue-42"},
-		{"has branch note", "agent/go-engineer/issue-42"},
-		{"has gh pr create", "gh pr create"},
-		{"has git push", "git push -u origin agent/go-engineer/issue-42"},
-	}
-
-	for _, tc := range checks {
-		t.Run(tc.desc, func(t *testing.T) {
-			if !strings.Contains(got, tc.want) {
-				t.Errorf("system prompt missing %q\n\ngot (first 2000 chars):\n%s", tc.want, truncateStr(got, 2000))
-			}
-		})
-	}
-
-	// Verify ordering: preamble comes after frontmatter, exec instructions come after preamble.
-	t.Run("order: frontmatter before preamble", func(t *testing.T) {
-		fmIdx := strings.Index(got, `ticket: "#42"`)
-		pIdx := strings.Index(got, "## agentctl Runtime Environment")
-		if fmIdx >= pIdx {
-			t.Error("frontmatter should appear before preamble")
-		}
-	})
-	t.Run("order: preamble before exec instructions", func(t *testing.T) {
-		pIdx := strings.Index(got, "## agentctl Runtime Environment")
-		eIdx := strings.Index(got, "Execute this ticket autonomously")
-		if pIdx >= eIdx {
-			t.Error("preamble should appear before exec instructions")
-		}
-	})
-}
-
-func TestBuildSystemPrompt_AdHocDispatch(t *testing.T) {
-	req := Request{
-		AgentName:    "go-engineer",
-		Mode:         ModeAdhoc,
-		CustomPrompt: strings.Repeat("x", 600), // long prompt goes into system prompt
-		RepoSlug:     "blsmth/agentctl",
-	}
-	spec := modes[ModeAdhoc]
-	workDir := "/tmp/test-dir"
-
-	got := buildSystemPrompt(req, spec, workDir, "", false, nil, "")
-
-	t.Run("no issue zero", func(t *testing.T) {
-		if strings.Contains(got, "Issue #0") {
-			t.Error("ad-hoc prompt should not contain 'Issue #0'")
-		}
-	})
-	t.Run("no ticket in frontmatter", func(t *testing.T) {
-		if strings.Contains(got, "ticket:") {
-			t.Error("ad-hoc frontmatter should not contain 'ticket:'")
-		}
-	})
-	t.Run("has preamble", func(t *testing.T) {
-		if !strings.Contains(got, "## agentctl Runtime Environment") {
-			t.Error("ad-hoc prompt should contain preamble")
-		}
-	})
-	t.Run("has exec instructions", func(t *testing.T) {
-		if !strings.Contains(got, "Execute this t") {
-			t.Error("ad-hoc prompt should contain exec instructions")
-		}
-	})
-	t.Run("has task section for long prompt", func(t *testing.T) {
-		if !strings.Contains(got, "## Task") {
-			t.Error("long ad-hoc prompt should be embedded as ## Task section")
-		}
-	})
-	t.Run("commit step has no Closes ref", func(t *testing.T) {
-		if strings.Contains(got, "Closes #") {
-			t.Error("ad-hoc prompt should not reference Closes #N")
-		}
-	})
-}
-
-func TestBuildSystemPrompt_NoWorktree(t *testing.T) {
-	req := Request{
-		AgentName:   "go-engineer",
-		Mode:        ModeDispatch,
-		Ticket:      10,
-		TicketTitle: "Test",
-		TicketBody:  "Body",
-	}
-	spec := modes[ModeDispatch]
-
-	got := buildSystemPrompt(req, spec, "/tmp/dir", "", false, nil, "")
-
-	if strings.Contains(got, "git worktree at") {
-		t.Error("prompt should not contain worktree note when useWorktree is false")
-	}
-	if strings.Contains(got, "git worktree on branch") {
-		t.Error("prompt should not contain worktree note when useWorktree is false")
-	}
-}
-
-func TestBuildSystemPrompt_PreamblePresent(t *testing.T) {
-	req := Request{
-		AgentName:   "go-engineer",
-		Mode:        ModeDispatch,
-		Ticket:      1,
-		TicketTitle: "T",
-		TicketBody:  "B",
-	}
-	spec := modes[ModeDispatch]
-
-	got := buildSystemPrompt(req, spec, "/tmp/dir", "", false, nil, "")
-
-	t.Run("contains agentctl context", func(t *testing.T) {
-		if !strings.Contains(got, "agentctl context") {
-			t.Error("preamble should mention 'agentctl context'")
-		}
-	})
-	t.Run("does not mention agentctl signal done", func(t *testing.T) {
-		if strings.Contains(got, "agentctl signal done") {
-			t.Error("preamble should no longer mention 'agentctl signal done' -- done is derived from the Stop hook")
-		}
-	})
-}
-
-func TestBuildSystemPrompt_WithContextEntries(t *testing.T) {
-	req := Request{
-		AgentName:   "go-engineer",
-		Mode:        ModeDispatch,
-		Ticket:      5,
-		TicketTitle: "Test",
-		TicketBody:  "Body",
-	}
-	spec := modes[ModeDispatch]
-
-	entries := []ctxstore.Entry{
-		{Key: "test-key", Content: "test-value"},
-	}
-
-	got := buildSystemPrompt(req, spec, "/tmp/dir", "", false, entries, "")
-
-	if !strings.Contains(got, "## Shared Context") {
-		t.Error("prompt should contain '## Shared Context' when context entries are provided")
-	}
-	if !strings.Contains(got, "test-key") {
-		t.Error("prompt should contain the context entry key")
-	}
-}
-
-func TestBuildFrontmatter_Issue(t *testing.T) {
-	req := Request{
-		AgentName:   "go-engineer",
-		Mode:        ModeDispatch,
-		Ticket:      42,
-		TicketTitle: "Fix the widget",
-		RepoSlug:    "blsmth/agentctl",
-	}
-
-	got := buildFrontmatter(req, "/tmp/dir")
-
-	for _, want := range []string{
-		"---",
-		`ticket: "#42"`,
-		`title: "Fix the widget"`,
-		"agent: go-engineer",
-		"repo: blsmth/agentctl",
-		"started:",
-		"mode: dispatch",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("frontmatter missing %q, got:\n%s", want, got)
-		}
-	}
-}
-
-func TestBuildFrontmatter_AdHoc(t *testing.T) {
-	req := Request{
-		AgentName: "go-engineer",
-		Mode:      ModeAdhoc,
-		RepoSlug:  "blsmth/agentctl",
-	}
-
-	got := buildFrontmatter(req, "/tmp/dir")
-
-	if strings.Contains(got, "ticket:") {
-		t.Errorf("ad-hoc frontmatter should not contain 'ticket:', got:\n%s", got)
-	}
-	if strings.Contains(got, "title:") {
-		t.Errorf("ad-hoc frontmatter should not contain 'title:', got:\n%s", got)
-	}
-	for _, want := range []string{"agent: go-engineer", "started:", "mode: adhoc", "---"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("ad-hoc frontmatter missing %q, got:\n%s", want, got)
-		}
-	}
-}
 
 // TestPreamble_DoesNotMentionSignalDone verifies the Signaling section was
 // fully removed from both preamble variants -- done is now derived from the
@@ -394,7 +171,7 @@ func TestBuildSystemPrompt_DiscussMode(t *testing.T) {
 	spec := modes[ModeDiscuss]
 	workDir := "/tmp/test-dir"
 
-	got := buildSystemPrompt(req, spec, workDir, "", false, nil, "")
+	got := buildBoth(req, spec, workDir, "", false, nil, "")
 
 	t.Run("has preamble", func(t *testing.T) {
 		if !strings.Contains(got, "## agentctl Runtime Environment") {
@@ -437,7 +214,7 @@ func TestBuildSystemPrompt_TriageMode(t *testing.T) {
 	spec := modes[ModeTriage]
 	workDir := "/tmp/test-dir"
 
-	got := buildSystemPrompt(req, spec, workDir, "", false, nil, "")
+	got := buildBoth(req, spec, workDir, "", false, nil, "")
 
 	checks := []struct {
 		desc string
@@ -447,7 +224,7 @@ func TestBuildSystemPrompt_TriageMode(t *testing.T) {
 		{"has Do NOT implement", "Do NOT implement"},
 		{"has ticket body in system prompt", "We want feature X to do Y."},
 		{"has issue heading", "## Issue #15: Add feature X"},
-		{"has gh issue edit instruction", "gh issue edit 15"},
+		{"has gh issue edit instruction", "gh issue edit <number>"},
 		{"has Context section", "## Context"},
 		{"has What to build section", "## What to build"},
 		{"has Implementation notes section", "## Implementation notes"},
@@ -483,7 +260,7 @@ func TestBuildSystemPrompt_ReviewMode(t *testing.T) {
 	spec := modes[ModeReview]
 	workDir := "/tmp/test-dir"
 
-	got := buildSystemPrompt(req, spec, workDir, "", false, nil, "")
+	got := buildBoth(req, spec, workDir, "", false, nil, "")
 
 	t.Run("has preamble", func(t *testing.T) {
 		if !strings.Contains(got, "## agentctl Runtime Environment") {
@@ -523,7 +300,7 @@ func TestBuildSystemPrompt_CustomMode(t *testing.T) {
 	spec := modes[ModeCustom]
 	workDir := "/tmp/test-dir"
 
-	got := buildSystemPrompt(req, spec, workDir, "", false, nil, "")
+	got := buildBoth(req, spec, workDir, "", false, nil, "")
 
 	t.Run("has preamble", func(t *testing.T) {
 		if !strings.Contains(got, "## agentctl Runtime Environment") {
@@ -540,78 +317,6 @@ func TestBuildSystemPrompt_CustomMode(t *testing.T) {
 			t.Error("custom prompt should embed ticket body in system prompt")
 		}
 	})
-}
-
-func TestDiscussMode_DefaultUserMessage(t *testing.T) {
-	req := Request{
-		Ticket:      7,
-		TicketTitle: "Scope this feature",
-		TicketBody:  "Body content here.",
-	}
-	spec := modes[ModeDiscuss]
-	msg := spec.DefaultUserMessage(req)
-
-	if !strings.Contains(msg, "Discuss issue #7") {
-		t.Errorf("discuss user message should reference the issue number, got: %s", msg)
-	}
-	// The user message is passed as an inline shell argument -- the body must
-	// stay in the system prompt file (see docs/prompt-architecture.md).
-	if strings.Contains(msg, "Body content here.") {
-		t.Errorf("discuss user message should NOT embed the ticket body, got: %s", msg)
-	}
-}
-
-func TestTriageMode_DefaultUserMessage(t *testing.T) {
-	req := Request{Ticket: 15}
-	spec := modes[ModeTriage]
-	msg := spec.DefaultUserMessage(req)
-
-	if !strings.Contains(msg, "Triage #15") {
-		t.Errorf("triage user message should reference ticket number, got: %s", msg)
-	}
-}
-
-func TestReviewMode_DefaultUserMessage(t *testing.T) {
-	req := Request{
-		Ticket:      22,
-		TicketTitle: "Fix widget",
-		TicketBody:  "Widget body.",
-	}
-	spec := modes[ModeReview]
-	msg := spec.DefaultUserMessage(req)
-
-	if !strings.Contains(msg, "Review issue #22") {
-		t.Errorf("review user message should reference issue number, got: %s", msg)
-	}
-	// The user message is passed as an inline shell argument -- the body must
-	// stay in the system prompt file (see docs/prompt-architecture.md).
-	if strings.Contains(msg, "Widget body.") {
-		t.Errorf("review user message should NOT embed the ticket body, got: %s", msg)
-	}
-}
-
-// TestDefaultUserMessage_NeverEmbedsTicketBody is a regression test across
-// every mode: DefaultUserMessage is delivered as an inline CLI argument (see
-// dispatch.go Launch, step 10), so embedding a large ticket body in it risks
-// "shell argument too long, claude never launches" -- the exact failure
-// docs/prompt-architecture.md documents as already fixed once. It was still
-// live for ModeDiscuss and ModeReview.
-func TestDefaultUserMessage_NeverEmbedsTicketBody(t *testing.T) {
-	const sentinelBody = "SENTINEL-TICKET-BODY-MUST-NEVER-APPEAR-IN-A-SHELL-ARGUMENT"
-
-	for mode, spec := range modes {
-		t.Run(string(mode), func(t *testing.T) {
-			req := Request{
-				Ticket:      99,
-				TicketTitle: "Sentinel ticket",
-				TicketBody:  sentinelBody,
-			}
-			msg := spec.DefaultUserMessage(req)
-			if strings.Contains(msg, sentinelBody) {
-				t.Errorf("mode %s: DefaultUserMessage embeds the full ticket body, got: %s", mode, msg)
-			}
-		})
-	}
 }
 
 func TestBuildSystemPrompt_BareMode(t *testing.T) {
@@ -649,9 +354,6 @@ func TestBuildSystemPrompt_BareMode(t *testing.T) {
 		if strings.Contains(got, "Issue #") {
 			t.Error("bare prompt should NOT contain issue heading")
 		}
-		if strings.Contains(got, "ticket:") {
-			t.Error("bare prompt frontmatter should NOT contain ticket field")
-		}
 	})
 	t.Run("no closes reference", func(t *testing.T) {
 		if strings.Contains(got, "Closes #") {
@@ -659,12 +361,12 @@ func TestBuildSystemPrompt_BareMode(t *testing.T) {
 		}
 	})
 	t.Run("has agent in frontmatter", func(t *testing.T) {
-		if !strings.Contains(got, "agent: go-engineer") {
+		if !strings.Contains(got, "- Agent: go-engineer") {
 			t.Error("bare prompt frontmatter should contain agent name")
 		}
 	})
 	t.Run("has mode in frontmatter", func(t *testing.T) {
-		if !strings.Contains(got, "mode: bare") {
+		if !strings.Contains(got, "- Mode: bare") {
 			t.Error("bare prompt frontmatter should contain mode: bare")
 		}
 	})
@@ -721,7 +423,7 @@ func TestBuildSystemPrompt_WorktreeOrientationSplit(t *testing.T) {
 		}
 		spec := modes[ModeDispatch]
 		branch := "agent/go-engineer/issue-42"
-		got := buildSystemPrompt(req, spec, "/tmp/wt", branch, true, nil, "")
+		got := buildBoth(req, spec, "/tmp/wt", branch, true, nil, "")
 
 		if !strings.Contains(got, "Do not merge to main") {
 			t.Error("ModeDispatch worktree prompt should contain 'Do not merge to main'")
@@ -826,7 +528,7 @@ func TestBuildSystemPrompt_FinishingStepsIntegration(t *testing.T) {
 			TicketBody:  "Body",
 			RepoSlug:    "blsmth/agentctl",
 		}
-		got := buildSystemPrompt(req, modes[ModeDispatch], "/tmp/wt", "agent/go-engineer/issue-42", true, nil, "")
+		got := buildFirstMessage(req, modes[ModeDispatch], "/tmp/wt", "agent/go-engineer/issue-42", true, nil, "")
 		for _, want := range []string{"gh pr create", "git push", "Closes #42"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("dispatch+worktree prompt missing %q", want)
@@ -841,7 +543,7 @@ func TestBuildSystemPrompt_FinishingStepsIntegration(t *testing.T) {
 			CustomPrompt: "do the thing",
 			RepoSlug:     "blsmth/agentctl",
 		}
-		got := buildSystemPrompt(req, modes[ModeAdhoc], "/tmp/wt", "agent/go-engineer/adhoc-xyz", true, nil, "")
+		got := buildFirstMessage(req, modes[ModeAdhoc], "/tmp/wt", "agent/go-engineer/adhoc-xyz", true, nil, "")
 		if !strings.Contains(got, "gh pr create") {
 			t.Error("adhoc+worktree prompt missing 'gh pr create'")
 		}
@@ -862,7 +564,7 @@ func TestBuildSystemPrompt_FinishingStepsIntegration(t *testing.T) {
 			TicketBody:  "Body",
 			RepoSlug:    "blsmth/agentctl",
 		}
-		got := buildSystemPrompt(req, modes[ModeDispatch], "/tmp/dir", "", false, nil, "")
+		got := buildFirstMessage(req, modes[ModeDispatch], "/tmp/dir", "", false, nil, "")
 		if strings.Contains(got, "git push") {
 			t.Error("no-worktree prompt should never mention 'git push'")
 		}
@@ -895,7 +597,7 @@ func TestBuildSystemPrompt_NoHardcodedToolchain(t *testing.T) {
 
 	for _, tc := range tests {
 		spec := modes[tc.req.Mode]
-		got := buildSystemPrompt(tc.req, spec, "/tmp/dir", "agent/go-engineer/issue-1", tc.useWorktree, nil, "")
+		got := buildBoth(tc.req, spec, "/tmp/dir", "agent/go-engineer/issue-1", tc.useWorktree, nil, "")
 		for _, forbidden := range []string{"go build", "just restart"} {
 			if strings.Contains(got, forbidden) {
 				t.Errorf("mode %s: composed prompt should never mention %q", tc.req.Mode, forbidden)
@@ -912,187 +614,37 @@ func truncateStr(s string, n int) string {
 	return s[:n] + "..."
 }
 
-func TestTaskSynopsis(t *testing.T) {
-	tests := []struct {
-		name   string
-		prompt string
-		want   string
-	}{
-		{
-			name:   "skips ## Problem heading for following prose",
-			prompt: "## Problem\n\nThe monitor never detects idle agents correctly.\n\nMore detail here.",
-			want:   "The monitor never detects idle agents correctly.",
-		},
-		{
-			name:   "falls back to heading when nothing else usable",
-			prompt: "## Task",
-			want:   "Task",
-		},
-		{
-			name:   "skips leading blank lines and a rule",
-			prompt: "\n\n---\n\nDo the thing well.",
-			want:   "Do the thing well.",
-		},
-		{
-			name:   "strips bullet marker",
-			prompt: "- Fix the widget before it breaks.",
-			want:   "Fix the widget before it breaks.",
-		},
-		{
-			name:   "strips bold wrapper",
-			prompt: "**Fix the widget before it breaks.**",
-			want:   "Fix the widget before it breaks.",
-		},
-		{
-			name:   "collapses internal whitespace",
-			prompt: "Fix   the    widget\tbefore  it breaks.",
-			want:   "Fix the widget before it breaks.",
-		},
-		{
-			name:   "empty input returns empty",
-			prompt: "",
-			want:   "",
-		},
-		{
-			name:   "whitespace-only input returns empty",
-			prompt: "   \n\t\n   ",
-			want:   "",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := taskSynopsis(tc.prompt)
-			if got != tc.want {
-				t.Errorf("taskSynopsis(%q) = %q, want %q", tc.prompt, got, tc.want)
-			}
-		})
-	}
-
-	t.Run("truncates long first line with ellipsis", func(t *testing.T) {
-		long := strings.Repeat("word ", 40) // way over synopsisWidth
-		got := taskSynopsis(long)
-		if len([]rune(got)) > synopsisWidth {
-			t.Errorf("taskSynopsis result exceeds synopsisWidth: %q (%d runes)", got, len([]rune(got)))
-		}
-		runes := []rune(got)
-		if len(runes) == 0 || runes[len(runes)-1] != '…' {
-			t.Errorf("taskSynopsis result should end with ellipsis rune, got %q", got)
-		}
-	})
-}
-
-func TestAdhocMode_DefaultUserMessage(t *testing.T) {
-	spec := modes[ModeAdhoc]
-
-	t.Run("long prompt: has synopsis and Task pointer, no old boilerplate", func(t *testing.T) {
-		req := Request{
-			Mode:         ModeAdhoc,
-			CustomPrompt: "## Problem\n\nFix the monitor's idle detection logic.\n\nMore context follows in the rest of this very long prompt that exceeds the long prompt threshold by quite a lot of padding text to push it well past five hundred characters in total length, which is required for this test scenario to exercise the long-prompt code path in DefaultUserMessage as intended by the original ticket description above.",
-		}
-		msg := spec.DefaultUserMessage(req)
-
-		if !strings.Contains(msg, "Fix the monitor's idle detection logic.") {
-			t.Errorf("message missing synopsis, got: %q", msg)
-		}
-		if !strings.Contains(msg, `## Task`) {
-			t.Errorf("message missing '## Task' pointer, got: %q", msg)
-		}
-		if strings.Contains(msg, "Read it, execute it.") {
-			t.Errorf("message should not contain the old boilerplate sentence, got: %q", msg)
-		}
-	})
-
-	t.Run("prompt key set: message contains the key", func(t *testing.T) {
-		req := Request{
-			Mode:         ModeAdhoc,
-			CustomPrompt: "Do the thing.",
-			PromptKey:    "my-spec-key",
-		}
-		msg := spec.DefaultUserMessage(req)
-		if !strings.Contains(msg, "my-spec-key") {
-			t.Errorf("message missing prompt key, got: %q", msg)
-		}
-	})
-
-	t.Run("template set: message names the template", func(t *testing.T) {
-		req := Request{Mode: ModeAdhoc, CustomPrompt: "Review PRs.", Template: "review-prs"}
-		msg := spec.DefaultUserMessage(req)
-		if !strings.Contains(msg, "Source: template `review-prs`") {
-			t.Errorf("message missing template, got: %q", msg)
-		}
-	})
-
-	t.Run("empty custom prompt falls back to non-empty message", func(t *testing.T) {
-		req := Request{Mode: ModeAdhoc}
-		msg := spec.DefaultUserMessage(req)
-		if strings.TrimSpace(msg) == "" {
-			t.Error("message should never be empty")
-		}
-	})
-}
-
-func TestDispatchMode_DefaultUserMessage(t *testing.T) {
-	spec := modes[ModeDispatch]
-
-	t.Run("with ticket title", func(t *testing.T) {
-		req := Request{Mode: ModeDispatch, Ticket: 42, TicketTitle: "Fix monitor idle detection"}
-		msg := spec.DefaultUserMessage(req)
-		if !strings.Contains(msg, "Implement #42: Fix monitor idle detection.") {
-			t.Errorf("message missing title, got: %q", msg)
-		}
-	})
-
-	t.Run("without ticket title", func(t *testing.T) {
-		req := Request{Mode: ModeDispatch, Ticket: 42}
-		msg := spec.DefaultUserMessage(req)
-		if !strings.Contains(msg, "Implement #42.") {
-			t.Errorf("message missing bare form, got: %q", msg)
-		}
-	})
-}
-
-func TestCustomMode_DefaultUserMessage(t *testing.T) {
-	spec := modes[ModeCustom]
-
-	t.Run("with ticket", func(t *testing.T) {
-		req := Request{Mode: ModeCustom, Ticket: 7, TicketTitle: "Migrate database"}
-		msg := spec.DefaultUserMessage(req)
-		if !strings.Contains(msg, "Issue #7: Migrate database") {
-			t.Errorf("message missing ticket reference, got: %q", msg)
-		}
-	})
-
-	t.Run("without ticket, with custom prompt synopsis", func(t *testing.T) {
-		req := Request{Mode: ModeCustom, CustomPrompt: "## Problem\n\nRun the migration runbook exactly."}
-		msg := spec.DefaultUserMessage(req)
-		if !strings.Contains(msg, "Run the migration runbook exactly.") {
-			t.Errorf("message missing synopsis, got: %q", msg)
-		}
-	})
-
-	t.Run("without ticket and empty prompt falls back", func(t *testing.T) {
-		req := Request{Mode: ModeCustom}
-		msg := spec.DefaultUserMessage(req)
-		if msg != "Your instructions are in the system prompt." {
-			t.Errorf("message should fall back to the plain sentence, got: %q", msg)
-		}
-	})
-}
-
 func TestPreamble_Orchestrator(t *testing.T) {
-	t.Run("worker with orchestrator and name", func(t *testing.T) {
-		got := preambleWithOrchestrator(RoleWorker, Orchestrator{WindowID: "@26", Pane: "%77", Name: "brandon-proj-3"})
-		for _, want := range []string{"### Your orchestrator", "tmux window @26, pane %77", "@26.%77", "ignore the tmux session-name prefix", "brandon-proj-3", "hint only", "same weight as this prompt", "SendMessage", "orchestrator is gone", "PR body"} {
+	t.Run("worker with orchestrator: stable section, location left to the launch facts", func(t *testing.T) {
+		o := Orchestrator{WindowID: "@26", Pane: "%77", Name: "brandon-proj-3"}
+		got := preambleWithOrchestrator(RoleWorker, o)
+		for _, want := range []string{"### Your orchestrator", "launch facts in your first message", "`@N.%P`", "ignore the tmux session-name prefix", "hint only", "same weight as this prompt", "SendMessage", "orchestrator is gone", "PR body"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("missing %q in:\n%s", want, got)
 			}
 		}
+		if got != preambleWithOrchestrator(RoleWorker, Orchestrator{WindowID: "@1"}) {
+			t.Error("the orchestrator section varies with the orchestrator")
+		}
+		for _, perLaunch := range []string{"@26", "%77", "brandon-proj-3"} {
+			if strings.Contains(got, perLaunch) {
+				t.Errorf("preamble contains per-launch %q", perLaunch)
+			}
+		}
 	})
-	t.Run("worker with orchestrator, no name", func(t *testing.T) {
-		got := preambleWithOrchestrator(RoleWorker, Orchestrator{WindowID: "@26"})
-		if !strings.Contains(got, "tmux window @26") || strings.Contains(got, "hint only") || !strings.Contains(got, "orchestrator is gone") {
-			t.Errorf("unexpected section:\n%s", got)
+	t.Run("orchestrator fact", func(t *testing.T) {
+		tests := []struct {
+			o    Orchestrator
+			want string
+		}{
+			{Orchestrator{WindowID: "@26", Pane: "%77", Name: "brandon-proj-3"}, "- Orchestrator: tmux window @26, pane %77 (`@26.%77`); its session name was brandon-proj-3 at launch"},
+			{Orchestrator{WindowID: "@26", Pane: "%77"}, "- Orchestrator: tmux window @26, pane %77 (`@26.%77`)"},
+			{Orchestrator{WindowID: "@26"}, "- Orchestrator: tmux window @26"},
+		}
+		for _, tt := range tests {
+			if got := orchestratorFact(tt.o); got != tt.want {
+				t.Errorf("orchestratorFact(%+v) = %q, want %q", tt.o, got, tt.want)
+			}
 		}
 	})
 	t.Run("bare launch gets only generic guidance", func(t *testing.T) {
@@ -1172,26 +724,39 @@ func TestWorkerPreambleContextClearAndWhoami(t *testing.T) {
 	}
 }
 
-func TestBuildSystemPrompt_ExtraInstructions(t *testing.T) {
+// TestExtraInstructions: the user's additional instructions are per launch,
+// so they go in the first message (after the task, before the launch facts
+// and finishing steps) and never change the system file.
+func TestExtraInstructions(t *testing.T) {
 	for _, mode := range []Mode{ModeAdhoc, ModeBare, ModeDispatch} {
 		t.Run(string(mode), func(t *testing.T) {
-			req := Request{AgentName: "go-engineer", Mode: mode, CustomPrompt: "do it", RepoSlug: "o/r"}
+			req := Request{AgentName: "go-engineer", Mode: mode, Ticket: 1, TicketBody: "b", CustomPrompt: "do it", RepoSlug: "o/r"}
+			if mode != ModeDispatch {
+				req.Ticket, req.TicketBody = 0, ""
+			}
 			spec := modes[mode]
-			base := buildSystemPrompt(req, spec, "/tmp/wt", "agent/x/adhoc-1", true, nil, "")
+			base := buildLaunchPrompt(req, spec, testFacts("/tmp/wt", "agent/x/adhoc-1", true), nil, "")
 
 			req.ExtraInstructions = "   \n"
-			if got := buildSystemPrompt(req, spec, "/tmp/wt", "agent/x/adhoc-1", true, nil, ""); got != base {
-				t.Error("blank instructions changed the system prompt")
+			if got := buildLaunchPrompt(req, spec, testFacts("/tmp/wt", "agent/x/adhoc-1", true), nil, ""); got != base {
+				t.Error("blank instructions changed the prompt")
 			}
-			if strings.Contains(base, AdditionalInstructionsHeading) {
+			if strings.Contains(base.Message, AdditionalInstructionsHeading) {
 				t.Error("heading present with no instructions")
 			}
 
 			req.ExtraInstructions = "  Prefer small commits.\nNo emojis.\n"
-			got := buildSystemPrompt(req, spec, "/tmp/wt", "agent/x/adhoc-1", true, nil, "")
-			want := base + "\n\n## Additional instructions from the user\n\nPrefer small commits.\nNo emojis."
-			if got != want {
-				t.Errorf("section is not appended at the very end:\n%s", got[max(0, len(got)-300):])
+			got := buildLaunchPrompt(req, spec, testFacts("/tmp/wt", "agent/x/adhoc-1", true), nil, "")
+			if got.System != base.System {
+				t.Error("instructions changed the system file")
+			}
+			section := AdditionalInstructionsHeading + "\n\nPrefer small commits.\nNo emojis."
+			i := strings.Index(got.Message, section)
+			if i < 0 {
+				t.Fatalf("message missing the section:\n%s", got.Message)
+			}
+			if f := strings.Index(got.Message, "## Launch facts"); f >= 0 && f < i {
+				t.Error("instructions come after the launch facts")
 			}
 		})
 	}

@@ -49,7 +49,6 @@ type Request struct {
 	Ticket       int    // 0 for ad-hoc
 	TicketTitle  string
 	TicketBody   string
-	UserMessage  string // override default user message
 	CustomPrompt string // ad-hoc prompt text
 	// PromptKey is the context store key the ad-hoc prompt came from, if any
 	// (set only when the caller used --prompt-key rather than --prompt). It is
@@ -203,9 +202,9 @@ type Result struct {
 //  4. Load agent config
 //  5. Gather context store entries
 //  6. Resolve the launching agent's body and expand its @shared includes
-//  7. Build system prompt
-//  8. Determine user message
-//  9. Prepare the harness workspace (settings or bridge extension), session ID
+//  7. Resolve the orchestrator and review author for the prompt
+//  8. Prepare the harness workspace (settings or bridge extension), session ID
+//  9. Build the stable system prompt file and the per-launch first message
 //  10. Write system prompt to temp file
 //  11. Build shell command
 //  12. Launch tmux window
@@ -343,7 +342,7 @@ func Launch(req Request) (Result, error) {
 		}
 	}
 
-	// 7. Build system prompt.
+	// 7. Resolve what the prompt names: pr_review, backends, orchestrator, review author.
 	req.prReview = effectivePRReview(cfg.EffectivePRReview(), req.PRReviewOverride)
 	if spec.Role == RoleOrchestrator && caps.Backends {
 		req.backendLines = backendGuidance(cfg.Backends)
@@ -361,20 +360,8 @@ func Launch(req Request) (Result, error) {
 		req.noMessaging = true
 	}
 	messagesAuthor := prepareReview(&req, cfg, caps.Accounts, acct.Dir, inWorktree)
-	systemPrompt := buildSystemPrompt(req, spec, workDir, ownBranch, inWorktree, contextEntries, sharedConventions)
 
-	// 8. Determine user message.
-	userMessage := req.UserMessage
-	if userMessage == "" {
-		// For adhoc with short custom prompts, use the prompt as the user message.
-		if req.Mode == ModeAdhoc && req.CustomPrompt != "" && len(req.CustomPrompt) <= longPromptThreshold {
-			userMessage = req.CustomPrompt
-		} else {
-			userMessage = spec.DefaultUserMessage(req)
-		}
-	}
-
-	// 9. Prepare the harness workspace: for Claude, agentctl's settings
+	// 8. Prepare the harness workspace: for Claude, agentctl's settings
 	// (hooks, permissions, backend routing); for pi, the bridge extension.
 	prep, err := h.PrepareWorkspace(harness.Workspace{
 		Dir:           launchDirFn(),
@@ -394,12 +381,20 @@ func Launch(req Request) (Result, error) {
 		inv.PermissionMode = permissionMode
 	}
 
+	// 9. Build the stable system prompt file and the per-launch first
+	// user message (see buildLaunchPrompt).
+	lp := buildLaunchPrompt(req, spec, launchFacts{
+		WorkDir: workDir, RepoDir: repoDir, Branch: ownBranch, InWorktree: inWorktree,
+		Window: windowName, Started: launchNow(),
+	}, contextEntries, sharedConventions)
+	userMessage := lp.Message
+
 	// 10. Write system prompt to temp file.
-	sysFile, err := writeTempPrompt(string(req.Mode)+"-sys", systemPrompt)
+	sysFile, err := writeTempPrompt(string(req.Mode)+"-sys", lp.System)
 	if err != nil {
 		return Result{}, fmt.Errorf("writing system prompt: %w", err)
 	}
-	logging.Debug("dispatch: full system prompt %s (%d bytes):\n%s", sysFile, len(systemPrompt), systemPrompt)
+	logging.Debug("dispatch: full system prompt %s (%d bytes, task in system: %v):\n%s", sysFile, len(lp.System), lp.TaskInSystem, lp.System)
 	inv.SystemPromptFile = sysFile
 
 	// 11. Build shell command.
@@ -1184,6 +1179,9 @@ func CallerIsAgentSession() bool {
 
 // resolveOrchestratorFn is the seam launchOrchestrator resolves through.
 var resolveOrchestratorFn = resolveOrchestrator
+
+// launchNow is the clock behind the first message's "Started" launch fact.
+var launchNow = time.Now
 
 // resolveOrchestrator identifies the dispatching Claude session. It returns
 // the zero value unless the dispatcher is a tracked session, so a human

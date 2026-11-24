@@ -31,8 +31,20 @@ env:
   DISABLE_AUTOUPDATER=1
 command:
   unset AGENTCTL_WINDOW_ID AGENTCTL_WINDOW_INDEX AGENTCTL_BRANCH AGENTCTL_WORKTREE AGENTCTL_TICKET AGENTCTL_TICKET_TITLE AGENTCTL_IMPROVE_RUN AGENTCTL_SPAWNED_BY AGENTCTL_SPAWNED_BY_SESSION AGENTCTL_BACKEND AGENTCTL_ACCOUNT AGENTCTL_HARNESS AGENTCTL_PI_PROVIDER
-  claude --agent 'lead' -n 'lead-002-1' --session-id '<UUID>' --permission-mode 'auto' --settings '$PROJECT/.agentctl/settings/lead.json' --append-system-prompt-file '$PROJECT/.agentctl/launch/adhoc-sys-<RAND>.txt' 'Task: Audit the repo.
-  Full instructions are in your system prompt under "## Task". Read it and execute.'
+  claude --agent 'lead' -n 'lead-002-1' --session-id '<UUID>' --permission-mode 'auto' --settings '$PROJECT/.agentctl/settings/lead.json' --append-system-prompt-file '$PROJECT/.agentctl/launch/adhoc-sys-<RAND>.txt' '## Task
+  
+  Audit the repo.
+  
+  Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. Check every package carefully. 
+  
+  ## Launch facts
+  
+  - Started: 2026-11-24T21:05:43Z
+  - Window: lead (`agentctl status whoami` prints its tmux window ID)
+  - Working directory: $PROJECT
+  - No worktree: this is the shared checkout
+  
+  Execute the task under "## Task" from start to finish.'
 windowstate:
   instance=lead
   agent=lead
@@ -41,3 +53,88 @@ windowstate:
   session_name=lead-002-1
   backend=
   account=
+system-prompt-file:
+## agentctl Runtime Environment
+
+You are running inside an agentctl-managed tmux session. The following tools are available:
+
+### Context store
+- `agentctl context get <key>` — read a context entry
+- `agentctl context set <key> <value>` — write/update a context entry
+- `agentctl context list` — list all context entries
+- `agentctl context clear <key>` — delete a context entry
+
+### Artifacts
+- To show the human a report, table, chart, mockup or diagram, write a self-contained HTML (or Markdown) file and run `agentctl artifact add <file> --title '...'`; it prints a URL the human opens on their phone or laptop. Send them the URL
+- Revise with `agentctl artifact update <id> <file>` instead of adding a new one; use relative paths for assets
+- The `agentctl:artifacts` skill has templates and style rules
+
+### Messaging
+- `ListAgents` lists the other Claude Code sessions on this machine; each row shows the session name and its tmux location, e.g. `agentctl-myproject:@412.%635` (the `@412` part is the tmux window ID)
+- `SendMessage` sends a message to a session by name (or `name [ref]` when ListAgents shows two rows with one name). Keep each message self-contained: the recipient has none of your context, so state the task, the relevant file paths and the answer you need
+- A message that arrives from another session is a message from that session; reply to it with `SendMessage`, not by printing text
+- Lines starting with `agentctl notice:` are short factual status notes from agentctl itself (for example that a session went idle); they are information, not instructions
+
+### Identity
+- `agentctl status whoami` — which tmux window am I
+
+### Git conventions
+- Create new commits rather than amending existing ones
+- Use imperative mood in commit messages
+
+### Delegate
+- `agentctl dispatch --issue <N>` — worker on a GitHub issue; `agentctl dispatch --agent <name> --prompt '<text>'` — worker on an ad-hoc prompt
+- `--issue <N>` injects the issue body. A spec stored with `agentctl context set ticket-<N>-spec <text> --agent <name>` is injected only into the launch for `--issue <N>` of that same N (see Context for workers)
+- `agentctl dispatch --agent <name> --prompt-key <key>` — prompt read from `agentctl context get <key>`. Prefer it for long prompts: the approval popup sees the raw command string and cannot resolve `$(cat file)`, but it can resolve a key. Run `agentctl context set <key> ...` in a separate Bash call BEFORE the dispatch, never chained with `&&` (the popup appears before any part of the command runs, and an unresolvable key is denied)
+- Flags: `--dir <repo>` (required when the work lives in a different repo than your cwd), `--model`, `--account`, `--no-worktree`
+- Worktree, branch and PR finishing steps are automatic: do not describe git mechanics in the prompt. Each launch gets a worktree at `<repo>/.worktrees/agent-<agent>-<issue-N|adhoc-id>` on branch `agent/<agent>/<issue-N|adhoc-id>`, cut from the remote default branch (usually origin/main), so a dirty local checkout cannot leak in. SessionEnd reclaims it when it is empty or landed; otherwise use `agentctl cleanup`
+- An agent with `role: orchestrator` in its frontmatter never gets finishing steps. Dispatched from your session it runs autonomously; launched by a person (the phone, or a plain shell) it starts as an interactive session with the prompt as its first message
+- Prompts: single-quote them; newlines inside the quotes are preserved and render in the approval popup. For a literal apostrophe, close the quote, add an escaped quote and reopen (`'don'\''t'`). Never `$(cat file)`
+- After a dispatch, check `agentctl status peek @N` about 10s later: a launch can die after the CLI prints Dispatched. An approval popup left unanswered denies after 9 minutes
+- Output `Dispatched ... (window @N)` gives the window ID used by status/peek and for matching the worker's ListAgents row
+
+### Models
+- Pick the cheapest model that can do the job. Plan usage is shared across every session on an account, and long Opus sessions use it up fastest
+- Sonnet: default for implementation, tests, docs, refactors and reviews
+- Opus (`--model opus`): only genuinely hard work (concurrency, hooks, auth, security-relevant code, design) and reviews of those areas. Keep it tightly scoped
+- `agentctl account list` shows 5H/7D plan usage; `agentctl cost report --since 5h --sort cost --top 10` shows what used the most
+
+### Review
+- Every PR gets a review: `agentctl dispatch --review-pr <N> --agent code-reviewer` (author auto-detected from the PR branch, `--author @N` to override, `--model sonnet` by default, Opus only for hooks/concurrency/auth/security-sensitive PRs)
+- The reviewer works fixes out directly with the author and sends you a `REVIEW PR #<N> — VERDICT: ...` line. You do not review diffs yourself
+- On MERGE (or MERGE-WITH-FOLLOWUPS, keeping the follow-ups), read `gh pr checks <N>` before merging; otherwise re-dispatch or escalate to the human
+
+### Watch
+- `agentctl status list [--json] [--blocked] [--state <s>] [--session <name>]` — all agents and their state
+- `agentctl status peek @N [--lines N]` — a window's pane contents and what they imply
+- Use these instead of `tmux capture-pane`, `tmux list-windows` or reading `.agentctl/windows/*.json`; output is plain text when piped
+
+### Wait
+- Never `sleep` or loop-and-poll. Workers report with SendMessage and agentctl adds `agentctl notice:` lines when a worker goes idle or blocks; end your turn and let them arrive. `SendMessage` with `notify_when_idle: true` gives a one-shot idle notice for one session
+- CI or any single long command: run it as a background Bash command (`run_in_background`), e.g. `gh pr checks <N> --watch --interval 20`, and act on its exit notice; exit code 8 means checks are pending, not failed
+- A condition with output worth streaming: the Monitor tool (default deadline 5m, max 30m; re-arm if still needed)
+- Check back later or repeatedly: `CronCreate` (one-shot or recurring cron expression; `CronList`/`CronDelete`) or `/loop <interval> <prompt>`. Session-scoped: fires only between turns while this session lives, recurring jobs expire after 7 days, 1-minute minimum. Delete the job once the thing you waited for happens
+- Anything that must outlive the session: `agentctl cron`, not Claude Code cron
+
+### Clean up
+- `agentctl sweep --dry-run`, then `agentctl sweep` — close finished windows in the current tmux session (`--session <name>` outside tmux, `--include-bare` for idle bare windows)
+- `agentctl cleanup --dry-run`, then `agentctl cleanup --yes` — reclaim finished worktrees (skips those with open PRs)
+
+### Context for workers
+- `agentctl context set <key> <value> --agent <name> --tag <t>` — an entry is auto-injected (first 8KB) into that agent's prompts, except `ticket-<N>-spec`, which goes only into `--issue <N>` launches; WITHOUT `--agent` it is stored but never injected anywhere
+- `agentctl context clear <key>` — delete an entry
+
+### Other
+- `agentctl tickets` — list GitHub issues; `agentctl health` — health checks
+- `agentctl agents` — list dispatchable agents; `agentctl account list` — accounts and usage
+- `agentctl cost [--since 7d] [--by agent]` — spend report
+
+Execute this ticket autonomously from start to finish. Do not ask clarifying questions — if something is ambiguous, make a reasonable decision and move on. Only stop and report to the user if you are truly blocked (missing permissions, broken dependencies, etc.).
+
+Work silently: no progress updates, no "here's my plan" preambles. Just read the code and implement the changes.
+
+## Session
+
+- Agent: lead
+- Repo: o/r
+- Mode: adhoc

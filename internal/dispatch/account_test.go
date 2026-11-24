@@ -112,7 +112,7 @@ func TestCrossAccountWorkerPreamble(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := Request{AgentName: "go-engineer", Mode: ModeDispatch, Ticket: 1, TicketTitle: "t", Orchestrator: orch}
 			dropCrossAccountOrchestrator(&req, tt.worker, tt.parent)
-			got := buildSystemPrompt(req, modes[ModeDispatch], "/tmp/wt", "agent/x/issue-1", true, nil, "")
+			got := buildBoth(req, modes[ModeDispatch], "/tmp/wt", "agent/x/issue-1", true, nil, "")
 			hasPointer := strings.Contains(got, "@809.%1151") || strings.Contains(got, "### Your orchestrator")
 			hasSend := strings.Contains(got, "SendMessage to your orchestrator")
 			if hasPointer != tt.wantOrch || hasSend != tt.wantOrch {

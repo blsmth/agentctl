@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/tmux/launchtest"
 )
@@ -25,20 +26,45 @@ const goldenConfig = `{
 func setupGolden(t *testing.T, cfg string) *launchtest.Env {
 	t.Helper()
 	env := launchtest.Setup(t, cfg, map[string]string{"golden": goldenAgentMD})
-	prevOrch, prevParent, prevExec := resolveOrchestratorFn, parentAccountFn, execPath
-	resolveOrchestratorFn = func() Orchestrator { return Orchestrator{} }
-	parentAccountFn = func() string { return "" }
-	execPath = func() (string, error) { return "/opt/bin/agentctl", nil }
-	t.Cleanup(func() { resolveOrchestratorFn, parentAccountFn, execPath = prevOrch, prevParent, prevExec })
+	stubGoldenSeams(t, Orchestrator{})
 	return env
 }
 
-// renderGolden renders a captured launch plus the window record and the
-// --settings file it wrote.
+// goldenStart is the launch time the golden tests' first messages show.
+var goldenStart = time.Date(2026, 11, 24, 21, 5, 43, 0, time.UTC)
+
+// stubGoldenSeams fixes every seam a golden launch would otherwise read from
+// the machine: the orchestrator, the parent account, the hook binary path
+// and the clock.
+func stubGoldenSeams(t *testing.T, orch Orchestrator) {
+	t.Helper()
+	prevOrch, prevParent, prevExec, prevNow := resolveOrchestratorFn, parentAccountFn, execPath, launchNow
+	resolveOrchestratorFn = func() Orchestrator { return orch }
+	parentAccountFn = func() string { return "" }
+	execPath = func() (string, error) { return "/opt/bin/agentctl", nil }
+	launchNow = func() time.Time { return goldenStart }
+	t.Cleanup(func() {
+		resolveOrchestratorFn, parentAccountFn, execPath, launchNow = prevOrch, prevParent, prevExec, prevNow
+	})
+}
+
+// renderGolden renders a captured launch plus the window record, the
+// --settings file and the system prompt file it wrote. The system file is
+// pinned whole: it is the cache-stable half of the prompt.
 func renderGolden(env *launchtest.Env, l launchtest.Launch, settingsName string) string {
 	out := l.Render() + launchtest.WindowRecord("@9001") +
-		launchtest.File("settings", filepath.Join(env.Project, ".agentctl", "settings", settingsName+".json"))
+		launchtest.File("settings", filepath.Join(env.Project, ".agentctl", "settings", settingsName+".json")) +
+		goldenSystemFile(l)
 	return env.Normalize(out, launchtest.BinPair(l)...)
+}
+
+// goldenSystemFile renders the system prompt file a launch names, if any.
+func goldenSystemFile(l launchtest.Launch) string {
+	m := sysFileRe.FindStringSubmatch(l.Command)
+	if m == nil {
+		return ""
+	}
+	return launchtest.File("system-prompt-file", m[1])
 }
 
 // TestLaunchGolden pins the exact claude command line, window env and

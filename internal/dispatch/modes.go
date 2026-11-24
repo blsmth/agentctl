@@ -2,7 +2,6 @@ package dispatch
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/blsmth/agentctl/internal/dispatchplan"
 )
@@ -32,22 +31,27 @@ const (
 // modeSpec defines per-mode prompt composition and behavior.
 type modeSpec struct {
 	// SystemInstructions returns the mode-specific instructions block that
-	// appears after the preamble in the system prompt.
+	// appears after the preamble in the system prompt. It must not depend on
+	// anything per launch (issue number, PR, prompt text): the system prompt
+	// file is kept byte-stable so Claude's prompt cache can reuse it (see
+	// buildLaunchPrompt).
 	SystemInstructions func(req Request) string
 
-	// DefaultUserMessage returns the first user message sent to the agent.
-	DefaultUserMessage func(req Request) string
+	// Directive returns the one-paragraph instruction that closes the first
+	// user message, just before the finishing steps. Unused by ModeBare,
+	// whose first message is the human's prompt.
+	Directive func(req Request) string
 
 	// Autonomous indicates whether the agent runs without human interaction.
 	Autonomous bool
 
-	// IncludeTicketBody controls whether the issue body is embedded in the
-	// system prompt (true for dispatch, false for adhoc).
+	// IncludeTicketBody controls whether the issue body is part of the first
+	// message's task block (every ticket-bearing mode).
 	IncludeTicketBody bool
 
 	// IncludeFinishingSteps controls whether buildFinishingSteps' ordered
-	// verify -> commit -> push -> PR sequence is appended to the system
-	// prompt. True only for the fully autonomous, code-producing modes
+	// verify -> commit -> push -> PR sequence closes the first message.
+	// True only for the fully autonomous, code-producing modes
 	// (dispatch, adhoc) -- modes like triage and review explicitly forbid
 	// implementing/committing, and discuss/custom/bare expect a human to
 	// decide when work is "done", so appending finishing steps there would
@@ -85,11 +89,8 @@ type modeSpec struct {
 var modes = map[Mode]modeSpec{
 	ModeDispatch: {
 		SystemInstructions: dispatchInstructions,
-		DefaultUserMessage: func(req Request) string {
-			if req.TicketTitle != "" {
-				return fmt.Sprintf("Implement #%d: %s. The spec is in your system prompt — read it and open a PR when done.", req.Ticket, req.TicketTitle)
-			}
-			return fmt.Sprintf("Implement #%d. The spec is in your system prompt — read it and open a PR when done.", req.Ticket)
+		Directive: func(req Request) string {
+			return fmt.Sprintf("Implement %s and open a PR when done.", issueRef(req))
 		},
 		Autonomous:            true,
 		IncludeTicketBody:     true,
@@ -100,24 +101,8 @@ var modes = map[Mode]modeSpec{
 	},
 	ModeAdhoc: {
 		SystemInstructions: adhocInstructions,
-		DefaultUserMessage: func(req Request) string {
-			synopsis := taskSynopsis(req.CustomPrompt)
-			if synopsis == "" && req.PromptKey == "" && req.Template == "" {
-				return "Your task is in the system prompt. Read it, execute it."
-			}
-
-			var lines []string
-			if synopsis != "" {
-				lines = append(lines, "Task: "+synopsis)
-			}
-			if req.PromptKey != "" {
-				lines = append(lines, fmt.Sprintf("Source: context key `%s`", req.PromptKey))
-			}
-			if req.Template != "" {
-				lines = append(lines, fmt.Sprintf("Source: template `%s`", req.Template))
-			}
-			lines = append(lines, `Full instructions are in your system prompt under "## Task". Read it and execute.`)
-			return strings.Join(lines, "\n")
+		Directive: func(_ Request) string {
+			return `Execute the task under "## Task" from start to finish.`
 		},
 		Autonomous:            true,
 		IncludeTicketBody:     false,
@@ -134,8 +119,8 @@ Help the user understand this ticket, ask clarifying questions, suggest an imple
 
 When the user is satisfied with the plan and says to proceed, THEN you can start implementing.`
 		},
-		DefaultUserMessage: func(req Request) string {
-			return fmt.Sprintf("Discuss issue #%d: %s. The full issue is in your system prompt.", req.Ticket, req.TicketTitle)
+		Directive: func(req Request) string {
+			return fmt.Sprintf("Discuss %s with me. Do not implement it yet.", issueRef(req))
 		},
 		Autonomous:        false,
 		IncludeTicketBody: true,
@@ -151,7 +136,7 @@ When the user is satisfied with the plan and says to proceed, THEN you can start
 			if repo == "" {
 				repo = "this repository"
 			}
-			return fmt.Sprintf(`You are triaging this ticket for %s.
+			return fmt.Sprintf(`You are triaging a ticket for %s. The ticket is in your first message.
 
 Your job: make this ticket ready to hand to an engineer. Do NOT implement anything.
 
@@ -160,7 +145,7 @@ Your job: make this ticket ready to hand to an engineer. Do NOT implement anythi
 1. Read the source files the issue references. Understand current state and constraints.
 2. Assess scope: quick fix (1 file, <30 min) or real feature (multi-file, design needed)?
 3. Fill gaps: add exact file paths, function signatures, edge cases, test requirements.
-4. Update the issue using "gh issue edit %d --body-file <file>". Use the format below. Apply the best-fit labels from those that already exist in the repo — run `+"`gh label list`"+` to see them; do not invent new ones.
+4. Update the issue using "gh issue edit <number> --body-file <file>". Use the format below. Apply the best-fit labels from those that already exist in the repo — run `+"`gh label list`"+` to see them; do not invent new ones.
 
 ## Issue format
 
@@ -186,12 +171,10 @@ Structure the updated issue body like this:
 - [ ] ...
 - [ ] ...
 
-Do NOT implement. Do NOT ask questions. Read code, update the issue.`, repo, req.Ticket)
+Do NOT implement. Do NOT ask questions. Read code, update the issue.`, repo)
 		},
-		DefaultUserMessage: func(req Request) string {
-			return fmt.Sprintf(
-				"Triage #%d. The ticket is in your system prompt. Read the relevant code, flesh out the spec, update the issue on GitHub.",
-				req.Ticket)
+		Directive: func(req Request) string {
+			return fmt.Sprintf("Triage %s. Read the relevant code, flesh out the spec, update the issue on GitHub.", issueRef(req))
 		},
 		Autonomous:        true,
 		IncludeTicketBody: true,
@@ -214,8 +197,8 @@ Please conduct a thorough code review:
 
 Be direct and constructive. Point out what is done well, and be explicit about what needs to change before this can be merged.`
 		},
-		DefaultUserMessage: func(req Request) string {
-			return fmt.Sprintf("Review issue #%d: %s. The full issue is in your system prompt.", req.Ticket, req.TicketTitle)
+		Directive: func(req Request) string {
+			return fmt.Sprintf("Review the work on %s.", issueRef(req))
 		},
 		Autonomous:        false,
 		IncludeTicketBody: true,
@@ -225,17 +208,14 @@ Be direct and constructive. Point out what is done well, and be explicit about w
 		DefaultWorktree: true,
 	},
 	ModeCustom: {
-		SystemInstructions: func(req Request) string {
-			return req.CustomPrompt
-		},
-		DefaultUserMessage: func(req Request) string {
+		// The caller's instructions are per launch: they travel in the first
+		// message under "## Instructions" (taskBlock), not here.
+		SystemInstructions: func(_ Request) string { return "" },
+		Directive: func(req Request) string {
 			if req.Ticket > 0 {
-				return fmt.Sprintf("Issue #%d: %s. Your instructions are in the system prompt.", req.Ticket, req.TicketTitle)
+				return fmt.Sprintf("Follow the instructions under \"## Instructions\" for %s.", issueRef(req))
 			}
-			if synopsis := taskSynopsis(req.CustomPrompt); synopsis != "" {
-				return fmt.Sprintf("Task: %s\nYour instructions are in the system prompt.", synopsis)
-			}
-			return "Your instructions are in the system prompt."
+			return `Follow the instructions under "## Instructions".`
 		},
 		Autonomous:        false,
 		IncludeTicketBody: true,
@@ -247,7 +227,7 @@ Be direct and constructive. Point out what is done well, and be explicit about w
 	},
 	ModeReviewPR: {
 		SystemInstructions: reviewPRInstructions,
-		DefaultUserMessage: reviewPRUserMessage,
+		Directive:          reviewPRDirective,
 		Autonomous:         true,
 		IncludeTicketBody:  false,
 		// The deliverable is a verdict message; the instructions forbid
@@ -263,10 +243,11 @@ Be direct and constructive. Point out what is done well, and be explicit about w
 	// message when one is set.
 	ModeBare: {
 		SystemInstructions: func(_ Request) string { return "" },
-		DefaultUserMessage: bareUserMessage,
-		Autonomous:         false,
-		IncludeTicketBody:  false,
-		DefaultModel:       "",
+		// A bare launch's message is the human's own prompt (bareMessage).
+		Directive:         func(_ Request) string { return "" },
+		Autonomous:        false,
+		IncludeTicketBody: false,
+		DefaultModel:      "",
 		// Bare is how the human-facing lead session is launched -- its job
 		// is coordinating other agents, so it gets the delegation surface.
 		Role: RoleOrchestrator,
@@ -294,18 +275,21 @@ Be direct and constructive. Point out what is done well, and be explicit about w
 	},
 }
 
-// maxInlineMessage caps a prompt delivered whole as the first user message (a
-// single command-line argument; Linux limits one to 128KB). A longer bare
-// prompt goes in the system prompt under "## Task" instead.
+// maxInlineMessage caps the first user message. It reaches claude as a
+// single argv word of the launch script's exec: Linux limits one argument to
+// 128KB (MAX_ARG_STRLEN) and macOS all of argv plus the environment to 1MB
+// (ARG_MAX), so 64KB leaves headroom for the rest of the command line and
+// the window's environment. A message over the cap keeps its launch facts
+// and finishing steps, but the task block moves to the end of the system
+// prompt file (see buildLaunchPrompt).
 const maxInlineMessage = 64 << 10
 
-// bareUserMessage is ModeBare's first user message: CustomPrompt itself, or
-// a pointer to the "## Task" section when it is too long to pass inline.
-func bareUserMessage(req Request) string {
-	if len(req.CustomPrompt) > maxInlineMessage {
-		return `Your task is in the system prompt under "## Task".`
+// issueRef names the launch's issue in a directive: "issue #7 (Fix it)".
+func issueRef(req Request) string {
+	if req.TicketTitle != "" {
+		return fmt.Sprintf("issue #%d (%s)", req.Ticket, req.TicketTitle)
 	}
-	return req.CustomPrompt
+	return fmt.Sprintf("issue #%d", req.Ticket)
 }
 
 // IsAutonomous reports whether mode runs without human interaction, i.e.

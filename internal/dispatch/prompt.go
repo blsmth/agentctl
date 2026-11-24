@@ -6,60 +6,133 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/x/ansi"
-
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/tui"
 )
 
-// buildSystemPrompt composes the full system prompt for a dispatch session.
+// launchFacts are the per-launch facts of one launch: where it runs and who
+// dispatched it. They go in the first user message, never in the system
+// prompt file.
+type launchFacts struct {
+	WorkDir    string // where the agent runs: the worktree when one exists
+	RepoDir    string // the checkout the launch targets (repo slug fallback)
+	Branch     string // the window's own branch; "" without a worktree
+	InWorktree bool   // a worktree was actually created for this launch
+	Window     string // tmux window name (instance)
+	Started    time.Time
+}
+
+// worktree reports whether the launch runs in its own worktree and branch.
+func (f launchFacts) worktree() bool { return f.InWorktree && f.Branch != "" }
+
+// launchPrompt is what a launch hands the agent: the file passed with
+// --append-system-prompt-file and the first user message.
+type launchPrompt struct {
+	// System is identical across launches of the same agent, mode, repo,
+	// harness, account and config: nothing per launch goes in it.
+	System string
+	// Message is the first user message; "" starts the agent interactively.
+	Message string
+	// TaskInSystem is set when the task block was too large for the message
+	// (maxInlineMessage) and was appended to System instead.
+	TaskInSystem bool
+}
+
+// taskMaterialHeading heads a task block moved to the system prompt file
+// because it was too large for the first message.
+const taskMaterialHeading = "## Task material (too large for the first message)"
+
+// buildLaunchPrompt composes a launch's system prompt file and first user
+// message.
 //
-// Composition order:
-//  1. Frontmatter
-//  2. Task content (issue body or long custom prompt)
-//  3. "---" separator
-//  4. Preamble (agentctl capabilities, role-selected -- see preamble.go)
-//     4b. Agent definition body, for harnesses without --agent (pi)
-//  5. Shared Conventions (expanded from the launching agent's own @shared
-//     includes, if any -- see agent.ExpandSharedRefs)
-//  6. Worktree orientation note (branch name only, if applicable)
-//  7. Mode instructions (autonomy/behavior boilerplate)
-//  8. Context store entries
-//  9. Finishing steps (verify -> commit -> push -> PR, worktree-aware) --
-//     only for modes with IncludeFinishingSteps set (dispatch, adhoc), and
-//     never for an orchestrator-role agent (see applyAgentRole)
+// Claude Code sends a request as tools, then the system prompt (its base,
+// the agent body, then this file), then the messages (CLAUDE.md and memory
+// as reminders, then the first user message). The prompt cache reuses the
+// longest unchanged prefix, so anything that differs per launch inside this
+// file would make every later block, the repo's CLAUDE.md included, a fresh
+// cache write. The file therefore holds only stable rules, most stable first:
 //
-// Finishing steps are deliberately last: ordered instructions closest to the
-// end of the prompt are followed most reliably, and this is the sequence we
-// most need the agent to get right (it's what actually turns work into a
-// reviewable PR).
-// useWorktree is whether Launch actually created a worktree (the resolved
-// mode-default-or-override value, false when worktree creation fell back to
-// the shared dir) -- this function never reads req.UseWorktree directly.
-func buildSystemPrompt(req Request, spec modeSpec, workDir, branch string, useWorktree bool, contextEntries []ctxstore.Entry, sharedConventions string) string {
+//  1. Preamble (agentctl capabilities, role-selected, see preamble.go), with
+//     the orchestrator, cross-account or mailbox reporting section. The
+//     orchestrator's location is a launch fact, not part of it.
+//     1b. Agent definition body, for harnesses without --agent (pi)
+//  2. Shared Conventions (the agent's own @shared includes, expanded)
+//  3. Mode instructions (autonomy boilerplate, review rules, ...)
+//  4. Worktree note (that there is one, not its path or branch)
+//  5. Session (agent, repo, mode)
+//  6. Context store entries for the agent (not the ticket's spec)
+//
+// The first message carries everything per launch, in this order:
+//
+//  1. Task: the issue body and its ticket spec, the ad-hoc prompt, custom
+//     instructions, or the PR block with its author; then the user's
+//     additional instructions
+//  2. Launch facts: started time, window, working directory, branch,
+//     orchestrator location (and for review-pr, how to check out the head)
+//  3. The mode's directive, then the finishing steps (verify -> commit ->
+//     push -> PR) for dispatch/adhoc. They stay last on purpose: ordered
+//     instructions closest to the end are followed most reliably, and this
+//     is the sequence that turns work into a reviewable PR.
+//
+// A message over maxInlineMessage keeps its launch facts and closing steps,
+// and its task block moves to the end of the system prompt file, so that
+// launch writes the cache from the task onwards but still launches.
+//
+// ModeBare is different: its first message is the human's own prompt (see
+// bareLaunchPrompt).
+func buildLaunchPrompt(req Request, spec modeSpec, facts launchFacts, contextEntries []ctxstore.Entry, sharedConventions string) launchPrompt {
+	stable, perLaunch := splitContextEntries(req, contextEntries)
+	system := buildSystemFile(req, spec, facts, stable, sharedConventions)
+	if req.Mode == ModeBare {
+		return bareLaunchPrompt(req, facts, system)
+	}
+
+	task := taskBlock(req, spec, perLaunch)
+	tail := joinParts(launchFactsBlock(req, facts), closingBlock(req, spec, facts))
+	msg := joinParts(task, tail)
+	if len(msg) <= maxInlineMessage || task == "" {
+		return launchPrompt{System: system, Message: msg}
+	}
+	logging.Log("dispatch: first message for %s is %d bytes (over %d); moving its task block to the system prompt", req.AgentName, len(msg), maxInlineMessage)
+	return launchPrompt{
+		System:       joinParts(system, taskMaterialHeading, task),
+		Message:      joinParts(`Your task was too large to send as this message. It is at the end of your system prompt, under "`+strings.TrimPrefix(taskMaterialHeading, "## ")+`".`, tail),
+		TaskInSystem: true,
+	}
+}
+
+// bareLaunchPrompt finishes a ModeBare launch, whose first message is the
+// human's prompt (an orchestrator launched on an ad-hoc prompt) or nothing.
+// Bare launches have no orchestrator and no finishing steps, so the only
+// per-launch fact is the worktree, when there is one: a one-line prefix on
+// the message, or, with no message to carry it, the system file itself.
+func bareLaunchPrompt(req Request, facts launchFacts, system string) launchPrompt {
+	extra := extraSection(req)
+	if req.CustomPrompt == "" {
+		return launchPrompt{System: joinParts(system, extra)}
+	}
+	prefix := ""
+	if facts.worktree() {
+		prefix = fmt.Sprintf("[agentctl launch facts: git worktree %s, branch %s]", facts.WorkDir, facts.Branch)
+	}
+	msg := joinParts(prefix, req.CustomPrompt, extra)
+	if len(msg) <= maxInlineMessage {
+		return launchPrompt{System: system, Message: msg}
+	}
+	return launchPrompt{
+		System:       joinParts(system, "## Task\n\n"+req.CustomPrompt, extra),
+		Message:      joinParts(prefix, `Your task is in the system prompt under "## Task".`),
+		TaskInSystem: true,
+	}
+}
+
+// buildSystemFile composes the stable system prompt file (see
+// buildLaunchPrompt for the order and why).
+func buildSystemFile(req Request, spec modeSpec, facts launchFacts, contextEntries []ctxstore.Entry, sharedConventions string) string {
 	var parts []string
 
-	// 1. Frontmatter
-	parts = append(parts, buildFrontmatter(req, workDir))
-
-	// 2. Task content (issue body or custom prompt)
-	if spec.IncludeTicketBody && req.Ticket > 0 {
-		parts = append(parts, fmt.Sprintf("## Issue #%d: %s\n\n%s", req.Ticket, req.TicketTitle, req.TicketBody))
-	}
-
-	// For adhoc with long prompts, embed the custom prompt as task content.
-	// A bare launch's prompt is its first message unless it is too long to
-	// pass as one argument (bareUserMessage).
-	if req.Mode == ModeAdhoc && req.CustomPrompt != "" && len(req.CustomPrompt) > longPromptThreshold ||
-		req.Mode == ModeBare && len(req.CustomPrompt) > maxInlineMessage {
-		parts = append(parts, fmt.Sprintf("## Task\n\n%s", req.CustomPrompt))
-	}
-
-	// 3. "---" separator
-	parts = append(parts, "---")
-
-	// 4. Preamble
+	// 1. Preamble
 	reviewer := req.Mode == ModeReviewPR
 	switch {
 	case req.noMessaging && reviewer:
@@ -75,7 +148,7 @@ func buildSystemPrompt(req Request, spec modeSpec, workDir, branch string, useWo
 	case reviewer:
 		parts = append(parts, reviewerPreamble(true))
 		if req.Orchestrator.Known() {
-			parts = append(parts, reviewerOrchestratorSection(req.Orchestrator))
+			parts = append(parts, reviewerOrchestratorSection())
 		}
 	default:
 		parts = append(parts, preambleWithOrchestratorBackends(spec.Role, req.Orchestrator, req.prReview, req.backendLines))
@@ -88,13 +161,13 @@ func buildSystemPrompt(req Request, spec modeSpec, workDir, branch string, useWo
 		}
 	}
 
-	// 4b. Persona -- for harnesses with no --agent flag (pi), the agent's
+	// 1b. Persona -- for harnesses with no --agent flag (pi), the agent's
 	// own definition body has no other way in front of the model.
 	if req.persona != "" {
 		parts = append(parts, "## Agent definition: "+req.AgentName+"\n\n"+strings.TrimSpace(req.persona))
 	}
 
-	// 5. Shared Conventions -- expanded from the launching agent's own
+	// 2. Shared Conventions -- expanded from the launching agent's own
 	// @shared/*.md includes. The raw "@shared/foo.md" line still lives in the
 	// .md body Claude Code loads directly, but Claude Code does not expand it
 	// (see agent.ExpandSharedRefs doc comment), so this expanded copy is the
@@ -107,66 +180,179 @@ func buildSystemPrompt(req Request, spec modeSpec, workDir, branch string, useWo
 		parts = append(parts, "## Shared Conventions\n\n"+note+sharedConventions)
 	}
 
-	// 6. Worktree orientation note
-	switch {
-	case req.Mode == ModeReviewPR:
-		if useWorktree && branch != "" && !req.reviewSharedCheckout {
-			parts = append(parts, reviewWorktreeOrientation(req, workDir, branch))
-		}
-	case useWorktree && branch != "":
-		parts = append(parts, buildWorktreeOrientation(spec, workDir, branch))
+	// 3. Mode instructions
+	if s := spec.SystemInstructions(req); s != "" {
+		parts = append(parts, s)
 	}
 
-	// 7. Mode instructions
-	parts = append(parts, spec.SystemInstructions(req))
+	// 4. Worktree note. A review-pr launch's worktree is all per-launch
+	// (the PR head to check out), so it is in its launch facts only.
+	if facts.worktree() && req.Mode != ModeReviewPR {
+		// A bare launch with no message has no launch facts to point to.
+		withPath := req.Mode == ModeBare && req.CustomPrompt == ""
+		parts = append(parts, worktreeNote(spec, facts, withPath))
+	}
 
-	// 8. Context store entries
+	// 5. Session
+	parts = append(parts, sessionBlock(req, facts))
+
+	// 6. Context store entries
 	if len(contextEntries) > 0 {
-		var contextParts []string
-		totalBytes := 0
-		for _, e := range contextEntries {
-			formatted := ctxstore.Format(e)
-			contextParts = append(contextParts, formatted)
-			totalBytes += len(formatted)
-		}
-		contextSection := "## Shared Context\n\n" + strings.Join(contextParts, "\n\n---\n\n")
-		parts = append(parts, contextSection)
-		// Byte count, not just entry count, is the point: a count alone
-		// cannot reveal a 276KB payload -- that's exactly how the
-		// unscoped-broadcast bug went unnoticed for months.
-		logging.Log("dispatch: injected %d context store entries (%d bytes) for %s", len(contextEntries), totalBytes, req.AgentName)
-	}
-
-	// 9. Finishing steps — kept last on purpose (see doc comment above).
-	// Only appended for fully autonomous, code-producing modes (dispatch,
-	// adhoc); modes like triage/review explicitly forbid implementing, and
-	// discuss/custom/bare leave "done" to the human.
-	if spec.IncludeFinishingSteps {
-		parts = append(parts, buildFinishingSteps(req, branch, useWorktree))
-	}
-
-	// 10. User-supplied additional instructions, after everything else so they
-	// are the last standing guidance the model reads.
-	if extra := strings.TrimSpace(req.ExtraInstructions); extra != "" {
-		parts = append(parts, AdditionalInstructionsHeading+"\n\n"+extra)
+		parts = append(parts, contextSection(req, contextEntries))
 	}
 
 	return strings.Join(parts, "\n\n")
 }
 
-// AdditionalInstructionsHeading heads the user's extra system-prompt guidance.
+// splitContextEntries separates the context entries that are per launch
+// (the ticket's own spec, which goes in the first message) from the
+// agent's standing entries (system file). The --prompt-key entry is the task
+// itself, already in the message, so it is dropped.
+func splitContextEntries(req Request, entries []ctxstore.Entry) (stable, perLaunch []ctxstore.Entry) {
+	for _, e := range entries {
+		switch {
+		case req.PromptKey != "" && e.Key == req.PromptKey:
+		case isTicketSpec(e.Key, req.Ticket):
+			perLaunch = append(perLaunch, e)
+		default:
+			stable = append(stable, e)
+		}
+	}
+	return stable, perLaunch
+}
+
+// isTicketSpec reports whether key is ticket's ticket-<N>-spec entry.
+func isTicketSpec(key string, ticket int) bool {
+	n, ok := ctxstore.TicketSpecNumber(key)
+	return ok && ticket > 0 && n == ticket
+}
+
+// contextSection renders context entries under "## Shared Context".
+func contextSection(req Request, entries []ctxstore.Entry) string {
+	formatted := make([]string, 0, len(entries))
+	totalBytes := 0
+	for _, e := range entries {
+		f := ctxstore.Format(e)
+		formatted = append(formatted, f)
+		totalBytes += len(f)
+	}
+	// Byte count, not just entry count, is the point: a count alone cannot
+	// reveal a 276KB payload -- that's exactly how the unscoped-broadcast
+	// bug went unnoticed for months.
+	logging.Log("dispatch: injected %d context store entries (%d bytes) for %s", len(entries), totalBytes, req.AgentName)
+	return "## Shared Context\n\n" + strings.Join(formatted, "\n\n---\n\n")
+}
+
+// taskBlock is the first message's task: the issue (with its ticket spec),
+// the ad-hoc prompt, custom instructions or the PR, then the user's
+// additional instructions.
+func taskBlock(req Request, spec modeSpec, perLaunch []ctxstore.Entry) string {
+	var parts []string
+	if spec.IncludeTicketBody && req.Ticket > 0 {
+		parts = append(parts, fmt.Sprintf("## Issue #%d: %s\n\n%s", req.Ticket, req.TicketTitle, req.TicketBody))
+	}
+	if len(perLaunch) > 0 {
+		parts = append(parts, contextSection(req, perLaunch))
+	}
+	switch {
+	case req.Mode == ModeAdhoc && req.CustomPrompt != "":
+		parts = append(parts, "## Task\n\n"+taskSource(req)+req.CustomPrompt)
+	case req.Mode == ModeCustom && req.CustomPrompt != "":
+		parts = append(parts, "## Instructions\n\n"+req.CustomPrompt)
+	case req.Mode == ModeReviewPR:
+		parts = append(parts, reviewPRTask(req))
+	}
+	parts = append(parts, extraSection(req))
+	return joinParts(parts...)
+}
+
+// taskSource names where an ad-hoc prompt came from, so a human scanning
+// the transcript recognizes it: "Source: context key `k`\n\n", or "".
+func taskSource(req Request) string {
+	var lines []string
+	if req.PromptKey != "" {
+		lines = append(lines, fmt.Sprintf("Source: context key `%s`", req.PromptKey))
+	}
+	if req.Template != "" {
+		lines = append(lines, fmt.Sprintf("Source: template `%s`", req.Template))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n") + "\n\n"
+}
+
+// extraSection renders the user's additional instructions, or "".
+func extraSection(req Request) string {
+	extra := strings.TrimSpace(req.ExtraInstructions)
+	if extra == "" {
+		return ""
+	}
+	return AdditionalInstructionsHeading + "\n\n" + extra
+}
+
+// launchFactsBlock renders the first message's "## Launch facts".
+func launchFactsBlock(req Request, facts launchFacts) string {
+	lines := []string{"## Launch facts", ""}
+	if !facts.Started.IsZero() {
+		lines = append(lines, "- Started: "+facts.Started.UTC().Format(time.RFC3339))
+	}
+	if facts.Window != "" {
+		lines = append(lines, "- Window: "+facts.Window+" (`agentctl status whoami` prints its tmux window ID)")
+	}
+	if facts.WorkDir != "" {
+		lines = append(lines, "- Working directory: "+facts.WorkDir)
+	}
+	if facts.worktree() {
+		lines = append(lines, "- Branch: "+facts.Branch+" (a git worktree)")
+	} else {
+		lines = append(lines, "- No worktree: this is the shared checkout")
+	}
+	if req.Orchestrator.Known() {
+		lines = append(lines, orchestratorFact(req.Orchestrator))
+	}
+	out := strings.Join(lines, "\n")
+	if req.Mode == ModeReviewPR && facts.worktree() && !req.reviewSharedCheckout {
+		out += "\n\n" + reviewWorktreeOrientation(req, facts.WorkDir, facts.Branch)
+	}
+	return out
+}
+
+// closingBlock is the end of the first message: the mode's directive, then
+// the finishing steps for the modes that have them.
+func closingBlock(req Request, spec modeSpec, facts launchFacts) string {
+	var parts []string
+	if spec.Directive != nil {
+		parts = append(parts, spec.Directive(req))
+	}
+	if spec.IncludeFinishingSteps {
+		parts = append(parts, buildFinishingSteps(req, facts.Branch, facts.InWorktree))
+	}
+	return joinParts(parts...)
+}
+
+// joinParts joins the non-empty parts with blank lines.
+func joinParts(parts ...string) string {
+	kept := parts[:0:0]
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, "\n\n")
+}
+
+// AdditionalInstructionsHeading heads the user's extra guidance.
 const AdditionalInstructionsHeading = "## Additional instructions from the user"
 
-// buildWorktreeOrientation returns the worktree orientation note included in
-// the system prompt when a launch was worktree-isolated. It splits on
+// worktreeNote returns the system file's worktree note. It splits on
 // spec.IncludeFinishingSteps -- the same flag that governs whether
-// buildFinishingSteps' verify->commit->push->PR sequence gets appended --
-// because the two are two halves of the same contract:
+// buildFinishingSteps' verify->commit->push->PR sequence closes the first
+// message -- because the two are two halves of the same contract:
 //
 //   - IncludeFinishingSteps == true (dispatch, adhoc): these are the fully
 //     autonomous, code-producing modes whose job ends at "open a PR, do not
-//     merge it yourself." The original terse warning is exactly right for
-//     them, verbatim.
+//     merge it yourself." The terse warning is exactly right for them.
 //   - IncludeFinishingSteps == false (bare and the conversational modes):
 //     these sessions are driven by a human, and for ModeBare in particular
 //     the human's job explicitly includes merging other agents' pull
@@ -177,24 +363,26 @@ const AdditionalInstructionsHeading = "## Additional instructions from the user"
 //     that uncommitted edits here are worktree-local and will be discarded
 //     unless committed and opened as a PR.
 //
-// The bare branch of this split is no longer reachable by default: ModeBare's
-// DefaultWorktree is now false, and buildSystemPrompt only calls this at all
-// when useWorktree is true (see its "6. Worktree orientation note" gate). It
-// remains reachable only via an explicit Request.UseWorktree override that
-// forces a worktree for a bare launch. The code stays in place for that case
-// rather than being deleted.
-func buildWorktreeOrientation(spec modeSpec, workDir, branch string) string {
+// The path and branch are launch facts, so the note points at the first
+// message for them. withPath names them inline instead, for a launch with no
+// first message to carry them (a bare launch with no prompt, reachable only
+// through an explicit Request.UseWorktree override, since ModeBare's
+// DefaultWorktree is false).
+func worktreeNote(spec modeSpec, facts launchFacts, withPath bool) string {
 	if spec.IncludeFinishingSteps {
-		return fmt.Sprintf("You are working in a git worktree on branch %s. Do not merge to main.", branch)
+		return "You are working in a git worktree on its own branch (named in the launch facts of your first message). Do not merge to main."
 	}
+	where := "You are in a git worktree (its path and branch are in the launch facts of your first message)"
+	if withPath {
+		where = fmt.Sprintf("You are in a git worktree at %s on branch %s", facts.WorkDir, facts.Branch)
+	}
+	return where + `, cut from the remote default branch at launch. The main checkout stays on its own branch, and other sessions cannot see your uncommitted edits.
 
-	return fmt.Sprintf(`You are in a git worktree at %s on branch %s, cut from the remote default branch at launch. The main checkout stays on its own branch, and other sessions cannot see your uncommitted edits.
+To see the current default branch after another session merges something, run ` + "`git fetch origin`" + ` and read through ` + "`origin/main:<path>`" + `. Do not run ` + "`git pull origin main`" + `, which merges into this throwaway branch.
 
-To see the current default branch after another session merges something, run `+"`git fetch origin`"+` and read through `+"`origin/main:<path>`"+`. Do not run `+"`git pull origin main`"+`, which merges into this throwaway branch.
+Merging pull requests is unaffected. ` + "`gh pr merge`" + ` is a remote operation and works normally from a worktree.
 
-Merging pull requests is unaffected. `+"`gh pr merge`"+` is a remote operation and works normally from a worktree.
-
-Any file you edit here is worktree-local. If an edit needs to land (agent definitions, docs, specs), commit it and open a PR, otherwise it is discarded when the worktree is reclaimed.`, workDir, branch)
+Any file you edit here is worktree-local. If an edit needs to land (agent definitions, docs, specs), commit it and open a PR, otherwise it is discarded when the worktree is reclaimed.`
 }
 
 // buildFinishingSteps returns the ordered "when you are finished" sequence
@@ -251,129 +439,22 @@ func reportStep(o Orchestrator, num, what string) string {
 	return prefix + "SendMessage to your orchestrator (window " + o.WindowID + ") with " + what + "."
 }
 
-// buildFrontmatter returns a YAML-style frontmatter block with session metadata.
-func buildFrontmatter(req Request, workDir string) string {
+// sessionBlock names the agent, repo and mode. No timestamp, ticket or other
+// per-launch value: those are launch facts.
+func sessionBlock(req Request, facts launchFacts) string {
 	repoSlug := req.RepoSlug
 	if repoSlug == "" {
-		repoSlug = tui.TLRepoSlug(workDir)
+		dir := facts.RepoDir
+		if dir == "" {
+			dir = facts.WorkDir
+		}
+		repoSlug = tui.TLRepoSlug(dir)
 		if repoSlug == "" {
-			repoSlug = filepath.Base(workDir)
+			repoSlug = filepath.Base(dir)
 		}
 	}
-	started := time.Now().UTC().Format(time.RFC3339)
-
-	lines := []string{"---"}
-	if req.Ticket > 0 {
-		lines = append(lines,
-			fmt.Sprintf("ticket: \"#%d\"", req.Ticket),
-			fmt.Sprintf("title: %q", req.TicketTitle),
-		)
-	}
-	lines = append(lines,
-		fmt.Sprintf("agent: %s", req.AgentName),
-		fmt.Sprintf("repo: %s", repoSlug),
-		fmt.Sprintf("started: %s", started),
-		fmt.Sprintf("mode: %s", string(req.Mode)),
-	)
-	lines = append(lines, "---")
-	return strings.Join(lines, "\n")
-}
-
-const longPromptThreshold = 500
-
-// synopsisWidth is the maximum rendered width of a taskSynopsis result,
-// chosen to fit comfortably in a tmux input box on a single line.
-const synopsisWidth = 100
-
-// genericSectionHeadings are section headings common enough in our own task
-// prompts (e.g. "## Problem") that using one verbatim as the synopsis would
-// tell a human nothing. taskSynopsis skips over them in favor of the next
-// meaningful line, falling back to the heading only if nothing else is found.
-var genericSectionHeadings = map[string]bool{
-	"problem":    true,
-	"task":       true,
-	"context":    true,
-	"summary":    true,
-	"changes":    true,
-	"goal":       true,
-	"background": true,
-}
-
-// taskSynopsis reduces a multi-line task prompt to a single short line
-// suitable for the pane input box: the first meaningful line, stripped of
-// markdown decoration, whitespace-collapsed, truncated to synopsisWidth.
-// Returns "" if nothing usable was found; callers must handle that case.
-func taskSynopsis(prompt string) string {
-	var fallback string
-
-	for _, line := range strings.Split(prompt, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || isMarkdownRule(line) {
-			continue
-		}
-
-		cleaned := cleanSynopsisLine(line)
-		if cleaned == "" {
-			continue
-		}
-
-		if genericSectionHeadings[strings.ToLower(cleaned)] {
-			if fallback == "" {
-				fallback = cleaned
-			}
-			continue
-		}
-
-		return ansi.Truncate(cleaned, synopsisWidth, "…")
-	}
-
-	if fallback != "" {
-		return ansi.Truncate(fallback, synopsisWidth, "…")
-	}
-	return ""
-}
-
-// isMarkdownRule reports whether line is a bare markdown horizontal rule
-// (---, ***, or ===), which carries no synopsis-worthy content.
-func isMarkdownRule(line string) bool {
-	switch line {
-	case "---", "***", "===":
-		return true
-	default:
-		return false
-	}
-}
-
-// cleanSynopsisLine strips leading markdown decoration (heading '#' runs,
-// blockquote '>', list markers, and surrounding bold/code markers) from a
-// single line and collapses internal whitespace to single spaces.
-func cleanSynopsisLine(line string) string {
-	line = strings.TrimLeft(line, "#")
-	line = strings.TrimSpace(line)
-	line = strings.TrimPrefix(line, ">")
-	line = strings.TrimSpace(line)
-	line = strings.TrimPrefix(line, "- ")
-	line = strings.TrimPrefix(line, "* ")
-	line = strings.TrimPrefix(line, "+ ")
-	line = strings.Trim(line, "*")
-	// Strip ALL backticks rather than just the two outermost characters.
-	// strings.Trim(line, "`") only removes backticks that sit at the very
-	// start/end of the whole line -- if the line contains more than one
-	// inline code span (e.g. "`foo.go` breaks `bar`"), the leading backtick
-	// of the first span gets trimmed away but its matching closing backtick,
-	// sitting mid-string, does not, leaving an ODD number of backticks in
-	// the result. An odd backtick count is exactly what makes a downstream
-	// double-quoted shell string (e.g. a diagnostics echo) unparseable: the
-	// shell treats a lone backtick as the start of unterminated command
-	// substitution and hangs waiting for its close. This is a defense in
-	// depth measure -- the real fix is that no generated shell string should
-	// ever interpolate raw synopsis/command text into a double-quoted
-	// context in the first place (see tmux.LaunchAgent) -- but removing
-	// backticks here as well costs nothing and closes this class of bug at
-	// the source too.
-	line = strings.ReplaceAll(line, "`", "")
-	line = strings.TrimSpace(line)
-
-	fields := strings.Fields(line)
-	return strings.Join(fields, " ")
+	return "## Session\n\n" +
+		"- Agent: " + req.AgentName + "\n" +
+		"- Repo: " + repoSlug + "\n" +
+		"- Mode: " + string(req.Mode)
 }

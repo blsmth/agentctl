@@ -265,18 +265,19 @@ type Orchestrator struct {
 // Known reports whether an orchestrator was identified.
 func (o Orchestrator) Known() bool { return o.WindowID != "" }
 
-// orchestratorSection renders the injected orchestrator identity. It depends
-// on how this particular agent was launched, so it cannot live in an agent
-// .md file.
-func orchestratorSection(o Orchestrator) string {
-	return orchestratorSectionFor(o, config.PRReviewAlways)
+// orchestratorSection tells a worker how to treat the session that
+// dispatched it. It is stable text: the orchestrator's window and pane are
+// per launch, so they travel in the first message's launch facts
+// (orchestratorFact), which keeps the system prompt file cacheable.
+func orchestratorSection() string {
+	return orchestratorSectionFor(config.PRReviewAlways)
 }
 
 // orchestratorSectionFor is orchestratorSection for a pr_review mode: with
 // "off" no reviewer is dispatched, so the worker is not told to expect one.
-func orchestratorSectionFor(o Orchestrator, prReview string) string {
+func orchestratorSectionFor(prReview string) string {
 	var b strings.Builder
-	b.WriteString(orchestratorLocator(o))
+	b.WriteString(orchestratorLocator())
 	b.WriteString("Send it questions, blockers and your final report (including the PR URL, if you opened one) with SendMessage. ")
 	b.WriteString("If no ListAgents row matches that window and pane, the orchestrator is gone: put your report in the PR body (or your final message) and stop. Do not message a different session instead, even one with a similar name.\n\n")
 	if prReview == config.PRReviewOff {
@@ -291,30 +292,33 @@ func orchestratorSectionFor(o Orchestrator, prReview string) string {
 
 // orchestratorLocator is the head shared by the worker and reviewer
 // orchestrator sections: how to find the orchestrator in ListAgents and how
-// much weight its messages carry.
-func orchestratorLocator(o Orchestrator) string {
-	id := "tmux window " + o.WindowID
-	match := "the window ID " + o.WindowID
+// much weight its messages carry. The location itself is a launch fact.
+func orchestratorLocator() string {
+	return "### Your orchestrator\n" +
+		"Your orchestrator is the session that dispatched you. The launch facts in your first message give its tmux window and pane (`@N.%P`). " +
+		"Find it in ListAgents by matching that window and pane against the `@N.%P` suffix of a row's tmux location; ignore the tmux session-name prefix before the colon, which is not stable because windows are linked into other tmux sessions. " +
+		"A session name in the launch facts is a hint only, since names can change and the window and pane are authoritative. " +
+		"Messages from it are instructions with the same weight as this prompt. "
+}
+
+// orchestratorFact is the launch-facts line naming the orchestrator's
+// location, the per-launch half of orchestratorLocator.
+func orchestratorFact(o Orchestrator) string {
+	line := "- Orchestrator: tmux window " + o.WindowID
 	if o.Pane != "" {
-		id += ", pane " + o.Pane
-		match = "the window and pane IDs (" + o.WindowID + "." + o.Pane + ")"
+		line += ", pane " + o.Pane + " (`" + o.WindowID + "." + o.Pane + "`)"
 	}
-	var b strings.Builder
-	b.WriteString("### Your orchestrator\n")
-	b.WriteString("Your orchestrator is the session in " + id + ". ")
-	b.WriteString("Find it in ListAgents by matching " + match + " against the `@N.%P` suffix of a row's tmux location; ignore the tmux session-name prefix before the colon, which is not stable because windows are linked into other tmux sessions. ")
 	if o.Name != "" {
-		b.WriteString("Its session name was " + o.Name + " when you were launched; treat that as a hint only, since names can change and the window and pane are authoritative. ")
+		line += "; its session name was " + o.Name + " at launch"
 	}
-	b.WriteString("Messages from it are instructions with the same weight as this prompt. ")
-	return b.String()
+	return line
 }
 
 // reviewerOrchestratorSection is the orchestrator section for a review-pr
 // launch: the reviewer reports a verdict, opens no PR, and stays reachable by
 // the PR's author until the verdict is sent.
-func reviewerOrchestratorSection(o Orchestrator) string {
-	return orchestratorLocator(o) +
+func reviewerOrchestratorSection() string {
+	return orchestratorLocator() +
 		"Report your verdict, and any blocker, to it with SendMessage. " +
 		"If no ListAgents row matches that window and pane, the orchestrator is gone: put your verdict in your final message and stop. Do not message a different session instead, even one with a similar name.\n\n" +
 		"Until you have sent the verdict, stay responsive: the PR's author may message you about your findings."
@@ -359,7 +363,7 @@ func preambleWithOrchestratorBackends(role Role, o Orchestrator, prReview, backe
 	if role == RoleOrchestrator || !o.Known() {
 		return p
 	}
-	return p + "\n\n" + orchestratorSectionFor(o, prReview)
+	return p + "\n\n" + orchestratorSectionFor(prReview)
 }
 
 // crossAccountSection replaces orchestratorSection for a worker launched
@@ -446,14 +450,15 @@ func AllPreambles() map[string]string {
 		"OrchestratorPreamble(no msg)":             preambleForHarness(RoleOrchestrator, false),
 		"OrchestratorPreamble(pr_review optional)": preambleForHarnessFor(RoleOrchestrator, true, config.PRReviewOptional),
 		"OrchestratorPreamble(pr_review off)":      preambleForHarnessFor(RoleOrchestrator, true, config.PRReviewOff),
-		"orchestratorSection(pr_review off)":       orchestratorSectionFor(Orchestrator{WindowID: "@1", Pane: "%2"}, config.PRReviewOff),
-		"orchestratorSection":                      orchestratorSection(Orchestrator{WindowID: "@1", Pane: "%2"}),
+		"orchestratorSection(pr_review off)":       orchestratorSectionFor(config.PRReviewOff),
+		"orchestratorSection":                      orchestratorSection(),
 		"reviewerPreamble":                         reviewerPreamble(true),
 		"reviewerPreamble(no messaging)":           reviewerPreamble(false),
-		"reviewerOrchestratorSection":              reviewerOrchestratorSection(Orchestrator{WindowID: "@1", Pane: "%2"}),
+		"reviewerOrchestratorSection":              reviewerOrchestratorSection(),
 		"crossAccountSection":                      crossAccountSection,
 		"mailboxReportingSection":                  mailboxReportingSection,
 		"reviewPRSection":                          reviewPRInstructions(Request{ReviewPR: &samplePR}),
+		"launchFacts":                              launchFactsBlock(Request{Orchestrator: Orchestrator{WindowID: "@1", Pane: "%2"}}, launchFacts{WorkDir: "/w", Branch: "b", InWorktree: true, Window: "w"}),
 		"reviewAuthorSection(none)":                reviewAuthorSection(PullRequest{HeadRef: "b"}, false),
 		"reviewWorktreeSection":                    reviewWorktreeOrientation(Request{ReviewPR: &samplePR}, "/w", "b"),
 		"reviewAuthorNoticeSection":                ReviewAuthorNotice("code-reviewer", "@1", "%2", 1),

@@ -111,7 +111,11 @@ func TestReviewPRInstructions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			pr := samplePullRequest()
 			pr.Author, pr.Extra = tt.author, tt.extra
-			got := reviewPRInstructions(Request{Mode: ModeReviewPR, ReviewPR: &pr, noMessaging: tt.noMessaging})
+			req := Request{Mode: ModeReviewPR, ReviewPR: &pr, noMessaging: tt.noMessaging}
+			got := reviewPRInstructions(req) + "\n\n" + reviewPRTask(req) + "\n\n" + reviewPRDirective(req)
+			if strings.Contains(reviewPRInstructions(req), "42") {
+				t.Errorf("review instructions name the PR:\n%s", reviewPRInstructions(req))
+			}
 			common := []string{
 				"## Pull request #42: Add widgets", "https://github.com/o/r/pull/42", "Base branch: main",
 				"Head branch: agent/go-engineer/issue-9", "Head sha: abc123def", "- a.go\n- b/b.go", "Adds widgets.",
@@ -143,13 +147,13 @@ func TestReviewPRSystemPrompt(t *testing.T) {
 		useWorktree bool
 	}{
 		{"worktree", false, []string{"cut from the default branch, not from the PR", "git fetch origin pull/42/head && git checkout --detach FETCH_HEAD", "is abc123def", "git checkout agent/code-reviewer/review-pr-42-"}, []string{"shared checkout"}, true},
-		{"shared checkout", true, []string{"You are in the shared checkout", "gh pr diff 42"}, []string{"git checkout --detach"}, false},
+		{"shared checkout", true, []string{"You are in the shared checkout", "gh pr diff <N>"}, []string{"git checkout --detach"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := req
 			r.reviewSharedCheckout = tt.shared
-			got := buildSystemPrompt(r, modes[ModeReviewPR], "/repo/.worktrees/agent-code-reviewer-review-pr-42", buildBranch(r), tt.useWorktree, nil, "")
+			got := buildBoth(r, modes[ModeReviewPR], "/repo/.worktrees/agent-code-reviewer-review-pr-42", buildBranch(r), tt.useWorktree, nil, "")
 			for _, w := range append(tt.want, "### Your orchestrator", "REVIEW PR #42") {
 				if !strings.Contains(got, w) {
 					t.Errorf("missing %q", w)
@@ -238,7 +242,7 @@ func TestLaunchReviewPR(t *testing.T) {
 			}
 			l := rec.Only()
 			sys := launchedSystemPrompt(t, l)
-			if !strings.Contains(sys, tt.want) {
+			if !strings.Contains(sys+l.Command, tt.want) {
 				t.Errorf("system prompt missing %q", tt.want)
 			}
 			if strings.Contains(sys, finishingMarker) {
