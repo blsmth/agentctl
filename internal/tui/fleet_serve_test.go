@@ -137,6 +137,7 @@ func TestServeKeyToggles(t *testing.T) {
 	}{
 		{"phone off", servectl.StateRunning, "phone access off", nil, "turning phone access off", "phone access off", ""},
 		{"phone on", servectl.StatePhoneOff, "phone access on", nil, "turning phone access on", "phone access on", ""},
+		{"stuck restarts", servectl.StateUnresponsive, "serve started at https://h/", nil, "restarting", "serve started at https://h/", ""},
 		{"start", servectl.StateOff, "serve started at https://h/", nil, "starting", "serve started at https://h/", ""},
 		{"not installed", servectl.StateOff, "", servectl.ErrNotInstalled, "starting", "", "serve install"},
 	}

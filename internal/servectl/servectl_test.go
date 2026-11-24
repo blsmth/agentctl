@@ -252,13 +252,26 @@ func TestControllerToggle(t *testing.T) {
 			t.Errorf("phone off=%v alive=%v calls=%q; want phone off, process untouched", PhoneOff(c.Dir), f.alive, f.calls)
 		}
 	})
-	t.Run("unresponsive turns the phone off", func(t *testing.T) {
-		f := fakeServe{t: t, installed: true, loaded: true, alive: true, managed: true}
+	// One press on a stuck server restarts it (as the old stop did fix it),
+	// rather than only writing the switch the badge cannot show.
+	t.Run("stuck launchd job is kickstarted", func(t *testing.T) {
+		f := fakeServe{t: t, installed: true, loaded: true, alive: true, managed: true, upAfterStart: true}
 		c := f.controller()
 		got, err := c.Toggle()
-		checkResult(t, got, err, phoneOffMsg, "")
-		if len(f.calls) != 0 || len(f.terminated) != 0 {
-			t.Errorf("calls=%q terminated=%v; want none", f.calls, f.terminated)
+		checkResult(t, got, err, "serve started at https://mac.local:8443/", "")
+		checkCalls(t, f.calls, []string{"print gui/501/" + Label, "kickstart -k gui/501/" + Label})
+		if PhoneOff(c.Dir) {
+			t.Error("phone switched off on a stuck server")
+		}
+	})
+	t.Run("stuck unmanaged process asks for stop --all", func(t *testing.T) {
+		f := fakeServe{t: t, installed: true, alive: true}
+		_, err := f.controller().Toggle()
+		if err == nil || !strings.Contains(err.Error(), "stop --all") {
+			t.Errorf("err = %v, want the stop --all hint", err)
+		}
+		if len(f.terminated) != 0 {
+			t.Errorf("terminated %v", f.terminated)
 		}
 	})
 	t.Run("phone off turns it back on", func(t *testing.T) {

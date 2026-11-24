@@ -53,7 +53,9 @@ func newPhoneSwitch(dir string) *phoneSwitch {
 }
 
 // Off reports whether phone access is off, reading the file now, and
-// records a change.
+// records a change. The stat runs outside the lock, so two racing calls
+// around a toggle can briefly record the older answer (and log a spurious
+// off/on pair); the next call or poll corrects it, which is harmless.
 func (p *phoneSwitch) Off() bool {
 	if p == nil {
 		return false
@@ -117,7 +119,7 @@ func requirePhone(off func() bool, next http.Handler) http.Handler {
 
 // writePhoneOff writes the phone-off answer.
 func writePhoneOff(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Retry-After", "60")
+	w.Header().Set("Retry-After", "30") // the page's own refresh interval
 	if wantsHTML(r) {
 		writeHTML(w, http.StatusServiceUnavailable, pagePhoneOff)
 		return

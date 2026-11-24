@@ -76,6 +76,8 @@ func (m *FleetModel) toggleServe() tea.Cmd {
 		m.setProgress("starting agentctl serve…")
 	case m.serveState == servectl.StatePhoneOff:
 		m.setProgress("turning phone access on…")
+	case m.serveState == servectl.StateUnresponsive:
+		m.setProgress("restarting agentctl serve…")
 	default:
 		m.setProgress("turning phone access off…")
 	}

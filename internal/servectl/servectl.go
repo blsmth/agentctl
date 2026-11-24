@@ -390,11 +390,12 @@ func stoppedMessage(launchAgent bool) string {
 	return "serve stopped"
 }
 
-// Toggle turns phone access off when a serve process is alive (answering
-// or not) with phone access on, and otherwise starts: phone access on, and
-// the process started when it is down.
+// Toggle turns phone access off when serve answers with phone access on,
+// and otherwise starts: phone access on, and the process started when it
+// is down or restarted when it is stuck (alive, control socket dead), so
+// one press on a stuck server fixes it rather than only writing the switch.
 func (c Controller) Toggle() (string, error) {
-	if _, alive := c.Running(c.Dir); alive && !PhoneOff(c.Dir) {
+	if _, err := c.URL(c.Dir); err == nil && !PhoneOff(c.Dir) {
 		return c.Stop()
 	}
 	return c.Start()

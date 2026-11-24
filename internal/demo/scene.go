@@ -72,7 +72,7 @@ type Config struct {
 	// stub agent file is written for it.
 	DefaultAgent string `yaml:"default_agent"`
 	// Serve fakes a running agentctl serve (a stub listening on the control
-	// socket in the demo's own state dir), so the hub shows "📱 serve".
+	// socket in the demo's own state dir), so the hub shows "📱 on".
 	Serve bool `yaml:"serve"`
 	// Cron sets cron.enabled (default false). Nothing installs the ticker
 	// and claude is stubbed, so no job fires on its own either way; true
