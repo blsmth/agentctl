@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/blsmth/agentctl/internal/logging"
 )
@@ -39,7 +38,13 @@ func ProjectStores(projectDirs []string) []*Store {
 	seen := map[string]bool{}
 	for _, d := range projectDirs {
 		d = filepath.Clean(d)
-		if d == "." || !filepath.IsAbs(d) || seen[d] || strings.Contains(d, string(filepath.Separator)+".worktrees"+string(filepath.Separator)) {
+		if d == "." || !filepath.IsAbs(d) {
+			continue
+		}
+		// A worktree is a copy of a tracked repo: it maps to the main
+		// checkout, as does every symlinked spelling of a project.
+		d = CanonicalRoot(d)
+		if seen[d] {
 			continue
 		}
 		seen[d] = true

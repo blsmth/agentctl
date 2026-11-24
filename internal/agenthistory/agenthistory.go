@@ -136,13 +136,25 @@ func StoreByName(name string) (*Store, error) {
 }
 
 // StoreForPath picks the store an absolute path belongs to: the config store
-// for a path under the agentctl config dir, the home store otherwise.
+// for a path under the agentctl config dir, a project's store (named by its
+// canonical project dir) for a path under some <project>/.claude/agents, the
+// home store otherwise.
 func StoreForPath(arg string) string {
 	if filepath.IsAbs(arg) {
 		if dir, err := config.GlobalDir(); err == nil {
-			if rel, err := filepath.Rel(dir, arg); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
-				return NameConfig
+			for _, d := range []string{dir, CanonicalRoot(dir)} {
+				for _, a := range []string{arg, canonicalPath(arg)} {
+					if rel, err := filepath.Rel(d, a); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+						return NameConfig
+					}
+				}
 			}
+		}
+		if root, ok := projectRootOf(arg); ok && !isHomeRoot(root) {
+			return CanonicalRoot(root)
+		}
+		if root, ok := projectRootOf(canonicalPath(arg)); ok && !isHomeRoot(root) {
+			return CanonicalRoot(root)
 		}
 	}
 	return NameHome
@@ -157,11 +169,12 @@ func ProjectStore(repo string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving state dir: %w", err)
 	}
-	sum := sha256.Sum256([]byte(filepath.Clean(repo)))
+	repo = CanonicalRoot(repo)
+	sum := sha256.Sum256([]byte(repo))
 	name := fmt.Sprintf("%x-%s.git", sum[:4], filepath.Base(repo))
 	return &Store{
 		GitDir:   filepath.Join(sd, "agent-history", name),
-		WorkTree: filepath.Clean(repo),
+		WorkTree: repo,
 		Paths:    []string{filepath.Join(".claude", "agents")},
 	}, nil
 }
@@ -452,6 +465,11 @@ func (s *Store) Resolve(arg string) (string, error) {
 	switch {
 	case filepath.IsAbs(arg):
 		r, err := filepath.Rel(s.WorkTree, arg)
+		if err != nil || r == ".." || strings.HasPrefix(r, "../") {
+			// Another spelling of the same file: symlinked dirs, or a
+			// linked worktree's copy of a project path.
+			r, err = filepath.Rel(s.WorkTree, canonicalPath(arg))
+		}
 		if err != nil {
 			return "", fmt.Errorf("%w: %s", ErrNotTracked, arg)
 		}

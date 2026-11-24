@@ -387,6 +387,8 @@ func Launch(opts Options) (Result, error) {
 		prompt += "\n\nTEMPLATE INSTRUCTIONS (" + opts.Template + "):\n" + strings.TrimRight(tmplBody, "\n")
 	}
 
+	prompt = stripInvisible(prompt)
+
 	if opts.DryRun {
 		out := opts.Out
 		if out == nil {

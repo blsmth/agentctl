@@ -259,8 +259,8 @@ func TestProjectStoreAndSnapshotAll(t *testing.T) {
 		t.Fatalf("project files = %q err=%v", files, err)
 	}
 	wps, _ := ProjectStore(wt)
-	if _, err := os.Stat(wps.GitDir); err == nil {
-		t.Error("worktree got its own store")
+	if wps.GitDir != ps.GitDir || wps.WorkTree != ps.WorkTree {
+		t.Errorf("worktree got its own store: %s vs %s", wps.GitDir, ps.GitDir)
 	}
 	hs, _ := HomeStore()
 	if l, err := hs.Log("", 0); err != nil || len(l) != 1 {
@@ -541,5 +541,48 @@ func TestSnapshotSkipsTrackedRootThatIsRepo(t *testing.T) {
 	}
 	if got := s.SkippedRepos(); !slices.Equal(got, []string{"agents"}) {
 		t.Fatalf("SkippedRepos = %q", got)
+	}
+}
+
+func TestProjectStoreKeyResolvesSymlinksAndWorktrees(t *testing.T) {
+	home, _ := setup(t)
+	root := t.TempDir()
+	repo := filepath.Join(root, "proj")
+	write(t, filepath.Join(repo, ".claude", "agents", "p.md"), "p")
+	write(t, filepath.Join(repo, ".worktrees", "w", ".claude", "agents", "p.md"), "p")
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := ProjectStore(repo)
+	for _, d := range []string{link, filepath.Join(repo, ".worktrees", "w"), filepath.Join(link, ".worktrees", "w")} {
+		got, err := ProjectStore(d)
+		if err != nil || got.GitDir != want.GitDir || got.WorkTree != want.WorkTree {
+			t.Errorf("ProjectStore(%s) = %+v, %v; want %+v", d, got, err, want)
+		}
+	}
+
+	// Path routing: project paths (any spelling) pick the project store, the
+	// global agents dir stays on the home store.
+	for _, p := range []string{
+		filepath.Join(repo, ".claude", "agents", "p.md"),
+		filepath.Join(link, ".claude", "agents", "p.md"),
+		filepath.Join(repo, ".worktrees", "w", ".claude", "agents", "p.md"),
+	} {
+		which := StoreForPath(p)
+		if which == NameHome || which == NameConfig {
+			t.Fatalf("StoreForPath(%s) = %q", p, which)
+		}
+		s, err := StoreByName(which)
+		if err != nil || s.GitDir != want.GitDir {
+			t.Fatalf("StoreByName(%q) = %+v, %v", which, s, err)
+		}
+		rel, err := s.Resolve(p)
+		if err != nil || rel != ".claude/agents/p.md" {
+			t.Errorf("Resolve(%s) = %q, %v", p, rel, err)
+		}
+	}
+	if got := StoreForPath(filepath.Join(home, ".claude", "agents", "a.md")); got != NameHome {
+		t.Errorf("home path routed to %q", got)
 	}
 }

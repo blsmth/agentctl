@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -136,7 +137,10 @@ func Start(o StartOptions) error {
 		return err
 	}
 	r := Run{ID: o.ID, Agent: o.Agent, Fleet: o.Fleet, Started: now()}
-	for _, ns := range stores(o.ProjectDirs) {
+	// The session may edit any project's agents (a fleet review reaches every
+	// project), so every known project store is snapshotted, not just the
+	// run's own dirs.
+	for _, ns := range stores(knownDirs(o.ProjectDirs)) {
 		_, err := ns.store.Snapshot("improve "+o.ID+" start", agenthistory.DefaultAuthor)
 		switch {
 		case errors.Is(err, agenthistory.ErrGitMissing):
@@ -152,9 +156,23 @@ func Start(o StartOptions) error {
 	return save(dir, r)
 }
 
+// knownDirs is a seam for tests that must not read the real window records.
+var knownDirs = func(extra []string) []string { return KnownProjectDirs(extra...) }
+
 type namedStore struct {
 	name  string
 	store *agenthistory.Store
+}
+
+// KnownProjectDirs is every project dir agentctl knows: the work dirs of all
+// window records, after the extra dirs given. Housekeeping's snapshot and an
+// improve run's snapshots share it, so both cover the same project stores.
+func KnownProjectDirs(extra ...string) []string {
+	dirs := slices.Clone(extra)
+	for _, r := range windowstate.All() {
+		dirs = append(dirs, r.WorkDir)
+	}
+	return dirs
 }
 
 func stores(projectDirs []string) []namedStore {
