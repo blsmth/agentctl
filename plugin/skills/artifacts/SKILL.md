@@ -30,12 +30,12 @@ Use `--kind` only to override the extension.
 
 ## Workflow
 
-1. Copy the closest template from `${CLAUDE_PLUGIN_ROOT}/skills/artifacts/templates/` into `/tmp/<slug>/` (or the worktree, if the file belongs with the work). Edit only the marked DATA / CONTENT region.
-   - `report.html`: summary callouts, sections, sortable table
-   - `dashboard.html`: KPI tiles and Chart.js charts, data in one JSON block
-   - `mockup.html`: clickable multi-screen UI with hash routing and a "mock" badge
-   - `diagram.html`: Mermaid diagrams, light/dark
+1. Copy the closest template from `${CLAUDE_PLUGIN_ROOT}/skills/artifacts/templates/` into `/tmp/<slug>/` (or the worktree, if the file belongs with the work). **Edit only the spec JSON** (`<script type="application/json" id="spec">`); never touch the inlined kit CSS/JS. Block reference: `${CLAUDE_PLUGIN_ROOT}/skills/artifacts/kit/SPEC.md`.
+   - `report.html`: summary callouts, KPIs, charts, sortable table, sources
+   - `dashboard.html`: KPI tiles, line/bar/stacked/doughnut charts, table
    - `comparison.html`: side-by-side options, pros/cons, recommendation
+   - `diagram.html`: Mermaid diagrams (light/dark)
+   - `mockup.html`: free-form clickable multi-screen UI (hash routing, `sendChoice`); shares the kit tokens
    - `report.md`: markdown report (fenced `mermaid` blocks allowed)
 2. Publish: `agentctl artifact add /tmp/<slug>/report.html --title "Short title" --description "One line"`. It prints the id and URL. If serve is not running it says so; the URL is still valid once it starts.
 3. Send the human the direct link (and the one-line conclusion) in your message. Keep the id. Treat the link like a password: do not post it anywhere public (issues, PRs, commits).
@@ -44,12 +44,21 @@ Use `--kind` only to override the extension.
 
 Limits: 25 MB and 500 files per revision, 20 revisions per artifact.
 
+## Style guide
+
+- Lead with the answer: a title that states it and a one-sentence `summary`.
+- Colour only for meaning (good/warn/bad); never decorate.
+- Every number traces to a `sources` entry. Reports and dashboards need one; the page warns if it is missing.
+- Unknown values are `null` (shown as "unknown"), never 0 or a guess.
+- Raw numbers plus `unit`/`format`, so units and formatting stay consistent; the kit formats them.
+- No new CSS or `html` blocks unless the kit lacks what you need; if so, say so in your report so the kit can grow.
+
 ## Hard rules
 
 - Prefer one self-contained file: inline CSS and JS, no build step. If you need several files, use a directory with `index.html` and **relative paths only** (`./app.js`, never `/app.js`; the page lives under `/a/<id>/<rev>/`).
 - **No secrets**: no tokens, API keys, env values, credentials, private URLs or personal data in the content, the data, or comments. Check before publishing; anyone with the link, and every paired device, can read it.
 - **Mobile first**: design for 390 px wide, include `<meta name="viewport" content="width=device-width, initial-scale=1">`, and make it work at desktop widths too (cap content width, wrap grids). Wide tables scroll inside their own container; nothing may scroll the whole page sideways. Tap targets at least 40 px.
-- Respect `prefers-color-scheme` (light and dark). Use the template's CSS variables, not hard-coded colours.
+- Respect `prefers-color-scheme` (light and dark). Use the kit's CSS variables, not hard-coded colours (the kit already does).
 - No external fonts. Use the system font stack.
 - Keep it small, a few MB at most. Downscale images or inline small ones as data URIs; never embed big datasets, summarise them.
 - Do not rely on `localStorage`, cookies or `fetch` to agentctl; the sandbox has no origin. Keep state in the URL hash or in memory.
@@ -71,7 +80,7 @@ If the `playwright-cli` skill is available, open the file with it and look at it
 
 ```bash
 mkdir -p /tmp/db-options && cp "${CLAUDE_PLUGIN_ROOT}/skills/artifacts/templates/comparison.html" /tmp/db-options/index.html
-# edit the CONTENT region, then:
+# edit the spec JSON, then:
 agentctl artifact add /tmp/db-options/index.html --title "Database options"
 # later, after feedback:
 agentctl artifact update <id> /tmp/db-options/index.html --note "added cost column"
