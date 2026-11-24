@@ -61,6 +61,10 @@ type DispatchPreviewArgs struct {
 	// Project is the project the dispatched agent runs in (the phone's
 	// details.project); empty when unknown.
 	Project string `json:"project,omitempty"`
+	// Details is the whole resolved plan (dir, model, backend, harness,
+	// worktree, permission mode, ...); the popup shows it as rows under
+	// "Dispatching". Zero for older args files and non-dispatch kinds.
+	Details remoteapproval.Details `json:"details"`
 	// Kind selects which popup layout to render -- see PreviewKind. Empty
 	// (the zero value) is treated as PreviewKindDispatch for backward
 	// compatibility with args files written before this field existed.
@@ -415,6 +419,7 @@ func dispatchPreviewGate(agentName, command, cwd string) (approved, decided bool
 
 	// Where and how the agent will run. Best effort: it never fails the gate.
 	details := resolveDispatchDetails(config.Load(), command, bashCwd, tmpl)
+	vpHeight = dispatchPreviewVPHeight(vpHeight, details)
 
 	// Build the args struct.
 	args := DispatchPreviewArgs{
@@ -431,6 +436,7 @@ func dispatchPreviewGate(agentName, command, cwd string) (approved, decided bool
 		VPHeight:     vpHeight,
 		Account:      details.Account,
 		Project:      details.Project,
+		Details:      details,
 	}
 
 	// Resolve --prompt-key to its actual content so the human reviewing the
@@ -483,6 +489,7 @@ func dispatchPreviewGate(agentName, command, cwd string) (approved, decided bool
 	sz := clampPopupToClient(tui.DispatchPreviewMaxPopupSize(
 		tui.WithContentWidth(contentWidth),
 		tui.WithMaxViewportHeight(vpHeight),
+		tui.WithDetails(details),
 	))
 	popupW := sz.Width
 	popupH := sz.Height
@@ -505,6 +512,15 @@ func dispatchPreviewGate(agentName, command, cwd string) (approved, decided bool
 		Details:     details,
 	}
 	return runPopupWithDeadline(target, "dispatch", "hook-validate-bash: dispatch", popupW, popupH, tmpPath, notice)
+}
+
+// dispatchPreviewVPHeight shrinks the viewport budget by the detail rows the
+// popup adds under "Dispatching" (tui.DispatchDetailRows), so the popup stays
+// within the height dispatchPreviewFit budgeted for the client. It never goes
+// below dpMinVPHeight; on a client too short even for that, the popup opens
+// collapsed (DispatchPreviewModel.fitsExpanded) so the hint bar stays visible.
+func dispatchPreviewVPHeight(vpHeight int, details remoteapproval.Details) int {
+	return max(vpHeight-tui.DispatchDetailRows(details), dpMinVPHeight)
 }
 
 // promptKeyDenyReason is the deny message shown to the model when the prompt
