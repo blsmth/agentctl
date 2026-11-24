@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -198,7 +197,7 @@ func (m *FleetModel) resumeClosed(r closedlog.Record) tea.Cmd {
 		session = tmux.SessionNameForProjectRoot(r.ProjectDir)
 	}
 	return func() tea.Msg {
-		out, err := fleetResumeRun(r, fleetNewSessionEnv(r.ProjectDir, os.Environ()))
+		out, err := fleetResumeRun(r, closedlog.ResumeEnv(r.ProjectDir, os.Environ()))
 		if err != nil {
 			return fleetLaunchedMsg{session: session, err: fmt.Errorf("resume %s: %w", r.Title(), err)}
 		}
@@ -209,10 +208,5 @@ func (m *FleetModel) resumeClosed(r closedlog.Record) tea.Cmd {
 // runHubResumeHelper runs `agentctl hub-resume <project> ...` with cwd = the
 // project, like the new-session helper.
 func runHubResumeHelper(r closedlog.Record, env []string) (string, error) {
-	work := r.WorkDir
-	if work == "" {
-		work = r.ProjectDir
-	}
-	args := []string{"hub-resume", r.ProjectDir, "--work-dir", filepath.Clean(work), "--agent", r.Agent, "--session-id", r.SessionID}
-	return runAgentctlHelper(r.ProjectDir, env, args...)
+	return runAgentctlHelper(r.ProjectDir, env, closedlog.ResumeArgs(r)...)
 }

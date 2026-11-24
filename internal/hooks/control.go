@@ -245,7 +245,7 @@ func shouldEmitDone(spawnedBy, mode string, stopHookActive bool, blockReason str
 // logged and swallowed, since a mailbox problem must never affect whether the
 // agent is allowed to stop.
 func emitDoneMessage(windowID string, ws windowstate.WindowState, agentName string) {
-	body := fmt.Sprintf("agentctl notice: %s (window %s) finished its turn and is idle.", agentName, windowID)
+	body := fmt.Sprintf("agentctl notice: %s at %s finished its turn and is idle.", noticeWho(windowID, ws, agentName), noticeLocation(windowID, ws))
 	_, err := deps.EnqueueMailboxMessage(mailbox.Message{
 		From:      windowID,
 		To:        ws.SpawnedBy,
@@ -369,7 +369,7 @@ func StopFailure() {
 	title, titled := alertTitle(snap, agentName, windowID)
 	sendAlert(agentName, "stop_failure", notify.Options{
 		Title:    title,
-		Subtitle: alertSubtitle("Turn failed", titled, agentName, paths.DirName()),
+		Subtitle: alertSubtitle("Turn failed", titled, agentName, paths.DirName(), alertHandle(snap)),
 		Message:  alertMessage(message),
 		Env: map[string]string{
 			"AGENTCTL_AGENT_NAME":        agentName,
@@ -672,7 +672,7 @@ func buildAlertContent(notificationType, agentName, sessionName, windowID, fallb
 			lead = prReady(ws)
 		}
 	}
-	subtitle := alertSubtitle(event, titled, agentName, project)
+	subtitle := alertSubtitle(event, titled, agentName, project, alertHandle(ws))
 
 	// Ticket (or mode) and blocked duration stay after the lead, which is
 	// cut to leave them room.
@@ -799,7 +799,7 @@ func blockedToolSummary(ws windowstate.WindowState, now time.Time) string {
 // Best-effort: any failure is logged and swallowed -- a mailbox problem must
 // never affect notification delivery to the operator.
 func emitBlockedMessage(windowID string, ws windowstate.WindowState, agentName string) {
-	body := fmt.Sprintf("agentctl notice: %s (window %s) is waiting on a permission prompt: %s.", agentName, windowID, blockedToolSummary(ws, time.Now()))
+	body := fmt.Sprintf("agentctl notice: %s at %s is waiting on a permission prompt: %s.", noticeWho(windowID, ws, agentName), noticeLocation(windowID, ws), blockedToolSummary(ws, time.Now()))
 	_, err := deps.EnqueueMailboxMessage(mailbox.Message{
 		From:      windowID,
 		To:        ws.SpawnedBy,

@@ -594,7 +594,7 @@ func (c *OpenAgentsWindowCmd) Run() error {
 type DispatchCmd struct {
 	Issue      int           `help:"GitHub issue number" short:"i"`
 	ReviewPR   int           `name:"review-pr" help:"Review an open pull request; the verdict goes to the dispatching session (default agent: code-reviewer; --prompt/--prompt-key add review instructions)"`
-	Author     string        `help:"Window of the --review-pr author, e.g. @12 (default: the live window on the PR branch)"`
+	Author     string        `help:"Session of the --review-pr author: a handle such as a3f9, or a window ID such as @12 (default: the live window on the PR branch)"`
 	Prompt     string        `help:"Ad-hoc prompt text" short:"p"`
 	PromptKey  string        `name:"prompt-key" help:"Read ad-hoc prompt from a context store key" short:"k"`
 	Template   string        `help:"Prompt template to dispatch (agentctl template list); its agent/model/dir/effort apply when those flags are unset, and --prompt adds instructions"`
@@ -969,7 +969,7 @@ func (c *AuditReportCmd) Run() error {
 type AuditLogCmd struct {
 	Session     string `help:"Filter to a session ID"`
 	Agent       string `help:"Filter to an agent name"`
-	Window      string `help:"Filter to a tmux window ID (e.g. @5)"`
+	Window      string `help:"Filter to a window: a session handle or ID (e.g. a3f9), or a tmux window ID (e.g. @5)"`
 	Tool        string `help:"Filter to a tool name (e.g. Bash, Edit, Read)"`
 	Project     string `help:"Filter to a project directory basename (e.g. agentctl). Only matches records written since schema v2; older records have no project and are never matched."`
 	Mode        string `help:"Filter to a permission_mode value (e.g. acceptEdits). Applied client-side, not part of the audit query." name:"mode"`
@@ -1007,10 +1007,20 @@ func (c *AuditLogCmd) buildFilter() (audit.Filter, error) {
 		return audit.Filter{}, err
 	}
 
+	session, window := c.Session, c.Window
+	if id, ok, err := cmd.ResolveSessionFilter(c.Window); err != nil {
+		return audit.Filter{}, err
+	} else if ok {
+		if c.Session != "" {
+			return audit.Filter{}, fmt.Errorf("--session and --window <handle> both name a session; use one")
+		}
+		session, window = id, ""
+	}
+
 	return audit.Filter{
-		Session:    c.Session,
+		Session:    session,
 		Agent:      c.Agent,
-		Window:     c.Window,
+		Window:     window,
 		Tool:       c.Tool,
 		Project:    c.Project,
 		Event:      c.Event,

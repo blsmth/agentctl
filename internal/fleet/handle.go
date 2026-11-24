@@ -103,6 +103,9 @@ func (ix *Index) HandleFor(sessionID string) string {
 	if sessionID == "" {
 		return ""
 	}
+	if ix == nil {
+		return Handle(sessionID, nil)
+	}
 	return Handle(sessionID, ix.ids)
 }
 

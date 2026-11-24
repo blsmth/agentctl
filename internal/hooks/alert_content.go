@@ -23,19 +23,26 @@ func alertTitle(ws windowstate.WindowState, agentName, windowID string) (title s
 	if t := textutil.OneLine(ws.ShortTitle.Title); t != "" {
 		return t, true
 	}
-	return fleet.DisplayName(ws.Instance, agentName, windowID), false
+	name := fleet.DisplayName(ws.Instance, agentName, windowID)
+	if name == windowID {
+		name = "session" // never show a raw window ID to a person
+	}
+	return name, false
 }
 
 // alertSubtitle joins the event with the agent (only when the title is the
 // row title, which does not name it) and the project: "Needs permission ·
-// go-engineer · agentctl".
-func alertSubtitle(event string, titled bool, agentName, project string) string {
+// go-engineer · agentctl · a3f9" (the last part is the session handle).
+func alertSubtitle(event string, titled bool, agentName, project, handle string) string {
 	parts := []string{event}
 	if titled && agentName != "" {
 		parts = append(parts, agentName)
 	}
 	if project != "" {
 		parts = append(parts, project)
+	}
+	if handle != "" {
+		parts = append(parts, handle)
 	}
 	return strings.Join(parts, " · ")
 }

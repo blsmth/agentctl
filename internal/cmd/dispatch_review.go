@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/config"
@@ -119,6 +120,16 @@ func dispatchReviewPR(opts DispatchOptions) (string, string, error) {
 // live window whose worktree branch is headRef, across every agentctl
 // session. The zero value means none was found.
 func findPRAuthor(groups []fleet.Group, headRef, override string) (prAuthorWindow, error) {
+	if override != "" && !strings.HasPrefix(override, "@") {
+		s, err := fleet.NewIndex(groups, allClosed()).Resolve(override)
+		if err != nil {
+			return prAuthorWindow{}, fmt.Errorf("--author %s: %w", override, err)
+		}
+		if !s.Live {
+			return prAuthorWindow{}, fmt.Errorf("--author %s: session %s is closed", override, s.Handle)
+		}
+		override = s.Row.WindowID
+	}
 	var found *prAuthorWindow
 	for _, g := range groups {
 		for _, r := range g.Rows {

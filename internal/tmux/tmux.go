@@ -720,6 +720,7 @@ func applyLaunchBootstrap(ws *windowstate.WindowState, windowName, agentName, lo
 	ws.Seen = false
 	ws.TurnDone = false
 	ws.AgentName = agentName
+	ws.StartedAt = time.Now().Unix()
 	ws.LogPath = logPath
 	ws.Ticket = extraEnv["AGENTCTL_TICKET"]
 	ws.TicketTitle = extraEnv["AGENTCTL_TICKET_TITLE"]

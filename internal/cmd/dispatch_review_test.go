@@ -237,3 +237,19 @@ func TestDispatchReviewPR(t *testing.T) {
 		})
 	}
 }
+
+func TestFindPRAuthorByHandle(t *testing.T) {
+	groups := []fleet.Group{{Session: "agentctl-a", RuntimeDir: "/a/.agentctl", Rows: []fleet.Row{
+		authorRow("@7", "%70", "feature", "a3f9c0de-0001", ""),
+	}}}
+	got, err := findPRAuthor(groups, "other", "a3f9")
+	if err != nil || got.WindowID != "@7" || got.Pane != "%70" {
+		t.Fatalf("author = %+v, err = %v", got, err)
+	}
+	if _, err := findPRAuthor(groups, "other", "ffff"); err == nil || !strings.Contains(err.Error(), "--author ffff") {
+		t.Errorf("unknown handle err = %v", err)
+	}
+	if err := validateAuthor(DispatchOptions{ReviewPR: 5, Author: "a3f9"}); err != nil {
+		t.Errorf("handle author rejected: %v", err)
+	}
+}

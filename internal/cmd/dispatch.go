@@ -256,14 +256,14 @@ func validateDispatchOptions(opts DispatchOptions) error {
 	return validateAuthor(opts)
 }
 
-// validateAuthor checks --author: only with --review-pr, and a window ID.
+// validateAuthor checks --author: only with --review-pr, and a handle or window ID.
 func validateAuthor(opts DispatchOptions) error {
 	if opts.Author != "" {
 		if opts.ReviewPR == 0 {
 			return errors.New("--author requires --review-pr")
 		}
-		if !authorFlagRE.MatchString(opts.Author) {
-			return fmt.Errorf("invalid --author %q: want a window ID such as @12", opts.Author)
+		if !authorFlagRE.MatchString(opts.Author) && !handleLike(opts.Author) {
+			return fmt.Errorf("invalid --author %q: want a session handle such as a3f9, or a window ID such as @12", opts.Author)
 		}
 	}
 	return nil

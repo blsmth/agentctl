@@ -73,6 +73,9 @@ func Label(r Row, scope Scope) string {
 	if r.AgentName != "" {
 		agent = r.AgentName
 	}
+	if agent == r.WindowID { // never a raw window ID
+		agent = "session"
+	}
 	if r.StartTime > 0 {
 		return agent + " · started " + time.Unix(r.StartTime, 0).Format("15:04")
 	}

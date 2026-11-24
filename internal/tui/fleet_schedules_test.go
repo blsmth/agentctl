@@ -678,7 +678,7 @@ func TestScheduleRunNowConfirmsAndShowsSkip(t *testing.T) {
 	}
 	f.runEntry = cron.Entry{Result: cron.ResultFired, WindowID: "@12", Session: "agentctl-acme-api"}
 	m = schedPress(t, m, "g", "y")
-	if !strings.Contains(m.infoMsg, "upcoming fired: window @12") {
+	if !strings.Contains(m.infoMsg, "upcoming fired in acme-api") {
 		t.Errorf("info = %q", m.infoMsg)
 	}
 }
@@ -734,7 +734,7 @@ func TestScheduleCardDrawerLeavesViewerAlone(t *testing.T) {
 
 	// The running job's card names its live window.
 	m = selectSched(t, m, "babysit")
-	if !strings.Contains(ansi.Strip(m.render()), "running: go-engineer:2 in acme-api") {
+	if !strings.Contains(ansi.Strip(m.render()), `running: go-engineer:2 "babysit" in acme-api`) {
 		t.Errorf("running window not shown:\n%s", ansi.Strip(m.render()))
 	}
 
@@ -1221,5 +1221,18 @@ func testSchedEnv() schedEnv {
 		opts:    cronedit.Options{Models: map[string][]string{"anthropic": {"opus", "sonnet", "haiku"}}},
 		usage:   config.CronUsageThresholds{FiveHour: 80, SevenDay: 90},
 		efforts: []string{"low", "medium", "high", "xhigh", "max", "auto"},
+	}
+}
+
+func TestRenderRunLineLiveClosed(t *testing.T) {
+	e := cron.Entry{Time: schedNow, Job: "j", Result: cron.ResultFired, WindowID: "@1764"}
+	for _, tc := range []struct {
+		live bool
+		want string
+	}{{true, "live"}, {false, "closed"}} {
+		got := ansi.Strip(renderRunLine(e, 80, func(cron.Entry) bool { return tc.live }))
+		if !strings.Contains(got, tc.want) || strings.Contains(got, "@1764") {
+			t.Errorf("live=%v: %q", tc.live, got)
+		}
 	}
 }

@@ -35,7 +35,7 @@ func PostCompact() {
 	title, titled := alertTitle(snap, agentName, windowID)
 	sendAlert(agentName, "post_compact", notify.Options{
 		Title:    title,
-		Subtitle: alertSubtitle("Context compacted", titled, agentName, paths.DirName()),
+		Subtitle: alertSubtitle("Context compacted", titled, agentName, paths.DirName(), alertHandle(snap)),
 		Message:  "Context compacted, continuing",
 		Env: map[string]string{
 			"AGENTCTL_AGENT_NAME":        agentName,

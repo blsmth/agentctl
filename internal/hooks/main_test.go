@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/fleet"
 	"github.com/blsmth/agentctl/internal/notify"
 	"github.com/blsmth/agentctl/internal/remoteapproval"
 	"github.com/blsmth/agentctl/internal/testenv"
@@ -33,6 +34,8 @@ func TestMain(m *testing.M) {
 	lwCapture = func(string) (string, error) { return "", errors.New("no tmux in tests") }
 	lwSession = func(string) string { return "" }
 	lwSleep = func(time.Duration) {}
+	// Handles come from a fixed empty index, never tmux or the ledger.
+	sessionIndexFn = func() *fleet.Index { return fleet.NewIndex(nil, nil) }
 	// Never rename (or query) real tmux windows from a unit test.
 	winname.SetSeamsForTest(
 		func(string, string) error { return nil },

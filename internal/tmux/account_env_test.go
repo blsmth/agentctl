@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blsmth/agentctl/internal/windowstate"
 )
@@ -176,5 +177,14 @@ func TestLaunchUnsetEnvIdentity(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestApplyLaunchBootstrapStartedAt(t *testing.T) {
+	var ws windowstate.WindowState
+	before := time.Now().Unix()
+	applyLaunchBootstrap(&ws, "w", "a", "", nil)
+	if ws.StartedAt < before || ws.StartedAt > time.Now().Unix() {
+		t.Errorf("StartedAt = %d, want about now", ws.StartedAt)
 	}
 }
