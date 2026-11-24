@@ -211,3 +211,27 @@ func TestAnswerTrustKeyOnPermissionDialog(t *testing.T) {
 	}
 	e.assertNothingSent(t)
 }
+
+// A trust dialog quoted in scrollback (an agent cat-ing a capture) must not
+// hide a live permission dialog below it; the older numbered trust layout
+// left on screen after Claude Code exited gets no dialog at all.
+func TestPaneTrustDialogInScrollback(t *testing.T) {
+	quoted := strings.Split(trustCapture(t, "trust-scratch-60.txt"), "\n")
+	var b strings.Builder
+	for _, l := range quoted[:min(20, len(quoted))] {
+		b.WriteString("     " + l + "\n")
+	}
+	pane := b.String() + dialogPane
+	want := buildPaneBody(dialogPane).Dialog
+	got := buildPaneBody(pane)
+	if got.Verdict != "awaiting_input" || got.Dialog == nil || want == nil || got.Dialog.Kind != "" || got.Dialog.Options[0].Key != "1" {
+		t.Fatalf("verdict %q dialog %+v, want the permission dialog", got.Verdict, got.Dialog)
+	}
+
+	exitedNumbered := "Accessing workspace:\n\n/tmp/repo\n\nIs this a project you created or one you trust?\n\n" +
+		"❯ 1. Yes, I trust this folder\n  2. No, exit\n\nEnter to confirm · Esc to cancel\n" +
+		"Claude Code didn't start because this folder isn't trusted.\n$ \n"
+	if b := buildPaneBody(exitedNumbered); b.Dialog != nil {
+		t.Errorf("exited numbered layout: dialog %+v, want none", b.Dialog)
+	}
+}

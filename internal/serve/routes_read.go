@@ -266,19 +266,29 @@ func buildPaneBodyFor(harnessName, text string) paneBody {
 	verdict := fleet.ClassifyPaneFor(harnessName, plain)
 	body := paneBody{Text: text, Verdict: apiVerdict(verdict)}
 	if verdict == fleet.PaneAwaitingInput {
-		// The trust dialog is never read as a numbered dialog, even in the
-		// older numbered layout: it is answered by its own keys (trust,
-		// exit), and a pane where it lingers after Claude Code exited has no
-		// dialog at all.
-		if panestate.IsTrustDialog(plain) {
-			if d, ok := panestate.ParseTrustDialog(plain); ok {
-				body.Dialog = &d
-			}
-		} else if d, ok := panestate.ParseDialog(plain); ok {
+		// The trust dialog is answered by its own keys (trust, exit). A
+		// numbered dialog whose options are the trust rows (the older layout
+		// left on screen after Claude Code exited) is never offered: number
+		// keys would go to a shell. A trust dialog quoted in scrollback does
+		// not hide a live dialog below it.
+		if d, ok := panestate.ParseTrustDialog(plain); ok {
+			body.Dialog = &d
+		} else if d, ok := panestate.ParseDialog(plain); ok && !isTrustOptions(d) {
 			body.Dialog = &d
 		}
 	}
 	return body
+}
+
+// isTrustOptions reports whether a numbered dialog's options are the
+// folder-trust dialog's rows.
+func isTrustOptions(d panestate.Dialog) bool {
+	for _, o := range d.Options {
+		if o.Label == "Yes, I trust this folder" || o.Label == "No, exit" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handlePane(w http.ResponseWriter, r *http.Request) {
