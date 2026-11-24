@@ -349,23 +349,63 @@ func TestNewSessionClosesOtherInlineStates(t *testing.T) {
 	}
 }
 
-func TestTitleHasNoNewSessionButton(t *testing.T) {
+func TestTitleOpenButtonOpensPrompt(t *testing.T) {
 	stubNewSession(t, "/start", t.TempDir())
 	m := foldModel(t)
 	m.liveLeft = 0 // the whole 120 columns: room for anything
-	line := ansi.Strip(m.titleLayout(m.contentWidth()).line)
+	l := m.titleLayout(m.contentWidth())
+	line := ansi.Strip(l.line)
 	if strings.Contains(line, "+ new") || strings.Contains(line, "+ session") {
-		t.Errorf("title still shows a new-session button: %q", line)
+		t.Errorf("title shows a stale button: %q", line)
 	}
-	// Clicks along the title open nothing; N still does.
+	if l.open[1] == 0 || ansi.Cut(line, l.open[0], l.open[1]) != fleetOpenButton {
+		t.Fatalf("open span %v covers %q in %q", l.open, ansi.Cut(line, l.open[0], l.open[1]), line)
+	}
+	// Only the button's columns open the prompt.
 	for x := 0; x < m.contentWidth(); x++ {
 		next, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: 0})
-		if next.(FleetModel).newSessionOpen() {
-			t.Fatalf("click at %d on the title opened the prompt", x)
+		got := next.(FleetModel).newSessionOpen()
+		if want := x >= l.open[0] && x < l.open[1]; got != want {
+			t.Fatalf("click at %d: prompt open = %v, want %v", x, got, want)
 		}
 	}
-	if m, _ = hubKey(t, m, fleetNewSessionKey); !m.newSessionOpen() {
-		t.Error("N no longer opens the prompt")
+}
+
+func TestTitleOpenButtonDroppedWhenNarrow(t *testing.T) {
+	m := foldModel(t)
+	m.serveKnown = true
+	for _, w := range []int{20, 30, 40, 50, 60, 80, 120} {
+		with := m.titleLayout(w)
+		plain := ansi.Strip(with.line)
+		if ansi.StringWidth(plain) > w {
+			t.Errorf("w=%d: title %d wide", w, ansi.StringWidth(plain))
+		}
+		if s := with.open; s[1] > 0 && ansi.Cut(plain, s[0], s[1]) != fleetOpenButton {
+			t.Errorf("w=%d: open span %v covers %q", w, s, ansi.Cut(plain, s[0], s[1]))
+		}
+		if with.open[1] == 0 && strings.Contains(plain, fleetOpenButton) {
+			t.Errorf("w=%d: button drawn without a span: %q", w, plain)
+		}
+	}
+	if l := m.titleLayout(120); l.open[1] == 0 {
+		t.Error("no button at 120 columns")
+	}
+	if l := m.titleLayout(30); l.open[1] != 0 {
+		t.Error("button shown at 30 columns")
+	}
+	// Dropping it never costs another element.
+	for _, w := range []int{40, 50, 60, 80} {
+		l := m.titleLayout(w)
+		if l.open[1] == 0 {
+			continue
+		}
+		stripped := ansi.Strip(l.line)
+		without := strings.Replace(stripped, "  "+fleetOpenButton, "", 1)
+		for _, want := range []string{"agentctl hub", "📱", "⏸ 1"} {
+			if strings.Contains(without, want) && !strings.Contains(stripped, want) {
+				t.Errorf("w=%d: lost %q", w, want)
+			}
+		}
 	}
 }
 

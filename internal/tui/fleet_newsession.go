@@ -179,13 +179,20 @@ type fleetNewSessionState struct {
 	focus                int
 	agent, model, prompt textinput.Model
 	loadedFor            string // dir the templates were listed for
+
+	// Recent projects (fleet_newsession_recent.go): candidates after the
+	// live-group filter, the highlighted visible entry (-1 = none) and
+	// whether the user edited the input (the prefill is not a filter).
+	recent []string
+	hl     int
+	edited bool
 }
 
 // openNewSession opens the directory prompt, prefilled with the default dir.
 // Every other inline state (selector, close confirmation, menu) closes.
-func (m *FleetModel) openNewSession() {
+func (m *FleetModel) openNewSession() tea.Cmd {
 	if m.newSessionOpen() {
-		return // keep what was typed
+		return nil // keep what was typed
 	}
 	m.cancelClose()
 	m.cancelNew()
@@ -206,11 +213,14 @@ func (m *FleetModel) openNewSession() {
 	st := &fleetNewSessionState{
 		input: ti, base: base, focus: nsFieldDir,
 		agent: newSessionInput(""), model: newSessionInput(""), prompt: newSessionInput(""),
+		hl: -1,
 	}
 	st.loadTemplates(base)
 	st.setFocus(nsFieldDir)
 	m.dirPrompt = st
 	m.ensureCursorVisible()
+	origin, _ := fleetHubOrigin()
+	return recentDirsCmd(origin)
 }
 
 // cancelNewSession closes the prompt.
@@ -224,15 +234,27 @@ func (m *FleetModel) handleNewSessionKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.cancelNewSession()
 		return nil
 	case "enter":
+		if d, ok := m.highlightedRecent(); ok {
+			return m.openRecent(d)
+		}
 		return m.submitNewSession()
 	case "ctrl+c":
 		m.quitting = true
 		return tea.Quit
 	}
+	if m.recentKey(msg.String()) {
+		return nil
+	}
 	if m.handleNewSessionFormKey(msg.String()) {
 		return nil
 	}
-	return m.updateNewSessionInput(msg)
+	before := m.dirPrompt.input.Value()
+	cmd := m.updateNewSessionInput(msg)
+	if m.dirPrompt.focus == nsFieldDir && m.dirPrompt.input.Value() != before {
+		m.dirPrompt.edited = true
+		m.dirPrompt.hl = -1
+	}
+	return cmd
 }
 
 // submitNewSession validates the typed directory and starts the action. An
@@ -281,5 +303,5 @@ func (m FleetModel) newSessionView(cw int) string {
 	in := m.dirPrompt.input
 	in.SetWidth(fleetNewSessionInputWidth(cw))
 	in.SetCursor(in.Position()) // re-run the scroll for this width
-	return fleetBlockedStyle.Render(fleetNewSessionPrompt) + in.View()
+	return strings.Join(append([]string{fleetBlockedStyle.Render(fleetNewSessionPrompt) + in.View()}, m.recentLines(cw)...), "\n")
 }

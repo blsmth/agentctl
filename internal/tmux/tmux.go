@@ -229,7 +229,13 @@ func EnsureSessionEnv() {
 // AttachSession attaches to an existing agentctl session.
 func AttachSession() error {
 	EnsureSessionEnv()
-	cmd := exec.Command("tmux", "attach-session", "-t", ExactSession(SessionName))
+	return AttachSessionNamed(SessionName)
+}
+
+// AttachSessionNamed attaches to the session with exactly this name, with no
+// assumption about the project this process is bound to.
+func AttachSessionNamed(name string) error {
+	cmd := exec.Command("tmux", "attach-session", "-t", ExactSession(name))
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

@@ -252,6 +252,11 @@ func (m FleetModel) handleClickBody(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) 
 	}
 	if m.newSessionOpen() {
 		if y := m.footerMessageY(); msg.Y >= y && msg.Y < y+m.newSessionLines() {
+			if msg.Button == tea.MouseLeft {
+				if cmd, ok := m.clickRecent(msg.Y - y); ok {
+					return m, cmd
+				}
+			}
 			return m, nil // a click on the prompt itself keeps it open
 		}
 		m.cancelNewSession() // any other click dismisses the prompt
@@ -266,6 +271,11 @@ func (m FleetModel) handleClickBody(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) 
 		m.closeMenu()
 		m.cancelNew()
 		return m, m.toggleServe()
+	}
+	if msg.Button == tea.MouseLeft && m.onOpenButton(msg.X, msg.Y) {
+		m.closeMenu()
+		m.cancelNew()
+		return m, m.openNewSession()
 	}
 	if msg.Button == tea.MouseLeft && m.onActivityButton(msg.X, msg.Y) {
 		m.closeMenu()

@@ -85,6 +85,7 @@ Check on everything from a shell:
 agentctl status                  # every agent in every live session
 agentctl status --blocked        # only the ones waiting on you
 agentctl hub                     # cross-session dashboard (ctrl+b g)
+agentctl open [dir]              # start or switch to a project's session
 ```
 
 ## How it works

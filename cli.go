@@ -81,6 +81,7 @@ type CLI struct {
 	Dispatch DispatchCmd `cmd:"" help:"Dispatch an agent to work on a ticket"`
 
 	// Fleet hub — cross-session aggregator view
+	Open            OpenCmd            `cmd:"" help:"Start or switch to the agentctl session for a project directory"`
 	Hub             HubCmd             `cmd:"" help:"Open the fleet hub (cross-session dashboard)"`
 	HubView         HubViewCmd         `cmd:"" name:"hub-view" hidden:""`
 	HubNewSession   HubNewSessionCmd   `cmd:"" name:"hub-new-session" hidden:""`
@@ -680,6 +681,17 @@ func (c *HubViewCmd) Run() error { cmd.RunHubView(); return nil }
 type HubStatusCmd struct{}
 
 func (c *HubStatusCmd) Run() error { cmd.CmdHubStatus(); return nil }
+
+// OpenCmd is `agentctl open [dir]`.
+type OpenCmd struct {
+	Dir    string `arg:"" optional:"" help:"Project directory (default: the current directory; a repo subdirectory or worktree opens the main repo)"`
+	Detach bool   `help:"Start the session if needed but do not switch or attach; print its name"`
+	Ensure bool   `hidden:"" help:"Internal: prepare the session from a process pinned to Dir"`
+}
+
+func (c *OpenCmd) Run() error {
+	return cmd.RunOpen(c.Dir, cmd.OpenOptions{Detach: c.Detach, Ensure: c.Ensure})
+}
 
 // HubNewSessionCmd is the hub's "+ new session" helper: run with cwd = Dir,
 // it initializes the project if needed, starts its tmux session detached and
