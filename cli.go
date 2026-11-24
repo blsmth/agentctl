@@ -338,9 +338,17 @@ func (c *LogsCmd) Run() error { cmd.RunLogs(c.Name); return nil }
 // ImproveCmd groups `agentctl improve [<agent>]` (start a session, the
 // default) and `agentctl improve runs`.
 type ImproveCmd struct {
-	Start ImproveStartCmd `cmd:"" default:"withargs" help:"Launch a self-improvement session (default; an agent named runs or start needs: improve start <agent>)"`
-	Runs  ImproveRunsCmd  `cmd:"" help:"List past improve runs with their changes and history revisions"`
+	Start  ImproveStartCmd  `cmd:"" default:"withargs" help:"Launch a self-improvement session (default; an agent named runs or start needs: improve start <agent>)"`
+	Runs   ImproveRunsCmd   `cmd:"" help:"List past improve runs with their changes and history revisions"`
+	Notify ImproveNotifyCmd `cmd:"" hidden:"" help:"Re-send the summary notification and artifact of a finished improve run"`
 }
+
+// ImproveNotifyCmd implements `agentctl improve notify <run-id>`.
+type ImproveNotifyCmd struct {
+	RunID string `arg:"" help:"improve run ID (see agentctl improve runs)"`
+}
+
+func (c *ImproveNotifyCmd) Run() error { return improverun.Resend(c.RunID) }
 
 // ImproveRunsCmd implements `agentctl improve runs [--since]`.
 type ImproveRunsCmd struct {

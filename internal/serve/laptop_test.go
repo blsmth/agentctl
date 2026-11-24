@@ -246,7 +246,7 @@ func TestNotifierLaptopDecision(t *testing.T) {
 		{"blocked, laptop idle", false, true, func(e *laptopNotifyEnv) { e.transition(blocked) }, 1},
 		{"done, laptop active", true, true, func(e *laptopNotifyEnv) { e.transition(win("idle", true)) }, 0},
 		{"done, laptop idle", false, true, func(e *laptopNotifyEnv) { e.transition(win("idle", true)) }, 1},
-		{"artifact, laptop active", true, true, func(e *laptopNotifyEnv) { e.artifact() }, 0},
+		{"artifact, laptop active (held)", true, true, func(e *laptopNotifyEnv) { e.artifact() }, 0},
 		{"artifact, laptop idle", false, true, func(e *laptopNotifyEnv) { e.artifact() }, 1},
 		{"approval, laptop active", true, true, func(e *laptopNotifyEnv) { e.n.Approval("a1", approvalMsg("a1"), e.clock.Now().Add(time.Minute)) }, 0},
 		{"approval, laptop idle", false, true, func(e *laptopNotifyEnv) { e.n.Approval("a1", approvalMsg("a1"), e.clock.Now().Add(time.Minute)) }, 1},
@@ -571,5 +571,58 @@ func TestNotifierStaleCacheHoldsBlockedUntilRefresh(t *testing.T) {
 	e.n.Tick()
 	if got := e.take(); len(got) != 1 || got[0].Kind != "blocked" {
 		t.Errorf("messages = %+v, want one blocked push after the refresh", got)
+	}
+}
+
+// A new artifact published while the laptop is in use is held and pushed once
+// when the laptop goes idle, not dropped.
+func TestNotifierArtifactHeldUntilLaptopIdle(t *testing.T) {
+	e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
+	e.artifact()
+	e.n.Tick()
+	if got := e.take(); len(got) != 0 {
+		t.Fatalf("pushed while laptop active: %+v", got)
+	}
+	e.setActive(false)
+	e.n.Tick()
+	got := e.take()
+	if len(got) != 1 || got[0].Kind != "artifact" {
+		t.Fatalf("on idle got %+v, want one artifact push", got)
+	}
+	e.n.Tick()
+	if got := e.take(); len(got) != 0 {
+		t.Errorf("repeat push: %+v", got)
+	}
+}
+
+// A held artifact is dropped, not pushed, when its project got muted or quiet
+// hours began while it waited for the laptop to go idle.
+func TestNotifierHeldArtifactRechecksMuteAndQuietHours(t *testing.T) {
+	tests := []struct {
+		name  string
+		apply func(n *Notifier, now time.Time)
+	}{
+		{"muted meanwhile", func(n *Notifier, _ time.Time) { n.cfg.MutedProjects = []string{"proj"} }},
+		{"quiet hours began", func(n *Notifier, now time.Time) {
+			l := now // InQuietHours reads the clock's own zone
+			n.cfg.QuietHours = l.Add(-time.Hour).Format("15:04") + "-" + l.Add(time.Hour).Format("15:04")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
+			e.artifact()
+			e.n.mu.Lock()
+			tt.apply(e.n, e.clock.Now())
+			e.n.mu.Unlock()
+			e.setActive(false)
+			e.n.Tick()
+			if got := e.take(); len(got) != 0 {
+				t.Errorf("pushed a stale held artifact: %+v", got)
+			}
+			if len(e.n.held) != 0 {
+				t.Errorf("held = %v, want empty", e.n.held)
+			}
+		})
 	}
 }
