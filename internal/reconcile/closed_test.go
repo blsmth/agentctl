@@ -183,3 +183,16 @@ func TestClosedRecordImproveReason(t *testing.T) {
 		t.Errorf("cascade reason = %q, want %q", got, closedlog.ReasonCascade)
 	}
 }
+
+func TestFinishClosesOutImproveRun(t *testing.T) {
+	var got []string
+	old := finishImproveRun
+	finishImproveRun = func(id string) error { got = append(got, id); return nil }
+	t.Cleanup(func() { finishImproveRun = old })
+	e := newEnv(t)
+	Finish(Claimed{WindowID: "@7", Record: windowstate.WindowState{Instance: "improve~x", AgentName: "x", Mode: "improve", ImproveRun: "run-9"}}, e.deps())
+	Finish(Claimed{WindowID: "@8", Record: windowstate.WindowState{Instance: "x", AgentName: "x"}}, e.deps())
+	if len(got) != 1 || got[0] != "run-9" {
+		t.Fatalf("finished runs = %v, want [run-9]", got)
+	}
+}

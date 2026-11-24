@@ -20,6 +20,19 @@ func SnapshotAll(reason string, projectDirs []string) {
 	} else {
 		stores = append(stores, s)
 	}
+	if s, err := ConfigStore(); err != nil {
+		logging.Log("agent-history: %v", err)
+	} else {
+		stores = append(stores, s)
+	}
+	stores = append(stores, ProjectStores(projectDirs)...)
+	SnapshotStores(reason, stores)
+}
+
+// ProjectStores returns the project stores of the dirs in projectDirs that
+// have a .claude/agents directory (worktrees skipped).
+func ProjectStores(projectDirs []string) []*Store {
+	var stores []*Store
 	seen := map[string]bool{}
 	for _, d := range projectDirs {
 		d = filepath.Clean(d)
@@ -34,6 +47,12 @@ func SnapshotAll(reason string, projectDirs []string) {
 			stores = append(stores, s)
 		}
 	}
+	return stores
+}
+
+// SnapshotStores snapshots each store, logging failures; a missing git is
+// warned about once and ends the loop.
+func SnapshotStores(reason string, stores []*Store) {
 	for _, s := range stores {
 		rev, err := s.Snapshot(reason, DefaultAuthor)
 		switch {

@@ -3,6 +3,7 @@ package hooks
 import (
 	"errors"
 	"fmt"
+	"github.com/blsmth/agentctl/internal/improverun"
 	"os"
 	"strings"
 	"time"
@@ -139,6 +140,13 @@ func CheckDone() {
 		}
 	}
 
+	// An improve session's turn ended: take the end snapshot of its run and
+	// send the summary (idempotent; SessionEnd and the Gone reconcile also
+	// call it, so a killed window is still closed out).
+	if ws.Mode == "improve" && ws.ImproveRun != "" {
+		finishImproveRun(ws.ImproveRun)
+	}
+
 	// Auto-emit a "done" message to whoever dispatched this window (see
 	// docs/agent-messaging-design.md §4). This only runs on the genuine
 	// turn-end path: input.StopHookActive and blockReason are both
@@ -158,6 +166,18 @@ func CheckDone() {
 		"AGENTCTL_TICKET":     os.Getenv("AGENTCTL_TICKET"),
 		"AGENTCTL_MODE":       os.Getenv("AGENTCTL_MODE"),
 	})
+}
+
+// finishImproveRunFn closes out an improve run (internal/improverun); a seam
+// so tests never snapshot a real history store.
+var finishImproveRunFn = improverun.Finish
+
+// finishImproveRun runs finishImproveRunFn, logging a failure: a hook must
+// never fail on it.
+func finishImproveRun(runID string) {
+	if err := finishImproveRunFn(runID); err != nil {
+		logging.Log("hook: finishing improve run %s: %v", runID, err)
+	}
 }
 
 // autonomousModeFn decides whether mode is autonomous (dispatch-like: one

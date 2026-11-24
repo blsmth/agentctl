@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/agenthistory"
+	"github.com/blsmth/agentctl/internal/improverun"
 	"github.com/blsmth/agentctl/internal/approval"
 	"github.com/blsmth/agentctl/internal/auditnarrate"
 	"github.com/blsmth/agentctl/internal/closedlog"
@@ -105,6 +106,13 @@ func DefaultHousekeepingDeps(runtimeDir string) HousekeepingDeps {
 		Records:       windowstate.All,
 		SessionLogDir: paths.SessionLogDir,
 		SnapshotAgents: func(time.Time) {
+			// Runs whose window died without a hook closing them out are
+			// finished first; while one is still live its end snapshot owns
+			// the edits (and carries the rationale), so skip the plain one.
+			improverun.FinishStale()
+			if improverun.Active() {
+				return
+			}
 			var dirs []string
 			for _, r := range windowstate.All() {
 				dirs = append(dirs, r.WorkDir)

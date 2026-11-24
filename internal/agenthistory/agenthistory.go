@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -52,10 +53,19 @@ var (
 
 // Store is one tracked root.
 type Store struct {
-	GitDir   string   // bare-style git dir owned by agentctl
-	WorkTree string   // the tracked root
-	Paths    []string // tracked pathspecs, relative to WorkTree
+	GitDir   string   `json:"git_dir"`   // bare-style git dir owned by agentctl
+	WorkTree string   `json:"work_tree"` // the tracked root
+	Paths    []string `json:"paths"`     // tracked pathspecs, relative to WorkTree
+	// NameDir is the directory a bare name resolves into ("reviewer" is
+	// <NameDir>/reviewer.md); Paths[0] when empty.
+	NameDir string `json:"name_dir,omitempty"`
 }
+
+// Store names, for --store and run records.
+const (
+	NameHome   = "agents"
+	NameConfig = "config"
+)
 
 // Entry is one commit in the history.
 type Entry struct {
@@ -66,7 +76,16 @@ type Entry struct {
 	Subject string
 }
 
-// HomeStore is the store for ~/.claude/agents and ~/.claude/shared.
+// HomePaths are the tracked pathspecs under ~/.claude: nothing else there is
+// ever staged.
+var HomePaths = []string{"agents", "shared", "CLAUDE.md", "settings.json"}
+
+// ConfigPaths are the tracked pathspecs under the agentctl global config dir.
+// Nothing else in it (secrets, tokens) is ever staged.
+var ConfigPaths = []string{"config.json", "templates"}
+
+// HomeStore is the store for ~/.claude/agents, ~/.claude/shared,
+// ~/.claude/CLAUDE.md and ~/.claude/settings.json.
 func HomeStore() (*Store, error) {
 	home := claudehome.HomeDir()
 	if home == "" {
@@ -76,7 +95,49 @@ func HomeStore() (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving state dir: %w", err)
 	}
-	return &Store{GitDir: filepath.Join(sd, "agent-history.git"), WorkTree: home, Paths: []string{"agents", "shared"}}, nil
+	return &Store{GitDir: filepath.Join(sd, "agent-history.git"), WorkTree: home, Paths: slices.Clone(HomePaths), NameDir: "agents"}, nil
+}
+
+// ConfigStore is the store for the agentctl global config (config.json and
+// templates/), a second git dir beside the home store.
+func ConfigStore() (*Store, error) {
+	dir, err := config.GlobalDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolving config dir: %w", err)
+	}
+	sd, err := stateDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolving state dir: %w", err)
+	}
+	return &Store{GitDir: filepath.Join(sd, "agent-history-config.git"), WorkTree: dir, Paths: slices.Clone(ConfigPaths), NameDir: "templates"}, nil
+}
+
+// StoreByName returns the store for NameHome (or ""), NameConfig, or an
+// absolute project dir (its .claude/agents store).
+func StoreByName(name string) (*Store, error) {
+	if filepath.IsAbs(name) {
+		return ProjectStore(name)
+	}
+	switch name {
+	case "", NameHome:
+		return HomeStore()
+	case NameConfig:
+		return ConfigStore()
+	}
+	return nil, fmt.Errorf("unknown store %q (want %s or %s)", name, NameHome, NameConfig)
+}
+
+// StoreForPath picks the store an absolute path belongs to: the config store
+// for a path under the agentctl config dir, the home store otherwise.
+func StoreForPath(arg string) string {
+	if filepath.IsAbs(arg) {
+		if dir, err := config.GlobalDir(); err == nil {
+			if rel, err := filepath.Rel(dir, arg); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+				return NameConfig
+			}
+		}
+	}
+	return NameHome
 }
 
 // ProjectStore is the store for <repo>/.claude/agents, keyed by the repo path.
@@ -185,7 +246,14 @@ func (s *Store) skipList() []string {
 	var skip []string
 	for _, p := range s.Paths {
 		root := filepath.Join(s.WorkTree, p)
-		if fi, err := os.Lstat(root); err != nil || !fi.IsDir() {
+		fi, err := os.Lstat(root)
+		if err != nil {
+			continue
+		}
+		if !fi.IsDir() {
+			if fi.Mode().IsRegular() && fi.Size() > MaxFileSize {
+				skip = append(skip, ":(exclude,literal)"+filepath.ToSlash(p))
+			}
 			continue
 		}
 		filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error { //nolint:errcheck
@@ -229,6 +297,11 @@ func (s *Store) stage() error {
 // The first call creates the store with the current contents as the baseline.
 // It returns the new revision, or "" when nothing changed.
 func (s *Store) Snapshot(reason, author string) (string, error) {
+	return s.SnapshotBody(reason, "", author)
+}
+
+// SnapshotBody is Snapshot with a commit message body (a rationale).
+func (s *Store) SnapshotBody(reason, body, author string) (string, error) {
 	if _, err := lookPath("git"); err != nil {
 		return "", ErrGitMissing
 	}
@@ -246,10 +319,10 @@ func (s *Store) Snapshot(reason, author string) (string, error) {
 		return "", fmt.Errorf("locking history store: %w", err)
 	}
 	defer unlock()
-	return s.snapshotLocked(reason, author)
+	return s.snapshotLocked(reason, body, author)
 }
 
-func (s *Store) snapshotLocked(reason, author string) (string, error) {
+func (s *Store) snapshotLocked(reason, body, author string) (string, error) {
 	fresh, err := s.ensureInit()
 	if err != nil {
 		return "", err
@@ -266,6 +339,9 @@ func (s *Store) snapshotLocked(reason, author string) (string, error) {
 	msg := reason
 	if fresh || baseline {
 		msg = "baseline: " + reason
+	}
+	if body = strings.TrimSpace(body); body != "" {
+		msg += "\n\n" + body
 	}
 	email := strings.ReplaceAll(strings.ToLower(author), " ", "-") + "@agentctl.local"
 	env := []string{
@@ -305,6 +381,13 @@ func (s *Store) Resolve(arg string) (string, error) {
 		return "", errors.New("empty name")
 	}
 	rel := arg
+	if slices.Contains(s.Paths, arg) {
+		return arg, nil // a tracked file or dir named exactly
+	}
+	nameDir := s.NameDir
+	if nameDir == "" {
+		nameDir = s.Paths[0]
+	}
 	switch {
 	case filepath.IsAbs(arg):
 		r, err := filepath.Rel(s.WorkTree, arg)
@@ -313,9 +396,9 @@ func (s *Store) Resolve(arg string) (string, error) {
 		}
 		rel = r
 	case !strings.ContainsRune(arg, '/') && !strings.HasSuffix(arg, ".md"):
-		rel = filepath.Join(s.Paths[0], arg+".md")
+		rel = filepath.Join(nameDir, arg+".md")
 	case !strings.ContainsRune(arg, '/'):
-		rel = filepath.Join(s.Paths[0], arg)
+		rel = filepath.Join(nameDir, arg)
 	}
 	rel = filepath.ToSlash(filepath.Clean(rel))
 	if rel == ".." || strings.HasPrefix(rel, "../") || strings.HasPrefix(rel, "/") {
@@ -418,7 +501,7 @@ func (s *Store) Revert(path, rev, author string) (from, snap string, err error) 
 		return "", "", fmt.Errorf("locking history store: %w", err)
 	}
 	defer unlock()
-	if _, err := s.snapshotLocked("before revert of "+path, author); err != nil {
+	if _, err := s.snapshotLocked("before revert of "+path, "", author); err != nil {
 		return "", "", err
 	}
 	if rev == "" {
@@ -455,11 +538,42 @@ func (s *Store) Revert(path, rev, author string) (from, snap string, err error) 
 	if from != "" {
 		label = from[:min(8, len(from))]
 	}
-	snap, err = s.snapshotLocked(fmt.Sprintf("revert %s to %s", path, label), author)
+	snap, err = s.snapshotLocked(fmt.Sprintf("revert %s to %s", path, label), "", author)
 	return from, snap, err
 }
 
 func (s *Store) existsAt(rev, path string) bool {
 	_, err := s.git(nil, "", "cat-file", "-e", rev+":"+path)
 	return err == nil
+}
+
+// Head returns the current revision, "" when the store has no commit yet.
+func (s *Store) Head() string {
+	out, err := s.git(nil, "", "rev-parse", "--verify", "-q", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// ChangedFiles lists the tracked files (relative to the work tree) that differ
+// between two revisions.
+func (s *Store) ChangedFiles(from, to string) ([]string, error) {
+	if err := checkRev(from); err != nil {
+		return nil, err
+	}
+	if err := checkRev(to); err != nil {
+		return nil, err
+	}
+	out, err := s.git(nil, "", "diff", "--name-only", "-z", from, to, "--")
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, f := range strings.Split(string(out), "\x00") {
+		if f != "" {
+			files = append(files, f)
+		}
+	}
+	return files, nil
 }

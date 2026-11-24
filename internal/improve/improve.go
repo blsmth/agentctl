@@ -16,6 +16,7 @@ import (
 	"github.com/blsmth/agentctl/internal/harness"
 	"github.com/blsmth/agentctl/internal/hooks"
 	"github.com/blsmth/agentctl/internal/ids"
+	"github.com/blsmth/agentctl/internal/improverun"
 	"github.com/blsmth/agentctl/internal/launchwatch"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
@@ -147,7 +148,7 @@ func buildConfigContext(agentName string, ac config.AgentConfig, workDir string)
 //
 // The only genuinely conditional content is the focus block, which depends
 // on whether a theme was supplied -- see buildFocusBlock.
-func buildImprovePrompt(agentPath, agentName, harnessName, configContext, theme, sessionContext string) string {
+func buildImprovePrompt(agentPath, agentName, harnessName, configContext, theme, sessionContext, summaryPath string) string {
 	return fmt.Sprintf(
 		sessions.ImprovePromptHeader+" Be better than you were yesterday.\n\n"+
 			"YOUR AGENT FILE: %s\n"+
@@ -164,10 +165,34 @@ func buildImprovePrompt(agentPath, agentName, harnessName, configContext, theme,
 			"1. Read your agent file\n"+
 			"2. Make targeted improvements related to the focus area above\n"+
 			"3. Every edit should make you measurably better at your job — clearer instructions, fewer mistakes, better defaults\n"+
-			"4. Don't rewrite the whole file. Surgical, high-value changes only.\n\n"+
+			"4. Don't rewrite the whole file. Surgical, high-value changes only.\n"+
+			"5. Your own file is the main target; the scope below is open to you when the evidence points elsewhere\n\n"+
+			"%s\n"+
 			"You exist to get better. Ship the improvement.",
-		agentPath, configContext, harnessName, agentName, buildFocusBlock(theme), sessionContext,
+		agentPath, configContext, harnessName, agentName, buildFocusBlock(theme), sessionContext, scopeBlock(summaryPath),
 	)
+}
+
+// scopeBlock is the part of every improve prompt that says what a session may
+// change and how to record why. summaryPath is where the rationale goes.
+func scopeBlock(summaryPath string) string {
+	var b strings.Builder
+	b.WriteString("SCOPE: you may change anything that improves the experience, the agents' efficiency or security. Edit these directly:\n" +
+		"- agent definitions: ~/.claude/agents/*.md and a project's .claude/agents/*.md\n" +
+		"- shared includes: ~/.claude/shared/\n" +
+		"- the user-level ~/.claude/CLAUDE.md and ~/.claude/settings.json\n" +
+		"- agentctl's global config, ~/.config/agentctl/config.json, and prompt templates in ~/.config/agentctl/templates/\n" +
+		"Repo code, the preamble text (internal/dispatch) and docs are not edited by you: have an engineer change them " +
+		"(`agentctl dispatch`), which leads to a normal PR and review.\n\n" +
+		"Every edit above is snapshotted before and after this session in a hidden history, and each change can be undone with " +
+		"`agentctl agents revert` (see `agentctl agents history`). The existing guards stay in force: loosening the approval " +
+		"and other safety settings, and editing cron schedules or approval state, needs the human in the approval popup, " +
+		"so propose such changes in your report instead of working around the guard.\n")
+	if summaryPath != "" {
+		b.WriteString("\nRATIONALE: before you finish, write one line per change to " + summaryPath + ": what changed, why, and the evidence " +
+			"session IDs. It becomes the commit message of the change and the body of the summary notification sent to the human.\n")
+	}
+	return b.String()
 }
 
 // buildFocusBlock returns the improvement-focus fragment: a themed directive
@@ -187,6 +212,13 @@ func buildFocusBlock(theme string) string {
 		"- Delegation rules that need updating\n" +
 		"- Knowledge gaps that came up during sessions\n\n"
 }
+
+// Seams for tests: the run ID, and the history snapshots around a run.
+var (
+	newRunID  = func() string { return time.Now().Format("20060102-150405") + "-" + ids.NewUUID()[:4] }
+	startRun  = improverun.Start
+	finishRun = improverun.Finish
+)
 
 // DefaultFleetAgent runs a fleet review when no agent is named.
 const DefaultFleetAgent = "brandon"
@@ -304,11 +336,16 @@ func Run(opts Options) error {
 	}
 	caps := h.Caps()
 
+	runID := newRunID()
+	summaryPath, err := improverun.SummaryPath(runID)
+	if err != nil {
+		return err
+	}
 	var prompt string
 	if opts.Fleet {
-		prompt = buildFleetPrompt(agents, agentName, opts.Theme, evidence)
+		prompt = buildFleetPrompt(agents, agentName, opts.Theme, evidence, summaryPath)
 	} else {
-		prompt = buildImprovePrompt(target.FilePath, agentName, h.Name(), buildConfigContext(agentName, ac, workDir), opts.Theme, evidence)
+		prompt = buildImprovePrompt(target.FilePath, agentName, h.Name(), buildConfigContext(agentName, ac, workDir), opts.Theme, evidence, summaryPath)
 	}
 	if tmplBody != "" {
 		prompt += "\n\nTEMPLATE INSTRUCTIONS (" + opts.Template + "):\n" + strings.TrimRight(tmplBody, "\n")
@@ -381,15 +418,25 @@ func Run(opts Options) error {
 	}
 
 	extraEnv["AGENTCTL_MODE"] = "improve"
+	extraEnv[improverun.EnvRun] = runID
 	// Record who asked, so the window shows as a child row and closes with it.
 	dispatch.ApplySpawnedBy(extraEnv)
 	dispatch.ApplyHarnessEnv(extraEnv, h, "", prep)
+
+	// Snapshot every history store before the session can edit anything.
+	if err := startRun(improverun.StartOptions{ID: runID, Agent: agentName, Fleet: opts.Fleet, ProjectDirs: []string{workDir, target.Dir}}); err != nil {
+		logging.Log("improve: recording run %s: %v", runID, err)
+	}
 
 	windowName := "improve~" + agentName
 	logging.Log("improve: launching window %q focus=%v session=%s", windowName, opts.Focus, sessionID)
 	wid, launchErr := tmux.LaunchAgent(windowName, workDir, shellCmd, logPath, agentName, sessionID, extraEnv, opts.Focus)
 	if launchErr != nil {
 		logging.Log("improve: LaunchAgent error: %v", launchErr)
+		// No session will ever end this run: close it out (quietly) now.
+		if err := finishRun(runID); err != nil {
+			logging.Log("improve: closing run %s: %v", runID, err)
+		}
 	} else {
 		logging.Log("improve: success")
 		launchwatch.Start(wid, caps)
@@ -399,7 +446,7 @@ func Run(opts Options) error {
 
 // buildFleetPrompt composes the prompt of a fleet-wide review: the evidence of
 // every agent and the list of definitions the session may change.
-func buildFleetPrompt(agents []agent.Agent, runner, theme, evidence string) string {
+func buildFleetPrompt(agents []agent.Agent, runner, theme, evidence, summaryPath string) string {
 	var list strings.Builder
 	for _, a := range agents {
 		fmt.Fprintf(&list, "  - %s: %s\n", a.Name, a.FilePath)
@@ -415,8 +462,11 @@ func buildFleetPrompt(agents []agent.Agent, runner, theme, evidence string) stri
 			"1. Read the evidence above and find problems that recur (two or more sessions) or that are a security issue\n"+
 			"2. Read the definitions of the agents involved before changing them\n"+
 			"3. Make targeted, high-value edits; don't rewrite whole files\n"+
-			"4. Report what you changed and what you chose to leave alone",
-		list.String(), runner, buildFocusBlock(theme), evidence,
+			"4. Apply fixes within the scope below yourself; for repo code, preamble text or docs, dispatch an engineer "+
+			"(`agentctl dispatch`): that leads to a normal PR and review, and you orchestrate it\n"+
+			"5. Report what you changed and what you chose to leave alone\n\n"+
+			"%s",
+		list.String(), runner, buildFocusBlock(theme), evidence, scopeBlock(summaryPath),
 	)
 }
 

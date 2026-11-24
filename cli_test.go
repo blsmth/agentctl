@@ -477,7 +477,7 @@ func TestImproveFlagsParse(t *testing.T) {
 	if _, err := k.Parse([]string{"improve", "go-engineer", "--since", "24h", "--theme", "t", "--model", "sonnet", "--session", "abc", "--session", "def", "--dry-run"}); err != nil {
 		t.Fatal(err)
 	}
-	c := cli.Improve
+	c := cli.Improve.Start
 	if c.Agent != "go-engineer" || c.Since != "24h" || c.Theme != "t" || c.Model != "sonnet" || !c.DryRun || c.Fleet || len(c.Session) != 2 {
 		t.Errorf("improve = %+v", c)
 	}
@@ -486,7 +486,20 @@ func TestImproveFlagsParse(t *testing.T) {
 	if _, err := k2.Parse([]string{"improve", "--fleet"}); err != nil {
 		t.Fatal(err)
 	}
-	if !cli2.Improve.Fleet || cli2.Improve.Agent != "" || cli2.Improve.Since != "7d" || cli2.Improve.Focus {
-		t.Errorf("improve --fleet = %+v", cli2.Improve)
+	if i := cli2.Improve.Start; !i.Fleet || i.Agent != "" || i.Since != "7d" || i.Focus {
+		t.Errorf("improve --fleet = %+v", i)
+	}
+	var cli3 CLI
+	k3, _ := kong.New(&cli3, kong.Name("agentctl"))
+	if _, err := k3.Parse([]string{"improve", "runs", "--since", "24h"}); err != nil {
+		t.Fatal(err)
+	}
+	if cli3.Improve.Runs.Since != "24h" {
+		t.Errorf("improve runs = %+v", cli3.Improve.Runs)
+	}
+	var cli4 CLI
+	k4, _ := kong.New(&cli4, kong.Name("agentctl"))
+	if _, err := k4.Parse([]string{"agents", "history", "--store", "config", "foo"}); err != nil || cli4.Agents.History.Store != "config" {
+		t.Errorf("agents history --store: %v %+v", err, cli4.Agents.History)
 	}
 }
