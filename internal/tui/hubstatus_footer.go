@@ -11,10 +11,6 @@ import (
 	"github.com/blsmth/agentctl/internal/fleet"
 )
 
-// hubStatusMinCostUSD is the floor below which the footer hides the cost (a
-// fresh window, or a model with no known price, reports 0).
-const hubStatusMinCostUSD = 0.005
-
 // hubStatusParentMaxW is the width the parent title is cut to before it is
 // dropped.
 const hubStatusParentMaxW = 16
@@ -31,60 +27,58 @@ func footText(plain string, st lipgloss.Style) footSeg {
 
 // footPlan records which optional facts the footer has given up so far.
 type footPlan struct {
-	dropLen, dropAgent, dropModel, dropCost, dropCtx bool
-	branch                                           int // 0 full, 1 "…/<last>", 2 dropped
-	parent                                           int // 0 full, 1 cut to 16 columns, 2 dropped
+	dropAgent bool
+	parent    int // 0 full, 1 cut to 16 columns, 2 dropped
+}
+
+// hubStatusHasFacts reports whether the footer has anything to say beyond the
+// agent name: a ticket, PR, parent, cron job, sub-agents or a non-default
+// backend/account. Without any, the agent name moves to the title line and
+// the footer row goes to the recap.
+func hubStatusHasFacts(st *hubStatus) bool {
+	return st.SchedBy != "" || st.Ticket > 0 || st.PRNumber > 0 || st.ParentTitle != "" ||
+		st.Kids > 0 || len(st.Extra) > 0
+}
+
+// hubStatusAgentOnTitle is the agent name the title line carries when the
+// footer would hold nothing else ("" when it has other facts or the name just
+// repeats the title).
+func hubStatusAgentOnTitle(st *hubStatus) string {
+	if hubStatusHasFacts(st) || st.Agent == st.Title {
+		return ""
+	}
+	return st.Agent
 }
 
 // hubStatusFooter renders the facts footer in at most tw columns, or "" when
-// the block has nothing to say. Left zone: ticket, agent, branch, PR, parent
-// (or the cron job and when it fired), sub-agents, non-default backend and
-// account. Right zone, right-aligned: model, context, cost, session length.
-// Facts are dropped whole, in order: session length, branch (shortened, then
-// gone), parent (cut to 16 columns, then gone), agent, model, cost, context
-// below its warn threshold. Never dropped: the PR, ticket, cron job, the
-// sub-agent counts, backend/account and context at or above warn; if those
-// alone overflow, the left zone is end-truncated.
+// the block has no fact beyond the agent name. Ticket, agent, PR, parent (or
+// the cron job and when it fired), sub-agents, non-default backend and
+// account. Facts are dropped whole, in order: parent (cut to 16 columns, then
+// gone), agent. Never dropped: the PR, ticket, cron job, the sub-agent counts
+// and backend/account; if those alone overflow, the footer is end-truncated.
 func hubStatusFooter(st *hubStatus, tw int, now time.Time) string {
+	if !hubStatusHasFacts(st) {
+		return ""
+	}
 	steps := []func(*footPlan){
-		func(p *footPlan) { p.dropLen = true },
-		func(p *footPlan) { p.branch = 1 },
-		func(p *footPlan) { p.branch = 2 },
 		func(p *footPlan) { p.parent = 1 },
 		func(p *footPlan) { p.parent = 2 },
 		func(p *footPlan) { p.dropAgent = true },
-		func(p *footPlan) { p.dropModel = true },
-		func(p *footPlan) { p.dropCost = true },
-		func(p *footPlan) { p.dropCtx = true },
 	}
 	var plan footPlan
 	sep := fleetDimStyle.Render(" · ")
-	const sepW, gap = 3, 2
+	const sepW = 3
 	for i := 0; ; i++ {
-		left, right := footerSegs(st, plan, now)
-		lt, lw := joinSegs(left, sep, sepW)
-		rt, rw := joinSegs(right, sep, sepW)
-		if lw == 0 && rw == 0 {
+		lt, lw := joinSegs(footerSegs(st, plan, now), sep, sepW)
+		if lw == 0 {
 			return ""
 		}
-		need := lw
-		if rw > 0 {
-			need += gap + rw
-		}
-		if need <= tw {
-			if rw == 0 {
-				return lt
-			}
-			return lt + strings.Repeat(" ", tw-lw-rw) + rt
+		if lw <= tw {
+			return lt
 		}
 		if i < len(steps) {
 			steps[i](&plan)
 			continue
-		}
-		// Nothing left to drop: end-truncate the left zone.
-		if room := tw - rw - gap; rw > 0 && room >= 4 {
-			lt = ansi.Truncate(lt, room, "…")
-			return lt + strings.Repeat(" ", max(room-lipgloss.Width(lt), 0)+gap) + rt
 		}
 		return ansi.Truncate(lt, tw, "…")
 	}
@@ -106,9 +100,10 @@ func joinSegs(segs []footSeg, sep string, sepW int) (string, int) {
 	return strings.Join(parts, sep), w
 }
 
-// footerSegs builds the two zones' segments for plan.
-func footerSegs(st *hubStatus, plan footPlan, now time.Time) (left, right []footSeg) {
+// footerSegs builds the footer's segments for plan.
+func footerSegs(st *hubStatus, plan footPlan, now time.Time) []footSeg {
 	dim := fleetDimStyle
+	var left []footSeg
 	if st.SchedBy != "" {
 		left = append(left, footText(fleetScheduledGlyph+" "+st.SchedBy, dim))
 		if !plan.dropAgent && !st.SchedAt.IsZero() {
@@ -119,9 +114,6 @@ func footerSegs(st *hubStatus, plan footPlan, now time.Time) (left, right []foot
 	}
 	if st.SchedBy == "" && !plan.dropAgent && st.Agent != "" && st.Agent != st.Title {
 		left = append(left, footText(st.Agent, dim))
-	}
-	if b := footBranch(st.Branch, plan.branch); b != "" {
-		left = append(left, footText(b, dim))
 	}
 	if st.PRNumber > 0 {
 		seg := footText(fmt.Sprintf("PR #%d", st.PRNumber), dim)
@@ -143,44 +135,7 @@ func footerSegs(st *hubStatus, plan footPlan, now time.Time) (left, right []foot
 	for _, e := range st.Extra {
 		left = append(left, footText(e, dim))
 	}
-
-	if st.Model != "" && !plan.dropModel {
-		right = append(right, footText(st.Model, dim))
-	}
-	if st.CtxPct > 0 {
-		d := fleetDisplay{ctxWarn: st.CtxWarn, ctxCrit: st.CtxCrit}
-		warn, crit := d.thresholds()
-		if st.CtxPct >= warn || !plan.dropCtx {
-			txt := fmt.Sprintf("ctx %d%%", st.CtxPct)
-			if st.CtxPct >= crit {
-				txt += "!"
-			}
-			right = append(right, footText(txt, d.ctxStyle(st.CtxPct)))
-		}
-	}
-	if st.CostUSD >= hubStatusMinCostUSD && !plan.dropCost {
-		right = append(right, footText(fmt.Sprintf("$%.2f", st.CostUSD), dim))
-	}
-	if st.StartTime > 0 && !plan.dropLen {
-		if d := now.Sub(time.Unix(st.StartTime, 0)); d > 0 {
-			right = append(right, footText(fleet.CompactDuration(d), dim))
-		}
-	}
-	return left, right
-}
-
-// footBranch is the branch at the plan's level: whole, "…/<last part>", or "".
-func footBranch(b string, level int) string {
-	switch level {
-	case 0:
-		return b
-	case 1:
-		if i := strings.LastIndex(b, "/"); i >= 0 && i < len(b)-1 {
-			return "…/" + b[i+1:]
-		}
-		return b
-	}
-	return ""
+	return left
 }
 
 // kidsSeg is "↳ N sub-agents ⏸n ●n" (direct children): the counts of the
