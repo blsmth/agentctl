@@ -484,7 +484,7 @@ func (s *Store) Resolve(arg string) (string, error) {
 	switch {
 	case filepath.IsAbs(arg):
 		r, err := filepath.Rel(s.WorkTree, arg)
-		if err != nil || r == ".." || strings.HasPrefix(r, "../") {
+		if err != nil || !s.underTracked(r) {
 			// Another spelling of the same file: symlinked dirs, or a
 			// linked worktree's copy of a project path.
 			r, err = filepath.Rel(s.WorkTree, canonicalPath(arg))
@@ -509,6 +509,19 @@ func (s *Store) Resolve(arg string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%w: %s", ErrNotTracked, arg)
+}
+
+// underTracked reports whether rel (relative to the work tree) is one of the
+// tracked paths or under one.
+func (s *Store) underTracked(rel string) bool {
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	for _, p := range s.Paths {
+		p = filepath.ToSlash(p)
+		if rel == p || strings.HasPrefix(rel, p+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) ready() error {
