@@ -41,21 +41,21 @@ func TestAgentsHistoryCommands(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := RunAgentsHistory(&out, "a", 10); err != nil || !strings.Contains(out.String(), "second") {
+	if err := RunAgentsHistory(&out, "", "a", 10); err != nil || !strings.Contains(out.String(), "second") {
 		t.Fatalf("history: %q %v", out.String(), err)
 	}
 	out.Reset()
-	if err := RunAgentsDiff(&out, "a", "HEAD~1"); err != nil || !strings.Contains(out.String(), "-v1") {
+	if err := RunAgentsDiff(&out, "", "a", "HEAD~1"); err != nil || !strings.Contains(out.String(), "-v1") {
 		t.Fatalf("diff: %q %v", out.String(), err)
 	}
 	out.Reset()
-	if err := RunAgentsRevert(&out, "a", ""); err != nil || !strings.Contains(out.String(), "Reverted") {
+	if err := RunAgentsRevert(&out, "", "a", ""); err != nil || !strings.Contains(out.String(), "Reverted") {
 		t.Fatalf("revert: %q %v", out.String(), err)
 	}
 	if got, _ := os.ReadFile(p); string(got) != "v1\n" {
 		t.Fatalf("file = %q", got)
 	}
-	if err := RunAgentsRevert(&out, "../settings.json", ""); err == nil {
+	if err := RunAgentsRevert(&out, "", "../settings.json", ""); err == nil {
 		t.Fatal("path outside the tracked tree accepted")
 	}
 }

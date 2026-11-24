@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/improverun"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/mailbox"
 	"github.com/blsmth/agentctl/internal/metrics/events"
@@ -111,6 +112,9 @@ func untracked(instance string) bool {
 	return instance == "shell" || isImprove(instance)
 }
 
+// finishImproveRun closes out an improve run; a seam for tests.
+var finishImproveRun = improverun.Finish
+
 func isImprove(instance string) bool { return strings.HasPrefix(instance, "improve~") }
 
 func parseStatus(s string) state.AgentStatus {
@@ -143,6 +147,13 @@ func Finish(c Claimed, d Deps) {
 	// Before the handlers: handlers can be slow, and the children
 	// should close promptly.
 	closeChildren(c, d.Cascade)
+	// An improve window that died before its hooks closed the run out: take
+	// the end snapshot and send the summary now (idempotent).
+	if c.Record.Mode == "improve" && c.Record.ImproveRun != "" {
+		if err := finishImproveRun(c.Record.ImproveRun); err != nil {
+			logging.Log("reconcile: finishing improve run %s: %v", c.Record.ImproveRun, err)
+		}
+	}
 	if base != "" && !untracked(instance) && d.Handle != nil {
 		t := state.Transition{
 			Agent:    base,

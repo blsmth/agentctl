@@ -63,6 +63,8 @@ func TestSnapshotBaselineAndDrift(t *testing.T) {
 	write(t, filepath.Join(claude, "agents", "a.md"), "one\n")
 	write(t, filepath.Join(claude, "shared", "x.md"), "shared\n")
 	write(t, filepath.Join(claude, "settings.json"), "{}")
+	write(t, filepath.Join(claude, "projects", "log.jsonl"), "private")
+	write(t, filepath.Join(claude, ".credentials.json"), "secret")
 
 	rev, err := s.Snapshot("housekeeping: edit", "")
 	if err != nil || rev == "" {
@@ -75,8 +77,8 @@ func TestSnapshotBaselineAndDrift(t *testing.T) {
 		t.Fatal(".git created inside ~/.claude")
 	}
 	files, _ := s.git(nil, "", "ls-files")
-	if got := strings.Fields(string(files)); len(got) != 2 {
-		t.Fatalf("tracked = %v, want agents/a.md and shared/x.md only", got)
+	if got := strings.Fields(string(files)); len(got) != 3 {
+		t.Fatalf("tracked = %v, want agents/a.md, settings.json and shared/x.md only", got)
 	}
 
 	write(t, filepath.Join(claude, "agents", "a.md"), "two\n")
@@ -202,10 +204,13 @@ func TestResolve(t *testing.T) {
 		{"shared/x.md", "shared/x.md", false},
 		{filepath.Join(home, "agents", "a.md"), "agents/a.md", false},
 		{"../settings.json", "", true},
+		{"settings.json", "settings.json", false},
+		{"CLAUDE.md", "CLAUDE.md", false},
 		{"settings.json/..", "", true},
-		{filepath.Join(home, "settings.json"), "", true},
+		{filepath.Join(home, ".credentials.json"), "", true},
+		{filepath.Join(home, "projects", "x.jsonl"), "", true},
 		{"/etc/passwd", "", true},
-		{"agents/../settings.json", "", true},
+		{"agents/../.credentials.json", "", true},
 	} {
 		got, err := s.Resolve(tc.in)
 		if (err != nil) != tc.err || got != tc.want {
@@ -318,4 +323,120 @@ func TestRevertUnknownRevDoesNotDelete(t *testing.T) {
 	if _, _, err := s.Revert("agents", "", ""); err == nil {
 		t.Error("directory revert accepted")
 	}
+}
+
+func TestHomeStoreTracksClaudeMdAndSettings(t *testing.T) {
+	home, s := setup(t)
+	claude := filepath.Join(home, ".claude")
+	write(t, filepath.Join(claude, "CLAUDE.md"), "rules\n")
+	write(t, filepath.Join(claude, "settings.json"), "{}\n")
+	if _, err := s.Snapshot("t", ""); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(claude, "CLAUDE.md"), "better rules\n")
+	if _, err := s.Snapshot("edit", ""); err != nil {
+		t.Fatal(err)
+	}
+	for in, want := range map[string]string{"CLAUDE.md": "CLAUDE.md", "settings.json": "settings.json", "reviewer": "agents/reviewer.md"} {
+		if got, err := s.Resolve(in); err != nil || got != want {
+			t.Errorf("Resolve(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	if _, _, err := s.Revert("CLAUDE.md", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(claude, "CLAUDE.md")); string(b) != "rules\n" {
+		t.Fatalf("CLAUDE.md = %q", b)
+	}
+}
+
+func TestConfigStoreTracksOnlyConfigAndTemplates(t *testing.T) {
+	home, _ := setup(t)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	cfgDir := filepath.Join(home, ".config", "agentctl")
+	write(t, filepath.Join(cfgDir, "config.json"), "{}\n")
+	write(t, filepath.Join(cfgDir, "templates", "t.md"), "tmpl\n")
+	write(t, filepath.Join(cfgDir, "serve", "vapid.json"), "secret")
+	write(t, filepath.Join(cfgDir, "token"), "secret")
+	s, err := ConfigStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.WorkTree != cfgDir {
+		t.Fatalf("work tree = %s, want %s", s.WorkTree, cfgDir)
+	}
+	if _, err := s.Snapshot("t", ""); err != nil {
+		t.Fatal(err)
+	}
+	files, _ := s.git(nil, "", "ls-files")
+	if got := strings.Fields(string(files)); len(got) != 2 || got[0] != "config.json" || got[1] != "templates/t.md" {
+		t.Fatalf("tracked = %v", got)
+	}
+	if got, err := s.Resolve("t"); err != nil || got != "templates/t.md" {
+		t.Fatalf("Resolve(t) = %q, %v", got, err)
+	}
+	if got := StoreForPath(filepath.Join(cfgDir, "config.json")); got != NameConfig {
+		t.Fatalf("StoreForPath = %q", got)
+	}
+	if got := StoreForPath("reviewer"); got != NameHome {
+		t.Fatalf("StoreForPath(reviewer) = %q", got)
+	}
+}
+
+func TestSnapshotBodyHeadAndChangedFiles(t *testing.T) {
+	home, s := setup(t)
+	agents := filepath.Join(home, ".claude", "agents")
+	write(t, filepath.Join(agents, "a.md"), "1")
+	write(t, filepath.Join(agents, "b.md"), "1")
+	if _, err := s.Snapshot("start", ""); err != nil {
+		t.Fatal(err)
+	}
+	start := s.Head()
+	write(t, filepath.Join(agents, "a.md"), "2")
+	if _, err := s.SnapshotBody("improve x", "a.md: clearer\n", ""); err != nil {
+		t.Fatal(err)
+	}
+	files, err := s.ChangedFiles(start, s.Head())
+	if err != nil || len(files) != 1 || files[0] != "agents/a.md" {
+		t.Fatalf("files = %v, %v", files, err)
+	}
+	msg, _ := s.git(nil, "", "log", "-n1", "--format=%B")
+	if !strings.HasPrefix(string(msg), "improve x\n\na.md: clearer") {
+		t.Fatalf("message = %q", msg)
+	}
+	if _, err := s.ChangedFiles("--evil", "HEAD"); err == nil {
+		t.Fatal("option-like revision accepted")
+	}
+}
+
+func TestStoreDirsAreOwnerOnly(t *testing.T) {
+	home, _ := setup(t)
+	write(t, filepath.Join(home, ".config", "agentctl", "config.json"), "{}\n")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	s, err := ConfigStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Snapshot("t", ""); err != nil {
+		t.Fatal(err)
+	}
+	// An older, looser store is tightened on the next use.
+	if err := os.Chmod(s.GitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(home, ".config", "agentctl", "config.json"), "{\"a\":1}\n")
+	if _, err := s.Snapshot("t2", ""); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(s.GitDir); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("git dir mode = %v, %v", fi.Mode(), err)
+	}
+	filepath.WalkDir(filepath.Join(s.GitDir, "objects"), func(p string, d os.DirEntry, err error) error { //nolint:errcheck
+		if err == nil && !d.IsDir() {
+			if fi, _ := d.Info(); fi.Mode().Perm()&0o077 != 0 {
+				t.Errorf("%s mode %v has group/other bits", p, fi.Mode())
+			}
+		}
+		return nil
+	})
 }

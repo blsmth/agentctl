@@ -324,6 +324,14 @@ func SessionEnd() {
 		logging.Log("hook-session-end: cleared state=idle window=%s agent=%s", windowID, agentName)
 	}
 
+	// An improve session ending (a clean exit or a kill that still reaches
+	// this hook): close out its run before the window goes. Idempotent.
+	if windowID != "" {
+		if ws, err := windowstate.Read(windowID); err == nil && ws.Mode == "improve" && ws.ImproveRun != "" {
+			finishImproveRun(ws.ImproveRun)
+		}
+	}
+
 	// Fire user lifecycle hooks (async, non-blocking).
 	runUserHooks("session_end", map[string]string{
 		"AGENTCTL_AGENT_NAME": agentName,

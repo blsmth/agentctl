@@ -3,6 +3,7 @@ package improve
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/blsmth/agentctl/internal/agent"
 	"os"
 	"path/filepath"
 	"strings"
@@ -139,7 +140,7 @@ func TestBuildImprovePrompt_NoStaleArchitectureClaims(t *testing.T) {
 	}
 
 	for _, theme := range []string{"", "improve error handling"} {
-		got := buildImprovePrompt("/tmp/agent.md", "go-engineer", "pi", "CURRENT CONFIGURATION:\n", theme, "Session abc123\n")
+		got := buildImprovePrompt("/tmp/agent.md", "go-engineer", "pi", "CURRENT CONFIGURATION:\n", theme, "Session abc123\n", "/tmp/summary.md")
 		for _, stale := range staleStrings {
 			if strings.Contains(got, stale) {
 				t.Errorf("buildImprovePrompt(theme=%q) contains stale claim %q, got:\n%s", theme, stale, got)
@@ -345,5 +346,24 @@ func TestBuildConfigContext(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPromptScopeAndRationalePath(t *testing.T) {
+	agents := []agent.Agent{{Name: "a", FilePath: "/x/a.md"}}
+	for name, got := range map[string]string{
+		"agent": buildImprovePrompt("/tmp/agent.md", "go-engineer", "claude", "CFG\n", "", "EV\n", "/state/improve/r1/summary.md"),
+		"fleet": buildFleetPrompt(agents, "brandon", "", "EV\n", "/state/improve/r1/summary.md"),
+	} {
+		for _, want := range []string{
+			"improves the experience, the agents' efficiency or security",
+			"~/.claude/CLAUDE.md", "~/.claude/settings.json", "~/.config/agentctl/config.json", "templates",
+			"agentctl agents revert", "approval popup", "agentctl dispatch",
+			"/state/improve/r1/summary.md",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s prompt missing %q", name, want)
+			}
+		}
 	}
 }

@@ -70,6 +70,9 @@ type WindowState struct {
 	PromptScanKey string    `json:"prompt_scan_key,omitempty"`
 	PromptScanAt  time.Time `json:"prompt_scan_at,omitempty"`
 	Mode          string    `json:"mode,omitempty"`
+	// ImproveRun is the improve run ID of a Mode "improve" window
+	// (internal/improverun); the end snapshot and summary key off it.
+	ImproveRun string `json:"improve_run,omitempty"`
 	// Backend is the name of the config backend this window's claude was
 	// launched against ("" = Anthropic). Restore re-resolves it from config.
 	Backend string `json:"backend,omitempty"`

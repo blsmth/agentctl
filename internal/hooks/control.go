@@ -3,6 +3,7 @@ package hooks
 import (
 	"errors"
 	"fmt"
+	"github.com/blsmth/agentctl/internal/improverun"
 	"os"
 	"strings"
 	"time"
@@ -139,6 +140,13 @@ func CheckDone() {
 		}
 	}
 
+	// An improve session's turn ended: take the end snapshot of its run and
+	// send the summary (idempotent; SessionEnd and the Gone reconcile also
+	// call it, so a killed window is still closed out).
+	// Only once the session wrote its rationale (its "I'm done" signal): an
+	// interactive improve window also ends turns to wait for an answer.
+	finishImproveOnStop(ws)
+
 	// Auto-emit a "done" message to whoever dispatched this window (see
 	// docs/agent-messaging-design.md §4). This only runs on the genuine
 	// turn-end path: input.StopHookActive and blockReason are both
@@ -158,6 +166,36 @@ func CheckDone() {
 		"AGENTCTL_TICKET":     os.Getenv("AGENTCTL_TICKET"),
 		"AGENTCTL_MODE":       os.Getenv("AGENTCTL_MODE"),
 	})
+}
+
+// improveSummaryWritten is a seam for improverun.HasSummary.
+var improveSummaryWritten = improverun.HasSummary
+
+// spawnImproveFinishFn starts the detached `agentctl improve-finish <run>`
+// process (main.go wires it); the default only logs, so tests never snapshot a
+// history store. Git and its locks must not run inside a hook.
+var spawnImproveFinishFn = func(runID string) error {
+	logging.Log("hook: spawnImproveFinishFn not wired, run %s not closed out", runID)
+	return nil
+}
+
+// finishImproveOnStop closes out an improve window's run at a turn end, but
+// only once its rationale file exists.
+func finishImproveOnStop(ws windowstate.WindowState) {
+	if ws.Mode == "improve" && ws.ImproveRun != "" && improveSummaryWritten(ws.ImproveRun) {
+		finishImproveRun(ws.ImproveRun)
+	}
+}
+
+// SetSpawnImproveFinishFn overrides the improve-finish spawner.
+func SetSpawnImproveFinishFn(fn func(runID string) error) { spawnImproveFinishFn = fn }
+
+// finishImproveRun hands the run to a detached process; a failure is logged
+// (housekeeping finishes it later).
+func finishImproveRun(runID string) {
+	if err := spawnImproveFinishFn(runID); err != nil {
+		logging.Log("hook: spawning improve-finish %s: %v", runID, err)
+	}
 }
 
 // autonomousModeFn decides whether mode is autonomous (dispatch-like: one
