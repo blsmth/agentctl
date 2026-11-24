@@ -144,7 +144,7 @@ func backendGuidance(backends map[string]config.BackendConfig) string {
 	for _, n := range names {
 		bc := backends[n]
 		if bc.IsNous() {
-			fmt.Fprintf(&b, "- `--backend %s` (Nous Portal, default model %s): always fine to use; it is billed per token outside the Claude plan limit. Prefer it for docs audits, test backfills, bulk mechanical changes, first drafts, research and second-opinion reviews, and for any non-critical work when plan usage is high. Do not rely only on Anthropic models.\n", n, bc.Model)
+			fmt.Fprintf(&b, "- `--backend %s` (Nous Portal, default model %s): billed per token in real money, outside the Claude plan. Use it only when you want a second opinion from a non-Anthropic model (for example a second review of a PR that already has a Claude review). Do not use it for primary implementation, reviews, docs, tests or research, and not as a fallback when plan usage is high.\n", n, bc.Model)
 		} else {
 			fmt.Fprintf(&b, "- `--backend %s` (Ollama, local, model %s): free and local; fine for small and mechanical tasks.\n", n, bc.Model)
 		}
