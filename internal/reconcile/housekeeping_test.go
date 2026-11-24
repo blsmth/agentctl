@@ -180,7 +180,7 @@ func TestHousekeepSnapshotsAgentsRateLimited(t *testing.T) {
 	d := HousekeepingDeps{
 		RuntimeDir:     t.TempDir(),
 		Now:            func() time.Time { return now },
-		SnapshotAgents: func(time.Time) { snaps++ },
+		SnapshotAgents: func(time.Time) bool { snaps++; return true },
 	}
 	Housekeep(d)
 	now = now.Add(time.Minute)
@@ -192,5 +192,30 @@ func TestHousekeepSnapshotsAgentsRateLimited(t *testing.T) {
 	Housekeep(d)
 	if snaps != 2 {
 		t.Fatalf("snapshots after the interval = %d, want 2", snaps)
+	}
+}
+
+func TestHousekeepRetriesFailedAgentSnapshot(t *testing.T) {
+	var snaps int
+	ok := false
+	now := time.Now()
+	d := HousekeepingDeps{
+		RuntimeDir:     t.TempDir(),
+		Now:            func() time.Time { return now },
+		SnapshotAgents: func(time.Time) bool { snaps++; return ok },
+	}
+	Housekeep(d)
+	now = now.Add(time.Minute)
+	Housekeep(d)
+	if snaps != 2 {
+		t.Fatalf("snapshots after a failure = %d, want a retry (2)", snaps)
+	}
+	ok = true
+	now = now.Add(time.Minute)
+	Housekeep(d)
+	now = now.Add(time.Minute)
+	Housekeep(d)
+	if snaps != 3 {
+		t.Fatalf("snapshots after success = %d, want 3", snaps)
 	}
 }

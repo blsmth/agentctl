@@ -38,6 +38,9 @@ const DefaultAuthor = "agentctl"
 // ErrGitMissing is returned when no git binary is on PATH.
 var ErrGitMissing = errors.New("git not found on PATH")
 
+// ErrNoSnapshots is returned when the store exists but holds no commit yet.
+var ErrNoSnapshots = errors.New("no snapshots yet")
+
 // ErrNotTracked is returned for a path outside the store's tracked paths.
 var ErrNotTracked = errors.New("path is not tracked by the agent history")
 
@@ -246,7 +249,7 @@ func (s *Store) ensureInit() (bool, error) {
 }
 
 // skipList walks the tracked paths without following symlinks and returns
-// the files over MaxFileSize as exclude pathspecs.
+// the files over MaxFileSize and the nested git repos as exclude pathspecs.
 func (s *Store) skipList() []string {
 	var skip []string
 	for _, p := range s.Paths {
@@ -262,7 +265,20 @@ func (s *Store) skipList() []string {
 			continue
 		}
 		filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error { //nolint:errcheck
-			if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
+			if err != nil || d.Type()&fs.ModeSymlink != 0 {
+				return nil
+			}
+			if d.IsDir() {
+				// A nested git repo (a checked-out project under agents/) makes
+				// "git add" fail outright, so it is left out of the history.
+				if path != root {
+					if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
+						if rel, err := filepath.Rel(s.WorkTree, path); err == nil {
+							skip = append(skip, ":(exclude,literal)"+filepath.ToSlash(rel))
+						}
+						return filepath.SkipDir
+					}
+				}
 				return nil
 			}
 			if fi, err := d.Info(); err == nil && fi.Size() > MaxFileSize {
@@ -424,6 +440,9 @@ func (s *Store) ready() error {
 	}
 	if _, err := os.Stat(filepath.Join(s.GitDir, "HEAD")); err != nil {
 		return errors.New("no agent history yet (it is created by the first housekeeping snapshot)")
+	}
+	if !s.hasHead() {
+		return ErrNoSnapshots
 	}
 	return nil
 }

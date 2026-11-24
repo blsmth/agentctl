@@ -59,3 +59,23 @@ func TestAgentsHistoryCommands(t *testing.T) {
 		t.Fatal("path outside the tracked tree accepted")
 	}
 }
+
+func TestAgentsHistoryNoSnapshots(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	s, err := agenthistory.HomeStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "init", "-q", "--bare", "--initial-branch=main", s.GitDir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	var out bytes.Buffer
+	if err := RunAgentsHistory(&out, "", "", 10); err != nil || !strings.Contains(out.String(), "No snapshots yet") {
+		t.Fatalf("history: %q %v", out.String(), err)
+	}
+}

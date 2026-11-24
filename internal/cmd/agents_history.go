@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -31,6 +32,10 @@ func RunAgentsHistory(w io.Writer, which, name string, limit int) error {
 		}
 	}
 	entries, err := s.Log(path, limit)
+	if errors.Is(err, agenthistory.ErrNoSnapshots) {
+		fmt.Fprintln(w, "No snapshots yet.")
+		return nil
+	}
 	if err != nil {
 		return err
 	}
