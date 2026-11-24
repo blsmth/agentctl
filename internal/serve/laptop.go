@@ -183,15 +183,18 @@ func (l *laptopActivity) Active() bool {
 
 // Peek returns the last known answer without ever waiting for a probe: when
 // the cache is stale it starts one background refresh (at most one in flight)
-// and returns the old value. Before the first probe finishes the laptop counts
-// as idle. Use it wherever a lock is held. A nil receiver is never active.
-func (l *laptopActivity) Peek() bool {
+// and returns the old value. known is false when there is no answer yet or the
+// last one is older than 2*laptopCacheTTL (the refresh has not landed), so
+// callers can decide what an unknown laptop means for their push. Use it
+// wherever a lock is held. A nil receiver is known and never active.
+func (l *laptopActivity) Peek() (active, known bool) {
 	if l == nil {
-		return false
+		return false, true
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if !l.freshLocked(l.now()) && !l.inflight {
+	now := l.now()
+	if !l.freshLocked(now) && !l.inflight {
 		l.inflight = true
 		l.bg.Add(1)
 		go func() {
@@ -202,7 +205,8 @@ func (l *laptopActivity) Peek() bool {
 			l.mu.Unlock()
 		}()
 	}
-	return l.active
+	known = !l.probedAt.IsZero() && !now.Before(l.probedAt) && now.Sub(l.probedAt) < 2*laptopCacheTTL
+	return l.active, known
 }
 
 // wait blocks until background refreshes started by Peek have finished. Tests

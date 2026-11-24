@@ -447,7 +447,7 @@ func TestNotifierNeverProbesUnderLock(t *testing.T) {
 	go func() {
 		defer close(done)
 		blocked := win("blocked", false)
-		e.transition(blocked) // Handle: first call, no value yet counts as idle
+		e.transition(blocked) // Handle: no value yet
 		e.n.Approval("a1", approvalMsg("a1"), e.clock.Now().Add(time.Minute))
 		e.n.Tick()
 	}()
@@ -457,8 +457,8 @@ func TestNotifierNeverProbesUnderLock(t *testing.T) {
 		t.Fatal("Notifier calls blocked on a stuck laptop probe")
 	}
 	<-b.started
-	if got := e.take(); len(got) != 2 {
-		t.Errorf("messages = %+v, want blocked and approval pushed (no value yet = idle)", got)
+	if got := e.take(); len(got) != 0 {
+		t.Errorf("messages = %+v, want blocked and approval held while the laptop state is unknown", got)
 	}
 }
 
@@ -541,5 +541,35 @@ func TestQuietWhenLaptopActiveWiring(t *testing.T) {
 	ts = newTestServer(t, config.ServeConfig{Push: config.ServePushConfig{LaptopIdleSeconds: new(30)}})
 	if ts.sender.laptop.threshold != 30*time.Second {
 		t.Errorf("threshold = %v, want 30s", ts.sender.laptop.threshold)
+	}
+}
+
+func TestNotifierStaleCacheDoesNotDropDoneOrArtifact(t *testing.T) {
+	for name, fire := range map[string]func(e *laptopNotifyEnv){
+		"done":     func(e *laptopNotifyEnv) { e.transition(win("idle", true)) },
+		"artifact": func(e *laptopNotifyEnv) { e.artifact() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
+			e.laptop.setActive(false) // walked away; the cache still says active
+			e.clock.Advance(30 * time.Minute)
+			fire(e)
+			e.act.wait()
+			if got := e.take(); len(got) != 1 {
+				t.Errorf("messages = %+v, want 1 (stale answer must not drop the push)", got)
+			}
+		})
+	}
+}
+
+func TestNotifierStaleCacheHoldsBlockedUntilRefresh(t *testing.T) {
+	e := newLaptopNotifyEnv(config.ServePushConfig{}, true)
+	e.laptop.setActive(false)
+	e.clock.Advance(30 * time.Minute)
+	e.transition(win("blocked", false))
+	e.act.wait()
+	e.n.Tick()
+	if got := e.take(); len(got) != 1 || got[0].Kind != "blocked" {
+		t.Errorf("messages = %+v, want one blocked push after the refresh", got)
 	}
 }
