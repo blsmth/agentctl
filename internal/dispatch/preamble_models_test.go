@@ -18,7 +18,7 @@ func TestModelsSectionBackends(t *testing.T) {
 	}{
 		{"none", nil, nil, []string{"--backend", "Nous Portal"}},
 		{"nous", map[string]config.BackendConfig{"nous": nous},
-			[]string{"`--backend nous` (Nous Portal, default model qwen/qwen3-coder-next): always fine to use", "Do not rely only on Anthropic models."},
+			[]string{"`--backend nous` (Nous Portal, default model qwen/qwen3-coder-next): billed per token in real money", "Use it only when you want a second opinion from a non-Anthropic model", "not as a fallback when plan usage is high."},
 			[]string{"Ollama"}},
 		{"ollama", map[string]config.BackendConfig{"local": ollama},
 			[]string{"`--backend local` (Ollama, local", "free and local"},
