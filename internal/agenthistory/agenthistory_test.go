@@ -440,3 +440,56 @@ func TestStoreDirsAreOwnerOnly(t *testing.T) {
 		return nil
 	})
 }
+
+func gitInit(t *testing.T, dir string) {
+	t.Helper()
+	cmd := exec.Command("git", "init", "-q", dir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+}
+
+func TestSnapshotSkipsNestedGitRepo(t *testing.T) {
+	home, s := setup(t)
+	write(t, filepath.Join(home, ".claude", "agents", "a.md"), "a")
+	nested := filepath.Join(home, ".claude", "agents", "launcher")
+	write(t, filepath.Join(nested, "README.md"), "x")
+	gitInit(t, nested)
+	rev, err := s.Snapshot("test", "")
+	if err != nil || rev == "" {
+		t.Fatalf("snapshot with nested repo: %q %v", rev, err)
+	}
+	files, err := s.git(nil, "", "ls-files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(files)); got != "agents/a.md" {
+		t.Fatalf("tracked = %q, want only agents/a.md", got)
+	}
+}
+
+func TestSnapshotWithoutGlobalConfigOrIdentity(t *testing.T) {
+	home, s := setup(t)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_AUTHOR_NAME", "")
+	t.Setenv("GIT_COMMITTER_NAME", "")
+	t.Setenv("EMAIL", "")
+	write(t, filepath.Join(home, ".claude", "agents", "a.md"), "a")
+	rev, err := s.Snapshot("test", "")
+	if err != nil || rev == "" {
+		t.Fatalf("snapshot: %q %v", rev, err)
+	}
+	if s.Head() != rev {
+		t.Fatalf("head %q, want %q", s.Head(), rev)
+	}
+}
+
+func TestLogNoSnapshotsYet(t *testing.T) {
+	_, s := setup(t)
+	if _, err := s.ensureInit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Log("", 0); !errors.Is(err, ErrNoSnapshots) {
+		t.Fatalf("err = %v, want ErrNoSnapshots", err)
+	}
+}
