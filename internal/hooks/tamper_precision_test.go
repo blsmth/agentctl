@@ -92,6 +92,7 @@ func TestTamperRules_TargetsStillDenied(t *testing.T) {
 	sd := "~/.local/state/agentctl/serve"
 	key := "/Users/u/.local/state/agentctl/serve/ca.key"
 	blow := strings.Repeat("D=x$D$D; ", 40)
+	hs := "cat > s.sh <<'EOF'\nagentctl serve stop\nEOF\n"
 	for _, tc := range []struct{ name, command string }{
 		{"redirect into serve dir", `echo x > ` + sd + `/devices.json`},
 		{"rm serve dir", `rm -rf ` + sd},
@@ -123,6 +124,21 @@ func TestTamperRules_TargetsStillDenied(t *testing.T) {
 		{"heredoc script run by sed e", "cat > s.sh <<'EOF'\nagentctl serve stop\nEOF\nsed -n 'e' s.sh"},
 		{"heredoc script exec by python -c", "cat > s.py <<'EOF'\nimport os; os.system('agentctl serve stop')\nEOF\npython3 -c \"exec(open('s.py').read())\""},
 		{"heredoc script copied by cat", "cat > s.sh <<'EOF'\nagentctl serve stop\nEOF\ncat s.sh > t.sh; bash t.sh"},
+		// A compound command's pipe or redirect reaches the cat inside it.
+		{"block piped to bash", hs + "{ cat s.sh; } | bash"},
+		{"subshell piped to bash", hs + "(cat s.sh) | bash"},
+		{"if piped to sh", hs + "if true; then cat s.sh; fi | sh"},
+		{"for piped to sh", hs + "for i in 1; do cat s.sh; done | sh"},
+		{"block redirected then run", hs + "{ cat s.sh; } > t.sh; bash t.sh"},
+		{"function piped to bash", hs + "f() { cat s.sh; }; f | bash"},
+		{"exec redirect then run", hs + "exec > t.sh; cat s.sh; exec >/dev/tty; bash t.sh"},
+		{"cat redefined", hs + "cat() { bash \"$@\"; }; cat s.sh"},
+		{"PATH changed", hs + "PATH=/tmp/evil:$PATH; cat s.sh"},
+		// Option variables put -e in front of the quoted word.
+		{"GREP_OPTIONS prefix", `GREP_OPTIONS='-e x' grep '` + key + `'`},
+		{"GREP_OPTIONS exported", `export GREP_OPTIONS='-e x'; grep '` + key + `'`},
+		{"GREP_OPTIONS into bash -c", `export GREP_OPTIONS='-e x'; bash -c "grep '` + key + `'"`},
+		{"RIPGREP_CONFIG_PATH", `RIPGREP_CONFIG_PATH=/tmp/rc rg '` + key + `'`},
 		{"overflow with pattern", blow + `grep "x" ` + sd + `/devices.json`},
 		{"git-dir store", `git --git-dir=` + store + ` log`},
 		{"git -C store", `git -C ` + store + ` log --oneline -3`},
@@ -162,6 +178,10 @@ func TestSearchPatternArgs(t *testing.T) {
 		{`grep 'p' "$(cat x)"`, nil}, // substitution
 		{`/usr/bin/grep 'p' f`, []string{`'p'`}},
 		{`cat 'p' f`, nil},
+		{`GREP_OPTIONS='-e x' grep 'p' f`, nil},      // options from the env
+		{`LC_ALL=C grep 'p' f`, nil},                 // any prefix assignment
+		{`export GREP_OPTIONS=-ex; grep 'p' f`, nil}, // set earlier on the line
+		{`RIPGREP_CONFIG_PATH=/tmp/rc rg 'p' f`, nil},
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			sc := scanShell(tc.command)
@@ -170,7 +190,7 @@ func TestSearchPatternArgs(t *testing.T) {
 				if it.cmd == nil {
 					continue
 				}
-				for _, i := range it.cmd.searchPatternArgs() {
+				for _, i := range it.cmd.dataArgs(sc) {
 					got = append(got, it.cmd.words[i].raw)
 				}
 			}

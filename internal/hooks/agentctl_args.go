@@ -32,6 +32,10 @@ type shellScript struct {
 	items []shItem
 	// unsure: the line uses shell syntax the scanner does not model.
 	unsure bool
+	// noSearchMask: the line (or the line around a nested script) names an
+	// environment variable that injects search options (searchOptionEnv),
+	// so no search pattern is masked.
+	noSearchMask bool
 }
 
 // shItem is a simple command or a control operator (; && || | |& & ( ),
@@ -94,11 +98,14 @@ func (c *shCommand) args() []shWord {
 // dataArgs returns the indices into c.words of the words that are only
 // data to the command: every argument of an agentctl command without a
 // substitution, and a search tool's quoted pattern (searchPatternArgs).
-func (c *shCommand) dataArgs() []int {
+func (c *shCommand) dataArgs(sc shellScript) []int {
 	if c.subst {
 		return nil
 	}
 	if !c.isAgentctl() {
+		if sc.noSearchMask {
+			return nil
+		}
 		return c.searchPatternArgs()
 	}
 	ni := c.nameIndex()
@@ -121,7 +128,7 @@ func (sc shellScript) masked() string {
 		if it.cmd == nil {
 			continue
 		}
-		for _, i := range it.cmd.dataArgs() {
+		for _, i := range it.cmd.dataArgs(sc) {
 			w := it.cmd.words[i]
 			b.WriteString(sc.src[last:w.start])
 			b.WriteByte('_')
@@ -152,7 +159,7 @@ func (sc shellScript) agentctlCommands() []*shCommand {
 func scanShell(command string) shellScript {
 	m := shellScanner{s: command}
 	m.scan()
-	return shellScript{src: command, items: m.items, unsure: m.unsure}
+	return shellScript{src: command, items: m.items, unsure: m.unsure, noSearchMask: searchOptionEnv(command)}
 }
 
 // shellScanner is scanShell's state.

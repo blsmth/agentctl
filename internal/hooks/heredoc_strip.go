@@ -101,6 +101,7 @@ func dataHeredocSpans(f *syntax.File, command string) []span {
 		return false
 	}
 
+	scopes := inertScopes(f, command)
 	var spans []span
 	syntax.Walk(f, func(n syntax.Node) bool {
 		st, ok := n.(*syntax.Stmt)
@@ -109,7 +110,7 @@ func dataHeredocSpans(f *syntax.File, command string) []span {
 		}
 		targets, ok := writeTargets(st)
 		inert := func(o *syntax.Stmt) bool {
-			return inertMention(o, func(s *syntax.Stmt) bool { return inPipe[s] }, inSubst)
+			return scopes[o] && inertMention(o, func(s *syntax.Stmt) bool { return inPipe[s] }, inSubst)
 		}
 		if !ok || targetNamedElsewhere(f, st, targets, inert) {
 			return true

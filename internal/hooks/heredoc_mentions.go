@@ -16,6 +16,52 @@ import (
 // x_test.go`. inertMention reports those, so targetNamedElsewhere can skip
 // them. Anything not understood here still counts (fail closed).
 
+// inertScopes returns the statements of f that inertMention may consider:
+// top-level statements and the operands of top-level && / || chains. A
+// statement nested in a block, subshell, if, loop, case or function body
+// inherits that compound command's pipe or redirect (`{ cat s.sh; } |
+// bash`), so it never counts as inert. It returns nil, so nothing is
+// inert, when the line can change what a plain command name or its stdout
+// means: a function definition (`cat() { bash; }`), an exec (`exec >
+// t.sh` redirects every later command), alias, shopt, enable, hash, or a
+// PATH assignment.
+func inertScopes(f *syntax.File, command string) map[*syntax.Stmt]bool {
+	if strings.Contains(command, "PATH=") {
+		return nil
+	}
+	rebinds := false
+	syntax.Walk(f, func(n syntax.Node) bool {
+		switch x := n.(type) {
+		case *syntax.FuncDecl:
+			rebinds = true
+		case *syntax.CallExpr:
+			if len(x.Args) > 0 {
+				switch x.Args[0].Lit() {
+				case "exec", "alias", "shopt", "enable", "hash", "builtin", "command":
+					rebinds = true
+				}
+			}
+		}
+		return !rebinds
+	})
+	if rebinds {
+		return nil
+	}
+	top := map[*syntax.Stmt]bool{}
+	var add func(st *syntax.Stmt)
+	add = func(st *syntax.Stmt) {
+		top[st] = true
+		if b, ok := st.Cmd.(*syntax.BinaryCmd); ok && (b.Op == syntax.AndStmt || b.Op == syntax.OrStmt) {
+			add(b.X)
+			add(b.Y)
+		}
+	}
+	for _, st := range f.Stmts {
+		add(st)
+	}
+	return top
+}
+
 // inertFileTools read the files they are given, or rewrite them in place,
 // and never execute them, copy them elsewhere or run a helper program on
 // them. sort (--compress-program, -o), uniq and xxd (an output operand), rg

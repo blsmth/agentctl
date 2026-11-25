@@ -69,6 +69,23 @@ var grepTool = searchTool{
 		"version"),
 }
 
+// searchOptionEnvVars put options in front of a search tool's argv: BSD
+// grep (macOS) honours GREP_OPTIONS, and an rg config file can carry -e or
+// --regexp. With either, `GREP_OPTIONS='-e x' grep '<path>'` reads <path>.
+var searchOptionEnvVars = []string{"GREP_OPTIONS", "RIPGREP_CONFIG_PATH"}
+
+// searchOptionEnv reports whether command names one of searchOptionEnvVars
+// anywhere (a prefix assignment, export, declare, env ...), in which case
+// no search pattern on the line is masked.
+func searchOptionEnv(command string) bool {
+	for _, v := range searchOptionEnvVars {
+		if strings.Contains(command, v) {
+			return true
+		}
+	}
+	return false
+}
+
 func setOf(names ...string) map[string]bool {
 	m := make(map[string]bool, len(names))
 	for _, n := range names {
@@ -80,10 +97,12 @@ func setOf(names ...string) map[string]bool {
 // searchPatternArgs returns the indices into c.words of c's pattern words
 // that are safe to mask (see above): -e/--regexp values, and the first
 // operand when no -e or -f gives the patterns. It returns nil when c is not
-// a search tool, has a substitution, or has an argument it cannot place.
+// a search tool, has a substitution, has a prefix assignment (which may set
+// an option variable, see searchOptionEnvVars), or has an argument it
+// cannot place.
 func (c *shCommand) searchPatternArgs() []int {
 	ni := c.nameIndex()
-	if ni < 0 || c.subst || !plainLiteral(c.words[ni].raw) {
+	if ni != 0 || c.subst || !plainLiteral(c.words[ni].raw) {
 		return nil
 	}
 	tool, ok := searchTools[filepath.Base(c.words[ni].text)]

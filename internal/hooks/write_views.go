@@ -157,6 +157,8 @@ func (st *viewState) command(sc shellScript, c *shCommand, depth int) []string {
 		if script, ok := nestedScript(name, args); ok {
 			nested := &viewState{dirs: append([]string(nil), st.dirs...), vars: copyVars(st.vars), budget: st.budget}
 			nsc := scanShell(script)
+			// The outer line's environment reaches the nested script.
+			nsc.noSearchMask = nsc.noSearchMask || sc.noSearchMask
 			out = append(out, nested.views(nsc, depth+1)...)
 			// The nested script's own text, cd-free, is matched as is.
 			out = append(out, strings.ReplaceAll(nsc.masked(), "\n", " "))
@@ -167,7 +169,7 @@ func (st *viewState) command(sc shellScript, c *shCommand, depth int) []string {
 	// in masked(): joined to a cd they would read as paths.
 	data := map[int]bool{}
 	if !sc.unsure {
-		for _, i := range c.dataArgs() {
+		for _, i := range c.dataArgs(sc) {
 			data[i] = true
 		}
 	}
