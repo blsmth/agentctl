@@ -280,3 +280,23 @@ func TestRenderPageShape(t *testing.T) {
 		t.Error("invalid spec rendered")
 	}
 }
+
+// TestKitJSFormatters checks the percent and duration formatters never show a
+// value the data does not support (99.97 is not "100%").
+func TestKitJSFormatters(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not found; kit.js formatters are not checked")
+	}
+	out, err := exec.Command(node, filepath.Join(kitDir, "testdata", "formats.js"), filepath.Join(kitDir, "kit.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node: %v\n%s", err, out)
+	}
+	var bad [][]any
+	if err := json.Unmarshal(out, &bad); err != nil {
+		t.Fatalf("node output: %v\n%s", err, out)
+	}
+	for _, b := range bad {
+		t.Errorf("%v(%v): want %q, got %q", b[0], b[1], b[2], b[3])
+	}
+}

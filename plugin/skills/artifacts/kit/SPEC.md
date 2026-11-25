@@ -145,7 +145,9 @@ Footer list. `items` (required, non-empty) of `{label, url?, note?}`; `url` must
 
 ## Formatters
 
-Fixed `en-US` so every page reads the same: numbers group thousands and show up to 2 decimals (`12,400`, `0.48`); percent up to 1 decimal (`34.5%`); currency 2 decimals under 1,000 and none from 1,000 up (`$48.00`, `$1,480`); duration from seconds (`210 ms`, `3.2 s`, `4m 05s`, `2h 05m`, `3d 4h`); dates `Nov 24, 2026` (UTC, no timezone shift). Missing or `null` values show `unknown`.
+Fixed `en-US` so every page reads the same: numbers group thousands and show up to 2 decimals (`12,400`, `0.48`); percent up to 1 decimal (`34.5%`) but never a value the data does not support (below); currency 2 decimals under 1,000 and none from 1,000 up (`$48.00`, `$1,480`); duration from seconds (`210 ms`, `3.2 s`, `4m 05s`, `2h 05m`, `3d 4h`); dates `Nov 24, 2026` (UTC, no timezone shift). Missing or `null` values show `unknown`.
+
+Percent never rounds onto a whole number the value has not reached. Exactly `0` and `100` are the only values shown as `0%` / `100%`, and a value that rounds up to a whole number (`89.96`, `94.99`) keeps extra decimals too. Up to 3 decimals are used as needed: `99.97` → `99.97%`, `99.95` → `99.95%`, `99.999` → `99.999%`, `0.04` → `0.04%`, `89.96` → `89.96%`. If 3 decimals still land on the bound, the text is `>99.999%` or `<0.001%` (`>100%` just over 100); negatives mirror (`-0.04%`, `<-99.999%`). Values over 100 are fine (`100.04%`). The same formatter serves KPI values and deltas, table cells, the chart fallback table, and branded/PDF pages. Duration never rounds up into the next unit: `59.97 s` shows `59.9 s`, `999.6 ms` shows `999 ms`.
 
 ## Inlining and the drift guard
 
