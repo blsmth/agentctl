@@ -16,6 +16,7 @@ import (
 func TestTurnEndAttention(t *testing.T) {
 	now := time.Unix(100, 0)
 	verdict := &windowstate.PendingVerdict{PR: 12, Verdict: verdicts.NeedsBrendan}
+	missed := &windowstate.MissedApproval{Kind: "dispatch", Detail: "go-engineer on #3"}
 	tests := []struct {
 		name   string
 		in     turnEnd
@@ -29,7 +30,9 @@ func TestTurnEndAttention(t *testing.T) {
 		{"failure streak", turnEnd{ToolFailures: 3, LastError: "Bash: exit 1"}, windowstate.AttentionErrors, "3 tool failures in a row: Bash: exit 1"},
 		{"worker failure streak", turnEnd{Autonomous: true, ToolFailures: 4}, windowstate.AttentionErrors, "4 tool failures in a row"},
 		{"question beats failures", turnEnd{Text: "Should I retry?", ToolFailures: 3}, windowstate.AttentionQuestion, "Should I retry?"},
-		{"verdict beats everything", turnEnd{Text: "Merge it?", ToolFailures: 5, Verdict: verdict}, windowstate.AttentionMessage, "PR #12 review: NEEDS-BRENDAN"},
+		{"verdict beats everything", turnEnd{Text: "Merge it?", ToolFailures: 5, Verdict: verdict, Missed: missed}, windowstate.AttentionMessage, "PR #12 review: NEEDS-BRENDAN"},
+		{"missed approval beats a question", turnEnd{Text: "Merge it?", ToolFailures: 5, Missed: missed}, windowstate.AttentionApproval, "dispatch: go-engineer on #3"},
+		{"worker missed approval still needs the human", turnEnd{Autonomous: true, Missed: missed}, windowstate.AttentionApproval, "dispatch: go-engineer on #3"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -267,6 +270,7 @@ func TestSessionStartClearDropsAttention(t *testing.T) {
 		ws.State = "idle"
 		ws.Attention = &windowstate.Attention{Reason: windowstate.AttentionQuestion}
 		ws.PendingVerdict = &windowstate.PendingVerdict{PR: 1, Verdict: verdicts.Blocked}
+		ws.MissedApproval = &windowstate.MissedApproval{Kind: "dispatch"}
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -275,8 +279,8 @@ func TestSessionStartClearDropsAttention(t *testing.T) {
 		t.Fatal("compact cleared attention")
 	}
 	runHookCaptured(t, nil, `{"session_id":"s3","source":"clear"}`, SessionStart)
-	if ws, _ := windowstate.Read(w); ws.Attention != nil || ws.PendingVerdict != nil {
-		t.Fatalf("/clear kept attention %+v pending %+v", ws.Attention, ws.PendingVerdict)
+	if ws, _ := windowstate.Read(w); ws.Attention != nil || ws.PendingVerdict != nil || ws.MissedApproval != nil {
+		t.Fatalf("/clear kept attention %+v pending %+v missed %+v", ws.Attention, ws.PendingVerdict, ws.MissedApproval)
 	}
 }
 

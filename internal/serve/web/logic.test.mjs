@@ -776,6 +776,7 @@ console.log("ok: shell request");
   assert.equal(attentionLabel("question"), "asks you");
   assert.equal(attentionLabel("errors"), "stuck");
   assert.equal(attentionLabel("message"), "review verdict");
+  assert.equal(attentionLabel("approval"), "missed approval");
   assert.equal(attentionLabel("other"), "needs you");
   assert.equal(attentionLine(q), "asks you: Merge it?");
   assert.equal(attentionLine({ state: "idle", attention: "errors" }), "stuck");

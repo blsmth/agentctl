@@ -94,6 +94,7 @@ func BuildRestoreAgents(records map[string]windowstate.WindowState, live map[str
 			TurnCount:      ws.TurnCount,
 			Attention:      ws.Attention,
 			PendingVerdict: ws.PendingVerdict,
+			MissedApproval: ws.MissedApproval,
 		})
 		if ws.ShortTitle != (windowstate.ShortTitle{}) {
 			st := ws.ShortTitle

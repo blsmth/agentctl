@@ -730,6 +730,7 @@ func applyLaunchBootstrap(ws *windowstate.WindowState, windowName, agentName, lo
 	// The previous window's needs-you state is not the new agent's.
 	windowstate.ClearAttention(ws)
 	ws.PendingVerdict = nil
+	ws.MissedApproval = nil
 	ws.AgentName = agentName
 	ws.StartedAt = time.Now().Unix()
 	ws.LogPath = logPath

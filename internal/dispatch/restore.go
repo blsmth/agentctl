@@ -79,13 +79,14 @@ type RestoreRequest struct {
 	// time (unix seconds); 0 keeps the new launch's.
 	ShortTitle windowstate.ShortTitle
 	StartedAt  int64
-	// TurnDone, TurnCount, Attention and PendingVerdict are the saved
-	// turn-end facts, re-stamped so a restored window keeps its ✓ or ! and
-	// its turn count (it resumes idle at the same prompt).
+	// TurnDone, TurnCount, Attention, PendingVerdict and MissedApproval are
+	// the saved turn-end facts, re-stamped so a restored window keeps its ✓
+	// or ! and its turn count (it resumes idle at the same prompt).
 	TurnDone       bool
 	TurnCount      int
 	Attention      *windowstate.Attention
 	PendingVerdict *windowstate.PendingVerdict
+	MissedApproval *windowstate.MissedApproval
 }
 
 // Restore re-launches a saved agent window using the shared settings helpers
@@ -197,6 +198,9 @@ func applyRestoreMeta(ws *windowstate.WindowState, req RestoreRequest) {
 	}
 	if req.PendingVerdict != nil && ws.PendingVerdict == nil {
 		ws.PendingVerdict = req.PendingVerdict
+	}
+	if req.MissedApproval != nil && ws.MissedApproval == nil {
+		ws.MissedApproval = req.MissedApproval
 	}
 }
 

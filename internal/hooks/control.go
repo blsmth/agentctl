@@ -73,7 +73,7 @@ func CheckDone() {
 		}
 		now := time.Now()
 		var prevAttention *windowstate.Attention
-		verdictAlerted := false
+		factAlerted := false
 		if err := winname.Update(windowID, func(w *windowstate.WindowState) {
 			prevAttention = w.Attention
 			// Background subagents keep the turn's work going: the parent's
@@ -87,18 +87,15 @@ func CheckDone() {
 			w.LastText = textutil.Truncate(input.LastAssistantMessage, maxLastTextRunes, "")
 			w.TurnCount++
 			applyTurnEnd(windowID, w, activeSubagents, finalText, now)
-			if w.Attention != nil && w.Attention.Reason == windowstate.AttentionMessage && w.PendingVerdict != nil {
-				// One alert per pending verdict: it is raised again at every
-				// turn end (peer messages clear it in between) until the
-				// human replies.
-				verdictAlerted = w.PendingVerdict.Alerted
-				w.PendingVerdict.Alerted = true
-			}
+			// One alert per pending verdict or missed approval: each is
+			// raised again at every turn end (peer messages clear it in
+			// between) until the human replies.
+			factAlerted = markAttentionAlerted(w)
 			ws = *w
 		}); err != nil {
 			logUpdateErr("hook-check-done", err)
 		}
-		if ws.Attention != nil && !verdictAlerted && !sameAttention(prevAttention, ws.Attention) && !hasAttachedClient() {
+		if ws.Attention != nil && !factAlerted && !sameAttention(prevAttention, ws.Attention) && !hasAttachedClient() {
 			// No alert while the human is looking at the window: they can
 			// see the question.
 			alertAttention(windowID, hookAgentName(), ws, ws.Attention)
@@ -220,7 +217,26 @@ func applyTurnEnd(windowID string, w *windowstate.WindowState, activeSubagents i
 		ToolFailures: w.ToolFailures,
 		LastError:    w.LastError,
 		Verdict:      w.PendingVerdict,
+		Missed:       w.MissedApproval,
 	}, now)
+}
+
+// markAttentionAlerted marks the fact behind w's turn-end attention (a
+// pending verdict or a missed approval) as alerted, and reports whether it
+// already was, so the caller notifies once per fact.
+func markAttentionAlerted(w *windowstate.WindowState) (already bool) {
+	if w.Attention == nil {
+		return false
+	}
+	switch {
+	case w.Attention.Reason == windowstate.AttentionMessage && w.PendingVerdict != nil:
+		already = w.PendingVerdict.Alerted
+		w.PendingVerdict.Alerted = true
+	case w.Attention.Reason == windowstate.AttentionApproval && w.MissedApproval != nil:
+		already = w.MissedApproval.Alerted
+		w.MissedApproval.Alerted = true
+	}
+	return already
 }
 
 // markRetryTurnDone sets TurnDone on an autonomous window whose Stop is the
@@ -573,9 +589,11 @@ func UserPrompt() {
 		w.TurnDone, w.TurnDoneHeld = false, false
 		windowstate.ClearAttention(w)
 		if human {
-			// The human replied: a pending review verdict is answered. A
-			// SendMessage delivery (often the verdict itself) is not.
+			// The human replied: a pending review verdict or a missed
+			// approval is answered. A SendMessage delivery (often the
+			// verdict itself) is not.
 			w.PendingVerdict = nil
+			w.MissedApproval = nil
 		}
 		ws = *w
 	}); err != nil {

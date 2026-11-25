@@ -449,7 +449,7 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `alerts` | bool | `true` | Master switch for this agent's notifications. |
-| `alert_config.blocked` | bool | `true` | Notify on Working to Blocked (needs approval, including a pending dispatch/cron/bash approval popup), and when a window starts needing attention (the `!` state: it asks you something, looks stuck, or a review verdict needs you; see [needs attention](monitor-architecture.md#needs-attention)). |
+| `alert_config.blocked` | bool | `true` | Notify on Working to Blocked (needs approval, including a pending dispatch/cron/bash approval popup), and when a window starts needing attention (the `!` state: it asks you something, looks stuck, missed an approval, or a review verdict needs you; see [needs attention](monitor-architecture.md#needs-attention)). |
 | `alert_config.idle` | bool | `true` | Notify on Working to Idle (done). |
 | `alert_config.gone` | bool | `false` | Reserved; no notification uses it yet. |
 | `cross_context` | bool | `true` | Inject a cross-agent summary at launch. Global-only (a project may only switch it off). |

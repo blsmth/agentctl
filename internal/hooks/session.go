@@ -160,9 +160,10 @@ func SessionStart() {
 			if input.Source == sessionSourceClear {
 				resetTitleOnClear(ws)
 				// The old work's needs-you state goes with it.
-				clearedAttention = ws.Attention != nil || ws.PendingVerdict != nil || ws.TurnDone
+				clearedAttention = ws.Attention != nil || ws.PendingVerdict != nil || ws.MissedApproval != nil || ws.TurnDone
 				windowstate.ClearAttention(ws)
 				ws.PendingVerdict = nil
+				ws.MissedApproval = nil
 				ws.TurnDone, ws.TurnDoneHeld = false, false
 			}
 			if input.Cwd != "" {
