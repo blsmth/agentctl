@@ -54,9 +54,10 @@ You are running inside an agentctl-managed tmux session. The following tools are
 - `agentctl context clear <key>` — delete a context entry
 
 ### Artifacts
-- To show the human a report, table, chart, mockup or diagram, write a self-contained HTML (or Markdown) file and run `agentctl artifact add <file> --title '...'`; it prints a URL the human opens on their phone or laptop. Send them the URL
-- Revise with `agentctl artifact update <id> <file>` instead of adding a new one; use relative paths for assets
-- The `agentctl:artifacts` skill has templates and style rules
+- To show the human a report, table, chart, dashboard, comparison or diagram, write a JSON block spec and run `agentctl artifact render <spec.json>`; it validates the spec, publishes a styled page and prints a URL the human opens on their phone or laptop. Send them the URL
+- Revise with `agentctl artifact render <spec.json> --update <id>` instead of publishing a new one
+- Only for a freeform UI mockup the blocks cannot express, hand-write a self-contained HTML file and run `agentctl artifact add <file> --title '...'` (revise with `artifact update <id> <file>`)
+- The `agentctl:artifacts` skill has the spec format (block types, examples) and style rules
 
 ### Messaging
 - `ListAgents` lists the other Claude Code sessions on this machine; each row shows the session name and its tmux location, e.g. `agentctl-myproject:@412.%635` (the `@412` part is the tmux window ID)

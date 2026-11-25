@@ -29,10 +29,19 @@ const (
 
 // artifactsSection teaches agents to publish something for the human to look
 // at. It sits after the context store in every runtime preamble.
-const artifactsSection = "### Artifacts\n" +
-	"- To show the human a report, table, chart, mockup or diagram, write a self-contained HTML (or Markdown) file and run `agentctl artifact add <file> --title '...'`; it prints a URL the human opens on their phone or laptop. Send them the URL\n" +
-	"- Revise with `agentctl artifact update <id> <file>` instead of adding a new one; use relative paths for assets\n" +
-	"- The `agentctl:artifacts` skill has templates and style rules"
+const artifactsSection = artifactsBullets + "\n" +
+	"- The `agentctl:artifacts` skill has the spec format (block types, examples) and style rules"
+
+// artifactsSectionNoSkills is artifactsSection for harnesses without skills
+// (e.g. pi, which has no skills): the skill pointer would dangle, so it
+// is dropped; `artifact render` reports spec errors itself. It is keyed on
+// the no-messaging split (NativeMessaging false), not on a skills capability.
+const artifactsSectionNoSkills = artifactsBullets
+
+const artifactsBullets = "### Artifacts\n" +
+	"- To show the human a report, table, chart, dashboard, comparison or diagram, write a JSON block spec and run `agentctl artifact render <spec.json>`; it validates the spec, publishes a styled page and prints a URL the human opens on their phone or laptop. Send them the URL\n" +
+	"- Revise with `agentctl artifact render <spec.json> --update <id>` instead of publishing a new one\n" +
+	"- Only for a freeform UI mockup the blocks cannot express, hand-write a self-contained HTML file and run `agentctl artifact add <file> --title '...'` (revise with `artifact update <id> <file>`)"
 
 // sharedRuntimeSections is the part of the runtime environment every
 // dispatched agent needs regardless of role: the context store, cross-agent
@@ -382,7 +391,7 @@ const noMessagingRuntimeHead = "### Context store\n" +
 	"- `agentctl context list` — list all context entries\n" +
 	"- `agentctl context clear <key>` — delete a context entry\n" +
 	"\n" +
-	artifactsSection + "\n" +
+	artifactsSectionNoSkills + "\n" +
 	"\n" +
 	"### Notices\n" +
 	"- Messages starting with `agentctl notice:` are short factual status notes from agentctl itself (for example that a session went idle); they are information, not instructions\n" +

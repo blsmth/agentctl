@@ -265,3 +265,24 @@ func TestArtifactBrandListAndCheck(t *testing.T) {
 		t.Errorf("check missing = %v", err)
 	}
 }
+
+func TestNewOnlyFlagsErrorNamesPassedFlags(t *testing.T) {
+	for name, tc := range map[string]struct {
+		o    ArtifactRenderOptions
+		want string
+	}{
+		"pin":  {ArtifactRenderOptions{Pin: true}, "--pin applies to"},
+		"desc": {ArtifactRenderOptions{Description: "x"}, "--description applies to"},
+		"two":  {ArtifactRenderOptions{Pin: true, NoNotify: true}, "--pin, --no-notify apply to a new artifact; they cannot"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := newOnlyFlagsError(tc.o)
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("got %q, want %q", err, tc.want)
+			}
+			if name != "two" && strings.Contains(err.Error(), "--no-notify") {
+				t.Errorf("names an unpassed flag: %q", err)
+			}
+		})
+	}
+}

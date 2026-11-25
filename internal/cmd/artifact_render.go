@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/blsmth/agentctl/internal/artifactbrand"
 	"github.com/blsmth/agentctl/internal/artifactkit"
@@ -36,7 +37,7 @@ func (e artifactEnv) render(w io.Writer, o ArtifactRenderOptions) error {
 	case o.Note != "" && o.Update == "":
 		return errors.New("--note describes a revision; it needs --update <id>")
 	case o.Update != "" && (o.Pin || o.NoNotify || o.Description != ""):
-		return errors.New("--pin, --no-notify and --description apply to a new artifact; they cannot be combined with --update")
+		return newOnlyFlagsError(o)
 	}
 	data, err := e.readSpec(o.Path)
 	if err != nil {
@@ -118,4 +119,23 @@ func writeRendered(w io.Writer, out string, html []byte, title string, jsonOut b
 	}
 	_, err := fmt.Fprintf(w, "Wrote %q to %s (not published)\n", title, out)
 	return err
+}
+
+// newOnlyFlagsError names the new-artifact-only flags passed with --update.
+func newOnlyFlagsError(o ArtifactRenderOptions) error {
+	var flags []string
+	if o.Pin {
+		flags = append(flags, "--pin")
+	}
+	if o.NoNotify {
+		flags = append(flags, "--no-notify")
+	}
+	if o.Description != "" {
+		flags = append(flags, "--description")
+	}
+	verb, pron := "applies", "it"
+	if len(flags) > 1 {
+		verb, pron = "apply", "they"
+	}
+	return fmt.Errorf("%s %s to a new artifact; %s cannot be combined with --update", strings.Join(flags, ", "), verb, pron)
 }
