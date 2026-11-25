@@ -127,7 +127,7 @@ type Window struct {
 	Seen *bool `yaml:"seen"`
 
 	Title       string   `yaml:"title"` // short title
-	Kind        string   `yaml:"kind"`  // short-title kind (go, review, docs ...)
+	Kind        string   `yaml:"kind"`  // short-title kind (build, fix, review, docs ...)
 	Ticket      int      `yaml:"ticket"`
 	TicketTitle string   `yaml:"ticket_title"`
 	Task        string   `yaml:"task"`

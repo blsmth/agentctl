@@ -24,14 +24,14 @@ func liveSet(ids ...string) map[string]bool {
 func TestBackfillTitlesFinalAfterFirstStop(t *testing.T) {
 	e := setupTitle(t)
 	e.recap = "Rebuilt the hub sort order and added tests."
-	e.fake.out = "go | Fixing Hub Sort Order"
+	e.fake.out = "fix | Fixing Hub Sort Order"
 	seedWindow(t, "@1", windowstate.WindowState{SessionID: "s1", State: "idle", Task: "https://github.com/x/y/issues/9 fix it", TurnCount: 3, LastText: "Done, PR opened."})
 
 	if n := BackfillTitles(context.Background(), liveSet("@1")); n != 1 {
 		t.Fatalf("sent = %d, want 1", n)
 	}
 	st := readTitle(t, "@1")
-	if st.Title != "Fixing Hub Sort Order" || st.Kind != "go" || !st.Final {
+	if st.Title != "Fixing Hub Sort Order" || st.Kind != "fix" || !st.Final {
 		t.Fatalf("title = %+v, want final", st)
 	}
 	for _, want := range []string{"fix it", "Done, PR opened.", "Rebuilt the hub sort order"} {

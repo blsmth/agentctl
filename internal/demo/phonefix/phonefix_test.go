@@ -39,7 +39,7 @@ windows:
     state: done
     ticket: 142
     ticket_title: Add limiter
-    kind: go
+    kind: build
     title: Adding Limiter
     pr: 151
     spawned_by: orch
@@ -142,7 +142,7 @@ func TestConvertFields(t *testing.T) {
 	ws, _, _ := load(t)
 	w := ws["worker"]
 	if w.Parent != ws["orch"].ID || w.Mode != "dispatch" || w.Issue != 142 || w.Title != "Add limiter" ||
-		w.ShortTitle != "Adding Limiter" || w.ShortKind != "go" || w.PRNumber != 151 ||
+		w.ShortTitle != "Adding Limiter" || w.ShortKind != "build" || w.PRNumber != 151 ||
 		w.PRURL != "https://github.com/acme/acme-api/pull/151" || w.Prompt != "Add the limiter." ||
 		w.Activity != "go test ./..." || w.Recap != "#142 Add limiter" || w.RecapSource != "task" {
 		t.Errorf("worker = %+v", w)

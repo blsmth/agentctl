@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -104,21 +105,21 @@ func TestApply(t *testing.T) {
 	first := Input{Task: "sort"}
 	refine := Input{Task: "sort", LastText: "Sorted."}
 	var st windowstate.ShortTitle
-	Apply(&st, first, "Sorting Photos", "chat", nil, now)
-	want := windowstate.ShortTitle{Title: "Sorting Photos", Kind: "chat", At: now, InputHash: first.Hash()}
+	Apply(&st, first, "Sorting Photos", "plan", nil, now)
+	want := windowstate.ShortTitle{Title: "Sorting Photos", Kind: "plan", At: now, InputHash: first.Hash()}
 	if st != want {
 		t.Fatalf("first = %+v, want %+v", st, want)
 	}
 	// Failures keep the old title, stay unfrozen, and back off further each time.
 	for i, d := range []time.Duration{10 * time.Minute, 30 * time.Minute, 2 * time.Hour, 12 * time.Hour, 12 * time.Hour} {
-		Apply(&st, refine, "", "go", errors.New("down"), now)
-		if st.Title != "Sorting Photos" || st.Kind != "chat" || st.Final || st.Failures != i+1 || !st.RetryAfter.Equal(now.Add(d)) {
+		Apply(&st, refine, "", "fix", errors.New("down"), now)
+		if st.Title != "Sorting Photos" || st.Kind != "plan" || st.Final || st.Failures != i+1 || !st.RetryAfter.Equal(now.Add(d)) {
 			t.Fatalf("failure %d = %+v", i+1, st)
 		}
 	}
 	// A refinement clears the backoff and freezes.
-	Apply(&st, refine, "Sorting Photos Again", "go", nil, now)
-	want = windowstate.ShortTitle{Title: "Sorting Photos Again", Kind: "go", At: now, InputHash: refine.Hash(), Final: true}
+	Apply(&st, refine, "Sorting Photos Again", "fix", nil, now)
+	want = windowstate.ShortTitle{Title: "Sorting Photos Again", Kind: "fix", At: now, InputHash: refine.Hash(), Final: true}
 	if st != want {
 		t.Fatalf("refinement = %+v, want %+v", st, want)
 	}
@@ -250,20 +251,21 @@ func TestGenerateKind(t *testing.T) {
 		wantKind, want    string
 		wantErr           error
 	}{
-		{"good", "go | Fixing X Now", "", "go", "Fixing X Now", nil},
+		{"good", "fix | Fixing X Now", "", "fix", "Fixing X Now", nil},
 		{"whitespace and case", "  Review|  Checking This PR \n", "", "review", "Checking This PR", nil},
-		{"markdown", "`go` | **Fixing X**", "", "go", "Fixing X", nil},
+		{"markdown", "`fix` | **Fixing X**", "", "fix", "Fixing X", nil},
+		{"legacy language word dropped", "go | Fixing X", "", "", "Fixing X", nil},
+		{"new kind", "refactor | Fixing X", "", "refactor", "Fixing X", nil},
 		{"unknown kind", "rust | Fixing X", "", "", "Fixing X", nil},
-		{"label before kind", "Title: go | Fixing X", "", "go", "Fixing X", nil},
-		{"markdown label before kind", "**Title:** go | Fixing X", "", "go", "Fixing X", nil},
-		{"label before invented kind", "Title: refactor | Fixing X", "", "", "Fixing X", nil},
-		{"invented kinds", "refactor | Fixing X", "", "", "Fixing X", nil},
+		{"label before kind", "Title: fix | Fixing X", "", "fix", "Fixing X", nil},
+		{"markdown label before kind", "**Title:** fix | Fixing X", "", "fix", "Fixing X", nil},
+		{"label before invented kind", "Title: rust | Fixing X", "", "", "Fixing X", nil},
 		{"multi-word head kept", "Fix A | B", "", "", "Fix A B", nil},
 		{"unknown kind empty rest", "rust | ", "", "", "rust", nil},
 		{"no pipe", "Fixing X", "", "", "Fixing X", nil},
-		{"extra pipes", "web | Fixing | X | Y", "", "web", "Fixing X Y", nil},
-		{"empty title half", "go |  ", "", "", "", ErrEmptyTitle},
-		{"review-pr override", "go | Reading A Diff", ReviewPRMode, "review", "Reading A Diff", nil},
+		{"extra pipes", "ops | Fixing | X | Y", "", "ops", "Fixing X Y", nil},
+		{"empty title half", "fix |  ", "", "", "", ErrEmptyTitle},
+		{"review-pr override", "fix | Reading A Diff", ReviewPRMode, "review", "Reading A Diff", nil},
 		{"override without kind", "Reading A Diff", ReviewPRMode, "review", "Reading A Diff", nil},
 	}
 	for _, tt := range tests {
@@ -283,7 +285,7 @@ func TestPromptKindsAndHints(t *testing.T) {
 			t.Errorf("prompt missing kind %q", k)
 		}
 	}
-	for _, s := range []string{"<kind> | <title>", "Agent:\ngo-engineer", "Dispatch mode:\nreview-pr", "moving, renaming or upgrading"} {
+	for _, s := range []string{"<kind> | <title>", "Agent:\ngo-engineer", "Dispatch mode:\nreview-pr", "moving or upgrading data"} {
 		if !strings.Contains(p, s) {
 			t.Errorf("prompt missing %q", s)
 		}
@@ -307,7 +309,7 @@ func TestHashIgnoresAgentAndMode(t *testing.T) {
 }
 
 func TestSanitizeDropsKindPrefix(t *testing.T) {
-	if got := Sanitize("go | Fixing X"); got != "Fixing X" {
+	if got := Sanitize("fix | Fixing X"); got != "Fixing X" {
 		t.Errorf("Sanitize = %q", got)
 	}
 }
@@ -354,7 +356,7 @@ func TestRecapInput(t *testing.T) {
 		t.Fatalf("prompt lacks the recap:\n%s", p)
 	}
 	var st windowstate.ShortTitle
-	Apply(&st, in, "Rebuilding Hub Sort", "go", nil, now)
+	Apply(&st, in, "Rebuilding Hub Sort", "fix", nil, now)
 	if !st.Final {
 		t.Fatal("title from a recap not final")
 	}
@@ -396,25 +398,51 @@ func TestHashIgnoresParentTitle(t *testing.T) {
 
 func TestRole(t *testing.T) {
 	tests := []struct{ mode, kind, want string }{
-		{"review-pr", "go", "review"},
+		{"review-pr", "fix", "review"},
 		{"review-pr", "", "review"},
-		{"adhoc", "review", "review"},
-		{"adhoc", "research", "research"},
-		{"adhoc", "chat", "research"},
-		{"adhoc", "debug", "fix"},
-		{"adhoc", "docs", "docs"},
+		{"improve", "build", "improve"},
+		{"improve", "", "improve"},
+		// Every current kind is its own role.
+		{"adhoc", "build", "build"},
+		{"adhoc", "fix", "fix"},
+		{"adhoc", "debug", "debug"},
+		{"adhoc", "refactor", "refactor"},
 		{"adhoc", "tests", "tests"},
+		{"adhoc", "docs", "docs"},
+		{"adhoc", "review", "review"},
+		{"adhoc", "ship", "ship"},
+		{"adhoc", "ops", "ops"},
+		{"adhoc", "migrate", "migrate"},
+		{"adhoc", "research", "research"},
+		{"adhoc", "plan", "plan"},
+		// Legacy kinds stored before the intent vocabulary.
 		{"adhoc", "go", "build"},
 		{"adhoc", "python", "build"},
 		{"adhoc", "swift", "build"},
 		{"adhoc", "web", "build"},
-		{"adhoc", "infra", "build"},
-		{"adhoc", "migration", "build"},
+		{"adhoc", "infra", "ops"},
+		{"adhoc", "migration", "migrate"},
+		{"adhoc", "chat", "plan"},
 		{"adhoc", "", "build"},
+		{"adhoc", "bogus", "build"},
 	}
 	for _, tt := range tests {
-		if got := Role(tt.mode, tt.kind); got != tt.want {
-			t.Errorf("Role(%q,%q) = %q, want %q", tt.mode, tt.kind, got, tt.want)
+		t.Run(tt.mode+"/"+tt.kind, func(t *testing.T) {
+			if got := Role(tt.mode, tt.kind); got != tt.want {
+				t.Errorf("Role(%q,%q) = %q, want %q", tt.mode, tt.kind, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestKindsVocabulary(t *testing.T) {
+	want := []string{"build", "fix", "debug", "refactor", "tests", "docs", "review", "ship", "ops", "migrate", "research", "plan"}
+	if got := Kinds(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Kinds = %v, want %v", got, want)
+	}
+	for _, old := range []string{"go", "python", "swift", "web", "infra", "migration", "chat"} {
+		if IsKind(old) || normalizeKind(old) != "" {
+			t.Errorf("legacy kind %q must not be accepted", old)
 		}
 	}
 }

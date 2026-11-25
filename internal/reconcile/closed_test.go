@@ -67,7 +67,7 @@ func TestClosedRecordFields(t *testing.T) {
 		Harness: "pi", Account: "work", Model: "claude-opus-5-5", SessionID: "u1", LogPath: "/l/u1.jsonl",
 		FirstPrompt: "fix the thing", TurnCount: 4, Branch: "agent/x", WorktreeDir: "/repo/proj/.worktrees/x",
 		SpawnedBy: "@1", SpawnedBySession: "p1",
-		ShortTitle: windowstate.ShortTitle{Title: "Fix thing", Kind: "go"},
+		ShortTitle: windowstate.ShortTitle{Title: "Fix thing", Kind: "fix"},
 		LogPR:      windowstate.LogPRScan{PRNumber: 12, PRURL: "https://x/pull/12"},
 	}
 	Finish(Claimed{WindowID: "@7", Record: ws}, d)
@@ -80,7 +80,7 @@ func TestClosedRecordFields(t *testing.T) {
 		WindowID: "@7", Session: "agentctl-proj", ProjectDir: "/repo/proj", RuntimeDir: d.RuntimeDir,
 		WorkDir: "/repo/proj/.worktrees/x", Agent: "go-engineer", Instance: "go-engineer-2", Harness: "pi",
 		Account: "work", Model: "claude-opus-5-5", SessionID: "u1", LogPath: "/l/u1.jsonl",
-		ShortTitle: "Fix thing", TitleKind: "go", FirstPrompt: "fix the thing", State: "idle", Done: true,
+		ShortTitle: "Fix thing", TitleKind: "fix", FirstPrompt: "fix the thing", State: "idle", Done: true,
 		TurnCount: 4, Branch: "agent/x", Worktree: "/repo/proj/.worktrees/x", PRNumber: 12, PRURL: "https://x/pull/12",
 		SpawnedBy: "@1", SpawnedBySession: "p1", Reason: closedlog.ReasonClosed,
 	}
