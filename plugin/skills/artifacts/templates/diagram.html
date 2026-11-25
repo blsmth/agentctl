@@ -332,7 +332,7 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
       // never round up into the next unit: 999.6 ms is not "1000 ms", 59.97 s is not "60 s"
       if (s < 1) return sign + Math.min(Math.round(s * 1000), 999) + " ms";
       if (s < 60) return sign + (PF.format(s) === "60" ? "59.9" : PF.format(s)) + " s";
-      var t = Math.round(s), d = Math.floor(t / 86400), hr = Math.floor((t % 86400) / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+      var t = Math.floor(s), d = Math.floor(t / 86400), hr = Math.floor((t % 86400) / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
       if (t < 3600) return sign + m + "m " + pad2(sec) + "s";
       if (t < 86400) return sign + hr + "h " + pad2(m) + "m";
       return sign + d + "d " + hr + "h";
@@ -1013,7 +1013,7 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
               var name = dough ? c.label : c.dataset.label;
               if (c.raw === null || c.raw === undefined) return name + ": no data";
               var v = c.parsed && typeof c.parsed === "object" ? (horiz ? c.parsed.x : c.parsed.y) : c.parsed;
-              return name + ": " + fmt.number(v) + unit;
+              return name + ": " + (b.unit === "%" ? fmt.percent(v) : fmt.number(v) + unit);
             } } }
         }
       };
@@ -1040,7 +1040,7 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
       box.remove();
       card.append(h("p", "muted", "Charts need internet access to load Chart.js; the numbers are shown as a table instead."));
       var cols = [{ key: "label", label: b.x_label || "Label", type: "text" }].concat(b.series.map(function (se, i) {
-        return { key: "s" + i, label: se.name + (b.unit ? " (" + b.unit + ")" : ""), type: "number" };
+        return { key: "s" + i, label: se.name + (b.unit && b.unit !== "%" ? " (" + b.unit + ")" : ""), type: b.unit === "%" ? "percent" : "number" };
       }));
       var rows = b.labels.map(function (l, j) {
         var r = { label: l };

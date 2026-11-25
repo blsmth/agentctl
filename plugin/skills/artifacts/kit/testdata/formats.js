@@ -18,9 +18,12 @@ const percent = [
   [-100, "-100%"], [12.04, "12%"], [1234.5, "1,234.5%"],
 ];
 const signed = [[0.04, "+0.04%"], [99.97, "+99.97%"], [-0.04, "-0.04%"], [0.0004, "<+0.001%"], [100.0004, ">+100%"]];
-const duration = [[59.97, "59.9 s"], [3.24, "3.2 s"], [0.9996, "999 ms"], [0.21, "210 ms"], [60, "1m 00s"]];
+const duration = [[59.97, "59.9 s"], [3.24, "3.2 s"], [0.9996, "999 ms"], [0.21, "210 ms"], [60, "1m 00s"], [3599.6, "59m 59s"], [86399.6, "23h 59m"], [-3599.6, "-59m 59s"]];
 
 const bad = [];
+// chart fallback table cells and tooltips go through fmt.by / fmt.percent for "%" charts
+const chart = [["percent", 99.997, "99.997%"], ["percent", 99.9999, ">99.999%"], ["number", 99.997, "100"]];
+for (const [t, v, want] of chart) { const got = fmt.by(t, v); if (got !== want) bad.push(["chart " + t, v, want, got]); }
 for (const [v, want] of percent) { const got = fmt.percent(v); if (got !== want) bad.push(["percent", v, want, got]); }
 for (const [v, want] of signed) { const got = fmt.signed("percent", v); if (got !== want) bad.push(["signed", v, want, got]); }
 for (const [v, want] of duration) { const got = fmt.duration(v); if (got !== want) bad.push(["duration", v, want, got]); }
