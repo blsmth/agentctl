@@ -4,6 +4,7 @@ import (
 	"cmp"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -172,6 +173,13 @@ func main() {
 		// import the other way would be circular); main can import both,
 		// so this is where the single source of truth gets connected.
 		hooks.SetAutonomousModeFn(dispatch.IsAutonomous)
+		hooks.SetAgentNameCheck(func(name, dir string) error {
+			err := dispatch.ValidateAgentName(name, dir)
+			if errors.Is(err, dispatch.ErrAgentDiscovery) {
+				return nil // cannot tell: let the approval popup run
+			}
+			return err
+		})
 		// Wire the worktree-settings planter (hook-worktree-create's step 6)
 		// to dispatch.WriteWorktreeSettings. Same import-cycle constraint as
 		// SetAutonomousModeFn above: internal/hooks cannot import
