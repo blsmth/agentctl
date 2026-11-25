@@ -3,13 +3,18 @@ package artifactpdf
 import (
 	"bytes"
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
 
 // TestRenderRealBrowser prints an html and a markdown artifact with an actual
-// headless browser. It is skipped when none is installed (CI).
+// headless browser. It launches a real Chrome, so it runs only with
+// AGENTCTL_PDF_IT=1, and is skipped when no browser is installed.
 func TestRenderRealBrowser(t *testing.T) {
+	if os.Getenv("AGENTCTL_PDF_IT") != "1" {
+		t.Skip("set AGENTCTL_PDF_IT=1 to run the real-browser test")
+	}
 	old := configured
 	t.Cleanup(func() { configured = old })
 	configured = func() string { return "" }
