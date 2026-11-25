@@ -696,6 +696,9 @@ type Config struct {
 	// Titles configures short AI row titles for the hub and the phone app
 	// (internal/shorttitle). Global config only: it makes paid network calls.
 	Titles TitlesConfig `json:"titles,omitzero"`
+	// Artifacts configures artifact export (`artifact pdf`). Global config
+	// only: it names a binary agentctl executes.
+	Artifacts ArtifactsConfig `json:"artifacts,omitzero"`
 }
 
 // StringPtr returns a pointer to s, for setting optional string fields such as
@@ -1537,6 +1540,11 @@ func sanitizeProjectConfig(project, global *Config) {
 		warn("titles", globalOnly)
 	}
 	project.Titles = TitlesConfig{}
+	// artifacts.pdf_browser is a binary agentctl executes.
+	if project.Artifacts != (ArtifactsConfig{}) {
+		warn("artifacts", globalOnly)
+	}
+	project.Artifacts = ArtifactsConfig{}
 	for name, ac := range project.Agents {
 		g, hasGlobal := global.Agents[name]
 		pre := "agents." + name + "."
@@ -1918,6 +1926,8 @@ func applyProjectChanges(layer, before, after, global *Config) {
 	layer.Cron = protected.Cron
 	restore("titles", !reflect.DeepEqual(layer.Titles, protected.Titles))
 	layer.Titles = protected.Titles
+	restore("artifacts", layer.Artifacts != protected.Artifacts)
+	layer.Artifacts = protected.Artifacts
 	restore("auto_poll", layer.AutoPoll != protected.AutoPoll)
 	restore("default_agent", layer.DefaultAgent != protected.DefaultAgent)
 	restore("accounts", !reflect.DeepEqual(layer.Accounts, protected.Accounts) ||

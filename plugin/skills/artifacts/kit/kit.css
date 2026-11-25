@@ -149,3 +149,39 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
 .error-card{border:2px solid var(--bad);border-radius:var(--r);padding:12px 14px;margin:0 0 16px;background:var(--card)}
 .error-card b{color:var(--bad);display:block}
 .error-card ul{margin:.4em 0 0;padding-left:1.2em}
+
+/* print and PDF export: US Letter, always the light palette, nothing split or clipped */
+@page{size:letter;margin:.5in}
+@media print{
+  :root{
+    --bg:#fff;--fg:#1a1d21;--muted:#5f6b7a;--card:#f5f7fa;--line:#dde2e8;
+    --accent:#2563eb;--good:#15803d;--warn:#b45309;--bad:#b91c1c;--info:#2563eb;
+    --c1:#2563eb;--c2:#0f766e;--c3:#7c3aed;--c4:#c2410c;--c5:#be185d;--c6:#64748b;
+    color-scheme:light;
+  }
+  *{box-shadow:none!important;text-shadow:none!important}
+  html,body{background:#fff}
+  body{font-size:11pt;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  main{max-width:none;padding:0}
+  h1,h2,h3{break-after:avoid}
+  .block>h2{break-after:avoid}
+  .card,.kpi,.callout,.opt,.reco,.chart-box,.chart-note,.error-card,.diagram,details,pre,.timeline li,.badge{break-inside:avoid}
+  .block-chart .card{break-inside:avoid}
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+  .options{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+  .table-wrap{overflow:visible;max-height:none}
+  table{min-width:0;width:100%;table-layout:auto}
+  thead{display:table-header-group}
+  tfoot{display:table-footer-group}
+  thead th{position:static;padding:8px 12px}
+  /* Chrome paints a <button> in a repeated header row empty: show its text directly */
+  thead th>button{display:contents;font-weight:650}
+  thead th>span{display:inline;padding:0;min-height:0}
+  tr,.table-wrap tr{break-inside:avoid}
+  td{min-width:0;overflow-wrap:anywhere}
+  th button.sort::after{content:none}
+  pre{overflow:visible;white-space:pre-wrap;overflow-wrap:anywhere}
+  .diagram{overflow:visible}
+  .diagram svg,.chart-box canvas{max-width:100%}
+  a{color:inherit}
+}

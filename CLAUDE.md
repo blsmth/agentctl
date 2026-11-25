@@ -50,6 +50,7 @@ One Go module (`github.com/blsmth/agentctl`). [Kong](https://github.com/alecthom
 - **prompttemplate** — prompt templates; [docs/configuration.md#prompt-templates](docs/configuration.md#prompt-templates).
 - **race**, **sessionaudit** — `agentctl race` model; `audit report` grader ([docs/permissions.md](docs/permissions.md#session-audit-reports)).
 - **artifacts** — machine-wide store of agent-published artifacts; [docs/design/artifacts.md](docs/design/artifacts.md).
+- **artifactpage**, **artifactpdf** — shared markdown/text/image artifact pages; `artifact pdf` export via headless Chrome ([PDF export](docs/design/artifacts.md#pdf-export)).
 - **demo** — screenshot harness, never linked into the binary; [docs/development.md](docs/development.md#demo-harness-and-screenshots).
 
 ## Key data flow

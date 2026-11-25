@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/dustin/go-humanize"
 
+	"github.com/blsmth/agentctl/internal/artifactpdf"
 	"github.com/blsmth/agentctl/internal/artifacts"
 	"github.com/blsmth/agentctl/internal/artifacturl"
 	"github.com/blsmth/agentctl/internal/config"
@@ -58,6 +60,8 @@ type artifactEnv struct {
 	appBase func() string
 	// openBrowser opens url in the laptop browser.
 	openBrowser func(url string) error
+	// pdf renders revision rev (0 = latest) of an artifact to w as a PDF.
+	pdf         func(ctx context.Context, store *artifacts.Store, id string, rev int, w io.Writer) error
 	stdin       io.Reader
 	interactive func() bool
 	errw        io.Writer
@@ -70,6 +74,7 @@ var defaultArtifactEnv = artifactEnv{
 	serveURL:    artifactServeURL,
 	appBase:     artifacturl.AppBase,
 	openBrowser: openInBrowser,
+	pdf:         artifactpdf.Render,
 	stdin:       os.Stdin,
 	interactive: func() bool { return stdinIsTerminal() },
 	errw:        os.Stderr,
@@ -386,17 +391,25 @@ func printComments(w io.Writer, cs []artifacts.Comment, indent string) {
 	}
 }
 
-// revURL validates rev against the artifact and returns its direct URL.
-func (e artifactEnv) revURL(id string, rev int) (string, error) {
+// revMeta returns artifact id after checking that rev (0 = latest) exists.
+func (e artifactEnv) revMeta(id string, rev int) (artifacts.Meta, error) {
 	m, err := e.store().Get(id)
 	if err != nil {
-		return "", err
+		return m, err
 	}
 	if len(m.Revs) == 0 {
-		return "", fmt.Errorf("artifact %s has no revisions (its metadata is damaged; remove it with `agentctl artifact rm %s`)", id, id)
+		return m, fmt.Errorf("artifact %s has no revisions (its metadata is damaged; remove it with `agentctl artifact rm %s`)", id, id)
 	}
 	if rev > 0 && !m.HasRev(rev) {
-		return "", fmt.Errorf("artifact %s has no revision %d (have %d..%d)", id, rev, m.Revs[0].N, m.Latest())
+		return m, fmt.Errorf("artifact %s has no revision %d (have %d..%d)", id, rev, m.Revs[0].N, m.Latest())
+	}
+	return m, nil
+}
+
+// revURL validates rev against the artifact and returns its direct URL.
+func (e artifactEnv) revURL(id string, rev int) (string, error) {
+	if _, err := e.revMeta(id, rev); err != nil {
+		return "", err
 	}
 	base, running := e.serveURL()
 	u := artifactDirectURL(base, id, rev)
