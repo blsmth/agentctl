@@ -111,6 +111,8 @@ func TestValidation(t *testing.T) {
 		{"svg external href", `{"name":"X","logo":"l.svg"}`, map[string][]byte{"l.svg": []byte(`<svg><image href="https://evil.example/x.png"/></svg>`)}, "logo", "external href"},
 		{"svg xlink href", `{"name":"X","logo":"l.svg"}`, map[string][]byte{"l.svg": []byte(`<svg><use xlink:href="http://evil.example/x.svg#a"/></svg>`)}, "logo", "external href"},
 		{"svg external url", `{"name":"X","logo":"l.svg"}`, map[string][]byte{"l.svg": []byte(`<svg><rect style="fill:url(http://evil.example/p)"/></svg>`)}, "logo", "external url()"},
+		{"svg namespaced script", `{"name":"X","logo":"l.svg"}`, map[string][]byte{"l.svg": []byte(`<svg xmlns:s="http://www.w3.org/2000/svg"><s:script>alert(1)</s:script></svg>`)}, "logo", "<script>"},
+		{"svg entity", `{"name":"X","logo":"l.svg"}`, map[string][]byte{"l.svg": []byte(`<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY x "&#60;script&#62;">]><svg xmlns="http://www.w3.org/2000/svg">&x;</svg>`)}, "logo", "DTD"},
 		{"svg not svg", `{"name":"X","logo":"l.svg"}`, map[string][]byte{"l.svg": []byte(`hello`)}, "logo", "not an SVG"},
 		{"font not woff2 ext", `{"name":"X","font":{"family":"Inter","regular":"a.ttf"}}`, map[string][]byte{"a.ttf": woff2Bytes}, "font.regular", "only .woff2"},
 		{"font not woff2 data", `{"name":"X","font":{"family":"Inter","regular":"a.woff2"}}`, map[string][]byte{"a.woff2": []byte("OTTO....")}, "font.regular", "not a woff2"},

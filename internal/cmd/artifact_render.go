@@ -53,7 +53,7 @@ func (e artifactEnv) render(w io.Writer, o ArtifactRenderOptions) error {
 	if brandName != "" {
 		b, err := artifactbrand.Load(brandName)
 		if err != nil {
-			return fmt.Errorf("brand %q: %w", brandName, err)
+			return err
 		}
 		brand = &b
 	}

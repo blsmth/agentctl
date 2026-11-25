@@ -321,7 +321,7 @@
   }
   function cssVar(n) { return getComputedStyle(doc.documentElement).getPropertyValue(n).trim(); }
   // A branded page pins the light palette (the html element carries data-light), whatever the device prefers.
-  function isDark() { return !isPrint() && !doc.documentElement.hasAttribute("data-light") &&!!(global.matchMedia && global.matchMedia("(prefers-color-scheme: dark)").matches); }
+  function isDark() { return !isPrint() && !doc.documentElement.hasAttribute("data-light") && !!(global.matchMedia && global.matchMedia("(prefers-color-scheme: dark)").matches); }
 
   function errorCard(title, errs) {
     var c = h("div", "error-card");

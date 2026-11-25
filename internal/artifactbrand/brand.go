@@ -466,7 +466,7 @@ func (p *parser) readAsset(rel, path string, max int64) ([]byte, bool) {
 }
 
 var (
-	svgScriptRE   = regexp.MustCompile(`(?i)<\s*(script|foreignObject|iframe|embed|object)\b`)
+	svgScriptRE   = regexp.MustCompile(`(?i)<\s*(?:[a-z0-9_.-]+:)?(script|foreignObject|iframe|embed|object)\b`)
 	svgOnAttrRE   = regexp.MustCompile(`(?i)[\s"'/]on[a-z]+\s*=`)
 	svgHrefRE     = regexp.MustCompile(`(?i)\bhref\s*=\s*["']?\s*([^"'\s>]*)`)
 	svgURLRE      = regexp.MustCompile(`(?i)url\(\s*["']?\s*([^"')\s]*)`)
@@ -479,6 +479,9 @@ func unsafeSVG(data []byte) string {
 	s := string(data)
 	if !strings.Contains(strings.ToLower(s), "<svg") {
 		return "not an SVG document"
+	}
+	if regexp.MustCompile(`(?i)<!\s*(doctype|entity)`).MatchString(s) {
+		return "contains a DTD (<!DOCTYPE or <!ENTITY)"
 	}
 	if m := svgScriptRE.FindStringSubmatch(s); m != nil {
 		return "contains <" + strings.ToLower(m[1]) + ">"
