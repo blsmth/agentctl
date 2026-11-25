@@ -133,9 +133,9 @@ func newOnlyFlagsError(o ArtifactRenderOptions) error {
 	if o.Description != "" {
 		flags = append(flags, "--description")
 	}
-	verb := "applies"
+	verb, pron := "applies", "it"
 	if len(flags) > 1 {
-		verb = "apply"
+		verb, pron = "apply", "they"
 	}
-	return fmt.Errorf("%s %s to a new artifact; it cannot be combined with --update", strings.Join(flags, ", "), verb)
+	return fmt.Errorf("%s %s to a new artifact; %s cannot be combined with --update", strings.Join(flags, ", "), verb, pron)
 }

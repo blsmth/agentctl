@@ -34,7 +34,8 @@ const artifactsSection = artifactsBullets + "\n" +
 
 // artifactsSectionNoSkills is artifactsSection for harnesses without skills
 // (e.g. pi, which has no skills): the skill pointer would dangle, so it
-// is dropped; `artifact render` reports spec errors itself.
+// is dropped; `artifact render` reports spec errors itself. It is keyed on
+// the no-messaging split (NativeMessaging false), not on a skills capability.
 const artifactsSectionNoSkills = artifactsBullets
 
 const artifactsBullets = "### Artifacts\n" +

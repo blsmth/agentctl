@@ -273,7 +273,7 @@ func TestNewOnlyFlagsErrorNamesPassedFlags(t *testing.T) {
 	}{
 		"pin":  {ArtifactRenderOptions{Pin: true}, "--pin applies to"},
 		"desc": {ArtifactRenderOptions{Description: "x"}, "--description applies to"},
-		"two":  {ArtifactRenderOptions{Pin: true, NoNotify: true}, "--pin, --no-notify apply to"},
+		"two":  {ArtifactRenderOptions{Pin: true, NoNotify: true}, "--pin, --no-notify apply to a new artifact; they cannot"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := newOnlyFlagsError(tc.o)
