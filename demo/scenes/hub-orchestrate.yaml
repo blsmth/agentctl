@@ -51,7 +51,7 @@ windows:
     ticket: 57
     ticket_title: Backfill invoice totals for legacy accounts
     title: Backfilling Invoice Totals
-    kind: go
+    kind: migrate
     transcript: invoice-backfill
     spinner: "Migrating… (2m 4s · ↓ 2.2k tokens · esc to interrupt)"
     cost_usd: 2.31

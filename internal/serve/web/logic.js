@@ -445,7 +445,7 @@ export function rowHeadline(win) {
   return (win.label ?? "").trim() || rowTitle(win);
 }
 
-/** rowRole is the role label of a sub-agent row ("build", "review", ...; derived server-side), or "" for rows no agent dispatched. */
+/** rowRole is the role label of a sub-agent row ("build", "fix", "review", ...; derived server-side), or "" for rows no agent dispatched. */
 export function rowRole(win) {
   const k = typeof win.role === "string" ? win.role.trim() : "";
   return /^[a-z]{1,16}$/.test(k) ? k : "";

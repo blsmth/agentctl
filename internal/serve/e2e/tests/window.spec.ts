@@ -257,7 +257,7 @@ test("header: a short row title keeps the full recap in the window view", async 
 });
 
 test("header: a long title ellipsizes and keeps Close on screen", async ({ page, control }) => {
-  await control.patchWindow(SHOP, "@13", { recap: "Writing tests.", recap_source: "summary", short_title: "A very long generated title that cannot possibly fit on a phone header", short_kind: "go" });
+  await control.patchWindow(SHOP, "@13", { recap: "Writing tests.", recap_source: "summary", short_title: "A very long generated title that cannot possibly fit on a phone header", short_kind: "build" });
   await openWindow(page, "@13");
   const h1 = page.locator("header.bar h1");
   await expect(h1).toContainText("A very long generated title");

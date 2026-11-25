@@ -207,7 +207,7 @@ func Prompt(in Input) string {
 	for _, k := range kinds {
 		b.WriteString("- " + k.name + ": " + k.meaning + "\n")
 	}
-	b.WriteString("Reply on one line as `<kind> | <title>`, for example `go | Fixing Hub Sort Order`. Nothing else.\n")
+	b.WriteString("Reply on one line as `<kind> | <title>`, for example `fix | Fixing Hub Sort Order`. Nothing else.\n")
 	section := func(label, text string) {
 		if text != "" {
 			b.WriteString("\n" + label + ":\n" + text + "\n")
@@ -218,7 +218,7 @@ func Prompt(in Input) string {
 		b.WriteString("The row is already nested under it, so the title must name the specific piece THIS agent owns: ")
 		b.WriteString("the concrete change, mechanism, file area, or what it is checking. ")
 		b.WriteString("Do not restate or paraphrase the orchestrator's title and reuse none of its distinctive words unless unavoidable.\n")
-		b.WriteString("Example: orchestrator \"Fixing False Dialog Detection\" -> `go | Line-Anchoring Dialog Markers`; ")
+		b.WriteString("Example: orchestrator \"Fixing False Dialog Detection\" -> `fix | Line-Anchoring Dialog Markers`; ")
 		b.WriteString("its reviewer -> `review | Checking Dialog Marker Anchoring`. ")
 		b.WriteString("A pull request review window is titled for what is being checked, not \"Reviewing PR\".\n")
 	}

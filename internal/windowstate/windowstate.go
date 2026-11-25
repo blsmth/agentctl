@@ -327,7 +327,7 @@ type WindowState struct {
 // summary_hash key; it is ignored.
 type ShortTitle struct {
 	Title string `json:"title,omitempty"`
-	// Kind is the work-kind tag ("go", "review", ...; see internal/shorttitle),
+	// Kind is the work-kind tag ("build", "fix", "review", ...; see internal/shorttitle),
 	// empty when the model gave none. Older records have none.
 	Kind       string    `json:"kind,omitempty"`
 	At         time.Time `json:"at,omitzero"`

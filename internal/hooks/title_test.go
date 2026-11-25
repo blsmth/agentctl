@@ -679,7 +679,7 @@ func TestTitleKeepsPriceCacheFresh(t *testing.T) {
 // A human title (set from the hub) is never replaced: not by hook-title,
 // not by a request already in flight, and not by the /clear reset.
 func TestTitleManualTitleIsKept(t *testing.T) {
-	manual := windowstate.ShortTitle{Title: "My Name", Kind: "go", Final: true, Manual: true}
+	manual := windowstate.ShortTitle{Title: "My Name", Kind: "fix", Final: true, Manual: true}
 
 	t.Run("hook-title skips it", func(t *testing.T) {
 		e := setupTitle(t)

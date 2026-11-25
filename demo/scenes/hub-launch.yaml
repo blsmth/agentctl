@@ -43,7 +43,7 @@ windows:
     ticket: 142
     ticket_title: Add token-bucket rate limiter to POST /v1/orders
     title: Adding Rate Limiter
-    kind: go
+    kind: build
     model: claude-sonnet-5-5
     pr: 151
     spawned_by: orch
@@ -76,7 +76,7 @@ windows:
     ticket: 57
     ticket_title: Backfill invoice totals for legacy accounts
     title: Backfilling Invoice Totals
-    kind: go
+    kind: migrate
     transcript: invoice-backfill
     pending_tool: Bash
     pending_detail: psql "$DATABASE_URL" -f migrations/0042_backfill_invoice_totals.sql
@@ -97,7 +97,7 @@ windows:
     ticket: 61
     ticket_title: CSV exports round half-cent amounts down
     title: Fixing CSV Rounding
-    kind: python
+    kind: fix
     model: claude-sonnet-5-5
     pr: 64
     transcript: csv-rounding

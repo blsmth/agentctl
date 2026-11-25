@@ -46,7 +46,7 @@ windows:                              # in tmux order per project
     select: true                      # make it the session's current window (one per project)
 
     title: Rate limiter rollout       # short title shown in the hub
-    kind: go                          # short-title kind (dispatched windows only); review-pr defaults to review
+    kind: build                        # short-title kind (dispatched windows only); review-pr defaults to review
     ticket: 142                       # dispatched only
     ticket_title: Add rate limiting
     task: Free-form task line         # ad-hoc task; review-pr defaults to "Review PR #N"

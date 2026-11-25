@@ -91,7 +91,7 @@ type AgentState struct {
 	// short_title.title, written by hook-title). Display-only: never in
 	// state.json or restore.json.
 	ShortTitle string `json:"-"`
-	// ShortRole is the role label of a sub-agent window (shorttitle.Role of
+	// ShortRole is the role label of a sub-agent window ("build", "fix", "review", ...; shorttitle.Role of
 	// its mode and short_title.kind); empty for windows no agent dispatched.
 	ShortRole string `json:"-"`
 	// ShortManual marks ShortTitle as set by a human (short_title.manual):

@@ -44,7 +44,7 @@ type RecapLine struct {
 	Text   string
 	Source RecapSource
 	Title  string
-	// Role is the sub-agent role label ("build", "review", ...), empty for
+	// Role is the sub-agent role label ("build", "fix", "review", ...), empty for
 	// windows no agent dispatched. Only set together with Title.
 	Role string
 }

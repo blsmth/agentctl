@@ -74,7 +74,7 @@ func newRenameFixture(t *testing.T, width int) *renameFixture {
 	t.Helper()
 	InitStyles()
 	rt := t.TempDir()
-	writeRecord(t, rt, "@1", map[string]any{"instance": "alpha", "short_title": map[string]any{"title": renameTitled, "kind": "go"}})
+	writeRecord(t, rt, "@1", map[string]any{"instance": "alpha", "short_title": map[string]any{"title": renameTitled, "kind": "fix"}})
 	writeRecord(t, rt, "@2", map[string]any{"instance": "beta"})
 	m := NewFleetModel()
 	m.termWidth, m.termHeight = width, 40
@@ -259,7 +259,7 @@ func TestRenameEditorSaves(t *testing.T) {
 	}
 	st := readRecord(t, f.rt, "@1")
 	want := "Old Titlrqx pasted"
-	if st.Title != want || !st.Manual || !st.Final || st.Kind != "go" {
+	if st.Title != want || !st.Manual || !st.Final || st.Kind != "fix" {
 		t.Errorf("record = %+v, want manual final %q kind go", st, want)
 	}
 	if line := f.rowLine(t, "@1"); !strings.Contains(line, want) {

@@ -59,7 +59,7 @@ type Window struct {
 	// Title is a short generated title for Recap (2-5 words), for list rows;
 	// omitted until one is cached. Recap stays the full text.
 	Title string `json:"title,omitempty"`
-	// Role is the role label of a sub-agent window ("build", "review", ...,
+	// Role is the role label of a sub-agent window ("build", "fix", "review", ...,
 	// shorttitle.Role); omitted for windows no agent dispatched.
 	Role string `json:"role,omitempty"`
 

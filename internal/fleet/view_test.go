@@ -234,15 +234,15 @@ func TestShortRoleChildrenOnly(t *testing.T) {
 		{"bare", "bare", "", "", ""},
 		{"cron, no parent", "adhoc", "", "", ""},
 		{"spawned_by alone is untrusted", "adhoc", "@1", "", ""},
-		{"child build", "adhoc", "@1", "s1", "build"},
-		{"child issue", "issue", "@1", "s1", "build"},
+		{"child fix", "adhoc", "@1", "s1", "fix"},
+		{"child issue", "issue", "@1", "s1", "fix"},
 		{"child review-pr", "review-pr", "@1", "s1", "review"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			records := map[string]windowstate.WindowState{
 				"@5": {Instance: "go-engineer", Mode: tt.mode, SpawnedBy: tt.by, SpawnedBySession: tt.session,
-					ShortTitle: windowstate.ShortTitle{Title: "Fixing X", Kind: "go"}},
+					ShortTitle: windowstate.ShortTitle{Title: "Fixing X", Kind: "fix"}},
 			}
 			agents := BuildAgents([]tmux.WindowInfo{{ID: "@5", Name: "go-engineer"}}, records, nil, time.Now())
 			if len(agents) != 1 {
