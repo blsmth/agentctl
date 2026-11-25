@@ -10,7 +10,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/reconcile"
 	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
@@ -174,6 +176,8 @@ type fleetShellOpenedMsg struct {
 var (
 	newShellWindow    = tmux.NewShellWindow
 	killSessionWindow = tmux.KillSessionWindow
+	// fleetChildCloser closes a window's dispatched sub-sessions ahead of it.
+	fleetChildCloser = reconcile.DefaultChildCloser()
 )
 
 // fleetShellCmd opens a plain shell window in g's project. The window's env
@@ -189,6 +193,10 @@ func fleetShellCmd(g fleet.Group) tea.Cmd {
 
 func fleetCloseCmd(r fleet.Row) tea.Cmd {
 	return func() tea.Msg {
+		// Sub-sessions first, so none is left orphaned: the reconcile cascade
+		// does not run reliably without the monitor. Failures are logged and
+		// skipped inside Close; they never block the parent close.
+		fleetChildCloser.Close(r.WindowID, r.SessionID)
 		return fleetClosedMsg{name: r.Name, err: killSessionWindow(r.Session, r.WindowID)}
 	}
 }
@@ -341,9 +349,37 @@ func (m *FleetModel) startClose(idx int) {
 	m.jumpErr = ""
 	m.cancelArtDelete()
 	m.confirmSession, m.confirmWindow = r.Session, r.WindowID
+	m.confirmKids = 0
+	if r.SessionID != "" && config.Load().CloseChildrenEnabled() {
+		m.confirmKids = m.dispatchedUnder(r)
+	}
 }
 
-func (m *FleetModel) cancelClose() { m.confirmSession, m.confirmWindow = "", "" }
+// dispatchedUnder counts the rows dispatched by r, directly or transitively
+// (same session, linked by Parent): what closing r also closes.
+func (m *FleetModel) dispatchedUnder(r fleet.Row) int {
+	seen := map[string]bool{r.WindowID: true}
+	queue := []string{r.WindowID}
+	n := 0
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		for _, l := range m.lines {
+			c := l.row
+			if l.kind != fleetLineRow || c.Session != r.Session || c.Parent != id || seen[c.WindowID] {
+				continue
+			}
+			seen[c.WindowID] = true
+			n++
+			queue = append(queue, c.WindowID)
+		}
+	}
+	return n
+}
+
+func (m *FleetModel) cancelClose() {
+	m.confirmSession, m.confirmWindow, m.confirmKids = "", "", 0
+}
 
 func (m FleetModel) closeArmed() bool { return m.confirmWindow != "" }
 

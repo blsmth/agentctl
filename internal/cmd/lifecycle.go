@@ -76,6 +76,11 @@ func RunKillMenu(nameOrID string) {
 
 	// Kill by window ID if available (unambiguous); fall back to name-based kill.
 	if windowID != "" {
+		// Close dispatched sub-sessions first; the reconcile cascade alone
+		// does not run reliably without the monitor.
+		if ws, err := windowstate.Read(windowID); err == nil {
+			reconcile.DefaultChildCloser().Close(windowID, ws.SessionID)
+		}
 		if err := tmux.KillWindow(windowID); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			cliout.Exit(1)

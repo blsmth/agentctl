@@ -510,6 +510,7 @@ type FleetModel struct {
 	// the selection moves off that row.
 	confirmSession string
 	confirmWindow  string
+	confirmKids    int // dispatched sessions the armed close will also close
 
 	// artDelID is the artifact awaiting inline delete confirmation on the
 	// Artifacts tab ("delete? y/n"); empty when none.
@@ -3659,7 +3660,15 @@ func (m FleetModel) rowLayout(l fleetLine, selected bool, hover fleetHoverRegion
 	var text, right string
 	if m.confirmingRow(r) {
 		// The full instance name: this is the identifier being closed.
-		text = fleetBlockedStyle.Render(truncateToWidth("close "+r.Name+"? y/n", available))
+		prompt := "close " + r.Name + "? y/n"
+		if m.confirmKids > 0 {
+			noun := "session"
+			if m.confirmKids > 1 {
+				noun = "sessions"
+			}
+			prompt = fmt.Sprintf("close %s + %d dispatched %s? y/n", r.Name, m.confirmKids, noun)
+		}
+		text = fleetBlockedStyle.Render(truncateToWidth(prompt, available))
 		closeStyle = fleetBlockedStyle
 		showClose = true
 	} else {
