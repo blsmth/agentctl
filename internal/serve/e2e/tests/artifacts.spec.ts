@@ -316,13 +316,14 @@ test("Save as PDF downloads the revision on screen", async ({ page, control }) =
 
 test("Save as PDF uses the share sheet when the browser can share files", async ({ page, control }) => {
   await page.addInitScript(() => {
-    const w = window as unknown as { shared: { name: string; type: string; title: string }[] };
+    const w = window as unknown as { shared: { name: string; type: string; size: number; keys: string[] }[] };
     w.shared = [];
     Object.defineProperty(navigator, "canShare", { configurable: true, value: (d: { files?: File[] }) => !!d?.files?.length });
     Object.defineProperty(navigator, "share", {
       configurable: true,
-      value: async (d: { files: File[]; title: string }) => {
-        w.shared.push({ name: d.files[0]!.name, type: d.files[0]!.type, title: d.title });
+      value: async (d: { files: File[] }) => {
+        const f = d.files[0]!;
+        w.shared.push({ name: f.name, type: f.type, size: f.size, keys: Object.keys(d) });
       },
     });
   });
@@ -337,7 +338,81 @@ test("Save as PDF uses the share sheet when the browser can share files", async 
   if ((await shared()) === 0) await shareAgain.click();
   await expect.poll(shared).toBe(1);
   const got = await page.evaluate(() => (window as unknown as { shared: unknown[] }).shared[0]);
-  expect(got).toEqual({ name: "checkout-mockup-r2.pdf", type: "application/pdf", title: "Checkout mockup" });
+  // Files only: with a title or text, iOS shares text and drops Save to Files and Print.
+  expect(got).toMatchObject({ name: "checkout-mockup-r2.pdf", type: "application/pdf", keys: ["files"] });
+  expect((got as { size: number }).size).toBeGreaterThan(0);
+});
+
+test("Save as PDF refuses to share an answer that is not a PDF", async ({ page, control }) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { shared: number };
+    w.shared = 0;
+    Object.defineProperty(navigator, "canShare", { configurable: true, value: () => true });
+    Object.defineProperty(navigator, "share", { configurable: true, value: async () => void w.shared++ });
+    // An HTML page where the PDF should be (a captive portal, a proxy). The
+    // page's fetch is wrapped: page.route does not see requests once the
+    // service worker controls the page.
+    const real = window.fetch.bind(window);
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit) =>
+      /\/v1\/artifacts\/[^/]+\/pdf\?/.test(String(input))
+        ? Promise.resolve(new Response("<!doctype html><p>hi</p>", { status: 200, headers: { "Content-Type": "text/html" } }))
+        : real(input, init);
+  });
+  const [id] = await control.seedArtifacts(seed());
+  await page.goto(`/#/artifacts/${id}`);
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("button", { name: "Save as PDF (v2)" }).click();
+  await expect(page.locator(".toast.error")).toContainText("did not send a PDF");
+  expect(await page.evaluate(() => (window as unknown as { shared: number }).shared)).toBe(0);
+  await expect(page.getByRole("button", { name: "Save as PDF (v2)" })).toBeEnabled();
+});
+
+test("Open PDF opens a short-lived link that works without the app's cookie", async ({ page, browser, baseURL, control }) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { opened: string[] };
+    w.opened = [];
+    window.open = ((url: string) => {
+      w.opened.push(url);
+      return {} as Window;
+    }) as typeof window.open;
+  });
+  const [id] = await control.seedArtifacts(seed());
+  await page.goto(`/#/artifacts/${id}/1`);
+  await page.getByRole("button", { name: "More actions" }).click();
+  const save = page.getByRole("button", { name: "Save as PDF (v1)" });
+  const open = page.getByRole("button", { name: "Open PDF" });
+  // Side by side, both inside a 390px-wide phone.
+  const width = page.viewportSize()!.width;
+  const [a, b] = [(await save.boundingBox())!, (await open.boundingBox())!];
+  expect(Math.abs(a.y - b.y)).toBeLessThan(2);
+  for (const box of [a, b]) {
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+  await open.click();
+  const opened = () => page.evaluate(() => (window as unknown as { opened: string[] }).opened);
+  // When the request used up the tap's activation, a second tap opens.
+  const again = page.getByRole("button", { name: "Open PDF ↗" });
+  await expect.poll(async () => (await opened()).length > 0 || (await again.isVisible())).toBe(true);
+  if ((await opened()).length === 0) await again.click();
+  await expect.poll(async () => (await opened()).length).toBe(1);
+  const [url] = await opened();
+  expect(url).toMatch(/^\/pdf\/[A-Za-z0-9_-]{43}\/checkout-mockup-r1\.pdf$/);
+  await expect(page.locator(".artifact-sheet")).toHaveCount(0);
+
+  // A browser with no device cookie (Safari outside the home-screen app).
+  const ctx = await browser.newContext({ baseURL });
+  const res = await ctx.request.get(url!);
+  expect(res.status()).toBe(200);
+  expect(res.headers()["content-type"]).toBe("application/pdf");
+  expect(res.headers()["content-disposition"]).toBe('inline; filename="checkout-mockup-r1.pdf"');
+  expect(res.headers()["cache-control"]).toBe("private, no-store");
+  expect((await res.body()).subarray(0, 5).toString()).toBe("%PDF-");
+  // Another token is the /a/ 404 page.
+  const miss = await ctx.request.get(url!.replace(/\/pdf\/./, (m) => (m.endsWith("A") ? "/pdf/B" : "/pdf/A")));
+  expect(miss.status()).toBe(404);
+  await ctx.close();
 });
 
 test("Save as PDF shows the server's error when no browser is installed", async ({ page, control, guard }) => {

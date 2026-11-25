@@ -21,6 +21,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/blsmth/agentctl/internal/artifacts"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/safefs"
 )
@@ -217,6 +218,11 @@ func (s *Server) auditFor(r *http.Request, d Device, action string) auditEntry {
 	}
 	if action, ok := artifactActionFor(r.URL.Path); ok && action != "artifact-order" {
 		e.Artifact = clip(strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")[2])
+		if action == "artifact-pdf-link" {
+			// A line that hands out a credential names the artifact by
+			// ShortID only.
+			e.Artifact = artifacts.ShortID(e.Artifact)
+		}
 	}
 	return e
 }

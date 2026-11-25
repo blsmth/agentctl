@@ -31,9 +31,12 @@ import {
   artifactIcon,
   artifactOrigin,
   artifactPdfLabel,
+  artifactPdfLinkPath,
   artifactPdfPath,
   pdfDelivery,
+  pdfFileProblem,
   pdfFilename,
+  pdfSharePayload,
   windowWho,
   artifactRevLabel,
   artifactRevPill,
@@ -496,6 +499,7 @@ function mountList(root, ctx, filter) {
 function mountViewer(root, ctx, route) {
   const write = ctx.hasFeature("write");
   const canComment = write && ctx.hasFeature("artifact-comments");
+  const canLinkPdf = write && ctx.hasFeature("artifact-pdf-link");
   const id = route.id;
   let detail = null;
   let fetchedAt = 0;
@@ -711,7 +715,8 @@ function mountViewer(root, ctx, route) {
       const how = pdfDelivery(navigator, file);
       if (how === "share") {
         try {
-          await navigator.share({ files: [file], title: detail.title });
+          // Files only: a title next to them makes iOS share text.
+          await navigator.share(pdfSharePayload(file));
           closeSheet();
         } catch (e) {
           if (e?.name === "AbortError") return; // dismissed the share sheet
@@ -734,9 +739,15 @@ function mountViewer(root, ctx, route) {
     async function render() {
       if (busy) return;
       setBusy(true);
+      let problem = "";
       try {
         const { blob, disposition } = await getBlob(artifactPdfPath(id, rev), { signal: ctl.signal });
-        file = new File([blob], pdfFilename(disposition, `artifact-r${rev}.pdf`), { type: "application/pdf" });
+        // The File's type is what the server sent, so a non-PDF answer is
+        // caught here rather than shared as a "PDF" iOS cannot open.
+        const type = (blob.type || "").split(";")[0].trim().toLowerCase();
+        const got = new File([blob], pdfFilename(disposition, `artifact-r${rev}.pdf`), { type });
+        problem = pdfFileProblem(got, new Uint8Array(await got.slice(0, 5).arrayBuffer()));
+        if (!problem) file = got;
       } catch (e) {
         if (ctl.signal.aborted || disposed) return;
         setBusy(false);
@@ -750,6 +761,10 @@ function mountViewer(root, ctx, route) {
       }
       if (ctl.signal.aborted || disposed) return;
       setBusy(false);
+      if (problem) {
+        toast(`PDF failed: ${problem}`, "error");
+        return;
+      }
       const how = pdfDelivery(navigator, file);
       // A share needs user activation; after a long render it may be gone.
       if (how === "share" && navigator.userActivation && !navigator.userActivation.isActive) {
@@ -761,7 +776,70 @@ function mountViewer(root, ctx, route) {
     return { btn, abort: () => ctl.abort() };
   }
 
-  /** moreSheet is the ⋯ bottom sheet: origin, open in a new tab, save as PDF, pin and delete. */
+  /**
+   * openPdfButton is the sheet's "Open PDF": it asks serve for a
+   * five-minute link to the revision's PDF (a token URL that needs no
+   * cookie, since the browser that opens it does not share the home-screen
+   * app's cookies) and opens it in a new window, where iOS shows its own PDF
+   * viewer with Save to Files and Print. Like "Share PDF", when the request
+   * used up the tap's activation (or the window was blocked), the button
+   * asks for a second tap.
+   */
+  function openPdfButton(closeSheet) {
+    const rev = revNumber();
+    const label = "Open PDF";
+    const again = "Open PDF ↗";
+    let link = null; // {url, expires (ms)}
+    let busy = false;
+    const live = () => link && Date.now() < link.expires - 30000;
+    const btn = h("button", { class: "btn artifact-pdf-open", type: "button", onclick: () => (live() ? open() : mint()) }, label);
+    function open() {
+      const win = window.open(link.url, "_blank");
+      if (!win) {
+        btn.textContent = again;
+        return;
+      }
+      win.opener = null;
+      closeSheet();
+    }
+    async function mint() {
+      if (busy) return;
+      busy = true;
+      btn.disabled = true;
+      btn.toggleAttribute("aria-busy", true);
+      btn.textContent = "Opening…";
+      let err = null;
+      try {
+        const out = await api("POST", artifactPdfLinkPath(id, rev), {});
+        link = { url: out.url, expires: Date.parse(out.expires) || Date.now() + 60000 };
+      } catch (e) {
+        err = e;
+      }
+      busy = false;
+      btn.disabled = false;
+      btn.toggleAttribute("aria-busy", false);
+      btn.textContent = label;
+      if (disposed) return;
+      if (err) {
+        if (err instanceof ApiError && err.status === 404) {
+          closeSheet();
+          deleted();
+          return;
+        }
+        toast(`Could not open the PDF: ${errText(err)}`, "error");
+        return;
+      }
+      // Opening a window needs user activation; the request may have used it up.
+      if (navigator.userActivation && !navigator.userActivation.isActive) {
+        btn.textContent = again;
+        return;
+      }
+      open();
+    }
+    return { btn };
+  }
+
+  /** moreSheet is the ⋯ bottom sheet: origin, open in a new tab, save or open as PDF, pin and delete. */
   function moreSheet() {
     const close = () => {
       removeEventListener("hashchange", close);
@@ -769,6 +847,7 @@ function mountViewer(root, ctx, route) {
       overlay.remove();
     };
     const pdf = pdfButton(close);
+    const openPdf = canLinkPdf ? openPdfButton(close) : null;
     addEventListener("hashchange", close, { once: true });
     const live = artifactWindowLive(detail, ctx.store.fleet?.groups);
     const origin = artifactOrigin(detail, live);
@@ -782,7 +861,7 @@ function mountViewer(root, ctx, route) {
         origin ? h("p", { class: "artifact-origin" }, origin) : null,
         live ? h("a", { class: "btn", href: windowHash(detail.session, detail.window_id), onclick: close }, "Go to window ›") : null,
         h("a", { class: "btn", href: currentUrl(), target: "_blank", rel: "noopener noreferrer", onclick: close }, "Open in new tab ↗"),
-        pdf.btn,
+        openPdf ? h("div", { class: "row artifact-pdf-row" }, pdf.btn, openPdf.btn) : pdf.btn,
         detail.comments?.length
           ? h(
               "div",

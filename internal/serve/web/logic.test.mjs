@@ -27,7 +27,7 @@ import {
   ARTIFACT_COLLAPSE_KEY, ARTIFACT_OTHER, UNDO_MS, artifactGroupKey, artifactGroupMove, artifactRevBadge, artifactSubline, buildArtifactOrderRequest,
   createDeleteQueue, dropSettled, SETTLED_TTL_MS, loadCollapsedSet, mergeArtifactOrder, saveCollapsedSet,
   ARTIFACT_FEEDBACK_MAX, artifactCommentStatus, artifactCommentToast, artifactFeedbackFrom,
-  artifactPdfLabel, artifactPdfPath, pdfDelivery, pdfFilename,
+  artifactPdfLabel, artifactPdfLinkPath, artifactPdfPath, pdfDelivery, pdfFileProblem, pdfFilename, pdfSharePayload,
   isTrustBlocked, isTrustDialog, trustDialogOf, trustExitConfirm, trustFolder, TRUST_EXPLAIN, TRUST_TITLE,
 } from "./logic.js";
 
@@ -1353,5 +1353,23 @@ console.log("ok: folder trust");
   assert.equal(pdfDelivery({ share() {} }, file), "download"); // no canShare (desktop Firefox)
   assert.equal(pdfDelivery({ share() {}, canShare: () => { throw new TypeError("x"); } }, file), "download");
   assert.equal(pdfDelivery(undefined, file), "download");
+  // The share payload is the file alone: a title or text makes iOS share text.
+  assert.deepEqual(pdfSharePayload(file), { files: [file] });
+  const seen = [];
+  pdfDelivery({ share() {}, canShare: (d) => (seen.push(d), true) }, file);
+  assert.deepEqual(Object.keys(seen[0]), ["files"]);
+  assert.equal(artifactPdfLinkPath("a/b", 2), "/v1/artifacts/a%2Fb/pdf-link?rev=2");
+  assert.equal(pdfFilename('attachment; filename="report"'), "report.pdf");
+  assert.equal(pdfFilename('attachment; filename="R.PDF"'), "R.PDF");
+  const magic = new TextEncoder().encode("%PDF-1.4");
+  const pdf = { name: "r.pdf", type: "application/pdf", size: 8 };
+  assert.equal(pdfFileProblem(pdf, magic), "");
+  assert.match(pdfFileProblem({ ...pdf, type: "text/html" }, magic), /did not send a PDF/);
+  assert.match(pdfFileProblem({ ...pdf, type: "" }, magic), /did not send a PDF/);
+  assert.match(pdfFileProblem({ ...pdf, name: "r.html" }, magic), /\.pdf/);
+  assert.match(pdfFileProblem({ ...pdf, size: 0 }, new Uint8Array()), /empty/);
+  assert.match(pdfFileProblem(pdf, new TextEncoder().encode("<!doc")), /did not send a PDF/);
+  assert.match(pdfFileProblem(pdf, new TextEncoder().encode("%PD")), /did not send a PDF/);
+  assert.match(pdfFileProblem(null, magic), /did not send a PDF/);
 }
 console.log("ok: artifact pdf");
