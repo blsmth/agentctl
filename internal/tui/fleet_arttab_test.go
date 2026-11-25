@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -407,10 +406,9 @@ func artRowText(m FleetModel, id string) string {
 }
 
 func TestArtifactDeleteConfirm(t *testing.T) {
-	m, metas := artDeleteFixture(t, "only")
+	m, _ := artDeleteFixture(t, "only")
 	calls := stubArtRemove(t, nil)
 	id := m.selectedArtLine().art.ID
-	_ = metas
 
 	m = artPress(t, m, "x")
 	if !m.artDeleteArmed() || len(*calls) != 0 {
@@ -514,10 +512,11 @@ func TestArtifactDeletePinnedText(t *testing.T) {
 func TestArtifactDeleteErrors(t *testing.T) {
 	t.Run("error", func(t *testing.T) {
 		m, _ := artDeleteFixture(t, "one")
-		stubArtRemove(t, errors.New("disk on fire"))
+		id := m.selectedArtLine().art.ID
+		stubArtRemove(t, fmt.Errorf("removing artifact %s: disk on fire", id))
 		m = artPress(t, m, "x")
 		m = artPress(t, m, "y")
-		if !strings.Contains(m.jumpErr, "delete: disk on fire") || len(m.artList) != 1 {
+		if !strings.Contains(m.jumpErr, "disk on fire") || strings.Contains(m.jumpErr, id) || len(m.artList) != 1 {
 			t.Errorf("err=%q list=%d", m.jumpErr, len(m.artList))
 		}
 	})
@@ -582,10 +581,20 @@ func TestArtifactDeleteExclusiveWithClose(t *testing.T) {
 		t.Errorf("close=%v del=%v", m.closeArmed(), m.artDeleteArmed())
 	}
 	// And the other way round.
-	m.startClose(0)
+	m.cancelClose()
 	m.artDelID = "x"
-	m.startClose(schedLineHeaderIdx2(m, "agentctl-acme-api") + 1)
-	if m.artDeleteArmed() && m.closeArmed() {
-		t.Error("both confirmations armed")
+	row := -1
+	for i, l := range m.lines {
+		if l.kind == fleetLineRow {
+			row = i
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatal("no session row in the fixture")
+	}
+	m.startClose(row)
+	if !m.closeArmed() || m.artDeleteArmed() {
+		t.Errorf("close=%v del=%v, want close armed and delete cancelled", m.closeArmed(), m.artDeleteArmed())
 	}
 }

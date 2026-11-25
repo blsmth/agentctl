@@ -212,7 +212,9 @@ func (m *FleetModel) applyArtDeleted(msg fleetArtDeletedMsg) {
 	m.clearInfo()
 	gone := errors.Is(msg.err, artifacts.ErrNotFound)
 	if msg.err != nil && !gone {
-		m.setError("delete: " + msg.err.Error())
+		// Store errors carry the full id in paths; ids are capabilities.
+		short := artifacts.ShortID(msg.id)
+		m.setError("delete " + short + ": " + strings.ReplaceAll(msg.err.Error(), msg.id, short))
 		return
 	}
 	m.jumpErr = ""
