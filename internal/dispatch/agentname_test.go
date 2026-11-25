@@ -87,3 +87,14 @@ func TestValidateAgentName(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateAgentName_DiscoveryErrorIsSentinel(t *testing.T) {
+	stubDiscovery(t, nil, errors.New("boom"))
+	if err := ValidateAgentName("x", ""); !errors.Is(err, ErrAgentDiscovery) {
+		t.Errorf("err = %v, want ErrAgentDiscovery", err)
+	}
+	stubDiscovery(t, nil, nil)
+	if err := ValidateAgentName("x", ""); err == nil || errors.Is(err, ErrAgentDiscovery) {
+		t.Errorf("err = %v, want an unknown-agent error", err)
+	}
+}

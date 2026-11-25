@@ -367,6 +367,11 @@ func segmentHasHelpFlags(seg []cmdToken, valueFlag func(string) bool) bool {
 // cwd is the directory the Bash command runs in (the payload's cwd; "" falls
 // back to the asking window's), which the where/how rows resolve against.
 func dispatchPreviewGate(agentName, command, cwd string) (approved, decided bool, denyReason string) {
+	// An unknown --agent fails in the CLI after approval; say so before any popup.
+	if deny := dispatchUnknownAgentDeny(command, askingCwd(cwd)); deny != "" {
+		return false, false, deny
+	}
+
 	// Check if we're in a tmux session — can't show popup otherwise.
 	// Pass through rather than allowing: an unreviewed dispatch is exactly
 	// what this popup exists to prevent. See PermissionRequest's doc comment.

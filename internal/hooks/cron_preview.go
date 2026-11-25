@@ -741,6 +741,9 @@ func orNone(s string) string {
 // non-empty denyReason when the job cannot be shown faithfully or the popup
 // went unanswered.
 func cronPreviewGate(agentName, command, cwd string) (approved, decided bool, denyReason string) {
+	if deny := cronUnknownAgentDeny(command, askingCwd(cwd)); deny != "" {
+		return false, false, deny
+	}
 	if os.Getenv("TMUX") == "" {
 		logging.Log("hook-validate-bash: not in tmux session, passing through cron")
 		return false, false, ""

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/internal/dispatch"
 	"github.com/blsmth/agentctl/internal/prompt"
 	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/theme"
@@ -563,6 +565,7 @@ func PrintAgentsTable(jsonOut bool) error {
 		return fmt.Errorf("discovering agents: %w", err)
 	}
 
+	builtins := builtinAgentNames(agts)
 	if jsonOut {
 		rows := make([]agentsJSONRow, 0, len(agts))
 		for _, a := range agts {
@@ -574,6 +577,9 @@ func PrintAgentsTable(jsonOut bool) error {
 				Description: a.Description,
 				Tokens:      tok,
 			})
+		}
+		for _, n := range builtins {
+			rows = append(rows, agentsJSONRow{Name: n, Scope: builtinScope})
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -626,7 +632,29 @@ func PrintAgentsTable(jsonOut bool) error {
 			desc,
 		)
 	}
+	for _, n := range builtins {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+			accent.Render(n), muted.Render("-"), blue.Render(builtinScope), muted.Render("-"), "")
+	}
 	return w.Flush()
+}
+
+// builtinScope is the SCOPE of the Claude Code built-in agents, which have no
+// file; they are listed by `agents` (table and --json) but not in the TUI
+// browser or the detail view.
+const builtinScope = "builtin"
+
+// builtinAgentNames lists the Claude Code built-ins not shadowed by a
+// discovered agent, sorted.
+func builtinAgentNames(discovered []agent.Agent) []string {
+	var out []string
+	for _, n := range dispatch.ClaudeBuiltinAgents() {
+		if !slices.ContainsFunc(discovered, func(a agent.Agent) bool { return a.Name == n }) {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // resolveAgentTokens estimates the token count for an agent's prompt.

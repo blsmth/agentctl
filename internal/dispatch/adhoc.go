@@ -148,6 +148,10 @@ func isPluginAgent(name string) bool {
 	return ok && plugin != "" && agentName != ""
 }
 
+// ErrAgentDiscovery marks a ValidateAgentName failure to list agents at all
+// (as opposed to the name being unknown).
+var ErrAgentDiscovery = errors.New("discovering agents")
+
 // ValidateAgentName returns an error naming the available agents unless name
 // is a discovered agent, a Claude Code built-in, or a plugin agent.
 func ValidateAgentName(name, workDir string) error {
@@ -156,7 +160,7 @@ func ValidateAgentName(name, workDir string) error {
 	}
 	agents, err := discoverAgents(workDir)
 	if err != nil {
-		return fmt.Errorf("discovering agents: %w", err)
+		return fmt.Errorf("%w: %w", ErrAgentDiscovery, err)
 	}
 	names := make([]string, 0, len(agents)+len(claudeBuiltinAgents))
 	for _, a := range agents {
