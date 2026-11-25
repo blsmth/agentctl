@@ -291,30 +291,25 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
   var NF = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
   var PF = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
   var PFD = [0, 1, 2, 3].map(function (d) { return new Intl.NumberFormat("en-US", { maximumFractionDigits: d }); });
-  function pctNum(s) { return parseFloat(s.replace(/,/g, "")); }
-  // Percent text that never shows a value the data does not support: up to 1
-  // decimal, but never a whole number (0, 100, or a threshold such as 90 that
-  // the value only reaches by rounding up) unless the value is exactly it.
-  // Up to 3 decimals are used to avoid that, then ">99.999" / "<0.001" forms.
+  // Percent text that rounds toward zero, never up, so it never claims a value
+  // the data does not reach (99.86 is "99.8%", not "99.9%"). Up to 1 decimal;
+  // near 0 and 100 up to 3, with ">99.999" / "<0.001" / ">100" past that. The
+  // epsilon keeps float artifacts (34.4999999999 for 34.5) from truncating down.
+  function trunc(a, d) { var k = Math.pow(10, d); return Math.floor(a * k + 1e-9) / k; }
   function pct(v) {
-    var neg = v < 0, a = Math.abs(v), s = PFD[1].format(a), r = pctNum(s);
-    var out = s;
-    if (r === Math.round(r) && a !== r && (a < r || r === 0 || r === 100)) {
-      out = null;
-      for (var d = 2; d <= 3 && out === null; d++) {
-        var t = PFD[d].format(a);
-        if (pctNum(t) !== r) out = t;
-      }
-      if (out === null) {
-        if (a < r) out = ">" + PFD[3].format(r - 0.001);
-        else out = r === 0 ? "<0.001" : ">" + r;
-      }
-    }
+    var neg = v < 0, a = Math.abs(v), out;
+    var d = a < 0.1 || (a >= 99.9 && a < 100.1) ? 3 : 1;
+    if (a > 0 && a < 0.001 - 1e-9) out = "<0.001";
+    else if (a < 100 && a > 99.999 + 1e-9) out = ">99.999";
+    else if (a > 100 && a < 100.001 - 1e-9) out = ">100";
+    else out = PFD[d].format(trunc(a, d));
     if (!neg) return out + "%";
     if (out.charAt(0) === ">") return "<-" + out.slice(1) + "%";
     if (out.charAt(0) === "<") return ">-" + out.slice(1) + "%";
     return "-" + out + "%";
   }
+  // a chart unit that starts with "%" is a percent; the rest follows the number
+  function pctUnit(u) { return typeof u === "string" && u.charAt(0) === "%"; }
   var DF = new Intl.DateTimeFormat("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
   function isNil(v) { return v === null || v === undefined || v === ""; }
   function isNum(v) { return typeof v === "number" && isFinite(v); }
@@ -363,6 +358,8 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
     },
     text: function (v) { return isNil(v) ? UNKNOWN : String(v); },
     status: function (v) { return isNil(v) ? UNKNOWN : String(v); },
+    // chart value with its unit: a unit starting with "%" is a percent ("99.8% uptime")
+    withUnit: function (v, u) { return pctUnit(u) ? pct(v) + u.slice(1) : NF.format(v) + (u ? " " + u : ""); },
     by: function (type, v, code) {
       var f = fmt[type] || fmt.text;
       return f(v, code);
@@ -1021,7 +1018,7 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
               var name = dough ? c.label : c.dataset.label;
               if (c.raw === null || c.raw === undefined) return name + ": no data";
               var v = c.parsed && typeof c.parsed === "object" ? (horiz ? c.parsed.x : c.parsed.y) : c.parsed;
-              return name + ": " + (b.unit === "%" ? fmt.percent(v) : fmt.number(v) + unit);
+              return name + ": " + fmt.withUnit(v, b.unit);
             } } }
         }
       };
@@ -1048,7 +1045,7 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
       box.remove();
       card.append(h("p", "muted", "Charts need internet access to load Chart.js; the numbers are shown as a table instead."));
       var cols = [{ key: "label", label: b.x_label || "Label", type: "text" }].concat(b.series.map(function (se, i) {
-        return { key: "s" + i, label: se.name + (b.unit && b.unit !== "%" ? " (" + b.unit + ")" : ""), type: b.unit === "%" ? "percent" : "number" };
+        return { key: "s" + i, label: se.name + (pctUnit(b.unit) ? (b.unit.slice(1).trim() ? " (" + b.unit.slice(1).trim() + ")" : "") : b.unit ? " (" + b.unit + ")" : ""), type: pctUnit(b.unit) ? "percent" : "number" };
       }));
       var rows = b.labels.map(function (l, j) {
         var r = { label: l };
