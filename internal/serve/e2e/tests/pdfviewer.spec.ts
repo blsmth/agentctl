@@ -159,7 +159,7 @@ test("a failed render shows the server's message and Retry asks again", async ({
   const [id] = await control.seedArtifacts(seed());
   await open(page, id);
   await expect(page.locator(".pdfv-error")).toContainText("another PDF is rendering");
-  await expect(page.getByRole("button", { name: "Share", exact: true })).toBeHidden();
+  await expect(page.locator(".pdfv-share")).toBeHidden();
   const retry = page.getByRole("button", { name: "Retry" });
   const box = (await retry.boundingBox())!;
   expect(box.height).toBeGreaterThanOrEqual(44);
@@ -199,8 +199,9 @@ test("the viewer fits a 390px phone in light and dark, with white pages on dark 
   const width = page.viewportSize()!.width;
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
-    for (const name of ["Share", "Close PDF"]) {
-      const box = (await page.getByRole("button", { name, exact: true }).boundingBox())!;
+    // The button reads Share or Download depending on the engine's file sharing.
+    for (const btn of [page.locator(".pdfv-share"), page.getByRole("button", { name: "Close PDF" })]) {
+      const box = (await btn.boundingBox())!;
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
       expect(box.height).toBeGreaterThanOrEqual(44);
@@ -244,4 +245,37 @@ test("closing while the server is still rendering cancels the request", async ({
   await page.waitForTimeout(600);
   await expect(viewer(page)).toHaveCount(0);
   await expect(page.locator("header.bar h1")).toHaveText("Checkout mockup");
+});
+
+test("zooming twice quickly leaves every visible page drawn sharp, at the new size", async ({ page, control }) => {
+  const [id] = await control.seedArtifacts(seed());
+  await open(page, id);
+  await expect(page.locator(".pdfv-count")).toHaveText("12 pages");
+  await expect.poll(() => canvases(page).count()).toBeGreaterThan(0);
+  const wheel = (deltaY: number) =>
+    page.locator(".pdfv-scroll").evaluate((el, dy) => {
+      el.dispatchEvent(new WheelEvent("wheel", { ctrlKey: true, deltaY: dy, clientX: 200, clientY: 300, bubbles: true, cancelable: true }));
+    }, deltaY);
+  // Each wheel burst settles after 150ms and re-renders; the second lands while pages from the first are still drawing.
+  await wheel(-60);
+  await page.waitForTimeout(170);
+  await wheel(-40);
+  await page.waitForTimeout(170);
+  const sharp = () =>
+    page.evaluate(() => {
+      const box = document.querySelector(".pdfv-scroll")!.getBoundingClientRect();
+      const out: { drawn: boolean; ratio: number }[] = [];
+      for (const el of document.querySelectorAll(".pdfv-page")) {
+        const r = el.getBoundingClientRect();
+        if (r.bottom < box.top || r.top > box.bottom) continue;
+        const c = el.querySelector("canvas");
+        out.push({ drawn: !!c, ratio: c ? c.width / r.width : 0 });
+      }
+      return out;
+    });
+  // Zoomed ~2.7x: a canvas still at the old scale would be about 1.1 pixels per CSS pixel, not the device ratio.
+  await expect.poll(async () => {
+    const v = await sharp();
+    return v.length > 0 && v.every((p) => p.drawn && p.ratio > 2);
+  }).toBe(true);
 });

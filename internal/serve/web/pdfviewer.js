@@ -19,6 +19,10 @@ import { h, toast } from "./ui.js";
 
 const PDFJS_URL = "/vendor/pdfjs/pdf.min.mjs";
 const PDFJS_WORKER = "/vendor/pdfjs/pdf.worker.min.mjs";
+// Pixels per canvas. iOS limits the total canvas memory, and up to four pages
+// (the visible ones and one either side) are live, so stay well under its
+// per-canvas limit of about 16.7 million.
+const MAX_CANVAS_PIXELS = 6_000_000;
 
 let pdfjsPromise = null;
 
@@ -162,7 +166,7 @@ export function openPdfViewer({ id, rev, title, onGone }) {
     first.cleanup();
     for (let i = 0; i < doc.numPages; i++) {
       const el = h("div", { class: "pdfv-page", "data-page": String(i + 1) });
-      pages.push({ el, canvas: null, task: null, drawing: false, w: baseW, h: baseH });
+      pages.push({ el, canvas: null, task: null, drawing: false, gen: 0, w: baseW, h: baseH });
       pagesEl.append(el);
     }
     sizePages();
@@ -210,8 +214,14 @@ export function openPdfViewer({ id, rev, title, onGone }) {
     if (p.canvas || p.drawing || !state.doc) return;
     p.drawing = true;
     const doc = state.doc;
+    // free() bumps p.gen: a draw that began before is out of date (it was
+    // sized for an old zoom or width) and must not install its canvas.
+    const gen = p.gen;
+    const current = () => !state.closed && state.doc === doc && p.gen === gen;
+    let task = null;
     try {
       const page = await doc.getPage(i + 1);
+      if (!current()) return;
       const natural = page.getViewport({ scale: 1 });
       if (natural.width !== p.w || natural.height !== p.h) {
         p.w = natural.width;
@@ -220,11 +230,11 @@ export function openPdfViewer({ id, rev, title, onGone }) {
       }
       const cssW = availWidth() * state.zoom;
       const vp = page.getViewport({ scale: pdfFitScale(natural.width, cssW) });
-      const density = pdfCanvasDensity(window.devicePixelRatio || 1, vp.width, vp.height);
+      const density = pdfCanvasDensity(window.devicePixelRatio || 1, vp.width, vp.height, MAX_CANVAS_PIXELS);
       const canvas = h("canvas", { class: "pdfv-canvas" });
       canvas.width = Math.floor(vp.width * density);
       canvas.height = Math.floor(vp.height * density);
-      const task = page.render({
+      task = page.render({
         canvas,
         canvasContext: canvas.getContext("2d"),
         viewport: vp,
@@ -235,7 +245,7 @@ export function openPdfViewer({ id, rev, title, onGone }) {
       await task.promise;
       p.task = null;
       page.cleanup();
-      if (state.closed || state.doc !== doc || !stillWanted(i)) {
+      if (!current() || !stillWanted(i)) {
         canvas.width = canvas.height = 0;
         return;
       }
@@ -246,7 +256,10 @@ export function openPdfViewer({ id, rev, title, onGone }) {
       if (e?.name !== "RenderingCancelledException" && !state.closed) console.warn("pdf page", i + 1, e);
     } finally {
       p.drawing = false;
-      p.task = null;
+      if (p.task === task) p.task = null;
+      // The view changed while this drew (zoom, rotation, scrolling back):
+      // draw again, since nothing else will until the page next intersects.
+      if (p.gen !== gen && !p.canvas && !state.closed && state.doc === doc && pages[i] === p && stillWanted(i)) queueMicrotask(() => draw(i));
     }
   }
 
@@ -255,6 +268,7 @@ export function openPdfViewer({ id, rev, title, onGone }) {
 
   /** free drops a page's canvas and cancels its render; the bitmap goes back to the browser at once. */
   function free(p) {
+    p.gen++;
     p.task?.cancel();
     if (p.canvas) {
       // iOS keeps canvas memory until the element is collected: zero it.
