@@ -311,6 +311,9 @@ func launchFactsBlock(req Request, facts launchFacts) string {
 	if req.Orchestrator.Known() {
 		lines = append(lines, orchestratorFact(req.Orchestrator))
 	}
+	if req.ScheduledBy != "" {
+		lines = append(lines, scheduledRunNote(req.ScheduledBy))
+	}
 	out := strings.Join(lines, "\n")
 	if req.Mode == ModeReviewPR && facts.worktree() && !req.reviewSharedCheckout {
 		out += "\n\n" + reviewWorktreeOrientation(req, facts.WorkDir, facts.Branch)

@@ -97,12 +97,36 @@ const orchWaitMessagingSection = "### Wait\n" +
 	"- Never `sleep` or loop-and-poll. Workers report with SendMessage and agentctl adds `agentctl notice:` lines when a worker goes idle or blocks; end your turn and let them arrive. `SendMessage` with `notify_when_idle: true` gives a one-shot idle notice for one session\n" +
 	"- CI or any single long command: run it as a background Bash command (`run_in_background`), e.g. `gh pr checks <N> --watch --interval 20`, and act on its exit notice; exit code 8 means checks are pending, not failed\n" +
 	"- A condition with output worth streaming: the Monitor tool (default deadline 5m, max 30m; re-arm if still needed)\n" +
-	"- Check back later or repeatedly: `CronCreate` (one-shot or recurring cron expression; `CronList`/`CronDelete`) or `/loop <interval> <prompt>`. Session-scoped: fires only between turns while this session lives, recurring jobs expire after 7 days, 1-minute minimum. Delete the job once the thing you waited for happens\n" +
-	"- Anything that must outlive the session: `agentctl cron`, not Claude Code cron\n"
+	"- Check back later or repeatedly: `CronCreate` (one-shot or recurring cron expression; `CronList`/`CronDelete`) or `/loop <interval> <prompt>`. Session-scoped: fires only between turns while this session lives, recurring jobs expire after 7 days, 1-minute minimum. Delete the job once the thing you waited for happens\n"
 
 const orchWaitNoMessagingSection = "### Wait\n" +
 	"- Do not poll. agentctl tells you when a worker finishes or blocks (`agentctl notice:` lines)\n" +
 	"- CI: `gh pr checks <N> --watch --interval 20` as a single command that returns when checks finish; exit code 8 means checks are pending, not failed\n"
+
+// orchScheduleCore holds the agentctl cron bullets shared by both Schedule
+// variants. It names no Claude Code-only tool.
+const orchScheduleCore = "- Durable or recurring work: `agentctl cron add <name> --schedule '<5-field cron, local time, or @hourly/@daily/@weekly>' --agent <a> --dir <repo>` plus one of `--prompt-key` (read at every fire), `--prompt-file` (copied at add time), `--template` (read at every fire) or `--prompt`. Same rules as dispatch: never `--prompt \"$(cat ...)\"`, and `agentctl context set` the key in a separate Bash call first\n" +
+	"- `cron add`, `edit`, `resume` and `run --force` always open the approval popup (denies after 9 minutes). Never write schedules.json or the cron state dir directly (denied). Inspect with `cron list` / `cron runs <name>`; `cron pause` / `cron rm` to stop\n" +
+	"- A run is skipped when the previous run is still active (the default, `--overlap skip`; `--overlap allow` exists) and when plan usage is high (usage gate), so a fire can silently not happen. Set `--timeout` for unattended jobs\n" +
+	"- There is no run-once job: for a one-off, pick a schedule that fires once soon and end the job prompt with a step that runs `agentctl cron rm <name>`\n"
+
+const orchScheduleMessagingSection = "### Schedule\n" +
+	"- Waits within this session stay `CronCreate` or `/loop`; anything that must outlive the session is an `agentctl cron` job\n" +
+	orchScheduleCore +
+	"- Do not use Claude Code's cloud `schedule` skill or routines for agentctl work: they run outside agentctl\n" +
+	"- More: docs/configuration.md#cron\n"
+
+const orchScheduleNoMessagingSection = "### Schedule\n" + orchScheduleCore +
+	"- More: docs/configuration.md#cron\n"
+
+// scheduledRunNote is the launch fact for a cron fire. It names no
+// harness-specific tool.
+func scheduledRunNote(job string) string {
+	return "- Scheduled run of agentctl cron job `" + job + "`: nobody is watching live, so do not wait on a human answer; finish the task and report. The job prompt may end with its own cleanup steps; do them"
+}
+
+// workerNoCronLine tells a worker not to schedule; it names no harness tool.
+const workerNoCronLine = "- Never create `agentctl cron` jobs yourself; if something needs a schedule, say so in your report or PR to the dispatcher"
 
 // workerWaitSection is the Wait group for workers on harnesses with Claude
 // Code's tools (messaging true). It is not part of the shared sections: the
@@ -110,7 +134,8 @@ const orchWaitNoMessagingSection = "### Wait\n" +
 const workerWaitSection = "### Wait\n" +
 	"- Never `sleep` or loop-and-poll\n" +
 	"- A long command (CI, slow build): run it as a background Bash command (`run_in_background`) and act on its exit notice\n" +
-	"- To check back later: `CronCreate` (`CronList`/`CronDelete`), and delete the job once done"
+	"- To check back later: `CronCreate` (`CronList`/`CronDelete`), and delete the job once done\n" +
+	workerNoCronLine
 
 // orchReviewSection routes every PR through a reviewer (dispatch
 // --review-pr). Messaging harnesses only: the reviewer reports its verdict
@@ -197,9 +222,9 @@ func orchestratorSections(messaging bool) string {
 // orchestratorSectionsFor is orchestratorSections for a pr_review mode. The
 // Review group exists only for messaging harnesses, in every mode.
 func orchestratorSectionsFor(messaging bool, prReview, backendLines string) string {
-	wait, match, review := orchWaitNoMessagingSection, orchDelegateMatchNoMessaging, ""
+	wait, match, review := orchWaitNoMessagingSection+"\n"+orchScheduleNoMessagingSection, orchDelegateMatchNoMessaging, ""
 	if messaging {
-		wait, match, review = orchWaitMessagingSection, orchDelegateMatchMessaging, orchReviewFor(prReview)+"\n"
+		wait, match, review = orchWaitMessagingSection+"\n"+orchScheduleMessagingSection, orchDelegateMatchMessaging, orchReviewFor(prReview)+"\n"
 	}
 	return strings.TrimRight(orchDelegateSection+match+"\n"+orchModelsSection(backendLines)+"\n"+review+orchWatchSection+"\n"+wait+"\n"+
 		orchCleanupSection+"\n"+orchContextSection+"\n"+orchOtherSection, "\n")
@@ -429,6 +454,9 @@ func preambleForHarnessBackends(role Role, messaging bool, prReview, backendLine
 	p := "## agentctl Runtime Environment\n\n" +
 		"You are running inside an agentctl-managed tmux session. The following tools are available:\n\n" +
 		noMessagingRuntimeSections
+	if role != RoleOrchestrator {
+		p += "\n\n### Schedule\n" + workerNoCronLine
+	}
 	if role == RoleOrchestrator {
 		p += "\n\n" + orchestratorSectionsFor(false, config.PRReviewAlways, backendLines)
 	}
