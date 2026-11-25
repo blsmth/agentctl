@@ -324,8 +324,9 @@
   // Printing: the print media type, or ?print=1 in the URL. A headless PDF
   // export lays the page out as screen until it prints, so it passes the
   // parameter; either way charts must not be captured mid-animation.
+  var printing = false; // set between beforeprint and afterprint, when the print media type does not yet match
   function isPrint() {
-    return !!(global.matchMedia && global.matchMedia("print").matches) ||
+    return printing || !!(global.matchMedia && global.matchMedia("print").matches) ||
       /[?&]print=1(&|$)/.test((global.location && global.location.search) || "");
   }
   function cssVar(n) { return getComputedStyle(doc.documentElement).getPropertyValue(n).trim(); }
@@ -758,7 +759,7 @@
         options.scales = horiz ? { x: val, y: cat } : { x: cat, y: val };
         if (horiz) options.indexAxis = "y";
         // hover anywhere in a category, so a null (no bar) still gets a "no data" tooltip
-        options.interaction = { mode: "index", intersect: false };
+        options.interaction = { mode: "index", intersect: false, axis: horiz ? "y" : "x" };
         if (type === "bar") plugins.push(nullBarPlugin(horiz, stacked, pal, muted));
       } else options.cutout = "60%";
       chart = new Chart(cv, { type: type, data: { labels: shown, datasets: datasets }, options: options, plugins: plugins });
@@ -849,8 +850,18 @@
     if (nmq.addEventListener) nmq.addEventListener("change", onNarrow); else if (nmq.addListener) nmq.addListener(onNarrow);
   }
   if (global.addEventListener) {
-    global.addEventListener("beforeprint", function () { state.redraws.forEach(function (f) { f(); }); onPrintLayout(); });
-    global.addEventListener("afterprint", function () { state.redraws.forEach(function (f) { f(); }); onPrintLayout(); });
+    global.addEventListener("beforeprint", function () {
+      printing = true;
+      doc.documentElement.setAttribute("data-print", "");
+      state.redraws.forEach(function (f) { f(); });
+      onPrintLayout();
+    });
+    global.addEventListener("afterprint", function () {
+      printing = false;
+      doc.documentElement.removeAttribute("data-print");
+      state.redraws.forEach(function (f) { f(); });
+      onPrintLayout();
+    });
   }
   if (doc.getElementById("spec")) render();
 })(typeof window !== "undefined" ? window : this);

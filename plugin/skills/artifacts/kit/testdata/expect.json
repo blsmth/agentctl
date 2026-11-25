@@ -28,6 +28,7 @@
   "doughnut-x-axis": {"path": "blocks[0].x_axis"},
   "date-axis-bad-label": {"path": "blocks[0].labels[1]"},
   "date-axis-impossible": {"path": "blocks[0].labels[0]"},
+  "date-axis-datetime": {"path": "blocks[0].labels[0]"},
   "x-axis-bad-value": {"path": "blocks[0].x_axis"},
   "horizontal-not-bool": {"path": "blocks[0].horizontal"},
   "report-without-sources": {"path": "blocks", "go_only": true},

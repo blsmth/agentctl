@@ -22,6 +22,13 @@
   --accent:#6ea8ff;--good:#4ade80;--warn:#fbbf24;--bad:#f87171;--info:#6ea8ff;
   --c1:#6ea8ff;--c2:#2dd4bf;--c3:#a78bfa;--c4:#fb923c;--c5:#f472b6;--c6:#94a3b8;
 }}
+/* kit.js sets data-print on beforeprint, before the print media type applies, so charts repaint light */
+:root[data-print]{
+  --bg:#fff;--fg:#1a1d21;--muted:#5f6b7a;--card:#f5f7fa;--line:#dde2e8;
+  --accent:#2563eb;--good:#15803d;--warn:#b45309;--bad:#b91c1c;--info:#2563eb;
+  --c1:#2563eb;--c2:#0f766e;--c3:#7c3aed;--c4:#c2410c;--c5:#be185d;--c6:#64748b;
+  color-scheme:light;
+}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 var(--font);overflow-wrap:anywhere}
@@ -587,8 +594,9 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
   // Printing: the print media type, or ?print=1 in the URL. A headless PDF
   // export lays the page out as screen until it prints, so it passes the
   // parameter; either way charts must not be captured mid-animation.
+  var printing = false; // set between beforeprint and afterprint, when the print media type does not yet match
   function isPrint() {
-    return !!(global.matchMedia && global.matchMedia("print").matches) ||
+    return printing || !!(global.matchMedia && global.matchMedia("print").matches) ||
       /[?&]print=1(&|$)/.test((global.location && global.location.search) || "");
   }
   function cssVar(n) { return getComputedStyle(doc.documentElement).getPropertyValue(n).trim(); }
@@ -1021,7 +1029,7 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
         options.scales = horiz ? { x: val, y: cat } : { x: cat, y: val };
         if (horiz) options.indexAxis = "y";
         // hover anywhere in a category, so a null (no bar) still gets a "no data" tooltip
-        options.interaction = { mode: "index", intersect: false };
+        options.interaction = { mode: "index", intersect: false, axis: horiz ? "y" : "x" };
         if (type === "bar") plugins.push(nullBarPlugin(horiz, stacked, pal, muted));
       } else options.cutout = "60%";
       chart = new Chart(cv, { type: type, data: { labels: shown, datasets: datasets }, options: options, plugins: plugins });
@@ -1112,8 +1120,18 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
     if (nmq.addEventListener) nmq.addEventListener("change", onNarrow); else if (nmq.addListener) nmq.addListener(onNarrow);
   }
   if (global.addEventListener) {
-    global.addEventListener("beforeprint", function () { state.redraws.forEach(function (f) { f(); }); onPrintLayout(); });
-    global.addEventListener("afterprint", function () { state.redraws.forEach(function (f) { f(); }); onPrintLayout(); });
+    global.addEventListener("beforeprint", function () {
+      printing = true;
+      doc.documentElement.setAttribute("data-print", "");
+      state.redraws.forEach(function (f) { f(); });
+      onPrintLayout();
+    });
+    global.addEventListener("afterprint", function () {
+      printing = false;
+      doc.documentElement.removeAttribute("data-print");
+      state.redraws.forEach(function (f) { f(); });
+      onPrintLayout();
+    });
   }
   if (doc.getElementById("spec")) render();
 })(typeof window !== "undefined" ? window : this);
