@@ -343,7 +343,19 @@ func postChart(b map[string]any, errs *Errors) {
 		}
 	}
 	if b["chart"] != "doughnut" {
+		if b["x_axis"] == "date" {
+			for i, l := range labels {
+				if s, _ := l.(string); !isDateOnly(s) {
+					*errs = append(*errs, Error{fmt.Sprintf("labels[%d]", i), "x_axis \"date\" needs ISO dates YYYY-MM-DD (got " + quote(l) + ")"})
+				}
+			}
+		}
 		return
+	}
+	for _, k := range []string{"horizontal", "x_axis"} {
+		if _, ok := b[k]; ok {
+			*errs = append(*errs, Error{k, "a doughnut does not support this field"})
+		}
 	}
 	if len(series) != 1 {
 		*errs = append(*errs, Error{"series", "a doughnut needs exactly one series"})

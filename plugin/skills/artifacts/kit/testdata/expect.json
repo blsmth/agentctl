@@ -24,6 +24,12 @@
   "bad-column-type": {"path": "blocks[0].columns[0].type"},
   "brand-not-string": {"path": "brand"},
   "client-null": {"path": "client"},
+  "doughnut-horizontal": {"path": "blocks[0].horizontal"},
+  "doughnut-x-axis": {"path": "blocks[0].x_axis"},
+  "date-axis-bad-label": {"path": "blocks[0].labels[1]"},
+  "date-axis-impossible": {"path": "blocks[0].labels[0]"},
+  "x-axis-bad-value": {"path": "blocks[0].x_axis"},
+  "horizontal-not-bool": {"path": "blocks[0].horizontal"},
   "report-without-sources": {"path": "blocks", "go_only": true},
   "dashboard-without-sources": {"path": "blocks", "go_only": true}
 }

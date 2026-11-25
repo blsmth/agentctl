@@ -78,6 +78,7 @@ var blockSchemas = map[string][]field{
 			{name: "name", t: tStr, req: true}, {name: "values", t: tNums, req: true}}},
 		{name: "unit", t: tStr}, {name: "x_label", t: tStr}, {name: "y_label", t: tStr}, {name: "note", t: tStr},
 		{name: "excluded", t: tStrs},
+		{name: "horizontal", t: tBool}, {name: "x_axis", t: tEnum, enum: []string{"date"}},
 	},
 	"table": {
 		{name: "title", t: tStr},

@@ -57,7 +57,7 @@ Tiles. `items` (required, non-empty) of:
 
 ### `chart`
 
-Chart.js via CDN, colours from the CSS tokens, redrawn when the colour scheme changes. If the CDN is unreachable the data is shown as a table.
+Chart.js via CDN, colours from the CSS tokens, redrawn when the colour scheme changes or the viewport crosses the phone breakpoint (600px). Tick labels are never rotated. A `null` bar is drawn as a dashed, hatched "no data" stub (tooltip says "no data"); a `null` in a line is a break in the line. Printing forces the light palette and disables animation. If the CDN is unreachable the data is shown as a table.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -68,6 +68,8 @@ Chart.js via CDN, colours from the CSS tokens, redrawn when the colour scheme ch
 | `x_label` | string | no | x-axis title |
 | `y_label` | string | no | y-axis title, before the unit |
 | `note` | string | no | caption under the chart |
+| `horizontal` | boolean | no | `bar`/`stacked_bar` only (ignored by `line`). `true`/`false` forces horizontal/vertical bars. Unset: horizontal when there are more than 8 labels and the viewport is 600px or narrower, so every label stays readable. Not allowed on a doughnut |
+| `x_axis` | `date` | no | `date`: every label must be an ISO date `YYYY-MM-DD`; labels are shown short in the viewer locale (e.g. "Nov 24") and ticks are thinned, not rotated. No date adapter: the axis is categorical, so unevenly spaced dates are not spaced by time. Not allowed on a doughnut |
 | `excluded` | array of string | no | what the chart leaves out (e.g. "3 failed runs without a duration"); each is shown under the chart as "Excluded: ..." |
 
 ```json
