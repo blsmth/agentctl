@@ -408,7 +408,7 @@ func buildFinishingSteps(req Request, branch string, useWorktree bool) string {
 		}
 
 		return fmt.Sprintf(`When you are finished — follow these steps IN ORDER, do not skip any:
-1. Verify the change builds and tests pass, using the project's own build/test commands.
+1. Verify the change builds and tests pass, using the project's own build/test commands, and run the repo's configured linter (e.g. golangci-lint run when .golangci.yml exists) on what you changed; fix what it reports. If the task names checks (screen sizes, themes, browsers, commands, environments), do every one before the PR and list each in the PR message as done, or not done with the reason.
 2. Stage ONLY the files you changed — explicit paths, never "git add -A" or "git add .".
 3. Commit your changes with a descriptive message.%s
 4. Push your branch: git push -u origin %s
@@ -419,7 +419,7 @@ The PR is the deliverable, not the commit — do not stop after committing, and 
 	}
 
 	return `When you are finished — follow these steps IN ORDER, do not skip any:
-1. Verify the change builds and tests pass, using the project's own build/test commands.
+1. Verify the change builds and tests pass, using the project's own build/test commands, and run the repo's configured linter (e.g. golangci-lint run when .golangci.yml exists) on what you changed; fix what it reports. If the task names checks (screen sizes, themes, browsers, commands, environments), do every one before the PR and list each in the PR message as done, or not done with the reason.
 2. Stage ONLY the files you changed — explicit paths, never "git add -A" or "git add .".
 3. Commit your changes with a descriptive message.
 
