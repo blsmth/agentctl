@@ -41,6 +41,31 @@
   // ---- formatters: every page formats numbers the same way ----
   var NF = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
   var PF = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
+  var PFD = [0, 1, 2, 3].map(function (d) { return new Intl.NumberFormat("en-US", { maximumFractionDigits: d }); });
+  function pctNum(s) { return parseFloat(s.replace(/,/g, "")); }
+  // Percent text that never shows a value the data does not support: up to 1
+  // decimal, but never a whole number (0, 100, or a threshold such as 90 that
+  // the value only reaches by rounding up) unless the value is exactly it.
+  // Up to 3 decimals are used to avoid that, then ">99.999" / "<0.001" forms.
+  function pct(v) {
+    var neg = v < 0, a = Math.abs(v), s = PFD[1].format(a), r = pctNum(s);
+    var out = s;
+    if (r === Math.round(r) && a !== r && (a < r || r === 0 || r === 100)) {
+      out = null;
+      for (var d = 2; d <= 3 && out === null; d++) {
+        var t = PFD[d].format(a);
+        if (pctNum(t) !== r) out = t;
+      }
+      if (out === null) {
+        if (a < r) out = ">" + PFD[3].format(r - 0.001);
+        else out = r === 0 ? "<0.001" : ">" + r;
+      }
+    }
+    if (!neg) return out + "%";
+    if (out.charAt(0) === ">") return "<-" + out.slice(1) + "%";
+    if (out.charAt(0) === "<") return ">-" + out.slice(1) + "%";
+    return "-" + out + "%";
+  }
   var DF = new Intl.DateTimeFormat("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
   function isNil(v) { return v === null || v === undefined || v === ""; }
   function isNum(v) { return typeof v === "number" && isFinite(v); }
@@ -49,7 +74,7 @@
   var fmt = {
     unknown: UNKNOWN,
     number: function (v) { return isNil(v) ? UNKNOWN : isNum(v) ? NF.format(v) : String(v); },
-    percent: function (v) { return isNil(v) ? UNKNOWN : isNum(v) ? PF.format(v) + "%" : String(v); },
+    percent: function (v) { return isNil(v) ? UNKNOWN : isNum(v) ? pct(v) : String(v); },
     currency: function (v, code) {
       if (isNil(v)) return UNKNOWN;
       if (!isNum(v)) return String(v);
@@ -63,9 +88,10 @@
       if (isNil(v)) return UNKNOWN;
       if (!isNum(v)) return String(v);
       var sign = v < 0 ? "-" : "", s = Math.abs(v);
-      if (s < 1) return sign + Math.round(s * 1000) + " ms";
-      if (s < 60) return sign + PF.format(s) + " s";
-      var t = Math.round(s), d = Math.floor(t / 86400), hr = Math.floor((t % 86400) / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+      // never round up into the next unit: 999.6 ms is not "1000 ms", 59.97 s is not "60 s"
+      if (s < 1) return sign + Math.min(Math.round(s * 1000), 999) + " ms";
+      if (s < 60) return sign + (PF.format(s) === "60" ? "59.9" : PF.format(s)) + " s";
+      var t = Math.floor(s), d = Math.floor(t / 86400), hr = Math.floor((t % 86400) / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
       if (t < 3600) return sign + m + "m " + pad2(sec) + "s";
       if (t < 86400) return sign + hr + "h " + pad2(m) + "m";
       return sign + d + "d " + hr + "h";
@@ -94,7 +120,8 @@
     },
     signed: function (type, v, code) {
       var out = fmt.by(type, v, code);
-      return isNum(v) && v > 0 ? "+" + out : out;
+      if (!isNum(v) || v <= 0) return out;
+      return out.charAt(0) === ">" || out.charAt(0) === "<" ? out.charAt(0) + "+" + out.slice(1) : "+" + out;
     }
   };
 
@@ -745,7 +772,7 @@
               var name = dough ? c.label : c.dataset.label;
               if (c.raw === null || c.raw === undefined) return name + ": no data";
               var v = c.parsed && typeof c.parsed === "object" ? (horiz ? c.parsed.x : c.parsed.y) : c.parsed;
-              return name + ": " + fmt.number(v) + unit;
+              return name + ": " + (b.unit === "%" ? fmt.percent(v) : fmt.number(v) + unit);
             } } }
         }
       };
@@ -772,7 +799,7 @@
       box.remove();
       card.append(h("p", "muted", "Charts need internet access to load Chart.js; the numbers are shown as a table instead."));
       var cols = [{ key: "label", label: b.x_label || "Label", type: "text" }].concat(b.series.map(function (se, i) {
-        return { key: "s" + i, label: se.name + (b.unit ? " (" + b.unit + ")" : ""), type: "number" };
+        return { key: "s" + i, label: se.name + (b.unit && b.unit !== "%" ? " (" + b.unit + ")" : ""), type: b.unit === "%" ? "percent" : "number" };
       }));
       var rows = b.labels.map(function (l, j) {
         var r = { label: l };
