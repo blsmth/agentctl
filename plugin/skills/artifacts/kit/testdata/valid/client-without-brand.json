@@ -1,0 +1,1 @@
+{"kind":"diagram","title":"Flow","client":"Acme Corp","blocks":[{"type":"mermaid","source":"flowchart LR\n  A --> B"}]}

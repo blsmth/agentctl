@@ -154,6 +154,27 @@ Agents never edit artifact HTML. A kit page is described by a JSON spec (`plugin
 - **Shared fixtures.** `kit/testdata/valid/*.json` must pass and `kit/testdata/invalid/*.json` must fail at the path named in `kit/testdata/expect.json`. The Go validator is tested against all of them; when `node` is on the PATH (CI's runners have it) `testdata/check.js` runs `kit.js` over the same files, otherwise that half is skipped. Starting points per kind are `kit/examples/<kind>.json`, extracted from the templates; templates stay for mockups.
 - **Kit additions from first use.** A `datetime` table column (sortable, shown in local time as `YYYY-MM-DD HH:MM`), a KPI `breakdown` list, chart `excluded` notes under the chart, and text table cells that break only at word boundaries with a minimum width instead of mid-word on a 390px phone.
 
+## Branding (client-ready pages)
+
+A brand profile makes a page something that can go straight to a client: the firm's logo and name on top, its colours and font, a footer line, "Prepared for <client>", and nothing that names agentctl. One brand per firm the reports are produced as (no co-branding, no white-label). Branded pages always use the light palette.
+
+A profile is a directory `<config dir>/brands/<name>/` (the same config dir as `config.json`, resolved on every call) holding `brand.json` and the files it names. `<name>` is letters, digits, `-` and `_`. Profiles are written by hand; there is no `brand add`.
+
+```json
+{
+  "name": "Lincoln Loop",
+  "logo": "logo.svg",
+  "colors": {"accent": "#1d4ed8", "c1": "#1d4ed8", "c2": "#0f766e", "c3": "#7c3aed", "c4": "#c2410c", "c5": "#be185d", "c6": "#475569"},
+  "font": {"family": "Inter", "regular": "Inter-Regular.woff2", "bold": "Inter-Bold.woff2"},
+  "footer": "© 2026 Lincoln Loop · Confidential"
+}
+```
+
+- **Fields** (closed: an unknown field is an error). `name` (required) is the firm name in the header and footer. `logo` is a relative `.svg` or `.png` of at most 256 KB, embedded as a `data:` URI (the CSP already allows `data:`); no `..`, no absolute path, no symlink that leaves the brand directory, and an SVG with `<script>`, `on*=` attributes or an external `href`/`url()` is rejected. `colors.accent` and `c1`..`c6` are `#rrggbb` and override the kit's light tokens; the accent needs a contrast ratio of at least 4.5:1 against the page (`#fff`) and card (`#f5f7fa`) backgrounds, since links and headings use it. `font` is `{"stack": "serif"|"sans"|"mono"}` or `{"family", "regular", "bold"?}` with woff2 files of at most 300 KB each, embedded with `@font-face`; the kit's system stack is the fallback. `footer` is one line shown at the bottom of the page (the firm name when unset).
+- **Using it.** The spec's top-level `brand` names a profile and `client` sets "Prepared for <client>" (also without a brand). `agentctl artifact render spec.json --brand <name>` overrides the spec's `brand`. A name that does not exist is an error that lists the available brands and the directory to create one in, never a silent unbranded page. `agentctl artifact brand list` shows names and firm names; `agentctl artifact brand check <name>` prints every problem with its field path and exits non-zero on any.
+- **How the page changes** (`internal/artifactbrand`, `internal/artifactkit/brand.go`). A second `<style>` after `kit.css` restates the kit's light tokens (taken from kit.css's first `:root` block, so there is no second copy), applies the brand colours and font, and sets `color-scheme: light`; no dark `@media` rule can win over it, and the `<html>` element carries `data-light` so `kit.js` reports `isDark() === false` and charts and Mermaid take their palette from the tokens, not the phone's setting. The logo/firm header above `<main>` and the footer below it are built in Go with escaped text rather than by `kit.js`: they need no script, so they print and show even when the spec fails to render, and they never depend on spec JSON. "Prepared for <client>" is part of the page header `kit.js` already renders from the spec. Unbranded output is unchanged (`Render` is `RenderBranded(nil)`).
+- **No agentctl on the page.** On a branded page no visible string, the document `<title>` (the spec title) or print output names agentctl; only code comments inside the inlined CSS/JS do. A test checks the shell and the kit's strings.
+
 ## PDF export
 
 `agentctl artifact pdf <id> [--rev N] [--out path|-] [--force]` writes a paged US Letter PDF (0.5in margins, light palette, no header or footer). It is read-only on the store, so ungated, and it works whether or not `agentctl serve` runs. The package is `internal/artifactpdf` (`Render(ctx, store, id, rev, w)`, rev 0 = latest), built to be called by the CLI and by a serve route behind a viewer button.

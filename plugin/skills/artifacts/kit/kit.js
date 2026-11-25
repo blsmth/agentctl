@@ -163,6 +163,7 @@
   var TOP = {
     kind: { t: "enum", req: 1, v: ["report", "dashboard", "comparison", "diagram"] },
     title: { t: "str", req: 1 }, summary: { t: "str" }, date: { t: "isodate" }, author: { t: "str" }, scope: { t: "str" },
+    brand: { t: "str" }, client: { t: "str" },
     blocks: { t: "arr", req: 1 }
   };
 
@@ -319,7 +320,8 @@
       /[?&]print=1(&|$)/.test((global.location && global.location.search) || "");
   }
   function cssVar(n) { return getComputedStyle(doc.documentElement).getPropertyValue(n).trim(); }
-  function isDark() { return !isPrint() && !!(global.matchMedia && global.matchMedia("(prefers-color-scheme: dark)").matches); }
+  // A branded page pins the light palette (the html element carries data-light), whatever the device prefers.
+  function isDark() { return !isPrint() && !doc.documentElement.hasAttribute("data-light") &&!!(global.matchMedia && global.matchMedia("(prefers-color-scheme: dark)").matches); }
 
   function errorCard(title, errs) {
     var c = h("div", "error-card");
@@ -671,6 +673,7 @@
     var hd = h("header", "page-head");
     hd.append(h("h1", "", spec.title));
     if (spec.summary) hd.append(h("p", "lede", spec.summary));
+    if (spec.client) hd.append(h("p", "prepared", "Prepared for " + spec.client));
     var meta = [spec.date ? fmt.date(spec.date) : "", spec.author || "", spec.scope || ""].filter(Boolean).join(" · ");
     if (meta) hd.append(h("p", "meta", meta));
     return hd;

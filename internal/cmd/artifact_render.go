@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/blsmth/agentctl/internal/artifactbrand"
 	"github.com/blsmth/agentctl/internal/artifactkit"
 	"github.com/blsmth/agentctl/internal/artifacts"
 )
@@ -15,7 +16,9 @@ import (
 // ArtifactRenderOptions are the flags of `agentctl artifact render`.
 type ArtifactRenderOptions struct {
 	Path, Title, Description, Update, Note, Out string
-	NoNotify, Pin, JSON                         bool
+	// Brand names a brand profile; it overrides the spec's "brand".
+	Brand               string
+	NoNotify, Pin, JSON bool
 }
 
 // RunArtifactRender validates a kit spec, builds its page and publishes it.
@@ -39,7 +42,22 @@ func (e artifactEnv) render(w io.Writer, o ArtifactRenderOptions) error {
 	if err != nil {
 		return err
 	}
-	page, err := artifactkit.Render(data)
+	if errs := artifactkit.Validate(data); errs != nil {
+		return errs
+	}
+	brandName := o.Brand
+	if brandName == "" {
+		brandName = artifactkit.SpecBrand(data)
+	}
+	var brand *artifactbrand.Brand
+	if brandName != "" {
+		b, err := artifactbrand.Load(brandName)
+		if err != nil {
+			return fmt.Errorf("brand %q: %w", brandName, err)
+		}
+		brand = &b
+	}
+	page, err := artifactkit.RenderBranded(data, brand)
 	if err != nil {
 		return err
 	}
