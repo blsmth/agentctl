@@ -389,9 +389,10 @@ Any file you edit here is worktree-local. If an edit needs to land (agent defini
 // for a dispatched agent. It owns the WORKFLOW (verify -> commit -> push ->
 // PR) because only the dispatch prompt knows whether there is a worktree,
 // what the branch is, and whether there is a ticket number to close. It
-// deliberately never names a language-specific build/test tool or a
-// repo-specific deploy/restart step (e.g. "go build", "just restart") --
+// deliberately avoids language-specific build/test commands and
+// repo-specific deploy/restart steps (e.g. "go build", "just restart") --
 // that's the agent's own .md file's job, since only it knows the toolchain.
+// The one tool it names, golangci-lint, is only an example of a linter.
 //
 // useWorktree is the already-resolved mode-default-or-override value from
 // Launch's single resolution site -- this function never reads
@@ -419,7 +420,7 @@ The PR is the deliverable, not the commit — do not stop after committing, and 
 	}
 
 	return `When you are finished — follow these steps IN ORDER, do not skip any:
-1. Verify the change builds and tests pass, using the project's own build/test commands, and run the repo's configured linter (e.g. golangci-lint run when .golangci.yml exists) on what you changed; fix what it reports. If the task names checks (screen sizes, themes, browsers, commands, environments), do every one before the PR and list each in the PR message as done, or not done with the reason.
+1. Verify the change builds and tests pass, using the project's own build/test commands, and run the repo's configured linter (e.g. golangci-lint run when .golangci.yml exists) on what you changed; fix what it reports. If the task names checks (screen sizes, themes, browsers, commands, environments), do every one before you finish and list each in your final report as done, or not done with the reason.
 2. Stage ONLY the files you changed — explicit paths, never "git add -A" or "git add .".
 3. Commit your changes with a descriptive message.
 
