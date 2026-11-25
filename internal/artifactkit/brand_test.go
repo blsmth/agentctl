@@ -209,7 +209,7 @@ func TestBrandedCoverAndPagedCSS(t *testing.T) {
 	css := html[strings.Index(html, `<style id="brand">`):]
 	css = css[:strings.Index(css, "</style>")]
 	for _, want := range []string{
-		".brand-cover{display:none}", "break-after:page",
+		".brand-cover{display:none}", ".brand-foot{display:none}", "break-after:page",
 		`@bottom-left{content:"© 2026 \3c i\3e Lincoln\3c /i\3e  Loop · Confidential";font-family:"Inter",system-ui`,
 		`@bottom-right{content:"Page " counter(page) " of " counter(pages);`,
 		"@page :first{margin:.5in;@bottom-left{content:none;border:0}@bottom-right{content:none;border:0}}",

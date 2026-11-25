@@ -140,6 +140,7 @@ func pagedCSS(b *artifactbrand.Brand, font, muted, line string) string {
 .cover-summary{font-size:1.2rem;color:var(--muted);margin:0;max-width:5.5in}
 .cover-for{font-size:1.1rem;margin:.4in 0 0;font-weight:600}
 .cover-date{color:var(--muted);margin:0}
+.brand-foot{display:none}
 }
 @page{margin:.5in .5in .75in;@bottom-left{content:%s;%s;text-align:left;border-top:.5pt solid %s}@bottom-right{content:"Page " counter(page) " of " counter(pages);%s;text-align:right;border-top:.5pt solid %s}}
 @page :first{margin:.5in;@bottom-left{content:none;border:0}@bottom-right{content:none;border:0}}
