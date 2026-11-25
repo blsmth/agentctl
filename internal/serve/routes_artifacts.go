@@ -78,18 +78,11 @@ func (s *Server) registerArtifacts(rt *Router) {
 	// Device, never Public: a render launches a headless browser, so a bare
 	// capability link must not be able to trigger one.
 	rt.Device("GET /v1/artifacts/{id}/pdf", pdfDeadline(s.handleArtifactPDF))
-	// The PDF link: a Write route mints a five-minute token for one revision
-	// (artifact_pdf_link.go); the Public GET serves the PDF to whoever holds
-	// it, checking the token before any store read or render.
-	rt.Write("POST /v1/artifacts/{id}/pdf-link", writeRoute(s, "artifact-pdf-link", s.handleArtifactPDFLink))
-	rt.Public("GET /pdf/{token}/{name}", pdfDeadline(s.handlePDFLink))
-	rt.Public("GET /pdf/", s.handlePDFLinkNotFound)
 	rt.Write("DELETE /v1/artifacts/{id}", writeRoute(s, "artifact-delete", s.handleArtifactDelete))
 	rt.Write("POST /v1/artifacts/order", writeRoute(s, "artifact-order", s.handleArtifactOrder))
 	rt.Write("POST /v1/artifacts/{id}/pin", writeRoute(s, "artifact-pin", s.handleArtifactPin))
 	if rt.allowWrite {
 		rt.Feature("artifact-comments")
-		rt.Feature("artifact-pdf-link")
 	}
 	rt.Write("POST /v1/artifacts/{id}/comments", writeRoute(s, "artifact-comment", s.handleArtifactComment))
 	// Public: a capability id is its own credential and is served here with
@@ -119,8 +112,6 @@ func artifactActionFor(path string) (string, bool) {
 		return "artifact-delete", true
 	case len(p) == 4 && p[3] == "pin":
 		return "artifact-pin", true
-	case len(p) == 4 && p[3] == "pdf-link":
-		return "artifact-pdf-link", true
 	case len(p) == 4 && p[3] == "comments":
 		return "artifact-comment", true
 	}

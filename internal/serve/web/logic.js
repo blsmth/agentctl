@@ -2887,9 +2887,9 @@ export function artifactPdfPath(id, rev) {
   return `/v1/artifacts/${encodeURIComponent(id)}/pdf?rev=${encodeURIComponent(rev)}`;
 }
 
-/** artifactPdfLabel is the sheet button: "Save as PDF (v2)". */
+/** artifactPdfLabel is the sheet button: "View PDF (v2)". */
 export function artifactPdfLabel(rev) {
-  return `Save as PDF (v${rev})`;
+  return `View PDF (v${rev})`;
 }
 
 /**
@@ -2918,11 +2918,6 @@ export function pdfFilename(disposition, fallback = "artifact.pdf") {
   return /\.pdf$/i.test(name) ? name : `${name}.pdf`;
 }
 
-/** artifactPdfLinkPath is the route that mints a short-lived PDF link for revision rev (a number). */
-export function artifactPdfLinkPath(id, rev) {
-  return `/v1/artifacts/${encodeURIComponent(id)}/pdf-link?rev=${encodeURIComponent(rev)}`;
-}
-
 /**
  * pdfSharePayload is what navigator.share gets for a PDF: the file and
  * nothing else. On iOS a title or text next to the files makes the share
@@ -2949,12 +2944,10 @@ export function pdfFileProblem(file, head) {
 }
 
 /**
- * pdfDelivery decides how a fetched PDF reaches the person: "share" (the
- * share sheet: Save to Files, AirDrop; an iOS home-screen app cannot
- * reliably download, and its cookies are not Safari's, so opening the
- * Device URL elsewhere would not work; "Open PDF" uses a short-lived link
- * instead) when the browser can share the file, else "download" (a blob URL
- * and <a download>). nav is navigator.
+ * pdfDelivery decides how the viewer's Share button hands over the PDF:
+ * "share" (the share sheet: Save to Files, Print, AirDrop; an iOS home-screen
+ * app cannot reliably download) when the browser can share the file, else
+ * "download" (a blob URL and <a download>). nav is navigator.
  */
 export function pdfDelivery(nav, file) {
   try {
@@ -2963,4 +2956,57 @@ export function pdfDelivery(nav, file) {
     // canShare throws on some browsers for unsupported input
   }
   return "download";
+}
+
+/** pdfPageCountLabel is the viewer header's page count: "1 page", "12 pages", "" while unknown. */
+export function pdfPageCountLabel(n) {
+  if (!(n > 0)) return "";
+  return n === 1 ? "1 page" : `${n} pages`;
+}
+
+/**
+ * pdfFitScale is the PDF.js scale that makes a page of pageWidth points as
+ * wide as avail CSS pixels (times zoom). 0 when either is unusable.
+ */
+export function pdfFitScale(pageWidth, avail, zoom = 1) {
+  if (!(pageWidth > 0) || !(avail > 0) || !(zoom > 0)) return 0;
+  return (avail / pageWidth) * zoom;
+}
+
+/** pdfClampZoom keeps a pinch zoom within [1, 5]; 1 (the fit) for anything that is not a number. */
+export function pdfClampZoom(z) {
+  if (!Number.isFinite(z)) return 1;
+  return Math.min(5, Math.max(1, z));
+}
+
+/**
+ * pdfCanvasDensity is the pixels per CSS pixel to draw a page at: the device
+ * pixel ratio, lowered when the canvas (cssW x cssH CSS pixels) would exceed
+ * maxPixels (iOS refuses canvases above about 16.7 million pixels, and big
+ * ones cost memory), never below 1.
+ */
+export function pdfCanvasDensity(dpr, cssW, cssH, maxPixels = 16_000_000) {
+  const want = dpr > 0 ? dpr : 1;
+  if (!(cssW > 0) || !(cssH > 0)) return want;
+  const cap = Math.sqrt(maxPixels / (cssW * cssH));
+  return Math.max(1, Math.min(want, cap));
+}
+
+/**
+ * pdfPagesToDraw picks which pages (0-based) of a count-page document should
+ * hold a drawn canvas: the visible ones (a Set of indexes) plus keep pages
+ * either side of them. Everything else is freed. With nothing visible yet it
+ * draws the first keep+1 pages.
+ */
+export function pdfPagesToDraw(visible, count, keep = 1) {
+  const want = new Set();
+  const seen = [...visible].filter((i) => i >= 0 && i < count);
+  if (seen.length === 0) {
+    for (let i = 0; i <= keep && i < count; i++) want.add(i);
+    return want;
+  }
+  const lo = Math.max(0, Math.min(...seen) - keep);
+  const hi = Math.min(count - 1, Math.max(...seen) + keep);
+  for (let i = lo; i <= hi; i++) want.add(i);
+  return want;
 }
