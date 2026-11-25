@@ -25,6 +25,13 @@ import (
 	"github.com/blsmth/agentctl/internal/artifacts"
 )
 
+// CSP is the Content-Security-Policy of every artifact response: no
+// allow-same-origin, so the document runs in an opaque origin and cannot reach
+// the app's API, and plain http: targets (other services on this machine) are
+// blocked. The source list is otherwise open (CDN scripts, styles, fonts).
+const CSP = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; " +
+	"default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https:"
+
 // MaxCSVRows bounds the rendered CSV table.
 const MaxCSVRows = 5000
 

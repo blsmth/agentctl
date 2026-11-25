@@ -38,11 +38,23 @@ func (s *source) handler() http.Handler {
 			return
 		}
 		if r.Host != s.host || !strings.HasPrefix(r.URL.Path, s.prefix) {
-			http.NotFound(w, r)
+			writeError(w, http.StatusNotFound)
 			return
 		}
 		s.serve(w, r, strings.TrimPrefix(r.URL.Path, s.prefix))
 	})
+}
+
+// setHeaders applies the headers serve puts on every /a/ response: the
+// sandbox CSP, and CORP/CORS so the sandboxed (opaque-origin) page can load
+// its own stylesheets, images and modules.
+func setHeaders(h http.Header) {
+	h.Set("Content-Security-Policy", artifactpage.CSP)
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Cross-Origin-Resource-Policy", "cross-origin")
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Cache-Control", "no-store")
 }
 
 func (s *source) serve(w http.ResponseWriter, r *http.Request, rel string) {
@@ -58,9 +70,7 @@ func (s *source) serve(w http.ResponseWriter, r *http.Request, rel string) {
 	defer c.Close() //nolint:errcheck
 
 	h := w.Header()
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Referrer-Policy", "no-referrer")
-	h.Set("Cache-Control", "no-store")
+	setHeaders(h)
 	if c.Rel == c.Meta.Entry && r.URL.Query().Get("raw") != "1" {
 		page, ok, err := entryPage(c)
 		if err != nil {
@@ -96,6 +106,7 @@ func entryPage(c *artifacts.Content) (page []byte, ok bool, err error) {
 }
 
 func writeError(w http.ResponseWriter, status int) {
+	setHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = w.Write(artifactpage.ErrorPage(http.StatusText(status)))

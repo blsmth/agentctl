@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/artifactpage"
 	"github.com/blsmth/agentctl/internal/artifacts"
 )
 
@@ -96,7 +97,7 @@ func get(t *testing.T, url string) (int, string, http.Header) {
 	return resp.StatusCode, string(b), resp.Header
 }
 
-func writePDF(out string) error { return os.WriteFile(out, []byte("%PDF-1.4 fake"), 0o644) }
+func writePDF(out string) error { return os.WriteFile(out, []byte("%PDF-1.4 fake\n%%EOF\n"), 0o644) }
 
 func TestRenderArgsAndEntryURL(t *testing.T) {
 	s := newStore(t)
@@ -197,6 +198,9 @@ func TestServerKinds(t *testing.T) {
 			defer stop()
 			base := entry[:strings.LastIndex(entry, m.Entry)]
 			code, body, hdr := get(t, base+tt.rel)
+			if got := hdr.Get("Content-Security-Policy"); got != artifactpage.CSP {
+				t.Errorf("CSP = %q", got)
+			}
 			if code != tt.code || !strings.HasPrefix(hdr.Get("Content-Type"), tt.ctype) || !strings.Contains(body, tt.body) {
 				t.Errorf("got %d %s %q", code, hdr.Get("Content-Type"), body)
 			}
@@ -288,7 +292,15 @@ func TestRenderFailures(t *testing.T) {
 		stubBrowser(t, func(_ context.Context, out, _ string) (string, error) {
 			return "", os.WriteFile(out, []byte("<html>"), 0o644)
 		})
-		if err := Render(context.Background(), s, m.ID, 0, io.Discard); err == nil || !strings.Contains(err.Error(), "not a PDF") {
+		if err := Render(context.Background(), s, m.ID, 0, io.Discard); err == nil || !strings.Contains(err.Error(), "not a complete PDF") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("truncated pdf", func(t *testing.T) {
+		stubBrowser(t, func(_ context.Context, out, _ string) (string, error) {
+			return "", os.WriteFile(out, []byte("%PDF-1.4 cut"), 0o644)
+		})
+		if err := Render(context.Background(), s, m.ID, 0, io.Discard); err == nil || !strings.Contains(err.Error(), "not a complete PDF") {
 			t.Fatalf("err = %v", err)
 		}
 	})

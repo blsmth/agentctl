@@ -33,8 +33,7 @@ import (
 //
 // The source list is deliberately open (CDN scripts, styles, fonts): the
 // protection is the opaque origin.
-const artifactCSP = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; " +
-	"default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https:"
+const artifactCSP = artifactpage.CSP
 
 // cacheArtifactRev is the Cache-Control of content at a capability URL: a
 // numbered revision never changes. The cookie redirects are no-store.

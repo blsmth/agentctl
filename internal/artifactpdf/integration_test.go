@@ -10,6 +10,8 @@ import (
 // TestRenderRealBrowser prints an html and a markdown artifact with an actual
 // headless browser. It is skipped when none is installed (CI).
 func TestRenderRealBrowser(t *testing.T) {
+	old := configured
+	t.Cleanup(func() { configured = old })
 	configured = func() string { return "" }
 	if _, err := FindBrowser(); err != nil {
 		t.Skipf("no browser: %v", err)

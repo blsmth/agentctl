@@ -85,8 +85,8 @@ func Render(ctx context.Context, store *artifacts.Store, id string, rev int, w i
 	}
 	// Chrome writes the file, then may take a moment to exit; a file that
 	// reached disk is the result even when the process was killed after it.
-	if !bytes.HasPrefix(pdf, []byte("%PDF-")) {
-		return fmt.Errorf("browser wrote %d bytes that are not a PDF%s", len(pdf), tail(stderr))
+	if !bytes.HasPrefix(pdf, []byte("%PDF-")) || !bytes.Contains(pdf[max(0, len(pdf)-1024):], []byte("%%EOF")) {
+		return fmt.Errorf("browser wrote %d bytes that are not a complete PDF%s", len(pdf), tail(stderr))
 	}
 	if _, err := w.Write(pdf); err != nil {
 		return fmt.Errorf("writing PDF: %w", err)
@@ -158,6 +158,8 @@ func execBrowser(ctx context.Context, bin string, args []string) (string, error)
 	var buf tailBuffer
 	cmd.Stderr = &buf
 	err := cmd.Run()
+	// Sweep helpers that outlived the browser; ESRCH (group gone) is the norm.
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	return buf.String(), err
 }
 
