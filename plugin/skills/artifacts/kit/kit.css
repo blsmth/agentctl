@@ -71,7 +71,7 @@ a{color:var(--accent)}
 .kpi .note{color:var(--muted);font-size:.8rem}
 .kpi .breakdown{list-style:none;margin:8px 0 0;padding:8px 0 0;border-top:1px solid var(--line);font-size:.875rem}
 .kpi .breakdown li{display:flex;justify-content:space-between;gap:12px;padding:2px 0}
-.kpi .breakdown .lab{color:var(--muted);min-width:0;overflow-wrap:normal;word-break:normal;hyphens:none}
+.kpi .breakdown .lab{color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal;word-break:normal;hyphens:none}
 .kpi .breakdown .lab.trunc{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kpi .breakdown .val{flex:none;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
 
@@ -84,10 +84,10 @@ thead th{position:sticky;top:0;z-index:1;background:var(--card);white-space:nowr
 thead th>span,thead th>button{display:block;width:100%;padding:8px 12px;text-align:inherit}
 td{min-width:9rem;overflow-wrap:break-word}
 th.num,td.num{text-align:right;white-space:nowrap;overflow-wrap:normal;min-width:0}
-td.nowrap,th.nowrap{white-space:nowrap;overflow-wrap:normal;min-width:0}
+td.nowrap{white-space:nowrap;overflow-wrap:normal;min-width:0}
 td.num,td.nowrap{width:1%}
-td.nowrap{font-size:.9rem;padding-left:8px;padding-right:8px}
-@media(max-width:699px){table{min-width:0}td{min-width:7rem}}
+td.nowrap{font-size:.85rem;padding-left:6px;padding-right:6px}
+@media(max-width:699px){table{min-width:0}td{min-width:6rem}}
 /* pinned first column: opaque in both palettes, with an edge so it reads as pinned */
 th.pin,td.pin{position:sticky;left:0;background:var(--bg);box-shadow:1px 0 0 var(--line),4px 0 6px -4px rgba(0,0,0,.35)}
 thead th.pin{z-index:2;background:var(--card)}
@@ -183,6 +183,7 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
   tfoot{display:table-footer-group}
   thead th{position:static;padding:8px 12px}
   th.pin,td.pin,thead th.pin{position:static;box-shadow:none}
+  td.pin{background:transparent}
   td.num,td.nowrap{width:auto}
   /* Chrome paints a <button> in a repeated header row empty: show its text directly */
   thead th>button{display:contents;font-weight:650}
