@@ -23,7 +23,7 @@ func humanPrompts(entries []logstream.Entry) []humanPrompt {
 		if !race.IsPrompt(e) || e.Timestamp.IsZero() {
 			continue
 		}
-		if meta, _ := e.Raw["isMeta"].(bool); meta {
+		if !typedByHuman(e.Raw) {
 			continue
 		}
 		if t := promptText(e.Raw); t != "" {
@@ -31,6 +31,32 @@ func humanPrompts(entries []logstream.Entry) []humanPrompt {
 		}
 	}
 	return out
+}
+
+// nonHumanPrefixes start user entries that the harness, not a person, wrote.
+var nonHumanPrefixes = []string{"<task-notification", "<command-", "<local-command-", "<bash-", "[Request interrupted"}
+
+// typedByHuman reports whether a user entry is a person's own prompt, not a
+// compaction summary, task notification, hook or peer message. Newer
+// transcripts say so in origin.kind; older ones are judged by their text.
+func typedByHuman(raw map[string]any) bool {
+	if meta, _ := raw["isMeta"].(bool); meta {
+		return false
+	}
+	if c, _ := raw["isCompactSummary"].(bool); c {
+		return false
+	}
+	if o, ok := raw["origin"].(map[string]any); ok {
+		kind, _ := o["kind"].(string)
+		return kind == "human"
+	}
+	text := promptText(raw)
+	for _, p := range nonHumanPrefixes {
+		if strings.HasPrefix(text, p) {
+			return false
+		}
+	}
+	return true
 }
 
 func promptText(raw map[string]any) string {
@@ -67,7 +93,7 @@ func promptBefore(ps []humanPrompt, t time.Time) string {
 var (
 	deleteVerb = regexp.MustCompile(`(?i)\b(delet\w*|remov\w*|clean\w*|wip\w*)\b`)
 	wordSplit  = regexp.MustCompile(`[^a-z0-9]+`)
-	sentenceAt = regexp.MustCompile(`[.!?\n]`)
+	sentenceAt = regexp.MustCompile(`[.!?]+(\s|$)|\n`)
 )
 
 // genericWords are too common to show that a prompt named a path.
@@ -83,24 +109,47 @@ var genericWords = map[string]bool{
 // the part of the prompt that asks. Conservative: any operand it cannot
 // judge, or that the prompt does not name, means no.
 func requestedRemoval(prompt string, operands []string) (excerpt string, ok bool) {
-	loc := deleteVerb.FindStringIndex(prompt)
-	if loc == nil || len(operands) == 0 {
+	if len(operands) == 0 {
 		return "", false
 	}
+	// Judge per sentence: only one with a delete verb and no negation counts.
 	words := map[string]bool{}
-	for _, w := range wordSplit.Split(strings.ToLower(prompt), -1) {
-		words[w] = true
+	first := ""
+	for _, sent := range splitSentences(prompt) {
+		if !deleteVerb.MatchString(sent) || negated(sent) {
+			continue
+		}
+		if first == "" {
+			first = sent
+		}
+		for _, w := range wordSplit.Split(strings.ToLower(sent), -1) {
+			words[w] = true
+		}
+	}
+	if first == "" {
+		return "", false
 	}
 	for _, op := range operands {
 		if !namedIn(op, words) {
 			return "", false
 		}
 	}
+	return excerpt80(first), true
+}
+
+var negation = regexp.MustCompile(`(?i)\b(not|never|no|keep|without|dont|leave)\b|n['’]t\b`)
+
+func negated(sentence string) bool { return negation.MatchString(sentence) }
+
+// splitSentences cuts s after each . ! ? or newline, keeping the text.
+func splitSentences(s string) []string {
+	var out []string
 	start := 0
-	for _, m := range sentenceAt.FindAllStringIndex(prompt[:loc[0]], -1) {
+	for _, m := range sentenceAt.FindAllStringIndex(s, -1) {
+		out = append(out, s[start:m[1]])
 		start = m[1]
 	}
-	return excerpt80(prompt[start:]), true
+	return append(out, s[start:])
 }
 
 // namedIn reports whether a path operand's basename shares a word with words.

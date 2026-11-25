@@ -73,9 +73,9 @@ type Step struct {
 	Cwd    string         // working directory recorded on that entry
 	RawGap time.Duration  // longest uncapped gap charged to this step
 	// ModelGap is the longest uncapped part of RawGap that was the model
-	// thinking: a gap ending in an assistant entry that follows a user entry
-	// (a tool result or a prompt). The wait between a tool call and its
-	// result is the tool running and is not in it.
+	// thinking: a gap ending in an assistant entry. The wait between a tool
+	// call and its result ends in a user entry (the tool result), is the tool
+	// running, and is not in it.
 	ModelGap time.Duration
 
 	AgentStart time.Duration // offset on the agent timeline
@@ -169,7 +169,6 @@ func extract(entries []logstream.Entry, maxGap time.Duration) []Step {
 	byID := map[string]int{}
 	var last time.Time
 	var pending, pendingRaw, pendingModel time.Duration
-	lastType := ""
 	cwd := ""
 
 	for _, e := range entries {
@@ -232,10 +231,9 @@ func extract(entries []logstream.Entry, maxGap time.Duration) []Step {
 		}
 		raw := gap
 		var model time.Duration
-		if e.Type == "assistant" && lastType == "user" {
+		if e.Type == "assistant" {
 			model = raw
 		}
-		lastType = e.Type
 		if maxGap > 0 && gap > maxGap {
 			gap = maxGap
 		}

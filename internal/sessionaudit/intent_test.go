@@ -37,6 +37,9 @@ func TestRequestedRemoval(t *testing.T) {
 		{"home only", "delete the o2x repos", "rm -rf ~", High, false},
 		{"generic word only", "delete the old repo", "rm -rf /home/u/old", High, false},
 		{"second rm unrequested", "delete the o2x repos", "rm -rf /home/u/o2x-api && rm -rf /home/u/other", High, false},
+		{"negated", "Keep the o2x repos, do not delete them. Clean the caches.", "rm -rf /home/u/code/o2x-api", High, false},
+		{"contraction", "Don't remove the o2x repos", "rm -rf /home/u/code/o2x-api", High, false},
+		{"negated then asked", "Don't touch src. Delete the o2x repos.", "rm -rf /home/u/code/o2x-api", High, true},
 		{"long prompt cut", long, "rm -rf /home/u/code/o2x-api", High, true},
 	}
 	for _, tt := range tests {
@@ -116,5 +119,61 @@ func TestIdleGapIgnoresToolRuns(t *testing.T) {
 	think.gap = 10 * time.Minute
 	if f := findRule(analyzeCalls(t, think), "idle-gap"); f == nil || !strings.Contains(f.Why, "10m") {
 		t.Errorf("model thinking gap: %+v", f)
+	}
+}
+
+// Entries the harness wrote are not the person asking.
+func TestRequestedIgnoresNonHumanEntries(t *testing.T) {
+	tests := []struct {
+		name  string
+		extra map[string]any
+		text  string
+	}{
+		{"compact summary", map[string]any{"isCompactSummary": true}, "Summary: the user asked to delete the o2x repos."},
+		{"task notification origin", map[string]any{"origin": map[string]any{"kind": "task-notification"}}, "Background command \"Remove o2x checkouts\" completed"},
+		{"task notification text", nil, "<task-notification>Remove o2x checkouts completed</task-notification>"},
+		{"command text", nil, "<command-name>/clean o2x</command-name>"},
+		{"peer", map[string]any{"origin": map[string]any{"kind": "peer"}}, "delete the o2x repos"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recs := linesPrompt(t, "run the tests", bash("echo hi"))
+			note := map[string]any{
+				"type": "user", "sessionId": "sess-1", "cwd": testCwd, "timestamp": t0.Add(time.Minute).Format(time.RFC3339Nano),
+				"message": map[string]any{"role": "user", "content": tt.text},
+			}
+			for k, v := range tt.extra {
+				note[k] = v
+			}
+			recs = append(recs, note)
+			rm := linesPrompt(t, "x", bash("rm -rf /home/u/code/o2x-api"))[1:]
+			for _, r := range rm {
+				ts, _ := time.Parse(time.RFC3339Nano, r["timestamp"].(string))
+				r["timestamp"] = ts.Add(2 * time.Minute).Format(time.RFC3339Nano)
+			}
+			f := findRule(Analyze(toEntries(t, append(recs, rm...)), nil, testParams()), "rm-recursive")
+			if f == nil || f.Severity != High || f.RequestedByPrompt != "" {
+				t.Errorf("finding = %+v", f)
+			}
+		})
+	}
+
+	human := linesPrompt(t, "delete the o2x repos", bash("rm -rf /home/u/code/o2x-api"))
+	human[0]["origin"] = map[string]any{"kind": "human"}
+	if f := findRule(Analyze(toEntries(t, human), nil, testParams()), "rm-recursive"); f == nil || f.Severity != Med {
+		t.Errorf("human origin: %+v", f)
+	}
+}
+
+func TestIdleGapAssistantToAssistant(t *testing.T) {
+	recs := linesPrompt(t, "go", bash("go build"))
+	stall := t0.Add(10 * time.Minute)
+	recs = append(recs, map[string]any{
+		"type": "assistant", "sessionId": "sess-1", "cwd": testCwd, "timestamp": stall.Format(time.RFC3339Nano),
+		"message": map[string]any{"id": "msg_x", "role": "assistant", "model": "claude-opus-4-5",
+			"content": []any{map[string]any{"type": "tool_use", "id": "toolu_x", "name": "Bash", "input": map[string]any{"command": "go vet"}}}},
+	})
+	if findRule(Analyze(toEntries(t, recs), nil, testParams()), "idle-gap") == nil {
+		t.Error("assistant to assistant stall not flagged")
 	}
 }
