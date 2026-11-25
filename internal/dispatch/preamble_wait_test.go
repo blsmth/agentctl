@@ -64,12 +64,17 @@ func TestScheduleGuidanceByVariant(t *testing.T) {
 
 	for _, messaging := range []bool{true, false} {
 		w := preambleForHarness(RoleWorker, messaging)
-		if strings.Contains(w, "### Schedule") || strings.Contains(w, "agentctl cron add") {
-			t.Errorf("worker (messaging=%v) got the Schedule section", messaging)
+		if strings.Contains(w, "agentctl cron add") {
+			t.Errorf("worker (messaging=%v) got the orchestrator Schedule text", messaging)
+		}
+		if !strings.Contains(w, "Never create `agentctl cron` jobs") {
+			t.Errorf("worker (messaging=%v) missing no-cron line", messaging)
 		}
 	}
-	if w := preambleForHarness(RoleWorker, true); !strings.Contains(w, "Never create `agentctl cron` jobs") {
-		t.Error("worker missing no-cron line")
+	for _, w := range []string{"--overlap skip", "--template"} {
+		if !strings.Contains(nomsg, w) {
+			t.Errorf("no-messaging orchestrator missing %q", w)
+		}
 	}
 }
 

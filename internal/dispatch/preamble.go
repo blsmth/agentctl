@@ -105,9 +105,9 @@ const orchWaitNoMessagingSection = "### Wait\n" +
 
 // orchScheduleCore holds the agentctl cron bullets shared by both Schedule
 // variants. It names no Claude Code-only tool.
-const orchScheduleCore = "- Durable or recurring work: `agentctl cron add <name> --schedule '<5-field cron, local time, or @hourly/@daily/@weekly>' --agent <a> --dir <repo>` plus one of `--prompt-key` (read at every fire), `--prompt-file` (copied at add time) or `--prompt`. Same rules as dispatch: never `--prompt \"$(cat ...)\"`, and `agentctl context set` the key in a separate Bash call first\n" +
+const orchScheduleCore = "- Durable or recurring work: `agentctl cron add <name> --schedule '<5-field cron, local time, or @hourly/@daily/@weekly>' --agent <a> --dir <repo>` plus one of `--prompt-key` (read at every fire), `--prompt-file` (copied at add time), `--template` (read at every fire) or `--prompt`. Same rules as dispatch: never `--prompt \"$(cat ...)\"`, and `agentctl context set` the key in a separate Bash call first\n" +
 	"- `cron add`, `edit`, `resume` and `run --force` always open the approval popup (denies after 9 minutes). Never write schedules.json or the cron state dir directly (denied). Inspect with `cron list` / `cron runs <name>`; `cron pause` / `cron rm` to stop\n" +
-	"- A run is skipped when the previous run is still active and when plan usage is high (usage gate), so a fire can silently not happen. Set `--timeout` for unattended jobs\n" +
+	"- A run is skipped when the previous run is still active (the default, `--overlap skip`; `--overlap allow` exists) and when plan usage is high (usage gate), so a fire can silently not happen. Set `--timeout` for unattended jobs\n" +
 	"- There is no run-once job: for a one-off, pick a schedule that fires once soon and end the job prompt with a step that runs `agentctl cron rm <name>`\n"
 
 const orchScheduleMessagingSection = "### Schedule\n" +
@@ -125,6 +125,9 @@ func scheduledRunNote(job string) string {
 	return "- Scheduled run of agentctl cron job `" + job + "`: nobody is watching live, so do not wait on a human answer; finish the task and report. The job prompt may end with its own cleanup steps; do them"
 }
 
+// workerNoCronLine tells a worker not to schedule; it names no harness tool.
+const workerNoCronLine = "- Never create `agentctl cron` jobs yourself; if something needs a schedule, say so in your report or PR to the dispatcher"
+
 // workerWaitSection is the Wait group for workers on harnesses with Claude
 // Code's tools (messaging true). It is not part of the shared sections: the
 // no-messaging preamble must not name tools that do not exist there.
@@ -132,7 +135,7 @@ const workerWaitSection = "### Wait\n" +
 	"- Never `sleep` or loop-and-poll\n" +
 	"- A long command (CI, slow build): run it as a background Bash command (`run_in_background`) and act on its exit notice\n" +
 	"- To check back later: `CronCreate` (`CronList`/`CronDelete`), and delete the job once done\n" +
-	"- Never create `agentctl cron` jobs yourself; if something needs a schedule, say so in your report or PR to the dispatcher"
+	workerNoCronLine
 
 // orchReviewSection routes every PR through a reviewer (dispatch
 // --review-pr). Messaging harnesses only: the reviewer reports its verdict
@@ -451,6 +454,9 @@ func preambleForHarnessBackends(role Role, messaging bool, prReview, backendLine
 	p := "## agentctl Runtime Environment\n\n" +
 		"You are running inside an agentctl-managed tmux session. The following tools are available:\n\n" +
 		noMessagingRuntimeSections
+	if role != RoleOrchestrator {
+		p += "\n\n### Schedule\n" + workerNoCronLine
+	}
 	if role == RoleOrchestrator {
 		p += "\n\n" + orchestratorSectionsFor(false, config.PRReviewAlways, backendLines)
 	}
