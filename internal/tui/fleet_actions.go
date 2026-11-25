@@ -339,6 +339,7 @@ func (m *FleetModel) startClose(idx int) {
 		return
 	}
 	m.jumpErr = ""
+	m.cancelArtDelete()
 	m.confirmSession, m.confirmWindow = r.Session, r.WindowID
 }
 

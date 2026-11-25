@@ -232,7 +232,7 @@ func fleetHelpItems() []fleetHelpItem {
 		{fleetShellsKey, "shells", fleetShellsKey},
 		{fleetClosedKey, "closed agents", fleetClosedKey},
 		{fleetSchedulesKey, "Sessions / Schedules / Artifacts tab (project)", fleetSchedulesKey},
-		{"⏎/p", "artifact row: open in browser / pin", ""},
+		{"⏎/p/x", "artifact row: open in browser / pin / delete", ""},
 		{"e/space/g/d/x", "schedule row: edit/pause/run/dup/delete", ""},
 		{fleetServeKey, "phone on/off", fleetServeKey},
 		{"q", "leave", "q"},

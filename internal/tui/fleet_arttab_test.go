@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -356,9 +358,234 @@ func artPress(t *testing.T, m FleetModel, k string) FleetModel {
 		return m
 	}
 	switch msg := cmd().(type) {
-	case fleetArtOpenedMsg, fleetArtPinnedMsg:
+	case fleetArtOpenedMsg, fleetArtPinnedMsg, fleetArtDeletedMsg:
 		next, _ = m.Update(msg)
 		m = next.(FleetModel)
 	}
 	return m
+}
+
+// stubArtRemove replaces the delete seam and records the ids it was asked to
+// remove; err is returned for every call.
+func stubArtRemove(t *testing.T, err error) *[]string {
+	t.Helper()
+	orig := fleetArtifactRemove
+	t.Cleanup(func() { fleetArtifactRemove = orig })
+	var calls []string
+	fleetArtifactRemove = func(id string) (artifacts.Meta, error) {
+		calls = append(calls, id)
+		return artifacts.Meta{ID: id}, err
+	}
+	return &calls
+}
+
+// artDeleteFixture is a model on the Artifacts tab with n artifacts, cursor
+// on the first.
+func artDeleteFixture(t *testing.T, titles ...string) (FleetModel, []artifacts.Meta) {
+	t.Helper()
+	f := newSchedFixture(t)
+	s := artStore(t)
+	var metas []artifacts.Meta
+	for _, title := range titles {
+		metas = append(metas, addArt(t, s, f.project, title))
+	}
+	m := withArtifacts(t, f.twoGroups(t), s)
+	m = schedPress(t, m, fleetSchedulesKey)
+	if l := m.selectedArtLine(); l == nil {
+		t.Fatal("cursor not on an artifact row")
+	}
+	return m, metas
+}
+
+func artRowText(m FleetModel, id string) string {
+	for _, l := range m.lines {
+		if l.kind == fleetLineArtifact && l.art.ID == id {
+			return ansi.Strip(m.renderArtRow(l, true, fleetHoverNone, 80))
+		}
+	}
+	return ""
+}
+
+func TestArtifactDeleteConfirm(t *testing.T) {
+	m, metas := artDeleteFixture(t, "only")
+	calls := stubArtRemove(t, nil)
+	id := m.selectedArtLine().art.ID
+	_ = metas
+
+	m = artPress(t, m, "x")
+	if !m.artDeleteArmed() || len(*calls) != 0 {
+		t.Fatalf("x should arm without deleting: armed=%v calls=%v", m.artDeleteArmed(), *calls)
+	}
+	if got := artRowText(m, id); !strings.Contains(got, "delete? y/n") {
+		t.Errorf("armed row = %q", got)
+	}
+	var keys []string
+	for _, h := range m.footerHints() {
+		keys = append(keys, h.key)
+	}
+	if strings.Join(keys, "") != "yn" {
+		t.Errorf("armed hints = %v", keys)
+	}
+	m = artPress(t, m, "y")
+	if len(*calls) != 1 || (*calls)[0] != id {
+		t.Fatalf("stub calls = %v, want [%s]", *calls, id)
+	}
+	if m.artDeleteArmed() || len(m.artList) != 0 {
+		t.Errorf("armed=%v artList=%d", m.artDeleteArmed(), len(m.artList))
+	}
+	if !strings.Contains(m.infoMsg, "deleted artifact "+artifacts.ShortID(id)) || strings.Contains(m.infoMsg, id) {
+		t.Errorf("footer = %q", m.infoMsg)
+	}
+}
+
+func TestArtifactDeleteCancel(t *testing.T) {
+	for _, key := range []string{"n", "N", "esc"} {
+		t.Run(key, func(t *testing.T) {
+			m, _ := artDeleteFixture(t, "only")
+			calls := stubArtRemove(t, nil)
+			m = artPress(t, m, "x")
+			m = artPress(t, m, key)
+			if m.artDeleteArmed() || len(*calls) != 0 || len(m.artList) != 1 {
+				t.Errorf("armed=%v calls=%v list=%d", m.artDeleteArmed(), *calls, len(m.artList))
+			}
+		})
+	}
+	t.Run("other key cancels and runs", func(t *testing.T) {
+		m, _ := artDeleteFixture(t, "one", "two")
+		calls := stubArtRemove(t, nil)
+		m = artPress(t, m, "x")
+		first := m.selectedArtLine().art.ID
+		m = artPress(t, m, "j")
+		if m.artDeleteArmed() || len(*calls) != 0 {
+			t.Fatalf("armed=%v calls=%v", m.artDeleteArmed(), *calls)
+		}
+		if l := m.selectedArtLine(); l == nil || l.art.ID == first {
+			t.Error("j did not move the cursor")
+		}
+	})
+	t.Run("other key runs as usual", func(t *testing.T) {
+		m, _ := artDeleteFixture(t, "one")
+		stubArtRemove(t, nil)
+		pinned := false
+		orig := fleetArtifactPin
+		t.Cleanup(func() { fleetArtifactPin = orig })
+		fleetArtifactPin = func(id string, p bool) (artifacts.Meta, error) {
+			pinned = p
+			return artifacts.Meta{ID: id, Pinned: p}, nil
+		}
+		m = artPress(t, m, "x")
+		m = artPress(t, m, fleetArtPinKey)
+		if m.artDeleteArmed() || !pinned {
+			t.Errorf("armed=%v pinned=%v", m.artDeleteArmed(), pinned)
+		}
+	})
+	t.Run("tab switch", func(t *testing.T) {
+		m, _ := artDeleteFixture(t, "one")
+		m = artPress(t, m, "x")
+		m = schedPress(t, m, fleetSchedulesKey)
+		if m.artDeleteArmed() {
+			t.Error("still armed after a tab switch")
+		}
+	})
+	t.Run("list refresh without the id", func(t *testing.T) {
+		m, _ := artDeleteFixture(t, "one", "two")
+		m = artPress(t, m, "x")
+		m.applyArtifacts(fleetArtifactsMsg{stamp: time.Now(), list: m.artList[:0:0]})
+		if m.artDeleteArmed() {
+			t.Error("still armed after the artifact vanished")
+		}
+	})
+}
+
+func TestArtifactDeletePinnedText(t *testing.T) {
+	m, _ := artDeleteFixture(t, "keeper")
+	id := m.selectedArtLine().art.ID
+	for i := range m.artList {
+		m.artList[i].Pinned = true
+	}
+	m.relayout()
+	stubArtRemove(t, nil)
+	m = artPress(t, m, "x")
+	if got := artRowText(m, id); !strings.Contains(got, "delete pinned? y/n") {
+		t.Errorf("armed pinned row = %q", got)
+	}
+}
+
+func TestArtifactDeleteErrors(t *testing.T) {
+	t.Run("error", func(t *testing.T) {
+		m, _ := artDeleteFixture(t, "one")
+		stubArtRemove(t, errors.New("disk on fire"))
+		m = artPress(t, m, "x")
+		m = artPress(t, m, "y")
+		if !strings.Contains(m.jumpErr, "delete: disk on fire") || len(m.artList) != 1 {
+			t.Errorf("err=%q list=%d", m.jumpErr, len(m.artList))
+		}
+	})
+	t.Run("not found", func(t *testing.T) {
+		m, _ := artDeleteFixture(t, "one")
+		id := m.selectedArtLine().art.ID
+		stubArtRemove(t, fmt.Errorf("%w: gone", artifacts.ErrNotFound))
+		m = artPress(t, m, "x")
+		m = artPress(t, m, "y")
+		if m.jumpErr != "" || len(m.artList) != 0 || !strings.Contains(m.infoMsg, "already deleted") || strings.Contains(m.infoMsg, id) {
+			t.Errorf("err=%q info=%q list=%d", m.jumpErr, m.infoMsg, len(m.artList))
+		}
+	})
+}
+
+func TestArtifactDeleteCursorPlacement(t *testing.T) {
+	t.Run("middle goes to next", func(t *testing.T) {
+		m, _ := artDeleteFixture(t, "a", "b", "c")
+		stubArtRemove(t, nil)
+		ids := []string{}
+		for _, l := range artRows(m, "agentctl-acme-api") {
+			ids = append(ids, l.art.ID)
+		}
+		m = artPress(t, m, "x")
+		m = artPress(t, m, "y")
+		if l := m.selectedArtLine(); l == nil || l.art.ID != ids[1] {
+			t.Errorf("cursor = %+v, want %s", l, ids[1])
+		}
+	})
+	t.Run("last goes to previous", func(t *testing.T) {
+		m, _ := artDeleteFixture(t, "a", "b")
+		stubArtRemove(t, nil)
+		rows := artRows(m, "agentctl-acme-api")
+		m = artPress(t, m, "j")
+		m = artPress(t, m, "x")
+		m = artPress(t, m, "y")
+		if l := m.selectedArtLine(); l == nil || l.art.ID != rows[0].art.ID {
+			t.Errorf("cursor = %+v, want %s", l, rows[0].art.ID)
+		}
+	})
+	t.Run("emptied tab goes to the header", func(t *testing.T) {
+		m, _ := artDeleteFixture(t, "only")
+		stubArtRemove(t, nil)
+		m = artPress(t, m, "x")
+		m = artPress(t, m, "y")
+		if got := tabKey(m, "agentctl-acme-api"); got != -1 && got != tabKindSessions {
+			t.Errorf("tab = %d, want the vanished tab gone", got)
+		}
+		idx := m.splitPane.Cursor()
+		if idx != schedLineHeaderIdx2(m, "agentctl-acme-api") {
+			t.Errorf("cursor line %d (%v), want the group header %d", idx, m.lines[idx].kind, schedLineHeaderIdx2(m, "agentctl-acme-api"))
+		}
+	})
+}
+
+func TestArtifactDeleteExclusiveWithClose(t *testing.T) {
+	m, _ := artDeleteFixture(t, "one")
+	stubArtRemove(t, nil)
+	m.confirmSession, m.confirmWindow = "agentctl-acme-api", "@1"
+	m = artPress(t, m, "x")
+	if m.closeArmed() || !m.artDeleteArmed() {
+		t.Errorf("close=%v del=%v", m.closeArmed(), m.artDeleteArmed())
+	}
+	// And the other way round.
+	m.startClose(0)
+	m.artDelID = "x"
+	m.startClose(schedLineHeaderIdx2(m, "agentctl-acme-api") + 1)
+	if m.artDeleteArmed() && m.closeArmed() {
+		t.Error("both confirmations armed")
+	}
 }
