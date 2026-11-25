@@ -157,13 +157,22 @@ func (st *viewState) command(sc shellScript, c *shCommand, depth int) []string {
 		if script, ok := nestedScript(name, args); ok {
 			nested := &viewState{dirs: append([]string(nil), st.dirs...), vars: copyVars(st.vars), budget: st.budget}
 			nsc := scanShell(script)
+			// The outer line's environment reaches the nested script.
+			nsc.noSearchMask = nsc.noSearchMask || sc.noSearchMask
 			out = append(out, nested.views(nsc, depth+1)...)
 			// The nested script's own text, cd-free, is matched as is.
 			out = append(out, strings.ReplaceAll(nsc.masked(), "\n", " "))
 		}
 	}
 
-	masked := !sc.unsure && !c.subst && c.isAgentctl()
+	// Data words (agentctl arguments, a search pattern) are left out, as
+	// in masked(): joined to a cd they would read as paths.
+	data := map[int]bool{}
+	if !sc.unsure {
+		for _, i := range c.dataArgs(sc) {
+			data[i] = true
+		}
+	}
 	for _, dir := range st.dirs {
 		if dir == "" && !expanded && depth == 0 {
 			continue // nothing resolved: the plain text is matched already
@@ -172,8 +181,8 @@ func (st *viewState) command(sc shellScript, c *shCommand, depth int) []string {
 		if dir != "" && viewInterpreters[name] {
 			parts = append(parts, dir)
 		}
-		if !masked {
-			for _, a := range args {
+		for i, a := range args {
+			if !data[ni+1+i] {
 				parts = append(parts, joinViewPath(dir, a, true))
 			}
 		}

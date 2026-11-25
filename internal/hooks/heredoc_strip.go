@@ -71,17 +71,21 @@ func stripDataHeredocs(command string) string {
 //     an earlier statement may have wired that fd to an interpreter
 //     (`exec 3> >(bash); cat >&3 <<EOF`);
 //   - the statement writes to a file named anywhere else in the command, which
-//     may run it (`cat > s.sh <<EOF ... EOF; bash s.sh`).
+//     may run it (`cat > s.sh <<EOF ... EOF; bash s.sh`), unless every other
+//     mention is in a command that only reads the file or rewrites it in
+//     place (inertMention: `sed -i.bak 's/a/b/' f`, `gofmt -l f`).
 func dataHeredocSpans(f *syntax.File, command string) []span {
 	if hasProcSubstOrCoproc(f) {
 		return nil
 	}
 	// Statements piped into another command may have their output executed
 	// (e.g. `cat <<EOF | bash`), so their heredocs are never treated as data.
-	piped := map[*syntax.Stmt]bool{}
+	// inPipe has both sides, for inertMention.
+	piped, inPipe := map[*syntax.Stmt]bool{}, map[*syntax.Stmt]bool{}
 	syntax.Walk(f, func(n syntax.Node) bool {
 		if b, ok := n.(*syntax.BinaryCmd); ok && (b.Op == syntax.Pipe || b.Op == syntax.PipeAll) {
 			piped[b.X] = true
+			inPipe[b.X], inPipe[b.Y] = true, true
 		}
 		return true
 	})
@@ -97,6 +101,7 @@ func dataHeredocSpans(f *syntax.File, command string) []span {
 		return false
 	}
 
+	scopes := inertScopes(f, command)
 	var spans []span
 	syntax.Walk(f, func(n syntax.Node) bool {
 		st, ok := n.(*syntax.Stmt)
@@ -104,7 +109,10 @@ func dataHeredocSpans(f *syntax.File, command string) []span {
 			return true
 		}
 		targets, ok := writeTargets(st)
-		if !ok || targetNamedElsewhere(f, st, targets) {
+		inert := func(o *syntax.Stmt) bool {
+			return scopes[o] && inertMention(o, func(s *syntax.Stmt) bool { return inPipe[s] }, inSubst)
+		}
+		if !ok || targetNamedElsewhere(f, st, targets, inert) {
 			return true
 		}
 		for _, r := range st.Redirs {
@@ -211,8 +219,10 @@ func writeTargets(st *syntax.Stmt) (targets []string, ok bool) {
 }
 
 // targetNamedElsewhere reports whether any target (or its base name) is a
-// field of a word anywhere in f outside st's own words and heredoc bodies.
-func targetNamedElsewhere(f *syntax.File, st *syntax.Stmt, targets []string) bool {
+// field of a word anywhere in f outside st's own words and heredoc bodies,
+// skipping statements that only read or rewrite in place the files they
+// name (inert, see inertMention).
+func targetNamedElsewhere(f *syntax.File, st *syntax.Stmt, targets []string, inert func(*syntax.Stmt) bool) bool {
 	if len(targets) == 0 {
 		return false
 	}
@@ -226,9 +236,15 @@ func targetNamedElsewhere(f *syntax.File, st *syntax.Stmt, targets []string) boo
 	})
 	found := false
 	syntax.Walk(f, func(n syntax.Node) bool {
+		if found {
+			return false
+		}
+		if o, ok := n.(*syntax.Stmt); ok && o != st && inert(o) {
+			return false
+		}
 		w, ok := n.(*syntax.Word)
-		if !ok || found {
-			return !found
+		if !ok {
+			return true
 		}
 		if bodies[w] || own.contains(span{w.Pos().Offset(), w.End().Offset()}) {
 			return false
