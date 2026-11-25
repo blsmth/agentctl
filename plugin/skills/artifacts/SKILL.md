@@ -37,6 +37,8 @@ Use `--kind` only to override the extension.
 3. Send the human the direct link (and the one-line conclusion). Keep the id. Treat the link like a password: do not post it anywhere public (issues, PRs, commits). If serve is not running it says so; the URL is still valid once it starts.
 4. To change it, edit the spec and run `agentctl artifact render spec.json --update <id> --note "what changed"`. Never publish a second artifact for the same thing.
 
+**Client-facing reports are branded.** When a report is for a client or names one, set top-level `"brand"` (a profile from `agentctl artifact brand list`) and `"client"` (shown as "Prepared for <client>") in the spec, and set `author` to a person. Branded pages show the firm's logo, colours, font and footer, are always light, and never name agentctl, so keep tool names and internal jargon out of the content too. Hand it over as a PDF: `agentctl artifact pdf <id> --out /tmp/<slug>/<slug>.pdf` (cover page, footer with page numbers), and check the pages before sending. Never create or edit brand files; if the brand is missing or `agentctl artifact brand check <name>` fails, say so.
+
 **mockups, markdown, images, anything else:** write the file yourself.
 
 - `${CLAUDE_PLUGIN_ROOT}/skills/artifacts/templates/mockup.html`: free-form clickable multi-screen UI (hash routing, `sendChoice`); shares the kit tokens. `report.md`: markdown report (fenced `mermaid` blocks allowed).
