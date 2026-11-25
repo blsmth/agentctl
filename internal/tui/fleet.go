@@ -511,6 +511,10 @@ type FleetModel struct {
 	confirmSession string
 	confirmWindow  string
 
+	// artDelID is the artifact awaiting inline delete confirmation on the
+	// Artifacts tab ("delete? y/n"); empty when none.
+	artDelID string
+
 	// newSession/newLine identify the group header whose "+ new" button is
 	// armed as the shell | cron | agent selector (newLine is the cursor line it was
 	// armed from); empty when none. Cleared when the cursor moves off newLine.
@@ -1000,6 +1004,10 @@ func (m FleetModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyArtPinned(msg)
 		return m, nil
 
+	case fleetArtDeletedMsg:
+		m.applyArtDeleted(msg)
+		return m, nil
+
 	case fleetSchedLoadedMsg:
 		m.applySchedLoaded(msg)
 		return m, nil
@@ -1340,6 +1348,11 @@ func (m *FleetModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.cancelSweep()
 		if key == "n" || key == "N" || key == "esc" {
 			return *m, nil
+		}
+	}
+	if m.artDeleteArmed() {
+		if cmd, handled := m.artDeleteKey(key); handled {
+			return *m, cmd
 		}
 	}
 	if m.closeArmed() {
@@ -1746,6 +1759,9 @@ func (m *FleetModel) syncSelectionFromCursor() {
 	defer func() {
 		if m.closeArmed() && (m.selSession != m.confirmSession || m.selWindowID != m.confirmWindow) {
 			m.cancelClose()
+		}
+		if m.artDeleteArmed() && m.selSchedule != artSel(m.artDelID) {
+			m.cancelArtDelete()
 		}
 		if m.newArmed() && m.splitPane.Cursor() != m.newLine {
 			m.cancelNew()

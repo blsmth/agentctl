@@ -145,6 +145,9 @@ func (m *FleetModel) applyArtifacts(msg fleetArtifactsMsg) {
 	m.artifacts = msg.byWindow
 	if !slices.EqualFunc(m.artList, msg.list, artMetaSame) {
 		m.artList = msg.list
+		if m.artDeleteArmed() && !slices.ContainsFunc(m.artList, func(a artifacts.Meta) bool { return a.ID == m.artDelID }) {
+			m.cancelArtDelete()
+		}
 		m.relayout()
 	}
 }

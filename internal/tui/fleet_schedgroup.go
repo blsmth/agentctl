@@ -283,6 +283,7 @@ func (m *FleetModel) setTab(key string, k fleetTab) {
 	if key == "" {
 		return
 	}
+	m.cancelArtDelete()
 	delete(m.schedTabs, key)
 	delete(m.artTabs, key)
 	switch k {

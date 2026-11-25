@@ -50,6 +50,10 @@ var (
 	fleetArtifactPin = func(id string, pinned bool) (artifacts.Meta, error) {
 		return artifacts.New().Pin(id, pinned)
 	}
+	// fleetArtifactRemove deletes an artifact from the store.
+	fleetArtifactRemove = func(id string) (artifacts.Meta, error) {
+		return artifacts.New().Remove(id)
+	}
 )
 
 // artSel is the selSchedule key of artifact id.
@@ -144,10 +148,114 @@ func (m *FleetModel) artifactLineKey(key string) (tea.Cmd, bool) {
 		return m.openArtifactTab(l.art), true
 	case fleetArtPinKey:
 		return m.pinArtifact(l.art), true
-	case "tab", "e", "g", "d", "x", "space":
+	case "x":
+		m.startArtDelete(l.art.ID)
+		return nil, true
+	case "tab", "e", "g", "d", "space":
 		return nil, true // nothing live to act on
 	}
 	return nil, false
+}
+
+// startArtDelete arms the inline delete confirmation for artifact id. Only
+// one confirmation is armed at a time, so an armed window close is dropped.
+func (m *FleetModel) startArtDelete(id string) {
+	m.cancelClose()
+	m.jumpErr = ""
+	m.artDelID = id
+}
+
+func (m *FleetModel) cancelArtDelete() { m.artDelID = "" }
+
+func (m FleetModel) artDeleteArmed() bool { return m.artDelID != "" }
+
+// artDeleteArmedFor reports whether a's delete awaits confirmation.
+func (m FleetModel) artDeleteArmedFor(a artifacts.Meta) bool {
+	return m.artDeleteArmed() && a.ID == m.artDelID
+}
+
+// artDeleteKey handles a key while a delete is armed: y deletes, n/esc
+// cancels, anything else cancels and then runs as usual (handled is false).
+func (m *FleetModel) artDeleteKey(key string) (tea.Cmd, bool) {
+	switch key {
+	case "y", "Y":
+		return m.confirmArtDelete(), true
+	case "n", "N", "esc":
+		m.cancelArtDelete()
+		return nil, true
+	}
+	m.cancelArtDelete()
+	return nil, false
+}
+
+// fleetArtDeletedMsg is the outcome of a delete.
+type fleetArtDeletedMsg struct {
+	id  string
+	err error
+}
+
+// confirmArtDelete runs the armed delete.
+func (m *FleetModel) confirmArtDelete() tea.Cmd {
+	id := m.artDelID
+	m.cancelArtDelete()
+	if id == "" {
+		return nil
+	}
+	m.setProgress("deleting artifact…")
+	return func() tea.Msg {
+		_, err := fleetArtifactRemove(id)
+		return fleetArtDeletedMsg{id: id, err: err}
+	}
+}
+
+func (m *FleetModel) applyArtDeleted(msg fleetArtDeletedMsg) {
+	m.clearInfo()
+	gone := errors.Is(msg.err, artifacts.ErrNotFound)
+	if msg.err != nil && !gone {
+		// Store errors carry the full id in paths; ids are capabilities.
+		short := artifacts.ShortID(msg.id)
+		m.setError("delete " + short + ": " + strings.ReplaceAll(msg.err.Error(), msg.id, short))
+		return
+	}
+	m.jumpErr = ""
+	m.moveCursorOffArt(msg.id)
+	m.artList = slices.DeleteFunc(slices.Clone(m.artList), func(a artifacts.Meta) bool { return a.ID == msg.id })
+	// The store stamp moved with the write; drop ours so the next poll re-reads.
+	m.artifactsStamp = m.artifactsStamp.Add(-1)
+	m.relayout()
+	if gone {
+		m.setSuccess("artifact " + artifacts.ShortID(msg.id) + " was already deleted")
+		return
+	}
+	m.setSuccess("deleted artifact " + artifacts.ShortID(msg.id))
+}
+
+// moveCursorOffArt points the selection at the row after artifact id (the one
+// before when it was last), or at its group header when the tab empties, so
+// the relayout lands somewhere sensible.
+func (m *FleetModel) moveCursorOffArt(id string) {
+	at := -1
+	for i, l := range m.lines {
+		if l.kind == fleetLineArtifact && l.art.ID == id {
+			at = i
+			break
+		}
+	}
+	if at < 0 || m.selSchedule != artSel(id) {
+		return // the cursor is elsewhere and stays put
+	}
+	same := func(i int) bool {
+		return i >= 0 && i < len(m.lines) && m.lines[i].kind == fleetLineArtifact && m.lines[i].group.Session == m.lines[at].group.Session
+	}
+	switch {
+	case same(at + 1):
+		m.selSchedule = artSel(m.lines[at+1].art.ID)
+	case same(at - 1):
+		m.selSchedule = artSel(m.lines[at-1].art.ID)
+	default:
+		m.selSchedule = ""
+		m.selSession, m.selWindowID, m.selIsHeader = m.lines[at].group.Session, "", true
+	}
 }
 
 // artifactHints are the footer hints on an artifact row.
@@ -156,7 +264,10 @@ func (m FleetModel) artifactHints(l fleetLine) []fleetHint {
 	if l.art.Pinned {
 		pin = "unpin"
 	}
-	return []fleetHint{{"j/k", "move"}, {"⏎", "open"}, {fleetArtPinKey, pin}, {fleetSchedulesKey, "next tab"}, {"?", "more"}}
+	if m.artDeleteArmedFor(l.art) {
+		return fleetSchedYesNoHints
+	}
+	return []fleetHint{{"j/k", "move"}, {"⏎", "open"}, {fleetArtPinKey, pin}, {"x", "delete"}, {fleetSchedulesKey, "next tab"}, {"?", "more"}}
 }
 
 // fleetArtOpenedMsg is the outcome of opening an artifact from the tab.
@@ -281,6 +392,17 @@ func (m FleetModel) renderArtRow(l fleetLine, selected bool, hover fleetHoverReg
 		nameSt = nameSt.Underline(true)
 	}
 	left := lead + pin + " " + nameSt.Render(truncateToWidth(title, max(room, 1)))
+	if m.artDeleteArmedFor(a) {
+		q := "delete? y/n"
+		if a.Pinned {
+			q = "delete pinned? y/n"
+		}
+		right = fleetBlockedStyle.Render(q)
+		rw := lipgloss.Width(right)
+		left = lead + pin + " " + nameSt.Render(truncateToWidth(title, max(inner-fixed-rw-2, 1)))
+		gap := max(inner-lipgloss.Width(left)-rw, 1)
+		return fleetFitLine(left+strings.Repeat(" ", gap)+right, selected, cw)
+	}
 	if right == "" {
 		return fleetFitLine(left, selected, cw)
 	}
