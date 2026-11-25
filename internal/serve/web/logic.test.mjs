@@ -27,6 +27,7 @@ import {
   ARTIFACT_COLLAPSE_KEY, ARTIFACT_OTHER, UNDO_MS, artifactGroupKey, artifactGroupMove, artifactRevBadge, artifactSubline, buildArtifactOrderRequest,
   createDeleteQueue, dropSettled, SETTLED_TTL_MS, loadCollapsedSet, mergeArtifactOrder, saveCollapsedSet,
   ARTIFACT_FEEDBACK_MAX, artifactCommentStatus, artifactCommentToast, artifactFeedbackFrom,
+  artifactPdfLabel, artifactPdfPath, pdfDelivery, pdfFilename,
   isTrustBlocked, isTrustDialog, trustDialogOf, trustExitConfirm, trustFolder, TRUST_EXPLAIN, TRUST_TITLE,
 } from "./logic.js";
 
@@ -1331,3 +1332,26 @@ console.log("ok: handles");
   assert.match(TRUST_EXPLAIN, /read, edit and run files here/);
 }
 console.log("ok: folder trust");
+
+// Artifact PDF export.
+{
+  assert.equal(artifactPdfPath("abc", 2), "/v1/artifacts/abc/pdf?rev=2");
+  assert.equal(artifactPdfPath("a/b", 1), "/v1/artifacts/a%2Fb/pdf?rev=1");
+  assert.equal(artifactPdfLabel(3), "Save as PDF (v3)");
+  assert.equal(pdfFilename('attachment; filename="weekly-report-r2.pdf"'), "weekly-report-r2.pdf");
+  assert.equal(pdfFilename("attachment; filename=\"abcdef-r1.pdf\"; filename*=UTF-8''%E6%97%A5%E6%9C%AC-r1.pdf"), "\u65E5\u672C-r1.pdf");
+  assert.equal(pdfFilename("attachment; filename=\"ok.pdf\"; filename*=UTF-8''%E0%A4"), "ok.pdf"); // undecodable filename*
+  assert.equal(pdfFilename("attachment; filename=plain.pdf"), "plain.pdf");
+  assert.equal(pdfFilename('attachment; filename="../x/y.pdf"'), "..-x-y.pdf");
+  assert.equal(pdfFilename("", "fallback-r1.pdf"), "fallback-r1.pdf");
+  assert.equal(pdfFilename(null), "artifact.pdf");
+  const file = { name: "a.pdf" };
+  const share = { share() {}, canShare: (d) => d.files.length === 1 };
+  assert.equal(pdfDelivery(share, file), "share");
+  assert.equal(pdfDelivery({ share() {}, canShare: () => false }, file), "download");
+  assert.equal(pdfDelivery({ canShare: () => true }, file), "download"); // no share()
+  assert.equal(pdfDelivery({ share() {} }, file), "download"); // no canShare (desktop Firefox)
+  assert.equal(pdfDelivery({ share() {}, canShare: () => { throw new TypeError("x"); } }, file), "download");
+  assert.equal(pdfDelivery(undefined, file), "download");
+}
+console.log("ok: artifact pdf");

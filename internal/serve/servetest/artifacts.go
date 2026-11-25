@@ -1,14 +1,18 @@
 package servetest
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/blsmth/agentctl/internal/artifactpdf"
 	"github.com/blsmth/agentctl/internal/artifacts"
 )
 
@@ -147,4 +151,25 @@ func (h *Harness) handleSetArtifacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string][]string{"ids": ids})
+}
+
+// renderPDF stands in for artifactpdf.Render: no browser is launched. It
+// writes a tiny PDF naming the artifact and revision, after a short pause so
+// the viewer's busy state can be seen. An artifact whose title contains
+// "[no browser]" fails as a host without Chrome would.
+func (a *artifactWorld) renderPDF(ctx context.Context, store *artifacts.Store, id string, rev int, w io.Writer) error {
+	m, err := store.Get(id)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(m.Title, "[no browser]") {
+		return fmt.Errorf("%w: servetest", artifactpdf.ErrNoBrowser)
+	}
+	select {
+	case <-time.After(300 * time.Millisecond):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	_, err = fmt.Fprintf(w, "%%PDF-1.4\n%% servetest %s r%d\n%%%%EOF\n", m.Slug, rev)
+	return err
 }

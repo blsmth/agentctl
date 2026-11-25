@@ -75,6 +75,9 @@ func (s *Server) registerArtifacts(rt *Router) {
 	rt.Feature("artifacts")
 	rt.Device("GET /v1/artifacts", s.handleArtifacts)
 	rt.Device("GET /v1/artifacts/{id}", s.handleArtifact)
+	// Device, never Public: a render launches a headless browser, so a bare
+	// capability link must not be able to trigger one.
+	rt.Device("GET /v1/artifacts/{id}/pdf", pdfDeadline(s.handleArtifactPDF))
 	rt.Write("DELETE /v1/artifacts/{id}", writeRoute(s, "artifact-delete", s.handleArtifactDelete))
 	rt.Write("POST /v1/artifacts/order", writeRoute(s, "artifact-order", s.handleArtifactOrder))
 	rt.Write("POST /v1/artifacts/{id}/pin", writeRoute(s, "artifact-pin", s.handleArtifactPin))

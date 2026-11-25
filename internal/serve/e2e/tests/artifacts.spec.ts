@@ -292,3 +292,60 @@ test("swipe-delete hides the row at once, Undo brings it back, and nothing is se
   await expect(page.locator(".artifact-row", { hasText: "Cart numbers" })).toHaveCount(1);
   expect(deletes).toEqual([]);
 });
+
+test("Save as PDF downloads the revision on screen", async ({ page, control }) => {
+  // A browser that cannot share files (a laptop) gets a download.
+  await page.addInitScript(() => Object.defineProperty(navigator, "canShare", { configurable: true, value: () => false }));
+  const [id] = await control.seedArtifacts(seed());
+  await page.goto(`/#/artifacts/${id}/1`);
+  await expect(frame(page).locator("#h")).toHaveText("Rev one");
+  await page.getByRole("button", { name: "More actions" }).click();
+  const btn = page.getByRole("button", { name: "Save as PDF (v1)" });
+  const box = (await btn.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  const download = page.waitForEvent("download");
+  await btn.click();
+  // The servetest renderer takes 300ms, long enough to see the busy state.
+  await expect(page.locator(".artifact-pdf")).toHaveText("Rendering PDF…");
+  await expect(page.locator(".artifact-pdf")).toBeDisabled();
+  const d = await download;
+  expect(d.suggestedFilename()).toBe("checkout-mockup-r1.pdf");
+  await expect(page.locator(".artifact-sheet")).toHaveCount(0);
+});
+
+test("Save as PDF uses the share sheet when the browser can share files", async ({ page, control }) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { shared: { name: string; type: string; title: string }[] };
+    w.shared = [];
+    Object.defineProperty(navigator, "canShare", { configurable: true, value: (d: { files?: File[] }) => !!d?.files?.length });
+    Object.defineProperty(navigator, "share", {
+      configurable: true,
+      value: async (d: { files: File[]; title: string }) => {
+        w.shared.push({ name: d.files[0]!.name, type: d.files[0]!.type, title: d.title });
+      },
+    });
+  });
+  const [id] = await control.seedArtifacts(seed());
+  await page.goto(`/#/artifacts/${id}`);
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("button", { name: "Save as PDF (v2)" }).click();
+  // When the render outlived the tap's activation, a second tap shares.
+  const shareAgain = page.getByRole("button", { name: "Share PDF" });
+  const shared = () => page.evaluate(() => (window as unknown as { shared: unknown[] }).shared.length);
+  await expect.poll(async () => (await shared()) > 0 || (await shareAgain.isVisible())).toBe(true);
+  if ((await shared()) === 0) await shareAgain.click();
+  await expect.poll(shared).toBe(1);
+  const got = await page.evaluate(() => (window as unknown as { shared: unknown[] }).shared[0]);
+  expect(got).toEqual({ name: "checkout-mockup-r2.pdf", type: "application/pdf", title: "Checkout mockup" });
+});
+
+test("Save as PDF shows the server's error when no browser is installed", async ({ page, control, guard }) => {
+  guard.allow(/501|Not Implemented/);
+  const [id] = await control.seedArtifacts([{ title: "Report [no browser]", revisions: [{ files: { "r.md": "# R" }, entry: "r.md" }] }]);
+  await page.goto(`/#/artifacts/${id}`);
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("button", { name: "Save as PDF (v1)" }).click();
+  await expect(page.locator(".toast.error")).toContainText("artifacts.pdf_browser");
+  await expect(page.getByRole("button", { name: "Save as PDF (v1)" })).toBeEnabled();
+});

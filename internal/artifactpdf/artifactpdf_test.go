@@ -384,7 +384,7 @@ func TestFindBrowser(t *testing.T) {
 		configured = func() string { return "/opt/br" }
 		statFile = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 		_, err := FindBrowser()
-		if err == nil || !strings.Contains(err.Error(), ConfigKey) {
+		if !errors.Is(err, ErrBadBrowserConfig) || !strings.Contains(err.Error(), ConfigKey) || !strings.Contains(err.Error(), "/opt/br") {
 			t.Fatalf("err = %v", err)
 		}
 	})

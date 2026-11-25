@@ -37,13 +37,26 @@ var defaultLookPath = exec.LookPath
 // ErrNoBrowser is returned (wrapped) when no Chrome, Chromium or Edge is found.
 var ErrNoBrowser = errors.New("no Chrome, Chromium or Edge found")
 
+// ErrBadBrowserConfig is matched (errors.Is) by the error FindBrowser returns
+// when artifacts.pdf_browser is set to something that is not an executable.
+var ErrBadBrowserConfig = errors.New(ConfigKey + " is not an executable file")
+
+// badConfigError names the configured path; it Is ErrBadBrowserConfig.
+type badConfigError struct{ path string }
+
+func (e badConfigError) Error() string {
+	return fmt.Sprintf("%s %q is not an executable file", ConfigKey, e.path)
+}
+
+func (e badConfigError) Is(target error) bool { return target == ErrBadBrowserConfig }
+
 // FindBrowser returns the browser binary to render with: the configured
 // artifacts.pdf_browser when set (it must be an executable file), else the
 // first installed of the usual locations.
 func FindBrowser() (string, error) {
 	if p := configured(); p != "" {
 		if !isExecutable(p) {
-			return "", fmt.Errorf("%s %q is not an executable file", ConfigKey, p)
+			return "", badConfigError{path: p}
 		}
 		return p, nil
 	}

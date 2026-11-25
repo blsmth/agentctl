@@ -2,6 +2,8 @@ package serve
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blsmth/agentctl/internal/artifacts"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/launchwatch"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -99,6 +102,7 @@ func newTestServerWith(t *testing.T, cfg config.ServeConfig, mutate func(*Option
 		AdvertiseHost: "192.168.1.10",
 		HTTPSPort:     8443,
 		Now:           clock.Now,
+		RenderPDF:     noRealPDF,
 	}
 	if mutate != nil {
 		mutate(&opts)
@@ -109,6 +113,13 @@ func newTestServerWith(t *testing.T, cfg config.ServeConfig, mutate func(*Option
 	}
 	t.Cleanup(s.Close)
 	return &testServer{Server: s, dir: dir, clock: clock}
+}
+
+// noRealPDF is the default PDF renderer of test servers: a test that reaches
+// /v1/artifacts/{id}/pdf without its own stub fails instead of launching a
+// real browser.
+func noRealPDF(context.Context, *artifacts.Store, string, int, io.Writer) error {
+	return errors.New("test server: no PDF renderer stubbed (use newPDFEnv)")
 }
 
 // pairDevice adds a device directly and returns its token.

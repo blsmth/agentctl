@@ -2879,3 +2879,55 @@ export function artifactCommentStatus(c) {
       return "not delivered";
   }
 }
+
+// ---- artifact PDF export ----
+
+/** artifactPdfPath is the PDF route of revision rev (a number; never "latest", so the file matches what is on screen). */
+export function artifactPdfPath(id, rev) {
+  return `/v1/artifacts/${encodeURIComponent(id)}/pdf?rev=${encodeURIComponent(rev)}`;
+}
+
+/** artifactPdfLabel is the sheet button: "Save as PDF (v2)". */
+export function artifactPdfLabel(rev) {
+  return `Save as PDF (v${rev})`;
+}
+
+/**
+ * pdfFilename reads the file name from a Content-Disposition header: the
+ * RFC 8187 filename* when present and decodable, else filename, else
+ * fallback. Path separators never survive.
+ */
+export function pdfFilename(disposition, fallback = "artifact.pdf") {
+  const d = disposition ?? "";
+  let name = "";
+  const star = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(d);
+  if (star) {
+    try {
+      name = decodeURIComponent(star[1].trim());
+    } catch {
+      name = "";
+    }
+  }
+  if (!name) {
+    const plain = /filename\s*=\s*"([^"]*)"/i.exec(d) ?? /filename\s*=\s*([^;\s]+)/i.exec(d);
+    name = plain ? plain[1] : "";
+  }
+  name = name.replace(/[/\\\u0000-\u001f]/g, "-").trim();
+  return name || fallback;
+}
+
+/**
+ * pdfDelivery decides how a fetched PDF reaches the person: "share" (the
+ * share sheet: Save to Files, AirDrop; an iOS home-screen app cannot
+ * reliably download, and its cookies are not Safari's, so opening the URL
+ * elsewhere would not work) when the browser can share the file, else
+ * "download" (a blob URL and <a download>). nav is navigator.
+ */
+export function pdfDelivery(nav, file) {
+  try {
+    if (typeof nav?.share === "function" && nav.canShare?.({ files: [file] })) return "share";
+  } catch {
+    // canShare throws on some browsers for unsupported input
+  }
+  return "download";
+}
