@@ -2913,19 +2913,52 @@ export function pdfFilename(disposition, fallback = "artifact.pdf") {
     name = plain ? plain[1] : "";
   }
   name = name.replace(/[/\\\u0000-\u001f]/g, "-").trim();
-  return name || fallback;
+  if (!name) return fallback;
+  // iOS picks the share sheet's actions by type and name: always .pdf.
+  return /\.pdf$/i.test(name) ? name : `${name}.pdf`;
+}
+
+/** artifactPdfLinkPath is the route that mints a short-lived PDF link for revision rev (a number). */
+export function artifactPdfLinkPath(id, rev) {
+  return `/v1/artifacts/${encodeURIComponent(id)}/pdf-link?rev=${encodeURIComponent(rev)}`;
+}
+
+/**
+ * pdfSharePayload is what navigator.share gets for a PDF: the file and
+ * nothing else. On iOS a title or text next to the files makes the share
+ * sheet treat the share as text, and it drops the file actions (Save to
+ * Files, Print, open in another app).
+ */
+export function pdfSharePayload(file) {
+  return { files: [file] };
+}
+
+/**
+ * pdfFileProblem checks a file before it is shared or downloaded: it must be
+ * application/pdf, named *.pdf, not empty, and its first bytes (head, a
+ * Uint8Array of at least 5) must be "%PDF-". It returns "" when the file is
+ * a PDF, else why not.
+ */
+export function pdfFileProblem(file, head) {
+  if (!file || file.type !== "application/pdf") return "the server did not send a PDF";
+  if (!/\.pdf$/i.test(file.name ?? "")) return "the file name does not end in .pdf";
+  if (!(file.size > 0)) return "the PDF is empty";
+  const magic = [0x25, 0x50, 0x44, 0x46, 0x2d]; // %PDF-
+  if (!head || head.length < magic.length || magic.some((b, i) => head[i] !== b)) return "the server did not send a PDF";
+  return "";
 }
 
 /**
  * pdfDelivery decides how a fetched PDF reaches the person: "share" (the
  * share sheet: Save to Files, AirDrop; an iOS home-screen app cannot
- * reliably download, and its cookies are not Safari's, so opening the URL
- * elsewhere would not work) when the browser can share the file, else
- * "download" (a blob URL and <a download>). nav is navigator.
+ * reliably download, and its cookies are not Safari's, so opening the
+ * Device URL elsewhere would not work; "Open PDF" uses a short-lived link
+ * instead) when the browser can share the file, else "download" (a blob URL
+ * and <a download>). nav is navigator.
  */
 export function pdfDelivery(nav, file) {
   try {
-    if (typeof nav?.share === "function" && nav.canShare?.({ files: [file] })) return "share";
+    if (typeof nav?.share === "function" && nav.canShare?.(pdfSharePayload(file))) return "share";
   } catch {
     // canShare throws on some browsers for unsupported input
   }

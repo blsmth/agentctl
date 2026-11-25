@@ -93,29 +93,41 @@ func (s *Server) handleArtifactPDF(w http.ResponseWriter, r *http.Request) {
 // writePDFError maps a render error to a JSON error. The log names the
 // artifact by ShortID only: its id is a viewing credential.
 func (s *Server) writePDFError(w http.ResponseWriter, r *http.Request, id string, rev int, err error) {
+	status, code, msg, ok := s.pdfFailure(r, id, rev, err)
+	if !ok {
+		return
+	}
+	if status == http.StatusServiceUnavailable {
+		w.Header().Set("Retry-After", pdfRetryAfter)
+	}
+	writeError(w, status, code, msg)
+}
+
+// pdfFailure maps a render error to a status, code and client message
+// (logging the unexpected ones). ok is false when the client left: nobody
+// reads the answer. A 503 is busy and wants Retry-After.
+func (s *Server) pdfFailure(r *http.Request, id string, rev int, err error) (status int, code, msg string, ok bool) {
 	short := artifacts.ShortID(id)
 	switch {
 	case r.Context().Err() != nil:
-		// The client left; nobody reads the answer.
-		return
+		return 0, "", "", false
 	case errors.Is(err, errPDFBusy):
-		w.Header().Set("Retry-After", pdfRetryAfter)
-		writeError(w, http.StatusServiceUnavailable, codeBusy, "another PDF is rendering; try again shortly")
+		return http.StatusServiceUnavailable, codeBusy, "another PDF is rendering; try again shortly", true
 	case errors.Is(err, artifactpdf.ErrNoBrowser):
-		writeError(w, http.StatusNotImplemented, codeNoBrowser,
-			"no Chrome, Chromium or Edge on the server: install Google Chrome or set "+artifactpdf.ConfigKey+" in the global config")
+		return http.StatusNotImplemented, codeNoBrowser,
+			"no Chrome, Chromium or Edge on the server: install Google Chrome or set " + artifactpdf.ConfigKey + " in the global config", true
 	case errors.Is(err, artifactpdf.ErrBadBrowserConfig):
-		writeError(w, http.StatusNotImplemented, codeNoBrowser,
-			artifactpdf.ConfigKey+" in the global config is not an executable file")
+		return http.StatusNotImplemented, codeNoBrowser,
+			artifactpdf.ConfigKey + " in the global config is not an executable file", true
 	case errors.Is(err, artifacts.ErrNotFound):
 		status, code, msg := artifactErr(err)
-		writeError(w, status, code, msg)
+		return status, code, msg, true
 	case errors.Is(err, context.DeadlineExceeded):
 		logging.Warn("serve: pdf of artifact %s rev %d: %s", short, rev, redactArtifactIDs(err.Error()))
-		writeError(w, http.StatusBadGateway, codeRenderFailed, "rendering the PDF timed out")
+		return http.StatusBadGateway, codeRenderFailed, "rendering the PDF timed out", true
 	default:
 		logging.Warn("serve: pdf of artifact %s rev %d: %s", short, rev, redactArtifactIDs(err.Error()))
-		writeError(w, http.StatusBadGateway, codeRenderFailed, "rendering the PDF failed")
+		return http.StatusBadGateway, codeRenderFailed, "rendering the PDF failed", true
 	}
 }
 
@@ -125,22 +137,37 @@ func (s *Server) writePDFError(w http.ResponseWriter, r *http.Request, id string
 // slug, so its title names the file) filename* carries the UTF-8 name
 // (RFC 6266, RFC 8187) and filename falls back to the id prefix.
 func pdfDisposition(m artifacts.Meta, rev int) string {
-	suffix := fmt.Sprintf("-r%d.pdf", rev)
+	return pdfDispositionAs("attachment", m, rev)
+}
+
+// pdfDispositionAs is pdfDisposition with the disposition type: "inline"
+// for the PDF link, which the browser shows in its own PDF viewer.
+func pdfDispositionAs(kind string, m artifacts.Meta, rev int) string {
+	v := kind + `; filename="` + pdfASCIIName(m, rev) + `"`
+	if m.Slug == "" {
+		ascii := pdfASCIIStem(m)
+		if name := unicodeFilename(m.Title); name != "" && name != ascii {
+			v += "; filename*=UTF-8''" + url.PathEscape(name+pdfSuffix(rev))
+		}
+	}
+	return v
+}
+
+// pdfASCIIName is the plain (ASCII) PDF file name of revision rev of m.
+func pdfASCIIName(m artifacts.Meta, rev int) string { return pdfASCIIStem(m) + pdfSuffix(rev) }
+
+func pdfSuffix(rev int) string { return fmt.Sprintf("-r%d.pdf", rev) }
+
+// pdfASCIIStem is the slug, else the first six characters of the id.
+func pdfASCIIStem(m artifacts.Meta) string {
+	if ascii := asciiFilename(m.Slug); ascii != "" {
+		return ascii
+	}
 	fallback := m.ID
 	if len(fallback) > 6 {
 		fallback = fallback[:6]
 	}
-	ascii := asciiFilename(m.Slug)
-	if ascii == "" {
-		ascii = asciiFilename(fallback)
-	}
-	v := `attachment; filename="` + ascii + suffix + `"`
-	if m.Slug == "" {
-		if name := unicodeFilename(m.Title); name != "" && name != ascii {
-			v += "; filename*=UTF-8''" + url.PathEscape(name+suffix)
-		}
-	}
-	return v
+	return asciiFilename(fallback)
 }
 
 // asciiFilename keeps letters, digits, '.', '_' and '-' of s (others become

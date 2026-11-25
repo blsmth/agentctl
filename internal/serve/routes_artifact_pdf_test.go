@@ -64,8 +64,15 @@ func (f *fakePDF) count() int {
 	return len(f.calls)
 }
 
-// newPDFEnv is an artifact env whose PDF renders go to the returned fake.
+// newPDFEnv is an artifact env (allow_write off) whose PDF renders go to
+// the returned fake.
 func newPDFEnv(t *testing.T) (*artifactEnv, *fakePDF) {
+	t.Helper()
+	return newPDFEnvWrite(t, false)
+}
+
+// newPDFEnvWrite is newPDFEnv with allow_write set.
+func newPDFEnvWrite(t *testing.T, allowWrite bool) (*artifactEnv, *fakePDF) {
 	t.Helper()
 	fake := &fakePDF{}
 	ae := &artifactEnv{root: filepath.Join(t.TempDir(), "state", "artifacts"), now: time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC)}
@@ -73,7 +80,7 @@ func newPDFEnv(t *testing.T) (*artifactEnv, *fakePDF) {
 		Dir: func() (string, error) { return ae.root, nil },
 		Now: func() time.Time { return ae.now },
 	}
-	ae.writeEnv = newWriteEnvWith(t, false, func(o *Options) {
+	ae.writeEnv = newWriteEnvWith(t, allowWrite, func(o *Options) {
 		o.Artifacts = ae.store
 		o.RenderPDF = fake.render
 	})
