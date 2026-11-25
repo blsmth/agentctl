@@ -99,10 +99,13 @@ type Brand struct {
 	// Name is the profile's directory name.
 	Name string
 	// Firm is the firm name shown in the header and footer.
-	Firm   string
-	Logo   *File
-	Colors Colors
-	Font   Font
+	Firm string
+	Logo *File
+	// LogoHasName says the logo already shows the firm name (a wordmark), so
+	// the header and cover omit the name text beside it. The footer keeps it.
+	LogoHasName bool
+	Colors      Colors
+	Font        Font
 	// Footer is the one-line footer text; empty when unset.
 	Footer string
 }
@@ -217,7 +220,7 @@ func parse(dir string, data []byte) (Brand, Errors) {
 		return b, Errors{{"brand.json", "must be a JSON object"}}
 	}
 	p := &parser{dir: dir}
-	p.closed(top, "", "name", "logo", "colors", "font", "footer")
+	p.closed(top, "", "name", "logo", "logo_has_name", "colors", "font", "footer")
 
 	if s, ok := p.str(top, "name", "name", true); ok {
 		b.Firm = s
@@ -227,6 +230,17 @@ func parse(dir string, data []byte) (Brand, Errors) {
 	}
 	if s, ok := p.str(top, "logo", "logo", false); ok && s != "" {
 		b.Logo = p.logo(s)
+	}
+	if raw, present := top["logo_has_name"]; present {
+		v, isBool := raw.(bool)
+		switch {
+		case !isBool:
+			p.add("logo_has_name", "expected true or false")
+		case v && b.Logo == nil:
+			p.add("logo_has_name", "needs a logo")
+		default:
+			b.LogoHasName = v
+		}
 	}
 	if m, ok := p.obj(top, "colors"); ok {
 		b.Colors = p.colors(m)
@@ -472,6 +486,7 @@ var (
 	svgURLRE      = regexp.MustCompile(`(?i)url\(\s*["']?\s*([^"')\s]*)`)
 	svgImportRE   = regexp.MustCompile(`(?i)@import`)
 	svgJSSchemeRE = regexp.MustCompile(`(?i)javascript:`)
+	svgDTDRE      = regexp.MustCompile(`(?i)<!\s*(doctype|entity)`)
 )
 
 // unsafeSVG returns why an SVG must not be embedded, or "".
@@ -480,7 +495,7 @@ func unsafeSVG(data []byte) string {
 	if !strings.Contains(strings.ToLower(s), "<svg") {
 		return "not an SVG document"
 	}
-	if regexp.MustCompile(`(?i)<!\s*(doctype|entity)`).MatchString(s) {
+	if svgDTDRE.MatchString(s) {
 		return "contains a DTD (<!DOCTYPE or <!ENTITY)"
 	}
 	if m := svgScriptRE.FindStringSubmatch(s); m != nil {

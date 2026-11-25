@@ -77,7 +77,7 @@ The iOS Simulator (macOS with Xcode only) is still useful as an occasional manua
 
 ### PDF export: real-browser test
 
-`internal/artifactpdf` unit tests stub the browser. `AGENTCTL_PDF_IT=1 go test -run RealBrowser ./internal/artifactpdf` prints an html and a markdown artifact with an installed Chrome, Chromium or Edge; without the variable the test is skipped, so a plain `go test ./...` never launches a browser.
+`internal/artifactpdf` unit tests stub the browser. `AGENTCTL_PDF_IT=1 go test -run RealBrowser ./internal/artifactpdf` prints an html and a markdown artifact, and a branded kit page (cover, footer, page numbers; text checks need `pdftotext`), with an installed Chrome, Chromium or Edge; without the variable the test is skipped, so a plain `go test ./...` never launches a browser.
 
 ### Demo harness and screenshots
 

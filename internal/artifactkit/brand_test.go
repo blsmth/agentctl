@@ -178,3 +178,94 @@ func TestKitPrintTokensSkipBrandedPages(t *testing.T) {
 		t.Error("kit.css has an unscoped [data-print] rule")
 	}
 }
+
+func TestBrandedCoverAndPagedCSS(t *testing.T) {
+	spec := `{"kind":"comparison","title":"Q4 <review>","summary":"All good","client":"Acme <Corp>","date":"2026-11-24","blocks":[{"type":"text","text":"x"}]}`
+	page, err := RenderBranded([]byte(spec), testBrand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(page.HTML)
+	cover := html[strings.Index(html, `<section class="brand-cover"`):]
+	cover = cover[:strings.Index(cover, "</section>")]
+	for _, want := range []string{
+		`<img class="cover-logo" src="data:image/png;base64,`, // the logo stays an <img> data URI
+		`<span class="cover-firm">Lincoln &lt;b&gt;Loop&lt;/b&gt; &amp; Co</span>`,
+		`<h1 class="cover-title">Q4 &lt;review&gt;</h1>`,
+		`<p class="cover-summary">All good</p>`,
+		`<p class="cover-for">Prepared for Acme &lt;Corp&gt;</p>`,
+		`<p class="cover-date">Nov 24, 2026</p>`,
+	} {
+		if !strings.Contains(cover, want) {
+			t.Errorf("cover lacks %q:\n%s", want, cover)
+		}
+	}
+	if strings.Contains(html, "<svg") && strings.Contains(cover, "<svg") {
+		t.Error("cover inlines an svg")
+	}
+	if strings.Index(html, `class="brand-cover"`) > strings.Index(html, `class="brand-bar"`) {
+		t.Error("cover must precede the header")
+	}
+	css := html[strings.Index(html, `<style id="brand">`):]
+	css = css[:strings.Index(css, "</style>")]
+	for _, want := range []string{
+		".brand-cover{display:none}", ".brand-foot{display:none}", "break-after:page",
+		`@bottom-left{content:"© 2026 \3c i\3e Lincoln\3c /i\3e  Loop · Confidential";font-family:"Inter",system-ui`,
+		`@bottom-right{content:"Page " counter(page) " of " counter(pages);`,
+		"@page :first{margin:.5in;@bottom-left{content:none;border:0}@bottom-right{content:none;border:0}}",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("paged css lacks %q:\n%s", want, css)
+		}
+	}
+}
+
+func TestBrandedCoverMinimal(t *testing.T) {
+	b := &artifactbrand.Brand{Firm: "Min"}
+	page, err := RenderBranded([]byte(`{"kind":"comparison","title":"T","blocks":[{"type":"text","text":"x"}]}`), b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(page.HTML)
+	for _, no := range []string{"cover-summary", `class="cover-for"`, `class="cover-date"`, "cover-logo"} {
+		if strings.Contains(html[strings.Index(html, `<section`):strings.Index(html, `</section>`)], no) {
+			t.Errorf("cover has %s", no)
+		}
+	}
+	if !strings.Contains(html, `<span class="cover-firm">Min</span>`) || !strings.Contains(html, `@bottom-left{content:"Min";`) {
+		t.Error("firm name missing from cover or footer fallback")
+	}
+}
+
+func TestLogoHasNameHidesFirmText(t *testing.T) {
+	b := testBrand()
+	b.LogoHasName = true
+	page, err := RenderBranded([]byte(brandedSpec), b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(page.HTML)
+	if strings.Contains(html, `class="brand-firm"`) || strings.Contains(html, `class="cover-firm"`) {
+		t.Error("firm name text shown beside a wordmark logo")
+	}
+	if !strings.Contains(html, `class="brand-logo" src="data:image/png;base64,`) || !strings.Contains(html, `alt="Lincoln &lt;b&gt;Loop&lt;/b&gt; &amp; Co"`) {
+		t.Error("logo missing or without the firm name as alt")
+	}
+	if !strings.Contains(html, `<footer class="brand-foot">`) {
+		t.Error("footer lost")
+	}
+	// without a logo the name is still shown
+	b.Logo = nil
+	page, _ = RenderBranded([]byte(brandedSpec), b)
+	if !strings.Contains(string(page.HTML), `class="brand-firm"`) {
+		t.Error("no logo and no firm name")
+	}
+}
+
+func TestCSSString(t *testing.T) {
+	got := cssString("a\"b\\c\nd</style>")
+	want := `"a\"b\\c\a d\3c /style\3e "`
+	if got != want {
+		t.Errorf("cssString = %s, want %s", got, want)
+	}
+}

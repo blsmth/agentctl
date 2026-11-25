@@ -57,6 +57,7 @@ func RenderBranded(data []byte, brand *artifactbrand.Brand) (Page, error) {
 	}
 	b.WriteString("</head>\n<body>\n")
 	if brand != nil {
+		b.WriteString(brandCover(brand, spec))
 		b.WriteString(brandHeader(brand))
 	}
 	b.WriteString("<main id=\"kit-main\"></main>\n")
