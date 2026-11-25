@@ -253,3 +253,43 @@ func CloseDescendants(parentID, parentSessionID string, wins []LiveWindow, kill 
 	}
 	return closed
 }
+
+// ChildCloser closes a window's dispatched sub-sessions ahead of the window
+// itself. The fields are seams so tests never touch tmux.
+type ChildCloser struct {
+	// Enabled reports the close_children switch.
+	Enabled func() bool
+	// List lists live windows across every agentctl session.
+	List func() ([]LiveWindow, error)
+	// Kill closes one window.
+	Kill func(LiveWindow) error
+}
+
+// DefaultChildCloser wires a ChildCloser to config and tmux.
+func DefaultChildCloser() ChildCloser {
+	return ChildCloser{
+		Enabled: func() bool { return config.Load().CloseChildrenEnabled() },
+		List:    ListLiveWindows,
+		Kill: func(w LiveWindow) error {
+			return tmux.KillWindowIn(w.Session, w.RuntimeDir, w.WindowID)
+		},
+	}
+}
+
+// Close kills the descendants of windowID/sessionID deepest-first and returns
+// the windows it closed. It does nothing when close_children is off or the
+// Claude session ID is empty (nothing can be matched). A listing failure
+// closes nothing and a failed kill is skipped: it never blocks closing the
+// parent. A child already gone is not an error (the kill is skipped and
+// logged).
+func (c ChildCloser) Close(windowID, sessionID string) []LiveWindow {
+	if sessionID == "" || c.Enabled == nil || c.List == nil || c.Kill == nil || !c.Enabled() {
+		return nil
+	}
+	wins, err := c.List()
+	if err != nil {
+		logging.Warn("reconcile: listing windows to close sub-sessions: %v", err)
+		return nil
+	}
+	return CloseDescendants(windowID, sessionID, wins, c.Kill)
+}

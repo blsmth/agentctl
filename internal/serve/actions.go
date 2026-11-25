@@ -255,32 +255,14 @@ type liveChildren struct {
 }
 
 func tmuxChildren() liveChildren {
-	return liveChildren{
-		enabled: func() bool { return config.Load().CloseChildrenEnabled() },
-		list:    reconcile.ListLiveWindows,
-		kill: func(w reconcile.LiveWindow) error {
-			return tmux.KillWindowIn(w.Session, w.RuntimeDir, w.WindowID)
-		},
-	}
+	d := reconcile.DefaultChildCloser()
+	return liveChildren{enabled: d.Enabled, list: d.List, kill: d.Kill}
 }
 
 func (c liveChildren) CloseChildren(windowID, sessionID string) []WindowKey {
-	if sessionID == "" || !c.enabled() {
-		return nil
-	}
-	return closeChildren(windowID, sessionID, c.list, c.kill)
-}
-
-// closeChildren lists live windows and kills the descendants of the window
-// deepest-first. A listing failure closes nothing.
-func closeChildren(windowID, sessionID string, list func() ([]reconcile.LiveWindow, error), kill func(reconcile.LiveWindow) error) []WindowKey {
-	wins, err := list()
-	if err != nil {
-		logging.Warn("serve: listing windows to close sub-sessions: %v", err)
-		return nil
-	}
+	closer := reconcile.ChildCloser{Enabled: c.enabled, List: c.list, Kill: c.kill}
 	var keys []WindowKey
-	for _, w := range reconcile.CloseDescendants(windowID, sessionID, wins, kill) {
+	for _, w := range closer.Close(windowID, sessionID) {
 		keys = append(keys, WindowKey{Session: w.Session, WindowID: w.WindowID})
 	}
 	return keys

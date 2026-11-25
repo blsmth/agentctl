@@ -10,9 +10,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/reconcile"
 	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // fleetCronKey opens a new cron job for the selected group's project, also
@@ -174,6 +177,8 @@ type fleetShellOpenedMsg struct {
 var (
 	newShellWindow    = tmux.NewShellWindow
 	killSessionWindow = tmux.KillSessionWindow
+	// fleetChildCloser closes a window's dispatched sub-sessions ahead of it.
+	fleetChildCloser = reconcile.DefaultChildCloser()
 )
 
 // fleetShellCmd opens a plain shell window in g's project. The window's env
@@ -189,6 +194,10 @@ func fleetShellCmd(g fleet.Group) tea.Cmd {
 
 func fleetCloseCmd(r fleet.Row) tea.Cmd {
 	return func() tea.Msg {
+		// Sub-sessions first, so none is left orphaned: the reconcile cascade
+		// does not run reliably without the monitor. Failures are logged and
+		// skipped inside Close; they never block the parent close.
+		fleetChildCloser.Close(r.WindowID, r.SessionID)
 		return fleetClosedMsg{name: r.Name, err: killSessionWindow(r.Session, r.WindowID)}
 	}
 }
@@ -341,9 +350,38 @@ func (m *FleetModel) startClose(idx int) {
 	m.jumpErr = ""
 	m.cancelArtDelete()
 	m.confirmSession, m.confirmWindow = r.Session, r.WindowID
+	m.confirmKids = 0
+	if r.SessionID != "" && config.Load().CloseChildrenEnabled() {
+		m.confirmKids = m.dispatchedUnder(r)
+	}
 }
 
-func (m *FleetModel) cancelClose() { m.confirmSession, m.confirmWindow = "", "" }
+// dispatchedUnder counts the windows a close of r also closes. It adapts every
+// loaded group's rows (not just the visible lines: collapsed, filtered and
+// other-tab rows still close) to reconcile.LiveWindow and asks
+// reconcile.Descendants, so the count follows the same rule as the close.
+func (m *FleetModel) dispatchedUnder(r fleet.Row) int {
+	var wins []reconcile.LiveWindow
+	for _, g := range m.groups {
+		for _, c := range g.Rows {
+			wins = append(wins, reconcile.LiveWindow{
+				Session:  g.Session,
+				WindowID: c.WindowID,
+				Record: windowstate.WindowState{
+					SessionID:        c.SessionID,
+					SpawnedBy:        c.SpawnedBy,
+					SpawnedBySession: c.SpawnedBySession,
+					ScheduledBy:      c.ScheduledBy,
+				},
+			})
+		}
+	}
+	return len(reconcile.Descendants(r.WindowID, r.SessionID, wins))
+}
+
+func (m *FleetModel) cancelClose() {
+	m.confirmSession, m.confirmWindow, m.confirmKids = "", "", 0
+}
 
 func (m FleetModel) closeArmed() bool { return m.confirmWindow != "" }
 
