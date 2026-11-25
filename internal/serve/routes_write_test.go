@@ -296,6 +296,7 @@ func newWriteEnvWith(t *testing.T, allowWrite bool, mutate func(*Options)) *writ
 		MainPanes:      e.panes,
 		Sweep:          e.sweep.run,
 		GroupOrderPath: func() (string, error) { return filepath.Join(dir, "group-order.json"), nil },
+		RenderPDF:      noRealPDF,
 	}
 	if mutate != nil {
 		mutate(&opts)

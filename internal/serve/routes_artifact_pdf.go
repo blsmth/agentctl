@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -20,6 +21,23 @@ const (
 	codeNoBrowser    = "no_browser"
 	codeRenderFailed = "render_failed"
 )
+
+// pdfWriteDeadline is the write deadline of the PDF route, past the server's
+// 30s WriteTimeout: a request may wait pdfQueueWait for the render slot and
+// then up to artifactpdf.Timeout for the browser, plus a margin to send the
+// file. Without it a render slower than ~30s would finish (and be cached)
+// while the phone saw a network error.
+const pdfWriteDeadline = pdfQueueWait + artifactpdf.Timeout + 15*time.Second
+
+// pdfDeadline extends the write deadline for the PDF route.
+func pdfDeadline(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(pdfWriteDeadline)); err != nil {
+			logging.Debug("serve: extending pdf write deadline: %v", err)
+		}
+		h(w, r)
+	}
+}
 
 // handleArtifactPDF is GET /v1/artifacts/{id}/pdf?rev=N (rev absent or
 // "latest" = the latest revision): the revision printed to a PDF by

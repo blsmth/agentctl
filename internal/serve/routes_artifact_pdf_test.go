@@ -466,3 +466,25 @@ func TestPDFCacheLRU(t *testing.T) {
 		t.Errorf("size after forget = %d", c.size)
 	}
 }
+
+// A queued render can outlast the server's 30s WriteTimeout, so the route
+// extends the write deadline past the queue wait plus the render timeout.
+func TestArtifactPDFExtendsWriteDeadline(t *testing.T) {
+	if pdfWriteDeadline < pdfQueueWait+artifactpdf.Timeout {
+		t.Fatalf("pdfWriteDeadline %v < queue wait %v + render timeout %v", pdfWriteDeadline, pdfQueueWait, artifactpdf.Timeout)
+	}
+	ae, _ := newPDFEnv(t)
+	m := ae.add(t, map[string]string{"r.html": "<p>x</p>"}, artifacts.AddOptions{Title: "R"})
+	r := httptest.NewRequest(http.MethodGet, pdfPath(m.ID, ""), nil)
+	r.RemoteAddr = "192.168.1.20:51515"
+	r.AddCookie(&http.Cookie{Name: DeviceCookie, Value: ae.tok})
+	inner := httptest.NewRecorder()
+	rec := &deadlineRecorder{ResponseWriter: inner}
+	ae.Handler().ServeHTTP(rec, r)
+	if inner.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", inner.Code, inner.Body)
+	}
+	if until := time.Until(rec.deadline); until < pdfQueueWait+artifactpdf.Timeout {
+		t.Errorf("write deadline %v from now, want at least %v", until, pdfQueueWait+artifactpdf.Timeout)
+	}
+}
