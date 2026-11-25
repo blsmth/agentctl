@@ -98,6 +98,7 @@ See [cron](configuration.md#cron) for the config keys, approval rules and the hu
 | Command | What it does |
 |---|---|
 | `agentctl artifact add <path\|dir\|->` | Publish a file, a directory (opens `index.html`, or `--entry`) or stdin (`-`, needs `--entry name.ext` or `--kind`). `--title`, `--description`, `--kind html\|markdown\|image\|text`, `--pin`, `--no-notify`, `--json`. Kind comes from the entry's extension; an unknown extension is text only if it is valid UTF-8. The title defaults to the HTML `<title>`, the first markdown `# heading`, else the file name. |
+| `agentctl artifact render <spec.json\|->` | Validate a kit spec (block format: `plugin/skills/artifacts/kit/SPEC.md`), build the HTML page and publish it like `add`. Errors name the JSON path and nothing is published. `--title` (default: the spec title), `--description`, `--update <id> --note N` (adds a revision), `--out file.html` (write only, no publish), `--pin`, `--no-notify`, `--json`. |
 | `agentctl artifact update <id> <path\|dir\|->` | Add revision n+1 (`--note`, `--title`, `--json`). The latest is the default view; at most 20 revisions are kept, oldest dropped. |
 | `agentctl artifact list` | The current project's artifacts (`--all` for every project, `--project`, `--agent`, `--since 7d`, `--json`). |
 | `agentctl artifact show <id>` | Metadata, revisions and URLs (`--json`). |

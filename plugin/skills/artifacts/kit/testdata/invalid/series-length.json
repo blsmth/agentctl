@@ -1,0 +1,1 @@
+{"kind":"comparison","title":"T","blocks":[{"type":"text","text":"x"},{"type":"chart","chart":"bar","labels":["a","b"],"series":[{"name":"s","values":[1,2]},{"name":"t","values":[1]}]}]}

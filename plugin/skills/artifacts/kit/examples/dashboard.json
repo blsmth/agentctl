@@ -1,0 +1,39 @@
+{
+  "kind": "dashboard",
+  "title": "Service health, week of 17 Nov",
+  "summary": "Traffic is up 8% and errors are flat; cost is the one number to watch.",
+  "date": "2026-11-24",
+  "author": "agent",
+  "scope": "all production services",
+  "blocks": [
+    {"type": "kpis", "items": [
+      {"label": "Requests", "value": 12400, "format": "number", "delta": "+8%", "trend": "good", "note": "vs. prior week"},
+      {"label": "Error rate", "value": 0.4, "format": "percent", "delta": "+0.1 pt", "trend": "bad"},
+      {"label": "p95 latency", "value": 0.21, "format": "duration", "delta": "-12 ms", "trend": "good"},
+      {"label": "Cost", "value": 48, "format": "currency", "currency": "USD"}
+    ]},
+    {"type": "chart", "title": "Requests per day", "chart": "line", "unit": "requests", "x_label": "Day",
+     "labels": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+     "series": [{"name": "This week", "values": [1820, 1910, 1750, 2230, 2610, 1130, 980]}, {"name": "Last week", "values": [1700, 1800, 1790, 2050, 2400, 1100, null]}]},
+    {"type": "chart", "title": "Errors by service", "chart": "stacked_bar", "unit": "errors",
+     "labels": ["api", "web", "worker"],
+     "series": [{"name": "5xx", "values": [12, 5, 9]}, {"name": "Timeouts", "values": [4, 2, 11]}]},
+    {"type": "chart", "title": "Cost split", "chart": "doughnut", "unit": "USD",
+     "labels": ["Compute", "Storage", "Network"],
+     "series": [{"name": "Cost", "values": [28, 12, 8]}]},
+    {"type": "table", "title": "Services", "columns": [
+      {"key": "service", "label": "Service"},
+      {"key": "status", "label": "Status", "type": "status"},
+      {"key": "uptime", "label": "Uptime", "type": "percent"},
+      {"key": "p95", "label": "p95", "type": "duration"}
+    ], "rows": [
+      {"service": "api", "status": "ok", "uptime": 99.98, "p95": 0.21},
+      {"service": "web", "status": "ok", "uptime": 99.95, "p95": 0.34},
+      {"service": "worker", "status": "degraded", "uptime": 99.2, "p95": null}
+    ]},
+    {"type": "sources", "items": [
+      {"label": "Prometheus, 17-23 Nov", "note": "requests, errors, latency"},
+      {"label": "Cloud billing export, 17-23 Nov", "note": "cost"}
+    ]}
+  ]
+}

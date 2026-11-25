@@ -1,0 +1,1 @@
+{"kind":"diagram","title":"Flow","blocks":[{"type":"mermaid","source":"flowchart LR\n  A --> B"}]}

@@ -411,6 +411,21 @@ func TestArtifactFlagsParse(t *testing.T) {
 	if _, err := k4.Parse([]string{"artifact", "add", "x.html", "--kind", "pdf"}); err == nil {
 		t.Error("unknown --kind accepted")
 	}
+	var cli6 CLI
+	k6, _ := kong.New(&cli6, kong.Name("agentctl"))
+	if _, err := k6.Parse([]string{"artifact", "render", "spec.json", "--title", "T", "--description", "D", "--update", "abcdefghij",
+		"--note", "n", "--no-notify", "--pin", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	if r := cli6.Artifact.Render; r.Spec != "spec.json" || r.Title != "T" || r.Description != "D" || r.Update != "abcdefghij" ||
+		r.Note != "n" || !r.NoNotify || !r.Pin || !r.JSON || r.Out != "" {
+		t.Errorf("render parsed = %+v", r)
+	}
+	var cli7 CLI
+	k7, _ := kong.New(&cli7, kong.Name("agentctl"))
+	if _, err := k7.Parse([]string{"artifact", "render", "-", "--out", "page.html"}); err != nil || cli7.Artifact.Render.Spec != "-" || cli7.Artifact.Render.Out != "page.html" {
+		t.Errorf("render --out parsed = %+v err=%v", cli7.Artifact.Render, err)
+	}
 }
 
 // TestLaunchWatchParses: the hidden launch watcher takes one window ID.
