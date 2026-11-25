@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 
+	"github.com/blsmth/agentctl/internal/artifactbrand"
 	"github.com/blsmth/agentctl/plugin/skills/artifacts/kit"
 )
 
@@ -20,7 +21,13 @@ type Page struct {
 
 // Render validates data and builds the page. An invalid spec returns Errors
 // and no page.
-func Render(data []byte) (Page, error) {
+func Render(data []byte) (Page, error) { return RenderBranded(data, nil) }
+
+// RenderBranded is Render with a brand profile applied: a logo and firm name
+// header above the page, the brand's colours and font over the kit's tokens,
+// the light palette pinned, and the brand footer. A nil brand gives exactly
+// Render's page.
+func RenderBranded(data []byte, brand *artifactbrand.Brand) (Page, error) {
 	spec, errs := parse(data)
 	if errs != nil {
 		return Page{}, errs
@@ -31,12 +38,31 @@ func Render(data []byte) (Page, error) {
 		return Page{}, fmt.Errorf("embedding spec: %w", err)
 	}
 	var b bytes.Buffer
-	b.WriteString("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
+	if brand == nil {
+		b.WriteString("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
+	} else {
+		b.WriteString("<!doctype html>\n<html lang=\"en\" data-light>\n<head>\n<meta charset=\"utf-8\">\n")
+	}
 	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
-	b.WriteString("<meta name=\"color-scheme\" content=\"light dark\">\n")
+	if brand == nil {
+		b.WriteString("<meta name=\"color-scheme\" content=\"light dark\">\n")
+	} else {
+		b.WriteString("<meta name=\"color-scheme\" content=\"light\">\n")
+	}
 	b.WriteString("<title>" + html.EscapeString(title) + "</title>\n<style>\n")
 	b.WriteString(kit.CSS)
-	b.WriteString("</style>\n</head>\n<body>\n<main id=\"kit-main\"></main>\n")
+	b.WriteString("</style>\n")
+	if brand != nil {
+		b.WriteString("<style id=\"brand\">\n" + brandCSS(brand) + "</style>\n")
+	}
+	b.WriteString("</head>\n<body>\n")
+	if brand != nil {
+		b.WriteString(brandHeader(brand))
+	}
+	b.WriteString("<main id=\"kit-main\"></main>\n")
+	if brand != nil {
+		b.WriteString(brandFooter(brand))
+	}
 	b.WriteString("<script type=\"application/json\" id=\"spec\">\n")
 	b.Write(embedded)
 	b.WriteString("\n</script>\n<script>\n")

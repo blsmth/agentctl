@@ -11,7 +11,7 @@
       "name": "agentctl",
       "source": "./plugin",
       "description": "agentctl slash commands and artifact skill for Claude Code",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "homepage": "https://github.com/blsmth/agentctl",
       "license": "MIT"
     }

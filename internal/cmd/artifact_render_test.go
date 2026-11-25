@@ -155,3 +155,113 @@ func TestArtifactRenderFlagConflicts(t *testing.T) {
 		})
 	}
 }
+
+func writeTestBrand(t *testing.T, name, firm string) {
+	t.Helper()
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	dir := filepath.Join(xdg, "agentctl", "brands", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "brand.json"), []byte(`{"name":"`+firm+`","footer":"Confidential"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func renderToFile(t *testing.T, spec string, o ArtifactRenderOptions) (string, error) {
+	t.Helper()
+	h := newArtifactHarness(t)
+	o.Path = writeTmp(t, "spec.json", spec)
+	o.Out = filepath.Join(t.TempDir(), "out.html")
+	var out bytes.Buffer
+	if err := h.env.render(&out, o); err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(o.Out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data), nil
+}
+
+func TestArtifactRenderBrandFlagOverridesSpec(t *testing.T) {
+	writeTestBrand(t, "flagged", "Flag Firm")
+	spec := `{"kind":"comparison","title":"T","brand":"does-not-exist","blocks":[{"type":"text","text":"x"}]}`
+	html, err := renderToFile(t, spec, ArtifactRenderOptions{Brand: "flagged"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html, `<span class="brand-firm">Flag Firm</span>`) || !strings.Contains(html, "Confidential</footer>") {
+		t.Error("flag brand not applied")
+	}
+}
+
+func TestArtifactRenderSpecBrand(t *testing.T) {
+	writeTestBrand(t, "fromspec", "Spec Firm")
+	spec := `{"kind":"comparison","title":"T","brand":"fromspec","client":"Acme","blocks":[{"type":"text","text":"x"}]}`
+	html, err := renderToFile(t, spec, ArtifactRenderOptions{})
+	if err != nil || !strings.Contains(html, "Spec Firm") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestArtifactRenderUnknownBrandIsAnError(t *testing.T) {
+	writeTestBrand(t, "only-one", "One")
+	for name, o := range map[string]ArtifactRenderOptions{"flag": {Brand: "nope"}, "spec": {}} {
+		spec := goodSpec
+		if name == "spec" {
+			spec = `{"kind":"comparison","title":"T","brand":"nope","blocks":[{"type":"text","text":"x"}]}`
+		}
+		_, err := renderToFile(t, spec, o)
+		if err == nil || !strings.Contains(err.Error(), `unknown brand "nope"`) || !strings.Contains(err.Error(), "available: only-one") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}
+
+func TestArtifactRenderWithoutBrandIsUnbranded(t *testing.T) {
+	html, err := renderToFile(t, `{"kind":"comparison","title":"T","client":"Acme","blocks":[{"type":"text","text":"x"}]}`, ArtifactRenderOptions{})
+	if err != nil || strings.Contains(html, "brand-bar") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestArtifactBrandListAndCheck(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "brands")
+	var out bytes.Buffer
+	if err := listBrands(&out, root); err != nil || !strings.Contains(out.String(), "No brands. Create one as "+filepath.Join(root, "<name>")) {
+		t.Errorf("empty list = %q %v", out.String(), err)
+	}
+	for name, js := range map[string]string{"good": `{"name":"Good Co"}`, "bad": `{"name":"Bad","colors":{"accent":"#aaaaaa","c1":"red"},"x":1}`} {
+		if err := os.MkdirAll(filepath.Join(root, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name, "brand.json"), []byte(js), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out.Reset()
+	if err := listBrands(&out, root); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "good\tGood Co") || !strings.Contains(out.String(), "bad\t(invalid") {
+		t.Errorf("list = %q", out.String())
+	}
+	out.Reset()
+	if err := checkBrand(&out, root, "good"); err != nil || !strings.Contains(out.String(), "is valid") {
+		t.Errorf("check good = %q %v", out.String(), err)
+	}
+	out.Reset()
+	if err := checkBrand(&out, root, "bad"); err == nil {
+		t.Error("check bad: want a non-nil error")
+	}
+	for _, want := range []string{"colors.accent: contrast ratio", "colors.c1:", "x: unknown field"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("check output lacks %q:\n%s", want, out.String())
+		}
+	}
+	if err := checkBrand(&out, root, "missing"); err == nil || !strings.Contains(err.Error(), "available: bad, good") {
+		t.Errorf("check missing = %v", err)
+	}
+}

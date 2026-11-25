@@ -1827,6 +1827,7 @@ type ArtifactCmd struct {
 	URL      ArtifactURLCmd      `cmd:"" name:"url" help:"Print an artifact's URL"`
 	Open     ArtifactOpenCmd     `cmd:"" help:"Open an artifact in the laptop browser"`
 	PDF      ArtifactPDFCmd      `cmd:"" name:"pdf" help:"Export an artifact as a paged US Letter PDF (needs Chrome, Chromium or Edge)"`
+	Brand    ArtifactBrandCmd    `cmd:"" help:"List and check brand profiles for client-ready pages (<config dir>/brands/<name>/)"`
 	Pin      ArtifactPinCmd      `cmd:"" help:"Pin an artifact so retention never prunes it"`
 	Unpin    ArtifactUnpinCmd    `cmd:"" help:"Unpin an artifact"`
 	Rm       ArtifactRmCmd       `cmd:"" help:"Delete an artifact and all its revisions"`
@@ -1869,6 +1870,7 @@ type ArtifactRenderCmd struct {
 	Spec        string `arg:"" name:"spec" help:"Spec .json file (the block format in the artifacts skill's kit/SPEC.md), or - to read stdin"`
 	Title       string `help:"Title (default: the spec's title)"`
 	Description string `help:"One-line description"`
+	Brand       string `help:"Brand profile to apply (overrides the spec's brand); see 'artifact brand list'"`
 	Update      string `help:"Add a revision to this artifact id instead of publishing a new one"`
 	Note        string `help:"What changed in this revision (with --update)"`
 	Out         string `help:"Only write the HTML to this file; do not publish"`
@@ -1879,7 +1881,7 @@ type ArtifactRenderCmd struct {
 
 func (c *ArtifactRenderCmd) Run() error {
 	return cmd.RunArtifactRender(os.Stdout, cmd.ArtifactRenderOptions{
-		Path: c.Spec, Title: c.Title, Description: c.Description, Update: c.Update, Note: c.Note, Out: c.Out,
+		Path: c.Spec, Title: c.Title, Description: c.Description, Update: c.Update, Note: c.Note, Out: c.Out, Brand: c.Brand,
 		NoNotify: c.NoNotify, Pin: c.Pin, JSON: c.JSON,
 	})
 }
@@ -1934,6 +1936,23 @@ type ArtifactPDFCmd struct {
 func (c *ArtifactPDFCmd) Run() error {
 	return cmd.RunArtifactPDF(os.Stdout, cmd.ArtifactPDFOptions{ID: c.ID, Rev: c.Rev, Out: c.Out, Force: c.Force})
 }
+
+// ArtifactBrandCmd groups the brand profile commands. Profiles are written
+// by hand; there is no add command.
+type ArtifactBrandCmd struct {
+	List  ArtifactBrandListCmd  `cmd:"" help:"List brand profiles with their firm names"`
+	Check ArtifactBrandCheckCmd `cmd:"" help:"Validate a brand profile; prints every problem and exits non-zero on any"`
+}
+
+type ArtifactBrandListCmd struct{}
+
+func (c *ArtifactBrandListCmd) Run() error { return cmd.RunArtifactBrandList(os.Stdout) }
+
+type ArtifactBrandCheckCmd struct {
+	Name string `arg:"" help:"Brand name (the directory under <config dir>/brands)"`
+}
+
+func (c *ArtifactBrandCheckCmd) Run() error { return cmd.RunArtifactBrandCheck(os.Stdout, c.Name) }
 
 type ArtifactPinCmd struct {
 	ID string `arg:"" help:"Artifact id"`

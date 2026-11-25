@@ -42,6 +42,8 @@ var topSchema = []field{
 	{name: "date", t: tISODate},
 	{name: "author", t: tStr},
 	{name: "scope", t: tStr},
+	{name: "brand", t: tStr},
+	{name: "client", t: tStr},
 	{name: "blocks", t: tArr, req: true},
 }
 

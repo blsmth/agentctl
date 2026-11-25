@@ -22,6 +22,8 @@
   "excluded-not-array": {"path": "blocks[0].excluded"},
   "breakdown-missing-label": {"path": "blocks[0].items[0].breakdown[0].label"},
   "bad-column-type": {"path": "blocks[0].columns[0].type"},
+  "brand-not-string": {"path": "brand"},
+  "client-null": {"path": "client"},
   "report-without-sources": {"path": "blocks", "go_only": true},
   "dashboard-without-sources": {"path": "blocks", "go_only": true}
 }

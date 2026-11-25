@@ -15,7 +15,7 @@ agentctl follows the XDG base directory spec and splits user-level files by role
 
 | Role | Location | Contents |
 |---|---|---|
-| Config | `$XDG_CONFIG_HOME/agentctl` (default `~/.config/agentctl`) | `config.json`, `schedules.json` (`agentctl cron` jobs), user-authored `themes/*.json` |
+| Config | `$XDG_CONFIG_HOME/agentctl` (default `~/.config/agentctl`) | `config.json`, `schedules.json` (`agentctl cron` jobs), user-authored `themes/*.json`, `brands/<name>/` (artifact brand profiles written by hand; see [Branding](design/artifacts.md#branding-client-ready-pages)) |
 | Data | `$XDG_DATA_HOME/agentctl` (default `~/.local/share/agentctl`) | `context/` (context store), `journal/` (work journal) |
 | State | `$XDG_STATE_HOME/agentctl` (default `~/.local/state/agentctl`) | `registry/` (live sessions), `ratelimits.json`, `hub/` (hub session working directory), `serve/` (`agentctl serve` certificates, devices, log), `cron/` (`agentctl cron` tick lock, state, run history, log), `titles/` (hourly request cap for short row titles), `pricing/` (machine-wide model price cache), `llm-usage/` (ledger of agentctl's own background LLM calls), `closed/` (ledger of closed agent windows behind `status list --closed` and the hub's Closed section) |
 
