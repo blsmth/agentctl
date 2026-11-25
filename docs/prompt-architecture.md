@@ -38,7 +38,8 @@ Claude follows instructions in user messages more reliably than in the system pr
 1. Preamble (agentctl runtime: context store, messaging, identity, waiting;
    worker, orchestrator or reviewer flavour; the review lines follow
    `pr_review`; orchestrators also get a "Models" section built from the
-   global config, see dispatch.md#choosing-a-model). A worker with an
+   global config, see dispatch.md#choosing-a-model, and a "Schedule" section
+   on `agentctl cron`; workers get one line saying never to create jobs). A worker with an
    orchestrator gets the "Your orchestrator" section, which says how to
    find and treat it but not where it is: the location is a launch fact.
    Harnesses without native messaging (pi) get a mailbox-reporting section
@@ -74,7 +75,9 @@ The context entries are last because they change whenever an agent writes to the
    - `## Additional instructions from the user` (the phone form's extra text)
 2. ## Launch facts: started time, window name, working directory, branch
    (or "No worktree"), the orchestrator's window and pane (and its session
-   name as a hint). For review-pr, the commands to check out the PR head
+   name as a hint). A cron fire (`ScheduledBy` set) adds a line saying it is
+   a scheduled run of that job, nobody is watching, do not wait on a human.
+   For review-pr, the commands to check out the PR head
    detached and return the worktree to its base
 3. The mode's directive ("Implement issue #42 (title) and open a PR when
    done.", "Review PR #N ... REVIEW PR #N — VERDICT: ..."), then the

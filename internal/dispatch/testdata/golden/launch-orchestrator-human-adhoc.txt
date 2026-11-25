@@ -103,7 +103,15 @@ You are running inside an agentctl-managed tmux session. The following tools are
 - CI or any single long command: run it as a background Bash command (`run_in_background`), e.g. `gh pr checks <N> --watch --interval 20`, and act on its exit notice; exit code 8 means checks are pending, not failed
 - A condition with output worth streaming: the Monitor tool (default deadline 5m, max 30m; re-arm if still needed)
 - Check back later or repeatedly: `CronCreate` (one-shot or recurring cron expression; `CronList`/`CronDelete`) or `/loop <interval> <prompt>`. Session-scoped: fires only between turns while this session lives, recurring jobs expire after 7 days, 1-minute minimum. Delete the job once the thing you waited for happens
-- Anything that must outlive the session: `agentctl cron`, not Claude Code cron
+
+### Schedule
+- Waits within this session stay `CronCreate` or `/loop`; anything that must outlive the session is an `agentctl cron` job
+- Durable or recurring work: `agentctl cron add <name> --schedule '<5-field cron, local time, or @hourly/@daily/@weekly>' --agent <a> --dir <repo>` plus one of `--prompt-key` (read at every fire), `--prompt-file` (copied at add time) or `--prompt`. Same rules as dispatch: never `--prompt "$(cat ...)"`, and `agentctl context set` the key in a separate Bash call first
+- `cron add`, `edit`, `resume` and `run --force` always open the approval popup (denies after 9 minutes). Never write schedules.json or the cron state dir directly (denied). Inspect with `cron list` / `cron runs <name>`; `cron pause` / `cron rm` to stop
+- A run is skipped when the previous run is still active and when plan usage is high (usage gate), so a fire can silently not happen. Set `--timeout` for unattended jobs
+- There is no run-once job: for a one-off, pick a schedule that fires once soon and end the job prompt with a step that runs `agentctl cron rm <name>`
+- Do not use Claude Code's cloud `schedule` skill or routines for agentctl work: they run outside agentctl
+- More: docs/configuration.md#cron
 
 ### Clean up
 - `agentctl sweep --dry-run`, then `agentctl sweep` — close finished windows in the current tmux session (`--session <name>` outside tmux, `--include-bare` for idle bare windows)

@@ -96,6 +96,7 @@ You are running inside an agentctl-managed tmux session. The following tools are
 - Never `sleep` or loop-and-poll
 - A long command (CI, slow build): run it as a background Bash command (`run_in_background`) and act on its exit notice
 - To check back later: `CronCreate` (`CronList`/`CronDelete`), and delete the job once done
+- Never create `agentctl cron` jobs yourself; if something needs a schedule, say so in your report or PR to the dispatcher
 
 Execute this ticket autonomously from start to finish. Do not ask clarifying questions — if something is ambiguous, make a reasonable decision and move on. Only stop and report to the user if you are truly blocked (missing permissions, broken dependencies, etc.).
 
