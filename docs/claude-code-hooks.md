@@ -102,7 +102,7 @@ Blocking hooks can return JSON on stdout:
 - **agentctl status**: ✅ IMPLEMENTED (two handlers)
   - `hook-pre-tool` (matcher: `*`): Sets windowstate `state` to `working`
   - `hook-pre-tool` also denies `Write`/`Edit`/`MultiEdit` edits that would loosen the global `dispatch_approval`, and edits to the cron and dispatch-approval state (see [configuration.md](configuration.md#dispatch_approval))
-  - `hook-validate-bash` (matcher: `Bash`, 600s timeout): checks the global deny list and per-agent blocked commands/patterns, denies tampering with serve, cron and approval state and `go run` of agentctl itself, and shows the approval popup for gated `agentctl dispatch` and `agentctl cron` commands (and every command with `bash_preview`). Unanswered popups deny after 9 minutes. See [permissions.md](permissions.md)
+  - `hook-validate-bash` (matcher: `Bash`, 600s timeout): checks the global deny list and per-agent blocked commands/patterns, denies tampering with serve, cron, approval and agent-history state (matched on what a command operates on: agentctl arguments, quoted grep/rg patterns and data heredoc bodies are ignored) and `go run` of agentctl itself, and shows the approval popup for gated `agentctl dispatch` and `agentctl cron` commands (and every command with `bash_preview`). Unanswered popups deny after 9 minutes. See [permissions.md](permissions.md)
 
 #### PostToolUse
 - **When**: After tool execution succeeds

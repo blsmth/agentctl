@@ -9,7 +9,9 @@ import (
 // invocation replaced by "_", so the file tamper rules match real shell write
 // targets only and not, say, the text of `agentctl context set k '... tee
 // schedules.json ...'`. agentctl never hands its arguments to a shell, so
-// those words cannot write anything.
+// those words cannot write anything. The quoted pattern of a grep or rg is
+// masked the same way (searchPatternArgs): it is matched against file
+// contents, never opened, run or written.
 //
 // Redirections and their targets are kept (`agentctl status > file` still
 // writes file). An agentctl command that contains a command substitution
@@ -89,7 +91,26 @@ func (c *shCommand) args() []shWord {
 	return c.words[i+1:]
 }
 
-// masked is maskAgentctlArgs over the scanned line.
+// dataArgs returns the indices into c.words of the words that are only
+// data to the command: every argument of an agentctl command without a
+// substitution, and a search tool's quoted pattern (searchPatternArgs).
+func (c *shCommand) dataArgs() []int {
+	if c.subst {
+		return nil
+	}
+	if !c.isAgentctl() {
+		return c.searchPatternArgs()
+	}
+	ni := c.nameIndex()
+	out := make([]int, 0, len(c.words)-ni-1)
+	for i := ni + 1; i < len(c.words); i++ {
+		out = append(out, i)
+	}
+	return out
+}
+
+// masked is maskAgentctlArgs over the scanned line, with search patterns
+// masked too (dataArgs).
 func (sc shellScript) masked() string {
 	if sc.unsure {
 		return sc.src
@@ -97,11 +118,11 @@ func (sc shellScript) masked() string {
 	var b strings.Builder
 	last := 0
 	for _, it := range sc.items {
-		c := it.cmd
-		if c == nil || c.subst || !c.isAgentctl() {
+		if it.cmd == nil {
 			continue
 		}
-		for _, w := range c.args() {
+		for _, i := range it.cmd.dataArgs() {
+			w := it.cmd.words[i]
 			b.WriteString(sc.src[last:w.start])
 			b.WriteByte('_')
 			last = w.end

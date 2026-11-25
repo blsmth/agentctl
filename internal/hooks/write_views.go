@@ -163,7 +163,14 @@ func (st *viewState) command(sc shellScript, c *shCommand, depth int) []string {
 		}
 	}
 
-	masked := !sc.unsure && !c.subst && c.isAgentctl()
+	// Data words (agentctl arguments, a search pattern) are left out, as
+	// in masked(): joined to a cd they would read as paths.
+	data := map[int]bool{}
+	if !sc.unsure {
+		for _, i := range c.dataArgs() {
+			data[i] = true
+		}
+	}
 	for _, dir := range st.dirs {
 		if dir == "" && !expanded && depth == 0 {
 			continue // nothing resolved: the plain text is matched already
@@ -172,8 +179,8 @@ func (st *viewState) command(sc shellScript, c *shCommand, depth int) []string {
 		if dir != "" && viewInterpreters[name] {
 			parts = append(parts, dir)
 		}
-		if !masked {
-			for _, a := range args {
+		for i, a := range args {
+			if !data[ni+1+i] {
 				parts = append(parts, joinViewPath(dir, a, true))
 			}
 		}
