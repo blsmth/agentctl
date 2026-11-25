@@ -102,6 +102,9 @@ func Render(ctx context.Context, store *artifacts.Store, id string, rev int, w i
 func browserArgs(profile, out, url string) []string {
 	return []string{
 		"--headless=new",
+		// A throwaway profile must not touch the macOS keychain ("Chrome Safe Storage").
+		"--use-mock-keychain",
+		"--password-store=basic",
 		"--disable-gpu",
 		"--no-first-run",
 		"--no-default-browser-check",

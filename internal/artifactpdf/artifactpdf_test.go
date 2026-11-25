@@ -121,7 +121,7 @@ func TestRenderArgsAndEntryURL(t *testing.T) {
 	}
 	args := (*calls)[0].args
 	for _, want := range []string{
-		"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+		"--headless=new", "--use-mock-keychain", "--password-store=basic", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
 		"--no-pdf-header-footer", "--hide-scrollbars", "--blink-settings=preferredColorScheme=1",
 		"--virtual-time-budget=15000", "--timeout=30000",
 	} {
