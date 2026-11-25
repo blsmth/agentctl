@@ -1,0 +1,1 @@
+{"kind":"comparison","title":"T","blocks":[{"type":"chart","chart":"bar","x_axis":"month","labels":["a"],"series":[{"name":"s","values":[1]}]}]}

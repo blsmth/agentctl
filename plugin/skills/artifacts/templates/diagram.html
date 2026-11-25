@@ -22,6 +22,13 @@
   --accent:#6ea8ff;--good:#4ade80;--warn:#fbbf24;--bad:#f87171;--info:#6ea8ff;
   --c1:#6ea8ff;--c2:#2dd4bf;--c3:#a78bfa;--c4:#fb923c;--c5:#f472b6;--c6:#94a3b8;
 }}
+/* kit.js sets data-print on beforeprint, before the print media type applies, so charts repaint light */
+:root[data-print]:not([data-light]){
+  --bg:#fff;--fg:#1a1d21;--muted:#5f6b7a;--card:#f5f7fa;--line:#dde2e8;
+  --accent:#2563eb;--good:#15803d;--warn:#b45309;--bad:#b91c1c;--info:#2563eb;
+  --c1:#2563eb;--c2:#0f766e;--c3:#7c3aed;--c4:#c2410c;--c5:#be185d;--c6:#64748b;
+  color-scheme:light;
+}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 var(--font);overflow-wrap:anywhere}
@@ -365,7 +372,8 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
       labels: S({ t: "strs", req: 1 }),
       series: S({ t: "arr", req: 1, of: { name: { t: "str", req: 1 }, values: { t: "nums", req: 1 } } }),
       unit: S({ t: "str" }), x_label: S({ t: "str" }), y_label: S({ t: "str" }), note: S({ t: "str" }),
-      excluded: S({ t: "strs" })
+      excluded: S({ t: "strs" }),
+      horizontal: S({ t: "bool" }), x_axis: S({ t: "enum", v: ["date"] })
     },
     table: {
       title: S({ t: "str" }),
@@ -483,7 +491,15 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
         if (isObj(s) && Array.isArray(s.values) && s.values.length !== b.labels.length)
           errs.push(["series[" + i + "].values", "has " + s.values.length + " values but labels has " + b.labels.length]);
       });
+      if (b.chart !== "doughnut" && b.x_axis === "date") {
+        b.labels.forEach(function (l, i) {
+          if (typeof l !== "string" || !isDateOnly(l)) errs.push(["labels[" + i + "]", "x_axis \"date\" needs ISO dates YYYY-MM-DD (got " + JSON.stringify(l) + ")"]);
+        });
+      }
       if (b.chart === "doughnut") {
+        ["horizontal", "x_axis"].forEach(function (k) {
+          if (Object.prototype.hasOwnProperty.call(b, k)) errs.push([k, "a doughnut does not support this field"]);
+        });
         if (b.series.length !== 1) errs.push(["series", "a doughnut needs exactly one series"]);
         else if (isObj(b.series[0]) && Array.isArray(b.series[0].values) && b.series[0].values.indexOf(null) >= 0)
           errs.push(["series[0].values", "a doughnut cannot contain null"]);
@@ -549,8 +565,9 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
   // Printing: the print media type, or ?print=1 in the URL. A headless PDF
   // export lays the page out as screen until it prints, so it passes the
   // parameter; either way charts must not be captured mid-animation.
+  var printing = false; // set between beforeprint and afterprint, when the print media type does not yet match
   function isPrint() {
-    return !!(global.matchMedia && global.matchMedia("print").matches) ||
+    return printing || !!(global.matchMedia && global.matchMedia("print").matches) ||
       /[?&]print=1(&|$)/.test((global.location && global.location.search) || "");
   }
   function cssVar(n) { return getComputedStyle(doc.documentElement).getPropertyValue(n).trim(); }
@@ -843,6 +860,75 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
     return s;
   };
 
+  // ---- chart helpers ----
+  var NARROW_MQ = "(max-width: 600px)";
+  var MANY_LABELS = 8;
+  function isNarrow() { return !isPrint() && !!(global.matchMedia && global.matchMedia(NARROW_MQ).matches); }
+  // Bars go horizontal when asked to, or when a phone-width chart has too many categories to label.
+  function isHorizontal(b) {
+    if (b.chart !== "bar" && b.chart !== "stacked_bar") return false;
+    if (typeof b.horizontal === "boolean") return b.horizontal;
+    return b.labels.length > MANY_LABELS && isNarrow();
+  }
+  // "2026-11-24" -> "Nov 24" in the viewer's locale; the year is added when the labels span years.
+  function dateFormatter(labels, opts) {
+    var years = {};
+    labels.forEach(function (l) { years[l.slice(0, 4)] = 1; });
+    var o = { month: "short", day: "numeric", timeZone: "UTC" };
+    if (Object.keys(years).length > 1) o.year = "2-digit";
+    if (opts) Object.keys(opts).forEach(function (k) { o[k] = opts[k]; });
+    var f = new Intl.DateTimeFormat(undefined, o);
+    return function (l) { var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(l); return f.format(new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]))); };
+  }
+  function wrapLabel(s, n) {
+    var lines = [], cur = "";
+    String(s).split(/\s+/).forEach(function (w) {
+      if (cur && (cur + " " + w).length > n) { lines.push(cur); cur = w; } else cur = cur ? cur + " " + w : w;
+    });
+    if (cur) lines.push(cur);
+    return lines.length ? lines : [String(s)];
+  }
+  // A null bar is unknown, not small: draw a dashed, hatched stub on the baseline and label it.
+  function nullBarPlugin(horiz, stacked, colors, muted) {
+    return {
+      id: "kitNoData",
+      afterDatasetsDraw: function (chart) {
+        var ctx = chart.ctx, vs = chart.scales[horiz ? "x" : "y"], zero = vs.getPixelForValue(0), len = 16;
+        chart.data.datasets.forEach(function (ds, di) {
+          if (!chart.isDatasetVisible(di)) return;
+          var meta = chart.getDatasetMeta(di);
+          ds.data.forEach(function (v, i) {
+            if (v !== null && v !== undefined) return;
+            if (stacked && chart.data.datasets.some(function (o, oi) { return chart.isDatasetVisible(oi) && o.data[i] !== null && o.data[i] !== undefined; })) return;
+            var el = meta.data[i];
+            if (!el) return;
+            var p = el.getProps(["x", "y", "width", "height"], true);
+            var thick = horiz ? p.height : p.width, mid = horiz ? p.y : p.x;
+            if (!isFinite(thick) || !isFinite(mid) || thick <= 0) return;
+            var x = horiz ? zero : mid - thick / 2, y = horiz ? mid - thick / 2 : zero - len;
+            var w = horiz ? len : thick, hh = horiz ? thick : len;
+            ctx.save();
+            ctx.beginPath(); ctx.rect(x, y, w, hh); ctx.clip();
+            ctx.strokeStyle = colors[di % colors.length]; ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (var k = -hh; k < w + hh; k += 5) { ctx.moveTo(x + k, y + hh); ctx.lineTo(x + k + hh, y); }
+            ctx.stroke();
+            ctx.restore();
+            ctx.save();
+            ctx.globalAlpha = 1; ctx.strokeStyle = colors[di % colors.length]; ctx.lineWidth = 1.5; ctx.setLineDash([3, 2]);
+            ctx.strokeRect(x + 0.75, y + 0.75, w - 1.5, hh - 1.5);
+            ctx.restore();
+            ctx.save();
+            ctx.fillStyle = muted; ctx.font = "11px " + cssVar("--font"); ctx.textBaseline = "middle";
+            if (horiz) { ctx.textAlign = "left"; ctx.fillText("no data", x + w + 6, mid); }
+            else if (ctx.measureText("no data").width <= thick + 6) { ctx.textAlign = "center"; ctx.fillText("no data", mid, y - 8); }
+            ctx.restore();
+          });
+        });
+      }
+    };
+  }
+
   R.chart = function (b) {
     var s = section(b, "chart"), card = h("div", "card");
     var box = h("div", "chart-box"), cv = h("canvas");
@@ -867,8 +953,23 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
       var datasets = b.series.map(function (se, i) {
         var col = pal[i % pal.length];
         if (dough) return { label: se.name, data: se.values, backgroundColor: b.labels.map(function (_, j) { return pal[j % pal.length]; }), borderColor: cardBg, borderWidth: 2 };
-        return { label: se.name, data: se.values, borderColor: col, backgroundColor: col, tension: 0.25, borderWidth: 2, pointRadius: 2, spanGaps: false };
+        var ds = { label: se.name, data: se.values, borderColor: col, backgroundColor: col, tension: 0.25, borderWidth: 2, pointRadius: 2, spanGaps: false };
+        // a point between two gaps would otherwise vanish: make it visible
+        if (type === "line") ds.pointRadius = function (c) {
+          var d = c.dataset.data, i = c.dataIndex;
+          return (i === 0 || d[i - 1] === null) && (i === d.length - 1 || d[i + 1] === null) ? 4 : 2;
+        };
+        return ds;
       });
+      var horiz = isHorizontal(b), isDate = !dough && b.x_axis === "date";
+      var shortDate = isDate ? dateFormatter(b.labels) : null, longDate = isDate ? dateFormatter(b.labels, { weekday: "short", year: "numeric" }) : null;
+      var shown = isDate ? b.labels.map(shortDate) : b.labels;
+      var stacked = b.chart === "stacked_bar";
+      // a horizontal chart needs a row per category, so its box grows with the data
+      if (horiz) {
+        var rows = shown.reduce(function (n, l) { return n + Math.max(1, wrapLabel(l, 18).length) * 14 + (stacked ? 12 : b.series.length * 16); }, 0);
+        box.style.height = Math.max(260, rows + 56 + (b.series.length > 1 ? 36 : 0)) + "px";
+      } else box.style.height = "";
       function axisTitle(label, withUnit) {
         var t = [label, withUnit && b.unit ? "(" + b.unit + ")" : ""].filter(Boolean).join(" ");
         return t ? { display: true, text: t, color: muted } : { display: false };
@@ -879,20 +980,30 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
         animation: isPrint() ? false : undefined,
         plugins: {
           legend: { display: dough || b.series.length > 1, position: "bottom", labels: { color: fg, usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
-          tooltip: { callbacks: { label: function (c) {
-            var v = c.parsed && typeof c.parsed === "object" ? c.parsed.y : c.parsed;
-            return (dough ? c.label : c.dataset.label) + ": " + fmt.number(v) + unit;
-          } } }
+          tooltip: { callbacks: {
+            title: function (items) { return isDate && items.length ? longDate(b.labels[items[0].dataIndex]) : items.length ? items[0].label : ""; },
+            label: function (c) {
+              var name = dough ? c.label : c.dataset.label;
+              if (c.raw === null || c.raw === undefined) return name + ": no data";
+              var v = c.parsed && typeof c.parsed === "object" ? (horiz ? c.parsed.x : c.parsed.y) : c.parsed;
+              return name + ": " + fmt.number(v) + unit;
+            } } }
         }
       };
+      var plugins = [];
       if (!dough) {
-        var stacked = b.chart === "stacked_bar";
-        options.scales = {
-          x: { stacked: stacked, grid: { color: line }, ticks: { color: muted }, title: axisTitle(b.x_label, false) },
-          y: { stacked: stacked, beginAtZero: type === "bar", grid: { color: line }, ticks: { color: muted, callback: function (v) { return fmt.number(v); } }, title: axisTitle(b.y_label, true) }
-        };
+        // category axis: never rotated; thinned (line/date) or fully shown (horizontal) instead
+        var cat = { stacked: stacked, grid: { color: line }, title: axisTitle(b.x_label, false),
+          ticks: { color: muted, minRotation: 0, maxRotation: 0, autoSkip: !horiz, autoSkipPadding: 14 } };
+        if (horiz) cat.ticks.callback = function (v) { return wrapLabel(shown[v], 18); };
+        var val = { stacked: stacked, beginAtZero: type === "bar", grid: { color: line }, ticks: { color: muted, maxRotation: 0, callback: function (v) { return fmt.number(v); } }, title: axisTitle(b.y_label, true) };
+        options.scales = horiz ? { x: val, y: cat } : { x: cat, y: val };
+        if (horiz) options.indexAxis = "y";
+        // hover anywhere in a category, so a null (no bar) still gets a "no data" tooltip
+        options.interaction = { mode: "index", intersect: false, axis: horiz ? "y" : "x" };
+        if (type === "bar") plugins.push(nullBarPlugin(horiz, stacked, pal, muted));
       } else options.cutout = "60%";
-      chart = new Chart(cv, { type: type, data: { labels: b.labels, datasets: datasets }, options: options });
+      chart = new Chart(cv, { type: type, data: { labels: shown, datasets: datasets }, options: options, plugins: plugins });
     }
     state.work.push(loadLib("chart").then(function (Chart) {
       paint(Chart);
@@ -974,9 +1085,24 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
   // Charts are canvases sized for the screen layout: fit them to the page
   // box before printing and back afterwards.
   var onPrintLayout = function () { state.resizers.forEach(function (f) { f(); }); };
+  // redraw on the phone breakpoint; print repaints in light colours, without animation
+  if (global.matchMedia) {
+    var nmq = global.matchMedia(NARROW_MQ), onNarrow = function () { state.redraws.forEach(function (f) { f(); }); };
+    if (nmq.addEventListener) nmq.addEventListener("change", onNarrow); else if (nmq.addListener) nmq.addListener(onNarrow);
+  }
   if (global.addEventListener) {
-    global.addEventListener("beforeprint", onPrintLayout);
-    global.addEventListener("afterprint", onPrintLayout);
+    global.addEventListener("beforeprint", function () {
+      printing = true;
+      doc.documentElement.setAttribute("data-print", "");
+      state.redraws.forEach(function (f) { f(); });
+      onPrintLayout();
+    });
+    global.addEventListener("afterprint", function () {
+      printing = false;
+      doc.documentElement.removeAttribute("data-print");
+      state.redraws.forEach(function (f) { f(); });
+      onPrintLayout();
+    });
   }
   if (doc.getElementById("spec")) render();
 })(typeof window !== "undefined" ? window : this);

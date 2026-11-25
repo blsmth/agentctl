@@ -1,0 +1,1 @@
+{"kind":"comparison","title":"T","blocks":[{"type":"chart","chart":"line","x_axis":"date","labels":["2026-11-24","2026-11-25","2026-12-01"],"series":[{"name":"s","values":[1,null,3]},{"name":"empty","values":[null,null,null]}]},{"type":"chart","chart":"stacked_bar","horizontal":false,"labels":["a","b"],"series":[{"name":"s","values":[null,2]}]}]}
