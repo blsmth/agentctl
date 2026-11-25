@@ -42,6 +42,8 @@ func TestUnknownAgentDeny(t *testing.T) {
 		{"dispatch review-pr no agent", "agentctl dispatch --review-pr 3", false, false, ""},
 		{"dispatch prompt mentions agent", `agentctl dispatch -p "use --agent claude"`, false, false, ""},
 		{"dispatch mode improve", "agentctl dispatch --mode improve --agent claude", false, false, ""},
+		{"dispatch template", "agentctl dispatch --template t --agent claude", false, false, ""},
+		{"dispatch template eq", "agentctl dispatch --template=t --agent claude", false, false, ""},
 		{"dispatch expanded", "agentctl dispatch --agent $A -p hi", false, false, ""},
 		{"dispatch dir", "agentctl dispatch --agent claude --dir /other -p hi", false, true, "/other"},
 		{"dispatch relative dir", "agentctl dispatch --agent claude --dir sub -p hi", false, true, "/work/sub"},

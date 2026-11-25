@@ -57,8 +57,8 @@ func dispatchUnknownAgentDeny(command, cwd string) string {
 		if n, v, ok := cutFlag(t.text); ok {
 			name, val, hasEq = n, cmdToken{text: v, quoted: t.quoted, expands: t.expands}, true
 		}
-		if name == "--mode" {
-			return "" // improve mode supplies its own agent
+		if name == "--mode" || name == "--template" {
+			return "" // a template supplies its own dir (and agent): the CLI validates against that
 		}
 		isAgent, isDir := name == "--agent" || name == "-a", name == "--dir"
 		if !hasEq && (isDispatchValueFlag(name)) && i+1 < len(seg) {
