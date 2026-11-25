@@ -69,6 +69,7 @@ var staticAssets = []staticAsset{
 	{"/terminal.js", "terminal.js", ctJS, cacheRevalidate, false},
 	{"/dispatch.js", "dispatch.js", ctJS, cacheRevalidate, false},
 	{"/artifacts.js", "artifacts.js", ctJS, cacheRevalidate, false},
+	{"/pdfviewer.js", "pdfviewer.js", ctJS, cacheRevalidate, false},
 	{"/schedules.js", "schedules.js", ctJS, cacheRevalidate, false},
 	{"/settings.js", "settings.js", ctJS, cacheRevalidate, false},
 	{"/host.js", "host.js", ctJS, cacheRevalidate, false},
@@ -78,6 +79,8 @@ var staticAssets = []staticAsset{
 	{"/vendor/xterm.js", "vendor/xterm.js", ctJS, cacheDay, false},
 	{"/vendor/xterm.css", "vendor/xterm.css", ctCSS, cacheDay, false},
 	{"/vendor/addon-fit.js", "vendor/addon-fit.js", ctJS, cacheDay, false},
+	{"/vendor/pdfjs/pdf.min.mjs", "vendor/pdfjs/pdf.min.mjs", ctJS, cacheDay, false},
+	{"/vendor/pdfjs/pdf.worker.min.mjs", "vendor/pdfjs/pdf.worker.min.mjs", ctJS, cacheDay, false},
 }
 
 // registerStatic registers every entry of staticAssets on rt.

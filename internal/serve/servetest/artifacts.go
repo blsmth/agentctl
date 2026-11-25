@@ -154,7 +154,7 @@ func (h *Harness) handleSetArtifacts(w http.ResponseWriter, r *http.Request) {
 }
 
 // renderPDF stands in for artifactpdf.Render: no browser is launched. It
-// writes a tiny PDF naming the artifact and revision, after a short pause so
+// writes a tiny twelve-page PDF (tinyPDF) after a short pause so
 // the viewer's busy state can be seen. An artifact whose title contains
 // "[no browser]" fails as a host without Chrome would.
 func (a *artifactWorld) renderPDF(ctx context.Context, store *artifacts.Store, id string, rev int, w io.Writer) error {
@@ -170,6 +170,43 @@ func (a *artifactWorld) renderPDF(ctx context.Context, store *artifacts.Store, i
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	_, err = fmt.Fprintf(w, "%%PDF-1.4\n%% servetest %s r%d\n%%%%EOF\n", m.Slug, rev)
+	_, err = w.Write(tinyPDF(12))
 	return err
 }
+
+// tinyPDF is a real, valid PDF of n 200x280 point pages, so the viewer's
+// PDF.js can open and draw it. Page k (from 0) is white with its left half
+// filled in the k-th colour of pdfColors: pixel checks can tell the pages
+// apart. It uses no fonts, so no font data is needed to draw it.
+func tinyPDF(n int) []byte {
+	var b strings.Builder
+	var offs []int
+	obj := func(body string) {
+		offs = append(offs, b.Len())
+		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", len(offs), body)
+	}
+	b.WriteString("%PDF-1.4\n")
+	obj("<< /Type /Catalog /Pages 2 0 R >>")
+	kids := make([]string, n)
+	for k := range kids {
+		kids[k] = fmt.Sprintf("%d 0 R", 3+2*k)
+	}
+	obj(fmt.Sprintf("<< /Type /Pages /Count %d /Kids [%s] >>", n, strings.Join(kids, " ")))
+	for k := 0; k < n; k++ {
+		obj(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 280] /Contents %d 0 R >>", 4+2*k))
+		c := pdfColors[k%len(pdfColors)]
+		stream := fmt.Sprintf("%s rg 0 0 100 280 re f", c)
+		obj(fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(stream), stream))
+	}
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(offs)+1)
+	for _, o := range offs {
+		fmt.Fprintf(&b, "%010d 00000 n \n", o)
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(offs)+1, xref)
+	return []byte(b.String())
+}
+
+// pdfColors are the fill colours (RGB operands) of tinyPDF's pages: red,
+// green, blue.
+var pdfColors = []string{"1 0 0", "0 1 0", "0 0 1"}

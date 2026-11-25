@@ -181,7 +181,6 @@ type Server struct {
 	artifactWatch *artifactWatcher
 	artifactKey   []byte
 	pdfs          *pdfExporter
-	pdfLinks      *pdfLinks
 
 	keys       KeySender
 	injector   Injector
@@ -355,11 +354,9 @@ func New(opts Options) (*Server, error) {
 		s.artifacts = artifacts.New()
 	}
 	s.pdfs = newPDFExporter(s.artifacts, opts.RenderPDF)
-	s.pdfLinks = newPDFLinks()
 	s.artifactWatch = newArtifactWatcher(s.artifacts, func(c fleetwatch.ArtifactChange) {
 		if c.Action == fleetwatch.ArtifactRemove {
 			s.pdfs.forget(c.ID)
-			s.pdfLinks.forget(c.ID)
 		}
 		s.bus.Publish(fleetwatch.Event{Kind: fleetwatch.KindArtifact, Artifact: c})
 	}, opts.ArtifactDebounce, opts.ArtifactPoll)

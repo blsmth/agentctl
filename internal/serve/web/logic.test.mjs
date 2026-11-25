@@ -27,7 +27,7 @@ import {
   ARTIFACT_COLLAPSE_KEY, ARTIFACT_OTHER, UNDO_MS, artifactGroupKey, artifactGroupMove, artifactRevBadge, artifactSubline, buildArtifactOrderRequest,
   createDeleteQueue, dropSettled, SETTLED_TTL_MS, loadCollapsedSet, mergeArtifactOrder, saveCollapsedSet,
   ARTIFACT_FEEDBACK_MAX, artifactCommentStatus, artifactCommentToast, artifactFeedbackFrom,
-  artifactPdfLabel, artifactPdfLinkPath, artifactPdfPath, pdfDelivery, pdfFileProblem, pdfFilename, pdfSharePayload,
+  artifactPdfLabel, artifactPdfPath, pdfCanvasDensity, pdfClampZoom, pdfDelivery, pdfFitScale, pdfPageCountLabel, pdfPagesToDraw, pdfFileProblem, pdfFilename, pdfSharePayload,
   isTrustBlocked, isTrustDialog, trustDialogOf, trustExitConfirm, trustFolder, TRUST_EXPLAIN, TRUST_TITLE,
 } from "./logic.js";
 
@@ -1337,7 +1337,7 @@ console.log("ok: folder trust");
 {
   assert.equal(artifactPdfPath("abc", 2), "/v1/artifacts/abc/pdf?rev=2");
   assert.equal(artifactPdfPath("a/b", 1), "/v1/artifacts/a%2Fb/pdf?rev=1");
-  assert.equal(artifactPdfLabel(3), "Save as PDF (v3)");
+  assert.equal(artifactPdfLabel(3), "View PDF (v3)");
   assert.equal(pdfFilename('attachment; filename="weekly-report-r2.pdf"'), "weekly-report-r2.pdf");
   assert.equal(pdfFilename("attachment; filename=\"abcdef-r1.pdf\"; filename*=UTF-8''%E6%97%A5%E6%9C%AC-r1.pdf"), "\u65E5\u672C-r1.pdf");
   assert.equal(pdfFilename("attachment; filename=\"ok.pdf\"; filename*=UTF-8''%E0%A4"), "ok.pdf"); // undecodable filename*
@@ -1358,7 +1358,6 @@ console.log("ok: folder trust");
   const seen = [];
   pdfDelivery({ share() {}, canShare: (d) => (seen.push(d), true) }, file);
   assert.deepEqual(Object.keys(seen[0]), ["files"]);
-  assert.equal(artifactPdfLinkPath("a/b", 2), "/v1/artifacts/a%2Fb/pdf-link?rev=2");
   assert.equal(pdfFilename('attachment; filename="report"'), "report.pdf");
   assert.equal(pdfFilename('attachment; filename="R.PDF"'), "R.PDF");
   const magic = new TextEncoder().encode("%PDF-1.4");
@@ -1372,4 +1371,26 @@ console.log("ok: folder trust");
   assert.match(pdfFileProblem(pdf, new TextEncoder().encode("%PD")), /did not send a PDF/);
   assert.match(pdfFileProblem(null, magic), /did not send a PDF/);
 }
+assert.equal(pdfPageCountLabel(0), "");
+assert.equal(pdfPageCountLabel(1), "1 page");
+assert.equal(pdfPageCountLabel(30), "30 pages");
+assert.equal(pdfFitScale(200, 400), 2);
+assert.equal(pdfFitScale(200, 400, 2.5), 5);
+assert.equal(pdfFitScale(0, 400), 0);
+assert.equal(pdfFitScale(200, 0), 0);
+assert.equal(pdfClampZoom(0.4), 1);
+assert.equal(pdfClampZoom(2.5), 2.5);
+assert.equal(pdfClampZoom(9), 5);
+assert.equal(pdfClampZoom(NaN), 1);
+assert.equal(pdfCanvasDensity(3, 390, 505), 3);
+assert.ok(pdfCanvasDensity(3, 390 * 5, 505 * 5) < 3); // zoomed: capped
+assert.ok(pdfCanvasDensity(3, 390 * 5, 505 * 5) * 390 * 5 * pdfCanvasDensity(3, 390 * 5, 505 * 5) * 505 * 5 <= 16_000_001);
+assert.equal(pdfCanvasDensity(3, 10000, 10000), 1); // never below 1
+assert.equal(pdfCanvasDensity(0, 390, 505), 1);
+assert.deepEqual([...pdfPagesToDraw(new Set(), 30)], [0, 1]);
+assert.deepEqual([...pdfPagesToDraw(new Set([10, 11]), 30)], [9, 10, 11, 12]);
+assert.deepEqual([...pdfPagesToDraw(new Set([0]), 30)], [0, 1]);
+assert.deepEqual([...pdfPagesToDraw(new Set([29]), 30)], [28, 29]);
+assert.deepEqual([...pdfPagesToDraw(new Set([5]), 30, 0)], [5]);
+assert.deepEqual([...pdfPagesToDraw(new Set(), 1)], [0]);
 console.log("ok: artifact pdf");
