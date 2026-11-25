@@ -42,6 +42,7 @@ Keys that make agentctl run a shell command are honored **only from the global c
 - `notify_cmd`
 - `hooks.*` (and per-agent `agents.<name>.hooks`)
 - `dispatch.on_complete` (and per-agent `dispatch.on_complete`)
+- `artifacts.pdf_browser` (a browser binary agentctl executes; see [artifacts](#artifacts))
 
 `backends`, `titles`, `accounts`, `default_account`, `account_rules`, `agents.<name>.account` and `agents.<name>.harness` are global-only for the same reason: they decide where prompts go, which login pays for them, and (for `harness`) which approval layer an agent runs under.
 
@@ -263,6 +264,18 @@ The key comes from the same place as for agent launches (`api_key_cmd` or `agent
 {
   "titles": { "model": "meta-llama/llama-3.1-8b-instruct" }
 }
+```
+
+### artifacts
+
+`agentctl artifact pdf` prints an artifact with a headless Chrome, Chromium or Edge. Global config only (it names a binary agentctl executes; a project-local value is ignored with a warning).
+
+| Key | Default | Description |
+|---|---|---|
+| `artifacts.pdf_browser` | discovered | Path of the browser binary. Unset: the first of `/Applications/Google Chrome.app`, `Chromium.app`, `Microsoft Edge.app` (macOS), then `google-chrome`, `google-chrome-stable`, `chromium`, `chromium-browser` on `PATH`. When set it must be an executable file; there is no fallback. With none found the command fails and names this key. |
+
+```json
+{ "artifacts": { "pdf_browser": "/opt/homebrew/bin/chromium" } }
 ```
 
 ### metrics

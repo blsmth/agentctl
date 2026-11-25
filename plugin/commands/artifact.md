@@ -12,12 +12,13 @@ Mapping:
 - `show <id>` → `agentctl artifact show <id>`
 - `url <id>` → `agentctl artifact url <id>`
 - `open <id>` → `agentctl artifact open <id>` (opens the laptop browser)
+- `pdf <id>` → `agentctl artifact pdf <id>` (writes `./<slug>.pdf`; optionally `--rev N`, `--out path`, `--force`; needs Chrome, Chromium or Edge)
 - `pin <id>` / `unpin <id>` → `agentctl artifact pin|unpin <id>`
 - `rm <id>` → confirm with the user first (it deletes every revision), then `agentctl artifact rm <id> --yes` (the prompt cannot be answered from Bash)
 - `prune` → `agentctl artifact prune --dry-run` first, then without `--dry-run` only if the user confirms
 - A bare id → `agentctl artifact show <id>`
 
-Flags the user typed (`--title`, `--description`, `--kind`, `--entry`, `--pin`, `--no-notify`, `--note`, `--all`, `--json`, `--dry-run`, `--yes`) pass through unchanged. Do not invent other flags.
+Flags the user typed (`--title`, `--description`, `--kind`, `--entry`, `--pin`, `--no-notify`, `--note`, `--all`, `--json`, `--dry-run`, `--yes`, `--rev`, `--out`, `--force`) pass through unchanged. Do not invent other flags.
 
 Notes:
 - `add` and `update` print the artifact id and URL; send the URL to the user. Update an existing artifact rather than adding a duplicate.

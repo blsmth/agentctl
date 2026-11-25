@@ -421,6 +421,14 @@ func TestArtifactFlagsParse(t *testing.T) {
 		r.Note != "n" || !r.NoNotify || !r.Pin || !r.JSON || r.Out != "" {
 		t.Errorf("render parsed = %+v", r)
 	}
+	var cli8 CLI
+	k8, _ := kong.New(&cli8, kong.Name("agentctl"))
+	if _, err := k8.Parse([]string{"artifact", "pdf", "abcdefghij", "--rev", "2", "--out", "-", "--force"}); err != nil {
+		t.Fatal(err)
+	}
+	if p := cli8.Artifact.PDF; p.ID != "abcdefghij" || p.Rev != 2 || p.Out != "-" || !p.Force {
+		t.Errorf("pdf parsed = %+v", p)
+	}
 	var cli7 CLI
 	k7, _ := kong.New(&cli7, kong.Name("agentctl"))
 	if _, err := k7.Parse([]string{"artifact", "render", "-", "--out", "page.html"}); err != nil || cli7.Artifact.Render.Spec != "-" || cli7.Artifact.Render.Out != "page.html" {

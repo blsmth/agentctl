@@ -104,6 +104,7 @@ See [cron](configuration.md#cron) for the config keys, approval rules and the hu
 | `agentctl artifact show <id>` | Metadata, revisions and URLs (`--json`). |
 | `agentctl artifact comments <id>` | Feedback sent from the viewer (`--json`): revision, time, device, delivery status and text. `show` lists them too. |
 | `agentctl artifact url <id>` / `open <id>` | Print the direct link, or open it in the laptop browser (`--rev N` for `/a/<id>/<N>/`). No pairing needed, except for a legacy 10-character id. |
+| `agentctl artifact pdf <id>` | Export a revision as a paged US Letter PDF with a headless Chrome/Chromium/Edge (`--rev N`; `--out file\|dir\|-`, default `./<slug>.pdf`, `-` is stdout; `--force` to overwrite). Works without `agentctl serve`; see [PDF export](design/artifacts.md#pdf-export). Browser: [`artifacts.pdf_browser`](configuration.md#artifacts). |
 | `agentctl artifact pin` / `unpin <id>` | Pinned artifacts are never pruned. |
 | `agentctl artifact rm <id>` | Delete it (`--yes` to skip the prompt; required when not on a terminal). |
 | `agentctl artifact prune` | Delete unpinned artifacts not updated for `--older-than` (default 30d; `--dry-run` lists them). `reconcile --housekeeping` runs the same 30-day prune. |

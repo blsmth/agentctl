@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -524,5 +526,108 @@ func TestArtifactAppLinkStaysLocalWithPublicHost(t *testing.T) {
 	}
 	if v.AppURL != "https://box.local:8443/#/artifacts/"+v.ID {
 		t.Errorf("app_url = %q", v.AppURL)
+	}
+}
+
+// stubPDF replaces the renderer; it records the call and writes fake bytes.
+func stubPDF(h *artifactHarness, calls *[]int) {
+	h.env.pdf = func(_ context.Context, _ *artifacts.Store, id string, rev int, w io.Writer) error {
+		*calls = append(*calls, rev)
+		_, err := io.WriteString(w, "%PDF-fake "+id)
+		return err
+	}
+}
+
+func TestArtifactPDF(t *testing.T) {
+	h := newArtifactHarness(t)
+	var revs []int
+	stubPDF(h, &revs)
+	m, err := h.env.store().Add(artifacts.AddOptions{Source: artifacts.Source{Path: writeTmp(t, "r.md", "# Quarterly Report\n")}, NoNotify: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	t.Run("default name in cwd", func(t *testing.T) {
+		var out bytes.Buffer
+		if err := h.env.exportPDF(ctx, &out, ArtifactPDFOptions{ID: m.ID}); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := filepath.EvalSymlinks(strings.TrimSpace(out.String()))
+		want, _ := filepath.EvalSymlinks(filepath.Join(dir, m.Slug+".pdf"))
+		if got != want || m.Slug == "" {
+			t.Errorf("printed %q, want %q", got, want)
+		}
+		b, _ := os.ReadFile(m.Slug + ".pdf")
+		if string(b) != "%PDF-fake "+m.ID {
+			t.Errorf("file = %q", b)
+		}
+	})
+	t.Run("refuses overwrite, force allows", func(t *testing.T) {
+		n := len(revs)
+		err := h.env.exportPDF(ctx, io.Discard, ArtifactPDFOptions{ID: m.ID})
+		if err == nil || !strings.Contains(err.Error(), "--force") {
+			t.Fatalf("err = %v", err)
+		}
+		if len(revs) != n {
+			t.Error("rendered before refusing")
+		}
+		if err := h.env.exportPDF(ctx, io.Discard, ArtifactPDFOptions{ID: m.ID, Force: true}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("out file and directory", func(t *testing.T) {
+		if err := h.env.exportPDF(ctx, io.Discard, ArtifactPDFOptions{ID: m.ID, Out: "x.pdf"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir("sub", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.env.exportPDF(ctx, io.Discard, ArtifactPDFOptions{ID: m.ID, Out: "sub"}); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range []string{"x.pdf", filepath.Join("sub", m.Slug+".pdf")} {
+			if _, err := os.Stat(p); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	t.Run("stdout", func(t *testing.T) {
+		var out bytes.Buffer
+		if err := h.env.exportPDF(ctx, &out, ArtifactPDFOptions{ID: m.ID, Out: "-"}); err != nil {
+			t.Fatal(err)
+		}
+		if out.String() != "%PDF-fake "+m.ID {
+			t.Errorf("stdout = %q", out.String())
+		}
+	})
+	t.Run("bad rev and unknown id", func(t *testing.T) {
+		err := h.env.exportPDF(ctx, io.Discard, ArtifactPDFOptions{ID: m.ID, Rev: 9, Out: "-"})
+		if err == nil || !strings.Contains(err.Error(), "no revision 9") {
+			t.Errorf("rev err = %v", err)
+		}
+		if err := h.env.exportPDF(ctx, io.Discard, ArtifactPDFOptions{ID: "nosuchid", Out: "-"}); !errors.Is(err, artifacts.ErrNotFound) {
+			t.Errorf("id err = %v", err)
+		}
+	})
+	t.Run("render failure leaves no file", func(t *testing.T) {
+		h.env.pdf = func(context.Context, *artifacts.Store, string, int, io.Writer) error { return errors.New("no browser") }
+		err := h.env.exportPDF(ctx, io.Discard, ArtifactPDFOptions{ID: m.ID, Out: "fail.pdf"})
+		if err == nil || !strings.Contains(err.Error(), "no browser") {
+			t.Fatalf("err = %v", err)
+		}
+		if _, err := os.Stat("fail.pdf"); !os.IsNotExist(err) {
+			t.Error("file left behind")
+		}
+	})
+}
+
+func TestPDFPathFallsBackToShortID(t *testing.T) {
+	t.Chdir(t.TempDir())
+	got, err := pdfPath("", "", "abcdefghij")
+	if err != nil || filepath.Base(got) != "abcdef.pdf" {
+		t.Errorf("got %q, %v", got, err)
 	}
 }

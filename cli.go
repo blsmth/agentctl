@@ -140,7 +140,7 @@ type CLI struct {
 	Ctl        CtlCmd        `cmd:"" help:"Send operator control command"`
 	Models     ModelsCmd     `cmd:"" help:"Inspect the model registry (context window, pricing, resolution)"`
 	Race       RaceCmd       `cmd:"" help:"Replay a session as a race against a human typing and reading the same work"`
-	Artifact   ArtifactCmd   `cmd:"" help:"Publish reports, mockups and charts as artifacts and get a URL to open them (add, update, render, list, show, url, open, pin, rm, prune)"`
+	Artifact   ArtifactCmd   `cmd:"" help:"Publish reports, mockups and charts as artifacts and get a URL to open them (add, update, render, list, show, url, open, pdf, pin, rm, prune)"`
 
 	// Setup
 	Init             InitCmd             `cmd:"" help:"Initialize agentctl in current project"`
@@ -1826,6 +1826,7 @@ type ArtifactCmd struct {
 	Comments ArtifactCommentsCmd `cmd:"" help:"List the feedback sent on an artifact from the viewer"`
 	URL      ArtifactURLCmd      `cmd:"" name:"url" help:"Print an artifact's URL"`
 	Open     ArtifactOpenCmd     `cmd:"" help:"Open an artifact in the laptop browser"`
+	PDF      ArtifactPDFCmd      `cmd:"" name:"pdf" help:"Export an artifact as a paged US Letter PDF (needs Chrome, Chromium or Edge)"`
 	Pin      ArtifactPinCmd      `cmd:"" help:"Pin an artifact so retention never prunes it"`
 	Unpin    ArtifactUnpinCmd    `cmd:"" help:"Unpin an artifact"`
 	Rm       ArtifactRmCmd       `cmd:"" help:"Delete an artifact and all its revisions"`
@@ -1922,6 +1923,17 @@ type ArtifactOpenCmd struct {
 }
 
 func (c *ArtifactOpenCmd) Run() error { return cmd.RunArtifactOpen(os.Stdout, c.ID, c.Rev) }
+
+type ArtifactPDFCmd struct {
+	ID    string `arg:"" help:"Artifact id"`
+	Rev   int    `help:"Revision (default: the latest)"`
+	Out   string `help:"Output file or directory (default: ./<slug>.pdf); - writes the PDF to stdout"`
+	Force bool   `help:"Overwrite an existing output file"`
+}
+
+func (c *ArtifactPDFCmd) Run() error {
+	return cmd.RunArtifactPDF(os.Stdout, cmd.ArtifactPDFOptions{ID: c.ID, Rev: c.Rev, Out: c.Out, Force: c.Force})
+}
 
 type ArtifactPinCmd struct {
 	ID string `arg:"" help:"Artifact id"`

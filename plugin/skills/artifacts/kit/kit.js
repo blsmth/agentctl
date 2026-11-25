@@ -311,8 +311,15 @@
     if (text !== undefined && text !== null) e.textContent = text;
     return e;
   }
+  // Printing: the print media type, or ?print=1 in the URL. A headless PDF
+  // export lays the page out as screen until it prints, so it passes the
+  // parameter; either way charts must not be captured mid-animation.
+  function isPrint() {
+    return !!(global.matchMedia && global.matchMedia("print").matches) ||
+      /[?&]print=1(&|$)/.test((global.location && global.location.search) || "");
+  }
   function cssVar(n) { return getComputedStyle(doc.documentElement).getPropertyValue(n).trim(); }
-  function isDark() { return global.matchMedia && global.matchMedia("(prefers-color-scheme: dark)").matches; }
+  function isDark() { return !isPrint() && !!(global.matchMedia && global.matchMedia("(prefers-color-scheme: dark)").matches); }
 
   function errorCard(title, errs) {
     var c = h("div", "error-card");
@@ -328,7 +335,7 @@
     return c;
   }
 
-  var state = { redraws: [] };
+  var state = { redraws: [], resizers: [] };
 
   function section(b, cls, defaultTitle) {
     var s = h("section", "block block-" + cls);
@@ -620,6 +627,8 @@
       }
       var options = {
         responsive: true, maintainAspectRatio: false,
+        // printing (and PDF export) must not capture a half-drawn animation
+        animation: isPrint() ? false : undefined,
         plugins: {
           legend: { display: dough || b.series.length > 1, position: "bottom", labels: { color: fg, usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
           tooltip: { callbacks: { label: function (c) {
@@ -640,6 +649,7 @@
     state.work.push(loadLib("chart").then(function (Chart) {
       paint(Chart);
       state.redraws.push(function () { paint(Chart); });
+      state.resizers.push(function () { if (chart) chart.resize(); });
     }, function () {
       box.remove();
       card.append(h("p", "muted", "Charts need internet access to load Chart.js; the numbers are shown as a table instead."));
@@ -670,7 +680,7 @@
     var main = doc.getElementById("kit-main") || doc.querySelector("main");
     if (!main) { main = doc.createElement("main"); doc.body.prepend(main); }
     main.replaceChildren();
-    state = { redraws: [], work: [] };
+    state = { redraws: [], resizers: [], work: [] };
     var el = doc.getElementById("spec"), spec;
     if (!el) { main.append(errorCard("Spec missing", [["#spec", 'no <script type="application/json" id="spec"> element'] ])); return Promise.resolve(); }
     try { spec = JSON.parse(el.textContent); }
@@ -711,6 +721,13 @@
     var mq = global.matchMedia("(prefers-color-scheme: dark)");
     var onScheme = function () { state.redraws.forEach(function (f) { f(); }); };
     if (mq.addEventListener) mq.addEventListener("change", onScheme); else if (mq.addListener) mq.addListener(onScheme);
+  }
+  // Charts are canvases sized for the screen layout: fit them to the page
+  // box before printing and back afterwards.
+  var onPrintLayout = function () { state.resizers.forEach(function (f) { f(); }); };
+  if (global.addEventListener) {
+    global.addEventListener("beforeprint", onPrintLayout);
+    global.addEventListener("afterprint", onPrintLayout);
   }
   if (doc.getElementById("spec")) render();
 })(typeof window !== "undefined" ? window : this);
