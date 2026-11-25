@@ -167,3 +167,14 @@ func TestSpecBrand(t *testing.T) {
 		}
 	}
 }
+
+// The print repaint rule must not restate tokens on a branded page: it would
+// out-specify the brand's :root{} and drop brand colours from client PDFs.
+func TestKitPrintTokensSkipBrandedPages(t *testing.T) {
+	if !strings.Contains(kit.CSS, ":root[data-print]:not([data-light])") {
+		t.Error("kit.css data-print rule is not scoped with :not([data-light])")
+	}
+	if strings.Contains(strings.ReplaceAll(kit.CSS, ":root[data-print]:not([data-light])", ""), "[data-print]") {
+		t.Error("kit.css has an unscoped [data-print] rule")
+	}
+}
