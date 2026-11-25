@@ -243,8 +243,9 @@ func TestRestoreCarriesTitleAndStart(t *testing.T) {
 func TestRestoreCarriesTurnEndFacts(t *testing.T) {
 	attn := &windowstate.Attention{Reason: windowstate.AttentionQuestion, Detail: "Merge it?", At: time.Unix(1700000000, 0).UTC()}
 	pv := &windowstate.PendingVerdict{PR: 9, Verdict: "BLOCKED"}
+	ma := &windowstate.MissedApproval{Kind: "dispatch", Detail: "go-engineer on #3"}
 	recs := map[string]windowstate.WindowState{
-		"@1": {Instance: "a:1", AgentName: "a", WorkDir: "/w", State: "idle", TurnDone: true, TurnCount: 4, Attention: attn, PendingVerdict: pv},
+		"@1": {Instance: "a:1", AgentName: "a", WorkDir: "/w", State: "idle", TurnDone: true, TurnCount: 4, Attention: attn, PendingVerdict: pv, MissedApproval: ma},
 		"@2": {Instance: "a:2", AgentName: "a", WorkDir: "/w", State: "idle", Done: true, TurnCount: 1},
 		"@3": {Instance: "a:3", AgentName: "a", WorkDir: "/w", State: "idle", Done: true, Seen: true},
 		"@4": {Instance: "a:4", AgentName: "a", WorkDir: "/w"},
@@ -262,7 +263,7 @@ func TestRestoreCarriesTurnEndFacts(t *testing.T) {
 		byID[a.WindowID] = a
 	}
 	a1 := byID["@1"]
-	if !a1.TurnDone || a1.TurnCount != 4 || a1.Attention == nil || a1.Attention.Detail != "Merge it?" || a1.PendingVerdict == nil || a1.PendingVerdict.PR != 9 {
+	if !a1.TurnDone || a1.TurnCount != 4 || a1.Attention == nil || a1.Attention.Detail != "Merge it?" || a1.PendingVerdict == nil || a1.PendingVerdict.PR != 9 || a1.MissedApproval == nil || a1.MissedApproval.Kind != "dispatch" {
 		t.Errorf("@1 = %+v", a1)
 	}
 	if a2 := byID["@2"]; !a2.TurnDone || a2.Done {
@@ -271,7 +272,7 @@ func TestRestoreCarriesTurnEndFacts(t *testing.T) {
 	if byID["@3"].TurnDone {
 		t.Error("a seen done window came back ✓")
 	}
-	if a4 := byID["@4"]; a4.TurnDone || a4.Attention != nil || a4.PendingVerdict != nil {
+	if a4 := byID["@4"]; a4.TurnDone || a4.Attention != nil || a4.PendingVerdict != nil || a4.MissedApproval != nil {
 		t.Errorf("@4 = %+v", a4)
 	}
 }

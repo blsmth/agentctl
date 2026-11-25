@@ -19,7 +19,7 @@ export function effectiveState(win) {
   return "idle";
 }
 
-const ATTENTION_LABELS = { question: "asks you", errors: "stuck", message: "review verdict" };
+const ATTENTION_LABELS = { question: "asks you", errors: "stuck", message: "review verdict", approval: "missed approval" };
 
 /** attentionLabel is the short label of an attention reason ("asks you"); "needs you" when unknown. */
 export function attentionLabel(reason) {

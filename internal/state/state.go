@@ -80,6 +80,9 @@ type AgentState struct {
 	// PendingVerdict is the windowstate pending_verdict, carried through
 	// restore.json only.
 	PendingVerdict *windowstate.PendingVerdict `json:"pending_verdict,omitempty"`
+	// MissedApproval is the windowstate missed_approval, carried through
+	// restore.json only.
+	MissedApproval *windowstate.MissedApproval `json:"missed_approval,omitempty"`
 	MailboxPending int                         `json:"mailbox_pending,omitempty"` // count-only mailbox.PendingCount, refreshed on a throttled monitor tick; delivered by the hook path
 
 	// ScheduledBy is the cron job that launched the window and ScheduledAt

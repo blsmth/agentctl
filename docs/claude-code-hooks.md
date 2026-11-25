@@ -102,7 +102,7 @@ Blocking hooks can return JSON on stdout:
 - **agentctl status**: ✅ IMPLEMENTED (two handlers)
   - `hook-pre-tool` (matcher: `*`): Sets windowstate `state` to `working`
   - `hook-pre-tool` also denies `Write`/`Edit`/`MultiEdit` edits that would loosen the global `dispatch_approval`, and edits to the cron and dispatch-approval state (see [configuration.md](configuration.md#dispatch_approval))
-  - `hook-validate-bash` (matcher: `Bash`, 600s timeout): checks the global deny list and per-agent blocked commands/patterns, denies tampering with serve, cron and approval state and `go run` of agentctl itself, and shows the approval popup for gated `agentctl dispatch` and `agentctl cron` commands (and every command with `bash_preview`). Unanswered popups deny after 9 minutes. See [permissions.md](permissions.md)
+  - `hook-validate-bash` (matcher: `Bash`, 600s timeout): checks the global deny list and per-agent blocked commands/patterns, denies tampering with serve, cron and approval state and `go run` of agentctl itself, and shows the approval popup for gated `agentctl dispatch` and `agentctl cron` commands (and every command with `bash_preview`). Unanswered popups deny after 9 minutes and leave the window at `!` (`missed_approval`, see [needs attention](monitor-architecture.md#needs-attention)). See [permissions.md](permissions.md)
 
 #### PostToolUse
 - **When**: After tool execution succeeds
@@ -167,7 +167,7 @@ Blocking hooks can return JSON on stdout:
 - **Async**: No
 - **Extra payload**: User prompt text
 - **agentctl status**: ✅ IMPLEMENTED (`hook-user-prompt`)
-  - Sets windowstate `state` to `working` immediately, before the first tool fires, and clears `done`/`TurnDone`/`attention` and the tool-failure streak; a prompt the human typed (not a `<cross-session-message>` or task notification) also answers a `pending_verdict`
+  - Sets windowstate `state` to `working` immediately, before the first tool fires, and clears `done`/`TurnDone`/`attention` and the tool-failure streak; a prompt the human typed (not a `<cross-session-message>` or task notification) also answers a `pending_verdict` and a `missed_approval`
   - Delivers pending agentctl notices as `additionalContext`
   - Runs the watchdog and janitor, like SessionStart
   - `hook-title` (async) runs next to it and titles a bare window from its first prompt

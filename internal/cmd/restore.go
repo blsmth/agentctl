@@ -225,6 +225,7 @@ func restoreAgents(saved []state.AgentState, byName map[string]agent.Agent, home
 			TurnCount:        as.TurnCount,
 			Attention:        as.Attention,
 			PendingVerdict:   as.PendingVerdict,
+			MissedApproval:   as.MissedApproval,
 			AgentName:        baseName,
 			InstanceName:     as.Name,
 			SessionID:        sessionID,

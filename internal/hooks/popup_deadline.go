@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/approval"
+	"github.com/blsmth/agentctl/internal/attention"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/notify"
 	"github.com/blsmth/agentctl/internal/paths"
+	"github.com/blsmth/agentctl/internal/textutil"
 	"github.com/blsmth/agentctl/internal/windowstate"
 	"github.com/blsmth/agentctl/internal/winname"
 )
@@ -78,12 +80,38 @@ var (
 	approvalRuntimeDir  = paths.RuntimeDir
 )
 
+// approvalEnding is how an approval popup ended, for the window restore in
+// beginApproval's end func.
+type approvalEnding struct {
+	// missed is set when nobody answered before the deadline (not a
+	// signal cancel): it is recorded as the window's MissedApproval.
+	missed *windowstate.MissedApproval
+	// answered: the human (laptop or phone) decided, either way. It clears
+	// an earlier MissedApproval.
+	answered bool
+}
+
+// applyApprovalEnding records or clears w.MissedApproval for e. Clearing also
+// lifts the "approval" attention the miss raised.
+func applyApprovalEnding(w *windowstate.WindowState, e approvalEnding) {
+	switch {
+	case e.missed != nil:
+		w.MissedApproval = e.missed
+	case e.answered && w.MissedApproval != nil:
+		w.MissedApproval = nil
+		if w.Attention != nil && w.Attention.Reason == windowstate.AttentionApproval {
+			w.Attention = nil
+		}
+	}
+}
+
 // beginApproval marks the issuing window blocked, drops the focus-guard
 // marker, and notifies the human. The returned func undoes the state and
-// marker changes; callers must defer it so every exit path restores. If the
-// window cannot be resolved the state change is skipped, but the notification
+// marker changes and records how the approval ended (see approvalEnding);
+// callers must defer it so every exit path restores. If the window cannot be
+// resolved (or is gone) the state change is skipped, but the notification
 // still fires.
-func beginApproval(n popupNotice) (end func()) {
+func beginApproval(n popupNotice) (end func(approvalEnding)) {
 	windowID := approvalWindowID()
 	sessionName := approvalSessionName()
 	clearMarker := approval.Mark(approvalRuntimeDir(), windowID)
@@ -131,12 +159,13 @@ func beginApproval(n popupNotice) (end func()) {
 		},
 	})
 
-	return func() {
+	return func(e approvalEnding) {
 		clearMarker()
 		if !stateSet {
 			return
 		}
 		if err := winname.Update(windowID, func(w *windowstate.WindowState) {
+			applyApprovalEnding(w, e)
 			w.State = "working"
 			w.BlockedSince = time.Time{}
 			// Restore the PreToolUse-written pending tool (the real Bash
@@ -201,8 +230,19 @@ func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, po
 	ctx, cancel := context.WithTimeout(sigCtx, popupDeadline)
 	defer cancel()
 
+	// timedOut is set by deny for a real timeout (not a signal cancel).
+	timedOut := false
 	end := beginApproval(notice)
-	defer end()
+	defer func() {
+		var e approvalEnding
+		switch {
+		case denyReason != "" && timedOut:
+			e.missed = missedApproval(kind, notice, time.Now())
+		case denyReason == "" && decided:
+			e.answered = true
+		}
+		end(e)
+	}()
 
 	resultFile := popupResultPath(argsFile)
 	defer os.Remove(resultFile)
@@ -218,6 +258,8 @@ func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, po
 		outcome := "timeout"
 		if sigCtx.Err() != nil {
 			outcome = "cancelled by signal"
+		} else {
+			timedOut = true
 		}
 		logging.Log("%s: approval outcome=%s source=timeout after %s (%v), denying",
 			logPrefix, outcome, time.Since(begin).Round(time.Millisecond), ctx.Err())
@@ -241,6 +283,19 @@ func runPopupWithDeadline(target popupTarget, kind, logPrefix string, popupW, po
 		return false, false, ""
 	}
 	return deny(pr.popupOpen)
+}
+
+// missedApproval is the MissedApproval for an unanswered popup of kind.
+func missedApproval(kind string, n popupNotice, now time.Time) *windowstate.MissedApproval {
+	detail := n.Detail
+	if detail == "" {
+		detail = n.Action
+	}
+	return &windowstate.MissedApproval{
+		Kind:   kind,
+		Detail: textutil.Truncate(textutil.OneLine(detail), attention.MaxDetailRunes, "…"),
+		At:     now,
+	}
 }
 
 // runPopupLoop shows the popup until it records a verdict, fails, or ctx ends.

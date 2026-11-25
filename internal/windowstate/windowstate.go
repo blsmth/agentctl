@@ -282,6 +282,13 @@ type WindowState struct {
 	// a "message" attention.
 	PendingVerdict *PendingVerdict `json:"pending_verdict,omitempty"`
 
+	// MissedApproval is the latest approval popup (dispatch, cron, template,
+	// bash preview) this window issued that nobody answered before its
+	// deadline, kept until the human next types into the window (a peer
+	// message does not count), /clear, or a later approval in this window is
+	// answered. While set, every turn end raises an "approval" attention.
+	MissedApproval *MissedApproval `json:"missed_approval,omitempty"`
+
 	// RenderedName is the tmux window name last written by internal/winname.
 	// It lets the writers skip the rename when nothing changed.
 	RenderedName string `json:"rendered_name,omitempty"`
@@ -351,6 +358,9 @@ const (
 	// AttentionMessage: a BLOCKED or NEEDS-BRENDAN review verdict reached
 	// this window and the human has not replied since.
 	AttentionMessage = "message"
+	// AttentionApproval: an approval popup this window issued timed out
+	// unanswered and the human has not replied since.
+	AttentionApproval = "approval"
 )
 
 // AttentionToolFailures is how many consecutive failed tool calls make a turn
@@ -380,8 +390,22 @@ type PendingVerdict struct {
 	Alerted bool `json:"alerted,omitempty"`
 }
 
+// MissedApproval is an approval popup that timed out unanswered (see
+// WindowState.MissedApproval).
+type MissedApproval struct {
+	// Kind is the gate ("dispatch", "cron job", "prompt template", ...).
+	Kind string `json:"kind"`
+	// Detail is the one-line command summary the popup showed.
+	Detail string    `json:"detail,omitempty"`
+	At     time.Time `json:"at,omitzero"`
+	// Alerted records that this miss's desktop alert went out, so the
+	// "approval" attention it raises again at every turn end notifies once.
+	Alerted bool `json:"alerted,omitempty"`
+}
+
 // ClearAttention clears the attention flag and the failure streak behind it.
-// PendingVerdict is not touched: only a human prompt answers it.
+// PendingVerdict and MissedApproval are not touched: only a human prompt
+// answers them.
 func ClearAttention(w *WindowState) {
 	w.Attention = nil
 	w.ToolFailures = 0

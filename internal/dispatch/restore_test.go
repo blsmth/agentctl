@@ -83,10 +83,11 @@ func TestApplyRestoreMetaTitleAndStart(t *testing.T) {
 func TestApplyRestoreMetaTurnEndFacts(t *testing.T) {
 	attn := &windowstate.Attention{Reason: windowstate.AttentionQuestion}
 	pv := &windowstate.PendingVerdict{PR: 3, Verdict: "BLOCKED"}
-	req := RestoreRequest{TurnDone: true, TurnCount: 5, Attention: attn, PendingVerdict: pv}
+	ma := &windowstate.MissedApproval{Kind: "cron job"}
+	req := RestoreRequest{TurnDone: true, TurnCount: 5, Attention: attn, PendingVerdict: pv, MissedApproval: ma}
 	var ws windowstate.WindowState
 	applyRestoreMeta(&ws, req)
-	if !ws.TurnDone || ws.TurnCount != 5 || ws.Attention != attn || ws.PendingVerdict != pv {
+	if !ws.TurnDone || ws.TurnCount != 5 || ws.Attention != attn || ws.PendingVerdict != pv || ws.MissedApproval != ma {
 		t.Fatalf("restored record %+v", ws)
 	}
 	// A session that already started working owns its turn-end facts.

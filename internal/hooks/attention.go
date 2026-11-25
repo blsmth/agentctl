@@ -33,11 +33,15 @@ type turnEnd struct {
 	ToolFailures int    // consecutive failed tool calls at the turn end
 	LastError    string // the last tool failure ("Bash: exit 1")
 	Verdict      *windowstate.PendingVerdict
+	// Missed is an approval popup that timed out unanswered. It raises an
+	// attention even for an autonomous window: the human missed it.
+	Missed *windowstate.MissedApproval
 }
 
 // turnEndAttention decides the attention a turn end raises, or nil. A pending
-// review verdict wins (it names a PR), then a question to the human, then a
-// failure streak of windowstate.AttentionToolFailures or more.
+// review verdict wins (it names a PR), then a missed approval, then a
+// question to the human, then a failure streak of
+// windowstate.AttentionToolFailures or more.
 //
 // A window with working children still raises a question: the question is
 // the window's own text addressed to the human, and an orchestrator that is
@@ -46,6 +50,9 @@ type turnEnd struct {
 func turnEndAttention(in turnEnd, now time.Time) *windowstate.Attention {
 	if in.Verdict != nil {
 		return verdictAttention(*in.Verdict, now)
+	}
+	if in.Missed != nil {
+		return missedApprovalAttention(*in.Missed, now)
 	}
 	if !in.Autonomous {
 		if d, ok := attention.Question(in.Text); ok {
@@ -71,6 +78,23 @@ func verdictAttention(v windowstate.PendingVerdict, now time.Time) *windowstate.
 	}
 }
 
+// missedApprovalAttention is the "approval" attention for a missed approval:
+// "<kind>: <detail>", shown after the "missed approval" label.
+func missedApprovalAttention(m windowstate.MissedApproval, now time.Time) *windowstate.Attention {
+	d := m.Kind
+	if m.Detail != "" {
+		if d != "" {
+			d += ": "
+		}
+		d += m.Detail
+	}
+	return &windowstate.Attention{
+		Reason: windowstate.AttentionApproval,
+		Detail: textutil.Truncate(d, attention.MaxDetailRunes, "…"),
+		At:     now,
+	}
+}
+
 // peerPromptPrefixes start a UserPromptSubmit prompt that no human typed: a
 // message from another Claude session, or a background task's notice.
 var peerPromptPrefixes = []string{
@@ -81,7 +105,7 @@ var peerPromptPrefixes = []string{
 
 // isHumanPrompt reports whether prompt was typed by the human, as opposed to
 // a SendMessage delivery or a task notification. Only a human prompt answers
-// a pending verdict.
+// a pending verdict or a missed approval.
 func isHumanPrompt(prompt string) bool {
 	p := strings.TrimSpace(prompt)
 	for _, pre := range peerPromptPrefixes {
@@ -184,6 +208,8 @@ func attentionEvent(reason string) string {
 		return "Looks stuck"
 	case windowstate.AttentionMessage:
 		return "Review needs you"
+	case windowstate.AttentionApproval:
+		return "Missed an approval"
 	}
 	return "Needs you"
 }
