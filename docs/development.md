@@ -75,6 +75,10 @@ The dev server's control API lives under `/__test/` (see `internal/serve/servete
 
 The iOS Simulator (macOS with Xcode only) is still useful as an occasional manual smoke check of real Safari behaviour (installing to the home screen, push, safe areas), but it is not part of CI.
 
+### PDF export: real-browser test
+
+`internal/artifactpdf` unit tests stub the browser. `AGENTCTL_PDF_IT=1 go test -run RealBrowser ./internal/artifactpdf` prints an html and a markdown artifact with an installed Chrome, Chromium or Edge; without the variable the test is skipped, so a plain `go test ./...` never launches a browser.
+
 ### Demo harness and screenshots
 
 `just demo` builds a fake, fully isolated agentctl world for screenshots and bug reports: fake projects, fake agent windows that print canned Claude Code output (no `claude`, no tokens), and real agentctl chrome bars, hub, HUD, popups and statusline on top. Scenes are data files in `demo/scenes/` (schema in [demo/scenes/README.md](../demo/scenes/README.md)); the code is `internal/demo` and its CLI `internal/demo/cmd/seed`.
