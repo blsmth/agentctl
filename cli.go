@@ -140,7 +140,7 @@ type CLI struct {
 	Ctl        CtlCmd        `cmd:"" help:"Send operator control command"`
 	Models     ModelsCmd     `cmd:"" help:"Inspect the model registry (context window, pricing, resolution)"`
 	Race       RaceCmd       `cmd:"" help:"Replay a session as a race against a human typing and reading the same work"`
-	Artifact   ArtifactCmd   `cmd:"" help:"Publish reports, mockups and charts as artifacts and get a URL to open them (add, update, list, show, url, open, pin, rm, prune)"`
+	Artifact   ArtifactCmd   `cmd:"" help:"Publish reports, mockups and charts as artifacts and get a URL to open them (add, update, render, list, show, url, open, pin, rm, prune)"`
 
 	// Setup
 	Init             InitCmd             `cmd:"" help:"Initialize agentctl in current project"`
@@ -1820,6 +1820,7 @@ func (c *TemplateRmCmd) Run() error { return cmd.RunTemplateRm(os.Stdout, c.Name
 type ArtifactCmd struct {
 	Add      ArtifactAddCmd      `cmd:"" help:"Publish a file, a directory (with index.html) or stdin (-) as an artifact"`
 	Update   ArtifactUpdateCmd   `cmd:"" help:"Add a revision to an artifact (the latest is the default view)"`
+	Render   ArtifactRenderCmd   `cmd:"" help:"Validate a kit spec (.json), build its page and publish it (--update <id> adds a revision; --out only writes the file)"`
 	List     ArtifactListCmd     `cmd:"" help:"List artifacts (this project; --all for every project)"`
 	Show     ArtifactShowCmd     `cmd:"" help:"Show an artifact's metadata, revisions and URL"`
 	Comments ArtifactCommentsCmd `cmd:"" help:"List the feedback sent on an artifact from the viewer"`
@@ -1859,6 +1860,27 @@ type ArtifactUpdateCmd struct {
 
 func (c *ArtifactUpdateCmd) Run() error {
 	return cmd.RunArtifactUpdate(os.Stdout, cmd.ArtifactUpdateOptions{ID: c.ID, Path: c.Path, Note: c.Note, Title: c.Title, JSON: c.JSON})
+}
+
+// ArtifactRenderCmd builds an artifact page from a JSON spec, so the agent
+// never edits HTML. See plugin/skills/artifacts/kit/SPEC.md.
+type ArtifactRenderCmd struct {
+	Spec        string `arg:"" name:"spec" help:"Spec .json file (the block format in the artifacts skill's kit/SPEC.md), or - to read stdin"`
+	Title       string `help:"Title (default: the spec's title)"`
+	Description string `help:"One-line description"`
+	Update      string `help:"Add a revision to this artifact id instead of publishing a new one"`
+	Note        string `help:"What changed in this revision (with --update)"`
+	Out         string `help:"Only write the HTML to this file; do not publish"`
+	NoNotify    bool   `name:"no-notify" help:"Do not send a push notification for this artifact"`
+	Pin         bool   `help:"Pin so retention never prunes it"`
+	JSON        bool   `help:"Print the result as JSON"`
+}
+
+func (c *ArtifactRenderCmd) Run() error {
+	return cmd.RunArtifactRender(os.Stdout, cmd.ArtifactRenderOptions{
+		Path: c.Spec, Title: c.Title, Description: c.Description, Update: c.Update, Note: c.Note, Out: c.Out,
+		NoNotify: c.NoNotify, Pin: c.Pin, JSON: c.JSON,
+	})
 }
 
 type ArtifactListCmd struct {

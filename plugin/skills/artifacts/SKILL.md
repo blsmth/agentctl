@@ -30,17 +30,19 @@ Use `--kind` only to override the extension.
 
 ## Workflow
 
-1. Copy the closest template from `${CLAUDE_PLUGIN_ROOT}/skills/artifacts/templates/` into `/tmp/<slug>/` (or the worktree, if the file belongs with the work). **Edit only the spec JSON** (`<script type="application/json" id="spec">`); never touch the inlined kit CSS/JS. Block reference: `${CLAUDE_PLUGIN_ROOT}/skills/artifacts/kit/SPEC.md`.
-   - `report.html`: summary callouts, KPIs, charts, sortable table, sources
-   - `dashboard.html`: KPI tiles, line/bar/stacked/doughnut charts, table
-   - `comparison.html`: side-by-side options, pros/cons, recommendation
-   - `diagram.html`: Mermaid diagrams (light/dark)
-   - `mockup.html`: free-form clickable multi-screen UI (hash routing, `sendChoice`); shares the kit tokens
-   - `report.md`: markdown report (fenced `mermaid` blocks allowed)
-2. Publish: `agentctl artifact add /tmp/<slug>/report.html --title "Short title" --description "One line"`. It prints the id and URL. If serve is not running it says so; the URL is still valid once it starts.
-3. Send the human the direct link (and the one-line conclusion) in your message. Keep the id. Treat the link like a password: do not post it anywhere public (issues, PRs, commits).
-4. To change it, run `agentctl artifact update <id> <file> --note "what changed"`. This adds a revision at the same URL. Never `add` a second artifact for the same thing.
-5. Other commands: `artifact list`, `show <id>`, `url <id>`, `open <id>` (laptop browser), `pin <id>` (exempt from the 30-day cleanup), `rm <id>`. `add` takes `--pin`, `--no-notify` (skip the push), `--json`. With stdin (`-`) pass `--entry report.html` so the kind is known.
+**report, dashboard, comparison, diagram: write a spec, never HTML.**
+
+1. Copy `${CLAUDE_PLUGIN_ROOT}/skills/artifacts/kit/examples/<kind>.json` to `/tmp/<slug>/spec.json` and edit it. Block reference: `${CLAUDE_PLUGIN_ROOT}/skills/artifacts/kit/SPEC.md`.
+2. `agentctl artifact render /tmp/<slug>/spec.json` validates it, builds the page and publishes it. Every error names its JSON path (`blocks[3].series[0].values`); fix them and rerun, nothing is published until the spec is valid. It takes `--title`, `--description`, `--pin`, `--no-notify`, `--json`, and `--out page.html` to only write the file.
+3. Send the human the direct link (and the one-line conclusion). Keep the id. Treat the link like a password: do not post it anywhere public (issues, PRs, commits). If serve is not running it says so; the URL is still valid once it starts.
+4. To change it, edit the spec and run `agentctl artifact render spec.json --update <id> --note "what changed"`. Never publish a second artifact for the same thing.
+
+**mockups, markdown, images, anything else:** write the file yourself.
+
+- `${CLAUDE_PLUGIN_ROOT}/skills/artifacts/templates/mockup.html`: free-form clickable multi-screen UI (hash routing, `sendChoice`); shares the kit tokens. `report.md`: markdown report (fenced `mermaid` blocks allowed).
+- `agentctl artifact add <file> --title "Short title"`, then `agentctl artifact update <id> <file> --note "what changed"`. `add` takes `--pin`, `--no-notify`, `--json`; with stdin (`-`) pass `--entry report.html`.
+
+Other commands: `artifact list`, `show <id>`, `url <id>`, `open <id>` (laptop browser), `pin <id>` (exempt from the 30-day cleanup), `rm <id>`.
 
 Limits: 25 MB and 500 files per revision, 20 revisions per artifact.
 
@@ -68,7 +70,7 @@ Limits: 25 MB and 500 files per revision, 20 revisions per artifact.
 
 ## Feedback from the human
 
-The viewer has a comment button. What Brendan writes there arrives in your session as a message: `Feedback on artifact "<title>" (<id>, rev N) from Brendan: <text>`, followed by `Update it with: agentctl artifact update <id> <file>`. Treat it as his instruction: change the artifact and `update` it (do not `add` a new one). If your window was busy the message is queued; if it was closed, the comment is only stored and `agentctl artifact comments <id>` lists it (`artifact show <id>` lists them too).
+The viewer has a comment button. What Brendan writes there arrives in your session as a message: `Feedback on artifact "<title>" (<id>, rev N) from Brendan: <text>`, followed by `Update it with: agentctl artifact update <id> <file>`. Treat it as his instruction: change the artifact and update it (`render --update <id>` for a spec, `update` for a file; do not publish a new one). If your window was busy the message is queued; if it was closed, the comment is only stored and `agentctl artifact comments <id>` lists it (`artifact show <id>` lists them too).
 
 An interactive mockup can offer "send my choice" buttons. Call `parent.postMessage({type: "agentctl:feedback", text: "Option B, blue header"}, "*")` from the page's script (the `mockup.html` template has a `sendChoice(text)` helper). The viewer does not send it: it opens the feedback sheet prefilled with that text and Brendan taps Send. Only `type` and a plain-text `text` (up to 4000 characters) are read; put the whole choice in the text, in words you can act on. Nothing happens when the page is opened outside the viewer.
 
@@ -79,9 +81,9 @@ If the `playwright-cli` skill is available, open the file with it and look at it
 ## Example
 
 ```bash
-mkdir -p /tmp/db-options && cp "${CLAUDE_PLUGIN_ROOT}/skills/artifacts/templates/comparison.html" /tmp/db-options/index.html
-# edit the spec JSON, then:
-agentctl artifact add /tmp/db-options/index.html --title "Database options"
+mkdir -p /tmp/db-options && cp "${CLAUDE_PLUGIN_ROOT}/skills/artifacts/kit/examples/comparison.json" /tmp/db-options/spec.json
+# edit spec.json, then:
+agentctl artifact render /tmp/db-options/spec.json
 # later, after feedback:
-agentctl artifact update <id> /tmp/db-options/index.html --note "added cost column"
+agentctl artifact render /tmp/db-options/spec.json --update <id> --note "added cost column"
 ```

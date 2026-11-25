@@ -4,7 +4,7 @@
 
   var doc = global.document;
   var TONES = ["info", "good", "warn", "bad"];
-  var TYPES = ["number", "percent", "currency", "duration", "date", "text", "status"];
+  var TYPES = ["number", "percent", "currency", "duration", "date", "datetime", "text", "status"];
   var UNKNOWN = "unknown";
 
   // ---- pinned CDN libraries (loaded only when a block needs them) ----
@@ -78,6 +78,14 @@
       var t = Date.parse(s.length === 10 ? s + "T00:00:00Z" : s);
       return isNaN(t) ? s : DF.format(new Date(t));
     },
+    // RFC 3339 timestamp, shown in the viewer's local time as "YYYY-MM-DD HH:MM"
+    datetime: function (v) {
+      if (isNil(v)) return UNKNOWN;
+      var t = Date.parse(String(v));
+      if (isNaN(t)) return String(v);
+      var d = new Date(t);
+      return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+    },
     text: function (v) { return isNil(v) ? UNKNOWN : String(v); },
     status: function (v) { return isNil(v) ? UNKNOWN : String(v); },
     by: function (type, v, code) {
@@ -114,14 +122,16 @@
       items: S({ t: "arr", req: 1, of: {
         label: { t: "str", req: 1 }, value: { t: "strnum", req: 1, nul: 1 },
         format: { t: "enum", v: ["number", "percent", "currency", "duration", "text"] }, currency: { t: "cur" },
-        delta: { t: "strnum" }, trend: { t: "enum", v: ["good", "bad", "neutral"] }, note: { t: "str" } } })
+        delta: { t: "strnum" }, trend: { t: "enum", v: ["good", "bad", "neutral"] }, note: { t: "str" },
+        breakdown: { t: "arr", of: { label: { t: "str", req: 1 }, value: { t: "strnum", req: 1, nul: 1 } } } } })
     },
     chart: {
       title: S({ t: "str" }),
       chart: S({ t: "enum", req: 1, v: ["line", "bar", "stacked_bar", "doughnut"] }),
       labels: S({ t: "strs", req: 1 }),
       series: S({ t: "arr", req: 1, of: { name: { t: "str", req: 1 }, values: { t: "nums", req: 1 } } }),
-      unit: S({ t: "str" }), x_label: S({ t: "str" }), y_label: S({ t: "str" }), note: S({ t: "str" })
+      unit: S({ t: "str" }), x_label: S({ t: "str" }), y_label: S({ t: "str" }), note: S({ t: "str" }),
+      excluded: S({ t: "strs" })
     },
     table: {
       title: S({ t: "str" }),
@@ -152,11 +162,25 @@
   };
   var TOP = {
     kind: { t: "enum", req: 1, v: ["report", "dashboard", "comparison", "diagram"] },
-    title: { t: "str", req: 1 }, summary: { t: "str" }, date: { t: "str" }, author: { t: "str" }, scope: { t: "str" },
+    title: { t: "str", req: 1 }, summary: { t: "str" }, date: { t: "isodate" }, author: { t: "str" }, scope: { t: "str" },
     blocks: { t: "arr", req: 1 }
   };
 
   function isObj(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
+
+  // ISO calendar date "YYYY-MM-DD" (a real day) or an RFC 3339 timestamp with seconds and an offset
+  function validDay(y, m, d) {
+    var t = new Date(Date.UTC(y, m - 1, d));
+    return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
+  }
+  function isDateOnly(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    return !!m && validDay(+m[1], +m[2], +m[3]);
+  }
+  function isDateTime(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-](\d{2}):(\d{2}))$/.exec(s);
+    return !!m && validDay(+m[1], +m[2], +m[3]) && +m[4] < 24 && +m[5] < 60 && +m[6] < 60 && (!m[9] || (+m[9] < 24 && +m[10] < 60));
+  }
 
   function check(val, s, path, errs) {
     if (val === undefined) { if (s.req) errs.push([path, "required"]); return; }
@@ -176,6 +200,10 @@
       case "bool": if (typeof val !== "boolean") errs.push([path, "expected true or false"]); break;
       case "enum":
         if (s.v.indexOf(val) < 0) errs.push([path, "expected one of " + s.v.join(", ") + " (got " + JSON.stringify(val) + ")"]);
+        break;
+      case "isodate":
+        if (typeof val !== "string") errs.push([path, "expected a string"]);
+        else if (!isDateOnly(val) && !isDateTime(val)) errs.push([path, "expected an ISO date YYYY-MM-DD or an RFC 3339 datetime (got " + JSON.stringify(val) + ")"]);
         break;
       case "cur": if (typeof val !== "string" || !/^[A-Z]{3}$/.test(val)) errs.push([path, "expected a 3-letter ISO currency code such as USD"]); break;
       case "url": if (typeof val !== "string" || !/^https?:\/\//.test(val)) errs.push([path, "expected an http(s) URL"]); break;
@@ -236,7 +264,12 @@
       });
       b.rows.forEach(function (r, i) {
         if (isObj(r)) Object.keys(r).forEach(function (k) {
-          if (keys.indexOf(k) < 0) errs.push(["rows[" + i + "]." + k, "no column with this key"]);
+          var ci = keys.indexOf(k);
+          if (ci < 0) { errs.push(["rows[" + i + "]." + k, "no column with this key"]); return; }
+          var type = b.columns[ci].type, x = r[k];
+          if (x === null || (type !== "date" && type !== "datetime")) return;
+          if (typeof x !== "string" || !(type === "date" ? isDateOnly(x) || isDateTime(x) : isDateTime(x)))
+            errs.push(["rows[" + i + "]." + k, type === "date" ? "expected an ISO date YYYY-MM-DD or an RFC 3339 datetime" : "expected an RFC 3339 datetime such as 2026-11-24T09:30:00Z"]);
         });
       });
       if (typeof b.sort_by === "string" && keys.indexOf(b.sort_by) < 0) errs.push(["sort_by", "no column with this key"]);
@@ -338,6 +371,15 @@
         c.append(d);
       }
       if (k.note) c.append(h("div", "note", k.note));
+      if (k.breakdown && k.breakdown.length) {
+        var ul = h("ul", "breakdown");
+        k.breakdown.forEach(function (r) {
+          var li = h("li");
+          li.append(h("span", "", r.label), h("span", "", fmt.by(type, r.value, k.currency)));
+          ul.append(li);
+        });
+        c.append(ul);
+      }
       g.append(c);
     });
     s.append(g);
@@ -347,7 +389,7 @@
   function compare(type, a, b) {
     var an = isNil(a), bn = isNil(b);
     if (an || bn) return an === bn ? 0 : an ? 1 : -1; // unknown always last (handled by caller for direction)
-    if (type === "date") return Date.parse(a) - Date.parse(b) || 0;
+    if (type === "date" || type === "datetime") return Date.parse(a) - Date.parse(b) || 0;
     if (isNum(a) && isNum(b)) return a - b;
     return String(a).localeCompare(String(b), "en", { numeric: true });
   }
@@ -373,7 +415,7 @@
       order.forEach(function (r) {
         var tr = h("tr");
         columns.forEach(function (c) {
-          var td = h("td", numeric(c) ? "num" : "");
+          var td = h("td", numeric(c) ? "num" : c.type === "date" || c.type === "datetime" ? "nowrap" : "");
           var v = r[c.key];
           if (isNil(v)) td.append(h("span", "unknown", UNKNOWN));
           else if (c.type === "status") td.append(h("span", "badge " + statusTone(v), String(v)));
@@ -555,6 +597,7 @@
     card.append(box);
     s.append(card);
     if (b.note) s.append(h("p", "chart-note", b.note));
+    (b.excluded || []).forEach(function (t) { s.append(h("p", "chart-note excluded", "Excluded: " + t)); });
     var chart = null;
     function paint(Chart) {
       if (chart) chart.destroy();

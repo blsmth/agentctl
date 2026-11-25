@@ -1,0 +1,14 @@
+{
+  "kind": "diagram",
+  "title": "How a checkout request flows",
+  "summary": "The gateway authenticates, then the service reads the database and calls tax-service.",
+  "date": "2026-11-24",
+  "author": "agent",
+  "scope": "checkout-api",
+  "blocks": [
+    {"type": "mermaid", "title": "Request flow", "caption": "Dotted line: token validation.", "source": "flowchart LR\n  U[Client] --> G[Gateway]\n  G --> A[Auth]\n  G --> S[Service]\n  S --> D[(Database)]\n  A -. token .-> S"},
+    {"type": "mermaid", "title": "Sequence", "source": "sequenceDiagram\n  participant C as Client\n  participant S as Server\n  C->>S: request\n  S-->>C: response"},
+    {"type": "text", "title": "Notes", "text": "Auth results are cached for 60 seconds.\n\n- The database is the only stateful hop.\n- tax-service is called synchronously."},
+    {"type": "sources", "items": [{"label": "checkout-api architecture notes", "note": "internal"}]}
+  ]
+}

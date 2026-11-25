@@ -1,0 +1,43 @@
+{
+  "kind": "report",
+  "title": "Checkout latency regressed after the 14 Nov deploy",
+  "summary": "p95 checkout latency rose from 310 ms to 480 ms; the new tax-service call is the cause and a cache fixes most of it.",
+  "date": "2026-11-24",
+  "author": "agent",
+  "scope": "checkout-api, 1-23 Nov",
+  "blocks": [
+    {"type": "summary", "items": [
+      {"tone": "bad", "title": "Regression", "text": "p95 is up 55% since 14 Nov and over the 400 ms SLO."},
+      {"tone": "good", "title": "Fix is small", "text": "Caching tax rates for 5 minutes brought p95 to 330 ms in staging."},
+      {"tone": "warn", "title": "Caveat", "text": "Staging traffic is about 10% of production, so confirm after rollout."}
+    ]},
+    {"type": "kpis", "title": "Checkout p95", "items": [
+      {"label": "Before (1-13 Nov)", "value": 0.31, "format": "duration"},
+      {"label": "After (14-23 Nov)", "value": 0.48, "format": "duration", "delta": 0.17, "trend": "bad"},
+      {"label": "Error rate", "value": 0.4, "format": "percent", "delta": "+0.1 pt", "trend": "bad"},
+      {"label": "Staging with cache", "value": 0.33, "format": "duration", "note": "single run"}
+    ]},
+    {"type": "chart", "title": "p95 latency by day", "chart": "line", "unit": "ms", "x_label": "Day",
+     "labels": ["Nov 10", "Nov 12", "Nov 14", "Nov 16", "Nov 18", "Nov 20", "Nov 22"],
+     "series": [{"name": "p95", "values": [305, 312, 450, 482, 470, 495, 478]}, {"name": "SLO", "values": [400, 400, 400, 400, 400, 400, 400]}]},
+    {"type": "text", "title": "Findings", "text": "The deploy on 14 Nov added a synchronous call to tax-service on every checkout.\n\n- 71% of the added time is that call (median 140 ms).\n- Errors rose only on requests that hit a tax-service timeout.\n- No change in database time."},
+    {"type": "table", "title": "Slowest endpoints", "columns": [
+      {"key": "endpoint", "label": "Endpoint"},
+      {"key": "status", "label": "Status", "type": "status"},
+      {"key": "p95", "label": "p95", "type": "duration"},
+      {"key": "share", "label": "Traffic", "type": "percent"},
+      {"key": "cost", "label": "Daily cost", "type": "currency"},
+      {"key": "seen", "label": "Last seen", "type": "date"}
+    ], "rows": [
+      {"endpoint": "POST /checkout", "status": "degraded", "p95": 0.48, "share": 34.5, "cost": 212.4, "seen": "2026-11-23"},
+      {"endpoint": "GET /cart", "status": "ok", "p95": 0.09, "share": 41, "cost": 96, "seen": "2026-11-23"},
+      {"endpoint": "POST /tax/quote", "status": "failed", "p95": 0.14, "share": 12.2, "cost": 1480, "seen": "2026-11-22"},
+      {"endpoint": "GET /orders", "status": "ok", "p95": null, "share": 12.3, "cost": null, "seen": "2026-11-21"}
+    ], "sort_by": "p95", "sort_dir": "desc", "note": "Unknown means the metric was not collected."},
+    {"type": "sources", "items": [
+      {"label": "Grafana, checkout-api latency dashboard", "url": "https://grafana.example.com/d/checkout", "note": "p95, 1-23 Nov"},
+      {"label": "Deploy log for 14 Nov", "note": "internal"},
+      {"label": "Staging load test, run 2026-11-23"}
+    ]}
+  ]
+}

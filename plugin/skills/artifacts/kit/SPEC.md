@@ -1,6 +1,6 @@
 # Artifact kit: block spec
 
-A kit page is one HTML file with `kit.css` and `kit.js` inlined and a JSON spec in `<script type="application/json" id="spec">`. `kit.js` validates the spec and renders it into `<main>`. This document is the contract; `kit.js` (`SCHEMA`) and the later `agentctl artifact render` validator implement exactly this.
+A kit page is one HTML file with `kit.css` and `kit.js` inlined and a JSON spec in `<script type="application/json" id="spec">`. `kit.js` validates the spec and renders it into `<main>`. This document is the contract; `kit.js` (`SCHEMA`) and the Go validator behind `agentctl artifact render` (`internal/artifactkit`) implement exactly this. Agents do not write the HTML: they write the spec as a `.json` file and run `agentctl artifact render spec.json`, which validates it (every error with its JSON path, such as `blocks[3].series[0].values`), builds the page and publishes it. Both validators are tested against the shared fixtures in `kit/testdata/` (`valid/` must pass, `invalid/` must fail); starting points are in `kit/examples/<kind>.json`.
 
 Rules for the whole spec:
 
@@ -14,10 +14,10 @@ Rules for the whole spec:
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `kind` | `report` \| `dashboard` \| `comparison` \| `diagram` | yes | `report` and `dashboard` must contain a `sources` block, or the page shows a "No sources" warning |
+| `kind` | `report` \| `dashboard` \| `comparison` \| `diagram` | yes | `report` and `dashboard` must contain a `sources` block (`artifact render` refuses a spec without one; the page shows a "No sources" warning) |
 | `title` | string | yes | Page `<h1>` and document title |
 | `summary` | string | no | One sentence that gives the answer |
-| `date` | string | no | ISO `YYYY-MM-DD`; shown as "Nov 24, 2026" |
+| `date` | string | no | ISO `YYYY-MM-DD` or an RFC 3339 datetime (`2026-11-24T09:30:00Z`); anything else is an error. Shown as "Nov 24, 2026" |
 | `author` | string | no | |
 | `scope` | string | no | Meta line is `date · author · scope`, empty parts skipped |
 | `blocks` | array of block | yes | Rendered in order |
@@ -47,6 +47,7 @@ Tiles. `items` (required, non-empty) of:
 | `delta` | string \| number | no | a number is formatted with a sign; a string is shown as given. A leading `+`/`-` adds an arrow |
 | `trend` | `good` \| `bad` \| `neutral` | no | colours the delta by meaning, never by sign |
 | `note` | string | no | small caption |
+| `breakdown` | array of `{label, value}` | no | label/value rows under the tile instead of a long `note`; `label` string, `value` string \| number \| null, formatted with the tile's `format` |
 
 ```json
 {"type": "kpis", "items": [{"label": "p95", "value": 0.48, "format": "duration", "delta": 0.17, "trend": "bad"}]}
@@ -65,6 +66,7 @@ Chart.js via CDN, colours from the CSS tokens, redrawn when the colour scheme ch
 | `x_label` | string | no | x-axis title |
 | `y_label` | string | no | y-axis title, before the unit |
 | `note` | string | no | caption under the chart |
+| `excluded` | array of string | no | what the chart leaves out (e.g. "3 failed runs without a duration"); each is shown under the chart as "Excluded: ..." |
 
 ```json
 {"type": "chart", "title": "Requests per day", "chart": "line", "unit": "requests", "labels": ["Mon", "Tue"], "series": [{"name": "This week", "values": [120, null]}]}
@@ -76,14 +78,14 @@ Own scroll container, sticky header, client-side sort (tap a header), numeric co
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `columns` | array of `{key, label, type?, currency?}` | yes | `key` unique; `type` is `text` (default) \| `number` \| `percent` \| `currency` \| `duration` \| `date` \| `status` |
+| `columns` | array of `{key, label, type?, currency?}` | yes | `key` unique; `type` is `text` (default) \| `number` \| `percent` \| `currency` \| `duration` \| `date` \| `datetime` \| `status` |
 | `rows` | array of objects | yes | keys must be column keys; values string, number, boolean or `null` (unknown) |
 | `sortable` | boolean | no | default `true` |
 | `sort_by` | string | no | initial sort, a column key |
 | `sort_dir` | `asc` \| `desc` | no | default `asc` |
 | `note` | string | no | caption |
 
-Column types: `percent` values are already percent (`34.5` shows `34.5%`); `duration` values are seconds; `date` values are ISO dates; `status` shows a pill coloured by meaning: good (`ok pass passed passing healthy good done success succeeded green up`), warn (`warn warning degraded pending slow partial yellow running`), bad (`fail failed failing error down blocked bad red critical`), anything else neutral. Unknown cells sort last.
+Column types: `percent` values are already percent (`34.5` shows `34.5%`); `duration` values are seconds; `date` values are ISO dates (`YYYY-MM-DD`, or an RFC 3339 datetime); `datetime` values are RFC 3339 datetimes with an offset (`2026-11-24T09:30:00Z`), sort by instant and show in the viewer's local time as `YYYY-MM-DD HH:MM`; text columns have a minimum width and wrap at word boundaries, so a long text column scrolls the table sideways on a phone instead of breaking words. `status` shows a pill coloured by meaning: good (`ok pass passed passing healthy good done success succeeded green up`), warn (`warn warning degraded pending slow partial yellow running`), bad (`fail failed failing error down blocked bad red critical`), anything else neutral. Unknown cells sort last.
 
 ```json
 {"type": "table", "columns": [{"key": "svc", "label": "Service"}, {"key": "p95", "label": "p95", "type": "duration"}], "rows": [{"svc": "api", "p95": 0.21}, {"svc": "web", "p95": null}]}
@@ -149,5 +151,7 @@ Templates carry the kit between marker lines, and `plugin_manifest_test.go` fail
 /* kit:css:begin */ ... /* kit:css:end */      (inside <style>)
 // kit:js:begin ... // kit:js:end               (inside <script>)
 ```
+
+`agentctl` embeds `kit.css` and `kit.js` from this directory (`kit/embed.go`), so there is still one copy. A rendered page is the same shell as the templates, with the spec JSON escaped (every less-than sign is written as the JSON unicode escape for U+003C) so no string in it can close the script element.
 
 After editing a kit file, refresh every template with `UPDATE_ARTIFACT_KIT=1 go test -run ArtifactKit .`, then run `go test -run Plugin .`. The test also checks that each template's spec is valid JSON with only known block types. Never edit inside the marker regions of a template by hand.

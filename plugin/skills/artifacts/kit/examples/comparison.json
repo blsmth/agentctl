@@ -1,0 +1,22 @@
+{
+  "kind": "comparison",
+  "title": "Which queue should carry background jobs?",
+  "summary": "Use Postgres-backed jobs now; revisit Redis if we pass 50 jobs per second.",
+  "date": "2026-11-24",
+  "author": "agent",
+  "scope": "background job processing",
+  "blocks": [
+    {"type": "comparison", "options": [
+      {"name": "Postgres queue", "recommended": true, "description": "Jobs table with SKIP LOCKED workers.",
+       "pros": ["No new infrastructure", "Transactional enqueue"], "cons": ["Tops out near 50 jobs/s"], "effort": "About 2 days"},
+      {"name": "Redis + workers", "description": "Dedicated Redis with a job library.",
+       "pros": ["High throughput", "Mature tooling"], "cons": ["New dependency to run", "Enqueue is not transactional"], "effort": "About 1 week"},
+      {"name": "Managed queue", "description": "Cloud queue service.",
+       "pros": ["No servers to run"], "cons": ["Per-message cost", "Vendor lock-in"], "effort": "About 3 days"}
+    ], "recommendation": "Current load is about 4 jobs per second, so Postgres has 10x headroom and keeps enqueue in the same transaction as the write. Switch to Redis if sustained load passes 50 jobs per second."},
+    {"type": "sources", "items": [
+      {"label": "Job volume, last 30 days", "note": "peak 4.2 jobs/s from the app logs"},
+      {"label": "PostgreSQL docs: SELECT ... FOR UPDATE SKIP LOCKED", "url": "https://www.postgresql.org/docs/current/sql-select.html"}
+    ]}
+  ]
+}
