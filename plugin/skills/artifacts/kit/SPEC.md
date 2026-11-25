@@ -20,8 +20,8 @@ Rules for the whole spec:
 | `date` | string | no | ISO `YYYY-MM-DD` or an RFC 3339 datetime (`2026-11-24T09:30:00Z`); anything else is an error. Shown as "Nov 24, 2026" |
 | `author` | string | no | |
 | `scope` | string | no | Meta line is `date · author · scope`, empty parts skipped |
-| `brand` | string | no | Name of a brand profile (`<config dir>/brands/<name>/`): `artifact render` builds a branded page for it (logo and firm name header, brand colours and font, footer, always the light palette). An unknown brand is an error. `artifact render --brand` overrides it. See `docs/design/artifacts.md` (Branding) |
-| `client` | string | no | Shown as "Prepared for <client>" in the page header. Works with or without a brand |
+| `brand` | string | no | Name of a brand profile (`<config dir>/brands/<name>/`): `artifact render` builds a branded page for it (logo and firm name header, brand colours and font, footer, always the light palette; in a PDF also a cover page and a running footer with page numbers). An unknown brand is an error. `artifact render --brand` overrides it. See `docs/design/artifacts.md` (Branding) |
+| `client` | string | no | Shown as "Prepared for <client>" in the page header (and on the PDF cover of a branded page). Works with or without a brand |
 | `blocks` | array of block | yes | Rendered in order |
 
 Every block has `type` (required) and `title` (optional string, shown as the section heading; `sources` defaults to "Sources").

@@ -69,6 +69,19 @@ func TestLoadFull(t *testing.T) {
 	}
 }
 
+func TestLogoHasName(t *testing.T) {
+	root := t.TempDir()
+	files := map[string][]byte{"l.png": pngBytes}
+	writeBrand(t, root, "on", `{"name":"X","logo":"l.png","logo_has_name":true}`, files)
+	writeBrand(t, root, "off", `{"name":"X","logo":"l.png"}`, files)
+	if b, err := LoadFrom(root, "on"); err != nil || !b.LogoHasName {
+		t.Errorf("on: %+v %v", b, err)
+	}
+	if b, err := LoadFrom(root, "off"); err != nil || b.LogoHasName {
+		t.Errorf("off: %+v %v", b, err)
+	}
+}
+
 func TestLoadMinimalAndStack(t *testing.T) {
 	root := t.TempDir()
 	writeBrand(t, root, "min", `{"name":"Min"}`, nil)
@@ -122,6 +135,8 @@ func TestValidation(t *testing.T) {
 		{"font both", `{"name":"X","font":{"stack":"serif","family":"Inter"}}`, nil, "font", "not both"},
 		{"font neither", `{"name":"X","font":{}}`, nil, "font", "needs"},
 		{"font regular missing", `{"name":"X","font":{"family":"Inter"}}`, nil, "font.regular", "required"},
+		{"logo_has_name type", `{"name":"X","logo":"l.png","logo_has_name":"yes"}`, map[string][]byte{"l.png": pngBytes}, "logo_has_name", "true or false"},
+		{"logo_has_name without logo", `{"name":"X","logo_has_name":true}`, nil, "logo_has_name", "needs a logo"},
 		{"not json", `{`, nil, "brand.json", "not valid JSON"},
 	}
 	for _, c := range cases {
