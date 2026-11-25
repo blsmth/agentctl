@@ -4,7 +4,7 @@
 // raw_url the server gives: the direct /a/<id>/<n>/ for an artifact whose id
 // is itself the capability, or a token URL minted per device (valid ~24h) for
 // a legacy 10-character id.
-import { ApiError, api, get, send } from "./api.js";
+import { ApiError, api, get, getBlob, send } from "./api.js";
 import { attachDrag } from "./drag.js";
 import { attachSwipe } from "./swipe.js";
 import {
@@ -30,6 +30,10 @@ import {
   artifactHash,
   artifactIcon,
   artifactOrigin,
+  artifactPdfLabel,
+  artifactPdfPath,
+  pdfDelivery,
+  pdfFilename,
   windowWho,
   artifactRevLabel,
   artifactRevPill,
@@ -682,12 +686,89 @@ function mountViewer(root, ctx, route) {
   };
   addEventListener("message", onMessage);
 
-  /** moreSheet is the ⋯ bottom sheet: origin, open in a new tab, pin and delete. */
+  /**
+   * pdfButton is the sheet's "Save as PDF (vN)" for the revision on screen.
+   * The server renders it with a headless browser (several seconds), so the
+   * button shows that it is busy. The file then goes to the share sheet or a
+   * download (pdfDelivery). Sharing needs a fresh tap: when the wait used up
+   * the first tap's activation, the button turns into "Share PDF". Closing
+   * the sheet aborts the request.
+   */
+  function pdfButton(closeSheet) {
+    const rev = revNumber();
+    const label = artifactPdfLabel(rev);
+    const ctl = new AbortController();
+    let file = null;
+    let busy = false;
+    const btn = h("button", { class: "btn artifact-pdf", type: "button", onclick: () => (file ? deliver() : render()) }, label);
+    const setBusy = (on) => {
+      busy = on;
+      btn.disabled = on;
+      btn.toggleAttribute("aria-busy", on);
+      btn.textContent = on ? "Rendering PDF\u2026" : label;
+    };
+    async function deliver() {
+      const how = pdfDelivery(navigator, file);
+      if (how === "share") {
+        try {
+          await navigator.share({ files: [file], title: detail.title });
+          closeSheet();
+        } catch (e) {
+          if (e?.name === "AbortError") return; // dismissed the share sheet
+          if (e?.name === "NotAllowedError") {
+            btn.textContent = "Share PDF";
+            return;
+          }
+          toast(`Could not share the PDF: ${errText(e)}`, "error");
+        }
+        return;
+      }
+      const url = URL.createObjectURL(file);
+      const a = h("a", { href: url, download: file.name, hidden: true });
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      closeSheet();
+    }
+    async function render() {
+      if (busy) return;
+      setBusy(true);
+      try {
+        const { blob, disposition } = await getBlob(artifactPdfPath(id, rev), { signal: ctl.signal });
+        file = new File([blob], pdfFilename(disposition, `artifact-r${rev}.pdf`), { type: "application/pdf" });
+      } catch (e) {
+        if (ctl.signal.aborted || disposed) return;
+        setBusy(false);
+        if (e instanceof ApiError && e.status === 404) {
+          closeSheet();
+          deleted();
+          return;
+        }
+        toast(`PDF failed: ${errText(e)}`, "error");
+        return;
+      }
+      if (ctl.signal.aborted || disposed) return;
+      setBusy(false);
+      const how = pdfDelivery(navigator, file);
+      // A share needs user activation; after a long render it may be gone.
+      if (how === "share" && navigator.userActivation && !navigator.userActivation.isActive) {
+        btn.textContent = "Share PDF";
+        return;
+      }
+      deliver();
+    }
+    return { btn, abort: () => ctl.abort() };
+  }
+
+  /** moreSheet is the ⋯ bottom sheet: origin, open in a new tab, save as PDF, pin and delete. */
   function moreSheet() {
     const close = () => {
       removeEventListener("hashchange", close);
+      pdf.abort();
       overlay.remove();
     };
+    const pdf = pdfButton(close);
     addEventListener("hashchange", close, { once: true });
     const live = artifactWindowLive(detail, ctx.store.fleet?.groups);
     const origin = artifactOrigin(detail, live);
@@ -701,6 +782,7 @@ function mountViewer(root, ctx, route) {
         origin ? h("p", { class: "artifact-origin" }, origin) : null,
         live ? h("a", { class: "btn", href: windowHash(detail.session, detail.window_id), onclick: close }, "Go to window ›") : null,
         h("a", { class: "btn", href: currentUrl(), target: "_blank", rel: "noopener noreferrer", onclick: close }, "Open in new tab ↗"),
+        pdf.btn,
         detail.comments?.length
           ? h(
               "div",

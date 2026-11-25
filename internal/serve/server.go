@@ -126,6 +126,9 @@ type Options struct {
 	Artifacts        *artifacts.Store
 	ArtifactPoll     time.Duration
 	ArtifactDebounce time.Duration
+	// RenderPDF renders an artifact PDF for /v1/artifacts/{id}/pdf; nil
+	// means artifactpdf.Render (a headless browser). Tests stub it.
+	RenderPDF RenderPDFFunc
 
 	// Push dependencies; nil means production (webpush-go, ntfy.sh).
 	Pusher   Pusher
@@ -177,6 +180,7 @@ type Server struct {
 	artifacts     *artifacts.Store
 	artifactWatch *artifactWatcher
 	artifactKey   []byte
+	pdfs          *pdfExporter
 
 	keys       KeySender
 	injector   Injector
@@ -349,7 +353,11 @@ func New(opts Options) (*Server, error) {
 	if s.artifacts == nil {
 		s.artifacts = artifacts.New()
 	}
+	s.pdfs = newPDFExporter(s.artifacts, opts.RenderPDF)
 	s.artifactWatch = newArtifactWatcher(s.artifacts, func(c fleetwatch.ArtifactChange) {
+		if c.Action == fleetwatch.ArtifactRemove {
+			s.pdfs.forget(c.ID)
+		}
 		s.bus.Publish(fleetwatch.Event{Kind: fleetwatch.KindArtifact, Artifact: c})
 	}, opts.ArtifactDebounce, opts.ArtifactPoll)
 	s.router = newRouter(devices, opts.Config.AllowWrite, now)

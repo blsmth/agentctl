@@ -93,3 +93,23 @@ export async function uploadImages(path, files, fields = {}) {
   }
   return data.images;
 }
+
+/**
+ * getBlob GETs a binary response (the artifact PDF) with the device cookie and
+ * returns {blob, disposition}. A failure throws ApiError with the server's
+ * JSON message, like api. signal aborts the request.
+ */
+export async function getBlob(path, { signal } = {}) {
+  const res = await fetch(path, { credentials: "same-origin", cache: "no-store", signal });
+  if (!res.ok) {
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // non-JSON body: fall through
+    }
+    onPhoneOff(res.status, data);
+    throw new ApiError(res.status, data?.code ?? "http_error", data?.error ?? `HTTP ${res.status}`);
+  }
+  return { blob: await res.blob(), disposition: res.headers.get("Content-Disposition") ?? "" };
+}

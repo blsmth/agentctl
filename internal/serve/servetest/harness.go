@@ -123,7 +123,7 @@ func New(opts Options) (*Harness, error) {
 		LaptopIdle: func(context.Context) (time.Duration, error) { return 0, errors.New("no laptop in servetest") },
 		BusOptions: fleetwatch.Options{Debounce: 10 * time.Millisecond, Rediscover: opts.Rediscover},
 		PingEvery:  5 * time.Second,
-		Artifacts:  arts.store, ArtifactDebounce: 10 * time.Millisecond, ArtifactPoll: time.Second,
+		Artifacts:  arts.store, ArtifactDebounce: 10 * time.Millisecond, ArtifactPoll: time.Second, RenderPDF: arts.renderPDF,
 		Schedules: scheds.store(), RunSchedule: scheds.run, AgentPermissionMode: func(string) string { return "" },
 	})
 	if err != nil {
