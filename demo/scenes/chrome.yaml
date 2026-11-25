@@ -26,7 +26,7 @@ windows:
     ticket: 142
     ticket_title: Add token-bucket rate limiter to POST /v1/orders
     title: Orders rate limiter
-    kind: go
+    kind: build
     spawned_by: orch
     dirty: [internal/ratelimit/bucket.go, internal/http/router.go]
     transcript: rate-limiter

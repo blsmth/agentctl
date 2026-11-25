@@ -24,11 +24,11 @@ test("a short title becomes the row headline over the full recap", async ({ page
 });
 
 test("a sub-agent row shows its role pill before the title and a bare row never does", async ({ page, control }) => {
-  await control.patchWindow(SHOP, "@15", { recap: "Did a thing.", recap_source: "summary", short_title: "Fixing Hub Sort Order", short_kind: "go" });
+  await control.patchWindow(SHOP, "@15", { recap: "Did a thing.", recap_source: "summary", short_title: "Fixing Hub Sort Order", short_kind: "fix" });
   await expect(row(page, "@15").locator(".win-title .agent")).toHaveText("Fixing Hub Sort Order");
   await expect(row(page, "@15").locator(".win-title .tag.kind-chip")).toHaveCount(0);
   await control.patchWindow(SHOP, "@13", { recap: "Did a thing.", recap_source: "summary", short_title: "Checking Retry Backoff", short_kind: "debug" });
-  await expect(row(page, "@13").locator(".win-title .tag.kind-chip")).toHaveText("fix");
+  await expect(row(page, "@13").locator(".win-title .tag.kind-chip")).toHaveText("debug");
   await expect(row(page, "@13").locator(".win-title .agent")).toHaveText("Checking Retry Backoff");
 });
 
