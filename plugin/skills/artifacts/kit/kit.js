@@ -361,6 +361,11 @@
     return s;
   };
 
+  // a label with a word too long to fit a phone tile is truncated with an ellipsis instead of broken mid-word
+  function longWord(label) {
+    return String(label).split(/\s+/).some(function (w) { return w.length > 16; });
+  }
+
   R.kpis = function (b) {
     var s = section(b, "kpis"), g = h("div", "kpis");
     b.items.forEach(function (k) {
@@ -384,7 +389,9 @@
         var ul = h("ul", "breakdown");
         k.breakdown.forEach(function (r) {
           var li = h("li");
-          li.append(h("span", "", r.label), h("span", "", fmt.by(type, r.value, k.currency)));
+          var lab = h("span", longWord(r.label) ? "lab trunc" : "lab", r.label);
+          lab.title = String(r.label);
+          li.append(lab, h("span", "val", fmt.by(type, r.value, k.currency)));
           ul.append(li);
         });
         c.append(ul);
@@ -410,6 +417,11 @@
     var sort = { i: -1, dir: 1 };
     var ths = [];
     function numeric(c) { return c.type === "number" || c.type === "percent" || c.type === "currency" || c.type === "duration"; }
+    // the first column is pinned while the table scrolls sideways; a single column has nothing to pin
+    function pinned(i) { return i === 0 && columns.length > 1 ? " pin" : ""; }
+    function cellClass(c, i) {
+      return (numeric(c) ? "num" : c.type === "date" || c.type === "datetime" ? "nowrap" : "") + pinned(i);
+    }
     function paint() {
       var order = rows.slice();
       if (sort.i >= 0) {
@@ -423,8 +435,8 @@
       tbody.replaceChildren();
       order.forEach(function (r) {
         var tr = h("tr");
-        columns.forEach(function (c) {
-          var td = h("td", numeric(c) ? "num" : c.type === "date" || c.type === "datetime" ? "nowrap" : "");
+        columns.forEach(function (c, ci) {
+          var td = h("td", cellClass(c, ci));
           var v = r[c.key];
           if (isNil(v)) td.append(h("span", "unknown", UNKNOWN));
           else if (c.type === "status") td.append(h("span", "badge " + statusTone(v), String(v)));
@@ -439,7 +451,7 @@
       });
     }
     columns.forEach(function (c, i) {
-      var th = h("th", numeric(c) ? "num" : "");
+      var th = h("th", (numeric(c) ? "num" : "") + pinned(i));
       th.scope = "col";
       if (opts.sortable === false) th.append(h("span", "", c.label));
       else {

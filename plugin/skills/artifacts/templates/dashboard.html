@@ -80,8 +80,9 @@ a{color:var(--accent)}
 .kpi .note{color:var(--muted);font-size:.8rem}
 .kpi .breakdown{list-style:none;margin:8px 0 0;padding:8px 0 0;border-top:1px solid var(--line);font-size:.875rem}
 .kpi .breakdown li{display:flex;justify-content:space-between;gap:12px;padding:2px 0}
-.kpi .breakdown span:first-child{color:var(--muted);min-width:0}
-.kpi .breakdown span:last-child{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.kpi .breakdown .lab{color:var(--muted);min-width:0;overflow-wrap:normal;word-break:normal;hyphens:none}
+.kpi .breakdown .lab.trunc{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi .breakdown .val{flex:none;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
 
 /* table */
 .table-wrap{overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:var(--r);background:var(--bg)}
@@ -92,7 +93,13 @@ thead th{position:sticky;top:0;z-index:1;background:var(--card);white-space:nowr
 thead th>span,thead th>button{display:block;width:100%;padding:8px 12px;text-align:inherit}
 td{min-width:9rem;overflow-wrap:break-word}
 th.num,td.num{text-align:right;white-space:nowrap;overflow-wrap:normal;min-width:0}
-td.nowrap{white-space:nowrap;overflow-wrap:normal;min-width:0}
+td.nowrap,th.nowrap{white-space:nowrap;overflow-wrap:normal;min-width:0}
+td.num,td.nowrap{width:1%}
+td.nowrap{font-size:.9rem;padding-left:8px;padding-right:8px}
+@media(max-width:699px){table{min-width:0}td{min-width:7rem}}
+/* pinned first column: opaque in both palettes, with an edge so it reads as pinned */
+th.pin,td.pin{position:sticky;left:0;background:var(--bg);box-shadow:1px 0 0 var(--line),4px 0 6px -4px rgba(0,0,0,.35)}
+thead th.pin{z-index:2;background:var(--card)}
 td .unknown{white-space:nowrap}
 th button.sort{min-height:var(--tap);background:none;border:0;color:inherit;font:inherit;font-weight:650;cursor:pointer}
 th button.sort::after{content:" \2195";color:var(--muted);font-weight:400}
@@ -184,6 +191,8 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
   thead{display:table-header-group}
   tfoot{display:table-footer-group}
   thead th{position:static;padding:8px 12px}
+  th.pin,td.pin,thead th.pin{position:static;box-shadow:none}
+  td.num,td.nowrap{width:auto}
   /* Chrome paints a <button> in a repeated header row empty: show its text directly */
   thead th>button{display:contents;font-weight:650}
   thead th>span{display:inline;padding:0;min-height:0}
@@ -610,6 +619,11 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
     return s;
   };
 
+  // a label with a word too long to fit a phone tile is truncated with an ellipsis instead of broken mid-word
+  function longWord(label) {
+    return String(label).split(/\s+/).some(function (w) { return w.length > 16; });
+  }
+
   R.kpis = function (b) {
     var s = section(b, "kpis"), g = h("div", "kpis");
     b.items.forEach(function (k) {
@@ -633,7 +647,9 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
         var ul = h("ul", "breakdown");
         k.breakdown.forEach(function (r) {
           var li = h("li");
-          li.append(h("span", "", r.label), h("span", "", fmt.by(type, r.value, k.currency)));
+          var lab = h("span", longWord(r.label) ? "lab trunc" : "lab", r.label);
+          lab.title = String(r.label);
+          li.append(lab, h("span", "val", fmt.by(type, r.value, k.currency)));
           ul.append(li);
         });
         c.append(ul);
@@ -659,6 +675,11 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
     var sort = { i: -1, dir: 1 };
     var ths = [];
     function numeric(c) { return c.type === "number" || c.type === "percent" || c.type === "currency" || c.type === "duration"; }
+    // the first column is pinned while the table scrolls sideways; a single column has nothing to pin
+    function pinned(i) { return i === 0 && columns.length > 1 ? " pin" : ""; }
+    function cellClass(c, i) {
+      return (numeric(c) ? "num" : c.type === "date" || c.type === "datetime" ? "nowrap" : "") + pinned(i);
+    }
     function paint() {
       var order = rows.slice();
       if (sort.i >= 0) {
@@ -672,8 +693,8 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
       tbody.replaceChildren();
       order.forEach(function (r) {
         var tr = h("tr");
-        columns.forEach(function (c) {
-          var td = h("td", numeric(c) ? "num" : c.type === "date" || c.type === "datetime" ? "nowrap" : "");
+        columns.forEach(function (c, ci) {
+          var td = h("td", cellClass(c, ci));
           var v = r[c.key];
           if (isNil(v)) td.append(h("span", "unknown", UNKNOWN));
           else if (c.type === "status") td.append(h("span", "badge " + statusTone(v), String(v)));
@@ -688,7 +709,7 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
       });
     }
     columns.forEach(function (c, i) {
-      var th = h("th", numeric(c) ? "num" : "");
+      var th = h("th", (numeric(c) ? "num" : "") + pinned(i));
       th.scope = "col";
       if (opts.sortable === false) th.append(h("span", "", c.label));
       else {
