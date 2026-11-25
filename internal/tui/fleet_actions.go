@@ -15,6 +15,7 @@ import (
 	"github.com/blsmth/agentctl/internal/reconcile"
 	"github.com/blsmth/agentctl/internal/selfpath"
 	"github.com/blsmth/agentctl/internal/tmux"
+	"github.com/blsmth/agentctl/internal/windowstate"
 )
 
 // fleetCronKey opens a new cron job for the selected group's project, also
@@ -355,26 +356,27 @@ func (m *FleetModel) startClose(idx int) {
 	}
 }
 
-// dispatchedUnder counts the rows dispatched by r, directly or transitively
-// (same session, linked by Parent): what closing r also closes.
+// dispatchedUnder counts the windows a close of r also closes. It adapts every
+// loaded group's rows (not just the visible lines: collapsed, filtered and
+// other-tab rows still close) to reconcile.LiveWindow and asks
+// reconcile.Descendants, so the count follows the same rule as the close.
 func (m *FleetModel) dispatchedUnder(r fleet.Row) int {
-	seen := map[string]bool{r.WindowID: true}
-	queue := []string{r.WindowID}
-	n := 0
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		for _, l := range m.lines {
-			c := l.row
-			if l.kind != fleetLineRow || c.Session != r.Session || c.Parent != id || seen[c.WindowID] {
-				continue
-			}
-			seen[c.WindowID] = true
-			n++
-			queue = append(queue, c.WindowID)
+	var wins []reconcile.LiveWindow
+	for _, g := range m.groups {
+		for _, c := range g.Rows {
+			wins = append(wins, reconcile.LiveWindow{
+				Session:  g.Session,
+				WindowID: c.WindowID,
+				Record: windowstate.WindowState{
+					SessionID:        c.SessionID,
+					SpawnedBy:        c.SpawnedBy,
+					SpawnedBySession: c.SpawnedBySession,
+					ScheduledBy:      c.ScheduledBy,
+				},
+			})
 		}
 	}
-	return n
+	return len(reconcile.Descendants(r.WindowID, r.SessionID, wins))
 }
 
 func (m *FleetModel) cancelClose() {

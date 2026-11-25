@@ -64,20 +64,36 @@ func TestFleetCloseCmdNoSessionIDClosesOnlyWindow(t *testing.T) {
 }
 
 func TestDispatchedUnderCountsDescendants(t *testing.T) {
-	row := func(id, parent string) fleet.Row {
-		return fleet.Row{Session: "s", Parent: parent, AgentState: state.AgentState{WindowID: id}}
+	row := func(id, sid, parent, parentSid, sched string) fleet.Row {
+		return fleet.Row{
+			Parent:     parent,
+			AgentState: state.AgentState{WindowID: id, SessionID: sid, SpawnedBy: parent, SpawnedBySession: parentSid, ScheduledBy: sched},
+		}
 	}
-	m := &FleetModel{lines: []fleetLine{
-		{kind: fleetLineRow, row: row("@1", "")},
-		{kind: fleetLineRow, row: row("@2", "@1")},
-		{kind: fleetLineRow, row: row("@3", "@2")},
-		{kind: fleetLineRow, row: row("@4", "")},
-	}}
-	if got := m.dispatchedUnder(m.lines[0].row); got != 2 {
-		t.Errorf("dispatchedUnder(@1) = %d, want 2", got)
+	// Only @1 is on screen: the rest are collapsed, filtered or in another
+	// group, so they are in m.groups but not in m.lines.
+	m := &FleetModel{
+		lines: []fleetLine{{kind: fleetLineRow, row: row("@1", "s1", "", "", "")}},
+		groups: []fleet.Group{
+			{Session: "a", Rows: []fleet.Row{
+				row("@1", "s1", "", "", ""),
+				row("@2", "s2", "@1", "s1", ""),    // collapsed child
+				row("@3", "s3", "@2", "s2", ""),    // grandchild
+				row("@4", "s4", "@1", "stale", ""), // recycled @N: wrong session
+				row("@5", "s5", "@1", "s1", "job"), // cron-scheduled: never a child
+				row("@6", "s6", "", "", ""),
+			}},
+			{Session: "b", Rows: []fleet.Row{
+				row("@7", "s7", "@1", "s1", ""), // child in another session
+			}},
+		},
 	}
-	if got := m.dispatchedUnder(m.lines[3].row); got != 0 {
-		t.Errorf("dispatchedUnder(@4) = %d, want 0", got)
+	root := m.groups[0].Rows[0]
+	if got := m.dispatchedUnder(root); got != 3 {
+		t.Errorf("dispatchedUnder(@1) = %d, want 3 (@2, @3, @7)", got)
+	}
+	if got := m.dispatchedUnder(m.groups[0].Rows[5]); got != 0 {
+		t.Errorf("dispatchedUnder(@6) = %d, want 0", got)
 	}
 }
 
