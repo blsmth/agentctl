@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/blsmth/agentctl/internal/cliout"
 	ctxstore "github.com/blsmth/agentctl/internal/context"
+	"github.com/blsmth/agentctl/internal/sessions"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/tui"
 )
@@ -31,8 +32,8 @@ func RunContext() {
 		cmdContextList()
 	case "clear":
 		cmdContextClear()
-	case "push":
-		cmdContextPush()
+	case "prune":
+		cmdContextPrune()
 	default:
 		printContextUsage()
 		cliout.Exit(1)
@@ -44,11 +45,11 @@ func printContextUsage() {
        agentctl context --tui
 
 Subcommands:
-  set   <key> <value>   Write a context entry (flags: --agent, --tag)
+  set   <key> <value>   Write a context entry (flag: --tag)
   get   <key>           Print a context entry
   list                  Table of all entries
   clear <key>           Delete an entry
-  push  <key>           Push an entry to a running agent (flag: --agent)
+  prune --used          Delete entries a dispatch has used (flags: --older-than <dur>, default 1d; --dry-run)
 
 Flags:
   --tui                 Full-screen browser (filter, preview, delete)`)
@@ -69,19 +70,21 @@ func cmdContextTUI() {
 	}
 }
 
-// cmdContextSet handles "agentctl context set <key> <value> [--agent NAME] [--tag TAG]...".
+// cmdContextSet handles "agentctl context set <key> <value> [--tag TAG]...".
+// --agent is still accepted (old scripts and agent instructions pass it) but
+// means nothing: the entry is stored without it.
 func cmdContextSet() {
 	args := os.Args[3:]
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: agentctl context set <key> <value> [--agent <name>] [--tag <tag>]...")
+		fmt.Fprintln(os.Stderr, "Usage: agentctl context set <key> <value> [--tag <tag>]...")
 		cliout.Exit(1)
 	}
 
 	key := args[0]
 	value := args[1]
 
-	var agentName string
 	var tags []string
+	agentIgnored := false
 
 	for i := 2; i < len(args); i++ {
 		switch args[i] {
@@ -91,7 +94,7 @@ func cmdContextSet() {
 				cliout.Exit(1)
 			}
 			i++
-			agentName = args[i]
+			agentIgnored = true
 		case "--tag":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "Error: --tag requires a value")
@@ -106,7 +109,6 @@ func cmdContextSet() {
 	}
 
 	e := ctxstore.Entry{
-		Agent:   agentName,
 		Content: value,
 		Tags:    tags,
 	}
@@ -114,25 +116,10 @@ func cmdContextSet() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		cliout.Exit(1)
 	}
-	if msg := contextSetNotice(key, agentName); msg != "" {
-		fmt.Fprintln(os.Stderr, msg)
+	if agentIgnored {
+		fmt.Fprintln(os.Stderr, "context: --agent is ignored; entries are no longer scoped to an agent")
 	}
 	fmt.Printf("context: set %q\n", key)
-}
-
-// contextSetNotice returns the stderr guidance for a "context set", or "" for none.
-func contextSetNotice(key, agentName string) string {
-	if agentName == "" {
-		return fmt.Sprintf("context: %q is stored for lookup and for `dispatch --prompt-key %s`; it is not injected into any prompt (use --agent <name> only to inject it into every launch of that agent)", key, key)
-	}
-	if n, ok := ctxstore.TicketSpecNumber(key); ok {
-		return fmt.Sprintf("context: %q is injected only into `dispatch --issue %d` launches of %s (or when listed in its context_keys)", key, n, agentName)
-	}
-	msg := fmt.Sprintf("context: warning: %q is injected (first 8KB) into every launch of %s until cleared", key, agentName)
-	if strings.HasSuffix(key, "-prompt") {
-		msg += "; a key ending in -prompt looks like a one-dispatch prompt -- set it without --agent and use `dispatch --prompt-key`"
-	}
-	return msg
 }
 
 // cmdContextGet handles "agentctl context get <key>".
@@ -180,8 +167,8 @@ func cmdContextList() {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "KEY\tAGENT\tSIZE\tAGE\tPREVIEW")
-	fmt.Fprintln(w, "---\t-----\t----\t---\t-------")
+	fmt.Fprintln(w, "KEY\tAGENT\tSIZE\tAGE\tUSED\tPREVIEW")
+	fmt.Fprintln(w, "---\t-----\t----\t---\t----\t-------")
 	for _, e := range entries {
 		age := tui.FormatContextAge(e.Timestamp)
 		preview := strings.ReplaceAll(e.Content, "\n", " ")
@@ -193,7 +180,7 @@ func cmdContextList() {
 			agentCol = "-"
 		}
 		size := formatEntrySize(len(e.Content))
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.Key, agentCol, size, age, preview)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", e.Key, agentCol, size, age, formatContextUsed(e.Used), preview)
 	}
 	if err := w.Flush(); err != nil {
 		fmt.Fprintf(os.Stderr, "context: flush: %v\n", err)
@@ -229,125 +216,73 @@ func cmdContextClear() {
 	fmt.Printf("context: cleared %q\n", key)
 }
 
-// cmdContextPush handles "agentctl context push <key> --agent <name>".
-func cmdContextPush() {
-	args := os.Args[3:]
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: agentctl context push <key> --agent <name>")
-		cliout.Exit(1)
+// formatContextUsed renders an entry's last-used time as a relative age, or
+// "-" for an entry no dispatch has used.
+func formatContextUsed(used time.Time) string {
+	if used.IsZero() {
+		return "-"
 	}
-
-	key := args[0]
-	var agentName string
-
-	for i := 1; i < len(args); i++ {
-		switch args[i] {
-		case "--agent":
-			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "Error: --agent requires a value")
-				cliout.Exit(1)
-			}
-			i++
-			agentName = args[i]
-		default:
-			fmt.Fprintf(os.Stderr, "Error: unknown flag: %s\n", args[i])
-			cliout.Exit(1)
-		}
-	}
-
-	if agentName == "" {
-		fmt.Fprintln(os.Stderr, "Error: --agent <name> is required")
-		cliout.Exit(1)
-	}
-
-	e, ok, err := ctxstore.Get(key)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		cliout.Exit(1)
-	}
-	if !ok {
-		fmt.Fprintf(os.Stderr, "Error: key %q not found\n", key)
-		cliout.Exit(1)
-	}
-
-	message := ctxstore.Format(e)
-	if err := tmux.InjectPromptToAgent(agentName, message); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		cliout.Exit(1)
-	}
-	fmt.Printf("context: pushed %q to %s\n", key, agentName)
+	return tui.FormatContextAge(used)
 }
 
-// RunContextPushMenu is the TUI popup bound to prefix+C. It reads the target
-// agent from the tmux window ID (or the current agent), lists all context
-// store entries, and lets the operator select one to push.
-func RunContextPushMenu() {
-	// Resolve target agent from args or the current window.
-	var windowIDOrName string
-	if len(os.Args) > 2 {
-		windowIDOrName = os.Args[2]
+// cmdContextPrune handles "agentctl context prune --used [--older-than <dur>] [--dry-run]".
+func cmdContextPrune() {
+	opts, err := parseContextPrune(os.Args[3:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		cliout.Exit(1)
 	}
+	keys, err := ctxstore.PruneUsed(opts.olderThan, time.Now(), opts.dryRun)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		cliout.Exit(1)
+	}
+	verb := "pruned"
+	if opts.dryRun {
+		verb = "would prune"
+	}
+	for _, k := range keys {
+		fmt.Printf("context: %s %q\n", verb, k)
+	}
+	if len(keys) == 0 {
+		fmt.Println("context: nothing to prune")
+	}
+}
 
-	var agentName string
-	if strings.HasPrefix(windowIDOrName, "@") {
-		agentName = tmux.ResolveAgentByWindowID(windowIDOrName)
-	} else if windowIDOrName != "" {
-		agentName = tmux.BaseAgentName(tmux.StripAgentPrefix(windowIDOrName))
-	}
-	if agentName == "" || agentName == "shell" {
-		// Resolve the current agent from the active tmux window.
-		name := tmux.CurrentWindowName()
-		if name != "" && name != "shell" {
-			agentName = tmux.StripAgentPrefix(name)
-		} else {
-			agentName = ""
+type contextPruneOpts struct {
+	olderThan time.Duration
+	dryRun    bool
+}
+
+const contextPruneUsage = "Usage: agentctl context prune --used [--older-than <duration>] [--dry-run]"
+
+// parseContextPrune parses the prune flags. --used is required: it names the
+// only supported criterion, so unused entries can never be selected.
+func parseContextPrune(args []string) (contextPruneOpts, error) {
+	opts := contextPruneOpts{olderThan: 24 * time.Hour}
+	used := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--used":
+			used = true
+		case "--dry-run":
+			opts.dryRun = true
+		case "--older-than":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("--older-than requires a value")
+			}
+			i++
+			d, err := sessions.ParseSince(args[i])
+			if err != nil || d <= 0 {
+				return opts, fmt.Errorf("invalid --older-than %q (want e.g. 12h, 1d, 2w)", args[i])
+			}
+			opts.olderThan = d
+		default:
+			return opts, fmt.Errorf("unknown flag: %s", args[i])
 		}
 	}
-	if agentName != "" {
-		agentName = tmux.BaseAgentName(agentName)
+	if !used {
+		return opts, fmt.Errorf("--used is required (only entries a dispatch has used are pruned)\n%s", contextPruneUsage)
 	}
-
-	// Load all context entries.
-	entries, err := ctxstore.List()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading context store: %v\n", err)
-		cliout.Exit(1)
-	}
-
-	displayEntries := tui.BuildContextPushEntries(entries)
-	model := tui.NewContextPushModel(agentName, displayEntries)
-	p := tea.NewProgram(model)
-	finalModel, err := p.Run()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		cliout.Exit(1)
-	}
-
-	result := finalModel.(tui.ContextPushModel).Result()
-	if result.Cancelled || result.Key == "" {
-		return
-	}
-
-	target := result.TargetAgent
-	if target == "" {
-		fmt.Fprintf(os.Stderr, "Error: no target agent\n")
-		cliout.Exit(1)
-	}
-
-	// Fetch the full entry and inject it.
-	e, ok, err := ctxstore.Get(result.Key)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		cliout.Exit(1)
-	}
-	if !ok {
-		fmt.Fprintf(os.Stderr, "Error: key %q not found\n", result.Key)
-		cliout.Exit(1)
-	}
-
-	message := ctxstore.Format(e)
-	if err := tmux.InjectPromptToAgent(target, message); err != nil {
-		fmt.Fprintf(os.Stderr, "Error pushing context: %v\n", err)
-		cliout.Exit(1)
-	}
+	return opts, nil
 }

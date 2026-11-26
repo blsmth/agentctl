@@ -149,6 +149,12 @@ func RunDispatch(opts DispatchOptions) {
 		fmt.Printf("Dispatched prompt → %s (window %s)\n", resolvedAgent, linkWindow(wid, wid))
 	}
 
+	// The launch succeeded (every failure above exits): record the key's use
+	// for `context prune --used`. The approval preview hook never gets here.
+	if promptKey != "" {
+		markPromptKeyUsed(promptKey)
+	}
+
 	if !wait {
 		return
 	}
@@ -300,6 +306,14 @@ func applyDispatchTemplate(opts DispatchOptions, cwd string) (DispatchOptions, e
 	}
 	opts.Prompt = prompttemplate.Compose(t.Prompt, opts.Prompt)
 	return opts, nil
+}
+
+// markPromptKeyUsed records that a dispatch launched with key. A failure only
+// costs the usage record, so it is logged and never fails the dispatch.
+var markPromptKeyUsed = func(key string) {
+	if err := ctxstore.MarkUsed(key, time.Now()); err != nil {
+		logging.Warn("dispatch: recording use of context key %q: %v", key, err)
+	}
 }
 
 // Seams for tests.

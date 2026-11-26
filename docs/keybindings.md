@@ -73,7 +73,6 @@ With the mouse: click a row to select it and double-click to open it. Label chip
 | Key | Action |
 |-----|--------|
 | `i` | **Self-improve** — launches a session in which the agent reviews short summaries of its recent sessions and rewrites its own instructions |
-| `C` | **Context push** — pick a context-store entry to push to the focused agent |
 | `X` | **Context viewer** — open the context window (`agentctl context --tui`): browse entries with a scrollable preview, `/` filter, `d` delete (y/n), `r` reload, `q`/`esc` back to the previous window |
 
 ## Phone web app
@@ -102,7 +101,7 @@ These two keys are bound server-globally (tmux `bind-key` has no session scope),
 
 Bindings are server-global, so a key pressed in the hub would resolve to the hub window itself. Instead, every agentctl binding passes the window it was pressed in (`AGENTCTL_KEY_WINDOW`), and `agentctl` (see `internal/hubtarget`) redirects hub keypresses to the agent shown in the live pane:
 
-- **Window-scoped** (`x` kill, `o` logs, `s` settings, `i` improve, `h`/`H` HUD, `C` context push) act on the viewed agent's window.
+- **Window-scoped** (`x` kill, `o` logs, `s` settings, `i` improve, `h`/`H` HUD) act on the viewed agent's window.
 - **Project-scoped** (`a` menu, `A` launch, `c` create, `T`/`Q` tickets, `P` permissions, `m`/`t`/`S`/`X` windows) run as if pressed in the viewed agent's project session; new windows land there.
 - `q` closes the hub (back to the previous session). `R` (restart) and `K` (kill all) are refused in the hub.
 - With no agent viewed yet, these keys show "select an agent in the hub first".

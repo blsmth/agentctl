@@ -61,10 +61,6 @@ type AgentConfig struct {
 	AllowedPermissions []string    `json:"allowed_permissions,omitempty"` // permission globs to allow (e.g. "WebFetch(*)")
 	BlockedPatterns    []string    `json:"blocked_patterns,omitempty"`    // regex patterns to block
 	AutoAccept         bool        `json:"auto_accept,omitempty"`         // auto-accept all permission prompts via PreToolUse hook
-	// ContextKeys pins specific context-store entries to this agent. When
-	// cross_context is true, these keys are always injected at launch in
-	// addition to the agent-scoped entries.
-	ContextKeys []string `json:"context_keys,omitempty"`
 	// Dispatch holds per-agent dispatch settings. A nil value means inherit
 	// from the global dispatch config.
 	Dispatch *DispatchConfig `json:"dispatch,omitempty"`
@@ -1425,9 +1421,9 @@ func containsAll(have, want []string) bool {
 //     rejects agents defined only in the repo and auto-approving agents,
 //     falling back to GlobalDefaultAgent
 //   - agents.*.dir (would point an auto-mode worker at any directory, e.g. ~),
-//     agents.*.cross_context and agents.*.context_keys (would pull the user's
-//     global context store into the prompt of an agent processing attacker
-//     input); the global agent's value is used instead, or the default
+//     agents.*.cross_context (would pull the user's ticket specs into the
+//     prompt of an agent processing attacker input); the global agent's
+//     value is used instead, or the default
 //     (DefaultAgentConfig) for an agent the global config does not define.
 //     A project may still switch cross_context off.
 //   - backends and agents.*.backend (a project-chosen base_url would send
@@ -1575,9 +1571,6 @@ func sanitizeProjectConfig(project, global *Config) {
 		if ac.CrossContext && !gb.CrossContext {
 			warn(pre+"cross_context", globalOnly)
 		}
-		if len(ac.ContextKeys) > 0 && !reflect.DeepEqual(ac.ContextKeys, gb.ContextKeys) {
-			warn(pre+"context_keys", globalOnly)
-		}
 		if ac.Backend != "" && ac.Backend != g.Backend {
 			warn(pre+"backend", globalOnly)
 		}
@@ -1621,7 +1614,7 @@ func sanitizeProjectConfig(project, global *Config) {
 		ac.PermissionMode = g.PermissionMode
 		// cross_context may be switched off by the project (that only
 		// narrows what the agent does), never on.
-		ac.Dir, ac.ContextKeys = gb.Dir, gb.ContextKeys
+		ac.Dir = gb.Dir
 		ac.CrossContext = ac.CrossContext && gb.CrossContext
 		ac.BlockedCommands = unionStrings(g.BlockedCommands, ac.BlockedCommands)
 		ac.BlockedPatterns = unionStrings(g.BlockedPatterns, ac.BlockedPatterns)
@@ -1877,7 +1870,7 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 // because mergeConfig replaces whole agent entries, an agent whose merged
 // entry changed is written as a whole entry, including fields it inherited
 // from the global agent. Global-only fields (hooks, dispatch, auto_accept,
-// allowed_permissions, permission_mode, dir, context_keys) are never taken
+// allowed_permissions, permission_mode, dir) are never taken
 // from the merged entry; they keep whatever the project file already had, and blocked_*
 // lists drop entries the global agent already contributes.
 //
@@ -1964,7 +1957,7 @@ func projectAgent(ac, prev, global AgentConfig) AgentConfig {
 	ac.AutoAccept = prev.AutoAccept
 	ac.AllowedPermissions = prev.AllowedPermissions
 	ac.PermissionMode = prev.PermissionMode
-	ac.Dir, ac.ContextKeys = prev.Dir, prev.ContextKeys
+	ac.Dir = prev.Dir
 	ac.Backend, ac.Account = prev.Backend, prev.Account
 	ac.BlockedCommands = minusStrings(ac.BlockedCommands, global.BlockedCommands)
 	ac.BlockedPatterns = minusStrings(ac.BlockedPatterns, global.BlockedPatterns)
@@ -2040,7 +2033,7 @@ func SetDefaultAgent(name string) error {
 // globalAgentUpdate returns the change SetAgent must write to the global
 // layer for an agent going from prev to next, or nil when there is none.
 //
-// auto_accept, dir and context_keys are global-only in both directions.
+// auto_accept and dir are global-only in both directions.
 // cross_context is global-only only when switched ON: a project may switch it
 // off (sanitizeProjectConfig ANDs the layers), so switching off is a
 // project-layer change and must not leak to every other project via the
@@ -2052,9 +2045,6 @@ func globalAgentUpdate(prev, next AgentConfig) func(*AgentConfig) {
 	}
 	if prev.Dir != next.Dir {
 		fns = append(fns, func(g *AgentConfig) { g.Dir = next.Dir })
-	}
-	if !reflect.DeepEqual(prev.ContextKeys, next.ContextKeys) {
-		fns = append(fns, func(g *AgentConfig) { g.ContextKeys = next.ContextKeys })
 	}
 	if next.CrossContext && !prev.CrossContext {
 		fns = append(fns, func(g *AgentConfig) { g.CrossContext = true })

@@ -141,7 +141,9 @@ The dispatched agent receives a carefully scoped context window:
 - **Issue body** — the problem statement from GitHub
 - **Agent system prompt** — the agent's conventions and tool preferences from `~/.claude/agents/<name>.md`
 - **Project CLAUDE.md** — codebase conventions
-- **Context entries** — every context store entry stored with `--agent <name>`, within a size budget, each cut at 8KB with a pointer to `agentctl context get <key>`. A `ticket-<N>-spec` entry is the exception: it is injected only into the `--issue N` launch for that same N (or when the key is in the agent's `context_keys`), so a stale spec does not ride along on unrelated launches
+- **Ticket spec** — the `ticket-<N>-spec` context entry, if there is one, injected into the `dispatch --issue N` launch for that same N whichever agent it was stored with (cut at 8KB with a pointer to `agentctl context get <key>`). It is the only context store entry ever injected; everything else is read by key (`context get`, `--prompt-key`)
+
+Use is tracked: a `dispatch --prompt-key <key>` that launches records a last-used time on the entry (the approval preview does not), `agentctl context list` shows it in the USED column, and `agentctl context prune --used [--older-than <dur>, default 1d] [--dry-run]` deletes entries used at least that long ago. Unused entries are never pruned.
 
 And nothing else. No conversation history about unrelated issues. No stale file reads. Just the signal the agent needs.
 

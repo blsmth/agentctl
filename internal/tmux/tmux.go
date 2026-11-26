@@ -1592,7 +1592,6 @@ func agentctlKeybindings(exe string) []keyBinding {
 		{"K", popup(50, 11, "kill-all-menu")},
 		{"h", run("", "hud-toggle #{window_id}")},
 		{"H", nested(80, 30, "hud #{window_id}")},
-		{"C", nested(60, 24, "context-push-menu #{window_id}")},
 		{"X", run("-b ", "open-context-window")},
 		// Toggle agentctl serve (the phone web app) and report the outcome as
 		// a tmux message on the pressing client. Machine-wide, so not

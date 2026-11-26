@@ -74,12 +74,12 @@ operator is away from the laptop is something `alerter` cannot deliver. That is 
 
 At the time this was written, `tmux.InjectPromptToAgent(agentName, content)`
 (`send-keys -l <content>` + `Enter` into an agent's main pane, already used in
-production by `agentctl context push`) looked like the obvious delivery
+production by the former `agentctl context push`) looked like the obvious delivery
 primitive to reuse. **It turned out not to be** — see §3 for why, and what
 replaced it (hook `additionalContext`, not tmux injection at all).
-`tmux.InjectPromptToAgent` and `tmux.InjectPromptToWindow` still exist and are
-still used by `agentctl context push`; they are just no longer part of the
-mailbox delivery path.
+`tmux.InjectPromptToWindow` still exists; `InjectPromptToAgent` and
+`context push` have since been removed, and neither was part of the mailbox
+delivery path.
 
 ### 1. Addressing: windows, not names
 

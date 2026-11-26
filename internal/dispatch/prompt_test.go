@@ -701,7 +701,7 @@ func TestOrchestratorQuickReference(t *testing.T) {
 		}
 		for _, want := range []string{
 			"agentctl status list", "agentctl status peek", "--dir <repo>", "gh pr checks <N> --watch",
-			"exit code 8", "agentctl sweep --dry-run", "agentctl cleanup --yes", "WITHOUT `--agent`",
+			"exit code 8", "agentctl sweep --dry-run", "agentctl cleanup --yes", "Nothing is injected into worker prompts except `ticket-<N>-spec`",
 			"agentctl context clear", "agentctl account list", "agentctl cost",
 		} {
 			if !strings.Contains(p, want) {

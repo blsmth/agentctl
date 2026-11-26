@@ -312,12 +312,12 @@ func Launch(req Request) (Result, error) {
 
 	// 4. (see above) agent config is loaded before the worktree is created.
 
-	// 5. Gather context store entries.
+	// 5. The one context store entry a launch gets injected: its issue's
+	// ticket-<N>-spec, whichever agent it was stored for.
 	var contextEntries []ctxstore.Entry
-	if ac.CrossContext {
-		entries, err := ctxstore.ForAgent(req.AgentName, ac.ContextKeys, req.Ticket, req.PromptKey)
-		if err == nil {
-			contextEntries = entries
+	if ac.CrossContext && req.Ticket > 0 {
+		if e, ok, err := ctxstore.TicketSpec(req.Ticket); err == nil && ok {
+			contextEntries = []ctxstore.Entry{e}
 		}
 	}
 

@@ -126,7 +126,6 @@ type CLI struct {
 	Settings        SettingsCmd        `cmd:"" hidden:""`
 	SettingsMenu    SettingsMenuCmd    `cmd:"" name:"settings-menu" hidden:""`
 	Permissions     PermissionsCmd     `cmd:"" aliases:"permissions-menu" hidden:""`
-	ContextPushMenu ContextPushMenuCmd `cmd:"" name:"context-push-menu" hidden:""`
 	Signal          SignalCmd          `cmd:"" hidden:""`
 	ThemePicker     ThemePickerCmd     `cmd:"" name:"theme-picker" hidden:""`
 
@@ -1253,10 +1252,6 @@ func (c *SettingsMenuCmd) Run() error { cmd.CmdSettingsPopup(c.WindowIDOrName); 
 type PermissionsCmd struct{}
 
 func (c *PermissionsCmd) Run() error { cmd.CmdPermissionsPopup(); return nil }
-
-type ContextPushMenuCmd struct{}
-
-func (c *ContextPushMenuCmd) Run() error { cmd.RunContextPushMenu(); return nil }
 
 // SignalCmd groups the signal subcommands.
 type SignalCmd struct {

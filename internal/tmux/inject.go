@@ -93,32 +93,6 @@ func tmuxCaptureMainPane(paneID string) (string, error) {
 	return string(out), nil
 }
 
-// InjectPromptToAgent sends a text message to a running agent's main pane,
-// as if the operator had typed it and pressed Enter. The agent name is matched
-// against running windows (case-insensitive, stripping instance suffixes).
-//
-// Returns an error if the agent is not found or the send fails, including
-// when InjectPromptToWindow cannot confirm the content was actually
-// submitted (see its doc comment).
-func InjectPromptToAgent(agentName, content string) error {
-	agents := RunningAgents()
-	var windowID string
-	for id, name := range agents {
-		if strings.EqualFold(BaseAgentName(name), BaseAgentName(agentName)) {
-			windowID = id
-			break
-		}
-	}
-	if windowID == "" {
-		return fmt.Errorf("agent %q is not running in the agentctl session", agentName)
-	}
-
-	if err := InjectPromptToWindow(windowID, content); err != nil {
-		return fmt.Errorf("agent %q: %w", agentName, err)
-	}
-	return nil
-}
-
 // InjectPromptToWindow sends content into windowID's main pane exactly as if
 // the operator had typed it, then presses Enter, and VERIFIES the content
 // actually submitted before returning success.

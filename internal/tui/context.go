@@ -398,7 +398,7 @@ func (m ContextModel) renderEmpty(cw int) string {
 	default:
 		lines = []string{
 			"The context store is empty.",
-			"Add an entry with: agentctl context set <key> <value> --agent <name>",
+			"Add an entry with: agentctl context set <key> <value>",
 		}
 	}
 	var sb strings.Builder
@@ -565,4 +565,21 @@ func sanitizeContextBody(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// FormatContextAge returns a human-friendly age string for a context entry timestamp.
+func FormatContextAge(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	default:
+		return fmt.Sprintf("%dw", int(d.Hours()/(24*7)))
+	}
 }

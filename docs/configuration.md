@@ -456,8 +456,7 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
 | `alert_config.blocked` | bool | `true` | Notify on Working to Blocked (needs approval, including a pending dispatch/cron/bash approval popup), and when a window starts needing attention (the `!` state: it asks you something, looks stuck, missed an approval, or a review verdict needs you; see [needs attention](monitor-architecture.md#needs-attention)). |
 | `alert_config.idle` | bool | `true` | Notify on Working to Idle (done). |
 | `alert_config.gone` | bool | `false` | Reserved; no notification uses it yet. |
-| `cross_context` | bool | `true` | Inject a cross-agent summary at launch. Global-only (a project may only switch it off). |
-| `context_keys` | string[] | none | Context-store keys always injected at launch for this agent, including a `ticket-<N>-spec` key whatever the issue. Global-only. |
+| `cross_context` | bool | `true` | Inject the issue's `ticket-<N>-spec` context entry into `dispatch --issue` launches. Global-only (a project may only switch it off). The removed `context_keys` key is ignored in old configs. |
 | `dir` | string | empty (portable) | Fixed working directory. Global-only. |
 | `model` | string | inherit | `sonnet`, `opus`, `haiku`, or a full model name. |
 | `effort_level` | string | unset | `low`, `medium`, `high`, `xhigh`, `max`, or `auto`. |

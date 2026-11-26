@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 )
@@ -31,7 +33,7 @@ func TestCmdContextList_HasSizeColumn(t *testing.T) {
 
 	header := lines[0]
 	gotCols := strings.Fields(header)
-	wantCols := []string{"KEY", "AGENT", "SIZE", "AGE", "PREVIEW"}
+	wantCols := []string{"KEY", "AGENT", "SIZE", "AGE", "USED", "PREVIEW"}
 	if len(gotCols) != len(wantCols) {
 		t.Fatalf("header columns = %v, want %v", gotCols, wantCols)
 	}
@@ -49,28 +51,82 @@ func TestCmdContextList_HasSizeColumn(t *testing.T) {
 	}
 }
 
-func TestContextSetNotice(t *testing.T) {
+func TestCmdContextSet_AgentFlagIgnored(t *testing.T) {
+	ctxstore.SetPathForTest(t.TempDir())
+	old := os.Args
+	t.Cleanup(func() { os.Args = old })
+	os.Args = []string{"agentctl", "context", "set", "k", "v", "--agent", "go-engineer", "--tag", "t"}
+
+	var stdout string
+	stderr := captureStderr(t, func() { stdout = captureStdout(t, cmdContextSet) })
+
+	if stdout != "context: set \"k\"\n" {
+		t.Errorf("stdout = %q", stdout)
+	}
+	if strings.Count(stderr, "\n") != 1 || !strings.Contains(stderr, "--agent is ignored") {
+		t.Errorf("stderr = %q, want one line saying --agent is ignored", stderr)
+	}
+	e, ok, _ := ctxstore.Get("k")
+	if !ok || e.Agent != "" || e.Content != "v" || len(e.Tags) != 1 {
+		t.Errorf("entry = %+v", e)
+	}
+
+	os.Args = []string{"agentctl", "context", "set", "k2", "v"}
+	if stderr := captureStderr(t, func() { captureStdout(t, cmdContextSet) }); stderr != "" {
+		t.Errorf("stderr without --agent = %q, want empty", stderr)
+	}
+}
+
+func TestCmdContextList_UsedColumn(t *testing.T) {
+	ctxstore.SetPathForTest(t.TempDir())
+	for _, k := range []string{"fresh", "used"} {
+		if err := ctxstore.Set(k, ctxstore.Entry{Content: k}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ctxstore.MarkUsed("used", time.Now().Add(-3*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, cmdContextList)
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		switch {
+		case len(f) > 5 && f[0] == "fresh":
+			if f[4] != "-" {
+				t.Errorf("unused USED = %q in %q", f[4], line)
+			}
+		case len(f) > 5 && f[0] == "used":
+			if f[4] != "3h" {
+				t.Errorf("used USED = %q in %q", f[4], line)
+			}
+		}
+	}
+}
+
+func TestParseContextPrune(t *testing.T) {
 	tests := []struct {
-		name, key, agent string
-		want, not        []string
+		name    string
+		args    []string
+		want    contextPruneOpts
+		wantErr bool
 	}{
-		{"no agent", "k", "", []string{"dispatch --prompt-key k", "not injected"}, []string{"NOT be auto"}},
-		{"agent", "k", "go-engineer", []string{"every launch of go-engineer", "first 8KB"}, []string{"-prompt"}},
-		{"agent prompt key", "x-prompt", "go-engineer", []string{"every launch", "without --agent", "--prompt-key"}, nil},
-		{"ticket spec", "ticket-5-spec", "a", []string{"--issue 5"}, []string{"every launch"}},
+		{"default", []string{"--used"}, contextPruneOpts{olderThan: 24 * time.Hour}, false},
+		{"days and dry run", []string{"--used", "--older-than", "3d", "--dry-run"}, contextPruneOpts{olderThan: 72 * time.Hour, dryRun: true}, false},
+		{"hours", []string{"--used", "--older-than", "2h"}, contextPruneOpts{olderThan: 2 * time.Hour}, false},
+		{"missing --used", []string{"--older-than", "1d"}, contextPruneOpts{}, true},
+		{"bad duration", []string{"--used", "--older-than", "soon"}, contextPruneOpts{}, true},
+		{"empty duration", []string{"--used", "--older-than", ""}, contextPruneOpts{}, true},
+		{"missing value", []string{"--used", "--older-than"}, contextPruneOpts{}, true},
+		{"unknown flag", []string{"--used", "--all"}, contextPruneOpts{}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := contextSetNotice(tt.key, tt.agent)
-			for _, w := range tt.want {
-				if !strings.Contains(got, w) {
-					t.Errorf("%q missing %q", got, w)
-				}
+			got, err := parseContextPrune(tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}
-			for _, w := range tt.not {
-				if strings.Contains(got, w) {
-					t.Errorf("%q should not contain %q", got, w)
-				}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("got %+v, want %+v", got, tt.want)
 			}
 		})
 	}
