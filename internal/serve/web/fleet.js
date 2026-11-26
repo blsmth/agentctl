@@ -40,6 +40,7 @@ import {
   treeRows,
   canSwipeClose,
   canSweep,
+  sweepableCount,
   runSweep,
   saveCollapsedSet,
   visibleTree,
@@ -293,6 +294,8 @@ export function mountFleet(root, ctx) {
   /** sweepButton is a group header's sweep action. */
   function sweepButton(g, name) {
     const busy = sweeping.has(g.session);
+    const n = sweepableCount(g);
+    if (n === 0 && !busy) return null;
     return h(
       "button",
       {
@@ -300,14 +303,14 @@ export function mountFleet(root, ctx) {
         type: "button",
         disabled: busy,
         "aria-busy": busy ? "true" : null,
-        "aria-label": busy ? `Sweeping ${name}…` : `Sweep ${name}`,
-        title: busy ? "Sweeping…" : "Sweep finished windows",
+        "aria-label": busy ? `Sweeping ${name}…` : `Sweep ${n} finished ${n === 1 ? "window" : "windows"} in ${name}`,
+        title: busy ? "Sweeping…" : `Sweep ${n} finished ${n === 1 ? "window" : "windows"}`,
         onclick: (e) => {
           e.stopPropagation();
           sweep(g);
         },
       },
-      busy ? "…" : "🧹",
+      busy ? "…" : `🧹 ${n}`,
     );
   }
 

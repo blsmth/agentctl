@@ -48,8 +48,8 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 .group-add { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px;
   margin: -.4rem 0; border-radius: 10px; font-size: 1.4rem; line-height: 1; text-decoration: none; color: var(--accent); }
 button.group-add { padding: 0; border: 0; background: none; cursor: pointer; }
-.group-sweep { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px;
-  margin: -.4rem 0; padding: 0; border: 0; border-radius: 10px; background: none; font-size: 1.15rem; line-height: 1; color: var(--accent); cursor: pointer; }
+.group-sweep { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 44px; height: 44px;
+  margin: -.4rem 0; padding: 0 .4rem; gap: .15rem; border: 0; border-radius: 10px; background: none; font-size: 1.15rem; line-height: 1; color: var(--accent); cursor: pointer; }
 .group-sweep.busy { opacity: .5; cursor: progress; }
 .closed-group { margin: .75rem 0 .5rem; }
 .closed-group.folded .group-toggle::before { content: "▸"; color: var(--fg); }
