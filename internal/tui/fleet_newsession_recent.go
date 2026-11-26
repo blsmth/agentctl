@@ -13,16 +13,12 @@ import (
 
 // Recent projects in the new-session dropdown: up to fleetRecentMax directories
 // listed below the input, from the closed-window ledger (newest first, last
-// fleetRecentWindow) and the hub's origin dir. Dirs that already have a live
+// closedlog.RecentWindow) and the hub's origin dir. Dirs that already have a live
 // group, worktree paths and dirs that no longer exist are left out. The
 // ledger is read once, in the background, when the prompt opens.
 
-const (
-	fleetRecentMax    = 8
-	fleetRecentWindow = 30 * 24 * time.Hour
-	// fleetRecentScan bounds how many ledger dirs are examined (stat'ed).
-	fleetRecentScan = 60
-)
+// fleetRecentMax is how many entries the dropdown lists at once.
+const fleetRecentMax = 8
 
 // Seams so tests never read the real ledger or touch the real filesystem.
 var (
@@ -42,57 +38,15 @@ type fleetRecentDirsMsg struct{ dirs []string }
 // recentDirsCmd lists the candidates off the render path: the hub origin dir
 // first, then the ledger's project dirs newest first.
 func recentDirsCmd(origin string) tea.Cmd {
-	since := fleetNow().Add(-fleetRecentWindow)
+	since := fleetNow().Add(-closedlog.RecentWindow)
 	return func() tea.Msg {
 		return fleetRecentDirsMsg{dirs: loadRecentDirs(origin, fleetRecentLedger(since))}
 	}
 }
 
-// resolvedKey is p with symlinks resolved, or the cleaned p when it cannot be.
-func resolvedKey(p string) string {
-	p = filepath.Clean(p)
-	if r, err := filepath.EvalSymlinks(p); err == nil {
-		return r
-	}
-	return p
-}
-
-// isWorktreePath reports a path inside a repo's .worktrees directory.
-func isWorktreePath(p string) bool {
-	return strings.Contains(filepath.ToSlash(filepath.Clean(p))+"/", "/.worktrees/")
-}
-
-// loadRecentDirs dedups origin and the ledger's project dirs by resolved path
-// and drops worktree paths and dirs that no longer exist.
+// loadRecentDirs is closedlog.RecentDirs over the fleetRecentIsDir seam.
 func loadRecentDirs(origin string, recs []closedlog.Record) []string {
-	cands := make([]string, 0, len(recs)+1)
-	if origin != "" {
-		cands = append(cands, origin)
-	}
-	for _, r := range recs {
-		if r.ProjectDir != "" {
-			cands = append(cands, r.ProjectDir)
-		}
-	}
-	seen := map[string]bool{}
-	var out []string
-	for i, c := range cands {
-		if i >= fleetRecentScan {
-			break
-		}
-		if !filepath.IsAbs(c) || isWorktreePath(c) {
-			continue
-		}
-		k := resolvedKey(c)
-		if seen[k] || isWorktreePath(k) {
-			continue
-		}
-		seen[k] = true
-		if fleetRecentIsDir(k) {
-			out = append(out, filepath.Clean(c))
-		}
-	}
-	return out
+	return closedlog.RecentDirs(origin, recs, fleetRecentIsDir)
 }
 
 // applyRecentDirs stores the candidates on the open prompt, minus the dirs
@@ -102,18 +56,11 @@ func (m *FleetModel) applyRecentDirs(msg fleetRecentDirsMsg) {
 	if s == nil {
 		return
 	}
-	live := map[string]bool{}
+	var live []string
 	for _, g := range m.groups {
-		if g.ProjectDir != "" {
-			live[resolvedKey(g.ProjectDir)] = true
-		}
+		live = append(live, g.ProjectDir)
 	}
-	s.recent = s.recent[:0]
-	for _, d := range msg.dirs {
-		if !live[resolvedKey(d)] {
-			s.recent = append(s.recent, d)
-		}
-	}
+	s.recent = closedlog.WithoutDirs(msg.dirs, live)
 	s.hl = -1
 }
 

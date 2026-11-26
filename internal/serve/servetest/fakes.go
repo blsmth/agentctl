@@ -22,8 +22,9 @@ import (
 // them through the control API instead of watching tmux.
 type Action struct {
 	// Kind is close, key (answer and interrupt), reply, queue, dispatch,
-	// approval, shell, sweep (an applied sweep; Text lists the closed window
-	// IDs) or resume (a closed session; ID is its session ID, Dir its project).
+	// approval, shell, open (a project; Dir is the directory), sweep (an
+	// applied sweep; Text lists the closed window IDs) or resume (a closed
+	// session; ID is its session ID, Dir its project).
 	Kind     string `json:"kind"`
 	Session  string `json:"session,omitempty"`
 	Window   string `json:"window,omitempty"`

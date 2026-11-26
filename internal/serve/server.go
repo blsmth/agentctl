@@ -95,6 +95,10 @@ type Options struct {
 	// hub-resume` subprocess, as the hub runs it. Tests inject fakes.
 	ClosedRecords func(since time.Time) ([]closedlog.Record, error)
 	ResumeClosed  func(closedlog.Record) (string, error)
+	// OpenProject opens a project dir (POST /v1/projects/open) and returns
+	// the helper's stdout, the session name; nil means the `agentctl open
+	// --detach` subprocess. Tests inject a fake.
+	OpenProject func(dir string) (string, error)
 	// RunSchedule fires a job now (plain `cron run`); nil means the
 	// cronedit.RunSubprocess subprocess. Tests inject a fake.
 	RunSchedule cronedit.RunFunc
@@ -202,6 +206,10 @@ type Server struct {
 	closedRecs   func(since time.Time) ([]closedlog.Record, error)
 	resumeClosed func(closedlog.Record) (string, error)
 	resumes      sweepGuard
+	// openProject runs `agentctl open --detach`; opens allows one open per
+	// directory at a time.
+	openProject func(dir string) (string, error)
+	opens       sweepGuard
 	// schedules is the cron editing core (see scheduleStore); runSchedule
 	// fires a job now; scheduleRuns allows one run-now per job at a time.
 	schedules   cronedit.Store
@@ -297,6 +305,9 @@ func New(opts Options) (*Server, error) {
 	}
 	if s.resumeClosed = opts.ResumeClosed; s.resumeClosed == nil {
 		s.resumeClosed = spawnHubResume
+	}
+	if s.openProject = opts.OpenProject; s.openProject == nil {
+		s.openProject = spawnOpenProject
 	}
 	if opts.Schedules != nil {
 		s.schedules = *opts.Schedules
@@ -412,6 +423,7 @@ func (s *Server) routes(rt *Router) {
 	s.registerPresence(rt)
 	s.registerWrite(rt)
 	s.registerClosed(rt)
+	s.registerOpen(rt)
 	s.registerSchedules(rt)
 	s.registerTerminal(rt)
 	s.registerApprovals(rt)

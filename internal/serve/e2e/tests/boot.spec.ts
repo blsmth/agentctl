@@ -55,11 +55,16 @@ test("every sw.js precache URL is served", async ({ page }) => {
 test("service worker installs, activates and precaches the whole shell", async ({ page }) => {
   const { urls, cache } = await shellList(page.request);
   await openFleet(page);
-  const state = await page.evaluate(async () => {
-    const reg = await navigator.serviceWorker.ready;
-    return reg.active?.state;
-  });
-  expect(state).toBe("activated");
+  // ready resolves once the worker is active, which can still be
+  // "activating" while its activate handler runs: wait for "activated".
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const reg = await navigator.serviceWorker.ready;
+        return reg.active?.state;
+      }),
+    )
+    .toBe("activated");
   // install uses Promise.allSettled, so a 404 would not fail it: check the
   // cache itself holds every entry.
   await expect
