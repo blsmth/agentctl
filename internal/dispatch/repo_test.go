@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"unicode/utf8"
 	"time"
 )
 
@@ -147,5 +148,20 @@ func TestGhErrorsIncludeStderr(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestGhStderrBounded(t *testing.T) {
+	huge := strings.Repeat("é", 5000)
+	got := ghStderr(exitErr(huge))
+	if len(got) > maxGhStderr+len("…") {
+		t.Errorf("len = %d, want <= %d", len(got), maxGhStderr+len("…"))
+	}
+	if !strings.HasSuffix(got, "…") || !utf8.ValidString(got) {
+		t.Errorf("want valid UTF-8 ending in ellipsis, got %q", got[len(got)-10:])
+	}
+	stubRunner(t, func(string, string, ...string) ([]byte, error) { return nil, exitErr(huge) })
+	if _, err := RepoSlug("/x"); err == nil || len(err.Error()) > 1000 {
+		t.Errorf("error not bounded: %v", err)
 	}
 }
