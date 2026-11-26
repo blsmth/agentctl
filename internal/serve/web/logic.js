@@ -3041,3 +3041,77 @@ export function pdfPagesToDraw(visible, count, keep = 1) {
   for (let i = lo; i <= hi; i++) want.add(i);
   return want;
 }
+
+// --- Recently closed (GET /v1/closed, POST /v1/closed/{handle}/resume) ---
+
+/** CLOSED_PATH lists windows closed in the last 7 days, newest first. */
+export const CLOSED_PATH = "/v1/closed";
+
+/** CLOSED_GLYPH marks a closed row, as on the hub. */
+export const CLOSED_GLYPH = "✗";
+
+/** canResume reports whether a closed row offers resume: write and resume are on and the server says it can. */
+export function canResume(item, features) {
+  return Boolean(item?.resumable && item.handle) && hasFeature(features, "write") && hasFeature(features, "resume");
+}
+
+/** buildResumeRequest resumes a closed session by handle; the server resolves everything else. */
+export function buildResumeRequest(handle) {
+  return { method: "POST", path: `/v1/closed/${encodeURIComponent(handle)}/resume`, body: {} };
+}
+
+/** closedHeader is the section heading: "Recently closed (3)", or the bare name when there are none. */
+export function closedHeader(n) {
+  return n > 0 ? `Recently closed (${n})` : "Recently closed";
+}
+
+/** closedTitle is a closed row's title: the server's title, else its label, instance or agent. */
+export function closedTitle(item) {
+  for (const s of [item?.title, item?.label, item?.instance, item?.agent]) {
+    const t = String(s ?? "").trim();
+    if (t) return t;
+  }
+  return "closed agent";
+}
+
+/** closedMeta is the row's second line: "project · closed 2h ago". */
+export function closedMeta(item, now = Date.now()) {
+  const ago = formatAgo(item?.closed_at, now);
+  return [item?.project ?? "", ago ? `closed ${ago}` : ""].filter(Boolean).join(" · ");
+}
+
+/**
+ * closedNote is what a row says besides its title: "open again" for a
+ * session open in a window, the server's reason when it cannot be resumed,
+ * else "" (resume, when offered, is the row tap).
+ */
+export function closedNote(item) {
+  if (item?.live) return "open again";
+  if (!item?.resumable) return item?.reason || "cannot be resumed";
+  return "";
+}
+
+/** closedPr is the row's PR link ({ href, text }), or null without an https PR URL. */
+export function closedPr(item) {
+  const href = safeHttpsUrl(item?.pr_url ?? "");
+  if (!href) return null;
+  return { href, text: item.pr_number ? `PR #${item.pr_number}` : "PR" };
+}
+
+/** closedResumeConfirm is the confirm sheet before a resume. */
+export function closedResumeConfirm(item, now = Date.now()) {
+  const who = [item?.agent, item?.project ? `in ${item.project}` : ""].filter(Boolean).join(" ");
+  const ago = formatAgo(item?.closed_at, now);
+  const lines = [who, ago ? `Closed ${ago}. The agent resumes its conversation in a new window.` : "The agent resumes its conversation in a new window."].filter(Boolean);
+  return { title: `Resume ${closedTitle(item)}?`, lines, confirmLabel: "Resume" };
+}
+
+/** resumeTarget is where to go after a resume: the new window, else the fleet. */
+export function resumeTarget(res) {
+  return res?.session && res?.window_id ? windowHash(res.session, res.window_id) : "#/";
+}
+
+/** closedRowHref is the window a live closed row opens, else "". */
+export function closedRowHref(item) {
+  return item?.live && item.session && item.window_id ? windowHash(item.session, item.window_id) : "";
+}

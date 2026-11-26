@@ -182,6 +182,9 @@ func writeActionFor(path string) (action, session, window string, ok bool) {
 	if path == "/v1/sweep/preview" {
 		return "sweep-preview", "", "", true
 	}
+	if strings.HasPrefix(path, "/v1/closed/") && strings.HasSuffix(path, "/resume") {
+		return "closed-resume", "", "", true
+	}
 	if strings.HasPrefix(path, "/v1/approvals/") {
 		return "approval", "", "", true
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/artifacts"
+	"github.com/blsmth/agentctl/internal/closedlog"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/launchwatch"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -25,6 +26,10 @@ func TestMain(m *testing.M) {
 	cleanup := testenv.Setup()
 	// Dispatch routes must never spawn a real launch watcher.
 	launchwatch.SetSpawnForTest(func(string) error { return nil })
+	// Resume routes must never spawn a real `agentctl hub-resume`.
+	closedResumeSpawn = func(closedlog.Record) (string, error) {
+		return "", errors.New("test: no resume spawn stubbed (set Options.ResumeClosed)")
+	}
 	// Push decisions must never run ioreg or tmux: the laptop has no signal
 	// (not active) unless a test injects Options.LaptopIdle.
 	laptopIdleProbe = func(context.Context) (time.Duration, error) { return 0, errNoLaptopSignal }

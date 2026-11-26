@@ -21,6 +21,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/artifacts"
 	"github.com/blsmth/agentctl/internal/buildid"
+	"github.com/blsmth/agentctl/internal/closedlog"
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/dispatch"
@@ -88,6 +89,12 @@ type Options struct {
 	// real jobs file and state dir (cronedit.Default). Its ValidateAgent and
 	// Windows seams, when nil, are filled from Agents and Fleet.
 	Schedules *cronedit.Store
+	// ClosedRecords reads the closed ledger for /v1/closed; nil means the
+	// cached ledger (fleetwatch.Closed). ResumeClosed resumes a closed
+	// record and returns the helper's stdout; nil means the `agentctl
+	// hub-resume` subprocess, as the hub runs it. Tests inject fakes.
+	ClosedRecords func(since time.Time) ([]closedlog.Record, error)
+	ResumeClosed  func(closedlog.Record) (string, error)
 	// RunSchedule fires a job now (plain `cron run`); nil means the
 	// cronedit.RunSubprocess subprocess. Tests inject a fake.
 	RunSchedule cronedit.RunFunc
@@ -190,6 +197,11 @@ type Server struct {
 	shells     Shells
 	sweep      sweeprun.Func
 	sweeps     sweepGuard
+	// closedRecs reads the closed ledger; resumeClosed runs hub-resume;
+	// resumes allows one resume per session ID at a time.
+	closedRecs   func(since time.Time) ([]closedlog.Record, error)
+	resumeClosed func(closedlog.Record) (string, error)
+	resumes      sweepGuard
 	// schedules is the cron editing core (see scheduleStore); runSchedule
 	// fires a job now; scheduleRuns allows one run-now per job at a time.
 	schedules   cronedit.Store
@@ -279,6 +291,12 @@ func New(opts Options) (*Server, error) {
 	s.sweep = opts.Sweep
 	if s.sweep == nil {
 		s.sweep = sweeprun.Run
+	}
+	if s.closedRecs = opts.ClosedRecords; s.closedRecs == nil {
+		s.closedRecs = fleetwatch.Closed
+	}
+	if s.resumeClosed = opts.ResumeClosed; s.resumeClosed == nil {
+		s.resumeClosed = spawnHubResume
 	}
 	if opts.Schedules != nil {
 		s.schedules = *opts.Schedules
@@ -393,6 +411,7 @@ func (s *Server) routes(rt *Router) {
 	s.registerPush(rt)
 	s.registerPresence(rt)
 	s.registerWrite(rt)
+	s.registerClosed(rt)
 	s.registerSchedules(rt)
 	s.registerTerminal(rt)
 	s.registerApprovals(rt)

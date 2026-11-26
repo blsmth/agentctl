@@ -29,6 +29,7 @@ import {
   ARTIFACT_FEEDBACK_MAX, artifactCommentStatus, artifactCommentToast, artifactFeedbackFrom,
   artifactPdfLabel, artifactPdfPath, pdfCanvasDensity, pdfClampZoom, pdfDelivery, pdfFitScale, pdfPageCountLabel, pdfPagesToDraw, pdfFileProblem, pdfFilename, pdfSharePayload,
   isTrustBlocked, isTrustDialog, trustDialogOf, trustExitConfirm, trustFolder, TRUST_EXPLAIN, TRUST_TITLE,
+  CLOSED_PATH, CLOSED_GLYPH, canResume, buildResumeRequest, closedHeader, closedTitle, closedMeta, closedNote, closedPr, closedResumeConfirm, resumeTarget, closedRowHref,
 } from "./logic.js";
 
 // Slash commands (phone "Run command").
@@ -1419,4 +1420,49 @@ console.log("ok: artifact pdf");
   assert.equal(imageExt("image/png"), "png");
   assert.equal(imageExt("image/svg+xml"), "png");
   console.log("ok: pasted images");
+}
+
+// Recently closed (fleet section).
+{
+  const now = Date.parse("2026-11-16T12:00:00Z");
+  const item = {
+    handle: "aaaa", title: "Fix the parser", agent: "go-engineer", project: "proj", closed_at: "2026-11-16T10:00:00Z",
+    resumable: true, pr_number: 42, pr_url: "https://github.com/o/r/pull/42",
+  };
+  const w = ["write", "resume"];
+  assert.equal(CLOSED_PATH, "/v1/closed");
+  assert.equal(CLOSED_GLYPH, "✗");
+  assert.equal(canResume(item, w), true);
+  assert.equal(canResume(item, ["write"]), false, "server without resume");
+  assert.equal(canResume(item, ["resume"]), false, "allow_write off");
+  assert.equal(canResume({ ...item, resumable: false }, w), false);
+  assert.equal(canResume({ ...item, handle: "" }, w), false);
+  assert.equal(canResume(null, w), false);
+  assert.deepEqual(buildResumeRequest("ab/c"), { method: "POST", path: "/v1/closed/ab%2Fc/resume", body: {} });
+  assert.equal(closedHeader(0), "Recently closed");
+  assert.equal(closedHeader(3), "Recently closed (3)");
+  assert.equal(closedTitle(item), "Fix the parser");
+  assert.equal(closedTitle({ title: " ", label: "go-engineer-2" }), "go-engineer-2");
+  assert.equal(closedTitle({}), "closed agent");
+  assert.equal(closedMeta(item, now), "proj · closed 2h ago");
+  assert.equal(closedMeta({ project: "proj" }, now), "proj");
+  assert.equal(closedMeta({ closed_at: "2026-11-13T12:00:00Z" }, now), "closed 3d ago");
+  assert.equal(closedNote(item), "");
+  assert.equal(closedNote({ resumable: false, reason: "worktree w was reclaimed" }), "worktree w was reclaimed");
+  assert.equal(closedNote({ resumable: false }), "cannot be resumed");
+  assert.equal(closedNote({ live: true, resumable: false, reason: "already open" }), "open again");
+  assert.deepEqual(closedPr(item), { href: "https://github.com/o/r/pull/42", text: "PR #42" });
+  assert.deepEqual(closedPr({ pr_url: "https://github.com/o/r/pull/7" }), { href: "https://github.com/o/r/pull/7", text: "PR" });
+  assert.equal(closedPr({ pr_url: "javascript:alert(1)", pr_number: 1 }), null);
+  assert.equal(closedPr({}), null);
+  const c = closedResumeConfirm(item, now);
+  assert.equal(c.title, "Resume Fix the parser?");
+  assert.equal(c.confirmLabel, "Resume");
+  assert.deepEqual(c.lines, ["go-engineer in proj", "Closed 2h ago. The agent resumes its conversation in a new window."]);
+  assert.deepEqual(closedResumeConfirm({}, now).lines, ["The agent resumes its conversation in a new window."]);
+  assert.equal(resumeTarget({ session: "agentctl-proj", window_id: "@7" }), "#/w/agentctl-proj/%407");
+  assert.equal(resumeTarget({ session: "agentctl-proj" }), "#/");
+  assert.equal(resumeTarget(null), "#/");
+  assert.equal(closedRowHref({ live: true, session: "s", window_id: "@1" }), "#/w/s/%401");
+  assert.equal(closedRowHref(item), "");
 }

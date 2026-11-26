@@ -62,6 +62,7 @@ var staticAssets = []staticAsset{
 	{"/logic.js", "logic.js", ctJS, cacheRevalidate, false},
 	{"/ui.js", "ui.js", ctJS, cacheRevalidate, false},
 	{"/fleet.js", "fleet.js", ctJS, cacheRevalidate, false},
+	{"/closed.js", "closed.js", ctJS, cacheRevalidate, false},
 	{"/attach.js", "attach.js", ctJS, cacheRevalidate, false},
 	{"/swipe.js", "swipe.js", ctJS, cacheRevalidate, false},
 	{"/drag.js", "drag.js", ctJS, cacheRevalidate, false},

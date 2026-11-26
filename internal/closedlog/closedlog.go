@@ -1,8 +1,8 @@
 // Package closedlog is the machine-wide ledger of closed agent windows: one
 // NDJSON line per tracked window that reconcile.Finish handled, in
 // <stateDir>/closed/closed-<YYYY-MM>.ndjson. It is what lets `agentctl status
-// list --closed` and the hub's Closed section show (and resume) sessions whose
-// tmux window is gone. Session teardown never reaches Finish, so windows that
+// list --closed`, the hub's Closed section and the phone's Recently closed view
+// show (and resume) sessions whose tmux window is gone. Session teardown never reaches Finish, so windows that
 // live on in restore.json are not in it.
 //
 // It is a leaf: callers build the Record. State paths are resolved per call,
@@ -384,5 +384,30 @@ func (r Record) ResumeCheck(stat func(string) (os.FileInfo, error)) error {
 		}
 		return fmt.Errorf("directory %s is gone", work)
 	}
+	if work != r.ProjectDir {
+		// The helper runs in the project dir and binds to its tmux session.
+		if fi, err := stat(r.ProjectDir); err != nil || !fi.IsDir() {
+			return fmt.Errorf("project directory %s is gone", r.ProjectDir)
+		}
+	}
 	return nil
+}
+
+// LatestPerSession keeps the newest record of each agent session: recs is
+// newest first (as Load returns it), so the first record of a session ID wins.
+// A session closed twice (resumed in place, then closed again) shows once.
+// Records with no session ID are kept as they are.
+func LatestPerSession(recs []Record) []Record {
+	seen := make(map[string]bool, len(recs))
+	out := make([]Record, 0, len(recs))
+	for _, r := range recs {
+		if r.SessionID != "" {
+			if seen[r.SessionID] {
+				continue
+			}
+			seen[r.SessionID] = true
+		}
+		out = append(out, r)
+	}
+	return out
 }

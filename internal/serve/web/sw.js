@@ -1,8 +1,8 @@
 // Service worker: web push + a small app-shell cache. It never touches /v1/.
-const CACHE = "agentctl-shell-v27";
+const CACHE = "agentctl-shell-v28";
 const SHELL = [
   "/", "/app.css", "/app.js", "/api.js", "/live.js", "/logic.js", "/ui.js",
-  "/fleet.js", "/swipe.js", "/drag.js", "/window.js", "/terminal.js", "/dispatch.js", "/attach.js", "/schedules.js", "/settings.js", "/host.js", "/handle.js", "/approvals.js", "/artifacts.js", "/pdfviewer.js", "/trust.js",
+  "/fleet.js", "/closed.js", "/swipe.js", "/drag.js", "/window.js", "/terminal.js", "/dispatch.js", "/attach.js", "/schedules.js", "/settings.js", "/host.js", "/handle.js", "/approvals.js", "/artifacts.js", "/pdfviewer.js", "/trust.js",
   "/vendor/xterm.js", "/vendor/xterm.css", "/vendor/addon-fit.js",
   "/vendor/pdfjs/pdf.min.mjs", "/vendor/pdfjs/pdf.worker.min.mjs",
   "/icons/icon-192.png", "/icons/icon-512.png",
