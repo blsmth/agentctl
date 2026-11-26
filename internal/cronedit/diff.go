@@ -35,6 +35,15 @@ func FieldText(j cron.Job, field string) string {
 		return j.Name
 	case cron.FieldSchedule:
 		return j.Schedule
+	case cron.FieldAt:
+		if j.IsOnce() {
+			return cron.OnceSummary(j)
+		}
+		return ""
+	case "state":
+		return j.State
+	case "result":
+		return j.Result
 	case cron.FieldDir:
 		return j.Dir
 	case cron.FieldAgent:

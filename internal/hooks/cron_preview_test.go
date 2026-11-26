@@ -227,7 +227,7 @@ func TestBuildCronPreview(t *testing.T) {
 		{name: "unknown prompt key", command: `agentctl cron add j --schedule @daily -a a --dir /x --prompt-key nope`, wantDeny: "key not found"},
 		{name: "missing prompt file", command: `agentctl cron add j --schedule @daily -a a --dir /x --prompt-file /no/such/file.md`, wantDeny: "cannot read --prompt-file"},
 		{name: "invalid schedule", command: `agentctl cron add j --schedule "61 * * * *" -a a --dir /x -p hi`, wantDeny: "invalid schedule"},
-		{name: "missing schedule", command: `agentctl cron add j -a a --dir /x -p hi`, wantDeny: "schedule is required"},
+		{name: "missing schedule", command: `agentctl cron add j -a a --dir /x -p hi`, wantDeny: "exactly one of --schedule"},
 		{name: "two adds in one call", command: cronAddCmd + " && " + strings.Replace(cronAddCmd, "nightly", "other", 1), wantDeny: "one cron add/edit/resume/run --force per Bash call"},
 		{
 			name:         "resume shows the stored job",

@@ -23,6 +23,31 @@ const (
 	resultFailedPrefix       = "failed:"
 )
 
+// Lifecycle results: a change to the job definition rather than a run.
+// Each carries the job snapshot (Entry.Def) and who made it (Entry.By), so
+// a job's definition survives its deletion. A one-shot's completion needs
+// no entry of its own: its fired/failed/skipped:catchup entry is the
+// record, and the job keeps the outcome until it is pruned.
+const (
+	ResultCreated = "created"
+	ResultEdited  = "edited"
+	ResultPaused  = "paused"
+	ResultResumed = "resumed"
+	ResultDeleted = "deleted"
+	// ResultPruned is a done one-shot the tick removed PruneDoneAfter
+	// after it completed.
+	ResultPruned = "pruned"
+)
+
+// IsLifecycle reports whether result is a lifecycle result.
+func IsLifecycle(result string) bool {
+	switch result {
+	case ResultCreated, ResultEdited, ResultPaused, ResultResumed, ResultDeleted, ResultPruned:
+		return true
+	}
+	return false
+}
+
 // Failed returns the failed:<reason> result.
 func Failed(reason string) string { return resultFailedPrefix + reason }
 
@@ -47,16 +72,139 @@ type Entry struct {
 	// Missed counts older fires a catch-up superseded.
 	Missed int    `json:"missed,omitempty"`
 	Note   string `json:"note,omitempty"`
+	// By and Def are set on lifecycle entries only.
+	By  *Actor       `json:"by,omitempty"`
+	Def *JobSnapshot `json:"def,omitempty"`
 }
 
 // IsAttempt reports whether the entry is a launch attempt (fired or failed),
-// as opposed to a skip or a timeout.
+// as opposed to a skip, a timeout or a lifecycle entry.
 func (e Entry) IsAttempt() bool { return e.Result == ResultFired || IsFailed(e.Result) }
+
+// IsLifecycle reports whether the entry records a definition change.
+func (e Entry) IsLifecycle() bool { return IsLifecycle(e.Result) }
+
+// Actor kinds: who made a lifecycle change.
+const (
+	ActorCLI    = "cli"    // a CLI run that is not an agent (a human's shell, maybe in a tmux window)
+	ActorWindow = "window" // a CLI run from an agentctl window (an agent)
+	ActorHub    = "hub"
+	ActorPhone  = "phone"
+	ActorTick   = "tick"
+)
+
+// Actor is who made a lifecycle change: the kind, and for ActorWindow the
+// caller's window and agent session (as spawned_by records them). An
+// ActorCLI may carry the tmux window it ran in.
+type Actor struct {
+	Kind      string `json:"kind"`
+	WindowID  string `json:"window,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+}
+
+// String is "window @12 (session 1a2b3c4d)", "hub", "cli".
+func (a Actor) String() string {
+	if a.Kind == "" {
+		return ActorCLI
+	}
+	s := a.Kind
+	if a.WindowID != "" {
+		s += " " + a.WindowID
+	}
+	if a.SessionID != "" {
+		sid := a.SessionID
+		if len(sid) > 8 {
+			sid = sid[:8]
+		}
+		s += " (session " + sid + ")"
+	}
+	return s
+}
+
+// promptExcerptRunes bounds JobSnapshot.Prompt.
+const promptExcerptRunes = 200
+
+// JobSnapshot is a job's definition as a lifecycle entry records it. The
+// prompt is an excerpt (inline prompts) or the key/template name, never
+// the full text.
+type JobSnapshot struct {
+	Name         string    `json:"name"`
+	Schedule     string    `json:"schedule,omitempty"`
+	At           string    `json:"at,omitempty"`
+	State        string    `json:"state,omitempty"`
+	CompletedAt  time.Time `json:"completed_at,omitzero"`
+	Result       string    `json:"result,omitempty"`
+	Agent        string    `json:"agent,omitempty"`
+	Dir          string    `json:"dir,omitempty"`
+	Account      string    `json:"account,omitempty"`
+	Mode         string    `json:"mode,omitempty"`
+	Model        string    `json:"model,omitempty"`
+	Enabled      bool      `json:"enabled"`
+	PromptSource string    `json:"prompt_source"`
+	Prompt       string    `json:"prompt,omitempty"`
+}
+
+// SnapshotOf is j's lifecycle snapshot.
+func SnapshotOf(j Job) JobSnapshot {
+	s := JobSnapshot{
+		Name: j.Name, Schedule: strings.TrimSpace(j.Schedule), At: strings.TrimSpace(j.At), State: j.State,
+		CompletedAt: j.CompletedAt, Result: j.Result,
+		Agent: j.Agent, Dir: j.Dir, Account: j.Account, Mode: j.Mode, Model: j.Model,
+		Enabled: j.IsEnabled(), PromptSource: j.PromptSource(),
+	}
+	switch {
+	case j.Template != "":
+		s.Prompt = j.Template
+	case j.PromptKey != "":
+		s.Prompt = j.PromptKey
+	default:
+		s.Prompt = excerpt(j.Prompt, promptExcerptRunes)
+	}
+	return s
+}
+
+// Job rebuilds the parts of a job the snapshot holds (for display).
+func (s JobSnapshot) Job() Job {
+	en := s.Enabled
+	j := Job{Name: s.Name, Schedule: s.Schedule, At: s.At, State: s.State, CompletedAt: s.CompletedAt, Result: s.Result, Agent: s.Agent, Dir: s.Dir,
+		Account: s.Account, Mode: s.Mode, Model: s.Model, Enabled: &en}
+	switch s.PromptSource {
+	case FieldTemplate:
+		j.Template = s.Prompt
+	case "prompt_key":
+		j.PromptKey = s.Prompt
+	default:
+		j.Prompt = s.Prompt
+	}
+	return j
+}
+
+// excerpt collapses whitespace and keeps the first n runes, with "…" when
+// cut.
+func excerpt(s string, n int) string {
+	r := []rune(strings.Join(strings.Fields(s), " "))
+	if len(r) <= n {
+		return string(r)
+	}
+	return string(r[:n]) + "…"
+}
+
+// LifecycleEntry builds the lifecycle entry for job.
+func LifecycleEntry(now time.Time, result string, job Job, by Actor, note string) Entry {
+	snap := SnapshotOf(job)
+	if by.Kind == "" {
+		by.Kind = ActorCLI
+	}
+	return Entry{Time: now, Job: job.Name, Result: result, Account: job.Account, Note: note, By: &by, Def: &snap}
+}
 
 // runsMaxBytes bounds runs.ndjson; past it the oldest half is dropped.
 const runsMaxBytes = 2 << 20
 
-// AppendRun appends e to <dir>/runs.ndjson.
+// AppendRun appends e to <dir>/runs.ndjson. It holds <dir>/runs.lock (a
+// leaf lock: nothing else is taken while it is held) around the append and
+// any trim, so the tick, `cron run` and the editors (cronedit, which holds
+// only the jobs lock) never lose a line to a concurrent trim.
 func AppendRun(dir string, e Entry) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -66,6 +214,11 @@ func AppendRun(dir string, e Entry) error {
 	if err != nil {
 		return err
 	}
+	unlock, _, err := flockIn(dir, runsLock, true)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", path, err)
@@ -84,8 +237,8 @@ func AppendRun(dir string, e Entry) error {
 	return nil
 }
 
-// trimRuns keeps the newest half of an oversized runs file. Callers hold the
-// tick lock, so no append races the rewrite.
+// trimRuns keeps the newest half of an oversized runs file. The caller
+// (AppendRun) holds runs.lock, so no append races the rewrite.
 func trimRuns(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -128,11 +281,38 @@ func ReadRuns(dir, job string) ([]Entry, error) {
 	return out, sc.Err()
 }
 
-// LastByJob returns each job's most recent entry.
+// LastByJob returns each job's most recent run entry. Lifecycle entries
+// are not runs and are ignored.
 func LastByJob(entries []Entry) map[string]Entry {
 	m := map[string]Entry{}
 	for _, e := range entries {
+		if e.IsLifecycle() {
+			continue
+		}
 		m[e.Job] = e
+	}
+	return m
+}
+
+// RunsOnly drops lifecycle entries, keeping the order.
+func RunsOnly(entries []Entry) []Entry {
+	out := make([]Entry, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsLifecycle() {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// LatestSnapshots returns each job's newest lifecycle entry that carries a
+// snapshot (the last known definition, and whether it was deleted).
+func LatestSnapshots(entries []Entry) map[string]Entry {
+	m := map[string]Entry{}
+	for _, e := range entries {
+		if e.IsLifecycle() && e.Def != nil {
+			m[e.Job] = e
+		}
 	}
 	return m
 }

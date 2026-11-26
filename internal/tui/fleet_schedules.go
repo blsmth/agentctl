@@ -64,7 +64,9 @@ var (
 	// fleetSchedStore is the editing core; validate is the injected agent
 	// check (dispatch.ValidateAgentName in the hub).
 	fleetSchedStore = func(validate func(name, dir string) error) cronedit.Store {
-		return cronedit.Default(validate)
+		st := cronedit.Default(validate)
+		st.Actor = func() cron.Actor { return cron.Actor{Kind: cron.ActorHub} }
+		return st
 	}
 	// fleetSchedRun fires a job now (plain `cron run`, never --force).
 	fleetSchedRun cronedit.RunFunc = cronedit.RunSubprocess
@@ -559,6 +561,10 @@ func schedGlyph(st cronedit.Status) (string, lipgloss.Style) {
 // "Mon 07:31"; "paused" for a paused job.
 func schedNextText(st cronedit.Status, now time.Time) string {
 	switch {
+	case st.Job.State == cron.StateCompleted:
+		return "done"
+	case st.Job.State == cron.StateExpired:
+		return "expired"
 	case !st.Enabled:
 		return "paused"
 	case st.ScheduleError != "" || st.Invalid != "":
@@ -750,7 +756,7 @@ func (m FleetModel) schedCardLines(w int) []string {
 	add := func(s ...string) { out = append(out, s...) }
 	add(gst.Render(glyph)+" "+fleetTitleStyle.Render(truncateToWidth(st.Name, w-14))+"  "+gst.Render(status), "")
 	words := schedWords(st)
-	if st.Words != "" {
+	if st.Words != "" && st.Job.Schedule != "" {
 		words += fleetDimStyle.Render("  (" + st.Job.Schedule + ")")
 	}
 	add(wrapText(words, w))
@@ -776,12 +782,14 @@ func (m FleetModel) schedCardLines(w int) []string {
 		add(fleetDimStyle.Render(wrapText("Advanced: "+adv, w)))
 	}
 	add("")
-	if st.Enabled {
+	if st.Job.IsDone() {
+		add(fleetCountStyle.Render("Next"), fleetDimStyle.Render("nothing: a one-shot fires once (cron edit --at schedules it again)"))
+	} else if st.Enabled {
 		var texts []string
 		if detail != nil {
 			texts = detail.NextFiresText
 		} else {
-			for _, t := range cronedit.NextFires(st.Job.Schedule, st.Name, fleetNow(), cronedit.PreviewFires) {
+			for _, t := range cronedit.NextFiresOf(st.Job, fleetNow(), cronedit.PreviewFires) {
 				texts = append(texts, t.In(time.Local).Format(cron.NextFireFormat))
 			}
 		}

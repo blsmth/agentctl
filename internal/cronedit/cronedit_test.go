@@ -291,8 +291,19 @@ func TestSetEnabledAndDelete(t *testing.T) {
 	if err := ts.Delete("triage"); err != nil {
 		t.Fatal(err)
 	}
-	if runs, _ := cron.ReadRuns(ts.stateDir, "triage"); len(runs) != 1 {
+	runs, _ := cron.ReadRuns(ts.stateDir, "triage")
+	if got := cron.RunsOnly(runs); len(got) != 1 || got[0].Result != cron.ResultFired {
 		t.Errorf("delete touched the run history: %v", runs)
+	}
+	var results []string
+	for _, e := range runs {
+		results = append(results, e.Result)
+	}
+	if want := "created paused resumed fired deleted"; strings.Join(results, " ") != want {
+		t.Errorf("history = %q, want %q", strings.Join(results, " "), want)
+	}
+	if d := runs[len(runs)-1]; d.Def == nil || d.Def.Name != "triage" || d.By == nil || d.By.Kind != cron.ActorCLI {
+		t.Errorf("deleted entry = %+v", d)
 	}
 	jobs, _ := ts.Load()
 	if len(jobs.Jobs) != 0 {

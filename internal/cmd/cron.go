@@ -23,6 +23,7 @@ import (
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/prompttemplate"
 	"github.com/blsmth/agentctl/internal/ratelimit"
+	"github.com/blsmth/agentctl/internal/signal"
 	"github.com/blsmth/agentctl/internal/tmux"
 	"github.com/blsmth/agentctl/internal/windowstate"
 	"github.com/blsmth/agentctl/internal/winname"
@@ -31,8 +32,11 @@ import (
 
 // CronAddOptions are the inputs of `agentctl cron add`.
 type CronAddOptions struct {
-	Name       string
-	Schedule   string
+	Name     string
+	Schedule string
+	// At makes a one-shot: a local "YYYY-MM-DD HH:MM" or RFC3339 time.
+	// Exactly one of Schedule and At is required.
+	At         string
 	Agent      string
 	Dir        string
 	Prompt     string
@@ -68,6 +72,9 @@ type cronEnv struct {
 	// options supplies the pinned model/backend/account sets; nil skips
 	// those checks.
 	options func() cronedit.Options
+	// actor says who is editing, for the lifecycle entries; nil records
+	// "cli".
+	actor func() cron.Actor
 }
 
 // defaultCronEnv is the real environment.
@@ -80,6 +87,28 @@ var defaultCronEnv = cronEnv{
 	deps:               realCronDeps,
 	schedulerInstalled: cronPlistExists,
 	options:            cronedit.DefaultOptions,
+	actor:              cronCallerActor,
+}
+
+// cronCallerActor identifies a CLI caller the way dispatch fills
+// spawned_by. An agent (an agent session ID or AGENTCTL_WINDOW_ID in the
+// environment) is "window" with its window (signal.ResolveWindowID) and
+// session. Anything else, including a human's shell in a tmux pane, is
+// "cli", with the tmux window when there is one.
+func cronCallerActor() cron.Actor {
+	sid := os.Getenv("AGENTCTL_SESSION_ID")
+	if sid == "" {
+		sid = os.Getenv("CLAUDE_CODE_SESSION_ID")
+	}
+	agent := sid != "" || os.Getenv("AGENTCTL_WINDOW_ID") != ""
+	win := ""
+	if agent || os.Getenv("TMUX") != "" {
+		win = signal.ResolveWindowID()
+	}
+	if !agent {
+		return cron.Actor{Kind: cron.ActorCLI, WindowID: win}
+	}
+	return cron.Actor{Kind: cron.ActorWindow, WindowID: win, SessionID: sid}
 }
 
 // store is the shared editing core over this environment's seams.
@@ -92,6 +121,7 @@ func (e cronEnv) store() cronedit.Store {
 		ValidateAgent:      e.validateAgent,
 		SchedulerInstalled: e.schedulerInstalled,
 		Options:            e.options,
+		Actor:              e.actor,
 		// The fire-time loader (and its test seam), so a save checks the
 		// template a fire will read.
 		LoadTemplate: func(name, dir string) (prompttemplate.Template, error) { return loadPromptTemplate(name, dir) },
@@ -117,7 +147,11 @@ func (e cronEnv) add(w io.Writer, opts CronAddOptions) error {
 		return err
 	}
 	next, _ := cronedit.NextFire(job, e.now())
-	fmt.Fprintf(w, "Added %s (%s), next fire %s\n", job.Name, job.Schedule, next.Format(cron.NextFireFormat))
+	if job.IsOnce() {
+		fmt.Fprintf(w, "Added %s (%s), fires once at %s\n", job.Name, cron.OnceSummary(job), next.Format(cron.NextFireFormat))
+	} else {
+		fmt.Fprintf(w, "Added %s (%s), next fire %s\n", job.Name, job.Schedule, next.Format(cron.NextFireFormat))
+	}
 	if e.schedulerInstalled != nil && !e.schedulerInstalled() {
 		fmt.Fprintln(w, "The scheduler is not installed yet: run agentctl cron install")
 	}
@@ -141,12 +175,16 @@ func jobFromAdd(opts CronAddOptions) (cron.Job, error) {
 	if opts.Agent == "" && opts.Template == "" && !improve {
 		return cron.Job{}, errors.New("--agent is required (unless --template names one)")
 	}
+	at, err := atFromFlags(opts.Schedule, opts.At)
+	if err != nil {
+		return cron.Job{}, err
+	}
 	dir, err := absDir(opts.Dir)
 	if err != nil {
 		return cron.Job{}, err
 	}
 	job := cron.Job{
-		Name: opts.Name, Schedule: opts.Schedule, Dir: dir, Agent: opts.Agent,
+		Name: opts.Name, Schedule: opts.Schedule, At: at, Dir: dir, Agent: opts.Agent,
 		Prompt: prompt, PromptKey: opts.PromptKey, Template: opts.Template,
 		Model: opts.Model, Effort: opts.Effort, Backend: opts.Backend, Account: opts.Account,
 		Timeout: opts.Timeout, Overlap: opts.Overlap, Catchup: opts.Catchup,
@@ -155,6 +193,26 @@ func jobFromAdd(opts CronAddOptions) (cron.Job, error) {
 	wt, enabled := !opts.NoWorktree, true
 	job.Worktree, job.Enabled = &wt, &enabled
 	return job, nil
+}
+
+// errScheduleOrAt is the error for neither or both of --schedule and --at.
+var errScheduleOrAt = errors.New("exactly one of --schedule (recurring) or --at (one-shot) is required")
+
+// atFromFlags checks that exactly one of schedule and at is given and
+// returns at in its stored (RFC3339) form, "" for a recurring job. That the
+// time is in the future is checked by the shared core.
+func atFromFlags(schedule, at string) (string, error) {
+	if (strings.TrimSpace(schedule) == "") == (strings.TrimSpace(at) == "") {
+		return "", errScheduleOrAt
+	}
+	if strings.TrimSpace(at) == "" {
+		return "", nil
+	}
+	t, err := cron.ParseAt(at)
+	if err != nil {
+		return "", err
+	}
+	return cron.FormatAt(t), nil
 }
 
 func countSet(vals ...string) int {
@@ -201,8 +259,11 @@ func absDir(dir string) (string, error) {
 // CronEditOptions are the inputs of `agentctl cron edit`. A nil field (or a
 // false Worktree/NoWorktree) leaves that part of the job unchanged.
 type CronEditOptions struct {
-	Name       string
-	Schedule   *string
+	Name     string
+	Schedule *string
+	// At makes the job a one-shot at that time (and resets a done one to
+	// pending).
+	At         *string
 	Agent      *string
 	Dir        *string
 	Prompt     *string
@@ -232,6 +293,16 @@ func (e cronEnv) edit(w io.Writer, opts CronEditOptions) error {
 	if opts.Worktree && opts.NoWorktree {
 		return errors.New("--worktree and --no-worktree are mutually exclusive")
 	}
+	if opts.Schedule != nil && opts.At != nil {
+		return errors.New("--schedule and --at are mutually exclusive: a job is recurring or a one-shot")
+	}
+	var at string
+	if opts.At != nil {
+		var err error
+		if at, err = atFromFlags("", *opts.At); err != nil {
+			return err
+		}
+	}
 	str := func(p *string) string {
 		if p == nil {
 			return ""
@@ -257,7 +328,14 @@ func (e cronEnv) edit(w io.Writer, opts CronEditOptions) error {
 				*dst = *src
 			}
 		}
-		set(&j.Schedule, opts.Schedule)
+		if opts.Schedule != nil {
+			j.Schedule, j.At = *opts.Schedule, ""
+			j.ClearOutcome()
+		}
+		if opts.At != nil {
+			j.Schedule, j.At = "", at
+			j.ClearOutcome()
+		}
 		set(&j.Agent, opts.Agent)
 		if opts.Dir != nil {
 			j.Dir = dir
@@ -294,9 +372,12 @@ func (e cronEnv) edit(w io.Writer, opts CronEditOptions) error {
 	fmt.Fprintf(w, "Updated %s: %s\n", opts.Name, strings.Join(res.Changed, ", "))
 	if res.Reseeded {
 		next, _ := cronedit.NextFire(res.Job, e.now())
-		if next.IsZero() {
+		switch {
+		case next.IsZero():
 			fmt.Fprintln(w, "Schedule changed; the job is paused")
-		} else {
+		case res.Job.IsOnce():
+			fmt.Fprintf(w, "One-shot pending: fires once at %s\n", next.Format(cron.NextFireFormat))
+		default:
 			fmt.Fprintf(w, "Schedule changed; next fire %s (earlier fires are not caught up)\n", next.Format(cron.NextFireFormat))
 		}
 	}
@@ -380,7 +461,9 @@ func (e cronEnv) tick() error {
 		}
 		valid = append(valid, j)
 	}
-	_, err = cron.Tick(e.deps(dir, cfg, valid))
+	d := e.deps(dir, cfg, valid)
+	d.JobsPath, _ = e.jobsPath()
+	_, err = cron.Tick(d)
 	return err
 }
 
@@ -404,7 +487,9 @@ func (e cronEnv) run(w io.Writer, name string, force, asJSON bool) error {
 	if err := jobs.Jobs[i].Validate(); err != nil {
 		return fmt.Errorf("job %s is invalid: %w", name, err)
 	}
-	entry, err := cron.RunNow(e.deps(dir, cfg, jobs.Jobs), name, force)
+	d := e.deps(dir, cfg, jobs.Jobs)
+	d.JobsPath, _ = e.jobsPath()
+	entry, err := cron.RunNow(d, name, force)
 	if err != nil {
 		return err
 	}

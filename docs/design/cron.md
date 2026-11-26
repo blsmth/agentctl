@@ -135,17 +135,19 @@ HeadlessCommand(inv Invocation) (shellCmd string, env map[string]string, err err
 - **Creating a schedule is the approval moment.** One `cron add` authorizes unlimited future autonomous runs, so when an agent (not a human shell) runs `agentctl cron add/edit/enable`, the PreToolUse gate shows a preview popup like the dispatch preview: schedule in words ("weekdays 07:30, next: Tue 18 Nov 07:30"), agent, dir, harness, mode, rendered prompt. Extend `dispatch_preview.go`'s parser rather than adding a second popup. A human typing `cron add` in a shell isn't gated.
 - `--prompt "$(cat …)"` is rejected for `cron add` for the same reason as dispatch. Use `--prompt-key` or `--prompt-file` (copied into the job at add time, so later edits to the file don't silently change what runs).
 - Kill switch: global `cron.enabled: false` makes `tick` a no-op. `agentctl cron pause <job>` / `resume <job>`.
-- Every decision (fired, skipped:overlap, skipped:usage, skipped:catchup, failed:…) is appended to `<stateDir>/cron/runs.ndjson`. `agentctl health` reports: plist loaded? last tick age? jobs failing N times in a row?
+- Every decision (fired, skipped:overlap, skipped:usage, skipped:catchup, failed:…) and every change to a job (created, edited, paused, resumed, deleted, pruned; see §6b) is appended to `<stateDir>/cron/runs.ndjson`. `agentctl health` reports: plist loaded? last tick age? jobs failing N times in a row?
 
 ### 6. CLI
 
 ```
-agentctl cron add <name> --schedule '30 7 * * 1-5' --agent brandon --dir ~/code/x \
+agentctl cron add <name> (--schedule '30 7 * * 1-5' | --at '2026-12-01 09:00') \
+                         --agent brandon --dir ~/code/x \
                          (--prompt-key K | --prompt-file F | --prompt '...') \
                          [--harness claude] [--mode window|headless] [--no-worktree] \
                          [--model M] [--effort E] [--backend B] [--timeout 45m]
-agentctl cron list                 # next fire, last result, throttle state
-agentctl cron runs [<name>]        # history from runs.ndjson
+agentctl cron edit <name> [--schedule S | --at T] ...   # --at also resets a done one-shot
+agentctl cron list [--all]         # next fire, last result, throttle state; --all adds deleted jobs
+agentctl cron runs [<name>]        # runs and job changes from runs.ndjson (works for deleted jobs)
 agentctl cron run <name>           # fire now (ignores schedule, honors overlap + usage gate unless --force)
 agentctl cron pause|resume|rm <name>
 agentctl cron install|uninstall    # launchd plist
@@ -153,6 +155,20 @@ agentctl cron tick                 # hidden; what launchd runs
 ```
 
 The phone web app and the hub get a Schedules view to list, create, edit, pause/resume, run now, duplicate and delete jobs (#237).
+
+### 6a. One-shot jobs (`--at`)
+
+A one-time reminder used to be a yearly expression plus a `cron rm` at the end of the run, which left nothing behind. `cron add <name> --at 'YYYY-MM-DD HH:MM'` (local time, or RFC3339) makes a one-shot instead: the job stores `at` (RFC3339) and no `schedule`; exactly one of the two is set. A time in the past, or a local time a DST spring-forward skips, is rejected; a time in a fall-back's repeated hour is its first occurrence (pass RFC3339 with an offset for the second).
+
+The tick fires it once when `at` plus the job's jitter is due, through the same path as a scheduled fire: catchup_window, `catchup: none`, overlap, max_concurrent and the usage gate all apply; min_interval does not. A gate skip leaves it pending (the skip is recorded once per reason, not every tick), so a later tick retries; once it is past catchup_window it expires and is recorded as `skipped:catchup`. A job paused (or first seen) past its time expires on resume rather than firing late. A launch attempt, fired or failed (including `failed:account`), completes it: the job gets `state: completed`, `completed_at`, and `result`, `run_window`, `run_session`, `run_session_id` copied from the run entry. Expired jobs get `state: expired`. Done one-shots are kept, never fire again, and have no next fire. `cron run <one-shot>` is an early fire and completes it; `cron run` and `cron resume` of a done one are refused (use `cron edit <name> --at ...`, which resets it to pending and re-seeds).
+
+Fire state: the outcome is written to `state.json` (`one_shot`, with a `launching` marker persisted before the launch, so a crash cannot fire twice; an interrupted launch is completed with result `unknown`) and then mirrored into `schedules.json`. The tick already holds the tick lock and an editor may hold the jobs lock while waiting for it, so the tick takes the jobs lock only with `LOCK_NB`; when it is busy the mirror waits for the next tick and `state.json` keeps the job from firing meanwhile. The same write prunes done one-shots 30 days after `completed_at`, recording a `pruned` entry.
+
+Summaries: `once, Tue 1 Dec 09:00` pending, `done, fired Tue 1 Dec 09:01` (or `done, failed ...`) completed, `expired, missed Tue 1 Dec 09:00` expired, in `cron list` (SCHEDULE), `cronedit` words (the `/v1/schedules` JSON, the hub row and drawer, the phone), the next-fires preview (one fire) and the approval popup.
+
+### 6b. Lifecycle entries
+
+`runs.ndjson` also records changes to a job, so its definition outlives it. `cronedit.Store` (CLI, hub, serve) appends `created`, `edited` (note: the changed fields), `paused`, `resumed` and `deleted` after the jobs file is committed, still under the jobs lock; the tick appends `pruned`. Each carries `def` (name, schedule or at, state, agent, dir, account, mode, model, enabled, prompt source and an excerpt: the first 200 runes of an inline prompt, or the key/template name, never the full prompt) and `by`: `window` with the caller's window and session ID (resolved as dispatch resolves `spawned_by`), `hub`, `phone`, `tick`, or `cli` from a plain shell. There is no separate `completed` entry: the fired/failed/skipped:catchup entry plus the job's state is the record, and the `pruned` or `deleted` snapshot keeps the state. Appends (and the trim of an oversized file) take `<state dir>/cron/runs.lock`, a leaf lock, since editors do not hold the tick lock. Lifecycle entries are not runs: `LastByJob`, `FailingJobs`, the list/overview `last`/`recent` and the job card's runs skip them. `cron runs` shows them (NOTE: who, plus a one-line definition) and `cron list --all` lists jobs gone from `schedules.json` from their newest snapshot, ENABLED `deleted` (or `pruned`) with LAST from their last run.
 
 ### 7. Opening a run's session
 

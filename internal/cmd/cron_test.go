@@ -412,7 +412,7 @@ func TestCronRunMissingTemplate(t *testing.T) {
 		t.Errorf("last run = %+v", last)
 	}
 	out.Reset()
-	if err := e.list(&out); err != nil {
+	if err := e.list(&out, false); err != nil {
 		t.Fatal(err)
 	}
 	if s := out.String(); !strings.Contains(s, `invalid: template "triage" not found`) || !strings.Contains(s, "template triage") ||

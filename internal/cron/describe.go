@@ -115,3 +115,73 @@ func Summary(spec, name string, now time.Time) (string, error) {
 	}
 	return out, nil
 }
+
+// OnceSummary describes a one-shot job: "once, Tue 1 Dec 09:00" while
+// pending, "done, fired Tue 1 Dec 09:00" (or "done, failed ...") once its
+// launch was attempted, "expired, missed Tue 1 Dec 09:00" when the time
+// passed without a launch. Times are local; an invalid at is reported as
+// such rather than guessed.
+func OnceSummary(j Job) string {
+	at, err := j.AtTime()
+	if err != nil {
+		return "once, invalid time " + strings.TrimSpace(j.At)
+	}
+	when := at.In(time.Local).Format(NextFireFormat)
+	switch j.State {
+	case StateCompleted:
+		fired := when
+		if !j.CompletedAt.IsZero() {
+			fired = j.CompletedAt.In(time.Local).Format(NextFireFormat)
+		}
+		if IsFailed(j.Result) {
+			return "done, failed " + fired
+		}
+		return "done, fired " + fired
+	case StateExpired:
+		return "expired, missed " + when
+	}
+	return "once, " + when
+}
+
+// JobSummary is Summary for a job: the schedule summary of a recurring
+// job, OnceSummary of a one-shot.
+func JobSummary(j Job, now time.Time) (string, error) {
+	if j.IsOnce() {
+		if _, err := j.AtTime(); err != nil {
+			return "", err
+		}
+		return OnceSummary(j), nil
+	}
+	return Summary(j.Schedule, j.Name, now)
+}
+
+// Words is the job's schedule in words: Describe of a recurring schedule
+// ("" when it has none), OnceSummary of a one-shot.
+func Words(j Job) string {
+	if j.IsOnce() {
+		return OnceSummary(j)
+	}
+	return Describe(j.Schedule)
+}
+
+// ScheduleText is what a one-line view prints for the schedule: the
+// expression of a recurring job, OnceSummary of a one-shot.
+func ScheduleText(j Job) string {
+	if j.IsOnce() {
+		return OnceSummary(j)
+	}
+	return j.Schedule
+}
+
+// NextOnce is a pending one-shot's fire time (jitter included); zero when
+// it is done or its at does not parse.
+func NextOnce(j Job) time.Time {
+	if j.IsDone() {
+		return time.Time{}
+	}
+	at, err := j.AtTime()
+	if err != nil {
+		return time.Time{}
+	}
+	return at.Add(Jitter(j.Name))
+}

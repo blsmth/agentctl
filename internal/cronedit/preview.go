@@ -76,20 +76,25 @@ func (s Store) Preview(job cron.Job, original string, simple *SimpleSchedule) Pr
 		if jobs.Find(norm.Name) >= 0 {
 			errs = append(errs, cron.FieldError{Field: cron.FieldName, Message: fmt.Sprintf("a cron job named %q already exists", norm.Name)})
 		}
+		norm.ClearOutcome()
+		errs = append(errs, s.atErrors(norm)...)
 	default:
 		if i := jobs.Find(original); i < 0 {
 			errs = append(errs, cron.FieldError{Field: cron.FieldName, Message: (&NotFoundError{Name: original}).Error()})
 		} else {
+			if atChanged(normalize(jobs.Jobs[i]), norm) {
+				errs = append(errs, s.atErrors(norm)...)
+			}
 			changed = ChangedFields(jobs.Jobs[i], norm)
 			diff = Diff(jobs.Jobs[i], norm)
 		}
 	}
 	now := s.now()
-	p := Preview{Job: norm, Schedule: norm.Schedule, Words: cron.Describe(norm.Schedule), Errors: sortFields(errs), Changed: changed, Diff: diff, Warnings: s.Warnings(norm)}
-	if ss, ok := ParseSimple(norm.Schedule); ok {
+	p := Preview{Job: norm, Schedule: norm.Schedule, Words: cron.Words(norm), Errors: sortFields(errs), Changed: changed, Diff: diff, Warnings: s.Warnings(norm)}
+	if ss, ok := ParseSimple(norm.Schedule); ok && !norm.IsOnce() {
 		p.Simple = &ss
 	}
-	p.NextFires = NextFires(norm.Schedule, norm.Name, now, PreviewFires)
+	p.NextFires = NextFiresOf(norm, now, PreviewFires)
 	p.NextFiresText = make([]string, len(p.NextFires))
 	for i, t := range p.NextFires {
 		p.NextFiresText[i] = t.Format(cron.NextFireFormat)
@@ -123,10 +128,32 @@ func NextFires(spec, name string, now time.Time, n int) []time.Time {
 	return out
 }
 
+// NextFiresOf is NextFires for a job: a pending one-shot's single fire
+// (even when overdue: the next tick fires or expires it), nothing for a
+// done one.
+func NextFiresOf(job cron.Job, now time.Time, n int) []time.Time {
+	if !job.IsOnce() {
+		return NextFires(job.Schedule, job.Name, now, n)
+	}
+	if t := cron.NextOnce(job); !t.IsZero() && n > 0 {
+		return []time.Time{t}
+	}
+	return []time.Time{}
+}
+
 // NextFire is the job's next fire (jitter included). It returns the zero
-// time for a paused job or one that never fires, and the parse error for an
-// invalid schedule.
+// time for a paused job, a done one-shot or one that never fires, and the
+// parse error for an invalid schedule or at time.
 func NextFire(job cron.Job, now time.Time) (time.Time, error) {
+	if job.IsOnce() {
+		if _, err := job.AtTime(); err != nil {
+			return time.Time{}, err
+		}
+		if !job.IsEnabled() {
+			return time.Time{}, nil
+		}
+		return cron.NextOnce(job), nil
+	}
 	sched, err := cron.ParseSchedule(job.Schedule)
 	if err != nil {
 		return time.Time{}, err

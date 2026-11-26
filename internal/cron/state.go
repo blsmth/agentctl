@@ -18,6 +18,7 @@ const (
 	jobsLock  = "jobs.lock"
 	stateFile = "state.json"
 	runsFile  = "runs.ndjson"
+	runsLock  = "runs.lock"
 )
 
 // Dir returns <StateDir>/cron.
@@ -38,6 +39,44 @@ type JobState struct {
 	// TimedOut lists windows this job's timeout already interrupted, so a
 	// window gets one C-c, not one per tick.
 	TimedOut []string `json:"timed_out,omitempty"`
+	// OneShot is a one-shot job's outcome for one at time. The tick writes
+	// it (persisted before the launch, as OneShotLaunching, so a crash
+	// cannot fire twice) and then mirrors it into the jobs file; it is the
+	// authority when that mirror is behind (the jobs lock was busy).
+	OneShot *OneShotOutcome `json:"one_shot,omitempty"`
+	// OnceSkip is the last gate skip recorded for a pending one-shot, so a
+	// skip that repeats every tick is recorded once.
+	OnceSkip string `json:"once_skip,omitempty"`
+}
+
+// OneShotLaunching marks a one-shot whose launch started but whose result
+// was not recorded (the process died mid-launch).
+const OneShotLaunching = "launching"
+
+// OneShotOutcome is a one-shot's outcome for the at time At.
+type OneShotOutcome struct {
+	At          time.Time `json:"at"`
+	State       string    `json:"state"`
+	CompletedAt time.Time `json:"completed_at,omitzero"`
+	Result      string    `json:"result,omitempty"`
+	WindowID    string    `json:"window,omitempty"`
+	Session     string    `json:"session,omitempty"`
+	SessionID   string    `json:"session_id,omitempty"`
+}
+
+// Apply copies the outcome onto a job.
+func (o OneShotOutcome) Apply(j *Job) {
+	j.State, j.CompletedAt, j.Result = o.State, o.CompletedAt, o.Result
+	j.RunWindow, j.RunSession, j.RunSessionID = o.WindowID, o.Session, o.SessionID
+}
+
+// matches reports whether the outcome is for job's at time.
+func (o *OneShotOutcome) matches(j Job) bool {
+	if o == nil {
+		return false
+	}
+	at, err := j.AtTime()
+	return err == nil && o.At.Equal(at)
 }
 
 // State is <StateDir>/cron/state.json.
@@ -96,6 +135,15 @@ func Lock(dir string, wait bool) (unlock func(), ok bool, err error) {
 func LockJobs(dir string) (unlock func(), err error) {
 	unlock, _, err = flockIn(dir, jobsLock, true)
 	return unlock, err
+}
+
+// TryLockJobs is LockJobs without waiting (ok=false when it is held). The
+// tick uses it to write one-shot outcomes and prunes: it already holds the
+// tick lock, and an editor holding the jobs lock may be waiting for that,
+// so blocking here could deadlock. A busy lock defers the write to a later
+// tick.
+func TryLockJobs(dir string) (unlock func(), ok bool, err error) {
+	return flockIn(dir, jobsLock, false)
 }
 
 func flockIn(dir, name string, wait bool) (unlock func(), ok bool, err error) {
