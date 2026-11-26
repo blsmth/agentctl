@@ -979,6 +979,32 @@ export function checkAttachment(file, count) {
 }
 
 /**
+ * pastedImages returns the image files on a clipboard-like object
+ * ({files, items, getData}), de-duplicated (browsers often expose the same
+ * file through both files and items). Non-image files are ignored.
+ */
+export function pastedImages(clip) {
+  const out = [];
+  const add = (f) => {
+    if (f && /^image\//i.test(f.type ?? "") && !out.includes(f)) out.push(f);
+  };
+  for (const f of clip?.files ?? []) add(f);
+  for (const it of clip?.items ?? []) if (it.kind === "file" && /^image\//i.test(it.type ?? "")) add(it.getAsFile?.());
+  return out;
+}
+
+/** pasteHasText reports whether a clipboard-like object carries plain text. */
+export function pasteHasText(clip) {
+  return Boolean(clip?.getData?.("text/plain"));
+}
+
+/** imageExt maps an image MIME type to a file extension. */
+export function imageExt(type) {
+  const t = String(type ?? "").toLowerCase().replace(/^image\//, "");
+  return t === "jpeg" ? "jpg" : /^[a-z0-9]+$/.test(t) ? t : "png";
+}
+
+/**
  * buildDispatchRequest builds POST /v1/dispatch. choice is the optional
  * {backend, model, effort} picked from launch options; empty fields are left
  * out so the server keeps the agent's own configuration. images are IDs from
