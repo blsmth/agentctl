@@ -176,7 +176,7 @@ body.pane-expanded { overflow: hidden; }
 .icon-btn { flex: none; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: none;
   color: var(--accent); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .icon-btn:disabled { opacity: .5; }
-.icon-btn.paste { margin-left: -.5rem; }
+.icon-btn.paste { margin-left: -.35rem; }
 .row .btn.paste { margin-left: .5rem; }
 .icon-btn.send { background: var(--accent); color: #fff; }
 .icon-btn.send.command { width: auto; padding: 0 .9rem; border-radius: 22px; font: inherit; font-size: .85rem; font-weight: 600; background: var(--blocked); }

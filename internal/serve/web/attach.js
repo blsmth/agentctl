@@ -67,7 +67,7 @@ export function imagePicker({ icon = false } = {}) {
     const picked = [];
     try {
       for (const item of await navigator.clipboard.read()) {
-        const type = item.types.find((t) => /^image\//i.test(t));
+        const type = item.types.find((t) => /^image\/(png|jpe?g|gif|webp)$/i.test(t)) ?? item.types.find((t) => /^image\//i.test(t));
         if (!type) continue;
         const blob = await item.getType(type);
         picked.push(new File([blob], `pasted.${imageExt(type)}`, { type }));

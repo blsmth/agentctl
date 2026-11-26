@@ -980,17 +980,19 @@ export function checkAttachment(file, count) {
 
 /**
  * pastedImages returns the image files on a clipboard-like object
- * ({files, items, getData}), de-duplicated (browsers often expose the same
- * file through both files and items). Non-image files are ignored.
+ * ({files, items, getData}), taken from files, falling back to items (browsers
+ * expose the same file through both). Non-image files are ignored.
  */
 export function pastedImages(clip) {
-  const out = [];
-  const add = (f) => {
-    if (f && /^image\//i.test(f.type ?? "") && !out.includes(f)) out.push(f);
-  };
-  for (const f of clip?.files ?? []) add(f);
-  for (const it of clip?.items ?? []) if (it.kind === "file" && /^image\//i.test(it.type ?? "")) add(it.getAsFile?.());
-  return out;
+  const isImg = (t) => /^image\//i.test(t ?? "");
+  // files first; items only as a fallback, since Chromium returns a fresh
+  // File from getAsFile() that is never identical to the one in files.
+  const fromFiles = [...(clip?.files ?? [])].filter((f) => isImg(f.type));
+  if (fromFiles.length) return fromFiles;
+  return [...(clip?.items ?? [])]
+    .filter((it) => it.kind === "file" && isImg(it.type))
+    .map((it) => it.getAsFile?.())
+    .filter(Boolean);
 }
 
 /** pasteHasText reports whether a clipboard-like object carries plain text. */

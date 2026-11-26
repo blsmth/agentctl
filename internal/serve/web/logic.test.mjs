@@ -1406,7 +1406,7 @@ console.log("ok: artifact pdf");
   const txt = { type: "text/plain", name: "a.txt" };
   const item = (kind, type, file) => ({ kind, type, getAsFile: () => file });
   const clip = (o) => ({ getData: () => "", ...o });
-  assert.deepEqual(pastedImages(clip({ files: [png], items: [item("file", "image/png", png)] })), [png], "image only, deduped");
+  assert.deepEqual(pastedImages(clip({ files: [png], items: [item("file", "image/png", { type: "image/png", name: "b.png" })] })), [png], "image only, deduped (Chromium: items give a different File)");
   assert.deepEqual(pastedImages(clip({ items: [item("file", "image/png", png)] })), [png], "items only");
   assert.deepEqual(pastedImages(clip({ items: [item("string", "text/plain", null)], getData: () => "hi" })), [], "text only");
   assert.equal(pasteHasText(clip({ getData: () => "hi" })), true);
