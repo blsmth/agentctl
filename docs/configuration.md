@@ -490,7 +490,7 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
 
 ### Agent frontmatter `role`
 
-An agent definition can declare `role: orchestrator` (or `role: worker`, the same as leaving it out) in its frontmatter. There is no config key. An `extends` child inherits the base's role unless it sets its own; an unknown value is logged and ignored.
+An agent definition can declare `role: orchestrator`, `role: reporter`, or `role: worker` (the same as leaving it out) in its frontmatter. There is no config key. An `extends` child inherits the base's role unless it sets its own; an unknown value is logged and ignored.
 
 ```markdown
 ---
@@ -500,6 +500,8 @@ role: orchestrator
 ```
 
 An orchestrator gets the orchestrator preamble in every mode and never gets worker finishing steps (commit, push, open a PR). The phone's new-session button, or `dispatch --prompt` from a shell with no tracked Claude session, launches it as an interactive `bare` session with the prompt as its first message (no autonomous instructions, but the worker permission mode: `auto` unless overridden); cron jobs, `--prompt` dispatches from another agent session and `dispatch --issue` keep autonomous execution. See [dispatch.md](dispatch.md#orchestrator-agents).
+
+A reporter is a worker that never changes code (a reviewer, researcher or designer). In ad-hoc and `--issue` launches its first message ends with a short report step instead of the commit/push/PR finishing steps: make no commits and open no PR unless the task asks for one, and send the result to the orchestrator with SendMessage (or put it in the final message when there is none). Its orchestrator section leaves out the "stay responsive until the PR merges" paragraph. Everything else, `--review-pr` included, is as for a worker. See [dispatch.md](dispatch.md#reporter-agents).
 
 ## Prompt templates
 

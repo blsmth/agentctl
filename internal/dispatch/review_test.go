@@ -406,9 +406,9 @@ func TestReviewerPreamble(t *testing.T) {
 	if !strings.Contains(gp, "Put your verdict in your final message.") {
 		t.Error("pi reviewer lacks reporting section")
 	}
-	// Workers keep their sections.
+	// Workers keep their sections and share the deferred-tool note.
 	w := buildSystemPrompt(Request{AgentName: "a", Mode: ModeAdhoc, Orchestrator: orch}, modes[ModeAdhoc], "/w", "b", true, nil, "")
-	if !strings.Contains(w, "### Git conventions") || strings.Contains(w, "ToolSearch") {
+	if !strings.Contains(w, "### Git conventions") || !strings.Contains(w, sendMessageDeferredNote) {
 		t.Error("worker preamble changed")
 	}
 }

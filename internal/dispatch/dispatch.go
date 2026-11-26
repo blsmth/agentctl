@@ -383,10 +383,14 @@ func Launch(req Request) (Result, error) {
 
 	// 9. Build the stable system prompt file and the per-launch first
 	// user message (see buildLaunchPrompt).
-	lp := buildLaunchPrompt(req, spec, launchFacts{
+	facts := launchFacts{
 		WorkDir: workDir, RepoDir: repoDir, Branch: ownBranch, InWorktree: inWorktree,
 		Window: windowName, Started: launchNow(),
-	}, contextEntries, sharedConventions)
+	}
+	if !facts.worktree() {
+		facts.Checkout = inspectCheckout(workDir)
+	}
+	lp := buildLaunchPrompt(req, spec, facts, contextEntries, sharedConventions)
 	userMessage := lp.Message
 
 	// 10. Write system prompt to temp file.

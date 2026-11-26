@@ -16,7 +16,8 @@ func humanLaunch(req Request) bool {
 }
 
 // frontmatterRoleFn returns the role in agentName's definition frontmatter
-// (agent.RoleOrchestrator, agent.RoleWorker or ""). A var for tests.
+// (agent.RoleOrchestrator, agent.RoleWorker, agent.RoleReporter or ""). A
+// var for tests.
 var frontmatterRoleFn = frontmatterRole
 
 func frontmatterRole(cfg *config.Config, agentName, workDir string) string {
@@ -33,7 +34,8 @@ func frontmatterRole(cfg *config.Config, agentName, workDir string) string {
 }
 
 // applyAgentRole adapts a launch to the agent's frontmatter role. Workers
-// (role "worker" or empty) are returned unchanged. An orchestrator never gets
+// (role "worker" or empty) are returned unchanged; a reporter is handled by
+// applyReporterRole. An orchestrator never gets
 // the worker tail: no finishing steps (commit, push, open a PR) and no "do not
 // merge to main" worktree line, and its preamble is the orchestrator one. The
 // role only ever upgrades the mode's preamble role, never downgrades it.
@@ -54,6 +56,9 @@ func frontmatterRole(cfg *config.Config, agentName, workDir string) string {
 // another agent session is unattended: it must stay autonomous so the done
 // state, the dispatcher's done notice and `dispatch --wait` keep working.
 func applyAgentRole(req Request, spec modeSpec, role string, human bool) (Request, modeSpec) {
+	if role == agent.RoleReporter {
+		return req, applyReporterRole(req, spec)
+	}
 	if role != agent.RoleOrchestrator {
 		return req, spec
 	}
@@ -81,4 +86,27 @@ func applyAgentRole(req Request, spec modeSpec, role string, human bool) (Reques
 // directive for an orchestrator, which delegates rather than implements.
 func orchestratorTicketDirective(req Request) string {
 	return fmt.Sprintf("Handle %s.", issueRef(req))
+}
+
+// applyReporterRole adapts a worker-role launch for a `role: reporter`
+// agent, one that never changes code: its finishing steps become a report
+// step (reporterFinishingSteps) and its orchestrator section drops the
+// "stay responsive until the PR merges" paragraph. Everything else stays as
+// for a worker. An orchestrator-role mode (bare) is never downgraded, and
+// --review-pr, which has its own reviewer prompt, is left alone.
+func applyReporterRole(req Request, spec modeSpec) modeSpec {
+	if req.Mode == ModeReviewPR || spec.Role == RoleOrchestrator {
+		return spec
+	}
+	spec.Role = RoleReporter
+	if req.Mode == ModeDispatch {
+		spec.Directive = reporterTicketDirective
+	}
+	return spec
+}
+
+// reporterTicketDirective replaces ModeDispatch's "open a PR when done"
+// directive for a reporter, which normally opens no PR.
+func reporterTicketDirective(req Request) string {
+	return fmt.Sprintf("Work on %s and report the result.", issueRef(req))
 }

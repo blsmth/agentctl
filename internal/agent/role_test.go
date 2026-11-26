@@ -11,6 +11,7 @@ func TestDiscoverRole(t *testing.T) {
 		"lead.md":      "---\nname: lead\nrole: orchestrator\n---\nLead body",
 		"worker.md":    "---\nname: worker\nrole: worker\n---\nWorker body",
 		"plain.md":     "---\nname: plain\n---\nPlain body",
+		"rep.md":       "---\nname: rep\nrole: reporter\n---\nReporter body",
 		"bogus.md":     "---\nname: bogus\nrole: manager\n---\nBogus body",
 		"sub-lead.md":  "---\nname: sub-lead\nextends: lead\n---\nInherits the role",
 		"sub-work.md":  "---\nname: sub-work\nextends: lead\nrole: worker\n---\nChild wins",
@@ -37,6 +38,7 @@ func TestDiscoverRole(t *testing.T) {
 		{"lead", RoleOrchestrator},
 		{"worker", RoleWorker},
 		{"plain", ""},
+		{"rep", RoleReporter},
 		{"bogus", ""}, // unknown value: logged and ignored
 		{"sub-lead", RoleOrchestrator},
 		{"sub-work", RoleWorker},
@@ -60,6 +62,7 @@ func TestNormalizeRole(t *testing.T) {
 		{"", ""},
 		{"orchestrator", RoleOrchestrator},
 		{"worker", RoleWorker},
+		{"reporter", RoleReporter},
 		{"Orchestrator", ""},
 		{"lead", ""},
 	}

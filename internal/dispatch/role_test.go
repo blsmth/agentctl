@@ -45,6 +45,12 @@ func TestApplyAgentRole(t *testing.T) {
 		{"orchestrator scheduled adhoc stays adhoc", Request{Mode: ModeAdhoc, ScheduledBy: "nightly"}, agent.RoleOrchestrator, ModeAdhoc, RoleOrchestrator, false, nil, false},
 		{"orchestrator dispatch stays dispatch", Request{Mode: ModeDispatch, Ticket: 3}, agent.RoleOrchestrator, ModeDispatch, RoleOrchestrator, false, nil, false},
 		{"orchestrator bare stays bare", Request{Mode: ModeBare}, agent.RoleOrchestrator, ModeBare, RoleOrchestrator, false, nil, false},
+		{"reporter adhoc", Request{Mode: ModeAdhoc}, agent.RoleReporter, ModeAdhoc, RoleReporter, true, nil, false},
+		{"reporter adhoc from an agent session", Request{Mode: ModeAdhoc}, agent.RoleReporter, ModeAdhoc, RoleReporter, true, nil, true},
+		{"reporter dispatch", Request{Mode: ModeDispatch, Ticket: 3}, agent.RoleReporter, ModeDispatch, RoleReporter, true, nil, false},
+		{"reporter triage", Request{Mode: ModeTriage, Ticket: 3}, agent.RoleReporter, ModeTriage, RoleReporter, false, nil, false},
+		{"reporter review-pr unchanged", Request{Mode: ModeReviewPR}, agent.RoleReporter, ModeReviewPR, RoleWorker, false, nil, false},
+		{"reporter bare never downgraded", Request{Mode: ModeBare}, agent.RoleReporter, ModeBare, RoleOrchestrator, false, nil, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
