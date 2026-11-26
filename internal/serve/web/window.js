@@ -781,6 +781,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
     if (!canUpload) return null;
     const picker = imagePicker({ icon });
     return {
+      bindPaste: picker.bindPaste,
       controls: picker.controls,
       trigger: picker.trigger,
       count: picker.count,
@@ -883,6 +884,7 @@ export function mountWindow(root, ctx, { session, windowId }) {
       },
       svgIcon(SEND_SVG),
     );
+    if (att) att.bindPaste(text);
     const row = h("div", { class: "composer" }, ...(att ? att.trigger : []), text, send);
     return { text, nodes: [...(att ? att.controls : []), suggest, row] };
   }

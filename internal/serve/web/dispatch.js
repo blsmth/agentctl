@@ -40,6 +40,7 @@ export function mountDispatch(root, ctx, { dir } = {}) {
   const withOptions = ctx.hasFeature("launch-options");
   // Attaching a screenshot needs writes and the dispatch upload route.
   const att = ctx.hasFeature("write") && ctx.hasFeature("dispatch-upload") ? imagePicker() : null;
+  if (att) att.bindPaste(prompt);
   root.append(
     h("header", { class: "bar" }, h("a", { class: "btn", href: "#/" }, "‹ Fleet"), h("h1", {}, "Dispatch")),
     h(

@@ -11,7 +11,7 @@ import {
   bucketLabel, kindLabel, rowTags, rowChips, rowTitle, rowHeadline, rowRole, detailTitle, truncateWords, agentChip, rowDetailLine, treeRows,
   isScheduled, scheduledChip, scheduledLine, treeLines, collapseKey, groupCounts, groupKey,
   buildCommandRequest, commandConfirm, commandError, commandSuggestions, commandWord, isClaudeWindow, isSlashCommand, SLASH_COMMANDS,
-  actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
+  actionsWithQueue, buildAnswerRequest, checkboxChoices, buildQueueRequest, buildReplyRequest, buildUploadPath, checkAttachment, pastedImages, pasteHasText, imageExt, MAX_IMAGES, dialogQuestion, exactRows, focusedOption, formatCost, hangingIndent, headerChips,
   sortGroups, groupKeys, moveKey, applyGroupOrder, sameOrder, dropIndex, autoscrollDelta, buildGroupOrderRequest,
   defaultAgentFor, liveness, paneLinesForExact, safeHttpsUrl, shortModel, stateLabel, taskLine, headerLines, fullPrompt,
   waitingIndex, parentOf, childrenOf, displayState, waitingLabel, actionsFor, effectiveState, attentionLabel, attentionLine,
@@ -1399,3 +1399,24 @@ assert.deepEqual([...pdfPagesToDraw(new Set([29]), 30)], [28, 29]);
 assert.deepEqual([...pdfPagesToDraw(new Set([5]), 30, 0)], [5]);
 assert.deepEqual([...pdfPagesToDraw(new Set(), 1)], [0]);
 console.log("ok: artifact pdf");
+
+// Pasted images.
+{
+  const png = { type: "image/png", name: "a.png" };
+  const txt = { type: "text/plain", name: "a.txt" };
+  const item = (kind, type, file) => ({ kind, type, getAsFile: () => file });
+  const clip = (o) => ({ getData: () => "", ...o });
+  assert.deepEqual(pastedImages(clip({ files: [png], items: [item("file", "image/png", { type: "image/png", name: "b.png" })] })), [png], "image only, deduped (Chromium: items give a different File)");
+  assert.deepEqual(pastedImages(clip({ items: [item("file", "image/png", png)] })), [png], "items only");
+  assert.deepEqual(pastedImages(clip({ items: [item("string", "text/plain", null)], getData: () => "hi" })), [], "text only");
+  assert.equal(pasteHasText(clip({ getData: () => "hi" })), true);
+  assert.equal(pasteHasText(clip({})), false);
+  assert.deepEqual(pastedImages(clip({ files: [png], getData: () => "hi" })), [png], "mixed");
+  assert.deepEqual(pastedImages(clip({ files: [txt], items: [item("file", "text/plain", txt)] })), [], "non-image file");
+  assert.deepEqual(pastedImages(clip({})), [], "empty");
+  assert.deepEqual(pastedImages(null), []);
+  assert.equal(imageExt("image/jpeg"), "jpg");
+  assert.equal(imageExt("image/png"), "png");
+  assert.equal(imageExt("image/svg+xml"), "png");
+  console.log("ok: pasted images");
+}
