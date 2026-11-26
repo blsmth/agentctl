@@ -48,3 +48,30 @@ func TestCmdContextList_HasSizeColumn(t *testing.T) {
 		t.Errorf("expected big entry's byte size (5000B) in output, got:\n%s", out)
 	}
 }
+
+func TestContextSetNotice(t *testing.T) {
+	tests := []struct {
+		name, key, agent string
+		want, not        []string
+	}{
+		{"no agent", "k", "", []string{"dispatch --prompt-key k", "not injected"}, []string{"NOT be auto"}},
+		{"agent", "k", "go-engineer", []string{"every launch of go-engineer", "first 8KB"}, []string{"-prompt"}},
+		{"agent prompt key", "x-prompt", "go-engineer", []string{"every launch", "without --agent", "--prompt-key"}, nil},
+		{"ticket spec", "ticket-5-spec", "a", []string{"--issue 5"}, []string{"every launch"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := contextSetNotice(tt.key, tt.agent)
+			for _, w := range tt.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("%q missing %q", got, w)
+				}
+			}
+			for _, w := range tt.not {
+				if strings.Contains(got, w) {
+					t.Errorf("%q should not contain %q", got, w)
+				}
+			}
+		})
+	}
+}
