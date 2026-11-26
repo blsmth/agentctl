@@ -114,13 +114,25 @@ func cmdContextSet() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		cliout.Exit(1)
 	}
-	if n, ok := ctxstore.TicketSpecNumber(key); ok && agentName != "" {
-		fmt.Fprintf(os.Stderr, "context: %q is injected only into `dispatch --issue %d` launches of %s (or when listed in its context_keys)\n", key, n, agentName)
-	}
-	if agentName == "" {
-		fmt.Fprintf(os.Stderr, "context: %q has no --agent, so it will NOT be auto-injected into any prompt -- use --agent <name> or add it to that agent's context_keys to opt in\n", key)
+	if msg := contextSetNotice(key, agentName); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
 	}
 	fmt.Printf("context: set %q\n", key)
+}
+
+// contextSetNotice returns the stderr guidance for a "context set", or "" for none.
+func contextSetNotice(key, agentName string) string {
+	if agentName == "" {
+		return fmt.Sprintf("context: %q is stored for lookup and for `dispatch --prompt-key %s`; it is not injected into any prompt (use --agent <name> only to inject it into every launch of that agent)", key, key)
+	}
+	if n, ok := ctxstore.TicketSpecNumber(key); ok {
+		return fmt.Sprintf("context: %q is injected only into `dispatch --issue %d` launches of %s (or when listed in its context_keys)", key, n, agentName)
+	}
+	msg := fmt.Sprintf("context: warning: %q is injected (first 8KB) into every launch of %s until cleared", key, agentName)
+	if strings.HasSuffix(key, "-prompt") {
+		msg += "; a key ending in -prompt looks like a one-dispatch prompt -- set it without --agent and use `dispatch --prompt-key`"
+	}
+	return msg
 }
 
 // cmdContextGet handles "agentctl context get <key>".
