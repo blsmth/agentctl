@@ -23,17 +23,24 @@ import (
 
 // Entry is a single item in the context store.
 type Entry struct {
-	Key       string    // derived from filename (not in frontmatter)
+	Key string // derived from filename (not in frontmatter)
+	// Agent is legacy metadata from older binaries, where it scoped injection.
+	// It is still read and displayed but nothing uses it to select entries.
 	Agent     string    `yaml:"agent,omitempty"`
 	Content   string    // body below frontmatter (not in frontmatter)
 	Tags      []string  `yaml:"tags,omitempty"`
 	Timestamp time.Time // derived from file mtime (not in frontmatter)
+	// Used is when `dispatch --prompt-key` last launched with this entry.
+	// Zero means never used (including every entry an older binary wrote).
+	// Set clears it: a rewritten entry is new content.
+	Used time.Time `yaml:"used,omitempty"`
 }
 
 // frontmatter holds the YAML-serializable fields of an entry.
 type frontmatter struct {
-	Agent string   `yaml:"agent,omitempty"`
-	Tags  []string `yaml:"tags,omitempty"`
+	Agent string    `yaml:"agent,omitempty"`
+	Tags  []string  `yaml:"tags,omitempty"`
+	Used  time.Time `yaml:"used,omitempty"`
 }
 
 var (
@@ -130,6 +137,7 @@ func readEntry(path string) (Entry, error) {
 		Content:   content,
 		Tags:      fm.Tags,
 		Timestamp: info.ModTime(),
+		Used:      fm.Used,
 	}, nil
 }
 
@@ -140,10 +148,10 @@ func writeEntry(key string, e Entry) error {
 	}
 
 	var buf strings.Builder
-	fm := frontmatter{Agent: e.Agent, Tags: e.Tags}
+	fm := frontmatter{Agent: e.Agent, Tags: e.Tags, Used: e.Used}
 
 	// Only write frontmatter if there's something to write.
-	if fm.Agent != "" || len(fm.Tags) > 0 {
+	if fm.Agent != "" || len(fm.Tags) > 0 || !fm.Used.IsZero() {
 		yamlBytes, err := yaml.Marshal(&fm)
 		if err != nil {
 			return fmt.Errorf("marshal frontmatter for %q: %w", key, err)
@@ -173,6 +181,7 @@ func Set(key string, e Entry) error {
 	defer mu.Unlock()
 
 	e.Key = key
+	e.Used = time.Time{}
 	return writeEntry(key, e)
 }
 
@@ -256,17 +265,8 @@ func Search(tag string) ([]Entry, error) {
 	return result, nil
 }
 
-// MaxInjectedBytes bounds how many bytes of Format()'d output ForAgent will
-// return in total. It exists as a backstop against a single agent quietly
-// accumulating dozens of scoped/pinned entries over time and re-inflating
-// every prompt built from it -- scoping fixes today's problem, this fixes a
-// plausible future one. It's a var, not a const, so tests can shrink it
-// instead of building 32KB fixtures.
-var MaxInjectedBytes = 32 * 1024
-
-// MaxEntryBytes caps a single injected entry's content. A longer entry is
-// cut and ends with a visible pointer to the full text. Like MaxInjectedBytes
-// it is a var so tests can shrink it.
+// MaxEntryBytes caps an injected ticket spec. A longer spec is cut and ends
+// with a visible pointer to the full text. It is a var so tests can shrink it.
 var MaxEntryBytes = 8 * 1024
 
 var ticketSpecKey = regexp.MustCompile(`^ticket-(\d+)-spec$`)
@@ -284,57 +284,68 @@ func TicketSpecNumber(key string) (int, bool) {
 	return n, true
 }
 
-// ForAgent returns entries relevant to a specific agent: those explicitly
-// scoped to it via the agent field, or explicitly pinned via pinnedKeys.
-// Newest first, capped at MaxInjectedBytes of formatted output, and each
-// entry cut at MaxEntryBytes.
-//
-// A ticket spec (key ticket-<N>-spec) scoped to the agent is injected only
-// when the launch is for issue N (issue == N); a stale spec must not ride
-// along on unrelated launches. Pinning its key in context_keys still
-// injects it always.
-//
-// Unscoped entries (Agent == "") are deliberately NOT returned. That is what
-// makes this store a lookup service rather than a broadcast channel: every
-// entry stays fully available on demand via `agentctl context get <key>` and
-// `agentctl context list`, but nothing is force-fed into a prompt that never
-// asked for it. To get an entry auto-injected for an agent, either set it
-// explicitly with `--agent <name>` at `context set` time, or add its key to
-// that agent's `context_keys` in config.
-//
-// excludeKey (the launch's --prompt-key, which is the task itself and is
-// dropped from the prompt) is removed before budget selection so it cannot
-// crowd out standing entries. "" excludes nothing.
-func ForAgent(agentName string, pinnedKeys []string, issue int, excludeKey string) ([]Entry, error) {
+// TicketSpecKey is the key of issue n's spec.
+func TicketSpecKey(n int) string { return fmt.Sprintf("ticket-%d-spec", n) }
+
+// TicketSpec returns issue n's spec entry (key ticket-<n>-spec), cut at
+// MaxEntryBytes, for injection into `dispatch --issue n`. It is the only
+// entry ever injected into a launch. ok is false when there is none.
+func TicketSpec(n int) (Entry, bool, error) {
+	e, ok, err := Get(TicketSpecKey(n))
+	if err != nil || !ok {
+		return Entry{}, false, err
+	}
+	return truncateEntry(e), true, nil
+}
+
+// MarkUsed records now as the entry's last-used time without touching its
+// mtime (and so its AGE). A missing entry is not an error.
+func MarkUsed(key string, now time.Time) error {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if err := validateKey(key); err != nil {
+		return err
+	}
+	if storePath == "" {
+		return nil
+	}
+	path := filepath.Join(storePath, key+".md")
+	e, err := readEntry(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	e.Used = now
+	if err := writeEntry(key, e); err != nil {
+		return err
+	}
+	return os.Chtimes(path, e.Timestamp, e.Timestamp)
+}
+
+// PruneUsed deletes entries whose last use is at least olderThan before now,
+// returning the keys removed (or, with dryRun, that would be). Entries that
+// were never used are never touched.
+func PruneUsed(olderThan time.Duration, now time.Time, dryRun bool) ([]string, error) {
 	all, err := List()
 	if err != nil {
 		return nil, err
 	}
-
-	pinned := make(map[string]bool, len(pinnedKeys))
-	for _, k := range pinnedKeys {
-		pinned[k] = true
-	}
-
-	var candidates []Entry
+	var keys []string
 	for _, e := range all {
-		if excludeKey != "" && e.Key == excludeKey {
+		if e.Used.IsZero() || now.Sub(e.Used) < olderThan {
 			continue
 		}
-		if pinned[e.Key] {
-			candidates = append(candidates, truncateEntry(e))
-			continue
+		if !dryRun {
+			if err := Delete(e.Key); err != nil {
+				return keys, err
+			}
 		}
-		if e.Agent != agentName {
-			continue
-		}
-		if n, ok := TicketSpecNumber(e.Key); ok && n != issue {
-			continue
-		}
-		candidates = append(candidates, truncateEntry(e))
+		keys = append(keys, e.Key)
 	}
-
-	return selectWithinBudget(candidates, pinnedKeys, MaxInjectedBytes), nil
+	return keys, nil
 }
 
 // truncateEntry cuts e.Content to MaxEntryBytes (on a rune boundary) and
@@ -350,60 +361,6 @@ func truncateEntry(e Entry) Entry {
 	e.Content = strings.TrimRight(e.Content[:cut], "\n") +
 		fmt.Sprintf("\n\n[truncated, full text: agentctl context get %s]", e.Key)
 	return e
-}
-
-// selectWithinBudget picks entries from candidates to inject without
-// exceeding budget bytes of their Format()'d output. Pinned entries (by key)
-// are considered first, since a pin is the strongest explicit signal that an
-// entry belongs in a prompt; the rest follow in their existing order (the
-// order List() returns them in -- newest first).
-//
-// Entries are included whole or not at all: as soon as the next candidate in
-// priority order would push the running total past budget, selection stops
-// there -- a half-injected entry is worse than an absent one, and a
-// deterministic cutoff is easier to reason about than best-effort bin
-// packing. Every entry that didn't make the cut is named in a logging.Warn
-// alongside the budget: silent dropping is exactly how the unscoped-broadcast
-// bug this replaces went unnoticed for months, so a drop must always be loud.
-func selectWithinBudget(candidates []Entry, pinnedKeys []string, budget int) []Entry {
-	pinned := make(map[string]bool, len(pinnedKeys))
-	for _, k := range pinnedKeys {
-		pinned[k] = true
-	}
-
-	ordered := make([]Entry, 0, len(candidates))
-	for _, e := range candidates {
-		if pinned[e.Key] {
-			ordered = append(ordered, e)
-		}
-	}
-	for _, e := range candidates {
-		if !pinned[e.Key] {
-			ordered = append(ordered, e)
-		}
-	}
-
-	var selected []Entry
-	var dropped []string
-	total := 0
-	for i, e := range ordered {
-		size := len(Format(e))
-		if total+size > budget {
-			for _, rest := range ordered[i:] {
-				dropped = append(dropped, rest.Key)
-			}
-			break
-		}
-		total += size
-		selected = append(selected, e)
-	}
-
-	if len(dropped) > 0 {
-		logging.Warn("context store: dropped %d entr(y/ies) exceeding %d-byte injection budget: %s",
-			len(dropped), budget, strings.Join(dropped, ", "))
-	}
-
-	return selected
 }
 
 // Format renders an entry as a human-readable context block suitable for

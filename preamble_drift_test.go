@@ -114,7 +114,7 @@ func TestPreamblesMatchCLI(t *testing.T) {
 		ctxCases[m[1]] = true
 		ctxCases["--"+m[1]] = true // flags appear as case "--agent"; tolerate both forms
 	}
-	for _, sub := range []string{"set", "get", "list", "clear", "push"} {
+	for _, sub := range []string{"set", "get", "list", "clear", "prune"} {
 		if !ctxCases[sub] {
 			t.Fatalf("context.go no longer handles %q; update the preamble guard", sub)
 		}
@@ -139,7 +139,7 @@ func TestCheckInvocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctxCases := map[string]bool{"set": true, "get": true, "list": true, "clear": true, "push": true, "--agent": true, "--tag": true}
+	ctxCases := map[string]bool{"set": true, "get": true, "list": true, "clear": true, "prune": true, "--agent": true, "--tag": true}
 	tests := []struct {
 		span string
 		bad  bool

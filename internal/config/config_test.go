@@ -1913,7 +1913,7 @@ func TestProjectLayerGlobalOnlyKeys(t *testing.T) {
 			check:   wantDefaultAgent("", ""),
 		},
 		{
-			name:   "dir, cross_context, context_keys cannot override global; stale auto_improve is ignored",
+			name:   "dir, cross_context cannot override global; stale auto_improve and context_keys load and are ignored",
 			global: `{"agents":{"x":{"dir":"~/code/x","cross_context":false,"context_keys":["mine"]}}}`,
 			project: `{"agents":{"x":{"dir":"~","cross_context":true,"context_keys":["secrets","tokens"],
 				"auto_improve":true,"model":"opus"}}}`,
@@ -1925,22 +1925,19 @@ func TestProjectLayerGlobalOnlyKeys(t *testing.T) {
 				if x.CrossContext {
 					t.Error("project enabled cross_context")
 				}
-				if len(x.ContextKeys) != 1 || x.ContextKeys[0] != "mine" {
-					t.Errorf("context_keys = %v, want global [mine]", x.ContextKeys)
-				}
 				if x.Model != "opus" {
 					t.Errorf("model = %q, project non-protected fields must still apply", x.Model)
 				}
 			},
 		},
 		{
-			name:    "dir, context_keys on project-only agent fall back to defaults",
+			name:    "dir on project-only agent falls back to defaults; stale context_keys is ignored",
 			global:  `{}`,
 			project: `{"agents":{"x":{"dir":"~","cross_context":true,"context_keys":["secrets"],"auto_improve":true}}}`,
 			check: func(t *testing.T, cfg *Config) {
 				x := cfg.Agents["x"]
 				def := DefaultAgentConfig()
-				if x.Dir != def.Dir || len(x.ContextKeys) != 0 {
+				if x.Dir != def.Dir {
 					t.Errorf("project-only agent kept global-only values: %+v", x)
 				}
 				if x.CrossContext != def.CrossContext {
@@ -2347,12 +2344,11 @@ func TestGlobalOnlySettersWriteGlobalLayer(t *testing.T) {
 		cfg = Load()
 		ac := cfg.ForAgent("x")
 		ac.Dir = "~/code/x"
-		ac.ContextKeys = []string{"k"}
 		if err := cfg.SetAgent("x", ac); err != nil {
 			t.Fatal(err)
 		}
 		g := read(t, gp).Agents["x"]
-		if !g.CrossContext || g.Dir != "~/code/x" || len(g.ContextKeys) != 1 {
+		if !g.CrossContext || g.Dir != "~/code/x" {
 			t.Errorf("global agent = %+v, want toggled fields persisted", g)
 		}
 		got := Load().ForAgent("x")

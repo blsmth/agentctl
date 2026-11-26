@@ -103,7 +103,7 @@ const sharedRuntimeSections = sharedRuntimeHead + "\n" + gitConventionsSection
 // and display.
 const orchDelegateSection = "### Delegate\n" +
 	"- `agentctl dispatch --issue <N>` — worker on a GitHub issue; `agentctl dispatch --agent <name> --prompt '<text>'` — worker on an ad-hoc prompt\n" +
-	"- `--issue <N>` injects the issue body. A spec stored with `agentctl context set ticket-<N>-spec <text> --agent <name>` is injected only into the launch for `--issue <N>` of that same N (see Context for workers)\n" +
+	"- `--issue <N>` injects the issue body. A spec stored with `agentctl context set ticket-<N>-spec <text>` is injected into the launch for `--issue <N>` of that same N (see Context for workers)\n" +
 	"- `agentctl dispatch --agent <name> --prompt-key <key>` — prompt read from `agentctl context get <key>`. Prefer it for long prompts: the approval popup sees the raw command string and cannot resolve `$(cat file)`, but it can resolve a key. Run `agentctl context set <key> ...` in a separate Bash call BEFORE the dispatch, never chained with `&&` (the popup appears before any part of the command runs, and an unresolvable key is denied)\n" +
 	"- Flags: `--dir <repo>` (required when the work lives in a different repo than your cwd), `--model`, `--account`, `--no-worktree`\n" +
 	"- Worktree, branch and PR finishing steps are automatic: do not describe git mechanics in the prompt. Each launch gets a worktree at `<repo>/.worktrees/agent-<agent>-<issue-N|adhoc-id>` on branch `agent/<agent>/<issue-N|adhoc-id>`, cut from the remote default branch (usually origin/main), so a dirty local checkout cannot leak in. SessionEnd reclaims it when it is empty or landed; otherwise use `agentctl cleanup`\n" +
@@ -183,7 +183,8 @@ const orchCleanupSection = "### Clean up\n" +
 	"- `agentctl cleanup --dry-run`, then `agentctl cleanup --yes` — reclaim finished worktrees (skips those with open PRs)\n"
 
 const orchContextSection = "### Context for workers\n" +
-	"- `agentctl context set <key> <value> --agent <name> --tag <t>` — an entry is auto-injected (first 8KB) into that agent's prompts, except `ticket-<N>-spec`, which goes only into `--issue <N>` launches; WITHOUT `--agent` it is stored but never injected anywhere\n" +
+	"- `agentctl context set <key> <value> --tag <t>` — store a prompt or spec to read by key (`dispatch --prompt-key`, `context get`). Nothing is injected into worker prompts except `ticket-<N>-spec` (first 8KB), which goes into the `--issue <N>` launch whichever agent it is for\n" +
+	"- `agentctl context prune --used [--older-than 1d] [--dry-run]` — delete entries a dispatch has already used; unused entries are never deleted\n" +
 	"- `agentctl context clear <key>` — delete an entry\n"
 
 const orchOtherSection = "### Other\n" +

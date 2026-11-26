@@ -1,5 +1,5 @@
 ---
-description: Read and write the agentctl context store (set, get, list, push, clear)
+description: Read and write the agentctl context store (set, get, list, prune, clear)
 ---
 
 Parse $ARGUMENTS to extract the context subcommand and run it:
@@ -10,10 +10,10 @@ agentctl context <subcommand> [args] [flags]
 
 Available subcommands:
 
-- `list` — print all entries in the context store as a table
-- `set <key> <value> [--agent <name>] [--tag <tag>]...` — write a key/value entry. `--agent <name>` scopes the entry to that agent so it is auto-injected into that agent's prompt (cut at 8KB; a `ticket-<N>-spec` key only into the `--issue N` launch); without `--agent` the entry is NOT injected anywhere (it is stored for `get`/`push` and `dispatch --prompt-key <key>`, or if an agent lists the key in its `context_keys`). Use `--agent` only for entries that belong in every launch of that agent; a one-dispatch prompt (e.g. `*-prompt`) must be set without it. `--tag` may be repeated.
+- `list` — print all entries in the context store as a table (the USED column shows when a `dispatch --prompt-key` last used the entry, `-` if never)
+- `set <key> <value> [--tag <tag>]...` — write a key/value entry, read back by `get`, `dispatch --prompt-key <key>` and cron. Entries are never injected into prompts, except a `ticket-<N>-spec` entry, which goes into the `dispatch --issue N` launch. `--agent <name>` is accepted for old scripts but ignored. `--tag` may be repeated.
 - `get <key>` — print the value for a key
-- `push <key> --agent <name>` — inject a context entry into a running agent's prompt via tmux (needs an agentctl tmux session)
+- `prune --used [--older-than <duration>] [--dry-run]` — delete entries a dispatch has used at least that long ago (default `1d`). Entries never used are never deleted. Prefer `--dry-run` first.
 - `clear <key>` — delete the single entry `<key>`. A key is required; there is no way to clear everything at once.
 
 If no subcommand is given in $ARGUMENTS, default to `list`. If `clear` is given without a key, ask the user which key to delete rather than running it.
@@ -21,7 +21,7 @@ If no subcommand is given in $ARGUMENTS, default to `list`. If `clear` is given 
 Examples:
 - `/agentctl:context list` → `agentctl context list`
 - `/agentctl:context set repo_url https://github.com/org/repo` → `agentctl context set repo_url https://github.com/org/repo`
-- `/agentctl:context set api_base_url https://api.example.com --agent go-engineer --tag discovery` → same command, scoped to `go-engineer`
+- `/agentctl:context set api_base_url https://api.example.com --tag discovery` → `agentctl context set api_base_url https://api.example.com --tag discovery`
 - `/agentctl:context get repo_url` → `agentctl context get repo_url`
-- `/agentctl:context push repo_url --agent go-engineer` → `agentctl context push repo_url --agent go-engineer`
+- `/agentctl:context prune --used --dry-run` → `agentctl context prune --used --dry-run`
 - `/agentctl:context clear repo_url` → `agentctl context clear repo_url`

@@ -55,7 +55,7 @@ Every user-facing `agentctl` subcommand, grouped by job. Run `agentctl <command>
 | `agentctl sessions search <query>` | Search transcripts (`--tool`, `--include-output`, `--agent`, `--project`, `--since`, `--regex`, `--context`, `--json`). |
 | `agentctl sessions summary` | Summary of a day's sessions (`--date`, `--dir`). |
 | `agentctl sessions sync` | Rebuild session metadata sidecars. |
-| `agentctl context` | Cross-agent context store: `set <key> <value> [--agent A]`, `get`, `list`, `clear`, `push <key> --agent A`, `--tui` (prefix+`X`). Entries stored for an agent are injected into its dispatch prompt. |
+| `agentctl context` | Cross-agent context store: `set <key> <value> [--tag T]` (`--agent` is accepted and ignored), `get`, `list` (with a USED column), `clear`, `prune --used [--older-than 1d] [--dry-run]`, `--tui` (prefix+`X`). Named prompts and specs read by key (`dispatch --prompt-key`, cron, agents); only a `ticket-<N>-spec` entry is ever injected into a launch. |
 
 ## Cost and models
 

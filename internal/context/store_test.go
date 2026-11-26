@@ -180,140 +180,121 @@ func TestFormat(t *testing.T) {
 	}
 }
 
-// TestForAgent is a table test covering the four cases that define scoping:
-// an entry scoped to the target agent is returned, an entry scoped to a
-// different agent is not, an unscoped entry is NOT returned (this is the
-// regression test for the original broadcast bug -- every unscoped entry
-// used to be injected into every agent's prompt), and an unscoped entry IS
-// returned when its key is explicitly pinned.
-func TestForAgent(t *testing.T) {
+func TestTicketSpec(t *testing.T) {
 	setup(t)
-
-	if err := ctxstore.Set("unscoped", ctxstore.Entry{Content: "unscoped", Agent: ""}); err != nil {
-		t.Fatalf("Set unscoped: %v", err)
-	}
-	if err := ctxstore.Set("agent-only", ctxstore.Entry{Content: "agent", Agent: "go-engineer"}); err != nil {
-		t.Fatalf("Set agent-only: %v", err)
-	}
-	if err := ctxstore.Set("other-agent", ctxstore.Entry{Content: "other", Agent: "python-engineer"}); err != nil {
-		t.Fatalf("Set other-agent: %v", err)
-	}
-	if err := ctxstore.Set("pinned-unscoped", ctxstore.Entry{Content: "bykey", Agent: ""}); err != nil {
-		t.Fatalf("Set pinned-unscoped: %v", err)
-	}
-
-	results, err := ctxstore.ForAgent("go-engineer", []string{"pinned-unscoped"}, 0, "")
-	if err != nil {
-		t.Fatalf("ForAgent: %v", err)
-	}
-
-	keys := make(map[string]bool)
-	for _, e := range results {
-		keys[e.Key] = true
-	}
-
-	tests := []struct {
-		key  string
-		want bool
-		desc string
-	}{
-		{"agent-only", true, "entry scoped to the target agent must be included"},
-		{"other-agent", false, "entry scoped to a different agent must NOT be included"},
-		{"unscoped", false, "unscoped entry must NOT be included (regression: this was the broadcast bug)"},
-		{"pinned-unscoped", true, "unscoped entry IS included when its key is explicitly pinned"},
-	}
-	for _, tc := range tests {
-		if keys[tc.key] != tc.want {
-			t.Errorf("%s: keys[%q] = %v, want %v", tc.desc, tc.key, keys[tc.key], tc.want)
-		}
-	}
-}
-
-func TestForAgent_TicketSpecScoping(t *testing.T) {
-	setup(t)
-	for _, k := range []string{"ticket-1-spec", "ticket-2-spec", "ticket-3-spec", "ticket-x-spec", "notes"} {
-		if err := ctxstore.Set(k, ctxstore.Entry{Content: k, Agent: "go-engineer"}); err != nil {
+	for _, k := range []string{"ticket-2-spec", "ticket-3-spec", "notes"} {
+		if err := ctxstore.Set(k, ctxstore.Entry{Content: k, Agent: "some-agent"}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	tests := []struct {
-		name   string
-		pinned []string
-		issue  int
-		want   []string
-	}{
-		{"adhoc: no specs", nil, 0, []string{"notes", "ticket-x-spec"}},
-		{"issue 2: only its spec", nil, 2, []string{"notes", "ticket-2-spec", "ticket-x-spec"}},
-		{"issue 9: no spec", nil, 9, []string{"notes", "ticket-x-spec"}},
-		{"pinned spec always", []string{"ticket-3-spec"}, 0, []string{"notes", "ticket-3-spec", "ticket-x-spec"}},
+	e, ok, err := ctxstore.TicketSpec(2)
+	if err != nil || !ok || e.Key != "ticket-2-spec" {
+		t.Fatalf("TicketSpec(2) = %v, %v, %v", e, ok, err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := ctxstore.ForAgent("go-engineer", tc.pinned, tc.issue, "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			var keys []string
-			for _, e := range got {
-				keys = append(keys, e.Key)
-			}
-			sort.Strings(keys)
-			if strings.Join(keys, ",") != strings.Join(tc.want, ",") {
-				t.Errorf("keys = %v, want %v", keys, tc.want)
-			}
-		})
+	if _, ok, _ := ctxstore.TicketSpec(9); ok {
+		t.Error("TicketSpec(9) found a spec that does not exist")
 	}
-	t.Run("zero entries", func(t *testing.T) {
-		setup(t)
-		got, err := ctxstore.ForAgent("go-engineer", nil, 1, "")
-		if err != nil || len(got) != 0 {
-			t.Errorf("got %v, %v", got, err)
-		}
-	})
 }
 
-func TestForAgent_TruncatesLargeEntry(t *testing.T) {
+func TestTicketSpec_Truncates(t *testing.T) {
 	setup(t)
 	old := ctxstore.MaxEntryBytes
 	ctxstore.MaxEntryBytes = 100
 	t.Cleanup(func() { ctxstore.MaxEntryBytes = old })
-	if err := ctxstore.Set("big", ctxstore.Entry{Content: strings.Repeat("é", 200), Agent: "go-engineer"}); err != nil {
+	if err := ctxstore.Set("ticket-1-spec", ctxstore.Entry{Content: strings.Repeat("é", 200)}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ctxstore.ForAgent("go-engineer", nil, 0, "")
-	if err != nil || len(got) != 1 {
-		t.Fatalf("got %v, %v", got, err)
+	e, ok, err := ctxstore.TicketSpec(1)
+	if err != nil || !ok {
+		t.Fatalf("got %v, %v", ok, err)
 	}
-	c := got[0].Content
-	if !strings.HasSuffix(c, "[truncated, full text: agentctl context get big]") || !utf8.ValidString(c) || len(c) > 100+60 {
+	c := e.Content
+	if !strings.HasSuffix(c, "[truncated, full text: agentctl context get ticket-1-spec]") || !utf8.ValidString(c) || len(c) > 100+70 {
 		t.Errorf("content = %q", c)
 	}
 }
 
-func TestForAgent_ExcludeKeyBeforeBudget(t *testing.T) {
+func TestMarkUsed(t *testing.T) {
 	setup(t)
-	old := ctxstore.MaxInjectedBytes
-	ctxstore.MaxInjectedBytes = 300
-	t.Cleanup(func() { ctxstore.MaxInjectedBytes = old })
-	if err := ctxstore.Set("standing", ctxstore.Entry{Content: "standing", Agent: "go-engineer"}); err != nil {
+	if err := ctxstore.Set("k", ctxstore.Entry{Content: "body", Tags: []string{"t"}}); err != nil {
 		t.Fatal(err)
 	}
-	// Set last, so it is newest and would be selected first.
-	if err := ctxstore.Set("task", ctxstore.Entry{Content: strings.Repeat("x", 280), Agent: "go-engineer"}); err != nil {
+	old := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(filepath.Join(ctxstore.Dir(), "k.md"), old, old); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ctxstore.ForAgent("go-engineer", nil, 0, "task")
-	if err != nil {
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := ctxstore.MarkUsed("k", now); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Key != "standing" {
-		t.Errorf("got %v, want only the standing entry", got)
+	e, _, _ := ctxstore.Get("k")
+	if !e.Used.Equal(now) || e.Content != "body" || len(e.Tags) != 1 {
+		t.Errorf("entry after MarkUsed = %+v", e)
 	}
-	got, _ = ctxstore.ForAgent("go-engineer", nil, 0, "")
-	for _, e := range got {
-		if e.Key == "standing" {
-			t.Errorf("without exclusion the task entry should crowd out standing; got %v", got)
+	if !e.Timestamp.Equal(old) {
+		t.Errorf("mtime moved: %v, want %v", e.Timestamp, old)
+	}
+	if err := ctxstore.MarkUsed("missing", now); err != nil {
+		t.Errorf("MarkUsed(missing) = %v, want nil", err)
+	}
+	// A rewrite is new content: not used yet.
+	if err := ctxstore.Set("k", ctxstore.Entry{Content: "new"}); err != nil {
+		t.Fatal(err)
+	}
+	if e, _, _ := ctxstore.Get("k"); !e.Used.IsZero() {
+		t.Errorf("Set kept Used = %v", e.Used)
+	}
+}
+
+func TestLegacyEntryHasNoUsed(t *testing.T) {
+	setup(t)
+	legacy := "---\nagent: go-engineer\ntags:\n    - x\n---\nold body"
+	if err := os.WriteFile(filepath.Join(ctxstore.Dir(), "old.md"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e, ok, err := ctxstore.Get("old")
+	if err != nil || !ok || !e.Used.IsZero() || e.Content != "old body" {
+		t.Fatalf("got %+v, %v, %v", e, ok, err)
+	}
+}
+
+func TestPruneUsed(t *testing.T) {
+	setup(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, k := range []string{"unused", "recent", "stale", "exact"} {
+		if err := ctxstore.Set(k, ctxstore.Entry{Content: k}); err != nil {
+			t.Fatal(err)
 		}
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(ctxstore.MarkUsed("recent", now.Add(-time.Hour)))
+	must(ctxstore.MarkUsed("stale", now.Add(-3*24*time.Hour)))
+	must(ctxstore.MarkUsed("exact", now.Add(-24*time.Hour)))
+
+	got, err := ctxstore.PruneUsed(24*time.Hour, now, true)
+	must(err)
+	sort.Strings(got)
+	if strings.Join(got, ",") != "exact,stale" {
+		t.Fatalf("dry run = %v", got)
+	}
+	if l, _ := ctxstore.List(); len(l) != 4 {
+		t.Fatalf("dry run deleted: %d left", len(l))
+	}
+	_, err = ctxstore.PruneUsed(24*time.Hour, now, false)
+	must(err)
+	var left []string
+	l, _ := ctxstore.List()
+	for _, e := range l {
+		left = append(left, e.Key)
+	}
+	sort.Strings(left)
+	if strings.Join(left, ",") != "recent,unused" {
+		t.Errorf("left = %v", left)
 	}
 }
 

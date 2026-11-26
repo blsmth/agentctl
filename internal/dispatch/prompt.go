@@ -105,7 +105,6 @@ const taskMaterialHeading = "## Task material (too large for the first message)"
 //  3. Mode instructions (autonomy boilerplate, review rules, ...)
 //  4. Worktree note (that there is one, not its path or branch)
 //  5. Session (agent, repo, mode)
-//  6. Context store entries for the agent (not the ticket's spec)
 //
 // The first message carries everything per launch, in this order:
 //
@@ -126,13 +125,13 @@ const taskMaterialHeading = "## Task material (too large for the first message)"
 // ModeBare is different: its first message is the human's own prompt (see
 // bareLaunchPrompt).
 func buildLaunchPrompt(req Request, spec modeSpec, facts launchFacts, contextEntries []ctxstore.Entry, sharedConventions string) launchPrompt {
-	stable, perLaunch := splitContextEntries(req, contextEntries)
-	system := buildSystemFile(req, spec, facts, stable, sharedConventions)
+	specs := ticketSpecs(req, contextEntries)
+	system := buildSystemFile(req, spec, facts, sharedConventions)
 	if req.Mode == ModeBare {
 		return bareLaunchPrompt(req, facts, system)
 	}
 
-	task := taskBlock(req, spec, perLaunch)
+	task := taskBlock(req, spec, specs)
 	tail := joinParts(launchFactsBlock(req, facts), closingBlock(req, spec, facts))
 	msg := joinParts(task, tail)
 	if len(msg) <= maxInlineMessage || task == "" {
@@ -173,7 +172,7 @@ func bareLaunchPrompt(req Request, facts launchFacts, system string) launchPromp
 
 // buildSystemFile composes the stable system prompt file (see
 // buildLaunchPrompt for the order and why).
-func buildSystemFile(req Request, spec modeSpec, facts launchFacts, contextEntries []ctxstore.Entry, sharedConventions string) string {
+func buildSystemFile(req Request, spec modeSpec, facts launchFacts, sharedConventions string) string {
 	var parts []string
 
 	// 1. Preamble
@@ -240,29 +239,20 @@ func buildSystemFile(req Request, spec modeSpec, facts launchFacts, contextEntri
 	// 5. Session
 	parts = append(parts, sessionBlock(req, facts))
 
-	// 6. Context store entries
-	if len(contextEntries) > 0 {
-		parts = append(parts, contextSection(req, contextEntries))
-	}
-
 	return strings.Join(parts, "\n\n")
 }
 
-// splitContextEntries separates the context entries that are per launch
-// (the ticket's own spec, which goes in the first message) from the
-// agent's standing entries (system file). The --prompt-key entry is the task
-// itself, already in the message, so it is dropped.
-func splitContextEntries(req Request, entries []ctxstore.Entry) (stable, perLaunch []ctxstore.Entry) {
+// ticketSpecs keeps the entries that belong in the first message: the
+// launch's own ticket-<N>-spec. Nothing else from the context store is ever
+// injected, so anything else in entries is dropped.
+func ticketSpecs(req Request, entries []ctxstore.Entry) []ctxstore.Entry {
+	var out []ctxstore.Entry
 	for _, e := range entries {
-		switch {
-		case req.PromptKey != "" && e.Key == req.PromptKey:
-		case isTicketSpec(e.Key, req.Ticket):
-			perLaunch = append(perLaunch, e)
-		default:
-			stable = append(stable, e)
+		if isTicketSpec(e.Key, req.Ticket) {
+			out = append(out, e)
 		}
 	}
-	return stable, perLaunch
+	return out
 }
 
 // isTicketSpec reports whether key is ticket's ticket-<N>-spec entry.
@@ -271,7 +261,7 @@ func isTicketSpec(key string, ticket int) bool {
 	return ok && ticket > 0 && n == ticket
 }
 
-// contextSection renders context entries under "## Shared Context".
+// contextSection renders the ticket spec under "## Shared Context".
 func contextSection(req Request, entries []ctxstore.Entry) string {
 	formatted := make([]string, 0, len(entries))
 	totalBytes := 0
@@ -283,20 +273,20 @@ func contextSection(req Request, entries []ctxstore.Entry) string {
 	// Byte count, not just entry count, is the point: a count alone cannot
 	// reveal a 276KB payload -- that's exactly how the unscoped-broadcast
 	// bug went unnoticed for months.
-	logging.Log("dispatch: injected %d context store entries (%d bytes) for %s", len(entries), totalBytes, req.AgentName)
+	logging.Log("dispatch: injected ticket spec (%d bytes) for %s", totalBytes, req.AgentName)
 	return "## Shared Context\n\n" + strings.Join(formatted, "\n\n---\n\n")
 }
 
 // taskBlock is the first message's task: the issue (with its ticket spec),
 // the ad-hoc prompt, custom instructions or the PR, then the user's
 // additional instructions.
-func taskBlock(req Request, spec modeSpec, perLaunch []ctxstore.Entry) string {
+func taskBlock(req Request, spec modeSpec, specs []ctxstore.Entry) string {
 	var parts []string
 	if spec.IncludeTicketBody && req.Ticket > 0 {
 		parts = append(parts, fmt.Sprintf("## Issue #%d: %s\n\n%s", req.Ticket, req.TicketTitle, req.TicketBody))
 	}
-	if len(perLaunch) > 0 {
-		parts = append(parts, contextSection(req, perLaunch))
+	if len(specs) > 0 {
+		parts = append(parts, contextSection(req, specs))
 	}
 	switch {
 	case req.Mode == ModeAdhoc && req.CustomPrompt != "":

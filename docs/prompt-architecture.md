@@ -54,11 +54,9 @@ Claude follows instructions in user messages more reliably than in the system pr
    (finishing modes: "Do not merge to main"; the others get the longer
    orientation). None for review-pr, whose checkout steps are launch facts
 5. Session (agent, repo, mode; no timestamp)
-6. Context store entries for the agent and pinned `context_keys`, each cut
-   at 8KB; never the ticket's `ticket-<N>-spec` or the `--prompt-key` entry
 ```
 
-The context entries are last because they change whenever an agent writes to the store.
+No context store entries are in the system file. The only entry a launch is given is the issue's `ticket-<N>-spec`, which goes in the first message with the task.
 
 ### First user message
 

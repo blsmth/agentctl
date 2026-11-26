@@ -35,13 +35,12 @@ const (
 )
 
 var scopes = map[string]Scope{
-	"kill-menu":         ScopeWindow,
-	"logs":              ScopeWindow,
-	"settings-menu":     ScopeWindow,
-	"improve-menu":      ScopeWindow,
-	"hud-toggle":        ScopeWindow,
-	"hud":               ScopeWindow,
-	"context-push-menu": ScopeWindow,
+	"kill-menu":     ScopeWindow,
+	"logs":          ScopeWindow,
+	"settings-menu": ScopeWindow,
+	"improve-menu":  ScopeWindow,
+	"hud-toggle":    ScopeWindow,
+	"hud":           ScopeWindow,
 
 	"menu":                 ScopeProject,
 	"launch":               ScopeProject,

@@ -155,15 +155,15 @@ func TestFirstMessageLayout(t *testing.T) {
 		t.Errorf("finishing steps are not the last thing in the message:\n%s", msg)
 	}
 	if strings.Contains(msg, "STANDING") {
-		t.Error("the agent's standing context entry is in the message; it belongs in the system file")
+		t.Error("a context entry other than the ticket spec was injected")
 	}
-	if !strings.Contains(lp.System, "STANDING") || strings.Contains(lp.System, "THE SPEC") {
-		t.Error("system file should hold the standing entry and not the ticket spec")
+	if strings.Contains(lp.System, "STANDING") || strings.Contains(lp.System, "THE SPEC") {
+		t.Error("system file should hold neither the standing entry nor the ticket spec")
 	}
 }
 
 // TestSystemFileLayout checks the system file's content and order: the
-// preamble first, the session block without a timestamp, context last.
+// preamble first, the session block (without a timestamp) last.
 func TestSystemFileLayout(t *testing.T) {
 	req := Request{AgentName: "go-engineer", Mode: ModeDispatch, Ticket: 42, TicketTitle: "T", TicketBody: "B", RepoSlug: "blsmth/agentctl",
 		Orchestrator: Orchestrator{WindowID: "@35", Pane: "%35"}}
@@ -176,7 +176,6 @@ func TestSystemFileLayout(t *testing.T) {
 		"Execute this ticket autonomously",
 		"You are working in a git worktree on its own branch",
 		"## Session\n\n- Agent: go-engineer\n- Repo: blsmth/agentctl\n- Mode: dispatch",
-		"## Shared Context",
 	}
 	last := -1
 	for _, want := range order {
@@ -189,7 +188,7 @@ func TestSystemFileLayout(t *testing.T) {
 		}
 		last = i
 	}
-	for _, absent := range []string{"started:", "ticket:", "## Issue #42", "When you are finished", "git push", "---\nagent:"} {
+	for _, absent := range []string{"started:", "ticket:", "## Issue #42", "When you are finished", "git push", "---\nagent:", "## Shared Context", "## Context: k"} {
 		if strings.Contains(got, absent) {
 			t.Errorf("system file contains %q", absent)
 		}
