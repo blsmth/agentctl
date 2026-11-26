@@ -59,10 +59,16 @@ const maxImproveSince = 30 * 24 * time.Hour
 // Job is one scheduled run. Optional enum fields are normalized by
 // Normalize; read Worktree and Enabled through UseWorktree and IsEnabled.
 type Job struct {
-	Name     string `json:"name"`
+	Name string `json:"name"`
+	// Schedule is the cron expression of a recurring job; empty for a
+	// one-shot.
 	Schedule string `json:"schedule"`
-	Dir      string `json:"dir"`
-	Agent    string `json:"agent"`
+	// At makes the job a one-shot: the RFC3339 time it fires once at
+	// (jitter included, like a scheduled fire). Exactly one of Schedule and
+	// At is set. See IsOnce and the one-shot fields below.
+	At    string `json:"at,omitempty"`
+	Dir   string `json:"dir"`
+	Agent string `json:"agent"`
 	// Exactly one of Prompt, PromptKey (context store) and Template (a
 	// prompt template, internal/prompttemplate). --prompt-file is copied
 	// into Prompt at add time; PromptKey and Template are read at every
@@ -90,7 +96,86 @@ type Job struct {
 	Timeout          string                      `json:"timeout,omitempty"`
 	SkipIfUsageAbove *config.CronUsageThresholds `json:"skip_if_usage_above,omitempty"`
 	Enabled          *bool                       `json:"enabled,omitempty"`
+
+	// One-shot outcome, written by the tick (or `cron run`) after the one
+	// launch attempt, or when the time is missed: State is "" while
+	// pending, then StateCompleted or StateExpired. A done one-shot never
+	// fires again and is pruned PruneDoneAfter after CompletedAt. The
+	// rest copy the run entry.
+	State        string    `json:"state,omitempty"`
+	CompletedAt  time.Time `json:"completed_at,omitzero"`
+	Result       string    `json:"result,omitempty"`
+	RunWindow    string    `json:"run_window,omitempty"`
+	RunSession   string    `json:"run_session,omitempty"`
+	RunSessionID string    `json:"run_session_id,omitempty"`
 }
+
+// One-shot states (Job.State).
+const (
+	StateCompleted = "completed"
+	StateExpired   = "expired"
+)
+
+// PruneDoneAfter is how long a completed or expired one-shot stays in the
+// jobs file before the tick prunes it.
+const PruneDoneAfter = 30 * 24 * time.Hour
+
+// IsOnce reports whether the job is a one-shot (At set).
+func (j Job) IsOnce() bool { return strings.TrimSpace(j.At) != "" }
+
+// IsDone reports whether a one-shot has completed or expired.
+func (j Job) IsDone() bool { return j.State == StateCompleted || j.State == StateExpired }
+
+// AtTime parses At.
+func (j Job) AtTime() (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(j.At))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid at %q: want an RFC3339 time such as 2026-12-01T09:00:00-05:00", j.At)
+	}
+	return t, nil
+}
+
+// ClearOutcome resets a one-shot to pending.
+func (j *Job) ClearOutcome() {
+	j.State, j.CompletedAt, j.Result, j.RunWindow, j.RunSession, j.RunSessionID = "", time.Time{}, "", "", "", ""
+}
+
+// atLayouts are the local-time forms ParseAt accepts besides RFC3339.
+var atLayouts = []string{"2006-01-02 15:04", "2006-01-02T15:04", "2006-01-02 15:04:05", "2006-01-02T15:04:05"}
+
+// ParseAt parses a `--at` value: "YYYY-MM-DD HH:MM" in local time, or an
+// RFC3339 timestamp. A local wall-clock time that does not exist (the hour
+// a DST spring-forward skips) is rejected; one that occurs twice (a
+// fall-back) is the first occurrence, as Go resolves it, and the preview
+// shows the offset. It does not check that the time is in the future.
+func ParseAt(s string) (time.Time, error) {
+	return parseAtIn(s, time.Local)
+}
+
+func parseAtIn(s string, loc *time.Location) (time.Time, error) {
+	v := strings.TrimSpace(s)
+	if v == "" {
+		return time.Time{}, fmt.Errorf("--at needs a time: YYYY-MM-DD HH:MM (local time) or RFC3339")
+	}
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t, nil
+	}
+	for _, layout := range atLayouts {
+		t, err := time.ParseInLocation(layout, v, loc)
+		if err != nil {
+			continue
+		}
+		want, _ := time.Parse(layout, v) // the wall clock as written
+		if t.Hour() != want.Hour() || t.Minute() != want.Minute() || t.Day() != want.Day() {
+			return time.Time{}, fmt.Errorf("--at %q does not exist in local time (a daylight saving change skips it); pick another time", s)
+		}
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("--at %q: want YYYY-MM-DD HH:MM (local time) or an RFC3339 time", s)
+}
+
+// FormatAt is the stored form of an at time (RFC3339, local offset).
+func FormatAt(t time.Time) string { return t.In(time.Local).Format(time.RFC3339) }
 
 // IsImprove reports whether the job runs a fleet improve run.
 func (j Job) IsImprove() bool { return j.Mode == ModeImprove }
@@ -214,6 +299,7 @@ var (
 const (
 	FieldName             = "name"
 	FieldSchedule         = "schedule"
+	FieldAt               = "at"
 	FieldDir              = "dir"
 	FieldAgent            = "agent"
 	FieldPrompt           = "prompt"
@@ -261,8 +347,25 @@ func (j Job) FieldErrors() []FieldError {
 	} else if !jobNameRE.MatchString(j.Name) {
 		add(FieldName, "invalid job name %q: use letters, digits, - and _ (max 48, starting with a letter or digit)", j.Name)
 	}
-	if _, err := ParseSchedule(j.Schedule); err != nil {
-		add(FieldSchedule, "%s", err.Error())
+	switch {
+	case j.IsOnce() && strings.TrimSpace(j.Schedule) != "":
+		add(FieldSchedule, "use a schedule or a one-shot at time, not both")
+	case j.IsOnce():
+		if _, err := j.AtTime(); err != nil {
+			add(FieldAt, "%s", err.Error())
+		}
+	default:
+		if _, err := ParseSchedule(j.Schedule); err != nil {
+			add(FieldSchedule, "%s", err.Error())
+		}
+	}
+	switch j.State {
+	case "", StateCompleted, StateExpired:
+		if j.State != "" && !j.IsOnce() {
+			add(FieldSchedule, "state %q applies only to a one-shot (at) job", j.State)
+		}
+	default:
+		add(FieldSchedule, "state %q: want %s or %s", j.State, StateCompleted, StateExpired)
 	}
 	switch {
 	case j.Dir == "":

@@ -54,7 +54,7 @@ const (
 // word after them is never a help flag, a positional or a subcommand. Keys
 // are the long names; cronShortFlags maps the short forms.
 var cronValueFlags = map[string]bool{
-	"schedule": true, "agent": true, "dir": true, "prompt": true, "prompt-key": true,
+	"schedule": true, "at": true, "agent": true, "dir": true, "prompt": true, "prompt-key": true,
 	"prompt-file": true, "model": true, "effort": true, "backend": true, "account": true,
 	"timeout": true, "overlap": true, "catchup": true, "limit": true, "template": true, "mode": true,
 }
@@ -374,7 +374,7 @@ func buildCronAddPreview(a cronArgs, command, cwd string) (cronPreview, string) 
 	if len(a.positional) > 0 && a.positional[0].expands {
 		return cronPreview{}, cronExpansionReason("add", "")
 	}
-	for _, f := range []string{"schedule", "agent", "dir", "prompt", "prompt-key", "prompt-file", "account",
+	for _, f := range []string{"schedule", "at", "agent", "dir", "prompt", "prompt-key", "prompt-file", "account",
 		"model", "effort", "backend", "timeout", "template", "mode"} {
 		if a.values[f].expands {
 			return cronPreview{}, cronExpansionReason("add", f)
@@ -384,7 +384,15 @@ func buildCronAddPreview(a cronArgs, command, cwd string) (cronPreview, string) 
 	if len(a.positional) > 0 {
 		name = a.positional[0].text
 	}
-	schedule, err := cron.Summary(a.value("schedule"), name, cronNow())
+	at, deny := cronFlagAt("add", a)
+	if deny != "" {
+		return cronPreview{}, deny
+	}
+	_, hasAt := a.values["at"]
+	if hasAt == (a.value("schedule") != "") {
+		return cronPreview{}, "agentctl cron add: give exactly one of --schedule (recurring) or --at (one-shot)."
+	}
+	schedule, err := cron.JobSummary(cron.Job{Name: name, Schedule: a.value("schedule"), At: at}, cronNow())
 	if err != nil {
 		return cronPreview{}, fmt.Sprintf("agentctl cron add: %v. Fix the schedule and retry.", err)
 	}
@@ -406,7 +414,7 @@ func buildCronAddPreview(a cronArgs, command, cwd string) (cronPreview, string) 
 	}
 	wt := !a.noWorktree
 	job := cron.Job{
-		Name: name, Schedule: a.value("schedule"), Agent: a.value("agent"), Dir: displayDir(a.value("dir")),
+		Name: name, Schedule: a.value("schedule"), At: at, Agent: a.value("agent"), Dir: displayDir(a.value("dir")),
 		Account: a.value("account"), Model: a.value("model"), Effort: a.value("effort"), Backend: a.value("backend"),
 		Timeout: a.value("timeout"), Overlap: a.value("overlap"), Catchup: a.value("catchup"), Worktree: &wt,
 		Template: a.value("template"), Mode: a.value("mode"),
@@ -423,6 +431,24 @@ func buildCronAddPreview(a cronArgs, command, cwd string) (cronPreview, string) 
 		schedule: schedule,
 		body:     cronJobBody(withTemplateDefaults(job, tmpl), schedule, "", source, prompt),
 	}, ""
+}
+
+// cronFlagAt parses a literal --at of a cron add or edit into its stored
+// form ("" when absent), or returns a deny reason: a time that does not
+// parse or is not in the future (the command would fail on it).
+func cronFlagAt(sub string, a cronArgs) (string, string) {
+	tok, ok := a.values["at"]
+	if !ok {
+		return "", ""
+	}
+	t, err := cron.ParseAt(tok.text)
+	if err != nil {
+		return "", fmt.Sprintf("agentctl cron %s: %v.", sub, err)
+	}
+	if !t.After(cronNow()) {
+		return "", fmt.Sprintf("agentctl cron %s: --at %s is in the past.", sub, tok.text)
+	}
+	return cron.FormatAt(t), ""
 }
 
 // cronAddPrompt resolves the prompt of a cron add: inline, from the context
@@ -457,7 +483,7 @@ func cronAddPrompt(a cronArgs, command string) (prompt, source, deny string) {
 
 // cronEditFlags are the value flags `cron edit` can change, checked for
 // shell expansion like cron add's.
-var cronEditFlags = []string{"schedule", "agent", "dir", "prompt", "prompt-key", "prompt-file", "account",
+var cronEditFlags = []string{"schedule", "at", "agent", "dir", "prompt", "prompt-key", "prompt-file", "account",
 	"model", "effort", "backend", "timeout", "overlap", "catchup", "template", "mode"}
 
 // buildCronEditPreview previews `cron edit`: the stored job with the given
@@ -480,6 +506,14 @@ func buildCronEditPreview(a cronArgs, command, cwd string) (cronPreview, string)
 		}
 	}
 	name := a.positional[0].text
+	_, hasAt := a.values["at"]
+	if _, hasSchedule := a.values["schedule"]; hasAt && hasSchedule {
+		return cronPreview{}, "agentctl cron edit: --schedule and --at are mutually exclusive."
+	}
+	at, deny := cronFlagAt("edit", a)
+	if deny != "" {
+		return cronPreview{}, deny
+	}
 	jobs, err := cronJobsLoader()
 	if err != nil {
 		return cronPreview{}, fmt.Sprintf("agentctl cron edit: cannot read the jobs to show for approval: %v", err)
@@ -518,6 +552,14 @@ func buildCronEditPreview(a cronArgs, command, cwd string) (cronPreview, string)
 			*dst = t.text
 		}
 	}
+	if _, ok := a.values["schedule"]; ok {
+		job.At = ""
+		job.ClearOutcome()
+	}
+	if hasAt {
+		job.Schedule, job.At = "", at
+		job.ClearOutcome()
+	}
 	// The template is read from the dir the job will have.
 	templateDir := old.Dir
 	if t, ok := a.values["dir"]; ok {
@@ -553,7 +595,7 @@ func buildCronEditPreview(a cronArgs, command, cwd string) (cronPreview, string)
 		job.Mode = cron.ModeImprove
 	}
 	job.Normalize()
-	schedule, err := cron.Summary(job.Schedule, job.Name, cronNow())
+	schedule, err := cron.JobSummary(job, cronNow())
 	if err != nil {
 		return cronPreview{}, fmt.Sprintf("agentctl cron edit: %v. Fix the schedule and retry.", err)
 	}
@@ -572,7 +614,10 @@ func buildCronEditPreview(a cronArgs, command, cwd string) (cronPreview, string)
 	if changed := cronedit.ChangedFields(old, job); len(changed) > 0 {
 		note = "Edit changes: " + strings.Join(changed, ", ") + "."
 	}
-	if strings.TrimSpace(old.Schedule) != strings.TrimSpace(job.Schedule) {
+	switch {
+	case hasAt:
+		note += " The job becomes a one-shot: it fires once, then is kept as done."
+	case strings.TrimSpace(old.Schedule) != strings.TrimSpace(job.Schedule):
 		note += " The schedule restarts from now; earlier fires are not caught up."
 	}
 	return cronPreview{
@@ -621,9 +666,12 @@ func buildStoredCronPreview(sub, action string, a cronArgs, command string) (cro
 		return cronPreview{}, fmt.Sprintf("agentctl cron %s: no cron job named %q.", sub, name)
 	}
 	job := jobs.Jobs[i]
-	schedule, err := cron.Summary(job.Schedule, job.Name, cronNow())
+	if job.IsDone() {
+		return cronPreview{}, fmt.Sprintf("agentctl cron %s: %v.", sub, cron.OnceDoneError(job))
+	}
+	schedule, err := cron.JobSummary(job, cronNow())
 	if err != nil {
-		schedule = fmt.Sprintf("%s (invalid: %v)", job.Schedule, err)
+		schedule = fmt.Sprintf("%s (invalid: %v)", cron.ScheduleText(job), err)
 	}
 	note := "Resuming re-enables scheduled fires; fires missed while paused are not caught up."
 	if action == cronActionForce {

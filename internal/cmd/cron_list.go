@@ -36,13 +36,17 @@ type cronListView struct {
 	// are configured); usage holds each account's pushed rate limits.
 	accounts map[string]string
 	usage    map[string]*ratelimit.PushedRateLimits
+	// deleted are jobs gone from schedules.json (--all): each one's newest
+	// lifecycle entry, oldest name first; last holds their last runs.
+	deleted []cron.Entry
+	last    map[string]cron.Entry
 }
 
 // RunCronList prints the jobs with their next fire, last result and
-// throttles.
-func RunCronList(w io.Writer) error { return defaultCronEnv.list(w) }
+// throttles; with all, also the deleted jobs runs.ndjson remembers.
+func RunCronList(w io.Writer, all bool) error { return defaultCronEnv.list(w, all) }
 
-func (e cronEnv) list(w io.Writer) error {
+func (e cronEnv) list(w io.Writer, all bool) error {
 	dir, cfg, jobs, err := e.loadAll()
 	if err != nil {
 		return err
@@ -60,6 +64,9 @@ func (e cronEnv) list(w io.Writer) error {
 		in.Windows, _ = d.Windows(jobs.Jobs)
 	}
 	v := cronListView{now: in.Now, cfg: cfg, ov: cronedit.BuildOverview(in)}
+	if all {
+		v.deleted, v.last = deletedJobs(runs, jobs), cron.LastByJob(runs)
+	}
 	v.accounts, v.usage = map[string]string{}, map[string]*ratelimit.PushedRateLimits{}
 	for _, j := range jobs.Jobs {
 		acct := j.Account
@@ -95,7 +102,7 @@ func renderCronList(w io.Writer, v cronListView) {
 		}
 		fmt.Fprintf(w, "%s: %s\n", label, usageSummary(v.usage[acct], v.now))
 	}
-	if len(v.ov.Jobs) == 0 {
+	if len(v.ov.Jobs) == 0 && len(v.deleted) == 0 {
 		fmt.Fprintln(w, "\nNo cron jobs. Add one with agentctl cron add.")
 		return
 	}
@@ -109,14 +116,59 @@ func renderCronList(w io.Writer, v cronListView) {
 			acct = "-"
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			j.Name, j.Schedule, nextColumn(st, v.now), lastColumn(st.Last, v.now),
+			j.Name, cron.ScheduleText(j), nextColumn(st, v.now), lastColumn(st.Last, v.now),
 			enabledColumn(st), agentColumn(j), acct, promptColumn(j, v.now), throttleColumn(j, th))
+	}
+	for _, e := range v.deleted {
+		j := e.Def.Job()
+		var last *cron.Entry
+		if l, ok := v.last[e.Job]; ok {
+			last = &l
+		}
+		acct := j.Account
+		if acct == "" {
+			acct = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			j.Name, cron.ScheduleText(j), "-", lastColumn(last, v.now),
+			deletedColumn(e, v.now), agentColumn(j), acct, promptColumn(j, v.now), "-")
 	}
 	_ = tw.Flush()
 }
 
+// deletedJobs returns the newest lifecycle entry of each job runs.ndjson
+// knows that schedules.json no longer has, by name.
+func deletedJobs(runs []cron.Entry, jobs *cron.Jobs) []cron.Entry {
+	snaps := cron.LatestSnapshots(runs)
+	var out []cron.Entry
+	for _, name := range sortedKeys(snaps) {
+		if jobs.Find(name) < 0 {
+			out = append(out, snaps[name])
+		}
+	}
+	return out
+}
+
+// deletedColumn is the ENABLED column of a gone job: "deleted" (or
+// "pruned") with when, and by whom when it was not the tick.
+func deletedColumn(e cron.Entry, now time.Time) string {
+	what := "deleted"
+	switch e.Result {
+	case cron.ResultPruned:
+		what = "pruned"
+	case cron.ResultDeleted:
+	default:
+		// The newest entry is not a removal (runs.ndjson was trimmed, or the
+		// file was edited by hand): the job is still gone.
+		return "deleted (not recorded)"
+	}
+	return what + " " + relTime(e.Time, now)
+}
+
 func nextColumn(st cronedit.Status, now time.Time) string {
 	switch {
+	case st.Job.IsDone():
+		return "-"
 	case !st.Enabled:
 		return "paused"
 	case st.ScheduleError != "":
@@ -254,6 +306,9 @@ func renderCronRuns(w io.Writer, entries []cron.Entry, limit int, now time.Time)
 			win = e.Session + ":" + win
 		}
 		note := e.Note
+		if e.IsLifecycle() {
+			note = lifecycleNote(e, now)
+		}
 		if e.Missed > 0 {
 			note = strings.TrimPrefix(fmt.Sprintf("%s; %d older fires coalesced", note, e.Missed), "; ")
 		}
@@ -261,6 +316,64 @@ func renderCronRuns(w io.Writer, entries []cron.Entry, limit int, now time.Time)
 			e.Time.Format("Mon 2 Jan 15:04"), relTime(e.Time, now), e.Job, sched, e.Result, win, note)
 	}
 	_ = tw.Flush()
+}
+
+// lifecycleNoteWidth bounds the definition part of a lifecycle note.
+const lifecycleNoteWidth = 120
+
+// lifecycleNote is the NOTE of a lifecycle entry: who, the entry's own note,
+// and a short definition ("by window @12 (session 1a2b3c4d); changed at;
+// once, Tue 1 Dec 09:00 · agent brandon · ~/p · prompt: check the …").
+func lifecycleNote(e cron.Entry, now time.Time) string {
+	parts := []string{"by " + cronActorText(e.By)}
+	if e.Note != "" {
+		parts = append(parts, e.Note)
+	}
+	if e.Def != nil {
+		parts = append(parts, textutil.Truncate(snapshotText(*e.Def, now), lifecycleNoteWidth, "…"))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func cronActorText(a *cron.Actor) string {
+	if a == nil {
+		return cron.ActorCLI
+	}
+	return a.String()
+}
+
+// snapshotText is a one-line job definition.
+func snapshotText(s cron.JobSnapshot, now time.Time) string {
+	j := s.Job()
+	parts := []string{cron.ScheduleText(j), "agent " + agentColumn(j), "prompt: " + promptColumn(j, now)}
+	if s.Account != "" {
+		parts = append(parts, "account "+s.Account)
+	}
+	if s.Model != "" {
+		parts = append(parts, "model "+s.Model)
+	}
+	if !s.Enabled {
+		parts = append(parts, "paused")
+	}
+	if s.Dir != "" {
+		parts = append(parts, tildify(s.Dir))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// tildify shortens a home-relative path to ~/...
+func tildify(p string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	if p == home {
+		return "~"
+	}
+	if strings.HasPrefix(p, home+string(os.PathSeparator)) {
+		return "~" + p[len(home):]
+	}
+	return p
 }
 
 // ---------------------------------------------------------------------------
@@ -295,7 +408,7 @@ func gatherCronHealth(loaded func() bool) (cronHealth, bool) {
 	}
 	h.jobs = len(jobs.Jobs)
 	for _, j := range jobs.Jobs {
-		if j.IsEnabled() {
+		if j.IsEnabled() && !j.IsDone() { // a done one-shot never fires again
 			h.enabled++
 		}
 	}

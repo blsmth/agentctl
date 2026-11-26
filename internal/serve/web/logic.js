@@ -2222,6 +2222,9 @@ export function scheduleGlyph(st) {
 
 /** scheduleWhen is the right-hand "next fire" text of a list row. */
 export function scheduleWhen(st, now = Date.now()) {
+  // A one-shot that ran or was missed: its words say when.
+  if (st.job?.state === "completed") return "done";
+  if (st.job?.state === "expired") return "expired";
   if (!st.enabled) return "paused";
   if (st.invalid || st.schedule_error) return "invalid";
   return formatNextFire(st.next_fire, now) || "never";

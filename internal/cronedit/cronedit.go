@@ -13,7 +13,13 @@
 // change, resume) also takes the tick lock, inside the jobs lock, and seeds
 // last_fire before it saves the jobs file, so a tick never sees the new
 // schedule with the old last_fire (which could fire for a time before the
-// edit). The tick itself never takes the jobs lock.
+// edit). The tick takes the jobs lock only without waiting (cron.TryLockJobs),
+// to record a one-shot's outcome or prune a done one-shot.
+//
+// Every successful Create, Modify (with changes), SetEnabled and Delete
+// appends a lifecycle entry (created, edited, paused, resumed, deleted) to
+// runs.ndjson after the jobs file is committed, still under the jobs lock,
+// carrying the job snapshot and who made the change (Store.Actor).
 package cronedit
 
 import (
@@ -101,6 +107,28 @@ type Store struct {
 	// Options supplies the values the pinned model, backend and account may
 	// take (DefaultOptions in production). nil skips those checks.
 	Options func() Options
+	// Actor says who is making changes, for the lifecycle entries: the
+	// caller's window for a CLI run from an agent window, "hub", "phone".
+	// nil records cron.ActorCLI.
+	Actor func() cron.Actor
+}
+
+func (s Store) actor() cron.Actor {
+	if s.Actor == nil {
+		return cron.Actor{Kind: cron.ActorCLI}
+	}
+	return s.Actor()
+}
+
+// recordLifecycle appends a lifecycle entry for job. The jobs file is
+// already committed, so the change stands even when the append fails; the
+// failure is not reported to the caller.
+func (s Store) recordLifecycle(result string, job cron.Job, note string) {
+	dir, err := s.StateDir()
+	if err != nil {
+		return
+	}
+	_ = cron.AppendRun(dir, cron.LifecycleEntry(s.now(), result, job, s.actor(), note))
 }
 
 // Default is the production store. validateAgent is
@@ -177,7 +205,7 @@ func (s Store) Validate(job cron.Job, original string) (cron.Job, []cron.FieldEr
 	if job.PromptKey != "" && !validPromptKey(job.PromptKey) {
 		add(cron.FieldPrompt, fmt.Sprintf("invalid prompt_key %q", job.PromptKey))
 	}
-	if !has(cron.FieldSchedule) {
+	if !has(cron.FieldSchedule) && !job.IsOnce() {
 		sched, _ := cron.ParseSchedule(job.Schedule)
 		if err := cron.CheckMinInterval(sched, s.now(), s.config().EffectiveMinInterval()); err != nil {
 			add(cron.FieldSchedule, err.Error())
@@ -285,9 +313,33 @@ func (s Store) Check(j cron.Job) []cron.FieldError {
 	return append(s.optionErrors(j), s.templateErrors(j)...)
 }
 
+// atErrors rejects a pending one-shot whose time is not in the future. It
+// runs only where the at time is being set (create, a changed at, a reset
+// to pending), so an unrelated edit of a pending job in its last minute,
+// or any edit of a done one, is not refused for it.
+func (s Store) atErrors(job cron.Job) []cron.FieldError {
+	if !job.IsOnce() || job.IsDone() {
+		return nil
+	}
+	at, err := job.AtTime()
+	if err != nil {
+		return nil // reported by FieldErrors
+	}
+	if !at.After(s.now()) {
+		return []cron.FieldError{{Field: cron.FieldAt, Message: fmt.Sprintf("at %s is in the past", at.In(time.Local).Format(cron.NextFireFormat))}}
+	}
+	return nil
+}
+
+// atChanged reports whether an update sets a one-shot's time: a new at, or
+// a done one-shot reset to pending.
+func atChanged(old, next cron.Job) bool {
+	return next.IsOnce() && (strings.TrimSpace(old.At) != next.At || (old.IsDone() && !next.IsDone()))
+}
+
 // fieldOrder is the order field errors are reported in (the form order).
 var fieldOrder = []string{
-	cron.FieldName, cron.FieldDir, cron.FieldAgent, cron.FieldPrompt, cron.FieldTemplate, cron.FieldSchedule,
+	cron.FieldName, cron.FieldDir, cron.FieldAgent, cron.FieldPrompt, cron.FieldTemplate, cron.FieldSchedule, cron.FieldAt,
 	cron.FieldHarness, cron.FieldMode, cron.FieldModel, cron.FieldEffort, cron.FieldBackend, cron.FieldAccount,
 	cron.FieldTimeout, cron.FieldOverlap, cron.FieldCatchup, cron.FieldSkipIfUsageAbove,
 }
@@ -318,6 +370,10 @@ func validPromptKey(k string) bool {
 func normalize(job cron.Job) cron.Job {
 	job = clone(job)
 	job.Schedule = strings.TrimSpace(job.Schedule)
+	job.At = strings.TrimSpace(job.At)
+	if at, err := job.AtTime(); job.At != "" && err == nil {
+		job.At = cron.FormatAt(at)
+	}
 	if job.Dir != "" {
 		job.Dir = paths.ExpandHome(strings.TrimSpace(job.Dir))
 		if filepath.IsAbs(job.Dir) {
@@ -352,7 +408,10 @@ func clone(j cron.Job) cron.Job {
 // default to true; Duplicate is a Create with a new name (and, from the UI,
 // enabled false).
 func (s Store) Create(job cron.Job) (cron.Job, error) {
+	// A new job (or a duplicate of a done one-shot) starts pending.
+	job.ClearOutcome()
 	job, errs := s.Validate(job, "")
+	errs = sortFields(append(errs, s.atErrors(job)...))
 	if len(errs) > 0 {
 		return cron.Job{}, &ValidationError{Fields: errs}
 	}
@@ -365,7 +424,11 @@ func (s Store) Create(job cron.Job) (cron.Job, error) {
 		}
 		jobs.Jobs = append(jobs.Jobs, job)
 		out = job
-		return s.commit(path, jobs, job.Name)
+		if err := s.commit(path, jobs, job.Name); err != nil {
+			return err
+		}
+		s.recordLifecycle(cron.ResultCreated, job, "")
+		return nil
 	})
 	return out, err
 }
@@ -384,13 +447,20 @@ type Updated struct {
 
 // Update replaces the named job with job, atomically. The name cannot
 // change (an empty name keeps it). A nil enabled keeps the stored value, so
-// an edit never resumes a paused job by omission.
+// an edit never resumes a paused job by omission. A one-shot keeps its
+// outcome (state, result, ...) unless the at time changes, since the
+// forms do not send it.
 func (s Store) Update(name string, job cron.Job) (Updated, error) {
 	return s.Modify(name, func(cur *cron.Job) error {
 		enabled := cur.Enabled
+		prev := *cur
 		*cur = clone(job)
 		if cur.Enabled == nil {
 			cur.Enabled = enabled
+		}
+		if cur.IsOnce() && cur.State == "" && strings.TrimSpace(cur.At) == strings.TrimSpace(prev.At) {
+			cur.State, cur.CompletedAt, cur.Result = prev.State, prev.CompletedAt, prev.Result
+			cur.RunWindow, cur.RunSession, cur.RunSessionID = prev.RunWindow, prev.RunSession, prev.RunSessionID
 		}
 		return nil
 	})
@@ -398,8 +468,11 @@ func (s Store) Update(name string, job cron.Job) (Updated, error) {
 
 // Modify applies fn to a copy of the named job, validates the result and
 // saves it, all under the jobs lock. Fire state is kept unless the schedule
-// changed or the job was resumed, in which case last_fire is re-seeded to
-// now. Run history is never touched. An error from fn aborts the edit.
+// or a one-shot's at changed or the job was resumed, in which case
+// last_fire is re-seeded to now. A new at resets a done one-shot to
+// pending (and must be in the future). Run history is kept; an edit that
+// changes something appends an edited entry. An error from fn aborts the
+// edit.
 func (s Store) Modify(name string, fn func(*cron.Job) error) (Updated, error) {
 	var res Updated
 	err := s.withJobs(func(path string, jobs *cron.Jobs) error {
@@ -412,25 +485,42 @@ func (s Store) Modify(name string, fn func(*cron.Job) error) (Updated, error) {
 		if err := fn(&cur); err != nil {
 			return err
 		}
+		if strings.TrimSpace(cur.At) != strings.TrimSpace(old.At) || !cur.IsOnce() {
+			cur.ClearOutcome()
+		}
 		next, errs := s.Validate(cur, name)
+		if atChanged(old, next) {
+			errs = sortFields(append(errs, s.atErrors(next)...))
+		}
 		if len(errs) > 0 {
 			return &ValidationError{Fields: errs}
 		}
-		reseed := strings.TrimSpace(old.Schedule) != next.Schedule || (!old.IsEnabled() && next.IsEnabled())
+		if !old.IsEnabled() && next.IsEnabled() && next.IsDone() {
+			return cron.OnceDoneError(next)
+		}
+		reseed := strings.TrimSpace(old.Schedule) != next.Schedule || atChanged(old, next) || (!old.IsEnabled() && next.IsEnabled())
 		jobs.Jobs[i] = next
 		res = Updated{Job: next, Changed: ChangedFields(old, next), Reseeded: reseed}
 		seed := ""
 		if reseed {
 			seed = name
 		}
-		return s.commit(path, jobs, seed)
+		if err := s.commit(path, jobs, seed); err != nil {
+			return err
+		}
+		if len(res.Changed) > 0 {
+			s.recordLifecycle(cron.ResultEdited, next, "changed "+strings.Join(res.Changed, ", "))
+		}
+		return nil
 	})
 	return res, err
 }
 
 // SetEnabled pauses or resumes a job. Resuming re-seeds last_fire, so fires
-// missed while paused are not caught up. The job is not re-validated, so a
-// broken job can still be paused.
+// missed while paused are not caught up (a one-shot whose time passed while
+// paused expires). A done one-shot cannot be resumed: cron edit --at
+// schedules it again. The job is not re-validated, so a broken job can
+// still be paused.
 func (s Store) SetEnabled(name string, enabled bool) (cron.Job, error) {
 	var out cron.Job
 	err := s.withJobs(func(path string, jobs *cron.Jobs) error {
@@ -438,6 +528,10 @@ func (s Store) SetEnabled(name string, enabled bool) (cron.Job, error) {
 		if i < 0 {
 			return &NotFoundError{Name: name}
 		}
+		if enabled && jobs.Jobs[i].IsDone() {
+			return cron.OnceDoneError(jobs.Jobs[i])
+		}
+		was := jobs.Jobs[i].IsEnabled()
 		v := enabled
 		jobs.Jobs[i].Enabled = &v
 		out = jobs.Jobs[i]
@@ -445,7 +539,17 @@ func (s Store) SetEnabled(name string, enabled bool) (cron.Job, error) {
 		if enabled {
 			seed = name
 		}
-		return s.commit(path, jobs, seed)
+		if err := s.commit(path, jobs, seed); err != nil {
+			return err
+		}
+		if was != enabled {
+			result := cron.ResultPaused
+			if enabled {
+				result = cron.ResultResumed
+			}
+			s.recordLifecycle(result, out, "")
+		}
+		return nil
 	})
 	return out, err
 }
@@ -458,8 +562,13 @@ func (s Store) Delete(name string) error {
 		if i < 0 {
 			return &NotFoundError{Name: name}
 		}
+		gone := jobs.Jobs[i]
 		jobs.Jobs = append(jobs.Jobs[:i], jobs.Jobs[i+1:]...)
-		return s.commit(path, jobs, "")
+		if err := s.commit(path, jobs, ""); err != nil {
+			return err
+		}
+		s.recordLifecycle(cron.ResultDeleted, gone, "")
+		return nil
 	})
 }
 
@@ -512,6 +621,11 @@ func (s Store) commit(path string, jobs *cron.Jobs, seed string) error {
 // jobs, in form order. Unset worktree/enabled compare as their defaults.
 func ChangedFields(a, b cron.Job) []string {
 	am, bm := jobMap(normalize(a)), jobMap(normalize(b))
+	// A one-shot's outcome is bookkeeping: "state" stands for all of it.
+	for _, k := range []string{"completed_at", "result", "run_window", "run_session", "run_session_id"} {
+		delete(am, k)
+		delete(bm, k)
+	}
 	var out []string
 	for k, v := range am {
 		if string(bm[k]) != string(v) {
@@ -523,7 +637,7 @@ func ChangedFields(a, b cron.Job) []string {
 			out = append(out, k)
 		}
 	}
-	order := append(slices.Clone(fieldOrder), "prompt_key", "worktree", "enabled")
+	order := append(slices.Clone(fieldOrder), "prompt_key", "worktree", "enabled", "state")
 	slices.SortFunc(out, func(x, y string) int {
 		if d := rankIn(order, x) - rankIn(order, y); d != 0 {
 			return d

@@ -1987,13 +1987,13 @@ func (c *ArtifactPruneCmd) Run() error { return cmd.RunArtifactPrune(os.Stdout, 
 // CronCmd groups `agentctl cron`. Jobs live in ~/.config/agentctl/schedules.json
 // (global only); launchd runs the hidden `cron tick` every minute.
 type CronCmd struct {
-	Add       CronAddCmd       `cmd:"" help:"Add a scheduled job"`
+	Add       CronAddCmd       `cmd:"" help:"Add a scheduled job (--schedule) or a one-shot (--at)"`
 	Edit      CronEditCmd      `cmd:"" help:"Change fields of a scheduled job (only the flags given change; the name cannot)"`
 	List      CronListCmd      `cmd:"" help:"List jobs with next fire, last result and throttles"`
-	Runs      CronRunsCmd      `cmd:"" help:"Show run history (fired, skipped, failed)"`
+	Runs      CronRunsCmd      `cmd:"" help:"Show run history (fired, skipped, failed) and job changes (created, edited, deleted)"`
 	Run       CronRunCmd       `cmd:"" help:"Fire a job now (honors overlap and the usage gate unless --force)"`
 	Pause     CronPauseCmd     `cmd:"" help:"Pause a job"`
-	Resume    CronResumeCmd    `cmd:"" help:"Resume a paused job (missed fires are not caught up)"`
+	Resume    CronResumeCmd    `cmd:"" help:"Resume a paused job (missed fires are not caught up; a done one-shot needs cron edit --at)"`
 	Rm        CronRmCmd        `cmd:"" help:"Remove a job"`
 	Install   CronInstallCmd   `cmd:"" help:"Install the launchd ticker (prints a crontab line on Linux)"`
 	Uninstall CronUninstallCmd `cmd:"" help:"Remove the launchd ticker"`
@@ -2002,7 +2002,8 @@ type CronCmd struct {
 
 type CronAddCmd struct {
 	Name       string `arg:"" help:"Job name (letters, digits, - and _)"`
-	Schedule   string `required:"" help:"5-field cron expression in local time, or @hourly/@daily/@weekly"`
+	Schedule   string `help:"5-field cron expression in local time, or @hourly/@daily/@weekly (or use --at)"`
+	At         string `help:"Fire once at this local time instead of a schedule: 'YYYY-MM-DD HH:MM' (or RFC3339)"`
 	Agent      string `short:"a" help:"Agent to run (required unless --template names one)"`
 	Dir        string `required:"" help:"Project directory (also where --template is looked up)"`
 	Prompt     string `short:"p" help:"Prompt text"`
@@ -2029,7 +2030,7 @@ func (c *CronAddCmd) Run() error {
 	}
 	return cmd.RunCronAdd(os.Stdout, cmd.CronAddOptions{
 		Mode: mode,
-		Name: c.Name, Schedule: c.Schedule, Agent: c.Agent, Dir: c.Dir,
+		Name: c.Name, Schedule: c.Schedule, At: c.At, Agent: c.Agent, Dir: c.Dir,
 		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile, Template: c.Template, NoWorktree: c.NoWorktree,
 		Model: c.Model, Effort: c.Effort, Backend: c.Backend, Account: c.Account,
 		Timeout: c.Timeout, Overlap: c.Overlap, Catchup: c.Catchup,
@@ -2039,6 +2040,7 @@ func (c *CronAddCmd) Run() error {
 type CronEditCmd struct {
 	Name         string  `arg:"" help:"Job to edit (the name cannot change)"`
 	Schedule     *string `help:"5-field cron expression in local time, or @hourly/@daily/@weekly (re-seeds the schedule: earlier fires are not caught up)"`
+	At           *string `help:"Make it a one-shot at this local time, 'YYYY-MM-DD HH:MM' (or RFC3339); resets a completed or expired one-shot to pending"`
 	Agent        *string `short:"a" help:"Agent to run"`
 	Dir          *string `help:"Project directory"`
 	Prompt       *string `short:"p" help:"Prompt text (replaces a prompt key)"`
@@ -2066,7 +2068,7 @@ func (c *CronEditCmd) Run() error {
 	}
 	return cmd.RunCronEdit(os.Stdout, cmd.CronEditOptions{
 		Mode: mode,
-		Name: c.Name, Schedule: c.Schedule, Agent: c.Agent, Dir: c.Dir,
+		Name: c.Name, Schedule: c.Schedule, At: c.At, Agent: c.Agent, Dir: c.Dir,
 		Prompt: c.Prompt, PromptKey: c.PromptKey, PromptFile: c.PromptFile, Template: c.Template,
 		Worktree: c.Worktree, NoWorktree: c.NoWorktree,
 		Model: c.Model, Effort: c.Effort, Backend: c.Backend, Account: c.Account,
@@ -2074,9 +2076,11 @@ func (c *CronEditCmd) Run() error {
 	})
 }
 
-type CronListCmd struct{}
+type CronListCmd struct {
+	All bool `help:"Also list deleted jobs, from their last recorded definition in the run history"`
+}
 
-func (c *CronListCmd) Run() error { return cmd.RunCronList(os.Stdout) }
+func (c *CronListCmd) Run() error { return cmd.RunCronList(os.Stdout, c.All) }
 
 type CronRunsCmd struct {
 	Name  string `arg:"" optional:"" help:"Only this job"`

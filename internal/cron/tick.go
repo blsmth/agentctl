@@ -77,10 +77,14 @@ type LaunchResult struct {
 // launch goes through here so tests never spawn anything.
 type Deps struct {
 	// Dir is <StateDir>/cron (lock, state, runs).
-	Dir    string
-	Config config.CronConfig
-	Jobs   []Job
-	Now    func() time.Time
+	Dir string
+	// JobsPath is schedules.json, which the tick writes only to record a
+	// one-shot's outcome and to prune done one-shots (under TryLockJobs).
+	// "" leaves the jobs file alone (state.json still stops a refire).
+	JobsPath string
+	Config   config.CronConfig
+	Jobs     []Job
+	Now      func() time.Time
 	// Windows lists the live windows launched by any of jobs.
 	Windows func(jobs []Job) ([]Window, error)
 	// Account resolves the Claude account a job runs under (its flag, the
@@ -169,6 +173,8 @@ type ticker struct {
 	windows []Window
 	running int
 	res     TickResult
+	// sync holds one-shot outcomes to mirror into the jobs file.
+	sync map[string]OneShotOutcome
 }
 
 func (t *ticker) run() error {
@@ -197,7 +203,98 @@ func (t *ticker) run() error {
 			return err
 		}
 	}
-	return SaveState(t.d.Dir, t.st)
+	if err := SaveState(t.d.Dir, t.st); err != nil {
+		return err
+	}
+	t.writeJobsFile(t.donePrunable())
+	return nil
+}
+
+// donePrunable lists the done one-shots whose outcome is older than
+// PruneDoneAfter.
+func (t *ticker) donePrunable() []string {
+	var out []string
+	for _, j := range t.d.Jobs {
+		if prunable(j, t.now) {
+			out = append(out, j.Name)
+		}
+	}
+	return out
+}
+
+func prunable(j Job, now time.Time) bool {
+	return j.IsOnce() && j.IsDone() && !j.CompletedAt.IsZero() && now.Sub(j.CompletedAt) >= PruneDoneAfter
+}
+
+// queueSync schedules o to be written onto the job in the jobs file, unless
+// the file already says so.
+func (t *ticker) queueSync(job Job, o OneShotOutcome) {
+	if job.State == o.State && job.CompletedAt.Equal(o.CompletedAt) && job.Result == o.Result {
+		return
+	}
+	if t.sync == nil {
+		t.sync = map[string]OneShotOutcome{}
+	}
+	t.sync[job.Name] = o
+}
+
+// writeJobsFile mirrors the queued one-shot outcomes into the jobs file and
+// removes the prune jobs, in one write, then records a pruned entry for
+// each. It never waits for the jobs lock (see TryLockJobs): when an editor
+// holds it, the next tick retries, and state.json keeps the outcome
+// meanwhile. The file is re-read under the lock, so a concurrent edit is
+// kept; an outcome is applied only while the job still has the at time it
+// is for.
+func (t *ticker) writeJobsFile(prune []string) {
+	if t.d.JobsPath == "" || (len(t.sync) == 0 && len(prune) == 0) {
+		return
+	}
+	unlock, ok, err := TryLockJobs(t.d.Dir)
+	if err != nil {
+		t.d.logf("cron: locking jobs file: %v", err)
+		return
+	}
+	if !ok {
+		t.d.logf("cron: jobs file busy; one-shot outcomes and prunes wait for the next tick")
+		return
+	}
+	defer unlock()
+	f, err := LoadJobs(t.d.JobsPath)
+	if err != nil {
+		t.d.logf("cron: %v", err)
+		return
+	}
+	changed := false
+	for name, o := range t.sync {
+		i := f.Find(name)
+		if i < 0 || !(&o).matches(f.Jobs[i]) {
+			continue
+		}
+		o.Apply(&f.Jobs[i])
+		changed = true
+	}
+	var pruned []Job
+	for _, name := range prune {
+		i := f.Find(name)
+		if i < 0 || !prunable(f.Jobs[i], t.now) {
+			continue
+		}
+		pruned = append(pruned, f.Jobs[i])
+		f.Jobs = slices.Delete(f.Jobs, i, i+1)
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	if err := SaveJobs(t.d.JobsPath, f); err != nil {
+		t.d.logf("cron: %v", err)
+		return
+	}
+	t.sync = nil
+	for _, j := range pruned {
+		note := fmt.Sprintf("%s %s ago; one-shots are pruned after %s", j.State, ShortDuration(t.now.Sub(j.CompletedAt).Truncate(time.Hour)), ShortDuration(PruneDoneAfter))
+		t.record(LifecycleEntry(t.now, ResultPruned, j, Actor{Kind: ActorTick}, note))
+	}
 }
 
 // pruneState drops state for jobs that no longer exist.
@@ -273,6 +370,9 @@ func (t *ticker) record(e Entry) {
 
 // tickJob decides and, if due and allowed, launches one job.
 func (t *ticker) tickJob(job Job) error {
+	if job.IsOnce() {
+		return t.tickOnce(job)
+	}
 	sched, err := ParseSchedule(job.Schedule)
 	if err != nil {
 		t.d.logf("cron: job %s: %v", job.Name, err)
@@ -327,6 +427,124 @@ func (t *ticker) tickJob(job Job) error {
 	return nil
 }
 
+// tickOnce handles a one-shot: fire once when its at time (plus jitter) is
+// due, through the same catch-up and gate rules as a scheduled fire. A gate
+// skip leaves it pending for a later tick; a launch attempt (fired or
+// failed) completes it; past catchup_window (or a catchup none job past
+// the grace) it expires. min_interval does not apply.
+func (t *ticker) tickOnce(job Job) error {
+	at, err := job.AtTime()
+	if err != nil {
+		t.d.logf("cron: job %s: %v", job.Name, err)
+		return nil
+	}
+	js := t.st.Jobs[job.Name]
+	if o := js.OneShot; o.matches(job) {
+		if o.State == OneShotLaunching {
+			// The process died between persisting the launch and recording
+			// its result: never retry (it may have started).
+			o.State, o.CompletedAt, o.Result = StateCompleted, t.now, "unknown"
+			t.d.logf("cron: job %s: launch was interrupted; marking the one-shot completed", job.Name)
+		}
+		t.queueSync(job, *o)
+		return nil
+	}
+	if job.IsDone() {
+		return nil
+	}
+	if js.LastFire.IsZero() {
+		// First sight (state lost, or the file was edited by hand).
+		js.LastFire = t.now
+		t.st.Jobs[job.Name] = js
+	}
+	fireAt := at.Add(Jitter(job.Name))
+	if t.now.Before(fireAt) {
+		return nil
+	}
+	base := Entry{Time: t.now, Job: job.Name, Scheduled: at, Account: job.Account}
+	late := t.now.Sub(fireAt)
+	switch win := t.d.Config.EffectiveCatchupWindow(); {
+	case js.LastFire.After(fireAt):
+		t.expireOnce(job, at, base, "its time passed while it was paused (or before the scheduler saw it); not caught up")
+		return nil
+	case late > win:
+		t.expireOnce(job, at, base, fmt.Sprintf("%s late, past catchup_window %s", late.Round(time.Minute), win))
+		return nil
+	case job.Catchup == CatchupNone && late > onTimeGrace:
+		t.expireOnce(job, at, base, fmt.Sprintf("%s late and catchup is none", late.Round(time.Minute)))
+		return nil
+	}
+	account, ok := t.resolveAccount(job, &base)
+	if !ok {
+		t.finishOnce(job, at, t.res.Entries[len(t.res.Entries)-1])
+		return nil
+	}
+	res, note, skip := t.gate(job, account, false)
+	base.Note = note
+	if skip {
+		base.Result = res
+		if js.OnceSkip != res {
+			// Recorded once per reason, not every tick it stays skipped.
+			js.OnceSkip = res
+			t.st.Jobs[job.Name] = js
+			t.record(base)
+		}
+		return nil
+	}
+	if err := t.markLaunching(job.Name, at); err != nil {
+		base.Result, base.Note = Failed("state"), err.Error()
+		t.record(base)
+		return err
+	}
+	t.finishOnce(job, at, t.launch(job, at, base))
+	return nil
+}
+
+// markLaunching persists a one-shot's launching marker before its launch,
+// so a crash mid-launch cannot fire it again.
+func (t *ticker) markLaunching(name string, at time.Time) error {
+	js := t.st.Jobs[name]
+	prev := js
+	js.OneShot, js.OnceSkip = &OneShotOutcome{At: at, State: OneShotLaunching}, ""
+	t.st.Jobs[name] = js
+	if err := SaveState(t.d.Dir, t.st); err != nil {
+		t.st.Jobs[name] = prev
+		return err
+	}
+	return nil
+}
+
+// expireOnce records a missed one-shot as skipped:catchup and expires it.
+func (t *ticker) expireOnce(job Job, at time.Time, e Entry, note string) {
+	e.Result, e.Note = ResultSkippedCatchup, note
+	t.record(e)
+	t.setOutcome(job, OneShotOutcome{At: at, State: StateExpired, CompletedAt: t.now, Result: e.Result})
+}
+
+// finishOnce completes a one-shot from its launch attempt's entry.
+func (t *ticker) finishOnce(job Job, at time.Time, e Entry) {
+	t.setOutcome(job, OneShotOutcome{
+		At: at, State: StateCompleted, CompletedAt: e.Time, Result: e.Result,
+		WindowID: e.WindowID, Session: e.Session, SessionID: e.SessionID,
+	})
+}
+
+func (t *ticker) setOutcome(job Job, o OneShotOutcome) {
+	js := t.st.Jobs[job.Name]
+	js.OneShot, js.OnceSkip = &o, ""
+	t.st.Jobs[job.Name] = js
+	t.queueSync(job, o)
+}
+
+// OnceDoneError is the refusal to fire or resume a done one-shot.
+func OnceDoneError(job Job) error {
+	what := "already ran"
+	if job.State == StateExpired {
+		what = "expired (its time was missed)"
+	}
+	return fmt.Errorf("cron job %s is a one-shot that %s; schedule it again with agentctl cron edit %s --at 'YYYY-MM-DD HH:MM'", job.Name, what, job.Name)
+}
+
 // gate applies overlap, max_concurrent and the usage gate. It returns the
 // skip result and a note, or skip=false (note may still say the usage data
 // was unknown).
@@ -363,7 +581,7 @@ func (t *ticker) gate(job Job, account string, force bool) (result, note string,
 	return "", why, false
 }
 
-func (t *ticker) launch(job Job, scheduled time.Time, e Entry) {
+func (t *ticker) launch(job Job, scheduled time.Time, e Entry) Entry {
 	res, err := t.d.Launch(LaunchRequest{Job: job, Scheduled: scheduled, Branch: BranchFor(job, scheduled)})
 	if err != nil {
 		reason := "launch"
@@ -377,12 +595,13 @@ func (t *ticker) launch(job Job, scheduled time.Time, e Entry) {
 		e.Note = joinNote(e.Note, err.Error())
 		t.record(e)
 		t.d.notifyFailed(job, "Cron run failed", err)
-		return
+		return e
 	}
 	t.running++
 	t.windows = append(t.windows, Window{ID: res.WindowID, Job: job.Name, Session: res.Session, SessionID: res.SessionID, ScheduledAt: t.now})
 	e.Result, e.WindowID, e.Session, e.SessionID = ResultFired, res.WindowID, res.Session, res.SessionID
 	t.record(e)
+	return e
 }
 
 func joinNote(a, b string) string {
@@ -425,7 +644,9 @@ func UsageGate(pr *ratelimit.PushedRateLimits, now time.Time, th config.CronUsag
 
 // RunNow fires job immediately (`agentctl cron run`). It waits for a running
 // tick, honors overlap, max_concurrent and the usage gate unless force, and
-// leaves last_fire alone so the schedule is unaffected.
+// leaves last_fire alone so the schedule is unaffected. A pending one-shot
+// is completed by the launch attempt, as if its time had come; a done one
+// is refused (OnceDoneError).
 func RunNow(d Deps, name string, force bool) (Entry, error) {
 	unlock, _, err := Lock(d.Dir, true)
 	if err != nil {
@@ -438,10 +659,35 @@ func RunNow(d Deps, name string, force bool) (Entry, error) {
 	}
 	job := d.Jobs[i]
 	t := &ticker{d: d, now: d.Now()}
+	var at time.Time
+	if job.IsOnce() {
+		if at, err = job.AtTime(); err != nil {
+			return Entry{}, err
+		}
+		t.st, err = LoadState(d.Dir)
+		if err != nil {
+			d.logf("cron: %v (starting from empty state)", err)
+		}
+		if o := t.st.Jobs[job.Name].OneShot; job.IsDone() || o.matches(job) {
+			if o.matches(job) && o.State != OneShotLaunching {
+				o.Apply(&job)
+			}
+			return Entry{}, OnceDoneError(job)
+		}
+	}
 	t.loadWindows()
 	e := Entry{Time: t.now, Job: job.Name, Scheduled: t.now, Manual: true, Account: job.Account}
 	account, ok := t.resolveAccount(job, &e)
 	if !ok {
+		if job.IsOnce() {
+			// failed:account is a launch attempt: it completes the one-shot,
+			// as at a scheduled fire.
+			t.finishOnce(job, at, e)
+			if err := SaveState(d.Dir, t.st); err != nil {
+				return e, err
+			}
+			t.writeJobsFile(nil)
+		}
 		return e, nil
 	}
 	res, note, skip := t.gate(job, account, force)
@@ -451,8 +697,19 @@ func RunNow(d Deps, name string, force bool) (Entry, error) {
 		t.record(e)
 		return e, nil
 	}
-	t.launch(job, t.now, e)
-	return t.res.Entries[len(t.res.Entries)-1], nil
+	if !job.IsOnce() {
+		return t.launch(job, t.now, e), nil
+	}
+	if err := t.markLaunching(job.Name, at); err != nil {
+		return Entry{}, err
+	}
+	out := t.launch(job, t.now, e)
+	t.finishOnce(job, at, out)
+	if err := SaveState(d.Dir, t.st); err != nil {
+		return out, err
+	}
+	t.writeJobsFile(nil)
+	return out, nil
 }
 
 // Seed records now as job's last_fire so a newly added job starts from the
@@ -475,6 +732,7 @@ func SeedLocked(dir, job string, now time.Time) error {
 	js := st.Jobs[job]
 	js.LastFire = now
 	js.TimedOut = nil
+	js.OneShot, js.OnceSkip = nil, ""
 	st.Jobs[job] = js
 	return SaveState(dir, st)
 }

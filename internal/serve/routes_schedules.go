@@ -135,6 +135,9 @@ func (s *Server) scheduleStore() cronedit.Store {
 	if st.Windows == nil {
 		st.Windows = s.scheduleWindows
 	}
+	if st.Actor == nil {
+		st.Actor = func() cron.Actor { return cron.Actor{Kind: cron.ActorPhone} }
+	}
 	return st
 }
 

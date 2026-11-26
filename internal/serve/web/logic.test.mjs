@@ -18,7 +18,7 @@ import {
   applyGone, shellRows, shellDirName, shellApiPath,
   formatBytes, formatUptime, hostLevels, hostConnection, pushSample, formatSkew,
   advancedSummary, cardLastFailure, cardStatus, changeLines, fieldErrors, runResultCard, timeoutIsPreset, usageOptions, formClientErrors, formatAgo, formatNextFire, newScheduleForm, previewBody, runResultLabel, scheduleBanners, scheduleBody,
-  scheduleException, scheduleGlyph, scheduleHash, scheduleLastText, scheduleReview, scheduleWhen, worktreeFact,
+  scheduleException, scheduleGlyph, scheduleHash, scheduleLastText, scheduleReview, scheduleScheduleText, scheduleWhen, worktreeFact,
   scheduleAgentText, schedulePromptLabel, scheduleRowActivity,
   isTap, isDoubleTap, paneLineCount, canLoadEarlier, historyAddsLines,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
@@ -894,6 +894,10 @@ console.log("ok: shell request");
   assert.equal(scheduleGlyph({ enabled: true, running: true }).glyph, "\u25CF");
   assert.equal(scheduleGlyph({ enabled: true }).glyph, "\u23F2");
   assert.equal(scheduleWhen({ enabled: false }, now), "paused");
+  // A one-shot that ran or was missed shows that, never "never".
+  assert.equal(scheduleWhen({ enabled: true, job: { at: "2026-12-01T09:00:00-05:00", state: "completed" } }, now), "done");
+  assert.equal(scheduleWhen({ enabled: false, job: { at: "2026-12-01T09:00:00-05:00", state: "expired" } }, now), "expired");
+  assert.equal(scheduleScheduleText({ words: "once, Tue 1 Dec 09:00", job: { at: "2026-12-01T09:00:00-05:00", schedule: "" } }), "once, Tue 1 Dec 09:00");
   assert.equal(scheduleLastText({ last: { ts: at(22, 7, 0), result: "fired" } }, now), "last: fired \u00B7 1h ago");
   assert.deepEqual(scheduleBanners({ scheduler_installed: true, enabled: true }), []);
   assert.equal(scheduleBanners({ scheduler_installed: false, enabled: false }).length, 2);

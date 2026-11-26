@@ -109,6 +109,9 @@ func BuildOverview(in OverviewInput) Overview {
 	}
 	byJob := map[string][]cron.Entry{}
 	for _, e := range in.Runs {
+		if e.IsLifecycle() {
+			continue // a definition change, not a run
+		}
 		byJob[e.Job] = append(byJob[e.Job], e)
 	}
 	for _, w := range in.Windows {
@@ -123,7 +126,7 @@ func BuildOverview(in OverviewInput) Overview {
 }
 
 func buildStatus(j cron.Job, now time.Time, runs []cron.Entry, windows []cron.Window, check func(cron.Job) []cron.FieldError) Status {
-	st := Status{Name: j.Name, Job: j, Enabled: j.IsEnabled(), Words: cron.Describe(j.Schedule), Windows: []RunningWindow{}}
+	st := Status{Name: j.Name, Job: j, Enabled: j.IsEnabled(), Words: cron.Words(j), Windows: []RunningWindow{}}
 	if err := j.Validate(); err != nil {
 		st.Invalid = err.Error()
 	} else if check != nil {
@@ -131,7 +134,7 @@ func buildStatus(j cron.Job, now time.Time, runs []cron.Entry, windows []cron.Wi
 			st.Invalid = errs[0].Message
 		}
 	}
-	if ss, ok := ParseSimple(j.Schedule); ok {
+	if ss, ok := ParseSimple(j.Schedule); ok && !j.IsOnce() {
 		st.Simple = &ss
 	}
 	if next, err := NextFire(j, now); err != nil {
@@ -258,6 +261,7 @@ func (s Store) Detail(name string) (Detail, error) {
 	var runs []cron.Entry
 	if dir, err := s.StateDir(); err == nil {
 		runs, _ = cron.ReadRuns(dir, name)
+		runs = cron.RunsOnly(runs)
 	}
 	now := s.now()
 	d := Detail{
@@ -267,7 +271,7 @@ func (s Store) Detail(name string) (Detail, error) {
 		NextFiresText: []string{},
 	}
 	if job.IsEnabled() {
-		d.NextFires = NextFires(job.Schedule, job.Name, now, PreviewFires)
+		d.NextFires = NextFiresOf(job, now, PreviewFires)
 		for _, t := range d.NextFires {
 			d.NextFiresText = append(d.NextFiresText, t.In(time.Local).Format(cron.NextFireFormat))
 		}
