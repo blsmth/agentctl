@@ -2350,10 +2350,13 @@ export function scheduleBody(f) {
     job.template = f.template;
     delete job.prompt;
     delete job.prompt_key;
+    delete job.prompt_source_key;
   } else if (f.promptKey && !promptChanged) {
     job.prompt_key = f.promptKey;
     delete job.prompt;
   } else {
+    // Typed text is no longer the copy of the key it was pinned from.
+    if (f.prompt !== f.base.prompt) delete job.prompt_source_key;
     job.prompt = f.prompt;
     delete job.prompt_key;
   }
@@ -2495,12 +2498,27 @@ export function changeLines(oldJob, newJob, oldWhen = "", newWhen = "") {
 }
 
 /**
+ * schedulePromptSource says where a job's prompt came from, or "" for an
+ * inline prompt or a template: a prompt pinned from a context key, or a
+ * legacy unpinned key (read at every run) with the command that pins it.
+ */
+export function schedulePromptSource(job) {
+  if (!job || job.template) return "";
+  if (job.prompt_key && !job.prompt) {
+    return `context key ${job.prompt_key}, UNPINNED: read at every run, so it can change without approval. ` +
+      `Pin it with: agentctl cron edit ${job.name} --prompt-key ${job.prompt_key}`;
+  }
+  if (job.prompt_source_key) return `copied from context key ${job.prompt_source_key} (pinned)`;
+  return "";
+}
+
+/**
  * schedulePromptLabel names what a job runs in one line: "template triage",
- * "context key spec", or the inline prompt.
+ * "context key spec (unpinned)", or the inline prompt.
  */
 export function schedulePromptLabel(job) {
   if (job?.template) return `template ${job.template}`;
-  return job?.prompt || (job?.prompt_key ? `context key ${job.prompt_key}` : "");
+  return job?.prompt || (job?.prompt_key ? `context key ${job.prompt_key} (unpinned)` : "");
 }
 
 /** scheduleAgentText is the agent a job runs, naming a template's default. */
@@ -2554,7 +2572,8 @@ export function scheduleReview(p, f) {
   } else if (job.template) {
     lines.push(`Prompt: template ${job.template} (read from the project at every run)${f?.templateText ? `\n${f.templateText}` : ""}`);
   } else {
-    lines.push(`Prompt:\n${job.prompt || (job.prompt_key ? `(context key ${job.prompt_key}, read at every run)` : "")}`);
+    const from = schedulePromptSource(job);
+    lines.push(`Prompt${from ? ` (${from})` : ""}:\n${job.prompt || ""}`);
   }
   return lines;
 }

@@ -170,3 +170,41 @@ func TestKeyDistinguishesArgBoundaries(t *testing.T) {
 		t.Error("keys collide across argument boundaries")
 	}
 }
+
+func TestCronPromptPin(t *testing.T) {
+	_, clock := useDir(t)
+	args := []string{"cron", "add", "j", "-k", "spec"}
+	if err := RecordCronPrompt("@1", args, "approved text"); err != nil {
+		t.Fatal(err)
+	}
+	text, err := ConsumeCronPrompt("@1", args)
+	if err != nil || text != "approved text" {
+		t.Fatalf("consume = %q, %v", text, err)
+	}
+	if _, err := ConsumeCronPrompt("@1", args); !errors.Is(err, ErrNotApproved) {
+		t.Fatalf("replayed pin: err = %v", err)
+	}
+
+	// The kinds do not stand in for each other.
+	if err := RecordCronPrompt("@1", args, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Consume("@1", args); !errors.Is(err, ErrNotApproved) {
+		t.Errorf("a pin satisfied a dispatch approval: %v", err)
+	}
+	if err := Record("@1", args); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ConsumeCronPrompt("@1", args); !errors.Is(err, ErrNotApproved) {
+		t.Errorf("a dispatch approval satisfied a pin: %v", err)
+	}
+
+	// Expired.
+	if err := RecordCronPrompt("@1", args, "t"); err != nil {
+		t.Fatal(err)
+	}
+	*clock = clock.Add(TTL + time.Second)
+	if _, err := ConsumeCronPrompt("@1", args); !errors.Is(err, ErrNotApproved) {
+		t.Errorf("expired pin: err = %v", err)
+	}
+}

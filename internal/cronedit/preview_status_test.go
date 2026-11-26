@@ -136,9 +136,7 @@ func TestDetail(t *testing.T) {
 	ts := newTestStore(t)
 	j := ts.job("keyed")
 	j.Prompt, j.PromptKey = "", "spec-237"
-	if _, err := ts.Create(j); err != nil {
-		t.Fatal(err)
-	}
+	ts.seedLegacy(t, j)
 	for i := range 25 {
 		if err := cron.AppendRun(ts.stateDir, cron.Entry{Time: ts.now.Add(time.Duration(i) * time.Minute), Job: "keyed", Result: cron.ResultFired}); err != nil {
 			t.Fatal(err)

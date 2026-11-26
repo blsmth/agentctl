@@ -134,6 +134,30 @@ func renderCronList(w io.Writer, v cronListView) {
 			deletedColumn(e, v.now), agentColumn(j), acct, promptColumn(j, v.now), "-")
 	}
 	_ = tw.Flush()
+	if lines := unpinnedLines(v.ov.Jobs); len(lines) > 0 {
+		fmt.Fprintln(w)
+		for _, l := range lines {
+			fmt.Fprintln(w, l)
+		}
+	}
+}
+
+// unpinnedLines warns about legacy prompt_key jobs, one line each naming
+// the gated command that pins it.
+func unpinnedLines(jobs []cronedit.Status) []string {
+	var out []string
+	for _, st := range jobs {
+		if st.Job.Unpinned() {
+			out = append(out, unpinnedWarning(st.Job))
+		}
+	}
+	return out
+}
+
+// unpinnedWarning is the `cron list` and `health` line for an unpinned job.
+func unpinnedWarning(j cron.Job) string {
+	return fmt.Sprintf("UNPINNED %s: its fires read context key %s, which can change without approval. Pin it with %s (approve the text in the popup).",
+		j.Name, j.PromptKey, j.PinCommand())
 }
 
 // deletedJobs returns the newest lifecycle entry of each job runs.ndjson
@@ -194,8 +218,9 @@ func agentColumn(j cron.Job) string {
 // promptPreviewWidth is how much of an inline prompt `cron list` shows.
 const promptPreviewWidth = 32
 
-// promptColumn says what a fire runs: the template or context key by name
-// (both read at every fire), else the start of the inline prompt.
+// promptColumn says what a fire runs: the template by name (read at every
+// fire), a legacy context key by name and UNPINNED (read at every fire), a
+// prompt pinned from a key by its key, else the start of the inline prompt.
 func promptColumn(j cron.Job, now time.Time) string {
 	if j.IsImprove() {
 		s := "fleet improve, last " + cron.ShortDuration(j.ImproveSince(now))
@@ -207,8 +232,10 @@ func promptColumn(j cron.Job, now time.Time) string {
 	switch {
 	case j.Template != "":
 		return "template " + j.Template
-	case j.PromptKey != "":
-		return "key " + j.PromptKey
+	case j.Unpinned():
+		return "key " + j.PromptKey + " (UNPINNED)"
+	case j.PromptSourceKey != "":
+		return "key " + j.PromptSourceKey + " (pinned)"
 	}
 	return textutil.Truncate(strings.Join(strings.Fields(j.Prompt), " "), promptPreviewWidth, "…")
 }
@@ -389,6 +416,8 @@ type cronHealth struct {
 	darwin        bool
 	lastTick      time.Time
 	failing       []string
+	// unpinned are the legacy prompt_key jobs (fires read the key).
+	unpinned []cron.Job
 }
 
 // cronFailingRuns is how many consecutive failed launches health flags.
@@ -410,6 +439,9 @@ func gatherCronHealth(loaded func() bool) (cronHealth, bool) {
 	for _, j := range jobs.Jobs {
 		if j.IsEnabled() && !j.IsDone() { // a done one-shot never fires again
 			h.enabled++
+		}
+		if j.Unpinned() {
+			h.unpinned = append(h.unpinned, j)
 		}
 	}
 	h.killSwitch = !config.Load().Cron.EnabledOrDefault()
@@ -455,6 +487,9 @@ func cronHealthLines(h cronHealth, now time.Time) []string {
 	lines := []string{line}
 	for _, j := range h.failing {
 		lines = append(lines, fmt.Sprintf("  %s: last %d runs failed (agentctl cron runs %s)", j, cronFailingRuns, j))
+	}
+	for _, j := range h.unpinned {
+		lines = append(lines, "  "+unpinnedWarning(j))
 	}
 	return lines
 }

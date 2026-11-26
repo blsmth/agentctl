@@ -468,7 +468,7 @@ func runResultText(e cron.Entry) string {
 	return r
 }
 
-// syncSchedDetail loads the full card (prompt_key text, more runs) of the
+// syncSchedDetail loads the full card (a legacy prompt_key text, more runs) of the
 // selected job; the card always shows it. Called after every Update. The
 // previous detail of the same job stays up while a refresh loads.
 func (m *FleetModel) syncSchedDetail() tea.Cmd {
@@ -828,8 +828,12 @@ func (m FleetModel) schedCardLines(w int) []string {
 			}
 		}
 	}
-	if st.Job.PromptKey != "" {
-		add(fleetDimStyle.Render(truncateToWidth("context key "+st.Job.PromptKey+" (read at every fire)", w)))
+	if st.Job.PromptSourceKey != "" {
+		add(fleetDimStyle.Render(truncateToWidth("copied from context key "+st.Job.PromptSourceKey+" (pinned)", w)))
+	}
+	if st.Job.Unpinned() {
+		add(fleetErrStyle.Render(truncateToWidth("context key "+st.Job.PromptKey+" UNPINNED: read at every fire", w)))
+		add(fleetDimStyle.Render(truncateToWidth("pin it: "+st.Job.PinCommand(), w)))
 		prompt = ""
 		if detail != nil {
 			prompt = detail.PromptResolved

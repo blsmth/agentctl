@@ -205,6 +205,9 @@ func (s Store) Validate(job cron.Job, original string) (cron.Job, []cron.FieldEr
 	if job.PromptKey != "" && !validPromptKey(job.PromptKey) {
 		add(cron.FieldPrompt, fmt.Sprintf("invalid prompt_key %q", job.PromptKey))
 	}
+	if job.PromptSourceKey != "" && !validPromptKey(job.PromptSourceKey) {
+		add(cron.FieldPrompt, fmt.Sprintf("invalid prompt_source_key %q", job.PromptSourceKey))
+	}
 	if !has(cron.FieldSchedule) && !job.IsOnce() {
 		sched, _ := cron.ParseSchedule(job.Schedule)
 		if err := cron.CheckMinInterval(sched, s.now(), s.config().EffectiveMinInterval()); err != nil {
@@ -410,6 +413,9 @@ func clone(j cron.Job) cron.Job {
 func (s Store) Create(job cron.Job) (cron.Job, error) {
 	// A new job (or a duplicate of a done one-shot) starts pending.
 	job.ClearOutcome()
+	if err := s.pinNewKey(&job, ""); err != nil {
+		return cron.Job{}, err
+	}
 	job, errs := s.Validate(job, "")
 	errs = sortFields(append(errs, s.atErrors(job)...))
 	if len(errs) > 0 {
@@ -431,6 +437,31 @@ func (s Store) Create(job cron.Job) (cron.Job, error) {
 		return nil
 	})
 	return out, err
+}
+
+// pinNewKey copies a prompt_key that job names newly (not the stored job's
+// own, kept) into its prompt, so no new job reads the context store at a
+// fire. Only a legacy job keeps an unpinned key, until an edit pins it. The
+// CLI pins before calling (with the text the approval popup showed); this
+// covers the hub, the phone and duplicates of a legacy job.
+func (s Store) pinNewKey(job *cron.Job, kept string) error {
+	key := job.PromptKey
+	if key == "" || key == kept || job.Prompt != "" || job.Template != "" {
+		return nil
+	}
+	text, err := s.PromptKeyText(key)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		err = errors.New("not found in the context store")
+	case err == nil && strings.TrimSpace(text) == "":
+		err = errors.New("the key is empty")
+	}
+	if err != nil {
+		return &ValidationError{Fields: []cron.FieldError{{Field: cron.FieldPrompt,
+			Message: fmt.Sprintf("context key %q cannot be read to copy into the job: %v", key, err)}}}
+	}
+	job.PinKey(key, text)
+	return nil
 }
 
 // Updated reports what an update changed.
@@ -483,6 +514,9 @@ func (s Store) Modify(name string, fn func(*cron.Job) error) (Updated, error) {
 		old := normalize(jobs.Jobs[i])
 		cur := clone(old)
 		if err := fn(&cur); err != nil {
+			return err
+		}
+		if err := s.pinNewKey(&cur, old.PromptKey); err != nil {
 			return err
 		}
 		if strings.TrimSpace(cur.At) != strings.TrimSpace(old.At) || !cur.IsOnce() {
@@ -644,7 +678,7 @@ func ChangedFields(a, b cron.Job) []string {
 			out = append(out, k)
 		}
 	}
-	order := append(slices.Clone(fieldOrder), "prompt_key", "worktree", "enabled", "state")
+	order := append(slices.Clone(fieldOrder), "prompt_key", "prompt_source_key", "worktree", "enabled", "state")
 	slices.SortFunc(out, func(x, y string) int {
 		if d := rankIn(order, x) - rankIn(order, y); d != 0 {
 			return d

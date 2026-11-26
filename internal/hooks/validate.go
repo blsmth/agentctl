@@ -185,11 +185,12 @@ func ValidateBash() {
 	if gateDispatch || isCron || isTemplate || isRevert || cfg.EffectiveBashPreview(agentName) {
 		var approved, decided bool
 		var denyReason string
+		var pin *cronPin
 		gate := PreviewKindBash
 		switch {
 		case isCron:
 			gate = PreviewKindCron
-			approved, decided, denyReason = cronPreviewGate(agentName, command, input.Cwd)
+			approved, decided, denyReason, pin = cronPreviewGatePin(agentName, command, input.Cwd)
 		case isTemplate:
 			gate = PreviewKindTemplate
 			approved, decided, denyReason = templateGate(agentName, command, input.Cwd)
@@ -221,6 +222,11 @@ func ValidateBash() {
 					// What the dispatch CLI checks when the launch needs
 					// proof of a human's approval (dispatchapproval).
 					recordDispatchApprovals(windowID, command)
+				}
+				if isCron {
+					// The key text the popup showed, which cron add/edit
+					// --prompt-key stores (see recordCronPin).
+					recordCronPin(windowID, pin)
 				}
 				recordApproved(agentName, actx)
 				allowCommand(agentName, command)

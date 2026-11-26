@@ -142,6 +142,9 @@ type JobSnapshot struct {
 	Enabled      bool      `json:"enabled"`
 	PromptSource string    `json:"prompt_source"`
 	Prompt       string    `json:"prompt,omitempty"`
+	// PromptSourceKey is the context key a pinned prompt was copied from
+	// (PromptSource "prompt").
+	PromptSourceKey string `json:"prompt_source_key,omitempty"`
 }
 
 // SnapshotOf is j's lifecycle snapshot.
@@ -150,7 +153,7 @@ func SnapshotOf(j Job) JobSnapshot {
 		Name: j.Name, Schedule: strings.TrimSpace(j.Schedule), At: strings.TrimSpace(j.At), State: j.State,
 		CompletedAt: j.CompletedAt, Result: j.Result,
 		Agent: j.Agent, Dir: j.Dir, Account: j.Account, Mode: j.Mode, Model: j.Model,
-		Enabled: j.IsEnabled(), PromptSource: j.PromptSource(),
+		Enabled: j.IsEnabled(), PromptSource: j.PromptSource(), PromptSourceKey: j.PromptSourceKey,
 	}
 	switch {
 	case j.Template != "":
@@ -167,7 +170,7 @@ func SnapshotOf(j Job) JobSnapshot {
 func (s JobSnapshot) Job() Job {
 	en := s.Enabled
 	j := Job{Name: s.Name, Schedule: s.Schedule, At: s.At, State: s.State, CompletedAt: s.CompletedAt, Result: s.Result, Agent: s.Agent, Dir: s.Dir,
-		Account: s.Account, Mode: s.Mode, Model: s.Model, Enabled: &en}
+		Account: s.Account, Mode: s.Mode, Model: s.Model, Enabled: &en, PromptSourceKey: s.PromptSourceKey}
 	switch s.PromptSource {
 	case FieldTemplate:
 		j.Template = s.Prompt

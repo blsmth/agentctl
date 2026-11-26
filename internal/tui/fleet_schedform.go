@@ -774,13 +774,15 @@ func (f *fleetSchedForm) job() (cron.Job, []cron.FieldError) {
 	j.Template = ""
 	switch p := f.prompt.Value(); {
 	case f.source == schedSourceTemplate:
-		j.Prompt, j.PromptKey, j.Template = "", "", f.tmpl.value()
+		j.Prompt, j.PromptKey, j.PromptSourceKey, j.Template = "", "", "", f.tmpl.value()
 	case p == f.init[stopPrompt] && f.base.PromptKey == "":
+		// Unchanged (a pinned prompt keeps its source key).
 		j.Prompt = f.base.Prompt
 	case strings.TrimSpace(p) == "" && f.promptKey != "":
 		j.Prompt, j.PromptKey = "", f.promptKey
 	default:
-		j.Prompt, j.PromptKey = p, ""
+		// Typed text is no longer the key's copy.
+		j.Prompt, j.PromptKey, j.PromptSourceKey = p, "", ""
 	}
 	if f.schedTouched {
 		spec, err := f.spec()
@@ -1338,7 +1340,7 @@ func (f *fleetSchedForm) specFor(kind int) (string, error) {
 }
 
 // schedOpenEditor is ctrl+e: open the prompt in the full-pane editor, in
-// the form's place (a prompt_key job starts from the key's text). A
+// the form's place (a legacy prompt_key job starts from the key's text). A
 // template-source job has no prompt to edit.
 func (m *FleetModel) schedOpenEditor() tea.Cmd {
 	f := m.schedForm
@@ -1375,7 +1377,7 @@ func (m *FleetModel) sizeSchedEditor() {
 }
 
 // schedEditorDone acts on what the editor asked: a save applies the text
-// to the prompt (a prompt_key job becomes an inline prompt when the text is
+// to the prompt (a legacy prompt_key job becomes an inline prompt when the text is
 // not empty); any close returns to the form on the prompt with a preview.
 func (m *FleetModel) schedEditorDone(act editorAction) tea.Cmd {
 	f := m.schedForm
@@ -1873,8 +1875,8 @@ func (m FleetModel) schedReviewLayout(w int) schedLayout {
 		if tmpl != nil {
 			prompt += "\n\n" + tmpl.Prompt
 		}
-	case job.PromptKey != "":
-		prompt = "(context key " + job.PromptKey + ", read at every fire)"
+	case job.Unpinned():
+		prompt = "(context key " + job.PromptKey + ", UNPINNED: read at every fire; " + job.PinCommand() + " pins it)"
 	}
 	if job.IsImprove() {
 		theme := ""
@@ -1883,12 +1885,12 @@ func (m FleetModel) schedReviewLayout(w int) schedLayout {
 		}
 		prompt = job.ImproveSummary(fleetNow()) + theme
 	}
-	promptChanged := slices.Contains(p.Changed, cron.FieldPrompt) || slices.Contains(p.Changed, cron.FieldMode) || slices.Contains(p.Changed, "prompt_key") ||
+	promptChanged := slices.Contains(p.Changed, cron.FieldPrompt) || slices.Contains(p.Changed, cron.FieldMode) || slices.Contains(p.Changed, "prompt_key") || slices.Contains(p.Changed, "prompt_source_key") ||
 		slices.Contains(p.Changed, cron.FieldTemplate)
 	if f.mode == schedFormEdit {
 		add(fleetCountStyle.Render("Changes"))
 		for _, c := range p.Diff {
-			if c.Field == cron.FieldPrompt || c.Field == "prompt_key" || c.Field == cron.FieldTemplate {
+			if c.Field == cron.FieldPrompt || c.Field == "prompt_key" || c.Field == "prompt_source_key" || c.Field == cron.FieldTemplate {
 				continue
 			}
 			add(truncateToWidth("  "+padRight(c.Field, 10)+" "+f.reviewValue(c.Field, c.Old)+fleetDimStyle.Render(" → ")+f.reviewValue(c.Field, c.New), w))

@@ -130,7 +130,7 @@ func TestRenderCronRunsLifecycle(t *testing.T) {
 	e := cron.LifecycleEntry(now, cron.ResultDeleted, j, cron.Actor{Kind: cron.ActorWindow, WindowID: "@4", SessionID: "abcdef0123"}, "")
 	var out bytes.Buffer
 	renderCronRuns(&out, []cron.Entry{e}, 0, now)
-	if s := out.String(); !strings.Contains(s, "deleted") || !strings.Contains(s, "by window @4 (session abcdef01); 0 9 * * * · agent brandon · prompt: key spec · /p") {
+	if s := out.String(); !strings.Contains(s, "deleted") || !strings.Contains(s, "by window @4 (session abcdef01); 0 9 * * * · agent brandon · prompt: key spec (UNPINNED) · /p") {
 		t.Errorf("runs:\n%s", s)
 	}
 }

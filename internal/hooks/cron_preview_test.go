@@ -178,6 +178,7 @@ func TestBuildCronPreview(t *testing.T) {
 	withCronJobs(t,
 		cron.Job{Name: "paused", Schedule: "0 9 * * *", Agent: "ops", Dir: "/srv", Prompt: "stored prompt text", Enabled: &off, Timeout: "30m"},
 		cron.Job{Name: "keyed", Schedule: "0 9 * * *", Agent: "ops", Dir: "/srv", PromptKey: "gone-key"},
+		cron.Job{Name: "pinned", Schedule: "0 9 * * *", Agent: "ops", Dir: "/srv", Prompt: "Pinned text.", PromptSourceKey: "spec-1", Enabled: &off},
 	)
 	promptFile := filepath.Join(t.TempDir(), "weekly.md")
 	if err := os.WriteFile(promptFile, []byte("# Weekly\n\nSummarize the week."), 0o600); err != nil {
@@ -217,7 +218,7 @@ func TestBuildCronPreview(t *testing.T) {
 			command:    `agentctl context set spec-9 'Review open PRs.' && agentctl cron add prs --schedule @daily -a ops --dir /x -k spec-9`,
 			wantAction: cronActionAdd,
 			wantJob:    "prs",
-			wantBody:   []string{"Review open PRs.", "context key spec-9 (read at every fire"},
+			wantBody:   []string{"Review open PRs.", "context key spec-9 (this text is copied into the job now"},
 		},
 		{name: "command substitution prompt", command: `agentctl cron add j --schedule @daily -a a --dir /x --prompt "$(cat spec.md)"`, wantDeny: "--prompt uses shell expansion"},
 		{name: "variable prompt", command: `agentctl cron add j --schedule @daily -a a --dir /x --prompt="do $TASK"`, wantDeny: "--prompt uses shell expansion"},
@@ -250,7 +251,7 @@ func TestBuildCronPreview(t *testing.T) {
 			command:    `agentctl cron resume keyed`,
 			wantAction: cronActionResume,
 			wantJob:    "keyed",
-			wantBody:   []string{"context key gone-key is not set"},
+			wantBody:   []string{"context key gone-key is not set", "UNPINNED", "agentctl cron edit keyed --prompt-key gone-key"},
 		},
 		{
 			name:         "edit shows the job after the edit and what changes",
@@ -274,7 +275,28 @@ func TestBuildCronPreview(t *testing.T) {
 			command:    `agentctl context set spec-3 'Keyed prompt.' && agentctl cron edit paused -k spec-3`,
 			wantAction: cronActionEdit,
 			wantJob:    "paused",
-			wantBody:   []string{"Edit changes: prompt, prompt_key.", "Keyed prompt.", "context key spec-3"},
+			wantBody:   []string{"Edit changes: prompt, prompt_source_key.", "Keyed prompt.", "context key spec-3 (this text is copied"},
+		},
+		{
+			name:       "edit pinning a legacy prompt_key job",
+			command:    `agentctl context set gone-key 'Pinned now.' && agentctl cron edit keyed -k gone-key`,
+			wantAction: cronActionEdit,
+			wantJob:    "keyed",
+			wantBody:   []string{"Edit changes: prompt, prompt_key, prompt_source_key.", "Pinned now.", "copied into the job now"},
+		},
+		{
+			name:       "edit leaving a legacy prompt_key job unpinned says so",
+			command:    `agentctl cron edit keyed --timeout 1h`,
+			wantAction: cronActionEdit,
+			wantJob:    "keyed",
+			wantBody:   []string{"UNPINNED", "agentctl cron edit keyed --prompt-key gone-key pins it"},
+		},
+		{
+			name:       "resume of a pinned job names its source key",
+			command:    `agentctl cron resume pinned`,
+			wantAction: cronActionResume,
+			wantJob:    "pinned",
+			wantBody:   []string{"copied from context key spec-1", "Pinned text."},
 		},
 		{name: "edit attached short prompt", command: `agentctl cron edit paused -pEVIL`, wantDeny: `cannot show "-pEVIL" for approval`},
 		{name: "edit attached short prompt with =", command: `agentctl cron edit paused -p=EVIL`, wantDeny: `cannot show "-p=EVIL"`},

@@ -162,7 +162,7 @@ func closedNums(r closedlog.Record) []int {
 }
 
 // jobHaystack is what a schedule is searched on: name, agent, the prompt
-// when it is inline (not a prompt_key lookup), template and dir basename.
+// when it is inline (not a legacy prompt_key lookup; a pinned prompt counts), template and dir basename.
 func jobHaystack(st cronedit.Status) string {
 	prompt := ""
 	if st.Job.PromptKey == "" {

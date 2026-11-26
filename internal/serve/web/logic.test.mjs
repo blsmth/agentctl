@@ -19,7 +19,7 @@ import {
   formatBytes, formatUptime, hostLevels, hostConnection, pushSample, formatSkew,
   advancedSummary, cardLastFailure, cardStatus, changeLines, fieldErrors, runResultCard, timeoutIsPreset, usageOptions, formClientErrors, formatAgo, formatNextFire, newScheduleForm, previewBody, runResultLabel, scheduleBanners, scheduleBody,
   scheduleException, scheduleGlyph, scheduleHash, scheduleLastText, scheduleReview, scheduleScheduleText, scheduleWhen, worktreeFact,
-  scheduleAgentText, schedulePromptLabel, scheduleRowActivity,
+  scheduleAgentText, schedulePromptLabel, schedulePromptSource, scheduleRowActivity,
   isTap, isDoubleTap, paneLineCount, canLoadEarlier, historyAddsLines,
   buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
   ARTIFACT_TOKEN_MAX_AGE_MS, artifactChipText, artifactHash, artifactIcon, artifactOrigin, artifactRevLabel, artifactRevPill, artifactRowMeta, artifactTokenStale,
@@ -938,6 +938,11 @@ console.log("ok: shell request");
   pk.prompt = "mine";
   assert.equal(scheduleBody(pk).job.prompt, "mine");
   assert.equal(scheduleBody(pk).job.prompt_key, undefined);
+  // A pinned prompt keeps its source key until the text is edited.
+  const pinned = newScheduleForm({ job: { ...stored, prompt: "copied", prompt_source_key: "k" }, simple: { kind: "daily", minute: 0, hour: 1 } });
+  assert.equal(scheduleBody(pinned).job.prompt_source_key, "k");
+  pinned.prompt = "mine";
+  assert.equal(scheduleBody(pinned).job.prompt_source_key, undefined);
   // Duplicate: new name, saved paused, no original.
   const cp = newScheduleForm({ job: stored, simple: { kind: "daily", minute: 0, hour: 1 }, copy: true });
   assert.equal(cp.name, "j-copy");
@@ -1017,7 +1022,10 @@ console.log("ok: shell request");
   assert.equal(formClientErrors(newScheduleForm()).template, undefined);
   // Labels.
   assert.equal(schedulePromptLabel({ template: "triage", prompt: "x" }), "template triage");
-  assert.equal(schedulePromptLabel({ prompt_key: "k" }), "context key k");
+  assert.equal(schedulePromptLabel({ prompt_key: "k" }), "context key k (unpinned)");
+  assert.match(schedulePromptSource({ name: "j", prompt_key: "k" }), /UNPINNED.*agentctl cron edit j --prompt-key k/);
+  assert.equal(schedulePromptSource({ prompt: "x", prompt_source_key: "k" }), "copied from context key k (pinned)");
+  assert.equal(schedulePromptSource({ prompt: "x" }), "");
   assert.equal(scheduleAgentText({ template: "triage" }, "go-engineer"), "go-engineer (from template triage)");
   assert.equal(scheduleAgentText({ template: "triage" }), "the agent of template triage");
   assert.equal(scheduleAgentText({ agent: "a", template: "triage" }, "go-engineer"), "a");

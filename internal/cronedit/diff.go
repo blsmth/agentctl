@@ -52,6 +52,8 @@ func FieldText(j cron.Job, field string) string {
 		return j.Prompt
 	case "prompt_key":
 		return j.PromptKey
+	case "prompt_source_key":
+		return j.PromptSourceKey
 	case cron.FieldTemplate:
 		return j.Template
 	case cron.FieldHarness:
