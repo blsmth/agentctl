@@ -7,7 +7,8 @@ export { expect };
 
 /** Action mirrors servetest.Action: one side effect the server performed. */
 export type Action = {
-  kind: "close" | "key" | "reply" | "queue" | "dispatch" | "approval" | "sweep" | "resume";
+  kind: "close" | "key" | "reply" | "queue" | "dispatch" | "approval" | "sweep" | "resume" | "open";
+  dir?: string;
   session?: string;
   window?: string;
   key?: string;

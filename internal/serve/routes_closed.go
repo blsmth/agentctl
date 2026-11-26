@@ -307,14 +307,7 @@ func runHubResume(r closedlog.Record) (string, error) {
 	var stdout, stderr bytes.Buffer
 	c.Stdout, c.Stderr = &stdout, &stderr
 	if err := c.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if i := strings.LastIndex(msg, "\n"); i >= 0 {
-			msg = msg[i+1:]
-		}
-		if msg = strings.TrimPrefix(msg, "Error: "); msg != "" {
-			return "", errors.New(msg)
-		}
-		return "", err
+		return "", subprocessError(stderr.String(), err)
 	}
 	return stdout.String(), nil
 }

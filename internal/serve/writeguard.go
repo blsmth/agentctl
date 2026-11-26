@@ -173,6 +173,9 @@ func writeActionFor(path string) (action, session, window string, ok bool) {
 	if path == "/v1/dispatch/upload" {
 		return "dispatch-upload", "", "", true
 	}
+	if path == "/v1/projects/open" {
+		return "open-project", "", "", true
+	}
 	if path == "/v1/group-order" {
 		return "group-order", "", "", true
 	}

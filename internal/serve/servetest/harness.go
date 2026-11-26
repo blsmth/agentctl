@@ -128,6 +128,7 @@ func New(opts Options) (*Harness, error) {
 		Artifacts:  arts.store, ArtifactDebounce: 10 * time.Millisecond, ArtifactPoll: time.Second, RenderPDF: arts.renderPDF,
 		Schedules: scheds.store(), RunSchedule: scheds.run, AgentPermissionMode: func(string) string { return "" },
 		ClosedRecords: closed.load, ResumeClosed: closed.resume, HandleIndex: closed.index,
+		OpenProject: w.openProject,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("building server: %w", err)

@@ -195,6 +195,7 @@ type writeEnv struct {
 	disp   *fakeDispatcher
 	shells *fakeShells
 	sweep  *fakeSweeper
+	opener *fakeOpener
 	tok    string
 	dev    Device
 }
@@ -280,6 +281,7 @@ func newWriteEnvWith(t *testing.T, allowWrite bool, mutate func(*Options)) *writ
 	e := &writeEnv{
 		fleet: fleet, panes: &syncPanes{text: dialogPane}, keys: &fakeKeys{},
 		inj: &fakeInjector{}, closer: &fakeCloser{}, disp: &fakeDispatcher{}, shells: &fakeShells{}, sweep: &fakeSweeper{},
+		opener: &fakeOpener{},
 	}
 	dir := t.TempDir()
 	clock := newClock()
@@ -295,6 +297,7 @@ func newWriteEnvWith(t *testing.T, allowWrite bool, mutate func(*Options)) *writ
 		Children:       noChildren{},
 		MainPanes:      e.panes,
 		Sweep:          e.sweep.run,
+		OpenProject:    e.opener.open,
 		GroupOrderPath: func() (string, error) { return filepath.Join(dir, "group-order.json"), nil },
 		RenderPDF:      noRealPDF,
 	}
@@ -387,6 +390,7 @@ func writeRoutes(t *testing.T) []struct{ name, path, body string } {
 		{"group-order", "/v1/group-order", `{"keys":["/code/proj"]}`},
 		{"dispatch", "/v1/dispatch", `{"agent":"go-engineer","project_dir":"/code/proj","prompt":"p"}`},
 		{"shell", "/v1/shell", `{"project_dir":"/code/proj"}`},
+		{"open-project", "/v1/projects/open", fmt.Sprintf(`{"dir":%q}`, t.TempDir())},
 		{"sweep-preview", "/v1/sweep/preview", `{"session":"agentctl-proj"}`},
 		{"sweep", "/v1/sweep", `{"session":"agentctl-proj"}`},
 		{"artifact-comment", "/v1/artifacts/" + strings.Repeat("a", 10) + "/comments", `{"text":"hi","rev":1}`},
@@ -399,8 +403,8 @@ func (e *writeEnv) assertNothingSent(t *testing.T) {
 	if n := len(e.keys.all()); n != 0 {
 		t.Errorf("%d keys sent", n)
 	}
-	if len(e.inj.got) != 0 || len(e.closer.closed) != 0 || len(e.disp.got) != 0 || len(e.shells.opened) != 0 || len(e.sweep.all()) != 0 {
-		t.Errorf("action ran: inject %v close %v dispatch %v sweep %v", e.inj.got, e.closer.closed, e.disp.got, e.sweep.all())
+	if len(e.inj.got) != 0 || len(e.closer.closed) != 0 || len(e.disp.got) != 0 || len(e.shells.opened) != 0 || len(e.sweep.all()) != 0 || len(e.opener.all()) != 0 {
+		t.Errorf("action ran: inject %v close %v dispatch %v sweep %v open %v", e.inj.got, e.closer.closed, e.disp.got, e.sweep.all(), e.opener.all())
 	}
 }
 

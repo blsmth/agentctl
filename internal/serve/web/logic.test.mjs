@@ -30,6 +30,7 @@ import {
   artifactPdfLabel, artifactPdfPath, pdfCanvasDensity, pdfClampZoom, pdfDelivery, pdfFitScale, pdfPageCountLabel, pdfPagesToDraw, pdfFileProblem, pdfFilename, pdfSharePayload,
   isTrustBlocked, isTrustDialog, trustDialogOf, trustExitConfirm, trustFolder, TRUST_EXPLAIN, TRUST_TITLE,
   CLOSED_PATH, CLOSED_GLYPH, canResume, buildResumeRequest, closedHeader, closedTitle, closedMeta, closedNote, closedPr, closedResumeConfirm, resumeTarget, closedRowHref,
+  RECENT_PROJECTS_PATH, OPEN_RECENT_MAX, canOpenProject, buildOpenProjectRequest, openPathProblem, filterRecentProjects, openProjectToast,
 } from "./logic.js";
 
 // Slash commands (phone "Run command").
@@ -1488,4 +1489,42 @@ console.log("ok: artifact pdf");
   assert.equal(resumeTarget(null), "#/");
   assert.equal(closedRowHref({ live: true, session: "s", window_id: "@1" }), "#/w/s/%401");
   assert.equal(closedRowHref(item), "");
+}
+
+// Open project (openproject.js).
+{
+  const w = ["write", "open-project"];
+  assert.equal(canOpenProject(w), true);
+  assert.equal(canOpenProject(["open-project"]), false, "allow_write off");
+  assert.equal(canOpenProject(["write"]), false, "server without the route");
+  assert.equal(RECENT_PROJECTS_PATH, "/v1/projects/recent");
+  assert.deepEqual(buildOpenProjectRequest("  ~/code/app "), { method: "POST", path: "/v1/projects/open", body: { dir: "~/code/app" } });
+  assert.deepEqual(buildOpenProjectRequest(undefined).body, { dir: "" });
+
+  assert.equal(openPathProblem(""), "Enter a project directory");
+  assert.equal(openPathProblem("   "), "Enter a project directory");
+  assert.equal(openPathProblem("/abs/dir"), "");
+  assert.equal(openPathProblem("~"), "");
+  assert.equal(openPathProblem("~/code"), "");
+  assert.equal(openPathProblem("~bob/x"), "Use ~/ or an absolute path");
+  assert.match(openPathProblem("code/app"), /absolute path/);
+
+  const dirs = [
+    { dir: "/Users/me/code/app", label: "~/code/app" },
+    { dir: "/Users/me/code/blog", label: "~/code/blog" },
+    { dir: "/srv/Api", label: "/srv/Api" },
+    { dir: "" },
+  ];
+  assert.deepEqual(filterRecentProjects(dirs, "").map((d) => d.label), ["~/code/app", "~/code/blog", "/srv/Api"]);
+  assert.deepEqual(filterRecentProjects(dirs, "API").map((d) => d.dir), ["/srv/Api"], "case-insensitive");
+  assert.deepEqual(filterRecentProjects(dirs, "~/code/b").map((d) => d.dir), ["/Users/me/code/blog"], "matches the label");
+  assert.deepEqual(filterRecentProjects(dirs, "", 2).length, 2, "bounded");
+  assert.deepEqual(filterRecentProjects(null, "x"), []);
+  const many = Array.from({ length: 12 }, (_, i) => ({ dir: `/p/${i}`, label: `/p/${i}` }));
+  assert.equal(filterRecentProjects(many, "").length, OPEN_RECENT_MAX);
+
+  assert.equal(openProjectToast({ session: "agentctl-app", running: false }), "Started agentctl-app");
+  assert.equal(openProjectToast({ session: "agentctl-app", running: true }), "agentctl-app is already running");
+  assert.equal(openProjectToast({ session: "", dir: "/Users/me/x" }), "Started ~/x");
+  console.log("ok: open project");
 }

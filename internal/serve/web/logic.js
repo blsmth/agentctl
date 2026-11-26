@@ -3143,3 +3143,57 @@ export function resumeTarget(res) {
 export function closedRowHref(item) {
   return item?.live && item.session && item.window_id ? windowHash(item.session, item.window_id) : "";
 }
+
+// "Open project" (openproject.js): the hub's "+ open" on the phone.
+
+/** RECENT_PROJECTS_PATH lists the recent project dirs (GET). */
+export const RECENT_PROJECTS_PATH = "/v1/projects/recent";
+
+/** OPEN_RECENT_MAX is how many recent dirs the sheet lists at once, as the hub does. */
+export const OPEN_RECENT_MAX = 8;
+
+/** canOpenProject reports whether the fleet may offer "Open project" (write on, server has the route). */
+export function canOpenProject(features) {
+  return hasFeature(features, "write") && hasFeature(features, "open-project");
+}
+
+/** buildOpenProjectRequest builds POST /v1/projects/open for a typed or chosen dir. */
+export function buildOpenProjectRequest(dir) {
+  return { method: "POST", path: "/v1/projects/open", body: { dir: String(dir ?? "").trim() } };
+}
+
+/**
+ * openPathProblem is the message for a path the server would refuse before
+ * asking it, or "" when it may be sent: the server needs an absolute path or
+ * one under ~/ (it checks existence itself).
+ */
+export function openPathProblem(text) {
+  const p = String(text ?? "").trim();
+  if (!p) return "Enter a project directory";
+  if (p === "~" || p.startsWith("~/") || p.startsWith("/")) return "";
+  if (p.startsWith("~")) return "Use ~/ or an absolute path";
+  return "Use an absolute path, such as ~/code/project";
+}
+
+/**
+ * filterRecentProjects is the recent entries matching query (a
+ * case-insensitive substring of the dir or its label), at most max. An empty
+ * query lists the first max.
+ */
+export function filterRecentProjects(dirs, query, max = OPEN_RECENT_MAX) {
+  const q = String(query ?? "").trim().toLowerCase();
+  const out = [];
+  for (const d of dirs ?? []) {
+    if (!d || !d.dir) continue;
+    if (q && !d.dir.toLowerCase().includes(q) && !(d.label ?? "").toLowerCase().includes(q)) continue;
+    out.push(d);
+    if (out.length === max) break;
+  }
+  return out;
+}
+
+/** openProjectToast is the toast after an open: started, or already running. */
+export function openProjectToast(res) {
+  const name = res?.session || tildePath(res?.dir) || "the project";
+  return res?.running ? `${name} is already running` : `Started ${name}`;
+}

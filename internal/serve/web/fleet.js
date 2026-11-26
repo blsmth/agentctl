@@ -39,7 +39,9 @@ import {
   treeLines,
   treeRows,
   canSwipeClose,
+  canOpenProject,
   canSweep,
+  openProjectToast,
   sweepableCount,
   runSweep,
   saveCollapsedSet,
@@ -51,6 +53,7 @@ import {
 import { get, send, ApiError } from "./api.js";
 import { attachDrag } from "./drag.js";
 import { mountClosed } from "./closed.js";
+import { openProjectSheet } from "./openproject.js";
 import { attachSwipe } from "./swipe.js";
 import { trustCard } from "./trust.js";
 import { clear, confirmSheet, h, newSheet, toast } from "./ui.js";
@@ -63,6 +66,9 @@ function closeError(err) {
 const GLYPH = { blocked: "⏸", working: "●", waiting: "◷", attention: "!", done: "✓", idle: "○" };
 
 const STORE_KEY = "agentctl.fleet.collapsed";
+
+// FOCUS_WAIT_MS is how long an opened project's group is waited for.
+const FOCUS_WAIT_MS = 15000;
 
 const loadCollapsed = () => loadCollapsedSet(STORE_KEY);
 const saveCollapsed = (set) => saveCollapsedSet(STORE_KEY, set);
@@ -185,7 +191,16 @@ export function mountFleet(root, ctx) {
   const approvalBanner = h("a", { class: "banner approval-banner", hidden: true, href: approvalHash("") });
   const list = h("div", { class: "fleet" });
   root.append(
-    h("header", { class: "bar" }, h("h1", {}, "Fleet"), ctx.hasFeature("write") ? h("a", { class: "btn", href: "#/dispatch" }, "Dispatch") : null, h("a", { class: "btn icon", href: "#/settings", "aria-label": "Settings", title: "Settings" }, "⚙︎")),
+    h(
+      "header",
+      { class: "bar" },
+      h("h1", {}, "Fleet"),
+      canOpenProject(ctx.features)
+        ? h("button", { class: "btn open-project", type: "button", "aria-label": "Open project", title: "Open a project", onclick: () => openProjectSheet({ onOpened }) }, "+ Open")
+        : null,
+      ctx.hasFeature("write") ? h("a", { class: "btn", href: "#/dispatch" }, "Dispatch") : null,
+      h("a", { class: "btn icon", href: "#/settings", "aria-label": "Settings", title: "Settings" }, "⚙︎"),
+    ),
     approvalBanner,
     banner,
     list,
@@ -197,6 +212,34 @@ export function mountFleet(root, ctx) {
     approvalBanner.textContent = text;
     approvalBanner.hidden = !text;
     approvalBanner.setAttribute("href", approvalHash(pending.length === 1 ? pending[0].id : ""));
+  }
+
+  // The project just opened from the "Open project" sheet: its group is
+  // scrolled to and highlighted on the first render that lists it, for up
+  // to FOCUS_WAIT_MS (a new session takes a fleet event to appear).
+  let focusTarget = null; // { session, at }
+
+  /** onOpened toasts an open and focuses the project's group once it is listed. */
+  function onOpened(res) {
+    toast(openProjectToast(res));
+    if (!res?.session) return;
+    focusTarget = { session: res.session, at: Date.now() };
+    render();
+  }
+
+  /** focusOpened scrolls to and highlights the opened project's group once it is listed. */
+  function focusOpened() {
+    if (!focusTarget) return;
+    if (Date.now() - focusTarget.at > FOCUS_WAIT_MS) {
+      focusTarget = null;
+      return;
+    }
+    const section = [...list.querySelectorAll(":scope > section.group")].find((el) => el.dataset.session === focusTarget.session);
+    if (!section) return;
+    focusTarget = null;
+    section.scrollIntoView({ block: "start", behavior: "smooth" });
+    section.classList.add("just-opened");
+    section.querySelector(".group-toggle")?.focus({ preventScroll: true });
   }
 
   const collapsed = loadCollapsed();
@@ -397,6 +440,8 @@ export function mountFleet(root, ctx) {
     if (pending && (sameOrder(groupKeys(served), pending.keys) || Date.now() - pending.at > 10000)) pending = null;
     const groups = pending ? applyGroupOrder(served, pending.keys) : served;
     if (groups.length === 0) list.append(h("p", { class: "muted pad" }, "No agents running."));
+    // The opened project's group is listed unfolded.
+    if (focusTarget && groups.some((g) => g.session === focusTarget.session) && collapsed.delete(groupKey(focusTarget.session))) saveCollapsed(collapsed);
     const live = new Set();
     for (const g of groups) {
       // Window keys stay live while the group is folded, so nested folds survive.
@@ -427,7 +472,7 @@ export function mountFleet(root, ctx) {
           ? addButton(g, name)
           : null,
       );
-      const section = h("section", { class: `group ${g.rollup}${folded ? " folded" : ""}` }, head, ...(folded ? [] : nodes));
+      const section = h("section", { class: `group ${g.rollup}${folded ? " folded" : ""}`, "data-session": g.session }, head, ...(folded ? [] : nodes));
       // Only keyed project groups reorder, and only with the write feature
       // (the route is a write); a lone group has nowhere to go.
       if (g.key && groups.length > 1 && ctx.hasFeature("write")) {
@@ -448,6 +493,7 @@ export function mountFleet(root, ctx) {
     }
     // Rendering rebuilds the list; keep keyboard focus on the same header.
     if (focusKey) [...list.querySelectorAll(".group-toggle")].find((b) => b.dataset.key === focusKey)?.focus();
+    focusOpened();
     const present = new Set(groups.flatMap((g) => [...g.windows.map(windowKey), ...(g.shells ?? []).map((s) => windowKey({ session: g.session, window_id: s.window_id }))]));
     for (const [k, t] of closed) if (!present.has(k) || Date.now() - t > 15000) closed.delete(k);
     // Forget collapsed keys whose window or bucket is gone.

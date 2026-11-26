@@ -556,3 +556,19 @@ body.nav-hidden nav { display: none; }
 .artifact-message { padding: 1.5rem 1rem; display: flex; flex-direction: column; align-items: flex-start; gap: .75rem; }
 .artifact-message p { margin: 0; }
 nav a { flex: 1 1 0; min-width: 0; padding: 0 .2rem; text-align: center; font-size: .9rem; }
+
+/* Fleet "Open project" sheet (openproject.js). */
+.bar .open-project { flex: none; white-space: nowrap; padding: 0 .75rem; }
+.open-sheet .open-note { margin: 0; }
+.open-sheet .open-input { font: inherit; font-size: 16px; color: var(--fg); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 10px; padding: .6rem; min-height: 44px; width: 100%; box-sizing: border-box; }
+.open-recent { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.open-recent[hidden] { display: none; }
+.open-recent .open-note { padding: .6rem .8rem; }
+.open-dir { min-height: 44px; padding: 0 .8rem; border: 0; border-top: 1px solid var(--line); background: none; color: var(--fg);
+  font: .9rem/1.2 ui-monospace, Menlo, monospace; text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.open-dir:first-child { border-top: 0; }
+.open-dir:active { background: var(--line); }
+.group { scroll-margin-top: 4.5rem; }
+@media (prefers-reduced-motion: no-preference) { .group.just-opened { animation: just-opened 2s ease-out; } }
+@keyframes just-opened { from { background: color-mix(in srgb, var(--accent) 22%, transparent); } to { background: transparent; } }

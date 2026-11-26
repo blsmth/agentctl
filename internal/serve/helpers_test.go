@@ -30,6 +30,10 @@ func TestMain(m *testing.M) {
 	closedResumeSpawn = func(closedlog.Record) (string, error) {
 		return "", errors.New("test: no resume spawn stubbed (set Options.ResumeClosed)")
 	}
+	// Open routes must never spawn a real `agentctl open`.
+	openProjectSpawn = func(string) (string, error) {
+		return "", errors.New("test: no open spawn stubbed (set Options.OpenProject)")
+	}
 	// Push decisions must never run ioreg or tmux: the laptop has no signal
 	// (not active) unless a test injects Options.LaptopIdle.
 	laptopIdleProbe = func(context.Context) (time.Duration, error) { return 0, errNoLaptopSignal }
