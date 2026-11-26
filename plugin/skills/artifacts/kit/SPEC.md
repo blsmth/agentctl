@@ -20,7 +20,7 @@ Rules for the whole spec:
 | `date` | string | no | ISO `YYYY-MM-DD` or an RFC 3339 datetime (`2026-11-24T09:30:00Z`); anything else is an error. Shown as "Nov 24, 2026" |
 | `author` | string | no | |
 | `scope` | string | no | Meta line is `date · author · scope`, empty parts skipped |
-| `brand` | string | no | Name of a brand profile (`<config dir>/brands/<name>/`): `artifact render` builds a branded page for it (logo and firm name header, brand colours and font, footer, always the light palette; in a PDF also a cover page and a running footer with page numbers). An unknown brand is an error. `artifact render --brand` overrides it. See `docs/design/artifacts.md` (Branding) |
+| `brand` | string | no | Name of a brand profile (`<config dir>/brands/<name>/`): `artifact render` builds a branded page for it (logo and firm name header, brand colours and font, footer, the brand's light or dark palette; in a PDF also a cover page and a running footer with page numbers). An unknown brand is an error. `artifact render --brand` overrides it. See `docs/design/artifacts.md` (Branding) |
 | `client` | string | no | Shown as "Prepared for <client>" in the page header (and on the PDF cover of a branded page). Works with or without a brand |
 | `blocks` | array of block | yes | Rendered in order |
 
@@ -57,7 +57,7 @@ Tiles. `items` (required, non-empty) of:
 
 ### `chart`
 
-Chart.js via CDN, colours from the CSS tokens, redrawn when the colour scheme changes or the viewport crosses the phone breakpoint (600px). Tick labels are never rotated. A `null` bar is drawn as a dashed, hatched "no data" stub (tooltip says "no data"); a `null` in a line is a break in the line. Printing forces the light palette and disables animation. If the CDN is unreachable the data is shown as a table.
+Chart.js via CDN, colours from the CSS tokens, redrawn when the colour scheme changes or the viewport crosses the phone breakpoint (600px). Tick labels are never rotated. A `null` bar is drawn as a dashed, hatched "no data" stub (tooltip says "no data"); a `null` in a line is a break in the line. Printing forces the light palette (except on a dark-brand page) and disables animation. If the CDN is unreachable the data is shown as a table.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|

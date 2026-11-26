@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/blsmth/agentctl/internal/config"
+	"github.com/blsmth/agentctl/plugin/skills/artifacts/kit"
 )
 
 // Size limits for the files a brand embeds in every page.
@@ -33,8 +34,34 @@ const (
 // headings use the accent colour.
 const MinAccentContrast = 4.5
 
+// Brand colour schemes.
+const (
+	SchemeLight = "light"
+	SchemeDark  = "dark"
+)
+
 // Light-palette surfaces the accent must be readable on (kit.css --bg and --card).
 var accentBackgrounds = []string{"#ffffff", "#f5f7fa"}
+
+var darkBlockRE = regexp.MustCompile(`(?s)@media\(prefers-color-scheme:dark\)\{:root\{(.*?)\}\}`)
+
+// darkBackgrounds returns the dark-palette surfaces (kit.css --bg and --card
+// in its dark block) the accent must be readable on, parsed from kit.css so
+// there is one copy.
+func darkBackgrounds() []string {
+	m := darkBlockRE.FindStringSubmatch(kit.CSS)
+	if m == nil {
+		return nil
+	}
+	var out []string
+	for _, decl := range strings.Split(m[1], ";") {
+		name, val, ok := strings.Cut(strings.TrimSpace(decl), ":")
+		if ok && (name == "--bg" || name == "--card") && hexRE.MatchString(val) {
+			out = append(out, strings.ToLower(val))
+		}
+	}
+	return out
+}
 
 var (
 	nameRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$`)
@@ -106,6 +133,8 @@ type Brand struct {
 	LogoHasName bool
 	Colors      Colors
 	Font        Font
+	// Scheme is the palette the pages pin: SchemeLight (the default) or SchemeDark.
+	Scheme string
 	// Footer is the one-line footer text; empty when unset.
 	Footer string
 }
@@ -220,7 +249,7 @@ func parse(dir string, data []byte) (Brand, Errors) {
 		return b, Errors{{"brand.json", "must be a JSON object"}}
 	}
 	p := &parser{dir: dir}
-	p.closed(top, "", "name", "logo", "logo_has_name", "colors", "font", "footer")
+	p.closed(top, "", "name", "logo", "logo_has_name", "colors", "font", "footer", "scheme")
 
 	if s, ok := p.str(top, "name", "name", true); ok {
 		b.Firm = s
@@ -242,8 +271,16 @@ func parse(dir string, data []byte) (Brand, Errors) {
 			b.LogoHasName = v
 		}
 	}
+	b.Scheme = SchemeLight
+	if s, ok := p.str(top, "scheme", "scheme", false); ok {
+		if s != SchemeLight && s != SchemeDark {
+			p.add("scheme", "must be %q or %q (got %q)", SchemeLight, SchemeDark, s)
+		} else {
+			b.Scheme = s
+		}
+	}
 	if m, ok := p.obj(top, "colors"); ok {
-		b.Colors = p.colors(m)
+		b.Colors = p.colors(m, b.Scheme)
 	}
 	if m, ok := p.obj(top, "font"); ok {
 		b.Font = p.font(m)
@@ -318,7 +355,7 @@ func (p *parser) obj(m map[string]any, key string) (map[string]any, bool) {
 	return o, ok
 }
 
-func (p *parser) colors(m map[string]any) Colors {
+func (p *parser) colors(m map[string]any, scheme string) Colors {
 	var c Colors
 	p.closed(m, "colors", "accent", "c1", "c2", "c3", "c4", "c5", "c6")
 	hex := func(key string) string {
@@ -333,9 +370,13 @@ func (p *parser) colors(m map[string]any) Colors {
 		return strings.ToLower(s)
 	}
 	if c.Accent = hex("accent"); c.Accent != "" {
-		for _, bg := range accentBackgrounds {
+		bgs, hint := accentBackgrounds, "darker"
+		if scheme == SchemeDark {
+			bgs, hint = darkBackgrounds(), "lighter"
+		}
+		for _, bg := range bgs {
 			if r := contrast(c.Accent, bg); r < MinAccentContrast {
-				p.add("colors.accent", "contrast ratio %.2f:1 against %s is below %.1f:1 (links and headings use the accent); pick a darker colour", r, bg, MinAccentContrast)
+				p.add("colors.accent", "contrast ratio %.2f:1 against %s (the %s background) is below %.1f:1 (links and headings use the accent); pick a %s colour", r, bg, scheme, MinAccentContrast, hint)
 			}
 		}
 	}

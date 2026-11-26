@@ -23,7 +23,7 @@
   --c1:#6ea8ff;--c2:#2dd4bf;--c3:#a78bfa;--c4:#fb923c;--c5:#f472b6;--c6:#94a3b8;
 }}
 /* kit.js sets data-print on beforeprint, before the print media type applies, so charts repaint light */
-:root[data-print]:not([data-light]){
+:root[data-print]:not([data-light]):not([data-dark]){
   --bg:#fff;--fg:#1a1d21;--muted:#5f6b7a;--card:#f5f7fa;--line:#dde2e8;
   --accent:#2563eb;--good:#15803d;--warn:#b45309;--bad:#b91c1c;--info:#2563eb;
   --c1:#2563eb;--c2:#0f766e;--c3:#7c3aed;--c4:#c2410c;--c5:#be185d;--c6:#64748b;
@@ -639,8 +639,13 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
       /[?&]print=1(&|$)/.test((global.location && global.location.search) || "");
   }
   function cssVar(n) { return getComputedStyle(doc.documentElement).getPropertyValue(n).trim(); }
-  // A branded page pins the light palette (the html element carries data-light), whatever the device prefers.
-  function isDark() { return !isPrint() && !doc.documentElement.hasAttribute("data-light") && !!(global.matchMedia && global.matchMedia("(prefers-color-scheme: dark)").matches); }
+  // A branded page pins its palette on the html element: data-light (the default) or data-dark, whatever the
+  // device prefers. A dark brand stays dark in print too; everything else repaints light for print.
+  function isDark() {
+    var root = doc.documentElement;
+    if (root.hasAttribute("data-dark")) return true;
+    return !isPrint() && !root.hasAttribute("data-light") && !!(global.matchMedia && global.matchMedia("(prefers-color-scheme: dark)").matches);
+  }
 
   function errorCard(title, errs) {
     var c = h("div", "error-card");
@@ -1088,6 +1093,10 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
         options.interaction = { mode: "index", intersect: false, axis: horiz ? "y" : "x" };
         if (type === "bar") plugins.push(nullBarPlugin(horiz, stacked, pal, muted));
       } else options.cutout = "60%";
+      // Chrome prints a canvas as an opaque image, so transparent pixels turn white in a PDF: a dark-brand page fills its own background in.
+      if (doc.documentElement.hasAttribute("data-dark")) plugins.push({ id: "cardBg", beforeDraw: function (c) {
+        var x = c.ctx; x.save(); x.globalCompositeOperation = "destination-over"; x.fillStyle = cardBg; x.fillRect(0, 0, c.width, c.height); x.restore();
+      } });
       chart = new Chart(cv, { type: type, data: { labels: shown, datasets: datasets }, options: options, plugins: plugins });
     }
     state.work.push(loadLib("chart").then(function (Chart) {
@@ -1159,7 +1168,7 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
     return Promise.all(state.work);
   }
 
-  var Kit = { version: 1, render: render, validate: validateSpec, validateBlock: validateBlock, fmt: fmt, blockTypes: Object.keys(SCHEMA) };
+  var Kit = { version: 1, render: render, validate: validateSpec, validateBlock: validateBlock, fmt: fmt, isDark: isDark, blockTypes: Object.keys(SCHEMA) };
   global.Kit = Kit;
 
   if (global.matchMedia) {

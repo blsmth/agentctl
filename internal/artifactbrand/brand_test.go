@@ -111,6 +111,10 @@ func TestValidation(t *testing.T) {
 		{"bad hex", `{"name":"X","colors":{"accent":"blue"}}`, nil, "colors.accent", "#rrggbb"},
 		{"short hex", `{"name":"X","colors":{"c3":"#fff"}}`, nil, "colors.c3", "#rrggbb"},
 		{"low contrast", `{"name":"X","colors":{"accent":"#7aa7ff"}}`, nil, "colors.accent", "contrast ratio 2."},
+		{"bad scheme", `{"name":"X","scheme":"auto"}`, nil, "scheme", `must be "light" or "dark"`},
+		{"scheme type", `{"name":"X","scheme":true}`, nil, "scheme", "expected a string"},
+		{"dark accent too dark", `{"name":"X","scheme":"dark","colors":{"accent":"#1d4ed8"}}`, nil, "colors.accent", "#0f1216 (the dark background) is below 4.5:1 (links and headings use the accent); pick a lighter colour"},
+		{"light accent too light", `{"name":"X","scheme":"light","colors":{"accent":"#7aa7ff"}}`, nil, "colors.accent", "pick a darker colour"},
 		{"footer newline", `{"name":"X","footer":"a\nb"}`, nil, "footer", "one line"},
 		{"footer type", `{"name":"X","footer":3}`, nil, "footer", "expected a string"},
 		{"oversized logo", `{"name":"X","logo":"big.svg"}`, map[string][]byte{"big.svg": big}, "logo", "limit is 256 KB"},
@@ -258,5 +262,23 @@ func TestContrast(t *testing.T) {
 	}
 	if r := contrast("#2563eb", "#ffffff"); r < 5 || r > 5.3 {
 		t.Errorf("kit accent on white = %v", r)
+	}
+}
+
+func TestSchemeDefaultsAndAccentPerScheme(t *testing.T) {
+	root := t.TempDir()
+	writeBrand(t, root, "def", `{"name":"D","colors":{"accent":"#1d4ed8"}}`, nil)
+	writeBrand(t, root, "dark", `{"name":"D","scheme":"dark","colors":{"accent":"#7aa7ff"}}`, nil)
+	if b, err := LoadFrom(root, "def"); err != nil || b.Scheme != SchemeLight {
+		t.Errorf("default: %+v %v", b, err)
+	}
+	if b, err := LoadFrom(root, "dark"); err != nil || b.Scheme != SchemeDark {
+		t.Errorf("dark: %+v %v", b, err)
+	}
+}
+
+func TestDarkBackgroundsComeFromKitCSS(t *testing.T) {
+	if got := darkBackgrounds(); len(got) != 2 || got[0] != "#0f1216" || got[1] != "#181d24" {
+		t.Errorf("darkBackgrounds = %v", got)
 	}
 }

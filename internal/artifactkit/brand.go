@@ -33,13 +33,26 @@ h1,.block>h2{color:var(--accent)}
 @media print{.brand-bar,.brand-foot{max-width:none;padding-left:0;padding-right:0}.brand-foot{break-inside:avoid}}
 `
 
-var rootBlockRE = regexp.MustCompile(`(?s):root\{(.*?)\}`)
+// darkPrintCSS keeps a dark brand dark in print and PDF export: kit.css's
+// print rules paint html and body white, and Chrome drops backgrounds unless
+// asked to keep them.
+const darkPrintCSS = `html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+@media print{html,body{background:var(--bg)}}
+`
 
-// lightTokens returns the declarations of kit.css's first :root block (the
-// light palette) as ordered name/value pairs, without color-scheme.
-func lightTokens() (names []string, vals map[string]string) {
+var (
+	rootBlockRE = regexp.MustCompile(`(?s):root\{(.*?)\}`)
+	darkBlockRE = regexp.MustCompile(`(?s)@media\(prefers-color-scheme:dark\)\{:root\{(.*?)\}\}`)
+)
+
+// isDark reports whether the brand pins the dark palette.
+func isDark(b *artifactbrand.Brand) bool { return b.Scheme == artifactbrand.SchemeDark }
+
+// tokens parses the declarations of the first match of re in kit.css as
+// ordered name/value pairs, without color-scheme.
+func tokens(re *regexp.Regexp) (names []string, vals map[string]string) {
 	vals = map[string]string{}
-	m := rootBlockRE.FindStringSubmatch(kit.CSS)
+	m := re.FindStringSubmatch(kit.CSS)
 	if m == nil {
 		return nil, vals
 	}
@@ -54,11 +67,28 @@ func lightTokens() (names []string, vals map[string]string) {
 	return names, vals
 }
 
+// lightTokens returns kit.css's first :root block (the light palette).
+func lightTokens() ([]string, map[string]string) { return tokens(rootBlockRE) }
+
+// brandTokens returns the palette a brand pins. The dark block holds only the
+// colours, so the rest (radii, fonts) come from the light block.
+func brandTokens(b *artifactbrand.Brand) ([]string, map[string]string) {
+	names, vals := lightTokens()
+	if !isDark(b) {
+		return names, vals
+	}
+	_, dark := tokens(darkBlockRE)
+	for k, v := range dark {
+		vals[k] = v
+	}
+	return names, vals
+}
+
 // brandCSS builds the stylesheet that follows kit.css on a branded page: the
 // light tokens restated after kit.css's dark-mode override (so no dark rule
-// applies), the brand colours and font on top, and the header/footer styles.
+// applies; a dark brand restates the dark tokens instead), the brand colours and font on top, and the header/footer styles.
 func brandCSS(b *artifactbrand.Brand) string {
-	names, vals := lightTokens()
+	names, vals := brandTokens(b)
 	override := func(name, val string) {
 		if val != "" {
 			vals[name] = val
@@ -95,8 +125,16 @@ func brandCSS(b *artifactbrand.Brand) string {
 	for _, n := range names {
 		css.WriteString(n + ":" + vals[n] + ";")
 	}
-	css.WriteString("color-scheme:light}\n")
-	css.WriteString("html{color-scheme:light}\n")
+	scheme := "light"
+	if isDark(b) {
+		scheme = "dark"
+	}
+	css.WriteString("color-scheme:" + scheme + "}\n")
+	css.WriteString("html{color-scheme:" + scheme + "}\n")
+	if isDark(b) {
+		css.WriteString(darkPrintCSS)
+		css.WriteString("@page{background:" + vals["--bg"] + "}\n")
+	}
 	css.WriteString(brandChromeCSS)
 	font := strings.ReplaceAll(vals["--font"], "var(--mono)", vals["--mono"])
 	css.WriteString(pagedCSS(b, font, vals["--muted"], vals["--line"]))

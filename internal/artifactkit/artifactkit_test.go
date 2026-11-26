@@ -300,3 +300,17 @@ func TestKitJSFormatters(t *testing.T) {
 		t.Errorf("%v(%v): want %q, got %q", b[0], b[1], b[2], b[3])
 	}
 }
+
+// TestKitJSIsDark runs kit.js's isDark in node against stub documents: a
+// dark brand is dark even when printing, a light brand never is, and an
+// unbranded page follows the device and turns light in print.
+func TestKitJSIsDark(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not found")
+	}
+	out, err := exec.Command(node, filepath.Join(kitDir, "testdata", "isdark.js"), filepath.Join(kitDir, "kit.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("isdark.js: %v\n%s", err, out)
+	}
+}

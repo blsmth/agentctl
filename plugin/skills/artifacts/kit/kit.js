@@ -381,8 +381,13 @@
       /[?&]print=1(&|$)/.test((global.location && global.location.search) || "");
   }
   function cssVar(n) { return getComputedStyle(doc.documentElement).getPropertyValue(n).trim(); }
-  // A branded page pins the light palette (the html element carries data-light), whatever the device prefers.
-  function isDark() { return !isPrint() && !doc.documentElement.hasAttribute("data-light") && !!(global.matchMedia && global.matchMedia("(prefers-color-scheme: dark)").matches); }
+  // A branded page pins its palette on the html element: data-light (the default) or data-dark, whatever the
+  // device prefers. A dark brand stays dark in print too; everything else repaints light for print.
+  function isDark() {
+    var root = doc.documentElement;
+    if (root.hasAttribute("data-dark")) return true;
+    return !isPrint() && !root.hasAttribute("data-light") && !!(global.matchMedia && global.matchMedia("(prefers-color-scheme: dark)").matches);
+  }
 
   function errorCard(title, errs) {
     var c = h("div", "error-card");
@@ -830,6 +835,10 @@
         options.interaction = { mode: "index", intersect: false, axis: horiz ? "y" : "x" };
         if (type === "bar") plugins.push(nullBarPlugin(horiz, stacked, pal, muted));
       } else options.cutout = "60%";
+      // Chrome prints a canvas as an opaque image, so transparent pixels turn white in a PDF: a dark-brand page fills its own background in.
+      if (doc.documentElement.hasAttribute("data-dark")) plugins.push({ id: "cardBg", beforeDraw: function (c) {
+        var x = c.ctx; x.save(); x.globalCompositeOperation = "destination-over"; x.fillStyle = cardBg; x.fillRect(0, 0, c.width, c.height); x.restore();
+      } });
       chart = new Chart(cv, { type: type, data: { labels: shown, datasets: datasets }, options: options, plugins: plugins });
     }
     state.work.push(loadLib("chart").then(function (Chart) {
@@ -901,7 +910,7 @@
     return Promise.all(state.work);
   }
 
-  var Kit = { version: 1, render: render, validate: validateSpec, validateBlock: validateBlock, fmt: fmt, blockTypes: Object.keys(SCHEMA) };
+  var Kit = { version: 1, render: render, validate: validateSpec, validateBlock: validateBlock, fmt: fmt, isDark: isDark, blockTypes: Object.keys(SCHEMA) };
   global.Kit = Kit;
 
   if (global.matchMedia) {

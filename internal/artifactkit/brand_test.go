@@ -171,10 +171,10 @@ func TestSpecBrand(t *testing.T) {
 // The print repaint rule must not restate tokens on a branded page: it would
 // out-specify the brand's :root{} and drop brand colours from client PDFs.
 func TestKitPrintTokensSkipBrandedPages(t *testing.T) {
-	if !strings.Contains(kit.CSS, ":root[data-print]:not([data-light])") {
+	if !strings.Contains(kit.CSS, ":root[data-print]:not([data-light]):not([data-dark])") {
 		t.Error("kit.css data-print rule is not scoped with :not([data-light])")
 	}
-	if strings.Contains(strings.ReplaceAll(kit.CSS, ":root[data-print]:not([data-light])", ""), "[data-print]") {
+	if strings.Contains(strings.ReplaceAll(kit.CSS, ":root[data-print]:not([data-light]):not([data-dark])", ""), "[data-print]") {
 		t.Error("kit.css has an unscoped [data-print] rule")
 	}
 }
@@ -267,5 +267,75 @@ func TestCSSString(t *testing.T) {
 	want := `"a\"b\\c\a d\3c /style\3e "`
 	if got != want {
 		t.Errorf("cssString = %s, want %s", got, want)
+	}
+}
+
+func darkBrand() *artifactbrand.Brand {
+	b := testBrand()
+	b.Scheme = artifactbrand.SchemeDark
+	b.Colors.Accent = "#a78bfa"
+	return b
+}
+
+func brandStyle(t *testing.T, html string) string {
+	t.Helper()
+	css := html[strings.Index(html, `<style id="brand">`):]
+	return css[:strings.Index(css, "</style>")]
+}
+
+func TestRenderDarkBrand(t *testing.T) {
+	page, err := RenderBranded([]byte(brandedSpec), darkBrand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(page.HTML)
+	css := brandStyle(t, html)
+	for _, want := range []string{
+		"--bg:#0f1216;", "--card:#181d24;", "--fg:#e8ebef;", "--accent:#a78bfa;", "--c1:#111111;",
+		"--r:12px;", "color-scheme:dark}", "html{color-scheme:dark}",
+		"@media print{html,body{background:var(--bg)}}", "print-color-adjust:exact", "@page{background:#0f1216}",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("dark brand css lacks %q:\n%s", want, css)
+		}
+	}
+	for _, banned := range []string{"--bg:#fff;", "--card:#f5f7fa;", "color-scheme:light", "prefers-color-scheme"} {
+		if strings.Contains(css, banned) {
+			t.Errorf("dark brand css contains %q", banned)
+		}
+	}
+	for _, want := range []string{`<html lang="en" data-dark>`, `<meta name="color-scheme" content="dark">`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+	if strings.Contains(html, "data-light>") {
+		t.Error("dark page carries data-light")
+	}
+}
+
+// TestLightBrandUnchanged pins the light brand sheet: an explicit "light"
+// scheme and the zero value render exactly as before schemes existed.
+func TestLightBrandUnchanged(t *testing.T) {
+	zero, err := RenderBranded([]byte(brandedSpec), testBrand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := testBrand()
+	b.Scheme = artifactbrand.SchemeLight
+	light, err := RenderBranded([]byte(brandedSpec), b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(zero.HTML, light.HTML) {
+		t.Error("explicit light differs from the default")
+	}
+	css := brandStyle(t, string(light.HTML))
+	wantHead := ":root{--bg:#fff;--fg:#1a1d21;--muted:#5f6b7a;--card:#f5f7fa;--line:#dde2e8;--accent:#1d4ed8;"
+	if !strings.Contains(css, wantHead) || !strings.Contains(css, "color-scheme:light}\nhtml{color-scheme:light}\n"+brandChromeCSS) {
+		t.Errorf("light brand css changed:\n%s", css)
+	}
+	if strings.Contains(css, "print-color-adjust") || strings.Contains(string(light.HTML), "data-dark>") {
+		t.Error("light brand carries dark-only rules")
 	}
 }

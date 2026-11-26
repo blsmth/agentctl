@@ -14,7 +14,7 @@
   --c1:#6ea8ff;--c2:#2dd4bf;--c3:#a78bfa;--c4:#fb923c;--c5:#f472b6;--c6:#94a3b8;
 }}
 /* kit.js sets data-print on beforeprint, before the print media type applies, so charts repaint light */
-:root[data-print]:not([data-light]){
+:root[data-print]:not([data-light]):not([data-dark]){
   --bg:#fff;--fg:#1a1d21;--muted:#5f6b7a;--card:#f5f7fa;--line:#dde2e8;
   --accent:#2563eb;--good:#15803d;--warn:#b45309;--bad:#b91c1c;--info:#2563eb;
   --c1:#2563eb;--c2:#0f766e;--c3:#7c3aed;--c4:#c2410c;--c5:#be185d;--c6:#64748b;
