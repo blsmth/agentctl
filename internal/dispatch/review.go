@@ -73,7 +73,7 @@ func FetchPR(repoSlug string, number int) (PullRequest, error) {
 	}
 	out, err := ghRunner("", "gh", args...)
 	if err != nil {
-		return PullRequest{}, fmt.Errorf("fetching PR #%d from %s: %w", number, repoSlug, err)
+		return PullRequest{}, fmt.Errorf("fetching PR #%d from %s: %w", number, repoSlug, withGhStderr(err))
 	}
 	pr, err := parsePR(out)
 	if err != nil {
