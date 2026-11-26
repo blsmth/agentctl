@@ -41,13 +41,21 @@ func RenderBranded(data []byte, brand *artifactbrand.Brand) (Page, error) {
 	if brand == nil {
 		b.WriteString("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
 	} else {
-		b.WriteString("<!doctype html>\n<html lang=\"en\" data-light>\n<head>\n<meta charset=\"utf-8\">\n")
+		attr := "data-light"
+		if isDark(brand) {
+			attr = "data-dark"
+		}
+		b.WriteString("<!doctype html>\n<html lang=\"en\" " + attr + ">\n<head>\n<meta charset=\"utf-8\">\n")
 	}
 	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
 	if brand == nil {
 		b.WriteString("<meta name=\"color-scheme\" content=\"light dark\">\n")
 	} else {
-		b.WriteString("<meta name=\"color-scheme\" content=\"light\">\n")
+		scheme := "light"
+		if isDark(brand) {
+			scheme = "dark"
+		}
+		b.WriteString("<meta name=\"color-scheme\" content=\"" + scheme + "\">\n")
 	}
 	b.WriteString("<title>" + html.EscapeString(title) + "</title>\n<style>\n")
 	b.WriteString(kit.CSS)
