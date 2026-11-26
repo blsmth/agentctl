@@ -530,6 +530,14 @@ func cronAddPrompt(a cronArgs, command string) (prompt, source, deny string) {
 		return string(data), fmt.Sprintf("--prompt-file %s (copied into the job now)", path), ""
 	case a.value("prompt-key") != "":
 		key := a.value("prompt-key")
+		if lineChangesContextFor(command, "cron") {
+			// The CLI stores the popup's text only from an agent session
+			// it can identify (pinnedKeyText); an env -u / VAR= prefix or
+			// a cd could hide that and make it read the key again.
+			return "", "", fmt.Sprintf("agentctl cron add --prompt-key %s: the command changes directory or environment "+
+				"first, so the text the popup shows might not be the text stored. Run cron add as its own Bash call "+
+				"(after `agentctl context set %s ...` in a separate call, or chained only with agentctl commands).", key, key)
+		}
 		content, ok := resolvePromptKey(key, command)
 		if !ok {
 			return "", "", cronPromptKeyDenyReason(key)
@@ -591,7 +599,7 @@ func buildCronEditPreview(a cronArgs, command, cwd string) (cronPreview, string)
 		var deny string
 		prompt, source, deny = cronAddPrompt(a, command)
 		if deny != "" {
-			return cronPreview{}, strings.Replace(deny, "cron add", "cron edit", 1)
+			return cronPreview{}, strings.ReplaceAll(deny, "cron add", "cron edit")
 		}
 		if a.value("prompt-key") != "" {
 			job.PinKey(a.value("prompt-key"), prompt)

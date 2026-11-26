@@ -67,6 +67,38 @@ func TestBuildCronPreview_PinArgsAndText(t *testing.T) {
 	}
 }
 
+// TestBuildCronPreview_PromptKeyDeniedWhenLineChangesContext: an env or cd
+// before the command could hide the agent session from the CLI, which would
+// then read the key again instead of storing the popup's text.
+func TestBuildCronPreview_PromptKeyDeniedWhenLineChangesContext(t *testing.T) {
+	withCronNow(t)
+	set := isolateContextStore(t)
+	set("spec-5", "Stored key text.")
+	withCronJobs(t, cron.Job{Name: "keyed", Schedule: "0 9 * * *", Agent: "ops", Dir: "/srv", PromptKey: "spec-5"})
+	for _, tt := range []struct{ command, want string }{
+		{`env -u AGENTCTL_SESSION_ID -u TMUX_PANE -u AGENTCTL_WINDOW_ID agentctl cron add j --schedule @daily -a ops --dir /x -k spec-5`, "cron add --prompt-key spec-5"},
+		{`AGENTCTL_SESSION_ID= TMUX_PANE= AGENTCTL_WINDOW_ID= agentctl cron add j --schedule @daily -a ops --dir /x -k spec-5`, "cron add --prompt-key spec-5"},
+		{`env -u AGENTCTL_SESSION_ID -u TMUX_PANE -u AGENTCTL_WINDOW_ID agentctl cron edit keyed -k spec-5`, "cron edit --prompt-key spec-5"},
+		{`AGENTCTL_SESSION_ID= TMUX_PANE= AGENTCTL_WINDOW_ID= agentctl cron edit keyed -k spec-5`, "cron edit --prompt-key spec-5"},
+		{`cd /tmp && agentctl cron add j --schedule @daily -a ops --dir /x -k spec-5`, "changes directory or environment"},
+	} {
+		p, deny := buildCronPreview(tt.command)
+		if !strings.Contains(deny, tt.want) || !strings.Contains(deny, "changes directory or environment") {
+			t.Errorf("%s:\n deny = %q, want %q", tt.command, deny, tt.want)
+		}
+		if strings.Contains(deny, "cron add") && strings.Contains(tt.want, "cron edit") {
+			t.Errorf("edit deny names add: %q", deny)
+		}
+		if p.pin != nil {
+			t.Errorf("%s: pin recorded on a deny", tt.command)
+		}
+	}
+	// An inline literal context set (an agentctl command) is still fine.
+	if _, deny := buildCronPreview(`agentctl context set spec-5 'x' && agentctl cron add j --schedule @daily -a ops --dir /x -k spec-5`); deny != "" {
+		t.Errorf("inline context set denied: %s", deny)
+	}
+}
+
 // TestCronPreviewGate_PinIsThePopupRead changes the key while the popup is
 // up: the pin is still the text the popup showed.
 func TestCronPreviewGate_PinIsThePopupRead(t *testing.T) {

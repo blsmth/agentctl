@@ -174,6 +174,10 @@ type fleetSchedForm struct {
 	focus                    schedStop
 	gen, previewGen          int
 	preview                  *cronedit.Preview
+	// pinText is the context key text a save will copy into the job (a
+	// new job or duplicate naming a legacy key), read when the review
+	// opens; pinErr says why it cannot be read.
+	pinText, pinErr string
 	localErrs                []cron.FieldError
 	review, discard, saving  bool
 	wantReview               bool
@@ -953,6 +957,14 @@ func (m *FleetModel) schedReview() {
 	}
 	f.err = ""
 	f.permMode = fleetSchedPermMode(f.preview.Job.Agent)
+	f.pinText, f.pinErr = "", ""
+	if j := f.preview.Job; j.Unpinned() && (f.mode != schedFormEdit || j.PromptKey != f.base.PromptKey) {
+		// The save pins the key (cronedit.Store): show the text it copies.
+		f.pinText, _ = m.schedStore().PromptKeyText(j.PromptKey)
+		if strings.TrimSpace(f.pinText) == "" {
+			f.pinErr = "context key " + j.PromptKey + " cannot be read; the save will fail"
+		}
+	}
 	f.review = true
 }
 
@@ -1874,6 +1886,11 @@ func (m FleetModel) schedReviewLayout(w int) schedLayout {
 		prompt = "(template " + job.Template + ", read from the project at every fire)"
 		if tmpl != nil {
 			prompt += "\n\n" + tmpl.Prompt
+		}
+	case job.Unpinned() && (f.pinText != "" || f.pinErr != ""):
+		prompt = "(copied from context key " + job.PromptKey + " on save)\n\n" + f.pinText
+		if f.pinErr != "" {
+			prompt = "(" + f.pinErr + ")"
 		}
 	case job.Unpinned():
 		prompt = "(context key " + job.PromptKey + ", UNPINNED: read at every fire; " + job.PinCommand() + " pins it)"

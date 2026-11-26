@@ -1249,3 +1249,20 @@ func TestSchedulePinnedAndUnpinnedCards(t *testing.T) {
 		t.Errorf("edited job = %+v", j)
 	}
 }
+
+func TestScheduleDuplicateOfLegacyKeyShowsPinnedText(t *testing.T) {
+	f := newSchedFixture(t)
+	f.promptKeys = map[string]string{"spec": "Text the save copies."}
+	f.create(t, cron.Job{Name: "legacy", Schedule: "0 7 * * *", PromptKey: "spec"})
+	m := showSchedules(t, f.model(t))
+	m = selectSched(t, m, "legacy")
+	m = schedPress(t, m, "d", "ctrl+s")
+	out := ansi.Strip(m.render())
+	if !strings.Contains(out, "copied from context key spec on save") || !strings.Contains(out, "Text the save copies.") || strings.Contains(out, "UNPINNED: read at every fire") {
+		t.Errorf("duplicate review:\n%s", out)
+	}
+	schedPress(t, m, "y")
+	if j := f.job(t, "legacy-copy"); j.Unpinned() || j.Prompt != "Text the save copies." || j.PromptSourceKey != "spec" {
+		t.Errorf("duplicate = %+v", j)
+	}
+}

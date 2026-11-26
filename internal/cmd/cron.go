@@ -372,17 +372,18 @@ func (e cronEnv) edit(w io.Writer, opts CronEditOptions) error {
 	if opts.Template != nil && *opts.Template == "" {
 		return errors.New("--template needs a name (switch to --prompt, --prompt-key or --prompt-file instead)")
 	}
+	var dir string
+	if opts.Dir != nil {
+		if dir, err = absDir(*opts.Dir); err != nil {
+			return err
+		}
+	}
+	// Last before the write, so a bad flag does not use up the approval.
 	if opts.PromptKey != nil {
 		if *opts.PromptKey == "" {
 			return errors.New("--prompt-key needs a key")
 		}
 		if prompt, err = pinnedKeyText(*opts.PromptKey); err != nil {
-			return err
-		}
-	}
-	var dir string
-	if opts.Dir != nil {
-		if dir, err = absDir(*opts.Dir); err != nil {
 			return err
 		}
 	}
