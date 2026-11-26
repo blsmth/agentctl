@@ -36,6 +36,10 @@ type closedEnv struct {
 	out      string
 	spawnErr error
 	proj     string
+	// spawnStarted, when set, is signalled as a resume begins; spawnBlock,
+	// when set, holds the resume until it is closed.
+	spawnStarted chan struct{}
+	spawnBlock   chan struct{}
 }
 
 func (c *closedEnv) load(since time.Time) ([]closedlog.Record, error) {
@@ -56,9 +60,16 @@ func (c *closedEnv) load(since time.Time) ([]closedlog.Record, error) {
 
 func (c *closedEnv) resume(r closedlog.Record) (string, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.resumed = append(c.resumed, r)
-	return c.out, c.spawnErr
+	out, err, started, block := c.out, c.spawnErr, c.spawnStarted, c.spawnBlock
+	c.mu.Unlock()
+	if started != nil {
+		started <- struct{}{}
+	}
+	if block != nil {
+		<-block
+	}
+	return out, err
 }
 
 func (c *closedEnv) calls() []closedlog.Record {
@@ -299,6 +310,45 @@ func TestClosedResumeRefusals(t *testing.T) {
 				t.Errorf("spawned %d times", n)
 			}
 		})
+	}
+}
+
+func TestClosedResumeBusy(t *testing.T) {
+	c := newClosedEnv(t, true)
+	c.spawnStarted, c.spawnBlock = make(chan struct{}, 1), make(chan struct{})
+	path := "/v1/closed/" + sidOK[:8] + "/resume"
+	first := make(chan int, 1)
+	go func() { first <- c.post(path, `{}`).Code }()
+	<-c.spawnStarted
+	w := c.post(path, `{}`)
+	if w.Code != http.StatusConflict || errCode(t, w) != codeBusy {
+		t.Errorf("second resume: %d %s", w.Code, w.Body)
+	}
+	close(c.spawnBlock)
+	if code := <-first; code != http.StatusOK {
+		t.Errorf("first resume: %d", code)
+	}
+	if n := len(c.calls()); n != 1 {
+		t.Errorf("spawned %d times, want 1", n)
+	}
+	// Once the first finishes, the session can be resumed again.
+	c.spawnStarted = nil
+	if w := c.post(path, `{}`); w.Code != http.StatusOK {
+		t.Errorf("resume after release: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestClosedResumeAmbiguous(t *testing.T) {
+	c := newClosedEnv(t, true)
+	twin := c.recs[0]
+	twin.SessionID, twin.WindowID, twin.ClosedAt = "aaaa1111-0000-0000-0000-000000000099", "@20", twin.ClosedAt.Add(-time.Minute)
+	c.recs = append([]closedlog.Record{c.recs[0], twin}, c.recs[1:]...)
+	w := c.post("/v1/closed/aaaa1111/resume", `{}`)
+	if w.Code != http.StatusConflict || errCode(t, w) != codeAmbiguous {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if n := len(c.calls()); n != 0 {
+		t.Errorf("spawned %d times", n)
 	}
 }
 
