@@ -18,6 +18,7 @@ const (
 	tRows                 // array of objects of scalar cells
 	tArr                  // array of objects described by of
 	tISODate              // YYYY-MM-DD or an RFC 3339 datetime
+	tImgSrc               // image source: local path, https:// URL or data:image URI
 )
 
 type field struct {
@@ -30,9 +31,10 @@ type field struct {
 }
 
 var (
-	tones    = []string{"info", "good", "warn", "bad"}
-	colTypes = []string{"number", "percent", "currency", "duration", "date", "datetime", "text", "status"}
-	kinds    = []string{"report", "dashboard", "comparison", "diagram"}
+	tones       = []string{"info", "good", "warn", "bad"}
+	colTypes    = []string{"number", "percent", "currency", "duration", "date", "datetime", "text", "status"}
+	imageWidths = []string{"full", "wide", "narrow"}
+	kinds       = []string{"report", "dashboard", "comparison", "diagram"}
 )
 
 var topSchema = []field{
@@ -48,7 +50,7 @@ var topSchema = []field{
 }
 
 // blockOrder is the closed set of block types, in SPEC.md order.
-var blockOrder = []string{"summary", "kpis", "chart", "table", "text", "mermaid", "comparison", "timeline", "html", "sources"}
+var blockOrder = []string{"summary", "kpis", "chart", "table", "text", "mermaid", "comparison", "timeline", "image", "html", "sources"}
 
 var blockSchemas = map[string][]field{
 	"summary": {
@@ -107,6 +109,14 @@ var blockSchemas = map[string][]field{
 		{name: "items", t: tArr, req: true, of: []field{
 			{name: "date", t: tStr, req: true}, {name: "title", t: tStr, req: true},
 			{name: "text", t: tStr}, {name: "tone", t: tEnum, enum: tones}}},
+	},
+	"image": {
+		{name: "title", t: tStr},
+		{name: "src", t: tImgSrc}, {name: "alt", t: tStr},
+		{name: "images", t: tArr, of: []field{
+			{name: "src", t: tImgSrc, req: true}, {name: "alt", t: tStr, req: true}, {name: "caption", t: tStr}}},
+		{name: "caption", t: tStr},
+		{name: "width", t: tEnum, enum: imageWidths},
 	},
 	"html": {{name: "title", t: tStr}, {name: "html", t: tStr, req: true}},
 	"sources": {

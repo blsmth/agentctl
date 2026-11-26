@@ -141,6 +141,15 @@ details>:last-child{margin-bottom:12px}
 pre.mermaid{margin:0;padding:0;border:0;background:none;visibility:hidden;white-space:pre}
 pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left}
 
+/* image block */
+.images{display:grid;gap:var(--gap);grid-template-columns:minmax(0,1fr)}
+.images-wide{max-width:900px}
+.images-narrow{max-width:520px}
+@media(min-width:760px){.images.gallery{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}}
+.figure{margin:0;padding:8px;overflow:hidden}
+.figure img{display:block;max-width:100%;height:auto;margin:0 auto;border-radius:calc(var(--r) - 4px)}
+.figure figcaption{margin-top:8px}
+
 /* comparison option cards */
 .options{display:grid;gap:var(--gap);grid-template-columns:minmax(0,1fr)}
 @media(min-width:760px){.options{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}}
@@ -189,7 +198,7 @@ pre.mermaid[data-processed],pre.mermaid.plain{visibility:visible;text-align:left
   main{max-width:none;padding:0}
   h1,h2,h3{break-after:avoid}
   .block>h2{break-after:avoid}
-  .card,.kpi,.callout,.opt,.reco,.chart-box,.chart-note,.error-card,.diagram,details,pre,.timeline li,.badge{break-inside:avoid}
+  .card,.kpi,.callout,.opt,.reco,.chart-box,.chart-note,.error-card,.diagram,.figure,.figure img,details,pre,.timeline li,.badge{break-inside:avoid}
   .block-chart .card{break-inside:avoid}
   .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
   .options{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}

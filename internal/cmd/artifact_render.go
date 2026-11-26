@@ -46,6 +46,10 @@ func (e artifactEnv) render(w io.Writer, o ArtifactRenderOptions) error {
 	if errs := artifactkit.Validate(data); errs != nil {
 		return errs
 	}
+	data, err = resolveSpecImages(data, o.Path)
+	if err != nil {
+		return err
+	}
 	brandName := o.Brand
 	if brandName == "" {
 		brandName = artifactkit.SpecBrand(data)
@@ -65,6 +69,9 @@ func (e artifactEnv) render(w io.Writer, o ArtifactRenderOptions) error {
 	title := o.Title
 	if title == "" {
 		title = page.Title
+	}
+	if o.Out == "" && int64(len(page.HTML)) > artifacts.MaxRevBytes {
+		return fmt.Errorf("rendered page is %d MB, over the %d MB artifact limit; use fewer or smaller images", len(page.HTML)>>20, artifacts.MaxRevBytes>>20)
 	}
 	if o.Out != "" {
 		return writeRendered(w, o.Out, page.HTML, title, o.JSON)
@@ -87,6 +94,23 @@ func (e artifactEnv) render(w io.Writer, o ArtifactRenderOptions) error {
 		Path: "-", Title: title, Description: o.Description, Kind: artifacts.KindHTML, Entry: "index.html",
 		Pin: o.Pin, NoNotify: o.NoNotify, JSON: o.JSON,
 	})
+}
+
+// pageOverheadBytes is room reserved for kit.css, kit.js and the rest of the
+// spec when capping inlined images against artifacts.MaxRevBytes.
+const pageOverheadBytes = 1 << 20
+
+// resolveSpecImages inlines local image files as data: URIs. Relative paths
+// resolve against the spec file's directory, or the working directory when the
+// spec came from stdin. The image budget is the lesser of the kit's own cap and
+// what still fits in one artifact revision after base64 (4/3) expansion.
+func resolveSpecImages(data []byte, specPath string) ([]byte, error) {
+	base := "."
+	if specPath != "-" {
+		base = filepath.Dir(specPath)
+	}
+	budget := (artifacts.MaxRevBytes - pageOverheadBytes) * 3 / 4
+	return artifactkit.ResolveImages(data, base, budget)
 }
 
 func (e artifactEnv) readSpec(p string) ([]byte, error) {

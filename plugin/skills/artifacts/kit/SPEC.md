@@ -127,6 +127,16 @@ Paragraphs and bullet lists only. `text` (required): blank line separates paragr
 {"type": "timeline", "items": [{"date": "2026-11-14", "title": "Deploy", "tone": "bad", "text": "Latency rose."}]}
 ```
 
+### `image`
+
+A screenshot, GIF or diagram. Give exactly one of `src` (one image; `alt` required) or `images` (a gallery: non-empty array of `{src, alt, caption?}`, `alt` required on each; a grid that stacks on narrow screens). `caption` (optional) sits under the block; `width` is `full` (default) \| `wide` \| `narrow`.
+
+`src` is a local file (relative to the spec file's directory, or the working directory when the spec comes from stdin; `~/` works) or an `https://` URL. `artifact render` reads each local file and inlines it as a `data:` URI, so the page stays one file; an `https://` URL is left as is and needs internet when viewed. `http:` and any other scheme are errors. The type comes from the file's bytes, not its name: only png, jpeg, gif and webp are allowed. SVG is rejected (it can carry script). Limits: 8 MB per image, 20 MB of images per spec, and the finished page must fit one artifact revision (25 MB; with base64 growth that caps the images at about 18 MB). A GIF animates on screen and prints its first frame in a PDF. Images shrink to the page width and keep their aspect ratio.
+
+```json
+{"type": "image", "title": "Hub", "src": "demo/out/hub.png", "alt": "The agent hub with three sessions", "caption": "After the change", "width": "wide"}
+```
+
 ### `html`
 
 Escape hatch, discouraged: use it only when no other block fits, and say so in your report. `html` (required): raw HTML inserted as-is, styled by the kit's classes and tokens. No scripts, no inline colours.

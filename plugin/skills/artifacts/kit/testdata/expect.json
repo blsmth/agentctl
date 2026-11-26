@@ -31,6 +31,14 @@
   "date-axis-datetime": {"path": "blocks[0].labels[0]"},
   "x-axis-bad-value": {"path": "blocks[0].x_axis"},
   "horizontal-not-bool": {"path": "blocks[0].horizontal"},
+  "image-both": {"path": "blocks[0].images"},
+  "image-neither": {"path": "blocks[0].src"},
+  "image-missing-alt": {"path": "blocks[0].alt"},
+  "image-gallery-missing-alt": {"path": "blocks[0].images[0].alt"},
+  "image-bad-width": {"path": "blocks[0].width"},
+  "image-http": {"path": "blocks[0].src"},
+  "image-bad-scheme": {"path": "blocks[0].src"},
+  "image-svg-data": {"path": "blocks[0].src"},
   "report-without-sources": {"path": "blocks", "go_only": true},
   "dashboard-without-sources": {"path": "blocks", "go_only": true}
 }
