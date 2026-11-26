@@ -6,8 +6,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-	"unicode/utf8"
 	"time"
+	"unicode/utf8"
 )
 
 func stubRunner(t *testing.T, fn commandRunner) *int {
