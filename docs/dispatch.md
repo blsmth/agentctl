@@ -48,7 +48,7 @@ The agent is told its worktree path and branch in the prompt, and instructed to 
 
 ### Opting out
 
-Use `--no-worktree` to skip worktree creation and use the shared repo directory instead. Useful for quick fixes where isolation isn't needed, but be aware of potential conflicts with other agents.
+Use `--no-worktree` to skip worktree creation and use the shared repo directory instead. Useful for quick fixes where isolation isn't needed, but be aware of potential conflicts with other agents. The launch facts say what that directory is: the repo's main checkout, an existing linked worktree (named by its branch, when dispatching from a session that runs in one) that other sessions may also use, or a directory outside git.
 
 ### Cleanup
 
@@ -103,6 +103,10 @@ An agent with `role: orchestrator` in its frontmatter (see [configuration.md](co
 
 - **Human-initiated `--prompt`** (the phone's new-session button, or the CLI from a shell with no tracked Claude session): launched as a `bare` interactive session. The prompt is the first user message, there are no autonomous instructions, and the permission mode resolves like a worker dispatch (per-launch override, then the agent's `permission_mode`, then `auto`).
 - **Unattended** (a cron job, or `--prompt` dispatched from another agent session, so done notices and `--wait` work) **and `--issue`**: the mode is kept, with its autonomous instructions, and the task is in the first message.
+
+## Reporter agents
+
+An agent with `role: reporter` in its frontmatter (see [configuration.md](configuration.md#agent-frontmatter-role)) never changes code: code-reviewer, researcher, designer. It is a worker in every other respect (worker preamble, autonomous instructions, worktree), but in ad-hoc and `--issue` launches the finishing steps are replaced by a short report step: make no commits and open no PR unless the task asks for one, then send the result to the orchestrator with SendMessage, or put it in the final message when there is no orchestrator. Its orchestrator section has no "After you open the PR, stay responsive until it merges" paragraph, and an `--issue` launch's directive is "Work on issue #N and report the result." instead of "open a PR when done". `--review-pr` launches are unchanged, and a `bare` launch keeps the orchestrator preamble (a role never downgrades it).
 
 ## Choosing a model
 

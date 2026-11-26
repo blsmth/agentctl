@@ -9,6 +9,7 @@ import (
 	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/tui"
+	"github.com/blsmth/agentctl/internal/worktree"
 )
 
 // launchFacts are the per-launch facts of one launch: where it runs and who
@@ -19,12 +20,55 @@ type launchFacts struct {
 	RepoDir    string // the checkout the launch targets (repo slug fallback)
 	Branch     string // the window's own branch; "" without a worktree
 	InWorktree bool   // a worktree was actually created for this launch
-	Window     string // tmux window name (instance)
-	Started    time.Time
+	// Checkout is what WorkDir is when no worktree was created for this
+	// launch; the zero value is the repository's main checkout.
+	Checkout checkoutInfo
+	Window   string // tmux window name (instance)
+	Started  time.Time
 }
 
 // worktree reports whether the launch runs in its own worktree and branch.
 func (f launchFacts) worktree() bool { return f.InWorktree && f.Branch != "" }
+
+// sharedWorktree reports whether the launch runs in a linked worktree it did
+// not create (e.g. --no-worktree from a session that runs in one).
+func (f launchFacts) sharedWorktree() bool { return !f.worktree() && f.Checkout.Kind == checkoutLinked }
+
+// notRepo reports whether the launch runs outside any git repository.
+func (f launchFacts) notRepo() bool { return !f.worktree() && f.Checkout.Kind == checkoutNotRepo }
+
+// checkoutKind is the kind of directory a launch without its own worktree
+// runs in.
+type checkoutKind int
+
+const (
+	checkoutMain    checkoutKind = iota // the repository's main checkout
+	checkoutLinked                      // a linked worktree that already existed
+	checkoutNotRepo                     // not inside a git repository
+)
+
+// checkoutInfo describes the directory a launch without its own worktree
+// runs in.
+type checkoutInfo struct {
+	Kind   checkoutKind
+	Branch string // checked-out branch of a linked worktree; "" when detached
+}
+
+// inspectCheckoutFn inspects a working directory. A var for tests.
+var inspectCheckoutFn = worktree.Inspect
+
+// inspectCheckout describes dir for the launch facts.
+func inspectCheckout(dir string) checkoutInfo {
+	c := inspectCheckoutFn(dir)
+	switch {
+	case !c.Repo:
+		return checkoutInfo{Kind: checkoutNotRepo}
+	case c.Linked:
+		return checkoutInfo{Kind: checkoutLinked, Branch: c.Branch}
+	default:
+		return checkoutInfo{Kind: checkoutMain}
+	}
+}
 
 // launchPrompt is what a launch hands the agent: the file passed with
 // --append-system-prompt-file and the first user message.
@@ -303,11 +347,7 @@ func launchFactsBlock(req Request, facts launchFacts) string {
 	if facts.WorkDir != "" {
 		lines = append(lines, "- Working directory: "+facts.WorkDir)
 	}
-	if facts.worktree() {
-		lines = append(lines, "- Branch: "+facts.Branch+" (a git worktree)")
-	} else {
-		lines = append(lines, "- No worktree: this is the shared checkout")
-	}
+	lines = append(lines, checkoutFact(facts))
 	if req.Orchestrator.Known() {
 		lines = append(lines, orchestratorFact(req.Orchestrator))
 	}
@@ -318,6 +358,24 @@ func launchFactsBlock(req Request, facts launchFacts) string {
 	return out
 }
 
+// checkoutFact is the launch-facts line saying where the agent works: its
+// own worktree, an existing worktree it shares, the main checkout, or a
+// directory outside git.
+func checkoutFact(facts launchFacts) string {
+	switch {
+	case facts.worktree():
+		return "- Branch: " + facts.Branch + " (a git worktree)"
+	case facts.sharedWorktree() && facts.Checkout.Branch != "":
+		return "- Branch: " + facts.Checkout.Branch + " (an existing git worktree, not created for this launch; other sessions may also use it)"
+	case facts.sharedWorktree():
+		return "- Detached HEAD in an existing git worktree, not created for this launch; other sessions may also use it"
+	case facts.notRepo():
+		return "- No worktree: the working directory is not in a git repository"
+	default:
+		return "- No worktree: this is the repo's main checkout, which other sessions may also use"
+	}
+}
+
 // closingBlock is the end of the first message: the mode's directive, then
 // the finishing steps for the modes that have them.
 func closingBlock(req Request, spec modeSpec, facts launchFacts) string {
@@ -325,8 +383,11 @@ func closingBlock(req Request, spec modeSpec, facts launchFacts) string {
 	if spec.Directive != nil {
 		parts = append(parts, spec.Directive(req))
 	}
-	if spec.IncludeFinishingSteps {
-		parts = append(parts, buildFinishingSteps(req, facts.Branch, facts.InWorktree))
+	switch {
+	case spec.IncludeFinishingSteps && spec.Role == RoleReporter:
+		parts = append(parts, reporterFinishingSteps(req.Orchestrator))
+	case spec.IncludeFinishingSteps:
+		parts = append(parts, buildFinishingSteps(req, facts))
 	}
 	return joinParts(parts...)
 }
@@ -394,11 +455,11 @@ Any file you edit here is worktree-local. If an edit needs to land (agent defini
 // that's the agent's own .md file's job, since only it knows the toolchain.
 // The one tool it names, golangci-lint, is only an example of a linter.
 //
-// useWorktree is the already-resolved mode-default-or-override value from
-// Launch's single resolution site -- this function never reads
+// facts.InWorktree is the already-resolved mode-default-or-override value
+// from Launch's single resolution site -- this function never reads
 // req.UseWorktree directly.
-func buildFinishingSteps(req Request, branch string, useWorktree bool) string {
-	if useWorktree && branch != "" {
+func buildFinishingSteps(req Request, facts launchFacts) string {
+	if branch := facts.Branch; facts.worktree() {
 		closesLine := ""
 		if req.Ticket > 0 {
 			closesLine = fmt.Sprintf(" Include \"Closes #%d\" in the commit body so GitHub auto-closes the issue.", req.Ticket)
@@ -424,7 +485,31 @@ The PR is the deliverable, not the commit — do not stop after committing, and 
 2. Stage ONLY the files you changed — explicit paths, never "git add -A" or "git add .".
 3. Commit your changes with a descriptive message.
 
-Do NOT push to main and do NOT open a pull request — you are working directly in the shared repo directory, not an isolated worktree. Stop after committing and report back what you did.` + reportStep(req.Orchestrator, "", "a summary of what you did")
+Do NOT push to main and do NOT open a pull request — ` + sharedDirReason(facts) + ` Stop after committing and report back what you did.` + reportStep(req.Orchestrator, "", "a summary of what you did")
+}
+
+// sharedDirReason says why a launch without its own worktree must not push
+// or open a PR, matching the checkout its launch facts name.
+func sharedDirReason(facts launchFacts) string {
+	switch {
+	case facts.sharedWorktree():
+		return "you are working in an existing git worktree that was not created for this launch and that other sessions may also use, not an isolated worktree of your own."
+	case facts.notRepo():
+		return "the working directory is not in a git repository, so there is no isolated worktree."
+	default:
+		return "you are working directly in the repo's main checkout, not an isolated worktree."
+	}
+}
+
+// reporterFinishingSteps closes the first message for a role: reporter
+// agent, which reports instead of changing code: no commit or PR unless the
+// task asks for one, and the result goes to the orchestrator.
+func reporterFinishingSteps(o Orchestrator) string {
+	report := "put your result in your final message."
+	if o.Known() {
+		report = "send your result to your orchestrator (window " + o.WindowID + ") with SendMessage. If it is gone, put the result in your final message instead."
+	}
+	return "When you are finished: make no commits and open no pull request unless the task asks for one, then " + report
 }
 
 // reportStep is the final finishing step: report to the orchestrator with

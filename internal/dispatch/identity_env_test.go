@@ -147,10 +147,10 @@ func TestLaunchWorktreeFallbackPromptIsSharedDir(t *testing.T) {
 			t.Errorf("fallback prompt contains %q", bad)
 		}
 	}
-	if !strings.Contains(rec.Only().Command, "No worktree: this is the shared checkout") {
+	if !strings.Contains(rec.Only().Command, "main checkout, which other sessions may also use") {
 		t.Error("fallback launch facts do not say there is no worktree")
 	}
-	if !strings.Contains(rec.Only().Command, "working directly in the shared repo directory") {
+	if !strings.Contains(rec.Only().Command, "main checkout, not an isolated worktree") {
 		t.Error("fallback prompt lacks the shared-dir finishing steps")
 	}
 }

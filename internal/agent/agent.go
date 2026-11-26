@@ -50,8 +50,8 @@ type Agent struct {
 	ComposedBody string // Merged base+local body, empty if standalone
 	Tools        string // Tools field from frontmatter
 	Harness      string // harness field from frontmatter ("" = config or default; see internal/harness)
-	// Role is the frontmatter role: RoleOrchestrator, RoleWorker, or "" (a
-	// worker). Unknown values are logged and dropped at discovery.
+	// Role is the frontmatter role: RoleOrchestrator, RoleWorker,
+	// RoleReporter, or "" (a worker). Unknown values are logged and dropped at discovery.
 	Role        string
 	Scope       AgentScope
 	SymTarget   string // Raw symlink target path (if local)
@@ -77,8 +77,9 @@ type Frontmatter struct {
 	// The agents.<name>.harness config key wins over it.
 	Harness string `yaml:"harness"`
 	// Role is "orchestrator" for an agent whose job is coordinating other
-	// agents (it never gets worker finishing steps), "worker" or empty
-	// otherwise. See NormalizeRole.
+	// agents (it never gets worker finishing steps), "reporter" for an agent
+	// that never changes code (it reports instead of committing and opening a
+	// PR), "worker" or empty otherwise. See NormalizeRole.
 	Role string `yaml:"role"`
 }
 
@@ -86,16 +87,18 @@ type Frontmatter struct {
 const (
 	RoleOrchestrator = "orchestrator"
 	RoleWorker       = "worker"
+	RoleReporter     = "reporter"
 )
 
 // NormalizeRole returns role when it is a known value (RoleOrchestrator,
-// RoleWorker or ""), else "" after logging a warning naming source.
+// RoleWorker, RoleReporter or ""), else "" after logging a warning naming
+// source.
 func NormalizeRole(role, source string) string {
 	switch role {
-	case "", RoleOrchestrator, RoleWorker:
+	case "", RoleOrchestrator, RoleWorker, RoleReporter:
 		return role
 	}
-	logging.Warn("agent: %s: ignoring unknown role %q (want %s or %s)", source, role, RoleOrchestrator, RoleWorker)
+	logging.Warn("agent: %s: ignoring unknown role %q (want %s, %s or %s)", source, role, RoleOrchestrator, RoleWorker, RoleReporter)
 	return ""
 }
 

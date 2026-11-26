@@ -125,7 +125,7 @@ The `state.json` snapshot the monitor writes each tick under `paths.RuntimeDir()
 
 ### agent/
 
-Discovers agents from the global registry `~/.claude/agents/*.md` and project-local `.claude/agents/` by parsing YAML frontmatter; local definitions shadow global, and `Extends` composes a local agent on top of a base. Frontmatter may set `role: orchestrator` and `harness:`. Agent creation writes new `.md` files.
+Discovers agents from the global registry `~/.claude/agents/*.md` and project-local `.claude/agents/` by parsing YAML frontmatter; local definitions shadow global, and `Extends` composes a local agent on top of a base. Frontmatter may set `role: orchestrator` (or `reporter`, `worker`) and `harness:`. Agent creation writes new `.md` files.
 
 ### sessions/
 

@@ -446,6 +446,7 @@ func TestBuildFinishingSteps(t *testing.T) {
 		req         Request
 		useWorktree bool
 		branch      string
+		checkout    checkoutInfo
 		wantContain []string
 		wantAbsent  []string
 	}{
@@ -487,13 +488,27 @@ func TestBuildFinishingSteps(t *testing.T) {
 				"git push",
 				"gh pr create",
 			},
-			wantContain: []string{"main"},
+			wantContain: []string{"main", "you are working directly in the repo's main checkout, not an isolated worktree"},
+		},
+		{
+			name:        "existing linked worktree",
+			req:         Request{},
+			checkout:    checkoutInfo{Kind: checkoutLinked, Branch: "feature"},
+			wantAbsent:  []string{"git push", "gh pr create", "main checkout"},
+			wantContain: []string{"an existing git worktree that was not created for this launch and that other sessions may also use"},
+		},
+		{
+			name:        "not a git repo",
+			req:         Request{},
+			checkout:    checkoutInfo{Kind: checkoutNotRepo},
+			wantAbsent:  []string{"git push", "gh pr create", "main checkout"},
+			wantContain: []string{"not in a git repository"},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildFinishingSteps(tc.req, tc.branch, tc.useWorktree)
+			got := buildFinishingSteps(tc.req, launchFacts{Branch: tc.branch, InWorktree: tc.useWorktree, Checkout: tc.checkout})
 			for _, want := range tc.wantContain {
 				if !strings.Contains(got, want) {
 					t.Errorf("buildFinishingSteps() missing %q, got:\n%s", want, got)
@@ -659,15 +674,15 @@ func TestPreamble_Orchestrator(t *testing.T) {
 
 func TestFinishingSteps_ReportToOrchestrator(t *testing.T) {
 	orch := Orchestrator{WindowID: "@26"}
-	with := buildFinishingSteps(Request{Orchestrator: orch}, "agent/x/issue-1", true)
+	with := buildFinishingSteps(Request{Orchestrator: orch}, launchFacts{Branch: "agent/x/issue-1", InWorktree: true})
 	if !strings.Contains(with, "7. SendMessage to your orchestrator (window @26) with the PR URL") {
 		t.Errorf("worktree steps missing report step:\n%s", with)
 	}
-	without := buildFinishingSteps(Request{}, "agent/x/issue-1", true)
+	without := buildFinishingSteps(Request{}, launchFacts{Branch: "agent/x/issue-1", InWorktree: true})
 	if strings.Contains(without, "SendMessage") {
 		t.Errorf("no orchestrator: steps must not mention SendMessage:\n%s", without)
 	}
-	shared := buildFinishingSteps(Request{Orchestrator: orch}, "", false)
+	shared := buildFinishingSteps(Request{Orchestrator: orch}, launchFacts{})
 	if !strings.Contains(shared, "SendMessage to your orchestrator (window @26)") {
 		t.Errorf("shared-dir steps missing report:\n%s", shared)
 	}

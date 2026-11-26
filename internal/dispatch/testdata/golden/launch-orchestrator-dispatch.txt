@@ -42,7 +42,7 @@ command:
   - Started: 2026-11-24T21:05:43Z
   - Window: lead (`agentctl status whoami` prints its tmux window ID)
   - Working directory: $PROJECT
-  - No worktree: this is the shared checkout
+  - No worktree: this is the repo'\''s main checkout, which other sessions may also use
   
   Handle issue #7 (Fix it).'
 windowstate:

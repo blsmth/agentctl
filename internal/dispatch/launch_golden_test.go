@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/tmux/launchtest"
+	"github.com/blsmth/agentctl/internal/worktree"
 )
 
 // goldenAgentMD is the agent definition the launch golden tests use.
@@ -35,16 +36,17 @@ var goldenStart = time.Date(2026, 11, 24, 21, 5, 43, 0, time.UTC)
 
 // stubGoldenSeams fixes every seam a golden launch would otherwise read from
 // the machine: the orchestrator, the parent account, the hook binary path
-// and the clock.
+// the clock and the checkout inspection (a main checkout).
 func stubGoldenSeams(t *testing.T, orch Orchestrator) {
 	t.Helper()
-	prevOrch, prevParent, prevExec, prevNow := resolveOrchestratorFn, parentAccountFn, execPath, launchNow
+	prevOrch, prevParent, prevExec, prevNow, prevInspect := resolveOrchestratorFn, parentAccountFn, execPath, launchNow, inspectCheckoutFn
 	resolveOrchestratorFn = func() Orchestrator { return orch }
+	inspectCheckoutFn = func(string) worktree.Checkout { return worktree.Checkout{Repo: true, Branch: "main"} }
 	parentAccountFn = func() string { return "" }
 	execPath = func() (string, error) { return "/opt/bin/agentctl", nil }
 	launchNow = func() time.Time { return goldenStart }
 	t.Cleanup(func() {
-		resolveOrchestratorFn, parentAccountFn, execPath, launchNow = prevOrch, prevParent, prevExec, prevNow
+		resolveOrchestratorFn, parentAccountFn, execPath, launchNow, inspectCheckoutFn = prevOrch, prevParent, prevExec, prevNow, prevInspect
 	})
 }
 

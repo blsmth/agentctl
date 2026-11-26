@@ -73,7 +73,8 @@ The context entries are last because they change whenever an agent writes to the
      review instructions
    - `## Additional instructions from the user` (the phone form's extra text)
 2. ## Launch facts: started time, window name, working directory, branch
-   (or "No worktree"), the orchestrator's window and pane (and its session
+   (or, with no worktree of its own, whether the directory is the main
+   checkout, an existing linked worktree on branch X, or not in git), the orchestrator's window and pane (and its session
    name as a hint). For review-pr, the commands to check out the PR head
    detached and return the worktree to its base
 3. The mode's directive ("Implement issue #42 (title) and open a PR when
@@ -82,7 +83,7 @@ The context entries are last because they change whenever an agent writes to the
    report to the orchestrator
 ```
 
-Finishing steps are deliberately the last thing the agent reads: ordered instructions closest to the end of the prompt are followed most reliably, and getting the agent to push and open a PR (rather than stopping after a local commit) is the step most worth reinforcing. They run only for the fully autonomous dispatch/adhoc modes (triage/review/review-pr forbid committing; discuss/custom/bare leave "done" to the human) and never for a `role: orchestrator` agent. The workflow lives in `internal/dispatch` and never hardcodes a language-specific build tool or a repo-specific deploy step; those belong to the agent's own `.md`.
+Finishing steps are deliberately the last thing the agent reads: ordered instructions closest to the end of the prompt are followed most reliably, and getting the agent to push and open a PR (rather than stopping after a local commit) is the step most worth reinforcing. They run only for the fully autonomous dispatch/adhoc modes (triage/review/review-pr forbid committing; discuss/custom/bare leave "done" to the human) and never for a `role: orchestrator` agent. A `role: reporter` agent gets a short report step in their place (no commit or PR unless the task asks; send the result to the orchestrator, or put it in the final message). The workflow lives in `internal/dispatch` and never hardcodes a language-specific build tool or a repo-specific deploy step; those belong to the agent's own `.md`.
 
 The user's additional instructions used to be the very last section of the system prompt. They are per launch, so they now sit at the end of the task block, above the launch facts and finishing steps.
 
@@ -94,7 +95,7 @@ The first message reaches `claude` as one argv word, so it is bound by the per-a
 
 A bare launch's first message is the human's own text, unchanged: the phone's new-session button, `dispatch --prompt` from a plain shell for a `role: orchestrator` agent, or a menu launch with no prompt (no message at all). Bare launches have no orchestrator and no finishing steps, so their only per-launch fact is the worktree, when there is one (a human ad-hoc launch of an orchestrator keeps the ad-hoc worktree default). It goes in a one-line prefix, `[agentctl launch facts: git worktree <path>, branch <branch>]`, above the human text. A bare launch with a worktree and no prompt has no message to carry it, so its path and branch stay in the system file. A bare prompt over 64KB moves to `## Task` in the system file, as before.
 
-The preamble role is the mode's, upgraded to orchestrator when the agent's frontmatter says `role: orchestrator` (never downgraded). Such an agent never gets finishing steps or the "do not merge to main" line (`dispatch.applyAgentRole`). Cron launches, ad-hoc dispatches from another agent session, and `--issue` keep their mode and autonomous instructions.
+The preamble role is the mode's, upgraded to orchestrator when the agent's frontmatter says `role: orchestrator` (never downgraded). Such an agent never gets finishing steps or the "do not merge to main" line (`dispatch.applyAgentRole`). Cron launches, ad-hoc dispatches from another agent session, and `--issue` keep their mode and autonomous instructions. `role: reporter` keeps the worker preamble but swaps the finishing steps for a report step and drops the orchestrator section's "stay responsive until it merges" paragraph (`dispatch.applyReporterRole`); review-pr and bare launches ignore it.
 
 ## Paths that do not build a prompt
 
