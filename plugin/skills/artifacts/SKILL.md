@@ -55,6 +55,7 @@ Limits: 25 MB and 500 files per revision, 20 revisions per artifact.
 - Every number traces to a `sources` entry. Reports and dashboards need one; the page warns if it is missing.
 - Unknown values are `null` (shown as "unknown"), never 0 or a guess.
 - Raw numbers plus `unit`/`format`, so units and formatting stay consistent; the kit formats them.
+- Screenshots, GIFs and diagram images go in an `image` block (`src` is a local file, inlined by `render`; png/jpeg/gif/webp only), not a hand-written HTML page.
 - No new CSS or `html` blocks unless the kit lacks what you need; if so, say so in your report so the kit can grow.
 
 ## Hard rules

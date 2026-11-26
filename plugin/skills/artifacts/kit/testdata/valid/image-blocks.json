@@ -1,0 +1,1 @@
+{"kind":"diagram","title":"T","blocks":[{"type":"image","title":"Shot","src":"https://example.com/a.png","alt":"A","caption":"Cap","width":"wide"},{"type":"image","images":[{"src":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==","alt":"one","caption":"c"},{"src":"shots/two.gif","alt":"two"}]}]}

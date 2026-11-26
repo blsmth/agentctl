@@ -286,3 +286,63 @@ func TestNewOnlyFlagsErrorNamesPassedFlags(t *testing.T) {
 		})
 	}
 }
+
+// onePixelPNG is a valid 1x1 PNG.
+var onePixelPNG = []byte{
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+	0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0,
+	0x1f, 0x00, 0x05, 0x05, 0x02, 0x00, 0x5f, 0xc8, 0xf1, 0xd2, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+	0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+}
+
+const imageSpecJSON = `{"kind":"diagram","title":"Shot","blocks":[{"type":"image","src":"shot.png","alt":"A shot"}]}`
+
+func TestArtifactRenderInlinesImagesRelativeToSpec(t *testing.T) {
+	h := newArtifactHarness(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "shot.png"), onePixelPNG, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec := filepath.Join(dir, "spec.json")
+	if err := os.WriteFile(spec, []byte(imageSpecJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir()) // the spec's directory, not cwd, is the base
+	dest := filepath.Join(t.TempDir(), "page.html")
+	if err := h.env.render(&bytes.Buffer{}, ArtifactRenderOptions{Path: spec, Out: dest}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(dest)
+	if !strings.Contains(string(data), "data:image/png;base64,") {
+		t.Error("page lacks the inlined image")
+	}
+}
+
+func TestArtifactRenderStdinImagesUseCwd(t *testing.T) {
+	h := newArtifactHarness(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "shot.png"), onePixelPNG, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	e := h.env
+	e.stdin = strings.NewReader(imageSpecJSON)
+	dest := filepath.Join(t.TempDir(), "page.html")
+	if err := e.render(&bytes.Buffer{}, ArtifactRenderOptions{Path: "-", Out: dest}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(dest)
+	if !strings.Contains(string(data), "data:image/png;base64,") {
+		t.Error("page lacks the inlined image")
+	}
+}
+
+func TestArtifactRenderMissingImageNamesBlock(t *testing.T) {
+	h := newArtifactHarness(t)
+	spec := writeTmp(t, "s.json", imageSpecJSON)
+	err := h.env.render(&bytes.Buffer{}, ArtifactRenderOptions{Path: spec, Out: filepath.Join(t.TempDir(), "x.html")})
+	if err == nil || !strings.Contains(err.Error(), "blocks[0].src") {
+		t.Errorf("err = %v", err)
+	}
+}

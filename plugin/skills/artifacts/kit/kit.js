@@ -179,6 +179,12 @@
       items: S({ t: "arr", req: 1, of: {
         date: { t: "str", req: 1 }, title: { t: "str", req: 1 }, text: { t: "str" }, tone: { t: "enum", v: TONES } } })
     },
+    image: {
+      title: S({ t: "str" }),
+      src: S({ t: "imgsrc" }), alt: S({ t: "str" }),
+      images: S({ t: "arr", of: { src: { t: "imgsrc", req: 1 }, alt: { t: "str", req: 1 }, caption: { t: "str" } } }),
+      caption: S({ t: "str" }), width: S({ t: "enum", v: ["full", "wide", "narrow"] })
+    },
     html: { title: S({ t: "str" }), html: S({ t: "str", req: 1 }) },
     sources: {
       title: S({ t: "str" }),
@@ -208,6 +214,15 @@
     return !!m && validDay(+m[1], +m[2], +m[3]) && +m[4] < 24 && +m[5] < 60 && +m[6] < 60 && (!m[9] || (+m[9] < 24 && +m[10] < 60));
   }
 
+  // Shape of an image src; `agentctl artifact render` has already inlined local files as data: URIs.
+  function imgSrcProblem(s) {
+    if (s.trim() === "") return "must not be empty";
+    if (/^https:\/\//.test(s) || /^data:image\/(png|jpeg|gif|webp);base64,/.test(s)) return "";
+    if (/^http:\/\//i.test(s)) return "http: images are blocked by the page's CSP; use https:// or a local file";
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(s)) return "unsupported scheme in " + JSON.stringify(s) + " (use a local file path or an https:// URL)";
+    return "";
+  }
+
   function check(val, s, path, errs) {
     if (val === undefined) { if (s.req) errs.push([path, "required"]); return; }
     if (val === null) {
@@ -233,6 +248,10 @@
         break;
       case "cur": if (typeof val !== "string" || !/^[A-Z]{3}$/.test(val)) errs.push([path, "expected a 3-letter ISO currency code such as USD"]); break;
       case "url": if (typeof val !== "string" || !/^https?:\/\//.test(val)) errs.push([path, "expected an http(s) URL"]); break;
+      case "imgsrc":
+        if (typeof val !== "string") errs.push([path, "expected a string"]);
+        else { var ip = imgSrcProblem(val); if (ip) errs.push([path, ip]); }
+        break;
       case "strs":
         if (!Array.isArray(val)) errs.push([path, "expected an array of strings"]);
         else val.forEach(function (x, j) { if (typeof x !== "string") errs.push([path + "[" + j + "]", "expected a string"]); });
@@ -307,6 +326,14 @@
         });
       });
       if (typeof b.sort_by === "string" && keys.indexOf(b.sort_by) < 0) errs.push(["sort_by", "no column with this key"]);
+    },
+    image: function (b, errs) {
+      var hasSrc = b.src !== undefined, hasImgs = Array.isArray(b.images);
+      if (hasSrc && hasImgs) errs.push(["images", "give either src or images, not both"]);
+      else if (!hasSrc && !hasImgs) errs.push(["src", "required (or give images for a gallery)"]);
+      else if (hasImgs && b.images.length === 0) errs.push(["images", "must not be empty"]);
+      else if (hasSrc && (typeof b.alt !== "string" || b.alt.trim() === "")) errs.push(["alt", "required with src"]);
+      if (b.alt !== undefined && hasImgs) errs.push(["alt", "not allowed with images; set alt on each image"]);
     },
     comparison: function (b, errs) {
       if (!Array.isArray(b.options)) return;
@@ -581,6 +608,23 @@
       ol.append(li);
     });
     s.append(ol);
+    return s;
+  };
+
+  R.image = function (b) {
+    var s = section(b, "image");
+    var list = b.images || [{ src: b.src, alt: b.alt }];
+    var wrap = h("div", "images images-" + (b.width || "full") + (list.length > 1 ? " gallery" : ""));
+    list.forEach(function (it) {
+      var fig = h("figure", "card figure");
+      var img = h("img");
+      img.src = it.src; img.alt = it.alt; img.loading = "eager";
+      fig.append(img);
+      if (it.caption) fig.append(h("figcaption", "chart-note", it.caption));
+      wrap.append(fig);
+    });
+    s.append(wrap);
+    if (b.caption) s.append(h("p", "chart-note", b.caption));
     return s;
   };
 

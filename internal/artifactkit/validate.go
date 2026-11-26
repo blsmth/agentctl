@@ -237,6 +237,12 @@ func checkField(val any, present bool, f field, path string, errs *Errors) {
 		if s, ok := val.(string); !ok || !urlRE.MatchString(s) {
 			add("expected an http(s) URL")
 		}
+	case tImgSrc:
+		if s, ok := val.(string); !ok {
+			add("expected a string")
+		} else if msg := imgSrcProblem(s); msg != "" {
+			add(msg)
+		}
 	case tStrs:
 		arr, ok := val.([]any)
 		if !ok {
@@ -284,6 +290,28 @@ func checkField(val any, present bool, f field, path string, errs *Errors) {
 	}
 }
 
+var schemeRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
+
+// dataImgRE matches the data: URIs `render` produces from local files.
+var dataImgRE = regexp.MustCompile(`^data:image/(png|jpeg|gif|webp);base64,`)
+
+// imgSrcProblem returns why s is not an acceptable image source, or "". Shape
+// only: it never touches the disk. A local path (no scheme) is allowed here and
+// inlined by Resolve.
+func imgSrcProblem(s string) string {
+	switch {
+	case strings.TrimSpace(s) == "":
+		return "must not be empty"
+	case strings.HasPrefix(s, "https://"), dataImgRE.MatchString(s):
+		return ""
+	case strings.HasPrefix(strings.ToLower(s), "http://"):
+		return "http: images are blocked by the page's CSP; use https:// or a local file"
+	case schemeRE.MatchString(s):
+		return "unsupported scheme in " + quote(s) + " (use a local file path or an https:// URL)"
+	}
+	return ""
+}
+
 func idx(path string, i int) string { return path + "[" + strconv.Itoa(i) + "]" }
 
 func checkRows(val any, path string, errs *Errors) {
@@ -316,6 +344,8 @@ func postBlock(typ string, b map[string]any, errs *Errors) {
 		postChart(b, errs)
 	case "table":
 		postTable(b, errs)
+	case "image":
+		postImage(b, errs)
 	case "comparison":
 		opts, _ := b["options"].([]any)
 		if len(opts) < 2 {
@@ -402,5 +432,25 @@ func postTable(b map[string]any, errs *Errors) {
 		if _, found := types[sb]; !found {
 			*errs = append(*errs, Error{"sort_by", "no column with this key"})
 		}
+	}
+}
+
+func postImage(b map[string]any, errs *Errors) {
+	_, hasSrc := b["src"]
+	imgs, hasImgs := b["images"].([]any)
+	switch {
+	case hasSrc && hasImgs:
+		*errs = append(*errs, Error{"images", "give either src or images, not both"})
+	case !hasSrc && !hasImgs:
+		*errs = append(*errs, Error{"src", "required (or give images for a gallery)"})
+	case hasImgs && len(imgs) == 0:
+		*errs = append(*errs, Error{"images", "must not be empty"})
+	case hasSrc:
+		if alt, _ := b["alt"].(string); strings.TrimSpace(alt) == "" {
+			*errs = append(*errs, Error{"alt", "required with src"})
+		}
+	}
+	if _, ok := b["alt"]; ok && hasImgs {
+		*errs = append(*errs, Error{"alt", "not allowed with images; set alt on each image"})
 	}
 }
