@@ -7,7 +7,7 @@ export { expect };
 
 /** Action mirrors servetest.Action: one side effect the server performed. */
 export type Action = {
-  kind: "close" | "key" | "reply" | "queue" | "dispatch" | "approval" | "sweep";
+  kind: "close" | "key" | "reply" | "queue" | "dispatch" | "approval" | "sweep" | "resume";
   session?: string;
   window?: string;
   key?: string;
@@ -62,6 +62,19 @@ export type SchedulesSpec = {
   run?: Record<string, unknown>;
   /** templates are written as the project's prompt templates. */
   templates?: { name: string; prompt: string; agent?: string; description?: string; model?: string; effort?: string }[];
+};
+
+/** ClosedSpec mirrors servetest.ClosedSpec: one closed-ledger record. */
+export type ClosedSpec = {
+  session_id: string;
+  agent: string;
+  project: string;
+  title: string;
+  ago_minutes: number;
+  pr_number?: number;
+  pr_url?: string;
+  /** gone leaves the project dir missing, so the record is not resumable. */
+  gone?: boolean;
 };
 
 export type ArtifactSpec = {
@@ -140,6 +153,11 @@ export class Control {
   /** seedArtifacts replaces the artifact store; returns the new ids in order. */
   async seedArtifacts(artifacts: ArtifactSpec[]): Promise<string[]> {
     return (await this.call<{ ids: string[] }>("PUT", "artifacts", { artifacts })).ids;
+  }
+
+  /** seedClosed replaces the closed ledger /v1/closed lists. */
+  seedClosed(closed: ClosedSpec[]) {
+    return this.call("PUT", "closed", { closed });
   }
 
   async openApproval(spec: Record<string, unknown>): Promise<string> {

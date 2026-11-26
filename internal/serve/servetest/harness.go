@@ -72,6 +72,7 @@ type Harness struct {
 
 	scheds    *schedules
 	artifacts *artifactWorld
+	closed    *closedWorld
 }
 
 // New builds and starts a Harness on the default fixture.
@@ -107,6 +108,7 @@ func New(opts Options) (*Harness, error) {
 	p := panes{w}
 	scheds := newSchedules(opts.Dir)
 	arts := newArtifactWorld(opts.Dir)
+	closed := &closedWorld{root: opts.Dir, w: w}
 	s, err := serve.New(serve.Options{
 		Config: config.ServeConfig{
 			AllowCIDRs: []string{"127.0.0.0/8", "::1/128"},
@@ -125,13 +127,14 @@ func New(opts Options) (*Harness, error) {
 		PingEvery:  5 * time.Second,
 		Artifacts:  arts.store, ArtifactDebounce: 10 * time.Millisecond, ArtifactPoll: time.Second, RenderPDF: arts.renderPDF,
 		Schedules: scheds.store(), RunSchedule: scheds.run, AgentPermissionMode: func(string) string { return "" },
+		ClosedRecords: closed.load, ResumeClosed: closed.resume, HandleIndex: closed.index,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("building server: %w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.Start(ctx)
-	h := &Harness{Server: s, Token: token, world: w, initial: initial, cancel: cancel, rediscover: opts.Rediscover, approvals: map[string]net.Conn{}, scheds: scheds, artifacts: arts}
+	h := &Harness{Server: s, Token: token, world: w, initial: initial, cancel: cancel, rediscover: opts.Rediscover, approvals: map[string]net.Conn{}, scheds: scheds, artifacts: arts, closed: closed}
 	mux := http.NewServeMux()
 	h.registerControl(mux)
 	mux.Handle("/", s.Handler())
@@ -174,6 +177,7 @@ func (h *Harness) Reset() {
 	h.Server.ResetWriteLimits()
 	_ = h.scheds.set(SchedulesSpec{})
 	_ = h.artifacts.clear()
+	_ = h.closed.set(nil)
 	time.Sleep(3*h.rediscover + 50*time.Millisecond)
 }
 

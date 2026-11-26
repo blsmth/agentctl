@@ -104,6 +104,13 @@ var closedSessions = func() []closedlog.Record {
 
 var closedCache closedlog.Cache
 
+// Closed returns the ledger records closed at or after since, newest first,
+// from the same cache the handle index reads (re-read only when the ledger
+// files change).
+func Closed(since time.Time) ([]closedlog.Record, error) {
+	return closedCache.Load(since)
+}
+
 // labelWindows sets the person-facing Label (unique within the group) and
 // Handle of each window; rows and wins are aligned.
 func labelWindows(ix *fleet.Index, rows []fleet.Row, wins []fleet.Window) {

@@ -51,6 +51,18 @@ button.group-add { padding: 0; border: 0; background: none; cursor: pointer; }
 .group-sweep { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px;
   margin: -.4rem 0; padding: 0; border: 0; border-radius: 10px; background: none; font-size: 1.15rem; line-height: 1; color: var(--accent); cursor: pointer; }
 .group-sweep.busy { opacity: .5; cursor: progress; }
+.closed-group { margin: .75rem 0 .5rem; }
+.closed-group.folded .group-toggle::before { content: "▸"; color: var(--fg); }
+.closed-group .group-toggle { color: var(--muted); }
+.closed-row { padding: 0; border-left-color: var(--line); }
+.closed-main { display: flex; align-items: center; gap: .75rem; flex: 1; min-width: 0; min-height: 56px; padding: .6rem 1rem;
+  border: 0; background: none; color: inherit; font: inherit; text-align: left; text-decoration: none; }
+button.closed-main { cursor: pointer; }
+button.closed-main:disabled { opacity: .6; cursor: progress; }
+.closed-row .glyph { color: var(--muted); }
+.closed-row:not(.resumable):not(.live) .win-title { color: var(--muted); }
+.closed-note { color: var(--muted); font-size: .8rem; font-style: italic; overflow-wrap: anywhere; }
+.closed-pr { display: inline-flex; align-items: center; flex: none; min-height: 44px; padding: 0 1rem; color: var(--accent); font-size: .85rem; text-decoration: none; }
 .fleet, .group { --glyph-w: 1.4rem; --indent: 1.4rem; --row-pad: 1rem; --tree-w: 1.5px; --tree-line: color-mix(in srgb, var(--muted) 55%, transparent); }
 .win { display: flex; align-items: center; gap: .75rem; min-height: 56px; padding: .6rem 1rem; text-decoration: none; color: var(--fg);
   background: var(--card); border-bottom: 1px solid var(--line); border-left: 4px solid var(--idle); }

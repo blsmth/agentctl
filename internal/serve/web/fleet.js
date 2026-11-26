@@ -49,6 +49,7 @@ import {
 } from "./logic.js";
 import { get, send, ApiError } from "./api.js";
 import { attachDrag } from "./drag.js";
+import { mountClosed } from "./closed.js";
 import { attachSwipe } from "./swipe.js";
 import { trustCard } from "./trust.js";
 import { clear, confirmSheet, h, newSheet, toast } from "./ui.js";
@@ -198,6 +199,8 @@ export function mountFleet(root, ctx) {
   }
 
   const collapsed = loadCollapsed();
+  // The "Recently closed" section, below the groups when the server lists the ledger.
+  const closedView = ctx.hasFeature("closed") ? mountClosed(ctx) : null;
 
   // Renders are deferred while a swipe or confirm sheet is live, because
   // render() rebuilds every row and would destroy the one being dragged.
@@ -434,6 +437,11 @@ export function mountFleet(root, ctx) {
         });
       }
       list.append(section);
+    }
+    if (closedView) {
+      list.append(closedView.node);
+      // A window leaving the fleet may be a new closed row; re-read the ledger then.
+      closedView.sync(groups.flatMap((g) => g.windows.map(windowKey)).sort().join("\n"));
     }
     // Rendering rebuilds the list; keep keyboard focus on the same header.
     if (focusKey) [...list.querySelectorAll(".group-toggle")].find((b) => b.dataset.key === focusKey)?.focus();

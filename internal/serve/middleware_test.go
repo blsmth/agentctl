@@ -220,8 +220,8 @@ func TestHealthz(t *testing.T) {
 		t.Errorf("healthz = %v", got)
 	}
 	f, ok := got["features"].([]any)
-	if !ok || len(f) != 9 || f[0] != "fleet" || f[1] != "launch-options" || f[2] != "host" || f[3] != "events" || f[4] != "push" || f[5] != "schedules" || f[6] != "terminal" || f[7] != "approvals" || f[8] != "artifacts" {
-		t.Errorf("features = %#v, want [fleet launch-options host events push schedules terminal approvals artifacts]", got["features"])
+	if !ok || len(f) != 10 || f[0] != "fleet" || f[1] != "launch-options" || f[2] != "host" || f[3] != "events" || f[4] != "push" || f[5] != "closed" || f[6] != "schedules" || f[7] != "terminal" || f[8] != "approvals" || f[9] != "artifacts" {
+		t.Errorf("features = %#v, want [fleet launch-options host events push closed schedules terminal approvals artifacts]", got["features"])
 	}
 	if w.Header().Get("X-Content-Type-Options") != "nosniff" || w.Header().Get("Cache-Control") != "no-store" {
 		t.Errorf("missing security headers: %v", w.Header())

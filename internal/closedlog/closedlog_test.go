@@ -229,6 +229,7 @@ func TestResumeCheck(t *testing.T) {
 		{"log missing", func(r *Record) { r.LogPath = filepath.Join(dir, "nope.jsonl") }, "is missing"},
 		{"worktree reclaimed", func(r *Record) { r.WorkDir = filepath.Join(dir, ".worktrees", "w") }, "was reclaimed"},
 		{"dir gone", func(r *Record) { r.WorkDir = filepath.Join(dir, "gone") }, "is gone"},
+		{"project gone", func(r *Record) { r.ProjectDir = filepath.Join(dir, "gone") }, "project directory"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -245,5 +246,26 @@ func TestResumeCheck(t *testing.T) {
 				t.Errorf("err = %v, want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestLatestPerSession(t *testing.T) {
+	t0 := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	recs := []Record{
+		{ClosedAt: t0, WindowID: "@3", SessionID: "a"},
+		{ClosedAt: t0.Add(-time.Minute), WindowID: "@2"},
+		{ClosedAt: t0.Add(-2 * time.Minute), WindowID: "@1", SessionID: "a"},
+		{ClosedAt: t0.Add(-3 * time.Minute), WindowID: "@4"},
+		{ClosedAt: t0.Add(-4 * time.Minute), WindowID: "@5", SessionID: "b"},
+	}
+	var got []string
+	for _, r := range LatestPerSession(recs) {
+		got = append(got, r.WindowID)
+	}
+	if want := "@3 @2 @4 @5"; strings.Join(got, " ") != want {
+		t.Errorf("got %v, want %s", got, want)
+	}
+	if got := LatestPerSession(nil); len(got) != 0 {
+		t.Errorf("nil = %v", got)
 	}
 }

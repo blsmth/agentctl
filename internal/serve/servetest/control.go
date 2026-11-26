@@ -22,6 +22,7 @@ import (
 //	PUT  /__test/artifacts {artifacts: [ArtifactSpec]} -> {ids}: replace the artifact store
 //	PUT  /__test/schedules SchedulesSpec -> {dir}: replace the cron jobs/runs; dir is a real project dir
 //	GET  /__test/schedules {runs, dir}: the jobs run-now fired
+//	PUT  /__test/closed    {closed: [ClosedSpec]}: replace the closed ledger
 //
 // Fixture changes reach the browser the way real ones do: the fleet bus
 // re-reads the source (every Options.Rediscover) and publishes SSE events.
@@ -57,6 +58,7 @@ func (h *Harness) registerControl(mux *http.ServeMux) {
 	mux.HandleFunc("PUT "+p+"artifacts", h.handleSetArtifacts)
 	mux.HandleFunc("PUT "+p+"schedules", func(w http.ResponseWriter, r *http.Request) { h.scheds.handleSet(h, w, r) })
 	mux.HandleFunc("GET "+p+"schedules", func(w http.ResponseWriter, r *http.Request) { h.scheds.handleRuns(w, r) })
+	mux.HandleFunc("PUT "+p+"closed", h.handleSetClosed)
 	mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("no control route %s %s", r.Method, r.URL.Path))
 	})
