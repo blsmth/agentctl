@@ -21,7 +21,7 @@ import {
   scheduleException, scheduleGlyph, scheduleHash, scheduleLastText, scheduleReview, scheduleScheduleText, scheduleWhen, worktreeFact,
   scheduleAgentText, schedulePromptLabel, schedulePromptSource, scheduleRowActivity,
   isTap, isDoubleTap, paneLineCount, canLoadEarlier, historyAddsLines,
-  buildSweepRequest, canSweep, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
+  buildSweepRequest, canSweep, sweepableCount, sweepConfirm, sweepCounts, nothingToSweep, sweptMessage, runSweep,
   ARTIFACT_TOKEN_MAX_AGE_MS, artifactChipText, artifactHash, artifactIcon, artifactOrigin, artifactRevLabel, artifactRevPill, artifactRowMeta, artifactTokenStale,
   artifactWindowLive, artifactsForWindow, artifactsHash, groupArtifacts,
   ARTIFACT_COLLAPSE_KEY, ARTIFACT_OTHER, UNDO_MS, artifactGroupKey, artifactGroupMove, artifactRevBadge, artifactSubline, buildArtifactOrderRequest,
@@ -609,6 +609,21 @@ console.log("ok: resolved text");
   assert.deepEqual(buildSweepRequest("agentctl-shop", false), { method: "POST", path: "/v1/sweep", body: { session: "agentctl-shop" } });
   assert.deepEqual(buildSweepRequest("agentctl-shop", true, true), { method: "POST", path: "/v1/sweep/preview", body: { session: "agentctl-shop", include_bare: true } });
   assert.deepEqual(buildSweepRequest("agentctl-shop", false, true).body, { session: "agentctl-shop", include_bare: true });
+  assert.equal(sweepableCount(null), 0);
+  assert.equal(sweepableCount({ windows: [] }), 0);
+  assert.equal(
+    sweepableCount({
+      windows: [
+        { state: "idle", done: true },
+        { state: "idle", turn_done: true },
+        { state: "working", done: true },
+        { state: "idle", done: true, attention: "question" },
+        { state: "idle" },
+      ],
+      shells: [{ window_id: "@9" }],
+    }),
+    2,
+  );
   assert.equal(canSweep({ session: "agentctl-shop", dir: "/x" }, write), true);
   assert.equal(canSweep({ session: "agentctl-shop", dir: "/x" }, ["fleet"]), false, "needs write");
   assert.equal(canSweep({ session: "agentctl-hub", dir: "/x" }, write), false, "never the hub");

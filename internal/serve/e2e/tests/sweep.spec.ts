@@ -5,15 +5,16 @@ import { expect, openFleet, row, test } from "./fixtures";
 
 const SHOP = "agentctl-shop";
 const sheet = (page: Page) => page.locator(".overlay .sheet");
-const sweepButton = (page: Page, project: string) => page.getByRole("button", { name: `Sweep ${project}` });
+const sweepButton = (page: Page, project: string) => page.getByRole("button", { name: new RegExp(`^Sweep \\d+ finished windows? in ${project}$`) });
 
 test.beforeEach(async ({ page }) => {
   await openFleet(page);
 });
 
-test("project groups get a sweep button; the hub group does not", async ({ page }) => {
+test("only project groups with finished windows get a sweep button, labelled with the count", async ({ page }) => {
   await expect(sweepButton(page, "shop")).toBeVisible();
-  await expect(sweepButton(page, "blog")).toBeVisible();
+  await expect(sweepButton(page, "shop")).toHaveText("🧹 1"); // only @12 is done
+  await expect(sweepButton(page, "blog")).toHaveCount(0); // nothing finished
   await expect(sweepButton(page, "hub")).toHaveCount(0);
 });
 
@@ -46,9 +47,9 @@ test("cancel leaves everything in place", async ({ page, control }) => {
   await expect(sweepButton(page, "shop")).toBeEnabled();
 });
 
-test("nothing to close shows a toast and no confirm", async ({ page, control }) => {
-  await sweepButton(page, "blog").tap();
-  await expect(page.locator(".toast")).toContainText("Nothing to sweep");
-  await expect(sheet(page)).toHaveCount(0);
-  expect((await control.actions()).filter((a) => a.kind === "sweep")).toEqual([]);
+test("the button disappears once nothing is left to sweep", async ({ page }) => {
+  await sweepButton(page, "shop").tap();
+  await sheet(page).getByRole("button", { name: "Close 1" }).tap();
+  await expect(row(page, "@12")).toHaveCount(0);
+  await expect(sweepButton(page, "shop")).toHaveCount(0);
 });

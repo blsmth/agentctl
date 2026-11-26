@@ -247,6 +247,15 @@ export function canSweep(group, features) {
   return Boolean(group.session) && Boolean(group.dir) && group.session !== HUB_SESSION;
 }
 
+/**
+ * sweepableCount is how many of a group's windows are finished (display state
+ * done), the count the hub's "sweep N" button shows. Plain shells live in
+ * group.shells, not windows, so they are never counted.
+ */
+export function sweepableCount(group) {
+  return (group?.windows ?? []).filter((w) => effectiveState(w) === "done").length;
+}
+
 /** sweepCounts summarises the parts of a sweep report besides the closes. */
 export function sweepCounts(report) {
   const parts = [];
