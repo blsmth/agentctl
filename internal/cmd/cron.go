@@ -91,19 +91,22 @@ var defaultCronEnv = cronEnv{
 }
 
 // cronCallerActor identifies a CLI caller the way dispatch fills
-// spawned_by: the caller's window (signal.ResolveWindowID) and agent
-// session. Neither set (a plain shell) is "cli".
+// spawned_by. An agent (an agent session ID or AGENTCTL_WINDOW_ID in the
+// environment) is "window" with its window (signal.ResolveWindowID) and
+// session. Anything else, including a human's shell in a tmux pane, is
+// "cli", with the tmux window when there is one.
 func cronCallerActor() cron.Actor {
 	sid := os.Getenv("AGENTCTL_SESSION_ID")
 	if sid == "" {
 		sid = os.Getenv("CLAUDE_CODE_SESSION_ID")
 	}
+	agent := sid != "" || os.Getenv("AGENTCTL_WINDOW_ID") != ""
 	win := ""
-	if os.Getenv("TMUX") != "" || os.Getenv("AGENTCTL_WINDOW_ID") != "" || sid != "" {
+	if agent || os.Getenv("TMUX") != "" {
 		win = signal.ResolveWindowID()
 	}
-	if win == "" && sid == "" {
-		return cron.Actor{Kind: cron.ActorCLI}
+	if !agent {
+		return cron.Actor{Kind: cron.ActorCLI, WindowID: win}
 	}
 	return cron.Actor{Kind: cron.ActorWindow, WindowID: win, SessionID: sid}
 }

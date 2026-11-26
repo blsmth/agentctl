@@ -424,7 +424,7 @@ func (s Store) Create(job cron.Job) (cron.Job, error) {
 		}
 		jobs.Jobs = append(jobs.Jobs, job)
 		out = job
-		if err := s.commit(path, jobs, job.Name); err != nil {
+		if err := s.commit(path, jobs, job.Name, true); err != nil {
 			return err
 		}
 		s.recordLifecycle(cron.ResultCreated, job, "")
@@ -505,7 +505,9 @@ func (s Store) Modify(name string, fn func(*cron.Job) error) (Updated, error) {
 		if reseed {
 			seed = name
 		}
-		if err := s.commit(path, jobs, seed); err != nil {
+		// A new at (or a switch to a schedule) starts the one-shot over; any
+		// other reseed keeps a recorded outcome.
+		if err := s.commit(path, jobs, seed, atChanged(old, next) || !next.IsOnce()); err != nil {
 			return err
 		}
 		if len(res.Changed) > 0 {
@@ -539,7 +541,7 @@ func (s Store) SetEnabled(name string, enabled bool) (cron.Job, error) {
 		if enabled {
 			seed = name
 		}
-		if err := s.commit(path, jobs, seed); err != nil {
+		if err := s.commit(path, jobs, seed, false); err != nil {
 			return err
 		}
 		if was != enabled {
@@ -564,7 +566,7 @@ func (s Store) Delete(name string) error {
 		}
 		gone := jobs.Jobs[i]
 		jobs.Jobs = append(jobs.Jobs[:i], jobs.Jobs[i+1:]...)
-		if err := s.commit(path, jobs, ""); err != nil {
+		if err := s.commit(path, jobs, "", false); err != nil {
 			return err
 		}
 		s.recordLifecycle(cron.ResultDeleted, gone, "")
@@ -597,8 +599,9 @@ func (s Store) withJobs(fn func(path string, jobs *cron.Jobs) error) error {
 // commit saves the jobs file. When seed names a job, its last_fire is set
 // to now first, under the tick lock, so a tick sees either the old jobs or
 // the new jobs with the new last_fire, never the new schedule with the old
-// last_fire.
-func (s Store) commit(path string, jobs *cron.Jobs, seed string) error {
+// last_fire. fresh also drops the job's one-shot outcome in state.json (a
+// create, or a new at time); a plain resume keeps it.
+func (s Store) commit(path string, jobs *cron.Jobs, seed string, fresh bool) error {
 	if seed == "" {
 		return cron.SaveJobs(path, jobs)
 	}
@@ -611,7 +614,11 @@ func (s Store) commit(path string, jobs *cron.Jobs, seed string) error {
 		return err
 	}
 	defer unlock()
-	if err := cron.SeedLocked(dir, seed, s.now()); err != nil {
+	seedFn := cron.SeedLocked
+	if fresh {
+		seedFn = cron.SeedFreshLocked
+	}
+	if err := seedFn(dir, seed, s.now()); err != nil {
 		return fmt.Errorf("seeding state for %s: %w", seed, err)
 	}
 	return cron.SaveJobs(path, jobs)

@@ -86,7 +86,7 @@ func (e Entry) IsLifecycle() bool { return IsLifecycle(e.Result) }
 
 // Actor kinds: who made a lifecycle change.
 const (
-	ActorCLI    = "cli"    // a CLI run that is not in an agent window
+	ActorCLI    = "cli"    // a CLI run that is not an agent (a human's shell, maybe in a tmux window)
 	ActorWindow = "window" // a CLI run from an agentctl window (an agent)
 	ActorHub    = "hub"
 	ActorPhone  = "phone"
@@ -94,7 +94,8 @@ const (
 )
 
 // Actor is who made a lifecycle change: the kind, and for ActorWindow the
-// caller's window and agent session (as spawned_by records them).
+// caller's window and agent session (as spawned_by records them). An
+// ActorCLI may carry the tmux window it ran in.
 type Actor struct {
 	Kind      string `json:"kind"`
 	WindowID  string `json:"window,omitempty"`

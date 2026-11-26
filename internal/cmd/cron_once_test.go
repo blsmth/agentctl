@@ -18,7 +18,7 @@ func TestCronAddAt(t *testing.T) {
 		wantOut  string
 	}{
 		{name: "one-shot", at: "2026-12-01 09:00", wantOut: "Added remind (once, Tue 1 Dec 09:00), fires once at Tue 1 Dec 09:"},
-		{name: "rfc3339", at: "2026-12-01T14:00:00Z", wantOut: "once, Tue 1 Dec 09:00"},
+		{name: "rfc3339", at: "2026-12-01T14:00:00Z", wantOut: "once, " + time.Date(2026, 12, 1, 14, 0, 0, 0, time.UTC).In(time.Local).Format(cron.NextFireFormat)},
 		{name: "neither", wantErr: "exactly one of --schedule"},
 		{name: "both", schedule: "@daily", at: "2026-12-01 09:00", wantErr: "exactly one of --schedule"},
 		{name: "past", at: "2026-11-16 09:00", wantErr: "in the past"},

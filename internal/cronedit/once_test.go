@@ -236,3 +236,84 @@ func TestOnceStatusAndPreview(t *testing.T) {
 		t.Error("preview accepted a past at")
 	}
 }
+
+// tickAt runs one scheduler pass over the stored jobs at now, with a launch
+// that never spawns anything.
+func (ts *testStore) tickAt(t *testing.T, now time.Time, launches *int) {
+	t.Helper()
+	path, _ := ts.JobsPath()
+	jobs, err := cron.LoadJobs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := cron.Deps{
+		Dir: ts.stateDir, JobsPath: path, Jobs: jobs.Jobs, Now: func() time.Time { return now },
+		Launch: func(cron.LaunchRequest) (cron.LaunchResult, error) {
+			*launches++
+			return cron.LaunchResult{WindowID: "@9", Session: "agentctl-p", SessionID: "sess-9"}, nil
+		},
+	}
+	if _, err := cron.Tick(d); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestOncePauseResumeWhileMirrorBehind: a one-shot fires while an editor
+// holds the jobs lock (so the jobs file still says pending), then is paused
+// and resumed. The fire must stay recorded as completed, never turn into a
+// missed (expired) reminder.
+func TestOncePauseResumeWhileMirrorBehind(t *testing.T) {
+	for _, lockedWhilePaused := range []bool{true, false} {
+		name := map[bool]string{true: "file behind at resume", false: "file catches up while paused"}[lockedWhilePaused]
+		t.Run(name, func(t *testing.T) {
+			ts := newTestStore(t)
+			at := ts.now.Add(time.Hour)
+			if _, err := ts.Create(ts.once("remind", at)); err != nil {
+				t.Fatal(err)
+			}
+			unlock, err := cron.LockJobs(ts.stateDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			launches := 0
+			ts.tickAt(t, at.Add(3*time.Minute), &launches)
+			unlock()
+			if launches != 1 {
+				t.Fatalf("launches = %d", launches)
+			}
+			if _, err := ts.SetEnabled("remind", false); err != nil {
+				t.Fatal(err)
+			}
+			if lockedWhilePaused {
+				if unlock, err = cron.LockJobs(ts.stateDir); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for i := 0; i < 3; i++ {
+				ts.tickAt(t, at.Add(time.Duration(4+i)*time.Minute), &launches)
+			}
+			if lockedWhilePaused {
+				unlock()
+				*ts.now = at.Add(10 * time.Minute)
+				if _, err := ts.SetEnabled("remind", true); err != nil {
+					t.Fatalf("resume with the file behind: %v", err)
+				}
+				ts.tickAt(t, at.Add(11*time.Minute), &launches)
+			} else {
+				*ts.now = at.Add(10 * time.Minute)
+				if _, err := ts.SetEnabled("remind", true); err == nil || !strings.Contains(err.Error(), "--at") {
+					t.Fatalf("resume of a done one-shot: %v", err)
+				}
+			}
+			j, _ := ts.Get("remind")
+			if launches != 1 || j.State != cron.StateCompleted || j.Result != cron.ResultFired || j.RunWindow != "@9" {
+				t.Fatalf("launches %d, job %+v", launches, j)
+			}
+			for _, e := range ts.history(t, "remind") {
+				if e.Result == cron.ResultSkippedCatchup {
+					t.Errorf("a delivered one-shot was recorded as missed: %+v", e)
+				}
+			}
+		})
+	}
+}

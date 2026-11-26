@@ -197,6 +197,11 @@ func (t *ticker) run() error {
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Name < jobs[j].Name })
 	for _, job := range jobs {
 		if !job.IsEnabled() {
+			// A paused one-shot that already fired still gets its outcome
+			// into the jobs file, so a resume sees it done.
+			if o := t.st.Jobs[job.Name].OneShot; job.IsOnce() && o.matches(job) && o.State != OneShotLaunching {
+				t.queueSync(job, *o)
+			}
 			continue
 		}
 		if err := t.tickJob(job); err != nil {
@@ -723,8 +728,21 @@ func Seed(dir, job string, now time.Time) error {
 	return SeedLocked(dir, job, now)
 }
 
-// SeedLocked is Seed for a caller that already holds the tick lock.
+// SeedLocked is Seed for a caller that already holds the tick lock. A
+// one-shot's recorded outcome is kept: a resume must not forget that it
+// already fired (the jobs file may not show it yet). SeedFreshLocked also
+// drops it.
 func SeedLocked(dir, job string, now time.Time) error {
+	return seedLocked(dir, job, now, false)
+}
+
+// SeedFreshLocked is SeedLocked for a new job or a new one-shot time: it
+// also drops the one-shot outcome, so the job starts pending.
+func SeedFreshLocked(dir, job string, now time.Time) error {
+	return seedLocked(dir, job, now, true)
+}
+
+func seedLocked(dir, job string, now time.Time, fresh bool) error {
 	st, err := LoadState(dir)
 	if err != nil && st == nil {
 		return err
@@ -732,7 +750,10 @@ func SeedLocked(dir, job string, now time.Time) error {
 	js := st.Jobs[job]
 	js.LastFire = now
 	js.TimedOut = nil
-	js.OneShot, js.OnceSkip = nil, ""
+	js.OnceSkip = ""
+	if fresh {
+		js.OneShot = nil
+	}
 	st.Jobs[job] = js
 	return SaveState(dir, st)
 }
