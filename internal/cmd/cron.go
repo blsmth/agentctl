@@ -15,6 +15,8 @@ import (
 	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
+	"github.com/blsmth/agentctl/internal/dispatch"
+	"github.com/blsmth/agentctl/internal/dispatchapproval"
 	"github.com/blsmth/agentctl/internal/improve"
 	"github.com/blsmth/agentctl/internal/improverun"
 	"github.com/blsmth/agentctl/internal/logging"
@@ -159,8 +161,9 @@ func (e cronEnv) add(w io.Writer, opts CronAddOptions) error {
 }
 
 // jobFromAdd turns add options into a job for the shared core, which
-// validates it. --prompt-file is read now, so later edits to the file do
-// not change what runs.
+// validates it. --prompt-file and --prompt-key are read now (the key as the
+// approval popup showed it, see pinnedKeyText), so later edits to the file
+// or the key do not change what runs.
 func jobFromAdd(opts CronAddOptions) (cron.Job, error) {
 	prompt, err := promptFromFlags(opts.Prompt, opts.PromptKey, opts.PromptFile, opts.Template)
 	if err != nil {
@@ -183,16 +186,69 @@ func jobFromAdd(opts CronAddOptions) (cron.Job, error) {
 	if err != nil {
 		return cron.Job{}, err
 	}
+	// Last, so a bad flag does not use up the approval.
+	if opts.PromptKey != "" {
+		if prompt, err = pinnedKeyText(opts.PromptKey); err != nil {
+			return cron.Job{}, err
+		}
+	}
 	job := cron.Job{
 		Name: opts.Name, Schedule: opts.Schedule, At: at, Dir: dir, Agent: opts.Agent,
-		Prompt: prompt, PromptKey: opts.PromptKey, Template: opts.Template,
+		Prompt: prompt, Template: opts.Template,
 		Model: opts.Model, Effort: opts.Effort, Backend: opts.Backend, Account: opts.Account,
 		Timeout: opts.Timeout, Overlap: opts.Overlap, Catchup: opts.Catchup,
 		Mode: opts.Mode,
 	}
+	if opts.PromptKey != "" {
+		job.PinKey(opts.PromptKey, prompt)
+	}
 	wt, enabled := !opts.NoWorktree, true
 	job.Worktree, job.Enabled = &wt, &enabled
 	return job, nil
+}
+
+// Seams for pinnedKeyText.
+var (
+	cronCallerIsAgent = dispatch.CallerIsAgentSession
+	cronPinWindowID   = signal.ResolveWindowID
+	consumeCronPin    = dispatchapproval.ConsumeCronPrompt
+	cronPinArgs       = func() []string { return cronArgsFrom(os.Args) }
+)
+
+// pinnedKeyText is the text a cron add/edit --prompt-key stores. From an
+// agent session it is the text the approval popup showed, which the hook
+// recorded as a single-use marker on approval: the context store is not
+// read again, so a `context set` between the popup and this write cannot
+// change what was approved, and without the marker the key is refused. A
+// person in a plain shell (no popup) gets the key's current text.
+func pinnedKeyText(key string) (string, error) {
+	if !cronCallerIsAgent() {
+		return resolvePromptKey(key)
+	}
+	win, args := cronPinWindowID(), cronPinArgs()
+	text, err := consumeCronPin(win, args)
+	if err != nil {
+		logging.Warn("cron: refusing --prompt-key %s from an agent session: %v", key, err)
+		return "", fmt.Errorf("--prompt-key %s: no approved copy of the key's text was recorded for this command (%w). "+
+			"The approval popup records the text it shows: run the cron command as its own Bash call so the popup can show it "+
+			"(after `agentctl context set %s ...` in a separate call), or use --prompt-file", key, err, key)
+	}
+	logging.Log("cron-pin: consumed window=%s key=%s args=%s", win, key, dispatchapproval.ShortKey(win, args))
+	if cur, err := resolvePromptKey(key); err == nil && cur != text {
+		fmt.Fprintf(os.Stderr, "warning: context key %s changed after approval; storing the approved text\n", key)
+	}
+	return text, nil
+}
+
+// cronArgsFrom returns argv's words from "cron" on (what the hook keys a
+// cron prompt pin by), or nil.
+func cronArgsFrom(argv []string) []string {
+	for i := 1; i < len(argv); i++ {
+		if argv[i] == "cron" {
+			return append([]string{}, argv[i:]...)
+		}
+	}
+	return nil
 }
 
 // errScheduleOrAt is the error for neither or both of --schedule and --at.
@@ -322,6 +378,15 @@ func (e cronEnv) edit(w io.Writer, opts CronEditOptions) error {
 			return err
 		}
 	}
+	// Last before the write, so a bad flag does not use up the approval.
+	if opts.PromptKey != nil {
+		if *opts.PromptKey == "" {
+			return errors.New("--prompt-key needs a key")
+		}
+		if prompt, err = pinnedKeyText(*opts.PromptKey); err != nil {
+			return err
+		}
+	}
 	res, err := e.store().Modify(opts.Name, func(j *cron.Job) error {
 		set := func(dst *string, src *string) {
 			if src != nil {
@@ -342,11 +407,13 @@ func (e cronEnv) edit(w io.Writer, opts CronEditOptions) error {
 		}
 		switch {
 		case opts.Prompt != nil || opts.PromptFile != nil:
-			j.Prompt, j.PromptKey, j.Template = prompt, "", ""
+			j.Prompt, j.PromptKey, j.PromptSourceKey, j.Template = prompt, "", "", ""
 		case opts.PromptKey != nil:
-			j.Prompt, j.PromptKey, j.Template = "", *opts.PromptKey, ""
+			// Pins the key: a legacy prompt_key job stops reading the
+			// context store at every fire.
+			j.PinKey(*opts.PromptKey, prompt)
 		case opts.Template != nil:
-			j.Prompt, j.PromptKey, j.Template = "", "", *opts.Template
+			j.Prompt, j.PromptKey, j.PromptSourceKey, j.Template = "", "", "", *opts.Template
 		}
 		if opts.Worktree || opts.NoWorktree {
 			wt := opts.Worktree
@@ -707,8 +774,8 @@ var improveLaunch = improve.Launch
 // cronLaunchImprove fires an improve job: the same launch path as `agentctl
 // improve --fleet --since <window>` (start snapshot, rationale path, end
 // snapshot and summary through the improve window's hooks), unattended, in
-// the job's project session. The job's prompt, prompt_key or template only
-// adds a theme or template body.
+// the job's project session. The job's prompt (or a legacy job's
+// prompt_key) or template only adds a theme or template body.
 func cronLaunchImprove(req cron.LaunchRequest, p cronProject, res *cron.LaunchResult) error {
 	opts, err := cronImproveOptions(req)
 	if err != nil {
@@ -734,7 +801,8 @@ func cronLaunchImprove(req cron.LaunchRequest, p cronProject, res *cron.LaunchRe
 func cronImproveOptions(req cron.LaunchRequest) (improve.Options, error) {
 	job := req.Job
 	theme := job.Prompt
-	if job.PromptKey != "" {
+	if job.Unpinned() {
+		// Legacy: kept so existing jobs keep running; health warns.
 		resolved, err := resolvePromptKey(job.PromptKey)
 		if err != nil {
 			return improve.Options{}, err
@@ -772,7 +840,7 @@ func cronImproveOptions(req cron.LaunchRequest) (improve.Options, error) {
 }
 
 // cronDispatchOptions maps a fire onto the dispatch options, resolving a
-// prompt_key from the context store, or a template from the job dir's
+// legacy (unpinned) prompt_key from the context store, or a template from the job dir's
 // project through the dispatch --template path (applyDispatchTemplate), so
 // the job's agent, model and effort win over the template's defaults. A
 // template that no longer resolves is cron.ErrTemplateNotFound, which the
@@ -780,7 +848,9 @@ func cronImproveOptions(req cron.LaunchRequest) (improve.Options, error) {
 func cronDispatchOptions(req cron.LaunchRequest) (DispatchOptions, error) {
 	job := req.Job
 	prompt := job.Prompt
-	if job.PromptKey != "" {
+	if job.Unpinned() {
+		// Legacy: kept so existing jobs keep running; health warns. A
+		// pinned job runs its stored Prompt and never reads the key.
 		resolved, err := resolvePromptKey(job.PromptKey)
 		if err != nil {
 			return DispatchOptions{}, err

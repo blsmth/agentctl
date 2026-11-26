@@ -228,7 +228,7 @@ func (s Store) schedulerInstalled() bool {
 }
 
 // Detail is the job card: the status, the next PreviewFires fires, the last
-// DetailRuns runs (newest first) and, for a prompt_key job, the key's
+// DetailRuns runs (newest first) and, for a legacy unpinned prompt_key job, the key's
 // current text (read-only).
 type Detail struct {
 	Status

@@ -5,7 +5,7 @@ import { ApiError, api, get } from "./api.js";
 import { launchPicker } from "./dispatch.js";
 import {
   advancedSummary, cardLastFailure, cardStatus, defaultAgentFor, dirName, fieldErrors, formClientErrors, formatAgo, formatClock, formatNextFire,
-  newScheduleForm, previewBody, runResultCard, runResultLabel, scheduleAgentText, scheduleBanners, scheduleBody, scheduleException, scheduleGlyph,
+  newScheduleForm, previewBody, runResultCard, runResultLabel, scheduleAgentText, scheduleBanners, scheduleBody, scheduleException, scheduleGlyph, schedulePromptSource,
   scheduleHash, scheduleLastText, scheduleReview, scheduleRowActivity, scheduleScheduleText, scheduleWhen, templateLabel, templatesPath,
   TIMEOUT_PRESETS, tildePath, timeoutIsPreset, usageOptions, windowHash, worktreeFact,
 } from "./logic.js";
@@ -226,6 +226,8 @@ function mountCard(root, ctx, name, write) {
     if (st.job.template) facts.splice(3, 0, ["Template", `${st.job.template}${st.template_resolved ? ` (${st.template_resolved.scope})` : ""}`]);
     if (fires.length > 1 && st.enabled) facts.push(["Next fires", fires.join(", ")]);
     if (adv) facts.push(["Advanced", adv]);
+    const promptFrom = schedulePromptSource(st.job);
+    const unpinned = Boolean(st.job.prompt_key && !st.job.prompt);
     // Native append stringifies null: build the list, then drop the empty slots.
     body.append(...[
       h("p", { class: `sched-status ${lead.kind}` }, h("span", { class: `glyph sched-glyph ${lead.kind}`, "aria-hidden": "true" }, lead.glyph), " ", lead.text),
@@ -233,6 +235,7 @@ function mountCard(root, ctx, name, write) {
       st.invalid ? h("p", { class: "sched-fail" }, `Problem: ${st.invalid}`) : null,
       h("div", { class: "sched-facts" }, ...facts.map(([k, v]) => h("div", {}, h("span", { class: "meta" }, `${k} `), v))),
       st.job.template && st.template_error ? h("p", { class: "sched-fail" }, `Template: ${st.template_error}`) : null,
+      promptFrom ? h("p", { class: unpinned ? "sched-fail" : "meta" }, `Prompt: ${promptFrom}`) : null,
       h("pre", { class: "sheet-body sched-prompt" }, st.job.mode === "improve"
         ? [st.improve_summary, st.job.prompt ? `Theme: ${st.job.prompt}` : ""].filter(Boolean).join("\n\n")
         : st.job.template

@@ -10,6 +10,7 @@ import (
 
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
+	"github.com/blsmth/agentctl/internal/dispatchapproval"
 	"github.com/blsmth/agentctl/internal/logging"
 	"github.com/blsmth/agentctl/internal/paths"
 	"github.com/blsmth/agentctl/internal/prompttemplate"
@@ -219,6 +220,20 @@ type cronPreview struct {
 	account  string
 	schedule string // one-line summary for the metadata row
 	body     string // markdown job details plus the prompt
+	// pin is set for a cron add or edit with --prompt-key: the text the
+	// popup shows, which the CLI stores (see recordCronPin).
+	pin *cronPin
+}
+
+// cronPin is the context-key text a cron add/edit popup showed, recorded on
+// approval as a dispatchapproval cron prompt marker so the CLI stores this
+// exact text rather than reading the key again. args are the command's
+// words from "cron" on, the marker key; nil when a word expands (then no
+// marker is recorded and the CLI refuses the key from an agent session).
+type cronPin struct {
+	args []string
+	key  string
+	text string
 }
 
 // cronJobsLoader reads the stored jobs for resume / run --force previews. A
@@ -261,13 +276,57 @@ func buildCronPreviewIn(command, cwd string) (cronPreview, string) {
 			"Spell flags as --name value (or --name=value), with no attached short-flag values, "+
 			"and use only the documented flags.", seg.sub, args.unknown[0])
 	}
+	var p cronPreview
+	var deny string
 	switch seg.sub {
 	case "add":
-		return buildCronAddPreview(args, command, cwd)
+		p, deny = buildCronAddPreview(args, command, cwd)
 	case "edit":
-		return buildCronEditPreview(args, command, cwd)
+		p, deny = buildCronEditPreview(args, command, cwd)
+	default:
+		return buildStoredCronPreview(seg.sub, seg.action(), args, command)
 	}
-	return buildStoredCronPreview(seg.sub, seg.action(), args, command)
+	if deny == "" && p.pin != nil {
+		if words, ok := segmentArgs(seg.tokens); ok {
+			p.pin.args = append([]string{"cron", seg.sub}, words...)
+		}
+	}
+	return p, deny
+}
+
+// cronKeyPin is the pin of a cron add/edit whose prompt came from
+// --prompt-key (nil otherwise): prompt is the text the popup shows.
+func cronKeyPin(a cronArgs, prompt string) *cronPin {
+	key := a.value("prompt-key")
+	if key == "" {
+		return nil
+	}
+	return &cronPin{key: key, text: prompt}
+}
+
+// recordPinApproval is the seam recordCronPin records through; tests swap
+// it.
+var recordPinApproval = dispatchapproval.RecordCronPrompt
+
+// recordCronPin records the approved key text of a cron add/edit for the
+// CLI to consume (dispatchapproval.ConsumeCronPrompt).
+func recordCronPin(windowID string, pin *cronPin) {
+	if pin == nil {
+		return
+	}
+	switch {
+	case windowID == "":
+		logging.Log("hook-validate-bash: approved cron --prompt-key has no window; no pin recorded")
+		return
+	case pin.args == nil:
+		logging.Log("hook-validate-bash: approved cron --prompt-key has shell-expanded words; no pin recorded")
+		return
+	}
+	if err := recordPinApproval(windowID, pin.args, pin.text); err != nil {
+		logging.Warn("hook-validate-bash: recording cron prompt pin: %v", err)
+		return
+	}
+	logging.Log("cron-pin: recorded window=%s key=%s args=%s", windowID, pin.key, dispatchapproval.ShortKey(windowID, pin.args))
 }
 
 // cronAbsDir is a --dir value as `cron add`/`edit` store it: ~ expanded and
@@ -430,6 +489,7 @@ func buildCronAddPreview(a cronArgs, command, cwd string) (cronPreview, string) 
 		account:  job.Account,
 		schedule: schedule,
 		body:     cronJobBody(withTemplateDefaults(job, tmpl), schedule, "", source, prompt),
+		pin:      cronKeyPin(a, prompt),
 	}, ""
 }
 
@@ -470,11 +530,19 @@ func cronAddPrompt(a cronArgs, command string) (prompt, source, deny string) {
 		return string(data), fmt.Sprintf("--prompt-file %s (copied into the job now)", path), ""
 	case a.value("prompt-key") != "":
 		key := a.value("prompt-key")
+		if lineChangesContextFor(command, "cron") {
+			// The CLI stores the popup's text only from an agent session
+			// it can identify (pinnedKeyText); an env -u / VAR= prefix or
+			// a cd could hide that and make it read the key again.
+			return "", "", fmt.Sprintf("agentctl cron add --prompt-key %s: the command changes directory or environment "+
+				"first, so the text the popup shows might not be the text stored. Run cron add as its own Bash call "+
+				"(after `agentctl context set %s ...` in a separate call, or chained only with agentctl commands).", key, key)
+		}
 		content, ok := resolvePromptKey(key, command)
 		if !ok {
 			return "", "", cronPromptKeyDenyReason(key)
 		}
-		return content, fmt.Sprintf("context key %s (read at every fire; it can change after approval)", key), ""
+		return content, fmt.Sprintf("context key %s (this text is copied into the job now; later changes to the key do not affect it)", key), ""
 	case a.values["prompt"].text != "" || a.values["prompt"].quoted:
 		return a.value("prompt"), "--prompt", ""
 	}
@@ -531,17 +599,17 @@ func buildCronEditPreview(a cronArgs, command, cwd string) (cronPreview, string)
 		var deny string
 		prompt, source, deny = cronAddPrompt(a, command)
 		if deny != "" {
-			return cronPreview{}, strings.Replace(deny, "cron add", "cron edit", 1)
+			return cronPreview{}, strings.ReplaceAll(deny, "cron add", "cron edit")
 		}
 		if a.value("prompt-key") != "" {
-			job.Prompt, job.PromptKey, job.Template = "", a.value("prompt-key"), ""
+			job.PinKey(a.value("prompt-key"), prompt)
 		} else {
-			job.Prompt, job.PromptKey, job.Template = prompt, "", ""
+			job.Prompt, job.PromptKey, job.PromptSourceKey, job.Template = prompt, "", "", ""
 		}
 	}
 	_, templateSet := a.values["template"]
 	if templateSet {
-		job.Prompt, job.PromptKey, job.Template = "", "", a.value("template")
+		job.Prompt, job.PromptKey, job.PromptSourceKey, job.Template = "", "", "", a.value("template")
 	}
 	for flag, dst := range map[string]*string{
 		"schedule": &job.Schedule, "agent": &job.Agent, "account": &job.Account, "model": &job.Model,
@@ -601,13 +669,11 @@ func buildCronEditPreview(a cronArgs, command, cwd string) (cronPreview, string)
 	}
 	if !promptSet && job.Template == "" {
 		prompt, source = old.Prompt, "stored prompt (unchanged)"
-		if old.PromptKey != "" {
-			source = fmt.Sprintf("context key %s (unchanged; read at every fire)", old.PromptKey)
-			if content, ok := resolvePromptKey(old.PromptKey, command); ok {
-				prompt = content
-			} else {
-				prompt = fmt.Sprintf("(context key %s is not set; fires will fail until it is)", old.PromptKey)
-			}
+		if old.PromptSourceKey != "" {
+			source = fmt.Sprintf("stored prompt, copied from context key %s (unchanged)", old.PromptSourceKey)
+		}
+		if old.Unpinned() {
+			source, prompt = unpinnedSource(old, "unchanged; "), unpinnedPrompt(old, command)
 		}
 	}
 	note := "Edit changes nothing."
@@ -620,6 +686,10 @@ func buildCronEditPreview(a cronArgs, command, cwd string) (cronPreview, string)
 	case strings.TrimSpace(old.Schedule) != strings.TrimSpace(job.Schedule):
 		note += " The schedule restarts from now; earlier fires are not caught up."
 	}
+	var pin *cronPin
+	if promptSet {
+		pin = cronKeyPin(a, prompt)
+	}
 	return cronPreview{
 		action:   cronActionEdit,
 		job:      job.Name,
@@ -627,6 +697,7 @@ func buildCronEditPreview(a cronArgs, command, cwd string) (cronPreview, string)
 		account:  job.Account,
 		schedule: schedule,
 		body:     cronJobBody(withTemplateDefaults(job, tmpl), schedule, note, source, prompt),
+		pin:      pin,
 	}, ""
 }
 
@@ -682,13 +753,11 @@ func buildStoredCronPreview(sub, action string, a cronArgs, command string) (cro
 	if job.Template != "" {
 		prompt, source, tmpl = cronStoredTemplate(job, "")
 	}
-	if job.PromptKey != "" {
-		source = fmt.Sprintf("context key %s (read at every fire)", job.PromptKey)
-		if content, ok := resolvePromptKey(job.PromptKey, command); ok {
-			prompt = content
-		} else {
-			prompt = fmt.Sprintf("(context key %s is not set; fires will fail until it is)", job.PromptKey)
-		}
+	if job.PromptSourceKey != "" {
+		source = fmt.Sprintf("stored prompt, copied from context key %s", job.PromptSourceKey)
+	}
+	if job.Unpinned() {
+		source, prompt = unpinnedSource(job, ""), unpinnedPrompt(job, command)
 	}
 	return cronPreview{
 		action:   action,
@@ -698,6 +767,20 @@ func buildStoredCronPreview(sub, action string, a cronArgs, command string) (cro
 		schedule: schedule,
 		body:     cronJobBody(withTemplateDefaults(job, tmpl), schedule, note, source, prompt),
 	}, ""
+}
+
+// unpinnedSource is the "Prompt from" row of a legacy prompt_key job.
+func unpinnedSource(job cron.Job, prefix string) string {
+	return fmt.Sprintf("context key %s (%sUNPINNED: read at every fire, so it can change without approval; "+
+		"%s pins it)", job.PromptKey, prefix, job.PinCommand())
+}
+
+// unpinnedPrompt is a legacy prompt_key job's current key text.
+func unpinnedPrompt(job cron.Job, command string) string {
+	if content, ok := resolvePromptKey(job.PromptKey, command); ok {
+		return content
+	}
+	return fmt.Sprintf("(context key %s is not set; fires will fail until it is)", job.PromptKey)
 }
 
 // cronJobBody renders the job details and prompt as markdown, for the popup
@@ -789,23 +872,31 @@ func orNone(s string) string {
 // non-empty denyReason when the job cannot be shown faithfully or the popup
 // went unanswered.
 func cronPreviewGate(agentName, command, cwd string) (approved, decided bool, denyReason string) {
+	approved, decided, denyReason, _ = cronPreviewGatePin(agentName, command, cwd)
+	return approved, decided, denyReason
+}
+
+// cronPreviewGatePin is cronPreviewGate also returning the key text the
+// popup showed (nil unless the command is a cron add/edit --prompt-key),
+// from the same read as the popup, for recordCronPin.
+func cronPreviewGatePin(agentName, command, cwd string) (approved, decided bool, denyReason string, pin *cronPin) {
 	if deny := cronUnknownAgentDeny(command, askingCwd(cwd)); deny != "" {
-		return false, false, deny
+		return false, false, deny, nil
 	}
 	if os.Getenv("TMUX") == "" {
 		logging.Log("hook-validate-bash: not in tmux session, passing through cron")
-		return false, false, ""
+		return false, false, "", nil
 	}
 	release, ok := acquireGateLock(command)
 	if !ok {
 		logging.Log("hook-validate-bash: cron gate already owned by another invocation, staying silent")
-		return false, false, ""
+		return false, false, "", nil
 	}
 	defer release()
 
 	p, deny := buildCronPreviewIn(command, cwd)
 	if deny != "" {
-		return false, false, deny
+		return false, false, deny, nil
 	}
 
 	contentWidth, vpHeight := dispatchPreviewFit()
@@ -826,7 +917,7 @@ func cronPreviewGate(agentName, command, cwd string) (approved, decided bool, de
 	tmpPath, err := writePreviewArgs("agentctl-cron-preview-*", args)
 	if err != nil {
 		logging.Log("hook-validate-bash: cron preview args: %v", err)
-		return false, false, ""
+		return false, false, "", nil
 	}
 	defer os.Remove(tmpPath)
 
@@ -835,7 +926,8 @@ func cronPreviewGate(agentName, command, cwd string) (approved, decided bool, de
 		tui.WithMaxViewportHeight(vpHeight),
 	))
 	logging.Log("hook-validate-bash: launching cron popup agent=%s action=%q job=%s", agentName, p.action, p.job)
-	return runPopupWithDeadline(target, "cron job", "hook-validate-bash: cron", sz.Width, sz.Height, tmpPath, cronPopupNotice(agentName, command, p))
+	approved, decided, denyReason = runPopupWithDeadline(target, "cron job", "hook-validate-bash: cron", sz.Width, sz.Height, tmpPath, cronPopupNotice(agentName, command, p))
+	return approved, decided, denyReason, p.pin
 }
 
 // cronPopupNotice builds the pending-approval description for a cron gate.

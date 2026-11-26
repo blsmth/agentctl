@@ -13,6 +13,12 @@
 // which the hook tamper rules deny agents' Bash and Write/Edit from writing.
 // They are per user, not per project, so a dispatch that changed directory
 // before running still finds the marker its popup recorded.
+//
+// The same store carries the cron prompt pins (RecordCronPrompt,
+// ConsumeCronPrompt): when a human approves `agentctl cron add|edit
+// --prompt-key K`, the hook records the exact text the popup showed, and
+// the CLI stores that text instead of reading the context store again, so
+// the key cannot change between the popup and the write.
 package dispatchapproval
 
 import (
@@ -62,7 +68,15 @@ func Dir() (string, error) { return dirFn() }
 type marker struct {
 	Window  string    `json:"window"`
 	Created time.Time `json:"created"`
+	// Kind is "" for a dispatch approval and kindCronPrompt for a cron
+	// prompt pin; a consumer accepts only its own kind.
+	Kind string `json:"kind,omitempty"`
+	// Payload is the approved prompt text of a cron prompt pin.
+	Payload string `json:"payload,omitempty"`
 }
+
+// kindCronPrompt marks a cron prompt pin.
+const kindCronPrompt = "cron-prompt"
 
 // Key is the marker name for a dispatch issued from windowID with args (the
 // words after "dispatch", as the shell passes them).
@@ -86,6 +100,17 @@ func ShortKey(windowID string, args []string) string {
 // Record stores an approval for one dispatch from windowID with args, and
 // prunes expired markers.
 func Record(windowID string, args []string) error {
+	return record(windowID, args, marker{Window: windowID})
+}
+
+// RecordCronPrompt stores the prompt text a human approved for one `agentctl
+// cron add|edit --prompt-key` from windowID; args are the words from "cron"
+// on, as the shell passes them.
+func RecordCronPrompt(windowID string, args []string, text string) error {
+	return record(windowID, args, marker{Window: windowID, Kind: kindCronPrompt, Payload: text})
+}
+
+func record(windowID string, args []string, m marker) error {
 	if windowID == "" {
 		return errors.New("recording dispatch approval: no window")
 	}
@@ -97,7 +122,8 @@ func Record(windowID string, args []string) error {
 		return fmt.Errorf("creating %s: %w", dir, err)
 	}
 	prune(dir)
-	data, err := json.Marshal(marker{Window: windowID, Created: now()})
+	m.Created = now()
+	data, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
@@ -125,42 +151,57 @@ func Record(windowID string, args []string) error {
 // returns nil exactly once per recorded approval, and ErrNotApproved (or a
 // wrapped error) when there is none, it was used, or it expired.
 func Consume(windowID string, args []string) error {
+	_, err := consume(windowID, args, "")
+	return err
+}
+
+// ConsumeCronPrompt claims the prompt text recorded by RecordCronPrompt for
+// a cron command from windowID with args. Like Consume it succeeds once.
+func ConsumeCronPrompt(windowID string, args []string) (string, error) {
+	m, err := consume(windowID, args, kindCronPrompt)
+	if err != nil {
+		return "", err
+	}
+	return m.Payload, nil
+}
+
+func consume(windowID string, args []string, kind string) (marker, error) {
 	if windowID == "" {
-		return ErrNotApproved
+		return marker{}, ErrNotApproved
 	}
 	dir, err := Dir()
 	if err != nil {
-		return err
+		return marker{}, err
 	}
 	path := filepath.Join(dir, Key(windowID, args))
 	fi, err := os.Lstat(path)
 	if err != nil {
-		return ErrNotApproved
+		return marker{}, ErrNotApproved
 	}
 	if !fi.Mode().IsRegular() {
 		os.Remove(path)
-		return ErrNotApproved
+		return marker{}, ErrNotApproved
 	}
 	data, readErr := os.ReadFile(path)
 	// Removing is the claim: of two concurrent consumers only one succeeds.
 	if err := os.Remove(path); err != nil {
-		return ErrNotApproved
+		return marker{}, ErrNotApproved
 	}
 	if readErr != nil {
-		return ErrNotApproved
+		return marker{}, ErrNotApproved
 	}
 	var m marker
-	if err := json.Unmarshal(data, &m); err != nil || m.Window != windowID {
-		return ErrNotApproved
+	if err := json.Unmarshal(data, &m); err != nil || m.Window != windowID || m.Kind != kind {
+		return marker{}, ErrNotApproved
 	}
 	t := now()
 	if m.Created.After(t.Add(futureSkew)) {
-		return ErrNotApproved
+		return marker{}, ErrNotApproved
 	}
 	if t.Sub(m.Created) > TTL {
-		return fmt.Errorf("%w (the approval expired after %s)", ErrNotApproved, TTL)
+		return marker{}, fmt.Errorf("%w (the approval expired after %s)", ErrNotApproved, TTL)
 	}
-	return nil
+	return m, nil
 }
 
 // prune removes markers older than TTL (and stray temp files), best effort.

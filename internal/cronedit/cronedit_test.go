@@ -50,6 +50,24 @@ func (ts *testStore) job(name string) cron.Job {
 	return cron.Job{Name: name, Schedule: "30 7 * * 1-5", Dir: ts.projDir, Agent: "brandon", Prompt: "triage"}
 }
 
+// seedLegacy writes job straight to the jobs file, as an older binary left
+// it (Create would pin a prompt_key).
+func (ts *testStore) seedLegacy(t *testing.T, job cron.Job) {
+	t.Helper()
+	path, _ := ts.JobsPath()
+	jobs, err := cron.LoadJobs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	jobs.Jobs = append(jobs.Jobs, job)
+	if err := cron.SaveJobs(path, jobs); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (ts *testStore) lastFire(t *testing.T, name string) time.Time {
 	t.Helper()
 	st, err := cron.LoadState(ts.stateDir)
@@ -381,5 +399,68 @@ func TestChangedFields(t *testing.T) {
 	b.Prompt, b.PromptKey, b.Agent = "", "k", "z"
 	if got := ChangedFields(a, b); !slices.Equal(got, []string{"agent", "prompt", "prompt_key"}) {
 		t.Errorf("changed = %v", got)
+	}
+}
+
+func TestPromptKeyPinning(t *testing.T) {
+	ts := newTestStore(t)
+
+	// A new job naming a key gets the key's text now, the key as a label.
+	j := ts.job("fresh")
+	j.Prompt, j.PromptKey = "", "spec"
+	got, err := ts.Create(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Prompt != "text of spec" || got.PromptKey != "" || got.PromptSourceKey != "spec" || got.Unpinned() {
+		t.Errorf("created = %+v, want pinned", got)
+	}
+
+	// A legacy job stays unpinned through an edit that keeps its key.
+	legacy := ts.job("legacy")
+	legacy.Prompt, legacy.PromptKey = "", "old-key"
+	ts.seedLegacy(t, legacy)
+	res, err := ts.Modify("legacy", func(j *cron.Job) error { j.Model = "opus"; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Job.Unpinned() || res.Job.Prompt != "" {
+		t.Errorf("kept key = %+v, want still unpinned", res.Job)
+	}
+
+	// An edit that names a new key pins it, and the edited entry records it.
+	res, err = ts.Modify("legacy", func(j *cron.Job) error { j.PromptKey = "new-key"; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Job.Unpinned() || res.Job.Prompt != "text of new-key" || res.Job.PromptSourceKey != "new-key" {
+		t.Errorf("new key = %+v, want pinned", res.Job)
+	}
+	if !slices.Equal(res.Changed, []string{"prompt", "prompt_key", "prompt_source_key"}) {
+		t.Errorf("changed = %v", res.Changed)
+	}
+	runs, err := cron.ReadRuns(ts.stateDir, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := runs[len(runs)-1]
+	if last.Result != cron.ResultEdited || last.Def == nil || last.Def.PromptSource != cron.FieldPrompt ||
+		last.Def.PromptSourceKey != "new-key" || last.Def.Prompt != "text of new-key" {
+		t.Errorf("edited entry = %+v def %+v", last, last.Def)
+	}
+	if back := last.Def.Job(); back.PromptSourceKey != "new-key" || back.Unpinned() {
+		t.Errorf("snapshot job = %+v", back)
+	}
+
+	// A key that cannot be read is a prompt field error, and nothing is saved.
+	ts.ResolvePromptKey = func(string) (string, error) { return "", &NotFoundError{Name: "gone"} }
+	j = ts.job("missing")
+	j.Prompt, j.PromptKey = "", "gone"
+	_, err = ts.Create(j)
+	if f := FieldsOf(err); len(f) != 1 || f[0].Field != cron.FieldPrompt || !strings.Contains(f[0].Message, "not found in the context store") {
+		t.Errorf("unreadable key err = %v", err)
+	}
+	if _, err := ts.Get("missing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing job saved: %v", err)
 	}
 }

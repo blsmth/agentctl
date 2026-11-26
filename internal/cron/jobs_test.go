@@ -3,6 +3,7 @@ package cron
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -139,5 +140,39 @@ func TestJobsRoundTrip(t *testing.T) {
 	}
 	if _, err := LoadJobs(path); err == nil {
 		t.Error("corrupt file loaded without error")
+	}
+}
+
+func TestPinKey(t *testing.T) {
+	j := Job{Name: "j", Schedule: "@daily", Dir: "/p", Agent: "a", PromptKey: "spec", Template: ""}
+	if !j.Unpinned() || j.PinCommand() != "agentctl cron edit j --prompt-key spec" {
+		t.Fatalf("legacy job: unpinned %v, pin %q", j.Unpinned(), j.PinCommand())
+	}
+	j.PinKey("spec", "the text")
+	j.Normalize()
+	if j.Unpinned() || j.Prompt != "the text" || j.PromptSourceKey != "spec" || j.PromptKey != "" || j.PromptSource() != FieldPrompt {
+		t.Errorf("pinned = %+v", j)
+	}
+	if err := j.Validate(); err != nil {
+		t.Errorf("pinned job invalid: %v", err)
+	}
+	// The source key is a label for a stored prompt; without one it is wrong.
+	bad := j
+	bad.Prompt = ""
+	if errs := bad.FieldErrors(); !slices.ContainsFunc(errs, func(e FieldError) bool { return strings.Contains(e.Message, "prompt_source_key") }) {
+		t.Errorf("source key without prompt: %v", errs)
+	}
+	bad.Mode = ModeImprove
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "prompt_source_key") {
+		t.Errorf("improve source key without prompt: %v", err)
+	}
+
+	// The lifecycle snapshot keeps the source key, and an excerpt.
+	snap := SnapshotOf(j)
+	if snap.PromptSource != FieldPrompt || snap.Prompt != "the text" || snap.PromptSourceKey != "spec" {
+		t.Errorf("snapshot = %+v", snap)
+	}
+	if back := snap.Job(); back.PromptSourceKey != "spec" || back.Prompt != "the text" || back.Unpinned() {
+		t.Errorf("snapshot job = %+v", back)
 	}
 }

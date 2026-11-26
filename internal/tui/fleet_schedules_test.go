@@ -137,8 +137,27 @@ func (f *schedFixture) create(t *testing.T, j cron.Job) {
 	if j.Prompt == "" && j.PromptKey == "" {
 		j.Prompt = "Triage new issues."
 	}
+	// A prompt_key job is legacy (Create would pin it): save it with a
+	// placeholder prompt, then write the key back as an older binary did.
+	key := j.PromptKey
+	if key != "" {
+		j.Prompt, j.PromptKey = "placeholder", ""
+	}
 	if _, err := f.base().Create(j); err != nil {
 		t.Fatalf("seeding %s: %v", j.Name, err)
+	}
+	if key == "" {
+		return
+	}
+	path, _ := f.base().JobsPath()
+	jobs, err := cron.LoadJobs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := jobs.Find(j.Name)
+	jobs.Jobs[i].Prompt, jobs.Jobs[i].PromptKey = "", key
+	if err := cron.SaveJobs(path, jobs); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -1199,5 +1218,51 @@ func TestRenderRunLineLiveClosed(t *testing.T) {
 		if !strings.Contains(got, tc.want) || strings.Contains(got, "@1764") {
 			t.Errorf("live=%v: %q", tc.live, got)
 		}
+	}
+}
+
+func TestSchedulePinnedAndUnpinnedCards(t *testing.T) {
+	f := newSchedFixture(t)
+	f.promptKeys = map[string]string{"spec": "Pinned spec text."}
+	f.create(t, cron.Job{Name: "legacy", Schedule: "0 7 * * *", PromptKey: "spec"})
+	f.create(t, cron.Job{Name: "pinned", Schedule: "0 8 * * *", Prompt: "Pinned spec text.", PromptSourceKey: "spec"})
+	m := showSchedules(t, f.model(t))
+
+	m = selectSched(t, m, "legacy")
+	if out := ansi.Strip(m.render()); !strings.Contains(out, "UNPINNED") {
+		t.Errorf("legacy card does not say it is unpinned:\n%s", out)
+	}
+	m = selectSched(t, m, "pinned")
+	if out := ansi.Strip(m.render()); !strings.Contains(out, "copied from context key spec") || strings.Contains(out, "UNPINNED") {
+		t.Errorf("pinned card:\n%s", out)
+	}
+
+	// Editing the text drops the source key: it is no longer the key's copy.
+	m = schedPress(t, m, "e")
+	m = focusStopT(t, m, stopPrompt)
+	m = schedType(t, m, " Edited.")
+	m = schedPress(t, m, "ctrl+s", "y")
+	if m.schedForm != nil {
+		t.Fatalf("not saved: %q %v", m.schedForm.err, m.schedForm.errors())
+	}
+	if j := f.job(t, "pinned"); j.PromptSourceKey != "" || !strings.Contains(j.Prompt, "Edited.") {
+		t.Errorf("edited job = %+v", j)
+	}
+}
+
+func TestScheduleDuplicateOfLegacyKeyShowsPinnedText(t *testing.T) {
+	f := newSchedFixture(t)
+	f.promptKeys = map[string]string{"spec": "Text the save copies."}
+	f.create(t, cron.Job{Name: "legacy", Schedule: "0 7 * * *", PromptKey: "spec"})
+	m := showSchedules(t, f.model(t))
+	m = selectSched(t, m, "legacy")
+	m = schedPress(t, m, "d", "ctrl+s")
+	out := ansi.Strip(m.render())
+	if !strings.Contains(out, "copied from context key spec on save") || !strings.Contains(out, "Text the save copies.") || strings.Contains(out, "UNPINNED: read at every fire") {
+		t.Errorf("duplicate review:\n%s", out)
+	}
+	schedPress(t, m, "y")
+	if j := f.job(t, "legacy-copy"); j.Unpinned() || j.Prompt != "Text the save copies." || j.PromptSourceKey != "spec" {
+		t.Errorf("duplicate = %+v", j)
 	}
 }

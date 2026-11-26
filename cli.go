@@ -2002,7 +2002,7 @@ type CronAddCmd struct {
 	Agent      string `short:"a" help:"Agent to run (required unless --template names one)"`
 	Dir        string `required:"" help:"Project directory (also where --template is looked up)"`
 	Prompt     string `short:"p" help:"Prompt text"`
-	PromptKey  string `name:"prompt-key" short:"k" help:"Context store key holding the prompt (read at each fire)"`
+	PromptKey  string `name:"prompt-key" short:"k" help:"Context store key holding the prompt (its text is copied into the job now, as the approval popup shows it; the key is kept only as a label)"`
 	PromptFile string `name:"prompt-file" type:"path" help:"File holding the prompt (copied into the job now)"`
 	Template   string `help:"Prompt template (agentctl template list), read at each fire; its agent/model/effort fill unset flags"`
 	NoWorktree bool   `name:"no-worktree" help:"Run in the project checkout instead of a worktree per fire"`
@@ -2039,7 +2039,7 @@ type CronEditCmd struct {
 	Agent        *string `short:"a" help:"Agent to run"`
 	Dir          *string `help:"Project directory"`
 	Prompt       *string `short:"p" help:"Prompt text (replaces a prompt key)"`
-	PromptKey    *string `name:"prompt-key" short:"k" help:"Context store key holding the prompt (read at each fire)"`
+	PromptKey    *string `name:"prompt-key" short:"k" help:"Context store key holding the prompt (its text is copied into the job now, as the approval popup shows it; the key is kept only as a label)"`
 	PromptFile   *string `name:"prompt-file" type:"path" help:"File holding the prompt (copied into the job now)"`
 	Template     *string `help:"Prompt template, read at each fire (replaces the prompt or prompt key)"`
 	Worktree     bool    `help:"Run each fire in its own worktree" xor:"worktree"`

@@ -70,20 +70,32 @@ type Job struct {
 	Dir   string `json:"dir"`
 	Agent string `json:"agent"`
 	// Exactly one of Prompt, PromptKey (context store) and Template (a
-	// prompt template, internal/prompttemplate). --prompt-file is copied
-	// into Prompt at add time; PromptKey and Template are read at every
-	// fire, Template from Dir's project (shadowing the global templates).
-	// With a Template, Agent, Model and Effort may be empty: the
-	// template's defaults fill them, and a job field always wins.
+	// prompt template, internal/prompttemplate). --prompt-file and
+	// --prompt-key are copied into Prompt when the job is added or edited
+	// (the text the approval popup showed), and PromptSourceKey records the
+	// key for display only. Template is read at every fire from Dir's
+	// project (shadowing the global templates), and changes only through
+	// a gated template edit. With a Template, Agent, Model and Effort may
+	// be empty: the template's defaults fill them, and a job field always
+	// wins.
+	//
+	// PromptKey is legacy: a job written before keys were pinned names the
+	// key, and its fires still read the context store (see Unpinned).
+	// Nothing writes a new one; `cron edit <job> --prompt-key <key>` pins
+	// it.
 	//
 	// In ModeImprove no prompt is needed: at most one of the three adds a
 	// theme (prompt, prompt_key) or a template body to the improve prompt,
 	// and Agent defaults to the fleet-improver agent.
 	Prompt    string `json:"prompt,omitempty"`
 	PromptKey string `json:"prompt_key,omitempty"`
-	Template  string `json:"template,omitempty"`
-	Harness   string `json:"harness"`
-	Mode      string `json:"mode"`
+	// PromptSourceKey is the context key Prompt was copied from; display
+	// only, never read at a fire. A binary that predates it ignores the
+	// field and runs Prompt.
+	PromptSourceKey string `json:"prompt_source_key,omitempty"`
+	Template        string `json:"template,omitempty"`
+	Harness         string `json:"harness"`
+	Mode            string `json:"mode"`
 	// Worktree runs each fire in its own worktree (default true).
 	Worktree *bool  `json:"worktree,omitempty"`
 	Model    string `json:"model,omitempty"`
@@ -176,6 +188,22 @@ func parseAtIn(s string, loc *time.Location) (time.Time, error) {
 
 // FormatAt is the stored form of an at time (RFC3339, local offset).
 func FormatAt(t time.Time) string { return t.In(time.Local).Format(time.RFC3339) }
+
+// Unpinned reports whether the job is a legacy prompt_key job: its fires
+// read the context store, so an unapproved `context set` changes what runs.
+func (j Job) Unpinned() bool { return j.PromptKey != "" }
+
+// PinCommand is the gated command that pins an unpinned job's key (the
+// approval popup shows the text that gets stored).
+func (j Job) PinCommand() string {
+	return fmt.Sprintf("agentctl cron edit %s --prompt-key %s", j.Name, j.PromptKey)
+}
+
+// PinKey makes text, read from the context key key, the job's stored
+// prompt, with key kept as its source for display.
+func (j *Job) PinKey(key, text string) {
+	j.Prompt, j.PromptKey, j.PromptSourceKey, j.Template = text, "", key, ""
+}
 
 // IsImprove reports whether the job runs a fleet improve run.
 func (j Job) IsImprove() bool { return j.Mode == ModeImprove }
@@ -399,6 +427,9 @@ func (j Job) FieldErrors() []FieldError {
 	case j.Template != "" && !agentname.Valid(j.Template):
 		add(FieldTemplate, "invalid template name %q", j.Template)
 	}
+	if j.PromptSourceKey != "" && j.Prompt == "" {
+		add(FieldPrompt, "prompt_source_key %q needs the prompt copied from it", j.PromptSourceKey)
+	}
 	if j.Harness != HarnessClaude {
 		add(FieldHarness, "harness %q is not supported yet (only %q)", j.Harness, HarnessClaude)
 	}
@@ -443,8 +474,9 @@ func (j Job) FieldErrors() []FieldError {
 	return errs
 }
 
-// PromptSource names where a job's prompt comes from: "template",
-// "prompt_key" or "prompt".
+// PromptSource names where a job's prompt comes from at a fire:
+// "template", "prompt_key" (an unpinned legacy job) or "prompt" (inline,
+// including a prompt pinned from a key, see PromptSourceKey).
 func (j Job) PromptSource() string {
 	switch {
 	case j.Template != "":

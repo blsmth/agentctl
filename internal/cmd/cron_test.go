@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
+	ctxstore "github.com/blsmth/agentctl/internal/context"
 	"github.com/blsmth/agentctl/internal/cron"
 	"github.com/blsmth/agentctl/internal/cronedit"
 	"github.com/blsmth/agentctl/internal/launchd"
@@ -23,6 +24,10 @@ func testCronEnv(t *testing.T, launches *[]cron.LaunchRequest) cronEnv {
 	t.Helper()
 	root := t.TempDir()
 	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.Local)
+	// A plain shell by default: --prompt-key reads the (temp) context
+	// store. withCronPinCaller makes the caller an agent session.
+	stubCronPinCaller(t, false, nil)
+	ctxstore.SetPathForTest(t.TempDir())
 	return cronEnv{
 		now:        func() time.Time { return now },
 		jobsPath:   func() (string, error) { return filepath.Join(root, "config", cron.SchedulesFile), nil },
@@ -427,7 +432,8 @@ func TestPromptColumn(t *testing.T) {
 		want string
 	}{
 		{cron.Job{Template: "triage"}, "template triage"},
-		{cron.Job{PromptKey: "spec"}, "key spec"},
+		{cron.Job{PromptKey: "spec"}, "key spec (UNPINNED)"},
+		{cron.Job{Prompt: "copied", PromptSourceKey: "spec"}, "key spec (pinned)"},
 		{cron.Job{Prompt: "short\nprompt"}, "short prompt"},
 		{cron.Job{Prompt: strings.Repeat("x", 40)}, strings.Repeat("x", 31) + "…"},
 	} {
@@ -562,10 +568,13 @@ func TestCronEdit(t *testing.T) {
 	}
 
 	out.Reset()
+	if err := ctxstore.Set("spec", ctxstore.Entry{Content: "the spec"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := e.edit(&out, CronEditOptions{Name: "j", Schedule: ptr("0 * * * *"), PromptKey: ptr("spec")}); err != nil {
 		t.Fatal(err)
 	}
-	if j := get(); j.Prompt != "" || j.PromptKey != "spec" || j.Schedule != "0 * * * *" {
+	if j := get(); j.Prompt != "the spec" || j.PromptKey != "" || j.PromptSourceKey != "spec" || j.Schedule != "0 * * * *" {
 		t.Errorf("job = %+v", j)
 	}
 	if !lastFire().Equal(e.now()) || !strings.Contains(out.String(), "Schedule changed; next fire") {
