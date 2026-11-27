@@ -30,7 +30,7 @@ type Window struct {
 
 	// Additive fields (serve). PRURL is the PR recorded by dispatch completion
 	// (windowstate), else the newest pr-link record in the session log (see
-	// TagLogs); PRNumber is only known from the former. PendingTool is only set while the
+	// TagLogs); PRNumber comes from the same source as PRURL, never mixed. PendingTool is only set while the
 	// window is blocked, which is when it names the tool the dialog asks about.
 	PRURL        string `json:"pr_url,omitempty"`
 	Issue        int    `json:"issue,omitempty"`
@@ -115,7 +115,7 @@ func ToWindow(r Row, m Meta) Window {
 		MailPending:  r.MailboxPending,
 		Issue:        r.Ticket,
 		PRURL:        r.PRURL,
-		PRNumber:     m.PRNumber,
+		PRNumber:     r.PRNumber,
 		Detached:     m.Detached(),
 		Model:        r.ModelName,
 		TurnDone:     r.TurnDone,
@@ -136,8 +136,10 @@ func ToWindow(r Row, m Meta) Window {
 			w.ScheduledAt = m.ScheduledAt.UTC().Format(time.RFC3339)
 		}
 	}
-	if m.PRURL != "" {
-		w.PRURL = m.PRURL
+	if m.hasPR() {
+		// Windowstate's pair wins whole; rows not run through TagMeta
+		// still get it.
+		w.PRNumber, w.PRURL = m.PRNumber, m.PRURL
 	}
 	if !m.StateSince.IsZero() {
 		w.StateSince = m.StateSince.UTC().Format(time.RFC3339)

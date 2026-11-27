@@ -58,7 +58,7 @@ type Row struct {
 	PendingToolDetail string
 
 	// Recap is the row's "what is it working on" line, and PRNumber/PRURL the
-	// newest PR link from its session log. Set by TagLogs.
+	// PR link: windowstate's pair (TagMeta), else the newest log record (TagLogs).
 	Recap    RecapLine
 	PRNumber int
 	PRURL    string

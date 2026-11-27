@@ -302,6 +302,7 @@ func (m FleetModel) hubSelection() HubSelection {
 			if sel.valid() {
 				sel.Status = hubStatusFor(r, m.display, m.groups)
 				sel.Status.TicketURL = ticketURLFor(sel.Status, g.RuntimeDir)
+				fillPRURL(sel.Status, g.RuntimeDir)
 			}
 			return sel
 		}
@@ -371,19 +372,39 @@ func ticketURLFor(st *hubStatus, runtimeDir string) string {
 	slug := ""
 	if m := prURLRepo.FindStringSubmatch(st.PRURL); m != nil {
 		slug = m[1]
-	} else if runtimeDir != "" {
-		dir := filepath.Dir(runtimeDir)
-		if v, ok := ticketRepoCache.Load(dir); ok {
-			slug = v.(string)
-		} else {
-			slug = ticketRepoSlug(dir)
-			ticketRepoCache.Store(dir, slug)
-		}
+	} else {
+		slug = projectRepoSlug(runtimeDir)
 	}
 	if slug == "" {
 		return ""
 	}
 	return fmt.Sprintf("https://github.com/%s/issues/%d", slug, st.Ticket)
+}
+
+// projectRepoSlug is "owner/repo" for the project owning runtimeDir, cached;
+// "" when unknown.
+func projectRepoSlug(runtimeDir string) string {
+	if runtimeDir == "" {
+		return ""
+	}
+	dir := filepath.Dir(runtimeDir)
+	if v, ok := ticketRepoCache.Load(dir); ok {
+		return v.(string)
+	}
+	slug := ticketRepoSlug(dir)
+	ticketRepoCache.Store(dir, slug)
+	return slug
+}
+
+// fillPRURL builds st.PRURL from the project's repo when only the PR number is
+// known (windowstate recorded a number alone). It never overwrites a URL.
+func fillPRURL(st *hubStatus, runtimeDir string) {
+	if st.PRNumber <= 0 || st.PRURL != "" {
+		return
+	}
+	if slug := projectRepoSlug(runtimeDir); slug != "" {
+		st.PRURL = fmt.Sprintf("https://github.com/%s/pull/%d", slug, st.PRNumber)
+	}
 }
 
 // prURLRepo captures "owner/repo" from a GitHub pull request URL.

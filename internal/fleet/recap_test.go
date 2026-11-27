@@ -509,3 +509,44 @@ func TestWindowLabelField(t *testing.T) {
 		t.Errorf("Label = %q", w.Label)
 	}
 }
+
+func TestPRPairSources(t *testing.T) {
+	logPath := writeLog(t, jsonl(t, prLink(60, "https://x/60")))
+	noLog := writeLog(t, jsonl(t, awaySummary("hi")))
+	tests := []struct {
+		name    string
+		meta    Meta
+		log     string
+		wantNum int
+		wantURL string
+	}{
+		{"windowstate only", Meta{PRNumber: 5, PRURL: "https://x/5"}, noLog, 5, "https://x/5"},
+		{"log only", Meta{}, logPath, 60, "https://x/60"},
+		{"both, windowstate wins", Meta{PRNumber: 5, PRURL: "https://x/5"}, logPath, 5, "https://x/5"},
+		{"windowstate number only is not mixed with log URL", Meta{PRNumber: 5}, logPath, 5, ""},
+		{"neither", Meta{}, noLog, 0, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows := []Row{{AgentState: state.AgentState{WindowID: "@1", LogPath: tt.log}}}
+			TagMeta(rows, map[string]Meta{"@1": tt.meta})
+			TagLogs(rows)
+			if rows[0].PRNumber != tt.wantNum || rows[0].PRURL != tt.wantURL {
+				t.Errorf("row PR = %d %q, want %d %q", rows[0].PRNumber, rows[0].PRURL, tt.wantNum, tt.wantURL)
+			}
+			w := ToWindow(Row{AgentState: state.AgentState{WindowID: "@1"}}, tt.meta)
+			if tt.meta.hasPR() && (w.PRNumber != tt.wantNum || w.PRURL != tt.wantURL) {
+				t.Errorf("window PR = %d %q", w.PRNumber, w.PRURL)
+			}
+		})
+	}
+}
+
+func TestTagLogsKeepsExistingPR(t *testing.T) {
+	p := writeLog(t, jsonl(t, awaySummary("hi")))
+	rows := []Row{{AgentState: state.AgentState{LogPath: p}, PRNumber: 7, PRURL: "https://x/7"}}
+	TagLogs(rows)
+	if rows[0].PRNumber != 7 || rows[0].PRURL != "https://x/7" {
+		t.Errorf("TagLogs cleared the PR: %+v", rows[0])
+	}
+}
