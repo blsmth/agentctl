@@ -15,6 +15,7 @@
 | [prompt-architecture.md](prompt-architecture.md) | How dispatch system prompts and user messages are structured |
 | [package-reference.md](package-reference.md) | Full per-package description of everything under `internal/` |
 | [behavior-notes.md](behavior-notes.md) | Cross-cutting behaviors, detailed data flow, dispatch/worktree specifics, `agentctl status`, session identity |
+| [agents.md](agents.md) | The agent team that builds agentctl: roster, pipeline, dispatch lines, setting up a team in another repo |
 | [development.md](development.md) | Contributor conventions, phone app browser tests, the demo harness and screenshots |
 
 ## Design records
