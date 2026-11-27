@@ -319,6 +319,12 @@ one-column `▌` gutter bar in the state colour:
    right-aligned and dim. The age is dim, and from one hour on in any state
    but working it turns the attention colour. A narrow pane drops the project,
    then the state word (the pill shrinks to the glyph), then the age.
+   Left of the project, an activity sparkline: tool calls per minute over the
+   last 30 minutes (`▁▂▃▄▅▆▇█`, one cell per minute, oldest left; a minute
+   with no call is a dim `▁`) and a dim `30m`. It is absent with no tool call
+   in the window or no transcript, and is dropped before anything else on the
+   line, whenever showing it would cut the title below 20 cells (or below the
+   title's own width when that is shorter). See "Live signals" below.
 2. Only for a blocked row with a pending tool (`Row.PendingTool`, set only
    while blocked) or a specific attention reason: bold
    `needs you ▸ <tool>  <detail>`, one line, the detail flattened,
@@ -331,7 +337,9 @@ one-column `▌` gutter bar in the state colour:
    facts; the "needs you" line never yields to either.
 4. The facts, directly under the recap (the content packs upward), joined by
    ` │ `: `#ticket`, agent base name (only when it differs from the title),
-   `PR #N` (an OSC 8 link), `← <parent title>`; or `⏲ <job> │ fired <age>`
+   `PR #N` (an OSC 8 link) followed by its CI chip (`✓` all checks passed,
+   green; `✗` any failed, red; `…` pending, dim; nothing when unknown),
+   `← <parent title>`; or `⏲ <job> │ fired <age>`
    for a cron row; then `N sub-agents · K blocked · K working` coloured by the
    worst state among them, then a non-default backend / `acct <name>`
    (`Extra` is empty for the defaults). Model, context, cost, session length,
@@ -348,6 +356,20 @@ counts none; without it the inline expansion is back. Focus, keys and
 clicks in it are handed to the viewer pane, and the hub's `enter`/`tab`
 select the viewer by its marker rather than "next pane", which would be
 the status pane.
+
+**Live signals.** The sparkline and the CI chip are computed in the status
+pane process (`hubstatus_activity.go`, `hubstatus_ci.go`), not the hub: the
+hub's tick joins every row and must stay cheap, while the pane only follows
+one selection. The hub publishes the selected session's `session_id` and
+`log_path`; the pane reads the transcript's last 2 MB in a `tea.Cmd` at most
+every 10s per session (pi records go through `internal/transcript`) and
+buckets the cached tool-call times at render time. The CI chip is fetched
+only for the selected row's GitHub PR, in a `tea.Cmd`, over the REST API
+(`gh api repos/{o}/{r}/pulls/{n}`, then the head commit's `check-runs` and
+`status`; never GraphQL, whose quota the fleet shares). A closed PR shows no
+chip. Results are cached per PR for 60s; after an error the chip is hidden
+and the next call waits 5 minutes (15 after a rate limit, 30 when gh is
+missing or not logged in).
 
 **Returning to the list.** The fleet-list window is pinned to the stable name
 `FleetListWindowName`; `agentctl hub` (and so the `prefix+g` summon key)

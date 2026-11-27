@@ -107,7 +107,7 @@ func footerSegs(st *hubStatus, plan footPlan, now time.Time) []footSeg {
 		if st.PRURL != "" {
 			seg.text = ansi.SetHyperlink(st.PRURL) + seg.text + ansi.ResetHyperlink()
 		}
-		left = append(left, seg)
+		left = append(left, withCIChip(seg, st))
 	}
 	if st.ParentTitle != "" && plan.parent < 2 {
 		t := st.ParentTitle

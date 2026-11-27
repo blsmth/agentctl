@@ -88,6 +88,14 @@ type hubStatus struct {
 	// TitleFromRecap is set when Title is the recap's first sentence (no short
 	// title): the pane leaves that sentence out of the recap body.
 	TitleFromRecap bool `json:"title_from_recap,omitempty"`
+	// SessionID and LogPath name the selected session's transcript, which the
+	// pane reads for its activity sparkline (hubstatus_activity.go).
+	SessionID string `json:"session_id,omitempty"`
+	LogPath   string `json:"log_path,omitempty"`
+
+	// Live signals the pane attaches before rendering; never published.
+	activity []time.Time // tool-call times in the sparkline window
+	ci       ciResult    // the PR head's CI state
 }
 
 // hubStatusFor builds the status pane content for row r; groups resolve the
@@ -113,6 +121,8 @@ func hubStatusFor(r fleet.Row, d fleetDisplay, groups []fleet.Group) *hubStatus 
 		PRURL:      r.PRURL,
 		SchedBy:    r.ScheduledBy,
 		SchedAt:    r.ScheduledAt,
+		SessionID:  r.SessionID,
+		LogPath:    r.LogPath,
 	}
 	if r.State == "blocked" {
 		st.PendingTool, st.PendingToolDetail = r.PendingTool, r.PendingToolDetail
