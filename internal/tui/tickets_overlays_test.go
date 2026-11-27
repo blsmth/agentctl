@@ -494,16 +494,23 @@ func TestAgentSelectModel_GroupedByProject(t *testing.T) {
 		{Name: "zed", Scope: agent.ScopeLocal, FilePath: dir + "/.claude/agents/zed.md"},
 		{Name: "alpha", Scope: agent.ScopeLocal, FilePath: dir + "/.claude/agents/alpha.md"},
 	}
-	m := newAgentSelectModel(agents, 1, "t", "").groupedBy(dir)
+	m := newAgentSelectModel(agents, 1, "t", "").groupedBy(dir, "")
 	out := ansi.Strip(m.View().Content)
-	ip, ig := strings.Index(out, "proj"), strings.Index(out, "global")
+	ip, ig := strings.Index(out, "PROJ"), strings.Index(out, "GLOBAL")
 	ia, iz, ie := strings.Index(out, "alpha"), strings.Index(out, "zed"), strings.Index(out, "go-engineer")
 	if !(ip >= 0 && ip < ia && ia < iz && iz < ig && ig < ie) {
 		t.Errorf("want proj heading, alpha, zed, global heading, go-engineer:\n%s", out)
 	}
 
-	plain := newAgentSelectModel(agents[:1], 1, "t", "").groupedBy(dir)
-	if strings.Contains(ansi.Strip(plain.View().Content), "global\n") {
+	plain := newAgentSelectModel(agents[:1], 1, "t", "").groupedBy(dir, "")
+	if strings.Contains(ansi.Strip(plain.View().Content), "GLOBAL") {
 		t.Error("no project agents: want no heading")
+	}
+}
+
+func TestAgentSelectModel_CursorStartsOnDefaultAgent(t *testing.T) {
+	m := newAgentSelectModel(testAgents(), 1, "t", "").groupedBy("/nowhere", testAgents()[2].Name)
+	if m.cursor != 2 {
+		t.Errorf("cursor = %d, want 2 (the default agent)", m.cursor)
 	}
 }

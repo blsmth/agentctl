@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/blsmth/agentctl/internal/agent"
 	"github.com/blsmth/agentctl/internal/agentlabel"
+	"github.com/blsmth/agentctl/internal/config"
 	"github.com/blsmth/agentctl/internal/theme"
 )
 
@@ -947,7 +948,7 @@ func (m TicketsModel) launchTriage(n int, title, body string) (tea.Model, tea.Cm
 // on the label-inferred agent when no agents are known.
 func (m TicketsModel) launchDispatch(n int, title, body string) (tea.Model, tea.Cmd) {
 	if len(m.agents) > 0 {
-		asm := newAgentSelectModel(m.agents, n, title, body).groupedBy(m.dir)
+		asm := newAgentSelectModel(m.agents, n, title, body).groupedBy(m.dir, config.Load().DefaultAgent)
 		m.agentModal = NewModal(fmt.Sprintf("Select Agent  #%d", n), asm, ModalMedium)
 		return m, nil
 	}

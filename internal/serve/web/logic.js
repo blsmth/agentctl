@@ -2110,19 +2110,19 @@ export function defaultAgentFor(projects, projectDir, agentNames, userPicked) {
 /**
  * agentGroups orders the /v1/agents list for the project at projectDir: that
  * project's own agents first (labelled with its name, sorted by name), then
- * the global ones ("global"), then project agents of other projects ("other
- * projects"). With none of the project's own agents it returns one unlabelled
- * group holding the list as given. Empty groups are dropped.
+ * the global ones ("global"). Agents of other projects are left out, since
+ * they do not resolve in this project. With none of the project's own agents
+ * it returns one unlabelled group of the globals. Empty groups are dropped.
  */
 export function agentGroups(agents, projectDir) {
   const list = agents ?? [];
   const own = list.filter((a) => a.scope === "project" && projectDir && a.project_dir === projectDir);
-  if (own.length === 0) return list.length ? [{ label: "", agents: list }] : [];
+  const globals = list.filter((a) => a.scope !== "project");
+  if (own.length === 0) return globals.length ? [{ label: "", agents: globals }] : [];
   const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
   const groups = [
     { label: own[0].project || "project", agents: [...own].sort(byName) },
-    { label: "global", agents: list.filter((a) => a.scope !== "project") },
-    { label: "other projects", agents: list.filter((a) => a.scope === "project" && !own.includes(a)) },
+    { label: "global", agents: globals },
   ];
   return groups.filter((g) => g.agents.length > 0);
 }

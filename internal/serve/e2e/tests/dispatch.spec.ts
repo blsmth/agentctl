@@ -99,6 +99,13 @@ test("agents list the chosen project's own first, then global", async ({ page })
   await expect(groups.nth(0)).toHaveAttribute("label", "shop");
   await expect(groups.nth(0).locator("option")).toHaveText(["reviewer"]);
   await expect(groups.nth(1)).toHaveAttribute("label", "global");
+  // Project agents lead the list but are never preselected.
+  const agent = page.locator("select[aria-label=Agent]");
+  await expect(agent).toHaveValue("go-engineer");
+  await agent.selectOption("reviewer");
   await project.selectOption("/fixture/blog");
+  // Another project's agent is neither listed nor kept selected.
   await expect(page.locator("select[aria-label=Agent] optgroup")).toHaveCount(0);
+  await expect(agent.locator("option[value=reviewer]")).toHaveCount(0);
+  await expect(agent).toHaveValue("go-engineer");
 });

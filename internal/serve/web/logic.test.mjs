@@ -1539,13 +1539,13 @@ console.log("ok: artifact pdf");
   const A = (name, scope, dir, project) => ({ name, scope, project_dir: dir, project });
   const list = [A("b-glob", "global"), A("zed", "project", "/p/ac", "ac"), A("alpha", "project", "/p/ac", "ac"), A("x", "project", "/p/other", "other"), A("a-glob", "global")];
   const g = agentGroups(list, "/p/ac");
-  assert.deepEqual(g.map((x) => x.label), ["ac", "global", "other projects"], "project, global, other");
+  assert.deepEqual(g.map((x) => x.label), ["ac", "global"], "project, then global; other projects hidden");
   assert.deepEqual(g[0].agents.map((a) => a.name), ["alpha", "zed"], "project agents sorted by name");
   assert.deepEqual(g[1].agents.map((a) => a.name), ["b-glob", "a-glob"], "globals keep their order");
   const flat = agentGroups(list, "/p/none");
   assert.equal(flat.length, 1, "no project agents: one group");
   assert.equal(flat[0].label, "", "no heading");
-  assert.equal(flat[0].agents.length, 5);
+  assert.deepEqual(flat[0].agents.map((a) => a.name), ["b-glob", "a-glob"], "other projects' agents are not listed");
   assert.deepEqual(agentGroups([], "/p/ac"), []);
   assert.deepEqual(agentGroups(null, "/p/ac"), []);
 }

@@ -68,9 +68,11 @@ export function mountDispatch(root, ctx, { dir } = {}) {
   let projects = [];
   let allAgents = [];
   // fillAgents lists the agents for the selected project: its own first, then
-  // global ones; a pick that is still listed is kept.
+  // global ones.
   function fillAgents() {
     const keep = agent.value;
+    // A pick survives a project change only when it is global or belongs to
+    // the new project; another project's agent is not listed at all.
     clear(agent);
     const opt = (x) => h("option", { value: x.name }, x.name);
     for (const g of agentGroups(allAgents, project.value)) {
@@ -88,9 +90,12 @@ export function mountDispatch(root, ctx, { dir } = {}) {
     if (def) {
       agent.value = def;
       autoApplied = def;
-    } else if (autoApplied && !userPickedAgent && agent.value === autoApplied && names.length) {
-      // The previous project's default no longer applies: back to the first agent.
-      agent.value = names[0];
+    } else if (!userPickedAgent) {
+      // Project agents lead the list but are never auto-selected: fall back
+      // to the first global agent, as the flat list did.
+      const g = allAgents.find((x) => x.scope !== "project" && names.includes(x.name));
+      if (g) agent.value = g.name;
+      else if (names.length) agent.value = names[0];
       autoApplied = "";
     }
   }

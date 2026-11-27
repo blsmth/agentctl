@@ -151,14 +151,19 @@ func newAgentSelectModel(agents []agent.Agent, ticketNum int, ticketTitle, ticke
 
 // groupedBy puts the agents defined in dir's .claude/agents first, sorted by
 // name and under the project's name; the rest follow under "global".
-func (m AgentSelectModel) groupedBy(dir string) AgentSelectModel {
-	proj, rest := agent.SplitByProject(m.agents, dir)
-	if len(proj) == 0 {
-		return m
+// The cursor starts on defaultAgent when it is listed.
+func (m AgentSelectModel) groupedBy(dir, defaultAgent string) AgentSelectModel {
+	if proj, rest := agent.SplitByProject(m.agents, dir); len(proj) > 0 {
+		m.agents = append(append([]agent.Agent(nil), proj...), rest...)
+		m.projectName = agent.ProjectLabel(dir)
+		m.nProject = len(proj)
 	}
-	m.agents = append(append([]agent.Agent(nil), proj...), rest...)
-	m.projectName = agent.ProjectLabel(dir)
-	m.nProject = len(proj)
+	for i, a := range m.agents {
+		if defaultAgent != "" && a.Name == defaultAgent {
+			m.cursor = i
+			break
+		}
+	}
 	return m
 }
 
@@ -221,7 +226,7 @@ func (m AgentSelectModel) View() tea.View {
 			if i == m.nProject {
 				label = "global"
 			}
-			b.WriteString("  " + tkSubtitleStyle.Render(label) + "\n")
+			b.WriteString(" " + sectionRule(label, cw-2) + "\n")
 		}
 
 		cur := "   "

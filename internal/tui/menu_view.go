@@ -175,7 +175,11 @@ func (m MenuModel) listRows(width int) ([]listRow, int) {
 		if sel {
 			cursorRow = len(rows)
 		}
-		rows = append(rows, listRow{text: renderAgentRow(a, m.modelLabel(a), m.isFree(a), m.nameW, sel, width), sel: sel})
+		label := m.modelLabel(a)
+		if label == launchopts.Inherit {
+			label = "" // only a pinned model is worth a column cell
+		}
+		rows = append(rows, listRow{text: renderAgentRow(a, label, m.isFree(a), m.nameW, sel, width), sel: sel})
 	}
 	createSel := m.cursor == len(m.visible)
 	if createSel {

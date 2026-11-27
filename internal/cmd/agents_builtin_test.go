@@ -98,7 +98,7 @@ func TestPrintAgentsTable_ProjectAgentsFirstUnderHeading(t *testing.T) {
 	proj := strings.Index(out, "zz-team")
 	global := strings.Index(out, "global")
 	gp := strings.Index(out, "general-purpose")
-	if proj < 0 || global < 0 || gp < 0 || !(proj < global && global < gp) {
+	if proj < 0 || global < 0 || gp < 0 || !(proj < global && global < gp) || !strings.Contains(out, "built-in") {
 		t.Errorf("want project agent, then a global heading, then the rest:\n%s", out)
 	}
 }
@@ -112,5 +112,17 @@ func TestPrintAgentsTable_NoProjectAgentsHasNoHeading(t *testing.T) {
 	})
 	if strings.Contains(out, "global") {
 		t.Errorf("unexpected global heading:\n%s", out)
+	}
+}
+
+func TestPrintAgentsTable_GroupedDropsScopeColumn(t *testing.T) {
+	writeProjectAgent(t, "zz-team")
+	out := captureStdout(t, func() {
+		if err := PrintAgentsTable(false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if strings.Contains(out, "SCOPE") || strings.Contains(out, "builtin") {
+		t.Errorf("grouped table must drop the SCOPE column:\n%s", out)
 	}
 }
