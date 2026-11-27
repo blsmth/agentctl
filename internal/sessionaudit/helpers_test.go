@@ -30,6 +30,7 @@ type call struct {
 	result string
 	isErr  bool
 	gap    time.Duration // before the call; default 2s
+	run    time.Duration // call to result (the tool running); default 1s
 	id     string        // tool_use id; default toolu_<n>
 }
 
@@ -58,12 +59,18 @@ func write(path string) call {
 // lines renders a transcript: one prompt, then each call with its result.
 func lines(t *testing.T, calls ...call) []map[string]any {
 	t.Helper()
+	return linesPrompt(t, "do the thing", calls...)
+}
+
+// linesPrompt is lines with the given human prompt.
+func linesPrompt(t *testing.T, prompt string, calls ...call) []map[string]any {
+	t.Helper()
 	at := t0
 	ts := func() string { return at.Format(time.RFC3339Nano) }
 	out := []map[string]any{{
 		"type": "user", "sessionId": "sess-1", "cwd": testCwd, "agentSetting": "go-engineer",
 		"permissionMode": "default", "timestamp": ts(),
-		"message": map[string]any{"role": "user", "content": "do the thing"},
+		"message": map[string]any{"role": "user", "content": prompt},
 	}}
 	for i, c := range calls {
 		gap := c.gap
@@ -83,7 +90,11 @@ func lines(t *testing.T, calls ...call) []map[string]any {
 				"usage":   map[string]any{"input_tokens": 10, "output_tokens": 20, "cache_read_input_tokens": 100},
 			},
 		})
-		at = at.Add(time.Second)
+		run := c.run
+		if run == 0 {
+			run = time.Second
+		}
+		at = at.Add(run)
 		res := map[string]any{"type": "tool_result", "tool_use_id": id, "content": c.result}
 		if c.isErr {
 			res["is_error"] = true

@@ -72,6 +72,11 @@ type Step struct {
 	At     time.Time      // timestamp of the entry that made the call
 	Cwd    string         // working directory recorded on that entry
 	RawGap time.Duration  // longest uncapped gap charged to this step
+	// ModelGap is the longest uncapped part of RawGap that was the model
+	// thinking: a gap ending in an assistant entry. The wait between a tool
+	// call and its result ends in a user entry (the tool result), is the tool
+	// running, and is not in it.
+	ModelGap time.Duration
 
 	AgentStart time.Duration // offset on the agent timeline
 	AgentDur   time.Duration
@@ -163,7 +168,7 @@ func extract(entries []logstream.Entry, maxGap time.Duration) []Step {
 	var steps []Step
 	byID := map[string]int{}
 	var last time.Time
-	var pending, pendingRaw time.Duration
+	var pending, pendingRaw, pendingModel time.Duration
 	cwd := ""
 
 	for _, e := range entries {
@@ -225,6 +230,10 @@ func extract(entries []logstream.Entry, maxGap time.Duration) []Step {
 			gap = 0
 		}
 		raw := gap
+		var model time.Duration
+		if e.Type == "assistant" {
+			model = raw
+		}
 		if maxGap > 0 && gap > maxGap {
 			gap = maxGap
 		}
@@ -234,15 +243,18 @@ func extract(entries []logstream.Entry, maxGap time.Duration) []Step {
 		case first >= 0:
 			steps[first].AgentDur += gap + pending
 			steps[first].RawGap = max(steps[first].RawGap, raw, pendingRaw)
-			pending, pendingRaw = 0, 0
+			steps[first].ModelGap = max(steps[first].ModelGap, model, pendingModel)
+			pending, pendingRaw, pendingModel = 0, 0, 0
 		default:
 			pending += gap
 			pendingRaw = max(pendingRaw, raw)
+			pendingModel = max(pendingModel, model)
 		}
 	}
 	if pending > 0 && len(steps) > 0 {
 		steps[len(steps)-1].AgentDur += pending
 		steps[len(steps)-1].RawGap = max(steps[len(steps)-1].RawGap, pendingRaw)
+		steps[len(steps)-1].ModelGap = max(steps[len(steps)-1].ModelGap, pendingModel)
 	}
 	return steps
 }

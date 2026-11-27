@@ -564,6 +564,9 @@ func renderAuditReport(w io.Writer, r *sessionaudit.Report, sev sessionaudit.Sev
 		fmt.Fprintln(w, pal.header(strings.ToUpper(string(cat[:1]))+string(cat[1:])))
 		for _, f := range fs {
 			fmt.Fprintln(w, findingLine(f, loc, pal))
+			if f.RequestedByPrompt != "" {
+				fmt.Fprintln(w, "        "+pal.muted("requested: \""+f.RequestedByPrompt+"\""))
+			}
 		}
 	}
 	if hidden := r.Safety.Findings + r.Efficiency.Findings - len(r.Findings); hidden > 0 {
@@ -591,7 +594,15 @@ func findingLine(f sessionaudit.Finding, loc *time.Location, pal reportPalette) 
 	return fmt.Sprintf("  %s  %s  %s  %s  %s",
 		padRight(step, 4), pal.muted(at),
 		pal.severity(f.Severity, padRight(f.Rule, 17)+" "+padRight(string(f.Severity), 4)),
-		f.Evidence, pal.muted("— "+f.Why))
+		f.Evidence, pal.muted("— "+f.Why+requestedTag(f)))
+}
+
+// requestedTag marks a finding the human asked for.
+func requestedTag(f sessionaudit.Finding) string {
+	if f.RequestedByPrompt == "" {
+		return ""
+	}
+	return " [requested]"
 }
 
 func metricLines(m sessionaudit.Metrics) []string {
