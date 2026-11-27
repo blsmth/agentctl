@@ -258,6 +258,48 @@ func TestTextToPi(t *testing.T) {
 	}
 }
 
+// TestReplyStaleBlock is the cron-timeout case: the record still says
+// blocked (the C-c left no hook to clear it) but the pane is idle at the
+// prompt. Claude Code's pane decides, so the reply lands and its
+// UserPromptSubmit hook clears the record; a live dialog is still refused,
+// and a harness without a pane classifier still trusts the record.
+func TestReplyStaleBlock(t *testing.T) {
+	tests := []struct {
+		name   string
+		group  fleetwatch.Group
+		pane   string
+		status int
+	}{
+		{"claude idle pane delivered", writeGroup("blocked", false, "go-engineer", "dispatch"), idlePane, http.StatusOK},
+		{"claude permission dialog refused", writeGroup("blocked", false, "go-engineer", "dispatch"), dialogPane, http.StatusConflict},
+		{"pi recorded blocked refused", piGroup("blocked"), idlePane, http.StatusConflict},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWriteEnv(t, true)
+			e.fleet.set(tt.group)
+			e.panes.set(tt.pane)
+			w := e.post(winPath+"/reply", `{"text":"carry on"}`)
+			if w.Code != tt.status {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			if tt.status != http.StatusOK {
+				if errCode(t, w) != codeNotIdle {
+					t.Errorf("code = %s, want %s", errCode(t, w), codeNotIdle)
+				}
+				e.assertNothingSent(t)
+				return
+			}
+			if len(e.inj.got) != 1 || e.inj.got[0] != "carry on" {
+				t.Fatalf("injected %q", e.inj.got)
+			}
+			if lines := e.auditLines(t); len(lines) == 0 || lines[len(lines)-1].Action != "reply" {
+				t.Errorf("audit = %+v, want a reply line", lines)
+			}
+		})
+	}
+}
+
 func TestReplyClaudeUnknownPaneRefused(t *testing.T) {
 	e := newWriteEnv(t, true)
 	e.fleet.set(writeGroup("idle", false, "go-engineer", "dispatch"))
@@ -826,6 +868,9 @@ func TestReply(t *testing.T) {
 		{"multi-line", "idle", idlePane, "a\nb\tc", nil, 200, "", true},
 		{"working window", "working", idlePane, "hi", nil, 409, codeNotIdle, false},
 		{"blocked window", "blocked", dialogPane, "hi", nil, 409, codeNotIdle, false},
+		{"stale block, pane idle", "blocked", idlePane, "hi", nil, 200, "", true},
+		{"blocked record, busy pane", "blocked", workingPane, "hi", nil, 409, codeNotIdle, false},
+		{"blocked record, unrecognised pane", "blocked", "", "hi", nil, 409, codeNotIdle, false},
 		{"record idle but pane busy", "idle", workingPane, "hi", nil, 409, codeNotIdle, false},
 		{"record idle but pane dialog", "idle", dialogPane, "hi", nil, 409, codeNotIdle, false},
 		{"dialog appears during inject", "idle", idlePane, "hi", fmt.Errorf("x: %w", tmux.ErrDialogBlocking), 409, codeNotIdle, false},
@@ -878,6 +923,7 @@ func TestQueue(t *testing.T) {
 		{"record working, pane idle", "working", idlePane, "hi", nil, 200, "", true},
 		{"blocked window", "blocked", dialogPane, "hi", nil, 409, codeNotIdle, false},
 		{"blocked record, busy pane", "blocked", workingPane, "hi", nil, 409, codeNotIdle, false},
+		{"stale block, pane idle", "blocked", idlePane, "hi", nil, 200, "", true},
 		{"record working but pane dialog", "working", dialogPane, "hi", nil, 409, codeNotIdle, false},
 		{"unrecognised pane", "working", "", "hi", nil, 409, codeNotIdle, false},
 		{"dialog appears during inject", "working", workingPane, "hi", fmt.Errorf("x: %w", tmux.ErrDialogBlocking), 409, codeNotIdle, false},
@@ -1635,6 +1681,8 @@ func TestCommand(t *testing.T) {
 		{"plugin command", "idle", idlePane, "/plugin:skill-x arg", 200, "", "/plugin:skill-x arg"},
 		{"working window", "working", idlePane, "/compact", 409, codeNotIdle, ""},
 		{"blocked window", "blocked", dialogPane, "/compact", 409, codeNotIdle, ""},
+		{"stale block, pane idle", "blocked", idlePane, "/compact", 200, "", "/compact"},
+		{"blocked record, busy pane", "blocked", workingPane, "/compact", 409, codeNotIdle, ""},
 		{"pane dialog", "idle", dialogPane, "/compact", 409, codeNotIdle, ""},
 		{"pane busy", "idle", workingPane, "/compact", 409, codeNotIdle, ""},
 		{"bash mode", "idle", idlePane, "!ls", 400, codeBadRequest, ""},

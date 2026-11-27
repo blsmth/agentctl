@@ -575,8 +575,8 @@ func (s *Server) handleReply(r *http.Request, in replyIn, a *auditEntry) outcome
 // after the current step. It is a separate, explicitly requested action (and
 // audit kind) from reply. It also accepts an idle agent, since the turn may
 // end between the phone's tap and the send, and the message then simply
-// lands as a reply. A blocked record, a dialog or an unrecognised pane is
-// refused exactly as for reply.
+// lands as a reply. A dialog or an unrecognised pane is refused exactly as
+// for reply, and so is a blocked record unless the pane is idle at the prompt.
 func (s *Server) handleQueue(r *http.Request, in replyIn, a *auditEntry) outcome {
 	return s.typeText(r, in, a, true)
 }
@@ -622,14 +622,24 @@ func (s *Server) deliverText(session, window string, in replyIn, a *auditEntry, 
 	}
 
 	st := rw.window.State
-	if st == "blocked" || (st == "working" && !allowWorking) {
+	classified := harness.For(rw.harness()).Caps().PaneClassifier
+	// A blocked record is only trusted alone when the pane cannot be read.
+	// With a pane classifier the pane decides: a live permission dialog
+	// classifies as awaiting_input and is refused below, while a stale block
+	// (e.g. a cron timeout's C-c left the prompt idle) accepts a reply, as
+	// the phone's actionsFor offers one. Its UserPromptSubmit hook then
+	// clears the record.
+	if (st == "blocked" && !classified) || (st == "working" && !allowWorking) {
 		return failure(http.StatusConflict, codeNotIdle, "the agent is "+st)
 	}
 	target := rw.target()
-	if harness.For(rw.harness()).Caps().PaneClassifier {
+	if classified {
 		pane, out, ok := s.capturePane(rw)
 		if !ok {
 			return out
+		}
+		if st == "blocked" && !staleBlockAccepts(pane) {
+			return failure(http.StatusConflict, codeNotIdle, "the agent is blocked")
 		}
 		if !textAccepted(pane.Verdict, allowWorking) {
 			if allowWorking {
@@ -664,6 +674,14 @@ func (s *Server) deliverText(session, window string, in replyIn, a *auditEntry, 
 // never does.
 func textAccepted(verdict string, allowWorking bool) bool {
 	return verdict == "idle" || (allowWorking && verdict == "working")
+}
+
+// staleBlockAccepts reports whether a window recorded as blocked is in fact
+// idle at its prompt with no dialog, the only pane that admits text for a
+// blocked record (a busy pane is refused even for queue, matching the phone,
+// which offers only Reply there).
+func staleBlockAccepts(pane paneBody) bool {
+	return pane.Verdict == "idle" && pane.Dialog == nil
 }
 
 // recordedAccepts is textAccepted for a harness whose pane cannot be read:
