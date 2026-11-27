@@ -10,7 +10,10 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/blsmth/agentctl/internal/verdicts"
 )
 
 // stubGH replaces ghAPI with responses keyed by path prefix ("pulls",
@@ -247,5 +250,42 @@ func TestCheckRunsResultMorePages(t *testing.T) {
 	}{"completed", "success"})
 	if got := checkRunsResult(cr); got != ciPending {
 		t.Errorf("green first page of more = %v, want pending", got)
+	}
+}
+
+func TestCIChipComposesWithLinkAndVerdict(t *testing.T) {
+	InitStyles()
+	url := "https://github.com/o/r/pull/418"
+	tests := []struct {
+		name    string
+		ci      ciResult
+		verdict string
+		want    string
+	}{
+		{"passed, approved", ciPassed, verdicts.Merge, "#7 │ PR #418 ✓"},
+		{"failed, changes", ciFailed, verdicts.Blocked, "#7 │ PR #418 ✗ · changes"},
+		{"unknown, changes", ciUnknown, verdicts.Blocked, "#7 │ PR #418 · changes"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := &hubStatus{Version: hubStatusVersion, Ticket: 7, PRNumber: 418, PRURL: url, ci: tt.ci, Verdict: tt.verdict}
+			line, spans := hubStatusFooterSpans(st, 80, statusNow)
+			if got := ansi.Strip(line); got != tt.want {
+				t.Errorf("footer = %q, want %q", got, tt.want)
+			}
+			var pr *footSpan
+			for i := range spans {
+				if spans[i].url == url {
+					pr = &spans[i]
+				}
+			}
+			if pr == nil {
+				t.Fatalf("no PR span in %+v", spans)
+			}
+			start := lipgloss.Width(tt.want[:strings.Index(tt.want, "PR #418")])
+			if pr.x0 != start || pr.x1 != start+len("PR #418") {
+				t.Errorf("PR click span [%d,%d), want [%d,%d) (the PR text only)", pr.x0, pr.x1, start, start+len("PR #418"))
+			}
+		})
 	}
 }

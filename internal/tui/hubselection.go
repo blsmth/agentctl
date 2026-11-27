@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blsmth/agentctl/internal/config"
@@ -84,10 +86,21 @@ type hubStatus struct {
 	Kids        int       `json:"kids,omitempty"`
 	KidsBlocked int       `json:"kids_blocked,omitempty"`
 	KidsWorking int       `json:"kids_working,omitempty"`
-	Extra       []string  `json:"extra,omitempty"` // non-default backend, "acct <name>"
+	// KidsAttention and KidsDone complete the per-state counts the sub-agent
+	// dots are drawn from (the rest of Kids is idle).
+	KidsAttention int `json:"kids_attention,omitempty"`
+	KidsDone      int `json:"kids_done,omitempty"`
+	// TicketURL is the ticket's issue page, when the repo is known.
+	TicketURL string   `json:"ticket_url,omitempty"`
+	Extra     []string `json:"extra,omitempty"` // non-default backend, "acct <name>"
 	// TitleFromRecap is set when Title is the recap's first sentence (no short
 	// title): the pane leaves that sentence out of the recap body.
 	TitleFromRecap bool `json:"title_from_recap,omitempty"`
+
+	// Verdict is the PR's latest review verdict (verdicts.Merge, ...), filled
+	// in by the status pane itself and never published.
+	Verdict string `json:"-"`
+
 	// SessionID and LogPath name the selected session's transcript, which the
 	// pane reads for its activity sparkline (hubstatus_activity.go).
 	SessionID string `json:"session_id,omitempty"`
@@ -157,6 +170,7 @@ func hubStatusFor(r fleet.Row, d fleetDisplay, groups []fleet.Group) *hubStatus 
 	}
 	c := tallySubtree(kids)
 	st.Kids, st.KidsBlocked, st.KidsWorking = c.total, c.blocked, c.working
+	st.KidsAttention, st.KidsDone = c.attention, c.done
 	return st
 }
 
@@ -287,6 +301,7 @@ func (m FleetModel) hubSelection() HubSelection {
 			sel := selectionForRow(g, r)
 			if sel.valid() {
 				sel.Status = hubStatusFor(r, m.display, m.groups)
+				sel.Status.TicketURL = ticketURLFor(sel.Status, g.RuntimeDir)
 			}
 			return sel
 		}
@@ -338,3 +353,38 @@ func (m *FleetModel) publishSelection() {
 func (m FleetModel) selectionFollowed() bool {
 	return m.activity.open() || m.statusPaneOpen()
 }
+
+// ticketRepoSlug resolves "owner/repo" for a project dir; a seam for tests
+// (it spawns git).
+var ticketRepoSlug = TLRepoSlug
+
+// ticketRepoCache remembers the slug per project dir (including failures), so
+// the selection tick never re-spawns git.
+var ticketRepoCache sync.Map // dir -> string
+
+// ticketURLFor is the issue URL for st's ticket: from the PR URL's repo when
+// there is one, else from the project's git remote; "" when unknown.
+func ticketURLFor(st *hubStatus, runtimeDir string) string {
+	if st.Ticket <= 0 {
+		return ""
+	}
+	slug := ""
+	if m := prURLRepo.FindStringSubmatch(st.PRURL); m != nil {
+		slug = m[1]
+	} else if runtimeDir != "" {
+		dir := filepath.Dir(runtimeDir)
+		if v, ok := ticketRepoCache.Load(dir); ok {
+			slug = v.(string)
+		} else {
+			slug = ticketRepoSlug(dir)
+			ticketRepoCache.Store(dir, slug)
+		}
+	}
+	if slug == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://github.com/%s/issues/%d", slug, st.Ticket)
+}
+
+// prURLRepo captures "owner/repo" from a GitHub pull request URL.
+var prURLRepo = regexp.MustCompile(`^https://github\.com/([^/]+/[^/]+)/pull/\d+`)

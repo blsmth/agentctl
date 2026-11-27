@@ -304,7 +304,7 @@ func ciChip(r ciResult) (string, int) {
 	case ciFailed:
 		return fleetErrStyle.Render("✗"), 1
 	case ciPending:
-		return fleetDimStyle.Render("…"), 1
+		return hubStatusDim.Render("…"), 1
 	}
 	return "", 0
 }

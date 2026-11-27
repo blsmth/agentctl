@@ -254,13 +254,13 @@ func renderSparkline(buckets []int) (string, int) {
 	top := len(hubSparkLevels) - 1
 	for _, c := range buckets {
 		if c == 0 {
-			sb.WriteString(fleetDimStyle.Render(string(hubSparkLevels[0])))
+			sb.WriteString(hubStatusDim.Render(string(hubSparkLevels[0])))
 			continue
 		}
 		lvl := (c*top + peak - 1) / peak // 1..top, the peak cell at top
 		sb.WriteString(fleetWorkingStyle.Render(string(hubSparkLevels[min(lvl, top)])))
 	}
-	sb.WriteString(" " + fleetDimStyle.Render(hubActivityLabel))
+	sb.WriteString(" " + hubStatusDim.Render(hubActivityLabel))
 	return sb.String(), len(buckets) + 1 + len(hubActivityLabel)
 }
 
