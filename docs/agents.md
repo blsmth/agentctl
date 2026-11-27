@@ -16,7 +16,7 @@ agentctl is built by Claude Code sessions that agentctl itself dispatches. Each 
 | `artifact-engineer` | global | Reports, dashboards, mockups for Brendan | no | artifact URL |
 | `fleet-improver` | global, cron `fleet-improve` nightly | Fixes recurring problems in agent definitions, config and agentctl | sometimes | PRs + run record |
 
-`.claude/` is gitignored here, so the project agents live only in the main checkout (`~/code/personal/agentctl/.claude/agents/`).
+`.claude/` and `.agentctl/` are gitignored here, so the project agents (`.claude/agents/`) and the project templates listed below (`.agentctl/templates/`) live only in the main checkout (`~/code/personal/agentctl`); `team-bootstrap` is a global template in `~/.config/agentctl/templates/`. None of them ship with the repo.
 
 ## Pipeline
 
