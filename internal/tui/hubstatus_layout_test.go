@@ -74,7 +74,7 @@ func TestHubStatusLayout(t *testing.T) {
 		{"blocked without tool", blockedNoTool, 90, 6, []string{"BLOCKED"}, []string{"needs you"}, nil},
 		{"cron no recap", cron, 90, 6, []string{"nightly", "no prompt yet", "⏲ nightly │ fired 3h"}, nil, map[int]string{2: "fired 3h"}},
 		{"done with PR", donePR, 90, 6, []string{"DONE", "PR #12"}, nil, map[int]string{2: "PR #12"}},
-		{"child tally", kids, 90, 6, []string{"3 sub-agents · 1 blocked · 2 working │ acct work"}, nil, map[int]string{2: "acct work"}},
+		{"child tally", kids, 90, 6, []string{"⏸ ● ● │ acct work"}, nil, map[int]string{2: "acct work"}},
 		{"agent only shows its name", fresh, 60, 6, []string{"IDLE"}, []string{"ctx", "$", "│  │"}, nil},
 		{"agent differing from title", agentOnly, 90, 6, []string{"WORKING 4m", "Recap sentence", "go-engineer"}, nil, map[int]string{2: "go-engineer"}},
 		{"narrow 60", layoutStatus(), 60, 6, []string{"WORKING 4m", "PR #7"}, nil, map[int]string{2: "PR #7"}},
@@ -123,7 +123,7 @@ func TestHubStatusFooterDropOrder(t *testing.T) {
 	st.Kids, st.KidsBlocked, st.KidsWorking = 3, 1, 2
 	st.Extra = []string{"acct work"}
 	full := ansi.Strip(hubStatusFooter(st, 400, statusNow))
-	if !strings.Contains(full, "3 sub-agents · 1 blocked · 2 working │ acct work") {
+	if !strings.Contains(full, "⏸ ● ● │ acct work") {
 		t.Fatalf("full footer = %q", full)
 	}
 	// Whole facts go, never half of one: agent first, then the parent, then
@@ -143,7 +143,7 @@ func TestHubStatusFooterDropOrder(t *testing.T) {
 				t.Fatalf("w=%d: %q came back after dropping at %d", w, m, gone[i])
 			}
 		}
-		for _, keep := range []string{"PR #7", "#42", "1 blocked"} {
+		for _, keep := range []string{"PR #7", "#42", "⏸"} {
 			if !strings.Contains(got, keep) {
 				t.Fatalf("w=%d: never-dropped %q missing in %q", w, keep, got)
 			}

@@ -8,6 +8,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/blsmth/agentctl/internal/fleet"
 )
 
 // matrixStatuses are the cases the pane is checked against at every width and
@@ -127,7 +129,7 @@ func TestHubStatusWaitingSince(t *testing.T) {
 func TestHubStatusAgeEscalates(t *testing.T) {
 	InitStyles()
 	waiting := &hubStatus{State: "your turn", StateSince: statusNow.Add(-59 * time.Minute)}
-	if got := hubStatusAgeStyle(waiting, statusNow).Render("x"); got != fleetDimStyle.Render("x") {
+	if got := hubStatusAgeStyle(waiting, statusNow).Render("x"); got != hubStatusDim.Render("x") {
 		t.Errorf("under 1h should stay dim")
 	}
 	waiting.StateSince = statusNow.Add(-time.Hour)
@@ -135,28 +137,40 @@ func TestHubStatusAgeEscalates(t *testing.T) {
 		t.Errorf("1h should escalate")
 	}
 	waiting.State = "working"
-	if got := hubStatusAgeStyle(waiting, statusNow).Render("x"); got != fleetDimStyle.Render("x") {
+	if got := hubStatusAgeStyle(waiting, statusNow).Render("x"); got != hubStatusDim.Render("x") {
 		t.Errorf("a long working age is normal")
 	}
 }
 
-func TestHubStatusKidsColouredByWorstState(t *testing.T) {
+func TestHubStatusKidsDots(t *testing.T) {
 	InitStyles()
-	for _, tt := range []struct{ blocked, working int }{{1, 1}, {0, 2}, {0, 0}} {
-		st := &hubStatus{Kids: 2, KidsBlocked: tt.blocked, KidsWorking: tt.working}
-		want := fleetDimStyle
-		if tt.blocked > 0 {
-			want = fleetBlockedStyle
-		} else if tt.working > 0 {
-			want = fleetWorkingStyle
-		}
-		seg := kidsSeg(st)
-		if seg.text != want.Render(ansi.Strip(seg.text)) {
-			t.Errorf("%+v: coloured %q, want state colour", tt, seg.text)
-		}
+	plain := func(st *hubStatus) string { return ansi.Strip(kidsSeg(st).text) }
+	tests := []struct {
+		name string
+		st   hubStatus
+		want string
+	}{
+		{"worst first", hubStatus{Kids: 4, KidsWorking: 2, KidsBlocked: 1}, "⏸ ● ● ○"},
+		{"all states", hubStatus{Kids: 5, KidsWorking: 1, KidsBlocked: 1, KidsAttention: 1, KidsDone: 1}, "⏸ " + fleet.AttentionGlyph + " ● ✓ ○"},
+		{"exactly eight", hubStatus{Kids: 8, KidsWorking: 8}, "● ● ● ● ● ● ● ●"},
+		{"overflow", hubStatus{Kids: 11, KidsBlocked: 2, KidsWorking: 9}, "⏸ ⏸ ● ● ● ● ● ● +3"},
 	}
-	if got := ansi.Strip(kidsSeg(&hubStatus{Kids: 2, KidsBlocked: 1}).text); got != "2 sub-agents · 1 blocked" {
-		t.Errorf("kids = %q", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := tt.st
+			seg := kidsSeg(&st)
+			if got := plain(&st); got != tt.want {
+				t.Errorf("dots = %q, want %q", got, tt.want)
+			}
+			if seg.w != lipgloss.Width(tt.want) {
+				t.Errorf("width = %d, want %d", seg.w, lipgloss.Width(tt.want))
+			}
+		})
+	}
+	st := &hubStatus{Kids: 2, KidsBlocked: 1, KidsWorking: 1}
+	want := fleetBlockedStyle.Render("⏸") + " " + fleetWorkingStyle.Render("●")
+	if got := kidsSeg(st).text; got != want {
+		t.Errorf("coloured %q, want %q", got, want)
 	}
 }
 
