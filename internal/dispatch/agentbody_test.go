@@ -32,7 +32,7 @@ func TestResolveAgentBody_Found(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := resolveAgentBody(emptyConfig(), "go-engineer")
+	got := resolveAgentBody(emptyConfig(), "go-engineer").composed()
 	if got == "" {
 		t.Fatal("resolveAgentBody() returned empty string, want the agent body")
 	}
@@ -46,7 +46,7 @@ func TestResolveAgentBody_NotFound(t *testing.T) {
 	withRegistryDir(t, dir)
 
 	got := resolveAgentBody(emptyConfig(), "does-not-exist")
-	if got != "" {
+	if got != (agentBody{}) {
 		t.Errorf("resolveAgentBody() = %q, want empty string for an unresolvable agent", got)
 	}
 }
@@ -64,10 +64,11 @@ func TestResolveAgentBody_UsesComposedBody(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := resolveAgentBody(emptyConfig(), "child-agent")
-	if got == "" {
-		t.Fatal("resolveAgentBody() returned empty string, want the composed body")
+	b := resolveAgentBody(emptyConfig(), "child-agent")
+	if b.Own != "Child body." || b.Base != "Base body." || b.BaseName != "base-agent" {
+		t.Fatalf("resolveAgentBody() = %+v, want own and base bodies split", b)
 	}
+	got := b.composed()
 	for _, want := range []string{"Base body.", "Child body."} {
 		if !strings.Contains(got, want) {
 			t.Errorf("resolveAgentBody() = %q, want it to contain %q", got, want)

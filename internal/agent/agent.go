@@ -48,8 +48,15 @@ type Agent struct {
 	FilePath     string // Resolved absolute path to the .md file
 	Extends      string // Base agent name, empty if standalone
 	ComposedBody string // Merged base+local body, empty if standalone
-	Tools        string // Tools field from frontmatter
-	Harness      string // harness field from frontmatter ("" = config or default; see internal/harness)
+	// BaseName, BasePath and BaseBody describe the base an Extends agent
+	// was composed from (all "" when standalone or unresolved). A launch
+	// with --agent loads only the agent's own file, so dispatch injects
+	// BaseBody itself.
+	BaseName string
+	BasePath string
+	BaseBody string
+	Tools    string // Tools field from frontmatter
+	Harness  string // harness field from frontmatter ("" = config or default; see internal/harness)
 	// Role is the frontmatter role: RoleOrchestrator, RoleWorker,
 	// RoleReporter, or "" (a worker). Unknown values are logged and dropped at discovery.
 	Role        string

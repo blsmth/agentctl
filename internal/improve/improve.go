@@ -223,6 +223,9 @@ var (
 	// checkLive refuses a second run while one is live.
 	checkLive = improverun.CheckNoLiveRun
 	recordRun = improverun.RecordWindow
+	// agentSystemPrompt is what the session's system prompt file carries of
+	// the agent's own definition (see dispatch.AgentSystemPrompt).
+	agentSystemPrompt = dispatch.AgentSystemPrompt
 )
 
 // DefaultFleetAgent runs a fleet review when no agent is named.
@@ -448,6 +451,16 @@ func Launch(opts Options) (Result, error) {
 	if opts.Unattended && caps.PermissionModes {
 		permissionMode = dispatchplan.PermissionMode(true, ac.PermissionMode, "")
 		inv.PermissionMode = permissionMode
+	}
+	// The agent's base (when it extends one) and its expanded @shared
+	// includes, the same sections a dispatch of it gets: --agent loads only
+	// its own file. Never fails the launch.
+	if sys := agentSystemPrompt(cfg, agentName, caps.AgentFlag, workDir, opts.CallerDir); sys != "" {
+		if f, err := writePromptFile(agentName+"-sys", sys); err != nil {
+			logging.Warn("improve: writing system prompt for %s: %v", agentName, err)
+		} else {
+			inv.SystemPromptFile = f
+		}
 	}
 	baseFlags, err := h.Command(inv)
 	if err != nil {

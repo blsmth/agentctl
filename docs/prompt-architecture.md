@@ -26,11 +26,11 @@ Claude follows instructions in user messages more reliably than in the system pr
 
 | Layer | Content | Delivery |
 |---|---|---|
-| Agent definition | Role, persona, coding patterns, repo conventions | `--agent <name>` (reads `~/.claude/agents/<name>.md`; on pi, inlined into the system prompt file) |
+| Agent definition | Role, persona, coding patterns, repo conventions | `--agent <name>` (reads `~/.claude/agents/<name>.md`, or the project's `.claude/agents/<name>.md`, and nothing else: an `extends` base reaches the model only through the system prompt file; on pi, the whole composed body is inlined into the system prompt file) |
 | System prompt file | Stable rules: preamble, shared conventions, mode instructions, worktree note, session block, the agent's context entries | `--append-system-prompt-file <path>` (on pi `--append-system-prompt`), a file under `<project>/.agentctl/launch/`, pruned after 7 days by `reconcile --housekeeping` |
 | First user message | The task, launch facts, directive and finishing steps | One argv word of the launch script's `claude` (or `pi -- <msg>`) command, single-quoted with `shellquote.Quote` |
 
-`buildLaunchPrompt` in `internal/dispatch/prompt.go` builds both.
+`buildLaunchPrompt` in `internal/dispatch/prompt.go` builds both. `agent improve` sessions also launch with `--agent`; their system prompt file carries sections 1b and 2 only (`dispatch.AgentSystemPrompt`), and none when both are empty. A resumed session (`sessions`, the hub's Resume, restore) gets no system prompt file.
 
 ### System prompt file, most stable first
 
@@ -44,9 +44,16 @@ Claude follows instructions in user messages more reliably than in the system pr
    Harnesses without native messaging (pi) get a mailbox-reporting section
    instead, and a worker on a different Claude account than its dispatcher
    gets a cross-account section
-1b. Agent definition body (pi only: it has no --agent flag)
-2. Shared Conventions (the agent's @shared/*.md includes, expanded, since
-   Claude Code does not expand them inside agent files)
+1b. Agent definition. On pi (no --agent flag): the whole body, composed
+   with its `extends` base ("## Agent definition: <name>"). On Claude, only
+   when the agent extends a base: the base's body under "## Base agent:
+   <base>", whose note says the agent's own definition (which --agent
+   already loaded, earlier in the system prompt) overrides it on any
+   conflict. The own body is never repeated here. A global agent whose base
+   resolves outside ~/.claude/agents gets no base (see configuration.md)
+2. Shared Conventions (the @shared/*.md includes of the base and the
+   agent's own body, expanded, each file once, since Claude Code does not
+   expand them inside agent files)
 3. Mode instructions (autonomy boilerplate for dispatch/adhoc; a block per
    mode for discuss/triage/review; the review rules and verdict format for
    review-pr, with the PR as "N"; empty for bare and custom)
