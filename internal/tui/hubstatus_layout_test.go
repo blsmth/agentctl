@@ -61,29 +61,30 @@ func TestHubStatusLayout(t *testing.T) {
 		w, h    int
 		want    []string // substrings of the plain output
 		wantNot []string
-		lastRow string // substring required on row h (empty: no footer expected)
+		rows    map[int]string // 0-based row index -> substring required there
 	}{
 		{"working wide", layoutStatus(), 166, 6,
-			[]string{"working 4m · agentctl", "#42 · go-engineer · PR #7 · ← Fleet view overhaul work"},
-			[]string{"opus", "ctx", "$1", "47m", "issue-42"}, "← Fleet view"},
-		{"width 90", layoutStatus(), 90, 6, []string{"working 4m · agentctl", "#42 · go-engineer · PR #7"}, nil, "PR #7"},
+			[]string{"● WORKING", "4m", "agentctl", "#42 │ go-engineer │ PR #7 │ ← Fleet view overhaul work"},
+			[]string{"opus", "ctx", "$1", "47m", "issue-42"}, map[int]string{2: "← Fleet view"}},
+		{"working 90", layoutStatus(), 90, 6, []string{"WORKING 4m", "agentctl", "#42 │ go-engineer │ PR #7"}, nil, map[int]string{2: "PR #7"}},
 		{"blocked with tool", blocked, 90, 6,
-			[]string{"blocked 4m", "needs you: Bash  rm -rf node_modules"}, nil, "PR #7"},
+			[]string{"BLOCKED", "needs you ▸ Bash  rm -rf node_modules"}, nil, map[int]string{1: "needs you", 2: "Moving", 3: "PR #7"}},
 		{"blocked on folder trust", trust, 90, 6,
-			[]string{"needs you: folder trust  /repo/.worktrees/agent-x"}, []string{"needs you: trust"}, "PR #7"},
-		{"blocked without tool", blockedNoTool, 90, 6, []string{"blocked 4m"}, []string{"needs you"}, "PR #7"},
-		{"cron no recap", cron, 90, 6, []string{"nightly", "no prompt yet", "⏲ nightly · fired 3h"}, nil, "fired 3h"},
-		{"done with PR", donePR, 90, 6, []string{"done 1h", "PR #12"}, nil, "PR #12"},
-		{"child tally", kids, 90, 6, []string{"↳ 3 sub-agents ⏸1 ●2 · acct work"}, nil, "acct work"},
-		{"agent only collapses", fresh, 60, 6, []string{"idle"}, []string{"ctx", "$", "·  ·"}, ""},
-		{"agent on title line", agentOnly, 90, 6, []string{"go-engineer  working 4m · agentctl", "Recap sentence"}, nil, ""},
-		{"narrow 60", layoutStatus(), 60, 6, []string{"working 4m", "PR #7"}, nil, "PR #7"},
-		{"narrow 40", layoutStatus(), 40, 6, []string{"working", "PR #7"}, nil, "PR #7"},
-		{"h=2 recap wins", layoutStatus(), 90, 2, []string{"Moving the detail"}, []string{"PR #7"}, ""},
-		{"h=1 title only", layoutStatus(), 90, 1, []string{"working"}, []string{"Moving"}, ""},
-		{"h=3 recap before needs", blocked, 90, 3, []string{"Moving the detail", "PR #7"}, []string{"needs you"}, "PR #7"},
-		{"untitled narrow keeps full recap", untitledLong, 40, 6, []string{"middleware to use the new session", "store."}, nil, ""},
-		{"untitled recap not repeated", untitled, 90, 6, []string{"Fixed the build", "Then added tests"}, nil, ""},
+			[]string{"needs you ▸ folder trust  /repo/.worktrees/agent-x"}, []string{"needs you ▸ trust"}, map[int]string{1: "folder trust"}},
+		{"blocked without tool", blockedNoTool, 90, 6, []string{"BLOCKED"}, []string{"needs you"}, nil},
+		{"cron no recap", cron, 90, 6, []string{"nightly", "no prompt yet", "⏲ nightly │ fired 3h"}, nil, map[int]string{2: "fired 3h"}},
+		{"done with PR", donePR, 90, 6, []string{"DONE", "PR #12"}, nil, map[int]string{2: "PR #12"}},
+		{"child tally", kids, 90, 6, []string{"3 sub-agents · 1 blocked · 2 working │ acct work"}, nil, map[int]string{2: "acct work"}},
+		{"agent only shows its name", fresh, 60, 6, []string{"IDLE"}, []string{"ctx", "$", "│  │"}, nil},
+		{"agent differing from title", agentOnly, 90, 6, []string{"WORKING 4m", "Recap sentence", "go-engineer"}, nil, map[int]string{2: "go-engineer"}},
+		{"narrow 60", layoutStatus(), 60, 6, []string{"WORKING 4m", "PR #7"}, nil, map[int]string{2: "PR #7"}},
+		{"narrow 40", layoutStatus(), 40, 6, []string{"WORKING", "PR #7"}, nil, nil},
+		{"h=2 recap wins over facts", layoutStatus(), 90, 2, []string{"Moving the detail"}, []string{"PR #7"}, nil},
+		{"h=1 title only", layoutStatus(), 90, 1, []string{"WORKING"}, []string{"Moving"}, nil},
+		{"h=2 needs wins over recap", blocked, 90, 2, []string{"needs you ▸ Bash"}, []string{"Moving", "PR #7"}, map[int]string{1: "needs you"}},
+		{"h=3 needs then recap", blocked, 90, 3, []string{"needs you ▸ Bash", "Moving the detail"}, []string{"PR #7"}, map[int]string{1: "needs you", 2: "Moving"}},
+		{"untitled narrow keeps full recap", untitledLong, 40, 6, []string{"middleware to use the new session", "store."}, nil, nil},
+		{"untitled recap not repeated", untitled, 90, 6, []string{"Fixed the build", "Then added tests"}, nil, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -107,8 +108,10 @@ func TestHubStatusLayout(t *testing.T) {
 					t.Errorf("unexpected %q in:\n%s", w, all)
 				}
 			}
-			if tt.lastRow != "" && !strings.Contains(lines[tt.h-1], tt.lastRow) {
-				t.Errorf("footer not pinned to row %d: %q", tt.h, lines[tt.h-1])
+			for i, want := range tt.rows {
+				if i >= len(lines) || !strings.Contains(lines[i], want) {
+					t.Errorf("row %d lacks %q:\n%s", i, want, all)
+				}
 			}
 		})
 	}
@@ -120,12 +123,14 @@ func TestHubStatusFooterDropOrder(t *testing.T) {
 	st.Kids, st.KidsBlocked, st.KidsWorking = 3, 1, 2
 	st.Extra = []string{"acct work"}
 	full := ansi.Strip(hubStatusFooter(st, 400, statusNow))
-	if !strings.Contains(full, "↳ 3 sub-agents ⏸1 ●2 · acct work") {
+	if !strings.Contains(full, "3 sub-agents · 1 blocked · 2 working │ acct work") {
 		t.Fatalf("full footer = %q", full)
 	}
-	markers := []string{"←", "go-engineer"}
+	// Whole facts go, never half of one: agent first, then the parent, then
+	// the account; each stays gone as the width shrinks.
+	markers := []string{"go-engineer", "←", "acct work"}
 	gone := make([]int, len(markers)) // widest width at which each is absent
-	for w := 400; w >= 50; w-- {
+	for w := 400; w >= 40; w-- {
 		got := ansi.Strip(hubStatusFooter(st, w, statusNow))
 		if lipgloss.Width(got) > w {
 			t.Fatalf("w=%d: footer is %d wide: %q", w, lipgloss.Width(got), got)
@@ -138,23 +143,27 @@ func TestHubStatusFooterDropOrder(t *testing.T) {
 				t.Fatalf("w=%d: %q came back after dropping at %d", w, m, gone[i])
 			}
 		}
-		for _, keep := range []string{"PR #7", "#42", "⏸1", "acct work"} {
+		for _, keep := range []string{"PR #7", "#42", "1 blocked"} {
 			if !strings.Contains(got, keep) {
 				t.Fatalf("w=%d: never-dropped %q missing in %q", w, keep, got)
 			}
 		}
 	}
-	if gone[1] == 0 || gone[1] > gone[0] {
-		t.Errorf("agent dropped at %d, before parent at %d", gone[1], gone[0])
+	if gone[0] == 0 || gone[0] < gone[1] || gone[1] < gone[2] {
+		t.Errorf("drop widths agent=%d parent=%d account=%d, want agent first, then parent, then account", gone[0], gone[1], gone[2])
 	}
 	// Overflowing never-drop facts are end-truncated.
 	st3 := &hubStatus{Version: hubStatusVersion, PRNumber: 1234, Ticket: 99, Extra: []string{"acct a-very-long-account-name"}}
-	if got := ansi.Strip(hubStatusFooter(st3, 20, statusNow)); lipgloss.Width(got) > 20 || !strings.HasSuffix(got, "…") {
+	if got := ansi.Strip(hubStatusFooter(st3, 10, statusNow)); lipgloss.Width(got) > 10 || !strings.HasSuffix(got, "…") {
 		t.Errorf("not truncated: %q", got)
 	}
-	// Agent only: no footer at all.
-	if got := hubStatusFooter(&hubStatus{Version: hubStatusVersion, Agent: "go-engineer"}, 80, statusNow); got != "" {
-		t.Errorf("agent-only footer = %q", got)
+	// Nothing to show: no footer at all.
+	if got := hubStatusFooter(&hubStatus{Version: hubStatusVersion}, 80, statusNow); got != "" {
+		t.Errorf("empty footer = %q", got)
+	}
+	// An agent name that repeats the title adds nothing.
+	if got := hubStatusFooter(&hubStatus{Version: hubStatusVersion, Agent: "x", Title: "x"}, 80, statusNow); got != "" {
+		t.Errorf("repeated agent footer = %q", got)
 	}
 }
 

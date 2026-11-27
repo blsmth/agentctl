@@ -70,7 +70,7 @@ func TestRenderHubStatus(t *testing.T) {
 		}
 	}
 	plain := ansi.Strip(out)
-	for _, want := range []string{"● Status pane", "agentctl", "Moving the selected row", "#42 · go-engineer"} {
+	for _, want := range []string{"● WORKING", "Status pane", "agentctl", "Moving the selected row", "#42 │ go-engineer"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("missing %q in:\n%s", want, plain)
 		}
@@ -78,12 +78,12 @@ func TestRenderHubStatus(t *testing.T) {
 	if strings.Contains(plain, "go test") {
 		t.Errorf("activity line shown:\n%s", plain)
 	}
-	// Title, four recap lines, chips: the recap wraps over every row left,
+	// Title, four recap lines, facts: the recap wraps over every row left,
 	// cut with an ellipsis.
 	if got := strings.TrimSpace(ansi.Strip(lines[4])); !strings.HasSuffix(got, "…") {
 		t.Errorf("last recap line %q, want an ellipsis", got)
 	}
-	if got := ansi.Strip(lines[h-1]); !strings.Contains(got, "#42 · go-engineer") || strings.Contains(got, "[") {
+	if got := ansi.Strip(lines[h-1]); !strings.Contains(got, "#42 │ go-engineer") || strings.Contains(got, "[") {
 		t.Errorf("last line %q, want the facts footer", got)
 	}
 
@@ -97,8 +97,8 @@ func TestRenderHubStatusIgnoresActivityFromOlderFile(t *testing.T) {
 	InitStyles()
 	st := &hubStatus{Glyph: "●", Title: "T", Detail: rowDetailParts{Recap: "ls", RecapIsActivity: true, Marker: "$ "}}
 	plain := ansi.Strip(renderHubStatus(HubSelection{Session: "s", WindowID: "@1", RuntimeDir: "/p", Status: st}, false, 60, 6, statusNow))
-	if strings.Contains(plain, "$ ") || strings.Contains(plain, "ls") || !strings.Contains(plain, "nothing to summarise") {
-		t.Errorf("want a placeholder, got:\n%s", plain)
+	if strings.Contains(plain, "$ ") || strings.Contains(plain, "ls") || strings.Contains(plain, "nothing to summarise") {
+		t.Errorf("want no recap and no filler, got:\n%s", plain)
 	}
 }
 

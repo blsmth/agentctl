@@ -128,7 +128,7 @@ func TestAttentionRowDetailAndStatus(t *testing.T) {
 	}
 	st.Version = hubStatusVersion
 	lines := hubStatusLines(st, 60, 6, fleetNow())
-	if !strings.Contains(ansi.Strip(strings.Join(lines, "\n")), "needs you: asks you: Merge it?") {
+	if !strings.Contains(ansi.Strip(strings.Join(lines, "\n")), "needs you ▸ asks you: Merge it?") {
 		t.Errorf("status pane lacks the attention line:\n%s", ansi.Strip(strings.Join(lines, "\n")))
 	}
 }
