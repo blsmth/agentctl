@@ -1682,6 +1682,7 @@ func (m *FleetModel) liveShowFor(session, window string) tea.Cmd {
 	activity, userAct := m.activity.open(), m.activity.userWidth
 	wantStatus := statusWanted(m.termHeight)
 	return func() tea.Msg {
+		defer schedWorkTrack()()
 		win := liveWindowWidth(fallback)
 		left, right, err := fleetLiveSplitFor(win, userLeft)
 		status := false

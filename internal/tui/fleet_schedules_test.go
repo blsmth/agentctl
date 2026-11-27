@@ -44,9 +44,56 @@ type schedFixture struct {
 	promptKeys map[string]string // context keys the store resolves, when set
 }
 
+// schedWork counts form previews in flight (see schedWorkTrack).
+var schedWork = newPreviewGate()
+
+// previewGate is a counter with a Wait that, unlike sync.WaitGroup, may be
+// called while the count is rising from zero.
+type previewGate struct {
+	mu sync.Mutex
+	c  *sync.Cond
+	n  int
+}
+
+func newPreviewGate() *previewGate {
+	g := &previewGate{}
+	g.c = sync.NewCond(&g.mu)
+	return g
+}
+
+func (g *previewGate) Add() { g.mu.Lock(); g.n++; g.mu.Unlock() }
+func (g *previewGate) Done() {
+	g.mu.Lock()
+	g.n--
+	g.c.Broadcast()
+	g.mu.Unlock()
+}
+func (g *previewGate) Wait() {
+	g.mu.Lock()
+	for g.n > 0 {
+		g.c.Wait()
+	}
+	g.mu.Unlock()
+}
+
+// Store-backed commands outlive a test that drops them (a drive timeout),
+// so the tracker is installed once and never swapped, which would race with
+// their goroutines. schedDrive waits on it instead of guessing how long a
+// loaded machine needs.
+func init() {
+	schedWorkTrack = func() func() { schedWork.Add(); return schedWork.Done }
+}
+
 func newSchedFixture(t *testing.T) *schedFixture {
 	t.Helper()
 	InitStyles()
+	// Slide frames answer at once: schedDrive settles them, so no test
+	// depends on a real timer beating its drive timeout.
+	savedTick := schedDrawerTick
+	schedDrawerTick = func(gen int) tea.Cmd {
+		return func() tea.Msg { return schedDrawerTickMsg{gen: gen} }
+	}
+	t.Cleanup(func() { schedDrawerTick = savedTick })
 	dir := t.TempDir()
 	f := &schedFixture{
 		jobsPath:  filepath.Join(dir, "schedules.json"),
@@ -244,13 +291,20 @@ func schedDrive(t *testing.T, m FleetModel, cmd tea.Cmd) FleetModel {
 		// A cursor blink or slide tick never answers in time and is dropped.
 		// A write in flight does, just later on a loaded machine (-race):
 		// wait for it, or the test sees the form still saving.
-		if m.schedForm == nil || !m.schedForm.saving && m.sched.busy == "" {
-			return m
-		}
+		// A preview in flight is waited for (it ends in a message); anything
+		// still silent after that is a blink and is dropped.
+		schedWork.Wait()
 		select {
 		case msg = <-ch:
-		case <-time.After(10 * time.Second):
-			t.Fatal("a schedule write never answered")
+		default:
+			if m.schedForm == nil || !m.schedForm.saving && m.sched.busy == "" {
+				return m
+			}
+			select {
+			case msg = <-ch:
+			case <-time.After(10 * time.Second):
+				t.Fatal("a schedule write never answered")
+			}
 		}
 	}
 	switch msg := msg.(type) {

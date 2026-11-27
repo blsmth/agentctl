@@ -158,6 +158,7 @@ func (m *FleetModel) schedLoadCmd() tea.Cmd {
 	m.sched.lastLoad = fleetNow()
 	st := m.schedStore()
 	return func() tea.Msg {
+		defer schedWorkTrack()()
 		ov, err := st.Overview()
 		if err == nil {
 			cronedit.SortForDisplay(ov.Jobs)
@@ -358,6 +359,7 @@ func (m *FleetModel) schedSetEnabled(st cronedit.Status) tea.Cmd {
 	m.setProgress(action + " " + st.Name + "…")
 	store, name := m.schedStore(), st.Name
 	return func() tea.Msg {
+		defer schedWorkTrack()()
 		job, err := store.SetEnabled(name, enable)
 		return fleetSchedWroteMsg{action: action, name: name, job: job, err: err}
 	}
@@ -372,6 +374,7 @@ func (m *FleetModel) schedDelete(name string) tea.Cmd {
 	m.setProgress("deleting " + name + "…")
 	store := m.schedStore()
 	return func() tea.Msg {
+		defer schedWorkTrack()()
 		return fleetSchedWroteMsg{action: "delete", name: name, err: store.Delete(name)}
 	}
 }
@@ -386,6 +389,7 @@ func (m *FleetModel) schedRunNow(name string) tea.Cmd {
 	m.setProgress("running " + name + "…")
 	run := fleetSchedRun
 	return func() tea.Msg {
+		defer schedWorkTrack()()
 		e, err := run(context.Background(), name)
 		return fleetSchedRanMsg{name: name, entry: e, err: err}
 	}
@@ -479,6 +483,7 @@ func (m *FleetModel) syncSchedDetail() tea.Cmd {
 	m.sched.detailName = name
 	store := m.schedStore()
 	return func() tea.Msg {
+		defer schedWorkTrack()()
 		d, err := store.Detail(name)
 		return fleetSchedDetailMsg{name: name, d: d, err: err}
 	}
@@ -1053,7 +1058,9 @@ func (m *FleetModel) syncSchedDrawer() tea.Cmd {
 	return nil
 }
 
-func schedDrawerTick(gen int) tea.Cmd {
+// schedDrawerTick schedules the next slide frame. A variable so tests can
+// answer at once instead of racing a real timer.
+var schedDrawerTick = func(gen int) tea.Cmd {
 	return tea.Tick(fleetSchedSlideEvery, func(time.Time) tea.Msg { return schedDrawerTickMsg{gen: gen} })
 }
 
