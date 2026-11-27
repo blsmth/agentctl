@@ -145,3 +145,11 @@ func TestComposeInheritsHarness(t *testing.T) {
 		t.Errorf("Harness = %q, want local claude", got.Harness)
 	}
 }
+
+func TestCompose_RecordsBase(t *testing.T) {
+	base := Agent{Name: "base", FilePath: "/reg/base.md"}
+	out := Compose(Agent{Name: "local", Extends: "base"}, "local content", base, "base content\n\n")
+	if out.BaseName != "base" || out.BasePath != "/reg/base.md" || out.BaseBody != "base content" {
+		t.Errorf("base = %q %q %q", out.BaseName, out.BasePath, out.BaseBody)
+	}
+}

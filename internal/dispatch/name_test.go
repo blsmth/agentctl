@@ -44,7 +44,7 @@ func TestResolveAgentBody_WarnsOnShadow(t *testing.T) {
 	shadowWarnOut = &buf
 	t.Cleanup(func() { shadowWarnOut = orig })
 
-	if got := resolveAgentBody(emptyConfig(), "go-engineer", proj); got != "Project." {
+	if got := resolveAgentBody(emptyConfig(), "go-engineer", proj).Own; got != "Project." {
 		t.Fatalf("body = %q, want project body", got)
 	}
 	if !strings.Contains(buf.String(), "shadows your global agent") || !strings.Contains(buf.String(), projFile) {
@@ -52,7 +52,7 @@ func TestResolveAgentBody_WarnsOnShadow(t *testing.T) {
 	}
 
 	buf.Reset()
-	if got := resolveAgentBody(emptyConfig(), "go-engineer"); got != "Global." {
+	if got := resolveAgentBody(emptyConfig(), "go-engineer").Own; got != "Global." {
 		t.Fatalf("body = %q, want global body", got)
 	}
 	if buf.Len() != 0 {

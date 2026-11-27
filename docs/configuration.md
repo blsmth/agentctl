@@ -495,6 +495,14 @@ Under `agents.<name>`. Defaults for a new agent: `alerts: true`, `alert_config.b
 
 An agent definition can declare `role: orchestrator`, `role: reporter`, or `role: worker` (the same as leaving it out) in its frontmatter. There is no config key. An `extends` child inherits the base's role unless it sets its own; an unknown value is logged and ignored.
 
+#### `extends`
+
+`extends: <base>` in an agent's frontmatter makes it a child of another agent. The child inherits the base's `description`, `harness` and `role` (and its configured `dir` and `model`) unless it sets its own. The base must be a different file that does not itself extend anything; a base name that is a symlink in `~/.claude/agents` is not followed. An unresolvable base is logged and the child launches on its own.
+
+Claude Code's `--agent <name>` loads only the child's own file, so agentctl puts the base's body in the launch's system prompt file, under `## Base agent: <base>`, with a note that the child's own definition (loaded by Claude Code, earlier in the system prompt) overrides it where they conflict. The child's body is not repeated. The `@shared` includes of both are expanded once into `## Shared Conventions`. This applies to every launch that uses `--agent`: dispatches (issue, ad-hoc, review-pr, bare), cron jobs, `agentctl launch` and the hub and phone, and improve sessions. On pi, which has no `--agent`, the whole composed body (base, then `## Local Overrides` and the child) is the persona.
+
+A base is never trusted more than the child: a global agent (a regular file in `~/.claude/agents`) only gets a base that is also a regular file there. If its base resolves to a project-local file (a cloned repo's `.claude/agents/<base>.md`, which shadows a global agent of that name) or a registry symlink, the launch prints a warning and the base is not loaded. A project-local child may extend a project-local base; when that base shadows a global agent of the same name, the launch prints a warning naming the file, like a project agent that shadows a global one.
+
 ```markdown
 ---
 name: brandon

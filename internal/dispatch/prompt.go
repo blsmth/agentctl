@@ -100,7 +100,9 @@ const taskMaterialHeading = "## Task material (too large for the first message)"
 //  1. Preamble (agentctl capabilities, role-selected, see preamble.go), with
 //     the orchestrator, cross-account or mailbox reporting section. The
 //     orchestrator's location is a launch fact, not part of it.
-//     1b. Agent definition body, for harnesses without --agent (pi)
+//     1b. Agent definition body, for harnesses without --agent (pi); or,
+//     with --agent, the body of the base the agent extends (--agent loads
+//     only the agent's own file)
 //  2. Shared Conventions (the agent's own @shared includes, expanded)
 //  3. Mode instructions (autonomy boilerplate, review rules, ...)
 //  4. Worktree note (that there is one, not its path or branch)
@@ -204,24 +206,12 @@ func buildSystemFile(req Request, spec modeSpec, facts launchFacts, sharedConven
 		}
 	}
 
-	// 1b. Persona -- for harnesses with no --agent flag (pi), the agent's
-	// own definition body has no other way in front of the model.
-	if req.persona != "" {
-		parts = append(parts, "## Agent definition: "+req.AgentName+"\n\n"+strings.TrimSpace(req.persona))
-	}
-
-	// 2. Shared Conventions -- expanded from the launching agent's own
-	// @shared/*.md includes. The raw "@shared/foo.md" line still lives in the
-	// .md body Claude Code loads directly, but Claude Code does not expand it
-	// (see agent.ExpandSharedRefs doc comment), so this expanded copy is the
-	// one the model can actually rely on; the heading says so explicitly.
-	if sharedConventions != "" {
-		note := "_The following was expanded from this agent's `@shared` includes, because Claude Code does not expand `@` imports inside agent definition files. This expanded copy is authoritative over any raw `@shared/...` reference you may also see in your own instructions._\n\n"
-		if req.persona != "" {
-			note = "_The following was expanded from the `@shared` includes in the agent definition above. It is authoritative over the raw `@shared/...` references there._\n\n"
-		}
-		parts = append(parts, "## Shared Conventions\n\n"+note+sharedConventions)
-	}
+	// 1b. Agent definition: the persona for harnesses with no --agent flag
+	// (pi), or the extended base for harnesses that load the agent's own
+	// file by name; then 2. its expanded Shared Conventions.
+	parts = append(parts, agentDefinitionSections(req.AgentName, agentPrompt{
+		Persona: req.persona, Base: req.baseBody, BaseName: req.baseName, SharedConventions: sharedConventions,
+	})...)
 
 	// 3. Mode instructions
 	if s := spec.SystemInstructions(req); s != "" {
@@ -240,6 +230,44 @@ func buildSystemFile(req Request, spec modeSpec, facts launchFacts, sharedConven
 	parts = append(parts, sessionBlock(req, facts))
 
 	return strings.Join(parts, "\n\n")
+}
+
+// agentDefinitionSections renders what the system prompt file carries of
+// the launching agent's definition, in order, empty sections left out:
+//
+//   - Persona (harness without --agent): the full composed body, since it
+//     has no other way in front of the model.
+//   - Base (harness with --agent): the extended base's body. --agent loads
+//     only the agent's own file, ahead of this file, so the own body is not
+//     repeated, and the heading says that it wins on any conflict.
+//   - Shared Conventions: the agent's @shared includes, expanded. The raw
+//     "@shared/foo.md" line still lives in the .md body Claude Code loads
+//     directly, but Claude Code does not expand it (see the
+//     agent.ExpandSharedRefs doc comment), so this expanded copy is the one
+//     the model can actually rely on; the heading says so explicitly.
+func agentDefinitionSections(agentName string, p agentPrompt) []string {
+	var parts []string
+	switch {
+	case p.Persona != "":
+		parts = append(parts, "## Agent definition: "+agentName+"\n\n"+strings.TrimSpace(p.Persona))
+	case p.Base != "":
+		parts = append(parts, baseAgentSection(agentName, p.BaseName, p.Base))
+	}
+	if p.SharedConventions != "" {
+		note := "_The following was expanded from this agent's `@shared` includes, because Claude Code does not expand `@` imports inside agent definition files. This expanded copy is authoritative over any raw `@shared/...` reference you may also see in your own instructions._\n\n"
+		if p.Persona != "" {
+			note = "_The following was expanded from the `@shared` includes in the agent definition above. It is authoritative over the raw `@shared/...` references there._\n\n"
+		}
+		parts = append(parts, "## Shared Conventions\n\n"+note+p.SharedConventions)
+	}
+	return parts
+}
+
+// baseAgentSection renders an extended base agent's body for a harness that
+// loads the agent's own definition by name.
+func baseAgentSection(agentName, baseName, body string) string {
+	note := fmt.Sprintf("_Your agent definition (`%s`) extends the `%s` agent, whose definition follows. Your own agent definition, given earlier in this system prompt, overrides anything here that conflicts with it._", agentName, baseName)
+	return "## Base agent: " + baseName + "\n\n" + note + "\n\n" + strings.TrimSpace(body)
 }
 
 // ticketSpecs keeps the entries that belong in the first message: the

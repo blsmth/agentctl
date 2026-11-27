@@ -3,7 +3,9 @@ package improve
 import (
 	"errors"
 	"github.com/blsmth/agentctl/internal/improverun"
+	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -168,5 +170,31 @@ func TestLaunchRefusesSecondLiveRun(t *testing.T) {
 	var out strings.Builder
 	if _, err := Launch(Options{Agent: "golden", DryRun: true, Out: &out}); err != nil {
 		t.Errorf("dry run: %v", err)
+	}
+}
+
+// TestLaunchSessionInjectsBaseAgent checks an improvement session of an agent
+// that extends a base gets the base body in its system prompt file: --agent
+// loads only the agent's own file.
+func TestLaunchSessionInjectsBaseAgent(t *testing.T) {
+	env := launchtest.Setup(t, "", map[string]string{
+		"base-eng": "---\nname: base-eng\ndescription: base\n---\nBASE-TEXT\n",
+		"child":    "---\nname: child\ndescription: child\nextends: base-eng\n---\nCHILD-TEXT\n",
+	})
+	launchtest.WriteConfig(t, `{"agents": {"child": {"dir": "`+env.Project+`"}}}`)
+	rec := launchtest.Capture(t)
+	if err := LaunchSession("child", "", ""); err != nil {
+		t.Fatalf("LaunchSession: %v", err)
+	}
+	m := regexp.MustCompile(`--append-system-prompt-file '([^']+)'`).FindStringSubmatch(rec.Only().Command)
+	if m == nil {
+		t.Fatalf("no system prompt file in %q", rec.Only().Command)
+	}
+	data, err := os.ReadFile(m[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sys := string(data); !strings.Contains(sys, "## Base agent: base-eng") || !strings.Contains(sys, "BASE-TEXT") || strings.Contains(sys, "CHILD-TEXT") {
+		t.Errorf("system prompt file:\n%s", sys)
 	}
 }

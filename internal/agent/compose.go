@@ -38,6 +38,8 @@ func ReadBody(filePath string) (string, error) {
 //   - Frontmatter fields: local value wins for any field that is non-empty;
 //     otherwise the base value is inherited.
 //   - Body: base body + "\n\n---\n\n## Local Overrides\n\n" + local body.
+//   - BaseName, BasePath, BaseBody record the base, for launches that load
+//     the local file by name and need the base text injected separately.
 func Compose(local Agent, localBody string, base Agent, baseBody string) Agent {
 	out := local
 
@@ -65,6 +67,10 @@ func Compose(local Agent, localBody string, base Agent, baseBody string) Agent {
 	if out.Role == "" {
 		out.Role = base.Role
 	}
+
+	out.BaseName = base.Name
+	out.BasePath = base.FilePath
+	out.BaseBody = strings.TrimRight(baseBody, "\n")
 
 	// Compose body: base first, then local overrides.
 	var body strings.Builder

@@ -121,6 +121,8 @@ type Request struct {
 
 	// Set by Launch from the resolved harness, for buildSystemFile.
 	persona          string // full agent body, for harnesses without --agent
+	baseBody         string // extended base's body, for harnesses with --agent
+	baseName         string // name of the base in baseBody
 	noMessaging      bool   // harness has no SendMessage/ListAgents
 	prReview         string // config pr_review mode; empty means always
 	backendLines     string // orchestrator Models-section backend lines, built from config at launch
@@ -324,23 +326,16 @@ func Launch(req Request) (Result, error) {
 	// 6. Resolve the launching agent's own .md body and expand its
 	// @shared/*.md includes -- Claude Code does not expand @ imports inside
 	// agent definition files, so this is the only channel that actually gets
-	// their content in front of the model (see agent.ExpandSharedRefs).
+	// their content in front of the model (see agent.ExpandSharedRefs). With
+	// --agent, Claude Code loads only the agent's own file, so an extended
+	// base's body is injected here too (see agentPromptFor).
 	// Never fails the dispatch: a resolution failure just means no expansion.
 	if caps.NativeMessaging {
 		warnMissingMessagingTools(cfg, req.AgentName, workDir, repoDir)
 	}
-	var sharedConventions string
-	if body := resolveAgentBody(cfg, req.AgentName, workDir, repoDir); body != "" {
-		expanded, missing := agent.ExpandSharedRefs(body)
-		sharedConventions = expanded
-		for _, ref := range missing {
-			logging.Warn("dispatch: agent %q references unresolved shared include %q", req.AgentName, ref)
-		}
-		if !caps.AgentFlag {
-			// No --agent: the persona itself must travel in the prompt.
-			req.persona = body
-		}
-	}
+	ap := agentPromptFor(cfg, req.AgentName, caps.AgentFlag, workDir, repoDir)
+	sharedConventions := ap.SharedConventions
+	req.persona, req.baseBody, req.baseName = ap.Persona, ap.Base, ap.BaseName
 
 	// 7. Resolve what the prompt names: pr_review, backends, orchestrator, review author.
 	req.prReview = effectivePRReview(cfg.EffectivePRReview(), req.PRReviewOverride)
