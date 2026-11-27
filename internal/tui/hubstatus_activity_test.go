@@ -164,7 +164,7 @@ func TestHubStatusTitleSparkline(t *testing.T) {
 		wantSpark bool
 	}{
 		{"wide", 190, true},
-		{"100 cols", 100, false},
+		{"100 cols", 100, true},
 		{"narrow drops it first", 70, false},
 		{"very narrow", 40, false},
 	}
@@ -178,8 +178,8 @@ func TestHubStatusTitleSparkline(t *testing.T) {
 			if got := strings.Contains(plain, " 30m"); got != tt.wantSpark {
 				t.Errorf("sparkline shown = %v, want %v: %q", got, tt.wantSpark, plain)
 			}
-			if tt.w >= 70 && !strings.Contains(plain, "WORKING") {
-				t.Errorf("the state pill gave way: %q", plain)
+			if strings.Contains(plain, "WORKING") {
+				t.Errorf("the state pill is on the title row: %q", plain)
 			}
 			if tt.w >= 100 && !strings.Contains(plain, sparkStatus().Title) {
 				t.Errorf("title cut: %q", plain)

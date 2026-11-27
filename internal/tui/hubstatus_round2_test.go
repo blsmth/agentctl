@@ -224,9 +224,9 @@ func TestHubStatusTintFullWidth(t *testing.T) {
 						t.Errorf("line %d loses the background after a reset: %q", i, l)
 					}
 				}
-				// The reverse-video pill is still there, and still reverse.
-				if !strings.Contains(rows[0], "\x1b[1;7;") && !strings.Contains(rows[0], ";7;") && !strings.Contains(rows[0], "[7;") {
-					t.Errorf("title line lost its reverse-video pill: %q", rows[0])
+				// The reverse-video pill is still there, on the last row, and still reverse.
+				if last := rows[5]; !strings.Contains(last, "\x1b[1;7;") && !strings.Contains(last, ";7;") && !strings.Contains(last, "[7;") {
+					t.Errorf("last line lost its reverse-video pill: %q", last)
 				}
 			})
 		}

@@ -46,8 +46,20 @@ func TestHubStatusMatrix(t *testing.T) {
 						}
 					}
 					all := strings.Join(lines, "\n")
-					if !strings.Contains(lines[0], "▌") || !strings.Contains(lines[0], st.Glyph) {
-						t.Errorf("title row lacks gutter or glyph: %q", lines[0])
+					if !strings.Contains(lines[0], "▌") || !strings.Contains(lines[0], st.Title[:min(len(st.Title), 6)]) {
+						t.Errorf("title row lacks gutter or title: %q", lines[0])
+					}
+					if h > 1 && strings.Contains(lines[0], st.Glyph) {
+						t.Errorf("state glyph on the title row of a %d-row pane: %q", h, lines[0])
+					}
+					// The pill is right-aligned on the last row, for every height.
+					last := lines[h-1]
+					at := strings.LastIndex(last, st.Glyph)
+					if at < 0 || lipgloss.Width(last[:at]) < w/2 {
+						t.Errorf("state pill not at the right of the last row: %q", last)
+					}
+					if tw := lipgloss.Width(strings.TrimRight(last, " ")); tw < w-2 || tw > w-1 {
+						t.Errorf("last row ends at %d, not flush right of %d: %q", tw, w, last)
 					}
 					for _, b := range banned {
 						if strings.Contains(strings.ToLower(all), b) {
@@ -60,10 +72,64 @@ func TestHubStatusMatrix(t *testing.T) {
 					if st.PendingTool != "" && h >= 2 && !strings.Contains(lines[1], "needs you ▸ Bash") {
 						t.Errorf("needs-you line lost at h=%d:\n%s", h, all)
 					}
-					if name == "your turn no recap" && h >= 2 && !strings.Contains(lines[1], "Waiting on you since yesterday") {
+					if name == "your turn no recap" && h >= 2 && !strings.Contains(lines[1], "Waiting on you") {
 						t.Errorf("waiting line missing:\n%s", all)
 					}
 				})
+			}
+		}
+	}
+}
+
+// TestHubStatusPillCornerClickSpans checks that the PR and ticket click spans
+// cover exactly what is drawn, at every size, including where the pill takes
+// width from the facts line.
+func TestHubStatusPillCornerClickSpans(t *testing.T) {
+	InitStyles()
+	for name, st := range matrixStatuses() {
+		for _, w := range []int{40, 70, 100} {
+			for h := 1; h <= 6; h++ {
+				t.Run(fmt.Sprintf("%s/w%d/h%d", name, w, h), func(t *testing.T) {
+					sel := HubSelection{Session: "s", WindowID: "@1", RuntimeDir: "/p", Status: st}
+					out, spans := renderHubStatusLayout(sel, false, w, h, statusNow)
+					lines := strings.Split(ansi.Strip(out), "\n")
+					for _, sp := range spans {
+						cells := ansi.Cut(lines[sp.y], sp.x0, sp.x1)
+						if sp.url == st.PRURL && !strings.HasPrefix(strings.TrimSpace(cells), "PR #") {
+							t.Errorf("PR span %+v covers %q in %q", sp, cells, lines[sp.y])
+						}
+						if sp.url == st.TicketURL && st.TicketURL != "" && !strings.HasPrefix(strings.TrimSpace(cells), "#") {
+							t.Errorf("ticket span %+v covers %q in %q", sp, cells, lines[sp.y])
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestHubStatusPillBeatsFacts squeezes the facts line against the pill on a
+// shared bottom row: the pill stays whole at the right, and the PR span still
+// matches what is drawn.
+func TestHubStatusPillBeatsFacts(t *testing.T) {
+	InitStyles()
+	st := layoutStatus()
+	st.Detail.Recap = ""
+	sel := HubSelection{Session: "s", WindowID: "@1", RuntimeDir: "/p", Status: st}
+	for _, w := range []int{40, 50, 60, 70, 100} {
+		out, spans := renderHubStatusLayout(sel, false, w, 2, statusNow)
+		row := strings.Split(ansi.Strip(out), "\n")[1]
+		if !strings.Contains(row, "●") {
+			t.Errorf("w=%d: pill lost on the shared row: %q", w, row)
+		}
+		pillAt := strings.LastIndex(row, "●")
+		for _, sp := range spans {
+			got := strings.TrimSpace(ansi.Cut(row, sp.x0, sp.x1))
+			if sp.url == st.PRURL && got != "PR #7" {
+				t.Errorf("w=%d: PR span covers %q in %q", w, got, row)
+			}
+			if sp.x1+hubStatusPillGap > lipgloss.Width(row[:pillAt]) {
+				t.Errorf("w=%d: span %+v leaves under %d cells before the pill in %q", w, sp, hubStatusPillGap, row)
 			}
 		}
 	}
