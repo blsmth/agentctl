@@ -889,7 +889,7 @@ func cronDispatchOptions(req cron.LaunchRequest) (DispatchOptions, error) {
 }
 
 // cronInterrupt handles a timed-out window: C-c to its main pane, the window
-// marked blocked, a mailbox notice for the agent and a desktop notification.
+// left idle with a timeout attention, a mailbox notice for the agent and a desktop notification.
 // The window is never killed, so a human can look.
 func cronInterrupt(w cron.Window, job cron.Job, timeout time.Duration) error {
 	p := cronProject{root: filepath.Dir(w.RuntimeDir), runtimeDir: w.RuntimeDir, session: w.Session}
@@ -914,12 +914,8 @@ func cronInterrupt(w cron.Window, job cron.Job, timeout time.Duration) error {
 			// (needs you, can reply), not a blocked dialog.
 			ws.State = "idle"
 			ws.Attention = &windowstate.Attention{Reason: windowstate.AttentionTimeout, Detail: detail, At: now}
-			ws.PendingTool = "cron-timeout"
-			ws.PendingToolDetail = detail
-			ws.PendingToolAt = now
-			ws.BlockedSince = now
 		}); uerr != nil {
-			logging.Warn("cron: marking %s blocked: %v", w.ID, uerr)
+			logging.Warn("cron: marking %s timed out: %v", w.ID, uerr)
 		}
 		if _, merr := mailbox.Enqueue(mailbox.Message{
 			To: w.ID, ToSession: w.SessionID, Kind: mailbox.KindBlocked,

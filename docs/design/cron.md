@@ -87,7 +87,7 @@ A separate file rather than a `config.json` key, so `cron add/rm` rewrite a smal
 - `harness`: `claude` (default). Other values are validated against the `internal/harness` registry from multi-harness.md. Until that refactor lands, `claude` is the only accepted value, but the field ships in v1 so the schema doesn't change later.
 - `overlap`: `skip` (default) skips a run if the previous one is still alive and not Done; `allow` runs anyway. No `queue`, which is one more state machine for little gain.
 - `catchup`: `latest` (default) runs once for the most recent missed fire if it is within `catchup_window` (default 6h), the same as Desktop tasks, and otherwise records a skip. `none` never catches up.
-- `timeout`: after this, a `window` run gets `C-c` plus a `blocked`/timeout notice. It is not killed, so a human can look. A `headless` run gets SIGINT, then SIGTERM after 30s (SIGINT first so the turn ends cleanly; see the headless docs on exit code 143).
+- `timeout`: after this, a `window` run gets `C-c`, is left idle with a `timeout` attention and gets a mailbox notice. It is not killed, so a human can look. The timeout covers only the first unattended run: a window whose first turn ended (`scheduled_run_ended`) is skipped, so a human reply never triggers it. A `headless` run gets SIGINT, then SIGTERM after 30s (SIGINT first so the turn ends cleanly; see the headless docs on exit code 143).
 
 Global defaults under `cron` in `config.json`: `min_interval` (default `15m`; `cron add` rejects schedules that fire more often), `max_concurrent` (default 2), `skip_if_usage_above` (default 5h ≥ 80%, 7d ≥ 90%), `catchup_window`.
 

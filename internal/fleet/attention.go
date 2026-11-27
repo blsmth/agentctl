@@ -26,6 +26,8 @@ func AttentionLabel(reason string) string {
 		return "review verdict"
 	case windowstate.AttentionApproval:
 		return "missed approval"
+	case windowstate.AttentionTimeout:
+		return "timed out"
 	}
 	return "needs you"
 }

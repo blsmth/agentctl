@@ -31,3 +31,9 @@ func TestAttentionLine(t *testing.T) {
 		})
 	}
 }
+
+func TestAttentionLabelTimeout(t *testing.T) {
+	if got := AttentionLabel(windowstate.AttentionTimeout); got != "timed out" {
+		t.Errorf("AttentionLabel(timeout) = %q", got)
+	}
+}
