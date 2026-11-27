@@ -344,7 +344,7 @@ func (agents) Agents([]string) ([]serve.AgentInfo, error) {
 	return []serve.AgentInfo{
 		{Name: "go-engineer", Description: "Writes Go", Scope: "global"},
 		{Name: "lead", Description: "Orchestrates", Scope: "global", Orchestrator: true},
-		{Name: "reviewer", Description: "Reviews PRs", Scope: "project"},
+		{Name: "reviewer", Description: "Reviews PRs", Scope: "project", Project: "shop", ProjectDir: "/fixture/shop"},
 	}, nil
 }
 

@@ -591,24 +591,32 @@ func PrintAgentsTable(jsonOut bool) error {
 	accent := cliAccent()
 	blue := cliStyle(theme.Current().Blue)
 
+	cwd, _ := os.Getwd()
+	projAgents, restAgents := agent.SplitByProject(agts, cwd)
+	grouped := len(projAgents) > 0 // headings replace the SCOPE column
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-		hdr.Render("NAME"),
-		hdr.Render("MODEL"),
-		hdr.Render("SCOPE"),
-		hdr.Render("TOKENS"),
-		hdr.Render("DESCRIPTION"),
-	)
-	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-		muted.Render(strings.Repeat("─", 20)),
-		muted.Render(strings.Repeat("─", 10)),
-		muted.Render(strings.Repeat("─", 8)),
-		muted.Render(strings.Repeat("─", 6)),
-		muted.Render(strings.Repeat("─", 30)),
-	)
-	for _, a := range agts {
-		tok := resolveAgentTokens(a)
-		tokStr := "-"
+	cols := []string{"NAME", "MODEL", "SCOPE", "TOKENS", "DESCRIPTION"}
+	rules := []int{20, 10, 8, 6, 30}
+	if grouped {
+		cols = []string{"NAME", "MODEL", "TOKENS", "DESCRIPTION"}
+		rules = []int{22, 10, 6, 30}
+	}
+	cells := func(c ...string) { fmt.Fprintln(w, strings.Join(c, "\t")) }
+	var head, rule []string
+	for i, c := range cols {
+		head = append(head, hdr.Render(c))
+		rule = append(rule, muted.Render(strings.Repeat("─", rules[i])))
+	}
+	cells(head...)
+	cells(rule...)
+
+	indent := ""
+	if grouped {
+		indent = "  "
+	}
+	row := func(name, model, scope string, tok int, desc string) {
+		tokStr := ""
 		if tok > 0 {
 			if tok >= 1000 {
 				tokStr = fmt.Sprintf("%dk", tok/1000)
@@ -616,25 +624,39 @@ func PrintAgentsTable(jsonOut bool) error {
 				tokStr = fmt.Sprintf("%d", tok)
 			}
 		}
-		model := a.Model
-		if model == "" {
-			model = "-"
-		}
-		desc := a.Description
 		if len(desc) > 50 {
 			desc = desc[:49] + "…"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			accent.Render(a.Name),
-			muted.Render(model),
-			blue.Render(a.Scope.String()),
-			muted.Render(tokStr),
-			desc,
-		)
+		if grouped {
+			cells(indent+accent.Render(name), muted.Render(model), muted.Render(tokStr), desc)
+			return
+		}
+		cells(accent.Render(name), muted.Render(model), blue.Render(scope), muted.Render(tokStr), desc)
+	}
+	// heading prints a blank line, then the heading, in every column so the
+	// widths stay shared across sections.
+	heading := func(label string) {
+		cells(make([]string, len(cols))...)
+		c := make([]string, len(cols))
+		c[0] = hdr.Render(label)
+		cells(c...)
+	}
+	agentRow := func(a agent.Agent) { row(a.Name, a.Model, a.Scope.String(), resolveAgentTokens(a), a.Description) }
+	if grouped {
+		heading(agent.ProjectLabel(cwd))
+		for _, a := range projAgents {
+			agentRow(a)
+		}
+		heading("global")
+	}
+	for _, a := range restAgents {
+		agentRow(a)
+	}
+	if grouped && len(builtins) > 0 {
+		heading("built-in")
 	}
 	for _, n := range builtins {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			accent.Render(n), muted.Render("-"), blue.Render(builtinScope), muted.Render("-"), "")
+		row(n, "", builtinScope, 0, "")
 	}
 	return w.Flush()
 }

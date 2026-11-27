@@ -89,3 +89,23 @@ test("skip code review is offered for orchestrators only and is sent", async ({ 
   const actions = await control.waitForActions((a) => a.some((x) => x.kind === "dispatch"));
   expect(actions.find((x) => x.kind === "dispatch")!.skip_review).toBe(true);
 });
+
+test("agents list the chosen project's own first, then global", async ({ page }) => {
+  await openDispatch(page);
+  const project = page.locator("select[aria-label=Project]");
+  await project.selectOption("/fixture/shop");
+  const groups = page.locator("select[aria-label=Agent] optgroup");
+  await expect(groups).toHaveCount(2);
+  await expect(groups.nth(0)).toHaveAttribute("label", "shop");
+  await expect(groups.nth(0).locator("option")).toHaveText(["reviewer"]);
+  await expect(groups.nth(1)).toHaveAttribute("label", "global");
+  // Project agents lead the list but are never preselected.
+  const agent = page.locator("select[aria-label=Agent]");
+  await expect(agent).toHaveValue("go-engineer");
+  await agent.selectOption("reviewer");
+  await project.selectOption("/fixture/blog");
+  // Another project's agent is neither listed nor kept selected.
+  await expect(page.locator("select[aria-label=Agent] optgroup")).toHaveCount(0);
+  await expect(agent.locator("option[value=reviewer]")).toHaveCount(0);
+  await expect(agent).toHaveValue("go-engineer");
+});

@@ -41,6 +41,12 @@ func TestDiscoveredAgentsOrchestrator(t *testing.T) {
 			}
 			delete(want, a.Name)
 		}
+		if a.Name == "deputy" && (a.Scope != "project" || a.ProjectDir != proj || a.Project != filepath.Base(proj)) {
+			t.Errorf("deputy = %+v, want project scope with dir %s", a, proj)
+		}
+		if a.Name == "boss" && (a.ProjectDir != "" || a.Project != "") {
+			t.Errorf("global boss carries a project: %+v", a)
+		}
 	}
 	if len(want) != 0 {
 		t.Errorf("agents not listed: %v", want)

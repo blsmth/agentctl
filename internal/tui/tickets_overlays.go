@@ -133,6 +133,10 @@ type AgentSelectModel struct {
 	pendingTicketTitle string
 	pendingTicketBody  string
 	state              agentSelectState
+	// projectName heads the first nProject agents (the project's own);
+	// the rest sit under "global". Empty when the project defines none.
+	projectName string
+	nProject    int
 }
 
 // newAgentSelectModel creates an AgentSelectModel for the given ticket.
@@ -143,6 +147,24 @@ func newAgentSelectModel(agents []agent.Agent, ticketNum int, ticketTitle, ticke
 		pendingTicketTitle: ticketTitle,
 		pendingTicketBody:  ticketBody,
 	}
+}
+
+// groupedBy puts the agents defined in dir's .claude/agents first, sorted by
+// name and under the project's name; the rest follow under "global".
+// The cursor starts on defaultAgent when it is listed.
+func (m AgentSelectModel) groupedBy(dir, defaultAgent string) AgentSelectModel {
+	if proj, rest := agent.SplitByProject(m.agents, dir); len(proj) > 0 {
+		m.agents = append(append([]agent.Agent(nil), proj...), rest...)
+		m.projectName = agent.ProjectLabel(dir)
+		m.nProject = len(proj)
+	}
+	for i, a := range m.agents {
+		if defaultAgent != "" && a.Name == defaultAgent {
+			m.cursor = i
+			break
+		}
+	}
+	return m
 }
 
 func (m AgentSelectModel) Init() tea.Cmd { return nil }
@@ -199,6 +221,13 @@ func (m AgentSelectModel) View() tea.View {
 	for i := start; i < end; i++ {
 		a := m.agents[i]
 		selected := i == m.cursor
+		if m.projectName != "" && (i == 0 || i == m.nProject) {
+			label := m.projectName
+			if i == m.nProject {
+				label = "global"
+			}
+			b.WriteString(" " + sectionRule(label, cw-2) + "\n")
+		}
 
 		cur := "   "
 		if selected {

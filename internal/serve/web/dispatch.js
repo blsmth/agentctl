@@ -2,7 +2,7 @@
 import { ApiError, get, send, uploadImages } from "./api.js";
 import { imagePicker } from "./attach.js";
 import {
-  DISPATCH_UPLOAD_PATH, buildDispatchRequest, choiceLabel, confirmLines, defaultAgentFor, launchOptionsPath, modelPicker, templateFill, templateLabel, templatesPath, windowHash,
+  DISPATCH_UPLOAD_PATH, buildDispatchRequest, choiceLabel, confirmLines, agentGroups, defaultAgentFor, launchOptionsPath, modelPicker, templateFill, templateLabel, templatesPath, windowHash,
 } from "./logic.js";
 import { clear, confirmSheet, h, toast } from "./ui.js";
 
@@ -46,8 +46,8 @@ export function mountDispatch(root, ctx, { dir } = {}) {
     h(
       "form",
       { class: "form", onsubmit: (e) => e.preventDefault() },
-      h("label", {}, "Agent", agent),
       h("label", {}, "Project", project),
+      h("label", {}, "Agent", agent),
       withOptions ? launchBox : null,
       withTemplates ? templateRow : null,
       h("label", {}, "Prompt", prompt),
@@ -66,6 +66,22 @@ export function mountDispatch(root, ctx, { dir } = {}) {
   // projects is the loaded /v1/projects list; userPickedAgent stops a later
   // project change from overriding a hand-picked agent.
   let projects = [];
+  let allAgents = [];
+  // fillAgents lists the agents for the selected project: its own first, then
+  // global ones.
+  function fillAgents() {
+    const keep = agent.value;
+    // A pick survives a project change only when it is global or belongs to
+    // the new project; another project's agent is not listed at all.
+    clear(agent);
+    const opt = (x) => h("option", { value: x.name }, x.name);
+    for (const g of agentGroups(allAgents, project.value)) {
+      if (g.label) agent.append(h("optgroup", { label: g.label }, ...g.agents.map(opt)));
+      else for (const x of g.agents) agent.append(opt(x));
+    }
+    const names = [...agent.options].map((o) => o.value);
+    if (names.includes(keep)) agent.value = keep;
+  }
   let userPickedAgent = false;
   let autoApplied = ""; // the agent applyDefaultAgent last selected, "" if none
   function applyDefaultAgent() {
@@ -74,9 +90,12 @@ export function mountDispatch(root, ctx, { dir } = {}) {
     if (def) {
       agent.value = def;
       autoApplied = def;
-    } else if (autoApplied && !userPickedAgent && agent.value === autoApplied && names.length) {
-      // The previous project's default no longer applies: back to the first agent.
-      agent.value = names[0];
+    } else if (!userPickedAgent) {
+      // Project agents lead the list but are never auto-selected: fall back
+      // to the first global agent, as the flat list did.
+      const g = allAgents.find((x) => x.scope !== "project" && names.includes(x.name));
+      if (g) agent.value = g.name;
+      else if (names.length) agent.value = names[0];
       autoApplied = "";
     }
   }
@@ -86,6 +105,7 @@ export function mountDispatch(root, ctx, { dir } = {}) {
     loadOptions();
   });
   project.addEventListener("change", () => {
+    fillAgents();
     applyDefaultAgent();
     loadOptions();
     loadTemplates();
@@ -129,13 +149,12 @@ export function mountDispatch(root, ctx, { dir } = {}) {
 
   Promise.all([get("/v1/agents"), get("/v1/projects")])
     .then(([a, p]) => {
-      for (const x of a.agents ?? []) {
-        agent.append(h("option", { value: x.name }, x.name));
-        if (x.orchestrator) orchestrators.add(x.name);
-      }
+      allAgents = a.agents ?? [];
+      for (const x of allAgents) if (x.orchestrator) orchestrators.add(x.name);
       for (const x of p.projects ?? []) project.append(h("option", { value: x.dir }, x.name));
       projects = p.projects ?? [];
       if (dir && projects.some((x) => x.dir === dir)) project.value = dir;
+      fillAgents();
       applyDefaultAgent();
       syncSkipReview();
       submit.disabled = !ctx.hasFeature("write");

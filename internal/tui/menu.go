@@ -64,6 +64,19 @@ func (s MenuSection) Label() string {
 	}
 }
 
+// sectionLabel is the header text of s in this menu.
+func (m MenuModel) sectionLabel(s MenuSection) string {
+	if m.cfg.ProjectName != "" {
+		switch s {
+		case SectionProject:
+			return m.cfg.ProjectName
+		case SectionUser:
+			return "global"
+		}
+	}
+	return s.Label()
+}
+
 // MenuAgent represents an agent entry in the launch menu.
 type MenuAgent struct {
 	Name        string
@@ -88,8 +101,11 @@ type MenuSession struct {
 // MenuConfig is everything the menu needs from the outside world. The
 // functions are injected so the model does no I/O of its own.
 type MenuConfig struct {
-	Agents   []MenuAgent
-	Backends map[string]config.BackendConfig
+	Agents []MenuAgent
+	// ProjectName heads the SectionProject group (and turns SectionUser into
+	// "global"); empty keeps the generic "Project"/"User" labels.
+	ProjectName string
+	Backends    map[string]config.BackendConfig
 	// FetchOllama lists the live models of an Ollama backend (name from
 	// Backends). It is called from a tea.Cmd under a short timeout.
 	FetchOllama func(ctx context.Context, backend string) ([]string, error)
@@ -252,7 +268,13 @@ type MenuModel struct {
 // NewMenuModel builds the launch menu.
 func NewMenuModel(cfg MenuConfig) MenuModel {
 	agents := append([]MenuAgent(nil), cfg.Agents...)
-	sort.SliceStable(agents, func(i, j int) bool { return agents[i].Section < agents[j].Section })
+	sort.SliceStable(agents, func(i, j int) bool {
+		if agents[i].Section != agents[j].Section {
+			return agents[i].Section < agents[j].Section
+		}
+		// The project's own team reads as a roster: by name.
+		return agents[i].Section == SectionProject && agents[i].Name < agents[j].Name
+	})
 	cfg.Agents = agents
 
 	fi := textinput.New()

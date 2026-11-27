@@ -63,6 +63,10 @@ type Agent struct {
 	Scope       AgentScope
 	SymTarget   string // Raw symlink target path (if local)
 	ProjectName string // Extracted project name from symlink target
+	// ProjectDir is the absolute project root whose .claude/agents defined
+	// this agent, set by DiscoverAll for project-local agents ("" for globals
+	// and registry symlinks).
+	ProjectDir string
 	// Shadows is the FilePath of the global agent this project-local agent
 	// replaced in discovery (same name), or "" when it shadows nothing.
 	Shadows string
@@ -219,6 +223,7 @@ func DiscoverAll(cfg *config.Config, projectDirs []string) ([]Agent, error) {
 		projectName := filepath.Base(absDir)
 		for _, la := range localAgents {
 			la.ProjectName = projectName
+			la.ProjectDir = absDir
 			if idx, exists := byName[la.Name]; exists {
 				existing := agents[idx]
 				if existing.Scope == ScopeGlobal {

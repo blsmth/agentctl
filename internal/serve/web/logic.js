@@ -2107,6 +2107,26 @@ export function defaultAgentFor(projects, projectDir, agentNames, userPicked) {
   return def && (agentNames ?? []).includes(def) ? def : "";
 }
 
+/**
+ * agentGroups orders the /v1/agents list for the project at projectDir: that
+ * project's own agents first (labelled with its name, sorted by name), then
+ * the global ones ("global"). Agents of other projects are left out, since
+ * they do not resolve in this project. With none of the project's own agents
+ * it returns one unlabelled group of the globals. Empty groups are dropped.
+ */
+export function agentGroups(agents, projectDir) {
+  const list = agents ?? [];
+  const own = list.filter((a) => a.scope === "project" && projectDir && a.project_dir === projectDir);
+  const globals = list.filter((a) => a.scope !== "project");
+  if (own.length === 0) return globals.length ? [{ label: "", agents: globals }] : [];
+  const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  const groups = [
+    { label: own[0].project || "project", agents: [...own].sort(byName) },
+    { label: "global", agents: globals },
+  ];
+  return groups.filter((g) => g.agents.length > 0);
+}
+
 /** formatBytes renders a byte count as "1.5 GB". */
 export function formatBytes(n) {
   if (!Number.isFinite(n) || n < 0) return "";

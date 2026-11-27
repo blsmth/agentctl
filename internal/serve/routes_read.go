@@ -44,6 +44,10 @@ type AgentInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Scope       string `json:"scope"` // "global" | "project"
+	// Project and ProjectDir name the project whose .claude/agents defines a
+	// project-scoped agent (base name and absolute dir); empty for globals.
+	Project    string `json:"project,omitempty"`
+	ProjectDir string `json:"project_dir,omitempty"`
 	// Orchestrator is true when the resolved role is orchestrator.
 	Orchestrator bool `json:"orchestrator,omitempty"`
 }
@@ -70,14 +74,17 @@ func (discoveredAgents) Agents(projectDirs []string) ([]AgentInfo, error) {
 	}
 	out := make([]AgentInfo, 0, len(found))
 	for _, a := range found {
-		scope := "global"
+		scope, project, projectDir := "global", "", ""
 		switch a.Scope {
 		case agent.ScopeTemplate:
 			continue // not installed, cannot be dispatched
 		case agent.ScopeLocal:
 			scope = "project"
+			if a.ProjectDir != "" {
+				project, projectDir = agent.ProjectLabel(a.ProjectDir), a.ProjectDir
+			}
 		}
-		out = append(out, AgentInfo{Name: a.Name, Description: a.Description, Scope: scope, Orchestrator: a.Role == agent.RoleOrchestrator})
+		out = append(out, AgentInfo{Name: a.Name, Description: a.Description, Scope: scope, Project: project, ProjectDir: projectDir, Orchestrator: a.Role == agent.RoleOrchestrator})
 	}
 	return out, nil
 }
