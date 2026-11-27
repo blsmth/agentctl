@@ -3,6 +3,8 @@ package tui
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -13,18 +15,21 @@ import (
 	"github.com/blsmth/agentctl/internal/transcript"
 )
 
-// The status pane's activity sparkline: tool calls per minute over the last
-// hubActivityMinutes minutes of the selected session, drawn on the title row
+// The status pane's activity sparkline: tool calls over the last 30 minutes of
+// the selected session, hubActivityBucket per cell, drawn on the title row
 // left of the project. It is computed in the status pane process, not the
 // hub: the hub's tick is shared by every row and must stay a cheap join, while
 // the pane only ever looks at one session and already runs on its own clock.
 // The transcript tail is read in a tea.Cmd at most every hubActivityRefresh
-// per session; the minute buckets are laid out at render time from the cached
-// call times, so the bars shift on the minute without a re-read.
+// per session; the buckets are laid out at render time from the cached
+// call times, so the bars shift every two minutes without a re-read.
 
 const (
-	// hubActivityMinutes is the window, one sparkline cell per minute.
-	hubActivityMinutes = 30
+	// hubActivityCells is the sparkline's width; each cell counts the calls
+	// in hubActivityBucket, so the cells span hubActivityWindow.
+	hubActivityCells  = 15
+	hubActivityBucket = 2 * time.Minute
+	hubActivityWindow = hubActivityCells * hubActivityBucket
 	// hubActivityRefresh is how long a session's tool-call times are reused
 	// before the transcript tail is read again.
 	hubActivityRefresh = 10 * time.Second
@@ -34,14 +39,11 @@ const (
 	hubActivityTailBytes = 2 << 20
 	// hubActivityLabel follows the bars, dim.
 	hubActivityLabel = "30m"
-	// hubActivityMinTitle is the narrowest the title may be squeezed to make
-	// room for the sparkline; below it the sparkline is dropped instead.
-	hubActivityMinTitle = 20
 )
 
-// hubSparkLevels are the bar glyphs, lowest first. A minute with no tool call
+// hubSparkLevels are the bar glyphs, lowest first. A cell with no tool call
 // is the lowest bar, dim; any call draws at least the second level, so an
-// idle minute and a quiet one are told apart.
+// idle cell and a quiet one are told apart.
 var hubSparkLevels = []rune("▁▂▃▄▅▆▇█")
 
 // hubActivityEntry is one session's cached tool-call times.
@@ -101,7 +103,7 @@ func (c *hubActivityCache) refresh(st *hubStatus, now time.Time) tea.Cmd {
 	e.inflight = true
 	path := st.LogPath
 	return func() tea.Msg {
-		return hubActivityMsg{key: key, at: now, calls: readToolCallTimes(path, now.Add(-hubActivityMinutes*time.Minute))}
+		return hubActivityMsg{key: key, at: now, calls: readToolCallTimes(path, now.Add(-hubActivityWindow))}
 	}
 }
 
@@ -182,8 +184,18 @@ func recordTime(v any) time.Time {
 	return time.Time{}
 }
 
-// readTail returns at most n bytes from the end of the file at path.
+// errNotRegular rejects a transcript path that is not a regular file.
+var errNotRegular = errors.New("not a regular file")
+
+// readTail returns at most n bytes from the end of the regular file at path.
+// The path comes from the selection file, so it is checked before the open:
+// opening a FIFO would block the read (and its cache entry) forever.
 func readTail(path string, n int64) ([]byte, error) {
+	if fi, err := os.Stat(path); err != nil {
+		return nil, err
+	} else if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s: %w", path, errNotRegular)
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -192,6 +204,9 @@ func readTail(path string, n int64) ([]byte, error) {
 	fi, err := f.Stat()
 	if err != nil {
 		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s: %w", path, errNotRegular)
 	}
 	off := fi.Size() - n
 	if off < 0 {
@@ -204,22 +219,23 @@ func readTail(path string, n int64) ([]byte, error) {
 	return buf, nil
 }
 
-// activityBuckets counts calls per minute over the hubActivityMinutes minutes
-// ending with now's minute, oldest first. A call belongs to the wall-clock
-// minute it falls in; calls older than the window are dropped and calls after
-// now (clock skew) count in the current minute.
+// activityBuckets counts calls per hubActivityBucket over the
+// hubActivityCells buckets ending with the one now falls in, oldest first.
+// Buckets are aligned to even wall-clock minutes (time.Truncate), so a call
+// belongs to the two-minute slot it falls in; calls older than the window are
+// dropped and calls after now (clock skew) count in the current bucket.
 func activityBuckets(calls []time.Time, now time.Time) []int {
-	b := make([]int, hubActivityMinutes)
-	cur := now.Truncate(time.Minute)
+	b := make([]int, hubActivityCells)
+	cur := now.Truncate(hubActivityBucket)
 	for _, t := range calls {
-		age := int(cur.Sub(t.Truncate(time.Minute)) / time.Minute)
+		age := int(cur.Sub(t.Truncate(hubActivityBucket)) / hubActivityBucket)
 		if age < 0 {
 			age = 0
 		}
-		if age >= hubActivityMinutes {
+		if age >= hubActivityCells {
 			continue
 		}
-		b[hubActivityMinutes-1-age]++
+		b[hubActivityCells-1-age]++
 	}
 	return b
 }
@@ -241,7 +257,7 @@ func renderSparkline(buckets []int) (string, int) {
 			sb.WriteString(fleetDimStyle.Render(string(hubSparkLevels[0])))
 			continue
 		}
-		lvl := (c*top + peak - 1) / peak // 1..top, the peak minute at top
+		lvl := (c*top + peak - 1) / peak // 1..top, the peak cell at top
 		sb.WriteString(fleetWorkingStyle.Render(string(hubSparkLevels[min(lvl, top)])))
 	}
 	sb.WriteString(" " + fleetDimStyle.Render(hubActivityLabel))

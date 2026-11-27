@@ -18,7 +18,7 @@ import (
 // shows, behind a one-column gutter bar in the state colour: the title line
 // (the state as a reverse-video pill with its age, the title in bold, the
 // project right-aligned, and left of it a 30-minute tool-call sparkline when
-// there is room; see hubstatus_activity.go), the main line (a "needs you ▸ <tool>  <detail>" line
+// the whole title still fits; see hubstatus_activity.go), the main line (a "needs you ▸ <tool>  <detail>" line
 // for a blocked row with a pending tool or a specific attention reason, then
 // the recap wrapped over the free rows, or "Waiting on you since ..." when an
 // idle row has none), and a facts line (ticket, PR, parent, cron job,
@@ -356,9 +356,10 @@ func hubStatusTitleAt(st *hubStatus, w int, now time.Time) (string, bool) {
 			break
 		}
 	}
-	// The sparkline only takes room the title can spare; it is dropped before
-	// any other part of the line gives way (hubstatus_activity.go).
-	if need := min(hubActivityMinTitle, lipgloss.Width(st.Title)); sparkW == 0 || chosen != 0 || room-sparkW-2 < need {
+	// The sparkline only takes room the title can spare, never cutting it; it
+	// is dropped before any other part of the line gives way
+	// (hubstatus_activity.go).
+	if sparkW == 0 || chosen != 0 || room-sparkW-2 < lipgloss.Width(st.Title) {
 		spark, sparkW = "", 0
 	} else {
 		room -= sparkW + 2

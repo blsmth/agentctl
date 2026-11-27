@@ -108,12 +108,17 @@ type ghCombinedStatus struct {
 }
 
 // checkRunsResult maps check runs to a result: any failed run fails, else any
-// unfinished run is pending, else passed; no runs is unknown.
+// unfinished run is pending, else passed; no runs is unknown. Only the first
+// page (100 runs) is read: with more runs than that, an all-green first page
+// is pending rather than passed, since a failure may be on a later page.
 func checkRunsResult(cr ghCheckRuns) ciResult {
 	if len(cr.CheckRuns) == 0 {
 		return ciUnknown
 	}
 	res := ciPassed
+	if cr.TotalCount > len(cr.CheckRuns) {
+		res = ciPending
+	}
 	for _, r := range cr.CheckRuns {
 		if r.Status != "completed" {
 			res = ciPending

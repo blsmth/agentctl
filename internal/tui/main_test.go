@@ -31,6 +31,8 @@ func TestMain(m *testing.M) {
 	hubViewPath = func() (string, error) { return "", errors.New("hub view state disabled in tests") }
 	groupOrderPath = func() (string, error) { return "", errors.New("group order disabled in tests") }
 	_ = os.Unsetenv(HubViewEnv)
+	// Never exec gh (the status pane's CI chip); stubGH replaces this.
+	ghAPI = func(context.Context, ...string) ([]byte, error) { return nil, errors.New("gh disabled in tests") }
 	// Never probe or toggle the real agentctl serve; tests that need either
 	// replace these.
 	fleetServeProbe = func() servectl.State { return servectl.StateOff }

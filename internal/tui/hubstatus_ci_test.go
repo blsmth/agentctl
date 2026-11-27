@@ -238,3 +238,14 @@ func drainBatch(cmd tea.Cmd) []tea.Msg {
 	}
 	return out
 }
+
+func TestCheckRunsResultMorePages(t *testing.T) {
+	cr := ghCheckRuns{TotalCount: 150}
+	cr.CheckRuns = append(cr.CheckRuns, struct {
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+	}{"completed", "success"})
+	if got := checkRunsResult(cr); got != ciPending {
+		t.Errorf("green first page of more = %v, want pending", got)
+	}
+}

@@ -319,12 +319,12 @@ one-column `▌` gutter bar in the state colour:
    right-aligned and dim. The age is dim, and from one hour on in any state
    but working it turns the attention colour. A narrow pane drops the project,
    then the state word (the pill shrinks to the glyph), then the age.
-   Left of the project, an activity sparkline: tool calls per minute over the
-   last 30 minutes (`▁▂▃▄▅▆▇█`, one cell per minute, oldest left; a minute
+   Left of the project, an activity sparkline: tool calls over the last 30
+   minutes (`▁▂▃▄▅▆▇█`, 15 cells of two minutes each, oldest left; a cell
    with no call is a dim `▁`) and a dim `30m`. It is absent with no tool call
-   in the window or no transcript, and is dropped before anything else on the
-   line, whenever showing it would cut the title below 20 cells (or below the
-   title's own width when that is shorter). See "Live signals" below.
+   in the window or no transcript, never cuts the title, and is dropped
+   before anything else on the line: it shows only when the whole title still
+   fits beside it. See "Live signals" below.
 2. Only for a blocked row with a pending tool (`Row.PendingTool`, set only
    while blocked) or a specific attention reason: bold
    `needs you ▸ <tool>  <detail>`, one line, the detail flattened,
