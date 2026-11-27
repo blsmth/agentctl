@@ -313,12 +313,8 @@ published for one release.
 
 Layout (exactly the pane's rows, `hubStatusLines`), every row behind a
 one-column `▌` gutter bar in the state colour:
-1. Title: the state as a reverse-video pill (`● WORKING`, `⏸ BLOCKED`,
-   `✓ DONE`, `✓ YOUR TURN` for a bare window at a turn end, `○ IDLE`) with
-   its age from `StateSince` right after it, the title in bold, the project
-   right-aligned and dim. The age is dim, and from one hour on in any state
-   but working it turns the attention colour. A narrow pane drops the project,
-   then the state word (the pill shrinks to the glyph), then the age.
+1. Title: the title in bold, the project right-aligned and dim. A one-row
+   pane puts the state pill on this row too (see "State pill" below).
    Left of the project, an activity sparkline: tool calls over the last 30
    minutes (`▁▂▃▄▅▆▇█`, 15 cells of two minutes each, oldest left; a cell
    with no call is a dim `▁`) and a dim `30m`. It is absent with no tool call
@@ -350,6 +346,20 @@ one-column `▌` gutter bar in the state colour:
    pane is drawn on a tint halfway between the theme's base and surface colours
    (none when the theme has no distinct surface), with secondary text picked to
    reach a 4.5 contrast ratio on it; the project is dropped before the title is cut, every row padded to the full width.
+   **State pill:** the state as a reverse-video pill (`● WORKING`, `⏸ BLOCKED`,
+   `✓ DONE`, `✓ YOUR TURN` for a bare window at a turn end, `○ IDLE`) with its
+   age from `StateSince` right after it, flush right on the pane's last row
+   (one column in from the edge), not on the title row. The pane height is
+   fixed and content packs upward, so with blank rows the pill sits alone on
+   the last row; when the content reaches it the pill shares the row and the
+   row's text gives way: facts drop whole segments, the needs-you line and the
+   recap are truncated, with at least 2 cells before the pill. The pill always
+   wins and is never dropped; on a narrow pane it sheds the state word, then
+   the age. Click spans follow what is drawn after the drop. In a one-row pane
+   the title shares the row and is truncated first; in a two-row pane the
+   needs-you line shares row 2 and is truncated before the pill, never
+   dropped. The age is dim, and from one hour on in any state but working it
+   turns the attention colour.
    An untitled row (title = the recap's first sentence, published as
    `title_from_recap`) leaves that sentence out of the recap body, so it is
    not printed twice. While it is open the list draws no inline

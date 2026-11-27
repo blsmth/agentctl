@@ -19,16 +19,19 @@ import (
 // HubStatusModel is `agentctl hub-status`, the hub's status pane above the
 // live viewer (see fleet_status.go): it follows the hub selection file and
 // shows, behind a one-column gutter bar in the state colour: the title line
-// (the state as a reverse-video pill with its age, the title in bold, the
-// project right-aligned, and left of it a 30-minute tool-call sparkline when
-// the whole title still fits; see hubstatus_activity.go), the main line (a "needs you ▸ <tool>  <detail>" line
+// (the title in bold, the project right-aligned, and left of it a 30-minute
+// tool-call sparkline when the whole title still fits; see
+// hubstatus_activity.go), the main line (a "needs you ▸ <tool>  <detail>" line
 // for a blocked row with a pending tool or a specific attention reason, then
 // the recap wrapped over the free rows, or "Waiting on you since ..." when an
 // idle row has none), and a facts line (ticket, PR, parent, cron job,
 // sub-agent dots, agent name and backend/account when they add information;
 // the PR carries a CI chip (hubstatus_ci.go) and its latest review verdict).
-// The PR and ticket facts are click targets that open in the browser, and the
-// whole pane is drawn on the theme's surface colour when it has one.
+// The PR and ticket facts are click targets that open in the browser. The
+// state, as a reverse-video pill with its age, sits at the right end of the
+// pane's last row (in a one-row pane, beside the title): when the content
+// reaches that row it shares it and gives way (facts drop whole segments, the
+// needs-you line and recap are truncated; the pill never is). The whole pane is drawn on the theme's surface colour when it has one.
 // Rows are kept in that priority when the pane is short, and the content packs
 // upward. Model, context, cost, branch and account usage are in the viewer's
 // statusline and never shown here, nor is the last command. It takes no input:
@@ -74,12 +77,12 @@ func NewHubStatusModel() HubStatusModel {
 		focusViewer: tmux.FocusViewerPane,
 
 		lookupVerdict: latestVerdict,
-		width:       80,
-		height:      fleetStatusRows,
-		reload:      newReloader("hub-status", "hub-status"),
-		activity:    newHubActivityCache(),
-		ci:          newHubCICache(),
-		now:         time.Now,
+		width:         80,
+		height:        fleetStatusRows,
+		reload:        newReloader("hub-status", "hub-status"),
+		activity:      newHubActivityCache(),
+		ci:            newHubCICache(),
+		now:           time.Now,
 	}
 }
 
@@ -341,44 +344,133 @@ func hubStatusLines(st *hubStatus, w, h int, now time.Time) []string {
 	return lines
 }
 
+// hubStatusRow is one body row (under the title): its text without the gutter
+// and a renderer that re-fits it to a narrower width, for when it shares the
+// pane's bottom row with the state pill.
+type hubStatusRow struct {
+	text  string
+	spans []footSpan
+	fit   func(w int) (string, []footSpan)
+}
+
+// hubStatusPillGap is the least gap between the bottom row's text and the pill.
+const hubStatusPillGap = 2
+
 // hubStatusLayout is hubStatusLines plus the clickable spans of the facts line.
+// The state pill sits at the right end of the pane's last row; when the content
+// reaches that row it shares it, and the row's text is cut to leave the pill
+// and a gap (facts drop whole segments, the needs-you line is truncated).
 func hubStatusLayout(st *hubStatus, w, h int, now time.Time) ([]string, []hubLinkSpan) {
 	if st.Version < hubStatusVersion {
 		return hubStatusLinesLegacy(st, w, h), nil
 	}
 	tw := w - hubStatusIndent - 1 // one column of right margin
 	gutter := hubStatusGutter(st)
+	pill, pillW := hubStatusPill(st, tw, now)
+	if h == 1 {
+		// Title and pill share the row; the title gives way first.
+		if tw <= 0 {
+			line, _ := hubStatusTitleAt(st, w, now)
+			return []string{line}, nil
+		}
+		line, _ := hubStatusTitleAt(st, w-pillW-hubStatusPillGap, now)
+		return []string{hubStatusPillRow(line, pill, pillW, w)}, nil
+	}
 	titleLine, titleCut := hubStatusTitleAt(st, w, now)
 	lines := []string{titleLine}
-	free := h - 1
-	if tw <= 0 || free <= 0 {
+	if tw <= 0 {
 		return lines, nil
 	}
+	var rows []hubStatusRow
+	free := h - 1
 	if needs := hubStatusNeeds(st, tw); needs != "" {
-		lines = append(lines, gutter+needs)
+		rows = append(rows, hubStatusRow{text: needs, fit: func(w int) (string, []footSpan) { return hubStatusNeeds(st, w), nil }})
 		free--
 	}
 	text, style := hubStatusBody(st, titleCut, now)
-	facts := ""
-	var factSpans []footSpan
+	var facts hubStatusRow
 	if free >= 1 {
 		if f, sp := hubStatusFooterSpans(st, tw, now); f != "" && (free >= 2 || text == "") {
-			facts, factSpans = f, sp
+			facts = hubStatusRow{text: f, spans: sp, fit: func(w int) (string, []footSpan) { return hubStatusFooterSpans(st, w, now) }}
 			free--
 		}
 	}
 	for _, l := range wrapLines(text, min(tw, hubStatusRecapMeasure), free) {
-		lines = append(lines, gutter+style.Render(l))
+		rows = append(rows, hubStatusRow{text: style.Render(l), fit: func(w int) (string, []footSpan) {
+			return style.Render(truncateToWidth(l, w)), nil
+		}})
+	}
+	if facts.fit != nil {
+		rows = append(rows, facts)
+	}
+	narrow := max(tw-pillW-hubStatusPillGap, 1)
+	if len(rows) == h-1 {
+		// The content reaches the bottom row: refit its last row beside the pill.
+		last := &rows[len(rows)-1]
+		last.text, last.spans = last.fit(narrow)
 	}
 	var spans []hubLinkSpan
-	if facts != "" {
-		y := len(lines)
-		for _, sp := range factSpans {
-			spans = append(spans, hubLinkSpan{y: y, x0: hubStatusIndent + sp.x0, x1: hubStatusIndent + sp.x1, url: sp.url})
+	for i, r := range rows {
+		for _, sp := range r.spans {
+			spans = append(spans, hubLinkSpan{y: i + 1, x0: hubStatusIndent + sp.x0, x1: hubStatusIndent + sp.x1, url: sp.url})
 		}
-		lines = append(lines, gutter+facts)
+		lines = append(lines, gutter+r.text)
 	}
-	return lines, spans
+	if len(rows) == h-1 {
+		lines[h-1] = hubStatusPillRow(lines[h-1], pill, pillW, w)
+		return lines, spans
+	}
+	for len(lines) < h-1 {
+		lines = append(lines, "")
+	}
+	return append(lines, hubStatusPillRow(gutter, pill, pillW, w)), spans
+}
+
+// hubStatusPillRow right-aligns pill (pillW columns) on line, one column from
+// the pane's right edge.
+func hubStatusPillRow(line, pill string, pillW, w int) string {
+	if pillW == 0 {
+		return line
+	}
+	room := w - 1 - pillW
+	line = ansi.Truncate(line, max(room-hubStatusPillGap, 0), "")
+	return line + strings.Repeat(" ", max(room-lipgloss.Width(line), 0)) + pill
+}
+
+// hubStatusPill is the state as a reverse-video pill (glyph and state word, in
+// the state colour) with its age after it, and its width. It starts as wide as
+// possible and shrinks (drops the state word, then the age) until the row's text
+// keeps some room beside it in tw columns; the pill itself is never dropped. A
+// row with no state gets its glyph alone.
+func hubStatusPill(st *hubStatus, tw int, now time.Time) (string, int) {
+	gs := hubStatusGlyphStyle(st.Glyph)
+	if st.State == "" {
+		return gs.Render(st.Glyph), lipgloss.Width(st.Glyph)
+	}
+	age := ""
+	if !st.StateSince.IsZero() {
+		age = fleet.CompactAge(now.Sub(st.StateSince))
+	}
+	ageStyle := hubStatusAgeStyle(st, now)
+	type variant struct{ word, age bool }
+	var out string
+	var outW int
+	for _, v := range []variant{{true, true}, {false, true}, {false, false}} {
+		body := " " + st.Glyph + " "
+		if v.word {
+			body = " " + st.Glyph + " " + strings.ToUpper(st.State) + " "
+		}
+		out = gs.Bold(true).Reverse(true).Render(body)
+		outW = lipgloss.Width(body)
+		if v.age && age != "" {
+			out += ageStyle.Render(age)
+			outW += lipgloss.Width(age)
+		}
+		if tw-outW-hubStatusPillGap >= fleetMinRecapWidth {
+			break
+		}
+	}
+	return out, outW
 }
 
 // hubStatusGutter is the one-column bar in the row's state colour, and the
@@ -423,7 +515,7 @@ func hubStatusSinceText(since, now time.Time) string {
 		y, m, d := t.Date()
 		return time.Date(y, m, d, 12, 0, 0, 0, t.Location())
 	}
-	switch days := int(day(now).Sub(day(since)).Round(24 * time.Hour).Hours() / 24); {
+	switch days := int(day(now).Sub(day(since)).Round(24*time.Hour).Hours() / 24); {
 	case days <= 0:
 		return since.Format("15:04")
 	case days == 1:
@@ -482,71 +574,35 @@ func flattenInline(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// hubStatusTitleAt renders the title line: the gutter bar, the state pill
-// (glyph and state word in reverse video, in the state colour) with its age
-// after it, then the role and the title in bold, and the project right-aligned
-// and dim. A narrow pane drops the project first, then the state word (the
-// pill shrinks to the glyph), then the age. The bool reports that the title
-// had to be cut to fit.
+// hubStatusTitleAt renders the title line: the gutter bar, the role and the
+// title in bold, and the project right-aligned and dim, with the activity
+// sparkline left of it. The state pill is not on this line (it is at the
+// pane's bottom right, hubStatusPill). A narrow pane drops the sparkline, then
+// the project. The bool reports that the title had to be cut to fit.
 func hubStatusTitleAt(st *hubStatus, w int, now time.Time) (string, bool) {
-	gs := hubStatusGlyphStyle(st.Glyph)
-	age := ""
-	if !st.StateSince.IsZero() && st.State != "" {
-		age = fleet.CompactAge(now.Sub(st.StateSince))
+	var sb strings.Builder
+	sb.WriteString(hubStatusGutter(st))
+	if st.Role != "" {
+		sb.WriteString(hubStatusDim.Render(st.Role) + " ")
 	}
-	ageStyle := hubStatusAgeStyle(st, now)
-	type variant struct{ word, project, age bool }
-	build := func(v variant) (string, int) {
-		var sb strings.Builder
-		sb.WriteString(hubStatusGutter(st))
-		if st.State != "" {
-			pill := " " + st.Glyph + " "
-			if v.word {
-				pill = " " + st.Glyph + " " + strings.ToUpper(st.State) + " "
-			}
-			sb.WriteString(gs.Bold(true).Reverse(true).Render(pill))
-			if v.age && age != "" {
-				sb.WriteString(ageStyle.Render(age))
-			}
-			sb.WriteString("  ")
-		} else {
-			sb.WriteString(gs.Render(st.Glyph) + " ")
-		}
-		if st.Role != "" {
-			sb.WriteString(hubStatusDim.Render(st.Role) + " ")
-		}
-		s := sb.String()
-		return s, lipgloss.Width(s)
-	}
-	variants := []variant{{true, true, true}, {true, false, true}, {false, false, true}, {false, false, false}}
+	left := sb.String()
+	leftW := lipgloss.Width(left)
 	spark, sparkW := hubStatusSpark(st, now)
-	var left string
-	var leftW int
 	project, projectW := "", 0
-	room, chosen := 0, 0
-	for i, v := range variants {
-		chosen = i
-		left, leftW = build(v)
-		project, projectW = "", 0
-		room = w - leftW - 1
-		if v.project && st.Project != "" {
-			project, projectW = hubStatusDim.Render(st.Project), lipgloss.Width(st.Project)
-			room -= projectW + 2
-		}
+	room := w - leftW - 1
+	if st.Project != "" {
 		// The title wins: the project is shown only when the whole title
 		// still fits beside it.
-		need := fleetMinRecapWidth
-		if projectW > 0 {
-			need = max(need, lipgloss.Width(st.Title))
-		}
-		if i == len(variants)-1 || room >= need {
-			break
+		need := max(fleetMinRecapWidth, lipgloss.Width(st.Title))
+		if r := room - lipgloss.Width(st.Project) - 2; r >= need {
+			project, projectW = hubStatusDim.Render(st.Project), lipgloss.Width(st.Project)
+			room = r
 		}
 	}
 	// The sparkline only takes room the title can spare, never cutting it; it
 	// is dropped before any other part of the line gives way
 	// (hubstatus_activity.go).
-	if sparkW == 0 || chosen != 0 || room-sparkW-2 < lipgloss.Width(st.Title) {
+	if sparkW == 0 || projectW == 0 && st.Project != "" || room-sparkW-2 < lipgloss.Width(st.Title) {
 		spark, sparkW = "", 0
 	} else {
 		room -= sparkW + 2

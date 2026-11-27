@@ -1,5 +1,6 @@
 title: Token-bucket rate limiter for POST /v1/orders
 recap: "Added a token-bucket limiter package and wired it into POST /v1/orders; the burst test is running."
+pr: 151
 entries:
   - user: "Issue #142: add a token-bucket rate limiter to POST /v1/orders (100 req/min per API key, burst 20). Return 429 with Retry-After."
   - say: "I'll start by looking at how middleware is wired into the router, then add the limiter as its own package."
