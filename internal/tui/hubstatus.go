@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/theme"
 	"github.com/blsmth/agentctl/internal/tmux"
 )
 
@@ -21,22 +22,34 @@ import (
 // for a blocked row with a pending tool or a specific attention reason, then
 // the recap wrapped over the free rows, or "Waiting on you since ..." when an
 // idle row has none), and a facts line (ticket, PR, parent, cron job,
-// sub-agents, agent name and backend/account when they add information).
+// sub-agent dots, agent name and backend/account when they add information;
+// the PR carries its latest review verdict). The PR and ticket facts are click
+// targets that open in the browser, and the whole pane is drawn on the theme's
+// surface colour when it has one.
 // Rows are kept in that priority when the pane is short, and the content packs
 // upward. Model, context, cost, branch and account usage are in the viewer's
 // statusline and never shown here, nor is the last command. It takes no input:
-// focus, a key or a click hands focus to the viewer below, which is where
+// focus, a key or a click elsewhere hands focus to the viewer below, which is where
 // typing belongs. A status block from an older hub (no Version) is laid out
 // the old way, with its chips.
 type HubStatusModel struct {
 	read        func() (HubSelection, error)
 	focusViewer func() error
+	// lookupVerdict is the PR's latest review verdict ("" for none).
+	lookupVerdict func(pr int, repo string) string
 
 	sel     HubSelection
 	readErr bool
 
 	width, height int
 	reload        *reloader
+}
+
+// hubLinkSpan is a clickable stretch of the pane: columns [x0, x1) of line y
+// open url.
+type hubLinkSpan struct {
+	y, x0, x1 int
+	url       string
 }
 
 // hubStatusTickInterval is how often the status pane re-reads the selection
@@ -52,6 +65,8 @@ func NewHubStatusModel() HubStatusModel {
 	return HubStatusModel{
 		read:        readPublishedHubSelection,
 		focusViewer: tmux.FocusViewerPane,
+
+		lookupVerdict: latestVerdict,
 		width:       80,
 		height:      fleetStatusRows,
 		reload:      newReloader("hub-status", "hub-status"),
@@ -86,13 +101,38 @@ func (m HubStatusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		refreshThemeIfChanged()
 		m.poll()
 		return m, hubStatusTick()
-	case tea.KeyPressMsg, tea.MouseClickMsg, tea.FocusMsg:
-		if m.focusViewer != nil {
-			focus := m.focusViewer
-			return m, func() tea.Msg { _ = focus(); return nil }
+	case tea.MouseClickMsg:
+		if url := m.linkAt(msg.X, msg.Y, msg.Button); url != "" {
+			return m, func() tea.Msg { _ = openURL(url); return nil }
 		}
+		return m.handToViewer()
+	case tea.KeyPressMsg, tea.FocusMsg:
+		return m.handToViewer()
 	}
 	return m, nil
+}
+
+// handToViewer moves focus to the viewer pane below.
+func (m HubStatusModel) handToViewer() (tea.Model, tea.Cmd) {
+	if m.focusViewer == nil {
+		return m, nil
+	}
+	focus := m.focusViewer
+	return m, func() tea.Msg { _ = focus(); return nil }
+}
+
+// linkAt is the URL of the link a left click at (x, y) lands on, or "".
+func (m HubStatusModel) linkAt(x, y int, b tea.MouseButton) string {
+	if b != tea.MouseLeft {
+		return ""
+	}
+	_, spans := renderHubStatusLayout(m.sel, m.readErr, m.width, m.height, time.Now())
+	for _, sp := range spans {
+		if y == sp.y && x >= sp.x0 && x < sp.x1 {
+			return sp.url
+		}
+	}
+	return ""
 }
 
 // poll re-reads the selection; an unreadable file shows the placeholder.
@@ -101,6 +141,9 @@ func (m *HubStatusModel) poll() {
 	m.readErr = err != nil
 	if err != nil || !sel.valid() {
 		sel = HubSelection{}
+	}
+	if st := sel.Status; st != nil && st.PRNumber > 0 && m.lookupVerdict != nil {
+		st.Verdict = m.lookupVerdict(st.PRNumber, prURLRepoSlug(st.PRURL))
 	}
 	m.sel = sel
 }
@@ -124,27 +167,85 @@ const hubStatusRecapMeasure = 120
 
 // renderHubStatus lays sel's status out in exactly h lines of at most w
 // columns (see hubStatusLines); now ages the state and session length. With
-// no agent selected it is one muted placeholder line.
+// no agent selected it is one muted placeholder line. Every line is padded to
+// w columns and, when the theme has a surface colour, drawn on it.
 func renderHubStatus(sel HubSelection, readErr bool, w, h int, now time.Time) string {
+	out, _ := renderHubStatusLayout(sel, readErr, w, h, now)
+	return out
+}
+
+// renderHubStatusLayout is renderHubStatus plus the clickable spans, in the
+// columns they were drawn at.
+func renderHubStatusLayout(sel HubSelection, readErr bool, w, h int, now time.Time) (string, []hubLinkSpan) {
 	if w <= 0 || h <= 0 {
-		return ""
+		return "", nil
 	}
 	var lines []string
+	var spans []hubLinkSpan
 	if st := sel.Status; st != nil && sel.valid() {
-		lines = hubStatusLines(st, w, h, now)
+		lines, spans = hubStatusLayout(st, w, h, now)
 	} else {
 		lines = []string{fleetDimStyle.Render(" " + truncateToWidth(followPlaceholderText(readErr, false), w-1))}
 	}
 	if len(lines) > h {
 		lines = lines[:h]
 	}
+	bg := hubStatusBackground()
+	return renderHubStatusLines(lines, spans, w, h, bg)
+}
+
+// renderHubStatusLines clips lines to h rows of w columns, tints and pads
+// them, and drops spans on clipped rows.
+func renderHubStatusLines(lines []string, spans []hubLinkSpan, w, h int, bg string) (string, []hubLinkSpan) {
+	if len(lines) > h {
+		lines = lines[:h]
+	}
 	for i, l := range lines {
-		lines[i] = ansi.Truncate(l, w, "")
+		lines[i] = hubStatusTint(ansi.Truncate(l, w, ""), w, bg)
 	}
 	for len(lines) < h {
-		lines = append(lines, "")
+		lines = append(lines, hubStatusTint("", w, bg))
 	}
-	return strings.Join(lines, "\n")
+	var kept []hubLinkSpan
+	for _, sp := range spans {
+		if sp.y < h {
+			kept = append(kept, sp)
+		}
+	}
+	return strings.Join(lines, "\n"), kept
+}
+
+// hubStatusBackground is the SGR sequence that sets the pane's background: the
+// theme's surface colour, or "" when the theme has none (or the terminal has no
+// colour), in which case the pane is left untinted.
+func hubStatusBackground() string { return hubStatusBackgroundFor(theme.Current()) }
+
+// hubStatusBackgroundFor is hubStatusBackground for theme t.
+func hubStatusBackgroundFor(t theme.Theme) string {
+	if t.Surface == "" || t.Surface == t.Base {
+		return ""
+	}
+	const probe = "x"
+	r := lipgloss.NewStyle().Background(lipgloss.Color(t.Surface)).Render(probe)
+	if i := strings.Index(r, probe); i > 0 {
+		return r[:i]
+	}
+	return ""
+}
+
+// hubStatusTint pads line to w display columns and draws it on bg, restoring
+// bg after every style reset inside the line so the tint is one solid block.
+// With no bg it only pads.
+func hubStatusTint(line string, w int, bg string) string {
+	if pad := w - ansi.StringWidth(line); pad > 0 {
+		line += strings.Repeat(" ", pad)
+	}
+	if bg == "" {
+		return line
+	}
+	line = strings.ReplaceAll(line, "\x1b[m", "\x1b[m"+bg)
+	line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+bg)
+	return bg + line + "\x1b[m"
 }
 
 // hubStatusLines renders a selected row's status in at most h lines, each
@@ -155,8 +256,14 @@ func renderHubStatus(sel HubSelection, readErr bool, w, h int, now time.Time) st
 // rest of the pane is blank. With a single row left after the needs-you line
 // the recap wins over the facts.
 func hubStatusLines(st *hubStatus, w, h int, now time.Time) []string {
+	lines, _ := hubStatusLayout(st, w, h, now)
+	return lines
+}
+
+// hubStatusLayout is hubStatusLines plus the clickable spans of the facts line.
+func hubStatusLayout(st *hubStatus, w, h int, now time.Time) ([]string, []hubLinkSpan) {
 	if st.Version < hubStatusVersion {
-		return hubStatusLinesLegacy(st, w, h)
+		return hubStatusLinesLegacy(st, w, h), nil
 	}
 	tw := w - hubStatusIndent - 1 // one column of right margin
 	gutter := hubStatusGutter(st)
@@ -164,7 +271,7 @@ func hubStatusLines(st *hubStatus, w, h int, now time.Time) []string {
 	lines := []string{titleLine}
 	free := h - 1
 	if tw <= 0 || free <= 0 {
-		return lines
+		return lines, nil
 	}
 	if needs := hubStatusNeeds(st, tw); needs != "" {
 		lines = append(lines, gutter+needs)
@@ -172,19 +279,25 @@ func hubStatusLines(st *hubStatus, w, h int, now time.Time) []string {
 	}
 	text, style := hubStatusBody(st, titleCut, now)
 	facts := ""
+	var factSpans []footSpan
 	if free >= 1 {
-		if f := hubStatusFooter(st, tw, now); f != "" && (free >= 2 || text == "") {
-			facts = f
+		if f, sp := hubStatusFooterSpans(st, tw, now); f != "" && (free >= 2 || text == "") {
+			facts, factSpans = f, sp
 			free--
 		}
 	}
 	for _, l := range wrapLines(text, min(tw, hubStatusRecapMeasure), free) {
 		lines = append(lines, gutter+style.Render(l))
 	}
+	var spans []hubLinkSpan
 	if facts != "" {
+		y := len(lines)
+		for _, sp := range factSpans {
+			spans = append(spans, hubLinkSpan{y: y, x0: hubStatusIndent + sp.x0, x1: hubStatusIndent + sp.x1, url: sp.url})
+		}
 		lines = append(lines, gutter+facts)
 	}
-	return lines
+	return lines, spans
 }
 
 // hubStatusGutter is the one-column bar in the row's state colour, and the

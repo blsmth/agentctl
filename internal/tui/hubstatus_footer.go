@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/blsmth/agentctl/internal/fleet"
+	"github.com/blsmth/agentctl/internal/verdicts"
 )
 
 // hubStatusParentMaxW is the width the parent title is cut to before it is
@@ -19,18 +20,26 @@ const hubStatusParentMaxW = 16
 type footSeg struct {
 	text string
 	w    int
+	link string // URL a click on the segment opens; "" for none
+}
+
+// footSpan is a clickable stretch of the facts line: columns [x0, x1) open url.
+type footSpan struct {
+	x0, x1 int
+	url    string
 }
 
 func footText(plain string, st lipgloss.Style) footSeg {
-	return footSeg{st.Render(plain), lipgloss.Width(plain)}
+	return footSeg{text: st.Render(plain), w: lipgloss.Width(plain)}
 }
 
 // footPlan records which optional facts the facts line has given up so far.
 type footPlan struct {
-	dropFired bool
-	dropAgent bool
-	parent    int // 0 full, 1 cut to 16 columns, 2 dropped
-	dropExtra bool
+	dropFired   bool
+	dropVerdict bool
+	dropAgent   bool
+	parent      int // 0 full, 1 cut to 16 columns, 2 dropped
+	dropExtra   bool
 }
 
 // hubStatusFooterSep joins the facts.
@@ -40,13 +49,22 @@ const hubStatusFooterSep = " │ "
 // the block has no fact to show: ticket (or the cron job and when it fired),
 // agent name (only when it differs from the title), PR, parent, sub-agent
 // counts, and a non-default backend/account. Facts are dropped whole, never
-// cut mid-word, in order: when the cron job fired, the agent, the parent
+// cut mid-word, in order: when the cron job fired, the review verdict, the agent, the parent
 // (cut to 16 columns first), the backend/account. Never dropped: the ticket,
-// PR, cron job and sub-agent counts; if those alone overflow, the line is
+// PR, cron job and sub-agent dots; if those alone overflow, the line is
 // end-truncated.
 func hubStatusFooter(st *hubStatus, tw int, now time.Time) string {
+	line, _ := hubStatusFooterSpans(st, tw, now)
+	return line
+}
+
+// hubStatusFooterSpans is hubStatusFooter plus the clickable spans (the PR and
+// ticket facts) in the columns they were drawn at after fact dropping and
+// truncation, relative to the start of the line.
+func hubStatusFooterSpans(st *hubStatus, tw int, now time.Time) (string, []footSpan) {
 	steps := []func(*footPlan){
 		func(p *footPlan) { p.dropFired = true },
+		func(p *footPlan) { p.dropVerdict = true },
 		func(p *footPlan) { p.dropAgent = true },
 		func(p *footPlan) { p.parent = 1 },
 		func(p *footPlan) { p.parent = 2 },
@@ -56,35 +74,53 @@ func hubStatusFooter(st *hubStatus, tw int, now time.Time) string {
 	sep := fleetDimStyle.Render(hubStatusFooterSep)
 	sepW := lipgloss.Width(hubStatusFooterSep)
 	for i := 0; ; i++ {
-		lt, lw := joinSegs(footerSegs(st, plan, now), sep, sepW)
+		lt, lw, spans := joinSegs(footerSegs(st, plan, now), sep, sepW)
 		if lw == 0 {
-			return ""
+			return "", nil
 		}
 		if lw <= tw {
-			return lt
+			return lt, spans
 		}
 		if i < len(steps) {
 			steps[i](&plan)
 			continue
 		}
-		return ansi.Truncate(lt, tw, "…")
+		return ansi.Truncate(lt, tw, "…"), clipSpans(spans, tw)
 	}
 }
 
-func joinSegs(segs []footSeg, sep string, sepW int) (string, int) {
+// clipSpans cuts spans to the first w columns and drops those that start
+// beyond them.
+func clipSpans(spans []footSpan, w int) []footSpan {
+	var out []footSpan
+	for _, sp := range spans {
+		if sp.x0 >= w {
+			continue
+		}
+		sp.x1 = min(sp.x1, w)
+		out = append(out, sp)
+	}
+	return out
+}
+
+func joinSegs(segs []footSeg, sep string, sepW int) (string, int, []footSpan) {
 	if len(segs) == 0 {
-		return "", 0
+		return "", 0, nil
 	}
 	parts := make([]string, len(segs))
+	var spans []footSpan
 	w := 0
 	for i, s := range segs {
-		parts[i] = s.text
-		w += s.w
 		if i > 0 {
 			w += sepW
 		}
+		parts[i] = s.text
+		if s.link != "" {
+			spans = append(spans, footSpan{x0: w, x1: w + s.w, url: s.link})
+		}
+		w += s.w
 	}
-	return strings.Join(parts, sep), w
+	return strings.Join(parts, sep), w, spans
 }
 
 // footerSegs builds the facts line's segments for plan.
@@ -97,17 +133,15 @@ func footerSegs(st *hubStatus, plan footPlan, now time.Time) []footSeg {
 			left = append(left, footText("fired "+fleet.CompactAge(now.Sub(st.SchedAt)), dim))
 		}
 	} else if st.Ticket > 0 {
-		left = append(left, footText(fmt.Sprintf("#%d", st.Ticket), dim))
+		seg := footText(fmt.Sprintf("#%d", st.Ticket), dim)
+		seg.link = st.TicketURL
+		left = append(left, seg)
 	}
 	if st.SchedBy == "" && !plan.dropAgent && st.Agent != "" && st.Agent != st.Title {
 		left = append(left, footText(st.Agent, dim))
 	}
 	if st.PRNumber > 0 {
-		seg := footText(fmt.Sprintf("PR #%d", st.PRNumber), dim)
-		if st.PRURL != "" {
-			seg.text = ansi.SetHyperlink(st.PRURL) + seg.text + ansi.ResetHyperlink()
-		}
-		left = append(left, seg)
+		left = append(left, prSeg(st, plan))
 	}
 	if st.ParentTitle != "" && plan.parent < 2 {
 		t := st.ParentTitle
@@ -127,22 +161,81 @@ func footerSegs(st *hubStatus, plan footPlan, now time.Time) []footSeg {
 	return left
 }
 
-// kidsSeg is "N sub-agents · K blocked · K working" (direct children),
-// coloured by the worst state among them: blocked, else working, else dim.
+// prSeg is "PR #N", followed by " · <verdict>" when the review ledger has a
+// verdict for it (and the line has room). The whole segment is the OSC 8
+// link and the click target for st.PRURL.
+func prSeg(st *hubStatus, plan footPlan) footSeg {
+	seg := footText(fmt.Sprintf("PR #%d", st.PRNumber), fleetDimStyle)
+	if label, style := hubStatusVerdict(st.Verdict); label != "" && !plan.dropVerdict {
+		v := footText(label, style)
+		dot := footText(" · ", fleetDimStyle)
+		seg.text += dot.text + v.text
+		seg.w += dot.w + v.w
+	}
+	if st.PRURL != "" {
+		seg.text = ansi.SetHyperlink(st.PRURL) + seg.text + ansi.ResetHyperlink()
+		seg.link = st.PRURL
+	}
+	return seg
+}
+
+// hubStatusVerdict is the label and style for a review verdict (see
+// internal/verdicts); "" for none or an unknown value.
+func hubStatusVerdict(verdict string) (string, lipgloss.Style) {
+	switch verdict {
+	case verdicts.Merge, verdicts.MergeWithFollowup:
+		return "approved", fleetDoneStyle
+	case verdicts.Blocked:
+		return "changes", fleetAttentionStyle
+	case verdicts.NeedsBrendan:
+		return "needs you", fleetBlockedStyle
+	}
+	return "", fleetDimStyle
+}
+
+// hubStatusKidsMax is how many sub-agent dots are drawn before "+N".
+const hubStatusKidsMax = 8
+
+// kidsSeg is one glyph per direct child in its state colour (the hub rows'
+// glyphs), worst state first: blocked, needs attention, working, done, idle.
+// Only counts are published, so the dots are drawn from them. Above
+// hubStatusKidsMax the first eight are shown, then "+N".
 func kidsSeg(st *hubStatus) footSeg {
-	plain := fmt.Sprintf("%d sub-agent%s", st.Kids, plural(st.Kids))
-	style := fleetDimStyle
-	switch {
-	case st.KidsBlocked > 0:
-		style = fleetBlockedStyle
-	case st.KidsWorking > 0:
-		style = fleetWorkingStyle
+	type group struct {
+		glyph string
+		n     int
 	}
-	if st.KidsBlocked > 0 {
-		plain += fmt.Sprintf(" · %d blocked", st.KidsBlocked)
+	groups := []group{
+		{"⏸", st.KidsBlocked},
+		{fleet.AttentionGlyph, st.KidsAttention},
+		{"●", st.KidsWorking},
+		{"✓", st.KidsDone},
 	}
-	if st.KidsWorking > 0 {
-		plain += fmt.Sprintf(" · %d working", st.KidsWorking)
+	rest := st.Kids
+	for _, g := range groups {
+		rest -= g.n
 	}
-	return footText(plain, style)
+	groups = append(groups, group{"○", max(rest, 0)})
+	var parts []string
+	w, shown := 0, 0
+	for _, g := range groups {
+		for range g.n {
+			if shown == hubStatusKidsMax {
+				break
+			}
+			if shown > 0 {
+				w++
+			}
+			parts = append(parts, hubStatusGlyphStyle(g.glyph).Render(g.glyph))
+			w += lipgloss.Width(g.glyph)
+			shown++
+		}
+	}
+	text := strings.Join(parts, " ")
+	if extra := st.Kids - shown; extra > 0 {
+		more := fmt.Sprintf("+%d", extra)
+		text += " " + fleetDimStyle.Render(more)
+		w += 1 + lipgloss.Width(more)
+	}
+	return footSeg{text: text, w: w}
 }
