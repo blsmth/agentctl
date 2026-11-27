@@ -134,7 +134,7 @@ All JSON. Errors: `{"error": "message", "code": "snake_case"}` with an appropria
 | `GET /v1/fleet` | `{"generated":"RFC3339","groups":[Group]}` |
 | `GET /v1/sessions/{s}/windows/{w}` | `Window` plus `"detail"` (summary, last activity, pending tool, blocked since, cost if cheap to compute) |
 | `GET /v1/sessions/{s}/windows/{w}/pane?lines=200` | `{"text":"…ANSI…","verdict":"awaiting_input|working|idle|unknown","dialog":{"text":"…","hash":"sha256hex","options":[{"key":"1","label":"Yes"},…]}|null}` |
-| `GET /v1/agents` | `{"agents":[{"name":"go-engineer","description":"…","scope":"global|project"}]}` |
+| `GET /v1/agents` | `{"agents":[{"name":"go-engineer","description":"…","scope":"global|project","project"?:"agentctl","project_dir"?:"/Users/…/agentctl"}]}` (`project`/`project_dir` only for project-scoped agents: the project whose `.claude/agents` defines it) |
 | `GET /v1/templates?dir=<project>` | `{"templates":[{"name","description"?,"scope":"global"\|"project","agent"?,"model"?,"dir"?,"effort"?,"prompt"}]}`; what `agentctl template list` shows from that project (`prompttemplate.List`, project shadows global), `dir` with `~/` expanded. `dir` must be a `/v1/projects` dir; without it only global templates are listed. No templates is `[]`. |
 | `GET /v1/launch-options?agent=&project_dir=` | `{"backends":[{"name","kind","default"}],"models":{<backend>:{"models":[{"value","note","default"}],"model_list_error"?}},"efforts":[…],"defaults":{"backend","model","effort"}}`; same choices as the tmux launch popup (`internal/launchopts`). Ollama lists are fetched live (3s timeout, cached 60s); on failure only the default model is listed with `model_list_error`. Feature `launch-options`. |
 | `GET /v1/projects` | `{"projects":[{"name":"agentctl","dir":"/Users/…","session":"agentctl-agentctl"}]}` (live sessions + registry; dispatch targets) |
@@ -290,7 +290,7 @@ Embedded under `internal/serve/web/` (`go:embed`), served at `/`. Hash-based rou
   - idle/done: Reply box with a full-width Reply; a small Close window text button below
   - working: a Queue message composer (`queue`, when the server advertises it) beside a small Interrupt (confirm sheet); after an interrupt, the reply box that follows within 10s gets focus
   - closed (404): actions go, "This window was closed" and a way back to the Fleet
-- **Dispatch** (`#/dispatch`): agent picker, project picker, multi-line prompt, confirm sheet showing exactly what will be sent.
+- **Dispatch** (`#/dispatch`): project picker first, then the agent picker (the chosen project's own `.claude/agents` first under a heading with the project name, then a "global" group, then agents of other projects; with none of its own, the plain list; `agentGroups` in `logic.js`, regrouped when the project changes), multi-line prompt, confirm sheet showing exactly what will be sent.
 - **Settings** (`#/settings`): server version, device name, enable notifications (requests permission, subscribes, test push button), write mode status, an explanation when not installed to the Home Screen ("Add to Home Screen to enable notifications").
 - All writes show a confirm sheet; errors (409 dialog changed / not idle) show a toast and refresh the view.
 

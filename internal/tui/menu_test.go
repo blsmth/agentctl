@@ -960,3 +960,29 @@ func TestPickerCursorSurvivesOllamaArrival(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectNameHeadsProjectGroupSortedByName(t *testing.T) {
+	m := newTestMenu(t, func(c *MenuConfig) {
+		c.ProjectName = "agentctl"
+		c.Agents = []MenuAgent{
+			{Name: "u1", Section: SectionUser, Dir: "/work"},
+			{Name: "zed", Section: SectionProject, Dir: "/proj"},
+			{Name: "alpha", Section: SectionProject, Dir: "/proj"},
+		}
+	})
+	if got := strings.Join(headers(m), ","); got != "AGENTCTL,GLOBAL" {
+		t.Errorf("headers = %s, want AGENTCTL,GLOBAL", got)
+	}
+	var names []string
+	for _, i := range m.visible {
+		names = append(names, m.agents[i].Name)
+	}
+	if got := strings.Join(names, ","); got != "alpha,zed,u1" {
+		t.Errorf("order = %s, want alpha,zed,u1", got)
+	}
+	// Globals stay filterable.
+	m = typeText(t, m, "u1")
+	if len(m.visible) != 1 || m.agents[m.visible[0]].Name != "u1" {
+		t.Errorf("filter u1 visible = %v", m.visible)
+	}
+}

@@ -169,7 +169,7 @@ func (m MenuModel) listRows(width int) ([]listRow, int) {
 		a := m.agents[idx]
 		if !filtering && a.Section != last {
 			last = a.Section
-			rows = append(rows, listRow{text: sectionRule(a.Section.Label(), width), header: true})
+			rows = append(rows, listRow{text: sectionRule(m.sectionLabel(a.Section), width), header: true})
 		}
 		sel := i == m.cursor
 		if sel {

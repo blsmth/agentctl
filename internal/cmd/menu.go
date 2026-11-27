@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -63,9 +62,11 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 	}
 	done()
 
+	menuAgents := buildMenuAgents(cfg, agents, runningByID, windowActivity(paths.RuntimeDir()))
 	mcfg := tui.MenuConfig{
-		Agents:   buildMenuAgents(cfg, agents, runningByID, windowActivity(paths.RuntimeDir())),
-		Backends: cfg.Backends,
+		Agents:      menuAgents,
+		ProjectName: menuProjectName(menuAgents),
+		Backends:    cfg.Backends,
 		FetchOllama: func(ctx context.Context, name string) ([]string, error) {
 			return dispatch.ListOllamaModels(ctx, cfg.Backends[name])
 		},
@@ -121,6 +122,18 @@ func RunMenu(writeSettings WriteAgentSettingsFn, createMenu func(name string)) {
 		fmt.Print("\033[H\033[2J")
 		createMenu(result.Name)
 	}
+}
+
+// menuProjectName is the current project's name when the menu lists any
+// agents of its own (so the heading is never empty), else "".
+func menuProjectName(agents []tui.MenuAgent) string {
+	for _, a := range agents {
+		if a.Section == tui.SectionProject {
+			cwd, _ := os.Getwd()
+			return agent.ProjectLabel(cwd)
+		}
+	}
+	return ""
 }
 
 // windowActivity maps window ID to the unix time of its latest recorded
@@ -205,11 +218,8 @@ func menuSection(a agent.Agent, cwd string) tui.MenuSection {
 	if a.Scope != agent.ScopeLocal {
 		return tui.SectionUser
 	}
-	if cwd != "" {
-		dir := filepath.Join(cwd, ".claude", "agents")
-		if rel, err := filepath.Rel(dir, a.FilePath); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
-			return tui.SectionProject
-		}
+	if agent.InProject(a, cwd) {
+		return tui.SectionProject
 	}
 	return tui.SectionOther
 }

@@ -606,7 +606,9 @@ func PrintAgentsTable(jsonOut bool) error {
 		muted.Render(strings.Repeat("─", 6)),
 		muted.Render(strings.Repeat("─", 30)),
 	)
-	for _, a := range agts {
+	cwd, _ := os.Getwd()
+	projAgents, restAgents := agent.SplitByProject(agts, cwd)
+	row := func(a agent.Agent) {
 		tok := resolveAgentTokens(a)
 		tokStr := "-"
 		if tok > 0 {
@@ -616,25 +618,34 @@ func PrintAgentsTable(jsonOut bool) error {
 				tokStr = fmt.Sprintf("%d", tok)
 			}
 		}
-		model := a.Model
-		if model == "" {
-			model = "-"
-		}
 		desc := a.Description
 		if len(desc) > 50 {
 			desc = desc[:49] + "…"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			accent.Render(a.Name),
-			muted.Render(model),
+			muted.Render(a.Model), // blank unless the agent pins one
 			blue.Render(a.Scope.String()),
 			muted.Render(tokStr),
 			desc,
 		)
 	}
+	heading := func(label string) {
+		fmt.Fprintf(w, "%s\t\t\t\t\n", hdr.Render(label))
+	}
+	if len(projAgents) > 0 {
+		heading(agent.ProjectLabel(cwd))
+		for _, a := range projAgents {
+			row(a)
+		}
+		heading("global")
+	}
+	for _, a := range restAgents {
+		row(a)
+	}
 	for _, n := range builtins {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			accent.Render(n), muted.Render("-"), blue.Render(builtinScope), muted.Render("-"), "")
+			accent.Render(n), muted.Render(""), blue.Render(builtinScope), muted.Render("-"), "")
 	}
 	return w.Flush()
 }

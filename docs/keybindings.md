@@ -6,7 +6,7 @@ All keybindings use the tmux prefix (`ctrl+b`), then the key. Re-apply them to a
 
 | Key | Action |
 |-----|--------|
-| `a` | **Launch agent** — filter-first popup: type to filter, `enter` launch, `tab` options, `ctrl+r` resume, `ctrl+g` go to running, `esc` clear/close |
+| `a` | **Launch agent** — filter-first popup: type to filter, `enter` launch, `tab` options, `ctrl+r` resume, `ctrl+g` go to running, `esc` clear/close. The list is grouped: the pinned default agent, then the project's own agents under a heading with the project name (sorted by name), then `global`; typing filters across every group |
 | `A` | **Quick-launch** — launch the default agent (`default_agent` in config) immediately, skipping the menu |
 | `m` | **Agents window** — open the agent browser window |
 | `c` | **Create** — popup menu for creating a new agent definition |
@@ -55,7 +55,7 @@ The browser (`agentctl tickets --tui`) works with the keyboard alone; the mouse 
 | `s` / `S` / `/` | Cycle the sort / cycle open, closed and all issues / search titles |
 | `c` / `d` | New issue / close the issue (confirms) |
 | `o` / `p` / `y` | Open the issue / its linked PR in the browser / copy its URL to the tmux buffer |
-| `t` / `T` | Launch a triage agent / pick an agent to dispatch |
+| `t` / `T` | Launch a triage agent / pick an agent to dispatch (the project's own agents first under its name, then `global`) |
 | `P` | Autopilot on (asks first: it is a global setting) or off |
 
 With the mouse: click a row to select it and double-click to open it. Label chips filter, `#`/`AGE` headers sort, `#N↗` opens the linked PR, and the chips, sidebar buttons, autopilot pill and every hint at the bottom do what their key does. `✎`, or a double-click on the title or body, starts an edit. A click outside a dialog cancels it, except an edit with unsaved changes. The wheel scrolls the pane under the pointer. To select text natively, hold Shift (Option in iTerm2).

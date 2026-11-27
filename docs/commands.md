@@ -24,7 +24,7 @@ Every user-facing `agentctl` subcommand, grouped by job. Run `agentctl <command>
 | `agentctl improve` | Launch a self-improvement session (no editor step) that rewrites an agent's instructions from short summaries of its recent sessions. Runs in the agent's configured dir, else the directory you launched it from. Only runs when you start it. |
 | `agentctl cleanup` | Reclaim finished worktrees under `.worktrees/` (`--dry-run`, `--yes`, `--include-open-prs`, `--json`). See [dispatch.md](dispatch.md#cleanup). |
 | `agentctl sweep` | Close finished windows in the current tmux session and list the rest (`--dry-run`, `--include-bare`, `--session`, `--json`). See [dispatch.md](dispatch.md#cleanup). |
-| `agentctl agents` | List agents (`--tui` browser, `--json`). |
+| `agentctl agents` | List agents (`--tui` browser, `--json`). The current project's own `.claude/agents` come first under a heading with the project name, sorted by name, then the rest under `global` (no heading when the project has none); MODEL is blank unless the agent pins one. `--json` order and fields are unchanged. |
 | `agentctl agents history [name]` | Change history of `~/.claude/agents` and `~/.claude/shared` (a hidden git store under the state dir, snapshotted by housekeeping every 5 minutes). |
 | `agentctl agents diff [name] [rev]` | Compare the current files with a revision (default: last snapshot). |
 | `agentctl agents revert <name\|path> [rev]` | Restore a definition; recorded as a new snapshot, never rewrites history. From an agent session it goes through the approval popup. |
