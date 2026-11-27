@@ -311,29 +311,35 @@ its tick. New fields are additive and omitempty; a block without `v: 2`
 (an older hub) is laid out the old way from its `chips`, which are still
 published for one release.
 
-Layout (exactly the pane's rows, `hubStatusLines`):
-
-1. Title: glyph, role, title; right-aligned `<state word> <age> · <project>`
-   (state word in the glyph colour: `blocked`, `working`, `done`, `your turn`
-   for a bare window at a turn end, `idle`; age from `StateSince`). A narrow
-   pane drops the project, then the age.
+Layout (exactly the pane's rows, `hubStatusLines`), every row behind a
+one-column `▌` gutter bar in the state colour:
+1. Title: the state as a reverse-video pill (`● WORKING`, `⏸ BLOCKED`,
+   `✓ DONE`, `✓ YOUR TURN` for a bare window at a turn end, `○ IDLE`) with
+   its age from `StateSince` right after it, the title in bold, the project
+   right-aligned and dim. The age is dim, and from one hour on in any state
+   but working it turns the attention colour. A narrow pane drops the project,
+   then the state word (the pill shrinks to the glyph), then the age.
 2. Only for a blocked row with a pending tool (`Row.PendingTool`, set only
-   while blocked): `needs you: <tool>  <detail>`, one line.
-3. The recap, top-anchored, wrapped at up to 120 columns. With one row after
-   the title the recap wins over the footer; the "needs you" line also
-   yields to the recap.
-4. The last row, when there is a fact to show beyond the agent name: facts
-   joined by ` · `: `#ticket`, agent base name, `PR #N` (an OSC 8 link),
-   `← <parent title>`; or `⏲ <job> · fired <age>` for a cron row; then
-   `↳ N sub-agents ⏸n ●n` (direct children), then a non-default backend /
-   `acct <name>`. Model, context, cost, session length and branch are not
-   shown: the viewer right below carries Claude Code's statusline with them.
-   Facts drop whole as the pane narrows: parent (cut to 16 columns, then
-   gone), then agent. The PR, ticket, cron job, sub-agent counts and
-   backend/account stay; if those overflow, the footer is end-truncated.
-   When the footer would hold only the agent name, the row is dropped (the
-   recap gets it) and the agent name goes dim on the title line, before the
-   right-aligned state; on a narrow pane it drops before the project.
+   while blocked) or a specific attention reason: bold
+   `needs you ▸ <tool>  <detail>`, one line, the detail flattened,
+   ANSI-sanitised and truncated by display width.
+3. The recap in the normal text colour, wrapped at up to 120 columns over the
+   free rows. With no recap: an idle or your-turn row says
+   `Waiting on you since <15:04 | yesterday 04:10 | Jan 2>`; a working row
+   shows its note, if any; never filler. Row priority when the pane is short:
+   title, needs-you, recap, facts. With one row left the recap wins over the
+   facts; the "needs you" line never yields to either.
+4. The facts, directly under the recap (the content packs upward), joined by
+   ` │ `: `#ticket`, agent base name (only when it differs from the title),
+   `PR #N` (an OSC 8 link), `← <parent title>`; or `⏲ <job> │ fired <age>`
+   for a cron row; then `N sub-agents · K blocked · K working` coloured by the
+   worst state among them, then a non-default backend / `acct <name>`
+   (`Extra` is empty for the defaults). Model, context, cost, session length,
+   branch and account usage are not shown: the viewer right below carries
+   Claude Code's statusline with them. Facts drop whole as the pane narrows:
+   when the cron job fired, the agent, the parent (cut to 16 columns, then
+   gone), then backend/account. The PR, ticket, cron job and sub-agent counts
+   stay; if those overflow, the line is end-truncated.
    An untitled row (title = the recap's first sentence, published as
    `title_from_recap`) leaves that sentence out of the recap body, so it is
    not printed twice. While it is open the list draws no inline

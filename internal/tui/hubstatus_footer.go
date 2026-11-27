@@ -25,49 +25,36 @@ func footText(plain string, st lipgloss.Style) footSeg {
 	return footSeg{st.Render(plain), lipgloss.Width(plain)}
 }
 
-// footPlan records which optional facts the footer has given up so far.
+// footPlan records which optional facts the facts line has given up so far.
 type footPlan struct {
+	dropFired bool
 	dropAgent bool
 	parent    int // 0 full, 1 cut to 16 columns, 2 dropped
+	dropExtra bool
 }
 
-// hubStatusHasFacts reports whether the footer has anything to say beyond the
-// agent name: a ticket, PR, parent, cron job, sub-agents or a non-default
-// backend/account. Without any, the agent name moves to the title line and
-// the footer row goes to the recap.
-func hubStatusHasFacts(st *hubStatus) bool {
-	return st.SchedBy != "" || st.Ticket > 0 || st.PRNumber > 0 || st.ParentTitle != "" ||
-		st.Kids > 0 || len(st.Extra) > 0
-}
+// hubStatusFooterSep joins the facts.
+const hubStatusFooterSep = " │ "
 
-// hubStatusAgentOnTitle is the agent name the title line carries when the
-// footer would hold nothing else ("" when it has other facts or the name just
-// repeats the title).
-func hubStatusAgentOnTitle(st *hubStatus) string {
-	if hubStatusHasFacts(st) || st.Agent == st.Title {
-		return ""
-	}
-	return st.Agent
-}
-
-// hubStatusFooter renders the facts footer in at most tw columns, or "" when
-// the block has no fact beyond the agent name. Ticket, agent, PR, parent (or
-// the cron job and when it fired), sub-agents, non-default backend and
-// account. Facts are dropped whole, in order: parent (cut to 16 columns, then
-// gone), agent. Never dropped: the PR, ticket, cron job, the sub-agent counts
-// and backend/account; if those alone overflow, the footer is end-truncated.
+// hubStatusFooter renders the facts line in at most tw columns, or "" when
+// the block has no fact to show: ticket (or the cron job and when it fired),
+// agent name (only when it differs from the title), PR, parent, sub-agent
+// counts, and a non-default backend/account. Facts are dropped whole, never
+// cut mid-word, in order: when the cron job fired, the agent, the parent
+// (cut to 16 columns first), the backend/account. Never dropped: the ticket,
+// PR, cron job and sub-agent counts; if those alone overflow, the line is
+// end-truncated.
 func hubStatusFooter(st *hubStatus, tw int, now time.Time) string {
-	if !hubStatusHasFacts(st) {
-		return ""
-	}
 	steps := []func(*footPlan){
+		func(p *footPlan) { p.dropFired = true },
+		func(p *footPlan) { p.dropAgent = true },
 		func(p *footPlan) { p.parent = 1 },
 		func(p *footPlan) { p.parent = 2 },
-		func(p *footPlan) { p.dropAgent = true },
+		func(p *footPlan) { p.dropExtra = true },
 	}
 	var plan footPlan
-	sep := fleetDimStyle.Render(" · ")
-	const sepW = 3
+	sep := fleetDimStyle.Render(hubStatusFooterSep)
+	sepW := lipgloss.Width(hubStatusFooterSep)
 	for i := 0; ; i++ {
 		lt, lw := joinSegs(footerSegs(st, plan, now), sep, sepW)
 		if lw == 0 {
@@ -100,13 +87,13 @@ func joinSegs(segs []footSeg, sep string, sepW int) (string, int) {
 	return strings.Join(parts, sep), w
 }
 
-// footerSegs builds the footer's segments for plan.
+// footerSegs builds the facts line's segments for plan.
 func footerSegs(st *hubStatus, plan footPlan, now time.Time) []footSeg {
 	dim := fleetDimStyle
 	var left []footSeg
 	if st.SchedBy != "" {
 		left = append(left, footText(fleetScheduledGlyph+" "+st.SchedBy, dim))
-		if !plan.dropAgent && !st.SchedAt.IsZero() {
+		if !plan.dropFired && !st.SchedAt.IsZero() {
 			left = append(left, footText("fired "+fleet.CompactAge(now.Sub(st.SchedAt)), dim))
 		}
 	} else if st.Ticket > 0 {
@@ -132,26 +119,30 @@ func footerSegs(st *hubStatus, plan footPlan, now time.Time) []footSeg {
 	if st.Kids > 0 {
 		left = append(left, kidsSeg(st))
 	}
-	for _, e := range st.Extra {
-		left = append(left, footText(e, dim))
+	if !plan.dropExtra {
+		for _, e := range st.Extra {
+			left = append(left, footText(e, dim))
+		}
 	}
 	return left
 }
 
-// kidsSeg is "↳ N sub-agents ⏸n ●n" (direct children): the counts of the
-// blocked and working ones in their state colours.
+// kidsSeg is "N sub-agents · K blocked · K working" (direct children),
+// coloured by the worst state among them: blocked, else working, else dim.
 func kidsSeg(st *hubStatus) footSeg {
-	plain := fmt.Sprintf("↳ %d sub-agent%s", st.Kids, plural(st.Kids))
-	seg := footText(plain, fleetDimStyle)
+	plain := fmt.Sprintf("%d sub-agent%s", st.Kids, plural(st.Kids))
+	style := fleetDimStyle
+	switch {
+	case st.KidsBlocked > 0:
+		style = fleetBlockedStyle
+	case st.KidsWorking > 0:
+		style = fleetWorkingStyle
+	}
 	if st.KidsBlocked > 0 {
-		t := fmt.Sprintf("⏸%d", st.KidsBlocked)
-		seg.text += " " + fleetBlockedStyle.Render(t)
-		seg.w += 1 + lipgloss.Width(t)
+		plain += fmt.Sprintf(" · %d blocked", st.KidsBlocked)
 	}
 	if st.KidsWorking > 0 {
-		t := fmt.Sprintf("●%d", st.KidsWorking)
-		seg.text += " " + fleetWorkingStyle.Render(t)
-		seg.w += 1 + lipgloss.Width(t)
+		plain += fmt.Sprintf(" · %d working", st.KidsWorking)
 	}
-	return seg
+	return footText(plain, style)
 }

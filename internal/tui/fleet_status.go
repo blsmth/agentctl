@@ -9,7 +9,7 @@ import (
 
 // The hub's status pane: a short pane stacked above the live viewer pane
 // running `agentctl hub-status`, which shows the selected row's detail (the
-// title, the full recap wrapped, the activity line and the chips) that the
+// state and title, the needs-you line, the full recap wrapped and the facts) that the
 // list otherwise expands beneath the row. It opens and closes with the
 // viewer: every show of the viewer ensures it (found by its pane option, so
 // a hot-reloaded hub reuses the one it finds), and every hide of the viewer
@@ -18,10 +18,12 @@ import (
 // in the viewer's place, a failed show) the inline expansion is back. The
 // content comes from the hub selection file (HubSelection.Status).
 
-// Status pane geometry. fleetStatusRows fits a title, up to three recap
-// lines, the activity line and the chips: the inline detail today (three
-// text lines plus chips) plus its title, so nothing that fits under a row is
-// lost, while the viewer gives up only seven rows (with the divider).
+// Status pane geometry. fleetStatusRows fits a title, a needs-you line, up to
+// three recap lines and the facts (the height stays fixed so the viewer never
+// resizes when the selection changes; content packs upward and short rows
+// leave blanks). It matches the inline detail (three text lines plus chips)
+// plus its title, so nothing that fits under a row is lost, while the viewer
+// gives up only seven rows (with the divider).
 // Windows shorter than fleetStatusMinWindowRows keep every row for the
 // viewer and the list keeps the inline detail.
 const (
