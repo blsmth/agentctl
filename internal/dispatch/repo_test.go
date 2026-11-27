@@ -3,8 +3,11 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func stubRunner(t *testing.T, fn commandRunner) *int {
@@ -97,5 +100,68 @@ func TestRunWithTimeoutKillsHungCommand(t *testing.T) {
 	}
 	if out, err := runWithTimeout(5*time.Second, t.TempDir(), "echo", "ok"); err != nil || string(out) != "ok\n" {
 		t.Errorf("echo = %q, %v", out, err)
+	}
+}
+
+func exitErr(stderr string) error {
+	return &exec.ExitError{Stderr: []byte(stderr)}
+}
+
+func TestGhErrorsIncludeStderr(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		want    []string
+		wantNot []string
+	}{
+		{name: "stderr surfaced", err: exitErr("  GraphQL: boom\n"), want: []string{"GraphQL: boom"}},
+		{name: "rate limit", err: exitErr("GraphQL: API rate limit already exceeded"),
+			want: []string{"rate limit exhausted", "API rate limit already exceeded"}},
+		{name: "no stderr", err: exitErr(""), wantNot: []string{"rate limit"}},
+		{name: "plain error", err: errors.New("boom"), want: []string{"boom"}},
+	}
+	for _, tc := range tests {
+		for _, call := range []string{"RepoSlug", "FetchPR"} {
+			t.Run(tc.name+"/"+call, func(t *testing.T) {
+				stubRunner(t, func(string, string, ...string) ([]byte, error) { return nil, tc.err })
+				var err error
+				if call == "RepoSlug" {
+					_, err = RepoSlug("/x")
+				} else {
+					_, err = FetchPR("a/b", 1)
+				}
+				if err == nil {
+					t.Fatal("want error")
+				}
+				for _, w := range tc.want {
+					if call == "FetchPR" && w == "rate limit exhausted" {
+						continue
+					}
+					if !strings.Contains(err.Error(), w) {
+						t.Errorf("err %q missing %q", err, w)
+					}
+				}
+				for _, w := range tc.wantNot {
+					if strings.Contains(err.Error(), w) {
+						t.Errorf("err %q should not contain %q", err, w)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestGhStderrBounded(t *testing.T) {
+	huge := strings.Repeat("é", 5000)
+	got := ghStderr(exitErr(huge))
+	if len(got) > maxGhStderr+len("…") {
+		t.Errorf("len = %d, want <= %d", len(got), maxGhStderr+len("…"))
+	}
+	if !strings.HasSuffix(got, "…") || !utf8.ValidString(got) {
+		t.Errorf("want valid UTF-8 ending in ellipsis, got %q", got[len(got)-10:])
+	}
+	stubRunner(t, func(string, string, ...string) ([]byte, error) { return nil, exitErr(huge) })
+	if _, err := RepoSlug("/x"); err == nil || len(err.Error()) > 1000 {
+		t.Errorf("error not bounded: %v", err)
 	}
 }

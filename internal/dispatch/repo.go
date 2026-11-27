@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // repoSlugTimeout bounds `gh repo view`. It goes to the network, and a hung
@@ -40,6 +41,43 @@ func runWithTimeout(timeout time.Duration, dir, name string, args ...string) ([]
 	return out, err
 }
 
+// maxGhStderr bounds the stderr text embedded in an error; Go keeps up to
+// 32KB of it.
+const maxGhStderr = 512
+
+// ghStderr returns the trimmed, length-bounded stderr captured by Output()
+// when err is an *exec.ExitError, or "".
+func ghStderr(err error) string {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return ""
+	}
+	s := strings.TrimSpace(string(ee.Stderr))
+	if len(s) <= maxGhStderr {
+		return s
+	}
+	cut := maxGhStderr
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
+
+// withGhStderr appends gh's stderr to err when there is any, so callers see
+// the real cause instead of "exit status 1".
+func withGhStderr(err error) error {
+	if s := ghStderr(err); s != "" {
+		return fmt.Errorf("%w: %s", err, s)
+	}
+	return err
+}
+
+// isRateLimit is a loose substring match; any gh message mentioning a rate
+// limit counts.
+func isRateLimit(stderr string) bool {
+	return strings.Contains(strings.ToLower(stderr), "rate limit")
+}
+
 var (
 	ghRunner commandRunner = execRunner
 
@@ -66,7 +104,10 @@ func RepoSlug(dir string) (string, error) {
 
 	out, err := ghRunner(dir, "gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
 	if err != nil {
-		return "", fmt.Errorf("resolving repo slug in %s: %w", dir, err)
+		if stderr := ghStderr(err); isRateLimit(stderr) {
+			return "", fmt.Errorf("resolving repo slug in %s: GitHub API rate limit exhausted (%s)", dir, stderr)
+		}
+		return "", fmt.Errorf("resolving repo slug in %s: %w", dir, withGhStderr(err))
 	}
 	slug = strings.TrimSpace(string(out))
 	if slug == "" {
