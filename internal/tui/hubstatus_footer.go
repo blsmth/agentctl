@@ -21,6 +21,8 @@ type footSeg struct {
 	text string
 	w    int
 	link string // URL a click on the segment opens; "" for none
+	// linkW is how many leading columns the click covers; 0 for all of w.
+	linkW int
 }
 
 // footSpan is a clickable stretch of the facts line: columns [x0, x1) open url.
@@ -116,7 +118,11 @@ func joinSegs(segs []footSeg, sep string, sepW int) (string, int, []footSpan) {
 		}
 		parts[i] = s.text
 		if s.link != "" {
-			spans = append(spans, footSpan{x0: w, x1: w + s.w, url: s.link})
+			lw := s.w
+			if s.linkW > 0 {
+				lw = s.linkW
+			}
+			spans = append(spans, footSpan{x0: w, x1: w + lw, url: s.link})
 		}
 		w += s.w
 	}
@@ -173,15 +179,17 @@ func prSeg(st *hubStatus, plan footPlan) footSeg {
 		prStyle = hubStatusLink // a visible affordance: the OSC 8 link alone is not
 	}
 	seg := footText(fmt.Sprintf("PR #%d", st.PRNumber), prStyle)
+	if st.PRURL != "" {
+		// Only the "PR #N" text is the link and the click target.
+		seg.text = ansi.SetHyperlink(st.PRURL) + seg.text + ansi.ResetHyperlink()
+		seg.link, seg.linkW = st.PRURL, seg.w
+	}
+	seg = withCIChip(seg, st)
 	if label, style := hubStatusVerdict(st.Verdict); label != "" && !plan.dropVerdict {
 		v := footText(label, style)
 		dot := footText(" · ", hubStatusDim)
 		seg.text += dot.text + v.text
 		seg.w += dot.w + v.w
-	}
-	if st.PRURL != "" {
-		seg.text = ansi.SetHyperlink(st.PRURL) + seg.text + ansi.ResetHyperlink()
-		seg.link = st.PRURL
 	}
 	return seg
 }

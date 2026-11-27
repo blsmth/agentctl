@@ -100,6 +100,15 @@ type hubStatus struct {
 	// Verdict is the PR's latest review verdict (verdicts.Merge, ...), filled
 	// in by the status pane itself and never published.
 	Verdict string `json:"-"`
+
+	// SessionID and LogPath name the selected session's transcript, which the
+	// pane reads for its activity sparkline (hubstatus_activity.go).
+	SessionID string `json:"session_id,omitempty"`
+	LogPath   string `json:"log_path,omitempty"`
+
+	// Live signals the pane attaches before rendering; never published.
+	activity []time.Time // tool-call times in the sparkline window
+	ci       ciResult    // the PR head's CI state
 }
 
 // hubStatusFor builds the status pane content for row r; groups resolve the
@@ -125,6 +134,8 @@ func hubStatusFor(r fleet.Row, d fleetDisplay, groups []fleet.Group) *hubStatus 
 		PRURL:      r.PRURL,
 		SchedBy:    r.ScheduledBy,
 		SchedAt:    r.ScheduledAt,
+		SessionID:  r.SessionID,
+		LogPath:    r.LogPath,
 	}
 	if r.State == "blocked" {
 		st.PendingTool, st.PendingToolDetail = r.PendingTool, r.PendingToolDetail

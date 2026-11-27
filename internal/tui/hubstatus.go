@@ -20,14 +20,15 @@ import (
 // live viewer (see fleet_status.go): it follows the hub selection file and
 // shows, behind a one-column gutter bar in the state colour: the title line
 // (the state as a reverse-video pill with its age, the title in bold, the
-// project right-aligned), the main line (a "needs you ▸ <tool>  <detail>" line
+// project right-aligned, and left of it a 30-minute tool-call sparkline when
+// the whole title still fits; see hubstatus_activity.go), the main line (a "needs you ▸ <tool>  <detail>" line
 // for a blocked row with a pending tool or a specific attention reason, then
 // the recap wrapped over the free rows, or "Waiting on you since ..." when an
 // idle row has none), and a facts line (ticket, PR, parent, cron job,
 // sub-agent dots, agent name and backend/account when they add information;
-// the PR carries its latest review verdict). The PR and ticket facts are click
-// targets that open in the browser, and the whole pane is drawn on the theme's
-// surface colour when it has one.
+// the PR carries a CI chip (hubstatus_ci.go) and its latest review verdict).
+// The PR and ticket facts are click targets that open in the browser, and the
+// whole pane is drawn on the theme's surface colour when it has one.
 // Rows are kept in that priority when the pane is short, and the content packs
 // upward. Model, context, cost, branch and account usage are in the viewer's
 // statusline and never shown here, nor is the last command. It takes no input:
@@ -45,6 +46,10 @@ type HubStatusModel struct {
 
 	width, height int
 	reload        *reloader
+
+	activity *hubActivityCache // tool-call times per session (sparkline)
+	ci       *hubCICache       // CI result per PR
+	now      func() time.Time
 }
 
 // hubLinkSpan is a clickable stretch of the pane: columns [x0, x1) of line y
@@ -72,6 +77,9 @@ func NewHubStatusModel() HubStatusModel {
 		width:       80,
 		height:      fleetStatusRows,
 		reload:      newReloader("hub-status", "hub-status"),
+		activity:    newHubActivityCache(),
+		ci:          newHubCICache(),
+		now:         time.Now,
 	}
 }
 
@@ -102,7 +110,11 @@ func (m HubStatusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		refreshThemeIfChanged()
 		m.poll()
-		return m, hubStatusTick()
+		return m, tea.Batch(hubStatusTick(), m.liveRefresh())
+	case hubActivityMsg:
+		m.activity.store(msg)
+	case hubCIMsg:
+		m.ci.store(msg, m.clock())
 	case tea.MouseClickMsg:
 		if url := m.linkAt(msg.X, msg.Y, msg.Button); url != "" {
 			return m, func() tea.Msg { _ = openURL(url); return nil }
@@ -128,7 +140,7 @@ func (m HubStatusModel) linkAt(x, y int, b tea.MouseButton) string {
 	if b != tea.MouseLeft {
 		return ""
 	}
-	_, spans := renderHubStatusLayout(m.sel, m.readErr, m.width, m.height, time.Now())
+	_, spans := renderHubStatusLayout(m.withLive(), m.readErr, m.width, m.height, time.Now())
 	for _, sp := range spans {
 		if y == sp.y && x >= sp.x0 && x < sp.x1 {
 			return sp.url
@@ -159,7 +171,7 @@ func (m *HubStatusModel) poll() {
 
 // View renders the pane.
 func (m HubStatusModel) View() tea.View {
-	v := tea.NewView(renderHubStatus(m.sel, m.readErr, m.width, m.height, time.Now()))
+	v := tea.NewView(renderHubStatus(m.withLive(), m.readErr, m.width, m.height, time.Now()))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.ReportFocus = true // focus arriving here (pane navigation) moves on to the viewer
@@ -507,11 +519,13 @@ func hubStatusTitleAt(st *hubStatus, w int, now time.Time) (string, bool) {
 		return s, lipgloss.Width(s)
 	}
 	variants := []variant{{true, true, true}, {true, false, true}, {false, false, true}, {false, false, false}}
+	spark, sparkW := hubStatusSpark(st, now)
 	var left string
 	var leftW int
 	project, projectW := "", 0
-	room := 0
+	room, chosen := 0, 0
 	for i, v := range variants {
+		chosen = i
 		left, leftW = build(v)
 		project, projectW = "", 0
 		room = w - leftW - 1
@@ -529,12 +543,20 @@ func hubStatusTitleAt(st *hubStatus, w int, now time.Time) (string, bool) {
 			break
 		}
 	}
+	// The sparkline only takes room the title can spare, never cutting it; it
+	// is dropped before any other part of the line gives way
+	// (hubstatus_activity.go).
+	if sparkW == 0 || chosen != 0 || room-sparkW-2 < lipgloss.Width(st.Title) {
+		spark, sparkW = "", 0
+	} else {
+		room -= sparkW + 2
+	}
 	cut := lipgloss.Width(st.Title) > max(room, 0)
 	title := renderRecapTitle(truncateToWidth(st.Title, max(room, 0)), fleetRecapWorkingStyle.Bold(true))
 	line := left + title
-	if projectW > 0 && room >= 0 {
-		pad := w - 1 - lipgloss.Width(line) - projectW
-		line += strings.Repeat(" ", max(pad, 2)) + project
+	if right, rightW := joinRight(spark, sparkW, project, projectW); rightW > 0 && room >= 0 {
+		pad := w - 1 - lipgloss.Width(line) - rightW
+		line += strings.Repeat(" ", max(pad, 2)) + right
 	}
 	return line, cut
 }
