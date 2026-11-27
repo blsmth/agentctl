@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"math"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -192,7 +194,7 @@ func renderHubStatusLayout(sel HubSelection, readErr bool, w, h int, now time.Ti
 	if st := sel.Status; st != nil && sel.valid() {
 		lines, spans = hubStatusLayout(st, w, h, now)
 	} else {
-		lines = []string{fleetDimStyle.Render(" " + truncateToWidth(followPlaceholderText(readErr, false), w-1))}
+		lines = []string{hubStatusDim.Render(" " + truncateToWidth(followPlaceholderText(readErr, false), w-1))}
 	}
 	if len(lines) > h {
 		lines = lines[:h]
@@ -229,15 +231,75 @@ func hubStatusBackground() string { return hubStatusBackgroundFor(theme.Current(
 
 // hubStatusBackgroundFor is hubStatusBackground for theme t.
 func hubStatusBackgroundFor(t theme.Theme) string {
-	if t.Surface == "" || t.Surface == t.Base {
+	tint := hubStatusTintColor(t)
+	if tint == "" {
 		return ""
 	}
 	const probe = "x"
-	r := lipgloss.NewStyle().Background(lipgloss.Color(t.Surface)).Render(probe)
+	r := lipgloss.NewStyle().Background(lipgloss.Color(tint)).Render(probe)
 	if i := strings.Index(r, probe); i > 0 {
 		return r[:i]
 	}
 	return ""
+}
+
+// hubStatusTintColor is the pane's background colour: halfway between the
+// theme's base and surface colours, so it sits below the hub's selected-row
+// highlight; "" when the theme has no distinct surface colour.
+func hubStatusTintColor(t theme.Theme) string {
+	if t.Surface == "" || t.Surface == t.Base {
+		return ""
+	}
+	return midColor(t.Base, t.Surface)
+}
+
+// hubStatusMinContrast is the WCAG contrast ratio secondary text must reach
+// against the tint.
+const hubStatusMinContrast = 4.5
+
+// hubStatusDimColor is the secondary text colour for theme t: the midpoint of
+// subtle and text when it reads on the pane's tint, else the full text colour.
+func hubStatusDimColor(t theme.Theme) string {
+	bg := hubStatusTintColor(t)
+	if bg == "" {
+		bg = t.Base
+	}
+	mid := midColor(t.Subtle, t.Text)
+	if c, ok := contrastRatio(mid, bg); !ok || c >= hubStatusMinContrast {
+		return mid
+	}
+	return t.Text
+}
+
+// contrastRatio is the WCAG contrast ratio of two #rrggbb colours.
+func contrastRatio(a, b string) (float64, bool) {
+	la, ok1 := relLuminance(a)
+	lb, ok2 := relLuminance(b)
+	if !ok1 || !ok2 {
+		return 0, false
+	}
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05), true
+}
+
+func relLuminance(c string) (float64, bool) {
+	if len(c) != 7 || c[0] != '#' {
+		return 0, false
+	}
+	v, err := strconv.ParseInt(c[1:], 16, 32)
+	if err != nil {
+		return 0, false
+	}
+	lin := func(x int64) float64 {
+		f := float64(x) / 255
+		if f <= 0.03928 {
+			return f / 12.92
+		}
+		return math.Pow((f+0.055)/1.055, 2.4)
+	}
+	return 0.2126*lin(v>>16&0xff) + 0.7152*lin(v>>8&0xff) + 0.0722*lin(v&0xff), true
 }
 
 // hubStatusTint pads line to w display columns and draws it on bg, restoring
@@ -439,7 +501,7 @@ func hubStatusTitleAt(st *hubStatus, w int, now time.Time) (string, bool) {
 			sb.WriteString(gs.Render(st.Glyph) + " ")
 		}
 		if st.Role != "" {
-			sb.WriteString(fleetDimStyle.Render(st.Role) + " ")
+			sb.WriteString(hubStatusDim.Render(st.Role) + " ")
 		}
 		s := sb.String()
 		return s, lipgloss.Width(s)
@@ -454,10 +516,16 @@ func hubStatusTitleAt(st *hubStatus, w int, now time.Time) (string, bool) {
 		project, projectW = "", 0
 		room = w - leftW - 1
 		if v.project && st.Project != "" {
-			project, projectW = fleetDimStyle.Render(st.Project), lipgloss.Width(st.Project)
+			project, projectW = hubStatusDim.Render(st.Project), lipgloss.Width(st.Project)
 			room -= projectW + 2
 		}
-		if i == len(variants)-1 || room >= fleetMinRecapWidth {
+		// The title wins: the project is shown only when the whole title
+		// still fits beside it.
+		need := fleetMinRecapWidth
+		if projectW > 0 {
+			need = max(need, lipgloss.Width(st.Title))
+		}
+		if i == len(variants)-1 || room >= need {
 			break
 		}
 	}
@@ -478,7 +546,7 @@ func hubStatusAgeStyle(st *hubStatus, now time.Time) lipgloss.Style {
 	if st.State != "working" && !st.StateSince.IsZero() && now.Sub(st.StateSince) >= time.Hour {
 		return fleetAttentionStyle
 	}
-	return fleetDimStyle
+	return hubStatusDim
 }
 
 // hubStatusLinesLegacy lays out a status block from an older hub (no facts,
@@ -518,11 +586,11 @@ func hubStatusLinesLegacy(st *hubStatus, w, h int) []string {
 func hubStatusTitle(st *hubStatus, w int) string {
 	left := hubStatusGlyphStyle(st.Glyph).Render(st.Glyph) + " "
 	if st.Role != "" {
-		left += fleetDimStyle.Render(st.Role) + " "
+		left += hubStatusDim.Render(st.Role) + " "
 	}
 	project := ""
 	if st.Project != "" {
-		project = fleetDimStyle.Render(st.Project)
+		project = hubStatusDim.Render(st.Project)
 	}
 	room := w - lipgloss.Width(left) - 1
 	pw := lipgloss.Width(project)
@@ -556,5 +624,5 @@ func hubStatusGlyphStyle(glyph string) lipgloss.Style {
 	case "○":
 		return fleetIdleStyle
 	}
-	return fleetDimStyle
+	return hubStatusDim
 }

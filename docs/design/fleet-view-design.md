@@ -331,7 +331,7 @@ one-column `▌` gutter bar in the state colour:
    facts; the "needs you" line never yields to either.
 4. The facts, directly under the recap (the content packs upward), joined by
    ` │ `: `#ticket`, agent base name (only when it differs from the title),
-   `PR #N` (an OSC 8 link, plus `· approved | changes | needs you` from the latest review verdict in `internal/verdicts`, cached by file mtime), `← <parent title>`; or `⏲ <job> │ fired <age>`
+   `PR #N` (an OSC 8 link, underlined in the link colour like the ticket when it is clickable, plus `· changes | needs you` from the latest BLOCKED / NEEDS-BRENDAN review verdict in `internal/verdicts`, cached by file mtime and looked up only when `pr_url` names the repo; approvals show nothing), `← <parent title>`; or `⏲ <job> │ fired <age>`
    for a cron row; then one glyph per sub-agent in the hub rows' state colours, worst state first (blocked, needs attention, working, done, idle; the first 8, then `+N`, drawn from the published per-state counts), then a non-default backend / `acct <name>`
    (`Extra` is empty for the defaults). Model, context, cost, session length,
    branch and account usage are not shown: the viewer right below carries
@@ -341,8 +341,9 @@ one-column `▌` gutter bar in the state colour:
    stay; if those overflow, the line is end-truncated. A left click on the PR
    fact opens `pr_url`, on the ticket fact the issue URL (`ticket_url`), in the
    browser (`open` / `xdg-open`); any other click hands focus to the viewer. The
-   pane is drawn on the theme's surface colour (none when the theme has no
-   distinct one), every row padded to the full width.
+   pane is drawn on a tint halfway between the theme's base and surface colours
+   (none when the theme has no distinct surface), with secondary text picked to
+   reach a 4.5 contrast ratio on it; the project is dropped before the title is cut, every row padded to the full width.
    An untitled row (title = the recap's first sentence, published as
    `title_from_recap`) leaves that sentence out of the recap body, so it is
    not printed twice. While it is open the list draws no inline

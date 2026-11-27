@@ -22,7 +22,7 @@ func r2Selection() HubSelection {
 	st := layoutStatus()
 	st.Ticket, st.TicketURL = 42, r2TicketURL
 	st.PRNumber, st.PRURL = 418, r2PRURL
-	st.Verdict = verdicts.Merge
+	st.Verdict = verdicts.Blocked
 	return HubSelection{Session: "s", WindowID: "@1", RuntimeDir: "/p/.agentctl", Status: st}
 }
 
@@ -124,12 +124,12 @@ func TestHubStatusVerdictLabels(t *testing.T) {
 		verdict, want string
 		style         lipgloss.Style
 	}{
-		{verdicts.Merge, "PR #418 · approved", fleetDoneStyle},
-		{verdicts.MergeWithFollowup, "PR #418 · approved", fleetDoneStyle},
+		{verdicts.Merge, "PR #418", hubStatusDim},
+		{verdicts.MergeWithFollowup, "PR #418", hubStatusDim},
 		{verdicts.Blocked, "PR #418 · changes", fleetAttentionStyle},
 		{verdicts.NeedsBrendan, "PR #418 · needs you", fleetBlockedStyle},
-		{"", "PR #418", fleetDimStyle},
-		{"WHAT", "PR #418", fleetDimStyle},
+		{"", "PR #418", hubStatusDim},
+		{"WHAT", "PR #418", hubStatusDim},
 	}
 	for _, tt := range tests {
 		t.Run(tt.verdict, func(t *testing.T) {
@@ -147,7 +147,7 @@ func TestHubStatusVerdictLabels(t *testing.T) {
 		})
 	}
 	// Dropped before anything else is lost when the line is narrow.
-	st := &hubStatus{Version: hubStatusVersion, PRNumber: 418, PRURL: r2PRURL, Verdict: verdicts.Merge}
+	st := &hubStatus{Version: hubStatusVersion, PRNumber: 418, PRURL: r2PRURL, Verdict: verdicts.Blocked}
 	if got := ansi.Strip(hubStatusFooter(st, 10, statusNow)); got != "PR #418" {
 		t.Errorf("narrow footer = %q", got)
 	}
@@ -268,5 +268,65 @@ func TestHubStatusPollNoVerdictWithoutRepo(t *testing.T) {
 	m.poll()
 	if calls != 1 || m.sel.Status.Verdict != verdicts.Merge {
 		t.Fatalf("with pr_url: lookups=%d verdict=%q", calls, m.sel.Status.Verdict)
+	}
+}
+
+func TestHubStatusDimReadsOnTint(t *testing.T) {
+	palettes := []theme.Theme{
+		{Name: "dark", Base: "#1e1e2e", Surface: "#313244", Subtle: "#6c7086", Text: "#cdd6f4"},
+		{Name: "light", Base: "#eff1f5", Surface: "#ccd0da", Subtle: "#8c8fa1", Text: "#4c4f69"},
+	}
+	for _, th := range palettes {
+		t.Run(th.Name, func(t *testing.T) {
+			tint := hubStatusTintColor(th)
+			if tint == "" || tint == th.Surface {
+				t.Fatalf("tint = %q: want a colour below the selected-row surface %q", tint, th.Surface)
+			}
+			c, ok := contrastRatio(hubStatusDimColor(th), tint)
+			if !ok || c < hubStatusMinContrast {
+				t.Errorf("dim %s on %s: contrast %.2f < %.1f", hubStatusDimColor(th), tint, c, hubStatusMinContrast)
+			}
+		})
+	}
+}
+
+func TestHubStatusLinksAreMarked(t *testing.T) {
+	InitStyles()
+	st := r2Selection().Status
+	plain := *st
+	plain.TicketURL, plain.PRURL = "", ""
+	linked, _ := hubStatusFooterSpans(st, 120, statusNow)
+	unlinked, _ := hubStatusFooterSpans(&plain, 120, statusNow)
+	if !strings.Contains(linked, "\x1b[4;") && !strings.Contains(linked, ";4;") && !strings.Contains(linked, "[4m") {
+		t.Errorf("linked facts are not underlined: %q", linked)
+	}
+	if strings.Contains(unlinked, hubStatusLink.Render("PR #418")) || strings.Contains(unlinked, hubStatusLink.Render("#42")) {
+		t.Errorf("facts without a URL must not look clickable: %q", unlinked)
+	}
+	if ansi.Strip(linked) != ansi.Strip(unlinked) && lipgloss.Width(linked) != lipgloss.Width(unlinked) {
+		t.Errorf("styling changed the width")
+	}
+}
+
+func TestHubStatusTitleWinsOverProject(t *testing.T) {
+	InitStyles()
+	st := layoutStatus()
+	st.Title = strings.Repeat("A long and descriptive title ", 2)
+	st.Title = strings.TrimSpace(st.Title)
+	st.Project = "a-very-long-project-name"
+	for _, w := range []int{100, 80, 70} {
+		line, cut := hubStatusTitleAt(st, w, statusNow)
+		plain := ansi.Strip(line)
+		if cut {
+			continue
+		}
+		if !strings.Contains(plain, st.Title) {
+			t.Errorf("w=%d: title lost: %q", w, plain)
+		}
+	}
+	// Narrow enough that the project would force a cut: it goes first.
+	line, cut := hubStatusTitleAt(st, 60, statusNow)
+	if strings.Contains(ansi.Strip(line), st.Project) && cut {
+		t.Errorf("project kept while the title is cut: %q", ansi.Strip(line))
 	}
 }

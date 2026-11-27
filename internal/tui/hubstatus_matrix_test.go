@@ -129,7 +129,7 @@ func TestHubStatusWaitingSince(t *testing.T) {
 func TestHubStatusAgeEscalates(t *testing.T) {
 	InitStyles()
 	waiting := &hubStatus{State: "your turn", StateSince: statusNow.Add(-59 * time.Minute)}
-	if got := hubStatusAgeStyle(waiting, statusNow).Render("x"); got != fleetDimStyle.Render("x") {
+	if got := hubStatusAgeStyle(waiting, statusNow).Render("x"); got != hubStatusDim.Render("x") {
 		t.Errorf("under 1h should stay dim")
 	}
 	waiting.StateSince = statusNow.Add(-time.Hour)
@@ -137,7 +137,7 @@ func TestHubStatusAgeEscalates(t *testing.T) {
 		t.Errorf("1h should escalate")
 	}
 	waiting.State = "working"
-	if got := hubStatusAgeStyle(waiting, statusNow).Render("x"); got != fleetDimStyle.Render("x") {
+	if got := hubStatusAgeStyle(waiting, statusNow).Render("x"); got != hubStatusDim.Render("x") {
 		t.Errorf("a long working age is normal")
 	}
 }

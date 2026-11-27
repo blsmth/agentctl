@@ -71,7 +71,7 @@ func hubStatusFooterSpans(st *hubStatus, tw int, now time.Time) (string, []footS
 		func(p *footPlan) { p.dropExtra = true },
 	}
 	var plan footPlan
-	sep := fleetDimStyle.Render(hubStatusFooterSep)
+	sep := hubStatusDim.Render(hubStatusFooterSep)
 	sepW := lipgloss.Width(hubStatusFooterSep)
 	for i := 0; ; i++ {
 		lt, lw, spans := joinSegs(footerSegs(st, plan, now), sep, sepW)
@@ -125,7 +125,7 @@ func joinSegs(segs []footSeg, sep string, sepW int) (string, int, []footSpan) {
 
 // footerSegs builds the facts line's segments for plan.
 func footerSegs(st *hubStatus, plan footPlan, now time.Time) []footSeg {
-	dim := fleetDimStyle
+	dim := hubStatusDim
 	var left []footSeg
 	if st.SchedBy != "" {
 		left = append(left, footText(fleetScheduledGlyph+" "+st.SchedBy, dim))
@@ -134,7 +134,10 @@ func footerSegs(st *hubStatus, plan footPlan, now time.Time) []footSeg {
 		}
 	} else if st.Ticket > 0 {
 		seg := footText(fmt.Sprintf("#%d", st.Ticket), dim)
-		seg.link = st.TicketURL
+		if st.TicketURL != "" {
+			seg = footText(fmt.Sprintf("#%d", st.Ticket), hubStatusLink)
+			seg.link = st.TicketURL
+		}
 		left = append(left, seg)
 	}
 	if st.SchedBy == "" && !plan.dropAgent && st.Agent != "" && st.Agent != st.Title {
@@ -162,13 +165,17 @@ func footerSegs(st *hubStatus, plan footPlan, now time.Time) []footSeg {
 }
 
 // prSeg is "PR #N", followed by " · <verdict>" when the review ledger has a
-// verdict for it (and the line has room). The whole segment is the OSC 8
+// verdict worth showing (and the line has room). The whole segment is the OSC 8
 // link and the click target for st.PRURL.
 func prSeg(st *hubStatus, plan footPlan) footSeg {
-	seg := footText(fmt.Sprintf("PR #%d", st.PRNumber), fleetDimStyle)
+	prStyle := hubStatusDim
+	if st.PRURL != "" {
+		prStyle = hubStatusLink // a visible affordance: the OSC 8 link alone is not
+	}
+	seg := footText(fmt.Sprintf("PR #%d", st.PRNumber), prStyle)
 	if label, style := hubStatusVerdict(st.Verdict); label != "" && !plan.dropVerdict {
 		v := footText(label, style)
-		dot := footText(" · ", fleetDimStyle)
+		dot := footText(" · ", hubStatusDim)
 		seg.text += dot.text + v.text
 		seg.w += dot.w + v.w
 	}
@@ -180,17 +187,17 @@ func prSeg(st *hubStatus, plan footPlan) footSeg {
 }
 
 // hubStatusVerdict is the label and style for a review verdict (see
-// internal/verdicts); "" for none or an unknown value.
+// internal/verdicts); "" for none, an unknown value, or an approval: the CI
+// chip on the same fact uses ✓, and two meanings of it are noise, so only the
+// verdicts that need a look are shown.
 func hubStatusVerdict(verdict string) (string, lipgloss.Style) {
 	switch verdict {
-	case verdicts.Merge, verdicts.MergeWithFollowup:
-		return "approved", fleetDoneStyle
 	case verdicts.Blocked:
 		return "changes", fleetAttentionStyle
 	case verdicts.NeedsBrendan:
 		return "needs you", fleetBlockedStyle
 	}
-	return "", fleetDimStyle
+	return "", hubStatusDim
 }
 
 // hubStatusKidsMax is how many sub-agent dots are drawn before "+N".
@@ -234,7 +241,7 @@ func kidsSeg(st *hubStatus) footSeg {
 	text := strings.Join(parts, " ")
 	if extra := st.Kids - shown; extra > 0 {
 		more := fmt.Sprintf("+%d", extra)
-		text += " " + fleetDimStyle.Render(more)
+		text += " " + hubStatusDim.Render(more)
 		w += 1 + lipgloss.Width(more)
 	}
 	return footSeg{text: text, w: w}

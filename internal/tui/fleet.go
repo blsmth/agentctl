@@ -113,6 +113,13 @@ var (
 	// project groups hash into: the left bar only.
 	fleetPaletteColors []string
 
+	// hubStatusDim is the status pane's secondary text (age, role, project,
+	// separators): the dim style loses contrast on the pane's tint, so it is
+	// chosen to read on it. hubStatusLink marks the clickable PR and ticket
+	// facts.
+	hubStatusDim  lipgloss.Style
+	hubStatusLink lipgloss.Style
+
 	// fleetStylesTheme is the theme name the fleet styles were last built
 	// from; the poll tick compares it to the active theme (see
 	// refreshThemeIfChanged).
@@ -165,6 +172,8 @@ func initFleetStyles() {
 	fleetEmptyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted)).Italic(true)
 
 	fleetPaletteColors = paletteFor(t)
+	hubStatusDim = lipgloss.NewStyle().Foreground(lipgloss.Color(hubStatusDimColor(t)))
+	hubStatusLink = lipgloss.NewStyle().Foreground(lipgloss.Color(firstNonEmpty(t.Sky, firstNonEmpty(t.Blue, t.Text)))).Underline(true)
 }
 
 // refreshThemeIfChanged rebuilds every package-level style when the resolved
