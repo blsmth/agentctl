@@ -165,8 +165,14 @@ func TagMeta(rows []Row, meta map[string]Meta) {
 		if rows[i].State == "blocked" {
 			rows[i].PendingTool, rows[i].PendingToolDetail = m.PendingTool, m.PendingToolDetail
 		}
+		if m.hasPR() {
+			rows[i].PRNumber, rows[i].PRURL = m.PRNumber, m.PRURL
+		}
 	}
 }
+
+// hasPR reports whether windowstate recorded a PR (number or URL).
+func (m Meta) hasPR() bool { return m.PRNumber > 0 || m.PRURL != "" }
 
 // stateSince is when the window entered state: BlockedSince for blocked
 // (falling back to StateSince), StateSince otherwise. Zero when unknown.
@@ -177,7 +183,8 @@ func (m Meta) stateSince(state string) time.Time {
 	return m.StateSince
 }
 
-// TagLogs fills each row's Recap and PR link from its session log (see
+// TagLogs fills each row's Recap, and its PR link when windowstate recorded
+// none (see TagMeta), from its session log (see
 // ReadLogInfo; cheap on an unchanged log), and the recap's short Title from
 // the window's generated title (windowstate, written by hook-title) when the
 // recap is one that is worth shortening (see titleSource).
@@ -186,7 +193,11 @@ func (m Meta) stateSince(state string) time.Time {
 func TagLogs(rows []Row) {
 	for i := range rows {
 		info := ReadLogInfo(rows[i].LogPath)
-		rows[i].PRNumber, rows[i].PRURL = info.PRNumber, info.PRURL
+		// The PR is a pair from one source: windowstate (set by TagMeta)
+		// wins, else the log. Never overwrite or mix the two.
+		if rows[i].PRNumber == 0 && rows[i].PRURL == "" {
+			rows[i].PRNumber, rows[i].PRURL = info.PRNumber, info.PRURL
+		}
 		tagRecap(&rows[i], info)
 	}
 }
