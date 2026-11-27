@@ -81,6 +81,10 @@ The window ID and pane ID (`main_pane`) are identity; names are not (Claude Code
 - **New detach/`os.Executable` spawns must be stubbed in tests** (see `launchwatch.SetSpawnForTest`, `launchtest.Capture`).
 - **New `web/*.js` files must be registered in `assets.go`.**
 
+## Team and pipeline
+
+Work runs triage → build (`go-engineer`) → review (`code-reviewer`) → UI check (`ux-designer`, UI changes only) → merge → `just install` → QA (`qa`, user-visible changes). Roster, rules per step and dispatch lines: [docs/agents.md](docs/agents.md). Engineers never add `docs/specs/`; read `gh pr checks` before claiming CI is green.
+
 ## Where to read before touching X
 
 | Touching | Read |
