@@ -733,3 +733,20 @@ func TestReviewTargetRoundTrip(t *testing.T) {
 		t.Fatalf("Review = %+v, want %+v", got.Review, want)
 	}
 }
+
+func TestClaimCompleteMarksScheduledRunEnded(t *testing.T) {
+	sched := &windowstate.WindowState{ScheduledBy: "job"}
+	windowstate.ClaimComplete(sched, false, time.Now())
+	if !sched.ScheduledRunEnded {
+		t.Error("scheduled window: ScheduledRunEnded not set")
+	}
+	windowstate.ClearDone(sched)
+	if !sched.ScheduledRunEnded {
+		t.Error("ClearDone must not clear ScheduledRunEnded")
+	}
+	plain := &windowstate.WindowState{}
+	windowstate.ClaimComplete(plain, false, time.Now())
+	if plain.ScheduledRunEnded {
+		t.Error("unscheduled window: ScheduledRunEnded set")
+	}
+}

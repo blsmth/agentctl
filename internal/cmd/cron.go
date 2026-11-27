@@ -650,7 +650,7 @@ func cronWindows(jobs []cron.Job) ([]cron.Window, error) {
 			}
 			out = append(out, cron.Window{
 				ID: id, Job: ws.ScheduledBy, RuntimeDir: p.runtimeDir, Session: p.session,
-				MainPane: ws.MainPane, SessionID: ws.SessionID, Done: ws.Done || improveRunDone(ws), ScheduledAt: ws.ScheduledAt,
+				MainPane: ws.MainPane, SessionID: ws.SessionID, Done: ws.Done || improveRunDone(ws), ScheduledAt: ws.ScheduledAt, RunEnded: ws.ScheduledRunEnded,
 			})
 		}
 	}
@@ -910,7 +910,10 @@ func cronInterrupt(w cron.Window, job cron.Job, timeout time.Duration) error {
 			if t := strings.Join(strings.Fields(ws.ShortTitle.Title), " "); t != "" {
 				title = t
 			}
-			ws.State = "blocked"
+			// The agent sits at the prompt after C-c, so this is attention
+			// (needs you, can reply), not a blocked dialog.
+			ws.State = "idle"
+			ws.Attention = &windowstate.Attention{Reason: windowstate.AttentionTimeout, Detail: detail, At: now}
 			ws.PendingTool = "cron-timeout"
 			ws.PendingToolDetail = detail
 			ws.PendingToolAt = now

@@ -772,6 +772,12 @@ console.log("ok: shell request");
   assert.equal(displayState({ state: "idle", turn_done: true }, new Map()), "done");
   assert.equal(stateLabel({ state: "idle", turn_done: true }, 0), "done");
   assert.equal(actionsFor({ state: "idle", turn_done: true }), "reply");
+  // Blocked in the record but idle at the prompt with no dialog: reply.
+  assert.equal(actionsFor({ state: "blocked" }, { verdict: "idle" }), "reply");
+  assert.equal(actionsFor({ state: "blocked" }, { verdict: "idle", dialog: { options: [] } }), "none");
+  assert.equal(actionsFor({ state: "blocked" }, { verdict: "working" }), "none");
+  assert.equal(actionsFor({ state: "blocked" }, null), "none");
+  assert.equal(actionsFor({ state: "blocked" }, { verdict: "awaiting_input", dialog: { options: [] } }), "answer");
   assert.equal(canSwipeClose({ state: "idle", turn_done: true }, "s", ["write"]), true);
   // Still waiting when a child works.
   const fl = [{ windows: [

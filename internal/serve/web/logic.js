@@ -19,7 +19,7 @@ export function effectiveState(win) {
   return "idle";
 }
 
-const ATTENTION_LABELS = { question: "asks you", errors: "stuck", message: "review verdict", approval: "missed approval" };
+const ATTENTION_LABELS = { question: "asks you", errors: "stuck", message: "review verdict", approval: "missed approval", timeout: "timed out" };
 
 /** attentionLabel is the short label of an attention reason ("asks you"); "needs you" when unknown. */
 export function attentionLabel(reason) {
@@ -1148,6 +1148,9 @@ export function actionsFor(win, pane) {
   const s = effectiveState(win);
   if (s === "working") return "interrupt";
   if (s === "idle" || s === "done" || s === "attention") return "reply"; // a waiting window is idle at the prompt
+  // Blocked in the record but idle at the prompt with no dialog (a stale
+  // block, e.g. after a cron timeout C-c): the human can still reply.
+  if (s === "blocked" && pane && pane.verdict === "idle" && !pane.dialog) return "reply";
   return "none";
 }
 

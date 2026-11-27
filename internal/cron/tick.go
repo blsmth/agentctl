@@ -51,6 +51,9 @@ type Window struct {
 	SessionID   string
 	Done        bool
 	ScheduledAt time.Time
+	// RunEnded: the scheduled run finished a turn at some point, so a human
+	// may have resumed the window and the job timeout no longer applies.
+	RunEnded bool
 }
 
 // LaunchRequest is one fire handed to Deps.Launch.
@@ -343,7 +346,7 @@ func (t *ticker) checkTimeouts() {
 		})
 		timeout := job.TimeoutDuration()
 		for _, w := range t.windows {
-			if w.Job != job.Name || timeout == 0 || w.Done || w.ScheduledAt.IsZero() ||
+			if w.Job != job.Name || timeout == 0 || w.Done || w.RunEnded || w.ScheduledAt.IsZero() ||
 				t.now.Sub(w.ScheduledAt) < timeout || slices.Contains(js.TimedOut, w.ID) {
 				continue
 			}
