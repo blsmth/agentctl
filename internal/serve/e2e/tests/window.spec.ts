@@ -499,6 +499,13 @@ test("a dispatch approval shows where and how the agent runs, and folds a long p
   const full = await pre.evaluate((el) => el.scrollHeight);
   expect(Math.round(box!.height)).toBeGreaterThanOrEqual(full - 1);
 
+  // An approvals update re-renders the list; the expanded prompt must stay open.
+  await control.openApproval({ kind: "dispatch", session: SHOP, window_id: "@14", asking_agent: "brandon", target_agent: "general-purpose", command: "agentctl dispatch --prompt x" });
+  await expect(page.locator("section.approval")).toHaveCount(1); // still scoped to this id's page
+  await page.waitForTimeout(1500);
+  await expect(card.locator("pre.approval-text").first()).not.toHaveClass(/folded/);
+  await expect(card.getByRole("button", { name: "Show less" })).toBeVisible();
+
   // No confirm sheet for an approved dispatch: the tap sends the answer.
   await card.getByRole("button", { name: "Approve", exact: true }).tap();
   await expect(sheet(page)).toHaveCount(0);
