@@ -33,12 +33,15 @@ func TestLatestCachesUntilFileChanges(t *testing.T) {
 		t.Fatalf("Latest(7) = %+v, %v", r, ok)
 	}
 	for range 3 {
-		Latest(8, "")
+		Latest(8, "o/r")
 	}
 	if latestCache.loads != 1 {
 		t.Fatalf("loads = %d, want 1 (cached)", latestCache.loads)
 	}
-	if _, ok := Latest(9, ""); ok {
+	if _, ok := Latest(7, ""); ok {
+		t.Fatal("an empty repo must match nothing: PR numbers collide across repos")
+	}
+	if _, ok := Latest(9, "o/r"); ok {
 		t.Fatal("PR 9 has no verdict")
 	}
 	if _, ok := Latest(7, "other/repo"); ok {
@@ -64,7 +67,7 @@ func TestLatestCachesUntilFileChanges(t *testing.T) {
 
 func TestLatestMissingLedger(t *testing.T) {
 	useTempLedger(t)
-	if _, ok := Latest(1, ""); ok {
+	if _, ok := Latest(1, "o/r"); ok {
 		t.Fatal("empty ledger has no verdict")
 	}
 }

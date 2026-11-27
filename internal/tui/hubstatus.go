@@ -142,8 +142,15 @@ func (m *HubStatusModel) poll() {
 	if err != nil || !sel.valid() {
 		sel = HubSelection{}
 	}
+	// Without a PR URL the repo is unknown, and a PR number alone could
+	// belong to another repo's review: show no verdict then.
+	if st := sel.Status; st != nil {
+		st.Verdict = ""
+	}
 	if st := sel.Status; st != nil && st.PRNumber > 0 && m.lookupVerdict != nil {
-		st.Verdict = m.lookupVerdict(st.PRNumber, prURLRepoSlug(st.PRURL))
+		if repo := prURLRepoSlug(st.PRURL); repo != "" {
+			st.Verdict = m.lookupVerdict(st.PRNumber, repo)
+		}
 	}
 	m.sel = sel
 }

@@ -40,11 +40,14 @@ func ledgerSignature() (string, error) {
 	return sb.String(), nil
 }
 
-// Latest is the newest verdict recorded for PR number pr within MaxAge. repo
-// ("owner/repo") narrows the match when both it and the record's Repo are
-// set; "" matches any repo. The ledger is cached and re-read only when its
-// files change.
+// Latest is the newest verdict recorded for PR number pr in repo
+// ("owner/repo") within MaxAge. PR numbers collide across repos, so an empty
+// repo matches nothing; a record with no Repo of its own matches any repo.
+// The ledger is cached and re-read only when its files change.
 func Latest(pr int, repo string) (Record, bool) {
+	if repo == "" {
+		return Record{}, false
+	}
 	sig, err := ledgerSignature()
 	if err != nil {
 		return Record{}, false
@@ -63,7 +66,7 @@ func Latest(pr int, repo string) (Record, bool) {
 		if r.PR != pr {
 			continue
 		}
-		if repo != "" && r.Repo != "" && !strings.EqualFold(r.Repo, repo) {
+		if r.Repo != "" && !strings.EqualFold(r.Repo, repo) {
 			continue
 		}
 		return r, true

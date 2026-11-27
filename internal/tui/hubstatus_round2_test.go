@@ -248,3 +248,25 @@ func TestHubStatusNoSurfaceNoTint(t *testing.T) {
 		}
 	}
 }
+
+func TestHubStatusPollNoVerdictWithoutRepo(t *testing.T) {
+	InitStyles()
+	calls := 0
+	m := HubStatusModel{
+		read: func() (HubSelection, error) {
+			sel := r2Selection()
+			sel.Status.PRURL = ""
+			return sel, nil
+		},
+		lookupVerdict: func(int, string) string { calls++; return verdicts.Merge },
+	}
+	m.poll()
+	if calls != 0 || m.sel.Status.Verdict != "" {
+		t.Fatalf("no pr_url: lookups=%d verdict=%q, want none", calls, m.sel.Status.Verdict)
+	}
+	m.read = func() (HubSelection, error) { return r2Selection(), nil }
+	m.poll()
+	if calls != 1 || m.sel.Status.Verdict != verdicts.Merge {
+		t.Fatalf("with pr_url: lookups=%d verdict=%q", calls, m.sel.Status.Verdict)
+	}
+}
