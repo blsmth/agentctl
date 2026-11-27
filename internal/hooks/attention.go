@@ -210,6 +210,8 @@ func attentionEvent(reason string) string {
 		return "Review needs you"
 	case windowstate.AttentionApproval:
 		return "Missed an approval"
+	case windowstate.AttentionTimeout:
+		return "Timed out"
 	}
 	return "Needs you"
 }

@@ -130,6 +130,11 @@ type WindowState struct {
 	// max_concurrent and timeout decisions. Empty for every other launch.
 	ScheduledBy string    `json:"scheduled_by,omitempty"`
 	ScheduledAt time.Time `json:"scheduled_at,omitzero"`
+	// ScheduledRunEnded is set, and never cleared, once a scheduled window's
+	// first run finished a turn (ClaimComplete). Done is cleared by the next
+	// prompt, so a human reply would otherwise look like a run still going;
+	// cron timeouts cover only the unattended run and skip these windows.
+	ScheduledRunEnded bool `json:"scheduled_run_ended,omitempty"`
 	// StartedAt is when the window's agent was launched (unix seconds). Set
 	// once by the launch bootstrap and never touched by state transitions; it
 	// names a bare session "<agent> · started HH:MM" without the monitor.
@@ -361,6 +366,9 @@ const (
 	// AttentionApproval: an approval popup this window issued timed out
 	// unanswered and the human has not replied since.
 	AttentionApproval = "approval"
+	// AttentionTimeout: a cron job's timeout interrupted the run; the agent
+	// sits at the prompt and the human can reply.
+	AttentionTimeout = "timeout"
 )
 
 // AttentionToolFailures is how many consecutive failed tool calls make a turn
@@ -1063,6 +1071,9 @@ func FindBySessionID(sessionID string) string {
 // Stop hooks cannot both claim.
 func ClaimComplete(w *WindowState, autonomous bool, now time.Time) bool {
 	w.Done = true
+	if w.ScheduledBy != "" {
+		w.ScheduledRunEnded = true
+	}
 	if !autonomous || !w.CompleteFiredAt.IsZero() {
 		return false
 	}

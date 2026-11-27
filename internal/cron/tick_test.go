@@ -355,6 +355,26 @@ func TestTickTimeout(t *testing.T) {
 	}
 }
 
+// A run that finished its first turn and was then resumed by a human (Done
+// cleared again) is no longer unattended: the timeout never applies.
+func TestTickTimeoutSkipsResumedRun(t *testing.T) {
+	dir := t.TempDir()
+	job := hourlyJob("j")
+	job.Timeout = "30m"
+	seedState(t, dir, map[string]time.Time{"j": at(10, 0)})
+	f := &fakeEnv{windows: []Window{
+		{ID: "@1", Job: "j", ScheduledAt: at(4, 0), RunEnded: true}, // resumed, not Done
+		{ID: "@2", Job: "j", ScheduledAt: at(4, 0)},                 // stuck first run
+	}}
+	d := f.deps(dir, at(10, 10), config.CronConfig{}, job)
+	if _, err := Tick(d); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.interrupts) != 1 || f.interrupts[0] != "@2" {
+		t.Fatalf("interrupts = %v, want only @2", f.interrupts)
+	}
+}
+
 func TestUsageGate(t *testing.T) {
 	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
 	th := config.CronUsageThresholds{FiveHour: 80, SevenDay: 90}
