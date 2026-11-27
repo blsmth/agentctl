@@ -39,6 +39,7 @@ func TestArtifactCommentDelivery(t *testing.T) {
 		{"idle delivers", "idle", idlePane, nil, deliveryDelivered, artifacts.CommentDelivered, true, ""},
 		{"working queues", "working", workingPane, nil, deliveryQueued, artifacts.CommentQueued, true, ""},
 		{"blocked saves", "blocked", dialogPane, nil, deliverySaved, artifacts.CommentUndelivered, false, "busy"},
+		{"stale block delivers", "blocked", idlePane, nil, deliveryDelivered, artifacts.CommentDelivered, true, ""},
 		{"gone window saves", "idle", idlePane, func(o artifacts.Origin) artifacts.Origin { o.WindowID = "@999"; return o }, deliverySaved, artifacts.CommentUndelivered, false, "closed"},
 		{"other session saves", "idle", idlePane, func(o artifacts.Origin) artifacts.Origin { o.Session = "agentctl-other"; return o }, deliverySaved, artifacts.CommentUndelivered, false, "closed"},
 		{"other account saves", "idle", idlePane, func(o artifacts.Origin) artifacts.Origin { o.Account = "work"; return o }, deliverySaved, artifacts.CommentUndelivered, false, "account"},

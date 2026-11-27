@@ -190,6 +190,23 @@ func TestReplyWithImages(t *testing.T) {
 	}
 }
 
+// TestReplyWithImagesStaleBlock: an image paste follows the same rule as a
+// reply, so a blocked record with an idle pane accepts it.
+func TestReplyWithImagesStaleBlock(t *testing.T) {
+	e, rt := uploadEnv(t)
+	ids := uploadedIDs(t, e.upload(t, part{imageField, "a.png", testPNG}))
+	g := writeGroup("blocked", false, "go-engineer", "dispatch")
+	g.RuntimeDir = rt
+	e.fleet.set(g)
+	req, _ := json.Marshal(replyIn{Text: "see this", Images: ids})
+	if w := e.post(winPath+"/reply", string(req)); w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if len(e.inj.got) != 1 {
+		t.Fatalf("injected %q", e.inj.got)
+	}
+}
+
 func TestReplyImageOnlyAndBadImages(t *testing.T) {
 	e, rt := uploadEnv(t)
 	ids := uploadedIDs(t, e.upload(t, part{imageField, "a.png", testPNG}))
